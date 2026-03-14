@@ -10,6 +10,9 @@ export const PacketType = {
   ROUTE_RESPONSE: 0x07
 };
 
+export const DEFAULT_TTL = 32;
+export const MAX_TTL = 64;
+
 export class Packet {
   constructor(options = {}) {
     this.version = options.version || 1;
@@ -17,21 +20,49 @@ export class Packet {
     this.flowId = options.flowId || randomBytes(8).toString('hex');
     this.seq = options.seq || 0;
     this.hop = options.hop || 0;
+    this.ttl = options.ttl ?? DEFAULT_TTL;
     this.srcNode = options.srcNode || null;
     this.dstNode = options.dstNode || null;
     this.route = options.route || [];
+    this.visitedNodes = options.visitedNodes || [];
     this.timestamp = options.timestamp || Date.now();
     this.payload = options.payload || Buffer.alloc(0);
   }
 
+  decrementTTL() {
+    this.ttl--;
+    return this.ttl > 0;
+  }
+
+  isTTLExpired() {
+    return this.ttl <= 0;
+  }
+
+  addVisitedNode(nodeId) {
+    if (!this.visitedNodes.includes(nodeId)) {
+      this.visitedNodes.push(nodeId);
+    }
+    return this;
+  }
+
+  hasVisited(nodeId) {
+    return this.visitedNodes.includes(nodeId);
+  }
+
+  getVisitedCount() {
+    return this.visitedNodes.length;
+  }
+
   serialize() {
-    const header = Buffer.alloc(64);
+    const header = Buffer.alloc(66);
     let offset = 0;
     
     header.writeUInt8(this.version, offset++);
     header.writeUInt8(this.type, offset++);
     header.writeUInt16BE(this.hop, offset);
     offset += 2;
+    header.writeUInt8(this.ttl, offset++);
+    header.writeUInt8(0, offset++);
     header.writeUInt32BE(this.seq, offset);
     offset += 4;
     
@@ -55,6 +86,11 @@ export class Packet {
     const routeLen = Buffer.alloc(2);
     routeLen.writeUInt16BE(routeBuf.length, 0);
     
+    const visitedJson = JSON.stringify(this.visitedNodes);
+    const visitedBuf = Buffer.from(visitedJson);
+    const visitedLen = Buffer.alloc(2);
+    visitedLen.writeUInt16BE(visitedBuf.length, 0);
+    
     const payloadLen = Buffer.alloc(4);
     payloadLen.writeUInt32BE(this.payload.length, 0);
     
@@ -62,13 +98,15 @@ export class Packet {
       header,
       routeLen,
       routeBuf,
+      visitedLen,
+      visitedBuf,
       payloadLen,
       this.payload
     ]);
   }
 
   static deserialize(buffer) {
-    if (buffer.length < 64) {
+    if (buffer.length < 66) {
       throw new Error('Buffer too short for packet header');
     }
     
@@ -78,6 +116,8 @@ export class Packet {
     const type = buffer.readUInt8(offset++);
     const hop = buffer.readUInt16BE(offset);
     offset += 2;
+    const ttl = buffer.readUInt8(offset++);
+    offset++;
     const seq = buffer.readUInt32BE(offset);
     offset += 4;
     
@@ -100,6 +140,13 @@ export class Packet {
     const route = JSON.parse(routeJson);
     offset += routeLen;
     
+    const visitedLen = buffer.readUInt16BE(offset);
+    offset += 2;
+    
+    const visitedJson = buffer.subarray(offset, offset + visitedLen).toString();
+    const visitedNodes = JSON.parse(visitedJson);
+    offset += visitedLen;
+    
     const payloadLen = buffer.readUInt32BE(offset);
     offset += 4;
     
@@ -111,9 +158,11 @@ export class Packet {
       flowId,
       seq,
       hop,
+      ttl,
       srcNode,
       dstNode,
       route,
+      visitedNodes,
       timestamp,
       payload
     });
@@ -126,9 +175,11 @@ export class Packet {
       flowId: this.flowId,
       seq: this.seq,
       hop: this.hop,
+      ttl: this.ttl,
       srcNode: this.srcNode,
       dstNode: this.dstNode,
       route: [...this.route],
+      visitedNodes: [...this.visitedNodes],
       timestamp: this.timestamp,
       payload: Buffer.from(this.payload)
     });
@@ -157,23 +208,26 @@ export class Packet {
       flowId: this.flowId,
       seq: this.seq,
       hop: this.hop,
+      ttl: this.ttl,
       srcNode: this.srcNode,
       dstNode: this.dstNode,
       route: this.route,
+      visitedNodes: this.visitedNodes,
       timestamp: this.timestamp,
       payloadLength: this.payload.length
     };
   }
 }
 
-export function createDataPacket(srcNode, dstNode, route, payload, flowId = null) {
+export function createDataPacket(srcNode, dstNode, route, payload, flowId = null, ttl = DEFAULT_TTL) {
   return new Packet({
     type: PacketType.DATA,
     srcNode,
     dstNode,
     route,
     payload,
-    flowId
+    flowId,
+    ttl
   });
 }
 

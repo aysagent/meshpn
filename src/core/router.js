@@ -36,7 +36,7 @@ export class MeshRouter extends EventEmitter {
   findRouteToExit(preferredExitNode = null) {
     const cacheKey = `exit:${preferredExitNode || 'any'}`;
     const cached = this._getCachedRoute(cacheKey);
-    if (cached) {
+    if (cached && this.isRouteValid(cached.route)) {
       return cached;
     }
     
@@ -46,16 +46,24 @@ export class MeshRouter extends EventEmitter {
       route = this.graph.findShortestPath(this.localNodeId, preferredExitNode);
       if (route && route.length > 1) {
         route = route.slice(1);
-        this._cacheRoute(cacheKey, { route, exitNode: preferredExitNode });
-        return { route, exitNode: preferredExitNode };
+        const validation = this.validateRoute(route);
+        if (validation.valid) {
+          this._cacheRoute(cacheKey, { route, exitNode: preferredExitNode });
+          return { route, exitNode: preferredExitNode };
+        }
+        console.warn(`Invalid route to preferred exit ${preferredExitNode}: ${validation.reason}`);
       }
     }
     
     const result = this.graph.findPathToNearestExit(this.localNodeId);
     if (result) {
       route = result.path.slice(1);
-      this._cacheRoute(cacheKey, { route, exitNode: result.exitNode });
-      return { route, exitNode: result.exitNode };
+      const validation = this.validateRoute(route);
+      if (validation.valid) {
+        this._cacheRoute(cacheKey, { route, exitNode: result.exitNode });
+        return { route, exitNode: result.exitNode };
+      }
+      console.warn(`Invalid route to nearest exit ${result.exitNode}: ${validation.reason}`);
     }
     
     return null;
@@ -70,11 +78,17 @@ export class MeshRouter extends EventEmitter {
     for (const pathInfo of allPaths) {
       if (pathInfo.path.length < 2) continue;
       
+      const route = pathInfo.path.slice(1);
+      const validation = this.validateRoute(route);
+      if (!validation.valid) {
+        continue;
+      }
+      
       const firstHop = pathInfo.path[1];
       if (!usedFirstHops.has(firstHop) || uniquePaths.length < count) {
         usedFirstHops.add(firstHop);
         uniquePaths.push({
-          route: pathInfo.path.slice(1),
+          route,
           exitNode: pathInfo.exitNode,
           hops: pathInfo.hops
         });
@@ -214,5 +228,47 @@ export class MeshRouter extends EventEmitter {
       clientNodes: this.graph.getClientNodes().length,
       connectedPeers: this.getConnectedPeers().length
     };
+  }
+
+  validateRoute(route) {
+    if (!route || route.length === 0) {
+      return { valid: false, reason: 'Empty route' };
+    }
+
+    const seen = new Set();
+    
+    for (let i = 0; i < route.length; i++) {
+      const nodeId = route[i];
+      
+      if (!nodeId) {
+        return { valid: false, reason: `Invalid node at position ${i}` };
+      }
+      
+      if (seen.has(nodeId)) {
+        return { valid: false, reason: `Cycle detected: node ${nodeId} appears twice in route` };
+      }
+      seen.add(nodeId);
+      
+      if (nodeId === this.localNodeId && i !== 0) {
+        return { valid: false, reason: `Route loops back to local node at position ${i}` };
+      }
+    }
+    
+    return { valid: true };
+  }
+
+  validateAndFilterRoutes(routes) {
+    return routes.filter(routeInfo => {
+      const validation = this.validateRoute(routeInfo.route);
+      if (!validation.valid) {
+        console.warn(`Filtered invalid route to ${routeInfo.exitNode}: ${validation.reason}`);
+        return false;
+      }
+      return true;
+    });
+  }
+
+  isRouteValid(route) {
+    return this.validateRoute(route).valid;
   }
 }

@@ -49,10 +49,50 @@ export class MeshNode extends EventEmitter {
       timeout: config.reorderTimeout || 5000
     });
     
+    this.processedPackets = new Map();
+    this.packetCacheTTL = config.packetCacheTTL || 60000;
+    this.cacheCleanupInterval = null;
+    
+    this.loopStats = {
+      ttlDropped: 0,
+      duplicateDropped: 0,
+      loopDropped: 0,
+      splitHorizonDropped: 0,
+      totalProcessed: 0,
+      totalForwarded: 0
+    };
+    
     this.tunManager = null;
     this.exitNodeHandler = null;
     this.virtualIp = null;
     this.running = false;
+  }
+
+  _isPacketDuplicate(packet) {
+    const key = `${packet.flowId}:${packet.seq}`;
+    if (this.processedPackets.has(key)) {
+      return true;
+    }
+    this.processedPackets.set(key, Date.now());
+    return false;
+  }
+
+  _startCacheCleanup() {
+    this.cacheCleanupInterval = setInterval(() => {
+      const now = Date.now();
+      for (const [key, timestamp] of this.processedPackets) {
+        if (now - timestamp > this.packetCacheTTL) {
+          this.processedPackets.delete(key);
+        }
+      }
+    }, 30000);
+  }
+
+  _stopCacheCleanup() {
+    if (this.cacheCleanupInterval) {
+      clearInterval(this.cacheCleanupInterval);
+      this.cacheCleanupInterval = null;
+    }
   }
 
   async start() {
@@ -76,6 +116,7 @@ export class MeshNode extends EventEmitter {
     }
     
     this.reorderBuffer.start();
+    this._startCacheCleanup();
     
     this.running = true;
     this.emit('started');
@@ -214,6 +255,33 @@ export class MeshNode extends EventEmitter {
   }
 
   _handleDataPacket(peerId, packet) {
+    this.loopStats.totalProcessed++;
+    
+    if (packet.isTTLExpired()) {
+      this.loopStats.ttlDropped++;
+      console.warn(`Dropping packet ${packet.flowId}: TTL expired`);
+      return;
+    }
+    
+    if (this._isPacketDuplicate(packet)) {
+      this.loopStats.duplicateDropped++;
+      return;
+    }
+    
+    if (packet.hasVisited(this.nodeId)) {
+      this.loopStats.loopDropped++;
+      console.warn(`Dropping packet ${packet.flowId}: loop detected (already visited ${this.nodeId})`);
+      return;
+    }
+    
+    packet.addVisitedNode(this.nodeId);
+    
+    if (!packet.decrementTTL()) {
+      this.loopStats.ttlDropped++;
+      console.warn(`Dropping packet ${packet.flowId}: TTL reached zero`);
+      return;
+    }
+    
     const sessionKey = this.discovery.getSessionKey(peerId);
     if (!sessionKey) {
       console.warn(`No session key for ${peerId}`);
@@ -230,21 +298,35 @@ export class MeshNode extends EventEmitter {
           console.warn('Received exit packet but not an exit node');
         }
       } else if (layer.nextHop) {
-        this._forwardPacket(packet, layer.nextHop, layer.payload);
+        this._forwardPacket(packet, layer.nextHop, layer.payload, peerId);
       }
     } catch (err) {
       console.error('Failed to peel onion layer:', err.message);
     }
   }
 
-  _forwardPacket(originalPacket, nextHop, newPayload) {
+  _forwardPacket(originalPacket, nextHop, newPayload, fromPeerId = null) {
+    if (nextHop === fromPeerId) {
+      this.loopStats.splitHorizonDropped++;
+      console.warn(`Split horizon: refusing to send packet ${originalPacket.flowId} back to ${fromPeerId}`);
+      return;
+    }
+    
+    if (nextHop === originalPacket.srcNode) {
+      this.loopStats.loopDropped++;
+      console.warn(`Loop prevention: refusing to send packet back to source ${nextHop}`);
+      return;
+    }
+    
     const forwardPacket = originalPacket.clone();
     forwardPacket.payload = newPayload;
     forwardPacket.incrementHop();
     
     const serialized = forwardPacket.serialize();
     
-    if (!this.transportManager.send(nextHop, serialized)) {
+    if (this.transportManager.send(nextHop, serialized)) {
+      this.loopStats.totalForwarded++;
+    } else {
       console.warn(`Failed to forward to ${nextHop}`);
     }
   }
@@ -360,7 +442,24 @@ export class MeshNode extends EventEmitter {
       exitNodes: this.discovery.getExitNodes(),
       routing: this.router.getGraphStats(),
       scheduler: this.scheduler.getPathStats(),
-      reorderBuffer: this.reorderBuffer.getBufferSize()
+      reorderBuffer: this.reorderBuffer.getBufferSize(),
+      loopPrevention: { ...this.loopStats },
+      packetCacheSize: this.processedPackets.size
+    };
+  }
+
+  getLoopStats() {
+    return { ...this.loopStats };
+  }
+
+  resetLoopStats() {
+    this.loopStats = {
+      ttlDropped: 0,
+      duplicateDropped: 0,
+      loopDropped: 0,
+      splitHorizonDropped: 0,
+      totalProcessed: 0,
+      totalForwarded: 0
     };
   }
 
@@ -369,6 +468,7 @@ export class MeshNode extends EventEmitter {
     
     this.running = false;
     
+    this._stopCacheCleanup();
     this.reorderBuffer.stop();
     
     if (this.exitNodeHandler) {
@@ -380,6 +480,8 @@ export class MeshNode extends EventEmitter {
     }
     
     this.discovery.stop();
+    
+    this.processedPackets.clear();
     
     this.emit('stopped');
     console.log(`Mesh node ${this.nodeId} stopped`);

@@ -166,6 +166,21 @@ async function main() {
     console.log(`Peers: ${stats.connectedPeers.length}`);
     console.log(`Exit nodes: ${stats.exitNodes.length}`);
     console.log(`Routing: ${stats.routing.totalNodes} nodes`);
+    
+    if (stats.loopPrevention) {
+      const lp = stats.loopPrevention;
+      if (lp.totalProcessed > 0) {
+        console.log(`Packets: ${lp.totalProcessed} processed, ${lp.totalForwarded} forwarded`);
+        const dropped = lp.ttlDropped + lp.duplicateDropped + lp.loopDropped + lp.splitHorizonDropped;
+        if (dropped > 0) {
+          console.log(`Dropped: ${dropped} (TTL: ${lp.ttlDropped}, dup: ${lp.duplicateDropped}, loop: ${lp.loopDropped}, split: ${lp.splitHorizonDropped})`);
+        }
+      }
+    }
+    
+    if (stats.packetCacheSize > 0) {
+      console.log(`Packet cache: ${stats.packetCacheSize} entries`);
+    }
   }, 30000);
 }
 

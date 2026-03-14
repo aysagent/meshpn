@@ -1,7 +1,9 @@
 export { TunInterface, TunManager } from './tun.js';
 export { 
   Packet, 
-  PacketType, 
+  PacketType,
+  DEFAULT_TTL,
+  MAX_TTL,
   createDataPacket, 
   createPingPacket, 
   createPongPacket,
