@@ -1,0 +1,24 @@
+{
+  "name": "mesh-vpn",
+  "version": "1.0.0",
+  "description": "Decentralized mesh VPN with WebRTC, onion encryption, and multipath routing",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "server": "node server/signalling-server.js",
+    "client": "node src/index.js --role client",
+    "relay": "node src/index.js --role relay",
+    "exit": "node src/index.js --role exit"
+  },
+  "dependencies": {
+    "werift": "^0.19.0",
+    "@noble/curves": "^1.4.0",
+    "@noble/hashes": "^1.4.0",
+    "ws": "^8.17.0",
+    "raw-socket": "^1.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

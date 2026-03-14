@@ -1,0 +1,17 @@
+{
+  "role": "exit",
+  "signallingServer": "ws://localhost:8080",
+  "iceServers": [
+    { "urls": "stun:stun.l.google.com:19302" },
+    { "urls": "stun:stun1.l.google.com:19302" }
+  ],
+  "turnServers": [],
+  "virtualNetwork": "10.200.0.0/16",
+  "mtu": 1400,
+  "enableTun": false,
+  "nat": {
+    "portStart": 40000,
+    "portEnd": 60000,
+    "timeout": 300000
+  }
+}
