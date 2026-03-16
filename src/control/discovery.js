@@ -69,6 +69,7 @@ export class PeerDiscovery extends EventEmitter {
     });
     
     this.transportManager.on('peer-connected', (peerId, transport) => {
+      console.log(`[DISCOVERY] Transport peer-connected: ${peerId} via ${transport}`);
       this.establishedPeers.add(peerId);
       this.pendingConnections.delete(peerId);
       
@@ -77,6 +78,7 @@ export class PeerDiscovery extends EventEmitter {
     });
     
     this.transportManager.on('peer-disconnected', (peerId) => {
+      console.log(`[DISCOVERY] Transport peer-disconnected: ${peerId}`);
       this.establishedPeers.delete(peerId);
       this.sessionManager.removeSession(peerId);
       
@@ -95,12 +97,16 @@ export class PeerDiscovery extends EventEmitter {
   }
 
   async _initiateConnection(peer) {
+    console.log(`[DISCOVERY] Initiating connection to ${peer.nodeId}, myId=${this.identity.nodeId}`);
+    
     if (this.pendingConnections.has(peer.nodeId) || 
         this.establishedPeers.has(peer.nodeId)) {
+      console.log(`[DISCOVERY] Skipping ${peer.nodeId} - already pending or established`);
       return;
     }
     
     if (this.identity.nodeId > peer.nodeId) {
+      console.log(`[DISCOVERY] Skipping ${peer.nodeId} - waiting for peer to initiate (myId > peerId)`);
       return;
     }
     
@@ -109,6 +115,8 @@ export class PeerDiscovery extends EventEmitter {
       initiator: true,
       timestamp: Date.now()
     });
+    
+    console.log(`[DISCOVERY] Creating offer for ${peer.nodeId}`);
     
     try {
       const myEphemeralPubKey = this.sessionManager.createSession(peer.nodeId);
@@ -120,8 +128,10 @@ export class PeerDiscovery extends EventEmitter {
         offer,
         ephemeralPubKey: myEphemeralPubKey
       });
+      
+      console.log(`[DISCOVERY] Offer sent to ${peer.nodeId}`);
     } catch (err) {
-      console.error(`Failed to create offer for ${peer.nodeId}:`, err.message);
+      console.error(`[DISCOVERY] Failed to create offer for ${peer.nodeId}:`, err.message);
       this.pendingConnections.delete(peer.nodeId);
     }
   }
@@ -143,6 +153,8 @@ export class PeerDiscovery extends EventEmitter {
   }
 
   async _handleOffer(fromNodeId, signal) {
+    console.log(`[DISCOVERY] Received offer from ${fromNodeId}`);
+    
     this.pendingConnections.set(fromNodeId, {
       initiator: false,
       timestamp: Date.now()
@@ -153,6 +165,7 @@ export class PeerDiscovery extends EventEmitter {
       
       if (signal.ephemeralPubKey) {
         this.sessionManager.completeSession(fromNodeId, signal.ephemeralPubKey);
+        console.log(`[DISCOVERY] Session key established with ${fromNodeId}`);
       }
       
       const answer = await this.transportManager.handleWebRTCOffer(fromNodeId, signal.offer);
@@ -163,22 +176,27 @@ export class PeerDiscovery extends EventEmitter {
         ephemeralPubKey: myEphemeralPubKey
       });
       
+      console.log(`[DISCOVERY] Answer sent to ${fromNodeId}`);
+      
       const sessionKey = this.sessionManager.getSessionKey(fromNodeId);
       if (sessionKey) {
         this.transportManager.setQuicSessionKey(fromNodeId, sessionKey);
       }
     } catch (err) {
-      console.error(`Failed to handle offer from ${fromNodeId}:`, err.message);
+      console.error(`[DISCOVERY] Failed to handle offer from ${fromNodeId}:`, err.message);
       this.pendingConnections.delete(fromNodeId);
     }
   }
 
   async _handleAnswer(fromNodeId, signal) {
+    console.log(`[DISCOVERY] Received answer from ${fromNodeId}`);
+    
     try {
       await this.transportManager.handleWebRTCAnswer(fromNodeId, signal.answer);
       
       if (signal.ephemeralPubKey) {
         this.sessionManager.completeSession(fromNodeId, signal.ephemeralPubKey);
+        console.log(`[DISCOVERY] Session key established with ${fromNodeId}`);
         
         const sessionKey = this.sessionManager.getSessionKey(fromNodeId);
         if (sessionKey) {
@@ -186,7 +204,7 @@ export class PeerDiscovery extends EventEmitter {
         }
       }
     } catch (err) {
-      console.error(`Failed to handle answer from ${fromNodeId}:`, err.message);
+      console.error(`[DISCOVERY] Failed to handle answer from ${fromNodeId}:`, err.message);
       this.pendingConnections.delete(fromNodeId);
     }
   }

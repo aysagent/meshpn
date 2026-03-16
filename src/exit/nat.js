@@ -370,12 +370,16 @@ export class ExitNode extends EventEmitter {
   }
 
   async processPacket(packet, payload) {
+    console.log(`[EXIT] Processing packet from ${packet.srcNode}, payload length: ${payload.length}`);
+    
     const ipHeader = this._parseIPHeader(payload);
     if (!ipHeader) {
+      console.log('[EXIT] Failed to parse IP header');
       return null;
     }
     
     const { dstIp, protocol, srcPort, dstPort, data, tcpSeqNum, tcpAckNum } = ipHeader;
+    console.log(`[EXIT] Forwarding: ${srcPort} -> ${dstIp}:${dstPort} proto=${protocol} data_len=${data.length}`);
     
     if (protocol === 17) {
       return await this.forwarder.forwardUDP(

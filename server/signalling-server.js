@@ -91,6 +91,22 @@ class SignallingServer extends EventEmitter {
       return;
     }
     
+    const existingNode = this.nodes.get(nodeId);
+    if (existingNode) {
+      existingNode.ws = ws;
+      setNodeId(nodeId);
+      
+      ws.send(JSON.stringify({
+        type: 'registered',
+        nodeId,
+        virtualIp: existingNode.virtualIp,
+        networkCidr: '10.200.0.0/16'
+      }));
+      
+      console.log(`Node re-registered: ${nodeId} (${existingNode.role}) - ${existingNode.virtualIp}`);
+      return;
+    }
+    
     const virtualIp = `${this.virtualNetwork}.${this.virtualIpCounter++}`;
     
     const nodeInfo = {

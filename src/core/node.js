@@ -135,10 +135,15 @@ export class MeshNode extends EventEmitter {
 
   _setupEventHandlers() {
     this.discovery.on('registered', async (info) => {
+      if (this.virtualIp === info.virtualIp && this.tunManager) {
+        console.log('Already registered with this IP, skipping TUN setup');
+        return;
+      }
+      
       this.virtualIp = info.virtualIp;
       console.log(`Registered with virtual IP: ${this.virtualIp}`);
       
-      if (this.isClient && this.config.enableTun !== false) {
+      if (this.isClient && this.config.enableTun !== false && !this.tunManager) {
         this.tunManager = new TunManager(this.config.tun || {});
         
         this.tunManager.on('outbound-packet', (packet) => {
@@ -195,14 +200,20 @@ export class MeshNode extends EventEmitter {
     if (!this.running) return;
     
     const parsed = parseIPPacket(ipPacket);
-    if (!parsed || !parsed.valid) return;
-    
-    const routeInfo = this.router.findRouteToExit();
-    if (!routeInfo) {
-      console.warn('No route to exit node available');
+    if (!parsed || !parsed.valid) {
+      console.log('[TUN] Invalid IP packet received, length:', ipPacket.length);
       return;
     }
     
+    console.log(`[TUN] Outbound packet: ${parsed.srcIp}:${parsed.srcPort} -> ${parsed.dstIp}:${parsed.dstPort} proto=${parsed.protocol}`);
+    
+    const routeInfo = this.router.findRouteToExit();
+    if (!routeInfo) {
+      console.warn('[TUN] No route to exit node available');
+      return;
+    }
+    
+    console.log(`[TUN] Route found: exit=${routeInfo.exitNode}, hops=${routeInfo.route.length}`);
     this._sendThroughMesh(ipPacket, routeInfo);
   }
 
@@ -233,11 +244,15 @@ export class MeshNode extends EventEmitter {
       const nextHop = route[0];
       const serialized = packet.serialize();
       
+      console.log(`[TUN] Sending packet to next hop: ${nextHop}, serialized size: ${serialized.length}`);
+      
       if (!this.transportManager.send(nextHop, serialized)) {
-        console.warn(`Failed to send to ${nextHop}`);
+        console.warn(`[TUN] Failed to send to ${nextHop}`);
+      } else {
+        console.log(`[TUN] Packet sent successfully`);
       }
     } catch (err) {
-      console.error('Failed to create onion packet:', err.message);
+      console.error('[TUN] Failed to create onion packet:', err.message);
     }
   }
 
@@ -267,6 +282,7 @@ export class MeshNode extends EventEmitter {
   }
 
   _handleDataPacket(peerId, packet) {
+    console.log(`[MESH] Received data packet from ${peerId}, flowId=${packet.flowId}, dst=${packet.dstNode}`);
     this.loopStats.totalProcessed++;
     
     if (packet.isTTLExpired()) {
@@ -358,11 +374,15 @@ export class MeshNode extends EventEmitter {
   _handleInternetResponse(response) {
     const { srcNodeId, srcIp, srcPort, dstIp, dstPort, data, protocol } = response;
     
+    console.log(`[EXIT] Internet response: ${dstIp}:${dstPort} -> ${srcIp}:${srcPort} proto=${protocol} data_len=${data.length}`);
+    
     const routeInfo = this.router.graph.findShortestPath(this.nodeId, srcNodeId);
     if (!routeInfo || routeInfo.length < 2) {
-      console.warn(`No route back to ${srcNodeId}`);
+      console.warn(`[EXIT] No route back to ${srcNodeId}`);
       return;
     }
+    
+    console.log(`[EXIT] Sending response back via route: ${routeInfo.join(' -> ')}`);
     
     const route = routeInfo.slice(1);
     const routeWithKeys = [];
@@ -415,8 +435,16 @@ export class MeshNode extends EventEmitter {
   }
 
   _processReorderedPacket(payload, packetInfo) {
+    console.log(`[CLIENT] Received response packet, length: ${payload.length}`);
+    
     if (this.tunManager && this.tunManager.isRunning()) {
+      const parsed = parseIPPacket(payload);
+      if (parsed && parsed.valid) {
+        console.log(`[CLIENT] Injecting to TUN: ${parsed.srcIp}:${parsed.srcPort} -> ${parsed.dstIp}:${parsed.dstPort}`);
+      }
       this.tunManager.injectPacket(payload);
+    } else {
+      console.log('[CLIENT] TUN not running, cannot inject packet');
     }
     
     this.emit('packet-received', payload);
