@@ -2,9 +2,14 @@ import { EventEmitter } from 'events';
 import { spawn, execSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
-import net from 'net';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const LINUX_TUN_PATH = '/dev/net/tun';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const UTUN_HELPER_PATH = path.join(__dirname, '../../helpers/utun-helper');
 
 export class TunInterface extends EventEmitter {
   constructor(config = {}) {
@@ -16,6 +21,8 @@ export class TunInterface extends EventEmitter {
     this.mtu = config.mtu || 1400;
     this.fd = null;
     this.socket = null;
+    this.helperProcess = null;
+    this.readBuffer = Buffer.alloc(0);
     this.platform = os.platform();
     this.running = false;
   }
@@ -114,48 +121,88 @@ export class TunInterface extends EventEmitter {
 
   async _openMacOS() {
     return new Promise((resolve, reject) => {
-      if (this.config.tunName) {
-        this.name = this.config.tunName;
-      } else {
-        const freeIndex = this._findFreeUtunIndex();
-        this.name = `utun${freeIndex}`;
+      console.log('Creating utun interface via helper...');
+      
+      if (!fs.existsSync(UTUN_HELPER_PATH)) {
+        reject(new Error(`utun-helper not found at ${UTUN_HELPER_PATH}. Run: cd helpers && make`));
+        return;
       }
       
-      try {
-        this._createUtunSocket()
-          .then(() => {
-            this._configureMacOSTun();
-            resolve();
-          })
-          .catch(reject);
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }
-
-  async _createUtunSocket() {
-    return new Promise((resolve, reject) => {
-      try {
-        const checkCmd = `ifconfig ${this.name} 2>/dev/null || echo "not found"`;
-        const result = execSync(checkCmd, { encoding: 'utf8' });
-        
-        if (result.includes('not found')) {
-          const tunSetup = `
-            networksetup -createnetworkservice MeshVPN ${this.name} 2>/dev/null || true
-          `;
-          try {
-            execSync(tunSetup, { stdio: 'ignore' });
-          } catch {
-            // utun will be created automatically when we configure it
-          }
+      this.helperProcess = spawn(UTUN_HELPER_PATH, [], {
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+      
+      let interfaceNameReceived = false;
+      
+      this.helperProcess.stderr.once('data', (data) => {
+        const output = data.toString().trim();
+        if (output.startsWith('ERROR:')) {
+          reject(new Error(`utun-helper: ${output}`));
+          return;
         }
         
+        this.name = output;
+        interfaceNameReceived = true;
+        console.log(`Created utun interface: ${this.name}`);
+        
+        this._configureMacOSTun();
         resolve();
-      } catch (err) {
-        resolve();
-      }
+      });
+      
+      this.helperProcess.stdout.on('data', (data) => {
+        if (!this.running) return;
+        this._processHelperData(data);
+      });
+      
+      this.helperProcess.on('error', (err) => {
+        console.error(`utun-helper error: ${err.message}`);
+        if (!interfaceNameReceived) {
+          reject(err);
+        } else {
+          this.emit('error', err);
+        }
+      });
+      
+      this.helperProcess.on('close', (code) => {
+        if (this.running) {
+          console.log(`utun-helper exited with code ${code}`);
+          this.running = false;
+          this.emit('close');
+        }
+      });
+      
+      setTimeout(() => {
+        if (!interfaceNameReceived) {
+          this.helperProcess.kill();
+          reject(new Error('Timeout waiting for utun interface name'));
+        }
+      }, 5000);
     });
+  }
+  
+  _processHelperData(data) {
+    this.readBuffer = Buffer.concat([this.readBuffer, data]);
+    
+    while (this.readBuffer.length >= 4) {
+      const packetLen = this.readBuffer.readUInt32BE(0);
+      
+      if (packetLen > this.mtu + 100) {
+        console.error(`Invalid packet length from helper: ${packetLen}`);
+        this.readBuffer = Buffer.alloc(0);
+        break;
+      }
+      
+      if (this.readBuffer.length < 4 + packetLen) {
+        break;
+      }
+      
+      const packet = this.readBuffer.subarray(4, 4 + packetLen);
+      this.readBuffer = this.readBuffer.subarray(4 + packetLen);
+      
+      if (packet.length > 0) {
+        this.emit('packet', Buffer.from(packet));
+      }
+    }
   }
 
   _configureMacOSTun() {
@@ -221,14 +268,37 @@ export class TunInterface extends EventEmitter {
   }
 
   _writeMacOS(packet) {
-    console.warn('Direct TUN write on macOS requires native bindings');
-    return false;
+    if (!this.helperProcess || !this.helperProcess.stdin.writable) {
+      return false;
+    }
+    
+    try {
+      const header = Buffer.alloc(4);
+      header.writeUInt32BE(packet.length, 0);
+      
+      this.helperProcess.stdin.write(header);
+      this.helperProcess.stdin.write(packet);
+      return true;
+    } catch (err) {
+      this.emit('error', err);
+      return false;
+    }
   }
 
   async close() {
     this.running = false;
     
-    if (this.fd !== null) {
+    if (this.helperProcess) {
+      try {
+        this.helperProcess.stdin.end();
+        this.helperProcess.kill('SIGTERM');
+      } catch {
+        // Ignore close errors
+      }
+      this.helperProcess = null;
+    }
+    
+    if (this.fd !== null && this.platform === 'linux') {
       fs.closeSync(this.fd);
       this.fd = null;
     }

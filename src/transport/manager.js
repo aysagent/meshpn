@@ -81,6 +81,14 @@ export class TransportManager extends EventEmitter {
     return null;
   }
 
+  async testTurnConnectivity() {
+    const webrtc = this.transports.get('webrtc');
+    if (webrtc && webrtc.testTurnConnectivity) {
+      return await webrtc.testTurnConnectivity();
+    }
+    return { success: false, reason: 'no_webrtc_transport' };
+  }
+
   async createWebRTCOffer(peerId) {
     const webrtc = this.transports.get('webrtc');
     if (!webrtc) {

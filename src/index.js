@@ -87,12 +87,20 @@ async function main() {
     config.role = process.env.NODE_ROLE || 'client';
   }
   
+  if (config.turnServers && config.turnServers.length > 0) {
+    config.iceServers = [
+      ...(config.iceServers || []),
+      ...config.turnServers
+    ];
+    console.log(`Configured ${config.turnServers.length} TURN server(s)`);
+  }
+  
   let identity;
   if (config.privateKey) {
     identity = Identity.fromPrivateKey(config.privateKey);
     console.log(`Loaded identity: ${identity.nodeId}`);
   } else {
-    const keyPath = path.join(process.env.HOME || '', '.mesh-vpn/identity.key');
+    const keyPath = path.join(process.env.HOME || '', `.mesh-vpn/identity-${config.role}.key`);
     try {
       if (fs.existsSync(keyPath)) {
         const keyData = fs.readFileSync(keyPath, 'utf8').trim();
@@ -155,6 +163,10 @@ async function main() {
   
   try {
     await node.start();
+    
+    if (config.turnServers && config.turnServers.length > 0) {
+      await node.transportManager.testTurnConnectivity();
+    }
   } catch (err) {
     console.error('Failed to start node:', err.message || err);
     if (err.stack) {

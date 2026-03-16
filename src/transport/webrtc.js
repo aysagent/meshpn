@@ -12,6 +12,90 @@ export class WebRTCTransport extends EventEmitter {
     this.iceServers = config.iceServers || DEFAULT_ICE_SERVERS;
     this.connections = new Map();
     this.dataChannels = new Map();
+    this.relayCandidates = new Map();
+    
+    this.turnServers = this.iceServers.filter(s => {
+      const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+      return urls.some(url => url?.startsWith('turn:') || url?.startsWith('turns:'));
+    });
+    
+    this.hasTurnServers = this.turnServers.length > 0;
+    
+    if (this.hasTurnServers) {
+      console.log(`TURN servers configured: ${this.turnServers.length}`);
+      this.turnServers.forEach(server => {
+        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+        urls.forEach(url => console.log(`  - ${url}`));
+      });
+    }
+  }
+
+  async testTurnConnectivity() {
+    if (!this.hasTurnServers) {
+      console.log('No TURN servers configured, skipping connectivity test');
+      return { success: false, reason: 'no_turn_servers' };
+    }
+
+    console.log('Testing TURN server connectivity...');
+    
+    return new Promise((resolve) => {
+      const pc = new RTCPeerConnection({
+        iceServers: this.turnServers
+      });
+      
+      let hasRelay = false;
+      let resolved = false;
+      
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          pc.close();
+          if (hasRelay) {
+            console.log('TURN server test: OK (relay candidates received)');
+            resolve({ success: true });
+          } else {
+            console.error('TURN server test: FAILED (no relay candidates after timeout)');
+            console.error('Check: server address, port, firewall, credentials');
+            resolve({ success: false, reason: 'timeout' });
+          }
+        }
+      }, 10000);
+      
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          const candidateStr = event.candidate.candidate || '';
+          if (candidateStr.includes('typ relay')) {
+            hasRelay = true;
+            if (!resolved) {
+              resolved = true;
+              clearTimeout(timeout);
+              pc.close();
+              console.log('TURN server test: OK (relay candidate received)');
+              resolve({ success: true });
+            }
+          }
+        }
+      };
+      
+      pc.onicegatheringstatechange = () => {
+        if (pc.iceGatheringState === 'complete' && !resolved) {
+          resolved = true;
+          clearTimeout(timeout);
+          pc.close();
+          if (hasRelay) {
+            console.log('TURN server test: OK (relay candidates received)');
+            resolve({ success: true });
+          } else {
+            console.error('TURN server test: FAILED (no relay candidates)');
+            console.error('Check: server address, port, firewall, credentials');
+            resolve({ success: false, reason: 'no_relay_candidates' });
+          }
+        }
+      };
+      
+      pc.createDataChannel('test');
+      pc.createOffer().then(offer => pc.setLocalDescription(offer));
+    });
   }
 
   async createOffer(peerId) {
@@ -106,6 +190,8 @@ export class WebRTCTransport extends EventEmitter {
       pc.close();
       this.connections.delete(peerId);
     }
+    
+    this.relayCandidates.delete(peerId);
   }
 
   closeAll() {
@@ -129,9 +215,46 @@ export class WebRTCTransport extends EventEmitter {
       iceServers: this.iceServers
     });
     
+    this.relayCandidates.set(peerId, false);
+    
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        this.emit('ice-candidate', peerId, event.candidate.toJSON());
+        const candidate = event.candidate;
+        const candidateStr = candidate.candidate || '';
+        
+        if (candidateStr.includes('typ relay')) {
+          this.relayCandidates.set(peerId, true);
+          console.log(`TURN relay candidate gathered for peer ${peerId}`);
+        }
+        
+        this.emit('ice-candidate', peerId, candidate.toJSON());
+      }
+    };
+    
+    pc.onicegatheringstatechange = () => {
+      if (pc.iceGatheringState === 'complete') {
+        const hasRelay = this.relayCandidates.get(peerId);
+        if (this.hasTurnServers && !hasRelay) {
+          console.warn(`ICE gathering complete for ${peerId}: no relay candidates collected`);
+          console.warn('TURN server may be unreachable or credentials may be invalid');
+        } else if (hasRelay) {
+          console.log(`ICE gathering complete for ${peerId}: relay candidates available`);
+        }
+      }
+    };
+    
+    pc.oniceconnectionstatechange = () => {
+      const state = pc.iceConnectionState;
+      
+      if (state === 'connected' || state === 'completed') {
+        console.log(`ICE connection established for peer ${peerId}`);
+      } else if (state === 'failed') {
+        console.error(`ICE connection failed for peer ${peerId}`);
+        if (this.hasTurnServers) {
+          console.error('Check TURN server availability and credentials');
+        }
+      } else if (state === 'disconnected') {
+        console.warn(`ICE connection disconnected for peer ${peerId}`);
       }
     };
     
