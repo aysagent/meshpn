@@ -9,7 +9,8 @@ const LINUX_TUN_PATH = '/dev/net/tun';
 export class TunInterface extends EventEmitter {
   constructor(config = {}) {
     super();
-    this.name = config.name || 'tun0';
+    this.config = config;
+    this.name = null;
     this.virtualIp = config.virtualIp;
     this.netmask = config.netmask || '255.255.0.0';
     this.mtu = config.mtu || 1400;
@@ -17,7 +18,44 @@ export class TunInterface extends EventEmitter {
     this.socket = null;
     this.platform = os.platform();
     this.running = false;
-    this.utunIndex = config.utunIndex || 0;
+  }
+
+  _findFreeUtunIndex() {
+    try {
+      const interfaces = execSync('ifconfig -l', { encoding: 'utf8' }).trim().split(' ');
+      const usedIndices = interfaces
+        .filter(name => name.startsWith('utun'))
+        .map(name => parseInt(name.replace('utun', ''), 10))
+        .filter(idx => !isNaN(idx));
+      
+      let freeIndex = 0;
+      while (usedIndices.includes(freeIndex)) {
+        freeIndex++;
+      }
+      return freeIndex;
+    } catch {
+      return 0;
+    }
+  }
+
+  _findFreeTunName() {
+    try {
+      const interfaces = execSync('ip link show', { encoding: 'utf8' });
+      const usedIndices = [];
+      const regex = /tun(\d+):/g;
+      let match;
+      while ((match = regex.exec(interfaces)) !== null) {
+        usedIndices.push(parseInt(match[1], 10));
+      }
+      
+      let freeIndex = 0;
+      while (usedIndices.includes(freeIndex)) {
+        freeIndex++;
+      }
+      return `tun${freeIndex}`;
+    } catch {
+      return 'tun0';
+    }
   }
 
   async open() {
@@ -34,7 +72,11 @@ export class TunInterface extends EventEmitter {
   }
 
   async _openLinux() {
-    const { createRequire } = await import('module');
+    if (this.config.tunName) {
+      this.name = this.config.tunName;
+    } else {
+      this.name = this._findFreeTunName();
+    }
     
     return new Promise((resolve, reject) => {
       try {
@@ -72,10 +114,12 @@ export class TunInterface extends EventEmitter {
 
   async _openMacOS() {
     return new Promise((resolve, reject) => {
-      const utunName = `utun${this.utunIndex}`;
-      this.name = utunName;
-      
-      const socket = new net.Socket();
+      if (this.config.tunName) {
+        this.name = this.config.tunName;
+      } else {
+        const freeIndex = this._findFreeUtunIndex();
+        this.name = `utun${freeIndex}`;
+      }
       
       try {
         this._createUtunSocket()

@@ -156,7 +156,10 @@ async function main() {
   try {
     await node.start();
   } catch (err) {
-    console.error('Failed to start node:', err.message);
+    console.error('Failed to start node:', err.message || err);
+    if (err.stack) {
+      console.error(err.stack);
+    }
     process.exit(1);
   }
   

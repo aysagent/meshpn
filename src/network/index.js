@@ -9,6 +9,10 @@ export {
   createPongPacket,
   createAckPacket,
   parseIPPacket,
-  buildIPPacket 
+  buildIPPacket,
+  buildUDPPacket,
+  buildTCPPacket,
+  TCPFlags,
+  buildIPPacketWithTransport
 } from './packet.js';
 export { VirtualIPManager, RoutingTable } from './ip-manager.js';

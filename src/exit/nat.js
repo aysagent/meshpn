@@ -33,12 +33,17 @@ export class NATTable extends EventEmitter {
     this.reverseMap.clear();
   }
 
-  createMapping(srcNodeId, srcIp, srcPort, dstIp, dstPort, protocol) {
+  createMapping(srcNodeId, srcIp, srcPort, dstIp, dstPort, protocol, tcpInfo = null) {
     const key = `${srcNodeId}:${srcIp}:${srcPort}:${dstIp}:${dstPort}:${protocol}`;
     
     let entry = this.entries.get(key);
     if (entry) {
       entry.lastUsed = Date.now();
+      if (tcpInfo) {
+        entry.clientSeqNum = tcpInfo.seqNum;
+        entry.clientAckNum = tcpInfo.ackNum;
+        entry.clientDataLen = tcpInfo.dataLen || 0;
+      }
       return entry;
     }
     
@@ -56,7 +61,11 @@ export class NATTable extends EventEmitter {
       createdAt: Date.now(),
       lastUsed: Date.now(),
       bytesIn: 0,
-      bytesOut: 0
+      bytesOut: 0,
+      serverSeqNum: 0,
+      clientSeqNum: tcpInfo ? tcpInfo.seqNum : 0,
+      clientAckNum: tcpInfo ? tcpInfo.ackNum : 0,
+      clientDataLen: tcpInfo ? (tcpInfo.dataLen || 0) : 0
     };
     
     this.entries.set(key, entry);
@@ -232,6 +241,8 @@ export class ExitNodeForwarder extends EventEmitter {
           srcNodeId: entry.srcNodeId,
           srcIp: entry.srcIp,
           srcPort: entry.srcPort,
+          dstIp: entry.dstIp,
+          dstPort: entry.dstPort,
           data,
           protocol: 'udp'
         });
@@ -241,13 +252,13 @@ export class ExitNodeForwarder extends EventEmitter {
     }
   }
 
-  async forwardTCP(srcNodeId, srcIp, srcPort, dstIp, dstPort, payload) {
+  async forwardTCP(srcNodeId, srcIp, srcPort, dstIp, dstPort, payload, tcpInfo = null) {
     if (!this.enabled) {
       return null;
     }
     
     const mapping = this.natTable.createMapping(
-      srcNodeId, srcIp, srcPort, dstIp, dstPort, 'tcp'
+      srcNodeId, srcIp, srcPort, dstIp, dstPort, 'tcp', tcpInfo
     );
     
     const connKey = mapping.key;
@@ -286,12 +297,21 @@ export class ExitNodeForwarder extends EventEmitter {
         mapping.bytesIn += data.length;
         mapping.lastUsed = Date.now();
         
+        const responseSeqNum = mapping.serverSeqNum;
+        const responseAckNum = (mapping.clientSeqNum + mapping.clientDataLen) >>> 0;
+        
+        mapping.serverSeqNum = (mapping.serverSeqNum + data.length) >>> 0;
+        
         this.emit('response', {
           srcNodeId: mapping.srcNodeId,
           srcIp: mapping.srcIp,
           srcPort: mapping.srcPort,
+          dstIp: mapping.dstIp,
+          dstPort: mapping.dstPort,
           data,
-          protocol: 'tcp'
+          protocol: 'tcp',
+          tcpSeqNum: responseSeqNum,
+          tcpAckNum: responseAckNum
         });
       });
       
@@ -355,7 +375,7 @@ export class ExitNode extends EventEmitter {
       return null;
     }
     
-    const { dstIp, protocol, srcPort, dstPort, data } = ipHeader;
+    const { dstIp, protocol, srcPort, dstPort, data, tcpSeqNum, tcpAckNum } = ipHeader;
     
     if (protocol === 17) {
       return await this.forwarder.forwardUDP(
@@ -367,13 +387,19 @@ export class ExitNode extends EventEmitter {
         data
       );
     } else if (protocol === 6) {
+      const tcpInfo = {
+        seqNum: tcpSeqNum,
+        ackNum: tcpAckNum,
+        dataLen: data.length
+      };
       return await this.forwarder.forwardTCP(
         packet.srcNode,
         packet.srcIp || '10.200.0.1',
         srcPort,
         dstIp,
         dstPort,
-        data
+        data,
+        tcpInfo
       );
     }
     
@@ -392,12 +418,23 @@ export class ExitNode extends EventEmitter {
     
     let srcPort = 0;
     let dstPort = 0;
+    let tcpSeqNum = 0;
+    let tcpAckNum = 0;
+    let tcpFlags = 0;
     let transportData = data.subarray(headerLength);
     
-    if ((protocol === 6 || protocol === 17) && transportData.length >= 4) {
+    if (protocol === 17 && transportData.length >= 8) {
       srcPort = transportData.readUInt16BE(0);
       dstPort = transportData.readUInt16BE(2);
-      transportData = transportData.subarray(protocol === 6 ? 20 : 8);
+      transportData = transportData.subarray(8);
+    } else if (protocol === 6 && transportData.length >= 20) {
+      srcPort = transportData.readUInt16BE(0);
+      dstPort = transportData.readUInt16BE(2);
+      tcpSeqNum = transportData.readUInt32BE(4);
+      tcpAckNum = transportData.readUInt32BE(8);
+      tcpFlags = transportData.readUInt8(13);
+      const tcpDataOffset = (transportData.readUInt8(12) >> 4) * 4;
+      transportData = transportData.subarray(tcpDataOffset);
     }
     
     return {
@@ -407,6 +444,9 @@ export class ExitNode extends EventEmitter {
       dstIp,
       srcPort,
       dstPort,
+      tcpSeqNum,
+      tcpAckNum,
+      tcpFlags,
       data: transportData
     };
   }

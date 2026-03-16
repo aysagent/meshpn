@@ -10,6 +10,7 @@
 - **Multipath** — параллельная передача через несколько маршрутов
 - **Exit nodes** — несколько выходных узлов с автоматическим failover
 - **Transport fallback** — WebRTC → QUIC → WebSocket
+- **Client-Relay** — комбинированная роль для одновременной работы как клиент и relay
 
 ## Архитектура
 
@@ -63,6 +64,14 @@ npm run relay
 node src/index.js --role relay --signalling ws://localhost:8080
 ```
 
+### Запуск client-relay node
+
+Комбинированный режим: работает как клиент (с TUN интерфейсом) и одновременно пересылает трафик других узлов.
+
+```bash
+node src/index.js --role client-relay --signalling ws://localhost:8080
+```
+
 ## Конфигурация
 
 ### config/default.json
@@ -87,7 +96,7 @@ node src/index.js --role relay --signalling ws://localhost:8080
 ### Переменные окружения
 
 - `SIGNALLING_SERVER` — URL signalling сервера
-- `NODE_ROLE` — роль узла (client/relay/exit)
+- `NODE_ROLE` — роль узла (client/relay/client-relay/exit)
 
 ### Аргументы командной строки
 
@@ -126,6 +135,14 @@ sudo ./scripts/setup-macos.sh exit en0
 - Пересылает пакеты
 - Снимает свой слой шифрования
 - Не видит содержимое трафика
+
+### Client-Relay
+
+- Комбинация client и relay
+- Создает TUN интерфейс (как client)
+- Пересылает пакеты других узлов (как relay)
+- Регистрируется как relay для маршрутизации
+- Позволяет использовать VPN и помогать сети одновременно
 
 ### Exit Node
 
@@ -236,6 +253,7 @@ mesh-vpn/
 │   └── turn-setup.md
 ├── config/
 │   ├── default.json
+│   ├── client-relay.json
 │   ├── exit-node.json
 │   └── relay-node.json
 └── scripts/

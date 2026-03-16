@@ -5,7 +5,7 @@ import { encrypt, decrypt } from '../crypto/encrypt.js';
 import { TransportManager } from '../transport/index.js';
 import { PeerDiscovery } from '../control/index.js';
 import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
-import { TunManager, Packet, PacketType, parseIPPacket } from '../network/index.js';
+import { TunManager, Packet, PacketType, parseIPPacket, buildIPPacketWithTransport, TCPFlags } from '../network/index.js';
 import { ExitNode } from '../exit/index.js';
 
 export class MeshNode extends EventEmitter {
@@ -13,6 +13,10 @@ export class MeshNode extends EventEmitter {
     super();
     this.config = config;
     this.role = config.role || 'client';
+    
+    this.isClient = this.role === 'client' || this.role === 'client-relay';
+    this.isRelay = this.role === 'relay' || this.role === 'client-relay';
+    this.isExit = this.role === 'exit';
     
     this.identity = config.identity || new Identity(config.privateKey);
     this.nodeId = this.identity.nodeId;
@@ -53,6 +57,9 @@ export class MeshNode extends EventEmitter {
     this.packetCacheTTL = config.packetCacheTTL || 60000;
     this.cacheCleanupInterval = null;
     
+    this.tcpConnections = new Map();
+    this.tcpConnectionTimeout = config.tcpConnectionTimeout || 300000;
+    
     this.loopStats = {
       ttlDropped: 0,
       duplicateDropped: 0,
@@ -85,6 +92,7 @@ export class MeshNode extends EventEmitter {
           this.processedPackets.delete(key);
         }
       }
+      this._cleanupTcpConnections();
     }, 30000);
   }
 
@@ -100,9 +108,10 @@ export class MeshNode extends EventEmitter {
     
     this._setupEventHandlers();
     
-    await this.discovery.start(this.role);
+    const discoveryRole = this.isRelay ? 'relay' : this.role;
+    await this.discovery.start(discoveryRole);
     
-    if (this.role === 'exit') {
+    if (this.isExit) {
       this.exitNodeHandler = new ExitNode({
         nodeId: this.nodeId
       });
@@ -129,7 +138,7 @@ export class MeshNode extends EventEmitter {
       this.virtualIp = info.virtualIp;
       console.log(`Registered with virtual IP: ${this.virtualIp}`);
       
-      if (this.role === 'client' && this.config.enableTun !== false) {
+      if (this.isClient && this.config.enableTun !== false) {
         this.tunManager = new TunManager(this.config.tun || {});
         
         this.tunManager.on('outbound-packet', (packet) => {
@@ -138,6 +147,9 @@ export class MeshNode extends EventEmitter {
         
         try {
           await this.tunManager.setup(this.virtualIp);
+          if (this.isRelay) {
+            console.log('Running as client-relay: TUN enabled + packet forwarding');
+          }
         } catch (err) {
           console.warn('TUN setup failed, running in relay mode:', err.message);
         }
@@ -292,8 +304,10 @@ export class MeshNode extends EventEmitter {
       const layer = peelOnionLayer(packet.payload, sessionKey);
       
       if (layer.isExit) {
-        if (this.role === 'exit' && this.exitNodeHandler) {
+        if (this.isExit && this.exitNodeHandler) {
           this._processExitPacket(packet, layer.payload);
+        } else if (this.isClient && packet.dstNode === this.nodeId) {
+          this.reorderBuffer.add(packet.flowId, packet.seq, layer.payload, packet);
         } else {
           console.warn('Received exit packet but not an exit node');
         }
@@ -342,7 +356,7 @@ export class MeshNode extends EventEmitter {
   }
 
   _handleInternetResponse(response) {
-    const { srcNodeId, srcIp, srcPort, data, protocol } = response;
+    const { srcNodeId, srcIp, srcPort, dstIp, dstPort, data, protocol } = response;
     
     const routeInfo = this.router.graph.findShortestPath(this.nodeId, srcNodeId);
     if (!routeInfo || routeInfo.length < 2) {
@@ -363,7 +377,25 @@ export class MeshNode extends EventEmitter {
     }
     
     try {
-      const onionPacket = createOnionPacket(data, routeWithKeys);
+      const protocolNumber = protocol === 'udp' ? 17 : 6;
+      
+      const tcpOptions = protocol === 'tcp' ? {
+        seqNum: response.tcpSeqNum || 0,
+        ackNum: response.tcpAckNum || 0,
+        flags: TCPFlags.ACK | TCPFlags.PSH
+      } : {};
+      
+      const ipPacket = buildIPPacketWithTransport(
+        dstIp,
+        srcIp,
+        protocolNumber,
+        dstPort,
+        srcPort,
+        data,
+        tcpOptions
+      );
+      
+      const onionPacket = createOnionPacket(ipPacket, routeWithKeys);
       
       const packet = new Packet({
         type: PacketType.DATA,
@@ -419,6 +451,55 @@ export class MeshNode extends EventEmitter {
     const paths = this.router.findMultiplePaths(3);
     if (paths.length > 0) {
       this.scheduler.setPaths(paths);
+    }
+  }
+
+  _getTcpConnectionKey(srcNodeId, srcIp, srcPort, dstIp, dstPort) {
+    return `${srcNodeId}:${srcIp}:${srcPort}:${dstIp}:${dstPort}`;
+  }
+
+  _getOrCreateTcpConnection(srcNodeId, srcIp, srcPort, dstIp, dstPort) {
+    const key = this._getTcpConnectionKey(srcNodeId, srcIp, srcPort, dstIp, dstPort);
+    
+    if (!this.tcpConnections.has(key)) {
+      this.tcpConnections.set(key, {
+        seqNum: Math.floor(Math.random() * 0xFFFFFFFF),
+        ackNum: 0,
+        lastUsed: Date.now()
+      });
+    }
+    
+    const conn = this.tcpConnections.get(key);
+    conn.lastUsed = Date.now();
+    return conn;
+  }
+
+  _getTcpSeqNum(srcNodeId, srcIp, srcPort, dstIp, dstPort) {
+    const conn = this._getOrCreateTcpConnection(srcNodeId, srcIp, srcPort, dstIp, dstPort);
+    return conn.seqNum;
+  }
+
+  _getTcpAckNum(srcNodeId, srcIp, srcPort, dstIp, dstPort) {
+    const conn = this._getOrCreateTcpConnection(srcNodeId, srcIp, srcPort, dstIp, dstPort);
+    return conn.ackNum;
+  }
+
+  _updateTcpSeqNum(srcNodeId, srcIp, srcPort, dstIp, dstPort, dataLength) {
+    const conn = this._getOrCreateTcpConnection(srcNodeId, srcIp, srcPort, dstIp, dstPort);
+    conn.seqNum = (conn.seqNum + dataLength) >>> 0;
+  }
+
+  _updateTcpAckNum(srcNodeId, srcIp, srcPort, dstIp, dstPort, seqNum, dataLength) {
+    const conn = this._getOrCreateTcpConnection(srcNodeId, srcIp, srcPort, dstIp, dstPort);
+    conn.ackNum = (seqNum + dataLength) >>> 0;
+  }
+
+  _cleanupTcpConnections() {
+    const now = Date.now();
+    for (const [key, conn] of this.tcpConnections) {
+      if (now - conn.lastUsed > this.tcpConnectionTimeout) {
+        this.tcpConnections.delete(key);
+      }
     }
   }
 
@@ -482,6 +563,7 @@ export class MeshNode extends EventEmitter {
     this.discovery.stop();
     
     this.processedPackets.clear();
+    this.tcpConnections.clear();
     
     this.emit('stopped');
     console.log(`Mesh node ${this.nodeId} stopped`);

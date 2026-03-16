@@ -321,3 +321,103 @@ export function buildIPPacket(srcIp, dstIp, protocol, payload) {
   
   return Buffer.concat([header, payload]);
 }
+
+function calculateTransportChecksum(srcIp, dstIp, protocol, transportData) {
+  const srcParts = srcIp.split('.').map(Number);
+  const dstParts = dstIp.split('.').map(Number);
+  
+  const pseudoHeaderLength = 12;
+  const pseudoHeader = Buffer.alloc(pseudoHeaderLength);
+  
+  pseudoHeader[0] = srcParts[0];
+  pseudoHeader[1] = srcParts[1];
+  pseudoHeader[2] = srcParts[2];
+  pseudoHeader[3] = srcParts[3];
+  pseudoHeader[4] = dstParts[0];
+  pseudoHeader[5] = dstParts[1];
+  pseudoHeader[6] = dstParts[2];
+  pseudoHeader[7] = dstParts[3];
+  pseudoHeader[8] = 0;
+  pseudoHeader[9] = protocol;
+  pseudoHeader.writeUInt16BE(transportData.length, 10);
+  
+  const dataToChecksum = Buffer.concat([pseudoHeader, transportData]);
+  
+  let sum = 0;
+  for (let i = 0; i < dataToChecksum.length - 1; i += 2) {
+    sum += dataToChecksum.readUInt16BE(i);
+  }
+  if (dataToChecksum.length % 2 === 1) {
+    sum += dataToChecksum[dataToChecksum.length - 1] << 8;
+  }
+  
+  while (sum >> 16) {
+    sum = (sum & 0xffff) + (sum >> 16);
+  }
+  
+  return (~sum) & 0xffff;
+}
+
+export function buildUDPPacket(srcIp, dstIp, srcPort, dstPort, payload) {
+  const UDP_HEADER_LENGTH = 8;
+  const udpLength = UDP_HEADER_LENGTH + payload.length;
+  
+  const header = Buffer.alloc(UDP_HEADER_LENGTH);
+  header.writeUInt16BE(srcPort, 0);
+  header.writeUInt16BE(dstPort, 2);
+  header.writeUInt16BE(udpLength, 4);
+  header.writeUInt16BE(0, 6);
+  
+  const udpData = Buffer.concat([header, payload]);
+  const checksum = calculateTransportChecksum(srcIp, dstIp, 17, udpData);
+  udpData.writeUInt16BE(checksum || 0xffff, 6);
+  
+  return udpData;
+}
+
+export function buildTCPPacket(srcIp, dstIp, srcPort, dstPort, seqNum, ackNum, flags, payload, windowSize = 65535) {
+  const TCP_HEADER_LENGTH = 20;
+  
+  const header = Buffer.alloc(TCP_HEADER_LENGTH);
+  header.writeUInt16BE(srcPort, 0);
+  header.writeUInt16BE(dstPort, 2);
+  header.writeUInt32BE(seqNum >>> 0, 4);
+  header.writeUInt32BE(ackNum >>> 0, 8);
+  
+  const dataOffset = (TCP_HEADER_LENGTH / 4) << 4;
+  header.writeUInt8(dataOffset, 12);
+  header.writeUInt8(flags, 13);
+  header.writeUInt16BE(windowSize, 14);
+  header.writeUInt16BE(0, 16);
+  header.writeUInt16BE(0, 18);
+  
+  const tcpData = Buffer.concat([header, payload]);
+  const checksum = calculateTransportChecksum(srcIp, dstIp, 6, tcpData);
+  tcpData.writeUInt16BE(checksum, 16);
+  
+  return tcpData;
+}
+
+export const TCPFlags = {
+  FIN: 0x01,
+  SYN: 0x02,
+  RST: 0x04,
+  PSH: 0x08,
+  ACK: 0x10,
+  URG: 0x20
+};
+
+export function buildIPPacketWithTransport(srcIp, dstIp, protocol, srcPort, dstPort, payload, tcpOptions = {}) {
+  let transportData;
+  
+  if (protocol === 17) {
+    transportData = buildUDPPacket(srcIp, dstIp, srcPort, dstPort, payload);
+  } else if (protocol === 6) {
+    const { seqNum = 0, ackNum = 0, flags = TCPFlags.ACK | TCPFlags.PSH, windowSize = 65535 } = tcpOptions;
+    transportData = buildTCPPacket(srcIp, dstIp, srcPort, dstPort, seqNum, ackNum, flags, payload, windowSize);
+  } else {
+    transportData = payload;
+  }
+  
+  return buildIPPacket(srcIp, dstIp, protocol, transportData);
+}
