@@ -79,6 +79,104 @@ fingerprint
 # pkey=/etc/letsencrypt/live/turn.example.com/privkey.pem
 ```
 
+### TLS с самоподписанным сертификатом (без домена)
+
+Если у вас нет домена и вы хотите использовать TLS только с IP-адресом, можно создать самоподписанный сертификат.
+
+#### 1. Генерация сертификата для IP-адреса
+
+```bash
+# Замените YOUR_PUBLIC_IP на реальный IP вашего сервера
+export TURN_IP="YOUR_PUBLIC_IP"
+
+# Создаем директорию для сертификатов
+sudo mkdir -p /etc/coturn/certs
+cd /etc/coturn/certs
+
+# Генерируем приватный ключ и самоподписанный сертификат
+sudo openssl req -x509 -newkey rsa:4096 -sha256 -days 365 \
+  -keyout turn-key.pem -out turn-cert.pem \
+  -subj "/CN=TURN Server/O=MeshVPN" \
+  -addext "subjectAltName=IP:${TURN_IP}" \
+  -nodes
+
+# Устанавливаем права доступа
+sudo chmod 600 turn-key.pem
+sudo chmod 644 turn-cert.pem
+sudo chown turnserver:turnserver turn-*.pem
+```
+
+#### 2. Настройка coturn с self-signed сертификатом
+
+Добавьте в `/etc/turnserver.conf`:
+
+```ini
+# TLS с самоподписанным сертификатом
+cert=/etc/coturn/certs/turn-cert.pem
+pkey=/etc/coturn/certs/turn-key.pem
+
+# Отключаем устаревшие версии TLS
+no-tlsv1
+no-tlsv1_1
+
+# Разрешаем TLS без проверки сертификата (для self-signed)
+no-tls-cert-verify
+```
+
+#### 3. Использование в клиентах
+
+**Важно:** Браузеры и WebRTC клиенты по умолчанию отклоняют самоподписанные сертификаты для `turns://` соединений.
+
+**Варианты решения:**
+
+**Вариант A: Использовать `turn:` без TLS (для тестирования/внутренних сетей)**
+
+```json
+{
+  "turnServers": [
+    {
+      "urls": "turn:YOUR_IP:3478",
+      "username": "meshuser",
+      "credential": "meshpassword"
+    }
+  ]
+}
+```
+
+**Вариант B: Добавить CA в доверенные (для Node.js приложений)**
+
+```bash
+# Экспортируем переменную окружения
+export NODE_EXTRA_CA_CERTS=/etc/coturn/certs/turn-cert.pem
+
+# Или в коде Node.js
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';  # Только для тестирования!
+```
+
+**Вариант C: Скопировать сертификат на клиентские машины**
+
+```bash
+# На сервере: скопировать сертификат
+scp /etc/coturn/certs/turn-cert.pem user@client:/tmp/
+
+# На клиенте (Linux): добавить в системные CA
+sudo cp /tmp/turn-cert.pem /usr/local/share/ca-certificates/turn-server.crt
+sudo update-ca-certificates
+
+# На клиенте (macOS): добавить в Keychain
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain /tmp/turn-cert.pem
+```
+
+#### 4. Проверка TLS соединения
+
+```bash
+# Проверка сертификата
+openssl s_client -connect YOUR_IP:5349 -showcerts
+
+# Должен показать ваш самоподписанный сертификат
+```
+
 ### Включение автозапуска
 
 #### Ubuntu/Debian
