@@ -184,11 +184,14 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
                             stdin_buf[3] = 30;  /* AF_INET6 */
                         }
                         
-                        if (write(utun_fd, stdin_buf, len + 4) < 0) {
-                            if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                                perror("write to utun");
-                            }
+                    ssize_t written = write(utun_fd, stdin_buf, len + 4);
+                    if (written < 0) {
+                        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                            perror("write to utun");
                         }
+                    } else {
+                        fprintf(stderr, "UTUN: wrote %zd bytes to interface\n", written);
+                    }
                     }
                 } else if (len > MTU) {
                     fprintf(stderr, "ERROR: Packet too large: %u\n", len);
