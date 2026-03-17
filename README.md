@@ -51,10 +51,19 @@ node src/index.js --role client --signalling ws://localhost:8080
 ### Запуск exit node
 
 ```bash
-npm run exit
+# 1. Включить системный NAT (сохраняет исходные настройки)
+npm run nat:enable
+
+# 2. Запустить exit node
+sudo npm run exit
 # или
-node src/index.js --role exit --signalling ws://localhost:8080
+sudo node src/index.js --role exit --signalling ws://localhost:8080
+
+# 3. После завершения — отключить NAT и восстановить настройки
+npm run nat:disable
 ```
+
+Подробнее о настройке NAT: [server/nat-setup.md](server/nat-setup.md)
 
 ### Запуск relay node
 
@@ -109,13 +118,32 @@ node src/index.js --role client-relay --signalling ws://localhost:8080
 
 ## Настройка системы
 
-### Linux
+### NAT для Exit Node
+
+```bash
+# Включить NAT (автоматически определяет ОС и интерфейс)
+npm run nat:enable
+
+# Включить NAT с указанием интерфейса
+npm run nat:enable -- eth0
+
+# Выключить NAT и восстановить исходные настройки
+npm run nat:disable
+```
+
+Скрипты автоматически сохраняют исходные настройки системы в `~/.mesh-vpn-backup/` и восстанавливают их при отключении.
+
+Подробная документация: [server/nat-setup.md](server/nat-setup.md)
+
+### Ручная настройка
+
+#### Linux
 
 ```bash
 sudo ./scripts/setup-linux.sh exit eth0
 ```
 
-### macOS
+#### macOS
 
 ```bash
 sudo ./scripts/setup-macos.sh exit en0
@@ -146,9 +174,10 @@ sudo ./scripts/setup-macos.sh exit en0
 
 ### Exit Node
 
-- Выпускает трафик в интернет
-- Выполняет NAT
-- Возвращает ответы клиентам
+- Создает TUN интерфейс
+- Инжектирует расшифрованные пакеты в TUN
+- Использует системный NAT (iptables/pf) для выхода в интернет
+- Возвращает ответы клиентам через mesh сеть
 
 ## Криптография
 
@@ -223,42 +252,54 @@ Identity.verify('message', signature, identity.publicKey);
 ```
 mesh-vpn/
 ├── src/
-│   ├── index.js           # Entry point
+│   ├── index.js              # Entry point
 │   ├── core/
-│   │   ├── node.js        # MeshNode class
-│   │   ├── router.js      # Mesh routing
-│   │   ├── scheduler.js   # Multipath scheduler
-│   │   └── graph.js       # Network topology
+│   │   ├── index.js          # Module exports
+│   │   ├── node.js           # MeshNode class
+│   │   ├── router.js         # Mesh routing
+│   │   ├── scheduler.js      # Multipath scheduler
+│   │   └── graph.js          # Network topology
 │   ├── crypto/
-│   │   ├── identity.js    # Ed25519 keys
-│   │   ├── session.js     # X25519 key exchange
-│   │   ├── encrypt.js     # AES-256-GCM
-│   │   └── onion.js       # Onion encryption
+│   │   ├── index.js          # Module exports
+│   │   ├── identity.js       # Ed25519 keys
+│   │   ├── session.js        # X25519 key exchange
+│   │   ├── encrypt.js        # AES-256-GCM
+│   │   └── onion.js          # Onion encryption
 │   ├── transport/
-│   │   ├── webrtc.js      # WebRTC via werift
-│   │   ├── quic.js        # QUIC fallback
-│   │   ├── websocket.js   # WebSocket fallback
-│   │   └── manager.js     # Transport abstraction
+│   │   ├── index.js          # Module exports
+│   │   ├── manager.js        # Transport abstraction
+│   │   ├── webrtc.js         # WebRTC via werift
+│   │   ├── quic.js           # QUIC fallback
+│   │   └── websocket.js      # WebSocket fallback
 │   ├── network/
-│   │   ├── tun.js         # TUN interface
-│   │   ├── packet.js      # Packet format
-│   │   └── ip-manager.js  # Virtual IP manager
+│   │   ├── index.js          # Module exports
+│   │   ├── tun.js            # TUN interface (Linux/macOS)
+│   │   ├── packet.js         # IP packet parsing/building
+│   │   └── ip-manager.js     # Virtual IP manager
 │   ├── control/
-│   │   ├── signalling.js  # Signalling client
-│   │   └── discovery.js   # Peer discovery
+│   │   ├── index.js          # Module exports
+│   │   ├── signalling.js     # Signalling client
+│   │   └── discovery.js      # Peer discovery
 │   └── exit/
-│       └── nat.js         # NAT forwarding
+│       ├── index.js          # Module exports
+│       └── nat.js            # NAT mapping table
 ├── server/
-│   ├── signalling-server.js
-│   └── turn-setup.md
+│   ├── signalling-server.js  # Signalling server
+│   ├── turn-setup.md         # TURN server setup guide
+│   └── nat-setup.md          # System NAT setup guide
+├── helpers/
+│   ├── utun-helper.c         # macOS utun interface helper
+│   └── Makefile              # Build helper binary
 ├── config/
-│   ├── default.json
-│   ├── client-relay.json
-│   ├── exit-node.json
-│   └── relay-node.json
+│   ├── default.json          # Default configuration
+│   ├── client-relay.json     # Client-relay config
+│   ├── exit-node.json        # Exit node config
+│   └── relay-node.json       # Relay node config
 └── scripts/
-    ├── setup-linux.sh
-    └── setup-macos.sh
+    ├── nat-enable.sh         # Enable system NAT
+    ├── nat-disable.sh        # Disable system NAT
+    ├── setup-linux.sh        # Linux setup
+    └── setup-macos.sh        # macOS setup
 ```
 
 ## Требования

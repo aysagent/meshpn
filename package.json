@@ -11,6 +11,8 @@
     "relay": "node src/index.js --role relay",
     "exit": "node src/index.js --role exit",
     "dev": "concurrently -n server,client,exit \"npm run server\" \"npm run client\" \"npm run exit\"",
+    "nat:enable": "sudo ./scripts/nat-enable.sh",
+    "nat:disable": "sudo ./scripts/nat-disable.sh",
     "postinstall": "cd helpers && make 2>/dev/null || true"
   },
   "dependencies": {
