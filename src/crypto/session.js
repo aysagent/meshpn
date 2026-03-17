@@ -36,6 +36,7 @@ export class SessionManager {
   }
 
   createSession(peerId) {
+    console.log(`[SESSION] Creating session for ${peerId}`);
     const keyExchange = new SessionKeyExchange();
     this.sessions.set(peerId, {
       keyExchange,
@@ -54,12 +55,18 @@ export class SessionManager {
     session.sessionKey = session.keyExchange.deriveSessionKey(peerPublicKey);
     session.established = true;
     
+    console.log(`[SESSION] Session completed for ${peerId}, total sessions: ${this.sessions.size}`);
     return session.sessionKey;
   }
 
   getSessionKey(peerId) {
     const session = this.sessions.get(peerId);
-    if (!session || !session.established) {
+    if (!session) {
+      console.log(`[SESSION] No session found for ${peerId}, available: [${Array.from(this.sessions.keys()).join(', ')}]`);
+      return null;
+    }
+    if (!session.established) {
+      console.log(`[SESSION] Session for ${peerId} not yet established`);
       return null;
     }
     return session.sessionKey;
@@ -71,10 +78,12 @@ export class SessionManager {
   }
 
   removeSession(peerId) {
+    console.log(`[SESSION] Removing session for ${peerId}`);
     this.sessions.delete(peerId);
   }
 
   clear() {
+    console.log(`[SESSION] Clearing all sessions: [${Array.from(this.sessions.keys()).join(', ')}]`);
     this.sessions.clear();
   }
 }

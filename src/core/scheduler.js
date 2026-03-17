@@ -300,26 +300,7 @@ export class ReorderBuffer extends EventEmitter {
       this.seenMultipath.set(key, Date.now());
     }
     
-    if (seq < this.expectedSeq) {
-      return;
-    }
-    
-    if (seq >= this.expectedSeq + this.windowSize) {
-      this.expectedSeq = seq - this.windowSize + 1;
-      this._flushOld();
-    }
-    
-    if (seq === this.expectedSeq) {
-      this.emit('packet', payload, packet);
-      this.expectedSeq++;
-      this._flushConsecutive();
-    } else {
-      this.buffer.set(seq, {
-        payload,
-        packet,
-        timestamp: Date.now()
-      });
-    }
+    this.emit('packet', payload, packet);
   }
 
   _flushConsecutive() {

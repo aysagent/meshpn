@@ -120,6 +120,10 @@ export class MeshNode extends EventEmitter {
         this._handleInternetResponse(response);
       });
       
+      this.exitNodeHandler.on('error', (error) => {
+        console.error(`[EXIT] Error:`, error.type, error.error?.message || error);
+      });
+      
       await this.exitNodeHandler.start();
       console.log('Exit node handler started');
     }
@@ -135,8 +139,8 @@ export class MeshNode extends EventEmitter {
 
   _setupEventHandlers() {
     this.discovery.on('registered', async (info) => {
-      if (this.virtualIp === info.virtualIp && this.tunManager) {
-        console.log('Already registered with this IP, skipping TUN setup');
+      if (this.tunManager) {
+        console.log(`Already have TUN (${this.virtualIp}), ignoring new registration with ${info.virtualIp}`);
         return;
       }
       
@@ -202,6 +206,14 @@ export class MeshNode extends EventEmitter {
     const parsed = parseIPPacket(ipPacket);
     if (!parsed || !parsed.valid) {
       console.log('[TUN] Invalid IP packet received, length:', ipPacket.length);
+      return;
+    }
+    
+    if (!parsed.srcIp.startsWith('10.200.')) {
+      return;
+    }
+    
+    if (parsed.srcIp === this.virtualIp && parsed.dstIp.startsWith('10.200.')) {
       return;
     }
     
@@ -323,7 +335,13 @@ export class MeshNode extends EventEmitter {
         if (this.isExit && this.exitNodeHandler) {
           this._processExitPacket(packet, layer.payload);
         } else if (this.isClient && packet.dstNode === this.nodeId) {
-          this.reorderBuffer.add(packet.flowId, packet.seq, layer.payload, packet);
+          this.reorderBuffer.addPacket({
+            flowId: packet.flowId,
+            seq: packet.seq || 0,
+            payload: layer.payload,
+            pathIndex: packet.pathIndex || 0,
+            totalPaths: packet.totalPaths || 1
+          });
         } else {
           console.warn('Received exit packet but not an exit node');
         }
@@ -397,23 +415,38 @@ export class MeshNode extends EventEmitter {
     }
     
     try {
-      const protocolNumber = protocol === 'udp' ? 17 : 6;
+      let ipPacket;
       
-      const tcpOptions = protocol === 'tcp' ? {
-        seqNum: response.tcpSeqNum || 0,
-        ackNum: response.tcpAckNum || 0,
-        flags: TCPFlags.ACK | TCPFlags.PSH
-      } : {};
-      
-      const ipPacket = buildIPPacketWithTransport(
-        dstIp,
-        srcIp,
-        protocolNumber,
-        dstPort,
-        srcPort,
-        data,
-        tcpOptions
-      );
+      if (protocol === 'raw') {
+        ipPacket = data;
+      } else {
+        let protocolNumber;
+        if (protocol === 'udp') {
+          protocolNumber = 17;
+        } else if (protocol === 'tcp') {
+          protocolNumber = 6;
+        } else if (protocol === 'icmp') {
+          protocolNumber = 1;
+        } else {
+          protocolNumber = 6;
+        }
+        
+        const tcpOptions = protocol === 'tcp' ? {
+          seqNum: response.tcpSeqNum || 0,
+          ackNum: response.tcpAckNum || 0,
+          flags: TCPFlags.ACK | TCPFlags.PSH
+        } : {};
+        
+        ipPacket = buildIPPacketWithTransport(
+          dstIp,
+          srcIp,
+          protocolNumber,
+          dstPort,
+          srcPort,
+          data,
+          tcpOptions
+        );
+      }
       
       const onionPacket = createOnionPacket(ipPacket, routeWithKeys);
       
@@ -428,7 +461,13 @@ export class MeshNode extends EventEmitter {
       const nextHop = route[0];
       const serialized = packet.serialize();
       
-      this.transportManager.send(nextHop, serialized);
+      console.log(`[EXIT] Sending response to ${nextHop}, packet size: ${serialized.length}`);
+      const sent = this.transportManager.send(nextHop, serialized);
+      if (sent) {
+        console.log(`[EXIT] Response sent successfully`);
+      } else {
+        console.warn(`[EXIT] Failed to send response to ${nextHop}`);
+      }
     } catch (err) {
       console.error('Failed to send response:', err.message);
     }

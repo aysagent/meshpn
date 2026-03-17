@@ -13,6 +13,11 @@ export {
   buildUDPPacket,
   buildTCPPacket,
   TCPFlags,
-  buildIPPacketWithTransport
+  buildIPPacketWithTransport,
+  buildTcpSynAckPacket,
+  buildTcpAckPacket,
+  buildTcpDataPacket,
+  buildTcpFinPacket,
+  buildTcpRstPacket
 } from './packet.js';
 export { VirtualIPManager, RoutingTable } from './ip-manager.js';

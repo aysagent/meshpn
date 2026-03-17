@@ -421,3 +421,54 @@ export function buildIPPacketWithTransport(srcIp, dstIp, protocol, srcPort, dstP
   
   return buildIPPacket(srcIp, dstIp, protocol, transportData);
 }
+
+export function buildTcpSynAckPacket(srcIp, dstIp, srcPort, dstPort, seqNum, clientSeqNum) {
+  const ackNum = (clientSeqNum + 1) >>> 0;
+  const flags = TCPFlags.SYN | TCPFlags.ACK;
+  return buildIPPacketWithTransport(srcIp, dstIp, 6, srcPort, dstPort, Buffer.alloc(0), {
+    seqNum,
+    ackNum,
+    flags,
+    windowSize: 65535
+  });
+}
+
+export function buildTcpAckPacket(srcIp, dstIp, srcPort, dstPort, seqNum, ackNum) {
+  const flags = TCPFlags.ACK;
+  return buildIPPacketWithTransport(srcIp, dstIp, 6, srcPort, dstPort, Buffer.alloc(0), {
+    seqNum,
+    ackNum,
+    flags,
+    windowSize: 65535
+  });
+}
+
+export function buildTcpDataPacket(srcIp, dstIp, srcPort, dstPort, seqNum, ackNum, data) {
+  const flags = TCPFlags.ACK | TCPFlags.PSH;
+  return buildIPPacketWithTransport(srcIp, dstIp, 6, srcPort, dstPort, data, {
+    seqNum,
+    ackNum,
+    flags,
+    windowSize: 65535
+  });
+}
+
+export function buildTcpFinPacket(srcIp, dstIp, srcPort, dstPort, seqNum, ackNum) {
+  const flags = TCPFlags.FIN | TCPFlags.ACK;
+  return buildIPPacketWithTransport(srcIp, dstIp, 6, srcPort, dstPort, Buffer.alloc(0), {
+    seqNum,
+    ackNum,
+    flags,
+    windowSize: 65535
+  });
+}
+
+export function buildTcpRstPacket(srcIp, dstIp, srcPort, dstPort, seqNum) {
+  const flags = TCPFlags.RST;
+  return buildIPPacketWithTransport(srcIp, dstIp, 6, srcPort, dstPort, Buffer.alloc(0), {
+    seqNum,
+    ackNum: 0,
+    flags,
+    windowSize: 0
+  });
+}

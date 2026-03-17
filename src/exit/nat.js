@@ -3,8 +3,34 @@ import dgram from 'dgram';
 import net from 'net';
 import dns from 'dns';
 import { promisify } from 'util';
+import { 
+  buildTcpSynAckPacket, 
+  buildTcpAckPacket, 
+  buildTcpRstPacket, 
+  buildTcpFinPacket
+} from '../network/packet.js';
 
 const dnsResolve = promisify(dns.resolve4);
+
+export const TCPState = {
+  LISTEN: 0,
+  SYN_RECEIVED: 1,
+  ESTABLISHED: 2,
+  FIN_WAIT_1: 3,
+  FIN_WAIT_2: 4,
+  CLOSING: 5,
+  TIME_WAIT: 6,
+  CLOSED: 7
+};
+
+export const TCPFlags = {
+  FIN: 0x01,
+  SYN: 0x02,
+  RST: 0x04,
+  PSH: 0x08,
+  ACK: 0x10,
+  URG: 0x20
+};
 
 export class NATTable extends EventEmitter {
   constructor(config = {}) {
@@ -62,10 +88,13 @@ export class NATTable extends EventEmitter {
       lastUsed: Date.now(),
       bytesIn: 0,
       bytesOut: 0,
-      serverSeqNum: 0,
+      serverSeqNum: Math.floor(Math.random() * 0xFFFFFFFF),
       clientSeqNum: tcpInfo ? tcpInfo.seqNum : 0,
       clientAckNum: tcpInfo ? tcpInfo.ackNum : 0,
-      clientDataLen: tcpInfo ? (tcpInfo.dataLen || 0) : 0
+      clientDataLen: tcpInfo ? (tcpInfo.dataLen || 0) : 0,
+      tcpState: TCPState.LISTEN,
+      serverConn: null,
+      pendingData: []
     };
     
     this.entries.set(key, entry);
@@ -264,38 +293,47 @@ export class ExitNodeForwarder extends EventEmitter {
     const connKey = mapping.key;
     let conn = this.tcpConnections.get(connKey);
     
-    if (!conn || conn.destroyed) {
-      conn = await this._createTCPConnection(mapping);
-      this.tcpConnections.set(connKey, conn);
-    }
-    
-    return new Promise((resolve, reject) => {
-      conn.write(payload, (err) => {
-        if (err) {
-          reject(err);
-        } else {
-          mapping.bytesOut += payload.length;
-          resolve(mapping);
-        }
+    try {
+      if (!conn || conn.destroyed) {
+        conn = await this._createTCPConnection(mapping);
+        this.tcpConnections.set(connKey, conn);
+      }
+      
+      return new Promise((resolve, reject) => {
+        conn.write(payload, (err) => {
+          if (err) {
+            reject(err);
+          } else {
+            mapping.bytesOut += payload.length;
+            resolve(mapping);
+          }
+        });
       });
-    });
+    } catch (err) {
+      console.error(`[EXIT] TCP forward failed to ${dstIp}:${dstPort}:`, err.message);
+      this.tcpConnections.delete(connKey);
+      this.natTable.removeMapping(connKey);
+      return null;
+    }
   }
 
   async _createTCPConnection(mapping) {
     return new Promise((resolve, reject) => {
       const conn = net.createConnection({
         host: mapping.dstIp,
-        port: mapping.dstPort,
-        localPort: mapping.natPort
+        port: mapping.dstPort
       });
       
       conn.on('connect', () => {
+        console.log(`[EXIT] TCP connected to ${mapping.dstIp}:${mapping.dstPort}`);
         resolve(conn);
       });
       
       conn.on('data', (data) => {
         mapping.bytesIn += data.length;
         mapping.lastUsed = Date.now();
+        
+        console.log(`[EXIT] TCP data received: ${data.length} bytes from ${mapping.dstIp}:${mapping.dstPort}`);
         
         const responseSeqNum = mapping.serverSeqNum;
         const responseAckNum = (mapping.clientSeqNum + mapping.clientDataLen) >>> 0;
@@ -316,11 +354,12 @@ export class ExitNodeForwarder extends EventEmitter {
       });
       
       conn.on('error', (err) => {
-        this.emit('error', { type: 'tcp', mapping, error: err });
+        console.error(`[EXIT] TCP error for ${mapping.dstIp}:${mapping.dstPort}:`, err.message);
         reject(err);
       });
       
       conn.on('close', () => {
+        console.log(`[EXIT] TCP closed for ${mapping.dstIp}:${mapping.dstPort}`);
         this.tcpConnections.delete(mapping.key);
         this.natTable.removeMapping(mapping.key);
       });
@@ -378,36 +417,270 @@ export class ExitNode extends EventEmitter {
       return null;
     }
     
-    const { dstIp, protocol, srcPort, dstPort, data, tcpSeqNum, tcpAckNum } = ipHeader;
-    console.log(`[EXIT] Forwarding: ${srcPort} -> ${dstIp}:${dstPort} proto=${protocol} data_len=${data.length}`);
+    const { srcIp, dstIp, protocol, srcPort, dstPort, data, tcpSeqNum, tcpAckNum } = ipHeader;
+    console.log(`[EXIT] Forwarding: ${srcIp}:${srcPort} -> ${dstIp}:${dstPort} proto=${protocol} data_len=${data.length}`);
     
-    if (protocol === 17) {
+    if (protocol === 1) {
+      if (ipHeader.icmpType === 8) {
+        console.log(`[EXIT] ICMP Echo Request from ${srcIp}, id=${ipHeader.icmpId}, seq=${ipHeader.icmpSeq}`);
+        return this._handleIcmpEchoRequest(packet, ipHeader);
+      }
+      console.log(`[EXIT] Ignoring ICMP type ${ipHeader.icmpType}`);
+      return null;
+    } else if (protocol === 17) {
       return await this.forwarder.forwardUDP(
         packet.srcNode,
-        packet.srcIp || '10.200.0.1',
+        srcIp,
         srcPort,
         dstIp,
         dstPort,
         data
       );
     } else if (protocol === 6) {
-      const tcpInfo = {
-        seqNum: tcpSeqNum,
-        ackNum: tcpAckNum,
-        dataLen: data.length
-      };
-      return await this.forwarder.forwardTCP(
-        packet.srcNode,
-        packet.srcIp || '10.200.0.1',
-        srcPort,
-        dstIp,
-        dstPort,
-        data,
-        tcpInfo
-      );
+      return await this._handleTcpPacket(packet, ipHeader);
     }
     
     return null;
+  }
+
+  async _handleTcpPacket(packet, ipHeader) {
+    const { srcIp, dstIp, srcPort, dstPort, tcpSeqNum, tcpAckNum, tcpFlags, data } = ipHeader;
+    
+    const isSyn = (tcpFlags & TCPFlags.SYN) !== 0;
+    const isAck = (tcpFlags & TCPFlags.ACK) !== 0;
+    const isFin = (tcpFlags & TCPFlags.FIN) !== 0;
+    const isRst = (tcpFlags & TCPFlags.RST) !== 0;
+    const isPsh = (tcpFlags & TCPFlags.PSH) !== 0;
+    
+    console.log(`[EXIT] TCP flags: SYN=${isSyn} ACK=${isAck} FIN=${isFin} RST=${isRst} PSH=${isPsh} seq=${tcpSeqNum} ack=${tcpAckNum}`);
+    
+    const tcpInfo = { seqNum: tcpSeqNum, ackNum: tcpAckNum, dataLen: data.length };
+    const mapping = this.forwarder.natTable.createMapping(
+      packet.srcNode, srcIp, srcPort, dstIp, dstPort, 'tcp', tcpInfo
+    );
+    
+    if (isRst) {
+      console.log(`[EXIT] TCP RST received, closing connection`);
+      this._closeTcpConnection(mapping);
+      return null;
+    }
+    
+    if (isSyn && !isAck) {
+      if (mapping.tcpState === TCPState.LISTEN || mapping.tcpState === TCPState.SYN_RECEIVED) {
+        console.log(`[EXIT] TCP SYN received, sending SYN-ACK`);
+        mapping.clientSeqNum = tcpSeqNum;
+        mapping.tcpState = TCPState.SYN_RECEIVED;
+        
+        this._sendTcpSynAck(packet.srcNode, dstIp, srcIp, dstPort, srcPort, mapping.serverSeqNum, tcpSeqNum);
+        mapping.serverSeqNum = (mapping.serverSeqNum + 1) >>> 0;
+        return mapping;
+      }
+    }
+    
+    if (isAck && !isSyn) {
+      if (mapping.tcpState === TCPState.SYN_RECEIVED) {
+        console.log(`[EXIT] TCP ACK received after SYN-ACK, connection established`);
+        mapping.tcpState = TCPState.ESTABLISHED;
+        mapping.clientAckNum = tcpAckNum;
+        
+        if (data.length > 0) {
+          console.log(`[EXIT] ACK contains data: ${data.length} bytes, queuing`);
+          mapping.pendingData.push(data);
+          mapping.clientSeqNum = tcpSeqNum;
+          mapping.clientDataLen = data.length;
+        }
+        
+        try {
+          await this._establishServerConnection(mapping);
+        } catch (err) {
+          console.error(`[EXIT] Failed to connect to server: ${err.message}`);
+          this._sendTcpRst(packet.srcNode, dstIp, srcIp, dstPort, srcPort, tcpAckNum);
+          this._closeTcpConnection(mapping);
+          return null;
+        }
+        return mapping;
+      }
+      
+      if (mapping.tcpState === TCPState.ESTABLISHED) {
+        if (data.length > 0 || isPsh) {
+          console.log(`[EXIT] TCP data received: ${data.length} bytes`);
+          mapping.clientSeqNum = tcpSeqNum;
+          mapping.clientAckNum = tcpAckNum;
+          mapping.clientDataLen = data.length;
+          
+          if (mapping.serverConn && !mapping.serverConn.destroyed) {
+            console.log(`[EXIT] Writing directly to server: ${data.length} bytes`);
+            mapping.serverConn.write(data);
+            mapping.bytesOut += data.length;
+          } else {
+            console.log(`[EXIT] Queuing data, serverConn not ready yet: ${data.length} bytes`);
+            mapping.pendingData.push(data);
+          }
+        }
+        return mapping;
+      }
+      
+      if (mapping.tcpState === TCPState.FIN_WAIT_1) {
+        console.log(`[EXIT] TCP ACK for FIN received`);
+        mapping.tcpState = TCPState.FIN_WAIT_2;
+        return mapping;
+      }
+    }
+    
+    if (isFin) {
+      console.log(`[EXIT] TCP FIN received`);
+      mapping.clientSeqNum = tcpSeqNum;
+      
+      this._sendTcpAck(packet.srcNode, dstIp, srcIp, dstPort, srcPort, 
+        mapping.serverSeqNum, (tcpSeqNum + 1) >>> 0);
+      
+      if (mapping.serverConn) {
+        mapping.serverConn.end();
+      }
+      
+      mapping.tcpState = TCPState.CLOSED;
+      setTimeout(() => this._closeTcpConnection(mapping), 1000);
+      return mapping;
+    }
+    
+    return null;
+  }
+
+  async _establishServerConnection(mapping) {
+    return new Promise((resolve, reject) => {
+      console.log(`[EXIT] Connecting to ${mapping.dstIp}:${mapping.dstPort}`);
+      
+      const conn = net.createConnection({
+        host: mapping.dstIp,
+        port: mapping.dstPort
+      });
+      
+      conn.on('connect', () => {
+        console.log(`[EXIT] Connected to ${mapping.dstIp}:${mapping.dstPort}`);
+        mapping.serverConn = conn;
+        
+        console.log(`[EXIT] Flushing ${mapping.pendingData.length} pending data chunks`);
+        console.log(`[EXIT] Socket connected: local=${conn.localAddress}:${conn.localPort} -> remote=${conn.remoteAddress}:${conn.remotePort}`);
+        for (const data of mapping.pendingData) {
+          console.log(`[EXIT] Sending to server: ${data.length} bytes`);
+          console.log(`[EXIT] Data preview: ${data.toString('utf8').substring(0, 200).replace(/\r\n/g, '\\r\\n')}`);
+          const result = conn.write(data);
+          console.log(`[EXIT] Write result: ${result}, bufferSize=${conn.writableLength}`);
+          mapping.bytesOut += data.length;
+        }
+        mapping.pendingData = [];
+        
+        resolve(conn);
+      });
+      
+      conn.on('drain', () => {
+        console.log(`[EXIT] Socket drained, ready for more writes`);
+      });
+      
+      conn.on('data', (data) => {
+        console.log(`[EXIT] Server data: ${data.length} bytes`);
+        mapping.bytesIn += data.length;
+        
+        const ackNum = (mapping.clientSeqNum + mapping.clientDataLen) >>> 0;
+        
+        this.emit('internet-response', {
+          srcNodeId: mapping.srcNodeId,
+          srcIp: mapping.srcIp,
+          srcPort: mapping.srcPort,
+          dstIp: mapping.dstIp,
+          dstPort: mapping.dstPort,
+          data,
+          protocol: 'tcp',
+          tcpSeqNum: mapping.serverSeqNum,
+          tcpAckNum: ackNum
+        });
+        
+        mapping.serverSeqNum = (mapping.serverSeqNum + data.length) >>> 0;
+      });
+      
+      conn.on('error', (err) => {
+        console.error(`[EXIT] Server connection error: ${err.message}`);
+        reject(err);
+      });
+      
+      conn.on('end', () => {
+        console.log(`[EXIT] Server sent FIN (end of data)`);
+      });
+      
+      conn.on('close', (hadError) => {
+        console.log(`[EXIT] Server connection closed, hadError=${hadError}`);
+        if (mapping.tcpState === TCPState.ESTABLISHED) {
+          this._sendTcpFin(mapping);
+          mapping.tcpState = TCPState.FIN_WAIT_1;
+        }
+      });
+    });
+  }
+
+  _sendTcpSynAck(srcNodeId, srcIp, dstIp, srcPort, dstPort, seqNum, clientSeqNum) {
+    const ipPacket = buildTcpSynAckPacket(srcIp, dstIp, srcPort, dstPort, seqNum, clientSeqNum);
+    
+    this.emit('internet-response', {
+      srcNodeId,
+      srcIp: dstIp,
+      srcPort: dstPort,
+      dstIp: srcIp,
+      dstPort: srcPort,
+      data: ipPacket,
+      protocol: 'raw'
+    });
+  }
+
+  _sendTcpAck(srcNodeId, srcIp, dstIp, srcPort, dstPort, seqNum, ackNum) {
+    const ipPacket = buildTcpAckPacket(srcIp, dstIp, srcPort, dstPort, seqNum, ackNum);
+    
+    this.emit('internet-response', {
+      srcNodeId,
+      srcIp: dstIp,
+      srcPort: dstPort,
+      dstIp: srcIp,
+      dstPort: srcPort,
+      data: ipPacket,
+      protocol: 'raw'
+    });
+  }
+
+  _sendTcpRst(srcNodeId, srcIp, dstIp, srcPort, dstPort, seqNum) {
+    const ipPacket = buildTcpRstPacket(srcIp, dstIp, srcPort, dstPort, seqNum);
+    
+    this.emit('internet-response', {
+      srcNodeId,
+      srcIp: dstIp,
+      srcPort: dstPort,
+      dstIp: srcIp,
+      dstPort: srcPort,
+      data: ipPacket,
+      protocol: 'raw'
+    });
+  }
+
+  _sendTcpFin(mapping) {
+    const ackNum = (mapping.clientSeqNum + mapping.clientDataLen) >>> 0;
+    const ipPacket = buildTcpFinPacket(mapping.dstIp, mapping.srcIp, mapping.dstPort, mapping.srcPort, mapping.serverSeqNum, ackNum);
+    
+    this.emit('internet-response', {
+      srcNodeId: mapping.srcNodeId,
+      srcIp: mapping.srcIp,
+      srcPort: mapping.srcPort,
+      dstIp: mapping.dstIp,
+      dstPort: mapping.dstPort,
+      data: ipPacket,
+      protocol: 'raw'
+    });
+  }
+
+  _closeTcpConnection(mapping) {
+    if (mapping.serverConn) {
+      mapping.serverConn.destroy();
+      mapping.serverConn = null;
+    }
+    mapping.tcpState = TCPState.CLOSED;
+    this.forwarder.natTable.removeMapping(mapping.key);
   }
 
   _parseIPHeader(data) {
@@ -418,6 +691,7 @@ export class ExitNode extends EventEmitter {
     
     const headerLength = (data[0] & 0x0f) * 4;
     const protocol = data[9];
+    const srcIp = `${data[12]}.${data[13]}.${data[14]}.${data[15]}`;
     const dstIp = `${data[16]}.${data[17]}.${data[18]}.${data[19]}`;
     
     let srcPort = 0;
@@ -425,6 +699,10 @@ export class ExitNode extends EventEmitter {
     let tcpSeqNum = 0;
     let tcpAckNum = 0;
     let tcpFlags = 0;
+    let icmpType = 0;
+    let icmpCode = 0;
+    let icmpId = 0;
+    let icmpSeq = 0;
     let transportData = data.subarray(headerLength);
     
     if (protocol === 17 && transportData.length >= 8) {
@@ -439,20 +717,71 @@ export class ExitNode extends EventEmitter {
       tcpFlags = transportData.readUInt8(13);
       const tcpDataOffset = (transportData.readUInt8(12) >> 4) * 4;
       transportData = transportData.subarray(tcpDataOffset);
+    } else if (protocol === 1 && transportData.length >= 8) {
+      icmpType = transportData.readUInt8(0);
+      icmpCode = transportData.readUInt8(1);
+      icmpId = transportData.readUInt16BE(4);
+      icmpSeq = transportData.readUInt16BE(6);
+      transportData = transportData.subarray(8);
     }
     
     return {
       version,
       headerLength,
       protocol,
+      srcIp,
       dstIp,
       srcPort,
       dstPort,
       tcpSeqNum,
       tcpAckNum,
       tcpFlags,
+      icmpType,
+      icmpCode,
+      icmpId,
+      icmpSeq,
       data: transportData
     };
+  }
+
+  _handleIcmpEchoRequest(packet, ipHeader) {
+    const { srcIp, dstIp, icmpId, icmpSeq, data } = ipHeader;
+    
+    const icmpReply = Buffer.alloc(8 + data.length);
+    icmpReply.writeUInt8(0, 0);
+    icmpReply.writeUInt8(0, 1);
+    icmpReply.writeUInt16BE(0, 2);
+    icmpReply.writeUInt16BE(icmpId, 4);
+    icmpReply.writeUInt16BE(icmpSeq, 6);
+    data.copy(icmpReply, 8);
+    
+    const checksum = this._calculateIcmpChecksum(icmpReply);
+    icmpReply.writeUInt16BE(checksum, 2);
+    
+    console.log(`[EXIT] Sending ICMP Echo Reply to ${srcIp}, id=${icmpId}, seq=${icmpSeq}`);
+    
+    this.emit('internet-response', {
+      srcNodeId: packet.srcNode,
+      srcIp: srcIp,
+      srcPort: 0,
+      dstIp: dstIp,
+      dstPort: 0,
+      data: icmpReply,
+      protocol: 'icmp'
+    });
+    
+    return true;
+  }
+
+  _calculateIcmpChecksum(data) {
+    let sum = 0;
+    for (let i = 0; i < data.length; i += 2) {
+      sum += (data[i] << 8) + (data[i + 1] || 0);
+    }
+    while (sum >> 16) {
+      sum = (sum & 0xffff) + (sum >> 16);
+    }
+    return (~sum) & 0xffff;
   }
 
   stop() {

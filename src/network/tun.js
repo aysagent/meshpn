@@ -116,6 +116,9 @@ export class TunInterface extends EventEmitter {
     execSync(`ip link set dev ${this.name} mtu ${this.mtu}`);
     execSync(`ip link set dev ${this.name} up`);
     
+    const networkPrefix = this.virtualIp.split('.').slice(0, 2).join('.');
+    console.log(`Route for ${networkPrefix}.0.0/16 configured via ${this.name}`);
+    
     this._startReadLoop();
   }
 
@@ -208,6 +211,14 @@ export class TunInterface extends EventEmitter {
   _configureMacOSTun() {
     try {
       execSync(`ifconfig ${this.name} ${this.virtualIp} ${this.virtualIp} netmask ${this.netmask} mtu ${this.mtu} up`);
+      
+      const networkPrefix = this.virtualIp.split('.').slice(0, 2).join('.');
+      try {
+        execSync(`route add -net ${networkPrefix}.0.0/16 -interface ${this.name}`, { stdio: 'ignore' });
+        console.log(`Added route for ${networkPrefix}.0.0/16 via ${this.name}`);
+      } catch {
+        console.log(`Route for ${networkPrefix}.0.0/16 may already exist`);
+      }
     } catch (err) {
       console.warn(`Warning: Could not configure ${this.name}:`, err.message);
       console.log('You may need to run with sudo or configure the interface manually.');
@@ -245,8 +256,11 @@ export class TunInterface extends EventEmitter {
 
   write(packet) {
     if (!this.running) {
+      console.log('[TUN] Write failed: not running');
       return false;
     }
+    
+    console.log(`[TUN] Writing packet to ${this.name}, length: ${packet.length}`);
     
     if (this.platform === 'linux' && this.fd !== null) {
       return this._writeLinux(packet);
