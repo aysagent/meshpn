@@ -1,1 +1,1 @@
-export { NATTable, ExitNodeForwarder, ExitNode } from './nat.js';
+export { NATTable } from './nat.js';

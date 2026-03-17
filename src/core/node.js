@@ -5,8 +5,7 @@ import { encrypt, decrypt } from '../crypto/encrypt.js';
 import { TransportManager } from '../transport/index.js';
 import { PeerDiscovery } from '../control/index.js';
 import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
-import { TunManager, Packet, PacketType, parseIPPacket, buildIPPacketWithTransport, TCPFlags } from '../network/index.js';
-import { ExitNode } from '../exit/index.js';
+import { TunManager, Packet, PacketType, parseIPPacket } from '../network/index.js';
 
 export class MeshNode extends EventEmitter {
   constructor(config) {
@@ -72,6 +71,9 @@ export class MeshNode extends EventEmitter {
     this.tunManager = null;
     this.exitNodeHandler = null;
     this.virtualIp = null;
+    
+    this.natMappings = new Map();
+    this.natMappingTimeout = config.natMappingTimeout || 300000;
     this.running = false;
   }
 
@@ -111,23 +113,6 @@ export class MeshNode extends EventEmitter {
     const discoveryRole = this.isRelay ? 'relay' : this.role;
     await this.discovery.start(discoveryRole);
     
-    if (this.isExit) {
-      this.exitNodeHandler = new ExitNode({
-        nodeId: this.nodeId
-      });
-      
-      this.exitNodeHandler.on('internet-response', (response) => {
-        this._handleInternetResponse(response);
-      });
-      
-      this.exitNodeHandler.on('error', (error) => {
-        console.error(`[EXIT] Error:`, error.type, error.error?.message || error);
-      });
-      
-      await this.exitNodeHandler.start();
-      console.log('Exit node handler started');
-    }
-    
     this.reorderBuffer.start();
     this._startCacheCleanup();
     
@@ -147,20 +132,30 @@ export class MeshNode extends EventEmitter {
       this.virtualIp = info.virtualIp;
       console.log(`Registered with virtual IP: ${this.virtualIp}`);
       
-      if (this.isClient && this.config.enableTun !== false && !this.tunManager) {
+      const needsTun = (this.isClient || this.isExit) && this.config.enableTun !== false;
+      
+      if (needsTun && !this.tunManager) {
         this.tunManager = new TunManager(this.config.tun || {});
         
-        this.tunManager.on('outbound-packet', (packet) => {
-          this._handleOutboundPacket(packet);
-        });
+        if (this.isClient) {
+          this.tunManager.on('outbound-packet', (packet) => {
+            this._handleOutboundPacket(packet);
+          });
+        } else if (this.isExit) {
+          this.tunManager.on('outbound-packet', (packet) => {
+            this._handleExitTunPacket(packet);
+          });
+        }
         
         try {
           await this.tunManager.setup(this.virtualIp);
           if (this.isRelay) {
             console.log('Running as client-relay: TUN enabled + packet forwarding');
+          } else if (this.isExit) {
+            console.log('Exit node TUN interface ready');
           }
         } catch (err) {
-          console.warn('TUN setup failed, running in relay mode:', err.message);
+          console.warn('TUN setup failed:', err.message);
         }
       }
       
@@ -380,27 +375,74 @@ export class MeshNode extends EventEmitter {
   }
 
   async _processExitPacket(packet, payload) {
-    if (!this.exitNodeHandler) return;
-    
-    try {
-      await this.exitNodeHandler.processPacket(packet, payload);
-    } catch (err) {
-      console.error('Exit processing failed:', err.message);
-    }
-  }
-
-  _handleInternetResponse(response) {
-    const { srcNodeId, srcIp, srcPort, dstIp, dstPort, data, protocol } = response;
-    
-    console.log(`[EXIT] Internet response: ${dstIp}:${dstPort} -> ${srcIp}:${srcPort} proto=${protocol} data_len=${data.length}`);
-    
-    const routeInfo = this.router.graph.findShortestPath(this.nodeId, srcNodeId);
-    if (!routeInfo || routeInfo.length < 2) {
-      console.warn(`[EXIT] No route back to ${srcNodeId}`);
+    if (!this.tunManager) {
+      console.warn('[EXIT] No TUN manager for exit node');
       return;
     }
     
-    console.log(`[EXIT] Sending response back via route: ${routeInfo.join(' -> ')}`);
+    try {
+      const parsed = parseIPPacket(payload);
+      if (!parsed) {
+        console.warn('[EXIT] Failed to parse IP packet');
+        return;
+      }
+      
+      const { srcIp, dstIp, srcPort, dstPort, protocol } = parsed;
+      console.log(`[EXIT] Processing: ${srcIp}:${srcPort} -> ${dstIp}:${dstPort} proto=${protocol}`);
+      
+      const mappingKey = `${srcIp}:${srcPort}:${dstIp}:${dstPort}:${protocol}`;
+      this.natMappings.set(mappingKey, {
+        srcNodeId: packet.srcNode,
+        srcIp,
+        srcPort,
+        dstIp,
+        dstPort,
+        protocol,
+        createdAt: Date.now()
+      });
+      
+      console.log(`[EXIT] NAT mapping created: ${mappingKey} -> ${packet.srcNode}`);
+      
+      await this.tunManager.writePacket(payload);
+      console.log(`[EXIT] Packet injected to TUN`);
+      
+    } catch (err) {
+      console.error('[EXIT] Processing failed:', err.message);
+    }
+  }
+
+  _handleExitTunPacket(packet) {
+    const parsed = parseIPPacket(packet);
+    if (!parsed) {
+      console.warn('[EXIT] Failed to parse TUN packet');
+      return;
+    }
+    
+    const { srcIp, dstIp, srcPort, dstPort, protocol } = parsed;
+    
+    if (dstIp.startsWith('10.200.')) {
+      const mappingKey = `${dstIp}:${dstPort}:${srcIp}:${srcPort}:${protocol}`;
+      const mapping = this.natMappings.get(mappingKey);
+      
+      if (!mapping) {
+        console.warn(`[EXIT] No NAT mapping for ${mappingKey}`);
+        return;
+      }
+      
+      console.log(`[EXIT] Response: ${srcIp}:${srcPort} -> ${dstIp}:${dstPort} for client ${mapping.srcNodeId}`);
+      
+      this._sendExitResponse(mapping.srcNodeId, packet);
+    }
+  }
+
+  _sendExitResponse(targetNodeId, ipPacket) {
+    const routeInfo = this.router.graph.findShortestPath(this.nodeId, targetNodeId);
+    if (!routeInfo || routeInfo.length < 2) {
+      console.warn(`[EXIT] No route back to ${targetNodeId}`);
+      return;
+    }
+    
+    console.log(`[EXIT] Sending response via: ${routeInfo.join(' -> ')}`);
     
     const route = routeInfo.slice(1);
     const routeWithKeys = [];
@@ -415,45 +457,12 @@ export class MeshNode extends EventEmitter {
     }
     
     try {
-      let ipPacket;
-      
-      if (protocol === 'raw') {
-        ipPacket = data;
-      } else {
-        let protocolNumber;
-        if (protocol === 'udp') {
-          protocolNumber = 17;
-        } else if (protocol === 'tcp') {
-          protocolNumber = 6;
-        } else if (protocol === 'icmp') {
-          protocolNumber = 1;
-        } else {
-          protocolNumber = 6;
-        }
-        
-        const tcpOptions = protocol === 'tcp' ? {
-          seqNum: response.tcpSeqNum || 0,
-          ackNum: response.tcpAckNum || 0,
-          flags: TCPFlags.ACK | TCPFlags.PSH
-        } : {};
-        
-        ipPacket = buildIPPacketWithTransport(
-          dstIp,
-          srcIp,
-          protocolNumber,
-          dstPort,
-          srcPort,
-          data,
-          tcpOptions
-        );
-      }
-      
       const onionPacket = createOnionPacket(ipPacket, routeWithKeys);
       
       const packet = new Packet({
         type: PacketType.DATA,
         srcNode: this.nodeId,
-        dstNode: srcNodeId,
+        dstNode: targetNodeId,
         route,
         payload: onionPacket
       });
@@ -461,15 +470,15 @@ export class MeshNode extends EventEmitter {
       const nextHop = route[0];
       const serialized = packet.serialize();
       
-      console.log(`[EXIT] Sending response to ${nextHop}, packet size: ${serialized.length}`);
+      console.log(`[EXIT] Sending to ${nextHop}, size: ${serialized.length}`);
       const sent = this.transportManager.send(nextHop, serialized);
       if (sent) {
         console.log(`[EXIT] Response sent successfully`);
       } else {
-        console.warn(`[EXIT] Failed to send response to ${nextHop}`);
+        console.warn(`[EXIT] Failed to send to ${nextHop}`);
       }
     } catch (err) {
-      console.error('Failed to send response:', err.message);
+      console.error('[EXIT] Failed to send response:', err.message);
     }
   }
 
