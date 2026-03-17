@@ -10,14 +10,17 @@
     "client": "node src/index.js --role client",
     "relay": "node src/index.js --role relay",
     "exit": "node src/index.js --role exit",
+    "dev": "concurrently -n server,client,exit \"npm run server\" \"npm run client\" \"npm run exit\"",
     "postinstall": "cd helpers && make 2>/dev/null || true"
   },
   "dependencies": {
-    "werift": "^0.19.0",
     "@noble/curves": "^1.4.0",
     "@noble/hashes": "^1.4.0",
-    "ws": "^8.17.0",
-    "raw-socket": "^1.7.0"
+    "concurrently": "^9.2.1",
+    "nodemon": "^3.1.14",
+    "raw-socket": "^1.7.0",
+    "werift": "^0.19.0",
+    "ws": "^8.17.0"
   },
   "engines": {
     "node": ">=18.0.0"
