@@ -51,17 +51,14 @@ node src/index.js --role client --signalling ws://localhost:8080
 ### Запуск exit node
 
 ```bash
-# 1. Включить системный NAT (сохраняет исходные настройки)
-npm run nat:enable
-
-# 2. Запустить exit node
+# Запустить exit node (NAT настраивается автоматически)
 sudo npm run exit
+
 # или
 sudo node src/index.js --role exit --signalling ws://localhost:8080
-
-# 3. После завершения — отключить NAT и восстановить настройки
-npm run nat:disable
 ```
+
+NAT включается автоматически после создания TUN интерфейса и откатывается при завершении (Ctrl+C).
 
 Подробнее о настройке NAT: [server/nat-setup.md](server/nat-setup.md)
 
@@ -119,6 +116,16 @@ node src/index.js --role client-relay --signalling ws://localhost:8080
 ## Настройка системы
 
 ### NAT для Exit Node
+
+NAT настраивается **автоматически** при запуске exit node:
+
+```bash
+sudo npm run exit
+```
+
+При завершении (Ctrl+C) настройки NAT откатываются автоматически.
+
+#### Ручное управление (fallback)
 
 ```bash
 # Включить NAT (автоматически определяет ОС и интерфейс)

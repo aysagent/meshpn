@@ -6,6 +6,7 @@ import { TransportManager } from '../transport/index.js';
 import { PeerDiscovery } from '../control/index.js';
 import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
 import { TunManager, Packet, PacketType, parseIPPacket } from '../network/index.js';
+import { NATManager } from '../exit/index.js';
 
 export class MeshNode extends EventEmitter {
   constructor(config) {
@@ -74,6 +75,9 @@ export class MeshNode extends EventEmitter {
     
     this.natMappings = new Map();
     this.natMappingTimeout = config.natMappingTimeout || 300000;
+    
+    this.natManager = this.isExit ? new NATManager(config.nat || {}) : null;
+    
     this.running = false;
   }
 
@@ -103,6 +107,19 @@ export class MeshNode extends EventEmitter {
       clearInterval(this.cacheCleanupInterval);
       this.cacheCleanupInterval = null;
     }
+  }
+
+  _setupNATCleanup() {
+    const cleanup = async () => {
+      console.log('\n[NAT] Shutting down, cleaning up NAT...');
+      if (this.natManager) {
+        await this.natManager.disable();
+      }
+      process.exit(0);
+    };
+
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
   }
 
   async start() {
@@ -153,6 +170,15 @@ export class MeshNode extends EventEmitter {
             console.log('Running as client-relay: TUN enabled + packet forwarding');
           } else if (this.isExit) {
             console.log('Exit node TUN interface ready');
+            
+            if (this.natManager && this.config.nat?.enabled !== false) {
+              const tunName = this.tunManager.getInterfaceName();
+              const extInterface = this.config.nat?.externalInterface || null;
+              const success = await this.natManager.enable(tunName, extInterface);
+              if (success) {
+                this._setupNATCleanup();
+              }
+            }
           }
         } catch (err) {
           console.warn('TUN setup failed:', err.message);
@@ -327,7 +353,7 @@ export class MeshNode extends EventEmitter {
       const layer = peelOnionLayer(packet.payload, sessionKey);
       
       if (layer.isExit) {
-        if (this.isExit && this.exitNodeHandler) {
+        if (this.isExit) {
           this._processExitPacket(packet, layer.payload);
         } else if (this.isClient && packet.dstNode === this.nodeId) {
           this.reorderBuffer.addPacket({
@@ -403,7 +429,7 @@ export class MeshNode extends EventEmitter {
       
       console.log(`[EXIT] NAT mapping created: ${mappingKey} -> ${packet.srcNode}`);
       
-      await this.tunManager.writePacket(payload);
+      this.tunManager.injectPacket(payload);
       console.log(`[EXIT] Packet injected to TUN`);
       
     } catch (err) {

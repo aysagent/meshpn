@@ -19,10 +19,10 @@
   ],
   "virtualNetwork": "10.200.0.0/16",
   "mtu": 1400,
-  "enableTun": false,
+  "enableTun": true,
   "nat": {
-    "portStart": 40000,
-    "portEnd": 60000,
+    "enabled": true,
+    "externalInterface": null,
     "timeout": 300000
   }
 }

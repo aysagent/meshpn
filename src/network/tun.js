@@ -392,4 +392,8 @@ export class TunManager extends EventEmitter {
   isRunning() {
     return this.tun !== null && this.tun.running;
   }
+
+  getInterfaceName() {
+    return this.tun ? this.tun.name : null;
+  }
 }
