@@ -1,6 +1,11 @@
 import { EventEmitter } from 'events';
 import net from 'net';
 import dgram from 'dgram';
+import { spawn } from 'child_process';
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import { fileURLToPath } from 'url';
 import { 
   PROTOCOLS, 
   TCP_FLAGS, 
@@ -8,6 +13,10 @@ import {
   buildTCPPacket, 
   buildUDPPacket 
 } from '../network/index.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ICMP_HELPER_PATH = path.join(__dirname, '../../helpers/icmp-helper');
 
 const TCP_STATE = {
   CONNECTING: 'CONNECTING',
@@ -26,6 +35,11 @@ export class UserSpaceNAT extends EventEmitter {
     this.connectingCount = 0;
     this.cleanupInterval = null;
     this.localVirtualIp = null;
+    
+    // ICMP helper
+    this.icmpHelper = null;
+    this.icmpPending = new Map();
+    this.icmpBuffer = '';
   }
   
   setLocalVirtualIp(ip) {
@@ -37,7 +51,153 @@ export class UserSpaceNAT extends EventEmitter {
     this.cleanupInterval = setInterval(() => {
       this._cleanup();
     }, 60000);
+    
+    // Start ICMP helper on Linux
+    if (os.platform() === 'linux') {
+      this._startICMPHelper();
+    }
+    
     console.log('[UserSpaceNAT] Started');
+  }
+  
+  _startICMPHelper() {
+    if (!fs.existsSync(ICMP_HELPER_PATH)) {
+      console.warn('[UserSpaceNAT] icmp-helper not found, external ping will not work');
+      console.warn('[UserSpaceNAT] Run: cd helpers && make');
+      return;
+    }
+    
+    this.icmpHelper = spawn(ICMP_HELPER_PATH, [], {
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    
+    this.icmpHelper.stdout.on('data', (data) => {
+      this.icmpBuffer += data.toString();
+      this._processICMPResponses();
+    });
+    
+    this.icmpHelper.stderr.on('data', (data) => {
+      const msg = data.toString().trim();
+      if (msg === 'READY') {
+        console.log('[UserSpaceNAT] ICMP helper ready');
+      } else if (msg.startsWith('ERROR')) {
+        console.error(`[UserSpaceNAT] ICMP helper: ${msg}`);
+      }
+    });
+    
+    this.icmpHelper.on('error', (err) => {
+      console.error('[UserSpaceNAT] ICMP helper error:', err.message);
+      this.icmpHelper = null;
+    });
+    
+    this.icmpHelper.on('exit', (code) => {
+      if (code !== 0 && code !== null) {
+        console.error(`[UserSpaceNAT] ICMP helper exited with code ${code}`);
+      }
+      this.icmpHelper = null;
+    });
+  }
+  
+  _processICMPResponses() {
+    const lines = this.icmpBuffer.split('\n');
+    this.icmpBuffer = lines.pop() || '';
+    
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      
+      const parts = line.split(' ');
+      const cmd = parts[0];
+      
+      if (cmd === 'REP') {
+        // REP <src_ip> <id> <seq> <ttl> <payload_hex>
+        const srcIp = parts[1];
+        const id = parseInt(parts[2], 10);
+        const seq = parseInt(parts[3], 10);
+        const ttl = parseInt(parts[4], 10);
+        const payloadHex = parts[5] || '';
+        
+        const key = `${id}:${seq}`;
+        const pending = this.icmpPending.get(key);
+        
+        if (pending) {
+          this.icmpPending.delete(key);
+          const reply = this._buildICMPReplyFromExternal(
+            srcIp, pending.srcIp, id, seq, ttl, payloadHex
+          );
+          pending.sendResponse(pending.srcNodeId, reply);
+        }
+      } else if (cmd === 'TIMEOUT') {
+        // TIMEOUT <id> <seq>
+        const id = parseInt(parts[1], 10);
+        const seq = parseInt(parts[2], 10);
+        const key = `${id}:${seq}`;
+        this.icmpPending.delete(key);
+      }
+    }
+  }
+  
+  _buildICMPReplyFromExternal(extSrcIp, clientIp, id, seq, ttl, payloadHex) {
+    // Convert hex payload to buffer
+    const payload = payloadHex ? Buffer.from(payloadHex, 'hex') : Buffer.alloc(0);
+    
+    // Build ICMP Echo Reply
+    const icmpHeader = Buffer.alloc(8);
+    icmpHeader.writeUInt8(0, 0);  // Type: Echo Reply
+    icmpHeader.writeUInt8(0, 1);  // Code: 0
+    icmpHeader.writeUInt16BE(0, 2);  // Checksum
+    icmpHeader.writeUInt16BE(id, 4);  // Identifier
+    icmpHeader.writeUInt16BE(seq, 6);  // Sequence
+    
+    const icmpPacket = Buffer.concat([icmpHeader, payload]);
+    
+    // Calculate ICMP checksum
+    let sum = 0;
+    for (let i = 0; i < icmpPacket.length; i += 2) {
+      if (i + 1 < icmpPacket.length) {
+        sum += icmpPacket.readUInt16BE(i);
+      } else {
+        sum += icmpPacket[i] << 8;
+      }
+    }
+    while (sum >> 16) {
+      sum = (sum & 0xffff) + (sum >> 16);
+    }
+    icmpPacket.writeUInt16BE(~sum & 0xffff, 2);
+    
+    // Build IP header
+    const ipHeader = Buffer.alloc(20);
+    ipHeader.writeUInt8(0x45, 0);  // Version + IHL
+    ipHeader.writeUInt8(0, 1);     // TOS
+    ipHeader.writeUInt16BE(20 + icmpPacket.length, 2);  // Total length
+    ipHeader.writeUInt16BE(Math.floor(Math.random() * 65535), 4);  // ID
+    ipHeader.writeUInt16BE(0, 6);  // Flags + Fragment offset
+    ipHeader.writeUInt8(ttl, 8);   // TTL from external reply
+    ipHeader.writeUInt8(1, 9);     // Protocol: ICMP
+    ipHeader.writeUInt16BE(0, 10); // Checksum
+    
+    // Source: external IP, Destination: client IP
+    const srcParts = extSrcIp.split('.').map(Number);
+    const dstParts = clientIp.split('.').map(Number);
+    ipHeader.writeUInt8(srcParts[0], 12);
+    ipHeader.writeUInt8(srcParts[1], 13);
+    ipHeader.writeUInt8(srcParts[2], 14);
+    ipHeader.writeUInt8(srcParts[3], 15);
+    ipHeader.writeUInt8(dstParts[0], 16);
+    ipHeader.writeUInt8(dstParts[1], 17);
+    ipHeader.writeUInt8(dstParts[2], 18);
+    ipHeader.writeUInt8(dstParts[3], 19);
+    
+    // Calculate IP checksum
+    let ipSum = 0;
+    for (let i = 0; i < 20; i += 2) {
+      ipSum += ipHeader.readUInt16BE(i);
+    }
+    while (ipSum >> 16) {
+      ipSum = (ipSum & 0xffff) + (ipSum >> 16);
+    }
+    ipHeader.writeUInt16BE(~ipSum & 0xffff, 10);
+    
+    return Buffer.concat([ipHeader, icmpPacket]);
   }
   
   stop() {
@@ -45,6 +205,13 @@ export class UserSpaceNAT extends EventEmitter {
       clearInterval(this.cleanupInterval);
       this.cleanupInterval = null;
     }
+    
+    // Stop ICMP helper
+    if (this.icmpHelper) {
+      this.icmpHelper.kill();
+      this.icmpHelper = null;
+    }
+    this.icmpPending.clear();
     
     for (const [key, conn] of this.tcpConnections) {
       this._closeTCPConnection(key, conn);
@@ -84,7 +251,7 @@ export class UserSpaceNAT extends EventEmitter {
   }
 
   _handleICMP(parsed, srcNodeId, sendResponse) {
-    const { srcIp, dstIp, icmpType, icmpCode, icmpData } = parsed;
+    const { srcIp, dstIp, icmpType, icmpData } = parsed;
     
     // ICMP Echo Request (ping) = type 8
     if (icmpType === 8) {
@@ -95,9 +262,22 @@ export class UserSpaceNAT extends EventEmitter {
         const echoReply = this._buildICMPEchoReply(parsed);
         console.log(`[UserSpaceNAT] Sending ICMP Echo Reply to ${srcIp}`);
         sendResponse(srcNodeId, echoReply);
+        return;
       }
-      // For external IPs, we would need raw sockets which require root
-      // and are complex to implement. Skip for now.
+      
+      // For external IPs, use ICMP helper
+      if (this.icmpHelper && icmpData && icmpData.length >= 4) {
+        const id = icmpData.readUInt16BE(0);
+        const seq = icmpData.readUInt16BE(2);
+        const payload = icmpData.length > 4 ? icmpData.subarray(4) : Buffer.alloc(0);
+        const payloadHex = payload.toString('hex');
+        
+        const key = `${id}:${seq}`;
+        this.icmpPending.set(key, { srcIp, srcNodeId, sendResponse });
+        
+        const cmd = `REQ ${dstIp} ${id} ${seq} ${payloadHex}\n`;
+        this.icmpHelper.stdin.write(cmd);
+      }
     }
   }
 
