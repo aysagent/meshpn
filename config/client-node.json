@@ -20,7 +20,7 @@
   "virtualNetwork": "10.200.0.0/16",
   "mtu": 1400,
   "enableTun": true,
-  "directMode": true,
+  "directMode": false,
   "tun": {
     "defaultRoute": true,
     "excludeFromVPN": []
