@@ -443,8 +443,8 @@ export class UserSpaceNAT extends EventEmitter {
         
         conn.lastActivity = Date.now();
         
-        // MSS for MTU 1400 (conservative for WebRTC overhead)
-        const MSS = 1360;
+        // Larger segments for better throughput (WebRTC SCTP supports up to 64KB)
+        const MSS = 4000;
         let offset = 0;
         
         while (offset < data.length) {
