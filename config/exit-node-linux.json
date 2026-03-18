@@ -19,9 +19,7 @@
   ],
   "virtualNetwork": "10.200.0.0/16",
   "mtu": 1400,
-  "natMode": "userspace",
-  "enableTun": false,
-  "nat": {
-    "connectionTimeout": 300000
-  }
+  "natMode": "system",
+  "enableTun": true,
+  "nat": { "enabled": true, "externalInterface": null, "timeout": 300000 }
 }

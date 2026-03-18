@@ -1,5 +1,20 @@
 import { randomBytes } from 'crypto';
 
+export const PROTOCOLS = {
+  ICMP: 1,
+  TCP: 6,
+  UDP: 17
+};
+
+export const TCP_FLAGS = {
+  FIN: 0x01,
+  SYN: 0x02,
+  RST: 0x04,
+  PSH: 0x08,
+  ACK: 0x10,
+  URG: 0x20
+};
+
 export const PacketType = {
   DATA: 0x01,
   CONTROL: 0x02,
@@ -273,14 +288,193 @@ export function parseIPPacket(buffer) {
   const srcIp = `${buffer[12]}.${buffer[13]}.${buffer[14]}.${buffer[15]}`;
   const dstIp = `${buffer[16]}.${buffer[17]}.${buffer[18]}.${buffer[19]}`;
   
-  return {
+  const result = {
     version,
     valid: true,
     headerLength,
     totalLength,
     protocol,
     srcIp,
-    dstIp
+    dstIp,
+    srcPort: 0,
+    dstPort: 0,
+    data: Buffer.alloc(0)
   };
+
+  const transportOffset = headerLength;
+
+  if (protocol === PROTOCOLS.TCP && buffer.length >= transportOffset + 20) {
+    result.srcPort = buffer.readUInt16BE(transportOffset);
+    result.dstPort = buffer.readUInt16BE(transportOffset + 2);
+    result.tcpSeq = buffer.readUInt32BE(transportOffset + 4);
+    result.tcpAck = buffer.readUInt32BE(transportOffset + 8);
+    const dataOffset = ((buffer[transportOffset + 12] >> 4) & 0x0f) * 4;
+    result.tcpDataOffset = dataOffset;
+    result.tcpFlags = buffer[transportOffset + 13];
+    result.tcpFlagsSYN = !!(result.tcpFlags & TCP_FLAGS.SYN);
+    result.tcpFlagsACK = !!(result.tcpFlags & TCP_FLAGS.ACK);
+    result.tcpFlagsFIN = !!(result.tcpFlags & TCP_FLAGS.FIN);
+    result.tcpFlagsRST = !!(result.tcpFlags & TCP_FLAGS.RST);
+    result.tcpFlagsPSH = !!(result.tcpFlags & TCP_FLAGS.PSH);
+    result.tcpWindow = buffer.readUInt16BE(transportOffset + 14);
+    const payloadStart = transportOffset + dataOffset;
+    if (buffer.length > payloadStart) {
+      result.data = buffer.subarray(payloadStart);
+    }
+  } else if (protocol === PROTOCOLS.UDP && buffer.length >= transportOffset + 8) {
+    result.srcPort = buffer.readUInt16BE(transportOffset);
+    result.dstPort = buffer.readUInt16BE(transportOffset + 2);
+    result.udpLength = buffer.readUInt16BE(transportOffset + 4);
+    const payloadStart = transportOffset + 8;
+    if (buffer.length > payloadStart) {
+      result.data = buffer.subarray(payloadStart);
+    }
+  } else if (protocol === PROTOCOLS.ICMP && buffer.length >= transportOffset + 8) {
+    result.icmpType = buffer[transportOffset];
+    result.icmpCode = buffer[transportOffset + 1];
+    result.data = buffer.subarray(transportOffset + 8);
+  }
+
+  return result;
+}
+
+export function calculateIPChecksum(buffer) {
+  let sum = 0;
+  for (let i = 0; i < buffer.length; i += 2) {
+    if (i + 1 < buffer.length) {
+      sum += buffer.readUInt16BE(i);
+    } else {
+      sum += buffer[i] << 8;
+    }
+  }
+  while (sum >> 16) {
+    sum = (sum & 0xffff) + (sum >> 16);
+  }
+  return (~sum) & 0xffff;
+}
+
+export function calculateTCPChecksum(srcIp, dstIp, tcpSegment) {
+  const srcParts = srcIp.split('.').map(Number);
+  const dstParts = dstIp.split('.').map(Number);
+  
+  const pseudoHeaderLen = 12;
+  const totalLen = pseudoHeaderLen + tcpSegment.length;
+  const paddedLen = totalLen % 2 === 0 ? totalLen : totalLen + 1;
+  const buffer = Buffer.alloc(paddedLen);
+  
+  buffer[0] = srcParts[0]; buffer[1] = srcParts[1];
+  buffer[2] = srcParts[2]; buffer[3] = srcParts[3];
+  buffer[4] = dstParts[0]; buffer[5] = dstParts[1];
+  buffer[6] = dstParts[2]; buffer[7] = dstParts[3];
+  buffer[8] = 0;
+  buffer[9] = PROTOCOLS.TCP;
+  buffer.writeUInt16BE(tcpSegment.length, 10);
+  tcpSegment.copy(buffer, 12);
+  
+  return calculateIPChecksum(buffer);
+}
+
+export function calculateUDPChecksum(srcIp, dstIp, udpDatagram) {
+  const srcParts = srcIp.split('.').map(Number);
+  const dstParts = dstIp.split('.').map(Number);
+  
+  const pseudoHeaderLen = 12;
+  const totalLen = pseudoHeaderLen + udpDatagram.length;
+  const paddedLen = totalLen % 2 === 0 ? totalLen : totalLen + 1;
+  const buffer = Buffer.alloc(paddedLen);
+  
+  buffer[0] = srcParts[0]; buffer[1] = srcParts[1];
+  buffer[2] = srcParts[2]; buffer[3] = srcParts[3];
+  buffer[4] = dstParts[0]; buffer[5] = dstParts[1];
+  buffer[6] = dstParts[2]; buffer[7] = dstParts[3];
+  buffer[8] = 0;
+  buffer[9] = PROTOCOLS.UDP;
+  buffer.writeUInt16BE(udpDatagram.length, 10);
+  udpDatagram.copy(buffer, 12);
+  
+  return calculateIPChecksum(buffer);
+}
+
+export function buildTCPSegment(srcPort, dstPort, seq, ack, flags, data = Buffer.alloc(0), windowSize = 65535) {
+  const dataOffset = 5;
+  const headerLen = dataOffset * 4;
+  const segment = Buffer.alloc(headerLen + data.length);
+  
+  segment.writeUInt16BE(srcPort, 0);
+  segment.writeUInt16BE(dstPort, 2);
+  segment.writeUInt32BE(seq >>> 0, 4);
+  segment.writeUInt32BE(ack >>> 0, 8);
+  segment[12] = (dataOffset << 4);
+  segment[13] = flags;
+  segment.writeUInt16BE(windowSize, 14);
+  segment.writeUInt16BE(0, 16);
+  segment.writeUInt16BE(0, 18);
+  
+  if (data.length > 0) {
+    data.copy(segment, headerLen);
+  }
+  
+  return segment;
+}
+
+export function buildIPPacket(srcIp, dstIp, protocol, payload, id = null) {
+  const srcParts = srcIp.split('.').map(Number);
+  const dstParts = dstIp.split('.').map(Number);
+  
+  const headerLen = 20;
+  const totalLen = headerLen + payload.length;
+  const packet = Buffer.alloc(totalLen);
+  
+  packet[0] = 0x45;
+  packet[1] = 0;
+  packet.writeUInt16BE(totalLen, 2);
+  packet.writeUInt16BE(id || (Math.random() * 0xffff) >>> 0, 4);
+  packet.writeUInt16BE(0x4000, 6);
+  packet[8] = 64;
+  packet[9] = protocol;
+  packet.writeUInt16BE(0, 10);
+  
+  packet[12] = srcParts[0]; packet[13] = srcParts[1];
+  packet[14] = srcParts[2]; packet[15] = srcParts[3];
+  packet[16] = dstParts[0]; packet[17] = dstParts[1];
+  packet[18] = dstParts[2]; packet[19] = dstParts[3];
+  
+  const checksum = calculateIPChecksum(packet.subarray(0, 20));
+  packet.writeUInt16BE(checksum, 10);
+  
+  payload.copy(packet, headerLen);
+  
+  return packet;
+}
+
+export function buildTCPPacket(srcIp, dstIp, srcPort, dstPort, seq, ack, flags, data = Buffer.alloc(0)) {
+  const tcpSegment = buildTCPSegment(srcPort, dstPort, seq, ack, flags, data);
+  const checksum = calculateTCPChecksum(srcIp, dstIp, tcpSegment);
+  tcpSegment.writeUInt16BE(checksum, 16);
+  return buildIPPacket(srcIp, dstIp, PROTOCOLS.TCP, tcpSegment);
+}
+
+export function buildUDPDatagram(srcPort, dstPort, data) {
+  const headerLen = 8;
+  const totalLen = headerLen + data.length;
+  const datagram = Buffer.alloc(totalLen);
+  
+  datagram.writeUInt16BE(srcPort, 0);
+  datagram.writeUInt16BE(dstPort, 2);
+  datagram.writeUInt16BE(totalLen, 4);
+  datagram.writeUInt16BE(0, 6);
+  
+  if (data.length > 0) {
+    data.copy(datagram, headerLen);
+  }
+  
+  return datagram;
+}
+
+export function buildUDPPacket(srcIp, dstIp, srcPort, dstPort, data) {
+  const udpDatagram = buildUDPDatagram(srcPort, dstPort, data);
+  const checksum = calculateUDPChecksum(srcIp, dstIp, udpDatagram);
+  udpDatagram.writeUInt16BE(checksum, 6);
+  return buildIPPacket(srcIp, dstIp, PROTOCOLS.UDP, udpDatagram);
 }
 

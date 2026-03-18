@@ -4,10 +4,20 @@ export {
   PacketType,
   DEFAULT_TTL,
   MAX_TTL,
+  PROTOCOLS,
+  TCP_FLAGS,
   createDataPacket, 
   createPingPacket, 
   createPongPacket,
   createAckPacket,
-  parseIPPacket
+  parseIPPacket,
+  calculateIPChecksum,
+  calculateTCPChecksum,
+  calculateUDPChecksum,
+  buildTCPSegment,
+  buildIPPacket,
+  buildTCPPacket,
+  buildUDPDatagram,
+  buildUDPPacket
 } from './packet.js';
 export { VirtualIPManager, RoutingTable } from './ip-manager.js';

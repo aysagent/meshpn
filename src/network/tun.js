@@ -184,6 +184,7 @@ export class TunInterface extends EventEmitter {
   }
   
   _processHelperData(data) {
+    console.log(`[TUN] Received ${data.length} bytes from helper`);
     this.readBuffer = Buffer.concat([this.readBuffer, data]);
     
     while (this.readBuffer.length >= 4) {
@@ -203,6 +204,7 @@ export class TunInterface extends EventEmitter {
       this.readBuffer = this.readBuffer.subarray(4 + packetLen);
       
       if (packet.length > 0) {
+        console.log(`[TUN] Emitting packet, length: ${packet.length}`);
         this.emit('packet', Buffer.from(packet));
       }
     }
@@ -356,6 +358,7 @@ export class TunManager extends EventEmitter {
     });
     
     this.tun.on('packet', (packet) => {
+      console.log(`[TunManager] Received packet from TUN, forwarding as outbound-packet, length: ${packet.length}`);
       this.emit('outbound-packet', packet);
     });
     

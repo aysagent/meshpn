@@ -3,25 +3,42 @@ import { Identity } from './crypto/index.js';
 import fs from 'fs';
 import path from 'path';
 
-function loadConfig() {
-  const configPaths = [
+function loadConfig(role) {
+  let config = {};
+  
+  const basePaths = [
     './config/default.json',
     './config.json',
     path.join(process.env.HOME || '', '.mesh-vpn/config.json')
   ];
   
-  for (const configPath of configPaths) {
+  for (const configPath of basePaths) {
     try {
       if (fs.existsSync(configPath)) {
         const content = fs.readFileSync(configPath, 'utf8');
-        return JSON.parse(content);
+        config = { ...config, ...JSON.parse(content) };
+        break;
       }
     } catch (err) {
       console.warn(`Failed to load config from ${configPath}:`, err.message);
     }
   }
   
-  return {};
+  if (role) {
+    const rolePath = `./config/${role}-node.json`;
+    try {
+      if (fs.existsSync(rolePath)) {
+        const roleContent = fs.readFileSync(rolePath, 'utf8');
+        const roleConfig = JSON.parse(roleContent);
+        config = { ...config, ...roleConfig };
+        console.log(`Loaded role-specific config from ${rolePath}`);
+      }
+    } catch (err) {
+      console.warn(`Failed to load role config from ${rolePath}:`, err.message);
+    }
+  }
+  
+  return config;
 }
 
 function parseArgs() {
@@ -71,8 +88,9 @@ Examples:
 async function main() {
   console.log('Mesh VPN Node starting...');
   
-  const fileConfig = loadConfig();
   const argsConfig = parseArgs();
+  const role = argsConfig.role || process.env.NODE_ROLE || 'client';
+  const fileConfig = loadConfig(role);
   
   const config = {
     ...fileConfig,
@@ -83,9 +101,7 @@ async function main() {
     config.signallingServer = process.env.SIGNALLING_SERVER || 'ws://localhost:8080';
   }
   
-  if (!config.role) {
-    config.role = process.env.NODE_ROLE || 'client';
-  }
+  config.role = role;
   
   if (config.turnServers && config.turnServers.length > 0) {
     config.iceServers = [

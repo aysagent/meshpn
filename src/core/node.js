@@ -6,7 +6,8 @@ import { TransportManager } from '../transport/index.js';
 import { PeerDiscovery } from '../control/index.js';
 import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
 import { TunManager, Packet, PacketType, parseIPPacket } from '../network/index.js';
-import { NATManager } from '../exit/index.js';
+import { NATManager, UserSpaceNAT } from '../exit/index.js';
+import http from 'http';
 
 export class MeshNode extends EventEmitter {
   constructor(config) {
@@ -76,7 +77,20 @@ export class MeshNode extends EventEmitter {
     this.natMappings = new Map();
     this.natMappingTimeout = config.natMappingTimeout || 300000;
     
-    this.natManager = this.isExit ? new NATManager(config.nat || {}) : null;
+    this.natMode = config.natMode || 'system';
+    
+    if (this.isExit) {
+      if (this.natMode === 'userspace') {
+        this.userSpaceNAT = new UserSpaceNAT(config.nat || {});
+        this.natManager = null;
+      } else {
+        this.userSpaceNAT = null;
+        this.natManager = new NATManager(config.nat || {});
+      }
+    } else {
+      this.userSpaceNAT = null;
+      this.natManager = null;
+    }
     
     this.running = false;
   }
@@ -149,13 +163,25 @@ export class MeshNode extends EventEmitter {
       this.virtualIp = info.virtualIp;
       console.log(`Registered with virtual IP: ${this.virtualIp}`);
       
-      const needsTun = (this.isClient || this.isExit) && this.config.enableTun !== false;
+      if (this.isExit && this.natMode === 'userspace') {
+        this.userSpaceNAT.setLocalVirtualIp(this.virtualIp);
+        this.userSpaceNAT.start();
+        this._startEchoServer();
+        console.log('Exit node ready (user-space NAT)');
+        this.emit('registered', info);
+        return;
+      }
       
+      const needsTun = (this.isClient || (this.isExit && this.natMode === 'system')) && this.config.enableTun !== false;
+      
+      console.log(`[DEBUG] needsTun=${needsTun}, this.tunManager=${!!this.tunManager}, isClient=${this.isClient}`);
       if (needsTun && !this.tunManager) {
         this.tunManager = new TunManager(this.config.tun || {});
+        console.log(`[DEBUG] Created TunManager, attaching outbound-packet handler`);
         
         if (this.isClient) {
           this.tunManager.on('outbound-packet', (packet) => {
+            console.log(`[DEBUG] outbound-packet handler called, packet length: ${packet.length}`);
             this._handleOutboundPacket(packet);
           });
         } else if (this.isExit) {
@@ -169,7 +195,7 @@ export class MeshNode extends EventEmitter {
           if (this.isRelay) {
             console.log('Running as client-relay: TUN enabled + packet forwarding');
           } else if (this.isExit) {
-            console.log('Exit node TUN interface ready');
+            console.log('Exit node TUN interface ready (system NAT)');
             
             if (this.natManager && this.config.nat?.enabled !== false) {
               const tunName = this.tunManager.getInterfaceName();
@@ -222,7 +248,10 @@ export class MeshNode extends EventEmitter {
   }
 
   _handleOutboundPacket(ipPacket) {
-    if (!this.running) return;
+    if (!this.running) {
+      console.log('[TUN] DROP: not running');
+      return;
+    }
     
     const parsed = parseIPPacket(ipPacket);
     if (!parsed || !parsed.valid) {
@@ -230,11 +259,16 @@ export class MeshNode extends EventEmitter {
       return;
     }
     
+    console.log(`[TUN] Parsed: ${parsed.srcIp} -> ${parsed.dstIp}, myVirtualIp=${this.virtualIp}`);
+    
     if (!parsed.srcIp.startsWith('10.200.')) {
+      console.log(`[TUN] DROP: srcIp ${parsed.srcIp} not in 10.200.x.x`);
       return;
     }
     
-    if (parsed.srcIp === this.virtualIp && parsed.dstIp.startsWith('10.200.')) {
+    // Only drop packets to self (loopback)
+    if (parsed.srcIp === this.virtualIp && parsed.dstIp === this.virtualIp) {
+      console.log(`[TUN] DROP: packet to self`);
       return;
     }
     
@@ -401,6 +435,14 @@ export class MeshNode extends EventEmitter {
   }
 
   async _processExitPacket(packet, payload) {
+    if (this.userSpaceNAT) {
+      const sendResponse = (targetNodeId, responsePacket) => {
+        this._sendExitResponse(targetNodeId, responsePacket);
+      };
+      this.userSpaceNAT.handlePacket(payload, packet.srcNode, sendResponse);
+      return;
+    }
+    
     if (!this.tunManager) {
       console.warn('[EXIT] No TUN manager for exit node');
       return;
@@ -615,6 +657,20 @@ export class MeshNode extends EventEmitter {
     return this.transportManager.send(peerId, pingPacket.serialize());
   }
 
+  _startEchoServer() {
+    const port = 8888;
+    this.echoServer = http.createServer((req, res) => {
+      console.log(`[ECHO] Request from ${req.socket.remoteAddress}: ${req.method} ${req.url}`);
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(`Hello from exit node!\nVirtual IP: ${this.virtualIp}\nNode ID: ${this.nodeId}\nTimestamp: ${new Date().toISOString()}\n`);
+    });
+    
+    this.echoServer.listen(port, '0.0.0.0', () => {
+      console.log(`[ECHO] Test server listening on port ${port}`);
+      console.log(`[ECHO] Test with: curl http://${this.virtualIp}:${port}/`);
+    });
+  }
+
   getStats() {
     return {
       nodeId: this.nodeId,
@@ -653,6 +709,10 @@ export class MeshNode extends EventEmitter {
     
     this._stopCacheCleanup();
     this.reorderBuffer.stop();
+    
+    if (this.userSpaceNAT) {
+      this.userSpaceNAT.stop();
+    }
     
     if (this.exitNodeHandler) {
       this.exitNodeHandler.stop();
