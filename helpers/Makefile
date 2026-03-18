@@ -1,19 +1,20 @@
-# Makefile for utun-helper (macOS only)
+# Makefile for TUN helpers
 
 CC ?= cc
 CFLAGS = -O2 -Wall -Wextra
 
 .PHONY: all clean
 
-all: utun-helper
-
-utun-helper: utun-helper.c
+all:
 	@if [ "$$(uname)" = "Darwin" ]; then \
-		$(CC) $(CFLAGS) -o $@ $<; \
+		$(CC) $(CFLAGS) -o utun-helper utun-helper.c; \
 		echo "Built utun-helper for macOS"; \
+	elif [ "$$(uname)" = "Linux" ]; then \
+		$(CC) $(CFLAGS) -o tun-helper tun-helper-linux.c; \
+		echo "Built tun-helper for Linux"; \
 	else \
-		echo "Skipping utun-helper build (not macOS)"; \
+		echo "Unsupported platform"; \
 	fi
 
 clean:
-	rm -f utun-helper
+	rm -f utun-helper tun-helper

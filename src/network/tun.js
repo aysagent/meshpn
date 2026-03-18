@@ -5,11 +5,10 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const LINUX_TUN_PATH = '/dev/net/tun';
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const UTUN_HELPER_PATH = path.join(__dirname, '../../helpers/utun-helper');
+const TUN_HELPER_LINUX_PATH = path.join(__dirname, '../../helpers/tun-helper');
 
 export class TunInterface extends EventEmitter {
   constructor(config = {}) {
@@ -79,47 +78,85 @@ export class TunInterface extends EventEmitter {
   }
 
   async _openLinux() {
-    if (this.config.tunName) {
-      this.name = this.config.tunName;
-    } else {
-      this.name = this._findFreeTunName();
-    }
+    const tunName = this.config.tunName || 'tun0';
     
     return new Promise((resolve, reject) => {
-      try {
-        fs.open(LINUX_TUN_PATH, 'r+', (err, fd) => {
-          if (err) {
-            reject(new Error(`Failed to open ${LINUX_TUN_PATH}: ${err.message}`));
-            return;
-          }
-          
-          this.fd = fd;
-          
-          this._configureLinuxTun(fd)
-            .then(() => resolve())
-            .catch(reject);
-        });
-      } catch (err) {
-        reject(err);
+      console.log('Creating TUN interface via helper...');
+      
+      if (!fs.existsSync(TUN_HELPER_LINUX_PATH)) {
+        reject(new Error(`tun-helper not found at ${TUN_HELPER_LINUX_PATH}. Run: cd helpers && make`));
+        return;
       }
+      
+      this.helperProcess = spawn(TUN_HELPER_LINUX_PATH, [tunName], {
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+      
+      let interfaceNameReceived = false;
+      
+      this.helperProcess.stderr.once('data', (data) => {
+        const output = data.toString().trim();
+        if (output.startsWith('ERROR:')) {
+          reject(new Error(`tun-helper: ${output}`));
+          return;
+        }
+        
+        this.name = output;
+        interfaceNameReceived = true;
+        console.log(`Created TUN interface: ${this.name}`);
+        
+        this._configureLinuxTun();
+        resolve();
+      });
+      
+      this.helperProcess.stdout.on('data', (data) => {
+        if (!this.running) return;
+        this._processHelperData(data);
+      });
+      
+      this.helperProcess.on('error', (err) => {
+        console.error(`tun-helper error: ${err.message}`);
+        if (!interfaceNameReceived) {
+          reject(err);
+        } else {
+          this.emit('error', err);
+        }
+      });
+      
+      this.helperProcess.on('close', (code) => {
+        if (this.running) {
+          console.log(`tun-helper exited with code ${code}`);
+          this.running = false;
+          this.emit('close');
+        }
+      });
+      
+      setTimeout(() => {
+        if (!interfaceNameReceived) {
+          this.helperProcess.kill();
+          reject(new Error('Timeout waiting for TUN interface name'));
+        }
+      }, 5000);
     });
   }
 
-  async _configureLinuxTun(fd) {
+  _configureLinuxTun() {
     try {
-      execSync(`ip tuntap add dev ${this.name} mode tun`, { stdio: 'ignore' });
-    } catch {
-      // Interface might already exist
+      execSync(`ip addr add ${this.virtualIp}/16 dev ${this.name} 2>/dev/null || true`, { stdio: 'ignore' });
+      execSync(`ip link set dev ${this.name} mtu ${this.mtu}`);
+      execSync(`ip link set dev ${this.name} up`);
+      
+      const networkPrefix = this.virtualIp.split('.').slice(0, 2).join('.');
+      try {
+        execSync(`ip route add ${networkPrefix}.0.0/16 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+        console.log(`Added route for ${networkPrefix}.0.0/16 via ${this.name}`);
+      } catch {
+        console.log(`Route for ${networkPrefix}.0.0/16 may already exist`);
+      }
+    } catch (err) {
+      console.warn(`Warning: Could not configure ${this.name}:`, err.message);
+      console.log('You may need to run with sudo.');
     }
-    
-    execSync(`ip addr add ${this.virtualIp}/16 dev ${this.name}`);
-    execSync(`ip link set dev ${this.name} mtu ${this.mtu}`);
-    execSync(`ip link set dev ${this.name} up`);
-    
-    const networkPrefix = this.virtualIp.split('.').slice(0, 2).join('.');
-    console.log(`Route for ${networkPrefix}.0.0/16 configured via ${this.name}`);
-    
-    this._startReadLoop();
   }
 
   async _openMacOS() {
@@ -256,36 +293,18 @@ export class TunInterface extends EventEmitter {
 
   write(packet) {
     if (!this.running) {
-      console.log('[TUN] Write failed: not running');
       return false;
     }
     
-    console.log(`[TUN] Writing packet to ${this.name}, length: ${packet.length}`);
-    
-    if (this.platform === 'linux' && this.fd !== null) {
-      return this._writeLinux(packet);
-    } else if (this.platform === 'darwin') {
-      return this._writeMacOS(packet);
+    // Both Linux and macOS now use helper process
+    if (this.helperProcess && this.helperProcess.stdin.writable) {
+      return this._writeViaHelper(packet);
     }
     
     return false;
   }
 
-  _writeLinux(packet) {
-    try {
-      fs.writeSync(this.fd, packet);
-      return true;
-    } catch (err) {
-      this.emit('error', err);
-      return false;
-    }
-  }
-
-  _writeMacOS(packet) {
-    if (!this.helperProcess || !this.helperProcess.stdin.writable) {
-      return false;
-    }
-    
+  _writeViaHelper(packet) {
     try {
       const header = Buffer.alloc(4);
       header.writeUInt32BE(packet.length, 0);
@@ -298,6 +317,7 @@ export class TunInterface extends EventEmitter {
       return false;
     }
   }
+
 
   async close() {
     this.running = false;
