@@ -22,7 +22,8 @@ export const PacketType = {
   PONG: 0x04,
   ACK: 0x05,
   ROUTE_REQUEST: 0x06,
-  ROUTE_RESPONSE: 0x07
+  ROUTE_RESPONSE: 0x07,
+  DATA_DIRECT: 0x08
 };
 
 export const DEFAULT_TTL = 32;

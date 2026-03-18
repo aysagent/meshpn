@@ -88,6 +88,7 @@ export class MeshNode extends EventEmitter {
     this.natMappingTimeout = config.natMappingTimeout || 300000;
     
     this.natMode = config.natMode || 'system';
+    this.directMode = config.directMode || false;
     
     if (this.isExit) {
       if (this.natMode === 'userspace') {
@@ -323,46 +324,52 @@ export class MeshNode extends EventEmitter {
     // Only drop packets to self (loopback)
     if (parsed.srcIp === this.virtualIp && parsed.dstIp === this.virtualIp) return;
     
-    console.log(`[TUN] Outbound: ${parsed.srcIp}:${parsed.srcPort} -> ${parsed.dstIp}:${parsed.dstPort}`);
-    
     const routeInfo = this.router.findRouteToExit();
     if (!routeInfo) {
-      console.warn('[TUN] No route to exit node available');
       return;
     }
     
-    console.log(`[TUN] Route found: exit=${routeInfo.exitNode}, hops=${routeInfo.route.length}`);
     this._sendThroughMesh(ipPacket, routeInfo);
   }
 
   _sendThroughMesh(payload, routeInfo) {
     const { route, exitNode } = routeInfo;
     
-    const routeWithKeys = [];
-    for (const nodeId of route) {
-      const sessionKey = this.discovery.getSessionKey(nodeId);
-      if (!sessionKey) {
-        console.warn(`No session key for ${nodeId}`);
-        return;
-      }
-      routeWithKeys.push({ nodeId, sessionKey });
-    }
-    
     try {
-      const onionPacket = createOnionPacket(payload, routeWithKeys);
+      let encryptedPayload;
+      
+      if (this.directMode && route.length === 1) {
+        // Direct mode: single encryption layer to exit node
+        const sessionKey = this.discovery.getSessionKey(exitNode);
+        if (!sessionKey) {
+          console.warn(`No session key for ${exitNode}`);
+          return;
+        }
+        encryptedPayload = encrypt(payload, sessionKey);
+      } else {
+        // Onion routing: multiple encryption layers
+        const routeWithKeys = [];
+        for (const nodeId of route) {
+          const sessionKey = this.discovery.getSessionKey(nodeId);
+          if (!sessionKey) {
+            console.warn(`No session key for ${nodeId}`);
+            return;
+          }
+          routeWithKeys.push({ nodeId, sessionKey });
+        }
+        encryptedPayload = createOnionPacket(payload, routeWithKeys);
+      }
       
       const packet = new Packet({
-        type: PacketType.DATA,
+        type: this.directMode ? PacketType.DATA_DIRECT : PacketType.DATA,
         srcNode: this.nodeId,
         dstNode: exitNode,
         route,
-        payload: onionPacket
+        payload: encryptedPayload
       });
       
       const nextHop = route[0];
       const serialized = packet.serialize();
-      
-      console.log(`[TUN] Sending packet to next hop: ${nextHop}, serialized size: ${serialized.length}`);
       
       if (!this.transportManager.send(nextHop, serialized)) {
         console.warn(`[TUN] Failed to send to ${nextHop}`);
@@ -371,7 +378,7 @@ export class MeshNode extends EventEmitter {
         this.trafficStats.packetsSent++;
       }
     } catch (err) {
-      console.error('[TUN] Failed to create onion packet:', err.message);
+      console.error('[TUN] Failed to send packet:', err.message);
     }
   }
 
@@ -382,6 +389,9 @@ export class MeshNode extends EventEmitter {
       switch (packet.type) {
         case PacketType.DATA:
           this._handleDataPacket(peerId, packet);
+          break;
+        case PacketType.DATA_DIRECT:
+          this._handleDirectDataPacket(peerId, packet);
           break;
         case PacketType.PING:
           this._handlePing(peerId, packet);
@@ -401,7 +411,6 @@ export class MeshNode extends EventEmitter {
   }
 
   _handleDataPacket(peerId, packet) {
-    console.log(`[MESH] Received data packet from ${peerId}, flowId=${packet.flowId}, dst=${packet.dstNode}`);
     this.loopStats.totalProcessed++;
     
     if (packet.isTTLExpired()) {
@@ -460,6 +469,39 @@ export class MeshNode extends EventEmitter {
     }
   }
 
+  _handleDirectDataPacket(peerId, packet) {
+    // Direct mode: single encryption layer, no onion routing
+    this.loopStats.totalProcessed++;
+    
+    if (packet.dstNode !== this.nodeId) {
+      // Forward to destination (relay)
+      const serialized = packet.serialize();
+      if (!this.transportManager.send(packet.dstNode, serialized)) {
+        console.warn(`Failed to forward direct packet to ${packet.dstNode}`);
+      }
+      return;
+    }
+    
+    // We are the destination
+    try {
+      const sessionKey = this.discovery.getSessionKey(packet.srcNode);
+      if (!sessionKey) {
+        console.warn(`No session key for ${packet.srcNode}`);
+        return;
+      }
+      
+      const payload = decrypt(packet.payload, sessionKey);
+      
+      if (this.isExit) {
+        this._processExitPacket(packet, payload);
+      } else if (this.isClient) {
+        this.reorderBuffer.add(payload, packet);
+      }
+    } catch (err) {
+      console.error('Failed to decrypt direct packet:', err.message);
+    }
+  }
+
   _forwardPacket(originalPacket, nextHop, newPayload, fromPeerId = null) {
     if (nextHop === fromPeerId) {
       this.loopStats.splitHorizonDropped++;
@@ -508,7 +550,6 @@ export class MeshNode extends EventEmitter {
       }
       
       const { srcIp, dstIp, srcPort, dstPort, protocol } = parsed;
-      console.log(`[EXIT] Processing: ${srcIp}:${srcPort} -> ${dstIp}:${dstPort} proto=${protocol}`);
       
       const mappingKey = `${srcIp}:${srcPort}:${dstIp}:${dstPort}:${protocol}`;
       this.natMappings.set(mappingKey, {
@@ -521,10 +562,7 @@ export class MeshNode extends EventEmitter {
         createdAt: Date.now()
       });
       
-      console.log(`[EXIT] NAT mapping created: ${mappingKey} -> ${packet.srcNode}`);
-      
       this.tunManager.injectPacket(payload);
-      console.log(`[EXIT] Packet injected to TUN`);
       
     } catch (err) {
       console.error('[EXIT] Processing failed:', err.message);
@@ -545,11 +583,8 @@ export class MeshNode extends EventEmitter {
       const mapping = this.natMappings.get(mappingKey);
       
       if (!mapping) {
-        console.warn(`[EXIT] No NAT mapping for ${mappingKey}`);
         return;
       }
-      
-      console.log(`[EXIT] Response: ${srcIp}:${srcPort} -> ${dstIp}:${dstPort} for client ${mapping.srcNodeId}`);
       
       this._sendExitResponse(mapping.srcNodeId, packet);
     }
@@ -562,39 +597,49 @@ export class MeshNode extends EventEmitter {
       return;
     }
     
-    console.log(`[EXIT] Sending response via: ${routeInfo.join(' -> ')}`);
-    
     const route = routeInfo.slice(1);
-    const routeWithKeys = [];
-    
-    for (const nodeId of route) {
-      const sessionKey = this.discovery.getSessionKey(nodeId);
-      if (!sessionKey) {
-        console.warn(`No session key for ${nodeId}`);
-        return;
-      }
-      routeWithKeys.push({ nodeId, sessionKey });
-    }
+    const useDirectMode = route.length === 1;
     
     try {
-      const onionPacket = createOnionPacket(ipPacket, routeWithKeys);
+      let encryptedPayload;
+      let packetType;
+      
+      if (useDirectMode) {
+        // Direct mode: single encryption to target
+        const sessionKey = this.discovery.getSessionKey(targetNodeId);
+        if (!sessionKey) {
+          console.warn(`No session key for ${targetNodeId}`);
+          return;
+        }
+        encryptedPayload = encrypt(ipPacket, sessionKey);
+        packetType = PacketType.DATA_DIRECT;
+      } else {
+        // Onion routing
+        const routeWithKeys = [];
+        for (const nodeId of route) {
+          const sessionKey = this.discovery.getSessionKey(nodeId);
+          if (!sessionKey) {
+            console.warn(`No session key for ${nodeId}`);
+            return;
+          }
+          routeWithKeys.push({ nodeId, sessionKey });
+        }
+        encryptedPayload = createOnionPacket(ipPacket, routeWithKeys);
+        packetType = PacketType.DATA;
+      }
       
       const packet = new Packet({
-        type: PacketType.DATA,
+        type: packetType,
         srcNode: this.nodeId,
         dstNode: targetNodeId,
         route,
-        payload: onionPacket
+        payload: encryptedPayload
       });
       
       const nextHop = route[0];
       const serialized = packet.serialize();
       
-      console.log(`[EXIT] Sending to ${nextHop}, size: ${serialized.length}`);
-      const sent = this.transportManager.send(nextHop, serialized);
-      if (sent) {
-        console.log(`[EXIT] Response sent successfully`);
-      } else {
+      if (!this.transportManager.send(nextHop, serialized)) {
         console.warn(`[EXIT] Failed to send to ${nextHop}`);
       }
     } catch (err) {

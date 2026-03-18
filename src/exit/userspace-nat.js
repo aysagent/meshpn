@@ -255,12 +255,10 @@ export class UserSpaceNAT extends EventEmitter {
     
     // ICMP Echo Request (ping) = type 8
     if (icmpType === 8) {
-      console.log(`[UserSpaceNAT] ICMP Echo Request from ${srcIp} to ${dstIp}`);
       
       // If destination is our virtual IP, reply directly
       if (dstIp === this.localVirtualIp) {
         const echoReply = this._buildICMPEchoReply(parsed);
-        console.log(`[UserSpaceNAT] Sending ICMP Echo Reply to ${srcIp}`);
         sendResponse(srcNodeId, echoReply);
         return;
       }
@@ -382,7 +380,6 @@ export class UserSpaceNAT extends EventEmitter {
       const actualDstIp = (this.localVirtualIp && dstIp === this.localVirtualIp) ? '127.0.0.1' : dstIp;
       const isLocal = actualDstIp === '127.0.0.1';
       
-      console.log(`[UserSpaceNAT] Connecting to ${dstIp}:${dstPort}${isLocal ? ' (local)' : ''}`);
 
       conn = {
         key,
@@ -412,7 +409,6 @@ export class UserSpaceNAT extends EventEmitter {
 
       socket.on('connect', () => {
         this.connectingCount--;
-        console.log(`[UserSpaceNAT] Connected to ${dstIp}:${dstPort}`);
         
         if (conn.state === TCP_STATE.CLOSED) {
           socket.destroy();
@@ -448,58 +444,52 @@ export class UserSpaceNAT extends EventEmitter {
         
         conn.lastActivity = Date.now();
         
-        // Segment large data into smaller chunks (MSS ~1360 for MTU 1400)
-        const MSS = 1360;
-        const chunks = [];
+        // Send data in larger chunks for better throughput
+        // WebRTC SCTP can handle up to 256KB, but we stay conservative
+        const CHUNK_SIZE = 16384; // 16KB chunks
+        const MAX_PENDING = 500;
         
-        for (let offset = 0; offset < data.length; offset += MSS) {
-          chunks.push(data.subarray(offset, offset + MSS));
-        }
+        // Build all packets first
+        const packets = [];
+        let offset = 0;
+        let tempSeq = conn.serverSeq;
         
-        conn.pendingChunks += chunks.length;
-        
-        // Pause socket if too many chunks pending
-        const MAX_PENDING = 100;
-        if (conn.pendingChunks > MAX_PENDING && !socket.isPaused()) {
-          socket.pause();
-        }
-        
-        // Send chunks with yielding to event loop to prevent blocking
-        const sendChunks = (index) => {
-          if (index >= chunks.length || conn.state === TCP_STATE.CLOSED) return;
-          
-          const chunk = chunks[index];
-          const isLast = index === chunks.length - 1;
+        while (offset < data.length) {
+          const chunk = data.subarray(offset, Math.min(offset + CHUNK_SIZE, data.length));
+          const isLast = offset + CHUNK_SIZE >= data.length;
           
           const responsePacket = buildTCPPacket(
             dstIp, srcIp,
             dstPort, srcPort,
-            conn.serverSeq,
+            tempSeq,
             conn.clientAck,
             isLast ? (TCP_FLAGS.PSH | TCP_FLAGS.ACK) : TCP_FLAGS.ACK,
             chunk
           );
-
-          conn.serverSeq += chunk.length;
-          conn.pendingChunks--;
-          sendResponse(srcNodeId, responsePacket);
           
-          // Resume socket if pending chunks dropped
-          if (conn.pendingChunks < MAX_PENDING / 2 && socket.isPaused()) {
-            socket.resume();
-          }
-          
-          // Yield to event loop every few chunks
-          if (index < chunks.length - 1) {
-            if ((index + 1) % 10 === 0) {
-              setImmediate(() => sendChunks(index + 1));
-            } else {
-              sendChunks(index + 1);
-            }
-          }
-        };
+          packets.push(responsePacket);
+          tempSeq += chunk.length;
+          offset += chunk.length;
+        }
         
-        sendChunks(0);
+        conn.serverSeq = tempSeq;
+        conn.pendingChunks += packets.length;
+        
+        // Pause socket if too many chunks pending
+        if (conn.pendingChunks > MAX_PENDING && !socket.isPaused()) {
+          socket.pause();
+        }
+        
+        // Send all packets immediately (no yield for speed)
+        for (const packet of packets) {
+          sendResponse(srcNodeId, packet);
+          conn.pendingChunks--;
+        }
+        
+        // Resume socket if pending dropped
+        if (conn.pendingChunks < MAX_PENDING / 2 && socket.isPaused()) {
+          socket.resume();
+        }
       });
 
       socket.on('end', () => {
