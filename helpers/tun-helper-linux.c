@@ -27,6 +27,7 @@ static int tun_fd = -1;
 static volatile int running = 1;
 
 void signal_handler(int sig) {
+    (void)sig;
     running = 0;
 }
 
@@ -150,7 +151,9 @@ int main(int argc, char *argv[]) {
                     break;
                 }
 
-                write(tun_fd, stdin_buffer + 4, packet_len);
+                if (write(tun_fd, stdin_buffer + 4, packet_len) < 0) {
+                    // Ignore write errors
+                }
 
                 int remaining = stdin_buffer_len - 4 - packet_len;
                 if (remaining > 0) {

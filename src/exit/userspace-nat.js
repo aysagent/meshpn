@@ -267,18 +267,28 @@ export class UserSpaceNAT extends EventEmitter {
         
         conn.lastActivity = Date.now();
         
-        const responsePacket = buildTCPPacket(
-          dstIp, srcIp,
-          dstPort, srcPort,
-          conn.serverSeq,
-          conn.clientAck,
-          TCP_FLAGS.PSH | TCP_FLAGS.ACK,
-          data
-        );
+        // Segment large data into smaller chunks (MSS ~1360 for MTU 1400)
+        const MSS = 1360;
+        let offset = 0;
+        
+        while (offset < data.length) {
+          const chunk = data.subarray(offset, offset + MSS);
+          const isLast = (offset + MSS >= data.length);
+          
+          const responsePacket = buildTCPPacket(
+            dstIp, srcIp,
+            dstPort, srcPort,
+            conn.serverSeq,
+            conn.clientAck,
+            isLast ? (TCP_FLAGS.PSH | TCP_FLAGS.ACK) : TCP_FLAGS.ACK,
+            chunk
+          );
 
-        conn.serverSeq += data.length;
+          conn.serverSeq += chunk.length;
+          offset += chunk.length;
 
-        sendResponse(srcNodeId, responsePacket);
+          sendResponse(srcNodeId, responsePacket);
+        }
       });
 
       socket.on('end', () => {
