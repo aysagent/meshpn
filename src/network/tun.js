@@ -153,9 +153,56 @@ export class TunInterface extends EventEmitter {
       } catch {
         console.log(`Route for ${networkPrefix}.0.0/16 may already exist`);
       }
+      
+      // Configure DNS through VPN
+      this._configureDNS();
     } catch (err) {
       console.warn(`Warning: Could not configure ${this.name}:`, err.message);
       console.log('You may need to run with sudo.');
+    }
+  }
+
+  _configureDNS() {
+    const dnsServers = ['8.8.8.8', '8.8.4.4', '1.1.1.1', '1.0.0.1'];
+    
+    try {
+      // Add routes to DNS servers through TUN
+      for (const dns of dnsServers) {
+        try {
+          execSync(`ip route add ${dns}/32 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+        } catch {
+          // Route may already exist
+        }
+      }
+      console.log(`Added routes for DNS servers via ${this.name}`);
+      
+      // Backup original resolv.conf
+      try {
+        if (fs.existsSync('/etc/resolv.conf') && !fs.existsSync('/etc/resolv.conf.vpn-backup')) {
+          execSync('cp /etc/resolv.conf /etc/resolv.conf.vpn-backup', { stdio: 'ignore' });
+        }
+      } catch {
+        // Backup may fail, continue anyway
+      }
+      
+      // Configure DNS resolvers
+      const resolvConf = dnsServers.map(dns => `nameserver ${dns}`).join('\n') + '\n';
+      fs.writeFileSync('/etc/resolv.conf', resolvConf);
+      console.log('DNS configured through VPN:', dnsServers.join(', '));
+    } catch (err) {
+      console.warn('Could not configure DNS:', err.message);
+    }
+  }
+
+  _restoreDNS() {
+    try {
+      if (fs.existsSync('/etc/resolv.conf.vpn-backup')) {
+        execSync('cp /etc/resolv.conf.vpn-backup /etc/resolv.conf', { stdio: 'ignore' });
+        execSync('rm /etc/resolv.conf.vpn-backup', { stdio: 'ignore' });
+        console.log('DNS configuration restored');
+      }
+    } catch {
+      // Restore may fail
     }
   }
 
@@ -321,6 +368,11 @@ export class TunInterface extends EventEmitter {
 
   async close() {
     this.running = false;
+    
+    // Restore DNS on Linux
+    if (this.platform === 'linux') {
+      this._restoreDNS();
+    }
     
     if (this.helperProcess) {
       try {
