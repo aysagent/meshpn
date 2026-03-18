@@ -163,6 +163,13 @@ export class WebRTCTransport extends EventEmitter {
       return false;
     }
     
+    // Check buffer overflow - 16MB is typical max, warn at 1MB
+    const HIGH_WATER_MARK = 1024 * 1024;
+    if (dc.bufferedAmount > HIGH_WATER_MARK) {
+      console.warn(`[WebRTC] Buffer high for ${peerId}: ${(dc.bufferedAmount / 1024).toFixed(0)}KB`);
+      // Still try to send, but this indicates backpressure issue
+    }
+    
     try {
       const buffer = typeof data === 'string' ? Buffer.from(data) : data;
       dc.send(buffer);

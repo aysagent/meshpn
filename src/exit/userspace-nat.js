@@ -399,7 +399,8 @@ export class UserSpaceNAT extends EventEmitter {
         serverSeq: Math.floor(Math.random() * 0xffffffff),
         socket: null,
         pendingData: [],
-        lastActivity: Date.now()
+        lastActivity: Date.now(),
+        pendingChunks: 0
       };
 
       this.tcpConnections.set(key, conn);
@@ -449,11 +450,26 @@ export class UserSpaceNAT extends EventEmitter {
         
         // Segment large data into smaller chunks (MSS ~1360 for MTU 1400)
         const MSS = 1360;
-        let offset = 0;
+        const chunks = [];
         
-        while (offset < data.length) {
-          const chunk = data.subarray(offset, offset + MSS);
-          const isLast = (offset + MSS >= data.length);
+        for (let offset = 0; offset < data.length; offset += MSS) {
+          chunks.push(data.subarray(offset, offset + MSS));
+        }
+        
+        conn.pendingChunks += chunks.length;
+        
+        // Pause socket if too many chunks pending
+        const MAX_PENDING = 100;
+        if (conn.pendingChunks > MAX_PENDING && !socket.isPaused()) {
+          socket.pause();
+        }
+        
+        // Send chunks with yielding to event loop to prevent blocking
+        const sendChunks = (index) => {
+          if (index >= chunks.length || conn.state === TCP_STATE.CLOSED) return;
+          
+          const chunk = chunks[index];
+          const isLast = index === chunks.length - 1;
           
           const responsePacket = buildTCPPacket(
             dstIp, srcIp,
@@ -465,10 +481,25 @@ export class UserSpaceNAT extends EventEmitter {
           );
 
           conn.serverSeq += chunk.length;
-          offset += chunk.length;
-
+          conn.pendingChunks--;
           sendResponse(srcNodeId, responsePacket);
-        }
+          
+          // Resume socket if pending chunks dropped
+          if (conn.pendingChunks < MAX_PENDING / 2 && socket.isPaused()) {
+            socket.resume();
+          }
+          
+          // Yield to event loop every few chunks
+          if (index < chunks.length - 1) {
+            if ((index + 1) % 10 === 0) {
+              setImmediate(() => sendChunks(index + 1));
+            } else {
+              sendChunks(index + 1);
+            }
+          }
+        };
+        
+        sendChunks(0);
       });
 
       socket.on('end', () => {
@@ -540,7 +571,11 @@ export class UserSpaceNAT extends EventEmitter {
 
     conn.lastActivity = Date.now();
 
+    // Handle pure ACK - resume socket if paused
     if (parsed.tcpFlagsACK && !parsed.tcpFlagsSYN && !parsed.tcpFlagsFIN && data.length === 0) {
+      if (conn.socket && conn.socket.isPaused() && conn.pendingChunks < 50) {
+        conn.socket.resume();
+      }
       return;
     }
 
