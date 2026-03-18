@@ -396,8 +396,7 @@ export class UserSpaceNAT extends EventEmitter {
         serverSeq: Math.floor(Math.random() * 0xffffffff),
         socket: null,
         pendingData: [],
-        lastActivity: Date.now(),
-        pendingChunks: 0
+        lastActivity: Date.now()
       };
 
       this.tcpConnections.set(key, conn);
@@ -444,51 +443,27 @@ export class UserSpaceNAT extends EventEmitter {
         
         conn.lastActivity = Date.now();
         
-        // Send data in larger chunks for better throughput
-        // WebRTC SCTP can handle up to 256KB, but we stay conservative
-        const CHUNK_SIZE = 16384; // 16KB chunks
-        const MAX_PENDING = 500;
-        
-        // Build all packets first
-        const packets = [];
+        // MSS for MTU 1400 (conservative for WebRTC overhead)
+        const MSS = 1360;
         let offset = 0;
-        let tempSeq = conn.serverSeq;
         
         while (offset < data.length) {
-          const chunk = data.subarray(offset, Math.min(offset + CHUNK_SIZE, data.length));
-          const isLast = offset + CHUNK_SIZE >= data.length;
+          const chunk = data.subarray(offset, offset + MSS);
+          const isLast = (offset + MSS >= data.length);
           
           const responsePacket = buildTCPPacket(
             dstIp, srcIp,
             dstPort, srcPort,
-            tempSeq,
+            conn.serverSeq,
             conn.clientAck,
             isLast ? (TCP_FLAGS.PSH | TCP_FLAGS.ACK) : TCP_FLAGS.ACK,
             chunk
           );
-          
-          packets.push(responsePacket);
-          tempSeq += chunk.length;
+
+          conn.serverSeq += chunk.length;
           offset += chunk.length;
-        }
-        
-        conn.serverSeq = tempSeq;
-        conn.pendingChunks += packets.length;
-        
-        // Pause socket if too many chunks pending
-        if (conn.pendingChunks > MAX_PENDING && !socket.isPaused()) {
-          socket.pause();
-        }
-        
-        // Send all packets immediately (no yield for speed)
-        for (const packet of packets) {
-          sendResponse(srcNodeId, packet);
-          conn.pendingChunks--;
-        }
-        
-        // Resume socket if pending dropped
-        if (conn.pendingChunks < MAX_PENDING / 2 && socket.isPaused()) {
-          socket.resume();
+
+          sendResponse(srcNodeId, responsePacket);
         }
       });
 
@@ -561,11 +536,8 @@ export class UserSpaceNAT extends EventEmitter {
 
     conn.lastActivity = Date.now();
 
-    // Handle pure ACK - resume socket if paused
+    // Handle pure ACK
     if (parsed.tcpFlagsACK && !parsed.tcpFlagsSYN && !parsed.tcpFlagsFIN && data.length === 0) {
-      if (conn.socket && conn.socket.isPaused() && conn.pendingChunks < 50) {
-        conn.socket.resume();
-      }
       return;
     }
 
