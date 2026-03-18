@@ -1,0 +1,27 @@
+{
+  "role": "client",
+  "signallingServer": "ws://localhost:8080",
+  "iceServers": [
+    { "urls": "stun:stun.l.google.com:19302" },
+    { "urls": "stun:stun1.l.google.com:19302" }
+  ],
+  "turnServers": [
+    {
+      "urls": "turn:62.84.120.30:3478",
+      "username": "meshuser",
+      "credential": "meshpass"
+    },
+    {
+      "urls": "turns:62.84.120.30:5349",
+      "username": "meshuser",
+      "credential": "meshpass"
+    }
+  ],
+  "virtualNetwork": "10.200.0.0/16",
+  "mtu": 1400,
+  "enableTun": true,
+  "tun": {
+    "defaultRoute": true,
+    "excludeFromVPN": []
+  }
+}

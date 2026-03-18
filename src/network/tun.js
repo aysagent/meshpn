@@ -24,6 +24,15 @@ export class TunInterface extends EventEmitter {
     this.readBuffer = Buffer.alloc(0);
     this.platform = os.platform();
     this.running = false;
+    
+    // For Linux default route management
+    // Read from config.tun or from top-level config
+    const tunConfig = config.tun || {};
+    this.originalRoutes = [];
+    this.excludedIPs = tunConfig.excludeFromVPN || config.excludeFromVPN || [];
+    this.defaultRouteEnabled = tunConfig.defaultRoute !== undefined 
+      ? tunConfig.defaultRoute 
+      : config.defaultRoute !== false;
   }
 
   _findFreeUtunIndex() {
@@ -156,6 +165,9 @@ export class TunInterface extends EventEmitter {
       
       // Configure DNS through VPN
       this._configureDNS();
+      
+      // Setup default route through VPN
+      this._setupDefaultRoute();
     } catch (err) {
       console.warn(`Warning: Could not configure ${this.name}:`, err.message);
       console.log('You may need to run with sudo.');
@@ -203,6 +215,115 @@ export class TunInterface extends EventEmitter {
       }
     } catch {
       // Restore may fail
+    }
+  }
+
+  _setupDefaultRoute() {
+    if (!this.defaultRouteEnabled) {
+      console.log('Default route through VPN disabled in config');
+      return;
+    }
+
+    try {
+      // Get current default routes
+      const routeOutput = execSync('ip route show default', { encoding: 'utf8' });
+      const routes = routeOutput.trim().split('\n').filter(r => r.length > 0);
+      
+      // Save original routes for restoration
+      this.originalRoutes = routes;
+      console.log(`Saved ${routes.length} original default route(s)`);
+
+      // Get gateway and interface from first default route
+      const match = routes[0]?.match(/via\s+(\S+)\s+dev\s+(\S+)/);
+      if (!match) {
+        console.warn('Could not parse default route, skipping default route setup');
+        return;
+      }
+      
+      const [, gateway, iface] = match;
+      
+      // Add routes for excluded IPs (TURN servers, signalling, etc.) via original gateway
+      const excludeIPs = [
+        ...this.excludedIPs,
+        '62.84.120.30',  // Default TURN server
+      ];
+      
+      // Also try to get signalling server IP from environment
+      const sigServer = process.env.SIGNALLING_SERVER;
+      if (sigServer) {
+        const sigMatch = sigServer.match(/(\d+\.\d+\.\d+\.\d+)/);
+        if (sigMatch) {
+          excludeIPs.push(sigMatch[1]);
+        }
+      }
+      
+      for (const ip of excludeIPs) {
+        try {
+          execSync(`ip route add ${ip}/32 via ${gateway} dev ${iface} 2>/dev/null`, { stdio: 'ignore' });
+          console.log(`Excluded ${ip} from VPN (via ${gateway})`);
+        } catch {
+          // Route may already exist
+        }
+      }
+      
+      // Remove original default routes
+      for (const route of routes) {
+        try {
+          execSync(`ip route del ${route}`, { stdio: 'ignore' });
+        } catch {
+          // May fail
+        }
+      }
+      
+      // Add default route via TUN
+      execSync(`ip route add default dev ${this.name}`);
+      console.log(`Default route set through ${this.name}`);
+      
+      // Add backup route with high metric
+      try {
+        execSync(`ip route add default via ${gateway} dev ${iface} metric 1000`, { stdio: 'ignore' });
+      } catch {
+        // May fail
+      }
+      
+    } catch (err) {
+      console.warn('Could not setup default route:', err.message);
+    }
+  }
+
+  _restoreDefaultRoute() {
+    if (this.originalRoutes.length === 0) {
+      return;
+    }
+
+    try {
+      // Remove VPN default route
+      try {
+        execSync(`ip route del default dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+      } catch {
+        // May not exist
+      }
+      
+      // Remove backup route
+      try {
+        execSync('ip route del default metric 1000 2>/dev/null', { stdio: 'ignore' });
+      } catch {
+        // May not exist
+      }
+      
+      // Restore original routes
+      for (const route of this.originalRoutes) {
+        try {
+          execSync(`ip route add ${route}`, { stdio: 'ignore' });
+        } catch {
+          // May already exist
+        }
+      }
+      
+      console.log('Default route restored');
+      this.originalRoutes = [];
+    } catch (err) {
+      console.warn('Could not restore default route:', err.message);
     }
   }
 
@@ -369,8 +490,9 @@ export class TunInterface extends EventEmitter {
   async close() {
     this.running = false;
     
-    // Restore DNS on Linux
+    // Restore DNS and routes on Linux
     if (this.platform === 'linux') {
+      this._restoreDefaultRoute();
       this._restoreDNS();
     }
     
