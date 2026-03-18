@@ -283,6 +283,7 @@ export function parseIPPacket(buffer) {
   
   const headerLength = (buffer[0] & 0x0f) * 4;
   const totalLength = buffer.readUInt16BE(2);
+  const ipId = buffer.readUInt16BE(4);
   const protocol = buffer[9];
   
   const srcIp = `${buffer[12]}.${buffer[13]}.${buffer[14]}.${buffer[15]}`;
@@ -293,6 +294,7 @@ export function parseIPPacket(buffer) {
     valid: true,
     headerLength,
     totalLength,
+    ipId,
     protocol,
     srcIp,
     dstIp,
@@ -329,9 +331,11 @@ export function parseIPPacket(buffer) {
     if (buffer.length > payloadStart) {
       result.data = buffer.subarray(payloadStart);
     }
-  } else if (protocol === PROTOCOLS.ICMP && buffer.length >= transportOffset + 8) {
+  } else if (protocol === PROTOCOLS.ICMP && buffer.length >= transportOffset + 4) {
     result.icmpType = buffer[transportOffset];
     result.icmpCode = buffer[transportOffset + 1];
+    // icmpData includes identifier (2 bytes) + sequence (2 bytes) + payload
+    result.icmpData = buffer.subarray(transportOffset + 4);
     result.data = buffer.subarray(transportOffset + 8);
   }
 

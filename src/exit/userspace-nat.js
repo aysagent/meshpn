@@ -126,7 +126,98 @@ export class UserSpaceNAT extends EventEmitter {
       this._handleTCP(parsed, srcNodeId, sendResponse);
     } else if (protocol === PROTOCOLS.UDP) {
       this._handleUDP(parsed, srcNodeId, sendResponse);
+    } else if (protocol === PROTOCOLS.ICMP) {
+      this._handleICMP(parsed, srcNodeId, sendResponse);
     }
+  }
+
+  _handleICMP(parsed, srcNodeId, sendResponse) {
+    const { srcIp, dstIp, icmpType, icmpCode, icmpData } = parsed;
+    
+    // ICMP Echo Request (ping) = type 8
+    if (icmpType === 8) {
+      console.log(`[UserSpaceNAT] ICMP Echo Request from ${srcIp} to ${dstIp}`);
+      
+      // If destination is our virtual IP, reply directly
+      if (dstIp === this.localVirtualIp) {
+        const echoReply = this._buildICMPEchoReply(parsed);
+        console.log(`[UserSpaceNAT] Sending ICMP Echo Reply to ${srcIp}`);
+        sendResponse(srcNodeId, echoReply);
+      }
+      // For external IPs, we would need raw sockets which require root
+      // and are complex to implement. Skip for now.
+    }
+  }
+
+  _buildICMPEchoReply(parsed) {
+    const { srcIp, dstIp, icmpData, ipId } = parsed;
+    
+    // Build ICMP Echo Reply (type 0, code 0)
+    // icmpData contains: identifier (2 bytes) + sequence (2 bytes) + payload
+    const icmpHeader = Buffer.alloc(8);
+    icmpHeader.writeUInt8(0, 0);  // Type: Echo Reply
+    icmpHeader.writeUInt8(0, 1);  // Code: 0
+    icmpHeader.writeUInt16BE(0, 2);  // Checksum (calculated later)
+    
+    // Copy identifier and sequence from request
+    if (icmpData && icmpData.length >= 4) {
+      icmpData.copy(icmpHeader, 4, 0, 4);
+    }
+    
+    // Payload (rest of icmpData after identifier+sequence)
+    const payload = icmpData && icmpData.length > 4 ? icmpData.subarray(4) : Buffer.alloc(0);
+    
+    // Full ICMP packet
+    const icmpPacket = Buffer.concat([icmpHeader, payload]);
+    
+    // Calculate ICMP checksum
+    let sum = 0;
+    for (let i = 0; i < icmpPacket.length; i += 2) {
+      if (i + 1 < icmpPacket.length) {
+        sum += icmpPacket.readUInt16BE(i);
+      } else {
+        sum += icmpPacket[i] << 8;
+      }
+    }
+    while (sum >> 16) {
+      sum = (sum & 0xffff) + (sum >> 16);
+    }
+    icmpPacket.writeUInt16BE(~sum & 0xffff, 2);
+    
+    // Build IP header
+    const ipHeader = Buffer.alloc(20);
+    ipHeader.writeUInt8(0x45, 0);  // Version + IHL
+    ipHeader.writeUInt8(0, 1);     // TOS
+    ipHeader.writeUInt16BE(20 + icmpPacket.length, 2);  // Total length
+    ipHeader.writeUInt16BE(ipId || 0, 4);  // Identification
+    ipHeader.writeUInt16BE(0, 6);  // Flags + Fragment offset
+    ipHeader.writeUInt8(64, 8);    // TTL
+    ipHeader.writeUInt8(1, 9);     // Protocol: ICMP
+    ipHeader.writeUInt16BE(0, 10); // Header checksum (calculated later)
+    
+    // Source IP (exit node) -> Destination IP (original source)
+    const srcParts = dstIp.split('.').map(Number);
+    const dstParts = srcIp.split('.').map(Number);
+    ipHeader.writeUInt8(srcParts[0], 12);
+    ipHeader.writeUInt8(srcParts[1], 13);
+    ipHeader.writeUInt8(srcParts[2], 14);
+    ipHeader.writeUInt8(srcParts[3], 15);
+    ipHeader.writeUInt8(dstParts[0], 16);
+    ipHeader.writeUInt8(dstParts[1], 17);
+    ipHeader.writeUInt8(dstParts[2], 18);
+    ipHeader.writeUInt8(dstParts[3], 19);
+    
+    // Calculate IP header checksum
+    let ipSum = 0;
+    for (let i = 0; i < 20; i += 2) {
+      ipSum += ipHeader.readUInt16BE(i);
+    }
+    while (ipSum >> 16) {
+      ipSum = (ipSum & 0xffff) + (ipSum >> 16);
+    }
+    ipHeader.writeUInt16BE(~ipSum & 0xffff, 10);
+    
+    return Buffer.concat([ipHeader, icmpPacket]);
   }
 
   _handleTCP(parsed, srcNodeId, sendResponse) {
