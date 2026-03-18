@@ -495,7 +495,7 @@ export class MeshNode extends EventEmitter {
       if (this.isExit) {
         this._processExitPacket(packet, payload);
       } else if (this.isClient) {
-        this.reorderBuffer.add(payload, packet);
+        this.reorderBuffer.addPacket({ payload, flowId: packet.flowId, seq: packet.seq });
       }
     } catch (err) {
       console.error('Failed to decrypt direct packet:', err.message);
