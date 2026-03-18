@@ -25,9 +25,7 @@ export class UserSpaceNAT extends EventEmitter {
     this.maxConnections = config.maxConnections || 50;
     this.connectingCount = 0;
     this.cleanupInterval = null;
-    this.packetCount = 0;
-    this.lastPacketCountTime = Date.now();
-    this.localVirtualIp = null; // Set by MeshNode after registration
+    this.localVirtualIp = null;
   }
   
   setLocalVirtualIp(ip) {
@@ -40,50 +38,12 @@ export class UserSpaceNAT extends EventEmitter {
       this._cleanup();
     }, 60000);
     console.log('[UserSpaceNAT] Started');
-    
-    // Event loop health check - should print every second
-    // this.healthCounter = 0;
-    // this.healthInterval = setInterval(() => {
-    //   this.healthCounter++;
-    //   console.log(`[UserSpaceNAT] HEALTH: tick ${this.healthCounter}, pending=${this.connectingCount}`);
-    // }, 1000);
-    
-    // Single test at startup (disabled periodic)
-    setTimeout(() => {
-      this._testConnectivity('delayed-startup');
-    }, 3000);
   }
   
-  _testConnectivity(label) {
-    console.log(`[UserSpaceNAT] TEST(${label}): Connecting...`);
-    const testSocket = new net.Socket();
-    testSocket.setTimeout(10000);
-    
-    testSocket.on('connect', () => {
-      console.log(`[UserSpaceNAT] TEST(${label}): SUCCESS`);
-      testSocket.destroy();
-    });
-    
-    testSocket.on('error', (err) => {
-      console.log(`[UserSpaceNAT] TEST(${label}): ERROR:`, err.message);
-    });
-    
-    testSocket.on('timeout', () => {
-      console.log(`[UserSpaceNAT] TEST(${label}): TIMEOUT`);
-      testSocket.destroy();
-    });
-    
-    testSocket.connect(80, '34.160.111.145');
-  }
-
   stop() {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
       this.cleanupInterval = null;
-    }
-    if (this.testInterval) {
-      clearInterval(this.testInterval);
-      this.testInterval = null;
     }
     
     for (const [key, conn] of this.tcpConnections) {
@@ -107,14 +67,6 @@ export class UserSpaceNAT extends EventEmitter {
   }
   
   _processPacket(ipPacket, srcNodeId, sendResponse) {
-    this.packetCount++;
-    const now = Date.now();
-    if (now - this.lastPacketCountTime >= 1000) {
-      console.log(`[UserSpaceNAT] Packets/sec: ${this.packetCount}, pending connects: ${this.connectingCount}`);
-      this.packetCount = 0;
-      this.lastPacketCountTime = now;
-    }
-    
     const parsed = parseIPPacket(ipPacket);
     if (!parsed || !parsed.valid) {
       return;
@@ -250,7 +202,7 @@ export class UserSpaceNAT extends EventEmitter {
       const actualDstIp = (this.localVirtualIp && dstIp === this.localVirtualIp) ? '127.0.0.1' : dstIp;
       const isLocal = actualDstIp === '127.0.0.1';
       
-      console.log(`[UserSpaceNAT] New connection to ${dstIp}:${dstPort}${isLocal ? ' (LOCAL)' : ''} (active: ${this.connectingCount})`);
+      console.log(`[UserSpaceNAT] Connecting to ${dstIp}:${dstPort}${isLocal ? ' (local)' : ''}`);
 
       conn = {
         key,
@@ -277,13 +229,9 @@ export class UserSpaceNAT extends EventEmitter {
       
       socket.setTimeout(30000);
 
-      socket.on('lookup', (err, address, family, host) => {
-        console.log(`[UserSpaceNAT] DNS lookup for ${dstIp}: err=${err}, addr=${address}`);
-      });
-
       socket.on('connect', () => {
         this.connectingCount--;
-        console.log(`[UserSpaceNAT] Connected to ${actualDstIp}:${dstPort} (for ${dstIp}) (active: ${this.connectingCount})`);
+        console.log(`[UserSpaceNAT] Connected to ${dstIp}:${dstPort}`);
         
         if (conn.state === TCP_STATE.CLOSED) {
           socket.destroy();
@@ -304,7 +252,6 @@ export class UserSpaceNAT extends EventEmitter {
         conn.serverSeq++;
         conn.clientAck = conn.clientSeq + 1;
 
-        console.log(`[UserSpaceNAT] Sending SYN-ACK to ${srcNodeId}, packet size: ${synAckPacket.length}`);
         sendResponse(srcNodeId, synAckPacket);
 
         if (conn.pendingData.length > 0) {
@@ -375,28 +322,17 @@ export class UserSpaceNAT extends EventEmitter {
         if (conn.state === TCP_STATE.CONNECTING) {
           this.connectingCount--;
         }
-        console.log(`[UserSpaceNAT] Socket timeout for ${dstIp}:${dstPort}`);
         socket.destroy();
         this._closeTCPConnection(key, conn);
       });
 
-      socket.on('close', (hadError) => {
-        console.log(`[UserSpaceNAT] Socket closed for ${dstIp}:${dstPort}, hadError=${hadError}`);
+      socket.on('close', () => {
         if (conn.state !== TCP_STATE.CLOSED) {
           this._closeTCPConnection(key, conn);
         }
       });
 
-      console.log(`[UserSpaceNAT] Calling socket.connect() for ${actualDstIp}:${dstPort}...`);
-      socket.connect(dstPort, actualDstIp, () => {
-        console.log(`[UserSpaceNAT] CALLBACK: Connected to ${actualDstIp}:${dstPort}!`);
-      });
-      console.log(`[UserSpaceNAT] socket.connect() returned, connecting=${socket.connecting}`);
-      
-      // Diagnostic: check socket state after 1 second
-      setTimeout(() => {
-        console.log(`[UserSpaceNAT] DIAGNOSTIC ${dstIp}:${dstPort}: connecting=${socket.connecting}, destroyed=${socket.destroyed}, readyState=${socket.readyState}, pending=${socket.pending}`);
-      }, 1000);
+      socket.connect(dstPort, actualDstIp);
       return;
     }
 

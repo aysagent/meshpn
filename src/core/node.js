@@ -116,6 +116,22 @@ export class MeshNode extends EventEmitter {
     }, 30000);
   }
 
+  _startKeepalive() {
+    this.keepaliveInterval = setInterval(() => {
+      const peers = this.discovery.getConnectedPeers();
+      for (const peerId of peers) {
+        this.sendPing(peerId);
+      }
+    }, 30000); // Ping every 30 seconds
+  }
+
+  _stopKeepalive() {
+    if (this.keepaliveInterval) {
+      clearInterval(this.keepaliveInterval);
+      this.keepaliveInterval = null;
+    }
+  }
+
   _stopCacheCleanup() {
     if (this.cacheCleanupInterval) {
       clearInterval(this.cacheCleanupInterval);
@@ -146,6 +162,7 @@ export class MeshNode extends EventEmitter {
     
     this.reorderBuffer.start();
     this._startCacheCleanup();
+    this._startKeepalive();
     
     this.running = true;
     this.emit('started');
@@ -174,14 +191,10 @@ export class MeshNode extends EventEmitter {
       
       const needsTun = (this.isClient || (this.isExit && this.natMode === 'system')) && this.config.enableTun !== false;
       
-      console.log(`[DEBUG] needsTun=${needsTun}, this.tunManager=${!!this.tunManager}, isClient=${this.isClient}`);
       if (needsTun && !this.tunManager) {
         this.tunManager = new TunManager(this.config.tun || {});
-        console.log(`[DEBUG] Created TunManager, attaching outbound-packet handler`);
-        
         if (this.isClient) {
           this.tunManager.on('outbound-packet', (packet) => {
-            console.log(`[DEBUG] outbound-packet handler called, packet length: ${packet.length}`);
             this._handleOutboundPacket(packet);
           });
         } else if (this.isExit) {
@@ -248,31 +261,17 @@ export class MeshNode extends EventEmitter {
   }
 
   _handleOutboundPacket(ipPacket) {
-    if (!this.running) {
-      console.log('[TUN] DROP: not running');
-      return;
-    }
+    if (!this.running) return;
     
     const parsed = parseIPPacket(ipPacket);
-    if (!parsed || !parsed.valid) {
-      console.log('[TUN] Invalid IP packet received, length:', ipPacket.length);
-      return;
-    }
+    if (!parsed || !parsed.valid) return;
     
-    console.log(`[TUN] Parsed: ${parsed.srcIp} -> ${parsed.dstIp}, myVirtualIp=${this.virtualIp}`);
-    
-    if (!parsed.srcIp.startsWith('10.200.')) {
-      console.log(`[TUN] DROP: srcIp ${parsed.srcIp} not in 10.200.x.x`);
-      return;
-    }
+    if (!parsed.srcIp.startsWith('10.200.')) return;
     
     // Only drop packets to self (loopback)
-    if (parsed.srcIp === this.virtualIp && parsed.dstIp === this.virtualIp) {
-      console.log(`[TUN] DROP: packet to self`);
-      return;
-    }
+    if (parsed.srcIp === this.virtualIp && parsed.dstIp === this.virtualIp) return;
     
-    console.log(`[TUN] Outbound packet: ${parsed.srcIp}:${parsed.srcPort} -> ${parsed.dstIp}:${parsed.dstPort} proto=${parsed.protocol}`);
+    console.log(`[TUN] Outbound: ${parsed.srcIp}:${parsed.srcPort} -> ${parsed.dstIp}:${parsed.dstPort}`);
     
     const routeInfo = this.router.findRouteToExit();
     if (!routeInfo) {
@@ -708,6 +707,7 @@ export class MeshNode extends EventEmitter {
     this.running = false;
     
     this._stopCacheCleanup();
+    this._stopKeepalive();
     this.reorderBuffer.stop();
     
     if (this.userSpaceNAT) {
