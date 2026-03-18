@@ -70,6 +70,16 @@ export class MeshNode extends EventEmitter {
       totalForwarded: 0
     };
     
+    // Traffic statistics
+    this.trafficStats = {
+      bytesSent: 0,
+      bytesReceived: 0,
+      packetsSent: 0,
+      packetsReceived: 0,
+      lastResetTime: Date.now()
+    };
+    this.statsInterval = null;
+    
     this.tunManager = null;
     this.exitNodeHandler = null;
     this.virtualIp = null;
@@ -132,6 +142,47 @@ export class MeshNode extends EventEmitter {
     }
   }
 
+  _startTrafficStats() {
+    if (!this.isClient) return;
+    
+    this.statsInterval = setInterval(() => {
+      const now = Date.now();
+      const elapsed = (now - this.trafficStats.lastResetTime) / 1000;
+      
+      if (elapsed > 0) {
+        const downloadSpeed = this.trafficStats.bytesReceived / elapsed;
+        const uploadSpeed = this.trafficStats.bytesSent / elapsed;
+        
+        const formatSpeed = (bytesPerSec) => {
+          if (bytesPerSec >= 1024 * 1024) {
+            return `${(bytesPerSec / (1024 * 1024)).toFixed(2)} MB/s`;
+          } else if (bytesPerSec >= 1024) {
+            return `${(bytesPerSec / 1024).toFixed(2)} KB/s`;
+          }
+          return `${bytesPerSec.toFixed(0)} B/s`;
+        };
+        
+        const peers = this.discovery.getConnectedPeers().length;
+        
+        console.log(`[STATS] ↓ ${formatSpeed(downloadSpeed)} | ↑ ${formatSpeed(uploadSpeed)} | Peers: ${peers}`);
+        
+        // Reset counters
+        this.trafficStats.bytesSent = 0;
+        this.trafficStats.bytesReceived = 0;
+        this.trafficStats.packetsSent = 0;
+        this.trafficStats.packetsReceived = 0;
+        this.trafficStats.lastResetTime = now;
+      }
+    }, 5000);
+  }
+
+  _stopTrafficStats() {
+    if (this.statsInterval) {
+      clearInterval(this.statsInterval);
+      this.statsInterval = null;
+    }
+  }
+
   _stopCacheCleanup() {
     if (this.cacheCleanupInterval) {
       clearInterval(this.cacheCleanupInterval);
@@ -163,6 +214,7 @@ export class MeshNode extends EventEmitter {
     this.reorderBuffer.start();
     this._startCacheCleanup();
     this._startKeepalive();
+    this._startTrafficStats();
     
     this.running = true;
     this.emit('started');
@@ -315,7 +367,8 @@ export class MeshNode extends EventEmitter {
       if (!this.transportManager.send(nextHop, serialized)) {
         console.warn(`[TUN] Failed to send to ${nextHop}`);
       } else {
-        console.log(`[TUN] Packet sent successfully`);
+        this.trafficStats.bytesSent += payload.length;
+        this.trafficStats.packetsSent++;
       }
     } catch (err) {
       console.error('[TUN] Failed to create onion packet:', err.message);
@@ -550,16 +603,12 @@ export class MeshNode extends EventEmitter {
   }
 
   _processReorderedPacket(payload, packetInfo) {
-    console.log(`[CLIENT] Received response packet, length: ${payload.length}`);
+    // Update traffic stats
+    this.trafficStats.bytesReceived += payload.length;
+    this.trafficStats.packetsReceived++;
     
     if (this.tunManager && this.tunManager.isRunning()) {
-      const parsed = parseIPPacket(payload);
-      if (parsed && parsed.valid) {
-        console.log(`[CLIENT] Injecting to TUN: ${parsed.srcIp}:${parsed.srcPort} -> ${parsed.dstIp}:${parsed.dstPort}`);
-      }
       this.tunManager.injectPacket(payload);
-    } else {
-      console.log('[CLIENT] TUN not running, cannot inject packet');
     }
     
     this.emit('packet-received', payload);
@@ -708,6 +757,7 @@ export class MeshNode extends EventEmitter {
     
     this._stopCacheCleanup();
     this._stopKeepalive();
+    this._stopTrafficStats();
     this.reorderBuffer.stop();
     
     if (this.userSpaceNAT) {
