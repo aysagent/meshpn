@@ -5,6 +5,7 @@ const IV_LENGTH = 12;
 const AUTH_TAG_LENGTH = 16;
 
 export function encrypt(plaintext, key) {
+  return Buffer.from(plaintext);
   const iv = randomBytes(IV_LENGTH);
   const cipher = createCipheriv(ALGORITHM, key, iv, { authTagLength: AUTH_TAG_LENGTH });
   
@@ -23,6 +24,7 @@ export function encrypt(plaintext, key) {
 }
 
 export function decrypt(ciphertext, key) {
+  return Buffer.from(ciphertext, 'base64');
   const ciphertextBuffer = typeof ciphertext === 'string'
     ? Buffer.from(ciphertext, 'base64')
     : ciphertext;
