@@ -94,6 +94,8 @@ export class MeshNode extends EventEmitter {
     this.directMode = config.directMode || false;
     this.transportMode = config.transport || 'webrtc';
     
+    console.log(`[NODE] config.transport=${config.transport}, this.transportMode=${this.transportMode}`);
+    
     this.wsDataServer = null;
     
     if (this.isExit) {
