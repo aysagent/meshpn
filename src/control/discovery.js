@@ -12,6 +12,10 @@ export class PeerDiscovery extends EventEmitter {
     this.sessionManager = new SessionManager();
     this.pendingConnections = new Map();
     this.establishedPeers = new Set();
+    this.transportMode = config.transportMode || 'webrtc';
+    this.dataServer = config.dataServer || null;
+    
+    this.transportManager.setLocalNodeId(this.identity.nodeId);
   }
 
   async start(role = 'client') {
@@ -116,11 +120,35 @@ export class PeerDiscovery extends EventEmitter {
       timestamp: Date.now()
     });
     
-    console.log(`[DISCOVERY] Creating offer for ${peer.nodeId}`);
+    const myEphemeralPubKey = this.sessionManager.createSession(peer.nodeId);
+    
+    const wsUrl = peer.dataServer || this.dataServer;
+    const shouldTryWebSocket = (this.transportMode === 'websocket' || this.transportMode === 'auto') && wsUrl;
+    
+    if (shouldTryWebSocket) {
+      try {
+        console.log(`[DISCOVERY] Trying WebSocket connection to ${peer.nodeId} at ${wsUrl}`);
+        await this.transportManager.connectWebSocket(peer.nodeId, wsUrl, 5000);
+        
+        this.signalling.sendSignal(peer.nodeId, {
+          type: 'session-key',
+          ephemeralPubKey: myEphemeralPubKey
+        });
+        
+        console.log(`[DISCOVERY] WebSocket connection established to ${peer.nodeId}`);
+        return;
+      } catch (err) {
+        console.log(`[DISCOVERY] WebSocket failed for ${peer.nodeId}: ${err.message}`);
+        if (this.transportMode === 'websocket') {
+          this.pendingConnections.delete(peer.nodeId);
+          return;
+        }
+      }
+    }
+    
+    console.log(`[DISCOVERY] Creating WebRTC offer for ${peer.nodeId}`);
     
     try {
-      const myEphemeralPubKey = this.sessionManager.createSession(peer.nodeId);
-      
       const offer = await this.transportManager.createWebRTCOffer(peer.nodeId);
       
       this.signalling.sendSignal(peer.nodeId, {
@@ -149,6 +177,38 @@ export class PeerDiscovery extends EventEmitter {
       case 'ice-candidate':
         await this.transportManager.addIceCandidate(fromNodeId, signal.candidate);
         break;
+        
+      case 'session-key':
+        this._handleSessionKey(fromNodeId, signal);
+        break;
+        
+      case 'session-key-ack':
+        this._handleSessionKeyAck(fromNodeId, signal);
+        break;
+    }
+  }
+  
+  _handleSessionKey(fromNodeId, signal) {
+    console.log(`[DISCOVERY] Received session key from ${fromNodeId}`);
+    
+    if (signal.ephemeralPubKey) {
+      const myEphemeralPubKey = this.sessionManager.createSession(fromNodeId);
+      this.sessionManager.completeSession(fromNodeId, signal.ephemeralPubKey);
+      console.log(`[DISCOVERY] Session key established with ${fromNodeId}`);
+      
+      this.signalling.sendSignal(fromNodeId, {
+        type: 'session-key-ack',
+        ephemeralPubKey: myEphemeralPubKey
+      });
+    }
+  }
+  
+  _handleSessionKeyAck(fromNodeId, signal) {
+    console.log(`[DISCOVERY] Received session key ack from ${fromNodeId}`);
+    
+    if (signal.ephemeralPubKey) {
+      this.sessionManager.completeSession(fromNodeId, signal.ephemeralPubKey);
+      console.log(`[DISCOVERY] Session key completed with ${fromNodeId}`);
     }
   }
 

@@ -14,6 +14,13 @@ export class WebRTCTransport extends EventEmitter {
     this.dataChannels = new Map();
     this.relayCandidates = new Map();
     
+    this.dataChannelConfig = {
+      ordered: config.ordered !== undefined ? config.ordered : true,
+      maxRetransmits: config.maxRetransmits
+    };
+    
+    this.bufferedAmountLowThreshold = config.bufferedAmountLowThreshold || 256 * 1024;
+    
     this.turnServers = this.iceServers.filter(s => {
       const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
       return urls.some(url => url?.startsWith('turn:') || url?.startsWith('turns:'));
@@ -28,6 +35,8 @@ export class WebRTCTransport extends EventEmitter {
         urls.forEach(url => console.log(`  - ${url}`));
       });
     }
+    
+    console.log(`[WebRTC] DataChannel config: ordered=${this.dataChannelConfig.ordered}`);
   }
 
   async testTurnConnectivity() {
@@ -101,10 +110,15 @@ export class WebRTCTransport extends EventEmitter {
   async createOffer(peerId) {
     const pc = this._createPeerConnection(peerId);
     
-    const dc = pc.createDataChannel('mesh-vpn', {
-      ordered: false,
-      maxRetransmits: 0
-    });
+    const dcOptions = {
+      ordered: this.dataChannelConfig.ordered
+    };
+    
+    if (this.dataChannelConfig.maxRetransmits !== undefined) {
+      dcOptions.maxRetransmits = this.dataChannelConfig.maxRetransmits;
+    }
+    
+    const dc = pc.createDataChannel('mesh-vpn', dcOptions);
     
     this._setupDataChannel(peerId, dc);
     
@@ -280,6 +294,10 @@ export class WebRTCTransport extends EventEmitter {
   _setupDataChannel(peerId, dc) {
     this.dataChannels.set(peerId, dc);
     
+    if (dc.bufferedAmountLowThreshold !== undefined) {
+      dc.bufferedAmountLowThreshold = this.bufferedAmountLowThreshold;
+    }
+    
     dc.onopen = () => {
       this.emit('peer-connected', peerId);
     };
@@ -297,6 +315,10 @@ export class WebRTCTransport extends EventEmitter {
         ? Buffer.from(event.data)
         : event.data;
       this.emit('message', peerId, data);
+    };
+    
+    dc.onbufferedamountlow = () => {
+      this.emit('buffer-low', peerId);
     };
   }
 }

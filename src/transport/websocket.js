@@ -5,11 +5,17 @@ export class WebSocketTransport extends EventEmitter {
   constructor(config = {}) {
     super();
     this.serverUrl = config.serverUrl;
+    this.localNodeId = config.localNodeId;
     this.connections = new Map();
     this.server = null;
     this.reconnectInterval = config.reconnectInterval || 5000;
     this.reconnectAttempts = new Map();
     this.maxReconnectAttempts = config.maxReconnectAttempts || 10;
+    this.connectTimeout = config.connectTimeout || 5000;
+  }
+  
+  setLocalNodeId(nodeId) {
+    this.localNodeId = nodeId;
   }
 
   async startServer(port) {
@@ -34,19 +40,30 @@ export class WebSocketTransport extends EventEmitter {
     });
   }
 
-  async connect(peerId, url) {
+  async connect(peerId, url, timeout = null) {
+    const connectTimeout = timeout || this.connectTimeout;
+    
     return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        ws.close();
+        reject(new Error(`Connection timeout after ${connectTimeout}ms`));
+      }, connectTimeout);
+      
       const ws = new WebSocket(url, {
-        headers: { 'X-Peer-ID': peerId }
+        headers: { 
+          'X-Peer-ID': this.localNodeId || peerId
+        }
       });
       
       ws.on('open', () => {
+        clearTimeout(timeoutId);
         this._setupConnection(peerId, ws);
         this.reconnectAttempts.delete(peerId);
         resolve();
       });
       
       ws.on('error', (err) => {
+        clearTimeout(timeoutId);
         reject(err);
       });
     });

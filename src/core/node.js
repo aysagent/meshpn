@@ -2,7 +2,7 @@ import { EventEmitter } from 'events';
 import { Identity, SessionManager } from '../crypto/index.js';
 import { createOnionPacket, peelOnionLayer } from '../crypto/onion.js';
 import { encrypt, decrypt } from '../crypto/encrypt.js';
-import { TransportManager } from '../transport/index.js';
+import { TransportManager, WebSocketDataServer } from '../transport/index.js';
 import { PeerDiscovery } from '../control/index.js';
 import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
 import { TunManager, Packet, PacketType, parseIPPacket } from '../network/index.js';
@@ -38,7 +38,9 @@ export class MeshNode extends EventEmitter {
     this.discovery = new PeerDiscovery({
       identity: this.identity,
       transportManager: this.transportManager,
-      signallingServer: config.signallingServer
+      signallingServer: config.signallingServer,
+      transportMode: this.transportMode,
+      dataServer: config.dataServer
     });
     
     this.router = new MeshRouter({
@@ -90,6 +92,9 @@ export class MeshNode extends EventEmitter {
     
     this.natMode = config.natMode || 'system';
     this.directMode = config.directMode || false;
+    this.transportMode = config.transport || 'webrtc';
+    
+    this.wsDataServer = null;
     
     if (this.isExit) {
       if (this.natMode === 'userspace') {
@@ -98,6 +103,13 @@ export class MeshNode extends EventEmitter {
       } else {
         this.userSpaceNAT = null;
         this.natManager = new NATManager(config.nat || {});
+      }
+      
+      if (config.dataServerPort) {
+        this.wsDataServer = new WebSocketDataServer({
+          port: config.dataServerPort,
+          nodeId: this.nodeId
+        });
       }
     } else {
       this.userSpaceNAT = null;
@@ -210,6 +222,11 @@ export class MeshNode extends EventEmitter {
     
     this._setupEventHandlers();
     
+    if (this.wsDataServer) {
+      await this.wsDataServer.start();
+      this._setupWsDataServerEvents();
+    }
+    
     const discoveryRole = this.isRelay ? 'relay' : this.role;
     await this.discovery.start(discoveryRole);
     
@@ -223,6 +240,24 @@ export class MeshNode extends EventEmitter {
     this.emit('started');
     
     console.log(`Mesh node ${this.nodeId} started successfully`);
+  }
+  
+  _setupWsDataServerEvents() {
+    if (!this.wsDataServer) return;
+    
+    this.wsDataServer.on('peer-connected', (peerId, info) => {
+      console.log(`[WS-DATA] Peer connected via WebSocket: ${peerId}`);
+      this.router.addPeer(peerId);
+    });
+    
+    this.wsDataServer.on('peer-disconnected', (peerId) => {
+      console.log(`[WS-DATA] Peer disconnected: ${peerId}`);
+      this.router.removePeer(peerId);
+    });
+    
+    this.wsDataServer.on('message', (peerId, data) => {
+      this._handleIncomingMessage(peerId, data, 'websocket');
+    });
   }
 
   _setupEventHandlers() {
@@ -668,7 +703,7 @@ export class MeshNode extends EventEmitter {
       const nextHop = route[0];
       const serialized = packet.serialize();
       
-      if (!this.transportManager.send(nextHop, serialized)) {
+      if (!this._sendToPeer(nextHop, serialized)) {
         console.warn(`[EXIT] Failed to send to ${nextHop}`);
       }
     } catch (err) {
@@ -687,6 +722,13 @@ export class MeshNode extends EventEmitter {
     
     this.emit('packet-received', payload);
   }
+  
+  _sendToPeer(peerId, data) {
+    if (this.wsDataServer && this.wsDataServer.isConnected(peerId)) {
+      return this.wsDataServer.send(peerId, data);
+    }
+    return this.transportManager.send(peerId, data);
+  }
 
   _handlePing(peerId, packet) {
     const pongPacket = new Packet({
@@ -696,7 +738,7 @@ export class MeshNode extends EventEmitter {
       payload: Buffer.from(packet.timestamp.toString())
     });
     
-    this.transportManager.send(peerId, pongPacket.serialize());
+    this._sendToPeer(peerId, pongPacket.serialize());
   }
 
   _handlePong(peerId, packet) {

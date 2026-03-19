@@ -195,4 +195,46 @@ export class TransportManager extends EventEmitter {
       quic.setPeerAddress(peerId, address, port);
     }
   }
+  
+  setLocalNodeId(nodeId) {
+    const websocket = this.transports.get('websocket');
+    if (websocket) {
+      websocket.setLocalNodeId(nodeId);
+    }
+  }
+  
+  async connectWebSocket(peerId, url, timeout = 5000) {
+    const websocket = this.transports.get('websocket');
+    if (!websocket) {
+      throw new Error('WebSocket transport not available');
+    }
+    
+    console.log(`[TransportManager] Connecting to ${peerId} via WebSocket: ${url}`);
+    await websocket.connect(peerId, url, timeout);
+    console.log(`[TransportManager] WebSocket connection established to ${peerId}`);
+  }
+  
+  async connectToPeer(peerId, options = {}) {
+    const { 
+      transportMode = 'auto',
+      wsUrl = null,
+      wsTimeout = 5000
+    } = options;
+    
+    if (transportMode === 'websocket' && wsUrl) {
+      await this.connectWebSocket(peerId, wsUrl, wsTimeout);
+      return 'websocket';
+    }
+    
+    if (transportMode === 'auto' && wsUrl) {
+      try {
+        await this.connectWebSocket(peerId, wsUrl, wsTimeout);
+        return 'websocket';
+      } catch (err) {
+        console.log(`[TransportManager] WebSocket failed, will use WebRTC: ${err.message}`);
+      }
+    }
+    
+    return 'webrtc';
+  }
 }
