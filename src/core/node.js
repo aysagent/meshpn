@@ -23,6 +23,9 @@ export class MeshNode extends EventEmitter {
     this.identity = config.identity || new Identity(config.privateKey);
     this.nodeId = this.identity.nodeId;
     
+    this.transportMode = config.transport || 'webrtc';
+    console.log(`[NODE] transportMode=${this.transportMode}`);
+    
     this.sessionManager = new SessionManager();
     
     this.transportManager = new TransportManager({
@@ -92,9 +95,6 @@ export class MeshNode extends EventEmitter {
     
     this.natMode = config.natMode || 'system';
     this.directMode = config.directMode || false;
-    this.transportMode = config.transport || 'webrtc';
-    
-    console.log(`[NODE] config.transport=${config.transport}, this.transportMode=${this.transportMode}`);
     
     this.wsDataServer = null;
     
