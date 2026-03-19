@@ -13,6 +13,8 @@ export class OnionRouter {
     let wrapped = typeof payload === 'string' ? Buffer.from(payload) : payload;
     
     const reversedRoute = [...route].reverse();
+
+    console.log('Onion wrap', reversedRoute);
     
     for (let i = 0; i < reversedRoute.length; i++) {
       const nodeId = reversedRoute[i];
