@@ -215,6 +215,15 @@ export class PeerDiscovery extends EventEmitter {
   async _handleOffer(fromNodeId, signal) {
     console.log(`[DISCOVERY] Received offer from ${fromNodeId}`);
     
+    // Skip WebRTC if already connected via WebSocket
+    if (this.transportManager.isConnected(fromNodeId)) {
+      const transports = this.transportManager.getAvailableTransports(fromNodeId);
+      if (transports.includes('websocket')) {
+        console.log(`[DISCOVERY] Skipping WebRTC offer from ${fromNodeId} - already connected via WebSocket`);
+        return;
+      }
+    }
+    
     this.pendingConnections.set(fromNodeId, {
       initiator: false,
       timestamp: Date.now()

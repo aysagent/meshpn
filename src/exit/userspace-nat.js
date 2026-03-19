@@ -448,31 +448,51 @@ export class UserSpaceNAT extends EventEmitter {
         conn.lastActivity = Date.now();
         metrics.recordTCPData(0, data.length);
         
+        // Initialize pending counter
+        if (conn.pendingResponses === undefined) {
+          conn.pendingResponses = 0;
+        }
+        
+        // Backpressure: pause if too many pending responses
+        const MAX_PENDING = 50;
+        if (conn.pendingResponses > MAX_PENDING) {
+          socket.pause();
+          conn.paused = true;
+        }
+        
         // MSS for MTU 1400
         const MSS = 1360;
         let offset = 0;
-        let responseBytes = 0;
         
-        while (offset < data.length) {
-          const chunk = data.subarray(offset, offset + MSS);
-          const isLast = (offset + MSS >= data.length);
+        const sendChunks = () => {
+          while (offset < data.length && conn.pendingResponses <= MAX_PENDING * 2) {
+            const chunk = data.subarray(offset, offset + MSS);
+            const isLast = (offset + MSS >= data.length);
+            
+            const responsePacket = buildTCPPacket(
+              dstIp, srcIp,
+              dstPort, srcPort,
+              conn.serverSeq,
+              conn.clientAck,
+              isLast ? (TCP_FLAGS.PSH | TCP_FLAGS.ACK) : TCP_FLAGS.ACK,
+              chunk
+            );
+
+            conn.serverSeq += chunk.length;
+            offset += chunk.length;
+            conn.pendingResponses++;
+
+            sendResponse(srcNodeId, responsePacket);
+            metrics.recordResponse(responsePacket.length);
+          }
           
-          const responsePacket = buildTCPPacket(
-            dstIp, srcIp,
-            dstPort, srcPort,
-            conn.serverSeq,
-            conn.clientAck,
-            isLast ? (TCP_FLAGS.PSH | TCP_FLAGS.ACK) : TCP_FLAGS.ACK,
-            chunk
-          );
-
-          conn.serverSeq += chunk.length;
-          offset += chunk.length;
-          responseBytes += responsePacket.length;
-
-          sendResponse(srcNodeId, responsePacket);
-          metrics.recordResponse(responsePacket.length);
-        }
+          // If more data to send, schedule next batch
+          if (offset < data.length) {
+            setImmediate(sendChunks);
+          }
+        };
+        
+        sendChunks();
       });
 
       socket.on('end', () => {
@@ -544,8 +564,17 @@ export class UserSpaceNAT extends EventEmitter {
 
     conn.lastActivity = Date.now();
 
-    // Handle pure ACK
+    // Handle pure ACK - this means client received our data
     if (parsed.tcpFlagsACK && !parsed.tcpFlagsSYN && !parsed.tcpFlagsFIN && data.length === 0) {
+      // Decrease pending counter and resume socket if paused
+      if (conn.pendingResponses > 0) {
+        conn.pendingResponses = Math.max(0, conn.pendingResponses - 5);
+        
+        if (conn.paused && conn.pendingResponses < 25 && conn.socket) {
+          conn.socket.resume();
+          conn.paused = false;
+        }
+      }
       return;
     }
 
