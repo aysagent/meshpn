@@ -78,11 +78,12 @@ export class PacketBatcher {
     const buffer = Buffer.alloc(totalSize);
     let offset = 0;
 
-    // Write batch marker + packet count
-    // Single packets start with version byte (1 or 2), batches start with 0xFFFFxxxx
-    // Use >>> 0 to convert to unsigned 32-bit integer
-    buffer.writeUInt32BE((0xFFFF0000 | packets.length) >>> 0, offset);
-    offset += 4;
+    // Write batch marker (0xFF 0xFF) + packet count (2 bytes)
+    // Single packets start with version byte (1 or 2), batches start with 0xFF 0xFF
+    buffer.writeUInt8(0xFF, offset++);
+    buffer.writeUInt8(0xFF, offset++);
+    buffer.writeUInt16BE(packets.length, offset);
+    offset += 2;
 
     for (const pkt of packets) {
       buffer.writeUInt32BE(pkt.length, offset);
@@ -113,25 +114,23 @@ export class PacketBatcher {
 
 // Unbatch received data - returns array of packets
 export function unbatch(data) {
-  // Check if this is a batch (starts with 0xFFFF)
-  if (data.length >= 4) {
-    const header = data.readUInt32BE(0);
-    if ((header & 0xFFFF0000) === 0xFFFF0000) {
-      const packetCount = header & 0x0000FFFF;
-      const packets = [];
-      let offset = 4;
+  // Check if this is a batch (starts with 0xFFFF in high bytes)
+  // Batch marker: first two bytes are 0xFF 0xFF
+  if (data.length >= 4 && data[0] === 0xFF && data[1] === 0xFF) {
+    const packetCount = data.readUInt16BE(2);
+    const packets = [];
+    let offset = 4;
 
-      for (let i = 0; i < packetCount && offset < data.length; i++) {
-        if (offset + 4 > data.length) break;
-        const pktLen = data.readUInt32BE(offset);
-        offset += 4;
-        if (offset + pktLen > data.length) break;
-        packets.push(data.subarray(offset, offset + pktLen));
-        offset += pktLen;
-      }
-
-      return packets;
+    for (let i = 0; i < packetCount && offset < data.length; i++) {
+      if (offset + 4 > data.length) break;
+      const pktLen = data.readUInt32BE(offset);
+      offset += 4;
+      if (offset + pktLen > data.length) break;
+      packets.push(data.subarray(offset, offset + pktLen));
+      offset += pktLen;
     }
+
+    return packets;
   }
 
   // Not a batch - return as single packet

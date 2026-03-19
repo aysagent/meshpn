@@ -263,11 +263,8 @@ export class MeshNode extends EventEmitter {
     });
     
     this.wsDataServer.on('message', (peerId, data) => {
-      // Unbatch if needed
-      const packets = unbatch(data);
-      for (const pkt of packets) {
-        this._handleIncomingMessage(peerId, pkt, 'websocket');
-      }
+      // TODO: re-enable unbatch after fixing binary formats
+      this._handleIncomingMessage(peerId, data, 'websocket');
     });
   }
 
@@ -353,11 +350,12 @@ export class MeshNode extends EventEmitter {
     });
     
     this.transportManager.on('message', (peerId, data, transport) => {
-      // Unbatch if needed
-      const packets = unbatch(data);
-      for (const pkt of packets) {
-        this._handleIncomingMessage(peerId, pkt);
-      }
+      // TODO: re-enable unbatch after fixing binary formats
+      // const packets = unbatch(data);
+      // for (const pkt of packets) {
+      //   this._handleIncomingMessage(peerId, pkt);
+      // }
+      this._handleIncomingMessage(peerId, data);
     });
     
     this.reorderBuffer.on('packet', (payload, packet) => {
@@ -787,8 +785,9 @@ export class MeshNode extends EventEmitter {
   }
   
   _sendToPeer(peerId, data) {
-    // Use batcher for efficient transmission
-    return this.batcher.add(peerId, data);
+    // TODO: re-enable batching after fixing binary formats
+    // return this.batcher.add(peerId, data);
+    return this._rawSend(peerId, data);
   }
 
   _handlePing(peerId, packet) {
