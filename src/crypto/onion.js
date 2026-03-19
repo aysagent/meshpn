@@ -1,5 +1,52 @@
 import { encrypt, decrypt } from './encrypt.js';
 
+// Binary layer format:
+// - 1 byte: flags (bit 0 = isExit, bit 1 = hasNextHop)
+// - 16 bytes: nextHop nodeId (only if hasNextHop = 1, padded/truncated)
+// - rest: payload (raw binary)
+const FLAG_IS_EXIT = 0x01;
+const FLAG_HAS_NEXT_HOP = 0x02;
+const NODE_ID_SIZE = 16;
+
+function encodeLayer(nextHop, isExit, payload) {
+  let flags = 0;
+  if (isExit) flags |= FLAG_IS_EXIT;
+  if (nextHop) flags |= FLAG_HAS_NEXT_HOP;
+  
+  const headerSize = 1 + (nextHop ? NODE_ID_SIZE : 0);
+  const layer = Buffer.alloc(headerSize + payload.length);
+  
+  let offset = 0;
+  layer.writeUInt8(flags, offset++);
+  
+  if (nextHop) {
+    const nodeIdBuf = Buffer.from(nextHop.padEnd(NODE_ID_SIZE, '\0').slice(0, NODE_ID_SIZE));
+    nodeIdBuf.copy(layer, offset);
+    offset += NODE_ID_SIZE;
+  }
+  
+  payload.copy(layer, offset);
+  return layer;
+}
+
+function decodeLayer(data) {
+  let offset = 0;
+  const flags = data.readUInt8(offset++);
+  
+  const isExit = !!(flags & FLAG_IS_EXIT);
+  const hasNextHop = !!(flags & FLAG_HAS_NEXT_HOP);
+  
+  let nextHop = null;
+  if (hasNextHop) {
+    nextHop = data.subarray(offset, offset + NODE_ID_SIZE).toString().replace(/\0/g, '');
+    offset += NODE_ID_SIZE;
+  }
+  
+  const payload = data.subarray(offset);
+  
+  return { nextHop, isExit, payload };
+}
+
 export class OnionRouter {
   constructor(sessionManager) {
     this.sessionManager = sessionManager;
@@ -24,13 +71,11 @@ export class OnionRouter {
         throw new Error(`No session key for node ${nodeId}`);
       }
       
-      const layer = {
-        nextHop: i === 0 ? null : reversedRoute[i - 1],
-        isExit: i === 0,
-        payload: wrapped.toString('base64')
-      };
+      const nextHop = i === 0 ? null : reversedRoute[i - 1];
+      const isExit = i === 0;
+      const layer = encodeLayer(nextHop, isExit, wrapped);
       
-      wrapped = encrypt(JSON.stringify(layer), key);
+      wrapped = encrypt(layer, key);
     }
     
     return wrapped;
@@ -38,13 +83,7 @@ export class OnionRouter {
 
   unwrap(encryptedPayload, myKey) {
     const decrypted = decrypt(encryptedPayload, myKey);
-    const layer = JSON.parse(decrypted.toString('utf8'));
-    
-    return {
-      nextHop: layer.nextHop,
-      isExit: layer.isExit,
-      payload: Buffer.from(layer.payload, 'base64')
-    };
+    return decodeLayer(decrypted);
   }
 }
 
@@ -64,16 +103,12 @@ export class OnionPacketBuilder {
     const reversedLayers = [...this.layers].reverse();
     
     for (let i = 0; i < reversedLayers.length; i++) {
-      const { nodeId, sessionKey } = reversedLayers[i];
+      const { sessionKey } = reversedLayers[i];
       const nextHop = i === 0 ? null : reversedLayers[i - 1].nodeId;
+      const isExit = i === 0;
       
-      const layer = {
-        nextHop,
-        isExit: i === 0,
-        payload: wrapped.toString('base64')
-      };
-      
-      wrapped = encrypt(JSON.stringify(layer), sessionKey);
+      const layer = encodeLayer(nextHop, isExit, wrapped);
+      wrapped = encrypt(layer, sessionKey);
     }
     
     return wrapped;
@@ -81,13 +116,7 @@ export class OnionPacketBuilder {
 
   static unwrapLayer(encryptedData, sessionKey) {
     const decrypted = decrypt(encryptedData, sessionKey);
-    const layer = JSON.parse(decrypted.toString('utf8'));
-    
-    return {
-      nextHop: layer.nextHop,
-      isExit: layer.isExit,
-      payload: Buffer.from(layer.payload, 'base64')
-    };
+    return decodeLayer(decrypted);
   }
 }
 

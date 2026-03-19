@@ -5,7 +5,7 @@ import { encrypt, decrypt } from '../crypto/encrypt.js';
 import { TransportManager, WebSocketDataServer } from '../transport/index.js';
 import { PeerDiscovery } from '../control/index.js';
 import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
-import { TunManager, Packet, PacketType, parseIPPacket } from '../network/index.js';
+import { TunManager, Packet, PacketType, parseIPPacket, PacketBatcher, unbatch } from '../network/index.js';
 import { NATManager, UserSpaceNAT } from '../exit/index.js';
 import { metrics } from '../debug/index.js';
 import http from 'http';
@@ -97,6 +97,11 @@ export class MeshNode extends EventEmitter {
     this.directMode = config.directMode || false;
     
     this.wsDataServer = null;
+    
+    // Packet batcher for efficient transmission
+    this.batcher = new PacketBatcher((peerId, data) => {
+      this._rawSend(peerId, data);
+    });
     
     if (this.isExit) {
       if (this.natMode === 'userspace') {
@@ -258,7 +263,11 @@ export class MeshNode extends EventEmitter {
     });
     
     this.wsDataServer.on('message', (peerId, data) => {
-      this._handleIncomingMessage(peerId, data, 'websocket');
+      // Unbatch if needed
+      const packets = unbatch(data);
+      for (const pkt of packets) {
+        this._handleIncomingMessage(peerId, pkt, 'websocket');
+      }
     });
   }
 
@@ -344,7 +353,11 @@ export class MeshNode extends EventEmitter {
     });
     
     this.transportManager.on('message', (peerId, data, transport) => {
-      this._handleIncomingMessage(peerId, data);
+      // Unbatch if needed
+      const packets = unbatch(data);
+      for (const pkt of packets) {
+        this._handleIncomingMessage(peerId, pkt);
+      }
     });
     
     this.reorderBuffer.on('packet', (payload, packet) => {
@@ -752,24 +765,30 @@ export class MeshNode extends EventEmitter {
     this.emit('packet-received', payload);
   }
   
-  _sendToPeer(peerId, data) {
+  _rawSend(peerId, data) {
     const wsConnected = this.wsDataServer && this.wsDataServer.isConnected(peerId);
     const tmConnected = this.transportManager.isConnected(peerId);
     
     if (wsConnected) {
       const result = this.wsDataServer.send(peerId, data);
-      if (!result) {
-        console.warn(`[_sendToPeer] WS send failed to ${peerId}`);
+      if (result) {
+        metrics.recordWebRTCSend(data.length, true);
       }
       return result;
     }
     
     if (tmConnected) {
-      return this.transportManager.send(peerId, data);
+      const result = this.transportManager.send(peerId, data);
+      metrics.recordWebRTCSend(data.length, result);
+      return result;
     }
     
-    console.warn(`[_sendToPeer] No connection to ${peerId} (ws=${wsConnected}, tm=${tmConnected})`);
     return false;
+  }
+  
+  _sendToPeer(peerId, data) {
+    // Use batcher for efficient transmission
+    return this.batcher.add(peerId, data);
   }
 
   _handlePing(peerId, packet) {
@@ -917,6 +936,7 @@ export class MeshNode extends EventEmitter {
     this._stopKeepalive();
     this._stopTrafficStats();
     this.reorderBuffer.stop();
+    this.batcher.stop();
     metrics.stop();
     
     if (this.userSpaceNAT) {

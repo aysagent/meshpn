@@ -21,3 +21,4 @@ export {
   buildUDPPacket
 } from './packet.js';
 export { VirtualIPManager, RoutingTable } from './ip-manager.js';
+export { PacketBatcher, unbatch } from './batcher.js';

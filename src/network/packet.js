@@ -1,5 +1,3 @@
-import { randomBytes } from 'crypto';
-
 export const PROTOCOLS = {
   ICMP: 1,
   TCP: 6,
@@ -29,11 +27,18 @@ export const PacketType = {
 export const DEFAULT_TTL = 32;
 export const MAX_TTL = 64;
 
+// Fast flowId generation using counter instead of slow randomBytes
+let flowIdCounter = 0;
+const flowIdPrefix = Date.now().toString(16).slice(-8);
+function generateFlowId() {
+  return flowIdPrefix + (flowIdCounter++).toString(16).padStart(8, '0');
+}
+
 export class Packet {
   constructor(options = {}) {
     this.version = options.version || 1;
     this.type = options.type || PacketType.DATA;
-    this.flowId = options.flowId || randomBytes(8).toString('hex');
+    this.flowId = options.flowId || generateFlowId();
     this.seq = options.seq || 0;
     this.hop = options.hop || 0;
     this.ttl = options.ttl ?? DEFAULT_TTL;
@@ -70,60 +75,133 @@ export class Packet {
   }
 
   serialize() {
-    const header = Buffer.alloc(66);
+    // Compact binary format (version 2):
+    // Header (58 bytes): version(1) + type(1) + hop(2) + ttl(1) + routeCount(1) + seq(4) + flowId(16) + srcNode(16) + dstNode(16)
+    // Route: 16 bytes per nodeId
+    // Payload: 4 bytes length + data
+    // Note: visitedNodes not sent over wire (used only locally for loop detection)
+    
+    const NODE_ID_SIZE = 16;
+    const routeCount = this.route.length;
+    const headerSize = 58;
+    const routeSize = routeCount * NODE_ID_SIZE;
+    const totalSize = headerSize + routeSize + 4 + this.payload.length;
+    
+    const buffer = Buffer.alloc(totalSize);
     let offset = 0;
     
-    header.writeUInt8(this.version, offset++);
-    header.writeUInt8(this.type, offset++);
-    header.writeUInt16BE(this.hop, offset);
+    buffer.writeUInt8(2, offset++); // version 2 = compact format
+    buffer.writeUInt8(this.type, offset++);
+    buffer.writeUInt16BE(this.hop, offset);
     offset += 2;
-    header.writeUInt8(this.ttl, offset++);
-    header.writeUInt8(0, offset++);
-    header.writeUInt32BE(this.seq, offset);
+    buffer.writeUInt8(this.ttl, offset++);
+    buffer.writeUInt8(routeCount, offset++);
+    buffer.writeUInt32BE(this.seq, offset);
     offset += 4;
     
-    const flowIdBuf = Buffer.from(this.flowId.padEnd(16, '\0').slice(0, 16));
-    flowIdBuf.copy(header, offset);
-    offset += 16;
+    const flowIdBuf = Buffer.from(this.flowId.padEnd(NODE_ID_SIZE, '\0').slice(0, NODE_ID_SIZE));
+    flowIdBuf.copy(buffer, offset);
+    offset += NODE_ID_SIZE;
     
-    const srcBuf = Buffer.from((this.srcNode || '').padEnd(16, '\0').slice(0, 16));
-    srcBuf.copy(header, offset);
-    offset += 16;
+    const srcBuf = Buffer.from((this.srcNode || '').padEnd(NODE_ID_SIZE, '\0').slice(0, NODE_ID_SIZE));
+    srcBuf.copy(buffer, offset);
+    offset += NODE_ID_SIZE;
     
-    const dstBuf = Buffer.from((this.dstNode || '').padEnd(16, '\0').slice(0, 16));
-    dstBuf.copy(header, offset);
-    offset += 16;
+    const dstBuf = Buffer.from((this.dstNode || '').padEnd(NODE_ID_SIZE, '\0').slice(0, NODE_ID_SIZE));
+    dstBuf.copy(buffer, offset);
+    offset += NODE_ID_SIZE;
     
-    header.writeBigUInt64BE(BigInt(this.timestamp), offset);
-    offset += 8;
+    // Write route as binary (16 bytes per nodeId)
+    for (const nodeId of this.route) {
+      const nodeBuf = Buffer.from((nodeId || '').padEnd(NODE_ID_SIZE, '\0').slice(0, NODE_ID_SIZE));
+      nodeBuf.copy(buffer, offset);
+      offset += NODE_ID_SIZE;
+    }
     
-    const routeJson = JSON.stringify(this.route);
-    const routeBuf = Buffer.from(routeJson);
-    const routeLen = Buffer.alloc(2);
-    routeLen.writeUInt16BE(routeBuf.length, 0);
+    // Payload length and data
+    buffer.writeUInt32BE(this.payload.length, offset);
+    offset += 4;
     
-    const visitedJson = JSON.stringify(this.visitedNodes);
-    const visitedBuf = Buffer.from(visitedJson);
-    const visitedLen = Buffer.alloc(2);
-    visitedLen.writeUInt16BE(visitedBuf.length, 0);
+    this.payload.copy(buffer, offset);
     
-    const payloadLen = Buffer.alloc(4);
-    payloadLen.writeUInt32BE(this.payload.length, 0);
-    
-    return Buffer.concat([
-      header,
-      routeLen,
-      routeBuf,
-      visitedLen,
-      visitedBuf,
-      payloadLen,
-      this.payload
-    ]);
+    return buffer;
   }
 
   static deserialize(buffer) {
-    if (buffer.length < 66) {
+    if (buffer.length < 6) {
       throw new Error('Buffer too short for packet header');
+    }
+    
+    const version = buffer.readUInt8(0);
+    
+    if (version === 2) {
+      return Packet._deserializeV2(buffer);
+    } else {
+      return Packet._deserializeV1(buffer);
+    }
+  }
+  
+  static _deserializeV2(buffer) {
+    // Compact binary format (version 2)
+    const NODE_ID_SIZE = 16;
+    
+    if (buffer.length < 58) {
+      throw new Error('Buffer too short for v2 packet header');
+    }
+    
+    let offset = 0;
+    
+    const version = buffer.readUInt8(offset++);
+    const type = buffer.readUInt8(offset++);
+    const hop = buffer.readUInt16BE(offset);
+    offset += 2;
+    const ttl = buffer.readUInt8(offset++);
+    const routeCount = buffer.readUInt8(offset++);
+    const seq = buffer.readUInt32BE(offset);
+    offset += 4;
+    
+    const flowId = buffer.subarray(offset, offset + NODE_ID_SIZE).toString().replace(/\0/g, '');
+    offset += NODE_ID_SIZE;
+    
+    const srcNode = buffer.subarray(offset, offset + NODE_ID_SIZE).toString().replace(/\0/g, '') || null;
+    offset += NODE_ID_SIZE;
+    
+    const dstNode = buffer.subarray(offset, offset + NODE_ID_SIZE).toString().replace(/\0/g, '') || null;
+    offset += NODE_ID_SIZE;
+    
+    // Read route
+    const route = [];
+    for (let i = 0; i < routeCount; i++) {
+      const nodeId = buffer.subarray(offset, offset + NODE_ID_SIZE).toString().replace(/\0/g, '');
+      route.push(nodeId);
+      offset += NODE_ID_SIZE;
+    }
+    
+    const payloadLen = buffer.readUInt32BE(offset);
+    offset += 4;
+    
+    const payload = buffer.subarray(offset, offset + payloadLen);
+    
+    return new Packet({
+      version,
+      type,
+      flowId,
+      seq,
+      hop,
+      ttl,
+      srcNode,
+      dstNode,
+      route,
+      visitedNodes: [], // Not transmitted in v2
+      timestamp: Date.now(),
+      payload
+    });
+  }
+  
+  static _deserializeV1(buffer) {
+    // Legacy JSON format (version 1)
+    if (buffer.length < 66) {
+      throw new Error('Buffer too short for v1 packet header');
     }
     
     let offset = 0;

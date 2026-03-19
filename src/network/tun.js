@@ -477,8 +477,9 @@ export class TunInterface extends EventEmitter {
       const header = Buffer.alloc(4);
       header.writeUInt32BE(packet.length, 0);
       
-      this.helperProcess.stdin.write(header);
-      this.helperProcess.stdin.write(packet);
+      // Single write instead of two separate writes
+      const combined = Buffer.concat([header, packet]);
+      this.helperProcess.stdin.write(combined);
       return true;
     } catch (err) {
       this.emit('error', err);
