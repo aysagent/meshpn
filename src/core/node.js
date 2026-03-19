@@ -659,6 +659,33 @@ export class MeshNode extends EventEmitter {
   _sendExitResponse(targetNodeId, ipPacket) {
     const routeInfo = this.router.graph.findShortestPath(this.nodeId, targetNodeId);
     if (!routeInfo || routeInfo.length < 2) {
+      // Check if we have direct WS connection
+      if (this.wsDataServer && this.wsDataServer.isConnected(targetNodeId)) {
+        console.log(`[EXIT] No graph route but WS connected to ${targetNodeId}, using direct`);
+        // Use direct connection
+        const sessionKey = this.discovery.getSessionKey(targetNodeId);
+        if (!sessionKey) {
+          console.warn(`[EXIT] No session key for ${targetNodeId}`);
+          return;
+        }
+        try {
+          const encryptedPayload = encrypt(ipPacket, sessionKey);
+          const packet = new Packet({
+            type: PacketType.DATA_DIRECT,
+            srcNode: this.nodeId,
+            dstNode: targetNodeId,
+            route: [targetNodeId],
+            payload: encryptedPayload
+          });
+          const serialized = packet.serialize();
+          if (!this.wsDataServer.send(targetNodeId, serialized)) {
+            console.warn(`[EXIT] WS send failed to ${targetNodeId}`);
+          }
+        } catch (err) {
+          console.error('[EXIT] Failed to send WS response:', err.message);
+        }
+        return;
+      }
       console.warn(`[EXIT] No route back to ${targetNodeId}`);
       return;
     }
@@ -726,10 +753,23 @@ export class MeshNode extends EventEmitter {
   }
   
   _sendToPeer(peerId, data) {
-    if (this.wsDataServer && this.wsDataServer.isConnected(peerId)) {
-      return this.wsDataServer.send(peerId, data);
+    const wsConnected = this.wsDataServer && this.wsDataServer.isConnected(peerId);
+    const tmConnected = this.transportManager.isConnected(peerId);
+    
+    if (wsConnected) {
+      const result = this.wsDataServer.send(peerId, data);
+      if (!result) {
+        console.warn(`[_sendToPeer] WS send failed to ${peerId}`);
+      }
+      return result;
     }
-    return this.transportManager.send(peerId, data);
+    
+    if (tmConnected) {
+      return this.transportManager.send(peerId, data);
+    }
+    
+    console.warn(`[_sendToPeer] No connection to ${peerId} (ws=${wsConnected}, tm=${tmConnected})`);
+    return false;
   }
 
   _handlePing(peerId, packet) {
