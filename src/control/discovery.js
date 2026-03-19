@@ -109,8 +109,13 @@ export class PeerDiscovery extends EventEmitter {
       return;
     }
     
-    if (this.identity.nodeId > peer.nodeId) {
-      console.log(`[DISCOVERY] Skipping ${peer.nodeId} - waiting for peer to initiate (myId > peerId)`);
+    const wsUrl = peer.dataServer || this.dataServer;
+    const shouldTryWebSocket = (this.transportMode === 'websocket' || this.transportMode === 'auto') && wsUrl;
+    
+    // For WebSocket, always try to connect (it's client-server, not P2P negotiation)
+    // For WebRTC, use nodeId comparison to avoid duplicate offers
+    if (!shouldTryWebSocket && this.identity.nodeId > peer.nodeId) {
+      console.log(`[DISCOVERY] Skipping ${peer.nodeId} - waiting for peer to initiate WebRTC (myId > peerId)`);
       return;
     }
     
@@ -121,9 +126,6 @@ export class PeerDiscovery extends EventEmitter {
     });
     
     const myEphemeralPubKey = this.sessionManager.createSession(peer.nodeId);
-    
-    const wsUrl = peer.dataServer || this.dataServer;
-    const shouldTryWebSocket = (this.transportMode === 'websocket' || this.transportMode === 'auto') && wsUrl;
     
     if (shouldTryWebSocket) {
       try {
