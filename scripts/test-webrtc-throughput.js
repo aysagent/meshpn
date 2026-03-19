@@ -29,6 +29,9 @@ const STUN_SERVERS = [
 const TEST_DURATION = 10000; // 10 seconds
 const CHUNK_SIZE = 16384; // 16KB chunks
 
+// Parse --stun-only flag
+const STUN_ONLY = process.argv.includes('--stun-only');
+
 class ThroughputTest {
   constructor(role, signalServer) {
     this.role = role;
@@ -36,6 +39,7 @@ class ThroughputTest {
     this.pc = null;
     this.dc = null;
     this.ws = null;
+    this.candidateTypes = { local: new Set(), remote: new Set() };
     
     this.stats = {
       bytesSent: 0,
@@ -105,18 +109,28 @@ class ThroughputTest {
   createPeerConnection(isInitiator) {
     console.log(`Creating peer connection (initiator: ${isInitiator})...`);
     
-    this.pc = new RTCPeerConnection({
-      iceServers: [...STUN_SERVERS, ...TURN_SERVERS]
-    });
+    const iceServers = STUN_ONLY ? [...STUN_SERVERS] : [...STUN_SERVERS, ...TURN_SERVERS];
+    console.log(`ICE mode: ${STUN_ONLY ? 'STUN only (P2P)' : 'STUN + TURN'}`);
+    
+    this.pc = new RTCPeerConnection({ iceServers });
     
     this.pc.onicecandidate = (event) => {
       if (event.candidate) {
+        const candidateStr = event.candidate.candidate || '';
+        const type = this.extractCandidateType(candidateStr);
+        this.candidateTypes.local.add(type);
+        console.log(`Local ICE candidate: ${type} - ${candidateStr.substring(0, 80)}...`);
         this.sendSignal({ type: 'candidate', candidate: event.candidate });
       }
     };
     
     this.pc.oniceconnectionstatechange = () => {
-      console.log('ICE state:', this.pc.iceConnectionState);
+      const state = this.pc.iceConnectionState;
+      console.log('ICE state:', state);
+      
+      if (state === 'connected' || state === 'completed') {
+        this.printCandidateInfo();
+      }
     };
     
     if (isInitiator) {
@@ -248,7 +262,10 @@ class ThroughputTest {
       console.log('Received answer');
       await this.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp, 'answer'));
     } else if (msg.type === 'candidate') {
-      console.log('Received ICE candidate');
+      const candidateStr = msg.candidate.candidate || '';
+      const type = this.extractCandidateType(candidateStr);
+      this.candidateTypes.remote.add(type);
+      console.log(`Remote ICE candidate: ${type}`);
       await this.pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
     }
   }
@@ -257,6 +274,48 @@ class ThroughputTest {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
     }
+  }
+  
+  extractCandidateType(candidateStr) {
+    if (candidateStr.includes('typ relay')) return 'relay (TURN)';
+    if (candidateStr.includes('typ srflx')) return 'srflx (STUN reflexive)';
+    if (candidateStr.includes('typ prflx')) return 'prflx (peer reflexive)';
+    if (candidateStr.includes('typ host')) return 'host (local)';
+    return 'unknown';
+  }
+  
+  printCandidateInfo() {
+    console.log('\n========== ICE CANDIDATE INFO ==========');
+    console.log('Local candidate types:', [...this.candidateTypes.local].join(', '));
+    console.log('Remote candidate types:', [...this.candidateTypes.remote].join(', '));
+    
+    // Try to get selected candidate pair info from werift
+    try {
+      const sctp = this.pc.sctp;
+      const dtls = sctp?.dtlsTransport;
+      const ice = dtls?.iceTransport;
+      
+      if (ice) {
+        const local = ice.localCandidate;
+        const remote = ice.remoteCandidate;
+        
+        if (local && remote) {
+          console.log('\n--- SELECTED CANDIDATE PAIR ---');
+          console.log(`Local:  ${local.type} ${local.host}:${local.port} (${local.protocol})`);
+          console.log(`Remote: ${remote.type} ${remote.host}:${remote.port} (${remote.protocol})`);
+          
+          if (local.type === 'relay' || remote.type === 'relay') {
+            console.log('\n*** CONNECTION IS RELAYED THROUGH TURN ***');
+            console.log('This may limit throughput!');
+          } else {
+            console.log('\n*** DIRECT P2P CONNECTION ***');
+          }
+        }
+      }
+    } catch (err) {
+      console.log('Could not get selected candidate pair:', err.message);
+    }
+    console.log('==========================================\n');
   }
 }
 
@@ -267,8 +326,11 @@ const signalServer = args[1] || 'localhost';
 
 if (role !== 'server' && role !== 'client') {
   console.log('Usage:');
-  console.log('  Server: node scripts/test-webrtc-throughput.js server');
-  console.log('  Client: node scripts/test-webrtc-throughput.js client <server-ip>');
+  console.log('  Server: node scripts/test-webrtc-throughput.js server [--stun-only]');
+  console.log('  Client: node scripts/test-webrtc-throughput.js client <server-ip> [--stun-only]');
+  console.log('');
+  console.log('Options:');
+  console.log('  --stun-only   Use only STUN (no TURN) to test direct P2P connection');
   process.exit(1);
 }
 
