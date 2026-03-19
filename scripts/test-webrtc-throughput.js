@@ -29,8 +29,10 @@ const STUN_SERVERS = [
 const TEST_DURATION = 10000; // 10 seconds
 const CHUNK_SIZE = 16384; // 16KB chunks
 
-// Parse --stun-only flag
+// Parse flags
 const STUN_ONLY = process.argv.includes('--stun-only');
+const SEND_ONLY = process.argv.includes('--send-only');
+const RECV_ONLY = process.argv.includes('--recv-only');
 
 class ThroughputTest {
   constructor(role, signalServer) {
@@ -183,9 +185,25 @@ class ThroughputTest {
   startTest() {
     console.log(`\nStarting throughput test (${TEST_DURATION/1000}s)...`);
     console.log(`Chunk size: ${CHUNK_SIZE} bytes`);
+    console.log(`Mode: ${SEND_ONLY ? 'SEND ONLY' : RECV_ONLY ? 'RECEIVE ONLY' : 'BIDIRECTIONAL'}`);
     
     this.stats.startTime = Date.now();
     const testData = Buffer.alloc(CHUNK_SIZE, 0x42);
+    
+    if (RECV_ONLY) {
+      // Only receive, don't send
+      setTimeout(() => {
+        this.stats.endTime = Date.now();
+        console.log('\nTest complete!');
+        this.printResults();
+        setTimeout(() => {
+          this.dc.close();
+          this.pc.close();
+          process.exit(0);
+        }, 2000);
+      }, TEST_DURATION);
+      return;
+    }
     
     const sendLoop = () => {
       if (Date.now() - this.stats.startTime >= TEST_DURATION) {
@@ -326,11 +344,17 @@ const signalServer = args[1] || 'localhost';
 
 if (role !== 'server' && role !== 'client') {
   console.log('Usage:');
-  console.log('  Server: node scripts/test-webrtc-throughput.js server [--stun-only]');
-  console.log('  Client: node scripts/test-webrtc-throughput.js client <server-ip> [--stun-only]');
+  console.log('  Server: node scripts/test-webrtc-throughput.js server [options]');
+  console.log('  Client: node scripts/test-webrtc-throughput.js client <server-ip> [options]');
   console.log('');
   console.log('Options:');
-  console.log('  --stun-only   Use only STUN (no TURN) to test direct P2P connection');
+  console.log('  --stun-only   Use only STUN (no TURN) for direct P2P');
+  console.log('  --send-only   Only send data (measure upload)');
+  console.log('  --recv-only   Only receive data (measure download)');
+  console.log('');
+  console.log('Example: Test VPS->Client speed only:');
+  console.log('  Server: node scripts/test-webrtc-throughput.js server --send-only');
+  console.log('  Client: node scripts/test-webrtc-throughput.js client <ip> --recv-only');
   process.exit(1);
 }
 
