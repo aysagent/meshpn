@@ -13,6 +13,7 @@ import {
   buildTCPPacket, 
   buildUDPPacket 
 } from '../network/index.js';
+import { metrics } from '../debug/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -229,8 +230,10 @@ export class UserSpaceNAT extends EventEmitter {
   }
 
   handlePacket(ipPacket, srcNodeId, sendResponse) {
-    // Process synchronously - setImmediate was blocking event loop
+    const startTime = Date.now();
     this._processPacket(ipPacket, srcNodeId, sendResponse);
+    const elapsed = Date.now() - startTime;
+    metrics.recordNATProcess(ipPacket.length, elapsed);
   }
   
   _processPacket(ipPacket, srcNodeId, sendResponse) {
@@ -375,6 +378,7 @@ export class UserSpaceNAT extends EventEmitter {
       }
       
       this.connectingCount++;
+      metrics.recordTCPConnection();
       
       // If destination is our own virtual IP, connect to localhost instead
       const actualDstIp = (this.localVirtualIp && dstIp === this.localVirtualIp) ? '127.0.0.1' : dstIp;
@@ -442,10 +446,12 @@ export class UserSpaceNAT extends EventEmitter {
         if (conn.state === TCP_STATE.CLOSED) return;
         
         conn.lastActivity = Date.now();
+        metrics.recordTCPData(0, data.length);
         
         // MSS for MTU 1400
         const MSS = 1360;
         let offset = 0;
+        let responseBytes = 0;
         
         while (offset < data.length) {
           const chunk = data.subarray(offset, offset + MSS);
@@ -462,8 +468,10 @@ export class UserSpaceNAT extends EventEmitter {
 
           conn.serverSeq += chunk.length;
           offset += chunk.length;
+          responseBytes += responsePacket.length;
 
           sendResponse(srcNodeId, responsePacket);
+          metrics.recordResponse(responsePacket.length);
         }
       });
 

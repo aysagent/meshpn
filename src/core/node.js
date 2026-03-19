@@ -7,6 +7,7 @@ import { PeerDiscovery } from '../control/index.js';
 import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
 import { TunManager, Packet, PacketType, parseIPPacket } from '../network/index.js';
 import { NATManager, UserSpaceNAT } from '../exit/index.js';
+import { metrics } from '../debug/index.js';
 import http from 'http';
 
 export class MeshNode extends EventEmitter {
@@ -216,6 +217,7 @@ export class MeshNode extends EventEmitter {
     this._startCacheCleanup();
     this._startKeepalive();
     this._startTrafficStats();
+    metrics.start();
     
     this.running = true;
     this.emit('started');
@@ -316,6 +318,9 @@ export class MeshNode extends EventEmitter {
   _handleOutboundPacket(ipPacket) {
     if (!this.running) return;
     
+    // Record TUN read
+    metrics.recordTunRead(ipPacket.length);
+    
     const parsed = parseIPPacket(ipPacket);
     if (!parsed || !parsed.valid) return;
     
@@ -334,9 +339,11 @@ export class MeshNode extends EventEmitter {
 
   _sendThroughMesh(payload, routeInfo) {
     const { route, exitNode } = routeInfo;
+    const payloadLen = payload.length;
     
     try {
       let encryptedPayload;
+      const encryptStart = Date.now();
       
       if (this.directMode && route.length === 1) {
         // Direct mode: single encryption layer to exit node
@@ -360,6 +367,10 @@ export class MeshNode extends EventEmitter {
         encryptedPayload = createOnionPacket(payload, routeWithKeys);
       }
       
+      const encryptTime = Date.now() - encryptStart;
+      metrics.recordOnionEncrypt(payloadLen, encryptedPayload.length, encryptTime);
+      
+      const serializeStart = Date.now();
       const packet = new Packet({
         type: this.directMode ? PacketType.DATA_DIRECT : PacketType.DATA,
         srcNode: this.nodeId,
@@ -370,21 +381,33 @@ export class MeshNode extends EventEmitter {
       
       const nextHop = route[0];
       const serialized = packet.serialize();
+      const serializeTime = Date.now() - serializeStart;
+      metrics.recordSerialize(encryptedPayload.length, serialized.length, serializeTime);
       
-      if (!this.transportManager.send(nextHop, serialized)) {
-        console.warn(`[TUN] Failed to send to ${nextHop}`);
+      const sent = this.transportManager.send(nextHop, serialized);
+      metrics.recordWebRTCSend(serialized.length, sent);
+      
+      if (!sent) {
+        metrics.recordError();
       } else {
         this.trafficStats.bytesSent += payload.length;
         this.trafficStats.packetsSent++;
       }
     } catch (err) {
+      metrics.recordError();
       console.error('[TUN] Failed to send packet:', err.message);
     }
   }
 
   _handleIncomingMessage(peerId, data) {
+    // Record WebRTC receive
+    metrics.recordWebRTCReceive(data.length);
+    
     try {
+      const deserializeStart = Date.now();
       const packet = Packet.deserialize(data);
+      const deserializeTime = Date.now() - deserializeStart;
+      metrics.recordDeserialize(data.length, deserializeTime);
       
       switch (packet.type) {
         case PacketType.DATA:
@@ -406,6 +429,7 @@ export class MeshNode extends EventEmitter {
           console.warn(`Unknown packet type: ${packet.type}`);
       }
     } catch (err) {
+      metrics.recordError();
       console.error('Failed to process incoming message:', err.message);
     }
   }
@@ -445,7 +469,11 @@ export class MeshNode extends EventEmitter {
     }
     
     try {
+      const decryptStart = Date.now();
+      const inputLen = packet.payload.length;
       const layer = peelOnionLayer(packet.payload, sessionKey);
+      const decryptTime = Date.now() - decryptStart;
+      metrics.recordOnionDecrypt(inputLen, layer.payload.length, decryptTime);
       
       if (layer.isExit) {
         if (this.isExit) {
@@ -465,6 +493,7 @@ export class MeshNode extends EventEmitter {
         this._forwardPacket(packet, layer.nextHop, layer.payload, peerId);
       }
     } catch (err) {
+      metrics.recordError();
       console.error('Failed to peel onion layer:', err.message);
     }
   }
@@ -804,6 +833,7 @@ export class MeshNode extends EventEmitter {
     this._stopKeepalive();
     this._stopTrafficStats();
     this.reorderBuffer.stop();
+    metrics.stop();
     
     if (this.userSpaceNAT) {
       this.userSpaceNAT.stop();
