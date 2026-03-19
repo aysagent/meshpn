@@ -14,8 +14,6 @@ export class OnionRouter {
     
     const reversedRoute = [...route].reverse();
 
-    console.log('Onion wrap', reversedRoute);
-    
     for (let i = 0; i < reversedRoute.length; i++) {
       const nodeId = reversedRoute[i];
       const key = sessionKeys 
