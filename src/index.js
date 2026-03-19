@@ -97,6 +97,8 @@ async function main() {
     ...argsConfig
   };
   
+  console.log(`Config transport: ${JSON.stringify(config.transport)}`);
+  
   if (!config.signallingServer) {
     config.signallingServer = process.env.SIGNALLING_SERVER || 'ws://localhost:8080';
   }
