@@ -78,9 +78,10 @@ export class PacketBatcher {
     const buffer = Buffer.alloc(totalSize);
     let offset = 0;
 
-    // Write packet count as negative number to distinguish from single packet
-    // Single packets start with positive type byte, batches start with 0xFFFFxxxx
-    buffer.writeUInt32BE(0xFFFF0000 | packets.length, offset);
+    // Write batch marker + packet count
+    // Single packets start with version byte (1 or 2), batches start with 0xFFFFxxxx
+    // Use >>> 0 to convert to unsigned 32-bit integer
+    buffer.writeUInt32BE((0xFFFF0000 | packets.length) >>> 0, offset);
     offset += 4;
 
     for (const pkt of packets) {
