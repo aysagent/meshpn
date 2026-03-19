@@ -11,7 +11,7 @@
  */
 
 import { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } from 'werift';
-import WebSocket from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import http from 'http';
 
 const TURN_SERVERS = [
@@ -60,7 +60,7 @@ class ThroughputTest {
   async startSignalServer() {
     // Simple HTTP server for signaling
     const server = http.createServer();
-    const wss = new WebSocket.Server({ server });
+    const wss = new WebSocketServer({ server });
     
     wss.on('connection', (ws) => {
       console.log('Client connected to signal server');
