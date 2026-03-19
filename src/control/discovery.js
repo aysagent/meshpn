@@ -15,6 +15,8 @@ export class PeerDiscovery extends EventEmitter {
     this.transportMode = config.transportMode || 'webrtc';
     this.dataServer = config.dataServer || null;
     
+    console.log(`[DISCOVERY] Transport mode: ${this.transportMode}, dataServer: ${this.dataServer}`);
+    
     this.transportManager.setLocalNodeId(this.identity.nodeId);
   }
 
@@ -111,6 +113,8 @@ export class PeerDiscovery extends EventEmitter {
     
     const wsUrl = peer.dataServer || this.dataServer;
     const shouldTryWebSocket = (this.transportMode === 'websocket' || this.transportMode === 'auto') && wsUrl;
+    
+    console.log(`[DISCOVERY] shouldTryWebSocket=${shouldTryWebSocket}, wsUrl=${wsUrl}, transportMode=${this.transportMode}`);
     
     // For WebSocket, always try to connect (it's client-server, not P2P negotiation)
     // For WebRTC, use nodeId comparison to avoid duplicate offers
