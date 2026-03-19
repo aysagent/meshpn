@@ -249,12 +249,12 @@ export class MeshNode extends EventEmitter {
     
     this.wsDataServer.on('peer-connected', (peerId, info) => {
       console.log(`[WS-DATA] Peer connected via WebSocket: ${peerId}`);
-      this.router.addPeer(peerId);
+      this.router.addLocalConnection(peerId, info);
     });
     
     this.wsDataServer.on('peer-disconnected', (peerId) => {
       console.log(`[WS-DATA] Peer disconnected: ${peerId}`);
-      this.router.removePeer(peerId);
+      this.router.removeLocalConnection(peerId);
     });
     
     this.wsDataServer.on('message', (peerId, data) => {
