@@ -263,8 +263,10 @@ export class MeshNode extends EventEmitter {
     });
     
     this.wsDataServer.on('message', (peerId, data) => {
-      // TODO: re-enable unbatch after fixing binary formats
-      this._handleIncomingMessage(peerId, data, 'websocket');
+      const packets = unbatch(data);
+      for (const pkt of packets) {
+        this._handleIncomingMessage(peerId, pkt, 'websocket');
+      }
     });
   }
 
@@ -350,12 +352,10 @@ export class MeshNode extends EventEmitter {
     });
     
     this.transportManager.on('message', (peerId, data, transport) => {
-      // TODO: re-enable unbatch after fixing binary formats
-      // const packets = unbatch(data);
-      // for (const pkt of packets) {
-      //   this._handleIncomingMessage(peerId, pkt);
-      // }
-      this._handleIncomingMessage(peerId, data);
+      const packets = unbatch(data);
+      for (const pkt of packets) {
+        this._handleIncomingMessage(peerId, pkt);
+      }
     });
     
     this.reorderBuffer.on('packet', (payload, packet) => {
@@ -607,12 +607,7 @@ export class MeshNode extends EventEmitter {
 
   async _processExitPacket(packet, payload) {
     if (this.userSpaceNAT) {
-      if (!this._natRespCount) this._natRespCount = 0;
       const sendResponse = (targetNodeId, responsePacket) => {
-        this._natRespCount++;
-        if (this._natRespCount % 100 === 1) {
-          console.log(`[NAT-RESP] count=${this._natRespCount}, target=${targetNodeId}, len=${responsePacket.length}`);
-        }
         this._sendExitResponse(targetNodeId, responsePacket);
       };
       this.userSpaceNAT.handlePacket(payload, packet.srcNode, sendResponse);
@@ -676,16 +671,9 @@ export class MeshNode extends EventEmitter {
     const routeInfo = this.router.graph.findShortestPath(this.nodeId, targetNodeId);
     const wsConnected = this.wsDataServer && this.wsDataServer.isConnected(targetNodeId);
     
-    // Debug: log every 100th response to avoid spam
-    if (!this._respCounter) this._respCounter = 0;
-    if (++this._respCounter % 100 === 1) {
-      console.log(`[EXIT-RESP] target=${targetNodeId}, routeInfo=${routeInfo?.length}, wsConnected=${wsConnected}, ipLen=${ipPacket.length}`);
-    }
-    
     if (!routeInfo || routeInfo.length < 2) {
       // Check if we have direct WS connection
       if (wsConnected) {
-        // Already logged above
         // Use direct connection
         const sessionKey = this.discovery.getSessionKey(targetNodeId);
         if (!sessionKey) {
@@ -798,9 +786,7 @@ export class MeshNode extends EventEmitter {
   }
   
   _sendToPeer(peerId, data) {
-    // TODO: re-enable batching after fixing binary formats
-    // return this.batcher.add(peerId, data);
-    return this._rawSend(peerId, data);
+    return this.batcher.add(peerId, data);
   }
 
   _handlePing(peerId, packet) {

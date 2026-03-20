@@ -115,14 +115,8 @@ export class OnionPacketBuilder {
   }
 
   static unwrapLayer(encryptedData, sessionKey) {
-    try {
-      const decrypted = decrypt(encryptedData, sessionKey);
-      return decodeLayer(decrypted);
-    } catch (err) {
-      console.error(`[ONION] Decrypt failed: encryptedData.length=${encryptedData.length}, keyLen=${sessionKey?.length}`);
-      console.error(`[ONION] First bytes: ${encryptedData.subarray(0, 20).toString('hex')}`);
-      throw err;
-    }
+    const decrypted = decrypt(encryptedData, sessionKey);
+    return decodeLayer(decrypted);
   }
 }
 
