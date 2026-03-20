@@ -786,6 +786,10 @@ export class MeshNode extends EventEmitter {
   }
   
   _sendToPeer(peerId, data) {
+    // Send small packets (ACKs, control) immediately - batching delays hurt TCP throughput
+    if (data.length < 256) {
+      return this._rawSend(peerId, data);
+    }
     return this.batcher.add(peerId, data);
   }
 
