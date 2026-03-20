@@ -2,7 +2,7 @@
 // Batch format: [4-byte total length][4-byte pkt1 len][pkt1][4-byte pkt2 len][pkt2]...
 
 const MAX_BATCH_SIZE = 16384; // 16KB
-const BATCH_TIMEOUT_MS = 5; // 5ms max delay
+const BATCH_TIMEOUT_MS = 15; // 15ms - collect more packets for slow upload path
 
 export class PacketBatcher {
   constructor(sendFn) {
