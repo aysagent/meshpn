@@ -28,6 +28,10 @@ const TEST_DURATION = 3000; // 3 seconds
 
 const STUN_ONLY = process.argv.includes('--stun-only');
 
+// #region agent log
+const _dbg = (loc, msg, data, hid) => fetch('http://127.0.0.1:7709/ingest/1c653f46-f2d0-4f49-8f87-b95e3ce070bf', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c8e2b' }, body: JSON.stringify({ sessionId: '7c8e2b', location: loc, message: msg, data: data || {}, hypothesisId: hid, timestamp: Date.now() }) }).catch(() => {});
+// #endregion
+
 class WebRTCPathCheck {
   constructor(role, signalServer) {
     this.role = role;
@@ -98,16 +102,30 @@ class WebRTCPathCheck {
 
     this.pc.oniceconnectionstatechange = () => {
       const state = this.pc.iceConnectionState;
+      // #region agent log
+      _dbg('check-webrtc-path.js:onice', 'iceconnectionstatechange', { state, candidatePairLogged: this.candidatePairLogged, role: this.role }, 'H1');
+      // #endregion
       console.log(`ICE state: ${state}`);
 
       if ((state === 'connected' || state === 'completed') && !this.candidatePairLogged) {
+        // #region agent log
+        _dbg('check-webrtc-path.js:onice', 'entering printPath branch', { state }, 'H2');
+        // #endregion
         this.candidatePairLogged = true;
-        // Delay: selected pair may not be available immediately
         setTimeout(() => {
+          // #region agent log
+          _dbg('check-webrtc-path.js:setTimeout', 'setTimeout fired', { hasPc: !!this.pc, hasSctp: !!this.pc?.sctp }, 'H3');
+          // #endregion
           this.printPathInfo();
           this.runQuickTest();
         }, 100);
       }
+    };
+
+    this.pc.onconnectionstatechange = () => {
+      // #region agent log
+      _dbg('check-webrtc-path.js:connstate', 'connectionstatechange', { connState: this.pc?.connectionState, iceState: this.pc?.iceConnectionState }, 'H5');
+      // #endregion
     };
 
     if (isInitiator) {
@@ -128,13 +146,22 @@ class WebRTCPathCheck {
   setupDataChannel() {
     this.dc.onopen = () => console.log('Data channel open');
     this.dc.onmessage = () => {};
-    this.dc.onclose = () => {
+    this.    dc.onclose = () => {
+      // #region agent log
+      _dbg('check-webrtc-path.js:dc.onclose', 'dc closed', { role: this.role, candidatePairLogged: this.candidatePairLogged }, 'H3');
+      // #endregion
       console.log('\nDone.');
       process.exit(0);
     };
   }
 
   printPathInfo() {
+    // #region agent log
+    const hasSctp = !!this.pc?.sctp;
+    const hasDtls = !!this.pc?.sctp?.dtlsTransport;
+    const hasIce = !!this.pc?.sctp?.dtlsTransport?.iceTransport;
+    _dbg('check-webrtc-path.js:printPathInfo', 'printPathInfo entry', { hasSctp, hasDtls, hasIce, pcKeys: this.pc ? Object.keys(this.pc) : [] }, 'H4');
+    // #endregion
     console.log('\n' + '='.repeat(50));
     console.log('SELECTED CONNECTION PATH');
     console.log('='.repeat(50));
