@@ -607,7 +607,12 @@ export class MeshNode extends EventEmitter {
 
   async _processExitPacket(packet, payload) {
     if (this.userSpaceNAT) {
+      if (!this._natRespCount) this._natRespCount = 0;
       const sendResponse = (targetNodeId, responsePacket) => {
+        this._natRespCount++;
+        if (this._natRespCount % 100 === 1) {
+          console.log(`[NAT-RESP] count=${this._natRespCount}, target=${targetNodeId}, len=${responsePacket.length}`);
+        }
         this._sendExitResponse(targetNodeId, responsePacket);
       };
       this.userSpaceNAT.handlePacket(payload, packet.srcNode, sendResponse);
@@ -669,10 +674,18 @@ export class MeshNode extends EventEmitter {
 
   _sendExitResponse(targetNodeId, ipPacket) {
     const routeInfo = this.router.graph.findShortestPath(this.nodeId, targetNodeId);
+    const wsConnected = this.wsDataServer && this.wsDataServer.isConnected(targetNodeId);
+    
+    // Debug: log every 100th response to avoid spam
+    if (!this._respCounter) this._respCounter = 0;
+    if (++this._respCounter % 100 === 1) {
+      console.log(`[EXIT-RESP] target=${targetNodeId}, routeInfo=${routeInfo?.length}, wsConnected=${wsConnected}, ipLen=${ipPacket.length}`);
+    }
+    
     if (!routeInfo || routeInfo.length < 2) {
       // Check if we have direct WS connection
-      if (this.wsDataServer && this.wsDataServer.isConnected(targetNodeId)) {
-        console.log(`[EXIT] No graph route but WS connected to ${targetNodeId}, using direct`);
+      if (wsConnected) {
+        // Already logged above
         // Use direct connection
         const sessionKey = this.discovery.getSessionKey(targetNodeId);
         if (!sessionKey) {
