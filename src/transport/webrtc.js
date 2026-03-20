@@ -10,6 +10,7 @@ export class WebRTCTransport extends EventEmitter {
   constructor(config = {}) {
     super();
     this.iceServers = config.iceServers || DEFAULT_ICE_SERVERS;
+    this.iceTransportPolicy = config.iceTransportPolicy || 'all';
     this.connections = new Map();
     this.dataChannels = new Map();
     this.relayCandidates = new Map();
@@ -19,7 +20,7 @@ export class WebRTCTransport extends EventEmitter {
       maxRetransmits: config.maxRetransmits
     };
     
-    this.bufferedAmountLowThreshold = config.bufferedAmountLowThreshold || 256 * 1024;
+    this.bufferedAmountLowThreshold = config.bufferedAmountLowThreshold || 1024 * 1024; // 1MB for high throughput
     
     this.turnServers = this.iceServers.filter(s => {
       const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
@@ -37,6 +38,9 @@ export class WebRTCTransport extends EventEmitter {
     }
     
     console.log(`[WebRTC] DataChannel config: ordered=${this.dataChannelConfig.ordered}`);
+    if (config.stunOnly) {
+      console.log('[WebRTC] STUN-only mode (no TURN)');
+    }
   }
 
   async testTurnConnectivity() {
@@ -233,7 +237,8 @@ export class WebRTCTransport extends EventEmitter {
 
   _createPeerConnection(peerId) {
     const pc = new RTCPeerConnection({
-      iceServers: this.iceServers
+      iceServers: this.iceServers,
+      iceTransportPolicy: this.iceTransportPolicy
     });
     
     this.relayCandidates.set(peerId, false);
@@ -269,6 +274,7 @@ export class WebRTCTransport extends EventEmitter {
       
       if (state === 'connected' || state === 'completed') {
         console.log(`ICE connection established for peer ${peerId}`);
+        this._logSelectedCandidatePair(peerId, pc);
       } else if (state === 'failed') {
         console.error(`ICE connection failed for peer ${peerId}`);
         if (this.hasTurnServers) {
@@ -289,6 +295,33 @@ export class WebRTCTransport extends EventEmitter {
     
     this.connections.set(peerId, pc);
     return pc;
+  }
+
+  _logSelectedCandidatePair(peerId, pc) {
+    try {
+      const sctp = pc.sctp;
+      const dtls = sctp?.dtlsTransport;
+      const ice = dtls?.iceTransport;
+
+      if (ice) {
+        const local = ice.localCandidate;
+        const remote = ice.remoteCandidate;
+
+        if (local && remote) {
+          console.log(`[WebRTC] Selected candidate pair for ${peerId}:`);
+          console.log(`  Local:  ${local.type} ${local.host}:${local.port} (${local.protocol || 'udp'})`);
+          console.log(`  Remote: ${remote.type} ${remote.host}:${remote.port} (${remote.protocol || 'udp'})`);
+
+          if (local.type === 'relay' || remote.type === 'relay') {
+            console.log(`  *** CONNECTION IS RELAYED THROUGH TURN - may limit throughput ***`);
+          } else {
+            console.log(`  *** DIRECT P2P CONNECTION ***`);
+          }
+        }
+      }
+    } catch (err) {
+      console.log(`[WebRTC] Could not get selected candidate pair:`, err.message);
+    }
   }
 
   _setupDataChannel(peerId, dc) {

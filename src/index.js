@@ -105,12 +105,14 @@ async function main() {
   
   config.role = role;
   
-  if (config.turnServers && config.turnServers.length > 0) {
+  if (config.turnServers && config.turnServers.length > 0 && !config.stunOnly) {
     config.iceServers = [
       ...(config.iceServers || []),
       ...config.turnServers
     ];
     console.log(`Configured ${config.turnServers.length} TURN server(s)`);
+  } else if (config.stunOnly) {
+    console.log('STUN-only mode: TURN servers disabled (for diagnostics)');
   }
   
   let identity;

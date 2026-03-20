@@ -32,7 +32,9 @@ export class MeshNode extends EventEmitter {
       webrtc: {
         iceServers: config.iceServers || [
           { urls: 'stun:stun.l.google.com:19302' }
-        ]
+        ],
+        iceTransportPolicy: config.iceTransportPolicy || 'all',
+        stunOnly: config.stunOnly
       },
       quic: config.quic || {},
       websocket: config.websocket || {}
