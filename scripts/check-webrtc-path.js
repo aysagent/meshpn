@@ -102,8 +102,11 @@ class WebRTCPathCheck {
 
       if ((state === 'connected' || state === 'completed') && !this.candidatePairLogged) {
         this.candidatePairLogged = true;
-        this.printPathInfo();
-        this.runQuickTest();
+        // Delay: selected pair may not be available immediately
+        setTimeout(() => {
+          this.printPathInfo();
+          this.runQuickTest();
+        }, 100);
       }
     };
 
@@ -137,16 +140,26 @@ class WebRTCPathCheck {
     console.log('='.repeat(50));
 
     try {
-      const ice = this.pc.sctp?.dtlsTransport?.iceTransport;
+      // Try multiple paths - werift structure may vary by version
+      let ice = this.pc.sctp?.dtlsTransport?.iceTransport;
+      if (!ice && this.pc.transceivers?.[0]) {
+        ice = this.pc.transceivers[0].dtlsTransport?.iceTransport;
+      }
+
       if (ice) {
-        const local = ice.localCandidate;
-        const remote = ice.remoteCandidate;
+        const local = ice.localCandidate ?? ice.selectedCandidatePair?.local;
+        const remote = ice.remoteCandidate ?? ice.selectedCandidatePair?.remote;
 
         if (local && remote) {
-          console.log(`\nLocal:  ${local.type} ${local.host}:${local.port}`);
-          console.log(`Remote: ${remote.type} ${remote.host}:${remote.port}`);
+          const localType = local.type ?? local.candidate?.split(' typ ')[1]?.split(' ')[0] ?? '?';
+          const remoteType = remote.type ?? remote.candidate?.split(' typ ')[1]?.split(' ')[0] ?? '?';
+          const localAddr = local.host ? `${local.host}:${local.port}` : (local.address || '?');
+          const remoteAddr = remote.host ? `${remote.host}:${remote.port}` : (remote.address || '?');
 
-          if (local.type === 'relay' || remote.type === 'relay') {
+          console.log(`\nLocal:  ${localType} ${localAddr}`);
+          console.log(`Remote: ${remoteType} ${remoteAddr}`);
+
+          if (localType === 'relay' || remoteType === 'relay') {
             console.log('\n*** CONNECTION VIA TURN RELAY ***');
             console.log('   All traffic goes through TURN server.');
             console.log('   This typically limits throughput (1-2 Mbit/s).');
@@ -156,13 +169,14 @@ class WebRTCPathCheck {
             console.log('   No relay - better throughput expected.');
           }
         } else {
-          console.log('(Could not get candidate details)');
+          console.log('(Candidates not yet available, pc keys:', Object.keys(this.pc).join(', ') + ')');
         }
       } else {
-        console.log('(ICE transport not available)');
+        console.log('(ICE transport not found, pc.sctp:', !!this.pc.sctp, ')');
       }
     } catch (err) {
       console.log('Error:', err.message);
+      console.log(err.stack);
     }
     console.log('='.repeat(50) + '\n');
   }
