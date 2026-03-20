@@ -1,7 +1,7 @@
 {
   "role": "client",
   "signallingServer": "ws://localhost:8080",
-  "transport": "websocket",
+  "transport": "webrtc",
   "dataServer": "ws://62.84.120.30:8081",
   "iceServers": [
     { "urls": "stun:stun.l.google.com:19302" },
