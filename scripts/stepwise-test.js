@@ -292,6 +292,7 @@ class StepTest {
   runTest() {
     console.log('\nTest running...\n');
     this.startTime = Date.now();
+    this._done = false;
     const payload = randomBytes(PACKET_SIZE);
 
     let batcher = null;
@@ -301,16 +302,30 @@ class StepTest {
       });
     }
 
+    // Safety timer — force finish even if sendLoop gets stuck
+    setTimeout(() => {
+      if (!this._done) {
+        this._done = true;
+        if (batcher) batcher.flushAll();
+        this.printResults();
+      }
+    }, TEST_DURATION + 2000);
+
+    const PKTS_PER_TICK = 50;
+
     const sendLoop = () => {
+      if (this._done) return;
+
       const elapsed = Date.now() - this.startTime;
       if (elapsed >= TEST_DURATION) {
+        this._done = true;
         if (batcher) batcher.flushAll();
         setTimeout(() => this.printResults(), 500);
         return;
       }
 
-      const MAX_BUFFER = 256 * 1024;
-      while (this.dc.bufferedAmount < MAX_BUFFER) {
+      let sent = 0;
+      while (sent < PKTS_PER_TICK && this.dc.bufferedAmount < 256 * 1024) {
         try {
           const processed = clientProcess(payload);
           if (STEP === 6) {
@@ -320,6 +335,7 @@ class StepTest {
           }
           this.uploadBytes += processed.length;
           this.uploadPkts++;
+          sent++;
         } catch {
           break;
         }
