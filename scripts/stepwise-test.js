@@ -302,30 +302,35 @@ class StepTest {
       });
     }
 
-    // Safety timer — force finish even if sendLoop gets stuck
-    setTimeout(() => {
-      if (!this._done) {
-        this._done = true;
-        if (batcher) batcher.flushAll();
-        this.printResults();
-      }
-    }, TEST_DURATION + 2000);
+    let lastLog = Date.now();
 
-    const PKTS_PER_TICK = 50;
-
-    const sendLoop = () => {
+    const sendBatch = () => {
       if (this._done) return;
 
-      const elapsed = Date.now() - this.startTime;
+      const now = Date.now();
+      const elapsed = now - this.startTime;
+
       if (elapsed >= TEST_DURATION) {
         this._done = true;
         if (batcher) batcher.flushAll();
-        setTimeout(() => this.printResults(), 500);
+        console.log('Test complete, waiting for remaining echoes...');
+        setTimeout(() => this.printResults(), 1000);
         return;
       }
 
+      // Progress log every 2 seconds
+      if (now - lastLog >= 2000) {
+        const sec = elapsed / 1000;
+        const upMbps = ((this.uploadBytes * 8) / sec / 1e6).toFixed(2);
+        const dnMbps = ((this.downloadBytes * 8) / sec / 1e6).toFixed(2);
+        console.log(`[${sec.toFixed(1)}s] up: ${upMbps} Mbit/s (${this.uploadPkts} pkts) | dn: ${dnMbps} Mbit/s (${this.downloadPkts} pkts) | buf: ${this.dc.bufferedAmount}`);
+        lastLog = now;
+      }
+
+      // Send a small batch, then yield via setTimeout to let timers & I/O run
       let sent = 0;
-      while (sent < PKTS_PER_TICK && this.dc.bufferedAmount < 256 * 1024) {
+      while (sent < 20) {
+        if (this.dc.bufferedAmount > 256 * 1024) break;
         try {
           const processed = clientProcess(payload);
           if (STEP === 6) {
@@ -336,15 +341,16 @@ class StepTest {
           this.uploadBytes += processed.length;
           this.uploadPkts++;
           sent++;
-        } catch {
+        } catch (e) {
+          console.error('Send error:', e.message);
           break;
         }
       }
 
-      setImmediate(sendLoop);
+      setTimeout(sendBatch, 1);
     };
 
-    sendLoop();
+    sendBatch();
   }
 
   printResults() {
