@@ -1,5 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { EventEmitter } from 'events';
+import { TransportSendBuffer, unframe } from './send-buffer.js';
 
 export class WebSocketDataServer extends EventEmitter {
   constructor(config = {}) {
@@ -7,6 +8,7 @@ export class WebSocketDataServer extends EventEmitter {
     this.port = config.port || 8081;
     this.server = null;
     this.connections = new Map();
+    this.sendBuffers = new Map();
     this.nodeId = config.nodeId;
   }
 
@@ -43,6 +45,11 @@ export class WebSocketDataServer extends EventEmitter {
     console.log(`[WS-DATA] Client connected: ${peerId}`);
     
     this.connections.set(peerId, ws);
+
+    const sb = new TransportSendBuffer((frame) => {
+      try { ws.send(frame); } catch {}
+    });
+    this.sendBuffers.set(peerId, sb);
     
     ws.isAlive = true;
     ws.peerId = peerId;
@@ -52,12 +59,17 @@ export class WebSocketDataServer extends EventEmitter {
     });
     
     ws.on('message', (data) => {
-      const buffer = data instanceof Buffer ? data : Buffer.from(data);
-      this.emit('message', peerId, buffer);
+      const raw = data instanceof Buffer ? data : Buffer.from(data);
+      const packets = unframe(raw);
+      for (const buffer of packets) {
+        this.emit('message', peerId, buffer);
+      }
     });
     
     ws.on('close', () => {
       console.log(`[WS-DATA] Client disconnected: ${peerId}`);
+      const buf = this.sendBuffers.get(peerId);
+      if (buf) { buf.stop(); this.sendBuffers.delete(peerId); }
       this.connections.delete(peerId);
       this.emit('peer-disconnected', peerId);
     });
@@ -71,19 +83,12 @@ export class WebSocketDataServer extends EventEmitter {
   }
 
   send(peerId, data) {
-    const ws = this.connections.get(peerId);
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      return false;
-    }
-    
-    try {
-      const buffer = typeof data === 'string' ? Buffer.from(data) : data;
-      ws.send(buffer);
-      return true;
-    } catch (err) {
-      console.error(`[WS-DATA] Failed to send to ${peerId}:`, err.message);
-      return false;
-    }
+    const sb = this.sendBuffers.get(peerId);
+    if (!sb) return false;
+
+    const buffer = typeof data === 'string' ? Buffer.from(data) : data;
+    sb.push(buffer);
+    return true;
   }
 
   isConnected(peerId) {
@@ -92,6 +97,8 @@ export class WebSocketDataServer extends EventEmitter {
   }
 
   close(peerId) {
+    const sb = this.sendBuffers.get(peerId);
+    if (sb) { sb.stop(); this.sendBuffers.delete(peerId); }
     const ws = this.connections.get(peerId);
     if (ws) {
       ws.close();
@@ -111,6 +118,8 @@ export class WebSocketDataServer extends EventEmitter {
 
   stop() {
     if (this.server) {
+      for (const sb of this.sendBuffers.values()) sb.stop();
+      this.sendBuffers.clear();
       for (const ws of this.connections.values()) {
         ws.close();
       }

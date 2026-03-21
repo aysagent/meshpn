@@ -27,10 +27,10 @@ import { Packet, PacketType } from '../src/network/packet.js';
 import { encrypt, decrypt } from '../src/crypto/encrypt.js';
 import { createOnionPacket, peelOnionLayer } from '../src/crypto/onion.js';
 import { PacketBatcher, unbatch } from '../src/network/batcher.js';
+import { TransportSendBuffer, unframe } from '../src/transport/send-buffer.js';
 
 const SIGNAL_PORT = 9997;
 const TEST_DURATION = 10_000;
-const PACKET_SIZE = 1400;
 
 const TURN_SERVERS = [
   { urls: 'turn:62.84.120.30:3478', username: 'meshuser', credential: 'meshpass' }
@@ -42,6 +42,8 @@ const role = args[0];
 const STUN_ONLY = args.includes('--stun-only');
 const stepIdx = args.indexOf('--step');
 const STEP = stepIdx !== -1 ? parseInt(args[stepIdx + 1], 10) : 1;
+const pktIdx = args.indexOf('--pkt-size');
+const PACKET_SIZE = pktIdx !== -1 ? parseInt(args[pktIdx + 1], 10) : 1400;
 const serverIp = role === 'client' ? args[1] : null;
 
 const STEP_NAMES = {
@@ -50,13 +52,14 @@ const STEP_NAMES = {
   3: '+ encrypt/decrypt (AES-256-GCM)',
   4: '+ Onion wrap/unwrap',
   5: '+ Full pipeline (Packet+Onion)',
-  6: '+ Batching',
+  6: '+ Batching (old PacketBatcher)',
+  7: '+ TransportSendBuffer aggregation',
 };
 
 if (!role || (role === 'client' && !serverIp) || !STEP_NAMES[STEP]) {
   console.log('Usage:');
-  console.log('  Server: node scripts/stepwise-test.js server --step N [--stun-only]');
-  console.log('  Client: node scripts/stepwise-test.js client <ip> --step N [--stun-only]');
+  console.log('  Server: node scripts/stepwise-test.js server --step N [--stun-only] [--pkt-size 1400]');
+  console.log('  Client: node scripts/stepwise-test.js client <ip> --step N [--stun-only] [--pkt-size 1400]');
   console.log('\nSteps:');
   for (const [k, v] of Object.entries(STEP_NAMES)) console.log(`  ${k}  ${v}`);
   process.exit(1);
@@ -70,7 +73,7 @@ const DST_NODE = 'ServerNodeBBBBCC';  // 16 chars to match NODE_ID_SIZE
 // --- Processing functions per step ---
 
 function clientProcess(payload) {
-  if (STEP === 1) return payload;
+  if (STEP === 1 || STEP === 7) return payload;
 
   if (STEP === 2) {
     const pkt = new Packet({ type: PacketType.DATA_DIRECT, srcNode: SRC_NODE, dstNode: DST_NODE, payload });
@@ -85,7 +88,7 @@ function clientProcess(payload) {
     return createOnionPacket(payload, [{ nodeId: DST_NODE, sessionKey: sharedKey }]);
   }
 
-  if (STEP >= 5) {
+  if (STEP === 5 || STEP === 6) {
     const encrypted = createOnionPacket(payload, [{ nodeId: DST_NODE, sessionKey: sharedKey }]);
     const pkt = new Packet({ type: PacketType.DATA, srcNode: SRC_NODE, dstNode: DST_NODE, route: [DST_NODE], payload: encrypted });
     return pkt.serialize();
@@ -93,7 +96,7 @@ function clientProcess(payload) {
 }
 
 function serverProcess(data) {
-  if (STEP === 1) return data;
+  if (STEP === 1 || STEP === 7) return data;
 
   if (STEP === 2) {
     const pkt = Packet.deserialize(data);
@@ -111,7 +114,7 @@ function serverProcess(data) {
     return encrypt(layer.payload, sharedKey);
   }
 
-  if (STEP >= 5) {
+  if (STEP === 5 || STEP === 6) {
     const pkt = Packet.deserialize(data);
     const layer = peelOnionLayer(pkt.payload, sharedKey);
     const encPayload = encrypt(layer.payload, sharedKey);
@@ -121,11 +124,11 @@ function serverProcess(data) {
 }
 
 function clientReceiveProcess(data) {
-  if (STEP === 1) return data.length;
+  if (STEP === 1 || STEP === 7) return data.length;
   if (STEP === 2) { Packet.deserialize(data); return data.length; }
   if (STEP === 3) { decrypt(data, sharedKey); return data.length; }
   if (STEP === 4) { decrypt(data, sharedKey); return data.length; }
-  if (STEP >= 5) {
+  if (STEP === 5 || STEP === 6) {
     const pkt = Packet.deserialize(data);
     decrypt(pkt.payload, sharedKey);
     return data.length;
@@ -240,11 +243,24 @@ class StepTest {
           try { this.dc.send(data); } catch {}
         });
       }
+      if (STEP === 7) {
+        this._serverSendBuf = new TransportSendBuffer((frame) => {
+          try { this.dc.send(frame); } catch {}
+        });
+      }
 
       this.dc.onmessage = (event) => {
         const raw = event.data instanceof ArrayBuffer ? Buffer.from(event.data) : event.data;
 
-        if (STEP === 6) {
+        if (STEP === 7) {
+          const packets = unframe(raw);
+          for (const pkt of packets) {
+            try {
+              const echo = serverProcess(pkt);
+              this._serverSendBuf.push(echo);
+            } catch {}
+          }
+        } else if (STEP === 6) {
           const packets = unbatch(raw);
           for (const pkt of packets) {
             try {
@@ -256,9 +272,7 @@ class StepTest {
           try {
             const echo = serverProcess(raw);
             this.dc.send(echo);
-          } catch (err) {
-            // skip
-          }
+          } catch {}
         }
       };
     }
@@ -267,7 +281,16 @@ class StepTest {
       this.dc.onmessage = (event) => {
         const raw = event.data instanceof ArrayBuffer ? Buffer.from(event.data) : event.data;
 
-        if (STEP === 6) {
+        if (STEP === 7) {
+          const packets = unframe(raw);
+          for (const pkt of packets) {
+            try {
+              clientReceiveProcess(pkt);
+              this.downloadBytes += pkt.length;
+              this.downloadPkts++;
+            } catch {}
+          }
+        } else if (STEP === 6) {
           const packets = unbatch(raw);
           for (const pkt of packets) {
             try {
@@ -301,6 +324,12 @@ class StepTest {
         try { this.dc.send(data); } catch {}
       });
     }
+    let sendBuf = null;
+    if (STEP === 7) {
+      sendBuf = new TransportSendBuffer((frame) => {
+        try { this.dc.send(frame); } catch {}
+      });
+    }
 
     let lastLog = Date.now();
 
@@ -313,6 +342,7 @@ class StepTest {
       if (elapsed >= TEST_DURATION) {
         this._done = true;
         if (batcher) batcher.flushAll();
+        if (sendBuf) sendBuf.flush();
         console.log('Test complete, waiting for remaining echoes...');
         setTimeout(() => this.printResults(), 1000);
         return;
@@ -333,7 +363,9 @@ class StepTest {
         if (this.dc.bufferedAmount > 256 * 1024) break;
         try {
           const processed = clientProcess(payload);
-          if (STEP === 6) {
+          if (STEP === 7) {
+            sendBuf.push(processed);
+          } else if (STEP === 6) {
             batcher.add('server', processed);
           } else {
             this.dc.send(processed);

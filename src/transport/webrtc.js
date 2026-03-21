@@ -1,5 +1,6 @@
 import { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } from 'werift';
 import { EventEmitter } from 'events';
+import { TransportSendBuffer, unframe } from './send-buffer.js';
 
 const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -13,6 +14,7 @@ export class WebRTCTransport extends EventEmitter {
     this.iceTransportPolicy = config.iceTransportPolicy || 'all';
     this.connections = new Map();
     this.dataChannels = new Map();
+    this.sendBuffers = new Map();
     this.relayCandidates = new Map();
     
     this.dataChannelConfig = {
@@ -176,26 +178,12 @@ export class WebRTCTransport extends EventEmitter {
   }
 
   send(peerId, data) {
-    const dc = this.dataChannels.get(peerId);
-    if (!dc || dc.readyState !== 'open') {
-      return false;
-    }
-    
-    // Check buffer overflow - 16MB is typical max, warn at 1MB
-    const HIGH_WATER_MARK = 1024 * 1024;
-    if (dc.bufferedAmount > HIGH_WATER_MARK) {
-      console.warn(`[WebRTC] Buffer high for ${peerId}: ${(dc.bufferedAmount / 1024).toFixed(0)}KB`);
-      // Still try to send, but this indicates backpressure issue
-    }
-    
-    try {
-      const buffer = typeof data === 'string' ? Buffer.from(data) : data;
-      dc.send(buffer);
-      return true;
-    } catch (err) {
-      console.error(`Failed to send to ${peerId}:`, err.message);
-      return false;
-    }
+    const sb = this.sendBuffers.get(peerId);
+    if (!sb) return false;
+
+    const buffer = typeof data === 'string' ? Buffer.from(data) : data;
+    sb.push(buffer);
+    return true;
   }
 
   isConnected(peerId) {
@@ -204,6 +192,12 @@ export class WebRTCTransport extends EventEmitter {
   }
 
   close(peerId) {
+    const sb = this.sendBuffers.get(peerId);
+    if (sb) {
+      sb.stop();
+      this.sendBuffers.delete(peerId);
+    }
+
     const dc = this.dataChannels.get(peerId);
     if (dc) {
       dc.close();
@@ -332,10 +326,16 @@ export class WebRTCTransport extends EventEmitter {
     }
     
     dc.onopen = () => {
+      const sb = new TransportSendBuffer((frame) => {
+        try { dc.send(frame); } catch {}
+      });
+      this.sendBuffers.set(peerId, sb);
       this.emit('peer-connected', peerId);
     };
     
     dc.onclose = () => {
+      const sb = this.sendBuffers.get(peerId);
+      if (sb) { sb.stop(); this.sendBuffers.delete(peerId); }
       this.emit('peer-disconnected', peerId);
     };
     
@@ -344,10 +344,13 @@ export class WebRTCTransport extends EventEmitter {
     };
     
     dc.onmessage = (event) => {
-      const data = event.data instanceof ArrayBuffer 
+      const raw = event.data instanceof ArrayBuffer 
         ? Buffer.from(event.data)
         : event.data;
-      this.emit('message', peerId, data);
+      const packets = unframe(raw);
+      for (const data of packets) {
+        this.emit('message', peerId, data);
+      }
     };
     
     dc.onbufferedamountlow = () => {

@@ -5,7 +5,7 @@ import { encrypt, decrypt } from '../crypto/encrypt.js';
 import { TransportManager, WebSocketDataServer } from '../transport/index.js';
 import { PeerDiscovery } from '../control/index.js';
 import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
-import { TunManager, Packet, PacketType, parseIPPacket, PacketBatcher, unbatch } from '../network/index.js';
+import { TunManager, Packet, PacketType, parseIPPacket } from '../network/index.js';
 import { NATManager, UserSpaceNAT } from '../exit/index.js';
 import { metrics } from '../debug/index.js';
 import http from 'http';
@@ -100,10 +100,6 @@ export class MeshNode extends EventEmitter {
     
     this.wsDataServer = null;
     
-    // Packet batcher for efficient transmission
-    this.batcher = new PacketBatcher((peerId, data) => {
-      this._rawSend(peerId, data);
-    });
     
     if (this.isExit) {
       if (this.natMode === 'userspace') {
@@ -265,10 +261,7 @@ export class MeshNode extends EventEmitter {
     });
     
     this.wsDataServer.on('message', (peerId, data) => {
-      const packets = unbatch(data);
-      for (const pkt of packets) {
-        this._handleIncomingMessage(peerId, pkt, 'websocket');
-      }
+      this._handleIncomingMessage(peerId, data, 'websocket');
     });
   }
 
@@ -354,10 +347,7 @@ export class MeshNode extends EventEmitter {
     });
     
     this.transportManager.on('message', (peerId, data, transport) => {
-      const packets = unbatch(data);
-      for (const pkt of packets) {
-        this._handleIncomingMessage(peerId, pkt);
-      }
+      this._handleIncomingMessage(peerId, data);
     });
     
     this.reorderBuffer.on('packet', (payload, packet) => {
@@ -788,11 +778,7 @@ export class MeshNode extends EventEmitter {
   }
   
   _sendToPeer(peerId, data) {
-    // Send small packets (ACKs, control) immediately - batching delays hurt TCP throughput
-    if (data.length < 256) {
-      return this._rawSend(peerId, data);
-    }
-    return this.batcher.add(peerId, data);
+    return this._rawSend(peerId, data);
   }
 
   _handlePing(peerId, packet) {
@@ -940,7 +926,6 @@ export class MeshNode extends EventEmitter {
     this._stopKeepalive();
     this._stopTrafficStats();
     this.reorderBuffer.stop();
-    this.batcher.stop();
     metrics.stop();
     
     if (this.userSpaceNAT) {

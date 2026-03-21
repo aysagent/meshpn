@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
+import { TransportSendBuffer, unframe } from './send-buffer.js';
 
 export class WebSocketTransport extends EventEmitter {
   constructor(config = {}) {
@@ -7,6 +8,7 @@ export class WebSocketTransport extends EventEmitter {
     this.serverUrl = config.serverUrl;
     this.localNodeId = config.localNodeId;
     this.connections = new Map();
+    this.sendBuffers = new Map();
     this.server = null;
     this.reconnectInterval = config.reconnectInterval || 5000;
     this.reconnectAttempts = new Map();
@@ -70,19 +72,12 @@ export class WebSocketTransport extends EventEmitter {
   }
 
   send(peerId, data) {
-    const ws = this.connections.get(peerId);
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      return false;
-    }
-    
-    try {
-      const buffer = typeof data === 'string' ? Buffer.from(data) : data;
-      ws.send(buffer);
-      return true;
-    } catch (err) {
-      console.error(`Failed to send to ${peerId}:`, err.message);
-      return false;
-    }
+    const sb = this.sendBuffers.get(peerId);
+    if (!sb) return false;
+
+    const buffer = typeof data === 'string' ? Buffer.from(data) : data;
+    sb.push(buffer);
+    return true;
   }
 
   isConnected(peerId) {
@@ -91,6 +86,8 @@ export class WebSocketTransport extends EventEmitter {
   }
 
   close(peerId) {
+    const sb = this.sendBuffers.get(peerId);
+    if (sb) { sb.stop(); this.sendBuffers.delete(peerId); }
     const ws = this.connections.get(peerId);
     if (ws) {
       ws.close();
@@ -102,6 +99,8 @@ export class WebSocketTransport extends EventEmitter {
     for (const peerId of this.connections.keys()) {
       this.close(peerId);
     }
+    for (const sb of this.sendBuffers.values()) sb.stop();
+    this.sendBuffers.clear();
     if (this.server) {
       this.server.close();
     }
@@ -119,13 +118,23 @@ export class WebSocketTransport extends EventEmitter {
 
   _setupConnection(peerId, ws) {
     this.connections.set(peerId, ws);
+
+    const sb = new TransportSendBuffer((frame) => {
+      try { ws.send(frame); } catch {}
+    });
+    this.sendBuffers.set(peerId, sb);
     
     ws.on('message', (data) => {
-      const buffer = data instanceof Buffer ? data : Buffer.from(data);
-      this.emit('message', peerId, buffer);
+      const raw = data instanceof Buffer ? data : Buffer.from(data);
+      const packets = unframe(raw);
+      for (const buffer of packets) {
+        this.emit('message', peerId, buffer);
+      }
     });
     
     ws.on('close', () => {
+      const buf = this.sendBuffers.get(peerId);
+      if (buf) { buf.stop(); this.sendBuffers.delete(peerId); }
       this.connections.delete(peerId);
       this.emit('peer-disconnected', peerId);
     });
