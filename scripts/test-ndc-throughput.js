@@ -8,10 +8,18 @@
  *   Client: node scripts/test-ndc-throughput.js client <server-ip> [--stun-only]
  */
 
-import { PeerConnection } from 'node-datachannel';
+import { PeerConnection, setSctpSettings } from 'node-datachannel';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes } from 'crypto';
 import http from 'http';
+
+setSctpSettings({
+  recvBufferSize: 4 * 1024 * 1024,
+  sendBufferSize: 4 * 1024 * 1024,
+  maxChunksOnQueue: 16384,
+  initialCongestionWindow: 65535,
+  delayedSackTime: 2,
+});
 
 const SIGNAL_PORT = 9996;
 const TEST_DURATION = 10_000;
@@ -94,7 +102,7 @@ class NdcTest {
   }
 
   setupPeer(isInitiator) {
-    this.pc = new PeerConnection(`peer-${role}`, { iceServers });
+    this.pc = new PeerConnection(`peer-${role}`, { iceServers, maxMessageSize: 65536 });
 
     this.pc.onLocalDescription((sdp, type) => {
       this.signal({ type: type.toLowerCase(), sdp });
@@ -106,6 +114,7 @@ class NdcTest {
 
     this.pc.onStateChange((state) => {
       console.log(`Connection state: ${state}`);
+      if (state === 'connected') this._logCandidatePair();
     });
 
     this.pc.onGatheringStateChange((state) => {
@@ -190,9 +199,9 @@ class NdcTest {
       }
 
       let sent = 0;
-      while (sent < 50) {
+      while (sent < 100) {
         const buffered = typeof this.dc.bufferedAmount === 'function' ? this.dc.bufferedAmount() : 0;
-        if (buffered > 256 * 1024) break;
+        if (buffered > 1024 * 1024) break;
         try {
           this.dc.sendMessageBinary(payload);
           this.uploadBytes += payload.length;
@@ -245,6 +254,17 @@ class NdcTest {
     console.log(`${'='.repeat(45)}\n`);
 
     setTimeout(() => process.exit(0), 1000);
+  }
+
+  _logCandidatePair() {
+    try {
+      const pair = this.pc.getSelectedCandidatePair();
+      const l = pair.local;
+      const r = pair.remote;
+      const isRelay = l.type === 'relay' || r.type === 'relay';
+      const tag = isRelay ? 'RELAY (TURN)' : 'DIRECT P2P';
+      console.log(`Path: ${l.type} ${l.address}:${l.port} (${l.transportType}) <-> ${r.type} ${r.address}:${r.port} (${r.transportType}) [${tag}]`);
+    } catch {}
   }
 
   handleSignal(msg) {
