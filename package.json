@@ -20,14 +20,11 @@
     "@noble/curves": "^1.4.0",
     "@noble/hashes": "^1.4.0",
     "concurrently": "^9.2.1",
+    "node-datachannel": "^0.32.1",
     "nodemon": "^3.1.14",
-    "werift": "^0.19.0",
     "ws": "^8.17.0"
   },
   "engines": {
     "node": ">=18.0.0"
-  },
-  "devDependencies": {
-    "node-datachannel": "^0.32.1"
   }
 }

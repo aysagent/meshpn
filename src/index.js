@@ -105,15 +105,19 @@ async function main() {
   
   config.role = role;
   
-  if (config.turnServers && config.turnServers.length > 0 && !config.stunOnly) {
+  config.iceMode = config.iceMode || 'auto';
+  config.dcMode = config.dcMode || 'performance';
+
+  if (config.turnServers && config.turnServers.length > 0 && config.iceMode !== 'direct') {
     config.iceServers = [
       ...(config.iceServers || []),
       ...config.turnServers
     ];
     console.log(`Configured ${config.turnServers.length} TURN server(s)`);
-  } else if (config.stunOnly) {
-    console.log('STUN-only mode: TURN servers disabled (for diagnostics)');
+  } else if (config.iceMode === 'direct') {
+    console.log('Direct mode: TURN servers excluded');
   }
+  console.log(`ICE mode: ${config.iceMode}, DC mode: ${config.dcMode}`);
   
   let identity;
   if (config.privateKey) {

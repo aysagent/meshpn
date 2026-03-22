@@ -22,7 +22,8 @@
   "virtualNetwork": "10.200.0.0/16",
   "mtu": 1400,
   "enableTun": true,
-  "directMode": false,
+  "iceMode": "auto",
+  "dcMode": "performance",
   "tun": {
     "defaultRoute": true,
     "excludeFromVPN": []

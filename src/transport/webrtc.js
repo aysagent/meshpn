@@ -1,158 +1,169 @@
-import { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } from 'werift';
+import { PeerConnection, setSctpSettings } from 'node-datachannel';
 import { EventEmitter } from 'events';
 import { TransportSendBuffer, unframe } from './send-buffer.js';
+
+setSctpSettings({
+  recvBufferSize: 4 * 1024 * 1024,
+  sendBufferSize: 4 * 1024 * 1024,
+  maxChunksOnQueue: 16384,
+  initialCongestionWindow: 65535,
+  delayedSackTime: 2,
+});
 
 const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' }
 ];
 
+/**
+ * Convert werift-style ICE server objects to node-datachannel string format.
+ * Filters by iceMode (auto/relay/direct).
+ */
+function convertIceServers(servers, iceMode) {
+  const result = [];
+  for (const s of servers) {
+    const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+    for (const url of urls) {
+      if (!url) continue;
+      const isStun = url.startsWith('stun:');
+      const isTurn = url.startsWith('turn:') || url.startsWith('turns:');
+
+      if (iceMode === 'relay' && isStun) continue;
+      if (iceMode === 'direct' && isTurn) continue;
+
+      if (isTurn && (s.username || s.credential)) {
+        const proto = url.startsWith('turns:') ? 'turns' : 'turn';
+        const addr = url.replace(/^turns?:/, '');
+        result.push(`${proto}:${s.username}:${s.credential}@${addr}`);
+      } else {
+        result.push(url);
+      }
+    }
+  }
+  return result;
+}
+
 export class WebRTCTransport extends EventEmitter {
   constructor(config = {}) {
     super();
-    this.iceServers = config.iceServers || DEFAULT_ICE_SERVERS;
-    this.iceTransportPolicy = config.iceTransportPolicy || 'all';
+    this.iceMode = config.iceMode || 'auto';
+    this.dcMode = config.dcMode || 'performance';
+    this.rawIceServers = config.iceServers || DEFAULT_ICE_SERVERS;
+    this.ndcIceServers = convertIceServers(this.rawIceServers, this.iceMode);
+
     this.connections = new Map();
     this.dataChannels = new Map();
     this.sendBuffers = new Map();
-    this.relayCandidates = new Map();
-    
-    this.dataChannelConfig = {
-      ordered: config.ordered !== undefined ? config.ordered : true,
-      maxRetransmits: config.maxRetransmits
-    };
-    
-    this.bufferedAmountLowThreshold = config.bufferedAmountLowThreshold || 1024 * 1024; // 1MB for high throughput
-    
-    this.turnServers = this.iceServers.filter(s => {
-      const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
-      return urls.some(url => url?.startsWith('turn:') || url?.startsWith('turns:'));
-    });
-    
-    this.hasTurnServers = this.turnServers.length > 0;
-    
-    if (this.hasTurnServers) {
-      console.log(`TURN servers configured: ${this.turnServers.length}`);
-      this.turnServers.forEach(server => {
-        const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
-        urls.forEach(url => console.log(`  - ${url}`));
-      });
+    this._descriptionResolvers = new Map();
+
+    const hasTurn = this.ndcIceServers.some(s => s.startsWith('turn:') || s.startsWith('turns:'));
+
+    console.log(`[WebRTC] ICE mode: ${this.iceMode}`);
+    console.log(`[WebRTC] DC mode: ${this.dcMode}`);
+    console.log(`[WebRTC] ICE servers (${this.ndcIceServers.length}):`);
+    for (const s of this.ndcIceServers) {
+      const display = s.replace(/:[^:@]+@/, ':***@');
+      console.log(`  - ${display}`);
     }
-    
-    console.log(`[WebRTC] DataChannel config: ordered=${this.dataChannelConfig.ordered}`);
-    if (config.stunOnly) {
-      console.log('[WebRTC] STUN-only mode (no TURN)');
+    if (this.iceMode === 'relay' && !hasTurn) {
+      console.warn('[WebRTC] WARNING: relay mode but no TURN servers configured!');
     }
   }
 
   async testTurnConnectivity() {
-    if (!this.hasTurnServers) {
-      console.log('No TURN servers configured, skipping connectivity test');
+    const turnOnly = convertIceServers(this.rawIceServers, 'relay');
+    if (turnOnly.length === 0) {
+      console.log('[WebRTC] No TURN servers configured, skipping connectivity test');
       return { success: false, reason: 'no_turn_servers' };
     }
 
-    console.log('Testing TURN server connectivity...');
-    
+    console.log('[WebRTC] Testing TURN server connectivity...');
     return new Promise((resolve) => {
-      const pc = new RTCPeerConnection({
-        iceServers: this.turnServers
+      const pc = new PeerConnection('turn-test', {
+        iceServers: turnOnly,
+        iceTransportPolicy: 'relay',
       });
-      
+
       let hasRelay = false;
       let resolved = false;
-      
+
       const timeout = setTimeout(() => {
         if (!resolved) {
           resolved = true;
-          pc.close();
-          if (hasRelay) {
-            console.log('TURN server test: OK (relay candidates received)');
-            resolve({ success: true });
-          } else {
-            console.error('TURN server test: FAILED (no relay candidates after timeout)');
-            console.error('Check: server address, port, firewall, credentials');
-            resolve({ success: false, reason: 'timeout' });
-          }
+          try { pc.destroy(); } catch {}
+          const ok = hasRelay;
+          console.log(`[WebRTC] TURN test: ${ok ? 'OK' : 'FAILED (no relay candidates after timeout)'}`);
+          resolve({ success: ok, reason: ok ? undefined : 'timeout' });
         }
       }, 10000);
-      
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          const candidateStr = event.candidate.candidate || '';
-          if (candidateStr.includes('typ relay')) {
-            hasRelay = true;
-            if (!resolved) {
-              resolved = true;
-              clearTimeout(timeout);
-              pc.close();
-              console.log('TURN server test: OK (relay candidate received)');
-              resolve({ success: true });
-            }
+
+      pc.onLocalCandidate((candidate) => {
+        if (candidate.includes('typ relay')) {
+          hasRelay = true;
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+            try { pc.destroy(); } catch {}
+            console.log('[WebRTC] TURN test: OK (relay candidate received)');
+            resolve({ success: true });
           }
         }
-      };
-      
-      pc.onicegatheringstatechange = () => {
-        if (pc.iceGatheringState === 'complete' && !resolved) {
+      });
+
+      pc.onGatheringStateChange((state) => {
+        if (state === 'complete' && !resolved) {
           resolved = true;
           clearTimeout(timeout);
-          pc.close();
-          if (hasRelay) {
-            console.log('TURN server test: OK (relay candidates received)');
-            resolve({ success: true });
-          } else {
-            console.error('TURN server test: FAILED (no relay candidates)');
-            console.error('Check: server address, port, firewall, credentials');
-            resolve({ success: false, reason: 'no_relay_candidates' });
-          }
+          try { pc.destroy(); } catch {}
+          console.log(`[WebRTC] TURN test: ${hasRelay ? 'OK' : 'FAILED (no relay candidates)'}`);
+          resolve({ success: hasRelay, reason: hasRelay ? undefined : 'no_relay_candidates' });
         }
-      };
-      
+      });
+
       pc.createDataChannel('test');
-      pc.createOffer().then(offer => pc.setLocalDescription(offer));
     });
   }
 
   async createOffer(peerId) {
     const pc = this._createPeerConnection(peerId);
-    
-    const dcOptions = {
-      ordered: this.dataChannelConfig.ordered
-    };
-    
-    if (this.dataChannelConfig.maxRetransmits !== undefined) {
-      dcOptions.maxRetransmits = this.dataChannelConfig.maxRetransmits;
-    }
-    
-    const dc = pc.createDataChannel('mesh-vpn', dcOptions);
-    
-    this._setupDataChannel(peerId, dc);
-    
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    
-    return {
-      type: 'offer',
-      sdp: pc.localDescription.sdp
-    };
+
+    return new Promise((resolve, reject) => {
+      this._descriptionResolvers.set(peerId, resolve);
+
+      pc.onLocalDescription((sdp, type) => {
+        const resolver = this._descriptionResolvers.get(peerId);
+        if (resolver) {
+          this._descriptionResolvers.delete(peerId);
+          resolver({ type: type.toLowerCase(), sdp });
+        }
+      });
+
+      const dcOpts = this._getDcOptions();
+      const dc = pc.createDataChannel('mesh-vpn', dcOpts);
+      this._setupDataChannel(peerId, dc);
+    });
   }
 
   async handleOffer(peerId, offer) {
     const pc = this._createPeerConnection(peerId);
-    
-    pc.ondatachannel = (event) => {
-      this._setupDataChannel(peerId, event.channel);
-    };
-    
-    await pc.setRemoteDescription(new RTCSessionDescription(offer.sdp, offer.type));
-    
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    
-    return {
-      type: 'answer',
-      sdp: pc.localDescription.sdp
-    };
+
+    return new Promise((resolve) => {
+      this._descriptionResolvers.set(peerId, resolve);
+
+      pc.onLocalDescription((sdp, type) => {
+        const resolver = this._descriptionResolvers.get(peerId);
+        if (resolver) {
+          this._descriptionResolvers.delete(peerId);
+          resolver({ type: type.toLowerCase(), sdp });
+        }
+      });
+
+      pc.onDataChannel((dc) => {
+        this._setupDataChannel(peerId, dc);
+      });
+
+      pc.setRemoteDescription(offer.sdp, 'Offer');
+    });
   }
 
   async handleAnswer(peerId, answer) {
@@ -160,20 +171,21 @@ export class WebRTCTransport extends EventEmitter {
     if (!pc) {
       throw new Error(`No connection found for peer ${peerId}`);
     }
-    
-    await pc.setRemoteDescription(new RTCSessionDescription(answer.sdp, answer.type));
+    pc.setRemoteDescription(answer.sdp, 'Answer');
   }
 
   async addIceCandidate(peerId, candidate) {
     const pc = this.connections.get(peerId);
-    if (!pc) {
-      return;
-    }
-    
+    if (!pc) return;
+
     try {
-      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      const candidateStr = typeof candidate === 'string'
+        ? candidate
+        : (candidate.candidate || candidate);
+      const mid = candidate.mid || candidate.sdpMid || '0';
+      pc.addRemoteCandidate(candidateStr, mid);
     } catch (err) {
-      console.error(`Failed to add ICE candidate for ${peerId}:`, err.message);
+      console.error(`[WebRTC] Failed to add ICE candidate for ${peerId}: ${err.message}`);
     }
   }
 
@@ -181,40 +193,38 @@ export class WebRTCTransport extends EventEmitter {
     const sb = this.sendBuffers.get(peerId);
     if (!sb) return false;
 
-    const buffer = typeof data === 'string' ? Buffer.from(data) : data;
+    const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
     sb.push(buffer);
     return true;
   }
 
   isConnected(peerId) {
     const dc = this.dataChannels.get(peerId);
-    return dc && dc.readyState === 'open';
+    if (!dc) return false;
+    try { return dc.isOpen(); } catch { return false; }
   }
 
   close(peerId) {
     const sb = this.sendBuffers.get(peerId);
-    if (sb) {
-      sb.stop();
-      this.sendBuffers.delete(peerId);
-    }
+    if (sb) { sb.stop(); this.sendBuffers.delete(peerId); }
 
     const dc = this.dataChannels.get(peerId);
     if (dc) {
-      dc.close();
+      try { dc.close(); } catch {}
       this.dataChannels.delete(peerId);
     }
-    
+
     const pc = this.connections.get(peerId);
     if (pc) {
-      pc.close();
+      try { pc.destroy(); } catch {}
       this.connections.delete(peerId);
     }
-    
-    this.relayCandidates.delete(peerId);
+
+    this._descriptionResolvers.delete(peerId);
   }
 
   closeAll() {
-    for (const peerId of this.connections.keys()) {
+    for (const peerId of [...this.connections.keys()]) {
       this.close(peerId);
     }
   }
@@ -222,139 +232,115 @@ export class WebRTCTransport extends EventEmitter {
   getConnectedPeers() {
     const connected = [];
     for (const [peerId, dc] of this.dataChannels) {
-      if (dc.readyState === 'open') {
-        connected.push(peerId);
-      }
+      try { if (dc.isOpen()) connected.push(peerId); } catch {}
     }
     return connected;
   }
 
+  _getDcOptions() {
+    if (this.dcMode === 'performance') {
+      return { unordered: true, maxRetransmits: 0 };
+    }
+    return {};
+  }
+
   _createPeerConnection(peerId) {
-    const pc = new RTCPeerConnection({
-      iceServers: this.iceServers,
-      iceTransportPolicy: this.iceTransportPolicy
+    if (this.connections.has(peerId)) {
+      this.close(peerId);
+    }
+
+    console.log(`[WebRTC] Creating connection to ${peerId} (ice=${this.iceMode}, dc=${this.dcMode})`);
+
+    const pcConfig = {
+      iceServers: this.ndcIceServers,
+      maxMessageSize: 65536,
+    };
+    if (this.iceMode === 'relay') {
+      pcConfig.iceTransportPolicy = 'relay';
+    }
+
+    const pc = new PeerConnection(`pc-${peerId.substring(0, 8)}`, pcConfig);
+
+    pc.onLocalCandidate((candidate, mid) => {
+      this.emit('ice-candidate', peerId, { candidate, mid });
     });
-    
-    this.relayCandidates.set(peerId, false);
-    
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        const candidate = event.candidate;
-        const candidateStr = candidate.candidate || '';
-        
-        if (candidateStr.includes('typ relay')) {
-          this.relayCandidates.set(peerId, true);
-          console.log(`TURN relay candidate gathered for peer ${peerId}`);
-        }
-        
-        this.emit('ice-candidate', peerId, candidate.toJSON());
-      }
-    };
-    
-    pc.onicegatheringstatechange = () => {
-      if (pc.iceGatheringState === 'complete') {
-        const hasRelay = this.relayCandidates.get(peerId);
-        if (this.hasTurnServers && !hasRelay) {
-          console.warn(`ICE gathering complete for ${peerId}: no relay candidates collected`);
-          console.warn('TURN server may be unreachable or credentials may be invalid');
-        } else if (hasRelay) {
-          console.log(`ICE gathering complete for ${peerId}: relay candidates available`);
-        }
-      }
-    };
-    
-    pc.oniceconnectionstatechange = () => {
-      const state = pc.iceConnectionState;
-      
-      if (state === 'connected' || state === 'completed') {
-        console.log(`ICE connection established for peer ${peerId}`);
+
+    pc.onStateChange((state) => {
+      console.log(`[WebRTC] ${peerId.substring(0, 8)}… state: ${state}`);
+
+      if (state === 'connected') {
         this._logSelectedCandidatePair(peerId, pc);
-      } else if (state === 'failed') {
-        console.error(`ICE connection failed for peer ${peerId}`);
-        if (this.hasTurnServers) {
-          console.error('Check TURN server availability and credentials');
-        }
-      } else if (state === 'disconnected') {
-        console.warn(`ICE connection disconnected for peer ${peerId}`);
       }
-    };
-    
-    pc.onconnectionstatechange = () => {
-      this.emit('connection-state', peerId, pc.connectionState);
-      
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+
+      this.emit('connection-state', peerId, state);
+
+      if (state === 'failed' || state === 'disconnected' || state === 'closed') {
         this.emit('peer-disconnected', peerId);
       }
-    };
-    
+    });
+
+    pc.onGatheringStateChange((state) => {
+      console.log(`[WebRTC] ${peerId.substring(0, 8)}… gathering: ${state}`);
+    });
+
     this.connections.set(peerId, pc);
     return pc;
   }
 
   _logSelectedCandidatePair(peerId, pc) {
     try {
-      const sctp = pc.sctp;
-      const dtls = sctp?.dtlsTransport;
-      const ice = dtls?.iceTransport;
+      const pair = pc.getSelectedCandidatePair();
+      const l = pair.local;
+      const r = pair.remote;
+      const isRelay = l.type === 'relay' || r.type === 'relay';
+      const tag = isRelay ? 'RELAY (TURN)' : 'DIRECT P2P';
+      console.log(`[WebRTC] Path for ${peerId.substring(0, 8)}…: ${l.type} ${l.address}:${l.port} (${l.transportType}) <-> ${r.type} ${r.address}:${r.port} (${r.transportType}) [${tag}]`);
 
-      if (ice) {
-        const local = ice.localCandidate;
-        const remote = ice.remoteCandidate;
-
-        if (local && remote) {
-          console.log(`[WebRTC] Selected candidate pair for ${peerId}:`);
-          console.log(`  Local:  ${local.type} ${local.host}:${local.port} (${local.protocol || 'udp'})`);
-          console.log(`  Remote: ${remote.type} ${remote.host}:${remote.port} (${remote.protocol || 'udp'})`);
-
-          if (local.type === 'relay' || remote.type === 'relay') {
-            console.log(`  *** CONNECTION IS RELAYED THROUGH TURN - may limit throughput ***`);
-          } else {
-            console.log(`  *** DIRECT P2P CONNECTION ***`);
-          }
-        }
-      }
+      try {
+        const rtt = pc.rtt();
+        if (rtt > 0) console.log(`[WebRTC] RTT: ${rtt}ms`);
+      } catch {}
     } catch (err) {
-      console.log(`[WebRTC] Could not get selected candidate pair:`, err.message);
+      console.log(`[WebRTC] Could not get candidate pair for ${peerId.substring(0, 8)}…: ${err.message}`);
     }
   }
 
   _setupDataChannel(peerId, dc) {
     this.dataChannels.set(peerId, dc);
-    
-    if (dc.bufferedAmountLowThreshold !== undefined) {
-      dc.bufferedAmountLowThreshold = this.bufferedAmountLowThreshold;
-    }
-    
-    dc.onopen = () => {
+
+    dc.onOpen(() => {
+      console.log(`[WebRTC] DataChannel open for ${peerId.substring(0, 8)}…`);
       const sb = new TransportSendBuffer((frame) => {
-        try { dc.send(frame); } catch {}
+        try {
+          dc.sendMessageBinary(Buffer.isBuffer(frame) ? frame : Buffer.from(frame));
+        } catch {}
       });
       this.sendBuffers.set(peerId, sb);
       this.emit('peer-connected', peerId);
-    };
-    
-    dc.onclose = () => {
+    });
+
+    dc.onClosed(() => {
+      console.log(`[WebRTC] DataChannel closed for ${peerId.substring(0, 8)}…`);
       const sb = this.sendBuffers.get(peerId);
       if (sb) { sb.stop(); this.sendBuffers.delete(peerId); }
       this.emit('peer-disconnected', peerId);
-    };
-    
-    dc.onerror = (err) => {
+    });
+
+    dc.onError((err) => {
+      console.error(`[WebRTC] DataChannel error for ${peerId.substring(0, 8)}…: ${err}`);
       this.emit('error', peerId, err);
-    };
-    
-    dc.onmessage = (event) => {
-      const raw = event.data instanceof ArrayBuffer 
-        ? Buffer.from(event.data)
-        : event.data;
-      const packets = unframe(raw);
-      for (const data of packets) {
+    });
+
+    dc.onMessage((raw) => {
+      const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+      for (const data of unframe(buf)) {
         this.emit('message', peerId, data);
       }
-    };
-    
-    dc.onbufferedamountlow = () => {
+    });
+
+    dc.onBufferedAmountLow(() => {
       this.emit('buffer-low', peerId);
-    };
+    });
+    dc.setBufferedAmountLowThreshold(1024 * 1024);
   }
 }

@@ -33,8 +33,8 @@ export class MeshNode extends EventEmitter {
         iceServers: config.iceServers || [
           { urls: 'stun:stun.l.google.com:19302' }
         ],
-        iceTransportPolicy: config.iceTransportPolicy || 'all',
-        stunOnly: config.stunOnly
+        iceMode: config.iceMode || 'auto',
+        dcMode: config.dcMode || 'performance',
       },
       quic: config.quic || {},
       websocket: config.websocket || {}
