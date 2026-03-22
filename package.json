@@ -26,5 +26,8 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "node-datachannel": "^0.32.1"
   }
 }
