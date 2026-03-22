@@ -80,9 +80,11 @@ if (!role || (role === 'client' && !serverIp) || !STEP_NAMES[STEP]) {
   process.exit(1);
 }
 
-const iceServers = STUN_ONLY
-  ? ['stun:stun.l.google.com:19302']
-  : ['stun:stun.l.google.com:19302', 'turn:meshuser:meshpass@62.84.120.30:3478'];
+function buildIceServers(forceRelay) {
+  if (forceRelay) return ['turn:meshuser:meshpass@62.84.120.30:3478'];
+  if (STUN_ONLY) return ['stun:stun.l.google.com:19302'];
+  return ['stun:stun.l.google.com:19302', 'turn:meshuser:meshpass@62.84.120.30:3478'];
+}
 
 let sharedKey = null;
 const SRC_NODE = 'ClientNodeAAAABB';
@@ -182,11 +184,18 @@ class StepTestNdc {
     wss.on('connection', (ws) => {
       console.log('Client connected');
       this.ws = ws;
+      this._peerReady = false;
       ws.on('message', (data) => {
         const msg = JSON.parse(data.toString());
+        if (msg.type === 'config' && !this._peerReady) {
+          this._peerReady = true;
+          const relay = !!msg.relay;
+          if (relay) console.log('Client requested TURN relay mode');
+          this.setupPeer(true, relay);
+          return;
+        }
         this.handleSignal(msg);
       });
-      this.setupPeer(true);
     });
 
     httpServer.listen(SIGNAL_PORT, () => {
@@ -200,6 +209,7 @@ class StepTestNdc {
     this.ws = new WebSocket(url);
     this.ws.on('open', () => {
       console.log('Connected to signal server');
+      this.ws.send(JSON.stringify({ type: 'config', relay: FORCE_RELAY, unordered: UNORDERED }));
       this.setupPeer(false);
     });
     this.ws.on('message', (data) => {
@@ -209,12 +219,13 @@ class StepTestNdc {
     this.ws.on('error', (err) => console.error('WS error:', err.message));
   }
 
-  setupPeer(isInitiator) {
+  setupPeer(isInitiator, relayOverride) {
+    const useRelay = FORCE_RELAY || relayOverride;
     const pcConfig = {
-      iceServers,
+      iceServers: buildIceServers(useRelay),
       maxMessageSize: 65536,
     };
-    if (FORCE_RELAY) pcConfig.iceTransportPolicy = 'relay';
+    if (useRelay) pcConfig.iceTransportPolicy = 'relay';
 
     this.pc = new PeerConnection(`ndc-step-${role}`, pcConfig);
 
@@ -263,7 +274,13 @@ class StepTestNdc {
       else console.log('Waiting for data...');
     });
 
-    dc.onClosed(() => console.log('DataChannel closed'));
+    dc.onClosed(() => {
+      console.log('DataChannel closed');
+      if (!this._done) {
+        this._done = true;
+        this.printResults();
+      }
+    });
     dc.onError((err) => console.error('DataChannel error:', err));
 
     if (role === 'server') {
@@ -382,6 +399,7 @@ class StepTestNdc {
 
       let sent = 0;
       while (sent < 100) {
+        if (typeof this.dc.isOpen === 'function' && !this.dc.isOpen()) break;
         const buffered = typeof this.dc.bufferedAmount === 'function' ? this.dc.bufferedAmount() : 0;
         if (buffered > 1024 * 1024) break;
         try {
@@ -398,7 +416,7 @@ class StepTestNdc {
           this.uploadPkts++;
           sent++;
         } catch (e) {
-          console.error('Send error:', e.message);
+          if (!this._done) console.error('Send error:', e.message);
           break;
         }
       }

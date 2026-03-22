@@ -27,20 +27,23 @@ const TEST_DURATION = 10_000;
 const args = process.argv.slice(2);
 const role = args[0];
 const STUN_ONLY = args.includes('--stun-only');
+const FORCE_RELAY = args.includes('--relay');
 const pktIdx = args.indexOf('--pkt-size');
 const PACKET_SIZE = pktIdx !== -1 ? parseInt(args[pktIdx + 1], 10) : 1400;
 const serverIp = role === 'client' ? args[1] : null;
 
 if (!role || (role === 'client' && !serverIp)) {
   console.log('Usage:');
-  console.log('  Server: node scripts/test-ndc-throughput.js server [--stun-only] [--pkt-size N]');
-  console.log('  Client: node scripts/test-ndc-throughput.js client <ip> [--stun-only] [--pkt-size N]');
+  console.log('  Server: node scripts/test-ndc-throughput.js server [--stun-only] [--relay] [--pkt-size N]');
+  console.log('  Client: node scripts/test-ndc-throughput.js client <ip> [--stun-only] [--relay] [--pkt-size N]');
   process.exit(1);
 }
 
-const iceServers = STUN_ONLY
-  ? ['stun:stun.l.google.com:19302']
-  : ['stun:stun.l.google.com:19302', 'turn:meshuser:meshpass@62.84.120.30:3478'];
+function buildIceServers(forceRelay) {
+  if (forceRelay) return ['turn:meshuser:meshpass@62.84.120.30:3478'];
+  if (STUN_ONLY) return ['stun:stun.l.google.com:19302'];
+  return ['stun:stun.l.google.com:19302', 'turn:meshuser:meshpass@62.84.120.30:3478'];
+}
 
 class NdcTest {
   constructor() {
@@ -58,7 +61,7 @@ class NdcTest {
 
   async run() {
     console.log(`\n===== NDC (node-datachannel) ECHO TEST =====`);
-    console.log(`ICE: ${STUN_ONLY ? 'STUN only' : 'STUN + TURN'}`);
+    console.log(`ICE: ${STUN_ONLY ? 'STUN only' : FORCE_RELAY ? 'TURN relay only' : 'STUN + TURN'}`);
     console.log(`Role: ${role}`);
     console.log(`Packet size: ${PACKET_SIZE} bytes`);
     console.log(`Duration: ${TEST_DURATION / 1000}s\n`);
@@ -74,11 +77,18 @@ class NdcTest {
     wss.on('connection', (ws) => {
       console.log('Client connected');
       this.ws = ws;
+      this._peerReady = false;
       ws.on('message', (data) => {
         const msg = JSON.parse(data.toString());
+        if (msg.type === 'config' && !this._peerReady) {
+          this._peerReady = true;
+          const relay = !!msg.relay;
+          if (relay) console.log('Client requested TURN relay mode');
+          this.setupPeer(true, relay);
+          return;
+        }
         this.handleSignal(msg);
       });
-      this.setupPeer(true);
     });
 
     httpServer.listen(SIGNAL_PORT, () => {
@@ -92,6 +102,7 @@ class NdcTest {
     this.ws = new WebSocket(url);
     this.ws.on('open', () => {
       console.log('Connected to signal server');
+      this.ws.send(JSON.stringify({ type: 'config', relay: FORCE_RELAY }));
       this.setupPeer(false);
     });
     this.ws.on('message', (data) => {
@@ -101,8 +112,15 @@ class NdcTest {
     this.ws.on('error', (err) => console.error('WS error:', err.message));
   }
 
-  setupPeer(isInitiator) {
-    this.pc = new PeerConnection(`peer-${role}`, { iceServers, maxMessageSize: 65536 });
+  setupPeer(isInitiator, relayOverride) {
+    const useRelay = FORCE_RELAY || relayOverride;
+    const pcConfig = {
+      iceServers: buildIceServers(useRelay),
+      maxMessageSize: 65536,
+    };
+    if (useRelay) pcConfig.iceTransportPolicy = 'relay';
+
+    this.pc = new PeerConnection(`peer-${role}`, pcConfig);
 
     this.pc.onLocalDescription((sdp, type) => {
       this.signal({ type: type.toLowerCase(), sdp });
@@ -142,6 +160,10 @@ class NdcTest {
 
     dc.onClosed(() => {
       console.log('DataChannel closed');
+      if (!this._done) {
+        this._done = true;
+        this.printResults();
+      }
     });
 
     dc.onError((err) => {
@@ -200,6 +222,7 @@ class NdcTest {
 
       let sent = 0;
       while (sent < 100) {
+        if (typeof this.dc.isOpen === 'function' && !this.dc.isOpen()) break;
         const buffered = typeof this.dc.bufferedAmount === 'function' ? this.dc.bufferedAmount() : 0;
         if (buffered > 1024 * 1024) break;
         try {
