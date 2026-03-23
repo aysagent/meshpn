@@ -34,44 +34,59 @@ export class WorkerPipeline {
 
   _spawn() {
     for (let i = 0; i < this.txPoolSize; i++) {
-      const w = new Worker(path.join(__dirname, 'tx-worker.js'));
-      w.on('message', (msg) => this._onTxResult(msg));
-      w.on('error', (err) => console.error('[Pipeline] TX worker error:', err.message));
-      w.on('exit', (code) => {
-        if (code !== 0 && this._alive) console.error(`[Pipeline] TX worker exited unexpectedly (code ${code})`);
-      });
-      this.txWorkers.push(w);
+      this.txWorkers.push(this._createTxWorker(i));
     }
     for (let i = 0; i < this.rxPoolSize; i++) {
-      const w = new Worker(path.join(__dirname, 'rx-worker.js'));
-      w.on('message', (msg) => this._onRxResult(msg));
-      w.on('error', (err) => console.error('[Pipeline] RX worker error:', err.message));
-      w.on('exit', (code) => {
-        if (code !== 0 && this._alive) console.error(`[Pipeline] RX worker exited unexpectedly (code ${code})`);
-      });
-      this.rxWorkers.push(w);
+      this.rxWorkers.push(this._createRxWorker(i));
     }
     this._alive = true;
     console.log(`[Pipeline] Started: ${this.txPoolSize} TX + ${this.rxPoolSize} RX workers`);
   }
 
+  _createTxWorker(index) {
+    const w = new Worker(path.join(__dirname, 'tx-worker.js'));
+    w.on('message', (msg) => this._onTxResult(msg));
+    w.on('error', (err) => console.error('[Pipeline] TX worker error:', err.message));
+    w.on('exit', (code) => {
+      if (code !== 0 && this._alive) {
+        console.error(`[Pipeline] TX worker crashed (code ${code}), flushing pending + respawn`);
+        this._flushPending(this._txPending, 'TX worker crashed');
+        this.txWorkers[index] = this._createTxWorker(index);
+      }
+    });
+    return w;
+  }
+
+  _createRxWorker(index) {
+    const w = new Worker(path.join(__dirname, 'rx-worker.js'));
+    w.on('message', (msg) => this._onRxResult(msg));
+    w.on('error', (err) => console.error('[Pipeline] RX worker error:', err.message));
+    w.on('exit', (code) => {
+      if (code !== 0 && this._alive) {
+        console.error(`[Pipeline] RX worker crashed (code ${code}), flushing pending + respawn`);
+        this._flushPending(this._rxPending, 'RX worker crashed');
+        this.rxWorkers[index] = this._createRxWorker(index);
+      }
+    });
+    return w;
+  }
+
+  _flushPending(map, reason) {
+    for (const cb of map.values()) {
+      try { cb(new Error(reason)); } catch {}
+    }
+    map.clear();
+  }
+
   // ── TX ────────────────────────────────────────────
 
-  /**
-   * Offload encrypt + serialize to TX worker.
-   * @param {Buffer} payload - raw IP packet
-   * @param {Array<{nodeId:string, sessionKey:Buffer}>} routeWithKeys
-   * @param {{type:number, srcNode:string, dstNode:string, route:string[]}} packetMeta
-   * @param {boolean} directMode
-   * @param {function} callback - (err, {serialized:Buffer, nextHop:string, payloadLen:number})
-   */
   submitTx(payload, routeWithKeys, packetMeta, directMode, callback) {
     if (!this._alive || this.txWorkers.length === 0) {
       return this._fallbackTx(payload, routeWithKeys, packetMeta, directMode, callback);
     }
     if (this._txPending.size >= MAX_PENDING) {
       this._txDropped++;
-      return callback(new Error('TX queue full'));
+      return this._fallbackTx(payload, routeWithKeys, packetMeta, directMode, callback);
     }
 
     const jobId = this._jobId++;
@@ -90,10 +105,17 @@ export class WorkerPipeline {
       : payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.length);
 
     const worker = this.txWorkers[this._txRR++ % this.txWorkers.length];
-    worker.postMessage(
-      { jobId, payload: ab, routeWithKeys: keys, packetMeta, directMode },
-      [ab],
-    );
+    try {
+      worker.postMessage(
+        { jobId, payload: ab, routeWithKeys: keys, packetMeta, directMode },
+        [ab],
+      );
+    } catch (err) {
+      this._txPending.delete(jobId);
+      this._fallbackTx(
+        Buffer.from(ab), routeWithKeys, packetMeta, directMode, callback,
+      );
+    }
   }
 
   _onTxResult(msg) {
@@ -130,21 +152,13 @@ export class WorkerPipeline {
 
   // ── RX ────────────────────────────────────────────
 
-  /**
-   * Offload deserialize + decrypt to RX worker.
-   * @param {Buffer} data - raw buffer from DataChannel (already deserialized from frame)
-   * @param {Buffer} sessionKey
-   * @param {string} peerId
-   * @param {number} packetType - hint: PacketType.DATA or DATA_DIRECT
-   * @param {function} callback - (err, result)
-   */
   submitRx(data, sessionKey, peerId, packetType, callback) {
     if (!this._alive || this.rxWorkers.length === 0) {
       return this._fallbackRx(data, sessionKey, peerId, packetType, callback);
     }
     if (this._rxPending.size >= MAX_PENDING) {
       this._rxDropped++;
-      return callback(new Error('RX queue full'));
+      return this._fallbackRx(data, sessionKey, peerId, packetType, callback);
     }
 
     const jobId = this._jobId++;
@@ -159,10 +173,15 @@ export class WorkerPipeline {
       : sessionKey.buffer.slice(sessionKey.byteOffset, sessionKey.byteOffset + sessionKey.length);
 
     const worker = this.rxWorkers[this._rxRR++ % this.rxWorkers.length];
-    worker.postMessage(
-      { jobId, data: dataAb, sessionKey: keyAb, peerId, packetType },
-      [dataAb],
-    );
+    try {
+      worker.postMessage(
+        { jobId, data: dataAb, sessionKey: keyAb, peerId, packetType },
+        [dataAb],
+      );
+    } catch (err) {
+      this._rxPending.delete(jobId);
+      this._fallbackRx(Buffer.from(dataAb), sessionKey, peerId, packetType, callback);
+    }
   }
 
   _onRxResult(msg) {
@@ -237,10 +256,8 @@ export class WorkerPipeline {
 
   async terminate() {
     this._alive = false;
-    for (const cb of this._txPending.values()) cb(new Error('Pipeline terminated'));
-    for (const cb of this._rxPending.values()) cb(new Error('Pipeline terminated'));
-    this._txPending.clear();
-    this._rxPending.clear();
+    this._flushPending(this._txPending, 'Pipeline terminated');
+    this._flushPending(this._rxPending, 'Pipeline terminated');
 
     const all = [...this.txWorkers, ...this.rxWorkers].map(w => w.terminate());
     await Promise.all(all);

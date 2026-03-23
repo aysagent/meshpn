@@ -432,43 +432,41 @@ export class MeshNode extends EventEmitter {
   _handleIncomingMessage(peerId, data) {
     metrics.recordWebRTCReceive(data.length);
 
-    const peeked = data.length >= 2 ? data[1] : 0;
-    const isData = peeked === PacketType.DATA || peeked === PacketType.DATA_DIRECT;
+    if (data.length < 2) return;
+    const peeked = data[1];
 
-    if (isData) {
-      const sessionKey = peeked === PacketType.DATA
-        ? this.discovery.getSessionKey(peerId)
-        : null;
+    if (peeked === PacketType.DATA) {
+      const sessionKey = this.discovery.getSessionKey(peerId);
+      if (!sessionKey) { console.warn(`No session key for ${peerId}`); return; }
 
-      if (peeked === PacketType.DATA && !sessionKey) {
-        console.warn(`No session key for ${peerId}`);
-        return;
-      }
+      this.pipeline.submitRx(data, sessionKey, peerId, PacketType.DATA, (err, result) => {
+        if (err) { metrics.recordError(); console.error('[RX] worker error:', err.message); return; }
+        this._handleRxWorkerResult(result);
+      });
+      return;
+    }
 
-      if (peeked === PacketType.DATA_DIRECT) {
-        let packet;
-        try { packet = Packet.deserialize(data); } catch (err) {
-          metrics.recordError();
-          console.error('Failed to deserialize packet:', err.message);
-          return;
-        }
-        if (packet.dstNode !== this.nodeId) {
+    if (peeked === PacketType.DATA_DIRECT) {
+      // v2 binary peek: dstNode at bytes 42..57 (16 bytes)
+      if (data.length >= 58) {
+        const dstNode = data.subarray(42, 58).toString().replace(/\0/g, '');
+        if (dstNode !== this.nodeId) {
+          let packet;
+          try { packet = Packet.deserialize(data); } catch (err) {
+            metrics.recordError(); return;
+          }
           this._handleDirectDataPacket(peerId, packet);
           return;
         }
-        const key = this.discovery.getSessionKey(packet.srcNode);
-        if (!key) {
-          console.warn(`No session key for ${packet.srcNode}`);
-          return;
-        }
-        this.pipeline.submitRx(data, key, peerId, PacketType.DATA_DIRECT, (err, result) => {
-          if (err) { metrics.recordError(); console.error('[RX] worker error:', err.message); return; }
-          this._handleRxWorkerResult(result);
-        });
-        return;
       }
+      // srcNode at bytes 26..41
+      const srcNode = data.length >= 42
+        ? data.subarray(26, 42).toString().replace(/\0/g, '')
+        : null;
+      const key = srcNode ? this.discovery.getSessionKey(srcNode) : null;
+      if (!key) { console.warn(`No session key for ${srcNode}`); return; }
 
-      this.pipeline.submitRx(data, sessionKey, peerId, PacketType.DATA, (err, result) => {
+      this.pipeline.submitRx(data, key, peerId, PacketType.DATA_DIRECT, (err, result) => {
         if (err) { metrics.recordError(); console.error('[RX] worker error:', err.message); return; }
         this._handleRxWorkerResult(result);
       });
@@ -496,9 +494,16 @@ export class MeshNode extends EventEmitter {
       this.loopStats.totalProcessed++;
       metrics.recordOnionDecrypt(0, payload.length, 0);
 
+      const pkt = new Packet(packetMeta);
+
+      if (pkt.isTTLExpired()) { this.loopStats.ttlDropped++; return; }
+      if (this._isPacketDuplicate(pkt)) { this.loopStats.duplicateDropped++; return; }
+      if (pkt.hasVisited(this.nodeId)) { this.loopStats.loopDropped++; return; }
+      pkt.addVisitedNode(this.nodeId);
+      if (!pkt.decrementTTL()) { this.loopStats.ttlDropped++; return; }
+
       if (result.isExit) {
         if (this.isExit) {
-          const pkt = new Packet(packetMeta);
           this._processExitPacket(pkt, payload);
         } else if (this.isClient && packetMeta.dstNode === this.nodeId) {
           this.reorderBuffer.addPacket({
@@ -508,12 +513,8 @@ export class MeshNode extends EventEmitter {
             pathIndex: 0,
             totalPaths: 1,
           });
-        } else {
-          console.warn('Received exit packet but not an exit node');
         }
       } else if (result.nextHop) {
-        const pkt = new Packet(packetMeta);
-        pkt.addVisitedNode(this.nodeId);
         this._forwardPacket(pkt, result.nextHop, payload, peerId);
       }
     } else if (packetType === PacketType.DATA_DIRECT) {
