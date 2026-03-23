@@ -107,6 +107,7 @@ async function main() {
   
   config.iceMode = config.iceMode || 'auto';
   config.dcMode = config.dcMode || 'performance';
+  config.workers = config.workers || { enabled: true, txPool: 1, rxPool: 1 };
 
   if (config.turnServers && config.turnServers.length > 0 && config.iceMode !== 'direct') {
     config.iceServers = [

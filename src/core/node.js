@@ -8,6 +8,7 @@ import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
 import { TunManager, Packet, PacketType, parseIPPacket } from '../network/index.js';
 import { NATManager, UserSpaceNAT } from '../exit/index.js';
 import { metrics } from '../debug/index.js';
+import { WorkerPipeline } from '../workers/pipeline.js';
 import http from 'http';
 
 export class MeshNode extends EventEmitter {
@@ -60,6 +61,13 @@ export class MeshNode extends EventEmitter {
     this.reorderBuffer = new ReorderBuffer({
       windowSize: config.reorderWindowSize || 1000,
       timeout: config.reorderTimeout || 5000
+    });
+    
+    const wCfg = config.workers || {};
+    this.pipeline = new WorkerPipeline({
+      enabled: wCfg.enabled !== false,
+      txPool: wCfg.txPool || 1,
+      rxPool: wCfg.rxPool || 1,
     });
     
     this.processedPackets = new Map();
@@ -379,98 +387,143 @@ export class MeshNode extends EventEmitter {
 
   _sendThroughMesh(payload, routeInfo) {
     const { route, exitNode } = routeInfo;
-    const payloadLen = payload.length;
-    
-    try {
-      let encryptedPayload;
-      const encryptStart = Date.now();
-      
-      if (this.directMode && route.length === 1) {
-        // Direct mode: single encryption layer to exit node
-        const sessionKey = this.discovery.getSessionKey(exitNode);
-        if (!sessionKey) {
-          console.warn(`No session key for ${exitNode}`);
-          return;
-        }
-        encryptedPayload = encrypt(payload, sessionKey);
-      } else {
-        // Onion routing: multiple encryption layers
-        const routeWithKeys = [];
-        for (const nodeId of route) {
-          const sessionKey = this.discovery.getSessionKey(nodeId);
-          if (!sessionKey) {
-            console.warn(`No session key for ${nodeId}`);
-            return;
-          }
-          routeWithKeys.push({ nodeId, sessionKey });
-        }
-        encryptedPayload = createOnionPacket(payload, routeWithKeys);
+
+    const routeWithKeys = [];
+    for (const nodeId of route) {
+      const sessionKey = this.discovery.getSessionKey(nodeId);
+      if (!sessionKey) {
+        console.warn(`No session key for ${nodeId}`);
+        return;
       }
-      
-      const encryptTime = Date.now() - encryptStart;
-      metrics.recordOnionEncrypt(payloadLen, encryptedPayload.length, encryptTime);
-      
-      const serializeStart = Date.now();
-      const packet = new Packet({
-        type: this.directMode ? PacketType.DATA_DIRECT : PacketType.DATA,
-        srcNode: this.nodeId,
-        dstNode: exitNode,
-        route,
-        payload: encryptedPayload
-      });
-      
-      const nextHop = route[0];
-      const serialized = packet.serialize();
-      const serializeTime = Date.now() - serializeStart;
-      metrics.recordSerialize(encryptedPayload.length, serialized.length, serializeTime);
-      
-      const sent = this.transportManager.send(nextHop, serialized);
-      metrics.recordWebRTCSend(serialized.length, sent);
-      
+      routeWithKeys.push({ nodeId, sessionKey });
+    }
+
+    const packetMeta = {
+      type: this.directMode ? PacketType.DATA_DIRECT : PacketType.DATA,
+      srcNode: this.nodeId,
+      dstNode: exitNode,
+      route,
+    };
+
+    const txStart = Date.now();
+
+    this.pipeline.submitTx(payload, routeWithKeys, packetMeta, this.directMode, (err, result) => {
+      if (err) {
+        metrics.recordError();
+        console.error('[TUN] TX worker error:', err.message);
+        return;
+      }
+
+      const elapsed = Date.now() - txStart;
+      metrics.recordOnionEncrypt(result.payloadLen, result.serialized.length, elapsed);
+
+      const sent = this.transportManager.send(result.nextHop, result.serialized);
+      metrics.recordWebRTCSend(result.serialized.length, sent);
+
       if (!sent) {
         metrics.recordError();
       } else {
-        this.trafficStats.bytesSent += payload.length;
+        this.trafficStats.bytesSent += result.payloadLen;
         this.trafficStats.packetsSent++;
       }
-    } catch (err) {
-      metrics.recordError();
-      console.error('[TUN] Failed to send packet:', err.message);
-    }
+    });
   }
 
   _handleIncomingMessage(peerId, data) {
-    // Record WebRTC receive
     metrics.recordWebRTCReceive(data.length);
-    
-    try {
-      const deserializeStart = Date.now();
-      const packet = Packet.deserialize(data);
-      const deserializeTime = Date.now() - deserializeStart;
-      metrics.recordDeserialize(data.length, deserializeTime);
-      
-      switch (packet.type) {
-        case PacketType.DATA:
-          this._handleDataPacket(peerId, packet);
-          break;
-        case PacketType.DATA_DIRECT:
+
+    const peeked = data.length >= 2 ? data[1] : 0;
+    const isData = peeked === PacketType.DATA || peeked === PacketType.DATA_DIRECT;
+
+    if (isData) {
+      const sessionKey = peeked === PacketType.DATA
+        ? this.discovery.getSessionKey(peerId)
+        : null;
+
+      if (peeked === PacketType.DATA && !sessionKey) {
+        console.warn(`No session key for ${peerId}`);
+        return;
+      }
+
+      if (peeked === PacketType.DATA_DIRECT) {
+        let packet;
+        try { packet = Packet.deserialize(data); } catch (err) {
+          metrics.recordError();
+          console.error('Failed to deserialize packet:', err.message);
+          return;
+        }
+        if (packet.dstNode !== this.nodeId) {
           this._handleDirectDataPacket(peerId, packet);
-          break;
-        case PacketType.PING:
-          this._handlePing(peerId, packet);
-          break;
-        case PacketType.PONG:
-          this._handlePong(peerId, packet);
-          break;
-        case PacketType.ACK:
-          this._handleAck(peerId, packet);
-          break;
-        default:
-          console.warn(`Unknown packet type: ${packet.type}`);
+          return;
+        }
+        const key = this.discovery.getSessionKey(packet.srcNode);
+        if (!key) {
+          console.warn(`No session key for ${packet.srcNode}`);
+          return;
+        }
+        this.pipeline.submitRx(data, key, peerId, PacketType.DATA_DIRECT, (err, result) => {
+          if (err) { metrics.recordError(); console.error('[RX] worker error:', err.message); return; }
+          this._handleRxWorkerResult(result);
+        });
+        return;
+      }
+
+      this.pipeline.submitRx(data, sessionKey, peerId, PacketType.DATA, (err, result) => {
+        if (err) { metrics.recordError(); console.error('[RX] worker error:', err.message); return; }
+        this._handleRxWorkerResult(result);
+      });
+      return;
+    }
+
+    try {
+      const packet = Packet.deserialize(data);
+      switch (packet.type) {
+        case PacketType.PING:  this._handlePing(peerId, packet); break;
+        case PacketType.PONG:  this._handlePong(peerId, packet); break;
+        case PacketType.ACK:   this._handleAck(peerId, packet); break;
+        default: console.warn(`Unknown packet type: ${packet.type}`);
       }
     } catch (err) {
       metrics.recordError();
       console.error('Failed to process incoming message:', err.message);
+    }
+  }
+
+  _handleRxWorkerResult(result) {
+    const { peerId, packetType, payload, packetMeta } = result;
+
+    if (packetType === PacketType.DATA) {
+      this.loopStats.totalProcessed++;
+      metrics.recordOnionDecrypt(0, payload.length, 0);
+
+      if (result.isExit) {
+        if (this.isExit) {
+          const pkt = new Packet(packetMeta);
+          this._processExitPacket(pkt, payload);
+        } else if (this.isClient && packetMeta.dstNode === this.nodeId) {
+          this.reorderBuffer.addPacket({
+            flowId: packetMeta.flowId,
+            seq: packetMeta.seq || 0,
+            payload,
+            pathIndex: 0,
+            totalPaths: 1,
+          });
+        } else {
+          console.warn('Received exit packet but not an exit node');
+        }
+      } else if (result.nextHop) {
+        const pkt = new Packet(packetMeta);
+        pkt.addVisitedNode(this.nodeId);
+        this._forwardPacket(pkt, result.nextHop, payload, peerId);
+      }
+    } else if (packetType === PacketType.DATA_DIRECT) {
+      this.loopStats.totalProcessed++;
+      if (this.isExit) {
+        const pkt = new Packet(packetMeta);
+        this._processExitPacket(pkt, payload);
+      } else if (this.isClient) {
+        this.reorderBuffer.addPacket({ payload, flowId: packetMeta.flowId, seq: packetMeta.seq });
+      }
     }
   }
 
@@ -941,6 +994,8 @@ export class MeshNode extends EventEmitter {
     }
     
     this.discovery.stop();
+    
+    await this.pipeline.terminate();
     
     this.processedPackets.clear();
     this.tcpConnections.clear();

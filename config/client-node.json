@@ -24,6 +24,11 @@
   "enableTun": true,
   "iceMode": "auto",
   "dcMode": "performance",
+  "workers": {
+    "enabled": true,
+    "txPool": 1,
+    "rxPool": 1
+  },
   "tun": {
     "defaultRoute": true,
     "excludeFromVPN": []
