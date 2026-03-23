@@ -119,7 +119,7 @@ node scripts/test-webrtc-throughput.js client <exit-server-ip>
 
 **В коде / конфиге (план B при нестабильности):**
 
-1. **`dcMode: "reliable"`** (вместо `performance`) на client и exit — ordered/reliable DataChannel, меньше потерь при перегрузке.
+1. **`dcMode: "reliable"`** (дефолт в приложении) — ordered/reliable DataChannel; **`performance`** (unordered, без ретрансмитов) может **ломать TCP в TUN** (обрывы iperf3, «Size of data read…»). Для максимальной скорости в лабораторных скриптах можно включить `performance` осознанно.
 2. **`workers.txPool: 1`** на exit — уже безопаснее вместе с очередью per-client; сужает параллелизм TX.
 3. **Уменьшить SCTP-буферы** (меньше пиковая память процесса), в конфиге ноды:
 

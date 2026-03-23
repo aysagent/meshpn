@@ -35,7 +35,7 @@ export class MeshNode extends EventEmitter {
         { urls: 'stun:stun.l.google.com:19302' },
       ],
       iceMode: config.iceMode || 'auto',
-      dcMode: config.dcMode || 'performance',
+      dcMode: config.dcMode || 'reliable',
     };
     this.transportManager = new TransportManager({
       webrtc: webrtcCfg,

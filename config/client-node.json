@@ -23,7 +23,7 @@
   "mtu": 1400,
   "enableTun": true,
   "iceMode": "auto",
-  "dcMode": "performance",
+  "dcMode": "reliable",
   "workers": {
     "enabled": true,
     "txPool": 1,

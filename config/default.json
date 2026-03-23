@@ -26,6 +26,7 @@
   "virtualNetwork": "10.200.0.0/16",
   "mtu": 1400,
   "enableTun": true,
+  "dcMode": "reliable",
   "multipathStrategy": "round-robin",
   "reorderWindowSize": 1000,
   "reorderTimeout": 5000,

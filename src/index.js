@@ -107,7 +107,7 @@ async function main() {
   config.role = role;
   
   config.iceMode = config.iceMode || 'auto';
-  config.dcMode = config.dcMode || 'performance';
+  config.dcMode = config.dcMode || 'reliable';
   config.workers = config.workers || { enabled: true, txPool: 1, rxPool: 1 };
 
   config.metrics = {

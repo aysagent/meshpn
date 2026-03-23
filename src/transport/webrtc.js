@@ -49,7 +49,7 @@ export class WebRTCTransport extends EventEmitter {
   constructor(config = {}) {
     super();
     this.iceMode = config.iceMode || 'auto';
-    this.dcMode = config.dcMode || 'performance';
+    this.dcMode = config.dcMode || 'reliable';
     this.rawIceServers = config.iceServers || DEFAULT_ICE_SERVERS;
     this.ndcIceServers = convertIceServers(this.rawIceServers, this.iceMode);
 
@@ -62,7 +62,8 @@ export class WebRTCTransport extends EventEmitter {
     this.sendOverflowMax = config.sendOverflowMax ?? 2000;
     /** @type {Map<string, Buffer[]>} очередь при полном TransportSendBuffer */
     this._sendOverflow = new Map();
-    this._overflowDropped = 0;
+    /** Сколько раз send() остановился из‑за полной overflow (backpressure). */
+    this._overflowBlocked = 0;
 
     this.connections = new Map();
     this.dataChannels = new Map();
@@ -80,6 +81,12 @@ export class WebRTCTransport extends EventEmitter {
     }
     if (this.iceMode === 'relay' && !hasTurn) {
       console.warn('[WebRTC] WARNING: relay mode but no TURN servers configured!');
+    }
+    if (this.dcMode === 'performance') {
+      console.warn(
+        '[WebRTC] dcMode=performance: unordered/unreliable DC — TCP через TUN может ломаться '
+        + '(потери/перестановки). Для iperf/стабильности используйте dcMode: reliable.',
+      );
     }
   }
 
@@ -221,9 +228,11 @@ export class WebRTCTransport extends EventEmitter {
       q = [];
       this._sendOverflow.set(peerId, q);
     }
+    // Никогда не выкидываем байты из середины потока — иначе ломается TCP в TUN
+    // (iperf3: "Size of data read does not correspond to offered length").
     if (q.length >= this.sendOverflowMax) {
-      q.shift();
-      this._overflowDropped++;
+      this._overflowBlocked++;
+      return false;
     }
     q.push(buffer);
     return true;
@@ -261,7 +270,7 @@ export class WebRTCTransport extends EventEmitter {
         overflowQueued: (this._sendOverflow.get(peerId) || []).length,
       });
     }
-    return { peers, overflowDroppedTotal: this._overflowDropped };
+    return { peers, overflowBlockedTotal: this._overflowBlocked };
   }
 
   isConnected(peerId) {
