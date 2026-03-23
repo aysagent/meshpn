@@ -308,12 +308,19 @@ export class WebRTCTransport extends EventEmitter {
   _setupDataChannel(peerId, dc) {
     this.dataChannels.set(peerId, dc);
 
+    const DC_HIGH_WATER = 2 * 1024 * 1024;
+    const DC_LOW_WATER = 256 * 1024;
+
     dc.onOpen(() => {
       console.log(`[WebRTC] DataChannel open for ${peerId.substring(0, 8)}…`);
       const sb = new TransportSendBuffer((frame) => {
         try {
           dc.sendMessageBinary(Buffer.isBuffer(frame) ? frame : Buffer.from(frame));
         } catch {}
+      }, {
+        isReady: () => {
+          try { return dc.bufferedAmount() < DC_HIGH_WATER; } catch { return false; }
+        },
       });
       this.sendBuffers.set(peerId, sb);
       this.emit('peer-connected', peerId);
@@ -339,8 +346,10 @@ export class WebRTCTransport extends EventEmitter {
     });
 
     dc.onBufferedAmountLow(() => {
+      const sb = this.sendBuffers.get(peerId);
+      if (sb) sb.resume();
       this.emit('buffer-low', peerId);
     });
-    dc.setBufferedAmountLowThreshold(1024 * 1024);
+    dc.setBufferedAmountLowThreshold(DC_LOW_WATER);
   }
 }

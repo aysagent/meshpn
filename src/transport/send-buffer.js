@@ -21,12 +21,15 @@ const FRAME_MARKER = 0xFE;
 const MAX_FRAME_SIZE = 15000;
 const FLUSH_INTERVAL_MS = 2;
 const HEADER_SIZE = 3; // 1 byte marker + 2 bytes count
+const DEFAULT_MAX_QUEUE = 500;
 
 export class TransportSendBuffer {
   constructor(sendFn, opts = {}) {
     this.sendFn = sendFn;
     this.maxFrameSize = opts.maxFrameSize || MAX_FRAME_SIZE;
     this.flushIntervalMs = opts.flushIntervalMs ?? FLUSH_INTERVAL_MS;
+    this.isReady = opts.isReady || (() => true);
+    this.maxQueuePackets = opts.maxQueuePackets || DEFAULT_MAX_QUEUE;
 
     this.packets = [];
     this.currentSize = HEADER_SIZE;
@@ -34,7 +37,11 @@ export class TransportSendBuffer {
   }
 
   push(data) {
-    const entrySize = 2 + data.length; // 2-byte length prefix + payload
+    if (this.packets.length >= this.maxQueuePackets) {
+      return false;
+    }
+
+    const entrySize = 2 + data.length;
 
     if (this.currentSize + entrySize > this.maxFrameSize && this.packets.length > 0) {
       this._flush();
@@ -45,7 +52,7 @@ export class TransportSendBuffer {
 
     if (this.currentSize >= this.maxFrameSize) {
       this._flush();
-      return;
+      return true;
     }
 
     if (!this.timer) {
@@ -53,6 +60,13 @@ export class TransportSendBuffer {
         this.timer = null;
         this._flush();
       }, this.flushIntervalMs);
+    }
+    return true;
+  }
+
+  resume() {
+    if (this.packets.length > 0) {
+      this._flush();
     }
   }
 
@@ -67,31 +81,68 @@ export class TransportSendBuffer {
     }
     if (this.packets.length === 0) return;
 
-    if (this.packets.length === 1) {
-      this.sendFn(this.packets[0]);
+    if (!this.isReady()) {
+      this._scheduleRetry();
+      return;
+    }
+
+    if (this.currentSize <= this.maxFrameSize) {
+      this._sendFrame(this.packets);
       this.packets = [];
       this.currentSize = HEADER_SIZE;
       return;
     }
 
-    const buf = Buffer.allocUnsafe(this.currentSize);
+    // Accumulated data exceeds one frame — drain in chunks
+    while (this.packets.length > 0 && this.isReady()) {
+      let batchSize = HEADER_SIZE;
+      let count = 0;
+      for (let i = 0; i < this.packets.length; i++) {
+        const es = 2 + this.packets[i].length;
+        if (batchSize + es > this.maxFrameSize && count > 0) break;
+        batchSize += es;
+        count++;
+      }
+      this._sendFrame(this.packets.splice(0, count));
+    }
+
+    this.currentSize = HEADER_SIZE;
+    for (const p of this.packets) this.currentSize += 2 + p.length;
+
+    if (this.packets.length > 0) {
+      this._scheduleRetry();
+    }
+  }
+
+  _sendFrame(packets) {
+    if (packets.length === 1) {
+      this.sendFn(packets[0]);
+      return;
+    }
+    let size = HEADER_SIZE;
+    for (const p of packets) size += 2 + p.length;
+
+    const buf = Buffer.allocUnsafe(size);
     let offset = 0;
-
     buf[offset++] = FRAME_MARKER;
-    buf.writeUInt16BE(this.packets.length, offset);
+    buf.writeUInt16BE(packets.length, offset);
     offset += 2;
-
-    for (const pkt of this.packets) {
+    for (const pkt of packets) {
       buf.writeUInt16BE(pkt.length, offset);
       offset += 2;
       pkt.copy(buf, offset);
       offset += pkt.length;
     }
-
-    this.packets = [];
-    this.currentSize = HEADER_SIZE;
-
     this.sendFn(buf);
+  }
+
+  _scheduleRetry() {
+    if (!this.timer) {
+      this.timer = setTimeout(() => {
+        this.timer = null;
+        this._flush();
+      }, this.flushIntervalMs);
+    }
   }
 
   stop() {
