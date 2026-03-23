@@ -70,6 +70,11 @@ export class TransportSendBuffer {
     }
   }
 
+  /** Для диагностики backpressure / дебага. */
+  getQueueLength() {
+    return this.packets.length;
+  }
+
   flush() {
     this._flush();
   }

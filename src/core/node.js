@@ -29,16 +29,18 @@ export class MeshNode extends EventEmitter {
     
     this.sessionManager = new SessionManager();
     
+    const webrtcCfg = {
+      ...(typeof config.webrtc === 'object' && config.webrtc ? config.webrtc : {}),
+      iceServers: config.iceServers || [
+        { urls: 'stun:stun.l.google.com:19302' },
+      ],
+      iceMode: config.iceMode || 'auto',
+      dcMode: config.dcMode || 'performance',
+    };
     this.transportManager = new TransportManager({
-      webrtc: {
-        iceServers: config.iceServers || [
-          { urls: 'stun:stun.l.google.com:19302' }
-        ],
-        iceMode: config.iceMode || 'auto',
-        dcMode: config.dcMode || 'performance',
-      },
+      webrtc: webrtcCfg,
       quic: config.quic || {},
-      websocket: config.websocket || {}
+      websocket: config.websocket || {},
     });
     
     this.discovery = new PeerDiscovery({
@@ -98,6 +100,7 @@ export class MeshNode extends EventEmitter {
       lastResetTime: Date.now()
     };
     this.statsInterval = null;
+    this._debugTransportInterval = null;
     
     this.tunManager = null;
     this.exitNodeHandler = null;
@@ -174,7 +177,13 @@ export class MeshNode extends EventEmitter {
 
   _startTrafficStats() {
     if (!this.isClient) return;
-    
+
+    const tsi = this.config.trafficStatsIntervalMs;
+    if (tsi === 0 || tsi === false) {
+      return;
+    }
+    const intervalMs = typeof tsi === 'number' && tsi > 0 ? tsi : 5000;
+
     this.statsInterval = setInterval(() => {
       const now = Date.now();
       const elapsed = (now - this.trafficStats.lastResetTime) / 1000;
@@ -203,13 +212,37 @@ export class MeshNode extends EventEmitter {
         this.trafficStats.packetsReceived = 0;
         this.trafficStats.lastResetTime = now;
       }
-    }, 5000);
+    }, intervalMs);
   }
 
   _stopTrafficStats() {
     if (this.statsInterval) {
       clearInterval(this.statsInterval);
       this.statsInterval = null;
+    }
+  }
+
+  _startDebugTransport() {
+    if (!this.config.debugTransport) return;
+    const ms = this.config.debugTransportIntervalMs || 2000;
+    this._debugTransportInterval = setInterval(() => {
+      const m = process.memoryUsage();
+      const p = this.pipeline.getStats();
+      console.log(
+        `[DEBUG-TX] rss=${(m.rss / 1048576).toFixed(1)}MB heapUsed=${(m.heapUsed / 1048576).toFixed(1)}MB `
+        + `txP=${p.txPending} rxP=${p.rxPending} txDr=${p.txDropped} rxDr=${p.rxDropped}`,
+      );
+      const w = this.transportManager.getTransport('webrtc');
+      if (w?.getSendDiagnostics) {
+        console.log(`[DEBUG-TX] webrtc ${JSON.stringify(w.getSendDiagnostics())}`);
+      }
+    }, ms);
+  }
+
+  _stopDebugTransport() {
+    if (this._debugTransportInterval) {
+      clearInterval(this._debugTransportInterval);
+      this._debugTransportInterval = null;
     }
   }
 
@@ -250,6 +283,7 @@ export class MeshNode extends EventEmitter {
     this._startCacheCleanup();
     this._startKeepalive();
     this._startTrafficStats();
+    this._startDebugTransport();
     metrics.start();
     
     this.running = true;
@@ -985,6 +1019,7 @@ export class MeshNode extends EventEmitter {
   }
 
   getStats() {
+    const webrtc = this.transportManager.getTransport('webrtc');
     return {
       nodeId: this.nodeId,
       role: this.role,
@@ -996,7 +1031,10 @@ export class MeshNode extends EventEmitter {
       scheduler: this.scheduler.getPathStats(),
       reorderBuffer: this.reorderBuffer.getBufferSize(),
       loopPrevention: { ...this.loopStats },
-      packetCacheSize: this.processedPackets.size
+      packetCacheSize: this.processedPackets.size,
+      pipeline: this.pipeline.getStats(),
+      webrtcSend: webrtc?.getSendDiagnostics ? webrtc.getSendDiagnostics() : null,
+      memory: process.memoryUsage(),
     };
   }
 
@@ -1023,6 +1061,7 @@ export class MeshNode extends EventEmitter {
     this._stopCacheCleanup();
     this._stopKeepalive();
     this._stopTrafficStats();
+    this._stopDebugTransport();
     this.reorderBuffer.stop();
     metrics.stop();
     

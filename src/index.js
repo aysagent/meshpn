@@ -1,5 +1,6 @@
 import { MeshNode } from './core/node.js';
 import { Identity } from './crypto/index.js';
+import { metrics } from './debug/index.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -108,6 +109,14 @@ async function main() {
   config.iceMode = config.iceMode || 'auto';
   config.dcMode = config.dcMode || 'performance';
   config.workers = config.workers || { enabled: true, txPool: 1, rxPool: 1 };
+
+  config.metrics = {
+    periodicReport: false,
+    reportInterval: 5000,
+    enabled: true,
+    ...(config.metrics && typeof config.metrics === 'object' ? config.metrics : {}),
+  };
+  metrics.configure(config.metrics);
 
   if (config.turnServers && config.turnServers.length > 0 && config.iceMode !== 'direct') {
     config.iceServers = [

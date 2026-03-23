@@ -1,8 +1,26 @@
 # Отладка производительности VPN
 
-## Запуск с метриками
+## Конфигурация метрик и логов
 
-При запуске client или exit ноды, каждые 5 секунд будет выводиться отчёт:
+По умолчанию **периодический блок `PERFORMANCE METRICS` отключён** (меньше шума и нагрузки на GC). Счётчики `record*` по-прежнему накапливаются, если `metrics.enabled: true`.
+
+Включить печать раз в `reportInterval` мс:
+
+```json
+"metrics": {
+  "enabled": true,
+  "periodicReport": true,
+  "reportInterval": 5000
+}
+```
+
+- **`trafficStatsIntervalMs`** (только client): интервал строки `[STATS]` в консоль. Значение **`0`** — отключить.
+- **`debugTransport: true`**: раз в `debugTransportIntervalMs` (по умолчанию 2000) лог `rss`, `heapUsed`, очереди `WorkerPipeline`, `bufferedAmount` / очереди send-buffer / overflow WebRTC.
+- **`webrtc`** (объект в конфиге ноды): опционально `sendBufferMaxQueue`, `sendOverflowMax`, `sctp` — см. раздел «План B» ниже.
+
+## Запуск с метриками (periodicReport: true)
+
+При `metrics.periodicReport: true` каждые `reportInterval` мс выводится отчёт:
 
 ```
 ========== PERFORMANCE METRICS ==========
@@ -94,6 +112,30 @@ node scripts/test-webrtc-throughput.js client <exit-server-ip>
 ### Проблема: WebRTC Send failed > 0
 **Причина:** Переполнение буфера WebRTC
 **Решение:** Уменьшить скорость отправки, добавить backpressure
+
+### Проблема: iperf3 `-R` после повторного запуска падает до 0 Mbit/s или `iperf3: Cannot allocate memory`
+
+**На стенде:** проверить `free -h`, swap; не утрамбовывать client, exit и iperf3 на одной маленькой VM без запаса RAM.
+
+**В коде / конфиге (план B при нестабильности):**
+
+1. **`dcMode: "reliable"`** (вместо `performance`) на client и exit — ordered/reliable DataChannel, меньше потерь при перегрузке.
+2. **`workers.txPool: 1`** на exit — уже безопаснее вместе с очередью per-client; сужает параллелизм TX.
+3. **Уменьшить SCTP-буферы** (меньше пиковая память процесса), в конфиге ноды:
+
+```json
+"webrtc": {
+  "sctp": {
+    "recvBufferSize": 1048576,
+    "sendBufferSize": 1048576,
+    "maxChunksOnQueue": 4096
+  }
+}
+```
+
+(поля совпадают с `setSctpSettings` в node-datachannel; применяются при создании `WebRTCTransport`.)
+
+4. Включить **`debugTransport: true`** и смотреть рост `overflowQueued`, `overflowDroppedTotal`, `txP`/`rxP` у pipeline.
 
 ## Быстрая диагностика
 

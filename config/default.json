@@ -1,5 +1,11 @@
 {
   "role": "client",
+  "metrics": {
+    "enabled": true,
+    "periodicReport": false,
+    "reportInterval": 5000
+  },
+  "trafficStatsIntervalMs": 5000,
   "signallingServer": "ws://localhost:8080",
   "iceServers": [
     { "urls": "stun:stun.l.google.com:19302" },

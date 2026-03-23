@@ -4,6 +4,8 @@ class PerformanceMetrics extends EventEmitter {
   constructor(config = {}) {
     super();
     this.enabled = config.enabled !== false;
+    /** Печать блока PERFORMANCE METRICS по таймеру (по умолчанию выключена). */
+    this.periodicReport = config.periodicReport === true;
     this.reportInterval = config.reportInterval || 5000;
     this.reportTimer = null;
     
@@ -61,15 +63,41 @@ class PerformanceMetrics extends EventEmitter {
     this.lastReport = Date.now();
     this.lastCounters = { ...this.counters };
   }
+
+  /**
+   * Применить настройки из конфига (до metrics.start()).
+   * @param {object} cfg
+   * @param {boolean} [cfg.enabled]
+   * @param {boolean} [cfg.periodicReport] — true = раз в reportInterval печатать отчёт
+   * @param {number} [cfg.reportInterval]
+   */
+  configure(cfg = {}) {
+    if ('enabled' in cfg) {
+      this.enabled = cfg.enabled !== false;
+    }
+    if ('periodicReport' in cfg) {
+      this.periodicReport = cfg.periodicReport === true;
+    }
+    if (cfg.reportInterval != null && cfg.reportInterval > 0) {
+      this.reportInterval = cfg.reportInterval;
+    }
+    if (this.reportTimer) {
+      clearInterval(this.reportTimer);
+      this.reportTimer = null;
+    }
+  }
   
   start() {
     if (!this.enabled) return;
-    
-    this.reportTimer = setInterval(() => {
-      this.report();
-    }, this.reportInterval);
-    
-    console.log('[METRICS] Performance metrics started');
+
+    if (this.periodicReport) {
+      this.reportTimer = setInterval(() => {
+        this.report();
+      }, this.reportInterval);
+      console.log(`[METRICS] Periodic report every ${this.reportInterval}ms`);
+    } else {
+      console.log('[METRICS] Periodic report disabled (set metrics.periodicReport: true to enable)');
+    }
   }
   
   stop() {
@@ -271,7 +299,7 @@ class PerformanceMetrics extends EventEmitter {
   }
 }
 
-// Global singleton
-const metrics = new PerformanceMetrics({ enabled: true });
+// Global singleton (periodicReport по умолчанию false)
+const metrics = new PerformanceMetrics({ enabled: true, periodicReport: false });
 
 export { PerformanceMetrics, metrics };

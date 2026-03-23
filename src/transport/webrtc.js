@@ -2,13 +2,15 @@ import { PeerConnection, setSctpSettings } from 'node-datachannel';
 import { EventEmitter } from 'events';
 import { TransportSendBuffer, unframe } from './send-buffer.js';
 
-setSctpSettings({
+const SCTP_DEFAULTS = {
   recvBufferSize: 4 * 1024 * 1024,
   sendBufferSize: 4 * 1024 * 1024,
   maxChunksOnQueue: 16384,
   initialCongestionWindow: 65535,
   delayedSackTime: 2,
-});
+};
+
+setSctpSettings(SCTP_DEFAULTS);
 
 const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -50,6 +52,17 @@ export class WebRTCTransport extends EventEmitter {
     this.dcMode = config.dcMode || 'performance';
     this.rawIceServers = config.iceServers || DEFAULT_ICE_SERVERS;
     this.ndcIceServers = convertIceServers(this.rawIceServers, this.iceMode);
+
+    if (config.sctp && typeof config.sctp === 'object') {
+      setSctpSettings({ ...SCTP_DEFAULTS, ...config.sctp });
+      console.log('[WebRTC] SCTP settings merged from config');
+    }
+
+    this.sendBufferMaxQueue = config.sendBufferMaxQueue ?? 500;
+    this.sendOverflowMax = config.sendOverflowMax ?? 2000;
+    /** @type {Map<string, Buffer[]>} очередь при полном TransportSendBuffer */
+    this._sendOverflow = new Map();
+    this._overflowDropped = 0;
 
     this.connections = new Map();
     this.dataChannels = new Map();
@@ -194,8 +207,61 @@ export class WebRTCTransport extends EventEmitter {
     if (!sb) return false;
 
     const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-    sb.push(buffer);
+    if (sb.push(buffer)) {
+      this._drainSendOverflow(peerId);
+      return true;
+    }
+
+    if (this.sendOverflowMax <= 0) {
+      return false;
+    }
+
+    let q = this._sendOverflow.get(peerId);
+    if (!q) {
+      q = [];
+      this._sendOverflow.set(peerId, q);
+    }
+    if (q.length >= this.sendOverflowMax) {
+      q.shift();
+      this._overflowDropped++;
+    }
+    q.push(buffer);
     return true;
+  }
+
+  _drainSendOverflow(peerId) {
+    const sb = this.sendBuffers.get(peerId);
+    if (!sb) return;
+    const q = this._sendOverflow.get(peerId);
+    if (!q || q.length === 0) return;
+    while (q.length > 0) {
+      if (!sb.push(q[0])) break;
+      q.shift();
+    }
+    if (q.length === 0) {
+      this._sendOverflow.delete(peerId);
+    }
+  }
+
+  /** Диагностика: очереди DC / send-buffer / overflow. */
+  getSendDiagnostics() {
+    const peers = [];
+    for (const [peerId, dc] of this.dataChannels) {
+      let bufferedAmount = null;
+      try {
+        bufferedAmount = dc.bufferedAmount();
+      } catch {
+        bufferedAmount = null;
+      }
+      const sb = this.sendBuffers.get(peerId);
+      peers.push({
+        peerId: peerId.substring(0, 12),
+        bufferedAmount,
+        sendBufferQueued: sb ? sb.getQueueLength() : 0,
+        overflowQueued: (this._sendOverflow.get(peerId) || []).length,
+      });
+    }
+    return { peers, overflowDroppedTotal: this._overflowDropped };
   }
 
   isConnected(peerId) {
@@ -205,6 +271,8 @@ export class WebRTCTransport extends EventEmitter {
   }
 
   close(peerId) {
+    this._sendOverflow.delete(peerId);
+
     const sb = this.sendBuffers.get(peerId);
     if (sb) { sb.stop(); this.sendBuffers.delete(peerId); }
 
@@ -321,6 +389,7 @@ export class WebRTCTransport extends EventEmitter {
         isReady: () => {
           try { return dc.bufferedAmount() < DC_HIGH_WATER; } catch { return false; }
         },
+        maxQueuePackets: this.sendBufferMaxQueue,
       });
       this.sendBuffers.set(peerId, sb);
       this.emit('peer-connected', peerId);
@@ -348,6 +417,7 @@ export class WebRTCTransport extends EventEmitter {
     dc.onBufferedAmountLow(() => {
       const sb = this.sendBuffers.get(peerId);
       if (sb) sb.resume();
+      this._drainSendOverflow(peerId);
       this.emit('buffer-low', peerId);
     });
     dc.setBufferedAmountLowThreshold(DC_LOW_WATER);
