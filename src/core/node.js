@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import { Identity, SessionManager } from '../crypto/index.js';
-import { createOnionPacket, peelOnionLayer } from '../crypto/onion.js';
-import { encrypt, decrypt } from '../crypto/encrypt.js';
+import { peelOnionLayer } from '../crypto/onion.js';
+import { decrypt } from '../crypto/encrypt.js';
 import { TransportManager, WebSocketDataServer } from '../transport/index.js';
 import { PeerDiscovery } from '../control/index.js';
 import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
@@ -69,6 +69,9 @@ export class MeshNode extends EventEmitter {
       txPool: wCfg.txPool || 1,
       rxPool: wCfg.rxPool || 1,
     });
+
+    /** @type {Map<string, Promise<void>>} серийный TX к одному клиенту (exit → target) при workers */
+    this._exitTxChains = new Map();
     
     this.processedPackets = new Map();
     this.packetCacheTTL = config.packetCacheTTL || 60000;
@@ -713,88 +716,129 @@ export class MeshNode extends EventEmitter {
     }
   }
 
+  /**
+   * Сбор аргументов для TX-воркера / fallback (exit → target).
+   * @returns {{ routeWithKeys: Array, packetMeta: object, directMode: boolean } | null}
+   */
+  _buildExitTxArgs(targetNodeId, ipPacket, route) {
+    const useDirectMode = route.length === 1;
+    const routeWithKeys = [];
+
+    if (useDirectMode) {
+      const sessionKey = this.discovery.getSessionKey(targetNodeId);
+      if (!sessionKey) {
+        console.warn(`[EXIT] No session key for ${targetNodeId}`);
+        return null;
+      }
+      routeWithKeys.push({ nodeId: targetNodeId, sessionKey });
+    } else {
+      for (const nodeId of route) {
+        const sessionKey = this.discovery.getSessionKey(nodeId);
+        if (!sessionKey) {
+          console.warn(`[EXIT] No session key for ${nodeId}`);
+          return null;
+        }
+        routeWithKeys.push({ nodeId, sessionKey });
+      }
+    }
+
+    const packetMeta = {
+      type: useDirectMode ? PacketType.DATA_DIRECT : PacketType.DATA,
+      srcNode: this.nodeId,
+      dstNode: targetNodeId,
+      route,
+    };
+
+    return { routeWithKeys, packetMeta, directMode: useDirectMode };
+  }
+
+  _enqueueExitTx(targetNodeId, run) {
+    const prev = this._exitTxChains.get(targetNodeId) || Promise.resolve();
+    const next = prev.then(
+      () => new Promise((resolve) => {
+        run(() => resolve());
+      }),
+    );
+    this._exitTxChains.set(targetNodeId, next);
+    next.catch(() => {});
+  }
+
   _sendExitResponse(targetNodeId, ipPacket) {
     const routeInfo = this.router.graph.findShortestPath(this.nodeId, targetNodeId);
     const wsConnected = this.wsDataServer && this.wsDataServer.isConnected(targetNodeId);
-    
+
+    let route;
+    let useWsOnlyPath = false;
+
     if (!routeInfo || routeInfo.length < 2) {
-      // Check if we have direct WS connection
-      if (wsConnected) {
-        // Use direct connection
-        const sessionKey = this.discovery.getSessionKey(targetNodeId);
-        if (!sessionKey) {
-          console.warn(`[EXIT] No session key for ${targetNodeId}`);
-          return;
-        }
-        try {
-          const encryptedPayload = encrypt(ipPacket, sessionKey);
-          const packet = new Packet({
-            type: PacketType.DATA_DIRECT,
-            srcNode: this.nodeId,
-            dstNode: targetNodeId,
-            route: [targetNodeId],
-            payload: encryptedPayload
-          });
-          const serialized = packet.serialize();
-          if (!this.wsDataServer.send(targetNodeId, serialized)) {
-            console.warn(`[EXIT] WS send failed to ${targetNodeId}`);
-          }
-        } catch (err) {
-          console.error('[EXIT] Failed to send WS response:', err.message);
-        }
+      if (!wsConnected) {
+        console.warn(`[EXIT] No route back to ${targetNodeId}`);
         return;
       }
-      console.warn(`[EXIT] No route back to ${targetNodeId}`);
-      return;
+      route = [targetNodeId];
+      useWsOnlyPath = true;
+    } else {
+      route = routeInfo.slice(1);
     }
-    
-    const route = routeInfo.slice(1);
-    const useDirectMode = route.length === 1;
-    
-    try {
-      let encryptedPayload;
-      let packetType;
-      
-      if (useDirectMode) {
-        // Direct mode: single encryption to target
-        const sessionKey = this.discovery.getSessionKey(targetNodeId);
-        if (!sessionKey) {
-          console.warn(`No session key for ${targetNodeId}`);
-          return;
-        }
-        encryptedPayload = encrypt(ipPacket, sessionKey);
-        packetType = PacketType.DATA_DIRECT;
-      } else {
-        // Onion routing
-        const routeWithKeys = [];
-        for (const nodeId of route) {
-          const sessionKey = this.discovery.getSessionKey(nodeId);
-          if (!sessionKey) {
-            console.warn(`No session key for ${nodeId}`);
-            return;
+
+    const useWorkerQueue = this.pipeline.enabled && this.pipeline._alive;
+
+    const runExitTx = (done) => {
+      const args = this._buildExitTxArgs(targetNodeId, ipPacket, route);
+      if (!args) {
+        done();
+        return;
+      }
+      const { routeWithKeys, packetMeta, directMode } = args;
+      const txStart = Date.now();
+
+      this.pipeline.submitTx(
+        ipPacket,
+        routeWithKeys,
+        packetMeta,
+        directMode,
+        (err, result) => {
+          try {
+            if (err) {
+              metrics.recordError();
+              console.error('[EXIT] TX worker error:', err.message);
+              return;
+            }
+
+            const elapsed = Date.now() - txStart;
+            metrics.recordOnionEncrypt(result.payloadLen, result.serialized.length, elapsed);
+
+            if (useWsOnlyPath) {
+              const sent = this.wsDataServer.send(targetNodeId, result.serialized);
+              metrics.recordWebRTCSend(result.serialized.length, sent);
+              if (!sent) {
+                metrics.recordError();
+                console.warn(`[EXIT] WS send failed to ${targetNodeId}`);
+              } else {
+                this.trafficStats.bytesSent += result.payloadLen;
+                this.trafficStats.packetsSent++;
+              }
+            } else {
+              const sent = this._sendToPeer(result.nextHop, result.serialized);
+              if (!sent) {
+                metrics.recordError();
+                console.warn(`[EXIT] Failed to send to ${result.nextHop}`);
+              } else {
+                this.trafficStats.bytesSent += result.payloadLen;
+                this.trafficStats.packetsSent++;
+              }
+            }
+          } finally {
+            done();
           }
-          routeWithKeys.push({ nodeId, sessionKey });
-        }
-        encryptedPayload = createOnionPacket(ipPacket, routeWithKeys);
-        packetType = PacketType.DATA;
-      }
-      
-      const packet = new Packet({
-        type: packetType,
-        srcNode: this.nodeId,
-        dstNode: targetNodeId,
-        route,
-        payload: encryptedPayload
-      });
-      
-      const nextHop = route[0];
-      const serialized = packet.serialize();
-      
-      if (!this._sendToPeer(nextHop, serialized)) {
-        console.warn(`[EXIT] Failed to send to ${nextHop}`);
-      }
-    } catch (err) {
-      console.error('[EXIT] Failed to send response:', err.message);
+        },
+      );
+    };
+
+    if (useWorkerQueue) {
+      this._enqueueExitTx(targetNodeId, runExitTx);
+    } else {
+      runExitTx(() => {});
     }
   }
 
@@ -995,6 +1039,8 @@ export class MeshNode extends EventEmitter {
     }
     
     this.discovery.stop();
+
+    this._exitTxChains.clear();
     
     await this.pipeline.terminate();
     
