@@ -2,6 +2,10 @@
 
 Децентрализованная mesh VPN система с WebRTC, onion-шифрованием и multipath routing.
 
+## Run
+- sudo env PATH=$PATH SIGNALLING_SERVER=62.84.120.30:8888 npm run sig:exit
+- sudo env PATH=$PATH node src/index.js --role client --signalling ws://62.84.120.30:8080
+
 ## Возможности
 
 - **Mesh сеть** — все узлы связаны между собой, автоматический поиск маршрутов
