@@ -31,6 +31,10 @@ export class UserSpaceNAT extends EventEmitter {
     super();
     this.tcpConnections = new Map();
     this.udpSockets = new Map();
+    /** Сколько mesh-сегментов «в полёте» к клиенту до паузы чтения с реального сервера (iperf -R). */
+    this.tcpMaxPending = config.maxPendingResponses ?? 200;
+    /** Ниже этого порога pending + окно клиента > 0 — снова resume к серверу. */
+    this.tcpResumePending = Math.max(30, Math.floor(this.tcpMaxPending * 0.35));
     this.connectionTimeout = config.connectionTimeout || 300000;
     this.maxConnections = config.maxConnections || 50;
     this.connectingCount = 0;
@@ -253,6 +257,66 @@ export class UserSpaceNAT extends EventEmitter {
     }
   }
 
+  /**
+   * Окно приёма клиента (из его TCP-заголовка) и cumulative ACK по нашему serverSeq.
+   * Раньше pendingResponses уменьшали на 5 за любой ACK — счётчик не сходился, сокет к iperf
+   * зря pause/resume, на клиенте переполнялся буфер → TCP ZeroWindow.
+   */
+  _updatePeerWindowAndAck(conn, parsed) {
+    if (conn.state !== TCP_STATE.ESTABLISHED) return;
+
+    conn.peerRecvWindow = parsed.tcpWindow;
+
+    if (!parsed.tcpFlagsACK) {
+      this._syncServerSocketPause(conn);
+      return;
+    }
+
+    const ack = parsed.tcpAck >>> 0;
+    if (conn.lastPeerAck === undefined) {
+      conn.lastPeerAck = ack;
+      this._syncServerSocketPause(conn);
+      return;
+    }
+
+    const prev = conn.lastPeerAck >>> 0;
+    const delta = (ack - prev) >>> 0;
+    if (delta > 0 && delta < 0x80000000) {
+      conn.lastPeerAck = ack;
+      if (conn.pendingResponses > 0) {
+        const mss = 1360;
+        const released = Math.min(
+          conn.pendingResponses,
+          Math.max(1, Math.ceil(delta / mss)),
+        );
+        conn.pendingResponses -= released;
+      }
+    }
+
+    this._syncServerSocketPause(conn);
+  }
+
+  _syncServerSocketPause(conn) {
+    if (!conn.socket || conn.state !== TCP_STATE.ESTABLISHED) return;
+
+    const win = conn.peerRecvWindow ?? 65535;
+    const over = conn.pendingResponses > this.tcpMaxPending;
+    const zeroWin = win === 0;
+    const needPause = over || zeroWin;
+    const canResume =
+      conn.serverSocketPaused
+      && conn.pendingResponses < this.tcpResumePending
+      && win > 0;
+
+    if (needPause && !conn.serverSocketPaused) {
+      conn.socket.pause();
+      conn.serverSocketPaused = true;
+    } else if (canResume) {
+      conn.socket.resume();
+      conn.serverSocketPaused = false;
+    }
+  }
+
   _handleICMP(parsed, srcNodeId, sendResponse) {
     const { srcIp, dstIp, icmpType, icmpData } = parsed;
     
@@ -400,7 +464,11 @@ export class UserSpaceNAT extends EventEmitter {
         serverSeq: Math.floor(Math.random() * 0xffffffff),
         socket: null,
         pendingData: [],
-        lastActivity: Date.now()
+        lastActivity: Date.now(),
+        pendingResponses: 0,
+        peerRecvWindow: parsed.tcpWindow ?? 65535,
+        lastPeerAck: undefined,
+        serverSocketPaused: false,
       };
 
       this.tcpConnections.set(key, conn);
@@ -420,6 +488,7 @@ export class UserSpaceNAT extends EventEmitter {
 
         conn.state = TCP_STATE.ESTABLISHED;
         conn.lastActivity = Date.now();
+        conn.peerRecvWindow = 65535;
 
         const synAckPacket = buildTCPPacket(
           dstIp, srcIp,
@@ -448,24 +517,13 @@ export class UserSpaceNAT extends EventEmitter {
         conn.lastActivity = Date.now();
         metrics.recordTCPData(0, data.length);
         
-        // Initialize pending counter
-        if (conn.pendingResponses === undefined) {
-          conn.pendingResponses = 0;
-        }
-        
-        // Backpressure: pause if too many pending responses
-        const MAX_PENDING = 50;
-        if (conn.pendingResponses > MAX_PENDING) {
-          socket.pause();
-          conn.paused = true;
-        }
-        
         // MSS for MTU 1400
         const MSS = 1360;
+        const maxP = this.tcpMaxPending;
         let offset = 0;
         
         const sendChunks = () => {
-          while (offset < data.length && conn.pendingResponses <= MAX_PENDING * 2) {
+          while (offset < data.length && conn.pendingResponses <= maxP) {
             const chunk = data.subarray(offset, offset + MSS);
             const isLast = (offset + MSS >= data.length);
             
@@ -486,7 +544,8 @@ export class UserSpaceNAT extends EventEmitter {
             metrics.recordResponse(responsePacket.length);
           }
           
-          // If more data to send, schedule next batch
+          this._syncServerSocketPause(conn);
+
           if (offset < data.length) {
             setImmediate(sendChunks);
           }
@@ -564,17 +623,12 @@ export class UserSpaceNAT extends EventEmitter {
 
     conn.lastActivity = Date.now();
 
-    // Handle pure ACK - this means client received our data
+    if (conn.state === TCP_STATE.ESTABLISHED && !parsed.tcpFlagsRST) {
+      this._updatePeerWindowAndAck(conn, parsed);
+    }
+
+    // Чистый ACK от клиента (всё уже учтено в _updatePeerWindowAndAck)
     if (parsed.tcpFlagsACK && !parsed.tcpFlagsSYN && !parsed.tcpFlagsFIN && data.length === 0) {
-      // Decrease pending counter and resume socket if paused
-      if (conn.pendingResponses > 0) {
-        conn.pendingResponses = Math.max(0, conn.pendingResponses - 5);
-        
-        if (conn.paused && conn.pendingResponses < 25 && conn.socket) {
-          conn.socket.resume();
-          conn.paused = false;
-        }
-      }
       return;
     }
 
@@ -615,6 +669,10 @@ export class UserSpaceNAT extends EventEmitter {
         TCP_FLAGS.ACK
       );
       sendResponse(srcNodeId, ackPacket);
+    }
+
+    if (conn.state === TCP_STATE.ESTABLISHED) {
+      this._syncServerSocketPause(conn);
     }
   }
 
