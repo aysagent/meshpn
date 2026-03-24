@@ -90,6 +90,11 @@ export class MeshNode extends EventEmitter {
       totalProcessed: 0,
       totalForwarded: 0
     };
+
+    const sr = this.config.sendRetry || {};
+    /** Очередь serialized mesh-пакетов, если WebRTC DC переполнен (иначе TCP в TUN даёт retransmit в Wireshark). */
+    this._sendRetryMaxPackets = sr.maxPacketsPerPeer ?? 4000;
+    this._sendRetryQueues = new Map();
     
     // Traffic statistics
     this.trafficStats = {
@@ -382,6 +387,7 @@ export class MeshNode extends EventEmitter {
     this.discovery.on('peer-disconnected', (peerId) => {
       console.log(`Peer disconnected: ${peerId}`);
       this.router.removeLocalConnection(peerId);
+      this._clearSendRetryQueue(peerId);
       this._updateMultipathRoutes();
       this.emit('peer-disconnected', peerId);
     });
@@ -394,10 +400,77 @@ export class MeshNode extends EventEmitter {
     this.transportManager.on('message', (peerId, data, transport) => {
       this._handleIncomingMessage(peerId, data);
     });
+
+    this.transportManager.on('transport-buffer-low', (peerId) => {
+      this._drainSendRetryQueue(peerId);
+    });
     
     this.reorderBuffer.on('packet', (payload, packet) => {
       this._processReorderedPacket(payload, packet);
     });
+  }
+
+  _enqueueSendRetry(peerId, item) {
+    let q = this._sendRetryQueues.get(peerId);
+    if (!q) {
+      q = [];
+      this._sendRetryQueues.set(peerId, q);
+    }
+    if (q.length >= this._sendRetryMaxPackets) {
+      console.warn(
+        `[SendRetry] queue full for ${peerId.substring(0, 8)}… (${q.length} packets), dropping`,
+      );
+      return false;
+    }
+    q.push(item);
+    return true;
+  }
+
+  _drainSendRetryQueue(peerId) {
+    const q = this._sendRetryQueues.get(peerId);
+    if (!q?.length) return;
+    while (q.length > 0) {
+      const { serialized, flush } = q[0];
+      if (!this.transportManager.isConnected(peerId)) break;
+      if (this.transportManager.send(peerId, serialized)) {
+        q.shift();
+        try {
+          flush?.();
+        } catch {
+          /* ignore */
+        }
+      } else {
+        break;
+      }
+    }
+    if (q.length === 0) {
+      this._sendRetryQueues.delete(peerId);
+    }
+  }
+
+  _clearSendRetryQueue(peerId) {
+    const q = this._sendRetryQueues.get(peerId);
+    if (q?.length) {
+      console.warn(
+        `[SendRetry] dropping ${q.length} pending packet(s) for disconnected ${peerId.substring(0, 8)}…`,
+      );
+    }
+    this._sendRetryQueues.delete(peerId);
+  }
+
+  /**
+   * Отправка через WebRTC/QUIC с очередью при backpressure (см. transport-buffer-low).
+   * @returns {boolean} false только если пир не подключён или очередь переполнена
+   */
+  _transportSendWithRetry(peerId, serialized, flush) {
+    if (!this.transportManager.isConnected(peerId)) {
+      return false;
+    }
+    if (this.transportManager.send(peerId, serialized)) {
+      flush?.();
+      return true;
+    }
+    return this._enqueueSendRetry(peerId, { serialized, flush });
   }
 
   _handleOutboundPacket(ipPacket) {
@@ -454,14 +527,14 @@ export class MeshNode extends EventEmitter {
       const elapsed = Date.now() - txStart;
       metrics.recordOnionEncrypt(result.payloadLen, result.serialized.length, elapsed);
 
-      const sent = this.transportManager.send(result.nextHop, result.serialized);
-      metrics.recordWebRTCSend(result.serialized.length, sent);
-
-      if (!sent) {
-        metrics.recordError();
-      } else {
+      const ok = this._transportSendWithRetry(result.nextHop, result.serialized, () => {
+        metrics.recordWebRTCSend(result.serialized.length, true);
         this.trafficStats.bytesSent += result.payloadLen;
         this.trafficStats.packetsSent++;
+      });
+      if (!ok) {
+        metrics.recordError();
+        metrics.recordWebRTCSend(result.serialized.length, false);
       }
     });
   }
@@ -636,7 +709,7 @@ export class MeshNode extends EventEmitter {
     if (packet.dstNode !== this.nodeId) {
       // Forward to destination (relay)
       const serialized = packet.serialize();
-      if (!this.transportManager.send(packet.dstNode, serialized)) {
+      if (!this._transportSendWithRetry(packet.dstNode, serialized)) {
         console.warn(`Failed to forward direct packet to ${packet.dstNode}`);
       }
       return;
@@ -680,10 +753,11 @@ export class MeshNode extends EventEmitter {
     forwardPacket.incrementHop();
     
     const serialized = forwardPacket.serialize();
-    
-    if (this.transportManager.send(nextHop, serialized)) {
+
+    const ok = this._transportSendWithRetry(nextHop, serialized, () => {
       this.loopStats.totalForwarded++;
-    } else {
+    });
+    if (!ok) {
       console.warn(`Failed to forward to ${nextHop}`);
     }
   }
@@ -853,13 +927,15 @@ export class MeshNode extends EventEmitter {
                 this.trafficStats.packetsSent++;
               }
             } else {
-              const sent = this._sendToPeer(result.nextHop, result.serialized);
-              if (!sent) {
-                metrics.recordError();
-                console.warn(`[EXIT] Failed to send to ${result.nextHop}`);
-              } else {
+              const ok = this._transportSendWithRetry(result.nextHop, result.serialized, () => {
+                metrics.recordWebRTCSend(result.serialized.length, true);
                 this.trafficStats.bytesSent += result.payloadLen;
                 this.trafficStats.packetsSent++;
+              });
+              if (!ok) {
+                metrics.recordError();
+                metrics.recordWebRTCSend(result.serialized.length, false);
+                console.warn(`[EXIT] Failed to send to ${result.nextHop}`);
               }
             }
           } finally {
@@ -901,9 +977,13 @@ export class MeshNode extends EventEmitter {
     }
     
     if (tmConnected) {
-      const result = this.transportManager.send(peerId, data);
-      metrics.recordWebRTCSend(data.length, result);
-      return result;
+      const ok = this._transportSendWithRetry(peerId, data, () => {
+        metrics.recordWebRTCSend(data.length, true);
+      });
+      if (!ok) {
+        metrics.recordWebRTCSend(data.length, false);
+      }
+      return ok;
     }
     
     return false;
@@ -1001,7 +1081,7 @@ export class MeshNode extends EventEmitter {
       dstNode: peerId
     });
     
-    return this.transportManager.send(peerId, pingPacket.serialize());
+    return this._transportSendWithRetry(peerId, pingPacket.serialize());
   }
 
   _startEchoServer() {
@@ -1034,6 +1114,9 @@ export class MeshNode extends EventEmitter {
       packetCacheSize: this.processedPackets.size,
       pipeline: this.pipeline.getStats(),
       webrtcSend: webrtc?.getSendDiagnostics ? webrtc.getSendDiagnostics() : null,
+      sendRetryPending: Object.fromEntries(
+        [...this._sendRetryQueues.entries()].map(([id, q]) => [id.substring(0, 10), q.length]),
+      ),
       memory: process.memoryUsage(),
     };
   }
@@ -1078,6 +1161,10 @@ export class MeshNode extends EventEmitter {
     }
     
     this.discovery.stop();
+
+    for (const peerId of [...this._sendRetryQueues.keys()]) {
+      this._clearSendRetryQueue(peerId);
+    }
 
     this._exitTxChains.clear();
     

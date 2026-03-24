@@ -3,9 +3,9 @@ import { EventEmitter } from 'events';
 import { TransportSendBuffer, unframe } from './send-buffer.js';
 
 const SCTP_DEFAULTS = {
-  recvBufferSize: 4 * 1024 * 1024,
-  sendBufferSize: 4 * 1024 * 1024,
-  maxChunksOnQueue: 16384,
+  recvBufferSize: 16 * 1024 * 1024,
+  sendBufferSize: 16 * 1024 * 1024,
+  maxChunksOnQueue: 32768,
   initialCongestionWindow: 65535,
   delayedSackTime: 2,
 };
@@ -58,8 +58,13 @@ export class WebRTCTransport extends EventEmitter {
       console.log('[WebRTC] SCTP settings merged from config');
     }
 
-    this.sendBufferMaxQueue = config.sendBufferMaxQueue ?? 500;
-    this.sendOverflowMax = config.sendOverflowMax ?? 2000;
+    /** Сколько IP-пакетов держим в агрегаторе до flush (iperf -R / TURN — выше = меньше дропов). */
+    this.sendBufferMaxQueue = config.sendBufferMaxQueue ?? 2000;
+    /** Очередь поверх DC при полном TransportSendBuffer; 0 = не использовать overflow. */
+    this.sendOverflowMax = config.sendOverflowMax ?? 8000;
+    /** Порог bufferedAmount на DC: ниже — чаще ждём, выше — больше памяти, меньше «Failed to forward». */
+    this.dcBufferedHighWater = config.dcBufferedHighWater ?? 8 * 1024 * 1024;
+    this.dcBufferedLowWater = config.dcBufferedLowWater ?? 512 * 1024;
     /** @type {Map<string, Buffer[]>} очередь при полном TransportSendBuffer */
     this._sendOverflow = new Map();
     /** Сколько раз send() остановился из‑за полной overflow (backpressure). */
@@ -385,8 +390,8 @@ export class WebRTCTransport extends EventEmitter {
   _setupDataChannel(peerId, dc) {
     this.dataChannels.set(peerId, dc);
 
-    const DC_HIGH_WATER = 2 * 1024 * 1024;
-    const DC_LOW_WATER = 256 * 1024;
+    const DC_HIGH_WATER = this.dcBufferedHighWater;
+    const DC_LOW_WATER = this.dcBufferedLowWater;
 
     dc.onOpen(() => {
       console.log(`[WebRTC] DataChannel open for ${peerId.substring(0, 8)}…`);
@@ -427,7 +432,8 @@ export class WebRTCTransport extends EventEmitter {
       const sb = this.sendBuffers.get(peerId);
       if (sb) sb.resume();
       this._drainSendOverflow(peerId);
-      this.emit('buffer-low', peerId);
+      // После внутреннего drain — чтобы MeshNode мог дописать свою очередь повтора.
+      process.nextTick(() => this.emit('buffer-low', peerId));
     });
     dc.setBufferedAmountLowThreshold(DC_LOW_WATER);
   }

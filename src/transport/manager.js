@@ -67,6 +67,12 @@ export class TransportManager extends EventEmitter {
     transport.on('error', (peerId, err) => {
       this.emit('transport-error', type, peerId, err);
     });
+
+    if (type === 'webrtc') {
+      transport.on('buffer-low', (peerId) => {
+        this.emit('transport-buffer-low', peerId);
+      });
+    }
   }
 
   getTransport(type) {
