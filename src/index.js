@@ -118,6 +118,11 @@ async function main() {
   };
   metrics.configure(config.metrics);
 
+  config.signalling = {
+    reconnectIntervalMs: 5000,
+    ...(config.signalling && typeof config.signalling === 'object' ? config.signalling : {}),
+  };
+
   if (config.turnServers && config.turnServers.length > 0 && config.iceMode !== 'direct') {
     config.iceServers = [
       ...(config.iceServers || []),
