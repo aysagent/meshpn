@@ -258,16 +258,36 @@ export class UserSpaceNAT extends EventEmitter {
   }
 
   /**
+   * Сколько mesh-сегментов можно держать «в полёте» без переполнения приёмного окна клиента
+   * (без парсинга TCP WS — берём 16-bit Window из заголовка).
+   */
+  _maxPendingForConn(conn) {
+    const MSS = 1360;
+    const w = conn.peerRecvWindow ?? 65535;
+    if (w === 0) return 0;
+    const slack = 6;
+    const byWin = Math.floor(w / MSS) + slack;
+    return Math.min(this.tcpMaxPending, Math.max(slack, byWin));
+  }
+
+  _resumePendingTarget(conn) {
+    const maxP = this._maxPendingForConn(conn);
+    if (maxP <= 0) return 0;
+    return Math.max(4, Math.floor(maxP * 0.35));
+  }
+
+  /**
    * Окно приёма клиента (из его TCP-заголовка) и cumulative ACK по нашему serverSeq.
    * Раньше pendingResponses уменьшали на 5 за любой ACK — счётчик не сходился, сокет к iperf
    * зря pause/resume, на клиенте переполнялся буфер → TCP ZeroWindow.
    */
   _updatePeerWindowAndAck(conn, parsed) {
-    if (conn.state !== TCP_STATE.ESTABLISHED) return;
+    if (conn.state !== TCP_STATE.ESTABLISHED && conn.state !== TCP_STATE.FIN_WAIT) return;
 
     conn.peerRecvWindow = parsed.tcpWindow;
 
     if (!parsed.tcpFlagsACK) {
+      this._flushServerReadBacklog(conn);
       this._syncServerSocketPause(conn);
       return;
     }
@@ -275,6 +295,7 @@ export class UserSpaceNAT extends EventEmitter {
     const ack = parsed.tcpAck >>> 0;
     if (conn.lastPeerAck === undefined) {
       conn.lastPeerAck = ack;
+      this._flushServerReadBacklog(conn);
       this._syncServerSocketPause(conn);
       return;
     }
@@ -293,20 +314,105 @@ export class UserSpaceNAT extends EventEmitter {
       }
     }
 
+    this._flushServerReadBacklog(conn);
     this._syncServerSocketPause(conn);
   }
 
+  /** Данные от реального сервера (iperf), ещё не ушедшие в mesh к клиенту. */
+  _flushServerReadBacklog(conn) {
+    if (
+      (conn.state !== TCP_STATE.ESTABLISHED && conn.state !== TCP_STATE.FIN_WAIT)
+      || !conn.sendResponse
+    ) {
+      return;
+    }
+
+    const MSS = 1360;
+    let backlog = conn.serverReadBacklog;
+    if (!backlog || backlog.length === 0) {
+      this._maybeSendServerFin(conn);
+      return;
+    }
+
+    const { dstIp, srcIp, dstPort, srcPort, srcNodeId, sendResponse } = conn;
+    let offset = 0;
+    const maxP = this._maxPendingForConn(conn);
+
+    while (offset < backlog.length && maxP > 0 && conn.pendingResponses < maxP) {
+      const chunkSize = Math.min(MSS, backlog.length - offset);
+      const chunk = backlog.subarray(offset, offset + chunkSize);
+      const atEndOfBacklog = offset + chunkSize >= backlog.length;
+      const responsePacket = buildTCPPacket(
+        dstIp, srcIp,
+        dstPort, srcPort,
+        conn.serverSeq,
+        conn.clientAck,
+        atEndOfBacklog ? (TCP_FLAGS.PSH | TCP_FLAGS.ACK) : TCP_FLAGS.ACK,
+        chunk,
+      );
+
+      conn.serverSeq += chunk.length;
+      offset += chunkSize;
+      conn.pendingResponses++;
+      sendResponse(srcNodeId, responsePacket);
+      metrics.recordResponse(responsePacket.length);
+    }
+
+    conn.serverReadBacklog = offset < backlog.length ? backlog.subarray(offset) : null;
+    this._maybeSendServerFin(conn);
+  }
+
+  _maybeSendServerFin(conn) {
+    if (
+      !conn.eofFromServer
+      || conn.finSent
+      || conn.state !== TCP_STATE.ESTABLISHED
+      || (conn.serverReadBacklog && conn.serverReadBacklog.length > 0)
+      || conn.pendingResponses > 0
+    ) {
+      return;
+    }
+
+    const { dstIp, srcIp, dstPort, srcPort, srcNodeId, sendResponse } = conn;
+    conn.finSent = true;
+    conn.state = TCP_STATE.FIN_WAIT;
+
+    const finPacket = buildTCPPacket(
+      dstIp, srcIp,
+      dstPort, srcPort,
+      conn.serverSeq,
+      conn.clientAck,
+      TCP_FLAGS.FIN | TCP_FLAGS.ACK,
+    );
+    conn.serverSeq++;
+    sendResponse(srcNodeId, finPacket);
+  }
+
   _syncServerSocketPause(conn) {
-    if (!conn.socket || conn.state !== TCP_STATE.ESTABLISHED) return;
+    if (
+      !conn.socket
+      || (conn.state !== TCP_STATE.ESTABLISHED && conn.state !== TCP_STATE.FIN_WAIT)
+    ) {
+      return;
+    }
 
     const win = conn.peerRecvWindow ?? 65535;
-    const over = conn.pendingResponses > this.tcpMaxPending;
+    const maxP = this._maxPendingForConn(conn);
+    const overInFlight = maxP > 0 && conn.pendingResponses >= maxP;
     const zeroWin = win === 0;
-    const needPause = over || zeroWin;
+    const backlogBytes = conn.serverReadBacklog?.length ?? 0;
+    const backlogStuck = backlogBytes > 0 && (overInFlight || zeroWin || maxP === 0);
+
+    const needPause = zeroWin || overInFlight || backlogStuck;
+
+    const resumeBelow = this._resumePendingTarget(conn);
     const canResume =
       conn.serverSocketPaused
-      && conn.pendingResponses < this.tcpResumePending
-      && win > 0;
+      && win > 0
+      && maxP > 0
+      && conn.pendingResponses < resumeBelow
+      && conn.pendingResponses < maxP
+      && !backlogStuck;
 
     if (needPause && !conn.serverSocketPaused) {
       conn.socket.pause();
@@ -469,6 +575,9 @@ export class UserSpaceNAT extends EventEmitter {
         peerRecvWindow: parsed.tcpWindow ?? 65535,
         lastPeerAck: undefined,
         serverSocketPaused: false,
+        serverReadBacklog: null,
+        eofFromServer: false,
+        finSent: false,
       };
 
       this.tcpConnections.set(key, conn);
@@ -513,62 +622,25 @@ export class UserSpaceNAT extends EventEmitter {
 
       socket.on('data', (data) => {
         if (conn.state === TCP_STATE.CLOSED) return;
-        
+
         conn.lastActivity = Date.now();
         metrics.recordTCPData(0, data.length);
-        
-        // MSS for MTU 1400
-        const MSS = 1360;
-        const maxP = this.tcpMaxPending;
-        let offset = 0;
-        
-        const sendChunks = () => {
-          while (offset < data.length && conn.pendingResponses <= maxP) {
-            const chunk = data.subarray(offset, offset + MSS);
-            const isLast = (offset + MSS >= data.length);
-            
-            const responsePacket = buildTCPPacket(
-              dstIp, srcIp,
-              dstPort, srcPort,
-              conn.serverSeq,
-              conn.clientAck,
-              isLast ? (TCP_FLAGS.PSH | TCP_FLAGS.ACK) : TCP_FLAGS.ACK,
-              chunk
-            );
 
-            conn.serverSeq += chunk.length;
-            offset += chunk.length;
-            conn.pendingResponses++;
+        conn.serverReadBacklog = conn.serverReadBacklog
+          ? Buffer.concat([conn.serverReadBacklog, data])
+          : data;
 
-            sendResponse(srcNodeId, responsePacket);
-            metrics.recordResponse(responsePacket.length);
-          }
-          
-          this._syncServerSocketPause(conn);
-
-          if (offset < data.length) {
-            setImmediate(sendChunks);
-          }
-        };
-        
-        sendChunks();
+        this._flushServerReadBacklog(conn);
+        this._syncServerSocketPause(conn);
       });
 
       socket.on('end', () => {
         if (conn.state === TCP_STATE.CLOSED) return;
-        
-        const finPacket = buildTCPPacket(
-          dstIp, srcIp,
-          dstPort, srcPort,
-          conn.serverSeq,
-          conn.clientAck,
-          TCP_FLAGS.FIN | TCP_FLAGS.ACK
-        );
 
-        conn.serverSeq++;
-        conn.state = TCP_STATE.FIN_WAIT;
-
-        sendResponse(srcNodeId, finPacket);
+        conn.eofFromServer = true;
+        this._flushServerReadBacklog(conn);
+        this._maybeSendServerFin(conn);
+        this._syncServerSocketPause(conn);
       });
 
       socket.on('error', (err) => {
@@ -623,7 +695,10 @@ export class UserSpaceNAT extends EventEmitter {
 
     conn.lastActivity = Date.now();
 
-    if (conn.state === TCP_STATE.ESTABLISHED && !parsed.tcpFlagsRST) {
+    if (
+      (conn.state === TCP_STATE.ESTABLISHED || conn.state === TCP_STATE.FIN_WAIT)
+      && !parsed.tcpFlagsRST
+    ) {
       this._updatePeerWindowAndAck(conn, parsed);
     }
 
@@ -671,7 +746,7 @@ export class UserSpaceNAT extends EventEmitter {
       sendResponse(srcNodeId, ackPacket);
     }
 
-    if (conn.state === TCP_STATE.ESTABLISHED) {
+    if (conn.state === TCP_STATE.ESTABLISHED || conn.state === TCP_STATE.FIN_WAIT) {
       this._syncServerSocketPause(conn);
     }
   }
