@@ -98,6 +98,8 @@ export class MeshNode extends EventEmitter {
      */
     this._sendRetryMaxPackets = sr.maxPacketsPerPeer ?? 4000;
     this._sendRetryQueues = new Map();
+    /** Цепочка Promise на пира: RX/decrypt/forward строго по порядку приёма с DC (иначе TCP в туннеле переставляется при rxPool>1). */
+    this._rxPeerChains = new Map();
     
     // Traffic statistics
     this.trafficStats = {
@@ -391,6 +393,7 @@ export class MeshNode extends EventEmitter {
       console.log(`Peer disconnected: ${peerId}`);
       this.router.removeLocalConnection(peerId);
       this._clearSendRetryQueue(peerId);
+      this._rxPeerChains.delete(peerId);
       this._updateMultipathRoutes();
       this.emit('peer-disconnected', peerId);
     });
@@ -545,59 +548,110 @@ export class MeshNode extends EventEmitter {
   _handleIncomingMessage(peerId, data) {
     metrics.recordWebRTCReceive(data.length);
 
-    if (data.length < 2) return;
+    const prev = this._rxPeerChains.get(peerId) || Promise.resolve();
+    const next = prev
+      .then(() => this._processIncomingMessage(peerId, data))
+      .catch((err) => {
+        console.error(
+          `[RX] chain error for ${peerId.substring(0, 8)}…:`,
+          err?.message || err,
+        );
+      });
+    this._rxPeerChains.set(peerId, next);
+  }
+
+  /**
+   * Одно сообщение с транспорта. Для одного peerId вызывается последовательно (см. _handleIncomingMessage).
+   */
+  _processIncomingMessage(peerId, data) {
+    if (data.length < 2) {
+      return Promise.resolve();
+    }
     const peeked = data[1];
 
     if (peeked === PacketType.DATA) {
       const sessionKey = this.discovery.getSessionKey(peerId);
-      if (!sessionKey) { console.warn(`No session key for ${peerId}`); return; }
+      if (!sessionKey) {
+        console.warn(`No session key for ${peerId}`);
+        return Promise.resolve();
+      }
 
-      this.pipeline.submitRx(data, sessionKey, peerId, PacketType.DATA, (err, result) => {
-        if (err) { metrics.recordError(); console.error('[RX] worker error:', err.message); return; }
-        this._handleRxWorkerResult(result);
+      return new Promise((resolve) => {
+        this.pipeline.submitRx(data, sessionKey, peerId, PacketType.DATA, (err, result) => {
+          try {
+            if (err) {
+              metrics.recordError();
+              console.error('[RX] worker error:', err.message);
+              return;
+            }
+            this._handleRxWorkerResult(result);
+          } finally {
+            resolve();
+          }
+        });
       });
-      return;
     }
 
     if (peeked === PacketType.DATA_DIRECT) {
-      // v2 binary peek: dstNode at bytes 42..57 (16 bytes)
       if (data.length >= 58) {
         const dstNode = data.subarray(42, 58).toString().replace(/\0/g, '');
         if (dstNode !== this.nodeId) {
           let packet;
-          try { packet = Packet.deserialize(data); } catch (err) {
-            metrics.recordError(); return;
+          try {
+            packet = Packet.deserialize(data);
+          } catch (err) {
+            metrics.recordError();
+            return Promise.resolve();
           }
           this._handleDirectDataPacket(peerId, packet);
-          return;
+          return Promise.resolve();
         }
       }
-      // srcNode at bytes 26..41
       const srcNode = data.length >= 42
         ? data.subarray(26, 42).toString().replace(/\0/g, '')
         : null;
       const key = srcNode ? this.discovery.getSessionKey(srcNode) : null;
-      if (!key) { console.warn(`No session key for ${srcNode}`); return; }
+      if (!key) {
+        console.warn(`No session key for ${srcNode}`);
+        return Promise.resolve();
+      }
 
-      this.pipeline.submitRx(data, key, peerId, PacketType.DATA_DIRECT, (err, result) => {
-        if (err) { metrics.recordError(); console.error('[RX] worker error:', err.message); return; }
-        this._handleRxWorkerResult(result);
+      return new Promise((resolve) => {
+        this.pipeline.submitRx(data, key, peerId, PacketType.DATA_DIRECT, (err, result) => {
+          try {
+            if (err) {
+              metrics.recordError();
+              console.error('[RX] worker error:', err.message);
+              return;
+            }
+            this._handleRxWorkerResult(result);
+          } finally {
+            resolve();
+          }
+        });
       });
-      return;
     }
 
     try {
       const packet = Packet.deserialize(data);
       switch (packet.type) {
-        case PacketType.PING:  this._handlePing(peerId, packet); break;
-        case PacketType.PONG:  this._handlePong(peerId, packet); break;
-        case PacketType.ACK:   this._handleAck(peerId, packet); break;
-        default: console.warn(`Unknown packet type: ${packet.type}`);
+        case PacketType.PING:
+          this._handlePing(peerId, packet);
+          break;
+        case PacketType.PONG:
+          this._handlePong(peerId, packet);
+          break;
+        case PacketType.ACK:
+          this._handleAck(peerId, packet);
+          break;
+        default:
+          console.warn(`Unknown packet type: ${packet.type}`);
       }
     } catch (err) {
       metrics.recordError();
       console.error('Failed to process incoming message:', err.message);
     }
+    return Promise.resolve();
   }
 
   _handleRxWorkerResult(result) {
@@ -1168,6 +1222,7 @@ export class MeshNode extends EventEmitter {
     for (const peerId of [...this._sendRetryQueues.keys()]) {
       this._clearSendRetryQueue(peerId);
     }
+    this._rxPeerChains.clear();
 
     this._exitTxChains.clear();
     
