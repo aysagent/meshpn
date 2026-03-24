@@ -92,7 +92,10 @@ export class MeshNode extends EventEmitter {
     };
 
     const sr = this.config.sendRetry || {};
-    /** Очередь serialized mesh-пакетов, если WebRTC DC переполнен (иначе TCP в TUN даёт retransmit в Wireshark). */
+    /**
+     * FIFO на пир: при backpressure нельзя слать следующие пакеты «в обход» очереди —
+     * иначе TCP в TUN приходит не по порядку (лавина Dup ACK).
+     */
     this._sendRetryMaxPackets = sr.maxPacketsPerPeer ?? 4000;
     this._sendRetryQueues = new Map();
     
@@ -410,22 +413,6 @@ export class MeshNode extends EventEmitter {
     });
   }
 
-  _enqueueSendRetry(peerId, item) {
-    let q = this._sendRetryQueues.get(peerId);
-    if (!q) {
-      q = [];
-      this._sendRetryQueues.set(peerId, q);
-    }
-    if (q.length >= this._sendRetryMaxPackets) {
-      console.warn(
-        `[SendRetry] queue full for ${peerId.substring(0, 8)}… (${q.length} packets), dropping`,
-      );
-      return false;
-    }
-    q.push(item);
-    return true;
-  }
-
   _drainSendRetryQueue(peerId) {
     const q = this._sendRetryQueues.get(peerId);
     if (!q?.length) return;
@@ -459,18 +446,34 @@ export class MeshNode extends EventEmitter {
   }
 
   /**
-   * Отправка через WebRTC/QUIC с очередью при backpressure (см. transport-buffer-low).
+   * Отправка через WebRTC/QUIC с сохранением порядка на пира (head-of-line blocking).
    * @returns {boolean} false только если пир не подключён или очередь переполнена
    */
   _transportSendWithRetry(peerId, serialized, flush) {
     if (!this.transportManager.isConnected(peerId)) {
       return false;
     }
+
+    let q = this._sendRetryQueues.get(peerId);
+    if (q && q.length > 0) {
+      if (q.length >= this._sendRetryMaxPackets) {
+        console.warn(
+          `[SendRetry] queue full for ${peerId.substring(0, 8)}… (${q.length} packets), dropping`,
+        );
+        return false;
+      }
+      q.push({ serialized, flush });
+      return true;
+    }
+
     if (this.transportManager.send(peerId, serialized)) {
       flush?.();
       return true;
     }
-    return this._enqueueSendRetry(peerId, { serialized, flush });
+
+    q = [{ serialized, flush }];
+    this._sendRetryQueues.set(peerId, q);
+    return true;
   }
 
   _handleOutboundPacket(ipPacket) {
