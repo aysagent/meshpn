@@ -407,7 +407,9 @@ export class WebRTCTransport extends EventEmitter {
 
       this.emit('connection-state', peerId, state);
 
-      if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+      // Не эмитим при `disconnected` — ICE может кратковременно падать и восстанавливаться;
+      // иначе discovery снимает сессию, а ключи не переобмениваются.
+      if (state === 'failed' || state === 'closed') {
         this.emit('peer-disconnected', peerId);
       }
     });
