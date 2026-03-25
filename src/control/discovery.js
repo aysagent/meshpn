@@ -18,6 +18,17 @@ export class PeerDiscovery extends EventEmitter {
     console.log(`[DISCOVERY] Transport mode: ${this.transportMode}, dataServer: ${this.dataServer}`);
     
     this.transportManager.setLocalNodeId(this.identity.nodeId);
+
+    /** Цепочка Promise: сообщения signalling обрабатываются по одному (иначе ICE может прийти до setRemoteDescription). */
+    this._signallingWorkChain = Promise.resolve();
+  }
+
+  _enqueueSignallingWork(fn) {
+    this._signallingWorkChain = this._signallingWorkChain
+      .then(() => fn())
+      .catch((err) => {
+        console.error('[DISCOVERY] Signalling async handler error:', err?.message || err);
+      });
   }
 
   async start(role = 'client') {
@@ -41,19 +52,21 @@ export class PeerDiscovery extends EventEmitter {
     });
     
     this.signalling.on('peers-updated', (peers) => {
-      this._handlePeersUpdate(peers);
+      this._enqueueSignallingWork(() => this._handlePeersUpdate(peers));
     });
-    
+
     this.signalling.on('peer-join', (peer) => {
-      this._initiateConnection(peer);
+      this._enqueueSignallingWork(() => this._initiateConnection(peer));
     });
-    
+
     this.signalling.on('peer-leave', (nodeId) => {
-      this._handlePeerLeave(nodeId);
+      this._enqueueSignallingWork(() => {
+        this._handlePeerLeave(nodeId);
+      });
     });
-    
+
     this.signalling.on('signal', (fromNodeId, signal) => {
-      this._handleSignal(fromNodeId, signal);
+      this._enqueueSignallingWork(() => this._handleSignal(fromNodeId, signal));
     });
     
     this.signalling.on('topology', (topology) => {

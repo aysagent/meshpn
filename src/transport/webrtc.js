@@ -74,6 +74,10 @@ export class WebRTCTransport extends EventEmitter {
     this.dataChannels = new Map();
     this.sendBuffers = new Map();
     this._descriptionResolvers = new Map();
+    /** После setRemoteDescription можно вызывать addRemoteCandidate (до этого — очередь). */
+    this._remoteDescForTrickle = new Set();
+    /** peerId -> список { candidateStr, mid } */
+    this._pendingRemoteIce = new Map();
 
     const hasTurn = this.ndcIceServers.some(s => s.startsWith('turn:') || s.startsWith('turns:'));
 
@@ -188,6 +192,7 @@ export class WebRTCTransport extends EventEmitter {
       });
 
       pc.setRemoteDescription(offer.sdp, 'Offer');
+      this._afterRemoteDescriptionForTrickle(peerId);
     });
   }
 
@@ -197,17 +202,60 @@ export class WebRTCTransport extends EventEmitter {
       throw new Error(`No connection found for peer ${peerId}`);
     }
     pc.setRemoteDescription(answer.sdp, 'Answer');
+    this._afterRemoteDescriptionForTrickle(peerId);
+  }
+
+  _pushPendingIce(peerId, candidateStr, mid) {
+    let q = this._pendingRemoteIce.get(peerId);
+    if (!q) {
+      q = [];
+      this._pendingRemoteIce.set(peerId, q);
+    }
+    q.push({ candidateStr, mid });
+  }
+
+  _afterRemoteDescriptionForTrickle(peerId) {
+    this._remoteDescForTrickle.add(peerId);
+    this._flushPendingRemoteIce(peerId);
+  }
+
+  _flushPendingRemoteIce(peerId) {
+    const pc = this.connections.get(peerId);
+    if (!pc) {
+      return;
+    }
+    const q = this._pendingRemoteIce.get(peerId);
+    if (!q || q.length === 0) {
+      return;
+    }
+    this._pendingRemoteIce.delete(peerId);
+    for (const { candidateStr, mid } of q) {
+      try {
+        pc.addRemoteCandidate(candidateStr, mid);
+      } catch (err) {
+        console.error(`[WebRTC] Failed to flush ICE candidate for ${peerId}: ${err.message}`);
+      }
+    }
   }
 
   async addIceCandidate(peerId, candidate) {
-    const pc = this.connections.get(peerId);
-    if (!pc) return;
-
     try {
       const candidateStr = typeof candidate === 'string'
         ? candidate
         : (candidate.candidate || candidate);
       const mid = candidate.mid || candidate.sdpMid || '0';
+
+      if (!this._remoteDescForTrickle.has(peerId)) {
+        this._pushPendingIce(peerId, candidateStr, mid);
+        return;
+      }
+
+      const pc = this.connections.get(peerId);
+      if (!pc) {
+        this._pushPendingIce(peerId, candidateStr, mid);
+        return;
+      }
+
       pc.addRemoteCandidate(candidateStr, mid);
     } catch (err) {
       console.error(`[WebRTC] Failed to add ICE candidate for ${peerId}: ${err.message}`);
@@ -285,6 +333,9 @@ export class WebRTCTransport extends EventEmitter {
   }
 
   close(peerId) {
+    this._remoteDescForTrickle.delete(peerId);
+    this._pendingRemoteIce.delete(peerId);
+
     this._sendOverflow.delete(peerId);
 
     const sb = this.sendBuffers.get(peerId);
