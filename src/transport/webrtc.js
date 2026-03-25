@@ -79,6 +79,8 @@ export class WebRTCTransport extends EventEmitter {
     this._remoteDescForTrickle = new Set();
     /** peerId -> список { candidateStr, mid } */
     this._pendingRemoteIce = new Map();
+    /** Слить PC terminal + DC close в одно событие; отмена при новом PC для того же peerId (replace). */
+    this._peerDisconnectEmitTimer = new Map();
 
     const hasTurn = this.ndcIceServers.some(s => s.startsWith('turn:') || s.startsWith('turns:'));
 
@@ -388,6 +390,25 @@ export class WebRTCTransport extends EventEmitter {
     return {};
   }
 
+  _emitPeerDisconnectSoon(peerId) {
+    if (this._peerDisconnectEmitTimer.has(peerId)) {
+      return;
+    }
+    const t = setTimeout(() => {
+      this._peerDisconnectEmitTimer.delete(peerId);
+      this.emit('peer-disconnected', peerId);
+    }, 0);
+    this._peerDisconnectEmitTimer.set(peerId, t);
+  }
+
+  _cancelPeerDisconnectEmit(peerId) {
+    const t = this._peerDisconnectEmitTimer.get(peerId);
+    if (t != null) {
+      clearTimeout(t);
+      this._peerDisconnectEmitTimer.delete(peerId);
+    }
+  }
+
   _createPeerConnection(peerId) {
     if (this.connections.has(peerId)) {
       // #region agent log
@@ -439,7 +460,7 @@ export class WebRTCTransport extends EventEmitter {
           data: { peerId: (peerId || '').slice(0, 12), state },
         });
         // #endregion
-        this.emit('peer-disconnected', peerId);
+        this._emitPeerDisconnectSoon(peerId);
       }
     });
 
@@ -448,6 +469,8 @@ export class WebRTCTransport extends EventEmitter {
     });
 
     this.connections.set(peerId, pc);
+    // Замена PC: не даём отложенному disconnect от уничтоженного peer ударить по discovery/mesh.
+    this._cancelPeerDisconnectEmit(peerId);
     return pc;
   }
 
@@ -504,7 +527,7 @@ export class WebRTCTransport extends EventEmitter {
       console.log(`[WebRTC] DataChannel closed for ${peerId.substring(0, 8)}…`);
       const sb = this.sendBuffers.get(peerId);
       if (sb) { sb.stop(); this.sendBuffers.delete(peerId); }
-      this.emit('peer-disconnected', peerId);
+      this._emitPeerDisconnectSoon(peerId);
     });
 
     dc.onError((err) => {

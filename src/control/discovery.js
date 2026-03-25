@@ -147,6 +147,24 @@ export class PeerDiscovery extends EventEmitter {
       this.establishedPeers.delete(peerId);
       this.sessionManager.removeSession(peerId);
 
+      const hadPending = this.pendingConnections.has(peerId);
+      this.pendingConnections.delete(peerId);
+      // #region agent log
+      if (hadPending) {
+        sessionDebugLog({
+          runId: 'webrtc-drop',
+          hypothesisId: 'H10_pending_cleared_on_disconnect',
+          location: 'discovery.js:peer-disconnected',
+          message: 'cleared pending (dead handshake or transport drop)',
+          data: {
+            peerId: (peerId || '').slice(0, 12),
+            stillInSignalling,
+            myId: (this.identity?.nodeId || '').slice(0, 12),
+          },
+        });
+      }
+      // #endregion
+
       this._updateTopology();
       this.emit('peer-disconnected', peerId);
 
@@ -239,6 +257,8 @@ export class PeerDiscovery extends EventEmitter {
     // #endregion
     console.warn(`[DISCOVERY] Superseding stale pending handshake for ${nodeId} (${reason}, age=${ageMs}ms)`);
     this.pendingConnections.delete(nodeId);
+    this.establishedPeers.delete(nodeId);
+    this.sessionManager.removeSession(nodeId);
     this.transportManager.close(nodeId);
   }
 

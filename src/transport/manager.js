@@ -53,6 +53,9 @@ export class TransportManager extends EventEmitter {
           this.peerTransports.delete(peerId);
           this.emit('peer-disconnected', peerId);
         }
+      } else {
+        // WebRTC: handshake не дошёл до peer-connected — в map пира нет, но transport шлёт disconnect (failed/closed).
+        this.emit('peer-disconnected', peerId);
       }
     });
     
