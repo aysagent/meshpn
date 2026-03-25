@@ -26,8 +26,9 @@ export class PeerDiscovery extends EventEmitter {
     /**
      * peer-leave от сервера часто гоняется с mesh auto-reconnect (ICE упал, exit шлёт новый offer).
      * Немедленный close() убивает новый PC. Откладываем leave и снимаем при peer-join / peer-connected.
+     * 450ms мало для ICE (логи: H2_apply срабатывал до peer-connected). Берём запас под offer/answer/ICE.
      */
-    this._peerLeaveDelayMs = 450;
+    this._peerLeaveDelayMs = 4000;
     /** @type {Map<string, ReturnType<typeof setTimeout>>} */
     this._peerLeaveTimers = new Map();
   }
@@ -387,6 +388,33 @@ export class PeerDiscovery extends EventEmitter {
   }
 
   _applyPeerLeave(nodeId) {
+    if (this.signalling?.getPeer?.(nodeId)) {
+      // #region agent log
+      sessionDebugLog({
+        runId: 'webrtc-drop',
+        hypothesisId: 'H7_apply_peer_leave_skipped',
+        location: 'discovery.js:_applyPeerLeave',
+        message: 'skip close: peer again in signalling roster',
+        data: { nodeId: (nodeId || '').slice(0, 12), myId: (this.identity?.nodeId || '').slice(0, 12) },
+      });
+      // #endregion
+      console.log(`[DISCOVERY] _applyPeerLeave skipped (signalling still has peer): ${nodeId}`);
+      return;
+    }
+    if (this.transportManager?.isConnected?.(nodeId)) {
+      // #region agent log
+      sessionDebugLog({
+        runId: 'webrtc-drop',
+        hypothesisId: 'H7_apply_peer_leave_skipped',
+        location: 'discovery.js:_applyPeerLeave',
+        message: 'skip close: transport already connected',
+        data: { nodeId: (nodeId || '').slice(0, 12), myId: (this.identity?.nodeId || '').slice(0, 12) },
+      });
+      // #endregion
+      console.log(`[DISCOVERY] _applyPeerLeave skipped (transport connected): ${nodeId}`);
+      return;
+    }
+
     console.warn(`[DISCOVERY] _applyPeerLeave → close transport: ${nodeId}`);
     // #region agent log
     sessionDebugLog({
