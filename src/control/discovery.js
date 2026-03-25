@@ -168,7 +168,9 @@ export class PeerDiscovery extends EventEmitter {
       }
     }
     
-    console.log(`[DISCOVERY] Creating WebRTC offer for ${peer.nodeId}`);
+    console.log(
+      `[DISCOVERY] Creating WebRTC offer for ${peer.nodeId} at ${new Date().toISOString()}`,
+    );
     
     try {
       const offer = await this.transportManager.createWebRTCOffer(peer.nodeId);
@@ -237,11 +239,17 @@ export class PeerDiscovery extends EventEmitter {
   async _handleOffer(fromNodeId, signal) {
     console.log(`[DISCOVERY] Received offer from ${fromNodeId}`);
     
-    // Skip WebRTC if already connected via WebSocket
     if (this.transportManager.isConnected(fromNodeId)) {
       const transports = this.transportManager.getAvailableTransports(fromNodeId);
       if (transports.includes('websocket')) {
         console.log(`[DISCOVERY] Skipping WebRTC offer from ${fromNodeId} - already connected via WebSocket`);
+        return;
+      }
+      if (transports.includes('webrtc')) {
+        console.log(
+          `[DISCOVERY] Skipping WebRTC offer from ${fromNodeId} - already connected via WebRTC `
+          + `(would replace PC; likely duplicate signalling; t=${new Date().toISOString()})`,
+        );
         return;
       }
     }
