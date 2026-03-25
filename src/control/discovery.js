@@ -31,6 +31,12 @@ export class PeerDiscovery extends EventEmitter {
     this._peerLeaveDelayMs = 4000;
     /** @type {Map<string, ReturnType<typeof setTimeout>>} */
     this._peerLeaveTimers = new Map();
+
+    /**
+     * peer-join после mesh-reconnect приходит через ~1s с тем же nodeId; сразу supersede рвёт свежий offer/ICE (лог H8+H3).
+     * Сбрасываем transport только если pending реально залип (клиент переподключился, а старый handshake безнадёжен).
+     */
+    this._stalePendingMeshMs = 20000;
   }
 
   _clearPendingPeerLeave(nodeId) {
@@ -191,7 +197,30 @@ export class PeerDiscovery extends EventEmitter {
    * после register список пиров приходит сразу и сорвёт нормальный in-flight handshake (лог: H8 через ~66ms после старта).
    */
   async _supersedePendingMeshHandshake(nodeId, reason) {
-    if (this.establishedPeers.has(nodeId) || !this.pendingConnections.has(nodeId)) {
+    if (this.establishedPeers.has(nodeId)) {
+      return;
+    }
+    const pending = this.pendingConnections.get(nodeId);
+    if (!pending) {
+      return;
+    }
+    const ageMs = Date.now() - (pending.timestamp ?? 0);
+    if (ageMs < this._stalePendingMeshMs) {
+      // #region agent log
+      sessionDebugLog({
+        runId: 'webrtc-drop',
+        hypothesisId: 'H9_supersede_skipped_fresh_pending',
+        location: 'discovery.js:_supersedePendingMeshHandshake',
+        message: 'skip supersede: in-flight handshake still fresh',
+        data: {
+          nodeId: (nodeId || '').slice(0, 12),
+          reason,
+          ageMs,
+          staleAfterMs: this._stalePendingMeshMs,
+          myId: (this.identity?.nodeId || '').slice(0, 12),
+        },
+      });
+      // #endregion
       return;
     }
     // #region agent log
@@ -203,11 +232,12 @@ export class PeerDiscovery extends EventEmitter {
       data: {
         nodeId: (nodeId || '').slice(0, 12),
         reason,
+        ageMs,
         myId: (this.identity?.nodeId || '').slice(0, 12),
       },
     });
     // #endregion
-    console.warn(`[DISCOVERY] Superseding stale pending handshake for ${nodeId} (${reason})`);
+    console.warn(`[DISCOVERY] Superseding stale pending handshake for ${nodeId} (${reason}, age=${ageMs}ms)`);
     this.pendingConnections.delete(nodeId);
     this.transportManager.close(nodeId);
   }
