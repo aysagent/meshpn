@@ -8,7 +8,6 @@ import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
 import { TunManager, Packet, PacketType, parseIPPacket } from '../network/index.js';
 import { NATManager, UserSpaceNAT } from '../exit/index.js';
 import { metrics } from '../debug/index.js';
-import { sessionDebugLog } from '../debug/session-log.js';
 import { WorkerPipeline } from '../workers/pipeline.js';
 import http from 'http';
 
@@ -39,20 +38,6 @@ export class MeshNode extends EventEmitter {
     }
     this.transportMode = transportMode;
     console.log(`[NODE] transportMode=${this.transportMode}`);
-
-    // #region agent log
-    sessionDebugLog({
-      runId: 'transport-normalize',
-      hypothesisId: 'H_config_transport_object',
-      location: 'node.js:MeshNode.constructor',
-      message: 'resolved transportMode from config.transport',
-      data: {
-        transportMode: this.transportMode,
-        preferredOrder: transportPreferredOrder,
-        rawWasObject: rawTransport != null && typeof rawTransport === 'object',
-      },
-    });
-    // #endregion
 
     this.sessionManager = new SessionManager();
 

@@ -1,6 +1,5 @@
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
-import { sessionDebugLog } from '../debug/session-log.js';
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -207,15 +206,6 @@ export class SignallingClient extends EventEmitter {
   }
 
   _handlePeerLeave(nodeId) {
-    // #region agent log
-    sessionDebugLog({
-      runId: 'webrtc-drop',
-      hypothesisId: 'H1_signalling_peer_leave_msg',
-      location: 'signalling.js:_handlePeerLeave',
-      message: 'server sent peer-leave',
-      data: { nodeId: (nodeId || '').slice(0, 12), role: this.role },
-    });
-    // #endregion
     this.peers.delete(nodeId);
     this.exitNodes.delete(nodeId);
     this.emit('peer-leave', nodeId);

@@ -1,7 +1,6 @@
 import { EventEmitter } from 'events';
 import { SignallingClient } from './signalling.js';
 import { SessionManager } from '../crypto/session.js';
-import { sessionDebugLog } from '../debug/session-log.js';
 
 export class PeerDiscovery extends EventEmitter {
   constructor(config) {
@@ -149,39 +148,10 @@ export class PeerDiscovery extends EventEmitter {
     this.transportManager.on('peer-disconnected', (peerId) => {
       console.log(`[DISCOVERY] Transport peer-disconnected: ${peerId}`);
       const stillInSignalling = !!this.signalling?.getPeer?.(peerId);
-      // #region agent log
-      sessionDebugLog({
-        runId: 'webrtc-drop',
-        hypothesisId: 'H_peer_disconnected_ctx',
-        location: 'discovery.js:peer-disconnected',
-        message: 'transport peer-disconnected',
-        data: {
-          peerId: (peerId || '').slice(0, 12),
-          stillInSignalling,
-          myId: (this.identity?.nodeId || '').slice(0, 12),
-        },
-      });
-      // #endregion
       this.establishedPeers.delete(peerId);
       this.sessionManager.removeSession(peerId);
 
-      const hadPending = this.pendingConnections.has(peerId);
       this.pendingConnections.delete(peerId);
-      // #region agent log
-      if (hadPending) {
-        sessionDebugLog({
-          runId: 'webrtc-drop',
-          hypothesisId: 'H10_pending_cleared_on_disconnect',
-          location: 'discovery.js:peer-disconnected',
-          message: 'cleared pending (dead handshake or transport drop)',
-          data: {
-            peerId: (peerId || '').slice(0, 12),
-            stillInSignalling,
-            myId: (this.identity?.nodeId || '').slice(0, 12),
-          },
-        });
-      }
-      // #endregion
 
       this._updateTopology();
       this.emit('peer-disconnected', peerId);
@@ -189,19 +159,6 @@ export class PeerDiscovery extends EventEmitter {
       if (stillInSignalling) {
         this._clearMeshReconnectTimer(peerId);
         const delayMs = this._meshReconnectDelayMs;
-        // #region agent log
-        sessionDebugLog({
-          runId: 'webrtc-drop',
-          hypothesisId: 'H11_mesh_reconnect_debounced',
-          location: 'discovery.js:peer-disconnected',
-          message: 'scheduling mesh reconnect after delay',
-          data: {
-            peerId: (peerId || '').slice(0, 12),
-            delayMs,
-            myId: (this.identity?.nodeId || '').slice(0, 12),
-          },
-        });
-        // #endregion
         const timer = setTimeout(() => {
           this._meshReconnectTimers.delete(peerId);
           this._enqueueSignallingWork(() => this._maybeReconnectMeshPeer(peerId));
@@ -224,15 +181,6 @@ export class PeerDiscovery extends EventEmitter {
       return;
     }
     console.warn(`[DISCOVERY] Mesh reconnect to ${peerId} (signalling still lists peer)`);
-    // #region agent log
-    sessionDebugLog({
-      runId: 'webrtc-drop',
-      hypothesisId: 'H_mesh_auto_reconnect',
-      location: 'discovery.js:_maybeReconnectMeshPeer',
-      message: 'scheduling _initiateConnection after transport drop',
-      data: { peerId: (peerId || '').slice(0, 12) },
-    });
-    // #endregion
     await this._initiateConnection(peer);
   }
 
@@ -261,37 +209,8 @@ export class PeerDiscovery extends EventEmitter {
     }
     const ageMs = Date.now() - (pending.timestamp ?? 0);
     if (ageMs < this._stalePendingMeshMs) {
-      // #region agent log
-      sessionDebugLog({
-        runId: 'webrtc-drop',
-        hypothesisId: 'H9_supersede_skipped_fresh_pending',
-        location: 'discovery.js:_supersedePendingMeshHandshake',
-        message: 'skip supersede: in-flight handshake still fresh',
-        data: {
-          nodeId: (nodeId || '').slice(0, 12),
-          reason,
-          ageMs,
-          staleAfterMs: this._stalePendingMeshMs,
-          myId: (this.identity?.nodeId || '').slice(0, 12),
-        },
-      });
-      // #endregion
       return;
     }
-    // #region agent log
-    sessionDebugLog({
-      runId: 'webrtc-drop',
-      hypothesisId: 'H8_peer_join_supersedes_pending',
-      location: 'discovery.js:_supersedePendingMeshHandshake',
-      message: 'reset stale pending transport before new handshake',
-      data: {
-        nodeId: (nodeId || '').slice(0, 12),
-        reason,
-        ageMs,
-        myId: (this.identity?.nodeId || '').slice(0, 12),
-      },
-    });
-    // #endregion
     console.warn(`[DISCOVERY] Superseding stale pending handshake for ${nodeId} (${reason}, age=${ageMs}ms)`);
     this.pendingConnections.delete(nodeId);
     this.establishedPeers.delete(nodeId);
@@ -483,19 +402,6 @@ export class PeerDiscovery extends EventEmitter {
   }
 
   _handlePeerLeave(nodeId) {
-    // #region agent log
-    sessionDebugLog({
-      runId: 'webrtc-drop',
-      hypothesisId: 'H2_peer_leave_scheduled',
-      location: 'discovery.js:_handlePeerLeave',
-      message: 'peer-leave debounced',
-      data: {
-        nodeId: (nodeId || '').slice(0, 12),
-        myId: (this.identity?.nodeId || '').slice(0, 12),
-        delayMs: this._peerLeaveDelayMs,
-      },
-    });
-    // #endregion
     this._clearMeshReconnectTimer(nodeId);
     this._clearPendingPeerLeave(nodeId);
     const timer = setTimeout(() => {
@@ -507,42 +413,15 @@ export class PeerDiscovery extends EventEmitter {
 
   _applyPeerLeave(nodeId) {
     if (this.signalling?.getPeer?.(nodeId)) {
-      // #region agent log
-      sessionDebugLog({
-        runId: 'webrtc-drop',
-        hypothesisId: 'H7_apply_peer_leave_skipped',
-        location: 'discovery.js:_applyPeerLeave',
-        message: 'skip close: peer again in signalling roster',
-        data: { nodeId: (nodeId || '').slice(0, 12), myId: (this.identity?.nodeId || '').slice(0, 12) },
-      });
-      // #endregion
       console.log(`[DISCOVERY] _applyPeerLeave skipped (signalling still has peer): ${nodeId}`);
       return;
     }
     if (this.transportManager?.isConnected?.(nodeId)) {
-      // #region agent log
-      sessionDebugLog({
-        runId: 'webrtc-drop',
-        hypothesisId: 'H7_apply_peer_leave_skipped',
-        location: 'discovery.js:_applyPeerLeave',
-        message: 'skip close: transport already connected',
-        data: { nodeId: (nodeId || '').slice(0, 12), myId: (this.identity?.nodeId || '').slice(0, 12) },
-      });
-      // #endregion
       console.log(`[DISCOVERY] _applyPeerLeave skipped (transport connected): ${nodeId}`);
       return;
     }
 
     console.warn(`[DISCOVERY] _applyPeerLeave → close transport: ${nodeId}`);
-    // #region agent log
-    sessionDebugLog({
-      runId: 'webrtc-drop',
-      hypothesisId: 'H2_discovery_applyPeerLeave',
-      location: 'discovery.js:_applyPeerLeave',
-      message: 'closing transport and session after debounce',
-      data: { nodeId: (nodeId || '').slice(0, 12), myId: (this.identity?.nodeId || '').slice(0, 12) },
-    });
-    // #endregion
     this.pendingConnections.delete(nodeId);
     this.establishedPeers.delete(nodeId);
     this.sessionManager.removeSession(nodeId);

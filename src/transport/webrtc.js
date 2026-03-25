@@ -1,7 +1,6 @@
 import { PeerConnection, setSctpSettings } from 'node-datachannel';
 import { EventEmitter } from 'events';
 import { TransportSendBuffer, unframe } from './send-buffer.js';
-import { sessionDebugLog } from '../debug/session-log.js';
 
 const SCTP_DEFAULTS = {
   recvBufferSize: 16 * 1024 * 1024,
@@ -340,16 +339,6 @@ export class WebRTCTransport extends EventEmitter {
   }
 
   close(peerId) {
-    // #region agent log
-    const st = (new Error().stack || '').split('\n').slice(1, 10).join('|');
-    sessionDebugLog({
-      runId: 'webrtc-drop',
-      hypothesisId: 'H3_webrtc_close_called',
-      location: 'webrtc.js:close',
-      message: 'WebRTCTransport.close',
-      data: { peerId: (peerId || '').slice(0, 12), stack: st },
-    });
-    // #endregion
     this._remoteDescForTrickle.delete(peerId);
     this._pendingRemoteIce.delete(peerId);
 
@@ -420,15 +409,6 @@ export class WebRTCTransport extends EventEmitter {
     this._connectionEpoch.set(peerId, epoch);
 
     if (this.connections.has(peerId)) {
-      // #region agent log
-      sessionDebugLog({
-        runId: 'webrtc-drop',
-        hypothesisId: 'H4_replace_peer_connection',
-        location: 'webrtc.js:_createPeerConnection',
-        message: 'replacing existing PC (close+new)',
-        data: { peerId: (peerId || '').slice(0, 12) },
-      });
-      // #endregion
       this.close(peerId);
     }
 
@@ -468,15 +448,6 @@ export class WebRTCTransport extends EventEmitter {
       // Не эмитим при `disconnected` — ICE может кратковременно падать и восстанавливаться;
       // иначе discovery снимает сессию, а ключи не переобмениваются.
       if (state === 'failed' || state === 'closed') {
-        // #region agent log
-        sessionDebugLog({
-          runId: 'webrtc-drop',
-          hypothesisId: 'H5_pc_terminal_state',
-          location: 'webrtc.js:onStateChange',
-          message: 'PC terminal state',
-          data: { peerId: (peerId || '').slice(0, 12), state },
-        });
-        // #endregion
         this._dcOpenEpoch.delete(peerId);
         this._emitPeerDisconnectSoon(peerId);
       }
@@ -545,15 +516,6 @@ export class WebRTCTransport extends EventEmitter {
         return;
       }
       this._dcOpenEpoch.delete(peerId);
-      // #region agent log
-      sessionDebugLog({
-        runId: 'webrtc-drop',
-        hypothesisId: 'H6_dc_onClosed',
-        location: 'webrtc.js:dc.onClosed',
-        message: 'DataChannel closed',
-        data: { peerId: (peerId || '').slice(0, 12) },
-      });
-      // #endregion
       console.log(`[WebRTC] DataChannel closed for ${peerId.substring(0, 8)}…`);
       const sb = this.sendBuffers.get(peerId);
       if (sb) { sb.stop(); this.sendBuffers.delete(peerId); }
