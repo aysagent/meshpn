@@ -37,6 +37,22 @@ export class PeerDiscovery extends EventEmitter {
      * Сбрасываем transport только если pending реально залип (клиент переподключился, а старый handshake безнадёжен).
      */
     this._stalePendingMeshMs = 20000;
+
+    /**
+     * DC падает раньше, чем приходит peer-join после рестарта клиента — мгновенный offer часто ведёт к closed (~12s).
+     * Ждём, чтобы peer-join успел прийти и сам вызвал _initiateConnection; иначе один раз делаем reconnect по таймеру.
+     */
+    this._meshReconnectDelayMs = 1100;
+    /** @type {Map<string, ReturnType<typeof setTimeout>>} */
+    this._meshReconnectTimers = new Map();
+  }
+
+  _clearMeshReconnectTimer(peerId) {
+    const t = this._meshReconnectTimers.get(peerId);
+    if (t != null) {
+      clearTimeout(t);
+      this._meshReconnectTimers.delete(peerId);
+    }
   }
 
   _clearPendingPeerLeave(nodeId) {
@@ -80,6 +96,7 @@ export class PeerDiscovery extends EventEmitter {
     });
 
     this.signalling.on('peer-join', (peer) => {
+      this._clearMeshReconnectTimer(peer.nodeId);
       this._clearPendingPeerLeave(peer.nodeId);
       this._enqueueSignallingWork(async () => {
         await this._supersedePendingMeshHandshake(peer.nodeId, 'peer-join');
@@ -119,6 +136,7 @@ export class PeerDiscovery extends EventEmitter {
     });
     
     this.transportManager.on('peer-connected', (peerId, transport) => {
+      this._clearMeshReconnectTimer(peerId);
       this._clearPendingPeerLeave(peerId);
       console.log(`[DISCOVERY] Transport peer-connected: ${peerId} via ${transport}`);
       this.establishedPeers.add(peerId);
@@ -169,7 +187,26 @@ export class PeerDiscovery extends EventEmitter {
       this.emit('peer-disconnected', peerId);
 
       if (stillInSignalling) {
-        this._enqueueSignallingWork(() => this._maybeReconnectMeshPeer(peerId));
+        this._clearMeshReconnectTimer(peerId);
+        const delayMs = this._meshReconnectDelayMs;
+        // #region agent log
+        sessionDebugLog({
+          runId: 'webrtc-drop',
+          hypothesisId: 'H11_mesh_reconnect_debounced',
+          location: 'discovery.js:peer-disconnected',
+          message: 'scheduling mesh reconnect after delay',
+          data: {
+            peerId: (peerId || '').slice(0, 12),
+            delayMs,
+            myId: (this.identity?.nodeId || '').slice(0, 12),
+          },
+        });
+        // #endregion
+        const timer = setTimeout(() => {
+          this._meshReconnectTimers.delete(peerId);
+          this._enqueueSignallingWork(() => this._maybeReconnectMeshPeer(peerId));
+        }, delayMs);
+        this._meshReconnectTimers.set(peerId, timer);
       }
     });
   }
@@ -459,6 +496,7 @@ export class PeerDiscovery extends EventEmitter {
       },
     });
     // #endregion
+    this._clearMeshReconnectTimer(nodeId);
     this._clearPendingPeerLeave(nodeId);
     const timer = setTimeout(() => {
       this._peerLeaveTimers.delete(nodeId);
@@ -542,6 +580,10 @@ export class PeerDiscovery extends EventEmitter {
       clearTimeout(t);
     }
     this._peerLeaveTimers.clear();
+    for (const t of this._meshReconnectTimers.values()) {
+      clearTimeout(t);
+    }
+    this._meshReconnectTimers.clear();
     if (this.signalling) {
       this.signalling.disconnect();
     }
