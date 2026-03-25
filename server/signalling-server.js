@@ -42,9 +42,7 @@ class SignallingServer extends EventEmitter {
     });
     
     ws.on('close', () => {
-      if (nodeId) {
-        this._handleNodeDisconnect(nodeId);
-      }
+      this._handleWsClose(ws);
     });
     
     ws.on('error', (err) => {
@@ -93,16 +91,26 @@ class SignallingServer extends EventEmitter {
     
     const existingNode = this.nodes.get(nodeId);
     if (existingNode) {
+      // Сбросить у пиров залипший транспорт/сессию до замены сокета.
+      this._broadcastPeerLeave(nodeId);
       existingNode.ws = ws;
+      if (publicKey) {
+        existingNode.publicKey = publicKey;
+      }
+      if (role) {
+        existingNode.role = role;
+      }
       setNodeId(nodeId);
-      
+
       ws.send(JSON.stringify({
         type: 'registered',
         nodeId,
         virtualIp: existingNode.virtualIp,
         networkCidr: '10.200.0.0/16'
       }));
-      
+
+      this._broadcastPeerJoin(nodeId, existingNode);
+
       console.log(`Node re-registered: ${nodeId} (${existingNode.role}) - ${existingNode.virtualIp}`);
       return;
     }
@@ -214,18 +222,20 @@ class SignallingServer extends EventEmitter {
     this._broadcastTopology();
   }
 
-  _handleNodeDisconnect(nodeId) {
-    const nodeInfo = this.nodes.get(nodeId);
-    if (!nodeInfo) {
+  /**
+   * Удалять ноду только если закрылся её текущий WebSocket (не устаревший после re-register).
+   */
+  _handleWsClose(ws) {
+    for (const [nodeId, info] of this.nodes) {
+      if (info.ws !== ws) {
+        continue;
+      }
+      this.nodes.delete(nodeId);
+      this._broadcastPeerLeave(nodeId);
+      console.log(`Node disconnected: ${nodeId}`);
+      this.emit('node-disconnected', nodeId);
       return;
     }
-    
-    this.nodes.delete(nodeId);
-    
-    this._broadcastPeerLeave(nodeId);
-    
-    console.log(`Node disconnected: ${nodeId}`);
-    this.emit('node-disconnected', nodeId);
   }
 
   _broadcastPeerJoin(nodeId, nodeInfo) {
@@ -246,13 +256,17 @@ class SignallingServer extends EventEmitter {
     }
   }
 
+  /** peer-leave всем, кроме самого nodeId (нужно при re-register, пока нода ещё в map). */
   _broadcastPeerLeave(nodeId) {
     const message = JSON.stringify({
       type: 'peer-leave',
       nodeId
     });
-    
-    for (const info of this.nodes.values()) {
+
+    for (const [id, info] of this.nodes) {
+      if (id === nodeId) {
+        continue;
+      }
       info.ws.send(message);
     }
   }
