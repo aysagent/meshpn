@@ -91,8 +91,9 @@ class SignallingServer extends EventEmitter {
     
     const existingNode = this.nodes.get(nodeId);
     if (existingNode) {
-      // Сбросить у пиров залипший транспорт/сессию до замены сокета.
-      this._broadcastPeerLeave(nodeId);
+      // Не шлём peer-leave: это рвёт рабочий WebRTC между exit и клиентом при лишь
+      // переподключении signalling WS (тот же nodeId). Залипший транспорт снимает
+      // реальный peer-leave при закрытии старого сокета или новый offer от клиента.
       existingNode.ws = ws;
       if (publicKey) {
         existingNode.publicKey = publicKey;
@@ -256,7 +257,7 @@ class SignallingServer extends EventEmitter {
     }
   }
 
-  /** peer-leave всем, кроме самого nodeId (нужно при re-register, пока нода ещё в map). */
+  /** peer-leave всем, кроме самого nodeId (при удалении ноды из map её уже нет в цикле). */
   _broadcastPeerLeave(nodeId) {
     const message = JSON.stringify({
       type: 'peer-leave',
