@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import { SignallingClient } from './signalling.js';
 import { SessionManager } from '../crypto/session.js';
+import { sessionDebugLog } from '../debug/session-log.js';
 
 export class PeerDiscovery extends EventEmitter {
   constructor(config) {
@@ -101,12 +102,55 @@ export class PeerDiscovery extends EventEmitter {
     
     this.transportManager.on('peer-disconnected', (peerId) => {
       console.log(`[DISCOVERY] Transport peer-disconnected: ${peerId}`);
+      const stillInSignalling = !!this.signalling?.getPeer?.(peerId);
+      // #region agent log
+      sessionDebugLog({
+        runId: 'webrtc-drop',
+        hypothesisId: 'H_peer_disconnected_ctx',
+        location: 'discovery.js:peer-disconnected',
+        message: 'transport peer-disconnected',
+        data: {
+          peerId: (peerId || '').slice(0, 12),
+          stillInSignalling,
+          myId: (this.identity?.nodeId || '').slice(0, 12),
+        },
+      });
+      // #endregion
       this.establishedPeers.delete(peerId);
       this.sessionManager.removeSession(peerId);
-      
+
       this._updateTopology();
       this.emit('peer-disconnected', peerId);
+
+      if (stillInSignalling) {
+        this._enqueueSignallingWork(() => this._maybeReconnectMeshPeer(peerId));
+      }
     });
+  }
+
+  /**
+   * ICE/WebRTC мог упасть без peer-leave; если пир всё ещё в списке signalling — новый handshake.
+   * После реального peer-leave пира уже нет в signalling — повтор не запускаем.
+   */
+  async _maybeReconnectMeshPeer(peerId) {
+    const peer = this.signalling?.getPeer?.(peerId);
+    if (!peer) {
+      return;
+    }
+    if (this.establishedPeers.has(peerId) || this.pendingConnections.has(peerId)) {
+      return;
+    }
+    console.warn(`[DISCOVERY] Mesh reconnect to ${peerId} (signalling still lists peer)`);
+    // #region agent log
+    sessionDebugLog({
+      runId: 'webrtc-drop',
+      hypothesisId: 'H_mesh_auto_reconnect',
+      location: 'discovery.js:_maybeReconnectMeshPeer',
+      message: 'scheduling _initiateConnection after transport drop',
+      data: { peerId: (peerId || '').slice(0, 12) },
+    });
+    // #endregion
+    await this._initiateConnection(peer);
   }
 
   async _handlePeersUpdate(peers) {
@@ -245,13 +289,6 @@ export class PeerDiscovery extends EventEmitter {
         console.log(`[DISCOVERY] Skipping WebRTC offer from ${fromNodeId} - already connected via WebSocket`);
         return;
       }
-      if (transports.includes('webrtc')) {
-        console.log(
-          `[DISCOVERY] Skipping WebRTC offer from ${fromNodeId} - already connected via WebRTC `
-          + `(would replace PC; likely duplicate signalling; t=${new Date().toISOString()})`,
-        );
-        return;
-      }
     }
     
     this.pendingConnections.set(fromNodeId, {
@@ -311,19 +348,13 @@ export class PeerDiscovery extends EventEmitter {
   _handlePeerLeave(nodeId) {
     console.warn(`[DISCOVERY] _handlePeerLeave → close transport: ${nodeId}`);
     // #region agent log
-    fetch('http://127.0.0.1:7709/ingest/1c653f46-f2d0-4f49-8f87-b95e3ce070bf', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c8e2b' },
-      body: JSON.stringify({
-        sessionId: '7c8e2b',
-        runId: 'webrtc-drop',
-        hypothesisId: 'H2_discovery_handlePeerLeave',
-        location: 'discovery.js:_handlePeerLeave',
-        message: 'closing transport and session',
-        data: { nodeId: (nodeId || '').slice(0, 12), myId: (this.identity?.nodeId || '').slice(0, 12) },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
+    sessionDebugLog({
+      runId: 'webrtc-drop',
+      hypothesisId: 'H2_discovery_handlePeerLeave',
+      location: 'discovery.js:_handlePeerLeave',
+      message: 'closing transport and session',
+      data: { nodeId: (nodeId || '').slice(0, 12), myId: (this.identity?.nodeId || '').slice(0, 12) },
+    });
     // #endregion
     this.pendingConnections.delete(nodeId);
     this.establishedPeers.delete(nodeId);

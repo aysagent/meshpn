@@ -8,6 +8,7 @@ import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
 import { TunManager, Packet, PacketType, parseIPPacket } from '../network/index.js';
 import { NATManager, UserSpaceNAT } from '../exit/index.js';
 import { metrics } from '../debug/index.js';
+import { sessionDebugLog } from '../debug/session-log.js';
 import { WorkerPipeline } from '../workers/pipeline.js';
 import http from 'http';
 
@@ -40,23 +41,17 @@ export class MeshNode extends EventEmitter {
     console.log(`[NODE] transportMode=${this.transportMode}`);
 
     // #region agent log
-    fetch('http://127.0.0.1:7709/ingest/1c653f46-f2d0-4f49-8f87-b95e3ce070bf', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c8e2b' },
-      body: JSON.stringify({
-        sessionId: '7c8e2b',
-        runId: 'transport-normalize',
-        hypothesisId: 'H_config_transport_object',
-        location: 'node.js:MeshNode.constructor',
-        message: 'resolved transportMode from config.transport',
-        data: {
-          transportMode: this.transportMode,
-          preferredOrder: transportPreferredOrder,
-          rawWasObject: rawTransport != null && typeof rawTransport === 'object',
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
+    sessionDebugLog({
+      runId: 'transport-normalize',
+      hypothesisId: 'H_config_transport_object',
+      location: 'node.js:MeshNode.constructor',
+      message: 'resolved transportMode from config.transport',
+      data: {
+        transportMode: this.transportMode,
+        preferredOrder: transportPreferredOrder,
+        rawWasObject: rawTransport != null && typeof rawTransport === 'object',
+      },
+    });
     // #endregion
 
     this.sessionManager = new SessionManager();
