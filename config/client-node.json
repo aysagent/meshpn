@@ -24,6 +24,9 @@
   "enableTun": true,
   "iceMode": "auto",
   "dcMode": "reliable",
+  "mesh": {
+    "strictTransportOrdering": false
+  },
   "workers": {
     "enabled": true,
     "txPool": 1,

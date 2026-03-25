@@ -92,13 +92,27 @@ export class MeshNode extends EventEmitter {
     };
 
     const sr = this.config.sendRetry || {};
+    const meshCfg = this.config.mesh && typeof this.config.mesh === 'object' ? this.config.mesh : {};
+    /**
+     * Строгий порядок mesh-пакетов на пира (рекомендуется для TCP в TUN).
+     * `mesh.strictTransportOrdering: false` — параллельный RX и отправка в обход очереди при backpressure
+     * (быстрее, но возможны Dup ACK / retransmit в Wireshark).
+     */
+    this.strictTransportOrdering = meshCfg.strictTransportOrdering !== false;
+    if (!this.strictTransportOrdering) {
+      console.warn(
+        '[NODE] mesh.strictTransportOrdering=false: RX/TX без строгого порядка на пира — '
+        + 'TCP через TUN может дать больше Dup ACK/retransmit.',
+      );
+    }
+
     /**
      * FIFO на пир: при backpressure нельзя слать следующие пакеты «в обход» очереди —
-     * иначе TCP в TUN приходит не по порядку (лавина Dup ACK).
+     * иначе TCP в TUN приходит не по порядку (лавина Dup ACK). Выключается вместе со strictTransportOrdering.
      */
     this._sendRetryMaxPackets = sr.maxPacketsPerPeer ?? 4000;
     this._sendRetryQueues = new Map();
-    /** Цепочка Promise на пира: RX/decrypt/forward строго по порядку приёма с DC (иначе TCP в туннеле переставляется при rxPool>1). */
+    /** Цепочка Promise на пира при strictTransportOrdering. */
     this._rxPeerChains = new Map();
     
     // Traffic statistics
@@ -449,7 +463,7 @@ export class MeshNode extends EventEmitter {
   }
 
   /**
-   * Отправка через WebRTC/QUIC с сохранением порядка на пира (head-of-line blocking).
+   * Отправка через WebRTC/QUIC; при strictTransportOrdering — FIFO на пир (head-of-line blocking).
    * @returns {boolean} false только если пир не подключён или очередь переполнена
    */
   _transportSendWithRetry(peerId, serialized, flush) {
@@ -457,15 +471,26 @@ export class MeshNode extends EventEmitter {
       return false;
     }
 
-    let q = this._sendRetryQueues.get(peerId);
-    if (q && q.length > 0) {
-      if (q.length >= this._sendRetryMaxPackets) {
-        console.warn(
-          `[SendRetry] queue full for ${peerId.substring(0, 8)}… (${q.length} packets), dropping`,
-        );
-        return false;
+    if (this.strictTransportOrdering) {
+      let q = this._sendRetryQueues.get(peerId);
+      if (q && q.length > 0) {
+        if (q.length >= this._sendRetryMaxPackets) {
+          console.warn(
+            `[SendRetry] queue full for ${peerId.substring(0, 8)}… (${q.length} packets), dropping`,
+          );
+          return false;
+        }
+        q.push({ serialized, flush });
+        return true;
       }
-      q.push({ serialized, flush });
+
+      if (this.transportManager.send(peerId, serialized)) {
+        flush?.();
+        return true;
+      }
+
+      q = [{ serialized, flush }];
+      this._sendRetryQueues.set(peerId, q);
       return true;
     }
 
@@ -474,8 +499,18 @@ export class MeshNode extends EventEmitter {
       return true;
     }
 
-    q = [{ serialized, flush }];
-    this._sendRetryQueues.set(peerId, q);
+    let q = this._sendRetryQueues.get(peerId);
+    if (!q) {
+      q = [];
+      this._sendRetryQueues.set(peerId, q);
+    }
+    if (q.length >= this._sendRetryMaxPackets) {
+      console.warn(
+        `[SendRetry] queue full for ${peerId.substring(0, 8)}… (${q.length} packets), dropping`,
+      );
+      return false;
+    }
+    q.push({ serialized, flush });
     return true;
   }
 
@@ -548,16 +583,26 @@ export class MeshNode extends EventEmitter {
   _handleIncomingMessage(peerId, data) {
     metrics.recordWebRTCReceive(data.length);
 
-    const prev = this._rxPeerChains.get(peerId) || Promise.resolve();
-    const next = prev
-      .then(() => this._processIncomingMessage(peerId, data))
-      .catch((err) => {
-        console.error(
-          `[RX] chain error for ${peerId.substring(0, 8)}…:`,
-          err?.message || err,
-        );
-      });
-    this._rxPeerChains.set(peerId, next);
+    if (this.strictTransportOrdering) {
+      const prev = this._rxPeerChains.get(peerId) || Promise.resolve();
+      const next = prev
+        .then(() => this._processIncomingMessage(peerId, data))
+        .catch((err) => {
+          console.error(
+            `[RX] chain error for ${peerId.substring(0, 8)}…:`,
+            err?.message || err,
+          );
+        });
+      this._rxPeerChains.set(peerId, next);
+      return;
+    }
+
+    this._processIncomingMessage(peerId, data).catch((err) => {
+      console.error(
+        `[RX] async error for ${peerId.substring(0, 8)}…:`,
+        err?.message || err,
+      );
+    });
   }
 
   /**
@@ -1174,6 +1219,7 @@ export class MeshNode extends EventEmitter {
       sendRetryPending: Object.fromEntries(
         [...this._sendRetryQueues.entries()].map(([id, q]) => [id.substring(0, 10), q.length]),
       ),
+      strictTransportOrdering: this.strictTransportOrdering,
       memory: process.memoryUsage(),
     };
   }

@@ -27,6 +27,9 @@
   "mtu": 1400,
   "enableTun": true,
   "dcMode": "reliable",
+  "mesh": {
+    "strictTransportOrdering": false
+  },
   "multipathStrategy": "round-robin",
   "reorderWindowSize": 1000,
   "reorderTimeout": 5000,
