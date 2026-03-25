@@ -6,12 +6,14 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { 
-  PROTOCOLS, 
-  TCP_FLAGS, 
-  parseIPPacket, 
-  buildTCPPacket, 
-  buildUDPPacket 
+import {
+  PROTOCOLS,
+  TCP_FLAGS,
+  parseIPPacket,
+  buildTCPPacket,
+  buildUDPPacket,
+  parseTcpSynOptions,
+  buildSynAckOptions,
 } from '../network/index.js';
 import { metrics } from '../debug/index.js';
 
@@ -251,7 +253,7 @@ export class UserSpaceNAT extends EventEmitter {
     const { protocol, srcIp, dstIp, srcPort, dstPort } = parsed;
 
     if (protocol === PROTOCOLS.TCP) {
-      this._handleTCP(parsed, srcNodeId, sendResponse);
+      this._handleTCP(parsed, srcNodeId, sendResponse, ipPacket);
     } else if (protocol === PROTOCOLS.UDP) {
       this._handleUDP(parsed, srcNodeId, sendResponse);
     } else if (protocol === PROTOCOLS.ICMP) {
@@ -261,11 +263,19 @@ export class UserSpaceNAT extends EventEmitter {
 
   /**
    * Сколько mesh-сегментов можно держать «в полёте» без переполнения приёмного окна клиента
-   * (без парсинга TCP WS — берём 16-bit Window из заголовка).
+   * Окно из заголовка × window scale из SYN клиента (RFC 7323).
    */
+  _scaledPeerRecvWindow(conn) {
+    const raw = conn.peerRecvWindow ?? 65535;
+    const s = conn.peerWindowScaleShift ?? 0;
+    if (raw === 0) return 0;
+    if (s <= 0 || s > 14) return raw;
+    return Math.min(raw * (2 ** s), 0x40000000);
+  }
+
   _maxPendingForConn(conn) {
     const MSS = 1360;
-    const w = conn.peerRecvWindow ?? 65535;
+    const w = this._scaledPeerRecvWindow(conn);
     if (w === 0) return 0;
     const slack = 6;
     const byWin = Math.floor(w / MSS) + slack;
@@ -525,7 +535,7 @@ export class UserSpaceNAT extends EventEmitter {
     return Buffer.concat([ipHeader, icmpPacket]);
   }
 
-  _handleTCP(parsed, srcNodeId, sendResponse) {
+  _handleTCP(parsed, srcNodeId, sendResponse, ipPacket = null) {
     const { srcIp, dstIp, srcPort, dstPort, tcpSeq, tcpFlags, data } = parsed;
     const key = `${srcIp}:${srcPort}:${dstIp}:${dstPort}`;
     
@@ -555,7 +565,12 @@ export class UserSpaceNAT extends EventEmitter {
       // If destination is our own virtual IP, connect to localhost instead
       const actualDstIp = (this.localVirtualIp && dstIp === this.localVirtualIp) ? '127.0.0.1' : dstIp;
       const isLocal = actualDstIp === '127.0.0.1';
-      
+
+      const synNegotiation = ipPacket ? parseTcpSynOptions(ipPacket) : {};
+      const peerWindowScaleShift =
+        synNegotiation.wscale !== undefined && synNegotiation.wscale <= 14
+          ? synNegotiation.wscale
+          : 0;
 
       conn = {
         key,
@@ -574,6 +589,8 @@ export class UserSpaceNAT extends EventEmitter {
         pendingData: [],
         lastActivity: Date.now(),
         pendingResponses: 0,
+        synNegotiation,
+        peerWindowScaleShift,
         peerRecvWindow: parsed.tcpWindow ?? 65535,
         lastPeerAck: undefined,
         serverSocketPaused: false,
@@ -605,12 +622,16 @@ export class UserSpaceNAT extends EventEmitter {
         conn.lastActivity = Date.now();
         conn.peerRecvWindow = 65535;
 
+        const synAckOpts = buildSynAckOptions(conn.synNegotiation || {});
+
         const synAckPacket = buildTCPPacket(
           dstIp, srcIp,
           dstPort, srcPort,
           conn.serverSeq,
           conn.clientSeq + 1,
-          TCP_FLAGS.SYN | TCP_FLAGS.ACK
+          TCP_FLAGS.SYN | TCP_FLAGS.ACK,
+          Buffer.alloc(0),
+          synAckOpts,
         );
 
         conn.serverSeq++;

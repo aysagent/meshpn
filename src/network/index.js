@@ -17,6 +17,8 @@ export {
   buildTCPSegment,
   buildIPPacket,
   buildTCPPacket,
+  parseTcpSynOptions,
+  buildSynAckOptions,
   buildUDPDatagram,
   buildUDPPacket
 } from './packet.js';

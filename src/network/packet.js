@@ -478,25 +478,117 @@ export function calculateUDPChecksum(srcIp, dstIp, udpDatagram) {
   return calculateIPChecksum(buffer);
 }
 
-export function buildTCPSegment(srcPort, dstPort, seq, ack, flags, data = Buffer.alloc(0), windowSize = 65535) {
-  const dataOffset = 5;
-  const headerLen = dataOffset * 4;
-  const segment = Buffer.alloc(headerLen + data.length);
-  
+/**
+ * Парсинг TCP options из IPv4-пакета (для SYN в userspace NAT).
+ */
+export function parseTcpSynOptions(ipBuffer) {
+  if (!ipBuffer || ipBuffer.length < 20) return {};
+  const ihl = (ipBuffer[0] & 0xf) * 4;
+  if (ipBuffer.length < ihl + 20 || ipBuffer[9] !== PROTOCOLS.TCP) return {};
+
+  const tcp0 = ihl;
+  const thl = ((ipBuffer[tcp0 + 12] >> 4) & 0xf) * 4;
+  if (thl < 20 || ipBuffer.length < tcp0 + thl) return {};
+
+  let mss;
+  let wscale;
+  let sackPerm = false;
+  let tsval;
+
+  let o = tcp0 + 20;
+  const optEnd = tcp0 + thl;
+  while (o < optEnd) {
+    const kind = ipBuffer[o];
+    if (kind === 0) break;
+    if (kind === 1) {
+      o++;
+      continue;
+    }
+    const len = ipBuffer[o + 1];
+    if (len < 2 || o + len > optEnd) break;
+    if (kind === 2 && len >= 4) mss = ipBuffer.readUInt16BE(o + 2);
+    else if (kind === 3 && len >= 3) {
+      const sc = ipBuffer[o + 2];
+      if (sc <= 14) wscale = sc;
+    } else if (kind === 4 && len === 2) sackPerm = true;
+    else if (kind === 8 && len >= 10) tsval = ipBuffer.readUInt32BE(o + 2);
+
+    o += len;
+  }
+
+  return { mss, wscale, sackPerm, tsval };
+}
+
+/**
+ * Опции для SYN-ACK по тому, что предложил клиент (MSS, SACK, TS echo, WScale).
+ */
+export function buildSynAckOptions(negotiation = {}) {
+  const { mss: cmss, wscale, sackPerm, tsval } = negotiation;
+  const chunks = [];
+
+  const ourMss = Math.min(1360, cmss ? Math.min(cmss, 1360) : 1360);
+  const mssBuf = Buffer.alloc(4);
+  mssBuf[0] = 2;
+  mssBuf[1] = 4;
+  mssBuf.writeUInt16BE(ourMss, 2);
+  chunks.push(mssBuf);
+
+  if (sackPerm) {
+    chunks.push(Buffer.from([4, 2]));
+  }
+
+  if (tsval !== undefined) {
+    const ts = Buffer.alloc(10);
+    ts[0] = 8;
+    ts[1] = 10;
+    const t = (Math.floor(Date.now() / 1000) & 0xffffffff) >>> 0;
+    ts.writeUInt32BE(t, 2);
+    ts.writeUInt32BE(tsval >>> 0, 6);
+    chunks.push(ts);
+  }
+
+  if (wscale !== undefined && wscale <= 14) {
+    chunks.push(Buffer.from([1, 1, 1, 1]));
+    chunks.push(Buffer.from([3, 3, wscale]));
+  }
+
+  let buf = Buffer.concat(chunks);
+  const pad = (4 - (buf.length % 4)) % 4;
+  if (pad) buf = Buffer.concat([buf, Buffer.alloc(pad, 0)]);
+  return buf;
+}
+
+export function buildTCPSegment(
+  srcPort,
+  dstPort,
+  seq,
+  ack,
+  flags,
+  data = Buffer.alloc(0),
+  windowSize = 65535,
+  options = null,
+) {
+  const optPart = options && options.length ? options : Buffer.alloc(0);
+  const headerCore = 20 + optPart.length;
+  const pad = (4 - (headerCore % 4)) % 4;
+  const totalHeader = headerCore + pad;
+  const dataOffsetWords = totalHeader / 4;
+
+  const segment = Buffer.alloc(totalHeader + data.length);
+
   segment.writeUInt16BE(srcPort, 0);
   segment.writeUInt16BE(dstPort, 2);
   segment.writeUInt32BE(seq >>> 0, 4);
   segment.writeUInt32BE(ack >>> 0, 8);
-  segment[12] = (dataOffset << 4);
+  segment[12] = (dataOffsetWords << 4);
   segment[13] = flags;
-  segment.writeUInt16BE(windowSize, 14);
+  segment.writeUInt16BE(windowSize & 0xffff, 14);
   segment.writeUInt16BE(0, 16);
   segment.writeUInt16BE(0, 18);
-  
-  if (data.length > 0) {
-    data.copy(segment, headerLen);
-  }
-  
+
+  if (optPart.length) optPart.copy(segment, 20);
+  if (data.length) data.copy(segment, totalHeader);
+
   return segment;
 }
 
@@ -530,8 +622,18 @@ export function buildIPPacket(srcIp, dstIp, protocol, payload, id = null) {
   return packet;
 }
 
-export function buildTCPPacket(srcIp, dstIp, srcPort, dstPort, seq, ack, flags, data = Buffer.alloc(0)) {
-  const tcpSegment = buildTCPSegment(srcPort, dstPort, seq, ack, flags, data);
+export function buildTCPPacket(
+  srcIp,
+  dstIp,
+  srcPort,
+  dstPort,
+  seq,
+  ack,
+  flags,
+  data = Buffer.alloc(0),
+  options = null,
+) {
+  const tcpSegment = buildTCPSegment(srcPort, dstPort, seq, ack, flags, data, 65535, options);
   const checksum = calculateTCPChecksum(srcIp, dstIp, tcpSegment);
   tcpSegment.writeUInt16BE(checksum, 16);
   return buildIPPacket(srcIp, dstIp, PROTOCOLS.TCP, tcpSegment);
