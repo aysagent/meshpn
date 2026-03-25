@@ -333,6 +333,22 @@ export class WebRTCTransport extends EventEmitter {
   }
 
   close(peerId) {
+    // #region agent log
+    const st = (new Error().stack || '').split('\n').slice(1, 10).join('|');
+    fetch('http://127.0.0.1:7709/ingest/1c653f46-f2d0-4f49-8f87-b95e3ce070bf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c8e2b' },
+      body: JSON.stringify({
+        sessionId: '7c8e2b',
+        runId: 'webrtc-drop',
+        hypothesisId: 'H3_webrtc_close_called',
+        location: 'webrtc.js:close',
+        message: 'WebRTCTransport.close',
+        data: { peerId: (peerId || '').slice(0, 12), stack: st },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     this._remoteDescForTrickle.delete(peerId);
     this._pendingRemoteIce.delete(peerId);
 
@@ -379,6 +395,21 @@ export class WebRTCTransport extends EventEmitter {
 
   _createPeerConnection(peerId) {
     if (this.connections.has(peerId)) {
+      // #region agent log
+      fetch('http://127.0.0.1:7709/ingest/1c653f46-f2d0-4f49-8f87-b95e3ce070bf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c8e2b' },
+        body: JSON.stringify({
+          sessionId: '7c8e2b',
+          runId: 'webrtc-drop',
+          hypothesisId: 'H4_replace_peer_connection',
+          location: 'webrtc.js:_createPeerConnection',
+          message: 'replacing existing PC (close+new)',
+          data: { peerId: (peerId || '').slice(0, 12) },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       this.close(peerId);
     }
 
@@ -410,6 +441,21 @@ export class WebRTCTransport extends EventEmitter {
       // Не эмитим при `disconnected` — ICE может кратковременно падать и восстанавливаться;
       // иначе discovery снимает сессию, а ключи не переобмениваются.
       if (state === 'failed' || state === 'closed') {
+        // #region agent log
+        fetch('http://127.0.0.1:7709/ingest/1c653f46-f2d0-4f49-8f87-b95e3ce070bf', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c8e2b' },
+          body: JSON.stringify({
+            sessionId: '7c8e2b',
+            runId: 'webrtc-drop',
+            hypothesisId: 'H5_pc_terminal_state',
+            location: 'webrtc.js:onStateChange',
+            message: 'PC terminal state',
+            data: { peerId: (peerId || '').slice(0, 12), state },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
         this.emit('peer-disconnected', peerId);
       }
     });
@@ -463,6 +509,21 @@ export class WebRTCTransport extends EventEmitter {
     });
 
     dc.onClosed(() => {
+      // #region agent log
+      fetch('http://127.0.0.1:7709/ingest/1c653f46-f2d0-4f49-8f87-b95e3ce070bf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c8e2b' },
+        body: JSON.stringify({
+          sessionId: '7c8e2b',
+          runId: 'webrtc-drop',
+          hypothesisId: 'H6_dc_onClosed',
+          location: 'webrtc.js:dc.onClosed',
+          message: 'DataChannel closed',
+          data: { peerId: (peerId || '').slice(0, 12) },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       console.log(`[WebRTC] DataChannel closed for ${peerId.substring(0, 8)}…`);
       const sb = this.sendBuffers.get(peerId);
       if (sb) { sb.stop(); this.sendBuffers.delete(peerId); }

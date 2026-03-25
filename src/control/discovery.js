@@ -309,6 +309,22 @@ export class PeerDiscovery extends EventEmitter {
   }
 
   _handlePeerLeave(nodeId) {
+    console.warn(`[DISCOVERY] _handlePeerLeave → close transport: ${nodeId}`);
+    // #region agent log
+    fetch('http://127.0.0.1:7709/ingest/1c653f46-f2d0-4f49-8f87-b95e3ce070bf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c8e2b' },
+      body: JSON.stringify({
+        sessionId: '7c8e2b',
+        runId: 'webrtc-drop',
+        hypothesisId: 'H2_discovery_handlePeerLeave',
+        location: 'discovery.js:_handlePeerLeave',
+        message: 'closing transport and session',
+        data: { nodeId: (nodeId || '').slice(0, 12), myId: (this.identity?.nodeId || '').slice(0, 12) },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     this.pendingConnections.delete(nodeId);
     this.establishedPeers.delete(nodeId);
     this.sessionManager.removeSession(nodeId);
