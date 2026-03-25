@@ -22,6 +22,22 @@ export class PeerDiscovery extends EventEmitter {
 
     /** Цепочка Promise: сообщения signalling обрабатываются по одному (иначе ICE может прийти до setRemoteDescription). */
     this._signallingWorkChain = Promise.resolve();
+
+    /**
+     * peer-leave от сервера часто гоняется с mesh auto-reconnect (ICE упал, exit шлёт новый offer).
+     * Немедленный close() убивает новый PC. Откладываем leave и снимаем при peer-join / peer-connected.
+     */
+    this._peerLeaveDelayMs = 450;
+    /** @type {Map<string, ReturnType<typeof setTimeout>>} */
+    this._peerLeaveTimers = new Map();
+  }
+
+  _clearPendingPeerLeave(nodeId) {
+    const t = this._peerLeaveTimers.get(nodeId);
+    if (t != null) {
+      clearTimeout(t);
+      this._peerLeaveTimers.delete(nodeId);
+    }
   }
 
   _enqueueSignallingWork(fn) {
@@ -57,6 +73,7 @@ export class PeerDiscovery extends EventEmitter {
     });
 
     this.signalling.on('peer-join', (peer) => {
+      this._clearPendingPeerLeave(peer.nodeId);
       this._enqueueSignallingWork(() => this._initiateConnection(peer));
     });
 
@@ -92,6 +109,7 @@ export class PeerDiscovery extends EventEmitter {
     });
     
     this.transportManager.on('peer-connected', (peerId, transport) => {
+      this._clearPendingPeerLeave(peerId);
       console.log(`[DISCOVERY] Transport peer-connected: ${peerId} via ${transport}`);
       this.establishedPeers.add(peerId);
       this.pendingConnections.delete(peerId);
@@ -155,7 +173,8 @@ export class PeerDiscovery extends EventEmitter {
 
   async _handlePeersUpdate(peers) {
     for (const peer of peers) {
-      if (!this.establishedPeers.has(peer.nodeId) && 
+      this._clearPendingPeerLeave(peer.nodeId);
+      if (!this.establishedPeers.has(peer.nodeId) &&
           !this.pendingConnections.has(peer.nodeId)) {
         await this._initiateConnection(peer);
       }
@@ -346,13 +365,35 @@ export class PeerDiscovery extends EventEmitter {
   }
 
   _handlePeerLeave(nodeId) {
-    console.warn(`[DISCOVERY] _handlePeerLeave → close transport: ${nodeId}`);
     // #region agent log
     sessionDebugLog({
       runId: 'webrtc-drop',
-      hypothesisId: 'H2_discovery_handlePeerLeave',
+      hypothesisId: 'H2_peer_leave_scheduled',
       location: 'discovery.js:_handlePeerLeave',
-      message: 'closing transport and session',
+      message: 'peer-leave debounced',
+      data: {
+        nodeId: (nodeId || '').slice(0, 12),
+        myId: (this.identity?.nodeId || '').slice(0, 12),
+        delayMs: this._peerLeaveDelayMs,
+      },
+    });
+    // #endregion
+    this._clearPendingPeerLeave(nodeId);
+    const timer = setTimeout(() => {
+      this._peerLeaveTimers.delete(nodeId);
+      this._applyPeerLeave(nodeId);
+    }, this._peerLeaveDelayMs);
+    this._peerLeaveTimers.set(nodeId, timer);
+  }
+
+  _applyPeerLeave(nodeId) {
+    console.warn(`[DISCOVERY] _applyPeerLeave → close transport: ${nodeId}`);
+    // #region agent log
+    sessionDebugLog({
+      runId: 'webrtc-drop',
+      hypothesisId: 'H2_discovery_applyPeerLeave',
+      location: 'discovery.js:_applyPeerLeave',
+      message: 'closing transport and session after debounce',
       data: { nodeId: (nodeId || '').slice(0, 12), myId: (this.identity?.nodeId || '').slice(0, 12) },
     });
     // #endregion
@@ -360,7 +401,7 @@ export class PeerDiscovery extends EventEmitter {
     this.establishedPeers.delete(nodeId);
     this.sessionManager.removeSession(nodeId);
     this.transportManager.close(nodeId);
-    
+
     this.emit('peer-leave', nodeId);
   }
 
@@ -389,6 +430,10 @@ export class PeerDiscovery extends EventEmitter {
   }
 
   stop() {
+    for (const t of this._peerLeaveTimers.values()) {
+      clearTimeout(t);
+    }
+    this._peerLeaveTimers.clear();
     if (this.signalling) {
       this.signalling.disconnect();
     }
