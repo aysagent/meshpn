@@ -178,17 +178,17 @@ export class PeerDiscovery extends EventEmitter {
   async _handlePeersUpdate(peers) {
     for (const peer of peers) {
       this._clearPendingPeerLeave(peer.nodeId);
-      if (this.establishedPeers.has(peer.nodeId)) {
-        continue;
+      if (!this.establishedPeers.has(peer.nodeId) &&
+          !this.pendingConnections.has(peer.nodeId)) {
+        await this._initiateConnection(peer);
       }
-      await this._supersedePendingMeshHandshake(peer.nodeId, 'peers-updated');
-      await this._initiateConnection(peer);
     }
   }
 
   /**
-   * Сервер прислал peer-join / полный список: старый in-flight offer (pending) без established
-   * нельзя оставлять — иначе _initiateConnection делает «Skipping … already pending» и mesh залипает.
+   * Только для явного peer-join (re-register на сервере): сбрасываем зависший pending,
+   * иначе _initiateConnection делает «Skipping … already pending». Не вызывать из peers-updated:
+   * после register список пиров приходит сразу и сорвёт нормальный in-flight handshake (лог: H8 через ~66ms после старта).
    */
   async _supersedePendingMeshHandshake(nodeId, reason) {
     if (this.establishedPeers.has(nodeId) || !this.pendingConnections.has(nodeId)) {
