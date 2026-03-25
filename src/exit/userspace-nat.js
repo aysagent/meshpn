@@ -578,6 +578,9 @@ export class UserSpaceNAT extends EventEmitter {
         serverReadBacklog: null,
         eofFromServer: false,
         finSent: false,
+        clientFinSeen: false,
+        clientFinSeq: null,
+        socketEndedToServer: false,
       };
 
       this.tcpConnections.set(key, conn);
@@ -708,22 +711,41 @@ export class UserSpaceNAT extends EventEmitter {
     }
 
     if (parsed.tcpFlagsFIN) {
+      // Повторный FIN (retransmit) — снова ACK, иначе conn уже удалён → !conn → RST в mesh.
+      if (conn.clientFinSeen && conn.clientFinSeq === tcpSeq) {
+        const dupAck = buildTCPPacket(
+          dstIp, srcIp,
+          dstPort, srcPort,
+          conn.serverSeq,
+          conn.clientAck,
+          TCP_FLAGS.ACK,
+        );
+        sendResponse(srcNodeId, dupAck);
+        return;
+      }
+
+      conn.clientFinSeen = true;
+      conn.clientFinSeq = tcpSeq;
       conn.clientAck = tcpSeq + 1;
-      
+
       const ackPacket = buildTCPPacket(
         dstIp, srcIp,
         dstPort, srcPort,
         conn.serverSeq,
         conn.clientAck,
-        TCP_FLAGS.ACK
+        TCP_FLAGS.ACK,
       );
       sendResponse(srcNodeId, ackPacket);
-      
-      if (conn.socket) {
-        conn.socket.end();
+
+      if (conn.socket && !conn.socketEndedToServer) {
+        try {
+          conn.socket.end();
+        } catch {
+          /* ignore */
+        }
+        conn.socketEndedToServer = true;
       }
-      
-      this._closeTCPConnection(key, conn);
+
       return;
     }
 
