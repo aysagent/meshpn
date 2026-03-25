@@ -23,12 +23,44 @@ export class MeshNode extends EventEmitter {
     
     this.identity = config.identity || new Identity(config.privateKey);
     this.nodeId = this.identity.nodeId;
-    
-    this.transportMode = config.transport || 'webrtc';
+
+    const rawTransport = config.transport;
+    let transportMode = 'webrtc';
+    let transportPreferredOrder = null;
+    if (typeof rawTransport === 'string') {
+      transportMode = rawTransport;
+    } else if (rawTransport && typeof rawTransport === 'object') {
+      const po = rawTransport.preferredOrder;
+      if (Array.isArray(po) && po.length > 0) {
+        transportPreferredOrder = po;
+        transportMode = po[0] || 'webrtc';
+      }
+    }
+    this.transportMode = transportMode;
     console.log(`[NODE] transportMode=${this.transportMode}`);
-    
+
+    // #region agent log
+    fetch('http://127.0.0.1:7709/ingest/1c653f46-f2d0-4f49-8f87-b95e3ce070bf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c8e2b' },
+      body: JSON.stringify({
+        sessionId: '7c8e2b',
+        runId: 'transport-normalize',
+        hypothesisId: 'H_config_transport_object',
+        location: 'node.js:MeshNode.constructor',
+        message: 'resolved transportMode from config.transport',
+        data: {
+          transportMode: this.transportMode,
+          preferredOrder: transportPreferredOrder,
+          rawWasObject: rawTransport != null && typeof rawTransport === 'object',
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+
     this.sessionManager = new SessionManager();
-    
+
     const webrtcCfg = {
       ...(typeof config.webrtc === 'object' && config.webrtc ? config.webrtc : {}),
       iceServers: config.iceServers || [
@@ -41,6 +73,7 @@ export class MeshNode extends EventEmitter {
       webrtc: webrtcCfg,
       quic: config.quic || {},
       websocket: config.websocket || {},
+      preferredOrder: transportPreferredOrder || config.preferredOrder,
     });
     
     this.discovery = new PeerDiscovery({
