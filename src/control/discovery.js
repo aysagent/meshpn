@@ -75,7 +75,10 @@ export class PeerDiscovery extends EventEmitter {
 
     this.signalling.on('peer-join', (peer) => {
       this._clearPendingPeerLeave(peer.nodeId);
-      this._enqueueSignallingWork(() => this._initiateConnection(peer));
+      this._enqueueSignallingWork(async () => {
+        await this._supersedePendingMeshHandshake(peer.nodeId, 'peer-join');
+        await this._initiateConnection(peer);
+      });
     });
 
     this.signalling.on('peer-leave', (nodeId) => {
@@ -175,11 +178,38 @@ export class PeerDiscovery extends EventEmitter {
   async _handlePeersUpdate(peers) {
     for (const peer of peers) {
       this._clearPendingPeerLeave(peer.nodeId);
-      if (!this.establishedPeers.has(peer.nodeId) &&
-          !this.pendingConnections.has(peer.nodeId)) {
-        await this._initiateConnection(peer);
+      if (this.establishedPeers.has(peer.nodeId)) {
+        continue;
       }
+      await this._supersedePendingMeshHandshake(peer.nodeId, 'peers-updated');
+      await this._initiateConnection(peer);
     }
+  }
+
+  /**
+   * Сервер прислал peer-join / полный список: старый in-flight offer (pending) без established
+   * нельзя оставлять — иначе _initiateConnection делает «Skipping … already pending» и mesh залипает.
+   */
+  async _supersedePendingMeshHandshake(nodeId, reason) {
+    if (this.establishedPeers.has(nodeId) || !this.pendingConnections.has(nodeId)) {
+      return;
+    }
+    // #region agent log
+    sessionDebugLog({
+      runId: 'webrtc-drop',
+      hypothesisId: 'H8_peer_join_supersedes_pending',
+      location: 'discovery.js:_supersedePendingMeshHandshake',
+      message: 'reset stale pending transport before new handshake',
+      data: {
+        nodeId: (nodeId || '').slice(0, 12),
+        reason,
+        myId: (this.identity?.nodeId || '').slice(0, 12),
+      },
+    });
+    // #endregion
+    console.warn(`[DISCOVERY] Superseding stale pending handshake for ${nodeId} (${reason})`);
+    this.pendingConnections.delete(nodeId);
+    this.transportManager.close(nodeId);
   }
 
   async _initiateConnection(peer) {
