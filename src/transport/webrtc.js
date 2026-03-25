@@ -445,10 +445,18 @@ export class WebRTCTransport extends EventEmitter {
     const pc = new PeerConnection(`pc-${peerId.substring(0, 8)}`, pcConfig);
 
     pc.onLocalCandidate((candidate, mid) => {
+      if (this._connectionEpoch.get(peerId) !== epoch) {
+        return;
+      }
       this.emit('ice-candidate', peerId, { candidate, mid });
     });
 
     pc.onStateChange((state) => {
+      // Старый PC после replace всё ещё шлёт disconnected/failed/closed — iperf при этом идёт по новому PC.
+      if (this._connectionEpoch.get(peerId) !== epoch) {
+        return;
+      }
+
       console.log(`[WebRTC] ${peerId.substring(0, 8)}… state: ${state}`);
 
       if (state === 'connected') {
@@ -469,15 +477,15 @@ export class WebRTCTransport extends EventEmitter {
           data: { peerId: (peerId || '').slice(0, 12), state },
         });
         // #endregion
-        if (this._connectionEpoch.get(peerId) !== epoch) {
-          return;
-        }
         this._dcOpenEpoch.delete(peerId);
         this._emitPeerDisconnectSoon(peerId);
       }
     });
 
     pc.onGatheringStateChange((state) => {
+      if (this._connectionEpoch.get(peerId) !== epoch) {
+        return;
+      }
       console.log(`[WebRTC] ${peerId.substring(0, 8)}… gathering: ${state}`);
     });
 
@@ -553,11 +561,17 @@ export class WebRTCTransport extends EventEmitter {
     });
 
     dc.onError((err) => {
+      if (this._connectionEpoch.get(peerId) !== epoch) {
+        return;
+      }
       console.error(`[WebRTC] DataChannel error for ${peerId.substring(0, 8)}…: ${err}`);
       this.emit('error', peerId, err);
     });
 
     dc.onMessage((raw) => {
+      if (this._connectionEpoch.get(peerId) !== epoch) {
+        return;
+      }
       const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
       for (const data of unframe(buf)) {
         this.emit('message', peerId, data);
@@ -565,6 +579,9 @@ export class WebRTCTransport extends EventEmitter {
     });
 
     dc.onBufferedAmountLow(() => {
+      if (this._connectionEpoch.get(peerId) !== epoch) {
+        return;
+      }
       const sb = this.sendBuffers.get(peerId);
       if (sb) sb.resume();
       this._drainSendOverflow(peerId);
