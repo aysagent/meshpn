@@ -35,6 +35,8 @@ export class UserSpaceNAT extends EventEmitter {
     this.tcpMaxPending = config.maxPendingResponses ?? 200;
     /** Ниже этого порога pending + окно клиента > 0 — снова resume к серверу. */
     this.tcpResumePending = Math.max(30, Math.floor(this.tcpMaxPending * 0.35));
+    /** После FIN в mesh не удалять conn сразу при close/error сокета к iperf — иначе ACK/FIN клиента → !conn → RST. */
+    this.tcpLingerMs = config.tcpLingerMs ?? 120000;
     this.connectionTimeout = config.connectionTimeout || 300000;
     this.maxConnections = config.maxConnections || 50;
     this.connectingCount = 0;
@@ -581,6 +583,7 @@ export class UserSpaceNAT extends EventEmitter {
         clientFinSeen: false,
         clientFinSeq: null,
         socketEndedToServer: false,
+        lingerCloseTimer: null,
       };
 
       this.tcpConnections.set(key, conn);
@@ -647,35 +650,51 @@ export class UserSpaceNAT extends EventEmitter {
       });
 
       socket.on('error', (err) => {
+        if (conn.state === TCP_STATE.CLOSED) return;
+
         if (conn.state === TCP_STATE.CONNECTING) {
           this.connectingCount--;
         }
         console.error(`[UserSpaceNAT] TCP error ${dstIp}:${dstPort}:`, err.message);
-        
-        if (conn.state !== TCP_STATE.CLOSED) {
+
+        // После нашего FIN в туннель iperf часто даёт ECONNRESET/EPIPE — RST в mesh ломает закрытие (клиент шлёт FIN снова).
+        if (!conn.finSent) {
           const rstPacket = buildTCPPacket(
             dstIp, srcIp,
             dstPort, srcPort,
             conn.serverSeq,
             conn.clientAck,
-            TCP_FLAGS.RST
+            TCP_FLAGS.RST,
           );
           sendResponse(srcNodeId, rstPacket);
         }
-        
-        this._closeTCPConnection(key, conn);
+
+        if (conn.finSent) {
+          this._scheduleTcpLingerClose(key, conn);
+        } else {
+          this._closeTCPConnection(key, conn);
+        }
       });
 
       socket.on('timeout', () => {
         if (conn.state === TCP_STATE.CONNECTING) {
           this.connectingCount--;
         }
-        socket.destroy();
-        this._closeTCPConnection(key, conn);
+        try {
+          socket.destroy();
+        } catch {}
+        if (conn.finSent) {
+          this._scheduleTcpLingerClose(key, conn);
+        } else {
+          this._closeTCPConnection(key, conn);
+        }
       });
 
       socket.on('close', () => {
-        if (conn.state !== TCP_STATE.CLOSED) {
+        if (conn.state === TCP_STATE.CLOSED) return;
+        if (conn.finSent) {
+          this._scheduleTcpLingerClose(key, conn);
+        } else {
           this._closeTCPConnection(key, conn);
         }
       });
@@ -819,18 +838,33 @@ export class UserSpaceNAT extends EventEmitter {
     }
   }
 
+  _scheduleTcpLingerClose(key, conn) {
+    if (conn.lingerCloseTimer || conn.state === TCP_STATE.CLOSED) return;
+    conn.lingerCloseTimer = setTimeout(() => {
+      conn.lingerCloseTimer = null;
+      if (this.tcpConnections.get(key) === conn) {
+        this._closeTCPConnection(key, conn);
+      }
+    }, this.tcpLingerMs);
+  }
+
   _closeTCPConnection(key, conn) {
     if (conn.state === TCP_STATE.CLOSED) return;
-    
+
+    if (conn.lingerCloseTimer) {
+      clearTimeout(conn.lingerCloseTimer);
+      conn.lingerCloseTimer = null;
+    }
+
     conn.state = TCP_STATE.CLOSED;
-    
+
     if (conn.socket) {
       try {
         conn.socket.destroy();
       } catch {}
       conn.socket = null;
     }
-    
+
     this.tcpConnections.delete(key);
   }
 
