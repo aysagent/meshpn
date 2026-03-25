@@ -28,7 +28,7 @@
   "enableTun": true,
   "dcMode": "reliable",
   "mesh": {
-    "strictTransportOrdering": false
+    "strictTransportOrdering": true
   },
   "multipathStrategy": "round-robin",
   "reorderWindowSize": 1000,

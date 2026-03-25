@@ -25,7 +25,7 @@
   "iceMode": "auto",
   "dcMode": "reliable",
   "mesh": {
-    "strictTransportOrdering": false
+    "strictTransportOrdering": true
   },
   "workers": {
     "enabled": true,
