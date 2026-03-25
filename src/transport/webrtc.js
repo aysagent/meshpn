@@ -81,6 +81,10 @@ export class WebRTCTransport extends EventEmitter {
     this._pendingRemoteIce = new Map();
     /** Слить PC terminal + DC close в одно событие; отмена при новом PC для того же peerId (replace). */
     this._peerDisconnectEmitTimer = new Map();
+    /** Монотонный счётчик поколения PC на peerId — игнорируем disconnect от предыдущего PC/DC. */
+    this._connectionEpoch = new Map();
+    /** peerId -> epoch, в котором DC уже был open (onClosed до open при replace не шлём в mesh). */
+    this._dcOpenEpoch = new Map();
 
     const hasTurn = this.ndcIceServers.some(s => s.startsWith('turn:') || s.startsWith('turns:'));
 
@@ -157,7 +161,7 @@ export class WebRTCTransport extends EventEmitter {
   }
 
   async createOffer(peerId) {
-    const pc = this._createPeerConnection(peerId);
+    const { pc, epoch } = this._createPeerConnection(peerId);
 
     return new Promise((resolve, reject) => {
       this._descriptionResolvers.set(peerId, resolve);
@@ -172,12 +176,12 @@ export class WebRTCTransport extends EventEmitter {
 
       const dcOpts = this._getDcOptions();
       const dc = pc.createDataChannel('mesh-vpn', dcOpts);
-      this._setupDataChannel(peerId, dc);
+      this._setupDataChannel(peerId, dc, epoch);
     });
   }
 
   async handleOffer(peerId, offer) {
-    const pc = this._createPeerConnection(peerId);
+    const { pc, epoch } = this._createPeerConnection(peerId);
 
     return new Promise((resolve) => {
       this._descriptionResolvers.set(peerId, resolve);
@@ -191,7 +195,7 @@ export class WebRTCTransport extends EventEmitter {
       });
 
       pc.onDataChannel((dc) => {
-        this._setupDataChannel(peerId, dc);
+        this._setupDataChannel(peerId, dc, epoch);
       });
 
       pc.setRemoteDescription(offer.sdp, 'Offer');
@@ -367,6 +371,8 @@ export class WebRTCTransport extends EventEmitter {
     }
 
     this._descriptionResolvers.delete(peerId);
+    this._dcOpenEpoch.delete(peerId);
+    this._cancelPeerDisconnectEmit(peerId);
   }
 
   closeAll() {
@@ -410,6 +416,9 @@ export class WebRTCTransport extends EventEmitter {
   }
 
   _createPeerConnection(peerId) {
+    const epoch = (this._connectionEpoch.get(peerId) || 0) + 1;
+    this._connectionEpoch.set(peerId, epoch);
+
     if (this.connections.has(peerId)) {
       // #region agent log
       sessionDebugLog({
@@ -460,6 +469,10 @@ export class WebRTCTransport extends EventEmitter {
           data: { peerId: (peerId || '').slice(0, 12), state },
         });
         // #endregion
+        if (this._connectionEpoch.get(peerId) !== epoch) {
+          return;
+        }
+        this._dcOpenEpoch.delete(peerId);
         this._emitPeerDisconnectSoon(peerId);
       }
     });
@@ -469,9 +482,7 @@ export class WebRTCTransport extends EventEmitter {
     });
 
     this.connections.set(peerId, pc);
-    // Замена PC: не даём отложенному disconnect от уничтоженного peer ударить по discovery/mesh.
-    this._cancelPeerDisconnectEmit(peerId);
-    return pc;
+    return { pc, epoch };
   }
 
   _logSelectedCandidatePair(peerId, pc) {
@@ -492,13 +503,17 @@ export class WebRTCTransport extends EventEmitter {
     }
   }
 
-  _setupDataChannel(peerId, dc) {
+  _setupDataChannel(peerId, dc, epoch) {
     this.dataChannels.set(peerId, dc);
 
     const DC_HIGH_WATER = this.dcBufferedHighWater;
     const DC_LOW_WATER = this.dcBufferedLowWater;
 
     dc.onOpen(() => {
+      if (this._connectionEpoch.get(peerId) !== epoch) {
+        return;
+      }
+      this._dcOpenEpoch.set(peerId, epoch);
       console.log(`[WebRTC] DataChannel open for ${peerId.substring(0, 8)}…`);
       const sb = new TransportSendBuffer((frame) => {
         try {
@@ -515,6 +530,13 @@ export class WebRTCTransport extends EventEmitter {
     });
 
     dc.onClosed(() => {
+      if (this._connectionEpoch.get(peerId) !== epoch) {
+        return;
+      }
+      if (this._dcOpenEpoch.get(peerId) !== epoch) {
+        return;
+      }
+      this._dcOpenEpoch.delete(peerId);
       // #region agent log
       sessionDebugLog({
         runId: 'webrtc-drop',
