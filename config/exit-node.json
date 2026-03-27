@@ -22,5 +22,8 @@
   "mtu": 1400,
   "natMode": "system",
   "enableTun": true,
-  "nat": { "enabled": true, "externalInterface": null, "timeout": 300000 }
+  "nat": { "enabled": true, "externalInterface": null, "timeout": 300000 },
+  "tun": {
+    "defaultRoute": false
+  }
 }
