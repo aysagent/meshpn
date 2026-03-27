@@ -897,7 +897,10 @@ export class MeshNode extends EventEmitter {
         console.warn('[EXIT] Failed to parse IP packet');
         return;
       }
-      
+      if (parsed.valid === false || typeof parsed.dstIp !== 'string') {
+        return;
+      }
+
       const { srcIp, dstIp, srcPort, dstPort, protocol } = parsed;
       
       const mappingKey = `${srcIp}:${srcPort}:${dstIp}:${dstPort}:${protocol}`;
@@ -924,9 +927,12 @@ export class MeshNode extends EventEmitter {
       console.warn('[EXIT] Failed to parse TUN packet');
       return;
     }
-    
+    if (parsed.valid === false || typeof parsed.dstIp !== 'string') {
+      return;
+    }
+
     const { srcIp, dstIp, srcPort, dstPort, protocol } = parsed;
-    
+
     if (dstIp.startsWith('10.200.')) {
       const mappingKey = `${dstIp}:${dstPort}:${srcIp}:${srcPort}:${protocol}`;
       const mapping = this.natMappings.get(mappingKey);
