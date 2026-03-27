@@ -1,6 +1,6 @@
 {
   "role": "exit",
-  "signallingServer": "ws://localhost:8080",
+  "signallingServer": "ws://62.84.120.30:8080",
   "dataServerPort": 8081,
   "iceServers": [
     { "urls": "stun:stun.l.google.com:19302" },
@@ -22,7 +22,11 @@
   "mtu": 1400,
   "natMode": "system",
   "enableTun": true,
-  "nat": { "enabled": true, "externalInterface": null, "timeout": 300000 },
+  "nat": {
+     "enabled": true,
+     "externalInterface": null,
+     "timeout": 300000
+  },
   "tun": {
     "defaultRoute": false
   }
