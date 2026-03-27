@@ -24,7 +24,8 @@ export class TunInterface extends EventEmitter {
     this.readBuffer = Buffer.alloc(0);
     this.platform = os.platform();
     this.running = false;
-    
+    this.isExit = config.isExit === true;
+
     // For Linux default route management
     // Read from config.tun or from top-level config
     const tunConfig = config.tun || {};
@@ -163,9 +164,11 @@ export class TunInterface extends EventEmitter {
         console.log(`Route for ${networkPrefix}.0.0/16 may already exist`);
       }
       
-      // Configure DNS through VPN
-      this._configureDNS();
-      
+      // Client VPN: steer public DNS via TUN + resolv.conf. Exit node keeps host DNS and no DNS /32 routes on tun.
+      if (!this.isExit) {
+        this._configureDNS();
+      }
+
       // Setup default route through VPN
       this._setupDefaultRoute();
     } catch (err) {

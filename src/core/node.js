@@ -369,7 +369,10 @@ export class MeshNode extends EventEmitter {
       const needsTun = (this.isClient || (this.isExit && this.natMode === 'system')) && this.config.enableTun !== false;
       
       if (needsTun && !this.tunManager) {
-        this.tunManager = new TunManager(this.config.tun || {});
+        this.tunManager = new TunManager({
+          ...(this.config.tun || {}),
+          isExit: this.isExit
+        });
         if (this.isClient) {
           this.tunManager.on('outbound-packet', (packet) => {
             this._handleOutboundPacket(packet);
