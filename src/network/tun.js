@@ -1,9 +1,98 @@
 import { EventEmitter } from 'events';
 import { spawn, execSync } from 'child_process';
+import { promises as dnsPromises } from 'dns';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
+
+/**
+ * Hostnames / URL-like strings from mesh config (signalling, TURN, ICE).
+ * @param {object} config
+ * @returns {string[]}
+ */
+function _collectInfraHostsFromMeshConfig(config) {
+  const hosts = new Set();
+
+  const pushHost = (h) => {
+    if (h && typeof h === 'string') hosts.add(h.trim());
+  };
+
+  const addUrlLike = (s) => {
+    if (!s || typeof s !== 'string') return;
+    const t = s.trim();
+    if (/^(wss?|https?):\/\//i.test(t)) {
+      try {
+        const u = new URL(t);
+        if (u.hostname) pushHost(u.hostname);
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    const m = t.match(/^(?:turn|turns|stun|stuns):([^:[\s]+)(?::\d+)?/i);
+    if (m) {
+      pushHost(m[1]);
+    }
+  };
+
+  if (!config || typeof config !== 'object') {
+    return [];
+  }
+
+  if (config.signallingServer) addUrlLike(config.signallingServer);
+  if (config.dataServer) addUrlLike(config.dataServer);
+
+  if (Array.isArray(config.turnServers)) {
+    for (const entry of config.turnServers) {
+      if (!entry?.urls) continue;
+      const urls = Array.isArray(entry.urls) ? entry.urls : [entry.urls];
+      for (const u of urls) addUrlLike(u);
+    }
+  }
+
+  if (Array.isArray(config.iceServers)) {
+    for (const entry of config.iceServers) {
+      if (!entry?.urls) continue;
+      const urls = Array.isArray(entry.urls) ? entry.urls : [entry.urls];
+      for (const u of urls) addUrlLike(u);
+    }
+  }
+
+  return [...hosts];
+}
+
+/**
+ * Resolves infra hosts to IPv4 for ip route exclude rules.
+ * @param {object} meshVpnConfig
+ * @returns {Promise<string[]>}
+ */
+export async function collectInfraIPv4FromMeshConfigAsync(meshVpnConfig) {
+  const hosts = _collectInfraHostsFromMeshConfig(meshVpnConfig);
+  const ips = new Set();
+
+  for (const h of hosts) {
+    if (!h) continue;
+    if (IPV4_RE.test(h)) {
+      ips.add(h);
+      continue;
+    }
+    if (h === 'localhost') {
+      ips.add('127.0.0.1');
+      continue;
+    }
+    try {
+      const { address } = await dnsPromises.lookup(h, { family: 4 });
+      ips.add(address);
+    } catch (err) {
+      console.warn(`[TUN] Could not resolve infra host "${h}": ${err.message}`);
+    }
+  }
+
+  return [...ips];
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,6 +114,8 @@ export class TunInterface extends EventEmitter {
     this.platform = os.platform();
     this.running = false;
     this.isExit = config.isExit === true;
+    /** Full mesh node config: used to add /32 routes for signalling/TURN/ICE before switching default to tun. */
+    this.meshVpnConfig = config.meshVpnConfig || null;
 
     // For Linux default route management
     // Read from config.tun or from top-level config
@@ -114,9 +205,16 @@ export class TunInterface extends EventEmitter {
         this.name = output;
         interfaceNameReceived = true;
         console.log(`Created TUN interface: ${this.name}`);
-        
-        this._configureLinuxTun();
-        resolve();
+
+        void (async () => {
+          try {
+            await this._configureLinuxTunAsync();
+          } catch (err) {
+            console.warn(`Warning: Could not configure ${this.name}:`, err.message);
+            console.log('You may need to run with sudo.');
+          }
+          resolve();
+        })();
       });
       
       this.helperProcess.stdout.on('data', (data) => {
@@ -150,31 +248,30 @@ export class TunInterface extends EventEmitter {
     });
   }
 
-  _configureLinuxTun() {
-    try {
-      execSync(`ip addr add ${this.virtualIp}/16 dev ${this.name} 2>/dev/null || true`, { stdio: 'ignore' });
-      execSync(`ip link set dev ${this.name} mtu ${this.mtu}`);
-      execSync(`ip link set dev ${this.name} up`);
-      
-      const networkPrefix = this.virtualIp.split('.').slice(0, 2).join('.');
-      try {
-        execSync(`ip route add ${networkPrefix}.0.0/16 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
-        console.log(`Added route for ${networkPrefix}.0.0/16 via ${this.name}`);
-      } catch {
-        console.log(`Route for ${networkPrefix}.0.0/16 may already exist`);
-      }
-      
-      // Client VPN: steer public DNS via TUN + resolv.conf. Exit node keeps host DNS and no DNS /32 routes on tun.
-      if (!this.isExit) {
-        this._configureDNS();
-      }
+  async _configureLinuxTunAsync() {
+    execSync(`ip addr add ${this.virtualIp}/16 dev ${this.name} 2>/dev/null || true`, { stdio: 'ignore' });
+    execSync(`ip link set dev ${this.name} mtu ${this.mtu}`);
+    execSync(`ip link set dev ${this.name} up`);
 
-      // Setup default route through VPN
-      this._setupDefaultRoute();
-    } catch (err) {
-      console.warn(`Warning: Could not configure ${this.name}:`, err.message);
-      console.log('You may need to run with sudo.');
+    const networkPrefix = this.virtualIp.split('.').slice(0, 2).join('.');
+    try {
+      execSync(`ip route add ${networkPrefix}.0.0/16 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+      console.log(`Added route for ${networkPrefix}.0.0/16 via ${this.name}`);
+    } catch {
+      console.log(`Route for ${networkPrefix}.0.0/16 may already exist`);
     }
+
+    let infraIpv4 = [];
+    if (this.meshVpnConfig) {
+      infraIpv4 = await collectInfraIPv4FromMeshConfigAsync(this.meshVpnConfig);
+    }
+
+    // Full-tunnel clients: DNS via TUN + resolv.conf. Exit keeps host DNS; no full tunnel => do not touch resolv.
+    if (!this.isExit && this.defaultRouteEnabled) {
+      this._configureDNS();
+    }
+
+    this._setupDefaultRoute(infraIpv4);
   }
 
   _configureDNS() {
@@ -221,7 +318,10 @@ export class TunInterface extends EventEmitter {
     }
   }
 
-  _setupDefaultRoute() {
+  /**
+   * @param {string[]} infraIpv4  Resolved IPv4 for signalling/TURN/ICE from mesh config
+   */
+  _setupDefaultRoute(infraIpv4 = []) {
     if (!this.defaultRouteEnabled) {
       console.log('Default route through VPN disabled in config');
       return;
@@ -244,23 +344,35 @@ export class TunInterface extends EventEmitter {
       }
       
       const [, gateway, iface] = match;
-      
-      // Add routes for excluded IPs (TURN servers, signalling, etc.) via original gateway
-      const excludeIPs = [
-        ...this.excludedIPs,
-        '62.84.120.30',  // Default TURN server
-      ];
-      
-      // Also try to get signalling server IP from environment
+
+      const excludeSet = new Set();
+      for (const ip of this.excludedIPs) {
+        if (ip && IPV4_RE.test(String(ip).trim())) {
+          excludeSet.add(String(ip).trim());
+        }
+      }
+      excludeSet.add('62.84.120.30');
+
+      for (const ip of infraIpv4) {
+        if (ip && IPV4_RE.test(ip)) excludeSet.add(ip);
+      }
+
       const sigServer = process.env.SIGNALLING_SERVER;
       if (sigServer) {
         const sigMatch = sigServer.match(/(\d+\.\d+\.\d+\.\d+)/);
-        if (sigMatch) {
-          excludeIPs.push(sigMatch[1]);
+        if (sigMatch) excludeSet.add(sigMatch[1]);
+      }
+
+      const sshConn = process.env.SSH_CONNECTION;
+      if (sshConn) {
+        const clientIp = sshConn.trim().split(/\s+/)[0];
+        if (IPV4_RE.test(clientIp)) {
+          excludeSet.add(clientIp);
+          console.log(`[TUN] Excluding SSH client IP from tunnel: ${clientIp}`);
         }
       }
-      
-      for (const ip of excludeIPs) {
+
+      for (const ip of excludeSet) {
         try {
           execSync(`ip route add ${ip}/32 via ${gateway} dev ${iface} 2>/dev/null`, { stdio: 'ignore' });
           console.log(`Excluded ${ip} from VPN (via ${gateway})`);

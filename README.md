@@ -146,6 +146,17 @@ npm run nat:disable
 
 Подробная документация: [server/nat-setup.md](server/nat-setup.md)
 
+### Client (Linux): full tunnel и маршруты к инфраструктуре
+
+При `tun.defaultRoute: true` (или если ключ не задан — по умолчанию включён) клиент переключает **default route** на TUN: весь исходящий IPv4-трафик идёт в mesh/exit. Чтобы **signalling, TURN, data server и STUN** из конфига продолжали открываться **напрямую** по uplink (без обхода через TUN), перед сменой default добавляются узкие маршруты `ip route add <ip>/32 via <шлюз> dev <интерфейс>` для IPv4, полученных из `signallingServer`, `dataServer`, `turnServers`, `iceServers` (включая разрешение имён через DNS).
+
+Дополнительно:
+
+- IP клиента из переменной окружения **`SSH_CONNECTION`** (интерактивный SSH на VPS) добавляется в исключения, чтобы не рвать сессию.
+- Ручной список **`tun.excludeFromVPN`**: дополнительные IPv4 в том же формате `/32` через исходный шлюз для редких адресов (например постоянный IP администратора при запуске через systemd).
+
+Перехват DNS (`/etc/resolv.conf` и маршруты к публичным резолверам через TUN) выполняется **только** при включённом full tunnel (`defaultRoute`), не на exit-ноде.
+
 ### Ручная настройка
 
 #### Linux
