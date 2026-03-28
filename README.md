@@ -156,7 +156,7 @@ npm run nat:disable
 - **`ip rule`**: для пакетов с **fwmark `0x1`** — `lookup main` (ответы SSH и исходящий SSH на порт 22 идут через обычный default); для остального IPv4 — `lookup 100`, то есть «интернет» в смысле продукта идёт в TUN.
 - **`iptables -t mangle`**, цепочка **`MESHVPN-BYPASS`**: маркирует исходящий TCP с `--sport 22` / `--dport 22` (состояния conntrack), чтобы сработало правило `ip rule` выше.
 
-Узкие маршруты **`/32` через uplink** к IPv4 из конфига (**`signallingServer`**, **`dataServer`**, **`turnServers`**, **`iceServers`**, с разрешением имён) и из **`tun.excludeFromVPN`** добавляются **в таблицу 100** (не в `main`), чтобы при выборе таблицы 100 трафик к инфраструктуре mesh не уходил в TUN. Дополнительно в исключения попадает IPv4 из **`SIGNALLING_SERVER`**, если в переменной задан адрес.
+Узкие маршруты **`/32` через uplink** к IPv4 из конфига (**`signallingServer`**, **`dataServer`**, **`turnServers`**, **`iceServers`**) и из **`tun.excludeFromVPN`** добавляются **в таблицу 100** (не в `main`), чтобы при выборе таблицы 100 трафик к инфраструктуре mesh не уходил в TUN. Для **доменных имён** (в т.ч. в `excludeFromVPN` и в **`SIGNALLING_SERVER`**, если там URL с hostname) выполняется DNS: для каждого имени подтягиваются **все** IPv4 A-записи (`resolve4`), как для публичных STUN. Литеральные IPv4 в конфиге и в exclude добавляются без запроса DNS.
 
 Перехват DNS (`/etc/resolv.conf` и маршруты к резолверам) выполняется **только** при full tunnel на клиенте, **не** на exit-ноде.
 
@@ -176,6 +176,12 @@ npm run nat:disable
 2. **TURN/STUN** — адреса в `turnServers` / `iceServers` должны указывать на хост, **доступный с VPS и с exit** (часто публичный IP с coturn). Замените примерные IP в конфигах на свои.
 3. **Разделить mesh и policy routing** — временно `"tun": { "defaultRoute": false }` у клиента и перезапуск. Если ping/curl к интернету **снова работают**, проблема в пути **к exit в mesh** (WebRTC/TURN), а не в таблице маршрутизации 100.
 4. **Логи** — при отсутствии пути к exit: `[MESH] Нет достижимого exit…` и периодически `[TUN] Нет маршрута к exit…`. Сообщение `[WS-DATA] WebSocket data server listening on port 8081` на exit относится к опциональному `dataServerPort`, это не signalling (8080).
+
+**Проверка маршрутов (client Linux, full tunnel):** `ip route show table 100`, `ip route get <DST> table 100` — для IP TURN и нескольких IP из `dig stun.l.google.com +short` путь не должен быть через `dev tun` (кроме самого mesh). Сравните с рабочей машиной (например Multipass). Если TURN на том же хосте, что и клиент, и что-то всё ещё уходит в tun, добавьте IP в **`tun.excludeFromVPN`**.
+
+**Hairpin / тот же VPS:** при необходимости явно согласуйте URL TURN (публичный IP vs localhost) и DNS; для теста можно временно отключить публичные STUN в конфиге (осторожно с ICE).
+
+**Если маршруты верны, а Peers:0:** смотрите фаервол coturn, UDP, NAT на стороне exit в Multipass (`tcpdump`, логи ICE).
 
 ### Ручная настройка
 

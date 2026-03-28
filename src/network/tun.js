@@ -73,15 +73,76 @@ function _collectInfraHostsFromMeshConfig(config) {
 }
 
 /**
- * Resolves infra hosts to IPv4 for ip route exclude rules.
+ * Извлекает hostname из `SIGNALLING_SERVER` / похожих URL (ws/wss/http/https) или `turn:host:…`.
+ * @param {string} s
+ * @returns {string|null}
+ */
+function _hostnameFromEnvUrlLike(s) {
+  if (!s || typeof s !== 'string') return null;
+  const t = s.trim();
+  if (/^(wss?|https?):\/\//i.test(t)) {
+    try {
+      const u = new URL(t);
+      return u.hostname || null;
+    } catch {
+      return null;
+    }
+  }
+  const m = t.match(/^(?:turn|turns|stun|stuns):([^:[\s]+)(?::\d+)?/i);
+  return m ? m[1].trim() : null;
+}
+
+/**
+ * Resolves infra hosts to IPv4 for ip route exclude rules (table meshvpn).
+ * Hostnames use `resolve4` so **all** A records are added (public STUN pools use many IPs;
+ * a single `lookup` left part of ICE traffic on default via tun).
+ *
+ * Учитывает домены в `signallingServer` / `dataServer` / TURN/ICE (как раньше), плюс
+ * **`excludeFromVPN`** (литералы IPv4 и имена) и опционально **`SIGNALLING_SERVER`** из окружения.
+ *
  * @param {object} meshVpnConfig
+ * @param {object} [options]
+ * @param {string[]|undefined} [options.excludeFromVPN]  IPv4 или hostname из `tun.excludeFromVPN`
+ * @param {string|null|undefined} [options.signallingServerEnv]  по умолчанию `process.env.SIGNALLING_SERVER`
  * @returns {Promise<string[]>}
  */
-export async function collectInfraIPv4FromMeshConfigAsync(meshVpnConfig) {
-  const hosts = _collectInfraHostsFromMeshConfig(meshVpnConfig);
+export async function collectInfraIPv4FromMeshConfigAsync(meshVpnConfig, options = {}) {
+  const excludeFromVPN = options.excludeFromVPN;
+  const signallingServerEnv =
+    options.signallingServerEnv !== undefined
+      ? options.signallingServerEnv
+      : process.env.SIGNALLING_SERVER;
+
+  const hostSet = new Set(_collectInfraHostsFromMeshConfig(meshVpnConfig));
   const ips = new Set();
 
-  for (const h of hosts) {
+  if (Array.isArray(excludeFromVPN)) {
+    for (const raw of excludeFromVPN) {
+      const entry = raw != null ? String(raw).trim() : '';
+      if (!entry) continue;
+      if (IPV4_RE.test(entry)) {
+        ips.add(entry);
+        continue;
+      }
+      hostSet.add(entry);
+    }
+  }
+
+  if (signallingServerEnv && typeof signallingServerEnv === 'string') {
+    const t = signallingServerEnv.trim();
+    const ipOnly = t.match(/(\d+\.\d+\.\d+\.\d+)/);
+    if (ipOnly) {
+      ips.add(ipOnly[1]);
+    } else {
+      const h = _hostnameFromEnvUrlLike(t);
+      if (h) {
+        if (IPV4_RE.test(h)) ips.add(h);
+        else hostSet.add(h);
+      }
+    }
+  }
+
+  for (const h of hostSet) {
     if (!h) continue;
     if (IPV4_RE.test(h)) {
       ips.add(h);
@@ -92,10 +153,17 @@ export async function collectInfraIPv4FromMeshConfigAsync(meshVpnConfig) {
       continue;
     }
     try {
-      const { address } = await dnsPromises.lookup(h, { family: 4 });
-      ips.add(address);
-    } catch (err) {
-      console.warn(`[TUN] Could not resolve infra host "${h}": ${err.message}`);
+      const addrs = await dnsPromises.resolve4(h);
+      for (const a of addrs) {
+        if (IPV4_RE.test(a)) ips.add(a);
+      }
+    } catch {
+      try {
+        const { address } = await dnsPromises.lookup(h, { family: 4 });
+        ips.add(address);
+      } catch (err) {
+        console.warn(`[TUN] Could not resolve infra host "${h}": ${err.message}`);
+      }
     }
   }
 
@@ -273,10 +341,9 @@ export class TunInterface extends EventEmitter {
       }
     }
 
-    let infraIpv4 = [];
-    if (this.meshVpnConfig) {
-      infraIpv4 = await collectInfraIPv4FromMeshConfigAsync(this.meshVpnConfig);
-    }
+    const infraIpv4 = await collectInfraIPv4FromMeshConfigAsync(this.meshVpnConfig || {}, {
+      excludeFromVPN: this.excludedIPs,
+    });
 
     if (useLinuxPolicyRouting) {
       this._setupLinuxPolicyRouting(infraIpv4, networkPrefix);
@@ -388,18 +455,8 @@ export class TunInterface extends EventEmitter {
       }
 
       const excludeSet = new Set();
-      for (const ip of this.excludedIPs) {
-        if (ip && IPV4_RE.test(String(ip).trim())) {
-          excludeSet.add(String(ip).trim());
-        }
-      }
       for (const ip of infraIpv4) {
         if (ip && IPV4_RE.test(ip)) excludeSet.add(ip);
-      }
-      const sigServer = process.env.SIGNALLING_SERVER;
-      if (sigServer) {
-        const sigMatch = sigServer.match(/(\d+\.\d+\.\d+\.\d+)/);
-        if (sigMatch) excludeSet.add(sigMatch[1]);
       }
 
       for (const ip of excludeSet) {
