@@ -381,7 +381,11 @@ export class TunInterface extends EventEmitter {
     const tbl = LINUX_RT_TABLE_MESHVPN;
 
     try {
-      execSync(`ip route flush table ${tbl} 2>/dev/null`, { stdio: 'ignore' });
+      try {
+        execSync(`ip route flush table ${tbl}`, { stdio: 'ignore' });
+      } catch {
+        // Первый запуск / пустая таблица: на части систем `flush` даёт ненулевой код — не критично.
+      }
 
       const excludeSet = new Set();
       for (const ip of this.excludedIPs) {
@@ -407,9 +411,9 @@ export class TunInterface extends EventEmitter {
         }
       }
 
-      execSync(`ip route add default dev ${this.name} table ${tbl}`, { stdio: 'ignore' });
+      execSync(`ip route replace default dev ${this.name} table ${tbl}`, { stdio: 'ignore' });
       execSync(
-        `ip route add ${networkPrefix}.0.0/16 dev ${this.name} table ${tbl}`,
+        `ip route replace ${networkPrefix}.0.0/16 dev ${this.name} table ${tbl}`,
         { stdio: 'ignore' }
       );
 
