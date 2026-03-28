@@ -138,7 +138,11 @@ export class MeshNode extends EventEmitter {
     };
     this.statsInterval = null;
     this._debugTransportInterval = null;
-    
+    /** Rate-limit лога «нет маршрута к exit» при full tunnel (мс). */
+    this._noRouteToExitLogAt = 0;
+    /** Дедуп лога [MESH] при частых topology-update. */
+    this._lastReachableExitKey = null;
+
     this.tunManager = null;
     this.exitNodeHandler = null;
     this.virtualIp = null;
@@ -417,6 +421,7 @@ export class MeshNode extends EventEmitter {
       }
       
       this._updateMultipathRoutes();
+      this._logMeshReachabilityForClient();
       this.emit('peer-connected', peerId);
     });
     
@@ -426,12 +431,14 @@ export class MeshNode extends EventEmitter {
       this._clearSendRetryQueue(peerId);
       this._rxPeerChains.delete(peerId);
       this._updateMultipathRoutes();
+      this._logMeshReachabilityForClient();
       this.emit('peer-disconnected', peerId);
     });
     
     this.discovery.on('topology', (topology) => {
       this.router.updateTopology(topology);
       this._updateMultipathRoutes();
+      this._logMeshReachabilityForClient();
     });
     
     this.transportManager.on('message', (peerId, data, transport) => {
@@ -445,6 +452,28 @@ export class MeshNode extends EventEmitter {
     this.reorderBuffer.on('packet', (payload, packet) => {
       this._processReorderedPacket(payload, packet);
     });
+  }
+
+  _logMeshReachabilityForClient() {
+    if (!this.isClient) {
+      return;
+    }
+    const exits = this.router.getReachableExitNodes();
+    const key = exits.map((e) => e.nodeId).sort().join(',');
+    if (key === this._lastReachableExitKey) {
+      return;
+    }
+    this._lastReachableExitKey = key;
+    if (exits.length === 0) {
+      console.warn(
+        '[MESH] Нет достижимого exit в графе (нужно ребро WebRTC к exit). Трафик full tunnel в TUN будет отброшен, пока маршрут не появится.',
+      );
+    } else {
+      const summary = exits
+        .map((e) => `${e.nodeId.slice(0, 8)}… (${e.hops} hop(s))`)
+        .join(', ');
+      console.log(`[MESH] Достижимый exit: ${summary}`);
+    }
   }
 
   _drainSendRetryQueue(peerId) {
@@ -547,9 +576,16 @@ export class MeshNode extends EventEmitter {
     
     const routeInfo = this.router.findRouteToExit();
     if (!routeInfo) {
+      const now = Date.now();
+      if (now - this._noRouteToExitLogAt > 5000) {
+        this._noRouteToExitLogAt = now;
+        console.warn(
+          '[TUN] Нет маршрута к exit — пакет отброшен. Нужен WebRTC-путь к exit (см. логи Peer connected / [MESH]).',
+        );
+      }
       return;
     }
-    
+
     this._sendThroughMesh(ipPacket, routeInfo);
   }
 

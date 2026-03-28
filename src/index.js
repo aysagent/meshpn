@@ -103,7 +103,17 @@ async function main() {
   if (!config.signallingServer) {
     config.signallingServer = process.env.SIGNALLING_SERVER || 'ws://localhost:8080';
   }
-  
+
+  if (role === 'exit') {
+    const sig = config.signallingServer || '';
+    if (/localhost|127\.0\.0\.1/i.test(sig)) {
+      console.warn(
+        '[CONFIG] Роль exit: signallingServer указывает на localhost. Если signalling на другом хосте (например VPS), ' +
+          'задайте ws://<PUBLIC_HOST>:8080 через переменную SIGNALLING_SERVER или флаг --signalling.',
+      );
+    }
+  }
+
   config.role = role;
   
   config.iceMode = config.iceMode || 'auto';

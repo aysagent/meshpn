@@ -105,7 +105,7 @@ node src/index.js --role client-relay --signalling ws://localhost:8080
 
 ### Переменные окружения
 
-- `SIGNALLING_SERVER` — URL signalling сервера
+- `SIGNALLING_SERVER` — URL signalling сервера; для **exit** на другой машине, чем signalling, задавайте публичный `ws://host:8080`, а не `localhost`
 - `NODE_ROLE` — роль узла (client/relay/client-relay/exit)
 
 ### Аргументы командной строки
@@ -167,6 +167,15 @@ npm run nat:disable
 ### Client (macOS)
 
 Поведение **macOS** при full tunnel **не меняется**: отдельного `ip rule`/отдельной таблицы, как в Linux, нет; используется прежняя настройка TUN-интерфейса и маршрутов через системные утилиты.
+
+### Диагностика: клиент на VPS, exit в другой сети (Multipass, домашний NAT)
+
+Если **signalling** на VPS, а **exit** в виртуалке/дома, типичные причины «на VPS не работают ping/curl» при full tunnel:
+
+1. **URL signalling для exit** — внутри ВМ `localhost` — это сама ВМ, а не VPS. Задайте явно: `SIGNALLING_SERVER=ws://<PUBLIC_IP_VPS>:8080` или `node src/index.js --role exit --signalling ws://<PUBLIC_IP_VPS>:8080 -c config/exit-node-linux.json`. Предупреждение при старте `[CONFIG] Роль exit: signallingServer указывает на localhost` указывает на ту же проблему.
+2. **TURN/STUN** — адреса в `turnServers` / `iceServers` должны указывать на хост, **доступный с VPS и с exit** (часто публичный IP с coturn). Замените примерные IP в конфигах на свои.
+3. **Разделить mesh и policy routing** — временно `"tun": { "defaultRoute": false }` у клиента и перезапуск. Если ping/curl к интернету **снова работают**, проблема в пути **к exit в mesh** (WebRTC/TURN), а не в таблице маршрутизации 100.
+4. **Логи** — при отсутствии пути к exit: `[MESH] Нет достижимого exit…` и периодически `[TUN] Нет маршрута к exit…`. Сообщение `[WS-DATA] WebSocket data server listening on port 8081` на exit относится к опциональному `dataServerPort`, это не signalling (8080).
 
 ### Ручная настройка
 
