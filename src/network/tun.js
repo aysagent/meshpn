@@ -8,6 +8,14 @@ import { fileURLToPath } from 'url';
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 
+/** Linux policy routing: traffic without fwmark uses this table (default via tun); fwmark uses `main` (SSH etc.). */
+const LINUX_RT_TABLE_MESHVPN = 100;
+const LINUX_FWMARK_BYPASS_MAIN = 0x1;
+/** Lower number = higher priority in `ip rule`. */
+const LINUX_IP_RULE_PREF_FWMARK_MAIN = 100;
+const LINUX_IP_RULE_PREF_LOOKUP_MESHVPN = 101;
+const IPTABLES_CHAIN_MESHVPN = 'MESHVPN-BYPASS';
+
 /**
  * Hostnames / URL-like strings from mesh config (signalling, TURN, ICE).
  * @param {object} config
@@ -114,14 +122,13 @@ export class TunInterface extends EventEmitter {
     this.platform = os.platform();
     this.running = false;
     this.isExit = config.isExit === true;
-    /** Full mesh node config: used to add /32 routes for signalling/TURN/ICE before switching default to tun. */
+    /** Full mesh node config: infra IPv4 for /32 in main (bypass tun table). */
     this.meshVpnConfig = config.meshVpnConfig || null;
 
-    // For Linux default route management
-    // Read from config.tun or from top-level config
     const tunConfig = config.tun || {};
-    this.originalRoutes = [];
     this.excludedIPs = tunConfig.excludeFromVPN || config.excludeFromVPN || [];
+    /** @type {boolean} */
+    this._linuxPolicyRoutingActive = false;
     this.defaultRouteEnabled = tunConfig.defaultRoute !== undefined 
       ? tunConfig.defaultRoute 
       : config.defaultRoute !== false;
@@ -254,11 +261,16 @@ export class TunInterface extends EventEmitter {
     execSync(`ip link set dev ${this.name} up`);
 
     const networkPrefix = this.virtualIp.split('.').slice(0, 2).join('.');
-    try {
-      execSync(`ip route add ${networkPrefix}.0.0/16 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
-      console.log(`Added route for ${networkPrefix}.0.0/16 via ${this.name}`);
-    } catch {
-      console.log(`Route for ${networkPrefix}.0.0/16 may already exist`);
+    const useLinuxPolicyRouting =
+      this.platform === 'linux' && !this.isExit && this.defaultRouteEnabled;
+
+    if (!useLinuxPolicyRouting) {
+      try {
+        execSync(`ip route add ${networkPrefix}.0.0/16 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+        console.log(`Added route for ${networkPrefix}.0.0/16 via ${this.name}`);
+      } catch {
+        console.log(`Route for ${networkPrefix}.0.0/16 may already exist`);
+      }
     }
 
     let infraIpv4 = [];
@@ -266,27 +278,35 @@ export class TunInterface extends EventEmitter {
       infraIpv4 = await collectInfraIPv4FromMeshConfigAsync(this.meshVpnConfig);
     }
 
-    // Full-tunnel clients: DNS via TUN + resolv.conf. Exit keeps host DNS; no full tunnel => do not touch resolv.
-    if (!this.isExit && this.defaultRouteEnabled) {
-      this._configureDNS();
+    if (useLinuxPolicyRouting) {
+      this._setupLinuxPolicyRouting(infraIpv4, networkPrefix);
     }
 
-    this._setupDefaultRoute(infraIpv4);
+    if (!this.isExit && this.defaultRouteEnabled) {
+      this._configureDNS(useLinuxPolicyRouting ? LINUX_RT_TABLE_MESHVPN : null);
+    }
   }
 
-  _configureDNS() {
+  /**
+   * @param {number|null} linuxRouteTable  If set (Linux policy routing), add DNS /32 routes in this table only.
+   */
+  _configureDNS(linuxRouteTable = null) {
     const dnsServers = ['8.8.8.8', '8.8.4.4', '1.1.1.1', '1.0.0.1'];
-    
+    const tableSuffix =
+      linuxRouteTable != null ? ` table ${linuxRouteTable}` : '';
+
     try {
-      // Add routes to DNS servers through TUN
       for (const dns of dnsServers) {
         try {
-          execSync(`ip route add ${dns}/32 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+          execSync(`ip route add ${dns}/32 dev ${this.name}${tableSuffix} 2>/dev/null`, { stdio: 'ignore' });
         } catch {
           // Route may already exist
         }
       }
-      console.log(`Added routes for DNS servers via ${this.name}`);
+      console.log(
+        `Added routes for DNS servers via ${this.name}` +
+          (linuxRouteTable != null ? ` (table ${linuxRouteTable})` : '')
+      );
       
       // Backup original resolv.conf
       try {
@@ -319,31 +339,49 @@ export class TunInterface extends EventEmitter {
   }
 
   /**
-   * @param {string[]} infraIpv4  Resolved IPv4 for signalling/TURN/ICE from mesh config
+   * Parse first IPv4 default route: `default via G dev I` or `default dev I`.
+   * @returns {{ gateway: string|null, iface: string } | null}
    */
-  _setupDefaultRoute(infraIpv4 = []) {
-    if (!this.defaultRouteEnabled) {
-      console.log('Default route through VPN disabled in config');
+  _parseLinuxDefaultUplink() {
+    const routeOutput = execSync('ip route show default', { encoding: 'utf8' });
+    const routes = routeOutput.trim().split('\n').filter((r) => r.length > 0);
+    const line = routes[0];
+    if (!line) return null;
+    let m = line.match(/default via (\S+)\s+dev\s+(\S+)/);
+    if (m) {
+      return { gateway: m[1], iface: m[2] };
+    }
+    m = line.match(/default\s+dev\s+(\S+)/);
+    if (m) {
+      return { gateway: null, iface: m[1] };
+    }
+    return null;
+  }
+
+  _ipRouteAddMeshvpnTableBypass(ip, gateway, iface, tableId) {
+    const spec =
+      gateway != null
+        ? `${ip}/32 via ${gateway} dev ${iface} table ${tableId}`
+        : `${ip}/32 dev ${iface} table ${tableId}`;
+    execSync(`ip route add ${spec} 2>/dev/null`, { stdio: 'ignore' });
+  }
+
+  /**
+   * Linux full tunnel without replacing `main` default: table `LINUX_RT_TABLE_MESHVPN`, `ip rule`, fwmark + iptables for SSH.
+   * @param {string[]} infraIpv4
+   * @param {string} networkPrefix e.g. "10.200"
+   */
+  _setupLinuxPolicyRouting(infraIpv4, networkPrefix) {
+    const uplink = this._parseLinuxDefaultUplink();
+    if (!uplink) {
+      console.warn('[TUN] Could not parse default route; policy routing not configured');
       return;
     }
+    const { gateway, iface } = uplink;
+    const tbl = LINUX_RT_TABLE_MESHVPN;
 
     try {
-      // Get current default routes
-      const routeOutput = execSync('ip route show default', { encoding: 'utf8' });
-      const routes = routeOutput.trim().split('\n').filter(r => r.length > 0);
-      
-      // Save original routes for restoration
-      this.originalRoutes = routes;
-      console.log(`Saved ${routes.length} original default route(s)`);
-
-      // Get gateway and interface from first default route
-      const match = routes[0]?.match(/via\s+(\S+)\s+dev\s+(\S+)/);
-      if (!match) {
-        console.warn('Could not parse default route, skipping default route setup');
-        return;
-      }
-      
-      const [, gateway, iface] = match;
+      execSync(`ip route flush table ${tbl} 2>/dev/null`, { stdio: 'ignore' });
 
       const excludeSet = new Set();
       for (const ip of this.excludedIPs) {
@@ -351,95 +389,103 @@ export class TunInterface extends EventEmitter {
           excludeSet.add(String(ip).trim());
         }
       }
-      excludeSet.add('62.84.120.30');
-
       for (const ip of infraIpv4) {
         if (ip && IPV4_RE.test(ip)) excludeSet.add(ip);
       }
-
       const sigServer = process.env.SIGNALLING_SERVER;
       if (sigServer) {
         const sigMatch = sigServer.match(/(\d+\.\d+\.\d+\.\d+)/);
         if (sigMatch) excludeSet.add(sigMatch[1]);
       }
 
-      const sshConn = process.env.SSH_CONNECTION;
-      if (sshConn) {
-        const clientIp = sshConn.trim().split(/\s+/)[0];
-        if (IPV4_RE.test(clientIp)) {
-          excludeSet.add(clientIp);
-          console.log(`[TUN] Excluding SSH client IP from tunnel: ${clientIp}`);
+      for (const ip of excludeSet) {
+        try {
+          this._ipRouteAddMeshvpnTableBypass(ip, gateway, iface, tbl);
+          console.log(`[TUN] Table ${tbl} bypass /32 (uplink) for infra/exclude: ${ip}`);
+        } catch {
+          // ignore
         }
       }
 
-      for (const ip of excludeSet) {
-        try {
-          execSync(`ip route add ${ip}/32 via ${gateway} dev ${iface} 2>/dev/null`, { stdio: 'ignore' });
-          console.log(`Excluded ${ip} from VPN (via ${gateway})`);
-        } catch {
-          // Route may already exist
-        }
-      }
-      
-      // Remove original default routes
-      for (const route of routes) {
-        try {
-          execSync(`ip route del ${route}`, { stdio: 'ignore' });
-        } catch {
-          // May fail
-        }
-      }
-      
-      // Add default route via TUN
-      execSync(`ip route add default dev ${this.name}`);
-      console.log(`Default route set through ${this.name}`);
-      
-      // Add backup route with high metric
+      execSync(`ip route add default dev ${this.name} table ${tbl}`, { stdio: 'ignore' });
+      execSync(
+        `ip route add ${networkPrefix}.0.0/16 dev ${this.name} table ${tbl}`,
+        { stdio: 'ignore' }
+      );
+
+      execSync(
+        `ip rule add pref ${LINUX_IP_RULE_PREF_FWMARK_MAIN} fwmark 0x${LINUX_FWMARK_BYPASS_MAIN.toString(16)} lookup main`,
+        { stdio: 'ignore' }
+      );
+      execSync(
+        `ip rule add pref ${LINUX_IP_RULE_PREF_LOOKUP_MESHVPN} from all lookup ${tbl}`,
+        { stdio: 'ignore' }
+      );
+
+      const ch = IPTABLES_CHAIN_MESHVPN;
       try {
-        execSync(`ip route add default via ${gateway} dev ${iface} metric 1000`, { stdio: 'ignore' });
+        execSync(`iptables -t mangle -N ${ch} 2>/dev/null`, { stdio: 'ignore' });
       } catch {
-        // May fail
+        // exists
       }
-      
+      execSync(`iptables -t mangle -F ${ch}`, { stdio: 'ignore' });
+      const mk = `0x${LINUX_FWMARK_BYPASS_MAIN.toString(16)}`;
+      execSync(
+        `iptables -t mangle -A ${ch} -p tcp -m tcp --sport 22 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j MARK --set-mark ${mk}`,
+        { stdio: 'ignore' }
+      );
+      execSync(
+        `iptables -t mangle -A ${ch} -p tcp -m tcp --dport 22 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j MARK --set-mark ${mk}`,
+        { stdio: 'ignore' }
+      );
+      try {
+        execSync(`iptables -t mangle -C OUTPUT -j ${ch} 2>/dev/null`, { stdio: 'ignore' });
+      } catch {
+        execSync(`iptables -t mangle -I OUTPUT 1 -j ${ch}`, { stdio: 'ignore' });
+      }
+
+      this._linuxPolicyRoutingActive = true;
+      console.log(
+        `[TUN] Linux policy routing: table ${tbl} (default via ${this.name}), SSH marked ${LINUX_FWMARK_BYPASS_MAIN} -> main`
+      );
     } catch (err) {
-      console.warn('Could not setup default route:', err.message);
+      console.warn('[TUN] Policy routing setup failed:', err.message);
     }
   }
 
-  _restoreDefaultRoute() {
-    if (this.originalRoutes.length === 0) {
+  _restoreLinuxPolicyRouting() {
+    if (!this._linuxPolicyRoutingActive) {
       return;
+    }
+    this._linuxPolicyRoutingActive = false;
+
+    const ch = IPTABLES_CHAIN_MESHVPN;
+    try {
+      execSync(`iptables -t mangle -D OUTPUT -j ${ch} 2>/dev/null`, { stdio: 'ignore' });
+      execSync(`iptables -t mangle -F ${ch} 2>/dev/null`, { stdio: 'ignore' });
+      execSync(`iptables -t mangle -X ${ch} 2>/dev/null`, { stdio: 'ignore' });
+    } catch {
+      // ignore
     }
 
     try {
-      // Remove VPN default route
-      try {
-        execSync(`ip route del default dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
-      } catch {
-        // May not exist
-      }
-      
-      // Remove backup route
-      try {
-        execSync('ip route del default metric 1000 2>/dev/null', { stdio: 'ignore' });
-      } catch {
-        // May not exist
-      }
-      
-      // Restore original routes
-      for (const route of this.originalRoutes) {
-        try {
-          execSync(`ip route add ${route}`, { stdio: 'ignore' });
-        } catch {
-          // May already exist
-        }
-      }
-      
-      console.log('Default route restored');
-      this.originalRoutes = [];
-    } catch (err) {
-      console.warn('Could not restore default route:', err.message);
+      execSync(`ip rule del pref ${LINUX_IP_RULE_PREF_LOOKUP_MESHVPN} 2>/dev/null`, {
+        stdio: 'ignore'
+      });
+      execSync(`ip rule del pref ${LINUX_IP_RULE_PREF_FWMARK_MAIN} 2>/dev/null`, {
+        stdio: 'ignore'
+      });
+    } catch {
+      // ignore
     }
+
+    try {
+      execSync(`ip route flush table ${LINUX_RT_TABLE_MESHVPN}`, { stdio: 'ignore' });
+    } catch {
+      // ignore
+    }
+
+    console.log('[TUN] Linux policy routing restored');
   }
 
   async _openMacOS() {
@@ -608,7 +654,7 @@ export class TunInterface extends EventEmitter {
     
     // Restore DNS and routes on Linux
     if (this.platform === 'linux') {
-      this._restoreDefaultRoute();
+      this._restoreLinuxPolicyRouting();
       this._restoreDNS();
     }
     
