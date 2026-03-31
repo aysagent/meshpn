@@ -8,12 +8,13 @@ import { fileURLToPath } from 'url';
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 
-/** Linux policy routing: traffic without fwmark uses this table (default via tun); fwmark uses `main` (SSH etc.). */
+/** Table 100: uplink-only для fwmark (SSH). Остальной IPv4 — `main` (split /1 → tun), без глобального `from all lookup 100`. */
 const LINUX_RT_TABLE_MESHVPN = 100;
 const LINUX_FWMARK_BYPASS_MAIN = 0x1;
 /** Lower number = higher priority in `ip rule`. */
 const LINUX_IP_RULE_PREF_FWMARK_MAIN = 100;
-const LINUX_IP_RULE_PREF_LOOKUP_MESHVPN = 101;
+/** Старые установки (глобальный lookup 100): удалять при настройке/restore. */
+const LINUX_IP_RULE_PREF_LOOKUP_MESHVPN_LEGACY = 101;
 const IPTABLES_CHAIN_MESHVPN = 'MESHVPN-BYPASS';
 
 /**
@@ -210,6 +211,8 @@ export class TunInterface extends EventEmitter {
     this._deferredInfraIpv4 = null;
     /** @type {string|null} */
     this._deferredNetworkPrefix = null;
+    /** @type {string[]|null} IPv4 /32, добавленные в main как infra bypass (снять в restore). */
+    this._linuxMainInfraRoutes = null;
   }
 
   _findFreeUtunIndex() {
@@ -375,9 +378,7 @@ export class TunInterface extends EventEmitter {
     }
 
     if (!this.isExit && this.defaultRouteEnabled) {
-      const dnsTable =
-        useLinuxPolicyRouting && !deferPolicy ? LINUX_RT_TABLE_MESHVPN : null;
-      this._configureDNS(dnsTable);
+      this._configureDNS(null);
     }
   }
 
@@ -416,7 +417,7 @@ export class TunInterface extends EventEmitter {
     this._setupLinuxPolicyRouting(infra || [], prefix);
 
     if (!this.isExit && this.defaultRouteEnabled) {
-      this._configureDNS(LINUX_RT_TABLE_MESHVPN);
+      this._configureDNS(null);
     }
   }
 
@@ -499,8 +500,17 @@ export class TunInterface extends EventEmitter {
     execSync(`ip route add ${spec} 2>/dev/null`, { stdio: 'ignore' });
   }
 
+  _ipRouteReplaceMainUplink32(ip, gateway, iface) {
+    const spec =
+      gateway != null
+        ? `${ip}/32 via ${gateway} dev ${iface}`
+        : `${ip}/32 dev ${iface}`;
+    execSync(`ip route replace ${spec}`, { stdio: 'ignore' });
+  }
+
   /**
-   * Linux full tunnel without replacing `main` default: table `LINUX_RT_TABLE_MESHVPN`, `ip rule`, fwmark + iptables for SSH.
+   * Full tunnel на Linux: split default в main (0.0.0.0/1 и 128.0.0.0/1 → tun), infra /32 → uplink в main;
+   * table 100 — только uplink для fwmark (SSH). Без `ip rule from all lookup 100`, чтобы не ломать UDP/TURN.
    * @param {string[]} infraIpv4
    * @param {string} networkPrefix e.g. "10.200"
    */
@@ -514,72 +524,83 @@ export class TunInterface extends EventEmitter {
     const tbl = LINUX_RT_TABLE_MESHVPN;
 
     try {
+      for (let i = 0; i < 4; i++) {
+        execSync(`ip rule del pref ${LINUX_IP_RULE_PREF_LOOKUP_MESHVPN_LEGACY} 2>/dev/null`, {
+          stdio: 'ignore',
+        });
+      }
+      for (let i = 0; i < 4; i++) {
+        execSync(`ip rule del pref ${LINUX_IP_RULE_PREF_FWMARK_MAIN} 2>/dev/null`, {
+          stdio: 'ignore',
+        });
+      }
+
       try {
         execSync(`ip route flush table ${tbl}`, { stdio: 'ignore' });
       } catch {
-        // Первый запуск / пустая таблица: на части систем `flush` даёт ненулевой код — не критично.
+        /* ignore */
       }
 
       const excludeSet = new Set();
       for (const ip of infraIpv4) {
         if (ip && IPV4_RE.test(ip)) excludeSet.add(ip);
       }
+      this._linuxMainInfraRoutes = [...excludeSet];
 
       for (const ip of excludeSet) {
         try {
           this._ipRouteAddMeshvpnTableBypass(ip, gateway, iface, tbl);
-          console.log(`[TUN] Table ${tbl} bypass /32 (uplink) for infra/exclude: ${ip}`);
         } catch {
-          // ignore
+          /* ignore */
         }
       }
 
-      execSync(`ip route replace default dev ${this.name} table ${tbl}`, { stdio: 'ignore' });
+      if (gateway != null) {
+        execSync(
+          `ip route replace default via ${gateway} dev ${iface} table ${tbl}`,
+          { stdio: 'ignore' },
+        );
+      } else {
+        execSync(`ip route replace default dev ${iface} table ${tbl}`, { stdio: 'ignore' });
+      }
+
+      for (const ip of excludeSet) {
+        try {
+          this._ipRouteReplaceMainUplink32(ip, gateway, iface);
+          console.log(`[TUN] Main bypass /32 (uplink) for infra: ${ip}`);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      execSync(`ip route replace 0.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
+      execSync(`ip route replace 128.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
       execSync(
-        `ip route replace ${networkPrefix}.0.0/16 dev ${this.name} table ${tbl}`,
-        { stdio: 'ignore' }
+        `ip route replace ${networkPrefix}.0.0/16 dev ${this.name}`,
+        { stdio: 'ignore' },
       );
 
       execSync(
-        `ip rule add pref ${LINUX_IP_RULE_PREF_FWMARK_MAIN} fwmark 0x${LINUX_FWMARK_BYPASS_MAIN.toString(16)} lookup main`,
-        { stdio: 'ignore' }
-      );
-      execSync(
-        `ip rule add pref ${LINUX_IP_RULE_PREF_LOOKUP_MESHVPN} from all lookup ${tbl}`,
-        { stdio: 'ignore' }
+        `ip rule add pref ${LINUX_IP_RULE_PREF_FWMARK_MAIN} fwmark 0x${LINUX_FWMARK_BYPASS_MAIN.toString(16)} lookup ${tbl}`,
+        { stdio: 'ignore' },
       );
 
       const ch = IPTABLES_CHAIN_MESHVPN;
       try {
         execSync(`iptables -t mangle -N ${ch} 2>/dev/null`, { stdio: 'ignore' });
       } catch {
-        // exists
+        /* exists */
       }
       execSync(`iptables -t mangle -F ${ch}`, { stdio: 'ignore' });
       const mk = `0x${LINUX_FWMARK_BYPASS_MAIN.toString(16)}`;
       execSync(
         `iptables -t mangle -A ${ch} -p tcp -m tcp --sport 22 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j MARK --set-mark ${mk}`,
-        { stdio: 'ignore' }
+        { stdio: 'ignore' },
       );
       execSync(
         `iptables -t mangle -A ${ch} -p tcp -m tcp --dport 22 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j MARK --set-mark ${mk}`,
-        { stdio: 'ignore' }
+        { stdio: 'ignore' },
       );
-      // Иначе весь IPv4 идёт в table 100; UDP к TURN/STUN может ломать уже поднятый relay — форсируем main, как для SSH.
-      for (const ip of excludeSet) {
-        try {
-          execSync(
-            `iptables -t mangle -A ${ch} -p udp -d ${ip}/32 -j MARK --set-mark ${mk}`,
-            { stdio: 'ignore' },
-          );
-          execSync(
-            `iptables -t mangle -A ${ch} -p tcp -d ${ip}/32 -j MARK --set-mark ${mk}`,
-            { stdio: 'ignore' },
-          );
-        } catch {
-          /* ignore */
-        }
-      }
       try {
         execSync(`iptables -t mangle -C OUTPUT -j ${ch} 2>/dev/null`, { stdio: 'ignore' });
       } catch {
@@ -588,8 +609,8 @@ export class TunInterface extends EventEmitter {
 
       this._linuxPolicyRoutingActive = true;
       console.log(
-        `[TUN] Linux policy routing: table ${tbl} (default via ${this.name}), `
-        + `fwmark ${LINUX_FWMARK_BYPASS_MAIN} -> main (SSH + TCP/UDP to ${excludeSet.size} infra IPs)`,
+        `[TUN] Linux full tunnel: main 0.0.0.0/1+128.0.0.0/1 via ${this.name}, infra /32 uplink; `
+        + `table ${tbl} = uplink for fwmark ${LINUX_FWMARK_BYPASS_MAIN} (SSH)`,
       );
     } catch (err) {
       console.warn('[TUN] Policy routing setup failed:', err.message);
@@ -608,24 +629,50 @@ export class TunInterface extends EventEmitter {
       execSync(`iptables -t mangle -F ${ch} 2>/dev/null`, { stdio: 'ignore' });
       execSync(`iptables -t mangle -X ${ch} 2>/dev/null`, { stdio: 'ignore' });
     } catch {
-      // ignore
+      /* ignore */
     }
 
-    try {
-      execSync(`ip rule del pref ${LINUX_IP_RULE_PREF_LOOKUP_MESHVPN} 2>/dev/null`, {
-        stdio: 'ignore'
+    for (let i = 0; i < 4; i++) {
+      execSync(`ip rule del pref ${LINUX_IP_RULE_PREF_LOOKUP_MESHVPN_LEGACY} 2>/dev/null`, {
+        stdio: 'ignore',
       });
-      execSync(`ip rule del pref ${LINUX_IP_RULE_PREF_FWMARK_MAIN} 2>/dev/null`, {
-        stdio: 'ignore'
-      });
-    } catch {
-      // ignore
     }
+    for (let i = 0; i < 4; i++) {
+      execSync(`ip rule del pref ${LINUX_IP_RULE_PREF_FWMARK_MAIN} 2>/dev/null`, {
+        stdio: 'ignore',
+      });
+    }
+
+    if (this.name) {
+      try {
+        execSync(`ip route del 0.0.0.0/1 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+      } catch {
+        /* ignore */
+      }
+      try {
+        execSync(`ip route del 128.0.0.0/1 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (Array.isArray(this._linuxMainInfraRoutes)) {
+      for (const ip of this._linuxMainInfraRoutes) {
+        if (ip && IPV4_RE.test(ip)) {
+          try {
+            execSync(`ip route del ${ip}/32 2>/dev/null`, { stdio: 'ignore' });
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    }
+    this._linuxMainInfraRoutes = null;
 
     try {
       execSync(`ip route flush table ${LINUX_RT_TABLE_MESHVPN}`, { stdio: 'ignore' });
     } catch {
-      // ignore
+      /* ignore */
     }
 
     console.log('[TUN] Linux policy routing restored');

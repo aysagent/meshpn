@@ -146,23 +146,23 @@ npm run nat:disable
 
 Подробная документация: [server/nat-setup.md](server/nat-setup.md)
 
-### Client (Linux): full tunnel — policy routing (IPv4)
+### Client (Linux): full tunnel (IPv4)
 
-При `tun.defaultRoute: true` (или если ключ не задан — по умолчанию включён) **клиент Linux** не трогает default в таблице `main`: uplink остаётся как был (`default via …`).
+При `tun.defaultRoute: true` (или если ключ не задан — по умолчанию включён) **клиент Linux** настраивает full tunnel **без** глобального правила `ip rule from all lookup 100` (оно ломало UDP/TURN при переключении маршрутизации).
 
-Вместо этого:
+Схема:
 
-- Отдельная таблица маршрутизации с номером **`100`** (в коде `LINUX_RT_TABLE_MESHVPN`): в ней `default dev <tun>` и маршрут к виртуальной сети mesh (`10.200.0.0/16`), а также маршруты к публичным DNS (`8.8.8.8` и др.) через TUN, чтобы совпадало с подменой `/etc/resolv.conf`.
-- **`ip rule`**: для пакетов с **fwmark `0x1`** — `lookup main` (ответы SSH и исходящий SSH на порт 22 идут через обычный default); для остального IPv4 — `lookup 100`, то есть «интернет» в смысле продукта идёт в TUN.
-- **`iptables -t mangle`**, цепочка **`MESHVPN-BYPASS`**: маркирует исходящий TCP с `--sport 22` / `--dport 22` (состояния conntrack), а также **исходящий TCP и UDP ко всем IPv4 из того же набора, что и bypass в table 100** (signalling/TURN/STUN/exclude), чтобы этот трафик шёл через **`lookup main`**, иначе уже установленный **UDP relay к TURN** после включения `ip rule` может обрываться.
+- В **`main`**: маршруты **`0.0.0.0/1`** и **`128.0.0.0/1`** на **`dev <tun>`** (весь IPv4 попадает в туннель по принципу «две половины»), маршрут к mesh **`10.200.0.0/16`**, узкие **`/32` через uplink** к IPv4 инфраструктуры (signalling/TURN/STUN/exclude) — **длиннее префикса**, чем `/1`, поэтому TURN и STUN идут мимо туннеля; маршруты к резолверам DNS (`8.8.8.8` и др.) через TUN в `main`, совместно с подменой `/etc/resolv.conf`.
+- Таблица **`100`**: только **`default` через uplink** и те же **infra `/32`**, чтобы по **`ip rule fwmark 0x1 lookup 100`** обходить туннель **SSH** (и только он маркируется).
+- **`iptables -t mangle`**, цепочка **`MESHVPN-BYPASS`**: маркирует исходящий TCP с `--sport 22` / `--dport 22` (conntrack), **`fwmark 0x1`** → **`lookup 100`** → физический default.
 
-Узкие маршруты **`/32` через uplink** к IPv4 из конфига (**`signallingServer`**, **`dataServer`**, **`turnServers`**, **`iceServers`**) и из **`tun.excludeFromVPN`** добавляются **в таблицу 100** (не в `main`), чтобы при выборе таблицы 100 трафик к инфраструктуре mesh не уходил в TUN. Для **доменных имён** (в т.ч. в `excludeFromVPN` и в **`SIGNALLING_SERVER`**, если там URL с hostname) выполняется DNS: для каждого имени подтягиваются **все** IPv4 A-записи (`resolve4`), как для публичных STUN. Литеральные IPv4 в конфиге и в exclude добавляются без запроса DNS.
+Для **доменных имён** в конфиге и в **`tun.excludeFromVPN`** выполняется DNS (`resolve4`), как раньше. Литеральные IPv4 добавляются без DNS.
 
 Перехват DNS (`/etc/resolv.conf` и маршруты к резолверам) выполняется **только** при full tunnel на клиенте, **не** на exit-ноде.
 
-**Отложенная policy routing:** при `tun.deferPolicyRoutingUntilWebRtcConnected: true` таблица `100`, `ip rule` и перенос маршрутов DNS в эту таблицу выполняются **после** первого `peer-connected` по WebRTC; до этого остаётся маршрут к префиксу mesh в `main`. По умолчанию `false`. Имеет смысл при диагностике ICE, если поднятие full tunnel до установления WebRTC мешает UDP. Чтобы не рвать уже поднятый TURN/relay, включение table 100 по умолчанию **откладывается на `tun.deferPolicyRoutingDelayMs` миллисекунд** (по умолчанию 3000) после `peer-connected`; `0` — применить сразу, как раньше.
+**Отложенная policy routing:** при `tun.deferPolicyRoutingUntilWebRtcConnected: true` split-маршруты и `ip rule` для fwmark применяются **после** первого `peer-connected` (с задержкой `tun.deferPolicyRoutingDelayMs`, по умолчанию 3000 ms). По умолчанию `false`.
 
-**Конфликты:** таблица `100`, приоритеты правил `100`/`101` и mark `0x1` могут пересечься с Docker, WireGuard (`wg-quick`) или другим VPN — при необходимости проверьте `ip rule list` и `ip route show table 100`.
+**Конфликты:** приоритет правила `fwmark` и mark `0x1` могут пересечься с Docker, WireGuard или другим VPN — проверьте `ip rule list` и `ip route show table 100` / `ip route show`.
 
 **IPv6:** эта схема нацелена на **IPv4**; для SSHv6 и инфраструктуры по IPv6 нужны отдельные правила и таблицы.
 
