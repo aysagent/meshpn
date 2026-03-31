@@ -45,6 +45,42 @@ function convertIceServers(servers, iceMode) {
   return result;
 }
 
+/** Разбор SDP candidate для диагностики Peers:0 / coturn relay (IPv4). */
+function summarizeIceCandidate(candidateStr) {
+  if (!candidateStr || typeof candidateStr !== 'string') {
+    return null;
+  }
+  if (candidateStr.includes('end-of-candidates')) {
+    return null;
+  }
+  const parts = candidateStr.trim().split(/\s+/);
+  let typ = 'unknown';
+  const ti = parts.indexOf('typ');
+  if (ti >= 0 && parts[ti + 1]) {
+    typ = parts[ti + 1];
+  }
+  let ip = '';
+  let port = '';
+  for (let i = 0; i < parts.length; i++) {
+    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(parts[i]) && i + 1 < parts.length && /^\d+$/.test(parts[i + 1])) {
+      ip = parts[i];
+      port = parts[i + 1];
+      break;
+    }
+  }
+  return { typ, ip, port };
+}
+
+function isPrivateIPv4(ip) {
+  if (!ip) return false;
+  const [a, b] = ip.split('.').map(Number);
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 127) return true;
+  return false;
+}
+
 export class WebRTCTransport extends EventEmitter {
   constructor(config = {}) {
     super();
@@ -84,6 +120,9 @@ export class WebRTCTransport extends EventEmitter {
     this._connectionEpoch = new Map();
     /** peerId -> epoch, в котором DC уже был open (onClosed до open при replace не шлём в mesh). */
     this._dcOpenEpoch = new Map();
+
+    /** Логировать локальные/удалённые ICE-кандидаты (typ + addr) — диагностика TURN relay vs private IP. */
+    this.logIceCandidates = config.logIceCandidates !== false;
 
     const hasTurn = this.ndcIceServers.some(s => s.startsWith('turn:') || s.startsWith('turns:'));
 
@@ -133,6 +172,11 @@ export class WebRTCTransport extends EventEmitter {
       }, 10000);
 
       pc.onLocalCandidate((candidate) => {
+        const sum = summarizeIceCandidate(candidate);
+        if (sum && sum.typ === 'relay') {
+          const priv = isPrivateIPv4(sum.ip) ? ' [relay IPv4 looks private — check coturn external-ip]' : '';
+          console.log(`[WebRTC] TURN test relay candidate: ${sum.ip}:${sum.port}${priv}`);
+        }
         if (candidate.includes('typ relay')) {
           hasRelay = true;
           if (!resolved) {
@@ -260,6 +304,15 @@ export class WebRTCTransport extends EventEmitter {
       if (!pc) {
         this._pushPendingIce(peerId, candidateStr, mid);
         return;
+      }
+
+      if (this.logIceCandidates) {
+        const sum = summarizeIceCandidate(candidateStr);
+        if (sum) {
+          console.log(
+            `[WebRTC] ICE remote ${peerId.substring(0, 8)}… typ=${sum.typ} ${sum.ip}:${sum.port}`,
+          );
+        }
       }
 
       pc.addRemoteCandidate(candidateStr, mid);
@@ -427,6 +480,18 @@ export class WebRTCTransport extends EventEmitter {
     pc.onLocalCandidate((candidate, mid) => {
       if (this._connectionEpoch.get(peerId) !== epoch) {
         return;
+      }
+      if (this.logIceCandidates) {
+        const sum = summarizeIceCandidate(candidate);
+        if (sum) {
+          let extra = '';
+          if (sum.typ === 'relay' && isPrivateIPv4(sum.ip)) {
+            extra = ' — если удалённый peer не в этой сети, задайте в coturn external-ip=PUBLIC/PRIVATE';
+          }
+          console.log(
+            `[WebRTC] ICE local ${peerId.substring(0, 8)}… typ=${sum.typ} ${sum.ip}:${sum.port}${extra}`,
+          );
+        }
       }
       this.emit('ice-candidate', peerId, { candidate, mid });
     });
