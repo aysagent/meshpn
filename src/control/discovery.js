@@ -2,6 +2,27 @@ import { EventEmitter } from 'events';
 import { SignallingClient } from './signalling.js';
 import { SessionManager } from '../crypto/session.js';
 
+function sdpByteLength(sdp) {
+  if (sdp == null || typeof sdp !== 'string') {
+    return 0;
+  }
+  return Buffer.byteLength(sdp, 'utf8');
+}
+
+/** Краткое описание trickle для логов signalling (без полного SDP). */
+function summarizeTricklePayload(payload) {
+  if (!payload) {
+    return { mid: '?', typ: '?', end: false };
+  }
+  const mid = payload.mid ?? payload.sdpMid ?? '?';
+  const c = typeof payload === 'string' ? payload : (payload.candidate || '');
+  if (!c || String(c).includes('end-of-candidates')) {
+    return { mid, typ: 'end-of-candidates', end: true };
+  }
+  const m = String(c).match(/\btyp\s+(host|srflx|relay|prflx)\b/);
+  return { mid, typ: m ? m[1] : '?', end: false };
+}
+
 export class PeerDiscovery extends EventEmitter {
   constructor(config) {
     super();
@@ -128,6 +149,12 @@ export class PeerDiscovery extends EventEmitter {
 
   _setupTransportEvents() {
     this.transportManager.on('ice-candidate', (peerId, candidate) => {
+      const s = summarizeTricklePayload(candidate);
+      console.log(
+        `[DISCOVERY] ICE trickle out → ${peerId.substring(0, 8)}… mid=${s.mid} typ=${s.typ}${
+          s.end ? ' (end)' : ''
+        }`,
+      );
       this.signalling.sendSignal(peerId, {
         type: 'ice-candidate',
         candidate
@@ -274,7 +301,10 @@ export class PeerDiscovery extends EventEmitter {
     
     try {
       const offer = await this.transportManager.createWebRTCOffer(peer.nodeId);
-      
+      console.log(
+        `[DISCOVERY] SDP offer out bytes=${sdpByteLength(offer?.sdp)} → ${peer.nodeId.substring(0, 8)}…`,
+      );
+
       this.signalling.sendSignal(peer.nodeId, {
         type: 'offer',
         offer,
@@ -298,9 +328,16 @@ export class PeerDiscovery extends EventEmitter {
         await this._handleAnswer(fromNodeId, signal);
         break;
         
-      case 'ice-candidate':
+      case 'ice-candidate': {
+        const s = summarizeTricklePayload(signal.candidate);
+        console.log(
+          `[DISCOVERY] ICE trickle in ← ${fromNodeId.substring(0, 8)}… mid=${s.mid} typ=${s.typ}${
+            s.end ? ' (end)' : ''
+          }`,
+        );
         await this.transportManager.addIceCandidate(fromNodeId, signal.candidate);
         break;
+      }
         
       case 'session-key':
         this._handleSessionKey(fromNodeId, signal);
@@ -337,7 +374,9 @@ export class PeerDiscovery extends EventEmitter {
   }
 
   async _handleOffer(fromNodeId, signal) {
-    console.log(`[DISCOVERY] Received offer from ${fromNodeId}`);
+    console.log(
+      `[DISCOVERY] Received offer from ${fromNodeId} (SDP bytes=${sdpByteLength(signal.offer?.sdp)})`,
+    );
     
     if (this.transportManager.isConnected(fromNodeId)) {
       const transports = this.transportManager.getAvailableTransports(fromNodeId);
@@ -361,7 +400,10 @@ export class PeerDiscovery extends EventEmitter {
       }
       
       const answer = await this.transportManager.handleWebRTCOffer(fromNodeId, signal.offer);
-      
+      console.log(
+        `[DISCOVERY] SDP answer out bytes=${sdpByteLength(answer?.sdp)} → ${fromNodeId.substring(0, 8)}…`,
+      );
+
       this.signalling.sendSignal(fromNodeId, {
         type: 'answer',
         answer,
@@ -381,7 +423,9 @@ export class PeerDiscovery extends EventEmitter {
   }
 
   async _handleAnswer(fromNodeId, signal) {
-    console.log(`[DISCOVERY] Received answer from ${fromNodeId}`);
+    console.log(
+      `[DISCOVERY] Received answer from ${fromNodeId} (SDP bytes=${sdpByteLength(signal.answer?.sdp)})`,
+    );
     
     try {
       await this.transportManager.handleWebRTCAnswer(fromNodeId, signal.answer);
