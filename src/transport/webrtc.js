@@ -12,6 +12,9 @@ const SCTP_DEFAULTS = {
 
 setSctpSettings(SCTP_DEFAULTS);
 
+/** Ожидание полного ICE gathering перед отправкой offer/answer по сигналингу (SDP с кандидатами). */
+const ICE_GATHERING_TIMEOUT_MS = 15000;
+
 const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' }
@@ -109,7 +112,8 @@ export class WebRTCTransport extends EventEmitter {
     this.connections = new Map();
     this.dataChannels = new Map();
     this.sendBuffers = new Map();
-    this._descriptionResolvers = new Map();
+    /** peerId -> { epoch, resolve, reject, timeoutId, pc } — резолв offer/answer после gathering:complete + localDescription(). */
+    this._sdpAfterGathering = new Map();
     /** После setRemoteDescription можно вызывать addRemoteCandidate (до этого — очередь). */
     this._remoteDescForTrickle = new Set();
     /** peerId -> список { candidateStr, mid } */
@@ -207,15 +211,11 @@ export class WebRTCTransport extends EventEmitter {
     const { pc, epoch } = this._createPeerConnection(peerId);
 
     return new Promise((resolve, reject) => {
-      this._descriptionResolvers.set(peerId, resolve);
+      const timeoutId = setTimeout(() => {
+        this._finishSdpAfterGatheringTimeout(peerId, epoch, pc);
+      }, ICE_GATHERING_TIMEOUT_MS);
 
-      pc.onLocalDescription((sdp, type) => {
-        const resolver = this._descriptionResolvers.get(peerId);
-        if (resolver) {
-          this._descriptionResolvers.delete(peerId);
-          resolver({ type: type.toLowerCase(), sdp });
-        }
-      });
+      this._sdpAfterGathering.set(peerId, { epoch, resolve, reject, timeoutId, pc, kind: 'offer' });
 
       const dcOpts = this._getDcOptions();
       const dc = pc.createDataChannel('mesh-vpn', dcOpts);
@@ -226,16 +226,12 @@ export class WebRTCTransport extends EventEmitter {
   async handleOffer(peerId, offer) {
     const { pc, epoch } = this._createPeerConnection(peerId);
 
-    return new Promise((resolve) => {
-      this._descriptionResolvers.set(peerId, resolve);
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this._finishSdpAfterGatheringTimeout(peerId, epoch, pc);
+      }, ICE_GATHERING_TIMEOUT_MS);
 
-      pc.onLocalDescription((sdp, type) => {
-        const resolver = this._descriptionResolvers.get(peerId);
-        if (resolver) {
-          this._descriptionResolvers.delete(peerId);
-          resolver({ type: type.toLowerCase(), sdp });
-        }
-      });
+      this._sdpAfterGathering.set(peerId, { epoch, resolve, reject, timeoutId, pc, kind: 'answer' });
 
       pc.onDataChannel((dc) => {
         this._setupDataChannel(peerId, dc, epoch);
@@ -244,6 +240,63 @@ export class WebRTCTransport extends EventEmitter {
       pc.setRemoteDescription(offer.sdp, 'Offer');
       this._afterRemoteDescriptionForTrickle(peerId);
     });
+  }
+
+  _finishSdpAfterGatheringTimeout(peerId, epoch, pc) {
+    const entry = this._sdpAfterGathering.get(peerId);
+    if (!entry || entry.epoch !== epoch) {
+      return;
+    }
+    this._sdpAfterGathering.delete(peerId);
+    clearTimeout(entry.timeoutId);
+    const ld = typeof pc.localDescription === 'function' ? pc.localDescription() : null;
+    const sdp = ld?.sdp;
+    const kind = entry.kind || '?';
+    console.warn(
+      `[WebRTC] ${peerId.substring(0, 8)}… ICE gathering timeout (${ICE_GATHERING_TIMEOUT_MS}ms, ${kind}), `
+      + `using localDescription() bytes=${sdp ? Buffer.byteLength(sdp, 'utf8') : 0}`,
+    );
+    if (sdp) {
+      entry.resolve(this._localDescriptionToSignal(ld));
+    } else {
+      entry.reject(new Error(`ICE gathering timeout with no localDescription (${kind})`));
+    }
+  }
+
+  _resolveSdpAfterGathering(peerId, epoch, pc) {
+    const entry = this._sdpAfterGathering.get(peerId);
+    if (!entry || entry.epoch !== epoch) {
+      return;
+    }
+    const ld = typeof pc.localDescription === 'function' ? pc.localDescription() : null;
+    const sdp = ld?.sdp;
+    if (!sdp) {
+      console.error(`[WebRTC] ${peerId.substring(0, 8)}… gathering complete but localDescription() empty`);
+      this._sdpAfterGathering.delete(peerId);
+      clearTimeout(entry.timeoutId);
+      entry.reject(new Error('localDescription() empty after ICE gathering complete'));
+      return;
+    }
+    clearTimeout(entry.timeoutId);
+    this._sdpAfterGathering.delete(peerId);
+    console.log(
+      `[WebRTC] ${peerId.substring(0, 8)}… local SDP after gathering complete (${Buffer.byteLength(sdp, 'utf8')} bytes)`,
+    );
+    entry.resolve(this._localDescriptionToSignal(ld));
+  }
+
+  _localDescriptionToSignal(ld) {
+    const sdp = ld.sdp;
+    let type = 'offer';
+    if (ld.type != null) {
+      const t = String(ld.type).toLowerCase();
+      if (t.includes('answer')) {
+        type = 'answer';
+      } else if (t.includes('offer')) {
+        type = 'offer';
+      }
+    }
+    return { type, sdp };
   }
 
   async handleAnswer(peerId, answer) {
@@ -412,7 +465,12 @@ export class WebRTCTransport extends EventEmitter {
       this.connections.delete(peerId);
     }
 
-    this._descriptionResolvers.delete(peerId);
+    const pendingSdp = this._sdpAfterGathering.get(peerId);
+    if (pendingSdp) {
+      clearTimeout(pendingSdp.timeoutId);
+      this._sdpAfterGathering.delete(peerId);
+      pendingSdp.reject(new Error('Peer connection closed before ICE gathering completed'));
+    }
     this._dcOpenEpoch.delete(peerId);
     this._cancelPeerDisconnectEmit(peerId);
   }
@@ -523,6 +581,9 @@ export class WebRTCTransport extends EventEmitter {
         return;
       }
       console.log(`[WebRTC] ${peerId.substring(0, 8)}… gathering: ${state}`);
+      if (String(state).toLowerCase() === 'complete') {
+        this._resolveSdpAfterGathering(peerId, epoch, pc);
+      }
     });
 
     this.connections.set(peerId, pc);
