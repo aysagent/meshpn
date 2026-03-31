@@ -154,7 +154,7 @@ npm run nat:disable
 
 - Отдельная таблица маршрутизации с номером **`100`** (в коде `LINUX_RT_TABLE_MESHVPN`): в ней `default dev <tun>` и маршрут к виртуальной сети mesh (`10.200.0.0/16`), а также маршруты к публичным DNS (`8.8.8.8` и др.) через TUN, чтобы совпадало с подменой `/etc/resolv.conf`.
 - **`ip rule`**: для пакетов с **fwmark `0x1`** — `lookup main` (ответы SSH и исходящий SSH на порт 22 идут через обычный default); для остального IPv4 — `lookup 100`, то есть «интернет» в смысле продукта идёт в TUN.
-- **`iptables -t mangle`**, цепочка **`MESHVPN-BYPASS`**: маркирует исходящий TCP с `--sport 22` / `--dport 22` (состояния conntrack), чтобы сработало правило `ip rule` выше.
+- **`iptables -t mangle`**, цепочка **`MESHVPN-BYPASS`**: маркирует исходящий TCP с `--sport 22` / `--dport 22` (состояния conntrack), а также **исходящий TCP и UDP ко всем IPv4 из того же набора, что и bypass в table 100** (signalling/TURN/STUN/exclude), чтобы этот трафик шёл через **`lookup main`**, иначе уже установленный **UDP relay к TURN** после включения `ip rule` может обрываться.
 
 Узкие маршруты **`/32` через uplink** к IPv4 из конфига (**`signallingServer`**, **`dataServer`**, **`turnServers`**, **`iceServers`**) и из **`tun.excludeFromVPN`** добавляются **в таблицу 100** (не в `main`), чтобы при выборе таблицы 100 трафик к инфраструктуре mesh не уходил в TUN. Для **доменных имён** (в т.ч. в `excludeFromVPN` и в **`SIGNALLING_SERVER`**, если там URL с hostname) выполняется DNS: для каждого имени подтягиваются **все** IPv4 A-записи (`resolve4`), как для публичных STUN. Литеральные IPv4 в конфиге и в exclude добавляются без запроса DNS.
 

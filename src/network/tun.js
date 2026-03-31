@@ -565,6 +565,21 @@ export class TunInterface extends EventEmitter {
         `iptables -t mangle -A ${ch} -p tcp -m tcp --dport 22 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j MARK --set-mark ${mk}`,
         { stdio: 'ignore' }
       );
+      // Иначе весь IPv4 идёт в table 100; UDP к TURN/STUN может ломать уже поднятый relay — форсируем main, как для SSH.
+      for (const ip of excludeSet) {
+        try {
+          execSync(
+            `iptables -t mangle -A ${ch} -p udp -d ${ip}/32 -j MARK --set-mark ${mk}`,
+            { stdio: 'ignore' },
+          );
+          execSync(
+            `iptables -t mangle -A ${ch} -p tcp -d ${ip}/32 -j MARK --set-mark ${mk}`,
+            { stdio: 'ignore' },
+          );
+        } catch {
+          /* ignore */
+        }
+      }
       try {
         execSync(`iptables -t mangle -C OUTPUT -j ${ch} 2>/dev/null`, { stdio: 'ignore' });
       } catch {
@@ -573,7 +588,8 @@ export class TunInterface extends EventEmitter {
 
       this._linuxPolicyRoutingActive = true;
       console.log(
-        `[TUN] Linux policy routing: table ${tbl} (default via ${this.name}), SSH marked ${LINUX_FWMARK_BYPASS_MAIN} -> main`
+        `[TUN] Linux policy routing: table ${tbl} (default via ${this.name}), `
+        + `fwmark ${LINUX_FWMARK_BYPASS_MAIN} -> main (SSH + TCP/UDP to ${excludeSet.size} infra IPs)`,
       );
     } catch (err) {
       console.warn('[TUN] Policy routing setup failed:', err.message);
