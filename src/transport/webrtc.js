@@ -12,8 +12,17 @@ const SCTP_DEFAULTS = {
 
 setSctpSettings(SCTP_DEFAULTS);
 
-/** Ожидание полного ICE gathering перед отправкой offer/answer по сигналингу (SDP с кандидатами). */
-const ICE_GATHERING_TIMEOUT_MS = 15000;
+/**
+ * Answerer (NAT / Multipass + TURN) часто завершает ICE gathering позже offerer; короткий общий таймаут
+ * мог отправлять answer ~443 B до прихода `gathering: complete`.
+ */
+const ICE_GATHERING_TIMEOUT_OFFER_MS = 45000;
+const ICE_GATHERING_TIMEOUT_ANSWER_MS = 90000;
+/** После срабатывания основного таймера — короткие повторы (гонка с `gathering: complete`). */
+const ICE_GATHERING_GRACE_ROUNDS = 24;
+const ICE_GATHERING_GRACE_MS = 150;
+/** SDP с a=candidate и достаточной длиной vs минимальное описание без кандидатов. */
+const ICE_SDP_MIN_CANDIDATE_BYTES = 480;
 
 const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -112,7 +121,7 @@ export class WebRTCTransport extends EventEmitter {
     this.connections = new Map();
     this.dataChannels = new Map();
     this.sendBuffers = new Map();
-    /** peerId -> { epoch, resolve, reject, timeoutId, pc } — резолв offer/answer после gathering:complete + localDescription(). */
+    /** peerId -> { epoch, resolve, reject, timeoutId, pc, kind, timeoutMs } — резолв offer/answer после gathering:complete + localDescription(). */
     this._sdpAfterGathering = new Map();
     /** После setRemoteDescription можно вызывать addRemoteCandidate (до этого — очередь). */
     this._remoteDescForTrickle = new Set();
@@ -212,10 +221,18 @@ export class WebRTCTransport extends EventEmitter {
 
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
-        this._finishSdpAfterGatheringTimeout(peerId, epoch, pc);
-      }, ICE_GATHERING_TIMEOUT_MS);
+        this._finishSdpAfterGatheringTimeout(peerId, epoch, pc, 0);
+      }, ICE_GATHERING_TIMEOUT_OFFER_MS);
 
-      this._sdpAfterGathering.set(peerId, { epoch, resolve, reject, timeoutId, pc, kind: 'offer' });
+      this._sdpAfterGathering.set(peerId, {
+        epoch,
+        resolve,
+        reject,
+        timeoutId,
+        pc,
+        kind: 'offer',
+        timeoutMs: ICE_GATHERING_TIMEOUT_OFFER_MS,
+      });
 
       const dcOpts = this._getDcOptions();
       const dc = pc.createDataChannel('mesh-vpn', dcOpts);
@@ -228,10 +245,18 @@ export class WebRTCTransport extends EventEmitter {
 
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
-        this._finishSdpAfterGatheringTimeout(peerId, epoch, pc);
-      }, ICE_GATHERING_TIMEOUT_MS);
+        this._finishSdpAfterGatheringTimeout(peerId, epoch, pc, 0);
+      }, ICE_GATHERING_TIMEOUT_ANSWER_MS);
 
-      this._sdpAfterGathering.set(peerId, { epoch, resolve, reject, timeoutId, pc, kind: 'answer' });
+      this._sdpAfterGathering.set(peerId, {
+        epoch,
+        resolve,
+        reject,
+        timeoutId,
+        pc,
+        kind: 'answer',
+        timeoutMs: ICE_GATHERING_TIMEOUT_ANSWER_MS,
+      });
 
       pc.onDataChannel((dc) => {
         this._setupDataChannel(peerId, dc, epoch);
@@ -242,19 +267,63 @@ export class WebRTCTransport extends EventEmitter {
     });
   }
 
-  _finishSdpAfterGatheringTimeout(peerId, epoch, pc) {
+  _sdpLooksCompleteEnough(sdp) {
+    if (!sdp || typeof sdp !== 'string') {
+      return false;
+    }
+    if (!sdp.includes('a=candidate:')) {
+      return false;
+    }
+    return Buffer.byteLength(sdp, 'utf8') >= ICE_SDP_MIN_CANDIDATE_BYTES;
+  }
+
+  _gatheringStateIsComplete(pc) {
+    try {
+      if (typeof pc.gatheringState !== 'function') {
+        return false;
+      }
+      return String(pc.gatheringState()).toLowerCase() === 'complete';
+    } catch {
+      return false;
+    }
+  }
+
+  _finishSdpAfterGatheringTimeout(peerId, epoch, pc, graceRound = 0) {
     const entry = this._sdpAfterGathering.get(peerId);
     if (!entry || entry.epoch !== epoch) {
       return;
     }
-    this._sdpAfterGathering.delete(peerId);
-    clearTimeout(entry.timeoutId);
+
     const ld = typeof pc.localDescription === 'function' ? pc.localDescription() : null;
     const sdp = ld?.sdp;
+    const bytes = sdp ? Buffer.byteLength(sdp, 'utf8') : 0;
     const kind = entry.kind || '?';
+    const tMs = entry.timeoutMs ?? ICE_GATHERING_TIMEOUT_ANSWER_MS;
+
+    if (this._gatheringStateIsComplete(pc) || this._sdpLooksCompleteEnough(sdp)) {
+      clearTimeout(entry.timeoutId);
+      this._sdpAfterGathering.delete(peerId);
+      const reason = this._gatheringStateIsComplete(pc) ? 'state=complete' : 'sdp has a=candidate';
+      console.log(
+        `[WebRTC] ${peerId.substring(0, 8)}… local SDP (${bytes} bytes) [timeout path, grace=${graceRound}, ${reason}]`,
+      );
+      entry.resolve(this._localDescriptionToSignal(ld));
+      return;
+    }
+
+    if (graceRound < ICE_GATHERING_GRACE_ROUNDS) {
+      setTimeout(
+        () => this._finishSdpAfterGatheringTimeout(peerId, epoch, pc, graceRound + 1),
+        ICE_GATHERING_GRACE_MS,
+      );
+      return;
+    }
+
+    this._sdpAfterGathering.delete(peerId);
+    clearTimeout(entry.timeoutId);
     console.warn(
-      `[WebRTC] ${peerId.substring(0, 8)}… ICE gathering timeout (${ICE_GATHERING_TIMEOUT_MS}ms, ${kind}), `
-      + `using localDescription() bytes=${sdp ? Buffer.byteLength(sdp, 'utf8') : 0}`,
+      `[WebRTC] ${peerId.substring(0, 8)}… ICE gathering timeout (${tMs}ms + grace, ${kind}), `
+      + `using localDescription() bytes=${bytes}`,
     );
     if (sdp) {
       entry.resolve(this._localDescriptionToSignal(ld));
