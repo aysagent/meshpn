@@ -146,6 +146,8 @@ export class MeshNode extends EventEmitter {
     this.tunManager = null;
     this.exitNodeHandler = null;
     this.virtualIp = null;
+    /** @type {ReturnType<typeof setTimeout>|null} */
+    this._deferPolicyRoutingTimer = null;
     
     this.natMappings = new Map();
     this.natMappingTimeout = config.natMappingTimeout || 300000;
@@ -416,10 +418,42 @@ export class MeshNode extends EventEmitter {
       console.log(`Peer connected: ${peerId} via ${transport}`);
 
       if (this.isClient && transport === 'webrtc' && this.tunManager) {
-        try {
-          await this.tunManager.applyDeferredPolicyRouting();
-        } catch (err) {
-          console.warn(`[NODE] applyDeferredPolicyRouting: ${err.message}`);
+        const tunCfg = this.config.tun && typeof this.config.tun === 'object' ? this.config.tun : {};
+        if (tunCfg.deferPolicyRoutingUntilWebRtcConnected === true) {
+          const delayMs =
+            typeof tunCfg.deferPolicyRoutingDelayMs === 'number'
+              ? tunCfg.deferPolicyRoutingDelayMs
+              : 3000;
+          if (this._deferPolicyRoutingTimer) {
+            clearTimeout(this._deferPolicyRoutingTimer);
+            this._deferPolicyRoutingTimer = null;
+          }
+          const runApply = () => {
+            this.tunManager.applyDeferredPolicyRouting().catch((err) => {
+              console.warn(`[NODE] applyDeferredPolicyRouting: ${err.message}`);
+            });
+          };
+          if (delayMs <= 0) {
+            try {
+              await this.tunManager.applyDeferredPolicyRouting();
+            } catch (err) {
+              console.warn(`[NODE] applyDeferredPolicyRouting: ${err.message}`);
+            }
+          } else {
+            console.log(
+              `[NODE] Deferred policy routing (table 100) in ${delayMs}ms — letting TURN/WebRTC stabilize first`,
+            );
+            this._deferPolicyRoutingTimer = setTimeout(() => {
+              this._deferPolicyRoutingTimer = null;
+              runApply();
+            }, delayMs);
+          }
+        } else {
+          try {
+            await this.tunManager.applyDeferredPolicyRouting();
+          } catch (err) {
+            console.warn(`[NODE] applyDeferredPolicyRouting: ${err.message}`);
+          }
         }
       }
 
@@ -1308,7 +1342,12 @@ export class MeshNode extends EventEmitter {
 
   async stop() {
     console.log(`Stopping mesh node ${this.nodeId}...`);
-    
+
+    if (this._deferPolicyRoutingTimer) {
+      clearTimeout(this._deferPolicyRoutingTimer);
+      this._deferPolicyRoutingTimer = null;
+    }
+
     this.running = false;
     
     this._stopCacheCleanup();
