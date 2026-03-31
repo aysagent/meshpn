@@ -412,14 +412,22 @@ export class MeshNode extends EventEmitter {
       this.emit('registered', info);
     });
     
-    this.discovery.on('peer-connected', (peerId, transport) => {
+    this.discovery.on('peer-connected', async (peerId, transport) => {
       console.log(`Peer connected: ${peerId} via ${transport}`);
-      
+
+      if (this.isClient && transport === 'webrtc' && this.tunManager) {
+        try {
+          await this.tunManager.applyDeferredPolicyRouting();
+        } catch (err) {
+          console.warn(`[NODE] applyDeferredPolicyRouting: ${err.message}`);
+        }
+      }
+
       const peerInfo = this.discovery.getAllPeers().find(p => p.nodeId === peerId);
       if (peerInfo) {
         this.router.addLocalConnection(peerId, peerInfo);
       }
-      
+
       this._updateMultipathRoutes();
       this._logMeshReachabilityForClient();
       this.emit('peer-connected', peerId);

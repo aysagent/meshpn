@@ -200,6 +200,16 @@ export class TunInterface extends EventEmitter {
     this.defaultRouteEnabled = tunConfig.defaultRoute !== undefined 
       ? tunConfig.defaultRoute 
       : config.defaultRoute !== false;
+    /** Linux client: не ставить table 100 / ip rule до первого WebRTC peer-connected (см. applyDeferredPolicyRouting). */
+    this.deferPolicyRoutingUntilWebRtcConnected =
+      tunConfig.deferPolicyRoutingUntilWebRtcConnected === true
+      || config.deferPolicyRoutingUntilWebRtcConnected === true;
+    /** @type {boolean} */
+    this._policyRoutingDeferred = false;
+    /** @type {string[]|null} */
+    this._deferredInfraIpv4 = null;
+    /** @type {string|null} */
+    this._deferredNetworkPrefix = null;
   }
 
   _findFreeUtunIndex() {
@@ -331,6 +341,8 @@ export class TunInterface extends EventEmitter {
     const networkPrefix = this.virtualIp.split('.').slice(0, 2).join('.');
     const useLinuxPolicyRouting =
       this.platform === 'linux' && !this.isExit && this.defaultRouteEnabled;
+    const deferPolicy =
+      useLinuxPolicyRouting && this.deferPolicyRoutingUntilWebRtcConnected;
 
     if (!useLinuxPolicyRouting) {
       try {
@@ -345,12 +357,66 @@ export class TunInterface extends EventEmitter {
       excludeFromVPN: this.excludedIPs,
     });
 
-    if (useLinuxPolicyRouting) {
+    if (useLinuxPolicyRouting && deferPolicy) {
+      try {
+        execSync(`ip route add ${networkPrefix}.0.0/16 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+        console.log(
+          `[TUN] Route for ${networkPrefix}.0.0/16 via ${this.name} (main); `
+          + 'policy routing deferred until WebRTC peer-connected',
+        );
+      } catch {
+        console.log(`Route for ${networkPrefix}.0.0/16 may already exist`);
+      }
+      this._deferredInfraIpv4 = infraIpv4;
+      this._deferredNetworkPrefix = networkPrefix;
+      this._policyRoutingDeferred = true;
+    } else if (useLinuxPolicyRouting) {
       this._setupLinuxPolicyRouting(infraIpv4, networkPrefix);
     }
 
     if (!this.isExit && this.defaultRouteEnabled) {
-      this._configureDNS(useLinuxPolicyRouting ? LINUX_RT_TABLE_MESHVPN : null);
+      const dnsTable =
+        useLinuxPolicyRouting && !deferPolicy ? LINUX_RT_TABLE_MESHVPN : null;
+      this._configureDNS(dnsTable);
+    }
+  }
+
+  _removeDnsRoutesFromMain() {
+    if (!this.name) {
+      return;
+    }
+    const dnsServers = ['8.8.8.8', '8.8.4.4', '1.1.1.1', '1.0.0.1'];
+    for (const dns of dnsServers) {
+      try {
+        execSync(`ip route del ${dns}/32 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  /**
+   * Фаза B: table 100 + ip rule после установления WebRTC (если включён deferPolicyRoutingUntilWebRtcConnected).
+   */
+  async applyDeferredPolicyRouting() {
+    if (this.platform !== 'linux' || this.isExit || !this._policyRoutingDeferred || !this.name) {
+      return;
+    }
+    const infra = this._deferredInfraIpv4;
+    const prefix = this._deferredNetworkPrefix;
+    if (!prefix) {
+      return;
+    }
+    this._policyRoutingDeferred = false;
+    this._deferredInfraIpv4 = null;
+    this._deferredNetworkPrefix = null;
+
+    console.log('[TUN] Applying deferred Linux policy routing (WebRTC path ready)');
+    this._removeDnsRoutesFromMain();
+    this._setupLinuxPolicyRouting(infra || [], prefix);
+
+    if (!this.isExit && this.defaultRouteEnabled) {
+      this._configureDNS(LINUX_RT_TABLE_MESHVPN);
     }
   }
 
@@ -812,5 +878,12 @@ export class TunManager extends EventEmitter {
 
   getInterfaceName() {
     return this.tun ? this.tun.name : null;
+  }
+
+  /** Linux + defer: вызвать после первого peer-connected по WebRTC. */
+  async applyDeferredPolicyRouting() {
+    if (this.tun) {
+      await this.tun.applyDeferredPolicyRouting();
+    }
   }
 }

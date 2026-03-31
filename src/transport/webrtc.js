@@ -645,6 +645,17 @@ export class WebRTCTransport extends EventEmitter {
       }
     });
 
+    pc.onIceStateChange((iceState) => {
+      if (this._connectionEpoch.get(peerId) !== epoch) {
+        return;
+      }
+      const s = String(iceState);
+      console.log(`[WebRTC] ${peerId.substring(0, 8)}… ICE: ${s}`);
+      if (s.toLowerCase() === 'failed' || s.toLowerCase() === 'disconnected') {
+        this._logIceFailureDiagnostics(peerId, pc);
+      }
+    });
+
     pc.onGatheringStateChange((state) => {
       if (this._connectionEpoch.get(peerId) !== epoch) {
         return;
@@ -657,6 +668,35 @@ export class WebRTCTransport extends EventEmitter {
 
     this.connections.set(peerId, pc);
     return { pc, epoch };
+  }
+
+  _logIceFailureDiagnostics(peerId, pc) {
+    try {
+      let ice = '';
+      try {
+        if (typeof pc.iceState === 'function') {
+          ice = String(pc.iceState());
+        }
+      } catch (e) {
+        ice = `? (${e.message})`;
+      }
+      console.warn(`[WebRTC] ${peerId.substring(0, 8)}… ICE diagnostics: iceState=${ice}`);
+      try {
+        const pair = pc.getSelectedCandidatePair();
+        if (pair?.local && pair?.remote) {
+          console.warn(
+            `[WebRTC] ${peerId.substring(0, 8)}… last candidate pair: local ${pair.local.type} `
+            + `${pair.local.address}:${pair.local.port} <-> remote ${pair.remote.type} ${pair.remote.address}:${pair.remote.port}`,
+          );
+        } else {
+          console.warn(`[WebRTC] ${peerId.substring(0, 8)}… no selected candidate pair at ICE failure`);
+        }
+      } catch (e) {
+        console.warn(`[WebRTC] ${peerId.substring(0, 8)}… getSelectedCandidatePair: ${e.message}`);
+      }
+    } catch (e) {
+      console.warn(`[WebRTC] ${peerId.substring(0, 8)}… ICE diagnostics error: ${e.message}`);
+    }
   }
 
   _logSelectedCandidatePair(peerId, pc) {

@@ -160,6 +160,8 @@ npm run nat:disable
 
 Перехват DNS (`/etc/resolv.conf` и маршруты к резолверам) выполняется **только** при full tunnel на клиенте, **не** на exit-ноде.
 
+**Отложенная policy routing:** при `tun.deferPolicyRoutingUntilWebRtcConnected: true` таблица `100`, `ip rule` и перенос маршрутов DNS в эту таблицу выполняются **после** первого `peer-connected` по WebRTC; до этого остаётся маршрут к префиксу mesh в `main`. По умолчанию `false`. Имеет смысл при диагностике ICE, если поднятие full tunnel до установления WebRTC мешает UDP.
+
 **Конфликты:** таблица `100`, приоритеты правил `100`/`101` и mark `0x1` могут пересечься с Docker, WireGuard (`wg-quick`) или другим VPN — при необходимости проверьте `ip rule list` и `ip route show table 100`.
 
 **IPv6:** эта схема нацелена на **IPv4**; для SSHv6 и инфраструктуры по IPv6 нужны отдельные правила и таблицы.
