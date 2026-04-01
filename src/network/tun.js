@@ -228,7 +228,7 @@ export class TunInterface extends EventEmitter {
     /* TunManager передаёт поля из JSON `tun` развёрнутыми в корень; поддерживаем и `config.tun`. */
     const nestedTun = config.tun && typeof config.tun === 'object' ? { ...config.tun } : {};
     const tunConfig = { ...nestedTun };
-    for (const k of ['defaultRoute', 'excludeFromVPN', 'deferPolicyRoutingDelayMs', 'dnsViaVpn', 'deferDnsAfterPolicyMs', 'linuxSplitDefault']) {
+    for (const k of ['defaultRoute', 'excludeFromVPN', 'deferPolicyRoutingDelayMs', 'dnsViaVpn', 'deferDnsAfterPolicyMs', 'linuxSplitDefault', 'linuxFlushRouteCache']) {
       if (config[k] !== undefined) {
         tunConfig[k] = config[k];
       }
@@ -252,6 +252,8 @@ export class TunInterface extends EventEmitter {
     this._linuxRpFilterBackup = null;
     /** false — не ставить 0.0.0.0/1 и 128.0.0.0/1 в main (диагностика обрыва ICE при full tunnel). */
     this.linuxSplitDefault = tunConfig.linuxSplitDefault !== false;
+    /** После policy routing вызывать `ip route flush cache` (по умолчанию true); false — если ICE падает при корректном `ip route get` к TURN. */
+    this.linuxFlushRouteCache = tunConfig.linuxFlushRouteCache !== false;
     /** Подмена resolv.conf + /32 на публичные DNS; false — только маршруты (диагностика обрыва ICE). */
     this.dnsViaVpn = tunConfig.dnsViaVpn !== false;
     /** мс после успешных маршрутов до _configureDNS; 0 = сразу */
@@ -772,10 +774,14 @@ export class TunInterface extends EventEmitter {
         execSync(`iptables -t mangle -I OUTPUT 1 -j ${ch}`, { stdio: 'ignore' });
       }
 
-      try {
-        execFileSync('ip', ['route', 'flush', 'cache'], { stdio: 'ignore' });
-      } catch {
-        /* ignore */
+      if (this.linuxFlushRouteCache) {
+        try {
+          execFileSync('ip', ['route', 'flush', 'cache'], { stdio: 'ignore' });
+        } catch {
+          /* ignore */
+        }
+      } else {
+        console.log('[TUN] linuxFlushRouteCache=false: пропуск ip route flush cache');
       }
 
       this._linuxRpFilterBackup = applyLooseRpFilterForVpn([iface, this.name], '[TUN]');

@@ -166,6 +166,8 @@ npm run nat:disable
 
 **`tun.linuxSplitDefault`:** по умолчанию **`true`** — в main добавляются обе «половины» default (`0.0.0.0/1` и `128.0.0.0/1` на TUN), и обычный интернет-трафик приложений (`curl`, браузер) уходит в туннель и дальше на exit. Если задать **`false`**, эти маршруты **не** ставятся: остаются только mesh `10.x.0.0/16` на TUN и infra `/32` на uplink — **clearnet через VPN в TUN недоступен** (трафик идёт системным default на uplink). Режим `false` полезен, когда split-default после фазы B рвёт WebRTC/TURN на том же хосте; тогда для снова полного туннеля верните `true` (или уберите ключ) и при необходимости увеличьте `tun.deferPolicyRoutingDelayMs` (например 5000–15000 ms), проверьте `tun.excludeFromVPN`, для DNS через exit включите `tun.dnsViaVpn` (и при желании `tun.deferDnsAfterPolicyMs`).
 
+**`tun.linuxFlushRouteCache`:** по умолчанию **`true`** — после фазы B выполняется `ip route flush cache`. Если при **корректном** `ip route get` к IP TURN (uplink, не tun) ICE всё равно падает через ~30–60 с после фазы B, задайте **`false`** и проверьте стабильность (см. [docs/linux-client-routing.md](docs/linux-client-routing.md)).
+
 **Конфликты:** приоритет правила `fwmark` и mark `0x1` могут пересечься с Docker, WireGuard или другим VPN — проверьте `ip rule list` и `ip route show table 100` / `ip route show`.
 
 **IPv6:** эта схема нацелена на **IPv4**; для SSHv6 и инфраструктуры по IPv6 нужны отдельные правила и таблицы.

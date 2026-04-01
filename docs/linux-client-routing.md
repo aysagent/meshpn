@@ -29,7 +29,7 @@
    - `ip route replace <10.x.0.0/16> dev <tun>`
    - `ip rule add pref … fwmark 0x1 lookup 100`
    - `iptables -t mangle` цепочка `MESHVPN-BYPASS`: MARK для TCP 22
-   - `ip route flush cache`
+   - опционально: **`ip route flush cache`** — если `tun.linuxFlushRouteCache !== false` (по умолчанию выполняется)
    - `rp_filter=2` на uplink и tun ([`linux-rp-filter.js`](../src/network/linux-rp-filter.js))
 4. Если `tun.dnsViaVpn`: `_configureDNS` сразу или через `deferDnsAfterPolicyMs`. Если `dnsViaVpn: false` — **не** вызывать `_configureDNS` (только лог).
 
@@ -53,9 +53,37 @@ sudo tcpdump -ni eth0 udp port 3478
 
 Убедиться, что до/после фазы B есть обмен UDP с TURN.
 
+## ICE падает после фазы B, но `ip route get` к TURN уже через uplink
+
+Если **`ip route get <TURN_IP>`** показывает **eth0** (или другой uplink), а не **tun0**, простой «добавить TURN в exclude» часто уже не причина: таблица **main** для этого dst выглядит верно.
+
+1. **Попробуйте отключить сброс кэша маршрутов** в конфиге клиента:
+
+   ```json
+   "tun": {
+     "linuxFlushRouteCache": false
+   }
+   ```
+
+   Перезапустите узел и проверьте, держится ли WebRTC 10+ минут. Если да — оставьте `false` или сделайте поведение постоянным в коде/доке.
+
+2. **Глубже по UDP** (под root на клиенте, пока peer подключён):
+
+   ```bash
+   ip route get <TURN_IP>
+   ss -uap | head
+   # при наличии conntrack:
+   conntrack -L 2>/dev/null | grep 3478 || true
+   sudo tcpdump -ni eth0 host <TURN_IP> and udp
+   ```
+
+   Нужно увидеть, идут ли пакеты к TURN **после** строки `[TUN] Linux policy routing:` и **до** `ICE failed`. Если поток обрывается — смотреть coturn/фаервол и согласованность relay на обеих сторонах.
+
+3. Если и **`linuxFlushRouteCache: false`** не помогает — фиксируйте вывод tcpdump/conntrack и рассматривайте разделение стека (netns / отдельный процесс для WebRTC), см. общий план отладки в репозитории.
+
 ## Критерии приёмки (ручные)
 
-1. `linuxSplitDefault` не задан или `true`, **Peers: 1** не менее 10 минут после фазы B, нет `WebRTC … state: failed` из-за маршрутов.
+1. `linuxSplitDefault` не задан или `true`, **Peers: 1** не менее 10 минут после фазы B, нет `WebRTC … state: failed` из-за маршрутов. При падении при «правильном» `ip route get` к TURN — проверить сценарий с **`linuxFlushRouteCache: false`**.
 2. `curl -4 ifconfig.me` с клиента показывает **публичный IP exit**, не uplink клиента (при полном туннеле).
 3. Рестарт только клиента или только exit: повторное соединение без спама `Got a remote candidate without ICE transport` и без ложного закрытия нового PC из-за отложенного `peer-leave`.
 
