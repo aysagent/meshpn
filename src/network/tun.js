@@ -377,8 +377,13 @@ export class TunInterface extends EventEmitter {
       this._setupLinuxPolicyRouting(infraIpv4, networkPrefix);
     }
 
-    if (!this.isExit && this.defaultRouteEnabled) {
+    // При defer до WebRTC нельзя слать DNS в tun — маршрута к exit ещё нет (курица и яйцо с ICE).
+    if (!this.isExit && this.defaultRouteEnabled && !deferPolicy) {
       this._configureDNS(null);
+    } else if (deferPolicy) {
+      console.log(
+        '[TUN] DNS через VPN отложен до peer-connected (deferPolicyRoutingUntilWebRtcConnected)',
+      );
     }
   }
 
@@ -408,13 +413,20 @@ export class TunInterface extends EventEmitter {
     if (!prefix) {
       return;
     }
-    this._policyRoutingDeferred = false;
-    this._deferredInfraIpv4 = null;
-    this._deferredNetworkPrefix = null;
 
     console.log('[TUN] Applying deferred Linux policy routing (WebRTC path ready)');
     this._removeDnsRoutesFromMain();
-    this._setupLinuxPolicyRouting(infra || [], prefix);
+    const ok = this._setupLinuxPolicyRouting(infra || [], prefix);
+    if (!ok || !this._linuxPolicyRoutingActive) {
+      console.warn(
+        '[TUN] Deferred full tunnel setup failed; DNS остаётся как до peer-connected, повтор при следующем peer-connected',
+      );
+      return;
+    }
+
+    this._policyRoutingDeferred = false;
+    this._deferredInfraIpv4 = null;
+    this._deferredNetworkPrefix = null;
 
     if (!this.isExit && this.defaultRouteEnabled) {
       this._configureDNS(null);
@@ -513,12 +525,13 @@ export class TunInterface extends EventEmitter {
    * table 100 — только uplink для fwmark (SSH). Без `ip rule from all lookup 100`, чтобы не ломать UDP/TURN.
    * @param {string[]} infraIpv4
    * @param {string} networkPrefix e.g. "10.200"
+   * @returns {boolean}
    */
   _setupLinuxPolicyRouting(infraIpv4, networkPrefix) {
     const uplink = this._parseLinuxDefaultUplink();
     if (!uplink) {
       console.warn('[TUN] Could not parse default route; policy routing not configured');
-      return;
+      return false;
     }
     const { gateway, iface } = uplink;
     const tbl = LINUX_RT_TABLE_MESHVPN;
@@ -612,8 +625,10 @@ export class TunInterface extends EventEmitter {
         `[TUN] Linux full tunnel: main 0.0.0.0/1+128.0.0.0/1 via ${this.name}, infra /32 uplink; `
         + `table ${tbl} = uplink for fwmark ${LINUX_FWMARK_BYPASS_MAIN} (SSH)`,
       );
+      return true;
     } catch (err) {
       console.warn('[TUN] Policy routing setup failed:', err.message);
+      return false;
     }
   }
 
