@@ -56,12 +56,17 @@ export class MeshNode extends EventEmitter {
       preferredOrder: transportPreferredOrder || config.preferredOrder,
     });
     
+    this._tunOpenBarrierPromise = null;
     this.discovery = new PeerDiscovery({
       identity: this.identity,
       transportManager: this.transportManager,
       signallingServer: config.signallingServer,
       transportMode: this.transportMode,
-      dataServer: config.dataServer
+      dataServer: config.dataServer,
+      awaitTunBeforeMesh: async () => {
+        const p = this._tunOpenBarrierPromise;
+        if (p) await p;
+      },
     });
     
     this.router = new MeshRouter({
@@ -400,6 +405,10 @@ export class MeshNode extends EventEmitter {
           });
         }
         
+        let tunBarrierResolve = null;
+        this._tunOpenBarrierPromise = new Promise((r) => {
+          tunBarrierResolve = r;
+        });
         try {
           await this.tunManager.setup(this.virtualIp);
           if (this.isRelay) {
@@ -418,6 +427,11 @@ export class MeshNode extends EventEmitter {
           }
         } catch (err) {
           console.warn('TUN setup failed:', err.message);
+        } finally {
+          try {
+            tunBarrierResolve?.();
+          } catch {}
+          this._tunOpenBarrierPromise = null;
         }
       }
       

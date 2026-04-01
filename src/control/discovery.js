@@ -245,6 +245,9 @@ export class PeerDiscovery extends EventEmitter {
   }
 
   async _initiateConnection(peer) {
+    if (this.config.awaitTunBeforeMesh) {
+      await this.config.awaitTunBeforeMesh();
+    }
     console.log(`[DISCOVERY] Initiating connection to ${peer.nodeId}, myId=${this.identity.nodeId}`);
     
     if (this.pendingConnections.has(peer.nodeId) || 

@@ -242,6 +242,10 @@ export class TunInterface extends EventEmitter {
       : config.defaultRoute !== false;
     /** @type {boolean} */
     this._policyRoutingDeferred = false;
+    /** Infra /32 + table 100 уже на фазе A; split-default отдельно после peer-connected. */
+    this._infraAppliedEarly = false;
+    /** Ожидается только добавление 0.0.0.0/1 и 128.0.0.0/1. */
+    this._splitDefaultOnlyDeferred = false;
     /** @type {string[]|null} */
     this._deferredInfraIpv4 = null;
     /** @type {string|null} */
@@ -479,7 +483,7 @@ export class TunInterface extends EventEmitter {
       excludeFromVPN: this.excludedIPs,
     });
 
-    // Full tunnel нельзя включать при поднятии TUN — гонка с ICE/TURN. Фаза B — после peer-connected.
+    // Split-default откладываем до peer-connected; bypass TURN/infra — до WebRTC (меньше гонок с ICE).
     if (useLinuxPolicyRouting) {
       try {
         execFileSync(
@@ -489,7 +493,7 @@ export class TunInterface extends EventEmitter {
         );
         console.log(
           `[TUN] Route for ${networkPrefix}.0.0/16 via ${this.name} (main); `
-          + 'full tunnel отложен до WebRTC peer-connected',
+          + 'split-default отложен до WebRTC peer-connected',
         );
       } catch {
         console.log(`Route for ${networkPrefix}.0.0/16 may already exist`);
@@ -497,6 +501,21 @@ export class TunInterface extends EventEmitter {
       this._deferredInfraIpv4 = infraIpv4;
       this._deferredNetworkPrefix = networkPrefix;
       this._policyRoutingDeferred = true;
+      try {
+        const earlyOk = this._setupLinuxPolicyRouting(infraIpv4, networkPrefix, {
+          applySplitDefault: false,
+          flushCache: false,
+        });
+        if (earlyOk && this._linuxPolicyRoutingActive) {
+          this._infraAppliedEarly = true;
+          this._splitDefaultOnlyDeferred = this.linuxSplitDefault;
+          console.log(
+            '[TUN] Infra /32 + table 100 до WebRTC; clearnet в tun — после peer-connected (split /1)',
+          );
+        }
+      } catch (e) {
+        console.warn(`[TUN] Ранний infra policy routing не удался: ${e.message}`);
+      }
     }
 
     if (!this.isExit && this.defaultRouteEnabled) {
@@ -569,7 +588,38 @@ export class TunInterface extends EventEmitter {
     } catch (e) {
       console.warn(`[TUN] Повторный resolve infra перед фазой B не удался: ${e.message}`);
     }
-    const ok = this._setupLinuxPolicyRouting(infraForPolicy, prefix);
+
+    let ok = true;
+    if (this._infraAppliedEarly) {
+      if (this._splitDefaultOnlyDeferred && this.linuxSplitDefault) {
+        console.log('[TUN] Добавление split-default (infra уже применена при поднятии TUN)');
+        try {
+          execSync(`ip route replace 0.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
+          execSync(`ip route replace 128.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
+        } catch (err) {
+          console.warn('[TUN] Deferred split-default failed:', err.message);
+          ok = false;
+        }
+        if (this.linuxFlushRouteCache) {
+          try {
+            execFileSync('ip', ['route', 'flush', 'cache'], { stdio: 'ignore' });
+          } catch {
+            /* ignore */
+          }
+        } else {
+          console.log('[TUN] linuxFlushRouteCache=false: пропуск ip route flush cache');
+        }
+      }
+      this._splitDefaultOnlyDeferred = false;
+      if (infraForPolicy.length > 0) {
+        this._diagInfraSnapshot = [...infraForPolicy];
+      }
+    } else {
+      ok = this._setupLinuxPolicyRouting(infraForPolicy, prefix, {
+        applySplitDefault: this.linuxSplitDefault,
+      });
+    }
+
     if (!ok || !this._linuxPolicyRoutingActive) {
       console.warn(
         '[TUN] Deferred full tunnel setup failed; DNS остаётся как до peer-connected, повтор при следующем peer-connected',
@@ -580,7 +630,9 @@ export class TunInterface extends EventEmitter {
     this._policyRoutingDeferred = false;
     this._deferredInfraIpv4 = null;
     this._deferredNetworkPrefix = null;
-    this._diagInfraSnapshot = [...infraForPolicy];
+    if (!this._diagInfraSnapshot || this._diagInfraSnapshot.length === 0) {
+      this._diagInfraSnapshot = [...infraForPolicy];
+    }
 
     if (!this.isExit && this.defaultRouteEnabled) {
       if (!this.dnsViaVpn) {
@@ -734,7 +786,10 @@ export class TunInterface extends EventEmitter {
    * @param {string} networkPrefix e.g. "10.200"
    * @returns {boolean}
    */
-  _setupLinuxPolicyRouting(infraIpv4, networkPrefix) {
+  _setupLinuxPolicyRouting(infraIpv4, networkPrefix, options = {}) {
+    const applySplitDefault = options.applySplitDefault !== false;
+    const flushCache =
+      options.flushCache === undefined ? this.linuxFlushRouteCache : options.flushCache;
     const uplink = this._parseLinuxDefaultUplink();
     if (!uplink) {
       console.warn('[TUN] Could not parse default route; policy routing not configured');
@@ -800,8 +855,12 @@ export class TunInterface extends EventEmitter {
       }
 
       if (this.linuxSplitDefault) {
-        execSync(`ip route replace 0.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
-        execSync(`ip route replace 128.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
+        if (applySplitDefault) {
+          execSync(`ip route replace 0.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
+          execSync(`ip route replace 128.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
+        } else {
+          console.log('[TUN] split-default (0.0.0.0/1) отложен до peer-connected');
+        }
       } else {
         console.log(
           '[TUN] linuxSplitDefault=false: пропуск 0.0.0.0/1 и 128.0.0.0/1 — дефолтный интернет остаётся на uplink',
@@ -840,22 +899,28 @@ export class TunInterface extends EventEmitter {
         execSync(`iptables -t mangle -I OUTPUT 1 -j ${ch}`, { stdio: 'ignore' });
       }
 
-      if (this.linuxFlushRouteCache) {
+      if (flushCache) {
         try {
           execFileSync('ip', ['route', 'flush', 'cache'], { stdio: 'ignore' });
         } catch {
           /* ignore */
         }
-      } else {
+      } else if (!this.linuxFlushRouteCache) {
         console.log('[TUN] linuxFlushRouteCache=false: пропуск ip route flush cache');
       }
 
       this._linuxRpFilterBackup = applyLooseRpFilterForVpn([iface, this.name], '[TUN]');
 
       this._linuxPolicyRoutingActive = true;
-      const splitPart = this.linuxSplitDefault
-        ? `main 0.0.0.0/1+128.0.0.0/1 via ${this.name}, `
-        : 'без split-default в main, ';
+      this._diagInfraSnapshot = Array.from(excludeSet);
+      let splitPart;
+      if (this.linuxSplitDefault) {
+        splitPart = applySplitDefault
+          ? `main 0.0.0.0/1+128.0.0.0/1 via ${this.name}, `
+          : 'split-default отложен, ';
+      } else {
+        splitPart = 'без split-default в main, ';
+      }
       console.log(
         `[TUN] Linux policy routing: ${splitPart}mesh ${networkPrefix}.0.0/16 via ${this.name}, infra /32 uplink; `
         + `table ${tbl} = uplink for fwmark ${LINUX_FWMARK_BYPASS_MAIN} (SSH)`,
@@ -871,6 +936,8 @@ export class TunInterface extends EventEmitter {
     if (!this._linuxPolicyRoutingActive) {
       return;
     }
+    this._infraAppliedEarly = false;
+    this._splitDefaultOnlyDeferred = false;
     this._linuxPolicyRoutingActive = false;
 
     restoreRpFilterBackup(this._linuxRpFilterBackup, '[TUN]');
