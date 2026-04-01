@@ -449,7 +449,7 @@ export class MeshNode extends EventEmitter {
           }
         } else {
           console.log(
-            `[NODE] Full tunnel (split routes + DNS) in ${delayMs}ms after peer-connected`,
+            `[NODE] Full tunnel (split routes; DNS по tun.dnsViaVpn/defer) in ${delayMs}ms after peer-connected`,
           );
           this._deferPolicyRoutingTimer = setTimeout(() => {
             this._deferPolicyRoutingTimer = null;

@@ -242,6 +242,15 @@ export class TunInterface extends EventEmitter {
     this._linuxMainInfraRoutes = null;
     /** @type {Record<string, string>|null} снимок rp_filter до policy routing */
     this._linuxRpFilterBackup = null;
+    /** Подмена resolv.conf + /32 на публичные DNS; false — только маршруты (диагностика обрыва ICE). */
+    this.dnsViaVpn = tunConfig.dnsViaVpn !== false;
+    /** мс после успешных маршрутов до _configureDNS; 0 = сразу */
+    this.deferDnsAfterPolicyMs =
+      typeof tunConfig.deferDnsAfterPolicyMs === 'number' && tunConfig.deferDnsAfterPolicyMs >= 0
+        ? tunConfig.deferDnsAfterPolicyMs
+        : 0;
+    /** @type {ReturnType<typeof setTimeout>|null} */
+    this._deferDnsTimer = null;
   }
 
   _findFreeUtunIndex() {
@@ -424,7 +433,14 @@ export class TunInterface extends EventEmitter {
     }
   }
 
-  _removeDnsRoutesFromMain() {
+  _clearDeferDnsTimer() {
+    if (this._deferDnsTimer != null) {
+      clearTimeout(this._deferDnsTimer);
+      this._deferDnsTimer = null;
+    }
+  }
+
+    _removeDnsRoutesFromMain() {
     if (!this.name) {
       return;
     }
@@ -470,7 +486,22 @@ export class TunInterface extends EventEmitter {
     this._deferredNetworkPrefix = null;
 
     if (!this.isExit && this.defaultRouteEnabled) {
-      this._configureDNS(null);
+      if (!this.dnsViaVpn) {
+        console.log(
+          '[TUN] dnsViaVpn=false: resolv.conf и маршруты к 8.8.8.8/… не меняем — резолв через систему (VPC/resolved)',
+        );
+      } else if (this.deferDnsAfterPolicyMs > 0) {
+        this._clearDeferDnsTimer();
+        console.log(
+          `[TUN] DNS через VPN через ${this.deferDnsAfterPolicyMs}ms после маршрутов`,
+        );
+        this._deferDnsTimer = setTimeout(() => {
+          this._deferDnsTimer = null;
+          this._configureDNS(null);
+        }, this.deferDnsAfterPolicyMs);
+      } else {
+        this._configureDNS(null);
+      }
     }
   }
 
@@ -966,6 +997,7 @@ export class TunInterface extends EventEmitter {
     
     // Restore DNS and routes on Linux
     if (this.platform === 'linux') {
+      this._clearDeferDnsTimer();
       this._restoreLinuxPolicyRouting();
       this._restoreDNS();
     }
