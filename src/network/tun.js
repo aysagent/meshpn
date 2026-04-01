@@ -18,7 +18,8 @@ function isIpv4UplinkBypassSafe(ip) {
     return false;
   }
   if (a === 169 && b === 254) {
-    return false;
+    /* link-local иначе не вешаем пачкой; исключение — IMDS облаков (иначе full tunnel уводит в tun). */
+    return ip === '169.254.169.254';
   }
   if (a === 0 && b === 0) {
     return false;
@@ -595,7 +596,7 @@ export class TunInterface extends EventEmitter {
 
   /**
    * Full tunnel на Linux: split default в main (0.0.0.0/1 и 128.0.0.0/1 → tun), infra /32 → uplink в main;
-   * table 100 — uplink для fwmark (SSH + исходящий UDP/TCP5349 к IP инфраструктуры). Без `from all lookup 100`.
+   * table 100 — uplink для fwmark (SSH). TURN обходится /32+prefsrc в main (без mangle UDP).
    * @param {string[]} infraIpv4
    * @param {string} networkPrefix e.g. "10.200"
    * @returns {boolean}
@@ -632,6 +633,10 @@ export class TunInterface extends EventEmitter {
           continue;
         }
         excludeSet.add(ip);
+      }
+      const cloudImds = '169.254.169.254';
+      if (isIpv4UplinkBypassSafe(cloudImds)) {
+        excludeSet.add(cloudImds);
       }
       this._linuxMainInfraRoutes = [...excludeSet];
 
@@ -681,26 +686,7 @@ export class TunInterface extends EventEmitter {
       }
       execSync(`iptables -t mangle -F ${ch}`, { stdio: 'ignore' });
       const mk = `0x${LINUX_FWMARK_BYPASS_MAIN.toString(16)}`;
-      for (const ip of excludeSet) {
-        if (!IPV4_RE.test(ip)) {
-          continue;
-        }
-        try {
-          execFileSync('iptables', [
-            '-t', 'mangle', '-A', ch, '-p', 'udp', '-d', ip, '-j', 'MARK', '--set-mark', mk,
-          ], { stdio: 'ignore' });
-        } catch {
-          /* ignore */
-        }
-        try {
-          execFileSync('iptables', [
-            '-t', 'mangle', '-A', ch, '-p', 'tcp', '-d', ip, '--dport', '5349',
-            '-j', 'MARK', '--set-mark', mk,
-          ], { stdio: 'ignore' });
-        } catch {
-          /* ignore */
-        }
-      }
+      /* Не маркируем UDP/TURN в mangle: prefsrc + /32 в main достаточно; MARK меняет conntrack/ответный путь и рвёт ICE. */
       execSync(
         `iptables -t mangle -A ${ch} -p tcp -m tcp --sport 22 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j MARK --set-mark ${mk}`,
         { stdio: 'ignore' },
@@ -724,7 +710,7 @@ export class TunInterface extends EventEmitter {
       this._linuxPolicyRoutingActive = true;
       console.log(
         `[TUN] Linux full tunnel: main 0.0.0.0/1+128.0.0.0/1 via ${this.name}, infra /32 uplink; `
-        + `table ${tbl} = uplink for fwmark ${LINUX_FWMARK_BYPASS_MAIN} (SSH + TURN UDP/TCP5349)`,
+        + `table ${tbl} = uplink for fwmark ${LINUX_FWMARK_BYPASS_MAIN} (SSH)`,
       );
       return true;
     } catch (err) {
