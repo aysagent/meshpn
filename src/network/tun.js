@@ -228,7 +228,18 @@ export class TunInterface extends EventEmitter {
     /* TunManager передаёт поля из JSON `tun` развёрнутыми в корень; поддерживаем и `config.tun`. */
     const nestedTun = config.tun && typeof config.tun === 'object' ? { ...config.tun } : {};
     const tunConfig = { ...nestedTun };
-    for (const k of ['defaultRoute', 'excludeFromVPN', 'deferPolicyRoutingDelayMs', 'dnsViaVpn', 'deferDnsAfterPolicyMs', 'linuxSplitDefault', 'linuxFlushRouteCache', 'logRouteDiag']) {
+    for (const k of [
+      'defaultRoute',
+      'excludeFromVPN',
+      'deferPolicyRoutingDelayMs',
+      'dnsViaVpn',
+      'deferDnsAfterPolicyMs',
+      'linuxSplitDefault',
+      'linuxSplitDefaultDelayAfterPeerMs',
+      'linuxFlushRouteCache',
+      'logRouteDiag',
+      'logRouteDiagSs',
+    ]) {
       if (config[k] !== undefined) {
         tunConfig[k] = config[k];
       }
@@ -256,10 +267,18 @@ export class TunInterface extends EventEmitter {
     this._linuxRpFilterBackup = null;
     /** false — не ставить 0.0.0.0/1 и 128.0.0.0/1 в main (диагностика обрыва ICE при full tunnel). */
     this.linuxSplitDefault = tunConfig.linuxSplitDefault !== false;
+    /** мс после первого вызова фазы B — только отложить split /1 (при ранней infra); 0 = сразу. */
+    this.linuxSplitDefaultDelayAfterPeerMs =
+      typeof tunConfig.linuxSplitDefaultDelayAfterPeerMs === 'number' &&
+      tunConfig.linuxSplitDefaultDelayAfterPeerMs > 0
+        ? tunConfig.linuxSplitDefaultDelayAfterPeerMs
+        : 0;
     /** После policy routing вызывать `ip route flush cache` (по умолчанию true); false — если ICE падает при корректном `ip route get` к TURN. */
     this.linuxFlushRouteCache = tunConfig.linuxFlushRouteCache !== false;
     /** true — печатать в лог [TUN-DIAG] вывод `ip route get` / `ip rule` (после фазы B и при обрыве WebRTC на клиенте). */
     this.logRouteDiag = tunConfig.logRouteDiag === true;
+    /** Дополнительно к logRouteDiag: короткий вывод `ss -uap` (UDP сокеты процесса не видны, но слушающие — да). */
+    this.logRouteDiagSs = tunConfig.logRouteDiagSs === true;
     /** Подмена resolv.conf + /32 на публичные DNS; false — только маршруты (диагностика обрыва ICE). */
     this.dnsViaVpn = tunConfig.dnsViaVpn !== false;
     /** мс после успешных маршрутов до _configureDNS; 0 = сразу */
@@ -269,6 +288,8 @@ export class TunInterface extends EventEmitter {
         : 0;
     /** @type {ReturnType<typeof setTimeout>|null} */
     this._deferDnsTimer = null;
+    /** @type {ReturnType<typeof setTimeout>|null} */
+    this._splitDefaultDelayTimer = null;
     /** Последний список infra IPv4 после успешной фазы B — для снимка при disconnect. */
     this._diagInfraSnapshot = [];
   }
@@ -323,6 +344,19 @@ export class TunInterface extends EventEmitter {
       );
     } catch (e) {
       push('ip route show table main', `(ошибка: ${e.message})`);
+    }
+
+    if (this.logRouteDiagSs) {
+      try {
+        const ssOut = execFileSync('ss', ['-uap'], { encoding: 'utf8', maxBuffer: 512 * 1024 });
+        const ssLines = ssOut.trim().split('\n').filter(Boolean);
+        push(
+          'ss -uap (первые 30 строк)',
+          ssLines.slice(0, 30).join('\n'),
+        );
+      } catch (e) {
+        push('ss -uap', `(ошибка: ${e.message})`);
+      }
     }
 
     console.log(`[TUN-DIAG] --- reason=${reason} tun=${this.name} ---`);
@@ -539,6 +573,18 @@ export class TunInterface extends EventEmitter {
     }
   }
 
+  _clearSplitDefaultDelayTimer() {
+    if (this._splitDefaultDelayTimer != null) {
+      clearTimeout(this._splitDefaultDelayTimer);
+      this._splitDefaultDelayTimer = null;
+    }
+  }
+
+  /** Отмена отложенного split-default (peer-disconnected / повтор фазы B). */
+  cancelDeferredSplitDefaultTimer() {
+    this._clearSplitDefaultDelayTimer();
+  }
+
   _removeDnsRoutesFromMain() {
     if (!this.name) {
       return;
@@ -557,76 +603,50 @@ export class TunInterface extends EventEmitter {
     }
   }
 
-  /**
-   * Фаза B: split /1 + table 100 + iptables + DNS после первого peer-connected (WebRTC — с задержкой).
-   */
-  async applyDeferredPolicyRouting() {
-    if (this.platform !== 'linux' || this.isExit || !this._policyRoutingDeferred || !this.name) {
+  _runDeferredSplitDefaultNow(infraForPolicy) {
+    if (!this.running || !this.name || !this._policyRoutingDeferred) {
       return;
     }
-    const infra = this._deferredInfraIpv4;
-    const prefix = this._deferredNetworkPrefix;
-    if (!prefix) {
-      return;
-    }
-
-    console.log('[TUN] Applying deferred Linux policy routing (WebRTC path ready)');
-    this._removeDnsRoutesFromMain();
-    let infraForPolicy = infra || [];
-    try {
-      const fresh = await collectInfraIPv4FromMeshConfigAsync(this.meshVpnConfig || {}, {
-        excludeFromVPN: this.excludedIPs,
-      });
-      if (fresh.length > 0) {
-        infraForPolicy = fresh;
-        if (fresh.length !== (infra || []).length) {
-          console.log(
-            `[TUN] Infra IPv4 пересобран перед фазой B: ${fresh.length} адрес(ов) (STUN/TURN актуальны по DNS)`,
-          );
-        }
-      }
-    } catch (e) {
-      console.warn(`[TUN] Повторный resolve infra перед фазой B не удался: ${e.message}`);
-    }
-
+    console.log(
+      '[TUN] Отложенное добавление split-default (linuxSplitDefaultDelayAfterPeerMs)',
+    );
     let ok = true;
-    if (this._infraAppliedEarly) {
-      if (this._splitDefaultOnlyDeferred && this.linuxSplitDefault) {
-        console.log('[TUN] Добавление split-default (infra уже применена при поднятии TUN)');
-        try {
-          execSync(`ip route replace 0.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
-          execSync(`ip route replace 128.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
-        } catch (err) {
-          console.warn('[TUN] Deferred split-default failed:', err.message);
-          ok = false;
-        }
-        if (this.linuxFlushRouteCache) {
-          try {
-            execFileSync('ip', ['route', 'flush', 'cache'], { stdio: 'ignore' });
-          } catch {
-            /* ignore */
-          }
-        } else {
-          console.log('[TUN] linuxFlushRouteCache=false: пропуск ip route flush cache');
-        }
-      }
-      this._splitDefaultOnlyDeferred = false;
-      if (infraForPolicy.length > 0) {
-        this._diagInfraSnapshot = [...infraForPolicy];
+    try {
+      execSync(`ip route replace 0.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
+      execSync(`ip route replace 128.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
+    } catch (err) {
+      console.warn('[TUN] Deferred split-default failed:', err.message);
+      ok = false;
+    }
+    if (this.linuxFlushRouteCache) {
+      try {
+        execFileSync('ip', ['route', 'flush', 'cache'], { stdio: 'ignore' });
+      } catch {
+        /* ignore */
       }
     } else {
-      ok = this._setupLinuxPolicyRouting(infraForPolicy, prefix, {
-        applySplitDefault: this.linuxSplitDefault,
-      });
+      console.log('[TUN] linuxFlushRouteCache=false: пропуск ip route flush cache');
     }
-
+    this._splitDefaultOnlyDeferred = false;
+    if (infraForPolicy.length > 0) {
+      this._diagInfraSnapshot = [...infraForPolicy];
+    }
     if (!ok || !this._linuxPolicyRoutingActive) {
       console.warn(
-        '[TUN] Deferred full tunnel setup failed; DNS остаётся как до peer-connected, повтор при следующем peer-connected',
+        '[TUN] Deferred split-default не применён; повтор при следующем peer-connected',
       );
       return;
     }
+    this._finalizeDeferredPolicyRoutingTail(
+      infraForPolicy,
+      'after-phase-B-split-default-delayed',
+    );
+  }
 
+  _finalizeDeferredPolicyRoutingTail(
+    infraForPolicy,
+    diagReason = 'after-phase-B-policy-routing',
+  ) {
     this._policyRoutingDeferred = false;
     this._deferredInfraIpv4 = null;
     this._deferredNetworkPrefix = null;
@@ -653,7 +673,102 @@ export class TunInterface extends EventEmitter {
       }
     }
 
-    this.logRoutingDiag('after-phase-B-policy-routing');
+    this.logRoutingDiag(diagReason);
+  }
+
+  /**
+   * Фаза B: split /1 + table 100 + iptables + DNS после первого peer-connected (WebRTC — с задержкой).
+   */
+  async applyDeferredPolicyRouting() {
+    if (this.platform !== 'linux' || this.isExit || !this._policyRoutingDeferred || !this.name) {
+      return;
+    }
+    const infra = this._deferredInfraIpv4;
+    const prefix = this._deferredNetworkPrefix;
+    if (!prefix) {
+      return;
+    }
+
+    this._clearSplitDefaultDelayTimer();
+
+    console.log('[TUN] Applying deferred Linux policy routing (WebRTC path ready)');
+    this._removeDnsRoutesFromMain();
+    let infraForPolicy = infra || [];
+    try {
+      const fresh = await collectInfraIPv4FromMeshConfigAsync(this.meshVpnConfig || {}, {
+        excludeFromVPN: this.excludedIPs,
+      });
+      if (fresh.length > 0) {
+        infraForPolicy = fresh;
+        if (fresh.length !== (infra || []).length) {
+          console.log(
+            `[TUN] Infra IPv4 пересобран перед фазой B: ${fresh.length} адрес(ов) (STUN/TURN актуальны по DNS)`,
+          );
+        }
+      }
+    } catch (e) {
+      console.warn(`[TUN] Повторный resolve infra перед фазой B не удался: ${e.message}`);
+    }
+
+    let ok = true;
+    let splitScheduled = false;
+    if (this._infraAppliedEarly) {
+      if (this._splitDefaultOnlyDeferred && this.linuxSplitDefault) {
+        const extraMs = this.linuxSplitDefaultDelayAfterPeerMs;
+        if (extraMs > 0) {
+          const snap = [...infraForPolicy];
+          console.log(
+            `[TUN] Split-default отложен на ${extraMs}ms (linuxSplitDefaultDelayAfterPeerMs)`,
+          );
+          this._splitDefaultDelayTimer = setTimeout(() => {
+            this._splitDefaultDelayTimer = null;
+            this._runDeferredSplitDefaultNow(snap);
+          }, extraMs);
+          splitScheduled = true;
+        } else {
+          console.log('[TUN] Добавление split-default (infra уже применена при поднятии TUN)');
+          try {
+            execSync(`ip route replace 0.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
+            execSync(`ip route replace 128.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
+          } catch (err) {
+            console.warn('[TUN] Deferred split-default failed:', err.message);
+            ok = false;
+          }
+          if (this.linuxFlushRouteCache) {
+            try {
+              execFileSync('ip', ['route', 'flush', 'cache'], { stdio: 'ignore' });
+            } catch {
+              /* ignore */
+            }
+          } else {
+            console.log('[TUN] linuxFlushRouteCache=false: пропуск ip route flush cache');
+          }
+        }
+      }
+      if (!splitScheduled) {
+        this._splitDefaultOnlyDeferred = false;
+        if (infraForPolicy.length > 0) {
+          this._diagInfraSnapshot = [...infraForPolicy];
+        }
+      }
+    } else {
+      ok = this._setupLinuxPolicyRouting(infraForPolicy, prefix, {
+        applySplitDefault: this.linuxSplitDefault,
+      });
+    }
+
+    if (splitScheduled) {
+      return;
+    }
+
+    if (!ok || !this._linuxPolicyRoutingActive) {
+      console.warn(
+        '[TUN] Deferred full tunnel setup failed; DNS остаётся как до peer-connected, повтор при следующем peer-connected',
+      );
+      return;
+    }
+
+    this._finalizeDeferredPolicyRoutingTail(infraForPolicy);
   }
 
   /**
@@ -1176,6 +1291,7 @@ export class TunInterface extends EventEmitter {
     
     // Restore DNS and routes on Linux
     if (this.platform === 'linux') {
+      this._clearSplitDefaultDelayTimer();
       this._clearDeferDnsTimer();
       this._restoreLinuxPolicyRouting();
       this._restoreDNS();
@@ -1287,6 +1403,13 @@ export class TunManager extends EventEmitter {
   logRoutingDiag(reason) {
     if (this.tun) {
       this.tun.logRoutingDiag(reason);
+    }
+  }
+
+  /** Отмена таймера отложенного split-default при обрыве peer до истечения задержки. */
+  cancelDeferredSplitDefaultTimer() {
+    if (this.tun) {
+      this.tun.cancelDeferredSplitDefaultTimer();
     }
   }
 }
