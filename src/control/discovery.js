@@ -43,28 +43,23 @@ export class PeerDiscovery extends EventEmitter {
     /** Цепочка Promise: сообщения signalling обрабатываются по одному (иначе ICE может прийти до setRemoteDescription). */
     this._signallingWorkChain = Promise.resolve();
 
-    /**
-     * peer-leave от сервера часто гоняется с mesh auto-reconnect (ICE упал, exit шлёт новый offer).
-     * Немедленный close() убивает новый PC. Откладываем leave и снимаем при peer-join / peer-connected.
-     * 450ms мало для ICE (логи: H2_apply срабатывал до peer-connected). Берём запас под offer/answer/ICE.
-     */
+    /** Отложенный peer-leave: не рвать свежий PC; таймер привязан к поколению (_leaveIntentGen). */
     this._peerLeaveDelayMs = 4000;
     /** @type {Map<string, ReturnType<typeof setTimeout>>} */
     this._peerLeaveTimers = new Map();
+    /** Инкремент при clear peer-leave / peer-join / peer-connected — устаревший таймер leave не вызывает close. */
+    this._leaveIntentGen = new Map();
 
-    /**
-     * peer-join после mesh-reconnect приходит через ~1s с тем же nodeId; сразу supersede рвёт свежий offer/ICE (лог H8+H3).
-     * Сбрасываем transport только если pending реально залип (клиент переподключился, а старый handshake безнадёжен).
-     */
+    /** Supersede только «зависший» pending handshake (мс с момента постановки в очередь). */
     this._stalePendingMeshMs = 20000;
 
-    /**
-     * DC падает раньше, чем приходит peer-join после рестарта клиента — мгновенный offer часто ведёт к closed (~12s).
-     * Ждём, чтобы peer-join успел прийти и сам вызвал _initiateConnection; иначе один раз делаем reconnect по таймеру.
-     */
+    /** Задержка перед mesh reconnect после transport peer-disconnected (signalling ещё видит пира). */
     this._meshReconnectDelayMs = 1100;
     /** @type {Map<string, ReturnType<typeof setTimeout>>} */
     this._meshReconnectTimers = new Map();
+
+    /** Ожидаемый hsGen удалённого пира для trickle ICE (см. offer/answer). */
+    this._expectedRemoteIceHsGen = new Map();
   }
 
   _clearMeshReconnectTimer(peerId) {
@@ -81,6 +76,7 @@ export class PeerDiscovery extends EventEmitter {
       clearTimeout(t);
       this._peerLeaveTimers.delete(nodeId);
     }
+    this._leaveIntentGen.set(nodeId, (this._leaveIntentGen.get(nodeId) || 0) + 1);
   }
 
   _enqueueSignallingWork(fn) {
@@ -155,9 +151,11 @@ export class PeerDiscovery extends EventEmitter {
           s.end ? ' (end)' : ''
         }`,
       );
+      const hsGen = this.transportManager.getWebRtcHandshakeGen(peerId);
       this.signalling.sendSignal(peerId, {
         type: 'ice-candidate',
-        candidate
+        candidate,
+        ...(hsGen > 0 ? { hsGen } : {}),
       });
     });
     
@@ -305,12 +303,14 @@ export class PeerDiscovery extends EventEmitter {
         `[DISCOVERY] SDP offer out bytes=${sdpByteLength(offer?.sdp)} → ${peer.nodeId.substring(0, 8)}…`,
       );
 
+      const offerHs = this.transportManager.getWebRtcHandshakeGen(peer.nodeId);
       this.signalling.sendSignal(peer.nodeId, {
         type: 'offer',
         offer,
-        ephemeralPubKey: myEphemeralPubKey
+        ephemeralPubKey: myEphemeralPubKey,
+        ...(offerHs > 0 ? { hsGen: offerHs } : {}),
       });
-      
+
       console.log(`[DISCOVERY] Offer sent to ${peer.nodeId}`);
     } catch (err) {
       console.error(`[DISCOVERY] Failed to create offer for ${peer.nodeId}:`, err.message);
@@ -335,6 +335,17 @@ export class PeerDiscovery extends EventEmitter {
             s.end ? ' (end)' : ''
           }`,
         );
+        const exp = this._expectedRemoteIceHsGen.get(fromNodeId);
+        if (
+          signal.hsGen != null &&
+          exp != null &&
+          signal.hsGen !== exp
+        ) {
+          console.warn(
+            `[DISCOVERY] drop stale ICE ← ${fromNodeId.substring(0, 8)}… hsGen=${signal.hsGen} expected=${exp}`,
+          );
+          break;
+        }
         await this.transportManager.addIceCandidate(fromNodeId, signal.candidate);
         break;
       }
@@ -377,7 +388,13 @@ export class PeerDiscovery extends EventEmitter {
     console.log(
       `[DISCOVERY] Received offer from ${fromNodeId} (SDP bytes=${sdpByteLength(signal.offer?.sdp)})`,
     );
-    
+
+    if (signal.hsGen != null) {
+      this._expectedRemoteIceHsGen.set(fromNodeId, signal.hsGen);
+    } else {
+      this._expectedRemoteIceHsGen.delete(fromNodeId);
+    }
+
     if (this.transportManager.isConnected(fromNodeId)) {
       const transports = this.transportManager.getAvailableTransports(fromNodeId);
       if (transports.includes('websocket')) {
@@ -404,12 +421,14 @@ export class PeerDiscovery extends EventEmitter {
         `[DISCOVERY] SDP answer out bytes=${sdpByteLength(answer?.sdp)} → ${fromNodeId.substring(0, 8)}…`,
       );
 
+      const answerHs = this.transportManager.getWebRtcHandshakeGen(fromNodeId);
       this.signalling.sendSignal(fromNodeId, {
         type: 'answer',
         answer,
-        ephemeralPubKey: myEphemeralPubKey
+        ephemeralPubKey: myEphemeralPubKey,
+        ...(answerHs > 0 ? { hsGen: answerHs } : {}),
       });
-      
+
       console.log(`[DISCOVERY] Answer sent to ${fromNodeId}`);
       
       const sessionKey = this.sessionManager.getSessionKey(fromNodeId);
@@ -426,7 +445,13 @@ export class PeerDiscovery extends EventEmitter {
     console.log(
       `[DISCOVERY] Received answer from ${fromNodeId} (SDP bytes=${sdpByteLength(signal.answer?.sdp)})`,
     );
-    
+
+    if (signal.hsGen != null) {
+      this._expectedRemoteIceHsGen.set(fromNodeId, signal.hsGen);
+    } else {
+      this._expectedRemoteIceHsGen.delete(fromNodeId);
+    }
+
     try {
       await this.transportManager.handleWebRTCAnswer(fromNodeId, signal.answer);
       
@@ -448,8 +473,13 @@ export class PeerDiscovery extends EventEmitter {
   _handlePeerLeave(nodeId) {
     this._clearMeshReconnectTimer(nodeId);
     this._clearPendingPeerLeave(nodeId);
+    const gen = (this._leaveIntentGen.get(nodeId) || 0) + 1;
+    this._leaveIntentGen.set(nodeId, gen);
     const timer = setTimeout(() => {
       this._peerLeaveTimers.delete(nodeId);
+      if (this._leaveIntentGen.get(nodeId) !== gen) {
+        return;
+      }
       this._applyPeerLeave(nodeId);
     }, this._peerLeaveDelayMs);
     this._peerLeaveTimers.set(nodeId, timer);

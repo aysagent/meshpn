@@ -384,8 +384,11 @@ export class MeshNode extends EventEmitter {
       if (needsTun && !this.tunManager) {
         this.tunManager = new TunManager({
           ...(this.config.tun || {}),
+          ...(this.config.tun && typeof this.config.tun === 'object'
+            ? { tun: { ...this.config.tun } }
+            : {}),
           isExit: this.isExit,
-          meshVpnConfig: this.config
+          meshVpnConfig: this.config,
         });
         if (this.isClient) {
           this.tunManager.on('outbound-packet', (packet) => {

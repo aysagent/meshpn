@@ -131,6 +131,8 @@ export class WebRTCTransport extends EventEmitter {
     this._peerDisconnectEmitTimer = new Map();
     /** Монотонный счётчик поколения PC на peerId — игнорируем disconnect от предыдущего PC/DC. */
     this._connectionEpoch = new Map();
+    /** Поколение handshake на peerId — в signalling для отсечения старых ICE после reconnect. */
+    this._handshakeGen = new Map();
     /** peerId -> epoch, в котором DC уже был open (onClosed до open при replace не шлём в mesh). */
     this._dcOpenEpoch = new Map();
 
@@ -584,9 +586,15 @@ export class WebRTCTransport extends EventEmitter {
     }
   }
 
+  getHandshakeGen(peerId) {
+    return this._handshakeGen.get(peerId) ?? 0;
+  }
+
   _createPeerConnection(peerId) {
     const epoch = (this._connectionEpoch.get(peerId) || 0) + 1;
     this._connectionEpoch.set(peerId, epoch);
+    const hsGen = (this._handshakeGen.get(peerId) || 0) + 1;
+    this._handshakeGen.set(peerId, hsGen);
 
     if (this.connections.has(peerId)) {
       this.close(peerId);

@@ -438,7 +438,12 @@ export class TunInterface extends EventEmitter {
       if (!useLinuxPolicyRouting) {
         this._configureDNS(null);
       } else {
-        console.log('[TUN] DNS через VPN отложен до peer-connected (Linux full tunnel)');
+        const dnsNote = this.dnsViaVpn
+          ? 'после фазы B (или deferDnsAfterPolicyMs)'
+          : 'не трогаем (tun.dnsViaVpn=false)';
+        console.log(
+          `[TUN] resolv.conf / маршруты к публичным DNS: ${dnsNote}; фаза B после peer-connected`,
+        );
       }
     }
   }
@@ -450,7 +455,7 @@ export class TunInterface extends EventEmitter {
     }
   }
 
-    _removeDnsRoutesFromMain() {
+  _removeDnsRoutesFromMain() {
     if (!this.name) {
       return;
     }
@@ -483,7 +488,23 @@ export class TunInterface extends EventEmitter {
 
     console.log('[TUN] Applying deferred Linux policy routing (WebRTC path ready)');
     this._removeDnsRoutesFromMain();
-    const ok = this._setupLinuxPolicyRouting(infra || [], prefix);
+    let infraForPolicy = infra || [];
+    try {
+      const fresh = await collectInfraIPv4FromMeshConfigAsync(this.meshVpnConfig || {}, {
+        excludeFromVPN: this.excludedIPs,
+      });
+      if (fresh.length > 0) {
+        infraForPolicy = fresh;
+        if (fresh.length !== (infra || []).length) {
+          console.log(
+            `[TUN] Infra IPv4 пересобран перед фазой B: ${fresh.length} адрес(ов) (STUN/TURN актуальны по DNS)`,
+          );
+        }
+      }
+    } catch (e) {
+      console.warn(`[TUN] Повторный resolve infra перед фазой B не удался: ${e.message}`);
+    }
+    const ok = this._setupLinuxPolicyRouting(infraForPolicy, prefix);
     if (!ok || !this._linuxPolicyRoutingActive) {
       console.warn(
         '[TUN] Deferred full tunnel setup failed; DNS остаётся как до peer-connected, повтор при следующем peer-connected',

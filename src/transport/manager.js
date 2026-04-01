@@ -129,6 +129,12 @@ export class TransportManager extends EventEmitter {
     }
   }
 
+  /** Поколение WebRTC-handshake для peer (для поля hsGen в signalling). */
+  getWebRtcHandshakeGen(peerId) {
+    const webrtc = this.transports.get('webrtc');
+    return webrtc?.getHandshakeGen?.(peerId) ?? 0;
+  }
+
   send(peerId, data, preferredTransport = null) {
     const transports = this.peerTransports.get(peerId);
     if (!transports || transports.size === 0) {

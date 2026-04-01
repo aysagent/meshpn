@@ -162,6 +162,8 @@ npm run nat:disable
 
 **Порядок включения full tunnel (Linux + WebRTC):** mesh-маршрут `10.x.0.0/16` через TUN поднимается сразу; split-маршруты `0.0.0.0/1` + `128.0.0.0/1`, таблица `100`, `iptables` и подмена DNS применяются **после** первого `peer-connected` по WebRTC, с задержкой `tun.deferPolicyRoutingDelayMs` (по умолчанию 3000 ms), чтобы не гоняться с ICE/TURN. До фазы B `/etc/resolv.conf` и маршруты к публичным DNS через tun **не** трогаются. Для транспорта не WebRTC (например WebSocket) фаза B выполняется сразу при `peer-connected`.
 
+Подробно (фазы A/B, список `ip`/`iptables`, протокол `ip route get` / tcpdump, ручные критерии приёмки): [docs/linux-client-routing.md](docs/linux-client-routing.md).
+
 **`tun.linuxSplitDefault`:** по умолчанию **`true`** — в main добавляются обе «половины» default (`0.0.0.0/1` и `128.0.0.0/1` на TUN), и обычный интернет-трафик приложений (`curl`, браузер) уходит в туннель и дальше на exit. Если задать **`false`**, эти маршруты **не** ставятся: остаются только mesh `10.x.0.0/16` на TUN и infra `/32` на uplink — **clearnet через VPN в TUN недоступен** (трафик идёт системным default на uplink). Режим `false` полезен, когда split-default после фазы B рвёт WebRTC/TURN на том же хосте; тогда для снова полного туннеля верните `true` (или уберите ключ) и при необходимости увеличьте `tun.deferPolicyRoutingDelayMs` (например 5000–15000 ms), проверьте `tun.excludeFromVPN`, для DNS через exit включите `tun.dnsViaVpn` (и при желании `tun.deferDnsAfterPolicyMs`).
 
 **Конфликты:** приоритет правила `fwmark` и mark `0x1` могут пересечься с Docker, WireGuard или другим VPN — проверьте `ip rule list` и `ip route show table 100` / `ip route show`.
