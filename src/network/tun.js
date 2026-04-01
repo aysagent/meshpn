@@ -5,6 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { applyLooseRpFilterForVpn, restoreRpFilterBackup } from './linux-rp-filter.js';
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 
@@ -239,6 +240,8 @@ export class TunInterface extends EventEmitter {
     this._deferredNetworkPrefix = null;
     /** @type {string[]|null} IPv4 /32, добавленные в main как infra bypass (снять в restore). */
     this._linuxMainInfraRoutes = null;
+    /** @type {Record<string, string>|null} снимок rp_filter до policy routing */
+    this._linuxRpFilterBackup = null;
   }
 
   _findFreeUtunIndex() {
@@ -707,6 +710,8 @@ export class TunInterface extends EventEmitter {
         /* ignore */
       }
 
+      this._linuxRpFilterBackup = applyLooseRpFilterForVpn([iface, this.name], '[TUN]');
+
       this._linuxPolicyRoutingActive = true;
       console.log(
         `[TUN] Linux full tunnel: main 0.0.0.0/1+128.0.0.0/1 via ${this.name}, infra /32 uplink; `
@@ -724,6 +729,9 @@ export class TunInterface extends EventEmitter {
       return;
     }
     this._linuxPolicyRoutingActive = false;
+
+    restoreRpFilterBackup(this._linuxRpFilterBackup, '[TUN]');
+    this._linuxRpFilterBackup = null;
 
     const ch = IPTABLES_CHAIN_MESHVPN;
     try {

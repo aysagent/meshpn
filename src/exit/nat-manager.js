@@ -2,6 +2,7 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { applyLooseRpFilterForVpn, restoreRpFilterBackup } from '../network/linux-rp-filter.js';
 
 const BACKUP_DIR = path.join(os.homedir(), '.mesh-vpn-backup');
 
@@ -13,6 +14,8 @@ export class NATManager {
     this.tunInterface = null;
     this.externalInterface = null;
     this.backupCreated = false;
+    /** @type {Record<string, string>|null} */
+    this._rpFilterBackup = null;
   }
 
   _detectExternalInterface() {
@@ -154,6 +157,11 @@ export class NATManager {
       execSync('sudo iptables -A FORWARD -o tun+ -j ACCEPT');
       console.log('[NAT] FORWARD tun+ output rule added');
     }
+
+    this._rpFilterBackup = applyLooseRpFilterForVpn(
+      [this.externalInterface, this.tunInterface],
+      '[NAT]',
+    );
   }
 
   async _enableMacOS() {
@@ -235,6 +243,9 @@ export class NATManager {
   }
 
   async _disableLinux() {
+    restoreRpFilterBackup(this._rpFilterBackup, '[NAT]');
+    this._rpFilterBackup = null;
+
     const extIface = this.externalInterface || this._readBackupFile('interface');
 
     if (extIface) {
