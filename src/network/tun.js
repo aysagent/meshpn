@@ -545,25 +545,57 @@ export class TunInterface extends EventEmitter {
     return null;
   }
 
-  _ipRouteAddMeshvpnTableBypass(ip, gateway, iface, tableId) {
-    const args =
-      gateway != null
-        ? ['route', 'add', `${ip}/32`, 'via', gateway, 'dev', iface, 'table', String(tableId)]
-        : ['route', 'add', `${ip}/32`, 'dev', iface, 'table', String(tableId)];
+  /**
+   * Предпочтительный IPv4 source на uplink до split-default (после tun0 ядро может выбрать 10.x с tun
+   * для исходящего UDP к TURN — ICE рвётся).
+   * @param {string} iface
+   * @returns {string|null}
+   */
+  _parseLinuxPreferredUplinkSrc(iface) {
+    if (!iface) {
+      return null;
+    }
+    try {
+      const out = execFileSync('ip', ['-4', 'route', 'get', '8.8.8.8'], {
+        encoding: 'utf8',
+      });
+      if (!out.includes(`dev ${iface}`)) {
+        return null;
+      }
+      const m = out.match(/\bsrc\s+(\d{1,3}(?:\.\d{1,3}){3})\b/);
+      return m ? m[1] : null;
+    } catch {
+      return null;
+    }
+  }
+
+  _ipRouteAddMeshvpnTableBypass(ip, gateway, iface, tableId, src = null) {
+    const args = ['route', 'add', `${ip}/32`];
+    if (gateway != null) {
+      args.push('via', gateway);
+    }
+    args.push('dev', iface, 'table', String(tableId));
+    if (src) {
+      args.push('src', src);
+    }
     execFileSync('ip', args, { stdio: 'ignore' });
   }
 
-  _ipRouteReplaceMainUplink32(ip, gateway, iface) {
-    const spec =
-      gateway != null
-        ? `${ip}/32 via ${gateway} dev ${iface}`
-        : `${ip}/32 dev ${iface}`;
-    execSync(`ip route replace ${spec}`, { stdio: 'ignore' });
+  _ipRouteReplaceMainUplink32(ip, gateway, iface, src = null) {
+    const args = ['route', 'replace', `${ip}/32`];
+    if (gateway != null) {
+      args.push('via', gateway);
+    }
+    args.push('dev', iface);
+    if (src) {
+      args.push('src', src);
+    }
+    execFileSync('ip', args, { stdio: 'ignore' });
   }
 
   /**
    * Full tunnel на Linux: split default в main (0.0.0.0/1 и 128.0.0.0/1 → tun), infra /32 → uplink в main;
-   * table 100 — только uplink для fwmark (SSH). Без `ip rule from all lookup 100`, чтобы не ломать UDP/TURN.
+   * table 100 — uplink для fwmark (SSH + исходящий UDP/TCP5349 к IP инфраструктуры). Без `from all lookup 100`.
    * @param {string[]} infraIpv4
    * @param {string} networkPrefix e.g. "10.200"
    * @returns {boolean}
@@ -576,6 +608,10 @@ export class TunInterface extends EventEmitter {
     }
     const { gateway, iface } = uplink;
     const tbl = LINUX_RT_TABLE_MESHVPN;
+    const prefsrc = this._parseLinuxPreferredUplinkSrc(iface);
+    if (prefsrc) {
+      console.log(`[TUN] Infra /32 prefsrc=${prefsrc} (uplink ${iface})`);
+    }
 
     try {
       flushIpRulePref(LINUX_IP_RULE_PREF_LOOKUP_MESHVPN_LEGACY);
@@ -601,7 +637,7 @@ export class TunInterface extends EventEmitter {
 
       for (const ip of excludeSet) {
         try {
-          this._ipRouteAddMeshvpnTableBypass(ip, gateway, iface, tbl);
+          this._ipRouteAddMeshvpnTableBypass(ip, gateway, iface, tbl, prefsrc);
         } catch {
           /* ignore */
         }
@@ -618,7 +654,7 @@ export class TunInterface extends EventEmitter {
 
       for (const ip of excludeSet) {
         try {
-          this._ipRouteReplaceMainUplink32(ip, gateway, iface);
+          this._ipRouteReplaceMainUplink32(ip, gateway, iface, prefsrc);
           console.log(`[TUN] Main bypass /32 (uplink) for infra: ${ip}`);
         } catch {
           /* ignore */
@@ -645,6 +681,26 @@ export class TunInterface extends EventEmitter {
       }
       execSync(`iptables -t mangle -F ${ch}`, { stdio: 'ignore' });
       const mk = `0x${LINUX_FWMARK_BYPASS_MAIN.toString(16)}`;
+      for (const ip of excludeSet) {
+        if (!IPV4_RE.test(ip)) {
+          continue;
+        }
+        try {
+          execFileSync('iptables', [
+            '-t', 'mangle', '-A', ch, '-p', 'udp', '-d', ip, '-j', 'MARK', '--set-mark', mk,
+          ], { stdio: 'ignore' });
+        } catch {
+          /* ignore */
+        }
+        try {
+          execFileSync('iptables', [
+            '-t', 'mangle', '-A', ch, '-p', 'tcp', '-d', ip, '--dport', '5349',
+            '-j', 'MARK', '--set-mark', mk,
+          ], { stdio: 'ignore' });
+        } catch {
+          /* ignore */
+        }
+      }
       execSync(
         `iptables -t mangle -A ${ch} -p tcp -m tcp --sport 22 -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j MARK --set-mark ${mk}`,
         { stdio: 'ignore' },
@@ -659,10 +715,16 @@ export class TunInterface extends EventEmitter {
         execSync(`iptables -t mangle -I OUTPUT 1 -j ${ch}`, { stdio: 'ignore' });
       }
 
+      try {
+        execFileSync('ip', ['route', 'flush', 'cache'], { stdio: 'ignore' });
+      } catch {
+        /* ignore */
+      }
+
       this._linuxPolicyRoutingActive = true;
       console.log(
         `[TUN] Linux full tunnel: main 0.0.0.0/1+128.0.0.0/1 via ${this.name}, infra /32 uplink; `
-        + `table ${tbl} = uplink for fwmark ${LINUX_FWMARK_BYPASS_MAIN} (SSH)`,
+        + `table ${tbl} = uplink for fwmark ${LINUX_FWMARK_BYPASS_MAIN} (SSH + TURN UDP/TCP5349)`,
       );
       return true;
     } catch (err) {
