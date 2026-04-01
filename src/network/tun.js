@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { spawn, execSync } from 'child_process';
+import { spawn, execSync, execFileSync } from 'child_process';
 import { promises as dnsPromises } from 'dns';
 import fs from 'fs';
 import os from 'os';
@@ -16,6 +16,17 @@ const LINUX_IP_RULE_PREF_FWMARK_MAIN = 100;
 /** Старые установки (глобальный lookup 100): удалять при настройке/restore. */
 const LINUX_IP_RULE_PREF_LOOKUP_MESHVPN_LEGACY = 101;
 const IPTABLES_CHAIN_MESHVPN = 'MESHVPN-BYPASS';
+
+/** Без shell строка `… 2>/dev/null` попадает в argv ip и ломает команду; при отсутствии правила ip завершается с ошибкой. */
+function flushIpRulePref(pref, maxAttempts = 6) {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      execFileSync('ip', ['rule', 'del', 'pref', String(pref)], { stdio: 'ignore' });
+    } catch {
+      break;
+    }
+  }
+}
 
 /**
  * Hostnames / URL-like strings from mesh config (signalling, TURN, ICE).
@@ -337,7 +348,11 @@ export class TunInterface extends EventEmitter {
   }
 
   async _configureLinuxTunAsync() {
-    execSync(`ip addr add ${this.virtualIp}/16 dev ${this.name} 2>/dev/null || true`, { stdio: 'ignore' });
+    try {
+      execFileSync('ip', ['addr', 'add', `${this.virtualIp}/16`, 'dev', this.name], { stdio: 'ignore' });
+    } catch {
+      /* адрес мог быть добавлен ранее */
+    }
     execSync(`ip link set dev ${this.name} mtu ${this.mtu}`);
     execSync(`ip link set dev ${this.name} up`);
 
@@ -349,7 +364,11 @@ export class TunInterface extends EventEmitter {
 
     if (!useLinuxPolicyRouting) {
       try {
-        execSync(`ip route add ${networkPrefix}.0.0/16 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+        execFileSync(
+          'ip',
+          ['route', 'add', `${networkPrefix}.0.0/16`, 'dev', this.name],
+          { stdio: 'ignore' },
+        );
         console.log(`Added route for ${networkPrefix}.0.0/16 via ${this.name}`);
       } catch {
         console.log(`Route for ${networkPrefix}.0.0/16 may already exist`);
@@ -362,7 +381,11 @@ export class TunInterface extends EventEmitter {
 
     if (useLinuxPolicyRouting && deferPolicy) {
       try {
-        execSync(`ip route add ${networkPrefix}.0.0/16 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+        execFileSync(
+          'ip',
+          ['route', 'add', `${networkPrefix}.0.0/16`, 'dev', this.name],
+          { stdio: 'ignore' },
+        );
         console.log(
           `[TUN] Route for ${networkPrefix}.0.0/16 via ${this.name} (main); `
           + 'policy routing deferred until WebRTC peer-connected',
@@ -394,7 +417,11 @@ export class TunInterface extends EventEmitter {
     const dnsServers = ['8.8.8.8', '8.8.4.4', '1.1.1.1', '1.0.0.1'];
     for (const dns of dnsServers) {
       try {
-        execSync(`ip route del ${dns}/32 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+        execFileSync(
+          'ip',
+          ['route', 'del', `${dns}/32`, 'dev', this.name],
+          { stdio: 'ignore' },
+        );
       } catch {
         /* ignore */
       }
@@ -444,7 +471,11 @@ export class TunInterface extends EventEmitter {
     try {
       for (const dns of dnsServers) {
         try {
-          execSync(`ip route add ${dns}/32 dev ${this.name}${tableSuffix} 2>/dev/null`, { stdio: 'ignore' });
+          const dnsArgs =
+            linuxRouteTable != null
+              ? ['route', 'add', `${dns}/32`, 'dev', this.name, 'table', String(linuxRouteTable)]
+              : ['route', 'add', `${dns}/32`, 'dev', this.name];
+          execFileSync('ip', dnsArgs, { stdio: 'ignore' });
         } catch {
           // Route may already exist
         }
@@ -505,11 +536,11 @@ export class TunInterface extends EventEmitter {
   }
 
   _ipRouteAddMeshvpnTableBypass(ip, gateway, iface, tableId) {
-    const spec =
+    const args =
       gateway != null
-        ? `${ip}/32 via ${gateway} dev ${iface} table ${tableId}`
-        : `${ip}/32 dev ${iface} table ${tableId}`;
-    execSync(`ip route add ${spec} 2>/dev/null`, { stdio: 'ignore' });
+        ? ['route', 'add', `${ip}/32`, 'via', gateway, 'dev', iface, 'table', String(tableId)]
+        : ['route', 'add', `${ip}/32`, 'dev', iface, 'table', String(tableId)];
+    execFileSync('ip', args, { stdio: 'ignore' });
   }
 
   _ipRouteReplaceMainUplink32(ip, gateway, iface) {
@@ -537,16 +568,8 @@ export class TunInterface extends EventEmitter {
     const tbl = LINUX_RT_TABLE_MESHVPN;
 
     try {
-      for (let i = 0; i < 4; i++) {
-        execSync(`ip rule del pref ${LINUX_IP_RULE_PREF_LOOKUP_MESHVPN_LEGACY} 2>/dev/null`, {
-          stdio: 'ignore',
-        });
-      }
-      for (let i = 0; i < 4; i++) {
-        execSync(`ip rule del pref ${LINUX_IP_RULE_PREF_FWMARK_MAIN} 2>/dev/null`, {
-          stdio: 'ignore',
-        });
-      }
+      flushIpRulePref(LINUX_IP_RULE_PREF_LOOKUP_MESHVPN_LEGACY);
+      flushIpRulePref(LINUX_IP_RULE_PREF_FWMARK_MAIN);
 
       try {
         execSync(`ip route flush table ${tbl}`, { stdio: 'ignore' });
@@ -600,7 +623,7 @@ export class TunInterface extends EventEmitter {
 
       const ch = IPTABLES_CHAIN_MESHVPN;
       try {
-        execSync(`iptables -t mangle -N ${ch} 2>/dev/null`, { stdio: 'ignore' });
+        execFileSync('iptables', ['-t', 'mangle', '-N', ch], { stdio: 'ignore' });
       } catch {
         /* exists */
       }
@@ -615,7 +638,7 @@ export class TunInterface extends EventEmitter {
         { stdio: 'ignore' },
       );
       try {
-        execSync(`iptables -t mangle -C OUTPUT -j ${ch} 2>/dev/null`, { stdio: 'ignore' });
+        execFileSync('iptables', ['-t', 'mangle', '-C', 'OUTPUT', '-j', ch], { stdio: 'ignore' });
       } catch {
         execSync(`iptables -t mangle -I OUTPUT 1 -j ${ch}`, { stdio: 'ignore' });
       }
@@ -640,32 +663,44 @@ export class TunInterface extends EventEmitter {
 
     const ch = IPTABLES_CHAIN_MESHVPN;
     try {
-      execSync(`iptables -t mangle -D OUTPUT -j ${ch} 2>/dev/null`, { stdio: 'ignore' });
-      execSync(`iptables -t mangle -F ${ch} 2>/dev/null`, { stdio: 'ignore' });
-      execSync(`iptables -t mangle -X ${ch} 2>/dev/null`, { stdio: 'ignore' });
-    } catch {
-      /* ignore */
-    }
-
-    for (let i = 0; i < 4; i++) {
-      execSync(`ip rule del pref ${LINUX_IP_RULE_PREF_LOOKUP_MESHVPN_LEGACY} 2>/dev/null`, {
-        stdio: 'ignore',
-      });
-    }
-    for (let i = 0; i < 4; i++) {
-      execSync(`ip rule del pref ${LINUX_IP_RULE_PREF_FWMARK_MAIN} 2>/dev/null`, {
-        stdio: 'ignore',
-      });
-    }
-
-    if (this.name) {
       try {
-        execSync(`ip route del 0.0.0.0/1 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+        execFileSync('iptables', ['-t', 'mangle', '-D', 'OUTPUT', '-j', ch], { stdio: 'ignore' });
       } catch {
         /* ignore */
       }
       try {
-        execSync(`ip route del 128.0.0.0/1 dev ${this.name} 2>/dev/null`, { stdio: 'ignore' });
+        execFileSync('iptables', ['-t', 'mangle', '-F', ch], { stdio: 'ignore' });
+      } catch {
+        /* ignore */
+      }
+      try {
+        execFileSync('iptables', ['-t', 'mangle', '-X', ch], { stdio: 'ignore' });
+      } catch {
+        /* ignore */
+      }
+    } catch {
+      /* ignore */
+    }
+
+    flushIpRulePref(LINUX_IP_RULE_PREF_LOOKUP_MESHVPN_LEGACY);
+    flushIpRulePref(LINUX_IP_RULE_PREF_FWMARK_MAIN);
+
+    if (this.name) {
+      try {
+        execFileSync(
+          'ip',
+          ['route', 'del', '0.0.0.0/1', 'dev', this.name],
+          { stdio: 'ignore' },
+        );
+      } catch {
+        /* ignore */
+      }
+      try {
+        execFileSync(
+          'ip',
+          ['route', 'del', '128.0.0.0/1', 'dev', this.name],
+          { stdio: 'ignore' },
+        );
       } catch {
         /* ignore */
       }
@@ -675,7 +710,7 @@ export class TunInterface extends EventEmitter {
       for (const ip of this._linuxMainInfraRoutes) {
         if (ip && IPV4_RE.test(ip)) {
           try {
-            execSync(`ip route del ${ip}/32 2>/dev/null`, { stdio: 'ignore' });
+            execFileSync('ip', ['route', 'del', `${ip}/32`], { stdio: 'ignore' });
           } catch {
             /* ignore */
           }
