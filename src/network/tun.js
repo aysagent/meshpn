@@ -8,6 +8,24 @@ import { fileURLToPath } from 'url';
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 
+/** Не вешать /32 на uplink: loopback из `localhost` в signalling и link-local ломают маршрутизацию. */
+function isIpv4UplinkBypassSafe(ip) {
+  if (!ip || !IPV4_RE.test(ip)) {
+    return false;
+  }
+  const [a, b] = ip.split('.').map(Number);
+  if (a === 127) {
+    return false;
+  }
+  if (a === 169 && b === 254) {
+    return false;
+  }
+  if (a === 0 && b === 0) {
+    return false;
+  }
+  return true;
+}
+
 /** Table 100: uplink-only для fwmark (SSH). Остальной IPv4 — `main` (split /1 → tun), без глобального `from all lookup 100`. */
 const LINUX_RT_TABLE_MESHVPN = 100;
 const LINUX_FWMARK_BYPASS_MAIN = 0x1;
@@ -579,7 +597,13 @@ export class TunInterface extends EventEmitter {
 
       const excludeSet = new Set();
       for (const ip of infraIpv4) {
-        if (ip && IPV4_RE.test(ip)) excludeSet.add(ip);
+        if (!isIpv4UplinkBypassSafe(ip)) {
+          if (ip && IPV4_RE.test(ip)) {
+            console.log(`[TUN] Skip uplink bypass for ${ip} (loopback or link-local)`);
+          }
+          continue;
+        }
+        excludeSet.add(ip);
       }
       this._linuxMainInfraRoutes = [...excludeSet];
 
