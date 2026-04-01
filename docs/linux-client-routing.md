@@ -33,7 +33,16 @@
    - `rp_filter=2` на uplink и tun ([`linux-rp-filter.js`](../src/network/linux-rp-filter.js))
 4. Если `tun.dnsViaVpn`: `_configureDNS` сразу или через `deferDnsAfterPolicyMs`. Если `dnsViaVpn: false` — **не** вызывать `_configureDNS` (только лог).
 
-## Команды для диагностики (протокол измерений)
+## Автоматический снимок в лог (`[TUN-DIAG]`)
+
+При **`tun.logRouteDiag: true`** (в примере [client-node.json](../config/client-node.json) уже включено) узел **сам** выполняет `ip route get` для 8.8.8.8, 1.1.1.1 и для всех IPv4 из последнего infra-списка после фазы B, плюс `ip rule list` и начало `ip route show table main`. Снимок печатается:
+
+1. сразу после успешной фазы B (`reason=after-phase-B-policy-routing`);
+2. при обрыве WebRTC на клиенте (`reason=webrtc-peer-disconnected:…`).
+
+Достаточно **скопировать блоки между `[TUN-DIAG] ---` и передать их для разбора**. Отключить шум: `"logRouteDiag": false`.
+
+## Команды для диагностики вручную (по желанию)
 
 На клиенте **до** и **сразу после** строки в логе `[TUN] Linux policy routing:` / `[TUN] Linux full tunnel:`:
 

@@ -168,6 +168,8 @@ npm run nat:disable
 
 **`tun.linuxFlushRouteCache`:** по умолчанию **`true`** — после фазы B выполняется `ip route flush cache`. Если при **корректном** `ip route get` к IP TURN (uplink, не tun) ICE всё равно падает через ~30–60 с после фазы B, задайте **`false`** и проверьте стабильность (см. [docs/linux-client-routing.md](docs/linux-client-routing.md)).
 
+**`tun.logRouteDiag`:** при **`true`** в лог печатаются блоки **`[TUN-DIAG]`** с выводом `ip route get` / `ip rule` после фазы B и при `peer-disconnected` на клиенте — можно копировать целиком без ручного запуска команд.
+
 **Конфликты:** приоритет правила `fwmark` и mark `0x1` могут пересечься с Docker, WireGuard или другим VPN — проверьте `ip rule list` и `ip route show table 100` / `ip route show`.
 
 **IPv6:** эта схема нацелена на **IPv4**; для SSHv6 и инфраструктуры по IPv6 нужны отдельные правила и таблицы.

@@ -474,6 +474,9 @@ export class MeshNode extends EventEmitter {
     
     this.discovery.on('peer-disconnected', (peerId) => {
       console.log(`Peer disconnected: ${peerId}`);
+      if (this.isClient && this.tunManager) {
+        this.tunManager.logRoutingDiag(`webrtc-peer-disconnected:${peerId.substring(0, 8)}…`);
+      }
       this.router.removeLocalConnection(peerId);
       this._clearSendRetryQueue(peerId);
       this._rxPeerChains.delete(peerId);

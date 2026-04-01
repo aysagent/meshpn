@@ -228,7 +228,7 @@ export class TunInterface extends EventEmitter {
     /* TunManager передаёт поля из JSON `tun` развёрнутыми в корень; поддерживаем и `config.tun`. */
     const nestedTun = config.tun && typeof config.tun === 'object' ? { ...config.tun } : {};
     const tunConfig = { ...nestedTun };
-    for (const k of ['defaultRoute', 'excludeFromVPN', 'deferPolicyRoutingDelayMs', 'dnsViaVpn', 'deferDnsAfterPolicyMs', 'linuxSplitDefault', 'linuxFlushRouteCache']) {
+    for (const k of ['defaultRoute', 'excludeFromVPN', 'deferPolicyRoutingDelayMs', 'dnsViaVpn', 'deferDnsAfterPolicyMs', 'linuxSplitDefault', 'linuxFlushRouteCache', 'logRouteDiag']) {
       if (config[k] !== undefined) {
         tunConfig[k] = config[k];
       }
@@ -254,6 +254,8 @@ export class TunInterface extends EventEmitter {
     this.linuxSplitDefault = tunConfig.linuxSplitDefault !== false;
     /** После policy routing вызывать `ip route flush cache` (по умолчанию true); false — если ICE падает при корректном `ip route get` к TURN. */
     this.linuxFlushRouteCache = tunConfig.linuxFlushRouteCache !== false;
+    /** true — печатать в лог [TUN-DIAG] вывод `ip route get` / `ip rule` (после фазы B и при обрыве WebRTC на клиенте). */
+    this.logRouteDiag = tunConfig.logRouteDiag === true;
     /** Подмена resolv.conf + /32 на публичные DNS; false — только маршруты (диагностика обрыва ICE). */
     this.dnsViaVpn = tunConfig.dnsViaVpn !== false;
     /** мс после успешных маршрутов до _configureDNS; 0 = сразу */
@@ -263,6 +265,67 @@ export class TunInterface extends EventEmitter {
         : 0;
     /** @type {ReturnType<typeof setTimeout>|null} */
     this._deferDnsTimer = null;
+    /** Последний список infra IPv4 после успешной фазы B — для снимка при disconnect. */
+    this._diagInfraSnapshot = [];
+  }
+
+  /**
+   * Снимок маршрутизации для отладки (копипаста логов). Только Linux, только при logRouteDiag.
+   * @param {string} reason
+   */
+  logRoutingDiag(reason) {
+    if (!this.logRouteDiag || this.platform !== 'linux' || !this.name) {
+      return;
+    }
+    const lines = [];
+    const push = (label, text) => {
+      const t = (text || '').trim().replace(/\n/g, '\n[TUN-DIAG]   ');
+      lines.push(`[TUN-DIAG] ${label}: ${t || '(пусто)'}`);
+    };
+
+    const targets = new Set(['8.8.8.8', '1.1.1.1']);
+    for (const ip of this._diagInfraSnapshot || []) {
+      if (ip && IPV4_RE.test(ip)) {
+        targets.add(ip);
+      }
+    }
+
+    for (const ip of targets) {
+      try {
+        const out = execFileSync('ip', ['route', 'get', ip], { encoding: 'utf8' });
+        push(`ip route get ${ip}`, out);
+      } catch (e) {
+        push(`ip route get ${ip}`, `(ошибка: ${e.message})`);
+      }
+    }
+
+    try {
+      const rules = execFileSync('ip', ['rule', 'list'], { encoding: 'utf8' });
+      const ruleLines = rules.trim().split('\n').filter(Boolean);
+      push(
+        'ip rule list (первые 40 строк)',
+        ruleLines.slice(0, 40).join('\n'),
+      );
+    } catch (e) {
+      push('ip rule list', `(ошибка: ${e.message})`);
+    }
+
+    try {
+      const main = execFileSync('ip', ['route', 'show', 'table', 'main'], { encoding: 'utf8' });
+      const ml = main.trim().split('\n').filter(Boolean);
+      push(
+        'ip route show table main (первые 35 строк)',
+        ml.slice(0, 35).join('\n'),
+      );
+    } catch (e) {
+      push('ip route show table main', `(ошибка: ${e.message})`);
+    }
+
+    console.log(`[TUN-DIAG] --- reason=${reason} tun=${this.name} ---`);
+    for (const L of lines) {
+      console.log(L);
+    }
+    console.log('[TUN-DIAG] --- конец снимка ---');
   }
 
   _findFreeUtunIndex() {
@@ -517,6 +580,7 @@ export class TunInterface extends EventEmitter {
     this._policyRoutingDeferred = false;
     this._deferredInfraIpv4 = null;
     this._deferredNetworkPrefix = null;
+    this._diagInfraSnapshot = [...infraForPolicy];
 
     if (!this.isExit && this.defaultRouteEnabled) {
       if (!this.dnsViaVpn) {
@@ -536,6 +600,8 @@ export class TunInterface extends EventEmitter {
         this._configureDNS(null);
       }
     }
+
+    this.logRoutingDiag('after-phase-B-policy-routing');
   }
 
   /**
@@ -1147,6 +1213,13 @@ export class TunManager extends EventEmitter {
   async applyDeferredPolicyRouting() {
     if (this.tun) {
       await this.tun.applyDeferredPolicyRouting();
+    }
+  }
+
+  /** Снимок `ip route` / `ip rule` в лог (см. tun.logRouteDiag). */
+  logRoutingDiag(reason) {
+    if (this.tun) {
+      this.tun.logRoutingDiag(reason);
     }
   }
 }

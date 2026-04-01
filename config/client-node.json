@@ -40,6 +40,8 @@
     "defaultRoute": true,
     "excludeFromVPN": [],
     "deferPolicyRoutingDelayMs": 3000,
-    "dnsViaVpn": false
+    "dnsViaVpn": false,
+    "linuxFlushRouteCache": false,
+    "logRouteDiag": true
   }
 }
