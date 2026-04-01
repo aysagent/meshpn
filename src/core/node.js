@@ -179,6 +179,11 @@ export class MeshNode extends EventEmitter {
     }
     
     this.running = false;
+
+    /** PING по WebRTC DC — тот же UDP через TURN; 30s было слишком редко при ICE consent (~30s timeout). */
+    const ka = config.meshKeepaliveIntervalMs;
+    this.meshKeepaliveIntervalMs =
+      typeof ka === 'number' && ka > 0 ? ka : 8000;
   }
 
   _isPacketDuplicate(packet) {
@@ -203,12 +208,14 @@ export class MeshNode extends EventEmitter {
   }
 
   _startKeepalive() {
+    const ms = this.meshKeepaliveIntervalMs;
+    console.log(`[NODE] Mesh keepalive (PING) every ${ms}ms`);
     this.keepaliveInterval = setInterval(() => {
       const peers = this.discovery.getConnectedPeers();
       for (const peerId of peers) {
         this.sendPing(peerId);
       }
-    }, 30000); // Ping every 30 seconds
+    }, ms);
   }
 
   _stopKeepalive() {
