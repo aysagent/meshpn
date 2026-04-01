@@ -439,7 +439,24 @@ export class WebRTCTransport extends EventEmitter {
         }
       }
 
-      pc.addRemoteCandidate(candidateStr, mid);
+      try {
+        pc.addRemoteCandidate(candidateStr, mid);
+      } catch (addErr) {
+        const msg = addErr?.message || String(addErr);
+        if (/ICE transport|without.*candidate/i.test(msg)) {
+          this._remoteDescForTrickle.delete(peerId);
+          try {
+            pc.destroy();
+          } catch {}
+          this.connections.delete(peerId);
+          this._pushPendingIce(peerId, candidateStr, mid);
+          console.warn(
+            `[WebRTC] Stale PC for ${peerId.substring(0, 8)}…, re-queued remote ICE (${msg})`,
+          );
+          return;
+        }
+        throw addErr;
+      }
     } catch (err) {
       console.error(`[WebRTC] Failed to add ICE candidate for ${peerId}: ${err.message}`);
     }
@@ -515,24 +532,36 @@ export class WebRTCTransport extends EventEmitter {
     try { return dc.isOpen(); } catch { return false; }
   }
 
-  close(peerId) {
+  /**
+   * Снять PC/DC/очереди для peerId. Если cancelDisconnectEmit=false — не трогаем таймер
+   * peer-disconnected (нужно при failed/closed: сразу сбросить _remoteDescForTrickle, иначе ранний
+   * trickle до нового offer попадает в мёртвый PC → «without ICE transport»).
+   */
+  _tearDownPeerWebRtcState(peerId, { cancelDisconnectEmit = true } = {}) {
     this._remoteDescForTrickle.delete(peerId);
     this._pendingRemoteIce.delete(peerId);
 
     this._sendOverflow.delete(peerId);
 
     const sb = this.sendBuffers.get(peerId);
-    if (sb) { sb.stop(); this.sendBuffers.delete(peerId); }
+    if (sb) {
+      sb.stop();
+      this.sendBuffers.delete(peerId);
+    }
 
     const dc = this.dataChannels.get(peerId);
     if (dc) {
-      try { dc.close(); } catch {}
+      try {
+        dc.close();
+      } catch {}
       this.dataChannels.delete(peerId);
     }
 
     const pc = this.connections.get(peerId);
     if (pc) {
-      try { pc.destroy(); } catch {}
+      try {
+        pc.destroy();
+      } catch {}
       this.connections.delete(peerId);
     }
 
@@ -543,7 +572,13 @@ export class WebRTCTransport extends EventEmitter {
       pendingSdp.reject(new Error('Peer connection closed before ICE gathering completed'));
     }
     this._dcOpenEpoch.delete(peerId);
-    this._cancelPeerDisconnectEmit(peerId);
+    if (cancelDisconnectEmit) {
+      this._cancelPeerDisconnectEmit(peerId);
+    }
+  }
+
+  close(peerId) {
+    this._tearDownPeerWebRtcState(peerId, { cancelDisconnectEmit: true });
   }
 
   closeAll() {
@@ -649,6 +684,7 @@ export class WebRTCTransport extends EventEmitter {
       // иначе discovery снимает сессию, а ключи не переобмениваются.
       if (state === 'failed' || state === 'closed') {
         this._dcOpenEpoch.delete(peerId);
+        this._tearDownPeerWebRtcState(peerId, { cancelDisconnectEmit: false });
         this._emitPeerDisconnectSoon(peerId);
       }
     });
