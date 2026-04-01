@@ -225,7 +225,15 @@ export class TunInterface extends EventEmitter {
     /** Full mesh node config: infra IPv4 for /32 in main (bypass tun table). */
     this.meshVpnConfig = config.meshVpnConfig || null;
 
-    const tunConfig = config.tun || {};
+    /* TunManager передаёт поля из JSON `tun` развёрнутыми в корень; поддерживаем и `config.tun`. */
+    const nestedTun = config.tun && typeof config.tun === 'object' ? { ...config.tun } : {};
+    const tunConfig = { ...nestedTun };
+    for (const k of ['defaultRoute', 'excludeFromVPN', 'deferPolicyRoutingDelayMs', 'dnsViaVpn', 'deferDnsAfterPolicyMs']) {
+      if (config[k] !== undefined) {
+        tunConfig[k] = config[k];
+      }
+    }
+
     this.excludedIPs = tunConfig.excludeFromVPN || config.excludeFromVPN || [];
     /** @type {boolean} */
     this._linuxPolicyRoutingActive = false;

@@ -26,7 +26,7 @@
   "virtualNetwork": "10.200.0.0/16",
   "mtu": 1400,
   "enableTun": true,
-  "iceMode": "auto",
+  "iceMode": "relay",
   "dcMode": "reliable",
   "mesh": {
     "strictTransportOrdering": true
