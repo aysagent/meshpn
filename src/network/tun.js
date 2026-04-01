@@ -228,7 +228,7 @@ export class TunInterface extends EventEmitter {
     /* TunManager передаёт поля из JSON `tun` развёрнутыми в корень; поддерживаем и `config.tun`. */
     const nestedTun = config.tun && typeof config.tun === 'object' ? { ...config.tun } : {};
     const tunConfig = { ...nestedTun };
-    for (const k of ['defaultRoute', 'excludeFromVPN', 'deferPolicyRoutingDelayMs', 'dnsViaVpn', 'deferDnsAfterPolicyMs']) {
+    for (const k of ['defaultRoute', 'excludeFromVPN', 'deferPolicyRoutingDelayMs', 'dnsViaVpn', 'deferDnsAfterPolicyMs', 'linuxSplitDefault']) {
       if (config[k] !== undefined) {
         tunConfig[k] = config[k];
       }
@@ -250,6 +250,8 @@ export class TunInterface extends EventEmitter {
     this._linuxMainInfraRoutes = null;
     /** @type {Record<string, string>|null} снимок rp_filter до policy routing */
     this._linuxRpFilterBackup = null;
+    /** false — не ставить 0.0.0.0/1 и 128.0.0.0/1 в main (диагностика обрыва ICE при full tunnel). */
+    this.linuxSplitDefault = tunConfig.linuxSplitDefault !== false;
     /** Подмена resolv.conf + /32 на публичные DNS; false — только маршруты (диагностика обрыва ICE). */
     this.dnsViaVpn = tunConfig.dnsViaVpn !== false;
     /** мс после успешных маршрутов до _configureDNS; 0 = сразу */
@@ -637,8 +639,8 @@ export class TunInterface extends EventEmitter {
   }
 
   /**
-   * Full tunnel на Linux: split default в main (0.0.0.0/1 и 128.0.0.0/1 → tun), infra /32 → uplink в main;
-   * table 100 — uplink для fwmark (SSH). TURN обходится /32+prefsrc в main (без mangle UDP).
+   * Full tunnel на Linux: при linuxSplitDefault — split default в main (0.0.0.0/1 и 128.0.0.0/1 → tun);
+   * иначе только mesh /16 + infra /32 в main. table 100 — uplink для fwmark (SSH). TURN — /32+prefsrc в main.
    * @param {string[]} infraIpv4
    * @param {string} networkPrefix e.g. "10.200"
    * @returns {boolean}
@@ -708,8 +710,14 @@ export class TunInterface extends EventEmitter {
         }
       }
 
-      execSync(`ip route replace 0.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
-      execSync(`ip route replace 128.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
+      if (this.linuxSplitDefault) {
+        execSync(`ip route replace 0.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
+        execSync(`ip route replace 128.0.0.0/1 dev ${this.name}`, { stdio: 'ignore' });
+      } else {
+        console.log(
+          '[TUN] linuxSplitDefault=false: пропуск 0.0.0.0/1 и 128.0.0.0/1 — дефолтный интернет остаётся на uplink',
+        );
+      }
       execSync(
         `ip route replace ${networkPrefix}.0.0/16 dev ${this.name}`,
         { stdio: 'ignore' },
@@ -752,8 +760,11 @@ export class TunInterface extends EventEmitter {
       this._linuxRpFilterBackup = applyLooseRpFilterForVpn([iface, this.name], '[TUN]');
 
       this._linuxPolicyRoutingActive = true;
+      const splitPart = this.linuxSplitDefault
+        ? `main 0.0.0.0/1+128.0.0.0/1 via ${this.name}, `
+        : 'без split-default в main, ';
       console.log(
-        `[TUN] Linux full tunnel: main 0.0.0.0/1+128.0.0.0/1 via ${this.name}, infra /32 uplink; `
+        `[TUN] Linux policy routing: ${splitPart}mesh ${networkPrefix}.0.0/16 via ${this.name}, infra /32 uplink; `
         + `table ${tbl} = uplink for fwmark ${LINUX_FWMARK_BYPASS_MAIN} (SSH)`,
       );
       return true;

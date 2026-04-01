@@ -38,6 +38,7 @@
   },
   "tun": {
     "defaultRoute": true,
+    "linuxSplitDefault": false,
     "excludeFromVPN": [],
     "deferPolicyRoutingDelayMs": 3000,
     "dnsViaVpn": false

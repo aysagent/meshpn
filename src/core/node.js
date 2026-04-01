@@ -448,8 +448,9 @@ export class MeshNode extends EventEmitter {
             console.warn(`[NODE] applyDeferredPolicyRouting: ${err.message}`);
           }
         } else {
+          const splitOn = tunCfg.linuxSplitDefault !== false;
           console.log(
-            `[NODE] Full tunnel (split routes; DNS по tun.dnsViaVpn/defer) in ${delayMs}ms after peer-connected`,
+            `[NODE] Linux policy routing (${splitOn ? 'split default' : 'без split-default'}; DNS по tun.dnsViaVpn/defer) через ${delayMs}ms после peer-connected`,
           );
           this._deferPolicyRoutingTimer = setTimeout(() => {
             this._deferPolicyRoutingTimer = null;
