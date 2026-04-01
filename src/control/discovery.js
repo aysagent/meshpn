@@ -172,6 +172,7 @@ export class PeerDiscovery extends EventEmitter {
     
     this.transportManager.on('peer-disconnected', (peerId) => {
       console.log(`[DISCOVERY] Transport peer-disconnected: ${peerId}`);
+      this._expectedRemoteIceHsGen.delete(peerId);
       const stillInSignalling = !!this.signalling?.getPeer?.(peerId);
       this.establishedPeers.delete(peerId);
       this.sessionManager.removeSession(peerId);
@@ -336,15 +337,16 @@ export class PeerDiscovery extends EventEmitter {
           }`,
         );
         const exp = this._expectedRemoteIceHsGen.get(fromNodeId);
-        if (
-          signal.hsGen != null &&
-          exp != null &&
-          signal.hsGen !== exp
-        ) {
-          console.warn(
-            `[DISCOVERY] drop stale ICE ← ${fromNodeId.substring(0, 8)}… hsGen=${signal.hsGen} expected=${exp}`,
-          );
-          break;
+        if (signal.hsGen != null && exp != null) {
+          if (signal.hsGen < exp) {
+            console.warn(
+              `[DISCOVERY] drop stale ICE ← ${fromNodeId.substring(0, 8)}… hsGen=${signal.hsGen} expected=${exp}`,
+            );
+            break;
+          }
+          if (signal.hsGen > exp) {
+            this._expectedRemoteIceHsGen.set(fromNodeId, signal.hsGen);
+          }
         }
         await this.transportManager.addIceCandidate(fromNodeId, signal.candidate);
         break;

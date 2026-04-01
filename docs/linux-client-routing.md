@@ -42,6 +42,10 @@
 
 Достаточно **скопировать блоки между `[TUN-DIAG] ---` и передать их для разбора**. Отключить шум: `"logRouteDiag": false`.
 
+## WebRTC: порядок ICE и `hsGen` в signalling
+
+Trickle **ICE** иногда приходит **раньше** нового **offer** при reconnect. Старый фильтр «любой `hsGen !== expected` — drop» ошибочно отбрасывал кандидаты нового handshake (`hsGen=2` при ещё не обновлённом `expected=1`). В [`discovery.js`](../src/control/discovery.js) отбрасывается только **`hsGen < expected`**; при **`hsGen > expected`** ожидание обновляется и кандидат передаётся в WebRTC (очередь до `setRemoteDescription`). При **`peer-disconnected`** сбрасывается `_expectedRemoteIceHsGen` для пира.
+
 ## Команды для диагностики вручную (по желанию)
 
 На клиенте **до** и **сразу после** строки в логе `[TUN] Linux policy routing:` / `[TUN] Linux full tunnel:`:
