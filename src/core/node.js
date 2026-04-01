@@ -417,43 +417,37 @@ export class MeshNode extends EventEmitter {
     this.discovery.on('peer-connected', async (peerId, transport) => {
       console.log(`Peer connected: ${peerId} via ${transport}`);
 
-      if (this.isClient && transport === 'webrtc' && this.tunManager) {
+      if (this.isClient && this.tunManager) {
         const tunCfg = this.config.tun && typeof this.config.tun === 'object' ? this.config.tun : {};
-        if (tunCfg.deferPolicyRoutingUntilWebRtcConnected === true) {
-          const delayMs =
-            typeof tunCfg.deferPolicyRoutingDelayMs === 'number'
+        const delayMs =
+          transport === 'webrtc'
+            ? (typeof tunCfg.deferPolicyRoutingDelayMs === 'number'
               ? tunCfg.deferPolicyRoutingDelayMs
-              : 3000;
-          if (this._deferPolicyRoutingTimer) {
-            clearTimeout(this._deferPolicyRoutingTimer);
-            this._deferPolicyRoutingTimer = null;
-          }
-          const runApply = () => {
-            this.tunManager.applyDeferredPolicyRouting().catch((err) => {
-              console.warn(`[NODE] applyDeferredPolicyRouting: ${err.message}`);
-            });
-          };
-          if (delayMs <= 0) {
-            try {
-              await this.tunManager.applyDeferredPolicyRouting();
-            } catch (err) {
-              console.warn(`[NODE] applyDeferredPolicyRouting: ${err.message}`);
-            }
-          } else {
-            console.log(
-              `[NODE] Deferred policy routing (table 100) in ${delayMs}ms — letting TURN/WebRTC stabilize first`,
-            );
-            this._deferPolicyRoutingTimer = setTimeout(() => {
-              this._deferPolicyRoutingTimer = null;
-              runApply();
-            }, delayMs);
-          }
-        } else {
+              : 3000)
+            : 0;
+        if (this._deferPolicyRoutingTimer) {
+          clearTimeout(this._deferPolicyRoutingTimer);
+          this._deferPolicyRoutingTimer = null;
+        }
+        const runApply = () => {
+          this.tunManager.applyDeferredPolicyRouting().catch((err) => {
+            console.warn(`[NODE] applyDeferredPolicyRouting: ${err.message}`);
+          });
+        };
+        if (delayMs <= 0) {
           try {
             await this.tunManager.applyDeferredPolicyRouting();
           } catch (err) {
             console.warn(`[NODE] applyDeferredPolicyRouting: ${err.message}`);
           }
+        } else {
+          console.log(
+            `[NODE] Full tunnel (split routes + DNS) in ${delayMs}ms after peer-connected`,
+          );
+          this._deferPolicyRoutingTimer = setTimeout(() => {
+            this._deferPolicyRoutingTimer = null;
+            runApply();
+          }, delayMs);
         }
       }
 

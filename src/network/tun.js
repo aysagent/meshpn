@@ -230,10 +230,6 @@ export class TunInterface extends EventEmitter {
     this.defaultRouteEnabled = tunConfig.defaultRoute !== undefined 
       ? tunConfig.defaultRoute 
       : config.defaultRoute !== false;
-    /** Linux client: не ставить table 100 / ip rule до первого WebRTC peer-connected (см. applyDeferredPolicyRouting). */
-    this.deferPolicyRoutingUntilWebRtcConnected =
-      tunConfig.deferPolicyRoutingUntilWebRtcConnected === true
-      || config.deferPolicyRoutingUntilWebRtcConnected === true;
     /** @type {boolean} */
     this._policyRoutingDeferred = false;
     /** @type {string[]|null} */
@@ -377,8 +373,6 @@ export class TunInterface extends EventEmitter {
     const networkPrefix = this.virtualIp.split('.').slice(0, 2).join('.');
     const useLinuxPolicyRouting =
       this.platform === 'linux' && !this.isExit && this.defaultRouteEnabled;
-    const deferPolicy =
-      useLinuxPolicyRouting && this.deferPolicyRoutingUntilWebRtcConnected;
 
     if (!useLinuxPolicyRouting) {
       try {
@@ -397,7 +391,8 @@ export class TunInterface extends EventEmitter {
       excludeFromVPN: this.excludedIPs,
     });
 
-    if (useLinuxPolicyRouting && deferPolicy) {
+    // Full tunnel нельзя включать при поднятии TUN — гонка с ICE/TURN. Фаза B — после peer-connected.
+    if (useLinuxPolicyRouting) {
       try {
         execFileSync(
           'ip',
@@ -406,7 +401,7 @@ export class TunInterface extends EventEmitter {
         );
         console.log(
           `[TUN] Route for ${networkPrefix}.0.0/16 via ${this.name} (main); `
-          + 'policy routing deferred until WebRTC peer-connected',
+          + 'full tunnel отложен до WebRTC peer-connected',
         );
       } catch {
         console.log(`Route for ${networkPrefix}.0.0/16 may already exist`);
@@ -414,17 +409,14 @@ export class TunInterface extends EventEmitter {
       this._deferredInfraIpv4 = infraIpv4;
       this._deferredNetworkPrefix = networkPrefix;
       this._policyRoutingDeferred = true;
-    } else if (useLinuxPolicyRouting) {
-      this._setupLinuxPolicyRouting(infraIpv4, networkPrefix);
     }
 
-    // При defer до WebRTC нельзя слать DNS в tun — маршрута к exit ещё нет (курица и яйцо с ICE).
-    if (!this.isExit && this.defaultRouteEnabled && !deferPolicy) {
-      this._configureDNS(null);
-    } else if (deferPolicy) {
-      console.log(
-        '[TUN] DNS через VPN отложен до peer-connected (deferPolicyRoutingUntilWebRtcConnected)',
-      );
+    if (!this.isExit && this.defaultRouteEnabled) {
+      if (!useLinuxPolicyRouting) {
+        this._configureDNS(null);
+      } else {
+        console.log('[TUN] DNS через VPN отложен до peer-connected (Linux full tunnel)');
+      }
     }
   }
 
@@ -447,7 +439,7 @@ export class TunInterface extends EventEmitter {
   }
 
   /**
-   * Фаза B: table 100 + ip rule после установления WebRTC (если включён deferPolicyRoutingUntilWebRtcConnected).
+   * Фаза B: split /1 + table 100 + iptables + DNS после первого peer-connected (WebRTC — с задержкой).
    */
   async applyDeferredPolicyRouting() {
     if (this.platform !== 'linux' || this.isExit || !this._policyRoutingDeferred || !this.name) {
@@ -1017,7 +1009,7 @@ export class TunManager extends EventEmitter {
     return this.tun ? this.tun.name : null;
   }
 
-  /** Linux + defer: вызвать после первого peer-connected по WebRTC. */
+  /** Linux full tunnel (фаза B): после peer-connected; для WebRTC — с задержкой из node.js. */
   async applyDeferredPolicyRouting() {
     if (this.tun) {
       await this.tun.applyDeferredPolicyRouting();

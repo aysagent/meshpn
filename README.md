@@ -160,7 +160,7 @@ npm run nat:disable
 
 Перехват DNS (`/etc/resolv.conf` и маршруты к резолверам) выполняется **только** при full tunnel на клиенте, **не** на exit-ноде.
 
-**Отложенная policy routing:** при `tun.deferPolicyRoutingUntilWebRtcConnected: true` split-маршруты и `ip rule` для fwmark применяются **после** первого `peer-connected` (с задержкой `tun.deferPolicyRoutingDelayMs`, по умолчанию 3000 ms). До этого **не** подменяются `/etc/resolv.conf` и маршруты к публичным DNS через tun — иначе запросы уходят в TUN без пути к exit и ломают резолв/TURN/ICE. По умолчанию у ключа `deferPolicyRoutingUntilWebRtcConnected` значение `false`.
+**Порядок включения full tunnel (Linux + WebRTC):** mesh-маршрут `10.x.0.0/16` через TUN поднимается сразу; split-маршруты `0.0.0.0/1` + `128.0.0.0/1`, таблица `100`, `iptables` и подмена DNS применяются **после** первого `peer-connected` по WebRTC, с задержкой `tun.deferPolicyRoutingDelayMs` (по умолчанию 3000 ms), чтобы не гоняться с ICE/TURN. До фазы B `/etc/resolv.conf` и маршруты к публичным DNS через tun **не** трогаются. Для транспорта не WebRTC (например WebSocket) фаза B выполняется сразу при `peer-connected`.
 
 **Конфликты:** приоритет правила `fwmark` и mark `0x1` могут пересечься с Docker, WireGuard или другим VPN — проверьте `ip rule list` и `ip route show table 100` / `ip route show`.
 
