@@ -1,10 +1,60 @@
 # Mesh VPN
 
-Децентрализованная mesh VPN система с WebRTC, onion-шифрованием и multipath routing.
+Децентрализованная mesh VPN система с WebRTC (node-datachannel), onion-шифрованием и multipath routing.
 
 ## Run
-- sudo env PATH=$PATH SIGNALLING_SERVER=62.84.120.30:8888 npm run sig:exit
-- sudo env PATH=$PATH node src/index.js --role client --signalling ws://62.84.120.30:8080
+- sudo env PATH=$PATH SIGNALLING_SERVER=62.84.
+120.30:8888 npm run sig:exit
+- sudo env PATH=$PATH node src/index.js --role 
+client --signalling ws://62.84.120.30:8080
+
+**Полный контекст для разработки и LLM-агентов:** [FULL_SUMMARIZATION.md](FULL_SUMMARIZATION.md) — развёртывание, потоки данных, карта модулей, известные проблемы Linux full tunnel + WebRTC.
+
+## Схема системы (компоненты и интерфейсы)
+
+```mermaid
+flowchart TB
+  subgraph osClient [ОС клиента]
+    Apps[Приложения IPv4]
+    TUNc[TUN клиента]
+    Apps <--> TUNc
+  end
+  subgraph nodeClient [Процесс mesh node client]
+    NC[MeshNode + TunManager]
+    NC <--> TUNc
+  end
+  subgraph sigLayer [Инфраструктура]
+    Sig[Signalling WS]
+    Turn[TURN/STUN]
+  end
+  subgraph nodeExit [Процесс mesh node exit]
+    NE[MeshNode + TunManager + NAT]
+    TUNe[TUN exit]
+    NE <--> TUNe
+  end
+  subgraph osExit [ОС exit]
+    Fwd[FORWARD + MASQUERADE]
+    Inet[Интернет]
+    TUNe <--> Fwd <--> Inet
+  end
+  NC <-->|SDP ICE JSON| Sig
+  NE <-->|SDP ICE JSON| Sig
+  NC <-->|WebRTC DataChannel часто через TURN| NE
+  NC <-->|UDP relay| Turn
+  NE <-->|UDP relay| Turn
+```
+
+## Быстрый пример запуска (ваши хосты)
+
+```bash
+# Signalling + exit на одной машине (пример)
+sudo env PATH=$PATH SIGNALLING_SERVER=ws://62.84.120.30:8080 npm run sig:exit
+
+# Клиент (подтянется config/client-node.json по роли client)
+sudo env PATH=$PATH node src/index.js --role client --signalling ws://62.84.120.30:8080
+```
+
+Порты и URL подставьте свои; для exit на другой машине, чем signalling, **не** используйте `localhost` в URL signalling.
 
 ## Возможности
 
@@ -13,10 +63,25 @@
 - **Onion encryption** — многослойное шифрование, relay узлы не видят содержимое
 - **Multipath** — параллельная передача через несколько маршрутов
 - **Exit nodes** — несколько выходных узлов с автоматическим failover
-- **Transport fallback** — WebRTC → QUIC → WebSocket
+- **Transport fallback** — при настройке `transport.preferredOrder`: WebRTC → QUIC → WebSocket
 - **Client-Relay** — комбинированная роль для одновременной работы как клиент и relay
 
-## Архитектура
+## Кто за что отвечает (кратко)
+
+| Часть | Роль |
+|-------|------|
+| [`server/signalling-server.js`](server/signalling-server.js) | Регистрация узлов, виртуальные IP, ретрансляция SDP/ICE между пирами |
+| [`src/control/signalling.js`](src/control/signalling.js) + [`discovery.js`](src/control/discovery.js) | WebSocket к signalling, mesh-handshake, WebRTC offer/answer, trickle ICE |
+| [`src/transport/webrtc.js`](src/transport/webrtc.js) | PeerConnection и DataChannel (libdatachannel через node-datachannel) |
+| [`src/core/node.js`](src/core/node.js) | Сборка всего: TUN, маршрутизация, NAT на exit, отложенная policy routing на клиенте Linux |
+| [`src/core/router.js`](src/core/router.js) | Топология, путь к exit, onion-обёртка пакетов |
+| [`src/network/tun.js`](src/network/tun.js) | TUN, Linux policy routing (mesh, infra /32, split-default, SSH bypass) |
+| [`src/crypto/*`](src/crypto/) | Ed25519, X25519, AES-GCM, onion |
+| [`src/exit/nat-manager.js`](src/exit/nat-manager.js) | Системный NAT для выхода в интернет |
+
+Подробнее и с известными ограничениями — [FULL_SUMMARIZATION.md](FULL_SUMMARIZATION.md).
+
+## Логическая топология mesh
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
@@ -84,12 +149,15 @@ node src/index.js --role client-relay --signalling ws://localhost:8080
 
 ## Конфигурация
 
-### config/default.json
+Файлы по умолчанию: [`config/default.json`](config/default.json) (или `config.json` / `~/.mesh-vpn/config.json`), поверх них подмешивается **`config/<role>-node.json`**, например [`config/client-node.json`](config/client-node.json), [`config/exit-node.json`](config/exit-node.json). Из CLI в итоговый объект попадают **`--signalling`**, **`--role`**, **`--key`** и т.д. Флаг **`--config` / `-c`** в справке есть, но **содержимое указанного JSON в конфиг не подмешивается** (в объекте остаётся только поле `configPath`) — для альтернативного набора настроек правьте `config/<role>-node.json` или добавьте загрузку файла в [`src/index.js`](src/index.js).
+
+Пример фрагмента:
 
 ```json
 {
   "role": "client",
   "signallingServer": "ws://localhost:8080",
+  "transport": "webrtc",
   "iceServers": [
     { "urls": "stun:stun.l.google.com:19302" }
   ],
@@ -111,9 +179,9 @@ node src/index.js --role client-relay --signalling ws://localhost:8080
 ### Аргументы командной строки
 
 ```
---role, -r <role>        Роль: client, relay, exit
+--role, -r <role>        Роль: client, relay, exit, client-relay
 --signalling, -s <url>   URL signalling сервера  
---config, -c <path>      Путь к конфигу
+--config, -c <path>      Путь (см. ограничение выше: JSON из файла не сливается автоматически)
 --key, -k <key>          Приватный ключ (base64)
 ```
 
@@ -326,21 +394,38 @@ mesh-vpn/
 │   ├── transport/
 │   │   ├── index.js          # Module exports
 │   │   ├── manager.js        # Transport abstraction
-│   │   ├── webrtc.js         # WebRTC via werift
+│   │   ├── webrtc.js         # WebRTC (node-datachannel / libdatachannel)
 │   │   ├── quic.js           # QUIC fallback
-│   │   └── websocket.js      # WebSocket fallback
+│   │   ├── websocket.js      # WebSocket fallback
+│   │   ├── ws-data-server.js # Опциональный data server на exit
+│   │   └── send-buffer.js
 │   ├── network/
 │   │   ├── index.js          # Module exports
-│   │   ├── tun.js            # TUN interface (Linux/macOS)
+│   │   ├── tun.js            # TUN interface (Linux/macOS), policy routing
+│   │   ├── linux-rp-filter.js
 │   │   ├── packet.js         # IP packet parsing/building
+│   │   ├── batcher.js
 │   │   └── ip-manager.js     # Virtual IP manager
+│   ├── workers/
+│   │   ├── pipeline.js
+│   │   ├── tx-worker.js
+│   │   └── rx-worker.js
+│   ├── debug/
+│   │   ├── index.js
+│   │   └── metrics.js
 │   ├── control/
 │   │   ├── index.js          # Module exports
 │   │   ├── signalling.js     # Signalling client
 │   │   └── discovery.js      # Peer discovery
 │   └── exit/
 │       ├── index.js          # Module exports
-│       └── nat.js            # NAT mapping table
+│       ├── nat.js            # NAT mapping table
+│       ├── nat-manager.js    # Системный NAT (iptables)
+│       └── userspace-nat.js
+├── docs/
+│   ├── linux-client-routing.md
+│   └── PERFORMANCE_DEBUG.md
+├── FULL_SUMMARIZATION.md     # Полная суммаризация проекта
 ├── server/
 │   ├── signalling-server.js  # Signalling server
 │   ├── turn-setup.md         # TURN server setup guide
