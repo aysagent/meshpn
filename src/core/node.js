@@ -10,6 +10,7 @@ import { NATManager, UserSpaceNAT } from '../exit/index.js';
 import { metrics } from '../debug/index.js';
 import { WorkerPipeline } from '../workers/pipeline.js';
 import http from 'http';
+import { randomInt } from 'crypto';
 
 export class MeshNode extends EventEmitter {
   constructor(config) {
@@ -501,6 +502,8 @@ export class MeshNode extends EventEmitter {
       this.router.removeLocalConnection(peerId);
       this._clearSendRetryQueue(peerId);
       this._rxPeerChains.delete(peerId);
+      // Цепочка TX для exit-ответов этому пиру больше не нужна
+      this._exitTxChains.delete(peerId);
       this._updateMultipathRoutes();
       this._logMeshReachabilityForClient();
       this.emit('peer-disconnected', peerId);
@@ -1266,7 +1269,7 @@ export class MeshNode extends EventEmitter {
     
     if (!this.tcpConnections.has(key)) {
       this.tcpConnections.set(key, {
-        seqNum: Math.floor(Math.random() * 0xFFFFFFFF),
+        seqNum: randomInt(0, 0xFFFFFFFF),
         ackNum: 0,
         lastUsed: Date.now()
       });
@@ -1302,6 +1305,13 @@ export class MeshNode extends EventEmitter {
     for (const [key, conn] of this.tcpConnections) {
       if (now - conn.lastUsed > this.tcpConnectionTimeout) {
         this.tcpConnections.delete(key);
+      }
+    }
+    // Очистка NAT-маппингов по TTL (используем тот же таймаут, что и для TCP-соединений)
+    const natTtl = this.natMappingTimeout;
+    for (const [key, mapping] of this.natMappings) {
+      if (now - mapping.createdAt > natTtl) {
+        this.natMappings.delete(key);
       }
     }
   }

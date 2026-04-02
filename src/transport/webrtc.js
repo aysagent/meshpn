@@ -814,7 +814,9 @@ export class WebRTCTransport extends EventEmitter {
         return;
       }
       const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-      for (const data of unframe(buf)) {
+      const packets = unframe(buf);
+      if (!packets) return; // malformed/truncated frame, already logged in unframe
+      for (const data of packets) {
         this.emit('message', peerId, data);
       }
     });

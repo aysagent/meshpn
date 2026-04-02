@@ -42,7 +42,7 @@
     "deferPolicyRoutingDelayMs": 3000,
     "dnsViaVpn": false,
     "linuxFlushRouteCache": false,
-    "linuxSplitDefault": false,
+    "linuxSplitDefault": true,
     "linuxSplitDefaultDelayAfterPeerMs": 60000,
     "logRouteDiag": true,
     "logRouteDiagSs": false

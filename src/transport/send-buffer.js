@@ -162,8 +162,12 @@ export class TransportSendBuffer {
 
 /**
  * Unpack a received frame.
- * Returns an array of individual packets.
+ * Returns an array of individual packets, or null if the frame is malformed/truncated.
  * If the data is not an aggregated frame, returns [data] as-is.
+ *
+ * Callers MUST check for null and discard the message:
+ *   const packets = unframe(buf);
+ *   if (!packets) return; // malformed frame, already logged
  */
 export function unframe(data) {
   if (data.length >= HEADER_SIZE && data[0] === FRAME_MARKER) {
@@ -171,11 +175,17 @@ export function unframe(data) {
     const packets = [];
     let offset = HEADER_SIZE;
 
-    for (let i = 0; i < count && offset < data.length; i++) {
-      if (offset + 2 > data.length) break;
+    for (let i = 0; i < count; i++) {
+      if (offset + 2 > data.length) {
+        console.warn(`[unframe] Truncated frame: expected length prefix at offset ${offset}, buf size ${data.length}`);
+        return null;
+      }
       const len = data.readUInt16BE(offset);
       offset += 2;
-      if (offset + len > data.length) break;
+      if (offset + len > data.length) {
+        console.warn(`[unframe] Truncated frame: expected ${len} bytes at offset ${offset}, buf size ${data.length}`);
+        return null;
+      }
       packets.push(data.subarray(offset, offset + len));
       offset += len;
     }

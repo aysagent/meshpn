@@ -11,8 +11,25 @@ class SignallingServer extends EventEmitter {
     this.virtualNetwork = '10.200.0';
   }
 
+  /**
+   * Безопасная отправка: проверяет readyState перед send, поглощает исключения.
+   * @param {import('ws').WebSocket} ws
+   * @param {string} data
+   */
+  _wsSend(ws, data) {
+    if (!ws || ws.readyState !== ws.OPEN) {
+      return;
+    }
+    try {
+      ws.send(data);
+    } catch (err) {
+      console.warn('[Signalling] ws.send error (ignored):', err.message);
+    }
+  }
+
   start() {
-    this.wss = new WebSocketServer({ port: this.port });
+    // maxPayload ограничивает размер входящего сообщения (64 KB достаточно для SDP/ICE JSON)
+    this.wss = new WebSocketServer({ port: this.port, maxPayload: 65536 });
     
     this.wss.on('listening', () => {
       console.log(`Signalling server listening on port ${this.port}`);
@@ -37,7 +54,7 @@ class SignallingServer extends EventEmitter {
         this._handleMessage(ws, message, nodeId, (id) => { nodeId = id; });
       } catch (err) {
         console.error('Failed to parse message:', err);
-        ws.send(JSON.stringify({ type: 'error', error: 'Invalid message format' }));
+        this._wsSend(ws, JSON.stringify({ type: 'error', error: 'Invalid message format' }));
       }
     });
     
@@ -73,11 +90,11 @@ class SignallingServer extends EventEmitter {
         break;
         
       case 'ping':
-        ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+        this._wsSend(ws, JSON.stringify({ type: 'pong', timestamp: Date.now() }));
         break;
-        
+
       default:
-        ws.send(JSON.stringify({ type: 'error', error: 'Unknown message type' }));
+        this._wsSend(ws, JSON.stringify({ type: 'error', error: 'Unknown message type' }));
     }
   }
 
@@ -85,15 +102,21 @@ class SignallingServer extends EventEmitter {
     const { nodeId, publicKey, role } = message;
     
     if (!nodeId || !publicKey) {
-      ws.send(JSON.stringify({ type: 'error', error: 'Missing nodeId or publicKey' }));
+      this._wsSend(ws, JSON.stringify({ type: 'error', error: 'Missing nodeId or publicKey' }));
       return;
     }
-    
+
     const existingNode = this.nodes.get(nodeId);
     if (existingNode) {
       // Не шлём peer-leave: это рвёт рабочий WebRTC между exit и клиентом при лишь
       // переподключении signalling WS (тот же nodeId). Залипший транспорт снимает
       // реальный peer-leave при закрытии старого сокета или новый offer от клиента.
+
+      // Закрываем старый сокет, если он ещё открыт (не тот же объект, что пришёл сейчас)
+      if (existingNode.ws !== ws && existingNode.ws.readyState === existingNode.ws.OPEN) {
+        try { existingNode.ws.terminate(); } catch { /* ignore */ }
+      }
+
       existingNode.ws = ws;
       if (publicKey) {
         existingNode.publicKey = publicKey;
@@ -103,7 +126,7 @@ class SignallingServer extends EventEmitter {
       }
       setNodeId(nodeId);
 
-      ws.send(JSON.stringify({
+      this._wsSend(ws, JSON.stringify({
         type: 'registered',
         nodeId,
         virtualIp: existingNode.virtualIp,
@@ -131,7 +154,7 @@ class SignallingServer extends EventEmitter {
     this.nodes.set(nodeId, nodeInfo);
     setNodeId(nodeId);
     
-    ws.send(JSON.stringify({
+    this._wsSend(ws, JSON.stringify({
       type: 'registered',
       nodeId,
       virtualIp,
@@ -155,7 +178,7 @@ class SignallingServer extends EventEmitter {
     if (!targetNode) {
       const fromNode = this.nodes.get(fromNodeId);
       if (fromNode) {
-        fromNode.ws.send(JSON.stringify({
+        this._wsSend(fromNode.ws, JSON.stringify({
           type: 'signal-error',
           to,
           error: 'Target node not found'
@@ -163,8 +186,8 @@ class SignallingServer extends EventEmitter {
       }
       return;
     }
-    
-    targetNode.ws.send(JSON.stringify({
+
+    this._wsSend(targetNode.ws, JSON.stringify({
       type: 'signal',
       from: fromNodeId,
       signal
@@ -185,7 +208,7 @@ class SignallingServer extends EventEmitter {
       }
     }
     
-    ws.send(JSON.stringify({
+    this._wsSend(ws, JSON.stringify({
       type: 'peers',
       peers
     }));
@@ -204,7 +227,7 @@ class SignallingServer extends EventEmitter {
       }
     }
     
-    ws.send(JSON.stringify({
+    this._wsSend(ws, JSON.stringify({
       type: 'exit-nodes',
       exitNodes
     }));
@@ -252,7 +275,7 @@ class SignallingServer extends EventEmitter {
     
     for (const [id, info] of this.nodes) {
       if (id !== nodeId) {
-        info.ws.send(message);
+        this._wsSend(info.ws, message);
       }
     }
   }
@@ -268,13 +291,13 @@ class SignallingServer extends EventEmitter {
       if (id === nodeId) {
         continue;
       }
-      info.ws.send(message);
+      this._wsSend(info.ws, message);
     }
   }
 
   _broadcastTopology() {
     const topology = {};
-    
+
     for (const [nodeId, info] of this.nodes) {
       topology[nodeId] = {
         role: info.role,
@@ -282,14 +305,14 @@ class SignallingServer extends EventEmitter {
         connectedTo: Array.from(info.connectedPeers)
       };
     }
-    
+
     const message = JSON.stringify({
       type: 'topology',
       topology
     });
-    
+
     for (const info of this.nodes.values()) {
-      info.ws.send(message);
+      this._wsSend(info.ws, message);
     }
   }
 

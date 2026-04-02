@@ -4,41 +4,68 @@ import { metrics } from './debug/index.js';
 import fs from 'fs';
 import path from 'path';
 
+/**
+ * Deep merge двух объектов конфигурации.
+ * Для известных вложенных ключей (tun, mesh, workers, metrics, signalling, nat, quic, webrtc)
+ * выполняется рекурсивное слияние, остальные значения заменяются.
+ */
+const DEEP_MERGE_KEYS = new Set(['tun', 'mesh', 'workers', 'metrics', 'signalling', 'nat', 'quic', 'webrtc']);
+
+function deepMergeConfig(base, override) {
+  const result = { ...base };
+  for (const [key, val] of Object.entries(override)) {
+    if (
+      DEEP_MERGE_KEYS.has(key) &&
+      val !== null &&
+      typeof val === 'object' &&
+      !Array.isArray(val) &&
+      typeof result[key] === 'object' &&
+      result[key] !== null &&
+      !Array.isArray(result[key])
+    ) {
+      result[key] = { ...result[key], ...val };
+    } else {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
 function loadConfig(role) {
   let config = {};
-  
+
   const basePaths = [
     './config/default.json',
     './config.json',
     path.join(process.env.HOME || '', '.mesh-vpn/config.json')
   ];
-  
+
   for (const configPath of basePaths) {
     try {
       if (fs.existsSync(configPath)) {
         const content = fs.readFileSync(configPath, 'utf8');
-        config = { ...config, ...JSON.parse(content) };
+        config = deepMergeConfig(config, JSON.parse(content));
         break;
       }
     } catch (err) {
       console.warn(`Failed to load config from ${configPath}:`, err.message);
     }
   }
-  
+
   if (role) {
     const rolePath = `./config/${role}-node.json`;
     try {
       if (fs.existsSync(rolePath)) {
         const roleContent = fs.readFileSync(rolePath, 'utf8');
         const roleConfig = JSON.parse(roleContent);
-        config = { ...config, ...roleConfig };
+        config = deepMergeConfig(config, roleConfig);
         console.log(`Loaded role-specific config from ${rolePath}`);
       }
     } catch (err) {
       console.warn(`Failed to load role config from ${rolePath}:`, err.message);
     }
   }
-  
+
   return config;
 }
 
@@ -91,12 +118,21 @@ async function main() {
   
   const argsConfig = parseArgs();
   const role = argsConfig.role || process.env.NODE_ROLE || 'client';
-  const fileConfig = loadConfig(role);
-  
-  const config = {
-    ...fileConfig,
-    ...argsConfig
-  };
+  let fileConfig = loadConfig(role);
+
+  // Загружаем файл из --config / -c если он указан
+  if (argsConfig.configPath) {
+    try {
+      const extraContent = fs.readFileSync(argsConfig.configPath, 'utf8');
+      const extraConfig = JSON.parse(extraContent);
+      fileConfig = deepMergeConfig(fileConfig, extraConfig);
+      console.log(`Loaded extra config from ${argsConfig.configPath}`);
+    } catch (err) {
+      console.warn(`Failed to load config from ${argsConfig.configPath}:`, err.message);
+    }
+  }
+
+  const config = deepMergeConfig(fileConfig, argsConfig);
   
   console.log(`Config transport: ${JSON.stringify(config.transport)}`);
   
