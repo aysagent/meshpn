@@ -523,7 +523,11 @@ export class TunInterface extends EventEmitter {
       excludeFromVPN: this.excludedIPs,
     });
 
-    // Split-default откладываем до peer-connected; bypass TURN/infra — до WebRTC (меньше гонок с ICE).
+    // Split-default применяем сразу вместе с infra /32 и ip rules (до WebRTC ICE).
+    // Это исключает изменение маршрутизации к живому WebRTC/TURN соединению:
+    // ICE гатерит кандидатов и держит consent freshness уже с активным split-default.
+    // TURN защищён `ip rule pref 50 to TURN_IP/32 lookup 100`, который настраивается
+    // внутри _setupLinuxPolicyRouting() ДО добавления split-default маршрутов.
     if (useLinuxPolicyRouting) {
       try {
         execFileSync(
@@ -531,10 +535,7 @@ export class TunInterface extends EventEmitter {
           ['route', 'add', `${networkPrefix}.0.0/16`, 'dev', this.name],
           { stdio: 'ignore' },
         );
-        console.log(
-          `[TUN] Route for ${networkPrefix}.0.0/16 via ${this.name} (main); `
-          + 'split-default отложен до WebRTC peer-connected',
-        );
+        console.log(`[TUN] Route for ${networkPrefix}.0.0/16 via ${this.name} (main)`);
       } catch {
         console.log(`Route for ${networkPrefix}.0.0/16 may already exist`);
       }
@@ -543,15 +544,16 @@ export class TunInterface extends EventEmitter {
       this._policyRoutingDeferred = true;
       try {
         const earlyOk = this._setupLinuxPolicyRouting(infraIpv4, networkPrefix, {
-          applySplitDefault: false,
+          applySplitDefault: this.linuxSplitDefault,
           flushCache: false,
         });
         if (earlyOk && this._linuxPolicyRoutingActive) {
           this._infraAppliedEarly = true;
-          this._splitDefaultOnlyDeferred = this.linuxSplitDefault;
-          console.log(
-            '[TUN] Infra /32 + table 100 до WebRTC; clearnet в tun — после peer-connected (split /1)',
-          );
+          this._splitDefaultOnlyDeferred = false; // split-default применён сразу в Phase A
+          const splitNote = this.linuxSplitDefault
+            ? 'infra /32 + split-default до WebRTC; TURN защищён ip rule pref 50'
+            : 'infra /32 + table 100 до WebRTC';
+          console.log(`[TUN] ${splitNote}`);
         }
       } catch (e) {
         console.warn(`[TUN] Ранний infra policy routing не удался: ${e.message}`);
