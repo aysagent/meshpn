@@ -35,6 +35,12 @@ const LINUX_FWMARK_BYPASS_MAIN = 0x1;
 const LINUX_IP_RULE_PREF_FWMARK_MAIN = 100;
 /** Старые установки (глобальный lookup 100): удалять при настройке/restore. */
 const LINUX_IP_RULE_PREF_LOOKUP_MESHVPN_LEGACY = 101;
+/**
+ * `ip rule to INFRA_IP/32 pref 50 lookup 100` — bypass для TURN/signalling при split-default.
+ * Работает на уровне policy rules (до routing table), поэтому не зависит от per-socket route cache:
+ * добавление 0.0.0.0/1 в main table не влияет на уже открытые UDP-сокеты WebRTC/TURN.
+ */
+const LINUX_IP_RULE_PREF_INFRA_TO = 50;
 const IPTABLES_CHAIN_MESHVPN = 'MESHVPN-BYPASS';
 
 /** Без shell строка `… 2>/dev/null` попадает в argv ip и ломает команду; при отсутствии правила ip завершается с ошибкой. */
@@ -920,6 +926,8 @@ export class TunInterface extends EventEmitter {
     try {
       flushIpRulePref(LINUX_IP_RULE_PREF_LOOKUP_MESHVPN_LEGACY);
       flushIpRulePref(LINUX_IP_RULE_PREF_FWMARK_MAIN);
+      // Сброс infra-to правил от предыдущего запуска (до 32 IP)
+      flushIpRulePref(LINUX_IP_RULE_PREF_INFRA_TO, 32);
 
       try {
         execSync(`ip route flush table ${tbl}`, { stdio: 'ignore' });
@@ -964,6 +972,23 @@ export class TunInterface extends EventEmitter {
         try {
           this._ipRouteReplaceMainUplink32(ip, gateway, iface, prefsrc);
           console.log(`[TUN] Main bypass /32 (uplink) for infra: ${ip}`);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      // Policy rule bypass для TURN/signalling: `ip rule to IP/32 pref 50 lookup 100`.
+      // Срабатывает до routing table → не зависит от per-socket route cache.
+      // Именно это решает проблему: при добавлении 0.0.0.0/1 в main ядро инвалидирует
+      // route cache на открытых UDP-сокетах WebRTC/TURN, но policy rules пересматриваются
+      // при каждом lookup — ICE consent freshness (каждые ~5s) и медиа UDP идут через uplink.
+      for (const ip of excludeSet) {
+        try {
+          execSync(
+            `ip rule add to ${ip}/32 pref ${LINUX_IP_RULE_PREF_INFRA_TO} lookup ${tbl}`,
+            { stdio: 'ignore' },
+          );
+          console.log(`[TUN] ip rule to ${ip}/32 pref ${LINUX_IP_RULE_PREF_INFRA_TO} → table ${tbl}`);
         } catch {
           /* ignore */
         }
@@ -1081,6 +1106,7 @@ export class TunInterface extends EventEmitter {
 
     flushIpRulePref(LINUX_IP_RULE_PREF_LOOKUP_MESHVPN_LEGACY);
     flushIpRulePref(LINUX_IP_RULE_PREF_FWMARK_MAIN);
+    flushIpRulePref(LINUX_IP_RULE_PREF_INFRA_TO, 32);
 
     if (this.name) {
       try {
