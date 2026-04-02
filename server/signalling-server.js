@@ -27,6 +27,10 @@ class SignallingServer extends EventEmitter {
     }
   }
 
+  _sendRegistered(ws, nodeId, virtualIp) {
+    this._wsSend(ws, JSON.stringify({ type: 'registered', nodeId, virtualIp, networkCidr: '10.200.0.0/16' }));
+  }
+
   start() {
     // maxPayload ограничивает размер входящего сообщения (64 KB достаточно для SDP/ICE JSON)
     this.wss = new WebSocketServer({ port: this.port, maxPayload: 65536 });
@@ -126,12 +130,7 @@ class SignallingServer extends EventEmitter {
       }
       setNodeId(nodeId);
 
-      this._wsSend(ws, JSON.stringify({
-        type: 'registered',
-        nodeId,
-        virtualIp: existingNode.virtualIp,
-        networkCidr: '10.200.0.0/16'
-      }));
+      this._sendRegistered(ws, nodeId, existingNode.virtualIp);
 
       this._broadcastPeerJoin(nodeId, existingNode);
 
@@ -154,12 +153,7 @@ class SignallingServer extends EventEmitter {
     this.nodes.set(nodeId, nodeInfo);
     setNodeId(nodeId);
     
-    this._wsSend(ws, JSON.stringify({
-      type: 'registered',
-      nodeId,
-      virtualIp,
-      networkCidr: '10.200.0.0/16'
-    }));
+    this._sendRegistered(ws, nodeId, virtualIp);
     
     this._broadcastPeerJoin(nodeId, nodeInfo);
     

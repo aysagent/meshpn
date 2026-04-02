@@ -44,26 +44,24 @@ export class WebSocketTransport extends EventEmitter {
 
   async connect(peerId, url, timeout = null) {
     const connectTimeout = timeout || this.connectTimeout;
-    
+
     return new Promise((resolve, reject) => {
+      const ws = new WebSocket(url, {
+        headers: { 'X-Peer-ID': this.localNodeId || peerId }
+      });
+
       const timeoutId = setTimeout(() => {
         ws.close();
         reject(new Error(`Connection timeout after ${connectTimeout}ms`));
       }, connectTimeout);
-      
-      const ws = new WebSocket(url, {
-        headers: { 
-          'X-Peer-ID': this.localNodeId || peerId
-        }
-      });
-      
+
       ws.on('open', () => {
         clearTimeout(timeoutId);
         this._setupConnection(peerId, ws);
         this.reconnectAttempts.delete(peerId);
         resolve();
       });
-      
+
       ws.on('error', (err) => {
         clearTimeout(timeoutId);
         reject(err);
@@ -99,8 +97,6 @@ export class WebSocketTransport extends EventEmitter {
     for (const peerId of this.connections.keys()) {
       this.close(peerId);
     }
-    for (const sb of this.sendBuffers.values()) sb.stop();
-    this.sendBuffers.clear();
     if (this.server) {
       this.server.close();
     }

@@ -4,26 +4,12 @@ import { metrics } from './debug/index.js';
 import fs from 'fs';
 import path from 'path';
 
-/**
- * Deep merge двух объектов конфигурации.
- * Для известных вложенных ключей (tun, mesh, workers, metrics, signalling, nat, quic, webrtc)
- * выполняется рекурсивное слияние, остальные значения заменяются.
- */
-const DEEP_MERGE_KEYS = new Set(['tun', 'mesh', 'workers', 'metrics', 'signalling', 'nat', 'quic', 'webrtc']);
-
 function deepMergeConfig(base, override) {
   const result = { ...base };
   for (const [key, val] of Object.entries(override)) {
-    if (
-      DEEP_MERGE_KEYS.has(key) &&
-      val !== null &&
-      typeof val === 'object' &&
-      !Array.isArray(val) &&
-      typeof result[key] === 'object' &&
-      result[key] !== null &&
-      !Array.isArray(result[key])
-    ) {
-      result[key] = { ...result[key], ...val };
+    if (val !== null && typeof val === 'object' && !Array.isArray(val)
+        && result[key] !== null && typeof result[key] === 'object' && !Array.isArray(result[key])) {
+      result[key] = deepMergeConfig(result[key], val);
     } else {
       result[key] = val;
     }

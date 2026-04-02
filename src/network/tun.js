@@ -876,27 +876,12 @@ export class TunInterface extends EventEmitter {
     }
   }
 
-  _ipRouteAddMeshvpnTableBypass(ip, gateway, iface, tableId, src = null) {
-    const args = ['route', 'add', `${ip}/32`];
-    if (gateway != null) {
-      args.push('via', gateway);
-    }
-    args.push('dev', iface, 'table', String(tableId));
-    if (src) {
-      args.push('src', src);
-    }
-    execFileSync('ip', args, { stdio: 'ignore' });
-  }
-
-  _ipRouteReplaceMainUplink32(ip, gateway, iface, src = null) {
-    const args = ['route', 'replace', `${ip}/32`];
-    if (gateway != null) {
-      args.push('via', gateway);
-    }
+  _ipRoute(action, ip, gateway, iface, opts = {}) {
+    const args = ['route', action, `${ip}/32`];
+    if (gateway != null) args.push('via', gateway);
     args.push('dev', iface);
-    if (src) {
-      args.push('src', src);
-    }
+    if (opts.tableId) args.push('table', String(opts.tableId));
+    if (opts.src) args.push('src', opts.src);
     execFileSync('ip', args, { stdio: 'ignore' });
   }
 
@@ -953,7 +938,7 @@ export class TunInterface extends EventEmitter {
 
       for (const ip of excludeSet) {
         try {
-          this._ipRouteAddMeshvpnTableBypass(ip, gateway, iface, tbl, prefsrc);
+          this._ipRoute('add', ip, gateway, iface, { tableId: tbl, src: prefsrc });
         } catch {
           /* ignore */
         }
@@ -970,7 +955,7 @@ export class TunInterface extends EventEmitter {
 
       for (const ip of excludeSet) {
         try {
-          this._ipRouteReplaceMainUplink32(ip, gateway, iface, prefsrc);
+          this._ipRoute('replace', ip, gateway, iface, { src: prefsrc });
           console.log(`[TUN] Main bypass /32 (uplink) for infra: ${ip}`);
         } catch {
           /* ignore */
@@ -1085,24 +1070,14 @@ export class TunInterface extends EventEmitter {
 
     const ch = IPTABLES_CHAIN_MESHVPN;
     try {
-      try {
-        execFileSync('iptables', ['-t', 'mangle', '-D', 'OUTPUT', '-j', ch], { stdio: 'ignore' });
-      } catch {
-        /* ignore */
-      }
-      try {
-        execFileSync('iptables', ['-t', 'mangle', '-F', ch], { stdio: 'ignore' });
-      } catch {
-        /* ignore */
-      }
-      try {
-        execFileSync('iptables', ['-t', 'mangle', '-X', ch], { stdio: 'ignore' });
-      } catch {
-        /* ignore */
-      }
-    } catch {
-      /* ignore */
-    }
+      execFileSync('iptables', ['-t', 'mangle', '-D', 'OUTPUT', '-j', ch], { stdio: 'ignore' });
+    } catch { /* ignore */ }
+    try {
+      execFileSync('iptables', ['-t', 'mangle', '-F', ch], { stdio: 'ignore' });
+    } catch { /* ignore */ }
+    try {
+      execFileSync('iptables', ['-t', 'mangle', '-X', ch], { stdio: 'ignore' });
+    } catch { /* ignore */ }
 
     flushIpRulePref(LINUX_IP_RULE_PREF_LOOKUP_MESHVPN_LEGACY);
     flushIpRulePref(LINUX_IP_RULE_PREF_FWMARK_MAIN);
