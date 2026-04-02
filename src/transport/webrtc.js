@@ -715,31 +715,25 @@ export class WebRTCTransport extends EventEmitter {
   }
 
   _logIceFailureDiagnostics(peerId, pc) {
+    let ice = '';
     try {
-      let ice = '';
-      try {
-        if (typeof pc.iceState === 'function') {
-          ice = String(pc.iceState());
-        }
-      } catch (e) {
-        ice = `? (${e.message})`;
-      }
-      console.warn(`[WebRTC] ${peerId.substring(0, 8)}… ICE diagnostics: iceState=${ice}`);
-      try {
-        const pair = pc.getSelectedCandidatePair();
-        if (pair?.local && pair?.remote) {
-          console.warn(
-            `[WebRTC] ${peerId.substring(0, 8)}… last candidate pair: local ${pair.local.type} `
-            + `${pair.local.address}:${pair.local.port} <-> remote ${pair.remote.type} ${pair.remote.address}:${pair.remote.port}`,
-          );
-        } else {
-          console.warn(`[WebRTC] ${peerId.substring(0, 8)}… no selected candidate pair at ICE failure`);
-        }
-      } catch (e) {
-        console.warn(`[WebRTC] ${peerId.substring(0, 8)}… getSelectedCandidatePair: ${e.message}`);
+      if (typeof pc.iceState === 'function') ice = String(pc.iceState());
+    } catch (e) {
+      ice = `? (${e.message})`;
+    }
+    console.warn(`[WebRTC] ${peerId.substring(0, 8)}… ICE diagnostics: iceState=${ice}`);
+    try {
+      const pair = pc.getSelectedCandidatePair();
+      if (pair?.local && pair?.remote) {
+        console.warn(
+          `[WebRTC] ${peerId.substring(0, 8)}… last candidate pair: local ${pair.local.type} `
+          + `${pair.local.address}:${pair.local.port} <-> remote ${pair.remote.type} ${pair.remote.address}:${pair.remote.port}`,
+        );
+      } else {
+        console.warn(`[WebRTC] ${peerId.substring(0, 8)}… no selected candidate pair at ICE failure`);
       }
     } catch (e) {
-      console.warn(`[WebRTC] ${peerId.substring(0, 8)}… ICE diagnostics error: ${e.message}`);
+      console.warn(`[WebRTC] ${peerId.substring(0, 8)}… getSelectedCandidatePair: ${e.message}`);
     }
   }
 

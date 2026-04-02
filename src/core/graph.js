@@ -134,90 +134,51 @@ export class NetworkGraph extends EventEmitter {
     return this.getNodesByRole('client');
   }
 
-  findShortestPath(fromNodeId, toNodeId) {
-    if (!this.nodes.has(fromNodeId) || !this.nodes.has(toNodeId)) {
-      return null;
-    }
-    
-    if (fromNodeId === toNodeId) {
-      return [fromNodeId];
-    }
-    
-    const visited = new Set();
-    const queue = [[fromNodeId]];
-    visited.add(fromNodeId);
-    
+  _bfs(startId, isGoal) {
+    if (!this.nodes.has(startId)) return null;
+    const visited = new Set([startId]);
+    const queue = [[startId]];
     while (queue.length > 0) {
       const path = queue.shift();
       const current = path[path.length - 1];
-      
-      const neighbors = this.edges.get(current) || new Set();
-      
-      for (const neighbor of neighbors) {
-        if (neighbor === toNodeId) {
-          return [...path, neighbor];
-        }
-        
-        if (!visited.has(neighbor)) {
-          visited.add(neighbor);
-          queue.push([...path, neighbor]);
-        }
+      const hit = isGoal(current, path);
+      if (hit) return hit;
+      for (const nb of (this.edges.get(current) || [])) {
+        if (!visited.has(nb)) { visited.add(nb); queue.push([...path, nb]); }
       }
     }
-    
     return null;
+  }
+
+  findShortestPath(fromNodeId, toNodeId) {
+    if (!this.nodes.has(toNodeId)) return null;
+    if (fromNodeId === toNodeId) return [fromNodeId];
+    return this._bfs(fromNodeId, (cur, path) => cur === toNodeId ? [...path] : null);
   }
 
   findPathToNearestExit(fromNodeId) {
-    const exitNodes = this.getExitNodes();
-    if (exitNodes.length === 0) {
-      return null;
-    }
-    
-    const visited = new Set();
-    const queue = [[fromNodeId]];
-    visited.add(fromNodeId);
-    
-    while (queue.length > 0) {
-      const path = queue.shift();
-      const current = path[path.length - 1];
-      
-      const currentNode = this.nodes.get(current);
-      if (currentNode && currentNode.role === 'exit' && current !== fromNodeId) {
-        return { path, exitNode: current };
-      }
-      
-      const neighbors = this.edges.get(current) || new Set();
-      
-      for (const neighbor of neighbors) {
-        if (!visited.has(neighbor)) {
-          visited.add(neighbor);
-          queue.push([...path, neighbor]);
-        }
-      }
-    }
-    
-    return null;
+    return this._bfs(fromNodeId, (cur, path) =>
+      (this.nodes.get(cur)?.role === 'exit' && cur !== fromNodeId) ? { path, exitNode: cur } : null
+    );
   }
 
   findAllPathsToExits(fromNodeId, maxPaths = 5) {
-    const exitNodes = this.getExitNodes();
+    if (!this.nodes.has(fromNodeId)) return [];
     const paths = [];
-    
-    for (const exitNode of exitNodes) {
-      const path = this.findShortestPath(fromNodeId, exitNode.nodeId);
-      if (path && path.length > 1) {
-        paths.push({
-          path,
-          exitNode: exitNode.nodeId,
-          hops: path.length - 1
-        });
+    const visited = new Set([fromNodeId]);
+    const queue = [[fromNodeId]];
+    while (queue.length > 0 && paths.length < maxPaths) {
+      const path = queue.shift();
+      const cur = path[path.length - 1];
+      if (this.nodes.get(cur)?.role === 'exit' && cur !== fromNodeId) {
+        paths.push({ path, exitNode: cur, hops: path.length - 1 });
+        if (paths.length >= maxPaths) break;
+      }
+      for (const nb of (this.edges.get(cur) || [])) {
+        if (!visited.has(nb)) { visited.add(nb); queue.push([...path, nb]); }
       }
     }
-    
-    paths.sort((a, b) => a.hops - b.hops);
-    
-    return paths.slice(0, maxPaths);
+    return paths.sort((a, b) => a.hops - b.hops);
   }
 
   updateFromTopology(topology) {
