@@ -114,6 +114,8 @@ export class PeerDiscovery extends EventEmitter {
     this.signalling.on('peer-join', (peer) => {
       this._clearMeshReconnectTimer(peer.nodeId);
       this._clearPendingPeerLeave(peer.nodeId);
+      // Сбрасываем stale ICE-поколение — при reconnect пира старый hsGen недействителен
+      this._expectedRemoteIceHsGen.delete(peer.nodeId);
       this._enqueueSignallingWork(async () => {
         await this._supersedePendingMeshHandshake(peer.nodeId, 'peer-join');
         await this._initiateConnection(peer);
@@ -506,6 +508,9 @@ export class PeerDiscovery extends EventEmitter {
     this.sessionManager.removeSession(nodeId);
     this.transportManager.close(nodeId);
 
+    // Финальная очистка: запись в _leaveIntentGen больше не нужна
+    this._leaveIntentGen.delete(nodeId);
+
     this.emit('peer-leave', nodeId);
   }
 
@@ -549,5 +554,7 @@ export class PeerDiscovery extends EventEmitter {
     this.sessionManager.clear();
     this.pendingConnections.clear();
     this.establishedPeers.clear();
+    this._leaveIntentGen.clear();
+    this._expectedRemoteIceHsGen.clear();
   }
 }

@@ -13,6 +13,7 @@ export class SignallingClient extends EventEmitter {
     this.serverUrl = serverUrl;
     this.identity = identity;
     this.reconnectInterval = options.reconnectIntervalMs ?? options.reconnectInterval ?? 5000;
+    this.pingIntervalMs = options.pingIntervalMs ?? 30000;
     this.ws = null;
     this.connected = false;
     this.registered = false;
@@ -65,6 +66,13 @@ export class SignallingClient extends EventEmitter {
 
   _connectOnce() {
     return new Promise((resolve, reject) => {
+      // Чистим слушатели предыдущего сокета (если он уже закрыт), чтобы не накапливались
+      // между reconnect-циклами и позволить GC собрать объект.
+      const prevWs = this.ws;
+      if (prevWs && (prevWs.readyState === prevWs.CLOSED || prevWs.readyState === prevWs.CLOSING)) {
+        prevWs.removeAllListeners();
+      }
+
       const ws = new WebSocket(this.serverUrl);
       this.ws = ws;
       let settled = false;
@@ -258,7 +266,7 @@ export class SignallingClient extends EventEmitter {
   _startPingInterval() {
     this.pingInterval = setInterval(() => {
       this._send({ type: 'ping' });
-    }, 30000);
+    }, this.pingIntervalMs);
   }
 
   _send(message) {

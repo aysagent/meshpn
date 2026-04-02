@@ -221,19 +221,31 @@ export class NetworkGraph extends EventEmitter {
   }
 
   updateFromTopology(topology) {
+    const incomingNodeIds = new Set(Object.keys(topology));
+
+    // Обновляем / добавляем узлы из нового снимка topology
     for (const [nodeId, info] of Object.entries(topology)) {
       this.addNode(nodeId, {
         role: info.role,
-        virtualIp: info.virtualIp
+        virtualIp: info.virtualIp,
+        _fromTopology: true,
       });
-      
+
       for (const connectedNodeId of info.connectedTo || []) {
         if (this.nodes.has(connectedNodeId) || topology[connectedNodeId]) {
           this.addEdge(nodeId, connectedNodeId);
         }
       }
     }
-    
+
+    // Pruning: удаляем узлы, которые пришли из topology в прошлый раз, но отсутствуют сейчас.
+    // Узлы, добавленные локально через addLocalConnection (не из topology), не трогаем.
+    for (const [nodeId, info] of this.nodes) {
+      if (info._fromTopology && !incomingNodeIds.has(nodeId)) {
+        this.removeNode(nodeId);
+      }
+    }
+
     this.emit('topology-updated');
   }
 

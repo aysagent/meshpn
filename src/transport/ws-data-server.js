@@ -61,6 +61,7 @@ export class WebSocketDataServer extends EventEmitter {
     ws.on('message', (data) => {
       const raw = data instanceof Buffer ? data : Buffer.from(data);
       const packets = unframe(raw);
+      if (!packets) return; // malformed/truncated frame, already logged in unframe
       for (const buffer of packets) {
         this.emit('message', peerId, buffer);
       }
