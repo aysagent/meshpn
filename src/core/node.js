@@ -324,14 +324,46 @@ export class MeshNode extends EventEmitter {
 
   async start() {
     console.log(`Starting mesh node ${this.nodeId} as ${this.role}...`);
-    
+
     this._setupEventHandlers();
-    
+
     if (this.wsDataServer) {
       await this.wsDataServer.start();
       this._setupWsDataServerEvents();
     }
-    
+
+    // Early TUN setup: create tun0 + apply full routing (incl. split-default) to DOWN interface
+    // BEFORE signalling connects. Routes become active atomically when `ip link set tun0 up`
+    // runs after virtualIp is received — no routing changes on live sockets ever.
+    if (
+      this.isClient &&
+      process.platform === 'linux' &&
+      this.config.enableTun !== false &&
+      this.config.tun?.linuxSplitDefault === true
+    ) {
+      this.tunManager = new TunManager({
+        ...(this.config.tun || {}),
+        ...(this.config.tun && typeof this.config.tun === 'object'
+          ? { tun: { ...this.config.tun } }
+          : {}),
+        isExit: false,
+        meshVpnConfig: this.config,
+      });
+      this.tunManager.on('outbound-packet', (packet) => { this._handleOutboundPacket(packet); });
+      this._tunEarlyBarrierResolve = null;
+      this._tunOpenBarrierPromise = new Promise((r) => { this._tunEarlyBarrierResolve = r; });
+      try {
+        await this.tunManager.setupEarly();
+        console.log('[NODE] Early TUN ready; подключаемся к signalling...');
+      } catch (err) {
+        console.warn(`[NODE] Early TUN setup failed: ${err.message}`);
+        this.tunManager = null;
+        this._tunEarlyBarrierResolve?.();
+        this._tunEarlyBarrierResolve = null;
+        this._tunOpenBarrierPromise = null;
+      }
+    }
+
     const discoveryRole = this.isRelay ? 'relay' : this.role;
     await this.discovery.start(discoveryRole);
     
@@ -368,11 +400,28 @@ export class MeshNode extends EventEmitter {
 
   _setupEventHandlers() {
     this.discovery.on('registered', async (info) => {
-      if (this.tunManager) {
+      // Early TUN: устройство создано в start(), но IP ещё не назначен — присваиваем сейчас
+      if (this.tunManager && !this.virtualIp) {
+        this.virtualIp = info.virtualIp;
+        console.log(`Registered with virtual IP: ${this.virtualIp}`);
+        try {
+          await this.tunManager.setup(this.virtualIp);
+        } catch (err) {
+          console.warn(`[NODE] TUN IP assignment failed: ${err.message}`);
+        } finally {
+          try { this._tunEarlyBarrierResolve?.(); } catch {}
+          this._tunEarlyBarrierResolve = null;
+          this._tunOpenBarrierPromise = null;
+        }
+        this.emit('registered', info);
+        return;
+      }
+      // TUN полностью готов — игнорируем повторную регистрацию (signalling reconnect)
+      if (this.tunManager && this.virtualIp) {
         console.log(`Already have TUN (${this.virtualIp}), ignoring new registration with ${info.virtualIp}`);
         return;
       }
-      
+
       this.virtualIp = info.virtualIp;
       console.log(`Registered with virtual IP: ${this.virtualIp}`);
       
