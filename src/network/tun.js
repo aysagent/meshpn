@@ -490,23 +490,23 @@ export class TunInterface extends EventEmitter {
       excludeFromVPN: this.excludedIPs,
     });
     const ok = this._setupLinuxPolicyRouting(infraIpv4, networkPrefix, {
-      applySplitDefault: true,
+      applySplitDefault: false, // split-default добавляем только после ip link set up
       flushCache: false,
     });
     if (ok && this._linuxPolicyRoutingActive) {
       this._infraAppliedEarly = true;
-      this._splitDefaultOnlyDeferred = false;
+      this._splitDefaultOnlyDeferred = true; // будет добавлен в assignIpAndBringUp
       this._policyRoutingDeferred = false;
       this._deferredInfraIpv4 = infraIpv4;
       this._deferredNetworkPrefix = networkPrefix;
-      console.log('[TUN] Ранний routing: ip rules + split-default на DOWN tun0; активация при ip link set up');
+      console.log('[TUN] Ранний routing: ip rules + infra /32 на DOWN tun0; split-default — после ip link up');
     }
   }
 
   /**
    * Назначить IP и поднять tun0 после получения virtualIp от signalling.
-   * В момент `ip link set up` все ранее добавленные маршруты (split-default, mesh /16)
-   * активируются атомарно — никаких изменений маршрутизации после этого.
+   * ip rules (TURN bypass) уже активны с openEarly(). split-default добавляем здесь —
+   * после ip link set up интерфейс UP, маршрут принимается ядром без ошибок.
    */
   async assignIpAndBringUp(virtualIp) {
     this.virtualIp = virtualIp;
@@ -517,6 +517,16 @@ export class TunInterface extends EventEmitter {
     }
     execSync(`ip link set dev ${this.name} mtu ${this.mtu}`);
     execSync(`ip link set dev ${this.name} up`);
+    if (this.linuxSplitDefault && this._splitDefaultOnlyDeferred) {
+      try {
+        execSync(`ip route replace 0.0.0.0/1 dev ${this.name}`);
+        execSync(`ip route replace 128.0.0.0/1 dev ${this.name}`);
+        this._splitDefaultOnlyDeferred = false;
+        console.log('[TUN] split-default применён после ip link set up');
+      } catch (err) {
+        console.warn('[TUN] split-default failed:', err.message);
+      }
+    }
     this.running = true;
     this.emit('open', this.name);
   }
