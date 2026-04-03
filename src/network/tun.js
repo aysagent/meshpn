@@ -496,10 +496,10 @@ export class TunInterface extends EventEmitter {
     if (ok && this._linuxPolicyRoutingActive) {
       this._infraAppliedEarly = true;
       this._splitDefaultOnlyDeferred = true; // будет добавлен в assignIpAndBringUp
-      this._policyRoutingDeferred = false;
+      this._policyRoutingDeferred = true; // split-default отложен до peer-connected
       this._deferredInfraIpv4 = infraIpv4;
       this._deferredNetworkPrefix = networkPrefix;
-      console.log('[TUN] Ранний routing: ip rules + infra /32 на DOWN tun0; split-default — после ip link up');
+      console.log('[TUN] Ранний routing: ip rules + infra /32 применены на DOWN tun0; split-default — после peer-connected');
     }
   }
 
@@ -517,16 +517,6 @@ export class TunInterface extends EventEmitter {
     }
     execSync(`ip link set dev ${this.name} mtu ${this.mtu}`);
     execSync(`ip link set dev ${this.name} up`);
-    if (this.linuxSplitDefault && this._splitDefaultOnlyDeferred) {
-      try {
-        execSync(`ip route replace 0.0.0.0/1 dev ${this.name}`);
-        execSync(`ip route replace 128.0.0.0/1 dev ${this.name}`);
-        this._splitDefaultOnlyDeferred = false;
-        console.log('[TUN] split-default применён после ip link set up');
-      } catch (err) {
-        console.warn('[TUN] split-default failed:', err.message);
-      }
-    }
     this.running = true;
     this.emit('open', this.name);
   }
