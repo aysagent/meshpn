@@ -418,7 +418,105 @@ export class TunInterface extends EventEmitter {
     } else {
       throw new Error(`Unsupported platform: ${this.platform}`);
     }
-    
+
+    this.running = true;
+    this.emit('open', this.name);
+  }
+
+  /**
+   * Linux-only: создать tun0 и применить ВСЕ маршруты (включая split-default) к DOWN-интерфейсу
+   * ДО подключения к signalling. Маршруты хранятся ядром как DEAD и активируются атомарно
+   * при `ip link set tun0 up` (в assignIpAndBringUp). IP не назначается — нужен virtualIp от сервера.
+   */
+  async openEarly() {
+    const tunName = this.config.tunName || 'tun0';
+    return new Promise((resolve, reject) => {
+      if (!fs.existsSync(TUN_HELPER_LINUX_PATH)) {
+        reject(new Error(`tun-helper not found at ${TUN_HELPER_LINUX_PATH}. Run: cd helpers && make`));
+        return;
+      }
+      this.helperProcess = spawn(TUN_HELPER_LINUX_PATH, [tunName], { stdio: ['pipe', 'pipe', 'pipe'] });
+      let interfaceNameReceived = false;
+      this.helperProcess.stderr.once('data', (data) => {
+        const output = data.toString().trim();
+        if (output.startsWith('ERROR:')) {
+          reject(new Error(`tun-helper: ${output}`));
+          return;
+        }
+        this.name = output;
+        interfaceNameReceived = true;
+        console.log(`[TUN] Created TUN interface (early): ${this.name}`);
+        this.helperProcess.stdout.on('data', (d) => {
+          if (!this.running) return;
+          this._processHelperData(d);
+        });
+        void (async () => {
+          try {
+            await this._applyEarlyLinuxRouting();
+          } catch (err) {
+            console.warn(`[TUN] Early routing failed: ${err.message}`);
+          }
+          resolve();
+        })();
+      });
+      this.helperProcess.on('error', (err) => {
+        if (!interfaceNameReceived) reject(err);
+        else this.emit('error', err);
+      });
+      this.helperProcess.on('close', (code) => {
+        if (this.running) {
+          console.log(`tun-helper exited with code ${code}`);
+          this.running = false;
+          this.emit('close');
+        }
+      });
+      setTimeout(() => {
+        if (!interfaceNameReceived) {
+          this.helperProcess.kill();
+          reject(new Error('Timeout waiting for TUN interface name'));
+        }
+      }, 5000);
+    });
+  }
+
+  /**
+   * Применить ip rules + split-default на DOWN tun0 до получения virtualIp.
+   * Маршруты к DOWN-интерфейсу ядро хранит как DEAD — не используются до `ip link set up`.
+   */
+  async _applyEarlyLinuxRouting() {
+    const vnet = this.meshVpnConfig?.virtualNetwork || '10.200.0.0/16';
+    const networkPrefix = vnet.split('/')[0].split('.').slice(0, 2).join('.');
+    const infraIpv4 = await collectInfraIPv4FromMeshConfigAsync(this.meshVpnConfig || {}, {
+      excludeFromVPN: this.excludedIPs,
+    });
+    const ok = this._setupLinuxPolicyRouting(infraIpv4, networkPrefix, {
+      applySplitDefault: true,
+      flushCache: false,
+    });
+    if (ok && this._linuxPolicyRoutingActive) {
+      this._infraAppliedEarly = true;
+      this._splitDefaultOnlyDeferred = false;
+      this._policyRoutingDeferred = false;
+      this._deferredInfraIpv4 = infraIpv4;
+      this._deferredNetworkPrefix = networkPrefix;
+      console.log('[TUN] Ранний routing: ip rules + split-default на DOWN tun0; активация при ip link set up');
+    }
+  }
+
+  /**
+   * Назначить IP и поднять tun0 после получения virtualIp от signalling.
+   * В момент `ip link set up` все ранее добавленные маршруты (split-default, mesh /16)
+   * активируются атомарно — никаких изменений маршрутизации после этого.
+   */
+  async assignIpAndBringUp(virtualIp) {
+    this.virtualIp = virtualIp;
+    try {
+      execFileSync('ip', ['addr', 'add', `${virtualIp}/16`, 'dev', this.name], { stdio: 'ignore' });
+    } catch {
+      /* адрес мог быть добавлен ранее */
+    }
+    execSync(`ip link set dev ${this.name} mtu ${this.mtu}`);
+    execSync(`ip link set dev ${this.name} up`);
     this.running = true;
     this.emit('open', this.name);
   }
@@ -1345,22 +1443,47 @@ export class TunManager extends EventEmitter {
     this.virtualIp = null;
   }
 
+  /**
+   * Linux early setup: создать tun0 и применить routing (включая split-default) к DOWN-интерфейсу
+   * ДО подключения к signalling. Вызывать из MeshNode.start() перед discovery.start().
+   * После этого вызвать setup(virtualIp) когда сервер назначит IP.
+   */
+  async setupEarly() {
+    this.tun = new TunInterface({ ...this.config, virtualIp: null });
+    this.tun.on('packet', (packet) => { this.emit('outbound-packet', packet); });
+    this.tun.on('error', (err) => { this.emit('error', err); });
+    await this.tun.openEarly();
+  }
+
   async setup(virtualIp) {
     this.virtualIp = virtualIp;
-    
+
+    if (this.tun) {
+      // setupEarly() был вызван: устройство создано, применяем только IP + bring up
+      this.tun.virtualIp = virtualIp;
+      try {
+        await this.tun.assignIpAndBringUp(virtualIp);
+        console.log(`TUN interface ${this.tun.name} configured with IP ${virtualIp}`);
+      } catch (err) {
+        console.error('Failed to configure TUN IP:', err.message);
+        this.tun = null;
+      }
+      return this.tun !== null;
+    }
+
     this.tun = new TunInterface({
       ...this.config,
       virtualIp
     });
-    
+
     this.tun.on('packet', (packet) => {
       this.emit('outbound-packet', packet);
     });
-    
+
     this.tun.on('error', (err) => {
       this.emit('error', err);
     });
-    
+
     try {
       await this.tun.open();
       console.log(`TUN interface ${this.tun.name} configured with IP ${virtualIp}`);
@@ -1369,7 +1492,7 @@ export class TunManager extends EventEmitter {
       console.log('The VPN will run in proxy mode without TUN.');
       this.tun = null;
     }
-    
+
     return this.tun !== null;
   }
 
