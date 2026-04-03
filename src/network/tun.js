@@ -1101,10 +1101,9 @@ export class TunInterface extends EventEmitter {
           '[TUN] linuxSplitDefault=false: пропуск 0.0.0.0/1 и 128.0.0.0/1 — дефолтный интернет остаётся на uplink',
         );
       }
-      execSync(
-        `ip route replace ${networkPrefix}.0.0/16 dev ${this.name}`,
-        { stdio: 'ignore' },
-      );
+      try {
+        execSync(`ip route replace ${networkPrefix}.0.0/16 dev ${this.name}`, { stdio: 'ignore' });
+      } catch { /* interface may be DOWN during early routing; kernel creates this route on ip addr add */ }
 
       execSync(
         `ip rule add pref ${LINUX_IP_RULE_PREF_FWMARK_MAIN} fwmark 0x${LINUX_FWMARK_BYPASS_MAIN.toString(16)} lookup ${tbl}`,
