@@ -12,6 +12,7 @@ export class SignallingClient extends EventEmitter {
     super();
     this.serverUrl = serverUrl;
     this.identity = identity;
+    this.name = options.name || null;
     this.reconnectInterval = options.reconnectIntervalMs ?? options.reconnectInterval ?? 5000;
     this.pingIntervalMs = options.pingIntervalMs ?? 30000;
     this.ws = null;
@@ -123,12 +124,16 @@ export class SignallingClient extends EventEmitter {
   }
 
   _register() {
-    this._send({
+    const msg = {
       type: 'register',
       nodeId: this.identity.nodeId,
       publicKey: this.identity.exportPublicKey(),
       role: this.role,
-    });
+    };
+    if (this.name) {
+      msg.name = this.name;
+    }
+    this._send(msg);
   }
 
   _handleMessage(data) {

@@ -1,5 +1,6 @@
 import { WebSocketServer } from 'ws';
 import { EventEmitter } from 'events';
+import geoip from 'geoip-lite';
 
 class SignallingServer extends EventEmitter {
   constructor(port = 8080) {
@@ -39,8 +40,8 @@ class SignallingServer extends EventEmitter {
       console.log(`Signalling server listening on port ${this.port}`);
     });
     
-    this.wss.on('connection', (ws) => {
-      this._handleConnection(ws);
+    this.wss.on('connection', (ws, req) => {
+      this._handleConnection(ws, req);
     });
     
     this.wss.on('error', (err) => {
@@ -49,7 +50,9 @@ class SignallingServer extends EventEmitter {
     });
   }
 
-  _handleConnection(ws) {
+  _handleConnection(ws, req) {
+    const rawAddr = req?.socket?.remoteAddress || '';
+    ws._remoteAddress = rawAddr.replace(/^::ffff:/, '');
     let nodeId = null;
     
     ws.on('message', (data) => {
@@ -103,13 +106,14 @@ class SignallingServer extends EventEmitter {
   }
 
   _handleRegister(ws, message, setNodeId) {
-    const { nodeId, publicKey, role } = message;
-    
+    const { nodeId, publicKey, role, name } = message;
+
     if (!nodeId || !publicKey) {
       this._wsSend(ws, JSON.stringify({ type: 'error', error: 'Missing nodeId or publicKey' }));
       return;
     }
 
+    const label = name || nodeId.substring(0, 8);
     const existingNode = this.nodes.get(nodeId);
     if (existingNode) {
       // Не шлём peer-leave: это рвёт рабочий WebRTC между exit и клиентом при лишь
@@ -128,36 +132,45 @@ class SignallingServer extends EventEmitter {
       if (role) {
         existingNode.role = role;
       }
+      if (name) {
+        existingNode.name = name;
+      }
       setNodeId(nodeId);
 
       this._sendRegistered(ws, nodeId, existingNode.virtualIp);
 
       this._broadcastPeerJoin(nodeId, existingNode);
 
-      console.log(`Node re-registered: ${nodeId} (${existingNode.role}) - ${existingNode.virtualIp}`);
+      console.log(`Node re-registered: ${label} (${existingNode.role}) - ${existingNode.virtualIp}`);
       return;
     }
-    
+
     const virtualIp = `${this.virtualNetwork}.${this.virtualIpCounter++}`;
-    
+    const externalIp = ws._remoteAddress || null;
+    const geo = externalIp ? geoip.lookup(externalIp) : null;
+
     const nodeInfo = {
       ws,
       nodeId,
+      name: name || null,
       publicKey,
       role: role || 'client',
       virtualIp,
+      externalIp,
+      geo,
       connectedPeers: new Set(),
       registeredAt: Date.now()
     };
-    
+
     this.nodes.set(nodeId, nodeInfo);
     setNodeId(nodeId);
-    
+
     this._sendRegistered(ws, nodeId, virtualIp);
-    
+
     this._broadcastPeerJoin(nodeId, nodeInfo);
-    
-    console.log(`Node registered: ${nodeId} (${role}) - ${virtualIp}`);
+
+    const geoStr = geo ? ` [${geo.country}${geo.city ? '/' + geo.city : ''}]` : '';
+    console.log(`Node registered: ${label} (${role}) - ${virtualIp}${geoStr}`);
     this.emit('node-registered', nodeInfo);
   }
 
@@ -190,14 +203,17 @@ class SignallingServer extends EventEmitter {
 
   _handleGetPeers(ws, excludeNodeId) {
     const peers = [];
-    
+
     for (const [nodeId, info] of this.nodes) {
       if (nodeId !== excludeNodeId) {
         peers.push({
           nodeId,
+          name: info.name || null,
           publicKey: info.publicKey,
           role: info.role,
-          virtualIp: info.virtualIp
+          virtualIp: info.virtualIp,
+          externalIp: info.externalIp || null,
+          geo: info.geo || null,
         });
       }
     }
@@ -210,13 +226,16 @@ class SignallingServer extends EventEmitter {
 
   _handleGetExitNodes(ws) {
     const exitNodes = [];
-    
+
     for (const [nodeId, info] of this.nodes) {
       if (info.role === 'exit') {
         exitNodes.push({
           nodeId,
+          name: info.name || null,
           publicKey: info.publicKey,
-          virtualIp: info.virtualIp
+          virtualIp: info.virtualIp,
+          externalIp: info.externalIp || null,
+          geo: info.geo || null,
         });
       }
     }
@@ -250,7 +269,7 @@ class SignallingServer extends EventEmitter {
       }
       this.nodes.delete(nodeId);
       this._broadcastPeerLeave(nodeId);
-      console.log(`Node disconnected: ${nodeId}`);
+      console.log(`Node disconnected: ${info.name || nodeId.substring(0, 8)}`);
       this.emit('node-disconnected', nodeId);
       return;
     }
@@ -261,9 +280,12 @@ class SignallingServer extends EventEmitter {
       type: 'peer-join',
       peer: {
         nodeId,
+        name: nodeInfo.name || null,
         publicKey: nodeInfo.publicKey,
         role: nodeInfo.role,
-        virtualIp: nodeInfo.virtualIp
+        virtualIp: nodeInfo.virtualIp,
+        externalIp: nodeInfo.externalIp || null,
+        geo: nodeInfo.geo || null,
       }
     });
     
@@ -294,8 +316,11 @@ class SignallingServer extends EventEmitter {
 
     for (const [nodeId, info] of this.nodes) {
       topology[nodeId] = {
+        name: info.name || null,
         role: info.role,
         virtualIp: info.virtualIp,
+        externalIp: info.externalIp || null,
+        geo: info.geo || null,
         connectedTo: Array.from(info.connectedPeers)
       };
     }
