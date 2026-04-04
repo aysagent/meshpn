@@ -1,15 +1,21 @@
 import { WebSocketServer } from 'ws';
 import { EventEmitter } from 'events';
 import geoip from 'geoip-lite';
+import fs from 'fs';
+import path from 'path';
 
 class SignallingServer extends EventEmitter {
-  constructor(port = 8080) {
+  constructor(port = 8080, options = {}) {
     super();
     this.port = port;
     this.wss = null;
     this.nodes = new Map();
     this.virtualIpCounter = 2;
     this.virtualNetwork = '10.200.0';
+    /** Map<nodeId, virtualIp> — статически закреплённые адреса. */
+    this.pinnedIps = options.pinnedIps && typeof options.pinnedIps === 'object'
+      ? options.pinnedIps
+      : {};
   }
 
   /**
@@ -145,7 +151,23 @@ class SignallingServer extends EventEmitter {
       return;
     }
 
-    const virtualIp = `${this.virtualNetwork}.${this.virtualIpCounter++}`;
+    let virtualIp;
+    if (this.pinnedIps[nodeId]) {
+      const pinned = this.pinnedIps[nodeId];
+      // Проверяем что IP не занят другой нодой
+      const conflict = [...this.nodes.values()].find(
+        (n) => n.virtualIp === pinned && n.nodeId !== nodeId,
+      );
+      if (conflict) {
+        console.warn(`[Signalling] Pinned IP ${pinned} for ${label} is already used by ${conflict.name || conflict.nodeId.substring(0, 8)}`);
+        virtualIp = `${this.virtualNetwork}.${this.virtualIpCounter++}`;
+      } else {
+        virtualIp = pinned;
+        console.log(`[Signalling] Assigned pinned IP ${virtualIp} to ${label}`);
+      }
+    } else {
+      virtualIp = `${this.virtualNetwork}.${this.virtualIpCounter++}`;
+    }
     const externalIp = ws._remoteAddress || null;
     const geo = externalIp ? geoip.lookup(externalIp) : null;
 
@@ -359,7 +381,24 @@ class SignallingServer extends EventEmitter {
 }
 
 const port = parseInt(process.env.PORT || '8080', 10);
-const server = new SignallingServer(port);
+
+function loadServerConfig() {
+  const configPath = process.env.SIGNALLING_CONFIG
+    || path.join(process.cwd(), 'server', 'server-config.json');
+  try {
+    if (fs.existsSync(configPath)) {
+      const raw = fs.readFileSync(configPath, 'utf8');
+      console.log(`[Signalling] Loaded server config from ${configPath}`);
+      return JSON.parse(raw);
+    }
+  } catch (err) {
+    console.warn(`[Signalling] Failed to load server config: ${err.message}`);
+  }
+  return {};
+}
+
+const serverConfig = loadServerConfig();
+const server = new SignallingServer(port, serverConfig);
 
 process.on('SIGINT', () => {
   server.stop();
