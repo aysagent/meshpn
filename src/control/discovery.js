@@ -88,12 +88,16 @@ export class PeerDiscovery extends EventEmitter {
   }
 
   async start(role = 'client') {
+    const signallingOptions = this.config.signalling && typeof this.config.signalling === 'object'
+      ? { ...this.config.signalling }
+      : {};
+    if (this.config.name) {
+      signallingOptions.name = this.config.name;
+    }
     this.signalling = new SignallingClient(
       this.config.signallingServer,
       this.identity,
-      this.config.signalling && typeof this.config.signalling === 'object'
-        ? this.config.signalling
-        : {},
+      signallingOptions,
     );
     
     this._setupSignallingEvents();

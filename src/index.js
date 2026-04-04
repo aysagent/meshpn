@@ -64,6 +64,8 @@ function parseArgs() {
     
     if (arg === '--role' || arg === '-r') {
       parsed.role = args[++i];
+    } else if (arg === '--name' || arg === '-n') {
+      parsed.name = args[++i];
     } else if (arg === '--signalling' || arg === '-s') {
       parsed.signallingServer = args[++i];
     } else if (arg === '--config' || arg === '-c') {
@@ -87,6 +89,7 @@ Usage: node src/index.js [options]
 
 Options:
   --role, -r <role>          Node role: client, relay, or exit (default: client)
+  --name, -n <label>         Human-readable node label (shown in logs and topology)
   --signalling, -s <url>     Signalling server WebSocket URL
   --config, -c <path>        Path to config file
   --key, -k <key>            Private key (base64)
