@@ -5,6 +5,7 @@ import { decrypt } from '../crypto/encrypt.js';
 import { TransportManager, WebSocketDataServer } from '../transport/index.js';
 import { PeerDiscovery } from '../control/index.js';
 import { ControlApi } from '../control/control-api.js';
+import { ConfigSync } from '../config-sync.js';
 import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
 import { TunManager, Packet, PacketType, parseIPPacket } from '../network/index.js';
 import { NATManager, UserSpaceNAT } from '../exit/index.js';
@@ -217,6 +218,8 @@ export class MeshNode extends EventEmitter {
       ? new ControlApi(this, config)
       : null;
 
+    this.configSync = new ConfigSync(this, config);
+
     /** PING по WebRTC DC — тот же UDP через TURN; 30s было слишком редко при ICE consent (~30s timeout). */
     const ka = config.meshKeepaliveIntervalMs;
     this.meshKeepaliveIntervalMs =
@@ -402,6 +405,7 @@ export class MeshNode extends EventEmitter {
     if (this.controlApi) {
       this.controlApi.start();
     }
+    this.configSync.start();
     this.reorderBuffer.start();
     this._startCacheCleanup();
     this._startKeepalive();
@@ -1467,6 +1471,7 @@ export class MeshNode extends EventEmitter {
     this.running = false;
     
     this.router.stop();
+    this.configSync.stop();
     if (this.controlApi) {
       this.controlApi.stop();
     }
