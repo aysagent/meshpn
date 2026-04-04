@@ -87,7 +87,7 @@ export class PeerDiscovery extends EventEmitter {
       });
   }
 
-  async start(role = 'client') {
+  start(role = 'client') {
     const signallingOptions = this.config.signalling && typeof this.config.signalling === 'object'
       ? { ...this.config.signalling }
       : {};
@@ -99,11 +99,17 @@ export class PeerDiscovery extends EventEmitter {
       this.identity,
       signallingOptions,
     );
-    
+
     this._setupSignallingEvents();
     this._setupTransportEvents();
-    
-    await this.signalling.connect(role);
+
+    // Подключение в фоне — не блокируем запуск ноды.
+    // Signalling сам повторяет попытки с exponential backoff (1s→60s).
+    this.signalling.connect(role).catch((err) => {
+      if (err.code !== 'ABORTED') {
+        console.error('[DISCOVERY] Signalling connection failed permanently:', err.message);
+      }
+    });
   }
 
   _setupSignallingEvents() {
