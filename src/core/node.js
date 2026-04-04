@@ -72,7 +72,8 @@ export class MeshNode extends EventEmitter {
     
     this.router = new MeshRouter({
       localNodeId: this.nodeId,
-      sessionManager: this.sessionManager
+      sessionManager: this.sessionManager,
+      routingUpdateIntervalMs: config.routing?.updateIntervalMs,
     });
     
     this.scheduler = new MultipathScheduler({
@@ -367,6 +368,7 @@ export class MeshNode extends EventEmitter {
     const discoveryRole = this.isRelay ? 'relay' : this.role;
     await this.discovery.start(discoveryRole);
     
+    this.router.start();
     this.reorderBuffer.start();
     this._startCacheCleanup();
     this._startKeepalive();
@@ -1431,6 +1433,7 @@ export class MeshNode extends EventEmitter {
 
     this.running = false;
     
+    this.router.stop();
     this._stopCacheCleanup();
     this._stopKeepalive();
     this._stopTrafficStats();

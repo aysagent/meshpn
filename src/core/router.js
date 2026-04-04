@@ -11,61 +11,126 @@ export class MeshRouter extends EventEmitter {
     this.routeCacheTTL = config.routeCacheTTL || 30000;
     this.exitNodePreference = new Map();
     this.sessionManager = config.sessionManager;
+    this._updateIntervalMs = config.routingUpdateIntervalMs || 10000;
+    /** Кешированные маршруты: key = 'exit:any' | 'exit:<nodeId>', value = { route, exitNode, latency, unavailable } */
+    this.activeRoutes = new Map();
+    this._updateTimer = null;
+  }
+
+  start() {
+    this._updateTimer = setInterval(() => this._rebuildActiveRoutes(), this._updateIntervalMs);
+    this._rebuildActiveRoutes();
+  }
+
+  stop() {
+    if (this._updateTimer) {
+      clearInterval(this._updateTimer);
+      this._updateTimer = null;
+    }
+  }
+
+  /** Перестраивает все активные маршруты через Dijkstra (latency-weighted). */
+  _rebuildActiveRoutes() {
+    // Маршрут к лучшему exit (any)
+    const best = this.graph.findPathToNearestExitWeighted(this.localNodeId);
+    if (best && best.path.length > 1) {
+      this.activeRoutes.set('exit:any', {
+        route: best.path.slice(1),
+        exitNode: best.exitNode,
+        latency: best.latency,
+        updatedAt: Date.now(),
+        unavailable: false,
+      });
+    } else {
+      this.activeRoutes.delete('exit:any');
+    }
+
+    // Маршруты к конкретным exit-нодам
+    for (const exitNode of this.graph.getExitNodes()) {
+      const key = `exit:${exitNode.nodeId}`;
+      const result = this.graph.findShortestPathWeighted(this.localNodeId, exitNode.nodeId);
+      if (result && result.length > 1) {
+        this.activeRoutes.set(key, {
+          route: result.slice(1),
+          exitNode: exitNode.nodeId,
+          latency: null,
+          updatedAt: Date.now(),
+          unavailable: false,
+        });
+      } else {
+        this.activeRoutes.delete(key);
+      }
+    }
+
+    this.emit('routes-updated', this.activeRoutes);
+  }
+
+  /** Проверяет activeRoutes: если peerId встречается в маршруте — помечает как unavailable и немедленно перестраивает. */
+  _handlePeerDisconnectedRoutes(peerId) {
+    let affected = false;
+    for (const [key, info] of this.activeRoutes) {
+      if (info.route && info.route.includes(peerId)) {
+        info.unavailable = true;
+        affected = true;
+      }
+    }
+    if (affected) {
+      this._rebuildActiveRoutes();
+    }
   }
 
   updateTopology(topology) {
     this.graph.updateFromTopology(topology);
     this._invalidateRouteCache();
+    this._rebuildActiveRoutes();
   }
 
   addLocalConnection(peerId, peerInfo = {}) {
     this.graph.addNode(peerId, peerInfo);
     this.graph.addEdge(this.localNodeId, peerId);
     this._invalidateRouteCache();
+    this._rebuildActiveRoutes();
   }
 
   removeLocalConnection(peerId) {
     this.graph.removeEdge(this.localNodeId, peerId);
     this._invalidateRouteCache();
+    this._handlePeerDisconnectedRoutes(peerId);
   }
 
   updateEdgeMetrics(peerId, metrics) {
     this.graph.updateEdgeMetrics(this.localNodeId, peerId, metrics);
+    // Не пересчитываем маршруты при каждом RTT — таймер делает это периодически
   }
 
   findRouteToExit(preferredExitNode = null) {
-    const cacheKey = `exit:${preferredExitNode || 'any'}`;
-    const cached = this._getCachedRoute(cacheKey);
-    if (cached && this.isRouteValid(cached.route)) {
-      return cached;
+    const key = `exit:${preferredExitNode || 'any'}`;
+    const active = this.activeRoutes.get(key);
+    if (active && !active.unavailable && this.isRouteValid(active.route)) {
+      return { route: active.route, exitNode: active.exitNode };
     }
-    
-    let route = null;
-    
+
+    // Запасной вариант: сразу пересчитать через Dijkstra (не ждать таймера)
     if (preferredExitNode) {
-      route = this.graph.findShortestPath(this.localNodeId, preferredExitNode);
-      if (route && route.length > 1) {
-        route = route.slice(1);
-        const validation = this.validateRoute(route);
-        if (validation.valid) {
-          this._cacheRoute(cacheKey, { route, exitNode: preferredExitNode });
+      const result = this.graph.findShortestPathWeighted(this.localNodeId, preferredExitNode);
+      if (result && result.length > 1) {
+        const route = result.slice(1);
+        if (this.isRouteValid(route)) {
+          this.activeRoutes.set(key, { route, exitNode: preferredExitNode, updatedAt: Date.now(), unavailable: false });
           return { route, exitNode: preferredExitNode };
         }
-        console.warn(`Invalid route to preferred exit ${preferredExitNode}: ${validation.reason}`);
       }
     }
-    
-    const result = this.graph.findPathToNearestExit(this.localNodeId);
-    if (result) {
-      route = result.path.slice(1);
-      const validation = this.validateRoute(route);
-      if (validation.valid) {
-        this._cacheRoute(cacheKey, { route, exitNode: result.exitNode });
+
+    const result = this.graph.findPathToNearestExitWeighted(this.localNodeId);
+    if (result && result.path.length > 1) {
+      const route = result.path.slice(1);
+      if (this.isRouteValid(route)) {
+        this.activeRoutes.set('exit:any', { route, exitNode: result.exitNode, latency: result.latency, updatedAt: Date.now(), unavailable: false });
         return { route, exitNode: result.exitNode };
       }
-      console.warn(`Invalid route to nearest exit ${result.exitNode}: ${validation.reason}`);
     }
-    
+
     return null;
   }
 
