@@ -112,7 +112,12 @@ class SignallingServer extends EventEmitter {
   }
 
   _handleRegister(ws, message, setNodeId) {
-    const { nodeId, publicKey, role, name } = message;
+    const { nodeId, publicKey, name } = message;
+    // Автодетект роли: явный флаг nat/relay имеет приоритет над полем role
+    const resolvedRole = message.nat?.enabled ? 'exit'
+      : message.relay ? 'relay'
+      : (message.role || 'client');
+    const role = resolvedRole;
 
     if (!nodeId || !publicKey) {
       this._wsSend(ws, JSON.stringify({ type: 'error', error: 'Missing nodeId or publicKey' }));

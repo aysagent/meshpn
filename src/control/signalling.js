@@ -13,6 +13,8 @@ export class SignallingClient extends EventEmitter {
     this.serverUrl = serverUrl;
     this.identity = identity;
     this.name = options.name || null;
+    this.natEnabled = options.natEnabled || false;
+    this.relayEnabled = options.relayEnabled || false;
     this.reconnectInterval = options.reconnectIntervalMs ?? options.reconnectInterval ?? 5000;
     this.pingIntervalMs = options.pingIntervalMs ?? 30000;
     this.ws = null;
@@ -136,6 +138,12 @@ export class SignallingClient extends EventEmitter {
     };
     if (this.name) {
       msg.name = this.name;
+    }
+    if (this.natEnabled) {
+      msg.nat = { enabled: true };
+    }
+    if (this.relayEnabled) {
+      msg.relay = true;
     }
     this._send(msg);
   }

@@ -17,11 +17,28 @@ export class MeshNode extends EventEmitter {
   constructor(config) {
     super();
     this.config = config;
-    this.role = config.role || 'client';
-    
-    this.isClient = this.role === 'client' || this.role === 'client-relay';
-    this.isRelay = this.role === 'relay' || this.role === 'client-relay';
-    this.isExit = this.role === 'exit';
+
+    // Поведение ноды определяется конкретными флагами конфига.
+    // Поле role — обратная совместимость: если флаги не заданы, оно используется как fallback.
+    const hasNat = !!(config.nat?.enabled);
+    const hasRelay = !!(config.relay);
+    const hasTun = config.enableTun !== false && config.enableTun !== undefined
+      ? true
+      : (config.role === 'client' || config.role === 'client-relay');
+
+    this.isExit = hasNat || config.role === 'exit';
+    this.isRelay = hasRelay || config.role === 'relay' || config.role === 'client-relay';
+    // Клиент = любая нода с TUN (не только чистый exit/relay)
+    this.isClient = hasTun && !this.isExit;
+
+    // Синтезируем role для signalling (для совместимости)
+    if (this.isExit) {
+      this.role = 'exit';
+    } else if (this.isRelay && !this.isClient) {
+      this.role = 'relay';
+    } else {
+      this.role = config.role || 'client';
+    }
     
     this.identity = config.identity || new Identity(config.privateKey);
     this.nodeId = this.identity.nodeId;
@@ -65,6 +82,10 @@ export class MeshNode extends EventEmitter {
       signallingServer: config.signallingServer,
       transportMode: this.transportMode,
       dataServer: config.dataServer,
+      name: config.name || null,
+      natEnabled: this.isExit,
+      relayEnabled: this.isRelay,
+      signalling: config.signalling,
       awaitTunBeforeMesh: async () => {
         const p = this._tunOpenBarrierPromise;
         if (p) await p;

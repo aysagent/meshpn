@@ -94,6 +94,12 @@ export class PeerDiscovery extends EventEmitter {
     if (this.config.name) {
       signallingOptions.name = this.config.name;
     }
+    if (this.config.natEnabled) {
+      signallingOptions.natEnabled = true;
+    }
+    if (this.config.relayEnabled) {
+      signallingOptions.relayEnabled = true;
+    }
     this.signalling = new SignallingClient(
       this.config.signallingServer,
       this.identity,
