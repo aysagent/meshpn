@@ -4,6 +4,7 @@ import { peelOnionLayer } from '../crypto/onion.js';
 import { decrypt } from '../crypto/encrypt.js';
 import { TransportManager, WebSocketDataServer } from '../transport/index.js';
 import { PeerDiscovery } from '../control/index.js';
+import { ControlApi } from '../control/control-api.js';
 import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
 import { TunManager, Packet, PacketType, parseIPPacket } from '../network/index.js';
 import { NATManager, UserSpaceNAT } from '../exit/index.js';
@@ -187,6 +188,14 @@ export class MeshNode extends EventEmitter {
     
     this.running = false;
 
+    /** Предпочтительные exit/relay ноды (может меняться через Control API). */
+    this.preferredExitNode = config.exitNodePreference || null;
+    this.preferredRelayNode = null;
+
+    this.controlApi = config.controlPort
+      ? new ControlApi(this, config)
+      : null;
+
     /** PING по WebRTC DC — тот же UDP через TURN; 30s было слишком редко при ICE consent (~30s timeout). */
     const ka = config.meshKeepaliveIntervalMs;
     this.meshKeepaliveIntervalMs =
@@ -369,6 +378,9 @@ export class MeshNode extends EventEmitter {
     await this.discovery.start(discoveryRole);
     
     this.router.start();
+    if (this.controlApi) {
+      this.controlApi.start();
+    }
     this.reorderBuffer.start();
     this._startCacheCleanup();
     this._startKeepalive();
@@ -1434,6 +1446,9 @@ export class MeshNode extends EventEmitter {
     this.running = false;
     
     this.router.stop();
+    if (this.controlApi) {
+      this.controlApi.stop();
+    }
     this._stopCacheCleanup();
     this._stopKeepalive();
     this._stopTrafficStats();
