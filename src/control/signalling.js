@@ -30,16 +30,19 @@ export class SignallingClient extends EventEmitter {
   }
 
   /**
-   * Ждёт доступности сервера: повторяет попытки с интервалом reconnectInterval.
+   * Ждёт доступности сервера: повторяет попытки с экспоненциальным backoff.
+   * Начальная задержка 1 с, удваивается до maxReconnectInterval (60 с).
    */
   async connect(role = 'client') {
     this.role = role;
     this._stopConnecting = false;
+    let delay = 1000;
 
     while (!this._stopConnecting) {
       try {
         await this._connectOnce();
         console.log(`[Signalling] Connected to ${this.serverUrl}`);
+        delay = 1000; // сброс backoff после успешного подключения
         return;
       } catch (err) {
         if (this._stopConnecting) {
@@ -49,14 +52,15 @@ export class SignallingClient extends EventEmitter {
         }
         const detail = err.code ? `${err.message} (${err.code})` : err.message;
         console.warn(
-          `[Signalling] ${this.serverUrl} — ${detail} — retry in ${this.reconnectInterval}ms`,
+          `[Signalling] ${this.serverUrl} — ${detail} — retry in ${delay}ms`,
         );
-        await sleep(this.reconnectInterval);
+        await sleep(delay);
         if (this._stopConnecting) {
           const e = new Error('Signalling connection aborted');
           e.code = 'ABORTED';
           throw e;
         }
+        delay = Math.min(delay * 2, 60000);
       }
     }
 
