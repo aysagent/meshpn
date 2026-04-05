@@ -43,7 +43,6 @@
     "dnsViaVpn": false,
     "linuxFlushRouteCache": false,
     "linuxSplitDefault": true,
-    "linuxSplitDefaultDelayAfterPeerMs": 10000,
     "logRouteDiag": true,
     "logRouteDiagSs": false
   }
