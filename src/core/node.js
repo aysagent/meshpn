@@ -467,14 +467,8 @@ export class MeshNode extends EventEmitter {
           }
         } else {
           const splitOn = tunCfg.linuxSplitDefault !== false;
-          const splitExtra =
-            splitOn &&
-            typeof tunCfg.linuxSplitDefaultDelayAfterPeerMs === 'number' &&
-            tunCfg.linuxSplitDefaultDelayAfterPeerMs > 0
-              ? `; split /1 дополнительно через ${tunCfg.linuxSplitDefaultDelayAfterPeerMs}ms`
-              : '';
           console.log(
-            `[NODE] Linux policy routing (${splitOn ? 'split default' : 'без split-default'}; DNS по tun.dnsViaVpn/defer) через ${delayMs}ms после peer-connected${splitExtra}`,
+            `[NODE] Linux policy routing (${splitOn ? 'split default' : 'без split-default'}; DNS по tun.dnsViaVpn/defer) через ${delayMs}ms после peer-connected`,
           );
           this._deferPolicyRoutingTimer = setTimeout(() => {
             this._deferPolicyRoutingTimer = null;
@@ -496,7 +490,6 @@ export class MeshNode extends EventEmitter {
     this.discovery.on('peer-disconnected', (peerId) => {
       console.log(`Peer disconnected: ${peerId}`);
       if (this.isClient && this.tunManager) {
-        this.tunManager.cancelDeferredSplitDefaultTimer();
         this.tunManager.logRoutingDiag(`webrtc-peer-disconnected:${peerId.substring(0, 8)}…`);
       }
       this.router.removeLocalConnection(peerId);
