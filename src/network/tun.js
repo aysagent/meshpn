@@ -637,8 +637,6 @@ export class TunInterface extends EventEmitter {
       return;
     }
 
-    this._clearSplitDefaultDelayTimer();
-
     console.log('[TUN] Applying deferred Linux policy routing (WebRTC path ready)');
     this._removeDnsRoutesFromMain();
     let infraForPolicy = infra || [];
@@ -1194,7 +1192,6 @@ export class TunInterface extends EventEmitter {
     
     // Restore DNS and routes on Linux
     if (this.platform === 'linux') {
-      this._clearSplitDefaultDelayTimer();
       this._clearDeferDnsTimer();
       this._restoreLinuxPolicyRouting();
       this._restoreDNS();
