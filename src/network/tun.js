@@ -486,13 +486,19 @@ export class TunInterface extends EventEmitter {
       applySplitDefault: false, // split-default добавляем только после ip link set up
       flushCache: false,
     });
+    // Всегда сохраняем infra и выставляем deferred = true,
+    // чтобы Phase B (applyDeferredPolicyRouting) гарантированно сработала:
+    // - при успехе: пропустит setup (infraAppliedEarly), сделает только finalize (DNS)
+    // - при неудаче: повторит полный setup включая split-default + DNS
+    this._deferredInfraIpv4 = infraIpv4;
+    this._deferredNetworkPrefix = networkPrefix;
+    this._policyRoutingDeferred = true;
     if (ok && this._linuxPolicyRoutingActive) {
       this._infraAppliedEarly = true;
       this._splitDefaultOnlyDeferred = true; // будет добавлен в assignIpAndBringUp
-      this._policyRoutingDeferred = false;
-      this._deferredInfraIpv4 = infraIpv4;
-      this._deferredNetworkPrefix = networkPrefix;
-      console.log('[TUN] Ранний routing: ip rules + infra /32 на DOWN tun0; split-default — после ip link up');
+      console.log('[TUN] Ранний routing: ip rules + infra /32 на DOWN tun0; split-default — после ip link up; DNS — фаза B');
+    } else {
+      console.log('[TUN] Ранний routing не удался; split-default и DNS — в фазе B после peer-connected');
     }
   }
 
