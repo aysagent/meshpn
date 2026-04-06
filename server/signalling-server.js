@@ -398,7 +398,7 @@ const port = parseInt(process.env.PORT || '8080', 10);
 
 function loadServerConfig() {
   const configPath = process.env.SIGNALLING_CONFIG
-    || path.join(process.cwd(), 'server', 'server-config.json');
+    || path.join(process.cwd(), 'config', 'server.json');
   try {
     if (fs.existsSync(configPath)) {
       const raw = fs.readFileSync(configPath, 'utf8');
