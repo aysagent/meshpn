@@ -134,7 +134,7 @@ export class NetworkGraph extends EventEmitter {
     return this.getNodesByRole('client');
   }
 
-  _bfs(startId, isGoal) {
+  _bfs(startId, isGoal, excludeNodes = new Set()) {
     if (!this.nodes.has(startId)) return null;
     const visited = new Set([startId]);
     const queue = [[startId]];
@@ -144,23 +144,23 @@ export class NetworkGraph extends EventEmitter {
       const hit = isGoal(current, path);
       if (hit) return hit;
       for (const nb of (this.edges.get(current) || [])) {
-        if (!visited.has(nb)) { visited.add(nb); queue.push([...path, nb]); }
+        if (!visited.has(nb) && !excludeNodes.has(nb)) { visited.add(nb); queue.push([...path, nb]); }
       }
     }
     return null;
   }
 
-  findShortestPath(fromNodeId, toNodeId) {
+  findShortestPath(fromNodeId, toNodeId, excludeNodes = new Set()) {
     if (!this.nodes.has(toNodeId)) return null;
     if (fromNodeId === toNodeId) return [fromNodeId];
-    return this._bfs(fromNodeId, (cur, path) => cur === toNodeId ? [...path] : null);
+    return this._bfs(fromNodeId, (cur, path) => cur === toNodeId ? [...path] : null, excludeNodes);
   }
 
   /**
    * Dijkstra по весам latency из metrics (мс). Если метрика отсутствует — 100 мс на хоп.
    * Возвращает массив nodeId от from до to или null.
    */
-  findShortestPathWeighted(fromNodeId, toNodeId) {
+  findShortestPathWeighted(fromNodeId, toNodeId, excludeNodes = new Set()) {
     if (!this.nodes.has(toNodeId)) return null;
     if (fromNodeId === toNodeId) return [fromNodeId];
 
@@ -189,6 +189,7 @@ export class NetworkGraph extends EventEmitter {
       if (cost > (dist.get(cur) ?? Infinity)) continue;
 
       for (const nb of (this.edges.get(cur) || [])) {
+        if (excludeNodes.has(nb)) continue;
         const m = this.getEdgeMetrics(cur, nb);
         const w = (m && m.latency > 0) ? m.latency : DEFAULT_LATENCY;
         const newCost = cost + w;
@@ -206,7 +207,7 @@ export class NetworkGraph extends EventEmitter {
   /**
    * Dijkstra к ближайшей exit-ноде (наименьшая суммарная latency).
    */
-  findPathToNearestExitWeighted(fromNodeId) {
+  findPathToNearestExitWeighted(fromNodeId, excludeNodes = new Set()) {
     if (!this.nodes.has(fromNodeId)) return null;
 
     const DEFAULT_LATENCY = 100;
@@ -232,6 +233,7 @@ export class NetworkGraph extends EventEmitter {
       if (cost > (dist.get(cur) ?? Infinity)) continue;
 
       for (const nb of (this.edges.get(cur) || [])) {
+        if (excludeNodes.has(nb)) continue;
         const m = this.getEdgeMetrics(cur, nb);
         const w = (m && m.latency > 0) ? m.latency : DEFAULT_LATENCY;
         const newCost = cost + w;
@@ -246,13 +248,14 @@ export class NetworkGraph extends EventEmitter {
     return null;
   }
 
-  findPathToNearestExit(fromNodeId) {
+  findPathToNearestExit(fromNodeId, excludeNodes = new Set()) {
     return this._bfs(fromNodeId, (cur, path) =>
-      (this.nodes.get(cur)?.role === 'exit' && cur !== fromNodeId) ? { path, exitNode: cur } : null
+      (this.nodes.get(cur)?.role === 'exit' && cur !== fromNodeId) ? { path, exitNode: cur } : null,
+      excludeNodes
     );
   }
 
-  findAllPathsToExits(fromNodeId, maxPaths = 5) {
+  findAllPathsToExits(fromNodeId, maxPaths = 5, excludeNodes = new Set()) {
     if (!this.nodes.has(fromNodeId)) return [];
     const paths = [];
     const visited = new Set([fromNodeId]);
@@ -265,7 +268,7 @@ export class NetworkGraph extends EventEmitter {
         if (paths.length >= maxPaths) break;
       }
       for (const nb of (this.edges.get(cur) || [])) {
-        if (!visited.has(nb)) { visited.add(nb); queue.push([...path, nb]); }
+        if (!visited.has(nb) && !excludeNodes.has(nb)) { visited.add(nb); queue.push([...path, nb]); }
       }
     }
     return paths.sort((a, b) => a.hops - b.hops);
