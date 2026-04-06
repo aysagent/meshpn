@@ -39,5 +39,6 @@
   "quic": {
     "portHopping": false,
     "portHoppingInterval": 30000
-  }
+  },
+  "signallingToken": "your-secret"
 }
