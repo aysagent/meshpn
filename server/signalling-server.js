@@ -16,6 +16,9 @@ class SignallingServer extends EventEmitter {
     this.pinnedIps = options.pinnedIps && typeof options.pinnedIps === 'object'
       ? options.pinnedIps
       : {};
+    this._registrationToken = options.registrationToken
+      || process.env.SIGNALLING_TOKEN
+      || null;
   }
 
   /**
@@ -121,6 +124,12 @@ class SignallingServer extends EventEmitter {
 
     if (!nodeId || !publicKey) {
       this._wsSend(ws, JSON.stringify({ type: 'error', error: 'Missing nodeId or publicKey' }));
+      return;
+    }
+
+    if (this._registrationToken && message.token !== this._registrationToken) {
+      this._wsSend(ws, JSON.stringify({ type: 'error', error: 'Unauthorized' }));
+      ws.close(4401, 'Unauthorized');
       return;
     }
 
@@ -389,7 +398,7 @@ const port = parseInt(process.env.PORT || '8080', 10);
 
 function loadServerConfig() {
   const configPath = process.env.SIGNALLING_CONFIG
-    || path.join(process.cwd(), 'server', 'server-config.json');
+    || path.join(process.cwd(), 'config', 'server.json');
   try {
     if (fs.existsSync(configPath)) {
       const raw = fs.readFileSync(configPath, 'utf8');
