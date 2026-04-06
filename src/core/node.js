@@ -570,6 +570,12 @@ export class MeshNode extends EventEmitter {
         this.router.addLocalConnection(peerId, peerInfo);
       }
 
+      if (transport === 'webrtc') {
+        const wt = this.transportManager.getTransport('webrtc');
+        const isTurn = wt?.isTurnConnection?.(peerId) ?? false;
+        this.router.updateEdgeMetrics(peerId, { isTurnRelay: isTurn });
+      }
+
       this._updateMultipathRoutes();
       this._logMeshReachabilityForClient();
       this.emit('peer-connected', peerId);

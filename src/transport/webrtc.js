@@ -135,6 +135,8 @@ export class WebRTCTransport extends EventEmitter {
     this._handshakeGen = new Map();
     /** peerId -> epoch, в котором DC уже был open (onClosed до open при replace не шлём в mesh). */
     this._dcOpenEpoch = new Map();
+    /** peerId -> boolean: true если выбранный ICE-путь идёт через TURN (local или remote type === 'relay'). */
+    this._turnConnections = new Map();
 
     /** Логировать локальные/удалённые ICE-кандидаты (typ + addr) — диагностика TURN relay vs private IP. */
     this.logIceCandidates = config.logIceCandidates !== false;
@@ -572,9 +574,15 @@ export class WebRTCTransport extends EventEmitter {
       pendingSdp.reject(new Error('Peer connection closed before ICE gathering completed'));
     }
     this._dcOpenEpoch.delete(peerId);
+    this._turnConnections.delete(peerId);
     if (cancelDisconnectEmit) {
       this._cancelPeerDisconnectEmit(peerId);
     }
+  }
+
+  /** Возвращает true если выбранный ICE-путь к peerId использует TURN. */
+  isTurnConnection(peerId) {
+    return this._turnConnections.get(peerId) ?? false;
   }
 
   close(peerId) {
@@ -743,6 +751,7 @@ export class WebRTCTransport extends EventEmitter {
       const l = pair.local;
       const r = pair.remote;
       const isRelay = l.type === 'relay' || r.type === 'relay';
+      this._turnConnections.set(peerId, isRelay);
       const tag = isRelay ? 'RELAY (TURN)' : 'DIRECT P2P';
       console.log(`[WebRTC] Path for ${peerId.substring(0, 8)}…: ${l.type} ${l.address}:${l.port} (${l.transportType}) <-> ${r.type} ${r.address}:${r.port} (${r.transportType}) [${tag}]`);
 

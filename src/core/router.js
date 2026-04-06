@@ -31,8 +31,10 @@ export class MeshRouter extends EventEmitter {
 
   /** Перестраивает все активные маршруты через Dijkstra (latency-weighted). */
   _rebuildActiveRoutes() {
+    const excluded = this._getTurnRelayIds();
+
     // Маршрут к лучшему exit (any)
-    const best = this.graph.findPathToNearestExitWeighted(this.localNodeId);
+    const best = this.graph.findPathToNearestExitWeighted(this.localNodeId, excluded);
     if (best && best.path.length > 1) {
       this.activeRoutes.set('exit:any', {
         route: best.path.slice(1),
@@ -48,7 +50,7 @@ export class MeshRouter extends EventEmitter {
     // Маршруты к конкретным exit-нодам
     for (const exitNode of this.graph.getExitNodes()) {
       const key = `exit:${exitNode.nodeId}`;
-      const result = this.graph.findShortestPathWeighted(this.localNodeId, exitNode.nodeId);
+      const result = this.graph.findShortestPathWeighted(this.localNodeId, exitNode.nodeId, excluded);
       if (result && result.length > 1) {
         this.activeRoutes.set(key, {
           route: result.slice(1),
@@ -101,6 +103,19 @@ export class MeshRouter extends EventEmitter {
   updateEdgeMetrics(peerId, metrics) {
     this.graph.updateEdgeMetrics(this.localNodeId, peerId, metrics);
     // Не пересчитываем маршруты при каждом RTT — таймер делает это периодически
+  }
+
+  /** Возвращает Set nodeId relay-нод, соединение с которыми идёт через TURN. */
+  _getTurnRelayIds() {
+    const excluded = new Set();
+    for (const neighbor of this.graph.getNeighbors(this.localNodeId)) {
+      const node = this.graph.nodes.get(neighbor);
+      if (node?.role === 'relay') {
+        const metrics = this.graph.getEdgeMetrics(this.localNodeId, neighbor);
+        if (metrics?.isTurnRelay) excluded.add(neighbor);
+      }
+    }
+    return excluded;
   }
 
   findRouteToExit(preferredExitNode = null) {
