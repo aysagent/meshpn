@@ -45,5 +45,7 @@
     "linuxSplitDefault": true,
     "logRouteDiag": true,
     "logRouteDiagSs": false
-  }
+  },
+  "controlPort": 3000,
+  "controlApiToken": "my-secret-token"
 }
