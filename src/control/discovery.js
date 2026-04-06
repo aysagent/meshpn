@@ -100,6 +100,9 @@ export class PeerDiscovery extends EventEmitter {
     if (this.config.relayEnabled) {
       signallingOptions.relayEnabled = true;
     }
+    if (this.config.signallingToken) {
+      signallingOptions.token = this.config.signallingToken;
+    }
     this.signalling = new SignallingClient(
       this.config.signallingServer,
       this.identity,

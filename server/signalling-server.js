@@ -16,6 +16,9 @@ class SignallingServer extends EventEmitter {
     this.pinnedIps = options.pinnedIps && typeof options.pinnedIps === 'object'
       ? options.pinnedIps
       : {};
+    this._registrationToken = options.registrationToken
+      || process.env.SIGNALLING_TOKEN
+      || null;
   }
 
   /**
@@ -121,6 +124,12 @@ class SignallingServer extends EventEmitter {
 
     if (!nodeId || !publicKey) {
       this._wsSend(ws, JSON.stringify({ type: 'error', error: 'Missing nodeId or publicKey' }));
+      return;
+    }
+
+    if (this._registrationToken && message.token !== this._registrationToken) {
+      this._wsSend(ws, JSON.stringify({ type: 'error', error: 'Unauthorized' }));
+      ws.close(4401, 'Unauthorized');
       return;
     }
 
