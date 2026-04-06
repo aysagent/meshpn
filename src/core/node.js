@@ -4,6 +4,8 @@ import { peelOnionLayer } from '../crypto/onion.js';
 import { decrypt } from '../crypto/encrypt.js';
 import { TransportManager, WebSocketDataServer } from '../transport/index.js';
 import { PeerDiscovery } from '../control/index.js';
+import { ControlApi } from '../control/control-api.js';
+import { ConfigSync } from '../config-sync.js';
 import { MeshRouter, MultipathScheduler, ReorderBuffer } from './index.js';
 import { TunManager, Packet, PacketType, parseIPPacket } from '../network/index.js';
 import { NATManager, UserSpaceNAT } from '../exit/index.js';
@@ -16,11 +18,28 @@ export class MeshNode extends EventEmitter {
   constructor(config) {
     super();
     this.config = config;
-    this.role = config.role || 'client';
-    
-    this.isClient = this.role === 'client' || this.role === 'client-relay';
-    this.isRelay = this.role === 'relay' || this.role === 'client-relay';
-    this.isExit = this.role === 'exit';
+
+    // Поведение ноды определяется конкретными флагами конфига.
+    // Поле role — обратная совместимость: если флаги не заданы, оно используется как fallback.
+    const hasNat = !!(config.nat?.enabled);
+    const hasRelay = !!(config.relay);
+    const hasTun = config.enableTun !== false && config.enableTun !== undefined
+      ? true
+      : (config.role === 'client' || config.role === 'client-relay');
+
+    this.isExit = hasNat || config.role === 'exit';
+    this.isRelay = hasRelay || config.role === 'relay' || config.role === 'client-relay';
+    // Клиент = любая нода с TUN (не только чистый exit/relay)
+    this.isClient = hasTun && !this.isExit;
+
+    // Синтезируем role для signalling (для совместимости)
+    if (this.isExit) {
+      this.role = 'exit';
+    } else if (this.isRelay && !this.isClient) {
+      this.role = 'relay';
+    } else {
+      this.role = config.role || 'client';
+    }
     
     this.identity = config.identity || new Identity(config.privateKey);
     this.nodeId = this.identity.nodeId;
@@ -64,6 +83,10 @@ export class MeshNode extends EventEmitter {
       signallingServer: config.signallingServer,
       transportMode: this.transportMode,
       dataServer: config.dataServer,
+      name: config.name || null,
+      natEnabled: this.isExit,
+      relayEnabled: this.isRelay,
+      signalling: config.signalling,
       awaitTunBeforeMesh: async () => {
         const p = this._tunOpenBarrierPromise;
         if (p) await p;
@@ -72,7 +95,8 @@ export class MeshNode extends EventEmitter {
     
     this.router = new MeshRouter({
       localNodeId: this.nodeId,
-      sessionManager: this.sessionManager
+      sessionManager: this.sessionManager,
+      routingUpdateIntervalMs: config.routing?.updateIntervalMs,
     });
     
     this.scheduler = new MultipathScheduler({
@@ -185,6 +209,16 @@ export class MeshNode extends EventEmitter {
     }
     
     this.running = false;
+
+    /** Предпочтительные exit/relay ноды (может меняться через Control API). */
+    this.preferredExitNode = config.exitNodePreference || null;
+    this.preferredRelayNode = null;
+
+    this.controlApi = config.controlPort
+      ? new ControlApi(this, config)
+      : null;
+
+    this.configSync = new ConfigSync(this, config);
 
     /** PING по WebRTC DC — тот же UDP через TURN; 30s было слишком редко при ICE consent (~30s timeout). */
     const ka = config.meshKeepaliveIntervalMs;
@@ -367,6 +401,11 @@ export class MeshNode extends EventEmitter {
     const discoveryRole = this.isRelay ? 'relay' : this.role;
     await this.discovery.start(discoveryRole);
     
+    this.router.start();
+    if (this.controlApi) {
+      this.controlApi.start();
+    }
+    this.configSync.start();
     this.reorderBuffer.start();
     this._startCacheCleanup();
     this._startKeepalive();
@@ -1431,6 +1470,11 @@ export class MeshNode extends EventEmitter {
 
     this.running = false;
     
+    this.router.stop();
+    this.configSync.stop();
+    if (this.controlApi) {
+      this.controlApi.stop();
+    }
     this._stopCacheCleanup();
     this._stopKeepalive();
     this._stopTrafficStats();

@@ -156,6 +156,96 @@ export class NetworkGraph extends EventEmitter {
     return this._bfs(fromNodeId, (cur, path) => cur === toNodeId ? [...path] : null);
   }
 
+  /**
+   * Dijkstra по весам latency из metrics (мс). Если метрика отсутствует — 100 мс на хоп.
+   * Возвращает массив nodeId от from до to или null.
+   */
+  findShortestPathWeighted(fromNodeId, toNodeId) {
+    if (!this.nodes.has(toNodeId)) return null;
+    if (fromNodeId === toNodeId) return [fromNodeId];
+
+    const DEFAULT_LATENCY = 100;
+    const dist = new Map();
+    const prev = new Map();
+    // Min-heap: [cost, nodeId]
+    const heap = [[0, fromNodeId]];
+    dist.set(fromNodeId, 0);
+
+    while (heap.length > 0) {
+      // Extract min
+      heap.sort((a, b) => a[0] - b[0]);
+      const [cost, cur] = heap.shift();
+
+      if (cur === toNodeId) {
+        const path = [];
+        let n = cur;
+        while (n !== undefined) {
+          path.unshift(n);
+          n = prev.get(n);
+        }
+        return path;
+      }
+
+      if (cost > (dist.get(cur) ?? Infinity)) continue;
+
+      for (const nb of (this.edges.get(cur) || [])) {
+        const m = this.getEdgeMetrics(cur, nb);
+        const w = (m && m.latency > 0) ? m.latency : DEFAULT_LATENCY;
+        const newCost = cost + w;
+        if (newCost < (dist.get(nb) ?? Infinity)) {
+          dist.set(nb, newCost);
+          prev.set(nb, cur);
+          heap.push([newCost, nb]);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Dijkstra к ближайшей exit-ноде (наименьшая суммарная latency).
+   */
+  findPathToNearestExitWeighted(fromNodeId) {
+    if (!this.nodes.has(fromNodeId)) return null;
+
+    const DEFAULT_LATENCY = 100;
+    const dist = new Map();
+    const prev = new Map();
+    const heap = [[0, fromNodeId]];
+    dist.set(fromNodeId, 0);
+
+    while (heap.length > 0) {
+      heap.sort((a, b) => a[0] - b[0]);
+      const [cost, cur] = heap.shift();
+
+      if (this.nodes.get(cur)?.role === 'exit' && cur !== fromNodeId) {
+        const path = [];
+        let n = cur;
+        while (n !== undefined) {
+          path.unshift(n);
+          n = prev.get(n);
+        }
+        return { path, exitNode: cur, latency: cost };
+      }
+
+      if (cost > (dist.get(cur) ?? Infinity)) continue;
+
+      for (const nb of (this.edges.get(cur) || [])) {
+        const m = this.getEdgeMetrics(cur, nb);
+        const w = (m && m.latency > 0) ? m.latency : DEFAULT_LATENCY;
+        const newCost = cost + w;
+        if (newCost < (dist.get(nb) ?? Infinity)) {
+          dist.set(nb, newCost);
+          prev.set(nb, cur);
+          heap.push([newCost, nb]);
+        }
+      }
+    }
+
+    return null;
+  }
+
   findPathToNearestExit(fromNodeId) {
     return this._bfs(fromNodeId, (cur, path) =>
       (this.nodes.get(cur)?.role === 'exit' && cur !== fromNodeId) ? { path, exitNode: cur } : null
