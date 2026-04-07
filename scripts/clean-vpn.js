@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Минимальный VPN поверх одного TCP/WebSocket/UDP/WebRTC (DataChannel) транспорта + Linux tun-helper.
+ * Минимальный VPN поверх TCP/WebSocket/UDP/WebRTC/QUIC (node:quic) + Linux tun-helper.
  * Без шифрования и авторизации.
  *
  * Требования: Linux, sudo, `helpers/tun-helper` (cd helpers && make).
@@ -12,6 +12,8 @@
  * WebSocket / UDP: одно binary-сообщение или одна датаграмма = один IPv4-пакет (без префикса длины).
  * WebRTC: сигналинг по WebSocket на --server; один SCTP DataChannel — одно бинарное сообщение = один IPv4-пакет.
  * ICE/STUN/TURN: из --config (по умолчанию config/default.json), см. --ice-mode.
+ * QUIC (Node 25+): нативный node:quic, ALPN clean-vpn, один bidi stream = тот же uint32+IPv4, что TCP.
+ *   Запуск: node --experimental-quic …  TLS: ca.pem / cert.pem / key.pem в certs/ (создаются через openssl при отсутствии).
  *
  * Пример:
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=websocket
@@ -20,17 +22,21 @@
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:51820 --type=udp --split-default
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:9876 --type=webrtc [--config=config/exit-node.json]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:9876 --type=webrtc --split-default
+ *   sudo env PATH=$PATH node --experimental-quic scripts/clean-vpn.js --role=exit --server=0.0.0.0:4433 --type=quic
+ *   sudo env PATH=$PATH node --experimental-quic scripts/clean-vpn.js --role=client --server=VPS:4433 --type=quic --split-default
  *
  * При SIGINT/SIGTERM: снимаются iptables/NAT (exit), net.ipv4.ip_forward, маршруты и rp_filter (client)
  * восстанавливаются по снимку `ip -json route` (если доступен).
  */
 
 import { spawn, execFileSync } from 'child_process';
+import { createPrivateKey } from 'crypto';
 import dgram from 'dgram';
 import fs from 'fs';
 import net from 'net';
 import path from 'path';
 import process from 'process';
+import { Readable, Writable } from 'stream';
 import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
@@ -62,6 +68,163 @@ const DEFAULT_ICE_SERVERS_JSON = [
 setSctpSettings(SCTP_DEFAULTS);
 
 const DEFAULT_CONFIG_JSON = path.join(__dirname, '../config/default.json');
+const DEFAULT_QUIC_CERTS_DIR = path.join(__dirname, '../certs');
+const QUIC_ALPN = 'clean-vpn';
+const QUIC_TLS_CA = 'ca.pem';
+const QUIC_TLS_CERT = 'cert.pem';
+const QUIC_TLS_KEY = 'key.pem';
+
+function assertQuicNodeVersion() {
+  const major = parseInt(String(process.versions.node).split('.')[0], 10);
+  if (Number.isNaN(major) || major < 25) {
+    throw new Error(
+      `--type=quic требует Node.js 25+ (сейчас ${process.versions.node}). Остальные --type работают на Node 18+.`,
+    );
+  }
+}
+
+async function importNodeQuic() {
+  try {
+    return await import('node:quic');
+  } catch (e) {
+    throw new Error(
+      `Не удалось загрузить node:quic: ${e.message}. Нужен Node 25+ и запуск с флагом --experimental-quic перед именем скрипта.`,
+    );
+  }
+}
+
+function opensslAvailable() {
+  try {
+    execFileSync('openssl', ['version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Локальный CA + серверный cert (CN=clean-vpn). Клиент доверяет ca.pem; SNI на клиенте — clean-vpn.
+ */
+function ensureQuicCerts(dir) {
+  const caPath = path.join(dir, QUIC_TLS_CA);
+  const certPath = path.join(dir, QUIC_TLS_CERT);
+  const keyPath = path.join(dir, QUIC_TLS_KEY);
+  if (fs.existsSync(caPath) && fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+    return { caPath, certPath, keyPath };
+  }
+  if (!opensslAvailable()) {
+    throw new Error(
+      `QUIC: нет ${caPath}, ${certPath}, ${keyPath} и не найден openssl в PATH. Установите openssl или создайте файлы вручную.`,
+    );
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  const caKeyPath = path.join(dir, '.clean-vpn-ca.key');
+  const csrPath = path.join(dir, '.clean-vpn-server.csr');
+  const sslOpt = { stdio: 'inherit', cwd: dir };
+  try {
+    execFileSync('openssl', ['genrsa', '-out', caKeyPath, '4096'], sslOpt);
+    execFileSync(
+      'openssl',
+      [
+        'req',
+        '-x509',
+        '-new',
+        '-nodes',
+        '-key',
+        caKeyPath,
+        '-sha256',
+        '-days',
+        '3650',
+        '-subj',
+        '/CN=clean-vpn-dev-ca',
+        '-out',
+        caPath,
+      ],
+      sslOpt,
+    );
+    execFileSync('openssl', ['genrsa', '-out', keyPath, '2048'], sslOpt);
+    execFileSync(
+      'openssl',
+      ['req', '-new', '-key', keyPath, '-out', csrPath, '-subj', '/CN=clean-vpn'],
+      sslOpt,
+    );
+    execFileSync(
+      'openssl',
+      [
+        'x509',
+        '-req',
+        '-in',
+        csrPath,
+        '-CA',
+        caPath,
+        '-CAkey',
+        caKeyPath,
+        '-CAcreateserial',
+        '-out',
+        certPath,
+        '-days',
+        '825',
+        '-sha256',
+      ],
+      sslOpt,
+    );
+  } finally {
+    for (const p of [caKeyPath, csrPath]) {
+      try {
+        fs.unlinkSync(p);
+      } catch {
+        /* ignore */
+      }
+    }
+    for (const srl of [
+      path.join(dir, `${path.basename(caPath)}.srl`),
+      path.join(dir, 'ca.srl'),
+    ]) {
+      try {
+        fs.unlinkSync(srl);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  console.log('[clean-vpn] QUIC: созданы тестовые TLS-файлы в', dir);
+  return { caPath, certPath, keyPath };
+}
+
+/** @param {any} qs — quic.QuicStream (bidi) */
+function quicBidiToSocketLike(qs) {
+  if (!qs?.readable) {
+    throw new Error('QUIC: у потока нет readable');
+  }
+  if (!qs.writable) {
+    throw new Error('QUIC: у потока нет writable (нужен bidirectional stream)');
+  }
+  const r = Readable.fromWeb(qs.readable, { highWaterMark: 4 * 1024 * 1024 });
+  const w = Writable.fromWeb(qs.writable, { highWaterMark: 4 * 1024 * 1024 });
+  const sock = /** @type {any} */ (r);
+  sock.destroyed = false;
+  sock.write = (chunk, enc, cb) => w.write(chunk, enc, cb);
+  sock.destroy = (err) => {
+    if (sock.destroyed) return;
+    sock.destroyed = true;
+    try {
+      qs.destroy(err);
+    } catch {
+      /* ignore */
+    }
+    try {
+      w.destroy(err);
+    } catch {
+      /* ignore */
+    }
+    try {
+      r.destroy(err);
+    } catch {
+      /* ignore */
+    }
+  };
+  return sock;
+}
 
 /** Как в src/transport/webrtc.js: объекты конфига → строки для node-datachannel. */
 function convertIceServers(servers, iceMode) {
@@ -123,6 +286,7 @@ function parseArgs(argv) {
     extIface: null,
     configPath: null,
     iceMode: null,
+    quicCertsDir: null,
   };
   for (const a of argv) {
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
@@ -131,7 +295,9 @@ function parseArgs(argv) {
     else if (a.startsWith('--ext=')) out.extIface = a.slice('--ext='.length);
     else if (a.startsWith('--config=')) out.configPath = a.slice('--config='.length);
     else if (a.startsWith('--ice-mode=')) out.iceMode = a.slice('--ice-mode='.length);
-    else if (a === '--split-default') out.splitDefault = true;
+    else if (a.startsWith('--quic-certs-dir=')) {
+      out.quicCertsDir = a.slice('--quic-certs-dir='.length);
+    } else if (a === '--split-default') out.splitDefault = true;
   }
   return out;
 }
@@ -624,7 +790,7 @@ function handleHttpSocket(sock, onReady) {
   sock.on('data', onData);
 }
 
-async function runExit({ server, type, extIface, configPath, iceMode }) {
+async function runExit({ server, type, extIface, configPath, iceMode, quicCertsDir }) {
   const { host, port } = parseHostPort(server);
   const tunName = findFreeTunName();
   const { child, name: ifname } = await spawnTun(tunName);
@@ -641,6 +807,10 @@ async function runExit({ server, type, extIface, configPath, iceMode }) {
   let udpSock = null;
   /** @type {import('node-datachannel').PeerConnection|null} */
   let webrtcPc = null;
+  /** @type {any} */
+  let quicEndpoint = null;
+  /** @type {any} */
+  let quicSession = null;
   let shuttingDown = false;
 
   const startBridge = (sock, restBuf, transport) => {
@@ -692,6 +862,22 @@ async function runExit({ server, type, extIface, configPath, iceMode }) {
     try {
       if (activeTcp && !activeTcp.destroyed) {
         activeTcp.destroy();
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (quicSession) {
+        quicSession.destroy();
+        quicSession = null;
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (quicEndpoint) {
+        quicEndpoint.destroy();
+        quicEndpoint = null;
       }
     } catch {
       /* ignore */
@@ -876,10 +1062,72 @@ async function runExit({ server, type, extIface, configPath, iceMode }) {
     return;
   }
 
+  if (type === 'quic') {
+    assertQuicNodeVersion();
+    const certsDir = quicCertsDir ? path.resolve(quicCertsDir) : DEFAULT_QUIC_CERTS_DIR;
+    const tlsPaths = ensureQuicCerts(certsDir);
+    const keyObj = createPrivateKey(fs.readFileSync(tlsPaths.keyPath));
+    const certBuf = fs.readFileSync(tlsPaths.certPath);
+    const quicNs = await importNodeQuic();
+    const listen = quicNs.listen ?? quicNs.default?.listen;
+    if (typeof listen !== 'function') {
+      throw new Error('node:quic: отсутствует listen()');
+    }
+    quicEndpoint = await listen(
+      (session) => {
+        try {
+          if (quicSession) {
+            quicSession.destroy();
+          }
+        } catch {
+          /* ignore */
+        }
+        quicSession = session;
+        let bidiAttached = false;
+        session.onstream = (stream) => {
+          if (stream.direction !== 'bidi') {
+            try {
+              stream.destroy();
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+          if (bidiAttached) {
+            try {
+              stream.destroy();
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+          bidiAttached = true;
+          console.log('[clean-vpn] QUIC: входящий bidi stream');
+          try {
+            const sock = quicBidiToSocketLike(stream);
+            startBridge(sock, null, 'tcp');
+          } catch (e) {
+            console.error('[clean-vpn] QUIC stream:', e?.message || e);
+          }
+        };
+      },
+      {
+        endpoint: { address: `${host}:${port}` },
+        alpn: QUIC_ALPN,
+        keys: keyObj,
+        certs: [certBuf],
+      },
+    );
+    console.log(
+      `[clean-vpn] exit QUIC UDP ${host}:${port} (ALPN ${QUIC_ALPN}, TLS из ${certsDir})`,
+    );
+    return;
+  }
+
   throw new Error(`Неизвестный --type=${type}`);
 }
 
-async function runClient({ server, type, splitDefault, configPath, iceMode }) {
+async function runClient({ server, type, splitDefault, configPath, iceMode, quicCertsDir }) {
   const { host, port } = parseHostPort(server);
   const tunName = findFreeTunName();
   const { child, name: ifname } = await spawnTun(tunName);
@@ -890,6 +1138,8 @@ async function runClient({ server, type, splitDefault, configPath, iceMode }) {
   let webrtcPc = null;
   /** @type {import('ws').WebSocket|null} */
   let webrtcSigWs = null;
+  /** @type {any} */
+  let quicClientSession = null;
 
   let shuttingDown = false;
   const shutdown = () => {
@@ -907,6 +1157,14 @@ async function runClient({ server, type, splitDefault, configPath, iceMode }) {
       if (webrtcSigWs) {
         webrtcSigWs.close();
         webrtcSigWs = null;
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (quicClientSession) {
+        quicClientSession.destroy();
+        quicClientSession = null;
       }
     } catch {
       /* ignore */
@@ -1027,6 +1285,32 @@ async function runClient({ server, type, splitDefault, configPath, iceMode }) {
     return;
   }
 
+  if (type === 'quic') {
+    assertQuicNodeVersion();
+    const certsDir = quicCertsDir ? path.resolve(quicCertsDir) : DEFAULT_QUIC_CERTS_DIR;
+    const tlsPaths = ensureQuicCerts(certsDir);
+    const caBuf = fs.readFileSync(tlsPaths.caPath);
+    let connectHost = host;
+    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) {
+      connectHost = (await dns.lookup(host, { family: 4 })).address;
+    }
+    const quicNs = await importNodeQuic();
+    const connect = quicNs.connect ?? quicNs.default?.connect;
+    if (typeof connect !== 'function') {
+      throw new Error('node:quic: отсутствует connect()');
+    }
+    quicClientSession = await connect(`${connectHost}:${port}`, {
+      alpn: QUIC_ALPN,
+      ca: caBuf,
+      sni: 'clean-vpn',
+    });
+    console.log('[clean-vpn] QUIC session установлена');
+    const stream = await quicClientSession.createBidirectionalStream();
+    const sock = quicBidiToSocketLike(stream);
+    attachTunBridge(child, 'tcp', sock);
+    return;
+  }
+
   await new Promise((resolve, reject) => {
     const sock = net.connect(port, host, () => {
       console.log('[clean-vpn] TCP connected');
@@ -1062,11 +1346,13 @@ async function main() {
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=socket [--ext=eth0]
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=socket --split-default
 
---type: socket | http | websocket | udp | webrtc
+--type: socket | http | websocket | udp | webrtc | quic
 --split-default: только client, split 0.0.0.0/1 + 128.0.0.0/1 через tun
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
 --config=PATH: для --type=webrtc — JSON с iceServers/turnServers (по умолчанию config/default.json от корня репо)
---ice-mode=auto|relay|direct: для webrtc — перекрывает iceMode из --config`);
+--ice-mode=auto|relay|direct: для webrtc — перекрывает iceMode из --config
+--quic-certs-dir=DIR: для --type=quic — каталог с ca.pem, cert.pem, key.pem (иначе repo/certs; при отсутствии файлов — openssl)
+--type=quic: Node.js 25+ и node --experimental-quic …`);
     process.exit(1);
   }
 
