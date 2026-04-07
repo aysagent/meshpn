@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Минимальный VPN поверх одного TCP/WebSocket транспорта + Linux tun-helper.
+ * Минимальный VPN поверх одного TCP/WebSocket/UDP транспорта + Linux tun-helper.
  * Без шифрования и авторизации.
  *
  * Требования: Linux, sudo, `helpers/tun-helper` (cd helpers && make).
@@ -9,17 +9,20 @@
  * Client: tun + split-default (опция), маршрут к --server через uplink.
  *
  * Протокол (socket / http после преамбулы): uint32 BE + сырой IPv4-пакет (как tun-helper).
- * WebSocket: одно binary-сообщение = один IPv4-пакет (без префикса длины).
+ * WebSocket / UDP: одно binary-сообщение или одна датаграмма = один IPv4-пакет (без префикса длины).
  *
  * Пример:
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=websocket
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=websocket --split-default
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:51820 --type=udp
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:51820 --type=udp --split-default
  *
  * При SIGINT/SIGTERM: снимаются iptables/NAT (exit), net.ipv4.ip_forward, маршруты и rp_filter (client)
  * восстанавливаются по снимку `ip -json route` (если доступен).
  */
 
 import { spawn, execFileSync } from 'child_process';
+import dgram from 'dgram';
 import fs from 'fs';
 import net from 'net';
 import path from 'path';
@@ -383,8 +386,11 @@ function teardownExitNat(tunName, ext) {
 /**
  * Один активный мост на tun-helper: иначе второй TCP-клиент на exit вешает второй
  * listener на stdout и пакеты дублируются / рассинхрон.
+ *
+ * @param {'tcp'|'websocket'|'udp-client'|'udp-server'} transport
+ * @param {import('net').Socket|import('ws')|import('dgram').Socket|{sock: import('dgram').Socket, peer?: import('dgram').RemoteInfo}} endpoint
  */
-function attachTunBridge(child, isWebSocket, sockOrWs) {
+function attachTunBridge(child, transport, endpoint) {
   child.stdout.removeAllListeners('data');
   child.stdout.removeAllListeners('end');
 
@@ -400,10 +406,24 @@ function attachTunBridge(child, isWebSocket, sockOrWs) {
   };
 
   const sendOnWire = (pkt) => {
-    if (isWebSocket) {
-      sockOrWs.send(pkt);
-    } else {
-      writeFramed(sockOrWs, pkt);
+    if (transport === 'websocket') {
+      endpoint.send(pkt);
+    } else if (transport === 'tcp') {
+      writeFramed(endpoint, pkt);
+    } else if (transport === 'udp-client') {
+      if (pkt.length > 65507) {
+        console.warn('[clean-vpn] udp: пакет больше типичного MTU датаграммы');
+      }
+      endpoint.send(pkt, (err) => {
+        if (err) console.error('[clean-vpn] udp send:', err.message);
+      });
+    } else if (transport === 'udp-server') {
+      const pr = endpoint.peer;
+      if (!pr) return;
+      if (pkt.length > 65507) return;
+      endpoint.sock.send(pkt, pr.port, pr.address, (err) => {
+        if (err) console.error('[clean-vpn] udp send:', err.message);
+      });
     }
   };
 
@@ -422,20 +442,39 @@ function attachTunBridge(child, isWebSocket, sockOrWs) {
     }
   });
 
-  if (isWebSocket) {
-    sockOrWs.on('message', (data, isBinary) => {
+  if (transport === 'websocket') {
+    endpoint.on('message', (data, isBinary) => {
       if (!isBinary) return;
       const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
       writeTun(buf);
     });
-  } else {
-    sockOrWs.on('data', (chunk) => {
+  } else if (transport === 'tcp') {
+    endpoint.on('data', (chunk) => {
       try {
         framer.push(chunk, writeTun);
       } catch (e) {
         console.error('[clean-vpn] framing error:', e.message);
-        sockOrWs.destroy();
+        endpoint.destroy();
       }
+    });
+  } else if (transport === 'udp-client') {
+    endpoint.on('message', (msg) => {
+      if (!msg.length || msg.length > MAX_PKT) return;
+      writeTun(Buffer.from(msg));
+    });
+  } else if (transport === 'udp-server') {
+    endpoint.sock.on('message', (msg, rinfo) => {
+      if (!msg.length || msg.length > MAX_PKT) return;
+      if (!endpoint.peer) {
+        endpoint.peer = rinfo;
+        console.log(`[clean-vpn] udp peer ${rinfo.address}:${rinfo.port}`);
+      } else if (
+        endpoint.peer.address !== rinfo.address ||
+        endpoint.peer.port !== rinfo.port
+      ) {
+        return;
+      }
+      writeTun(Buffer.from(msg));
     });
   }
 
@@ -477,15 +516,17 @@ async function runExit({ server, type, extIface }) {
   let wss = null;
   /** @type {import('net').Server|null} */
   let tcpSrv = null;
+  /** @type {import('dgram').Socket|null} */
+  let udpSock = null;
   let shuttingDown = false;
 
-  const startBridge = (sock, restBuf, isWs) => {
-    if (!isWs && activeTcp && !activeTcp.destroyed) {
+  const startBridge = (sock, restBuf, transport) => {
+    if (transport === 'tcp' && activeTcp && !activeTcp.destroyed) {
       activeTcp.destroy();
     }
-    if (!isWs) activeTcp = sock;
-    attachTunBridge(child, isWs, sock);
-    if (restBuf && restBuf.length && !isWs) {
+    if (transport === 'tcp') activeTcp = sock;
+    attachTunBridge(child, transport, sock);
+    if (restBuf && restBuf.length && transport === 'tcp') {
       sock.emit('data', restBuf);
     }
   };
@@ -505,6 +546,14 @@ async function runExit({ server, type, extIface }) {
       if (tcpSrv) {
         tcpSrv.close();
         tcpSrv = null;
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (udpSock) {
+        udpSock.close();
+        udpSock = null;
       }
     } catch {
       /* ignore */
@@ -540,7 +589,7 @@ async function runExit({ server, type, extIface }) {
       wss.clients.forEach((c) => {
         if (c !== ws) c.close();
       });
-      startBridge(ws, null, true);
+      startBridge(ws, null, 'websocket');
     });
     return;
   }
@@ -550,15 +599,28 @@ async function runExit({ server, type, extIface }) {
       .createServer((sock) => {
         console.log('[clean-vpn] tcp connected', sock.remoteAddress);
         if (type === 'socket') {
-          startBridge(sock, null, false);
+          startBridge(sock, null, 'tcp');
           return;
         }
         sock.__isServer = true;
-        handleHttpSocket(sock, (rest) => startBridge(sock, rest, false));
+        handleHttpSocket(sock, (rest) => startBridge(sock, rest, 'tcp'));
       })
       .listen(port, host, () => {
         console.log(`[clean-vpn] exit ${type} listening ${host}:${port}`);
       });
+    return;
+  }
+
+  if (type === 'udp') {
+    udpSock = dgram.createSocket('udp4');
+    udpSock.on('error', (err) => {
+      console.error('[clean-vpn] udp socket error:', err.message);
+    });
+    const udpEp = { sock: udpSock, peer: undefined };
+    udpSock.bind(port, host, () => {
+      console.log(`[clean-vpn] exit UDP ${host}:${port} (один peer по первому пакету)`);
+    });
+    attachTunBridge(child, 'udp-server', udpEp);
     return;
   }
 
@@ -598,7 +660,21 @@ async function runClient({ server, type, splitDefault }) {
       ws.once('error', reject);
     });
     console.log('[clean-vpn] WebSocket connected');
-    attachTunBridge(child, true, ws);
+    attachTunBridge(child, 'websocket', ws);
+    return;
+  }
+
+  if (type === 'udp') {
+    const udp = dgram.createSocket('udp4');
+    await new Promise((resolve, reject) => {
+      udp.once('error', reject);
+      udp.connect(port, host, () => {
+        udp.off('error', reject);
+        console.log(`[clean-vpn] UDP «connected» к ${host}:${port}`);
+        attachTunBridge(child, 'udp-client', udp);
+        resolve();
+      });
+    });
     return;
   }
 
@@ -606,13 +682,13 @@ async function runClient({ server, type, splitDefault }) {
     const sock = net.connect(port, host, () => {
       console.log('[clean-vpn] TCP connected');
       if (type === 'socket') {
-        attachTunBridge(child, false, sock);
+        attachTunBridge(child, 'tcp', sock);
         resolve();
         return;
       }
       sock.__isServer = false;
       handleHttpSocket(sock, (rest) => {
-        attachTunBridge(child, false, sock);
+        attachTunBridge(child, 'tcp', sock);
         if (rest && rest.length) {
           sock.emit('data', rest);
         }
@@ -637,7 +713,7 @@ async function main() {
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=socket [--ext=eth0]
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=socket --split-default
 
---type: socket | http | websocket
+--type: socket | http | websocket | udp
 --split-default: только client, split 0.0.0.0/1 + 128.0.0.0/1 через tun
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)`);
     process.exit(1);
