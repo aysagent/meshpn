@@ -31,13 +31,14 @@
  *   sudo env PATH=$PATH node --experimental-quic scripts/clean-vpn.js --role=client --server=VPS:4433 --type=quic --split-default
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:4433 --type=quic-ext
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:4433 --type=quic-ext --split-default
- *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=tls [--tls-cert-dir=...] [--tls-public-name=vpn.example.com]
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=tls [--tls-cert-dir=...] [--tls-public-name=vpn.example.com] [--tls-probe-target=host:port]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=tls --split-default [--tls-server-name=...]
  * TLS (--type=tls): TCP + TLS, ALPN clean-vpn-tls; тот же uint32+IPv4 после рукопожатия.
  *   Exit: сырой TCP → разбор ClientHello (SNI/ALPN): VPN / «честная» страница по SNI / passthrough на --tls-probe-target (см. лимиты).
+ *   На exit: --tls-cert-dir, --tls-public-name (SNI для «It works!»), --tls-probe-target (куда passthrough). Флаг --tls-server-name на exit не читается (только client).
  *   Внимание: passthrough на сторонний хост может нарушать ToS сервиса и законы юрисдикции — только на свой страх и риск.
  *   Сертификаты: --tls-cert-dir с fullchain.pem+privkey.pem (Let's Encrypt) или, как у QUIC, ca.pem+cert.pem+key.pem.
- *   Браузер: задайте --tls-public-name=ваш.домен (как в SNI); после HTTPS отдаётся «It works!». Клиент VPN: --tls-server-name при несовпадении с host.
+ *   Client: --tls-server-name — SNI и проверка сертификата, если CN/SAN не совпадают с host из --server (например самоподписанный clean-vpn).
  *
  * При SIGINT/SIGTERM: снимаются iptables/NAT (exit), net.ipv4.ip_forward, маршруты и rp_filter (client)
  * восстанавливаются по снимку `ip -json route` (если доступен).
@@ -367,22 +368,14 @@ function loadTlsClientCaPem(dir) {
   return fs.readFileSync(t.caPath, 'utf8');
 }
 
+/** Макс. буфер при сборке ClientHello из нескольких TLS records (защита от DOS). */
+const TLS_MUX_MAX_CLIENT_BUF = 512 * 1024;
+
 /**
- * Первый TLS record = ClientHello; иначе needMore / ошибка.
- * @returns {{ needMore: true, minTotal: number } | { ok: false, reason: string } | { ok: true, sni: string[], alpn: string[], bytesConsumed: number }}
+ * SNI / ALPN из тела ClientHello (после fixed части до extensions).
+ * @returns {{ ok: true, sni: string[], alpn: string[] } | { ok: false, reason: string }}
  */
-function parseFirstTlsClientHello(buf) {
-  if (buf.length < 5) return { needMore: true, minTotal: 5 };
-  if (buf[0] !== 0x16) return { ok: false, reason: 'not_tls_handshake' };
-  const recLen = buf.readUInt16BE(3);
-  const total = 5 + recLen;
-  if (buf.length < total) return { needMore: true, minTotal: total };
-  if (recLen < 4) return { ok: false, reason: 'short_record' };
-  const payload = buf.subarray(5, total);
-  if (payload[0] !== 1) return { ok: false, reason: 'not_client_hello' };
-  const hsLen = payload.readUIntBE(1, 3);
-  if (payload.length < 4 + hsLen) return { ok: false, reason: 'short_handshake' };
-  const ch = payload.subarray(4, 4 + hsLen);
+function parseTlsClientHelloExtensions(ch) {
   let o = 0;
   if (ch.length < 34) return { ok: false, reason: 'short_ch' };
   o += 34;
@@ -439,7 +432,53 @@ function parseFirstTlsClientHello(buf) {
     }
     eo += el;
   }
-  return { ok: true, sni, alpn, bytesConsumed: total };
+  return { ok: true, sni, alpn };
+}
+
+/**
+ * ClientHello может занимать несколько подряд TLS records (0x16) — типично при крупном hello (OpenSSL 3 / PQ).
+ * @returns {{ needMore: true, minTotal: number } | { ok: false, reason: string } | { ok: true, sni: string[], alpn: string[], bytesConsumed: number }}
+ */
+function parseFirstTlsClientHello(buf) {
+  if (buf.length > TLS_MUX_MAX_CLIENT_BUF) {
+    return { ok: false, reason: 'buffer_max' };
+  }
+  if (buf.length < 5) return { needMore: true, minTotal: 5 };
+  if (buf[0] !== 0x16) return { ok: false, reason: 'not_tls_handshake' };
+
+  /** @type {Buffer[]} */
+  const payloads = [];
+  let offset = 0;
+  for (;;) {
+    if (buf.length - offset < 5) {
+      return { needMore: true, minTotal: offset + 5 };
+    }
+    if (buf[offset] !== 0x16) {
+      return offset === 0
+        ? { ok: false, reason: 'not_tls_handshake' }
+        : { ok: false, reason: 'non_handshake_record' };
+    }
+    const recLen = buf.readUInt16BE(offset + 3);
+    const recordEnd = offset + 5 + recLen;
+    if (recLen < 1 || recordEnd > TLS_MUX_MAX_CLIENT_BUF) {
+      return { ok: false, reason: 'record_oversize' };
+    }
+    if (recordEnd > buf.length) {
+      return { needMore: true, minTotal: recordEnd };
+    }
+    payloads.push(buf.subarray(offset + 5, recordEnd));
+    offset = recordEnd;
+    const combined = Buffer.concat(payloads);
+    if (combined.length < 4) continue;
+    if (combined[0] !== 1) return { ok: false, reason: 'not_client_hello' };
+    const hsLen = combined.readUIntBE(1, 3);
+    const totalHs = 4 + hsLen;
+    if (combined.length < totalHs) continue;
+    const ch = combined.subarray(4, totalHs);
+    const ext = parseTlsClientHelloExtensions(ch);
+    if (!ext.ok) return ext;
+    return { ok: true, sni: ext.sni, alpn: ext.alpn, bytesConsumed: offset };
+  }
 }
 
 /**
@@ -463,6 +502,17 @@ function tlsClientIp(socket) {
 
 function tlsUtcDayBucket() {
   return Math.floor(Date.now() / 86400000);
+}
+
+/**
+ * @param {import('net').Socket} socket
+ * @param {string} reason
+ * @param {Buffer} fullBuf
+ */
+function logTlsPassthrough(socket, reason, fullBuf) {
+  const ip = tlsClientIp(socket);
+  const hex = fullBuf.subarray(0, Math.min(16, fullBuf.length)).toString('hex');
+  console.log(`[clean-vpn] tls → passthrough (${reason}) с ${ip}, префикс ${hex}…`);
 }
 
 /**
@@ -1276,6 +1326,7 @@ function handleTlsExitInbound(socket, ctx) {
     socket.off('data', onData);
     const fullBuf = Buffer.concat(chunks);
     if (!('ok' in p && p.ok)) {
+      logTlsPassthrough(socket, p.reason || 'parse_fail', fullBuf);
       runTlsProbePassthrough(socket, fullBuf, ctx);
       return;
     }
@@ -1285,6 +1336,7 @@ function handleTlsExitInbound(socket, ctx) {
       sniMatchesTlsPublicName(p.sni, ctx.tlsPublicName) &&
       !hasVpnAlpn;
     if (!hasVpnAlpn && !publicOk) {
+      logTlsPassthrough(socket, 'no_vpn_alpn_and_no_public_sni_match', fullBuf);
       runTlsProbePassthrough(socket, fullBuf, ctx);
       return;
     }
@@ -1331,6 +1383,7 @@ async function runExit({
   tlsProbeMaxBytes,
   tlsProbeMaxSeconds,
   tlsProbeFullProxyPerIp,
+  tlsServerName,
 }) {
   const { host, port } = parseHostPort(server);
   const tunName = findFreeTunName();
@@ -1485,6 +1538,11 @@ async function runExit({
   }
 
   if (type === 'tls') {
+    if (tlsServerName) {
+      console.warn(
+        '[clean-vpn] --tls-server-name на exit не используется (только на client). Для цели passthrough задайте --tls-probe-target=host:port.',
+      );
+    }
     const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
     const creds = loadTlsServerCredentials(certsDir);
     const targetStr = tlsProbeTarget || DEFAULT_TLS_PROBE_TARGET;
@@ -2059,7 +2117,7 @@ async function runClient({
           if (sock.alpnProtocol !== TLS_ALPN_VPN) {
             reject(
               new Error(
-                `TLS client: ожидался ALPN ${TLS_ALPN_VPN}, получено: ${String(sock.alpnProtocol)}`,
+                `TLS client: сервер выбрал ALPN ${String(sock.alpnProtocol)} вместо ${TLS_ALPN_VPN} (часто это passthrough на сторонний сайт или не тот порт/хост на exit).`,
               ),
             );
             return;
@@ -2069,7 +2127,10 @@ async function runClient({
           resolve(undefined);
         },
       );
-      sock.on('error', reject);
+      sock.on('error', (err) => {
+        console.error('[clean-vpn] TLS client: ошибка сокета до завершения рукопожатия:', err?.message || err);
+        reject(err);
+      });
     });
     attachTunBridge(child, 'tcp', tlsVpnSocket);
     return;
@@ -2120,9 +2181,9 @@ async function main() {
 --type=quic: Node.js 25+, node --experimental-quic и бинарь с node_use_quic (см. шапку файла)
 --type=quic-ext: npm install @infisical/quic (prebuild под платформу), Node 18+, см. шапку файла
 --tls-cert-dir=DIR: для --type=tls — fullchain.pem+privkey.pem (LE) или ca/cert/key как у QUIC
---tls-server-name=HOST: client + tls — SNI/проверка сертификата (иначе --tls-public-name или host из --server)
---tls-public-name=HOST: exit + tls — SNI «честной» страницы It works! (опционально)
---tls-probe-target=host:port: exit + tls — passthrough чужих ClientHello (default www.google.com:443)
+--tls-server-name=HOST: только client + tls — SNI и проверка сертификата (иначе --tls-public-name или host из --server); на exit игнорируется
+--tls-public-name=HOST: только exit + tls — SNI «честной» страницы It works! (опционально)
+--tls-probe-target=host:port: только exit + tls — passthrough чужих ClientHello (default www.google.com:443)
 --tls-probe-max-bytes=N: короткий passthrough, лимит байт обоих направлений (default 49152)
 --tls-probe-max-seconds=S: лимит времени passthrough-сессии (default 30)
 --tls-probe-full-proxy-per-ip=K: не более K «длинных» passthrough с одного IP за сутки (default 0 = только короткий)`);
