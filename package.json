@@ -18,6 +18,7 @@
     "postinstall": "cd helpers && make 2>/dev/null || true"
   },
   "dependencies": {
+    "@infisical/quic": "^1.0.8",
     "@noble/curves": "^1.4.0",
     "@noble/hashes": "^1.4.0",
     "concurrently": "^9.2.1",

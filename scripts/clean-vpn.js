@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Минимальный VPN поверх TCP/WebSocket/UDP/WebRTC/QUIC (node:quic) + Linux tun-helper.
+ * Минимальный VPN поверх TCP/WebSocket/UDP/WebRTC/QUIC (node:quic / @infisical/quic) + Linux tun-helper.
  * Без шифрования и авторизации.
  *
  * Требования: Linux, sudo, `helpers/tun-helper` (cd helpers && make).
@@ -13,7 +13,12 @@
  * WebRTC: сигналинг по WebSocket на --server; один SCTP DataChannel — одно бинарное сообщение = один IPv4-пакет.
  * ICE/STUN/TURN: из --config (по умолчанию config/default.json), см. --ice-mode.
  * QUIC (Node 25+): нативный node:quic, ALPN clean-vpn, один bidi stream = тот же uint32+IPv4, что TCP.
+ *   Нужен бинарь Node, собранный с QUIC (в рантайме: node -p "process.config.variables.node_use_quic" — должно быть истинно); одного флага --experimental-quic недостаточно, если модуль не вкомпилирован (часто apt/snap).
  *   Запуск: node --experimental-quic …  TLS: ca.pem / cert.pem / key.pem в certs/ (создаются через openssl при отсутствии).
+ * QUIC-EXT (--type=quic-ext): пакет @infisical/quic (quiche), Node 18+, без node:quic и без --experimental-quic.
+ *   Тот же UDP host:port и фрейминг uint32+IPv4 по одному bidi stream. ALPN: clean-vpn-ext (должен совпадать на обеих сторонах).
+ *   TLS: те же ca.pem / cert.pem / key.pem (--quic-certs-dir). Дополнительно для stateless retry: quic-ext-hmac.key (32 байта) в том же каталоге — создаётся на exit при отсутствии; для client не нужен.
+ *   Опционально: --quic-ext-crypto-key=PATH — явный файл с 32 байтами HMAC-ключа (вместо quic-ext-hmac.key в каталоге сертификатов).
  *
  * Пример:
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=websocket
@@ -24,13 +29,15 @@
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:9876 --type=webrtc --split-default
  *   sudo env PATH=$PATH node --experimental-quic scripts/clean-vpn.js --role=exit --server=0.0.0.0:4433 --type=quic
  *   sudo env PATH=$PATH node --experimental-quic scripts/clean-vpn.js --role=client --server=VPS:4433 --type=quic --split-default
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:4433 --type=quic-ext
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:4433 --type=quic-ext --split-default
  *
  * При SIGINT/SIGTERM: снимаются iptables/NAT (exit), net.ipv4.ip_forward, маршруты и rp_filter (client)
  * восстанавливаются по снимку `ip -json route` (если доступен).
  */
 
 import { spawn, execFileSync } from 'child_process';
-import { createPrivateKey } from 'crypto';
+import { createPrivateKey, randomBytes } from 'crypto';
 import dgram from 'dgram';
 import fs from 'fs';
 import net from 'net';
@@ -42,6 +49,7 @@ import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
 import dns from 'dns/promises';
 import { PeerConnection, setSctpSettings } from 'node-datachannel';
+import Logger, { LogLevel, StreamHandler } from '@matrixai/logger';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -73,6 +81,109 @@ const QUIC_ALPN = 'clean-vpn';
 const QUIC_TLS_CA = 'ca.pem';
 const QUIC_TLS_CERT = 'cert.pem';
 const QUIC_TLS_KEY = 'key.pem';
+/** ALPN для @infisical/quic (quiche); должен совпадать на exit и client. */
+const QUIC_EXT_ALPN = 'clean-vpn-ext';
+const QUIC_EXT_HMAC_FILE = 'quic-ext-hmac.key';
+
+function createQuicExtLogger() {
+  return new Logger('clean-vpn-quic-ext', LogLevel.WARN, [new StreamHandler(process.stderr)]);
+}
+
+/** @param {Buffer} buf */
+function bufferToArrayBuffer(buf) {
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+}
+
+/**
+ * @param {ArrayBuffer} keyBuf
+ * @param {ArrayBuffer} dataBuf
+ */
+async function quicExtSignHMAC(keyBuf, dataBuf) {
+  const key = await globalThis.crypto.subtle.importKey(
+    'raw',
+    keyBuf,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  return globalThis.crypto.subtle.sign('HMAC', key, dataBuf);
+}
+
+/**
+ * @param {ArrayBuffer} keyBuf
+ * @param {ArrayBuffer} dataBuf
+ * @param {ArrayBuffer} sigBuf
+ */
+async function quicExtVerifyHMAC(keyBuf, dataBuf, sigBuf) {
+  const key = await globalThis.crypto.subtle.importKey(
+    'raw',
+    keyBuf,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['verify'],
+  );
+  return globalThis.crypto.subtle.verify('HMAC', key, sigBuf, dataBuf);
+}
+
+/** @param {ArrayBuffer} data */
+async function quicExtRandomBytes(data) {
+  const u8 = new Uint8Array(data);
+  globalThis.crypto.getRandomValues(u8);
+}
+
+/**
+ * 32-байтовый HMAC-ключ для stateless retry @infisical/quic (общий на одну пару exit+client через файл).
+ * @param {string} certsDir
+ * @param {string|null} explicitPath
+ */
+function ensureQuicExtHmacKey(certsDir, explicitPath) {
+  const keyPath = explicitPath ? path.resolve(explicitPath) : path.join(certsDir, QUIC_EXT_HMAC_FILE);
+  if (explicitPath) {
+    if (!fs.existsSync(keyPath)) {
+      throw new Error(
+        `QUIC-EXT: нет файла --quic-ext-crypto-key=${keyPath} (нужны ровно 32 байта).`,
+      );
+    }
+    const buf = fs.readFileSync(keyPath);
+    if (buf.length !== 32) {
+      throw new Error(`QUIC-EXT: ${keyPath} должен быть ровно 32 байта, сейчас ${buf.length}`);
+    }
+    return bufferToArrayBuffer(buf);
+  }
+  if (fs.existsSync(keyPath)) {
+    const buf = fs.readFileSync(keyPath);
+    if (buf.length !== 32) {
+      throw new Error(`QUIC-EXT: ${keyPath} должен быть ровно 32 байта, сейчас ${buf.length}`);
+    }
+    return bufferToArrayBuffer(buf);
+  }
+  fs.mkdirSync(certsDir, { recursive: true });
+  const rnd = randomBytes(32);
+  fs.writeFileSync(keyPath, rnd, { mode: 0o600 });
+  console.log('[clean-vpn] QUIC-EXT: создан ключ stateless retry', keyPath);
+  return bufferToArrayBuffer(rnd);
+}
+
+async function importQuicExt() {
+  try {
+    const m = await import('@infisical/quic');
+    const root = m.default ?? m;
+    const QUICServer = root.QUICServer ?? m.QUICServer;
+    const QUICClient = root.QUICClient ?? m.QUICClient;
+    const events = root.events ?? m.events;
+    if (!QUICServer || !QUICClient || !events?.EventQUICServerConnection) {
+      throw new Error('неполный экспорт пакета (QUICServer / QUICClient / events)');
+    }
+    return { QUICServer, QUICClient, events };
+  } catch (e) {
+    const arch = process.arch;
+    const plat = process.platform;
+    throw new Error(
+      `Не удалось загрузить @infisical/quic (${plat}/${arch}): ${e.message}. ` +
+        `Нужен prebuild под вашу платформу; см. optionalDependencies пакета и выполните npm install.`,
+    );
+  }
+}
 
 function assertQuicNodeVersion() {
   const major = parseInt(String(process.versions.node).split('.')[0], 10);
@@ -87,8 +198,13 @@ async function importNodeQuic() {
   try {
     return await import('node:quic');
   } catch (e) {
+    const hint =
+      'Проверьте: node -p "process.config.variables.node_use_quic" — если не true/1, этот бинарь собран без QUIC; возьмите сборку с nodejs.org или nvm (не пакет apt без node_use_quic). ';
     throw new Error(
-      `Не удалось загрузить node:quic: ${e.message}. Нужен Node 25+ и запуск с флагом --experimental-quic перед именем скрипта.`,
+      `Не удалось загрузить node:quic: ${e.message}. ` +
+        `Нужны Node 25+ и флаг --experimental-quic перед скриптом. ` +
+        `Если версия уже 25+ и флаг есть, типичная причина — сборка без вкомпилированного QUIC. ` +
+        hint,
     );
   }
 }
@@ -287,6 +403,7 @@ function parseArgs(argv) {
     configPath: null,
     iceMode: null,
     quicCertsDir: null,
+    quicExtCryptoKey: null,
   };
   for (const a of argv) {
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
@@ -297,6 +414,8 @@ function parseArgs(argv) {
     else if (a.startsWith('--ice-mode=')) out.iceMode = a.slice('--ice-mode='.length);
     else if (a.startsWith('--quic-certs-dir=')) {
       out.quicCertsDir = a.slice('--quic-certs-dir='.length);
+    } else if (a.startsWith('--quic-ext-crypto-key=')) {
+      out.quicExtCryptoKey = a.slice('--quic-ext-crypto-key='.length);
     } else if (a === '--split-default') out.splitDefault = true;
   }
   return out;
@@ -790,7 +909,7 @@ function handleHttpSocket(sock, onReady) {
   sock.on('data', onData);
 }
 
-async function runExit({ server, type, extIface, configPath, iceMode, quicCertsDir }) {
+async function runExit({ server, type, extIface, configPath, iceMode, quicCertsDir, quicExtCryptoKey }) {
   const { host, port } = parseHostPort(server);
   const tunName = findFreeTunName();
   const { child, name: ifname } = await spawnTun(tunName);
@@ -811,6 +930,8 @@ async function runExit({ server, type, extIface, configPath, iceMode, quicCertsD
   let quicEndpoint = null;
   /** @type {any} */
   let quicSession = null;
+  /** @type {any} */
+  let quicExtServer = null;
   let shuttingDown = false;
 
   const startBridge = (sock, restBuf, transport) => {
@@ -882,16 +1003,29 @@ async function runExit({ server, type, extIface, configPath, iceMode, quicCertsD
     } catch {
       /* ignore */
     }
-    teardownExitNat(nat.tunName, nat.ext);
-    restoreExitSysctl(nat.prevIpForward);
+    const finishExit = () => {
+      teardownExitNat(nat.tunName, nat.ext);
+      restoreExitSysctl(nat.prevIpForward);
+      try {
+        child.stdin.end();
+        child.kill('SIGTERM');
+      } catch {
+        /* ignore */
+      }
+      console.log('[clean-vpn] exit: остановка');
+      process.exit(0);
+    };
     try {
-      child.stdin.end();
-      child.kill('SIGTERM');
+      if (quicExtServer) {
+        const s = quicExtServer;
+        quicExtServer = null;
+        void s.stop({ isApp: true, force: true }).then(finishExit, finishExit);
+        return;
+      }
     } catch {
       /* ignore */
     }
-    console.log('[clean-vpn] exit: остановка');
-    process.exit(0);
+    finishExit();
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
@@ -1124,6 +1258,69 @@ async function runExit({ server, type, extIface, configPath, iceMode, quicCertsD
     return;
   }
 
+  if (type === 'quic-ext') {
+    const certsDir = quicCertsDir ? path.resolve(quicCertsDir) : DEFAULT_QUIC_CERTS_DIR;
+    const tlsPaths = ensureQuicCerts(certsDir);
+    const hmacKey = ensureQuicExtHmacKey(certsDir, quicExtCryptoKey);
+    const logger = createQuicExtLogger();
+    const { QUICServer, events } = await importQuicExt();
+    quicExtServer = new QUICServer({
+      crypto: {
+        key: hmacKey,
+        ops: { sign: quicExtSignHMAC, verify: quicExtVerifyHMAC },
+      },
+      config: {
+        key: fs.readFileSync(tlsPaths.keyPath, 'utf8'),
+        cert: fs.readFileSync(tlsPaths.certPath, 'utf8'),
+        verifyPeer: false,
+        applicationProtos: [QUIC_EXT_ALPN],
+      },
+      logger,
+    });
+
+    /** @type {any} */
+    let quicExtServerConn = null;
+    quicExtServer.addEventListener(events.EventQUICServerConnection.name, (evt) => {
+      const connection = evt.detail;
+      if (quicExtServerConn && quicExtServerConn !== connection) {
+        void quicExtServerConn.stop({ isApp: true, force: true }).catch(() => {});
+      }
+      quicExtServerConn = connection;
+      let bidiAttached = false;
+      const onStream = (ev) => {
+        const stream = ev.detail;
+        if (stream.type !== 'bidi') return;
+        if (bidiAttached) {
+          void stream.destroy({ force: true });
+          return;
+        }
+        bidiAttached = true;
+        console.log('[clean-vpn] QUIC-EXT: входящий bidi stream');
+        try {
+          const sock = quicBidiToSocketLike(stream);
+          startBridge(sock, null, 'tcp');
+        } catch (e) {
+          console.error('[clean-vpn] QUIC-EXT stream:', e?.message || e);
+        }
+      };
+      connection.addEventListener(events.EventQUICConnectionStream.name, onStream);
+      connection.addEventListener(
+        events.EventQUICConnectionStopped.name,
+        () => {
+          connection.removeEventListener(events.EventQUICConnectionStream.name, onStream);
+          if (quicExtServerConn === connection) quicExtServerConn = null;
+        },
+        { once: true },
+      );
+    });
+
+    await quicExtServer.start({ host, port });
+    console.log(
+      `[clean-vpn] exit QUIC-EXT UDP ${host}:${port} (ALPN ${QUIC_EXT_ALPN}, @infisical/quic; TLS и ${QUIC_EXT_HMAC_FILE} в ${certsDir})`,
+    );
+    return;
+  }
+
   throw new Error(`Неизвестный --type=${type}`);
 }
 
@@ -1140,6 +1337,8 @@ async function runClient({ server, type, splitDefault, configPath, iceMode, quic
   let webrtcSigWs = null;
   /** @type {any} */
   let quicClientSession = null;
+  /** @type {any} */
+  let quicExtClient = null;
 
   let shuttingDown = false;
   const shutdown = () => {
@@ -1169,15 +1368,28 @@ async function runClient({ server, type, splitDefault, configPath, iceMode, quic
     } catch {
       /* ignore */
     }
-    teardownClientRoutes(routeCtx);
+    const finishClient = () => {
+      teardownClientRoutes(routeCtx);
+      try {
+        child.stdin.end();
+        child.kill('SIGTERM');
+      } catch {
+        /* ignore */
+      }
+      console.log('[clean-vpn] client: остановка');
+      process.exit(0);
+    };
     try {
-      child.stdin.end();
-      child.kill('SIGTERM');
+      if (quicExtClient) {
+        const c = quicExtClient;
+        quicExtClient = null;
+        void c.destroy({ isApp: true, force: true }).then(finishClient, finishClient);
+        return;
+      }
     } catch {
       /* ignore */
     }
-    console.log('[clean-vpn] client: остановка');
-    process.exit(0);
+    finishClient();
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
@@ -1311,6 +1523,34 @@ async function runClient({ server, type, splitDefault, configPath, iceMode, quic
     return;
   }
 
+  if (type === 'quic-ext') {
+    const certsDir = quicCertsDir ? path.resolve(quicCertsDir) : DEFAULT_QUIC_CERTS_DIR;
+    const tlsPaths = ensureQuicCerts(certsDir);
+    const logger = createQuicExtLogger();
+    const { QUICClient } = await importQuicExt();
+    let connectHost = host;
+    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) {
+      connectHost = (await dns.lookup(host, { family: 4 })).address;
+    }
+    quicExtClient = await QUICClient.createQUICClient({
+      host: connectHost,
+      port,
+      serverName: 'clean-vpn',
+      crypto: { ops: { randomBytes: quicExtRandomBytes } },
+      config: {
+        ca: fs.readFileSync(tlsPaths.caPath, 'utf8'),
+        verifyPeer: true,
+        applicationProtos: [QUIC_EXT_ALPN],
+      },
+      logger,
+    });
+    console.log('[clean-vpn] QUIC-EXT (@infisical/quic) соединение установлено');
+    const stream = quicExtClient.connection.newStream('bidi');
+    const sock = quicBidiToSocketLike(stream);
+    attachTunBridge(child, 'tcp', sock);
+    return;
+  }
+
   await new Promise((resolve, reject) => {
     const sock = net.connect(port, host, () => {
       console.log('[clean-vpn] TCP connected');
@@ -1346,13 +1586,15 @@ async function main() {
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=socket [--ext=eth0]
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=socket --split-default
 
---type: socket | http | websocket | udp | webrtc | quic
+--type: socket | http | websocket | udp | webrtc | quic | quic-ext
 --split-default: только client, split 0.0.0.0/1 + 128.0.0.0/1 через tun
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
 --config=PATH: для --type=webrtc — JSON с iceServers/turnServers (по умолчанию config/default.json от корня репо)
 --ice-mode=auto|relay|direct: для webrtc — перекрывает iceMode из --config
---quic-certs-dir=DIR: для --type=quic — каталог с ca.pem, cert.pem, key.pem (иначе repo/certs; при отсутствии файлов — openssl)
---type=quic: Node.js 25+ и node --experimental-quic …`);
+--quic-certs-dir=DIR: для --type=quic и quic-ext — каталог с ca.pem, cert.pem, key.pem (иначе repo/certs; при отсутствии — openssl)
+--quic-ext-crypto-key=PATH: только exit + quic-ext — файл с 32 байтами HMAC-ключа (иначе quic-ext-hmac.key в каталоге сертификатов)
+--type=quic: Node.js 25+, node --experimental-quic и бинарь с node_use_quic (см. шапку файла)
+--type=quic-ext: npm install @infisical/quic (prebuild под платформу), Node 18+, см. шапку файла`);
     process.exit(1);
   }
 
