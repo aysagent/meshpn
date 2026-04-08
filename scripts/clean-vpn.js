@@ -49,7 +49,8 @@ import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
 import dns from 'dns/promises';
 import { PeerConnection, setSctpSettings } from 'node-datachannel';
-import Logger, { LogLevel, StreamHandler } from '@matrixai/logger';
+import Logger from '@matrixai/logger';
+const { LogLevel, StreamHandler } = Logger;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
