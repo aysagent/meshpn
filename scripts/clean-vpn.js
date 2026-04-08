@@ -49,8 +49,10 @@ import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
 import dns from 'dns/promises';
 import { PeerConnection, setSctpSettings } from 'node-datachannel';
-import Logger from '@matrixai/logger';
-const { LogLevel, StreamHandler } = Logger;
+// @matrixai/logger — CJS; в ESM класс лежит в .default, не в корне namespace.
+import matrixAiLogger from '@matrixai/logger';
+const LoggerClass = matrixAiLogger.default ?? matrixAiLogger;
+const { LogLevel, StreamHandler } = matrixAiLogger;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -87,7 +89,7 @@ const QUIC_EXT_ALPN = 'clean-vpn-ext';
 const QUIC_EXT_HMAC_FILE = 'quic-ext-hmac.key';
 
 function createQuicExtLogger() {
-  return new Logger('clean-vpn-quic-ext', LogLevel.WARN, [new StreamHandler(process.stderr)]);
+  return new LoggerClass('clean-vpn-quic-ext', LogLevel.WARN, [new StreamHandler(process.stderr)]);
 }
 
 /** @param {Buffer} buf */
