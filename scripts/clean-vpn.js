@@ -6,7 +6,7 @@
  * Требования: Linux, sudo, `helpers/tun-helper` (cd helpers && make).
  *
  * Exit (VPS): tun + NAT в интернет, без split-default.
- * Client: tun + split-default (опция), маршрут к --server через uplink.
+ * Client: tun + split-default (опция, только IPv4 default), маршрут к --server через uplink.
  *
  * Протокол (socket / http после преамбулы): uint32 BE + сырой IPv4-пакет (как tun-helper).
  * WebSocket / UDP: одно binary-сообщение или одна датаграмма = один IPv4-пакет (без префикса длины).
@@ -38,7 +38,8 @@
  *   На exit: --tls-cert-dir, --tls-public-name (SNI для «It works!»), --tls-probe-target (куда passthrough). Флаг --tls-server-name на exit не читается (только client).
  *   Внимание: passthrough на сторонний хост может нарушать ToS сервиса и законы юрисдикции — только на свой страх и риск.
  *   Сертификаты: --tls-cert-dir с fullchain.pem+privkey.pem (Let's Encrypt) или, как у QUIC, ca.pem+cert.pem+key.pem.
- *   Client: --tls-server-name — SNI и проверка сертификата, если CN/SAN не совпадают с host из --server (например самоподписанный clean-vpn).
+ *   Client: --tls-server-name — SNI и проверка сертификата. Если в --server указан IP, SNI не может быть IP (RFC 6066): без флага подставляется clean-vpn (как у ca/cert из репо); для Let's Encrypt укажите --tls-server-name=ваш.домен.
+ *   Split-default: маршруты 0.0.0.0/1 + 128.0.0.0/1 — только IPv4; IPv6 default не трогается. Проверка «внешний IP через VPN»: curl -4 https://ifconfig.me (без -4 curl может выбрать IPv6 и показать адрес клиента).
  *
  * При SIGINT/SIGTERM: снимаются iptables/NAT (exit), net.ipv4.ip_forward, маршруты и rp_filter (client)
  * восстанавливаются по снимку `ip -json route` (если доступен).
@@ -897,6 +898,9 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault) {
     ip(['route', 'replace', '0.0.0.0/1', 'dev', ifname]);
     ip(['route', 'replace', '128.0.0.0/1', 'dev', ifname]);
     console.log('[clean-vpn] split-default (0.0.0.0/1 + 128.0.0.0/1) через', ifname);
+    console.warn(
+      '[clean-vpn] split-default только для IPv4; IPv6 default не в туннеле. Проверка внешнего IPv4: curl -4 …',
+    );
   }
   try {
     execFileSync('sysctl', ['net.ipv4.conf.all.rp_filter=2'], { stdio: 'inherit' });
@@ -2098,9 +2102,20 @@ async function runClient({
   if (type === 'tls') {
     const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
     const ca = loadTlsClientCaPem(certsDir);
-    const servername = tlsServerName || tlsPublicName || host;
+    const hostIsIp = net.isIP(host) !== 0;
+    let servername = tlsServerName || tlsPublicName;
+    if (!servername) {
+      if (hostIsIp) {
+        servername = 'clean-vpn';
+        console.warn(
+          '[clean-vpn] TLS: в --server указан IP — для SNI используется clean-vpn (при другом CN/SAN задайте --tls-server-name=…).',
+        );
+      } else {
+        servername = host;
+      }
+    }
     let connectHost = host;
-    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) {
+    if (!hostIsIp) {
       connectHost = (await dns.lookup(host, { family: 4 })).address;
     }
     await new Promise((resolve, reject) => {
@@ -2172,7 +2187,7 @@ async function main() {
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=socket --split-default
 
 --type: socket | http | websocket | udp | webrtc | quic | quic-ext | tls
---split-default: только client, split 0.0.0.0/1 + 128.0.0.0/1 через tun
+--split-default: только client, IPv4 default (0.0.0.0/1 + 128.0.0.0/1) через tun; IPv6 не в туннеле (проверка IP: curl -4)
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
 --config=PATH: для --type=webrtc — JSON с iceServers/turnServers (по умолчанию config/default.json от корня репо)
 --ice-mode=auto|relay|direct: для webrtc — перекрывает iceMode из --config
@@ -2181,7 +2196,7 @@ async function main() {
 --type=quic: Node.js 25+, node --experimental-quic и бинарь с node_use_quic (см. шапку файла)
 --type=quic-ext: npm install @infisical/quic (prebuild под платформу), Node 18+, см. шапку файла
 --tls-cert-dir=DIR: для --type=tls — fullchain.pem+privkey.pem (LE) или ca/cert/key как у QUIC
---tls-server-name=HOST: только client + tls — SNI и проверка сертификата (иначе --tls-public-name или host из --server); на exit игнорируется
+--tls-server-name=HOST: только client + tls — SNI и проверка сертификата; если --server — IP и флаг не задан, SNI=clean-vpn; на exit игнорируется
 --tls-public-name=HOST: только exit + tls — SNI «честной» страницы It works! (опционально)
 --tls-probe-target=host:port: только exit + tls — passthrough чужих ClientHello (default www.google.com:443)
 --tls-probe-max-bytes=N: короткий passthrough, лимит байт обоих направлений (default 49152)

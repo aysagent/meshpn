@@ -439,11 +439,14 @@ mesh-vpn/
 │   ├── exit-node.json        # Exit node config
 │   └── relay-node.json       # Relay node config
 └── scripts/
+    ├── clean-vpn.js          # Минимальный VPN (TLS/QUIC/WebSocket/…); детали в шапке файла
     ├── nat-enable.sh         # Enable system NAT
     ├── nat-disable.sh        # Disable system NAT
     ├── setup-linux.sh        # Linux setup
     └── setup-macos.sh        # macOS setup
 ```
+
+Для [`scripts/clean-vpn.js`](scripts/clean-vpn.js): флаг `--split-default` перенаправляет только **IPv4** default в туннель; проверка внешнего IPv4 — например `curl -4 https://ifconfig.me`. Для `--type=tls` при IP в `--server` см. `--tls-server-name` и комментарии в шапке скрипта.
 
 ## Требования
 
