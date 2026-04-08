@@ -31,6 +31,13 @@
  *   sudo env PATH=$PATH node --experimental-quic scripts/clean-vpn.js --role=client --server=VPS:4433 --type=quic --split-default
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:4433 --type=quic-ext
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:4433 --type=quic-ext --split-default
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=tls [--tls-cert-dir=...] [--tls-public-name=vpn.example.com]
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=tls --split-default [--tls-server-name=...]
+ * TLS (--type=tls): TCP + TLS, ALPN clean-vpn-tls; тот же uint32+IPv4 после рукопожатия.
+ *   Exit: сырой TCP → разбор ClientHello (SNI/ALPN): VPN / «честная» страница по SNI / passthrough на --tls-probe-target (см. лимиты).
+ *   Внимание: passthrough на сторонний хост может нарушать ToS сервиса и законы юрисдикции — только на свой страх и риск.
+ *   Сертификаты: --tls-cert-dir с fullchain.pem+privkey.pem (Let's Encrypt) или, как у QUIC, ca.pem+cert.pem+key.pem.
+ *   Браузер: задайте --tls-public-name=ваш.домен (как в SNI); после HTTPS отдаётся «It works!». Клиент VPN: --tls-server-name при несовпадении с host.
  *
  * При SIGINT/SIGTERM: снимаются iptables/NAT (exit), net.ipv4.ip_forward, маршруты и rp_filter (client)
  * восстанавливаются по снимку `ip -json route` (если доступен).
@@ -41,6 +48,7 @@ import { createPrivateKey, randomBytes } from 'crypto';
 import dgram from 'dgram';
 import fs from 'fs';
 import net from 'net';
+import tls from 'tls';
 import path from 'path';
 import process from 'process';
 import { Readable, Writable } from 'stream';
@@ -87,6 +95,16 @@ const QUIC_TLS_KEY = 'key.pem';
 /** ALPN для @infisical/quic (quiche); должен совпадать на exit и client. */
 const QUIC_EXT_ALPN = 'clean-vpn-ext';
 const QUIC_EXT_HMAC_FILE = 'quic-ext-hmac.key';
+
+/** ALPN для --type=tls (VPN); браузер обычно шлёт http/1.1 / h2. */
+const TLS_ALPN_VPN = 'clean-vpn-tls';
+const TLS_LE_FULLCHAIN = 'fullchain.pem';
+const TLS_LE_PRIVKEY = 'privkey.pem';
+const TLS_HTTP_WORKS_BODY = 'It works!\n';
+const DEFAULT_TLS_PROBE_TARGET = 'www.google.com:443';
+const DEFAULT_TLS_PROBE_MAX_BYTES = 49152;
+const DEFAULT_TLS_PROBE_MAX_SECONDS = 30;
+const DEFAULT_TLS_PROBE_FULL_PROXY_PER_IP = 0;
 
 function createQuicExtLogger() {
   return new LoggerClass('clean-vpn-quic-ext', LogLevel.WARN, [new StreamHandler(process.stderr)]);
@@ -310,6 +328,200 @@ function ensureQuicCerts(dir) {
   return { caPath, certPath, keyPath };
 }
 
+/**
+ * @param {{ tlsCertDir?: string|null, quicCertsDir?: string|null }} args
+ */
+function resolveTlsCertsDir(args) {
+  if (args.tlsCertDir) return path.resolve(args.tlsCertDir);
+  if (args.quicCertsDir) return path.resolve(args.quicCertsDir);
+  return DEFAULT_QUIC_CERTS_DIR;
+}
+
+/**
+ * Серверные PEM для TLS exit: приоритет Let's Encrypt (fullchain+privkey), иначе ensureQuicCerts.
+ * @returns {{ cert: string, key: string, caPath: string }}
+ */
+function loadTlsServerCredentials(dir) {
+  const fullchainPath = path.join(dir, TLS_LE_FULLCHAIN);
+  const privkeyPath = path.join(dir, TLS_LE_PRIVKEY);
+  if (fs.existsSync(fullchainPath) && fs.existsSync(privkeyPath)) {
+    return {
+      cert: fs.readFileSync(fullchainPath, 'utf8'),
+      key: fs.readFileSync(privkeyPath, 'utf8'),
+      caPath: fullchainPath,
+    };
+  }
+  const t = ensureQuicCerts(dir);
+  return {
+    cert: fs.readFileSync(t.certPath, 'utf8'),
+    key: fs.readFileSync(t.keyPath, 'utf8'),
+    caPath: t.caPath,
+  };
+}
+
+/** CA для tls.connect на клиенте: при LE — fullchain; иначе ca.pem. */
+function loadTlsClientCaPem(dir) {
+  const fullchainPath = path.join(dir, TLS_LE_FULLCHAIN);
+  if (fs.existsSync(fullchainPath)) return fs.readFileSync(fullchainPath, 'utf8');
+  const t = ensureQuicCerts(dir);
+  return fs.readFileSync(t.caPath, 'utf8');
+}
+
+/**
+ * Первый TLS record = ClientHello; иначе needMore / ошибка.
+ * @returns {{ needMore: true, minTotal: number } | { ok: false, reason: string } | { ok: true, sni: string[], alpn: string[], bytesConsumed: number }}
+ */
+function parseFirstTlsClientHello(buf) {
+  if (buf.length < 5) return { needMore: true, minTotal: 5 };
+  if (buf[0] !== 0x16) return { ok: false, reason: 'not_tls_handshake' };
+  const recLen = buf.readUInt16BE(3);
+  const total = 5 + recLen;
+  if (buf.length < total) return { needMore: true, minTotal: total };
+  if (recLen < 4) return { ok: false, reason: 'short_record' };
+  const payload = buf.subarray(5, total);
+  if (payload[0] !== 1) return { ok: false, reason: 'not_client_hello' };
+  const hsLen = payload.readUIntBE(1, 3);
+  if (payload.length < 4 + hsLen) return { ok: false, reason: 'short_handshake' };
+  const ch = payload.subarray(4, 4 + hsLen);
+  let o = 0;
+  if (ch.length < 34) return { ok: false, reason: 'short_ch' };
+  o += 34;
+  const sidLen = ch[o];
+  o += 1;
+  if (ch.length < o + sidLen + 2) return { ok: false, reason: 'short_ch2' };
+  o += sidLen;
+  const csLen = ch.readUInt16BE(o);
+  o += 2;
+  if (ch.length < o + csLen + 1) return { ok: false, reason: 'short_ch3' };
+  o += csLen;
+  const compLen = ch[o];
+  o += 1;
+  if (ch.length < o + compLen + 2) return { ok: false, reason: 'short_ch4' };
+  o += compLen;
+  const extLen = ch.readUInt16BE(o);
+  o += 2;
+  if (ch.length < o + extLen) return { ok: false, reason: 'short_ext' };
+  const extBlock = ch.subarray(o, o + extLen);
+  /** @type {string[]} */
+  const sni = [];
+  /** @type {string[]} */
+  const alpn = [];
+  let eo = 0;
+  while (eo + 4 <= extBlock.length) {
+    const et = extBlock.readUInt16BE(eo);
+    const el = extBlock.readUInt16BE(eo + 2);
+    eo += 4;
+    if (eo + el > extBlock.length) break;
+    const ed = extBlock.subarray(eo, eo + el);
+    if (et === 0 && ed.length >= 2) {
+      let listLen = ed.readUInt16BE(0);
+      let so = 2;
+      while (so + 3 <= ed.length && listLen >= 3) {
+        const nt = ed[so];
+        const nl = ed.readUInt16BE(so + 1);
+        so += 3;
+        if (so + nl > ed.length) break;
+        if (nt === 0) sni.push(ed.subarray(so, so + nl).toString('utf8'));
+        so += nl;
+        listLen -= 3 + nl;
+      }
+    } else if (et === 16 && ed.length >= 2) {
+      let listLen = ed.readUInt16BE(0);
+      let ao = 2;
+      while (ao + 1 <= ed.length && listLen > 0) {
+        const pl = ed[ao];
+        ao += 1;
+        if (ao + pl > ed.length) break;
+        alpn.push(ed.subarray(ao, ao + pl).toString('utf8'));
+        ao += pl;
+        listLen -= 1 + pl;
+      }
+    }
+    eo += el;
+  }
+  return { ok: true, sni, alpn, bytesConsumed: total };
+}
+
+/**
+ * @param {string[]} sniList
+ * @param {string} publicName
+ */
+function sniMatchesTlsPublicName(sniList, publicName) {
+  const want = String(publicName).toLowerCase().replace(/\.$/, '');
+  if (!want) return false;
+  for (const raw of sniList) {
+    const h = String(raw).toLowerCase().replace(/\.$/, '');
+    if (h === want) return true;
+  }
+  return false;
+}
+
+function tlsClientIp(socket) {
+  const a = socket.remoteAddress || '';
+  return a.replace(/^\:\:ffff\:/, '');
+}
+
+function tlsUtcDayBucket() {
+  return Math.floor(Date.now() / 86400000);
+}
+
+/**
+ * Двунаправленный pipe с лимитом байт и времени.
+ * @param {import('net').Socket} a
+ * @param {import('net').Socket} b
+ * @param {{ maxBytes: number, maxMs: number }} opts
+ * @param {() => void} onEnd
+ */
+function pipeTcpWithLimits(a, b, opts, onEnd) {
+  let total = 0;
+  const deadline = Date.now() + opts.maxMs;
+  let ended = false;
+  function finish() {
+    if (ended) return;
+    ended = true;
+    clearInterval(tick);
+    try {
+      a.destroy();
+    } catch {
+      /* ignore */
+    }
+    try {
+      b.destroy();
+    } catch {
+      /* ignore */
+    }
+    try {
+      onEnd();
+    } catch {
+      /* ignore */
+    }
+  }
+  const tick = setInterval(() => {
+    if (Date.now() > deadline) finish();
+  }, 1000);
+  tick.unref?.();
+  const count = (n) => {
+    total += n;
+    if (total >= opts.maxBytes) finish();
+  };
+  const pipeDir = (src, dst) => {
+    src.on('data', (chunk) => {
+      if (ended) return;
+      count(chunk.length);
+      if (ended) return;
+      const ok = dst.write(chunk);
+      if (!ok) src.pause();
+    });
+    dst.on('drain', () => src.resume());
+  };
+  pipeDir(a, b);
+  pipeDir(b, a);
+  a.on('error', () => finish());
+  b.on('error', () => finish());
+  a.on('close', () => finish());
+  b.on('close', () => finish());
+}
+
 /** @param {any} qs — quic.QuicStream (bidi) */
 function quicBidiToSocketLike(qs) {
   if (!qs?.readable) {
@@ -407,6 +619,13 @@ function parseArgs(argv) {
     iceMode: null,
     quicCertsDir: null,
     quicExtCryptoKey: null,
+    tlsCertDir: null,
+    tlsServerName: null,
+    tlsPublicName: null,
+    tlsProbeTarget: null,
+    tlsProbeMaxBytes: null,
+    tlsProbeMaxSeconds: null,
+    tlsProbeFullProxyPerIp: null,
   };
   for (const a of argv) {
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
@@ -419,6 +638,20 @@ function parseArgs(argv) {
       out.quicCertsDir = a.slice('--quic-certs-dir='.length);
     } else if (a.startsWith('--quic-ext-crypto-key=')) {
       out.quicExtCryptoKey = a.slice('--quic-ext-crypto-key='.length);
+    } else if (a.startsWith('--tls-cert-dir=')) {
+      out.tlsCertDir = a.slice('--tls-cert-dir='.length);
+    } else if (a.startsWith('--tls-server-name=')) {
+      out.tlsServerName = a.slice('--tls-server-name='.length);
+    } else if (a.startsWith('--tls-public-name=')) {
+      out.tlsPublicName = a.slice('--tls-public-name='.length);
+    } else if (a.startsWith('--tls-probe-target=')) {
+      out.tlsProbeTarget = a.slice('--tls-probe-target='.length);
+    } else if (a.startsWith('--tls-probe-max-bytes=')) {
+      out.tlsProbeMaxBytes = parseInt(a.slice('--tls-probe-max-bytes='.length), 10);
+    } else if (a.startsWith('--tls-probe-max-seconds=')) {
+      out.tlsProbeMaxSeconds = parseInt(a.slice('--tls-probe-max-seconds='.length), 10);
+    } else if (a.startsWith('--tls-probe-full-proxy-per-ip=')) {
+      out.tlsProbeFullProxyPerIp = parseInt(a.slice('--tls-probe-full-proxy-per-ip='.length), 10);
     } else if (a === '--split-default') out.splitDefault = true;
   }
   return out;
@@ -891,6 +1124,178 @@ function attachTunBridge(child, transport, endpoint) {
   child.on('close', () => process.exit(0));
 }
 
+/**
+ * @param {import('net').Socket} socket
+ * @param {{
+ *   startBridge: (sock: any, restBuf: Buffer|null, transport: 'tcp') => void,
+ *   creds: { cert: string, key: string },
+ *   tlsPublicName: string|null,
+ *   probeTargetHost: string,
+ *   probeTargetPort: number,
+ *   probeShortMaxBytes: number,
+ *   probeMaxSeconds: number,
+ *   probeFullProxyPerIp: number,
+ *   probeBudget: Map<string, { day: number, fullCount: number }>,
+ * }} ctx
+ */
+function startTlsServerSide(socket, ctx, mode) {
+  const tlsSock = new tls.TLSSocket(socket, {
+    isServer: true,
+    cert: ctx.creds.cert,
+    key: ctx.creds.key,
+    requestCert: false,
+    ALPNProtocols: mode === 'vpn' ? [TLS_ALPN_VPN] : ['http/1.1', 'h2'],
+  });
+  tlsSock.on('secure', () => {
+    try {
+      if (mode === 'vpn') {
+        if (tlsSock.alpnProtocol !== TLS_ALPN_VPN) {
+          tlsSock.destroy();
+          return;
+        }
+        console.log('[clean-vpn] tls VPN client connected', tlsSock.remoteAddress);
+        ctx.startBridge(tlsSock, null, 'tcp');
+        return;
+      }
+      if (tlsSock.alpnProtocol === 'h2') {
+        console.warn(
+          '[clean-vpn] tls exit: браузер выбрал только h2 — закройте вкладку или включите http/1.1 в ALPN (MVP без HTTP/2)',
+        );
+        tlsSock.destroy();
+        return;
+      }
+      let httpBuf = Buffer.alloc(0);
+      const onHttp = (d) => {
+        httpBuf = Buffer.concat([httpBuf, d]);
+        if (httpBuf.includes(Buffer.from('\r\n\r\n'))) {
+          tlsSock.off('data', onHttp);
+          const body = TLS_HTTP_WORKS_BODY;
+          const res = `HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`;
+          tlsSock.write(res, () => {
+            try {
+              tlsSock.end();
+            } catch {
+              /* ignore */
+            }
+          });
+        }
+      };
+      tlsSock.on('data', onHttp);
+      setTimeout(() => {
+        if (!tlsSock.destroyed) tlsSock.destroy();
+      }, 30000).unref?.();
+    } catch (e) {
+      console.error('[clean-vpn] tls secure handler:', e?.message || e);
+      try {
+        tlsSock.destroy();
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+  tlsSock.on('error', (e) => {
+    console.error('[clean-vpn] tls exit socket:', e?.message || e);
+  });
+}
+
+/**
+ * @param {import('net').Socket} clientSock
+ * @param {Buffer} prefixBuf
+ * @param {{
+ *   probeTargetHost: string,
+ *   probeTargetPort: number,
+ *   probeShortMaxBytes: number,
+ *   probeMaxSeconds: number,
+ *   probeFullProxyPerIp: number,
+ *   probeBudget: Map<string, { day: number, fullCount: number }>,
+ * }} ctx
+ */
+function runTlsProbePassthrough(clientSock, prefixBuf, ctx) {
+  const remote = net.createConnection(
+    { port: ctx.probeTargetPort, host: ctx.probeTargetHost },
+    () => {
+      remote.write(prefixBuf);
+      const day = tlsUtcDayBucket();
+      const ipKey = tlsClientIp(clientSock);
+      let fb = ctx.probeBudget.get(ipKey);
+      if (!fb || fb.day !== day) {
+        fb = { day, fullCount: 0 };
+        ctx.probeBudget.set(ipKey, fb);
+      }
+      let maxBytes = ctx.probeShortMaxBytes;
+      if (ctx.probeFullProxyPerIp > 0 && fb.fullCount < ctx.probeFullProxyPerIp) {
+        fb.fullCount += 1;
+        maxBytes = Number.MAX_SAFE_INTEGER;
+      }
+      pipeTcpWithLimits(clientSock, remote, {
+        maxBytes,
+        maxMs: ctx.probeMaxSeconds * 1000,
+      }, () => {});
+    },
+  );
+  remote.on('error', (e) => {
+    console.error('[clean-vpn] tls probe →', ctx.probeTargetHost, e.message);
+    try {
+      clientSock.destroy();
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
+/**
+ * @param {import('net').Socket} socket
+ * @param {{
+ *   startBridge: (sock: any, restBuf: Buffer|null, transport: 'tcp') => void,
+ *   creds: { cert: string, key: string },
+ *   tlsPublicName: string|null,
+ *   probeTargetHost: string,
+ *   probeTargetPort: number,
+ *   probeShortMaxBytes: number,
+ *   probeMaxSeconds: number,
+ *   probeFullProxyPerIp: number,
+ *   probeBudget: Map<string, { day: number, fullCount: number }>,
+ * }} ctx
+ */
+function handleTlsExitInbound(socket, ctx) {
+  /** @type {Buffer[]} */
+  const chunks = [];
+  const helloTimer = setTimeout(() => {
+    try {
+      socket.destroy();
+    } catch {
+      /* ignore */
+    }
+  }, 60000);
+  const onData = (c) => {
+    chunks.push(c);
+    const buf = Buffer.concat(chunks);
+    const p = parseFirstTlsClientHello(buf);
+    if ('needMore' in p && p.needMore) return;
+    clearTimeout(helloTimer);
+    socket.off('data', onData);
+    const fullBuf = Buffer.concat(chunks);
+    if (!('ok' in p && p.ok)) {
+      runTlsProbePassthrough(socket, fullBuf, ctx);
+      return;
+    }
+    const hasVpnAlpn = p.alpn.includes(TLS_ALPN_VPN);
+    const publicOk =
+      ctx.tlsPublicName &&
+      sniMatchesTlsPublicName(p.sni, ctx.tlsPublicName) &&
+      !hasVpnAlpn;
+    if (!hasVpnAlpn && !publicOk) {
+      runTlsProbePassthrough(socket, fullBuf, ctx);
+      return;
+    }
+    socket.unshift(fullBuf);
+    startTlsServerSide(socket, ctx, hasVpnAlpn ? 'vpn' : 'public');
+  };
+  socket.on('data', onData);
+  socket.on('error', () => clearTimeout(helloTimer));
+  socket.on('close', () => clearTimeout(helloTimer));
+}
+
 function handleHttpSocket(sock, onReady) {
   const onData = (chunk) => {
     const buf = sock.__httpBuf ? Buffer.concat([sock.__httpBuf, chunk]) : chunk;
@@ -912,7 +1317,21 @@ function handleHttpSocket(sock, onReady) {
   sock.on('data', onData);
 }
 
-async function runExit({ server, type, extIface, configPath, iceMode, quicCertsDir, quicExtCryptoKey }) {
+async function runExit({
+  server,
+  type,
+  extIface,
+  configPath,
+  iceMode,
+  quicCertsDir,
+  quicExtCryptoKey,
+  tlsCertDir,
+  tlsPublicName,
+  tlsProbeTarget,
+  tlsProbeMaxBytes,
+  tlsProbeMaxSeconds,
+  tlsProbeFullProxyPerIp,
+}) {
   const { host, port } = parseHostPort(server);
   const tunName = findFreeTunName();
   const { child, name: ifname } = await spawnTun(tunName);
@@ -1061,6 +1480,50 @@ async function runExit({ server, type, extIface, configPath, iceMode, quicCertsD
       })
       .listen(port, host, () => {
         console.log(`[clean-vpn] exit ${type} listening ${host}:${port}`);
+      });
+    return;
+  }
+
+  if (type === 'tls') {
+    const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
+    const creds = loadTlsServerCredentials(certsDir);
+    const targetStr = tlsProbeTarget || DEFAULT_TLS_PROBE_TARGET;
+    const { host: pHost, port: pPort } = parseHostPort(targetStr);
+    const probeShortMaxBytes =
+      tlsProbeMaxBytes != null && Number.isFinite(tlsProbeMaxBytes) && tlsProbeMaxBytes >= 0
+        ? tlsProbeMaxBytes
+        : DEFAULT_TLS_PROBE_MAX_BYTES;
+    const probeMaxSeconds =
+      tlsProbeMaxSeconds != null && Number.isFinite(tlsProbeMaxSeconds) && tlsProbeMaxSeconds > 0
+        ? tlsProbeMaxSeconds
+        : DEFAULT_TLS_PROBE_MAX_SECONDS;
+    const probeFullProxyPerIp =
+      tlsProbeFullProxyPerIp != null &&
+      Number.isFinite(tlsProbeFullProxyPerIp) &&
+      tlsProbeFullProxyPerIp >= 0
+        ? tlsProbeFullProxyPerIp
+        : DEFAULT_TLS_PROBE_FULL_PROXY_PER_IP;
+    /** @type {Map<string, { day: number, fullCount: number }>} */
+    const probeBudget = new Map();
+    const tlsCtx = {
+      startBridge,
+      creds,
+      tlsPublicName: tlsPublicName || null,
+      probeTargetHost: pHost,
+      probeTargetPort: pPort,
+      probeShortMaxBytes,
+      probeMaxSeconds,
+      probeFullProxyPerIp,
+      probeBudget,
+    };
+    tcpSrv = net
+      .createServer((sock) => {
+        handleTlsExitInbound(sock, tlsCtx);
+      })
+      .listen(port, host, () => {
+        console.log(
+          `[clean-vpn] exit TLS ${host}:${port} (ALPN VPN: ${TLS_ALPN_VPN}; публичный SNI: ${tlsPublicName || '—'}; probe → ${pHost}:${pPort}; short ≤${probeShortMaxBytes} B, ≤${probeMaxSeconds}s; full-proxy/(IP·сутки): ${probeFullProxyPerIp})`,
+        );
       });
     return;
   }
@@ -1327,7 +1790,17 @@ async function runExit({ server, type, extIface, configPath, iceMode, quicCertsD
   throw new Error(`Неизвестный --type=${type}`);
 }
 
-async function runClient({ server, type, splitDefault, configPath, iceMode, quicCertsDir }) {
+async function runClient({
+  server,
+  type,
+  splitDefault,
+  configPath,
+  iceMode,
+  quicCertsDir,
+  tlsCertDir,
+  tlsServerName,
+  tlsPublicName,
+}) {
   const { host, port } = parseHostPort(server);
   const tunName = findFreeTunName();
   const { child, name: ifname } = await spawnTun(tunName);
@@ -1342,6 +1815,8 @@ async function runClient({ server, type, splitDefault, configPath, iceMode, quic
   let quicClientSession = null;
   /** @type {any} */
   let quicExtClient = null;
+  /** @type {import('tls').TLSSocket|null} */
+  let tlsVpnSocket = null;
 
   let shuttingDown = false;
   const shutdown = () => {
@@ -1388,6 +1863,14 @@ async function runClient({ server, type, splitDefault, configPath, iceMode, quic
         quicExtClient = null;
         void c.destroy({ isApp: true, force: true }).then(finishClient, finishClient);
         return;
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (tlsVpnSocket) {
+        tlsVpnSocket.destroy();
+        tlsVpnSocket = null;
       }
     } catch {
       /* ignore */
@@ -1554,6 +2037,44 @@ async function runClient({ server, type, splitDefault, configPath, iceMode, quic
     return;
   }
 
+  if (type === 'tls') {
+    const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
+    const ca = loadTlsClientCaPem(certsDir);
+    const servername = tlsServerName || tlsPublicName || host;
+    let connectHost = host;
+    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) {
+      connectHost = (await dns.lookup(host, { family: 4 })).address;
+    }
+    await new Promise((resolve, reject) => {
+      const sock = tls.connect(
+        port,
+        connectHost,
+        {
+          ALPNProtocols: [TLS_ALPN_VPN],
+          ca,
+          servername,
+          rejectUnauthorized: true,
+        },
+        () => {
+          if (sock.alpnProtocol !== TLS_ALPN_VPN) {
+            reject(
+              new Error(
+                `TLS client: ожидался ALPN ${TLS_ALPN_VPN}, получено: ${String(sock.alpnProtocol)}`,
+              ),
+            );
+            return;
+          }
+          tlsVpnSocket = sock;
+          console.log('[clean-vpn] TLS (VPN) соединение установлено');
+          resolve(undefined);
+        },
+      );
+      sock.on('error', reject);
+    });
+    attachTunBridge(child, 'tcp', tlsVpnSocket);
+    return;
+  }
+
   await new Promise((resolve, reject) => {
     const sock = net.connect(port, host, () => {
       console.log('[clean-vpn] TCP connected');
@@ -1589,7 +2110,7 @@ async function main() {
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=socket [--ext=eth0]
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=socket --split-default
 
---type: socket | http | websocket | udp | webrtc | quic | quic-ext
+--type: socket | http | websocket | udp | webrtc | quic | quic-ext | tls
 --split-default: только client, split 0.0.0.0/1 + 128.0.0.0/1 через tun
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
 --config=PATH: для --type=webrtc — JSON с iceServers/turnServers (по умолчанию config/default.json от корня репо)
@@ -1597,7 +2118,14 @@ async function main() {
 --quic-certs-dir=DIR: для --type=quic и quic-ext — каталог с ca.pem, cert.pem, key.pem (иначе repo/certs; при отсутствии — openssl)
 --quic-ext-crypto-key=PATH: только exit + quic-ext — файл с 32 байтами HMAC-ключа (иначе quic-ext-hmac.key в каталоге сертификатов)
 --type=quic: Node.js 25+, node --experimental-quic и бинарь с node_use_quic (см. шапку файла)
---type=quic-ext: npm install @infisical/quic (prebuild под платформу), Node 18+, см. шапку файла`);
+--type=quic-ext: npm install @infisical/quic (prebuild под платформу), Node 18+, см. шапку файла
+--tls-cert-dir=DIR: для --type=tls — fullchain.pem+privkey.pem (LE) или ca/cert/key как у QUIC
+--tls-server-name=HOST: client + tls — SNI/проверка сертификата (иначе --tls-public-name или host из --server)
+--tls-public-name=HOST: exit + tls — SNI «честной» страницы It works! (опционально)
+--tls-probe-target=host:port: exit + tls — passthrough чужих ClientHello (default www.google.com:443)
+--tls-probe-max-bytes=N: короткий passthrough, лимит байт обоих направлений (default 49152)
+--tls-probe-max-seconds=S: лимит времени passthrough-сессии (default 30)
+--tls-probe-full-proxy-per-ip=K: не более K «длинных» passthrough с одного IP за сутки (default 0 = только короткий)`);
     process.exit(1);
   }
 
