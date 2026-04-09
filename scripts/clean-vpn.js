@@ -73,6 +73,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const TUN_HELPER = path.join(__dirname, '../helpers/tun-helper');
 
+// =============================================================================
+// === Константы: tun-helper, адреса VPN, SCTP, пути конфигов, ALPN, лимиты ===
+// =============================================================================
+
 const TUN_MTU = 1400;
 const MAX_PKT = 65535;
 const IP_EXIT = '10.99.0.1';
@@ -117,6 +121,10 @@ const DEFAULT_TLS_PROBE_FULL_PROXY_PER_IP = 0;
 /** Таймаут ожидания TLS-рукопожатия на client (до attachTunBridge). */
 const TLS_CLIENT_HANDSHAKE_MS = 30000;
 
+// =============================================================================
+// === tun: маршруты split-default (RFC1918 через uplink) ===
+// =============================================================================
+
 /** RFC1918: при split-default идут через uplink (длиннее префикса /1), чтобы DNS/LAN не уезжали на exit. Peer 10.99.0.1 остаётся /32 на tun. */
 const SPLIT_PRIVATE_V4 = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
 
@@ -147,6 +155,10 @@ function delSplitPrivateUplinkRoutes(gw, dev) {
     }
   }
 }
+
+// =============================================================================
+// === --type=quic-ext: HMAC stateless retry, импорт @infisical/quic, логер ===
+// =============================================================================
 
 function createQuicExtLogger() {
   return new LoggerClass('clean-vpn-quic-ext', LogLevel.WARN, [new StreamHandler(process.stderr)]);
@@ -248,6 +260,10 @@ async function importQuicExt() {
   }
 }
 
+// =============================================================================
+// === --type=quic (node:quic): версия Node, dynamic import ===
+// =============================================================================
+
 function assertQuicNodeVersion() {
   const major = parseInt(String(process.versions.node).split('.')[0], 10);
   if (Number.isNaN(major) || major < 25) {
@@ -271,6 +287,10 @@ async function importNodeQuic() {
     );
   }
 }
+
+// =============================================================================
+// === Общее: OpenSSL, каталог сертификатов (quic / quic-ext / tls) ===
+// =============================================================================
 
 function opensslAvailable() {
   try {
@@ -408,6 +428,10 @@ function loadTlsClientCaPem(dir) {
   const t = ensureQuicCerts(dir);
   return fs.readFileSync(t.caPath, 'utf8');
 }
+
+// =============================================================================
+// === --type=tls: парсинг ClientHello, SNI/ALPN, passthrough, inbound exit ===
+// =============================================================================
 
 /** Макс. буфер при сборке ClientHello из нескольких TLS records (защита от DOS). */
 const TLS_MUX_MAX_CLIENT_BUF = 512 * 1024;
@@ -642,6 +666,10 @@ function pipeTcpWithLimits(a, b, opts, onEnd) {
   b.on('close', () => finish('close', false));
 }
 
+// =============================================================================
+// === --type=quic (node:quic): QuicStream bidi → socket-like для attachTunBridge ===
+// =============================================================================
+
 /** @param {any} qs — quic.QuicStream (bidi) */
 function quicBidiToSocketLike(qs) {
   if (!qs?.readable) {
@@ -676,6 +704,10 @@ function quicBidiToSocketLike(qs) {
   };
   return sock;
 }
+
+// =============================================================================
+// === --type=webrtc: ICE/STUN/TURN из JSON (node-datachannel) ===
+// =============================================================================
 
 /** Как в src/transport/webrtc.js: объекты конфига → строки для node-datachannel. */
 function convertIceServers(servers, iceMode) {
@@ -727,6 +759,10 @@ function loadWebrtcIceFromConfig(configPath, cliIceMode) {
   }
   return { ndcIceServers, iceMode, configPath: resolved };
 }
+
+// =============================================================================
+// === Общее: разбор CLI, parseHostPort, снимки и правки ip route (client) ===
+// =============================================================================
 
 function parseArgs(argv) {
   const out = {
@@ -855,6 +891,10 @@ function tryIpRoute(args) {
   }
 }
 
+// =============================================================================
+// === tun (продолжение): имя интерфейса, spawn tun-helper, ip addr, sysctl, NAT ===
+// =============================================================================
+
 function findFreeTunName() {
   try {
     const out = execFileSync('ip', ['link', 'show'], { encoding: 'utf8' });
@@ -867,6 +907,10 @@ function findFreeTunName() {
     return 'tun0';
   }
 }
+
+// =============================================================================
+// === Общее: uint32+IPv4 фрейминг, writeFramed, attachTunBridge (все transport) ===
+// =============================================================================
 
 class StreamFramer {
   constructor() {
@@ -1468,6 +1512,10 @@ function handleTlsExitInbound(socket, ctx) {
   socket.on('close', () => clearTimeout(helloTimer));
 }
 
+// =============================================================================
+// === Общее: HTTP-преамбула для --type=socket | --type=http ===
+// =============================================================================
+
 function handleHttpSocket(sock, onReady) {
   const onData = (chunk) => {
     const buf = sock.__httpBuf ? Buffer.concat([sock.__httpBuf, chunk]) : chunk;
@@ -1488,6 +1536,10 @@ function handleHttpSocket(sock, onReady) {
   };
   sock.on('data', onData);
 }
+
+// =============================================================================
+// === runExit: tun + NAT, затем ветки по --type ===
+// =============================================================================
 
 async function runExit({
   server,
@@ -1625,6 +1677,7 @@ async function runExit({
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
+  // --- runExit: --type=websocket ---
   if (type === 'websocket') {
     wss = new WebSocketServer({ host, port });
     wss.on('listening', () => {
@@ -1640,6 +1693,7 @@ async function runExit({
     return;
   }
 
+  // --- runExit: --type=socket | --type=http ---
   if (type === 'socket' || type === 'http') {
     tcpSrv = net
       .createServer((sock) => {
@@ -1657,6 +1711,7 @@ async function runExit({
     return;
   }
 
+  // --- runExit: --type=tls ---
   if (type === 'tls') {
     if (tlsServerName) {
       console.warn(
@@ -1713,6 +1768,7 @@ async function runExit({
     return;
   }
 
+  // --- runExit: --type=udp ---
   if (type === 'udp') {
     udpSock = dgram.createSocket('udp4');
     udpSock.on('error', (err) => {
@@ -1726,6 +1782,7 @@ async function runExit({
     return;
   }
 
+  // --- runExit: --type=webrtc ---
   if (type === 'webrtc') {
     const ice = loadWebrtcIceFromConfig(configPath, iceMode);
     console.log(
@@ -1847,6 +1904,7 @@ async function runExit({
     return;
   }
 
+  // --- runExit: --type=quic (node:quic) ---
   if (type === 'quic') {
     assertQuicNodeVersion();
     const certsDir = quicCertsDir ? path.resolve(quicCertsDir) : DEFAULT_QUIC_CERTS_DIR;
@@ -1909,6 +1967,7 @@ async function runExit({
     return;
   }
 
+  // --- runExit: --type=quic-ext (@infisical/quic) ---
   if (type === 'quic-ext') {
     const certsDir = quicCertsDir ? path.resolve(quicCertsDir) : DEFAULT_QUIC_CERTS_DIR;
     const tlsPaths = ensureQuicCerts(certsDir);
@@ -1974,6 +2033,10 @@ async function runExit({
 
   throw new Error(`Неизвестный --type=${type}`);
 }
+
+// =============================================================================
+// === runClient: tun + маршруты, затем ветки по --type ===
+// =============================================================================
 
 async function runClient({
   server,
@@ -2065,6 +2128,7 @@ async function runClient({
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
+  // --- runClient: --type=websocket ---
   if (type === 'websocket') {
     const url = `ws://${host}:${port}/`;
     const ws = new WebSocket(url);
@@ -2078,6 +2142,7 @@ async function runClient({
     return;
   }
 
+  // --- runClient: --type=udp ---
   if (type === 'udp') {
     const udp = dgram.createSocket('udp4');
     await new Promise((resolve, reject) => {
@@ -2092,6 +2157,7 @@ async function runClient({
     return;
   }
 
+  // --- runClient: --type=webrtc ---
   if (type === 'webrtc') {
     const ice = loadWebrtcIceFromConfig(configPath, iceMode);
     console.log(`[clean-vpn] webrtc client: ICE mode=${ice.iceMode}, конфиг=${ice.configPath}`);
@@ -2168,6 +2234,7 @@ async function runClient({
     return;
   }
 
+  // --- runClient: --type=quic (node:quic) ---
   if (type === 'quic') {
     assertQuicNodeVersion();
     const certsDir = quicCertsDir ? path.resolve(quicCertsDir) : DEFAULT_QUIC_CERTS_DIR;
@@ -2194,6 +2261,7 @@ async function runClient({
     return;
   }
 
+  // --- runClient: --type=quic-ext (@infisical/quic) ---
   if (type === 'quic-ext') {
     const certsDir = quicCertsDir ? path.resolve(quicCertsDir) : DEFAULT_QUIC_CERTS_DIR;
     const tlsPaths = ensureQuicCerts(certsDir);
@@ -2222,6 +2290,7 @@ async function runClient({
     return;
   }
 
+  // --- runClient: --type=tls ---
   if (type === 'tls') {
     const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
     const ca = loadTlsClientCaPem(certsDir);
@@ -2331,6 +2400,7 @@ async function runClient({
     return;
   }
 
+  // --- runClient: --type=socket | --type=http (TCP + опционально GET /clean-vpn) ---
   await new Promise((resolve, reject) => {
     const sock = net.connect(port, host, () => {
       console.log('[clean-vpn] TCP connected');
@@ -2354,6 +2424,10 @@ async function runClient({
     sock.on('error', reject);
   });
 }
+
+// =============================================================================
+// === main: разбор argv, вызов runExit / runClient ===
+// =============================================================================
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
