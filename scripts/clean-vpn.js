@@ -1221,78 +1221,113 @@ function attachTunBridge(child, transport, endpoint) {
 }
 
 /**
- * @param {import('net').Socket} socket
+ * Два `tls.Server` без `listen()`: после разбора ClientHello вызывается
+ * `server.emit('connection', socket)` — надёжнее, чем `new tls.TLSSocket` на том же сокете.
+ *
  * @param {{
- *   startBridge: (sock: any, restBuf: Buffer|null, transport: 'tcp') => void,
  *   creds: { cert: string, key: string },
- *   tlsPublicName: string|null,
- *   probeTargetHost: string,
- *   probeTargetPort: number,
- *   probeShortMaxBytes: number,
- *   probeMaxSeconds: number,
- *   probeFullProxyPerIp: number,
- *   probeBudget: Map<string, { day: number, fullCount: number }>,
- * }} ctx
+ *   startBridge: (sock: any, restBuf: Buffer|null, transport: 'tcp') => void,
+ * }} opts
+ * @returns {{ vpnTlsServer: import('tls').Server, publicTlsServer: import('tls').Server }}
  */
-function startTlsServerSide(socket, ctx, mode) {
-  const tlsSock = new tls.TLSSocket(socket, {
-    isServer: true,
-    cert: ctx.creds.cert,
-    key: ctx.creds.key,
+function createTlsExitServers(opts) {
+  const { creds, startBridge } = opts;
+  const base = {
+    cert: creds.cert,
+    key: creds.key,
     requestCert: false,
-    ALPNProtocols: mode === 'vpn' ? [TLS_ALPN_VPN] : ['http/1.1', 'h2'],
     handshakeTimeout: 30000,
-  });
-  tlsSock.on('secure', () => {
-    try {
-      if (mode === 'vpn') {
+  };
+
+  const vpnTlsServer = tls.createServer(
+    { ...base, ALPNProtocols: [TLS_ALPN_VPN] },
+    (tlsSock) => {
+      try {
         if (tlsSock.alpnProtocol !== TLS_ALPN_VPN) {
           tlsSock.destroy();
           return;
         }
         console.log('[clean-vpn] tls VPN client connected', tlsSock.remoteAddress);
-        ctx.startBridge(tlsSock, null, 'tcp');
-        return;
-      }
-      if (tlsSock.alpnProtocol === 'h2') {
-        console.warn(
-          '[clean-vpn] tls exit: браузер выбрал только h2 — закройте вкладку или включите http/1.1 в ALPN (MVP без HTTP/2)',
-        );
-        tlsSock.destroy();
-        return;
-      }
-      let httpBuf = Buffer.alloc(0);
-      const onHttp = (d) => {
-        httpBuf = Buffer.concat([httpBuf, d]);
-        if (httpBuf.includes(Buffer.from('\r\n\r\n'))) {
-          tlsSock.off('data', onHttp);
-          const body = TLS_HTTP_WORKS_BODY;
-          const res = `HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`;
-          tlsSock.write(res, () => {
-            try {
-              tlsSock.end();
-            } catch {
-              /* ignore */
-            }
-          });
+        tlsSock.on('error', (e) => {
+          console.error('[clean-vpn] tls vpn socket:', e?.message || e);
+        });
+        startBridge(tlsSock, null, 'tcp');
+      } catch (e) {
+        console.error('[clean-vpn] tls vpn secureConnection:', e?.message || e);
+        try {
+          tlsSock.destroy();
+        } catch {
+          /* ignore */
         }
-      };
-      tlsSock.on('data', onHttp);
-      setTimeout(() => {
-        if (!tlsSock.destroyed) tlsSock.destroy();
-      }, 30000).unref?.();
-    } catch (e) {
-      console.error('[clean-vpn] tls secure handler:', e?.message || e);
+      }
+    },
+  );
+
+  const publicTlsServer = tls.createServer(
+    { ...base, ALPNProtocols: ['http/1.1', 'h2'] },
+    (tlsSock) => {
       try {
-        tlsSock.destroy();
+        tlsSock.on('error', (e) => {
+          console.error('[clean-vpn] tls public socket:', e?.message || e);
+        });
+        if (tlsSock.alpnProtocol === 'h2') {
+          console.warn(
+            '[clean-vpn] tls exit: браузер выбрал только h2 — закройте вкладку или включите http/1.1 в ALPN (MVP без HTTP/2)',
+          );
+          tlsSock.destroy();
+          return;
+        }
+        let httpBuf = Buffer.alloc(0);
+        const onHttp = (d) => {
+          httpBuf = Buffer.concat([httpBuf, d]);
+          if (httpBuf.includes(Buffer.from('\r\n\r\n'))) {
+            tlsSock.off('data', onHttp);
+            const body = TLS_HTTP_WORKS_BODY;
+            const res = `HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`;
+            tlsSock.write(res, () => {
+              try {
+                tlsSock.end();
+              } catch {
+                /* ignore */
+              }
+            });
+          }
+        };
+        tlsSock.on('data', onHttp);
+        setTimeout(() => {
+          if (!tlsSock.destroyed) tlsSock.destroy();
+        }, 30000).unref?.();
+      } catch (e) {
+        console.error('[clean-vpn] tls public secureConnection:', e?.message || e);
+        try {
+          tlsSock.destroy();
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+  );
+
+  for (const s of [vpnTlsServer, publicTlsServer]) {
+    s.on('tlsClientError', (err, sock) => {
+      console.error('[clean-vpn] tls tlsClientError:', err?.message || err);
+      try {
+        sock?.destroy?.();
       } catch {
         /* ignore */
       }
-    }
-  });
-  tlsSock.on('error', (e) => {
-    console.error('[clean-vpn] tls exit socket:', e?.message || e);
-  });
+    });
+    s.on('clientError', (err, sock) => {
+      console.error('[clean-vpn] tls clientError:', err?.message || err);
+      try {
+        sock?.destroy?.();
+      } catch {
+        /* ignore */
+      }
+    });
+  }
+
+  return { vpnTlsServer, publicTlsServer };
 }
 
 /**
@@ -1352,6 +1387,8 @@ function runTlsProbePassthrough(clientSock, prefixBuf, ctx) {
  *   probeMaxSeconds: number,
  *   probeFullProxyPerIp: number,
  *   probeBudget: Map<string, { day: number, fullCount: number }>,
+ *   vpnTlsServer: import('tls').Server,
+ *   publicTlsServer: import('tls').Server,
  * }} ctx
  */
 function handleTlsExitInbound(socket, ctx) {
@@ -1401,12 +1438,12 @@ function handleTlsExitInbound(socket, ctx) {
     } catch {
       /* ignore */
     }
-    const mode = hasVpnAlpn ? 'vpn' : 'public';
+    const srv = hasVpnAlpn ? ctx.vpnTlsServer : ctx.publicTlsServer;
     setImmediate(() => {
       try {
-        startTlsServerSide(socket, ctx, mode);
+        srv.emit('connection', socket);
       } catch (e) {
-        console.error('[clean-vpn] tls: startTlsServerSide:', e?.message || e);
+        console.error('[clean-vpn] tls: emit(connection):', e?.message || e);
         try {
           socket.destroy();
         } catch {
@@ -1635,6 +1672,7 @@ async function runExit({
         : DEFAULT_TLS_PROBE_FULL_PROXY_PER_IP;
     /** @type {Map<string, { day: number, fullCount: number }>} */
     const probeBudget = new Map();
+    const { vpnTlsServer, publicTlsServer } = createTlsExitServers({ creds, startBridge });
     const tlsCtx = {
       startBridge,
       creds,
@@ -1645,6 +1683,8 @@ async function runExit({
       probeMaxSeconds,
       probeFullProxyPerIp,
       probeBudget,
+      vpnTlsServer,
+      publicTlsServer,
     };
     tcpSrv = net
       .createServer((sock) => {
