@@ -446,7 +446,7 @@ mesh-vpn/
     └── setup-macos.sh        # macOS setup
 ```
 
-Для [`scripts/clean-vpn.js`](scripts/clean-vpn.js): флаг `--split-default` перенаправляет только **IPv4** default в туннель; проверка внешнего IPv4 — например `curl -4 https://ifconfig.me`. Для `--type=tls` при IP в `--server` см. `--tls-server-name` и комментарии в шапке скрипта.
+Для [`scripts/clean-vpn.js`](scripts/clean-vpn.js): `--split-default` отправляет **IPv4** default в туннель (две половины `0.0.0.0/1`), а сети **RFC1918** (`10/8`, `172.16/12`, `192.168/16`) — на uplink, чтобы локальный DNS и LAN не уходили на exit. Внешний IPv4 проверяйте так: `curl -4 https://ifconfig.me`. Для `--type=tls` и IP в `--server` см. шапку скрипта и `--tls-server-name`.
 
 ## Требования
 

@@ -39,7 +39,7 @@
  *   Внимание: passthrough на сторонний хост может нарушать ToS сервиса и законы юрисдикции — только на свой страх и риск.
  *   Сертификаты: --tls-cert-dir с fullchain.pem+privkey.pem (Let's Encrypt) или, как у QUIC, ca.pem+cert.pem+key.pem.
  *   Client: --tls-server-name — SNI и проверка сертификата. Если в --server указан IP, SNI не может быть IP (RFC 6066): без флага подставляется clean-vpn (как у ca/cert из репо); для Let's Encrypt укажите --tls-server-name=ваш.домен.
- *   Split-default: маршруты 0.0.0.0/1 + 128.0.0.0/1 — только IPv4; IPv6 default не трогается. Проверка «внешний IP через VPN»: curl -4 https://ifconfig.me (без -4 curl может выбрать IPv6 и показать адрес клиента).
+ *   Split-default: маршруты 0.0.0.0/1 + 128.0.0.0/1 — только IPv4; плюс 10/8, 172.16/12, 192.168/16 через uplink (DNS/LAN не на exit). IPv6 default не трогается. Проверка внешнего IPv4: curl -4 https://ifconfig.me (без -4 curl может выбрать IPv6).
  *
  * При SIGINT/SIGTERM: снимаются iptables/NAT (exit), net.ipv4.ip_forward, маршруты и rp_filter (client)
  * восстанавливаются по снимку `ip -json route` (если доступен).
@@ -107,6 +107,39 @@ const DEFAULT_TLS_PROBE_TARGET = 'www.google.com:443';
 const DEFAULT_TLS_PROBE_MAX_BYTES = 49152;
 const DEFAULT_TLS_PROBE_MAX_SECONDS = 30;
 const DEFAULT_TLS_PROBE_FULL_PROXY_PER_IP = 0;
+/** Таймаут ожидания TLS-рукопожатия на client (до attachTunBridge). */
+const TLS_CLIENT_HANDSHAKE_MS = 30000;
+
+/** RFC1918: при split-default идут через uplink (длиннее префикса /1), чтобы DNS/LAN не уезжали на exit. Peer 10.99.0.1 остаётся /32 на tun. */
+const SPLIT_PRIVATE_V4 = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
+
+/**
+ * @param {string|null|undefined} gw
+ * @param {string} dev
+ */
+function addSplitPrivateUplinkRoutes(gw, dev) {
+  for (const dst of SPLIT_PRIVATE_V4) {
+    if (gw) {
+      ip(['route', 'replace', dst, 'via', gw, 'dev', dev]);
+    } else {
+      ip(['route', 'replace', dst, 'dev', dev]);
+    }
+  }
+}
+
+/**
+ * @param {string|null|undefined} gw
+ * @param {string} dev
+ */
+function delSplitPrivateUplinkRoutes(gw, dev) {
+  for (const dst of SPLIT_PRIVATE_V4) {
+    if (gw) {
+      tryIpRoute(['route', 'del', dst, 'via', gw, 'dev', dev]);
+    } else {
+      tryIpRoute(['route', 'del', dst, 'dev', dev]);
+    }
+  }
+}
 
 function createQuicExtLogger() {
   return new LoggerClass('clean-vpn-quic-ext', LogLevel.WARN, [new StreamHandler(process.stderr)]);
@@ -897,9 +930,17 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault) {
   if (splitDefault) {
     ip(['route', 'replace', '0.0.0.0/1', 'dev', ifname]);
     ip(['route', 'replace', '128.0.0.0/1', 'dev', ifname]);
+    addSplitPrivateUplinkRoutes(gw, dev);
     console.log('[clean-vpn] split-default (0.0.0.0/1 + 128.0.0.0/1) через', ifname);
+    console.log(
+      '[clean-vpn] split-default: частные сети',
+      SPLIT_PRIVATE_V4.join(', '),
+      '→ uplink',
+      gw ? `via ${gw}` : '',
+      dev,
+    );
     console.warn(
-      '[clean-vpn] split-default только для IPv4; IPv6 default не в туннеле. Проверка внешнего IPv4: curl -4 …',
+      '[clean-vpn] split-default только для IPv4; IPv6 default не в туннеле. Проверка внешнего IPv4: curl -4 https://ifconfig.me',
     );
   }
   try {
@@ -930,6 +971,7 @@ function teardownClientRoutes(ctx) {
     tryIpRoute(['route', 'del', '128.0.0.0/1', 'dev', ifname]);
     restoreRoutesFromRecords(snap01);
     restoreRoutesFromRecords(snap128);
+    delSplitPrivateUplinkRoutes(gw, dev);
   }
 
   if (gw) {
@@ -1312,6 +1354,11 @@ function runTlsProbePassthrough(clientSock, prefixBuf, ctx) {
  * }} ctx
  */
 function handleTlsExitInbound(socket, ctx) {
+  const ra = socket.remoteAddress || '';
+  const rp = socket.remotePort;
+  console.log(
+    `[clean-vpn] tls: входящий TCP с ${ra.replace(/^\:\:ffff\:/, '')}:${rp ?? '?'}`,
+  );
   /** @type {Buffer[]} */
   const chunks = [];
   const helloTimer = setTimeout(() => {
@@ -2118,8 +2165,24 @@ async function runClient({
     if (!hostIsIp) {
       connectHost = (await dns.lookup(host, { family: 4 })).address;
     }
+    console.log(
+      `[clean-vpn] TLS client: соединение к ${connectHost}:${port}, SNI servername=${servername}`,
+    );
     await new Promise((resolve, reject) => {
-      const sock = tls.connect(
+      let settled = false;
+      /** @type {import('tls').TLSSocket} */
+      let sock;
+      const finish = (fn) => {
+        if (settled) return;
+        settled = true;
+        try {
+          sock.setTimeout(0);
+        } catch {
+          /* ignore */
+        }
+        fn();
+      };
+      sock = tls.connect(
         port,
         connectHost,
         {
@@ -2129,22 +2192,63 @@ async function runClient({
           rejectUnauthorized: true,
         },
         () => {
-          if (sock.alpnProtocol !== TLS_ALPN_VPN) {
-            reject(
-              new Error(
-                `TLS client: сервер выбрал ALPN ${String(sock.alpnProtocol)} вместо ${TLS_ALPN_VPN} (часто это passthrough на сторонний сайт или не тот порт/хост на exit).`,
-              ),
-            );
-            return;
+          try {
+            if (sock.authorizationError) {
+              console.error(
+                '[clean-vpn] TLS client: проверка сертификата:',
+                sock.authorizationError,
+              );
+            }
+            if (sock.alpnProtocol !== TLS_ALPN_VPN) {
+              try {
+                sock.destroy();
+              } catch {
+                /* ignore */
+              }
+              finish(() =>
+                reject(
+                  new Error(
+                    `TLS client: сервер выбрал ALPN ${String(sock.alpnProtocol)} вместо ${TLS_ALPN_VPN} (часто это passthrough на сторонний сайт или не тот порт/хост на exit).`,
+                  ),
+                ),
+              );
+              return;
+            }
+            tlsVpnSocket = sock;
+            console.log('[clean-vpn] TLS (VPN) соединение установлено');
+            finish(() => resolve(undefined));
+          } catch (e) {
+            finish(() => reject(e));
           }
-          tlsVpnSocket = sock;
-          console.log('[clean-vpn] TLS (VPN) соединение установлено');
-          resolve(undefined);
         },
       );
+      sock.setTimeout(TLS_CLIENT_HANDSHAKE_MS);
+      sock.on('timeout', () => {
+        finish(() =>
+          reject(
+            new Error(
+              `TLS client: таймаут ${TLS_CLIENT_HANDSHAKE_MS} мс рукопожатия к ${connectHost}:${port}`,
+            ),
+          ),
+        );
+        try {
+          sock.destroy();
+        } catch {
+          /* ignore */
+        }
+      });
       sock.on('error', (err) => {
-        console.error('[clean-vpn] TLS client: ошибка сокета до завершения рукопожатия:', err?.message || err);
-        reject(err);
+        console.error(
+          '[clean-vpn] TLS client: ошибка сокета до завершения рукопожатия:',
+          err?.message || err,
+        );
+        if (sock.authorizationError) {
+          console.error(
+            '[clean-vpn] TLS client: authorizationError:',
+            sock.authorizationError,
+          );
+        }
+        finish(() => reject(err));
       });
     });
     attachTunBridge(child, 'tcp', tlsVpnSocket);
@@ -2187,7 +2291,7 @@ async function main() {
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=socket --split-default
 
 --type: socket | http | websocket | udp | webrtc | quic | quic-ext | tls
---split-default: только client, IPv4 default (0.0.0.0/1 + 128.0.0.0/1) через tun; IPv6 не в туннеле (проверка IP: curl -4)
+--split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 (10/8, 172.16/12, 192.168/16) через uplink; IPv6 не в туннеле; проверка IP: curl -4 https://ifconfig.me
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
 --config=PATH: для --type=webrtc — JSON с iceServers/turnServers (по умолчанию config/default.json от корня репо)
 --ice-mode=auto|relay|direct: для webrtc — перекрывает iceMode из --config
