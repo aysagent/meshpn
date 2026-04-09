@@ -106,13 +106,27 @@ function runProbe(args) {
         done(false);
       }, timeout);
 
+      const onError = () => {
+        clearTimeout(readTimer);
+        sock.off('data', onData);
+        sock.off('close', onClose);
+        done(false);
+      };
+      const onClose = () => {
+        clearTimeout(readTimer);
+        sock.off('data', onData);
+        sock.off('error', onError);
+        done(false);
+      };
       const onData = (chunk) => {
         acc = Buffer.concat([acc, chunk]);
         if (acc.indexOf('HTTP/') !== -1) {
           clearTimeout(readTimer);
           sock.off('data', onData);
+          sock.off('error', onError);
+          sock.off('close', onClose);
           try {
-            sock.destroy();
+            sock.end();
           } catch {
             /* ignore */
           }
@@ -120,16 +134,8 @@ function runProbe(args) {
         }
       };
       sock.on('data', onData);
-      sock.once('error', () => {
-        clearTimeout(readTimer);
-        sock.off('data', onData);
-        done(false);
-      });
-      sock.once('close', () => {
-        clearTimeout(readTimer);
-        sock.off('data', onData);
-        done(false);
-      });
+      sock.once('error', onError);
+      sock.once('close', onClose);
     });
 
     sock.once('error', () => {
