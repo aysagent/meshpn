@@ -1241,6 +1241,7 @@ function startTlsServerSide(socket, ctx, mode) {
     key: ctx.creds.key,
     requestCert: false,
     ALPNProtocols: mode === 'vpn' ? [TLS_ALPN_VPN] : ['http/1.1', 'h2'],
+    handshakeTimeout: 30000,
   });
   tlsSock.on('secure', () => {
     try {
@@ -1391,8 +1392,28 @@ function handleTlsExitInbound(socket, ctx) {
       runTlsProbePassthrough(socket, fullBuf, ctx);
       return;
     }
+    console.log(
+      `[clean-vpn] tls: ClientHello ок (ALPN=${p.alpn.join(',') || '—'}; SNI=${p.sni.join(',') || '—'}) → TLS server (${hasVpnAlpn ? 'vpn' : 'public'})`,
+    );
     socket.unshift(fullBuf);
-    startTlsServerSide(socket, ctx, hasVpnAlpn ? 'vpn' : 'public');
+    try {
+      socket.resume();
+    } catch {
+      /* ignore */
+    }
+    const mode = hasVpnAlpn ? 'vpn' : 'public';
+    setImmediate(() => {
+      try {
+        startTlsServerSide(socket, ctx, mode);
+      } catch (e) {
+        console.error('[clean-vpn] tls: startTlsServerSide:', e?.message || e);
+        try {
+          socket.destroy();
+        } catch {
+          /* ignore */
+        }
+      }
+    });
   };
   socket.on('data', onData);
   socket.on('error', () => clearTimeout(helloTimer));
