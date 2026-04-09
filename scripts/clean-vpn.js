@@ -1221,17 +1221,77 @@ function attachTunBridge(child, transport, endpoint) {
 }
 
 /**
- * Два `tls.Server` без `listen()`: после разбора ClientHello вызывается
- * `server.emit('connection', socket)` — надёжнее, чем `new tls.TLSSocket` на том же сокете.
+ * После рукопожатия: VPN-мост или «It works!» для public.
  *
+ * @param {import('tls').TLSSocket} tlsSock
+ * @param {'vpn'|'public'} mode
  * @param {{
- *   creds: { cert: string, key: string },
  *   startBridge: (sock: any, restBuf: Buffer|null, transport: 'tcp') => void,
- * }} opts
+ * }} ctx
+ */
+function wireExitTlsSocket(tlsSock, mode, ctx) {
+  tlsSock.on('error', (e) => {
+    console.error(`[clean-vpn] tls ${mode} socket:`, e?.message || e);
+  });
+  tlsSock.once('secure', () => {
+    try {
+      if (mode === 'vpn') {
+        if (tlsSock.alpnProtocol !== TLS_ALPN_VPN) {
+          tlsSock.destroy();
+          return;
+        }
+        console.log('[clean-vpn] tls VPN client connected', tlsSock.remoteAddress);
+        ctx.startBridge(tlsSock, null, 'tcp');
+        return;
+      }
+      if (tlsSock.alpnProtocol === 'h2') {
+        console.warn(
+          '[clean-vpn] tls exit: браузер выбрал только h2 — закройте вкладку или включите http/1.1 в ALPN (MVP без HTTP/2)',
+        );
+        tlsSock.destroy();
+        return;
+      }
+      let httpBuf = Buffer.alloc(0);
+      const onHttp = (d) => {
+        httpBuf = Buffer.concat([httpBuf, d]);
+        if (httpBuf.includes(Buffer.from('\r\n\r\n'))) {
+          tlsSock.off('data', onHttp);
+          const body = TLS_HTTP_WORKS_BODY;
+          const res = `HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`;
+          tlsSock.write(res, () => {
+            try {
+              tlsSock.end();
+            } catch {
+              /* ignore */
+            }
+          });
+        }
+      };
+      tlsSock.on('data', onHttp);
+      setTimeout(() => {
+        if (!tlsSock.destroyed) tlsSock.destroy();
+      }, 30000).unref?.();
+    } catch (e) {
+      console.error('[clean-vpn] tls secure handler:', e?.message || e);
+      try {
+        tlsSock.destroy();
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+}
+
+/**
+ * Два `tls.Server` без `listen()`: контекст и ALPN для
+ * `new tls.TLSSocket(socket, { isServer: true, server })`.
+ * Без `listen()` вызов `server.emit('connection', socket)` в Node не поднимает TLS (таймаут рукопожатия).
+ *
+ * @param {{ creds: { cert: string, key: string } }} opts
  * @returns {{ vpnTlsServer: import('tls').Server, publicTlsServer: import('tls').Server }}
  */
 function createTlsExitServers(opts) {
-  const { creds, startBridge } = opts;
+  const { creds } = opts;
   const base = {
     cert: creds.cert,
     key: creds.key,
@@ -1239,74 +1299,15 @@ function createTlsExitServers(opts) {
     handshakeTimeout: 30000,
   };
 
-  const vpnTlsServer = tls.createServer(
-    { ...base, ALPNProtocols: [TLS_ALPN_VPN] },
-    (tlsSock) => {
-      try {
-        if (tlsSock.alpnProtocol !== TLS_ALPN_VPN) {
-          tlsSock.destroy();
-          return;
-        }
-        console.log('[clean-vpn] tls VPN client connected', tlsSock.remoteAddress);
-        tlsSock.on('error', (e) => {
-          console.error('[clean-vpn] tls vpn socket:', e?.message || e);
-        });
-        startBridge(tlsSock, null, 'tcp');
-      } catch (e) {
-        console.error('[clean-vpn] tls vpn secureConnection:', e?.message || e);
-        try {
-          tlsSock.destroy();
-        } catch {
-          /* ignore */
-        }
-      }
-    },
-  );
+  const vpnTlsServer = tls.createServer({
+    ...base,
+    ALPNProtocols: [TLS_ALPN_VPN],
+  });
 
-  const publicTlsServer = tls.createServer(
-    { ...base, ALPNProtocols: ['http/1.1', 'h2'] },
-    (tlsSock) => {
-      try {
-        tlsSock.on('error', (e) => {
-          console.error('[clean-vpn] tls public socket:', e?.message || e);
-        });
-        if (tlsSock.alpnProtocol === 'h2') {
-          console.warn(
-            '[clean-vpn] tls exit: браузер выбрал только h2 — закройте вкладку или включите http/1.1 в ALPN (MVP без HTTP/2)',
-          );
-          tlsSock.destroy();
-          return;
-        }
-        let httpBuf = Buffer.alloc(0);
-        const onHttp = (d) => {
-          httpBuf = Buffer.concat([httpBuf, d]);
-          if (httpBuf.includes(Buffer.from('\r\n\r\n'))) {
-            tlsSock.off('data', onHttp);
-            const body = TLS_HTTP_WORKS_BODY;
-            const res = `HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`;
-            tlsSock.write(res, () => {
-              try {
-                tlsSock.end();
-              } catch {
-                /* ignore */
-              }
-            });
-          }
-        };
-        tlsSock.on('data', onHttp);
-        setTimeout(() => {
-          if (!tlsSock.destroyed) tlsSock.destroy();
-        }, 30000).unref?.();
-      } catch (e) {
-        console.error('[clean-vpn] tls public secureConnection:', e?.message || e);
-        try {
-          tlsSock.destroy();
-        } catch {
-          /* ignore */
-        }
-      }
-    },
-  );
+  const publicTlsServer = tls.createServer({
+    ...base,
+    ALPNProtocols: ['http/1.1', 'h2'],
+  });
 
   for (const s of [vpnTlsServer, publicTlsServer]) {
     s.on('tlsClientError', (err, sock) => {
@@ -1439,11 +1440,17 @@ function handleTlsExitInbound(socket, ctx) {
       /* ignore */
     }
     const srv = hasVpnAlpn ? ctx.vpnTlsServer : ctx.publicTlsServer;
+    const mode = hasVpnAlpn ? 'vpn' : 'public';
     setImmediate(() => {
       try {
-        srv.emit('connection', socket);
+        const tlsSock = new tls.TLSSocket(socket, {
+          isServer: true,
+          server: srv,
+          handshakeTimeout: 30000,
+        });
+        wireExitTlsSocket(tlsSock, mode, ctx);
       } catch (e) {
-        console.error('[clean-vpn] tls: emit(connection):', e?.message || e);
+        console.error('[clean-vpn] tls: TLSSocket(server):', e?.message || e);
         try {
           socket.destroy();
         } catch {
@@ -1672,7 +1679,7 @@ async function runExit({
         : DEFAULT_TLS_PROBE_FULL_PROXY_PER_IP;
     /** @type {Map<string, { day: number, fullCount: number }>} */
     const probeBudget = new Map();
-    const { vpnTlsServer, publicTlsServer } = createTlsExitServers({ creds, startBridge });
+    const { vpnTlsServer, publicTlsServer } = createTlsExitServers({ creds });
     const tlsCtx = {
       startBridge,
       creds,
