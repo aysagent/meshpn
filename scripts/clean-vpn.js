@@ -21,12 +21,17 @@
  *   Опционально: --quic-ext-crypto-key=PATH — явный файл с 32 байтами HMAC-ключа (вместо quic-ext-hmac.key в каталоге сертификатов).
  *
  * Пример:
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=socket
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=socket --split-default
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=http
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=http --split-default
+ *   HTTP (--type=http): тот же TCP, что socket; клиент — GET /clean-vpn, ответ 200, затем uint32+IPv4 (см. строку «Протокол» выше).
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=websocket
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=websocket --split-default
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:51820 --type=udp
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:51820 --type=udp --split-default
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:9876 --type=webrtc [--config=config/exit-node.json]
- *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:9876 --type=webrtc --split-default
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:9876 --type=webrtc --split-default --ice-mode=relay
  *   sudo env PATH=$PATH node --experimental-quic scripts/clean-vpn.js --role=exit --server=0.0.0.0:4433 --type=quic
  *   sudo env PATH=$PATH node --experimental-quic scripts/clean-vpn.js --role=client --server=VPS:4433 --type=quic --split-default
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:4433 --type=quic-ext
