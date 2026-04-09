@@ -1283,55 +1283,6 @@ function wireExitTlsSocket(tlsSock, mode, ctx) {
 }
 
 /**
- * Два `tls.Server` без `listen()`: контекст и ALPN для
- * `new tls.TLSSocket(socket, { isServer: true, server })`.
- * Без `listen()` вызов `server.emit('connection', socket)` в Node не поднимает TLS (таймаут рукопожатия).
- *
- * @param {{ creds: { cert: string, key: string } }} opts
- * @returns {{ vpnTlsServer: import('tls').Server, publicTlsServer: import('tls').Server }}
- */
-function createTlsExitServers(opts) {
-  const { creds } = opts;
-  const base = {
-    cert: creds.cert,
-    key: creds.key,
-    requestCert: false,
-    handshakeTimeout: 30000,
-  };
-
-  const vpnTlsServer = tls.createServer({
-    ...base,
-    ALPNProtocols: [TLS_ALPN_VPN],
-  });
-
-  const publicTlsServer = tls.createServer({
-    ...base,
-    ALPNProtocols: ['http/1.1', 'h2'],
-  });
-
-  for (const s of [vpnTlsServer, publicTlsServer]) {
-    s.on('tlsClientError', (err, sock) => {
-      console.error('[clean-vpn] tls tlsClientError:', err?.message || err);
-      try {
-        sock?.destroy?.();
-      } catch {
-        /* ignore */
-      }
-    });
-    s.on('clientError', (err, sock) => {
-      console.error('[clean-vpn] tls clientError:', err?.message || err);
-      try {
-        sock?.destroy?.();
-      } catch {
-        /* ignore */
-      }
-    });
-  }
-
-  return { vpnTlsServer, publicTlsServer };
-}
-
-/**
  * @param {import('net').Socket} clientSock
  * @param {Buffer} prefixBuf
  * @param {{
@@ -1388,8 +1339,7 @@ function runTlsProbePassthrough(clientSock, prefixBuf, ctx) {
  *   probeMaxSeconds: number,
  *   probeFullProxyPerIp: number,
  *   probeBudget: Map<string, { day: number, fullCount: number }>,
- *   vpnTlsServer: import('tls').Server,
- *   publicTlsServer: import('tls').Server,
+ *   tlsExitSecureContext: import('tls').SecureContext,
  * }} ctx
  */
 function handleTlsExitInbound(socket, ctx) {
@@ -1433,24 +1383,25 @@ function handleTlsExitInbound(socket, ctx) {
     console.log(
       `[clean-vpn] tls: ClientHello ок (ALPN=${p.alpn.join(',') || '—'}; SNI=${p.sni.join(',') || '—'}) → TLS server (${hasVpnAlpn ? 'vpn' : 'public'})`,
     );
-    socket.unshift(fullBuf);
-    try {
-      socket.resume();
-    } catch {
-      /* ignore */
-    }
-    const srv = hasVpnAlpn ? ctx.vpnTlsServer : ctx.publicTlsServer;
     const mode = hasVpnAlpn ? 'vpn' : 'public';
     setImmediate(() => {
       try {
         const tlsSock = new tls.TLSSocket(socket, {
           isServer: true,
-          server: srv,
-          handshakeTimeout: 30000,
+          secureContext: ctx.tlsExitSecureContext,
+          ALPNProtocols: hasVpnAlpn ? [TLS_ALPN_VPN] : ['http/1.1', 'h2'],
+          requestCert: false,
+          handshakeTimeout: 60000,
         });
         wireExitTlsSocket(tlsSock, mode, ctx);
+        socket.unshift(fullBuf);
+        try {
+          socket.resume();
+        } catch {
+          /* ignore */
+        }
       } catch (e) {
-        console.error('[clean-vpn] tls: TLSSocket(server):', e?.message || e);
+        console.error('[clean-vpn] tls: TLSSocket(secureContext):', e?.message || e);
         try {
           socket.destroy();
         } catch {
@@ -1679,7 +1630,12 @@ async function runExit({
         : DEFAULT_TLS_PROBE_FULL_PROXY_PER_IP;
     /** @type {Map<string, { day: number, fullCount: number }>} */
     const probeBudget = new Map();
-    const { vpnTlsServer, publicTlsServer } = createTlsExitServers({ creds });
+    const tlsExitSecureContext = tls.createSecureContext({
+      cert: creds.cert,
+      key: creds.key,
+      minVersion: 'TLSv1.2',
+      maxVersion: 'TLSv1.3',
+    });
     const tlsCtx = {
       startBridge,
       creds,
@@ -1690,8 +1646,7 @@ async function runExit({
       probeMaxSeconds,
       probeFullProxyPerIp,
       probeBudget,
-      vpnTlsServer,
-      publicTlsServer,
+      tlsExitSecureContext,
     };
     tcpSrv = net
       .createServer((sock) => {
