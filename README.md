@@ -440,6 +440,7 @@ mesh-vpn/
 │   └── relay-node.json       # Relay node config
 └── scripts/
     ├── clean-vpn.js          # Минимальный VPN (TLS/QUIC/WebSocket/…); детали в шапке файла
+    ├── probe.js              # Проверка TLS passthrough (active probing); см. ниже
     ├── nat-enable.sh         # Enable system NAT
     ├── nat-disable.sh        # Disable system NAT
     ├── setup-linux.sh        # Linux setup
@@ -447,6 +448,17 @@ mesh-vpn/
 ```
 
 Для [`scripts/clean-vpn.js`](scripts/clean-vpn.js): `--split-default` отправляет **IPv4** default в туннель (две половины `0.0.0.0/1`), а сети **RFC1918** (`10/8`, `172.16/12`, `192.168/16`) — на uplink, чтобы локальный DNS и LAN не уходили на exit. Внешний IPv4 проверяйте так: `curl -4 https://ifconfig.me`. Для `--type=tls` и IP в `--server` см. шапку скрипта и `--tls-server-name`.
+
+### Проверка TLS passthrough ([`scripts/probe.js`](scripts/probe.js))
+
+Скрипт подключается к exit как обычный HTTPS-клиент (без ALPN `clean-vpn-tls`), с маркером ALPN `clean-vpn-probe`, чтобы в логах exit было `probeTool=true`. Хост в `--domain` должен совпадать с целью passthrough на exit ([`--tls-probe-target`](scripts/clean-vpn.js), по умолчанию `www.google.com:443`). Если SNI совпадает с [`--tls-public-name`](scripts/clean-vpn.js) на exit, трафик пойдёт на публичный TLS-сервер, а не в passthrough — для проверки обхода используйте другой SNI.
+
+```bash
+node scripts/probe.js --type=handshake --server=1.2.3.4:443 --domain=www.google.com:443
+node scripts/probe.js --type=full --server=1.2.3.4:443 --domain=www.google.com:443 [--timeout=15000]
+```
+
+В stdout: строка `RESULT ok` или `RESULT not ok`, код выхода 0/1. На exit при passthrough пишутся строки `tls active-probe: start` и `tls active-probe: end` с IP, портом, `probeTool`, `result` и причиной.
 
 ## Требования
 

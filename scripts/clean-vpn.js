@@ -100,6 +100,8 @@ const QUIC_EXT_HMAC_FILE = 'quic-ext-hmac.key';
 
 /** ALPN для --type=tls (VPN); браузер обычно шлёт http/1.1 / h2. */
 const TLS_ALPN_VPN = 'clean-vpn-tls';
+/** Маркер в ClientHello для scripts/probe.js (не VPN; только логи probeTool на exit). */
+const TLS_ALPN_PROBE = 'clean-vpn-probe';
 const TLS_LE_FULLCHAIN = 'fullchain.pem';
 const TLS_LE_PRIVKEY = 'privkey.pem';
 const TLS_HTTP_WORKS_BODY = 'It works!\n';
@@ -542,11 +544,15 @@ function tlsUtcDayBucket() {
  * @param {import('net').Socket} socket
  * @param {string} reason
  * @param {Buffer} fullBuf
+ * @param {boolean} [probeTool]
  */
-function logTlsPassthrough(socket, reason, fullBuf) {
+function logTlsPassthrough(socket, reason, fullBuf, probeTool = false) {
   const ip = tlsClientIp(socket);
+  const port = socket.remotePort ?? '?';
   const hex = fullBuf.subarray(0, Math.min(16, fullBuf.length)).toString('hex');
-  console.log(`[clean-vpn] tls → passthrough (${reason}) с ${ip}, префикс ${hex}…`);
+  console.log(
+    `[clean-vpn] tls active-probe: start ip=${ip} port=${port} reason=${reason} probeTool=${probeTool} prefix=${hex}…`,
+  );
 }
 
 /**
@@ -554,15 +560,20 @@ function logTlsPassthrough(socket, reason, fullBuf) {
  * @param {import('net').Socket} a
  * @param {import('net').Socket} b
  * @param {{ maxBytes: number, maxMs: number }} opts
- * @param {() => void} onEnd
+ * @param {(meta: { totalBytes: number, cause: 'timeout'|'byte_limit'|'error'|'close', socketError: boolean }) => void} onEnd
  */
 function pipeTcpWithLimits(a, b, opts, onEnd) {
   let total = 0;
   const deadline = Date.now() + opts.maxMs;
   let ended = false;
-  function finish() {
+  /** @type {'timeout'|'byte_limit'|'error'|'close'|null} */
+  let endCause = null;
+  let socketError = false;
+  function finish(cause, fromError = false) {
     if (ended) return;
     ended = true;
+    endCause = cause;
+    if (fromError) socketError = true;
     clearInterval(tick);
     try {
       a.destroy();
@@ -575,18 +586,22 @@ function pipeTcpWithLimits(a, b, opts, onEnd) {
       /* ignore */
     }
     try {
-      onEnd();
+      onEnd({
+        totalBytes: total,
+        cause: /** @type {'timeout'|'byte_limit'|'error'|'close'} */ (endCause || 'close'),
+        socketError,
+      });
     } catch {
       /* ignore */
     }
   }
   const tick = setInterval(() => {
-    if (Date.now() > deadline) finish();
+    if (Date.now() > deadline) finish('timeout', false);
   }, 1000);
   tick.unref?.();
   const count = (n) => {
     total += n;
-    if (total >= opts.maxBytes) finish();
+    if (total >= opts.maxBytes) finish('byte_limit', false);
   };
   const pipeDir = (src, dst) => {
     src.on('data', (chunk) => {
@@ -600,10 +615,10 @@ function pipeTcpWithLimits(a, b, opts, onEnd) {
   };
   pipeDir(a, b);
   pipeDir(b, a);
-  a.on('error', () => finish());
-  b.on('error', () => finish());
-  a.on('close', () => finish());
-  b.on('close', () => finish());
+  a.on('error', () => finish('error', true));
+  b.on('error', () => finish('error', true));
+  a.on('close', () => finish('close', false));
+  b.on('close', () => finish('close', false));
 }
 
 /** @param {any} qs — quic.QuicStream (bidi) */
@@ -1293,8 +1308,11 @@ function wireExitTlsSocket(tlsSock, mode, ctx) {
  *   probeFullProxyPerIp: number,
  *   probeBudget: Map<string, { day: number, fullCount: number }>,
  * }} ctx
+ * @param {boolean} [probeTool]
  */
-function runTlsProbePassthrough(clientSock, prefixBuf, ctx) {
+function runTlsProbePassthrough(clientSock, prefixBuf, ctx, probeTool = false) {
+  const ip = tlsClientIp(clientSock);
+  const port = clientSock.remotePort ?? '?';
   const remote = net.createConnection(
     { port: ctx.probeTargetPort, host: ctx.probeTargetHost },
     () => {
@@ -1311,14 +1329,26 @@ function runTlsProbePassthrough(clientSock, prefixBuf, ctx) {
         fb.fullCount += 1;
         maxBytes = Number.MAX_SAFE_INTEGER;
       }
-      pipeTcpWithLimits(clientSock, remote, {
-        maxBytes,
-        maxMs: ctx.probeMaxSeconds * 1000,
-      }, () => {});
+      pipeTcpWithLimits(
+        clientSock,
+        remote,
+        {
+          maxBytes,
+          maxMs: ctx.probeMaxSeconds * 1000,
+        },
+        (meta) => {
+          const ok = !meta.socketError;
+          console.log(
+            `[clean-vpn] tls active-probe: end ip=${ip} port=${port} probeTool=${probeTool} result=${ok ? 'ok' : 'fail'} bytes=${meta.totalBytes} cause=${meta.cause}`,
+          );
+        },
+      );
     },
   );
   remote.on('error', (e) => {
-    console.error('[clean-vpn] tls probe →', ctx.probeTargetHost, e.message);
+    console.log(
+      `[clean-vpn] tls active-probe: end ip=${ip} port=${port} probeTool=${probeTool} result=fail cause=upstream err=${e.message}`,
+    );
     try {
       clientSock.destroy();
     } catch {
@@ -1366,18 +1396,19 @@ function handleTlsExitInbound(socket, ctx) {
     socket.off('data', onData);
     const fullBuf = Buffer.concat(chunks);
     if (!('ok' in p && p.ok)) {
-      logTlsPassthrough(socket, p.reason || 'parse_fail', fullBuf);
-      runTlsProbePassthrough(socket, fullBuf, ctx);
+      logTlsPassthrough(socket, p.reason || 'parse_fail', fullBuf, false);
+      runTlsProbePassthrough(socket, fullBuf, ctx, false);
       return;
     }
     const hasVpnAlpn = p.alpn.includes(TLS_ALPN_VPN);
+    const probeTool = p.alpn.includes(TLS_ALPN_PROBE);
     const publicOk =
       ctx.tlsPublicName &&
       sniMatchesTlsPublicName(p.sni, ctx.tlsPublicName) &&
       !hasVpnAlpn;
     if (!hasVpnAlpn && !publicOk) {
-      logTlsPassthrough(socket, 'no_vpn_alpn_and_no_public_sni_match', fullBuf);
-      runTlsProbePassthrough(socket, fullBuf, ctx);
+      logTlsPassthrough(socket, 'no_vpn_alpn_and_no_public_sni_match', fullBuf, probeTool);
+      runTlsProbePassthrough(socket, fullBuf, ctx, probeTool);
       return;
     }
     console.log(
