@@ -540,6 +540,9 @@ function tlsUtcDayBucket() {
   return Math.floor(Date.now() / 86400000);
 }
 
+/** После того как байты уже шли через pipe, такие errno — типичный разрыв пира, не сбой прокси. */
+const TCP_BENIGN_AFTER_DATA_CODES = new Set(['ECONNRESET', 'EPIPE', 'ECONNABORTED']);
+
 /**
  * @param {import('net').Socket} socket
  * @param {string} reason
@@ -559,7 +562,7 @@ function logTlsPassthrough(socket, reason, fullBuf, probeTool = false) {
  * Двунаправленный pipe с лимитом байт и времени.
  * @param {import('net').Socket} a
  * @param {import('net').Socket} b
- * @param {{ maxBytes: number, maxMs: number }} opts
+ * @param {{ maxBytes: number, maxMs: number, treatCommonResetAsClose?: boolean }} opts
  * @param {(meta: { totalBytes: number, cause: 'timeout'|'byte_limit'|'error'|'close', socketError: boolean }) => void} onEnd
  */
 function pipeTcpWithLimits(a, b, opts, onEnd) {
@@ -615,8 +618,21 @@ function pipeTcpWithLimits(a, b, opts, onEnd) {
   };
   pipeDir(a, b);
   pipeDir(b, a);
-  a.on('error', () => finish('error', true));
-  b.on('error', () => finish('error', true));
+  const onSockError = (err) => {
+    const code = err && /** @type {NodeJS.ErrnoException} */ (err).code;
+    if (
+      opts.treatCommonResetAsClose &&
+      total > 0 &&
+      code &&
+      TCP_BENIGN_AFTER_DATA_CODES.has(code)
+    ) {
+      finish('close', false);
+      return;
+    }
+    finish('error', true);
+  };
+  a.on('error', onSockError);
+  b.on('error', onSockError);
   a.on('close', () => finish('close', false));
   b.on('close', () => finish('close', false));
 }
@@ -1335,6 +1351,7 @@ function runTlsProbePassthrough(clientSock, prefixBuf, ctx, probeTool = false) {
         {
           maxBytes,
           maxMs: ctx.probeMaxSeconds * 1000,
+          treatCommonResetAsClose: true,
         },
         (meta) => {
           const ok = !meta.socketError;
