@@ -963,12 +963,14 @@ class StreamFramer {
    */
   push(chunk, onPacket) {
     if (chunk.length) {
+      // Нельзя хранить ссылку на `chunk` из socket 'data': Node переиспользует slab.
+      const piece = Buffer.from(chunk);
       if (this.buf.length === 0) {
-        this.buf = chunk;
+        this.buf = piece;
       } else {
-        const next = Buffer.allocUnsafe(this.buf.length + chunk.length);
+        const next = Buffer.allocUnsafe(this.buf.length + piece.length);
         this.buf.copy(next, 0);
-        chunk.copy(next, this.buf.length);
+        piece.copy(next, this.buf.length);
         this.buf = next;
       }
     }
@@ -999,10 +1001,9 @@ class StreamFramer {
 }
 
 function writeFramed(sock, pkt) {
-  if (!sock._cleanVpnFrameHdr) {
-    sock._cleanVpnFrameHdr = Buffer.allocUnsafe(4);
-  }
-  const h = sock._cleanVpnFrameHdr;
+  // Отдельный буфер на каждый кадр: переиспользуемый заголовок ломает очередь, если write()
+  // откладывает отправку и следующий пакет перезапишет те же 4 байта.
+  const h = Buffer.allocUnsafe(4);
   h.writeUInt32BE(pkt.length, 0);
   const w1 = sock.write(h);
   const w2 = sock.write(pkt);
@@ -1571,7 +1572,7 @@ function handleHttpSocket(sock, onReady) {
     }
     const buf =
       base == null
-        ? chunk
+        ? Buffer.from(chunk)
         : (() => {
             const n = Buffer.allocUnsafe(base.length + chunk.length);
             base.copy(n, 0);
