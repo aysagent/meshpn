@@ -430,9 +430,12 @@ mesh-vpn/
 │   ├── signalling-server.js  # Signalling server
 │   ├── turn-setup.md         # TURN server setup guide
 │   └── nat-setup.md          # System NAT setup guide
+├── native/
+│   └── tun_linux/            # N-API TUN для scripts/clean-vpn.js (Linux); npm run build:tun-linux
 ├── helpers/
+│   ├── tun-helper-linux.c    # userspace TUN helper (бинарь для src/ и пр.; clean-vpn.js его не использует)
 │   ├── utun-helper.c         # macOS utun interface helper
-│   └── Makefile              # Build helper binary
+│   └── Makefile              # Build helper binaries
 ├── config/
 │   ├── default.json          # Default configuration
 │   ├── client-relay.json     # Client-relay config
@@ -447,7 +450,7 @@ mesh-vpn/
     └── setup-macos.sh        # macOS setup
 ```
 
-Для [`scripts/clean-vpn.js`](scripts/clean-vpn.js): `--split-default` отправляет **IPv4** default в туннель (две половины `0.0.0.0/1`), а сети **RFC1918** (`10/8`, `172.16/12`, `192.168/16`) — на uplink, чтобы локальный DNS и LAN не уходили на exit. Внешний IPv4 проверяйте так: `curl -4 https://ifconfig.me`. Для `--type=tls` и IP в `--server` см. шапку скрипта и `--tls-server-name`.
+Для [`scripts/clean-vpn.js`](scripts/clean-vpn.js) на **Linux** нужен собранный модуль `native/tun_linux` (после `npm install` это делает postinstall, либо явно: `npm run build:tun-linux`; нужны python3, make, g++). `--split-default` отправляет **IPv4** default в туннель (две половины `0.0.0.0/1`), а сети **RFC1918** (`10/8`, `172.16/12`, `192.168/16`) — на uplink, чтобы локальный DNS и LAN не уходили на exit. Внешний IPv4 проверяйте так: `curl -4 https://ifconfig.me`. Для `--type=tls` и IP в `--server` см. шапку скрипта и `--tls-server-name`.
 
 ### Проверка TLS passthrough ([`scripts/probe.js`](scripts/probe.js))
 

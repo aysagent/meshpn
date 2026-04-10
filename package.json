@@ -15,7 +15,8 @@
     "sig:client": "concurrently -n server,client \"npm run server\" \"npm run client\"",
     "nat:enable": "sudo ./scripts/nat-enable.sh",
     "nat:disable": "sudo ./scripts/nat-disable.sh",
-    "postinstall": "cd helpers && make 2>/dev/null || true"
+    "build:tun-linux": "node-gyp rebuild -C native/tun_linux",
+    "postinstall": "npm run build:tun-linux || true; cd helpers && make 2>/dev/null || true"
   },
   "dependencies": {
     "@infisical/quic": "^1.0.8",
@@ -25,7 +26,8 @@
     "geoip-lite": "^1.4.10",
     "node-datachannel": "^0.32.1",
     "nodemon": "^3.1.14",
-    "ws": "^8.17.0"
+    "ws": "^8.17.0",
+    "node-gyp": "^11.0.0"
   },
   "engines": {
     "node": ">=18.0.0"

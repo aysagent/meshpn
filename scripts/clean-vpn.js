@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 /**
- * Минимальный VPN поверх TCP/WebSocket/UDP/WebRTC/QUIC (node:quic / @infisical/quic) + Linux tun-helper.
+ * Минимальный VPN поверх TCP/WebSocket/UDP/WebRTC/QUIC (node:quic / @infisical/quic) + Linux TUN (native N-API addon).
  * Без шифрования и авторизации.
  *
- * Требования: Linux, sudo, `helpers/tun-helper` (cd helpers && make).
+ * Требования: Linux, sudo, собранный addon `native/tun_linux` (`npm run build:tun-linux`; python3, make, g++).
+ * После `npm install` addon собирается в postinstall (ошибка сборки не роняет install — тогда соберите вручную).
+ * Основной mesh (`src/network/tun.js`) по-прежнему может использовать бинарь `helpers/tun-helper` из `cd helpers && make`.
  *
  * Exit (VPS): tun + NAT в интернет, без split-default.
  * Client: tun + split-default (опция, только IPv4 default), маршрут к --server через uplink.
  *
- * Протокол (socket / http после преамбулы): uint32 BE + сырой IPv4-пакет (как tun-helper).
+ * Протокол (socket / http после преамбулы): uint32 BE + сырой IPv4-пакет (как у прежнего tun-helper по транспорту).
  * WebSocket / UDP: одно binary-сообщение или одна датаграмма = один IPv4-пакет (без префикса длины).
  * WebRTC: сигналинг по WebSocket на --server; один SCTP DataChannel — одно бинарное сообщение = один IPv4-пакет.
  * ICE/STUN/TURN: из --config (по умолчанию config/default.json), см. --ice-mode.
@@ -50,7 +52,8 @@
  * восстанавливаются по снимку `ip -json route` (если доступен).
  */
 
-import { spawn, execFileSync } from 'child_process';
+import { execFileSync } from 'child_process';
+import { createRequire } from 'module';
 import { createPrivateKey, randomBytes } from 'crypto';
 import dgram from 'dgram';
 import fs from 'fs';
@@ -71,10 +74,38 @@ const { LogLevel, StreamHandler } = matrixAiLogger;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const TUN_HELPER = path.join(__dirname, '../helpers/tun-helper');
+const requireAddon = createRequire(import.meta.url);
+const TUN_LINUX_ADDON = path.join(__dirname, '../native/tun_linux/build/Release/tun_linux.node');
+
+/** @type {{ open: (name: string) => object }|null} */
+let tunLinuxAddonCache = null;
+
+function loadTunLinuxAddon() {
+  if (tunLinuxAddonCache) return tunLinuxAddonCache;
+  try {
+    tunLinuxAddonCache = requireAddon(TUN_LINUX_ADDON);
+  } catch (e) {
+    throw new Error(
+      `Не удалось загрузить native TUN (${TUN_LINUX_ADDON}). Соберите: npm run build:tun-linux (нужны python3, make, g++; только Linux).`,
+      { cause: e },
+    );
+  }
+  return tunLinuxAddonCache;
+}
+
+/**
+ * Открывает TUN через N-API addon (без subprocess tun-helper).
+ * @param {string} tunName — желаемое имя, например tun0
+ * @returns {{ tun: { ifname: string, write: (b: Buffer) => void, startRead: (cb: (b: Buffer) => void) => void, close: () => void }, name: string }}
+ */
+function openTunNative(tunName) {
+  const addon = loadTunLinuxAddon();
+  const tun = addon.open(tunName);
+  return { tun, name: tun.ifname };
+}
 
 // =============================================================================
-// === Константы: tun-helper, адреса VPN, SCTP, пути конфигов, ALPN, лимиты ===
+// === Константы: native TUN addon, адреса VPN, SCTP, пути конфигов, ALPN ===
 // =============================================================================
 
 const TUN_MTU = 1400;
@@ -892,7 +923,7 @@ function tryIpRoute(args) {
 }
 
 // =============================================================================
-// === tun (продолжение): имя интерфейса, spawn tun-helper, ip addr, sysctl, NAT ===
+// === tun (продолжение): имя интерфейса, native addon, ip addr, sysctl, NAT ===
 // =============================================================================
 
 function findFreeTunName() {
@@ -937,29 +968,6 @@ function writeFramed(sock, pkt) {
   const h = Buffer.alloc(4);
   h.writeUInt32BE(pkt.length, 0);
   return sock.write(Buffer.concat([h, pkt]));
-}
-
-function spawnTun(tunName) {
-  if (!fs.existsSync(TUN_HELPER)) {
-    throw new Error(`Нет ${TUN_HELPER}. Соберите: cd helpers && make`);
-  }
-  const child = spawn(TUN_HELPER, [tunName], { stdio: ['pipe', 'pipe', 'pipe'] });
-  return new Promise((resolve, reject) => {
-    const to = setTimeout(() => {
-      child.kill();
-      reject(new Error('tun-helper timeout'));
-    }, 5000);
-    child.stderr.once('data', (d) => {
-      clearTimeout(to);
-      const name = d.toString().trim();
-      if (name.startsWith('ERROR')) {
-        reject(new Error(name));
-        return;
-      }
-      resolve({ child, name });
-    });
-    child.on('error', reject);
-  });
 }
 
 function ip(args) {
@@ -1158,24 +1166,21 @@ function teardownExitNat(tunName, ext) {
 }
 
 /**
- * Один активный мост на tun-helper: иначе второй TCP-клиент на exit вешает второй
- * listener на stdout и пакеты дублируются / рассинхрон.
+ * Один активный мост на TUN: иначе второй TCP-клиент на exit вешает второй
+ * listener и пакеты дублируются / рассинхрон.
  *
+ * @param {{ write: (b: Buffer) => void, startRead: (cb: (b: Buffer) => void) => void }} tun — native addon
  * @param {'tcp'|'websocket'|'udp-client'|'udp-server'|'webrtc-dc'} transport
  * @param {import('net').Socket|import('ws')|import('dgram').Socket|{sock: import('dgram').Socket, peer?: import('dgram').RemoteInfo}|import('node-datachannel').DataChannel} endpoint
  */
-function attachTunBridge(child, transport, endpoint) {
-  child.stdout.removeAllListeners('data');
-  child.stdout.removeAllListeners('end');
-
+function attachTunBridge(tun, transport, endpoint) {
   const framer = new StreamFramer();
-  let tunInBuf = Buffer.alloc(0);
 
   const writeTun = (pkt) => {
-    const h = Buffer.alloc(4);
-    h.writeUInt32BE(pkt.length, 0);
-    if (!child.stdin.write(Buffer.concat([h, pkt]))) {
-      child.stdin.once('drain', () => {});
+    try {
+      tun.write(pkt);
+    } catch (e) {
+      console.error('[clean-vpn] tun write:', e?.message || e);
     }
   };
 
@@ -1238,21 +1243,6 @@ function attachTunBridge(child, transport, endpoint) {
     }
   };
 
-  child.stdout.on('data', (d) => {
-    tunInBuf = Buffer.concat([tunInBuf, d]);
-    while (tunInBuf.length >= 4) {
-      const len = tunInBuf.readUInt32BE(0);
-      if (len <= 0 || len > MAX_PKT) {
-        tunInBuf = Buffer.alloc(0);
-        return;
-      }
-      if (tunInBuf.length < 4 + len) return;
-      const pkt = Buffer.from(tunInBuf.subarray(4, 4 + len));
-      tunInBuf = tunInBuf.subarray(4 + len);
-      sendOnWire(pkt);
-    }
-  });
-
   if (transport === 'websocket') {
     endpoint.on('message', (data, isBinary) => {
       if (!isBinary) return;
@@ -1296,8 +1286,10 @@ function attachTunBridge(child, transport, endpoint) {
     });
   }
 
-  child.stdout.on('end', () => process.exit(0));
-  child.on('close', () => process.exit(0));
+  tun.startRead((pkt) => {
+    if (!pkt.length || pkt.length > MAX_PKT) return;
+    sendOnWire(pkt);
+  });
 }
 
 /**
@@ -1559,7 +1551,7 @@ async function runExit({
 }) {
   const { host, port } = parseHostPort(server);
   const tunName = findFreeTunName();
-  const { child, name: ifname } = await spawnTun(tunName);
+  const { tun, name: ifname } = openTunNative(tunName);
   setupTunIp('exit', ifname);
   const nat = setupExitNat(ifname, extIface);
 
@@ -1586,7 +1578,7 @@ async function runExit({
       activeTcp.destroy();
     }
     if (transport === 'tcp') activeTcp = sock;
-    attachTunBridge(child, transport, sock);
+    attachTunBridge(tun, transport, sock);
     if (restBuf && restBuf.length && transport === 'tcp') {
       sock.emit('data', restBuf);
     }
@@ -1654,8 +1646,7 @@ async function runExit({
       teardownExitNat(nat.tunName, nat.ext);
       restoreExitSysctl(nat.prevIpForward);
       try {
-        child.stdin.end();
-        child.kill('SIGTERM');
+        tun.close();
       } catch {
         /* ignore */
       }
@@ -1778,7 +1769,7 @@ async function runExit({
     udpSock.bind(port, host, () => {
       console.log(`[clean-vpn] exit UDP ${host}:${port} (один peer по первому пакету)`);
     });
-    attachTunBridge(child, 'udp-server', udpEp);
+    attachTunBridge(tun, 'udp-server', udpEp);
     return;
   }
 
@@ -1860,7 +1851,7 @@ async function runExit({
         const dc = connPc.createDataChannel('clean-vpn');
         dc.onOpen(() => {
           console.log('[clean-vpn] DataChannel open (exit)');
-          attachTunBridge(child, 'webrtc-dc', dc);
+          attachTunBridge(tun, 'webrtc-dc', dc);
         });
         dc.onClosed(() => {
           console.log('[clean-vpn] DataChannel closed (exit)');
@@ -2051,7 +2042,7 @@ async function runClient({
 }) {
   const { host, port } = parseHostPort(server);
   const tunName = findFreeTunName();
-  const { child, name: ifname } = await spawnTun(tunName);
+  const { tun, name: ifname } = openTunNative(tunName);
   setupTunIp('client', ifname);
   const routeCtx = await setupClientRoutesAsync(ifname, host, splitDefault);
 
@@ -2097,8 +2088,7 @@ async function runClient({
     const finishClient = () => {
       teardownClientRoutes(routeCtx);
       try {
-        child.stdin.end();
-        child.kill('SIGTERM');
+        tun.close();
       } catch {
         /* ignore */
       }
@@ -2138,7 +2128,7 @@ async function runClient({
       ws.once('error', reject);
     });
     console.log('[clean-vpn] WebSocket connected');
-    attachTunBridge(child, 'websocket', ws);
+    attachTunBridge(tun, 'websocket', ws);
     return;
   }
 
@@ -2150,7 +2140,7 @@ async function runClient({
       udp.connect(port, host, () => {
         udp.off('error', reject);
         console.log(`[clean-vpn] UDP «connected» к ${host}:${port}`);
-        attachTunBridge(child, 'udp-client', udp);
+        attachTunBridge(tun, 'udp-client', udp);
         resolve();
       });
     });
@@ -2200,7 +2190,7 @@ async function runClient({
     webrtcPc.onDataChannel((dc) => {
       dc.onOpen(() => {
         console.log('[clean-vpn] DataChannel open (client)');
-        attachTunBridge(child, 'webrtc-dc', dc);
+        attachTunBridge(tun, 'webrtc-dc', dc);
       });
       dc.onError((err) => {
         console.error('[clean-vpn] DataChannel error (client):', err);
@@ -2257,7 +2247,7 @@ async function runClient({
     console.log('[clean-vpn] QUIC session установлена');
     const stream = await quicClientSession.createBidirectionalStream();
     const sock = quicBidiToSocketLike(stream);
-    attachTunBridge(child, 'tcp', sock);
+    attachTunBridge(tun, 'tcp', sock);
     return;
   }
 
@@ -2286,7 +2276,7 @@ async function runClient({
     console.log('[clean-vpn] QUIC-EXT (@infisical/quic) соединение установлено');
     const stream = quicExtClient.connection.newStream('bidi');
     const sock = quicBidiToSocketLike(stream);
-    attachTunBridge(child, 'tcp', sock);
+    attachTunBridge(tun, 'tcp', sock);
     return;
   }
 
@@ -2396,7 +2386,7 @@ async function runClient({
         finish(() => reject(err));
       });
     });
-    attachTunBridge(child, 'tcp', tlsVpnSocket);
+    attachTunBridge(tun, 'tcp', tlsVpnSocket);
     return;
   }
 
@@ -2405,13 +2395,13 @@ async function runClient({
     const sock = net.connect(port, host, () => {
       console.log('[clean-vpn] TCP connected');
       if (type === 'socket') {
-        attachTunBridge(child, 'tcp', sock);
+        attachTunBridge(tun, 'tcp', sock);
         resolve();
         return;
       }
       sock.__isServer = false;
       handleHttpSocket(sock, (rest) => {
-        attachTunBridge(child, 'tcp', sock);
+        attachTunBridge(tun, 'tcp', sock);
         if (rest && rest.length) {
           sock.emit('data', rest);
         }
