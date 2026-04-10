@@ -96,7 +96,7 @@ function loadTunLinuxAddon() {
 /**
  * Открывает TUN через N-API addon (без subprocess tun-helper).
  * @param {string} tunName — желаемое имя, например tun0
- * @returns {{ tun: { ifname: string, write: (b: Buffer) => void, startRead: (cb: (b: Buffer) => void) => void, close: () => void }, name: string }}
+ * @returns {{ tun: { ifname: string, write: (b: Buffer) => void, startRead: (cb: (b: Buffer|ArrayBuffer) => void) => void, close: () => void }, name: string }}
  */
 function openTunNative(tunName) {
   const addon = loadTunLinuxAddon();
@@ -965,9 +965,11 @@ class StreamFramer {
 }
 
 function writeFramed(sock, pkt) {
-  const h = Buffer.alloc(4);
+  const h = Buffer.allocUnsafe(4);
   h.writeUInt32BE(pkt.length, 0);
-  return sock.write(Buffer.concat([h, pkt]));
+  const w1 = sock.write(h);
+  const w2 = sock.write(pkt);
+  return w1 && w2;
 }
 
 function ip(args) {
@@ -1169,7 +1171,7 @@ function teardownExitNat(tunName, ext) {
  * Один активный мост на TUN: иначе второй TCP-клиент на exit вешает второй
  * listener и пакеты дублируются / рассинхрон.
  *
- * @param {{ write: (b: Buffer) => void, startRead: (cb: (b: Buffer) => void) => void }} tun — native addon
+ * @param {{ write: (b: Buffer) => void, startRead: (cb: (b: Buffer|ArrayBuffer) => void) => void }} tun — native addon
  * @param {'tcp'|'websocket'|'udp-client'|'udp-server'|'webrtc-dc'} transport
  * @param {import('net').Socket|import('ws')|import('dgram').Socket|{sock: import('dgram').Socket, peer?: import('dgram').RemoteInfo}|import('node-datachannel').DataChannel} endpoint
  */
@@ -1286,7 +1288,8 @@ function attachTunBridge(tun, transport, endpoint) {
     });
   }
 
-  tun.startRead((pkt) => {
+  tun.startRead((raw) => {
+    const pkt = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
     if (!pkt.length || pkt.length > MAX_PKT) return;
     sendOnWire(pkt);
   });

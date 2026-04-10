@@ -82,6 +82,10 @@ static void dispose_session(napi_env env, TunSession* s) {
   }
 }
 
+static void finalize_external_pkt(napi_env /* env */, void* data, void* /* hint */) {
+  free(data);
+}
+
 static void on_poll(uv_poll_t* handle, int status, int events) {
   auto* s = static_cast<TunSession*>(handle->data);
   if (s == nullptr || s->closed || s->disposed || s->read_cb_ref == nullptr) {
@@ -94,27 +98,39 @@ static void on_poll(uv_poll_t* handle, int status, int events) {
     return;
   }
 
-  uint8_t buf[kMaxPkt];
-  ssize_t n = read(s->fd, buf, sizeof buf);
+  void* raw = malloc(kMaxPkt);
+  if (raw == nullptr) {
+    return;
+  }
+  ssize_t n = read(s->fd, raw, kMaxPkt);
   if (n <= 0) {
+    free(raw);
     return;
   }
 
   napi_env env = s->env;
   napi_handle_scope scope = nullptr;
   if (napi_open_handle_scope(env, &scope) != napi_ok) {
+    free(raw);
     return;
   }
 
   napi_value callback;
   if (napi_get_reference_value(env, s->read_cb_ref, &callback) != napi_ok) {
+    free(raw);
     napi_close_handle_scope(env, scope);
     return;
   }
 
   napi_value argv;
-  void* data = nullptr;
-  if (napi_create_buffer_copy(env, static_cast<size_t>(n), buf, &data, &argv) != napi_ok) {
+  if (napi_create_external_arraybuffer(
+          env,
+          raw,
+          static_cast<size_t>(n),
+          finalize_external_pkt,
+          nullptr,
+          &argv) != napi_ok) {
+    free(raw);
     napi_close_handle_scope(env, scope);
     return;
   }
