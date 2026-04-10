@@ -1,12 +1,13 @@
 #include <node_api.h>
 #include <uv.h>
 
-#include <fcntl.h>
-#include <unistd.h>
-#include <string.h>
 #include <errno.h>
-#include <stdlib.h>
+#include <fcntl.h>
+#include <mutex>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 #include <linux/if.h>
 #include <linux/if_tun.h>
@@ -15,6 +16,36 @@
 namespace {
 
 constexpr size_t kMaxPkt = 65535;
+constexpr int kMaxBatch = 32;
+constexpr size_t kGlobalPoolCap = 64;
+
+static std::mutex g_pkt_pool_mu;
+static void* g_pkt_pool[kGlobalPoolCap];
+static size_t g_pkt_pool_n = 0;
+
+static void* pkt_pool_acquire() {
+  std::lock_guard<std::mutex> lock(g_pkt_pool_mu);
+  if (g_pkt_pool_n > 0) {
+    return g_pkt_pool[--g_pkt_pool_n];
+  }
+  return malloc(kMaxPkt);
+}
+
+static void pkt_pool_release(void* p) {
+  if (p == nullptr) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(g_pkt_pool_mu);
+  if (g_pkt_pool_n < kGlobalPoolCap) {
+    g_pkt_pool[g_pkt_pool_n++] = p;
+  } else {
+    free(p);
+  }
+}
+
+static void finalize_external_pkt_pool(napi_env /* env */, void* data, void* /* hint */) {
+  pkt_pool_release(data);
+}
 
 struct TunSession {
   int fd = -1;
@@ -82,10 +113,6 @@ static void dispose_session(napi_env env, TunSession* s) {
   }
 }
 
-static void finalize_external_pkt(napi_env /* env */, void* data, void* /* hint */) {
-  free(data);
-}
-
 static void on_poll(uv_poll_t* handle, int status, int events) {
   auto* s = static_cast<TunSession*>(handle->data);
   if (s == nullptr || s->closed || s->disposed || s->read_cb_ref == nullptr) {
@@ -98,47 +125,99 @@ static void on_poll(uv_poll_t* handle, int status, int events) {
     return;
   }
 
-  void* raw = malloc(kMaxPkt);
-  if (raw == nullptr) {
-    return;
+  void* ptrs[kMaxBatch];
+  size_t lens[kMaxBatch];
+  int nbatch = 0;
+
+  for (;;) {
+    if (nbatch >= kMaxBatch) {
+      break;
+    }
+    void* raw = pkt_pool_acquire();
+    if (raw == nullptr) {
+      break;
+    }
+    ssize_t n;
+    do {
+      n = read(s->fd, raw, kMaxPkt);
+    } while (n < 0 && errno == EINTR);
+
+    if (n < 0) {
+      pkt_pool_release(raw);
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        break;
+      }
+      break;
+    }
+    if (n == 0) {
+      pkt_pool_release(raw);
+      break;
+    }
+    ptrs[nbatch] = raw;
+    lens[nbatch] = static_cast<size_t>(n);
+    nbatch++;
   }
-  ssize_t n = read(s->fd, raw, kMaxPkt);
-  if (n <= 0) {
-    free(raw);
+
+  if (nbatch == 0) {
     return;
   }
 
   napi_env env = s->env;
   napi_handle_scope scope = nullptr;
   if (napi_open_handle_scope(env, &scope) != napi_ok) {
-    free(raw);
+    for (int i = 0; i < nbatch; i++) {
+      pkt_pool_release(ptrs[i]);
+    }
     return;
   }
 
   napi_value callback;
   if (napi_get_reference_value(env, s->read_cb_ref, &callback) != napi_ok) {
-    free(raw);
+    for (int i = 0; i < nbatch; i++) {
+      pkt_pool_release(ptrs[i]);
+    }
     napi_close_handle_scope(env, scope);
     return;
   }
 
-  napi_value argv;
-  if (napi_create_external_arraybuffer(
-          env,
-          raw,
-          static_cast<size_t>(n),
-          finalize_external_pkt,
-          nullptr,
-          &argv) != napi_ok) {
-    free(raw);
+  napi_value arr;
+  if (napi_create_array_with_length(env, static_cast<uint32_t>(nbatch), &arr) != napi_ok) {
+    for (int i = 0; i < nbatch; i++) {
+      pkt_pool_release(ptrs[i]);
+    }
     napi_close_handle_scope(env, scope);
     return;
   }
 
+  for (int i = 0; i < nbatch; i++) {
+    napi_value ab;
+    if (napi_create_external_arraybuffer(
+            env,
+            ptrs[i],
+            lens[i],
+            finalize_external_pkt_pool,
+            nullptr,
+            &ab) != napi_ok) {
+      for (int j = i; j < nbatch; j++) {
+        pkt_pool_release(ptrs[j]);
+      }
+      napi_close_handle_scope(env, scope);
+      return;
+    }
+    if (napi_set_element(env, arr, static_cast<uint32_t>(i), ab) != napi_ok) {
+      for (int j = i; j < nbatch; j++) {
+        pkt_pool_release(ptrs[j]);
+      }
+      napi_close_handle_scope(env, scope);
+      return;
+    }
+  }
+
+  napi_value argv[1] = {arr};
   napi_value global;
   napi_value ret;
   napi_get_global(env, &global);
-  napi_call_function(env, global, callback, 1, &argv, &ret);
+  napi_call_function(env, global, callback, 1, argv, &ret);
 
   napi_close_handle_scope(env, scope);
 }

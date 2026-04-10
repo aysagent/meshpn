@@ -50,6 +50,12 @@
  *
  * При SIGINT/SIGTERM: снимаются iptables/NAT (exit), net.ipv4.ip_forward, маршруты и rp_filter (client)
  * восстанавливаются по снимку `ip -json route` (если доступен).
+ *
+ * Производительность (Linux, опционально, вручную):
+ *   Высокий PPS / UDP / QUIC: увеличить лимиты сокетных буферов ядра, например:
+ *   `sudo sysctl -w net.core.rmem_max=134217728 net.core.wmem_max=134217728`
+ *   При узких TCP-окнах при необходимости смотреть `net.ipv4.tcp_rmem` / `tcp_wmem` (зависит от сценария).
+ *   Аномалии фрагментации или латентности на физическом NIC: `ethtool -k <iface>` (иногда GRO/LRO влияют на кейс).
  */
 
 import { execFileSync } from 'child_process';
@@ -96,7 +102,7 @@ function loadTunLinuxAddon() {
 /**
  * Открывает TUN через N-API addon (без subprocess tun-helper).
  * @param {string} tunName — желаемое имя, например tun0
- * @returns {{ tun: { ifname: string, write: (b: Buffer) => void, startRead: (cb: (b: Buffer|ArrayBuffer) => void) => void, close: () => void }, name: string }}
+ * @returns {{ tun: { ifname: string, write: (b: Buffer) => void, startRead: (cb: (batch: ArrayBuffer[]) => void) => void, close: () => void }, name: string }}
  */
 function openTunNative(tunName) {
   const addon = loadTunLinuxAddon();
@@ -943,29 +949,60 @@ function findFreeTunName() {
 // === Общее: uint32+IPv4 фрейминг, writeFramed, attachTunBridge (все transport) ===
 // =============================================================================
 
+/** Сдвиг накопленного буфера; при большом byteOffset — компактная копия, чтобы не держать гигантский ArrayBuffer. */
+const STREAM_FRAMER_COMPACT_THRESHOLD = 65536;
+
 class StreamFramer {
   constructor() {
     this.buf = Buffer.alloc(0);
   }
 
+  /**
+   * @param {Buffer} chunk
+   * @param {(pkt: Buffer) => void} onPacket — срез внутреннего буфера; не мутировать после колбэка.
+   */
   push(chunk, onPacket) {
-    this.buf = Buffer.concat([this.buf, chunk]);
-    while (this.buf.length >= 4) {
+    if (chunk.length) {
+      if (this.buf.length === 0) {
+        this.buf = chunk;
+      } else {
+        const next = Buffer.allocUnsafe(this.buf.length + chunk.length);
+        this.buf.copy(next, 0);
+        chunk.copy(next, this.buf.length);
+        this.buf = next;
+      }
+    }
+    for (;;) {
+      if (this.buf.length < 4) break;
       const len = this.buf.readUInt32BE(0);
       if (len <= 0 || len > MAX_PKT) {
         this.buf = Buffer.alloc(0);
         throw new Error(`bad frame length ${len}`);
       }
-      if (this.buf.length < 4 + len) return;
+      if (this.buf.length < 4 + len) break;
       const pkt = this.buf.subarray(4, 4 + len);
-      this.buf = this.buf.subarray(4 + len);
-      onPacket(Buffer.from(pkt));
+      const rest = 4 + len;
+      this.buf = rest === this.buf.length ? Buffer.alloc(0) : this.buf.subarray(rest);
+      onPacket(pkt);
+    }
+    this.#compactIfNeeded();
+  }
+
+  #compactIfNeeded() {
+    if (this.buf.length === 0) return;
+    if (this.buf.byteOffset >= STREAM_FRAMER_COMPACT_THRESHOLD) {
+      const copy = Buffer.allocUnsafe(this.buf.length);
+      this.buf.copy(copy);
+      this.buf = copy;
     }
   }
 }
 
 function writeFramed(sock, pkt) {
-  const h = Buffer.allocUnsafe(4);
+  if (!sock._cleanVpnFrameHdr) {
+    sock._cleanVpnFrameHdr = Buffer.allocUnsafe(4);
+  }
+  const h = sock._cleanVpnFrameHdr;
   h.writeUInt32BE(pkt.length, 0);
   const w1 = sock.write(h);
   const w2 = sock.write(pkt);
@@ -1171,7 +1208,7 @@ function teardownExitNat(tunName, ext) {
  * Один активный мост на TUN: иначе второй TCP-клиент на exit вешает второй
  * listener и пакеты дублируются / рассинхрон.
  *
- * @param {{ write: (b: Buffer) => void, startRead: (cb: (b: Buffer|ArrayBuffer) => void) => void }} tun — native addon
+ * @param {{ write: (b: Buffer) => void, startRead: (cb: (batch: ArrayBuffer[]) => void) => void }} tun — native addon
  * @param {'tcp'|'websocket'|'udp-client'|'udp-server'|'webrtc-dc'} transport
  * @param {import('net').Socket|import('ws')|import('dgram').Socket|{sock: import('dgram').Socket, peer?: import('dgram').RemoteInfo}|import('node-datachannel').DataChannel} endpoint
  */
@@ -1188,12 +1225,14 @@ function attachTunBridge(tun, transport, endpoint) {
 
   /** @type {Buffer[]} */
   const dcQueue = [];
+  let dcHead = 0;
+  const DC_QUEUE_COMPACT_AFTER = 2048;
   const DC_BUFFER_HIGH = 8 * 1024 * 1024;
   let dcPumpScheduled = false;
   const pumpDcQueue = () => {
     dcPumpScheduled = false;
     if (transport !== 'webrtc-dc') return;
-    while (dcQueue.length) {
+    while (dcHead < dcQueue.length) {
       if (typeof endpoint.isOpen === 'function' && !endpoint.isOpen()) return;
       let buffered = 0;
       try {
@@ -1207,13 +1246,20 @@ function attachTunBridge(tun, transport, endpoint) {
         setImmediate(pumpDcQueue);
         return;
       }
-      const pkt = dcQueue.shift();
+      const pkt = dcQueue[dcHead++];
       if (!pkt) break;
       try {
         endpoint.sendMessageBinary(pkt);
       } catch (e) {
         console.error('[clean-vpn] webrtc-dc send:', e?.message || e);
       }
+    }
+    if (
+      dcHead >= DC_QUEUE_COMPACT_AFTER &&
+      dcHead > (dcQueue.length >> 1)
+    ) {
+      dcQueue.splice(0, dcHead);
+      dcHead = 0;
     }
   };
 
@@ -1263,7 +1309,7 @@ function attachTunBridge(tun, transport, endpoint) {
   } else if (transport === 'udp-client') {
     endpoint.on('message', (msg) => {
       if (!msg.length || msg.length > MAX_PKT) return;
-      writeTun(Buffer.from(msg));
+      writeTun(Buffer.isBuffer(msg) ? msg : Buffer.from(msg));
     });
   } else if (transport === 'udp-server') {
     endpoint.sock.on('message', (msg, rinfo) => {
@@ -1277,7 +1323,7 @@ function attachTunBridge(tun, transport, endpoint) {
       ) {
         return;
       }
-      writeTun(Buffer.from(msg));
+      writeTun(Buffer.isBuffer(msg) ? msg : Buffer.from(msg));
     });
   } else if (transport === 'webrtc-dc') {
     endpoint.onMessage((data) => {
@@ -1288,10 +1334,13 @@ function attachTunBridge(tun, transport, endpoint) {
     });
   }
 
-  tun.startRead((raw) => {
-    const pkt = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-    if (!pkt.length || pkt.length > MAX_PKT) return;
-    sendOnWire(pkt);
+  tun.startRead((batch) => {
+    const pkts = Array.isArray(batch) ? batch : [batch];
+    for (const raw of pkts) {
+      const pkt = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+      if (!pkt.length || pkt.length > MAX_PKT) continue;
+      sendOnWire(pkt);
+    }
   });
 }
 
@@ -1512,8 +1561,23 @@ function handleTlsExitInbound(socket, ctx) {
 // =============================================================================
 
 function handleHttpSocket(sock, onReady) {
+  const HTTP_PREAMBLE_COMPACT = 32768;
   const onData = (chunk) => {
-    const buf = sock.__httpBuf ? Buffer.concat([sock.__httpBuf, chunk]) : chunk;
+    let base = sock.__httpBuf;
+    if (base && base.byteOffset >= HTTP_PREAMBLE_COMPACT) {
+      const c = Buffer.allocUnsafe(base.length);
+      base.copy(c);
+      base = c;
+    }
+    const buf =
+      base == null
+        ? chunk
+        : (() => {
+            const n = Buffer.allocUnsafe(base.length + chunk.length);
+            base.copy(n, 0);
+            chunk.copy(n, base.length);
+            return n;
+          })();
     const idx = buf.indexOf('\r\n\r\n');
     if (idx === -1) {
       sock.__httpBuf = buf;
