@@ -15,6 +15,7 @@
  * WebSocket через Puppeteer (--type=ws-chrome): на client Headless Chrome держит исходящий WS к exit; `npm install puppeteer`.
  *   По умолчанию встроенная страница (совместимо с exit --type=websocket). Или exit --type=ws-chrome + GET /clean-vpn-chrome и флаг --ws-chrome-exit-page / --ws-chrome-url=...
  *   Chrome: --ws-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH; в контейнере: CLEAN_VPN_PUPPETEER_NO_SANDBOX=1
+ *   Linux ARM64 (Multipass на Apple Silicon и т.п.): встроенный Chrome из кэша Puppeteer часто ломается — ставьте `chromium-browser`/`chromium` из apt и укажите путь или положитесь на авто-поиск на arm64.
  * WebRTC: сигналинг по WebSocket на --server; один SCTP DataChannel — одно бинарное сообщение = один IPv4-пакет.
  * ICE/STUN/TURN: из --config (по умолчанию config/default.json), см. --ice-mode.
  * QUIC (Node 25+): нативный node:quic, ALPN clean-vpn, один bidi stream = тот же uint32+IPv4, что TCP.
@@ -1636,6 +1637,26 @@ const WS_CHROME_BRIDGE_PAGE_HTML = `<!DOCTYPE html><html><head><meta charset="ut
 })();
 </script></body></html>`;
 
+/** На Linux arm64/arm предпочитаем системный Chromium — бандл из ~/.cache/puppeteer там часто несовместим (Multipass, VM). */
+function resolveLinuxArmSystemChromium() {
+  if (process.platform !== 'linux') return null;
+  if (process.arch !== 'arm64' && process.arch !== 'arm') return null;
+  const candidates = [
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/snap/bin/chromium',
+    '/usr/bin/google-chrome-stable',
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
 function buildWsChromeEmbeddedPageHtml(wsUrl) {
   const u = JSON.stringify(wsUrl);
   return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><script>
@@ -1674,17 +1695,42 @@ async function createWsChromeClientBridge(opts) {
   }
   const puppeteer = puppeteerMod.default ?? puppeteerMod;
   const launchArgs = [];
-  if (process.env.CLEAN_VPN_PUPPETEER_NO_SANDBOX === '1') {
+  if (
+    process.env.CLEAN_VPN_PUPPETEER_NO_SANDBOX === '1' ||
+    (typeof process.getuid === 'function' && process.getuid() === 0)
+  ) {
     launchArgs.push('--no-sandbox', '--disable-setuid-sandbox');
   }
   const launchOpts = {
-    headless: 'new',
+    headless: true,
     args: launchArgs,
   };
-  if (opts.executablePath) {
-    launchOpts.executablePath = opts.executablePath;
+  let executablePath =
+    opts.executablePath || process.env.PUPPETEER_EXECUTABLE_PATH || null;
+  if (!executablePath) {
+    const sys = resolveLinuxArmSystemChromium();
+    if (sys) {
+      executablePath = sys;
+      console.log(`[clean-vpn] ws-chrome: используем системный браузер ${sys}`);
+    }
   }
-  const browser = await puppeteer.launch(launchOpts);
+  if (executablePath) {
+    launchOpts.executablePath = executablePath;
+  }
+  let browser;
+  try {
+    browser = await puppeteer.launch(launchOpts);
+  } catch (launchErr) {
+    const hint = `ws-chrome: не удалось запустить браузер (${launchErr?.message || launchErr}).
+Частые причины на Linux ARM64 (Multipass/VM на Mac M*):
+  sudo apt update && sudo apt install -y chromium-browser
+  # или пакет chromium; затем явно:
+  sudo ... --ws-chrome-executable=/usr/bin/chromium-browser
+Либо удалите битый кэш: rm -rf ~/.cache/puppeteer
+При sudo node добавляются --no-sandbox; при необходимости: CLEAN_VPN_PUPPETEER_NO_SANDBOX=1
+См. https://pptr.dev/troubleshooting`;
+    throw new Error(hint, { cause: launchErr });
+  }
   const page = await browser.newPage();
 
   const bridge = new EventEmitter();

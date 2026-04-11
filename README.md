@@ -461,6 +461,16 @@ mesh-vpn/
 
 Протокол тот же, что у `--type=websocket`: одно binary WS-сообщение = один IPv4-пакет.
 
+**Ubuntu ARM64 в Multipass на Mac (M1/M2/M3):** Chrome из `~/.cache/puppeteer` часто не запускается (ошибки вроде `Syntax error: ";" unexpected` у бинарника). Поставьте системный Chromium и укажите путь, либо скрипт на **arm64** сам попробует `/usr/bin/chromium-browser`, `/usr/bin/chromium`, `/snap/bin/chromium`:
+
+```bash
+sudo apt update && sudo apt install -y chromium-browser
+# при необходимости явно:
+sudo env PATH=$PATH node scripts/clean-vpn.js ... --type=ws-chrome --ws-chrome-executable=/usr/bin/chromium-browser
+```
+
+После неудачной загрузки можно сбросить кэш: `rm -rf ~/.cache/puppeteer`. Запуск под `sudo` уже добавляет `--no-sandbox` для Chrome.
+
 ### Проверка TLS passthrough ([`scripts/probe.js`](scripts/probe.js))
 
 Скрипт подключается к exit как обычный HTTPS-клиент (без ALPN `clean-vpn-tls`), с маркером ALPN `clean-vpn-probe`, чтобы в логах exit было `probeTool=true`. Хост в `--domain` должен совпадать с целью passthrough на exit ([`--tls-probe-target`](scripts/clean-vpn.js), по умолчанию `www.google.com:443`). Если SNI совпадает с [`--tls-public-name`](scripts/clean-vpn.js) на exit, трафик пойдёт на публичный TLS-сервер, а не в passthrough — для проверки обхода используйте другой SNI.
