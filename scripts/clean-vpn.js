@@ -1626,7 +1626,7 @@ const WS_CHROME_BRIDGE_PAGE_HTML = `<!DOCTYPE html><html><head><meta charset="ut
   ws.onmessage = function (ev) {
     var d = ev.data;
     if (d instanceof ArrayBuffer && window.cleanVpnBrowserToNode) {
-      window.cleanVpnBrowserToNode(new Uint8Array(d));
+      window.cleanVpnBrowserToNode(Array.from(new Uint8Array(d)));
     }
   };
   ws.onclose = function () { if (window.cleanVpnWsClosed) window.cleanVpnWsClosed(); };
@@ -1666,7 +1666,7 @@ function buildWsChromeEmbeddedPageHtml(wsUrl) {
   ws.onopen = function () { window.cleanVpnWsReady(); };
   ws.onmessage = function (ev) {
     var d = ev.data;
-    if (d instanceof ArrayBuffer) window.cleanVpnBrowserToNode(new Uint8Array(d));
+    if (d instanceof ArrayBuffer) window.cleanVpnBrowserToNode(Array.from(new Uint8Array(d)));
   };
   ws.onclose = function () { window.cleanVpnWsClosed(); };
   ws.onerror = function () {};
@@ -1675,6 +1675,28 @@ function buildWsChromeEmbeddedPageHtml(wsUrl) {
   };
 })();
 </script></body></html>`;
+}
+
+/** page.exposeFunction сериализует Uint8Array в plain object {0:..,1:..}; Buffer.from(data) падает. */
+function bufferFromPuppeteerExpose(data) {
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof Uint8Array) return Buffer.from(data);
+  if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  if (Array.isArray(data)) return Buffer.from(data);
+  if (data && typeof data === 'object') {
+    const keys = Object.keys(data);
+    if (keys.length === 0) return Buffer.alloc(0);
+    const numeric = keys.filter((k) => /^\d+$/.test(k));
+    if (numeric.length === keys.length && numeric.length > 0) {
+      const len = numeric.length;
+      const out = Buffer.allocUnsafe(len);
+      for (let i = 0; i < len; i++) {
+        out[i] = Number(data[String(i)]) & 0xff;
+      }
+      return out;
+    }
+  }
+  throw new TypeError('ws-chrome: неподдерживаемый формат пакета из браузера');
 }
 
 /**
@@ -1737,7 +1759,7 @@ async function createWsChromeClientBridge(opts) {
 
   await page.exposeFunction('cleanVpnBrowserToNode', (data) => {
     try {
-      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      const buf = bufferFromPuppeteerExpose(data);
       bridge.emit('message', buf, true);
     } catch (err) {
       bridge.emit('error', err);
@@ -1776,10 +1798,13 @@ async function createWsChromeClientBridge(opts) {
   });
 
   bridge.send = (pkt) => {
+    const bytes = Array.from(pkt);
     void page
-      .evaluate((u8) => {
-        if (typeof window.__cleanVpnSend === 'function') window.__cleanVpnSend(u8);
-      }, pkt)
+      .evaluate((arr) => {
+        if (typeof window.__cleanVpnSend === 'function') {
+          window.__cleanVpnSend(new Uint8Array(arr));
+        }
+      }, bytes)
       .catch((e) => bridge.emit('error', e));
   };
 
