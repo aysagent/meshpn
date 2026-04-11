@@ -1678,7 +1678,7 @@ async function createWsChromeClientBridge(opts) {
     launchArgs.push('--no-sandbox', '--disable-setuid-sandbox');
   }
   const launchOpts = {
-    headless: true,
+    headless: 'new',
     args: launchArgs,
   };
   if (opts.executablePath) {
