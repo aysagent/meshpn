@@ -12,6 +12,9 @@
  *
  * Протокол (socket / http после преамбулы): uint32 BE + сырой IPv4-пакет (как у прежнего tun-helper по транспорту).
  * WebSocket / UDP: одно binary-сообщение или одна датаграмма = один IPv4-пакет (без префикса длины).
+ * WebSocket через Puppeteer (--type=ws-chrome): на client Headless Chrome держит исходящий WS к exit; `npm install puppeteer`.
+ *   По умолчанию встроенная страница (совместимо с exit --type=websocket). Или exit --type=ws-chrome + GET /clean-vpn-chrome и флаг --ws-chrome-exit-page / --ws-chrome-url=...
+ *   Chrome: --ws-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH; в контейнере: CLEAN_VPN_PUPPETEER_NO_SANDBOX=1
  * WebRTC: сигналинг по WebSocket на --server; один SCTP DataChannel — одно бинарное сообщение = один IPv4-пакет.
  * ICE/STUN/TURN: из --config (по умолчанию config/default.json), см. --ice-mode.
  * QUIC (Node 25+): нативный node:quic, ALPN clean-vpn, один bidi stream = тот же uint32+IPv4, что TCP.
@@ -30,6 +33,8 @@
  *   HTTP (--type=http): тот же TCP, что socket; клиент — GET /clean-vpn, ответ 200, затем uint32+IPv4 (см. строку «Протокол» выше).
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=websocket
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=websocket --split-default
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=ws-chrome
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=ws-chrome --split-default [--ws-chrome-exit-page]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:51820 --type=udp
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:51820 --type=udp --split-default
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:9876 --type=webrtc [--config=config/exit-node.json]
@@ -59,10 +64,12 @@
  */
 
 import { execFileSync } from 'child_process';
+import { EventEmitter } from 'events';
 import { createRequire } from 'module';
 import { createPrivateKey, randomBytes } from 'crypto';
 import dgram from 'dgram';
 import fs from 'fs';
+import http from 'http';
 import net from 'net';
 import tls from 'tls';
 import path from 'path';
@@ -819,6 +826,10 @@ function parseArgs(argv) {
     tlsProbeMaxBytes: null,
     tlsProbeMaxSeconds: null,
     tlsProbeFullProxyPerIp: null,
+    wsChromeExecutable: null,
+    wsChromeWsUrl: null,
+    wsChromeUrl: null,
+    wsChromeExitPage: false,
   };
   for (const a of argv) {
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
@@ -845,7 +856,14 @@ function parseArgs(argv) {
       out.tlsProbeMaxSeconds = parseInt(a.slice('--tls-probe-max-seconds='.length), 10);
     } else if (a.startsWith('--tls-probe-full-proxy-per-ip=')) {
       out.tlsProbeFullProxyPerIp = parseInt(a.slice('--tls-probe-full-proxy-per-ip='.length), 10);
-    } else if (a === '--split-default') out.splitDefault = true;
+    } else if (a.startsWith('--ws-chrome-executable=')) {
+      out.wsChromeExecutable = a.slice('--ws-chrome-executable='.length);
+    } else if (a.startsWith('--ws-chrome-ws-url=')) {
+      out.wsChromeWsUrl = a.slice('--ws-chrome-ws-url='.length);
+    } else if (a.startsWith('--ws-chrome-url=')) {
+      out.wsChromeUrl = a.slice('--ws-chrome-url='.length);
+    } else if (a === '--ws-chrome-exit-page') out.wsChromeExitPage = true;
+    else if (a === '--split-default') out.splitDefault = true;
   }
   return out;
 }
@@ -1597,6 +1615,131 @@ function handleHttpSocket(sock, onReady) {
   sock.on('data', onData);
 }
 
+/** Exit --type=ws-chrome: страница для Puppeteer (GET /clean-vpn-chrome). */
+const WS_CHROME_BRIDGE_PAGE_HTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>clean-vpn-chrome</title></head><body>
+<script>
+(function () {
+  var ws = new WebSocket((location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/');
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = function () { if (window.cleanVpnWsReady) window.cleanVpnWsReady(); };
+  ws.onmessage = function (ev) {
+    var d = ev.data;
+    if (d instanceof ArrayBuffer && window.cleanVpnBrowserToNode) {
+      window.cleanVpnBrowserToNode(new Uint8Array(d));
+    }
+  };
+  ws.onclose = function () { if (window.cleanVpnWsClosed) window.cleanVpnWsClosed(); };
+  ws.onerror = function () {};
+  window.__cleanVpnSend = function (u8) {
+    if (ws.readyState === WebSocket.OPEN) ws.send(u8);
+  };
+})();
+</script></body></html>`;
+
+function buildWsChromeEmbeddedPageHtml(wsUrl) {
+  const u = JSON.stringify(wsUrl);
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><script>
+(function () {
+  var ws = new WebSocket(${u});
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = function () { window.cleanVpnWsReady(); };
+  ws.onmessage = function (ev) {
+    var d = ev.data;
+    if (d instanceof ArrayBuffer) window.cleanVpnBrowserToNode(new Uint8Array(d));
+  };
+  ws.onclose = function () { window.cleanVpnWsClosed(); };
+  ws.onerror = function () {};
+  window.__cleanVpnSend = function (u8) {
+    if (ws.readyState === WebSocket.OPEN) ws.send(u8);
+  };
+})();
+</script></body></html>`;
+}
+
+/**
+ * Puppeteer: страница держит WebSocket к exit; мост с API как у `ws` для attachTunBridge.
+ * @param {{
+ *   wsUrl: string,
+ *   executablePath?: string|null,
+ *   pageMode: 'embedded'|'goto',
+ *   gotoUrl?: string|null,
+ * }} opts
+ */
+async function createWsChromeClientBridge(opts) {
+  let puppeteerMod;
+  try {
+    puppeteerMod = await import('puppeteer');
+  } catch (e) {
+    throw new Error('Для --type=ws-chrome установите: npm install puppeteer', { cause: e });
+  }
+  const puppeteer = puppeteerMod.default ?? puppeteerMod;
+  const launchArgs = [];
+  if (process.env.CLEAN_VPN_PUPPETEER_NO_SANDBOX === '1') {
+    launchArgs.push('--no-sandbox', '--disable-setuid-sandbox');
+  }
+  const launchOpts = {
+    headless: true,
+    args: launchArgs,
+  };
+  if (opts.executablePath) {
+    launchOpts.executablePath = opts.executablePath;
+  }
+  const browser = await puppeteer.launch(launchOpts);
+  const page = await browser.newPage();
+
+  const bridge = new EventEmitter();
+
+  await page.exposeFunction('cleanVpnBrowserToNode', (data) => {
+    try {
+      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      bridge.emit('message', buf, true);
+    } catch (err) {
+      bridge.emit('error', err);
+    }
+  });
+  await page.exposeFunction('cleanVpnWsReady', () => {
+    bridge.emit('_chromeWsOpen');
+  });
+  await page.exposeFunction('cleanVpnWsClosed', () => {
+    bridge.emit('close');
+  });
+
+  if (opts.pageMode === 'goto') {
+    const url = opts.gotoUrl;
+    if (!url) throw new Error('ws-chrome: пустой goto URL');
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
+  } else {
+    await page.setContent(buildWsChromeEmbeddedPageHtml(opts.wsUrl), {
+      waitUntil: 'domcontentloaded',
+    });
+  }
+
+  await new Promise((resolve, reject) => {
+    const to = setTimeout(
+      () => reject(new Error('ws-chrome: таймаут WebSocket к exit')),
+      120000,
+    );
+    bridge.once('_chromeWsOpen', () => {
+      clearTimeout(to);
+      resolve(undefined);
+    });
+    bridge.once('close', () => {
+      clearTimeout(to);
+      reject(new Error('ws-chrome: WebSocket закрыт до готовности'));
+    });
+  });
+
+  bridge.send = (pkt) => {
+    void page
+      .evaluate((u8) => {
+        if (typeof window.__cleanVpnSend === 'function') window.__cleanVpnSend(u8);
+      }, pkt)
+      .catch((e) => bridge.emit('error', e));
+  };
+
+  return { bridge, browser, page };
+}
+
 // =============================================================================
 // === runExit: tun + NAT, затем ветки по --type ===
 // =============================================================================
@@ -1627,6 +1770,8 @@ async function runExit({
   let activeTcp = null;
   /** @type {import('ws').WebSocketServer|null} */
   let wss = null;
+  /** @type {import('http').Server|null} */
+  let httpChromeSrv = null;
   /** @type {import('net').Server|null} */
   let tcpSrv = null;
   /** @type {import('dgram').Socket|null} */
@@ -1667,6 +1812,14 @@ async function runExit({
       if (wss) {
         wss.close();
         wss = null;
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (httpChromeSrv) {
+        httpChromeSrv.close();
+        httpChromeSrv = null;
       }
     } catch {
       /* ignore */
@@ -1749,6 +1902,48 @@ async function runExit({
       });
       startBridge(ws, null, 'websocket');
     });
+    return;
+  }
+
+  // --- runExit: --type=ws-chrome (HTTP GET /clean-vpn-chrome + WebSocket upgrade на том же порту) ---
+  if (type === 'ws-chrome') {
+    const srv = http.createServer((req, res) => {
+      if (
+        req.method === 'GET' &&
+        (req.url === '/clean-vpn-chrome' || req.url.startsWith('/clean-vpn-chrome?'))
+      ) {
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+        });
+        res.end(WS_CHROME_BRIDGE_PAGE_HTML);
+        return;
+      }
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('clean-vpn ws-chrome: GET /clean-vpn-chrome');
+    });
+    wss = new WebSocketServer({ noServer: true });
+    wss.on('connection', (ws) => {
+      console.log('[clean-vpn] ws-chrome: WebSocket connected');
+      wss.clients.forEach((c) => {
+        if (c !== ws) c.close();
+      });
+      startBridge(ws, null, 'websocket');
+    });
+    srv.on('upgrade', (request, socket, head) => {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    });
+    await new Promise((resolve, reject) => {
+      srv.listen(port, host, () => resolve(undefined));
+      srv.once('error', reject);
+    });
+    httpChromeSrv = srv;
+    const h = host === '0.0.0.0' ? '*' : host;
+    console.log(
+      `[clean-vpn] exit ws-chrome http://${h}:${port}/clean-vpn-chrome + ws same port`,
+    );
     return;
   }
 
@@ -2107,6 +2302,10 @@ async function runClient({
   tlsCertDir,
   tlsServerName,
   tlsPublicName,
+  wsChromeExecutable,
+  wsChromeWsUrl,
+  wsChromeUrl,
+  wsChromeExitPage,
 }) {
   const { host, port } = parseHostPort(server);
   const tunName = findFreeTunName();
@@ -2124,6 +2323,8 @@ async function runClient({
   let quicExtClient = null;
   /** @type {import('tls').TLSSocket|null} */
   let tlsVpnSocket = null;
+  /** @type {any} */
+  let wsChromeBrowser = null;
 
   let shuttingDown = false;
   const shutdown = () => {
@@ -2164,6 +2365,16 @@ async function runClient({
       process.exit(0);
     };
     try {
+      if (wsChromeBrowser) {
+        const b = wsChromeBrowser;
+        wsChromeBrowser = null;
+        void b.close().then(finishClient, finishClient);
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
       if (quicExtClient) {
         const c = quicExtClient;
         quicExtClient = null;
@@ -2197,6 +2408,39 @@ async function runClient({
     });
     console.log('[clean-vpn] WebSocket connected');
     attachTunBridge(tun, 'websocket', ws);
+    return;
+  }
+
+  // --- runClient: --type=ws-chrome (Puppeteer + WebSocket в Chrome) ---
+  if (type === 'ws-chrome') {
+    const wsUrl = wsChromeWsUrl || `ws://${host}:${port}/`;
+    const exe = wsChromeExecutable || process.env.PUPPETEER_EXECUTABLE_PATH || null;
+    let pageMode = 'embedded';
+    /** @type {string|null} */
+    let gotoUrl = null;
+    if (wsChromeUrl) {
+      pageMode = 'goto';
+      gotoUrl = wsChromeUrl;
+    } else if (wsChromeExitPage) {
+      pageMode = 'goto';
+      gotoUrl = `http://${host}:${port}/clean-vpn-chrome`;
+    }
+    const { bridge, browser } = await createWsChromeClientBridge({
+      wsUrl,
+      executablePath: exe,
+      pageMode,
+      gotoUrl,
+    });
+    wsChromeBrowser = browser;
+    bridge.on('close', () => {
+      console.error('[clean-vpn] ws-chrome: WebSocket закрыт');
+      shutdown();
+    });
+    bridge.on('error', (e) => {
+      console.error('[clean-vpn] ws-chrome:', e?.message || e);
+    });
+    console.log('[clean-vpn] ws-chrome: готово (Puppeteer → WebSocket → exit)');
+    attachTunBridge(tun, 'websocket', bridge);
     return;
   }
 
@@ -2498,7 +2742,7 @@ async function main() {
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=socket [--ext=eth0]
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=socket --split-default
 
---type: socket | http | websocket | udp | webrtc | quic | quic-ext | tls
+--type: socket | http | websocket | ws-chrome | udp | webrtc | quic | quic-ext | tls
 --split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 (10/8, 172.16/12, 192.168/16) через uplink; IPv6 не в туннеле; проверка IP: curl -4 https://ifconfig.me
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
 --config=PATH: для --type=webrtc — JSON с iceServers/turnServers (по умолчанию config/default.json от корня репо)
@@ -2513,7 +2757,9 @@ async function main() {
 --tls-probe-target=host:port: только exit + tls — passthrough чужих ClientHello (default www.google.com:443)
 --tls-probe-max-bytes=N: короткий passthrough, лимит байт обоих направлений (default 49152)
 --tls-probe-max-seconds=S: лимит времени passthrough-сессии (default 30)
---tls-probe-full-proxy-per-ip=K: не более K «длинных» passthrough с одного IP за сутки (default 0 = только короткий)`);
+--tls-probe-full-proxy-per-ip=K: не более K «длинных» passthrough с одного IP за сутки (default 0 = только короткий)
+--type=ws-chrome: client — Puppeteer + Chrome держит WS к exit (npm install puppeteer). По умолчанию встроенная страница (exit может быть websocket). exit ws-chrome — HTTP /clean-vpn-chrome + WS на одном порту; client тогда --ws-chrome-exit-page или свой --ws-chrome-url=...
+--ws-chrome-executable=PATH, --ws-chrome-ws-url=ws://..., --ws-chrome-url=http://... (goto), --ws-chrome-exit-page (goto http://HOST:PORT/clean-vpn-chrome)`);
     process.exit(1);
   }
 

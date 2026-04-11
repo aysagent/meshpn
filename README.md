@@ -452,6 +452,15 @@ mesh-vpn/
 
 Для [`scripts/clean-vpn.js`](scripts/clean-vpn.js) на **Linux** нужен собранный модуль `native/tun_linux` (после `npm install` это делает postinstall, либо явно: `npm run build:tun-linux`; нужны python3, make, g++). `--split-default` отправляет **IPv4** default в туннель (две половины `0.0.0.0/1`), а сети **RFC1918** (`10/8`, `172.16/12`, `192.168/16`) — на uplink, чтобы локальный DNS и LAN не уходили на exit. Внешний IPv4 проверяйте так: `curl -4 https://ifconfig.me`. Для `--type=tls` и IP в `--server` см. шапку скрипта и `--tls-server-name`.
 
+#### `--type=ws-chrome` (Puppeteer)
+
+Трафик VPN идёт через **Headless Chrome**: на клиенте страница открывает **исходящий** WebSocket к exit (в браузере нельзя поднять WS-сервер для произвольных входящих). Зависимость: `puppeteer` (ставится с `npm install`). Свой Chrome: `--ws-chrome-executable=PATH` или `PUPPETEER_EXECUTABLE_PATH`. В Docker часто нужно `CLEAN_VPN_PUPPETEER_NO_SANDBOX=1`.
+
+- **Client + exit только WebSocket:** `exit --type=websocket`, `client --type=ws-chrome` — по умолчанию встроенная страница в Puppeteer, отдельный HTTP на exit не нужен.
+- **Client + exit с страницей на том же порту:** `exit --type=ws-chrome` отдаёт `GET /clean-vpn-chrome` и WebSocket на upgrade; клиент: `--ws-chrome-exit-page` (или полный `--ws-chrome-url=http://HOST:PORT/clean-vpn-chrome`).
+
+Протокол тот же, что у `--type=websocket`: одно binary WS-сообщение = один IPv4-пакет.
+
 ### Проверка TLS passthrough ([`scripts/probe.js`](scripts/probe.js))
 
 Скрипт подключается к exit как обычный HTTPS-клиент (без ALPN `clean-vpn-tls`), с маркером ALPN `clean-vpn-probe`, чтобы в логах exit было `probeTool=true`. Хост в `--domain` должен совпадать с целью passthrough на exit ([`--tls-probe-target`](scripts/clean-vpn.js), по умолчанию `www.google.com:443`). Если SNI совпадает с [`--tls-public-name`](scripts/clean-vpn.js) на exit, трафик пойдёт на публичный TLS-сервер, а не в passthrough — для проверки обхода используйте другой SNI.

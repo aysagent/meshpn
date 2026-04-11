@@ -26,6 +26,7 @@
     "geoip-lite": "^1.4.10",
     "node-datachannel": "^0.32.1",
     "nodemon": "^3.1.14",
+    "puppeteer": "^24.0.0",
     "ws": "^8.17.0",
     "node-gyp": "^11.0.0"
   },
