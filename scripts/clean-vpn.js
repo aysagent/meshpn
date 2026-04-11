@@ -13,7 +13,8 @@
  * Протокол (socket / http после преамбулы): uint32 BE + сырой IPv4-пакет (как у прежнего tun-helper по транспорту).
  * WebSocket / UDP: одно binary-сообщение или одна датаграмма = один IPv4-пакет (без префикса длины).
  * WebSocket через Puppeteer (--type=ws-chrome): на client Headless Chrome держит исходящий WS к exit; `npm install puppeteer`.
- *   По умолчанию встроенная страница (совместимо с exit --type=websocket). Или exit --type=ws-chrome + GET /clean-vpn-chrome и флаг --ws-chrome-exit-page / --ws-chrome-url=...
+ *   По умолчанию данные идут через локальный ws://127.0.0.1 (без CDP на каждый пакет). Медленный путь: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1.
+ *   --ws-chrome-url=... (произвольная страница) — только CDP-путь. exit --type=ws-chrome + GET /clean-vpn-chrome; Puppeteer с --ws-chrome-exit-page без CDP использует setContent (тот же быстрый мост).
  *   Chrome: --ws-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH; в контейнере: CLEAN_VPN_PUPPETEER_NO_SANDBOX=1
  *   Linux ARM64 (Multipass на Apple Silicon и т.п.): встроенный Chrome из кэша Puppeteer часто ломается — ставьте `chromium-browser`/`chromium` из apt и укажите путь или положитесь на авто-поиск на arm64.
  * WebRTC: сигналинг по WebSocket на --server; один SCTP DataChannel — одно бинарное сообщение = один IPv4-пакет.
@@ -831,6 +832,7 @@ function parseArgs(argv) {
     wsChromeWsUrl: null,
     wsChromeUrl: null,
     wsChromeExitPage: false,
+    wsChromeCdpData: false,
   };
   for (const a of argv) {
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
@@ -864,6 +866,7 @@ function parseArgs(argv) {
     } else if (a.startsWith('--ws-chrome-url=')) {
       out.wsChromeUrl = a.slice('--ws-chrome-url='.length);
     } else if (a === '--ws-chrome-exit-page') out.wsChromeExitPage = true;
+    else if (a === '--ws-chrome-cdp-data') out.wsChromeCdpData = true;
     else if (a === '--split-default') out.splitDefault = true;
   }
   return out;
@@ -1657,7 +1660,8 @@ function resolveLinuxArmSystemChromium() {
   return null;
 }
 
-function buildWsChromeEmbeddedPageHtml(wsUrl) {
+/** Встроенная страница для режима CDP (медленный путь): один WS к exit + exposeFunction/evaluate на пакет. */
+function buildWsChromeCdpEmbeddedPageHtml(wsUrl) {
   const u = JSON.stringify(wsUrl);
   return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><script>
 (function () {
@@ -1673,6 +1677,62 @@ function buildWsChromeEmbeddedPageHtml(wsUrl) {
   window.__cleanVpnSend = function (u8) {
     if (ws.readyState === WebSocket.OPEN) ws.send(u8);
   };
+})();
+</script></body></html>`;
+}
+
+/**
+ * Два WebSocket: к exit и к локальному Node (127.0.0.1). Бинарные кадры 1:1; горячий путь без CDP.
+ */
+function buildWsChromeDualBridgePageHtml(wsUrl, localWsUrl) {
+  const u = JSON.stringify(wsUrl);
+  const l = JSON.stringify(localWsUrl);
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><script>
+(function () {
+  var OPEN = 1;
+  var exitWs = new WebSocket(${u});
+  var localWs = new WebSocket(${l});
+  exitWs.binaryType = 'arraybuffer';
+  localWs.binaryType = 'arraybuffer';
+  var exitBuf = [];
+  var localBuf = [];
+  function flushToLocal() {
+    while (exitBuf.length && localWs.readyState === OPEN) {
+      localWs.send(exitBuf.shift());
+    }
+  }
+  function flushToExit() {
+    while (localBuf.length && exitWs.readyState === OPEN) {
+      exitWs.send(localBuf.shift());
+    }
+  }
+  exitWs.onopen = function () {
+    flushToLocal();
+    if (window.cleanVpnWsReady) window.cleanVpnWsReady();
+  };
+  localWs.onopen = function () {
+    flushToExit();
+  };
+  exitWs.onmessage = function (ev) {
+    var d = ev.data;
+    if (localWs.readyState !== OPEN) {
+      exitBuf.push(d);
+      return;
+    }
+    localWs.send(d);
+  };
+  localWs.onmessage = function (ev) {
+    var d = ev.data;
+    if (exitWs.readyState !== OPEN) {
+      localBuf.push(d);
+      return;
+    }
+    exitWs.send(d);
+  };
+  exitWs.onclose = function () { if (window.cleanVpnWsClosed) window.cleanVpnWsClosed(); };
+  localWs.onclose = function () { if (window.cleanVpnWsClosed) window.cleanVpnWsClosed(); };
+  exitWs.onerror = function () {};
+  localWs.onerror = function () {};
 })();
 </script></body></html>`;
 }
@@ -1703,16 +1763,51 @@ function bufferFromPuppeteerExpose(data) {
  * Puppeteer: страница держит WebSocket к exit; мост с API как у `ws` для attachTunBridge.
  * @param {{
  *   wsUrl: string,
+ *   useLocalBridge: boolean,
  *   executablePath?: string|null,
  *   pageMode: 'embedded'|'goto',
  *   gotoUrl?: string|null,
  * }} opts
  */
 async function createWsChromeClientBridge(opts) {
+  if (opts.useLocalBridge && opts.pageMode === 'goto') {
+    throw new Error('ws-chrome: локальный мост несовместим с pageMode goto');
+  }
+
+  /** @type {import('ws').WebSocketServer|null} */
+  let localWss = null;
+  /** @type {string} */
+  let localWsUrl = '';
+
+  if (opts.useLocalBridge) {
+    localWss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await new Promise((resolve, reject) => {
+      localWss.once('error', reject);
+      localWss.once('listening', resolve);
+    });
+    const ad = localWss.address();
+    if (!ad || typeof ad === 'string') {
+      try {
+        localWss.close();
+      } catch {
+        /* ignore */
+      }
+      throw new Error('ws-chrome: не удалось получить адрес локального WSS');
+    }
+    localWsUrl = `ws://127.0.0.1:${ad.port}/`;
+  }
+
   let puppeteerMod;
   try {
     puppeteerMod = await import('puppeteer');
   } catch (e) {
+    if (localWss) {
+      try {
+        localWss.close();
+      } catch {
+        /* ignore */
+      }
+    }
     throw new Error('Для --type=ws-chrome установите: npm install puppeteer', { cause: e });
   }
   const puppeteer = puppeteerMod.default ?? puppeteerMod;
@@ -1743,6 +1838,13 @@ async function createWsChromeClientBridge(opts) {
   try {
     browser = await puppeteer.launch(launchOpts);
   } catch (launchErr) {
+    if (localWss) {
+      try {
+        localWss.close();
+      } catch {
+        /* ignore */
+      }
+    }
     const hint = `ws-chrome: не удалось запустить браузер (${launchErr?.message || launchErr}).
 Частые причины на Linux ARM64 (Multipass/VM на Mac M*):
   sudo apt update && sudo apt install -y chromium-browser
@@ -1754,6 +1856,63 @@ async function createWsChromeClientBridge(opts) {
     throw new Error(hint, { cause: launchErr });
   }
   const page = await browser.newPage();
+
+  const lifecycle = new EventEmitter();
+
+  if (opts.useLocalBridge) {
+    console.log('[clean-vpn] ws-chrome: локальный WS-мост 127.0.0.1 (данные не через CDP)');
+
+    let localConnDone = false;
+    const localClientPromise = new Promise((resolve, reject) => {
+      const to = setTimeout(
+        () => reject(new Error('ws-chrome: таймаут подключения локального WS моста')),
+        120000,
+      );
+      localWss.on('connection', (ws) => {
+        if (localConnDone) {
+          try {
+            ws.close();
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
+        localConnDone = true;
+        clearTimeout(to);
+        resolve(ws);
+      });
+    });
+
+    await page.exposeFunction('cleanVpnWsReady', () => {
+      lifecycle.emit('_chromeWsOpen');
+    });
+    await page.exposeFunction('cleanVpnWsClosed', () => {
+      lifecycle.emit('close');
+    });
+
+    await page.setContent(buildWsChromeDualBridgePageHtml(opts.wsUrl, localWsUrl), {
+      waitUntil: 'domcontentloaded',
+    });
+
+    const bridge = await localClientPromise;
+
+    await new Promise((resolve, reject) => {
+      const to = setTimeout(
+        () => reject(new Error('ws-chrome: таймаут WebSocket к exit')),
+        120000,
+      );
+      lifecycle.once('_chromeWsOpen', () => {
+        clearTimeout(to);
+        resolve(undefined);
+      });
+      lifecycle.once('close', () => {
+        clearTimeout(to);
+        reject(new Error('ws-chrome: WebSocket закрыт до готовности'));
+      });
+    });
+
+    return { bridge, browser, page, localWss };
+  }
 
   const bridge = new EventEmitter();
 
@@ -1772,12 +1931,14 @@ async function createWsChromeClientBridge(opts) {
     bridge.emit('close');
   });
 
+  console.log('[clean-vpn] ws-chrome: данные через Puppeteer/CDP (медленный путь)');
+
   if (opts.pageMode === 'goto') {
     const url = opts.gotoUrl;
     if (!url) throw new Error('ws-chrome: пустой goto URL');
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
   } else {
-    await page.setContent(buildWsChromeEmbeddedPageHtml(opts.wsUrl), {
+    await page.setContent(buildWsChromeCdpEmbeddedPageHtml(opts.wsUrl), {
       waitUntil: 'domcontentloaded',
     });
   }
@@ -1808,7 +1969,7 @@ async function createWsChromeClientBridge(opts) {
       .catch((e) => bridge.emit('error', e));
   };
 
-  return { bridge, browser, page };
+  return { bridge, browser, page, localWss: null };
 }
 
 // =============================================================================
@@ -2377,6 +2538,7 @@ async function runClient({
   wsChromeWsUrl,
   wsChromeUrl,
   wsChromeExitPage,
+  wsChromeCdpData,
 }) {
   const { host, port } = parseHostPort(server);
   const tunName = findFreeTunName();
@@ -2396,6 +2558,8 @@ async function runClient({
   let tlsVpnSocket = null;
   /** @type {any} */
   let wsChromeBrowser = null;
+  /** @type {import('ws').WebSocketServer|null} */
+  let wsChromeLocalWss = null;
 
   let shuttingDown = false;
   const shutdown = () => {
@@ -2435,6 +2599,19 @@ async function runClient({
       console.log('[clean-vpn] client: остановка');
       process.exit(0);
     };
+    try {
+      if (wsChromeLocalWss) {
+        const w = wsChromeLocalWss;
+        wsChromeLocalWss = null;
+        try {
+          w.close();
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
     try {
       if (wsChromeBrowser) {
         const b = wsChromeBrowser;
@@ -2486,23 +2663,30 @@ async function runClient({
   if (type === 'ws-chrome') {
     const wsUrl = wsChromeWsUrl || `ws://${host}:${port}/`;
     const exe = wsChromeExecutable || process.env.PUPPETEER_EXECUTABLE_PATH || null;
+    const forceCdp =
+      process.env.CLEAN_VPN_WS_CHROME_CDP_DATA === '1' || wsChromeCdpData;
+    const useLocalBridge = !forceCdp && !wsChromeUrl;
+
     let pageMode = 'embedded';
     /** @type {string|null} */
     let gotoUrl = null;
     if (wsChromeUrl) {
       pageMode = 'goto';
       gotoUrl = wsChromeUrl;
-    } else if (wsChromeExitPage) {
+    } else if (wsChromeExitPage && forceCdp) {
       pageMode = 'goto';
       gotoUrl = `http://${host}:${port}/clean-vpn-chrome`;
     }
-    const { bridge, browser } = await createWsChromeClientBridge({
+
+    const { bridge, browser, localWss } = await createWsChromeClientBridge({
       wsUrl,
       executablePath: exe,
       pageMode,
       gotoUrl,
+      useLocalBridge,
     });
     wsChromeBrowser = browser;
+    if (localWss) wsChromeLocalWss = localWss;
     bridge.on('close', () => {
       console.error('[clean-vpn] ws-chrome: WebSocket закрыт');
       shutdown();
@@ -2829,8 +3013,8 @@ async function main() {
 --tls-probe-max-bytes=N: короткий passthrough, лимит байт обоих направлений (default 49152)
 --tls-probe-max-seconds=S: лимит времени passthrough-сессии (default 30)
 --tls-probe-full-proxy-per-ip=K: не более K «длинных» passthrough с одного IP за сутки (default 0 = только короткий)
---type=ws-chrome: client — Puppeteer + Chrome держит WS к exit (npm install puppeteer). По умолчанию встроенная страница (exit может быть websocket). exit ws-chrome — HTTP /clean-vpn-chrome + WS на одном порту; client тогда --ws-chrome-exit-page или свой --ws-chrome-url=...
---ws-chrome-executable=PATH, --ws-chrome-ws-url=ws://..., --ws-chrome-url=http://... (goto), --ws-chrome-exit-page (goto http://HOST:PORT/clean-vpn-chrome)`);
+--type=ws-chrome: client — Puppeteer + Chrome держит WS к exit (npm install puppeteer). По умолчанию быстрый локальный WS-мост 127.0.0.1; медленный CDP на пакет: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1. exit ws-chrome — HTTP /clean-vpn-chrome + WS; без CDP клиент с --ws-chrome-exit-page использует setContent (не загрузка страницы с exit). Произвольная страница: --ws-chrome-url=... — только CDP.
+--ws-chrome-executable=PATH, --ws-chrome-ws-url=ws://..., --ws-chrome-url=http://... (goto), --ws-chrome-exit-page, --ws-chrome-cdp-data`);
     process.exit(1);
   }
 

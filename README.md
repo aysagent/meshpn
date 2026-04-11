@@ -456,8 +456,11 @@ mesh-vpn/
 
 Трафик VPN идёт через **Headless Chrome**: на клиенте страница открывает **исходящий** WebSocket к exit (в браузере нельзя поднять WS-сервер для произвольных входящих). Зависимость: `puppeteer` (ставится с `npm install`). Свой Chrome: `--ws-chrome-executable=PATH` или `PUPPETEER_EXECUTABLE_PATH`. В Docker часто нужно `CLEAN_VPN_PUPPETEER_NO_SANDBOX=1`.
 
-- **Client + exit только WebSocket:** `exit --type=websocket`, `client --type=ws-chrome` — по умолчанию встроенная страница в Puppeteer, отдельный HTTP на exit не нужен.
-- **Client + exit с страницей на том же порту:** `exit --type=ws-chrome` отдаёт `GET /clean-vpn-chrome` и WebSocket на upgrade; клиент: `--ws-chrome-exit-page` (или полный `--ws-chrome-url=http://HOST:PORT/clean-vpn-chrome`).
+**Производительность:** по умолчанию клиент поднимает **локальный** `WebSocketServer` на `127.0.0.1` и встраивает страницу с **двумя** сокетами (exit ↔ localhost): пакеты не проходят через CDP `evaluate` / `exposeFunction`, ожидается заметно выше пропускной способности, чем у чистого CDP-пути. Медленный режим (как раньше, на каждый пакет через Puppeteer): флаг **`--ws-chrome-cdp-data`** или **`CLEAN_VPN_WS_CHROME_CDP_DATA=1`**.
+
+- **Client + exit только WebSocket:** `exit --type=websocket`, `client --type=ws-chrome` — встроенная страница в Puppeteer, отдельный HTTP на exit не нужен.
+- **Client + exit с страницей на том же порту:** `exit --type=ws-chrome` отдаёт `GET /clean-vpn-chrome` и WebSocket на upgrade. Без CDP клиент с **`--ws-chrome-exit-page`** всё равно получает тот же быстрый двойной мост через `setContent` (URL exit вшит в скрипт); загрузка HTML с exit нужна только если включён CDP (`--ws-chrome-cdp-data`) или для ручной проверки в обычном браузере. Полный URL: `--ws-chrome-url=http://HOST:PORT/clean-vpn-chrome`.
+- **`--ws-chrome-url=...` (произвольная страница):** локальный мост не внедрить — используется только CDP-путь (медленнее); страница должна вызывать те же `exposeFunction`, что и встроенная (см. исходник `scripts/clean-vpn.js`).
 
 Протокол тот же, что у `--type=websocket`: одно binary WS-сообщение = один IPv4-пакет.
 
