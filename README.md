@@ -474,6 +474,10 @@ sudo env PATH=$PATH node scripts/clean-vpn.js ... --type=ws-chrome --ws-chrome-e
 
 После неудачной загрузки можно сбросить кэш: `rm -rf ~/.cache/puppeteer`. Запуск под `sudo` уже добавляет `--no-sandbox` для Chrome.
 
+#### `--type=rtc-chrome` (Puppeteer + WebRTC)
+
+Только **client**. На **exit** используйте **`--type=webrtc`** (тот же WebSocket-сигналинг и Data Channel с меткой `clean-vpn`). В Headless Chrome создаётся нативный **`RTCPeerConnection`**: JSON-сигналинг на `ws://HOST:PORT/` совпадает с Node-клиентом webrtc; **IPv4-пакеты** между TUN и страницей идут через **локальный WebSocket** на `127.0.0.1` (аналогично быстрому ws-chrome), в странице они пересылаются в Data Channel. Нужны **`puppeteer`**, **`--config`** / **`--ice-mode`** (как для webrtc), опционально **`--rtc-chrome-executable=PATH`** или **`PUPPETEER_EXECUTABLE_PATH`**.
+
 ### Проверка TLS passthrough ([`scripts/probe.js`](scripts/probe.js))
 
 Скрипт подключается к exit как обычный HTTPS-клиент (без ALPN `clean-vpn-tls`), с маркером ALPN `clean-vpn-probe`, чтобы в логах exit было `probeTool=true`. Хост в `--domain` должен совпадать с целью passthrough на exit ([`--tls-probe-target`](scripts/clean-vpn.js), по умолчанию `www.google.com:443`). Если SNI совпадает с [`--tls-public-name`](scripts/clean-vpn.js) на exit, трафик пойдёт на публичный TLS-сервер, а не в passthrough — для проверки обхода используйте другой SNI.
