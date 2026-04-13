@@ -464,7 +464,7 @@ mesh-vpn/
 
 Протокол тот же, что у `--type=websocket`: одно binary WS-сообщение = один IPv4-пакет.
 
-**Обратный WebSocket (`--reverse`):** на VPS запускается **client**, который **слушает** `ws://` на `--server` (например `0.0.0.0:8765`); локально — **exit**, который **подключается** к `VPS:8765`. Трафик с VPS уходит в туннель, в интернет он выходит через NAT локального exit. Сейчас поддерживается только `--type=websocket`. Для `client --reverse` обязателен **`--tunnel-peer=ПУБЛИЧНЫЙ_IP`** (или hostname) машины, где запущен **exit** — так задаётся обход маршрута к пиру WebSocket (иначе при `--split-default` возможна петля). Пример: `CLEAN_VPN_REVERSE=1` эквивалентен флагу `--reverse`.
+**Обратный WebSocket (`--reverse`):** на VPS — **client**, **слушает** `ws://` на `--server` (например `0.0.0.0:8765`); локально за NAT — **exit**, **исходящий** WebSocket к VPS (белый IP на exit не нужен). При **`--split-default`** на VPS добавляется маршрут обхода к **пиру TCP** (обычно публичный IP вашего NAT): **автоматически** по `remoteAddress` после accept или заранее через **`--tunnel-peer=HOST`**. Без **`--split-default`** такой `/32` к пиру **не** настраивается (трафик к пиру идёт системным default через uplink). `CLEAN_VPN_REVERSE=1` эквивалентен `--reverse`.
 
 **Ubuntu ARM64 в Multipass на Mac (M1/M2/M3):** Chrome из `~/.cache/puppeteer` часто не запускается (ошибки вроде `Syntax error: ";" unexpected` у бинарника). Поставьте системный Chromium и укажите путь, либо скрипт на **arm64** сам попробует `/usr/bin/chromium-browser`, `/usr/bin/chromium`, `/snap/bin/chromium`:
 

@@ -37,9 +37,9 @@
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=websocket
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=websocket --split-default
  *   Обратный WebSocket (exit подключается к client на VPS): client слушает, exit инициирует.
- *   sudo ... --role=client --server=0.0.0.0:8765 --type=websocket --reverse --tunnel-peer=ПУБЛИЧНЫЙ_IP_где_exit --split-default
+ *   sudo ... --role=client --server=0.0.0.0:8765 --type=websocket --reverse --split-default
  *   sudo ... --role=exit --server=VPS:8765 --type=websocket --reverse --ext=eth0
- *   Для client --reverse обязателен --tunnel-peer (IP/hostname узла с exit) — bypass маршрута к пиру. Или CLEAN_VPN_REVERSE=1.
+ *   На VPS при --split-default: bypass к пиру WS по TCP remoteAddress после accept (обычно WAN NAT дома) или через --tunnel-peer; без split-default маршрут /32 к пиру не добавляется. CLEAN_VPN_REVERSE=1 — как --reverse.
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=ws-chrome
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=ws-chrome --split-default [--ws-chrome-exit-page]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:51820 --type=udp
@@ -1128,27 +1128,95 @@ function setupTunIp(role, ifname) {
   ip(['link', 'set', 'dev', ifname, 'mtu', String(TUN_MTU), 'up']);
 }
 
-async function setupClientRoutesAsync(ifname, serverHost, splitDefault) {
+/**
+ * IPv4 пира TCP сокета (для reverse WebSocket client на VPS).
+ * @param {string|undefined} remoteAddress
+ */
+function normalizePeerIpv4(remoteAddress) {
+  if (!remoteAddress || typeof remoteAddress !== 'string') {
+    throw new Error('clean-vpn: нет remoteAddress у сокета WebSocket');
+  }
+  let a = remoteAddress;
+  if (a.startsWith('::ffff:')) a = a.slice(7);
+  if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(a)) {
+    throw new Error(
+      `clean-vpn: ожидался IPv4-пир WS (NAT), получено: ${remoteAddress}`,
+    );
+  }
+  return a;
+}
+
+/**
+ * @param {{ serverIp: string|null, gw: string|null, dev: string, snapPeer?: unknown[] }} ctx
+ * @param {string} peerIp
+ */
+function addClientWsPeerBypass(ctx, peerIp) {
+  if (ctx.peerIp) {
+    throw new Error('clean-vpn: bypass пира WS уже установлен');
+  }
+  const { gw, dev } = ctx;
+  const snapPeer = captureServerRoutes(peerIp);
+  console.log(
+    `[clean-vpn] bypass маршрут к пиру WebSocket ${peerIp}/32 через ${dev}`,
+  );
+  if (gw) {
+    ip(['route', 'replace', `${peerIp}/32`, 'via', gw, 'dev', dev]);
+  } else {
+    ip(['route', 'replace', `${peerIp}/32`, 'dev', dev]);
+  }
+  ctx.peerIp = peerIp;
+  ctx.snapPeer = snapPeer;
+}
+
+/**
+ * @param {string} ifname
+ * @param {string} serverHost
+ * @param {boolean} splitDefault
+ * @param {{ deferPeerBypass?: boolean; reverseWebsocket?: boolean }} [opts]
+ */
+async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
+  const deferPeerBypass = opts?.deferPeerBypass === true;
+  const reverseWebsocket = opts?.reverseWebsocket === true;
   const dr = getDefaultRouteLinux();
   if (!dr) throw new Error('Не найден default route (ip route show default)');
   const { gw, dev } = dr;
 
-  let serverIp = serverHost;
-  if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(serverHost)) {
-    serverIp = (await dns.lookup(serverHost, { family: 4 })).address;
+  /** @type {string|null} */
+  let serverIp = null;
+  /** @type {unknown[]} */
+  let snapHost = [];
+  if (!deferPeerBypass) {
+    if (!reverseWebsocket || splitDefault) {
+      let resolved = serverHost;
+      if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(serverHost)) {
+        resolved = (await dns.lookup(serverHost, { family: 4 })).address;
+      }
+      serverIp = resolved;
+      snapHost = captureServerRoutes(serverIp);
+      console.log(`[clean-vpn] bypass маршрут к серверу ${serverIp} через ${dev}`);
+      if (gw) {
+        ip(['route', 'replace', `${serverIp}/32`, 'via', gw, 'dev', dev]);
+      } else {
+        ip(['route', 'replace', `${serverIp}/32`, 'dev', dev]);
+      }
+    } else {
+      console.log(
+        '[clean-vpn] reverse WebSocket без --split-default: bypass к --tunnel-peer не настраивается (default через uplink)',
+      );
+    }
+  } else if (splitDefault) {
+    console.log(
+      '[clean-vpn] reverse WebSocket: bypass к TCP-пиру (обычно NAT за exit) после accept',
+    );
+  } else {
+    console.log(
+      '[clean-vpn] reverse WebSocket без --split-default: bypass к пиру после accept не настраивается (default через uplink)',
+    );
   }
 
   const prevRpAll = getSysctlNum('net.ipv4.conf.all.rp_filter');
-  const snapHost = captureServerRoutes(serverIp);
   const snap01 = splitDefault ? [...captureRoutesByDst('0.0.0.0/1')] : [];
   const snap128 = splitDefault ? [...captureRoutesByDst('128.0.0.0/1')] : [];
-
-  console.log(`[clean-vpn] bypass маршрут к серверу ${serverIp} через ${dev}`);
-  if (gw) {
-    ip(['route', 'replace', `${serverIp}/32`, 'via', gw, 'dev', dev]);
-  } else {
-    ip(['route', 'replace', `${serverIp}/32`, 'dev', dev]);
-  }
 
   if (splitDefault) {
     ip(['route', 'replace', '0.0.0.0/1', 'dev', ifname]);
@@ -1174,11 +1242,13 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault) {
 
   return {
     serverIp,
+    peerIp: null,
     gw,
     dev,
     splitDefault,
     prevRpAll,
     snapHost,
+    snapPeer: [],
     snap01,
     snap128,
     ifname,
@@ -1187,7 +1257,19 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault) {
 
 function teardownClientRoutes(ctx) {
   if (!ctx) return;
-  const { serverIp, gw, dev, splitDefault, prevRpAll, snapHost, snap01, snap128, ifname } = ctx;
+  const {
+    serverIp,
+    peerIp,
+    gw,
+    dev,
+    splitDefault,
+    prevRpAll,
+    snapHost,
+    snapPeer,
+    snap01,
+    snap128,
+    ifname,
+  } = ctx;
 
   if (splitDefault) {
     tryIpRoute(['route', 'del', '0.0.0.0/1', 'dev', ifname]);
@@ -1197,12 +1279,23 @@ function teardownClientRoutes(ctx) {
     delSplitPrivateUplinkRoutes(gw, dev);
   }
 
-  if (gw) {
-    tryIpRoute(['route', 'del', `${serverIp}/32`, 'via', gw, 'dev', dev]);
-  } else {
-    tryIpRoute(['route', 'del', `${serverIp}/32`, 'dev', dev]);
+  if (peerIp) {
+    if (gw) {
+      tryIpRoute(['route', 'del', `${peerIp}/32`, 'via', gw, 'dev', dev]);
+    } else {
+      tryIpRoute(['route', 'del', `${peerIp}/32`, 'dev', dev]);
+    }
+    restoreRoutesFromRecords(snapPeer || []);
   }
-  restoreRoutesFromRecords(snapHost);
+
+  if (serverIp) {
+    if (gw) {
+      tryIpRoute(['route', 'del', `${serverIp}/32`, 'via', gw, 'dev', dev]);
+    } else {
+      tryIpRoute(['route', 'del', `${serverIp}/32`, 'dev', dev]);
+    }
+    restoreRoutesFromRecords(snapHost || []);
+  }
 
   if (prevRpAll != null) {
     try {
@@ -2997,16 +3090,17 @@ async function runClient({
       '[clean-vpn] --reverse сейчас поддерживается только с --type=websocket',
     );
   }
-  if (reverse && type === 'websocket' && !tunnelPeer) {
-    throw new Error(
-      '[clean-vpn] client --reverse: укажите --tunnel-peer=ПУБЛИЧНЫЙ_IP (или hostname) узла, где запущен exit — для bypass-маршрута к пиру WebSocket',
-    );
-  }
-  const routeHost = reverse && type === 'websocket' ? tunnelPeer : host;
+  const deferWsPeerBypass =
+    reverse && type === 'websocket' && !tunnelPeer;
+  const routeHost =
+    reverse && type === 'websocket' && tunnelPeer ? tunnelPeer : host;
   const tunName = findFreeTunName();
   const { tun, name: ifname } = openTunNative(tunName);
   setupTunIp('client', ifname);
-  const routeCtx = await setupClientRoutesAsync(ifname, routeHost, splitDefault);
+  const routeCtx = await setupClientRoutesAsync(ifname, routeHost, splitDefault, {
+    deferPeerBypass: deferWsPeerBypass,
+    reverseWebsocket: reverse && type === 'websocket',
+  });
 
   /** @type {import('node-datachannel').PeerConnection|null} */
   let webrtcPc = null;
@@ -3144,6 +3238,10 @@ async function runClient({
         clientReverseWss.once('error', reject);
       });
       ws.binaryType = 'nodebuffer';
+      if (deferWsPeerBypass && splitDefault) {
+        const peerIp = normalizePeerIpv4(ws._socket?.remoteAddress);
+        addClientWsPeerBypass(routeCtx, peerIp);
+      }
       attachTunBridge(tun, 'websocket', ws);
       return;
     }
@@ -3544,8 +3642,8 @@ async function main() {
 --type=ws-chrome: client — Puppeteer + Chrome держит WS к exit (npm install puppeteer). По умолчанию быстрый локальный WS-мост 127.0.0.1; медленный CDP на пакет: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1. exit ws-chrome — HTTP /clean-vpn-chrome + WS; без CDP клиент с --ws-chrome-exit-page использует setContent (не загрузка страницы с exit). Произвольная страница: --ws-chrome-url=... — только CDP.
 --ws-chrome-executable=PATH, --ws-chrome-ws-url=ws://..., --ws-chrome-url=http://... (goto), --ws-chrome-exit-page, --ws-chrome-cdp-data
 --type=rtc-chrome: только client — Puppeteer + Chrome WebRTC DataChannel к exit --type=webrtc; локальный WS-мост к TUN; npm install puppeteer; --rtc-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH
---reverse: только с --type=websocket — меняет направление: client слушает --server, exit подключается к нему (локальный exit → удалённый client). Для client --reverse нужен --tunnel-peer=HOST (публичный адрес узла с exit). CLEAN_VPN_REVERSE=1 — то же, что флаг.
---tunnel-peer=HOST: только client + websocket + --reverse — адрес для bypass-маршрута к пиру WebSocket`);
+--reverse: только с --type=websocket — client слушает --server, exit подключается (локальный exit за NAT → client на VPS). С --split-default: bypass к пиру после accept по remoteAddress (или --tunnel-peer); без split-default /32 к пиру не ставится. CLEAN_VPN_REVERSE=1 — как флаг.
+--tunnel-peer=HOST: опционально client + websocket + --reverse — bypass к пиру до accept при --split-default (стабильный IPv4 пира)`);
     process.exit(1);
   }
 
