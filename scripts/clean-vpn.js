@@ -36,6 +36,10 @@
  *   HTTP (--type=http): тот же TCP, что socket; клиент — GET /clean-vpn, ответ 200, затем uint32+IPv4 (см. строку «Протокол» выше).
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=websocket
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=websocket --split-default
+ *   Обратный WebSocket (exit подключается к client на VPS): client слушает, exit инициирует.
+ *   sudo ... --role=client --server=0.0.0.0:8765 --type=websocket --reverse --tunnel-peer=ПУБЛИЧНЫЙ_IP_где_exit --split-default
+ *   sudo ... --role=exit --server=VPS:8765 --type=websocket --reverse --ext=eth0
+ *   Для client --reverse обязателен --tunnel-peer (IP/hostname узла с exit) — bypass маршрута к пиру. Или CLEAN_VPN_REVERSE=1.
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=ws-chrome
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=ws-chrome --split-default [--ws-chrome-exit-page]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:51820 --type=udp
@@ -895,6 +899,8 @@ function parseArgs(argv) {
     wsChromeExitPage: false,
     wsChromeCdpData: false,
     rtcChromeExecutable: null,
+    reverse: process.env.CLEAN_VPN_REVERSE === '1',
+    tunnelPeer: null,
   };
   for (const a of argv) {
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
@@ -931,6 +937,9 @@ function parseArgs(argv) {
     else if (a === '--ws-chrome-cdp-data') out.wsChromeCdpData = true;
     else if (a.startsWith('--rtc-chrome-executable=')) {
       out.rtcChromeExecutable = a.slice('--rtc-chrome-executable='.length);
+    } else if (a === '--reverse') out.reverse = true;
+    else if (a.startsWith('--tunnel-peer=')) {
+      out.tunnelPeer = a.slice('--tunnel-peer='.length);
     } else if (a === '--split-default') out.splitDefault = true;
   }
   return out;
@@ -2390,8 +2399,14 @@ async function runExit({
   tlsProbeMaxSeconds,
   tlsProbeFullProxyPerIp,
   tlsServerName,
+  reverse,
 }) {
   const { host, port } = parseHostPort(server);
+  if (reverse && type !== 'websocket') {
+    throw new Error(
+      '[clean-vpn] --reverse сейчас поддерживается только с --type=websocket',
+    );
+  }
   if (type === 'rtc-chrome') {
     throw new Error(
       '[clean-vpn] --type=rtc-chrome только для --role=client; на exit используйте --type=webrtc',
@@ -2406,6 +2421,8 @@ async function runExit({
   let activeTcp = null;
   /** @type {import('ws').WebSocketServer|null} */
   let wss = null;
+  /** @type {import('ws').WebSocket|null} */
+  let exitReverseWs = null;
   /** @type {import('http').Server|null} */
   let httpChromeSrv = null;
   /** @type {import('net').Server|null} */
@@ -2440,6 +2457,14 @@ async function runExit({
       if (webrtcPc) {
         webrtcPc.destroy();
         webrtcPc = null;
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (exitReverseWs) {
+        exitReverseWs.close();
+        exitReverseWs = null;
       }
     } catch {
       /* ignore */
@@ -2527,6 +2552,25 @@ async function runExit({
 
   // --- runExit: --type=websocket ---
   if (type === 'websocket') {
+    if (reverse) {
+      let connectHost = host;
+      if (net.isIP(host) === 0) {
+        connectHost = (await dns.lookup(host, { family: 4 })).address;
+      }
+      const url = `ws://${connectHost}:${port}/`;
+      console.log(
+        `[clean-vpn] exit WebSocket --reverse: подключение к ${url} (пир — слушающий client)`,
+      );
+      exitReverseWs = new WebSocket(url);
+      exitReverseWs.binaryType = 'nodebuffer';
+      await new Promise((resolve, reject) => {
+        exitReverseWs.once('open', resolve);
+        exitReverseWs.once('error', reject);
+      });
+      console.log('[clean-vpn] exit WebSocket reverse: соединение установлено');
+      startBridge(exitReverseWs, null, 'websocket');
+      return;
+    }
     wss = new WebSocketServer({ host, port });
     wss.on('listening', () => {
       console.log(`[clean-vpn] exit WebSocket ws://${host === '0.0.0.0' ? '*' : host}:${port}/`);
@@ -2944,12 +2988,25 @@ async function runClient({
   wsChromeExitPage,
   wsChromeCdpData,
   rtcChromeExecutable,
+  reverse,
+  tunnelPeer,
 }) {
   const { host, port } = parseHostPort(server);
+  if (reverse && type !== 'websocket') {
+    throw new Error(
+      '[clean-vpn] --reverse сейчас поддерживается только с --type=websocket',
+    );
+  }
+  if (reverse && type === 'websocket' && !tunnelPeer) {
+    throw new Error(
+      '[clean-vpn] client --reverse: укажите --tunnel-peer=ПУБЛИЧНЫЙ_IP (или hostname) узла, где запущен exit — для bypass-маршрута к пиру WebSocket',
+    );
+  }
+  const routeHost = reverse && type === 'websocket' ? tunnelPeer : host;
   const tunName = findFreeTunName();
   const { tun, name: ifname } = openTunNative(tunName);
   setupTunIp('client', ifname);
-  const routeCtx = await setupClientRoutesAsync(ifname, host, splitDefault);
+  const routeCtx = await setupClientRoutesAsync(ifname, routeHost, splitDefault);
 
   /** @type {import('node-datachannel').PeerConnection|null} */
   let webrtcPc = null;
@@ -2965,6 +3022,8 @@ async function runClient({
   let wsChromeBrowser = null;
   /** @type {import('ws').WebSocketServer|null} */
   let wsChromeLocalWss = null;
+  /** @type {import('ws').WebSocketServer|null} */
+  let clientReverseWss = null;
 
   let shuttingDown = false;
   const shutdown = () => {
@@ -3004,6 +3063,19 @@ async function runClient({
       console.log('[clean-vpn] client: остановка');
       process.exit(0);
     };
+    try {
+      if (clientReverseWss) {
+        const w = clientReverseWss;
+        clientReverseWss = null;
+        try {
+          w.close();
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
     try {
       if (wsChromeLocalWss) {
         const w = wsChromeLocalWss;
@@ -3052,6 +3124,29 @@ async function runClient({
 
   // --- runClient: --type=websocket ---
   if (type === 'websocket') {
+    if (reverse) {
+      clientReverseWss = new WebSocketServer({ host, port });
+      await new Promise((resolve, reject) => {
+        clientReverseWss.once('listening', resolve);
+        clientReverseWss.once('error', reject);
+      });
+      console.log(
+        `[clean-vpn] client WebSocket --reverse: слушаем ws://${host === '0.0.0.0' ? '*' : host}:${port}/ (ожидаем exit)`,
+      );
+      const ws = await new Promise((resolve, reject) => {
+        clientReverseWss.once('connection', (w) => {
+          console.log('[clean-vpn] client reverse: exit подключился');
+          clientReverseWss.clients.forEach((c) => {
+            if (c !== w) c.close();
+          });
+          resolve(w);
+        });
+        clientReverseWss.once('error', reject);
+      });
+      ws.binaryType = 'nodebuffer';
+      attachTunBridge(tun, 'websocket', ws);
+      return;
+    }
     const url = `ws://${host}:${port}/`;
     const ws = new WebSocket(url);
     ws.binaryType = 'nodebuffer';
@@ -3448,7 +3543,9 @@ async function main() {
 --tls-probe-full-proxy-per-ip=K: не более K «длинных» passthrough с одного IP за сутки (default 0 = только короткий)
 --type=ws-chrome: client — Puppeteer + Chrome держит WS к exit (npm install puppeteer). По умолчанию быстрый локальный WS-мост 127.0.0.1; медленный CDP на пакет: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1. exit ws-chrome — HTTP /clean-vpn-chrome + WS; без CDP клиент с --ws-chrome-exit-page использует setContent (не загрузка страницы с exit). Произвольная страница: --ws-chrome-url=... — только CDP.
 --ws-chrome-executable=PATH, --ws-chrome-ws-url=ws://..., --ws-chrome-url=http://... (goto), --ws-chrome-exit-page, --ws-chrome-cdp-data
---type=rtc-chrome: только client — Puppeteer + Chrome WebRTC DataChannel к exit --type=webrtc; локальный WS-мост к TUN; npm install puppeteer; --rtc-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH`);
+--type=rtc-chrome: только client — Puppeteer + Chrome WebRTC DataChannel к exit --type=webrtc; локальный WS-мост к TUN; npm install puppeteer; --rtc-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH
+--reverse: только с --type=websocket — меняет направление: client слушает --server, exit подключается к нему (локальный exit → удалённый client). Для client --reverse нужен --tunnel-peer=HOST (публичный адрес узла с exit). CLEAN_VPN_REVERSE=1 — то же, что флаг.
+--tunnel-peer=HOST: только client + websocket + --reverse — адрес для bypass-маршрута к пиру WebSocket`);
     process.exit(1);
   }
 
