@@ -18,7 +18,7 @@
  *   --ws-chrome-url=... (произвольная страница) — только CDP-путь. exit --type=ws-chrome + GET /clean-vpn-chrome; Puppeteer с --ws-chrome-exit-page без CDP использует setContent (тот же быстрый мост).
  *   Chrome: --ws-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH; в контейнере: CLEAN_VPN_PUPPETEER_NO_SANDBOX=1
  *   Linux ARM64 (Multipass на Apple Silicon и т.п.): встроенный Chrome из кэша Puppeteer часто ломается — ставьте `chromium-browser`/`chromium` из apt и укажите путь или положитесь на авто-поиск на arm64.
- * WebRTC: сигналинг по WebSocket на --server; один SCTP DataChannel — одно бинарное сообщение = один IPv4-пакет.
+ * WebRTC: сигналинг по WebSocket; по умолчанию exit слушает --server, client коннектится; --signaling (client) / --signaling-connect (exit) меняют сторону. Один SCTP DataChannel — одно бинарное сообщение = один IPv4-пакет.
  * ICE/STUN/TURN: из --config (по умолчанию config/default.json), см. --ice-mode.
  * QUIC (Node 25+): нативный node:quic, ALPN clean-vpn, один bidi stream = тот же uint32+IPv4, что TCP.
  *   Нужен бинарь Node, собранный с QUIC (в рантайме: node -p "process.config.variables.node_use_quic" — должно быть истинно); одного флага --experimental-quic недостаточно, если модуль не вкомпилирован (часто apt/snap).
@@ -46,6 +46,7 @@
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:51820 --type=udp --split-default
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:9876 --type=webrtc [--config=config/exit-node.json]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:9876 --type=webrtc --split-default --ice-mode=relay
+ *   Сигналинг на VPS (client слушает): client --server=0.0.0.0:9876 --type=webrtc --signaling --split-default; exit --signaling-connect --server=VPS:9876 --type=webrtc --ext=eth0
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:9876 --type=rtc-chrome --split-default [--config=...] [--rtc-chrome-executable=...]
  *   sudo env PATH=$PATH node --experimental-quic scripts/clean-vpn.js --role=exit --server=0.0.0.0:4433 --type=quic
  *   sudo env PATH=$PATH node --experimental-quic scripts/clean-vpn.js --role=client --server=VPS:4433 --type=quic --split-default
@@ -871,6 +872,219 @@ function loadWebrtcBrowserIceFromConfig(configPath, cliIceMode) {
   return { iceServers, iceMode, configPath: resolved };
 }
 
+/** WebRTC: WSS сигналинга на этой ноде (client + --signaling) или по умолчанию на exit. */
+function webrtcSignalingListens(role, signaling, signalingConnect) {
+  if (role === 'exit') {
+    if (signalingConnect) return false;
+    return true;
+  }
+  return signaling === true;
+}
+
+/** WebSocket VPN: кто слушает на --server (совместимо с --reverse; --ws-server / --ws-connect переопределяют). */
+function websocketVpnListens(role, reverse, wsServer, wsConnect) {
+  if (wsConnect) return false;
+  if (wsServer) return true;
+  return (role === 'exit' && !reverse) || (role === 'client' && reverse);
+}
+
+function assertOutboundWsHost(host, hint) {
+  if (host === '0.0.0.0' || host === '::' || host === '[::]') {
+    throw new Error(
+      `[clean-vpn] для исходящего WebSocket укажите реальный адрес пира в --server, либо поднимите приёмник на этой ноде (${hint}).`,
+    );
+  }
+}
+
+/**
+ * @param {import('ws').WebSocket} ws
+ * @param {ReturnType<typeof openTunNative>['tun']} tun
+ * @param {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} ice
+ * @param {{
+ *   setActive: (pc: import('node-datachannel').PeerConnection | null) => void;
+ *   clearIfStill: (pc: import('node-datachannel').PeerConnection) => void;
+ * }} pcRef
+ */
+function attachCleanVpnWebrtcExitSignaling(ws, tun, ice, pcRef) {
+  let handshakeDone = false;
+  /** @type {import('node-datachannel').PeerConnection|null} */
+  let connPc = null;
+
+  const signal = (msg) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify(msg));
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const handleSignal = (msg) => {
+    if (!connPc) return;
+    if (msg.type === 'offer') connPc.setRemoteDescription(msg.sdp, 'Offer');
+    else if (msg.type === 'answer') connPc.setRemoteDescription(msg.sdp, 'Answer');
+    else if (msg.type === 'candidate') {
+      try {
+        connPc.addRemoteCandidate(msg.candidate, msg.mid || '0');
+      } catch (e) {
+        console.warn('[clean-vpn] addRemoteCandidate:', e?.message || e);
+      }
+    }
+  };
+
+  const setupInitiator = () => {
+    if (handshakeDone) return;
+    handshakeDone = true;
+    connPc = new PeerConnection('clean-vpn-exit', {
+      iceServers: ice.ndcIceServers,
+      maxMessageSize: 65536,
+      ...(ice.iceMode === 'relay' ? { iceTransportPolicy: 'relay' } : {}),
+    });
+    pcRef.setActive(connPc);
+
+    connPc.onLocalDescription((sdp, t) => {
+      signal({ type: String(t).toLowerCase(), sdp });
+    });
+    connPc.onLocalCandidate((candidate, mid) => {
+      signal({ type: 'candidate', candidate, mid });
+    });
+    connPc.onStateChange((state) => {
+      console.log('[clean-vpn] webrtc exit PC:', state);
+    });
+
+    const dc = connPc.createDataChannel('clean-vpn');
+    dc.onOpen(() => {
+      console.log('[clean-vpn] DataChannel open (exit)');
+      attachTunBridge(tun, 'webrtc-dc', dc);
+    });
+    dc.onClosed(() => {
+      console.log('[clean-vpn] DataChannel closed (exit)');
+    });
+    dc.onError((err) => {
+      console.error('[clean-vpn] DataChannel error (exit):', err);
+    });
+  };
+
+  ws.on('message', (data, isBinary) => {
+    if (isBinary) return;
+    let msg;
+    try {
+      msg = JSON.parse(data.toString());
+    } catch {
+      return;
+    }
+    if (msg.type === 'clean-vpn-ready' && !handshakeDone) {
+      setupInitiator();
+      return;
+    }
+    handleSignal(msg);
+  });
+
+  ws.on('close', () => {
+    if (!connPc) return;
+    const dead = connPc;
+    connPc = null;
+    try {
+      dead.destroy();
+    } catch {
+      /* ignore */
+    }
+    pcRef.clearIfStill(dead);
+  });
+
+  ws.on('error', (err) => {
+    console.error('[clean-vpn] webrtc signalling ws:', err.message);
+  });
+}
+
+/**
+ * @param {import('ws').WebSocket} ws
+ * @param {ReturnType<typeof openTunNative>['tun']} tun
+ * @param {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} ice
+ * @param {{
+ *   setActive: (pc: import('node-datachannel').PeerConnection | null) => void;
+ *   clearIfStill: (pc: import('node-datachannel').PeerConnection) => void;
+ * }} pcRef
+ */
+function attachCleanVpnWebrtcClientSignaling(ws, tun, ice, pcRef) {
+  const signal = (msg) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify(msg));
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const pcConfig = {
+    iceServers: ice.ndcIceServers,
+    maxMessageSize: 65536,
+    ...(ice.iceMode === 'relay' ? { iceTransportPolicy: 'relay' } : {}),
+  };
+  const pc = new PeerConnection('clean-vpn-client', pcConfig);
+  pcRef.setActive(pc);
+
+  pc.onLocalDescription((sdp, t) => {
+    signal({ type: String(t).toLowerCase(), sdp });
+  });
+  pc.onLocalCandidate((candidate, mid) => {
+    signal({ type: 'candidate', candidate, mid });
+  });
+  pc.onStateChange((state) => {
+    console.log('[clean-vpn] webrtc client PC:', state);
+  });
+
+  pc.onDataChannel((dc) => {
+    dc.onOpen(() => {
+      console.log('[clean-vpn] DataChannel open (client)');
+      attachTunBridge(tun, 'webrtc-dc', dc);
+    });
+    dc.onError((err) => {
+      console.error('[clean-vpn] DataChannel error (client):', err);
+    });
+  });
+
+  ws.on('message', (data, isBinary) => {
+    if (isBinary) return;
+    let msg;
+    try {
+      msg = JSON.parse(data.toString());
+    } catch {
+      return;
+    }
+    if (msg.type === 'offer') pc.setRemoteDescription(msg.sdp, 'Offer');
+    else if (msg.type === 'answer') pc.setRemoteDescription(msg.sdp, 'Answer');
+    else if (msg.type === 'candidate') {
+      try {
+        pc.addRemoteCandidate(msg.candidate, msg.mid || '0');
+      } catch (e) {
+        console.warn('[clean-vpn] addRemoteCandidate:', e?.message || e);
+      }
+    }
+  });
+
+  ws.on('error', (err) => {
+    console.error('[clean-vpn] webrtc signalling ws:', err.message);
+  });
+
+  ws.on('close', () => {
+    try {
+      pc.destroy();
+    } catch {
+      /* ignore */
+    }
+    pcRef.clearIfStill(pc);
+  });
+
+  try {
+    ws.send(JSON.stringify({ type: 'clean-vpn-ready' }));
+  } catch {
+    /* ignore */
+  }
+}
+
 // =============================================================================
 // === Общее: разбор CLI, parseHostPort, снимки и правки ip route (client) ===
 // =============================================================================
@@ -901,6 +1115,10 @@ function parseArgs(argv) {
     rtcChromeExecutable: null,
     reverse: process.env.CLEAN_VPN_REVERSE === '1',
     tunnelPeer: null,
+    signaling: false,
+    signalingConnect: false,
+    wsServer: false,
+    wsConnect: false,
   };
   for (const a of argv) {
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
@@ -941,6 +1159,10 @@ function parseArgs(argv) {
     else if (a.startsWith('--tunnel-peer=')) {
       out.tunnelPeer = a.slice('--tunnel-peer='.length);
     } else if (a === '--split-default') out.splitDefault = true;
+    else if (a === '--signaling') out.signaling = true;
+    else if (a === '--signaling-connect') out.signalingConnect = true;
+    else if (a === '--ws-server') out.wsServer = true;
+    else if (a === '--ws-connect') out.wsConnect = true;
   }
   return out;
 }
@@ -1172,11 +1394,12 @@ function addClientWsPeerBypass(ctx, peerIp) {
  * @param {string} ifname
  * @param {string} serverHost
  * @param {boolean} splitDefault
- * @param {{ deferPeerBypass?: boolean; reverseWebsocket?: boolean }} [opts]
+ * @param {{ deferPeerBypass?: boolean; reverseWebsocket?: boolean; deferPeerKind?: 'reverse-ws'|'webrtc' }} [opts]
  */
 async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
   const deferPeerBypass = opts?.deferPeerBypass === true;
   const reverseWebsocket = opts?.reverseWebsocket === true;
+  const deferKind = opts?.deferPeerKind === 'webrtc' ? 'webrtc' : 'reverse-ws';
   const dr = getDefaultRouteLinux();
   if (!dr) throw new Error('Не найден default route (ip route show default)');
   const { gw, dev } = dr;
@@ -1206,11 +1429,15 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
     }
   } else if (splitDefault) {
     console.log(
-      '[clean-vpn] reverse WebSocket: bypass к TCP-пиру (обычно NAT за exit) после accept',
+      deferKind === 'webrtc'
+        ? '[clean-vpn] WebRTC сигналинг: bypass к TCP-пиру после accept (--split-default)'
+        : '[clean-vpn] reverse WebSocket: bypass к TCP-пиру (обычно NAT за exit) после accept',
     );
   } else {
     console.log(
-      '[clean-vpn] reverse WebSocket без --split-default: bypass к пиру после accept не настраивается (default через uplink)',
+      deferKind === 'webrtc'
+        ? '[clean-vpn] WebRTC сигналинг без --split-default: bypass к пиру после accept не настраивается (default через uplink)'
+        : '[clean-vpn] reverse WebSocket без --split-default: bypass к пиру после accept не настраивается (default через uplink)',
     );
   }
 
@@ -2493,6 +2720,10 @@ async function runExit({
   tlsProbeFullProxyPerIp,
   tlsServerName,
   reverse,
+  signaling,
+  signalingConnect,
+  wsServer,
+  wsConnect,
 }) {
   const { host, port } = parseHostPort(server);
   if (reverse && type !== 'websocket') {
@@ -2516,6 +2747,8 @@ async function runExit({
   let wss = null;
   /** @type {import('ws').WebSocket|null} */
   let exitReverseWs = null;
+  /** @type {import('ws').WebSocket|null} */
+  let exitWebrtcSigWs = null;
   /** @type {import('http').Server|null} */
   let httpChromeSrv = null;
   /** @type {import('net').Server|null} */
@@ -2550,6 +2783,14 @@ async function runExit({
       if (webrtcPc) {
         webrtcPc.destroy();
         webrtcPc = null;
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (exitWebrtcSigWs) {
+        exitWebrtcSigWs.close();
+        exitWebrtcSigWs = null;
       }
     } catch {
       /* ignore */
@@ -2645,14 +2886,16 @@ async function runExit({
 
   // --- runExit: --type=websocket ---
   if (type === 'websocket') {
-    if (reverse) {
+    const wsListen = websocketVpnListens('exit', reverse, wsServer, wsConnect);
+    if (!wsListen) {
+      assertOutboundWsHost(host, '--ws-server на этой ноде или --ws-connect с реальным HOST:PORT');
       let connectHost = host;
       if (net.isIP(host) === 0) {
         connectHost = (await dns.lookup(host, { family: 4 })).address;
       }
       const url = `ws://${connectHost}:${port}/`;
       console.log(
-        `[clean-vpn] exit WebSocket --reverse: подключение к ${url} (пир — слушающий client)`,
+        `[clean-vpn] exit WebSocket: исходящее подключение к ${url}${reverse ? ' (--reverse)' : ' (--ws-connect)'}`,
       );
       exitReverseWs = new WebSocket(url);
       exitReverseWs.binaryType = 'nodebuffer';
@@ -2660,13 +2903,15 @@ async function runExit({
         exitReverseWs.once('open', resolve);
         exitReverseWs.once('error', reject);
       });
-      console.log('[clean-vpn] exit WebSocket reverse: соединение установлено');
+      console.log('[clean-vpn] exit WebSocket: соединение установлено');
       startBridge(exitReverseWs, null, 'websocket');
       return;
     }
     wss = new WebSocketServer({ host, port });
     wss.on('listening', () => {
-      console.log(`[clean-vpn] exit WebSocket ws://${host === '0.0.0.0' ? '*' : host}:${port}/`);
+      console.log(
+        `[clean-vpn] exit WebSocket (сервер) ws://${host === '0.0.0.0' ? '*' : host}:${port}/`,
+      );
     });
     wss.on('connection', (ws) => {
       console.log('[clean-vpn] ws client connected');
@@ -2812,122 +3057,57 @@ async function runExit({
   // --- runExit: --type=webrtc ---
   if (type === 'webrtc') {
     const ice = loadWebrtcIceFromConfig(configPath, iceMode);
+    const sigListen = webrtcSignalingListens('exit', signaling, signalingConnect);
     console.log(
-      `[clean-vpn] webrtc exit: ICE mode=${ice.iceMode}, серверов=${ice.ndcIceServers.length}, конфиг=${ice.configPath}`,
+      `[clean-vpn] webrtc exit: ICE mode=${ice.iceMode}, серверов=${ice.ndcIceServers.length}, конфиг=${ice.configPath}; сигналинг=${sigListen ? 'сервер' : 'клиент'}`,
     );
     for (const s of ice.ndcIceServers) {
       console.log(`[clean-vpn]   - ${s.replace(/:[^:@]+@/, ':***@')}`);
     }
-    wss = new WebSocketServer({ host, port });
-    wss.on('listening', () => {
-      console.log(
-        `[clean-vpn] exit webrtc сигналинг ws://${host === '0.0.0.0' ? '*' : host}:${port}/ (ждём clean-vpn-ready)`,
-      );
-    });
-    wss.on('connection', (ws) => {
-      wss.clients.forEach((c) => {
-        if (c !== ws) c.close();
+    const exitWebrtcPcRef = {
+      setActive(pc) {
+        webrtcPc = pc;
+      },
+      clearIfStill(pc) {
+        if (webrtcPc === pc) webrtcPc = null;
+      },
+    };
+    if (sigListen) {
+      wss = new WebSocketServer({ host, port });
+      wss.on('listening', () => {
+        console.log(
+          `[clean-vpn] exit webrtc сигналинг (сервер) ws://${host === '0.0.0.0' ? '*' : host}:${port}/ (ждём clean-vpn-ready)`,
+        );
       });
-      if (webrtcPc) {
-        try {
-          webrtcPc.destroy();
-        } catch {
-          /* ignore */
-        }
-        webrtcPc = null;
-      }
-
-      let handshakeDone = false;
-      /** @type {import('node-datachannel').PeerConnection|null} */
-      let connPc = null;
-
-      const signal = (msg) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          try {
-            ws.send(JSON.stringify(msg));
-          } catch {
-            /* ignore */
-          }
-        }
-      };
-
-      const handleSignal = (msg) => {
-        if (!connPc) return;
-        if (msg.type === 'offer') connPc.setRemoteDescription(msg.sdp, 'Offer');
-        else if (msg.type === 'answer') connPc.setRemoteDescription(msg.sdp, 'Answer');
-        else if (msg.type === 'candidate') {
-          try {
-            connPc.addRemoteCandidate(msg.candidate, msg.mid || '0');
-          } catch (e) {
-            console.warn('[clean-vpn] addRemoteCandidate:', e?.message || e);
-          }
-        }
-      };
-
-      const setupInitiator = () => {
-        if (handshakeDone) return;
-        handshakeDone = true;
-        connPc = new PeerConnection('clean-vpn-exit', {
-          iceServers: ice.ndcIceServers,
-          maxMessageSize: 65536,
-          ...(ice.iceMode === 'relay' ? { iceTransportPolicy: 'relay' } : {}),
+      wss.on('connection', (ws) => {
+        wss.clients.forEach((c) => {
+          if (c !== ws) c.close();
         });
-        webrtcPc = connPc;
-
-        connPc.onLocalDescription((sdp, t) => {
-          signal({ type: String(t).toLowerCase(), sdp });
-        });
-        connPc.onLocalCandidate((candidate, mid) => {
-          signal({ type: 'candidate', candidate, mid });
-        });
-        connPc.onStateChange((state) => {
-          console.log('[clean-vpn] webrtc exit PC:', state);
-        });
-
-        const dc = connPc.createDataChannel('clean-vpn');
-        dc.onOpen(() => {
-          console.log('[clean-vpn] DataChannel open (exit)');
-          attachTunBridge(tun, 'webrtc-dc', dc);
-        });
-        dc.onClosed(() => {
-          console.log('[clean-vpn] DataChannel closed (exit)');
-        });
-        dc.onError((err) => {
-          console.error('[clean-vpn] DataChannel error (exit):', err);
-        });
-      };
-
-      ws.on('message', (data, isBinary) => {
-        if (isBinary) return;
-        let msg;
-        try {
-          msg = JSON.parse(data.toString());
-        } catch {
-          return;
-        }
-        if (msg.type === 'clean-vpn-ready' && !handshakeDone) {
-          setupInitiator();
-          return;
-        }
-        handleSignal(msg);
-      });
-
-      ws.on('close', () => {
-        if (connPc && webrtcPc === connPc) {
+        if (webrtcPc) {
           try {
             webrtcPc.destroy();
           } catch {
             /* ignore */
           }
           webrtcPc = null;
-          connPc = null;
         }
+        attachCleanVpnWebrtcExitSignaling(ws, tun, ice, exitWebrtcPcRef);
       });
-
-      ws.on('error', (err) => {
-        console.error('[clean-vpn] webrtc signalling ws:', err.message);
-      });
+      return;
+    }
+    assertOutboundWsHost(host, '--signaling на VPS или --signaling-connect с реальным HOST:PORT');
+    let connectHost = host;
+    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) {
+      connectHost = (await dns.lookup(host, { family: 4 })).address;
+    }
+    const url = `ws://${connectHost}:${port}/`;
+    exitWebrtcSigWs = new WebSocket(url);
+    await new Promise((resolve, reject) => {
+      exitWebrtcSigWs.once('open', resolve);
+      exitWebrtcSigWs.once('error', reject);
     });
+    console.log('[clean-vpn] exit webrtc: исходящий сигналинг подключён');
+    attachCleanVpnWebrtcExitSignaling(exitWebrtcSigWs, tun, ice, exitWebrtcPcRef);
     return;
   }
 
@@ -3083,6 +3263,10 @@ async function runClient({
   rtcChromeExecutable,
   reverse,
   tunnelPeer,
+  signaling,
+  signalingConnect,
+  wsServer,
+  wsConnect,
 }) {
   const { host, port } = parseHostPort(server);
   if (reverse && type !== 'websocket') {
@@ -3090,15 +3274,24 @@ async function runClient({
       '[clean-vpn] --reverse сейчас поддерживается только с --type=websocket',
     );
   }
+  const wsListenCli =
+    type === 'websocket' ? websocketVpnListens('client', reverse, wsServer, wsConnect) : false;
+  const webrtcSigListenClient =
+    type === 'webrtc' && webrtcSignalingListens('client', signaling, signalingConnect);
   const deferWsPeerBypass =
-    reverse && type === 'websocket' && !tunnelPeer;
+    type === 'websocket' && !tunnelPeer && wsListenCli && host === '0.0.0.0';
+  const deferWebrtcPeerBypass =
+    type === 'webrtc' && !tunnelPeer && webrtcSigListenClient && host === '0.0.0.0';
   const routeHost =
-    reverse && type === 'websocket' && tunnelPeer ? tunnelPeer : host;
+    (type === 'websocket' && reverse && tunnelPeer) || (type === 'webrtc' && tunnelPeer)
+      ? tunnelPeer
+      : host;
   const tunName = findFreeTunName();
   const { tun, name: ifname } = openTunNative(tunName);
   setupTunIp('client', ifname);
   const routeCtx = await setupClientRoutesAsync(ifname, routeHost, splitDefault, {
-    deferPeerBypass: deferWsPeerBypass,
+    deferPeerBypass: deferWsPeerBypass || deferWebrtcPeerBypass,
+    deferPeerKind: deferWebrtcPeerBypass ? 'webrtc' : 'reverse-ws',
     reverseWebsocket: reverse && type === 'websocket',
   });
 
@@ -3118,6 +3311,8 @@ async function runClient({
   let wsChromeLocalWss = null;
   /** @type {import('ws').WebSocketServer|null} */
   let clientReverseWss = null;
+  /** @type {import('ws').WebSocketServer|null} */
+  let clientWebrtcSigWss = null;
 
   let shuttingDown = false;
   const shutdown = () => {
@@ -3157,6 +3352,19 @@ async function runClient({
       console.log('[clean-vpn] client: остановка');
       process.exit(0);
     };
+    try {
+      if (clientWebrtcSigWss) {
+        const w = clientWebrtcSigWss;
+        clientWebrtcSigWss = null;
+        try {
+          w.close();
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
     try {
       if (clientReverseWss) {
         const w = clientReverseWss;
@@ -3218,18 +3426,18 @@ async function runClient({
 
   // --- runClient: --type=websocket ---
   if (type === 'websocket') {
-    if (reverse) {
+    if (wsListenCli) {
       clientReverseWss = new WebSocketServer({ host, port });
       await new Promise((resolve, reject) => {
         clientReverseWss.once('listening', resolve);
         clientReverseWss.once('error', reject);
       });
       console.log(
-        `[clean-vpn] client WebSocket --reverse: слушаем ws://${host === '0.0.0.0' ? '*' : host}:${port}/ (ожидаем exit)`,
+        `[clean-vpn] client WebSocket (сервер) ws://${host === '0.0.0.0' ? '*' : host}:${port}/${reverse ? ' (--reverse)' : ' (--ws-server)'}`,
       );
       const ws = await new Promise((resolve, reject) => {
         clientReverseWss.once('connection', (w) => {
-          console.log('[clean-vpn] client reverse: exit подключился');
+          console.log('[clean-vpn] client WebSocket: пир подключился');
           clientReverseWss.clients.forEach((c) => {
             if (c !== w) c.close();
           });
@@ -3245,6 +3453,7 @@ async function runClient({
       attachTunBridge(tun, 'websocket', ws);
       return;
     }
+    assertOutboundWsHost(host, '--ws-server');
     const url = `ws://${host}:${port}/`;
     const ws = new WebSocket(url);
     ws.binaryType = 'nodebuffer';
@@ -3303,6 +3512,11 @@ async function runClient({
     console.log(
       `[clean-vpn] rtc-chrome client: ICE mode=${ice.iceMode}, конфиг=${ice.configPath}`,
     );
+    if (signaling || signalingConnect) {
+      console.warn(
+        '[clean-vpn] rtc-chrome: --signaling / --signaling-connect не используются; Chrome подключается к ws://HOST:PORT из --server',
+      );
+    }
     const signalingWsUrl = `ws://${host}:${port}/`;
     const exe = rtcChromeExecutable || process.env.PUPPETEER_EXECUTABLE_PATH || null;
     const { bridge, browser, localWss } = await createRtcChromeClientBridge({
@@ -3343,77 +3557,52 @@ async function runClient({
   // --- runClient: --type=webrtc ---
   if (type === 'webrtc') {
     const ice = loadWebrtcIceFromConfig(configPath, iceMode);
-    console.log(`[clean-vpn] webrtc client: ICE mode=${ice.iceMode}, конфиг=${ice.configPath}`);
+    console.log(
+      `[clean-vpn] webrtc client: ICE mode=${ice.iceMode}, конфиг=${ice.configPath}; сигналинг=${webrtcSigListenClient ? 'сервер' : 'клиент'}`,
+    );
+    const cliWebrtcPcRef = {
+      setActive(pc) {
+        webrtcPc = pc;
+      },
+      clearIfStill(pc) {
+        if (webrtcPc === pc) webrtcPc = null;
+      },
+    };
+    if (webrtcSigListenClient) {
+      clientWebrtcSigWss = new WebSocketServer({ host, port });
+      await new Promise((resolve, reject) => {
+        clientWebrtcSigWss.once('listening', resolve);
+        clientWebrtcSigWss.once('error', reject);
+      });
+      console.log(
+        `[clean-vpn] webrtc client: сигналинг (сервер) ws://${host === '0.0.0.0' ? '*' : host}:${port}/`,
+      );
+      const ws = await new Promise((resolve, reject) => {
+        clientWebrtcSigWss.once('connection', (w) => {
+          console.log('[clean-vpn] webrtc client: пир сигналинга подключился');
+          clientWebrtcSigWss.clients.forEach((c) => {
+            if (c !== w) c.close();
+          });
+          resolve(w);
+        });
+        clientWebrtcSigWss.once('error', reject);
+      });
+      if (deferWebrtcPeerBypass && splitDefault) {
+        const peerIp = normalizePeerIpv4(ws._socket?.remoteAddress);
+        addClientWsPeerBypass(routeCtx, peerIp);
+      }
+      attachCleanVpnWebrtcClientSignaling(ws, tun, ice, cliWebrtcPcRef);
+      return;
+    }
+    assertOutboundWsHost(host, '--signaling');
     const url = `ws://${host}:${port}/`;
     webrtcSigWs = new WebSocket(url);
-
     await new Promise((resolve, reject) => {
       webrtcSigWs.once('open', resolve);
       webrtcSigWs.once('error', reject);
     });
     console.log('[clean-vpn] WebRTC сигналинг подключён');
-
-    const signal = (msg) => {
-      if (webrtcSigWs?.readyState === WebSocket.OPEN) {
-        try {
-          webrtcSigWs.send(JSON.stringify(msg));
-        } catch {
-          /* ignore */
-        }
-      }
-    };
-
-    const pcConfig = {
-      iceServers: ice.ndcIceServers,
-      maxMessageSize: 65536,
-      ...(ice.iceMode === 'relay' ? { iceTransportPolicy: 'relay' } : {}),
-    };
-    webrtcPc = new PeerConnection('clean-vpn-client', pcConfig);
-
-    webrtcPc.onLocalDescription((sdp, t) => {
-      signal({ type: String(t).toLowerCase(), sdp });
-    });
-    webrtcPc.onLocalCandidate((candidate, mid) => {
-      signal({ type: 'candidate', candidate, mid });
-    });
-    webrtcPc.onStateChange((state) => {
-      console.log('[clean-vpn] webrtc client PC:', state);
-    });
-
-    webrtcPc.onDataChannel((dc) => {
-      dc.onOpen(() => {
-        console.log('[clean-vpn] DataChannel open (client)');
-        attachTunBridge(tun, 'webrtc-dc', dc);
-      });
-      dc.onError((err) => {
-        console.error('[clean-vpn] DataChannel error (client):', err);
-      });
-    });
-
-    webrtcSigWs.on('message', (data, isBinary) => {
-      if (isBinary) return;
-      let msg;
-      try {
-        msg = JSON.parse(data.toString());
-      } catch {
-        return;
-      }
-      if (msg.type === 'offer') webrtcPc.setRemoteDescription(msg.sdp, 'Offer');
-      else if (msg.type === 'answer') webrtcPc.setRemoteDescription(msg.sdp, 'Answer');
-      else if (msg.type === 'candidate') {
-        try {
-          webrtcPc.addRemoteCandidate(msg.candidate, msg.mid || '0');
-        } catch (e) {
-          console.warn('[clean-vpn] addRemoteCandidate:', e?.message || e);
-        }
-      }
-    });
-
-    webrtcSigWs.on('error', (err) => {
-      console.error('[clean-vpn] webrtc signalling ws:', err.message);
-    });
-
-    webrtcSigWs.send(JSON.stringify({ type: 'clean-vpn-ready' }));
+    attachCleanVpnWebrtcClientSignaling(webrtcSigWs, tun, ice, cliWebrtcPcRef);
     return;
   }
 
@@ -3642,7 +3831,11 @@ async function main() {
 --type=ws-chrome: client — Puppeteer + Chrome держит WS к exit (npm install puppeteer). По умолчанию быстрый локальный WS-мост 127.0.0.1; медленный CDP на пакет: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1. exit ws-chrome — HTTP /clean-vpn-chrome + WS; без CDP клиент с --ws-chrome-exit-page использует setContent (не загрузка страницы с exit). Произвольная страница: --ws-chrome-url=... — только CDP.
 --ws-chrome-executable=PATH, --ws-chrome-ws-url=ws://..., --ws-chrome-url=http://... (goto), --ws-chrome-exit-page, --ws-chrome-cdp-data
 --type=rtc-chrome: только client — Puppeteer + Chrome WebRTC DataChannel к exit --type=webrtc; локальный WS-мост к TUN; npm install puppeteer; --rtc-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH
---reverse: только с --type=websocket — client слушает --server, exit подключается (локальный exit за NAT → client на VPS). С --split-default: bypass к пиру после accept по remoteAddress (или --tunnel-peer); без split-default /32 к пиру не ставится. CLEAN_VPN_REVERSE=1 — как флаг.
+--reverse: только с --type=websocket — по умолчанию client слушает --server, exit подключается; явно: --ws-server / --ws-connect. С --split-default: bypass к пиру после accept по remoteAddress (или --tunnel-peer). CLEAN_VPN_REVERSE=1 — как флаг.
+--ws-server: только websocket — WebSocket-сервер данных на --server на этой ноде (иначе по роли/reverse по умолчанию).
+--ws-connect: только websocket — принудительно исходящий WS к --server (например exit слушает: client с --ws-connect + --reverse).
+--signaling: только webrtc + client — WebSocket-сервер сигналинга на --server (VPS client + 0.0.0.0:PORT).
+--signaling-connect: только webrtc + exit — исходящий сигналинг к --server=HOST:PORT (когда сигналинг слушает client на VPS).
 --tunnel-peer=HOST: опционально client + websocket + --reverse — bypass к пиру до accept при --split-default (стабильный IPv4 пира)`);
     process.exit(1);
   }
@@ -3652,6 +3845,15 @@ async function main() {
     !['auto', 'relay', 'direct'].includes(args.iceMode)
   ) {
     console.error('[clean-vpn] --ice-mode должен быть auto | relay | direct');
+    process.exit(1);
+  }
+
+  if (args.signaling && args.signalingConnect) {
+    console.error('[clean-vpn] нельзя одновременно --signaling и --signaling-connect');
+    process.exit(1);
+  }
+  if (args.wsServer && args.wsConnect) {
+    console.error('[clean-vpn] нельзя одновременно --ws-server и --ws-connect');
     process.exit(1);
   }
 

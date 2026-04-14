@@ -452,6 +452,10 @@ mesh-vpn/
 
 Для [`scripts/clean-vpn.js`](scripts/clean-vpn.js) на **Linux** нужен собранный модуль `native/tun_linux` (после `npm install` это делает postinstall, либо явно: `npm run build:tun-linux`; нужны python3, make, g++). `--split-default` отправляет **IPv4** default в туннель (две половины `0.0.0.0/1`), а сети **RFC1918** (`10/8`, `172.16/12`, `192.168/16`) — на uplink, чтобы локальный DNS и LAN не уходили на exit. Внешний IPv4 проверяйте так: `curl -4 https://ifconfig.me`. Для `--type=tls` и IP в `--server` см. шапку скрипта и `--tls-server-name`.
 
+**WebRTC (`--type=webrtc`):** по умолчанию **exit** слушает WebSocket-сигналинг на `--server`, **client** подключается к `ws://HOST:PORT/`. Чтобы сигналинг слушал **client** (например VPS с `--server=0.0.0.0:8765`), добавьте **`--signaling`**; тогда **exit** запускайте с **`--signaling-connect`** и **`--server=VPS_ПУБЛИЧНЫЙ_IP:8765`**. С **`--split-default`** и listen на `0.0.0.0` bypass к пиру сигналинга после accept по `remoteAddress` (как у reverse WebSocket).
+
+**WebSocket данных (`--type=websocket`):** по умолчанию как раньше (exit — сервер, client — клиент; с **`--reverse`** — наоборот). Явно: **`--ws-server`** — поднять WSS на этой ноде на `--server`; **`--ws-connect`** — принудительно исходящий WS (например если exit слушает при reverse, на client укажите **`--ws-connect`** вместо listen).
+
 #### `--type=ws-chrome` (Puppeteer)
 
 Трафик VPN идёт через **Headless Chrome**: на клиенте страница открывает **исходящий** WebSocket к exit (в браузере нельзя поднять WS-сервер для произвольных входящих). Зависимость: `puppeteer` (ставится с `npm install`). Свой Chrome: `--ws-chrome-executable=PATH` или `PUPPETEER_EXECUTABLE_PATH`. В Docker часто нужно `CLEAN_VPN_PUPPETEER_NO_SANDBOX=1`.
@@ -478,7 +482,7 @@ sudo env PATH=$PATH node scripts/clean-vpn.js ... --type=ws-chrome --ws-chrome-e
 
 #### `--type=rtc-chrome` (Puppeteer + WebRTC)
 
-Только **client**. На **exit** используйте **`--type=webrtc`** (тот же WebSocket-сигналинг и Data Channel с меткой `clean-vpn`). В Headless Chrome создаётся нативный **`RTCPeerConnection`**: JSON-сигналинг на `ws://HOST:PORT/` совпадает с Node-клиентом webrtc; **IPv4-пакеты** между TUN и страницей идут через **локальный WebSocket** на `127.0.0.1` (аналогично быстрому ws-chrome), в странице они пересылаются в Data Channel. Нужны **`puppeteer`**, **`--config`** / **`--ice-mode`** (как для webrtc), опционально **`--rtc-chrome-executable=PATH`** или **`PUPPETEER_EXECUTABLE_PATH`**.
+Только **client**. На **exit** используйте **`--type=webrtc`** (тот же WebSocket-сигналинг и Data Channel с меткой `clean-vpn`). В Headless Chrome создаётся нативный **`RTCPeerConnection`**: JSON-сигналинг на `ws://HOST:PORT/` совпадает с Node-клиентом webrtc; **IPv4-пакеты** между TUN и страницей идут через **локальный WebSocket** на `127.0.0.1` (аналогично быстрому ws-chrome), в странице они пересылаются в Data Channel. Нужны **`puppeteer`**, **`--config`** / **`--ice-mode`** (как для webrtc), опционально **`--rtc-chrome-executable=PATH`** или **`PUPPETEER_EXECUTABLE_PATH`**. Флаги **`--signaling` / `--signaling-connect`** для rtc-chrome **не** используются (сигналинг всегда исходящий WS к `--server` у exit).
 
 ### Проверка TLS passthrough ([`scripts/probe.js`](scripts/probe.js))
 
