@@ -1062,7 +1062,7 @@ function attachCleanVpnWebrtcExitSignaling(ws, tun, ice, pcRef) {
     const dc = connPc.createDataChannel('clean-vpn');
     dc.onOpen(() => {
       console.log('[clean-vpn] DataChannel open (exit)');
-      attachTunBridge(tun, 'webrtc-dc', dc);
+      attachTunBridge(tun, 'webrtc-dc', dc, { localTunIp: IP_EXIT });
     });
     dc.onClosed(() => {
       console.log('[clean-vpn] DataChannel closed (exit)');
@@ -1145,7 +1145,7 @@ function attachCleanVpnWebrtcClientSignaling(ws, tun, ice, pcRef) {
   pc.onDataChannel((dc) => {
     dc.onOpen(() => {
       console.log('[clean-vpn] DataChannel open (client)');
-      attachTunBridge(tun, 'webrtc-dc', dc);
+      attachTunBridge(tun, 'webrtc-dc', dc, { localTunIp: IP_CLIENT });
     });
     dc.onError((err) => {
       console.error('[clean-vpn] DataChannel error (client):', err);
@@ -1721,15 +1721,117 @@ function teardownExitNat(tunName, ext) {
 }
 
 /**
+ * @param {string} s
+ * @returns {Uint8Array|null} четыре октета или null
+ */
+function parseDottedIPv4FourOctets(s) {
+  const parts = String(s).split('.');
+  if (parts.length !== 4) return null;
+  const out = new Uint8Array(4);
+  for (let i = 0; i < 4; i++) {
+    const n = Number(parts[i]);
+    if (!Number.isInteger(n) || n < 0 || n > 255) return null;
+    out[i] = n;
+  }
+  return out;
+}
+
+/**
+ * @param {Buffer} buf
+ * @param {number} off
+ * @param {number} len — чётность по длине как у IPv4 checksum
+ */
+function internetChecksum16(buf, off, len) {
+  let sum = 0;
+  for (let i = 0; i < len; i += 2) {
+    if (i + 1 < len) {
+      sum += buf.readUInt16BE(off + i);
+    } else {
+      sum += buf[off + i] << 8;
+    }
+  }
+  while (sum >> 16) {
+    sum = (sum & 0xffff) + (sum >> 16);
+  }
+  return (~sum) & 0xffff;
+}
+
+/**
+ * ICMP Echo Request к нашему TUN-IPv4 → полный IPv4 Echo Reply для записи в TUN.
+ * Только IHL=5, нефрагментированный первый кусок, protocol ICMP.
+ *
+ * @param {Buffer} pkt
+ * @param {Uint8Array} localDst4 — dst запроса = наш адрес на TUN
+ * @param {() => number} nextIpIdentification — 16-bit BE для нового IPv4 id
+ * @returns {Buffer|null}
+ */
+function tryBuildTunIcmpEchoReplyForLocalIp(pkt, localDst4, nextIpIdentification) {
+  if (pkt.length < 28) return null;
+  if ((pkt[0] >> 4) !== 4) return null;
+  const ihlWords = pkt[0] & 0x0f;
+  if (ihlWords !== 5) return null;
+  const totalLen = pkt.readUInt16BE(2);
+  if (totalLen < 28 || totalLen > pkt.length) return null;
+  const fragOff = pkt.readUInt16BE(6) & 0x1fff;
+  if (fragOff !== 0) return null;
+  if (pkt[9] !== 1) return null;
+  if (
+    pkt[16] !== localDst4[0] ||
+    pkt[17] !== localDst4[1] ||
+    pkt[18] !== localDst4[2] ||
+    pkt[19] !== localDst4[3]
+  ) {
+    return null;
+  }
+  const icmpOff = 20;
+  if (pkt[icmpOff] !== 8 || pkt[icmpOff + 1] !== 0) return null;
+
+  const icmpTotal = totalLen - 20;
+  if (icmpTotal < 8) return null;
+  const icmpBody = pkt.subarray(icmpOff + 8, icmpOff + icmpTotal);
+  const icmpPacket = Buffer.allocUnsafe(8 + icmpBody.length);
+  icmpPacket.writeUInt8(0, 0);
+  icmpPacket.writeUInt8(0, 1);
+  icmpPacket.writeUInt16BE(0, 2);
+  if (icmpBody.length) icmpBody.copy(icmpPacket, 8);
+  icmpPacket.writeUInt16BE(internetChecksum16(icmpPacket, 0, icmpPacket.length), 2);
+
+  const ipHeader = Buffer.allocUnsafe(20);
+  ipHeader.writeUInt8(0x45, 0);
+  ipHeader.writeUInt8(0, 1);
+  ipHeader.writeUInt16BE(20 + icmpPacket.length, 2);
+  ipHeader.writeUInt16BE(nextIpIdentification() & 0xffff, 4);
+  ipHeader.writeUInt16BE(0, 6);
+  ipHeader.writeUInt8(64, 8);
+  ipHeader.writeUInt8(1, 9);
+  ipHeader.writeUInt16BE(0, 10);
+  pkt.copy(ipHeader, 12, 16, 20);
+  pkt.copy(ipHeader, 16, 12, 16);
+  ipHeader.writeUInt16BE(internetChecksum16(ipHeader, 0, 20), 10);
+
+  return Buffer.concat([ipHeader, icmpPacket]);
+}
+
+/**
  * Один активный мост на TUN: иначе второй TCP-клиент на exit вешает второй
  * listener и пакеты дублируются / рассинхрон.
  *
  * @param {{ write: (b: Buffer) => void, startRead: (cb: (batch: ArrayBuffer[]) => void) => void }} tun — native addon
  * @param {'tcp'|'websocket'|'udp-client'|'udp-server'|'webrtc-dc'} transport
  * @param {import('net').Socket|import('ws')|import('dgram').Socket|{sock: import('dgram').Socket, peer?: import('dgram').RemoteInfo}|import('node-datachannel').DataChannel} endpoint
+ * @param {{ localTunIp?: string }} [bridgeOpts]
  */
-function attachTunBridge(tun, transport, endpoint) {
+function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
   const framer = new StreamFramer();
+  const local4 = bridgeOpts?.localTunIp
+    ? parseDottedIPv4FourOctets(bridgeOpts.localTunIp)
+    : null;
+  let ipIdCounter = randomBytes(2).readUInt16BE(0);
+  const nextIpId = () => {
+    ipIdCounter = (ipIdCounter + 1) & 0xffff;
+    return ipIdCounter;
+  };
+  let icmpEchoReplyLogged = false;
 
   const writeTun = (pkt) => {
     try {
@@ -1855,6 +1957,19 @@ function attachTunBridge(tun, transport, endpoint) {
     for (const raw of pkts) {
       const pkt = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
       if (!pkt.length || pkt.length > MAX_PKT) continue;
+      if (local4) {
+        const reply = tryBuildTunIcmpEchoReplyForLocalIp(pkt, local4, nextIpId);
+        if (reply) {
+          writeTun(reply);
+          if (!icmpEchoReplyLogged) {
+            icmpEchoReplyLogged = true;
+            console.log(
+              `[clean-vpn] ICMP echo reply на TUN (${bridgeOpts?.localTunIp}); дальнейшие ответы без лога`,
+            );
+          }
+          continue;
+        }
+      }
       sendOnWire(pkt);
     }
   });
@@ -2862,7 +2977,7 @@ async function runExit({
       activeTcp.destroy();
     }
     if (transport === 'tcp') activeTcp = sock;
-    attachTunBridge(tun, transport, sock);
+    attachTunBridge(tun, transport, sock, { localTunIp: IP_EXIT });
     if (restBuf && restBuf.length && transport === 'tcp') {
       sock.emit('data', restBuf);
     }
@@ -3145,7 +3260,7 @@ async function runExit({
     udpSock.bind(port, host, () => {
       console.log(`[clean-vpn] exit UDP ${host}:${port} (один peer по первому пакету)`);
     });
-    attachTunBridge(tun, 'udp-server', udpEp);
+    attachTunBridge(tun, 'udp-server', udpEp, { localTunIp: IP_EXIT });
     return;
   }
 
@@ -3559,7 +3674,7 @@ async function runClient({
         const peerIp = normalizePeerIpv4(ws._socket?.remoteAddress);
         addClientWsPeerBypass(routeCtx, peerIp);
       }
-      attachTunBridge(tun, 'websocket', ws);
+      attachTunBridge(tun, 'websocket', ws, { localTunIp: IP_CLIENT });
       return;
     }
     assertOutboundWsHost(host, '--ws-server');
@@ -3571,7 +3686,7 @@ async function runClient({
       ws.once('error', reject);
     });
     console.log('[clean-vpn] WebSocket connected');
-    attachTunBridge(tun, 'websocket', ws);
+    attachTunBridge(tun, 'websocket', ws, { localTunIp: IP_CLIENT });
     return;
   }
 
@@ -3616,7 +3731,7 @@ async function runClient({
       console.error('[clean-vpn] ws-chrome:', e?.message || e);
     });
     console.log('[clean-vpn] ws-chrome: готово (Puppeteer → WebSocket → exit)');
-    attachTunBridge(tun, 'websocket', bridge);
+    attachTunBridge(tun, 'websocket', bridge, { localTunIp: IP_CLIENT });
     return;
   }
 
@@ -3670,7 +3785,7 @@ async function runClient({
       console.error('[clean-vpn] rtc-chrome:', e?.message || e);
     });
     console.log('[clean-vpn] rtc-chrome: готово (Chrome WebRTC → exit webrtc, TUN ↔ localhost WS)');
-    attachTunBridge(tun, 'websocket', bridge);
+    attachTunBridge(tun, 'websocket', bridge, { localTunIp: IP_CLIENT });
     return;
   }
 
@@ -3682,7 +3797,7 @@ async function runClient({
       udp.connect(port, host, () => {
         udp.off('error', reject);
         console.log(`[clean-vpn] UDP «connected» к ${host}:${port}`);
-        attachTunBridge(tun, 'udp-client', udp);
+        attachTunBridge(tun, 'udp-client', udp, { localTunIp: IP_CLIENT });
         resolve();
       });
     });
@@ -3764,7 +3879,7 @@ async function runClient({
     console.log('[clean-vpn] QUIC session установлена');
     const stream = await quicClientSession.createBidirectionalStream();
     const sock = quicBidiToSocketLike(stream);
-    attachTunBridge(tun, 'tcp', sock);
+    attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT });
     return;
   }
 
@@ -3793,7 +3908,7 @@ async function runClient({
     console.log('[clean-vpn] QUIC-EXT (@infisical/quic) соединение установлено');
     const stream = quicExtClient.connection.newStream('bidi');
     const sock = quicBidiToSocketLike(stream);
-    attachTunBridge(tun, 'tcp', sock);
+    attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT });
     return;
   }
 
@@ -3903,7 +4018,7 @@ async function runClient({
         finish(() => reject(err));
       });
     });
-    attachTunBridge(tun, 'tcp', tlsVpnSocket);
+    attachTunBridge(tun, 'tcp', tlsVpnSocket, { localTunIp: IP_CLIENT });
     return;
   }
 
@@ -3912,13 +4027,13 @@ async function runClient({
     const sock = net.connect(port, host, () => {
       console.log('[clean-vpn] TCP connected');
       if (type === 'socket') {
-        attachTunBridge(tun, 'tcp', sock);
+        attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT });
         resolve();
         return;
       }
       sock.__isServer = false;
       handleHttpSocket(sock, (rest) => {
-        attachTunBridge(tun, 'tcp', sock);
+        attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT });
         if (rest && rest.length) {
           sock.emit('data', rest);
         }
