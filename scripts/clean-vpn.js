@@ -15,10 +15,10 @@
  * WebRTC DataChannel через Puppeteer (--type=rtc-chrome): client — Chrome + RTCPeerConnection к exit `--type=webrtc`, сигналинг как у webrtc, TUN ↔ локальный WS; `npm install puppeteer`.
  * WebSocket через Puppeteer (--type=ws-chrome): на client Headless Chrome держит исходящий WS к exit; `npm install puppeteer`.
  *   По умолчанию данные идут через локальный ws://127.0.0.1 (без CDP на каждый пакет). Медленный путь: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1.
- *   --ws-chrome-url=... (произвольная страница) — только CDP-путь. exit --type=ws-chrome + GET /clean-vpn-chrome; Puppeteer с --ws-chrome-exit-page без CDP использует setContent (тот же быстрый мост).
+ *   --ws-chrome-url=... (произвольная страница) — только CDP-путь. exit --type=ws-chrome --ws-server + GET /clean-vpn-chrome; Puppeteer с --ws-chrome-exit-page без CDP использует setContent (тот же быстрый мост).
  *   Chrome: --ws-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH; в контейнере: CLEAN_VPN_PUPPETEER_NO_SANDBOX=1
  *   Linux ARM64 (Multipass на Apple Silicon и т.п.): встроенный Chrome из кэша Puppeteer часто ломается — ставьте `chromium-browser`/`chromium` из apt и укажите путь или положитесь на авто-поиск на arm64.
- * WebRTC: сигналинг по WebSocket; по умолчанию exit слушает --server, client коннектится; --signaling (client) / --signaling-connect (exit) меняют сторону. Один SCTP DataChannel — одно бинарное сообщение = один IPv4-пакет.
+ * WebRTC: сигналинг по WebSocket; слушать только с --signaling на этой ноде, иначе исходящий WS к --server (exit и client). Алиас: --signalling. Один SCTP DataChannel — одно бинарное сообщение = один IPv4-пакет.
  * ICE/STUN/TURN: из --config (по умолчанию config/default.json), см. --ice-mode.
  * QUIC (Node 25+): нативный node:quic, ALPN clean-vpn, один bidi stream = тот же uint32+IPv4, что TCP.
  *   Нужен бинарь Node, собранный с QUIC (в рантайме: node -p "process.config.variables.node_use_quic" — должно быть истинно); одного флага --experimental-quic недостаточно, если модуль не вкомпилирован (часто apt/snap).
@@ -34,19 +34,18 @@
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=http
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=http --split-default
  *   HTTP (--type=http): тот же TCP, что socket; клиент — GET /clean-vpn, ответ 200, затем uint32+IPv4 (см. строку «Протокол» выше).
- *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=websocket
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=websocket --ws-server
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=websocket --split-default
- *   Обратный WebSocket (exit подключается к client на VPS): client слушает, exit инициирует.
- *   sudo ... --role=client --server=0.0.0.0:8765 --type=websocket --reverse --split-default
- *   sudo ... --role=exit --server=VPS:8765 --type=websocket --reverse --ext=eth0
- *   На VPS при --split-default: bypass к пиру WS по TCP remoteAddress после accept (обычно WAN NAT дома) или через --tunnel-peer; без split-default маршрут /32 к пиру не добавляется. CLEAN_VPN_REVERSE=1 — как --reverse.
- *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=ws-chrome
+ *   WebSocket «NAT»: client на VPS слушает (--ws-server), exit коннектится без флага к VPS:PORT; при --split-default bypass к пиру по remoteAddress или --tunnel-peer.
+ *   sudo ... --role=client --server=0.0.0.0:8765 --type=websocket --ws-server --split-default
+ *   sudo ... --role=exit --server=VPS:8765 --type=websocket --ext=eth0
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=ws-chrome --ws-server
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=ws-chrome --split-default [--ws-chrome-exit-page]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:51820 --type=udp
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:51820 --type=udp --split-default
- *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:9876 --type=webrtc [--config=config/exit-node.json]
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:9876 --type=webrtc --signaling [--config=config/exit-node.json]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:9876 --type=webrtc --split-default --ice-mode=relay
- *   Сигналинг на VPS (client слушает): client --server=0.0.0.0:9876 --type=webrtc --signaling --split-default; exit --signaling-connect --server=VPS:9876 --type=webrtc --ext=eth0
+ *   Сигналинг на VPS: client --server=0.0.0.0:9876 --type=webrtc --signaling --split-default; exit --server=VPS:9876 --type=webrtc --ext=eth0 (без --signaling — исходящий WS к VPS)
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:9876 --type=rtc-chrome --split-default [--config=...] [--rtc-chrome-executable=...]
  *   sudo env PATH=$PATH node --experimental-quic scripts/clean-vpn.js --role=exit --server=0.0.0.0:4433 --type=quic
  *   sudo env PATH=$PATH node --experimental-quic scripts/clean-vpn.js --role=client --server=VPS:4433 --type=quic --split-default
@@ -872,20 +871,127 @@ function loadWebrtcBrowserIceFromConfig(configPath, cliIceMode) {
   return { iceServers, iceMode, configPath: resolved };
 }
 
-/** WebRTC: WSS сигналинга на этой ноде (client + --signaling) или по умолчанию на exit. */
-function webrtcSignalingListens(role, signaling, signalingConnect) {
-  if (role === 'exit') {
-    if (signalingConnect) return false;
-    return true;
-  }
+/** WebRTC: WSS сигналинга на этой ноде только с --signaling; иначе исходящий WS. */
+function webrtcSignalingListens(signaling) {
   return signaling === true;
 }
 
-/** WebSocket VPN: кто слушает на --server (совместимо с --reverse; --ws-server / --ws-connect переопределяют). */
-function websocketVpnListens(role, reverse, wsServer, wsConnect) {
-  if (wsConnect) return false;
-  if (wsServer) return true;
-  return (role === 'exit' && !reverse) || (role === 'client' && reverse);
+/** WebSocket данных: WSS только с --ws-server; иначе исходящий WS. */
+function websocketVpnListens(wsServer) {
+  return wsServer === true;
+}
+
+/**
+ * Два текстовых пира на одном WSS (rtc-chrome + --signaling): Chrome и exit webrtc.
+ * Пока второй не подключён — буферизуем JSON до 200 сообщений на направление.
+ * @param {import('ws').WebSocketServer} wss
+ * @param {(exitSide: import('ws').WebSocket) => void} [onPaired] — после пары сокетов: не-127.0.0.1 считается стороной exit (bypass).
+ */
+function attachRtcChromeSignalingRelay(wss, onPaired) {
+  /** @type {[import('ws').WebSocket|null, import('ws').WebSocket|null]} */
+  const pair = [null, null];
+  /** @type {Buffer[]} */
+  const bufTo1 = [];
+  /** @type {Buffer[]} */
+  const bufTo0 = [];
+  const MAXQ = 200;
+  const flush = () => {
+    const a = pair[0];
+    const b = pair[1];
+    if (!a || !b || a.readyState !== WebSocket.OPEN || b.readyState !== WebSocket.OPEN) return;
+    while (bufTo1.length) {
+      const d = bufTo1.shift();
+      try {
+        b.send(d);
+      } catch {
+        /* ignore */
+      }
+    }
+    while (bufTo0.length) {
+      const d = bufTo0.shift();
+      try {
+        a.send(d);
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+  const wire = (idx) => {
+    const ws = pair[idx];
+    if (!ws) return;
+    const otherIdx = 1 - idx;
+    ws.on('message', (data, isBinary) => {
+      if (isBinary) return;
+      const o = pair[otherIdx];
+      const buf = idx === 0 ? bufTo1 : bufTo0;
+      if (o && o.readyState === WebSocket.OPEN) {
+        try {
+          o.send(data);
+        } catch {
+          /* ignore */
+        }
+      } else if (buf.length < MAXQ) {
+        buf.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
+      }
+    });
+  };
+  const cleanupSlot = (idx) => {
+    const w = pair[idx];
+    pair[idx] = null;
+    try {
+      w?.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      pair[1 - idx]?.close();
+    } catch {
+      /* ignore */
+    }
+    pair[1 - idx] = null;
+    bufTo0.length = 0;
+    bufTo1.length = 0;
+  };
+  wss.on('connection', (ws) => {
+    if (pair[0] && pair[1]) {
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    const idx = pair[0] ? 1 : 0;
+    pair[idx] = ws;
+    wire(idx);
+    if (pair[0] && pair[1]) {
+      flush();
+      if (typeof onPaired === 'function') {
+        const ra = (w) => String(w?._socket?.remoteAddress || '');
+        const isLoc = (a) =>
+          a === '127.0.0.1' ||
+          a === '::1' ||
+          a.endsWith('127.0.0.1') ||
+          a === '::ffff:127.0.0.1';
+        const w0 = pair[0];
+        const w1 = pair[1];
+        const r0 = ra(w0);
+        const r1 = ra(w1);
+        const exitSide = !isLoc(r0) ? w0 : !isLoc(r1) ? w1 : w1;
+        try {
+          onPaired(exitSide);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    ws.on('close', () => {
+      if (pair[idx] === ws) cleanupSlot(idx);
+    });
+    ws.on('error', () => {
+      if (pair[idx] === ws) cleanupSlot(idx);
+    });
+  });
 }
 
 function assertOutboundWsHost(host, hint) {
@@ -1113,12 +1219,9 @@ function parseArgs(argv) {
     wsChromeExitPage: false,
     wsChromeCdpData: false,
     rtcChromeExecutable: null,
-    reverse: process.env.CLEAN_VPN_REVERSE === '1',
     tunnelPeer: null,
     signaling: false,
-    signalingConnect: false,
     wsServer: false,
-    wsConnect: false,
   };
   for (const a of argv) {
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
@@ -1155,14 +1258,11 @@ function parseArgs(argv) {
     else if (a === '--ws-chrome-cdp-data') out.wsChromeCdpData = true;
     else if (a.startsWith('--rtc-chrome-executable=')) {
       out.rtcChromeExecutable = a.slice('--rtc-chrome-executable='.length);
-    } else if (a === '--reverse') out.reverse = true;
-    else if (a.startsWith('--tunnel-peer=')) {
+    } else if (a.startsWith('--tunnel-peer=')) {
       out.tunnelPeer = a.slice('--tunnel-peer='.length);
     } else if (a === '--split-default') out.splitDefault = true;
-    else if (a === '--signaling') out.signaling = true;
-    else if (a === '--signaling-connect') out.signalingConnect = true;
+    else if (a === '--signaling' || a === '--signalling') out.signaling = true;
     else if (a === '--ws-server') out.wsServer = true;
-    else if (a === '--ws-connect') out.wsConnect = true;
   }
   return out;
 }
@@ -1351,7 +1451,7 @@ function setupTunIp(role, ifname) {
 }
 
 /**
- * IPv4 пира TCP сокета (для reverse WebSocket client на VPS).
+ * IPv4 пира TCP сокета (для WebSocket-сервера на client: 0.0.0.0 + bypass после accept).
  * @param {string|undefined} remoteAddress
  */
 function normalizePeerIpv4(remoteAddress) {
@@ -1394,12 +1494,12 @@ function addClientWsPeerBypass(ctx, peerIp) {
  * @param {string} ifname
  * @param {string} serverHost
  * @param {boolean} splitDefault
- * @param {{ deferPeerBypass?: boolean; reverseWebsocket?: boolean; deferPeerKind?: 'reverse-ws'|'webrtc' }} [opts]
+ * @param {{ deferPeerBypass?: boolean; websocketListenNoSplitDefault?: boolean; deferPeerKind?: 'ws-listen'|'webrtc' }} [opts]
  */
 async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
   const deferPeerBypass = opts?.deferPeerBypass === true;
-  const reverseWebsocket = opts?.reverseWebsocket === true;
-  const deferKind = opts?.deferPeerKind === 'webrtc' ? 'webrtc' : 'reverse-ws';
+  const websocketListenNoSplitDefault = opts?.websocketListenNoSplitDefault === true;
+  const deferKind = opts?.deferPeerKind === 'webrtc' ? 'webrtc' : 'ws-listen';
   const dr = getDefaultRouteLinux();
   if (!dr) throw new Error('Не найден default route (ip route show default)');
   const { gw, dev } = dr;
@@ -1409,7 +1509,7 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
   /** @type {unknown[]} */
   let snapHost = [];
   if (!deferPeerBypass) {
-    if (!reverseWebsocket || splitDefault) {
+    if (!websocketListenNoSplitDefault || splitDefault) {
       let resolved = serverHost;
       if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(serverHost)) {
         resolved = (await dns.lookup(serverHost, { family: 4 })).address;
@@ -1424,20 +1524,20 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
       }
     } else {
       console.log(
-        '[clean-vpn] reverse WebSocket без --split-default: bypass к --tunnel-peer не настраивается (default через uplink)',
+        '[clean-vpn] WebSocket-сервер на client без --split-default: bypass к --tunnel-peer не настраивается (default через uplink)',
       );
     }
   } else if (splitDefault) {
     console.log(
       deferKind === 'webrtc'
         ? '[clean-vpn] WebRTC сигналинг: bypass к TCP-пиру после accept (--split-default)'
-        : '[clean-vpn] reverse WebSocket: bypass к TCP-пиру (обычно NAT за exit) после accept',
+        : '[clean-vpn] WebSocket-сервер на client: bypass к TCP-пиру после accept (--split-default)',
     );
   } else {
     console.log(
       deferKind === 'webrtc'
         ? '[clean-vpn] WebRTC сигналинг без --split-default: bypass к пиру после accept не настраивается (default через uplink)'
-        : '[clean-vpn] reverse WebSocket без --split-default: bypass к пиру после accept не настраивается (default через uplink)',
+        : '[clean-vpn] WebSocket-сервер на client без --split-default: bypass к пиру после accept не настраивается (default через uplink)',
     );
   }
 
@@ -2719,18 +2819,10 @@ async function runExit({
   tlsProbeMaxSeconds,
   tlsProbeFullProxyPerIp,
   tlsServerName,
-  reverse,
   signaling,
-  signalingConnect,
   wsServer,
-  wsConnect,
 }) {
   const { host, port } = parseHostPort(server);
-  if (reverse && type !== 'websocket') {
-    throw new Error(
-      '[clean-vpn] --reverse сейчас поддерживается только с --type=websocket',
-    );
-  }
   if (type === 'rtc-chrome') {
     throw new Error(
       '[clean-vpn] --type=rtc-chrome только для --role=client; на exit используйте --type=webrtc',
@@ -2746,7 +2838,7 @@ async function runExit({
   /** @type {import('ws').WebSocketServer|null} */
   let wss = null;
   /** @type {import('ws').WebSocket|null} */
-  let exitReverseWs = null;
+  let exitOutboundWebsocket = null;
   /** @type {import('ws').WebSocket|null} */
   let exitWebrtcSigWs = null;
   /** @type {import('http').Server|null} */
@@ -2796,9 +2888,9 @@ async function runExit({
       /* ignore */
     }
     try {
-      if (exitReverseWs) {
-        exitReverseWs.close();
-        exitReverseWs = null;
+      if (exitOutboundWebsocket) {
+        exitOutboundWebsocket.close();
+        exitOutboundWebsocket = null;
       }
     } catch {
       /* ignore */
@@ -2886,25 +2978,23 @@ async function runExit({
 
   // --- runExit: --type=websocket ---
   if (type === 'websocket') {
-    const wsListen = websocketVpnListens('exit', reverse, wsServer, wsConnect);
+    const wsListen = websocketVpnListens(wsServer);
     if (!wsListen) {
-      assertOutboundWsHost(host, '--ws-server на этой ноде или --ws-connect с реальным HOST:PORT');
+      assertOutboundWsHost(host, '--ws-server на стороне пира');
       let connectHost = host;
       if (net.isIP(host) === 0) {
         connectHost = (await dns.lookup(host, { family: 4 })).address;
       }
       const url = `ws://${connectHost}:${port}/`;
-      console.log(
-        `[clean-vpn] exit WebSocket: исходящее подключение к ${url}${reverse ? ' (--reverse)' : ' (--ws-connect)'}`,
-      );
-      exitReverseWs = new WebSocket(url);
-      exitReverseWs.binaryType = 'nodebuffer';
+      console.log(`[clean-vpn] exit WebSocket: исходящее подключение к ${url}`);
+      exitOutboundWebsocket = new WebSocket(url);
+      exitOutboundWebsocket.binaryType = 'nodebuffer';
       await new Promise((resolve, reject) => {
-        exitReverseWs.once('open', resolve);
-        exitReverseWs.once('error', reject);
+        exitOutboundWebsocket.once('open', resolve);
+        exitOutboundWebsocket.once('error', reject);
       });
       console.log('[clean-vpn] exit WebSocket: соединение установлено');
-      startBridge(exitReverseWs, null, 'websocket');
+      startBridge(exitOutboundWebsocket, null, 'websocket');
       return;
     }
     wss = new WebSocketServer({ host, port });
@@ -2925,6 +3015,11 @@ async function runExit({
 
   // --- runExit: --type=ws-chrome (HTTP GET /clean-vpn-chrome + WebSocket upgrade на том же порту) ---
   if (type === 'ws-chrome') {
+    if (!wsServer) {
+      throw new Error(
+        '[clean-vpn] exit ws-chrome: нужен флаг --ws-server (HTTP+WebSocket на --server); иначе используйте --type=websocket',
+      );
+    }
     const srv = http.createServer((req, res) => {
       if (
         req.method === 'GET' &&
@@ -3057,7 +3152,7 @@ async function runExit({
   // --- runExit: --type=webrtc ---
   if (type === 'webrtc') {
     const ice = loadWebrtcIceFromConfig(configPath, iceMode);
-    const sigListen = webrtcSignalingListens('exit', signaling, signalingConnect);
+    const sigListen = webrtcSignalingListens(signaling);
     console.log(
       `[clean-vpn] webrtc exit: ICE mode=${ice.iceMode}, серверов=${ice.ndcIceServers.length}, конфиг=${ice.configPath}; сигналинг=${sigListen ? 'сервер' : 'клиент'}`,
     );
@@ -3095,7 +3190,7 @@ async function runExit({
       });
       return;
     }
-    assertOutboundWsHost(host, '--signaling на VPS или --signaling-connect с реальным HOST:PORT');
+    assertOutboundWsHost(host, '--signaling на стороне пира или реальный HOST:PORT в --server');
     let connectHost = host;
     if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) {
       connectHost = (await dns.lookup(host, { family: 4 })).address;
@@ -3261,38 +3356,37 @@ async function runClient({
   wsChromeExitPage,
   wsChromeCdpData,
   rtcChromeExecutable,
-  reverse,
   tunnelPeer,
   signaling,
-  signalingConnect,
   wsServer,
-  wsConnect,
 }) {
   const { host, port } = parseHostPort(server);
-  if (reverse && type !== 'websocket') {
-    throw new Error(
-      '[clean-vpn] --reverse сейчас поддерживается только с --type=websocket',
-    );
-  }
-  const wsListenCli =
-    type === 'websocket' ? websocketVpnListens('client', reverse, wsServer, wsConnect) : false;
-  const webrtcSigListenClient =
-    type === 'webrtc' && webrtcSignalingListens('client', signaling, signalingConnect);
+  const wsListenCli = type === 'websocket' ? websocketVpnListens(wsServer) : false;
+  const webrtcSigListenClient = type === 'webrtc' && webrtcSignalingListens(signaling);
+  const rtcChromeSigListen = type === 'rtc-chrome' && webrtcSignalingListens(signaling);
   const deferWsPeerBypass =
     type === 'websocket' && !tunnelPeer && wsListenCli && host === '0.0.0.0';
   const deferWebrtcPeerBypass =
     type === 'webrtc' && !tunnelPeer && webrtcSigListenClient && host === '0.0.0.0';
+  const deferRtcChromeSigBypass =
+    type === 'rtc-chrome' && !tunnelPeer && rtcChromeSigListen && host === '0.0.0.0';
   const routeHost =
-    (type === 'websocket' && reverse && tunnelPeer) || (type === 'webrtc' && tunnelPeer)
+    (type === 'websocket' && tunnelPeer) ||
+    (type === 'webrtc' && tunnelPeer) ||
+    (type === 'rtc-chrome' && tunnelPeer)
       ? tunnelPeer
       : host;
   const tunName = findFreeTunName();
   const { tun, name: ifname } = openTunNative(tunName);
   setupTunIp('client', ifname);
+  const deferSigBypass =
+    deferWsPeerBypass || deferWebrtcPeerBypass || deferRtcChromeSigBypass;
+  const deferPeerKindForSetup =
+    deferWebrtcPeerBypass || deferRtcChromeSigBypass ? 'webrtc' : 'ws-listen';
   const routeCtx = await setupClientRoutesAsync(ifname, routeHost, splitDefault, {
-    deferPeerBypass: deferWsPeerBypass || deferWebrtcPeerBypass,
-    deferPeerKind: deferWebrtcPeerBypass ? 'webrtc' : 'reverse-ws',
-    reverseWebsocket: reverse && type === 'websocket',
+    deferPeerBypass: deferSigBypass,
+    deferPeerKind: deferPeerKindForSetup,
+    websocketListenNoSplitDefault: type === 'websocket' && wsServer && !splitDefault,
   });
 
   /** @type {import('node-datachannel').PeerConnection|null} */
@@ -3313,6 +3407,8 @@ async function runClient({
   let clientReverseWss = null;
   /** @type {import('ws').WebSocketServer|null} */
   let clientWebrtcSigWss = null;
+  /** @type {import('ws').WebSocketServer|null} */
+  let clientRtcChromeSigWss = null;
 
   let shuttingDown = false;
   const shutdown = () => {
@@ -3356,6 +3452,19 @@ async function runClient({
       if (clientWebrtcSigWss) {
         const w = clientWebrtcSigWss;
         clientWebrtcSigWss = null;
+        try {
+          w.close();
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (clientRtcChromeSigWss) {
+        const w = clientRtcChromeSigWss;
+        clientRtcChromeSigWss = null;
         try {
           w.close();
         } catch {
@@ -3433,7 +3542,7 @@ async function runClient({
         clientReverseWss.once('error', reject);
       });
       console.log(
-        `[clean-vpn] client WebSocket (сервер) ws://${host === '0.0.0.0' ? '*' : host}:${port}/${reverse ? ' (--reverse)' : ' (--ws-server)'}`,
+        `[clean-vpn] client WebSocket (сервер) ws://${host === '0.0.0.0' ? '*' : host}:${port}/ (--ws-server)`,
       );
       const ws = await new Promise((resolve, reject) => {
         clientReverseWss.once('connection', (w) => {
@@ -3468,6 +3577,11 @@ async function runClient({
 
   // --- runClient: --type=ws-chrome (Puppeteer + WebSocket в Chrome) ---
   if (type === 'ws-chrome') {
+    if (wsServer) {
+      throw new Error(
+        '[clean-vpn] client ws-chrome: флаг --ws-server не поддерживается (Chrome только подключается к exit)',
+      );
+    }
     const wsUrl = wsChromeWsUrl || `ws://${host}:${port}/`;
     const exe = wsChromeExecutable || process.env.PUPPETEER_EXECUTABLE_PATH || null;
     const forceCdp =
@@ -3510,14 +3624,35 @@ async function runClient({
   if (type === 'rtc-chrome') {
     const ice = loadWebrtcBrowserIceFromConfig(configPath, iceMode);
     console.log(
-      `[clean-vpn] rtc-chrome client: ICE mode=${ice.iceMode}, конфиг=${ice.configPath}`,
+      `[clean-vpn] rtc-chrome client: ICE mode=${ice.iceMode}, конфиг=${ice.configPath}; сигналинг=${rtcChromeSigListen ? 'сервер+relay' : 'клиент'}`,
     );
-    if (signaling || signalingConnect) {
-      console.warn(
-        '[clean-vpn] rtc-chrome: --signaling / --signaling-connect не используются; Chrome подключается к ws://HOST:PORT из --server',
+    let signalingWsUrl = `ws://${host}:${port}/`;
+    if (rtcChromeSigListen) {
+      clientRtcChromeSigWss = new WebSocketServer({ host, port });
+      attachRtcChromeSignalingRelay(clientRtcChromeSigWss, (exitSideWs) => {
+        if (deferRtcChromeSigBypass && splitDefault) {
+          try {
+            const peerIp = normalizePeerIpv4(exitSideWs._socket?.remoteAddress);
+            addClientWsPeerBypass(routeCtx, peerIp);
+          } catch (e) {
+            console.warn('[clean-vpn] rtc-chrome bypass пира:', e?.message || e);
+          }
+        }
+      });
+      await new Promise((resolve, reject) => {
+        clientRtcChromeSigWss.once('listening', resolve);
+        clientRtcChromeSigWss.once('error', reject);
+      });
+      if (host === '0.0.0.0') {
+        signalingWsUrl = `ws://127.0.0.1:${port}/`;
+        console.warn(
+          '[clean-vpn] rtc-chrome + --signaling: Chrome подключается к ws://127.0.0.1 (второй пир — exit webrtc на публичный IP этого порта)',
+        );
+      }
+      console.log(
+        `[clean-vpn] rtc-chrome: сигналинг (сервер) ws://${host === '0.0.0.0' ? '*' : host}:${port}/`,
       );
     }
-    const signalingWsUrl = `ws://${host}:${port}/`;
     const exe = rtcChromeExecutable || process.env.PUPPETEER_EXECUTABLE_PATH || null;
     const { bridge, browser, localWss } = await createRtcChromeClientBridge({
       signalingWsUrl,
@@ -3828,15 +3963,12 @@ async function main() {
 --tls-probe-max-bytes=N: короткий passthrough, лимит байт обоих направлений (default 49152)
 --tls-probe-max-seconds=S: лимит времени passthrough-сессии (default 30)
 --tls-probe-full-proxy-per-ip=K: не более K «длинных» passthrough с одного IP за сутки (default 0 = только короткий)
---type=ws-chrome: client — Puppeteer + Chrome держит WS к exit (npm install puppeteer). По умолчанию быстрый локальный WS-мост 127.0.0.1; медленный CDP на пакет: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1. exit ws-chrome — HTTP /clean-vpn-chrome + WS; без CDP клиент с --ws-chrome-exit-page использует setContent (не загрузка страницы с exit). Произвольная страница: --ws-chrome-url=... — только CDP.
+--type=ws-chrome: client — Puppeteer + Chrome держит WS к exit (npm install puppeteer). exit — HTTP /clean-vpn-chrome + WS только с --ws-server. Медленный CDP: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1. Произвольная страница: --ws-chrome-url=... — только CDP.
 --ws-chrome-executable=PATH, --ws-chrome-ws-url=ws://..., --ws-chrome-url=http://... (goto), --ws-chrome-exit-page, --ws-chrome-cdp-data
---type=rtc-chrome: только client — Puppeteer + Chrome WebRTC DataChannel к exit --type=webrtc; локальный WS-мост к TUN; npm install puppeteer; --rtc-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH
---reverse: только с --type=websocket — по умолчанию client слушает --server, exit подключается; явно: --ws-server / --ws-connect. С --split-default: bypass к пиру после accept по remoteAddress (или --tunnel-peer). CLEAN_VPN_REVERSE=1 — как флаг.
---ws-server: только websocket — WebSocket-сервер данных на --server на этой ноде (иначе по роли/reverse по умолчанию).
---ws-connect: только websocket — принудительно исходящий WS к --server (например exit слушает: client с --ws-connect + --reverse).
---signaling: только webrtc + client — WebSocket-сервер сигналинга на --server (VPS client + 0.0.0.0:PORT).
---signaling-connect: только webrtc + exit — исходящий сигналинг к --server=HOST:PORT (когда сигналинг слушает client на VPS).
---tunnel-peer=HOST: опционально client + websocket + --reverse — bypass к пиру до accept при --split-default (стабильный IPv4 пира)`);
+--type=rtc-chrome: только client — Puppeteer + Chrome WebRTC к exit --type=webrtc; --signaling — WSS сигналинга на --server + relay Chrome↔exit; иначе исходящий WS к --server. npm install puppeteer; --rtc-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH
+--ws-server: websocket / ws-chrome на exit — слушать HTTP+WS или WSS данных на --server; на client (websocket) — слушать WSS; без флага — исходящий WebSocket к --server.
+--signaling: webrtc (exit|client) или rtc-chrome (client) — слушать WSS сигналинга на --server; без флага — исходящий WS. Алиас: --signalling.
+--tunnel-peer=HOST: опционально client + websocket + --ws-server на 0.0.0.0 — bypass к пиру до accept при --split-default (стабильный IPv4 пира)`);
     process.exit(1);
   }
 
@@ -3845,15 +3977,6 @@ async function main() {
     !['auto', 'relay', 'direct'].includes(args.iceMode)
   ) {
     console.error('[clean-vpn] --ice-mode должен быть auto | relay | direct');
-    process.exit(1);
-  }
-
-  if (args.signaling && args.signalingConnect) {
-    console.error('[clean-vpn] нельзя одновременно --signaling и --signaling-connect');
-    process.exit(1);
-  }
-  if (args.wsServer && args.wsConnect) {
-    console.error('[clean-vpn] нельзя одновременно --ws-server и --ws-connect');
     process.exit(1);
   }
 

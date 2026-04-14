@@ -452,9 +452,9 @@ mesh-vpn/
 
 Для [`scripts/clean-vpn.js`](scripts/clean-vpn.js) на **Linux** нужен собранный модуль `native/tun_linux` (после `npm install` это делает postinstall, либо явно: `npm run build:tun-linux`; нужны python3, make, g++). `--split-default` отправляет **IPv4** default в туннель (две половины `0.0.0.0/1`), а сети **RFC1918** (`10/8`, `172.16/12`, `192.168/16`) — на uplink, чтобы локальный DNS и LAN не уходили на exit. Внешний IPv4 проверяйте так: `curl -4 https://ifconfig.me`. Для `--type=tls` и IP в `--server` см. шапку скрипта и `--tls-server-name`.
 
-**WebRTC (`--type=webrtc`):** по умолчанию **exit** слушает WebSocket-сигналинг на `--server`, **client** подключается к `ws://HOST:PORT/`. Чтобы сигналинг слушал **client** (например VPS с `--server=0.0.0.0:8765`), добавьте **`--signaling`**; тогда **exit** запускайте с **`--signaling-connect`** и **`--server=VPS_ПУБЛИЧНЫЙ_IP:8765`**. С **`--split-default`** и listen на `0.0.0.0` bypass к пиру сигналинга после accept по `remoteAddress` (как у reverse WebSocket).
+**WebRTC (`--type=webrtc`):** WebSocket-сигналинг **слушает** только нода с **`--signaling`** на `--server`; без флага — **исходящий** WS к `--server` (и exit, и client). Типично: exit **`--signaling --server=0.0.0.0:PORT`**, client **`--server=VPS:PORT`** без `--signaling`. Сигналинг на VPS: client **`--signaling --server=0.0.0.0:PORT`**, exit **`--server=VPS:PORT`** (без `--signaling`). Алиас CLI: **`--signalling`**. С **`--split-default`** и listen на `0.0.0.0` — bypass к пиру сигналинга после accept по `remoteAddress` (как у WebSocket-сервера на client).
 
-**WebSocket данных (`--type=websocket`):** по умолчанию как раньше (exit — сервер, client — клиент; с **`--reverse`** — наоборот). Явно: **`--ws-server`** — поднять WSS на этой ноде на `--server`; **`--ws-connect`** — принудительно исходящий WS (например если exit слушает при reverse, на client укажите **`--ws-connect`** вместо listen).
+**WebSocket данных (`--type=websocket`):** WSS **только** с **`--ws-server`** на `--server`; без флага — исходящий WebSocket к `--server` (обе роли).
 
 #### `--type=ws-chrome` (Puppeteer)
 
@@ -462,13 +462,13 @@ mesh-vpn/
 
 **Производительность:** по умолчанию клиент поднимает **локальный** `WebSocketServer` на `127.0.0.1` и встраивает страницу с **двумя** сокетами (exit ↔ localhost): пакеты не проходят через CDP `evaluate` / `exposeFunction`, ожидается заметно выше пропускной способности, чем у чистого CDP-пути. Медленный режим (как раньше, на каждый пакет через Puppeteer): флаг **`--ws-chrome-cdp-data`** или **`CLEAN_VPN_WS_CHROME_CDP_DATA=1`**.
 
-- **Client + exit только WebSocket:** `exit --type=websocket`, `client --type=ws-chrome` — встроенная страница в Puppeteer, отдельный HTTP на exit не нужен.
-- **Client + exit с страницей на том же порту:** `exit --type=ws-chrome` отдаёт `GET /clean-vpn-chrome` и WebSocket на upgrade. Без CDP клиент с **`--ws-chrome-exit-page`** всё равно получает тот же быстрый двойной мост через `setContent` (URL exit вшит в скрипт); загрузка HTML с exit нужна только если включён CDP (`--ws-chrome-cdp-data`) или для ручной проверки в обычном браузере. Полный URL: `--ws-chrome-url=http://HOST:PORT/clean-vpn-chrome`.
+- **Client + exit только WebSocket:** `exit --type=websocket --ws-server`, `client --type=ws-chrome` — встроенная страница в Puppeteer, отдельный HTTP на exit не нужен.
+- **Client + exit с страницей на том же порту:** `exit --type=ws-chrome --ws-server` отдаёт `GET /clean-vpn-chrome` и WebSocket на upgrade. Без CDP клиент с **`--ws-chrome-exit-page`** всё равно получает тот же быстрый двойной мост через `setContent` (URL exit вшит в скрипт); загрузка HTML с exit нужна только если включён CDP (`--ws-chrome-cdp-data`) или для ручной проверки в обычном браузере. Полный URL: `--ws-chrome-url=http://HOST:PORT/clean-vpn-chrome`. На client флаг **`--ws-server`** не поддерживается.
 - **`--ws-chrome-url=...` (произвольная страница):** локальный мост не внедрить — используется только CDP-путь (медленнее); страница должна вызывать те же `exposeFunction`, что и встроенная (см. исходник `scripts/clean-vpn.js`).
 
 Протокол тот же, что у `--type=websocket`: одно binary WS-сообщение = один IPv4-пакет.
 
-**Обратный WebSocket (`--reverse`):** на VPS — **client**, **слушает** `ws://` на `--server` (например `0.0.0.0:8765`); локально за NAT — **exit**, **исходящий** WebSocket к VPS (белый IP на exit не нужен). При **`--split-default`** на VPS добавляется маршрут обхода к **пиру TCP** (обычно публичный IP вашего NAT): **автоматически** по `remoteAddress` после accept или заранее через **`--tunnel-peer=HOST`**. Без **`--split-default`** такой `/32` к пиру **не** настраивается (трафик к пиру идёт системным default через uplink). `CLEAN_VPN_REVERSE=1` эквивалентен `--reverse`.
+**WebSocket «за NAT» (раньше `--reverse`):** на VPS — **client** с **`--ws-server --server=0.0.0.0:8765`**; дома — **exit** с **`--server=VPS:8765`** без `--ws-server`. При **`--split-default`** на VPS — маршрут обхода к пиру TCP по `remoteAddress` после accept или **`--tunnel-peer=HOST`**. Без **`--split-default`** `/32` к пиру не добавляется. Флаги **`--reverse`**, **`CLEAN_VPN_REVERSE`**, **`--ws-connect`** удалены — используйте семантику выше.
 
 **Ubuntu ARM64 в Multipass на Mac (M1/M2/M3):** Chrome из `~/.cache/puppeteer` часто не запускается (ошибки вроде `Syntax error: ";" unexpected` у бинарника). Поставьте системный Chromium и укажите путь, либо скрипт на **arm64** сам попробует `/usr/bin/chromium-browser`, `/usr/bin/chromium`, `/snap/bin/chromium`:
 
@@ -482,7 +482,19 @@ sudo env PATH=$PATH node scripts/clean-vpn.js ... --type=ws-chrome --ws-chrome-e
 
 #### `--type=rtc-chrome` (Puppeteer + WebRTC)
 
-Только **client**. На **exit** используйте **`--type=webrtc`** (тот же WebSocket-сигналинг и Data Channel с меткой `clean-vpn`). В Headless Chrome создаётся нативный **`RTCPeerConnection`**: JSON-сигналинг на `ws://HOST:PORT/` совпадает с Node-клиентом webrtc; **IPv4-пакеты** между TUN и страницей идут через **локальный WebSocket** на `127.0.0.1` (аналогично быстрому ws-chrome), в странице они пересылаются в Data Channel. Нужны **`puppeteer`**, **`--config`** / **`--ice-mode`** (как для webrtc), опционально **`--rtc-chrome-executable=PATH`** или **`PUPPETEER_EXECUTABLE_PATH`**. Флаги **`--signaling` / `--signaling-connect`** для rtc-chrome **не** используются (сигналинг всегда исходящий WS к `--server` у exit).
+Только **client**. На **exit** используйте **`--type=webrtc`** (тот же WebSocket-сигналинг и Data Channel с меткой `clean-vpn`). В Headless Chrome создаётся нативный **`RTCPeerConnection`**. Без **`--signaling`** — JSON-сигналинг как у Node-webrtc: исходящий WS к `--server` у exit. С **`--signaling`** — на client поднимается WSS сигналинга на `--server`, relay Chrome ↔ exit; при `0.0.0.0` в URL для Chrome используется `ws://127.0.0.1:PORT/` (только локальный Chrome). **IPv4-пакеты** между TUN и страницей идут через локальный WebSocket на `127.0.0.1`. Нужны **`puppeteer`**, **`--config`** / **`--ice-mode`**, опционально **`--rtc-chrome-executable=PATH`** или **`PUPPETEER_EXECUTABLE_PATH`**.
+
+**Миграция (breaking):** удалены **`--reverse`**, **`--signaling-connect`**, **`--ws-connect`**, переменная **`CLEAN_VPN_REVERSE`**.
+
+| Раньше | Теперь |
+|--------|--------|
+| `exit --type=webrtc` (слушал сигналинг по умолчанию) | `exit --type=webrtc --signaling --server=0.0.0.0:PORT` |
+| `client --type=webrtc` к VPS | без изменений: `client --server=VPS:PORT --type=webrtc` |
+| `client --signaling`, `exit --signaling-connect` | `client --signaling`, `exit` без `--signaling` (исходящий WS) |
+| `exit --type=websocket` (сервер) | `exit --type=websocket --ws-server --server=0.0.0.0:PORT` |
+| `client --type=websocket` | без изменений (connect) |
+| `client --reverse`, `exit --reverse` (NAT) | `client --ws-server`, `exit` без `--ws-server` |
+| `exit --type=ws-chrome` | `exit --type=ws-chrome --ws-server` |
 
 ### Проверка TLS passthrough ([`scripts/probe.js`](scripts/probe.js))
 
