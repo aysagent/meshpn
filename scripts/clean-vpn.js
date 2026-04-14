@@ -10,8 +10,8 @@
  * Exit (VPS): tun + NAT в интернет, без split-default.
  * Client: tun + split-default (опция, только IPv4 default), маршрут к --server через uplink.
  *
- * Протокол (socket / http после преамбулы): uint32 BE + один L3-кадр — сырой IPv4 или IPv6 (без PI на TUN).
- * WebSocket / UDP: одно binary-сообщение или одна датаграмма = один IPv4- или IPv6-пакет (без префикса длины).
+ * Протокол (socket / http после преамбулы): uint32 BE + сырой IPv4-пакет (как у прежнего tun-helper по транспорту).
+ * WebSocket / UDP: одно binary-сообщение или одна датаграмма = один IPv4-пакет (без префикса длины).
  * WebRTC DataChannel через Puppeteer (--type=rtc-chrome): client — Chrome + RTCPeerConnection к exit `--type=webrtc`, сигналинг как у webrtc, TUN ↔ локальный WS; `npm install puppeteer`.
  * WebSocket через Puppeteer (--type=ws-chrome): на client Headless Chrome держит исходящий WS к exit; `npm install puppeteer`.
  *   По умолчанию данные идут через локальный ws://127.0.0.1 (без CDP на каждый пакет). Медленный путь: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1.
@@ -130,19 +130,9 @@ function openTunNative(tunName) {
 // =============================================================================
 
 const TUN_MTU = 1400;
-/** Максимум байт одного L3-кадра (IPv4/IPv6) по туннелю; jumbo и фрагменты на границе MTU — на стороне отправителя. */
 const MAX_PKT = 65535;
 const IP_EXIT = '10.99.0.1';
 const IP_CLIENT = '10.99.0.2';
-/** ULA IPv6 point-to-point (peer на TUN); согласованы с `ip -6 addr add … peer …`. */
-const IP6_EXIT = 'fd10:99::1';
-const IP6_CLIENT = 'fd10:99::2';
-const IP6_EXIT_U8 = new Uint8Array([
-  0xfd, 0x10, 0, 0x99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-]);
-const IP6_CLIENT_U8 = new Uint8Array([
-  0xfd, 0x10, 0, 0x99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
-]);
 
 const SCTP_DEFAULTS = {
   recvBufferSize: 16 * 1024 * 1024,
@@ -189,8 +179,6 @@ const TLS_CLIENT_HANDSHAKE_MS = 30000;
 
 /** RFC1918: при split-default идут через uplink (длиннее префикса /1), чтобы DNS/LAN не уезжали на exit. Peer 10.99.0.1 остаётся /32 на tun. */
 const SPLIT_PRIVATE_V4 = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
-/** При --split-default-v6: ULA и link-local через uplink (аналог частных сетей v4). */
-const SPLIT_PRIVATE_V6 = ['fc00::/7', 'fe80::/10'];
 
 /**
  * @param {string|null|undefined} gw
@@ -217,61 +205,6 @@ function delSplitPrivateUplinkRoutes(gw, dev) {
     } else {
       tryIpRoute(['route', 'del', dst, 'dev', dev]);
     }
-  }
-}
-
-/**
- * @param {string|null|undefined} gw
- * @param {string} dev
- */
-function addSplitPrivateUplinkRoutesV6(gw, dev) {
-  for (const dst of SPLIT_PRIVATE_V6) {
-    if (gw) {
-      ip(['-6', 'route', 'replace', dst, 'via', gw, 'dev', dev]);
-    } else {
-      ip(['-6', 'route', 'replace', dst, 'dev', dev]);
-    }
-  }
-}
-
-/**
- * @param {string|null|undefined} gw
- * @param {string} dev
- */
-function delSplitPrivateUplinkRoutesV6(gw, dev) {
-  for (const dst of SPLIT_PRIVATE_V6) {
-    if (gw) {
-      tryIpRoute(['-6', 'route', 'del', dst, 'via', gw, 'dev', dev]);
-    } else {
-      tryIpRoute(['-6', 'route', 'del', dst, 'dev', dev]);
-    }
-  }
-}
-
-function getDefaultRouteLinuxV6() {
-  try {
-    const out = execFileSync('ip', ['-6', 'route', 'show', 'default'], { encoding: 'utf8' });
-    const line = out.trim().split('\n')[0] || '';
-    const via = line.match(/default via (\S+)/);
-    const dev = line.match(/dev (\S+)/);
-    if (via && dev) return { gw: via[1], dev: dev[1] };
-    if (dev) return { gw: null, dev: dev[1] };
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
-/** Записи table main с данным dst (IPv6). */
-function captureRoutesByDstV6(dst) {
-  try {
-    const out = execFileSync('ip', ['-6', '-json', 'route', 'list', 'table', 'main'], {
-      encoding: 'utf8',
-    });
-    const arr = JSON.parse(out);
-    return arr.filter((r) => r.dst === dst);
-  } catch {
-    return [];
   }
 }
 
@@ -1129,7 +1062,7 @@ function attachCleanVpnWebrtcExitSignaling(ws, tun, ice, pcRef) {
     const dc = connPc.createDataChannel('clean-vpn');
     dc.onOpen(() => {
       console.log('[clean-vpn] DataChannel open (exit)');
-      attachTunBridge(tun, 'webrtc-dc', dc, { localTunIp: IP_EXIT, localTunIp6: IP6_EXIT_U8 });
+      attachTunBridge(tun, 'webrtc-dc', dc, { localTunIp: IP_EXIT });
     });
     dc.onClosed(() => {
       console.log('[clean-vpn] DataChannel closed (exit)');
@@ -1212,7 +1145,7 @@ function attachCleanVpnWebrtcClientSignaling(ws, tun, ice, pcRef) {
   pc.onDataChannel((dc) => {
     dc.onOpen(() => {
       console.log('[clean-vpn] DataChannel open (client)');
-      attachTunBridge(tun, 'webrtc-dc', dc, { localTunIp: IP_CLIENT, localTunIp6: IP6_CLIENT_U8 });
+      attachTunBridge(tun, 'webrtc-dc', dc, { localTunIp: IP_CLIENT });
     });
     dc.onError((err) => {
       console.error('[clean-vpn] DataChannel error (client):', err);
@@ -1268,7 +1201,6 @@ function parseArgs(argv) {
     server: null,
     type: null,
     splitDefault: false,
-    splitDefaultV6: false,
     extIface: null,
     configPath: null,
     iceMode: null,
@@ -1329,7 +1261,6 @@ function parseArgs(argv) {
     } else if (a.startsWith('--tunnel-peer=')) {
       out.tunnelPeer = a.slice('--tunnel-peer='.length);
     } else if (a === '--split-default') out.splitDefault = true;
-    else if (a === '--split-default-v6') out.splitDefaultV6 = true;
     else if (a === '--signaling' || a === '--signalling') out.signaling = true;
     else if (a === '--ws-server') out.wsServer = true;
   }
@@ -1387,8 +1318,7 @@ function captureServerRoutes(serverIp) {
 
 function ipRouteAddFromRecord(r) {
   if (!r?.dst) return;
-  const isV6 = r.dst.includes(':');
-  const args = isV6 ? ['-6', 'route', 'add', r.dst] : ['-4', 'route', 'add', r.dst];
+  const args = ['route', 'add', r.dst];
   if (r.gateway) args.push('via', r.gateway);
   if (r.prefsrc) args.push('src', r.prefsrc);
   if (r.dev) args.push('dev', r.dev);
@@ -1433,7 +1363,7 @@ function findFreeTunName() {
 }
 
 // =============================================================================
-// === Общее: uint32+L3 (IPv4/IPv6) фрейминг, writeFramed, attachTunBridge (все transport) ===
+// === Общее: uint32+IPv4 фрейминг, writeFramed, attachTunBridge (все transport) ===
 // =============================================================================
 
 /** Сдвиг накопленного буфера; при большом byteOffset — компактная копия, чтобы не держать гигантский ArrayBuffer. */
@@ -1518,40 +1448,6 @@ function setupTunIp(role, ifname) {
     ip(['addr', 'add', `${IP_CLIENT}/32`, 'peer', `${IP_EXIT}/32`, 'dev', ifname]);
   }
   ip(['link', 'set', 'dev', ifname, 'mtu', String(TUN_MTU), 'up']);
-  try {
-    execFileSync('sysctl', [`net.ipv6.conf.${ifname}.accept_dad=0`], { stdio: 'inherit' });
-  } catch {
-    /* ignore */
-  }
-  try {
-    if (role === 'exit') {
-      ip([
-        '-6',
-        'addr',
-        'add',
-        `${IP6_EXIT}/128`,
-        'peer',
-        `${IP6_CLIENT}/128`,
-        'dev',
-        ifname,
-        'nodad',
-      ]);
-    } else {
-      ip([
-        '-6',
-        'addr',
-        'add',
-        `${IP6_CLIENT}/128`,
-        'peer',
-        `${IP6_EXIT}/128`,
-        'dev',
-        ifname,
-        'nodad',
-      ]);
-    }
-  } catch (e) {
-    console.warn('[clean-vpn] IPv6 на TUN не настроен:', e?.message || e);
-  }
 }
 
 /**
@@ -1598,18 +1494,9 @@ function addClientWsPeerBypass(ctx, peerIp) {
  * @param {string} ifname
  * @param {string} serverHost
  * @param {boolean} splitDefault
- * @param {{
- *   deferPeerBypass?: boolean;
- *   websocketListenNoSplitDefault?: boolean;
- *   deferPeerKind?: 'ws-listen'|'webrtc';
- *   splitDefaultV6?: boolean;
- * }} [opts]
+ * @param {{ deferPeerBypass?: boolean; websocketListenNoSplitDefault?: boolean; deferPeerKind?: 'ws-listen'|'webrtc' }} [opts]
  */
 async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
-  const splitDefaultV6 = opts?.splitDefaultV6 === true;
-  if (splitDefaultV6 && !splitDefault) {
-    throw new Error('[clean-vpn] --split-default-v6 только вместе с --split-default');
-  }
   const deferPeerBypass = opts?.deferPeerBypass === true;
   const websocketListenNoSplitDefault = opts?.websocketListenNoSplitDefault === true;
   const deferKind = opts?.deferPeerKind === 'webrtc' ? 'webrtc' : 'ws-listen';
@@ -1658,15 +1545,6 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
   const snap01 = splitDefault ? [...captureRoutesByDst('0.0.0.0/1')] : [];
   const snap128 = splitDefault ? [...captureRoutesByDst('128.0.0.0/1')] : [];
 
-  /** @type {string|null} */
-  let gwV6 = null;
-  /** @type {string|null} */
-  let devV6 = null;
-  /** @type {unknown[]} */
-  let snapV601 = [];
-  /** @type {unknown[]} */
-  let snapV68000 = [];
-
   if (splitDefault) {
     ip(['route', 'replace', '0.0.0.0/1', 'dev', ifname]);
     ip(['route', 'replace', '128.0.0.0/1', 'dev', ifname]);
@@ -1679,34 +1557,8 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
       gw ? `via ${gw}` : '',
       dev,
     );
-    if (!splitDefaultV6) {
-      console.warn(
-        '[clean-vpn] split-default: IPv6 default не в туннеле (добавьте --split-default-v6). Проверка IPv4: curl -4 https://ifconfig.me',
-      );
-    }
-  }
-
-  if (splitDefaultV6) {
-    const dr6 = getDefaultRouteLinuxV6();
-    if (!dr6) {
-      throw new Error(
-        '[clean-vpn] --split-default-v6: не найден IPv6 default (нужен ip -6 route show default)',
-      );
-    }
-    gwV6 = dr6.gw;
-    devV6 = dr6.dev;
-    snapV601 = [...captureRoutesByDstV6('::/1')];
-    snapV68000 = [...captureRoutesByDstV6('8000::/1')];
-    ip(['-6', 'route', 'replace', '::/1', 'dev', ifname]);
-    ip(['-6', 'route', 'replace', '8000::/1', 'dev', ifname]);
-    addSplitPrivateUplinkRoutesV6(gwV6, devV6);
-    console.log('[clean-vpn] split-default-v6 (::/1 + 8000::/1) через', ifname);
-    console.log(
-      '[clean-vpn] split-default-v6: ULA/link-local',
-      SPLIT_PRIVATE_V6.join(', '),
-      '→ uplink',
-      gwV6 ? `via ${gwV6}` : '',
-      devV6,
+    console.warn(
+      '[clean-vpn] split-default только для IPv4; IPv6 default не в туннеле. Проверка внешнего IPv4: curl -4 https://ifconfig.me',
     );
   }
   try {
@@ -1721,16 +1573,11 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
     gw,
     dev,
     splitDefault,
-    splitDefaultV6,
-    gwV6,
-    devV6,
     prevRpAll,
     snapHost,
     snapPeer: [],
     snap01,
     snap128,
-    snapV601,
-    snapV68000,
     ifname,
   };
 }
@@ -1743,26 +1590,13 @@ function teardownClientRoutes(ctx) {
     gw,
     dev,
     splitDefault,
-    splitDefaultV6,
-    gwV6,
-    devV6,
     prevRpAll,
     snapHost,
     snapPeer,
     snap01,
     snap128,
-    snapV601,
-    snapV68000,
     ifname,
   } = ctx;
-
-  if (splitDefaultV6 && devV6) {
-    tryIpRoute(['-6', 'route', 'del', '::/1', 'dev', ifname]);
-    tryIpRoute(['-6', 'route', 'del', '8000::/1', 'dev', ifname]);
-    restoreRoutesFromRecords(snapV601 || []);
-    restoreRoutesFromRecords(snapV68000 || []);
-    delSplitPrivateUplinkRoutesV6(gwV6, devV6);
-  }
 
   if (splitDefault) {
     tryIpRoute(['route', 'del', '0.0.0.0/1', 'dev', ifname]);
@@ -1802,16 +1636,10 @@ function teardownClientRoutes(ctx) {
 
 function setupExitNat(tunName, extIface) {
   const prevIpForward = getSysctlNum('net.ipv4.ip_forward');
-  const prevIp6Forward = getSysctlNum('net.ipv6.conf.all.forwarding');
   sysctlForward(true);
-  try {
-    execFileSync('sysctl', ['net.ipv6.conf.all.forwarding=1'], { stdio: 'inherit' });
-  } catch {
-    console.warn('[clean-vpn] sysctl net.ipv6.conf.all.forwarding=1 не применён');
-  }
   const ext = extIface || getDefaultRouteLinux()?.dev;
   if (!ext) throw new Error('Укажите --ext=eth0 или настройте default route');
-  console.log(`[clean-vpn] NAT: ${tunName} -> ${ext} (MASQUERADE IPv4 + IPv6)`);
+  console.log(`[clean-vpn] NAT: ${tunName} -> ${ext} (MASQUERADE)`);
   execFileSync(
     'iptables',
     ['-t', 'nat', '-A', 'POSTROUTING', '-s', `${IP_CLIENT}/32`, '-o', ext, '-j', 'MASQUERADE'],
@@ -1838,75 +1666,20 @@ function setupExitNat(tunName, extIface) {
     ],
     { stdio: 'inherit' },
   );
+  return { ext, tunName, prevIpForward };
+}
+
+function restoreExitSysctl(prevIpForward) {
+  if (prevIpForward == null) return;
   try {
-    execFileSync(
-      'ip6tables',
-      [
-        '-t',
-        'nat',
-        '-A',
-        'POSTROUTING',
-        '-s',
-        `${IP6_CLIENT}/128`,
-        '-o',
-        ext,
-        '-j',
-        'MASQUERADE',
-      ],
-      { stdio: 'inherit' },
-    );
-    execFileSync('ip6tables', ['-A', 'FORWARD', '-i', tunName, '-o', ext, '-j', 'ACCEPT'], {
-      stdio: 'inherit',
-    });
-    execFileSync(
-      'ip6tables',
-      [
-        '-A',
-        'FORWARD',
-        '-i',
-        ext,
-        '-o',
-        tunName,
-        '-m',
-        'conntrack',
-        '--ctstate',
-        'RELATED,ESTABLISHED',
-        '-j',
-        'ACCEPT',
-      ],
-      { stdio: 'inherit' },
-    );
-  } catch (e) {
-    console.warn('[clean-vpn] ip6tables NAT/FORWARD не настроен:', e?.message || e);
-  }
-  return { ext, tunName, prevIpForward, prevIp6Forward };
-}
-
-/** @param {{ prevIpForward?: number|null, prevIp6Forward?: number|null }} nat */
-function restoreExitSysctl(nat) {
-  if (nat?.prevIpForward != null) {
-    try {
-      execFileSync('sysctl', [`net.ipv4.ip_forward=${nat.prevIpForward}`], { stdio: 'inherit' });
-      console.log('[clean-vpn] exit: net.ipv4.ip_forward восстановлен');
-    } catch {
-      /* ignore */
-    }
-  }
-  if (nat?.prevIp6Forward != null) {
-    try {
-      execFileSync('sysctl', [`net.ipv6.conf.all.forwarding=${nat.prevIp6Forward}`], {
-        stdio: 'inherit',
-      });
-      console.log('[clean-vpn] exit: net.ipv6.conf.all.forwarding восстановлен');
-    } catch {
-      /* ignore */
-    }
+    execFileSync('sysctl', [`net.ipv4.ip_forward=${prevIpForward}`], { stdio: 'inherit' });
+    console.log('[clean-vpn] exit: net.ipv4.ip_forward восстановлен');
+  } catch {
+    /* ignore */
   }
 }
 
-/** @param {{ tunName: string, ext: string }} nat */
-function teardownExitNat(nat) {
-  const { tunName, ext } = nat;
+function teardownExitNat(tunName, ext) {
   try {
     execFileSync(
       'iptables',
@@ -1926,47 +1699,6 @@ function teardownExitNat(nat) {
   try {
     execFileSync(
       'iptables',
-      [
-        '-D',
-        'FORWARD',
-        '-i',
-        ext,
-        '-o',
-        tunName,
-        '-m',
-        'conntrack',
-        '--ctstate',
-        'RELATED,ESTABLISHED',
-        '-j',
-        'ACCEPT',
-      ],
-      { stdio: 'inherit' },
-    );
-  } catch {
-    /* ignore */
-  }
-  try {
-    execFileSync(
-      'ip6tables',
-      [
-        '-t',
-        'nat',
-        '-D',
-        'POSTROUTING',
-        '-s',
-        `${IP6_CLIENT}/128`,
-        '-o',
-        ext,
-        '-j',
-        'MASQUERADE',
-      ],
-      { stdio: 'inherit' },
-    );
-    execFileSync('ip6tables', ['-D', 'FORWARD', '-i', tunName, '-o', ext, '-j', 'ACCEPT'], {
-      stdio: 'inherit',
-    });
-    execFileSync(
-      'ip6tables',
       [
         '-D',
         'FORWARD',
@@ -2081,79 +1813,25 @@ function tryBuildTunIcmpEchoReplyForLocalIp(pkt, localDst4, nextIpIdentification
 }
 
 /**
- * ICMPv6 Echo Request (128) к нашему адресу на TUN → Echo Reply (129), без extension headers.
- *
- * @param {Buffer} pkt
- * @param {Uint8Array} localDst6 — 16 байт dst запроса
- * @returns {Buffer|null}
- */
-function tryBuildTunIcmp6EchoReplyForLocalIp(pkt, localDst6) {
-  if (pkt.length < 48) return null;
-  if ((pkt[0] >> 4) !== 6) return null;
-  const payloadLen = pkt.readUInt16BE(4);
-  if (payloadLen < 8 || 40 + payloadLen > pkt.length) return null;
-  if (pkt[6] !== 58) return null;
-  for (let i = 0; i < 16; i++) {
-    if (pkt[24 + i] !== localDst6[i]) return null;
-  }
-  const icmpOff = 40;
-  if (pkt[icmpOff] !== 128 || pkt[icmpOff + 1] !== 0) return null;
-  const icmpBody = pkt.subarray(icmpOff + 8, icmpOff + payloadLen);
-  const icmpPacket = Buffer.allocUnsafe(8 + icmpBody.length);
-  icmpPacket.writeUInt8(129, 0);
-  icmpPacket.writeUInt8(0, 1);
-  icmpPacket.writeUInt16BE(0, 2);
-  if (icmpBody.length) icmpBody.copy(icmpPacket, 8);
-  const icmpv6Len = icmpPacket.length;
-  const pseudo = Buffer.alloc(40);
-  pkt.copy(pseudo, 0, 24, 40);
-  pkt.copy(pseudo, 16, 8, 24);
-  pseudo.writeUInt32BE(icmpv6Len, 32);
-  pseudo[36] = 0;
-  pseudo[37] = 0;
-  pseudo[38] = 0;
-  pseudo[39] = 58;
-  let sumBuf = Buffer.concat([pseudo, icmpPacket]);
-  if (sumBuf.length % 2) {
-    sumBuf = Buffer.concat([sumBuf, Buffer.alloc(1)]);
-  }
-  icmpPacket.writeUInt16BE(internetChecksum16(sumBuf, 0, sumBuf.length), 2);
-
-  const v6 = Buffer.allocUnsafe(40 + icmpPacket.length);
-  v6.writeUInt32BE(0x60000000, 0);
-  v6.writeUInt16BE(icmpPacket.length, 4);
-  v6.writeUInt8(58, 6);
-  v6.writeUInt8(64, 7);
-  pkt.copy(v6, 8, 24, 40);
-  pkt.copy(v6, 24, 8, 24);
-  icmpPacket.copy(v6, 40);
-  return v6;
-}
-
-/**
  * Один активный мост на TUN: иначе второй TCP-клиент на exit вешает второй
  * listener и пакеты дублируются / рассинхрон.
  *
  * @param {{ write: (b: Buffer) => void, startRead: (cb: (batch: ArrayBuffer[]) => void) => void }} tun — native addon
  * @param {'tcp'|'websocket'|'udp-client'|'udp-server'|'webrtc-dc'} transport
  * @param {import('net').Socket|import('ws')|import('dgram').Socket|{sock: import('dgram').Socket, peer?: import('dgram').RemoteInfo}|import('node-datachannel').DataChannel} endpoint
- * @param {{ localTunIp?: string; localTunIp6?: Uint8Array }} [bridgeOpts]
+ * @param {{ localTunIp?: string }} [bridgeOpts]
  */
 function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
   const framer = new StreamFramer();
   const local4 = bridgeOpts?.localTunIp
     ? parseDottedIPv4FourOctets(bridgeOpts.localTunIp)
     : null;
-  const local6 =
-    bridgeOpts?.localTunIp6 instanceof Uint8Array && bridgeOpts.localTunIp6.length === 16
-      ? bridgeOpts.localTunIp6
-      : null;
   let ipIdCounter = randomBytes(2).readUInt16BE(0);
   const nextIpId = () => {
     ipIdCounter = (ipIdCounter + 1) & 0xffff;
     return ipIdCounter;
   };
-  let icmpLocalReplyLogged = false;
+  let icmpEchoReplyLogged = false;
 
   const writeTun = (pkt) => {
     try {
@@ -2283,23 +1961,10 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
         const reply = tryBuildTunIcmpEchoReplyForLocalIp(pkt, local4, nextIpId);
         if (reply) {
           writeTun(reply);
-          if (!icmpLocalReplyLogged) {
-            icmpLocalReplyLogged = true;
+          if (!icmpEchoReplyLogged) {
+            icmpEchoReplyLogged = true;
             console.log(
-              '[clean-vpn] локальный ICMP/ICMPv6 echo reply на TUN; дальнейшие ответы без лога',
-            );
-          }
-          continue;
-        }
-      }
-      if (local6) {
-        const reply6 = tryBuildTunIcmp6EchoReplyForLocalIp(pkt, local6);
-        if (reply6) {
-          writeTun(reply6);
-          if (!icmpLocalReplyLogged) {
-            icmpLocalReplyLogged = true;
-            console.log(
-              '[clean-vpn] локальный ICMP/ICMPv6 echo reply на TUN; дальнейшие ответы без лога',
+              `[clean-vpn] ICMP echo reply на TUN (${bridgeOpts?.localTunIp}); дальнейшие ответы без лога`,
             );
           }
           continue;
@@ -3312,7 +2977,7 @@ async function runExit({
       activeTcp.destroy();
     }
     if (transport === 'tcp') activeTcp = sock;
-    attachTunBridge(tun, transport, sock, { localTunIp: IP_EXIT, localTunIp6: IP6_EXIT_U8 });
+    attachTunBridge(tun, transport, sock, { localTunIp: IP_EXIT });
     if (restBuf && restBuf.length && transport === 'tcp') {
       sock.emit('data', restBuf);
     }
@@ -3401,8 +3066,8 @@ async function runExit({
       /* ignore */
     }
     const finishExit = () => {
-      teardownExitNat(nat);
-      restoreExitSysctl(nat);
+      teardownExitNat(nat.tunName, nat.ext);
+      restoreExitSysctl(nat.prevIpForward);
       try {
         tun.close();
       } catch {
@@ -3595,7 +3260,7 @@ async function runExit({
     udpSock.bind(port, host, () => {
       console.log(`[clean-vpn] exit UDP ${host}:${port} (один peer по первому пакету)`);
     });
-    attachTunBridge(tun, 'udp-server', udpEp, { localTunIp: IP_EXIT, localTunIp6: IP6_EXIT_U8 });
+    attachTunBridge(tun, 'udp-server', udpEp, { localTunIp: IP_EXIT });
     return;
   }
 
@@ -3794,7 +3459,6 @@ async function runClient({
   server,
   type,
   splitDefault,
-  splitDefaultV6,
   configPath,
   iceMode,
   quicCertsDir,
@@ -3838,7 +3502,6 @@ async function runClient({
     deferPeerBypass: deferSigBypass,
     deferPeerKind: deferPeerKindForSetup,
     websocketListenNoSplitDefault: type === 'websocket' && wsServer && !splitDefault,
-    splitDefaultV6: splitDefaultV6 === true,
   });
 
   /** @type {import('node-datachannel').PeerConnection|null} */
@@ -4011,7 +3674,7 @@ async function runClient({
         const peerIp = normalizePeerIpv4(ws._socket?.remoteAddress);
         addClientWsPeerBypass(routeCtx, peerIp);
       }
-      attachTunBridge(tun, 'websocket', ws, { localTunIp: IP_CLIENT, localTunIp6: IP6_CLIENT_U8 });
+      attachTunBridge(tun, 'websocket', ws, { localTunIp: IP_CLIENT });
       return;
     }
     assertOutboundWsHost(host, '--ws-server');
@@ -4023,7 +3686,7 @@ async function runClient({
       ws.once('error', reject);
     });
     console.log('[clean-vpn] WebSocket connected');
-    attachTunBridge(tun, 'websocket', ws, { localTunIp: IP_CLIENT, localTunIp6: IP6_CLIENT_U8 });
+    attachTunBridge(tun, 'websocket', ws, { localTunIp: IP_CLIENT });
     return;
   }
 
@@ -4068,7 +3731,7 @@ async function runClient({
       console.error('[clean-vpn] ws-chrome:', e?.message || e);
     });
     console.log('[clean-vpn] ws-chrome: готово (Puppeteer → WebSocket → exit)');
-    attachTunBridge(tun, 'websocket', bridge, { localTunIp: IP_CLIENT, localTunIp6: IP6_CLIENT_U8 });
+    attachTunBridge(tun, 'websocket', bridge, { localTunIp: IP_CLIENT });
     return;
   }
 
@@ -4122,7 +3785,7 @@ async function runClient({
       console.error('[clean-vpn] rtc-chrome:', e?.message || e);
     });
     console.log('[clean-vpn] rtc-chrome: готово (Chrome WebRTC → exit webrtc, TUN ↔ localhost WS)');
-    attachTunBridge(tun, 'websocket', bridge, { localTunIp: IP_CLIENT, localTunIp6: IP6_CLIENT_U8 });
+    attachTunBridge(tun, 'websocket', bridge, { localTunIp: IP_CLIENT });
     return;
   }
 
@@ -4134,7 +3797,7 @@ async function runClient({
       udp.connect(port, host, () => {
         udp.off('error', reject);
         console.log(`[clean-vpn] UDP «connected» к ${host}:${port}`);
-        attachTunBridge(tun, 'udp-client', udp, { localTunIp: IP_CLIENT, localTunIp6: IP6_CLIENT_U8 });
+        attachTunBridge(tun, 'udp-client', udp, { localTunIp: IP_CLIENT });
         resolve();
       });
     });
@@ -4216,7 +3879,7 @@ async function runClient({
     console.log('[clean-vpn] QUIC session установлена');
     const stream = await quicClientSession.createBidirectionalStream();
     const sock = quicBidiToSocketLike(stream);
-    attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT, localTunIp6: IP6_CLIENT_U8 });
+    attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT });
     return;
   }
 
@@ -4245,7 +3908,7 @@ async function runClient({
     console.log('[clean-vpn] QUIC-EXT (@infisical/quic) соединение установлено');
     const stream = quicExtClient.connection.newStream('bidi');
     const sock = quicBidiToSocketLike(stream);
-    attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT, localTunIp6: IP6_CLIENT_U8 });
+    attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT });
     return;
   }
 
@@ -4355,7 +4018,7 @@ async function runClient({
         finish(() => reject(err));
       });
     });
-    attachTunBridge(tun, 'tcp', tlsVpnSocket, { localTunIp: IP_CLIENT, localTunIp6: IP6_CLIENT_U8 });
+    attachTunBridge(tun, 'tcp', tlsVpnSocket, { localTunIp: IP_CLIENT });
     return;
   }
 
@@ -4364,13 +4027,13 @@ async function runClient({
     const sock = net.connect(port, host, () => {
       console.log('[clean-vpn] TCP connected');
       if (type === 'socket') {
-        attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT, localTunIp6: IP6_CLIENT_U8 });
+        attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT });
         resolve();
         return;
       }
       sock.__isServer = false;
       handleHttpSocket(sock, (rest) => {
-        attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT, localTunIp6: IP6_CLIENT_U8 });
+        attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT });
         if (rest && rest.length) {
           sock.emit('data', rest);
         }
@@ -4400,8 +4063,7 @@ async function main() {
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=socket --split-default
 
 --type: socket | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls
---split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 через uplink; проверка IPv4: curl -4 https://ifconfig.me
---split-default-v6: только с --split-default; IPv6 default через tun (::/1 + 8000::/1); ULA fc00::/7 и fe80::/10 через uplink; нужен ip -6 route show default; на exit — ip6tables MASQUERADE (см. NAT)
+--split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 (10/8, 172.16/12, 192.168/16) через uplink; IPv6 не в туннеле; проверка IP: curl -4 https://ifconfig.me
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
 --config=PATH: для --type=webrtc и rtc-chrome — JSON с iceServers/turnServers (по умолчанию config/default.json от корня репо)
 --ice-mode=auto|relay|direct: для webrtc и rtc-chrome — перекрывает iceMode из --config
@@ -4430,11 +4092,6 @@ async function main() {
     !['auto', 'relay', 'direct'].includes(args.iceMode)
   ) {
     console.error('[clean-vpn] --ice-mode должен быть auto | relay | direct');
-    process.exit(1);
-  }
-
-  if (args.splitDefaultV6 && !args.splitDefault) {
-    console.error('[clean-vpn] --split-default-v6 только вместе с --split-default');
     process.exit(1);
   }
 
