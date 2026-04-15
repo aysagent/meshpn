@@ -2470,6 +2470,16 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
 
   const sendOnWire = (pkt) => {
     if (!wireArmed || !ep) return;
+    if (transport === 'udp-server') {
+      const pr = ep.peer;
+      if (!pr) return;
+      bumpActivity();
+      if (pkt.length > 65507) return;
+      ep.sock.send(pkt, pr.port, pr.address, (err) => {
+        if (err) console.error('[clean-vpn] udp send:', err.message);
+      });
+      return;
+    }
     bumpActivity();
     if (transport === 'websocket') {
       ep.send(pkt);
@@ -2480,13 +2490,6 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
         console.warn('[clean-vpn] udp: пакет больше типичного MTU датаграммы');
       }
       ep.send(pkt, (err) => {
-        if (err) console.error('[clean-vpn] udp send:', err.message);
-      });
-    } else if (transport === 'udp-server') {
-      const pr = ep.peer;
-      if (!pr) return;
-      if (pkt.length > 65507) return;
-      ep.sock.send(pkt, pr.port, pr.address, (err) => {
         if (err) console.error('[clean-vpn] udp send:', err.message);
       });
     } else if (transport === 'webrtc-dc') {
@@ -2653,9 +2656,12 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
 
   function teardownWire(reason) {
     if (transport === 'udp-server' && reason === 'idle' && ep) {
+      if (!ep.peer) {
+        cancelTimers();
+        return;
+      }
       cancelTimers();
       ep.peer = undefined;
-      bumpActivity();
       logKa(
         'отключено',
         `udp-server: сброс peer по простою (${keepAliveSec}s), ждём новую датаграмму`,
