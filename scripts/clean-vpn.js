@@ -2397,6 +2397,12 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
   let idleTimer = null;
   let pingTimer = null;
   let wireOff = () => {};
+  let teardownBusy = false;
+
+  const logKa = (event, detail = '') => {
+    const tail = detail ? ` — ${detail}` : '';
+    console.log(`[clean-vpn] keep-alive [${transport}]: ${event}${tail}`);
+  };
 
   const cancelTimers = () => {
     if (idleTimer) clearTimeout(idleTimer);
@@ -2503,21 +2509,34 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     wireOff();
     wireOff = () => {};
     if (transport === 'websocket') {
+      const ws = ep;
       const onMsg = (data, isBinary) => {
         if (!isBinary) return;
         const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
         bumpActivity();
         writeTun(buf);
       };
-      ep.on('message', onMsg);
+      const onPeerClose = () => {
+        if (wireArmed) teardownWire('peer_close');
+      };
+      const onPeerErr = (e) => {
+        logKa('ошибка WebSocket', e?.message || String(e));
+        if (wireArmed) teardownWire('peer_error');
+      };
+      ws.on('message', onMsg);
+      ws.once('close', onPeerClose);
+      ws.once('error', onPeerErr);
       wireOff = () => {
         try {
-          ep.off('message', onMsg);
+          ws.off('message', onMsg);
+          ws.off('close', onPeerClose);
+          ws.off('error', onPeerErr);
         } catch {
           /* ignore */
         }
       };
     } else if (transport === 'tcp') {
+      const sock = ep;
       const onData = (chunk) => {
         try {
           bumpActivity();
@@ -2525,30 +2544,53 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
         } catch (e) {
           console.error('[clean-vpn] framing error:', e.message);
           try {
-            ep.destroy();
+            sock.destroy();
           } catch {
             /* ignore */
           }
         }
       };
-      ep.on('data', onData);
+      const onPeerClose = () => {
+        if (wireArmed) teardownWire('peer_close');
+      };
+      const onPeerErr = (e) => {
+        logKa('ошибка TCP', e?.message || String(e));
+        if (wireArmed) teardownWire('peer_error');
+      };
+      sock.on('data', onData);
+      sock.once('close', onPeerClose);
+      sock.once('error', onPeerErr);
       wireOff = () => {
         try {
-          ep.off('data', onData);
+          sock.off('data', onData);
+          sock.off('close', onPeerClose);
+          sock.off('error', onPeerErr);
         } catch {
           /* ignore */
         }
       };
     } else if (transport === 'udp-client') {
+      const udp = ep;
       const onMsg = (msg) => {
         if (!msg.length || msg.length > MAX_PKT) return;
         bumpActivity();
         writeTun(Buffer.isBuffer(msg) ? msg : Buffer.from(msg));
       };
-      ep.on('message', onMsg);
+      const onPeerClose = () => {
+        if (wireArmed) teardownWire('peer_close');
+      };
+      const onPeerErr = (e) => {
+        logKa('ошибка UDP', e?.message || String(e));
+        if (wireArmed) teardownWire('peer_error');
+      };
+      udp.on('message', onMsg);
+      udp.once('close', onPeerClose);
+      udp.once('error', onPeerErr);
       wireOff = () => {
         try {
-          ep.off('message', onMsg);
+          udp.off('message', onMsg);
+          udp.off('close', onPeerClose);
+          udp.off('error', onPeerErr);
         } catch {
           /* ignore */
         }
@@ -2574,6 +2616,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
         }
       };
     } else if (transport === 'webrtc-dc') {
+      const ch = ep;
       const onDc = (data) => {
         if (typeof data === 'string') return;
         const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
@@ -2581,9 +2624,14 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
         bumpActivity();
         writeTun(buf);
       };
-      ep.onMessage(onDc);
+      ch.onMessage(onDc);
+      if (typeof ch.onClosed === 'function') {
+        ch.onClosed(() => {
+          if (wireArmed) teardownWire('webrtc_dc_close');
+        });
+      }
       wireOff = () => {
-        /* node-datachannel: снять обработчик нельзя — закрываем канал */
+        /* onMessage/onClosed снять нельзя — канал закрывается в teardownWire */
       };
     }
   }
@@ -2593,11 +2641,15 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       cancelTimers();
       ep.peer = undefined;
       bumpActivity();
-      console.log(
-        `[clean-vpn] keep-alive: udp-server — сброшен peer по простою (${keepAliveSec}s); ждём новую датаграмму`,
+      logKa(
+        'отключено',
+        `udp-server: сброс peer по простою (${keepAliveSec}s), ждём новую датаграмму`,
       );
       return;
     }
+    if (teardownBusy) return;
+    teardownBusy = true;
+    try {
     if (!wireArmed && !ep && !connecting) return;
     cancelTimers();
     wireOff();
@@ -2639,10 +2691,19 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       /* ignore */
     }
     ep = null;
-    if (reason === 'idle') {
-      console.log(
-        `[clean-vpn] keep-alive: разрыв по простою (${keepAliveSec}s); при следующем трафике с TUN — новое подключение (client) или ожидание пира (exit)`,
-      );
+    const reasonRu =
+      reason === 'idle'
+        ? `простой ${keepAliveSec}s (следующий трафик с TUN поднимет client заново; exit — ждёт пира)`
+        : reason === 'peer_close'
+          ? 'пир закрыл соединение'
+          : reason === 'peer_error'
+            ? 'ошибка на транспорте'
+            : reason === 'webrtc_dc_close'
+              ? 'DataChannel закрыт'
+              : String(reason || 'неизвестно');
+    logKa('отключено', reasonRu);
+    } finally {
+      teardownBusy = false;
     }
   }
 
@@ -2657,10 +2718,12 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       applyWireKeepalive();
       bumpActivity();
       const pending = tunQueue.splice(0);
+      logKa('подключено', `lazy, очередь TUN ${pending.length} пакет(ов)`);
       for (const q of pending) {
         sendOnWire(q);
       }
     } catch (e) {
+      logKa('ошибка lazy-connect', e?.message || String(e));
       console.error('[clean-vpn] keep-alive lazy connect:', e?.message || e);
       wireArmed = false;
       ep = null;
@@ -2673,6 +2736,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     attachWireHandlers();
     applyWireKeepalive();
     bumpActivity();
+    logKa('подключено', 'сессия активна сразу (без lazy)');
   }
 
   tun.startRead((batch) => {
