@@ -134,6 +134,35 @@ const MAX_PKT = 65535;
 const IP_EXIT = '10.99.0.1';
 const IP_CLIENT = '10.99.0.2';
 
+/** Опции моста TUN для exit / client (`attachTunBridge`). */
+const BRIDGE_OPTS_EXIT = { localTunIp: IP_EXIT };
+const BRIDGE_OPTS_CLIENT = { localTunIp: IP_CLIENT };
+
+function safe(fn) {
+  try {
+    fn();
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * @param {import('ws').WebSocketServer} wss
+ * @returns {Promise<void>}
+ */
+function awaitWebSocketServerListening(wss) {
+  return new Promise((resolve, reject) => {
+    wss.once('error', reject);
+    wss.once('listening', resolve);
+  });
+}
+
+/** Уже «x.x.x.x» — как есть; иначе A-запись IPv4 через DNS. */
+async function resolveHostToIpv4(host) {
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) return host;
+  return (await dns.lookup(host, { family: 4 })).address;
+}
+
 const SCTP_DEFAULTS = {
   recvBufferSize: 16 * 1024 * 1024,
   sendBufferSize: 16 * 1024 * 1024,
@@ -479,6 +508,109 @@ function loadTlsClientCaPem(dir) {
   if (fs.existsSync(fullchainPath)) return fs.readFileSync(fullchainPath, 'utf8');
   const t = ensureQuicCerts(dir);
   return fs.readFileSync(t.caPath, 'utf8');
+}
+
+/**
+ * Исходящее TLS (ALPN VPN) к exit; возвращает установленный `TLSSocket`.
+ * @param {{
+ *   host: string,
+ *   port: number,
+ *   ca: string,
+ *   servername: string,
+ * }} opts
+ */
+async function connectCleanVpnTlsClient(opts) {
+  const { host, port, ca, servername } = opts;
+  const hostIsIp = net.isIP(host) !== 0;
+  let connectHost = host;
+  if (!hostIsIp) {
+    connectHost = (await dns.lookup(host, { family: 4 })).address;
+  }
+  console.log(
+    `[clean-vpn] TLS client: соединение к ${connectHost}:${port}, SNI servername=${servername}`,
+  );
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    /** @type {import('tls').TLSSocket} */
+    let sock;
+    const finish = (fn) => {
+      if (settled) return;
+      settled = true;
+      try {
+        sock.setTimeout(0);
+      } catch {
+        /* ignore */
+      }
+      fn();
+    };
+    sock = tls.connect(
+      port,
+      connectHost,
+      {
+        ALPNProtocols: [TLS_ALPN_VPN],
+        ca,
+        servername,
+        rejectUnauthorized: true,
+      },
+      () => {
+        try {
+          if (sock.authorizationError) {
+            console.error(
+              '[clean-vpn] TLS client: проверка сертификата:',
+              sock.authorizationError,
+            );
+          }
+          if (sock.alpnProtocol !== TLS_ALPN_VPN) {
+            try {
+              sock.destroy();
+            } catch {
+              /* ignore */
+            }
+            finish(() =>
+              reject(
+                new Error(
+                  `TLS client: сервер выбрал ALPN ${String(sock.alpnProtocol)} вместо ${TLS_ALPN_VPN} (часто это passthrough на сторонний сайт или не тот порт/хост на exit).`,
+                ),
+              ),
+            );
+            return;
+          }
+          console.log('[clean-vpn] TLS (VPN) соединение установлено');
+          finish(() => resolve(sock));
+        } catch (e) {
+          finish(() => reject(e));
+        }
+      },
+    );
+    sock.setTimeout(TLS_CLIENT_HANDSHAKE_MS);
+    sock.on('timeout', () => {
+      finish(() =>
+        reject(
+          new Error(
+            `TLS client: таймаут ${TLS_CLIENT_HANDSHAKE_MS} мс рукопожатия к ${connectHost}:${port}`,
+          ),
+        ),
+      );
+      try {
+        sock.destroy();
+      } catch {
+        /* ignore */
+      }
+    });
+    sock.on('error', (err) => {
+      console.error(
+        '[clean-vpn] TLS client: ошибка сокета до завершения рукопожатия:',
+        err?.message || err,
+      );
+      if (sock.authorizationError) {
+        console.error(
+          '[clean-vpn] TLS client: authorizationError:',
+          sock.authorizationError,
+        );
+      }
+      finish(() => reject(err));
+    });
+  });
 }
 
 // =============================================================================
@@ -1002,6 +1134,48 @@ function assertOutboundWsHost(host, hint) {
   }
 }
 
+function createWebrtcWsSignal(ws) {
+  return (msg) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify(msg));
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+}
+
+function tryParseWebrtcSignalingJson(data, isBinary) {
+  if (isBinary) return null;
+  try {
+    return JSON.parse(data.toString());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {import('node-datachannel').PeerConnection|null} pc
+ * @param {{ type: string, sdp?: string, candidate?: string, mid?: string }} msg
+ */
+function applyWebrtcRemoteSignal(pc, msg) {
+  if (!pc) return;
+  if (msg.type === 'offer') pc.setRemoteDescription(msg.sdp, 'Offer');
+  else if (msg.type === 'answer') pc.setRemoteDescription(msg.sdp, 'Answer');
+  else if (msg.type === 'candidate') {
+    try {
+      pc.addRemoteCandidate(msg.candidate, msg.mid || '0');
+    } catch (e) {
+      console.warn('[clean-vpn] addRemoteCandidate:', e?.message || e);
+    }
+  }
+}
+
+function logWebrtcSigWsError(err) {
+  console.error('[clean-vpn] webrtc signalling ws:', err.message);
+}
+
 /**
  * @param {import('ws').WebSocket} ws
  * @param {ReturnType<typeof openTunNative>['tun']} tun
@@ -1015,29 +1189,7 @@ function attachCleanVpnWebrtcExitSignaling(ws, tun, ice, pcRef) {
   let handshakeDone = false;
   /** @type {import('node-datachannel').PeerConnection|null} */
   let connPc = null;
-
-  const signal = (msg) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      try {
-        ws.send(JSON.stringify(msg));
-      } catch {
-        /* ignore */
-      }
-    }
-  };
-
-  const handleSignal = (msg) => {
-    if (!connPc) return;
-    if (msg.type === 'offer') connPc.setRemoteDescription(msg.sdp, 'Offer');
-    else if (msg.type === 'answer') connPc.setRemoteDescription(msg.sdp, 'Answer');
-    else if (msg.type === 'candidate') {
-      try {
-        connPc.addRemoteCandidate(msg.candidate, msg.mid || '0');
-      } catch (e) {
-        console.warn('[clean-vpn] addRemoteCandidate:', e?.message || e);
-      }
-    }
-  };
+  const signal = createWebrtcWsSignal(ws);
 
   const setupInitiator = () => {
     if (handshakeDone) return;
@@ -1062,7 +1214,7 @@ function attachCleanVpnWebrtcExitSignaling(ws, tun, ice, pcRef) {
     const dc = connPc.createDataChannel('clean-vpn');
     dc.onOpen(() => {
       console.log('[clean-vpn] DataChannel open (exit)');
-      attachTunBridge(tun, 'webrtc-dc', dc, { localTunIp: IP_EXIT });
+      attachTunBridge(tun, 'webrtc-dc', dc, BRIDGE_OPTS_EXIT);
     });
     dc.onClosed(() => {
       console.log('[clean-vpn] DataChannel closed (exit)');
@@ -1073,35 +1225,24 @@ function attachCleanVpnWebrtcExitSignaling(ws, tun, ice, pcRef) {
   };
 
   ws.on('message', (data, isBinary) => {
-    if (isBinary) return;
-    let msg;
-    try {
-      msg = JSON.parse(data.toString());
-    } catch {
-      return;
-    }
+    const msg = tryParseWebrtcSignalingJson(data, isBinary);
+    if (!msg) return;
     if (msg.type === 'clean-vpn-ready' && !handshakeDone) {
       setupInitiator();
       return;
     }
-    handleSignal(msg);
+    applyWebrtcRemoteSignal(connPc, msg);
   });
 
   ws.on('close', () => {
     if (!connPc) return;
     const dead = connPc;
     connPc = null;
-    try {
-      dead.destroy();
-    } catch {
-      /* ignore */
-    }
+    safe(() => dead.destroy());
     pcRef.clearIfStill(dead);
   });
 
-  ws.on('error', (err) => {
-    console.error('[clean-vpn] webrtc signalling ws:', err.message);
-  });
+  ws.on('error', logWebrtcSigWsError);
 }
 
 /**
@@ -1114,15 +1255,7 @@ function attachCleanVpnWebrtcExitSignaling(ws, tun, ice, pcRef) {
  * }} pcRef
  */
 function attachCleanVpnWebrtcClientSignaling(ws, tun, ice, pcRef) {
-  const signal = (msg) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      try {
-        ws.send(JSON.stringify(msg));
-      } catch {
-        /* ignore */
-      }
-    }
-  };
+  const signal = createWebrtcWsSignal(ws);
 
   const pcConfig = {
     iceServers: ice.ndcIceServers,
@@ -1145,7 +1278,7 @@ function attachCleanVpnWebrtcClientSignaling(ws, tun, ice, pcRef) {
   pc.onDataChannel((dc) => {
     dc.onOpen(() => {
       console.log('[clean-vpn] DataChannel open (client)');
-      attachTunBridge(tun, 'webrtc-dc', dc, { localTunIp: IP_CLIENT });
+      attachTunBridge(tun, 'webrtc-dc', dc, BRIDGE_OPTS_CLIENT);
     });
     dc.onError((err) => {
       console.error('[clean-vpn] DataChannel error (client):', err);
@@ -1153,34 +1286,15 @@ function attachCleanVpnWebrtcClientSignaling(ws, tun, ice, pcRef) {
   });
 
   ws.on('message', (data, isBinary) => {
-    if (isBinary) return;
-    let msg;
-    try {
-      msg = JSON.parse(data.toString());
-    } catch {
-      return;
-    }
-    if (msg.type === 'offer') pc.setRemoteDescription(msg.sdp, 'Offer');
-    else if (msg.type === 'answer') pc.setRemoteDescription(msg.sdp, 'Answer');
-    else if (msg.type === 'candidate') {
-      try {
-        pc.addRemoteCandidate(msg.candidate, msg.mid || '0');
-      } catch (e) {
-        console.warn('[clean-vpn] addRemoteCandidate:', e?.message || e);
-      }
-    }
+    const msg = tryParseWebrtcSignalingJson(data, isBinary);
+    if (!msg) return;
+    applyWebrtcRemoteSignal(pc, msg);
   });
 
-  ws.on('error', (err) => {
-    console.error('[clean-vpn] webrtc signalling ws:', err.message);
-  });
+  ws.on('error', logWebrtcSigWsError);
 
   ws.on('close', () => {
-    try {
-      pc.destroy();
-    } catch {
-      /* ignore */
-    }
+    safe(() => pc.destroy());
     pcRef.clearIfStill(pc);
   });
 
@@ -1510,11 +1624,7 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
   let snapHost = [];
   if (!deferPeerBypass) {
     if (!websocketListenNoSplitDefault || splitDefault) {
-      let resolved = serverHost;
-      if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(serverHost)) {
-        resolved = (await dns.lookup(serverHost, { family: 4 })).address;
-      }
-      serverIp = resolved;
+      serverIp = await resolveHostToIpv4(serverHost);
       snapHost = captureServerRoutes(serverIp);
       console.log(`[clean-vpn] bypass маршрут к серверу ${serverIp} через ${dev}`);
       if (gw) {
@@ -2389,10 +2499,7 @@ async function createWsChromeClientBridge(opts) {
 
   if (opts.useLocalBridge) {
     localWss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
-    await new Promise((resolve, reject) => {
-      localWss.once('error', reject);
-      localWss.once('listening', resolve);
-    });
+    await awaitWebSocketServerListening(localWss);
     const ad = localWss.address();
     if (!ad || typeof ad === 'string') {
       try {
@@ -2780,10 +2887,7 @@ function buildRtcChromeEmbeddedPageHtml(
  */
 async function createRtcChromeClientBridge(opts) {
   const localWss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
-  await new Promise((resolve, reject) => {
-    localWss.once('error', reject);
-    localWss.once('listening', resolve);
-  });
+  await awaitWebSocketServerListening(localWss);
   const ad = localWss.address();
   if (!ad || typeof ad === 'string') {
     try {
@@ -2977,7 +3081,7 @@ async function runExit({
       activeTcp.destroy();
     }
     if (transport === 'tcp') activeTcp = sock;
-    attachTunBridge(tun, transport, sock, { localTunIp: IP_EXIT });
+    attachTunBridge(tun, transport, sock, BRIDGE_OPTS_EXIT);
     if (restBuf && restBuf.length && transport === 'tcp') {
       sock.emit('data', restBuf);
     }
@@ -2986,106 +3090,83 @@ async function runExit({
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    try {
+    // Порядок закрытия: сигналинг/транспорт → QUIC → NAT/sysctl/tun → exit.
+    safe(() => {
       if (webrtcPc) {
         webrtcPc.destroy();
         webrtcPc = null;
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    safe(() => {
       if (exitWebrtcSigWs) {
         exitWebrtcSigWs.close();
         exitWebrtcSigWs = null;
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    safe(() => {
       if (exitOutboundWebsocket) {
         exitOutboundWebsocket.close();
         exitOutboundWebsocket = null;
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    safe(() => {
       if (wss) {
         wss.close();
         wss = null;
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    safe(() => {
       if (httpChromeSrv) {
         httpChromeSrv.close();
         httpChromeSrv = null;
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    safe(() => {
       if (tcpSrv) {
         tcpSrv.close();
         tcpSrv = null;
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    safe(() => {
       if (udpSock) {
         udpSock.close();
         udpSock = null;
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    safe(() => {
       if (activeTcp && !activeTcp.destroyed) {
         activeTcp.destroy();
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    safe(() => {
       if (quicSession) {
         quicSession.destroy();
         quicSession = null;
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    safe(() => {
       if (quicEndpoint) {
         quicEndpoint.destroy();
         quicEndpoint = null;
       }
-    } catch {
-      /* ignore */
-    }
+    });
     const finishExit = () => {
       teardownExitNat(nat.tunName, nat.ext);
       restoreExitSysctl(nat.prevIpForward);
-      try {
-        tun.close();
-      } catch {
-        /* ignore */
-      }
+      safe(() => tun.close());
       console.log('[clean-vpn] exit: остановка');
       process.exit(0);
     };
-    try {
+    let finishExitDeferred = false;
+    safe(() => {
       if (quicExtServer) {
         const s = quicExtServer;
         quicExtServer = null;
         void s.stop({ isApp: true, force: true }).then(finishExit, finishExit);
-        return;
+        finishExitDeferred = true;
       }
-    } catch {
-      /* ignore */
-    }
+    });
+    if (finishExitDeferred) return;
     finishExit();
   };
   process.on('SIGINT', shutdown);
@@ -3096,10 +3177,7 @@ async function runExit({
     const wsListen = websocketVpnListens(wsServer);
     if (!wsListen) {
       assertOutboundWsHost(host, '--ws-server на стороне пира');
-      let connectHost = host;
-      if (net.isIP(host) === 0) {
-        connectHost = (await dns.lookup(host, { family: 4 })).address;
-      }
+      const connectHost = net.isIP(host) === 0 ? await resolveHostToIpv4(host) : host;
       const url = `ws://${connectHost}:${port}/`;
       console.log(`[clean-vpn] exit WebSocket: исходящее подключение к ${url}`);
       exitOutboundWebsocket = new WebSocket(url);
@@ -3260,7 +3338,7 @@ async function runExit({
     udpSock.bind(port, host, () => {
       console.log(`[clean-vpn] exit UDP ${host}:${port} (один peer по первому пакету)`);
     });
-    attachTunBridge(tun, 'udp-server', udpEp, { localTunIp: IP_EXIT });
+    attachTunBridge(tun, 'udp-server', udpEp, BRIDGE_OPTS_EXIT);
     return;
   }
 
@@ -3306,10 +3384,7 @@ async function runExit({
       return;
     }
     assertOutboundWsHost(host, '--signaling на стороне пира или реальный HOST:PORT в --server');
-    let connectHost = host;
-    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) {
-      connectHost = (await dns.lookup(host, { family: 4 })).address;
-    }
+    const connectHost = await resolveHostToIpv4(host);
     const url = `ws://${connectHost}:${port}/`;
     exitWebrtcSigWs = new WebSocket(url);
     await new Promise((resolve, reject) => {
@@ -3529,120 +3604,84 @@ async function runClient({
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    try {
+    // Порядок: WebRTC/QUIC client → сигналинг WSS → Puppeteer/quic-ext (async finish) → TLS → маршруты/tun.
+    safe(() => {
       if (webrtcPc) {
         webrtcPc.destroy();
         webrtcPc = null;
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    safe(() => {
       if (webrtcSigWs) {
         webrtcSigWs.close();
         webrtcSigWs = null;
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    safe(() => {
       if (quicClientSession) {
         quicClientSession.destroy();
         quicClientSession = null;
       }
-    } catch {
-      /* ignore */
-    }
+    });
     const finishClient = () => {
       teardownClientRoutes(routeCtx);
-      try {
-        tun.close();
-      } catch {
-        /* ignore */
-      }
+      safe(() => tun.close());
       console.log('[clean-vpn] client: остановка');
       process.exit(0);
     };
-    try {
+    safe(() => {
       if (clientWebrtcSigWss) {
         const w = clientWebrtcSigWss;
         clientWebrtcSigWss = null;
-        try {
-          w.close();
-        } catch {
-          /* ignore */
-        }
+        safe(() => w.close());
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    safe(() => {
       if (clientRtcChromeSigWss) {
         const w = clientRtcChromeSigWss;
         clientRtcChromeSigWss = null;
-        try {
-          w.close();
-        } catch {
-          /* ignore */
-        }
+        safe(() => w.close());
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    safe(() => {
       if (clientReverseWss) {
         const w = clientReverseWss;
         clientReverseWss = null;
-        try {
-          w.close();
-        } catch {
-          /* ignore */
-        }
+        safe(() => w.close());
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    safe(() => {
       if (wsChromeLocalWss) {
         const w = wsChromeLocalWss;
         wsChromeLocalWss = null;
-        try {
-          w.close();
-        } catch {
-          /* ignore */
-        }
+        safe(() => w.close());
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    let finishClientDeferred = false;
+    safe(() => {
       if (wsChromeBrowser) {
         const b = wsChromeBrowser;
         wsChromeBrowser = null;
         void b.close().then(finishClient, finishClient);
-        return;
+        finishClientDeferred = true;
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    if (finishClientDeferred) return;
+    safe(() => {
       if (quicExtClient) {
         const c = quicExtClient;
         quicExtClient = null;
         void c.destroy({ isApp: true, force: true }).then(finishClient, finishClient);
-        return;
+        finishClientDeferred = true;
       }
-    } catch {
-      /* ignore */
-    }
-    try {
+    });
+    if (finishClientDeferred) return;
+    safe(() => {
       if (tlsVpnSocket) {
         tlsVpnSocket.destroy();
         tlsVpnSocket = null;
       }
-    } catch {
-      /* ignore */
-    }
+    });
     finishClient();
   };
   process.on('SIGINT', shutdown);
@@ -3652,10 +3691,7 @@ async function runClient({
   if (type === 'websocket') {
     if (wsListenCli) {
       clientReverseWss = new WebSocketServer({ host, port });
-      await new Promise((resolve, reject) => {
-        clientReverseWss.once('listening', resolve);
-        clientReverseWss.once('error', reject);
-      });
+      await awaitWebSocketServerListening(clientReverseWss);
       console.log(
         `[clean-vpn] client WebSocket (сервер) ws://${host === '0.0.0.0' ? '*' : host}:${port}/ (--ws-server)`,
       );
@@ -3674,7 +3710,7 @@ async function runClient({
         const peerIp = normalizePeerIpv4(ws._socket?.remoteAddress);
         addClientWsPeerBypass(routeCtx, peerIp);
       }
-      attachTunBridge(tun, 'websocket', ws, { localTunIp: IP_CLIENT });
+      attachTunBridge(tun, 'websocket', ws, BRIDGE_OPTS_CLIENT);
       return;
     }
     assertOutboundWsHost(host, '--ws-server');
@@ -3686,7 +3722,7 @@ async function runClient({
       ws.once('error', reject);
     });
     console.log('[clean-vpn] WebSocket connected');
-    attachTunBridge(tun, 'websocket', ws, { localTunIp: IP_CLIENT });
+    attachTunBridge(tun, 'websocket', ws, BRIDGE_OPTS_CLIENT);
     return;
   }
 
@@ -3731,7 +3767,7 @@ async function runClient({
       console.error('[clean-vpn] ws-chrome:', e?.message || e);
     });
     console.log('[clean-vpn] ws-chrome: готово (Puppeteer → WebSocket → exit)');
-    attachTunBridge(tun, 'websocket', bridge, { localTunIp: IP_CLIENT });
+    attachTunBridge(tun, 'websocket', bridge, BRIDGE_OPTS_CLIENT);
     return;
   }
 
@@ -3754,10 +3790,7 @@ async function runClient({
           }
         }
       });
-      await new Promise((resolve, reject) => {
-        clientRtcChromeSigWss.once('listening', resolve);
-        clientRtcChromeSigWss.once('error', reject);
-      });
+      await awaitWebSocketServerListening(clientRtcChromeSigWss);
       if (host === '0.0.0.0') {
         signalingWsUrl = `ws://127.0.0.1:${port}/`;
         console.warn(
@@ -3785,7 +3818,7 @@ async function runClient({
       console.error('[clean-vpn] rtc-chrome:', e?.message || e);
     });
     console.log('[clean-vpn] rtc-chrome: готово (Chrome WebRTC → exit webrtc, TUN ↔ localhost WS)');
-    attachTunBridge(tun, 'websocket', bridge, { localTunIp: IP_CLIENT });
+    attachTunBridge(tun, 'websocket', bridge, BRIDGE_OPTS_CLIENT);
     return;
   }
 
@@ -3797,7 +3830,7 @@ async function runClient({
       udp.connect(port, host, () => {
         udp.off('error', reject);
         console.log(`[clean-vpn] UDP «connected» к ${host}:${port}`);
-        attachTunBridge(tun, 'udp-client', udp, { localTunIp: IP_CLIENT });
+        attachTunBridge(tun, 'udp-client', udp, BRIDGE_OPTS_CLIENT);
         resolve();
       });
     });
@@ -3820,10 +3853,7 @@ async function runClient({
     };
     if (webrtcSigListenClient) {
       clientWebrtcSigWss = new WebSocketServer({ host, port });
-      await new Promise((resolve, reject) => {
-        clientWebrtcSigWss.once('listening', resolve);
-        clientWebrtcSigWss.once('error', reject);
-      });
+      await awaitWebSocketServerListening(clientWebrtcSigWss);
       console.log(
         `[clean-vpn] webrtc client: сигналинг (сервер) ws://${host === '0.0.0.0' ? '*' : host}:${port}/`,
       );
@@ -3862,10 +3892,7 @@ async function runClient({
     const certsDir = quicCertsDir ? path.resolve(quicCertsDir) : DEFAULT_QUIC_CERTS_DIR;
     const tlsPaths = ensureQuicCerts(certsDir);
     const caBuf = fs.readFileSync(tlsPaths.caPath);
-    let connectHost = host;
-    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) {
-      connectHost = (await dns.lookup(host, { family: 4 })).address;
-    }
+    const connectHost = await resolveHostToIpv4(host);
     const quicNs = await importNodeQuic();
     const connect = quicNs.connect ?? quicNs.default?.connect;
     if (typeof connect !== 'function') {
@@ -3879,7 +3906,7 @@ async function runClient({
     console.log('[clean-vpn] QUIC session установлена');
     const stream = await quicClientSession.createBidirectionalStream();
     const sock = quicBidiToSocketLike(stream);
-    attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT });
+    attachTunBridge(tun, 'tcp', sock, BRIDGE_OPTS_CLIENT);
     return;
   }
 
@@ -3889,10 +3916,7 @@ async function runClient({
     const tlsPaths = ensureQuicCerts(certsDir);
     const logger = createQuicExtLogger();
     const { QUICClient } = await importQuicExt();
-    let connectHost = host;
-    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(host)) {
-      connectHost = (await dns.lookup(host, { family: 4 })).address;
-    }
+    const connectHost = await resolveHostToIpv4(host);
     quicExtClient = await QUICClient.createQUICClient({
       host: connectHost,
       port,
@@ -3908,7 +3932,7 @@ async function runClient({
     console.log('[clean-vpn] QUIC-EXT (@infisical/quic) соединение установлено');
     const stream = quicExtClient.connection.newStream('bidi');
     const sock = quicBidiToSocketLike(stream);
-    attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT });
+    attachTunBridge(tun, 'tcp', sock, BRIDGE_OPTS_CLIENT);
     return;
   }
 
@@ -3928,97 +3952,8 @@ async function runClient({
         servername = host;
       }
     }
-    let connectHost = host;
-    if (!hostIsIp) {
-      connectHost = (await dns.lookup(host, { family: 4 })).address;
-    }
-    console.log(
-      `[clean-vpn] TLS client: соединение к ${connectHost}:${port}, SNI servername=${servername}`,
-    );
-    await new Promise((resolve, reject) => {
-      let settled = false;
-      /** @type {import('tls').TLSSocket} */
-      let sock;
-      const finish = (fn) => {
-        if (settled) return;
-        settled = true;
-        try {
-          sock.setTimeout(0);
-        } catch {
-          /* ignore */
-        }
-        fn();
-      };
-      sock = tls.connect(
-        port,
-        connectHost,
-        {
-          ALPNProtocols: [TLS_ALPN_VPN],
-          ca,
-          servername,
-          rejectUnauthorized: true,
-        },
-        () => {
-          try {
-            if (sock.authorizationError) {
-              console.error(
-                '[clean-vpn] TLS client: проверка сертификата:',
-                sock.authorizationError,
-              );
-            }
-            if (sock.alpnProtocol !== TLS_ALPN_VPN) {
-              try {
-                sock.destroy();
-              } catch {
-                /* ignore */
-              }
-              finish(() =>
-                reject(
-                  new Error(
-                    `TLS client: сервер выбрал ALPN ${String(sock.alpnProtocol)} вместо ${TLS_ALPN_VPN} (часто это passthrough на сторонний сайт или не тот порт/хост на exit).`,
-                  ),
-                ),
-              );
-              return;
-            }
-            tlsVpnSocket = sock;
-            console.log('[clean-vpn] TLS (VPN) соединение установлено');
-            finish(() => resolve(undefined));
-          } catch (e) {
-            finish(() => reject(e));
-          }
-        },
-      );
-      sock.setTimeout(TLS_CLIENT_HANDSHAKE_MS);
-      sock.on('timeout', () => {
-        finish(() =>
-          reject(
-            new Error(
-              `TLS client: таймаут ${TLS_CLIENT_HANDSHAKE_MS} мс рукопожатия к ${connectHost}:${port}`,
-            ),
-          ),
-        );
-        try {
-          sock.destroy();
-        } catch {
-          /* ignore */
-        }
-      });
-      sock.on('error', (err) => {
-        console.error(
-          '[clean-vpn] TLS client: ошибка сокета до завершения рукопожатия:',
-          err?.message || err,
-        );
-        if (sock.authorizationError) {
-          console.error(
-            '[clean-vpn] TLS client: authorizationError:',
-            sock.authorizationError,
-          );
-        }
-        finish(() => reject(err));
-      });
-    });
-    attachTunBridge(tun, 'tcp', tlsVpnSocket, { localTunIp: IP_CLIENT });
+    tlsVpnSocket = await connectCleanVpnTlsClient({ host, port, ca, servername });
+    attachTunBridge(tun, 'tcp', tlsVpnSocket, BRIDGE_OPTS_CLIENT);
     return;
   }
 
@@ -4027,13 +3962,13 @@ async function runClient({
     const sock = net.connect(port, host, () => {
       console.log('[clean-vpn] TCP connected');
       if (type === 'socket') {
-        attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT });
+        attachTunBridge(tun, 'tcp', sock, BRIDGE_OPTS_CLIENT);
         resolve();
         return;
       }
       sock.__isServer = false;
       handleHttpSocket(sock, (rest) => {
-        attachTunBridge(tun, 'tcp', sock, { localTunIp: IP_CLIENT });
+        attachTunBridge(tun, 'tcp', sock, BRIDGE_OPTS_CLIENT);
         if (rest && rest.length) {
           sock.emit('data', rest);
         }
