@@ -9,6 +9,8 @@
  *
  * Exit (VPS): tun + NAT в интернет, без split-default.
  * Client: tun + split-default (опция, только IPv4 default), маршрут к --server через uplink.
+ * Без --split-default на TUN всё равно может попадать трафик: к VPN-peer (point-to-point, напр. 10.99.0.1), IPv6 link-local/ND/RA
+ * на интерфейсе tun при включённом IPv6 на хосте. Мостируем только валидный IPv4; cooldown по idle не заменяет этот фильтр.
  *
  * Протокол (socket / http после преамбулы): uint32 BE + сырой IPv4-пакет (как у прежнего tun-helper по транспорту).
  * WebSocket / UDP: одно binary-сообщение или одна датаграмма = один IPv4-пакет (без префикса длины).
@@ -63,9 +65,12 @@
  *   Split-default: маршруты 0.0.0.0/1 + 128.0.0.0/1 — только IPv4; плюс 10/8, 172.16/12, 192.168/16 через uplink (DNS/LAN не на exit). IPv6 default не трогается. Проверка внешнего IPv4: curl -4 https://ifconfig.me (без -4 curl может выбрать IPv6).
  *
  * --keep-alive=N (N > 0): простой N-секундный idle по трафику TUN↔транспорт; при разрыве client снова поднимает
- * провод по первому пакету с TUN (lazy). Любой другой IPv4 с TUN после разрыва снова откроет сессию (DNS/фон — см. дребезг);
- * --keep-alive-reconnect-cooldown=M: после разрыва по idle M с не поднимать lazy по TUN (пакеты в этот интервал отбрасываются).
- * CLEAN_VPN_KEEPALIVE_DEBUG=1: лог ip-протокола/длины при постановке в очередь lazy (не полный дамп).
+ * провод по первому валидному IPv4 с TUN (lazy). Любой другой IPv4 с TUN после разрыва снова откроет сессию (DNS/фон — см. дребезг);
+ * не-IPv4 (в т.ч. IPv6 с tun) не ставится в очередь и не уходит на wire — не поднимает сессию после idle.
+ * --keep-alive-reconnect-cooldown=M: после разрыва по idle M с не поднимать lazy по TUN (IPv4 в этот интервал отбрасываются);
+ * по истечении M с следующий IPv4 снова может подключить lazy — это ожидаемо, не «вечная» блокировка.
+ * CLEAN_VPN_KEEPALIVE_DEBUG=1: лог ip-протокола/длины при lazy/cooldown и отбросе не-IPv4 (версия из старших 4 бит байта 0 + первые 8 байт hex).
+ * Шум IPv6 на tun при желании уменьняют вручную (отключение IPv6 на интерфейсе, sysctl) — скрипт это не автоматизирует.
  * QUIC/quic-ext в v1 без изменений (флаг на них не действует). Pong WS на idle не влияет.
  *
  * При SIGINT/SIGTERM: снимаются iptables/NAT (exit), net.ipv4.ip_forward, маршруты и rp_filter (client)
@@ -2184,6 +2189,22 @@ function tryBuildTunIcmpEchoReplyForLocalIp(pkt, localDst4, nextIpIdentification
 }
 
 /**
+ * Кадр с TUN — валидный IPv4 для моста (не IPv6/мусор): версия 4, IHL ≥ 5, total length согласован с буфером.
+ * @param {Buffer} pkt
+ */
+function isIpv4Bridgeable(pkt) {
+  if (!pkt || pkt.length < 20) return false;
+  if ((pkt[0] >> 4) !== 4) return false;
+  const ihlWords = pkt[0] & 0x0f;
+  if (ihlWords < 5) return false;
+  const hdrBytes = ihlWords * 4;
+  if (pkt.length < hdrBytes) return false;
+  const totalLen = pkt.readUInt16BE(2);
+  if (totalLen < hdrBytes || totalLen > pkt.length || totalLen > MAX_PKT) return false;
+  return true;
+}
+
+/**
  * Мост TUN↔транспорт без keep-alive / lazy (как раньше).
  *
  * @param {{ write: (b: Buffer) => void, startRead: (cb: (batch: ArrayBuffer[]) => void) => void }} tun — native addon
@@ -2339,6 +2360,16 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
           }
           continue;
         }
+      }
+      if (!isIpv4Bridgeable(pkt)) {
+        if (process.env.CLEAN_VPN_KEEPALIVE_DEBUG === '1') {
+          const v = pkt[0] >> 4;
+          const hex = pkt.subarray(0, Math.min(8, pkt.length)).toString('hex');
+          console.log(
+            `[clean-vpn] keep-alive [${transport}]: drop-nonv4 verNibble=${v} head=${hex} len=${pkt.length}`,
+          );
+        }
+        continue;
       }
       sendOnWire(pkt);
     }
@@ -2788,6 +2819,14 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
           }
           continue;
         }
+      }
+      if (!isIpv4Bridgeable(pkt)) {
+        if (kaDebug) {
+          const v = pkt.length ? pkt[0] >> 4 : -1;
+          const hex = pkt.subarray(0, Math.min(8, pkt.length)).toString('hex');
+          logKa('drop-nonv4', `verNibble=${v} head=${hex} len=${pkt.length}`);
+        }
+        continue;
       }
       if (!wireArmed && lazyConnect) {
         if (Date.now() < idleCooldownUntilMs) {
@@ -5169,7 +5208,7 @@ async function main() {
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=socket --split-default
 
 --type: socket | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls
---split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 (10/8, 172.16/12, 192.168/16) через uplink; IPv6 не в туннеле; проверка IP: curl -4 https://ifconfig.me
+--split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 (10/8, 172.16/12, 192.168/16) через uplink; IPv6 не в туннеле; проверка IP: curl -4 https://ifconfig.me. Без флага на tun возможен трафик к VPN-peer (ptp) и IPv6 ND на интерфейсе — см. шапку файла.
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
 --config=PATH: для --type=webrtc и rtc-chrome — JSON с iceServers/turnServers (по умолчанию config/default.json от корня репо)
 --ice-mode=auto|relay|direct: для webrtc и rtc-chrome — перекрывает iceMode из --config
@@ -5191,7 +5230,7 @@ async function main() {
 --signaling: webrtc (exit|client) или rtc-chrome (client) — слушать WSS сигналинга на --server; без флага — исходящий WS. Для udp — вместе с UDP на PORT поднять WSS на PORT+1 (как webrtc). Алиас: --signalling.
 --punch: только --type=udp — hole punching через STUN + сигналинг на PORT+1; на exit только вместе с --signaling.
 --keep-alive=N: целое N≥0; 0 или отсутствие — как раньше. N>0 — idle N с без трафика TUN↔транспорт → разрыв; на client исходящие TCP/TLS/WS/UDP — отложенный connect до первого IPv4 с TUN. ws-chrome/rtc-chrome: после idle сессию нужно поднять заново (дорого). webrtc DC после idle без автосигналинга — перезапуск процессов. QUIC/quic-ext: флаг не применяется.
---keep-alive-reconnect-cooldown=M: целое M≥0; только с --keep-alive>0. После разрыва по idle M с не поднимать lazy по пакетам с TUN (они отбрасываются) — меньше дребезга от DNS/ретрансмитов. По умолчанию 0.
+--keep-alive-reconnect-cooldown=M: целое M≥0; только с --keep-alive>0. После разрыва по idle M с не поднимать lazy по IPv4 с TUN (отбрасываются); не-IPv4 не поднимает сессию в любом случае. После M с следующий IPv4 снова может lazy-connect — cooldown не фильтр «навсегда». Меньше дребезга от DNS/ретрансмитов. По умолчанию 0. CLEAN_VPN_KEEPALIVE_DEBUG=1 — lazy/cooldown и drop не-IPv4 (hex).
 --tunnel-peer=HOST: опционально client + websocket + --ws-server на 0.0.0.0 — bypass к пиру до accept при --split-default (стабильный IPv4 пира)`);
     process.exit(1);
   }
