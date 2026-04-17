@@ -175,6 +175,8 @@ function classify(flow, key) {
         return { type: 'webrtc', stats };
     }
 
+    const onWebPort = hasPort(ports, WEB_PORTS);
+
     const videoUdp =
         isUdp &&
         !hasPort(ports, [53]) &&
@@ -184,25 +186,32 @@ function classify(flow, key) {
         meanInterval < 0.1 &&
         stdInterval < 0.05;
 
-    const videoTcp =
+    // На 443/80 короткий burst TLS (curl, API) совпадал с «видео»: нужен явный ровный поток крупных сегментов.
+    const videoTcpLoose =
         isTcp &&
         meanSize >= 900 &&
         largeShare >= 0.35 &&
         stdInterval < 0.18 &&
         meanInterval < 0.28;
+    const videoTcpStrictTls =
+        largeShare >= 0.56 &&
+        meanInterval < 0.12 &&
+        stdInterval < 0.082 &&
+        stdSize < 360;
+    const videoTcp = videoTcpLoose && (!onWebPort || videoTcpStrictTls);
 
     if (videoUdp || videoTcp) {
         return { type: 'video', stats };
     }
 
-    const onWebPort = hasPort(ports, WEB_PORTS);
     const webTcp =
         isTcp &&
         onWebPort &&
         !videoTcp &&
         (stdInterval > 0.042 ||
             (largeShare < 0.4 && stdSize > 170) ||
-            (meanSize < 900 && stdInterval > 0.032));
+            (meanSize < 900 && stdInterval > 0.032) ||
+            (smallShare >= 0.12 && largeShare <= 0.66));
 
     if (webTcp) {
         return { type: 'web', stats };
