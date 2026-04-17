@@ -56,6 +56,7 @@ if (!captureIface) {
     console.error(
         'Укажите интерфейс: node scripts/traffic-classifier.js --interface=tun0\n' +
             '  или: -i tun0, либо переменная окружения CAPTURE_IF.\n' +
+            'Имена к dst: DNS (UDP/53), TLS SNI (443), HTTP Host (80/8080).\n' +
             'По умолчанию логи группируются по dst IP:port и типу; построчно по потокам: --per-flow\n' +
             'Захват обычно нужно запускать с правами root: sudo node ...'
     );
@@ -140,6 +141,37 @@ function tryParseTlsClientHelloSni(buf) {
     return null;
 }
 
+/** A-запись DNS: rdata как строка, Buffer из 4 байт или массив октетов. */
+function dnsRdataToIpv4String(rdata) {
+    if (!rdata) return null;
+    if (typeof rdata === 'string' && /^\d{1,3}(\.\d{1,3}){3}$/.test(rdata)) return rdata;
+    if (Buffer.isBuffer(rdata) && rdata.length === 4) {
+        return `${rdata[0]}.${rdata[1]}.${rdata[2]}.${rdata[3]}`;
+    }
+    if (Array.isArray(rdata) && rdata.length === 4) {
+        return rdata.map((n) => Number(n) & 0xff).join('.');
+    }
+    const s = String(rdata);
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(s)) return s;
+    return null;
+}
+
+/** Первый запрос HTTP/1.x: строка Host: (для портов 80/8080 без TLS). */
+function tryParseHttpHostHeader(buf) {
+    if (!buf || buf.length < 16) return null;
+    const n = Math.min(buf.length, 4096);
+    const s = buf.subarray(0, n).toString('latin1');
+    const m = /\r\n[Hh][Oo][Ss][Tt]:\s*([^\r\n]+)/.exec(s);
+    if (!m) return null;
+    let h = m[1].trim();
+    if (!h.includes('[')) {
+        const portTail = /^(.+):(\d{1,5})$/.exec(h);
+        if (portTail && /^\d+$/.test(portTail[2])) h = portTail[1];
+    }
+    const norm = normalizeHost(h);
+    return norm || null;
+}
+
 function ingestDnsAndTls(pkt) {
     const ip = extractIPv4(pkt);
     if (!ip || !ip.payload) return;
@@ -152,14 +184,27 @@ function ingestDnsAndTls(pkt) {
             const answers = dns.answer?.rrs;
             if (!answers?.length) return;
             for (const rr of answers) {
-                if (rr.type === 1 && rr.class === 1 && rr.rdata && rr.name) {
-                    rememberHostForIp(String(rr.rdata), rr.name);
+                if (rr.type === 1 && rr.class === 1 && rr.name) {
+                    const ipStr = dnsRdataToIpv4String(rr.rdata);
+                    if (ipStr) rememberHostForIp(ipStr, rr.name);
                 }
             }
         } catch {
             /* malformed DNS */
         }
         return;
+    }
+
+    if (ip.protocol === PROTO_TCP && l4.data?.length) {
+        const dweb = l4.dport === 80 || l4.dport === 8080;
+        const sweb = l4.sport === 80 || l4.sport === 8080;
+        if (dweb || sweb) {
+            const host = tryParseHttpHostHeader(l4.data);
+            if (host) {
+                const serverIp = dweb ? String(ip.daddr) : String(ip.saddr);
+                rememberHostForIp(serverIp, host);
+            }
+        }
     }
 
     if (ip.protocol === PROTO_TCP && l4.data?.length && (l4.dport === 443 || l4.sport === 443)) {
