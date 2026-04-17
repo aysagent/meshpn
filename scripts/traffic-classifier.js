@@ -54,14 +54,14 @@ function classify(flow) {
         return "webrtc";
     }
 
-    // Video
-    if (meanSize > 900 && stdInterval > 0.05) {
-        return "video";
-    }
-
     // Web
     if (stdInterval > 0.1 && meanSize < 1000) {
         return "web";
+    }
+
+    // Video
+    if (meanSize > 900 && stdInterval > 0.05) {
+        return "video";
     }
 
     return "unknown";
