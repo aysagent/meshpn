@@ -1,4 +1,8 @@
 import pcap from 'pcap';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const PcapDns = require('pcap/decode/dns.js');
 
 const PROTO_TCP = 6;
 const PROTO_UDP = 17;
@@ -49,6 +53,135 @@ if (!captureIface) {
 
 const session = pcap.createSession(captureIface, bpfFilter);
 const flows = {};
+/** @type {Map<string, Set<string>>} */
+const ipToHosts = new Map();
+
+function normalizeHost(name) {
+    if (!name || typeof name !== 'string') return '';
+    return name.replace(/\.$/, '').toLowerCase();
+}
+
+function rememberHostForIp(ip, host) {
+    const h = normalizeHost(host);
+    if (!h || h.length > 253) return;
+    let s = ipToHosts.get(ip);
+    if (!s) {
+        s = new Set();
+        ipToHosts.set(ip, s);
+    }
+    s.add(h);
+    if (s.size > 16) {
+        const arr = [...s];
+        ipToHosts.set(ip, new Set(arr.slice(-12)));
+    }
+}
+
+/** TLS ClientHello: расширение server_name (0). Только первый фрагмент в буфере. */
+function tryParseTlsClientHelloSni(buf) {
+    if (!buf || buf.length < 43) return null;
+    if (buf[0] !== 0x16) return null;
+    const recLen = buf.readUInt16BE(3);
+    if (4 + recLen > buf.length || recLen < 42) return null;
+    let o = 5;
+    if (buf[o] !== 0x01) return null;
+    const hsBodyLen = buf.readUIntBE(o + 1, 3);
+    o += 4;
+    if (o + 34 > buf.length) return null;
+    o += 2 + 32;
+    const sidLen = buf[o];
+    o += 1 + sidLen;
+    if (o + 2 > buf.length) return null;
+    const cipherLen = buf.readUInt16BE(o);
+    o += 2;
+    if (o + cipherLen > buf.length) return null;
+    o += cipherLen;
+    if (o + 1 > buf.length) return null;
+    const compLen = buf[o];
+    o += 1 + compLen;
+    if (o + 2 > buf.length) return null;
+    const extLen = buf.readUInt16BE(o);
+    o += 2;
+    const extEnd = o + extLen;
+    if (extEnd > buf.length) return null;
+    while (o + 4 <= extEnd) {
+        const et = buf.readUInt16BE(o);
+        const el = buf.readUInt16BE(o + 2);
+        o += 4;
+        if (o + el > extEnd) break;
+        if (et === 0 && el >= 5) {
+            const listLen = buf.readUInt16BE(o);
+            let p = o + 2;
+            const lim = o + el;
+            if (p + listLen > lim) break;
+            while (p + 3 <= lim) {
+                const nameType = buf[p];
+                const nameLen = buf.readUInt16BE(p + 1);
+                p += 3;
+                if (p + nameLen > lim) break;
+                if (nameType === 0 && nameLen > 0) {
+                    return buf.subarray(p, p + nameLen).toString('utf8');
+                }
+                p += nameLen;
+            }
+        }
+        o += el;
+    }
+    return null;
+}
+
+function ingestDnsAndTls(pkt) {
+    const ip = extractIPv4(pkt);
+    if (!ip || !ip.payload) return;
+
+    const l4 = ip.payload;
+    if (ip.protocol === PROTO_UDP && (l4.sport === 53 || l4.dport === 53) && l4.data?.length) {
+        try {
+            const dns = new PcapDns(null).decode(l4.data, 0);
+            if (!dns.header?.isResponse || dns._error) return;
+            const answers = dns.answer?.rrs;
+            if (!answers?.length) return;
+            for (const rr of answers) {
+                if (rr.type === 1 && rr.class === 1 && rr.rdata && rr.name) {
+                    rememberHostForIp(String(rr.rdata), rr.name);
+                }
+            }
+        } catch {
+            /* malformed DNS */
+        }
+        return;
+    }
+
+    if (ip.protocol === PROTO_TCP && l4.data?.length && (l4.dport === 443 || l4.sport === 443)) {
+        const sni = tryParseTlsClientHelloSni(l4.data);
+        if (!sni) return;
+        const serverIp = l4.dport === 443 ? String(ip.daddr) : String(ip.saddr);
+        rememberHostForIp(serverIp, sni);
+    }
+}
+
+function parseIpsFromFlowKey(key) {
+    const rest = key.replace(/^(tcp|udp):/, '');
+    const parts = rest.split('<->');
+    if (parts.length !== 2) return [];
+    const out = [];
+    for (const side of parts) {
+        const colon = side.lastIndexOf(':');
+        if (colon <= 0) continue;
+        out.push(side.slice(0, colon));
+    }
+    return out;
+}
+
+function formatKnownHostsForKey(key) {
+    const ips = parseIpsFromFlowKey(key);
+    const names = new Set();
+    for (const ip of ips) {
+        const set = ipToHosts.get(ip);
+        if (set) for (const h of set) names.add(h);
+    }
+    if (names.size === 0) return '';
+    return ` names=${[...names].join(',')}`;
+}
 
 /** IPv4 слой: RAW / Ethernet / SLL / NULL */
 function extractIPv4(pkt) {
@@ -100,6 +233,7 @@ function flowMetaFromPacket(pkt) {
 
 session.on('packet', raw => {
     const pkt = pcap.decode.packet(raw);
+    ingestDnsAndTls(pkt);
     const meta = flowMetaFromPacket(pkt);
     if (!meta) return;
 
@@ -242,12 +376,13 @@ setInterval(() => {
 
     for (const [key, flow] of Object.entries(flows)) {
         const { type, stats } = classify(flow, key);
+        const hostSuffix = formatKnownHostsForKey(key);
         if (type !== 'unknown') {
-            console.log(key, '→', type);
+            console.log(key, '→', type + hostSuffix);
         } else if (verboseMode && stats && flow.length >= 8) {
             console.log(
                 key,
-                '→ unknown',
+                '→ unknown' + hostSuffix,
                 `(meanPayload=${stats.meanSize.toFixed(0)} stdPayload=${stats.stdSize.toFixed(0)} ` +
                     `int=${stats.meanInterval.toFixed(3)}±${stats.stdInterval.toFixed(3)} ports=${stats.ports.join(',')})`
             );
