@@ -131,13 +131,11 @@ function hasPort(ports, list) {
     return list.some(pr => ports.includes(pr));
 }
 
+const WEB_PORTS = [80, 443, 8080, 8443];
+
 /**
- * Классы по форме трафика, не по приложению:
- * dns — UDP 53, мелкие запросы
- * bulk — устойчивый поток крупных сегментов (iperf/scp/загрузки), TCP или «тяжёлый» UDP
- * realtime — частый ровный UDP с небольшим payload (игры/voip/webrtc)
- * streaming — ровный поток средних UDP или крупный ровный TCP (HLS-подобное по форме)
- * interactive — всё остальное осмысленное (запрос-ответ, смешанные размеры, любые порты)
+ * Порядок: dns → webrtc → video → web → bulk → interactive.
+ * web / video / webrtc — явные эвристики; bulk — тяжёлый поток, если не попали в эти три.
  */
 function classify(flow, key) {
     if (flow.length < 8) return { type: 'unknown', stats: null };
@@ -166,44 +164,61 @@ function classify(flow, key) {
         return { type: 'dns', stats };
     }
 
-    // TCP: чередование крупных данных и мелких ACK / или много MSS — iperf, передача файлов
+    if (
+        isUdp &&
+        !hasPort(ports, [53]) &&
+        meanInterval < 0.055 &&
+        stdInterval < 0.035 &&
+        meanSize > 0 &&
+        meanSize < 1200
+    ) {
+        return { type: 'webrtc', stats };
+    }
+
+    const videoUdp =
+        isUdp &&
+        !hasPort(ports, [53]) &&
+        meanSize >= 200 &&
+        meanSize <= 1450 &&
+        stdSize < 480 &&
+        meanInterval < 0.1 &&
+        stdInterval < 0.05;
+
+    const videoTcp =
+        isTcp &&
+        meanSize >= 900 &&
+        largeShare >= 0.35 &&
+        stdInterval < 0.18 &&
+        meanInterval < 0.28;
+
+    if (videoUdp || videoTcp) {
+        return { type: 'video', stats };
+    }
+
+    const onWebPort = hasPort(ports, WEB_PORTS);
+    const webTcp =
+        isTcp &&
+        onWebPort &&
+        !videoTcp &&
+        (stdInterval > 0.042 ||
+            (largeShare < 0.4 && stdSize > 170) ||
+            (meanSize < 900 && stdInterval > 0.032));
+
+    if (webTcp) {
+        return { type: 'web', stats };
+    }
+
     const bulkTcp =
         isTcp &&
         ((largeShare >= 0.18 && smallShare >= 0.12 && meanSize >= 320) ||
             (largeShare >= 0.3 && meanSize >= 480) ||
             meanSize >= 650);
 
-    // UDP: тяжёлый однородный поток (iperf -u и т.п.)
     const bulkUdp =
         isUdp && !hasPort(ports, [53]) && meanSize >= 550 && largeShare >= 0.38 && stdSize < meanSize * 0.65;
 
     if (bulkTcp || bulkUdp) {
         return { type: 'bulk', stats };
-    }
-
-    if (
-        isUdp &&
-        meanInterval < 0.055 &&
-        stdInterval < 0.035 &&
-        meanSize > 0 &&
-        meanSize < 900
-    ) {
-        return { type: 'realtime', stats };
-    }
-
-    if (
-        isUdp &&
-        meanSize >= 180 &&
-        meanSize <= 1450 &&
-        stdSize < 480 &&
-        meanInterval < 0.1 &&
-        stdInterval < 0.05
-    ) {
-        return { type: 'streaming', stats };
-    }
-
-    if (isTcp && meanSize >= 900 && largeShare >= 0.35 && stdInterval < 0.18 && meanInterval < 0.28) {
-        return { type: 'streaming', stats };
     }
 
     if (isTcp || isUdp) {
