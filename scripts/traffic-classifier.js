@@ -131,6 +131,14 @@ function hasPort(ports, list) {
     return list.some(pr => ports.includes(pr));
 }
 
+/**
+ * Классы по форме трафика, не по приложению:
+ * dns — UDP 53, мелкие запросы
+ * bulk — устойчивый поток крупных сегментов (iperf/scp/загрузки), TCP или «тяжёлый» UDP
+ * realtime — частый ровный UDP с небольшим payload (игры/voip/webrtc)
+ * streaming — ровный поток средних UDP или крупный ровный TCP (HLS-подобное по форме)
+ * interactive — всё остальное осмысленное (запрос-ответ, смешанные размеры, любые порты)
+ */
 function classify(flow, key) {
     if (flow.length < 8) return { type: 'unknown', stats: null };
 
@@ -149,40 +157,57 @@ function classify(flow, key) {
     const isUdp = key.startsWith('udp:');
     const isTcp = key.startsWith('tcp:');
 
-    const largeShare = sizes.filter(s => s >= 1200).length / sizes.length;
+    const largeShare = sizes.filter(s => s >= 1000).length / sizes.length;
+    const smallShare = sizes.filter(s => s < 96).length / sizes.length;
 
     const stats = { meanSize, stdSize, meanInterval, stdInterval, ports };
 
-    // Узкие правила первыми
-    if (isUdp && hasPort(ports, [53]) && meanSize < 512 && meanInterval < 0.25) {
+    if (isUdp && hasPort(ports, [53]) && meanSize < 512 && meanInterval < 0.35) {
         return { type: 'dns', stats };
     }
 
-    if (isUdp && meanInterval < 0.04 && stdInterval < 0.025 && meanSize > 0 && meanSize < 1400) {
-        return { type: 'webrtc', stats };
-    }
+    // TCP: чередование крупных данных и мелких ACK / или много MSS — iperf, передача файлов
+    const bulkTcp =
+        isTcp &&
+        ((largeShare >= 0.18 && smallShare >= 0.12 && meanSize >= 320) ||
+            (largeShare >= 0.3 && meanSize >= 480) ||
+            meanSize >= 650);
 
-    if (isTcp && hasPort(ports, [80, 443, 8080, 8443]) && stdInterval > 0.04 && meanSize < 1350) {
-        return { type: 'web', stats };
-    }
+    // UDP: тяжёлый однородный поток (iperf -u и т.п.)
+    const bulkUdp =
+        isUdp && !hasPort(ports, [53]) && meanSize >= 550 && largeShare >= 0.38 && stdSize < meanSize * 0.65;
 
-    if (isTcp && hasPort(ports, [80, 443, 8080, 8443]) && largeShare < 0.35 && stdSize > 180) {
-        return { type: 'web', stats };
+    if (bulkTcp || bulkUdp) {
+        return { type: 'bulk', stats };
     }
 
     if (
         isUdp &&
-        meanSize >= 200 &&
-        meanSize <= 1450 &&
-        stdSize < 400 &&
-        meanInterval < 0.08 &&
-        stdInterval < 0.04
+        meanInterval < 0.055 &&
+        stdInterval < 0.035 &&
+        meanSize > 0 &&
+        meanSize < 900
     ) {
-        return { type: 'video', stats };
+        return { type: 'realtime', stats };
     }
 
-    if (isTcp && meanSize >= 1300 && largeShare >= 0.45 && stdInterval < 0.12 && meanInterval < 0.2) {
-        return { type: 'video', stats };
+    if (
+        isUdp &&
+        meanSize >= 180 &&
+        meanSize <= 1450 &&
+        stdSize < 480 &&
+        meanInterval < 0.1 &&
+        stdInterval < 0.05
+    ) {
+        return { type: 'streaming', stats };
+    }
+
+    if (isTcp && meanSize >= 900 && largeShare >= 0.35 && stdInterval < 0.18 && meanInterval < 0.28) {
+        return { type: 'streaming', stats };
+    }
+
+    if (isTcp || isUdp) {
+        return { type: 'interactive', stats };
     }
 
     return { type: 'unknown', stats };
