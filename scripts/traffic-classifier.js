@@ -11,8 +11,13 @@ function parseArgs(argv) {
     let iface = null;
     let verbose = false;
     let filter = '';
+    let perFlow = false;
     for (let i = 2; i < argv.length; i++) {
         const a = argv[i];
+        if (a === '--per-flow') {
+            perFlow = true;
+            continue;
+        }
         if (a === '--verbose' || a === '-v') {
             verbose = true;
             continue;
@@ -37,15 +42,21 @@ function parseArgs(argv) {
     if (!iface) {
         iface = process.env.CAPTURE_IF || null;
     }
-    return { iface, verbose, filter };
+    return { iface, verbose, filter, perFlow };
 }
 
-const { iface: captureIface, verbose: verboseMode, filter: bpfFilter } = parseArgs(process.argv);
+const {
+    iface: captureIface,
+    verbose: verboseMode,
+    filter: bpfFilter,
+    perFlow: perFlowLog,
+} = parseArgs(process.argv);
 
 if (!captureIface) {
     console.error(
         'Укажите интерфейс: node scripts/traffic-classifier.js --interface=tun0\n' +
             '  или: -i tun0, либо переменная окружения CAPTURE_IF.\n' +
+            'По умолчанию логи группируются по dst IP:port и типу; построчно по потокам: --per-flow\n' +
             'Захват обычно нужно запускать с правами root: sudo node ...'
     );
     process.exit(1);
@@ -181,6 +192,68 @@ function formatKnownHostsForKey(key) {
     }
     if (names.size === 0) return '';
     return ` names=${[...names].join(',')}`;
+}
+
+/** Порты «серверной» стороны для группировки по удалённому IP. */
+const WELL_KNOWN_SERVICE_PORTS = new Set([
+    20, 21, 22, 25, 53, 80, 110, 143, 443, 853, 993, 995, 8080, 8443, 5201,
+]);
+
+function isPrivateIpv4(ip) {
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return false;
+    const [a, b] = ip.split('.').map(Number);
+    if (a === 10) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 127) return true;
+    return false;
+}
+
+function parseFlowEndpoints(key) {
+    const isUdp = key.startsWith('udp:');
+    const rest = key.replace(/^(tcp|udp):/, '');
+    const [left, right] = rest.split('<->');
+    if (!left || !right) return null;
+    const side = s => {
+        const c = s.lastIndexOf(':');
+        if (c <= 0) return null;
+        const port = parseInt(s.slice(c + 1), 10);
+        if (!Number.isFinite(port)) return null;
+        return { ip: s.slice(0, c), port };
+    };
+    const a = side(left);
+    const b = side(right);
+    if (!a || !b) return null;
+    return { isUdp, a, b };
+}
+
+/**
+ * Удалённая сторона (ip:port) для группировки логов.
+ * P2P без явного «сервера» — null (каждый поток отдельно).
+ * @returns {{ ip: string, port: number } | null}
+ */
+function inferRemoteEndpoint(key) {
+    const ep = parseFlowEndpoints(key);
+    if (!ep) return null;
+    const { a, b } = ep;
+    const aSvc = WELL_KNOWN_SERVICE_PORTS.has(a.port) || a.port <= 1024;
+    const bSvc = WELL_KNOWN_SERVICE_PORTS.has(b.port) || b.port <= 1024;
+    if (aSvc && !bSvc) return { ip: a.ip, port: a.port };
+    if (bSvc && !aSvc) return { ip: b.ip, port: b.port };
+    if (aSvc && bSvc) return a.port <= b.port ? { ip: a.ip, port: a.port } : { ip: b.ip, port: b.port };
+    const aPriv = isPrivateIpv4(a.ip);
+    const bPriv = isPrivateIpv4(b.ip);
+    if (aPriv !== bPriv) return aPriv ? { ip: b.ip, port: b.port } : { ip: a.ip, port: a.port };
+    return null;
+}
+
+function collectNamesForIps(ips) {
+    const names = new Set();
+    for (const ip of ips) {
+        const set = ipToHosts.get(ip);
+        if (set) for (const h of set) names.add(h);
+    }
+    return names;
 }
 
 /** IPv4 слой: RAW / Ethernet / SLL / NULL */
@@ -374,17 +447,93 @@ function classify(flow, key) {
 setInterval(() => {
     console.log('\n--- classification ---');
 
+    if (perFlowLog) {
+        for (const [key, flow] of Object.entries(flows)) {
+            const { type, stats } = classify(flow, key);
+            const hostSuffix = formatKnownHostsForKey(key);
+            if (type !== 'unknown') {
+                console.log(key, '→', type + hostSuffix);
+            } else if (verboseMode && stats && flow.length >= 8) {
+                console.log(
+                    key,
+                    '→ unknown' + hostSuffix,
+                    `(meanPayload=${stats.meanSize.toFixed(0)} stdPayload=${stats.stdSize.toFixed(0)} ` +
+                        `int=${stats.meanInterval.toFixed(3)}±${stats.stdInterval.toFixed(3)} ports=${stats.ports.join(',')})`
+                );
+            }
+        }
+        return;
+    }
+
+    /** @type {Map<string, { count: number, ports: Set<number>, ips: Set<string> }>} */
+    const grouped = new Map();
+
     for (const [key, flow] of Object.entries(flows)) {
         const { type, stats } = classify(flow, key);
-        const hostSuffix = formatKnownHostsForKey(key);
-        if (type !== 'unknown') {
-            console.log(key, '→', type + hostSuffix);
-        } else if (verboseMode && stats && flow.length >= 8) {
+        if (type === 'unknown') {
+            if (!verboseMode || !stats || flow.length < 8) continue;
+        }
+
+        const remoteEnd = inferRemoteEndpoint(key);
+        const groupKey = remoteEnd ? `${remoteEnd.ip}:${remoteEnd.port}\t${type}` : `_flow\t${key}\t${type}`;
+        if (!grouped.has(groupKey)) {
+            grouped.set(groupKey, { count: 0, ports: new Set(), ips: new Set() });
+        }
+        const g = grouped.get(groupKey);
+        g.count += 1;
+        for (const ip of parseIpsFromFlowKey(key)) g.ips.add(ip);
+        const ep = parseFlowEndpoints(key);
+        if (ep) {
+            if (remoteEnd) {
+                if (ep.a.ip === remoteEnd.ip && ep.a.port === remoteEnd.port) g.ports.add(ep.a.port);
+                if (ep.b.ip === remoteEnd.ip && ep.b.port === remoteEnd.port) g.ports.add(ep.b.port);
+            } else {
+                g.ports.add(ep.a.port);
+                g.ports.add(ep.b.port);
+            }
+        }
+        g._unknownStats = type === 'unknown' ? stats : g._unknownStats;
+        g._sampleKey = key;
+    }
+
+    const sortedKeys = [...grouped.keys()].sort();
+    for (const gk of sortedKeys) {
+        const g = grouped.get(gk);
+        const parts = gk.split('\t');
+        let remoteIp = null;
+        let remotePort = null;
+        let flowType;
+        if (parts[0] === '_flow') {
+            flowType = parts[parts.length - 1];
+        } else {
+            const hostPort = parts[0];
+            const colon = hostPort.lastIndexOf(':');
+            remoteIp = hostPort.slice(0, colon);
+            remotePort = parseInt(hostPort.slice(colon + 1), 10);
+            flowType = parts[1];
+        }
+
+        const names = collectNamesForIps([...g.ips]);
+        const hostSuffix = names.size ? ` names=${[...names].join(',')}` : '';
+        const portsStr = [...g.ports].sort((a, b) => a - b).join(',');
+        const portsPart =
+            remoteIp != null && Number.isFinite(remotePort) ? '' : portsStr ? ` ports=${portsStr}` : '';
+        const cnt = g.count > 1 ? ` ×${g.count}` : '';
+
+        if (flowType !== 'unknown') {
+            if (remoteIp != null && Number.isFinite(remotePort)) {
+                console.log(`dst ${remoteIp}:${remotePort} → ${flowType}${cnt}${hostSuffix}${portsPart}`);
+            } else {
+                console.log(`${g._sampleKey} → ${flowType}${cnt}${hostSuffix}${portsPart}`);
+            }
+        } else if (verboseMode && g._unknownStats) {
+            const st = g._unknownStats;
+            const label =
+                remoteIp != null && Number.isFinite(remotePort) ? `dst ${remoteIp}:${remotePort}` : g._sampleKey;
             console.log(
-                key,
-                '→ unknown' + hostSuffix,
-                `(meanPayload=${stats.meanSize.toFixed(0)} stdPayload=${stats.stdSize.toFixed(0)} ` +
-                    `int=${stats.meanInterval.toFixed(3)}±${stats.stdInterval.toFixed(3)} ports=${stats.ports.join(',')})`
+                `${label} → unknown${cnt}${hostSuffix}${portsPart}`,
+                `(meanPayload=${st.meanSize.toFixed(0)} stdPayload=${st.stdSize.toFixed(0)} ` +
+                    `int=${st.meanInterval.toFixed(3)}±${st.stdInterval.toFixed(3)} ports=${st.ports.join(',')})`
             );
         }
     }
