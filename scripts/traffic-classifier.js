@@ -1,4 +1,4 @@
-const pcap = require('pcap');
+import pcap from 'pcap';
 
 const session = pcap.createSession('tun0', '');
 const flows = {};
