@@ -1,6 +1,6 @@
 import pcap from 'pcap';
 
-const session = pcap.createSession('tun0', '');
+const session = pcap.createSession('enp0s1', '');
 const flows = {};
 
 function getKey(pkt) {
