@@ -23,12 +23,14 @@
     "@noble/curves": "^1.4.0",
     "@noble/hashes": "^1.4.0",
     "concurrently": "^9.2.1",
+    "connect": "^3.7.0",
     "geoip-lite": "^1.4.10",
     "node-datachannel": "^0.32.1",
+    "node-gyp": "^11.0.0",
     "nodemon": "^3.1.14",
     "puppeteer": "^24.0.0",
-    "ws": "^8.17.0",
-    "node-gyp": "^11.0.0"
+    "serve-static": "^2.2.1",
+    "ws": "^8.17.0"
   },
   "engines": {
     "node": ">=18.0.0"
