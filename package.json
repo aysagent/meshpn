@@ -28,6 +28,7 @@
     "node-datachannel": "^0.32.1",
     "node-gyp": "^11.0.0",
     "nodemon": "^3.1.14",
+    "pcap": "^3.1.0",
     "puppeteer": "^24.0.0",
     "serve-static": "^2.2.1",
     "ws": "^8.17.0"
