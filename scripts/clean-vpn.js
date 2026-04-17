@@ -61,7 +61,10 @@
  *   На exit: --tls-cert-dir, --tls-public-name (SNI для «It works!»), --tls-probe-target (куда passthrough). Флаг --tls-server-name на exit не читается (только client).
  *   Внимание: passthrough на сторонний хост может нарушать ToS сервиса и законы юрисдикции — только на свой страх и риск.
  *   Сертификаты: --tls-cert-dir с fullchain.pem+privkey.pem (Let's Encrypt) или, как у QUIC, ca.pem+cert.pem+key.pem.
- *   Client: --tls-server-name — SNI и проверка сертификата. Если в --server указан IP, SNI не может быть IP (RFC 6066): без флага подставляется clean-vpn (как у ca/cert из репо); для Let's Encrypt укажите --tls-server-name=ваш.домен.
+ *   Client: --tls-server-name — имя для проверки сертификата (и SNI в ClientHello, если не задан --tls-client-sni).
+ *   Если в --server указан IP, без --tls-server-name для проверки используется clean-vpn (как у ca/cert из репо); для LE на exit укажите --tls-server-name=ваш.домен.
+ *   --tls-client-sni=HOST (опционально): явный ClientHello SNI; проверка cert через --tls-server-name / host / clean-vpn.
+ *   Если не задан: при проверке имени clean-vpn (типично --server=IP без --tls-server-name) в ClientHello по умолчанию SNI www.google.com; иначе SNI совпадает с именем проверки (как один --tls-server-name= для LE).
  *   Split-default: маршруты 0.0.0.0/1 + 128.0.0.0/1 — только IPv4; плюс 10/8, 172.16/12, 192.168/16 через uplink (DNS/LAN не на exit). IPv6 default не трогается. Проверка внешнего IPv4: curl -4 https://ifconfig.me (без -4 curl может выбрать IPv6).
  *
  * --keep-alive=N (N > 0): простой N-секундный idle по трафику TUN↔транспорт; при разрыве client снова поднимает
@@ -532,17 +535,21 @@ function loadTlsClientCaPem(dir) {
  *   port: number,
  *   ca: string,
  *   servername: string,
+ *   verifyServername?: string,
  * }} opts
  */
 async function connectCleanVpnTlsClient(opts) {
-  const { host, port, ca, servername } = opts;
+  const { host, port, ca, servername, verifyServername } = opts;
+  const checkHost = verifyServername ?? servername;
   const hostIsIp = net.isIP(host) !== 0;
   let connectHost = host;
   if (!hostIsIp) {
     connectHost = (await dns.lookup(host, { family: 4 })).address;
   }
+  const sniNote =
+    checkHost !== servername ? `, проверка сертификата для host=${checkHost}` : '';
   console.log(
-    `[clean-vpn] TLS client: соединение к ${connectHost}:${port}, SNI servername=${servername}`,
+    `[clean-vpn] TLS client: соединение к ${connectHost}:${port}, ClientHello SNI=${servername}${sniNote}`,
   );
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -566,6 +573,12 @@ async function connectCleanVpnTlsClient(opts) {
         ca,
         servername,
         rejectUnauthorized: true,
+        ...(checkHost !== servername
+          ? {
+              checkServerIdentity: (/** @type {string} */ _host, cert) =>
+                tls.checkServerIdentity(checkHost, cert),
+            }
+          : {}),
       },
       () => {
         try {
@@ -1576,6 +1589,7 @@ function parseArgs(argv) {
     quicExtCryptoKey: null,
     tlsCertDir: null,
     tlsServerName: null,
+    tlsClientSni: null,
     tlsPublicName: null,
     tlsProbeTarget: null,
     tlsProbeMaxBytes: null,
@@ -1609,6 +1623,8 @@ function parseArgs(argv) {
       out.tlsCertDir = a.slice('--tls-cert-dir='.length);
     } else if (a.startsWith('--tls-server-name=')) {
       out.tlsServerName = a.slice('--tls-server-name='.length);
+    } else if (a.startsWith('--tls-client-sni=')) {
+      out.tlsClientSni = a.slice('--tls-client-sni='.length);
     } else if (a.startsWith('--tls-public-name=')) {
       out.tlsPublicName = a.slice('--tls-public-name='.length);
     } else if (a.startsWith('--tls-probe-target=')) {
@@ -4446,6 +4462,7 @@ async function runClient({
   quicCertsDir,
   tlsCertDir,
   tlsServerName,
+  tlsClientSni,
   tlsPublicName,
   wsChromeExecutable,
   wsChromeWsUrl,
@@ -5112,28 +5129,48 @@ async function runClient({
     const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
     const ca = loadTlsClientCaPem(certsDir);
     const hostIsIp = net.isIP(host) !== 0;
-    let servername = tlsServerName || tlsPublicName;
-    if (!servername) {
+    let verifyName = tlsServerName || tlsPublicName;
+    if (!verifyName) {
       if (hostIsIp) {
-        servername = 'clean-vpn';
+        verifyName = 'clean-vpn';
         console.warn(
-          '[clean-vpn] TLS: в --server указан IP — для SNI используется clean-vpn (при другом CN/SAN задайте --tls-server-name=…).',
+          '[clean-vpn] TLS: в --server указан IP — для проверки сертификата используется clean-vpn (как у ca/cert из репо); для LE на exit задайте --tls-server-name=ваш.домен.',
         );
       } else {
-        servername = host;
+        verifyName = host;
       }
     }
+    const sniRaw = tlsClientSni != null ? String(tlsClientSni).trim() : '';
+    let clientHelloSni = sniRaw || verifyName;
+    if (!sniRaw && verifyName === 'clean-vpn') {
+      clientHelloSni = 'www.google.com';
+      console.warn(
+        '[clean-vpn] TLS: ClientHello SNI по умолчанию www.google.com (проверка сертификата clean-vpn). Свой SNI: --tls-client-sni=…; LE: --tls-server-name=ваш.домен.',
+      );
+    }
+    if (sniRaw && sniRaw !== verifyName) {
+      console.warn(
+        '[clean-vpn] TLS: ClientHello SNI отличается от имени проверки сертификата; exit выбирает VPN по ALPN.',
+      );
+    }
+    const tlsConnectOpts = {
+      host,
+      port,
+      ca,
+      servername: clientHelloSni,
+      verifyServername: verifyName,
+    };
     if (kaBridge > 0) {
       attachTunBridge(tun, 'tcp', null, {
         ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
         lazyConnect: async () => {
-          const sock = await connectCleanVpnTlsClient({ host, port, ca, servername });
+          const sock = await connectCleanVpnTlsClient(tlsConnectOpts);
           tlsVpnSocket = sock;
           return sock;
         },
       });
     } else {
-      tlsVpnSocket = await connectCleanVpnTlsClient({ host, port, ca, servername });
+      tlsVpnSocket = await connectCleanVpnTlsClient(tlsConnectOpts);
       attachTunBridge(tun, 'tcp', tlsVpnSocket, BRIDGE_OPTS_CLIENT);
     }
     return;
@@ -5217,7 +5254,8 @@ async function main() {
 --type=quic: Node.js 25+, node --experimental-quic и бинарь с node_use_quic (см. шапку файла)
 --type=quic-ext: npm install @infisical/quic (prebuild под платформу), Node 18+, см. шапку файла
 --tls-cert-dir=DIR: для --type=tls — fullchain.pem+privkey.pem (LE) или ca/cert/key как у QUIC
---tls-server-name=HOST: только client + tls — SNI и проверка сертификата; если --server — IP и флаг не задан, SNI=clean-vpn; на exit игнорируется
+--tls-server-name=HOST: только client + tls — проверка сертификата (CN/SAN); также ClientHello SNI, если не задан --tls-client-sni. Если --server — IP и оба не заданы, для проверки используется clean-vpn; на exit игнорируется
+--tls-client-sni=HOST: только client + tls — явный SNI в ClientHello; без флага при проверке cert=clean-vpn (часто IP без --tls-server-name) SNI по умолчанию www.google.com; иначе SNI = имя проверки. Exit: VPN по ALPN ${TLS_ALPN_VPN}.
 --tls-public-name=HOST: только exit + tls — SNI «честной» страницы It works! (опционально)
 --tls-probe-target=host:port: только exit + tls — passthrough чужих ClientHello (default www.google.com:443)
 --tls-probe-max-bytes=N: короткий passthrough, лимит байт обоих направлений (default 49152)
