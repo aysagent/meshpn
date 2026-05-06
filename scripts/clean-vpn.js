@@ -426,21 +426,24 @@ function computeTlsVpnBearerToken(secret, windowOffset = 0) {
  * Принять токен в текущем окне или соседних (±1) для compensation clock skew.
  * @param {Buffer} secret
  * @param {string} token
+ * @returns {{ ok: boolean, windowOffset: number|null }} — windowOffset 0 / -1 / +1 при ok=true; null при ok=false.
  */
 function verifyTlsVpnBearerToken(secret, token) {
-  if (typeof token !== 'string' || token.length !== 32) return false;
+  if (typeof token !== 'string' || token.length !== 32) return { ok: false, windowOffset: null };
   let provided;
   try {
     provided = Buffer.from(token, 'hex');
   } catch {
-    return false;
+    return { ok: false, windowOffset: null };
   }
-  if (provided.length !== 16) return false;
+  if (provided.length !== 16) return { ok: false, windowOffset: null };
   for (const offset of [0, -1, 1]) {
     const expected = Buffer.from(computeTlsVpnBearerToken(secret, offset), 'hex');
-    if (expected.length === provided.length && timingSafeEqual(expected, provided)) return true;
+    if (expected.length === provided.length && timingSafeEqual(expected, provided)) {
+      return { ok: true, windowOffset: offset };
+    }
   }
-  return false;
+  return { ok: false, windowOffset: null };
 }
 
 async function importQuicExt() {
@@ -3032,17 +3035,20 @@ function withKeepalive(base, keepAliveSec, reconnectCooldownSec = 0) {
 
 /**
  * Разобрать первую HTTP/1.1 строку и заголовок `Authorization: Bearer <token>`.
+ * `kind='non_http'` означает, что request-line не соответствует `^METHOD PATH HTTP/1.x$`
+ * (или вообще нет CRLFCRLF в первых 16 KiB) — в обоих случаях вызывающий уже видит
+ * полный буфер преамбулы, поэтому достаточно одного маркера.
  * @param {Buffer} buf
- * @returns {{ method: string, path: string, bearer: string|null } | null}
+ * @returns {{ kind: 'http'|'non_http', method: string, path: string, bearer: string|null }}
  */
 function parseHttpRequestForVpn(buf) {
   const idx = buf.indexOf('\r\n\r\n');
-  if (idx === -1) return null;
+  if (idx === -1) return { kind: 'non_http', method: '', path: '', bearer: null };
   const head = buf.subarray(0, idx).toString('latin1');
   const lines = head.split('\r\n');
   const reqLine = lines[0] || '';
   const m = /^([A-Z]+)\s+(\S+)\s+HTTP\/1\.[01]$/.exec(reqLine);
-  if (!m) return { method: '', path: '', bearer: null };
+  if (!m) return { kind: 'non_http', method: '', path: '', bearer: null };
   let bearer = null;
   for (let i = 1; i < lines.length; i++) {
     const c = lines[i].indexOf(':');
@@ -3054,12 +3060,36 @@ function parseHttpRequestForVpn(buf) {
     if (bm) bearer = bm[1];
     break;
   }
-  return { method: m[1], path: m[2], bearer };
+  return { kind: 'http', method: m[1], path: m[2], bearer };
+}
+
+/** Hex16 от первых байт буфера — для prefix=… в логах cover/passthrough. */
+function tlsPreviewHex16(buf) {
+  return buf.subarray(0, Math.min(16, buf.length)).toString('hex');
+}
+
+/** Маппинг распарсенной HTTP-преамбулы на конкретный cover_* outcome. */
+function mapCoverOutcome(parsed, vpnSecret) {
+  if (!parsed || parsed.kind !== 'http') {
+    return { outcome: 'cover_non_http', windowOffset: null };
+  }
+  if (parsed.method !== 'GET') return { outcome: 'cover_wrong_method', windowOffset: null };
+  if (parsed.path !== '/clean-vpn') return { outcome: 'cover_wrong_path', windowOffset: null };
+  if (!parsed.bearer) return { outcome: 'cover_no_bearer', windowOffset: null };
+  const v = verifyTlsVpnBearerToken(vpnSecret, parsed.bearer);
+  if (!v.ok) return { outcome: 'cover_bad_bearer', windowOffset: null };
+  return { outcome: 'vpn', windowOffset: v.windowOffset };
 }
 
 /**
  * После рукопожатия: разбор HTTP-преамбулы. Совпавший Bearer → VPN-мост,
- * иначе — «It works!» (как обычная HTTPS-страница).
+ * иначе — «It works!» (как обычная HTTPS-страница). Логи:
+ *   - `tls vpn: connected ip=… windowOffset=…` при VPN connect;
+ *   - `tls cover: served ip=… reason=cover_… prefix=…` при отдаче «It works!»;
+ *   - `tls cover: idle ip=… ms=30000` при тишине после handshake;
+ *   - `tls cover: oversize ip=… bytes=…` при > 16 KiB без CRLFCRLF;
+ *   - `tls handshake: ip=… code=… msg=…` при ошибке до 'secure';
+ *   - `tls done: ip=… outcome=… bytesIn=… ms=…` ровно одна на close.
  *
  * @param {import('tls').TLSSocket} tlsSock
  * @param {{
@@ -3068,23 +3098,81 @@ function parseHttpRequestForVpn(buf) {
  * }} ctx
  */
 function wireExitTlsSocket(tlsSock, ctx) {
+  const st = {
+    ip: tlsClientIp(tlsSock),
+    port: tlsSock.remotePort ?? null,
+    startMs: Date.now(),
+    bytesIn: 0,
+    /** @type {string|null} */
+    outcome: null,
+    /** @type {string|null} */
+    reasonExtra: null,
+    /** @type {number|null} */
+    windowOffset: null,
+    secured: false,
+    summarized: false,
+  };
+  const setOutcomeOnce = (outcome, extra) => {
+    if (st.outcome) return;
+    st.outcome = outcome;
+    if (extra !== undefined) st.reasonExtra = extra;
+  };
+  const summarize = () => {
+    if (st.summarized) return;
+    st.summarized = true;
+    const ms = Date.now() - st.startMs;
+    const outcome = st.outcome || (st.secured ? 'tls_runtime_error' : 'tls_handshake_fail');
+    /** @type {string[]} */
+    const fields = [
+      `ip=${st.ip}`,
+      `port=${st.port ?? '?'}`,
+      `outcome=${outcome}`,
+      `bytesIn=${st.bytesIn}`,
+      `ms=${ms}`,
+    ];
+    if (outcome === 'vpn' && st.windowOffset !== null) {
+      fields.push(`windowOffset=${st.windowOffset}`);
+    }
+    if (st.reasonExtra) fields.push(st.reasonExtra);
+    console.log(`[clean-vpn] tls done: ${fields.join(' ')}`);
+  };
+
   tlsSock.on('error', (e) => {
-    console.error('[clean-vpn] tls socket:', e?.message || e);
+    const code = /** @type {any} */ (e)?.code ?? '';
+    const msg = e?.message || String(e);
+    if (!st.secured) {
+      setOutcomeOnce('tls_handshake_fail', `code=${code || '—'} msg=${msg}`);
+      console.error(`[clean-vpn] tls handshake: ip=${st.ip} code=${code || '—'} msg=${msg}`);
+      return;
+    }
+    if (st.bytesIn > 0 && TCP_BENIGN_AFTER_DATA_CODES.has(code)) {
+      return; // benign post-data reset
+    }
+    setOutcomeOnce('tls_runtime_error', `code=${code || '—'} msg=${msg}`);
+    console.error(`[clean-vpn] tls socket: ip=${st.ip} code=${code || '—'} msg=${msg}`);
   });
+  tlsSock.on('close', summarize);
+
   tlsSock.once('secure', () => {
+    st.secured = true;
     try {
       let httpBuf = Buffer.alloc(0);
       const idleTimer = setTimeout(() => {
-        if (!tlsSock.destroyed) {
-          try {
-            tlsSock.destroy();
-          } catch {
-            /* ignore */
-          }
+        if (tlsSock.destroyed) return;
+        setOutcomeOnce('cover_idle');
+        console.log(`[clean-vpn] tls cover: idle ip=${st.ip} port=${st.port ?? '?'} ms=30000`);
+        try {
+          tlsSock.destroy();
+        } catch {
+          /* ignore */
         }
       }, 30000);
       idleTimer.unref?.();
-      const respondPublic = () => {
+      const respondPublic = (outcome, prefixHex) => {
+        setOutcomeOnce(outcome, `reason=${outcome}`);
+        console.log(
+          `[clean-vpn] tls cover: served ip=${st.ip} port=${st.port ?? '?'} reason=${outcome} prefix=${prefixHex}`,
+        );
         const body = TLS_HTTP_WORKS_BODY;
         const res =
           `HTTP/1.1 200 OK\r\n` +
@@ -3100,12 +3188,18 @@ function wireExitTlsSocket(tlsSock, ctx) {
         });
       };
       const onHttp = (d) => {
+        st.bytesIn += d.length;
         httpBuf = httpBuf.length === 0 ? Buffer.from(d) : Buffer.concat([httpBuf, d]);
         const idx = httpBuf.indexOf('\r\n\r\n');
         if (idx === -1) {
           if (httpBuf.length > 16384) {
             tlsSock.off('data', onHttp);
             clearTimeout(idleTimer);
+            const prefixHex = tlsPreviewHex16(httpBuf);
+            setOutcomeOnce('cover_oversize', `prefix=${prefixHex}`);
+            console.log(
+              `[clean-vpn] tls cover: oversize ip=${st.ip} port=${st.port ?? '?'} bytes=${httpBuf.length} prefix=${prefixHex}`,
+            );
             try {
               tlsSock.destroy();
             } catch {
@@ -3117,24 +3211,24 @@ function wireExitTlsSocket(tlsSock, ctx) {
         tlsSock.off('data', onHttp);
         clearTimeout(idleTimer);
         const parsed = parseHttpRequestForVpn(httpBuf);
-        const isVpnReq =
-          parsed &&
-          parsed.method === 'GET' &&
-          parsed.path === '/clean-vpn' &&
-          parsed.bearer &&
-          verifyTlsVpnBearerToken(ctx.vpnSecret, parsed.bearer);
-        if (!isVpnReq) {
-          respondPublic();
+        const { outcome, windowOffset } = mapCoverOutcome(parsed, ctx.vpnSecret);
+        if (outcome !== 'vpn') {
+          respondPublic(outcome, tlsPreviewHex16(httpBuf));
           return;
         }
+        st.windowOffset = windowOffset;
+        setOutcomeOnce('vpn');
         const ack = `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Type: application/octet-stream\r\n\r\n`;
         tlsSock.write(ack);
         const rest = httpBuf.subarray(idx + 4);
-        console.log('[clean-vpn] tls VPN client connected', tlsSock.remoteAddress);
+        console.log(
+          `[clean-vpn] tls vpn: connected ip=${st.ip} port=${st.port ?? '?'} windowOffset=${windowOffset}`,
+        );
         ctx.startBridge(tlsSock, rest.length ? rest : null, 'tcp');
       };
       tlsSock.on('data', onHttp);
     } catch (e) {
+      setOutcomeOnce('tls_runtime_error', `msg=${e?.message || e}`);
       console.error('[clean-vpn] tls secure handler:', e?.message || e);
       try {
         tlsSock.destroy();
@@ -3259,8 +3353,9 @@ function handleTlsExitInbound(socket, ctx) {
       runTlsProbePassthrough(socket, fullBuf, ctx, probeTool);
       return;
     }
+    const scannerLike = p.alpn.length === 0 && p.sni.length === 0;
     console.log(
-      `[clean-vpn] tls: ClientHello ок (ALPN=${p.alpn.join(',') || '—'}; SNI=${p.sni.join(',') || '—'}) → TLS server (HTTP-преамбула)`,
+      `[clean-vpn] tls: ClientHello ок (ALPN=${p.alpn.join(',') || '—'}; SNI=${p.sni.join(',') || '—'})${scannerLike ? ' [scanner-like]' : ''} → TLS server (HTTP-преамбула)`,
     );
     setImmediate(() => {
       try {
