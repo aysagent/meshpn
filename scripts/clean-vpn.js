@@ -27,8 +27,12 @@
  *   Запуск: node --experimental-quic …  TLS: ca.pem / cert.pem / key.pem в certs/ (создаются через openssl при отсутствии).
  * QUIC-EXT (--type=quic-ext): пакет @infisical/quic (quiche), Node 18+, без node:quic и без --experimental-quic.
  *   Тот же UDP host:port и фрейминг uint32+IPv4 по одному bidi stream. ALPN: clean-vpn-ext (должен совпадать на обеих сторонах).
- *   TLS: те же ca.pem / cert.pem / key.pem (--quic-certs-dir). Дополнительно для stateless retry: quic-ext-hmac.key (32 байта) в том же каталоге — создаётся на exit при отсутствии; для client не нужен.
- *   Опционально: --quic-ext-crypto-key=PATH — явный файл с 32 байтами HMAC-ключа (вместо quic-ext-hmac.key в каталоге сертификатов).
+ *   TLS: те же ca.pem / cert.pem / key.pem (--quic-certs-dir). Дополнительно — общий HMAC-ключ (см. ниже «Общий HMAC PSK»); только на exit для stateless retry, на client+quic-ext не нужен.
+ *
+ * Общий HMAC PSK (clean-vpn-hmac.key, 32 байта в --tls-cert-dir / --quic-certs-dir):
+ *   Используется одновременно для stateless retry в QUIC-EXT и Bearer-токена в --type=tls.
+ *   На exit создаётся автоматически при отсутствии. На client + --type=tls должен лежать идентичный файл, скопированный с exit.
+ *   Явный путь: --shared-hmac-key=PATH (обе стороны). Legacy alias: --quic-ext-crypto-key=PATH; legacy-имя файла quic-ext-hmac.key всё ещё читается, но новые файлы создаются как clean-vpn-hmac.key.
  *
  * Пример:
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=socket
@@ -54,14 +58,13 @@
  *   sudo env PATH=$PATH node --experimental-quic scripts/clean-vpn.js --role=client --server=VPS:4433 --type=quic --split-default
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:4433 --type=quic-ext
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:4433 --type=quic-ext --split-default
- *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=tls [--tls-cert-dir=...] [--tls-public-name=vpn.example.com] [--tls-probe-target=host:port] [--tls-vpn-secret-key=PATH]
- *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=tls --split-default [--tls-server-name=...] [--tls-vpn-secret-key=PATH]
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=tls [--tls-cert-dir=...] [--tls-public-name=vpn.example.com] [--tls-probe-target=host:port] [--shared-hmac-key=PATH]
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=tls --split-default [--tls-server-name=...] [--shared-hmac-key=PATH]
  * TLS (--type=tls): TCP + TLS 1.3 only, ALPN в ClientHello [h2, http/1.1] (как у браузеров); маркера VPN в открытой части нет.
  *   Авторизация и маршрутизация: после рукопожатия client шлёт `GET /clean-vpn` с заголовком `Authorization: Bearer <token>`,
- *   где token = HMAC-SHA256 от pre-shared key и текущего 15-минутного окна (защита от replay из логов).
+ *   где token = HMAC-SHA256 от общего HMAC PSK и текущего 15-минутного окна (защита от replay из логов).
  *   Совпало → exit отвечает `200 OK` и поднимает прежний uint32+IPv4 туннель; иначе — отдаёт `It works!` как обычный HTTPS-сайт.
- *   Pre-shared key: файл `tls-vpn.key` (32 байта) в --tls-cert-dir; на exit создаётся автоматически, на client должен быть скопирован руками.
- *   --tls-vpn-secret-key=PATH (обе стороны) — явный путь к ключу.
+ *   Ключ — общий «clean-vpn-hmac.key», см. отдельный раздел выше; явный путь --shared-hmac-key=PATH (legacy --quic-ext-crypto-key).
  *   Exit: --tls-cert-dir, --tls-public-name (если задан, SNI должен совпасть, иначе passthrough), --tls-probe-target (куда passthrough при SNI mismatch / parse_fail). Флаг --tls-server-name на exit не читается (только client).
  *   Сертификаты: --tls-cert-dir с fullchain.pem+privkey.pem (Let's Encrypt) или, как у QUIC, ca.pem+cert.pem+key.pem.
  *   Внимание: passthrough на сторонний хост может нарушать ToS сервиса и законы юрисдикции — только на свой страх и риск.
@@ -69,7 +72,7 @@
  *   Если в --server указан IP, без --tls-server-name для проверки используется clean-vpn (как у ca/cert из репо); для LE на exit укажите --tls-server-name=ваш.домен.
  *   --tls-client-sni=HOST (опционально): явный ClientHello SNI; проверка cert через --tls-server-name / host / clean-vpn.
  *   Если не задан: при проверке имени clean-vpn (типично --server=IP без --tls-server-name) в ClientHello по умолчанию SNI www.google.com; иначе SNI совпадает с именем проверки.
- *   BREAKING: старые `--type=tls` пиры (с ALPN `clean-vpn-tls`) подключиться не смогут — нужно обновлять обе стороны и иметь общий tls-vpn.key.
+ *   BREAKING: старые `--type=tls` пиры (с ALPN `clean-vpn-tls`) подключиться не смогут — нужно обновлять обе стороны и иметь общий clean-vpn-hmac.key.
  *   Split-default: маршруты 0.0.0.0/1 + 128.0.0.0/1 — только IPv4; плюс 10/8, 172.16/12, 192.168/16 через uplink (DNS/LAN не на exit). IPv6 default не трогается. Проверка внешнего IPv4: curl -4 https://ifconfig.me (без -4 curl может выбрать IPv6).
  *
  * --keep-alive=N (N > 0): простой N-секундный idle по трафику TUN↔транспорт; при разрыве client снова поднимает
@@ -209,7 +212,10 @@ const QUIC_TLS_CERT = 'cert.pem';
 const QUIC_TLS_KEY = 'key.pem';
 /** ALPN для @infisical/quic (quiche); должен совпадать на exit и client. */
 const QUIC_EXT_ALPN = 'clean-vpn-ext';
-const QUIC_EXT_HMAC_FILE = 'quic-ext-hmac.key';
+/** Общий 32-байтовый HMAC PSK: stateless retry для QUIC-EXT и Bearer для --type=tls. */
+const SHARED_HMAC_FILE = 'clean-vpn-hmac.key';
+/** Legacy-имя того же файла (создавался прежними версиями только под QUIC-EXT). */
+const SHARED_HMAC_LEGACY_FILE = 'quic-ext-hmac.key';
 
 /** Маркер в ClientHello для scripts/probe.js (не VPN; только логи probeTool на exit). */
 const TLS_ALPN_PROBE = 'clean-vpn-probe';
@@ -220,8 +226,6 @@ const TLS_SERVER_ALPN = ['http/1.1'];
 const TLS_LE_FULLCHAIN = 'fullchain.pem';
 const TLS_LE_PRIVKEY = 'privkey.pem';
 const TLS_HTTP_WORKS_BODY = 'It works!\n';
-/** Pre-shared key для VPN-Bearer; рядом с quic-ext-hmac.key в каталоге сертификатов. */
-const TLS_VPN_SECRET_FILE = 'tls-vpn.key';
 /** Окно ротации Bearer-токена (мс) — защита от долгого replay при утечке логов. */
 const TLS_VPN_TOKEN_WINDOW_MS = 15 * 60 * 1000;
 /** Контекст HMAC: фиксированная строка-домен. */
@@ -327,66 +331,81 @@ async function quicExtRandomBytes(data) {
 }
 
 /**
- * 32-байтовый HMAC-ключ для stateless retry @infisical/quic (общий на одну пару exit+client через файл).
+ * Загружает (или auto-create на exit) общий 32-байтовый HMAC PSK.
+ * Используется для:
+ *   - stateless retry в QUIC-EXT (только exit);
+ *   - Bearer-токена в `--type=tls` (обе стороны).
+ *
+ * Приоритет источников:
+ *   1) `sharedExplicitPath` (флаг `--shared-hmac-key=PATH`);
+ *   2) `legacyExplicitPath` (legacy флаг `--quic-ext-crypto-key=PATH`);
+ *   3) `<certsDir>/clean-vpn-hmac.key`;
+ *   4) `<certsDir>/quic-ext-hmac.key` (legacy-имя — читается, но не создаётся);
+ *   5) при `opts.autoCreate === true` — генерируется новый `clean-vpn-hmac.key`;
+ *      иначе — ошибка с подсказкой.
+ *
  * @param {string} certsDir
- * @param {string|null} explicitPath
+ * @param {string|null} sharedExplicitPath
+ * @param {string|null} legacyExplicitPath
+ * @param {{ autoCreate: boolean, role: string }} opts
+ * @returns {{ buffer: Buffer, path: string, source: 'flag'|'legacy-flag'|'file'|'legacy-file'|'created' }}
  */
-function ensureQuicExtHmacKey(certsDir, explicitPath) {
-  const keyPath = explicitPath ? path.resolve(explicitPath) : path.join(certsDir, QUIC_EXT_HMAC_FILE);
-  if (explicitPath) {
-    if (!fs.existsSync(keyPath)) {
-      throw new Error(
-        `QUIC-EXT: нет файла --quic-ext-crypto-key=${keyPath} (нужны ровно 32 байта).`,
-      );
+function ensureSharedHmacKey(certsDir, sharedExplicitPath, legacyExplicitPath, opts) {
+  /**
+   * @param {string} p
+   * @param {string} flagName
+   */
+  const readExact32 = (p, flagName) => {
+    if (!fs.existsSync(p)) {
+      throw new Error(`HMAC: нет файла ${flagName}=${p} (нужны ровно 32 байта).`);
     }
-    const buf = fs.readFileSync(keyPath);
+    const buf = fs.readFileSync(p);
     if (buf.length !== 32) {
-      throw new Error(`QUIC-EXT: ${keyPath} должен быть ровно 32 байта, сейчас ${buf.length}`);
-    }
-    return bufferToArrayBuffer(buf);
-  }
-  if (fs.existsSync(keyPath)) {
-    const buf = fs.readFileSync(keyPath);
-    if (buf.length !== 32) {
-      throw new Error(`QUIC-EXT: ${keyPath} должен быть ровно 32 байта, сейчас ${buf.length}`);
-    }
-    return bufferToArrayBuffer(buf);
-  }
-  fs.mkdirSync(certsDir, { recursive: true });
-  const rnd = randomBytes(32);
-  fs.writeFileSync(keyPath, rnd, { mode: 0o600 });
-  console.log('[clean-vpn] QUIC-EXT: создан ключ stateless retry', keyPath);
-  return bufferToArrayBuffer(rnd);
-}
-
-/**
- * 32-байтовый pre-shared key для Bearer-токена `--type=tls` (на одной паре exit+client через файл).
- * @param {string} certsDir
- * @param {string|null} explicitPath
- * @param {boolean} autoCreate — true для exit (создаёт при отсутствии), false для client (fail-fast).
- * @returns {Buffer}
- */
-function loadOrCreateTlsVpnSecret(certsDir, explicitPath, autoCreate) {
-  const keyPath = explicitPath
-    ? path.resolve(explicitPath)
-    : path.join(certsDir, TLS_VPN_SECRET_FILE);
-  if (fs.existsSync(keyPath)) {
-    const buf = fs.readFileSync(keyPath);
-    if (buf.length !== 32) {
-      throw new Error(`tls-vpn secret: ${keyPath} должен быть ровно 32 байта, сейчас ${buf.length}`);
+      throw new Error(`HMAC: ${p} должен быть ровно 32 байта, сейчас ${buf.length}`);
     }
     return buf;
+  };
+  if (sharedExplicitPath) {
+    const p = path.resolve(sharedExplicitPath);
+    return { buffer: readExact32(p, '--shared-hmac-key'), path: p, source: 'flag' };
   }
-  if (!autoCreate) {
+  if (legacyExplicitPath) {
+    const p = path.resolve(legacyExplicitPath);
+    const buf = readExact32(p, '--quic-ext-crypto-key');
+    console.log(
+      '[clean-vpn] HMAC: legacy флаг --quic-ext-crypto-key (рекомендуется --shared-hmac-key=PATH)',
+    );
+    return { buffer: buf, path: p, source: 'legacy-flag' };
+  }
+  const newPath = path.join(certsDir, SHARED_HMAC_FILE);
+  if (fs.existsSync(newPath)) {
+    const buf = fs.readFileSync(newPath);
+    if (buf.length !== 32) {
+      throw new Error(`HMAC: ${newPath} должен быть ровно 32 байта, сейчас ${buf.length}`);
+    }
+    return { buffer: buf, path: newPath, source: 'file' };
+  }
+  const legacyPath = path.join(certsDir, SHARED_HMAC_LEGACY_FILE);
+  if (fs.existsSync(legacyPath)) {
+    const buf = fs.readFileSync(legacyPath);
+    if (buf.length !== 32) {
+      throw new Error(`HMAC: ${legacyPath} должен быть ровно 32 байта, сейчас ${buf.length}`);
+    }
+    console.log(
+      `[clean-vpn] HMAC: использую legacy ${SHARED_HMAC_LEGACY_FILE} (рекомендуется переименовать в ${SHARED_HMAC_FILE})`,
+    );
+    return { buffer: buf, path: legacyPath, source: 'legacy-file' };
+  }
+  if (!opts.autoCreate) {
     throw new Error(
-      `tls-vpn secret: нет файла ${keyPath} (на client должен совпадать с exit; --tls-vpn-secret-key=PATH).`,
+      `HMAC: не найден общий ключ (искал ${newPath} и legacy ${legacyPath}). На ${opts.role} нужен скопированный с exit файл; путь можно задать --shared-hmac-key=PATH.`,
     );
   }
   fs.mkdirSync(certsDir, { recursive: true });
   const rnd = randomBytes(32);
-  fs.writeFileSync(keyPath, rnd, { mode: 0o600 });
-  console.log('[clean-vpn] tls-vpn secret: создан', keyPath);
-  return rnd;
+  fs.writeFileSync(newPath, rnd, { mode: 0o600 });
+  console.log('[clean-vpn] HMAC: создан общий ключ', newPath);
+  return { buffer: rnd, path: newPath, source: 'created' };
 }
 
 /**
@@ -1714,11 +1733,11 @@ function parseArgs(argv) {
     iceMode: null,
     quicCertsDir: null,
     quicExtCryptoKey: null,
+    sharedHmacKey: null,
     tlsCertDir: null,
     tlsServerName: null,
     tlsClientSni: null,
     tlsPublicName: null,
-    tlsVpnSecretKey: null,
     tlsProbeTarget: null,
     tlsProbeMaxBytes: null,
     tlsProbeMaxSeconds: null,
@@ -1747,6 +1766,8 @@ function parseArgs(argv) {
       out.quicCertsDir = a.slice('--quic-certs-dir='.length);
     } else if (a.startsWith('--quic-ext-crypto-key=')) {
       out.quicExtCryptoKey = a.slice('--quic-ext-crypto-key='.length);
+    } else if (a.startsWith('--shared-hmac-key=')) {
+      out.sharedHmacKey = a.slice('--shared-hmac-key='.length);
     } else if (a.startsWith('--tls-cert-dir=')) {
       out.tlsCertDir = a.slice('--tls-cert-dir='.length);
     } else if (a.startsWith('--tls-server-name=')) {
@@ -1755,8 +1776,6 @@ function parseArgs(argv) {
       out.tlsClientSni = a.slice('--tls-client-sni='.length);
     } else if (a.startsWith('--tls-public-name=')) {
       out.tlsPublicName = a.slice('--tls-public-name='.length);
-    } else if (a.startsWith('--tls-vpn-secret-key=')) {
-      out.tlsVpnSecretKey = a.slice('--tls-vpn-secret-key='.length);
     } else if (a.startsWith('--tls-probe-target=')) {
       out.tlsProbeTarget = a.slice('--tls-probe-target='.length);
     } else if (a.startsWith('--tls-probe-max-bytes=')) {
@@ -4008,6 +4027,7 @@ async function runExit({
   iceMode,
   quicCertsDir,
   quicExtCryptoKey,
+  sharedHmacKey,
   tlsCertDir,
   tlsPublicName,
   tlsProbeTarget,
@@ -4015,7 +4035,6 @@ async function runExit({
   tlsProbeMaxSeconds,
   tlsProbeFullProxyPerIp,
   tlsServerName,
-  tlsVpnSecretKey,
   signaling,
   wsServer,
   punch,
@@ -4321,7 +4340,10 @@ async function runExit({
       ciphers: TLS_VPN_CIPHERS_1_3,
       ecdhCurve: TLS_VPN_ECDH_CURVES,
     });
-    const vpnSecret = loadOrCreateTlsVpnSecret(certsDir, tlsVpnSecretKey, true);
+    const vpnSecret = ensureSharedHmacKey(certsDir, sharedHmacKey, quicExtCryptoKey, {
+      autoCreate: true,
+      role: 'exit',
+    }).buffer;
     const tlsCtx = {
       startBridge,
       creds,
@@ -4572,7 +4594,12 @@ async function runExit({
   if (type === 'quic-ext') {
     const certsDir = quicCertsDir ? path.resolve(quicCertsDir) : DEFAULT_QUIC_CERTS_DIR;
     const tlsPaths = ensureQuicCerts(certsDir);
-    const hmacKey = ensureQuicExtHmacKey(certsDir, quicExtCryptoKey);
+    const hmacKey = bufferToArrayBuffer(
+      ensureSharedHmacKey(certsDir, sharedHmacKey, quicExtCryptoKey, {
+        autoCreate: true,
+        role: 'exit',
+      }).buffer,
+    );
     const logger = createQuicExtLogger();
     const { QUICServer, events } = await importQuicExt();
     quicExtServer = new QUICServer({
@@ -4627,7 +4654,7 @@ async function runExit({
 
     await quicExtServer.start({ host, port });
     console.log(
-      `[clean-vpn] exit QUIC-EXT UDP ${host}:${port} (ALPN ${QUIC_EXT_ALPN}, @infisical/quic; TLS и ${QUIC_EXT_HMAC_FILE} в ${certsDir})`,
+      `[clean-vpn] exit QUIC-EXT UDP ${host}:${port} (ALPN ${QUIC_EXT_ALPN}, @infisical/quic; TLS и ${SHARED_HMAC_FILE} в ${certsDir})`,
     );
     return;
   }
@@ -4646,11 +4673,12 @@ async function runClient({
   configPath,
   iceMode,
   quicCertsDir,
+  quicExtCryptoKey,
+  sharedHmacKey,
   tlsCertDir,
   tlsServerName,
   tlsClientSni,
   tlsPublicName,
-  tlsVpnSecretKey,
   wsChromeExecutable,
   wsChromeWsUrl,
   wsChromeUrl,
@@ -5340,7 +5368,10 @@ async function runClient({
         '[clean-vpn] TLS: ClientHello SNI отличается от имени проверки сертификата; маршрутизация VPN — по Bearer-токену внутри TLS.',
       );
     }
-    const vpnSecret = loadOrCreateTlsVpnSecret(certsDir, tlsVpnSecretKey, false);
+    const vpnSecret = ensureSharedHmacKey(certsDir, sharedHmacKey, quicExtCryptoKey, {
+      autoCreate: false,
+      role: 'client',
+    }).buffer;
     const tlsConnectOpts = {
       host,
       port,
@@ -5439,13 +5470,13 @@ async function main() {
 --config=PATH: для --type=webrtc и rtc-chrome — JSON с iceServers/turnServers (по умолчанию config/default.json от корня репо)
 --ice-mode=auto|relay|direct: для webrtc и rtc-chrome — перекрывает iceMode из --config
 --quic-certs-dir=DIR: для --type=quic и quic-ext — каталог с ca.pem, cert.pem, key.pem (иначе repo/certs; при отсутствии — openssl)
---quic-ext-crypto-key=PATH: только exit + quic-ext — файл с 32 байтами HMAC-ключа (иначе quic-ext-hmac.key в каталоге сертификатов)
+--shared-hmac-key=PATH: --type=tls (обе стороны) и exit + --type=quic-ext — общий 32-байтовый HMAC PSK (иначе clean-vpn-hmac.key в --tls-cert-dir/--quic-certs-dir; на exit создаётся автоматически; legacy-имя файла quic-ext-hmac.key всё ещё читается). На client + --type=quic-ext не нужен.
+--quic-ext-crypto-key=PATH: legacy alias для --shared-hmac-key=PATH (читается, рекомендуется заменить на --shared-hmac-key)
 --type=quic: Node.js 25+, node --experimental-quic и бинарь с node_use_quic (см. шапку файла)
 --type=quic-ext: npm install @infisical/quic (prebuild под платформу), Node 18+, см. шапку файла
---tls-cert-dir=DIR: для --type=tls — fullchain.pem+privkey.pem (LE) или ca/cert/key как у QUIC; здесь же лежит tls-vpn.key
+--tls-cert-dir=DIR: для --type=tls — fullchain.pem+privkey.pem (LE) или ca/cert/key как у QUIC; здесь же лежит общий clean-vpn-hmac.key
 --tls-server-name=HOST: только client + tls — проверка сертификата (CN/SAN); также ClientHello SNI, если не задан --tls-client-sni. Если --server — IP и оба не заданы, для проверки используется clean-vpn; на exit игнорируется
 --tls-client-sni=HOST: только client + tls — явный SNI в ClientHello; без флага при проверке cert=clean-vpn (часто IP без --tls-server-name) SNI по умолчанию www.google.com; иначе SNI = имя проверки. Маркер VPN в открытой части ClientHello отсутствует — exit отличает VPN по HMAC-токену в HTTP-преамбуле после рукопожатия (TLS 1.3, ALPN h2/http1.1).
---tls-vpn-secret-key=PATH: --type=tls (обе стороны) — путь к pre-shared 32-байтовому ключу для HMAC Bearer-токена; на exit создаётся автоматически (tls-vpn.key в --tls-cert-dir), на client — нужен идентичный файл
 --tls-public-name=HOST: только exit + tls — SNI «честной» страницы It works! (опционально)
 --tls-probe-target=host:port: только exit + tls — passthrough чужих ClientHello (default www.google.com:443)
 --tls-probe-max-bytes=N: короткий passthrough, лимит байт обоих направлений (default 49152)
