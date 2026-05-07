@@ -749,11 +749,12 @@ function establishCleanVpnOverH2(tlsSock, checkHost, vpnSecret) {
     req.on('error', fail);
     req.on('response', (headers) => {
       cleanupTimers();
-      const status = headers[':status'];
-      if (status !== '200') {
+      const rawStatus = headers[':status'];
+      const statusStr = rawStatus != null ? String(rawStatus) : '';
+      if (statusStr !== '200') {
         fail(
           new Error(
-            `TLS client: HTTP/2 ответ :status=${status ?? '—'} — bearer не принят / не VPN-сервер`,
+            `TLS client: HTTP/2 ответ :status=${rawStatus ?? '—'} — bearer не принят / не VPN-сервер`,
           ),
         );
         return;
