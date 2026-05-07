@@ -256,6 +256,30 @@ function resolveTlsAlpnProtocols(tlsHttpVers) {
   return { client: list, server: list };
 }
 
+/**
+ * Выбор ALPN со стороны сервера (первый протокол из serverOffer, который клиент указал в ClientHello).
+ * Совпадает с порядком OpenSSL/NODE для TLS 1.3 ALPN на сервере.
+ *
+ * @param {string[]} clientAlpn из разбора ClientHello (может быть пусто)
+ * @param {string[]} serverOffer например ['h2','http/1.1']
+ */
+function pickNegotiatedAlpn(clientAlpn, serverOffer) {
+  const client = new Set((clientAlpn || []).map((x) => String(x)));
+  if (!client.size) return '';
+  for (const p of serverOffer) {
+    if (client.has(p)) return p;
+  }
+  return '';
+}
+
+/** Уникальный ключ пира для привязки HTTP/2 session/stream к TCP-сокету (IPv6-safe). */
+function tlsPeerTuple(sock) {
+  const fam = sock?.remoteFamily ?? '';
+  const addr = sock?.remoteAddress ?? '';
+  const port = sock?.remotePort ?? '';
+  return `${fam}|${addr}|${port}`;
+}
+
 /** Человекочитаемый слой HTTP после handshake (для логов). */
 function tlsAlpnToHttpLabel(alpn) {
   if (alpn === 'h2') return 'HTTP/2';
@@ -3468,19 +3492,22 @@ function wireExitTlsSocket(tlsSock, ctx) {
 }
 
 /**
- * TLS уже с ALPN h2: принимаем HTTP/2 через общий Http2SecureServer (`secureConnection`).
+ * HTTP/2 (ALPN h2): ClientHello уже прочитан для mux — отдаём сырой TCP в общий Http2SecureServer.
+ * Важно: сначала `emit('connection', tcp)`, затем `unshift(ClientHello)`; иначе handshake/stream не поднимаются.
  *
- * @param {import('tls').TLSSocket} tlsSock
+ * @param {import('net').Socket} tcpSocket
+ * @param {Buffer} prefixBuf полный буфер с первым TLS ClientHello (и возможным хвостом)
  * @param {{
  *   startBridge: (sock: any, restBuf: Buffer|null, transport: 'tcp') => void,
  *   vpnSecret: Buffer,
  *   tlsExitHttp2Server: import('http2').Http2SecureServer,
  * }} ctx
  */
-function wireExitTlsSocketHttp2(tlsSock, ctx) {
+function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
+  const peerKey = tlsPeerTuple(tcpSocket);
   const st = {
-    ip: tlsClientIp(tlsSock),
-    port: tlsSock.remotePort ?? null,
+    ip: tlsClientIp(tcpSocket),
+    port: tcpSocket.remotePort ?? null,
     startMs: Date.now(),
     bytesIn: 0,
     /** @type {string|null} */
@@ -3489,10 +3516,12 @@ function wireExitTlsSocketHttp2(tlsSock, ctx) {
     reasonExtra: null,
     /** @type {number|null} */
     windowOffset: null,
-    secured: true,
+    secured: false,
     summarized: false,
     httpLabel: 'HTTP/2',
   };
+  /** @type {import('tls').TLSSocket|null} */
+  let tlsLayerSock = null;
   const h2 = ctx.tlsExitHttp2Server;
   const setOutcomeOnce = (outcome, extra) => {
     if (st.outcome) return;
@@ -3503,7 +3532,7 @@ function wireExitTlsSocketHttp2(tlsSock, ctx) {
     if (st.summarized) return;
     st.summarized = true;
     const ms = Date.now() - st.startMs;
-    const outcome = st.outcome || 'tls_runtime_error';
+    const outcome = st.outcome || (st.secured ? 'tls_runtime_error' : 'tls_handshake_fail');
     /** @type {string[]} */
     const fields = [
       `ip=${st.ip}`,
@@ -3520,25 +3549,17 @@ function wireExitTlsSocketHttp2(tlsSock, ctx) {
     console.log(`[clean-vpn] tls done: ${fields.join(' ')}`);
   };
 
-  tlsSock.on('error', (e) => {
-    const code = /** @type {any} */ (e)?.code ?? '';
-    const msg = e?.message || String(e);
-    if (st.bytesIn > 0 && TCP_BENIGN_AFTER_DATA_CODES.has(code)) {
-      return;
-    }
-    setOutcomeOnce('tls_runtime_error', `code=${code || '—'} msg=${msg}`);
-    console.error(`[clean-vpn] tls socket: ip=${st.ip} code=${code || '—'} msg=${msg}`);
-  });
-  tlsSock.on('close', summarize);
+  const destroyIdleTarget = () => tlsLayerSock || tcpSocket;
 
   let idleTimer = setTimeout(() => {
-    if (tlsSock.destroyed) return;
+    const sock = destroyIdleTarget();
+    if (sock.destroyed) return;
     setOutcomeOnce('cover_idle');
     console.log(
       `[clean-vpn] tls cover: idle ip=${st.ip} port=${st.port ?? '?'} ms=30000 http=${st.httpLabel}`,
     );
     try {
-      tlsSock.destroy();
+      sock.destroy();
     } catch {
       /* ignore */
     }
@@ -3546,7 +3567,7 @@ function wireExitTlsSocketHttp2(tlsSock, ctx) {
   idleTimer.unref?.();
 
   let streamHandled = false;
-  const cleanupStreamListener = () => {
+  const cleanupListeners = () => {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = /** @type {any} */ (null);
     try {
@@ -3554,11 +3575,50 @@ function wireExitTlsSocketHttp2(tlsSock, ctx) {
     } catch {
       /* ignore */
     }
+    try {
+      h2.off('session', onSession);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const onTlsLayerError = (e) => {
+    const code = /** @type {any} */ (e)?.code ?? '';
+    const msg = e?.message || String(e);
+    if (st.bytesIn > 0 && TCP_BENIGN_AFTER_DATA_CODES.has(code)) {
+      return;
+    }
+    setOutcomeOnce('tls_runtime_error', `code=${code || '—'} msg=${msg}`);
+    console.error(`[clean-vpn] tls socket: ip=${st.ip} code=${code || '—'} msg=${msg}`);
+  };
+
+  /** @param {import('http2').Http2Session} sess */
+  const onSession = (sess) => {
+    const s = /** @type {import('tls').TLSSocket} */ (sess.socket);
+    if (tlsPeerTuple(s) !== peerKey) return;
+    try {
+      h2.off('session', onSession);
+    } catch {
+      /* ignore */
+    }
+    tlsLayerSock = s;
+    st.secured = true;
+    const apRaw = s.alpnProtocol;
+    const ap = apRaw === false ? '' : String(apRaw);
+    try {
+      s.on('error', onTlsLayerError);
+      s.once('close', summarize);
+    } catch {
+      /* ignore */
+    }
+    console.log(
+      `[clean-vpn] tls: рукопожатие ip=${st.ip} port=${st.port ?? '?'} http=${tlsAlpnToHttpLabel(ap)} negotiated ALPN=${ap || '—'}`,
+    );
   };
 
   /** @type {(stream: import('http2').ServerHttp2Stream, headers: import('http2').IncomingHttpHeaders) => void} */
   const onStream = (stream, headers) => {
-    if (stream.session.socket !== tlsSock) return;
+    if (tlsPeerTuple(stream.session.socket) !== peerKey) return;
     if (streamHandled) {
       try {
         stream.respond({ ':status': '404' });
@@ -3569,7 +3629,7 @@ function wireExitTlsSocketHttp2(tlsSock, ctx) {
       return;
     }
     streamHandled = true;
-    cleanupStreamListener();
+    cleanupListeners();
 
     const method = headers[':method'];
     const path = headers[':path'];
@@ -3586,6 +3646,8 @@ function wireExitTlsSocketHttp2(tlsSock, ctx) {
       `${typeof method === 'string' ? method : '?'} ${typeof path === 'string' ? path : '?'}`,
       'utf8',
     );
+
+    const tlsForDestroy = /** @type {import('tls').TLSSocket} */ (stream.session.socket);
 
     if (outcome !== 'vpn') {
       setOutcomeOnce(outcome, `reason=${outcome}`);
@@ -3624,7 +3686,7 @@ function wireExitTlsSocketHttp2(tlsSock, ctx) {
     } catch (e) {
       setOutcomeOnce('tls_runtime_error', `msg=${e?.message || e}`);
       try {
-        tlsSock.destroy();
+        tlsForDestroy.destroy();
       } catch {
         /* ignore */
       }
@@ -3639,28 +3701,31 @@ function wireExitTlsSocketHttp2(tlsSock, ctx) {
       `[clean-vpn] tls vpn: connected ip=${st.ip} port=${st.port ?? '?'} windowOffset=${windowOffset} http=${st.httpLabel}`,
     );
 
-    const wrapped = http2StreamToSocketLike(stream, stream.session, tlsSock);
+    const wrapped = http2StreamToSocketLike(stream, stream.session, tlsForDestroy);
     ctx.startBridge(wrapped, null, 'tcp');
   };
 
-  tlsSock.once('close', () => {
-    try {
-      h2.off('stream', onStream);
-    } catch {
-      /* ignore */
-    }
-    if (idleTimer) clearTimeout(idleTimer);
+  tcpSocket.once('close', () => {
+    cleanupListeners();
+    summarize();
   });
 
   try {
+    h2.on('session', onSession);
     h2.on('stream', onStream);
-    h2.emit('secureConnection', tlsSock);
-  } catch (e) {
-    cleanupStreamListener();
-    setOutcomeOnce('tls_runtime_error', `msg=${e?.message || e}`);
-    console.error('[clean-vpn] tls HTTP/2 secureConnection:', e?.message || e);
+    h2.emit('connection', tcpSocket);
+    tcpSocket.unshift(prefixBuf);
     try {
-      tlsSock.destroy();
+      tcpSocket.resume();
+    } catch {
+      /* ignore */
+    }
+  } catch (e) {
+    cleanupListeners();
+    setOutcomeOnce('tls_runtime_error', `msg=${e?.message || e}`);
+    console.error('[clean-vpn] tls HTTP/2 emit(connection):', e?.message || e);
+    try {
+      tcpSocket.destroy();
     } catch {
       /* ignore */
     }
@@ -3789,39 +3854,70 @@ function handleTlsExitInbound(socket, ctx) {
     );
     setImmediate(() => {
       try {
-        socket.unshift(fullBuf);
+        try {
+          socket.pause();
+        } catch {
+          /* ignore */
+        }
         const alpnList = resolveTlsAlpnProtocols(ctx.tlsHttpVers ?? null).server;
-        const tlsSrv = tls.createServer(
-          {
-            secureContext: ctx.tlsExitSecureContext,
-            ALPNProtocols: alpnList,
-            requestCert: false,
-            handshakeTimeout: 60000,
-          },
-          (tlsSock) => {
-            const apRaw = tlsSock.alpnProtocol;
-            const ap = apRaw === false ? '' : String(apRaw);
-            const httpLabel = tlsAlpnToHttpLabel(ap);
-            console.log(
-              `[clean-vpn] tls: рукопожатие ip=${tlsClientIp(tlsSock)} port=${tlsSock.remotePort ?? '?'} http=${httpLabel} negotiated ALPN=${ap || '—'}`,
+        const negotiated = pickNegotiatedAlpn(p.alpn, alpnList);
+
+        if (negotiated === 'h2') {
+          wireExitHttp2VpnInjected(socket, fullBuf, ctx);
+          return;
+        }
+
+        const tlsSock = new tls.TLSSocket(socket, {
+          isServer: true,
+          secureContext: ctx.tlsExitSecureContext,
+          ALPNProtocols: alpnList,
+          requestCert: false,
+          handshakeTimeout: 60000,
+        });
+        tlsSock.once('secure', () => {
+          const apRaw = tlsSock.alpnProtocol;
+          const ap = apRaw === false ? '' : String(apRaw);
+          const httpLabel = tlsAlpnToHttpLabel(ap);
+          console.log(
+            `[clean-vpn] tls: рукопожатие ip=${tlsClientIp(tlsSock)} port=${tlsSock.remotePort ?? '?'} http=${httpLabel} negotiated ALPN=${ap || '—'}`,
+          );
+          if (ap === 'h2') {
+            console.error(
+              '[clean-vpn] tls: после ручного TLS получен ALPN h2 (расхождение с предвыбором) — закрываем',
             );
-            if (ap === 'h2') {
-              wireExitTlsSocketHttp2(tlsSock, ctx);
-            } else if (ap === 'http/1.1') {
-              wireExitTlsSocket(tlsSock, ctx);
-            } else {
-              console.error(
-                `[clean-vpn] tls: неподдерживаемый ALPN «${ap || '—'}» после рукопожатия — закрываем`,
-              );
-              try {
-                tlsSock.destroy();
-              } catch {
-                /* ignore */
-              }
+            try {
+              tlsSock.destroy();
+            } catch {
+              /* ignore */
             }
-          },
-        );
-        tlsSrv.emit('connection', socket);
+            return;
+          }
+          if (ap === 'http/1.1' || ap === '') {
+            wireExitTlsSocket(tlsSock, ctx);
+            return;
+          }
+          console.error(
+            `[clean-vpn] tls: неподдерживаемый ALPN «${ap || '—'}» после рукопожатия — закрываем`,
+          );
+          try {
+            tlsSock.destroy();
+          } catch {
+            /* ignore */
+          }
+        });
+        tlsSock.on('error', (e) => {
+          const code = /** @type {any} */ (e)?.code ?? '';
+          const msg = e?.message || String(e);
+          console.error(
+            `[clean-vpn] tls handshake (ручной TLSSocket): ip=${tlsClientIp(socket)} code=${code || '—'} msg=${msg}`,
+          );
+          try {
+            tlsSock.destroy();
+          } catch {
+            /* ignore */
+          }
+        });
+        socket.unshift(fullBuf);
         try {
           socket.resume();
         } catch {
@@ -4921,6 +5017,7 @@ async function runExit({
       maxVersion: 'TLSv1.3',
       ciphers: TLS_VPN_CIPHERS_1_3,
       ecdhCurve: TLS_VPN_ECDH_CURVES,
+      ALPNProtocols: tlsAlpnOffer,
     });
     tlsExitHttp2Server.on('error', (err) => {
       console.error('[clean-vpn] tls HTTP/2 server:', err?.message || err);
