@@ -70,6 +70,7 @@
  *   Сертификаты: --tls-cert-dir с fullchain.pem+privkey.pem (Let's Encrypt) или, как у QUIC, ca.pem+cert.pem+key.pem.
  *   Внимание: passthrough на сторонний хост может нарушать ToS сервиса и законы юрисдикции — только на свой страх и риск.
  *   Client: --tls-server-name — имя для проверки сертификата (и SNI в ClientHello, если не задан --tls-client-sni).
+ *   Не используйте `--tls-server-name=www.google.com` только ради маскировки SNI: это имя проверки CN/SAN, при сертификате exit с CN clean-vpn рукопожатие завершится ERR_TLS_CERT_ALTNAME_INVALID. При IP без имени проверки уже берётся clean-vpn и SNI по умолчанию www.google.com; свой SNI — `--tls-client-sni`.
  *   Если в --server указан IP, без --tls-server-name для проверки используется clean-vpn (как у ca/cert из репо); для LE на exit укажите --tls-server-name=ваш.домен.
  *   --tls-client-sni=HOST (опционально): явный ClientHello SNI; проверка cert через --tls-server-name / host / clean-vpn.
  *   Если не задан: при проверке имени clean-vpn (типично --server=IP без --tls-server-name) в ClientHello по умолчанию SNI www.google.com; иначе SNI совпадает с именем проверки.
@@ -241,6 +242,11 @@ const TLS_VPN_CIPHERS_1_3 =
 /** ECDH-кривые на client/exit: X25519 первый — как в Chrome. */
 const TLS_VPN_ECDH_CURVES = 'X25519:P-256:P-384';
 const DEFAULT_TLS_PROBE_TARGET = 'www.google.com:443';
+/**
+ * Значения `--tls-server-name`, которые пользователи часто путают с decoy SNI.
+ * При `--server=IP` и дефолтном ca.pem (CN clean-vpn) проверка должна быть по `clean-vpn`, не по этому хосту.
+ */
+const TLS_VERIFYNAME_DECOY_SNI_ALIASES = new Set(['www.google.com']);
 const DEFAULT_TLS_PROBE_MAX_BYTES = 49152;
 const DEFAULT_TLS_PROBE_MAX_SECONDS = 30;
 const DEFAULT_TLS_PROBE_FULL_PROXY_PER_IP = 0;
@@ -3566,7 +3572,8 @@ function mapCoverOutcome(parsed, vpnSecret) {
  *   - `tls cover: idle ip=… ms=30000` при тишине после handshake;
  *   - `tls cover: oversize ip=… bytes=…` при > 16 KiB без CRLFCRLF;
  *   - `tls handshake: ip=… code=… msg=…` при ошибке до 'secure';
- *   - `tls done: ip=… outcome=… bytesIn=… ms=…` ровно одна на close.
+ *   - `tls done: ip=… outcome=… bytesIn=… ms=…` ровно одна на close;
+ *   - `outcome=tls_peer_closed_before_http` — пир закрыл TLS после рукопожатия, не отправив HTTP (типично `probe.js --type=handshake`).
  *
  * @param {import('tls').TLSSocket} tlsSock
  * @param {{
@@ -3600,7 +3607,13 @@ function wireExitTlsSocket(tlsSock, ctx) {
     if (st.summarized) return;
     st.summarized = true;
     const ms = Date.now() - st.startMs;
-    const outcome = st.outcome || (st.secured ? 'tls_runtime_error' : 'tls_handshake_fail');
+    const outcome =
+      st.outcome ||
+      (st.secured
+        ? st.bytesIn === 0
+          ? 'tls_peer_closed_before_http'
+          : 'tls_runtime_error'
+        : 'tls_handshake_fail');
     /** @type {string[]} */
     const fields = [
       `ip=${st.ip}`,
@@ -3770,7 +3783,13 @@ function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
     if (st.summarized) return;
     st.summarized = true;
     const ms = Date.now() - st.startMs;
-    const outcome = st.outcome || (st.secured ? 'tls_runtime_error' : 'tls_handshake_fail');
+    const outcome =
+      st.outcome ||
+      (st.secured
+        ? st.bytesIn === 0
+          ? 'tls_peer_closed_before_http'
+          : 'tls_runtime_error'
+        : 'tls_handshake_fail');
     /** @type {string[]} */
     const fields = [
       `ip=${st.ip}`,
@@ -6278,6 +6297,16 @@ async function runClient({
         verifyName = host;
       }
     }
+    if (
+      hostIsIp &&
+      tlsServerName &&
+      TLS_VERIFYNAME_DECOY_SNI_ALIASES.has(String(tlsServerName).trim().toLowerCase())
+    ) {
+      console.warn(
+        '[clean-vpn] TLS: `--tls-server-name` задаёт проверку сертификата, не decoy SNI. При IP-сервере значение www.google.com трактуем как запрос проверки CN/SAN clean-vpn (как без этого флага). Явный ClientHello SNI: `--tls-client-sni=HOST`. Имя под ваш LE-сертификат: `--tls-server-name=ваш.домен`.',
+      );
+      verifyName = 'clean-vpn';
+    }
     const sniRaw = tlsClientSni != null ? String(tlsClientSni).trim() : '';
     let clientHelloSni = sniRaw || verifyName;
     if (!sniRaw && verifyName === 'clean-vpn') {
@@ -6404,7 +6433,7 @@ async function main() {
 --type=quic: Node.js 25+, node --experimental-quic и бинарь с node_use_quic (см. шапку файла)
 --type=quic-ext: npm install @infisical/quic (prebuild под платформу), Node 18+, см. шапку файла
 --tls-cert-dir=DIR: для --type=tls — fullchain.pem+privkey.pem (LE) или ca/cert/key как у QUIC; здесь же лежит общий clean-vpn-hmac.key
---tls-server-name=HOST: только client + tls — проверка сертификата (CN/SAN); также ClientHello SNI, если не задан --tls-client-sni. Если --server — IP и оба не заданы, для проверки используется clean-vpn; на exit игнорируется
+--tls-server-name=HOST: только client + tls — проверка сертификата (CN/SAN); также ClientHello SNI, если не задан --tls-client-sni. Если --server — IP и оба не заданы, для проверки используется clean-vpn; при ошибочном --tls-server-name=www.google.com и IP тоже принудительно clean-vpn (маскировку SNI см. --tls-client-sni); на exit игнорируется
 --tls-client-sni=HOST: только client + tls — явный SNI в ClientHello; без флага при проверке cert=clean-vpn (часто IP без --tls-server-name) SNI по умолчанию www.google.com; иначе SNI = имя проверки. Маркера VPN в открытой части ClientHello нет — exit отличает VPN по Bearer внутри TLS (TLS 1.3; ALPN по умолчанию h2 + http/1.1; HTTP/1.1 → GET /clean-vpn, HTTP/2 → POST /clean-vpn на одном stream).
 --tls-public-name=HOST: только exit + tls — SNI «честной» страницы It works! (опционально)
 --tls-probe-target=host:port: только exit + tls — passthrough чужих ClientHello (default www.google.com:443)

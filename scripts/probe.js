@@ -9,6 +9,8 @@
  *
  * --domain host:port должен совпадать с --tls-probe-target на exit (по умолчанию www.google.com:443).
  * Не используйте SNI, совпадающий с --tls-public-name на exit — трафик уйдёт на публичный TLS, не passthrough.
+ *
+ * `--type=handshake`: клиент закрывает сокет сразу после TLS — на exit в логе будет outcome=tls_peer_closed_before_http (это ожидаемо, не сбой рантайма).
  */
 
 import tls from 'tls';
