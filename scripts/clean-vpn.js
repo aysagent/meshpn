@@ -318,6 +318,27 @@ function applyCleanVpnHttp2ConnWindow(session) {
   }
 }
 
+/**
+ * Потоковое окно duplex-stream VPN (`Http2Stream.setWindowSize`, Node ≥20.18 / ≥22.9).
+ * Уменьшает асимметрию iperf без `-R` и с `-R`. Env: `CLEAN_VPN_H2_STREAM_WINDOW`;
+ * если не задан — те же байты, что и `CLEAN_VPN_H2_CONN_WINDOW`.
+ *
+ * @param {import('http2').Http2Stream|null|undefined} stream
+ */
+function applyCleanVpnHttp2StreamWindow(stream) {
+  if (!stream || typeof stream.setWindowSize !== 'function') return;
+  const raw = process.env.CLEAN_VPN_H2_STREAM_WINDOW;
+  const w =
+    raw != null && raw !== ''
+      ? parsePositiveEnvInt('CLEAN_VPN_H2_STREAM_WINDOW', CLEAN_VPN_H2_CONN_WINDOW_DEFAULT)
+      : parsePositiveEnvInt('CLEAN_VPN_H2_CONN_WINDOW', CLEAN_VPN_H2_CONN_WINDOW_DEFAULT);
+  try {
+    stream.setWindowSize(w);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** @param {import('net').Socket|null|undefined} sock */
 function applyCleanVpnTlsTcpBuffers(sock) {
   if (!sock) return;
@@ -849,6 +870,7 @@ function establishCleanVpnOverH2(tlsSock, checkHost, vpnSecret) {
       }
       if (settled) return;
       settled = true;
+      applyCleanVpnHttp2StreamWindow(req);
       resolve(http2StreamToSocketLike(req, clientSession, tlsSock));
     });
   });
@@ -3909,6 +3931,8 @@ function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
       }
       return;
     }
+
+    applyCleanVpnHttp2StreamWindow(stream);
 
     stream.on('data', (d) => {
       st.bytesIn += d.length;
