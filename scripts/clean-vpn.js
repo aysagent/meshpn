@@ -266,6 +266,14 @@ function parsePositiveEnvInt(envName, fallback) {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+/** Для env вида «0 выкл»: допускает 0 и положительные числа. */
+function parseNonNegativeEnvInt(envName, fallback) {
+  const raw = process.env[envName];
+  if (raw == null || raw === '') return fallback;
+  const n = Number.parseInt(String(raw), 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 /**
  * SETTINGS HTTP/2 для туннеля (--type=tls, ALPN h2): client (`http2.connect`) и exit (`createSecureServer`).
  * Переменные окружения: `CLEAN_VPN_H2_INITIAL_WINDOW`, `CLEAN_VPN_H2_MAX_FRAME` (байты).
@@ -290,6 +298,37 @@ function resolveCleanVpnHttp2Settings() {
   );
 
   return { initialWindowSize, maxFrameSize };
+}
+
+/** Окно потока на соединении HTTP/2: `Http2Session.setLocalWindowSize` (Node ≥20.18 / ≥22.9). Env: `CLEAN_VPN_H2_CONN_WINDOW`. */
+const CLEAN_VPN_H2_CONN_WINDOW_DEFAULT = 128 * 1024 * 1024;
+
+/** SO_SNDBUF/SO_RCVBUF для сокета VPN после TLS. Env: `CLEAN_VPN_TCP_SNDBUF`, `CLEAN_VPN_TCP_RCVBUF`. */
+const CLEAN_VPN_TCP_SNDBUF_DEFAULT = 4 * 1024 * 1024;
+const CLEAN_VPN_TCP_RCVBUF_DEFAULT = 4 * 1024 * 1024;
+
+/** @param {import('http2').Http2Session|null|undefined} session */
+function applyCleanVpnHttp2ConnWindow(session) {
+  if (!session || typeof session.setLocalWindowSize !== 'function') return;
+  const w = parsePositiveEnvInt('CLEAN_VPN_H2_CONN_WINDOW', CLEAN_VPN_H2_CONN_WINDOW_DEFAULT);
+  try {
+    session.setLocalWindowSize(w);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** @param {import('net').Socket|null|undefined} sock */
+function applyCleanVpnTlsTcpBuffers(sock) {
+  if (!sock) return;
+  const snd = parsePositiveEnvInt('CLEAN_VPN_TCP_SNDBUF', CLEAN_VPN_TCP_SNDBUF_DEFAULT);
+  const rcv = parsePositiveEnvInt('CLEAN_VPN_TCP_RCVBUF', CLEAN_VPN_TCP_RCVBUF_DEFAULT);
+  try {
+    if (typeof sock.setSendBufferSize === 'function') sock.setSendBufferSize(snd);
+    if (typeof sock.setRecvBufferSize === 'function') sock.setRecvBufferSize(rcv);
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
@@ -737,6 +776,9 @@ function establishCleanVpnOverH2(tlsSock, checkHost, vpnSecret) {
     createConnection: () => tlsSock,
     settings: resolveCleanVpnHttp2Settings(),
   });
+  clientSession.once('connect', () => {
+    applyCleanVpnHttp2ConnWindow(clientSession);
+  });
   return new Promise((resolve, reject) => {
     let settled = false;
     let respTimer = /** @type {ReturnType<typeof setTimeout>|null} */ (null);
@@ -886,6 +928,7 @@ async function connectCleanVpnTlsClient(opts) {
             console.log(
               `[clean-vpn] TLS client: рукопожатие OK http=${httpLabel} negotiated ALPN=${ap || '—'}`,
             );
+            applyCleanVpnTlsTcpBuffers(sock);
             if (tlsHttpVers === '1.1') {
               if (ap !== 'http/1.1') {
                 try {
@@ -2185,12 +2228,15 @@ function findFreeTunName() {
 // === Общее: uint32+IPv4 фрейминг, writeFramed, attachTunBridge (все transport) ===
 // =============================================================================
 
-/** Сдвиг накопленного буфера; при большом byteOffset — компактная копия, чтобы не держать гигантский ArrayBuffer. */
-const STREAM_FRAMER_COMPACT_THRESHOLD = 65536;
+/** Слить очередь chunk-буферов в один при большом числе осколков (меньше overhead очереди). */
+const STREAM_FRAMER_CHUNK_MERGE_AFTER = 24;
 
 class StreamFramer {
   constructor() {
-    this.buf = Buffer.alloc(0);
+    /** @type {Buffer[]} */
+    this.chunks = [];
+    /** @type {number} */
+    this.len = 0;
   }
 
   /**
@@ -2200,49 +2246,163 @@ class StreamFramer {
   push(chunk, onPacket) {
     if (chunk.length) {
       // Нельзя хранить ссылку на `chunk` из socket 'data': Node переиспользует slab.
-      const piece = Buffer.from(chunk);
-      if (this.buf.length === 0) {
-        this.buf = piece;
-      } else {
-        const next = Buffer.allocUnsafe(this.buf.length + piece.length);
-        this.buf.copy(next, 0);
-        piece.copy(next, this.buf.length);
-        this.buf = next;
-      }
+      this.chunks.push(Buffer.from(chunk));
+      this.len += chunk.length;
     }
     for (;;) {
-      if (this.buf.length < 4) break;
-      const len = this.buf.readUInt32BE(0);
-      if (len <= 0 || len > MAX_PKT) {
-        this.buf = Buffer.alloc(0);
-        throw new Error(`bad frame length ${len}`);
+      if (this.len < 4) break;
+      const packedLen = this.#peekUInt32BE();
+      if (packedLen == null) break;
+      if (packedLen <= 0 || packedLen > MAX_PKT) {
+        this.chunks = [];
+        this.len = 0;
+        throw new Error(`bad frame length ${packedLen}`);
       }
-      if (this.buf.length < 4 + len) break;
-      const pkt = this.buf.subarray(4, 4 + len);
-      const rest = 4 + len;
-      this.buf = rest === this.buf.length ? Buffer.alloc(0) : this.buf.subarray(rest);
+      const frameLen = 4 + packedLen;
+      if (this.len < frameLen) break;
+      const frame = this.#consume(frameLen);
+      const pkt = frame.subarray(4);
       onPacket(pkt);
     }
-    this.#compactIfNeeded();
+    this.#mergeChunksIfNeeded();
   }
 
-  #compactIfNeeded() {
-    if (this.buf.length === 0) return;
-    if (this.buf.byteOffset >= STREAM_FRAMER_COMPACT_THRESHOLD) {
-      const copy = Buffer.allocUnsafe(this.buf.length);
-      this.buf.copy(copy);
-      this.buf = copy;
+  /** @returns {number|null} */
+  #peekUInt32BE() {
+    if (this.len < 4) return null;
+    const c0 = this.chunks[0];
+    if (!c0) return null;
+    if (c0.length >= 4) return c0.readUInt32BE(0);
+    const tmp = Buffer.allocUnsafe(4);
+    let copied = 0;
+    for (let i = 0; i < this.chunks.length && copied < 4; i++) {
+      const c = this.chunks[i];
+      const need = 4 - copied;
+      if (c.length >= need) {
+        c.copy(tmp, copied, 0, need);
+        copied = 4;
+        break;
+      }
+      c.copy(tmp, copied);
+      copied += c.length;
     }
+    return copied >= 4 ? tmp.readUInt32BE(0) : null;
+  }
+
+  /** @param {number} n */
+  #consume(n) {
+    const out = Buffer.allocUnsafe(n);
+    let off = 0;
+    while (off < n) {
+      const first = /** @type {Buffer} */ (this.chunks[0]);
+      const avail = first.length;
+      const need = n - off;
+      if (avail <= need) {
+        first.copy(out, off);
+        off += avail;
+        this.len -= avail;
+        this.chunks.shift();
+      } else {
+        first.copy(out, off, 0, need);
+        this.chunks[0] = first.subarray(need);
+        this.len -= need;
+        off = n;
+      }
+    }
+    return out;
+  }
+
+  #mergeChunksIfNeeded() {
+    if (this.chunks.length < STREAM_FRAMER_CHUNK_MERGE_AFTER || this.len === 0) return;
+    const merged = Buffer.allocUnsafe(this.len);
+    let o = 0;
+    for (const c of this.chunks) {
+      c.copy(merged, o);
+      o += c.length;
+    }
+    this.chunks = [merged];
   }
 }
 
-function writeFramed(sock, pkt) {
-  // Один буфер на кадр и один write(): для HTTP/2 меньше DATA-frame overhead и мягче flow-control.
+/** Uint32 BE длина + IPv4-пакет (отдельный буфер на кадр). */
+function encodeCleanVpnFramedPkt(pkt) {
   const len = pkt.length;
   const buf = Buffer.allocUnsafe(4 + len);
   buf.writeUInt32BE(len, 0);
   if (len) pkt.copy(buf, 4);
-  return sock.write(buf);
+  return buf;
+}
+
+/**
+ * TCP-транспорт с опциональным батчем нескольких кадров в одном write (совместимо с StreamFramer).
+ * Env: `CLEAN_VPN_FRAME_BATCH_BYTES` (=0 выкл), `CLEAN_VPN_FRAME_BATCH_FLUSH_MS`.
+ *
+ * @param {NodeJS.WritableStream & { write: (...args: any[]) => boolean }} endpoint
+ * @returns {(pkt: Buffer) => void}
+ */
+function createTcpFramedBatchedWriter(endpoint) {
+  const maxBatch = parseNonNegativeEnvInt('CLEAN_VPN_FRAME_BATCH_BYTES', 0);
+  const flushMs = parseNonNegativeEnvInt('CLEAN_VPN_FRAME_BATCH_FLUSH_MS', 1);
+  if (maxBatch <= 0) {
+    return (pkt) => {
+      endpoint.write(encodeCleanVpnFramedPkt(pkt));
+    };
+  }
+
+  /** @type {Buffer[]} */
+  let batch = [];
+  let batchLen = 0;
+  /** @type {ReturnType<typeof setTimeout>|null} */
+  let flushTimer = null;
+  let flushDeferred = false;
+
+  const flush = () => {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    flushDeferred = false;
+    if (!batchLen) return;
+    const payload = batch.length === 1 ? batch[0] : Buffer.concat(batch, batchLen);
+    batch = [];
+    batchLen = 0;
+    try {
+      endpoint.write(payload);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const scheduleFlush = () => {
+    if (batchLen === 0) return;
+    if (flushMs <= 0) {
+      if (flushDeferred) return;
+      flushDeferred = true;
+      setImmediate(() => flush());
+      return;
+    }
+    if (flushTimer) return;
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      flush();
+    }, flushMs);
+    flushTimer.unref?.();
+  };
+
+  return (pkt) => {
+    const piece = encodeCleanVpnFramedPkt(pkt);
+    batch.push(piece);
+    batchLen += piece.length;
+    if (batchLen >= maxBatch) {
+      flush();
+    } else {
+      scheduleFlush();
+    }
+  };
+}
+
+function writeFramed(sock, pkt) {
+  return sock.write(encodeCleanVpnFramedPkt(pkt));
 }
 
 function ip(args) {
@@ -2710,11 +2870,13 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
     }
   };
 
+  const sendTcpFramed = createTcpFramedBatchedWriter(endpoint);
+
   const sendOnWire = (pkt) => {
     if (transport === 'websocket') {
       endpoint.send(pkt);
     } else if (transport === 'tcp') {
-      writeFramed(endpoint, pkt);
+      sendTcpFramed(pkt);
     } else if (transport === 'udp-client') {
       if (pkt.length > 65507) {
         console.warn('[clean-vpn] udp: пакет больше типичного MTU датаграммы');
@@ -2881,6 +3043,9 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
   let idleTimer = null;
   let pingTimer = null;
   let wireOff = () => {};
+  /** Пересоздаётся при каждом новом TCP-wire (lazy reconnect). */
+  /** @type {((pkt: Buffer) => void)|null} */
+  let tcpFramedSend = null;
   let teardownBusy = false;
 
   const logKa = (event, detail = '') => {
@@ -2953,7 +3118,8 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     if (transport === 'websocket') {
       ep.send(pkt);
     } else if (transport === 'tcp') {
-      writeFramed(ep, pkt);
+      if (!tcpFramedSend) tcpFramedSend = createTcpFramedBatchedWriter(ep);
+      tcpFramedSend(pkt);
     } else if (transport === 'udp-client') {
       if (pkt.length > 65507) {
         console.warn('[clean-vpn] udp: пакет больше типичного MTU датаграммы');
@@ -3192,6 +3358,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       /* ignore */
     }
     ep = null;
+    tcpFramedSend = null;
     const reasonRu =
       reason === 'idle'
         ? `простой ${keepAliveSec}s (следующий трафик с TUN поднимет client заново; exit — ждёт пира)`
@@ -3228,6 +3395,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       console.error('[clean-vpn] keep-alive lazy connect:', e?.message || e);
       wireArmed = false;
       ep = null;
+      tcpFramedSend = null;
     } finally {
       connecting = false;
     }
@@ -3445,6 +3613,7 @@ function wireExitTlsSocket(tlsSock, ctx) {
 
   const beginHttp1Wire = () => {
     st.secured = true;
+    applyCleanVpnTlsTcpBuffers(tlsSock);
     const apRaw = tlsSock.alpnProtocol;
     const ap = apRaw === false ? '' : String(apRaw);
     st.httpLabel = tlsAlpnToHttpLabel(ap);
@@ -3550,6 +3719,7 @@ function wireExitTlsSocket(tlsSock, ctx) {
  * }} ctx
  */
 function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
+  applyCleanVpnTlsTcpBuffers(tcpSocket);
   const peerKey = tlsPeerTuple(tcpSocket);
   const st = {
     ip: tlsClientIp(tcpSocket),
@@ -3648,6 +3818,7 @@ function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
       /* ignore */
     }
     tlsLayerSock = s;
+    applyCleanVpnHttp2ConnWindow(sess);
     st.secured = true;
     const apRaw = s.alpnProtocol;
     const ap = apRaw === false ? '' : String(apRaw);
