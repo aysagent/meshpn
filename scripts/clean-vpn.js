@@ -247,6 +247,51 @@ const DEFAULT_TLS_PROBE_FULL_PROXY_PER_IP = 0;
 /** Таймаут ожидания TLS-рукопожатия на client (до attachTunBridge). */
 const TLS_CLIENT_HANDSHAKE_MS = 30000;
 
+/** RFC 7540: минимальный/максимальный SETTINGS_MAX_FRAME_SIZE. */
+const HTTP2_SETTINGS_MAX_FRAME_MIN = 16384;
+const HTTP2_SETTINGS_MAX_FRAME_MAX = 16777215;
+/** Дефолтное SETTINGS_INITIAL_WINDOW_SIZE для VPN-потока h2 (можно переопределить env). */
+const CLEAN_VPN_H2_INITIAL_WINDOW_DEFAULT = 16 * 1024 * 1024;
+/** Дефолтное SETTINGS_MAX_FRAME_SIZE для VPN-потока h2 (байт). */
+const CLEAN_VPN_H2_MAX_FRAME_DEFAULT = 1024 * 1024;
+
+/**
+ * @param {string} envName
+ * @param {number} fallback
+ */
+function parsePositiveEnvInt(envName, fallback) {
+  const raw = process.env[envName];
+  if (raw == null || raw === '') return fallback;
+  const n = Number.parseInt(String(raw), 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
+ * SETTINGS HTTP/2 для туннеля (--type=tls, ALPN h2): client (`http2.connect`) и exit (`createSecureServer`).
+ * Переменные окружения: `CLEAN_VPN_H2_INITIAL_WINDOW`, `CLEAN_VPN_H2_MAX_FRAME` (байты).
+ *
+ * @returns {{ initialWindowSize: number, maxFrameSize: number }}
+ */
+function resolveCleanVpnHttp2Settings() {
+  let initialWindowSize = parsePositiveEnvInt(
+    'CLEAN_VPN_H2_INITIAL_WINDOW',
+    CLEAN_VPN_H2_INITIAL_WINDOW_DEFAULT,
+  );
+  const iwCap = 0x7fffffff;
+  if (initialWindowSize > iwCap) initialWindowSize = iwCap;
+
+  let maxFrameSize = parsePositiveEnvInt(
+    'CLEAN_VPN_H2_MAX_FRAME',
+    CLEAN_VPN_H2_MAX_FRAME_DEFAULT,
+  );
+  maxFrameSize = Math.min(
+    HTTP2_SETTINGS_MAX_FRAME_MAX,
+    Math.max(HTTP2_SETTINGS_MAX_FRAME_MIN, maxFrameSize),
+  );
+
+  return { initialWindowSize, maxFrameSize };
+}
+
 /**
  * @param {null|'1.1'} tlsHttpVers — из `--http-vers=1.1` или null (авто / приоритет h2).
  * @returns {{ client: string[], server: string[] }}
@@ -690,6 +735,7 @@ function establishCleanVpnOverH2(tlsSock, checkHost, vpnSecret) {
   const token = computeTlsVpnBearerToken(vpnSecret);
   const clientSession = http2.connect(`https://${checkHost}`, {
     createConnection: () => tlsSock,
+    settings: resolveCleanVpnHttp2Settings(),
   });
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -2191,13 +2237,12 @@ class StreamFramer {
 }
 
 function writeFramed(sock, pkt) {
-  // Отдельный буфер на каждый кадр: переиспользуемый заголовок ломает очередь, если write()
-  // откладывает отправку и следующий пакет перезапишет те же 4 байта.
-  const h = Buffer.allocUnsafe(4);
-  h.writeUInt32BE(pkt.length, 0);
-  const w1 = sock.write(h);
-  const w2 = sock.write(pkt);
-  return w1 && w2;
+  // Один буфер на кадр и один write(): для HTTP/2 меньше DATA-frame overhead и мягче flow-control.
+  const len = pkt.length;
+  const buf = Buffer.allocUnsafe(4 + len);
+  buf.writeUInt32BE(len, 0);
+  if (len) pkt.copy(buf, 4);
+  return sock.write(buf);
 }
 
 function ip(args) {
@@ -5019,6 +5064,7 @@ async function runExit({
       ciphers: TLS_VPN_CIPHERS_1_3,
       ecdhCurve: TLS_VPN_ECDH_CURVES,
       ALPNProtocols: tlsAlpnOffer,
+      settings: resolveCleanVpnHttp2Settings(),
     });
     tlsExitHttp2Server.on('error', (err) => {
       console.error('[clean-vpn] tls HTTP/2 server:', err?.message || err);
