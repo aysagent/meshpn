@@ -66,7 +66,7 @@
  *   Авторизация: `Authorization: Bearer <token>`; token = HMAC-SHA256 от общего HMAC PSK и текущего 15-минутного окна (защита от replay из логов).
  *   Совпало → exit отвечает 200 (`:status` при h2 или HTTP/1.1) и поднимает прежний uint32+IPv4 туннель; иначе — отдаёт `It works!` как обычный HTTPS-сайт.
  *   Ключ — общий «clean-vpn-hmac.key», см. отдельный раздел выше; явный путь --shared-hmac-key=PATH (legacy --quic-ext-crypto-key).
- *   Exit: --tls-cert-dir, --tls-public-name (если задан, SNI должен совпасть, иначе passthrough), --tls-probe-target (куда passthrough при SNI mismatch / parse_fail). Флаг --tls-server-name на exit не читается (только client).
+ *   Exit: --tls-cert-dir, --tls-public-name (если задан, SNI должен совпасть, иначе passthrough), --tls-probe-target (куда passthrough при SNI mismatch / parse_fail). Passthrough и локальный TLS-сервер выбираются по разбору ClientHello и SNI/public-name, не по значению ALPN (настоящий активный пробинг не использует «магических» протоколов в ALPN). Флаг --tls-server-name на exit не читается (только client).
  *   Сертификаты: --tls-cert-dir с fullchain.pem+privkey.pem (Let's Encrypt) или, как у QUIC, ca.pem+cert.pem+key.pem.
  *   Внимание: passthrough на сторонний хост может нарушать ToS сервиса и законы юрисдикции — только на свой страх и риск.
  *   Client: --tls-server-name — имя для проверки сертификата (и SNI в ClientHello, если не задан --tls-client-sni).
@@ -220,8 +220,6 @@ const SHARED_HMAC_FILE = 'clean-vpn-hmac.key';
 /** Legacy-имя того же файла (создавался прежними версиями только под QUIC-EXT). */
 const SHARED_HMAC_LEGACY_FILE = 'quic-ext-hmac.key';
 
-/** Маркер в ClientHello для scripts/probe.js (не VPN; только логи probeTool на exit). */
-const TLS_ALPN_PROBE = 'clean-vpn-probe';
 /** ALPN по умолчанию для --type=tls: приоритет HTTP/2 (`h2` первым). */
 const TLS_ALPN_PREFER_H2 = ['h2', 'http/1.1'];
 /** Принудительный HTTP/1.1 (`--http-vers=1.1`): только http/1.1 в ALPN. */
@@ -1238,14 +1236,13 @@ const TCP_BENIGN_AFTER_DATA_CODES = new Set(['ECONNRESET', 'EPIPE', 'ECONNABORTE
  * @param {import('net').Socket} socket
  * @param {string} reason
  * @param {Buffer} fullBuf
- * @param {boolean} [probeTool]
  */
-function logTlsPassthrough(socket, reason, fullBuf, probeTool = false) {
+function logTlsPassthrough(socket, reason, fullBuf) {
   const ip = tlsClientIp(socket);
   const port = socket.remotePort ?? '?';
   const hex = fullBuf.subarray(0, Math.min(16, fullBuf.length)).toString('hex');
   console.log(
-    `[clean-vpn] tls active-probe: start ip=${ip} port=${port} reason=${reason} probeTool=${probeTool} prefix=${hex}…`,
+    `[clean-vpn] tls passthrough: start ip=${ip} port=${port} reason=${reason} prefix=${hex}…`,
   );
 }
 
@@ -4003,9 +4000,8 @@ function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
  *   probeFullProxyPerIp: number,
  *   probeBudget: Map<string, { day: number, fullCount: number }>,
  * }} ctx
- * @param {boolean} [probeTool]
  */
-function runTlsProbePassthrough(clientSock, prefixBuf, ctx, probeTool = false) {
+function runTlsProbePassthrough(clientSock, prefixBuf, ctx) {
   const ip = tlsClientIp(clientSock);
   const port = clientSock.remotePort ?? '?';
   const remote = net.createConnection(
@@ -4035,7 +4031,7 @@ function runTlsProbePassthrough(clientSock, prefixBuf, ctx, probeTool = false) {
         (meta) => {
           const ok = !meta.socketError;
           console.log(
-            `[clean-vpn] tls active-probe: end ip=${ip} port=${port} probeTool=${probeTool} result=${ok ? 'ok' : 'fail'} bytes=${meta.totalBytes} cause=${meta.cause}`,
+            `[clean-vpn] tls passthrough: end ip=${ip} port=${port} result=${ok ? 'ok' : 'fail'} bytes=${meta.totalBytes} cause=${meta.cause}`,
           );
         },
       );
@@ -4043,7 +4039,7 @@ function runTlsProbePassthrough(clientSock, prefixBuf, ctx, probeTool = false) {
   );
   remote.on('error', (e) => {
     console.log(
-      `[clean-vpn] tls active-probe: end ip=${ip} port=${port} probeTool=${probeTool} result=fail cause=upstream err=${e.message}`,
+      `[clean-vpn] tls passthrough: end ip=${ip} port=${port} result=fail cause=upstream err=${e.message}`,
     );
     try {
       clientSock.destroy();
@@ -4095,17 +4091,16 @@ function handleTlsExitInbound(socket, ctx) {
     socket.off('data', onData);
     const fullBuf = Buffer.concat(chunks);
     if (!('ok' in p && p.ok)) {
-      logTlsPassthrough(socket, p.reason || 'parse_fail', fullBuf, false);
-      runTlsProbePassthrough(socket, fullBuf, ctx, false);
+      logTlsPassthrough(socket, p.reason || 'parse_fail', fullBuf);
+      runTlsProbePassthrough(socket, fullBuf, ctx);
       return;
     }
-    const probeTool = p.alpn.includes(TLS_ALPN_PROBE);
     if (
       ctx.tlsPublicName &&
       !sniMatchesTlsPublicName(p.sni, ctx.tlsPublicName)
     ) {
-      logTlsPassthrough(socket, 'sni_mismatch_public_name', fullBuf, probeTool);
-      runTlsProbePassthrough(socket, fullBuf, ctx, probeTool);
+      logTlsPassthrough(socket, 'sni_mismatch_public_name', fullBuf);
+      runTlsProbePassthrough(socket, fullBuf, ctx);
       return;
     }
     const scannerLike = p.alpn.length === 0 && p.sni.length === 0;
@@ -6436,7 +6431,7 @@ async function main() {
 --tls-server-name=HOST: только client + tls — проверка сертификата (CN/SAN); также ClientHello SNI, если не задан --tls-client-sni. Если --server — IP и оба не заданы, для проверки используется clean-vpn; при ошибочном --tls-server-name=www.google.com и IP тоже принудительно clean-vpn (маскировку SNI см. --tls-client-sni); на exit игнорируется
 --tls-client-sni=HOST: только client + tls — явный SNI в ClientHello; без флага при проверке cert=clean-vpn (часто IP без --tls-server-name) SNI по умолчанию www.google.com; иначе SNI = имя проверки. Маркера VPN в открытой части ClientHello нет — exit отличает VPN по Bearer внутри TLS (TLS 1.3; ALPN по умолчанию h2 + http/1.1; HTTP/1.1 → GET /clean-vpn, HTTP/2 → POST /clean-vpn на одном stream).
 --tls-public-name=HOST: только exit + tls — SNI «честной» страницы It works! (опционально)
---tls-probe-target=host:port: только exit + tls — passthrough чужих ClientHello (default www.google.com:443)
+--tls-probe-target=host:port: только exit + tls — куда TCP-прокси при passthrough (parse fail ClientHello или SNI ≠ --tls-public-name); default www.google.com:443
 --tls-probe-max-bytes=N: короткий passthrough, лимит байт обоих направлений (default 49152)
 --tls-probe-max-seconds=S: лимит времени passthrough-сессии (default 30)
 --tls-probe-full-proxy-per-ip=K: не более K «длинных» passthrough с одного IP за сутки (default 0 = только короткий)

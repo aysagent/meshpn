@@ -498,14 +498,16 @@ sudo env PATH=$PATH node scripts/clean-vpn.js ... --type=ws-chrome --ws-chrome-e
 
 ### Проверка TLS passthrough ([`scripts/probe.js`](scripts/probe.js))
 
-Скрипт подключается к exit как обычный HTTPS-клиент (без ALPN `clean-vpn-tls`), с маркером ALPN `clean-vpn-probe`, чтобы в логах exit было `probeTool=true`. Хост в `--domain` должен совпадать с целью passthrough на exit ([`--tls-probe-target`](scripts/clean-vpn.js), по умолчанию `www.google.com:443`). Если SNI совпадает с [`--tls-public-name`](scripts/clean-vpn.js) на exit, трафик пойдёт на публичный TLS-сервер, а не в passthrough — для проверки обхода используйте другой SNI.
+Скрипт поднимает обычный TLS к exit: в ClientHello передаётся только ALPN `http/1.1` (без маркеров и без обязательного совпадения `--domain` с `--tls-probe-target`). На exit **passthrough** в `--tls-probe-target` включается **до** терминирования TLS у нас, если (1) не удалось разобрать ClientHello как TLS-handshake, или (2) задан [`--tls-public-name`](scripts/clean-vpn.js), а SNI из Hello с ним не совпадает. В остальных случаях exit принимает TLS локально; уже внутри шифрования «наш VPN» от страницы-прикрытия отличается только по валидному Bearer-токену и корректному методу/пути (`GET`/`POST` `/clean-vpn`, см. шапку [`scripts/clean-vpn.js`](scripts/clean-vpn.js)), а не по ALPN.
+
+Чтобы увидеть в логах именно passthrough, используйте SNI (`--domain`), который **не** совпадает с `--tls-public-name`, если последний задан; иначе соединение останется на локальном TLS exit и до upstream не пойдёт.
 
 ```bash
 node scripts/probe.js --type=handshake --server=1.2.3.4:443 --domain=www.google.com:443
 node scripts/probe.js --type=full --server=1.2.3.4:443 --domain=www.google.com:443 [--timeout=15000]
 ```
 
-В stdout: строка `RESULT ok` или `RESULT not ok`, код выхода 0/1. На exit при passthrough пишутся строки `tls active-probe: start` и `tls active-probe: end` с IP, портом, `probeTool`, `result` и причиной.
+В stdout: строка `RESULT ok` или `RESULT not ok`, код выхода 0/1. На exit при passthrough — строки `tls passthrough: start` и `tls passthrough: end` с IP, портом, причиной (`reason`) и итогом pipe (`result`, байты, `cause`).
 
 ## Требования
 

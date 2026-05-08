@@ -1,23 +1,23 @@
 #!/usr/bin/env node
 /**
- * Проверка реакции exit на TLS passthrough (active probing): ClientHello без clean-vpn-tls,
- * с ALPN clean-vpn-probe (маркер для логов probeTool=true на exit).
+ * Локальная проверка TLS к exit: минимальный ClientHello (ALPN только http/1.1), без «магических» строк в ALPN.
+ * Решение passthrough vs локальный TLS на exit задаётся только разбором ClientHello и `--tls-public-name`, как у настоящего пробинга.
  *
  * Usage:
- *   node scripts/probe.js --type=handshake --server=EXIT:443 --domain=www.google.com:443
- *   node scripts/probe.js --type=full --server=EXIT:443 --domain=www.google.com:443 [--timeout=15000]
+ *   node scripts/probe.js --type=handshake --server=EXIT:443 --domain=www.example.com:443
+ *   node scripts/probe.js --type=full --server=EXIT:443 --domain=www.example.com:443 [--timeout=15000]
  *
- * --domain host:port должен совпадать с --tls-probe-target на exit (по умолчанию www.google.com:443).
- * Не используйте SNI, совпадающий с --tls-public-name на exit — трафик уйдёт на публичный TLS, не passthrough.
+ * `--domain` — SNI к exit и Host в GET (`--type=full`). Чтобы увидеть passthrough в логах exit, используйте SNI,
+ * не совпадающий с `--tls-public-name` (если он задан); иначе трафик обрабатывает локальный TLS exit и до upstream не уходит.
  *
- * `--type=handshake`: клиент закрывает сокет сразу после TLS — на exit в логе будет outcome=tls_peer_closed_before_http (это ожидаемо, не сбой рантайма).
+ * `--type=handshake`: после TLS сразу закрытие — на exit часто outcome=tls_peer_closed_before_http (ожидаемо).
  */
 
 import tls from 'tls';
 import process from 'process';
 
-/** Должен совпадать с TLS_ALPN_PROBE в scripts/clean-vpn.js */
-const TLS_ALPN_PROBE = 'clean-vpn-probe';
+/** Только http/1.1 — тот же класс ALPN, что у простого клиента; без h2, чтобы `--type=full` слал обычный HTTP/1.1 поверх TLS. */
+const PROBE_ALPN_HTTP11 = ['http/1.1'];
 
 function parseArgs(argv) {
   const out = {
@@ -65,7 +65,7 @@ function runProbe(args) {
       host: exitHost,
       port: exitPort,
       servername: sniHost,
-      ALPNProtocols: [TLS_ALPN_PROBE, 'http/1.1'],
+      ALPNProtocols: PROBE_ALPN_HTTP11,
       rejectUnauthorized: false,
     });
 
