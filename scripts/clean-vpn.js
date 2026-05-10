@@ -83,6 +83,7 @@
  * --keep-alive-reconnect-cooldown=M: после разрыва по idle M с не поднимать lazy по TUN (IPv4 в этот интервал отбрасываются);
  * по истечении M с следующий IPv4 снова может подключить lazy — это ожидаемо, не «вечная» блокировка.
  * CLEAN_VPN_KEEPALIVE_DEBUG=1: лог ip-протокола/длины при lazy/cooldown и отбросе не-IPv4 (версия из старших 4 бит байта 0 + первые 8 байт hex).
+ * CLEAN_VPN_TLS_MUX_DEBUG=1 (exit|client + tls): лог до разбора ClientHello на exit (таймаут/close/error, первый chunk hex); на client — TCP connect и гипотеза при таймауте handshake.
  * Шум IPv6 на tun при желании уменьняют вручную (отключение IPv6 на интерфейсе, sysctl) — скрипт это не автоматизирует.
  * QUIC/quic-ext в v1 без изменений (флаг на них не действует). Pong WS на idle не влияет.
  *
@@ -250,6 +251,10 @@ const DEFAULT_TLS_PROBE_MAX_SECONDS = 30;
 const DEFAULT_TLS_PROBE_FULL_PROXY_PER_IP = 0;
 /** Таймаут ожидания TLS-рукопожатия на client (до attachTunBridge). */
 const TLS_CLIENT_HANDSHAKE_MS = 30000;
+/** Env `CLEAN_VPN_TLS_MUX_DEBUG=1`: первый TCP chunk до разбора ClientHello на exit; этапы TCP/TLS на client до handshake. */
+function tlsMuxDebugEnabled() {
+  return process.env.CLEAN_VPN_TLS_MUX_DEBUG === '1';
+}
 
 /** RFC 7540: минимальный/максимальный SETTINGS_MAX_FRAME_SIZE. */
 const HTTP2_SETTINGS_MAX_FRAME_MIN = 16384;
@@ -1058,8 +1063,20 @@ async function connectCleanVpnTlsClient(opts) {
         })();
       },
     );
+    if (tlsMuxDebugEnabled()) {
+      sock.once('connect', () => {
+        console.log(
+          `[clean-vpn] TLS mux debug client: TCP установлен к ${connectHost}:${port}, идёт TLS handshake…`,
+        );
+      });
+    }
     sock.setTimeout(TLS_CLIENT_HANDSHAKE_MS);
     sock.on('timeout', () => {
+      if (tlsMuxDebugEnabled()) {
+        console.error(
+          `[clean-vpn] TLS mux debug client: таймаут ${TLS_CLIENT_HANDSHAKE_MS} мс — возможно фильтр режет TLS-record или сервер не отвечает (${connectHost}:${port})`,
+        );
+      }
       finish(() =>
         reject(
           new Error(
@@ -4068,26 +4085,45 @@ function runTlsProbePassthrough(clientSock, prefixBuf, ctx) {
  * }} ctx
  */
 function handleTlsExitInbound(socket, ctx) {
-  const ra = socket.remoteAddress || '';
+  const ip = tlsClientIp(socket);
   const rp = socket.remotePort;
-  console.log(
-    `[clean-vpn] tls: входящий TCP с ${ra.replace(/^\:\:ffff\:/, '')}:${rp ?? '?'}`,
-  );
+  console.log(`[clean-vpn] tls: входящий TCP с ${ip}:${rp ?? '?'}`);
   /** @type {Buffer[]} */
   const chunks = [];
+  let muxFinished = false;
+  let incompleteLogged = false;
+  const bytesFromPeer = () => Buffer.concat(chunks).length;
+  const logMuxIncomplete = (reason) => {
+    if (muxFinished || incompleteLogged) return;
+    incompleteLogged = true;
+    console.log(
+      `[clean-vpn] tls mux: ${reason} ip=${ip} port=${rp ?? '?'} bytesFromPeer=${bytesFromPeer()}`,
+    );
+  };
+
   const helloTimer = setTimeout(() => {
+    logMuxIncomplete('таймаут 60s ожидания полного ClientHello');
     try {
       socket.destroy();
     } catch {
       /* ignore */
     }
   }, 60000);
+  helloTimer.unref?.();
+
   const onData = (c) => {
+    if (tlsMuxDebugEnabled() && chunks.length === 0 && c.length) {
+      const hex = Buffer.from(c).subarray(0, Math.min(32, c.length)).toString('hex');
+      console.log(
+        `[clean-vpn] tls mux debug: первый chunk от peer ip=${ip} port=${rp ?? '?'} len=${c.length} prefix=${hex}`,
+      );
+    }
     chunks.push(c);
     const buf = Buffer.concat(chunks);
     const p = parseFirstTlsClientHello(buf);
     if ('needMore' in p && p.needMore) return;
     clearTimeout(helloTimer);
+    muxFinished = true;
     socket.off('data', onData);
     const fullBuf = Buffer.concat(chunks);
     if (!('ok' in p && p.ok)) {
@@ -4189,8 +4225,20 @@ function handleTlsExitInbound(socket, ctx) {
     });
   };
   socket.on('data', onData);
-  socket.on('error', () => clearTimeout(helloTimer));
-  socket.on('close', () => clearTimeout(helloTimer));
+  socket.once('error', (e) => {
+    const code = /** @type {any} */ (e)?.code ?? '';
+    const msg = e?.message || String(e);
+    if (!muxFinished) {
+      console.error(
+        `[clean-vpn] tls mux: ошибка TCP до завершения разбора ClientHello ip=${ip} port=${rp ?? '?'} code=${code || '—'} msg=${msg}`,
+      );
+    }
+    clearTimeout(helloTimer);
+  });
+  socket.once('close', (hadError) => {
+    clearTimeout(helloTimer);
+    logMuxIncomplete(`TCP закрыт до полного ClientHello hadError=${hadError}`);
+  });
 }
 
 // =============================================================================
@@ -6443,7 +6491,7 @@ async function main() {
 --signaling: webrtc (exit|client) или rtc-chrome (client) — слушать WSS сигналинга на --server; без флага — исходящий WS. Для udp — вместе с UDP на PORT поднять WSS на PORT+1 (как webrtc). Алиас: --signalling.
 --punch: только --type=udp — hole punching через STUN + сигналинг на PORT+1; на exit только вместе с --signaling.
 --keep-alive=N: целое N≥0; 0 или отсутствие — как раньше. N>0 — idle N с без трафика TUN↔транспорт → разрыв; на client исходящие TCP/TLS/WS/UDP — отложенный connect до первого IPv4 с TUN. ws-chrome/rtc-chrome: после idle сессию нужно поднять заново (дорого). webrtc DC после idle без автосигналинга — перезапуск процессов. QUIC/quic-ext: флаг не применяется.
---keep-alive-reconnect-cooldown=M: целое M≥0; только с --keep-alive>0. После разрыва по idle M с не поднимать lazy по IPv4 с TUN (отбрасываются); не-IPv4 не поднимает сессию в любом случае. После M с следующий IPv4 снова может lazy-connect — cooldown не фильтр «навсегда». Меньше дребезга от DNS/ретрансмитов. По умолчанию 0. CLEAN_VPN_KEEPALIVE_DEBUG=1 — lazy/cooldown и drop не-IPv4 (hex).
+--keep-alive-reconnect-cooldown=M: целое M≥0; только с --keep-alive>0. После разрыва по idle M с не поднимать lazy по IPv4 с TUN (отбрасываются); не-IPv4 не поднимает сессию в любом случае. После M с следующий IPv4 снова может lazy-connect — cooldown не фильтр «навсегда». Меньше дребезга от DNS/ретрансмитов. По умолчанию 0. CLEAN_VPN_KEEPALIVE_DEBUG=1 — lazy/cooldown и drop не-IPv4 (hex). CLEAN_VPN_TLS_MUX_DEBUG=1 — диагностика TCP до ClientHello на exit и до handshake на client (--type=tls).
 --tunnel-peer=HOST: опционально client + websocket + --ws-server на 0.0.0.0 — bypass к пиру до accept при --split-default (стабильный IPv4 пира)`);
     process.exit(1);
   }
