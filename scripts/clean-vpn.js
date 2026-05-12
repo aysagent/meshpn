@@ -11,6 +11,7 @@
  * Client: tun + split-default (опция, только IPv4 default), маршрут к --server через uplink.
  * Без --split-default на TUN всё равно может попадать трафик: к VPN-peer (point-to-point, напр. 10.99.0.1), IPv6 link-local/ND/RA
  * на интерфейсе tun при включённом IPv6 на хосте. Мостируем только валидный IPv4; cooldown по idle не заменяет этот фильтр.
+ * USB gadget / клиент как роутер: с `--split-default` опционально `--client-lan-subnet=192.168.7.0/24` — ip_forward + iptables SNAT LAN→10.99.0.2 через tun и FORWARD; иначе в VPN доходят пакеты в основном с самого клиента (src уже туннельный).
  *
  * Протокол (socket / http после преамбулы): uint32 BE + сырой IPv4-пакет (как у прежнего tun-helper по транспорту).
  * WebSocket / UDP: одно binary-сообщение или одна датаграмма = один IPv4-пакет (без префикса длины).
@@ -2111,6 +2112,7 @@ function parseArgs(argv) {
     punch: false,
     keepAliveSec: null,
     keepAliveReconnectCooldownSec: null,
+    clientLanSubnet: null,
   };
   for (const a of argv) {
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
@@ -2166,6 +2168,8 @@ function parseArgs(argv) {
         a.slice('--keep-alive-reconnect-cooldown='.length),
         10,
       );
+    } else if (a.startsWith('--client-lan-subnet=')) {
+      out.clientLanSubnet = a.slice('--client-lan-subnet='.length).trim();
     }
   }
   return out;
@@ -2459,6 +2463,210 @@ function sysctlForward(on) {
   }
 }
 
+/**
+ * IPv4 CIDR для iptables (`192.168.7.0/24`).
+ * @param {string} raw
+ * @returns {string}
+ */
+function parseIpv4CidrStrict(raw) {
+  const s = String(raw).trim();
+  const m = s.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/);
+  if (!m) {
+    throw new Error(`Неверный IPv4 CIDR: «${raw}», ожидается вида 192.168.7.0/24`);
+  }
+  const o = [m[1], m[2], m[3], m[4]].map((x) => Number.parseInt(x, 10));
+  for (const x of o) {
+    if (!Number.isFinite(x) || x < 0 || x > 255) {
+      throw new Error(`Неверный IPv4 CIDR: октет вне 0..255 в «${raw}»`);
+    }
+  }
+  const prefix = Number.parseInt(m[5], 10);
+  if (!Number.isFinite(prefix) || prefix < 0 || prefix > 32) {
+    throw new Error(`Неверная маска /prefix в «${raw}» (ожидается 0..32)`);
+  }
+  const addrNum = ((o[0] << 24) | (o[1] << 16) | (o[2] << 8) | o[3]) >>> 0;
+  if (prefix > 0 && prefix < 32) {
+    const mask = (-1 << (32 - prefix)) >>> 0;
+    const net = addrNum & mask;
+    if (addrNum !== net) {
+      throw new Error(
+        `CIDR «${raw}»: укажите адрес сети под маской /${prefix} (часто 192.168.7.0/24 для gadget), не адрес хоста в середине префикса`,
+      );
+    }
+  }
+  return `${o.join('.')}/${prefix}`;
+}
+
+/**
+ * SNAT LAN → адрес туннеля + FORWARD + ip_forward (USB gadget / AP за клиентом).
+ * @param {{ ifname: string }} routeCtx
+ * @param {string} cidr
+ */
+function setupClientLanGateway(routeCtx, cidr) {
+  const normalized = parseIpv4CidrStrict(cidr);
+  const tunIf = routeCtx.ifname;
+  const prevIpForward = getSysctlNum('net.ipv4.ip_forward');
+  sysctlForward(true);
+  try {
+    execFileSync(
+      'iptables',
+      [
+        '-t',
+        'nat',
+        '-A',
+        'POSTROUTING',
+        '-s',
+        normalized,
+        '-o',
+        tunIf,
+        '-j',
+        'SNAT',
+        '--to-source',
+        IP_CLIENT,
+      ],
+      { stdio: 'inherit' },
+    );
+    execFileSync(
+      'iptables',
+      ['-A', 'FORWARD', '-s', normalized, '-o', tunIf, '-j', 'ACCEPT'],
+      { stdio: 'inherit' },
+    );
+    execFileSync(
+      'iptables',
+      [
+        '-A',
+        'FORWARD',
+        '-d',
+        normalized,
+        '-i',
+        tunIf,
+        '-m',
+        'conntrack',
+        '--ctstate',
+        'RELATED,ESTABLISHED',
+        '-j',
+        'ACCEPT',
+      ],
+      { stdio: 'inherit' },
+    );
+  } catch (e) {
+    try {
+      execFileSync('iptables', [
+        '-t',
+        'nat',
+        '-D',
+        'POSTROUTING',
+        '-s',
+        normalized,
+        '-o',
+        tunIf,
+        '-j',
+        'SNAT',
+        '--to-source',
+        IP_CLIENT,
+      ]);
+    } catch {
+      /* ignore */
+    }
+    try {
+      execFileSync('iptables', ['-D', 'FORWARD', '-s', normalized, '-o', tunIf, '-j', 'ACCEPT']);
+    } catch {
+      /* ignore */
+    }
+    try {
+      execFileSync('iptables', [
+        '-D',
+        'FORWARD',
+        '-d',
+        normalized,
+        '-i',
+        tunIf,
+        '-m',
+        'conntrack',
+        '--ctstate',
+        'RELATED,ESTABLISHED',
+        '-j',
+        'ACCEPT',
+      ]);
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (prevIpForward != null) {
+        execFileSync('sysctl', [`net.ipv4.ip_forward=${prevIpForward}`], { stdio: 'inherit' });
+      }
+    } catch {
+      /* ignore */
+    }
+    throw e;
+  }
+  routeCtx.clientLanGateway = { cidr: normalized, tunIf, prevIpForward };
+  console.log(
+    `[clean-vpn] client LAN gateway: ip_forward=1; SNAT ${normalized} → ${IP_CLIENT} out ${tunIf}; FORWARD разрешён`,
+  );
+}
+
+/**
+ * @param {unknown} routeCtx
+ */
+function teardownClientLanGateway(routeCtx) {
+  const g = routeCtx && /** @type {{ clientLanGateway?: object }} */ (routeCtx).clientLanGateway;
+  if (!g || typeof g !== 'object') return;
+  const { cidr, tunIf, prevIpForward } = /** @type {{ cidr: string, tunIf: string, prevIpForward: number|null }} */ (
+    g
+  );
+  delete /** @type {{ clientLanGateway?: object }} */ (routeCtx).clientLanGateway;
+  try {
+    execFileSync('iptables', [
+      '-t',
+      'nat',
+      '-D',
+      'POSTROUTING',
+      '-s',
+      cidr,
+      '-o',
+      tunIf,
+      '-j',
+      'SNAT',
+      '--to-source',
+      IP_CLIENT,
+    ]);
+  } catch {
+    /* ignore */
+  }
+  try {
+    execFileSync('iptables', ['-D', 'FORWARD', '-s', cidr, '-o', tunIf, '-j', 'ACCEPT']);
+  } catch {
+    /* ignore */
+  }
+  try {
+    execFileSync('iptables', [
+      '-D',
+      'FORWARD',
+      '-d',
+      cidr,
+      '-i',
+      tunIf,
+      '-m',
+      'conntrack',
+      '--ctstate',
+      'RELATED,ESTABLISHED',
+      '-j',
+      'ACCEPT',
+    ]);
+  } catch {
+    /* ignore */
+  }
+  if (prevIpForward != null) {
+    try {
+      execFileSync('sysctl', [`net.ipv4.ip_forward=${prevIpForward}`], { stdio: 'inherit' });
+    } catch {
+      /* ignore */
+    }
+  }
+  console.log('[clean-vpn] client LAN gateway: iptables/sysctl восстановлены');
+}
+
 function setupTunIp(role, ifname) {
   if (role === 'exit') {
     ip(['addr', 'flush', 'dev', ifname]);
@@ -2600,6 +2808,7 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
 
 function teardownClientRoutes(ctx) {
   if (!ctx) return;
+  teardownClientLanGateway(ctx);
   const {
     serverIp,
     peerIp,
@@ -5654,6 +5863,7 @@ async function runClient({
   server,
   type,
   splitDefault,
+  clientLanSubnet,
   configPath,
   iceMode,
   quicCertsDir,
@@ -5712,6 +5922,9 @@ async function runClient({
     deferPeerKind: deferPeerKindForSetup,
     websocketListenNoSplitDefault: type === 'websocket' && wsServer && !splitDefault,
   });
+  if (clientLanSubnet) {
+    setupClientLanGateway(routeCtx, clientLanSubnet);
+  }
 
   /** @type {import('node-datachannel').PeerConnection|null} */
   let webrtcPc = null;
@@ -6467,6 +6680,7 @@ async function main() {
 
 --type: socket | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls
 --split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 (10/8, 172.16/12, 192.168/16) через uplink; IPv6 не в туннеле; проверка IP: curl -4 https://ifconfig.me. Без флага на tun возможен трафик к VPN-peer (ptp) и IPv6 ND на интерфейсе — см. шапку файла.
+--client-lan-subnet=CIDR: только client + --split-default — LAN/USB gadget за клиентом (адрес сети, напр. 192.168.7.0/24): ip_forward, SNAT в ${IP_CLIENT} через tun, FORWARD; иначе устройства за клиентом не попадают под NAT exit.
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
 --config=PATH: для --type=webrtc и rtc-chrome — JSON с iceServers/turnServers (по умолчанию config/default.json от корня репо)
 --ice-mode=auto|relay|direct: для webrtc и rtc-chrome — перекрывает iceMode из --config
@@ -6542,6 +6756,23 @@ async function main() {
     console.warn(
       '[clean-vpn] --http-vers действует только с --type=tls; флаг проигнорирован',
     );
+  }
+
+  if (args.clientLanSubnet) {
+    if (args.role !== 'client') {
+      console.error('[clean-vpn] --client-lan-subnet допускается только с --role=client');
+      process.exit(1);
+    }
+    if (!args.splitDefault) {
+      console.error('[clean-vpn] --client-lan-subnet требует --split-default');
+      process.exit(1);
+    }
+    try {
+      args.clientLanSubnet = parseIpv4CidrStrict(args.clientLanSubnet);
+    } catch (e) {
+      console.error('[clean-vpn]', e?.message || e);
+      process.exit(1);
+    }
   }
 
   if (args.role === 'exit') {
