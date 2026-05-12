@@ -2487,7 +2487,8 @@ function parseIpv4CidrStrict(raw) {
   const addrNum = ((o[0] << 24) | (o[1] << 16) | (o[2] << 8) | o[3]) >>> 0;
   if (prefix > 0 && prefix < 32) {
     const mask = (-1 << (32 - prefix)) >>> 0;
-    const net = addrNum & mask;
+    // `&` даёт signed Int32; для адресов ≥128.0.0.0 без >>> 0 сравнение с addrNum ломается.
+    const net = (addrNum & mask) >>> 0;
     if (addrNum !== net) {
       throw new Error(
         `CIDR «${raw}»: укажите адрес сети под маской /${prefix} (часто 192.168.7.0/24 для gadget), не адрес хоста в середине префикса`,
