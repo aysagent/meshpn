@@ -7,11 +7,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(FetchContent)
 
 # BoringSSL — закреплённый коммит (обновлять осознанно вместе с эталоном Chrome / JA).
+# GIT_SHALLOW нельзя: для произвольного SHA shallow clone даёт «reference is not a tree» на Linux/Git.
 FetchContent_Declare(
   boringssl
   GIT_REPOSITORY https://github.com/google/boringssl.git
   GIT_TAG        a7481f34712bc056a47ab91015536166b3a6cebb
-  GIT_SHALLOW    TRUE
+  GIT_SHALLOW    FALSE
 )
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(boringssl)

@@ -56,7 +56,7 @@
 
 Каталог `native/boring_tls/`: CMake, зависимость BoringSSL (FetchContent, закреплённый коммит), цель `boring-tls-helper`. Команда из корня репо:
 
-Зависимости CMake: **git**, **cmake ≥ 3.16**, компилятор **C++17**, сеть для первого clone **BoringSSL** (`FetchContent`, закреплённый коммит в `CMakeLists.txt`, shallow).
+Зависимости CMake: **git**, **cmake ≥ 3.16**, компилятор **C++17**, сеть для первого clone **BoringSSL** (`FetchContent`, закреплённый коммит — полный clone без shallow, иначе Git не находит SHA на некоторых системах).
 
 ```bash
 npm run build:boring-tls-helper
