@@ -194,12 +194,23 @@ std::string JoinCommaDec8(const std::vector<uint8_t>& v) {
   return out;
 }
 
+std::string JoinCommaStrings(const std::vector<std::string>& v) {
+  std::string out;
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i) out.push_back(',');
+    out += v[i];
+  }
+  return out;
+}
+
 struct Ja3Computed {
   uint16_t legacy_version = 0;
   std::vector<uint16_t> ciphers;
   std::vector<uint16_t> ext_types;
   std::vector<uint16_t> curves;
   std::vector<uint8_t> ec_point_formats;
+  std::vector<std::string> offered_alpn;
+  std::vector<uint16_t> supported_versions;
   std::string ja3_string;
   std::string ja3_md5_hex;
 };
@@ -264,6 +275,31 @@ bool ComputeJa3FromClientHelloBody(const uint8_t* body, size_t n,
            i++) {
         out->ec_point_formats.push_back(edata[i]);
       }
+    } else if (et == 16 && elen >= 2) {
+      uint16_t list_len =
+          (static_cast<uint16_t>(edata[0]) << 8) | edata[1];
+      size_t ao = 2;
+      while (ao + 1 <= elen && list_len > 0) {
+        uint8_t pl = edata[ao];
+        ao += 1;
+        if (ao + pl > elen) break;
+        out->offered_alpn.emplace_back(
+            reinterpret_cast<const char*>(edata + ao),
+            static_cast<size_t>(pl));
+        ao += pl;
+        uint16_t consumed = static_cast<uint16_t>(1 + pl);
+        if (list_len < consumed) break;
+        list_len -= consumed;
+      }
+    } else if (et == 43 && elen >= 1) {
+      uint8_t slen = edata[0];
+      size_t end = 1 + static_cast<size_t>(slen);
+      if (end > elen) end = elen;
+      for (size_t pos = 1; pos + 1 < end; pos += 2) {
+        uint16_t sv = (static_cast<uint16_t>(edata[pos]) << 8) |
+                      edata[pos + 1];
+        out->supported_versions.push_back(sv);
+      }
     }
   }
 
@@ -298,6 +334,16 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
   if (len < 4 + hs_body_len) return;
   Ja3Computed computed;
   if (!ComputeJa3FromClientHelloBody(p + 4, hs_body_len, &computed)) return;
+
+  std::cerr << "boring-tls-helper: tls hello (wire): clienthello_legacy="
+            << static_cast<unsigned>(computed.legacy_version)
+            << " supported_versions="
+            << JoinCommaDec16(computed.supported_versions)
+            << " offered_alpn=" << JoinCommaStrings(computed.offered_alpn)
+            << '\n';
+  std::cerr
+      << "boring-tls-helper: tls hello (hint): MD5 JA3 не включает строки "
+         "ALPN (только типы расширений).\n";
 
   std::cerr << "boring-tls-helper: ja3_md5=" << computed.ja3_md5_hex << '\n';
   if (cfg->ja3_verbose) {

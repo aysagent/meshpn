@@ -55,6 +55,8 @@
 
 Подробный разбор GREASE-очищенных полей и префикса в hex: **`--ja3-verbose`** (сам включает JA3). Env: при уже заданном `CLEAN_VPN_TLS_LOG_JA3` можно добавить `CLEAN_VPN_JA3_VERBOSE=1`.
 
+**Важно:** эталонный **JA3 (MD5)** строится только из типов расширений, шифров и т.д.; **строки внутри ALPN (h2 vs http/1.1) в JA3 не входят**. Поэтому при `--http-vers=1.1` digest часто совпадает с режимом h2+http/1.1, а отличие смотрите в логах `offered_alpn` / в Wireshark.
+
 Регрессия: `npm run test:boring-tls-smoke`; обновление MD5 эталона: `node scripts/dev-print-boring-tls-ja3.mjs`.
 
 ### Поля `response` (JSON)

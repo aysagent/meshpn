@@ -1,5 +1,6 @@
 /**
  * JA3 по сырым байтам первого ClientHello (алгоритм Salesforce JA3, GREASE из RFC 8701).
+ * В строку JA3 входят только типы расширений (числа), не содержимое ALPN/SNI и т.п.
  * @see https://github.com/salesforce/ja3
  */
 import crypto from 'node:crypto';

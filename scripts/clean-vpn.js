@@ -117,7 +117,11 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
 import dns from 'dns/promises';
-import { ja3DebugFromTcpBuf, ja3FromTcpBuf } from './lib/tls-clienthello-ja3.mjs';
+import {
+  extractFirstClientHelloBody,
+  ja3DebugFromTcpBuf,
+  ja3FromTcpBuf,
+} from './lib/tls-clienthello-ja3.mjs';
 import { PeerConnection, setSctpSettings } from 'node-datachannel';
 // @matrixai/logger — CJS; в ESM класс лежит в .default, не в корне namespace.
 import matrixAiLogger from '@matrixai/logger';
@@ -1397,8 +1401,8 @@ async function connectCleanVpnTlsClient(opts) {
 const TLS_MUX_MAX_CLIENT_BUF = 512 * 1024;
 
 /**
- * SNI / ALPN из тела ClientHello (после fixed части до extensions).
- * @returns {{ ok: true, sni: string[], alpn: string[] } | { ok: false, reason: string }}
+ * SNI / ALPN / supported_versions (расширение 43) из тела ClientHello.
+ * @returns {{ ok: true, sni: string[], alpn: string[], supportedVersions: number[] } | { ok: false, reason: string }}
  */
 function parseTlsClientHelloExtensions(ch) {
   let o = 0;
@@ -1424,6 +1428,8 @@ function parseTlsClientHelloExtensions(ch) {
   const sni = [];
   /** @type {string[]} */
   const alpn = [];
+  /** @type {number[]} */
+  const supportedVersions = [];
   let eo = 0;
   while (eo + 4 <= extBlock.length) {
     const et = extBlock.readUInt16BE(eo);
@@ -1454,15 +1460,21 @@ function parseTlsClientHelloExtensions(ch) {
         ao += pl;
         listLen -= 1 + pl;
       }
+    } else if (et === 43 && ed.length >= 1) {
+      const slen = ed[0];
+      const end = Math.min(ed.length, 1 + slen);
+      for (let pos = 1; pos + 1 < end; pos += 2) {
+        supportedVersions.push(ed.readUInt16BE(pos));
+      }
     }
     eo += el;
   }
-  return { ok: true, sni, alpn };
+  return { ok: true, sni, alpn, supportedVersions };
 }
 
 /**
  * ClientHello может занимать несколько подряд TLS records (0x16) — типично при крупном hello (OpenSSL 3 / PQ).
- * @returns {{ needMore: true, minTotal: number } | { ok: false, reason: string } | { ok: true, sni: string[], alpn: string[], bytesConsumed: number }}
+ * @returns {{ needMore: true, minTotal: number } | { ok: false, reason: string } | { ok: true, sni: string[], alpn: string[], supportedVersions: number[], bytesConsumed: number }}
  */
 function parseFirstTlsClientHello(buf) {
   if (buf.length > TLS_MUX_MAX_CLIENT_BUF) {
@@ -1502,7 +1514,13 @@ function parseFirstTlsClientHello(buf) {
     const ch = combined.subarray(4, totalHs);
     const ext = parseTlsClientHelloExtensions(ch);
     if (!ext.ok) return ext;
-    return { ok: true, sni: ext.sni, alpn: ext.alpn, bytesConsumed: offset };
+    return {
+      ok: true,
+      sni: ext.sni,
+      alpn: ext.alpn,
+      supportedVersions: ext.supportedVersions,
+      bytesConsumed: offset,
+    };
   }
 }
 
@@ -4576,13 +4594,36 @@ function runTlsProbePassthrough(clientSock, prefixBuf, ctx) {
 }
 
 /**
- * JA3 по накопленному TCP до успешного разбора ClientHello на exit (не бросает наружу).
+ * JA3 и поля ClientHello, которые в Wireshark видны отдельно от JA3 (ALPN, supported_versions и т.д.).
+ * Классический JA3 не включает строки ALPN — только тип расширения 16 в списке ext types.
+ *
  * @param {Buffer} fullBuf
+ * @param {{ sni: string[], alpn: string[], supportedVersions: number[] }} helloParse
  * @param {{ tlsLogJa3?: boolean, ja3Verbose?: boolean }} opts
  */
-function tryLogExitTlsJa3(fullBuf, opts) {
+function tryLogExitTlsJa3(fullBuf, helloParse, opts) {
   if (!opts.tlsLogJa3) return;
   try {
+    let recordLegacy = null;
+    if (fullBuf.length >= 3 && fullBuf[0] === 0x16) {
+      recordLegacy = fullBuf.readUInt16BE(1);
+    }
+    const chBody = extractFirstClientHelloBody(fullBuf);
+    const chLegacy =
+      chBody && chBody.length >= 2 ? chBody.readUInt16BE(0) : null;
+    const alpnStr = helloParse.alpn?.length ? helloParse.alpn.join(',') : '—';
+    const sniStr = helloParse.sni?.length ? helloParse.sni.join(',') : '—';
+    const supStr = helloParse.supportedVersions?.length
+      ? helloParse.supportedVersions.join(',')
+      : '—';
+    const recStr =
+      recordLegacy != null ? `0x${recordLegacy.toString(16)}` : '—';
+    console.log(
+      `[clean-vpn] tls hello (wire): tls_record_legacy=${recStr} clienthello_legacy=${chLegacy ?? '—'} supported_versions=${supStr} offered_alpn=${alpnStr} sni=${sniStr}`,
+    );
+    console.log(
+      '[clean-vpn] tls hello (hint): MD5 JA3 не зависит от имён протоколов в ALPN (меняется только содержимое расширения 16); при тех же типах расширений и шифрах digest часто совпадает при h2 и http/1.1.',
+    );
     if (opts.ja3Verbose) {
       const d = ja3DebugFromTcpBuf(fullBuf);
       if (!d) {
@@ -4686,7 +4727,7 @@ function handleTlsExitInbound(socket, ctx) {
     console.log(
       `[clean-vpn] tls: ClientHello ок (ALPN=${p.alpn.join(',') || '—'}; SNI=${p.sni.join(',') || '—'})${scannerLike ? ' [scanner-like]' : ''} → TLS server (HTTP/1.1 или HTTP/2 по ALPN)`,
     );
-    tryLogExitTlsJa3(fullBuf, ctx);
+    tryLogExitTlsJa3(fullBuf, p, ctx);
     setImmediate(() => {
       try {
         try {
