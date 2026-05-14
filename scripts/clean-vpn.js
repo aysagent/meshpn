@@ -2512,6 +2512,7 @@ function parseArgs(argv) {
       out.ja3Verbose = true;
     }
   }
+  if (out.type) out.type = String(out.type).trim();
   return out;
 }
 
@@ -7037,6 +7038,12 @@ async function runClient({
     return;
   }
 
+  if (type !== 'socket' && type !== 'http') {
+    throw new Error(
+      `Неизвестный --type=${type} для client. TLS: \`--type=tls\` или \`--type=boring-tls\` (не «boring»).`,
+    );
+  }
+
   // --- runClient: --type=socket | --type=http (TCP + опционально GET /clean-vpn) ---
   if (kaBridge > 0) {
     attachTunBridge(tun, 'tcp', null, {
@@ -7151,6 +7158,20 @@ async function main() {
   if (args.punch && args.type !== 'udp') {
     console.error('[clean-vpn] --punch допустим только с --type=udp');
     process.exit(1);
+  }
+
+  if (args.type === 'boring' || args.type === 'boring_tls') {
+    if (args.role === 'client') {
+      console.warn(
+        `[clean-vpn] \`--type=${args.type}\` не поддерживается; имелось в виду \`--type=boring-tls\`. Подставляю boring-tls.`,
+      );
+      args.type = 'boring-tls';
+    } else {
+      console.error(
+        `[clean-vpn] на exit для TLS используйте \`--type=tls\`, не «${args.type}» (алиас boring — только для client → boring-tls).`,
+      );
+      process.exit(1);
+    }
   }
 
   let keepAliveSec = 0;
