@@ -68,7 +68,7 @@
  *   Авторизация: `Authorization: Bearer <token>`; token = HMAC-SHA256 от общего HMAC PSK и текущего 15-минутного окна (защита от replay из логов).
  *   Совпало → exit отвечает 200 (`:status` при h2 или HTTP/1.1) и поднимает прежний uint32+IPv4 туннель; иначе — отдаёт `It works!` как обычный HTTPS-сайт.
  *   Ключ — общий «clean-vpn-hmac.key», см. отдельный раздел выше; явный путь --shared-hmac-key=PATH (legacy --quic-ext-crypto-key).
- *   Exit: --tls-cert-dir, --tls-public-name (если задан, SNI должен совпасть, иначе passthrough), --tls-probe-target (куда passthrough при SNI mismatch / parse_fail). Passthrough и локальный TLS-сервер выбираются по разбору ClientHello и SNI/public-name, не по значению ALPN (настоящий активный пробинг не использует «магических» протоколов в ALPN). Флаг --tls-server-name на exit не читается (только client).
+ *   Exit: --tls-cert-dir, --tls-public-name (если задан, SNI в Hello должен совпасть с одним из перечисленных имён, через запятую; иначе passthrough), --tls-probe-target (куда passthrough при SNI mismatch / parse_fail). Passthrough и локальный TLS-сервер выбираются по разбору ClientHello и SNI/public-name, не по значению ALPN (настоящий активный пробинг не использует «магических» протоколов в ALPN). Флаг --tls-server-name на exit не читается (только client).
  *   Сертификаты: --tls-cert-dir с fullchain.pem+privkey.pem (Let's Encrypt) или, как у QUIC, ca.pem+cert.pem+key.pem.
  *   Внимание: passthrough на сторонний хост может нарушать ToS сервиса и законы юрисдикции — только на свой страх и риск.
  *   Client: --tls-server-name — имя для проверки сертификата (и SNI в ClientHello, если не задан --tls-client-sni).
@@ -1525,15 +1525,38 @@ function parseFirstTlsClientHello(buf) {
 }
 
 /**
+ * Несколько имён из `--tls-public-name=a,b` (пробелы обрезаются).
+ * @param {string|null|undefined} publicName
+ * @returns {string[]}
+ */
+function tlsPublicNameList(publicName) {
+  if (publicName == null || String(publicName).trim() === '') return [];
+  return String(publicName)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((w) => w.toLowerCase().replace(/\.$/, ''));
+}
+
+/**
+ * Первый hostname из списка public-name (для проверки сертификата на client).
+ * @param {string|null|undefined} publicName
+ */
+function tlsPublicNamePrimary(publicName) {
+  const a = tlsPublicNameList(publicName);
+  return a[0] ?? null;
+}
+
+/**
  * @param {string[]} sniList
- * @param {string} publicName
+ * @param {string} publicName — одно имя или несколько через запятую
  */
 function sniMatchesTlsPublicName(sniList, publicName) {
-  const want = String(publicName).toLowerCase().replace(/\.$/, '');
-  if (!want) return false;
+  const wants = tlsPublicNameList(publicName);
+  if (!wants.length) return false;
   for (const raw of sniList) {
     const h = String(raw).toLowerCase().replace(/\.$/, '');
-    if (h === want) return true;
+    if (wants.includes(h)) return true;
   }
   return false;
 }
@@ -6926,7 +6949,7 @@ async function runClient({
     const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
     const ca = loadTlsClientCaPem(certsDir);
     const hostIsIp = net.isIP(host) !== 0;
-    let verifyName = tlsServerName || tlsPublicName;
+    let verifyName = tlsServerName || tlsPublicNamePrimary(tlsPublicName);
     if (!verifyName) {
       if (hostIsIp) {
         verifyName = 'clean-vpn';
@@ -7096,7 +7119,7 @@ async function main() {
 --tls-cert-dir=DIR: для --type=tls и boring-tls — fullchain.pem+privkey.pem (LE) или ca/cert/key как у QUIC; здесь же лежит общий clean-vpn-hmac.key
 --tls-server-name=HOST: только client + tls | boring-tls — проверка сертификата (CN/SAN); также ClientHello SNI, если не задан --tls-client-sni. Если --server — IP и оба не заданы, для проверки используется clean-vpn; при ошибочном --tls-server-name=www.google.com и IP тоже принудительно clean-vpn (маскировку SNI см. --tls-client-sni); на exit игнорируется
 --tls-client-sni=HOST: только client + tls | boring-tls — явный SNI в ClientHello; без флага при проверке cert=clean-vpn (часто IP без --tls-server-name) SNI по умолчанию www.google.com; иначе SNI = имя проверки. Маркера VPN в открытой части ClientHello нет — exit отличает VPN по Bearer внутри TLS (TLS 1.3; ALPN по умолчанию h2 + http/1.1; HTTP/1.1 → GET /clean-vpn, HTTP/2 → POST /clean-vpn на одном stream).
---tls-public-name=HOST: только exit + tls | boring-tls — SNI «честной» страницы It works! (опционально)
+--tls-public-name=HOST[,HOST...]: только exit + tls | boring-tls — SNI «честной» страницы It works! (опционально). Несколько имён через запятую: любой из них в ClientHello оставляет сессию на VPN; иначе passthrough.
 --tls-probe-target=host:port: только exit + tls | boring-tls — куда TCP-прокси при passthrough (parse fail ClientHello или SNI ≠ --tls-public-name); default www.google.com:443
 --tls-probe-max-bytes=N: короткий passthrough, лимит байт обоих направлений (default 49152)
 --tls-probe-max-seconds=S: лимит времени passthrough-сессии (default 30)
