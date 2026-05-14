@@ -16,6 +16,9 @@
     "nat:enable": "sudo ./scripts/nat-enable.sh",
     "nat:disable": "sudo ./scripts/nat-disable.sh",
     "build:tun-linux": "node-gyp rebuild -C native/tun_linux",
+    "build:boring-tls-helper": "cmake -S native/boring_tls -B native/boring_tls/build -DCMAKE_BUILD_TYPE=Release && cmake --build native/boring_tls/build",
+    "test:boring-tls-smoke": "node scripts/test-boring-tls-smoke.mjs",
+    "test:boring-tls": "node scripts/test-boring-tls-smoke.mjs",
     "postinstall": "npm run build:tun-linux || true; cd helpers && make 2>/dev/null || true"
   },
   "dependencies": {

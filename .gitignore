@@ -1,3 +1,9 @@
 node_modules
 certs/
 native/tun_linux/build/
+
+# Локальные секреты / токены
+.ghtoken
+
+# boring-tls-helper: CMake build + FetchContent (BoringSSL, nlohmann/json клоны и артефакты)
+native/boring_tls/build/

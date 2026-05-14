@@ -61,6 +61,7 @@
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:4433 --type=quic-ext --split-default
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=tls [--tls-cert-dir=...] [--tls-public-name=vpn.example.com] [--tls-probe-target=host:port] [--shared-hmac-key=PATH]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=tls --split-default [--tls-server-name=...] [--shared-hmac-key=PATH]
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=boring-tls --split-default [--tls-server-name=...] — TLS через native/boring_tls/boring-tls-helper (см. scripts/boring-tls-plan.md); exit по-прежнему `--type=tls`.
  * TLS (--type=tls): TCP + TLS 1.3 only, ALPN в ClientHello по умолчанию [h2, http/1.1]; маркера VPN в открытой части нет.
  *   После рукопожатия: при согласованном `h2` — VPN поверх HTTP/2 (`POST /clean-vpn` + Bearer, двусторонний DATA на одном stream); при `http/1.1` — как раньше `GET /clean-vpn` с Bearer и hijack сокета после ответа 200.
  *   Флаг `--http-vers=1.1` (обе стороны): только HTTP/1.1 и только ALPN `http/1.1` — для отладки и регрессии GET-пути.
@@ -84,7 +85,7 @@
  * --keep-alive-reconnect-cooldown=M: после разрыва по idle M с не поднимать lazy по TUN (IPv4 в этот интервал отбрасываются);
  * по истечении M с следующий IPv4 снова может подключить lazy — это ожидаемо, не «вечная» блокировка.
  * CLEAN_VPN_KEEPALIVE_DEBUG=1: лог ip-протокола/длины при lazy/cooldown и отбросе не-IPv4 (версия из старших 4 бит байта 0 + первые 8 байт hex).
- * CLEAN_VPN_TLS_MUX_DEBUG=1 (exit|client + tls): лог до разбора ClientHello на exit (таймаут/close/error, первый chunk hex); на client — TCP connect и гипотеза при таймауте handshake.
+ * CLEAN_VPN_TLS_MUX_DEBUG=1 (exit|client + tls|boring-tls): лог до разбора ClientHello на exit (таймаут/close/error, первый chunk hex); на client — TCP connect и гипотеза при таймауте handshake (`tls`; для `boring-tls` рукопожатие в helper — см. stderr helper).
  * Шум IPv6 на tun при желании уменьняют вручную (отключение IPv6 на интерфейсе, sysctl) — скрипт это не автоматизирует.
  * QUIC/quic-ext в v1 без изменений (флаг на них не действует). Pong WS на idle не влияет.
  *
@@ -98,8 +99,8 @@
  *   Аномалии фрагментации или латентности на физическом NIC: `ethtool -k <iface>` (иногда GRO/LRO влияют на кейс).
  */
 
-import { execFileSync } from 'child_process';
-import { EventEmitter } from 'events';
+import { execFileSync, spawn } from 'child_process';
+import { EventEmitter, once } from 'events';
 import { createRequire } from 'module';
 import { createHmac, createPrivateKey, randomBytes, timingSafeEqual } from 'crypto';
 import dgram from 'dgram';
@@ -110,7 +111,7 @@ import net from 'net';
 import tls from 'tls';
 import path from 'path';
 import process from 'process';
-import { Readable, Writable } from 'stream';
+import { Duplex, Readable, Writable } from 'stream';
 import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
@@ -886,6 +887,363 @@ function establishCleanVpnOverH2(tlsSock, checkHost, vpnSecret) {
   });
 }
 
+/** Дефолтный путь к артефакту сборки (рядом с репо). */
+const DEFAULT_BORING_TLS_HELPER = path.join(
+  __dirname,
+  '..',
+  'native',
+  'boring_tls',
+  'build',
+  'boring-tls-helper',
+);
+
+/** Exit принимает тот же протокол, что `--type=tls`. */
+function isTlsLikeType(t) {
+  return t === 'tls' || t === 'boring-tls';
+}
+
+/**
+ * @param {string|null|undefined} cliPath из `--boring-tls-helper`
+ */
+function resolveBoringTlsHelperExecutable(cliPath) {
+  const env = process.env.CLEAN_VPN_BORING_TLS_HELPER;
+  if (env != null && String(env).trim() !== '') return path.resolve(String(env).trim());
+  if (cliPath != null && String(cliPath).trim() !== '')
+    return path.resolve(String(cliPath).trim());
+  return path.resolve(DEFAULT_BORING_TLS_HELPER);
+}
+
+/**
+ * Читает ровно n байт из paused Readable.
+ * @param {import('stream').Readable} readable
+ */
+async function readExactFromReadable(readable, n) {
+  /** @type {Buffer[]} */
+  const chunks = [];
+  let have = 0;
+  while (have < n) {
+    const chunk = readable.read();
+    if (chunk) {
+      chunks.push(chunk);
+      have += chunk.length;
+      continue;
+    }
+    await once(readable, 'readable');
+  }
+  const all = Buffer.concat(chunks);
+  const head = all.subarray(0, n);
+  if (all.length > n) readable.unshift(all.subarray(n));
+  return head;
+}
+
+/**
+ * Один кадр протокола boring-tls-helper (BE uint32 + UTF-8 JSON).
+ * @param {import('stream').Writable} writable
+ */
+function writeBoringTlsConfigFrame(writable, jsonObj) {
+  const body = Buffer.from(JSON.stringify(jsonObj), 'utf8');
+  const hdr = Buffer.alloc(4);
+  hdr.writeUInt32BE(body.length, 0);
+  writable.write(hdr);
+  writable.write(body);
+}
+
+/**
+ * Duplex поверх stdin/stdout helper после ответа READY.
+ * @param {import('child_process').ChildProcessWithoutNullStreams} child
+ */
+function boringTlsHelperToDuplex(child) {
+  const d = new Duplex({
+    allowHalfOpen: false,
+    read() {
+      child.stdout.resume();
+    },
+    write(chunk, encoding, callback) {
+      const cb =
+        typeof encoding === 'function'
+          ? encoding
+          : typeof callback === 'function'
+            ? callback
+            : () => {};
+      const enc = typeof encoding === 'string' ? encoding : undefined;
+      if (child.stdin.destroyed) {
+        cb(new Error('boring-tls-helper stdin closed'));
+        return;
+      }
+      const ok = child.stdin.write(chunk, enc);
+      if (ok) process.nextTick(cb);
+      else child.stdin.once('drain', cb);
+    },
+    destroy(err, callback) {
+      const killer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* ignore */
+        }
+      }, 2000);
+      killer.unref?.();
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        /* ignore */
+      }
+      child.once('close', () => {
+        clearTimeout(killer);
+        callback(err);
+      });
+    },
+  });
+  child.stdout.on('data', (chunk) => {
+    if (!d.push(chunk)) child.stdout.pause();
+  });
+  child.stdout.on('end', () => d.push(null));
+  child.stdout.on('error', (e) => {
+    d.destroy(e);
+  });
+  child.stdin.on('error', (e) => {
+    d.destroy(e);
+  });
+  child.on('error', (e) => {
+    d.destroy(e);
+  });
+  d.setTimeout = () => d;
+  return d;
+}
+
+/**
+ * После TLS рукопожатия: HTTP/2 или HTTP/1.1 преамбула VPN.
+ * @param {import('tls').TLSSocket | import('stream').Duplex} sock
+ * @param {{
+ *   checkHost: string,
+ *   vpnSecret: Buffer,
+ *   tlsHttpVers: null|'1.1',
+ *   negotiatedAlpn?: string,
+ * }} opts
+ */
+async function completeCleanVpnTlsSession(sock, opts) {
+  const { checkHost, vpnSecret, tlsHttpVers, negotiatedAlpn } = opts;
+  const ap =
+    negotiatedAlpn !== undefined
+      ? negotiatedAlpn
+      : sock.alpnProtocol === false
+        ? ''
+        : String(sock.alpnProtocol ?? '');
+  const httpLabel = tlsAlpnToHttpLabel(ap);
+  console.log(
+    `[clean-vpn] TLS client: рукопожатие OK http=${httpLabel} negotiated ALPN=${ap || '—'}`,
+  );
+  if (
+    'setSendBufferSize' in sock &&
+    typeof /** @type {{ setSendBufferSize?: unknown }} */ (sock).setSendBufferSize === 'function'
+  ) {
+    applyCleanVpnTlsTcpBuffers(/** @type {import('net').Socket} */ (sock));
+  }
+  if (tlsHttpVers === '1.1') {
+    if (ap !== 'http/1.1') {
+      try {
+        sock.destroy();
+      } catch {
+        /* ignore */
+      }
+      throw new Error(
+        `TLS client: ожидался ALPN http/1.1 (--http-vers=1.1), получено «${ap || '—'}»`,
+      );
+    }
+  } else if (ap !== 'h2' && ap !== 'http/1.1') {
+    try {
+      sock.destroy();
+    } catch {
+      /* ignore */
+    }
+    throw new Error(
+      `TLS client: неожиданный ALPN «${ap || '—'}» (ожидались h2 или http/1.1)`,
+    );
+  }
+
+  if (ap === 'h2') {
+    sock.setTimeout?.(0);
+    const wrapped = await establishCleanVpnOverH2(
+      /** @type {import('tls').TLSSocket} */ (sock),
+      checkHost,
+      vpnSecret,
+    );
+    console.log('[clean-vpn] TLS (VPN) соединение установлено http=HTTP/2');
+    return wrapped;
+  }
+
+  const token = computeTlsVpnBearerToken(vpnSecret);
+  const req =
+    `GET /clean-vpn HTTP/1.1\r\n` +
+    `Host: ${checkHost}\r\n` +
+    `User-Agent: ${TLS_VPN_USER_AGENT}\r\n` +
+    `Accept: */*\r\n` +
+    `Authorization: Bearer ${token}\r\n` +
+    `Connection: keep-alive\r\n\r\n`;
+  /** @type {Buffer} */
+  let respBuf = Buffer.alloc(0);
+  await new Promise((resolve, reject) => {
+    const onResp = (chunk) => {
+      respBuf =
+        respBuf.length === 0 ? Buffer.from(chunk) : Buffer.concat([respBuf, chunk]);
+      const idx = respBuf.indexOf('\r\n\r\n');
+      if (idx === -1) {
+        if (respBuf.length > 16384) {
+          sock.off('data', onResp);
+          try {
+            sock.destroy();
+          } catch {
+            /* ignore */
+          }
+          reject(new Error('TLS client: HTTP-ответ exit > 16 KiB без \\r\\n\\r\\n'));
+        }
+        return;
+      }
+      sock.off('data', onResp);
+      const head = respBuf.subarray(0, idx).toString('latin1');
+      const status = /^HTTP\/1\.1 (\d{3})/.exec(head);
+      if (!status || status[1] !== '200') {
+        try {
+          sock.destroy();
+        } catch {
+          /* ignore */
+        }
+        reject(
+          new Error(
+            `TLS client: exit ответил «${head.split('\r\n')[0] || '?'}» — bearer не принят / не VPN-сервер`,
+          ),
+        );
+        return;
+      }
+      const rest = respBuf.subarray(idx + 4);
+      if (rest.length) setImmediate(() => sock.emit('data', rest));
+      resolve(undefined);
+    };
+    sock.on('data', onResp);
+    sock.write(req);
+  });
+  console.log('[clean-vpn] TLS (VPN) соединение установлено http=HTTP/1.1');
+  return sock;
+}
+
+/**
+ * TLS через boring-tls-helper (BoringSSL в отдельном процессе). См. scripts/boring-tls-plan.md
+ * @param {{
+ *   host: string,
+ *   port: number,
+ *   ca: string,
+ *   servername: string,
+ *   verifyServername?: string,
+ *   vpnSecret: Buffer,
+ *   tlsHttpVers?: null|'1.1',
+ *   boringTlsHelperPath?: string|null,
+ *   boringTlsProfile?: string|null,
+ * }} opts
+ */
+async function connectCleanVpnBoringTlsClient(opts) {
+  const {
+    host,
+    port,
+    ca,
+    servername,
+    verifyServername,
+    vpnSecret,
+    tlsHttpVers,
+    boringTlsHelperPath,
+    boringTlsProfile,
+  } = opts;
+  const checkHost = verifyServername ?? servername;
+  const connectHost = await resolveHostToIpv4(host);
+  const exe = resolveBoringTlsHelperExecutable(boringTlsHelperPath ?? null);
+  if (!fs.existsSync(exe)) {
+    throw new Error(
+      `boring-tls-helper не найден (${exe}). Соберите: npm run build:boring-tls-helper (cmake, см. native/boring_tls/). Переменная CLEAN_VPN_BORING_TLS_HELPER или --boring-tls-helper=PATH.`,
+    );
+  }
+  const sniNote =
+    checkHost !== servername ? `, проверка сертификата для host=${checkHost}` : '';
+  console.log(
+    `[clean-vpn] boring-tls: helper=${exe} → ${connectHost}:${port}, ClientHello SNI=${servername}${sniNote}`,
+  );
+
+  const child = spawn(exe, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  child.stderr?.on('data', (buf) => {
+    try {
+      process.stderr.write(buf);
+    } catch {
+      /* ignore */
+    }
+  });
+
+  let handshakeTimer = /** @type {ReturnType<typeof setTimeout>|null} */ (null);
+  const clearHsTimer = () => {
+    if (handshakeTimer) clearTimeout(handshakeTimer);
+    handshakeTimer = null;
+  };
+
+  try {
+    handshakeTimer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+    }, TLS_CLIENT_HANDSHAKE_MS);
+
+    await once(child, 'spawn');
+    child.stdout.pause();
+    writeBoringTlsConfigFrame(child.stdin, {
+      host: connectHost,
+      port,
+      ca_pem: ca,
+      servername,
+      verify_host: checkHost,
+      alpn: resolveTlsAlpnProtocols(tlsHttpVers ?? null).client,
+      handshake_timeout_ms: TLS_CLIENT_HANDSHAKE_MS,
+      profile: boringTlsProfile ?? 'default',
+    });
+
+    const hdr = await readExactFromReadable(child.stdout, 4);
+    const bodyLen = hdr.readUInt32BE(0);
+    if (bodyLen > 512 * 1024) {
+      throw new Error('boring-tls: слишком большой ответ helper');
+    }
+    const body = await readExactFromReadable(child.stdout, bodyLen);
+    clearHsTimer();
+    let resp;
+    try {
+      resp = JSON.parse(body.toString('utf8'));
+    } catch {
+      throw new Error('boring-tls: невалидный JSON ответ helper');
+    }
+    if (!resp || resp.ok !== true) {
+      throw new Error(
+        resp && typeof resp.error === 'string'
+          ? resp.error
+          : 'boring-tls-helper отказ (см. stderr)',
+      );
+    }
+    const negotiatedAlpn = resp.alpn != null ? String(resp.alpn) : '';
+
+    child.stdout.resume();
+    const duplex = boringTlsHelperToDuplex(child);
+    return await completeCleanVpnTlsSession(duplex, {
+      checkHost,
+      vpnSecret,
+      tlsHttpVers: tlsHttpVers ?? null,
+      negotiatedAlpn,
+    });
+  } catch (e) {
+    clearHsTimer();
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
+    throw e;
+  }
+}
+
 /**
  * Исходящее TLS к exit (ALPN по `resolveTlsAlpnProtocols`, TLS 1.3 only).
  * После рукопожатия: `http/1.1` — GET + 200; `h2` — POST duplex на одном stream + :status 200.
@@ -954,110 +1312,12 @@ async function connectCleanVpnTlsClient(opts) {
                 sock.authorizationError,
               );
             }
-            const apRaw = sock.alpnProtocol;
-            const ap = apRaw === false ? '' : String(apRaw);
-            const httpLabel = tlsAlpnToHttpLabel(ap);
-            console.log(
-              `[clean-vpn] TLS client: рукопожатие OK http=${httpLabel} negotiated ALPN=${ap || '—'}`,
-            );
-            applyCleanVpnTlsTcpBuffers(sock);
-            if (tlsHttpVers === '1.1') {
-              if (ap !== 'http/1.1') {
-                try {
-                  sock.destroy();
-                } catch {
-                  /* ignore */
-                }
-                finish(() =>
-                  reject(
-                    new Error(
-                      `TLS client: ожидался ALPN http/1.1 (--http-vers=1.1), получено «${ap || '—'}»`,
-                    ),
-                  ),
-                );
-                return;
-              }
-            } else if (ap !== 'h2' && ap !== 'http/1.1') {
-              try {
-                sock.destroy();
-              } catch {
-                /* ignore */
-              }
-              finish(() =>
-                reject(
-                  new Error(
-                    `TLS client: неожиданный ALPN «${ap || '—'}» (ожидались h2 или http/1.1)`,
-                  ),
-                ),
-              );
-              return;
-            }
-
-            if (ap === 'h2') {
-              try {
-                sock.setTimeout(0);
-                const wrapped = await establishCleanVpnOverH2(sock, checkHost, vpnSecret);
-                console.log('[clean-vpn] TLS (VPN) соединение установлено http=HTTP/2');
-                finish(() => resolve(wrapped));
-              } catch (e) {
-                finish(() => reject(e));
-              }
-              return;
-            }
-
-            const token = computeTlsVpnBearerToken(vpnSecret);
-            const req =
-              `GET /clean-vpn HTTP/1.1\r\n` +
-              `Host: ${checkHost}\r\n` +
-              `User-Agent: ${TLS_VPN_USER_AGENT}\r\n` +
-              `Accept: */*\r\n` +
-              `Authorization: Bearer ${token}\r\n` +
-              `Connection: keep-alive\r\n\r\n`;
-            /** @type {Buffer} */
-            let respBuf = Buffer.alloc(0);
-            const onResp = (chunk) => {
-              respBuf =
-                respBuf.length === 0 ? Buffer.from(chunk) : Buffer.concat([respBuf, chunk]);
-              const idx = respBuf.indexOf('\r\n\r\n');
-              if (idx === -1) {
-                if (respBuf.length > 16384) {
-                  sock.off('data', onResp);
-                  try {
-                    sock.destroy();
-                  } catch {
-                    /* ignore */
-                  }
-                  finish(() =>
-                    reject(new Error('TLS client: HTTP-ответ exit > 16 KiB без \\r\\n\\r\\n')),
-                  );
-                }
-                return;
-              }
-              sock.off('data', onResp);
-              const head = respBuf.subarray(0, idx).toString('latin1');
-              const status = /^HTTP\/1\.1 (\d{3})/.exec(head);
-              if (!status || status[1] !== '200') {
-                try {
-                  sock.destroy();
-                } catch {
-                  /* ignore */
-                }
-                finish(() =>
-                  reject(
-                    new Error(
-                      `TLS client: exit ответил «${head.split('\r\n')[0] || '?'}» — bearer не принят / не VPN-сервер`,
-                    ),
-                  ),
-                );
-                return;
-              }
-              const rest = respBuf.subarray(idx + 4);
-              if (rest.length) setImmediate(() => sock.emit('data', rest));
-              console.log('[clean-vpn] TLS (VPN) соединение установлено http=HTTP/1.1');
-              finish(() => resolve(sock));
-            };
-            sock.on('data', onResp);
-            sock.write(req);
+            const wrapped = await completeCleanVpnTlsSession(sock, {
+              checkHost,
+              vpnSecret,
+              tlsHttpVers: tlsHttpVers ?? null,
+            });
+            finish(() => resolve(wrapped));
           } catch (e) {
             finish(() => reject(e));
           }
@@ -2113,6 +2373,8 @@ function parseArgs(argv) {
     keepAliveSec: null,
     keepAliveReconnectCooldownSec: null,
     clientLanSubnet: null,
+    boringTlsHelper: null,
+    boringTlsProfile: null,
   };
   for (const a of argv) {
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
@@ -2170,6 +2432,10 @@ function parseArgs(argv) {
       );
     } else if (a.startsWith('--client-lan-subnet=')) {
       out.clientLanSubnet = a.slice('--client-lan-subnet='.length).trim();
+    } else if (a.startsWith('--boring-tls-helper=')) {
+      out.boringTlsHelper = a.slice('--boring-tls-helper='.length).trim();
+    } else if (a.startsWith('--boring-tls-profile=')) {
+      out.boringTlsProfile = a.slice('--boring-tls-profile='.length).trim();
     }
   }
   return out;
@@ -5477,7 +5743,7 @@ async function runExit({
   }
 
   // --- runExit: --type=tls ---
-  if (type === 'tls') {
+  if (isTlsLikeType(type)) {
     if (tlsServerName) {
       console.warn(
         '[clean-vpn] --tls-server-name на exit не используется (только на client). Для цели passthrough задайте --tls-probe-target=host:port.',
@@ -5865,6 +6131,8 @@ async function runClient({
   type,
   splitDefault,
   clientLanSubnet,
+  boringTlsHelper,
+  boringTlsProfile,
   configPath,
   iceMode,
   quicCertsDir,
@@ -6538,8 +6806,8 @@ async function runClient({
     return;
   }
 
-  // --- runClient: --type=tls ---
-  if (type === 'tls') {
+  // --- runClient: --type=tls | --type=boring-tls ---
+  if (isTlsLikeType(type)) {
     const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
     const ca = loadTlsClientCaPem(certsDir);
     const hostIsIp = net.isIP(host) !== 0;
@@ -6577,6 +6845,11 @@ async function runClient({
         '[clean-vpn] TLS: ClientHello SNI отличается от имени проверки сертификата; маршрутизация VPN — по Bearer-токену внутри TLS.',
       );
     }
+    if (type === 'boring-tls') {
+      console.log(
+        '[clean-vpn] boring-tls: TLS через boring-tls-helper (BoringSSL), см. scripts/boring-tls-plan.md',
+      );
+    }
     if (tlsHttpVers === '1.1') {
       console.log(
         '[clean-vpn] tls: режим --http-vers=1.1 (принудительный HTTP/1.1, без h2)',
@@ -6594,18 +6867,26 @@ async function runClient({
       verifyServername: verifyName,
       vpnSecret,
       tlsHttpVers: tlsHttpVers ?? null,
+      ...(type === 'boring-tls'
+        ? {
+            boringTlsHelperPath: boringTlsHelper,
+            boringTlsProfile: boringTlsProfile,
+          }
+        : {}),
     };
+    const connectTlsVpn =
+      type === 'boring-tls' ? connectCleanVpnBoringTlsClient : connectCleanVpnTlsClient;
     if (kaBridge > 0) {
       attachTunBridge(tun, 'tcp', null, {
         ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
         lazyConnect: async () => {
-          const sock = await connectCleanVpnTlsClient(tlsConnectOpts);
+          const sock = await connectTlsVpn(tlsConnectOpts);
           tlsVpnSocket = sock;
           return sock;
         },
       });
     } else {
-      tlsVpnSocket = await connectCleanVpnTlsClient(tlsConnectOpts);
+      tlsVpnSocket = await connectTlsVpn(tlsConnectOpts);
       attachTunBridge(tun, 'tcp', tlsVpnSocket, BRIDGE_OPTS_CLIENT);
     }
     return;
@@ -6679,26 +6960,27 @@ async function main() {
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=socket [--ext=eth0]
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=socket --split-default
 
---type: socket | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls
+--type: socket | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls | boring-tls
 --split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 (10/8, 172.16/12, 192.168/16) через uplink; IPv6 не в туннеле; проверка IP: curl -4 https://ifconfig.me. Без флага на tun возможен трафик к VPN-peer (ptp) и IPv6 ND на интерфейсе — см. шапку файла.
 --client-lan-subnet=CIDR: только client + --split-default — LAN/USB gadget за клиентом (адрес сети, напр. 192.168.7.0/24): ip_forward, SNAT в ${IP_CLIENT} через tun, FORWARD; иначе устройства за клиентом не попадают под NAT exit.
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
 --config=PATH: для --type=webrtc и rtc-chrome — JSON с iceServers/turnServers (по умолчанию config/default.json от корня репо)
 --ice-mode=auto|relay|direct: для webrtc и rtc-chrome — перекрывает iceMode из --config
 --quic-certs-dir=DIR: для --type=quic и quic-ext — каталог с ca.pem, cert.pem, key.pem (иначе repo/certs; при отсутствии — openssl)
---shared-hmac-key=PATH: --type=tls (обе стороны) и exit + --type=quic-ext — общий 32-байтовый HMAC PSK (иначе clean-vpn-hmac.key в --tls-cert-dir/--quic-certs-dir; на exit создаётся автоматически; legacy-имя файла quic-ext-hmac.key всё ещё читается). На client + --type=quic-ext не нужен.
+--shared-hmac-key=PATH: --type=tls | boring-tls (обе стороны) и exit + --type=quic-ext — общий 32-байтовый HMAC PSK (иначе clean-vpn-hmac.key в --tls-cert-dir/--quic-certs-dir; на exit создаётся автоматически; legacy-имя файла quic-ext-hmac.key всё ещё читается). На client + --type=quic-ext не нужен.
 --quic-ext-crypto-key=PATH: legacy alias для --shared-hmac-key=PATH (читается, рекомендуется заменить на --shared-hmac-key)
 --type=quic: Node.js 25+, node --experimental-quic и бинарь с node_use_quic (см. шапку файла)
 --type=quic-ext: npm install @infisical/quic (prebuild под платформу), Node 18+, см. шапку файла
---tls-cert-dir=DIR: для --type=tls — fullchain.pem+privkey.pem (LE) или ca/cert/key как у QUIC; здесь же лежит общий clean-vpn-hmac.key
---tls-server-name=HOST: только client + tls — проверка сертификата (CN/SAN); также ClientHello SNI, если не задан --tls-client-sni. Если --server — IP и оба не заданы, для проверки используется clean-vpn; при ошибочном --tls-server-name=www.google.com и IP тоже принудительно clean-vpn (маскировку SNI см. --tls-client-sni); на exit игнорируется
---tls-client-sni=HOST: только client + tls — явный SNI в ClientHello; без флага при проверке cert=clean-vpn (часто IP без --tls-server-name) SNI по умолчанию www.google.com; иначе SNI = имя проверки. Маркера VPN в открытой части ClientHello нет — exit отличает VPN по Bearer внутри TLS (TLS 1.3; ALPN по умолчанию h2 + http/1.1; HTTP/1.1 → GET /clean-vpn, HTTP/2 → POST /clean-vpn на одном stream).
---tls-public-name=HOST: только exit + tls — SNI «честной» страницы It works! (опционально)
---tls-probe-target=host:port: только exit + tls — куда TCP-прокси при passthrough (parse fail ClientHello или SNI ≠ --tls-public-name); default www.google.com:443
+--tls-cert-dir=DIR: для --type=tls и boring-tls — fullchain.pem+privkey.pem (LE) или ca/cert/key как у QUIC; здесь же лежит общий clean-vpn-hmac.key
+--tls-server-name=HOST: только client + tls | boring-tls — проверка сертификата (CN/SAN); также ClientHello SNI, если не задан --tls-client-sni. Если --server — IP и оба не заданы, для проверки используется clean-vpn; при ошибочном --tls-server-name=www.google.com и IP тоже принудительно clean-vpn (маскировку SNI см. --tls-client-sni); на exit игнорируется
+--tls-client-sni=HOST: только client + tls | boring-tls — явный SNI в ClientHello; без флага при проверке cert=clean-vpn (часто IP без --tls-server-name) SNI по умолчанию www.google.com; иначе SNI = имя проверки. Маркера VPN в открытой части ClientHello нет — exit отличает VPN по Bearer внутри TLS (TLS 1.3; ALPN по умолчанию h2 + http/1.1; HTTP/1.1 → GET /clean-vpn, HTTP/2 → POST /clean-vpn на одном stream).
+--tls-public-name=HOST: только exit + tls | boring-tls — SNI «честной» страницы It works! (опционально)
+--tls-probe-target=host:port: только exit + tls | boring-tls — куда TCP-прокси при passthrough (parse fail ClientHello или SNI ≠ --tls-public-name); default www.google.com:443
 --tls-probe-max-bytes=N: короткий passthrough, лимит байт обоих направлений (default 49152)
 --tls-probe-max-seconds=S: лимит времени passthrough-сессии (default 30)
 --tls-probe-full-proxy-per-ip=K: не более K «длинных» passthrough с одного IP за сутки (default 0 = только короткий)
---http-vers=1.1: только с --type=tls (client и exit); принудительный HTTP/1.1 без h2; совместно обновляйте код на обеих сторонах
+--http-vers=1.1: только с --type=tls или boring-tls (client и exit); принудительный HTTP/1.1 без h2; совместно обновляйте код на обеих сторонах
+--type=boring-tls: только client — TLS 1.3 через процесс boring-tls-helper (BoringSSL), см. scripts/boring-tls-plan.md; на exit используйте --type=tls (тот же сервер). Сборка: npm run build:boring-tls-helper. Путь к бинарю: CLEAN_VPN_BORING_TLS_HELPER или --boring-tls-helper=PATH; профиль (резерв): --boring-tls-profile=NAME.
 --type=ws-chrome: client — Puppeteer + Chrome держит WS к exit (npm install puppeteer). exit — HTTP /clean-vpn-chrome + WS только с --ws-server. Медленный CDP: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1. Произвольная страница: --ws-chrome-url=... — только CDP.
 --ws-chrome-executable=PATH, --ws-chrome-ws-url=ws://..., --ws-chrome-url=http://... (goto), --ws-chrome-exit-page, --ws-chrome-cdp-data
 --type=rtc-chrome: только client — Puppeteer + Chrome WebRTC к exit --type=webrtc; --signaling — WSS сигналинга на --server + relay Chrome↔exit; иначе исходящий WS к --server. npm install puppeteer; --rtc-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH
@@ -6753,9 +7035,9 @@ async function main() {
     console.error('[clean-vpn] --http-vers поддерживает только значение 1.1');
     process.exit(1);
   }
-  if (args.tlsHttpVers && args.type !== 'tls') {
+  if (args.tlsHttpVers && !isTlsLikeType(args.type)) {
     console.warn(
-      '[clean-vpn] --http-vers действует только с --type=tls; флаг проигнорирован',
+      '[clean-vpn] --http-vers действует только с --type=tls или boring-tls; флаг проигнорирован',
     );
   }
 
