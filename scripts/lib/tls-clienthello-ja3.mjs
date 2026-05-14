@@ -14,6 +14,9 @@ const GREASE = new Set([
 /** Дефолт длины hex-превью входного TCP-буфера для --ja3-verbose */
 export const JA3_HEX_PREVIEW_DEFAULT = 96;
 
+/** Макс. буфер при сборке ClientHello из нескольких TLS records (защита от DOS). */
+export const TLS_MUX_MAX_CLIENT_BUF = 512 * 1024;
+
 /** @param {Buffer} buf @param {number} o */
 function u24(buf, o) {
   return (buf[o] << 16) | (buf[o + 1] << 8) | buf[o + 2];
@@ -181,5 +184,183 @@ export function ja3DebugFromTcpBuf(tcpBuf, opts = {}) {
     curves: c.curves,
     ecPointFormats: c.ecPointFormats,
     hexPreview,
+  };
+}
+
+/**
+ * SNI / ALPN / supported_versions (43) из тела ClientHello (как в Wireshark).
+ * @param {Buffer} ch — тело ClientHello без handshake type/len
+ * @returns {{ ok: true, sni: string[], alpn: string[], supportedVersions: number[] } | { ok: false, reason: string }}
+ */
+export function parseTlsClientHelloReadableExtensions(ch) {
+  let o = 0;
+  if (ch.length < 34) return { ok: false, reason: 'short_ch' };
+  o += 34;
+  const sidLen = ch[o];
+  o += 1;
+  if (ch.length < o + sidLen + 2) return { ok: false, reason: 'short_ch2' };
+  o += sidLen;
+  const csLen = ch.readUInt16BE(o);
+  o += 2;
+  if (ch.length < o + csLen + 1) return { ok: false, reason: 'short_ch3' };
+  o += csLen;
+  const compLen = ch[o];
+  o += 1;
+  if (ch.length < o + compLen + 2) return { ok: false, reason: 'short_ch4' };
+  o += compLen;
+  const extLen = ch.readUInt16BE(o);
+  o += 2;
+  if (ch.length < o + extLen) return { ok: false, reason: 'short_ext' };
+  const extBlock = ch.subarray(o, o + extLen);
+  /** @type {string[]} */
+  const sni = [];
+  /** @type {string[]} */
+  const alpn = [];
+  /** @type {number[]} */
+  const supportedVersions = [];
+  let eo = 0;
+  while (eo + 4 <= extBlock.length) {
+    const et = extBlock.readUInt16BE(eo);
+    const el = extBlock.readUInt16BE(eo + 2);
+    eo += 4;
+    if (eo + el > extBlock.length) break;
+    const ed = extBlock.subarray(eo, eo + el);
+    if (et === 0 && ed.length >= 2) {
+      let listLen = ed.readUInt16BE(0);
+      let so = 2;
+      while (so + 3 <= ed.length && listLen >= 3) {
+        const nt = ed[so];
+        const nl = ed.readUInt16BE(so + 1);
+        so += 3;
+        if (so + nl > ed.length) break;
+        if (nt === 0) sni.push(ed.subarray(so, so + nl).toString('utf8'));
+        so += nl;
+        listLen -= 3 + nl;
+      }
+    } else if (et === 16 && ed.length >= 2) {
+      let listLen = ed.readUInt16BE(0);
+      let ao = 2;
+      while (ao + 1 <= ed.length && listLen > 0) {
+        const pl = ed[ao];
+        ao += 1;
+        if (ao + pl > ed.length) break;
+        alpn.push(ed.subarray(ao, ao + pl).toString('utf8'));
+        ao += pl;
+        listLen -= 1 + pl;
+      }
+    } else if (et === 43 && ed.length >= 1) {
+      const slen = ed[0];
+      const end = Math.min(ed.length, 1 + slen);
+      for (let pos = 1; pos + 1 < end; pos += 2) {
+        supportedVersions.push(ed.readUInt16BE(pos));
+      }
+    }
+    eo += el;
+  }
+  return { ok: true, sni, alpn, supportedVersions };
+}
+
+/**
+ * Накопленный TCP от начала соединения до полного первого ClientHello (несколько TLS records).
+ * @returns {{ needMore: true, minTotal: number } | { ok: false, reason: string } | { ok: true, sni: string[], alpn: string[], supportedVersions: number[], bytesConsumed: number }}
+ */
+export function parseFirstTlsClientHelloFromTcpBuf(buf) {
+  if (buf.length > TLS_MUX_MAX_CLIENT_BUF) {
+    return { ok: false, reason: 'buffer_max' };
+  }
+  if (buf.length < 5) return { needMore: true, minTotal: 5 };
+  if (buf[0] !== 0x16) return { ok: false, reason: 'not_tls_handshake' };
+
+  /** @type {Buffer[]} */
+  const payloads = [];
+  let offset = 0;
+  for (;;) {
+    if (buf.length - offset < 5) {
+      return { needMore: true, minTotal: offset + 5 };
+    }
+    if (buf[offset] !== 0x16) {
+      return offset === 0
+        ? { ok: false, reason: 'not_tls_handshake' }
+        : { ok: false, reason: 'non_handshake_record' };
+    }
+    const recLen = buf.readUInt16BE(offset + 3);
+    const recordEnd = offset + 5 + recLen;
+    if (recLen < 1 || recordEnd > TLS_MUX_MAX_CLIENT_BUF) {
+      return { ok: false, reason: 'record_oversize' };
+    }
+    if (recordEnd > buf.length) {
+      return { needMore: true, minTotal: recordEnd };
+    }
+    payloads.push(buf.subarray(offset + 5, recordEnd));
+    offset = recordEnd;
+    const combined = Buffer.concat(payloads);
+    if (combined.length < 4) continue;
+    if (combined[0] !== 1) return { ok: false, reason: 'not_client_hello' };
+    const hsLen = combined.readUIntBE(1, 3);
+    const totalHs = 4 + hsLen;
+    if (combined.length < totalHs) continue;
+    const ch = combined.subarray(4, totalHs);
+    const ext = parseTlsClientHelloReadableExtensions(ch);
+    if (!ext.ok) return ext;
+    return {
+      ok: true,
+      sni: ext.sni,
+      alpn: ext.alpn,
+      supportedVersions: ext.supportedVersions,
+      bytesConsumed: offset,
+    };
+  }
+}
+
+/**
+ * Единый объект профиля TLS ClientHello + JA3 для снифферов и отладки (без HTTP).
+ * @param {Buffer} tcpBuf
+ * @param {{ hexPreviewLen?: number }} [opts]
+ */
+export function tlsClientHandshakeProfileFromTcpBuf(tcpBuf, opts = {}) {
+  const parsed = parseFirstTlsClientHelloFromTcpBuf(tcpBuf);
+  if ('needMore' in parsed && parsed.needMore) {
+    return { ok: false, reason: 'incomplete_client_hello', minTotal: parsed.minTotal };
+  }
+  if (!parsed.ok) {
+    return { ok: false, reason: parsed.reason };
+  }
+  const ja3d = ja3DebugFromTcpBuf(tcpBuf, opts);
+  if (!ja3d) {
+    return { ok: false, reason: 'ja3_extract_failed' };
+  }
+  /** @type {number | null} */
+  let tlsRecordLegacyVersion = null;
+  if (tcpBuf.length >= 3 && tcpBuf[0] === 0x16) {
+    tlsRecordLegacyVersion = tcpBuf.readUInt16BE(1);
+  }
+  return {
+    ok: true,
+    tls: {
+      tls_record_legacy_version: tlsRecordLegacyVersion,
+      tls_record_legacy_hex:
+        tlsRecordLegacyVersion != null ? `0x${tlsRecordLegacyVersion.toString(16)}` : null,
+      clienthello_legacy_version: ja3d.legacyVersion,
+      clienthello_legacy_hex: `0x${ja3d.legacyVersion.toString(16)}`,
+      sni_hostnames: parsed.sni,
+      offered_alpn_protocols: parsed.alpn,
+      supported_versions_extension: parsed.supportedVersions,
+    },
+    ja3: {
+      md5: ja3d.ja3Digest,
+      string_before_md5: ja3d.ja3String,
+      components: {
+        legacy_version_decimal: ja3d.legacyVersion,
+        cipher_suites_decimal_grease_filtered: ja3d.ciphers,
+        extension_types_decimal_grease_filtered: ja3d.extTypes,
+        supported_groups_decimal_grease_filtered: ja3d.curves,
+        ec_point_formats_decimal: ja3d.ecPointFormats,
+      },
+      note:
+        'salesforce JA3: в строку до MD5 входят только типы расширений (без имён ALPN/SNI). GREASE из типов/шифров убран.',
+    },
+    wire: {
+      hex_preview_first_tcp_bytes: ja3d.hexPreview,
+    },
   };
 }

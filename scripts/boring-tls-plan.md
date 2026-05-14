@@ -106,6 +106,7 @@ cmake --build native/boring_tls/build --target boring-tls-helper
 
 После `npm run build:boring-tls-helper`:
 
+- `npm run ja3-snif-server` — локальный HTTPS (`127.0.0.1:8443`), JSON по `GET /ja3-snif`: User-Agent, JA3 и поля ClientHello для сравнения с Wireshark; см. [`scripts/ja3-snif-server.mjs`](ja3-snif-server.mjs).
 - `npm run test:boring-tls-smoke` — проверки: бинарь, ошибки конфига/TCP, stdin EOF, полный TLS 1.3 к `tls.Server`, **JA3** (ALPN `h2` + `http/1.1` как у client в clean-vpn), отсутствие `ja3_md5` на stderr без `log_ja3`, **JA3 stderr при `log_ja3`**, **SIGTERM** после handshake (не Windows).
 
 ## Что остаётся вне автотестов
