@@ -297,6 +297,114 @@ test('helper: JA3 ClientHello (ALPN как у clean-vpn)', async (t) => {
   }
 });
 
+test('helper: без log_ja3 на stderr нет ja3_md5', async (t) => {
+  if (!fs.existsSync(helper)) {
+    t.skip();
+    return;
+  }
+  const closedPort = await new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.once('error', reject);
+    s.listen(0, '127.0.0.1', () => {
+      const addr = s.address();
+      const p = typeof addr === 'object' && addr ? addr.port : null;
+      s.close((err) => (err ? reject(err) : resolve(p)));
+    });
+  });
+
+  const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  await once(child, 'spawn');
+  let stderr = '';
+  child.stderr?.on('data', (b) => {
+    stderr += b.toString();
+  });
+
+  try {
+    sendConfigFrame(child.stdin, {
+      host: '127.0.0.1',
+      port: closedPort,
+      ca_pem: MIN_CA_PEM,
+      servername: 'test-ca',
+      verify_host: 'test-ca',
+      alpn: ['http/1.1'],
+      handshake_timeout_ms: 3000,
+    });
+
+    await readJsonFrame(child.stdout);
+    await once(child, 'exit');
+    assert.ok(!stderr.includes('ja3_md5='), stderr);
+  } finally {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
+  }
+});
+
+test('helper: log_ja3=true — stderr содержит эталонный ja3_md5', async (t) => {
+  if (!fs.existsSync(helper)) {
+    t.skip();
+    return;
+  }
+
+  const server = net.createServer();
+  const ja3Promise = new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.once('connection', (sock) => {
+      /** @type {Buffer[]} */
+      const acc = [];
+      sock.on('data', (d) => {
+        acc.push(d);
+        const r = ja3FromTcpBuf(Buffer.concat(acc));
+        if (r) {
+          resolve(r);
+          sock.destroy();
+        }
+      });
+      sock.on('error', () => {});
+    });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const addr = server.address();
+  const port = typeof addr === 'object' && addr ? addr.port : null;
+  assert.ok(port);
+
+  const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  await once(child, 'spawn');
+  let stderr = '';
+  child.stderr?.on('data', (b) => {
+    stderr += b.toString();
+  });
+
+  try {
+    sendConfigFrame(child.stdin, {
+      host: '127.0.0.1',
+      port,
+      ca_pem: MIN_CA_PEM,
+      servername: 'test-ca',
+      verify_host: 'test-ca',
+      alpn: ['h2', 'http/1.1'],
+      handshake_timeout_ms: 8000,
+      log_ja3: true,
+    });
+
+    await raceMs(ja3Promise, 15000, 'JA3 из потока');
+    assert.match(stderr, new RegExp(`ja3_md5=${EXPECTED_JA3_DIGEST}`));
+  } finally {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
+    server.close();
+  }
+});
+
 test('helper: SIGTERM после успешного handshake', async (t) => {
   if (process.platform === 'win32') {
     t.skip();

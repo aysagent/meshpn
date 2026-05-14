@@ -86,6 +86,7 @@
  * по истечении M с следующий IPv4 снова может подключить lazy — это ожидаемо, не «вечная» блокировка.
  * CLEAN_VPN_KEEPALIVE_DEBUG=1: лог ip-протокола/длины при lazy/cooldown и отбросе не-IPv4 (версия из старших 4 бит байта 0 + первые 8 байт hex).
  * CLEAN_VPN_TLS_MUX_DEBUG=1 (exit|client + tls|boring-tls): лог до разбора ClientHello на exit (таймаут/close/error, первый chunk hex); на client — TCP connect и гипотеза при таймауте handshake (`tls`; для `boring-tls` рукопожатие в helper — см. stderr helper).
+ * JA3 (опционально): `CLEAN_VPN_TLS_LOG_JA3=1` и/или `--tls-log-ja3`; подробности — `--ja3-verbose` (включает JA3 само по себе) или при `CLEAN_VPN_TLS_LOG_JA3=1` ещё `CLEAN_VPN_JA3_VERBOSE=1`. Exit + `--type=tls`: JA3 входящего ClientHello из mux; client + `--type=boring-tls`: stderr helper (`log_ja3` в JSON). Для `--type=tls` в Node отпечаток в том же процессе не считается — смотрите лог exit или используйте boring-tls на клиенте.
  * Шум IPv6 на tun при желании уменьняют вручную (отключение IPv6 на интерфейсе, sysctl) — скрипт это не автоматизирует.
  * QUIC/quic-ext в v1 без изменений (флаг на них не действует). Pong WS на idle не влияет.
  *
@@ -116,6 +117,7 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
 import dns from 'dns/promises';
+import { ja3DebugFromTcpBuf, ja3FromTcpBuf } from './lib/tls-clienthello-ja3.mjs';
 import { PeerConnection, setSctpSettings } from 'node-datachannel';
 // @matrixai/logger — CJS; в ESM класс лежит в .default, не в корне namespace.
 import matrixAiLogger from '@matrixai/logger';
@@ -256,6 +258,14 @@ const TLS_CLIENT_HANDSHAKE_MS = 30000;
 /** Env `CLEAN_VPN_TLS_MUX_DEBUG=1`: первый TCP chunk до разбора ClientHello на exit; этапы TCP/TLS на client до handshake. */
 function tlsMuxDebugEnabled() {
   return process.env.CLEAN_VPN_TLS_MUX_DEBUG === '1';
+}
+
+/** Для CLEAN_VPN_TLS_LOG_JA3 / CLEAN_VPN_JA3_VERBOSE — истина для 1/true/yes (без учёта регистра). */
+function envCleanVpnTruthy01(key) {
+  const v = process.env[key];
+  if (v == null) return false;
+  const s = String(v).trim().toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes';
 }
 
 /** RFC 7540: минимальный/максимальный SETTINGS_MAX_FRAME_SIZE. */
@@ -1138,6 +1148,8 @@ async function completeCleanVpnTlsSession(sock, opts) {
  *   tlsHttpVers?: null|'1.1',
  *   boringTlsHelperPath?: string|null,
  *   boringTlsProfile?: string|null,
+ *   tlsLogJa3?: boolean,
+ *   ja3Verbose?: boolean,
  * }} opts
  */
 async function connectCleanVpnBoringTlsClient(opts) {
@@ -1151,6 +1163,8 @@ async function connectCleanVpnBoringTlsClient(opts) {
     tlsHttpVers,
     boringTlsHelperPath,
     boringTlsProfile,
+    tlsLogJa3,
+    ja3Verbose,
   } = opts;
   const checkHost = verifyServername ?? servername;
   const connectHost = await resolveHostToIpv4(host);
@@ -1192,7 +1206,8 @@ async function connectCleanVpnBoringTlsClient(opts) {
 
     await once(child, 'spawn');
     child.stdout.pause();
-    writeBoringTlsConfigFrame(child.stdin, {
+    /** @type {Record<string, unknown>} */
+    const cfgFrame = {
       host: connectHost,
       port,
       ca_pem: ca,
@@ -1201,7 +1216,12 @@ async function connectCleanVpnBoringTlsClient(opts) {
       alpn: resolveTlsAlpnProtocols(tlsHttpVers ?? null).client,
       handshake_timeout_ms: TLS_CLIENT_HANDSHAKE_MS,
       profile: boringTlsProfile ?? 'default',
-    });
+    };
+    if (tlsLogJa3 || ja3Verbose) {
+      cfgFrame.log_ja3 = true;
+      if (ja3Verbose) cfgFrame.ja3_verbose = true;
+    }
+    writeBoringTlsConfigFrame(child.stdin, cfgFrame);
 
     const hdr = await readExactFromReadable(child.stdout, 4);
     const bodyLen = hdr.readUInt32BE(0);
@@ -2382,6 +2402,8 @@ function parseArgs(argv) {
     clientLanSubnet: null,
     boringTlsHelper: null,
     boringTlsProfile: null,
+    tlsLogJa3: false,
+    ja3Verbose: false,
   };
   for (const a of argv) {
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
@@ -2443,6 +2465,10 @@ function parseArgs(argv) {
       out.boringTlsHelper = a.slice('--boring-tls-helper='.length).trim();
     } else if (a.startsWith('--boring-tls-profile=')) {
       out.boringTlsProfile = a.slice('--boring-tls-profile='.length).trim();
+    } else if (a === '--tls-log-ja3') {
+      out.tlsLogJa3 = true;
+    } else if (a === '--ja3-verbose') {
+      out.ja3Verbose = true;
     }
   }
   return out;
@@ -4550,6 +4576,38 @@ function runTlsProbePassthrough(clientSock, prefixBuf, ctx) {
 }
 
 /**
+ * JA3 по накопленному TCP до успешного разбора ClientHello на exit (не бросает наружу).
+ * @param {Buffer} fullBuf
+ * @param {{ tlsLogJa3?: boolean, ja3Verbose?: boolean }} opts
+ */
+function tryLogExitTlsJa3(fullBuf, opts) {
+  if (!opts.tlsLogJa3) return;
+  try {
+    if (opts.ja3Verbose) {
+      const d = ja3DebugFromTcpBuf(fullBuf);
+      if (!d) {
+        console.log('[clean-vpn] tls ja3 (exit): не удалось извлечь ClientHello для JA3');
+        return;
+      }
+      console.log(`[clean-vpn] tls ja3 (exit): ja3_md5=${d.ja3Digest}`);
+      console.log(`[clean-vpn] tls ja3 (exit): ja3_string=${d.ja3String}`);
+      console.log(`[clean-vpn] tls ja3 (exit): legacy_version=${d.legacyVersion}`);
+      console.log(`[clean-vpn] tls ja3 (exit): ciphers=${d.ciphers.join(',')}`);
+      console.log(`[clean-vpn] tls ja3 (exit): extensions=${d.extTypes.join(',')}`);
+      console.log(`[clean-vpn] tls ja3 (exit): supported_groups=${d.curves.join(',')}`);
+      console.log(`[clean-vpn] tls ja3 (exit): ec_point_formats=${d.ecPointFormats.join(',')}`);
+      console.log(`[clean-vpn] tls ja3 (exit): hex_preview=${d.hexPreview}`);
+    } else {
+      const j = ja3FromTcpBuf(fullBuf);
+      if (!j) return;
+      console.log(`[clean-vpn] tls ja3 (exit): ja3_md5=${j.ja3Digest}`);
+    }
+  } catch (e) {
+    console.warn('[clean-vpn] tls ja3 (exit):', e?.message || e);
+  }
+}
+
+/**
  * @param {import('net').Socket} socket
  * @param {{
  *   startBridge: (sock: any, restBuf: Buffer|null, transport: 'tcp') => void,
@@ -4565,6 +4623,8 @@ function runTlsProbePassthrough(clientSock, prefixBuf, ctx) {
  *   vpnSecret: Buffer,
  *   tlsHttpVers: null|'1.1',
  *   tlsExitHttp2Server: import('http2').Http2SecureServer,
+ *   tlsLogJa3?: boolean,
+ *   ja3Verbose?: boolean,
  * }} ctx
  */
 function handleTlsExitInbound(socket, ctx) {
@@ -4626,6 +4686,7 @@ function handleTlsExitInbound(socket, ctx) {
     console.log(
       `[clean-vpn] tls: ClientHello ок (ALPN=${p.alpn.join(',') || '—'}; SNI=${p.sni.join(',') || '—'})${scannerLike ? ' [scanner-like]' : ''} → TLS server (HTTP/1.1 или HTTP/2 по ALPN)`,
     );
+    tryLogExitTlsJa3(fullBuf, ctx);
     setImmediate(() => {
       try {
         try {
@@ -5472,6 +5533,8 @@ async function runExit({
   punch,
   keepAliveSec,
   keepAliveReconnectCooldownSec,
+  tlsLogJa3,
+  ja3Verbose,
 }) {
   const { host, port } = parseHostPort(server);
   const kaBridge = type === 'quic' || type === 'quic-ext' ? 0 : keepAliveSec ?? 0;
@@ -5823,6 +5886,8 @@ async function runExit({
       vpnSecret,
       tlsHttpVers: tlsHttpVers ?? null,
       tlsExitHttp2Server,
+      tlsLogJa3: Boolean(tlsLogJa3),
+      ja3Verbose: Boolean(ja3Verbose),
     };
     tcpSrv = net
       .createServer((sock) => {
@@ -6162,6 +6227,8 @@ async function runClient({
   punch,
   keepAliveSec,
   keepAliveReconnectCooldownSec,
+  tlsLogJa3,
+  ja3Verbose,
 }) {
   const { host, port } = parseHostPort(server);
   const kaBridge = type === 'quic' || type === 'quic-ext' ? 0 : keepAliveSec ?? 0;
@@ -6862,6 +6929,11 @@ async function runClient({
         '[clean-vpn] tls: режим --http-vers=1.1 (принудительный HTTP/1.1, без h2)',
       );
     }
+    if (type === 'tls' && tlsLogJa3) {
+      console.log(
+        '[clean-vpn] tls ja3: для `--type=tls` отпечаток ClientHello в этом процессе не считается; на exit включите `--tls-log-ja3` / `CLEAN_VPN_TLS_LOG_JA3=1`, либо на клиенте используйте `--type=boring-tls` (stderr helper).',
+      );
+    }
     const vpnSecret = ensureSharedHmacKey(certsDir, sharedHmacKey, quicExtCryptoKey, {
       autoCreate: false,
       role: 'client',
@@ -6874,6 +6946,8 @@ async function runClient({
       verifyServername: verifyName,
       vpnSecret,
       tlsHttpVers: tlsHttpVers ?? null,
+      tlsLogJa3: Boolean(tlsLogJa3),
+      ja3Verbose: Boolean(ja3Verbose),
       ...(type === 'boring-tls'
         ? {
             boringTlsHelperPath: boringTlsHelper,
@@ -6987,6 +7061,8 @@ async function main() {
 --tls-probe-max-seconds=S: лимит времени passthrough-сессии (default 30)
 --tls-probe-full-proxy-per-ip=K: не более K «длинных» passthrough с одного IP за сутки (default 0 = только короткий)
 --http-vers=1.1: только с --type=tls или boring-tls (client и exit); принудительный HTTP/1.1 без h2; совместно обновляйте код на обеих сторонах
+--tls-log-ja3: JA3 (MD5) по ClientHello — exit + --type=tls (stdout); client + boring-tls — stderr helper. Env: CLEAN_VPN_TLS_LOG_JA3=1 (также true/yes). Для --type=tls на клиенте сырый ClientHello недоступен Node — смотрите лог exit или используйте boring-tls.
+--ja3-verbose: подробный JA3 (строка до MD5, поля GREASE-очищенные, hex префикса TCP); сам включает вывод JA3. Env при уже включённом CLEAN_VPN_TLS_LOG_JA3: CLEAN_VPN_JA3_VERBOSE=1.
 --type=boring-tls: только client — TLS 1.3 через процесс boring-tls-helper (BoringSSL), см. scripts/boring-tls-plan.md; на exit используйте --type=tls (тот же сервер). Сборка: npm run build:boring-tls-helper. Путь к бинарю: CLEAN_VPN_BORING_TLS_HELPER или --boring-tls-helper=PATH; профиль (резерв): --boring-tls-profile=NAME.
 --type=ws-chrome: client — Puppeteer + Chrome держит WS к exit (npm install puppeteer). exit — HTTP /clean-vpn-chrome + WS только с --ws-server. Медленный CDP: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1. Произвольная страница: --ws-chrome-url=... — только CDP.
 --ws-chrome-executable=PATH, --ws-chrome-ws-url=ws://..., --ws-chrome-url=http://... (goto), --ws-chrome-exit-page, --ws-chrome-cdp-data
@@ -7064,6 +7140,14 @@ async function main() {
       process.exit(1);
     }
   }
+
+  const envTlsJa3 = envCleanVpnTruthy01('CLEAN_VPN_TLS_LOG_JA3');
+  const envJa3VerboseOnly = envCleanVpnTruthy01('CLEAN_VPN_JA3_VERBOSE');
+  const ja3Verbose =
+    Boolean(args.ja3Verbose) || (envTlsJa3 && envJa3VerboseOnly);
+  const tlsLogJa3 = Boolean(args.tlsLogJa3) || envTlsJa3 || ja3Verbose;
+  args.tlsLogJa3 = tlsLogJa3;
+  args.ja3Verbose = ja3Verbose;
 
   if (args.role === 'exit') {
     await runExit(args);

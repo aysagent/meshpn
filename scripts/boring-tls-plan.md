@@ -46,6 +46,16 @@
 | `alpn` | string[] | например `["h2","http/1.1"]` |
 | `handshake_timeout_ms` | number | таймаут рукопожатия |
 | `profile` | string | зарезервировано (например `chrome-default`); пока влияет только на логирование / будущие пресеты |
+| `log_ja3` | bool | если `true`, после исходящего ClientHello — строка `boring-tls-helper: ja3_md5=…` на stderr; при `ja3_verbose` добавляются поля и `hex_preview` handshake |
+| `ja3_verbose` | bool | расширенный JA3 на stderr; имеет смысл вместе с `log_ja3` |
+
+### JA3 в логах (без tcpdump)
+
+Эталонный расчёт JA3: [`tls-clienthello-ja3.mjs`](./lib/tls-clienthello-ja3.mjs). На **exit** (`--type=tls`) при `--tls-log-ja3` или `CLEAN_VPN_TLS_LOG_JA3=1` — по входящему TCP до полного ClientHello. На **client** с `--type=boring-tls` — тот же digest на stderr helper при пробросе `log_ja3`/`ja3_verbose` из clean-vpn. Для одной TCP-сессии digest exit и helper совпадает. **`--type=tls` в Node** сырый ClientHello не экспонирует — JA3 в этом процессе не пишется; смотрите лог exit или используйте boring-tls на клиенте.
+
+Подробный разбор GREASE-очищенных полей и префикса в hex: **`--ja3-verbose`** (сам включает JA3). Env: при уже заданном `CLEAN_VPN_TLS_LOG_JA3` можно добавить `CLEAN_VPN_JA3_VERBOSE=1`.
+
+Регрессия: `npm run test:boring-tls-smoke`; обновление MD5 эталона: `node scripts/dev-print-boring-tls-ja3.mjs`.
 
 ### Поля `response` (JSON)
 
@@ -92,7 +102,7 @@ cmake --build native/boring_tls/build -j
 
 После `npm run build:boring-tls-helper`:
 
-- `npm run test:boring-tls-smoke` — семь проверок: бинарь, ошибки конфига/TCP, stdin EOF, полный TLS 1.3 к `tls.Server`, **JA3** (ALPN `h2` + `http/1.1` как у client в clean-vpn), **SIGTERM** после handshake (не Windows).
+- `npm run test:boring-tls-smoke` — проверки: бинарь, ошибки конфига/TCP, stdin EOF, полный TLS 1.3 к `tls.Server`, **JA3** (ALPN `h2` + `http/1.1` как у client в clean-vpn), отсутствие `ja3_md5` на stderr без `log_ja3`, **JA3 stderr при `log_ja3`**, **SIGTERM** после handshake (не Windows).
 
 ## Что остаётся вне автотестов
 

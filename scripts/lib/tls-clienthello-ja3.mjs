@@ -10,6 +10,9 @@ const GREASE = new Set([
   0xcaca, 0xdada, 0xeaea, 0xfafa,
 ]);
 
+/** Дефолт длины hex-превью входного TCP-буфера для --ja3-verbose */
+export const JA3_HEX_PREVIEW_DEFAULT = 96;
+
 /** @param {Buffer} buf @param {number} o */
 function u24(buf, o) {
   return (buf[o] << 16) | (buf[o + 1] << 8) | buf[o + 2];
@@ -38,10 +41,19 @@ export function extractFirstClientHelloBody(buf) {
 }
 
 /**
- * @param {Buffer} body — тело ClientHello (RFC 8446)
- * @returns {{ ja3String: string, ja3Digest: string }}
+ * Разбор полей ClientHello для JA3 и отладки.
+ * @param {Buffer} body — тело ClientHello (RFC 8446), без handshake type/len
+ * @returns {{
+ *   legacyVersion: number,
+ *   ciphers: number[],
+ *   extTypes: number[],
+ *   curves: number[],
+ *   ecPointFormats: number[],
+ *   ja3String: string,
+ *   ja3Digest: string,
+ * }}
  */
-export function ja3FromClientHelloBody(body) {
+export function ja3ComponentsFromClientHelloBody(body) {
   let o = 0;
   const legacyVersion = body.readUInt16BE(o);
   o += 2 + 32;
@@ -68,8 +80,10 @@ export function ja3FromClientHelloBody(body) {
 
   /** @type {number[]} */
   const extTypes = [];
-  let ellipticCurve = '';
-  let ecPointFmt = '';
+  /** @type {number[]} */
+  const curves = [];
+  /** @type {number[]} */
+  const ecPointFormats = [];
 
   while (o + 4 <= extEnd && o + 4 <= body.length) {
     const et = body.readUInt16BE(o);
@@ -84,21 +98,18 @@ export function ja3FromClientHelloBody(body) {
     extTypes.push(et);
     if (et === 0x000a && edata.length >= 2) {
       const glen = edata.readUInt16BE(0);
-      /** @type {number[]} */
-      const gs = [];
       for (let i = 2; i < 2 + glen && i + 2 <= edata.length; i += 2) {
         const g = edata.readUInt16BE(i);
-        if (!GREASE.has(g)) gs.push(g);
+        if (!GREASE.has(g)) curves.push(g);
       }
-      ellipticCurve = gs.join('-');
     } else if (et === 0x000b && edata.length >= 1) {
       const flen = edata[0];
-      /** @type {number[]} */
-      const fs = [];
-      for (let i = 1; i < 1 + flen && i < edata.length; i++) fs.push(edata[i]);
-      ecPointFmt = fs.join('-');
+      for (let i = 1; i < 1 + flen && i < edata.length; i++) ecPointFormats.push(edata[i]);
     }
   }
+
+  const ellipticCurve = curves.join('-');
+  const ecPointFmt = ecPointFormats.join('-');
 
   const ja3String = [
     legacyVersion,
@@ -109,9 +120,23 @@ export function ja3FromClientHelloBody(body) {
   ].join(',');
 
   return {
+    legacyVersion,
+    ciphers,
+    extTypes,
+    curves,
+    ecPointFormats,
     ja3String,
     ja3Digest: crypto.createHash('md5').update(ja3String, 'utf8').digest('hex'),
   };
+}
+
+/**
+ * @param {Buffer} body — тело ClientHello (RFC 8446)
+ * @returns {{ ja3String: string, ja3Digest: string }}
+ */
+export function ja3FromClientHelloBody(body) {
+  const c = ja3ComponentsFromClientHelloBody(body);
+  return { ja3String: c.ja3String, ja3Digest: c.ja3Digest };
 }
 
 /**
@@ -121,4 +146,39 @@ export function ja3FromTcpBuf(tcpBuf) {
   const ch = extractFirstClientHelloBody(tcpBuf);
   if (!ch) return null;
   return ja3FromClientHelloBody(ch);
+}
+
+/**
+ * Полный разбор для логов (--ja3-verbose).
+ * @param {Buffer} tcpBuf — TCP payload от начала соединения
+ * @param {{ hexPreviewLen?: number }} [opts]
+ * @returns {{
+ *   ja3Digest: string,
+ *   ja3String: string,
+ *   legacyVersion: number,
+ *   ciphers: number[],
+ *   extTypes: number[],
+ *   curves: number[],
+ *   ecPointFormats: number[],
+ *   hexPreview: string,
+ * } | null}
+ */
+export function ja3DebugFromTcpBuf(tcpBuf, opts = {}) {
+  const ch = extractFirstClientHelloBody(tcpBuf);
+  if (!ch) return null;
+  const c = ja3ComponentsFromClientHelloBody(ch);
+  const maxHex = opts.hexPreviewLen ?? JA3_HEX_PREVIEW_DEFAULT;
+  const hexPreview = Buffer.from(tcpBuf.subarray(0, Math.min(maxHex, tcpBuf.length))).toString(
+    'hex',
+  );
+  return {
+    ja3Digest: c.ja3Digest,
+    ja3String: c.ja3String,
+    legacyVersion: c.legacyVersion,
+    ciphers: c.ciphers,
+    extTypes: c.extTypes,
+    curves: c.curves,
+    ecPointFormats: c.ecPointFormats,
+    hexPreview,
+  };
 }
