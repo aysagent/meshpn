@@ -1225,8 +1225,10 @@ async function connectCleanVpnBoringTlsClient(opts) {
     }
     const negotiatedAlpn = resp.alpn != null ? String(resp.alpn) : '';
 
-    child.stdout.resume();
+    // Нельзя resume stdout до подписки на 'data': в flowing mode без слушателя
+    // первые байты TLS application data теряются → HTTP/2 и IPv4 framing ломаются.
     const duplex = boringTlsHelperToDuplex(child);
+    child.stdout.resume();
     return await completeCleanVpnTlsSession(duplex, {
       checkHost,
       vpnSecret,
@@ -1651,8 +1653,13 @@ function quicBidiToSocketLike(qs) {
  * @param {import('tls').TLSSocket} tlsSocket
  */
 function http2StreamToSocketLike(stream, session, tlsSocket) {
-  if (!stream?.readable || !stream?.writable) {
-    throw new Error('HTTP/2: stream должен быть duplex (readable+writable)');
+  // Нельзя требовать stream.readable: у ClientHttp2Stream при событии 'response'
+  // readable может быть false до прихода первого DATA (особенно с произвольным Duplex-сокетом).
+  if (!stream || stream.destroyed) {
+    throw new Error('HTTP/2: stream отсутствует или уже уничтожен');
+  }
+  if (typeof stream.write !== 'function') {
+    throw new Error('HTTP/2: stream без writable-стороны');
   }
   const sock = /** @type {any} */ (stream);
   sock.destroyed = Boolean(sock.destroyed);
