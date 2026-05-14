@@ -14,6 +14,10 @@ FetchContent_Declare(
   GIT_TAG        a7481f34712bc056a47ab91015536166b3a6cebb
   GIT_SHALLOW    FALSE
 )
+# Юнит-тесты BoringSSL (ssl_test, crypto_test, …) не нужны для helper и при
+# `cmake --build ...` без явной цели попадают в ALL — на VPS с 1–2 ГБ RAM типичен
+# OOM killer («c++: fatal error: Killed signal terminated program cc1plus»).
+set(BUILD_TESTING OFF CACHE BOOL "BoringSSL unit tests (disable on low-RAM VPS)" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(boringssl)
 

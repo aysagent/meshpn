@@ -72,10 +72,12 @@
 
 ```bash
 npm run build:boring-tls-helper
-# эквивалентно:
+# эквивалентно (собирается только boring-tls-helper, без тестов BoringSSL):
 cmake -S native/boring_tls -B native/boring_tls/build -DCMAKE_BUILD_TYPE=Release
-cmake --build native/boring_tls/build -j
+cmake --build native/boring_tls/build --target boring-tls-helper
 ```
+
+На **VPS с малым RAM** (типичная ошибка `c++: fatal error: Killed signal terminated program cc1plus` на ~80% — это **OOM**, ядро убивает компилятор): используйте **`npm run build:boring-tls-helper-lowmem`** (один параллельный job) или вручную `--parallel 1`. При нехватке памяти временно отключите swapless-хост или добавьте **swap** (`fallocate`/`swapon`). После обновления репозитория при старом каталоге `build/` выполните заново `cmake -S … -B …`, чтобы подтянулось `BUILD_TESTING=OFF` для вложенного BoringSSL.
 
 Бинарь: `native/boring_tls/build/boring-tls-helper` (или см. `CMAKE_RUNTIME_OUTPUT_DIRECTORY`).
 

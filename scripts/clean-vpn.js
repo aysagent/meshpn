@@ -1175,7 +1175,7 @@ async function connectCleanVpnBoringTlsClient(opts) {
   const exe = resolveBoringTlsHelperExecutable(boringTlsHelperPath ?? null);
   if (!fs.existsSync(exe)) {
     throw new Error(
-      `boring-tls-helper не найден (${exe}). Соберите: npm run build:boring-tls-helper (cmake, см. native/boring_tls/). Переменная CLEAN_VPN_BORING_TLS_HELPER или --boring-tls-helper=PATH.`,
+      `boring-tls-helper не найден (${exe}). Соберите: npm run build:boring-tls-helper (на VPS при OOM/cc1plus Killed: npm run build:boring-tls-helper-lowmem; см. scripts/boring-tls-plan.md). Переменная CLEAN_VPN_BORING_TLS_HELPER или --boring-tls-helper=PATH.`,
     );
   }
   const sniNote =
@@ -7104,7 +7104,7 @@ async function main() {
 --http-vers=1.1: только с --type=tls или boring-tls (client и exit); принудительный HTTP/1.1 без h2; совместно обновляйте код на обеих сторонах
 --tls-log-ja3: JA3 (MD5) по ClientHello — exit + --type=tls (stdout); client + boring-tls — stderr helper. Env: CLEAN_VPN_TLS_LOG_JA3=1 (также true/yes). Для --type=tls на клиенте сырый ClientHello недоступен Node — смотрите лог exit или используйте boring-tls.
 --ja3-verbose: подробный JA3 (строка до MD5, поля GREASE-очищенные, hex префикса TCP); сам включает вывод JA3. Env при уже включённом CLEAN_VPN_TLS_LOG_JA3: CLEAN_VPN_JA3_VERBOSE=1.
---type=boring-tls: только client — TLS 1.3 через процесс boring-tls-helper (BoringSSL), см. scripts/boring-tls-plan.md; на exit используйте --type=tls (тот же сервер). Сборка: npm run build:boring-tls-helper. Путь к бинарю: CLEAN_VPN_BORING_TLS_HELPER или --boring-tls-helper=PATH; профиль (резерв): --boring-tls-profile=NAME.
+--type=boring-tls: только client — TLS 1.3 через процесс boring-tls-helper (BoringSSL), см. scripts/boring-tls-plan.md; на exit используйте --type=tls (тот же сервер). Сборка: npm run build:boring-tls-helper (мало RAM на VPS: npm run build:boring-tls-helper-lowmem). Путь к бинарю: CLEAN_VPN_BORING_TLS_HELPER или --boring-tls-helper=PATH; профиль (резерв): --boring-tls-profile=NAME.
 --type=ws-chrome: client — Puppeteer + Chrome держит WS к exit (npm install puppeteer). exit — HTTP /clean-vpn-chrome + WS только с --ws-server. Медленный CDP: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1. Произвольная страница: --ws-chrome-url=... — только CDP.
 --ws-chrome-executable=PATH, --ws-chrome-ws-url=ws://..., --ws-chrome-url=http://... (goto), --ws-chrome-exit-page, --ws-chrome-cdp-data
 --type=rtc-chrome: только client — Puppeteer + Chrome WebRTC к exit --type=webrtc; --signaling — WSS сигналинга на --server + relay Chrome↔exit; иначе исходящий WS к --server. npm install puppeteer; --rtc-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH
