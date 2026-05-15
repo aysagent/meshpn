@@ -48,6 +48,21 @@
 | `profile` | string | зарезервировано (например `chrome-default`); пока влияет только на логирование / будущие пресеты |
 | `log_ja3` | bool | если `true`, после исходящего ClientHello — строка `boring-tls-helper: ja3_md5=…` на stderr; при `ja3_verbose` добавляются поля и `hex_preview` handshake |
 | `ja3_verbose` | bool | расширенный JA3 на stderr; имеет смысл вместе с `log_ja3` |
+| `client_hello_profile` | object | опционально: настройка TLS 1.3 cipher suites и named groups под сохранённый профиль браузера; см. ниже |
+
+#### Объект `client_hello_profile`
+
+Передаётся из `clean-vpn` при `--boring-tls-clienthello-profile=PATH` (или `CLEAN_VPN_BORING_TLS_CLIENTHELLO_PROFILE`): файл JSON schema **v1** — [`lib/boring-tls-clienthello-profile.mjs`](lib/boring-tls-clienthello-profile.mjs), обычно созданный `ja3-snif-server --profile-save-path=…` после `GET /ja3-snif`.
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `cipher_suites` | number[] | IANA id TLS 1.3 cipher (**порядок на wire** в ClientHello через форк BoringSSL: `SSL_CTX_set_tls13_client_cipher_order`, патч `native/boring_tls/patches/boringssl-meshvpn-tls13-cipher-order.patch`; только известные TLS 1.3 suite из таблицы BoringSSL, без дубликатов) |
+| `supported_groups` | number[] | id named groups (**порядок** для `SSL_CTX_set1_groups_list`): 23, 24, 25, 29, 30 — см. `NamedGroupOpenSslName` в helper |
+| `ec_point_formats` | number[] | сохраняется в файле профиля для JA3; **пока не задаёт BoringSSL** отдельным API — см. раздел «Ограничения» |
+| `ja3_md5` | string | опционально: ожидаемый MD5 JA3 (32 hex lowercase); сравнение после отправки ClientHello |
+| `ja3_strict` | bool | если `true` и digest не совпал — handshake считается ошибкой (`ja3 profile mismatch (strict)`), код выхода 13 |
+
+**ALPN:** в реальном соединении список `alpn` в `config` задаёт **только** `clean-vpn` (`resolveTlsAlpnProtocols`, `--http-vers`). Поле `tls_info.alpn` в файле профиля — справочно (JA3 на содержимое ALPN не смотрит).
 
 ### JA3 в логах (без tcpdump)
 
@@ -68,7 +83,9 @@
 
 Каталог `native/boring_tls/`: CMake, зависимость BoringSSL (FetchContent, закреплённый коммит), цель `boring-tls-helper`. Команда из корня репо:
 
-Зависимости CMake: **git**, **cmake ≥ 3.16**, компилятор **C++17**, сеть для первого clone **BoringSSL** (`FetchContent`, закреплённый коммит — полный clone без shallow, иначе Git не находит SHA на некоторых системах).
+Зависимости CMake: **git**, **patch** (POSIX), **cmake ≥ 3.16**, компилятор **C++17**, сеть для первого clone **BoringSSL** (`FetchContent`, закреплённый коммит — полный clone без shallow, иначе Git не находит SHA на некоторых системах).
+
+При конфигурации CMake дерево BoringSSL проверяется на ожидаемый **SHA** (`MESHVPN_BORINGSSL_PINNED_SHA` в `native/boring_tls/CMakeLists.txt`) и при необходимости автоматически патчится файлом **`native/boring_tls/patches/boringssl-meshvpn-tls13-cipher-order.patch`** (порядок TLS 1.3 cipher в ClientHello через `SSL_CTX_set_tls13_client_cipher_order`). Если коммит BoringSSL обновили без обновления патча — конфигурация завершится ошибкой с указанием перегенерировать патч или откатить SHA.
 
 ```bash
 npm run build:boring-tls-helper
@@ -85,6 +102,19 @@ cmake --build native/boring_tls/build --target boring-tls-helper
 
 - `--type=boring-tls` на **client**; на **exit** тот же сервер, что и `--type=tls` (алиас по типу).
 - Остальные флаги TLS (`--tls-server-name`, `--tls-client-sni`, `--http-vers`, `--tls-cert-dir`, `--shared-hmac-key`) — как у `tls`.
+- **`--boring-tls-clienthello-profile=PATH`** (env `CLEAN_VPN_BORING_TLS_CLIENTHELLO_PROFILE`): перед **каждым** TCP/TLS к exit файл перечитывается; блок передаётся в helper как `client_hello_profile`. Без флага — дефолтный порядок TLS 1.3 cipher/groups в BoringSSL (без профиля).
+- **`--boring-tls-profile-ja3-strict`** (env `CLEAN_VPN_BORING_TLS_JA3_STRICT`): строгое совпадение `ja3_md5` из файла с фактическим ClientHello helper.
+
+## Файл профиля и ja3-snif-server
+
+- Запуск: `node scripts/ja3-snif-server.mjs --profile-save-path=/path/profile.json` (или env `JA3_SNIF_PROFILE_SAVE_PATH`).
+- После успешного **`GET /ja3-snif`** профиль (компактный JSON: `user_agent`, JA3-компоненты с порядком, `ja3_md5`, `tls_info`) записывается **атомарно** (temp + rename).
+
+## Ограничения (GREASE, padding, порядок расширений)
+
+- **JA3** в файле считается по правилам Salesforce с **удалением GREASE** из списков. На wire браузер всё равно вставляет GREASE; побайтовое совпадение ClientHello и **JA4** могут отличаться даже при верных cipher/group и совпавшем JA3 MD5. Порядок **TLS 1.3 cipher suites** в ClientHello задаётся профилем через патч BoringSSL (`SSL_CTX_set_tls13_client_cipher_order`); GREASE-cipher по-прежнему добавляет стек отдельно.
+- **Padding** (расширение 21) и **полный порядок расширений** задаются стеком BoringSSL; без доработки/исследования API или форка полное совпадение с Chrome не гарантируется.
+- Следующий шаг (spike): управление GREASE/padding/порядком расширений на стороне BoringSSL.
 
 ## Риски
 
@@ -106,7 +136,7 @@ cmake --build native/boring_tls/build --target boring-tls-helper
 
 После `npm run build:boring-tls-helper`:
 
-- `npm run ja3-snif-server` — локальный HTTPS (`127.0.0.1:8443`), JSON по `GET /ja3-snif`: User-Agent, JA3 и поля ClientHello для сравнения с Wireshark; см. [`scripts/ja3-snif-server.mjs`](ja3-snif-server.mjs).
+- `npm run ja3-snif-server` — локальный HTTPS (`127.0.0.1:8443`), JSON по `GET /ja3-snif`: User-Agent, JA3 и поля ClientHello для сравнения с Wireshark; опционально `--profile-save-path` для автосохранения компактного профиля; см. [`scripts/ja3-snif-server.mjs`](ja3-snif-server.mjs).
 - `npm run test:boring-tls-smoke` — проверки: бинарь, ошибки конфига/TCP, stdin EOF, полный TLS 1.3 к `tls.Server`, **JA3** (ALPN `h2` + `http/1.1` как у client в clean-vpn), отсутствие `ja3_md5` на stderr без `log_ja3`, **JA3 stderr при `log_ja3`**, **SIGTERM** после handshake (не Windows).
 
 ## Что остаётся вне автотестов

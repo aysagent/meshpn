@@ -26,6 +26,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <cctype>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -314,16 +315,121 @@ bool ComputeJa3FromClientHelloBody(const uint8_t* body, size_t n,
   return true;
 }
 
+const char* NamedGroupOpenSslName(uint16_t id) {
+  switch (id) {
+    case 23:
+      return "P-256";
+    case 24:
+      return "P-384";
+    case 25:
+      return "P-521";
+    case 29:
+      return "X25519";
+    case 30:
+      return "X448";
+    default:
+      return nullptr;
+  }
+}
+
 struct Ja3LogCfg {
   bool log_ja3 = false;
   bool ja3_verbose = false;
   bool logged = false;
+  std::string expected_ja3_md5;
+  bool ja3_strict = false;
+  bool ja3_mismatch = false;
 };
+
+bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
+                             Ja3LogCfg* ja3_cfg, std::string* err_out) {
+  if (!p.contains("cipher_suites") || !p["cipher_suites"].is_array() ||
+      p["cipher_suites"].empty()) {
+    *err_out =
+        "client_hello_profile.cipher_suites must be a non-empty array (TLS 1.3 "
+        "IANA ids)";
+    return false;
+  }
+  std::vector<uint16_t> cipher_order;
+  cipher_order.reserve(p["cipher_suites"].size());
+  for (const auto& item : p["cipher_suites"]) {
+    if (!item.is_number_unsigned() && !item.is_number_integer()) {
+      *err_out = "client_hello_profile.cipher_suites must be integers";
+      return false;
+    }
+    unsigned long raw = item.is_number_unsigned() ? item.get<unsigned long>()
+                                                  : static_cast<unsigned long>(
+                                                        item.get<long>());
+    if (raw > 0xffff) {
+      *err_out = "client_hello_profile cipher id out of uint16 range";
+      return false;
+    }
+    cipher_order.push_back(static_cast<uint16_t>(raw));
+  }
+  if (SSL_CTX_set_tls13_client_cipher_order(ctx, cipher_order.data(),
+                                            cipher_order.size()) != 1) {
+    ERR_print_errors_fp(stderr);
+    *err_out =
+        "SSL_CTX_set_tls13_client_cipher_order failed (unknown TLS 1.3 cipher "
+        "id, duplicate, or compliance policy mismatch)";
+    return false;
+  }
+
+  if (!p.contains("supported_groups") || !p["supported_groups"].is_array() ||
+      p["supported_groups"].empty()) {
+    *err_out = "client_hello_profile.supported_groups must be a non-empty array";
+    return false;
+  }
+  // ec_point_formats: сохраняются в профиле для JA3; порядок форматов на wire в BoringSSL
+  // пока не задаётся отдельным API — см. scripts/boring-tls-plan.md.
+
+  std::string groups_colon;
+  for (const auto& item : p["supported_groups"]) {
+    if (!item.is_number_unsigned() && !item.is_number_integer()) {
+      *err_out = "client_hello_profile.supported_groups must be integers";
+      return false;
+    }
+    unsigned long raw = item.is_number_unsigned() ? item.get<unsigned long>()
+                                                  : static_cast<unsigned long>(
+                                                        item.get<long>());
+    if (raw > 0xffff) {
+      *err_out = "client_hello_profile group id out of uint16 range";
+      return false;
+    }
+    auto id = static_cast<uint16_t>(raw);
+    const char* name = NamedGroupOpenSslName(id);
+    if (!name) {
+      *err_out =
+          "unsupported named group id " + std::to_string(raw) +
+          " (extend helper_main.cc NamedGroupOpenSslName)";
+      return false;
+    }
+    if (!groups_colon.empty()) groups_colon.push_back(':');
+    groups_colon += name;
+  }
+
+  if (SSL_CTX_set1_groups_list(ctx, groups_colon.c_str()) != 1) {
+    ERR_print_errors_fp(stderr);
+    *err_out = "SSL_CTX_set1_groups_list failed for profile supported_groups";
+    return false;
+  }
+
+  if (ja3_cfg && p.contains("ja3_md5") && p["ja3_md5"].is_string()) {
+    ja3_cfg->expected_ja3_md5 = p["ja3_md5"].get<std::string>();
+    for (auto& c : ja3_cfg->expected_ja3_md5) {
+      c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    }
+  }
+  if (ja3_cfg) {
+    ja3_cfg->ja3_strict = p.value("ja3_strict", false);
+  }
+  return true;
+}
 
 void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
                     const void* buf, size_t len, SSL* /*ssl*/, void* arg) {
   auto* cfg = static_cast<Ja3LogCfg*>(arg);
-  if (!cfg || !cfg->log_ja3 || cfg->logged) return;
+  if (!cfg || cfg->logged) return;
   if (!is_write) return;
   if (content_type != SSL3_RT_HANDSHAKE) return;
   const auto* p = static_cast<const uint8_t*>(buf);
@@ -334,6 +440,20 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
   if (len < 4 + hs_body_len) return;
   Ja3Computed computed;
   if (!ComputeJa3FromClientHelloBody(p + 4, hs_body_len, &computed)) return;
+
+  if (!cfg->expected_ja3_md5.empty()) {
+    if (computed.ja3_md5_hex != cfg->expected_ja3_md5) {
+      cfg->ja3_mismatch = true;
+      std::cerr << "boring-tls-helper: ja3 profile mismatch expected="
+                << cfg->expected_ja3_md5 << " actual=" << computed.ja3_md5_hex
+                << '\n';
+    }
+  }
+
+  if (!cfg->log_ja3) {
+    cfg->logged = true;
+    return;
+  }
 
   std::cerr << "boring-tls-helper: tls hello (wire): clienthello_legacy="
             << static_cast<unsigned>(computed.legacy_version)
@@ -534,20 +654,34 @@ int main(int argc, char** argv) {
   Ja3LogCfg ja3_cfg;
   ja3_cfg.log_ja3 = cfg.value("log_ja3", false);
   ja3_cfg.ja3_verbose = cfg.value("ja3_verbose", false);
-  if (ja3_cfg.log_ja3) {
-    SSL_CTX_set_msg_callback(ctx, Ja3MsgCallback);
-    SSL_CTX_set_msg_callback_arg(ctx, &ja3_cfg);
-  }
 
   SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
   SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
 
-  // Порядок suite’ов в духе Chrome / TLS 1.3
-  SSL_CTX_set_cipher_list(
-      ctx,
-      "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256");
+  std::string prof_err;
+  if (cfg.contains("client_hello_profile") &&
+      cfg["client_hello_profile"].is_object()) {
+    if (!ApplyClientHelloProfile(ctx, cfg["client_hello_profile"], &ja3_cfg,
+                                 &prof_err)) {
+      SSL_CTX_free(ctx);
+      close(sock);
+      return send_err(prof_err.c_str(), 5);
+    }
+  } else {
+    // Порядок suite’ов в духе Chrome / TLS 1.3
+    SSL_CTX_set_cipher_list(
+        ctx,
+        "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:"
+        "TLS_CHACHA20_POLY1305_SHA256");
 
-  SSL_CTX_set1_groups_list(ctx, "X25519:P-256:P-384");
+    SSL_CTX_set1_groups_list(ctx, "X25519:P-256:P-384");
+  }
+
+  if (ja3_cfg.log_ja3 || !ja3_cfg.expected_ja3_md5.empty()) {
+    SSL_CTX_set_msg_callback(ctx, Ja3MsgCallback);
+    SSL_CTX_set_msg_callback_arg(ctx, &ja3_cfg);
+  }
+
   SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
 
   if (SSL_CTX_set_alpn_protos(ctx, alpn_wire.data(),
@@ -585,6 +719,13 @@ int main(int argc, char** argv) {
     SSL_CTX_free(ctx);
     close(sock);
     return send_err("SSL_connect failed", 9);
+  }
+
+  if (ja3_cfg.ja3_strict && ja3_cfg.ja3_mismatch) {
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
+    close(sock);
+    return send_err("ja3 profile mismatch (strict)", 13);
   }
 
   X509* peer = SSL_get_peer_certificate(ssl);

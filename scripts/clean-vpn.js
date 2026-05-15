@@ -122,6 +122,10 @@ import {
   ja3DebugFromTcpBuf,
   ja3FromTcpBuf,
 } from './lib/tls-clienthello-ja3.mjs';
+import {
+  profileFileToHelperClientHelloBlock,
+  readClienthelloProfileFileSync,
+} from './lib/boring-tls-clienthello-profile.mjs';
 import { PeerConnection, setSctpSettings } from 'node-datachannel';
 // @matrixai/logger — CJS; в ESM класс лежит в .default, не в корне namespace.
 import matrixAiLogger from '@matrixai/logger';
@@ -1152,6 +1156,8 @@ async function completeCleanVpnTlsSession(sock, opts) {
  *   tlsHttpVers?: null|'1.1',
  *   boringTlsHelperPath?: string|null,
  *   boringTlsProfile?: string|null,
+ *   boringTlsClienthelloProfilePath?: string|null,
+ *   boringTlsJa3Strict?: boolean,
  *   tlsLogJa3?: boolean,
  *   ja3Verbose?: boolean,
  * }} opts
@@ -1167,6 +1173,8 @@ async function connectCleanVpnBoringTlsClient(opts) {
     tlsHttpVers,
     boringTlsHelperPath,
     boringTlsProfile,
+    boringTlsClienthelloProfilePath,
+    boringTlsJa3Strict,
     tlsLogJa3,
     ja3Verbose,
   } = opts;
@@ -1180,6 +1188,11 @@ async function connectCleanVpnBoringTlsClient(opts) {
   }
   const sniNote =
     checkHost !== servername ? `, проверка сертификата для host=${checkHost}` : '';
+  if (boringTlsClienthelloProfilePath) {
+    console.log(
+      `[clean-vpn] boring-tls: профиль ClientHello из файла ${boringTlsClienthelloProfilePath}${boringTlsJa3Strict ? ' (ja3_strict)' : ''}`,
+    );
+  }
   console.log(
     `[clean-vpn] boring-tls: helper=${exe} → ${connectHost}:${port}, ClientHello SNI=${servername}${sniNote}`,
   );
@@ -1224,6 +1237,12 @@ async function connectCleanVpnBoringTlsClient(opts) {
     if (tlsLogJa3 || ja3Verbose) {
       cfgFrame.log_ja3 = true;
       if (ja3Verbose) cfgFrame.ja3_verbose = true;
+    }
+    if (boringTlsClienthelloProfilePath) {
+      const prof = readClienthelloProfileFileSync(boringTlsClienthelloProfilePath);
+      cfgFrame.client_hello_profile = profileFileToHelperClientHelloBlock(prof, {
+        ja3Strict: Boolean(boringTlsJa3Strict),
+      });
     }
     writeBoringTlsConfigFrame(child.stdin, cfgFrame);
 
@@ -2443,6 +2462,8 @@ function parseArgs(argv) {
     clientLanSubnet: null,
     boringTlsHelper: null,
     boringTlsProfile: null,
+    boringTlsClienthelloProfile: null,
+    boringTlsJa3Strict: false,
     tlsLogJa3: false,
     ja3Verbose: false,
   };
@@ -2506,6 +2527,12 @@ function parseArgs(argv) {
       out.boringTlsHelper = a.slice('--boring-tls-helper='.length).trim();
     } else if (a.startsWith('--boring-tls-profile=')) {
       out.boringTlsProfile = a.slice('--boring-tls-profile='.length).trim();
+    } else if (a.startsWith('--boring-tls-clienthello-profile=')) {
+      out.boringTlsClienthelloProfile = path.resolve(
+        a.slice('--boring-tls-clienthello-profile='.length).trim(),
+      );
+    } else if (a === '--boring-tls-profile-ja3-strict') {
+      out.boringTlsJa3Strict = true;
     } else if (a === '--tls-log-ja3') {
       out.tlsLogJa3 = true;
     } else if (a === '--ja3-verbose') {
@@ -6270,6 +6297,8 @@ async function runClient({
   clientLanSubnet,
   boringTlsHelper,
   boringTlsProfile,
+  boringTlsClienthelloProfile,
+  boringTlsJa3Strict,
   configPath,
   iceMode,
   quicCertsDir,
@@ -7017,6 +7046,8 @@ async function runClient({
         ? {
             boringTlsHelperPath: boringTlsHelper,
             boringTlsProfile: boringTlsProfile,
+            boringTlsClienthelloProfilePath: boringTlsClienthelloProfile || null,
+            boringTlsJa3Strict: Boolean(boringTlsJa3Strict),
           }
         : {}),
     };
@@ -7134,7 +7165,9 @@ async function main() {
 --http-vers=1.1: только с --type=tls или boring-tls (client и exit); принудительный HTTP/1.1 без h2; совместно обновляйте код на обеих сторонах
 --tls-log-ja3: JA3 (MD5) по ClientHello — exit + --type=tls (stdout); client + boring-tls — stderr helper. Env: CLEAN_VPN_TLS_LOG_JA3=1 (также true/yes). Для --type=tls на клиенте сырый ClientHello недоступен Node — смотрите лог exit или используйте boring-tls.
 --ja3-verbose: подробный JA3 (строка до MD5, поля GREASE-очищенные, hex префикса TCP); сам включает вывод JA3. Env при уже включённом CLEAN_VPN_TLS_LOG_JA3: CLEAN_VPN_JA3_VERBOSE=1.
---type=boring-tls: только client — TLS 1.3 через процесс boring-tls-helper (BoringSSL), см. scripts/boring-tls-plan.md; на exit используйте --type=tls (тот же сервер). Сборка: npm run build:boring-tls-helper (мало RAM на VPS: npm run build:boring-tls-helper-lowmem). Путь к бинарю: CLEAN_VPN_BORING_TLS_HELPER или --boring-tls-helper=PATH; профиль (резерв): --boring-tls-profile=NAME.
+--type=boring-tls: только client — TLS 1.3 через процесс boring-tls-helper (BoringSSL), см. scripts/boring-tls-plan.md; на exit используйте --type=tls (тот же сервер). Сборка: npm run build:boring-tls-helper (мало RAM на VPS: npm run build:boring-tls-helper-lowmem). Путь к бинарю: CLEAN_VPN_BORING_TLS_HELPER или --boring-tls-helper=PATH; строковый профиль (резерв): --boring-tls-profile=NAME.
+--boring-tls-clienthello-profile=PATH: только client + boring-tls — JSON профиля ClientHello/JA3 (scripts/lib/boring-tls-clienthello-profile.mjs schema v1; см. ja3-snif-server --profile-save-path). Файл перечитывается перед каждым TLS к exit. Env: CLEAN_VPN_BORING_TLS_CLIENTHELLO_PROFILE.
+--boring-tls-profile-ja3-strict: только client + boring-tls — при несовпадении JA3 MD5 с полем ja3_md5 в профиле helper завершится ошибкой. Env: CLEAN_VPN_BORING_TLS_JA3_STRICT=1.
 --type=ws-chrome: client — Puppeteer + Chrome держит WS к exit (npm install puppeteer). exit — HTTP /clean-vpn-chrome + WS только с --ws-server. Медленный CDP: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1. Произвольная страница: --ws-chrome-url=... — только CDP.
 --ws-chrome-executable=PATH, --ws-chrome-ws-url=ws://..., --ws-chrome-url=http://... (goto), --ws-chrome-exit-page, --ws-chrome-cdp-data
 --type=rtc-chrome: только client — Puppeteer + Chrome WebRTC к exit --type=webrtc; --signaling — WSS сигналинга на --server + relay Chrome↔exit; иначе исходящий WS к --server. npm install puppeteer; --rtc-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH
@@ -7233,6 +7266,23 @@ async function main() {
   const tlsLogJa3 = Boolean(args.tlsLogJa3) || envTlsJa3 || ja3Verbose;
   args.tlsLogJa3 = tlsLogJa3;
   args.ja3Verbose = ja3Verbose;
+
+  const envChProf = process.env.CLEAN_VPN_BORING_TLS_CLIENTHELLO_PROFILE?.trim();
+  if (envChProf && !args.boringTlsClienthelloProfile) {
+    args.boringTlsClienthelloProfile = path.resolve(envChProf);
+  }
+  if (!args.boringTlsJa3Strict && envCleanVpnTruthy01('CLEAN_VPN_BORING_TLS_JA3_STRICT')) {
+    args.boringTlsJa3Strict = true;
+  }
+  if (
+    args.boringTlsClienthelloProfile &&
+    args.role === 'client' &&
+    args.type !== 'boring-tls'
+  ) {
+    console.warn(
+      '[clean-vpn] --boring-tls-clienthello-profile / CLEAN_VPN_BORING_TLS_CLIENTHELLO_PROFILE действует только с --type=boring-tls; профиль не используется.',
+    );
+  }
 
   if (args.role === 'exit') {
     await runExit(args);

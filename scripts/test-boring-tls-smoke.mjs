@@ -473,3 +473,280 @@ test('helper: SIGTERM после успешного handshake', async (t) => {
     }
   }
 });
+
+test('helper: client_hello_profile с дефолтными cipher/groups — тот же JA3', async (t) => {
+  if (!fs.existsSync(helper)) {
+    t.skip();
+    return;
+  }
+
+  const server = net.createServer();
+  const ja3Promise = new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.once('connection', (sock) => {
+      /** @type {Buffer[]} */
+      const acc = [];
+      sock.on('data', (d) => {
+        acc.push(d);
+        const r = ja3FromTcpBuf(Buffer.concat(acc));
+        if (r) {
+          resolve(r);
+          sock.destroy();
+        }
+      });
+      sock.on('error', () => {});
+    });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const addr = server.address();
+  const port = typeof addr === 'object' && addr ? addr.port : null;
+  assert.ok(port);
+
+  const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  await once(child, 'spawn');
+
+  try {
+    sendConfigFrame(child.stdin, {
+      host: '127.0.0.1',
+      port,
+      ca_pem: MIN_CA_PEM,
+      servername: 'test-ca',
+      verify_host: 'test-ca',
+      alpn: ['h2', 'http/1.1'],
+      handshake_timeout_ms: 8000,
+      client_hello_profile: {
+        cipher_suites: [4865, 4866, 4867],
+        supported_groups: [29, 23, 24],
+        ec_point_formats: [0],
+      },
+    });
+
+    const j = await raceMs(ja3Promise, 15000, 'JA3 из потока');
+    assert.strictEqual(
+      j.ja3Digest,
+      EXPECTED_JA3_DIGEST,
+      `ja3String=${j.ja3String}`,
+    );
+  } finally {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
+    server.close();
+  }
+});
+
+test('helper: client_hello_profile ja3_strict при неверном ja3_md5 — отказ', async (t) => {
+  if (!fs.existsSync(helper)) {
+    t.skip();
+    return;
+  }
+  if (!fs.existsSync(LOCAL_KEY) || !fs.existsSync(LOCAL_CERT)) {
+    t.skip(`нет ${LOCAL_CERT}`);
+    return;
+  }
+
+  const server = tls.createServer({
+    key: fs.readFileSync(LOCAL_KEY, 'utf8'),
+    cert: fs.readFileSync(LOCAL_CERT, 'utf8'),
+    minVersion: 'TLSv1.3',
+    maxVersion: 'TLSv1.3',
+    ALPNProtocols: ['http/1.1', 'h2'],
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const addr = server.address();
+  const port = typeof addr === 'object' && addr ? addr.port : null;
+  assert.ok(port);
+
+  const certPem = fs.readFileSync(LOCAL_CERT, 'utf8');
+
+  const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  await once(child, 'spawn');
+
+  try {
+    sendConfigFrame(child.stdin, {
+      host: '127.0.0.1',
+      port,
+      ca_pem: certPem,
+      servername: 'localhost',
+      verify_host: 'localhost',
+      alpn: ['http/1.1'],
+      handshake_timeout_ms: 12000,
+      client_hello_profile: {
+        cipher_suites: [4865, 4866, 4867],
+        supported_groups: [29, 23, 24],
+        ec_point_formats: [0],
+        ja3_md5: '00000000000000000000000000000000',
+        ja3_strict: true,
+      },
+      log_ja3: true,
+    });
+
+    const j = await raceMs(readJsonFrame(child.stdout), 20000, 'ответ helper');
+    assert.strictEqual(j.ok, false);
+    assert.match(String(j.error || ''), /ja3 profile mismatch/i);
+  } finally {
+    server.close();
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
+  }
+});
+
+test('helper: дубликат cipher id в client_hello_profile — отказ', async (t) => {
+  if (!fs.existsSync(helper)) {
+    t.skip();
+    return;
+  }
+
+  const dummy = net.createServer((c) => {
+    c.on('error', () => {});
+  });
+  await new Promise((resolve, reject) => {
+    dummy.once('error', reject);
+    dummy.listen(0, '127.0.0.1', resolve);
+  });
+  const addr = dummy.address();
+  const port = typeof addr === 'object' && addr ? addr.port : null;
+  assert.ok(port);
+
+  const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  await once(child, 'spawn');
+
+  try {
+    sendConfigFrame(child.stdin, {
+      host: '127.0.0.1',
+      port,
+      ca_pem: MIN_CA_PEM,
+      servername: 'test-ca',
+      verify_host: 'test-ca',
+      alpn: ['http/1.1'],
+      handshake_timeout_ms: 2000,
+      client_hello_profile: {
+        cipher_suites: [4865, 4865],
+        supported_groups: [29],
+        ec_point_formats: [0],
+      },
+    });
+
+    const j = await raceMs(readJsonFrame(child.stdout), 8000, 'ответ helper');
+    assert.strictEqual(j.ok, false);
+    assert.match(String(j.error || ''), /SSL_CTX_set_tls13_client_cipher_order/i);
+  } finally {
+    dummy.close();
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
+  }
+});
+
+test('helper: неизвестный TLS 1.3 cipher id в client_hello_profile — отказ', async (t) => {
+  if (!fs.existsSync(helper)) {
+    t.skip();
+    return;
+  }
+
+  const dummy = net.createServer((c) => {
+    c.on('error', () => {});
+  });
+  await new Promise((resolve, reject) => {
+    dummy.once('error', reject);
+    dummy.listen(0, '127.0.0.1', resolve);
+  });
+  const addr = dummy.address();
+  const port = typeof addr === 'object' && addr ? addr.port : null;
+  assert.ok(port);
+
+  const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  await once(child, 'spawn');
+
+  try {
+    sendConfigFrame(child.stdin, {
+      host: '127.0.0.1',
+      port,
+      ca_pem: MIN_CA_PEM,
+      servername: 'test-ca',
+      verify_host: 'test-ca',
+      alpn: ['http/1.1'],
+      handshake_timeout_ms: 2000,
+      client_hello_profile: {
+        cipher_suites: [0xfeff],
+        supported_groups: [29],
+        ec_point_formats: [0],
+      },
+    });
+
+    const j = await raceMs(readJsonFrame(child.stdout), 8000, 'ответ helper');
+    assert.strictEqual(j.ok, false);
+    assert.match(String(j.error || ''), /SSL_CTX_set_tls13_client_cipher_order/i);
+  } finally {
+    dummy.close();
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
+  }
+});
+
+test('helper: неизвестный named group id в client_hello_profile — отказ', async (t) => {
+  if (!fs.existsSync(helper)) {
+    t.skip();
+    return;
+  }
+
+  const dummy = net.createServer((c) => {
+    c.on('error', () => {});
+  });
+  await new Promise((resolve, reject) => {
+    dummy.once('error', reject);
+    dummy.listen(0, '127.0.0.1', resolve);
+  });
+  const addr = dummy.address();
+  const port = typeof addr === 'object' && addr ? addr.port : null;
+  assert.ok(port);
+
+  const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  await once(child, 'spawn');
+
+  try {
+    sendConfigFrame(child.stdin, {
+      host: '127.0.0.1',
+      port,
+      ca_pem: MIN_CA_PEM,
+      servername: 'test-ca',
+      verify_host: 'test-ca',
+      alpn: ['http/1.1'],
+      handshake_timeout_ms: 2000,
+      client_hello_profile: {
+        cipher_suites: [4865, 4866, 4867],
+        supported_groups: [11111],
+        ec_point_formats: [0],
+      },
+    });
+
+    const j = await raceMs(readJsonFrame(child.stdout), 8000, 'ответ helper');
+    assert.strictEqual(j.ok, false);
+    assert.match(String(j.error || ''), /named group id/i);
+  } finally {
+    dummy.close();
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
+  }
+});

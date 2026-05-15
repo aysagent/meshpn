@@ -1,0 +1,172 @@
+diff --git include/openssl/ssl.h include/openssl/ssl.h
+index 055b3e02..f8b32fec 100644
+--- include/openssl/ssl.h
++++ include/openssl/ssl.h
+@@ -2685,6 +2685,14 @@ OPENSSL_EXPORT int SSL_set1_groups(SSL *ssl, const int *groups,
+ // success and zero on failure.
+ OPENSSL_EXPORT int SSL_CTX_set1_groups_list(SSL_CTX *ctx, const char *groups);
+ 
++// SSL_CTX_set_tls13_client_cipher_order sets the TLS 1.3 cipher suites to
++// advertise in ClientHello, as IANA ids (e.g. 0x1301) in wire order. When
++// |num_cipher_ids| is zero, the default ordering is restored. Duplicates and ids
++// incompatible with |SSL_CTX|'s compliance policy are rejected. Only affects
++// the TLS 1.3 portion of the advertised list (mesh-vpn BoringSSL fork).
++OPENSSL_EXPORT int SSL_CTX_set_tls13_client_cipher_order(
++    SSL_CTX *ctx, const uint16_t *cipher_ids, size_t num_cipher_ids);
++
+ // SSL_set1_groups_list decodes |groups| as a non-empty colon-separated list of
+ // group names (e.g. "X25519" or "P-256") and sets |ssl|'s preferred groups to
+ // the result. The list must not contain duplicates. It returns one on success
+diff --git ssl/handshake_client.cc ssl/handshake_client.cc
+index 7ab6d2c5..6db71561 100644
+--- ssl/handshake_client.cc
++++ ssl/handshake_client.cc
+@@ -109,37 +109,46 @@ static bool ssl_write_client_cipher_list(const SSL_HANDSHAKE *hs, CBB *out,
+   }
+ 
+   // Add TLS 1.3 ciphers. Order ChaCha20-Poly1305 relative to AES-GCM based on
+-  // hardware support.
++  // hardware support, unless |tls13_client_cipher_order| overrides it.
+   if (hs->max_version >= TLS1_3_VERSION) {
+-    static const uint16_t kCiphersNoAESHardware[] = {
+-        SSL_CIPHER_CHACHA20_POLY1305_SHA256,
+-        SSL_CIPHER_AES_128_GCM_SHA256,
+-        SSL_CIPHER_AES_256_GCM_SHA384,
+-    };
+-    static const uint16_t kCiphersAESHardware[] = {
+-        SSL_CIPHER_AES_128_GCM_SHA256,
+-        SSL_CIPHER_AES_256_GCM_SHA384,
+-        SSL_CIPHER_CHACHA20_POLY1305_SHA256,
+-    };
+-    static const uint16_t kCiphersCNSA[] = {
+-        SSL_CIPHER_AES_256_GCM_SHA384,
+-        SSL_CIPHER_AES_128_GCM_SHA256,
+-        SSL_CIPHER_CHACHA20_POLY1305_SHA256,
+-    };
+-
+-    const bool has_aes_hw = ssl->config->aes_hw_override
+-                                ? ssl->config->aes_hw_override_value
+-                                : EVP_has_aes_hardware();
+-    const bssl::Span<const uint16_t> ciphers =
+-        ssl->config->compliance_policy == ssl_compliance_policy_cnsa_202407
+-            ? bssl::Span<const uint16_t>(kCiphersCNSA)
+-            : (has_aes_hw ? bssl::Span<const uint16_t>(kCiphersAESHardware)
+-                          : bssl::Span<const uint16_t>(kCiphersNoAESHardware));
+-
+-    for (auto cipher : ciphers) {
+-      if (!ssl_add_tls13_cipher(&child, cipher,
+-                                ssl->config->compliance_policy)) {
+-        return false;
++    if (!ssl->ctx->tls13_client_cipher_order.empty()) {
++      for (uint16_t cipher : ssl->ctx->tls13_client_cipher_order) {
++        if (!ssl_add_tls13_cipher(&child, cipher,
++                                  ssl->config->compliance_policy)) {
++          return false;
++        }
++      }
++    } else {
++      static const uint16_t kCiphersNoAESHardware[] = {
++          SSL_CIPHER_CHACHA20_POLY1305_SHA256,
++          SSL_CIPHER_AES_128_GCM_SHA256,
++          SSL_CIPHER_AES_256_GCM_SHA384,
++      };
++      static const uint16_t kCiphersAESHardware[] = {
++          SSL_CIPHER_AES_128_GCM_SHA256,
++          SSL_CIPHER_AES_256_GCM_SHA384,
++          SSL_CIPHER_CHACHA20_POLY1305_SHA256,
++      };
++      static const uint16_t kCiphersCNSA[] = {
++          SSL_CIPHER_AES_256_GCM_SHA384,
++          SSL_CIPHER_AES_128_GCM_SHA256,
++          SSL_CIPHER_CHACHA20_POLY1305_SHA256,
++      };
++
++      const bool has_aes_hw = ssl->config->aes_hw_override
++                                  ? ssl->config->aes_hw_override_value
++                                  : EVP_has_aes_hardware();
++      const bssl::Span<const uint16_t> ciphers =
++          ssl->config->compliance_policy == ssl_compliance_policy_cnsa_202407
++              ? bssl::Span<const uint16_t>(kCiphersCNSA)
++              : (has_aes_hw ? bssl::Span<const uint16_t>(kCiphersAESHardware)
++                            : bssl::Span<const uint16_t>(kCiphersNoAESHardware));
++
++      for (auto cipher : ciphers) {
++        if (!ssl_add_tls13_cipher(&child, cipher,
++                                  ssl->config->compliance_policy)) {
++          return false;
++        }
+       }
+     }
+   }
+diff --git ssl/internal.h ssl/internal.h
+index 2bea8f62..91757aa1 100644
+--- ssl/internal.h
++++ ssl/internal.h
+@@ -4100,6 +4100,10 @@ struct ssl_ctx_st : public bssl::RefCounted<ssl_ctx_st> {
+   bssl::Array<uint16_t> supported_group_list;
+   bssl::Array<uint32_t> supported_group_list_flags;
+ 
++  // If non-empty, overrides TLS 1.3 ClientHello cipher suite ids and order for
++  // clients (mesh-vpn fork; see SSL_CTX_set_tls13_client_cipher_order).
++  bssl::Array<uint16_t> tls13_client_cipher_order;
++
+   // channel_id_private is the client's Channel ID private key, or null if
+   // Channel ID should not be offered on this connection.
+   bssl::UniquePtr<EVP_PKEY> channel_id_private;
+diff --git ssl/ssl_lib.cc ssl/ssl_lib.cc
+index 89702eaa..b3bae57f 100644
+--- ssl/ssl_lib.cc
++++ ssl/ssl_lib.cc
+@@ -2035,6 +2035,52 @@ int SSL_CTX_set1_groups_list(SSL_CTX *ctx, const char *groups) {
+          ctx->supported_group_list_flags.Init(ctx->supported_group_list.size());
+ }
+ 
++static bool tls13_cipher_order_unique(Span<const uint16_t> list) {
++  if (list.size() < 2) {
++    return true;
++  }
++  for (size_t i = 0; i < list.size() - 1; ++i) {
++    for (size_t j = i + 1; j < list.size(); ++j) {
++      if (list[i] == list[j]) {
++        OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CIPHERS_SPECIFIED);
++        return false;
++      }
++    }
++  }
++  return true;
++}
++
++int SSL_CTX_set_tls13_client_cipher_order(SSL_CTX *ctx,
++                                          const uint16_t *cipher_ids,
++                                          size_t num_cipher_ids) {
++  if (ctx == nullptr) {
++    return 0;
++  }
++  ctx->tls13_client_cipher_order.Reset();
++  if (num_cipher_ids == 0) {
++    return 1;
++  }
++  Span<const uint16_t> span(cipher_ids, num_cipher_ids);
++  if (!tls13_cipher_order_unique(span)) {
++    return 0;
++  }
++  for (size_t i = 0; i < span.size(); i++) {
++    const uint16_t id = span[i];
++    const SSL_CIPHER *candidate = SSL_get_cipher_by_value(id);
++    if (candidate == nullptr ||
++        SSL_CIPHER_get_min_version(candidate) > TLS1_3_VERSION ||
++        SSL_CIPHER_get_max_version(candidate) < TLS1_3_VERSION) {
++      OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CIPHER_MATCH);
++      return 0;
++    }
++    if (!ssl_tls13_cipher_meets_policy(id, ctx->compliance_policy)) {
++      OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CIPHER_MATCH);
++      return 0;
++    }
++  }
++  return ctx->tls13_client_cipher_order.CopyFrom(span) ? 1 : 0;
++}
++
+ int SSL_set1_groups_list(SSL *ssl, const char *groups) {
+   if (!ssl->config) {
+     return 0;

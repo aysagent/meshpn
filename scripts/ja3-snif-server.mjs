@@ -22,6 +22,10 @@ import path from 'path';
 import tls from 'tls';
 import { fileURLToPath } from 'url';
 import {
+  atomicWriteJsonFileSync,
+  buildCompactProfileDocument,
+} from './lib/boring-tls-clienthello-profile.mjs';
+import {
   parseFirstTlsClientHelloFromTcpBuf,
   tlsClientHandshakeProfileFromTcpBuf,
 } from './lib/tls-clienthello-ja3.mjs';
@@ -34,13 +38,15 @@ const DEF_KEY = path.join(repoRoot, 'scripts/fixtures/boring-tls-local.key.pem')
 const ROUTE = '/ja3-snif';
 
 function parseArgs(argv) {
-  /** @type {{ host: string, port: number, cert: string, key: string, hexLen: number }} */
+  /** @type {{ host: string, port: number, cert: string, key: string, hexLen: number, profileSavePath: string|null }} */
   const out = {
     host: '127.0.0.1',
     port: 8443,
     cert: process.env.JA3_SNIF_CERT || DEF_CERT,
     key: process.env.JA3_SNIF_KEY || DEF_KEY,
     hexLen: 96,
+    profileSavePath:
+      process.env.JA3_SNIF_PROFILE_SAVE_PATH?.trim() || null,
   };
   for (const a of argv) {
     if (a.startsWith('--host=')) out.host = a.slice('--host='.length).trim();
@@ -49,6 +55,9 @@ function parseArgs(argv) {
     else if (a.startsWith('--key=')) out.key = path.resolve(a.slice('--key='.length).trim());
     else if (a.startsWith('--hex-preview-len=')) {
       out.hexLen = parseInt(a.slice('--hex-preview-len='.length), 10);
+    } else if (a.startsWith('--profile-save-path=')) {
+      const p = a.slice('--profile-save-path='.length).trim();
+      out.profileSavePath = p ? path.resolve(p) : null;
     }
   }
   if (!Number.isFinite(out.port) || out.port < 1 || out.port > 65535) {
@@ -136,7 +145,7 @@ function readHttpHead(sock, maxBytes = 65536, ms = 20000) {
 /**
  * @param {import('net').Socket} socket
  * @param {tls.SecureContext} secureContext
- * @param {{ hexLen: number }} opts
+ * @param {{ hexLen: number, profileSavePath: string|null }} opts
  */
 function handleInbound(socket, secureContext, opts) {
   /** @type {Buffer[]} */
@@ -289,6 +298,16 @@ function handleInbound(socket, secureContext, opts) {
             ),
           );
           console.log(`[ja3-snif] GET ${ROUTE} ${peer} ja3=${profile.ja3.md5}`);
+
+          if (opts.profileSavePath) {
+            try {
+              const doc = buildCompactProfileDocument(profile, ua || '');
+              atomicWriteJsonFileSync(opts.profileSavePath, doc);
+              console.log(`[ja3-snif] profile saved → ${opts.profileSavePath}`);
+            } catch (e) {
+              console.error('[ja3-snif] profile save failed:', e?.message || e);
+            }
+          }
         })
         .catch((e) => {
           console.error('[ja3-snif] http:', e?.message || e);
@@ -331,6 +350,7 @@ function main() {
   --host=127.0.0.1   --port=8443
   --cert=PATH        --key=PATH   (или JA3_SNIF_CERT / JA3_SNIF_KEY)
   --hex-preview-len=96
+  --profile-save-path=PATH   компактный JSON профиля после GET /ja3-snif (или JA3_SNIF_PROFILE_SAVE_PATH)
 Откройте в браузере: https://127.0.0.1:8443/ja3-snif`);
     process.exit(0);
   }
@@ -350,7 +370,12 @@ function main() {
     maxVersion: 'TLSv1.3',
   });
 
-  const srv = net.createServer((sock) => handleInbound(sock, secureContext, { hexLen: cfg.hexLen }));
+  const srv = net.createServer((sock) =>
+    handleInbound(sock, secureContext, {
+      hexLen: cfg.hexLen,
+      profileSavePath: cfg.profileSavePath,
+    }),
+  );
 
   srv.listen(cfg.port, cfg.host, () => {
     console.log(
