@@ -438,8 +438,9 @@ test('helper: SIGTERM после успешного handshake', async (t) => {
   const port = typeof addr === 'object' && addr ? addr.port : null;
   assert.ok(port);
 
+  let heldSock = null;
   const connPromise = once(server, 'secureConnection').then(([sock]) => {
-    sock.destroy();
+    heldSock = sock;
   });
 
   const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -464,6 +465,7 @@ test('helper: SIGTERM после успешного handshake', async (t) => {
     const [code, sig] = await raceMs(once(child, 'exit'), 5000, 'выход после SIGTERM');
     assert.strictEqual(sig, 'SIGTERM');
     assert.strictEqual(code, null);
+    if (heldSock) heldSock.destroy();
   } finally {
     server.close();
     try {
@@ -653,20 +655,30 @@ test('helper: дубликат cipher id в client_hello_profile — отказ'
   }
 });
 
-test('helper: неизвестный TLS 1.3 cipher id в client_hello_profile — отказ', async (t) => {
+test('helper: cipher_suites с префиксом TLS 1.2 (как в JA3) — TLS 1.3 порядок сохраняется, handshake OK', async (t) => {
   if (!fs.existsSync(helper)) {
     t.skip();
     return;
   }
+  if (!fs.existsSync(LOCAL_KEY) || !fs.existsSync(LOCAL_CERT)) {
+    t.skip(`нет ${LOCAL_CERT}`);
+    return;
+  }
 
-  const dummy = net.createServer((c) => {
-    c.on('error', () => {});
+  const certPem = fs.readFileSync(LOCAL_CERT, 'utf8');
+  const server = tls.createServer({
+    key: fs.readFileSync(LOCAL_KEY, 'utf8'),
+    cert: certPem,
+    minVersion: 'TLSv1.3',
+    maxVersion: 'TLSv1.3',
+    ALPNProtocols: ['http/1.1', 'h2'],
   });
+
   await new Promise((resolve, reject) => {
-    dummy.once('error', reject);
-    dummy.listen(0, '127.0.0.1', resolve);
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
   });
-  const addr = dummy.address();
+  const addr = server.address();
   const port = typeof addr === 'object' && addr ? addr.port : null;
   assert.ok(port);
 
@@ -677,23 +689,28 @@ test('helper: неизвестный TLS 1.3 cipher id в client_hello_profile �
     sendConfigFrame(child.stdin, {
       host: '127.0.0.1',
       port,
-      ca_pem: MIN_CA_PEM,
-      servername: 'test-ca',
-      verify_host: 'test-ca',
+      ca_pem: certPem,
+      servername: 'localhost',
+      verify_host: 'localhost',
       alpn: ['http/1.1'],
-      handshake_timeout_ms: 2000,
+      handshake_timeout_ms: 15000,
       client_hello_profile: {
-        cipher_suites: [0xfeff],
-        supported_groups: [29],
+        cipher_suites: [
+          49195,
+          49196,
+          4865,
+          4867,
+          4866,
+        ],
+        supported_groups: [29, 23, 24],
         ec_point_formats: [0],
       },
     });
 
-    const j = await raceMs(readJsonFrame(child.stdout), 8000, 'ответ helper');
-    assert.strictEqual(j.ok, false);
-    assert.match(String(j.error || ''), /SSL_CTX_set_tls13_client_cipher_order/i);
+    const j = await raceMs(readJsonFrame(child.stdout), 20000, 'ответ helper');
+    assert.strictEqual(j.ok, true, JSON.stringify(j));
   } finally {
-    dummy.close();
+    server.close();
     try {
       child.kill('SIGKILL');
     } catch {

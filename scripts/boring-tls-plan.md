@@ -56,7 +56,7 @@
 
 | Поле | Тип | Описание |
 |------|-----|----------|
-| `cipher_suites` | number[] | IANA id TLS 1.3 cipher (**порядок на wire** в ClientHello через форк BoringSSL: `SSL_CTX_set_tls13_client_cipher_order`, патч `native/boring_tls/patches/boringssl-meshvpn-tls13-cipher-order.patch`; только известные TLS 1.3 suite из таблицы BoringSSL, без дубликатов) |
+| `cipher_suites` | number[] | Полный список после удаления GREASE (как в JA3), часто **TLS 1.2 + TLS 1.3** подряд; helper берёт на wire только suites, которые BoringSSL считает TLS 1.3; порядок среди них совпадает с профилем (`SSL_CTX_set_tls13_client_cipher_order`, патч `patches/boringssl-meshvpn-tls13-cipher-order.patch`). Дубликаты среди TLS 1.3 отвергаются |
 | `supported_groups` | number[] | id named groups (**порядок** для `SSL_CTX_set1_groups_list`): 23, 24, 25, 29, 30 — см. `NamedGroupOpenSslName` в helper |
 | `ec_point_formats` | number[] | сохраняется в файле профиля для JA3; **пока не задаёт BoringSSL** отдельным API — см. раздел «Ограничения» |
 | `ja3_md5` | string | опционально: ожидаемый MD5 JA3 (32 hex lowercase); сравнение после отправки ClientHello |

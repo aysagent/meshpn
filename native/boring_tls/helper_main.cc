@@ -332,6 +332,16 @@ const char* NamedGroupOpenSslName(uint16_t id) {
   }
 }
 
+/** True if |id| is a cipher suite BoringSSL can negotiate on TLS 1.3. */
+static bool CipherSuiteNegotiatesTls13(uint16_t id) {
+  const SSL_CIPHER* c = SSL_get_cipher_by_value(id);
+  if (c == nullptr) {
+    return false;
+  }
+  return SSL_CIPHER_get_min_version(c) <= TLS1_3_VERSION &&
+         SSL_CIPHER_get_max_version(c) >= TLS1_3_VERSION;
+}
+
 struct Ja3LogCfg {
   bool log_ja3 = false;
   bool ja3_verbose = false;
@@ -350,8 +360,9 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
         "IANA ids)";
     return false;
   }
-  std::vector<uint16_t> cipher_order;
-  cipher_order.reserve(p["cipher_suites"].size());
+  std::vector<uint16_t> tls13_cipher_order;
+  tls13_cipher_order.reserve(p["cipher_suites"].size());
+  size_t skipped_non_tls13 = 0;
   for (const auto& item : p["cipher_suites"]) {
     if (!item.is_number_unsigned() && !item.is_number_integer()) {
       *err_out = "client_hello_profile.cipher_suites must be integers";
@@ -364,10 +375,25 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
       *err_out = "client_hello_profile cipher id out of uint16 range";
       return false;
     }
-    cipher_order.push_back(static_cast<uint16_t>(raw));
+    auto id = static_cast<uint16_t>(raw);
+    if (CipherSuiteNegotiatesTls13(id)) {
+      tls13_cipher_order.push_back(id);
+    } else {
+      skipped_non_tls13++;
+    }
   }
-  if (SSL_CTX_set_tls13_client_cipher_order(ctx, cipher_order.data(),
-                                            cipher_order.size()) != 1) {
+  if (skipped_non_tls13 > 0) {
+    std::cerr << "boring-tls-helper: note: отфильтровано " << skipped_non_tls13
+              << " cipher suite id из профиля (JA3 обычно смешивает TLS 1.2 и "
+                 "TLS 1.3; на wire задаётся только порядок TLS 1.3).\n";
+  }
+  if (tls13_cipher_order.empty()) {
+    std::cerr
+        << "boring-tls-helper: note: в профиле не осталось TLS 1.3 cipher — "
+           "используется порядок BoringSSL по умолчанию.\n";
+  }
+  if (SSL_CTX_set_tls13_client_cipher_order(ctx, tls13_cipher_order.data(),
+                                            tls13_cipher_order.size()) != 1) {
     ERR_print_errors_fp(stderr);
     *err_out =
         "SSL_CTX_set_tls13_client_cipher_order failed (unknown TLS 1.3 cipher "

@@ -40,7 +40,7 @@ const ROUTE = '/ja3-snif';
 function parseArgs(argv) {
   /** @type {{ host: string, port: number, cert: string, key: string, hexLen: number, profileSavePath: string|null }} */
   const out = {
-    host: '127.0.0.1',
+    host: '0.0.0.0',
     port: 8443,
     cert: process.env.JA3_SNIF_CERT || DEF_CERT,
     key: process.env.JA3_SNIF_KEY || DEF_KEY,
