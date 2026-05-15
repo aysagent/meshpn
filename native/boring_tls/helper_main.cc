@@ -348,6 +348,11 @@ static bool CipherSuiteNegotiatesTls13(uint16_t id) {
          SSL_CIPHER_get_max_version(c) >= TLS1_3_VERSION;
 }
 
+/** TLS 1.2-(или SSL3-)only suite: идёт во второй блок списка cipher в ClientHello. */
+static bool CipherSuiteMaxBelowTls13(const SSL_CIPHER* c) {
+  return c != nullptr && SSL_CIPHER_get_max_version(c) < TLS1_3_VERSION;
+}
+
 struct Ja3LogCfg {
   bool log_ja3 = false;
   bool ja3_verbose = false;
@@ -368,7 +373,9 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
   }
   std::vector<uint16_t> tls13_cipher_order;
   tls13_cipher_order.reserve(p["cipher_suites"].size());
-  size_t skipped_non_tls13 = 0;
+  std::string tls12_cipher_rule;
+  size_t tls12_suite_count = 0;
+  size_t skipped_unknown_cipher = 0;
   for (const auto& item : p["cipher_suites"]) {
     if (!item.is_number_unsigned() && !item.is_number_integer()) {
       *err_out = "client_hello_profile.cipher_suites must be integers";
@@ -384,15 +391,47 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
     auto id = static_cast<uint16_t>(raw);
     if (CipherSuiteNegotiatesTls13(id)) {
       tls13_cipher_order.push_back(id);
-    } else {
-      skipped_non_tls13++;
+      continue;
     }
+    const SSL_CIPHER* c = SSL_get_cipher_by_value(id);
+    if (!CipherSuiteMaxBelowTls13(c)) {
+      skipped_unknown_cipher++;
+      continue;
+    }
+    const char* nm = SSL_CIPHER_get_name(c);
+    if (nm == nullptr || nm[0] == '\0') {
+      skipped_unknown_cipher++;
+      continue;
+    }
+    if (!tls12_cipher_rule.empty()) {
+      tls12_cipher_rule.push_back(':');
+    }
+    tls12_cipher_rule += nm;
+    tls12_suite_count++;
   }
-  if (skipped_non_tls13 > 0) {
-    std::cerr << "boring-tls-helper: note: отфильтровано " << skipped_non_tls13
-              << " cipher suite id из профиля (JA3 обычно смешивает TLS 1.2 и "
-                 "TLS 1.3; на wire задаётся только порядок TLS 1.3).\n";
+  if (skipped_unknown_cipher > 0) {
+    std::cerr << "boring-tls-helper: warning: client_hello_profile.cipher_suites — "
+              << skipped_unknown_cipher
+              << " id не распознаны BoringSSL как TLS 1.2/1.3 suite (пропущены).\n";
   }
+
+  if (!tls12_cipher_rule.empty()) {
+    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+    SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
+    if (SSL_CTX_set_cipher_list(ctx, tls12_cipher_rule.c_str()) != 1) {
+      ERR_print_errors_fp(stderr);
+      *err_out =
+          "SSL_CTX_set_cipher_list failed for TLS 1.2 cipher suites from profile";
+      return false;
+    }
+    std::cerr << "boring-tls-helper: note: TLS 1.2 cipher block из профиля ("
+              << tls12_suite_count
+              << " suite) для паритета JA3 с браузером.\n";
+  } else {
+    SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
+    SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
+  }
+
   if (tls13_cipher_order.empty()) {
     std::cerr
         << "boring-tls-helper: note: в профиле не осталось TLS 1.3 cipher — "
@@ -687,9 +726,6 @@ int main(int argc, char** argv) {
   ja3_cfg.log_ja3 = cfg.value("log_ja3", false);
   ja3_cfg.ja3_verbose = cfg.value("ja3_verbose", false);
 
-  SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
-  SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
-
   std::string prof_err;
   if (cfg.contains("client_hello_profile") &&
       cfg["client_hello_profile"].is_object()) {
@@ -700,6 +736,8 @@ int main(int argc, char** argv) {
       return send_err(prof_err.c_str(), 5);
     }
   } else {
+    SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
+    SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
     // Порядок suite’ов в духе Chrome / TLS 1.3
     SSL_CTX_set_cipher_list(
         ctx,

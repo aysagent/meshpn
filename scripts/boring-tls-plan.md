@@ -56,7 +56,7 @@
 
 | Поле | Тип | Описание |
 |------|-----|----------|
-| `cipher_suites` | number[] | Полный список после удаления GREASE (как в JA3), часто **TLS 1.2 + TLS 1.3** подряд; helper берёт на wire только suites, которые BoringSSL считает TLS 1.3; порядок среди них совпадает с профилем (`SSL_CTX_set_tls13_client_cipher_order`, патч `patches/boringssl-meshvpn-tls13-cipher-order.patch`). Дубликаты среди TLS 1.3 отвергаются |
+| `cipher_suites` | number[] | Полный список после удаления GREASE (как в JA3): сначала типично **TLS 1.3**, затем **TLS 1.2**. Helper выставляет TLS 1.3 порядок через патч BoringSSL и при наличии TLS 1.2 id включает **`TLS1_2…TLS1_3`** и `SSL_CTX_set_cipher_list` для второго блока в том же порядке — так восполняется JA3-поле cipher. Дубликаты среди TLS 1.3 по-прежнему отвергаются API стека. Полное совпадение JA3 с эталоном браузера может не достигаться из‑за порядка расширений / ec_point_formats — см. «Ограничения» |
 | `supported_groups` | number[] | id named groups (**порядок** для `SSL_CTX_set1_groups_list`): классические `23,24,25,29,30` (P-256…X448), постквантовые/гибриды из BoringSSL — **`4588` (`X25519MLKEM768`)**, **`25497` (`X25519Kyber768Draft00`)**, **`514` (`MLKEM1024`)** и др.; см. `NamedGroupOpenSslName` / `SSL_GROUP_*` в `openssl/ssl.h` |
 | `ec_point_formats` | number[] | сохраняется в файле профиля для JA3; **пока не задаёт BoringSSL** отдельным API — см. раздел «Ограничения» |
 | `ja3_md5` | string | опционально: ожидаемый MD5 JA3 (32 hex lowercase); сравнение после отправки ClientHello |
