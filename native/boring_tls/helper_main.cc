@@ -327,6 +327,12 @@ const char* NamedGroupOpenSslName(uint16_t id) {
       return "X25519";
     case 30:
       return "X448";
+    case SSL_GROUP_X25519_MLKEM768:
+      return "X25519MLKEM768";
+    case SSL_GROUP_X25519_KYBER768_DRAFT00:
+      return "X25519Kyber768Draft00";
+    case SSL_GROUP_MLKEM1024:
+      return "MLKEM1024";
     default:
       return nullptr;
   }

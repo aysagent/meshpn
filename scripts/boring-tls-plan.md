@@ -57,7 +57,7 @@
 | Поле | Тип | Описание |
 |------|-----|----------|
 | `cipher_suites` | number[] | Полный список после удаления GREASE (как в JA3), часто **TLS 1.2 + TLS 1.3** подряд; helper берёт на wire только suites, которые BoringSSL считает TLS 1.3; порядок среди них совпадает с профилем (`SSL_CTX_set_tls13_client_cipher_order`, патч `patches/boringssl-meshvpn-tls13-cipher-order.patch`). Дубликаты среди TLS 1.3 отвергаются |
-| `supported_groups` | number[] | id named groups (**порядок** для `SSL_CTX_set1_groups_list`): 23, 24, 25, 29, 30 — см. `NamedGroupOpenSslName` в helper |
+| `supported_groups` | number[] | id named groups (**порядок** для `SSL_CTX_set1_groups_list`): классические `23,24,25,29,30` (P-256…X448), постквантовые/гибриды из BoringSSL — **`4588` (`X25519MLKEM768`)**, **`25497` (`X25519Kyber768Draft00`)**, **`514` (`MLKEM1024`)** и др.; см. `NamedGroupOpenSslName` / `SSL_GROUP_*` в `openssl/ssl.h` |
 | `ec_point_formats` | number[] | сохраняется в файле профиля для JA3; **пока не задаёт BoringSSL** отдельным API — см. раздел «Ограничения» |
 | `ja3_md5` | string | опционально: ожидаемый MD5 JA3 (32 hex lowercase); сравнение после отправки ClientHello |
 | `ja3_strict` | bool | если `true` и digest не совпал — handshake считается ошибкой (`ja3 profile mismatch (strict)`), код выхода 13 |
