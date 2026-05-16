@@ -123,6 +123,10 @@ import {
   ja3FromTcpBuf,
 } from './lib/tls-clienthello-ja3.mjs';
 import { ja4FromTcpBuf } from './lib/tls-clienthello-ja4.mjs';
+import {
+  profileFileToHelperClientHelloBlock,
+  readClienthelloProfileFileSync,
+} from './lib/boring-tls-clienthello-profile.mjs';
 import { PeerConnection, setSctpSettings } from 'node-datachannel';
 // @matrixai/logger — CJS; в ESM класс лежит в .default, не в корне namespace.
 import matrixAiLogger from '@matrixai/logger';
