@@ -62,9 +62,18 @@
 | `ja3_string` | string | эталонная строка JA3 до MD5 (как в ja3-snif); при расхождении MD5 helper печатает expected(profile) vs actual(wire) |
 | `ja3_md5` | string | опционально: ожидаемый MD5 JA3 (32 hex lowercase); сравнение после отправки ClientHello |
 | `ja3_strict` | bool | если `true` и digest не совпал — handshake считается ошибкой (`ja3 profile mismatch (strict)`), код выхода 13 |
-| `permute_extensions` | bool | опционально: проброс в `SSL_CTX_set_permute_extensions` BoringSSL; **`false`** — фиксированный порядок расширений стека (иногда ближе к отладке; с порядком Chromium всё равно может не совпасть) |
+| `permute_extensions` | bool | проброс в `SSL_CTX_set_permute_extensions` BoringSSL. **Если ключ отсутствует** — **`true`** (как Chromium): между рукопожатиями может меняться порядок типов расширений на wire → меняется **wire JA3**, а **`ja3_sorted_md5`** при том же профиле остаётся стабильным. **`false`** — фиксированный порядок расширений стека (удобно для эталонного wire-JA3 и для `ja3_strict`). **`ja3_strict: true` вместе с `permute_extensions: true`** — ошибка конфигурации: helper не выполняет handshake |
+
+**Ожидаемый wire-JA3 из файла профиля:** при профиле из `ja3-snif` поля `ja3_md5` / `ja3_string` соответствуют **конкретному** захвату. Если включена перестановка расширений (`permute_extensions` по умолчанию), фактический wire-JA3 между сессиями **не обязан** совпадать с этим снимком. **`clean-vpn`** в этом режиме **не передаёт** в helper `ja3_md5` / `ja3_string`, пока не включён **`--boring-tls-profile-ja3-strict`** (тогда в профиле должно быть **`permute_extensions: false`**).
 
 **ALPN:** в реальном соединении список `alpn` в `config` задаёт **только** `clean-vpn` (`resolveTlsAlpnProtocols`, `--http-vers`). Поле `tls_info.alpn` в файле профиля — справочно (JA3 на содержимое ALPN не смотрит).
+
+### Wire JA3 vs JA3 sorted и `permute_extensions`
+
+- **JA3 (wire)** зависит от **порядка** типов расширений (и шифров, групп и т.д.) **на проводе** после фильтра GREASE — как у классических JA3 DB.
+- **JA3 sorted** сортирует те же списки перед сборкой строки, поэтому **не меняется**, если меняется только перестановка расширений при неизменном множестве полей профиля — это основной стабильный отпечаток при «живом» Chromium-подобном ClientHello.
+- В экспортируемый JSON профиля (`buildCompactProfileDocument`) записывается **`permute_extensions: true`**; при необходимости байт-в-байт совпадения wire-JA3 со старым снимком задайте в файле **`permute_extensions: false`**.
+- **GREASE** по-прежнему исключается из строк JA3; случайные GREASE на wire не должны путаться с вариативностью от `permute_extensions`.
 
 ### JA3 в логах (без tcpdump)
 
@@ -115,7 +124,7 @@ cmake --build native/boring_tls/build --target boring-tls-helper
 - `--type=boring-tls` на **client**; на **exit** тот же сервер, что и `--type=tls` (алиас по типу).
 - Остальные флаги TLS (`--tls-server-name`, `--tls-client-sni`, `--http-vers`, `--tls-cert-dir`, `--shared-hmac-key`) — как у `tls`.
 - **`--boring-tls-clienthello-profile=PATH`** (env `CLEAN_VPN_BORING_TLS_CLIENTHELLO_PROFILE`): перед **каждым** TCP/TLS к exit файл перечитывается; блок передаётся в helper как `client_hello_profile`. Без флага — дефолтный порядок TLS 1.3 cipher/groups в BoringSSL (без профиля).
-- **`--boring-tls-profile-ja3-strict`** (env `CLEAN_VPN_BORING_TLS_JA3_STRICT`): строгое совпадение `ja3_md5` из файла с фактическим ClientHello helper.
+- **`--boring-tls-profile-ja3-strict`** (env `CLEAN_VPN_BORING_TLS_JA3_STRICT`): строгое совпадение `ja3_md5` из файла с фактическим ClientHello helper; в JSON профиля нужно **`permute_extensions: false`** (иначе `clean-vpn` и helper отвергнут конфигурацию как несовместимую с перестановкой расширений).
 
 ## Файл профиля и ja3-snif-server
 
@@ -125,7 +134,7 @@ cmake --build native/boring_tls/build --target boring-tls-helper
 ## Ограничения (GREASE, padding, порядок расширений)
 
 - **JA3** в файле считается по правилам Salesforce с **удалением GREASE** из списков. На wire браузер всё равно вставляет GREASE; побайтовое совпадение ClientHello и **JA4** могут отличаться даже при верных cipher/group и совпавшем JA3 MD5. Порядок **TLS 1.3 cipher suites** в ClientHello задаётся профилем через патч BoringSSL (`SSL_CTX_set_tls13_client_cipher_order`); GREASE-cipher по-прежнему добавляет стек отдельно.
-- **Padding** (расширение 21) и **полный порядок расширений** задаются стеком BoringSSL (в т.ч. `permute_extensions`); без форка под Chromium **полное совпадение JA3** с профилем, снятым с Chrome/Chromium, **часто недостижимо** даже при верных cipher/group — особенно при **`ja3_strict`**. Имеет смысл смотреть в логах сравнение `ja3_string` или не использовать строгий режим, если цель только рабочий VPN.
+- **Padding** (расширение 21) и **полный порядок расширений** задаются стеком BoringSSL; по умолчанию для `client_hello_profile` включена **`permute_extensions`** (как у Chromium), поэтому wire-JA3 может отличаться от одноразового снимка ja3-snif. Для строгой проверки задайте **`permute_extensions: false`** и **`ja3_strict`**. Без форка под Chromium **полное совпадение JA3** с профилем браузера **часто недостижимо** даже при верных cipher/group.
 - Следующий шаг (spike): управление GREASE/padding/порядком расширений на стороне BoringSSL.
 
 ## Риски
@@ -149,7 +158,7 @@ cmake --build native/boring_tls/build --target boring-tls-helper
 После `npm run build:boring-tls-helper`:
 
 - `npm run ja3-snif-server` — локальный HTTPS (`127.0.0.1:8443`), JSON по `GET /ja3-snif`: User-Agent, **JA3**, **JA3 sorted**, **JA4**, поля ClientHello для сравнения с Wireshark; опционально `--profile-save-path` для автосохранения компактного профиля; см. [`scripts/ja3-snif-server.mjs`](ja3-snif-server.mjs).
-- `npm run test:boring-tls-smoke` — проверки: бинарь, ошибки конфига/TCP, stdin EOF, полный TLS 1.3 к `tls.Server`, **JA3** (ALPN `h2` + `http/1.1` как у client в clean-vpn), отсутствие `ja3_md5` на stderr без `log_ja3`, **JA3 stderr при `log_ja3`**, **SIGTERM** после handshake (не Windows).
+- `npm run test:boring-tls-smoke` — проверки: бинарь, ошибки конфига/TCP, stdin EOF, полный TLS 1.3 к `tls.Server`, **JA3** (ALPN `h2` + `http/1.1` как у client в clean-vpn; эталонный wire digest при **`permute_extensions: false`**), отсутствие `ja3_md5` на stderr без `log_ja3`, **JA3 stderr при `log_ja3`**, **`permute_extensions`** — разный wire JA3 при неизменном **`ja3_sorted_md5`**, конфликт **`ja3_strict` + permute**, **SIGTERM** после handshake (не Windows).
 - `npm run test:tls-ja4` — JA4 по спецификации FoxIO (`scripts/test-tls-clienthello-ja4.mjs`), без сборки helper.
 
 ## Что остаётся вне автотестов

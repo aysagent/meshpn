@@ -154,6 +154,8 @@ export function buildCompactProfileDocument(handshakeOk, userAgent) {
       alpn: Array.isArray(alpn) ? [...alpn] : [],
       supported_versions: Array.isArray(sv) ? [...sv] : [],
     },
+    /** Как у Chromium: порядок расширений на wire меняется между сессиями; ja3_sorted_md5 стабилен. */
+    permute_extensions: true,
   };
   if (sorted && typeof sorted.md5 === 'string') {
     doc.ja3_sorted_md5 = sorted.md5;
@@ -172,21 +174,30 @@ export function buildCompactProfileDocument(handshakeOk, userAgent) {
  */
 export function profileFileToHelperClientHelloBlock(profile, opts = {}) {
   const ja3Strict = Boolean(opts.ja3Strict);
+  const permute =
+    profile.permute_extensions !== undefined ? profile.permute_extensions : true;
+
+  if (ja3Strict && permute) {
+    throw new Error(
+      'boring-tls profile: ja3_strict несовместим с permute_extensions; задайте permute_extensions:false в JSON профиля или отключите --boring-tls-profile-ja3-strict',
+    );
+  }
+
   /** @type {Record<string, unknown>} */
   const out = {
     cipher_suites: [...profile.cipher_suites],
     supported_groups: [...profile.supported_groups],
     ec_point_formats: [...profile.ec_point_formats],
+    permute_extensions: permute,
   };
-  if (profile.ja3_md5) {
+
+  const omitWireJa3Expectation = permute && !ja3Strict;
+  if (profile.ja3_md5 && !omitWireJa3Expectation) {
     out.ja3_md5 = profile.ja3_md5;
     out.ja3_strict = ja3Strict;
   }
-  if (profile.ja3_string) {
+  if (profile.ja3_string && !omitWireJa3Expectation) {
     out.ja3_string = profile.ja3_string;
-  }
-  if (profile.permute_extensions !== undefined) {
-    out.permute_extensions = profile.permute_extensions;
   }
   return out;
 }

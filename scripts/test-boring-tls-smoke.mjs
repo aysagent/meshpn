@@ -561,6 +561,8 @@ test('helper: client_hello_profile с дефолтными cipher/groups — т�
         cipher_suites: [4865, 4866, 4867],
         supported_groups: [29, 23, 24],
         ec_point_formats: [0],
+        /** Эталон EXPECTED_JA3_DIGEST зафиксирован при фиксированном порядке расширений. */
+        permute_extensions: false,
       },
     });
 
@@ -629,6 +631,7 @@ test('helper: client_hello_profile ja3_strict при неверном ja3_md5 �
         cipher_suites: [4865, 4866, 4867],
         supported_groups: [29, 23, 24],
         ec_point_formats: [0],
+        permute_extensions: false,
         ja3_md5: '00000000000000000000000000000000',
         ja3_strict: true,
       },
@@ -646,6 +649,142 @@ test('helper: client_hello_profile ja3_strict при неверном ja3_md5 �
       /* ignore */
     }
   }
+});
+
+test('helper: ja3_strict несовместим с permute_extensions — отказ конфигурации', async (t) => {
+  if (!fs.existsSync(helper)) {
+    t.skip();
+    return;
+  }
+
+  const dummy = net.createServer((c) => {
+    c.on('error', () => {});
+  });
+  await new Promise((resolve, reject) => {
+    dummy.once('error', reject);
+    dummy.listen(0, '127.0.0.1', resolve);
+  });
+  const addr = dummy.address();
+  const port = typeof addr === 'object' && addr ? addr.port : null;
+  assert.ok(port);
+
+  const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  await once(child, 'spawn');
+
+  try {
+    sendConfigFrame(child.stdin, {
+      host: '127.0.0.1',
+      port,
+      ca_pem: MIN_CA_PEM,
+      servername: 'test-ca',
+      verify_host: 'test-ca',
+      alpn: ['http/1.1'],
+      handshake_timeout_ms: 2000,
+      client_hello_profile: {
+        cipher_suites: [4865, 4866, 4867],
+        supported_groups: [29, 23, 24],
+        ec_point_formats: [0],
+        permute_extensions: true,
+        ja3_strict: true,
+      },
+    });
+
+    const j = await raceMs(readJsonFrame(child.stdout), 8000, 'ответ helper');
+    assert.strictEqual(j.ok, false);
+    assert.match(String(j.error || ''), /incompatible|permute_extensions/i);
+  } finally {
+    dummy.close();
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
+  }
+});
+
+test('helper: permute_extensions — разный wire JA3, один ja3_sorted_md5 за несколько коннектов', async (t) => {
+  if (!fs.existsSync(helper)) {
+    t.skip();
+    return;
+  }
+
+  const profile = {
+    cipher_suites: [4865, 4866, 4867],
+    supported_groups: [29, 23, 24],
+    ec_point_formats: [0],
+    permute_extensions: true,
+  };
+
+  /** @type {Set<string>} */
+  const wireDigests = new Set();
+  /** @type {string | null} */
+  let sortedDigest = null;
+
+  const rounds = 8;
+  for (let i = 0; i < rounds; i++) {
+    const server = net.createServer();
+    const ja3Promise = new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.once('connection', (sock) => {
+        /** @type {Buffer[]} */
+        const acc = [];
+        sock.on('data', (d) => {
+          acc.push(d);
+          const r = ja3FromTcpBuf(Buffer.concat(acc));
+          if (r) {
+            resolve(r);
+            sock.destroy();
+          }
+        });
+        sock.on('error', () => {});
+      });
+    });
+
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const addr = server.address();
+    const port = typeof addr === 'object' && addr ? addr.port : null;
+    assert.ok(port);
+
+    const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+    await once(child, 'spawn');
+
+    try {
+      sendConfigFrame(child.stdin, {
+        host: '127.0.0.1',
+        port,
+        ca_pem: MIN_CA_PEM,
+        servername: 'test-ca',
+        verify_host: 'test-ca',
+        alpn: ['h2', 'http/1.1'],
+        handshake_timeout_ms: 8000,
+        client_hello_profile: profile,
+      });
+
+      const j = await raceMs(ja3Promise, 15000, `JA3 из потока (раунд ${i})`);
+      wireDigests.add(j.ja3Digest);
+      if (sortedDigest === null) sortedDigest = j.ja3SortedDigest;
+      assert.strictEqual(
+        j.ja3SortedDigest,
+        sortedDigest,
+        `ja3SortedString=${j.ja3SortedString}`,
+      );
+    } finally {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+      server.close();
+    }
+  }
+
+  assert.ok(
+    wireDigests.size >= 2,
+    `ожидались ≥2 различных wire JA3 за ${rounds} попыток, получено: ${[...wireDigests].join(', ')}`,
+  );
 });
 
 test('helper: дубликат cipher id в client_hello_profile — отказ', async (t) => {

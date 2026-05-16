@@ -385,14 +385,23 @@ struct Ja3LogCfg {
 
 bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
                              Ja3LogCfg* ja3_cfg, std::string* err_out) {
+  bool permute_extensions = true;
   if (p.contains("permute_extensions")) {
     if (!p["permute_extensions"].is_boolean()) {
       *err_out =
           "client_hello_profile.permute_extensions must be boolean";
       return false;
     }
-    SSL_CTX_set_permute_extensions(ctx,
-                                   p["permute_extensions"].get<bool>() ? 1 : 0);
+    permute_extensions = p["permute_extensions"].get<bool>();
+  }
+  SSL_CTX_set_permute_extensions(ctx, permute_extensions ? 1 : 0);
+
+  const bool ja3_strict_cfg = p.value("ja3_strict", false);
+  if (ja3_strict_cfg && permute_extensions) {
+    *err_out =
+        "client_hello_profile: ja3_strict is incompatible with "
+        "permute_extensions (set permute_extensions to false)";
+    return false;
   }
 
   if (!p.contains("cipher_suites") || !p["cipher_suites"].is_array() ||
@@ -526,7 +535,7 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
     ja3_cfg->expected_ja3_string = p["ja3_string"].get<std::string>();
   }
   if (ja3_cfg) {
-    ja3_cfg->ja3_strict = p.value("ja3_strict", false);
+    ja3_cfg->ja3_strict = ja3_strict_cfg;
   }
   return true;
 }
@@ -561,9 +570,10 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
         std::cerr
             << "boring-tls-helper: hint: полный профиль от ja3-snif уже содержит "
                "ja3_string — передайте его в helper (clean-vpn передаёт при наличии "
-               "в JSON); иначе --tls-log-ja3 + --ja3-verbose на клиенте. Частая "
-               "причина расхождения — порядок типов расширений (Chromium ≠ upstream "
-               "BoringSSL); эксперимент: \"permute_extensions\": false в профиле.\n";
+               "в JSON), если не включён permute без ja3_strict; иначе --tls-log-ja3 + "
+               "--ja3-verbose на клиенте. Частая причина расхождения — порядок типов "
+               "расширений (Chromium ≠ upstream BoringSSL); для фиксированного wire-JA3 "
+               "задайте \"permute_extensions\": false и совместимый профиль.\n";
       }
     }
   }
