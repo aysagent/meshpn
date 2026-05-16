@@ -86,7 +86,7 @@
  * по истечении M с следующий IPv4 снова может подключить lazy — это ожидаемо, не «вечная» блокировка.
  * CLEAN_VPN_KEEPALIVE_DEBUG=1: лог ip-протокола/длины при lazy/cooldown и отбросе не-IPv4 (версия из старших 4 бит байта 0 + первые 8 байт hex).
  * CLEAN_VPN_TLS_MUX_DEBUG=1 (exit|client + tls|boring-tls): лог до разбора ClientHello на exit (таймаут/close/error, первый chunk hex); на client — TCP connect и гипотеза при таймауте handshake (`tls`; для `boring-tls` рукопожатие в helper — см. stderr helper).
- * JA3 (опционально): `CLEAN_VPN_TLS_LOG_JA3=1` и/или `--tls-log-ja3`; подробности — `--ja3-verbose` (включает JA3 само по себе) или при `CLEAN_VPN_TLS_LOG_JA3=1` ещё `CLEAN_VPN_JA3_VERBOSE=1`. Exit + `--type=tls`: JA3 входящего ClientHello из mux; client + `--type=boring-tls`: stderr helper (`log_ja3` в JSON). Для `--type=tls` в Node отпечаток в том же процессе не считается — смотрите лог exit или используйте boring-tls на клиенте.
+ * JA3 (опционально): `CLEAN_VPN_TLS_LOG_JA3=1` и/или `--tls-log-ja3`; выводятся **JA3 wire** и **JA3 sorted** MD5 (совпадают с `tls-clienthello-ja3.mjs` и helper). Подробности — `--ja3-verbose` (включает JA3 само по себе) или при `CLEAN_VPN_TLS_LOG_JA3=1` ещё `CLEAN_VPN_JA3_VERBOSE=1`. Exit + `--type=tls`: JA3 входящего ClientHello из mux; client + `--type=boring-tls`: stderr helper (`log_ja3` в JSON) и строки `[clean-vpn] boring-tls JA3 …` после ответа helper. Для `--type=tls` в Node отпечаток в том же процессе не считается — смотрите лог exit или используйте boring-tls на клиенте.
  * Шум IPv6 на tun при желании уменьняют вручную (отключение IPv6 на интерфейсе, sysctl) — скрипт это не автоматизирует.
  * QUIC/quic-ext в v1 без изменений (флаг на них не действует). Pong WS на idle не влияет.
  *
@@ -1198,7 +1198,10 @@ async function connectCleanVpnBoringTlsClient(opts) {
   );
 
   const child = spawn(exe, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  /** @type {Buffer[]} */
+  const boringTlsStderrChunks = [];
   child.stderr?.on('data', (buf) => {
+    boringTlsStderrChunks.push(Buffer.from(buf));
     try {
       process.stderr.write(buf);
     } catch {
@@ -1265,6 +1268,17 @@ async function connectCleanVpnBoringTlsClient(opts) {
           ? resp.error
           : 'boring-tls-helper отказ (см. stderr)',
       );
+    }
+    if (tlsLogJa3 || ja3Verbose) {
+      const errText = Buffer.concat(boringTlsStderrChunks).toString('utf8');
+      const jw = errText.match(/ja3_md5=([0-9a-f]{32})/);
+      const js = errText.match(/ja3_sorted_md5=([0-9a-f]{32})/);
+      if (jw) {
+        console.log(`[clean-vpn] boring-tls JA3 wire md5=${jw[1]} (Salesforce JA3 по проводу, сверка с JA3 DB для этого ClientHello)`);
+      }
+      if (js) {
+        console.log(`[clean-vpn] boring-tls JA3 sorted md5=${js[1]} (те же компоненты, списки отсортированы; стабильнее при permute_extensions)`);
+      }
     }
     const negotiatedAlpn = resp.alpn != null ? String(resp.alpn) : '';
 
@@ -4682,7 +4696,9 @@ function tryLogExitTlsJa3(fullBuf, helloParse, opts) {
         return;
       }
       console.log(`[clean-vpn] tls ja3 (exit): ja3_md5=${d.ja3Digest}`);
+      console.log(`[clean-vpn] tls ja3 (exit): ja3_sorted_md5=${d.ja3SortedDigest}`);
       console.log(`[clean-vpn] tls ja3 (exit): ja3_string=${d.ja3String}`);
+      console.log(`[clean-vpn] tls ja3 (exit): ja3_sorted_string=${d.ja3SortedString}`);
       console.log(`[clean-vpn] tls ja3 (exit): legacy_version=${d.legacyVersion}`);
       console.log(`[clean-vpn] tls ja3 (exit): ciphers=${d.ciphers.join(',')}`);
       console.log(`[clean-vpn] tls ja3 (exit): extensions=${d.extTypes.join(',')}`);
@@ -4693,6 +4709,7 @@ function tryLogExitTlsJa3(fullBuf, helloParse, opts) {
       const j = ja3FromTcpBuf(fullBuf);
       if (!j) return;
       console.log(`[clean-vpn] tls ja3 (exit): ja3_md5=${j.ja3Digest}`);
+      console.log(`[clean-vpn] tls ja3 (exit): ja3_sorted_md5=${j.ja3SortedDigest}`);
     }
   } catch (e) {
     console.warn('[clean-vpn] tls ja3 (exit):', e?.message || e);
@@ -7163,8 +7180,8 @@ async function main() {
 --tls-probe-max-seconds=S: лимит времени passthrough-сессии (default 30)
 --tls-probe-full-proxy-per-ip=K: не более K «длинных» passthrough с одного IP за сутки (default 0 = только короткий)
 --http-vers=1.1: только с --type=tls или boring-tls (client и exit); принудительный HTTP/1.1 без h2; совместно обновляйте код на обеих сторонах
---tls-log-ja3: JA3 (MD5) по ClientHello — exit + --type=tls (stdout); client + boring-tls — stderr helper. Env: CLEAN_VPN_TLS_LOG_JA3=1 (также true/yes). Для --type=tls на клиенте сырый ClientHello недоступен Node — смотрите лог exit или используйте boring-tls.
---ja3-verbose: подробный JA3 (строка до MD5, поля GREASE-очищенные, hex префикса TCP); сам включает вывод JA3. Env при уже включённом CLEAN_VPN_TLS_LOG_JA3: CLEAN_VPN_JA3_VERBOSE=1.
+--tls-log-ja3: JA3 wire и JA3 sorted (MD5) по ClientHello — exit + --type=tls (stdout); client + boring-tls — stderr helper и строки `[clean-vpn] boring-tls JA3 …`. Env: CLEAN_VPN_TLS_LOG_JA3=1 (также true/yes). Для --type=tls на клиенте сырый ClientHello недоступен Node — смотрите лог exit или используйте boring-tls.
+--ja3-verbose: подробный JA3 (обе строки до MD5, поля GREASE-очищенные, hex префикса TCP); сам включает вывод JA3. Env при уже включённом CLEAN_VPN_TLS_LOG_JA3: CLEAN_VPN_JA3_VERBOSE=1.
 --type=boring-tls: только client — TLS 1.3 через процесс boring-tls-helper (BoringSSL), см. scripts/boring-tls-plan.md; на exit используйте --type=tls (тот же сервер). Сборка: npm run build:boring-tls-helper (мало RAM на VPS: npm run build:boring-tls-helper-lowmem). Путь к бинарю: CLEAN_VPN_BORING_TLS_HELPER или --boring-tls-helper=PATH; строковый профиль (резерв): --boring-tls-profile=NAME.
 --boring-tls-clienthello-profile=PATH: только client + boring-tls — JSON профиля ClientHello/JA3 (scripts/lib/boring-tls-clienthello-profile.mjs schema v1; см. ja3-snif-server --profile-save-path). Файл перечитывается перед каждым TLS к exit. Env: CLEAN_VPN_BORING_TLS_CLIENTHELLO_PROFILE.
 --boring-tls-profile-ja3-strict: только client + boring-tls — при несовпадении JA3 MD5 с полем ja3_md5 в профиле helper завершится ошибкой. Env: CLEAN_VPN_BORING_TLS_JA3_STRICT=1.

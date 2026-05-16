@@ -47,8 +47,10 @@ const server = net.createServer((sock) => {
     const buf = Buffer.concat(acc);
     const r = ja3FromTcpBuf(buf);
     if (r) {
-      console.log('digest', r.ja3Digest);
-      console.log('string', r.ja3String);
+      console.log('digest wire', r.ja3Digest);
+      console.log('digest sorted', r.ja3SortedDigest);
+      console.log('string wire', r.ja3String);
+      console.log('string sorted', r.ja3SortedString);
       sock.destroy();
     }
   });

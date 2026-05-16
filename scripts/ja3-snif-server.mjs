@@ -223,7 +223,7 @@ function handleInbound(socket, secureContext, opts) {
             meta: {
               path: ROUTE,
               note:
-                'Поля tls / ja3 / wire — из ClientHello до TLS на TCP. User-Agent — из первого HTTP-запроса после рукопожатия. Сервер предлагает только ALPN http/1.1; предложенный клиентом ALPN — tls_observed_in_clienthello.offered_alpn_protocols.',
+                'Поля tls / ja3 (wire) / ja3_sorted / wire — из ClientHello до TLS на TCP. User-Agent — из первого HTTP-запроса после рукопожатия. Сервер предлагает только ALPN http/1.1; предложенный клиентом ALPN — tls_observed_in_clienthello.offered_alpn_protocols.',
             },
             http: {
               user_agent: ua || null,
@@ -233,6 +233,7 @@ function handleInbound(socket, secureContext, opts) {
             },
             tls_observed_in_clienthello: profile.tls,
             ja3: profile.ja3,
+            ja3_sorted: profile.ja3_sorted,
             wire: {
               ...profile.wire,
               tcp_bytes_accumulated_for_clienthello: fullBuf.length,
@@ -297,7 +298,9 @@ function handleInbound(socket, secureContext, opts) {
               jsonBody,
             ),
           );
-          console.log(`[ja3-snif] GET ${ROUTE} ${peer} ja3=${profile.ja3.md5}`);
+          console.log(
+            `[ja3-snif] GET ${ROUTE} ${peer} ja3=${profile.ja3.md5} ja3_sorted=${profile.ja3_sorted.md5}`,
+          );
 
           if (opts.profileSavePath) {
             try {

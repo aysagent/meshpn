@@ -19,6 +19,9 @@ export const BORING_TLS_CLIENTHELLO_SCHEMA_VERSION = '1';
  *   ec_point_formats: number[],
  *   ja3_string?: string,
  *   ja3_md5?: string,
+ *   ja3_sorted_string?: string,
+ *   ja3_sorted_md5?: string,
+ *   permute_extensions?: boolean,
  *   tls_info?: { alpn?: string[], supported_versions?: number[] },
  * }} BoringTlsClienthelloProfileFile
  */
@@ -81,6 +84,17 @@ export function validateBoringTlsClienthelloProfileFile(obj) {
   if (p.ja3_string !== undefined && typeof p.ja3_string !== 'string') {
     return { ok: false, error: 'profile: ja3_string должно быть строкой' };
   }
+  if (p.ja3_sorted_md5 !== undefined) {
+    if (typeof p.ja3_sorted_md5 !== 'string' || !/^[0-9a-f]{32}$/.test(p.ja3_sorted_md5)) {
+      return { ok: false, error: 'profile: ja3_sorted_md5 должен быть 32 lowercase hex' };
+    }
+  }
+  if (p.ja3_sorted_string !== undefined && typeof p.ja3_sorted_string !== 'string') {
+    return { ok: false, error: 'profile: ja3_sorted_string должно быть строкой' };
+  }
+  if (p.permute_extensions !== undefined && typeof p.permute_extensions !== 'boolean') {
+    return { ok: false, error: 'profile: permute_extensions должен быть boolean' };
+  }
   if (p.tls_info !== undefined) {
     if (!p.tls_info || typeof p.tls_info !== 'object') return { ok: false, error: 'profile: tls_info не объект' };
     const ti = /** @type {Record<string, unknown>} */ (p.tls_info);
@@ -103,7 +117,7 @@ export function validateBoringTlsClienthelloProfileFile(obj) {
 
 /**
  * Документ профиля для сохранения на диск (компактный JSON).
- * @param {{ tls: Record<string, unknown>, ja3: Record<string, unknown> }} handshakeOk — результат tlsClientHandshakeProfileFromTcpBuf при ok:true (поля tls/ja3)
+ * @param {{ tls: Record<string, unknown>, ja3: Record<string, unknown>, ja3_sorted?: Record<string, unknown> }} handshakeOk — результат tlsClientHandshakeProfileFromTcpBuf при ok:true
  * @param {string} userAgent
  */
 export function buildCompactProfileDocument(handshakeOk, userAgent) {
@@ -115,12 +129,18 @@ export function buildCompactProfileDocument(handshakeOk, userAgent) {
   ) {
     throw new Error('buildCompactProfileDocument: ожидается успешный профиль handshake');
   }
-  const p = /** @type {{ tls: Record<string, unknown>, ja3: Record<string, unknown> }} */ (handshakeOk);
+  const p = /** @type {{
+    tls: Record<string, unknown>,
+    ja3: Record<string, unknown>,
+    ja3_sorted?: Record<string, unknown>,
+  }} */ (handshakeOk);
   const comp = /** @type {Record<string, unknown>} */ (p.ja3.components || {});
   const tls = p.tls || {};
   const alpn = tls.offered_alpn_protocols;
   const sv = tls.supported_versions_extension;
-  return {
+  const sorted = p.ja3_sorted && typeof p.ja3_sorted === 'object' ? p.ja3_sorted : null;
+  /** @type {Record<string, unknown>} */
+  const doc = {
     schema_version: BORING_TLS_CLIENTHELLO_SCHEMA_VERSION,
     user_agent: userAgent,
     legacy_version: comp.legacy_version_decimal,
@@ -135,6 +155,13 @@ export function buildCompactProfileDocument(handshakeOk, userAgent) {
       supported_versions: Array.isArray(sv) ? [...sv] : [],
     },
   };
+  if (sorted && typeof sorted.md5 === 'string') {
+    doc.ja3_sorted_md5 = sorted.md5;
+  }
+  if (sorted && typeof sorted.string_before_md5 === 'string') {
+    doc.ja3_sorted_string = sorted.string_before_md5;
+  }
+  return doc;
 }
 
 /**
@@ -154,6 +181,12 @@ export function profileFileToHelperClientHelloBlock(profile, opts = {}) {
   if (profile.ja3_md5) {
     out.ja3_md5 = profile.ja3_md5;
     out.ja3_strict = ja3Strict;
+  }
+  if (profile.ja3_string) {
+    out.ja3_string = profile.ja3_string;
+  }
+  if (profile.permute_extensions !== undefined) {
+    out.permute_extensions = profile.permute_extensions;
   }
   return out;
 }

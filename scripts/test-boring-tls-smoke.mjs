@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { once } from 'events';
 import test from 'node:test';
 import { fileURLToPath } from 'url';
-import { ja3FromTcpBuf } from './lib/tls-clienthello-ja3.mjs';
+import { ja3ComponentsFromClientHelloBody, ja3FromTcpBuf } from './lib/tls-clienthello-ja3.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const helper = path.join(root, 'native/boring_tls/build/boring-tls-helper');
@@ -20,6 +20,36 @@ const LOCAL_CERT = path.join(root, 'scripts/fixtures/boring-tls-local.cert.pem')
 
 /** Эталон JA3 (MD5): pinned BoringSSL + порядок cipher/group в helper; ALPN как clean-vpn (`h2`,`http/1.1`). Обновление: node scripts/dev-print-boring-tls-ja3.mjs */
 const EXPECTED_JA3_DIGEST = 'e29d030d028f5cfe3fb65f4e96924e01';
+
+/** Порядок-инвариантный JA3 (сортировка списков после GREASE-filter). Обновление: node scripts/dev-print-boring-tls-ja3.mjs */
+const EXPECTED_JA3_SORTED_DIGEST = '3cea5676764a1ee8269a4c66081cc049';
+
+test('ja3_sorted: перестановка типов расширений — разный wire JA3, один sorted MD5', () => {
+  /** @param {number[]} extOrder */
+  function minimalClientHelloBody(extOrder) {
+    const legacy = Buffer.from([0x03, 0x03]);
+    const random = Buffer.alloc(32, 0);
+    const sid = Buffer.from([0]);
+    const ciphers = Buffer.from([0x00, 0x02, 0x13, 0x01]);
+    const comp = Buffer.from([1, 0]);
+    const ext10 = Buffer.from([0x00, 0x0a, 0x00, 0x04, 0x00, 0x02, 0x00, 0x1d]);
+    const ext11 = Buffer.from([0x00, 0x0b, 0x00, 0x02, 0x01, 0x00]);
+    /** @type {Buffer[]} */
+    const parts = [];
+    for (const typ of extOrder) {
+      if (typ === 10) parts.push(ext10);
+      else if (typ === 11) parts.push(ext11);
+    }
+    const extBlock = Buffer.concat(parts);
+    const extLen = Buffer.alloc(2);
+    extLen.writeUInt16BE(extBlock.length, 0);
+    return Buffer.concat([legacy, random, sid, ciphers, comp, extLen, extBlock]);
+  }
+  const a = ja3ComponentsFromClientHelloBody(minimalClientHelloBody([10, 11]));
+  const b = ja3ComponentsFromClientHelloBody(minimalClientHelloBody([11, 10]));
+  assert.notStrictEqual(a.ja3Digest, b.ja3Digest);
+  assert.strictEqual(a.ja3SortedDigest, b.ja3SortedDigest);
+});
 
 /** Минимальный валидный PEM (один X509), чтобы helper прошёл LoadCaFromPem; TCP может не установиться. */
 const MIN_CA_PEM = `-----BEGIN CERTIFICATE-----
@@ -287,6 +317,11 @@ test('helper: JA3 ClientHello (ALPN как у clean-vpn)', async (t) => {
       EXPECTED_JA3_DIGEST,
       `обновите эталон (node scripts/dev-print-boring-tls-ja3.mjs) или CMake; ja3String=${j.ja3String}`,
     );
+    assert.strictEqual(
+      j.ja3SortedDigest,
+      EXPECTED_JA3_SORTED_DIGEST,
+      `ja3SortedString=${j.ja3SortedString}`,
+    );
   } finally {
     try {
       child.kill('SIGKILL');
@@ -333,6 +368,7 @@ test('helper: без log_ja3 на stderr нет ja3_md5', async (t) => {
     await readJsonFrame(child.stdout);
     await once(child, 'exit');
     assert.ok(!stderr.includes('ja3_md5='), stderr);
+    assert.ok(!stderr.includes('ja3_sorted_md5='), stderr);
   } finally {
     try {
       child.kill('SIGKILL');
@@ -395,6 +431,7 @@ test('helper: log_ja3=true — stderr содержит эталонный ja3_md
 
     await raceMs(ja3Promise, 15000, 'JA3 из потока');
     assert.match(stderr, new RegExp(`ja3_md5=${EXPECTED_JA3_DIGEST}`));
+    assert.match(stderr, new RegExp(`ja3_sorted_md5=${EXPECTED_JA3_SORTED_DIGEST}`));
   } finally {
     try {
       child.kill('SIGKILL');
@@ -532,6 +569,11 @@ test('helper: client_hello_profile с дефолтными cipher/groups — т�
       j.ja3Digest,
       EXPECTED_JA3_DIGEST,
       `ja3String=${j.ja3String}`,
+    );
+    assert.strictEqual(
+      j.ja3SortedDigest,
+      EXPECTED_JA3_SORTED_DIGEST,
+      `ja3SortedString=${j.ja3SortedString}`,
     );
   } finally {
     try {

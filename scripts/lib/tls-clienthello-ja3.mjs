@@ -23,6 +23,36 @@ function u24(buf, o) {
 }
 
 /**
+ * Order-invariant JA3-подобная строка: те же компоненты, что после GREASE-filter,
+ * но каждый числовой список отсортирован по возрастанию (для сравнения с Chrome
+ * при перемешивании порядка расширений на wire). MD5 UTF-8 строки как у JA3.
+ * Не заменяет классический JA3 для сверки с БД — там порядок wire.
+ */
+export function ja3SortedStringDigestFromComponents(
+  legacyVersion,
+  ciphers,
+  extTypes,
+  curves,
+  ecPointFormats,
+) {
+  const sc = [...ciphers].sort((a, b) => a - b);
+  const se = [...extTypes].sort((a, b) => a - b);
+  const sg = [...curves].sort((a, b) => a - b);
+  const sf = [...ecPointFormats].sort((a, b) => a - b);
+  const ja3SortedString = [
+    legacyVersion,
+    sc.join('-'),
+    se.join('-'),
+    sg.join('-'),
+    sf.join('-'),
+  ].join(',');
+  return {
+    ja3SortedString,
+    ja3SortedDigest: crypto.createHash('md5').update(ja3SortedString, 'utf8').digest('hex'),
+  };
+}
+
+/**
  * Из буфера TCP (накопленного с начала соединения) вытаскивает тело ClientHello
  * (после legacy_version … до конца расширений).
  * @param {Buffer} buf
@@ -55,6 +85,8 @@ export function extractFirstClientHelloBody(buf) {
  *   ecPointFormats: number[],
  *   ja3String: string,
  *   ja3Digest: string,
+ *   ja3SortedString: string,
+ *   ja3SortedDigest: string,
  * }}
  */
 export function ja3ComponentsFromClientHelloBody(body) {
@@ -123,6 +155,14 @@ export function ja3ComponentsFromClientHelloBody(body) {
     ecPointFmt,
   ].join(',');
 
+  const sorted = ja3SortedStringDigestFromComponents(
+    legacyVersion,
+    ciphers,
+    extTypes,
+    curves,
+    ecPointFormats,
+  );
+
   return {
     legacyVersion,
     ciphers,
@@ -131,16 +171,28 @@ export function ja3ComponentsFromClientHelloBody(body) {
     ecPointFormats,
     ja3String,
     ja3Digest: crypto.createHash('md5').update(ja3String, 'utf8').digest('hex'),
+    ja3SortedString: sorted.ja3SortedString,
+    ja3SortedDigest: sorted.ja3SortedDigest,
   };
 }
 
 /**
  * @param {Buffer} body — тело ClientHello (RFC 8446)
- * @returns {{ ja3String: string, ja3Digest: string }}
+ * @returns {{
+ *   ja3String: string,
+ *   ja3Digest: string,
+ *   ja3SortedString: string,
+ *   ja3SortedDigest: string,
+ * }}
  */
 export function ja3FromClientHelloBody(body) {
   const c = ja3ComponentsFromClientHelloBody(body);
-  return { ja3String: c.ja3String, ja3Digest: c.ja3Digest };
+  return {
+    ja3String: c.ja3String,
+    ja3Digest: c.ja3Digest,
+    ja3SortedString: c.ja3SortedString,
+    ja3SortedDigest: c.ja3SortedDigest,
+  };
 }
 
 /**
@@ -159,6 +211,8 @@ export function ja3FromTcpBuf(tcpBuf) {
  * @returns {{
  *   ja3Digest: string,
  *   ja3String: string,
+ *   ja3SortedDigest: string,
+ *   ja3SortedString: string,
  *   legacyVersion: number,
  *   ciphers: number[],
  *   extTypes: number[],
@@ -178,6 +232,8 @@ export function ja3DebugFromTcpBuf(tcpBuf, opts = {}) {
   return {
     ja3Digest: c.ja3Digest,
     ja3String: c.ja3String,
+    ja3SortedDigest: c.ja3SortedDigest,
+    ja3SortedString: c.ja3SortedString,
     legacyVersion: c.legacyVersion,
     ciphers: c.ciphers,
     extTypes: c.extTypes,
@@ -358,6 +414,12 @@ export function tlsClientHandshakeProfileFromTcpBuf(tcpBuf, opts = {}) {
       },
       note:
         'salesforce JA3: в строку до MD5 входят только типы расширений (без имён ALPN/SNI). GREASE из типов/шифров убран.',
+    },
+    ja3_sorted: {
+      md5: ja3d.ja3SortedDigest,
+      string_before_md5: ja3d.ja3SortedString,
+      note:
+        'Те же компоненты после GREASE-filter, списки отсортированы по возрастанию; стабильнее при permute_extensions у Chromium. Не совпадает с классическим JA3 в БД для того же браузера.',
     },
     wire: {
       hex_preview_first_tcp_bytes: ja3d.hexPreview,

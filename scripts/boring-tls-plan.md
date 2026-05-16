@@ -46,7 +46,7 @@
 | `alpn` | string[] | например `["h2","http/1.1"]` |
 | `handshake_timeout_ms` | number | таймаут рукопожатия |
 | `profile` | string | зарезервировано (например `chrome-default`); пока влияет только на логирование / будущие пресеты |
-| `log_ja3` | bool | если `true`, после исходящего ClientHello — строка `boring-tls-helper: ja3_md5=…` на stderr; при `ja3_verbose` добавляются поля и `hex_preview` handshake |
+| `log_ja3` | bool | если `true`, после исходящего ClientHello на stderr: `ja3_md5=` и `ja3_sorted_md5=` (порядок-инвариантный); при `ja3_verbose` добавляются обе строки до MD5 и `hex_preview` handshake |
 | `ja3_verbose` | bool | расширенный JA3 на stderr; имеет смысл вместе с `log_ja3` |
 | `client_hello_profile` | object | опционально: настройка TLS 1.3 cipher suites и named groups под сохранённый профиль браузера; см. ниже |
 
@@ -59,14 +59,26 @@
 | `cipher_suites` | number[] | Полный список после удаления GREASE (как в JA3): сначала типично **TLS 1.3**, затем **TLS 1.2**. Helper выставляет TLS 1.3 порядок через патч BoringSSL и при наличии TLS 1.2 id включает **`TLS1_2…TLS1_3`** и `SSL_CTX_set_cipher_list` для второго блока в том же порядке — так восполняется JA3-поле cipher. Дубликаты среди TLS 1.3 по-прежнему отвергаются API стека. Полное совпадение JA3 с эталоном браузера может не достигаться из‑за порядка расширений / ec_point_formats — см. «Ограничения» |
 | `supported_groups` | number[] | id named groups (**порядок** для `SSL_CTX_set1_groups_list`): классические `23,24,25,29,30` (P-256…X448), постквантовые/гибриды из BoringSSL — **`4588` (`X25519MLKEM768`)**, **`25497` (`X25519Kyber768Draft00`)**, **`514` (`MLKEM1024`)** и др.; см. `NamedGroupOpenSslName` / `SSL_GROUP_*` в `openssl/ssl.h` |
 | `ec_point_formats` | number[] | сохраняется в файле профиля для JA3; **пока не задаёт BoringSSL** отдельным API — см. раздел «Ограничения» |
+| `ja3_string` | string | эталонная строка JA3 до MD5 (как в ja3-snif); при расхождении MD5 helper печатает expected(profile) vs actual(wire) |
 | `ja3_md5` | string | опционально: ожидаемый MD5 JA3 (32 hex lowercase); сравнение после отправки ClientHello |
 | `ja3_strict` | bool | если `true` и digest не совпал — handshake считается ошибкой (`ja3 profile mismatch (strict)`), код выхода 13 |
+| `permute_extensions` | bool | опционально: проброс в `SSL_CTX_set_permute_extensions` BoringSSL; **`false`** — фиксированный порядок расширений стека (иногда ближе к отладке; с порядком Chromium всё равно может не совпасть) |
 
 **ALPN:** в реальном соединении список `alpn` в `config` задаёт **только** `clean-vpn` (`resolveTlsAlpnProtocols`, `--http-vers`). Поле `tls_info.alpn` в файле профиля — справочно (JA3 на содержимое ALPN не смотрит).
 
 ### JA3 в логах (без tcpdump)
 
-Эталонный расчёт JA3: [`tls-clienthello-ja3.mjs`](./lib/tls-clienthello-ja3.mjs). На **exit** (`--type=tls`) при `--tls-log-ja3` или `CLEAN_VPN_TLS_LOG_JA3=1` — по входящему TCP до полного ClientHello. На **client** с `--type=boring-tls` — тот же digest на stderr helper при пробросе `log_ja3`/`ja3_verbose` из clean-vpn. Для одной TCP-сессии digest exit и helper совпадает. **`--type=tls` в Node** сырый ClientHello не экспонирует — JA3 в этом процессе не пишется; смотрите лог exit или используйте boring-tls на клиенте.
+#### Алгоритм (единый для Node и boring-tls-helper)
+
+- **JA3 wire** (классический Salesforce JA3): после handshake type/length — поля ClientHello; из списков шифров, типов расширений и named groups удаляются значения **GREASE** (RFC 8701, тот же набор, что в `tls-clienthello-ja3.mjs` и в `helper_main.cc`). Строка до MD5: `legacy_decimal,ciphers-dash,ext_types-dash,curves-dash,ec_point_formats-dash` (десятичные числа); MD5 от UTF-8 строки в **нижнем** hex. Порядок элементов в каждом списке — **как на проводе**. Это совместимо со сверкой по открытым JA3 DB для **конкретного** захвата.
+
+- **JA3 sorted** (порядок-инвариантный внутренний отпечаток): те же компоненты после GREASE-filter, но каждый из четырёх списков (cipher suites, extension types, supported groups, ec point formats) **сортируется по возрастанию** перед сборкой строки в том же формате и MD5. Стабилен при перестановке порядка расширений/шифров (типично для Chromium с `permute_extensions`); **не** подменяет классический JA3 при сравнении с БД.
+
+Реализации должны совпадать: [`scripts/lib/tls-clienthello-ja3.mjs`](./lib/tls-clienthello-ja3.mjs) и `ComputeJa3FromClientHelloBody` в [`native/boring_tls/helper_main.cc`](../native/boring_tls/helper_main.cc). Регрессия: одинаковые `ja3_md5` / `ja3_sorted_md5` на stderr helper и при разборе того же TCP в Node (`npm run test:boring-tls-smoke`).
+
+Эталонный расчёт в JS: [`tls-clienthello-ja3.mjs`](./lib/tls-clienthello-ja3.mjs). На **exit** (`--type=tls`) при `--tls-log-ja3` или `CLEAN_VPN_TLS_LOG_JA3=1` — в stdout печатаются **wire** и **sorted** MD5 (и при `--ja3-verbose` — обе строки до MD5). На **client** с `--type=boring-tls` helper на stderr выводит `ja3_md5=` и `ja3_sorted_md5=`; после успешного ответа конфиг-кадра clean-vpn дублирует их строками `[clean-vpn] boring-tls JA3 wire md5=…` и `… JA3 sorted md5=…`. Для одной TCP-сессии digest из потока и из helper совпадают. **`--type=tls` в Node** на клиенте сырой ClientHello не считается — смотрите лог exit или используйте boring-tls на клиенте.
+
+Мини-сервер [`ja3-snif-server.mjs`](ja3-snif-server.mjs): в JSON `GET /ja3-snif` поля `ja3` (wire) и `ja3_sorted`; при `--profile-save-path` в файл профиля добавляются опциональные `ja3_sorted_md5` и `ja3_sorted_string`.
 
 Подробный разбор GREASE-очищенных полей и префикса в hex: **`--ja3-verbose`** (сам включает JA3). Env: при уже заданном `CLEAN_VPN_TLS_LOG_JA3` можно добавить `CLEAN_VPN_JA3_VERBOSE=1`.
 
@@ -113,7 +125,7 @@ cmake --build native/boring_tls/build --target boring-tls-helper
 ## Ограничения (GREASE, padding, порядок расширений)
 
 - **JA3** в файле считается по правилам Salesforce с **удалением GREASE** из списков. На wire браузер всё равно вставляет GREASE; побайтовое совпадение ClientHello и **JA4** могут отличаться даже при верных cipher/group и совпавшем JA3 MD5. Порядок **TLS 1.3 cipher suites** в ClientHello задаётся профилем через патч BoringSSL (`SSL_CTX_set_tls13_client_cipher_order`); GREASE-cipher по-прежнему добавляет стек отдельно.
-- **Padding** (расширение 21) и **полный порядок расширений** задаются стеком BoringSSL; без доработки/исследования API или форка полное совпадение с Chrome не гарантируется.
+- **Padding** (расширение 21) и **полный порядок расширений** задаются стеком BoringSSL (в т.ч. `permute_extensions`); без форка под Chromium **полное совпадение JA3** с профилем, снятым с Chrome/Chromium, **часто недостижимо** даже при верных cipher/group — особенно при **`ja3_strict`**. Имеет смысл смотреть в логах сравнение `ja3_string` или не использовать строгий режим, если цель только рабочий VPN.
 - Следующий шаг (spike): управление GREASE/padding/порядком расширений на стороне BoringSSL.
 
 ## Риски

@@ -24,6 +24,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <cctype>
@@ -214,6 +215,8 @@ struct Ja3Computed {
   std::vector<uint16_t> supported_versions;
   std::string ja3_string;
   std::string ja3_md5_hex;
+  std::string ja3_sorted_string;
+  std::string ja3_sorted_md5_hex;
 };
 
 bool ComputeJa3FromClientHelloBody(const uint8_t* body, size_t n,
@@ -312,6 +315,23 @@ bool ComputeJa3FromClientHelloBody(const uint8_t* body, size_t n,
       << JoinDashDec8(out->ec_point_formats);
   out->ja3_string = oss.str();
   out->ja3_md5_hex = Md5HexUtf8(out->ja3_string);
+
+  auto ciphers_s = out->ciphers;
+  std::sort(ciphers_s.begin(), ciphers_s.end());
+  auto ext_s = out->ext_types;
+  std::sort(ext_s.begin(), ext_s.end());
+  auto curves_s = out->curves;
+  std::sort(curves_s.begin(), curves_s.end());
+  auto ecf_s = out->ec_point_formats;
+  std::sort(ecf_s.begin(), ecf_s.end());
+  std::ostringstream oss_s;
+  oss_s << static_cast<unsigned>(out->legacy_version) << ','
+        << JoinDashDec16(ciphers_s) << ','
+        << JoinDashDec16(ext_s) << ','
+        << JoinDashDec16(curves_s) << ','
+        << JoinDashDec8(ecf_s);
+  out->ja3_sorted_string = oss_s.str();
+  out->ja3_sorted_md5_hex = Md5HexUtf8(out->ja3_sorted_string);
   return true;
 }
 
@@ -358,12 +378,23 @@ struct Ja3LogCfg {
   bool ja3_verbose = false;
   bool logged = false;
   std::string expected_ja3_md5;
+  std::string expected_ja3_string;
   bool ja3_strict = false;
   bool ja3_mismatch = false;
 };
 
 bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
                              Ja3LogCfg* ja3_cfg, std::string* err_out) {
+  if (p.contains("permute_extensions")) {
+    if (!p["permute_extensions"].is_boolean()) {
+      *err_out =
+          "client_hello_profile.permute_extensions must be boolean";
+      return false;
+    }
+    SSL_CTX_set_permute_extensions(ctx,
+                                   p["permute_extensions"].get<bool>() ? 1 : 0);
+  }
+
   if (!p.contains("cipher_suites") || !p["cipher_suites"].is_array() ||
       p["cipher_suites"].empty()) {
     *err_out =
@@ -491,6 +522,9 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
       c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
     }
   }
+  if (ja3_cfg && p.contains("ja3_string") && p["ja3_string"].is_string()) {
+    ja3_cfg->expected_ja3_string = p["ja3_string"].get<std::string>();
+  }
   if (ja3_cfg) {
     ja3_cfg->ja3_strict = p.value("ja3_strict", false);
   }
@@ -518,6 +552,19 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
       std::cerr << "boring-tls-helper: ja3 profile mismatch expected="
                 << cfg->expected_ja3_md5 << " actual=" << computed.ja3_md5_hex
                 << '\n';
+      std::cerr << "boring-tls-helper: ja3_string actual(wire)="
+                << computed.ja3_string << '\n';
+      if (!cfg->expected_ja3_string.empty()) {
+        std::cerr << "boring-tls-helper: ja3_string expected(profile)="
+                  << cfg->expected_ja3_string << '\n';
+      } else {
+        std::cerr
+            << "boring-tls-helper: hint: полный профиль от ja3-snif уже содержит "
+               "ja3_string — передайте его в helper (clean-vpn передаёт при наличии "
+               "в JSON); иначе --tls-log-ja3 + --ja3-verbose на клиенте. Частая "
+               "причина расхождения — порядок типов расширений (Chromium ≠ upstream "
+               "BoringSSL); эксперимент: \"permute_extensions\": false в профиле.\n";
+      }
     }
   }
 
@@ -537,10 +584,14 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
          "ALPN (только типы расширений).\n";
 
   std::cerr << "boring-tls-helper: ja3_md5=" << computed.ja3_md5_hex << '\n';
+  std::cerr << "boring-tls-helper: ja3_sorted_md5=" << computed.ja3_sorted_md5_hex
+            << '\n';
   if (cfg->ja3_verbose) {
     constexpr size_t kHexPrev = 96;
     size_t preview_len = len < kHexPrev ? len : kHexPrev;
     std::cerr << "boring-tls-helper: ja3_string=" << computed.ja3_string
+              << '\n';
+    std::cerr << "boring-tls-helper: ja3_sorted_string=" << computed.ja3_sorted_string
               << '\n';
     std::cerr << "boring-tls-helper: legacy_version="
               << static_cast<unsigned>(computed.legacy_version) << '\n';
