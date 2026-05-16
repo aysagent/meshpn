@@ -1085,6 +1085,18 @@ int main(int argc, char** argv) {
     return send_err("invalid or missing alpn array", 3);
   }
 
+  bool emit_clienthello_sni = true;
+  if (cfg.contains("client_hello_profile") &&
+      cfg["client_hello_profile"].is_object()) {
+    const auto& chp = cfg["client_hello_profile"];
+    if (chp.contains("emit_sni")) {
+      if (!chp["emit_sni"].is_boolean()) {
+        return send_err("client_hello_profile.emit_sni must be boolean", 3);
+      }
+      emit_clienthello_sni = chp["emit_sni"].get<bool>();
+    }
+  }
+
   int sock = -1;
   if (!TcpConnect(host, port, &sock)) {
     return send_err("tcp connect failed", 4);
@@ -1150,7 +1162,13 @@ int main(int argc, char** argv) {
     return 8;
   }
 
-  SSL_set_tlsext_host_name(ssl, servername.c_str());
+  if (!emit_clienthello_sni) {
+    std::cerr << "boring-tls-helper: note: ClientHello без расширения server_name "
+                 "(emit_sni=false), JA4_a как у клиента без SNI; проверка сертификата "
+                 "по verify_host без изменений.\n";
+  } else {
+    SSL_set_tlsext_host_name(ssl, servername.c_str());
+  }
   SSL_set_fd(ssl, sock);
 
   struct timeval tv {};

@@ -32,6 +32,8 @@ export const BORING_TLS_CLIENTHELLO_SCHEMA_VERSION = '1';
  *   ja3_sorted_md5?: string,
  *   ja4?: BoringTlsProfileJa4Block,
  *   permute_extensions?: boolean,
+ *   /** В захвате ClientHello было расширение server_name (тип 0); если false — helper не вызывает SSL_set_tlsext_host_name (JA4_a с «i», как у клиента без SNI). */
+ *   clienthello_emit_sni?: boolean,
  *   tls_info?: { alpn?: string[], supported_versions?: number[] },
  * }} BoringTlsClienthelloProfileFile
  */
@@ -116,6 +118,9 @@ export function validateBoringTlsClienthelloProfileFile(obj) {
   if (p.permute_extensions !== undefined && typeof p.permute_extensions !== 'boolean') {
     return { ok: false, error: 'profile: permute_extensions должен быть boolean' };
   }
+  if (p.clienthello_emit_sni !== undefined && typeof p.clienthello_emit_sni !== 'boolean') {
+    return { ok: false, error: 'profile: clienthello_emit_sni должен быть boolean' };
+  }
   if (p.tls_info !== undefined) {
     if (!p.tls_info || typeof p.tls_info !== 'object') return { ok: false, error: 'profile: tls_info не объект' };
     const ti = /** @type {Record<string, unknown>} */ (p.tls_info);
@@ -179,6 +184,12 @@ export function buildCompactProfileDocument(handshakeOk, userAgent) {
   const alpn = tls.offered_alpn_protocols;
   const sv = tls.supported_versions_extension;
   const sorted = p.ja3_sorted && typeof p.ja3_sorted === 'object' ? p.ja3_sorted : null;
+  const extTypesArr = /** @type {unknown[]} */ (
+    Array.isArray(comp.extension_types_decimal_grease_filtered)
+      ? comp.extension_types_decimal_grease_filtered
+      : []
+  );
+  const hasSniExt = extTypesArr.includes(0);
   /** @type {Record<string, unknown>} */
   const doc = {
     schema_version: BORING_TLS_CLIENTHELLO_SCHEMA_VERSION,
@@ -194,6 +205,8 @@ export function buildCompactProfileDocument(handshakeOk, userAgent) {
       alpn: Array.isArray(alpn) ? [...alpn] : [],
       supported_versions: Array.isArray(sv) ? [...sv] : [],
     },
+    /** Совпадает с наличием расширения server_name (0) в списке JA3 — для JA4_a и helper `emit_sni`. */
+    clienthello_emit_sni: hasSniExt,
     /** Как у Chromium: порядок расширений на wire меняется между сессиями; ja3_sorted_md5 стабилен. */
     permute_extensions: true,
   };
@@ -244,6 +257,13 @@ export function profileFileToHelperClientHelloBlock(profile, opts = {}) {
     ec_point_formats: [...profile.ec_point_formats],
     permute_extensions: permute,
   };
+
+  /** Вызов SSL_set_tlsext_host_name: по умолчанию из профиля (тип расширения 0 в extension_types), иначе явное clienthello_emit_sni. */
+  const emitSni =
+    profile.clienthello_emit_sni !== undefined
+      ? Boolean(profile.clienthello_emit_sni)
+      : profile.extension_types.includes(0);
+  out.emit_sni = emitSni;
 
   const omitWireJa3Expectation = permute && !ja3Strict;
   if (profile.ja3_md5 && !omitWireJa3Expectation) {
