@@ -32,7 +32,7 @@ export const BORING_TLS_CLIENTHELLO_SCHEMA_VERSION = '1';
  *   ja3_sorted_md5?: string,
  *   ja4?: BoringTlsProfileJa4Block,
  *   permute_extensions?: boolean,
- *   // В захвате ClientHello было расширение server_name (тип 0); если false — helper не вызывает SSL_set_tlsext_host_name (JA4_a с «i», как у клиента без SNI).
+ *   // Явно из экспорта ja3-snif: false — helper не вызывает SSL_set_tlsext_host_name (JA4_a «i»). Если ключ отсутствует — считается true (без SNI ломается verify на многих CDN).
  *   clienthello_emit_sni?: boolean,
  *   tls_info?: { alpn?: string[], supported_versions?: number[] },
  * }} BoringTlsClienthelloProfileFile
@@ -258,11 +258,15 @@ export function profileFileToHelperClientHelloBlock(profile, opts = {}) {
     permute_extensions: permute,
   };
 
-  /** Вызов SSL_set_tlsext_host_name: по умолчанию из профиля (тип расширения 0 в extension_types), иначе явное clienthello_emit_sni. */
+  /**
+   * Вызов SSL_set_tlsext_host_name: только явное clienthello_emit_sni из файла.
+   * Если поля нет — всегда true: без SNI многие CDN отдают дефолтный сертификат → CERTIFICATE_VERIFY_FAILED при verify_host.
+   * JA4 без SNI задаётся экспортом ja3-snif с clienthello_emit_sni:false (осознанный компромисс с TLS на именованных хостах).
+   */
   const emitSni =
     profile.clienthello_emit_sni !== undefined
       ? Boolean(profile.clienthello_emit_sni)
-      : profile.extension_types.includes(0);
+      : true;
   out.emit_sni = emitSni;
 
   const omitWireJa3Expectation = permute && !ja3Strict;
