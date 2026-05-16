@@ -32,7 +32,7 @@ export const BORING_TLS_CLIENTHELLO_SCHEMA_VERSION = '1';
  *   ja3_sorted_md5?: string,
  *   ja4?: BoringTlsProfileJa4Block,
  *   permute_extensions?: boolean,
- *   /** В захвате ClientHello было расширение server_name (тип 0); если false — helper не вызывает SSL_set_tlsext_host_name (JA4_a с «i», как у клиента без SNI). */
+ *   // В захвате ClientHello было расширение server_name (тип 0); если false — helper не вызывает SSL_set_tlsext_host_name (JA4_a с «i», как у клиента без SNI).
  *   clienthello_emit_sni?: boolean,
  *   tls_info?: { alpn?: string[], supported_versions?: number[] },
  * }} BoringTlsClienthelloProfileFile
