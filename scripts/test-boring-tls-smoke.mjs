@@ -12,6 +12,7 @@ import { once } from 'events';
 import test from 'node:test';
 import { fileURLToPath } from 'url';
 import { ja3ComponentsFromClientHelloBody, ja3FromTcpBuf } from './lib/tls-clienthello-ja3.mjs';
+import { ja4FromTcpBuf } from './lib/tls-clienthello-ja4.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const helper = path.join(root, 'native/boring_tls/build/boring-tls-helper');
@@ -369,6 +370,7 @@ test('helper: без log_ja3 на stderr нет ja3_md5', async (t) => {
     await once(child, 'exit');
     assert.ok(!stderr.includes('ja3_md5='), stderr);
     assert.ok(!stderr.includes('ja3_sorted_md5='), stderr);
+    assert.ok(!stderr.includes('ja4='), stderr);
   } finally {
     try {
       child.kill('SIGKILL');
@@ -392,9 +394,11 @@ test('helper: log_ja3=true — stderr содержит эталонный ja3_md
       const acc = [];
       sock.on('data', (d) => {
         acc.push(d);
-        const r = ja3FromTcpBuf(Buffer.concat(acc));
-        if (r) {
-          resolve(r);
+        const buf = Buffer.concat(acc);
+        const j3 = ja3FromTcpBuf(buf);
+        const j4 = ja4FromTcpBuf(buf);
+        if (j3 && j4) {
+          resolve({ j3, j4 });
           sock.destroy();
         }
       });
@@ -429,9 +433,10 @@ test('helper: log_ja3=true — stderr содержит эталонный ja3_md
       log_ja3: true,
     });
 
-    await raceMs(ja3Promise, 15000, 'JA3 из потока');
+    const { j4 } = await raceMs(ja3Promise, 15000, 'JA3/JA4 из потока');
     assert.match(stderr, new RegExp(`ja3_md5=${EXPECTED_JA3_DIGEST}`));
     assert.match(stderr, new RegExp(`ja3_sorted_md5=${EXPECTED_JA3_SORTED_DIGEST}`));
+    assert.ok(stderr.includes(`ja4=${j4.fingerprint}`), stderr);
   } finally {
     try {
       child.kill('SIGKILL');

@@ -46,7 +46,7 @@
 | `alpn` | string[] | например `["h2","http/1.1"]` |
 | `handshake_timeout_ms` | number | таймаут рукопожатия |
 | `profile` | string | зарезервировано (например `chrome-default`); пока влияет только на логирование / будущие пресеты |
-| `log_ja3` | bool | если `true`, после исходящего ClientHello на stderr: `ja3_md5=` и `ja3_sorted_md5=` (порядок-инвариантный); при `ja3_verbose` добавляются обе строки до MD5 и `hex_preview` handshake |
+| `log_ja3` | bool | если `true`, после исходящего ClientHello на stderr: `ja3_md5=`, `ja3_sorted_md5=` и **`ja4=`** (FoxIO fingerprint); при `ja3_verbose` добавляются строки JA3 до MD5, компоненты JA4 (`ja4_a`/`ja4_b`/`ja4_c`, `raw_r`/`raw_o`) и `hex_preview` handshake |
 | `ja3_verbose` | bool | расширенный JA3 на stderr; имеет смысл вместе с `log_ja3` |
 | `client_hello_profile` | object | опционально: настройка TLS 1.3 cipher suites и named groups под сохранённый профиль браузера; см. ниже |
 
@@ -63,6 +63,9 @@
 | `ja3_md5` | string | опционально: ожидаемый MD5 JA3 (32 hex lowercase); сравнение после отправки ClientHello |
 | `ja3_strict` | bool | если `true` и digest не совпал — handshake считается ошибкой (`ja3 profile mismatch (strict)`), код выхода 13 |
 | `permute_extensions` | bool | проброс в `SSL_CTX_set_permute_extensions` BoringSSL. **Если ключ отсутствует** — **`true`** (как Chromium): между рукопожатиями может меняться порядок типов расширений на wire → меняется **wire JA3**, а **`ja3_sorted_md5`** при том же профиле остаётся стабильным. **`false`** — фиксированный порядок расширений стека (удобно для эталонного wire-JA3 и для `ja3_strict`). **`ja3_strict: true` вместе с `permute_extensions: true`** — ошибка конфигурации: helper не выполняет handshake |
+| `ja4` | object | опционально: эталон с ja3-snif — **`{ "fingerprint": "…" }`** передаётся из сохранённого профиля; при расхождении с фактическим ClientHello helper пишет **`warning: ja4 profile mismatch`** на stderr (handshake не прерывается). Компоненты `ja4_a`/`ja4_b`/`ja4_c` в файле профиля — только для человека; в IPC достаточно `fingerprint` |
+
+**JA4 (FoxIO):** один отпечаток `ja4_a_ja4_b_ja4_c`; алгоритм совпадает с [`tls-clienthello-ja4.mjs`](./lib/tls-clienthello-ja4.mjs) и `ComputeJa4FromClientHelloBody` в helper. **`JA4_c`** зависит от набора типов расширений (без SNI/ALPN в части сортировки) и от списков **signature algorithms** в расширениях **13** и **50**, объединённых **в порядке обхода расширений на проводе**. Поэтому полное совпадение JA4 с браузерным снимком не гарантируется только профилем cipher/groups — стек BoringSSL может отличаться по расширениям и содержимому 13/50; при **`permute_extensions`** относительный порядок ext **13** и **50** на wire может менять **`JA4_c`**.
 
 **Ожидаемый wire-JA3 из файла профиля:** при профиле из `ja3-snif` поля `ja3_md5` / `ja3_string` соответствуют **конкретному** захвату. Если включена перестановка расширений (`permute_extensions` по умолчанию), фактический wire-JA3 между сессиями **не обязан** совпадать с этим снимком. **`clean-vpn`** в этом режиме **не передаёт** в helper `ja3_md5` / `ja3_string`, пока не включён **`--boring-tls-profile-ja3-strict`** (тогда в профиле должно быть **`permute_extensions: false`**).
 
@@ -85,9 +88,11 @@
 
 Реализации должны совпадать: [`scripts/lib/tls-clienthello-ja3.mjs`](./lib/tls-clienthello-ja3.mjs) и `ComputeJa3FromClientHelloBody` в [`native/boring_tls/helper_main.cc`](../native/boring_tls/helper_main.cc). Регрессия: одинаковые `ja3_md5` / `ja3_sorted_md5` на stderr helper и при разборе того же TCP в Node (`npm run test:boring-tls-smoke`).
 
-Эталонный расчёт в JS: [`tls-clienthello-ja3.mjs`](./lib/tls-clienthello-ja3.mjs). На **exit** (`--type=tls`) при `--tls-log-ja3` или `CLEAN_VPN_TLS_LOG_JA3=1` — в stdout печатаются **wire** и **sorted** MD5 (и при `--ja3-verbose` — обе строки до MD5). На **client** с `--type=boring-tls` helper на stderr выводит `ja3_md5=` и `ja3_sorted_md5=`; после успешного ответа конфиг-кадра clean-vpn дублирует их строками `[clean-vpn] boring-tls JA3 wire md5=…` и `… JA3 sorted md5=…`. Для одной TCP-сессии digest из потока и из helper совпадают. **`--type=tls` в Node** на клиенте сырой ClientHello не считается — смотрите лог exit или используйте boring-tls на клиенте.
+**JA4:** [`scripts/lib/tls-clienthello-ja4.mjs`](./lib/tls-clienthello-ja4.mjs) и `ComputeJa4FromClientHelloBody` в том же `helper_main.cc`; при `log_ja3` на stderr строка `ja4=`. Регрессия: smoke-сверка JA4 helper ↔ Node по одному TCP.
 
-Мини-сервер [`ja3-snif-server.mjs`](ja3-snif-server.mjs): в JSON `GET /ja3-snif` поля `ja3` (wire) и `ja3_sorted`; при `--profile-save-path` в файл профиля добавляются опциональные `ja3_sorted_md5` и `ja3_sorted_string`.
+Эталонный расчёт в JS: [`tls-clienthello-ja3.mjs`](./lib/tls-clienthello-ja3.mjs). На **exit** (`--type=tls`) при `--tls-log-ja3` или `CLEAN_VPN_TLS_LOG_JA3=1` — в stdout печатаются **wire** и **sorted** MD5 JA3 и строка **`ja4=`** (и при `--ja3-verbose` — развёрнуто). На **client** с `--type=boring-tls` helper на stderr выводит `ja3_md5=`, `ja3_sorted_md5=` и `ja4=`; после успешного ответа конфиг-кадра clean-vpn дублирует их строками `[clean-vpn] boring-tls …`. Для одной TCP-сессии digest из потока и из helper совпадают. **`--type=tls` в Node** на клиенте сырой ClientHello не считается — смотрите лог exit или используйте boring-tls на клиенте.
+
+Мини-сервер [`ja3-snif-server.mjs`](ja3-snif-server.mjs): в JSON `GET /ja3-snif` поля `ja3` (wire) и `ja3_sorted`; при `--profile-save-path` в файл профиля дополнительно попадают **`ja4`** (`fingerprint`, при успешном расчёте — `ja4_a`/`ja4_b`/`ja4_c`), опциональные `ja3_sorted_md5` и `ja3_sorted_string`.
 
 Подробный разбор GREASE-очищенных полей и префикса в hex: **`--ja3-verbose`** (сам включает JA3). Env: при уже заданном `CLEAN_VPN_TLS_LOG_JA3` можно добавить `CLEAN_VPN_JA3_VERBOSE=1`.
 
@@ -129,7 +134,7 @@ cmake --build native/boring_tls/build --target boring-tls-helper
 ## Файл профиля и ja3-snif-server
 
 - Запуск: `node scripts/ja3-snif-server.mjs --profile-save-path=/path/profile.json` (или env `JA3_SNIF_PROFILE_SAVE_PATH`).
-- После успешного **`GET /ja3-snif`** профиль (компактный JSON: `user_agent`, JA3-компоненты с порядком, `ja3_md5`, `tls_info`) записывается **атомарно** (temp + rename).
+- После успешного **`GET /ja3-snif`** профиль (компактный JSON: `user_agent`, JA3-компоненты с порядком, `ja3_md5`, **`ja4`**, `tls_info`) записывается **атомарно** (temp + rename).
 
 ## Ограничения (GREASE, padding, порядок расширений)
 
@@ -150,7 +155,7 @@ cmake --build native/boring_tls/build --target boring-tls-helper
 
 - ~~Закрепить коммит BoringSSL в CMake.~~
 - ~~JA3 golden: `scripts/lib/tls-clienthello-ja3.mjs` + эталон MD5 в `scripts/test-boring-tls-smoke.mjs` (обновление: `node scripts/dev-print-boring-tls-ja3.mjs`).~~
-- **JA4** (FoxIO): в ответе [`ja3-snif-server.mjs`](ja3-snif-server.mjs) по `GET /ja3-snif` поле `ja4` — отпечаток вида `JA4_a_JA4_b_JA4_c` по [JA4.md](https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md); расчёт в [`scripts/lib/tls-clienthello-ja4.mjs`](lib/tls-clienthello-ja4.mjs), GREASE — тот же набор, что `TLS_GREASE_VALUES` в JA3. **`boring-tls-helper` пока JA4 не считает** (только ja3-snif / отладка). Регрессия: `node scripts/test-tls-clienthello-ja4.mjs`.
+- **JA4** (FoxIO): расчёт в [`scripts/lib/tls-clienthello-ja4.mjs`](lib/tls-clienthello-ja4.mjs) и в **`boring-tls-helper`** (`ComputeJa4FromClientHelloBody`); профиль с `--profile-save-path` включает объект **`ja4`**; регрессия JA4: `npm run test:boring-tls-smoke` и `node scripts/test-tls-clienthello-ja4.mjs`.
 - **Фаза 2** — см. раздел «Фаза 2» (полный H2 fingerprint в helper).
 
 ## Регрессионные тесты (локально, без продакшена)
@@ -158,11 +163,11 @@ cmake --build native/boring_tls/build --target boring-tls-helper
 После `npm run build:boring-tls-helper`:
 
 - `npm run ja3-snif-server` — локальный HTTPS (`127.0.0.1:8443`), JSON по `GET /ja3-snif`: User-Agent, **JA3**, **JA3 sorted**, **JA4**, поля ClientHello для сравнения с Wireshark; опционально `--profile-save-path` для автосохранения компактного профиля; см. [`scripts/ja3-snif-server.mjs`](ja3-snif-server.mjs).
-- `npm run test:boring-tls-smoke` — проверки: бинарь, ошибки конфига/TCP, stdin EOF, полный TLS 1.3 к `tls.Server`, **JA3** (ALPN `h2` + `http/1.1` как у client в clean-vpn; эталонный wire digest при **`permute_extensions: false`**), отсутствие `ja3_md5` на stderr без `log_ja3`, **JA3 stderr при `log_ja3`**, **`permute_extensions`** — разный wire JA3 при неизменном **`ja3_sorted_md5`**, конфликт **`ja3_strict` + permute**, **SIGTERM** после handshake (не Windows).
+- `npm run test:boring-tls-smoke` — проверки: бинарь, ошибки конфига/TCP, stdin EOF, полный TLS 1.3 к `tls.Server`, **JA3** (ALPN `h2` + `http/1.1` как у client в clean-vpn; эталонный wire digest при **`permute_extensions: false`**), **JA4** на stderr при `log_ja3` (сверка с Node по тому же TCP), отсутствие `ja3_md5=`/`ja4=` на stderr без `log_ja3`, **JA3/JA4 stderr при `log_ja3`**, **`permute_extensions`** — разный wire JA3 при неизменном **`ja3_sorted_md5`**, конфликт **`ja3_strict` + permute**, **SIGTERM** после handshake (не Windows).
 - `npm run test:tls-ja4` — JA4 по спецификации FoxIO (`scripts/test-tls-clienthello-ja4.mjs`), без сборки helper.
 
 ## Что остаётся вне автотестов
 
 1. **Прод e2e:** client `--type=boring-tls` ↔ exit `--type=tls` на реальном VPS/сертификатах.
 2. **Сборка в CI:** закрепить образ/agents с CMake + C++17 при необходимости.
-3. **Фаза 2 / JA4 в helper** — по необходимости дублировать JA4 в native helper для паритета с ja3-snif.
+3. ~~**Фаза 2 / JA4 в helper** — по необходимости дублировать JA4 в native helper для паритета с ja3-snif.~~ (JA4 в helper и smoke-сверка с Node.)

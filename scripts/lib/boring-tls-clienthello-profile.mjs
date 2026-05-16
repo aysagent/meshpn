@@ -10,6 +10,15 @@ export const BORING_TLS_CLIENTHELLO_SCHEMA_VERSION = '1';
 
 /**
  * @typedef {{
+ *   fingerprint: string,
+ *   ja4_a?: string,
+ *   ja4_b?: string,
+ *   ja4_c?: string,
+ * }} BoringTlsProfileJa4Block
+ */
+
+/**
+ * @typedef {{
  *   schema_version?: string,
  *   user_agent: string,
  *   legacy_version: number,
@@ -21,10 +30,22 @@ export const BORING_TLS_CLIENTHELLO_SCHEMA_VERSION = '1';
  *   ja3_md5?: string,
  *   ja3_sorted_string?: string,
  *   ja3_sorted_md5?: string,
+ *   ja4?: BoringTlsProfileJa4Block,
  *   permute_extensions?: boolean,
  *   tls_info?: { alpn?: string[], supported_versions?: number[] },
  * }} BoringTlsClienthelloProfileFile
  */
+
+/** FoxIO JA4 fingerprint: `ja4_a_ja4_b_ja4_c` */
+function validateJa4FingerprintString(s) {
+  if (typeof s !== 'string' || s.length < 10) return false;
+  const parts = s.split('_');
+  if (parts.length !== 3) return false;
+  const [a, b, c] = parts;
+  if (!/^t\d{2}[di]\d{4}[\s\S]{2}$/.test(a)) return false;
+  if (!/^[0-9a-f]{12}$/.test(b) || !/^[0-9a-f]{12}$/.test(c)) return false;
+  return true;
+}
 
 /** @param {unknown} n */
 function isUint16(n) {
@@ -109,6 +130,19 @@ export function validateBoringTlsClienthelloProfileFile(obj) {
       }
     }
   }
+  if (p.ja4 !== undefined) {
+    if (!p.ja4 || typeof p.ja4 !== 'object') return { ok: false, error: 'profile: ja4 должен быть объектом' };
+    const j4 = /** @type {Record<string, unknown>} */ (p.ja4);
+    if (typeof j4.fingerprint !== 'string' || !validateJa4FingerprintString(j4.fingerprint)) {
+      return { ok: false, error: 'profile: ja4.fingerprint — строка FoxIO JA4 (t…_12hex_12hex)' };
+    }
+    for (const key of ['ja4_a', 'ja4_b', 'ja4_c']) {
+      const v = j4[key];
+      if (v !== undefined && typeof v !== 'string') {
+        return { ok: false, error: `profile: ja4.${key} должно быть строкой` };
+      }
+    }
+  }
   return {
     ok: true,
     profile: /** @type {BoringTlsClienthelloProfileFile} */ (obj),
@@ -117,7 +151,12 @@ export function validateBoringTlsClienthelloProfileFile(obj) {
 
 /**
  * Документ профиля для сохранения на диск (компактный JSON).
- * @param {{ tls: Record<string, unknown>, ja3: Record<string, unknown>, ja3_sorted?: Record<string, unknown> }} handshakeOk — результат tlsClientHandshakeProfileFromTcpBuf при ok:true
+ * @param {{
+ *   tls: Record<string, unknown>,
+ *   ja3: Record<string, unknown>,
+ *   ja3_sorted?: Record<string, unknown>,
+ *   ja4?: { fingerprint?: string, ja4_a?: string, ja4_b?: string, ja4_c?: string, error?: string },
+ * }} handshakeOk — результат `tlsClientHandshakeProfileFromTcpBuf` или `tlsClientHandshakeProfileWithJa4FromTcpBuf` при ok:true
  * @param {string} userAgent
  */
 export function buildCompactProfileDocument(handshakeOk, userAgent) {
@@ -133,6 +172,7 @@ export function buildCompactProfileDocument(handshakeOk, userAgent) {
     tls: Record<string, unknown>,
     ja3: Record<string, unknown>,
     ja3_sorted?: Record<string, unknown>,
+    ja4?: { fingerprint?: string, ja4_a?: string, ja4_b?: string, ja4_c?: string, error?: string },
   }} */ (handshakeOk);
   const comp = /** @type {Record<string, unknown>} */ (p.ja3.components || {});
   const tls = p.tls || {};
@@ -162,6 +202,20 @@ export function buildCompactProfileDocument(handshakeOk, userAgent) {
   }
   if (sorted && typeof sorted.string_before_md5 === 'string') {
     doc.ja3_sorted_string = sorted.string_before_md5;
+  }
+  const j4 = p.ja4 && typeof p.ja4 === 'object' ? p.ja4 : null;
+  if (
+    j4 &&
+    typeof j4.fingerprint === 'string' &&
+    validateJa4FingerprintString(j4.fingerprint) &&
+    j4.error === undefined
+  ) {
+    doc.ja4 = {
+      fingerprint: j4.fingerprint,
+      ...(typeof j4.ja4_a === 'string' ? { ja4_a: j4.ja4_a } : {}),
+      ...(typeof j4.ja4_b === 'string' ? { ja4_b: j4.ja4_b } : {}),
+      ...(typeof j4.ja4_c === 'string' ? { ja4_c: j4.ja4_c } : {}),
+    };
   }
   return doc;
 }
@@ -198,6 +252,14 @@ export function profileFileToHelperClientHelloBlock(profile, opts = {}) {
   }
   if (profile.ja3_string && !omitWireJa3Expectation) {
     out.ja3_string = profile.ja3_string;
+  }
+  if (
+    profile.ja4 &&
+    typeof profile.ja4 === 'object' &&
+    typeof profile.ja4.fingerprint === 'string' &&
+    validateJa4FingerprintString(profile.ja4.fingerprint)
+  ) {
+    out.ja4 = { fingerprint: profile.ja4.fingerprint };
   }
   return out;
 }

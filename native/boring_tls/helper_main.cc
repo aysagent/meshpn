@@ -15,6 +15,7 @@
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/md5.h>
+#include <openssl/sha.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <openssl/ssl3.h>
@@ -29,6 +30,7 @@
 #include <cstring>
 #include <cctype>
 #include <iostream>
+#include <cstdio>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -335,6 +337,283 @@ bool ComputeJa3FromClientHelloBody(const uint8_t* body, size_t n,
   return true;
 }
 
+std::string Hex4LowerU16(uint16_t v) {
+  static const char kHex[] = "0123456789abcdef";
+  std::string s(4, '\0');
+  s[0] = kHex[(v >> 12) & 0xf];
+  s[1] = kHex[(v >> 8) & 0xf];
+  s[2] = kHex[(v >> 4) & 0xf];
+  s[3] = kHex[v & 0xf];
+  return s;
+}
+
+std::string Ja4Count99(size_t n) {
+  size_t c = n;
+  if (c > 99) c = 99;
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%02zu", c);
+  return std::string(buf);
+}
+
+std::string Ja4VersionTwoChars(uint16_t v) {
+  switch (v) {
+    case 0x0304:
+      return "13";
+    case 0x0303:
+      return "12";
+    case 0x0302:
+      return "11";
+    case 0x0301:
+      return "10";
+    case 0x0300:
+      return "s3";
+    case 0x0002:
+      return "s2";
+    case 0xfeff:
+      return "d1";
+    case 0xfefd:
+      return "d2";
+    case 0xfefc:
+      return "d3";
+    default:
+      return "00";
+  }
+}
+
+std::string Ja4ResolvedTlsVersion(const std::vector<uint16_t>& supported_versions,
+                                  uint16_t legacy_version) {
+  uint16_t best = 0;
+  bool any = false;
+  for (uint16_t x : supported_versions) {
+    if (IsGrease(x)) continue;
+    any = true;
+    if (x > best) best = x;
+  }
+  if (any) return Ja4VersionTwoChars(best);
+  return Ja4VersionTwoChars(legacy_version);
+}
+
+std::string Ja4AlpnFingerprintPair(const std::vector<uint8_t>& proto) {
+  if (proto.empty()) return "00";
+  uint8_t fb = proto.front();
+  uint8_t lb = proto.back();
+  auto alnum = [](uint8_t b) {
+    return (b >= '0' && b <= '9') || (b >= 'A' && b <= 'Z') ||
+           (b >= 'a' && b <= 'z');
+  };
+  if (alnum(fb) && alnum(lb)) {
+    return std::string(1, static_cast<char>(fb)) +
+           std::string(1, static_cast<char>(lb));
+  }
+  std::string hex;
+  hex.reserve(proto.size() * 2);
+  for (uint8_t b : proto) {
+    static const char kH[] = "0123456789abcdef";
+    hex.push_back(kH[b >> 4]);
+    hex.push_back(kH[b & 0xf]);
+  }
+  if (hex.empty()) return "00";
+  return std::string(1, hex.front()) + std::string(1, hex.back());
+}
+
+std::string Sha256Trunc12Utf8(const std::string& s) {
+  unsigned char digest[SHA256_DIGEST_LENGTH];
+  SHA256(reinterpret_cast<const unsigned char*>(s.data()), s.size(), digest);
+  return HexLower(digest, 6);
+}
+
+std::string JoinCommaStringsVec(const std::vector<std::string>& v) {
+  std::string out;
+  for (size_t i = 0; i < v.size(); i++) {
+    if (i) out.push_back(',');
+    out += v[i];
+  }
+  return out;
+}
+
+struct Ja4Computed {
+  std::string fingerprint;
+  std::string ja4_a;
+  std::string ja4_b;
+  std::string ja4_c;
+  std::string raw_r;
+  std::string raw_o;
+};
+
+/** FoxIO JA4 — логика как в scripts/lib/tls-clienthello-ja4.mjs `ja4FromClientHelloBody`. */
+bool ComputeJa4FromClientHelloBody(const uint8_t* body, size_t n,
+                                   Ja4Computed* out) {
+  size_t o = 0;
+  if (n < 2) return false;
+  uint16_t legacy_version =
+      (static_cast<uint16_t>(body[o]) << 8) | body[o + 1];
+  o += 2 + 32;
+  if (o >= n) return false;
+  uint8_t sid_len = body[o++];
+  if (o + sid_len > n) return false;
+  o += sid_len;
+  if (o + 2 > n) return false;
+  uint16_t cipher_len =
+      (static_cast<uint16_t>(body[o]) << 8) | body[o + 1];
+  o += 2;
+  if (cipher_len % 2 != 0 || o + cipher_len > n) return false;
+  size_t cipher_end = o + cipher_len;
+  std::vector<uint16_t> ciphers;
+  while (o < cipher_end) {
+    uint16_t cs =
+        (static_cast<uint16_t>(body[o]) << 8) | body[o + 1];
+    o += 2;
+    if (!IsGrease(cs)) ciphers.push_back(cs);
+  }
+  if (o >= n) return false;
+  uint8_t comp_len = body[o++];
+  if (o + comp_len > n) return false;
+  o += comp_len;
+  if (o + 2 > n) return false;
+  uint16_t ext_total =
+      (static_cast<uint16_t>(body[o]) << 8) | body[o + 1];
+  o += 2;
+  size_t ext_end = o + ext_total;
+  if (ext_end > n) return false;
+
+  bool has_sni_extension = false;
+  std::vector<uint8_t> first_alpn_bytes;
+  std::vector<uint16_t> supported_versions;
+  std::vector<uint16_t> signature_algorithms;
+  std::vector<uint16_t> ext_types;
+
+  while (o + 4 <= ext_end && o + 4 <= n) {
+    uint16_t et =
+        (static_cast<uint16_t>(body[o]) << 8) | body[o + 1];
+    uint16_t elen =
+        (static_cast<uint16_t>(body[o + 2]) << 8) | body[o + 3];
+    o += 4;
+    if (o + elen > n || o + elen > ext_end) return false;
+    const uint8_t* edata = body + o;
+    o += elen;
+    if (IsGrease(et)) continue;
+    ext_types.push_back(et);
+    if (et == 0) {
+      has_sni_extension = true;
+    } else if (et == 16 && elen >= 2) {
+      uint16_t list_len =
+          (static_cast<uint16_t>(edata[0]) << 8) | edata[1];
+      size_t ao = 2;
+      while (ao + 1 <= elen && list_len > 0) {
+        uint8_t pl = edata[ao];
+        ao += 1;
+        if (ao + pl > elen) break;
+        if (first_alpn_bytes.empty()) {
+          first_alpn_bytes.assign(edata + ao, edata + ao + pl);
+        }
+        ao += pl;
+        uint16_t consumed = static_cast<uint16_t>(1 + pl);
+        if (list_len < consumed) break;
+        list_len -= consumed;
+      }
+    } else if (et == 43 && elen >= 1) {
+      uint8_t slen = edata[0];
+      size_t end = 1 + static_cast<size_t>(slen);
+      if (end > elen) end = elen;
+      for (size_t pos = 1; pos + 1 < end; pos += 2) {
+        uint16_t sv =
+            (static_cast<uint16_t>(edata[pos]) << 8) | edata[pos + 1];
+        supported_versions.push_back(sv);
+      }
+    } else if (et == 13 && elen >= 2) {
+      uint16_t alg_len =
+          (static_cast<uint16_t>(edata[0]) << 8) | edata[1];
+      for (size_t i = 2; i < 2 + static_cast<size_t>(alg_len) && i + 2 <= elen;
+           i += 2) {
+        uint16_t sid =
+            (static_cast<uint16_t>(edata[i]) << 8) | edata[i + 1];
+        if (!IsGrease(sid)) signature_algorithms.push_back(sid);
+      }
+    } else if (et == 50 && elen >= 2) {
+      uint16_t alg_len =
+          (static_cast<uint16_t>(edata[0]) << 8) | edata[1];
+      for (size_t i = 2; i < 2 + static_cast<size_t>(alg_len) && i + 2 <= elen;
+           i += 2) {
+        uint16_t sid =
+            (static_cast<uint16_t>(edata[i]) << 8) | edata[i + 1];
+        if (!IsGrease(sid)) signature_algorithms.push_back(sid);
+      }
+    }
+  }
+
+  if (o != ext_end) return false;
+
+  std::string ver =
+      Ja4ResolvedTlsVersion(supported_versions, legacy_version);
+  char sni_mark = has_sni_extension ? 'd' : 'i';
+  std::string alpn_pair = Ja4AlpnFingerprintPair(first_alpn_bytes);
+
+  std::string ja4_a = std::string("t") + ver + sni_mark +
+                      Ja4Count99(ciphers.size()) +
+                      Ja4Count99(ext_types.size()) + alpn_pair;
+
+  std::vector<std::string> cipher_hex_sorted;
+  cipher_hex_sorted.reserve(ciphers.size());
+  for (uint16_t c : ciphers) cipher_hex_sorted.push_back(Hex4LowerU16(c));
+  std::sort(cipher_hex_sorted.begin(), cipher_hex_sorted.end());
+  std::string sorted_cipher_hex = JoinCommaStringsVec(cipher_hex_sorted);
+
+  std::string ja4_b;
+  if (ciphers.empty()) {
+    ja4_b = "000000000000";
+  } else {
+    ja4_b = Sha256Trunc12Utf8(sorted_cipher_hex);
+  }
+
+  std::vector<std::string> ext_for_c_hex;
+  for (uint16_t t : ext_types) {
+    if (t != 0 && t != 16) ext_for_c_hex.push_back(Hex4LowerU16(t));
+  }
+  std::sort(ext_for_c_hex.begin(), ext_for_c_hex.end());
+
+  std::string ja4_c;
+  if (ext_for_c_hex.empty()) {
+    ja4_c = "000000000000";
+  } else {
+    std::string ext_part = JoinCommaStringsVec(ext_for_c_hex);
+    std::vector<std::string> sig_hex;
+    sig_hex.reserve(signature_algorithms.size());
+    for (uint16_t s : signature_algorithms) sig_hex.push_back(Hex4LowerU16(s));
+    std::string sig_part = JoinCommaStringsVec(sig_hex);
+    std::string payload =
+        signature_algorithms.empty() ? ext_part : ext_part + "_" + sig_part;
+    ja4_c = Sha256Trunc12Utf8(payload);
+  }
+
+  std::vector<std::string> cipher_wire_hex;
+  for (uint16_t c : ciphers) cipher_wire_hex.push_back(Hex4LowerU16(c));
+  std::vector<std::string> ext_wire_hex;
+  for (uint16_t t : ext_types) ext_wire_hex.push_back(Hex4LowerU16(t));
+  std::vector<std::string> sig_wire_hex;
+  for (uint16_t s : signature_algorithms)
+    sig_wire_hex.push_back(Hex4LowerU16(s));
+
+  std::string raw_r =
+      ja4_a + "_" + sorted_cipher_hex + "_" + JoinCommaStringsVec(ext_for_c_hex);
+  if (!signature_algorithms.empty()) {
+    raw_r += "_" + JoinCommaStringsVec(sig_wire_hex);
+  }
+
+  std::string raw_o = ja4_a + "_" + JoinCommaStringsVec(cipher_wire_hex) +
+                      "_" + JoinCommaStringsVec(ext_wire_hex);
+  if (!signature_algorithms.empty()) {
+    raw_o += "_" + JoinCommaStringsVec(sig_wire_hex);
+  }
+
+  out->ja4_a = ja4_a;
+  out->ja4_b = ja4_b;
+  out->ja4_c = ja4_c;
+  out->fingerprint = ja4_a + "_" + ja4_b + "_" + ja4_c;
+  out->raw_r = raw_r;
+  out->raw_o = raw_o;
+  return true;
+}
+
 const char* NamedGroupOpenSslName(uint16_t id) {
   switch (id) {
     case 23:
@@ -379,6 +658,7 @@ struct Ja3LogCfg {
   bool logged = false;
   std::string expected_ja3_md5;
   std::string expected_ja3_string;
+  std::string expected_ja4_fingerprint;
   bool ja3_strict = false;
   bool ja3_mismatch = false;
 };
@@ -534,6 +814,16 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
   if (ja3_cfg && p.contains("ja3_string") && p["ja3_string"].is_string()) {
     ja3_cfg->expected_ja3_string = p["ja3_string"].get<std::string>();
   }
+  if (ja3_cfg && p.contains("ja4") && p["ja4"].is_object()) {
+    const auto& j4 = p["ja4"];
+    if (j4.contains("fingerprint") && j4["fingerprint"].is_string()) {
+      ja3_cfg->expected_ja4_fingerprint =
+          j4["fingerprint"].get<std::string>();
+      for (auto& c : ja3_cfg->expected_ja4_fingerprint) {
+        c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+      }
+    }
+  }
   if (ja3_cfg) {
     ja3_cfg->ja3_strict = ja3_strict_cfg;
   }
@@ -554,6 +844,20 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
   if (len < 4 + hs_body_len) return;
   Ja3Computed computed;
   if (!ComputeJa3FromClientHelloBody(p + 4, hs_body_len, &computed)) return;
+  Ja4Computed ja4_comp;
+  bool ja4_ok =
+      ComputeJa4FromClientHelloBody(p + 4, hs_body_len, &ja4_comp);
+  std::string ja4_fp_lower = ja4_comp.fingerprint;
+  for (auto& c : ja4_fp_lower) {
+    c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+  }
+
+  if (!cfg->expected_ja4_fingerprint.empty() && ja4_ok &&
+      ja4_fp_lower != cfg->expected_ja4_fingerprint) {
+    std::cerr << "boring-tls-helper: warning: ja4 profile mismatch expected="
+              << cfg->expected_ja4_fingerprint << " actual=" << ja4_fp_lower
+              << '\n';
+  }
 
   if (!cfg->expected_ja3_md5.empty()) {
     if (computed.ja3_md5_hex != cfg->expected_ja3_md5) {
@@ -596,6 +900,9 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
   std::cerr << "boring-tls-helper: ja3_md5=" << computed.ja3_md5_hex << '\n';
   std::cerr << "boring-tls-helper: ja3_sorted_md5=" << computed.ja3_sorted_md5_hex
             << '\n';
+  if (ja4_ok) {
+    std::cerr << "boring-tls-helper: ja4=" << ja4_fp_lower << '\n';
+  }
   if (cfg->ja3_verbose) {
     constexpr size_t kHexPrev = 96;
     size_t preview_len = len < kHexPrev ? len : kHexPrev;
@@ -615,6 +922,13 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
               << JoinCommaDec8(computed.ec_point_formats) << '\n';
     std::cerr << "boring-tls-helper: hex_preview=" << HexLower(p, preview_len)
               << '\n';
+    if (ja4_ok) {
+      std::cerr << "boring-tls-helper: ja4_a=" << ja4_comp.ja4_a << '\n';
+      std::cerr << "boring-tls-helper: ja4_b=" << ja4_comp.ja4_b << '\n';
+      std::cerr << "boring-tls-helper: ja4_c=" << ja4_comp.ja4_c << '\n';
+      std::cerr << "boring-tls-helper: ja4_raw_r=" << ja4_comp.raw_r << '\n';
+      std::cerr << "boring-tls-helper: ja4_raw_o=" << ja4_comp.raw_o << '\n';
+    }
   }
   cfg->logged = true;
 }
@@ -808,7 +1122,8 @@ int main(int argc, char** argv) {
     SSL_CTX_set1_groups_list(ctx, "X25519:P-256:P-384");
   }
 
-  if (ja3_cfg.log_ja3 || !ja3_cfg.expected_ja3_md5.empty()) {
+  if (ja3_cfg.log_ja3 || !ja3_cfg.expected_ja3_md5.empty() ||
+      !ja3_cfg.expected_ja4_fingerprint.empty()) {
     SSL_CTX_set_msg_callback(ctx, Ja3MsgCallback);
     SSL_CTX_set_msg_callback_arg(ctx, &ja3_cfg);
   }
