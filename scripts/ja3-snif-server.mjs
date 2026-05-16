@@ -26,8 +26,10 @@ import {
   buildCompactProfileDocument,
 } from './lib/boring-tls-clienthello-profile.mjs';
 import {
+  tlsClientHandshakeProfileWithJa4FromTcpBuf,
+} from './lib/tls-clienthello-ja4.mjs';
+import {
   parseFirstTlsClientHelloFromTcpBuf,
-  tlsClientHandshakeProfileFromTcpBuf,
 } from './lib/tls-clienthello-ja3.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -184,7 +186,7 @@ function handleInbound(socket, secureContext, opts) {
       return;
     }
 
-    const profile = tlsClientHandshakeProfileFromTcpBuf(fullBuf, {
+    const profile = tlsClientHandshakeProfileWithJa4FromTcpBuf(fullBuf, {
       hexPreviewLen: opts.hexLen,
     });
     if (!profile.ok) {
@@ -223,7 +225,7 @@ function handleInbound(socket, secureContext, opts) {
             meta: {
               path: ROUTE,
               note:
-                'Поля tls / ja3 (wire) / ja3_sorted / wire — из ClientHello до TLS на TCP. User-Agent — из первого HTTP-запроса после рукопожатия. Сервер предлагает только ALPN http/1.1; предложенный клиентом ALPN — tls_observed_in_clienthello.offered_alpn_protocols.',
+                'Поля tls / ja3 (wire) / ja3_sorted / ja4 / wire — из ClientHello до TLS на TCP. User-Agent — из первого HTTP-запроса после рукопожатия. Сервер предлагает только ALPN http/1.1; предложенный клиентом ALPN — tls_observed_in_clienthello.offered_alpn_protocols.',
             },
             http: {
               user_agent: ua || null,
@@ -234,6 +236,7 @@ function handleInbound(socket, secureContext, opts) {
             tls_observed_in_clienthello: profile.tls,
             ja3: profile.ja3,
             ja3_sorted: profile.ja3_sorted,
+            ja4: profile.ja4,
             wire: {
               ...profile.wire,
               tcp_bytes_accumulated_for_clienthello: fullBuf.length,
@@ -299,7 +302,7 @@ function handleInbound(socket, secureContext, opts) {
             ),
           );
           console.log(
-            `[ja3-snif] GET ${ROUTE} ${peer} ja3=${profile.ja3.md5} ja3_sorted=${profile.ja3_sorted.md5}`,
+            `[ja3-snif] GET ${ROUTE} ${peer} ja3=${profile.ja3.md5} ja3_sorted=${profile.ja3_sorted.md5} ja4=${profile.ja4 && profile.ja4.fingerprint ? profile.ja4.fingerprint : '?'}`,
           );
 
           if (opts.profileSavePath) {

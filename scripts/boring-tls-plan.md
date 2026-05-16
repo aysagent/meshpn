@@ -141,18 +141,19 @@ cmake --build native/boring_tls/build --target boring-tls-helper
 
 - ~~Закрепить коммит BoringSSL в CMake.~~
 - ~~JA3 golden: `scripts/lib/tls-clienthello-ja3.mjs` + эталон MD5 в `scripts/test-boring-tls-smoke.mjs` (обновление: `node scripts/dev-print-boring-tls-ja3.mjs`).~~
-- **JA4** и побайтовое совпадение ClientHello с конкретной сборкой Chromium — по желанию (отдельный эталон/pcap).
+- **JA4** (FoxIO): в ответе [`ja3-snif-server.mjs`](ja3-snif-server.mjs) по `GET /ja3-snif` поле `ja4` — отпечаток вида `JA4_a_JA4_b_JA4_c` по [JA4.md](https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md); расчёт в [`scripts/lib/tls-clienthello-ja4.mjs`](lib/tls-clienthello-ja4.mjs), GREASE — тот же набор, что `TLS_GREASE_VALUES` в JA3. **`boring-tls-helper` пока JA4 не считает** (только ja3-snif / отладка). Регрессия: `node scripts/test-tls-clienthello-ja4.mjs`.
 - **Фаза 2** — см. раздел «Фаза 2» (полный H2 fingerprint в helper).
 
 ## Регрессионные тесты (локально, без продакшена)
 
 После `npm run build:boring-tls-helper`:
 
-- `npm run ja3-snif-server` — локальный HTTPS (`127.0.0.1:8443`), JSON по `GET /ja3-snif`: User-Agent, JA3 и поля ClientHello для сравнения с Wireshark; опционально `--profile-save-path` для автосохранения компактного профиля; см. [`scripts/ja3-snif-server.mjs`](ja3-snif-server.mjs).
+- `npm run ja3-snif-server` — локальный HTTPS (`127.0.0.1:8443`), JSON по `GET /ja3-snif`: User-Agent, **JA3**, **JA3 sorted**, **JA4**, поля ClientHello для сравнения с Wireshark; опционально `--profile-save-path` для автосохранения компактного профиля; см. [`scripts/ja3-snif-server.mjs`](ja3-snif-server.mjs).
 - `npm run test:boring-tls-smoke` — проверки: бинарь, ошибки конфига/TCP, stdin EOF, полный TLS 1.3 к `tls.Server`, **JA3** (ALPN `h2` + `http/1.1` как у client в clean-vpn), отсутствие `ja3_md5` на stderr без `log_ja3`, **JA3 stderr при `log_ja3`**, **SIGTERM** после handshake (не Windows).
+- `npm run test:tls-ja4` — JA4 по спецификации FoxIO (`scripts/test-tls-clienthello-ja4.mjs`), без сборки helper.
 
 ## Что остаётся вне автотестов
 
 1. **Прод e2e:** client `--type=boring-tls` ↔ exit `--type=tls` на реальном VPS/сертификатах.
 2. **Сборка в CI:** закрепить образ/agents с CMake + C++17 при необходимости.
-3. **Фаза 2 / JA4** — по необходимости см. выше.
+3. **Фаза 2 / JA4 в helper** — по необходимости дублировать JA4 в native helper для паритета с ja3-snif.
