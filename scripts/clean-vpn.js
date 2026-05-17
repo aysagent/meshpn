@@ -7318,7 +7318,6 @@ async function main() {
       '[clean-vpn] --boring-tls-clienthello-profile / CLEAN_VPN_BORING_TLS_CLIENTHELLO_PROFILE действует только с --type=boring-tls; профиль не используется.',
     );
   }
-
   if (args.role === 'exit') {
     await runExit(args);
   } else if (args.role === 'client') {

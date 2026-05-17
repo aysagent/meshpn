@@ -230,7 +230,7 @@ export function buildCompactProfileDocument(handshakeOk, userAgent) {
     tls.signature_algorithms_cert.length > 0
       ? { signature_algorithms_cert: [...tls.signature_algorithms_cert] }
       : {}),
-    /** Совпадает с наличием расширения server_name (0) в списке JA3 — для JA4_a и helper `emit_sni`. */
+    /** Совпадает с наличием расширения server_name (0) в списке JA3 — для эталона JA4_a в файле; clean-vpn всегда шлёт SNI в helper. */
     clienthello_emit_sni: hasSniExt,
     /** Как у Chromium: порядок расширений на wire меняется между сессиями; ja3_sorted_md5 стабилен. */
     permute_extensions: true,
@@ -292,15 +292,11 @@ export function profileFileToHelperClientHelloBlock(profile, opts = {}) {
   }
 
   /**
-   * Вызов SSL_set_tlsext_host_name: только явное clienthello_emit_sni из файла.
-   * Если поля нет — всегда true: без SNI многие CDN отдают дефолтный сертификат → CERTIFICATE_VERIFY_FAILED при verify_host.
-   * JA4 без SNI задаётся экспортом ja3-snif с clienthello_emit_sni:false (осознанный компромисс с TLS на именованных хостах).
+   * Всегда true для IPC helper: профиль часто снят к локальному ja3-snif по IP — в захвате нет SNI, но к прод-хосту без SNI
+   * CDN отдают чужой сертификат → CERTIFICATE_VERIFY_FAILED при verify_host. Поле clienthello_emit_sni в JSON остаётся
+   * справочным для эталона JA4 из экспорта; clean-vpn на реальное соединение всегда шлёт server_name.
    */
-  const emitSni =
-    profile.clienthello_emit_sni !== undefined
-      ? Boolean(profile.clienthello_emit_sni)
-      : true;
-  out.emit_sni = emitSni;
+  out.emit_sni = true;
 
   const omitWireJa3Expectation = permute && !ja3Strict;
   if (profile.ja3_md5 && !omitWireJa3Expectation) {
