@@ -92,6 +92,23 @@ if(NOT _meshvpn_extra_ext_marker)
   endif()
 endif()
 
+file(STRINGS "${boringssl_SOURCE_DIR}/ssl/extensions.cc" _meshvpn_ext_emit_dedup_marker
+  REGEX meshvpn_clienthello_extensions_contains_type LIMIT_COUNT 1)
+if(NOT _meshvpn_ext_emit_dedup_marker)
+  execute_process(
+    COMMAND "${MESHVPN_PATCH_EXECUTABLE}" -p0 -i "${CMAKE_CURRENT_SOURCE_DIR}/patches/boringssl-meshvpn-extra-extensions-emit-dedup.patch"
+    WORKING_DIRECTORY "${boringssl_SOURCE_DIR}"
+    RESULT_VARIABLE _meshvpn_patch4_rc
+    OUTPUT_VARIABLE _meshvpn_patch4_out
+    ERROR_VARIABLE _meshvpn_patch4_err)
+  if(NOT _meshvpn_patch4_rc EQUAL 0)
+    message(FATAL_ERROR
+      "mesh-vpn: не удалось применить патч extra-extensions emit dedup (${MESHVPN_BORINGSSL_PINNED_SHA}). "
+      "Обновите patches/boringssl-meshvpn-extra-extensions-emit-dedup.patch.\n"
+      "patch stdout:\n${_meshvpn_patch4_out}\nstderr:\n${_meshvpn_patch4_err}")
+  endif()
+endif()
+
 FetchContent_Declare(
   json
   GIT_REPOSITORY https://github.com/nlohmann/json.git

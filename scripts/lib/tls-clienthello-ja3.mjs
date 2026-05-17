@@ -390,10 +390,10 @@ export function tlsExtensionTypeIsGrease(et) {
  */
 export const MESHVPN_OPAQUE_EXTENSION_SKIP_TYPES = new Set([
   0, 5, 10, 11, 13, 16, 43, 45, 50, 51,
-  18, // signed_certificate_timestamp
+  // 18 / 27: в профиле Chrome часто есть; BoringSSL-helper может не слать —
+  // воспроизводим opaque; при дубликате стек+BoringSSL отсекается в форке (emit).
   21, // padding (стек добавляет после meshvpn_extra)
   23, // extended_master_secret
-  27, // compress_certificate
   35, // session_ticket
   41, // pre_shared_key
   65281, // renegotiation_info (0xff01)

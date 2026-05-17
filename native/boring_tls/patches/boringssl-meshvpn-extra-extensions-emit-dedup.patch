@@ -1,0 +1,52 @@
+--- ssl/extensions.cc
++++ ssl/extensions.cc
+@@ -4478,19 +4478,48 @@
+   return true;
+ }
+ 
++// mesh-vpn: true if |extensions| already contains an extension of |want_type|.
++// Uses |CBB_flush| so length prefixes are valid before scanning.
++static bool meshvpn_clienthello_extensions_contains_type(CBB *extensions,
++                                                         uint16_t want_type) {
++  if (!CBB_flush(extensions)) {
++    return false;
++  }
++  const uint8_t *data = CBB_data(extensions);
++  size_t len = CBB_len(extensions);
++  CBS cbs;
++  CBS_init(&cbs, data, len);
++  while (CBS_len(&cbs) > 0) {
++    uint16_t type;
++    CBS body;
++    if (!CBS_get_u16(&cbs, &type) ||
++        !CBS_get_u16_length_prefixed(&cbs, &body)) {
++      return false;
++    }
++    if (type == want_type) {
++      return true;
++    }
++  }
++  return false;
++}
++
+ static bool meshvpn_emit_extra_clienthello_extensions(const SSL_HANDSHAKE *hs,
+-                                                                CBB *extensions) {
++                                                      CBB *extensions) {
+   const auto &extras = hs->config->meshvpn_client_hello_extra_extensions;
+   if (extras.empty()) {
+     return true;
+   }
+   for (const auto &entry : extras) {
++    if (meshvpn_clienthello_extensions_contains_type(extensions,
++                                                     entry.first)) {
++      continue;
++    }
+     CBB child;
+     if (!CBB_add_u16(extensions, entry.first) ||
+         !CBB_add_u16_length_prefixed(extensions, &child) ||
+         !CBB_add_bytes(&child, entry.second.data(), entry.second.size())) {
+       return false;
+     }
+   }
+   return true;
+ }

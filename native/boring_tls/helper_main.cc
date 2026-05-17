@@ -705,10 +705,8 @@ bool MeshvpnOpaqueExtensionBlocked(uint16_t t) {
     case 11:    // ec_point_formats
     case 13:    // signature_algorithms
     case 16:    // ALPN
-    case 18:    // signed_certificate_timestamp (стек Chromium/BoringSSL)
     case 21:    // padding
     case 23:    // extended_master_secret
-    case 27:    // compress_certificate
     case 35:    // session_ticket
     case 41:    // pre_shared_key
     case 43:    // supported_versions
