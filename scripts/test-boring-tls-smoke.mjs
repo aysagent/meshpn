@@ -737,6 +737,78 @@ test('helper: client_hello_extra_extensions — opaque добавляется н
   }
 });
 
+test('helper: client_hello_extra_extensions — тип из denylist (35) не добавляется', async (t) => {
+  if (!fs.existsSync(helper)) {
+    t.skip();
+    return;
+  }
+
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const addr = server.address();
+  const port = typeof addr === 'object' && addr ? addr.port : null;
+  assert.ok(port);
+
+  const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  await once(child, 'spawn');
+  let stderr = '';
+  child.stderr?.on('data', (b) => {
+    stderr += b.toString();
+  });
+
+  try {
+    sendConfigFrame(child.stdin, {
+      host: '127.0.0.1',
+      port,
+      ca_pem: MIN_CA_PEM,
+      servername: 'test-ca',
+      verify_host: 'test-ca',
+      alpn: ['h2', 'http/1.1'],
+      handshake_timeout_ms: 8000,
+      client_hello_profile: {
+        cipher_suites: [4865, 4866, 4867],
+        supported_groups: [29, 23, 24],
+        ec_point_formats: [0],
+        permute_extensions: false,
+        extension_types: [43, 16],
+        client_hello_extra_extensions: [{ type: 35, hex: '' }],
+      },
+    });
+
+    await raceMs(
+      new Promise((resolve, reject) => {
+        const deadline = Date.now() + 6000;
+        const tick = () => {
+          if (stderr.includes('пропуск opaque расширения типа 35')) {
+            resolve(undefined);
+            return;
+          }
+          if (Date.now() > deadline) {
+            reject(new Error('нет сообщения о пропуске opaque типа 35'));
+            return;
+          }
+          setImmediate(tick);
+        };
+        tick();
+      }),
+      6500,
+      'denylist opaque 35',
+    );
+    assert.ok(stderr.includes('пропуск opaque расширения типа 35'), stderr);
+    assert.ok(!stderr.includes('meshvpn_opaque_extensions_added='), stderr);
+  } finally {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
+    server.close();
+  }
+});
+
 test('helper: client_hello_profile ja3_strict при неверном ja3_md5 — отказ', async (t) => {
   if (!fs.existsSync(helper)) {
     t.skip();

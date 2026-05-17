@@ -383,9 +383,20 @@ export function tlsExtensionTypeIsGrease(et) {
   return (et & 0x0f0f) === 0x0a0a && ((et >> 8) & 0xff) === (et & 0xff);
 }
 
-/** Типы расширений, которые задаёт сам BoringSSL/поля профиля — не дублировать opaque-телами. */
+/**
+ * Типы расширений, которые типичный клиент BoringSSL/Chromium уже кладёт в ClientHello
+ * (или задаёт профиль/helper). Повтор через opaque даёт два блока с одним типом → alert 47.
+ * Держать в синхроне с MeshvpnOpaqueExtensionBlocked в native/boring_tls/helper_main.cc.
+ */
 export const MESHVPN_OPAQUE_EXTENSION_SKIP_TYPES = new Set([
   0, 5, 10, 11, 13, 16, 43, 45, 50, 51,
+  18, // signed_certificate_timestamp
+  21, // padding (стек добавляет после meshvpn_extra)
+  23, // extended_master_secret
+  27, // compress_certificate
+  35, // session_ticket
+  41, // pre_shared_key
+  65281, // renegotiation_info (0xff01)
 ]);
 
 /**
