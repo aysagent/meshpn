@@ -37,7 +37,7 @@ export const BORING_TLS_CLIENTHELLO_SCHEMA_VERSION = '1';
  *   tls_info?: { alpn?: string[], supported_versions?: number[] },
  *   signature_algorithms?: number[],
  *   signature_algorithms_cert?: number[],
- *   /** Opaque расширения для патча BoringSSL (type + hex тело с захвата). */
+ *   // Opaque расширения для патча BoringSSL (type + hex тело с захвата)
  *   client_hello_extra_extensions?: { type: number, hex: string }[],
  * }} BoringTlsClienthelloProfileFile
  */
