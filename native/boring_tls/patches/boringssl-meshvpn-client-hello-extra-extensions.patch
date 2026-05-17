@@ -1,0 +1,140 @@
+--- include/openssl/ssl.h	2026-05-17 23:40:21
++++ include/openssl/ssl.h	2026-05-17 23:40:25
+@@ -2698,6 +2698,16 @@
+ // extension. Duplicates are rejected (mesh-vpn BoringSSL fork).
+ OPENSSL_EXPORT int SSL_CTX_set_meshvpn_client_signature_algorithms_cert(
+     SSL_CTX *ctx, const uint16_t *prefs, size_t num_prefs);
++
++// SSL_CTX_meshvpn_clear_client_hello_extensions clears opaque extensions
++// appended before padding/PSK (mesh-vpn BoringSSL fork).
++OPENSSL_EXPORT void SSL_CTX_meshvpn_clear_client_hello_extensions(SSL_CTX *ctx);
++
++// SSL_CTX_meshvpn_add_client_hello_extension appends extension |ext_type| with
++// wire body |body|/|body_len| (|body_len| <= 65535). Duplicate |ext_type| is
++// rejected. Empty body is allowed.
++OPENSSL_EXPORT int SSL_CTX_meshvpn_add_client_hello_extension(
++    SSL_CTX *ctx, uint16_t ext_type, const uint8_t *body, size_t body_len);
+ 
+ // SSL_set1_groups_list decodes |groups| as a non-empty colon-separated list of
+ // group names (e.g. "X25519" or "P-256") and sets |ssl|'s preferred groups to
+--- ssl/internal.h	2026-05-17 23:40:21
++++ ssl/internal.h	2026-05-17 23:40:25
+@@ -32,6 +32,7 @@
+ #include <type_traits>
+ #include <utility>
+ #include <variant>
++#include <vector>
+ 
+ #include <openssl/aead.h>
+ #include <openssl/curve25519.h>
+@@ -3456,6 +3457,10 @@
+   // SSL_CTX_set_meshvpn_client_signature_algorithms_cert).
+   Array<uint16_t> meshvpn_client_sigalgs_cert;
+ 
++  // mesh-vpn: optional raw extensions before padding/PSK (opaque replay).
++  std::vector<std::pair<uint16_t, std::vector<uint8_t>>>
++      meshvpn_client_hello_extra_extensions;
++
+   // srtp_profiles is the list of configured SRTP protection profiles for
+   // DTLS-SRTP.
+   UniquePtr<STACK_OF(SRTP_PROTECTION_PROFILE)> srtp_profiles;
+@@ -4111,6 +4116,10 @@
+   // mesh-vpn: optional signature_algorithms_cert (extension 50) for clients.
+   bssl::Array<uint16_t> meshvpn_client_sigalgs_cert;
+ 
++  // mesh-vpn: opaque ClientHello extensions (see SSL_CTX_meshvpn_*).
++  std::vector<std::pair<uint16_t, std::vector<uint8_t>>>
++      meshvpn_client_hello_extra_extensions;
++
+   // channel_id_private is the client's Channel ID private key, or null if
+   // Channel ID should not be offered on this connection.
+   bssl::UniquePtr<EVP_PKEY> channel_id_private;
+--- ssl/ssl_lib.cc	2026-05-17 23:40:21
++++ ssl/ssl_lib.cc	2026-05-17 23:40:25
+@@ -520,6 +520,9 @@
+   ssl->config->aes_hw_override = ctx->aes_hw_override;
+   ssl->config->aes_hw_override_value = ctx->aes_hw_override_value;
+   ssl->config->compliance_policy = ctx->compliance_policy;
++
++  ssl->config->meshvpn_client_hello_extra_extensions =
++      ctx->meshvpn_client_hello_extra_extensions;
+ 
+   if (!ssl->config->supported_group_list.CopyFrom(ctx->supported_group_list) ||
+       !ssl->config->supported_group_list_flags.CopyFrom(
+@@ -2114,6 +2117,38 @@
+   return ctx->meshvpn_client_sigalgs_cert.CopyFrom(span) ? 1 : 0;
+ }
+ 
++void SSL_CTX_meshvpn_clear_client_hello_extensions(SSL_CTX *ctx) {
++  if (ctx == nullptr) {
++    return;
++  }
++  ctx->meshvpn_client_hello_extra_extensions.clear();
++}
++
++int SSL_CTX_meshvpn_add_client_hello_extension(SSL_CTX *ctx, uint16_t ext_type,
++                                               const uint8_t *body,
++                                               size_t body_len) {
++  if (ctx == nullptr) {
++    return 0;
++  }
++  if (body_len > 65535) {
++    OPENSSL_PUT_ERROR(SSL, SSL_R_ERROR_ADDING_EXTENSION);
++    return 0;
++  }
++  for (const auto &existing : ctx->meshvpn_client_hello_extra_extensions) {
++    if (existing.first == ext_type) {
++      OPENSSL_PUT_ERROR(SSL, SSL_R_ERROR_ADDING_EXTENSION);
++      return 0;
++    }
++  }
++  std::vector<uint8_t> bytes;
++  if (body_len != 0) {
++    bytes.assign(body, body + body_len);
++  }
++  ctx->meshvpn_client_hello_extra_extensions.emplace_back(ext_type,
++                                                          std::move(bytes));
++  return 1;
++}
++
+ int SSL_set1_groups_list(SSL *ssl, const char *groups) {
+   if (!ssl->config) {
+     return 0;
+--- ssl/extensions.cc	2026-05-17 23:40:21
++++ ssl/extensions.cc	2026-05-17 23:40:25
+@@ -4478,6 +4478,23 @@
+     return false;
+   }
+ 
++  return true;
++}
++
++static bool meshvpn_emit_extra_clienthello_extensions(const SSL_HANDSHAKE *hs,
++                                                                CBB *extensions) {
++  const auto &extras = hs->config->meshvpn_client_hello_extra_extensions;
++  if (extras.empty()) {
++    return true;
++  }
++  for (const auto &entry : extras) {
++    CBB child;
++    if (!CBB_add_u16(extensions, entry.first) ||
++        !CBB_add_u16_length_prefixed(extensions, &child) ||
++        !CBB_add_bytes(&child, entry.second.data(), entry.second.size())) {
++      return false;
++    }
++  }
+   return true;
+ }
+ 
+@@ -4545,6 +4562,11 @@
+     last_was_empty = false;
+   }
+ 
++  if (!meshvpn_emit_extra_clienthello_extensions(hs, &extensions)) {
++    OPENSSL_PUT_ERROR(SSL, SSL_R_ERROR_ADDING_EXTENSION);
++    return false;
++  }
++
+   // In cleartext ClientHellos, we add the padding extension to work around
+   // bugs. We also apply this padding to ClientHelloOuter, to keep the wire
+   // images aligned.

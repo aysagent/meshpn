@@ -652,9 +652,81 @@ test('helper: profile_vs_wire extensions — строка диагностики
       6500,
       'диагностика profile_vs_wire',
     );
-
     assert.ok(stderr.includes('profile_vs_wire extensions:'), stderr);
     assert.ok(stderr.includes('extra_in_profile(multiset)='), stderr);
+  } finally {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
+    server.close();
+  }
+});
+
+test('helper: client_hello_extra_extensions — opaque добавляется на wire', async (t) => {
+  if (!fs.existsSync(helper)) {
+    t.skip();
+    return;
+  }
+
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const addr = server.address();
+  const port = typeof addr === 'object' && addr ? addr.port : null;
+  assert.ok(port);
+
+  const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  await once(child, 'spawn');
+  let stderr = '';
+  child.stderr?.on('data', (b) => {
+    stderr += b.toString();
+  });
+
+  try {
+    sendConfigFrame(child.stdin, {
+      host: '127.0.0.1',
+      port,
+      ca_pem: MIN_CA_PEM,
+      servername: 'test-ca',
+      verify_host: 'test-ca',
+      alpn: ['h2', 'http/1.1'],
+      handshake_timeout_ms: 8000,
+      client_hello_profile: {
+        cipher_suites: [4865, 4866, 4867],
+        supported_groups: [29, 23, 24],
+        ec_point_formats: [0],
+        permute_extensions: false,
+        extension_types: [43, 16],
+        /** Не GREASE, не в denylist helper — пустое тело. */
+        client_hello_extra_extensions: [{ type: 27243, hex: '' }],
+      },
+    });
+
+    await raceMs(
+      new Promise((resolve, reject) => {
+        const deadline = Date.now() + 6000;
+        const tick = () => {
+          if (stderr.includes('meshvpn_opaque_extensions_added=')) {
+            resolve(undefined);
+            return;
+          }
+          if (Date.now() > deadline) {
+            reject(new Error('нет meshvpn_opaque_extensions_added в stderr'));
+            return;
+          }
+          setImmediate(tick);
+        };
+        tick();
+      }),
+      6500,
+      'opaque extensions note',
+    );
+
+    assert.ok(stderr.includes('meshvpn_opaque_extensions_added=1'), stderr);
   } finally {
     try {
       child.kill('SIGKILL');

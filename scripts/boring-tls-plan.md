@@ -59,7 +59,8 @@
 | `cipher_suites` | number[] | Полный список после удаления GREASE (как в JA3): сначала типично **TLS 1.3**, затем **TLS 1.2**. Helper выставляет TLS 1.3 порядок через патч BoringSSL и при наличии TLS 1.2 id включает **`TLS1_2…TLS1_3`** и `SSL_CTX_set_cipher_list` для второго блока в том же порядке — так восполняется JA3-поле cipher. Дубликаты среди TLS 1.3 по-прежнему отвергаются API стека. Полное совпадение JA3 с эталоном браузера может не достигаться из‑за порядка расширений / ec_point_formats — см. «Ограничения» |
 | `supported_groups` | number[] | id named groups (**порядок** для `SSL_CTX_set1_groups_list`): классические `23,24,25,29,30` (P-256…X448), постквантовые/гибриды из BoringSSL — **`4588` (`X25519MLKEM768`)**, **`25497` (`X25519Kyber768Draft00`)**, **`514` (`MLKEM1024`)** и др.; см. `NamedGroupOpenSslName` / `SSL_GROUP_*` в `openssl/ssl.h` |
 | `ec_point_formats` | number[] | сохраняется в файле профиля для JA3; **на клиенте TLS 1.3 BoringSSL не отправляет ext 11** — см. `ssl/extensions.cc` форка; паритет чаще при смешанном TLS 1.2–1.3 или патче |
-| `extension_types` | number[] | из профиля в IPC: stderr **`profile_vs_wire extensions:`** (Multiset-diff без GREASE). При **`ja3_verbose`** — **`profile_vs_wire ciphers:`** и **`profile_vs_wire ja4_sig_algs:`**. Если есть тип **5**, включается **`SSL_CTX_enable_ocsp_stapling`** |
+| `extension_types` | number[] | **Эталон захвата и диагностика**, не декларативный список «что отправить»: helper не итерирует это поле как команду на расширения (кроме типа **5** → OCSP). Multiset-diff с wire: stderr **`profile_vs_wire extensions:`**. При **`ja3_verbose`** — **`profile_vs_wire ciphers:`** и **`profile_vs_wire ja4_sig_algs:`** |
+| `client_hello_extra_extensions` | `{type, hex}[]` | опционально: **opaque replay** тел расширений с захвата (hex — тело расширения без заголовка типа/длины). Типы из набора **GREASE** и типы **0, 5, 10, 11, 13, 16, 43, 45, 50, 51** helper пропускает (их задаёт стек/остальной профиль). Передаётся в форк BoringSSL и добавляется на wire **перед** расчётом padding и **перед** PSK. Поле заполняется при экспорте профиля из ja3-snif (`extractClientHelloOpaqueExtensionsForProfile`), если есть подходящие расширения |
 | `signature_algorithms` | number[] | опционально: расширение **13**; задаётся **`SSL_CTX_set_verify_algorithm_prefs`** (публичный API закреплённого BoringSSL) |
 | `signature_algorithms_cert` | number[] | опционально: расширение **50**; **`SSL_CTX_set_meshvpn_client_signature_algorithms_cert`** — только со вторым патчем (`boringssl-meshvpn-client-signature-algorithms-cert.patch`) |
 | `ja3_string` | string | эталонная строка JA3 до MD5 (как в ja3-snif); при расхождении MD5 helper печатает expected(profile) vs actual(wire) |
@@ -76,6 +77,36 @@
 **Ожидаемый wire-JA3 из файла профиля:** при профиле из `ja3-snif` поля `ja3_md5` / `ja3_string` соответствуют **конкретному** захвату. Если включена перестановка расширений (`permute_extensions` по умолчанию), фактический wire-JA3 между сессиями **не обязан** совпадать с этим снимком. **`clean-vpn`** в этом режиме **не передаёт** в helper `ja3_md5` / `ja3_string`, пока не включён **`--boring-tls-profile-ja3-strict`** (тогда в профиле должно быть **`permute_extensions: false`**).
 
 **ALPN:** в реальном соединении список `alpn` в `config` задаёт **только** `clean-vpn` (`resolveTlsAlpnProtocols`, `--http-vers`). Поле `tls_info.alpn` в файле профиля — справочно (JA3 на содержимое ALPN не смотрит).
+
+### Почему в `extension_types` больше типов, чем на wire (audit)
+
+1. **Профиль не теряет расширения при сохранении:** список типов в JSON — это GREASE-очищенный снимок ja3-snif (`buildCompactProfileDocument`).
+2. **Раньше helper не «дорисовывал» типы по списку:** BoringSSL сам решал, какие расширения офферить; поле использовалось для диагностики и для OCSP при типе **5**.
+3. **Multiset-diff:** строка **`extra_in_profile(multiset)=…`** — типы, которые есть в профиле, но отсутствуют среди типов на wire (без GREASE); **`extra_on_wire`** — наоборот.
+
+### Карта типов (mapping): API стека vs opaque
+
+| Тип (IANA) | Имя / роль | Как воспроизводится сегодня |
+|------------|------------|-----------------------------|
+| 0 | server_name | `emit_sni` + имя из конфига (clean-vpn всегда **true**) |
+| 5 | status_request | тип в **`extension_types`** → `SSL_CTX_enable_ocsp_stapling` |
+| 10 | supported_groups | **`supported_groups`** в профиле |
+| 11 | ec_point_formats | только эталон в профиле; TLS 1.3-only часто **нет** на wire |
+| 13 | signature_algorithms | **`signature_algorithms`** → `SSL_CTX_set_verify_algorithm_prefs` |
+| 16 | ALPN | поле **`alpn`** в IPC конфиге helper |
+| 18 | signed_certificate_timestamp | типично только через **`client_hello_extra_extensions`** |
+| 27 | compress_certificate | то же |
+| 43 | supported_versions | стек BoringSSL при TLS 1.3 |
+| 45 | psk_key_exchange_modes | стек |
+| 50 | signature_algorithms_cert | **`signature_algorithms_cert`** + второй патч |
+| 51 | key_share | стек |
+| 17613 / прочие | проприетарные / ECH и т.д. | при необходимости **opaque** из захвата |
+
+### Стратегия паритета (реализовано)
+
+- **Гибрид:** точечные патчи (cipher **13/50**, порядок TLS 1.3 cipher) + **opaque replay** для остальных типов с провода Chrome.
+- **`client_hello_extra_extensions`** в файле профиля и в IPC: массив **`{ "type": uint16, "hex": "<тело расширения>"`**.
+- Сервер **может** разорвать handshake на неизвестные или некорректные тела — это осознанный риск паритета по байтам.
 
 ### Wire JA3 vs JA3 sorted и `permute_extensions`
 
@@ -117,7 +148,7 @@
 
 Зависимости CMake: **git**, **patch** (POSIX), **cmake ≥ 3.16**, компилятор **C++17**, сеть для первого clone **BoringSSL** (`FetchContent`, закреплённый коммит — полный clone без shallow, иначе Git не находит SHA на некоторых системах).
 
-При конфигурации CMake дерево BoringSSL проверяется на ожидаемый **SHA** (`MESHVPN_BORINGSSL_PINNED_SHA` в `native/boring_tls/CMakeLists.txt`) и при необходимости последовательно патчится файлами **`native/boring_tls/patches/boringssl-meshvpn-tls13-cipher-order.patch`** (порядок TLS 1.3 cipher в ClientHello) и **`native/boring_tls/patches/boringssl-meshvpn-client-signature-algorithms-cert.patch`** (расширение **50** и `SSL_CTX_set_meshvpn_client_signature_algorithms_cert`). Если коммит BoringSSL обновили без обновления патчей — конфигурация завершится ошибкой.
+При конфигурации CMake дерево BoringSSL проверяется на ожидаемый **SHA** (`MESHVPN_BORINGSSL_PINNED_SHA` в `native/boring_tls/CMakeLists.txt`) и при необходимости последовательно патчится файлами **`native/boring_tls/patches/boringssl-meshvpn-tls13-cipher-order.patch`** (порядок TLS 1.3 cipher в ClientHello), **`native/boring_tls/patches/boringssl-meshvpn-client-signature-algorithms-cert.patch`** (расширение **50** и `SSL_CTX_set_meshvpn_client_signature_algorithms_cert`) и **`native/boring_tls/patches/boringssl-meshvpn-client-hello-extra-extensions.patch`** (opaque расширения из профиля: `SSL_CTX_meshvpn_add_client_hello_extension`, вставка в ClientHello перед padding/PSK). Если коммит BoringSSL обновили без обновления патчей — конфигурация завершится ошибкой.
 
 ```bash
 npm run build:boring-tls-helper
@@ -140,13 +171,14 @@ cmake --build native/boring_tls/build --target boring-tls-helper
 ## Файл профиля и ja3-snif-server
 
 - Запуск: `node scripts/ja3-snif-server.mjs --profile-save-path=/path/profile.json` (или env `JA3_SNIF_PROFILE_SAVE_PATH`).
-- После успешного **`GET /ja3-snif`** профиль (компактный JSON: `user_agent`, JA3-компоненты с порядком, `ja3_md5`, **`ja4`**, при наличии списки **`signature_algorithms`** / **`signature_algorithms_cert`**, `tls_info`) записывается **атомарно** (temp + rename).
+- После успешного **`GET /ja3-snif`** профиль (компактный JSON: `user_agent`, JA3-компоненты с порядком, `ja3_md5`, **`ja4`**, при наличии списки **`signature_algorithms`** / **`signature_algorithms_cert`**, **`client_hello_extra_extensions`** (opaque тела расширений с захвата, без типов из denylist), `tls_info`) записывается **атомарно** (temp + rename).
 
 ## Ограничения (GREASE, padding, порядок расширений)
 
 - **JA3** в файле считается по правилам Salesforce с **удалением GREASE** из списков. На wire браузер всё равно вставляет GREASE; побайтовое совпадение ClientHello и **JA4** могут отличаться даже при верных cipher/group и совпавшем JA3 MD5. Порядок **TLS 1.3 cipher suites** в ClientHello задаётся профилем через патч BoringSSL (`SSL_CTX_set_tls13_client_cipher_order`); GREASE-cipher по-прежнему добавляет стек отдельно.
 - **Padding** (расширение 21) и **полный порядок расширений** задаются стеком BoringSSL; по умолчанию для `client_hello_profile` включена **`permute_extensions`** (как у Chromium). Строка **`profile_vs_wire extensions:`** на stderr — multiset-diff типов расширений (без GREASE) между профилем и wire; при совпадении multiset при **`ja3_verbose`** выводится заметка о расхождении **порядка**. Для эталонного wire-JA3 — **`permute_extensions: false`** и **`ja3_strict`** при необходимости. Без дополнительных патчей **полное совпадение JA3/JA4** с Chrome **часто недостижимо**.
 - **Signature algorithms:** расширение **13** — **`SSL_CTX_set_verify_algorithm_prefs`**; **50** — второй патч (**`SSL_CTX_set_meshvpn_client_signature_algorithms_cert`**). В сохранённый профиль попадают **`signature_algorithms`** / **`signature_algorithms_cert`** из разбора ClientHello (`signatureAlgorithmsFromClientHelloBody` в `tls-clienthello-ja3.mjs`).
+- **Opaque расширения:** третий патч BoringSSL (`boringssl-meshvpn-client-hello-extra-extensions.patch`) и поле **`client_hello_extra_extensions`** в профиле; при успешной загрузке на stderr — **`meshvpn_opaque_extensions_added=N`**.
 - **OCSP status_request (ext 5):** при типе **5** в **`extension_types`** профиля helper вызывает **`SSL_CTX_enable_ocsp_stapling`**.
 - **EC point formats (ext 11):** для TLS **1.3-only** ClientHello BoringSSL **не отправляет** ext 11 (`ext_ec_point_add_clienthello`); без TLS 1.2 в минимальной версии или патча форка JA3 по ec_point_formats может расходиться с Chrome.
 

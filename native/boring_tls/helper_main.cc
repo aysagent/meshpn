@@ -688,6 +688,65 @@ struct Ja3LogCfg {
   std::vector<uint16_t> profile_sigalgs_merged;
 };
 
+bool MeshvpnTlsExtensionIsGrease(uint16_t et) {
+  return (static_cast<uint16_t>(et & 0x0f0f) == 0x0a0a) &&
+         (((static_cast<unsigned>(et) >> 8) & 0xff) ==
+          (static_cast<unsigned>(et) & 0xff));
+}
+
+bool MeshvpnOpaqueExtensionBlocked(uint16_t t) {
+  if (MeshvpnTlsExtensionIsGrease(t)) {
+    return true;
+  }
+  switch (t) {
+    case 0:   // server_name
+    case 5:   // status_request — OCSP из профиля
+    case 10:  // supported_groups
+    case 11:  // ec_point_formats
+    case 13:  // signature_algorithms
+    case 16:  // ALPN
+    case 43:  // supported_versions
+    case 45:  // psk_key_exchange_modes
+    case 50:  // signature_algorithms_cert
+    case 51:  // key_share
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool HexDecodeStrict(const std::string& hex, std::vector<uint8_t>* out,
+                     std::string* err_out) {
+  out->clear();
+  std::string compact;
+  compact.reserve(hex.size());
+  for (unsigned char uc : hex) {
+    char c = static_cast<char>(uc);
+    if (std::isspace(static_cast<unsigned char>(c))) continue;
+    compact.push_back(c);
+  }
+  if (compact.size() % 2 != 0) {
+    *err_out = "client_hello_extra_extensions: hex length must be even";
+    return false;
+  }
+  auto nibble = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return -1;
+  };
+  for (size_t i = 0; i < compact.size(); i += 2) {
+    int hi = nibble(compact[i]);
+    int lo = nibble(compact[i + 1]);
+    if (hi < 0 || lo < 0) {
+      *err_out = "client_hello_extra_extensions: invalid hex digit";
+      return false;
+    }
+    out->push_back(static_cast<uint8_t>((hi << 4) | lo));
+  }
+  return true;
+}
+
 bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
                              Ja3LogCfg* ja3_cfg, std::string* err_out) {
   bool permute_extensions = true;
@@ -700,6 +759,8 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
     permute_extensions = p["permute_extensions"].get<bool>();
   }
   SSL_CTX_set_permute_extensions(ctx, permute_extensions ? 1 : 0);
+
+  SSL_CTX_meshvpn_clear_client_hello_extensions(ctx);
 
   const bool ja3_strict_cfg = p.value("ja3_strict", false);
   if (ja3_strict_cfg && permute_extensions) {
@@ -933,6 +994,75 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
                      "(status_request) — SSL_CTX_enable_ocsp_stapling.\n";
         break;
       }
+    }
+  }
+
+  if (p.contains("client_hello_extra_extensions")) {
+    if (!p["client_hello_extra_extensions"].is_array()) {
+      *err_out =
+          "client_hello_profile.client_hello_extra_extensions must be array";
+      return false;
+    }
+    size_t added = 0;
+    for (const auto& item : p["client_hello_extra_extensions"]) {
+      if (!item.is_object()) {
+        *err_out =
+            "client_hello_profile.client_hello_extra_extensions entries must "
+            "be objects";
+        return false;
+      }
+      if (!item.contains("type") ||
+          (!item["type"].is_number_unsigned() &&
+           !item["type"].is_number_integer())) {
+        *err_out =
+            "client_hello_extra_extensions.type must be integer (uint16)";
+        return false;
+      }
+      unsigned long et_raw =
+          item["type"].is_number_unsigned()
+              ? item["type"].get<unsigned long>()
+              : static_cast<unsigned long>(item["type"].get<long>());
+      if (et_raw > 0xffff) {
+        *err_out = "client_hello_extra_extensions.type out of uint16 range";
+        return false;
+      }
+      auto et = static_cast<uint16_t>(et_raw);
+      if (!item.contains("hex") || !item["hex"].is_string()) {
+        *err_out = "client_hello_extra_extensions.hex must be string";
+        return false;
+      }
+      if (MeshvpnOpaqueExtensionBlocked(et)) {
+        std::cerr << "boring-tls-helper: note: пропуск opaque расширения типа "
+                  << static_cast<unsigned>(et)
+                  << " (GREASE или тип, который задаёт сам BoringSSL/профиль).\n";
+        continue;
+      }
+      std::vector<uint8_t> body;
+      std::string hex_err;
+      if (!HexDecodeStrict(item["hex"].get<std::string>(), &body, err_out)) {
+        return false;
+      }
+      if (body.size() > 65535) {
+        *err_out =
+            "client_hello_extra_extensions: decoded body exceeds 65535 bytes";
+        return false;
+      }
+      if (SSL_CTX_meshvpn_add_client_hello_extension(
+              ctx, et,
+              body.empty() ? nullptr : body.data(), body.size()) != 1) {
+        *err_out =
+            "SSL_CTX_meshvpn_add_client_hello_extension failed (duplicate "
+            "extension type?)";
+        return false;
+      }
+      added++;
+    }
+    if (added > 0) {
+      std::cerr << "boring-tls-helper: note: meshvpn_opaque_extensions_added="
+                << added << '\n';
+      std::cerr << "boring-tls-helper: note: добавлено opaque расширений из "
+                   "профиля: "
+                << added << ".\n";
     }
   }
 

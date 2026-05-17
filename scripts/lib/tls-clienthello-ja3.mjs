@@ -378,6 +378,59 @@ export function ja3DebugFromTcpBuf(tcpBuf, opts = {}) {
   return ja3DebugFromClientHelloBody(ch, tcpBuf, opts);
 }
 
+/** GREASE для типов расширений TLS (RFC 8701). */
+export function tlsExtensionTypeIsGrease(et) {
+  return (et & 0x0f0f) === 0x0a0a && ((et >> 8) & 0xff) === (et & 0xff);
+}
+
+/** Типы расширений, которые задаёт сам BoringSSL/поля профиля — не дублировать opaque-телами. */
+export const MESHVPN_OPAQUE_EXTENSION_SKIP_TYPES = new Set([
+  0, 5, 10, 11, 13, 16, 43, 45, 50, 51,
+]);
+
+/**
+ * Из тела ClientHello: расширения с сырыми телами для replay в boring-tls-helper
+ * (поле `client_hello_extra_extensions` в профиле).
+ * @param {Buffer} ch — тело ClientHello без handshake type/len
+ * @returns {{ type: number, hex: string }[]}
+ */
+export function extractClientHelloOpaqueExtensionsForProfile(ch) {
+  let o = 0;
+  if (ch.length < 34) return [];
+  o += 34;
+  const sidLen = ch[o];
+  o += 1;
+  if (ch.length < o + sidLen + 2) return [];
+  o += sidLen;
+  const csLen = ch.readUInt16BE(o);
+  o += 2;
+  if (ch.length < o + csLen + 1) return [];
+  o += csLen;
+  const compLen = ch[o];
+  o += 1;
+  if (ch.length < o + compLen + 2) return [];
+  o += compLen;
+  const extLen = ch.readUInt16BE(o);
+  o += 2;
+  if (ch.length < o + extLen) return [];
+  const extBlock = ch.subarray(o, o + extLen);
+  /** @type {{ type: number, hex: string }[]} */
+  const out = [];
+  let eo = 0;
+  while (eo + 4 <= extBlock.length) {
+    const et = extBlock.readUInt16BE(eo);
+    const el = extBlock.readUInt16BE(eo + 2);
+    eo += 4;
+    if (eo + el > extBlock.length) break;
+    const ed = extBlock.subarray(eo, eo + el);
+    eo += el;
+    if (TLS_GREASE_VALUES.has(et) || tlsExtensionTypeIsGrease(et)) continue;
+    if (MESHVPN_OPAQUE_EXTENSION_SKIP_TYPES.has(et)) continue;
+    out.push({ type: et, hex: ed.toString('hex') });
+  }
+  return out;
+}
+
 /**
  * Профиль handshake из успешного {@link parseFirstTlsClientHelloFromTcpBuf} — один общий `clientHelloBody` для JA3/JA4.
  * @param {{ ok: true, sni: string[], alpn: string[], supportedVersions: number[], bytesConsumed: number, clientHelloBody: Buffer }} parsed
@@ -404,8 +457,12 @@ export function tlsClientHandshakeProfileFromSuccessfulParse(parsed, tcpBuf, opt
   if (tcpBuf.length >= 3 && tcpBuf[0] === 0x16) {
     tlsRecordLegacyVersion = tcpBuf.readUInt16BE(1);
   }
+  const clientHelloOpaqueExt = extractClientHelloOpaqueExtensionsForProfile(parsed.clientHelloBody);
   return {
     ok: true,
+    ...(clientHelloOpaqueExt.length > 0
+      ? { client_hello_extra_extensions: clientHelloOpaqueExt }
+      : {}),
     tls: {
       tls_record_legacy_version: tlsRecordLegacyVersion,
       tls_record_legacy_hex:

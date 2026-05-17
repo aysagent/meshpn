@@ -37,6 +37,8 @@ export const BORING_TLS_CLIENTHELLO_SCHEMA_VERSION = '1';
  *   tls_info?: { alpn?: string[], supported_versions?: number[] },
  *   signature_algorithms?: number[],
  *   signature_algorithms_cert?: number[],
+ *   /** Opaque расширения для патча BoringSSL (type + hex тело с захвата). */
+ *   client_hello_extra_extensions?: { type: number, hex: string }[],
  * }} BoringTlsClienthelloProfileFile
  */
 
@@ -150,6 +152,32 @@ export function validateBoringTlsClienthelloProfileFile(obj) {
     return { ok: false, error: 'profile: signature_algorithms_cert должен быть uint16[]' };
   }
 
+  if (p.client_hello_extra_extensions !== undefined) {
+    if (!Array.isArray(p.client_hello_extra_extensions)) {
+      return { ok: false, error: 'profile: client_hello_extra_extensions должен быть массивом' };
+    }
+    for (let i = 0; i < p.client_hello_extra_extensions.length; i++) {
+      const row = p.client_hello_extra_extensions[i];
+      if (!row || typeof row !== 'object') {
+        return { ok: false, error: `profile: client_hello_extra_extensions[${i}] не объект` };
+      }
+      const r = /** @type {Record<string, unknown>} */ (row);
+      if (!isUint16(r.type)) {
+        return { ok: false, error: `profile: client_hello_extra_extensions[${i}].type — uint16` };
+      }
+      if (typeof r.hex !== 'string') {
+        return { ok: false, error: `profile: client_hello_extra_extensions[${i}].hex — строка hex` };
+      }
+      const compact = r.hex.replace(/\s+/g, '');
+      if (!/^[0-9a-fA-F]*$/.test(compact)) {
+        return { ok: false, error: `profile: client_hello_extra_extensions[${i}].hex — только hex` };
+      }
+      if (compact.length % 2 !== 0) {
+        return { ok: false, error: `profile: client_hello_extra_extensions[${i}].hex — чётная длина` };
+      }
+    }
+  }
+
   if (p.ja4 !== undefined) {
     if (!p.ja4 || typeof p.ja4 !== 'object') return { ok: false, error: 'profile: ja4 должен быть объектом' };
     const j4 = /** @type {Record<string, unknown>} */ (p.ja4);
@@ -176,6 +204,7 @@ export function validateBoringTlsClienthelloProfileFile(obj) {
  *   ja3: Record<string, unknown>,
  *   ja3_sorted?: Record<string, unknown>,
  *   ja4?: { fingerprint?: string, ja4_a?: string, ja4_b?: string, ja4_c?: string, error?: string },
+ *   client_hello_extra_extensions?: { type: number, hex: string }[],
  * }} handshakeOk — результат `tlsClientHandshakeProfileFromTcpBuf` или `tlsClientHandshakeProfileWithJa4FromTcpBuf` при ok:true
  * @param {string} userAgent
  */
@@ -193,6 +222,7 @@ export function buildCompactProfileDocument(handshakeOk, userAgent) {
     ja3: Record<string, unknown>,
     ja3_sorted?: Record<string, unknown>,
     ja4?: { fingerprint?: string, ja4_a?: string, ja4_b?: string, ja4_c?: string, error?: string },
+    client_hello_extra_extensions?: { type: number, hex: string }[],
   }} */ (handshakeOk);
   const comp = /** @type {Record<string, unknown>} */ (p.ja3.components || {});
   const tls = p.tls || {};
@@ -235,6 +265,15 @@ export function buildCompactProfileDocument(handshakeOk, userAgent) {
     /** Как у Chromium: порядок расширений на wire меняется между сессиями; ja3_sorted_md5 стабилен. */
     permute_extensions: true,
   };
+  if (
+    Array.isArray(p.client_hello_extra_extensions) &&
+    p.client_hello_extra_extensions.length > 0
+  ) {
+    doc.client_hello_extra_extensions = p.client_hello_extra_extensions.map((e) => ({
+      type: e.type,
+      hex: typeof e.hex === 'string' ? e.hex.replace(/\s+/g, '') : '',
+    }));
+  }
   if (sorted && typeof sorted.md5 === 'string') {
     doc.ja3_sorted_md5 = sorted.md5;
   }
@@ -313,6 +352,15 @@ export function profileFileToHelperClientHelloBlock(profile, opts = {}) {
     validateJa4FingerprintString(profile.ja4.fingerprint)
   ) {
     out.ja4 = { fingerprint: profile.ja4.fingerprint };
+  }
+  if (
+    Array.isArray(profile.client_hello_extra_extensions) &&
+    profile.client_hello_extra_extensions.length > 0
+  ) {
+    out.client_hello_extra_extensions = profile.client_hello_extra_extensions.map((e) => ({
+      type: e.type,
+      hex: typeof e.hex === 'string' ? e.hex.replace(/\s+/g, '').toLowerCase() : '',
+    }));
   }
   return out;
 }
