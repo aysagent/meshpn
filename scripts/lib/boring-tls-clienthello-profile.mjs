@@ -35,6 +35,8 @@ export const BORING_TLS_CLIENTHELLO_SCHEMA_VERSION = '1';
  *   // Явно из экспорта ja3-snif: false — helper не вызывает SSL_set_tlsext_host_name (JA4_a «i»). Если ключ отсутствует — считается true (без SNI ломается verify на многих CDN).
  *   clienthello_emit_sni?: boolean,
  *   tls_info?: { alpn?: string[], supported_versions?: number[] },
+ *   signature_algorithms?: number[],
+ *   signature_algorithms_cert?: number[],
  * }} BoringTlsClienthelloProfileFile
  */
 
@@ -135,6 +137,19 @@ export function validateBoringTlsClienthelloProfileFile(obj) {
       }
     }
   }
+  const checkUint16ArrOpt = (key) => {
+    const v = p[key];
+    if (v === undefined) return true;
+    if (!Array.isArray(v)) return false;
+    return v.every((x) => isUint16(x));
+  };
+  if (!checkUint16ArrOpt('signature_algorithms')) {
+    return { ok: false, error: 'profile: signature_algorithms должен быть uint16[]' };
+  }
+  if (!checkUint16ArrOpt('signature_algorithms_cert')) {
+    return { ok: false, error: 'profile: signature_algorithms_cert должен быть uint16[]' };
+  }
+
   if (p.ja4 !== undefined) {
     if (!p.ja4 || typeof p.ja4 !== 'object') return { ok: false, error: 'profile: ja4 должен быть объектом' };
     const j4 = /** @type {Record<string, unknown>} */ (p.ja4);
@@ -205,6 +220,16 @@ export function buildCompactProfileDocument(handshakeOk, userAgent) {
       alpn: Array.isArray(alpn) ? [...alpn] : [],
       supported_versions: Array.isArray(sv) ? [...sv] : [],
     },
+    ...(tls.signature_algorithms &&
+    Array.isArray(tls.signature_algorithms) &&
+    tls.signature_algorithms.length > 0
+      ? { signature_algorithms: [...tls.signature_algorithms] }
+      : {}),
+    ...(tls.signature_algorithms_cert &&
+    Array.isArray(tls.signature_algorithms_cert) &&
+    tls.signature_algorithms_cert.length > 0
+      ? { signature_algorithms_cert: [...tls.signature_algorithms_cert] }
+      : {}),
     /** Совпадает с наличием расширения server_name (0) в списке JA3 — для JA4_a и helper `emit_sni`. */
     clienthello_emit_sni: hasSniExt,
     /** Как у Chromium: порядок расширений на wire меняется между сессиями; ja3_sorted_md5 стабилен. */
@@ -256,7 +281,15 @@ export function profileFileToHelperClientHelloBlock(profile, opts = {}) {
     supported_groups: [...profile.supported_groups],
     ec_point_formats: [...profile.ec_point_formats],
     permute_extensions: permute,
+    extension_types: [...profile.extension_types],
   };
+
+  if (profile.signature_algorithms && profile.signature_algorithms.length > 0) {
+    out.signature_algorithms = [...profile.signature_algorithms];
+  }
+  if (profile.signature_algorithms_cert && profile.signature_algorithms_cert.length > 0) {
+    out.signature_algorithms_cert = [...profile.signature_algorithms_cert];
+  }
 
   /**
    * Вызов SSL_set_tlsext_host_name: только явное clienthello_emit_sni из файла.

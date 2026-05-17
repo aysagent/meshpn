@@ -58,6 +58,23 @@ if(NOT _meshvpn_tls13_cipher_marker)
   endif()
 endif()
 
+file(STRINGS "${boringssl_SOURCE_DIR}/include/openssl/ssl.h" _meshvpn_sigcert_marker
+  REGEX SSL_CTX_set_meshvpn_client_signature_algorithms_cert LIMIT_COUNT 1)
+if(NOT _meshvpn_sigcert_marker)
+  execute_process(
+    COMMAND "${MESHVPN_PATCH_EXECUTABLE}" -p0 -i "${CMAKE_CURRENT_SOURCE_DIR}/patches/boringssl-meshvpn-client-signature-algorithms-cert.patch"
+    WORKING_DIRECTORY "${boringssl_SOURCE_DIR}"
+    RESULT_VARIABLE _meshvpn_patch2_rc
+    OUTPUT_VARIABLE _meshvpn_patch2_out
+    ERROR_VARIABLE _meshvpn_patch2_err)
+  if(NOT _meshvpn_patch2_rc EQUAL 0)
+    message(FATAL_ERROR
+      "mesh-vpn: не удалось применить патч signature_algorithms_cert (${MESHVPN_BORINGSSL_PINNED_SHA}). "
+      "Обновите patches/boringssl-meshvpn-client-signature-algorithms-cert.patch.\n"
+      "patch stdout:\n${_meshvpn_patch2_out}\nstderr:\n${_meshvpn_patch2_err}")
+  endif()
+endif()
+
 FetchContent_Declare(
   json
   GIT_REPOSITORY https://github.com/nlohmann/json.git

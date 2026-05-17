@@ -34,6 +34,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <map>
 
 #include <nlohmann/json.hpp>
 
@@ -431,6 +432,23 @@ std::string JoinCommaStringsVec(const std::vector<std::string>& v) {
   return out;
 }
 
+/** Элементы мультимножества |a|, которых недостаточно в |b| (учёт повторов типов). */
+std::string MultisetExtraInFirst(const std::vector<uint16_t>& a,
+                                   const std::vector<uint16_t>& b) {
+  std::map<uint16_t, int> ca, cb;
+  for (uint16_t x : a) ca[x]++;
+  for (uint16_t x : b) cb[x]++;
+  std::vector<uint16_t> extra;
+  for (const auto& kv : ca) {
+    int nb = 0;
+    auto it = cb.find(kv.first);
+    if (it != cb.end()) nb = it->second;
+    for (int i = 0; i < kv.second - nb; ++i) extra.push_back(kv.first);
+  }
+  std::sort(extra.begin(), extra.end());
+  return JoinCommaDec16(extra);
+}
+
 struct Ja4Computed {
   std::string fingerprint;
   std::string ja4_a;
@@ -438,6 +456,8 @@ struct Ja4Computed {
   std::string ja4_c;
   std::string raw_r;
   std::string raw_o;
+  /** Порядок как JA4_c: расширения 13 и 50 на проводе, без GREASE внутри списков. */
+  std::vector<uint16_t> signature_algorithms_merged;
 };
 
 /** FoxIO JA4 — логика как в scripts/lib/tls-clienthello-ja4.mjs `ja4FromClientHelloBody`. */
@@ -608,6 +628,7 @@ bool ComputeJa4FromClientHelloBody(const uint8_t* body, size_t n,
   out->ja4_a = ja4_a;
   out->ja4_b = ja4_b;
   out->ja4_c = ja4_c;
+  out->signature_algorithms_merged = signature_algorithms;
   out->fingerprint = ja4_a + "_" + ja4_b + "_" + ja4_c;
   out->raw_r = raw_r;
   out->raw_o = raw_o;
@@ -661,6 +682,10 @@ struct Ja3LogCfg {
   std::string expected_ja4_fingerprint;
   bool ja3_strict = false;
   bool ja3_mismatch = false;
+  /** Из JSON профиля (диагностика паритета с wire). */
+  std::vector<uint16_t> profile_extension_types;
+  std::vector<uint16_t> profile_cipher_order;
+  std::vector<uint16_t> profile_sigalgs_merged;
 };
 
 bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
@@ -682,6 +707,35 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
         "client_hello_profile: ja3_strict is incompatible with "
         "permute_extensions (set permute_extensions to false)";
     return false;
+  }
+
+  if (ja3_cfg) {
+    ja3_cfg->profile_extension_types.clear();
+    ja3_cfg->profile_cipher_order.clear();
+    ja3_cfg->profile_sigalgs_merged.clear();
+  }
+
+  if (ja3_cfg && p.contains("extension_types")) {
+    if (!p["extension_types"].is_array()) {
+      *err_out = "client_hello_profile.extension_types must be array";
+      return false;
+    }
+    for (const auto& item : p["extension_types"]) {
+      if (!item.is_number_unsigned() && !item.is_number_integer()) {
+        *err_out =
+            "client_hello_profile.extension_types entries must be integers";
+        return false;
+      }
+      unsigned long raw = item.is_number_unsigned()
+                              ? item.get<unsigned long>()
+                              : static_cast<unsigned long>(item.get<long>());
+      if (raw > 0xffff) {
+        *err_out =
+            "client_hello_profile.extension_types value out of uint16 range";
+        return false;
+      }
+      ja3_cfg->profile_extension_types.push_back(static_cast<uint16_t>(raw));
+    }
   }
 
   if (!p.contains("cipher_suites") || !p["cipher_suites"].is_array() ||
@@ -711,6 +765,7 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
     auto id = static_cast<uint16_t>(raw);
     if (CipherSuiteNegotiatesTls13(id)) {
       tls13_cipher_order.push_back(id);
+      if (ja3_cfg) ja3_cfg->profile_cipher_order.push_back(id);
       continue;
     }
     const SSL_CIPHER* c = SSL_get_cipher_by_value(id);
@@ -728,6 +783,7 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
     }
     tls12_cipher_rule += nm;
     tls12_suite_count++;
+    if (ja3_cfg) ja3_cfg->profile_cipher_order.push_back(id);
   }
   if (skipped_unknown_cipher > 0) {
     std::cerr << "boring-tls-helper: warning: client_hello_profile.cipher_suites — "
@@ -805,6 +861,81 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
     return false;
   }
 
+  auto parse_u16_vec_key = [&](const char* key,
+                               std::vector<uint16_t>* out) -> bool {
+    if (!p.contains(key)) return true;
+    if (!p[key].is_array()) {
+      *err_out =
+          std::string("client_hello_profile.") + key + " must be array";
+      return false;
+    }
+    for (const auto& item : p[key]) {
+      if (!item.is_number_unsigned() && !item.is_number_integer()) {
+        *err_out = std::string("client_hello_profile.") + key +
+                   " entries must be integers";
+        return false;
+      }
+      unsigned long raw =
+          item.is_number_unsigned()
+              ? item.get<unsigned long>()
+              : static_cast<unsigned long>(item.get<long>());
+      if (raw > 0xffff) {
+        *err_out = std::string("client_hello_profile.") + key +
+                   " value out of uint16 range";
+        return false;
+      }
+      out->push_back(static_cast<uint16_t>(raw));
+    }
+    return true;
+  };
+
+  std::vector<uint16_t> sig_algs13;
+  std::vector<uint16_t> sig_algs50;
+  if (!parse_u16_vec_key("signature_algorithms", &sig_algs13)) return false;
+  if (!parse_u16_vec_key("signature_algorithms_cert", &sig_algs50)) return false;
+
+  if (ja3_cfg) {
+    ja3_cfg->profile_sigalgs_merged.reserve(sig_algs13.size() +
+                                            sig_algs50.size());
+    ja3_cfg->profile_sigalgs_merged.insert(ja3_cfg->profile_sigalgs_merged.end(),
+                                           sig_algs13.begin(), sig_algs13.end());
+    ja3_cfg->profile_sigalgs_merged.insert(ja3_cfg->profile_sigalgs_merged.end(),
+                                           sig_algs50.begin(), sig_algs50.end());
+  }
+
+  if (!sig_algs13.empty()) {
+    if (SSL_CTX_set_verify_algorithm_prefs(ctx, sig_algs13.data(),
+                                           sig_algs13.size()) != 1) {
+      ERR_print_errors_fp(stderr);
+      *err_out =
+          "SSL_CTX_set_verify_algorithm_prefs failed for profile "
+          "signature_algorithms";
+      return false;
+    }
+  }
+
+  if (!sig_algs50.empty()) {
+    if (SSL_CTX_set_meshvpn_client_signature_algorithms_cert(
+            ctx, sig_algs50.data(), sig_algs50.size()) != 1) {
+      ERR_print_errors_fp(stderr);
+      *err_out =
+          "SSL_CTX_set_meshvpn_client_signature_algorithms_cert failed for "
+          "profile signature_algorithms_cert";
+      return false;
+    }
+  }
+
+  if (ja3_cfg) {
+    for (uint16_t et : ja3_cfg->profile_extension_types) {
+      if (et == 5) {
+        SSL_CTX_enable_ocsp_stapling(ctx);
+        std::cerr << "boring-tls-helper: note: профиль содержит расширение 5 "
+                     "(status_request) — SSL_CTX_enable_ocsp_stapling.\n";
+        break;
+      }
+    }
+  }
+
   if (ja3_cfg && p.contains("ja3_md5") && p["ja3_md5"].is_string()) {
     ja3_cfg->expected_ja3_md5 = p["ja3_md5"].get<std::string>();
     for (auto& c : ja3_cfg->expected_ja3_md5) {
@@ -880,6 +1011,43 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
                "задайте \"permute_extensions\": false и совместимый профиль.\n";
       }
     }
+  }
+
+  if (!cfg->profile_extension_types.empty()) {
+    std::string ep = MultisetExtraInFirst(cfg->profile_extension_types,
+                                          computed.ext_types);
+    std::string ew = MultisetExtraInFirst(computed.ext_types,
+                                          cfg->profile_extension_types);
+    std::cerr << "boring-tls-helper: profile_vs_wire extensions: "
+                 "extra_in_profile(multiset)="
+              << ep << " extra_on_wire(multiset)=" << ew << '\n';
+    if (cfg->ja3_verbose && ep.empty() && ew.empty() &&
+        cfg->profile_extension_types != computed.ext_types) {
+      std::cerr
+          << "boring-tls-helper: profile_vs_wire extensions: multiset совпадает, "
+             "порядок типов на wire отличается (permute_extensions / стек).\n";
+    }
+  }
+
+  if (cfg->ja3_verbose && !cfg->profile_cipher_order.empty()) {
+    std::cerr << "boring-tls-helper: profile_vs_wire ciphers: "
+                 "extra_in_profile(multiset)="
+              << MultisetExtraInFirst(cfg->profile_cipher_order, computed.ciphers)
+              << " extra_on_wire(multiset)="
+              << MultisetExtraInFirst(computed.ciphers, cfg->profile_cipher_order)
+              << '\n';
+  }
+
+  if (cfg->ja3_verbose && ja4_ok &&
+      !cfg->profile_sigalgs_merged.empty()) {
+    std::cerr << "boring-tls-helper: profile_vs_wire ja4_sig_algs: "
+                 "extra_in_profile(multiset)="
+              << MultisetExtraInFirst(cfg->profile_sigalgs_merged,
+                                      ja4_comp.signature_algorithms_merged)
+              << " extra_on_wire(multiset)="
+              << MultisetExtraInFirst(ja4_comp.signature_algorithms_merged,
+                                      cfg->profile_sigalgs_merged)
+              << '\n';
   }
 
   if (!cfg->log_ja3) {
@@ -1134,7 +1302,18 @@ int main(int argc, char** argv) {
     SSL_CTX_set1_groups_list(ctx, "X25519:P-256:P-384");
   }
 
-  if (ja3_cfg.log_ja3 || !ja3_cfg.expected_ja3_md5.empty() ||
+  bool profile_extension_diag = false;
+  if (cfg.contains("client_hello_profile") &&
+      cfg["client_hello_profile"].is_object()) {
+    const auto& ch = cfg["client_hello_profile"];
+    if (ch.contains("extension_types") && ch["extension_types"].is_array() &&
+        !ch["extension_types"].empty()) {
+      profile_extension_diag = true;
+    }
+  }
+
+  if (ja3_cfg.log_ja3 || ja3_cfg.ja3_verbose || profile_extension_diag ||
+      !ja3_cfg.expected_ja3_md5.empty() ||
       !ja3_cfg.expected_ja4_fingerprint.empty()) {
     SSL_CTX_set_msg_callback(ctx, Ja3MsgCallback);
     SSL_CTX_set_msg_callback_arg(ctx, &ja3_cfg);

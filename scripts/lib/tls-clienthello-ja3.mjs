@@ -222,6 +222,86 @@ export function ja3ComponentsFromClientHelloBody(body) {
 }
 
 /**
+ * Расширения 13 и 50 (signature_algorithms / signature_algorithms_cert) и объединённый
+ * порядок как для JA4_c (обход расширений на проводе, GREASE отфильтрован).
+ * @param {Buffer} body — тело ClientHello
+ * @returns {{
+ *   signature_algorithms: number[],
+ *   signature_algorithms_cert: number[],
+ *   ja4_signature_algorithms_wire: number[],
+ * }}
+ */
+export function signatureAlgorithmsFromClientHelloBody(body) {
+  let o = 0;
+  if (body.length < 2) throw new Error('sigalgs: короткое ClientHello');
+  o += 2 + 32;
+  const sidLen = body[o];
+  o += 1;
+  if (body.length < o + sidLen + 2) throw new Error('sigalgs: обрезано (session id)');
+  o += sidLen;
+  const cipherLen = body.readUInt16BE(o);
+  o += 2;
+  if (cipherLen % 2 !== 0 || body.length < o + cipherLen + 1) {
+    throw new Error('sigalgs: обрезано (cipher list)');
+  }
+  o += cipherLen;
+  const compLen = body[o];
+  o += 1;
+  if (body.length < o + compLen + 2) throw new Error('sigalgs: обрезано (compression)');
+  o += compLen;
+  const extTotal = body.readUInt16BE(o);
+  o += 2;
+  const extEnd = o + extTotal;
+  if (extEnd > body.length) throw new Error('sigalgs: обрезано (extensions)');
+
+  /** @type {number[]} */
+  const signatureAlgorithms = [];
+  /** @type {number[]} */
+  const signatureAlgorithmsCert = [];
+  /** @type {number[]} */
+  const ja4Merged = [];
+
+  while (o + 4 <= extEnd && o + 4 <= body.length) {
+    const et = body.readUInt16BE(o);
+    const elen = body.readUInt16BE(o + 2);
+    o += 4;
+    if (o + elen > body.length || o + elen > extEnd) {
+      throw new Error('sigalgs: обрезанное расширение');
+    }
+    const edata = body.subarray(o, o + elen);
+    o += elen;
+    if (TLS_GREASE_VALUES.has(et)) continue;
+
+    const pushSigList = (into, mergeToo) => {
+      if (edata.length < 2) return;
+      const algLen = edata.readUInt16BE(0);
+      for (let i = 2; i < 2 + algLen && i + 2 <= edata.length; i += 2) {
+        const sid = edata.readUInt16BE(i);
+        if (TLS_GREASE_VALUES.has(sid)) continue;
+        into.push(sid);
+        if (mergeToo) ja4Merged.push(sid);
+      }
+    };
+
+    if (et === 13) {
+      pushSigList(signatureAlgorithms, true);
+    } else if (et === 50) {
+      pushSigList(signatureAlgorithmsCert, true);
+    }
+  }
+
+  if (o !== extEnd) {
+    throw new Error('sigalgs: длина блока расширений не сходится');
+  }
+
+  return {
+    signature_algorithms: signatureAlgorithms,
+    signature_algorithms_cert: signatureAlgorithmsCert,
+    ja4_signature_algorithms_wire: ja4Merged,
+  };
+}
+
+/**
  * @param {Buffer} body — тело ClientHello (RFC 8446)
  * @returns {{
  *   ja3String: string,
@@ -312,6 +392,13 @@ export function tlsClientHandshakeProfileFromSuccessfulParse(parsed, tcpBuf, opt
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, reason: 'ja3_components_failed', message: msg };
   }
+  /** @type {ReturnType<typeof signatureAlgorithmsFromClientHelloBody> | null} */
+  let sigAlgs = null;
+  try {
+    sigAlgs = signatureAlgorithmsFromClientHelloBody(parsed.clientHelloBody);
+  } catch {
+    sigAlgs = null;
+  }
   /** @type {number | null} */
   let tlsRecordLegacyVersion = null;
   if (tcpBuf.length >= 3 && tcpBuf[0] === 0x16) {
@@ -328,6 +415,15 @@ export function tlsClientHandshakeProfileFromSuccessfulParse(parsed, tcpBuf, opt
       sni_hostnames: parsed.sni,
       offered_alpn_protocols: parsed.alpn,
       supported_versions_extension: parsed.supportedVersions,
+      ...(sigAlgs && sigAlgs.signature_algorithms.length > 0
+        ? { signature_algorithms: sigAlgs.signature_algorithms }
+        : {}),
+      ...(sigAlgs && sigAlgs.signature_algorithms_cert.length > 0
+        ? { signature_algorithms_cert: sigAlgs.signature_algorithms_cert }
+        : {}),
+      ...(sigAlgs && sigAlgs.ja4_signature_algorithms_wire.length > 0
+        ? { ja4_signature_algorithms_wire: sigAlgs.ja4_signature_algorithms_wire }
+        : {}),
     },
     ja3: {
       md5: ja3d.ja3Digest,
