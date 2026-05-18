@@ -34,6 +34,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <unordered_set>
 #include <map>
 
 #include <nlohmann/json.hpp>
@@ -152,6 +153,22 @@ bool MeshvpnTlsExtensionIsGrease(uint16_t et) {
   return (static_cast<uint16_t>(et & 0x0f0f) == 0x0a0a) &&
          (((static_cast<unsigned>(et) >> 8) & 0xff) ==
           (static_cast<unsigned>(et) & 0xff));
+}
+
+/** Убирает повторы uint16, порядок первых вхождений сохраняется. Возвращает число удалённых элементов. */
+size_t DedupeU16PreserveOrder(std::vector<uint16_t>* v) {
+  const size_t before = v->size();
+  std::unordered_set<uint16_t> seen;
+  seen.reserve(before);
+  std::vector<uint16_t> out;
+  out.reserve(before);
+  for (uint16_t x : *v) {
+    if (seen.insert(x).second) {
+      out.push_back(x);
+    }
+  }
+  v->swap(out);
+  return before - v->size();
 }
 
 std::string HexLower(const uint8_t* p, size_t len) {
@@ -1008,6 +1025,18 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
                                            sig_algs13.begin(), sig_algs13.end());
     ja3_cfg->profile_sigalgs_merged.insert(ja3_cfg->profile_sigalgs_merged.end(),
                                            sig_algs50.begin(), sig_algs50.end());
+  }
+
+  // Safari (и иногда другие стеки) кладут в ext.13 повторяющиеся codepoints; на wire JA3/JA4
+  // это ок, но SSL_CTX_set_verify_algorithm_prefs / cert prefs в BoringSSL — DUPLICATE_SIGNATURE_ALGORITHM.
+  size_t sig_dup_removed =
+      DedupeU16PreserveOrder(&sig_algs13) + DedupeU16PreserveOrder(&sig_algs50);
+  if (sig_dup_removed > 0) {
+    std::cerr << "boring-tls-helper: note: signature_algorithms / "
+                 "signature_algorithms_cert — удалены "
+              << sig_dup_removed
+              << " повторов uint16 (профиль как с провода; для BoringSSL prefs нужен "
+                 "уникальный список).\n";
   }
 
   if (!sig_algs13.empty()) {
