@@ -451,14 +451,14 @@ std::string MultisetExtraInFirst(const std::vector<uint16_t>& a,
 
 struct Ja4Computed {
   std::string fingerprint;
-  /** Полный JA4 с JA4_c по всем типам расширений (вкл. SNI/ALPN); не JA4.md — часть калькуляторов. */
+  /** Полный JA4 с JA4_c как у ja3.zone raw (sorted ext с 0000, без 0010); не FoxIO JA4.md. */
   std::string fingerprint_alt_sni_alpn_in_j4c;
   std::string ja4_a;
   std::string ja4_b;
   std::string ja4_c;
   std::string ja4_c_alt_sni_alpn_in_hash;
   std::string raw_r;
-  /** Как часть сайтов (ja3.zone): sorted ext включает 0000/0010 — не JA4.md JA4_r. */
+  /** Как ja3.zone raw: средний сегмент с SNI, без ALPN в списке. */
   std::string raw_r_alt_sni_alpn_in_segment;
   std::string raw_o;
   /** Порядок как JA4_c: расширения 13 и 50 на проводе, без GREASE внутри списков. */
@@ -596,9 +596,12 @@ bool ComputeJa4FromClientHelloBody(const uint8_t* body, size_t n,
   }
   std::sort(ext_for_c_hex.begin(), ext_for_c_hex.end());
 
+  /** Заготовка для ja3.zone-style raw / ja4_c_alt: все типы кроме ALPN (0010); SNI (0000) остаётся. */
   std::vector<std::string> ext_alt_all_hex;
   ext_alt_all_hex.reserve(ext_types.size());
-  for (uint16_t t : ext_types) ext_alt_all_hex.push_back(Hex4LowerU16(t));
+  for (uint16_t t : ext_types) {
+    if (t != 16) ext_alt_all_hex.push_back(Hex4LowerU16(t));
+  }
   std::sort(ext_alt_all_hex.begin(), ext_alt_all_hex.end());
 
   std::string ja4_c;
@@ -1244,8 +1247,8 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
     std::cerr << "boring-tls-helper: ja4=" << ja4_fp_lower << '\n';
     std::cerr << "boring-tls-helper: ja4_alt_sni_alpn_in_j4c="
               << ja4_comp.fingerprint_alt_sni_alpn_in_j4c << '\n';
-    // JA4_ro = провод; JA4_r (ja4_raw_r) — JA4.md, средний сегмент без 0000/0010.
-    // ja4_raw_r_alt_sni_alpn — как многие сайты (ja3.zone): средний сегмент с 0000/0010.
+    // JA4_ro = провод; JA4_r — JA4.md (без 0000/0010 в среднем сегменте).
+    // ja4_raw_r_alt_sni_alpn — как ja3.zone: средний сегмент с 0000, без 0010 (ALPN в ja4_a).
     std::cerr << "boring-tls-helper: ja4_raw_o=" << ja4_comp.raw_o << '\n';
     std::cerr << "boring-tls-helper: ja4_raw_r=" << ja4_comp.raw_r << '\n';
     std::cerr << "boring-tls-helper: ja4_raw_r_alt_sni_alpn="

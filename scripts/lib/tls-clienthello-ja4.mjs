@@ -101,6 +101,7 @@ function sha256Trunc12(s) {
 }
 
 /**
+ * Alt-поля (`fingerprint_alt_*`, `ja4_c_alt_*`, `raw_r_alt_*`) выровнены под ja3.zone: средний сегмент — sorted ext с 0000, без 0010 (ALPN только в ja4_a).
  * @param {Buffer} body — тело ClientHello (RFC 8446), без handshake type/len
  * @returns {{
  *   fingerprint: string,
@@ -237,13 +238,16 @@ export function ja4FromClientHelloBody(body) {
     ja4_c = sha256Trunc12(payload);
   }
 
-  /** Не JA4.md: JA4_c от всех типов расширений (кроме GREASE на уровне типа), sorted — часть сайтов/калькуляторов так включает 0000/0010 в хеш */
-  const extForAltC = extTypes.map(hex4).sort();
+  /** Как ja3.zone raw: sorted типы расширений с SNI (0000), без ALPN (0010) — ALPN только в ja4_a; не JA4.md JA4_r */
+  const extSortedJa3ZoneMiddle = extTypes
+    .filter((t) => t !== 16)
+    .map(hex4)
+    .sort();
   let ja4_c_alt_sni_alpn_in_hash;
-  if (extForAltC.length === 0) {
+  if (extSortedJa3ZoneMiddle.length === 0) {
     ja4_c_alt_sni_alpn_in_hash = '000000000000';
   } else {
-    const extPartAlt = extForAltC.join(',');
+    const extPartAlt = extSortedJa3ZoneMiddle.join(',');
     const sigPart = signatureAlgorithms.map(hex4).join(',');
     const payloadAlt =
       signatureAlgorithms.length > 0 ? `${extPartAlt}_${sigPart}` : extPartAlt;
@@ -261,8 +265,8 @@ export function ja4FromClientHelloBody(body) {
     raw_r += `_${sigWireStr}`;
   }
 
-  /** «Raw»-строка в стиле калькуляторов с SNI/ALPN в среднем сегменте (не JA4.md JA4_r) */
-  let raw_r_alt_sni_alpn_in_segment = `${ja4_a}_${sortedCipherHex || ''}_${extForAltC.join(',')}`;
+  /** Средний сегмент как типичный raw на ja3.zone (с 0000, без 0010). */
+  let raw_r_alt_sni_alpn_in_segment = `${ja4_a}_${sortedCipherHex || ''}_${extSortedJa3ZoneMiddle.join(',')}`;
   if (signatureAlgorithms.length > 0) {
     raw_r_alt_sni_alpn_in_segment += `_${sigWireStr}`;
   }
@@ -317,7 +321,7 @@ export function tlsClientHandshakeProfileWithJa4FromTcpBuf(tcpBuf, opts = {}) {
       ja4: {
         ...j4,
         note:
-          'FoxIO JA4 (TCP TLS). https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md — fingerprint=канон; fingerprint_alt_sni_alpn_in_j4c — тот же ja4_a/b, но JA4_c от всех типов расширений включая 0000/0010 (не по спецификации; часть сайтов). raw_r=JA4_r, raw_o=JA4_ro. Счётчик расширений в ja4_a — число не-GREASE расширений на проводе (17→16 = реально исчез один тип, например padding 0015).',
+          'FoxIO JA4 (TCP TLS). fingerprint=JA4.md; raw_r=JA4_r (без 0000/0010 в среднем сегменте). raw_r_alt / fingerprint_alt — стиль ja3.zone: в среднем сегменте есть SNI 0000, ALPN 0010 исключён (он в ja4_a). Полное совпадение с сайтом только при том же наборе расширений на wire (напр. 0029).',
       },
     };
   } catch (e) {

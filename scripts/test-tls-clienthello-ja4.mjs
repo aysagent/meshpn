@@ -95,9 +95,9 @@ test('ja4FromClientHelloBody: fingerprint_alt при наличии SNI и ALPN 
   const j = ja4FromClientHelloBody(clientHelloBodyWithSniAlpnSupportedVersions());
   assert.strictEqual(j.ja4_a, 't13d0103h2');
   assert.strictEqual(j.fingerprint, 't13d0103h2_0f2cb44170f4_b9a491fefe05');
-  assert.strictEqual(j.fingerprint_alt_sni_alpn_in_j4c, 't13d0103h2_0f2cb44170f4_76ae7f21e19f');
+  assert.strictEqual(j.fingerprint_alt_sni_alpn_in_j4c, 't13d0103h2_0f2cb44170f4_6178944d5da9');
   assert.notStrictEqual(j.ja4_c, j.ja4_c_alt_sni_alpn_in_hash);
-  assert.strictEqual(j.raw_r_alt_sni_alpn_in_segment.split('_')[2]?.startsWith('0000'), true);
+  assert.strictEqual(j.raw_r_alt_sni_alpn_in_segment, 't13d0103h2_1301_0000,002b');
 });
 
 test('GREASE cipher не входит в счётчик JA4_a и в JA4_b', () => {
