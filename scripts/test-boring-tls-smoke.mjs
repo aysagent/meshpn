@@ -373,7 +373,7 @@ test('helper: без log_ja3 на stderr нет ja3_md5', async (t) => {
     assert.ok(!stderr.includes('ja4='), stderr);
     assert.ok(!stderr.includes('ja4_alt_sni_alpn_in_j4c='), stderr);
     assert.ok(!stderr.includes('ja4_raw_o='), stderr);
-    assert.ok(!stderr.includes('ja4_raw_r='), stderr);
+    assert.ok(!stderr.includes('ja4_raw_r_alt_sni_alpn='), stderr);
   } finally {
     try {
       child.kill('SIGKILL');
@@ -444,6 +444,12 @@ test('helper: log_ja3=true — stderr содержит эталонный ja3_md
     assert.ok(stderr.includes(`ja4_raw_r=${j4.raw_r}`), stderr);
     assert.ok(
       stderr.includes(`ja4_alt_sni_alpn_in_j4c=${j4.fingerprint_alt_sni_alpn_in_j4c}`),
+      stderr,
+    );
+    assert.ok(
+      stderr.includes(
+        `ja4_raw_r_alt_sni_alpn=${j4.raw_r_alt_sni_alpn_in_segment}`,
+      ),
       stderr,
     );
   } finally {

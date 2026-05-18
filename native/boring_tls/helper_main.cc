@@ -458,6 +458,8 @@ struct Ja4Computed {
   std::string ja4_c;
   std::string ja4_c_alt_sni_alpn_in_hash;
   std::string raw_r;
+  /** Как часть сайтов (ja3.zone): sorted ext включает 0000/0010 — не JA4.md JA4_r. */
+  std::string raw_r_alt_sni_alpn_in_segment;
   std::string raw_o;
   /** Порядок как JA4_c: расширения 13 и 50 на проводе, без GREASE внутри списков. */
   std::vector<uint16_t> signature_algorithms_merged;
@@ -644,6 +646,13 @@ bool ComputeJa4FromClientHelloBody(const uint8_t* body, size_t n,
     raw_r += "_" + JoinCommaStringsVec(sig_wire_hex);
   }
 
+  std::string raw_r_alt_sni_alpn_in_segment =
+      ja4_a + "_" + sorted_cipher_hex + "_" +
+      JoinCommaStringsVec(ext_alt_all_hex);
+  if (!signature_algorithms.empty()) {
+    raw_r_alt_sni_alpn_in_segment += "_" + JoinCommaStringsVec(sig_wire_hex);
+  }
+
   std::string raw_o = ja4_a + "_" + JoinCommaStringsVec(cipher_wire_hex) +
                       "_" + JoinCommaStringsVec(ext_wire_hex);
   if (!signature_algorithms.empty()) {
@@ -658,6 +667,7 @@ bool ComputeJa4FromClientHelloBody(const uint8_t* body, size_t n,
   out->fingerprint = ja4_a + "_" + ja4_b + "_" + ja4_c;
   out->fingerprint_alt_sni_alpn_in_j4c = fingerprint_alt_sni_alpn_in_j4c;
   out->raw_r = raw_r;
+  out->raw_r_alt_sni_alpn_in_segment = raw_r_alt_sni_alpn_in_segment;
   out->raw_o = raw_o;
   return true;
 }
@@ -1234,10 +1244,12 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
     std::cerr << "boring-tls-helper: ja4=" << ja4_fp_lower << '\n';
     std::cerr << "boring-tls-helper: ja4_alt_sni_alpn_in_j4c="
               << ja4_comp.fingerprint_alt_sni_alpn_in_j4c << '\n';
-    // JA4_ro = провод (SNI/ALPN в списке ext); JA4_r = sorted cipher + ext без 0000/0010
-    // — совпадает с «raw» в JA4.md и веб-калькуляторами FoxIO.
+    // JA4_ro = провод; JA4_r (ja4_raw_r) — JA4.md, средний сегмент без 0000/0010.
+    // ja4_raw_r_alt_sni_alpn — как многие сайты (ja3.zone): средний сегмент с 0000/0010.
     std::cerr << "boring-tls-helper: ja4_raw_o=" << ja4_comp.raw_o << '\n';
     std::cerr << "boring-tls-helper: ja4_raw_r=" << ja4_comp.raw_r << '\n';
+    std::cerr << "boring-tls-helper: ja4_raw_r_alt_sni_alpn="
+              << ja4_comp.raw_r_alt_sni_alpn_in_segment << '\n';
   }
   if (cfg->ja3_verbose) {
     constexpr size_t kHexPrev = 96;

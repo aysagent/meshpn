@@ -178,6 +178,10 @@ test('JA4 тот же при ClientHello, разбитом на два TLS recor
   assert.strictEqual(pSplit.ja4.fingerprint, pOne.ja4.fingerprint);
   assert.strictEqual(pSplit.ja4.raw_r, pOne.ja4.raw_r);
   assert.strictEqual(pSplit.ja4.raw_o, pOne.ja4.raw_o);
+  assert.strictEqual(
+    pSplit.ja4.raw_r_alt_sni_alpn_in_segment,
+    pOne.ja4.raw_r_alt_sni_alpn_in_segment,
+  );
 });
 
 test('JA4.md Raw: JA4_r для типового Chrome-подобного набора (совпадает с примером в спецификации)', () => {
