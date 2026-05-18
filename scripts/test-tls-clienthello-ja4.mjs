@@ -9,7 +9,11 @@ import {
   ja4FromClientHelloBody,
   tlsClientHandshakeProfileWithJa4FromTcpBuf,
 } from './lib/tls-clienthello-ja4.mjs';
-import { TLS_GREASE_VALUES } from './lib/tls-clienthello-ja3.mjs';
+import {
+  TLS_GREASE_VALUES,
+  tlsClientHandshakeProfileFromTcpBuf,
+} from './lib/tls-clienthello-ja3.mjs';
+import { buildCompactProfileDocument } from './lib/boring-tls-clienthello-profile.mjs';
 
 test('JA4.md: усечённые SHA256 для JA4_b и JA4_c (примеры из спецификации)', () => {
   const cipherSorted =
@@ -196,4 +200,39 @@ test('JA4.md Raw: JA4_r для типового Chrome-подобного наб
     `t13d1516h2_${cipherSorted}_${extSortedNoSniAlpn}_${sigWire}`,
     expectedR,
   );
+});
+
+test('buildCompactProfileDocument: extension_types включает каждый не-GREASE тип с провода (пример 43 и 99)', () => {
+  function tlsRecord(inner) {
+    const rec = Buffer.alloc(5 + inner.length);
+    rec[0] = 0x16;
+    rec.writeUInt16BE(0x0301, 1);
+    rec.writeUInt16BE(inner.length, 3);
+    inner.copy(rec, 5);
+    return rec;
+  }
+  const ext43 = Buffer.from([0x00, 0x2b, 0x00, 0x03, 0x02, 0x03, 0x04]);
+  const ext99 = Buffer.from([0x00, 0x63, 0x00, 0x00]);
+  const extBlock = Buffer.concat([ext43, ext99]);
+  const extLen = Buffer.alloc(2);
+  extLen.writeUInt16BE(extBlock.length, 0);
+  const body = Buffer.concat([
+    Buffer.from([0x03, 0x03]),
+    Buffer.alloc(32, 0),
+    Buffer.from([0]),
+    Buffer.from([0x00, 0x02, 0x13, 0x01]),
+    Buffer.from([1, 0]),
+    extLen,
+    extBlock,
+  ]);
+  const inner = Buffer.alloc(4 + body.length);
+  inner[0] = 1;
+  inner.writeUIntBE(body.length, 1, 3);
+  body.copy(inner, 4);
+  const p = tlsClientHandshakeProfileFromTcpBuf(tlsRecord(inner), {});
+  assert.strictEqual(p.ok, true);
+  const doc = buildCompactProfileDocument(p, 'unit-test');
+  assert.deepStrictEqual(doc.extension_types, [43, 99]);
+  assert.ok(Array.isArray(doc.opaque_extension_skip_types_decimal));
+  assert.ok(doc.opaque_extension_skip_types_decimal.includes(41));
 });

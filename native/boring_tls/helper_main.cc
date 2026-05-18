@@ -147,6 +147,13 @@ bool IsGrease(uint16_t v) {
   return false;
 }
 
+/** RFC 8701: динамический GREASE для типов расширений TLS (как tlsExtensionTypeIsGrease в Node). */
+bool MeshvpnTlsExtensionIsGrease(uint16_t et) {
+  return (static_cast<uint16_t>(et & 0x0f0f) == 0x0a0a) &&
+         (((static_cast<unsigned>(et) >> 8) & 0xff) ==
+          (static_cast<unsigned>(et) & 0xff));
+}
+
 std::string HexLower(const uint8_t* p, size_t len) {
   static const char kHex[] = "0123456789abcdef";
   std::string out(len * 2, '\0');
@@ -265,8 +272,7 @@ bool ComputeJa3FromClientHelloBody(const uint8_t* body, size_t n,
     if (o + elen > n || o + elen > ext_end) return false;
     const uint8_t* edata = body + o;
     o += elen;
-    if (IsGrease(et)) continue;
-    out->ext_types.push_back(et);
+    if (IsGrease(et) || MeshvpnTlsExtensionIsGrease(et)) continue;
     if (et == 0x000a && elen >= 2) {
       uint16_t glen =
           (static_cast<uint16_t>(edata[0]) << 8) | edata[1];
@@ -516,8 +522,7 @@ bool ComputeJa4FromClientHelloBody(const uint8_t* body, size_t n,
     if (o + elen > n || o + elen > ext_end) return false;
     const uint8_t* edata = body + o;
     o += elen;
-    if (IsGrease(et)) continue;
-    ext_types.push_back(et);
+    if (IsGrease(et) || MeshvpnTlsExtensionIsGrease(et)) continue;
     if (et == 0) {
       has_sni_extension = true;
     } else if (et == 16 && elen >= 2) {
@@ -727,12 +732,6 @@ struct Ja3LogCfg {
   std::vector<uint16_t> profile_cipher_order;
   std::vector<uint16_t> profile_sigalgs_merged;
 };
-
-bool MeshvpnTlsExtensionIsGrease(uint16_t et) {
-  return (static_cast<uint16_t>(et & 0x0f0f) == 0x0a0a) &&
-         (((static_cast<unsigned>(et) >> 8) & 0xff) ==
-          (static_cast<unsigned>(et) & 0xff));
-}
 
 bool MeshvpnOpaqueExtensionBlocked(uint16_t t) {
   if (MeshvpnTlsExtensionIsGrease(t)) {

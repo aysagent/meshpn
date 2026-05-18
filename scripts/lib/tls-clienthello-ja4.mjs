@@ -8,6 +8,7 @@ import {
   extractFirstClientHelloBody,
   parseFirstTlsClientHelloFromTcpBuf,
   tlsClientHandshakeProfileFromSuccessfulParse,
+  tlsExtensionTypeIsGrease,
 } from './tls-clienthello-ja3.mjs';
 
 /** @param {number} n */
@@ -160,7 +161,7 @@ export function ja4FromClientHelloBody(body) {
     }
     const edata = body.subarray(o, o + elen);
     o += elen;
-    if (grease.has(et)) continue;
+    if (grease.has(et) || tlsExtensionTypeIsGrease(et)) continue;
     extTypes.push(et);
     if (et === 0) {
       hasSniExtension = true;

@@ -169,7 +169,7 @@ export function ja3ComponentsFromClientHelloBody(body) {
     }
     const edata = body.subarray(o, o + elen);
     o += elen;
-    if (TLS_GREASE_VALUES.has(et)) continue;
+    if (TLS_GREASE_VALUES.has(et) || tlsExtensionTypeIsGrease(et)) continue;
     extTypes.push(et);
     if (et === 0x000a && edata.length >= 2) {
       const glen = edata.readUInt16BE(0);
@@ -270,7 +270,7 @@ export function signatureAlgorithmsFromClientHelloBody(body) {
     }
     const edata = body.subarray(o, o + elen);
     o += elen;
-    if (TLS_GREASE_VALUES.has(et)) continue;
+    if (TLS_GREASE_VALUES.has(et) || tlsExtensionTypeIsGrease(et)) continue;
 
     const pushSigList = (into, mergeToo) => {
       if (edata.length < 2) return;

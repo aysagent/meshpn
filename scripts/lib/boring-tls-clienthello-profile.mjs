@@ -5,6 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { MESHVPN_OPAQUE_EXTENSION_SKIP_TYPES } from './tls-clienthello-ja3.mjs';
 
 export const BORING_TLS_CLIENTHELLO_SCHEMA_VERSION = '1';
 
@@ -39,6 +40,8 @@ export const BORING_TLS_CLIENTHELLO_SCHEMA_VERSION = '1';
  *   signature_algorithms_cert?: number[],
  *   // Opaque расширения для патча BoringSSL (type + hex тело с захвата)
  *   client_hello_extra_extensions?: { type: number, hex: string }[],
+ *   opaque_extension_skip_types_decimal?: number[],
+ *   extension_types_note?: string,
  * }} BoringTlsClienthelloProfileFile
  */
 
@@ -264,6 +267,11 @@ export function buildCompactProfileDocument(handshakeOk, userAgent) {
     clienthello_emit_sni: hasSniExt,
     /** Как у Chromium: порядок расширений на wire меняется между сессиями; ja3_sorted_md5 стабилен. */
     permute_extensions: true,
+    opaque_extension_skip_types_decimal: [...MESHVPN_OPAQUE_EXTENSION_SKIP_TYPES].sort(
+      (a, b) => a - b,
+    ),
+    extension_types_note:
+      'extension_types — порядок типов расширений как в JA3 (на проводе), без статического GREASE из набора RFC8701 и без динамического GREASE типа расширения. Типы из opaque_extension_skip_types_decimal не попадают в client_hello_extra_extensions: их добавляет стек/helper (в т.ч. 41 pre_shared_key); при необходимости паритет с браузером — профиль BoringSSL/Meshvpn, а не пропуск экспорта.',
   };
   if (
     Array.isArray(p.client_hello_extra_extensions) &&
