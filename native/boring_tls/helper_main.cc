@@ -451,9 +451,12 @@ std::string MultisetExtraInFirst(const std::vector<uint16_t>& a,
 
 struct Ja4Computed {
   std::string fingerprint;
+  /** Полный JA4 с JA4_c по всем типам расширений (вкл. SNI/ALPN); не JA4.md — часть калькуляторов. */
+  std::string fingerprint_alt_sni_alpn_in_j4c;
   std::string ja4_a;
   std::string ja4_b;
   std::string ja4_c;
+  std::string ja4_c_alt_sni_alpn_in_hash;
   std::string raw_r;
   std::string raw_o;
   /** Порядок как JA4_c: расширения 13 и 50 на проводе, без GREASE внутри списков. */
@@ -591,6 +594,11 @@ bool ComputeJa4FromClientHelloBody(const uint8_t* body, size_t n,
   }
   std::sort(ext_for_c_hex.begin(), ext_for_c_hex.end());
 
+  std::vector<std::string> ext_alt_all_hex;
+  ext_alt_all_hex.reserve(ext_types.size());
+  for (uint16_t t : ext_types) ext_alt_all_hex.push_back(Hex4LowerU16(t));
+  std::sort(ext_alt_all_hex.begin(), ext_alt_all_hex.end());
+
   std::string ja4_c;
   if (ext_for_c_hex.empty()) {
     ja4_c = "000000000000";
@@ -604,6 +612,23 @@ bool ComputeJa4FromClientHelloBody(const uint8_t* body, size_t n,
         signature_algorithms.empty() ? ext_part : ext_part + "_" + sig_part;
     ja4_c = Sha256Trunc12Utf8(payload);
   }
+
+  std::string ja4_c_alt_sni_alpn_in_hash;
+  if (ext_alt_all_hex.empty()) {
+    ja4_c_alt_sni_alpn_in_hash = "000000000000";
+  } else {
+    std::string ext_alt_part = JoinCommaStringsVec(ext_alt_all_hex);
+    std::vector<std::string> sig_hex_alt;
+    sig_hex_alt.reserve(signature_algorithms.size());
+    for (uint16_t s : signature_algorithms) sig_hex_alt.push_back(Hex4LowerU16(s));
+    std::string sig_alt_part = JoinCommaStringsVec(sig_hex_alt);
+    std::string payload_alt = signature_algorithms.empty()
+                                    ? ext_alt_part
+                                    : ext_alt_part + "_" + sig_alt_part;
+    ja4_c_alt_sni_alpn_in_hash = Sha256Trunc12Utf8(payload_alt);
+  }
+  std::string fingerprint_alt_sni_alpn_in_j4c =
+      ja4_a + "_" + ja4_b + "_" + ja4_c_alt_sni_alpn_in_hash;
 
   std::vector<std::string> cipher_wire_hex;
   for (uint16_t c : ciphers) cipher_wire_hex.push_back(Hex4LowerU16(c));
@@ -628,8 +653,10 @@ bool ComputeJa4FromClientHelloBody(const uint8_t* body, size_t n,
   out->ja4_a = ja4_a;
   out->ja4_b = ja4_b;
   out->ja4_c = ja4_c;
+  out->ja4_c_alt_sni_alpn_in_hash = ja4_c_alt_sni_alpn_in_hash;
   out->signature_algorithms_merged = signature_algorithms;
   out->fingerprint = ja4_a + "_" + ja4_b + "_" + ja4_c;
+  out->fingerprint_alt_sni_alpn_in_j4c = fingerprint_alt_sni_alpn_in_j4c;
   out->raw_r = raw_r;
   out->raw_o = raw_o;
   return true;
@@ -1205,6 +1232,8 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
             << '\n';
   if (ja4_ok) {
     std::cerr << "boring-tls-helper: ja4=" << ja4_fp_lower << '\n';
+    std::cerr << "boring-tls-helper: ja4_alt_sni_alpn_in_j4c="
+              << ja4_comp.fingerprint_alt_sni_alpn_in_j4c << '\n';
     // JA4_ro = провод (SNI/ALPN в списке ext); JA4_r = sorted cipher + ext без 0000/0010
     // — совпадает с «raw» в JA4.md и веб-калькуляторами FoxIO.
     std::cerr << "boring-tls-helper: ja4_raw_o=" << ja4_comp.raw_o << '\n';
@@ -1233,6 +1262,8 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
       std::cerr << "boring-tls-helper: ja4_a=" << ja4_comp.ja4_a << '\n';
       std::cerr << "boring-tls-helper: ja4_b=" << ja4_comp.ja4_b << '\n';
       std::cerr << "boring-tls-helper: ja4_c=" << ja4_comp.ja4_c << '\n';
+      std::cerr << "boring-tls-helper: ja4_c_alt_sni_alpn_in_hash="
+                << ja4_comp.ja4_c_alt_sni_alpn_in_hash << '\n';
     }
   }
   cfg->logged = true;

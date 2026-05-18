@@ -46,7 +46,7 @@
 | `alpn` | string[] | например `["h2","http/1.1"]` |
 | `handshake_timeout_ms` | number | таймаут рукопожатия |
 | `profile` | string | зарезервировано (например `chrome-default`); пока влияет только на логирование / будущие пресеты |
-| `log_ja3` | bool | если `true`, после исходящего ClientHello на stderr: `ja3_md5=`, `ja3_sorted_md5=` и **`ja4=`** (FoxIO fingerprint), **`ja4_raw_o`** (JA4_ro, порядок на проводе), **`ja4_raw_r`** (JA4_r по JA4.md — для сравнения с веб-калькуляторами); при `ja3_verbose` добавляются строки JA3 до MD5, компоненты JA4 (`ja4_a`/`ja4_b`/`ja4_c`) и `hex_preview` handshake |
+| `log_ja3` | bool | если `true`, после исходящего ClientHello на stderr: `ja3_md5=`, `ja3_sorted_md5=` и **`ja4=`** (FoxIO JA4.md), **`ja4_alt_sni_alpn_in_j4c=`** (тот же `ja4_a`/`ja4_b`, иной `JA4_c` при включении SNI/ALPN в список расширений для хеша — не спецификация), **`ja4_raw_o`**, **`ja4_raw_r`**; при `ja3_verbose` добавляются строки JA3 до MD5, компоненты JA4 (`ja4_a`/`ja4_b`/`ja4_c`, `ja4_c_alt_sni_alpn_in_hash`) и `hex_preview` handshake |
 | `ja3_verbose` | bool | расширенный JA3 на stderr; вместе с `log_ja3` или при наличии **`extension_types`** в профиле включает TLS msg callback в helper для JA3/JA4 и диффа расширений |
 | `client_hello_profile` | object | опционально: настройка TLS 1.3 cipher suites и named groups под сохранённый профиль браузера; см. ниже |
 

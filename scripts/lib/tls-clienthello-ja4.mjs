@@ -104,10 +104,13 @@ function sha256Trunc12(s) {
  * @param {Buffer} body — тело ClientHello (RFC 8446), без handshake type/len
  * @returns {{
  *   fingerprint: string,
+ *   fingerprint_alt_sni_alpn_in_j4c: string,
  *   ja4_a: string,
  *   ja4_b: string,
  *   ja4_c: string,
+ *   ja4_c_alt_sni_alpn_in_hash: string,
  *   raw_r: string,
+ *   raw_r_alt_sni_alpn_in_segment: string,
  *   raw_o: string,
  * }}
  */
@@ -218,7 +221,7 @@ export function ja4FromClientHelloBody(body) {
     ja4_b = sha256Trunc12(sortedCipherHex);
   }
 
-  /** JA4_c */
+  /** JA4_c (FoxIO JA4.md): типы расширений без SNI 0000 и ALPN 0010, sorted */
   const extForC = extTypes
     .filter((t) => t !== 0 && t !== 16)
     .map(hex4)
@@ -234,6 +237,20 @@ export function ja4FromClientHelloBody(body) {
     ja4_c = sha256Trunc12(payload);
   }
 
+  /** Не JA4.md: JA4_c от всех типов расширений (кроме GREASE на уровне типа), sorted — часть сайтов/калькуляторов так включает 0000/0010 в хеш */
+  const extForAltC = extTypes.map(hex4).sort();
+  let ja4_c_alt_sni_alpn_in_hash;
+  if (extForAltC.length === 0) {
+    ja4_c_alt_sni_alpn_in_hash = '000000000000';
+  } else {
+    const extPartAlt = extForAltC.join(',');
+    const sigPart = signatureAlgorithms.map(hex4).join(',');
+    const payloadAlt =
+      signatureAlgorithms.length > 0 ? `${extPartAlt}_${sigPart}` : extPartAlt;
+    ja4_c_alt_sni_alpn_in_hash = sha256Trunc12(payloadAlt);
+  }
+  const fingerprint_alt_sni_alpn_in_j4c = `${ja4_a}_${ja4_b}_${ja4_c_alt_sni_alpn_in_hash}`;
+
   const cipherWireStr = ciphers.map(hex4).join(',');
   const extWireStr = extTypes.map(hex4).join(',');
   const sigWireStr = signatureAlgorithms.map(hex4).join(',');
@@ -244,6 +261,12 @@ export function ja4FromClientHelloBody(body) {
     raw_r += `_${sigWireStr}`;
   }
 
+  /** «Raw»-строка в стиле калькуляторов с SNI/ALPN в среднем сегменте (не JA4.md JA4_r) */
+  let raw_r_alt_sni_alpn_in_segment = `${ja4_a}_${sortedCipherHex || ''}_${extForAltC.join(',')}`;
+  if (signatureAlgorithms.length > 0) {
+    raw_r_alt_sni_alpn_in_segment += `_${sigWireStr}`;
+  }
+
   /** JA4_ro: порядок на wire; SNI/ALPN включены */
   let raw_o = `${ja4_a}_${cipherWireStr}_${extWireStr}`;
   if (signatureAlgorithms.length > 0) {
@@ -252,10 +275,13 @@ export function ja4FromClientHelloBody(body) {
 
   return {
     fingerprint: `${ja4_a}_${ja4_b}_${ja4_c}`,
+    fingerprint_alt_sni_alpn_in_j4c,
     ja4_a,
     ja4_b,
     ja4_c,
+    ja4_c_alt_sni_alpn_in_hash,
     raw_r,
+    raw_r_alt_sni_alpn_in_segment,
     raw_o,
   };
 }
@@ -291,7 +317,7 @@ export function tlsClientHandshakeProfileWithJa4FromTcpBuf(tcpBuf, opts = {}) {
       ja4: {
         ...j4,
         note:
-          'FoxIO JA4 (TCP TLS). https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md — raw_r=JA4_r (sorted), raw_o=JA4_ro (wire order). В примере из JA4.md используется t13d1516h2 (16 расширений без GREASE); калькуляторы по PCAP через tshark иногда дают другой JA4_c за счёт полей signature_* или счётчика расширений. JA4_c включает signature schemes из расширений 13 и 50 (signature_algorithms_cert), по порядку на проводе, GREASE из списков убирается.',
+          'FoxIO JA4 (TCP TLS). https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md — fingerprint=канон; fingerprint_alt_sni_alpn_in_j4c — тот же ja4_a/b, но JA4_c от всех типов расширений включая 0000/0010 (не по спецификации; часть сайтов). raw_r=JA4_r, raw_o=JA4_ro. Счётчик расширений в ja4_a — число не-GREASE расширений на проводе (17→16 = реально исчез один тип, например padding 0015).',
       },
     };
   } catch (e) {

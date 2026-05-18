@@ -53,8 +53,51 @@ test('ja4FromClientHelloBody: минимальный TLS 1.3 hello', () => {
   assert.strictEqual(j.ja4_b, '0f2cb44170f4');
   assert.strictEqual(j.ja4_c, 'b9a491fefe05');
   assert.strictEqual(j.fingerprint, 't13i010100_0f2cb44170f4_b9a491fefe05');
+  assert.strictEqual(j.fingerprint_alt_sni_alpn_in_j4c, j.fingerprint);
+  assert.strictEqual(j.ja4_c_alt_sni_alpn_in_hash, j.ja4_c);
   assert.strictEqual(j.raw_r, 't13i010100_1301_002b');
   assert.strictEqual(j.raw_o, 't13i010100_1301_002b');
+  assert.strictEqual(j.raw_r_alt_sni_alpn_in_segment, j.raw_r);
+});
+
+/** ClientHello с SNI + ALPN + supported_versions — JA4.md исключает 0000/0010 из JA4_c; alt включает их в хеш JA4_c */
+function clientHelloBodyWithSniAlpnSupportedVersions() {
+  const legacy = Buffer.from([0x03, 0x03]);
+  const random = Buffer.alloc(32, 0);
+  const sid = Buffer.from([0]);
+  const ciphers = Buffer.from([0x00, 0x02, 0x13, 0x01]);
+  const comp = Buffer.from([1, 0]);
+  const sniPayload = Buffer.concat([
+    Buffer.from([0x00, 0x06]),
+    Buffer.from([0x00]),
+    Buffer.from([0x00, 0x03]),
+    Buffer.from('abc'),
+  ]);
+  const ext0 = Buffer.concat([
+    Buffer.from([0x00, 0x00]),
+    Buffer.from([0x00, sniPayload.length]),
+    sniPayload,
+  ]);
+  const alpnPayload = Buffer.from([0x00, 0x03, 0x02, 0x68, 0x32]);
+  const ext16 = Buffer.concat([
+    Buffer.from([0x00, 0x10]),
+    Buffer.from([0x00, alpnPayload.length]),
+    alpnPayload,
+  ]);
+  const ext43 = Buffer.from([0x00, 0x2b, 0x00, 0x03, 0x02, 0x03, 0x04]);
+  const extBlock = Buffer.concat([ext0, ext16, ext43]);
+  const extLen = Buffer.alloc(2);
+  extLen.writeUInt16BE(extBlock.length, 0);
+  return Buffer.concat([legacy, random, sid, ciphers, comp, extLen, extBlock]);
+}
+
+test('ja4FromClientHelloBody: fingerprint_alt при наличии SNI и ALPN на wire', () => {
+  const j = ja4FromClientHelloBody(clientHelloBodyWithSniAlpnSupportedVersions());
+  assert.strictEqual(j.ja4_a, 't13d0103h2');
+  assert.strictEqual(j.fingerprint, 't13d0103h2_0f2cb44170f4_b9a491fefe05');
+  assert.strictEqual(j.fingerprint_alt_sni_alpn_in_j4c, 't13d0103h2_0f2cb44170f4_76ae7f21e19f');
+  assert.notStrictEqual(j.ja4_c, j.ja4_c_alt_sni_alpn_in_hash);
+  assert.strictEqual(j.raw_r_alt_sni_alpn_in_segment.split('_')[2]?.startsWith('0000'), true);
 });
 
 test('GREASE cipher не входит в счётчик JA4_a и в JA4_b', () => {
