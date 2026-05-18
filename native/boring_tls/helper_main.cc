@@ -273,6 +273,7 @@ bool ComputeJa3FromClientHelloBody(const uint8_t* body, size_t n,
     const uint8_t* edata = body + o;
     o += elen;
     if (IsGrease(et) || MeshvpnTlsExtensionIsGrease(et)) continue;
+    out->ext_types.push_back(et);
     if (et == 0x000a && elen >= 2) {
       uint16_t glen =
           (static_cast<uint16_t>(edata[0]) << 8) | edata[1];
@@ -523,6 +524,7 @@ bool ComputeJa4FromClientHelloBody(const uint8_t* body, size_t n,
     const uint8_t* edata = body + o;
     o += elen;
     if (IsGrease(et) || MeshvpnTlsExtensionIsGrease(et)) continue;
+    ext_types.push_back(et);
     if (et == 0) {
       has_sni_extension = true;
     } else if (et == 16 && elen >= 2) {
