@@ -371,6 +371,7 @@ test('helper: без log_ja3 на stderr нет ja3_md5', async (t) => {
     assert.ok(!stderr.includes('ja3_md5='), stderr);
     assert.ok(!stderr.includes('ja3_sorted_md5='), stderr);
     assert.ok(!stderr.includes('ja4='), stderr);
+    assert.ok(!stderr.includes('ja4_raw_o='), stderr);
   } finally {
     try {
       child.kill('SIGKILL');
@@ -437,6 +438,7 @@ test('helper: log_ja3=true — stderr содержит эталонный ja3_md
     assert.match(stderr, new RegExp(`ja3_md5=${EXPECTED_JA3_DIGEST}`));
     assert.match(stderr, new RegExp(`ja3_sorted_md5=${EXPECTED_JA3_SORTED_DIGEST}`));
     assert.ok(stderr.includes(`ja4=${j4.fingerprint}`), stderr);
+    assert.ok(stderr.includes(`ja4_raw_o=${j4.raw_o}`), stderr);
   } finally {
     try {
       child.kill('SIGKILL');

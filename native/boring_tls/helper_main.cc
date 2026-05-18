@@ -1205,6 +1205,8 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
             << '\n';
   if (ja4_ok) {
     std::cerr << "boring-tls-helper: ja4=" << ja4_fp_lower << '\n';
+    // FoxIO JA4_ro (wire order): как «raw» в калькуляторах для сравнения с эталоном.
+    std::cerr << "boring-tls-helper: ja4_raw_o=" << ja4_comp.raw_o << '\n';
   }
   if (cfg->ja3_verbose) {
     constexpr size_t kHexPrev = 96;
@@ -1230,7 +1232,6 @@ void Ja3MsgCallback(int is_write, int /*version*/, int content_type,
       std::cerr << "boring-tls-helper: ja4_b=" << ja4_comp.ja4_b << '\n';
       std::cerr << "boring-tls-helper: ja4_c=" << ja4_comp.ja4_c << '\n';
       std::cerr << "boring-tls-helper: ja4_raw_r=" << ja4_comp.raw_r << '\n';
-      std::cerr << "boring-tls-helper: ja4_raw_o=" << ja4_comp.raw_o << '\n';
     }
   }
   cfg->logged = true;
