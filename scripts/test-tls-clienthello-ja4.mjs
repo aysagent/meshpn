@@ -52,7 +52,9 @@ test('ja4FromClientHelloBody: минимальный TLS 1.3 hello', () => {
   assert.strictEqual(j.ja4_a, 't13i010100');
   assert.strictEqual(j.ja4_b, '0f2cb44170f4');
   assert.strictEqual(j.ja4_c, 'b9a491fefe05');
-  assert.strictEqual(j.fingerprint, `${j.ja4_a}_${j.ja4_b}_${j.ja4_c}`);
+  assert.strictEqual(j.fingerprint, 't13i010100_0f2cb44170f4_b9a491fefe05');
+  assert.strictEqual(j.raw_r, 't13i010100_1301_002b');
+  assert.strictEqual(j.raw_o, 't13i010100_1301_002b');
 });
 
 test('GREASE cipher не входит в счётчик JA4_a и в JA4_b', () => {

@@ -439,6 +439,7 @@ test('helper: log_ja3=true — stderr содержит эталонный ja3_md
     assert.match(stderr, new RegExp(`ja3_sorted_md5=${EXPECTED_JA3_SORTED_DIGEST}`));
     assert.ok(stderr.includes(`ja4=${j4.fingerprint}`), stderr);
     assert.ok(stderr.includes(`ja4_raw_o=${j4.raw_o}`), stderr);
+    assert.ok(stderr.includes(`ja4_raw_r=${j4.raw_r}`), stderr);
   } finally {
     try {
       child.kill('SIGKILL');
