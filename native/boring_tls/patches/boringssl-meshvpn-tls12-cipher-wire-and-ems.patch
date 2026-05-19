@@ -139,8 +139,8 @@ diff --git ssl/extensions.cc ssl/extensions.cc
      return true;
    }
  
-+  const SSL *const ssl = hs->ssl;
-+  if (ssl->ctx->meshvpn_suppress_ems_clienthello) {
++  const SSL_CTX *const ssl_ctx = hs->ssl->ctx.get();
++  if (ssl_ctx != nullptr && ssl_ctx->meshvpn_suppress_ems_clienthello) {
 +    return true;
 +  }
 +

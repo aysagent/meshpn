@@ -842,40 +842,48 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
     ja3_cfg->profile_sigalgs_merged.clear();
   }
 
-  bool suppress_clienthello_ems = false;
+  // EMS (расширение 23): BoringSSL по умолчанию добавляет его во все TLS 1.2+
+  // ClientHello. Для паритета с профилем/захватом подавляем, пока в профиле
+  // явно не указан тип 23 в extension_types. Раньше при отсутствии или пустом
+  // extension_types suppress оставался false → лишний 0023 на проводе.
+  bool suppress_clienthello_ems = true;
   if (p.contains("extension_types")) {
     if (!p["extension_types"].is_array()) {
       *err_out = "client_hello_profile.extension_types must be array";
       return false;
     }
-    if (!p["extension_types"].empty()) {
+    const auto& ext_types_arr = p["extension_types"];
+    if (!ext_types_arr.empty()) {
       suppress_clienthello_ems = true;
-    }
-    for (const auto& item : p["extension_types"]) {
-      if (!item.is_number_unsigned() && !item.is_number_integer()) {
-        *err_out =
-            "client_hello_profile.extension_types entries must be integers";
-        return false;
-      }
-      unsigned long raw = item.is_number_unsigned()
-                              ? item.get<unsigned long>()
-                              : static_cast<unsigned long>(item.get<long>());
-      if (raw > 0xffff) {
-        *err_out =
-            "client_hello_profile.extension_types value out of uint16 range";
-        return false;
-      }
-      uint16_t et = static_cast<uint16_t>(raw);
-      if (ja3_cfg) {
-        ja3_cfg->profile_extension_types.push_back(et);
-      }
-      if (et == 23) {
-        suppress_clienthello_ems = false;
+      for (const auto& item : ext_types_arr) {
+        if (!item.is_number_unsigned() && !item.is_number_integer()) {
+          *err_out =
+              "client_hello_profile.extension_types entries must be integers";
+          return false;
+        }
+        unsigned long raw = item.is_number_unsigned()
+                                ? item.get<unsigned long>()
+                                : static_cast<unsigned long>(item.get<long>());
+        if (raw > 0xffff) {
+          *err_out =
+              "client_hello_profile.extension_types value out of uint16 range";
+          return false;
+        }
+        uint16_t et = static_cast<uint16_t>(raw);
+        if (ja3_cfg) {
+          ja3_cfg->profile_extension_types.push_back(et);
+        }
+        if (et == 23) {
+          suppress_clienthello_ems = false;
+        }
       }
     }
   }
   SSL_CTX_set_meshvpn_suppress_extended_master_secret_clienthello(
       ctx, suppress_clienthello_ems ? 1 : 0);
+  std::cerr << "boring-tls-helper: note: extended_master_secret ClientHello "
+            << (suppress_clienthello_ems ? "suppressed" : "enabled (type 23 in profile)")
+            << '\n';
 
   if (!p.contains("cipher_suites") || !p["cipher_suites"].is_array() ||
       p["cipher_suites"].empty()) {
