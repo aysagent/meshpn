@@ -679,7 +679,7 @@ test('helper: profile_vs_wire extensions — строка диагностики
   }
 });
 
-test('helper: emit_extended_master_secret=false — на wire нет EMS (JA4 hex 0017), при этом 0023 может быть ext 35', async (t) => {
+test('helper: профиль без ext 35 — нет session_ticket на wire (JA4 hex 0023); EMS выключен через emit flag — нет 0017', async (t) => {
   if (!fs.existsSync(helper)) {
     t.skip();
     return;
@@ -745,10 +745,13 @@ test('helper: emit_extended_master_secret=false — на wire нет EMS (JA4 he
 
     assert.ok(stderr.includes('extended_master_secret ClientHello suppressed'), stderr);
     assert.ok(stderr.includes('emit_extended_master_secret=false'), stderr);
+    assert.ok(stderr.includes('session_ticket extension (IANA 35, JA4 hex 0023): suppressed'), stderr);
     const m = stderr.match(/^boring-tls-helper: ja4_raw_r=(.+)$/m);
     assert.ok(m, stderr);
-    // JA4: 4 hex-цифры на тип расширения (uint16). EMS = decimal 23 = «0017». «0023» = 0x0023 = ext 35 (session_ticket).
-    assert.ok(!String(m[1]).includes(',0017,'), `unexpected EMS (ext 23): ${m[1]}`);
+    const raw = String(m[1]);
+    // JA4: 4 hex на uint16. EMS decimal 23 → «0017». session_ticket decimal 35 → «0023».
+    assert.ok(!raw.includes(',0017,'), `unexpected EMS (ext 23): ${raw}`);
+    assert.ok(!raw.includes(',0023,'), `unexpected session_ticket (ext 35): ${raw}`);
   } finally {
     try {
       child.kill('SIGKILL');

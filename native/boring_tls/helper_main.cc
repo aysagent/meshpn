@@ -842,11 +842,15 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
     ja3_cfg->profile_sigalgs_merged.clear();
   }
 
-  // EMS (расширение 23): BoringSSL по умолчанию добавляет его во все TLS 1.2+
-  // ClientHello. Для паритета с профилем/захватом подавляем, пока в профиле
-  // явно не указан тип 23 в extension_types. Раньше при отсутствии или пустом
-  // extension_types suppress оставался false → лишний 0023 на проводе.
+  // EMS (IANA 23): на JA4/raw это hex «0017». BoringSSL добавляет ext для TLS 1.2+
+  // ClientHello, пока не подавить через meshvpn patch.
+  //
+  // session_ticket (IANA 35): на JA4/raw это hex «0023». Для min_version < TLS 1.3
+  // BoringSSL всегда добавляет объявление session_ticket (extensions.cc
+  // ext_ticket_add_clienthello), даже с пустым телом — см. SSL_OP_NO_TICKET.
   bool suppress_clienthello_ems = true;
+  bool extension_types_nonempty = false;
+  bool profile_lists_session_ticket_ext = false;
   if (p.contains("extension_types")) {
     if (!p["extension_types"].is_array()) {
       *err_out = "client_hello_profile.extension_types must be array";
@@ -854,6 +858,7 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
     }
     const auto& ext_types_arr = p["extension_types"];
     if (!ext_types_arr.empty()) {
+      extension_types_nonempty = true;
       suppress_clienthello_ems = true;
       for (const auto& item : ext_types_arr) {
         if (!item.is_number_unsigned() && !item.is_number_integer()) {
@@ -875,6 +880,9 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
         }
         if (et == 23) {
           suppress_clienthello_ems = false;
+        }
+        if (et == 35) {
+          profile_lists_session_ticket_ext = true;
         }
       }
     }
@@ -903,6 +911,23 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
     std::cerr << " (type 23 in extension_types)";
   }
   std::cerr << '\n';
+
+  // Паритет с extension_types: без типа 35 не шлём RFC5077 session_ticket на TLS 1.2.
+  if (extension_types_nonempty) {
+    if (profile_lists_session_ticket_ext) {
+      SSL_CTX_clear_options(ctx, SSL_OP_NO_TICKET);
+    } else {
+      SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
+    }
+  } else {
+    SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
+  }
+  std::cerr << "boring-tls-helper: note: session_ticket extension (IANA 35, JA4 hex "
+               "0023): "
+            << ((extension_types_nonempty && profile_lists_session_ticket_ext)
+                    ? "enabled (35 in extension_types)"
+                    : "suppressed (SSL_OP_NO_TICKET)")
+            << '\n';
 
   if (!p.contains("cipher_suites") || !p["cipher_suites"].is_array() ||
       p["cipher_suites"].empty()) {
