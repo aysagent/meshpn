@@ -826,6 +826,7 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
   SSL_CTX_meshvpn_clear_client_hello_extensions(ctx);
   SSL_CTX_set_meshvpn_tls12_client_cipher_wire_order(ctx, nullptr, 0);
   SSL_CTX_set_meshvpn_suppress_extended_master_secret_clienthello(ctx, 0);
+  SSL_CTX_set_meshvpn_signature_algorithms_clienthello_wire(ctx, nullptr, 0);
 
   const bool ja3_strict_cfg = p.value("ja3_strict", false);
   if (ja3_strict_cfg && permute_extensions) {
@@ -1061,21 +1062,29 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
                                            sig_algs50.begin(), sig_algs50.end());
   }
 
-  // Safari (и иногда другие стеки) кладут в ext.13 повторяющиеся codepoints; на wire JA3/JA4
-  // это ок, но SSL_CTX_set_verify_algorithm_prefs / cert prefs в BoringSSL — DUPLICATE_SIGNATURE_ALGORITHM.
-  size_t sig_dup_removed =
-      DedupeU16PreserveOrder(&sig_algs13) + DedupeU16PreserveOrder(&sig_algs50);
-  if (sig_dup_removed > 0) {
-    std::cerr << "boring-tls-helper: note: signature_algorithms / "
-                 "signature_algorithms_cert — удалены "
-              << sig_dup_removed
-              << " повторов uint16 (профиль как с провода; для BoringSSL prefs нужен "
-                 "уникальный список).\n";
+  // Ext 13 на проводе — как в профиле (в т.ч. дубликаты для JA4 alt / ja3.zone).
+  // SSL_CTX_set_verify_algorithm_prefs принимает только уникальный список.
+  if (!sig_algs13.empty()) {
+    if (SSL_CTX_set_meshvpn_signature_algorithms_clienthello_wire(
+            ctx, sig_algs13.data(), sig_algs13.size()) != 1) {
+      *err_out =
+          "SSL_CTX_set_meshvpn_signature_algorithms_clienthello_wire failed";
+      return false;
+    }
   }
 
-  if (!sig_algs13.empty()) {
-    if (SSL_CTX_set_verify_algorithm_prefs(ctx, sig_algs13.data(),
-                                           sig_algs13.size()) != 1) {
+  std::vector<uint16_t> sig_algs13_verify = sig_algs13;
+  size_t sig13_dup_removed = DedupeU16PreserveOrder(&sig_algs13_verify);
+  if (sig13_dup_removed > 0) {
+    std::cerr << "boring-tls-helper: note: signature_algorithms — на проводе "
+                 "расширение 13 как в профиле (с повторами); для "
+                 "SSL_CTX_set_verify_algorithm_prefs убрано "
+              << sig13_dup_removed << " дубликатов.\n";
+  }
+
+  if (!sig_algs13_verify.empty()) {
+    if (SSL_CTX_set_verify_algorithm_prefs(ctx, sig_algs13_verify.data(),
+                                           sig_algs13_verify.size()) != 1) {
       ERR_print_errors_fp(stderr);
       *err_out =
           "SSL_CTX_set_verify_algorithm_prefs failed for profile "

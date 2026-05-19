@@ -1,0 +1,98 @@
+diff --git include/openssl/ssl.h include/openssl/ssl.h
+--- include/openssl/ssl.h
++++ include/openssl/ssl.h
+@@ -2708,9 +2708,16 @@
+ OPENSSL_EXPORT void SSL_CTX_set_meshvpn_suppress_extended_master_secret_clienthello(
+     SSL_CTX *ctx, int suppress);
+ 
++// SSL_CTX_set_meshvpn_signature_algorithms_clienthello_wire sets the exact
++// signature algorithm ids encoded in TLS extension 13 (wire order); duplicates
++// are allowed (Safari / ja3.zone parity). When empty, extension 13 follows
++// verify_sigalgs from SSL_CTX_set_verify_algorithm_prefs (mesh-vpn fork).
++OPENSSL_EXPORT int SSL_CTX_set_meshvpn_signature_algorithms_clienthello_wire(
++    SSL_CTX *ctx, const uint16_t *prefs, size_t num_prefs);
++
+ // SSL_CTX_set_meshvpn_client_signature_algorithms_cert sets TLS extension 50
+ // (signature_algorithms_cert) for TLS 1.2+ client hellos. Empty list omits the
+-// extension. Duplicates are rejected (mesh-vpn BoringSSL fork).
++// extension. Duplicate ids are allowed on wire (mesh-vpn BoringSSL fork).
+ OPENSSL_EXPORT int SSL_CTX_set_meshvpn_client_signature_algorithms_cert(
+     SSL_CTX *ctx, const uint16_t *prefs, size_t num_prefs);
+ 
+diff --git ssl/internal.h ssl/internal.h
+--- ssl/internal.h
++++ ssl/internal.h
+@@ -4118,6 +4118,10 @@
+   bssl::Array<uint16_t> meshvpn_tls12_client_cipher_wire_order;
+   // When true, skip ext extended_master_secret in ClientHello (mesh-vpn).
+   bool meshvpn_suppress_ems_clienthello = false;
++
++  // mesh-vpn: optional extension 13 wire body (may duplicate ids; see
++  // SSL_CTX_set_meshvpn_signature_algorithms_clienthello_wire).
++  bssl::Array<uint16_t> meshvpn_signature_algorithms_clienthello_wire;
+ 
+   // mesh-vpn: optional signature_algorithms_cert (extension 50) for clients.
+   bssl::Array<uint16_t> meshvpn_client_sigalgs_cert;
+diff --git ssl/extensions.cc ssl/extensions.cc
+--- ssl/extensions.cc
++++ ssl/extensions.cc
+@@ -344,6 +344,15 @@
+ }
+ 
+ bool tls12_add_verify_sigalgs(const SSL_HANDSHAKE *hs, CBB *out) {
++  const SSL_CTX *ctx = hs->ssl->ctx.get();
++  if (!ctx->meshvpn_signature_algorithms_clienthello_wire.empty()) {
++    for (uint16_t sigalg : ctx->meshvpn_signature_algorithms_clienthello_wire) {
++      if (!CBB_add_u16(out, sigalg)) {
++        return false;
++      }
++    }
++    return true;
++  }
+   for (uint16_t sigalg : tls12_get_verify_sigalgs(hs)) {
+     if (!CBB_add_u16(out, sigalg)) {
+       return false;
+diff --git ssl/ssl_lib.cc ssl/ssl_lib.cc
+--- ssl/ssl_lib.cc
++++ ssl/ssl_lib.cc
+@@ -2110,19 +2110,18 @@
+   ctx->meshvpn_suppress_ems_clienthello = suppress != 0;
+ }
+ 
+-static bool meshvpn_sigalgs_cert_unique(Span<const uint16_t> list) {
+-  if (list.size() < 2) {
+-    return true;
+-  }
+-  for (size_t i = 0; i < list.size() - 1; ++i) {
+-    for (size_t j = i + 1; j < list.size(); ++j) {
+-      if (list[i] == list[j]) {
+-        OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CIPHER_MATCH);
+-        return false;
+-      }
+-    }
++int SSL_CTX_set_meshvpn_signature_algorithms_clienthello_wire(
++    SSL_CTX *ctx, const uint16_t *prefs, size_t num_prefs) {
++  if (ctx == nullptr) {
++    return 0;
+   }
+-  return true;
++  ctx->meshvpn_signature_algorithms_clienthello_wire.Reset();
++  if (num_prefs == 0) {
++    return 1;
++  }
++  Span<const uint16_t> span(prefs, num_prefs);
++  return ctx->meshvpn_signature_algorithms_clienthello_wire.CopyFrom(span) ? 1
++                                                                           : 0;
+ }
+ 
+ int SSL_CTX_set_meshvpn_client_signature_algorithms_cert(
+@@ -2135,9 +2134,6 @@
+     return 1;
+   }
+   Span<const uint16_t> span(prefs, num_prefs);
+-  if (!meshvpn_sigalgs_cert_unique(span)) {
+-    return 0;
+-  }
+   return ctx->meshvpn_client_sigalgs_cert.CopyFrom(span) ? 1 : 0;
+ }
+ 
