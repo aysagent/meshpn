@@ -679,6 +679,86 @@ test('helper: profile_vs_wire extensions — строка диагностики
   }
 });
 
+test('helper: emit_extended_master_secret=false — на wire нет EMS (JA4 hex 0017), при этом 0023 может быть ext 35', async (t) => {
+  if (!fs.existsSync(helper)) {
+    t.skip();
+    return;
+  }
+
+  const server = net.createServer((sock) => {
+    sock.on('error', () => {});
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const addr = server.address();
+  const port = typeof addr === 'object' && addr ? addr.port : null;
+  assert.ok(port);
+
+  const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  await once(child, 'spawn');
+  let stderr = '';
+  child.stderr?.on('data', (b) => {
+    stderr += b.toString();
+  });
+
+  try {
+    sendConfigFrame(child.stdin, {
+      host: '127.0.0.1',
+      port,
+      ca_pem: MIN_CA_PEM,
+      servername: 'test-ca',
+      verify_host: 'test-ca',
+      alpn: ['h2', 'http/1.1'],
+      handshake_timeout_ms: 8000,
+      log_ja3: true,
+      client_hello_profile: {
+        cipher_suites: [49195, 4865],
+        supported_groups: [29],
+        ec_point_formats: [0],
+        permute_extensions: false,
+        extension_types: [0, 23, 43, 16],
+        emit_extended_master_secret: false,
+      },
+    });
+
+    await raceMs(
+      new Promise((resolve, reject) => {
+        const deadline = Date.now() + 8000;
+        const tick = () => {
+          if (/^boring-tls-helper: ja4_raw_r=/m.test(stderr)) {
+            resolve(undefined);
+            return;
+          }
+          if (Date.now() > deadline) {
+            reject(new Error('нет ja4_raw_r на stderr'));
+            return;
+          }
+          setImmediate(tick);
+        };
+        tick();
+      }),
+      9000,
+      'ja4_raw_r на stderr',
+    );
+
+    assert.ok(stderr.includes('extended_master_secret ClientHello suppressed'), stderr);
+    assert.ok(stderr.includes('emit_extended_master_secret=false'), stderr);
+    const m = stderr.match(/^boring-tls-helper: ja4_raw_r=(.+)$/m);
+    assert.ok(m, stderr);
+    // JA4: 4 hex-цифры на тип расширения (uint16). EMS = decimal 23 = «0017». «0023» = 0x0023 = ext 35 (session_ticket).
+    assert.ok(!String(m[1]).includes(',0017,'), `unexpected EMS (ext 23): ${m[1]}`);
+  } finally {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
+    server.close();
+  }
+});
+
 test('helper: client_hello_extra_extensions — opaque добавляется на wire', async (t) => {
   if (!fs.existsSync(helper)) {
     t.skip();

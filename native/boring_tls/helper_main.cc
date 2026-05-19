@@ -879,11 +879,30 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
       }
     }
   }
+
+  bool ems_profile_override = false;
+  if (p.contains("emit_extended_master_secret")) {
+    if (!p["emit_extended_master_secret"].is_boolean()) {
+      *err_out =
+          "client_hello_profile.emit_extended_master_secret must be boolean";
+      return false;
+    }
+    ems_profile_override = true;
+    suppress_clienthello_ems = !p["emit_extended_master_secret"].get<bool>();
+  }
+
   SSL_CTX_set_meshvpn_suppress_extended_master_secret_clienthello(
       ctx, suppress_clienthello_ems ? 1 : 0);
   std::cerr << "boring-tls-helper: note: extended_master_secret ClientHello "
-            << (suppress_clienthello_ems ? "suppressed" : "enabled (type 23 in profile)")
-            << '\n';
+            << (suppress_clienthello_ems ? "suppressed" : "enabled");
+  if (ems_profile_override) {
+    std::cerr << " (emit_extended_master_secret="
+              << (p["emit_extended_master_secret"].get<bool>() ? "true" : "false")
+              << ')';
+  } else if (!suppress_clienthello_ems) {
+    std::cerr << " (type 23 in extension_types)";
+  }
+  std::cerr << '\n';
 
   if (!p.contains("cipher_suites") || !p["cipher_suites"].is_array() ||
       p["cipher_suites"].empty()) {

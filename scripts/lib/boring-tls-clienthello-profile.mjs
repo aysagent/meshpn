@@ -42,6 +42,8 @@ export const BORING_TLS_CLIENTHELLO_SCHEMA_VERSION = '1';
  *   client_hello_extra_extensions?: { type: number, hex: string }[],
  *   opaque_extension_skip_types_decimal?: number[],
  *   extension_types_note?: string,
+ *   // Явное управление EMS (ext 23): если false — не слать EMS даже при наличии 23 в extension_types (паритет с эталоном без 0023). Если true — слать EMS даже без 23 в списке. Без ключа — решение по наличию 23 в extension_types (и подавление по умолчанию при пустом/отсутствующем списке).
+ *   emit_extended_master_secret?: boolean,
  * }} BoringTlsClienthelloProfileFile
  */
 
@@ -127,6 +129,12 @@ export function validateBoringTlsClienthelloProfileFile(obj) {
   }
   if (p.clienthello_emit_sni !== undefined && typeof p.clienthello_emit_sni !== 'boolean') {
     return { ok: false, error: 'profile: clienthello_emit_sni должен быть boolean' };
+  }
+  if (
+    p.emit_extended_master_secret !== undefined &&
+    typeof p.emit_extended_master_secret !== 'boolean'
+  ) {
+    return { ok: false, error: 'profile: emit_extended_master_secret должен быть boolean' };
   }
   if (p.tls_info !== undefined) {
     if (!p.tls_info || typeof p.tls_info !== 'object') return { ok: false, error: 'profile: tls_info не объект' };
@@ -369,6 +377,9 @@ export function profileFileToHelperClientHelloBlock(profile, opts = {}) {
       type: e.type,
       hex: typeof e.hex === 'string' ? e.hex.replace(/\s+/g, '').toLowerCase() : '',
     }));
+  }
+  if (profile.emit_extended_master_secret !== undefined) {
+    out.emit_extended_master_secret = profile.emit_extended_master_secret;
   }
   return out;
 }
