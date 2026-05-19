@@ -1,0 +1,149 @@
+diff --git include/openssl/ssl.h include/openssl/ssl.h
+--- include/openssl/ssl.h
++++ include/openssl/ssl.h
+@@ -2693,6 +2693,21 @@
+ OPENSSL_EXPORT int SSL_CTX_set_tls13_client_cipher_order(
+     SSL_CTX *ctx, const uint16_t *cipher_ids, size_t num_cipher_ids);
+ 
++// SSL_CTX_set_meshvpn_tls12_client_cipher_wire_order sets the TLS 1.2 (and
++// older) cipher suite ids appended after TLS 1.3 suites in ClientHello, in
++// wire order. Use for suites some browsers send but BoringSSL omits from
++// SSL_get_cipher_by_value / cipher_list (mesh-vpn fork). Empty list restores
++// default emission from SSL_get_ciphers. Duplicates are rejected.
++OPENSSL_EXPORT int SSL_CTX_set_meshvpn_tls12_client_cipher_wire_order(
++    SSL_CTX *ctx, const uint16_t *cipher_ids, size_t num_cipher_ids);
++
++// SSL_CTX_set_meshvpn_suppress_extended_master_secret_clienthello: when
++// |suppress| is non-zero, omit the extended_master_secret extension from the
++// ClientHello (parity with stacks that negotiate TLS 1.3 without EMS)
++// (mesh-vpn fork).
++OPENSSL_EXPORT void SSL_CTX_set_meshvpn_suppress_extended_master_secret_clienthello(
++    SSL_CTX *ctx, int suppress);
++
+ // SSL_CTX_set_meshvpn_client_signature_algorithms_cert sets TLS extension 50
+ // (signature_algorithms_cert) for TLS 1.2+ client hellos. Empty list omits the
+ // extension. Duplicates are rejected (mesh-vpn BoringSSL fork).
+diff --git ssl/internal.h ssl/internal.h
+--- ssl/internal.h
++++ ssl/internal.h
+@@ -4112,6 +4112,12 @@
+   // If non-empty, overrides TLS 1.3 ClientHello cipher suite ids and order for
+   // clients (mesh-vpn fork; see SSL_CTX_set_tls13_client_cipher_order).
+   bssl::Array<uint16_t> tls13_client_cipher_order;
++
++  // If non-empty, replaces TLS 1.2 ClientHello cipher ids (after TLS 1.3 block)
++  // with these raw uint16 values in order (mesh-vpn).
++  bssl::Array<uint16_t> meshvpn_tls12_client_cipher_wire_order;
++  // When true, skip ext extended_master_secret in ClientHello (mesh-vpn).
++  bool meshvpn_suppress_ems_clienthello = false;
+ 
+   // mesh-vpn: optional signature_algorithms_cert (extension 50) for clients.
+   bssl::Array<uint16_t> meshvpn_client_sigalgs_cert;
+diff --git ssl/ssl_lib.cc ssl/ssl_lib.cc
+--- ssl/ssl_lib.cc
++++ ssl/ssl_lib.cc
+@@ -2084,8 +2084,32 @@
+     }
+   }
+   return ctx->tls13_client_cipher_order.CopyFrom(span) ? 1 : 0;
++}
++
++int SSL_CTX_set_meshvpn_tls12_client_cipher_wire_order(
++    SSL_CTX *ctx, const uint16_t *cipher_ids, size_t num_cipher_ids) {
++  if (ctx == nullptr) {
++    return 0;
++  }
++  ctx->meshvpn_tls12_client_cipher_wire_order.Reset();
++  if (num_cipher_ids == 0) {
++    return 1;
++  }
++  Span<const uint16_t> span(cipher_ids, num_cipher_ids);
++  if (!tls13_cipher_order_unique(span)) {
++    return 0;
++  }
++  return ctx->meshvpn_tls12_client_cipher_wire_order.CopyFrom(span) ? 1 : 0;
+ }
+ 
++void SSL_CTX_set_meshvpn_suppress_extended_master_secret_clienthello(
++    SSL_CTX *ctx, int suppress) {
++  if (ctx == nullptr) {
++    return;
++  }
++  ctx->meshvpn_suppress_ems_clienthello = suppress != 0;
++}
++
+ static bool meshvpn_sigalgs_cert_unique(Span<const uint16_t> list) {
+   if (list.size() < 2) {
+     return true;
+diff --git ssl/handshake_client.cc ssl/handshake_client.cc
+--- ssl/handshake_client.cc
++++ ssl/handshake_client.cc
+@@ -154,28 +154,36 @@
+   }
+ 
+   if (hs->min_version < TLS1_3_VERSION && type != ssl_client_hello_inner) {
+-    bool any_enabled = false;
+-    for (const SSL_CIPHER *cipher : SSL_get_ciphers(ssl)) {
+-      // Skip disabled ciphers
+-      if ((cipher->algorithm_mkey & mask_k) ||
+-          (cipher->algorithm_auth & mask_a)) {
+-        continue;
++    if (!ssl->ctx->meshvpn_tls12_client_cipher_wire_order.empty()) {
++      for (uint16_t cipher_id : ssl->ctx->meshvpn_tls12_client_cipher_wire_order) {
++        if (!CBB_add_u16(&child, cipher_id)) {
++          return false;
++        }
+       }
+-      if (SSL_CIPHER_get_min_version(cipher) > hs->max_version ||
+-          SSL_CIPHER_get_max_version(cipher) < hs->min_version) {
+-        continue;
++    } else {
++      bool any_enabled = false;
++      for (const SSL_CIPHER *cipher : SSL_get_ciphers(ssl)) {
++        // Skip disabled ciphers
++        if ((cipher->algorithm_mkey & mask_k) ||
++            (cipher->algorithm_auth & mask_a)) {
++          continue;
++        }
++        if (SSL_CIPHER_get_min_version(cipher) > hs->max_version ||
++            SSL_CIPHER_get_max_version(cipher) < hs->min_version) {
++          continue;
++        }
++        any_enabled = true;
++        if (!CBB_add_u16(&child, SSL_CIPHER_get_protocol_id(cipher))) {
++          return false;
++        }
+       }
+-      any_enabled = true;
+-      if (!CBB_add_u16(&child, SSL_CIPHER_get_protocol_id(cipher))) {
++
++      // If all ciphers were disabled, return the error to the caller.
++      if (!any_enabled && hs->max_version < TLS1_3_VERSION) {
++        OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CIPHERS_AVAILABLE);
+         return false;
+       }
+     }
+-
+-    // If all ciphers were disabled, return the error to the caller.
+-    if (!any_enabled && hs->max_version < TLS1_3_VERSION) {
+-      OPENSSL_PUT_ERROR(SSL, SSL_R_NO_CIPHERS_AVAILABLE);
+-      return false;
+-    }
+   }
+ 
+   if (ssl->mode & SSL_MODE_SEND_FALLBACK_SCSV) {
+diff --git ssl/extensions.cc ssl/extensions.cc
+--- ssl/extensions.cc
++++ ssl/extensions.cc
+@@ -863,6 +863,11 @@
+     return true;
+   }
+ 
++  const SSL *const ssl = hs->ssl;
++  if (ssl->ctx->meshvpn_suppress_ems_clienthello) {
++    return true;
++  }
++
+   if (!CBB_add_u16(out, TLSEXT_TYPE_extended_master_secret) ||
+       !CBB_add_u16(out, 0 /* length */)) {
+     return false;

@@ -109,6 +109,25 @@ if(NOT _meshvpn_ext_emit_dedup_marker)
   endif()
 endif()
 
+file(STRINGS "${boringssl_SOURCE_DIR}/include/openssl/ssl.h"
+     _meshvpn_tls12_wire_marker
+     REGEX SSL_CTX_set_meshvpn_tls12_client_cipher_wire_order LIMIT_COUNT 1)
+if(NOT _meshvpn_tls12_wire_marker)
+  execute_process(
+    COMMAND "${MESHVPN_PATCH_EXECUTABLE}" -p0 -i
+            "${CMAKE_CURRENT_SOURCE_DIR}/patches/boringssl-meshvpn-tls12-cipher-wire-and-ems.patch"
+    WORKING_DIRECTORY "${boringssl_SOURCE_DIR}"
+    RESULT_VARIABLE _meshvpn_patch5_rc
+    OUTPUT_VARIABLE _meshvpn_patch5_out
+    ERROR_VARIABLE _meshvpn_patch5_err)
+  if(NOT _meshvpn_patch5_rc EQUAL 0)
+    message(FATAL_ERROR
+      "mesh-vpn: не удалось применить патч tls12 wire + EMS (${MESHVPN_BORINGSSL_PINNED_SHA}). "
+      "Обновите patches/boringssl-meshvpn-tls12-cipher-wire-and-ems.patch.\n"
+      "patch stdout:\n${_meshvpn_patch5_out}\nstderr:\n${_meshvpn_patch5_err}")
+  endif()
+endif()
+
 FetchContent_Declare(
   json
   GIT_REPOSITORY https://github.com/nlohmann/json.git

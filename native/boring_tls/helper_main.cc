@@ -824,6 +824,8 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
   SSL_CTX_set_permute_extensions(ctx, permute_extensions ? 1 : 0);
 
   SSL_CTX_meshvpn_clear_client_hello_extensions(ctx);
+  SSL_CTX_set_meshvpn_tls12_client_cipher_wire_order(ctx, nullptr, 0);
+  SSL_CTX_set_meshvpn_suppress_extended_master_secret_clienthello(ctx, 0);
 
   const bool ja3_strict_cfg = p.value("ja3_strict", false);
   if (ja3_strict_cfg && permute_extensions) {
@@ -839,10 +841,14 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
     ja3_cfg->profile_sigalgs_merged.clear();
   }
 
-  if (ja3_cfg && p.contains("extension_types")) {
+  bool suppress_clienthello_ems = false;
+  if (p.contains("extension_types")) {
     if (!p["extension_types"].is_array()) {
       *err_out = "client_hello_profile.extension_types must be array";
       return false;
+    }
+    if (!p["extension_types"].empty()) {
+      suppress_clienthello_ems = true;
     }
     for (const auto& item : p["extension_types"]) {
       if (!item.is_number_unsigned() && !item.is_number_integer()) {
@@ -858,9 +864,17 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
             "client_hello_profile.extension_types value out of uint16 range";
         return false;
       }
-      ja3_cfg->profile_extension_types.push_back(static_cast<uint16_t>(raw));
+      uint16_t et = static_cast<uint16_t>(raw);
+      if (ja3_cfg) {
+        ja3_cfg->profile_extension_types.push_back(et);
+      }
+      if (et == 23) {
+        suppress_clienthello_ems = false;
+      }
     }
   }
+  SSL_CTX_set_meshvpn_suppress_extended_master_secret_clienthello(
+      ctx, suppress_clienthello_ems ? 1 : 0);
 
   if (!p.contains("cipher_suites") || !p["cipher_suites"].is_array() ||
       p["cipher_suites"].empty()) {
@@ -871,6 +885,8 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
   }
   std::vector<uint16_t> tls13_cipher_order;
   tls13_cipher_order.reserve(p["cipher_suites"].size());
+  std::vector<uint16_t> meshvpn_tls12_wire_order;
+  meshvpn_tls12_wire_order.reserve(p["cipher_suites"].size());
   std::string tls12_cipher_rule;
   size_t tls12_suite_count = 0;
   size_t skipped_unknown_cipher = 0;
@@ -892,6 +908,8 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
       if (ja3_cfg) ja3_cfg->profile_cipher_order.push_back(id);
       continue;
     }
+    if (ja3_cfg) ja3_cfg->profile_cipher_order.push_back(id);
+    meshvpn_tls12_wire_order.push_back(id);
     const SSL_CIPHER* c = SSL_get_cipher_by_value(id);
     if (!CipherSuiteMaxBelowTls13(c)) {
       skipped_unknown_cipher++;
@@ -907,12 +925,13 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
     }
     tls12_cipher_rule += nm;
     tls12_suite_count++;
-    if (ja3_cfg) ja3_cfg->profile_cipher_order.push_back(id);
   }
   if (skipped_unknown_cipher > 0) {
-    std::cerr << "boring-tls-helper: warning: client_hello_profile.cipher_suites — "
+    std::cerr << "boring-tls-helper: note: cipher_suites — "
               << skipped_unknown_cipher
-              << " id не распознаны BoringSSL как TLS 1.2/1.3 suite (пропущены).\n";
+              << " id не известны BoringSSL как TLS 1.2 suite для "
+                 "SSL_CTX_set_cipher_list; на провод ClientHello они всё равно "
+                 "добавляются (meshvpn tls12 wire order).\n";
   }
 
   if (!tls12_cipher_rule.empty()) {
@@ -927,6 +946,11 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
     std::cerr << "boring-tls-helper: note: TLS 1.2 cipher block из профиля ("
               << tls12_suite_count
               << " suite) для паритета JA3 с браузером.\n";
+  } else if (!meshvpn_tls12_wire_order.empty()) {
+    // Только «неизвестные» legacy id из профиля — без них negotiation через
+    // cipher_list невозможен, но для JA-паритета нужен TLS 1.2 блок на проводе.
+    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+    SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
   } else {
     SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
@@ -943,6 +967,16 @@ bool ApplyClientHelloProfile(SSL_CTX* ctx, const nlohmann::json& p,
     *err_out =
         "SSL_CTX_set_tls13_client_cipher_order failed (unknown TLS 1.3 cipher "
         "id, duplicate, or compliance policy mismatch)";
+    return false;
+  }
+
+  if (SSL_CTX_set_meshvpn_tls12_client_cipher_wire_order(
+          ctx, meshvpn_tls12_wire_order.data(),
+          meshvpn_tls12_wire_order.size()) != 1) {
+    ERR_print_errors_fp(stderr);
+    *err_out =
+        "SSL_CTX_set_meshvpn_tls12_client_cipher_wire_order failed (duplicate "
+        "suite id?)";
     return false;
   }
 
