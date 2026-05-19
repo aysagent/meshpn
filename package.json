@@ -16,7 +16,7 @@
     "nat:enable": "sudo ./scripts/nat-enable.sh",
     "nat:disable": "sudo ./scripts/nat-disable.sh",
     "build:tun-linux": "node-gyp rebuild -C native/tun_linux",
-    "build:boring-tls-helper": "cmake -S native/boring_tls -B native/boring_tls/build -DCMAKE_BUILD_TYPE=Release && cmake --build native/boring_tls/build --target boring-tls-helper",
+    "build:boring-tls-helper": "cmake -S native/boring_tls -B native/boring_tls/build -DCMAKE_BUILD_TYPE=Release && cmake --build native/boring_tls/build --target boring-tls-helper --parallel $(node -p \"Math.max(1, require('os').cpus().length - 1)\")",
     "build:boring-tls-helper-lowmem": "cmake -S native/boring_tls -B native/boring_tls/build -DCMAKE_BUILD_TYPE=Release && cmake --build native/boring_tls/build --target boring-tls-helper --parallel 1",
     "ja3-snif-server": "node scripts/ja3-snif-server.mjs",
     "test:boring-tls-smoke": "node scripts/test-boring-tls-smoke.mjs",
