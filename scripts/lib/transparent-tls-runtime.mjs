@@ -348,6 +348,11 @@ export async function attachTransparentTlsClientSession(
     explicitDestination != null && typeof explicitDestination.address === 'string'
       ? { address: explicitDestination.address, port: explicitDestination.port }
       : ipv4OriginalDestinationFromSock(appSock);
+  if (logOpts?.tlsLogJa3 || logOpts?.ja3Verbose) {
+    console.log(
+      `[clean-vpn transparent-tls client] разбор первого TLS ClientHello: апстрим ${dst.address}:${dst.port}; JA3/JA4 появятся после успешной подмены SNI.`,
+    );
+  }
 
   /** @type {Buffer[]} */
   const chunks = [];

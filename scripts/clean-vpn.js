@@ -6118,6 +6118,14 @@ async function runExit({
       startBridge(sock, null, 'tcp');
     }).listen(port, host, () => {
       console.log(`[clean-vpn] exit ${type} listening ${host}:${port}`);
+      if (
+        type === 'transparent-tls' &&
+        (Boolean(tlsLogJa3) || Boolean(ja3Verbose))
+      ) {
+        console.log(
+          '[clean-vpn transparent-tls exit] JA3/JA4/SNI включены: логи по каждому CVPTX-потоку (OPEN + первый блок upstream после restore).\n[clean-vpn transparent-tls exit] Без `--tls-log-ja3` / `--ja3-verbose` на этой стороне логирования transparent-tls не будет.',
+        );
+      }
     });
     return;
   }
@@ -7347,6 +7355,13 @@ async function runClient({
         sock.on('error', reject);
       });
 
+    const ttlLogOpts = { tlsLogJa3: Boolean(tlsLogJa3), ja3Verbose: Boolean(ja3Verbose) };
+    if (ttlLogOpts.tlsLogJa3 || ttlLogOpts.ja3Verbose) {
+      console.log(
+        `[clean-vpn transparent-tls client] JA3/JA4/SNI включены (--tls-log-ja3/--ja3-verbose): строки появятся после полного первого ClientHello каждого нового HTTPS (tcp/443). На exit нужны те же флаги.\n[clean-vpn transparent-tls client] Важно: REDIRECT tcp/443 в nat OUTPUT — только трафик, сгенерированный этой машиной; браузеры/клиенты за --client-lan-subnet через FORWARD без отдельного PREROUTING сюда не попадают.`,
+      );
+    }
+
     if (kaBridge > 0) {
       attachTunBridge(tun, 'tcp', null, {
         ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
@@ -7362,12 +7377,17 @@ async function runClient({
 
     ttlHttpsInterceptSrv = net.createServer((sock) => {
       sock.on('error', () => {});
+      if (ttlLogOpts.tlsLogJa3 || ttlLogOpts.ja3Verbose) {
+        console.log(
+          `[clean-vpn transparent-tls client] accept HTTPS-intercept после REDIRECT: peer=${sock.remoteAddress ?? '?'}:${sock.remotePort ?? '?'}`,
+        );
+      }
       attachTransparentTlsClientSession(sock, {
         upstreamHost: host,
         upstreamPort: port,
         vpnSecretBuf,
         explicitDestination,
-        logOpts: { tlsLogJa3: Boolean(tlsLogJa3), ja3Verbose: Boolean(ja3Verbose) },
+        logOpts: ttlLogOpts,
       }).catch((err) => {
         console.error('[clean-vpn transparent-tls https]', err?.message ?? err);
         sock.destroy();
