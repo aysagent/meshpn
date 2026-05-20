@@ -62,7 +62,7 @@
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=tls [--tls-cert-dir=...] [--tls-public-name=vpn.example.com] [--tls-probe-target=host:port] [--shared-hmac-key=PATH]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=tls --split-default [--tls-server-name=...] [--shared-hmac-key=PATH]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=boring-tls --split-default [--tls-server-name=...] — TLS через native/boring_tls/boring-tls-helper (см. scripts/boring-tls-plan.md); exit по-прежнему `--type=tls`.
- * transparent-tls (`--type=transparent-tls`): на **client** — как **`--split-default` + `--type=socket`** (IPv4 из TUN в один TCP mux к exit); параллельно **HTTPS ipv4/tcp:443**: **OUTPUT** REDIRECT→**127:intercept** и **`filter INPUT` ACCEPT**; при **`--client-lan-subnet`** — второй слушатель на **LAN-IPv4 шлюза** + **PREROUTING DNAT** с LAN на этот адрес (**без sysctl route_localnet**). На **exit** — тот же TCP-порт, что у socket: входящие потоки с префиксом **CVPTX** — relay HTTPS; без префикса — обычные IPv4-кадры в TUN+NAT как у **`--type=socket`**. PSK — `clean-vpn-hmac.key`.
+ * transparent-tls (`--type=transparent-tls`): на **client** — как **`--split-default` + `--type=socket`** (IPv4 из TUN в один TCP mux к exit); параллельно **HTTPS ipv4/tcp:443**: **OUTPUT** REDIRECT→**127:intercept** и **`filter INPUT` ACCEPT**; при **`--client-lan-subnet`** — второй слушатель на **LAN-IPv4 шлюза** + **PREROUTING DNAT** (**авто-детект** или **`--transparent-tls-lan-bind=IPv4`**). На **exit** — тот же TCP-порт, что у socket: входящие потоки с префиксом **CVPTX** — relay HTTPS; без префикса — обычные IPv4-кадры в TUN+NAT как у **`--type=socket`**. PSK — `clean-vpn-hmac.key`.
  * TLS (--type=tls): TCP + TLS 1.3 only, ALPN в ClientHello по умолчанию [h2, http/1.1]; маркера VPN в открытой части нет.
  *   После рукопожатия: при согласованном `h2` — VPN поверх HTTP/2 (`POST /clean-vpn` + Bearer, двусторонний DATA на одном stream); при `http/1.1` — как раньше `GET /clean-vpn` с Bearer и hijack сокета после ответа 200.
  *   Флаг `--http-vers=1.1` (обе стороны): только HTTP/1.1 и только ALPN `http/1.1` — для отладки и регрессии GET-пути.
@@ -2513,6 +2513,7 @@ function parseArgs(argv) {
     keepAliveSec: null,
     keepAliveReconnectCooldownSec: null,
     clientLanSubnet: null,
+    transparentTlsLanBind: null,
     boringTlsHelper: null,
     boringTlsProfile: null,
     boringTlsClienthelloProfile: null,
@@ -2576,6 +2577,8 @@ function parseArgs(argv) {
       );
     } else if (a.startsWith('--client-lan-subnet=')) {
       out.clientLanSubnet = a.slice('--client-lan-subnet='.length).trim();
+    } else if (a.startsWith('--transparent-tls-lan-bind=')) {
+      out.transparentTlsLanBind = a.slice('--transparent-tls-lan-bind='.length).trim();
     } else if (a.startsWith('--boring-tls-helper=')) {
       out.boringTlsHelper = a.slice('--boring-tls-helper='.length).trim();
     } else if (a.startsWith('--boring-tls-profile=')) {
@@ -3189,28 +3192,56 @@ function ipv4HostContainedInNormalizedCidr(host, normalizedCidr) {
 /**
  * Локальный IPv4 шлюза в подсети --client-lan-subnet (для DNAT вместо 127.0.0.1).
  * Пропускаем lo и типичный tun*.
+ * Альтернатива `ip -json`: BusyBox/старый ip без -json или JSON с другими именами полей → fallback через `ip -o -4 addr`.
  */
 function detectIpv4LanGatewayOwnAddress(normalizedLanCidr) {
+  const consider = /** @type {(iface: string, ip: string) => string|null} */ (iface, ip) => {
+    if (!iface || iface === 'lo') return null;
+    if (/^tun/i.test(iface)) return null;
+    const t = ip.trim();
+    if (!net.isIPv4(t)) return null;
+    const u = ipv4StringToUint32(t);
+    if (Number.isFinite(u) && ipv4HostContainedInNormalizedCidr(u, normalizedLanCidr)) return t;
+    return null;
+  };
+
   try {
     const out = execFileSync('ip', ['-json', 'addr'], { encoding: 'utf8', maxBuffer: 2 ** 20 });
     const arr = JSON.parse(out);
     for (const ent of arr) {
-      const ifn = String(ent.ifname ?? '');
-      if (!ifn || ifn === 'lo') continue;
-      if (/^tun/i.test(ifn)) continue;
+      const ifn = String(ent.ifname ?? ent.if ?? '');
       for (const ai of ent.addr_info ?? []) {
-        if (ai.family !== 'inet' || typeof ai.local !== 'string') continue;
-        const ip = ai.local.trim();
-        if (!net.isIPv4(ip)) continue;
-        const u = ipv4StringToUint32(ip);
-        if (Number.isFinite(u) && ipv4HostContainedInNormalizedCidr(u, normalizedLanCidr)) {
-          return ip;
-        }
+        const fam = String(ai.family ?? '').toLowerCase();
+        if (fam !== 'inet') continue;
+        const lip = ai.local ?? ai.address;
+        const lipStr = typeof lip === 'string' ? lip : null;
+        if (!lipStr) continue;
+        const hit = consider(ifn, lipStr);
+        if (hit) return hit;
       }
+    }
+  } catch {
+    /* -json недоступен или формат другой — ниже текстовый ip -o */
+  }
+
+  /** Одна строка на адрес: `2: usb0 inet 192.168.7.1/24 ...` (GNU iproute2/BusyBox чаще совместимо). */
+  try {
+    const out = execFileSync('ip', ['-o', '-4', 'addr', 'show'], {
+      encoding: 'utf8',
+      maxBuffer: 2 ** 20,
+    });
+    for (const line of out.split(/\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const mStd = trimmed.match(/^\d+:\s+(\S+)\s+inet\s+(\d{1,3}(?:\.\d{1,3}){3})\//);
+      if (!mStd) continue;
+      const hit = consider(mStd[1], mStd[2]);
+      if (hit) return hit;
     }
   } catch {
     /* ignore */
   }
+
   return null;
 }
 
@@ -6691,6 +6722,7 @@ async function runClient({
   type,
   splitDefault,
   clientLanSubnet,
+  transparentTlsLanBind,
   boringTlsHelper,
   boringTlsProfile,
   boringTlsClienthelloProfile,
@@ -7616,12 +7648,33 @@ async function runClient({
     );
 
     if (!explicitDestination && clientLanSubnet) {
-      ttlLanGwHttps = detectIpv4LanGatewayOwnAddress(clientLanSubnet);
+      if (transparentTlsLanBind?.trim()) {
+        const manual = transparentTlsLanBind.trim();
+        if (!net.isIPv4(manual)) {
+          throw new Error('[clean-vpn] --transparent-tls-lan-bind должен быть IPv4');
+        }
+        const uh = ipv4StringToUint32(manual);
+        if (
+          Number.isFinite(uh) &&
+          ipv4HostContainedInNormalizedCidr(uh, clientLanSubnet)
+        ) {
+          ttlLanGwHttps = manual;
+          console.log(
+            `[clean-vpn] transparent-tls: HTTPS DNAT/listen LAN-IP задан явно: ${ttlLanGwHttps} (--transparent-tls-lan-bind).`,
+          );
+        } else {
+          throw new Error(
+            `[clean-vpn] --transparent-tls-lan-bind=${manual} должен входить в --client-lan-subnet=${clientLanSubnet}`,
+          );
+        }
+      } else {
+        ttlLanGwHttps = detectIpv4LanGatewayOwnAddress(clientLanSubnet);
+      }
       if (!ttlLanGwHttps) {
         safe(() => ttlHttpsInterceptSrv?.close());
         ttlHttpsInterceptSrv = null;
         throw new Error(
-          `[clean-vpn] transparent-tls: на шлюзе нет своего IPv4 в подсети ${clientLanSubnet} на интерфейсе к клиентам (исключены lo/tun*) — нужен адрес типа gadget/USB к Mac. Присвойте этому интерфейсу адрес из CIDR или расширьте --client-lan-subnet.`,
+          `[clean-vpn] transparent-tls: IPv4 этого шлюза в подсети ${clientLanSubnet} не найден на интерфейсах (кроме lo/tun*) — см. описание режима ниже.`,
         );
       }
       ttlHttpsInterceptLanSrv = net.createServer(onInterceptHttpsSock);
@@ -7769,6 +7822,7 @@ async function main() {
 --type: socket | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls | boring-tls | transparent-tls
 --split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 (10/8, 172.16/12, 192.168/16) через uplink; IPv6 не в туннеле; проверка IP: curl -4 https://ifconfig.me. Без флага на tun возможен трафик к VPN-peer (ptp) и IPv6 ND на интерфейсе — см. шапку файла.
 --client-lan-subnet=CIDR: только client + --split-default — LAN/USB gadget за клиентом (адрес сети, напр. 192.168.7.0/24): ip_forward, SNAT в ${IP_CLIENT} через tun, FORWARD; иначе устройства за клиентом не попадают под NAT exit.
+--transparent-tls-lan-bind=IPv4: только с --type=transparent-tls + --client-lan-subnet — адрес этого шлюза для DNAT второго listener и PREROUTING (должен входить в CIDR), если автопоиск не нашёл нужный интерфейс (часто: на USB/etherнет нет адреса из 192.168.7.x).
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
 --config=PATH: для --type=webrtc и rtc-chrome — JSON с iceServers/turnServers (по умолчанию config/default.json от корня репо)
 --ice-mode=auto|relay|direct: для webrtc и rtc-chrome — перекрывает iceMode из --config
@@ -7880,6 +7934,40 @@ async function main() {
       console.error('[clean-vpn]', e?.message || e);
       process.exit(1);
     }
+  }
+
+  if (args.transparentTlsLanBind != null && String(args.transparentTlsLanBind).trim()) {
+    const bip = String(args.transparentTlsLanBind).trim();
+    if (args.role !== 'client') {
+      console.error('[clean-vpn] --transparent-tls-lan-bind только с --role=client');
+      process.exit(1);
+    }
+    if (!args.splitDefault) {
+      console.error('[clean-vpn] --transparent-tls-lan-bind требует --split-default');
+      process.exit(1);
+    }
+    if (args.type !== 'transparent-tls') {
+      console.error('[clean-vpn] --transparent-tls-lan-bind только с --type=transparent-tls');
+      process.exit(1);
+    }
+    if (!args.clientLanSubnet) {
+      console.error('[clean-vpn] --transparent-tls-lan-bind требует --client-lan-subnet=CIDR');
+      process.exit(1);
+    }
+    if (!net.isIPv4(bip)) {
+      console.error('[clean-vpn] --transparent-tls-lan-bind: укажите IPv4 вида 192.168.7.1');
+      process.exit(1);
+    }
+    const uBind = ipv4StringToUint32(bip);
+    if (!ipv4HostContainedInNormalizedCidr(uBind, args.clientLanSubnet)) {
+      console.error(
+        `[clean-vpn] --transparent-tls-lan-bind=${bip} должен находиться в --client-lan-subnet=${args.clientLanSubnet}`,
+      );
+      process.exit(1);
+    }
+    args.transparentTlsLanBind = bip;
+  } else {
+    args.transparentTlsLanBind = null;
   }
 
   const envTlsJa3 = envCleanVpnTruthy01('CLEAN_VPN_TLS_LOG_JA3');

@@ -23,7 +23,7 @@
 ## 2. Контекст clean-vpn: что уже есть и что нужно
 
 - **[`scripts/clean-vpn.js`](clean-vpn.js)**: соединение **client ↔ exit** с разными **типами транспорта** — `socket`, `http`, `websocket`, `tls`, `boring-tls`, QUIC и др.; основной режим сейчас несёт **IPv4-пакеты с TUN** (длина + payload). Совместимость типов задаётся в скрипте (напр. пары типов для client/exit).
-- **Перехват приложений** на шлюзе: **iptables** `nat OUTPUT` → **127.0.0.1:intercept** для процессов на шлюзе; при **`--client-lan-subnet`** дополнительно **`nat PREROUTING`** **DNAT** tcp/443 с LAN → **`LAN-IPv4 шлюза:intercept`** (не 127.x — стабильный reply клиентам) + второй TCP listener на этом IPv4 и **`filter INPUT ACCEPT`**; **`sysctl route_localnet` не нужен** для этого пути. **`SO_ORIGINAL_DST`** — **`native/tun_linux`**. Для JA3 используйте **HTTPS**, не HTTP (порт **80** идёт как обычный IPv4 в TUN-сокет exit).
+- **Перехват приложений** на шлюзе: **iptables** `nat OUTPUT` → **127.0.0.1:intercept** для процессов на шлюзе; при **`--client-lan-subnet`** дополнительно **`nat PREROUTING`** **DNAT** tcp/443 с LAN → **IPv4 шлюза из той же подсети** (авто по `ip -json addr` или **`--transparent-tls-lan-bind=IPv4`**) + второй listener на этом адресе и **`filter INPUT ACCEPT`**; **`route_localnet` не нужен**. **`SO_ORIGINAL_DST`** — **`native/tun_linux`**. HTTPS для JA3, не HTTP (**80** в туннеле как IPv4-сокет).
 
 ## 3. Архитектура потоков
 
