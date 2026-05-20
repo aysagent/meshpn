@@ -62,7 +62,7 @@
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=tls [--tls-cert-dir=...] [--tls-public-name=vpn.example.com] [--tls-probe-target=host:port] [--shared-hmac-key=PATH]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=tls --split-default [--tls-server-name=...] [--shared-hmac-key=PATH]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=boring-tls --split-default [--tls-server-name=...] — TLS через native/boring_tls/boring-tls-helper (см. scripts/boring-tls-plan.md); exit по-прежнему `--type=tls`.
- * transparent-tls (`--type=transparent-tls`): на **client** — как **`--split-default` + `--type=socket`** (IPv4 из TUN в один TCP mux к exit); параллельно **HTTPS ipv4/tcp:443**: **OUTPUT** REDIRECT для процессов на шлюзе + при **`--client-lan-subnet`** — **nat PREROUTING** для проброса из этой LAN и **`sysctl net.ipv4.conf.all.route_localnet=1`**, когда нужно (iptables **ставит и откатывает**). На **exit** — тот же TCP-порт, что у socket: входящие потоки с префиксом **CVPTX** — relay HTTPS; без префикса — обычные IPv4-кадры в TUN+NAT как у **`--type=socket`**. PSK — `clean-vpn-hmac.key`.
+ * transparent-tls (`--type=transparent-tls`): на **client** — как **`--split-default` + `--type=socket`** (IPv4 из TUN в один TCP mux к exit); параллельно **HTTPS ipv4/tcp:443**: **OUTPUT** REDIRECT + **`filter INPUT` ACCEPT для 127.0.0.1:intercept** + при **`--client-lan-subnet`** — **nat PREROUTING** для проброса из этой LAN и **`sysctl …route_localnet=1`** при необходимости (iptables/sysctl — **ставит и откатывает**). На **exit** — тот же TCP-порт, что у socket: входящие потоки с префиксом **CVPTX** — relay HTTPS; без префикса — обычные IPv4-кадры в TUN+NAT как у **`--type=socket`**. PSK — `clean-vpn-hmac.key`.
  * TLS (--type=tls): TCP + TLS 1.3 only, ALPN в ClientHello по умолчанию [h2, http/1.1]; маркера VPN в открытой части нет.
  *   После рукопожатия: при согласованном `h2` — VPN поверх HTTP/2 (`POST /clean-vpn` + Bearer, двусторонний DATA на одном stream); при `http/1.1` — как раньше `GET /clean-vpn` с Bearer и hijack сокета после ответа 200.
  *   Флаг `--http-vers=1.1` (обе стороны): только HTTP/1.1 и только ALPN `http/1.1` — для отладки и регрессии GET-пути.
@@ -2824,6 +2824,40 @@ function installRouteLocalnetAllForForwardedTransparentTlsIntercept() {
         console.warn(`[clean-vpn] transparent-tls: не удалось вернуть ${key}=${prev}`);
       }
     }
+  };
+}
+
+/**
+ * filter INPUT: Accept TCP для локального transparent-tls intercept (иначе при DROP/reject входящего
+ * SYN к 127.0.0.1:8443 после REDIRECT с LAN или OUTPUT не находит listener с точки зрения filter).
+ */
+function installFilterInputAcceptTransparentTlsInterceptIpv4(localPort, opts = {}) {
+  const commentMarker = String(opts.commentMarker ?? TRANSPARENT_TLS_IPT_COMMENT).slice(0, 180);
+  const inComment = `${commentMarker}-in`;
+  const run = (/** @type {string[]} */ args) => execFileSync('iptables', args, { stdio: 'inherit' });
+  const rule = [
+    '-t',
+    'filter',
+    '-I',
+    'INPUT',
+    '1',
+    '-p',
+    'tcp',
+    '-d',
+    '127.0.0.1',
+    '--dport',
+    String(localPort),
+    '-m',
+    'comment',
+    '--comment',
+    inComment,
+    '-j',
+    'ACCEPT',
+  ];
+  run(rule);
+  const delRule = /** @type {string[]} */ (['-t', 'filter', '-D', 'INPUT', ...rule.slice(5)]);
+  return () => {
+    safe(() => run(delRule));
   };
 }
 
@@ -6707,6 +6741,8 @@ async function runClient({
   let ttlPreroutingLanHttpsUndo = null;
   /** @type {(() => void) | null} */
   let ttlRouteLocalnetLanUndo = null;
+  /** @type {(() => void) | null} */
+  let ttlInputInterceptUndo = null;
   /** @type {any} */
   let wsChromeBrowser = null;
   /** @type {import('ws').WebSocketServer|null} */
@@ -6834,6 +6870,16 @@ async function runClient({
           console.warn('[clean-vpn] transparent-tls: откат sysctl route_localnet:', e?.message ?? e);
         }
         ttlRouteLocalnetLanUndo = null;
+      }
+    });
+    safe(() => {
+      if (ttlInputInterceptUndo) {
+        try {
+          ttlInputInterceptUndo();
+        } catch (e) {
+          console.warn('[clean-vpn] transparent-tls: откат iptables INPUT интерсепт:', e?.message ?? e);
+        }
+        ttlInputInterceptUndo = null;
       }
     });
     safe(() => {
@@ -7531,6 +7577,13 @@ async function runClient({
     if (!explicitDestination) {
       const serverEx = routeCtx.serverIp && net.isIPv4(routeCtx.serverIp) ? routeCtx.serverIp : null;
       try {
+        ttlInputInterceptUndo = installFilterInputAcceptTransparentTlsInterceptIpv4(
+          TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT,
+          { commentMarker: TRANSPARENT_TLS_IPT_COMMENT },
+        );
+        console.log(
+          `[clean-vpn] transparent-tls: filter INPUT accept tcp→127.0.0.1:${TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT} (разрешена доставка после iptables REDIRECT).`,
+        );
         if (clientLanSubnet) {
           ttlRouteLocalnetLanUndo = installRouteLocalnetAllForForwardedTransparentTlsIntercept();
           try {
@@ -7562,6 +7615,8 @@ async function runClient({
         ttlPreroutingLanHttpsUndo = null;
         safe(() => ttlRouteLocalnetLanUndo?.());
         ttlRouteLocalnetLanUndo = null;
+        safe(() => ttlInputInterceptUndo?.());
+        ttlInputInterceptUndo = null;
         safe(() => ttlHttpsInterceptSrv?.close());
         ttlHttpsInterceptSrv = null;
         throw e;

@@ -453,11 +453,35 @@ export async function attachTransparentTlsClientSession(
   const muxDec = new TransparentTlsStreamDecoder({ maxInnerData: 768 * 1024 });
   muxSock.on?.('data', (raw) => {
     try {
-      for (const inner of muxDec.push(raw)) {
-        if (inner[0] !== OP_DATA) continue;
-        const pl = Buffer.from(inner.subarray(1));
-        if (!(appSock.writableEnded || appSock.writableFinished)) appSock.write(pl);
-      }
+      const inners = muxDec.push(raw);
+      /** @type {number} */
+      let i = 0;
+      const pumpInnerPayloadsToApp = () => {
+        for (;;) {
+          if (i >= inners.length) return;
+          const inner = inners[i];
+          if (inner[0] !== OP_DATA) {
+            i += 1;
+            continue;
+          }
+          const pl = Buffer.from(inner.subarray(1));
+          if (!pl.length) {
+            i += 1;
+            continue;
+          }
+          if (appSock.writableEnded || appSock.writableFinished) return;
+          if (!appSock.write(pl)) {
+            muxSock.pause();
+            appSock.once('drain', () => {
+              muxSock.resume();
+              pumpInnerPayloadsToApp();
+            });
+            return;
+          }
+          i += 1;
+        }
+      };
+      pumpInnerPayloadsToApp();
     } catch {
       killPair(appSock, muxSock);
     }
@@ -466,9 +490,24 @@ export async function attachTransparentTlsClientSession(
   muxSock.on?.('close', () => killOne(appSock));
   appSock.on?.('error', () => killPair(appSock, muxSock));
   appSock.on?.('close', () => killOne(muxSock));
-  appSock.on?.('data', (d) =>
-    muxSock.write(encodeDataFrame(Buffer.from(d))),
-  );
+  /** Избежать множества обработчиков drain при нескольких appSock chunks подряд. */
+  /** @type {boolean} */
+  let muxDrainWait = false;
+  appSock.on?.('data', (d) => {
+    const enc = encodeDataFrame(Buffer.from(d));
+    if (!(muxSock.writableEnded || muxSock.writableFinished)) {
+      if (!muxSock.write(enc)) {
+        appSock.pause();
+        if (!muxDrainWait) {
+          muxDrainWait = true;
+          muxSock.once('drain', () => {
+            muxDrainWait = false;
+            appSock.resume();
+          });
+        }
+      }
+    }
+  });
 
   muxSock.on?.('end', () => appSock?.end?.());
   appSock.on?.('end', () => muxSock?.end?.());
