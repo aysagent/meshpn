@@ -89,12 +89,15 @@ export function encodeDataFrame(chunk) {
 
 export class TransparentTlsStreamDecoder {
   /**
-   * @param {{ maxInnerData?: number }} [opts]
+   * @param {{ maxInnerData?: number, multiplexEstablished?: boolean }} [opts]
+   * `multiplexEstablished`: поток уже «открыт» с точки зрения фрейминга CVPTX —
+   * все кадры — OP_DATA (так делает клиентский net.Socket на ответах exit: OPEN только client→exit).
+   * Иначе первый inner ожидается OP_OPEN (exit, разбор входа от клиента).
    */
   constructor(opts = {}) {
     this.buf = Buffer.alloc(0);
     this.maxInnerData = opts.maxInnerData ?? 512 * 1024;
-    this.gotOpen = false;
+    this.gotOpen = opts.multiplexEstablished === true;
   }
 
   /** @returns {Buffer[]}

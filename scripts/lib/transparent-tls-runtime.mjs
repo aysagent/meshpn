@@ -442,7 +442,10 @@ export async function attachTransparentTlsClientSession(
     );
   }
 
-  const muxDec = new TransparentTlsStreamDecoder({ maxInnerData: 768 * 1024 });
+  const muxDec = new TransparentTlsStreamDecoder({
+    maxInnerData: 768 * 1024,
+    multiplexEstablished: true,
+  });
   muxSock.on?.('data', (raw) => {
     try {
       const inners = muxDec.push(raw);
