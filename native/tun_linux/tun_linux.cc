@@ -9,6 +9,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <linux/netfilter_ipv4.h>
+
 #include <linux/if.h>
 #include <linux/if_tun.h>
 #include <sys/ioctl.h>
@@ -365,6 +369,64 @@ static napi_value start_read(napi_env env, napi_callback_info info) {
   return u;
 }
 
+static napi_value original_dst_ipv4_from_fd(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+  if (argc < 1) {
+    napi_throw_error(env, nullptr, "originalDstIpv4FromFd: ожидался fd (int)");
+    return nullptr;
+  }
+
+  int32_t fd = 0;
+  if (napi_get_value_int32(env, args[0], &fd) != napi_ok) {
+    napi_throw_type_error(env, nullptr, "originalDstIpv4FromFd: fd должен быть int32");
+    return nullptr;
+  }
+
+  struct sockaddr_in od {};
+  socklen_t olen = sizeof(od);
+  memset(&od, 0, sizeof(od));
+
+  if (getsockopt(static_cast<int>(fd), SOL_IP, SO_ORIGINAL_DST, static_cast<void*>(&od),
+                 &olen) != 0) {
+    char msg[512];
+    snprintf(msg, sizeof msg,
+             "SO_ORIGINAL_DST (нужны iptables REDIRECT к этому сокету): %s",
+             strerror(errno));
+    napi_throw_error(env, nullptr, msg);
+    return nullptr;
+  }
+
+  if (od.sin_family != AF_INET) {
+    napi_throw_error(env, nullptr, "SO_ORIGINAL_DST: ожидался AF_INET");
+    return nullptr;
+  }
+
+  char ip[INET_ADDRSTRLEN]{};
+  if (inet_ntop(AF_INET, &od.sin_addr, ip, sizeof ip) == nullptr) {
+    napi_throw_error(env, nullptr, "inet_ntop(AF_INET)");
+    return nullptr;
+  }
+
+  const uint16_t port = ntohs(od.sin_port);
+
+  napi_value out{};
+  if (napi_create_object(env, &out) != napi_ok) {
+    return nullptr;
+  }
+  napi_value nip{};
+  napi_create_string_utf8(env, ip, NAPI_AUTO_LENGTH, &nip);
+  napi_set_named_property(env, out, "address", nip);
+
+  napi_value np{};
+  napi_create_uint32(env, port, &np);
+  napi_set_named_property(env, out, "port", np);
+
+  return out;
+}
+
 static napi_value open_tun(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value args[1];
@@ -443,6 +505,11 @@ static napi_value init(napi_env env, napi_value exports) {
   napi_value fn;
   napi_create_function(env, "open", NAPI_AUTO_LENGTH, open_tun, nullptr, &fn);
   napi_set_named_property(env, exports, "open", fn);
+
+  napi_value fn_od;
+  napi_create_function(env, "originalDstIpv4FromFd", NAPI_AUTO_LENGTH, original_dst_ipv4_from_fd,
+                       nullptr, &fn_od);
+  napi_set_named_property(env, exports, "originalDstIpv4FromFd", fn_od);
   return exports;
 }
 

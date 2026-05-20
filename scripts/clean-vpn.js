@@ -62,6 +62,7 @@
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=tls [--tls-cert-dir=...] [--tls-public-name=vpn.example.com] [--tls-probe-target=host:port] [--shared-hmac-key=PATH]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=tls --split-default [--tls-server-name=...] [--shared-hmac-key=PATH]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=boring-tls --split-default [--tls-server-name=...] — TLS через native/boring_tls/boring-tls-helper (см. scripts/boring-tls-plan.md); exit по-прежнему `--type=tls`.
+ * transparent-tls (`--type=transparent-tls`): на **client** — как **`--split-default` + `--type=socket`** (IPv4 из TUN в один TCP mux к exit); параллельно исходящий **HTTPS** (локальный iptables OUTPUT 443→`127:8443`, **ставится и снимается самим процессом**) уходит вторым транспортом с подменой SNI в первом ClientHello и восстановлением на exit. На **exit** — тот же TCP-порт, что у socket: входящие потоки с префиксом **CVPTX** — relay HTTPS; без префикса — обычные IPv4-кадры в TUN+NAT как у **`--type=socket`**. PSK — `clean-vpn-hmac.key`.
  * TLS (--type=tls): TCP + TLS 1.3 only, ALPN в ClientHello по умолчанию [h2, http/1.1]; маркера VPN в открытой части нет.
  *   После рукопожатия: при согласованном `h2` — VPN поверх HTTP/2 (`POST /clean-vpn` + Bearer, двусторонний DATA на одном stream); при `http/1.1` — как раньше `GET /clean-vpn` с Bearer и hijack сокета после ответа 200.
  *   Флаг `--http-vers=1.1` (обе стороны): только HTTP/1.1 и только ALPN `http/1.1` — для отладки и регрессии GET-пути.
@@ -127,6 +128,11 @@ import {
   profileFileToHelperClientHelloBlock,
   readClienthelloProfileFileSync,
 } from './lib/boring-tls-clienthello-profile.mjs';
+import { TTL_FRAME_MAGIC_PREFIX } from './lib/transparent-tls-wire.mjs';
+import {
+  attachTransparentTlsClientSession,
+  wireTransparentTlsExitSession,
+} from './lib/transparent-tls-runtime.mjs';
 import { PeerConnection, setSctpSettings } from 'node-datachannel';
 // @matrixai/logger — CJS; в ESM класс лежит в .default, не в корне namespace.
 import matrixAiLogger from '@matrixai/logger';
@@ -173,6 +179,10 @@ const TUN_MTU = 1400;
 const MAX_PKT = 65535;
 const IP_EXIT = '10.99.0.1';
 const IP_CLIENT = '10.99.0.2';
+
+/** После iptables OUTPUT REDIRECT/tcp:443 здесь живёт локальный intercept transparent-tls. */
+const TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT = 8443;
+const TRANSPARENT_TLS_IPT_COMMENT = `clean-vpn-ttl:${process.pid}`;
 
 /** Опции моста TUN для exit / client (`attachTunBridge`). */
 const BRIDGE_OPTS_EXIT = { localTunIp: IP_EXIT };
@@ -2590,6 +2600,80 @@ function parseHostPort(s) {
   const m = String(s).match(/^(.+):(\d+)$/);
   if (!m) throw new Error(`Неверный --server=${s}, ожидается host:port`);
   return { host: m[1], port: parseInt(m[2], 10) };
+}
+
+/** Только IPv4 (+ опционально :PORT); для `--type=transparent-tls` + client без iptables SO_ORIGINAL_DST. */
+function parseTransparentTlsTunnelPeerIpv4(s) {
+  const t = String(s).trim();
+  const m = t.match(/^(\d{1,3}(?:\.\d{1,3}){3})(?::(\d{1,5}))?$/);
+  if (!m)
+    throw new Error(
+      'transparent-tls + --tunnel-peer: ожидается IPv4 или IPv4:PORT (без имени хоста), порт по умолчанию 443.',
+    );
+  const port = m[2] != null ? parseInt(m[2], 10) : 443;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('transparent-tls: неверный порт в --tunnel-peer');
+  return { address: m[1], port };
+}
+
+/**
+ * На exit после accept: поток начинается с префикса transparent-tls (CVPTX…) → TLS byte-relay;
+ * иначе — мост IPv4-пакетов в TUN (как `--type=socket`).
+ */
+function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, startBridgeTcp) {
+  const need = TTL_FRAME_MAGIC_PREFIX.length;
+  /** @type {Buffer[]} */
+  let acc = [];
+  let len = 0;
+
+  /** @type {(...args: any[]) => void} */
+  const cleanup = () => sock.off('data', onData);
+
+  /** @type {(chunk: Buffer | string) => void} */
+  function onData(chunk) {
+    const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    acc.push(b);
+    len += b.length;
+    if (len < need) return;
+    cleanup();
+
+    const merged = Buffer.concat(acc, len);
+    const head = merged.subarray(0, need);
+
+    if (head.compare(TTL_FRAME_MAGIC_PREFIX) === 0) {
+      wireTransparentTlsExitSession(/** @type {import('net').Socket} */ (sock), vpnSecretBuf);
+      if (merged.length) process.nextTick(() => sock.emit('data', merged));
+      return;
+    }
+
+    startBridgeTcp(sock, merged, 'tcp');
+  }
+
+  sock.on('data', onData);
+}
+
+/**
+ * iptables nat OUTPUT: исходящий tcp dst 443 (кроме loopback/private и опционально IP VPN-сервера)
+ * перенаправляется на localPort для transparent-tls; ядро сохраняет SO_ORIGINAL_DST.
+ * Откатывается возвращаемым вызовом.
+ */
+function installOutputRedirectHttpsToLocalIpv4(localPort, opts = {}) {
+  const commentMarker = String(opts.commentMarker ?? TRANSPARENT_TLS_IPT_COMMENT).slice(0, 240);
+  const ex = opts.vpnServerIpv4Exclude;
+  /** @type {string[]} */
+  const tail = ['-p', 'tcp', '--dport', '443'];
+  for (const c of ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']) {
+    tail.push('!', '-d', c);
+  }
+  if (ex && net.isIPv4(ex)) tail.push('!', '-d', `${ex}/32`);
+  tail.push('-j', 'REDIRECT', '--to-ports', String(localPort));
+  tail.push('-m', 'comment', '--comment', commentMarker);
+  execFileSync('iptables', /** @type {string[]} */ (['-t', 'nat', '-A', 'OUTPUT', ...tail]), {
+    stdio: 'inherit',
+  });
+  const delArgs = ['-t', 'nat', '-D', 'OUTPUT', ...tail];
+  return () => {
+    execFileSync('iptables', delArgs, { stdio: 'inherit' });
+  };
 }
 
 function getDefaultRouteLinux() {
@@ -5945,21 +6029,44 @@ async function runExit({
     return;
   }
 
-  // --- runExit: --type=socket | --type=http ---
-  if (type === 'socket' || type === 'http') {
-    tcpSrv = net
-      .createServer((sock) => {
-        console.log('[clean-vpn] tcp connected', sock.remoteAddress);
-        if (type === 'socket') {
-          startBridge(sock, null, 'tcp');
-          return;
-        }
+  // --- runExit: --type=socket | --type=http | --type=transparent-tls ---
+  if (type === 'socket' || type === 'http' || type === 'transparent-tls') {
+    const ttlVpnSecretBuf =
+      type === 'transparent-tls'
+        ? ensureSharedHmacKey(
+            resolveTlsCertsDir({ tlsCertDir, quicCertsDir }),
+            sharedHmacKey,
+            quicExtCryptoKey,
+            { autoCreate: true, role: 'exit' },
+          ).buffer
+        : null;
+
+    if (type === 'transparent-tls' && (!ttlVpnSecretBuf || ttlVpnSecretBuf.length < 8)) {
+      throw new Error(
+        '[clean-vpn] transparent-tls exit: нужен общий PSK (--tls-cert-dir с clean-vpn-hmac.key или --shared-hmac-key)',
+      );
+    }
+
+    tcpSrv = net.createServer((sock) => {
+      console.log('[clean-vpn] tcp connected', sock.remoteAddress);
+
+      if (type === 'http') {
         sock.__isServer = true;
         handleHttpSocket(sock, (rest) => startBridge(sock, rest, 'tcp'));
-      })
-      .listen(port, host, () => {
-        console.log(`[clean-vpn] exit ${type} listening ${host}:${port}`);
-      });
+        return;
+      }
+      if (type === 'transparent-tls') {
+        peekDispatchExitTransparentTlsOrIpv4Sock(
+          sock,
+          /** @type {Buffer} */ (ttlVpnSecretBuf),
+          startBridge,
+        );
+        return;
+      }
+      startBridge(sock, null, 'tcp');
+    }).listen(port, host, () => {
+      console.log(`[clean-vpn] exit ${type} listening ${host}:${port}`);
+    });
     return;
   }
 
@@ -6432,6 +6539,10 @@ async function runClient({
   let quicExtClient = null;
   /** @type {import('tls').TLSSocket|null} */
   let tlsVpnSocket = null;
+  /** @type {import('net').Server|null} */
+  let ttlHttpsInterceptSrv = null;
+  /** @type {(() => void) | null} */
+  let ttlHttpsRedirectUndo = null;
   /** @type {any} */
   let wsChromeBrowser = null;
   /** @type {import('ws').WebSocketServer|null} */
@@ -6531,6 +6642,26 @@ async function runClient({
       }
     });
     if (finishClientDeferred) return;
+    safe(() => {
+      if (ttlHttpsRedirectUndo) {
+        try {
+          ttlHttpsRedirectUndo();
+        } catch (e) {
+          console.warn('[clean-vpn] transparent-tls: откат iptables OUTPUT:', e?.message ?? e);
+        }
+        ttlHttpsRedirectUndo = null;
+      }
+    });
+    safe(() => {
+      if (ttlHttpsInterceptSrv) {
+        try {
+          ttlHttpsInterceptSrv.close();
+        } catch {
+          /* ignore */
+        }
+        ttlHttpsInterceptSrv = null;
+      }
+    });
     safe(() => {
       if (quicExtClient) {
         const c = quicExtClient;
@@ -7128,9 +7259,101 @@ async function runClient({
     return;
   }
 
+  // --- runClient: --type=transparent-tls (tun как socket + параллельно HTTPS-сессии со сменой SNI) ---
+  if (type === 'transparent-tls') {
+    if (!splitDefault) {
+      throw new Error(
+        '[clean-vpn] transparent-tls на client требует --split-default (tun и IPv4-пакеты в exit — как `--type=socket`; tcp/443 к сайтам дополнительно уходит вторым транспортом к тому же exit).',
+      );
+    }
+
+    const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
+    const vpnSecretBuf = ensureSharedHmacKey(certsDir, sharedHmacKey, quicExtCryptoKey, {
+      autoCreate: false,
+      role: 'client',
+    }).buffer;
+
+    /** @type {{ address: string; port: number } | null} */
+    let explicitDestination = null;
+    const tpPeer = tunnelPeer?.trim?.();
+    if (tpPeer) {
+      explicitDestination = parseTransparentTlsTunnelPeerIpv4(tpPeer);
+      console.log(
+        `[clean-vpn] transparent-tls: --tunnel-peer=${explicitDestination.address}:${explicitDestination.port} — только этот апстрим, без iptables REDIRECT.`,
+      );
+    }
+
+    const connectIpv4Mux = () =>
+      new Promise((resolve, reject) => {
+        const sock = net.connect(port, host, () => {
+          console.log(
+            `[clean-vpn] transparent-tls: TCP→exit ${host}:${port} как мост IPv4 (кадры uint32+pkt, см. --type=socket)`,
+          );
+          tlsVpnSocket = sock;
+          resolve(sock);
+        });
+        sock.on('error', reject);
+      });
+
+    if (kaBridge > 0) {
+      attachTunBridge(tun, 'tcp', null, {
+        ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
+        lazyConnect: async () => {
+          await connectIpv4Mux();
+          return /** @type {import('net').Socket} */ (tlsVpnSocket);
+        },
+      });
+    } else {
+      await connectIpv4Mux();
+      attachTunBridge(tun, 'tcp', /** @type {import('net').Socket} */ (tlsVpnSocket), BRIDGE_OPTS_CLIENT);
+    }
+
+    ttlHttpsInterceptSrv = net.createServer((sock) => {
+      sock.on('error', () => {});
+      attachTransparentTlsClientSession(sock, {
+        upstreamHost: host,
+        upstreamPort: port,
+        vpnSecretBuf,
+        explicitDestination,
+      }).catch((err) => {
+        console.error('[clean-vpn transparent-tls https]', err?.message ?? err);
+        sock.destroy();
+      });
+    });
+
+    await new Promise((resolve, reject) => {
+      ttlHttpsInterceptSrv.listen(TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT, '127.0.0.1', () =>
+        resolve(undefined),
+      );
+      ttlHttpsInterceptSrv.once('error', reject);
+    });
+    console.log(
+      `[clean-vpn] transparent-tls: слушатель HTTPS (после REDIRECT) 127.0.0.1:${TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT} → те же хост:порт exit, канал CVPTX`,
+    );
+
+    if (!explicitDestination) {
+      const serverEx = routeCtx.serverIp && net.isIPv4(routeCtx.serverIp) ? routeCtx.serverIp : null;
+      try {
+        ttlHttpsRedirectUndo = installOutputRedirectHttpsToLocalIpv4(TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT, {
+          vpnServerIpv4Exclude: serverEx,
+          commentMarker: TRANSPARENT_TLS_IPT_COMMENT,
+        });
+        console.log(
+          `[clean-vpn] transparent-tls: добавлено iptables OUTPUT tcp dport 443 → 127.0.0.1:${TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT} (останов процесса — откат; частные адреса и${serverEx ? ` IP VPS ${serverEx}` : ''} исключены).`,
+        );
+      } catch (e) {
+        safe(() => ttlHttpsInterceptSrv?.close());
+        ttlHttpsInterceptSrv = null;
+        throw e;
+      }
+    }
+
+    return;
+  }
+
   if (type !== 'socket' && type !== 'http') {
     throw new Error(
-      `Неизвестный --type=${type} для client. TLS: \`--type=tls\` или \`--type=boring-tls\` (не «boring»).`,
+      `Неизвестный --type=${type} для client. Допускаются: tls, boring-tls, transparent-tls (см. документацию), socket, http, …`,
     );
   }
 
@@ -7201,15 +7424,17 @@ async function main() {
     console.error(`Использование:
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=socket [--ext=eth0]
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=socket --split-default
+  sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=transparent-tls --ext=eth0
+  sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=transparent-tls --split-default
 
---type: socket | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls | boring-tls
+--type: socket | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls | boring-tls | transparent-tls
 --split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 (10/8, 172.16/12, 192.168/16) через uplink; IPv6 не в туннеле; проверка IP: curl -4 https://ifconfig.me. Без флага на tun возможен трафик к VPN-peer (ptp) и IPv6 ND на интерфейсе — см. шапку файла.
 --client-lan-subnet=CIDR: только client + --split-default — LAN/USB gadget за клиентом (адрес сети, напр. 192.168.7.0/24): ip_forward, SNAT в ${IP_CLIENT} через tun, FORWARD; иначе устройства за клиентом не попадают под NAT exit.
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
 --config=PATH: для --type=webrtc и rtc-chrome — JSON с iceServers/turnServers (по умолчанию config/default.json от корня репо)
 --ice-mode=auto|relay|direct: для webrtc и rtc-chrome — перекрывает iceMode из --config
 --quic-certs-dir=DIR: для --type=quic и quic-ext — каталог с ca.pem, cert.pem, key.pem (иначе repo/certs; при отсутствии — openssl)
---shared-hmac-key=PATH: --type=tls | boring-tls (обе стороны) и exit + --type=quic-ext — общий 32-байтовый HMAC PSK (иначе clean-vpn-hmac.key в --tls-cert-dir/--quic-certs-dir; на exit создаётся автоматически; legacy-имя файла quic-ext-hmac.key всё ещё читается). На client + --type=quic-ext не нужен.
+--shared-hmac-key=PATH: --type=tls | boring-tls | transparent-tls (обе стороны) и exit + --type=quic-ext — общий 32-байтовый HMAC PSK (иначе clean-vpn-hmac.key в --tls-cert-dir/--quic-certs-dir; на exit создаётся автоматически; legacy-имя файла quic-ext-hmac.key всё ещё читается). На client + --type=quic-ext не нужен.
 --quic-ext-crypto-key=PATH: legacy alias для --shared-hmac-key=PATH (читается, рекомендуется заменить на --shared-hmac-key)
 --type=quic: Node.js 25+, node --experimental-quic и бинарь с node_use_quic (см. шапку файла)
 --type=quic-ext: npm install @infisical/quic (prebuild под платформу), Node 18+, см. шапку файла
@@ -7235,10 +7460,10 @@ async function main() {
 --punch: только --type=udp — hole punching через STUN + сигналинг на PORT+1; на exit только вместе с --signaling.
 --keep-alive=N: целое N≥0; 0 или отсутствие — как раньше. N>0 — idle N с без трафика TUN↔транспорт → разрыв; на client исходящие TCP/TLS/WS/UDP — отложенный connect до первого IPv4 с TUN. ws-chrome/rtc-chrome: после idle сессию нужно поднять заново (дорого). webrtc DC после idle без автосигналинга — перезапуск процессов. QUIC/quic-ext: флаг не применяется.
 --keep-alive-reconnect-cooldown=M: целое M≥0; только с --keep-alive>0. После разрыва по idle M с не поднимать lazy по IPv4 с TUN (отбрасываются); не-IPv4 не поднимает сессию в любом случае. После M с следующий IPv4 снова может lazy-connect — cooldown не фильтр «навсегда». Меньше дребезга от DNS/ретрансмитов. По умолчанию 0. CLEAN_VPN_KEEPALIVE_DEBUG=1 — lazy/cooldown и drop не-IPv4 (hex). CLEAN_VPN_TLS_MUX_DEBUG=1 — диагностика TCP до ClientHello на exit и до handshake на client (--type=tls).
---tunnel-peer=HOST: опционально client + websocket + --ws-server на 0.0.0.0 — bypass к пиру до accept при --split-default (стабильный IPv4 пира)`);
+--tunnel-peer=HOST: для websocket/webrtc/rtc-chrome/udp + client при нюансах accept/split-default — см. шапку. Дополнительно: **transparent-tls + client** — **IPv4 или IPv4:PORT** (порт по умолчанию **443**) фиксирует один апстрим для всех локальных HTTPS-сессий (**без** автоматического iptables REDIRECT; нужен только с тестами на один хост). Обычный режим без флага --tunnel-peer: OUTPUT 443 перенаправляется процессом clean-vpn автоматически.
+--tls-cert-dir / --shared-hmac-key: для transparent-tls нужен тот же 32-байтовый ключ, что и для --type=tls (на exit при отсутствии автосоздание как у QUIC каталога).`);
     process.exit(1);
   }
-
   if (
     args.iceMode &&
     !['auto', 'relay', 'direct'].includes(args.iceMode)
@@ -7342,6 +7567,7 @@ async function main() {
       '[clean-vpn] --boring-tls-clienthello-profile / CLEAN_VPN_BORING_TLS_CLIENTHELLO_PROFILE действует только с --type=boring-tls; профиль не используется.',
     );
   }
+
   if (args.role === 'exit') {
     await runExit(args);
   } else if (args.role === 'client') {
