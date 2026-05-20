@@ -2652,27 +2652,69 @@ function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, startBridg
 }
 
 /**
- * iptables nat OUTPUT: исходящий tcp dst 443 (кроме loopback/private и опционально IP VPN-сервера)
- * перенаправляется на localPort для transparent-tls; ядро сохраняет SO_ORIGINAL_DST.
+ * iptables nat OUTPUT: tcp/443 перенаправляется на localPort для transparent-tls (SO_ORIGINAL_DST).
+ * nftables-бэкенд (iptables 1.8.x) не допускает несколько «-d» в одном правиле → отдельная цепочка.
  * Откатывается возвращаемым вызовом.
  */
 function installOutputRedirectHttpsToLocalIpv4(localPort, opts = {}) {
-  const commentMarker = String(opts.commentMarker ?? TRANSPARENT_TLS_IPT_COMMENT).slice(0, 240);
+  const commentMarker = String(opts.commentMarker ?? TRANSPARENT_TLS_IPT_COMMENT).slice(0, 200);
   const ex = opts.vpnServerIpv4Exclude;
-  /** @type {string[]} */
-  const tail = ['-p', 'tcp', '--dport', '443'];
-  for (const c of ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']) {
-    tail.push('!', '-d', c);
+  const chain = `CVPN-TTL-${process.pid}`;
+  const jumpComment = `${commentMarker}-jmp`;
+
+  const run = (/** @type {string[]} */ args) => execFileSync('iptables', args, { stdio: 'inherit' });
+
+  try {
+    run(['-t', 'nat', '-N', chain]);
+  } catch {
+    run(['-t', 'nat', '-F', chain]);
   }
-  if (ex && net.isIPv4(ex)) tail.push('!', '-d', `${ex}/32`);
-  tail.push('-j', 'REDIRECT', '--to-ports', String(localPort));
-  tail.push('-m', 'comment', '--comment', commentMarker);
-  execFileSync('iptables', /** @type {string[]} */ (['-t', 'nat', '-A', 'OUTPUT', ...tail]), {
-    stdio: 'inherit',
-  });
-  const delArgs = ['-t', 'nat', '-D', 'OUTPUT', ...tail];
+
+  for (const cidr of ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']) {
+    run(['-t', 'nat', '-A', chain, '-d', cidr, '-j', 'RETURN']);
+  }
+  if (ex && net.isIPv4(ex)) {
+    run(['-t', 'nat', '-A', chain, '-d', `${ex}/32`, '-j', 'RETURN']);
+  }
+  run([
+    '-t',
+    'nat',
+    '-A',
+    chain,
+    '-m',
+    'comment',
+    '--comment',
+    `${commentMarker}-redir`,
+    '-j',
+    'REDIRECT',
+    '--to-ports',
+    String(localPort),
+  ]);
+
+  const jumpRule = [
+    '-t',
+    'nat',
+    '-A',
+    'OUTPUT',
+    '-p',
+    'tcp',
+    '--dport',
+    '443',
+    '-m',
+    'comment',
+    '--comment',
+    jumpComment,
+    '-j',
+    chain,
+  ];
+  run(jumpRule);
+
+  const jumpDelete = /** @type {string[]} */ (['-t', 'nat', '-D', 'OUTPUT', ...jumpRule.slice(4)]);
+
   return () => {
-    execFileSync('iptables', delArgs, { stdio: 'inherit' });
+    safe(() => run(jumpDelete));
+    safe(() => run(['-t', 'nat', '-F', chain]));
+    safe(() => run(['-t', 'nat', '-X', chain]));
   };
 }
 
