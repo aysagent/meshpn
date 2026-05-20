@@ -2618,8 +2618,9 @@ function parseTransparentTlsTunnelPeerIpv4(s) {
 /**
  * На exit после accept: поток начинается с префикса transparent-tls (CVPTX…) → TLS byte-relay;
  * иначе — мост IPv4-пакетов в TUN (как `--type=socket`).
+ * @param {{ tlsLogJa3?: boolean, ja3Verbose?: boolean }} [ttlLogOpts]
  */
-function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, startBridgeTcp) {
+function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, startBridgeTcp, ttlLogOpts) {
   const need = TTL_FRAME_MAGIC_PREFIX.length;
   /** @type {Buffer[]} */
   let acc = [];
@@ -2640,7 +2641,11 @@ function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, startBridg
     const head = merged.subarray(0, need);
 
     if (head.compare(TTL_FRAME_MAGIC_PREFIX) === 0) {
-      wireTransparentTlsExitSession(/** @type {import('net').Socket} */ (sock), vpnSecretBuf);
+      wireTransparentTlsExitSession(
+        /** @type {import('net').Socket} */ (sock),
+        vpnSecretBuf,
+        ttlLogOpts,
+      );
       if (merged.length) process.nextTick(() => sock.emit('data', merged));
       return;
     }
@@ -6106,6 +6111,7 @@ async function runExit({
           sock,
           /** @type {Buffer} */ (ttlVpnSecretBuf),
           startBridge,
+          { tlsLogJa3: Boolean(tlsLogJa3), ja3Verbose: Boolean(ja3Verbose) },
         );
         return;
       }
@@ -7361,6 +7367,7 @@ async function runClient({
         upstreamPort: port,
         vpnSecretBuf,
         explicitDestination,
+        logOpts: { tlsLogJa3: Boolean(tlsLogJa3), ja3Verbose: Boolean(ja3Verbose) },
       }).catch((err) => {
         console.error('[clean-vpn transparent-tls https]', err?.message ?? err);
         sock.destroy();
@@ -7493,7 +7500,7 @@ async function main() {
 --tls-probe-max-seconds=S: лимит времени passthrough-сессии (default 30)
 --tls-probe-full-proxy-per-ip=K: не более K «длинных» passthrough с одного IP за сутки (default 0 = только короткий)
 --http-vers=1.1: только с --type=tls или boring-tls (client и exit); принудительный HTTP/1.1 без h2; совместно обновляйте код на обеих сторонах
---tls-log-ja3: JA3 wire, JA3 sorted (MD5), JA4 (FoxIO JA4.md), **JA4 alt** (JA4_c как ja3.zone: ext с 0000, без 0010), **JA4 raw_o**, **JA4 raw_r**, **JA4 raw_r_alt** (ja3.zone raw). С \`--ja3-verbose\` — строки до MD5 и прочий stderr helper.
+--tls-log-ja3: JA3 wire, JA3 sorted (MD5), JA4 (FoxIO JA4.md), **JA4 alt** (JA4_c как ja3.zone: ext с 0000, без 0010), **JA4 raw_o**, **JA4 raw_r**, **JA4 raw_r_alt** (ja3.zone raw). С \`--ja3-verbose\` — строки до MD5 и прочий stderr helper. **transparent-tls** те же флаги: client — JA3/JA4 до и после подмены первого ClientHello; exit — поля OPEN (dst/origin/fake sni как на проводе) и JA4 по mux до/после restore к origin.
 --ja3-verbose: подробный JA3 (обе строки до MD5, поля GREASE-очищенные, hex префикса TCP); сам включает вывод JA3. Env при уже включённом CLEAN_VPN_TLS_LOG_JA3: CLEAN_VPN_JA3_VERBOSE=1.
 --type=boring-tls: только client — TLS 1.3 через процесс boring-tls-helper (BoringSSL), см. scripts/boring-tls-plan.md; на exit используйте --type=tls (тот же сервер). Сборка: npm run build:boring-tls-helper (мало RAM на VPS: npm run build:boring-tls-helper-lowmem). Путь к бинарю: CLEAN_VPN_BORING_TLS_HELPER или --boring-tls-helper=PATH; строковый профиль (резерв): --boring-tls-profile=NAME.
 --boring-tls-clienthello-profile=PATH: только client + boring-tls — JSON профиля ClientHello/JA3 (scripts/lib/boring-tls-clienthello-profile.mjs schema v1; см. ja3-snif-server --profile-save-path). Файл перечитывается перед каждым TLS к exit. Env: CLEAN_VPN_BORING_TLS_CLIENTHELLO_PROFILE.
