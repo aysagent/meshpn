@@ -2851,9 +2851,31 @@ function installFilterInputAcceptTransparentTlsInterceptIpv4(localPort, opts = {
   };
 }
 
+/**
+ * Вызов iproute2: при sudo/cron/unit PATH без /sbin программа может отсутствовать как «ip».
+ * Перебираем типичные пути, затем полагаемся на PATH.
+ */
+function execIpFileSync(args, execOpts = {}) {
+  const candidates = ['/sbin/ip', '/usr/sbin/ip', 'ip'];
+  let lastEnoent = null;
+  for (const file of candidates) {
+    try {
+      return execFileSync(file, args, execOpts);
+    } catch (e) {
+      if (typeof e === 'object' && e && /** @type {NodeJS.ErrnoException} */ (e).code === 'ENOENT') {
+        lastEnoent = e;
+        continue;
+      }
+      throw e;
+    }
+  }
+  if (lastEnoent) throw lastEnoent;
+  throw new Error('execIpFileSync failed');
+}
+
 function getDefaultRouteLinux() {
   try {
-    const out = execFileSync('ip', ['-4', 'route', 'show', 'default'], { encoding: 'utf8' });
+    const out = execIpFileSync(['-4', 'route', 'show', 'default'], { encoding: 'utf8' });
     const line = out.trim().split('\n')[0] || '';
     const via = line.match(/default via (\S+)/);
     const dev = line.match(/dev (\S+)/);
@@ -2878,7 +2900,7 @@ function getSysctlNum(key) {
 /** Записи table main с данным dst (как в `ip -json route list`). */
 function captureRoutesByDst(dst) {
   try {
-    const out = execFileSync('ip', ['-4', '-json', 'route', 'list', 'table', 'main'], {
+    const out = execIpFileSync(['-4', '-json', 'route', 'list', 'table', 'main'], {
       encoding: 'utf8',
     });
     const arr = JSON.parse(out);
@@ -2902,7 +2924,7 @@ function ipRouteAddFromRecord(r) {
   if (r.dev) args.push('dev', r.dev);
   if (typeof r.metric === 'number') args.push('metric', String(r.metric));
   if (r.scope && r.scope !== 'global') args.push('scope', r.scope);
-  execFileSync('ip', args, { stdio: 'inherit' });
+  execIpFileSync(args, { stdio: 'inherit' });
 }
 
 function restoreRoutesFromRecords(records) {
@@ -2917,7 +2939,7 @@ function restoreRoutesFromRecords(records) {
 
 function tryIpRoute(args) {
   try {
-    execFileSync('ip', args, { stdio: 'inherit' });
+    execIpFileSync(args, { stdio: 'inherit' });
   } catch {
     /* ignore */
   }
@@ -2929,7 +2951,7 @@ function tryIpRoute(args) {
 
 function findFreeTunName() {
   try {
-    const out = execFileSync('ip', ['link', 'show'], { encoding: 'utf8' });
+    const out = execIpFileSync(['link', 'show'], { encoding: 'utf8' });
     const used = new Set();
     for (const m of out.matchAll(/tun(\d+):/g)) used.add(parseInt(m[1], 10));
     let i = 0;
@@ -3122,7 +3144,7 @@ function writeFramed(sock, pkt) {
 }
 
 function ip(args) {
-  execFileSync('ip', args, { stdio: 'inherit' });
+  execIpFileSync(args, { stdio: 'inherit' });
 }
 
 function sysctlForward(on) {
@@ -3186,7 +3208,8 @@ function ipv4HostContainedInNormalizedCidr(host, normalizedCidr) {
   if (!Number.isFinite(baseNum) || !Number.isFinite(pref) || pref < 0 || pref > 32) return false;
   if (pref === 0) return true;
   const mask = (-1 << (32 - pref)) >>> 0;
-  return ((host & mask) >>> 0) === (baseNum & mask);
+  // Обе стороны через >>> 0: `&` даёт signed Int32, иначе 192.168.x.x всегда «вне» сети.
+  return ((host & mask) >>> 0) === ((baseNum & mask) >>> 0);
 }
 
 /**
@@ -3206,7 +3229,7 @@ function detectIpv4LanGatewayOwnAddress(normalizedLanCidr) {
   };
 
   try {
-    const out = execFileSync('ip', ['-json', 'addr'], { encoding: 'utf8', maxBuffer: 2 ** 20 });
+    const out = execIpFileSync(['-json', 'addr'], { encoding: 'utf8', maxBuffer: 2 ** 20 });
     const arr = JSON.parse(out);
     for (const ent of arr) {
       const ifn = String(ent.ifname ?? ent.if ?? '');
@@ -3226,7 +3249,7 @@ function detectIpv4LanGatewayOwnAddress(normalizedLanCidr) {
 
   /** Одна строка на адрес: `2: usb0 inet 192.168.7.1/24 ...` (GNU iproute2/BusyBox чаще совместимо). */
   try {
-    const out = execFileSync('ip', ['-o', '-4', 'addr', 'show'], {
+    const out = execIpFileSync(['-o', '-4', 'addr', 'show'], {
       encoding: 'utf8',
       maxBuffer: 2 ** 20,
     });
