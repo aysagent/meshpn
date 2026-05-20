@@ -284,36 +284,28 @@ export function wireTransparentTlsExitSession(mux, vpnSecretBuf, logOpts) {
  */
 export function pumpOriginChunksToMux(origin, mux) {
   if (!origin || !mux) return;
-  // Важно: без pause() многие net.Socket остаются в flowing-режиме и только 'readable' + read()
-  // не гарантируют доставку данных на аплинк — клиент висит после ClientHello (SSL_ERROR_SYSCALL).
-  try {
-    origin.pause();
-  } catch {
-    /* ignore */
-  }
-  const loop = () => {
-    /** @type {Buffer|null|string} */
-    let d;
-    for (;;) {
-      d = origin.read();
-      if (d === null) return;
-      let b = Buffer.isBuffer(d) ? d : Buffer.from(d);
-      if (!b.length) continue;
+  /** @type {boolean} */
+  let waitingMuxDrain = false;
+  origin.on('data', (chunk) => {
+    try {
+      const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (!b.length) return;
+      if (mux.writableEnded || mux.writableFinished) return;
       const enc = encodeDataFrame(Buffer.from(b));
-      if (!(mux.writableEnded || mux.writableFinished)) {
-        if (!mux.write(enc)) {
+      if (!mux.write(enc)) {
+        if (!waitingMuxDrain) {
+          waitingMuxDrain = true;
           mux.once('drain', () => {
+            waitingMuxDrain = false;
             origin.resume();
-            loop();
           });
-          origin.pause();
-          return;
         }
+        origin.pause();
       }
+    } catch {
+      killOne(origin);
     }
-  };
-  origin.on('readable', loop);
-  loop();
+  });
 }
 
 /**
