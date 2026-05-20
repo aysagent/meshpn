@@ -284,6 +284,13 @@ export function wireTransparentTlsExitSession(mux, vpnSecretBuf, logOpts) {
  */
 export function pumpOriginChunksToMux(origin, mux) {
   if (!origin || !mux) return;
+  // Важно: без pause() многие net.Socket остаются в flowing-режиме и только 'readable' + read()
+  // не гарантируют доставку данных на аплинк — клиент висит после ClientHello (SSL_ERROR_SYSCALL).
+  try {
+    origin.pause();
+  } catch {
+    /* ignore */
+  }
   const loop = () => {
     /** @type {Buffer|null|string} */
     let d;

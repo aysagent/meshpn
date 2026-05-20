@@ -62,7 +62,7 @@
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=tls [--tls-cert-dir=...] [--tls-public-name=vpn.example.com] [--tls-probe-target=host:port] [--shared-hmac-key=PATH]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=tls --split-default [--tls-server-name=...] [--shared-hmac-key=PATH]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=boring-tls --split-default [--tls-server-name=...] — TLS через native/boring_tls/boring-tls-helper (см. scripts/boring-tls-plan.md); exit по-прежнему `--type=tls`.
- * transparent-tls (`--type=transparent-tls`): на **client** — как **`--split-default` + `--type=socket`** (IPv4 из TUN в один TCP mux к exit); параллельно исходящий **HTTPS** (локальный iptables OUTPUT 443→`127:8443`, **ставится и снимается самим процессом**) уходит вторым транспортом с подменой SNI в первом ClientHello и восстановлением на exit. На **exit** — тот же TCP-порт, что у socket: входящие потоки с префиксом **CVPTX** — relay HTTPS; без префикса — обычные IPv4-кадры в TUN+NAT как у **`--type=socket`**. PSK — `clean-vpn-hmac.key`.
+ * transparent-tls (`--type=transparent-tls`): на **client** — как **`--split-default` + `--type=socket`** (IPv4 из TUN в один TCP mux к exit); параллельно **HTTPS ipv4/tcp:443**: **OUTPUT** REDIRECT для процессов на шлюзе + при **`--client-lan-subnet`** — **nat PREROUTING** для проброса из этой LAN и **`sysctl net.ipv4.conf.all.route_localnet=1`**, когда нужно (iptables **ставит и откатывает**). На **exit** — тот же TCP-порт, что у socket: входящие потоки с префиксом **CVPTX** — relay HTTPS; без префикса — обычные IPv4-кадры в TUN+NAT как у **`--type=socket`**. PSK — `clean-vpn-hmac.key`.
  * TLS (--type=tls): TCP + TLS 1.3 only, ALPN в ClientHello по умолчанию [h2, http/1.1]; маркера VPN в открытой части нет.
  *   После рукопожатия: при согласованном `h2` — VPN поверх HTTP/2 (`POST /clean-vpn` + Bearer, двусторонний DATA на одном stream); при `http/1.1` — как раньше `GET /clean-vpn` с Bearer и hijack сокета после ответа 200.
  *   Флаг `--http-vers=1.1` (обе стороны): только HTTP/1.1 и только ALPN `http/1.1` — для отладки и регрессии GET-пути.
@@ -2724,6 +2724,106 @@ function installOutputRedirectHttpsToLocalIpv4(localPort, opts = {}) {
     safe(() => run(jumpDelete));
     safe(() => run(['-t', 'nat', '-F', chain]));
     safe(() => run(['-t', 'nat', '-X', chain]));
+  };
+}
+
+/**
+ * nat PREROUTING: проброшенный с LAN ipv4/tcp:443 перенаправляется на localPort для transparent-tls.
+ * После REDIRECT на 127.0.0.1 пакеты должны считаться local; без route_localnet чужой FORWARD
+ * может не дойти до слушателя (см. net.ipv4.conf.all.route_localnet).
+ */
+function installPreroutingRedirectForwardedHttpsLanToLocalIpv4(sourceCidr, localPort, opts = {}) {
+  const commentMarker = String(opts.commentMarker ?? TRANSPARENT_TLS_IPT_COMMENT).slice(0, 200);
+  const ex = opts.vpnServerIpv4Exclude;
+  const chain = `CVPN-TTL-FWD-${process.pid}`;
+  const jumpComment = `${commentMarker}-prejmp`;
+
+  const run = (/** @type {string[]} */ args) => execFileSync('iptables', args, { stdio: 'inherit' });
+
+  try {
+    run(['-t', 'nat', '-N', chain]);
+  } catch {
+    run(['-t', 'nat', '-F', chain]);
+  }
+
+  for (const cidr of ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']) {
+    run(['-t', 'nat', '-A', chain, '-d', cidr, '-j', 'RETURN']);
+  }
+  if (ex && net.isIPv4(ex)) {
+    run(['-t', 'nat', '-A', chain, '-d', `${ex}/32`, '-j', 'RETURN']);
+  }
+  run([
+    '-t',
+    'nat',
+    '-A',
+    chain,
+    '-p',
+    'tcp',
+    '--dport',
+    '443',
+    '-m',
+    'comment',
+    '--comment',
+    `${commentMarker}-predir`,
+    '-j',
+    'REDIRECT',
+    '--to-ports',
+    String(localPort),
+  ]);
+
+  const jumpRule = [
+    '-t',
+    'nat',
+    '-A',
+    'PREROUTING',
+    '-s',
+    String(sourceCidr),
+    '-p',
+    'tcp',
+    '--dport',
+    '443',
+    '-m',
+    'comment',
+    '--comment',
+    jumpComment,
+    '-j',
+    chain,
+  ];
+  run(jumpRule);
+
+  const jumpDelete = /** @type {string[]} */ (['-t', 'nat', '-D', 'PREROUTING', ...jumpRule.slice(4)]);
+
+  return () => {
+    safe(() => run(jumpDelete));
+    safe(() => run(['-t', 'nat', '-F', chain]));
+    safe(() => run(['-t', 'nat', '-X', chain]));
+  };
+}
+
+/**
+ * @returns {() => void}
+ */
+function installRouteLocalnetAllForForwardedTransparentTlsIntercept() {
+  const key = 'net.ipv4.conf.all.route_localnet';
+  const prev = getSysctlNum(key);
+  if (prev !== 1) {
+    try {
+      execFileSync('sysctl', [`${key}=1`], { stdio: 'inherit' });
+    } catch (e) {
+      throw new Error(
+        `[clean-vpn] transparent-tls: не удалось ${key}=1 (нужен для PREROUTING REDIRECT tcp/443 с LAN на 127.0.0.1): ${/** @type {Error} */ (e).message}`,
+      );
+    }
+  }
+  return () => {
+    if (prev === 1) return;
+    if (prev !== null && prev !== 1) {
+      try {
+        execFileSync('sysctl', [`${key}=${prev}`], { stdio: 'inherit' });
+      } catch {
+        console.warn(`[clean-vpn] transparent-tls: не удалось вернуть ${key}=${prev}`);
+      }
+    }
   };
 }
 
@@ -6603,6 +6703,10 @@ async function runClient({
   let ttlHttpsInterceptSrv = null;
   /** @type {(() => void) | null} */
   let ttlHttpsRedirectUndo = null;
+  /** @type {(() => void) | null} */
+  let ttlPreroutingLanHttpsUndo = null;
+  /** @type {(() => void) | null} */
+  let ttlRouteLocalnetLanUndo = null;
   /** @type {any} */
   let wsChromeBrowser = null;
   /** @type {import('ws').WebSocketServer|null} */
@@ -6710,6 +6814,26 @@ async function runClient({
           console.warn('[clean-vpn] transparent-tls: откат iptables OUTPUT:', e?.message ?? e);
         }
         ttlHttpsRedirectUndo = null;
+      }
+    });
+    safe(() => {
+      if (ttlPreroutingLanHttpsUndo) {
+        try {
+          ttlPreroutingLanHttpsUndo();
+        } catch (e) {
+          console.warn('[clean-vpn] transparent-tls: откат iptables PREROUTING LAN 443:', e?.message ?? e);
+        }
+        ttlPreroutingLanHttpsUndo = null;
+      }
+    });
+    safe(() => {
+      if (ttlRouteLocalnetLanUndo) {
+        try {
+          ttlRouteLocalnetLanUndo();
+        } catch (e) {
+          console.warn('[clean-vpn] transparent-tls: откат sysctl route_localnet:', e?.message ?? e);
+        }
+        ttlRouteLocalnetLanUndo = null;
       }
     });
     safe(() => {
@@ -7358,7 +7482,7 @@ async function runClient({
     const ttlLogOpts = { tlsLogJa3: Boolean(tlsLogJa3), ja3Verbose: Boolean(ja3Verbose) };
     if (ttlLogOpts.tlsLogJa3 || ttlLogOpts.ja3Verbose) {
       console.log(
-        `[clean-vpn transparent-tls client] JA3/JA4/SNI включены (--tls-log-ja3/--ja3-verbose): строки появятся после полного первого ClientHello каждого нового HTTPS (tcp/443). На exit нужны те же флаги.\n[clean-vpn transparent-tls client] Важно: REDIRECT tcp/443 в nat OUTPUT — только трафик, сгенерированный этой машиной; браузеры/клиенты за --client-lan-subnet через FORWARD без отдельного PREROUTING сюда не попадают.`,
+        `[clean-vpn transparent-tls client] JA3/JA4/SNI: логируется только HTTPS (tcp/443), после полного ClientHello.${clientLanSubnet ? ` С вашим --client-lan-subnet PREROUTING перехватит ipv4/https с LAN (плюс sysctl route_localnet при необходимости). ` : ''}На exit нужны те же флаги. Пример с Mac через шлюз: curl -4 https://example.com`,
       );
     }
 
@@ -7407,6 +7531,23 @@ async function runClient({
     if (!explicitDestination) {
       const serverEx = routeCtx.serverIp && net.isIPv4(routeCtx.serverIp) ? routeCtx.serverIp : null;
       try {
+        if (clientLanSubnet) {
+          ttlRouteLocalnetLanUndo = installRouteLocalnetAllForForwardedTransparentTlsIntercept();
+          try {
+            ttlPreroutingLanHttpsUndo = installPreroutingRedirectForwardedHttpsLanToLocalIpv4(
+              clientLanSubnet,
+              TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT,
+              { vpnServerIpv4Exclude: serverEx, commentMarker: TRANSPARENT_TLS_IPT_COMMENT },
+            );
+            console.log(
+              `[clean-vpn] transparent-tls: nat PREROUTING ipv4/https с ${clientLanSubnet} → 127.0.0.1:${TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT} (+ откат).`,
+            );
+          } catch (e) {
+            safe(() => ttlRouteLocalnetLanUndo?.());
+            ttlRouteLocalnetLanUndo = null;
+            throw e;
+          }
+        }
         ttlHttpsRedirectUndo = installOutputRedirectHttpsToLocalIpv4(TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT, {
           vpnServerIpv4Exclude: serverEx,
           commentMarker: TRANSPARENT_TLS_IPT_COMMENT,
@@ -7415,6 +7556,12 @@ async function runClient({
           `[clean-vpn] transparent-tls: добавлено iptables OUTPUT tcp dport 443 → 127.0.0.1:${TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT} (останов процесса — откат; частные адреса и${serverEx ? ` IP VPS ${serverEx}` : ''} исключены).`,
         );
       } catch (e) {
+        safe(() => ttlHttpsRedirectUndo?.());
+        ttlHttpsRedirectUndo = null;
+        safe(() => ttlPreroutingLanHttpsUndo?.());
+        ttlPreroutingLanHttpsUndo = null;
+        safe(() => ttlRouteLocalnetLanUndo?.());
+        ttlRouteLocalnetLanUndo = null;
         safe(() => ttlHttpsInterceptSrv?.close());
         ttlHttpsInterceptSrv = null;
         throw e;
@@ -7533,7 +7680,7 @@ async function main() {
 --punch: только --type=udp — hole punching через STUN + сигналинг на PORT+1; на exit только вместе с --signaling.
 --keep-alive=N: целое N≥0; 0 или отсутствие — как раньше. N>0 — idle N с без трафика TUN↔транспорт → разрыв; на client исходящие TCP/TLS/WS/UDP — отложенный connect до первого IPv4 с TUN. ws-chrome/rtc-chrome: после idle сессию нужно поднять заново (дорого). webrtc DC после idle без автосигналинга — перезапуск процессов. QUIC/quic-ext: флаг не применяется.
 --keep-alive-reconnect-cooldown=M: целое M≥0; только с --keep-alive>0. После разрыва по idle M с не поднимать lazy по IPv4 с TUN (отбрасываются); не-IPv4 не поднимает сессию в любом случае. После M с следующий IPv4 снова может lazy-connect — cooldown не фильтр «навсегда». Меньше дребезга от DNS/ретрансмитов. По умолчанию 0. CLEAN_VPN_KEEPALIVE_DEBUG=1 — lazy/cooldown и drop не-IPv4 (hex). CLEAN_VPN_TLS_MUX_DEBUG=1 — диагностика TCP до ClientHello на exit и до handshake на client (--type=tls).
---tunnel-peer=HOST: для websocket/webrtc/rtc-chrome/udp + client при нюансах accept/split-default — см. шапку. Дополнительно: **transparent-tls + client** — **IPv4 или IPv4:PORT** (порт по умолчанию **443**) фиксирует один апстрим для всех локальных HTTPS-сессий (**без** автоматического iptables REDIRECT; нужен только с тестами на один хост). Обычный режим без флага --tunnel-peer: OUTPUT 443 перенаправляется процессом clean-vpn автоматически.
+--tunnel-peer=HOST: для websocket/webrtc/rtc-chrome/udp + client при нюансах accept/split-default — см. шапку. Дополнительно: **transparent-tls + client** — **IPv4 или IPv4:PORT** (порт по умолчанию **443**) фиксирует один апстрим для всех локальных HTTPS-сессий (**без** iptables REDIRECT; нужен только с тестами на один хост). Обычный режим: **OUTPUT** ipv4/https→локальный intercept; при **--client-lan-subnet** дополнительно **PREROUTING** для ipv4/https с этой LAN + **sysctl route_localnet** (откатываются при выходе).
 --tls-cert-dir / --shared-hmac-key: для transparent-tls нужен тот же 32-байтовый ключ, что и для --type=tls (на exit при отсутствии автосоздание как у QUIC каталога).`);
     process.exit(1);
   }
