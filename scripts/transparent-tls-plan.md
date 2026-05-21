@@ -102,3 +102,10 @@ flowchart LR
 
 - Основная обёртка: [`scripts/clean-vpn.js`](clean-vpn.js).
 - Этот план: [`scripts/transparent-tls-plan.md`](transparent-tls-plan.md).
+
+## 10. `--type=combo-tls` (один TCP-порт: CVPTX + TLS mux)
+
+- **Клиент:** `--split-default` обязательно; мост TUN ↔ exit через **boring-tls-helper** (аналогично `--type=boring-tls` при exit с TLS-веткой); перехват **tcp/443** — те же iptables, локальный intercept и (при LAN) PREROUTING/DNAT, что у `--type=transparent-tls`, сессии CVPTX к адресу **`--server`**.
+- **Exit:** один listener; первые байты **CVPTX** → `wireTransparentTlsExitSession`; иначе → `handleTlsExitInbound` (как `--type=tls`), в т.ч. passthrough по SNI/parse к `--tls-probe-target`.
+- **PSK:** общий `clean-vpn-hmac.key` / `--shared-hmac-key` для HMAC кадра OPEN и Bearer в TLS.
+- Ограничение MVP: plaintext на 443 после REDIRECT по-прежнему не обрабатывается (как у чистого transparent-tls).
