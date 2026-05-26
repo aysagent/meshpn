@@ -43,6 +43,45 @@ namespace {
 
 constexpr uint32_t kMaxFrame = 512 * 1024;
 
+/**
+ * RFC 5705 TLS exporter label для clean-vpn channel binding Bearer-токена
+ * (см. scripts/clean-vpn.js TLS_VPN_EXPORTER_LABEL).
+ * Длина (без NUL): 23.
+ */
+constexpr char kCleanVpnExporterLabel[] = "EXPORTER-clean-vpn-bind";
+constexpr size_t kCleanVpnExporterLen = 32;
+
+std::string Base64Encode(const uint8_t* data, size_t n) {
+  static const char kAlpha[] =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string out;
+  out.reserve(((n + 2) / 3) * 4);
+  size_t i = 0;
+  while (i + 3 <= n) {
+    uint32_t v = (static_cast<uint32_t>(data[i]) << 16) |
+                 (static_cast<uint32_t>(data[i + 1]) << 8) |
+                 static_cast<uint32_t>(data[i + 2]);
+    out.push_back(kAlpha[(v >> 18) & 0x3F]);
+    out.push_back(kAlpha[(v >> 12) & 0x3F]);
+    out.push_back(kAlpha[(v >> 6) & 0x3F]);
+    out.push_back(kAlpha[v & 0x3F]);
+    i += 3;
+  }
+  if (i < n) {
+    uint32_t v = static_cast<uint32_t>(data[i]) << 16;
+    if (i + 1 < n) v |= static_cast<uint32_t>(data[i + 1]) << 8;
+    out.push_back(kAlpha[(v >> 18) & 0x3F]);
+    out.push_back(kAlpha[(v >> 12) & 0x3F]);
+    if (i + 1 < n) {
+      out.push_back(kAlpha[(v >> 6) & 0x3F]);
+    } else {
+      out.push_back('=');
+    }
+    out.push_back('=');
+  }
+  return out;
+}
+
 bool WriteExact(int fd, const void* buf, size_t n) {
   const auto* p = static_cast<const uint8_t*>(buf);
   size_t w = 0;
@@ -1706,6 +1745,17 @@ int main(int argc, char** argv) {
   nlohmann::json okj;
   okj["ok"] = true;
   okj["alpn"] = alpn_sel;
+  // H-1+H-2 (Phase 2): TLS exporter (RFC 5705) для channel-binding Bearer-токена.
+  // Node-сторона ждёт base64 32-байтового exporter в поле `exporter`.
+  // Старые версии Node без поддержки fallback'нутся на Bearer v1 без channel-binding.
+  uint8_t exporter_out[kCleanVpnExporterLen];
+  if (SSL_export_keying_material(
+          ssl, exporter_out, kCleanVpnExporterLen, kCleanVpnExporterLabel,
+          sizeof(kCleanVpnExporterLabel) - 1, nullptr, 0, 0) == 1) {
+    okj["exporter"] = Base64Encode(exporter_out, kCleanVpnExporterLen);
+  } else {
+    std::cerr << "boring-tls-helper: SSL_export_keying_material failed (Bearer fallback v1)\n";
+  }
   if (!WriteFrame(STDOUT_FILENO, okj.dump())) {
     SSL_free(ssl);
     SSL_CTX_free(ctx);

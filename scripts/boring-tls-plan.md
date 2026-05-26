@@ -142,7 +142,9 @@
 
 ### Поля `response` (JSON)
 
-- Успех: `{"ok":true,"alpn":"<negotiated>"}` (`alpn` может быть пустой строкой если не согласован).
+- Успех: `{"ok":true,"alpn":"<negotiated>","exporter":"<base64>"}`.
+  - `alpn` может быть пустой строкой если не согласован.
+  - `exporter` (**Phase 2 / H-1+H-2**): результат `SSL_export_keying_material(ssl, out, 32, label="EXPORTER-clean-vpn-bind", label_len, NULL, 0, 0)` (RFC 5705) — 32 байта в base64. Node использует его как **channel binding** для Bearer-токена `--type=tls` (контекст `clean-vpn-tls-v2`). Если поле отсутствует (старый helper), Node падает на legacy v1 Bearer (без channel binding) с warning. При неудаче `SSL_export_keying_material` helper пишет в stderr и поле просто не отправляется.
 - Ошибка: `{"ok":false,"error":"<текст>"}` и процесс helper завершается с ненулевым кодом.
 
 ## Сборка helper

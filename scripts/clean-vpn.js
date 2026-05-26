@@ -21,7 +21,10 @@
  *   --ws-chrome-url=... (произвольная страница) — только CDP-путь. exit --type=ws-chrome --ws-server + GET /clean-vpn-chrome; Puppeteer с --ws-chrome-exit-page без CDP использует setContent (тот же быстрый мост).
  *   Chrome: --ws-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH; в контейнере: CLEAN_VPN_PUPPETEER_NO_SANDBOX=1
  *   Linux ARM64 (Multipass на Apple Silicon и т.п.): встроенный Chrome из кэша Puppeteer часто ломается — ставьте `chromium-browser`/`chromium` из apt и укажите путь или положитесь на авто-поиск на arm64.
+ *   Локальный 127.0.0.1 WS auth (Phase 1 / H-4): URL содержит `?t=<32hex random>` (16 байт), проверка constant-time. Чужие процессы на хосте без secret в connect-URL не могут подключиться к локальному мосту. Применяется и для ws-chrome (Dual bridge), и для rtc-chrome (локальный WS).
  * WebRTC: сигналинг по WebSocket; слушать только с --signaling на этой ноде, иначе исходящий WS к --server (exit и client). Алиас: --signalling. Один SCTP DataChannel — одно бинарное сообщение = один IPv4-пакет.
+ *   ICE host-candidate filter (Phase 1 / M-5): по умолчанию `typ host` и `typ prflx` для RFC1918 / loopback / IPv6 ULA / link-local отбрасываются (в исходящих local-candidate'ах и во входящих remote). `srflx`/`relay` остаются. Защита от утечки внутренних IP. Opt-out: `--allow-host-candidates`.
+ *   Signaling bind (Phase 2 / C-2): первое сообщение сигналинга `clean-vpn-bind` (webrtc/rtc-chrome) или `clean-vpn-udp-bind` (udp punch) подписано HMAC(clean-vpn-hmac.key, ts || nonce || dtls_fingerprint?), проверяется обеими сторонами; nonce защищает от replay, окно ts ±5 мин. Для webrtc дополнительно сверяется, что `a=fingerprint` в принятом SDP совпадает с подписанным — MITM сигналинга не может подсунуть свой DTLS-fingerprint. Без PSK (`clean-vpn-hmac.key`) запуск падает; для отладки: `--signaling-psk-required=false`.
  * ICE/STUN/TURN: из --config (по умолчанию config/default.json), см. --ice-mode; для udp --punch нужен хотя бы один `stun:` в iceServers.
  * QUIC (Node 25+): нативный node:quic, ALPN clean-vpn, один bidi stream = тот же uint32+IPv4, что TCP.
  *   Нужен бинарь Node, собранный с QUIC (в рантайме: node -p "process.config.variables.node_use_quic" — должно быть истинно); одного флага --experimental-quic недостаточно, если модуль не вкомпилирован (часто apt/snap).
@@ -67,11 +70,15 @@
  * TLS (--type=tls): TCP + TLS 1.3 only, ALPN в ClientHello по умолчанию [h2, http/1.1]; маркера VPN в открытой части нет.
  *   После рукопожатия: при согласованном `h2` — VPN поверх HTTP/2 (`POST /clean-vpn` + Bearer, двусторонний DATA на одном stream); при `http/1.1` — как раньше `GET /clean-vpn` с Bearer и hijack сокета после ответа 200.
  *   Флаг `--http-vers=1.1` (обе стороны): только HTTP/1.1 и только ALPN `http/1.1` — для отладки и регрессии GET-пути.
- *   Авторизация: `Authorization: Bearer <token>`; token = HMAC-SHA256 от общего HMAC PSK и текущего 15-минутного окна (защита от replay из логов).
+ *   Авторизация: `Authorization: Bearer <token>`; token = HMAC-SHA256 от общего HMAC PSK, **TLS exporter** (RFC 5705, label=EXPORTER-clean-vpn-bind, 32 байта) данной сессии и текущего 15-минутного окна — channel-binding (Phase 2 / H-1+H-2). Перехваченный Bearer вне той самой TLS-сессии не работает (exporter уникален per-session).
+ *   Legacy v1 (без exporter) принимается с warning `bearer_legacy=1`; используйте только для миграции, удалите в следующем миноре. Совместимость fallback: старый Node без `exportKeyingMaterial` / старый boring-tls-helper без `exporter` в ok-frame → v1.
  *   Совпало → exit отвечает 200 (`:status` при h2 или HTTP/1.1) и поднимает прежний uint32+IPv4 туннель; иначе — отдаёт `It works!` как обычный HTTPS-сайт.
+ *   Cover-page rate-limit (Phase 1 / M-1): per-IP лимит 10 cover-ответов за 60s; превышение — `socket.destroy()` без ответа. Tuning: CLEAN_VPN_TLS_COVER_RL_MAX / CLEAN_VPN_TLS_COVER_RL_WINDOW_MS. Успешный VPN-handshake счётчик не двигает.
+ *   Peek-timeout / pending-peek limit (Phase 1 / M-4): combo-tls и transparent-tls exit-диспатч — ждут первые 8 байт ≤10s (CLEAN_VPN_EXIT_PEEK_TIMEOUT_MS), глобальный лимит одновременных pending peek 1000 (CLEAN_VPN_EXIT_PEEK_MAX); превышение → destroy без ответа. Защита от slow-loris по pending peek.
  *   Ключ — общий «clean-vpn-hmac.key», см. отдельный раздел выше; явный путь --shared-hmac-key=PATH (legacy --quic-ext-crypto-key).
  *   Exit: --tls-cert-dir, --tls-public-name (если задан, SNI в Hello должен совпасть с одним из перечисленных имён, через запятую; иначе passthrough), --tls-probe-target (куда passthrough при SNI mismatch / parse_fail). Passthrough и локальный TLS-сервер выбираются по разбору ClientHello и SNI/public-name, не по значению ALPN (настоящий активный пробинг не использует «магических» протоколов в ALPN). Флаг --tls-server-name на exit не читается (только client).
  *   Сертификаты: --tls-cert-dir с fullchain.pem+privkey.pem (Let's Encrypt) или, как у QUIC, ca.pem+cert.pem+key.pem.
+ *   Рекомендация: для production используйте Let's Encrypt (fullchain.pem + privkey.pem в --tls-cert-dir). Self-signed (ensureQuicCerts) — fallback для отладки; с Phase 1 в auto-gen добавляется SAN из --server / --tls-public-name, поэтому Node-клиент проходит hostname-verification без `checkServerIdentity` workaround, но клиенту всё равно нужен ca.pem с exit'а в --tls-cert-dir.
  *   Внимание: passthrough на сторонний хост может нарушать ToS сервиса и законы юрисдикции — только на свой страх и риск.
  *   Client: --tls-server-name — имя для проверки сертификата (и SNI в ClientHello, если не задан --tls-client-sni).
  *   Не используйте `--tls-server-name=www.google.com` только ради маскировки SNI: это имя проверки CN/SAN, при сертификате exit с CN clean-vpn рукопожатие завершится ERR_TLS_CERT_ALTNAME_INVALID. При IP без имени проверки уже берётся clean-vpn и SNI по умолчанию www.google.com; свой SNI — `--tls-client-sni`.
@@ -252,10 +259,35 @@ const TLS_ALPN_HTTP1_ONLY = ['http/1.1'];
 const TLS_LE_FULLCHAIN = 'fullchain.pem';
 const TLS_LE_PRIVKEY = 'privkey.pem';
 const TLS_HTTP_WORKS_BODY = 'It works!\n';
+/** Rate-limit cover-page: окно 60s, лимит 10 cover-responses на IP. Vpn-успех счётчик не двигает. */
+const TLS_COVER_RATELIMIT_WINDOW_MS_DEFAULT = 60 * 1000;
+const TLS_COVER_RATELIMIT_MAX_DEFAULT = 10;
+/** Peek timeout (combo-tls / transparent-tls exit dispatch): 10s; превышение — destroy. */
+const EXIT_PEEK_TIMEOUT_MS_DEFAULT = 10 * 1000;
+/** Глобальный лимит одновременно открытых peek-сокетов на exit; защита от slow-loris по pending peek. */
+const EXIT_PEEK_MAX_PENDING_DEFAULT = 1000;
 /** Окно ротации Bearer-токена (мс) — защита от долгого replay при утечке логов. */
 const TLS_VPN_TOKEN_WINDOW_MS = 15 * 60 * 1000;
-/** Контекст HMAC: фиксированная строка-домен. */
-const TLS_VPN_TOKEN_CONTEXT = 'clean-vpn-tls-v1';
+/** Контекст HMAC v1 (legacy, без channel binding). */
+const TLS_VPN_TOKEN_CONTEXT_V1 = 'clean-vpn-tls-v1';
+/** Контекст HMAC v2 — с привязкой к TLS exporter (RFC 5705) данной сессии. */
+const TLS_VPN_TOKEN_CONTEXT_V2 = 'clean-vpn-tls-v2';
+/** Алиас для обратной совместимости с внешним кодом, если кто-то ссылался. */
+const TLS_VPN_TOKEN_CONTEXT = TLS_VPN_TOKEN_CONTEXT_V2;
+/** Label для tls.TLSSocket#exportKeyingMaterial / SSL_export_keying_material (RFC 5705). */
+const TLS_VPN_EXPORTER_LABEL = 'EXPORTER-clean-vpn-bind';
+/** Длина exporter-секрета (байт). */
+const TLS_VPN_EXPORTER_LEN = 32;
+
+/** C-2 / Phase 2: HMAC-контекст для подписи DTLS fingerprint в сигналинге webrtc/rtc-chrome/udp-punch. */
+const SIGNALING_BIND_CONTEXT = 'clean-vpn-signal-bind';
+/** Тип сообщения для подписи (передача fingerprint + nonce + ts + MAC) перед offer/answer. */
+const SIGNALING_BIND_MSG_TYPE = 'clean-vpn-bind';
+/** Окно валидности `ts` подписи (±, мс) — защита от replay; 5 мин по плану. */
+const SIGNALING_BIND_TS_WINDOW_MS = 5 * 60 * 1000;
+/** Контекст подписи для udp-punch (без DTLS fingerprint — только bearer + nonce). */
+const SIGNALING_UDPBIND_CONTEXT = 'clean-vpn-udp-bind';
+const SIGNALING_UDPBIND_MSG_TYPE = 'clean-vpn-udp-bind';
 /** Browser-like User-Agent — чтобы внутри TLS preamble выглядеть «как обычный HTTPS-клиент». */
 const TLS_VPN_USER_AGENT =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -598,40 +630,193 @@ function ensureSharedHmacKey(certsDir, sharedExplicitPath, legacyExplicitPath, o
 
 /**
  * Bearer-токен, сменяющийся каждое окно `TLS_VPN_TOKEN_WINDOW_MS`.
+ *
+ * v2 (Phase 2 / H-1+H-2): channel binding через TLS exporter (RFC 5705).
+ *   `HMAC(secret, "clean-vpn-tls-v2:" || exporter32 || ":" || window)[:16]`
+ *   Токен валиден только в **той самой** TLS-сессии, где получен exporter.
+ *
+ * v1 (legacy): без exporter, `HMAC(secret, "clean-vpn-tls-v1:" || window)[:16]`.
+ *   Поддерживается для миграции; на exit фиксируется в логах как `bearer_legacy=1`.
+ *   Используется, если `exporterBuf` отсутствует (старая Node-версия без `exportKeyingMaterial`,
+ *   старый boring-tls helper без exporter в config-frame, или QUIC-стек без exporter API).
+ *
  * @param {Buffer} secret
+ * @param {Buffer|null|undefined} exporterBuf — 32 байта из TLS exporter (label=EXPORTER-clean-vpn-bind),
+ *   null/undefined → v1 без channel binding.
  * @param {number} [windowOffset=0] — 0 = текущее окно; -1 / +1 — соседние (для clock skew).
  * @returns {string} hex-строка длиной 32 символа (16 байт)
  */
-function computeTlsVpnBearerToken(secret, windowOffset = 0) {
+function computeTlsVpnBearerToken(secret, exporterBuf, windowOffset = 0) {
   const window = Math.floor(Date.now() / TLS_VPN_TOKEN_WINDOW_MS) + windowOffset;
+  if (exporterBuf && Buffer.isBuffer(exporterBuf) && exporterBuf.length > 0) {
+    const mac = createHmac('sha256', secret)
+      .update(`${TLS_VPN_TOKEN_CONTEXT_V2}:`)
+      .update(exporterBuf)
+      .update(`:${window}`)
+      .digest();
+    return mac.subarray(0, 16).toString('hex');
+  }
   const mac = createHmac('sha256', secret)
-    .update(`${TLS_VPN_TOKEN_CONTEXT}:${window}`)
+    .update(`${TLS_VPN_TOKEN_CONTEXT_V1}:${window}`)
     .digest();
   return mac.subarray(0, 16).toString('hex');
 }
 
 /**
  * Принять токен в текущем окне или соседних (±1) для compensation clock skew.
+ * Если `exporterBuf` задан — сначала пробуем v2 (channel-bound); при mismatch fallback на v1
+ * с пометкой `legacy: true` (для warning-лога и метрики переходного периода).
+ *
  * @param {Buffer} secret
  * @param {string} token
- * @returns {{ ok: boolean, windowOffset: number|null }} — windowOffset 0 / -1 / +1 при ok=true; null при ok=false.
+ * @param {Buffer|null} [exporterBuf=null]
+ * @returns {{ ok: boolean, windowOffset: number|null, legacy: boolean }}
  */
-function verifyTlsVpnBearerToken(secret, token) {
-  if (typeof token !== 'string' || token.length !== 32) return { ok: false, windowOffset: null };
+function verifyTlsVpnBearerToken(secret, token, exporterBuf = null) {
+  if (typeof token !== 'string' || token.length !== 32) {
+    return { ok: false, windowOffset: null, legacy: false };
+  }
   let provided;
   try {
     provided = Buffer.from(token, 'hex');
   } catch {
-    return { ok: false, windowOffset: null };
+    return { ok: false, windowOffset: null, legacy: false };
   }
-  if (provided.length !== 16) return { ok: false, windowOffset: null };
-  for (const offset of [0, -1, 1]) {
-    const expected = Buffer.from(computeTlsVpnBearerToken(secret, offset), 'hex');
-    if (expected.length === provided.length && timingSafeEqual(expected, provided)) {
-      return { ok: true, windowOffset: offset };
+  if (provided.length !== 16) return { ok: false, windowOffset: null, legacy: false };
+
+  if (exporterBuf && Buffer.isBuffer(exporterBuf) && exporterBuf.length > 0) {
+    for (const offset of [0, -1, 1]) {
+      const expected = Buffer.from(
+        computeTlsVpnBearerToken(secret, exporterBuf, offset),
+        'hex',
+      );
+      if (expected.length === provided.length && timingSafeEqual(expected, provided)) {
+        return { ok: true, windowOffset: offset, legacy: false };
+      }
     }
   }
-  return { ok: false, windowOffset: null };
+  for (const offset of [0, -1, 1]) {
+    const expected = Buffer.from(computeTlsVpnBearerToken(secret, null, offset), 'hex');
+    if (expected.length === provided.length && timingSafeEqual(expected, provided)) {
+      return { ok: true, windowOffset: offset, legacy: true };
+    }
+  }
+  return { ok: false, windowOffset: null, legacy: false };
+}
+
+/**
+ * Извлечь 32-байтовый TLS exporter (RFC 5705) с label `EXPORTER-clean-vpn-bind`.
+ * Возвращает null, если стек не поддерживает или вызов упал.
+ * @param {import('tls').TLSSocket|null|undefined} tlsSock
+ * @returns {Buffer|null}
+ */
+function tlsVpnExporterFromSocket(tlsSock) {
+  if (!tlsSock || typeof tlsSock.exportKeyingMaterial !== 'function') return null;
+  try {
+    const buf = tlsSock.exportKeyingMaterial(TLS_VPN_EXPORTER_LEN, TLS_VPN_EXPORTER_LABEL);
+    if (Buffer.isBuffer(buf) && buf.length === TLS_VPN_EXPORTER_LEN) return buf;
+  } catch {
+    /* noop */
+  }
+  return null;
+}
+
+/**
+ * C-2 / Phase 2: подписать DTLS fingerprint для сигналинга webrtc/rtc-chrome.
+ * MAC = HMAC-SHA256(PSK, "clean-vpn-signal-bind:" + ts + ":" + nonce + ":" + fingerprint)[:32hex]
+ * Защита: ts окно ±5 мин, nonce 32hex (8 байт random), MAC не позволяет подделку без PSK.
+ *
+ * @param {Buffer} psk
+ * @param {string} fingerprint — "sha-256 XX:XX:..."
+ * @param {string} nonceHex
+ * @param {number} ts
+ * @returns {string} 32hex (16 bytes)
+ */
+function signSignalingBind(psk, fingerprint, nonceHex, ts) {
+  const mac = createHmac('sha256', psk)
+    .update(`${SIGNALING_BIND_CONTEXT}:${ts}:${nonceHex}:${fingerprint}`)
+    .digest();
+  return mac.subarray(0, 16).toString('hex');
+}
+
+/**
+ * Проверка подписи (C-2). Возвращает причину отказа или null при успехе.
+ * @param {Buffer} psk
+ * @param {{ fingerprint?: string, nonce?: string, ts?: number, mac?: string }} msg
+ * @returns {string|null}
+ */
+function verifySignalingBind(psk, msg) {
+  if (!msg || typeof msg !== 'object') return 'no_obj';
+  const { fingerprint, nonce, ts, mac } = msg;
+  if (typeof fingerprint !== 'string' || !fingerprint) return 'no_fingerprint';
+  if (typeof nonce !== 'string' || !/^[0-9a-f]{16,128}$/i.test(nonce)) return 'bad_nonce';
+  if (typeof ts !== 'number' || !Number.isFinite(ts)) return 'bad_ts';
+  if (typeof mac !== 'string' || !/^[0-9a-f]{32}$/i.test(mac)) return 'bad_mac';
+  const now = Date.now();
+  if (Math.abs(now - ts) > SIGNALING_BIND_TS_WINDOW_MS) return 'ts_window';
+  const expected = Buffer.from(signSignalingBind(psk, fingerprint, nonce, ts), 'hex');
+  const provided = Buffer.from(mac, 'hex');
+  if (expected.length !== provided.length) return 'mac_len';
+  if (!timingSafeEqual(expected, provided)) return 'mac_mismatch';
+  return null;
+}
+
+/**
+ * Аналог для udp-punch (без DTLS): просто bearer + replay-protected nonce + ts.
+ * MAC = HMAC(PSK, "clean-vpn-udp-bind:" + ts + ":" + nonce)
+ *
+ * @param {Buffer} psk
+ * @param {string} nonceHex
+ * @param {number} ts
+ */
+function signUdpPunchBind(psk, nonceHex, ts) {
+  const mac = createHmac('sha256', psk)
+    .update(`${SIGNALING_UDPBIND_CONTEXT}:${ts}:${nonceHex}`)
+    .digest();
+  return mac.subarray(0, 16).toString('hex');
+}
+
+/**
+ * Проверка подписи udp-punch (C-2).
+ * @param {Buffer} psk
+ * @param {{ nonce?: string, ts?: number, mac?: string }} msg
+ */
+function verifyUdpPunchBind(psk, msg) {
+  if (!msg || typeof msg !== 'object') return 'no_obj';
+  const { nonce, ts, mac } = msg;
+  if (typeof nonce !== 'string' || !/^[0-9a-f]{16,128}$/i.test(nonce)) return 'bad_nonce';
+  if (typeof ts !== 'number' || !Number.isFinite(ts)) return 'bad_ts';
+  if (typeof mac !== 'string' || !/^[0-9a-f]{32}$/i.test(mac)) return 'bad_mac';
+  const now = Date.now();
+  if (Math.abs(now - ts) > SIGNALING_BIND_TS_WINDOW_MS) return 'ts_window';
+  const expected = Buffer.from(signUdpPunchBind(psk, nonce, ts), 'hex');
+  const provided = Buffer.from(mac, 'hex');
+  if (expected.length !== provided.length) return 'mac_len';
+  if (!timingSafeEqual(expected, provided)) return 'mac_mismatch';
+  return null;
+}
+
+/**
+ * Извлечь первый `a=fingerprint:` из SDP. Возвращает строку формата "sha-256 XX:XX:..."
+ * или null, если не найдено.
+ * @param {string} sdp
+ */
+function extractDtlsFingerprintFromSdp(sdp) {
+  if (typeof sdp !== 'string') return null;
+  const m = /^a=fingerprint:\s*([^\s]+)\s+([0-9A-Fa-f:]+)\s*$/m.exec(sdp);
+  if (!m) return null;
+  return `${m[1].toLowerCase()} ${m[2].toUpperCase()}`;
+}
+
+/**
+ * Нормализованное сравнение fingerprint'ов (регистр и пробелы).
+ * @param {string|null|undefined} a
+ * @param {string|null|undefined} b
+ */
+function signalingFingerprintsEqual(a, b) {
+  if (!a || !b) return false;
+  const norm = (s) => String(s).trim().toLowerCase().replace(/\s+/g, ' ');
+  return norm(a) === norm(b);
 }
 
 async function importQuicExt() {
@@ -697,9 +882,46 @@ function opensslAvailable() {
 }
 
 /**
- * Локальный CA + серверный cert (CN=clean-vpn). Клиент доверяет ca.pem; SNI на клиенте — clean-vpn.
+ * Нормализует список host'ов (DNS/IPv4/IPv6) в строки `DNS:` / `IP:` для openssl SAN.
+ * Отбрасывает 0.0.0.0, ::, пустые и unspecified — это listen-bind, не публичный адрес.
+ * @param {string[]} hosts
+ * @returns {string[]}
  */
-function ensureQuicCerts(dir) {
+function normalizeCertSanHosts(hosts) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of hosts || []) {
+    if (!raw) continue;
+    const h = String(raw).trim();
+    if (!h) continue;
+    if (h === '0.0.0.0' || h === '::' || h === '::0' || h === '0.0.0.0/0') continue;
+    if (h.toLowerCase() === 'localhost') {
+      if (!seen.has('DNS:localhost')) {
+        out.push('DNS:localhost');
+        seen.add('DNS:localhost');
+      }
+      continue;
+    }
+    const ipKind = net.isIP(h);
+    const entry = ipKind ? `IP:${h}` : `DNS:${h}`;
+    if (!seen.has(entry)) {
+      out.push(entry);
+      seen.add(entry);
+    }
+  }
+  return out;
+}
+
+/**
+ * Локальный CA + серверный cert (CN=clean-vpn). Клиент доверяет ca.pem; SNI на клиенте — clean-vpn.
+ *
+ * @param {string} dir
+ * @param {{ sanHosts?: string[] }} [opts]  При первой генерации добавляет
+ *   `subjectAltName` (IP/DNS) из `sanHosts`. Используется, чтобы Node.js TLS
+ *   client мог пройти hostname-verification без `checkServerIdentity` workaround.
+ *   Если cert уже существует — параметр игнорируется (старый файл не апгрейдится).
+ */
+function ensureQuicCerts(dir, opts = {}) {
   const caPath = path.join(dir, QUIC_TLS_CA);
   const certPath = path.join(dir, QUIC_TLS_CERT);
   const keyPath = path.join(dir, QUIC_TLS_KEY);
@@ -714,6 +936,8 @@ function ensureQuicCerts(dir) {
   fs.mkdirSync(dir, { recursive: true });
   const caKeyPath = path.join(dir, '.clean-vpn-ca.key');
   const csrPath = path.join(dir, '.clean-vpn-server.csr');
+  const extPath = path.join(dir, '.clean-vpn-server.ext');
+  const sanEntries = normalizeCertSanHosts(opts.sanHosts || []);
   const sslOpt = { stdio: 'inherit', cwd: dir };
   try {
     execFileSync('openssl', ['genrsa', '-out', caKeyPath, '4096'], sslOpt);
@@ -742,28 +966,35 @@ function ensureQuicCerts(dir) {
       ['req', '-new', '-key', keyPath, '-out', csrPath, '-subj', '/CN=clean-vpn'],
       sslOpt,
     );
-    execFileSync(
-      'openssl',
-      [
-        'x509',
-        '-req',
-        '-in',
-        csrPath,
-        '-CA',
-        caPath,
-        '-CAkey',
-        caKeyPath,
-        '-CAcreateserial',
-        '-out',
-        certPath,
-        '-days',
-        '825',
-        '-sha256',
-      ],
-      sslOpt,
-    );
+    const x509Args = [
+      'x509',
+      '-req',
+      '-in',
+      csrPath,
+      '-CA',
+      caPath,
+      '-CAkey',
+      caKeyPath,
+      '-CAcreateserial',
+      '-out',
+      certPath,
+      '-days',
+      '825',
+      '-sha256',
+    ];
+    if (sanEntries.length) {
+      const extContent =
+        `authorityKeyIdentifier=keyid,issuer\n` +
+        `basicConstraints=CA:FALSE\n` +
+        `keyUsage = digitalSignature, keyEncipherment\n` +
+        `extendedKeyUsage = serverAuth\n` +
+        `subjectAltName = ${sanEntries.join(',')}\n`;
+      fs.writeFileSync(extPath, extContent);
+      x509Args.push('-extfile', extPath);
+    }
+    execFileSync('openssl', x509Args, sslOpt);
   } finally {
-    for (const p of [caKeyPath, csrPath]) {
+    for (const p of [caKeyPath, csrPath, extPath]) {
       try {
         fs.unlinkSync(p);
       } catch {
@@ -781,7 +1012,8 @@ function ensureQuicCerts(dir) {
       }
     }
   }
-  console.log('[clean-vpn] QUIC: созданы тестовые TLS-файлы в', dir);
+  const sanLabel = sanEntries.length ? ` SAN=${sanEntries.join(',')}` : '';
+  console.log(`[clean-vpn] QUIC: созданы тестовые TLS-файлы в ${dir}${sanLabel}`);
   return { caPath, certPath, keyPath };
 }
 
@@ -795,10 +1027,44 @@ function resolveTlsCertsDir(args) {
 }
 
 /**
+ * C-2 / Phase 2: загрузить общий HMAC PSK для подписи сигналинга webrtc/rtc-chrome/udp-punch.
+ * Возвращает Buffer | null. При отсутствии файла и `required=true` бросает; при false — только warning.
+ * Не создаёт ключ автоматически (на client'е exit'овский ключ должен быть скопирован).
+ * @param {string} certsDir
+ * @param {string|null|undefined} sharedExplicit — --shared-hmac-key
+ * @param {string|null|undefined} legacyExplicit — --quic-ext-crypto-key
+ * @param {boolean} required — если true и ключа нет — throw
+ * @param {string} logPrefix
+ */
+function loadSignalingPskOrWarn(certsDir, sharedExplicit, legacyExplicit, required, logPrefix) {
+  try {
+    const r = ensureSharedHmacKey(certsDir, sharedExplicit || null, legacyExplicit || null, {
+      autoCreate: false,
+      role: logPrefix,
+    });
+    return r.buffer;
+  } catch (e) {
+    if (required) {
+      throw new Error(
+        `[clean-vpn] ${logPrefix}: для C-2 сигналинг-подписи нужен clean-vpn-hmac.key (--shared-hmac-key или файл в --tls-cert-dir/--quic-certs-dir). ` +
+          `Отключите проверку флагом --signaling-psk-required=false (только для отладки). Исходная ошибка: ${e?.message || e}`,
+      );
+    }
+    console.warn(
+      `[clean-vpn] ${logPrefix}: PSK для сигналинга не найден (${e?.message || e}); работаем без C-2 fingerprint binding (--signaling-psk-required=false)`,
+    );
+    return null;
+  }
+}
+
+/**
  * Серверные PEM для TLS exit: приоритет Let's Encrypt (fullchain+privkey), иначе ensureQuicCerts.
+ * @param {string} dir
+ * @param {{ sanHosts?: string[] }} [opts]  Прокидывается в `ensureQuicCerts`
+ *   только при первой генерации self-signed; для Let's Encrypt игнорируется.
  * @returns {{ cert: string, key: string, caPath: string }}
  */
-function loadTlsServerCredentials(dir) {
+function loadTlsServerCredentials(dir, opts = {}) {
   const fullchainPath = path.join(dir, TLS_LE_FULLCHAIN);
   const privkeyPath = path.join(dir, TLS_LE_PRIVKEY);
   if (fs.existsSync(fullchainPath) && fs.existsSync(privkeyPath)) {
@@ -808,7 +1074,7 @@ function loadTlsServerCredentials(dir) {
       caPath: fullchainPath,
     };
   }
-  const t = ensureQuicCerts(dir);
+  const t = ensureQuicCerts(dir, { sanHosts: opts.sanHosts || [] });
   return {
     cert: fs.readFileSync(t.certPath, 'utf8'),
     key: fs.readFileSync(t.keyPath, 'utf8'),
@@ -832,8 +1098,14 @@ function loadTlsClientCaPem(dir) {
  * @param {Buffer} vpnSecret
  * @returns {Promise<any>} socket-like для `attachTunBridge`
  */
-function establishCleanVpnOverH2(tlsSock, checkHost, vpnSecret) {
-  const token = computeTlsVpnBearerToken(vpnSecret);
+function establishCleanVpnOverH2(tlsSock, checkHost, vpnSecret, exporter = null) {
+  const ek = exporter ?? tlsVpnExporterFromSocket(tlsSock);
+  if (!ek) {
+    console.warn(
+      '[clean-vpn] TLS exporter недоступен (Node без exportKeyingMaterial или helper без поддержки) — Bearer v1 legacy, без channel-binding (H-2)',
+    );
+  }
+  const token = computeTlsVpnBearerToken(vpnSecret, ek);
   const clientSession = http2.connect(`https://${checkHost}`, {
     createConnection: () => tlsSock,
     settings: resolveCleanVpnHttp2Settings(),
@@ -1053,6 +1325,13 @@ function boringTlsHelperToDuplex(child) {
  */
 async function completeCleanVpnTlsSession(sock, opts) {
   const { checkHost, vpnSecret, tlsHttpVers, negotiatedAlpn } = opts;
+  const exporter =
+    opts.exporter ||
+    tlsVpnExporterFromSocket(
+      /** @type {import('tls').TLSSocket|null} */ (
+        /** @type {unknown} */ (sock)
+      ),
+    );
   const ap =
     negotiatedAlpn !== undefined
       ? negotiatedAlpn
@@ -1097,12 +1376,18 @@ async function completeCleanVpnTlsSession(sock, opts) {
       /** @type {import('tls').TLSSocket} */ (sock),
       checkHost,
       vpnSecret,
+      exporter,
     );
     console.log('[clean-vpn] TLS (VPN) соединение установлено http=HTTP/2');
     return wrapped;
   }
 
-  const token = computeTlsVpnBearerToken(vpnSecret);
+  if (!exporter) {
+    console.warn(
+      '[clean-vpn] TLS exporter недоступен (HTTP/1.1) — Bearer v1 legacy, без channel-binding (H-2)',
+    );
+  }
+  const token = computeTlsVpnBearerToken(vpnSecret, exporter);
   const req =
     `GET /clean-vpn HTTP/1.1\r\n` +
     `Host: ${checkHost}\r\n` +
@@ -1321,6 +1606,22 @@ async function connectCleanVpnBoringTlsClient(opts) {
       }
     }
     const negotiatedAlpn = resp.alpn != null ? String(resp.alpn) : '';
+    /** H-1+H-2: helper кладёт TLS exporter (base64, label=EXPORTER-clean-vpn-bind) в ok-frame.
+     *  Старый helper без поля — exporter останется null, Bearer уйдёт как legacy v1. */
+    let exporter = null;
+    if (typeof resp.exporter === 'string' && resp.exporter.length > 0) {
+      try {
+        const dec = Buffer.from(resp.exporter, 'base64');
+        if (dec.length === TLS_VPN_EXPORTER_LEN) exporter = dec;
+      } catch {
+        /* ignore — Bearer уедет legacy */
+      }
+    }
+    if (!exporter) {
+      console.warn(
+        '[clean-vpn] boring-tls: helper не вернул `exporter` в ok-frame (старая сборка?) — Bearer v1 legacy, без channel-binding (H-2)',
+      );
+    }
 
     // Нельзя resume stdout до подписки на 'data': в flowing mode без слушателя
     // первые байты TLS application data теряются → HTTP/2 и IPv4 framing ломаются.
@@ -1331,6 +1632,7 @@ async function connectCleanVpnBoringTlsClient(opts) {
       vpnSecret,
       tlsHttpVers: tlsHttpVers ?? null,
       negotiatedAlpn,
+      exporter,
     });
   } catch (e) {
     clearHsTimer();
@@ -1641,6 +1943,79 @@ function tlsClientIp(socket) {
 
 function tlsUtcDayBucket() {
   return Math.floor(Date.now() / 86400000);
+}
+
+/**
+ * Sliding-window rate-limit для TLS cover-page (M-1).
+ * Считает только cover-ответы (`outcome !== 'vpn'`): успешный VPN-handshake счётчик не двигает.
+ * @type {Map<string, { count: number, windowStart: number }>}
+ */
+const tlsCoverRateState = new Map();
+let tlsCoverRateCleanupTimer = null;
+function tlsCoverRateWindowMs() {
+  return parsePositiveEnvInt(
+    'CLEAN_VPN_TLS_COVER_RL_WINDOW_MS',
+    TLS_COVER_RATELIMIT_WINDOW_MS_DEFAULT,
+  );
+}
+function tlsCoverRateLimit() {
+  return parsePositiveEnvInt('CLEAN_VPN_TLS_COVER_RL_MAX', TLS_COVER_RATELIMIT_MAX_DEFAULT);
+}
+function tlsCoverEnsureCleanupTimer() {
+  if (tlsCoverRateCleanupTimer) return;
+  const windowMs = tlsCoverRateWindowMs();
+  tlsCoverRateCleanupTimer = setInterval(() => {
+    const cutoff = Date.now() - 2 * windowMs;
+    for (const [ip, entry] of tlsCoverRateState) {
+      if (entry.windowStart < cutoff) tlsCoverRateState.delete(ip);
+    }
+  }, windowMs);
+  tlsCoverRateCleanupTimer.unref?.();
+}
+/**
+ * Проверить лимит и инкрементировать счётчик. Возвращает true если IP надо throttle.
+ * Вызывать ТОЛЬКО когда `outcome !== 'vpn'`, иначе легитимные клиенты будут резаться при reconnect.
+ * @param {string} ip
+ * @returns {boolean}
+ */
+function tlsCoverShouldThrottle(ip) {
+  tlsCoverEnsureCleanupTimer();
+  const now = Date.now();
+  const windowMs = tlsCoverRateWindowMs();
+  const limit = tlsCoverRateLimit();
+  let entry = tlsCoverRateState.get(ip);
+  if (!entry || now - entry.windowStart >= windowMs) {
+    entry = { count: 1, windowStart: now };
+    tlsCoverRateState.set(ip, entry);
+  } else {
+    entry.count += 1;
+  }
+  return entry.count > limit;
+}
+
+/**
+ * Глобальный семафор pending peek-сокетов на exit (M-4): защита от slow-loris,
+ * который удерживает много TCP-соединений, не отдавая первые байты.
+ * Acquire возвращает release-функцию или null, если лимит исчерпан.
+ * Caller обязан вызывать release ровно один раз (в cleanup peek-handler'а).
+ */
+let exitPeekActive = 0;
+function exitPeekMaxPending() {
+  return parsePositiveEnvInt('CLEAN_VPN_EXIT_PEEK_MAX', EXIT_PEEK_MAX_PENDING_DEFAULT);
+}
+function exitPeekTimeoutMs() {
+  return parsePositiveEnvInt('CLEAN_VPN_EXIT_PEEK_TIMEOUT_MS', EXIT_PEEK_TIMEOUT_MS_DEFAULT);
+}
+function exitPeekAcquire() {
+  const max = exitPeekMaxPending();
+  if (exitPeekActive >= max) return null;
+  exitPeekActive += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (exitPeekActive > 0) exitPeekActive -= 1;
+  };
 }
 
 /** После того как байты уже шли через pipe, такие errno — типичный разрыв пира, не сбой прокси. */
@@ -2237,6 +2612,9 @@ function waitForSignalingJson(sigWs, pred, timeoutMs) {
  */
 async function runUdpPunchAsPeer(opts) {
   const { udpSock, sigWs, ice, logPrefix } = opts;
+  /** C-2: PSK для сигналинга udp-punch (просто HMAC nonce + ts, без DTLS). */
+  const psk = opts.signalingPsk || null;
+  const pskRequired = opts.signalingPskRequired !== false;
   const STUN_MS = 4000;
   const SIG_MS = 60000;
   const PUNCH_MS = 8000;
@@ -2244,6 +2622,37 @@ async function runUdpPunchAsPeer(opts) {
   console.log(`[clean-vpn] UDP punch (${logPrefix}): reflexive ${mapped.address}:${mapped.port} (STUN)`);
   if (sigWs.readyState !== WebSocket.OPEN) {
     throw new Error('[clean-vpn] UDP punch: сигнальный WebSocket не OPEN');
+  }
+  if (psk) {
+    const nonceHex = randomBytes(8).toString('hex');
+    const ts = Date.now();
+    const mac = signUdpPunchBind(psk, nonceHex, ts);
+    sigWs.send(
+      JSON.stringify({
+        type: SIGNALING_UDPBIND_MSG_TYPE,
+        nonce: nonceHex,
+        ts,
+        mac,
+      }),
+    );
+    const peerBind = await waitForSignalingJson(
+      sigWs,
+      (m) => m.type === SIGNALING_UDPBIND_MSG_TYPE,
+      SIG_MS,
+    );
+    const err = verifyUdpPunchBind(psk, peerBind);
+    if (err) {
+      throw new Error(`[clean-vpn] UDP punch (${logPrefix}): подпись пира недопустима (bind_${err})`);
+    }
+    console.log(`[clean-vpn] UDP punch (${logPrefix}): подпись peer'а ОК (C-2)`);
+  } else if (pskRequired) {
+    throw new Error(
+      `[clean-vpn] UDP punch (${logPrefix}): для C-2 нужен PSK (clean-vpn-hmac.key). Отключите проверку через --signaling-psk-required=false (только для отладки).`,
+    );
+  } else {
+    console.warn(
+      `[clean-vpn] UDP punch (${logPrefix}): PSK не задан, C-2 сигналинг bind пропущен (--signaling-psk-required=false)`,
+    );
   }
   sigWs.send(
     JSON.stringify({
@@ -2327,14 +2736,92 @@ function tryParseWebrtcSignalingJson(data, isBinary) {
 }
 
 /**
+ * Парсер минимально достаточных полей ICE candidate-line (RFC 5245):
+ *   candidate:<foundation> <component> <transport> <priority> <ip> <port> typ <type> ...
+ * Возвращает null если не удаётся распознать.
+ * @param {string} candidate
+ * @returns {{ ip: string, port: string, type: string }|null}
+ */
+function parseIceCandidateFields(candidate) {
+  if (!candidate) return null;
+  const trimmed = String(candidate).trim().replace(/^a=/i, '');
+  const parts = trimmed.split(/\s+/);
+  if (parts.length < 8) return null;
+  const typIdx = parts.indexOf('typ');
+  if (typIdx === -1 || typIdx + 1 >= parts.length) return null;
+  return { ip: parts[4] || '', port: parts[5] || '', type: parts[typIdx + 1] || '' };
+}
+
+/**
+ * Приватный/loopback/link-local адрес (RFC1918, IPv6 ULA, link-local).
+ * @param {string} ip
+ */
+function isPrivateOrLoopbackIp(ip) {
+  if (!ip) return false;
+  if (ip === '0.0.0.0' || ip === '::' || ip === '::1') return true;
+  if (ip.startsWith('127.')) return true;
+  if (ip.startsWith('10.')) return true;
+  if (ip.startsWith('192.168.')) return true;
+  if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(ip)) return true;
+  if (/^169\.254\./.test(ip)) return true;
+  const low = ip.toLowerCase();
+  if (low.startsWith('fc') || low.startsWith('fd')) return true;
+  if (low.startsWith('fe80:')) return true;
+  return false;
+}
+
+/**
+ * Отбросить ли ICE candidate (M-5): `typ host` и `typ prflx` для приватных диапазонов RFC1918
+ * (утечка внутренних IP). `srflx`/`relay` остаются — это публичные mapping'и, нужны для NAT-traversal.
+ * Host с публичным IPv4 (например, сервер с белым адресом) тоже остаётся — не утечка.
+ * При `allowHost=true` ничего не фильтруем (флаг отладки).
+ * @param {string} candidate
+ * @param {boolean} allowHost
+ */
+function shouldDropIceCandidate(candidate, allowHost) {
+  if (allowHost) return false;
+  const f = parseIceCandidateFields(candidate);
+  if (!f) return false;
+  if (f.type === 'host' || f.type === 'prflx') {
+    return isPrivateOrLoopbackIp(f.ip);
+  }
+  return false;
+}
+
+/**
+ * Обёртка для отправки локального candidate с фильтром host/prflx-RFC1918 (M-5).
+ * @param {(msg: { type: string, candidate: string, mid?: string }) => void} signal
+ * @param {string} candidate
+ * @param {string|undefined} mid
+ * @param {boolean} allowHost
+ * @param {string} logPrefix
+ */
+function emitFilteredLocalCandidate(signal, candidate, mid, allowHost, logPrefix) {
+  if (shouldDropIceCandidate(candidate, allowHost)) {
+    console.log(
+      `[clean-vpn] ${logPrefix}: drop local host/prflx-private candidate (M-5; --allow-host-candidates для opt-out)`,
+    );
+    return;
+  }
+  signal({ type: 'candidate', candidate, mid });
+}
+
+/**
  * @param {import('node-datachannel').PeerConnection|null} pc
  * @param {{ type: string, sdp?: string, candidate?: string, mid?: string }} msg
+ * @param {{ allowHostCandidates?: boolean, logPrefix?: string }} [opts]
  */
-function applyWebrtcRemoteSignal(pc, msg) {
+function applyWebrtcRemoteSignal(pc, msg, opts = {}) {
   if (!pc) return;
   if (msg.type === 'offer') pc.setRemoteDescription(msg.sdp, 'Offer');
   else if (msg.type === 'answer') pc.setRemoteDescription(msg.sdp, 'Answer');
   else if (msg.type === 'candidate') {
+    if (shouldDropIceCandidate(msg.candidate, !!opts.allowHostCandidates)) {
+      console.log(
+        `[clean-vpn] ${opts.logPrefix || 'webrtc'}: drop remote host/prflx-private candidate (M-5)`,
+      );
+      return;
+    }
     try {
       pc.addRemoteCandidate(msg.candidate, msg.mid || '0');
     } catch (e) {
@@ -2356,11 +2843,49 @@ function logWebrtcSigWsError(err) {
  *   clearIfStill: (pc: import('node-datachannel').PeerConnection) => void;
  * }} pcRef
  */
-function attachCleanVpnWebrtcExitSignaling(ws, tun, ice, pcRef, tunBridgeOpts = BRIDGE_OPTS_EXIT) {
+function attachCleanVpnWebrtcExitSignaling(
+  ws,
+  tun,
+  ice,
+  pcRef,
+  tunBridgeOpts = BRIDGE_OPTS_EXIT,
+  iceOpts = {},
+) {
   let handshakeDone = false;
   /** @type {import('node-datachannel').PeerConnection|null} */
   let connPc = null;
   const signal = createWebrtcWsSignal(ws);
+  const allowHost = !!iceOpts.allowHostCandidates;
+  /** C-2: PSK для подписания/проверки DTLS fingerprint. null → fallback с warning. */
+  const psk = iceOpts.signalingPsk || null;
+  const pskRequired = iceOpts.signalingPskRequired !== false;
+  /** Expected remote (client) fingerprint после получения `clean-vpn-bind`. */
+  let expectedRemoteFingerprint = /** @type {string|null} */ (null);
+  /** @type {Set<string>} */
+  const seenNonces = new Set();
+
+  const closeWithReason = (reason) => {
+    console.warn(`[clean-vpn] webrtc exit signaling: отклоняем (${reason})`);
+    try {
+      ws.close(1008, reason);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const sendOwnBindForFingerprint = (fp) => {
+    if (!psk || !fp) return;
+    const nonceHex = randomBytes(8).toString('hex');
+    const ts = Date.now();
+    const mac = signSignalingBind(psk, fp, nonceHex, ts);
+    signal({
+      type: SIGNALING_BIND_MSG_TYPE,
+      fingerprint: fp,
+      nonce: nonceHex,
+      ts,
+      mac,
+    });
+  };
 
   const setupInitiator = () => {
     if (handshakeDone) return;
@@ -2372,11 +2897,20 @@ function attachCleanVpnWebrtcExitSignaling(ws, tun, ice, pcRef, tunBridgeOpts = 
     });
     pcRef.setActive(connPc);
 
+    let boundSent = false;
     connPc.onLocalDescription((sdp, t) => {
+      const fp = extractDtlsFingerprintFromSdp(sdp);
+      if (psk && fp && !boundSent) {
+        boundSent = true;
+        sendOwnBindForFingerprint(fp);
+      } else if (!psk && pskRequired) {
+        closeWithReason('no_signaling_psk');
+        return;
+      }
       signal({ type: String(t).toLowerCase(), sdp });
     });
     connPc.onLocalCandidate((candidate, mid) => {
-      signal({ type: 'candidate', candidate, mid });
+      emitFilteredLocalCandidate(signal, candidate, mid, allowHost, 'webrtc exit');
     });
     connPc.onStateChange((state) => {
       console.log('[clean-vpn] webrtc exit PC:', state);
@@ -2398,11 +2932,58 @@ function attachCleanVpnWebrtcExitSignaling(ws, tun, ice, pcRef, tunBridgeOpts = 
   ws.on('message', (data, isBinary) => {
     const msg = tryParseWebrtcSignalingJson(data, isBinary);
     if (!msg) return;
+    if (msg.type === SIGNALING_BIND_MSG_TYPE) {
+      if (!psk) {
+        if (pskRequired) {
+          closeWithReason('no_psk');
+          return;
+        }
+        return;
+      }
+      const err = verifySignalingBind(psk, msg);
+      if (err) {
+        closeWithReason(`bind_${err}`);
+        return;
+      }
+      if (seenNonces.has(msg.nonce)) {
+        closeWithReason('bind_nonce_replay');
+        return;
+      }
+      seenNonces.add(msg.nonce);
+      expectedRemoteFingerprint = msg.fingerprint;
+      console.log(
+        `[clean-vpn] webrtc exit signaling: принят ${SIGNALING_BIND_MSG_TYPE} (fingerprint=${msg.fingerprint})`,
+      );
+      return;
+    }
     if (msg.type === 'clean-vpn-ready' && !handshakeDone) {
+      if (psk == null && pskRequired) {
+        closeWithReason('exit_no_psk');
+        return;
+      }
       setupInitiator();
       return;
     }
-    applyWebrtcRemoteSignal(connPc, msg);
+    if (msg.type === 'offer' || msg.type === 'answer') {
+      if (psk) {
+        if (!expectedRemoteFingerprint) {
+          closeWithReason('bind_missing_before_sdp');
+          return;
+        }
+        const fp = extractDtlsFingerprintFromSdp(msg.sdp);
+        if (!signalingFingerprintsEqual(fp, expectedRemoteFingerprint)) {
+          closeWithReason('bind_sdp_fingerprint_mismatch');
+          return;
+        }
+      } else if (pskRequired) {
+        closeWithReason('no_psk_for_sdp');
+        return;
+      }
+    }
+    applyWebrtcRemoteSignal(connPc, msg, {
+      allowHostCandidates: allowHost,
+      logPrefix: 'webrtc exit',
+    });
   });
 
   ws.on('close', () => {
@@ -2425,8 +3006,31 @@ function attachCleanVpnWebrtcExitSignaling(ws, tun, ice, pcRef, tunBridgeOpts = 
  *   clearIfStill: (pc: import('node-datachannel').PeerConnection) => void;
  * }} pcRef
  */
-function attachCleanVpnWebrtcClientSignaling(ws, tun, ice, pcRef, tunBridgeOpts = BRIDGE_OPTS_CLIENT) {
+function attachCleanVpnWebrtcClientSignaling(
+  ws,
+  tun,
+  ice,
+  pcRef,
+  tunBridgeOpts = BRIDGE_OPTS_CLIENT,
+  iceOpts = {},
+) {
   const signal = createWebrtcWsSignal(ws);
+  const allowHost = !!iceOpts.allowHostCandidates;
+  /** C-2 */
+  const psk = iceOpts.signalingPsk || null;
+  const pskRequired = iceOpts.signalingPskRequired !== false;
+  let expectedRemoteFingerprint = /** @type {string|null} */ (null);
+  /** @type {Set<string>} */
+  const seenNonces = new Set();
+
+  const closeWithReason = (reason) => {
+    console.warn(`[clean-vpn] webrtc client signaling: отклоняем (${reason})`);
+    try {
+      ws.close(1008, reason);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const pcConfig = {
     iceServers: ice.ndcIceServers,
@@ -2436,11 +3040,34 @@ function attachCleanVpnWebrtcClientSignaling(ws, tun, ice, pcRef, tunBridgeOpts 
   const pc = new PeerConnection('clean-vpn-client', pcConfig);
   pcRef.setActive(pc);
 
+  const sendOwnBindForFingerprint = (fp) => {
+    if (!psk || !fp) return;
+    const nonceHex = randomBytes(8).toString('hex');
+    const ts = Date.now();
+    const mac = signSignalingBind(psk, fp, nonceHex, ts);
+    signal({
+      type: SIGNALING_BIND_MSG_TYPE,
+      fingerprint: fp,
+      nonce: nonceHex,
+      ts,
+      mac,
+    });
+  };
+
+  let boundSent = false;
   pc.onLocalDescription((sdp, t) => {
+    const fp = extractDtlsFingerprintFromSdp(sdp);
+    if (psk && fp && !boundSent) {
+      boundSent = true;
+      sendOwnBindForFingerprint(fp);
+    } else if (!psk && pskRequired) {
+      closeWithReason('no_signaling_psk');
+      return;
+    }
     signal({ type: String(t).toLowerCase(), sdp });
   });
   pc.onLocalCandidate((candidate, mid) => {
-    signal({ type: 'candidate', candidate, mid });
+    emitFilteredLocalCandidate(signal, candidate, mid, allowHost, 'webrtc client');
   });
   pc.onStateChange((state) => {
     console.log('[clean-vpn] webrtc client PC:', state);
@@ -2459,7 +3086,50 @@ function attachCleanVpnWebrtcClientSignaling(ws, tun, ice, pcRef, tunBridgeOpts 
   ws.on('message', (data, isBinary) => {
     const msg = tryParseWebrtcSignalingJson(data, isBinary);
     if (!msg) return;
-    applyWebrtcRemoteSignal(pc, msg);
+    if (msg.type === SIGNALING_BIND_MSG_TYPE) {
+      if (!psk) {
+        if (pskRequired) {
+          closeWithReason('no_psk');
+          return;
+        }
+        return;
+      }
+      const err = verifySignalingBind(psk, msg);
+      if (err) {
+        closeWithReason(`bind_${err}`);
+        return;
+      }
+      if (seenNonces.has(msg.nonce)) {
+        closeWithReason('bind_nonce_replay');
+        return;
+      }
+      seenNonces.add(msg.nonce);
+      expectedRemoteFingerprint = msg.fingerprint;
+      console.log(
+        `[clean-vpn] webrtc client signaling: принят ${SIGNALING_BIND_MSG_TYPE} (fingerprint=${msg.fingerprint})`,
+      );
+      return;
+    }
+    if (msg.type === 'offer' || msg.type === 'answer') {
+      if (psk) {
+        if (!expectedRemoteFingerprint) {
+          closeWithReason('bind_missing_before_sdp');
+          return;
+        }
+        const fp = extractDtlsFingerprintFromSdp(msg.sdp);
+        if (!signalingFingerprintsEqual(fp, expectedRemoteFingerprint)) {
+          closeWithReason('bind_sdp_fingerprint_mismatch');
+          return;
+        }
+      } else if (pskRequired) {
+        closeWithReason('no_psk_for_sdp');
+        return;
+      }
+    }
+    applyWebrtcRemoteSignal(pc, msg, {
+      allowHostCandidates: allowHost,
+      logPrefix: 'webrtc client',
+    });
   });
 
   ws.on('error', logWebrtcSigWsError);
@@ -2521,6 +3191,8 @@ function parseArgs(argv) {
     boringTlsJa3Strict: false,
     tlsLogJa3: false,
     ja3Verbose: false,
+    allowHostCandidates: false,
+    signalingPskRequired: true,
   };
   for (const a of argv) {
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
@@ -2594,6 +3266,12 @@ function parseArgs(argv) {
       out.tlsLogJa3 = true;
     } else if (a === '--ja3-verbose') {
       out.ja3Verbose = true;
+    } else if (a === '--allow-host-candidates') {
+      out.allowHostCandidates = true;
+    } else if (a === '--signaling-psk-required=false' || a === '--no-signaling-psk-required') {
+      out.signalingPskRequired = false;
+    } else if (a === '--signaling-psk-required' || a === '--signaling-psk-required=true') {
+      out.signalingPskRequired = true;
     }
   }
   if (out.type) out.type = String(out.type).trim();
@@ -2626,20 +3304,69 @@ function parseTransparentTlsTunnelPeerIpv4(s) {
  */
 function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, startBridgeTcp, ttlLogOpts) {
   const need = TTL_FRAME_MAGIC_PREFIX.length;
+  const peer = tlsClientIp(sock);
+  const rp = sock.remotePort ?? '?';
+  const release = exitPeekAcquire();
+  if (!release) {
+    console.log(
+      `[clean-vpn transparent-tls exit] peek отклонён: лимит pending peek превышен; peer=${peer}:${rp}`,
+    );
+    try {
+      sock.destroy();
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
   /** @type {Buffer[]} */
   let acc = [];
   let len = 0;
+  let finalized = false;
+  /** @type {ReturnType<typeof setTimeout>|undefined} */
+  let stallTimer;
 
-  /** @type {(...args: any[]) => void} */
-  const cleanup = () => sock.off('data', onData);
+  const cleanupPeek = () => {
+    sock.off('data', onData);
+    sock.off('error', onPeekErrOrClose);
+    sock.off('close', onPeekErrOrClose);
+    if (stallTimer !== undefined) {
+      clearTimeout(stallTimer);
+      stallTimer = undefined;
+    }
+    release();
+  };
+
+  const failStale = (reason) => {
+    if (finalized) return;
+    finalized = true;
+    cleanupPeek();
+    console.log(
+      `[clean-vpn transparent-tls exit] peek прерван: peer=${peer}:${rp} reason=${reason} (ожидалось ≥${need} B для CVPTX/IPv4 dispatch)`,
+    );
+    try {
+      sock.destroy();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const timeoutMs = exitPeekTimeoutMs();
+  stallTimer = setTimeout(() => failStale(`${timeoutMs}ms без данных`), timeoutMs);
+  stallTimer.unref?.();
+
+  function onPeekErrOrClose() {
+    failStale('error/close до маршрутизации');
+  }
 
   /** @type {(chunk: Buffer | string) => void} */
   function onData(chunk) {
+    if (finalized) return;
     const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     acc.push(b);
     len += b.length;
     if (len < need) return;
-    cleanup();
+    finalized = true;
+    cleanupPeek();
 
     const merged = Buffer.concat(acc, len);
     const head = merged.subarray(0, need);
@@ -2658,6 +3385,8 @@ function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, startBridg
   }
 
   sock.on('data', onData);
+  sock.once('error', onPeekErrOrClose);
+  sock.once('close', onPeekErrOrClose);
 }
 
 /**
@@ -2667,12 +3396,24 @@ function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, startBridg
  */
 function peekDispatchExitComboTlsSock(sock, vpnSecretBuf, tlsCtx, ttlLogOpts) {
   const need = TTL_FRAME_MAGIC_PREFIX.length;
+  const peer = tlsClientIp(sock);
+  const rp = sock.remotePort ?? '?';
+  const release = exitPeekAcquire();
+  if (!release) {
+    console.log(
+      `[clean-vpn combo-tls exit] peek отклонён: лимит pending peek превышен; peer=${peer}:${rp}`,
+    );
+    try {
+      sock.destroy();
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
   /** @type {Buffer[]} */
   let acc = [];
   let len = 0;
   let finalized = false;
-  const peer = tlsClientIp(sock);
-  const rp = sock.remotePort ?? '?';
   /** @type {ReturnType<typeof setTimeout>|undefined} */
   let stallTimer;
 
@@ -2685,6 +3426,7 @@ function peekDispatchExitComboTlsSock(sock, vpnSecretBuf, tlsCtx, ttlLogOpts) {
       clearTimeout(stallTimer);
       stallTimer = undefined;
     }
+    release();
   };
 
   const failStale = (reason) => {
@@ -2701,7 +3443,8 @@ function peekDispatchExitComboTlsSock(sock, vpnSecretBuf, tlsCtx, ttlLogOpts) {
     }
   };
 
-  stallTimer = setTimeout(() => failStale('60s без данных'), 60000);
+  const timeoutMs = exitPeekTimeoutMs();
+  stallTimer = setTimeout(() => failStale(`${timeoutMs}ms без данных`), timeoutMs);
   stallTimer.unref?.();
 
   function onPeekErrOrClose() {
@@ -4621,23 +5364,35 @@ function tlsVpnBearerFromAuthorizationHeader(raw) {
 /**
  * Общая проверка VPN vs cover по методу, пути и bearer.
  * @param {'http1'|'http2'} layer — GET для h1, POST для h2.
+ * @param {Buffer|null} [exporter=null] — TLS exporter этой сессии (RFC 5705) для channel-binding v2.
  */
-function mapCoverOutcomeFromParts(method, path, bearer, vpnSecret, layer) {
+function mapCoverOutcomeFromParts(method, path, bearer, vpnSecret, layer, exporter = null) {
   const wantMethod = layer === 'http2' ? 'POST' : 'GET';
-  if (method !== wantMethod) return { outcome: 'cover_wrong_method', windowOffset: null };
-  if (path !== '/clean-vpn') return { outcome: 'cover_wrong_path', windowOffset: null };
-  if (!bearer) return { outcome: 'cover_no_bearer', windowOffset: null };
-  const v = verifyTlsVpnBearerToken(vpnSecret, bearer);
-  if (!v.ok) return { outcome: 'cover_bad_bearer', windowOffset: null };
-  return { outcome: 'vpn', windowOffset: v.windowOffset };
+  if (method !== wantMethod) {
+    return { outcome: 'cover_wrong_method', windowOffset: null, legacy: false };
+  }
+  if (path !== '/clean-vpn') {
+    return { outcome: 'cover_wrong_path', windowOffset: null, legacy: false };
+  }
+  if (!bearer) return { outcome: 'cover_no_bearer', windowOffset: null, legacy: false };
+  const v = verifyTlsVpnBearerToken(vpnSecret, bearer, exporter);
+  if (!v.ok) return { outcome: 'cover_bad_bearer', windowOffset: null, legacy: false };
+  return { outcome: 'vpn', windowOffset: v.windowOffset, legacy: v.legacy };
 }
 
 /** Маппинг распарсенной HTTP/1.1 преамбулы на конкретный cover_* outcome. */
-function mapCoverOutcome(parsed, vpnSecret) {
+function mapCoverOutcome(parsed, vpnSecret, exporter = null) {
   if (!parsed || parsed.kind !== 'http') {
-    return { outcome: 'cover_non_http', windowOffset: null };
+    return { outcome: 'cover_non_http', windowOffset: null, legacy: false };
   }
-  return mapCoverOutcomeFromParts(parsed.method, parsed.path, parsed.bearer, vpnSecret, 'http1');
+  return mapCoverOutcomeFromParts(
+    parsed.method,
+    parsed.path,
+    parsed.bearer,
+    vpnSecret,
+    'http1',
+    exporter,
+  );
 }
 
 /**
@@ -4744,6 +5499,18 @@ function wireExitTlsSocket(tlsSock, ctx) {
       }, 30000);
       idleTimer.unref?.();
       const respondPublic = (outcome, prefixHex) => {
+        if (tlsCoverShouldThrottle(st.ip)) {
+          setOutcomeOnce('cover_ratelimit', `reason=${outcome}`);
+          console.log(
+            `[clean-vpn] tls cover: ratelimit ip=${st.ip} port=${st.port ?? '?'} reason=${outcome} prefix=${prefixHex} http=${st.httpLabel}`,
+          );
+          try {
+            tlsSock.destroy();
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
         setOutcomeOnce(outcome, `reason=${outcome}`);
         console.log(
           `[clean-vpn] tls cover: served ip=${st.ip} port=${st.port ?? '?'} reason=${outcome} prefix=${prefixHex} http=${st.httpLabel}`,
@@ -4786,7 +5553,12 @@ function wireExitTlsSocket(tlsSock, ctx) {
         tlsSock.off('data', onHttp);
         clearTimeout(idleTimer);
         const parsed = parseHttpRequestForVpn(httpBuf);
-        const { outcome, windowOffset } = mapCoverOutcome(parsed, ctx.vpnSecret);
+        const exporter = tlsVpnExporterFromSocket(tlsSock);
+        const { outcome, windowOffset, legacy } = mapCoverOutcome(
+          parsed,
+          ctx.vpnSecret,
+          exporter,
+        );
         if (outcome !== 'vpn') {
           respondPublic(outcome, tlsPreviewHex16(httpBuf));
           return;
@@ -4796,8 +5568,14 @@ function wireExitTlsSocket(tlsSock, ctx) {
         const ack = `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Type: application/octet-stream\r\n\r\n`;
         tlsSock.write(ack);
         const rest = httpBuf.subarray(idx + 4);
+        const bearerLabel = legacy ? ' bearer_legacy=1' : '';
+        if (legacy) {
+          console.warn(
+            `[clean-vpn] tls: принят legacy Bearer (v1, без channel-binding) ip=${st.ip} port=${st.port ?? '?'} — обновите client до Phase 2 (H-1+H-2)`,
+          );
+        }
         console.log(
-          `[clean-vpn] tls vpn: connected ip=${st.ip} port=${st.port ?? '?'} windowOffset=${windowOffset} http=${st.httpLabel}`,
+          `[clean-vpn] tls vpn: connected ip=${st.ip} port=${st.port ?? '?'} windowOffset=${windowOffset}${bearerLabel} http=${st.httpLabel}`,
         );
         ctx.startBridge(tlsSock, rest.length ? rest : null, 'tcp');
       };
@@ -4968,12 +5746,15 @@ function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
     const method = headers[':method'];
     const path = headers[':path'];
     const bearer = tlsVpnBearerFromAuthorizationHeader(headers.authorization);
-    const { outcome, windowOffset } = mapCoverOutcomeFromParts(
+    const tlsForDestroy = /** @type {import('tls').TLSSocket} */ (stream.session.socket);
+    const exporter = tlsVpnExporterFromSocket(tlsForDestroy);
+    const { outcome, windowOffset, legacy } = mapCoverOutcomeFromParts(
       typeof method === 'string' ? method : '',
       typeof path === 'string' ? path : '',
       bearer,
       ctx.vpnSecret,
       'http2',
+      exporter,
     );
 
     const previewBuf = Buffer.from(
@@ -4981,9 +5762,24 @@ function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
       'utf8',
     );
 
-    const tlsForDestroy = /** @type {import('tls').TLSSocket} */ (stream.session.socket);
-
     if (outcome !== 'vpn') {
+      if (tlsCoverShouldThrottle(st.ip)) {
+        setOutcomeOnce('cover_ratelimit', `reason=${outcome}`);
+        console.log(
+          `[clean-vpn] tls cover: ratelimit ip=${st.ip} port=${st.port ?? '?'} reason=${outcome} prefix=${tlsPreviewHex16(previewBuf)} http=${st.httpLabel}`,
+        );
+        try {
+          stream.destroy();
+        } catch {
+          /* ignore */
+        }
+        try {
+          tlsForDestroy.destroy();
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       setOutcomeOnce(outcome, `reason=${outcome}`);
       console.log(
         `[clean-vpn] tls cover: served ip=${st.ip} port=${st.port ?? '?'} reason=${outcome} prefix=${tlsPreviewHex16(previewBuf)} http=${st.httpLabel}`,
@@ -5033,8 +5829,14 @@ function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
       st.bytesIn += d.length;
     });
 
+    const bearerLabel = legacy ? ' bearer_legacy=1' : '';
+    if (legacy) {
+      console.warn(
+        `[clean-vpn] tls: принят legacy Bearer (v1, без channel-binding) ip=${st.ip} port=${st.port ?? '?'} — обновите client до Phase 2 (H-1+H-2)`,
+      );
+    }
     console.log(
-      `[clean-vpn] tls vpn: connected ip=${st.ip} port=${st.port ?? '?'} windowOffset=${windowOffset} http=${st.httpLabel}`,
+      `[clean-vpn] tls vpn: connected ip=${st.ip} port=${st.port ?? '?'} windowOffset=${windowOffset}${bearerLabel} http=${st.httpLabel}`,
     );
 
     const wrapped = http2StreamToSocketLike(stream, stream.session, tlsForDestroy);
@@ -5458,6 +6260,28 @@ function resolveLinuxArmSystemChromium() {
   return null;
 }
 
+/**
+ * H-4: проверка secret в request.url локального 127.0.0.1 WS. `timingSafeEqual` для защиты от timing.
+ * @param {import('http').IncomingMessage} request
+ * @param {string} expectedSecret
+ */
+function localWsRequestHasSecret(request, expectedSecret) {
+  if (!expectedSecret) return false;
+  try {
+    const url = String(request.url || '');
+    const q = url.indexOf('?');
+    if (q < 0) return false;
+    const search = new URLSearchParams(url.slice(q + 1));
+    const got = search.get('t') || '';
+    const a = Buffer.from(String(got), 'utf8');
+    const b = Buffer.from(String(expectedSecret), 'utf8');
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
 /** Встроенная страница для режима CDP (медленный путь): один WS к exit + exposeFunction/evaluate на пакет. */
 function buildWsChromeCdpEmbeddedPageHtml(wsUrl) {
   const u = JSON.stringify(wsUrl);
@@ -5577,6 +6401,8 @@ async function createWsChromeClientBridge(opts) {
   /** @type {string} */
   let localWsUrl = '';
 
+  /** H-4: random secret в URL локального WS — защита от чужих процессов на хосте. */
+  let localSecret = '';
   if (opts.useLocalBridge) {
     localWss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await awaitWebSocketServerListening(localWss);
@@ -5589,7 +6415,8 @@ async function createWsChromeClientBridge(opts) {
       }
       throw new Error('ws-chrome: не удалось получить адрес локального WSS');
     }
-    localWsUrl = `ws://127.0.0.1:${ad.port}/`;
+    localSecret = randomBytes(16).toString('hex');
+    localWsUrl = `ws://127.0.0.1:${ad.port}/?t=${localSecret}`;
   }
 
   let puppeteerMod;
@@ -5663,7 +6490,21 @@ async function createWsChromeClientBridge(opts) {
         () => reject(new Error('ws-chrome: таймаут подключения локального WS моста')),
         120000,
       );
-      localWss.on('connection', (ws) => {
+      localWss.on('connection', (ws, request) => {
+        if (!localWsRequestHasSecret(request, localSecret)) {
+          console.warn('[clean-vpn] ws-chrome: локальный WS — отклонён без/с неверным ?t=… (H-4)');
+          try {
+            ws.close(1008, 'bad token');
+          } catch {
+            /* ignore */
+          }
+          try {
+            request.socket?.destroy();
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
         if (localConnDone) {
           try {
             ws.close();
@@ -5775,16 +6616,125 @@ function buildRtcChromeEmbeddedPageHtml(
   localWsUrl,
   iceServers,
   iceTransportPolicy,
+  allowHostCandidates,
+  signalingPskBase64,
+  signalingPskRequired,
 ) {
   const sig = JSON.stringify(signalingWsUrl);
   const loc = JSON.stringify(localWsUrl);
   const ice = JSON.stringify(iceServers);
   const pol = JSON.stringify(iceTransportPolicy);
+  const allowHost = JSON.stringify(!!allowHostCandidates);
+  const pskB64 = JSON.stringify(signalingPskBase64 || null);
+  const pskReq = JSON.stringify(!!signalingPskRequired);
+  const bindMsgType = JSON.stringify(SIGNALING_BIND_MSG_TYPE);
+  const bindCtx = JSON.stringify(SIGNALING_BIND_CONTEXT);
+  const bindWindowMs = JSON.stringify(SIGNALING_BIND_TS_WINDOW_MS);
   return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><script>
 (function () {
   var OPEN = 1;
   var iceServers = ${ice};
   var iceTransportPolicy = ${pol};
+  var allowHostCandidates = ${allowHost};
+  var signalingPskBase64 = ${pskB64};
+  var signalingPskRequired = ${pskReq};
+  var BIND_MSG_TYPE = ${bindMsgType};
+  var BIND_CTX = ${bindCtx};
+  var BIND_TS_WINDOW_MS = ${bindWindowMs};
+  // C-2 (Phase 2): подписи сигналинга через Web Crypto + HMAC-SHA256.
+  var pskKeyPromise = null;
+  function getPskKey() {
+    if (pskKeyPromise) return pskKeyPromise;
+    if (!signalingPskBase64) return Promise.resolve(null);
+    var bin = atob(signalingPskBase64);
+    var arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    pskKeyPromise = crypto.subtle.importKey('raw', arr.buffer, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    return pskKeyPromise;
+  }
+  function bufToHex(buf) {
+    var v = new Uint8Array(buf);
+    var s = '';
+    for (var i = 0; i < v.length; i++) {
+      var h = v[i].toString(16);
+      if (h.length < 2) h = '0' + h;
+      s += h;
+    }
+    return s;
+  }
+  function hexToBuf(hex) {
+    var n = hex.length / 2;
+    var arr = new Uint8Array(n);
+    for (var i = 0; i < n; i++) arr[i] = parseInt(hex.substr(i * 2, 2), 16);
+    return arr.buffer;
+  }
+  async function signBind(fp, nonceHex, ts) {
+    var key = await getPskKey();
+    if (!key) return null;
+    var data = BIND_CTX + ':' + ts + ':' + nonceHex + ':' + fp;
+    var encoder = new TextEncoder();
+    var sig = await crypto.subtle.sign('HMAC', key, encoder.encode(data));
+    return bufToHex(sig).slice(0, 32);
+  }
+  async function verifyBind(msg) {
+    if (!msg || typeof msg !== 'object') return 'no_obj';
+    if (typeof msg.fingerprint !== 'string' || !msg.fingerprint) return 'no_fingerprint';
+    if (typeof msg.nonce !== 'string' || !/^[0-9a-f]{16,128}$/i.test(msg.nonce)) return 'bad_nonce';
+    if (typeof msg.ts !== 'number' || !isFinite(msg.ts)) return 'bad_ts';
+    if (typeof msg.mac !== 'string' || !/^[0-9a-f]{32}$/i.test(msg.mac)) return 'bad_mac';
+    if (Math.abs(Date.now() - msg.ts) > BIND_TS_WINDOW_MS) return 'ts_window';
+    var expected = (await signBind(msg.fingerprint, msg.nonce, msg.ts));
+    if (!expected) return 'no_key';
+    if (expected.toLowerCase() !== msg.mac.toLowerCase()) return 'mac_mismatch';
+    return null;
+  }
+  function extractFp(sdp) {
+    if (typeof sdp !== 'string') return null;
+    var m = /^a=fingerprint:\\s*([^\\s]+)\\s+([0-9A-Fa-f:]+)\\s*$/m.exec(sdp);
+    if (!m) return null;
+    return m[1].toLowerCase() + ' ' + m[2].toUpperCase();
+  }
+  function fpEq(a, b) {
+    if (!a || !b) return false;
+    return String(a).trim().toLowerCase().replace(/\\s+/g, ' ') === String(b).trim().toLowerCase().replace(/\\s+/g, ' ');
+  }
+  function randomNonceHex() {
+    var arr = new Uint8Array(8);
+    crypto.getRandomValues(arr);
+    return bufToHex(arr.buffer);
+  }
+  var expectedRemoteFp = null;
+  var seenNonces = Object.create(null);
+  // M-5 filter: drop typ host / typ prflx with private IPs (RFC1918 / loopback / link-local / IPv6 ULA)
+  function parseIceCandidate(c) {
+    if (!c) return null;
+    var s = String(c).trim().replace(/^a=/i, '');
+    var parts = s.split(/\\s+/);
+    if (parts.length < 8) return null;
+    var ti = parts.indexOf('typ');
+    if (ti < 0 || ti + 1 >= parts.length) return null;
+    return { ip: parts[4] || '', port: parts[5] || '', type: parts[ti + 1] || '' };
+  }
+  function isPrivateIp(ip) {
+    if (!ip) return false;
+    if (ip === '0.0.0.0' || ip === '::' || ip === '::1') return true;
+    if (ip.indexOf('127.') === 0) return true;
+    if (ip.indexOf('10.') === 0) return true;
+    if (ip.indexOf('192.168.') === 0) return true;
+    if (/^172\\.(1[6-9]|2[0-9]|3[01])\\./.test(ip)) return true;
+    if (/^169\\.254\\./.test(ip)) return true;
+    var lo = ip.toLowerCase();
+    if (lo.indexOf('fc') === 0 || lo.indexOf('fd') === 0) return true;
+    if (lo.indexOf('fe80:') === 0) return true;
+    return false;
+  }
+  function shouldDropIce(c) {
+    if (allowHostCandidates) return false;
+    var f = parseIceCandidate(c);
+    if (!f) return false;
+    if (f.type === 'host' || f.type === 'prflx') return isPrivateIp(f.ip);
+    return false;
+  }
   var sigWs = new WebSocket(${sig});
   var localWs = new WebSocket(${loc});
   localWs.binaryType = 'arraybuffer';
@@ -5884,6 +6834,7 @@ function buildRtcChromeEmbeddedPageHtml(
   pc.onicecandidate = function (e) {
     if (!e.candidate) return;
     if (sigWs.readyState !== OPEN) return;
+    if (shouldDropIce(e.candidate.candidate)) return;
     try {
       sigWs.send(
         JSON.stringify({
@@ -5900,19 +6851,66 @@ function buildRtcChromeEmbeddedPageHtml(
     for (i = 0; i < candPend.length; i++) {
       var msg = candPend[i];
       if (!msg.candidate) continue;
+      if (shouldDropIce(msg.candidate)) continue;
       pc.addIceCandidate({ candidate: msg.candidate, sdpMid: msg.mid || null }).catch(function () {});
     }
     candPend = [];
   }
 
+  function rejectAndClose(reason) {
+    if (window.cleanVpnRtcError) window.cleanVpnRtcError('signaling: ' + reason);
+    try { sigWs.close(1008, reason); } catch (e) {}
+  }
+  async function sendOwnBindForSdp(sdp) {
+    if (!signalingPskBase64) {
+      if (signalingPskRequired) {
+        rejectAndClose('no_signaling_psk');
+        return false;
+      }
+      return true;
+    }
+    var fp = extractFp(sdp);
+    if (!fp) return true;
+    var nonceHex = randomNonceHex();
+    var ts = Date.now();
+    var mac = await signBind(fp, nonceHex, ts);
+    if (!mac) return true;
+    if (sigWs.readyState === OPEN) {
+      sigWs.send(JSON.stringify({ type: BIND_MSG_TYPE, fingerprint: fp, nonce: nonceHex, ts: ts, mac: mac }));
+    }
+    return true;
+  }
   async function handleSigMsg(msg) {
     try {
+      if (msg.type === BIND_MSG_TYPE) {
+        if (!signalingPskBase64) {
+          if (signalingPskRequired) { rejectAndClose('no_psk'); return; }
+          return;
+        }
+        var err = await verifyBind(msg);
+        if (err) { rejectAndClose('bind_' + err); return; }
+        if (seenNonces[msg.nonce]) { rejectAndClose('bind_nonce_replay'); return; }
+        seenNonces[msg.nonce] = 1;
+        expectedRemoteFp = msg.fingerprint;
+        return;
+      }
+      if (msg.type === 'offer' || msg.type === 'answer') {
+        if (signalingPskBase64) {
+          if (!expectedRemoteFp) { rejectAndClose('bind_missing_before_sdp'); return; }
+          var rfp = extractFp(msg.sdp);
+          if (!fpEq(rfp, expectedRemoteFp)) { rejectAndClose('bind_sdp_fingerprint_mismatch'); return; }
+        } else if (signalingPskRequired) {
+          rejectAndClose('no_psk_for_sdp');
+          return;
+        }
+      }
       if (msg.type === 'offer') {
         await pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
         remoteOk = true;
         flushCandPend();
         var ans = await pc.createAnswer();
         await pc.setLocalDescription(ans);
+        if (!(await sendOwnBindForSdp(pc.localDescription.sdp))) return;
         if (sigWs.readyState === OPEN) {
           sigWs.send(JSON.stringify({ type: 'answer', sdp: pc.localDescription.sdp }));
         }
@@ -5922,6 +6920,7 @@ function buildRtcChromeEmbeddedPageHtml(
         flushCandPend();
       } else if (msg.type === 'candidate') {
         if (!msg.candidate) return;
+        if (shouldDropIce(msg.candidate)) return;
         if (!remoteOk) {
           candPend.push(msg);
           return;
@@ -5977,7 +6976,9 @@ async function createRtcChromeClientBridge(opts) {
     }
     throw new Error('rtc-chrome: не удалось получить адрес локального WSS');
   }
-  const localWsUrl = `ws://127.0.0.1:${ad.port}/`;
+  /** H-4: random secret в URL локального WS — защита от чужих процессов на хосте. */
+  const localSecret = randomBytes(16).toString('hex');
+  const localWsUrl = `ws://127.0.0.1:${ad.port}/?t=${localSecret}`;
 
   let puppeteerMod;
   try {
@@ -6038,7 +7039,21 @@ async function createRtcChromeClientBridge(opts) {
       () => reject(new Error('rtc-chrome: таймаут подключения локального WS моста')),
       180000,
     );
-    localWss.on('connection', (ws) => {
+    localWss.on('connection', (ws, request) => {
+      if (!localWsRequestHasSecret(request, localSecret)) {
+        console.warn('[clean-vpn] rtc-chrome: локальный WS — отклонён без/с неверным ?t=… (H-4)');
+        try {
+          ws.close(1008, 'bad token');
+        } catch {
+          /* ignore */
+        }
+        try {
+          request.socket?.destroy();
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       if (localConnDone) {
         try {
           ws.close();
@@ -6070,6 +7085,9 @@ async function createRtcChromeClientBridge(opts) {
       localWsUrl,
       opts.iceServers,
       iceTransportPolicy,
+      !!opts.allowHostCandidates,
+      opts.signalingPskBase64 || null,
+      !!opts.signalingPskRequired,
     ),
     { waitUntil: 'domcontentloaded' },
   );
@@ -6127,6 +7145,8 @@ async function runExit({
   keepAliveReconnectCooldownSec,
   tlsLogJa3,
   ja3Verbose,
+  allowHostCandidates,
+  signalingPskRequired,
 }) {
   const { host, port } = parseHostPort(server);
   const kaBridge = type === 'quic' || type === 'quic-ext' ? 0 : keepAliveSec ?? 0;
@@ -6444,7 +7464,9 @@ async function runExit({
       );
     }
     const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
-    const creds = loadTlsServerCredentials(certsDir);
+    const creds = loadTlsServerCredentials(certsDir, {
+      sanHosts: [tlsPublicName, host].filter(Boolean),
+    });
     const ttlComboSecretBuf = ensureSharedHmacKey(certsDir, sharedHmacKey, quicExtCryptoKey, {
       autoCreate: true,
       role: 'exit',
@@ -6550,7 +7572,9 @@ async function runExit({
       );
     }
     const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
-    const creds = loadTlsServerCredentials(certsDir);
+    const creds = loadTlsServerCredentials(certsDir, {
+      sanHosts: [tlsPublicName, host].filter(Boolean),
+    });
     const targetStr = tlsProbeTarget || DEFAULT_TLS_PROBE_TARGET;
     const { host: pHost, port: pPort } = parseHostPort(targetStr);
     const probeShortMaxBytes =
@@ -6643,6 +7667,17 @@ async function runExit({
       throw new Error('[clean-vpn] udp: PORT+1 для сигналинга выходит за 65535');
     }
     const iceForPunch = signaling && punch ? loadWebrtcIceFromConfig(configPath, iceMode) : null;
+    /** C-2 PSK для udp punch (только при signaling+punch). */
+    const udpSigPsk =
+      signaling && punch
+        ? loadSignalingPskOrWarn(
+            resolveTlsCertsDir({ tlsCertDir, quicCertsDir }),
+            sharedHmacKey,
+            quicExtCryptoKey,
+            signalingPskRequired,
+            'udp punch exit',
+          )
+        : null;
 
     if (signaling && punch) {
       udpSock = dgram.createSocket('udp4');
@@ -6672,6 +7707,8 @@ async function runExit({
         sigWs: /** @type {import('ws').WebSocket} */ (udpPunchLoopbackWs),
         ice: /** @type {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} */ (iceForPunch),
         logPrefix: 'exit',
+        signalingPsk: udpSigPsk,
+        signalingPskRequired: !!signalingPskRequired,
       });
       const udpEp = {
         sock: udpSock,
@@ -6727,6 +7764,15 @@ async function runExit({
   if (type === 'webrtc') {
     const ice = loadWebrtcIceFromConfig(configPath, iceMode);
     const sigListen = webrtcSignalingListens(signaling);
+    /** C-2: загрузить общий PSK для подписи сигналинга. */
+    const certsDirSig = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
+    const signalingPsk = loadSignalingPskOrWarn(
+      certsDirSig,
+      sharedHmacKey,
+      quicExtCryptoKey,
+      signalingPskRequired,
+      'webrtc exit',
+    );
     console.log(
       `[clean-vpn] webrtc exit: ICE mode=${ice.iceMode}, серверов=${ice.ndcIceServers.length}, конфиг=${ice.configPath}; сигналинг=${sigListen ? 'сервер' : 'клиент'}`,
     );
@@ -6766,6 +7812,11 @@ async function runExit({
           ice,
           exitWebrtcPcRef,
           withKeepalive(BRIDGE_OPTS_EXIT, kaBridge, kaCooldown),
+          {
+            allowHostCandidates,
+            signalingPsk,
+            signalingPskRequired: !!signalingPskRequired,
+          },
         );
       });
       return;
@@ -6785,6 +7836,11 @@ async function runExit({
       ice,
       exitWebrtcPcRef,
       withKeepalive(BRIDGE_OPTS_EXIT, kaBridge, kaCooldown),
+      {
+        allowHostCandidates,
+        signalingPsk,
+        signalingPskRequired: !!signalingPskRequired,
+      },
     );
     return;
   }
@@ -6793,7 +7849,9 @@ async function runExit({
   if (type === 'quic') {
     assertQuicNodeVersion();
     const certsDir = quicCertsDir ? path.resolve(quicCertsDir) : DEFAULT_QUIC_CERTS_DIR;
-    const tlsPaths = ensureQuicCerts(certsDir);
+    const tlsPaths = ensureQuicCerts(certsDir, {
+      sanHosts: [tlsPublicName, host].filter(Boolean),
+    });
     const keyObj = createPrivateKey(fs.readFileSync(tlsPaths.keyPath));
     const certBuf = fs.readFileSync(tlsPaths.certPath);
     const quicNs = await importNodeQuic();
@@ -6855,7 +7913,9 @@ async function runExit({
   // --- runExit: --type=quic-ext (@infisical/quic) ---
   if (type === 'quic-ext') {
     const certsDir = quicCertsDir ? path.resolve(quicCertsDir) : DEFAULT_QUIC_CERTS_DIR;
-    const tlsPaths = ensureQuicCerts(certsDir);
+    const tlsPaths = ensureQuicCerts(certsDir, {
+      sanHosts: [tlsPublicName, host].filter(Boolean),
+    });
     const hmacKey = bufferToArrayBuffer(
       ensureSharedHmacKey(certsDir, sharedHmacKey, quicExtCryptoKey, {
         autoCreate: true,
@@ -6962,6 +8022,8 @@ async function runClient({
   keepAliveReconnectCooldownSec,
   tlsLogJa3,
   ja3Verbose,
+  allowHostCandidates,
+  signalingPskRequired,
 }) {
   const { host, port } = parseHostPort(server);
   const kaBridge = type === 'quic' || type === 'quic-ext' ? 0 : keepAliveSec ?? 0;
@@ -7339,6 +8401,15 @@ async function runClient({
   // --- runClient: --type=rtc-chrome (Puppeteer + WebRTC DC + локальный WS) ---
   if (type === 'rtc-chrome') {
     const ice = loadWebrtcBrowserIceFromConfig(configPath, iceMode);
+    /** C-2: PSK для подписи сигналинга — прокидывается в Chrome через template literal. */
+    const certsDirSig = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
+    const signalingPsk = loadSignalingPskOrWarn(
+      certsDirSig,
+      sharedHmacKey,
+      quicExtCryptoKey,
+      signalingPskRequired,
+      'rtc-chrome client',
+    );
     console.log(
       `[clean-vpn] rtc-chrome client: ICE mode=${ice.iceMode}, конфиг=${ice.configPath}; сигналинг=${rtcChromeSigListen ? 'сервер+relay' : 'клиент'}`,
     );
@@ -7372,6 +8443,9 @@ async function runClient({
       iceServers: ice.iceServers,
       iceMode: ice.iceMode,
       executablePath: exe,
+      allowHostCandidates: !!allowHostCandidates,
+      signalingPskBase64: signalingPsk ? signalingPsk.toString('base64') : null,
+      signalingPskRequired: !!signalingPskRequired,
     };
     const setupRtcChromeHandlers = (bridge) => {
       bridge.on('close', () => {
@@ -7436,6 +8510,25 @@ async function runClient({
       throw new Error('[clean-vpn] udp: PORT+1 для сигналинга выходит за 65535');
     }
     const iceForPunch = punch ? loadWebrtcIceFromConfig(configPath, iceMode) : null;
+    /** C-2 PSK для udp punch client. */
+    const udpSigPsk =
+      signaling && punch
+        ? loadSignalingPskOrWarn(
+            resolveTlsCertsDir({ tlsCertDir, quicCertsDir }),
+            sharedHmacKey,
+            quicExtCryptoKey,
+            signalingPskRequired,
+            'udp punch client (sig)',
+          )
+        : punch
+          ? loadSignalingPskOrWarn(
+              resolveTlsCertsDir({ tlsCertDir, quicCertsDir }),
+              sharedHmacKey,
+              quicExtCryptoKey,
+              signalingPskRequired,
+              'udp punch client',
+            )
+          : null;
 
     if (signaling && punch) {
       const udp = dgram.createSocket('udp4');
@@ -7474,6 +8567,8 @@ async function runClient({
         sigWs: /** @type {import('ws').WebSocket} */ (clientUdpPunchLoopbackWs),
         ice: /** @type {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} */ (iceForPunch),
         logPrefix: 'client',
+        signalingPsk: udpSigPsk,
+        signalingPskRequired: !!signalingPskRequired,
       });
       await new Promise((resolve, reject) => {
         udp.once('error', reject);
@@ -7518,6 +8613,8 @@ async function runClient({
         sigWs,
         ice: /** @type {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} */ (iceForPunch),
         logPrefix: 'client',
+        signalingPsk: udpSigPsk,
+        signalingPskRequired: !!signalingPskRequired,
       });
       await new Promise((resolve, reject) => {
         udp.once('error', reject);
@@ -7565,6 +8662,15 @@ async function runClient({
   // --- runClient: --type=webrtc ---
   if (type === 'webrtc') {
     const ice = loadWebrtcIceFromConfig(configPath, iceMode);
+    /** C-2: PSK для подписи сигналинга. */
+    const certsDirSig = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
+    const signalingPsk = loadSignalingPskOrWarn(
+      certsDirSig,
+      sharedHmacKey,
+      quicExtCryptoKey,
+      signalingPskRequired,
+      'webrtc client',
+    );
     console.log(
       `[clean-vpn] webrtc client: ICE mode=${ice.iceMode}, конфиг=${ice.configPath}; сигналинг=${webrtcSigListenClient ? 'сервер' : 'клиент'}`,
     );
@@ -7575,6 +8681,11 @@ async function runClient({
       clearIfStill(pc) {
         if (webrtcPc === pc) webrtcPc = null;
       },
+    };
+    const sigIceOpts = {
+      allowHostCandidates,
+      signalingPsk,
+      signalingPskRequired: !!signalingPskRequired,
     };
     if (webrtcSigListenClient) {
       clientWebrtcSigWss = new WebSocketServer({ host, port });
@@ -7602,6 +8713,7 @@ async function runClient({
         ice,
         cliWebrtcPcRef,
         withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
+        sigIceOpts,
       );
       return;
     }
@@ -7619,6 +8731,7 @@ async function runClient({
       ice,
       cliWebrtcPcRef,
       withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
+      sigIceOpts,
     );
     return;
   }
@@ -8282,6 +9395,7 @@ async function main() {
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
 --config=PATH: для --type=webrtc и rtc-chrome — JSON с iceServers/turnServers (по умолчанию config/default.json от корня репо)
 --ice-mode=auto|relay|direct: для webrtc и rtc-chrome — перекрывает iceMode из --config
+--allow-host-candidates: разрешить локальные ICE host/prflx-candidate'ы с приватными IP (RFC1918/loopback/link-local). По умолчанию (Phase 1 / M-5) такие candidate'ы отбрасываются и в исходящих, и во входящих сигналах — защита от утечки внутренних IP в STUN/SDP. srflx/relay не фильтруются. Опт-аут только для отладки в доверенной локальной сети.
 --quic-certs-dir=DIR: для --type=quic и quic-ext — каталог с ca.pem, cert.pem, key.pem (иначе repo/certs; при отсутствии — openssl)
 --shared-hmac-key=PATH: --type=tls | boring-tls | transparent-tls | combo-tls (обе стороны) и exit + --type=quic-ext — общий 32-байтовый HMAC PSK (иначе clean-vpn-hmac.key в --tls-cert-dir/--quic-certs-dir; на exit создаётся автоматически; legacy-имя файла quic-ext-hmac.key всё ещё читается). На client + --type=quic-ext не нужен.
 --quic-ext-crypto-key=PATH: legacy alias для --shared-hmac-key=PATH (читается, рекомендуется заменить на --shared-hmac-key)
