@@ -9049,12 +9049,16 @@ async function runClient({
     });
 
     if (kaBridge > 0) {
+      if (splitDefault) {
+        applyDeferredClientSplitDefault(routeCtx);
+        console.log('[clean-vpn] rtc-chrome: split-default включён; WebRTC к exit — по трафику с TUN');
+      }
       let rtcChromeLazyReadyLogged = false;
+      let rtcChromeStrictLazyFilter = false;
       attachTunBridge(tun, 'websocket', null, {
         ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
         lazyConnect: async () => {
           await rtcSession.ensureWebrtcReady();
-          applyDeferredClientSplitDefault(routeCtx);
           if (!rtcChromeLazyReadyLogged) {
             rtcChromeLazyReadyLogged = true;
             console.log(
@@ -9063,8 +9067,12 @@ async function runClient({
           }
           return rtcSession.bridgeWs;
         },
-        lazyConnectFilter: ipv4PktTriggersRtcChromeKeepaliveReconnect,
+        lazyConnectFilter: (pkt) =>
+          rtcChromeStrictLazyFilter
+            ? ipv4PktTriggersRtcChromeKeepaliveReconnect(pkt)
+            : true,
         softKeepAliveIdle: () => {
+          rtcChromeStrictLazyFilter = true;
           console.log(
             `[clean-vpn] rtc-chrome: keep-alive ${kaBridge}s — WebRTC к exit сброшен, Chrome остаётся (reconnect: TCP SYN / ping, не DNS)`,
           );
@@ -9078,11 +9086,12 @@ async function runClient({
     }
 
     attachTunBridge(tun, 'websocket', rtcSession.bridgeWs, BRIDGE_OPTS_CLIENT);
-
+    if (splitDefault) {
+      applyDeferredClientSplitDefault(routeCtx);
+    }
     void rtcSession
       .ensureWebrtcReady()
       .then(() => {
-        applyDeferredClientSplitDefault(routeCtx);
         console.log('[clean-vpn] rtc-chrome: готово (Chrome WebRTC → exit webrtc, TUN ↔ localhost WS)');
       })
       .catch((e) => {
