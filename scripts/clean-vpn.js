@@ -4994,6 +4994,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
  *   onWebrtcWireDown?: (reason: string) => void,
  *   softKeepAliveIdle?: () => void,
  *   softKeepAliveIdleKeepsWire?: boolean,
+ *   onTunOutbound?: (pkt: Buffer) => void,
  * }} [bridgeOpts]
  * @returns {{ reconnectWire: (newEp: any) => void } | null}
  */
@@ -5101,7 +5102,9 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       }
       logKa(
         'отключено',
-        `простой ${keepAliveSec}s (транспорт остаётся; переподключение WebRTC/WS к exit)`,
+        bridgeOpts?.softKeepAliveIdleKeepsWire
+          ? `простой ${keepAliveSec}s (локальный мост остаётся; переподключение к exit — по IPv4 с TUN)`
+          : `простой ${keepAliveSec}s (транспорт остаётся; переподключение WebRTC/WS к exit)`,
       );
       try {
         bridgeOpts?.softKeepAliveIdle?.();
@@ -5551,6 +5554,11 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
         continue;
       }
       if (!wireArmed) continue;
+      try {
+        bridgeOpts?.onTunOutbound?.(pkt);
+      } catch (e) {
+        console.error('[clean-vpn] onTunOutbound:', e?.message || e);
+      }
       sendOnWire(pkt);
     }
   });
@@ -7646,6 +7654,7 @@ async function createRtcChromeClientSession(opts) {
     browser,
     page,
     localWss,
+    isWebrtcReady: () => webrtcReady,
     ensureWebrtcReady,
     idleWebrtcTeardown,
     close,
@@ -9016,12 +9025,16 @@ async function runClient({
       softKeepAliveIdleKeepsWire: true,
       softKeepAliveIdle: () => {
         console.log(
-          `[clean-vpn] rtc-chrome: keep-alive ${kaBridge}s — WebRTC к exit сброшен, Chrome остаётся`,
+          `[clean-vpn] rtc-chrome: keep-alive ${kaBridge}s — WebRTC к exit сброшен, Chrome остаётся (reconnect по IPv4 с TUN)`,
         );
         rtcSession.idleWebrtcTeardown();
-        void rtcSession.ensureWebrtcReady().catch((e) => {
-          console.error('[clean-vpn] rtc-chrome: reconnect после idle:', e?.message || e);
-        });
+      },
+      onTunOutbound: () => {
+        if (!rtcSession.isWebrtcReady()) {
+          void rtcSession.ensureWebrtcReady().catch((e) => {
+            console.error('[clean-vpn] rtc-chrome: lazy WebRTC reconnect:', e?.message || e);
+          });
+        }
       },
     });
 
