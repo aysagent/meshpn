@@ -6932,16 +6932,33 @@ function buildRtcChromeEmbeddedPageHtml(
   var BIND_MSG_TYPE = ${bindMsgType};
   var BIND_CTX = ${bindCtx};
   var BIND_TS_WINDOW_MS = ${bindWindowMs};
-  // C-2 (Phase 2): подписи сигналинга через Web Crypto + HMAC-SHA256.
-  var pskKeyPromise = null;
-  function getPskKey() {
-    if (pskKeyPromise) return pskKeyPromise;
-    if (!signalingPskBase64) return Promise.resolve(null);
-    var bin = atob(signalingPskBase64);
-    var arr = new Uint8Array(bin.length);
-    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-    pskKeyPromise = crypto.subtle.importKey('raw', arr.buffer, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-    return pskKeyPromise;
+  // C-2: HMAC через Node (exposeFunction) — crypto.subtle недоступен в setContent (не secure context).
+  async function signBind(fp, nonceHex, ts) {
+    if (!signalingPskBase64) return null;
+    if (typeof window.cleanVpnSignBind !== 'function') {
+      if (window.cleanVpnRtcError) {
+        window.cleanVpnRtcError('signBind: cleanVpnSignBind недоступен');
+      }
+      return null;
+    }
+    try {
+      return await window.cleanVpnSignBind(fp, nonceHex, ts);
+    } catch (e) {
+      if (window.cleanVpnRtcError) {
+        window.cleanVpnRtcError(String(e && e.message ? e.message : e));
+      }
+      return null;
+    }
+  }
+  async function verifyBind(msg) {
+    if (!signalingPskBase64) return 'no_key';
+    if (typeof window.cleanVpnVerifyBind !== 'function') return 'no_bridge';
+    try {
+      var err = await window.cleanVpnVerifyBind(msg);
+      return err || null;
+    } catch (e) {
+      return 'verify_err';
+    }
   }
   function bufToHex(buf) {
     var v = new Uint8Array(buf);
@@ -6952,32 +6969,6 @@ function buildRtcChromeEmbeddedPageHtml(
       s += h;
     }
     return s;
-  }
-  function hexToBuf(hex) {
-    var n = hex.length / 2;
-    var arr = new Uint8Array(n);
-    for (var i = 0; i < n; i++) arr[i] = parseInt(hex.substr(i * 2, 2), 16);
-    return arr.buffer;
-  }
-  async function signBind(fp, nonceHex, ts) {
-    var key = await getPskKey();
-    if (!key) return null;
-    var data = BIND_CTX + ':' + ts + ':' + nonceHex + ':' + fp;
-    var encoder = new TextEncoder();
-    var sig = await crypto.subtle.sign('HMAC', key, encoder.encode(data));
-    return bufToHex(sig).slice(0, 32);
-  }
-  async function verifyBind(msg) {
-    if (!msg || typeof msg !== 'object') return 'no_obj';
-    if (typeof msg.fingerprint !== 'string' || !msg.fingerprint) return 'no_fingerprint';
-    if (typeof msg.nonce !== 'string' || !/^[0-9a-f]{16,128}$/i.test(msg.nonce)) return 'bad_nonce';
-    if (typeof msg.ts !== 'number' || !isFinite(msg.ts)) return 'bad_ts';
-    if (typeof msg.mac !== 'string' || !/^[0-9a-f]{32}$/i.test(msg.mac)) return 'bad_mac';
-    if (Math.abs(Date.now() - msg.ts) > BIND_TS_WINDOW_MS) return 'ts_window';
-    var expected = (await signBind(msg.fingerprint, msg.nonce, msg.ts));
-    if (!expected) return 'no_key';
-    if (expected.toLowerCase() !== msg.mac.toLowerCase()) return 'mac_mismatch';
-    return null;
   }
   function extractFp(sdp) {
     if (typeof sdp !== 'string') return null;
@@ -7362,6 +7353,16 @@ rm -rf ~/.cache/puppeteer — убрать битый x64-кэш Puppeteer
   await page.exposeFunction('cleanVpnRtcError', (msg) => {
     lifecycle.emit('error', new Error(String(msg)));
   });
+
+  const pskBuf =
+    opts.signalingPsk ||
+    (opts.signalingPskBase64 ? Buffer.from(opts.signalingPskBase64, 'base64') : null);
+  if (pskBuf?.length) {
+    await page.exposeFunction('cleanVpnSignBind', (fp, nonceHex, ts) =>
+      signSignalingBind(pskBuf, fp, nonceHex, ts),
+    );
+    await page.exposeFunction('cleanVpnVerifyBind', (msg) => verifySignalingBind(pskBuf, msg));
+  }
 
   const iceTransportPolicy = opts.iceMode === 'relay' ? 'relay' : 'all';
   await page.setContent(
