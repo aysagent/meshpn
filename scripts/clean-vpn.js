@@ -4806,7 +4806,7 @@ function isIpv4Bridgeable(pkt) {
 }
 
 /**
- * rtc-chrome + keep-alive: после idle не поднимать WebRTC от фонового DNS/IPv6 — только новая сессия (TCP SYN, ping, UDP≠53).
+ * rtc-chrome + keep-alive: поднимать WebRTC только от новой TCP-сессии или ping; DNS/UDP — в очередь, не триггер.
  * @param {Buffer} pkt
  */
 function ipv4PktTriggersRtcChromeKeepaliveReconnect(pkt) {
@@ -4823,17 +4823,11 @@ function ipv4PktTriggersRtcChromeKeepaliveReconnect(pkt) {
     if (pkt.length < ihl + 2) return false;
     return pkt.readUInt8(ihl) === 8;
   }
-  if (proto === 17) {
-    if (pkt.length < ihl + 4) return false;
-    const dport = pkt.readUInt16BE(ihl + 2);
-    return dport !== 53 && dport !== 5353;
-  }
   return false;
 }
 
 /**
- *
- * @param {{ write: (b: Buffer) => void, startRead: (cb: (batch: ArrayBuffer[]) => void) => void }} tun — native addon
+ * Мост TUN↔транспорт без keep-alive / lazy (как раньше).
  * @param {'tcp'|'websocket'|'udp-client'|'udp-server'|'webrtc-dc'} transport
  * @param {import('net').Socket|import('ws')|import('dgram').Socket|{sock: import('dgram').Socket, peer?: import('dgram').RemoteInfo}|import('node-datachannel').DataChannel} endpoint
  * @param {{ localTunIp?: string }} [bridgeOpts]
@@ -5019,7 +5013,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
  *   onWebrtcWireDown?: (reason: string) => void,
  *   softKeepAliveIdle?: () => void,
  *   softKeepAliveIdleKeepsWire?: boolean,
- *   lazyConnectFilter?: (pkt: Buffer) => boolean,
+ *   lazyConnectFilter?: (pkt: Buffer) => boolean — true = вызвать lazyConnect; false = только очередь (без connect)
  * }} [bridgeOpts]
  * @returns {{ reconnectWire: (newEp: any) => void } | null}
  */
@@ -5570,20 +5564,18 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
           continue;
         }
         const lazyFilter = bridgeOpts?.lazyConnectFilter;
-        if (typeof lazyFilter === 'function' && !lazyFilter(pkt)) {
-          if (kaDebug) {
-            const ipProto = pkt.length >= 10 ? pkt.readUInt8(9) : -1;
-            logKa('lazy-skip', `${pkt.length} B ip-proto=${ipProto} (не триггер lazy-reconnect)`);
-          }
-          continue;
-        }
-        if (kaDebug) {
-          const ipProto = pkt.length >= 10 ? pkt.readUInt8(9) : -1;
-          logKa('lazy-queue', `${pkt.length} B ip-proto=${ipProto} до=${tunQueue.length + 1}`);
-        }
+        const triggersConnect =
+          typeof lazyFilter !== 'function' ? true : lazyFilter(pkt);
         if (tunQueue.length >= KEEPALIVE_TUN_QUEUE_MAX) tunQueue.shift();
         tunQueue.push(pkt);
-        void ensureWire();
+        if (kaDebug) {
+          const ipProto = pkt.length >= 10 ? pkt.readUInt8(9) : -1;
+          logKa(
+            triggersConnect ? 'lazy-queue' : 'lazy-queue-hold',
+            `${pkt.length} B ip-proto=${ipProto} до=${tunQueue.length}${triggersConnect ? '' : ' (ждём TCP SYN/ping)'}`,
+          );
+        }
+        if (triggersConnect) void ensureWire();
         continue;
       }
       if (!wireArmed) continue;
@@ -9051,10 +9043,11 @@ async function runClient({
     if (kaBridge > 0) {
       if (splitDefault) {
         applyDeferredClientSplitDefault(routeCtx);
-        console.log('[clean-vpn] rtc-chrome: split-default включён; WebRTC к exit — по трафику с TUN');
+        console.log(
+          '[clean-vpn] rtc-chrome: split-default включён; WebRTC к exit — по TCP SYN / ping с TUN',
+        );
       }
       let rtcChromeLazyReadyLogged = false;
-      let rtcChromeStrictLazyFilter = false;
       attachTunBridge(tun, 'websocket', null, {
         ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
         lazyConnect: async () => {
@@ -9062,25 +9055,21 @@ async function runClient({
           if (!rtcChromeLazyReadyLogged) {
             rtcChromeLazyReadyLogged = true;
             console.log(
-              '[clean-vpn] rtc-chrome: готово (WebRTC к exit по первому трафику с TUN, keep-alive)',
+              '[clean-vpn] rtc-chrome: готово (WebRTC к exit по TCP SYN / ping с TUN, keep-alive)',
             );
           }
           return rtcSession.bridgeWs;
         },
-        lazyConnectFilter: (pkt) =>
-          rtcChromeStrictLazyFilter
-            ? ipv4PktTriggersRtcChromeKeepaliveReconnect(pkt)
-            : true,
+        lazyConnectFilter: ipv4PktTriggersRtcChromeKeepaliveReconnect,
         softKeepAliveIdle: () => {
-          rtcChromeStrictLazyFilter = true;
           console.log(
-            `[clean-vpn] rtc-chrome: keep-alive ${kaBridge}s — WebRTC к exit сброшен, Chrome остаётся (reconnect: TCP SYN / ping, не DNS)`,
+            `[clean-vpn] rtc-chrome: keep-alive ${kaBridge}s — WebRTC к exit сброшен, Chrome остаётся`,
           );
           rtcSession.idleWebrtcTeardown();
         },
       });
       console.log(
-        '[clean-vpn] rtc-chrome: Chrome + локальный WS готов; WebRTC к exit — только по трафику с TUN (keep-alive)',
+        '[clean-vpn] rtc-chrome: Chrome + локальный WS; WebRTC к exit — по TCP SYN / ping (keep-alive, DNS в очередь)',
       );
       return;
     }
