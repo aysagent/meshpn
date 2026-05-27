@@ -4955,6 +4955,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
  *   keepAliveReconnectCooldownSec?: number,
  *   lazyConnect?: () => Promise<any>,
  *   onWebrtcWireDown?: (reason: string) => void,
+ *   softKeepAliveIdle?: () => void,
  * }} [bridgeOpts]
  * @returns {{ reconnectWire: (newEp: any) => void } | null}
  */
@@ -5031,10 +5032,46 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
       idleTimer = null;
-      teardownWire('idle');
+      if (typeof bridgeOpts?.softKeepAliveIdle === 'function') {
+        softTeardownWire('idle');
+      } else {
+        teardownWire('idle');
+      }
     }, keepAliveSec * 1000);
     idleTimer.unref?.();
   };
+
+  function softTeardownWire(reason) {
+    if (teardownBusy) return;
+    teardownBusy = true;
+    try {
+      if (!wireArmed && !connecting) {
+        tunQueue.length = 0;
+        return;
+      }
+      cancelTimers();
+      wireArmed = false;
+      tunQueue.length = 0;
+      if (reason === 'idle' && reconnectCooldownSec > 0 && lazyConnect) {
+        idleCooldownUntilMs = Date.now() + reconnectCooldownSec * 1000;
+        logKa(
+          'пауза lazy-reconnect',
+          `${reconnectCooldownSec}s (пакеты с TUN до этого времени игнорируются)`,
+        );
+      }
+      logKa(
+        'отключено',
+        `простой ${keepAliveSec}s (транспорт остаётся; переподключение WebRTC/WS к exit)`,
+      );
+      try {
+        bridgeOpts?.softKeepAliveIdle?.();
+      } catch (e) {
+        console.error('[clean-vpn] softKeepAliveIdle:', e?.message || e);
+      }
+    } finally {
+      teardownBusy = false;
+    }
+  }
 
   const pumpDcQueue = () => {
     dcPumpScheduled = false;
@@ -5396,11 +5433,17 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     connecting = true;
     try {
       const newEp = await lazyConnect();
+      const sameEp = ep && newEp === ep;
       ep = newEp;
       wireArmed = true;
-      attachWireHandlers();
-      applyWireKeepalive();
-      bumpActivity();
+      if (sameEp) {
+        applyWireKeepalive();
+        bumpActivity();
+      } else {
+        attachWireHandlers();
+        applyWireKeepalive();
+        bumpActivity();
+      }
       const pending = tunQueue.splice(0);
       logKa('подключено', `lazy, очередь TUN ${pending.length} пакет(ов)`);
       for (const q of pending) {
@@ -7017,20 +7060,20 @@ function buildRtcChromeEmbeddedPageHtml(
     if (f.type === 'host' || f.type === 'prflx') return isPrivateIp(f.ip);
     return false;
   }
-  var sigWs = new WebSocket(${sig});
+  var signalingWsUrl = ${sig};
   var localWs = new WebSocket(${loc});
   localWs.binaryType = 'arraybuffer';
-  var pc = new RTCPeerConnection({
-    iceServers: iceServers,
-    iceTransportPolicy: iceTransportPolicy,
-    bundlePolicy: 'max-bundle',
-  });
+  var sigWs = null;
+  var pc = null;
   var vpnDc = null;
   var dcBuf = [];
   var localBuf = [];
   var didReady = false;
   var remoteOk = false;
   var candPend = [];
+  var idleClosing = false;
+  var webrtcUp = false;
+  var sigHandleChain = Promise.resolve();
 
   function tryReady() {
     if (didReady) return;
@@ -7040,8 +7083,13 @@ function buildRtcChromeEmbeddedPageHtml(
     if (window.cleanVpnRtcReady) window.cleanVpnRtcReady();
   }
 
-  function signalClose() {
+  function signalFatalClose() {
     if (window.cleanVpnRtcClosed) window.cleanVpnRtcClosed();
+  }
+
+  function webrtcTransportDown() {
+    didReady = false;
+    webrtcUp = false;
   }
 
   function flushDcToLocal() {
@@ -7075,7 +7123,13 @@ function buildRtcChromeEmbeddedPageHtml(
       }
       localWs.send(d);
     };
-    vpnDc.onclose = signalClose;
+    vpnDc.onclose = function () {
+      if (idleClosing) {
+        webrtcTransportDown();
+        return;
+      }
+      signalFatalClose();
+    };
     vpnDc.onerror = function () {};
     if (vpnDc.readyState === 'open') {
       flushLocalToDc();
@@ -7099,36 +7153,11 @@ function buildRtcChromeEmbeddedPageHtml(
       if (window.cleanVpnRtcError) window.cleanVpnRtcError(String(e && e.message ? e.message : e));
     }
   };
-  localWs.onclose = signalClose;
+  localWs.onclose = signalFatalClose;
   localWs.onerror = function () {};
 
-  pc.ondatachannel = function (ev) {
-    var ch = ev.channel;
-    if (ch.label !== 'clean-vpn') {
-      try { ch.close(); } catch (e) {}
-      return;
-    }
-    vpnDc = ch;
-    attachDcPipe();
-    tryReady();
-  };
-
-  pc.onicecandidate = function (e) {
-    if (!e.candidate) return;
-    if (sigWs.readyState !== OPEN) return;
-    if (shouldDropIce(e.candidate.candidate)) return;
-    try {
-      sigWs.send(
-        JSON.stringify({
-          type: 'candidate',
-          candidate: e.candidate.candidate,
-          mid: e.candidate.sdpMid || '0',
-        }),
-      );
-    } catch (err) {}
-  };
-
   function flushCandPend() {
+    if (!pc) return;
     var i;
     for (i = 0; i < candPend.length; i++) {
       var msg = candPend[i];
@@ -7141,7 +7170,7 @@ function buildRtcChromeEmbeddedPageHtml(
 
   function rejectAndClose(reason) {
     if (window.cleanVpnRtcError) window.cleanVpnRtcError('signaling: ' + reason);
-    try { sigWs.close(1008, reason); } catch (e) {}
+    try { if (sigWs) sigWs.close(1008, reason); } catch (e) {}
   }
   async function sendOwnBindForSdp(sdp) {
     if (!signalingPskBase64) {
@@ -7157,12 +7186,13 @@ function buildRtcChromeEmbeddedPageHtml(
     var ts = Date.now();
     var mac = await signBind(fp, nonceHex, ts);
     if (!mac) return true;
-    if (sigWs.readyState === OPEN) {
+    if (sigWs && sigWs.readyState === OPEN) {
       sigWs.send(JSON.stringify({ type: BIND_MSG_TYPE, fingerprint: fp, nonce: nonceHex, ts: ts, mac: mac }));
     }
     return true;
   }
   async function handleSigMsg(msg) {
+    if (!pc) return;
     try {
       if (msg.type === BIND_MSG_TYPE) {
         if (!signalingPskBase64) {
@@ -7193,7 +7223,7 @@ function buildRtcChromeEmbeddedPageHtml(
         var ans = await pc.createAnswer();
         await pc.setLocalDescription(ans);
         if (!(await sendOwnBindForSdp(pc.localDescription.sdp))) return;
-        if (sigWs.readyState === OPEN) {
+        if (sigWs && sigWs.readyState === OPEN) {
           sigWs.send(JSON.stringify({ type: 'answer', sdp: pc.localDescription.sdp }));
         }
       } else if (msg.type === 'answer') {
@@ -7214,46 +7244,130 @@ function buildRtcChromeEmbeddedPageHtml(
     }
   }
 
-  var sigHandleChain = Promise.resolve();
-  sigWs.onmessage = function (ev) {
-    var msg;
-    try {
-      msg = JSON.parse(ev.data);
-    } catch (e) {
-      return;
-    }
-    sigHandleChain = sigHandleChain
-      .then(function () { return handleSigMsg(msg); })
-      .catch(function (e) {
-        if (window.cleanVpnRtcError) {
-          window.cleanVpnRtcError(String(e && e.message ? e.message : e));
-        }
-      });
-  };
-  sigWs.onclose = signalClose;
-  sigWs.onerror = function () {};
+  function wireSigWsHandlers() {
+    sigHandleChain = Promise.resolve();
+    sigWs.onmessage = function (ev) {
+      var msg;
+      try {
+        msg = JSON.parse(ev.data);
+      } catch (e) {
+        return;
+      }
+      sigHandleChain = sigHandleChain
+        .then(function () { return handleSigMsg(msg); })
+        .catch(function (e) {
+          if (window.cleanVpnRtcError) {
+            window.cleanVpnRtcError(String(e && e.message ? e.message : e));
+          }
+        });
+    };
+    sigWs.onclose = function () {
+      if (idleClosing) {
+        webrtcTransportDown();
+        return;
+      }
+      signalFatalClose();
+    };
+    sigWs.onerror = function () {};
+    sigWs.onopen = function () {
+      try {
+        sigWs.send(JSON.stringify({ type: 'clean-vpn-ready' }));
+      } catch (e) {
+        if (window.cleanVpnRtcError) window.cleanVpnRtcError(String(e && e.message ? e.message : e));
+      }
+    };
+  }
 
-  sigWs.onopen = function () {
+  function teardownWebrtcOnly() {
+    idleClosing = true;
+    webrtcUp = false;
+    didReady = false;
+    remoteOk = false;
     try {
-      sigWs.send(JSON.stringify({ type: 'clean-vpn-ready' }));
-    } catch (e) {
-      if (window.cleanVpnRtcError) window.cleanVpnRtcError(String(e && e.message ? e.message : e));
-    }
+      if (vpnDc) {
+        vpnDc.onclose = null;
+        vpnDc.close();
+      }
+    } catch (e) {}
+    try {
+      if (pc) pc.close();
+    } catch (e) {}
+    try {
+      if (sigWs) {
+        sigWs.onclose = null;
+        sigWs.close();
+      }
+    } catch (e) {}
+    vpnDc = null;
+    pc = null;
+    sigWs = null;
+    dcBuf = [];
+    candPend = [];
+    expectedRemoteFp = null;
+    seenNonces = Object.create(null);
+    sigHandleChain = Promise.resolve();
+    idleClosing = false;
+  }
+
+  window.__cleanVpnRtcIdleTeardown = function () {
+    teardownWebrtcOnly();
+  };
+
+  window.__cleanVpnRtcConnect = function () {
+    teardownWebrtcOnly();
+    webrtcUp = true;
+    didReady = false;
+    remoteOk = false;
+    pc = new RTCPeerConnection({
+      iceServers: iceServers,
+      iceTransportPolicy: iceTransportPolicy,
+      bundlePolicy: 'max-bundle',
+    });
+    pc.ondatachannel = function (ev) {
+      var ch = ev.channel;
+      if (ch.label !== 'clean-vpn') {
+        try { ch.close(); } catch (e) {}
+        return;
+      }
+      vpnDc = ch;
+      attachDcPipe();
+      tryReady();
+    };
+    pc.onicecandidate = function (e) {
+      if (!e.candidate) return;
+      if (!sigWs || sigWs.readyState !== OPEN) return;
+      if (shouldDropIce(e.candidate.candidate)) return;
+      try {
+        sigWs.send(
+          JSON.stringify({
+            type: 'candidate',
+            candidate: e.candidate.candidate,
+            mid: e.candidate.sdpMid || '0',
+          }),
+        );
+      } catch (err) {}
+    };
+    sigWs = new WebSocket(signalingWsUrl);
+    wireSigWsHandlers();
   };
 })();
 </script></body></html>`;
 }
 
 /**
- * Puppeteer + Chrome: WebRTC DataChannel к exit (сигналинг как у --type=webrtc), данные через локальный WS.
+ * Долгоживущая сессия rtc-chrome: Chrome + локальный WS один раз; keep-alive рвёт только WebRTC к exit.
  * @param {{
  *   signalingWsUrl: string,
  *   iceServers: Array<{ urls: string|string[], username?: string, credential?: string }>,
  *   iceMode: string,
  *   executablePath?: string|null,
+ *   signalingPsk?: Buffer|null,
+ *   signalingPskBase64?: string|null,
+ *   signalingPskRequired?: boolean,
+ *   allowHostCandidates?: boolean,
  * }} opts
  */
-async function createRtcChromeClientBridge(opts) {
+async function createRtcChromeClientSession(opts) {
   const localWss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await awaitWebSocketServerListening(localWss);
   const ad = localWss.address();
@@ -7265,7 +7379,6 @@ async function createRtcChromeClientBridge(opts) {
     }
     throw new Error('rtc-chrome: не удалось получить адрес локального WSS');
   }
-  /** H-4: random secret в URL локального WS — защита от чужих процессов на хосте. */
   const localSecret = randomBytes(16).toString('hex');
   const localWsUrl = `ws://127.0.0.1:${ad.port}/?t=${localSecret}`;
 
@@ -7288,14 +7401,10 @@ async function createRtcChromeClientBridge(opts) {
   ) {
     launchArgs.push('--no-sandbox', '--disable-setuid-sandbox');
   }
-  const launchOpts = {
-    headless: true,
-    args: launchArgs,
-  };
+  const launchOpts = { headless: true, args: launchArgs };
   const executablePath = resolvePuppeteerChromeExecutable('rtc-chrome', opts.executablePath, puppeteer);
-  if (executablePath) {
-    launchOpts.executablePath = executablePath;
-  }
+  if (executablePath) launchOpts.executablePath = executablePath;
+
   let browser;
   try {
     browser = await puppeteer.launch(launchOpts);
@@ -7305,21 +7414,24 @@ async function createRtcChromeClientBridge(opts) {
     } catch {
       /* ignore */
     }
-    const hint = `rtc-chrome: не удалось запустить браузер (${launchErr?.message || launchErr}).
-На Linux ARM (Radxa): sudo apt install -y chromium && --rtc-chrome-executable=/usr/bin/chromium
-rm -rf ~/.cache/puppeteer — убрать битый x64-кэш Puppeteer
-См. подсказки ws-chrome в шапке скрипта и https://pptr.dev/troubleshooting`;
-    throw new Error(hint, { cause: launchErr });
+    throw new Error(
+      `rtc-chrome: не удалось запустить браузер (${launchErr?.message || launchErr}). См. подсказки ws-chrome в шапке.`,
+      { cause: launchErr },
+    );
   }
+
   const page = await browser.newPage();
   const lifecycle = new EventEmitter();
+  let bridgeWs = null;
+  let webrtcReady = false;
+  /** @type {Promise<import('ws').WebSocket>|null} */
+  let webrtcConnectPromise = null;
 
-  console.log('[clean-vpn] rtc-chrome: локальный WS-мост 127.0.0.1 + WebRTC в Chrome');
+  console.log('[clean-vpn] rtc-chrome: Chrome запущен, локальный WS-мост 127.0.0.1');
 
-  let localConnDone = false;
-  const localClientPromise = new Promise((resolve, reject) => {
+  const bridgeWsPromise = new Promise((resolve, reject) => {
     const to = setTimeout(
-      () => reject(new Error('rtc-chrome: таймаут подключения локального WS моста')),
+      () => reject(new Error('rtc-chrome: таймаут локального WS моста')),
       180000,
     );
     localWss.on('connection', (ws, request) => {
@@ -7337,7 +7449,7 @@ rm -rf ~/.cache/puppeteer — убрать битый x64-кэш Puppeteer
         }
         return;
       }
-      if (localConnDone) {
+      if (bridgeWs) {
         try {
           ws.close();
         } catch {
@@ -7345,8 +7457,8 @@ rm -rf ~/.cache/puppeteer — убрать битый x64-кэш Puppeteer
         }
         return;
       }
-      localConnDone = true;
       clearTimeout(to);
+      bridgeWs = ws;
       resolve(ws);
     });
   });
@@ -7385,29 +7497,101 @@ rm -rf ~/.cache/puppeteer — убрать битый x64-кэш Puppeteer
     { waitUntil: 'domcontentloaded' },
   );
 
-  const bridge = await localClientPromise;
+  await bridgeWsPromise;
 
-  await new Promise((resolve, reject) => {
-    const to = setTimeout(
-      () => reject(new Error('rtc-chrome: таймаут готовности WebRTC DataChannel')),
-      180000,
-    );
-    const done = () => clearTimeout(to);
-    lifecycle.once('_rtcReady', () => {
-      done();
-      resolve(undefined);
+  const waitWebrtcReady = () =>
+    new Promise((resolve, reject) => {
+      const to = setTimeout(
+        () => reject(new Error('rtc-chrome: таймаут готовности WebRTC DataChannel')),
+        180000,
+      );
+      const done = () => clearTimeout(to);
+      lifecycle.once('_rtcReady', () => {
+        done();
+        resolve(undefined);
+      });
+      lifecycle.once('close', () => {
+        done();
+        reject(new Error('rtc-chrome: локальный WS закрыт до готовности WebRTC'));
+      });
+      lifecycle.once('error', (err) => {
+        done();
+        reject(err);
+      });
     });
-    lifecycle.once('close', () => {
-      done();
-      reject(new Error('rtc-chrome: соединение закрыто до готовности'));
-    });
-    lifecycle.once('error', (err) => {
-      done();
-      reject(err);
-    });
-  });
 
-  return { bridge, browser, page, localWss };
+  const ensureWebrtcReady = async () => {
+    if (webrtcReady && bridgeWs && bridgeWs.readyState === WebSocket.OPEN) {
+      return bridgeWs;
+    }
+    if (webrtcConnectPromise) return webrtcConnectPromise;
+
+    webrtcConnectPromise = (async () => {
+      lifecycle.removeAllListeners('_rtcReady');
+      lifecycle.removeAllListeners('close');
+      lifecycle.removeAllListeners('error');
+      const readyWait = waitWebrtcReady();
+      await page.evaluate(() => window.__cleanVpnRtcConnect());
+      await readyWait;
+      webrtcReady = true;
+      webrtcConnectPromise = null;
+      console.log('[clean-vpn] rtc-chrome: WebRTC DataChannel к exit готов');
+      return bridgeWs;
+    })().catch((e) => {
+      webrtcConnectPromise = null;
+      webrtcReady = false;
+      throw e;
+    });
+
+    return webrtcConnectPromise;
+  };
+
+  const idleWebrtcTeardown = () => {
+    webrtcReady = false;
+    webrtcConnectPromise = null;
+    lifecycle.removeAllListeners('_rtcReady');
+    lifecycle.removeAllListeners('close');
+    lifecycle.removeAllListeners('error');
+    void page.evaluate(() => window.__cleanVpnRtcIdleTeardown()).catch((e) => {
+      console.warn('[clean-vpn] rtc-chrome idle teardown:', e?.message || e);
+    });
+  };
+
+  const close = async () => {
+    idleWebrtcTeardown();
+    try {
+      await browser.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      localWss.close();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return {
+    bridgeWs: /** @type {import('ws').WebSocket} */ (bridgeWs),
+    browser,
+    page,
+    localWss,
+    ensureWebrtcReady,
+    idleWebrtcTeardown,
+    close,
+  };
+}
+
+/** @deprecated используйте createRtcChromeClientSession */
+async function createRtcChromeClientBridge(opts) {
+  const session = await createRtcChromeClientSession(opts);
+  await session.ensureWebrtcReady();
+  return {
+    bridge: session.bridgeWs,
+    browser: session.browser,
+    page: session.page,
+    localWss: session.localWss,
+  };
 }
 
 // =============================================================================
@@ -8734,54 +8918,44 @@ async function runClient({
       iceMode: ice.iceMode,
       executablePath: exe,
       allowHostCandidates: !!allowHostCandidates,
+      signalingPsk,
       signalingPskBase64: signalingPsk ? signalingPsk.toString('base64') : null,
       signalingPskRequired: !!signalingPskRequired,
     };
-    const setupRtcChromeHandlers = (bridge) => {
-      bridge.on('close', () => {
-        console.warn(
-          '[clean-vpn] rtc-chrome: локальный WS закрыт; следующий пакет с TUN — новый Chrome/WebRTC (дорого)',
-        );
-      });
-      bridge.on('error', (e) => {
-        console.error('[clean-vpn] rtc-chrome:', e?.message || e);
-      });
-    };
 
-    if (kaBridge > 0) {
-      console.log(
-        `[clean-vpn] rtc-chrome: keep-alive ${kaBridge}s — Chrome/WebRTC после первого IPv4 с TUN`,
-      );
-    }
-    attachOutboundTunBridge(
-      tun,
-      'websocket',
-      BRIDGE_OPTS_CLIENT,
-      async () => {
-        safe(() => {
-          if (wsChromeBrowser) void wsChromeBrowser.close();
-          wsChromeBrowser = null;
-        });
-        safe(() => {
-          if (wsChromeLocalWss) {
-            try {
-              wsChromeLocalWss.close();
-            } catch {
-              /* ignore */
-            }
-            wsChromeLocalWss = null;
-          }
-        });
-        const { bridge, browser, localWss } = await createRtcChromeClientBridge(rtcChromeOpts);
-        wsChromeBrowser = browser;
-        if (localWss) wsChromeLocalWss = localWss;
-        setupRtcChromeHandlers(bridge);
-        console.log('[clean-vpn] rtc-chrome: готово (Chrome WebRTC → exit webrtc, TUN ↔ localhost WS)');
-        return bridge;
+    console.log('[clean-vpn] rtc-chrome: запуск Chrome (WebRTC к exit — отдельно, keep-alive не закрывает браузер)');
+    const rtcSession = await createRtcChromeClientSession(rtcChromeOpts);
+    wsChromeBrowser = rtcSession.browser;
+    wsChromeLocalWss = rtcSession.localWss;
+
+    rtcSession.bridgeWs.on('close', () => {
+      console.error('[clean-vpn] rtc-chrome: локальный WS закрыт (Chrome упал?)');
+      shutdown();
+    });
+    rtcSession.bridgeWs.on('error', (e) => {
+      console.error('[clean-vpn] rtc-chrome:', e?.message || e);
+    });
+
+    const bridgeApi = attachTunBridge(tun, 'websocket', rtcSession.bridgeWs, {
+      ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
+      lazyConnect: () => rtcSession.ensureWebrtcReady(),
+      softKeepAliveIdle: () => {
+        console.log(
+          `[clean-vpn] rtc-chrome: keep-alive ${kaBridge}s — WebRTC к exit сброшен, Chrome остаётся`,
+        );
+        rtcSession.idleWebrtcTeardown();
       },
-      kaBridge,
-      kaCooldown,
-    );
+    });
+
+    void rtcSession
+      .ensureWebrtcReady()
+      .then(() => {
+        bridgeApi?.reconnectWire(rtcSession.bridgeWs);
+        console.log('[clean-vpn] rtc-chrome: готово (Chrome WebRTC → exit webrtc, TUN ↔ localhost WS)');
+      })
+      .catch((e) => {
+        console.error('[clean-vpn] rtc-chrome: начальный WebRTC connect:', e?.message || e);
+      });
     return;
   }
 
@@ -9669,7 +9843,7 @@ async function main() {
 --ws-server: websocket / ws-chrome на exit — слушать HTTP+WS или WSS данных на --server; на client (websocket) — слушать WSS; без флага — исходящий WebSocket к --server.
 --signaling: webrtc (exit|client) или rtc-chrome (client) — слушать WSS сигналинга на --server; без флага — исходящий WS. Для udp — вместе с UDP на PORT поднять WSS на PORT+1 (как webrtc). Алиас: --signalling.
 --punch: только --type=udp — hole punching через STUN + сигналинг на PORT+1; на exit только вместе с --signaling.
---keep-alive=N: целое N≥0; 0 или отсутствие — connect сразу (client/outbound), переподключение после разрыва пира — по TUN/inbound. N>0 — idle N с без трафика TUN↔транспорт → разрыв на этой стороне; client/outbound — lazy connect до первого IPv4 с TUN. Флаг асимметричен (достаточно на client или exit). Транспорты: socket, http, tls, boring-tls, combo-tls (TUN-ветка), transparent-tls (IPv4 mux), websocket, ws-chrome, rtc-chrome, udp, webrtc. ws-chrome/rtc-chrome: переподключение поднимает новый Chrome (дорого). QUIC/quic-ext: флаг не применяется.
+--keep-alive=N: ... ws-chrome: переподключение поднимает новый Chrome (дорого). rtc-chrome: keep-alive рвёт только WebRTC к exit, Chrome остаётся (быстрый reconnect). QUIC/quic-ext: флаг не применяется.
 --keep-alive-reconnect-cooldown=M: целое M≥0; только с --keep-alive>0. После разрыва по idle M с не поднимать lazy по IPv4 с TUN (отбрасываются); не-IPv4 не поднимает сессию в любом случае. После M с следующий IPv4 снова может lazy-connect — cooldown не фильтр «навсегда». Меньше дребезга от DNS/ретрансмитов. По умолчанию 0. CLEAN_VPN_KEEPALIVE_DEBUG=1 — lazy/cooldown и drop не-IPv4 (hex). CLEAN_VPN_TLS_MUX_DEBUG=1 — диагностика TCP до ClientHello на exit и до handshake на client (--type=tls).
 --tunnel-peer=HOST: для websocket/webrtc/rtc-chrome/udp + client при нюансах accept/split-default — см. шапку. Дополнительно: **transparent-tls** и **combo-tls + client** — **IPv4 или IPv4:PORT** (порт по умолчанию **443**) фиксирует один апстрим для всех локальных HTTPS-сессий (**без** iptables REDIRECT; нужен только с тестами на один хост). Обычный режим: **OUTPUT** ipv4/https→локальный intercept; при **--client-lan-subnet** — **PREROUTING DNAT** с LAN→LAN-IPv4 шлюза:intercept (второй listener, см. документацию).
 --tls-cert-dir / --shared-hmac-key: для transparent-tls и combo-tls нужен тот же 32-байтовый ключ (CVPTX OPEN-HMAC и Bearer tls), что и для --type=tls (на exit при отсутствии автосоздание как у QUIC каталога).`);
