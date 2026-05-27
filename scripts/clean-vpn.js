@@ -2854,6 +2854,8 @@ function attachCleanVpnWebrtcExitSignaling(
   let handshakeDone = false;
   /** @type {import('node-datachannel').PeerConnection|null} */
   let connPc = null;
+  /** @type {{ reconnectWire: (newEp: any) => void } | null} */
+  let bridgeApi = null;
   const signal = createWebrtcWsSignal(ws);
   const allowHost = !!iceOpts.allowHostCandidates;
   /** C-2: PSK для подписания/проверки DTLS fingerprint. null → fallback с warning. */
@@ -2863,6 +2865,12 @@ function attachCleanVpnWebrtcExitSignaling(
   let expectedRemoteFingerprint = /** @type {string|null} */ (null);
   /** @type {Set<string>} */
   const seenNonces = new Set();
+  const keepAliveSec =
+    typeof tunBridgeOpts?.keepAliveSec === 'number' &&
+    Number.isFinite(tunBridgeOpts.keepAliveSec) &&
+    tunBridgeOpts.keepAliveSec > 0
+      ? Math.floor(tunBridgeOpts.keepAliveSec)
+      : 0;
 
   const closeWithReason = (reason) => {
     console.warn(`[clean-vpn] webrtc exit signaling: отклоняем (${reason})`);
@@ -2872,6 +2880,29 @@ function attachCleanVpnWebrtcExitSignaling(
       /* ignore */
     }
   };
+
+  const resetWebrtcSession = (reason = '') => {
+    if (connPc) {
+      const dead = connPc;
+      connPc = null;
+      safe(() => dead.destroy());
+      pcRef.clearIfStill(dead);
+    }
+    handshakeDone = false;
+    expectedRemoteFingerprint = null;
+    seenNonces.clear();
+    if (reason) {
+      console.log(`[clean-vpn] webrtc exit signaling: сессия сброшена (${reason})`);
+    }
+  };
+
+  const bridgeOptsWithIdle =
+    keepAliveSec > 0
+      ? {
+          ...tunBridgeOpts,
+          onKeepAliveIdle: () => resetWebrtcSession('keep-alive idle'),
+        }
+      : tunBridgeOpts;
 
   const sendOwnBindForFingerprint = (fp) => {
     if (!psk || !fp) return;
@@ -2919,7 +2950,15 @@ function attachCleanVpnWebrtcExitSignaling(
     const dc = connPc.createDataChannel('clean-vpn');
     dc.onOpen(() => {
       console.log('[clean-vpn] DataChannel open (exit)');
-      attachTunBridge(tun, 'webrtc-dc', dc, tunBridgeOpts);
+      if (keepAliveSec > 0) {
+        if (!bridgeApi) {
+          bridgeApi = attachTunBridge(tun, 'webrtc-dc', dc, bridgeOptsWithIdle);
+        } else {
+          bridgeApi.reconnectWire(dc);
+        }
+      } else {
+        attachTunBridge(tun, 'webrtc-dc', dc, tunBridgeOpts);
+      }
     });
     dc.onClosed(() => {
       console.log('[clean-vpn] DataChannel closed (exit)');
@@ -2956,12 +2995,17 @@ function attachCleanVpnWebrtcExitSignaling(
       );
       return;
     }
-    if (msg.type === 'clean-vpn-ready' && !handshakeDone) {
-      if (psk == null && pskRequired) {
+    if (msg.type === 'clean-vpn-ready') {
+      if (psk == null && pskRequired && !handshakeDone) {
         closeWithReason('exit_no_psk');
         return;
       }
-      setupInitiator();
+      if (handshakeDone && keepAliveSec) {
+        resetWebrtcSession('повторный clean-vpn-ready');
+      }
+      if (!handshakeDone) {
+        setupInitiator();
+      }
       return;
     }
     if (msg.type === 'offer' || msg.type === 'answer') {
@@ -2987,11 +3031,7 @@ function attachCleanVpnWebrtcExitSignaling(
   });
 
   ws.on('close', () => {
-    if (!connPc) return;
-    const dead = connPc;
-    connPc = null;
-    safe(() => dead.destroy());
-    pcRef.clearIfStill(dead);
+    resetWebrtcSession('ws close');
   });
 
   ws.on('error', logWebrtcSigWsError);
@@ -3022,6 +3062,19 @@ function attachCleanVpnWebrtcClientSignaling(
   let expectedRemoteFingerprint = /** @type {string|null} */ (null);
   /** @type {Set<string>} */
   const seenNonces = new Set();
+  const keepAliveSec =
+    typeof tunBridgeOpts?.keepAliveSec === 'number' &&
+    Number.isFinite(tunBridgeOpts.keepAliveSec) &&
+    tunBridgeOpts.keepAliveSec > 0
+      ? Math.floor(tunBridgeOpts.keepAliveSec)
+      : 0;
+  /** @type {import('node-datachannel').PeerConnection|null} */
+  let pc = null;
+  /** @type {((dc: import('node-datachannel').DataChannel) => void)|null} */
+  let pendingDcOpenResolve = null;
+  /** @type {ReturnType<typeof setTimeout>|null} */
+  let pendingDcOpenTimer = null;
+  const SIG_MS = 60000;
 
   const closeWithReason = (reason) => {
     console.warn(`[clean-vpn] webrtc client signaling: отклоняем (${reason})`);
@@ -3037,8 +3090,33 @@ function attachCleanVpnWebrtcClientSignaling(
     maxMessageSize: 65536,
     ...(ice.iceMode === 'relay' ? { iceTransportPolicy: 'relay' } : {}),
   };
-  const pc = new PeerConnection('clean-vpn-client', pcConfig);
-  pcRef.setActive(pc);
+
+  const resetClientSession = (reason = '') => {
+    if (pendingDcOpenTimer) {
+      clearTimeout(pendingDcOpenTimer);
+      pendingDcOpenTimer = null;
+    }
+    pendingDcOpenResolve = null;
+    if (pc) {
+      const dead = pc;
+      pc = null;
+      safe(() => dead.destroy());
+      pcRef.clearIfStill(dead);
+    }
+    expectedRemoteFingerprint = null;
+    seenNonces.clear();
+    if (reason) {
+      console.log(`[clean-vpn] webrtc client signaling: сессия сброшена (${reason})`);
+    }
+  };
+
+  const bridgeOptsWithIdle =
+    keepAliveSec > 0
+      ? {
+          ...tunBridgeOpts,
+          onKeepAliveIdle: () => resetClientSession('keep-alive idle'),
+        }
+      : tunBridgeOpts;
 
   const sendOwnBindForFingerprint = (fp) => {
     if (!psk || !fp) return;
@@ -3054,38 +3132,94 @@ function attachCleanVpnWebrtcClientSignaling(
     });
   };
 
-  let boundSent = false;
-  pc.onLocalDescription((sdp, t) => {
-    const fp = extractDtlsFingerprintFromSdp(sdp);
-    if (psk && fp && !boundSent) {
-      boundSent = true;
-      sendOwnBindForFingerprint(fp);
-    } else if (!psk && pskRequired) {
-      closeWithReason('no_signaling_psk');
-      return;
-    }
-    signal({ type: String(t).toLowerCase(), sdp });
-  });
-  pc.onLocalCandidate((candidate, mid) => {
-    emitFilteredLocalCandidate(signal, candidate, mid, allowHost, 'webrtc client');
-  });
-  pc.onStateChange((state) => {
-    console.log('[clean-vpn] webrtc client PC:', state);
-  });
+  const setupPeerConnection = () => {
+    resetClientSession();
+    const newPc = new PeerConnection('clean-vpn-client', pcConfig);
+    pc = newPc;
+    pcRef.setActive(newPc);
 
-  pc.onDataChannel((dc) => {
-    dc.onOpen(() => {
-      console.log('[clean-vpn] DataChannel open (client)');
-      attachTunBridge(tun, 'webrtc-dc', dc, tunBridgeOpts);
+    let boundSent = false;
+    newPc.onLocalDescription((sdp, t) => {
+      const fp = extractDtlsFingerprintFromSdp(sdp);
+      if (psk && fp && !boundSent) {
+        boundSent = true;
+        sendOwnBindForFingerprint(fp);
+      } else if (!psk && pskRequired) {
+        closeWithReason('no_signaling_psk');
+        return;
+      }
+      signal({ type: String(t).toLowerCase(), sdp });
     });
-    dc.onError((err) => {
-      console.error('[clean-vpn] DataChannel error (client):', err);
+    newPc.onLocalCandidate((candidate, mid) => {
+      emitFilteredLocalCandidate(signal, candidate, mid, allowHost, 'webrtc client');
     });
-  });
+    newPc.onStateChange((state) => {
+      console.log('[clean-vpn] webrtc client PC:', state);
+    });
+
+    newPc.onDataChannel((dc) => {
+      dc.onError((err) => {
+        console.error('[clean-vpn] DataChannel error (client):', err);
+      });
+      dc.onOpen(() => {
+        console.log('[clean-vpn] DataChannel open (client)');
+        if (keepAliveSec && pendingDcOpenResolve) {
+          const resolve = pendingDcOpenResolve;
+          pendingDcOpenResolve = null;
+          if (pendingDcOpenTimer) {
+            clearTimeout(pendingDcOpenTimer);
+            pendingDcOpenTimer = null;
+          }
+          resolve(dc);
+        } else if (!keepAliveSec) {
+          attachTunBridge(tun, 'webrtc-dc', dc, tunBridgeOpts);
+        }
+      });
+    });
+
+    return newPc;
+  };
+
+  const connectDataChannel = async () => {
+    setupPeerConnection();
+    return new Promise((resolve, reject) => {
+      pendingDcOpenResolve = resolve;
+      pendingDcOpenTimer = setTimeout(() => {
+        pendingDcOpenTimer = null;
+        pendingDcOpenResolve = null;
+        reject(new Error(`timeout ожидания DataChannel (${SIG_MS}ms)`));
+      }, SIG_MS);
+      pendingDcOpenTimer.unref?.();
+      try {
+        ws.send(JSON.stringify({ type: 'clean-vpn-ready' }));
+      } catch (e) {
+        if (pendingDcOpenTimer) {
+          clearTimeout(pendingDcOpenTimer);
+          pendingDcOpenTimer = null;
+        }
+        pendingDcOpenResolve = null;
+        reject(e);
+      }
+    });
+  };
+
+  if (keepAliveSec > 0) {
+    attachTunBridge(tun, 'webrtc-dc', null, {
+      ...bridgeOptsWithIdle,
+      lazyConnect: connectDataChannel,
+    });
+  } else {
+    setupPeerConnection();
+    try {
+      ws.send(JSON.stringify({ type: 'clean-vpn-ready' }));
+    } catch {
+      /* ignore */
+    }
+  }
 
   ws.on('message', (data, isBinary) => {
     const msg = tryParseWebrtcSignalingJson(data, isBinary);
-    if (!msg) return;
+    if (!msg || !pc) return;
     if (msg.type === SIGNALING_BIND_MSG_TYPE) {
       if (!psk) {
         if (pskRequired) {
@@ -3135,15 +3269,8 @@ function attachCleanVpnWebrtcClientSignaling(
   ws.on('error', logWebrtcSigWsError);
 
   ws.on('close', () => {
-    safe(() => pc.destroy());
-    pcRef.clearIfStill(pc);
+    resetClientSession('ws close');
   });
-
-  try {
-    ws.send(JSON.stringify({ type: 'clean-vpn-ready' }));
-  } catch {
-    /* ignore */
-  }
 }
 
 // =============================================================================
@@ -4835,7 +4962,9 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
  *   keepAliveSec?: number,
  *   keepAliveReconnectCooldownSec?: number,
  *   lazyConnect?: () => Promise<any>,
+ *   onKeepAliveIdle?: () => void,
  * }} [bridgeOpts]
+ * @returns {{ reconnectWire: (newEp: any) => void } | null}
  */
 function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
   const kaRaw = bridgeOpts?.keepAliveSec;
@@ -4853,7 +4982,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
 
   if (!keepAliveSec && !lazyConnect) {
     attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts);
-    return;
+    return null;
   }
 
   const framer = new StreamFramer();
@@ -5217,9 +5346,34 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
               ? 'DataChannel закрыт'
               : String(reason || 'неизвестно');
     logKa('отключено', reasonRu);
+    if (reason === 'idle' && typeof bridgeOpts?.onKeepAliveIdle === 'function') {
+      try {
+        bridgeOpts.onKeepAliveIdle();
+      } catch (e) {
+        console.error('[clean-vpn] onKeepAliveIdle:', e?.message || e);
+      }
+    }
     } finally {
       teardownBusy = false;
     }
+  }
+
+  function reconnectWire(newEp) {
+    if (!keepAliveSec || !newEp) return;
+    if (connecting) return;
+    cancelTimers();
+    wireOff();
+    wireOff = () => {};
+    ep = newEp;
+    wireArmed = true;
+    tunQueue.length = 0;
+    dcQueue.length = 0;
+    dcHead = 0;
+    dcPumpScheduled = false;
+    attachWireHandlers();
+    applyWireKeepalive();
+    bumpActivity();
+    logKa('переподключено', 'webrtc-dc');
   }
 
   async function ensureWire() {
@@ -5302,6 +5456,8 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       sendOnWire(pkt);
     }
   });
+
+  return { reconnectWire };
 }
 
 /**
@@ -9422,7 +9578,7 @@ async function main() {
 --ws-server: websocket / ws-chrome на exit — слушать HTTP+WS или WSS данных на --server; на client (websocket) — слушать WSS; без флага — исходящий WebSocket к --server.
 --signaling: webrtc (exit|client) или rtc-chrome (client) — слушать WSS сигналинга на --server; без флага — исходящий WS. Для udp — вместе с UDP на PORT поднять WSS на PORT+1 (как webrtc). Алиас: --signalling.
 --punch: только --type=udp — hole punching через STUN + сигналинг на PORT+1; на exit только вместе с --signaling.
---keep-alive=N: целое N≥0; 0 или отсутствие — как раньше. N>0 — idle N с без трафика TUN↔транспорт → разрыв; на client исходящие TCP/TLS/WS/UDP — отложенный connect до первого IPv4 с TUN. ws-chrome/rtc-chrome: после idle сессию нужно поднять заново (дорого). webrtc DC после idle без автосигналинга — перезапуск процессов. QUIC/quic-ext: флаг не применяется.
+--keep-alive=N: целое N≥0; 0 или отсутствие — как раньше. N>0 — idle N с без трафика TUN↔транспорт → разрыв; на client исходящие TCP/TLS/WS/UDP/WebRTC — отложенный connect до первого IPv4 с TUN (webrtc: повторный сигналинг clean-vpn-ready + новый PC/DC). ws-chrome/rtc-chrome: после idle сессию нужно поднять заново (дорого). QUIC/quic-ext: флаг не применяется.
 --keep-alive-reconnect-cooldown=M: целое M≥0; только с --keep-alive>0. После разрыва по idle M с не поднимать lazy по IPv4 с TUN (отбрасываются); не-IPv4 не поднимает сессию в любом случае. После M с следующий IPv4 снова может lazy-connect — cooldown не фильтр «навсегда». Меньше дребезга от DNS/ретрансмитов. По умолчанию 0. CLEAN_VPN_KEEPALIVE_DEBUG=1 — lazy/cooldown и drop не-IPv4 (hex). CLEAN_VPN_TLS_MUX_DEBUG=1 — диагностика TCP до ClientHello на exit и до handshake на client (--type=tls).
 --tunnel-peer=HOST: для websocket/webrtc/rtc-chrome/udp + client при нюансах accept/split-default — см. шапку. Дополнительно: **transparent-tls** и **combo-tls + client** — **IPv4 или IPv4:PORT** (порт по умолчанию **443**) фиксирует один апстрим для всех локальных HTTPS-сессий (**без** iptables REDIRECT; нужен только с тестами на один хост). Обычный режим: **OUTPUT** ipv4/https→локальный intercept; при **--client-lan-subnet** — **PREROUTING DNAT** с LAN→LAN-IPv4 шлюза:intercept (второй listener, см. документацию).
 --tls-cert-dir / --shared-hmac-key: для transparent-tls и combo-tls нужен тот же 32-байтовый ключ (CVPTX OPEN-HMAC и Bearer tls), что и для --type=tls (на exit при отсутствии автосоздание как у QUIC каталога).`);
