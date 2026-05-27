@@ -500,53 +500,6 @@ function tlsAlpnToHttpLabel(alpn) {
 /** RFC1918: при split-default идут через uplink (длиннее префикса /1), чтобы DNS/LAN не уезжали на exit. Peer 10.99.0.1 остаётся /32 на tun. */
 const SPLIT_PRIVATE_V4 = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
 
-/** Публичные DNS через uplink, пока WebRTC не поднят (rtc-chrome + keep-alive + split-default). */
-const RTC_CHROME_DNS_BOOTSTRAP_V4 = [
-  '8.8.8.8',
-  '8.8.4.4',
-  '1.1.1.1',
-  '1.0.0.1',
-  '9.9.9.9',
-  '149.112.112.112',
-];
-
-/**
- * @param {{ gw?: string|null, dev?: string, splitDefaultApplied?: boolean, _rtcChromeDnsBootstrap?: boolean }} ctx
- */
-function enableRtcChromeDnsBootstrapUplink(ctx) {
-  if (!ctx?.splitDefaultApplied || ctx._rtcChromeDnsBootstrap) return;
-  const { gw, dev } = ctx;
-  if (!dev) return;
-  for (const host of RTC_CHROME_DNS_BOOTSTRAP_V4) {
-    if (gw) {
-      ip(['route', 'replace', `${host}/32`, 'via', gw, 'dev', dev]);
-    } else {
-      ip(['route', 'replace', `${host}/32`, 'dev', dev]);
-    }
-  }
-  ctx._rtcChromeDnsBootstrap = true;
-  console.log(
-    '[clean-vpn] rtc-chrome: публичный DNS через uplink (bootstrap, пока WebRTC к exit не поднят)',
-  );
-}
-
-/**
- * @param {{ gw?: string|null, dev?: string, _rtcChromeDnsBootstrap?: boolean }} ctx
- */
-function disableRtcChromeDnsBootstrapUplink(ctx) {
-  if (!ctx?._rtcChromeDnsBootstrap) return;
-  const { gw, dev } = ctx;
-  if (!dev) return;
-  for (const host of RTC_CHROME_DNS_BOOTSTRAP_V4) {
-    if (gw) {
-      tryIpRoute(['route', 'del', `${host}/32`, 'via', gw, 'dev', dev]);
-    } else {
-      tryIpRoute(['route', 'del', `${host}/32`, 'dev', dev]);
-    }
-  }
-  ctx._rtcChromeDnsBootstrap = false;
-}
-
 /**
  * @param {string|null|undefined} gw
  * @param {string} dev
@@ -4607,7 +4560,6 @@ function applyDeferredClientSplitDefault(ctx) {
 
 function teardownClientRoutes(ctx) {
   if (!ctx) return;
-  disableRtcChromeDnsBootstrapUplink(ctx);
   teardownClientLanGateway(ctx);
   const {
     serverIp,
@@ -4853,25 +4805,35 @@ function isIpv4Bridgeable(pkt) {
   return true;
 }
 
-/**
- * rtc-chrome + keep-alive: поднимать WebRTC только от новой TCP-сессии или ping; DNS/UDP — в очередь, не триггер.
- * @param {Buffer} pkt
- */
-function ipv4PktTriggersRtcChromeKeepaliveReconnect(pkt) {
-  if (!isIpv4Bridgeable(pkt)) return false;
+/** @param {Buffer} pkt */
+function ipv4PktIsTcpSyn(pkt) {
+  if (!isIpv4Bridgeable(pkt) || pkt.readUInt8(9) !== 6) return false;
   const ihl = (pkt.readUInt8(0) & 0x0f) * 4;
-  if (pkt.length < ihl + 1) return false;
-  const proto = pkt.readUInt8(9);
-  if (proto === 6) {
-    if (pkt.length < ihl + 14) return false;
-    const fl = pkt.readUInt8(ihl + 13);
-    return (fl & 0x02) !== 0 && (fl & 0x10) === 0;
-  }
-  if (proto === 1) {
-    if (pkt.length < ihl + 2) return false;
-    return pkt.readUInt8(ihl) === 8;
-  }
-  return false;
+  if (pkt.length < ihl + 14) return false;
+  const fl = pkt.readUInt8(ihl + 13);
+  return (fl & 0x02) !== 0 && (fl & 0x10) === 0;
+}
+
+/** @param {Buffer} pkt */
+function ipv4PktIsUdpDns(pkt) {
+  if (!isIpv4Bridgeable(pkt) || pkt.readUInt8(9) !== 17) return false;
+  const ihl = (pkt.readUInt8(0) & 0x0f) * 4;
+  if (pkt.length < ihl + 4) return false;
+  const dport = pkt.readUInt16BE(ihl + 2);
+  return dport === 53 || dport === 5353;
+}
+
+/**
+ * rtc-chrome + keep-alive: поднять WebRTC на «настоящем» HTTPS-запросе (DNS→SYN), не на одиночном фоновом SYN.
+ * @param {Buffer} pkt
+ * @param {Buffer[]} tunQueueBeforePush
+ */
+function rtcChromeLazyConnectTrigger(pkt, tunQueueBeforePush) {
+  if (!ipv4PktIsTcpSyn(pkt)) return false;
+  if (tunQueueBeforePush.some((q) => ipv4PktIsUdpDns(q))) return true;
+  const ihl = (pkt.readUInt8(0) & 0x0f) * 4;
+  const dport = pkt.readUInt16BE(ihl + 2);
+  return dport === 443 || dport === 80;
 }
 
 /**
@@ -5061,7 +5023,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
  *   onWebrtcWireDown?: (reason: string) => void,
  *   softKeepAliveIdle?: () => void,
  *   softKeepAliveIdleKeepsWire?: boolean,
- *   lazyConnectFilter?: (pkt: Buffer) => boolean — true = вызвать lazyConnect; false = только очередь (без connect)
+ *   lazyConnectTrigger?: (pkt: Buffer, tunQueueBeforePush: Buffer[]) => boolean,
  * }} [bridgeOpts]
  * @returns {{ reconnectWire: (newEp: any) => void } | null}
  */
@@ -5611,19 +5573,19 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
           }
           continue;
         }
-        const lazyFilter = bridgeOpts?.lazyConnectFilter;
-        const triggersConnect =
-          typeof lazyFilter !== 'function' ? true : lazyFilter(pkt);
+        const lazyTrigger = bridgeOpts?.lazyConnectTrigger;
+        const shouldConnect =
+          typeof lazyTrigger !== 'function' ? true : lazyTrigger(pkt, tunQueue);
         if (tunQueue.length >= KEEPALIVE_TUN_QUEUE_MAX) tunQueue.shift();
         tunQueue.push(pkt);
         if (kaDebug) {
           const ipProto = pkt.length >= 10 ? pkt.readUInt8(9) : -1;
           logKa(
-            triggersConnect ? 'lazy-queue' : 'lazy-queue-hold',
-            `${pkt.length} B ip-proto=${ipProto} до=${tunQueue.length}${triggersConnect ? '' : ' (ждём TCP SYN/ping)'}`,
+            shouldConnect ? 'lazy-queue' : 'lazy-queue-wait',
+            `${pkt.length} B ip-proto=${ipProto} до=${tunQueue.length}`,
           );
         }
-        if (triggersConnect) void ensureWire();
+        if (shouldConnect) void ensureWire();
         continue;
       }
       if (!wireArmed) continue;
@@ -9091,36 +9053,26 @@ async function runClient({
     if (kaBridge > 0) {
       if (splitDefault) {
         applyDeferredClientSplitDefault(routeCtx);
-        enableRtcChromeDnsBootstrapUplink(routeCtx);
-        console.log(
-          '[clean-vpn] rtc-chrome: split-default включён; WebRTC к exit — по TCP SYN / ping с TUN',
-        );
       }
-      let rtcChromeLazyReadyLogged = false;
       attachTunBridge(tun, 'websocket', null, {
         ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
         lazyConnect: async () => {
           await rtcSession.ensureWebrtcReady();
-          disableRtcChromeDnsBootstrapUplink(routeCtx);
-          if (!rtcChromeLazyReadyLogged) {
-            rtcChromeLazyReadyLogged = true;
-            console.log(
-              '[clean-vpn] rtc-chrome: готово (WebRTC к exit по TCP SYN / ping с TUN, keep-alive)',
-            );
-          }
+          console.log(
+            '[clean-vpn] rtc-chrome: готово (WebRTC к exit по HTTPS-запросу с TUN, keep-alive)',
+          );
           return rtcSession.bridgeWs;
         },
-        lazyConnectFilter: ipv4PktTriggersRtcChromeKeepaliveReconnect,
+        lazyConnectTrigger: rtcChromeLazyConnectTrigger,
         softKeepAliveIdle: () => {
           console.log(
             `[clean-vpn] rtc-chrome: keep-alive ${kaBridge}s — WebRTC к exit сброшен, Chrome остаётся`,
           );
           rtcSession.idleWebrtcTeardown();
-          enableRtcChromeDnsBootstrapUplink(routeCtx);
         },
       });
       console.log(
-        '[clean-vpn] rtc-chrome: Chrome + локальный WS; WebRTC — по TCP SYN / ping (DNS bootstrap через uplink)',
+        '[clean-vpn] rtc-chrome: Chrome + локальный WS; split-default активен; WebRTC — по curl/HTTPS (keep-alive)',
       );
       return;
     }
