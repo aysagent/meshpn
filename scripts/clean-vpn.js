@@ -9048,20 +9048,36 @@ async function runClient({
       console.error('[clean-vpn] rtc-chrome:', e?.message || e);
     });
 
-    attachTunBridge(tun, 'websocket', null, {
-      ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
-      lazyConnect: async () => {
-        await rtcSession.ensureWebrtcReady();
-        return rtcSession.bridgeWs;
-      },
-      lazyConnectFilter: ipv4PktTriggersRtcChromeKeepaliveReconnect,
-      softKeepAliveIdle: () => {
-        console.log(
-          `[clean-vpn] rtc-chrome: keep-alive ${kaBridge}s — WebRTC к exit сброшен, Chrome остаётся (reconnect: TCP SYN / ping, не DNS)`,
-        );
-        rtcSession.idleWebrtcTeardown();
-      },
-    });
+    if (kaBridge > 0) {
+      let rtcChromeLazyReadyLogged = false;
+      attachTunBridge(tun, 'websocket', null, {
+        ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
+        lazyConnect: async () => {
+          await rtcSession.ensureWebrtcReady();
+          applyDeferredClientSplitDefault(routeCtx);
+          if (!rtcChromeLazyReadyLogged) {
+            rtcChromeLazyReadyLogged = true;
+            console.log(
+              '[clean-vpn] rtc-chrome: готово (WebRTC к exit по первому трафику с TUN, keep-alive)',
+            );
+          }
+          return rtcSession.bridgeWs;
+        },
+        lazyConnectFilter: ipv4PktTriggersRtcChromeKeepaliveReconnect,
+        softKeepAliveIdle: () => {
+          console.log(
+            `[clean-vpn] rtc-chrome: keep-alive ${kaBridge}s — WebRTC к exit сброшен, Chrome остаётся (reconnect: TCP SYN / ping, не DNS)`,
+          );
+          rtcSession.idleWebrtcTeardown();
+        },
+      });
+      console.log(
+        '[clean-vpn] rtc-chrome: Chrome + локальный WS готов; WebRTC к exit — только по трафику с TUN (keep-alive)',
+      );
+      return;
+    }
+
+    attachTunBridge(tun, 'websocket', rtcSession.bridgeWs, BRIDGE_OPTS_CLIENT);
 
     void rtcSession
       .ensureWebrtcReady()
