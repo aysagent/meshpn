@@ -7214,6 +7214,7 @@ function buildRtcChromeEmbeddedPageHtml(
     }
   }
 
+  var sigHandleChain = Promise.resolve();
   sigWs.onmessage = function (ev) {
     var msg;
     try {
@@ -7221,7 +7222,13 @@ function buildRtcChromeEmbeddedPageHtml(
     } catch (e) {
       return;
     }
-    void handleSigMsg(msg);
+    sigHandleChain = sigHandleChain
+      .then(function () { return handleSigMsg(msg); })
+      .catch(function (e) {
+        if (window.cleanVpnRtcError) {
+          window.cleanVpnRtcError(String(e && e.message ? e.message : e));
+        }
+      });
   };
   sigWs.onclose = signalClose;
   sigWs.onerror = function () {};
