@@ -143,7 +143,7 @@ import {
   attachTransparentTlsClientSession,
   wireTransparentTlsExitSession,
 } from './lib/transparent-tls-runtime.mjs';
-import { PeerConnection, setSctpSettings } from 'node-datachannel';
+// node-datachannel — native addon; только для --type=webrtc (не rtc-chrome). Lazy import в ensureNodeDatachannelLoaded().
 // @matrixai/logger — CJS; в ESM класс лежит в .default, не в корне namespace.
 import matrixAiLogger from '@matrixai/logger';
 const LoggerClass = matrixAiLogger.default ?? matrixAiLogger;
@@ -248,7 +248,24 @@ const DEFAULT_ICE_SERVERS_JSON = [
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
 
-setSctpSettings(SCTP_DEFAULTS);
+/** @type {typeof import('node-datachannel').PeerConnection | null} */
+let ndcPeerConnectionClass = null;
+
+/** Загрузить node-datachannel (native). rtc-chrome/ws-chrome не вызывают — избегаем segfault на ARM при битом prebuild. */
+async function ensureNodeDatachannelLoaded() {
+  if (ndcPeerConnectionClass) return;
+  let mod;
+  try {
+    mod = await import('node-datachannel');
+  } catch (e) {
+    throw new Error(
+      'node-datachannel не загружен (нужен для --type=webrtc на client/exit). npm install node-datachannel; на ARM при segfault пересоберите из исходников или используйте --type=rtc-chrome.',
+      { cause: e },
+    );
+  }
+  mod.setSctpSettings(SCTP_DEFAULTS);
+  ndcPeerConnectionClass = mod.PeerConnection;
+}
 
 const DEFAULT_CONFIG_JSON = path.join(__dirname, '../config/default.json');
 const DEFAULT_QUIC_CERTS_DIR = path.join(__dirname, '../certs');
@@ -2923,7 +2940,7 @@ function attachCleanVpnWebrtcExitSignaling(
   const setupInitiator = () => {
     if (handshakeDone) return;
     handshakeDone = true;
-    connPc = new PeerConnection('clean-vpn-exit', {
+    connPc = new ndcPeerConnectionClass('clean-vpn-exit', {
       iceServers: ice.ndcIceServers,
       maxMessageSize: 65536,
       ...(ice.iceMode === 'relay' ? { iceTransportPolicy: 'relay' } : {}),
@@ -3133,7 +3150,7 @@ function attachCleanVpnWebrtcClientSignaling(
 
   const setupPeerConnection = () => {
     resetClientSession();
-    const newPc = new PeerConnection('clean-vpn-client', pcConfig);
+    const newPc = new ndcPeerConnectionClass('clean-vpn-client', pcConfig);
     pc = newPc;
     pcRef.setActive(newPc);
 
@@ -4977,6 +4994,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
  *   onWebrtcWireDown?: (reason: string) => void,
  *   softKeepAliveIdle?: () => void,
  *   softKeepAliveIdleKeepsWire?: boolean,
+ *   onTunOutbound?: (pkt: Buffer) => void,
  * }} [bridgeOpts]
  * @returns {{ reconnectWire: (newEp: any) => void } | null}
  */
@@ -5084,7 +5102,9 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       }
       logKa(
         'отключено',
-        `простой ${keepAliveSec}s (транспорт остаётся; переподключение WebRTC/WS к exit)`,
+        bridgeOpts?.softKeepAliveIdleKeepsWire
+          ? `простой ${keepAliveSec}s (локальный мост остаётся; переподключение к exit — по IPv4 с TUN)`
+          : `простой ${keepAliveSec}s (транспорт остаётся; переподключение WebRTC/WS к exit)`,
       );
       try {
         bridgeOpts?.softKeepAliveIdle?.();
@@ -5534,6 +5554,11 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
         continue;
       }
       if (!wireArmed) continue;
+      try {
+        bridgeOpts?.onTunOutbound?.(pkt);
+      } catch (e) {
+        console.error('[clean-vpn] onTunOutbound:', e?.message || e);
+      }
       sendOnWire(pkt);
     }
   });
@@ -7629,6 +7654,7 @@ async function createRtcChromeClientSession(opts) {
     browser,
     page,
     localWss,
+    isWebrtcReady: () => webrtcReady,
     ensureWebrtcReady,
     idleWebrtcTeardown,
     close,
@@ -8295,6 +8321,7 @@ async function runExit({
 
   // --- runExit: --type=webrtc ---
   if (type === 'webrtc') {
+    await ensureNodeDatachannelLoaded();
     const ice = loadWebrtcIceFromConfig(configPath, iceMode);
     const sigListen = webrtcSignalingListens(signaling);
     /** C-2: загрузить общий PSK для подписи сигналинга. */
@@ -8998,12 +9025,16 @@ async function runClient({
       softKeepAliveIdleKeepsWire: true,
       softKeepAliveIdle: () => {
         console.log(
-          `[clean-vpn] rtc-chrome: keep-alive ${kaBridge}s — WebRTC к exit сброшен, Chrome остаётся`,
+          `[clean-vpn] rtc-chrome: keep-alive ${kaBridge}s — WebRTC к exit сброшен, Chrome остаётся (reconnect по IPv4 с TUN)`,
         );
         rtcSession.idleWebrtcTeardown();
-        void rtcSession.ensureWebrtcReady().catch((e) => {
-          console.error('[clean-vpn] rtc-chrome: reconnect после idle:', e?.message || e);
-        });
+      },
+      onTunOutbound: () => {
+        if (!rtcSession.isWebrtcReady()) {
+          void rtcSession.ensureWebrtcReady().catch((e) => {
+            console.error('[clean-vpn] rtc-chrome: lazy WebRTC reconnect:', e?.message || e);
+          });
+        }
       },
     });
 
@@ -9169,6 +9200,7 @@ async function runClient({
 
   // --- runClient: --type=webrtc ---
   if (type === 'webrtc') {
+    await ensureNodeDatachannelLoaded();
     const ice = loadWebrtcIceFromConfig(configPath, iceMode);
     /** C-2: PSK для подписи сигналинга. */
     const certsDirSig = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
@@ -10046,6 +10078,20 @@ async function main() {
   ) {
     console.warn(
       '[clean-vpn] --boring-tls-clienthello-profile / CLEAN_VPN_BORING_TLS_CLIENTHELLO_PROFILE действует только с --type=boring-tls или combo-tls; профиль не используется.',
+    );
+  }
+  if (
+    args.role === 'client' &&
+    args.type === 'rtc-chrome' &&
+    (args.tlsClientSni ||
+      args.tlsLogJa3 ||
+      args.boringTlsClienthelloProfile ||
+      args.tlsServerName ||
+      args.boringTlsHelper ||
+      args.boringTlsProfile)
+  ) {
+    console.warn(
+      '[clean-vpn] rtc-chrome: флаги --tls-* / --boring-tls-* / --ja3-* не используются (WebRTC в Chrome, exit — --type=webrtc).',
     );
   }
 
