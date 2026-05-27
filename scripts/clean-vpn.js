@@ -88,8 +88,10 @@
  *   BREAKING: старые `--type=tls` пиры (с ALPN `clean-vpn-tls`) подключиться не смогут — нужно обновлять обе стороны и иметь общий clean-vpn-hmac.key.
  *   Split-default: маршруты 0.0.0.0/1 + 128.0.0.0/1 — только IPv4; плюс 10/8, 172.16/12, 192.168/16 через uplink (DNS/LAN не на exit). IPv6 default не трогается. Проверка внешнего IPv4: curl -4 https://ifconfig.me (без -4 curl может выбрать IPv6).
  *
- * --keep-alive=N (N > 0): простой N-секундный idle по трафику TUN↔транспорт; при разрыве client снова поднимает
- * провод по первому валидному IPv4 с TUN (lazy). Любой другой IPv4 с TUN после разрыва снова откроет сессию (DNS/фон — см. дребезг);
+ * --keep-alive=N (N > 0): простой N-секундный idle по трафику TUN↔транспорт на этой стороне; при разрыве
+ * (idle или закрытие пира) client снова поднимает провод по первому валидному IPv4 с TUN (lazy), exit/inbound —
+ * по новому входящему соединению. Флаг асимметричен: достаточно на client или exit. Без N на client исходящие
+ * транспорты подключаются сразу, но переподключение после разрыва пира — по TUN/inbound как выше.
  * не-IPv4 (в т.ч. IPv6 с tun) не ставится в очередь и не уходит на wire — не поднимает сессию после idle.
  * --keep-alive-reconnect-cooldown=M: после разрыва по idle M с не поднимать lazy по TUN (IPv4 в этот интервал отбрасываются);
  * по истечении M с следующий IPv4 снова может подключить lazy — это ожидаемо, не «вечная» блокировка.
@@ -198,6 +200,15 @@ const BRIDGE_OPTS_CLIENT = { localTunIp: IP_CLIENT };
 
 /** Макс. IPv4-пакетов с TUN в очереди на время lazy-connect (keep-alive). */
 const KEEPALIVE_TUN_QUEUE_MAX = 64;
+
+/** Транспорты с единым мостом и reconnectWire (асимметричный keep-alive). */
+const RECONNECT_BRIDGE_TRANSPORTS = new Set([
+  'tcp',
+  'websocket',
+  'udp-client',
+  'udp-server',
+  'webrtc-dc',
+]);
 
 function safe(fn) {
   try {
@@ -2865,12 +2876,6 @@ function attachCleanVpnWebrtcExitSignaling(
   let expectedRemoteFingerprint = /** @type {string|null} */ (null);
   /** @type {Set<string>} */
   const seenNonces = new Set();
-  const keepAliveSec =
-    typeof tunBridgeOpts?.keepAliveSec === 'number' &&
-    Number.isFinite(tunBridgeOpts.keepAliveSec) &&
-    tunBridgeOpts.keepAliveSec > 0
-      ? Math.floor(tunBridgeOpts.keepAliveSec)
-      : 0;
 
   const closeWithReason = (reason) => {
     console.warn(`[clean-vpn] webrtc exit signaling: отклоняем (${reason})`);
@@ -2896,13 +2901,10 @@ function attachCleanVpnWebrtcExitSignaling(
     }
   };
 
-  const bridgeOptsWithIdle =
-    keepAliveSec > 0
-      ? {
-          ...tunBridgeOpts,
-          onKeepAliveIdle: () => resetWebrtcSession('keep-alive idle'),
-        }
-      : tunBridgeOpts;
+  const bridgeOptsWebrtc = {
+    ...tunBridgeOpts,
+    onWebrtcWireDown: () => resetWebrtcSession('wire down'),
+  };
 
   const sendOwnBindForFingerprint = (fp) => {
     if (!psk || !fp) return;
@@ -2950,18 +2952,17 @@ function attachCleanVpnWebrtcExitSignaling(
     const dc = connPc.createDataChannel('clean-vpn');
     dc.onOpen(() => {
       console.log('[clean-vpn] DataChannel open (exit)');
-      if (keepAliveSec > 0) {
-        if (!bridgeApi) {
-          bridgeApi = attachTunBridge(tun, 'webrtc-dc', dc, bridgeOptsWithIdle);
-        } else {
-          bridgeApi.reconnectWire(dc);
-        }
+      if (!bridgeApi) {
+        bridgeApi = attachTunBridge(tun, 'webrtc-dc', dc, bridgeOptsWebrtc);
       } else {
-        attachTunBridge(tun, 'webrtc-dc', dc, tunBridgeOpts);
+        bridgeApi.reconnectWire(dc);
       }
     });
     dc.onClosed(() => {
       console.log('[clean-vpn] DataChannel closed (exit)');
+      if (handshakeDone || connPc) {
+        resetWebrtcSession('dc closed');
+      }
     });
     dc.onError((err) => {
       console.error('[clean-vpn] DataChannel error (exit):', err);
@@ -3000,7 +3001,7 @@ function attachCleanVpnWebrtcExitSignaling(
         closeWithReason('exit_no_psk');
         return;
       }
-      if (handshakeDone && keepAliveSec) {
+      if (handshakeDone) {
         resetWebrtcSession('повторный clean-vpn-ready');
       }
       if (!handshakeDone) {
@@ -3062,12 +3063,6 @@ function attachCleanVpnWebrtcClientSignaling(
   let expectedRemoteFingerprint = /** @type {string|null} */ (null);
   /** @type {Set<string>} */
   const seenNonces = new Set();
-  const keepAliveSec =
-    typeof tunBridgeOpts?.keepAliveSec === 'number' &&
-    Number.isFinite(tunBridgeOpts.keepAliveSec) &&
-    tunBridgeOpts.keepAliveSec > 0
-      ? Math.floor(tunBridgeOpts.keepAliveSec)
-      : 0;
   /** @type {import('node-datachannel').PeerConnection|null} */
   let pc = null;
   /** @type {((dc: import('node-datachannel').DataChannel) => void)|null} */
@@ -3091,6 +3086,13 @@ function attachCleanVpnWebrtcClientSignaling(
     ...(ice.iceMode === 'relay' ? { iceTransportPolicy: 'relay' } : {}),
   };
 
+  const keepAliveSec =
+    typeof tunBridgeOpts?.keepAliveSec === 'number' &&
+    Number.isFinite(tunBridgeOpts.keepAliveSec) &&
+    tunBridgeOpts.keepAliveSec > 0
+      ? Math.floor(tunBridgeOpts.keepAliveSec)
+      : 0;
+
   const resetClientSession = (reason = '') => {
     if (pendingDcOpenTimer) {
       clearTimeout(pendingDcOpenTimer);
@@ -3110,13 +3112,10 @@ function attachCleanVpnWebrtcClientSignaling(
     }
   };
 
-  const bridgeOptsWithIdle =
-    keepAliveSec > 0
-      ? {
-          ...tunBridgeOpts,
-          onKeepAliveIdle: () => resetClientSession('keep-alive idle'),
-        }
-      : tunBridgeOpts;
+  const bridgeOptsWebrtc = {
+    ...tunBridgeOpts,
+    onWebrtcWireDown: () => resetClientSession('wire down'),
+  };
 
   const sendOwnBindForFingerprint = (fp) => {
     if (!psk || !fp) return;
@@ -3163,7 +3162,7 @@ function attachCleanVpnWebrtcClientSignaling(
       });
       dc.onOpen(() => {
         console.log('[clean-vpn] DataChannel open (client)');
-        if (keepAliveSec && pendingDcOpenResolve) {
+        if (pendingDcOpenResolve) {
           const resolve = pendingDcOpenResolve;
           pendingDcOpenResolve = null;
           if (pendingDcOpenTimer) {
@@ -3171,8 +3170,6 @@ function attachCleanVpnWebrtcClientSignaling(
             pendingDcOpenTimer = null;
           }
           resolve(dc);
-        } else if (!keepAliveSec) {
-          attachTunBridge(tun, 'webrtc-dc', dc, tunBridgeOpts);
         }
       });
     });
@@ -3203,19 +3200,14 @@ function attachCleanVpnWebrtcClientSignaling(
     });
   };
 
-  if (keepAliveSec > 0) {
-    attachTunBridge(tun, 'webrtc-dc', null, {
-      ...bridgeOptsWithIdle,
-      lazyConnect: connectDataChannel,
-    });
-  } else {
-    setupPeerConnection();
-    try {
-      ws.send(JSON.stringify({ type: 'clean-vpn-ready' }));
-    } catch {
-      /* ignore */
-    }
-  }
+  attachOutboundTunBridge(
+    tun,
+    'webrtc-dc',
+    bridgeOptsWebrtc,
+    connectDataChannel,
+    keepAliveSec,
+    tunBridgeOpts?.keepAliveReconnectCooldownSec ?? 0,
+  );
 
   ws.on('message', (data, isBinary) => {
     const msg = tryParseWebrtcSignalingJson(data, isBinary);
@@ -4962,7 +4954,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
  *   keepAliveSec?: number,
  *   keepAliveReconnectCooldownSec?: number,
  *   lazyConnect?: () => Promise<any>,
- *   onKeepAliveIdle?: () => void,
+ *   onWebrtcWireDown?: (reason: string) => void,
  * }} [bridgeOpts]
  * @returns {{ reconnectWire: (newEp: any) => void } | null}
  */
@@ -4971,16 +4963,14 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
   const keepAliveSec =
     typeof kaRaw === 'number' && Number.isFinite(kaRaw) && kaRaw > 0 ? Math.floor(kaRaw) : 0;
   const lazyConnect =
-    keepAliveSec > 0 && typeof bridgeOpts?.lazyConnect === 'function'
-      ? bridgeOpts.lazyConnect
-      : null;
+    typeof bridgeOpts?.lazyConnect === 'function' ? bridgeOpts.lazyConnect : null;
   const cdRaw = bridgeOpts?.keepAliveReconnectCooldownSec;
   const reconnectCooldownSec =
     typeof cdRaw === 'number' && Number.isFinite(cdRaw) && cdRaw > 0 ? Math.floor(cdRaw) : 0;
   let idleCooldownUntilMs = 0;
   const kaDebug = process.env.CLEAN_VPN_KEEPALIVE_DEBUG === '1';
 
-  if (!keepAliveSec && !lazyConnect) {
+  if (!keepAliveSec && !lazyConnect && !RECONNECT_BRIDGE_TRANSPORTS.has(transport)) {
     attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts);
     return null;
   }
@@ -5346,11 +5336,15 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
               ? 'DataChannel закрыт'
               : String(reason || 'неизвестно');
     logKa('отключено', reasonRu);
-    if (reason === 'idle' && typeof bridgeOpts?.onKeepAliveIdle === 'function') {
+    if (
+      transport === 'webrtc-dc' &&
+      (reason === 'idle' || reason === 'webrtc_dc_close') &&
+      typeof bridgeOpts?.onWebrtcWireDown === 'function'
+    ) {
       try {
-        bridgeOpts.onKeepAliveIdle();
+        bridgeOpts.onWebrtcWireDown(reason);
       } catch (e) {
-        console.error('[clean-vpn] onKeepAliveIdle:', e?.message || e);
+        console.error('[clean-vpn] onWebrtcWireDown:', e?.message || e);
       }
     }
     } finally {
@@ -5358,22 +5352,43 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     }
   }
 
+  function closeBridgeEndpoint(prev) {
+    if (!prev) return;
+    try {
+      if (transport === 'tcp') {
+        prev.destroy?.();
+      } else if (transport === 'websocket') {
+        prev.close?.();
+      } else if (transport === 'udp-client') {
+        prev.disconnect?.();
+        prev.close?.();
+      } else if (transport === 'webrtc-dc') {
+        prev.close?.();
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   function reconnectWire(newEp) {
-    if (!keepAliveSec || !newEp) return;
+    if (!newEp) return;
     if (connecting) return;
     cancelTimers();
     wireOff();
     wireOff = () => {};
+    const prev = ep;
     ep = newEp;
     wireArmed = true;
     tunQueue.length = 0;
     dcQueue.length = 0;
     dcHead = 0;
     dcPumpScheduled = false;
+    tcpFramedSend = null;
     attachWireHandlers();
     applyWireKeepalive();
     bumpActivity();
-    logKa('переподключено', 'webrtc-dc');
+    closeBridgeEndpoint(prev);
+    logKa('переподключено', transport);
   }
 
   async function ensureWire() {
@@ -5472,6 +5487,67 @@ function withKeepalive(base, keepAliveSec, reconnectCooldownSec = 0) {
   const c = reconnectCooldownSec == null ? 0 : Number(reconnectCooldownSec);
   if (Number.isFinite(c) && c > 0) out.keepAliveReconnectCooldownSec = Math.floor(c);
   return out;
+}
+
+/**
+ * Client/outbound: один мост с lazyConnect. Без --keep-alive connect сразу (eager), с N>0 — после первого IPv4 с TUN.
+ *
+ * @param {Parameters<typeof attachTunBridge>[0]} tun
+ * @param {Parameters<typeof attachTunBridge>[1]} transport
+ * @param {{ localTunIp?: string }} bridgeBase
+ * @param {() => Promise<any>} connectFn
+ * @param {number} keepAliveSec
+ * @param {number} [reconnectCooldownSec]
+ * @returns {{ reconnectWire: (newEp: any) => void } | null}
+ */
+function attachOutboundTunBridge(
+  tun,
+  transport,
+  bridgeBase,
+  connectFn,
+  keepAliveSec,
+  reconnectCooldownSec = 0,
+) {
+  const ka = keepAliveSec > 0 ? Math.floor(keepAliveSec) : 0;
+  const api = attachTunBridge(tun, transport, null, {
+    ...withKeepalive(bridgeBase, ka, reconnectCooldownSec),
+    lazyConnect: connectFn,
+  });
+  if (ka === 0) {
+    void connectFn()
+      .then((ep) => api?.reconnectWire(ep))
+      .catch((e) => {
+        console.error(`[clean-vpn] eager connect [${transport}]:`, e?.message || e);
+      });
+  }
+  return api;
+}
+
+/**
+ * Exit/inbound (или client reverse-listen): один мост; каждое новое соединение — reconnectWire.
+ *
+ * @param {Parameters<typeof attachTunBridge>[0]} tun
+ * @param {{ localTunIp?: string }} bridgeBase
+ * @param {number} keepAliveSec
+ * @param {number} [reconnectCooldownSec]
+ */
+function createInboundTunBridgeAttach(tun, bridgeBase, keepAliveSec, reconnectCooldownSec = 0) {
+  /** @type {{ reconnectWire: (newEp: any) => void } | null} */
+  let bridgeApi = null;
+  const bridgeOpts = withKeepalive(bridgeBase, keepAliveSec, reconnectCooldownSec);
+  return (
+    /** @type {Parameters<typeof attachTunBridge>[1]} */ transport,
+    endpoint,
+    onAttached,
+  ) => {
+    if (!bridgeApi) {
+      bridgeApi = attachTunBridge(tun, transport, endpoint, bridgeOpts);
+    } else {
+      bridgeApi.reconnectWire(endpoint);
+    }
+    onAttached?.();
+    return bridgeApi;
+  };
 }
 
 /**
@@ -7346,15 +7422,23 @@ async function runExit({
   let quicExtServer = null;
   let shuttingDown = false;
 
+  const attachInboundBridge = createInboundTunBridgeAttach(
+    tun,
+    BRIDGE_OPTS_EXIT,
+    kaBridge,
+    kaCooldown,
+  );
+
   const startBridge = (sock, restBuf, transport) => {
     if (transport === 'tcp' && activeTcp && !activeTcp.destroyed) {
       activeTcp.destroy();
     }
     if (transport === 'tcp') activeTcp = sock;
-    attachTunBridge(tun, transport, sock, withKeepalive(BRIDGE_OPTS_EXIT, kaBridge, kaCooldown));
-    if (restBuf && restBuf.length && transport === 'tcp') {
-      sock.emit('data', restBuf);
-    }
+    attachInboundBridge(transport, sock, () => {
+      if (restBuf && restBuf.length && transport === 'tcp') {
+        sock.emit('data', restBuf);
+      }
+    });
   };
 
   const shutdown = () => {
@@ -7474,29 +7558,24 @@ async function runExit({
         console.log(
           `[clean-vpn] exit WebSocket: keep-alive ${kaBridge}s, TCP до первого IPv4 с TUN`,
         );
-        attachTunBridge(tun, 'websocket', null, {
-          ...withKeepalive(BRIDGE_OPTS_EXIT, kaBridge, kaCooldown),
-          lazyConnect: async () => {
-            exitOutboundWebsocket = new WebSocket(url);
-            exitOutboundWebsocket.binaryType = 'nodebuffer';
-            await new Promise((resolve, reject) => {
-              exitOutboundWebsocket.once('open', resolve);
-              exitOutboundWebsocket.once('error', reject);
-            });
-            console.log('[clean-vpn] exit WebSocket: соединение установлено');
-            return exitOutboundWebsocket;
-          },
-        });
-      } else {
-        exitOutboundWebsocket = new WebSocket(url);
-        exitOutboundWebsocket.binaryType = 'nodebuffer';
-        await new Promise((resolve, reject) => {
-          exitOutboundWebsocket.once('open', resolve);
-          exitOutboundWebsocket.once('error', reject);
-        });
-        console.log('[clean-vpn] exit WebSocket: соединение установлено');
-        startBridge(exitOutboundWebsocket, null, 'websocket');
       }
+      attachOutboundTunBridge(
+        tun,
+        'websocket',
+        BRIDGE_OPTS_EXIT,
+        async () => {
+          exitOutboundWebsocket = new WebSocket(url);
+          exitOutboundWebsocket.binaryType = 'nodebuffer';
+          await new Promise((resolve, reject) => {
+            exitOutboundWebsocket.once('open', resolve);
+            exitOutboundWebsocket.once('error', reject);
+          });
+          console.log('[clean-vpn] exit WebSocket: соединение установлено');
+          return exitOutboundWebsocket;
+        },
+        kaBridge,
+        kaCooldown,
+      );
       return;
     }
     wss = new WebSocketServer({ host, port });
@@ -7510,7 +7589,7 @@ async function runExit({
       wss.clients.forEach((c) => {
         if (c !== ws) c.close();
       });
-      startBridge(ws, null, 'websocket');
+      attachInboundBridge('websocket', ws);
     });
     return;
   }
@@ -7543,7 +7622,7 @@ async function runExit({
       wss.clients.forEach((c) => {
         if (c !== ws) c.close();
       });
-      startBridge(ws, null, 'websocket');
+      attachInboundBridge('websocket', ws);
     });
     srv.on('upgrade', (request, socket, head) => {
       wss.handleUpgrade(request, socket, head, (ws) => {
@@ -8409,6 +8488,13 @@ async function runClient({
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
+  const attachInboundBridge = createInboundTunBridgeAttach(
+    tun,
+    BRIDGE_OPTS_CLIENT,
+    kaBridge,
+    kaCooldown,
+  );
+
   // --- runClient: --type=websocket ---
   if (type === 'websocket') {
     if (wsListenCli) {
@@ -8417,22 +8503,22 @@ async function runClient({
       console.log(
         `[clean-vpn] client WebSocket (сервер) ws://${host === '0.0.0.0' ? '*' : host}:${port}/ (--ws-server)`,
       );
-      const ws = await new Promise((resolve, reject) => {
-        clientReverseWss.once('connection', (w) => {
-          console.log('[clean-vpn] client WebSocket: пир подключился');
-          clientReverseWss.clients.forEach((c) => {
-            if (c !== w) c.close();
-          });
-          resolve(w);
+      clientReverseWss.on('connection', (w) => {
+        console.log('[clean-vpn] client WebSocket: пир подключился');
+        clientReverseWss.clients.forEach((c) => {
+          if (c !== w) c.close();
         });
-        clientReverseWss.once('error', reject);
+        w.binaryType = 'nodebuffer';
+        if (deferWsPeerBypass && splitDefault) {
+          try {
+            const peerIp = normalizePeerIpv4(w._socket?.remoteAddress);
+            addClientWsPeerBypass(routeCtx, peerIp);
+          } catch (e) {
+            console.warn('[clean-vpn] client ws bypass пира:', e?.message || e);
+          }
+        }
+        attachInboundBridge('websocket', w);
       });
-      ws.binaryType = 'nodebuffer';
-      if (deferWsPeerBypass && splitDefault) {
-        const peerIp = normalizePeerIpv4(ws._socket?.remoteAddress);
-        addClientWsPeerBypass(routeCtx, peerIp);
-      }
-      attachTunBridge(tun, 'websocket', ws, withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown));
       return;
     }
     assertOutboundWsHost(host, '--ws-server');
@@ -8441,29 +8527,24 @@ async function runClient({
       console.log(
         `[clean-vpn] client WebSocket: keep-alive ${kaBridge}s, подключение к ${url} после первого IPv4 с TUN`,
       );
-      attachTunBridge(tun, 'websocket', null, {
-        ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
-        lazyConnect: async () => {
-          const ws = new WebSocket(url);
-          ws.binaryType = 'nodebuffer';
-          await new Promise((resolve, reject) => {
-            ws.once('open', resolve);
-            ws.once('error', reject);
-          });
-          console.log('[clean-vpn] WebSocket connected');
-          return ws;
-        },
-      });
-    } else {
-      const ws = new WebSocket(url);
-      ws.binaryType = 'nodebuffer';
-      await new Promise((resolve, reject) => {
-        ws.once('open', resolve);
-        ws.once('error', reject);
-      });
-      console.log('[clean-vpn] WebSocket connected');
-      attachTunBridge(tun, 'websocket', ws, BRIDGE_OPTS_CLIENT);
     }
+    attachOutboundTunBridge(
+      tun,
+      'websocket',
+      BRIDGE_OPTS_CLIENT,
+      async () => {
+        const ws = new WebSocket(url);
+        ws.binaryType = 'nodebuffer';
+        await new Promise((resolve, reject) => {
+          ws.once('open', resolve);
+          ws.once('error', reject);
+        });
+        console.log('[clean-vpn] WebSocket connected');
+        return ws;
+      },
+      kaBridge,
+      kaCooldown,
+    );
     return;
   }
 
@@ -8500,14 +8581,9 @@ async function runClient({
     };
     const setupWsChromeBridgeHandlers = (bridge) => {
       bridge.on('close', () => {
-        if (kaBridge > 0) {
-          console.warn(
-            '[clean-vpn] ws-chrome: мост закрыт (idle/сеть); следующий пакет с TUN поднимет новый экземпляр Puppeteer (дорого)',
-          );
-          return;
-        }
-        console.error('[clean-vpn] ws-chrome: WebSocket закрыт');
-        shutdown();
+        console.warn(
+          '[clean-vpn] ws-chrome: мост закрыт (idle/пир/сеть); следующий пакет с TUN поднимет новый Chrome (дорого)',
+        );
       });
       bridge.on('error', (e) => {
         console.error('[clean-vpn] ws-chrome:', e?.message || e);
@@ -8518,39 +8594,36 @@ async function runClient({
       console.log(
         `[clean-vpn] ws-chrome: keep-alive ${kaBridge}s — Chrome/WS к exit после первого IPv4 с TUN`,
       );
-      attachTunBridge(tun, 'websocket', null, {
-        ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
-        lazyConnect: async () => {
-          safe(() => {
-            if (wsChromeBrowser) void wsChromeBrowser.close();
-            wsChromeBrowser = null;
-          });
-          safe(() => {
-            if (wsChromeLocalWss) {
-              try {
-                wsChromeLocalWss.close();
-              } catch {
-                /* ignore */
-              }
-              wsChromeLocalWss = null;
-            }
-          });
-          const { bridge, browser, localWss } = await createWsChromeClientBridge(wsChromeOpts);
-          wsChromeBrowser = browser;
-          if (localWss) wsChromeLocalWss = localWss;
-          setupWsChromeBridgeHandlers(bridge);
-          console.log('[clean-vpn] ws-chrome: готово (Puppeteer → WebSocket → exit)');
-          return bridge;
-        },
-      });
-    } else {
-      const { bridge, browser, localWss } = await createWsChromeClientBridge(wsChromeOpts);
-      wsChromeBrowser = browser;
-      if (localWss) wsChromeLocalWss = localWss;
-      setupWsChromeBridgeHandlers(bridge);
-      console.log('[clean-vpn] ws-chrome: готово (Puppeteer → WebSocket → exit)');
-      attachTunBridge(tun, 'websocket', bridge, BRIDGE_OPTS_CLIENT);
     }
+    attachOutboundTunBridge(
+      tun,
+      'websocket',
+      BRIDGE_OPTS_CLIENT,
+      async () => {
+        safe(() => {
+          if (wsChromeBrowser) void wsChromeBrowser.close();
+          wsChromeBrowser = null;
+        });
+        safe(() => {
+          if (wsChromeLocalWss) {
+            try {
+              wsChromeLocalWss.close();
+            } catch {
+              /* ignore */
+            }
+            wsChromeLocalWss = null;
+          }
+        });
+        const { bridge, browser, localWss } = await createWsChromeClientBridge(wsChromeOpts);
+        wsChromeBrowser = browser;
+        if (localWss) wsChromeLocalWss = localWss;
+        setupWsChromeBridgeHandlers(bridge);
+        console.log('[clean-vpn] ws-chrome: готово (Puppeteer → WebSocket → exit)');
+        return bridge;
+      },
+      kaBridge,
+      kaCooldown,
+    );
     return;
   }
 
@@ -8605,14 +8678,9 @@ async function runClient({
     };
     const setupRtcChromeHandlers = (bridge) => {
       bridge.on('close', () => {
-        if (kaBridge > 0) {
-          console.warn(
-            '[clean-vpn] rtc-chrome: локальный WS закрыт; следующий пакет с TUN — новый Chrome/WebRTC (дорого)',
-          );
-          return;
-        }
-        console.error('[clean-vpn] rtc-chrome: локальный WebSocket закрыт');
-        shutdown();
+        console.warn(
+          '[clean-vpn] rtc-chrome: локальный WS закрыт; следующий пакет с TUN — новый Chrome/WebRTC (дорого)',
+        );
       });
       bridge.on('error', (e) => {
         console.error('[clean-vpn] rtc-chrome:', e?.message || e);
@@ -8623,39 +8691,36 @@ async function runClient({
       console.log(
         `[clean-vpn] rtc-chrome: keep-alive ${kaBridge}s — Chrome/WebRTC после первого IPv4 с TUN`,
       );
-      attachTunBridge(tun, 'websocket', null, {
-        ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
-        lazyConnect: async () => {
-          safe(() => {
-            if (wsChromeBrowser) void wsChromeBrowser.close();
-            wsChromeBrowser = null;
-          });
-          safe(() => {
-            if (wsChromeLocalWss) {
-              try {
-                wsChromeLocalWss.close();
-              } catch {
-                /* ignore */
-              }
-              wsChromeLocalWss = null;
-            }
-          });
-          const { bridge, browser, localWss } = await createRtcChromeClientBridge(rtcChromeOpts);
-          wsChromeBrowser = browser;
-          if (localWss) wsChromeLocalWss = localWss;
-          setupRtcChromeHandlers(bridge);
-          console.log('[clean-vpn] rtc-chrome: готово (Chrome WebRTC → exit webrtc, TUN ↔ localhost WS)');
-          return bridge;
-        },
-      });
-    } else {
-      const { bridge, browser, localWss } = await createRtcChromeClientBridge(rtcChromeOpts);
-      wsChromeBrowser = browser;
-      if (localWss) wsChromeLocalWss = localWss;
-      setupRtcChromeHandlers(bridge);
-      console.log('[clean-vpn] rtc-chrome: готово (Chrome WebRTC → exit webrtc, TUN ↔ localhost WS)');
-      attachTunBridge(tun, 'websocket', bridge, BRIDGE_OPTS_CLIENT);
     }
+    attachOutboundTunBridge(
+      tun,
+      'websocket',
+      BRIDGE_OPTS_CLIENT,
+      async () => {
+        safe(() => {
+          if (wsChromeBrowser) void wsChromeBrowser.close();
+          wsChromeBrowser = null;
+        });
+        safe(() => {
+          if (wsChromeLocalWss) {
+            try {
+              wsChromeLocalWss.close();
+            } catch {
+              /* ignore */
+            }
+            wsChromeLocalWss = null;
+          }
+        });
+        const { bridge, browser, localWss } = await createRtcChromeClientBridge(rtcChromeOpts);
+        wsChromeBrowser = browser;
+        if (localWss) wsChromeLocalWss = localWss;
+        setupRtcChromeHandlers(bridge);
+        console.log('[clean-vpn] rtc-chrome: готово (Chrome WebRTC → exit webrtc, TUN ↔ localhost WS)');
+        return bridge;
+      },
+      kaBridge,
+      kaCooldown,
+    );
     return;
   }
 
@@ -8784,34 +8849,25 @@ async function runClient({
       return;
     }
 
-    if (kaBridge > 0) {
-      attachTunBridge(tun, 'udp-client', null, {
-        ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
-        lazyConnect: async () => {
-          const udp = dgram.createSocket('udp4');
-          await new Promise((resolve, reject) => {
-            udp.once('error', reject);
-            udp.connect(port, host, () => {
-              udp.off('error', reject);
-              console.log(`[clean-vpn] UDP «connected» к ${host}:${port}`);
-              resolve(undefined);
-            });
+    attachOutboundTunBridge(
+      tun,
+      'udp-client',
+      BRIDGE_OPTS_CLIENT,
+      async () => {
+        const udp = dgram.createSocket('udp4');
+        await new Promise((resolve, reject) => {
+          udp.once('error', reject);
+          udp.connect(port, host, () => {
+            udp.off('error', reject);
+            console.log(`[clean-vpn] UDP «connected» к ${host}:${port}`);
+            resolve(undefined);
           });
-          return udp;
-        },
-      });
-    } else {
-      const udp = dgram.createSocket('udp4');
-      await new Promise((resolve, reject) => {
-        udp.once('error', reject);
-        udp.connect(port, host, () => {
-          udp.off('error', reject);
-          console.log(`[clean-vpn] UDP «connected» к ${host}:${port}`);
-          attachTunBridge(tun, 'udp-client', udp, BRIDGE_OPTS_CLIENT);
-          resolve(undefined);
         });
-      });
-    }
+        return udp;
+      },
+      kaBridge,
+      kaCooldown,
+    );
     return;
   }
 
@@ -9021,19 +9077,18 @@ async function runClient({
     };
     const connectTlsVpn =
       type === 'boring-tls' ? connectCleanVpnBoringTlsClient : connectCleanVpnTlsClient;
-    if (kaBridge > 0) {
-      attachTunBridge(tun, 'tcp', null, {
-        ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
-        lazyConnect: async () => {
-          const sock = await connectTlsVpn(tlsConnectOpts);
-          tlsVpnSocket = sock;
-          return sock;
-        },
-      });
-    } else {
-      tlsVpnSocket = await connectTlsVpn(tlsConnectOpts);
-      attachTunBridge(tun, 'tcp', tlsVpnSocket, BRIDGE_OPTS_CLIENT);
-    }
+    attachOutboundTunBridge(
+      tun,
+      'tcp',
+      BRIDGE_OPTS_CLIENT,
+      async () => {
+        const sock = await connectTlsVpn(tlsConnectOpts);
+        tlsVpnSocket = sock;
+        return sock;
+      },
+      kaBridge,
+      kaCooldown,
+    );
     return;
   }
 
@@ -9124,21 +9179,19 @@ async function runClient({
       console.log('[clean-vpn combo-tls client] мост TUN: route=boring-tls → exit-tls');
     };
 
-    if (kaBridge > 0) {
-      attachTunBridge(tun, 'tcp', null, {
-        ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
-        lazyConnect: async () => {
-          const sock = await connectCleanVpnBoringTlsClient(tlsConnectOptsCombo);
-          tlsVpnSocket = sock;
-          logComboTunUp();
-          return sock;
-        },
-      });
-    } else {
-      tlsVpnSocket = await connectCleanVpnBoringTlsClient(tlsConnectOptsCombo);
-      logComboTunUp();
-      attachTunBridge(tun, 'tcp', /** @type {import('net').Socket} */ (tlsVpnSocket), BRIDGE_OPTS_CLIENT);
-    }
+    attachOutboundTunBridge(
+      tun,
+      'tcp',
+      BRIDGE_OPTS_CLIENT,
+      async () => {
+        const sock = await connectCleanVpnBoringTlsClient(tlsConnectOptsCombo);
+        tlsVpnSocket = sock;
+        logComboTunUp();
+        return sock;
+      },
+      kaBridge,
+      kaCooldown,
+    );
 
     const ttlLogOptsCombo = { tlsLogJa3: Boolean(tlsLogJa3), ja3Verbose: Boolean(ja3Verbose) };
     if (ttlLogOptsCombo.tlsLogJa3 || ttlLogOptsCombo.ja3Verbose) {
@@ -9323,18 +9376,17 @@ async function runClient({
       );
     }
 
-    if (kaBridge > 0) {
-      attachTunBridge(tun, 'tcp', null, {
-        ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
-        lazyConnect: async () => {
-          await connectIpv4Mux();
-          return /** @type {import('net').Socket} */ (tlsVpnSocket);
-        },
-      });
-    } else {
-      await connectIpv4Mux();
-      attachTunBridge(tun, 'tcp', /** @type {import('net').Socket} */ (tlsVpnSocket), BRIDGE_OPTS_CLIENT);
-    }
+    attachOutboundTunBridge(
+      tun,
+      'tcp',
+      BRIDGE_OPTS_CLIENT,
+      async () => {
+        await connectIpv4Mux();
+        return /** @type {import('net').Socket} */ (tlsVpnSocket);
+      },
+      kaBridge,
+      kaCooldown,
+    );
 
     /** @type {string|null} */
     let ttlLanGwHttps = null;
@@ -9473,56 +9525,34 @@ async function runClient({
   }
 
   // --- runClient: --type=socket | --type=http (TCP + опционально GET /clean-vpn) ---
-  if (kaBridge > 0) {
-    attachTunBridge(tun, 'tcp', null, {
-      ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
-      lazyConnect: () =>
-        new Promise((resolve, reject) => {
-          const sock = net.connect(port, host, () => {
-            console.log('[clean-vpn] TCP connected');
-            if (type === 'socket') {
-              resolve(sock);
-              return;
+  attachOutboundTunBridge(
+    tun,
+    'tcp',
+    BRIDGE_OPTS_CLIENT,
+    () =>
+      new Promise((resolve, reject) => {
+        const sock = net.connect(port, host, () => {
+          console.log('[clean-vpn] TCP connected');
+          if (type === 'socket') {
+            resolve(sock);
+            return;
+          }
+          sock.__isServer = false;
+          handleHttpSocket(sock, (rest) => {
+            if (rest && rest.length) {
+              setImmediate(() => sock.emit('data', rest));
             }
-            sock.__isServer = false;
-            handleHttpSocket(sock, (rest) => {
-              if (rest && rest.length) {
-                setImmediate(() => sock.emit('data', rest));
-              }
-              resolve(sock);
-            });
-            sock.write(
-              `GET /clean-vpn HTTP/1.1\r\nHost: ${host}\r\nConnection: keep-alive\r\n\r\n`,
-            );
+            resolve(sock);
           });
-          sock.on('error', reject);
-        }),
-    });
-    return;
-  }
-
-  await new Promise((resolve, reject) => {
-    const sock = net.connect(port, host, () => {
-      console.log('[clean-vpn] TCP connected');
-      if (type === 'socket') {
-        attachTunBridge(tun, 'tcp', sock, BRIDGE_OPTS_CLIENT);
-        resolve();
-        return;
-      }
-      sock.__isServer = false;
-      handleHttpSocket(sock, (rest) => {
-        attachTunBridge(tun, 'tcp', sock, BRIDGE_OPTS_CLIENT);
-        if (rest && rest.length) {
-          sock.emit('data', rest);
-        }
-        resolve();
-      });
-      sock.write(
-        `GET /clean-vpn HTTP/1.1\r\nHost: ${host}\r\nConnection: keep-alive\r\n\r\n`,
-      );
-    });
-    sock.on('error', reject);
-  });
+          sock.write(
+            `GET /clean-vpn HTTP/1.1\r\nHost: ${host}\r\nConnection: keep-alive\r\n\r\n`,
+          );
+        });
+        sock.on('error', reject);
+      }),
+    kaBridge,
+    kaCooldown,
+  );
 }
 
 // =============================================================================
@@ -9578,7 +9608,7 @@ async function main() {
 --ws-server: websocket / ws-chrome на exit — слушать HTTP+WS или WSS данных на --server; на client (websocket) — слушать WSS; без флага — исходящий WebSocket к --server.
 --signaling: webrtc (exit|client) или rtc-chrome (client) — слушать WSS сигналинга на --server; без флага — исходящий WS. Для udp — вместе с UDP на PORT поднять WSS на PORT+1 (как webrtc). Алиас: --signalling.
 --punch: только --type=udp — hole punching через STUN + сигналинг на PORT+1; на exit только вместе с --signaling.
---keep-alive=N: целое N≥0; 0 или отсутствие — как раньше. N>0 — idle N с без трафика TUN↔транспорт → разрыв; на client исходящие TCP/TLS/WS/UDP/WebRTC — отложенный connect до первого IPv4 с TUN (webrtc: повторный сигналинг clean-vpn-ready + новый PC/DC). ws-chrome/rtc-chrome: после idle сессию нужно поднять заново (дорого). QUIC/quic-ext: флаг не применяется.
+--keep-alive=N: целое N≥0; 0 или отсутствие — connect сразу (client/outbound), переподключение после разрыва пира — по TUN/inbound. N>0 — idle N с без трафика TUN↔транспорт → разрыв на этой стороне; client/outbound — lazy connect до первого IPv4 с TUN. Флаг асимметричен (достаточно на client или exit). Транспорты: socket, http, tls, boring-tls, combo-tls (TUN-ветка), transparent-tls (IPv4 mux), websocket, ws-chrome, rtc-chrome, udp, webrtc. ws-chrome/rtc-chrome: переподключение поднимает новый Chrome (дорого). QUIC/quic-ext: флаг не применяется.
 --keep-alive-reconnect-cooldown=M: целое M≥0; только с --keep-alive>0. После разрыва по idle M с не поднимать lazy по IPv4 с TUN (отбрасываются); не-IPv4 не поднимает сессию в любом случае. После M с следующий IPv4 снова может lazy-connect — cooldown не фильтр «навсегда». Меньше дребезга от DNS/ретрансмитов. По умолчанию 0. CLEAN_VPN_KEEPALIVE_DEBUG=1 — lazy/cooldown и drop не-IPv4 (hex). CLEAN_VPN_TLS_MUX_DEBUG=1 — диагностика TCP до ClientHello на exit и до handshake на client (--type=tls).
 --tunnel-peer=HOST: для websocket/webrtc/rtc-chrome/udp + client при нюансах accept/split-default — см. шапку. Дополнительно: **transparent-tls** и **combo-tls + client** — **IPv4 или IPv4:PORT** (порт по умолчанию **443**) фиксирует один апстрим для всех локальных HTTPS-сессий (**без** iptables REDIRECT; нужен только с тестами на один хост). Обычный режим: **OUTPUT** ipv4/https→локальный intercept; при **--client-lan-subnet** — **PREROUTING DNAT** с LAN→LAN-IPv4 шлюза:intercept (второй listener, см. документацию).
 --tls-cert-dir / --shared-hmac-key: для transparent-tls и combo-tls нужен тот же 32-байтовый ключ (CVPTX OPEN-HMAC и Bearer tls), что и для --type=tls (на exit при отсутствии автосоздание как у QUIC каталога).`);
