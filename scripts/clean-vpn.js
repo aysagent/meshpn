@@ -4437,7 +4437,7 @@ function addClientWsPeerBypass(ctx, peerIp) {
  * @param {string} ifname
  * @param {string} serverHost
  * @param {boolean} splitDefault
- * @param {{ deferPeerBypass?: boolean; websocketListenNoSplitDefault?: boolean; deferPeerKind?: 'ws-listen'|'webrtc' }} [opts]
+ * @param {{ deferPeerBypass?: boolean; websocketListenNoSplitDefault?: boolean; deferPeerKind?: 'ws-listen'|'webrtc'; deferSplitDefault?: boolean }} [opts]
  */
 async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
   const deferPeerBypass = opts?.deferPeerBypass === true;
@@ -4480,24 +4480,18 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
     );
   }
 
+  const deferSplitDefault = opts?.deferSplitDefault === true;
   const prevRpAll = getSysctlNum('net.ipv4.conf.all.rp_filter');
   const snap01 = splitDefault ? [...captureRoutesByDst('0.0.0.0/1')] : [];
   const snap128 = splitDefault ? [...captureRoutesByDst('128.0.0.0/1')] : [];
 
-  if (splitDefault) {
-    ip(['route', 'replace', '0.0.0.0/1', 'dev', ifname]);
-    ip(['route', 'replace', '128.0.0.0/1', 'dev', ifname]);
-    addSplitPrivateUplinkRoutes(gw, dev);
-    console.log('[clean-vpn] split-default (0.0.0.0/1 + 128.0.0.0/1) через', ifname);
+  let splitDefaultApplied = false;
+  if (splitDefault && !deferSplitDefault) {
+    applyClientSplitDefaultRoutes(ifname, gw, dev);
+    splitDefaultApplied = true;
+  } else if (splitDefault && deferSplitDefault) {
     console.log(
-      '[clean-vpn] split-default: частные сети',
-      SPLIT_PRIVATE_V4.join(', '),
-      '→ uplink',
-      gw ? `via ${gw}` : '',
-      dev,
-    );
-    console.warn(
-      '[clean-vpn] split-default только для IPv4; IPv6 default не в туннеле. Проверка внешнего IPv4: curl -4 https://ifconfig.me',
+      '[clean-vpn] split-default: отложен до готовности туннеля (Puppeteer/Chrome — uplink остаётся рабочим)',
     );
   }
   try {
@@ -4518,7 +4512,33 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
     snap01,
     snap128,
     ifname,
+    splitDefaultApplied,
   };
+}
+
+/** IPv4 default через TUN (split-default). */
+function applyClientSplitDefaultRoutes(ifname, gw, dev) {
+  ip(['route', 'replace', '0.0.0.0/1', 'dev', ifname]);
+  ip(['route', 'replace', '128.0.0.0/1', 'dev', ifname]);
+  addSplitPrivateUplinkRoutes(gw, dev);
+  console.log('[clean-vpn] split-default (0.0.0.0/1 + 128.0.0.0/1) через', ifname);
+  console.log(
+    '[clean-vpn] split-default: частные сети',
+    SPLIT_PRIVATE_V4.join(', '),
+    '→ uplink',
+    gw ? `via ${gw}` : '',
+    dev,
+  );
+  console.warn(
+    '[clean-vpn] split-default только для IPv4; IPv6 default не в туннеле. Проверка внешнего IPv4: curl -4 https://ifconfig.me',
+  );
+}
+
+/** Отложенный split-default (ws-chrome / rtc-chrome). */
+function applyDeferredClientSplitDefault(ctx) {
+  if (!ctx?.splitDefault || ctx.splitDefaultApplied) return;
+  applyClientSplitDefaultRoutes(ctx.ifname, ctx.gw, ctx.dev);
+  ctx.splitDefaultApplied = true;
 }
 
 function teardownClientRoutes(ctx) {
@@ -4538,7 +4558,7 @@ function teardownClientRoutes(ctx) {
     ifname,
   } = ctx;
 
-  if (splitDefault) {
+  if (splitDefault && ctx.splitDefaultApplied !== false) {
     tryIpRoute(['route', 'del', '0.0.0.0/1', 'dev', ifname]);
     tryIpRoute(['route', 'del', '128.0.0.0/1', 'dev', ifname]);
     restoreRoutesFromRecords(snap01);
@@ -4956,6 +4976,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
  *   lazyConnect?: () => Promise<any>,
  *   onWebrtcWireDown?: (reason: string) => void,
  *   softKeepAliveIdle?: () => void,
+ *   softKeepAliveIdleKeepsWire?: boolean,
  * }} [bridgeOpts]
  * @returns {{ reconnectWire: (newEp: any) => void } | null}
  */
@@ -5050,7 +5071,9 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
         return;
       }
       cancelTimers();
-      wireArmed = false;
+      if (!bridgeOpts?.softKeepAliveIdleKeepsWire) {
+        wireArmed = false;
+      }
       tunQueue.length = 0;
       if (reason === 'idle' && reconnectCooldownSec > 0 && lazyConnect) {
         idleCooldownUntilMs = Date.now() + reconnectCooldownSec * 1000;
@@ -6552,6 +6575,48 @@ function resolveLinuxArmSystemChromium() {
 }
 
 /**
+ * Аргументы запуска Chromium/Puppeteer (ARM/Radxa, sudo, headless).
+ * @returns {string[]}
+ */
+function buildPuppeteerLaunchArgs() {
+  const args = [
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--no-first-run',
+    '--no-default-browser-check',
+  ];
+  if (
+    process.env.CLEAN_VPN_PUPPETEER_NO_SANDBOX === '1' ||
+    (typeof process.getuid === 'function' && process.getuid() === 0)
+  ) {
+    args.push('--no-sandbox', '--disable-setuid-sandbox');
+  }
+  if (process.env.CLEAN_VPN_PUPPETEER_EXTRA_ARGS) {
+    for (const a of String(process.env.CLEAN_VPN_PUPPETEER_EXTRA_ARGS).split(/\s+/)) {
+      if (a) args.push(a);
+    }
+  }
+  return args;
+}
+
+/**
+ * @param {'ws-chrome'|'rtc-chrome'} kind
+ * @param {string|null|undefined} explicitPath
+ * @param {import('puppeteer').PuppeteerNode} puppeteer
+ * @returns {{ launchOpts: import('puppeteer').LaunchOptions, executablePath: string|null }}
+ */
+function buildPuppeteerLaunchOptions(kind, explicitPath, puppeteer) {
+  const executablePath = resolvePuppeteerChromeExecutable(kind, explicitPath, puppeteer);
+  const launchOpts = {
+    headless: true,
+    args: buildPuppeteerLaunchArgs(),
+    timeout: 120000,
+  };
+  if (executablePath) launchOpts.executablePath = executablePath;
+  return { launchOpts, executablePath };
+}
+
+/**
  * Puppeteer на ARM без системного Chromium часто берёт …/linux_arm-…/chrome-linux64/chrome (x64) → shell: Syntax error "(".
  * @param {'ws-chrome'|'rtc-chrome'} kind
  * @param {string|null|undefined} explicitPath
@@ -6776,21 +6841,8 @@ async function createWsChromeClientBridge(opts) {
     throw new Error('Для --type=ws-chrome установите: npm install puppeteer', { cause: e });
   }
   const puppeteer = puppeteerMod.default ?? puppeteerMod;
-  const launchArgs = [];
-  if (
-    process.env.CLEAN_VPN_PUPPETEER_NO_SANDBOX === '1' ||
-    (typeof process.getuid === 'function' && process.getuid() === 0)
-  ) {
-    launchArgs.push('--no-sandbox', '--disable-setuid-sandbox');
-  }
-  const launchOpts = {
-    headless: true,
-    args: launchArgs,
-  };
-  const executablePath = resolvePuppeteerChromeExecutable('ws-chrome', opts.executablePath, puppeteer);
-  if (executablePath) {
-    launchOpts.executablePath = executablePath;
-  }
+  const { launchOpts } = buildPuppeteerLaunchOptions('ws-chrome', opts.executablePath, puppeteer);
+  console.log('[clean-vpn] ws-chrome: запуск Chromium…');
   let browser;
   try {
     browser = await puppeteer.launch(launchOpts);
@@ -7394,16 +7446,8 @@ async function createRtcChromeClientSession(opts) {
     throw new Error('Для --type=rtc-chrome установите: npm install puppeteer', { cause: e });
   }
   const puppeteer = puppeteerMod.default ?? puppeteerMod;
-  const launchArgs = [];
-  if (
-    process.env.CLEAN_VPN_PUPPETEER_NO_SANDBOX === '1' ||
-    (typeof process.getuid === 'function' && process.getuid() === 0)
-  ) {
-    launchArgs.push('--no-sandbox', '--disable-setuid-sandbox');
-  }
-  const launchOpts = { headless: true, args: launchArgs };
-  const executablePath = resolvePuppeteerChromeExecutable('rtc-chrome', opts.executablePath, puppeteer);
-  if (executablePath) launchOpts.executablePath = executablePath;
+  const { launchOpts } = buildPuppeteerLaunchOptions('rtc-chrome', opts.executablePath, puppeteer);
+  console.log('[clean-vpn] rtc-chrome: запуск Chromium…');
 
   let browser;
   try {
@@ -7421,6 +7465,14 @@ async function createRtcChromeClientSession(opts) {
   }
 
   const page = await browser.newPage();
+  page.on('pageerror', (err) => {
+    console.error('[clean-vpn] rtc-chrome page error:', err?.message || err);
+  });
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') {
+      console.error('[clean-vpn] rtc-chrome console:', msg.text());
+    }
+  });
   const lifecycle = new EventEmitter();
   let bridgeWs = null;
   let webrtcReady = false;
@@ -7498,6 +7550,7 @@ async function createRtcChromeClientSession(opts) {
   );
 
   await bridgeWsPromise;
+  console.log('[clean-vpn] rtc-chrome: Chrome подключился к локальному WS-мосту');
 
   const waitWebrtcReady = () =>
     new Promise((resolve, reject) => {
@@ -8535,10 +8588,13 @@ async function runClient({
     deferWsPeerBypass || deferWebrtcPeerBypass || deferRtcChromeSigBypass || deferUdpPeerBypass;
   const deferPeerKindForSetup =
     deferWebrtcPeerBypass || deferRtcChromeSigBypass ? 'webrtc' : 'ws-listen';
+  const deferSplitDefaultPuppeteer =
+    splitDefault && (type === 'rtc-chrome' || type === 'ws-chrome');
   const routeCtx = await setupClientRoutesAsync(ifname, routeHost, splitDefault, {
     deferPeerBypass: deferSigBypass,
     deferPeerKind: deferPeerKindForSetup,
     websocketListenNoSplitDefault: type === 'websocket' && wsServer && !splitDefault,
+    deferSplitDefault: deferSplitDefaultPuppeteer,
   });
   if (clientLanSubnet) {
     setupClientLanGateway(routeCtx, clientLanSubnet);
@@ -8863,6 +8919,7 @@ async function runClient({
         wsChromeBrowser = browser;
         if (localWss) wsChromeLocalWss = localWss;
         setupWsChromeBridgeHandlers(bridge);
+        applyDeferredClientSplitDefault(routeCtx);
         console.log('[clean-vpn] ws-chrome: готово (Puppeteer → WebSocket → exit)');
         return bridge;
       },
@@ -8936,26 +8993,30 @@ async function runClient({
       console.error('[clean-vpn] rtc-chrome:', e?.message || e);
     });
 
-    const bridgeApi = attachTunBridge(tun, 'websocket', rtcSession.bridgeWs, {
+    attachTunBridge(tun, 'websocket', rtcSession.bridgeWs, {
       ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
-      lazyConnect: () => rtcSession.ensureWebrtcReady(),
+      softKeepAliveIdleKeepsWire: true,
       softKeepAliveIdle: () => {
         console.log(
           `[clean-vpn] rtc-chrome: keep-alive ${kaBridge}s — WebRTC к exit сброшен, Chrome остаётся`,
         );
         rtcSession.idleWebrtcTeardown();
+        void rtcSession.ensureWebrtcReady().catch((e) => {
+          console.error('[clean-vpn] rtc-chrome: reconnect после idle:', e?.message || e);
+        });
       },
     });
 
     void rtcSession
       .ensureWebrtcReady()
       .then(() => {
-        bridgeApi?.reconnectWire(rtcSession.bridgeWs);
+        applyDeferredClientSplitDefault(routeCtx);
         console.log('[clean-vpn] rtc-chrome: готово (Chrome WebRTC → exit webrtc, TUN ↔ localhost WS)');
       })
       .catch((e) => {
         console.error('[clean-vpn] rtc-chrome: начальный WebRTC connect:', e?.message || e);
       });
+    console.log('[clean-vpn] rtc-chrome: TUN ↔ localhost WS активен; WebRTC к exit поднимается…');
     return;
   }
 
