@@ -20,7 +20,7 @@
  *   По умолчанию данные идут через локальный ws://127.0.0.1 (без CDP на каждый пакет). Медленный путь: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1.
  *   --ws-chrome-url=... (произвольная страница) — только CDP-путь. exit --type=ws-chrome --ws-server + GET /clean-vpn-chrome; Puppeteer с --ws-chrome-exit-page без CDP использует setContent (тот же быстрый мост).
  *   Chrome: --ws-chrome-executable=PATH или PUPPETEER_EXECUTABLE_PATH; в контейнере: CLEAN_VPN_PUPPETEER_NO_SANDBOX=1
- *   Linux ARM64 (Multipass на Apple Silicon и т.п.): встроенный Chrome из кэша Puppeteer часто ломается — ставьте `chromium-browser`/`chromium` из apt и укажите путь или положитесь на авто-поиск на arm64.
+ *   Linux ARM64/ARM (Radxa, Multipass на Apple Silicon): бандл Puppeteer часто x86_64 (…/chrome-linux64/…) — ставьте `chromium` из apt и `--ws-chrome-executable` / `--rtc-chrome-executable` или `PUPPETEER_EXECUTABLE_PATH`; без системного Chromium на ARM скрипт не использует кэш Puppeteer.
  *   Локальный 127.0.0.1 WS auth (Phase 1 / H-4): URL содержит `?t=<32hex random>` (16 байт), проверка constant-time. Чужие процессы на хосте без secret в connect-URL не могут подключиться к локальному мосту. Применяется и для ws-chrome (Dual bridge), и для rtc-chrome (локальный WS).
  * WebRTC: сигналинг по WebSocket; слушать только с --signaling на этой ноде, иначе исходящий WS к --server (exit и client). Алиас: --signalling. Один SCTP DataChannel — одно бинарное сообщение = один IPv4-пакет.
  *   ICE host-candidate filter (Phase 1 / M-5): по умолчанию `typ host` и `typ prflx` для RFC1918 / loopback / IPv6 ULA / link-local отбрасываются (в исходящих local-candidate'ах и во входящих remote). `srflx`/`relay` остаются. Защита от утечки внутренних IP. Opt-out: `--allow-host-candidates`.
@@ -6472,15 +6472,19 @@ const WS_CHROME_BRIDGE_PAGE_HTML = `<!DOCTYPE html><html><head><meta charset="ut
 })();
 </script></body></html>`;
 
-/** На Linux arm64/arm предпочитаем системный Chromium — бандл из ~/.cache/puppeteer там часто несовместим (Multipass, VM). */
+/** На Linux arm64/arm предпочитаем системный Chromium — бандл из ~/.cache/puppeteer там часто x86_64 (chrome-linux64). */
+function isLinuxArmHost() {
+  return process.platform === 'linux' && (process.arch === 'arm64' || process.arch === 'arm');
+}
+
 function resolveLinuxArmSystemChromium() {
-  if (process.platform !== 'linux') return null;
-  if (process.arch !== 'arm64' && process.arch !== 'arm') return null;
+  if (!isLinuxArmHost()) return null;
   const candidates = [
-    '/usr/bin/chromium-browser',
     '/usr/bin/chromium',
-    '/snap/bin/chromium',
+    '/usr/bin/chromium-browser',
     '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/snap/bin/chromium',
   ];
   for (const p of candidates) {
     try {
@@ -6489,7 +6493,71 @@ function resolveLinuxArmSystemChromium() {
       /* ignore */
     }
   }
+  for (const cmd of ['chromium', 'chromium-browser', 'google-chrome-stable']) {
+    try {
+      const out = execFileSync('sh', ['-c', `command -v ${cmd} 2>/dev/null || true`], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+      const p = out.split('\n')[0]?.trim();
+      if (p && fs.existsSync(p)) return p;
+    } catch {
+      /* ignore */
+    }
+  }
   return null;
+}
+
+/**
+ * Puppeteer на ARM без системного Chromium часто берёт …/linux_arm-…/chrome-linux64/chrome (x64) → shell: Syntax error "(".
+ * @param {'ws-chrome'|'rtc-chrome'} kind
+ * @param {string|null|undefined} explicitPath
+ * @param {import('puppeteer').PuppeteerNode} puppeteer
+ * @returns {string|null}
+ */
+function resolvePuppeteerChromeExecutable(kind, explicitPath, puppeteer) {
+  let executablePath = explicitPath || process.env.PUPPETEER_EXECUTABLE_PATH || null;
+  if (!executablePath && isLinuxArmHost()) {
+    const sys = resolveLinuxArmSystemChromium();
+    if (sys) {
+      executablePath = sys;
+      console.log(`[clean-vpn] ${kind}: используем системный браузер ${sys}`);
+    }
+  }
+  if (!executablePath && isLinuxArmHost()) {
+    let bundled = '';
+    try {
+      bundled =
+        typeof puppeteer.executablePath === 'function' ? puppeteer.executablePath() : '';
+    } catch {
+      /* ignore */
+    }
+    const extra =
+      bundled && bundled.includes('chrome-linux64')
+        ? `\nОбнаружен битый кэш Puppeteer: ${bundled}`
+        : '';
+    const flag = kind === 'rtc-chrome' ? '--rtc-chrome-executable' : '--ws-chrome-executable';
+    throw new Error(
+      `${kind}: на Linux ARM (Radxa и т.п.) нужен системный Chromium — встроенный Chrome из ~/.cache/puppeteer часто x86_64 и не запускается.${extra}
+
+  sudo apt update && sudo apt install -y chromium
+  # на старых образах: chromium-browser
+
+  sudo env PATH=$PATH node scripts/clean-vpn.js ... ${flag}=/usr/bin/chromium
+  # или: export PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+  rm -rf ~/.cache/puppeteer   # убрать битый x64-кэш
+
+  При sudo node добавляются --no-sandbox; при необходимости: CLEAN_VPN_PUPPETEER_NO_SANDBOX=1
+  См. https://pptr.dev/troubleshooting`,
+    );
+  }
+  if (executablePath && isLinuxArmHost() && executablePath.includes('chrome-linux64')) {
+    throw new Error(
+      `${kind}: путь ${executablePath} — x64 Chrome на ARM; установите chromium из apt и укажите /usr/bin/chromium`,
+    );
+  }
+  return executablePath;
 }
 
 /**
@@ -6676,15 +6744,7 @@ async function createWsChromeClientBridge(opts) {
     headless: true,
     args: launchArgs,
   };
-  let executablePath =
-    opts.executablePath || process.env.PUPPETEER_EXECUTABLE_PATH || null;
-  if (!executablePath) {
-    const sys = resolveLinuxArmSystemChromium();
-    if (sys) {
-      executablePath = sys;
-      console.log(`[clean-vpn] ws-chrome: используем системный браузер ${sys}`);
-    }
-  }
+  const executablePath = resolvePuppeteerChromeExecutable('ws-chrome', opts.executablePath, puppeteer);
   if (executablePath) {
     launchOpts.executablePath = executablePath;
   }
@@ -6700,11 +6760,10 @@ async function createWsChromeClientBridge(opts) {
       }
     }
     const hint = `ws-chrome: не удалось запустить браузер (${launchErr?.message || launchErr}).
-Частые причины на Linux ARM64 (Multipass/VM на Mac M*):
-  sudo apt update && sudo apt install -y chromium-browser
-  # или пакет chromium; затем явно:
-  sudo ... --ws-chrome-executable=/usr/bin/chromium-browser
-Либо удалите битый кэш: rm -rf ~/.cache/puppeteer
+Частые причины на Linux ARM (Radxa, Multipass на Mac M*):
+  sudo apt update && sudo apt install -y chromium
+  sudo ... --ws-chrome-executable=/usr/bin/chromium
+  rm -rf ~/.cache/puppeteer
 При sudo node добавляются --no-sandbox; при необходимости: CLEAN_VPN_PUPPETEER_NO_SANDBOX=1
 См. https://pptr.dev/troubleshooting`;
     throw new Error(hint, { cause: launchErr });
@@ -7235,15 +7294,7 @@ async function createRtcChromeClientBridge(opts) {
     headless: true,
     args: launchArgs,
   };
-  let executablePath =
-    opts.executablePath || process.env.PUPPETEER_EXECUTABLE_PATH || null;
-  if (!executablePath) {
-    const sys = resolveLinuxArmSystemChromium();
-    if (sys) {
-      executablePath = sys;
-      console.log(`[clean-vpn] rtc-chrome: используем системный браузер ${sys}`);
-    }
-  }
+  const executablePath = resolvePuppeteerChromeExecutable('rtc-chrome', opts.executablePath, puppeteer);
   if (executablePath) {
     launchOpts.executablePath = executablePath;
   }
@@ -7257,7 +7308,9 @@ async function createRtcChromeClientBridge(opts) {
       /* ignore */
     }
     const hint = `rtc-chrome: не удалось запустить браузер (${launchErr?.message || launchErr}).
-См. подсказки для ws-chrome в шапке скрипта и https://pptr.dev/troubleshooting`;
+На Linux ARM (Radxa): sudo apt install -y chromium && --rtc-chrome-executable=/usr/bin/chromium
+rm -rf ~/.cache/puppeteer — убрать битый x64-кэш Puppeteer
+См. подсказки ws-chrome в шапке скрипта и https://pptr.dev/troubleshooting`;
     throw new Error(hint, { cause: launchErr });
   }
   const page = await browser.newPage();
