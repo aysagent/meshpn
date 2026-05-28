@@ -137,7 +137,7 @@ function applyWebrtcRemoteSignal(pc, msg) {
 
 > Статус: для `**tls` / `boring-tls` / `combo-tls`** добавлен Bearer с TLS exporter (RFC 5705) — см. [Fixed H-1+H-2](#fixed-h-1--h-2--bearer-окно-15-мин-1--tls-channel-binding-tls--boring-tls--combo-tls).
 >
-> Для `**quic`** (`node:quic`) и `**quic-ext**` Bearer внутри bidi stream ещё не реализован: Node `node:quic` exporter API стабилизируется только в Node 25+, а `@infisical/quic` (quiche) пока не экспортирует keying material наружу. Остаётся **Open**: фикс **M** — добавить тот же Bearer на первом frame stream + либо exporter (когда появится), либо challenge-response.
+> Для `**quic`** (`node:quic`) и `**quic-ext`** Bearer внутри bidi stream ещё не реализован: Node `node:quic` exporter API стабилизируется только в Node 25+, а `@infisical/quic` (quiche) пока не экспортирует keying material наружу. Остаётся **Open**: фикс **M** — добавить тот же Bearer на первом frame stream + либо exporter (когда появится), либо challenge-response.
 
 Проверка на client: `serverName: 'clean-vpn'` + `ca` из `--quic-certs-dir`. На exit — `verifyPeer: false`:
 
@@ -423,7 +423,7 @@ Auto-gen certs на exit — `CN=clean-vpn`, без SAN:
   - **Работоспособность транспорта.**
     - `**--type=combo-tls`:** client с `--split-default`, TUN через boring-tls + (опционально) transparent HTTPS — подключение и `curl -4` через VPN.
     - `**--type=transparent-tls`:** client с `--split-default`, IPv4 mux и/или HTTPS intercept — обычный трафик проходит.
-  - **Корректность фикса (stall timeout).** Таймаут **10 с** действует только на exit с `**--type=combo-tls`** или `**--type=transparent-tls`** (peek-dispatch первых 8 байт). На `**--type=tls**` по-прежнему **60 с** ожидания полного ClientHello — это другой code-path, не M-4.
+  - **Корректность фикса (stall timeout).** Таймаут **10 с** действует только на exit с `**--type=combo-tls`** или `**--type=transparent-tls`** (peek-dispatch первых 8 байт). На `**--type=tls`** по-прежнему **60 с** ожидания полного ClientHello — это другой code-path, не M-4.
   Подключиться к peek-порту и **не отправлять** байты. **Критерий — лог exit** (~10 с), не время выхода `nc` на клиенте.
     ```bash
     apt install netcat-openbsd   # на Radxa: apt install nc не найдёт пакет
@@ -484,7 +484,7 @@ Auto-gen certs на exit — `CN=clean-vpn`, без SAN:
   - **Корректность фикса.** Включить логирование сигналинга (tcpdump на WS-порту или временный debug в коде) и убедиться, что в JSON-сообщениях `candidate` **нет** строк вида `192.168.x.x`, `10.x.x.x`, `172.16–31.x.x`, `127.0.0.1` с `typ host` / `typ prflx`. Должны оставаться `srflx`/`relay` (публичные mapping'и). На exit в stderr при drop: `drop local host/prflx-private candidate (M-5; ...)`.
   - **Opt-out.** Запустить client с `--allow-host-candidates` — приватные host-candidate'ы снова появляются в сигналинге (для сравнения «до/после»).
 
-### Fixed H-4 — ws-chrome / rtc-chrome / signalling relay — локальный 127.0.0.1 без auth
+### [Tested] Fixed H-4 — ws-chrome / rtc-chrome / signalling relay — локальный 127.0.0.1 без auth
 
 - **В чём была уязвимость.** Локальные WebSocket-мосты (Node ↔ Chrome) слушали `127.0.0.1` на эфемерном порту и принимали первый коннект. Любой локальный процесс под тем же UID мог выиграть гонку с Chrome и получить полный duplex доступ к VPN TUN.
 - **Как починили.** В `createWsChromeClientBridge` и `createRtcChromeClientBridge` при старте генерируется `localSecret = randomBytes(16).toString('hex')`, добавляется к локальному URL как `?t=${localSecret}` и передаётся в Chrome через **встроенный JS** (не через argv — argv видны другим процессам). На сервере вход проверяется через `localWsRequestHasSecret(request, expectedSecret)` (constant-time `timingSafeEqual` поверх `URLSearchParams`). Чужие процессы без secret в connect-URL соединиться не могут.

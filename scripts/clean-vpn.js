@@ -6765,11 +6765,13 @@ function buildWsChromeCdpEmbeddedPageHtml(wsUrl) {
 
 /**
  * Два WebSocket: к exit и к локальному Node (127.0.0.1). Бинарные кадры 1:1; горячий путь без CDP.
+ * @param {boolean} [lazyExitConnect] — local WS сразу; exit WS через __cleanVpnExitConnect (keep-alive).
  */
-function buildWsChromeDualBridgePageHtml(wsUrl, localWsUrl) {
+function buildWsChromeDualBridgePageHtml(wsUrl, localWsUrl, lazyExitConnect = false) {
   const u = JSON.stringify(wsUrl);
   const l = JSON.stringify(localWsUrl);
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><script>
+  if (!lazyExitConnect) {
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><script>
 (function () {
   var OPEN = 1;
   var exitWs = new WebSocket(${u});
@@ -6817,6 +6819,81 @@ function buildWsChromeDualBridgePageHtml(wsUrl, localWsUrl) {
   localWs.onerror = function () {};
 })();
 </script></body></html>`;
+  }
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><script>
+(function () {
+  var OPEN = 1;
+  var exitWsUrl = ${u};
+  var exitWs = null;
+  var idleClosing = false;
+  var localWs = new WebSocket(${l});
+  localWs.binaryType = 'arraybuffer';
+  var exitBuf = [];
+  var localBuf = [];
+  function flushToLocal() {
+    while (exitBuf.length && localWs.readyState === OPEN) {
+      localWs.send(exitBuf.shift());
+    }
+  }
+  function flushToExit() {
+    while (localBuf.length && exitWs && exitWs.readyState === OPEN) {
+      exitWs.send(localBuf.shift());
+    }
+  }
+  function wireExitWs() {
+    if (!exitWs) return;
+    exitWs.binaryType = 'arraybuffer';
+    exitWs.onopen = function () {
+      flushToExit();
+      flushToLocal();
+      if (window.cleanVpnWsReady) window.cleanVpnWsReady();
+    };
+    exitWs.onmessage = function (ev) {
+      var d = ev.data;
+      if (localWs.readyState !== OPEN) {
+        exitBuf.push(d);
+        return;
+      }
+      localWs.send(d);
+    };
+    exitWs.onclose = function () {
+      if (idleClosing) return;
+      if (window.cleanVpnWsClosed) window.cleanVpnWsClosed();
+    };
+    exitWs.onerror = function () {};
+  }
+  localWs.onopen = function () {
+    flushToExit();
+    flushToLocal();
+  };
+  localWs.onmessage = function (ev) {
+    var d = ev.data;
+    if (!exitWs || exitWs.readyState !== OPEN) {
+      localBuf.push(d);
+      return;
+    }
+    exitWs.send(d);
+  };
+  localWs.onclose = function () { if (window.cleanVpnWsClosed) window.cleanVpnWsClosed(); };
+  localWs.onerror = function () {};
+  window.__cleanVpnExitIdleTeardown = function () {
+    idleClosing = true;
+    if (exitWs) {
+      try { exitWs.close(); } catch (e) {}
+      exitWs = null;
+    }
+  };
+  window.__cleanVpnExitConnect = function () {
+    idleClosing = false;
+    if (exitWs) {
+      try { exitWs.close(); } catch (e) {}
+      exitWs = null;
+    }
+    exitWs = new WebSocket(exitWsUrl);
+    wireExitWs();
+  };
+})();
+</script></body></html>`;
 }
 
 /** page.exposeFunction сериализует Uint8Array в plain object {0:..,1:..}; Buffer.from(data) падает. */
@@ -6842,6 +6919,216 @@ function bufferFromPuppeteerExpose(data) {
 }
 
 /**
+ * Долгоживущая сессия ws-chrome: Chrome + локальный WS; keep-alive рвёт только WS к exit.
+ * @param {{
+ *   wsUrl: string,
+ *   useLocalBridge: boolean,
+ *   executablePath?: string|null,
+ *   pageMode: 'embedded'|'goto',
+ *   gotoUrl?: string|null,
+ *   lazyExitConnect?: boolean,
+ * }} opts
+ */
+async function createWsChromeClientSession(opts) {
+  if (!opts.useLocalBridge) {
+    throw new Error('ws-chrome session: только useLocalBridge');
+  }
+  if (opts.pageMode === 'goto') {
+    throw new Error('ws-chrome: локальный мост несовместим с pageMode goto');
+  }
+  const lazyExitConnect = !!opts.lazyExitConnect;
+
+  const localWss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await awaitWebSocketServerListening(localWss);
+  const ad = localWss.address();
+  if (!ad || typeof ad === 'string') {
+    try {
+      localWss.close();
+    } catch {
+      /* ignore */
+    }
+    throw new Error('ws-chrome: не удалось получить адрес локального WSS');
+  }
+  const localSecret = randomBytes(16).toString('hex');
+  const localWsUrl = `ws://127.0.0.1:${ad.port}/?t=${localSecret}`;
+
+  let puppeteerMod;
+  try {
+    puppeteerMod = await import('puppeteer');
+  } catch (e) {
+    try {
+      localWss.close();
+    } catch {
+      /* ignore */
+    }
+    throw new Error('Для --type=ws-chrome установите: npm install puppeteer', { cause: e });
+  }
+  const puppeteer = puppeteerMod.default ?? puppeteerMod;
+  const { launchOpts } = buildPuppeteerLaunchOptions('ws-chrome', opts.executablePath, puppeteer);
+  console.log('[clean-vpn] ws-chrome: запуск Chromium…');
+
+  let browser;
+  try {
+    browser = await puppeteer.launch(launchOpts);
+  } catch (launchErr) {
+    try {
+      localWss.close();
+    } catch {
+      /* ignore */
+    }
+    const hint = `ws-chrome: не удалось запустить браузер (${launchErr?.message || launchErr}).
+Частые причины на Linux ARM (Radxa, Multipass на Mac M*):
+  sudo apt update && sudo apt install -y chromium
+  sudo ... --ws-chrome-executable=/usr/bin/chromium
+  rm -rf ~/.cache/puppeteer
+При sudo node добавляются --no-sandbox; при необходимости: CLEAN_VPN_PUPPETEER_NO_SANDBOX=1
+См. https://pptr.dev/troubleshooting`;
+    throw new Error(hint, { cause: launchErr });
+  }
+
+  const page = await browser.newPage();
+  const lifecycle = new EventEmitter();
+  let bridgeWs = null;
+  let exitWsReady = !lazyExitConnect;
+  /** @type {Promise<import('ws').WebSocket>|null} */
+  let exitConnectPromise = null;
+
+  console.log('[clean-vpn] ws-chrome: локальный WS-мост 127.0.0.1 (данные не через CDP)');
+
+  const bridgeWsPromise = new Promise((resolve, reject) => {
+    const to = setTimeout(
+      () => reject(new Error('ws-chrome: таймаут подключения локального WS моста')),
+      120000,
+    );
+    localWss.on('connection', (ws, request) => {
+      if (!localWsRequestHasSecret(request, localSecret)) {
+        console.warn('[clean-vpn] ws-chrome: локальный WS — отклонён без/с неверным ?t=… (H-4)');
+        try {
+          ws.close(1008, 'bad token');
+        } catch {
+          /* ignore */
+        }
+        try {
+          request.socket?.destroy();
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      if (bridgeWs) {
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      clearTimeout(to);
+      bridgeWs = ws;
+      resolve(ws);
+    });
+  });
+
+  await page.exposeFunction('cleanVpnWsReady', () => {
+    lifecycle.emit('_chromeWsOpen');
+  });
+  await page.exposeFunction('cleanVpnWsClosed', () => {
+    lifecycle.emit('close');
+  });
+
+  await page.setContent(
+    buildWsChromeDualBridgePageHtml(opts.wsUrl, localWsUrl, lazyExitConnect),
+    { waitUntil: 'domcontentloaded' },
+  );
+
+  await bridgeWsPromise;
+  console.log('[clean-vpn] ws-chrome: Chrome подключился к локальному WS-мосту');
+
+  const waitExitWsReady = () =>
+    new Promise((resolve, reject) => {
+      const to = setTimeout(
+        () => reject(new Error('ws-chrome: таймаут WebSocket к exit')),
+        120000,
+      );
+      const done = () => clearTimeout(to);
+      lifecycle.once('_chromeWsOpen', () => {
+        done();
+        resolve(undefined);
+      });
+      lifecycle.once('close', () => {
+        done();
+        reject(new Error('ws-chrome: WebSocket к exit закрыт до готовности'));
+      });
+    });
+
+  const ensureExitWsReady = async () => {
+    if (exitWsReady && bridgeWs && bridgeWs.readyState === WebSocket.OPEN) {
+      return bridgeWs;
+    }
+    if (exitConnectPromise) return exitConnectPromise;
+
+    exitConnectPromise = (async () => {
+      lifecycle.removeAllListeners('_chromeWsOpen');
+      lifecycle.removeAllListeners('close');
+      const readyWait = waitExitWsReady();
+      await page.evaluate(() => window.__cleanVpnExitConnect());
+      await readyWait;
+      exitWsReady = true;
+      exitConnectPromise = null;
+      console.log('[clean-vpn] ws-chrome: WebSocket к exit готов');
+      return bridgeWs;
+    })().catch((e) => {
+      exitConnectPromise = null;
+      exitWsReady = false;
+      throw e;
+    });
+
+    return exitConnectPromise;
+  };
+
+  const idleExitTeardown = () => {
+    exitWsReady = false;
+    exitConnectPromise = null;
+    lifecycle.removeAllListeners('_chromeWsOpen');
+    lifecycle.removeAllListeners('close');
+    void page.evaluate(() => window.__cleanVpnExitIdleTeardown()).catch((e) => {
+      console.warn('[clean-vpn] ws-chrome idle teardown:', e?.message || e);
+    });
+  };
+
+  const close = async () => {
+    idleExitTeardown();
+    try {
+      await browser.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      localWss.close();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  if (!lazyExitConnect) {
+    await ensureExitWsReady();
+  } else {
+    console.log('[clean-vpn] ws-chrome: Chrome готов; WS к exit — по TCP SYN с TUN');
+  }
+
+  return {
+    bridgeWs: /** @type {import('ws').WebSocket} */ (bridgeWs),
+    browser,
+    page,
+    localWss,
+    isExitWsReady: () => exitWsReady,
+    ensureExitWsReady,
+    idleExitTeardown,
+    close,
+  };
+}
+
+/**
  * Puppeteer: страница держит WebSocket к exit; мост с API как у `ws` для attachTunBridge.
  * @param {{
  *   wsUrl: string,
@@ -6856,40 +7143,20 @@ async function createWsChromeClientBridge(opts) {
     throw new Error('ws-chrome: локальный мост несовместим с pageMode goto');
   }
 
-  /** @type {import('ws').WebSocketServer|null} */
-  let localWss = null;
-  /** @type {string} */
-  let localWsUrl = '';
-
-  /** H-4: random secret в URL локального WS — защита от чужих процессов на хосте. */
-  let localSecret = '';
   if (opts.useLocalBridge) {
-    localWss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
-    await awaitWebSocketServerListening(localWss);
-    const ad = localWss.address();
-    if (!ad || typeof ad === 'string') {
-      try {
-        localWss.close();
-      } catch {
-        /* ignore */
-      }
-      throw new Error('ws-chrome: не удалось получить адрес локального WSS');
-    }
-    localSecret = randomBytes(16).toString('hex');
-    localWsUrl = `ws://127.0.0.1:${ad.port}/?t=${localSecret}`;
+    const session = await createWsChromeClientSession({ ...opts, lazyExitConnect: false });
+    return {
+      bridge: session.bridgeWs,
+      browser: session.browser,
+      page: session.page,
+      localWss: session.localWss,
+    };
   }
 
   let puppeteerMod;
   try {
     puppeteerMod = await import('puppeteer');
   } catch (e) {
-    if (localWss) {
-      try {
-        localWss.close();
-      } catch {
-        /* ignore */
-      }
-    }
     throw new Error('Для --type=ws-chrome установите: npm install puppeteer', { cause: e });
   }
   const puppeteer = puppeteerMod.default ?? puppeteerMod;
@@ -6899,13 +7166,6 @@ async function createWsChromeClientBridge(opts) {
   try {
     browser = await puppeteer.launch(launchOpts);
   } catch (launchErr) {
-    if (localWss) {
-      try {
-        localWss.close();
-      } catch {
-        /* ignore */
-      }
-    }
     const hint = `ws-chrome: не удалось запустить браузер (${launchErr?.message || launchErr}).
 Частые причины на Linux ARM (Radxa, Multipass на Mac M*):
   sudo apt update && sudo apt install -y chromium
@@ -6916,77 +7176,6 @@ async function createWsChromeClientBridge(opts) {
     throw new Error(hint, { cause: launchErr });
   }
   const page = await browser.newPage();
-
-  const lifecycle = new EventEmitter();
-
-  if (opts.useLocalBridge) {
-    console.log('[clean-vpn] ws-chrome: локальный WS-мост 127.0.0.1 (данные не через CDP)');
-
-    let localConnDone = false;
-    const localClientPromise = new Promise((resolve, reject) => {
-      const to = setTimeout(
-        () => reject(new Error('ws-chrome: таймаут подключения локального WS моста')),
-        120000,
-      );
-      localWss.on('connection', (ws, request) => {
-        if (!localWsRequestHasSecret(request, localSecret)) {
-          console.warn('[clean-vpn] ws-chrome: локальный WS — отклонён без/с неверным ?t=… (H-4)');
-          try {
-            ws.close(1008, 'bad token');
-          } catch {
-            /* ignore */
-          }
-          try {
-            request.socket?.destroy();
-          } catch {
-            /* ignore */
-          }
-          return;
-        }
-        if (localConnDone) {
-          try {
-            ws.close();
-          } catch {
-            /* ignore */
-          }
-          return;
-        }
-        localConnDone = true;
-        clearTimeout(to);
-        resolve(ws);
-      });
-    });
-
-    await page.exposeFunction('cleanVpnWsReady', () => {
-      lifecycle.emit('_chromeWsOpen');
-    });
-    await page.exposeFunction('cleanVpnWsClosed', () => {
-      lifecycle.emit('close');
-    });
-
-    await page.setContent(buildWsChromeDualBridgePageHtml(opts.wsUrl, localWsUrl), {
-      waitUntil: 'domcontentloaded',
-    });
-
-    const bridge = await localClientPromise;
-
-    await new Promise((resolve, reject) => {
-      const to = setTimeout(
-        () => reject(new Error('ws-chrome: таймаут WebSocket к exit')),
-        120000,
-      );
-      lifecycle.once('_chromeWsOpen', () => {
-        clearTimeout(to);
-        resolve(undefined);
-      });
-      lifecycle.once('close', () => {
-        clearTimeout(to);
-        reject(new Error('ws-chrome: WebSocket закрыт до готовности'));
-      });
-    });
-
-    return { bridge, browser, page, localWss };
-  }
 
   const bridge = new EventEmitter();
 
@@ -8642,8 +8831,10 @@ async function runClient({
     deferWsPeerBypass || deferWebrtcPeerBypass || deferRtcChromeSigBypass || deferUdpPeerBypass;
   const deferPeerKindForSetup =
     deferWebrtcPeerBypass || deferRtcChromeSigBypass ? 'webrtc' : 'ws-listen';
+  // ws-chrome + keep-alive: split-default сразу — иначе lazyConnect ждёт IPv4 с TUN, а маршрутов в TUN нет.
   const deferSplitDefaultPuppeteer =
-    splitDefault && (type === 'rtc-chrome' || type === 'ws-chrome');
+    splitDefault &&
+    (type === 'rtc-chrome' || (type === 'ws-chrome' && kaBridge <= 0));
   const routeCtx = await setupClientRoutesAsync(ifname, routeHost, splitDefault, {
     deferPeerBypass: deferSigBypass,
     deferPeerKind: deferPeerKindForSetup,
@@ -8944,6 +9135,49 @@ async function runClient({
         console.error('[clean-vpn] ws-chrome:', e?.message || e);
       });
     };
+
+    if (kaBridge > 0 && useLocalBridge) {
+      console.log(
+        `[clean-vpn] ws-chrome: keep-alive ${kaBridge}s — Chrome сразу; WS к exit по TCP SYN с TUN`,
+      );
+      const wsSession = await createWsChromeClientSession({
+        ...wsChromeOpts,
+        lazyExitConnect: true,
+      });
+      wsChromeBrowser = wsSession.browser;
+      wsChromeLocalWss = wsSession.localWss;
+
+      wsSession.bridgeWs.on('close', () => {
+        console.error('[clean-vpn] ws-chrome: локальный WS закрыт (Chrome упал?)');
+        shutdown();
+      });
+      wsSession.bridgeWs.on('error', (e) => {
+        console.error('[clean-vpn] ws-chrome:', e?.message || e);
+      });
+
+      attachTunBridge(tun, 'websocket', wsSession.bridgeWs, {
+        ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
+        softKeepAliveIdleKeepsWire: true,
+        softKeepAliveIdle: () => {
+          console.log(
+            `[clean-vpn] ws-chrome: keep-alive ${kaBridge}s — WS к exit сброшен, Chrome остаётся (reconnect: только TCP SYN)`,
+          );
+          wsSession.idleExitTeardown();
+        },
+        onTunOutbound: (pkt) => {
+          if (wsSession.isExitWsReady()) return;
+          if (!ipv4TcpSynOnly(pkt)) return;
+          void wsSession
+            .ensureExitWsReady()
+            .then(() => applyDeferredClientSplitDefault(routeCtx))
+            .catch((e) => {
+              console.error('[clean-vpn] ws-chrome: lazy WS reconnect:', e?.message || e);
+            });
+        },
+        tunOutboundSendIf: (pkt) => wsSession.isExitWsReady() || ipv4TcpSynOnly(pkt),
+      });
+      return;
+    }
 
     if (kaBridge > 0) {
       console.log(
