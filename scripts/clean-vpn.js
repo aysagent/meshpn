@@ -5006,6 +5006,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
  *   softKeepAliveIdleKeepsWire?: boolean,
  *   onTunOutbound?: (pkt: Buffer) => void,
  *   tunOutboundSendIf?: (pkt: Buffer) => boolean,
+ *   shouldCountKeepaliveActivity?: () => boolean,
  *   lazyConnectFilter?: (pkt: Buffer) => boolean,
  * }} [bridgeOpts]
  * @returns {{ reconnectWire: (newEp: any) => void } | null}
@@ -5080,6 +5081,8 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
 
   const bumpActivity = () => {
     if (!keepAliveSec) return;
+    const kaFn = bridgeOpts?.shouldCountKeepaliveActivity;
+    if (typeof kaFn === 'function' && !kaFn()) return;
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
       idleTimer = null;
@@ -6882,6 +6885,9 @@ function buildWsChromeDualBridgePageHtml(wsUrl, localWsUrl, lazyExitConnect = fa
       try { exitWs.close(); } catch (e) {}
       exitWs = null;
     }
+    localBuf.length = 0;
+    exitBuf.length = 0;
+    idleClosing = false;
   };
   window.__cleanVpnExitConnect = function () {
     idleClosing = false;
@@ -6992,6 +6998,11 @@ async function createWsChromeClientSession(opts) {
   let exitWsReady = !lazyExitConnect;
   /** @type {Promise<import('ws').WebSocket>|null} */
   let exitConnectPromise = null;
+  let exitConnectGen = 0;
+  /** @type {number|null} */
+  let exitConnectStartedMs = null;
+  const EXIT_WS_CONNECT_TIMEOUT_MS = 30000;
+  const EXIT_WS_CONNECT_STALE_MS = 25000;
 
   console.log('[clean-vpn] ws-chrome: локальный WS-мост 127.0.0.1 (данные не через CDP)');
 
@@ -7044,14 +7055,19 @@ async function createWsChromeClientSession(opts) {
   await bridgeWsPromise;
   console.log('[clean-vpn] ws-chrome: Chrome подключился к локальному WS-мосту');
 
-  const waitExitWsReady = () =>
+  const waitExitWsReady = (gen) =>
     new Promise((resolve, reject) => {
       const to = setTimeout(
         () => reject(new Error('ws-chrome: таймаут WebSocket к exit')),
-        120000,
+        EXIT_WS_CONNECT_TIMEOUT_MS,
       );
       const done = () => clearTimeout(to);
       lifecycle.once('_chromeWsOpen', () => {
+        if (gen !== exitConnectGen) {
+          done();
+          reject(new Error('ws-chrome: reconnect отменён'));
+          return;
+        }
         done();
         resolve(undefined);
       });
@@ -7059,27 +7075,53 @@ async function createWsChromeClientSession(opts) {
         done();
         reject(new Error('ws-chrome: WebSocket к exit закрыт до готовности'));
       });
+      lifecycle.once('_exitConnectAbort', () => {
+        done();
+        reject(new Error('ws-chrome: reconnect отменён'));
+      });
     });
 
   const ensureExitWsReady = async () => {
     if (exitWsReady && bridgeWs && bridgeWs.readyState === WebSocket.OPEN) {
       return bridgeWs;
     }
-    if (exitConnectPromise) return exitConnectPromise;
+    if (
+      exitConnectPromise &&
+      exitConnectStartedMs != null &&
+      Date.now() - exitConnectStartedMs < EXIT_WS_CONNECT_STALE_MS
+    ) {
+      return exitConnectPromise;
+    }
+    if (exitConnectPromise) {
+      exitConnectGen++;
+      lifecycle.emit('_exitConnectAbort');
+      exitConnectPromise = null;
+      exitConnectStartedMs = null;
+    }
 
+    const gen = exitConnectGen;
+    exitConnectStartedMs = Date.now();
     exitConnectPromise = (async () => {
       lifecycle.removeAllListeners('_chromeWsOpen');
       lifecycle.removeAllListeners('close');
-      const readyWait = waitExitWsReady();
+      lifecycle.removeAllListeners('_exitConnectAbort');
+      const readyWait = waitExitWsReady(gen);
       await page.evaluate(() => window.__cleanVpnExitConnect());
       await readyWait;
+      if (gen !== exitConnectGen) {
+        throw new Error('ws-chrome: reconnect отменён');
+      }
       exitWsReady = true;
       exitConnectPromise = null;
+      exitConnectStartedMs = null;
       console.log('[clean-vpn] ws-chrome: WebSocket к exit готов');
       return bridgeWs;
     })().catch((e) => {
-      exitConnectPromise = null;
-      exitWsReady = false;
+      if (gen === exitConnectGen) {
+        exitConnectPromise = null;
+        exitConnectStartedMs = null;
+        exitWsReady = false;
+      }
       throw e;
     });
 
@@ -7087,10 +7129,14 @@ async function createWsChromeClientSession(opts) {
   };
 
   const idleExitTeardown = () => {
+    exitConnectGen++;
+    lifecycle.emit('_exitConnectAbort');
     exitWsReady = false;
     exitConnectPromise = null;
+    exitConnectStartedMs = null;
     lifecycle.removeAllListeners('_chromeWsOpen');
     lifecycle.removeAllListeners('close');
+    lifecycle.removeAllListeners('_exitConnectAbort');
     void page.evaluate(() => window.__cleanVpnExitIdleTeardown()).catch((e) => {
       console.warn('[clean-vpn] ws-chrome idle teardown:', e?.message || e);
     });
@@ -7595,6 +7641,7 @@ function buildRtcChromeEmbeddedPageHtml(
     pc = null;
     sigWs = null;
     dcBuf = [];
+    localBuf.length = 0;
     candPend = [];
     expectedRemoteFp = null;
     seenNonces = Object.create(null);
@@ -7719,6 +7766,11 @@ async function createRtcChromeClientSession(opts) {
   let webrtcReady = false;
   /** @type {Promise<import('ws').WebSocket>|null} */
   let webrtcConnectPromise = null;
+  let webrtcConnectGen = 0;
+  /** @type {number|null} */
+  let webrtcConnectStartedMs = null;
+  const WEBRTC_CONNECT_TIMEOUT_MS = 45000;
+  const WEBRTC_CONNECT_STALE_MS = 35000;
 
   console.log('[clean-vpn] rtc-chrome: Chrome запущен, локальный WS-мост 127.0.0.1');
 
@@ -7793,14 +7845,19 @@ async function createRtcChromeClientSession(opts) {
   await bridgeWsPromise;
   console.log('[clean-vpn] rtc-chrome: Chrome подключился к локальному WS-мосту');
 
-  const waitWebrtcReady = () =>
+  const waitWebrtcReady = (gen) =>
     new Promise((resolve, reject) => {
       const to = setTimeout(
         () => reject(new Error('rtc-chrome: таймаут готовности WebRTC DataChannel')),
-        180000,
+        WEBRTC_CONNECT_TIMEOUT_MS,
       );
       const done = () => clearTimeout(to);
       lifecycle.once('_rtcReady', () => {
+        if (gen !== webrtcConnectGen) {
+          done();
+          reject(new Error('rtc-chrome: reconnect отменён'));
+          return;
+        }
         done();
         resolve(undefined);
       });
@@ -7812,28 +7869,54 @@ async function createRtcChromeClientSession(opts) {
         done();
         reject(err);
       });
+      lifecycle.once('_webrtcConnectAbort', () => {
+        done();
+        reject(new Error('rtc-chrome: reconnect отменён'));
+      });
     });
 
   const ensureWebrtcReady = async () => {
     if (webrtcReady && bridgeWs && bridgeWs.readyState === WebSocket.OPEN) {
       return bridgeWs;
     }
-    if (webrtcConnectPromise) return webrtcConnectPromise;
+    if (
+      webrtcConnectPromise &&
+      webrtcConnectStartedMs != null &&
+      Date.now() - webrtcConnectStartedMs < WEBRTC_CONNECT_STALE_MS
+    ) {
+      return webrtcConnectPromise;
+    }
+    if (webrtcConnectPromise) {
+      webrtcConnectGen++;
+      lifecycle.emit('_webrtcConnectAbort');
+      webrtcConnectPromise = null;
+      webrtcConnectStartedMs = null;
+    }
 
+    const gen = webrtcConnectGen;
+    webrtcConnectStartedMs = Date.now();
     webrtcConnectPromise = (async () => {
       lifecycle.removeAllListeners('_rtcReady');
       lifecycle.removeAllListeners('close');
       lifecycle.removeAllListeners('error');
-      const readyWait = waitWebrtcReady();
+      lifecycle.removeAllListeners('_webrtcConnectAbort');
+      const readyWait = waitWebrtcReady(gen);
       await page.evaluate(() => window.__cleanVpnRtcConnect());
       await readyWait;
+      if (gen !== webrtcConnectGen) {
+        throw new Error('rtc-chrome: reconnect отменён');
+      }
       webrtcReady = true;
       webrtcConnectPromise = null;
+      webrtcConnectStartedMs = null;
       console.log('[clean-vpn] rtc-chrome: WebRTC DataChannel к exit готов');
       return bridgeWs;
     })().catch((e) => {
-      webrtcConnectPromise = null;
-      webrtcReady = false;
+      if (gen === webrtcConnectGen) {
+        webrtcConnectPromise = null;
+        webrtcConnectStartedMs = null;
+        webrtcReady = false;
+      }
       throw e;
     });
 
@@ -7841,11 +7924,15 @@ async function createRtcChromeClientSession(opts) {
   };
 
   const idleWebrtcTeardown = () => {
+    webrtcConnectGen++;
+    lifecycle.emit('_webrtcConnectAbort');
     webrtcReady = false;
     webrtcConnectPromise = null;
+    webrtcConnectStartedMs = null;
     lifecycle.removeAllListeners('_rtcReady');
     lifecycle.removeAllListeners('close');
     lifecycle.removeAllListeners('error');
+    lifecycle.removeAllListeners('_webrtcConnectAbort');
     void page.evaluate(() => window.__cleanVpnRtcIdleTeardown()).catch((e) => {
       console.warn('[clean-vpn] rtc-chrome idle teardown:', e?.message || e);
     });
@@ -9175,6 +9262,7 @@ async function runClient({
             });
         },
         tunOutboundSendIf: (pkt) => wsSession.isExitWsReady() || ipv4TcpSynOnly(pkt),
+        shouldCountKeepaliveActivity: () => wsSession.isExitWsReady(),
       });
       return;
     }
@@ -9299,6 +9387,7 @@ async function runClient({
       },
       tunOutboundSendIf: (pkt) =>
         rtcSession.isWebrtcReady() || ipv4TcpSynOnly(pkt),
+      shouldCountKeepaliveActivity: () => rtcSession.isWebrtcReady(),
     });
 
     void rtcSession
