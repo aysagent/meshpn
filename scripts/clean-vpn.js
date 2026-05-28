@@ -4805,7 +4805,7 @@ function isIpv4Bridgeable(pkt) {
   return true;
 }
 
-/** rtc-chrome + keep-alive после idle: reconnect только на новый TCP SYN (не DNS/UDP/ACK). */
+/** rtc-chrome + keep-alive после idle: reconnect только на новый TCP SYN (не ACK). */
 function ipv4TcpSynOnly(pkt) {
   if (!isIpv4Bridgeable(pkt)) return false;
   if (pkt.readUInt8(9) !== 6) return false;
@@ -4813,6 +4813,20 @@ function ipv4TcpSynOnly(pkt) {
   if (pkt.length < ihl + 14) return false;
   const fl = pkt.readUInt8(ihl + 13);
   return (fl & 0x02) !== 0 && (fl & 0x10) === 0;
+}
+
+/** Исходящий DNS-запрос (UDP → :53) — нужен до TCP SYN при split-default. */
+function ipv4DnsQuery(pkt) {
+  if (!isIpv4Bridgeable(pkt)) return false;
+  if (pkt.readUInt8(9) !== 17) return false;
+  const ihl = (pkt.readUInt8(0) & 0x0f) * 4;
+  if (pkt.length < ihl + 4) return false;
+  return pkt.readUInt16BE(ihl + 2) === 53;
+}
+
+/** Lazy connect к exit после idle: TCP SYN или DNS-запрос (curl без ping). */
+function ipv4TriggersExitLazyConnect(pkt) {
+  return ipv4TcpSynOnly(pkt) || ipv4DnsQuery(pkt);
 }
 
 /**
@@ -5585,7 +5599,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       if (typeof bridgeOpts?.tunOutboundSendIf === 'function' && !bridgeOpts.tunOutboundSendIf(pkt)) {
         if (kaDebug) {
           const ipProto = pkt.length >= 10 ? pkt.readUInt8(9) : -1;
-          logKa('tun-drop', `${pkt.length} B ip-proto=${ipProto} (WebRTC к exit не готов)`);
+          logKa('tun-drop', `${pkt.length} B ip-proto=${ipProto} (exit не готов)`);
         }
         continue;
       }
@@ -9253,7 +9267,7 @@ async function runClient({
         },
         onTunOutbound: (pkt) => {
           if (wsSession.isExitWsReady()) return;
-          if (!ipv4TcpSynOnly(pkt)) return;
+          if (!ipv4TriggersExitLazyConnect(pkt)) return;
           void wsSession
             .ensureExitWsReady()
             .then(() => applyDeferredClientSplitDefault(routeCtx))
@@ -9261,7 +9275,7 @@ async function runClient({
               console.error('[clean-vpn] ws-chrome: lazy WS reconnect:', e?.message || e);
             });
         },
-        tunOutboundSendIf: (pkt) => wsSession.isExitWsReady() || ipv4TcpSynOnly(pkt),
+        tunOutboundSendIf: (pkt) => wsSession.isExitWsReady() || ipv4TriggersExitLazyConnect(pkt),
         shouldCountKeepaliveActivity: () => wsSession.isExitWsReady(),
       });
       return;
@@ -9380,13 +9394,13 @@ async function runClient({
       },
       onTunOutbound: (pkt) => {
         if (rtcSession.isWebrtcReady()) return;
-        if (!ipv4TcpSynOnly(pkt)) return;
+        if (!ipv4TriggersExitLazyConnect(pkt)) return;
         void rtcSession.ensureWebrtcReady().catch((e) => {
           console.error('[clean-vpn] rtc-chrome: lazy WebRTC reconnect:', e?.message || e);
         });
       },
       tunOutboundSendIf: (pkt) =>
-        rtcSession.isWebrtcReady() || ipv4TcpSynOnly(pkt),
+        rtcSession.isWebrtcReady() || ipv4TriggersExitLazyConnect(pkt),
       shouldCountKeepaliveActivity: () => rtcSession.isWebrtcReady(),
     });
 
