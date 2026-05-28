@@ -472,7 +472,7 @@ Auto-gen certs на exit — `CN=clean-vpn`, без SAN:
     **Что вы уже проверили:** 10 соединений → все `peek прерван … 10000ms` — это подтверждает **stall timeout (10 с)**, не semaphore. Semaphore виден только при `CLEAN_VPN_EXIT_PEEK_MAX` ≤ числа параллельных «висящих» TCP.
     После закрытия «висящих» легитимный client снова подключается нормально.
 
-### Fixed M-5 — IP-утечка через ICE candidates
+### [1/2 Tested] Fixed M-5 — IP-утечка через ICE candidates
 
 - **В чём была уязвимость.** При `--ice-mode=auto` host/srflx candidates уходили в SDP по открытому WS-сигналингу — любой, кто читает (или логирует) сигналинг, видит реальные RFC1918/loopback/link-local адреса клиента.
 - **Как починили.** Добавлены утилиты `parseIceCandidateFields`, `isPrivateOrLoopbackIp`, `shouldDropIceCandidate`, `emitFilteredLocalCandidate`. По умолчанию для `typ host` и `typ prflx` отбрасываются IP из RFC1918 / loopback / IPv6 ULA / link-local — и в исходящих local-candidate'ах (`attachCleanVpnWebrtcExitSignaling`/`attachCleanVpnWebrtcClientSignaling`), и при `applyWebrtcRemoteSignal`. `srflx`/`relay` остаются (нужны для NAT-traversal). В `rtc-chrome` embedded JS добавлены идентичные функции и применяются к `pc.onicecandidate` и remote candidate processing. Флаг `--allow-host-candidates` — opt-out для отладки.
