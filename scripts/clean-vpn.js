@@ -340,6 +340,32 @@ function tlsMuxDebugEnabled() {
   return process.env.CLEAN_VPN_TLS_MUX_DEBUG === '1';
 }
 
+/** Включается из `--tls-log-bearer` или env `CLEAN_VPN_TLS_LOG_BEARER=1` в main(). */
+let cleanVpnTlsLogBearer = false;
+
+/** `--tls-log-bearer` или env `CLEAN_VPN_TLS_LOG_BEARER=1`. */
+function tlsLogBearerEnabled() {
+  return cleanVpnTlsLogBearer || envCleanVpnTruthy01('CLEAN_VPN_TLS_LOG_BEARER');
+}
+
+/**
+ * Печатать Bearer-токен и exporter_b64 для ручной проверки H-1/H-2 (только при tlsLogBearerEnabled()).
+ * @param {string} side — метка стороны/этапа (client h1, exit http2 reject, …)
+ * @param {string|null|undefined} token
+ * @param {Buffer|null|undefined} exporterBuf
+ * @param {boolean} [legacy=false]
+ */
+function tlsLogBearerDebug(side, token, exporterBuf, legacy = false) {
+  if (!tlsLogBearerEnabled()) return;
+  const exp =
+    exporterBuf && Buffer.isBuffer(exporterBuf) && exporterBuf.length > 0
+      ? exporterBuf.toString('base64')
+      : '(none — Bearer v1 legacy)';
+  console.log(
+    `[clean-vpn] tls bearer debug (${side}): token=${token ?? '(null)'} exporter_b64=${exp} legacy=${legacy ? '1' : '0'}`,
+  );
+}
+
 /** Для CLEAN_VPN_TLS_LOG_JA3 / CLEAN_VPN_JA3_VERBOSE — истина для 1/true/yes (без учёта регистра). */
 function envCleanVpnTruthy01(key) {
   const v = process.env[key];
@@ -1134,6 +1160,7 @@ function establishCleanVpnOverH2(tlsSock, checkHost, vpnSecret, exporter = null)
     );
   }
   const token = computeTlsVpnBearerToken(vpnSecret, ek);
+  tlsLogBearerDebug('client h2', token, ek, !ek);
   const clientSession = http2.connect(`https://${checkHost}`, {
     createConnection: () => tlsSock,
     settings: resolveCleanVpnHttp2Settings(),
@@ -1370,6 +1397,11 @@ async function completeCleanVpnTlsSession(sock, opts) {
   console.log(
     `[clean-vpn] TLS client: рукопожатие OK http=${httpLabel} negotiated ALPN=${ap || '—'}`,
   );
+  if (exporter && opts.exporter == null) {
+    console.log(
+      `[clean-vpn] tls: TLS channel-binding OK alpn=${ap || '(empty)'} exporter_len=${exporter.length} (Bearer v2; полный token/exporter — --tls-log-bearer)`,
+    );
+  }
   if (
     'setSendBufferSize' in sock &&
     typeof /** @type {{ setSendBufferSize?: unknown }} */ (sock).setSendBufferSize === 'function'
@@ -1406,7 +1438,8 @@ async function completeCleanVpnTlsSession(sock, opts) {
       vpnSecret,
       exporter,
     );
-    console.log('[clean-vpn] TLS (VPN) соединение установлено http=HTTP/2');
+    const cbLabel = exporter ? ' bearer=v2 channel-bound' : ' bearer=v1 legacy';
+    console.log(`[clean-vpn] TLS (VPN) соединение установлено http=HTTP/2${cbLabel}`);
     return wrapped;
   }
 
@@ -1416,6 +1449,7 @@ async function completeCleanVpnTlsSession(sock, opts) {
     );
   }
   const token = computeTlsVpnBearerToken(vpnSecret, exporter);
+  tlsLogBearerDebug('client http1', token, exporter, !exporter);
   const req =
     `GET /clean-vpn HTTP/1.1\r\n` +
     `Host: ${checkHost}\r\n` +
@@ -1465,7 +1499,8 @@ async function completeCleanVpnTlsSession(sock, opts) {
     sock.on('data', onResp);
     sock.write(req);
   });
-  console.log('[clean-vpn] TLS (VPN) соединение установлено http=HTTP/1.1');
+  const cbLabel = exporter ? ' bearer=v2 channel-bound' : ' bearer=v1 legacy';
+  console.log(`[clean-vpn] TLS (VPN) соединение установлено http=HTTP/1.1${cbLabel}`);
   return sock;
 }
 
@@ -1648,6 +1683,15 @@ async function connectCleanVpnBoringTlsClient(opts) {
     if (!exporter) {
       console.warn(
         '[clean-vpn] boring-tls: helper не вернул `exporter` в ok-frame (старая сборка?) — Bearer v1 legacy, без channel-binding (H-2)',
+      );
+    } else {
+      console.log(
+        `[clean-vpn] boring-tls: TLS channel-binding OK alpn=${negotiatedAlpn || '(empty)'} exporter_len=${exporter.length} (Bearer v2; полный token/exporter — --tls-log-bearer)`,
+      );
+    }
+    if (tlsLogBearerEnabled()) {
+      console.log(
+        `[clean-vpn] boring-tls: helper ok-frame (length-prefixed JSON на stdout, не stderr) alpn=${negotiatedAlpn || '(empty)'} exporter=${typeof resp.exporter === 'string' ? resp.exporter : '(missing)'}`,
       );
     }
 
@@ -2826,8 +2870,10 @@ function shouldDropIceCandidate(candidate, allowHost) {
  */
 function emitFilteredLocalCandidate(signal, candidate, mid, allowHost, logPrefix) {
   if (shouldDropIceCandidate(candidate, allowHost)) {
+    const f = parseIceCandidateFields(candidate);
+    const detail = f ? `${f.ip} typ=${f.type}` : candidate.slice(0, 96);
     console.log(
-      `[clean-vpn] ${logPrefix}: drop local host/prflx-private candidate (M-5; --allow-host-candidates для opt-out)`,
+      `[clean-vpn] ${logPrefix}: drop local host/prflx-private candidate (M-5; ${detail}; --allow-host-candidates для opt-out)`,
     );
     return;
   }
@@ -2845,8 +2891,10 @@ function applyWebrtcRemoteSignal(pc, msg, opts = {}) {
   else if (msg.type === 'answer') pc.setRemoteDescription(msg.sdp, 'Answer');
   else if (msg.type === 'candidate') {
     if (shouldDropIceCandidate(msg.candidate, !!opts.allowHostCandidates)) {
+      const f = parseIceCandidateFields(msg.candidate);
+      const detail = f ? `${f.ip} typ=${f.type}` : String(msg.candidate).slice(0, 96);
       console.log(
-        `[clean-vpn] ${opts.logPrefix || 'webrtc'}: drop remote host/prflx-private candidate (M-5)`,
+        `[clean-vpn] ${opts.logPrefix || 'webrtc'}: drop remote host/prflx-private candidate (M-5; ${detail})`,
       );
       return;
     }
@@ -3327,6 +3375,7 @@ function parseArgs(argv) {
     boringTlsJa3Strict: false,
     tlsLogJa3: false,
     ja3Verbose: false,
+    tlsLogBearer: false,
     allowHostCandidates: false,
     signalingPskRequired: true,
   };
@@ -3400,6 +3449,8 @@ function parseArgs(argv) {
       out.boringTlsJa3Strict = true;
     } else if (a === '--tls-log-ja3') {
       out.tlsLogJa3 = true;
+    } else if (a === '--tls-log-bearer') {
+      out.tlsLogBearer = true;
     } else if (a === '--ja3-verbose') {
       out.ja3Verbose = true;
     } else if (a === '--allow-host-candidates') {
@@ -5927,6 +5978,9 @@ function wireExitTlsSocket(tlsSock, ctx) {
           exporter,
         );
         if (outcome !== 'vpn') {
+          if (outcome === 'cover_bad_bearer') {
+            tlsLogBearerDebug('exit http1 reject', parsed.bearer, exporter, false);
+          }
           respondPublic(outcome, tlsPreviewHex16(httpBuf));
           return;
         }
@@ -5941,6 +5995,7 @@ function wireExitTlsSocket(tlsSock, ctx) {
             `[clean-vpn] tls: принят legacy Bearer (v1, без channel-binding) ip=${st.ip} port=${st.port ?? '?'} — обновите client до Phase 2 (H-1+H-2)`,
           );
         }
+        tlsLogBearerDebug('exit http1 accept', parsed.bearer, exporter, legacy);
         console.log(
           `[clean-vpn] tls vpn: connected ip=${st.ip} port=${st.port ?? '?'} windowOffset=${windowOffset}${bearerLabel} http=${st.httpLabel}`,
         );
@@ -6130,6 +6185,9 @@ function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
     );
 
     if (outcome !== 'vpn') {
+      if (outcome === 'cover_bad_bearer') {
+        tlsLogBearerDebug('exit http2 reject', bearer, exporter, false);
+      }
       if (tlsCoverShouldThrottle(st.ip)) {
         setOutcomeOnce('cover_ratelimit', `reason=${outcome}`);
         console.log(
@@ -6202,6 +6260,7 @@ function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
         `[clean-vpn] tls: принят legacy Bearer (v1, без channel-binding) ip=${st.ip} port=${st.port ?? '?'} — обновите client до Phase 2 (H-1+H-2)`,
       );
     }
+    tlsLogBearerDebug('exit http2 accept', bearer, exporter, legacy);
     console.log(
       `[clean-vpn] tls vpn: connected ip=${st.ip} port=${st.port ?? '?'} windowOffset=${windowOffset}${bearerLabel} http=${st.httpLabel}`,
     );
@@ -10291,6 +10350,7 @@ async function main() {
 --tls-probe-full-proxy-per-ip=K: не более K «длинных» passthrough с одного IP за сутки (default 0 = только короткий)
 --http-vers=1.1: с --type=tls, boring-tls (client) или combo-tls (client и exit); принудительный HTTP/1.1 без h2; совместно обновляйте код на обеих сторонах
 --tls-log-ja3: JA3 wire, JA3 sorted (MD5), JA4 (FoxIO JA4.md), **JA4 alt** (JA4_c как ja3.zone: ext с 0000, без 0010), **JA4 raw_o**, **JA4 raw_r**, **JA4 raw_r_alt** (ja3.zone raw). С \`--ja3-verbose\` — строки до MD5 и прочий stderr helper. **transparent-tls** те же флаги: client — JA3/JA4 до и после подмены первого ClientHello; exit — поля OPEN (dst/origin/fake sni как на проводе) и JA4 по mux до/после restore к origin.
+--tls-log-bearer: для проверки H-1/H-2 — полный Bearer token и exporter_b64 в логах client/exit (эквивалент env CLEAN_VPN_TLS_LOG_BEARER=1). Без флага при boring-tls/tls всё равно печатается краткое «channel-binding OK» / «bearer=v2 channel-bound».
 --ja3-verbose: подробный JA3 (обе строки до MD5, поля GREASE-очищенные, hex префикса TCP); сам включает вывод JA3. Env при уже включённом CLEAN_VPN_TLS_LOG_JA3: CLEAN_VPN_JA3_VERBOSE=1.
 --type=boring-tls: только client — TLS 1.3 через процесс boring-tls-helper (BoringSSL), см. scripts/boring-tls-plan.md; на exit используйте --type=tls (тот же сервер). Сборка: npm run build:boring-tls-helper (мало RAM на VPS: npm run build:boring-tls-helper-lowmem). Путь к бинарю: CLEAN_VPN_BORING_TLS_HELPER или --boring-tls-helper=PATH; строковый профиль (резерв): --boring-tls-profile=NAME.
 --type=combo-tls: client и exit (**одно имя типа у обеих сторон**, тот же порт). Client: \`--split-default\` + boring-helper для моста TUN + iptables/https как transparent-tls. Exit: если первые байты CVPTX → relay HTTPS; иначе — как \`--type=tls\`.
@@ -10428,6 +10488,10 @@ async function main() {
   const tlsLogJa3 = Boolean(args.tlsLogJa3) || envTlsJa3 || ja3Verbose;
   args.tlsLogJa3 = tlsLogJa3;
   args.ja3Verbose = ja3Verbose;
+
+  cleanVpnTlsLogBearer =
+    Boolean(args.tlsLogBearer) || envCleanVpnTruthy01('CLEAN_VPN_TLS_LOG_BEARER');
+  args.tlsLogBearer = cleanVpnTlsLogBearer;
 
   const envChProf = process.env.CLEAN_VPN_BORING_TLS_CLIENTHELLO_PROFILE?.trim();
   if (envChProf && !args.boringTlsClienthelloProfile) {

@@ -481,8 +481,34 @@ Auto-gen certs на exit — `CN=clean-vpn`, без SAN:
   - **Работоспособность транспорта.**
     - `**--type=webrtc`:** exit `--signaling`, client `--split-default --ice-mode=auto` (или `relay`) — DataChannel поднимается, `curl -4 https://ifconfig.me` через VPN.
     - `**--type=rtc-chrome`:** client с Chrome/Puppeteer — аналогично, TUN ↔ exit webrtc.
-  - **Корректность фикса.** Включить логирование сигналинга (tcpdump на WS-порту или временный debug в коде) и убедиться, что в JSON-сообщениях `candidate` **нет** строк вида `192.168.x.x`, `10.x.x.x`, `172.16–31.x.x`, `127.0.0.1` с `typ host` / `typ prflx`. Должны оставаться `srflx`/`relay` (публичные mapping'и). На exit в stderr при drop: `drop local host/prflx-private candidate (M-5; ...)`.
-  - **Opt-out.** Запустить client с `--allow-host-candidates` — приватные host-candidate'ы снова появляются в сигналинге (для сравнения «до/после»).
+  - **Корректность фикса.** В stderr **client'а** и **exit'а** при ICE gathering должны появляться строки вида:
+    ```
+    [clean-vpn] webrtc client: drop local host/prflx-private candidate (M-5; 192.168.1.42 typ=host; --allow-host-candidates для opt-out)
+    [clean-vpn] webrtc exit: drop remote host/prflx-private candidate (M-5; 10.0.0.5 typ=host)
+    ```
+    (IP и `typ` в логе — отфильтрованный candidate; в WS-сигналинг он **не** уходит.)
+  - **tcpdump на сигналинг (plain WS).** Exit webrtc слушает `--signaling` на порту `PORT` (тот же, что VPN UDP/TCP base, обычно из `--listen`). Сигналинг — **отдельный** TCP-порт `PORT+1` (см. лог `signaling ws://0.0.0.0:PORT+1` при старте exit).
+
+    **Захват в файл (рекомендуется):**
+    ```bash
+    # на exit-машине или на client, если сигналинг идёт на VPS
+    SIG_PORT=9877   # PORT+1, подставьте свой (например 9876+1)
+    sudo tcpdump -i any -s0 -w /tmp/clean-vpn-signaling.pcap "tcp port ${SIG_PORT}"
+    # подключите webrtc/rtc-chrome client, дождитесь ICE connected, Ctrl+C
+
+    # анализ: приватные host/prflx НЕ должны встречаться в candidate-строках
+    strings /tmp/clean-vpn-signaling.pcap | grep -E 'candidate|typ host|typ prflx' | grep -E '192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.0\.0\.1|169\.254\.' && echo FAIL || echo OK
+    ```
+    Ожидание: `OK` (grep ничего не нашёл) или в выводе только `typ srflx` / `typ relay` с публичными IP.
+
+    **Живой просмотр (ASCII payload):**
+    ```bash
+    sudo tcpdump -i any -A -s0 "tcp port ${SIG_PORT}" 2>&1 | grep --line-buffered -E '"type":"candidate"|typ host|typ prflx|192\.168\.|10\.'
+    ```
+    Ожидание: JSON `"type":"candidate"` с `typ srflx` или `typ relay`; строк `typ host` с RFC1918 **нет**.
+
+    **Wireshark:** открыть `.pcap` → Follow TCP Stream → искать `"candidate":"candidate:…"`. Допустимо: `typ srflx` (публичный mapping STUN), `typ relay` (TURN). Недопустимо: `typ host` / `typ prflx` с `192.168.x.x`, `10.x.x.x`, `172.16–31.x.x`, `127.0.0.1`.
+  - **Opt-out.** Запустить client с `--allow-host-candidates` — приватные host-candidate'ы снова появляются в сигналинге (для сравнения «до/после»); логи `drop … (M-5; …)` **исчезают**.
 
 ### [Tested] Fixed H-4 — ws-chrome / rtc-chrome / signalling relay — локальный 127.0.0.1 без auth
 
@@ -506,7 +532,7 @@ Auto-gen certs на exit — `CN=clean-vpn`, без SAN:
     ```
     Ожидание: соединение **не** устанавливается (close с кодом 1008 или обрыв до `open`). С правильным `?t=<32hex>` (из embedded JS страницы — только для ручного теста через DevTools) — `open` успешен. Штатный путь через Chrome secret подставляет автоматически — пользователю вручную secret знать не нужно.
 
-### Fixed H-1 + H-2 — Bearer-окно 15 мин ±1 + TLS channel binding (`tls` / `boring-tls` / `combo-tls`)
+### [Work Tested, fix not tested] Fixed H-1 + H-2 — Bearer-окно 15 мин ±1 + TLS channel binding (`tls` / `boring-tls` / `combo-tls`)
 
 - **В чём была уязвимость.** Bearer-токен для `--type=tls` считался как `HMAC(PSK, "clean-vpn-tls-v1:" + window)[:16]` и был валиден ~45 минут (текущее окно ±1). Перехват токена (через MITM до TLS, coredump, логи) давал атакующему окно подключения как «свой» в **любой** TLS-сессии до exit (H-2). Также для transport'ов с TLS server-auth по shared CA любая утечка ca/cert/key превращала exit в open relay без post-handshake auth (H-1 для `tls`/`boring-tls`/`combo-tls` — частично).
 - **Как починили.** В `[scripts/clean-vpn.js](clean-vpn.js)`: новые константы `TLS_VPN_TOKEN_CONTEXT_V2 = 'clean-vpn-tls-v2'`, `TLS_VPN_EXPORTER_LABEL = 'EXPORTER-clean-vpn-bind'`, `TLS_VPN_EXPORTER_LEN = 32`. `computeTlsVpnBearerToken` / `verifyTlsVpnBearerToken` принимают необязательный `exporterBuf`; при наличии — токен = `HMAC(PSK, "clean-vpn-tls-v2:" + base64(exporter) + ":" + window)[:16]`, иначе fallback на v1 (с warning `bearer_legacy=1`). `tlsVpnExporterFromSocket(tlsSock)` извлекает exporter из `tls.TLSSocket` (Node 19+). Клиентские пути (HTTP/2 `establishCleanVpnOverH2`, HTTP/1.1 `completeCleanVpnTlsSession`) и exit-стороны (`wireExitTlsSocket`, HTTP/2 stream handler) обмениваются exporter через сокет. Для `boring-tls` exporter возвращается из helper в JSON-frame `{"ok":true,"exporter":"<base64>"}` — в `[native/boring_tls/helper_main.cc](../native/boring_tls/helper_main.cc)` после `SSL_handshake` вызывается `SSL_export_keying_material(..., "EXPORTER-clean-vpn-bind", 32, NULL, 0, 0)` и результат base64-кодируется. `connectCleanVpnBoringTlsClient` парсит `exporter` из ответа helper. Перехваченный v2-Bearer вне той самой TLS-сессии не работает — exporter уникален per-session (RFC 5705).
@@ -516,8 +542,65 @@ Auto-gen certs на exit — `CN=clean-vpn`, без SAN:
     - `**--type=tls`:** exit + client с общим `clean-vpn-hmac.key`, Node **19+** на обеих сторонах — VPN поднимается, `curl -4` через TUN.
     - `**--type=boring-tls`:** client через helper (пересобрать `npm run build:boring-tls-helper`), exit `--type=tls` — то же.
     - `**--type=combo-tls`:** client combo + exit combo — TUN и (если настроен) transparent HTTPS работают.
-  - **Корректность фикса (v2 используется).** На exit в логах **нет** `bearer_legacy=1` при подключении свежего client'а. Для boring-tls в stderr helper / ok-frame JSON есть поле `"exporter":"…"`.
-  - **Корректность фикса (channel binding).** Негативный тест: взять Bearer из **успешной** TLS-сессии A (например, из debug-лога exit или перехвата `Authorization` внутри уже установленного TLS — не из plaintext!) и попытаться подставить его в **новую** TLS-сессию B (другой TCP+handshake) через ручной `curl`/скрипт с тем же Bearer — exit должен отказать (cover «It works!» / `cover_bad_bearer_exporter_mismatch`, VPN не поднимается). Старый v1-токен без exporter на новом client'е — exit принимает с warning `bearer_legacy=1` (переходный период).
+  - **Корректность фикса (v2 используется).** На exit в логах **нет** `bearer_legacy=1` при подключении свежего client'а (Node 19+ или пересобранный `boring-tls-helper`).
+
+    **Где смотреть `exporter` для `boring-tls`.** Поле `"exporter":"<base64>"` — **не** в stderr helper'а. Helper после успешного `SSL_handshake` пишет **length-prefixed JSON-frame на stdout** (IPC с Node), пример содержимого frame:
+    ```json
+    {"ok":true,"alpn":"h2","exporter":"K7x…32байта в base64…="}
+    ```
+    Node читает его в `connectCleanVpnBoringTlsClient()` (`scripts/clean-vpn.js`) и передаёт в `computeTlsVpnBearerToken` как 32-байтовый TLS exporter (label `EXPORTER-clean-vpn-bind`, RFC 5705). Stderr helper'а — только диагностика (JA3, ошибки OpenSSL); при неудаче `SSL_export_keying_material` там будет `SSL_export_keying_material failed`, а поля `exporter` в ok-frame не будет.
+
+    **Как увидеть channel-binding в логах (без секретов).** При **любом** успешном подключении client'а с exporter (boring-tls или `--type=tls` Node 19+) **всегда** печатаются строки:
+    ```
+    [clean-vpn] boring-tls: TLS channel-binding OK alpn=h2 exporter_len=32 (Bearer v2; полный token/exporter — --tls-log-bearer)
+    [clean-vpn] TLS (VPN) соединение установлено http=HTTP/2 bearer=v2 channel-bound
+    ```
+    (для `--type=tls` вместо `boring-tls: …` — `[clean-vpn] tls: TLS channel-binding OK …`). На exit: `tls vpn: connected …` **без** `bearer_legacy=1`.
+
+    **Полный token и exporter_b64** (для curl-теста channel binding) — только с флагом **`--tls-log-bearer`** на client **и** exit (или env `CLEAN_VPN_TLS_LOG_BEARER=1`):
+    ```bash
+    node scripts/clean-vpn.js --role=client --type=boring-tls --tls-log-bearer …
+    ```
+    Дополнительные строки:
+    ```
+    [clean-vpn] boring-tls: helper ok-frame (length-prefixed JSON на stdout, не stderr) alpn=h2 exporter=K7x…=
+    [clean-vpn] tls bearer debug (client h2): token=abcdef… exporter_b64=K7x…= legacy=0
+    ```
+    Для `--type=tls` строки `ok-frame` нет — exporter из `tlsSock.exportKeyingMaterial()`; при `--tls-log-bearer` видна `tls bearer debug (client h2|client http1)`.
+
+  - **Корректность фикса (channel binding).** Включить debug Bearer на **обеих** сторонах, поднять легитимный VPN, скопировать `token=` из лога, затем **новая** TLS-сессия с чужим Bearer:
+
+    ```bash
+    # Шаг 1 — легитимное подключение, снять Bearer v2
+    node scripts/clean-vpn.js --role=client --type=boring-tls --tls-log-bearer \
+      --server=EXIT_IP:443 --tls-cert-dir=./certs --shared-hmac-key=./certs/clean-vpn-hmac.key …
+    # exit тоже с --tls-log-bearer — в логе:
+    # [clean-vpn] tls bearer debug (exit http2 accept): token=… exporter_b64=… legacy=0
+    # [clean-vpn] tls vpn: connected … windowOffset=0 http=HTTP/2   ← без bearer_legacy=1
+
+    STOLEN=abcdef0123456789abcdef0123456789   # token= из лога (32 hex-символа)
+
+    # Шаг 2 — новая TLS-сессия B, подставить STOLEN (другой TCP + другой exporter → v2 не сойдётся)
+    curl -vk --http1.1 \
+      --cacert ./certs/clean-vpn-ca.pem \
+      --resolve "clean-vpn:443:EXIT_IP" \
+      -H "Authorization: Bearer ${STOLEN}" \
+      -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" \
+      -H "Accept: */*" \
+      "https://clean-vpn/clean-vpn"
+    ```
+    **Ожидание на client (curl):** HTTP/1.1 200, тело `It works!` (cover-страница), **не** бинарный VPN-поток.
+
+    **Ожидание на exit:**
+    ```
+    [clean-vpn] tls bearer debug (exit http1 reject): token=abcdef… exporter_b64=<другой, чем в сессии A> legacy=0
+    [clean-vpn] tls cover: served ip=… reason=cover_bad_bearer prefix=… http=HTTP/1.1
+    ```
+    VPN-мост **не** поднимается (`tls vpn: connected` **нет**).
+
+    Для HTTP/2 client'а негативный тест через curl неудобен (нужен POST + h2); достаточно HTTP/1.1 curl выше — проверка Bearer/exporter та же на exit.
+
+    **Переходный v1 (для сравнения):** старый client без exporter → exit: `bearer_legacy=1` + warning «принят legacy Bearer».
 
 ### Fixed C-2 — WebRTC / rtc-chrome / udp-punch — сигналинг без аутентификации
 
