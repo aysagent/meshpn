@@ -557,7 +557,25 @@ Auto-gen certs на exit — `CN=clean-vpn`, без SAN:
     ```
     (для `--type=tls` вместо `boring-tls: …` — `[clean-vpn] tls: TLS channel-binding OK …`). На exit: `tls vpn: connected …` **без** `bearer_legacy=1`.
 
-    **Полный token и exporter_b64** (для curl-теста channel binding) — только с флагом **`--tls-log-bearer`** на client **и** exit (или env `CLEAN_VPN_TLS_LOG_BEARER=1`):
+    **Полный token и exporter_b64** — флаг **`--tls-log-bearer`** или env `CLEAN_VPN_TLS_LOG_BEARER=1` на **client** (для ok-frame boring-tls) **и** на **exit** (для `tls bearer debug (exit http*)`):
+
+    **Важно — где какие строки:**
+    | Строка | Где | Когда |
+    |--------|-----|-------|
+    | `tls-log-bearer: включён` | client **и** exit | сразу при старте процесса |
+    | `boring-tls: helper ok-frame …` | **только client** (`--type=boring-tls` / combo-tls TUN) | после TLS handshake helper |
+    | `tls bearer debug (client h2)` | **только client** | сразу после ok-frame |
+    | `tls bearer debug (exit http2 accept)` | **только exit** `--type=tls` | когда client подключился |
+
+    `boring-tls: helper ok-frame` **никогда не появится на exit** — helper работает только на client.
+
+    **Частые причины «env=1, но строк нет»:**
+    - **`sudo` без env:** `export CLEAN_VPN_TLS_LOG_BEARER=1` + `sudo node …` — переменная **сбрасывается**. Нужно: `sudo env CLEAN_VPN_TLS_LOG_BEARER=1 PATH=$PATH node …` или `sudo -E …`.
+    - **Смотрите лог exit, а ok-frame — на client** (другой терминал / машина).
+    - **`--type=ws-chrome` / `rtc-chrome` / `webrtc`** — Bearer TLS не используется, этих строк не будет.
+    - **`--keep-alive=N` (N>0):** connect отложен до первого TCP SYN/DNS с TUN; Bearer-логи — **после** первого `curl`/ping через VPN, не при старте.
+    - **Нет строки `tls-log-bearer: включён` при старте** — env не дошёл до процесса (проверьте `sudo env …`).
+
     ```bash
     node scripts/clean-vpn.js --role=client --type=boring-tls --tls-log-bearer …
     ```

@@ -1556,6 +1556,9 @@ async function connectCleanVpnBoringTlsClient(opts) {
   console.log(
     `[clean-vpn] boring-tls: helper=${exe} → ${connectHost}:${port}, ClientHello SNI=${servername}${sniNote}`,
   );
+  if (tlsLogBearerEnabled()) {
+    console.log('[clean-vpn] tls-log-bearer: boring-tls connect…');
+  }
 
   const child = spawn(exe, [], { stdio: ['pipe', 'pipe', 'pipe'] });
   /** @type {Buffer[]} */
@@ -9830,6 +9833,11 @@ async function runClient({
     };
     const connectTlsVpn =
       type === 'boring-tls' ? connectCleanVpnBoringTlsClient : connectCleanVpnTlsClient;
+    if (tlsLogBearerEnabled() && kaBridge > 0) {
+      console.log(
+        `[clean-vpn] tls-log-bearer: --keep-alive=${kaBridge} — Bearer/exporter в логах после первого connect (TCP SYN/DNS или eager при ka=0)`,
+      );
+    }
     attachOutboundTunBridge(
       tun,
       'tcp',
@@ -9917,6 +9925,11 @@ async function runClient({
       boringTlsClienthelloProfilePath: boringTlsClienthelloProfile || null,
       boringTlsJa3Strict: Boolean(boringTlsJa3Strict),
     };
+    if (tlsLogBearerEnabled() && kaBridge > 0) {
+      console.log(
+        `[clean-vpn] tls-log-bearer: --keep-alive=${kaBridge} — Bearer/exporter в логах после первого connect TUN (TCP SYN/DNS)`,
+      );
+    }
 
     /** @type {{ address: string; port: number } | null} */
     let explicitDestination = null;
@@ -10489,9 +10502,26 @@ async function main() {
   args.tlsLogJa3 = tlsLogJa3;
   args.ja3Verbose = ja3Verbose;
 
-  cleanVpnTlsLogBearer =
-    Boolean(args.tlsLogBearer) || envCleanVpnTruthy01('CLEAN_VPN_TLS_LOG_BEARER');
+  const tlsLogBearerFromFlag = Boolean(args.tlsLogBearer);
+  const tlsLogBearerFromEnv = envCleanVpnTruthy01('CLEAN_VPN_TLS_LOG_BEARER');
+  cleanVpnTlsLogBearer = tlsLogBearerFromFlag || tlsLogBearerFromEnv;
   args.tlsLogBearer = cleanVpnTlsLogBearer;
+  if (process.env.CLEAN_VPN_TLS_LOG_BEARER != null && !cleanVpnTlsLogBearer) {
+    console.warn(
+      `[clean-vpn] tls-log-bearer: env CLEAN_VPN_TLS_LOG_BEARER=${JSON.stringify(process.env.CLEAN_VPN_TLS_LOG_BEARER)} не распознан (ожидается 1, true или yes)`,
+    );
+  }
+  if (cleanVpnTlsLogBearer) {
+    const src =
+      tlsLogBearerFromFlag && tlsLogBearerFromEnv
+        ? '--tls-log-bearer + CLEAN_VPN_TLS_LOG_BEARER'
+        : tlsLogBearerFromFlag
+          ? '--tls-log-bearer'
+          : 'CLEAN_VPN_TLS_LOG_BEARER';
+    console.log(
+      `[clean-vpn] tls-log-bearer: включён (${src}); ok-frame boring-tls — только client; exit печатает tls bearer debug (exit http*)`,
+    );
+  }
 
   const envChProf = process.env.CLEAN_VPN_BORING_TLS_CLIENTHELLO_PROFILE?.trim();
   if (envChProf && !args.boringTlsClienthelloProfile) {
