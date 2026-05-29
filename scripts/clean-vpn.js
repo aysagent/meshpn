@@ -2728,16 +2728,11 @@ function bindUdp4Async(sock, port, host) {
   });
 }
 
-/** UDP punch client: bind на uplink src, не 0.0.0.0 (multi-homed + tun0). */
+/** @param {import('dgram').Socket} sock @param {number} port @param {string} host */
 async function bindUdpPunchClientAsync(sock) {
-  const uplink = resolveUplinkBindIpv4();
-  const host = uplink || '0.0.0.0';
-  await bindUdp4Async(sock, 0, host);
+  await bindUdp4Async(sock, 0, '0.0.0.0');
   const a = sock.address();
-  console.log(
-    `[clean-vpn] UDP punch: сокет привязан ${a.address}:${a.port}` +
-      (uplink ? ' (uplink src)' : ''),
-  );
+  console.log(`[clean-vpn] UDP punch: сокет привязан ${a.address}:${a.port}`);
 }
 
 /**
@@ -2838,31 +2833,33 @@ function stunBindingRequest(udpSocket, stunHost, stunPort, timeoutMs) {
   STUN_MAGIC.copy(req, 4);
   tid.copy(req, 8);
   return new Promise((resolve, reject) => {
-    let done = false;
-    const finish = (fn, arg) => {
-      if (done) return;
-      done = true;
-      cleanup();
-      fn(arg);
-    };
     const to = setTimeout(() => {
+      cleanup();
       if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
-        console.warn(
-          `[clean-vpn] STUN: нет UDP ответа за ${timeoutMs} мс от ${stunHost}:${stunPort}`,
-        );
+        try {
+          const la = udpSocket.address();
+          console.warn(
+            `[clean-vpn] STUN: нет UDP ответа за ${timeoutMs} мс от ${stunHost}:${stunPort} (сокет ${la.address}:${la.port})`,
+          );
+        } catch {
+          console.warn(
+            `[clean-vpn] STUN: нет UDP ответа за ${timeoutMs} мс от ${stunHost}:${stunPort}`,
+          );
+        }
       }
-      finish(reject, new Error(`STUN таймаут ${timeoutMs} мс к ${stunHost}:${stunPort}`));
+      reject(new Error(`STUN таймаут ${timeoutMs} мс к ${stunHost}:${stunPort}`));
     }, timeoutMs);
     const onMsg = (msg, rinfo) => {
       try {
         const mapped = parseStunMappedFromResponse(msg, tid);
         if (mapped) {
-          finish(resolve, mapped);
+          cleanup();
+          resolve(mapped);
           return;
         }
         if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1' && rinfo) {
           console.warn(
-            `[clean-vpn] STUN: ответ ${stunHost}:${stunPort} от ${rinfo.address}:${rinfo.port}, ${msg.length} B — не Binding Response для tid`,
+            `[clean-vpn] STUN: UDP ${msg.length} B от ${rinfo.address}:${rinfo.port} — не Binding Response`,
           );
         }
       } catch {
@@ -2870,7 +2867,8 @@ function stunBindingRequest(udpSocket, stunHost, stunPort, timeoutMs) {
       }
     };
     const onErr = (err) => {
-      finish(reject, err);
+      cleanup();
+      reject(err);
     };
     const cleanup = () => {
       clearTimeout(to);
@@ -2881,7 +2879,8 @@ function stunBindingRequest(udpSocket, stunHost, stunPort, timeoutMs) {
     udpSocket.once('error', onErr);
     udpSocket.send(req, stunPort, stunHost, (err) => {
       if (err) {
-        finish(reject, err);
+        cleanup();
+        reject(err);
         return;
       }
       if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
@@ -2916,47 +2915,33 @@ async function stunGetMappedWithIceServers(udpSocket, ndcIceServers, perServerTi
   let lastErr;
   /** @type {string[]} */
   const tries = [];
-  /** @type {string|null} */
-  let lastStunResolvedIp = null;
   for (const { host, port } of servers) {
-    /** @type {string[]} */
-    const targets = [];
-    if (net.isIP(host) === 0) targets.push(host);
-    for (const ip of await resolveStunTargetIpv4s(host)) {
-      if (!targets.includes(ip)) targets.push(ip);
-    }
+    const targets = await resolveStunTargetIpv4s(host);
     if (!targets.length) {
       tries.push(`${host}:${port} (DNS не дал IPv4)`);
       continue;
     }
     for (const stunHost of targets) {
       try {
-        lastStunResolvedIp = net.isIP(stunHost) !== 0 ? stunHost : null;
-        if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1' && lastStunResolvedIp) {
-          logStunRouteDiag(lastStunResolvedIp);
+        if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
+          logStunRouteDiag(stunHost);
         }
-        const mapped = await stunBindingRequest(udpSocket, stunHost, port, perServerTimeoutMs);
-        return mapped;
+        return await stunBindingRequest(udpSocket, stunHost, port, perServerTimeoutMs);
       } catch (e) {
         lastErr = e;
         tries.push(`${host}:${port}→${stunHost} (${e?.message || e})`);
       }
     }
   }
-  if (lastStunResolvedIp) {
-    logStunRouteDiag(lastStunResolvedIp);
-  }
   throw new Error(
     `[clean-vpn] UDP punch: STUN не удался ни к одному серверу: ${lastErr?.message || lastErr}` +
-      (tries.length ? `; попытки: ${tries.join('; ')}` : '') +
-      '. Проверьте uplink и `ip route get <STUN_IP>` (при --split-default нужен infra bypass из iceServers/turnServers в --config). CLEAN_VPN_UDP_PUNCH_DEBUG=1 — диагностика маршрута.',
+      (tries.length ? `; попытки: ${tries.join('; ')}` : ''),
   );
 }
 
 /**
- * Reflexive для punch:
- * - client (bind 0 → ephemeral): STUN **с punch-сокета** (reflexive port = bound port);
- * - exit (bind :PORT фиксированный): STUN с ephemeral, reflexive port = PORT.
+ * Reflexive для punch — STUN всегда с punch-сокета (как в исходной реализации).
+ * Exit с фиксированным :PORT: в сигналинг уходит public IP из STUN + listen port.
  * @param {import('dgram').Socket} udpSock
  * @param {string[]} ndcIceServers
  * @param {number} timeoutMs
@@ -2975,24 +2960,14 @@ async function discoverUdpPunchReflexive(udpSock, ndcIceServers, timeoutMs, opts
   } catch {
     /* socket not bound */
   }
-  if (fixedListenPort && boundPort > 0) {
-    console.log(
-      `[clean-vpn] UDP punch STUN: exit listen :${boundPort}, IP через ephemeral (port reflexive=${boundPort})`,
-    );
-    const tmp = dgram.createSocket('udp4');
-    try {
-      const uplink = resolveUplinkBindIpv4();
-      await bindUdp4Async(tmp, 0, uplink || '0.0.0.0');
-      const mapped = await stunGetMappedWithIceServers(tmp, ndcIceServers, timeoutMs);
-      return { address: mapped.address, port: boundPort };
-    } finally {
-      tmp.close();
-    }
-  }
   console.log(
     `[clean-vpn] UDP punch STUN: с punch-сокета ${boundAddr || '?'}:${boundPort || '?'}`,
   );
-  return stunGetMappedWithIceServers(udpSock, ndcIceServers, timeoutMs);
+  const mapped = await stunGetMappedWithIceServers(udpSock, ndcIceServers, timeoutMs);
+  if (fixedListenPort && boundPort > 0) {
+    return { address: mapped.address, port: boundPort };
+  }
+  return mapped;
 }
 
 /**
@@ -3031,6 +3006,7 @@ function waitForSignalingJson(sigWs, pred, timeoutMs) {
  *   ice: Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>,
  *   logPrefix: string,
  *   fixedListenPort?: boolean,
+ *   mappedReflexive?: { address: string, port: number },
  * }} opts
  * @returns {Promise<{ address: string, port: number }>}
  */
@@ -3042,9 +3018,11 @@ async function runUdpPunchAsPeer(opts) {
   const STUN_MS = 4000;
   const SIG_MS = 60000;
   const PUNCH_MS = 8000;
-  const mapped = await discoverUdpPunchReflexive(udpSock, ice.ndcIceServers, STUN_MS, {
-    fixedListenPort: opts.fixedListenPort === true,
-  });
+  const mapped =
+    opts.mappedReflexive ??
+    (await discoverUdpPunchReflexive(udpSock, ice.ndcIceServers, STUN_MS, {
+      fixedListenPort: opts.fixedListenPort === true,
+    }));
   console.log(`[clean-vpn] UDP punch (${logPrefix}): reflexive ${mapped.address}:${mapped.port} (STUN)`);
   if (sigWs.readyState !== WebSocket.OPEN) {
     throw new Error('[clean-vpn] UDP punch: сигнальный WebSocket не OPEN');
@@ -5033,7 +5011,7 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
     iceMode: opts?.iceMode ?? null,
   };
 
-  if (splitDefault) {
+  if (splitDefault && !deferSplitDefault) {
     await ensureClientInfraBypass(routeCtx, routeCtx.iceConfigPath, routeCtx.iceMode);
   }
 
@@ -10058,7 +10036,6 @@ async function runClient({
         clientUdpPunchLoopbackWs.once('open', resolve);
         clientUdpPunchLoopbackWs.once('error', reject);
       });
-      await ensureClientInfraBypass(routeCtx, routeCtx.iceConfigPath, routeCtx.iceMode);
       const peerEp = await runUdpPunchAsPeer({
         udpSock: udp,
         sigWs: /** @type {import('ws').WebSocket} */ (clientUdpPunchLoopbackWs),
@@ -10094,6 +10071,13 @@ async function runClient({
         console.error('[clean-vpn] udp socket error:', err.message);
       });
       await bindUdpPunchClientAsync(udp);
+      const ice = /** @type {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} */ (iceForPunch);
+      const mappedReflexive = await discoverUdpPunchReflexive(udp, ice.ndcIceServers, 4000, {
+        fixedListenPort: false,
+      });
+      console.log(
+        `[clean-vpn] UDP punch (client): reflexive ${mappedReflexive.address}:${mappedReflexive.port} (STUN)`,
+      );
       const connectHost = await resolveHostToIpv4(host);
       const sigUrl = `ws://${connectHost}:${sigPort}/`;
       console.log(`[clean-vpn] UDP punch: сигналинг ${sigUrl}`);
@@ -10102,12 +10086,12 @@ async function runClient({
         sigWs.once('open', resolve);
         sigWs.once('error', reject);
       });
-      await ensureClientInfraBypass(routeCtx, routeCtx.iceConfigPath, routeCtx.iceMode);
       const peerEp = await runUdpPunchAsPeer({
         udpSock: udp,
         sigWs,
-        ice: /** @type {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} */ (iceForPunch),
+        ice,
         logPrefix: 'client',
+        mappedReflexive,
         signalingPsk: udpSigPsk,
         signalingPskRequired: !!signalingPskRequired,
       });
