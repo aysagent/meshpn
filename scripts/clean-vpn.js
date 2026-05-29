@@ -2728,6 +2728,18 @@ function bindUdp4Async(sock, port, host) {
   });
 }
 
+/** UDP punch client: bind на uplink src, не 0.0.0.0 (multi-homed + tun0). */
+async function bindUdpPunchClientAsync(sock) {
+  const uplink = resolveUplinkBindIpv4();
+  const host = uplink || '0.0.0.0';
+  await bindUdp4Async(sock, 0, host);
+  const a = sock.address();
+  console.log(
+    `[clean-vpn] UDP punch: сокет привязан ${a.address}:${a.port}` +
+      (uplink ? ' (uplink src)' : ''),
+  );
+}
+
 /**
  * @param {string[]} ndcIceServers — строки из convertIceServers
  * @returns {Array<{ host: string, port: number }>}
@@ -2863,7 +2875,20 @@ function stunBindingRequest(udpSocket, stunHost, stunPort, timeoutMs) {
     udpSocket.on('message', onMsg);
     udpSocket.once('error', onErr);
     udpSocket.send(req, stunPort, stunHost, (err) => {
-      if (err) finish(reject, err);
+      if (err) {
+        finish(reject, err);
+        return;
+      }
+      if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
+        try {
+          const la = udpSocket.address();
+          console.warn(
+            `[clean-vpn] STUN: запрос 20 B → ${stunHost}:${stunPort} с ${la.address}:${la.port}`,
+          );
+        } catch {
+          /* ignore */
+        }
+      }
     });
   });
 }
@@ -2889,16 +2914,21 @@ async function stunGetMappedWithIceServers(udpSocket, ndcIceServers, perServerTi
   /** @type {string|null} */
   let lastStunResolvedIp = null;
   for (const { host, port } of servers) {
-    const targets = await resolveStunTargetIpv4s(host);
+    /** @type {string[]} */
+    const targets = [];
+    if (net.isIP(host) === 0) targets.push(host);
+    for (const ip of await resolveStunTargetIpv4s(host)) {
+      if (!targets.includes(ip)) targets.push(ip);
+    }
     if (!targets.length) {
       tries.push(`${host}:${port} (DNS не дал IPv4)`);
       continue;
     }
     for (const stunHost of targets) {
       try {
-        lastStunResolvedIp = stunHost;
-        if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
-          logStunRouteDiag(stunHost);
+        lastStunResolvedIp = net.isIP(stunHost) !== 0 ? stunHost : null;
+        if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1' && lastStunResolvedIp) {
+          logStunRouteDiag(lastStunResolvedIp);
         }
         const mapped = await stunBindingRequest(udpSocket, stunHost, port, perServerTimeoutMs);
         return mapped;
@@ -2937,7 +2967,8 @@ async function discoverUdpPunchReflexive(udpSock, ndcIceServers, timeoutMs) {
   if (boundPort > 0) {
     const tmp = dgram.createSocket('udp4');
     try {
-      await bindUdp4Async(tmp, 0, '0.0.0.0');
+      const uplink = resolveUplinkBindIpv4();
+      await bindUdp4Async(tmp, 0, uplink || '0.0.0.0');
       const mapped = await stunGetMappedWithIceServers(tmp, ndcIceServers, timeoutMs);
       return { address: mapped.address, port: boundPort };
     } finally {
@@ -3592,6 +3623,7 @@ function attachCleanVpnWebrtcClientSignaling(
     connectDataChannel,
     keepAliveSec,
     tunBridgeOpts?.keepAliveReconnectCooldownSec ?? 0,
+    !!tunBridgeOpts?.eagerWireOnStart,
   );
 
   ws.on('message', (data, isBinary) => {
@@ -4218,6 +4250,17 @@ function getDefaultRouteLinux() {
     /* ignore */
   }
   return null;
+}
+
+/** IPv4 src для исходящего uplink (STUN/UDP punch bind). */
+function resolveUplinkBindIpv4() {
+  try {
+    const out = execIpFileSync(['-4', 'route', 'get', '8.8.8.8'], { encoding: 'utf8' });
+    const m = out.match(/\bsrc\s+(\d{1,3}(?:\.\d{1,3}){3})\b/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
 }
 
 function getSysctlNum(key) {
@@ -6090,6 +6133,7 @@ function withKeepalive(base, keepAliveSec, reconnectCooldownSec = 0) {
  * @param {() => Promise<any>} connectFn
  * @param {number} keepAliveSec
  * @param {number} [reconnectCooldownSec]
+ * @param {boolean} [eagerOnStart] — сразу connectFn (rtc-chrome / split-default отложен + keep-alive)
  * @returns {{ reconnectWire: (newEp: any) => void } | null}
  */
 function attachOutboundTunBridge(
@@ -6099,13 +6143,19 @@ function attachOutboundTunBridge(
   connectFn,
   keepAliveSec,
   reconnectCooldownSec = 0,
+  eagerOnStart = false,
 ) {
   const ka = keepAliveSec > 0 ? Math.floor(keepAliveSec) : 0;
   const api = attachTunBridge(tun, transport, null, {
     ...withKeepalive(bridgeBase, ka, reconnectCooldownSec),
     lazyConnect: connectFn,
   });
-  if (ka === 0) {
+  if (ka === 0 || eagerOnStart) {
+    if (eagerOnStart && ka > 0) {
+      console.log(
+        `[clean-vpn] ${transport}: eager connect при keep-alive=${ka}s (split-default/STUN до TUN-трафика)`,
+      );
+    }
     void connectFn()
       .then((ep) => api?.reconnectWire(ep))
       .catch((e) => {
@@ -10022,13 +10072,7 @@ async function runClient({
       udp.on('error', (err) => {
         console.error('[clean-vpn] udp socket error:', err.message);
       });
-      await new Promise((resolve, reject) => {
-        udp.once('error', reject);
-        udp.bind(0, '0.0.0.0', () => {
-          udp.off('error', reject);
-          resolve(undefined);
-        });
-      });
+      await bindUdpPunchClientAsync(udp);
       const connectHost = await resolveHostToIpv4(host);
       const sigUrl = `ws://${connectHost}:${sigPort}/`;
       console.log(`[clean-vpn] UDP punch: сигналинг ${sigUrl}`);
@@ -10139,8 +10183,18 @@ async function runClient({
         tun,
         ice,
         cliWebrtcPcRef,
-        withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
-        sigIceOpts,
+        {
+          ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
+          eagerWireOnStart: deferSplitDefaultUntilTunnel,
+        },
+        {
+          ...sigIceOpts,
+          onWireReady: () => {
+            void applyDeferredClientSplitDefault(routeCtx).catch((e) => {
+              console.error('[clean-vpn] split-default / infra bypass:', e?.message || e);
+            });
+          },
+        },
       );
       return;
     }
@@ -10158,7 +10212,10 @@ async function runClient({
       tun,
       ice,
       cliWebrtcPcRef,
-      withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
+      {
+        ...withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
+        eagerWireOnStart: deferSplitDefaultUntilTunnel,
+      },
       {
         ...sigIceOpts,
         onWireReady: () => {
