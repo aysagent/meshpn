@@ -101,8 +101,8 @@
  * Шум IPv6 на tun при желании уменьняют вручную (отключение IPv6 на интерфейсе, sysctl) — скрипт это не автоматизирует.
  * QUIC/quic-ext в v1 без изменений (флаг на них не действует). Pong WS на idle не влияет.
  *
- * При SIGINT/SIGTERM: снимаются iptables/NAT (exit), net.ipv4.ip_forward, маршруты и rp_filter (client)
- * восстанавливаются по снимку `ip -json route` (если доступен).
+ * При SIGINT/SIGTERM и при uncaughtException/unhandledRejection: снимаются iptables/NAT (exit),
+ * net.ipv4.ip_forward, маршруты и rp_filter (client) восстанавливаются по снимку `ip -json route`.
  *
  * Производительность (Linux, опционально, вручную):
  *   Высокий PPS / UDP / QUIC: увеличить лимиты сокетных буферов ядра, например:
@@ -216,6 +216,66 @@ function safe(fn) {
   } catch {
     /* ignore */
   }
+}
+
+/** @typedef {{ exitCode: number, reason: string, err?: unknown }} CleanVpnEmergencyOpts */
+
+/** @type {((opts: CleanVpnEmergencyOpts) => void) | null} */
+let cleanVpnEmergencyShutdown = null;
+let cleanVpnFatalHandlersInstalled = false;
+let cleanVpnFatalCleanupStarted = false;
+
+/**
+ * Регистрирует полный или минимальный shutdown (маршруты/NAT/tun) для аварийного выхода.
+ * @param {(opts: CleanVpnEmergencyOpts) => void} fn
+ */
+function registerCleanVpnEmergencyShutdown(fn) {
+  cleanVpnEmergencyShutdown = fn;
+}
+
+function clearCleanVpnEmergencyShutdown() {
+  cleanVpnEmergencyShutdown = null;
+}
+
+/**
+ * @param {string} reason
+ * @param {unknown} [err]
+ * @param {number} [exitCode=1]
+ */
+function invokeCleanVpnEmergencyShutdown(reason, err, exitCode = 1) {
+  if (cleanVpnFatalCleanupStarted) {
+    process.exit(exitCode);
+    return;
+  }
+  cleanVpnFatalCleanupStarted = true;
+  console.error(`[clean-vpn] аварийное завершение (${reason}): восстанавливаем маршруты/NAT…`);
+  if (err != null) {
+    const msg = err instanceof Error ? err.stack || err.message : String(err);
+    console.error(msg);
+  }
+  if (cleanVpnEmergencyShutdown) {
+    try {
+      cleanVpnEmergencyShutdown({ exitCode, reason, err });
+      return;
+    } catch (cleanupErr) {
+      console.error(
+        '[clean-vpn] ошибка при аварийной очистке:',
+        cleanupErr?.message || cleanupErr,
+      );
+    }
+  }
+  process.exit(exitCode);
+}
+
+function installCleanVpnFatalHandlers() {
+  if (cleanVpnFatalHandlersInstalled) return;
+  cleanVpnFatalHandlersInstalled = true;
+  process.on('uncaughtException', (err) => {
+    invokeCleanVpnEmergencyShutdown('uncaughtException', err, 1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    invokeCleanVpnEmergencyShutdown('unhandledRejection', reason, 1);
+  });
 }
 
 /**
@@ -8332,6 +8392,20 @@ async function runExit({
   setupTunIp('exit', ifname);
   const nat = setupExitNat(ifname, extIface);
 
+  /** @type {((exitCode?: number, reason?: string) => void) | null} */
+  let shutdownFn = null;
+  registerCleanVpnEmergencyShutdown(({ exitCode, reason }) => {
+    if (shutdownFn) {
+      shutdownFn(exitCode, reason);
+      return;
+    }
+    safe(() => teardownExitNat(nat.tunName, nat.ext));
+    safe(() => restoreExitSysctl(nat.prevIpForward));
+    safe(() => tun.close());
+    clearCleanVpnEmergencyShutdown();
+    process.exit(exitCode);
+  });
+
   /** @type {import('net').Socket|null} */
   let activeTcp = null;
   /** @type {import('ws').WebSocketServer|null} */
@@ -8379,7 +8453,7 @@ async function runExit({
     });
   };
 
-  const shutdown = () => {
+  const shutdown = (exitCode = 0, reason = 'SIGINT') => {
     if (shuttingDown) return;
     shuttingDown = true;
     // Порядок закрытия: сигналинг/транспорт → QUIC → NAT/sysctl/tun → exit.
@@ -8466,8 +8540,9 @@ async function runExit({
       teardownExitNat(nat.tunName, nat.ext);
       restoreExitSysctl(nat.prevIpForward);
       safe(() => tun.close());
-      console.log('[clean-vpn] exit: остановка');
-      process.exit(0);
+      clearCleanVpnEmergencyShutdown();
+      console.log(`[clean-vpn] exit: остановка (${reason})`);
+      process.exit(exitCode);
     };
     let finishExitDeferred = false;
     safe(() => {
@@ -8481,8 +8556,9 @@ async function runExit({
     if (finishExitDeferred) return;
     finishExit();
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  shutdownFn = shutdown;
+  process.on('SIGINT', () => shutdown(0, 'SIGINT'));
+  process.on('SIGTERM', () => shutdown(0, 'SIGTERM'));
 
   // --- runExit: --type=websocket ---
   if (type === 'websocket') {
@@ -9245,6 +9321,20 @@ async function runClient({
     configPath,
     iceMode,
   });
+
+  /** @type {((exitCode?: number, reason?: string) => void) | null} */
+  let shutdownFn = null;
+  registerCleanVpnEmergencyShutdown(({ exitCode, reason }) => {
+    if (shutdownFn) {
+      shutdownFn(exitCode, reason);
+      return;
+    }
+    safe(() => teardownClientRoutes(routeCtx));
+    safe(() => tun.close());
+    clearCleanVpnEmergencyShutdown();
+    process.exit(exitCode);
+  });
+
   if (clientLanSubnet) {
     setupClientLanGateway(routeCtx, clientLanSubnet);
   }
@@ -9285,7 +9375,7 @@ async function runClient({
   let clientUdpPunchLoopbackWs = null;
 
   let shuttingDown = false;
-  const shutdown = () => {
+  const shutdown = (exitCode = 0, reason = 'SIGINT') => {
     if (shuttingDown) return;
     shuttingDown = true;
     // Порядок: WebRTC/QUIC client → сигналинг WSS → Puppeteer/quic-ext (async finish) → TLS → маршруты/tun.
@@ -9320,8 +9410,9 @@ async function runClient({
     const finishClient = () => {
       teardownClientRoutes(routeCtx);
       safe(() => tun.close());
-      console.log('[clean-vpn] client: остановка');
-      process.exit(0);
+      clearCleanVpnEmergencyShutdown();
+      console.log(`[clean-vpn] client: остановка (${reason})`);
+      process.exit(exitCode);
     };
     safe(() => {
       if (clientUdpSigWss) {
@@ -9435,8 +9526,9 @@ async function runClient({
     });
     finishClient();
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  shutdownFn = shutdown;
+  process.on('SIGINT', () => shutdown(0, 'SIGINT'));
+  process.on('SIGTERM', () => shutdown(0, 'SIGTERM'));
 
   const attachInboundBridge = createInboundTunBridgeAttach(
     tun,
@@ -10588,6 +10680,7 @@ async function runClient({
 // =============================================================================
 
 async function main() {
+  installCleanVpnFatalHandlers();
   const args = parseArgs(process.argv.slice(2));
   if (process.platform !== 'linux') {
     console.error('Только Linux (tun-helper-linux).');
@@ -10828,6 +10921,5 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(e);
-  process.exit(1);
+  invokeCleanVpnEmergencyShutdown('main', e, 1);
 });
