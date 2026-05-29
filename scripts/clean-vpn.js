@@ -2975,11 +2975,16 @@ async function discoverUdpPunchReflexive(udpSock, ndcIceServers, timeoutMs, opts
  * @param {(obj: { type: string }) => boolean} pred
  * @param {number} timeoutMs
  */
-function waitForSignalingJson(sigWs, pred, timeoutMs) {
+function waitForSignalingJson(sigWs, pred, timeoutMs, waitLabel) {
   return new Promise((resolve, reject) => {
     const to = setTimeout(() => {
       sigWs.off('message', onMsg);
-      reject(new Error(`[clean-vpn] UDP punch: таймаут сигналинга ${timeoutMs} мс`));
+      reject(
+        new Error(
+          `[clean-vpn] UDP punch: таймаут сигналинга ${timeoutMs} мс` +
+            (waitLabel ? ` (${waitLabel})` : ''),
+        ),
+      );
     }, timeoutMs);
     const onMsg = (data, isBinary) => {
       if (isBinary) return;
@@ -3043,6 +3048,7 @@ async function runUdpPunchAsPeer(opts) {
       sigWs,
       (m) => m.type === SIGNALING_UDPBIND_MSG_TYPE,
       SIG_MS,
+      `${logPrefix}: bind peer`,
     );
     const err = verifyUdpPunchBind(psk, peerBind);
     if (err) {
@@ -3074,6 +3080,7 @@ async function runUdpPunchAsPeer(opts) {
       Number.isFinite(Number(m.port)) &&
       (m.address !== selfRef.address || Number(m.port) !== selfRef.port),
     SIG_MS,
+    `${logPrefix}: reflexive peer`,
   );
   const peerAddress = String(peerMsg.address);
   const peerPort = Number(peerMsg.port);
@@ -9101,27 +9108,49 @@ async function runExit({
       );
       wss = new WebSocketServer({ host, port: sigPort });
       await awaitWebSocketServerListening(wss);
-      attachRtcChromeSignalingRelay(wss);
+      let exitUdpPunchStarted = false;
+      attachRtcChromeSignalingRelay(wss, () => {
+        if (exitUdpPunchStarted) return;
+        exitUdpPunchStarted = true;
+        void (async () => {
+          try {
+            console.log('[clean-vpn] exit UDP punch: client на сигналинге, STUN + hole punch…');
+            const peerEp = await runUdpPunchAsPeer({
+              udpSock,
+              sigWs: /** @type {import('ws').WebSocket} */ (udpPunchLoopbackWs),
+              ice: /** @type {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} */ (iceForPunch),
+              logPrefix: 'exit',
+              fixedListenPort: true,
+              signalingPsk: udpSigPsk,
+              signalingPskRequired: !!signalingPskRequired,
+            });
+            const udpEp = {
+              sock: udpSock,
+              peer: { address: peerEp.address, port: peerEp.port },
+            };
+            console.log(
+              `[clean-vpn] exit UDP punch: зафиксирован пир ${peerEp.address}:${peerEp.port}`,
+            );
+            attachTunBridge(
+              tun,
+              'udp-server',
+              udpEp,
+              withKeepalive(BRIDGE_OPTS_EXIT, kaBridge, kaCooldown),
+            );
+          } catch (e) {
+            console.error('[clean-vpn] exit UDP punch:', e?.message || e);
+            process.exit(1);
+          }
+        })();
+      });
       udpPunchLoopbackWs = new WebSocket(`ws://127.0.0.1:${sigPort}/`);
       await new Promise((resolve, reject) => {
         udpPunchLoopbackWs.once('open', resolve);
         udpPunchLoopbackWs.once('error', reject);
       });
-      const peerEp = await runUdpPunchAsPeer({
-        udpSock,
-        sigWs: /** @type {import('ws').WebSocket} */ (udpPunchLoopbackWs),
-        ice: /** @type {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} */ (iceForPunch),
-        logPrefix: 'exit',
-        fixedListenPort: true,
-        signalingPsk: udpSigPsk,
-        signalingPskRequired: !!signalingPskRequired,
-      });
-      const udpEp = {
-        sock: udpSock,
-        peer: { address: peerEp.address, port: peerEp.port },
-      };
-      console.log(`[clean-vpn] exit UDP punch: зафиксирован пир ${peerEp.address}:${peerEp.port}`);
-      attachTunBridge(tun, 'udp-server', udpEp, withKeepalive(BRIDGE_OPTS_EXIT, kaBridge, kaCooldown));
+      console.log(
+        `[clean-vpn] exit UDP punch: слушаем UDP :${port}, сигналинг ws://*:${sigPort}/ — ждём client (--type=udp --punch)`,
+      );
       return;
     }
 
@@ -9455,6 +9484,27 @@ async function runClient({
     (type === 'udp' && tunnelPeer)
       ? tunnelPeer
       : host;
+
+  /** Outbound udp --punch: STUN до tun0/routes/iptables — иначе на части ARM/Linux dgram не получает ответ. */
+  /** @type {{ udp: import('dgram').Socket, mappedReflexive: { address: string, port: number }, ice: Awaited<ReturnType<typeof loadWebrtcIceFromConfig>> } | null} */
+  let udpPunchPrepared = null;
+  if (type === 'udp' && punch && !udpSigListenClient) {
+    console.log('[clean-vpn] UDP punch: STUN до поднятия TUN (чистый uplink)');
+    const iceEarly = loadWebrtcIceFromConfig(configPath, iceMode);
+    const udpEarly = dgram.createSocket('udp4');
+    udpEarly.on('error', (err) => {
+      console.error('[clean-vpn] udp socket error:', err.message);
+    });
+    await bindUdpPunchClientAsync(udpEarly);
+    const mappedReflexive = await discoverUdpPunchReflexive(udpEarly, iceEarly.ndcIceServers, 4000, {
+      fixedListenPort: false,
+    });
+    console.log(
+      `[clean-vpn] UDP punch (client): reflexive ${mappedReflexive.address}:${mappedReflexive.port} (STUN до TUN)`,
+    );
+    udpPunchPrepared = { udp: udpEarly, mappedReflexive, ice: iceEarly };
+  }
+
   const tunName = findFreeTunName();
   const { tun, name: ifname } = openTunNative(tunName);
   setupTunIp('client', ifname);
@@ -9492,7 +9542,7 @@ async function runClient({
     process.exit(exitCode);
   });
 
-  if (clientLanSubnet) {
+  if (clientLanSubnet && !(type === 'udp' && punch)) {
     setupClientLanGateway(routeCtx, clientLanSubnet);
   }
 
@@ -10066,18 +10116,26 @@ async function runClient({
     }
 
     if (punch) {
-      const udp = dgram.createSocket('udp4');
-      udp.on('error', (err) => {
-        console.error('[clean-vpn] udp socket error:', err.message);
-      });
-      await bindUdpPunchClientAsync(udp);
-      const ice = /** @type {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} */ (iceForPunch);
-      const mappedReflexive = await discoverUdpPunchReflexive(udp, ice.ndcIceServers, 4000, {
-        fixedListenPort: false,
-      });
-      console.log(
-        `[clean-vpn] UDP punch (client): reflexive ${mappedReflexive.address}:${mappedReflexive.port} (STUN)`,
-      );
+      const udp = udpPunchPrepared?.udp ?? dgram.createSocket('udp4');
+      if (!udpPunchPrepared) {
+        udp.on('error', (err) => {
+          console.error('[clean-vpn] udp socket error:', err.message);
+        });
+        await bindUdpPunchClientAsync(udp);
+      }
+      const ice =
+        udpPunchPrepared?.ice ??
+        /** @type {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} */ (iceForPunch);
+      const mappedReflexive =
+        udpPunchPrepared?.mappedReflexive ??
+        (await discoverUdpPunchReflexive(udp, ice.ndcIceServers, 4000, {
+          fixedListenPort: false,
+        }));
+      if (!udpPunchPrepared) {
+        console.log(
+          `[clean-vpn] UDP punch (client): reflexive ${mappedReflexive.address}:${mappedReflexive.port} (STUN)`,
+        );
+      }
       const connectHost = await resolveHostToIpv4(host);
       const sigUrl = `ws://${connectHost}:${sigPort}/`;
       console.log(`[clean-vpn] UDP punch: сигналинг ${sigUrl}`);
@@ -10106,6 +10164,9 @@ async function runClient({
       void applyDeferredClientSplitDefault(routeCtx).catch((e) => {
         console.error('[clean-vpn] split-default / infra bypass:', e?.message || e);
       });
+      if (clientLanSubnet) {
+        setupClientLanGateway(routeCtx, clientLanSubnet);
+      }
       attachTunBridge(tun, 'udp-client', udp, withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown));
       return;
     }
