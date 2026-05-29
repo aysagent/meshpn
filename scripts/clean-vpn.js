@@ -2957,68 +2957,6 @@ function stunBindingRequest(udpSocket, stunHost, stunPort, timeoutMs) {
 }
 
 /**
- * STUN Binding по TCP (RFC 5389 framing: uint16 BE length + message).
- * Не трогает punch UDP-сокет. На Radxa/ARM — fallback, если dgram не получает ответ.
- * @param {string} stunHost
- * @param {number} stunPort
- * @param {number} timeoutMs
- * @returns {Promise<{ address: string, port: number }>}
- */
-function stunBindingRequestTcp(stunHost, stunPort, timeoutMs) {
-  const { req, tid } = buildStunBindingRequestBuffer();
-  const frame = Buffer.alloc(2 + req.length);
-  frame.writeUInt16BE(req.length, 0);
-  req.copy(frame, 2);
-  return new Promise((resolve, reject) => {
-    let done = false;
-    /** @type {Buffer} */
-    let rx = Buffer.alloc(0);
-    const sock = net.createConnection({ host: stunHost, port: stunPort, family: 4 });
-    const finish = (fn, arg) => {
-      if (done) return;
-      done = true;
-      clearTimeout(to);
-      try {
-        sock.destroy();
-      } catch {
-        /* ignore */
-      }
-      fn(arg);
-    };
-    const to = setTimeout(
-      () => finish(reject, new Error(`STUN TCP таймаут ${timeoutMs} мс к ${stunHost}:${stunPort}`)),
-      timeoutMs,
-    );
-    sock.on('error', (err) => finish(reject, err));
-    sock.on('data', (chunk) => {
-      rx = Buffer.concat([rx, chunk]);
-      while (rx.length >= 2) {
-        const msgLen = rx.readUInt16BE(0);
-        if (msgLen <= 0 || rx.length < 2 + msgLen) break;
-        const msg = rx.subarray(2, 2 + msgLen);
-        rx = rx.subarray(2 + msgLen);
-        const mapped = parseStunMappedFromResponse(msg, tid);
-        if (mapped) {
-          if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
-            console.warn(
-              `[clean-vpn] STUN/TCP: Binding Response от ${stunHost}:${stunPort} → ${mapped.address}:${mapped.port}`,
-            );
-          }
-          finish(resolve, mapped);
-          return;
-        }
-      }
-    });
-    sock.on('connect', () => {
-      if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
-        console.warn(`[clean-vpn] STUN/TCP: connect → ${stunHost}:${stunPort}, запрос ${req.length} B`);
-      }
-      sock.write(frame);
-    });
-  });
-}
-
-/**
  * @param {import('dgram').Socket} udpSocket
  * @param {string[]} ndcIceServers
  * @param {number} perServerTimeoutMs
@@ -3033,21 +2971,9 @@ async function stunGetMappedWithIceServers(udpSocket, ndcIceServers, perServerTi
   console.log(
     `[clean-vpn] UDP punch STUN: ${servers.map((s) => `${s.host}:${s.port}`).join(', ')}`,
   );
-  let punchUdpPort = 0;
-  let punchUdpAddr = '';
-  try {
-    const la = udpSocket.address();
-    if (la && typeof la.port === 'number' && la.port > 0) {
-      punchUdpPort = la.port;
-      punchUdpAddr = la.address || '';
-    }
-  } catch {
-    /* not bound */
-  }
   let lastErr;
   /** @type {string[]} */
   const tries = [];
-  const tcpFallbackOff = process.env.CLEAN_VPN_UDP_PUNCH_STUN_TCP === '0';
   for (const { host, port } of servers) {
     const targets = await resolveStunTargetIpv4s(host);
     if (!targets.length) {
@@ -3062,42 +2988,13 @@ async function stunGetMappedWithIceServers(udpSocket, ndcIceServers, perServerTi
         return await stunBindingRequest(udpSocket, stunHost, port, perServerTimeoutMs);
       } catch (e) {
         lastErr = e;
-        tries.push(`${host}:${port}→${stunHost} UDP (${e?.message || e})`);
-      }
-    }
-  }
-  if (!tcpFallbackOff) {
-    console.warn(
-      '[clean-vpn] UDP punch STUN: UDP ответа нет — fallback STUN/TCP по stun: из iceServers (Google :19302 TCP часто недоступен)',
-    );
-    for (const { host, port } of servers) {
-      const targets = await resolveStunTargetIpv4s(host);
-      if (!targets.length) {
-        tries.push(`${host}:${port} TCP (DNS не дал IPv4)`);
-        continue;
-      }
-      for (const stunHost of targets) {
-        try {
-          const tcpMapped = await stunBindingRequestTcp(stunHost, port, perServerTimeoutMs);
-          if (punchUdpPort > 0) {
-            console.log(
-              `[clean-vpn] UDP punch STUN/TCP: reflexive ${tcpMapped.address}:${punchUdpPort}` +
-                ` (public IP из TCP; UDP punch с ${punchUdpAddr || '?'}:${punchUdpPort})`,
-            );
-            return { address: tcpMapped.address, port: punchUdpPort };
-          }
-          return tcpMapped;
-        } catch (e) {
-          lastErr = e;
-          tries.push(`${host}:${port}→${stunHost} TCP (${e?.message || e})`);
-        }
+        tries.push(`${host}:${port}→${stunHost} (${e?.message || e})`);
       }
     }
   }
   throw new Error(
     `[clean-vpn] UDP punch: STUN не удался ни к одному серверу: ${lastErr?.message || lastErr}` +
-      (tries.length ? `; попытки: ${tries.join('; ')}` : '') +
-      (tcpFallbackOff ? '; TCP fallback отключён (CLEAN_VPN_UDP_PUNCH_STUN_TCP=0)' : ''),
+      (tries.length ? `; попытки: ${tries.join('; ')}` : ''),
   );
 }
 
