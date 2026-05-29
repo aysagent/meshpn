@@ -2634,16 +2634,22 @@ async function stunGetMappedWithIceServers(udpSocket, ndcIceServers, perServerTi
     );
   }
   let lastErr;
+  /** @type {string[]} */
+  const tries = [];
   for (const { host, port } of servers) {
     try {
       const stunHost = net.isIP(host) === 0 ? (await dns.lookup(host, { family: 4 })).address : host;
-      return await stunBindingRequest(udpSocket, stunHost, port, perServerTimeoutMs);
+      const mapped = await stunBindingRequest(udpSocket, stunHost, port, perServerTimeoutMs);
+      return mapped;
     } catch (e) {
       lastErr = e;
+      tries.push(`${host}:${port} (${e?.message || e})`);
     }
   }
   throw new Error(
-    `[clean-vpn] UDP punch: STUN не удался ни к одному серверу: ${lastErr?.message || lastErr}`,
+    `[clean-vpn] UDP punch: STUN не удался ни к одному серверу: ${lastErr?.message || lastErr}` +
+      (tries.length ? `; попытки: ${tries.join('; ')}` : '') +
+      '. Проверьте DNS/uplink (при --split-default до punch DNS может идти через пустой TUN — обновите clean-vpn); для lab добавьте stun:IP:PORT в --config.',
   );
 }
 
@@ -3230,6 +3236,13 @@ function attachCleanVpnWebrtcClientSignaling(
       });
       dc.onOpen(() => {
         console.log('[clean-vpn] DataChannel open (client)');
+        if (typeof iceOpts.onWireReady === 'function') {
+          try {
+            iceOpts.onWireReady();
+          } catch (e) {
+            console.warn('[clean-vpn] webrtc client onWireReady:', e?.message || e);
+          }
+        }
         if (pendingDcOpenResolve) {
           const resolve = pendingDcOpenResolve;
           pendingDcOpenResolve = null;
@@ -4562,7 +4575,7 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
     splitDefaultApplied = true;
   } else if (splitDefault && deferSplitDefault) {
     console.log(
-      '[clean-vpn] split-default: отложен до готовности туннеля (Puppeteer/Chrome — uplink остаётся рабочим)',
+      '[clean-vpn] split-default: отложен до готовности туннеля (STUN/сигналинг/Puppeteer — uplink остаётся рабочим)',
     );
   }
   try {
@@ -8995,14 +9008,18 @@ async function runClient({
   const deferPeerKindForSetup =
     deferWebrtcPeerBypass || deferRtcChromeSigBypass ? 'webrtc' : 'ws-listen';
   // ws-chrome + keep-alive: split-default сразу — иначе lazyConnect ждёт IPv4 с TUN, а маршрутов в TUN нет.
-  const deferSplitDefaultPuppeteer =
+  // udp --punch / webrtc / rtc-chrome: STUN и сигналинг до поднятого туннеля — split-default откладываем.
+  const deferSplitDefaultUntilTunnel =
     splitDefault &&
-    (type === 'rtc-chrome' || (type === 'ws-chrome' && kaBridge <= 0));
+    (type === 'rtc-chrome' ||
+      (type === 'ws-chrome' && kaBridge <= 0) ||
+      (type === 'udp' && punch) ||
+      (type === 'webrtc' && !webrtcSigListenClient));
   const routeCtx = await setupClientRoutesAsync(ifname, routeHost, splitDefault, {
     deferPeerBypass: deferSigBypass,
     deferPeerKind: deferPeerKindForSetup,
     websocketListenNoSplitDefault: type === 'websocket' && wsServer && !splitDefault,
-    deferSplitDefault: deferSplitDefaultPuppeteer,
+    deferSplitDefault: deferSplitDefaultUntilTunnel,
   });
   if (clientLanSubnet) {
     setupClientLanGateway(routeCtx, clientLanSubnet);
@@ -9554,6 +9571,7 @@ async function runClient({
           resolve(undefined);
         });
       });
+      applyDeferredClientSplitDefault(routeCtx);
       attachTunBridge(tun, 'udp-client', udp, withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown));
       return;
     }
@@ -9600,6 +9618,7 @@ async function runClient({
           resolve(undefined);
         });
       });
+      applyDeferredClientSplitDefault(routeCtx);
       attachTunBridge(tun, 'udp-client', udp, withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown));
       return;
     }
@@ -9699,7 +9718,10 @@ async function runClient({
       ice,
       cliWebrtcPcRef,
       withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
-      sigIceOpts,
+      {
+        ...sigIceOpts,
+        onWireReady: () => applyDeferredClientSplitDefault(routeCtx),
+      },
     );
     return;
   }
