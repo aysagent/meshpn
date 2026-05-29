@@ -2671,9 +2671,36 @@ function attachRtcChromeSignalingRelay(wss, onPaired) {
 const STUN_BINDING_REQUEST = 0x0001;
 const STUN_BINDING_RESPONSE = 0x0101;
 const STUN_ATTR_XOR_MAPPED_ADDRESS = 0x0020;
+const STUN_ATTR_MAPPED_ADDRESS = 0x0001;
 const STUN_MAGIC = Buffer.from([0x21, 0x12, 0xa4, 0x42]);
 const UDP_PUNCH_MAGIC = Buffer.from([0x43, 0x56, 0x50, 0x4e]); // CVPN — маркер punch-пакета
 const CLEAN_VPN_UDP_REFLEXIVE = 'clean-vpn-udp-reflexive';
+
+/**
+ * @param {string} host
+ * @returns {Promise<string[]>}
+ */
+async function resolveStunTargetIpv4s(host) {
+  if (net.isIP(host) !== 0) return [host];
+  /** @type {string[]} */
+  const ips = [];
+  try {
+    for (const a of await dns.resolve4(host)) {
+      if (ICE_INFRA_IPV4_RE.test(a)) ips.push(a);
+    }
+  } catch {
+    /* ignore */
+  }
+  if (!ips.length) {
+    try {
+      const { address } = await dns.lookup(host, { family: 4 });
+      if (ICE_INFRA_IPV4_RE.test(address)) ips.push(address);
+    } catch {
+      /* ignore */
+    }
+  }
+  return ips;
+}
 
 /** @param {string} dstIp */
 function logStunRouteDiag(dstIp) {
@@ -2727,6 +2754,37 @@ function parseStunUdpServersFromIce(ndcIceServers) {
  * @param {Buffer} tid
  * @returns {{ address: string, port: number } | null}
  */
+function parseStunMappedFromResponse(msg, tid) {
+  const xor = parseStunXorMappedAddress(msg, tid);
+  if (xor) return xor;
+  if (msg.length < 20) return null;
+  if (msg.readUInt16BE(0) !== STUN_BINDING_RESPONSE) return null;
+  if (!msg.subarray(4, 8).equals(STUN_MAGIC)) return null;
+  if (!msg.subarray(8, 20).equals(tid)) return null;
+  let o = 20;
+  while (o + 4 <= msg.length) {
+    const attrType = msg.readUInt16BE(o);
+    const attrLen = msg.readUInt16BE(o + 2);
+    o += 4;
+    if (o + attrLen > msg.length) break;
+    if (attrType === STUN_ATTR_MAPPED_ADDRESS && attrLen >= 8) {
+      const v = msg.subarray(o, o + attrLen);
+      if (v[1] !== 0x01) return null;
+      const port = v.readUInt16BE(2);
+      const a = `${v[4]}.${v[5]}.${v[6]}.${v[7]}`;
+      return { address: a, port };
+    }
+    const pad = (4 - (attrLen % 4)) % 4;
+    o += attrLen + pad;
+  }
+  return null;
+}
+
+/**
+ * @param {Buffer} msg
+ * @param {Buffer} tid
+ * @returns {{ address: string, port: number } | null}
+ */
 function parseStunXorMappedAddress(msg, tid) {
   if (msg.length < 20) return null;
   if (msg.readUInt16BE(0) !== STUN_BINDING_RESPONSE) return null;
@@ -2768,24 +2826,34 @@ function stunBindingRequest(udpSocket, stunHost, stunPort, timeoutMs) {
   STUN_MAGIC.copy(req, 4);
   tid.copy(req, 8);
   return new Promise((resolve, reject) => {
-    const to = setTimeout(() => {
+    let done = false;
+    const finish = (fn, arg) => {
+      if (done) return;
+      done = true;
       cleanup();
-      reject(new Error(`STUN таймаут ${timeoutMs} мс к ${stunHost}:${stunPort}`));
+      fn(arg);
+    };
+    const to = setTimeout(() => {
+      finish(reject, new Error(`STUN таймаут ${timeoutMs} мс к ${stunHost}:${stunPort}`));
     }, timeoutMs);
-    const onMsg = (msg) => {
+    const onMsg = (msg, rinfo) => {
       try {
-        const mapped = parseStunXorMappedAddress(msg, tid);
+        const mapped = parseStunMappedFromResponse(msg, tid);
         if (mapped) {
-          cleanup();
-          resolve(mapped);
+          finish(resolve, mapped);
+          return;
+        }
+        if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1' && rinfo) {
+          console.warn(
+            `[clean-vpn] STUN: ответ ${stunHost}:${stunPort} от ${rinfo.address}:${rinfo.port}, ${msg.length} B — не Binding Response для tid`,
+          );
         }
       } catch {
         /* ignore */
       }
     };
     const onErr = (err) => {
-      cleanup();
-      reject(err);
+      finish(reject, err);
     };
     const cleanup = () => {
       clearTimeout(to);
@@ -2795,10 +2863,7 @@ function stunBindingRequest(udpSocket, stunHost, stunPort, timeoutMs) {
     udpSocket.on('message', onMsg);
     udpSocket.once('error', onErr);
     udpSocket.send(req, stunPort, stunHost, (err) => {
-      if (err) {
-        cleanup();
-        reject(err);
-      }
+      if (err) finish(reject, err);
     });
   });
 }
@@ -2815,23 +2880,32 @@ async function stunGetMappedWithIceServers(udpSocket, ndcIceServers, perServerTi
       '[clean-vpn] UDP punch: в --config нет ни одного stun: сервера (нужен STUN для reflexive адреса)',
     );
   }
+  console.log(
+    `[clean-vpn] UDP punch STUN: ${servers.map((s) => `${s.host}:${s.port}`).join(', ')}`,
+  );
   let lastErr;
   /** @type {string[]} */
   const tries = [];
   /** @type {string|null} */
   let lastStunResolvedIp = null;
   for (const { host, port } of servers) {
-    try {
-      const stunHost = net.isIP(host) === 0 ? (await dns.lookup(host, { family: 4 })).address : host;
-      lastStunResolvedIp = stunHost;
-      if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
-        logStunRouteDiag(stunHost);
+    const targets = await resolveStunTargetIpv4s(host);
+    if (!targets.length) {
+      tries.push(`${host}:${port} (DNS не дал IPv4)`);
+      continue;
+    }
+    for (const stunHost of targets) {
+      try {
+        lastStunResolvedIp = stunHost;
+        if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
+          logStunRouteDiag(stunHost);
+        }
+        const mapped = await stunBindingRequest(udpSocket, stunHost, port, perServerTimeoutMs);
+        return mapped;
+      } catch (e) {
+        lastErr = e;
+        tries.push(`${host}:${port}→${stunHost} (${e?.message || e})`);
       }
-      const mapped = await stunBindingRequest(udpSocket, stunHost, port, perServerTimeoutMs);
-      return mapped;
-    } catch (e) {
-      lastErr = e;
-      tries.push(`${host}:${port} (${e?.message || e})`);
     }
   }
   if (lastStunResolvedIp) {
@@ -3112,7 +3186,7 @@ function emitFilteredLocalCandidate(signal, candidate, mid, allowHost, logPrefix
 /**
  * @param {import('node-datachannel').PeerConnection|null} pc
  * @param {{ type: string, sdp?: string, candidate?: string, mid?: string }} msg
- * @param {{ allowHostCandidates?: boolean, logPrefix?: string }} [opts]
+ * @param {{ allowHostCandidates?: boolean, logPrefix?: string, routeCtx?: { splitDefault?: boolean, gw?: string|null, dev?: string, serverIp?: string|null, peerIp?: string|null, infraBypassIps?: string[], snapInfra?: unknown[] } }} [opts]
  */
 function applyWebrtcRemoteSignal(pc, msg, opts = {}) {
   if (!pc) return;
@@ -3127,6 +3201,7 @@ function applyWebrtcRemoteSignal(pc, msg, opts = {}) {
       );
       return;
     }
+    maybeBypassIceCandidateIp(opts.routeCtx, msg.candidate);
     try {
       pc.addRemoteCandidate(msg.candidate, msg.mid || '0');
     } catch (e) {
@@ -3426,6 +3501,15 @@ function attachCleanVpnWebrtcClientSignaling(
   };
 
   const setupPeerConnection = () => {
+    if (iceOpts.routeCtx?.splitDefault) {
+      void ensureClientInfraBypass(
+        iceOpts.routeCtx,
+        iceOpts.routeCtx.iceConfigPath,
+        iceOpts.routeCtx.iceMode,
+      ).catch((e) => {
+        console.warn('[clean-vpn] infra bypass refresh перед ICE:', e?.message || e);
+      });
+    }
     resetClientSession();
     const newPc = new ndcPeerConnectionClass('clean-vpn-client', pcConfig);
     pc = newPc;
@@ -3556,6 +3640,7 @@ function attachCleanVpnWebrtcClientSignaling(
     applyWebrtcRemoteSignal(pc, msg, {
       allowHostCandidates: allowHost,
       logPrefix: 'webrtc client',
+      routeCtx: iceOpts.routeCtx,
     });
   });
 
@@ -4738,40 +4823,63 @@ function addClientWsPeerBypass(ctx, peerIp) {
 }
 
 /**
+ * @param {{ gw: string|null, dev: string, splitDefault?: boolean, serverIp?: string|null, peerIp?: string|null, infraBypassIps?: string[], snapInfra?: unknown[] }} ctx
+ * @param {string} infraIp
+ * @param {string} [logLabel]
+ * @returns {boolean}
+ */
+function addClientInfraBypassIp(ctx, infraIp, logLabel = 'STUN/TURN') {
+  if (!ctx?.splitDefault) return false;
+  if (!isIpv4InfraBypassSafe(infraIp)) return false;
+  if (infraIp === ctx.serverIp || infraIp === ctx.peerIp) return false;
+  if (!ctx.infraBypassIps) ctx.infraBypassIps = [];
+  if (ctx.infraBypassIps.includes(infraIp)) return false;
+  if (!ctx.snapInfra) ctx.snapInfra = [];
+  const { gw, dev } = ctx;
+  ctx.snapInfra.push(...captureServerRoutes(infraIp));
+  if (gw) {
+    ip(['route', 'replace', `${infraIp}/32`, 'via', gw, 'dev', dev]);
+  } else {
+    ip(['route', 'replace', `${infraIp}/32`, 'dev', dev]);
+  }
+  ctx.infraBypassIps.push(infraIp);
+  console.log(
+    `[clean-vpn] infra bypass ${logLabel}: ${infraIp}/32 через ${dev}` +
+      (gw ? ` via ${gw}` : ''),
+  );
+  return true;
+}
+
+/** @param {Parameters<typeof addClientInfraBypassIp>[0]|undefined} ctx
+ *  @param {string} candidate */
+function maybeBypassIceCandidateIp(ctx, candidate) {
+  if (!ctx?.splitDefault) return;
+  const f = parseIceCandidateFields(candidate);
+  if (!f?.ip) return;
+  addClientInfraBypassIp(ctx, f.ip, 'ICE peer');
+}
+
+/**
  * /32 uplink bypass для STUN/TURN IP из --config (split-default иначе уводит ICE UDP в tun).
  * @param {{ gw: string|null, dev: string, splitDefault?: boolean, serverIp?: string|null, peerIp?: string|null, infraBypassApplied?: boolean, snapInfra?: unknown[], infraBypassIps?: string[] }} ctx
  * @param {string|null|undefined} configPath
  * @param {string|null|undefined} iceMode
  */
 async function ensureClientInfraBypass(ctx, configPath, iceMode) {
-  if (!ctx?.splitDefault || ctx.infraBypassApplied) return;
+  if (!ctx?.splitDefault) return;
   const ips = await resolveIceInfraIpv4FromConfig(configPath, iceMode);
   if (!ips.length) return;
-  const { gw, dev } = ctx;
-  /** @type {unknown[]} */
-  const snapInfra = [];
   /** @type {string[]} */
   const applied = [];
   for (const infraIp of ips) {
-    if (!isIpv4InfraBypassSafe(infraIp)) continue;
-    if (infraIp === ctx.serverIp || infraIp === ctx.peerIp) continue;
-    snapInfra.push(...captureServerRoutes(infraIp));
-    if (gw) {
-      ip(['route', 'replace', `${infraIp}/32`, 'via', gw, 'dev', dev]);
-    } else {
-      ip(['route', 'replace', `${infraIp}/32`, 'dev', dev]);
-    }
-    applied.push(infraIp);
+    if (addClientInfraBypassIp(ctx, infraIp)) applied.push(infraIp);
   }
   if (applied.length) {
     console.log(
-      `[clean-vpn] infra bypass STUN/TURN: ${applied.length} IPv4 через ${dev}` +
-        (gw ? ` via ${gw}` : '') +
+      `[clean-vpn] infra bypass STUN/TURN: +${applied.length} IPv4` +
         ` (${applied.slice(0, 6).join(', ')}${applied.length > 6 ? '…' : ''})`,
     );
   }
-  ctx.snapInfra = snapInfra;
-  ctx.infraBypassIps = applied;
   ctx.infraBypassApplied = true;
 }
 
@@ -9879,6 +9987,7 @@ async function runClient({
         clientUdpPunchLoopbackWs.once('open', resolve);
         clientUdpPunchLoopbackWs.once('error', reject);
       });
+      await ensureClientInfraBypass(routeCtx, routeCtx.iceConfigPath, routeCtx.iceMode);
       const peerEp = await runUdpPunchAsPeer({
         udpSock: udp,
         sigWs: /** @type {import('ws').WebSocket} */ (clientUdpPunchLoopbackWs),
@@ -9928,6 +10037,7 @@ async function runClient({
         sigWs.once('open', resolve);
         sigWs.once('error', reject);
       });
+      await ensureClientInfraBypass(routeCtx, routeCtx.iceConfigPath, routeCtx.iceMode);
       const peerEp = await runUdpPunchAsPeer({
         udpSock: udp,
         sigWs,
@@ -10001,6 +10111,7 @@ async function runClient({
       allowHostCandidates,
       signalingPsk,
       signalingPskRequired: !!signalingPskRequired,
+      routeCtx,
     };
     if (webrtcSigListenClient) {
       clientWebrtcSigWss = new WebSocketServer({ host, port });
@@ -10022,6 +10133,7 @@ async function runClient({
         const peerIp = normalizePeerIpv4(ws._socket?.remoteAddress);
         addClientWsPeerBypass(routeCtx, peerIp);
       }
+      await ensureClientInfraBypass(routeCtx, routeCtx.iceConfigPath, routeCtx.iceMode);
       attachCleanVpnWebrtcClientSignaling(
         ws,
         tun,
@@ -10040,6 +10152,7 @@ async function runClient({
       webrtcSigWs.once('error', reject);
     });
     console.log('[clean-vpn] WebRTC сигналинг подключён');
+    await ensureClientInfraBypass(routeCtx, routeCtx.iceConfigPath, routeCtx.iceMode);
     attachCleanVpnWebrtcClientSignaling(
       webrtcSigWs,
       tun,
