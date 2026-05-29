@@ -2713,6 +2713,23 @@ function logStunRouteDiag(dstIp) {
   }
 }
 
+function disconnectUdpIfConnected(sock) {
+  try {
+    if (typeof sock.disconnect === 'function') sock.disconnect();
+  } catch {
+    /* ignore */
+  }
+}
+
+/** UDP punch: reuseAddr + recv buffer (multihomed / ARM). */
+function createUdpPunchSocket() {
+  return dgram.createSocket({
+    type: 'udp4',
+    reuseAddr: true,
+    recvBufferSize: 256 * 1024,
+  });
+}
+
 /**
  * @param {import('dgram').Socket} sock
  * @param {number} port
@@ -2728,8 +2745,23 @@ function bindUdp4Async(sock, port, host) {
   });
 }
 
-/** @param {import('dgram').Socket} sock @param {number} port @param {string} host */
+/** Client punch: bind на uplink src (не 0.0.0.0 — иначе на multihomed ARM часто нет STUN-ответа). */
 async function bindUdpPunchClientAsync(sock) {
+  const forced = process.env.CLEAN_VPN_UDP_PUNCH_BIND?.trim();
+  const uplink = forced || resolveUplinkBindIpv4();
+  if (uplink) {
+    try {
+      await bindUdp4Async(sock, 0, uplink);
+      const a = sock.address();
+      console.log(`[clean-vpn] UDP punch: сокет привязан ${a.address}:${a.port} (uplink)`);
+      return;
+    } catch (e) {
+      if (forced) throw e;
+      console.warn(
+        `[clean-vpn] UDP punch: bind ${uplink} не удался (${e?.message || e}), пробуем 0.0.0.0`,
+      );
+    }
+  }
   await bindUdp4Async(sock, 0, '0.0.0.0');
   const a = sock.address();
   console.log(`[clean-vpn] UDP punch: сокет привязан ${a.address}:${a.port}`);
@@ -2833,6 +2865,16 @@ function stunBindingRequest(udpSocket, stunHost, stunPort, timeoutMs) {
   STUN_MAGIC.copy(req, 4);
   tid.copy(req, 8);
   return new Promise((resolve, reject) => {
+    let connected = false;
+    const cleanup = () => {
+      clearTimeout(to);
+      udpSocket.off('message', onMsg);
+      udpSocket.off('error', onErr);
+      if (connected) {
+        disconnectUdpIfConnected(udpSocket);
+        connected = false;
+      }
+    };
     const to = setTimeout(() => {
       cleanup();
       if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
@@ -2870,29 +2912,32 @@ function stunBindingRequest(udpSocket, stunHost, stunPort, timeoutMs) {
       cleanup();
       reject(err);
     };
-    const cleanup = () => {
-      clearTimeout(to);
-      udpSocket.off('message', onMsg);
-      udpSocket.off('error', onErr);
-    };
+    disconnectUdpIfConnected(udpSocket);
     udpSocket.on('message', onMsg);
     udpSocket.once('error', onErr);
-    udpSocket.send(req, stunPort, stunHost, (err) => {
+    udpSocket.connect(stunPort, stunHost, (err) => {
       if (err) {
         cleanup();
         reject(err);
         return;
       }
+      connected = true;
       if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
         try {
           const la = udpSocket.address();
           console.warn(
-            `[clean-vpn] STUN: запрос 20 B → ${stunHost}:${stunPort} с ${la.address}:${la.port}`,
+            `[clean-vpn] STUN: connect → ${stunHost}:${stunPort}, запрос 20 B с ${la.address}:${la.port}`,
           );
         } catch {
-          /* ignore */
+          console.warn(`[clean-vpn] STUN: connect → ${stunHost}:${stunPort}, запрос 20 B`);
         }
       }
+      udpSocket.send(req, (sendErr) => {
+        if (sendErr) {
+          cleanup();
+          reject(sendErr);
+        }
+      });
     });
   });
 }
@@ -9491,7 +9536,7 @@ async function runClient({
   if (type === 'udp' && punch && !udpSigListenClient) {
     console.log('[clean-vpn] UDP punch: STUN до поднятия TUN (чистый uplink)');
     const iceEarly = loadWebrtcIceFromConfig(configPath, iceMode);
-    const udpEarly = dgram.createSocket('udp4');
+    const udpEarly = createUdpPunchSocket();
     udpEarly.on('error', (err) => {
       console.error('[clean-vpn] udp socket error:', err.message);
     });
@@ -10116,7 +10161,7 @@ async function runClient({
     }
 
     if (punch) {
-      const udp = udpPunchPrepared?.udp ?? dgram.createSocket('udp4');
+      const udp = udpPunchPrepared?.udp ?? createUdpPunchSocket();
       if (!udpPunchPrepared) {
         udp.on('error', (err) => {
           console.error('[clean-vpn] udp socket error:', err.message);
