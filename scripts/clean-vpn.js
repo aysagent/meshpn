@@ -2386,6 +2386,33 @@ function loadWebrtcIceFromConfig(configPath, cliIceMode) {
   return { ndcIceServers, iceMode, configPath: resolved };
 }
 
+/**
+ * ICE для --type=udp --punch: только stun: из iceServers.
+ * turnServers / coturn намеренно не используются (hole punch ≠ relay).
+ * @param {string|null|undefined} configPath
+ * @param {string|null|undefined} cliIceMode — игнорируется для списка STUN (всегда stun-only)
+ */
+function loadUdpPunchIceFromConfig(configPath, cliIceMode) {
+  const resolved = configPath ? path.resolve(configPath) : DEFAULT_CONFIG_JSON;
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`Нет файла конфигурации ICE: ${resolved}`);
+  }
+  const json = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+  const iceFromFile = json.iceMode || 'auto';
+  const iceMode =
+    cliIceMode && ['auto', 'relay', 'direct'].includes(cliIceMode)
+      ? cliIceMode
+      : iceFromFile;
+  const raw = json.iceServers?.length ? json.iceServers : DEFAULT_ICE_SERVERS_JSON;
+  const ndcIceServers = convertIceServers(raw, 'direct').filter((u) => String(u).startsWith('stun:'));
+  if (!ndcIceServers.length) {
+    throw new Error(
+      '[clean-vpn] UDP punch: в --config iceServers нужен хотя бы один stun: (turn/coturn не используется)',
+    );
+  }
+  return { ndcIceServers, iceMode, configPath: resolved };
+}
+
 const ICE_INFRA_IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 
 /**
@@ -2781,43 +2808,6 @@ function parseStunUdpServersFromIce(ndcIceServers) {
 }
 
 /**
- * Цели STUN/TCP: сначала turn: (coturn STUN на :3478), потом stun: (Google UDP-only).
- * @param {string[]} ndcIceServers
- * @returns {Array<{ host: string, port: number, via: string }>}
- */
-function parseStunTcpFallbackServers(ndcIceServers) {
-  /** @type {Array<{ host: string, port: number, via: string }>} */
-  const out = [];
-  const seen = new Set();
-  const add = (host, port, via) => {
-    if (!host || !Number.isFinite(port) || port <= 0 || port > 65535) return;
-    const key = `${host}:${port}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    out.push({ host, port, via });
-  };
-  for (const s of ndcIceServers) {
-    const u = String(s);
-    if (!u.startsWith('turn:')) continue;
-    let rest = u.slice('turn:'.length);
-    const at = rest.lastIndexOf('@');
-    if (at >= 0) rest = rest.slice(at + 1);
-    const lastColon = rest.lastIndexOf(':');
-    if (lastColon <= 0) continue;
-    add(rest.slice(0, lastColon), parseInt(rest.slice(lastColon + 1), 10), 'turn');
-  }
-  for (const s of ndcIceServers) {
-    const u = String(s);
-    if (!u.startsWith('stun:') || u.includes('@')) continue;
-    const rest = u.slice('stun:'.length);
-    const lastColon = rest.lastIndexOf(':');
-    if (lastColon <= 0) continue;
-    add(rest.slice(0, lastColon), parseInt(rest.slice(lastColon + 1), 10), 'stun');
-  }
-  return out;
-}
-
-/**
  * @param {Buffer} msg
  * @param {Buffer} tid
  * @returns {{ address: string, port: number } | null}
@@ -3078,12 +3068,12 @@ async function stunGetMappedWithIceServers(udpSocket, ndcIceServers, perServerTi
   }
   if (!tcpFallbackOff) {
     console.warn(
-      '[clean-vpn] UDP punch STUN: UDP ответа нет — fallback STUN/TCP (public IP; UDP punch port = bound port)',
+      '[clean-vpn] UDP punch STUN: UDP ответа нет — fallback STUN/TCP по stun: из iceServers (Google :19302 TCP часто недоступен)',
     );
-    for (const { host, port, via } of parseStunTcpFallbackServers(ndcIceServers)) {
+    for (const { host, port } of servers) {
       const targets = await resolveStunTargetIpv4s(host);
       if (!targets.length) {
-        tries.push(`${host}:${port} TCP/${via} (DNS не дал IPv4)`);
+        tries.push(`${host}:${port} TCP (DNS не дал IPv4)`);
         continue;
       }
       for (const stunHost of targets) {
@@ -3091,7 +3081,7 @@ async function stunGetMappedWithIceServers(udpSocket, ndcIceServers, perServerTi
           const tcpMapped = await stunBindingRequestTcp(stunHost, port, perServerTimeoutMs);
           if (punchUdpPort > 0) {
             console.log(
-              `[clean-vpn] UDP punch STUN/TCP (${via}): reflexive ${tcpMapped.address}:${punchUdpPort}` +
+              `[clean-vpn] UDP punch STUN/TCP: reflexive ${tcpMapped.address}:${punchUdpPort}` +
                 ` (public IP из TCP; UDP punch с ${punchUdpAddr || '?'}:${punchUdpPort})`,
             );
             return { address: tcpMapped.address, port: punchUdpPort };
@@ -3099,7 +3089,7 @@ async function stunGetMappedWithIceServers(udpSocket, ndcIceServers, perServerTi
           return tcpMapped;
         } catch (e) {
           lastErr = e;
-          tries.push(`${host}:${port}→${stunHost} TCP/${via} (${e?.message || e})`);
+          tries.push(`${host}:${port}→${stunHost} TCP (${e?.message || e})`);
         }
       }
     }
@@ -9250,7 +9240,7 @@ async function runExit({
     if (sigPort > 65535) {
       throw new Error('[clean-vpn] udp: PORT+1 для сигналинга выходит за 65535');
     }
-    const iceForPunch = signaling && punch ? loadWebrtcIceFromConfig(configPath, iceMode) : null;
+    const iceForPunch = signaling && punch ? loadUdpPunchIceFromConfig(configPath, iceMode) : null;
     /** C-2 PSK для udp punch (только при signaling+punch). */
     const udpSigPsk =
       signaling && punch
@@ -9662,7 +9652,7 @@ async function runClient({
   let udpPunchPrepared = null;
   if (type === 'udp' && punch && !udpSigListenClient) {
     console.log('[clean-vpn] UDP punch: STUN до поднятия TUN (чистый uplink)');
-    const iceEarly = loadWebrtcIceFromConfig(configPath, iceMode);
+    const iceEarly = loadUdpPunchIceFromConfig(configPath, iceMode);
     const udpEarly = createUdpPunchSocket();
     udpEarly.on('error', (err) => {
       console.error('[clean-vpn] udp socket error:', err.message);
@@ -10205,7 +10195,7 @@ async function runClient({
     if (sigPort > 65535) {
       throw new Error('[clean-vpn] udp: PORT+1 для сигналинга выходит за 65535');
     }
-    const iceForPunch = punch ? loadWebrtcIceFromConfig(configPath, iceMode) : null;
+    const iceForPunch = punch ? loadUdpPunchIceFromConfig(configPath, iceMode) : null;
     /** C-2 PSK для udp punch client. */
     const udpSigPsk =
       signaling && punch
