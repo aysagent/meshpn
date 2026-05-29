@@ -25,7 +25,7 @@
  * WebRTC: сигналинг по WebSocket; слушать только с --signaling на этой ноде, иначе исходящий WS к --server (exit и client). Алиас: --signalling. Один SCTP DataChannel — одно бинарное сообщение = один IPv4-пакет.
  *   ICE host-candidate filter (Phase 1 / M-5): по умолчанию `typ host` и `typ prflx` для RFC1918 / loopback / IPv6 ULA / link-local отбрасываются (в исходящих local-candidate'ах и во входящих remote). `srflx`/`relay` остаются. Защита от утечки внутренних IP. Opt-out: `--allow-host-candidates`.
  *   Signaling bind (Phase 2 / C-2): первое сообщение сигналинга `clean-vpn-bind` (webrtc/rtc-chrome) или `clean-vpn-udp-bind` (udp punch) подписано HMAC(clean-vpn-hmac.key, ts || nonce || dtls_fingerprint?), проверяется обеими сторонами; nonce защищает от replay, окно ts ±5 мин. Для webrtc дополнительно сверяется, что `a=fingerprint` в принятом SDP совпадает с подписанным — MITM сигналинга не может подсунуть свой DTLS-fingerprint. Без PSK (`clean-vpn-hmac.key`) запуск падает; для отладки: `--signaling-psk-required=false`.
- * ICE/STUN/TURN: из --config (по умолчанию config/default.json), см. --ice-mode; для udp --punch нужен хотя бы один `stun:` в iceServers.
+ * ICE/STUN/TURN: из --config (по умолчанию config/default.json), см. --ice-mode; при --split-default client добавляет /32 bypass к IP STUN/TURN из конфига.
  * QUIC (Node 25+): нативный node:quic, ALPN clean-vpn, один bidi stream = тот же uint32+IPv4, что TCP.
  *   Нужен бинарь Node, собранный с QUIC (в рантайме: node -p "process.config.variables.node_use_quic" — должно быть истинно); одного флага --experimental-quic недостаточно, если модуль не вкомпилирован (часто apt/snap).
  *   Запуск: node --experimental-quic …  TLS: ca.pem / cert.pem / key.pem в certs/ (создаются через openssl при отсутствии).
@@ -2326,6 +2326,102 @@ function loadWebrtcIceFromConfig(configPath, cliIceMode) {
   return { ndcIceServers, iceMode, configPath: resolved };
 }
 
+const ICE_INFRA_IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
+
+/**
+ * Hostname из stun:/turn:/turns: URL (как src/network/tun.js).
+ * @param {string} url
+ * @returns {string|null}
+ */
+function hostnameFromIceUrl(url) {
+  const u = String(url).trim();
+  const m = u.match(/^(?:stun|stuns|turn|turns):([^:[\s]+)(?::\d+)?/i);
+  return m ? m[1].trim() : null;
+}
+
+/**
+ * @param {Array<{ urls?: string|string[] }>} merged
+ * @param {string} iceMode
+ * @returns {string[]}
+ */
+function collectIceInfraHostnames(merged, iceMode) {
+  const hosts = new Set();
+  for (const s of merged) {
+    const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+    for (const url of urls) {
+      if (!url) continue;
+      const u = String(url);
+      const isStun = u.startsWith('stun:') || u.startsWith('stuns:');
+      const isTurn = u.startsWith('turn:') || u.startsWith('turns:');
+      if (iceMode === 'relay' && isStun) continue;
+      if (iceMode === 'direct' && isTurn) continue;
+      const h = hostnameFromIceUrl(u);
+      if (h) hosts.add(h);
+    }
+  }
+  return [...hosts];
+}
+
+/**
+ * IPv4 STUN/TURN из --config для bypass при --split-default (все A-записи пула STUN).
+ * @param {string|null|undefined} configPath
+ * @param {string|null|undefined} cliIceMode
+ * @returns {Promise<string[]>}
+ */
+async function resolveIceInfraIpv4FromConfig(configPath, cliIceMode) {
+  const resolved = configPath ? path.resolve(configPath) : DEFAULT_CONFIG_JSON;
+  if (!fs.existsSync(resolved)) return [];
+  const json = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+  const iceFromFile = json.iceMode || 'auto';
+  const iceMode =
+    cliIceMode && ['auto', 'relay', 'direct'].includes(cliIceMode)
+      ? cliIceMode
+      : iceFromFile;
+  const raw = [...(json.iceServers || []), ...(json.turnServers || [])];
+  const merged = raw.length ? raw : DEFAULT_ICE_SERVERS_JSON;
+  const hostnames = collectIceInfraHostnames(merged, iceMode);
+  /** @type {Set<string>} */
+  const ips = new Set();
+  for (const h of hostnames) {
+    if (ICE_INFRA_IPV4_RE.test(h)) {
+      ips.add(h);
+      continue;
+    }
+    if (h === 'localhost') {
+      ips.add('127.0.0.1');
+      continue;
+    }
+    try {
+      const addrs = await dns.resolve4(h);
+      for (const a of addrs) {
+        if (ICE_INFRA_IPV4_RE.test(a)) ips.add(a);
+      }
+    } catch {
+      try {
+        const { address } = await dns.lookup(h, { family: 4 });
+        if (ICE_INFRA_IPV4_RE.test(address)) ips.add(address);
+      } catch (err) {
+        console.warn(
+          `[clean-vpn] infra bypass: не удалось резолвить ${h}: ${err?.message || err}`,
+        );
+      }
+    }
+  }
+  return [...ips];
+}
+
+/**
+ * @param {string} ip
+ * @returns {boolean}
+ */
+function isIpv4InfraBypassSafe(ip) {
+  if (!ip || !ICE_INFRA_IPV4_RE.test(ip)) return false;
+  const [a, b] = ip.split('.').map(Number);
+  if (a === 127) return false;
+  if (a === 169 && b === 254 && ip !== '169.254.169.254') return false;
+  return true;
+}
+
 /**
  * ICE в формате для RTCPeerConnection (Chrome): те же правила фильтрации, что у convertIceServers.
  * @returns {{ iceServers: Array<{ urls: string|string[], username?: string, credential?: string }>, iceMode: string, configPath: string }}
@@ -2519,6 +2615,32 @@ const STUN_MAGIC = Buffer.from([0x21, 0x12, 0xa4, 0x42]);
 const UDP_PUNCH_MAGIC = Buffer.from([0x43, 0x56, 0x50, 0x4e]); // CVPN — маркер punch-пакета
 const CLEAN_VPN_UDP_REFLEXIVE = 'clean-vpn-udp-reflexive';
 
+/** @param {string} dstIp */
+function logStunRouteDiag(dstIp) {
+  if (!dstIp) return;
+  try {
+    const out = execFileSync('ip', ['route', 'get', dstIp], { encoding: 'utf8' });
+    console.warn(`[clean-vpn] STUN ip route get ${dstIp}: ${out.trim()}`);
+  } catch (e) {
+    console.warn(`[clean-vpn] STUN ip route get ${dstIp}: ${e?.message || e}`);
+  }
+}
+
+/**
+ * @param {import('dgram').Socket} sock
+ * @param {number} port
+ * @param {string} host
+ */
+function bindUdp4Async(sock, port, host) {
+  return new Promise((resolve, reject) => {
+    sock.once('error', reject);
+    sock.bind(port, host, () => {
+      sock.off('error', reject);
+      resolve(undefined);
+    });
+  });
+}
+
 /**
  * @param {string[]} ndcIceServers — строки из convertIceServers
  * @returns {Array<{ host: string, port: number }>}
@@ -2636,9 +2758,15 @@ async function stunGetMappedWithIceServers(udpSocket, ndcIceServers, perServerTi
   let lastErr;
   /** @type {string[]} */
   const tries = [];
+  /** @type {string|null} */
+  let lastStunResolvedIp = null;
   for (const { host, port } of servers) {
     try {
       const stunHost = net.isIP(host) === 0 ? (await dns.lookup(host, { family: 4 })).address : host;
+      lastStunResolvedIp = stunHost;
+      if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
+        logStunRouteDiag(stunHost);
+      }
       const mapped = await stunBindingRequest(udpSocket, stunHost, port, perServerTimeoutMs);
       return mapped;
     } catch (e) {
@@ -2646,11 +2774,43 @@ async function stunGetMappedWithIceServers(udpSocket, ndcIceServers, perServerTi
       tries.push(`${host}:${port} (${e?.message || e})`);
     }
   }
+  if (lastStunResolvedIp) {
+    logStunRouteDiag(lastStunResolvedIp);
+  }
   throw new Error(
     `[clean-vpn] UDP punch: STUN не удался ни к одному серверу: ${lastErr?.message || lastErr}` +
       (tries.length ? `; попытки: ${tries.join('; ')}` : '') +
-      '. Проверьте DNS/uplink (при --split-default до punch DNS может идти через пустой TUN — обновите clean-vpn); для lab добавьте stun:IP:PORT в --config.',
+      '. Проверьте uplink и `ip route get <STUN_IP>` (при --split-default нужен infra bypass из iceServers/turnServers в --config). CLEAN_VPN_UDP_PUNCH_DEBUG=1 — диагностика маршрута.',
   );
+}
+
+/**
+ * Reflexive для punch: client (bind 0) — STUN с punch-сокета; exit (bind :PORT) — STUN с ephemeral, port из bind.
+ * @param {import('dgram').Socket} udpSock
+ * @param {string[]} ndcIceServers
+ * @param {number} timeoutMs
+ */
+async function discoverUdpPunchReflexive(udpSock, ndcIceServers, timeoutMs) {
+  let boundPort = 0;
+  try {
+    const addr = udpSock.address();
+    if (addr && typeof addr.port === 'number' && addr.port > 0) {
+      boundPort = addr.port;
+    }
+  } catch {
+    /* socket not bound */
+  }
+  if (boundPort > 0) {
+    const tmp = dgram.createSocket('udp4');
+    try {
+      await bindUdp4Async(tmp, 0, '0.0.0.0');
+      const mapped = await stunGetMappedWithIceServers(tmp, ndcIceServers, timeoutMs);
+      return { address: mapped.address, port: boundPort };
+    } finally {
+      tmp.close();
+    }
+  }
+  return stunGetMappedWithIceServers(udpSock, ndcIceServers, timeoutMs);
 }
 
 /**
@@ -2699,7 +2859,7 @@ async function runUdpPunchAsPeer(opts) {
   const STUN_MS = 4000;
   const SIG_MS = 60000;
   const PUNCH_MS = 8000;
-  const mapped = await stunGetMappedWithIceServers(udpSock, ice.ndcIceServers, STUN_MS);
+  const mapped = await discoverUdpPunchReflexive(udpSock, ice.ndcIceServers, STUN_MS);
   console.log(`[clean-vpn] UDP punch (${logPrefix}): reflexive ${mapped.address}:${mapped.port} (STUN)`);
   if (sigWs.readyState !== WebSocket.OPEN) {
     throw new Error('[clean-vpn] UDP punch: сигнальный WebSocket не OPEN');
@@ -4518,10 +4678,48 @@ function addClientWsPeerBypass(ctx, peerIp) {
 }
 
 /**
+ * /32 uplink bypass для STUN/TURN IP из --config (split-default иначе уводит ICE UDP в tun).
+ * @param {{ gw: string|null, dev: string, splitDefault?: boolean, serverIp?: string|null, peerIp?: string|null, infraBypassApplied?: boolean, snapInfra?: unknown[], infraBypassIps?: string[] }} ctx
+ * @param {string|null|undefined} configPath
+ * @param {string|null|undefined} iceMode
+ */
+async function ensureClientInfraBypass(ctx, configPath, iceMode) {
+  if (!ctx?.splitDefault || ctx.infraBypassApplied) return;
+  const ips = await resolveIceInfraIpv4FromConfig(configPath, iceMode);
+  if (!ips.length) return;
+  const { gw, dev } = ctx;
+  /** @type {unknown[]} */
+  const snapInfra = [];
+  /** @type {string[]} */
+  const applied = [];
+  for (const infraIp of ips) {
+    if (!isIpv4InfraBypassSafe(infraIp)) continue;
+    if (infraIp === ctx.serverIp || infraIp === ctx.peerIp) continue;
+    snapInfra.push(...captureServerRoutes(infraIp));
+    if (gw) {
+      ip(['route', 'replace', `${infraIp}/32`, 'via', gw, 'dev', dev]);
+    } else {
+      ip(['route', 'replace', `${infraIp}/32`, 'dev', dev]);
+    }
+    applied.push(infraIp);
+  }
+  if (applied.length) {
+    console.log(
+      `[clean-vpn] infra bypass STUN/TURN: ${applied.length} IPv4 через ${dev}` +
+        (gw ? ` via ${gw}` : '') +
+        ` (${applied.slice(0, 6).join(', ')}${applied.length > 6 ? '…' : ''})`,
+    );
+  }
+  ctx.snapInfra = snapInfra;
+  ctx.infraBypassIps = applied;
+  ctx.infraBypassApplied = true;
+}
+
+/**
  * @param {string} ifname
  * @param {string} serverHost
  * @param {boolean} splitDefault
- * @param {{ deferPeerBypass?: boolean; websocketListenNoSplitDefault?: boolean; deferPeerKind?: 'ws-listen'|'webrtc'; deferSplitDefault?: boolean }} [opts]
+ * @param {{ deferPeerBypass?: boolean; websocketListenNoSplitDefault?: boolean; deferPeerKind?: 'ws-listen'|'webrtc'; deferSplitDefault?: boolean; configPath?: string|null; iceMode?: string|null }} [opts]
  */
 async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
   const deferPeerBypass = opts?.deferPeerBypass === true;
@@ -4584,7 +4782,7 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
     /* ignore */
   }
 
-  return {
+  const routeCtx = {
     serverIp,
     peerIp: null,
     gw,
@@ -4597,7 +4795,18 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
     snap128,
     ifname,
     splitDefaultApplied,
+    infraBypassApplied: false,
+    snapInfra: [],
+    infraBypassIps: [],
+    iceConfigPath: opts?.configPath ?? null,
+    iceMode: opts?.iceMode ?? null,
   };
+
+  if (splitDefault) {
+    await ensureClientInfraBypass(routeCtx, routeCtx.iceConfigPath, routeCtx.iceMode);
+  }
+
+  return routeCtx;
 }
 
 /** IPv4 default через TUN (split-default). */
@@ -4618,11 +4827,14 @@ function applyClientSplitDefaultRoutes(ifname, gw, dev) {
   );
 }
 
-/** Отложенный split-default (ws-chrome / rtc-chrome). */
-function applyDeferredClientSplitDefault(ctx) {
-  if (!ctx?.splitDefault || ctx.splitDefaultApplied) return;
-  applyClientSplitDefaultRoutes(ctx.ifname, ctx.gw, ctx.dev);
-  ctx.splitDefaultApplied = true;
+/** Отложенный split-default (ws-chrome / rtc-chrome / udp punch / webrtc). */
+async function applyDeferredClientSplitDefault(ctx) {
+  if (!ctx?.splitDefault) return;
+  if (!ctx.splitDefaultApplied) {
+    applyClientSplitDefaultRoutes(ctx.ifname, ctx.gw, ctx.dev);
+    ctx.splitDefaultApplied = true;
+  }
+  await ensureClientInfraBypass(ctx, ctx.iceConfigPath, ctx.iceMode);
 }
 
 function teardownClientRoutes(ctx) {
@@ -4667,6 +4879,16 @@ function teardownClientRoutes(ctx) {
     }
     restoreRoutesFromRecords(snapHost || []);
   }
+
+  const infraBypassIps = ctx.infraBypassIps || [];
+  for (const ip of infraBypassIps) {
+    if (gw) {
+      tryIpRoute(['route', 'del', `${ip}/32`, 'via', gw, 'dev', dev]);
+    } else {
+      tryIpRoute(['route', 'del', `${ip}/32`, 'dev', dev]);
+    }
+  }
+  restoreRoutesFromRecords(ctx.snapInfra || []);
 
   if (prevRpAll != null) {
     try {
@@ -9020,6 +9242,8 @@ async function runClient({
     deferPeerKind: deferPeerKindForSetup,
     websocketListenNoSplitDefault: type === 'websocket' && wsServer && !splitDefault,
     deferSplitDefault: deferSplitDefaultUntilTunnel,
+    configPath,
+    iceMode,
   });
   if (clientLanSubnet) {
     setupClientLanGateway(routeCtx, clientLanSubnet);
@@ -9349,7 +9573,11 @@ async function runClient({
           if (!ipv4TriggersExitLazyConnect(pkt)) return;
           void wsSession
             .ensureExitWsReady()
-            .then(() => applyDeferredClientSplitDefault(routeCtx))
+            .then(() =>
+              applyDeferredClientSplitDefault(routeCtx).catch((e) => {
+                console.error('[clean-vpn] split-default / infra bypass:', e?.message || e);
+              }),
+            )
             .catch((e) => {
               console.error('[clean-vpn] ws-chrome: lazy WS reconnect:', e?.message || e);
             });
@@ -9388,7 +9616,9 @@ async function runClient({
         wsChromeBrowser = browser;
         if (localWss) wsChromeLocalWss = localWss;
         setupWsChromeBridgeHandlers(bridge);
-        applyDeferredClientSplitDefault(routeCtx);
+        void applyDeferredClientSplitDefault(routeCtx).catch((e) => {
+          console.error('[clean-vpn] split-default / infra bypass:', e?.message || e);
+        });
         console.log('[clean-vpn] ws-chrome: готово (Puppeteer → WebSocket → exit)');
         return bridge;
       },
@@ -9486,7 +9716,9 @@ async function runClient({
     void rtcSession
       .ensureWebrtcReady()
       .then(() => {
-        applyDeferredClientSplitDefault(routeCtx);
+        void applyDeferredClientSplitDefault(routeCtx).catch((e) => {
+          console.error('[clean-vpn] split-default / infra bypass:', e?.message || e);
+        });
         console.log('[clean-vpn] rtc-chrome: готово (Chrome WebRTC → exit webrtc, TUN ↔ localhost WS)');
       })
       .catch((e) => {
@@ -9571,7 +9803,9 @@ async function runClient({
           resolve(undefined);
         });
       });
-      applyDeferredClientSplitDefault(routeCtx);
+      void applyDeferredClientSplitDefault(routeCtx).catch((e) => {
+        console.error('[clean-vpn] split-default / infra bypass:', e?.message || e);
+      });
       attachTunBridge(tun, 'udp-client', udp, withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown));
       return;
     }
@@ -9618,7 +9852,9 @@ async function runClient({
           resolve(undefined);
         });
       });
-      applyDeferredClientSplitDefault(routeCtx);
+      void applyDeferredClientSplitDefault(routeCtx).catch((e) => {
+        console.error('[clean-vpn] split-default / infra bypass:', e?.message || e);
+      });
       attachTunBridge(tun, 'udp-client', udp, withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown));
       return;
     }
@@ -9720,7 +9956,11 @@ async function runClient({
       withKeepalive(BRIDGE_OPTS_CLIENT, kaBridge, kaCooldown),
       {
         ...sigIceOpts,
-        onWireReady: () => applyDeferredClientSplitDefault(routeCtx),
+        onWireReady: () => {
+          void applyDeferredClientSplitDefault(routeCtx).catch((e) => {
+            console.error('[clean-vpn] split-default / infra bypass:', e?.message || e);
+          });
+        },
       },
     );
     return;
@@ -10363,7 +10603,7 @@ async function main() {
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:443 --type=combo-tls --split-default
 
 --type: socket | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls | boring-tls | transparent-tls | combo-tls
---split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 (10/8, 172.16/12, 192.168/16) через uplink; IPv6 не в туннеле; проверка IP: curl -4 https://ifconfig.me. Без флага на tun возможен трафик к VPN-peer (ptp) и IPv6 ND на интерфейсе — см. шапку файла.
+--split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 через uplink; /32 bypass к --server и к IP STUN/TURN из --config (webrtc/udp-punch). IPv6 не в туннеле. Проверка: curl -4 https://ifconfig.me; STUN: ip route get $(dig +short stun.l.google.com|head -1) — dev uplink, не tun.
 --client-lan-subnet=CIDR: только client + --split-default — LAN/USB gadget за клиентом (адрес сети, напр. 192.168.7.0/24): ip_forward, SNAT в ${IP_CLIENT} через tun, FORWARD; иначе устройства за клиентом не попадают под NAT exit.
 --transparent-tls-lan-bind=IPv4: с --type=transparent-tls или combo-tls + --client-lan-subnet — адрес этого шлюза для DNAT второго listener и PREROUTING (должен входить в CIDR), если автопоиск не нашёл нужный интерфейс (часто: на USB/etherнет нет адреса из 192.168.7.x).
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
