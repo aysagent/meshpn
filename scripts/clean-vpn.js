@@ -25,7 +25,7 @@
  * WebRTC: сигналинг по WebSocket; слушать только с --signaling на этой ноде, иначе исходящий WS к --server (exit и client). Алиас: --signalling. Один SCTP DataChannel — одно бинарное сообщение = один IPv4-пакет.
  *   ICE host-candidate filter (Phase 1 / M-5): по умолчанию `typ host` и `typ prflx` для RFC1918 / loopback / IPv6 ULA / link-local отбрасываются (в исходящих local-candidate'ах и во входящих remote). `srflx`/`relay` остаются. Защита от утечки внутренних IP. Opt-out: `--allow-host-candidates`.
  *   Signaling bind (Phase 2 / C-2): первое сообщение сигналинга `clean-vpn-bind` (webrtc/rtc-chrome) или `clean-vpn-udp-bind` (udp punch) подписано HMAC(clean-vpn-hmac.key, ts || nonce || dtls_fingerprint?), проверяется обеими сторонами; nonce защищает от replay, окно ts ±5 мин. Для webrtc дополнительно сверяется, что `a=fingerprint` в принятом SDP совпадает с подписанным — MITM сигналинга не может подсунуть свой DTLS-fingerprint. Без PSK (`clean-vpn-hmac.key`) запуск падает; для отладки: `--signaling-psk-required=false`.
- * ICE/STUN/TURN: из --config (по умолчанию config/default.json), см. --ice-mode; при --split-default client добавляет /32 bypass к IP STUN/TURN из конфига.
+ * ICE/STUN/TURN: из --config (по умолчанию config/default.json), см. --ice-mode; при --split-default client добавляет /32 bypass к IP STUN/TURN только для webrtc/rtc-chrome/ws-chrome и udp --punch (plain udp STUN не резолвит).
  * QUIC (Node 25+): нативный node:quic, ALPN clean-vpn, один bidi stream = тот же uint32+IPv4, что TCP.
  *   Нужен бинарь Node, собранный с QUIC (в рантайме: node -p "process.config.variables.node_use_quic" — должно быть истинно); одного флага --experimental-quic недостаточно, если модуль не вкомпилирован (часто apt/snap).
  *   Запуск: node --experimental-quic …  TLS: ca.pem / cert.pem / key.pem в certs/ (создаются через openssl при отсутствии).
@@ -2513,6 +2513,34 @@ function isIpv4InfraBypassSafe(ip) {
   if (a === 127) return false;
   if (a === 169 && b === 254 && ip !== '169.254.169.254') return false;
   return true;
+}
+
+/** Нужен ли /32 bypass к STUN/TURN при --split-default (plain udp/socket/tcp — нет). */
+function clientNeedsIceInfraBypass(type, punch) {
+  return (
+    type === 'webrtc' ||
+    type === 'rtc-chrome' ||
+    type === 'ws-chrome' ||
+    (type === 'udp' && punch)
+  );
+}
+
+/**
+ * UDP exit: первый пир или смена порта/IP (client переподключился с новым ephemeral port).
+ * @param {{ peer?: import('dgram').RemoteInfo }} ep
+ * @param {import('dgram').RemoteInfo} rinfo
+ */
+function bindOrMigrateUdpServerPeer(ep, rinfo) {
+  if (!ep.peer) {
+    ep.peer = rinfo;
+    console.log(`[clean-vpn] udp peer ${rinfo.address}:${rinfo.port}`);
+    return;
+  }
+  if (ep.peer.address === rinfo.address && ep.peer.port === rinfo.port) return;
+  console.log(
+    `[clean-vpn] udp peer ${ep.peer.address}:${ep.peer.port} → ${rinfo.address}:${rinfo.port} (переподключение)`,
+  );
+  ep.peer = rinfo;
 }
 
 /**
@@ -5127,6 +5155,7 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
   }
 
   const deferSplitDefault = opts?.deferSplitDefault === true;
+  const iceInfraBypass = opts?.iceInfraBypass === true;
   const prevRpAll = getSysctlNum('net.ipv4.conf.all.rp_filter');
   const snap01 = splitDefault ? [...captureRoutesByDst('0.0.0.0/1')] : [];
   const snap128 = splitDefault ? [...captureRoutesByDst('128.0.0.0/1')] : [];
@@ -5164,9 +5193,10 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
     infraBypassIps: [],
     iceConfigPath: opts?.configPath ?? null,
     iceMode: opts?.iceMode ?? null,
+    iceInfraBypass,
   };
 
-  if (splitDefault && !deferSplitDefault) {
+  if (splitDefault && !deferSplitDefault && iceInfraBypass) {
     await ensureClientInfraBypass(routeCtx, routeCtx.iceConfigPath, routeCtx.iceMode);
   }
 
@@ -5198,7 +5228,9 @@ async function applyDeferredClientSplitDefault(ctx) {
     applyClientSplitDefaultRoutes(ctx.ifname, ctx.gw, ctx.dev);
     ctx.splitDefaultApplied = true;
   }
-  await ensureClientInfraBypass(ctx, ctx.iceConfigPath, ctx.iceMode);
+  if (ctx.iceInfraBypass) {
+    await ensureClientInfraBypass(ctx, ctx.iceConfigPath, ctx.iceMode);
+  }
 }
 
 function teardownClientRoutes(ctx) {
@@ -5603,15 +5635,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
   } else if (transport === 'udp-server') {
     endpoint.sock.on('message', (msg, rinfo) => {
       if (!msg.length || msg.length > MAX_PKT) return;
-      if (!endpoint.peer) {
-        endpoint.peer = rinfo;
-        console.log(`[clean-vpn] udp peer ${rinfo.address}:${rinfo.port}`);
-      } else if (
-        endpoint.peer.address !== rinfo.address ||
-        endpoint.peer.port !== rinfo.port
-      ) {
-        return;
-      }
+      bindOrMigrateUdpServerPeer(endpoint, rinfo);
       writeTun(Buffer.isBuffer(msg) ? msg : Buffer.from(msg));
     });
   } else if (transport === 'webrtc-dc') {
@@ -5979,12 +6003,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     } else if (transport === 'udp-server') {
       const onMsg = (msg, rinfo) => {
         if (!msg.length || msg.length > MAX_PKT) return;
-        if (!ep.peer) {
-          ep.peer = rinfo;
-          console.log(`[clean-vpn] udp peer ${rinfo.address}:${rinfo.port}`);
-        } else if (ep.peer.address !== rinfo.address || ep.peer.port !== rinfo.port) {
-          return;
-        }
+        bindOrMigrateUdpServerPeer(ep, rinfo);
         bumpActivity();
         writeTun(Buffer.isBuffer(msg) ? msg : Buffer.from(msg));
       };
@@ -9706,6 +9725,7 @@ async function runClient({
     deferPeerKind: deferPeerKindForSetup,
     websocketListenNoSplitDefault: type === 'websocket' && wsServer && !splitDefault,
     deferSplitDefault: deferSplitDefaultUntilTunnel,
+    iceInfraBypass: splitDefault && clientNeedsIceInfraBypass(type, punch),
     configPath,
     iceMode,
   });
@@ -11117,7 +11137,7 @@ async function main() {
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:443 --type=combo-tls --split-default
 
 --type: socket | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls | boring-tls | transparent-tls | combo-tls
---split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 через uplink; /32 bypass к --server и к IP STUN/TURN из --config (webrtc/udp-punch). IPv6 не в туннеле. Проверка: curl -4 https://ifconfig.me; STUN: ip route get $(dig +short stun.l.google.com|head -1) — dev uplink, не tun.
+--split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 через uplink; /32 bypass к --server и (только webrtc/rtc-chrome/ws-chrome/udp+punch) к IP STUN/TURN из --config. Plain --type=udp STUN не резолвит. IPv6 не в туннеле. Проверка: curl -4 https://ifconfig.me
 --client-lan-subnet=CIDR: только client + --split-default — LAN/USB gadget за клиентом (адрес сети, напр. 192.168.7.0/24): ip_forward, SNAT в ${IP_CLIENT} через tun, FORWARD; иначе устройства за клиентом не попадают под NAT exit.
 --transparent-tls-lan-bind=IPv4: с --type=transparent-tls или combo-tls + --client-lan-subnet — адрес этого шлюза для DNAT второго listener и PREROUTING (должен входить в CIDR), если автопоиск не нашёл нужный интерфейс (часто: на USB/etherнет нет адреса из 192.168.7.x).
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
