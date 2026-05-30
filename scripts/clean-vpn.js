@@ -3183,6 +3183,9 @@ async function runUdpPunchAsPeer(opts) {
       SIG_MS,
       `${logPrefix}: bind peer`,
     );
+    if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
+      console.warn(`[clean-vpn] UDP punch (${logPrefix}): send bind nonce=${nonceHex.slice(0, 8)}…`);
+    }
     sigWs.send(
       JSON.stringify({
         type: SIGNALING_UDPBIND_MSG_TYPE,
@@ -9262,9 +9265,16 @@ async function runExit({
       );
       wss = new WebSocketServer({ host, port: sigPort });
       await awaitWebSocketServerListening(wss);
+      /** Inbox на remote client WS с момента connect (до relay wire). */
+      /** @type {WeakMap<import('ws').WebSocket, ReturnType<typeof attachSignalingInbox>>} */
+      const exitRemotePunchInboxes = new WeakMap();
+      wss.on('connection', (ws) => {
+        const ra = String(ws?._socket?.remoteAddress || '');
+        if (!isWsRemoteLoopback(ra) && !exitRemotePunchInboxes.has(ws)) {
+          exitRemotePunchInboxes.set(ws, attachSignalingInbox(ws));
+        }
+      });
       let exitUdpPunchStarted = false;
-      /** @type {ReturnType<typeof attachSignalingInbox> | null} */
-      let exitPunchInbox = null;
       attachRtcChromeSignalingRelay(wss, (remotePeerWs) => {
         const ra = String(remotePeerWs?._socket?.remoteAddress || '');
         if (isWsRemoteLoopback(ra)) {
@@ -9273,13 +9283,20 @@ async function runExit({
         }
         if (exitUdpPunchStarted) return;
         exitUdpPunchStarted = true;
+        const punchInbox =
+          exitRemotePunchInboxes.get(remotePeerWs) ?? attachSignalingInbox(remotePeerWs);
+        if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
+          console.warn(
+            `[clean-vpn] exit UDP punch: сигналинг напрямую с ${ra} (server-side WS)`,
+          );
+        }
         void (async () => {
           try {
             console.log('[clean-vpn] exit UDP punch: client на сигналинге, hole punch…');
             const peerEp = await runUdpPunchAsPeer({
               udpSock,
-              sigWs: /** @type {import('ws').WebSocket} */ (udpPunchLoopbackWs),
-              sigInbox: exitPunchInbox ?? undefined,
+              sigWs: remotePeerWs,
+              sigInbox: punchInbox,
               ice: /** @type {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} */ (iceForPunch),
               logPrefix: 'exit',
               fixedListenPort: true,
@@ -9302,6 +9319,7 @@ async function runExit({
             );
           } catch (e) {
             console.error('[clean-vpn] exit UDP punch:', e?.message || e);
+            punchInbox.detach();
             exitUdpPunchStarted = false;
           }
         })();
@@ -9311,7 +9329,6 @@ async function runExit({
         udpPunchLoopbackWs.once('open', resolve);
         udpPunchLoopbackWs.once('error', reject);
       });
-      exitPunchInbox = attachSignalingInbox(udpPunchLoopbackWs);
       console.log(
         `[clean-vpn] exit UDP punch: слушаем UDP :${port}, сигналинг ws://*:${sigPort}/ — ждём client (--type=udp --punch)`,
       );
