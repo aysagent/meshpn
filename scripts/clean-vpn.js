@@ -1159,6 +1159,9 @@ function loadSignalingPskOrWarn(certsDir, sharedExplicit, legacyExplicit, requir
       autoCreate: false,
       role: logPrefix,
     });
+    if (r.source === 'file' || r.source === 'flag') {
+      console.log(`[clean-vpn] ${logPrefix}: PSK (${r.source}) ${r.path}`);
+    }
     return r.buffer;
   } catch (e) {
     if (required) {
@@ -2587,6 +2590,17 @@ function websocketVpnListens(wsServer) {
  * @param {import('ws').WebSocketServer} wss
  * @param {(exitSide: import('ws').WebSocket) => void} [onPaired] — после пары сокетов: не-127.0.0.1 считается стороной exit (bypass).
  */
+/** @param {string} remoteAddress */
+function isWsRemoteLoopback(remoteAddress) {
+  const a = String(remoteAddress || '');
+  return (
+    a === '127.0.0.1' ||
+    a === '::1' ||
+    a.endsWith('127.0.0.1') ||
+    a === '::ffff:127.0.0.1'
+  );
+}
+
 function attachRtcChromeSignalingRelay(wss, onPaired) {
   /** @type {[import('ws').WebSocket|null, import('ws').WebSocket|null]} */
   const pair = [null, null];
@@ -2622,6 +2636,16 @@ function attachRtcChromeSignalingRelay(wss, onPaired) {
     const otherIdx = 1 - idx;
     ws.on('message', (data, isBinary) => {
       if (isBinary) return;
+      if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1') {
+        try {
+          const j = JSON.parse(data.toString());
+          if (j?.type) {
+            console.warn(`[clean-vpn] relay slot${idx}→slot${otherIdx}: ${String(j.type)}`);
+          }
+        } catch {
+          /* ignore */
+        }
+      }
       const o = pair[otherIdx];
       const buf = idx === 0 ? bufTo1 : bufTo0;
       if (o && o.readyState === WebSocket.OPEN) {
@@ -3034,37 +3058,88 @@ async function discoverUdpPunchReflexive(udpSock, ndcIceServers, timeoutMs, opts
 }
 
 /**
+ * Буфер JSON-сигналинга с WS open — сообщения не теряются до waitForJson.
  * @param {import('ws').WebSocket} sigWs
- * @param {(obj: { type: string }) => boolean} pred
- * @param {number} timeoutMs
  */
-function waitForSignalingJson(sigWs, pred, timeoutMs, waitLabel) {
-  return new Promise((resolve, reject) => {
-    const to = setTimeout(() => {
-      sigWs.off('message', onMsg);
-      reject(
-        new Error(
-          `[clean-vpn] UDP punch: таймаут сигналинга ${timeoutMs} мс` +
-            (waitLabel ? ` (${waitLabel})` : ''),
-        ),
-      );
-    }, timeoutMs);
-    const onMsg = (data, isBinary) => {
-      if (isBinary) return;
-      let msg;
+function attachSignalingInbox(sigWs) {
+  /** @type {object[]} */
+  const queue = [];
+  /** @type {Array<{ pred: (obj: object) => boolean, resolve: (obj: object) => void, to: ReturnType<typeof setTimeout> }>} */
+  const waiters = [];
+
+  /** @param {object} msg */
+  const dispatch = (msg) => {
+    if (process.env.CLEAN_VPN_UDP_PUNCH_DEBUG === '1' && msg && typeof msg.type === 'string') {
+      console.warn(`[clean-vpn] UDP punch inbox: recv type=${msg.type}`);
+    }
+    for (let i = 0; i < waiters.length; i++) {
+      const w = waiters[i];
       try {
-        msg = JSON.parse(data.toString());
+        if (w.pred(msg)) {
+          clearTimeout(w.to);
+          waiters.splice(i, 1);
+          w.resolve(msg);
+          return;
+        }
       } catch {
-        return;
+        /* ignore */
       }
-      if (pred(msg)) {
-        clearTimeout(to);
-        sigWs.off('message', onMsg);
-        resolve(msg);
+    }
+    queue.push(msg);
+  };
+
+  const onMessage = (data, isBinary) => {
+    if (isBinary) return;
+    let msg;
+    try {
+      msg = JSON.parse(data.toString());
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg !== 'object') return;
+    dispatch(msg);
+  };
+
+  sigWs.on('message', onMessage);
+
+  return {
+    /**
+     * @param {(obj: object) => boolean} pred
+     * @param {number} timeoutMs
+     * @param {string} [waitLabel]
+     */
+    waitForJson(pred, timeoutMs, waitLabel) {
+      const hitIdx = queue.findIndex((m) => {
+        try {
+          return pred(m);
+        } catch {
+          return false;
+        }
+      });
+      if (hitIdx >= 0) {
+        return Promise.resolve(queue.splice(hitIdx, 1)[0]);
       }
-    };
-    sigWs.on('message', onMsg);
-  });
+      return new Promise((resolve, reject) => {
+        const to = setTimeout(() => {
+          const wi = waiters.findIndex((w) => w.to === to);
+          if (wi >= 0) waiters.splice(wi, 1);
+          reject(
+            new Error(
+              `[clean-vpn] UDP punch: таймаут сигналинга ${timeoutMs} мс` +
+                (waitLabel ? ` (${waitLabel})` : ''),
+            ),
+          );
+        }, timeoutMs);
+        waiters.push({ pred, resolve, to });
+      });
+    },
+    detach() {
+      sigWs.off('message', onMessage);
+      queue.length = 0;
+      for (const w of waiters) clearTimeout(w.to);
+      waiters.length = 0;
+    },
+  };
 }
 
 /**
@@ -3075,6 +3150,7 @@ function waitForSignalingJson(sigWs, pred, timeoutMs, waitLabel) {
  *   logPrefix: string,
  *   fixedListenPort?: boolean,
  *   mappedReflexive?: { address: string, port: number },
+ *   sigInbox?: ReturnType<typeof attachSignalingInbox>,
  * }} opts
  * @returns {Promise<{ address: string, port: number }>}
  */
@@ -3086,6 +3162,9 @@ async function runUdpPunchAsPeer(opts) {
   const STUN_MS = 4000;
   const SIG_MS = 60000;
   const PUNCH_MS = 8000;
+  const inbox = opts.sigInbox ?? attachSignalingInbox(sigWs);
+  const ownsInbox = !opts.sigInbox;
+  try {
   const mapped =
     opts.mappedReflexive ??
     (await discoverUdpPunchReflexive(udpSock, ice.ndcIceServers, STUN_MS, {
@@ -3099,6 +3178,11 @@ async function runUdpPunchAsPeer(opts) {
     const nonceHex = randomBytes(8).toString('hex');
     const ts = Date.now();
     const mac = signUdpPunchBind(psk, nonceHex, ts);
+    const peerBindPromise = inbox.waitForJson(
+      (m) => m.type === SIGNALING_UDPBIND_MSG_TYPE && m.nonce !== nonceHex,
+      SIG_MS,
+      `${logPrefix}: bind peer`,
+    );
     sigWs.send(
       JSON.stringify({
         type: SIGNALING_UDPBIND_MSG_TYPE,
@@ -3107,12 +3191,7 @@ async function runUdpPunchAsPeer(opts) {
         mac,
       }),
     );
-    const peerBind = await waitForSignalingJson(
-      sigWs,
-      (m) => m.type === SIGNALING_UDPBIND_MSG_TYPE,
-      SIG_MS,
-      `${logPrefix}: bind peer`,
-    );
+    const peerBind = await peerBindPromise;
     const err = verifyUdpPunchBind(psk, peerBind);
     if (err) {
       throw new Error(`[clean-vpn] UDP punch (${logPrefix}): подпись пира недопустима (bind_${err})`);
@@ -3127,16 +3206,8 @@ async function runUdpPunchAsPeer(opts) {
       `[clean-vpn] UDP punch (${logPrefix}): PSK не задан, C-2 сигналинг bind пропущен (--signaling-psk-required=false)`,
     );
   }
-  sigWs.send(
-    JSON.stringify({
-      type: CLEAN_VPN_UDP_REFLEXIVE,
-      address: mapped.address,
-      port: mapped.port,
-    }),
-  );
   const selfRef = { address: mapped.address, port: mapped.port };
-  const peerMsg = await waitForSignalingJson(
-    sigWs,
+  const peerMsgPromise = inbox.waitForJson(
     (m) =>
       m.type === CLEAN_VPN_UDP_REFLEXIVE &&
       typeof m.address === 'string' &&
@@ -3145,6 +3216,14 @@ async function runUdpPunchAsPeer(opts) {
     SIG_MS,
     `${logPrefix}: reflexive peer`,
   );
+  sigWs.send(
+    JSON.stringify({
+      type: CLEAN_VPN_UDP_REFLEXIVE,
+      address: mapped.address,
+      port: mapped.port,
+    }),
+  );
+  const peerMsg = await peerMsgPromise;
   const peerAddress = String(peerMsg.address);
   const peerPort = Number(peerMsg.port);
   console.log(`[clean-vpn] UDP punch (${logPrefix}): peer reflexive ${peerAddress}:${peerPort}`);
@@ -3177,6 +3256,9 @@ async function runUdpPunchAsPeer(opts) {
     return got;
   } finally {
     clearInterval(iv);
+  }
+  } finally {
+    if (ownsInbox) inbox.detach();
   }
 }
 
@@ -9166,24 +9248,42 @@ async function runExit({
           resolve(undefined);
         });
       });
+      const exitMappedReflexive = await discoverUdpPunchReflexive(
+        udpSock,
+        /** @type {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} */ (iceForPunch).ndcIceServers,
+        4000,
+        { fixedListenPort: true },
+      );
+      console.log(
+        `[clean-vpn] exit UDP punch: reflexive ${exitMappedReflexive.address}:${exitMappedReflexive.port} (STUN до client)`,
+      );
       console.log(
         `[clean-vpn] exit UDP ${host}:${port} + сигналинг (punch) ws://${host === '0.0.0.0' ? '*' : host}:${sigPort}/`,
       );
       wss = new WebSocketServer({ host, port: sigPort });
       await awaitWebSocketServerListening(wss);
       let exitUdpPunchStarted = false;
-      attachRtcChromeSignalingRelay(wss, () => {
+      /** @type {ReturnType<typeof attachSignalingInbox> | null} */
+      let exitPunchInbox = null;
+      attachRtcChromeSignalingRelay(wss, (remotePeerWs) => {
+        const ra = String(remotePeerWs?._socket?.remoteAddress || '');
+        if (isWsRemoteLoopback(ra)) {
+          console.warn('[clean-vpn] exit UDP punch: onPaired без remote client — punch пропущен');
+          return;
+        }
         if (exitUdpPunchStarted) return;
         exitUdpPunchStarted = true;
         void (async () => {
           try {
-            console.log('[clean-vpn] exit UDP punch: client на сигналинге, STUN + hole punch…');
+            console.log('[clean-vpn] exit UDP punch: client на сигналинге, hole punch…');
             const peerEp = await runUdpPunchAsPeer({
               udpSock,
               sigWs: /** @type {import('ws').WebSocket} */ (udpPunchLoopbackWs),
+              sigInbox: exitPunchInbox ?? undefined,
               ice: /** @type {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} */ (iceForPunch),
               logPrefix: 'exit',
               fixedListenPort: true,
+              mappedReflexive: exitMappedReflexive,
               signalingPsk: udpSigPsk,
               signalingPskRequired: !!signalingPskRequired,
             });
@@ -9202,7 +9302,7 @@ async function runExit({
             );
           } catch (e) {
             console.error('[clean-vpn] exit UDP punch:', e?.message || e);
-            process.exit(1);
+            exitUdpPunchStarted = false;
           }
         })();
       });
@@ -9211,6 +9311,7 @@ async function runExit({
         udpPunchLoopbackWs.once('open', resolve);
         udpPunchLoopbackWs.once('error', reject);
       });
+      exitPunchInbox = attachSignalingInbox(udpPunchLoopbackWs);
       console.log(
         `[clean-vpn] exit UDP punch: слушаем UDP :${port}, сигналинг ws://*:${sigPort}/ — ждём client (--type=udp --punch)`,
       );
@@ -10149,9 +10250,11 @@ async function runClient({
         clientUdpPunchLoopbackWs.once('open', resolve);
         clientUdpPunchLoopbackWs.once('error', reject);
       });
+      const clientSigInbox = attachSignalingInbox(clientUdpPunchLoopbackWs);
       const peerEp = await runUdpPunchAsPeer({
         udpSock: udp,
         sigWs: /** @type {import('ws').WebSocket} */ (clientUdpPunchLoopbackWs),
+        sigInbox: clientSigInbox,
         ice: /** @type {Awaited<ReturnType<typeof loadWebrtcIceFromConfig>>} */ (iceForPunch),
         logPrefix: 'client',
         signalingPsk: udpSigPsk,
@@ -10207,9 +10310,11 @@ async function runClient({
         sigWs.once('open', resolve);
         sigWs.once('error', reject);
       });
+      const clientSigInbox = attachSignalingInbox(sigWs);
       const peerEp = await runUdpPunchAsPeer({
         udpSock: udp,
         sigWs,
+        sigInbox: clientSigInbox,
         ice,
         logPrefix: 'client',
         mappedReflexive,
