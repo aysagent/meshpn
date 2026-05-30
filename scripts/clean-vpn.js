@@ -304,6 +304,9 @@ const SCTP_DEFAULTS = {
 };
 
 const DEFAULT_ICE_SERVERS_JSON = [
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
+  { urls: 'stun:stun.nextcloud.com:443' },
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
@@ -2994,7 +2997,8 @@ async function stunGetMappedWithIceServers(udpSocket, ndcIceServers, perServerTi
   }
   throw new Error(
     `[clean-vpn] UDP punch: STUN не удался ни к одному серверу: ${lastErr?.message || lastErr}` +
-      (tries.length ? `; попытки: ${tries.join('; ')}` : ''),
+      (tries.length ? `; попытки: ${tries.join('; ')}` : '') +
+      '; на части сетей stun.l.google.com блокируется ISP — добавьте рабочий stun: в iceServers (см. config/default.json)',
   );
 }
 
