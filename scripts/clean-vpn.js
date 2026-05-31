@@ -142,6 +142,10 @@ import {
 import {
   attachTransparentTlsClientSession,
   classifyComboTlsExitPrefix,
+  logComboTlsClientBranch,
+  logComboTlsExitBranch,
+  logNonTlsExitDispatch,
+  peekPrefixDescribe,
   wireTransparentTlsEncSniSession,
 } from './lib/transparent-tls-runtime.mjs';
 // node-datachannel — native addon; только для --type=webrtc (не rtc-chrome). Lazy import в ensureNodeDatachannelLoaded().
@@ -4090,6 +4094,13 @@ function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, publicName
     if (merged[0] !== 0x16) {
       finalized = true;
       cleanupPeek();
+      const pref = peekPrefixDescribe(merged);
+      logNonTlsExitDispatch('transparent-tls', 'ipv4-mux', {
+        peer: `${peer}:${rp}`,
+        firstByte: pref.firstByte,
+        len: pref.len,
+        hexPreview: pref.hexPreview,
+      });
       startBridgeTcp(sock, merged, 'tcp');
       return;
     }
@@ -4102,11 +4113,15 @@ function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, publicName
 
     finalized = true;
     cleanupPeek();
+    console.log(
+      `[clean-vpn transparent-tls exit] TLS ClientHello → enc-SNI relay peer=${peer}:${rp}`,
+    );
     wireTransparentTlsEncSniSession(/** @type {import('net').Socket} */ (sock), {
       vpnSecretBuf,
       publicName,
       logOpts: ttlLogOpts,
       initialBuf: merged,
+      modeTag: 'transparent-tls',
     });
   }
 
@@ -4191,18 +4206,38 @@ function peekDispatchExitComboTlsSock(sock, vpnSecretBuf, publicName, tlsCtx, tt
     finalized = true;
     cleanupPeek();
 
-    const tag = `[clean-vpn combo-tls exit] соединение: peer=${peer}:${rp}`;
+    const tagPeer = `${peer}:${rp}`;
     if (route.status === 'relay') {
-      console.log(`${tag} route=enc-sni-relay`);
       wireTransparentTlsEncSniSession(/** @type {import('net').Socket} */ (sock), {
         vpnSecretBuf,
         publicName,
         logOpts: ttlLogOpts,
         initialBuf: merged,
+        modeTag: 'combo-tls',
       });
       return;
     }
-    console.log(`${tag} route=tls`);
+
+    if (merged[0] !== 0x16) {
+      const pref = peekPrefixDescribe(merged);
+      logNonTlsExitDispatch('combo-tls', 'tls-mux', {
+        peer: tagPeer,
+        firstByte: pref.firstByte,
+        len: pref.len,
+        hexPreview: pref.hexPreview,
+      });
+      logComboTlsExitBranch('boring-tls', tagPeer, {
+        note: 'не TLS → tls-mux handler (VPN/TUN через boring-tls на client)',
+      });
+    } else {
+      const ch = parseFirstTlsClientHelloFromTcpBuf(merged);
+      const wireSni =
+        'ok' in ch && ch.ok && ch.sni?.length ? ch.sni.join(',') : null;
+      logComboTlsExitBranch('boring-tls', tagPeer, {
+        wireSni,
+        note: 'TLS ClientHello без enc-SNI → tls-mux (VPN/TUN через boring-tls на client)',
+      });
+    }
     handleTlsExitInbound(sock, tlsCtx);
     if (merged.length) process.nextTick(() => sock.emit('data', merged));
   }
@@ -10764,7 +10799,10 @@ async function runClient({
     }
 
     const logComboTunUp = () => {
-      console.log('[clean-vpn combo-tls client] мост TUN: route=boring-tls → exit-tls');
+      logComboTlsClientBranch(
+        'boring-tls',
+        `TCP→exit ${host}:${port} (TUN IPv4 через boring-tls-helper, не HTTPS intercept)`,
+      );
     };
 
     attachOutboundTunBridge(
@@ -10793,14 +10831,10 @@ async function runClient({
 
     const onInterceptHttpsSock = /** @type {(sock: import('net').Socket) => void} */ ((sock) => {
       sock.on('error', () => {});
-      console.log(
-        `[clean-vpn combo-tls client] HTTPS intercept: route=transparent-tls peer=${sock.remoteAddress ?? '?'}:${sock.remotePort ?? '?'}`,
+      logComboTlsClientBranch(
+        'transparent',
+        `accept HTTPS-intercept local=${sock.localAddress ?? '?'}:${sock.localPort ?? '?'} peer=${sock.remoteAddress ?? '?'}:${sock.remotePort ?? '?'}`,
       );
-      if (ttlLogOptsCombo.tlsLogJa3 || ttlLogOptsCombo.ja3Verbose) {
-        console.log(
-          `[clean-vpn combo-tls client] accept HTTPS-intercept: local=${sock.localAddress ?? '?'}:${sock.localPort ?? '?'}`,
-        );
-      }
       attachTransparentTlsClientSession(sock, {
         upstreamHost: host,
         upstreamPort: port,
@@ -10808,6 +10842,7 @@ async function runClient({
         publicName: comboClientPublicName,
         explicitDestination,
         logOpts: ttlLogOptsCombo,
+        modeTag: 'combo-tls',
       }).catch((err) => {
         console.error('[clean-vpn combo-tls https]', err?.message ?? err);
         sock.destroy();
@@ -10956,7 +10991,7 @@ async function runClient({
       new Promise((resolve, reject) => {
         const sock = net.connect(port, host, () => {
           console.log(
-            `[clean-vpn] transparent-tls: TCP→exit ${host}:${port} как мост IPv4 (кадры uint32+pkt, см. --type=socket)`,
+            `[clean-vpn transparent-tls client] route=non-tls (TUN IPv4) upstream=${host}:${port} транспорт=IPv4 mux (кадры uint32+pkt, как --type=socket)`,
           );
           tlsVpnSocket = sock;
           resolve(sock);
@@ -10988,11 +11023,9 @@ async function runClient({
 
     const onInterceptHttpsSock = /** @type {(sock: import('net').Socket) => void} */ ((sock) => {
       sock.on('error', () => {});
-      if (ttlLogOpts.tlsLogJa3 || ttlLogOpts.ja3Verbose) {
-        console.log(
-          `[clean-vpn transparent-tls client] accept HTTPS-intercept: local=${sock.localAddress ?? '?'}:${sock.localPort ?? '?'} peer=${sock.remoteAddress ?? '?'}:${sock.remotePort ?? '?'}`,
-        );
-      }
+      console.log(
+        `[clean-vpn transparent-tls client] route=transparent (HTTPS intercept) accept local=${sock.localAddress ?? '?'}:${sock.localPort ?? '?'} peer=${sock.remoteAddress ?? '?'}:${sock.remotePort ?? '?'}`,
+      );
       attachTransparentTlsClientSession(sock, {
         upstreamHost: host,
         upstreamPort: port,
@@ -11000,6 +11033,7 @@ async function runClient({
         publicName: ttlClientPublicName,
         explicitDestination,
         logOpts: ttlLogOpts,
+        modeTag: 'transparent-tls',
       }).catch((err) => {
         console.error('[clean-vpn transparent-tls https]', err?.message ?? err);
         sock.destroy();

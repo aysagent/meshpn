@@ -25,6 +25,85 @@ import {
 import { ja4FromTcpBuf } from './tls-clienthello-ja4.mjs';
 
 /** @typedef {{ tlsLogJa3?: boolean, ja3Verbose?: boolean }} TransparentTlsLogOpts */
+/** @typedef {'transparent-tls' | 'combo-tls'} TransparentTlsModeTag */
+
+/**
+ * Стандартный лог enc-SNI на проводе client↔exit (всегда, без --tls-log-ja3).
+ * @param {'client' | 'exit'} role
+ * @param {TransparentTlsModeTag} mode
+ * @param {{
+ *   originSni: string,
+ *   encSni: string,
+ *   peer?: string,
+ *   upstream?: string,
+ *   originPort?: number,
+ * }} info
+ */
+export function logEncSniWire(role, mode, info) {
+  const parts = [`[clean-vpn ${mode} ${role}] enc-SNI wire`];
+  if (info.peer) parts.push(`peer=${info.peer}`);
+  if (info.upstream) parts.push(`upstream=${info.upstream}`);
+  parts.push(`origin_sni=${info.originSni}`);
+  parts.push(`enc_sni=${info.encSni}`);
+  if (info.originPort != null && info.originPort !== 443) {
+    parts.push(`origin_port=${info.originPort}`);
+  }
+  console.log(parts.join(' '));
+}
+
+/**
+ * Лог non-TLS потока на exit (dispatch).
+ * @param {TransparentTlsModeTag} mode
+ * @param {'ipv4-mux' | 'tls-mux'} forwardVia
+ * @param {{ peer: string, firstByte: number, len: number, hexPreview: string }} info
+ */
+export function logNonTlsExitDispatch(mode, forwardVia, info) {
+  const via =
+    forwardVia === 'ipv4-mux'
+      ? 'IPv4 mux (кадры uint32+pkt → TUN/NAT, как --type=socket)'
+      : 'TLS mux (ожидается VPN ClientHello / boring-tls → TUN)';
+  console.log(
+    `[clean-vpn ${mode} exit] не TLS: peer=${info.peer} first_byte=0x${info.firstByte.toString(16).padStart(2, '0')} len=${info.len} prefix_hex=${info.hexPreview} → ${via}`,
+  );
+}
+
+/**
+ * Лог ветки combo-tls на exit.
+ * @param {'transparent' | 'boring-tls'} branch
+ * @param {string} peer
+ * @param {{ wireSni?: string|null, encSni?: string|null, originSni?: string|null, note?: string }} [extra]
+ */
+export function logComboTlsExitBranch(branch, peer, extra = {}) {
+  const parts = [`[clean-vpn combo-tls exit] route=${branch}`, `peer=${peer}`];
+  if (extra.wireSni) parts.push(`wire_sni=${extra.wireSni}`);
+  if (extra.encSni) parts.push(`enc_sni=${extra.encSni}`);
+  if (extra.originSni) parts.push(`origin_sni=${extra.originSni}`);
+  if (extra.note) parts.push(extra.note);
+  console.log(parts.join(' '));
+}
+
+/**
+ * Лог ветки combo-tls на client.
+ * @param {'transparent' | 'boring-tls'} branch
+ * @param {string} [detail]
+ */
+export function logComboTlsClientBranch(branch, detail) {
+  const msg = detail ? ` ${detail}` : '';
+  console.log(`[clean-vpn combo-tls client] route=${branch}${msg}`);
+}
+
+/**
+ * @param {Buffer} buf
+ */
+function peekPrefixDescribe(buf) {
+  return {
+    firstByte: buf[0],
+    len: buf.length,
+    hexPreview: buf.subarray(0, Math.min(16, buf.length)).toString('hex'),
+  };
+}
+
+export { peekPrefixDescribe };
 
 /**
  * @param {string} roleTag 'client' | 'exit'
@@ -198,10 +277,13 @@ export function pipeDuplexWithBackpressure(src, dst) {
  *   publicName: string,
  *   logOpts?: TransparentTlsLogOpts|null,
  *   initialBuf?: Buffer,
+ *   modeTag?: TransparentTlsModeTag,
  * }} opts
  */
 export function wireTransparentTlsEncSniSession(mux, opts) {
   const { vpnSecretBuf, publicName, logOpts } = opts;
+  const modeTag = opts.modeTag ?? 'transparent-tls';
+  const peer = `${mux.remoteAddress ?? '?'}:${mux.remotePort ?? '?'}`;
   /** @type {Buffer[]} */
   let acc = opts.initialBuf?.length ? [opts.initialBuf] : [];
   let accLen = acc.reduce((n, b) => n + b.length, 0);
@@ -225,7 +307,7 @@ export function wireTransparentTlsEncSniSession(mux, opts) {
   const startOrigin = (hostname, port, /** @type {Buffer[]} */ firstWrites) => {
     if (logOpts?.tlsLogJa3) {
       console.log(
-        `[clean-vpn transparent-tls exit] relay: origin=${hostname}:${port} relay_sni=${sess?.relaySni ?? '?'}`,
+        `[clean-vpn transparent-tls exit] relay connect: origin=${hostname}:${port} enc_sni=${sess?.relaySni ?? '?'}`,
       );
     }
     pendingToOrigin = firstWrites.filter((b) => b.length);
@@ -263,6 +345,19 @@ export function wireTransparentTlsEncSniSession(mux, opts) {
     }
 
     sess = { relaySni: parsed.sni[0], originHost: dec.hostname, port: dec.port };
+    logEncSniWire('exit', modeTag, {
+      originSni: sess.originHost,
+      encSni: sess.relaySni,
+      peer,
+      originPort: sess.port,
+    });
+    if (modeTag === 'combo-tls') {
+      logComboTlsExitBranch('transparent', peer, {
+        encSni: sess.relaySni,
+        originSni: sess.originHost,
+      });
+    }
+
     const chPrefix = Buffer.from(buf.subarray(0, parsed.bytesConsumed));
     const tail = Buffer.from(buf.subarray(parsed.bytesConsumed));
 
@@ -353,14 +448,18 @@ export async function attachTransparentTlsClientSession(
     publicName,
     explicitDestination,
     logOpts,
+    modeTag,
   },
 ) {
   const pn = String(publicName || '').trim();
+  const mode = modeTag ?? 'transparent-tls';
   if (!pn) {
     throw new Error('transparent-tls: --tls-public-name обязателен для enc-SNI relay');
   }
 
   appSock.pause();
+  const peer = `${appSock.remoteAddress ?? '?'}:${appSock.remotePort ?? '?'}`;
+  const upstream = `${upstreamHost}:${upstreamPort}`;
   const dst =
     explicitDestination != null && typeof explicitDestination.address === 'string'
       ? { address: explicitDestination.address, port: explicitDestination.port }
@@ -416,10 +515,22 @@ export async function attachTransparentTlsClientSession(
           reject(new Error(`rebuild SNI (${originHostAscii} → enc): ${wr.reason}`));
           return;
         }
-        if (logOpts?.tlsLogJa3) {
-          console.log(
-            `[clean-vpn transparent-tls client] enc-SNI: origin_sni=${originHostAscii} relay_sni=${relayHostname} so_orig=${dst.address}:${dst.port}`,
+
+        logEncSniWire('client', mode, {
+          originSni: originHostAscii,
+          encSni: relayHostname,
+          peer,
+          upstream,
+          originPort: dst.port,
+        });
+        if (mode === 'combo-tls') {
+          logComboTlsClientBranch(
+            'transparent',
+            `origin_sni=${originHostAscii} enc_sni=${relayHostname} so_orig=${dst.address}:${dst.port}`,
           );
+        }
+
+        if (logOpts?.tlsLogJa3) {
           logTransparentTlsClientHelloFingerprints(
             'client',
             'ClientHello браузера (до подмены)',
