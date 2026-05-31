@@ -1,4 +1,6 @@
-# Combo-TLS / Transparent-TLS / CVPTX — улучшение конфиденциальности
+# Combo-TLS / Transparent-TLS — улучшение конфиденциальности
+
+> **2026-05:** **Подход C (enc-SNI relay)** реализован — CVPTX wire удалён (BREAKING). См. раздел «Подход C» ниже. H-3 (magic + cleartext OPEN) закрыт для HTTPS intercept.
 
 ## Контекст
 
@@ -80,6 +82,56 @@ flowchart LR
   TLS-сессия» работает, и переход к multi-session helper'у — дорого.
 - Совместимость с deployment'ом за Cloudflare (см.
   [`scripts/cloudflare.md`](cloudflare.md)).
+
+## Подход C: enc-SNI relay (реализован, BREAKING)
+
+**Статус:** заменяет CVPTX wire целиком (без dual-version). Client и exit обновляются **вместе**.
+
+### Суть
+
+- Client→exit: **raw TCP**, первые байты — TLS ClientHello с SNI `<encLabels>.--tls-public-name`.
+- Origin hostname + port зашифрованы в DNS-label (AES-256-GCM, HKDF от `clean-vpn-hmac.key`).
+- Exit: parse ClientHello → decrypt label → `connect(port, hostname)` → restore origin SNI в CH → duplex pipe.
+- **`--tls-public-name` обязателен** на client и exit для HTTPS intercept (`transparent-tls`, `combo-tls`).
+
+### Dispatch (без magic `CVPTX1`)
+
+| Exit type | Маршрут relay | Иначе |
+|-----------|---------------|--------|
+| `combo-tls` | SNI `*.publicName` + decrypt OK | TLS mux (`--type=tls`) |
+| `transparent-tls` | первый байт `0x16` (TLS) | IPv4 socket bridge (TUN) |
+
+### Закрывает (из аудита)
+
+- **H-3 CVPTX magic** — протокол удалён (`transparent-tls-wire.mjs`).
+- **H-3 cleartext OPEN** (origin/fake/host в кадре) — удалён.
+- **Same-length SNI limit** — variable-length rebuild (`transparent-tls-ch-rebuild.mjs`).
+
+### Остаётся
+
+- **M-3** — raw TCP relay без per-frame MAC на uplink (нужен Подход A/B для полного fix).
+- Plaintext TLS ClientHello на client→exit (SNI = `*.publicName`, без magic).
+- HTTP/3 (QUIC), ECH, pattern `*.publicName`.
+
+### Модули
+
+- [`scripts/lib/transparent-tls-enc-sni.mjs`](lib/transparent-tls-enc-sni.mjs)
+- [`scripts/lib/transparent-tls-ch-rebuild.mjs`](lib/transparent-tls-ch-rebuild.mjs)
+- [`scripts/lib/transparent-tls-runtime.mjs`](lib/transparent-tls-runtime.mjs) — `wireTransparentTlsEncSniSession`, `attachTransparentTlsClientSession`
+
+### E2E
+
+```bash
+# exit
+sudo node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 \
+  --type=combo-tls --tls-public-name=vpn.example.com
+
+# client
+sudo node scripts/clean-vpn.js --role=client --server=EXIT:443 \
+  --type=combo-tls --split-default --tls-public-name=vpn.example.com
+```
+
+---
 
 ## Подход A: один TLS-канал client→exit + HTTP/2 mux
 

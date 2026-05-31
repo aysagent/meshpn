@@ -1,19 +1,20 @@
-/** Режим --type=transparent-tls без TUN (MVP relay). Вызывается из scripts/clean-vpn.js. */
+/** Режим --type=transparent-tls без TUN: enc-SNI relay (raw TCP TLS stream). */
 
 import net from 'net';
-import { randomInt } from 'crypto';
 import { once } from 'events';
 import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
-  decodeVerifyOpen,
-  encodeDataFrame,
-  encodeOpenFrame,
-  OP_DATA,
-  randomNonce16,
-  TransparentTlsStreamDecoder,
-} from './transparent-tls-wire.mjs';
+  buildRelayHostname,
+  decodeRelayFromHostname,
+  encodeRelaySniLabel,
+  looksLikeRelayEncSniHostname,
+} from './transparent-tls-enc-sni.mjs';
+import {
+  replaceFirstSniInTcpBuffer,
+  restoreFirstSniInTcpBuffer,
+} from './transparent-tls-ch-rebuild.mjs';
 import {
   extractFirstClientHelloBody,
   ja3DebugFromTcpBuf,
@@ -22,15 +23,10 @@ import {
   parseTlsClientHelloReadableExtensions,
 } from './tls-clienthello-ja3.mjs';
 import { ja4FromTcpBuf } from './tls-clienthello-ja4.mjs';
-import {
-  rewriteFirstSniInTcpBuffer,
-  restoreFirstSniInTcpBuffer,
-} from './transparent-tls-sn-patch.mjs';
 
 /** @typedef {{ tlsLogJa3?: boolean, ja3Verbose?: boolean }} TransparentTlsLogOpts */
 
 /**
- * JA3/JA4 первого ClientHello в TCP-буфере (--tls-log-ja3 / --ja3-verbose как на exit tls).
  * @param {string} roleTag 'client' | 'exit'
  * @param {string} phaseLabel
  * @param {Buffer} tcpBuf
@@ -94,7 +90,11 @@ function logTransparentTlsClientHelloFingerprints(roleTag, phaseLabel, tcpBuf, o
       }
     } else {
       const j = ja3FromTcpBuf(tcpBuf);
-      if (j) console.log(`[clean-vpn transparent-tls ${roleTag}] ${phaseLabel}: ja3_md5=${j.ja3Digest} ja3_sorted_md5=${j.ja3SortedDigest}`);
+      if (j) {
+        console.log(
+          `[clean-vpn transparent-tls ${roleTag}] ${phaseLabel}: ja3_md5=${j.ja3Digest} ja3_sorted_md5=${j.ja3SortedDigest}`,
+        );
+      }
     }
   } catch (e) {
     const msg = /** @type {Error} */ (e).message;
@@ -128,23 +128,6 @@ export function ipv4OriginalDestinationFromSock(sock) {
   return mod.originalDstIpv4FromFd(fd);
 }
 
-/**
- * Плейсхолдер той же UTF-8 длины, что и реальный SNI (без пересборки длин в handshake).
- * Только [a-z0-9] — достаточно для MVP «иной hostname в ClientHello».
- */
-export function randomAsciiHostnameSameUtf8ByteLength(realHostnameAscii) {
-  const n = Buffer.byteLength(String(realHostnameAscii), 'utf8');
-  if (n < 1 || n > 253) {
-    throw new Error(`transparent-tls: длина SNI ${n} вне 1..253`);
-  }
-  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let s = '';
-  for (let i = 0; i < n; i++) {
-    s += alphabet[randomInt(alphabet.length)];
-  }
-  return s;
-}
-
 export function killPair(a, b) {
   killOne(a);
   killOne(b);
@@ -160,175 +143,206 @@ export function killOne(s) {
 }
 
 /**
- * Одно TCP-соединение client→exit после accept на exit (без TUN).
- * @param {TransparentTlsLogOpts|null} [logOpts] — `--tls-log-ja3` / `--ja3-verbose`
+ * Классификация префикса для combo-tls exit: enc-SNI relay vs TLS mux.
+ * @param {Buffer} buf
+ * @param {string} publicName
+ * @param {Buffer} psk
  */
-export function wireTransparentTlsExitSession(mux, vpnSecretBuf, logOpts) {
-  const dec = new TransparentTlsStreamDecoder({ maxInnerData: 768 * 1024 });
+export function classifyComboTlsExitPrefix(buf, publicName, psk) {
+  if (buf.length < 1) return { status: 'need_more', minTotal: 1 };
+  if (buf[0] !== 0x16) return { status: 'tls_mux' };
+  const parsed = parseFirstTlsClientHelloFromTcpBuf(buf);
+  if ('needMore' in parsed && parsed.needMore) {
+    return { status: 'need_more', minTotal: parsed.minTotal };
+  }
+  if (!('ok' in parsed) || !parsed.ok || !parsed.sni?.[0]) {
+    return { status: 'tls_mux' };
+  }
+  if (!looksLikeRelayEncSniHostname(parsed.sni[0], publicName)) {
+    return { status: 'tls_mux' };
+  }
+  const dec = decodeRelayFromHostname(parsed.sni[0], publicName, psk);
+  if (!dec.ok) return { status: 'tls_mux' };
+  return { status: 'relay', parsed, decoded: dec };
+}
+
+/**
+ * Duplex pipe с backpressure между двумя сокетами.
+ * @param {import('stream').Duplex} src
+ * @param {import('stream').Duplex} dst
+ */
+export function pipeDuplexWithBackpressure(src, dst) {
+  /** @type {boolean} */
+  let srcDrainWait = false;
+  src.on('data', (chunk) => {
+    const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    if (!b.length || dst.writableEnded || dst.writableFinished) return;
+    if (!dst.write(b)) {
+      src.pause();
+      if (!srcDrainWait) {
+        srcDrainWait = true;
+        dst.once('drain', () => {
+          srcDrainWait = false;
+          src.resume();
+        });
+      }
+    }
+  });
+}
+
+/**
+ * Exit: raw TCP enc-SNI relay — decrypt SNI, DNS connect, restore CH, pipe.
+ * @param {import('net').Socket} mux
+ * @param {{
+ *   vpnSecretBuf: Buffer,
+ *   publicName: string,
+ *   logOpts?: TransparentTlsLogOpts|null,
+ *   initialBuf?: Buffer,
+ * }} opts
+ */
+export function wireTransparentTlsEncSniSession(mux, opts) {
+  const { vpnSecretBuf, publicName, logOpts } = opts;
+  /** @type {Buffer[]} */
+  let acc = opts.initialBuf?.length ? [opts.initialBuf] : [];
+  let accLen = acc.reduce((n, b) => n + b.length, 0);
   /** @type {import('net').Socket|null} */
   let origin = null;
-  /** @type {{ fakeHostAscii: string; originHostAscii: string } | null} */
+  /** @type {{ relaySni: string, originHost: string, port: number } | null} */
   let sess = null;
-  let firstUpstreamFromClient = true;
-
+  let clientPrefixDone = false;
   /** @type {Buffer[]} */
   let pendingToOrigin = [];
   let originReady = false;
+  let finalized = false;
 
-  /** @type {boolean} */
-  let pumpStarted = false;
+  const fail = (msg) => {
+    if (finalized) return;
+    finalized = true;
+    console.error('[transparent-tls exit]', msg);
+    killPair(mux, origin);
+  };
+
+  const startOrigin = (hostname, port, /** @type {Buffer[]} */ firstWrites) => {
+    if (logOpts?.tlsLogJa3) {
+      console.log(
+        `[clean-vpn transparent-tls exit] relay: origin=${hostname}:${port} relay_sni=${sess?.relaySni ?? '?'}`,
+      );
+    }
+    pendingToOrigin = firstWrites.filter((b) => b.length);
+    origin = net.connect(port, hostname);
+    origin.once('close', () => killOne(mux));
+    origin.once('connect', () => {
+      originReady = true;
+      for (const p of pendingToOrigin) {
+        if (!(origin.writableEnded || origin.writableFinished)) origin.write(p);
+      }
+      pendingToOrigin.length = 0;
+      if (origin && mux) pipeDuplexWithBackpressure(origin, mux);
+    });
+    origin.on('error', (err) => {
+      console.error('[transparent-tls exit] origin:', err.message);
+      killPair(mux, origin);
+    });
+  };
+
+  const processAccumulated = () => {
+    if (finalized || clientPrefixDone) return;
+    const buf = Buffer.concat(acc, accLen);
+    const parsed = parseFirstTlsClientHelloFromTcpBuf(buf);
+    if ('needMore' in parsed && parsed.needMore) return;
+
+    if (!('ok' in parsed) || !parsed.ok || !parsed.sni?.[0]) {
+      fail(`ClientHello: ${'reason' in parsed ? parsed.reason : 'parse_fail'}`);
+      return;
+    }
+
+    const dec = decodeRelayFromHostname(parsed.sni[0], publicName, vpnSecretBuf);
+    if (!dec.ok) {
+      fail(`enc-SNI: ${dec.reason}`);
+      return;
+    }
+
+    sess = { relaySni: parsed.sni[0], originHost: dec.hostname, port: dec.port };
+    const chPrefix = Buffer.from(buf.subarray(0, parsed.bytesConsumed));
+    const tail = Buffer.from(buf.subarray(parsed.bytesConsumed));
+
+    const muxTlsBefore =
+      logOpts?.tlsLogJa3 ? Buffer.from(chPrefix) : null;
+    const restored = restoreFirstSniInTcpBuffer(chPrefix, sess.relaySni, sess.originHost);
+    if (!restored.ok) {
+      fail(`restore SNI: ${restored.reason}`);
+      return;
+    }
+
+    if (logOpts?.tlsLogJa3) {
+      console.log(
+        `[clean-vpn transparent-tls exit] restore SNI: ${sess.relaySni} → ${sess.originHost}`,
+      );
+      if (muxTlsBefore) {
+        logTransparentTlsClientHelloFingerprints(
+          'exit',
+          'Mux enc-SNI ClientHello (relay SNI)',
+          muxTlsBefore,
+          logOpts,
+        );
+        logTransparentTlsClientHelloFingerprints(
+          'exit',
+          'К origin: ClientHello после restore',
+          restored.prefixBuf,
+          logOpts,
+        );
+      }
+    }
+
+    clientPrefixDone = true;
+    acc.length = 0;
+    accLen = 0;
+    startOrigin(sess.originHost, sess.port, [restored.prefixBuf, tail]);
+  };
 
   mux?.once?.('error', () => killPair(mux, origin));
   mux?.once?.('close', () => killOne(origin));
 
   mux?.on?.('data', (chunk) => {
-    try {
-      for (const inner of dec.push(chunk)) {
-        if (!sess) {
-          let meta;
-          try {
-            meta = decodeVerifyOpen(vpnSecretBuf, inner);
-          } catch (e) {
-            console.error('[transparent-tls exit] OPEN:', /** @type {Error} */ (e).message);
-            killPair(mux, origin);
-            return;
-          }
-          sess = {
-            fakeHostAscii: meta.fakeHostAscii,
-            originHostAscii: meta.originHostAscii,
-          };
-
-          if (logOpts?.tlsLogJa3) {
-            console.log(
-              `[clean-vpn transparent-tls exit] OPEN: dst_tcp=${meta.ipv4Host}:${meta.port} | origin_sni(в кадре + для upstream)=${meta.originHostAscii} | fake_sni(в теле первого ClientHello по этому mux)=${meta.fakeHostAscii} | байты OPEN на проводе: plaintext+HMAC между client↔этот хост — не AEAD`,
-            );
-          }
-
-          origin = net.connect(meta.port, meta.ipv4Host);
-          origin.once?.('close', () => killOne(mux));
-          origin?.once?.('connect', () => {
-            originReady = true;
-            for (const p of pendingToOrigin) {
-              if (!(origin.writableEnded || origin.writableFinished)) origin.write(p);
-            }
-            pendingToOrigin.length = 0;
-            if (!pumpStarted && mux && origin) {
-              pumpStarted = true;
-              pumpOriginChunksToMux(origin, mux);
-            }
-          });
-
-          origin?.on?.('error', (err) => {
-            console.error('[transparent-tls exit] origin:', err.message);
-            killPair(mux, origin);
-          });
-          continue;
-        }
-
-        if (!origin || inner[0] !== OP_DATA) {
-          killPair(mux, origin);
-          return;
-        }
-
-        let plain = Buffer.from(inner.subarray(1));
-        if (!plain.length) continue;
-
-        if (firstUpstreamFromClient && sess) {
-          firstUpstreamFromClient = false;
-          /** Снимок по mux до restore (JA4 содержит fake SNI там, где строка входит в ja4-сегменты). */
-          const muxTlsBufBeforeRestore =
-            logOpts?.tlsLogJa3 ? Buffer.from(plain) : null;
-          const r = restoreFirstSniInTcpBuffer(plain, sess.fakeHostAscii, sess.originHostAscii);
-          if (!r.ok) {
-            console.error('[transparent-tls exit] restore SNI:', r.reason);
-            killPair(mux, origin);
-            return;
-          }
-          if (logOpts?.tlsLogJa3) {
-            console.log(
-              `[clean-vpn transparent-tls exit] в сокет к origin подставили SNI обратно: relay_sni=${sess.fakeHostAscii} → upstream_sni=${sess.originHostAscii}`,
-            );
-            if (muxTlsBufBeforeRestore) {
-              logTransparentTlsClientHelloFingerprints(
-                'exit',
-                'Mux CVPTX: ClientHello от клиента (подстановочный SNI в CH)',
-                muxTlsBufBeforeRestore,
-                logOpts,
-              );
-              logTransparentTlsClientHelloFingerprints(
-                'exit',
-                'К origin-серверу: ClientHello после in-place восстановления SNI',
-                plain,
-                logOpts,
-              );
-            }
-          }
-        }
-
-        if (!(origin.writableEnded || origin.writableFinished)) {
-          if (originReady) origin.write(plain);
-          else pendingToOrigin.push(plain);
-        }
+    if (finalized) return;
+    const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    if (clientPrefixDone) {
+      if (originReady && origin && !(origin.writableEnded || origin.writableFinished)) {
+        origin.write(b);
+      } else if (!originReady) {
+        pendingToOrigin.push(b);
       }
-    } catch (e) {
-      console.error('[transparent-tls exit] протокол:', /** @type {Error} */ (e).message);
-      killPair(mux, origin);
+      return;
     }
+    acc.push(b);
+    accLen += b.length;
+    processAccumulated();
   });
-}
 
-/**
- * Перекачка origin readable → MUX в кадрах OP_DATA.
- * @param {import('stream').Duplex|null} origin
- * @param {import('net').Socket|null} mux
- */
-export function pumpOriginChunksToMux(origin, mux) {
-  if (!origin || !mux) return;
-  /** @type {boolean} */
-  let waitingMuxDrain = false;
-  origin.on('data', (chunk) => {
-    try {
-      const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      if (!b.length) return;
-      if (mux.writableEnded || mux.writableFinished) return;
-      const enc = encodeDataFrame(Buffer.from(b));
-      if (!mux.write(enc)) {
-        if (!waitingMuxDrain) {
-          waitingMuxDrain = true;
-          mux.once('drain', () => {
-            waitingMuxDrain = false;
-            origin.resume();
-          });
-        }
-        origin.pause();
-      }
-    } catch {
-      killOne(origin);
-    }
-  });
+  if (accLen) processAccumulated();
 }
 
 /**
  * Серверную сторону exit (TCP listen без TUN).
  */
-export function runTransparentTlsExitServer(host, listenPort, vpnSecretBuf) {
+export function runTransparentTlsExitServer(host, listenPort, vpnSecretBuf, publicName) {
   const srv = net.createServer((mux) =>
-    wireTransparentTlsExitSession(
-      /** @type {import('net').Socket} */ (mux),
+    wireTransparentTlsEncSniSession(/** @type {import('net').Socket} */ (mux), {
       vpnSecretBuf,
-      {},
-    ),
+      publicName,
+      logOpts: {},
+    }),
   );
   srv.listen(listenPort, host, () => {
     console.log(
-      `[clean-vpn] transparent-tls exit: TCP relay без TUN, слушаю ${host}:${listenPort}`,
+      `[clean-vpn] transparent-tls exit: enc-SNI relay без TUN, слушаю ${host}:${listenPort}`,
     );
   });
   return srv;
 }
 
 /**
- * Одно приложенческое соединение: REDIRECT/TCP → patch CH → multiplex к exit VPS.
+ * Client: REDIRECT/TCP → rebuild SNI → raw TCP TLS stream к exit.
  */
 export async function attachTransparentTlsClientSession(
   appSock,
@@ -336,12 +350,16 @@ export async function attachTransparentTlsClientSession(
     upstreamHost,
     upstreamPort,
     vpnSecretBuf,
-    /** @type {{ address: string; port: number }|null|undefined} если задано — без SO_ORIGINAL_DST (фиксированный dst, см. `--tunnel-peer` у client) */
+    publicName,
     explicitDestination,
-    /** @type {TransparentTlsLogOpts|null|undefined} */
     logOpts,
   },
 ) {
+  const pn = String(publicName || '').trim();
+  if (!pn) {
+    throw new Error('transparent-tls: --tls-public-name обязателен для enc-SNI relay');
+  }
+
   appSock.pause();
   const dst =
     explicitDestination != null && typeof explicitDestination.address === 'string'
@@ -349,18 +367,16 @@ export async function attachTransparentTlsClientSession(
       : ipv4OriginalDestinationFromSock(appSock);
   if (logOpts?.tlsLogJa3 || logOpts?.ja3Verbose) {
     console.log(
-      `[clean-vpn transparent-tls client] разбор первого TLS ClientHello: апстрим ${dst.address}:${dst.port}; JA3/JA4 появятся после успешной подмены SNI.`,
+      `[clean-vpn transparent-tls client] enc-SNI relay: апстрим ipv4=${dst.address}:${dst.port}; publicName=${pn}`,
     );
   }
 
   /** @type {Buffer[]} */
   const chunks = [];
-  const { prefixBuf, remaining, originHostAscii, fakeHostnameAscii } = await new Promise(
+  const { prefixBuf, remaining, originHostAscii, relayHostname } = await new Promise(
     (resolve, reject) => {
       const onErr = reject;
-      const onEnd = () =>
-        onErr(new Error('EOF before first TLS ClientHello is complete'));
-      /** @type {(...args:any[])=>void} */
+      const onEnd = () => onErr(new Error('EOF before first TLS ClientHello is complete'));
       const cleanup = () => {
         appSock.off('data', onData);
         appSock.off('end', onEnd);
@@ -378,40 +394,53 @@ export async function attachTransparentTlsClientSession(
           return;
         }
         if (!parsed.sni?.[0]) {
-          reject(new Error('нет plaintext SNI (ECH/MODE не поддерживается в MVP)'));
+          reject(new Error('нет plaintext SNI (ECH не поддерживается в v1)'));
           return;
         }
         const originHostAscii = parsed.sni[0];
-        const fakeHostnameAscii = randomAsciiHostnameSameUtf8ByteLength(originHostAscii);
+        let relayHostname;
+        try {
+          const labels = encodeRelaySniLabel(vpnSecretBuf, {
+            hostname: originHostAscii,
+            port: dst.port,
+          });
+          relayHostname = buildRelayHostname(labels, pn);
+        } catch (e) {
+          reject(new Error(`enc-SNI encode: ${/** @type {Error} */ (e).message}`));
+          return;
+        }
 
-        /** Копия tcp до патча имени хоста в ClientHello. */
         const tcpBufOriginalBrowser = Buffer.from(buf.subarray(0, parsed.bytesConsumed));
-        const prefixBuf = Buffer.from(tcpBufOriginalBrowser);
-        const wr = rewriteFirstSniInTcpBuffer(prefixBuf, fakeHostnameAscii);
+        const wr = replaceFirstSniInTcpBuffer(tcpBufOriginalBrowser, relayHostname);
         if (!wr.ok) {
-          reject(new Error(`patch SNI (${originHostAscii} → fake): ${wr.reason}`));
+          reject(new Error(`rebuild SNI (${originHostAscii} → enc): ${wr.reason}`));
           return;
         }
         if (logOpts?.tlsLogJa3) {
           console.log(
-            `[clean-vpn transparent-tls client] ClientHello уже обработан: origin_sni_браузера=${originHostAscii} подставили_sni_в_wire=${fakeHostnameAscii} ipv4_tls_dst_so_orig=${dst.address}:${dst.port}`,
+            `[clean-vpn transparent-tls client] enc-SNI: origin_sni=${originHostAscii} relay_sni=${relayHostname} so_orig=${dst.address}:${dst.port}`,
           );
           logTransparentTlsClientHelloFingerprints(
             'client',
-            'ClientHello браузера (до подмены, копия tcp)',
+            'ClientHello браузера (до подмены)',
             tcpBufOriginalBrowser,
             logOpts,
           );
           logTransparentTlsClientHelloFingerprints(
             'client',
-            'ClientHello после in-place подмены SNI (в OP_DATA до exit виден этот байтовый образ)',
-            prefixBuf,
+            'ClientHello после enc-SNI rebuild (raw TCP к exit)',
+            wr.prefixBuf,
             logOpts,
           );
         }
 
         const remaining = Buffer.from(buf.subarray(parsed.bytesConsumed));
-        resolve({ prefixBuf, remaining, originHostAscii, fakeHostnameAscii });
+        resolve({
+          prefixBuf: wr.prefixBuf,
+          remaining,
+          originHostAscii,
+          relayHostname,
+        });
       }
       appSock.on('data', onData);
       appSock.once('end', onEnd);
@@ -427,83 +456,19 @@ export async function attachTransparentTlsClientSession(
     },
   );
 
-  /** @type {import('stream').Duplex|null} */
-  const muxSock = /** @type {any} */ (net.connect(upstreamPort, upstreamHost));
+  const muxSock = /** @type {import('net').Socket} */ (net.connect(upstreamPort, upstreamHost));
   await once(muxSock, 'connect');
 
-  const nonce = randomNonce16();
-  muxSock.write(encodeOpenFrame(vpnSecretBuf, nonce, dst, originHostAscii, fakeHostnameAscii));
-  muxSock.write(encodeDataFrame(prefixBuf));
-  if (remaining.length) muxSock.write(encodeDataFrame(remaining));
+  muxSock.write(prefixBuf);
+  if (remaining.length) muxSock.write(remaining);
 
-  if (logOpts?.tlsLogJa3) {
-    console.warn(
-      `[clean-vpn transparent-tls client] CVPTX: кадр OPEN + первые OP_DATA идут на exit по открытому TCP (только целостность HMAC у OPEN); поля origin_sni, fake_sni из OPEN и байты патченного ClientHello читаются пассивно на этом участке.`,
-    );
-  }
+  pipeDuplexWithBackpressure(muxSock, appSock);
+  pipeDuplexWithBackpressure(appSock, muxSock);
 
-  const muxDec = new TransparentTlsStreamDecoder({
-    maxInnerData: 768 * 1024,
-    multiplexEstablished: true,
-  });
-  muxSock.on?.('data', (raw) => {
-    try {
-      const inners = muxDec.push(raw);
-      /** @type {number} */
-      let i = 0;
-      const pumpInnerPayloadsToApp = () => {
-        for (;;) {
-          if (i >= inners.length) return;
-          const inner = inners[i];
-          if (inner[0] !== OP_DATA) {
-            i += 1;
-            continue;
-          }
-          const pl = Buffer.from(inner.subarray(1));
-          if (!pl.length) {
-            i += 1;
-            continue;
-          }
-          if (appSock.writableEnded || appSock.writableFinished) return;
-          if (!appSock.write(pl)) {
-            muxSock.pause();
-            appSock.once('drain', () => {
-              muxSock.resume();
-              pumpInnerPayloadsToApp();
-            });
-            return;
-          }
-          i += 1;
-        }
-      };
-      pumpInnerPayloadsToApp();
-    } catch {
-      killPair(appSock, muxSock);
-    }
-  });
   muxSock.on?.('error', () => killPair(appSock, muxSock));
   muxSock.on?.('close', () => killOne(appSock));
   appSock.on?.('error', () => killPair(appSock, muxSock));
   appSock.on?.('close', () => killOne(muxSock));
-  /** Избежать множества обработчиков drain при нескольких appSock chunks подряд. */
-  /** @type {boolean} */
-  let muxDrainWait = false;
-  appSock.on?.('data', (d) => {
-    const enc = encodeDataFrame(Buffer.from(d));
-    if (!(muxSock.writableEnded || muxSock.writableFinished)) {
-      if (!muxSock.write(enc)) {
-        appSock.pause();
-        if (!muxDrainWait) {
-          muxDrainWait = true;
-          muxSock.once('drain', () => {
-            muxDrainWait = false;
-            appSock.resume();
-          });
-        }
-      }
-    }
-  });
-
   muxSock.on?.('end', () => appSock?.end?.());
   appSock.on?.('end', () => muxSock?.end?.());
 }

@@ -65,8 +65,8 @@
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=tls [--tls-cert-dir=...] [--tls-public-name=vpn.example.com] [--tls-probe-target=host:port] [--shared-hmac-key=PATH]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=tls --split-default [--tls-server-name=...] [--shared-hmac-key=PATH]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=boring-tls --split-default [--tls-server-name=...] — TLS через native/boring_tls/boring-tls-helper (см. scripts/boring-tls-plan.md); exit по-прежнему `--type=tls`.
- *   combo-tls (`--type=combo-tls`): обе стороны **одним** `--server=…:443` — **exit** один TCP listen; поток начинающийся префиксом **CVPTX** → HTTPS relay как `transparent-tls`; иначе → VPN **TLS mux** как `--type=tls` (JA3-пасsthrough к probe сохранён). **client**: TUN через **boring-tls-helper** (как `--type=boring-tls`); параллельно **tcp/443** перехват как **`transparent-tls`** (iptables/PREROUTING + CVPTX). Общий `clean-vpn-hmac.key`.
- * transparent-tls (`--type=transparent-tls`): на **client** — как **`--split-default` + `--type=socket`** (IPv4 из TUN в один TCP mux к exit); параллельно **HTTPS ipv4/tcp:443**: **OUTPUT** REDIRECT→**127:intercept** и **`filter INPUT` ACCEPT**; при **`--client-lan-subnet`** — второй слушатель на **LAN-IPv4 шлюза** + **PREROUTING DNAT** (**авто-детект** или **`--transparent-tls-lan-bind=IPv4`**). На **exit** — тот же TCP-порт, что у socket: входящие потоки с префиксом **CVPTX** — relay HTTPS; без префикса — обычные IPv4-кадры в TUN+NAT как у **`--type=socket`**. PSK — `clean-vpn-hmac.key`.
+ *   combo-tls (`--type=combo-tls`): обе стороны **одним** `--server=…:443` — **exit** один TCP listen; поток начинающийся префиксом enc-SNI relay (`*.--tls-public-name`, raw TCP TLS) → HTTPS; иначе → VPN **TLS mux** как `--type=tls`. **BREAKING:** CVPTX удалён; `--tls-public-name` обязателен.
+ * transparent-tls (`--type=transparent-tls`): TUN socket mux + enc-SNI HTTPS intercept; exit: `0x16` → relay, иначе IPv4 в TUN. **BREAKING:** `--tls-public-name` обязателен.
  * TLS (--type=tls): TCP + TLS 1.3 only, ALPN в ClientHello по умолчанию [h2, http/1.1]; маркера VPN в открытой части нет.
  *   После рукопожатия: при согласованном `h2` — VPN поверх HTTP/2 (`POST /clean-vpn` + Bearer, двусторонний DATA на одном stream); при `http/1.1` — как раньше `GET /clean-vpn` с Bearer и hijack сокета после ответа 200.
  *   Флаг `--http-vers=1.1` (обе стороны): только HTTP/1.1 и только ALPN `http/1.1` — для отладки и регрессии GET-пути.
@@ -97,7 +97,7 @@
  * по истечении M с следующий IPv4 снова может подключить lazy — это ожидаемо, не «вечная» блокировка.
  * CLEAN_VPN_KEEPALIVE_DEBUG=1: лог ip-протокола/длины при lazy/cooldown и отбросе не-IPv4 (версия из старших 4 бит байта 0 + первые 8 байт hex).
  * CLEAN_VPN_TLS_MUX_DEBUG=1 (exit|client + tls|boring-tls|combo-tls): лог до разбора ClientHello на exit (таймаут/close/error, первый chunk hex); на client — TCP connect и гипотеза при таймауте handshake (`tls`; для `boring-tls`/`combo-tls` TUN — рукопожатие в helper — см. stderr helper).
- * JA3/JA4 (опционально): `CLEAN_VPN_TLS_LOG_JA3=1` и/или `--tls-log-ja3`; выводятся **JA3 wire**, **JA3 sorted** MD5, **JA4** (FoxIO JA4.md), **JA4 alt**, **JA4 raw_o**, **JA4 raw_r** (JA4.md — средний сегмент без 0000/0010), **JA4 raw_r_alt** (стиль ja3.zone: средний сегмент с SNI 0000, без ALPN 0010). `--ja3-verbose` дополняет компоненты JA4 и stderr helper. Цифры **1516** в середине `ja4_a` — счётчики шифров и **расширений без GREASE на проводе**; 17→16 значит с wire реально пропал один тип расширения (часто padding `0015`), а не ошибка формулы JA4. Exit + `--type=tls`: JA3/JA4 входящего ClientHello из mux; exit + `combo-tls` — то же для ветви tls, плюс лог transparent по CVPTX как у `transparent-tls`. Client + `boring-tls` или `combo-tls` (мост TUN): stderr helper и строки `[clean-vpn] boring-tls …`. Для `--type=tls` в Node отпечаток в том же процессе не считается — смотрите лог exit или используйте на клиенте boring-tls либо combo-tls.
+ * JA3/JA4 (опционально): `CLEAN_VPN_TLS_LOG_JA3=1` и/или `--tls-log-ja3`; выводятся **JA3 wire**, **JA3 sorted** MD5, **JA4** (FoxIO JA4.md), **JA4 alt**, **JA4 raw_o**, **JA4 raw_r** (JA4.md — средний сегмент без 0000/0010), **JA4 raw_r_alt** (стиль ja3.zone: средний сегмент с SNI 0000, без ALPN 0010). `--ja3-verbose` дополняет компоненты JA4 и stderr helper. Цифры **1516** в середине `ja4_a` — счётчики шифров и **расширений без GREASE на проводе**; 17→16 значит с wire реально пропал один тип расширения (часто padding `0015`), а не ошибка формулы JA4. Exit + `--type=tls`: JA3/JA4 входящего ClientHello из mux; exit + `combo-tls` — то же для ветви tls, плюс лог enc-SNI relay как у `transparent-tls`. Client + `boring-tls` или `combo-tls` (мост TUN): stderr helper и строки `[clean-vpn] boring-tls …`. Для `--type=tls` в Node отпечаток в том же процессе не считается — смотрите лог exit или используйте на клиенте boring-tls либо combo-tls.
  * Шум IPv6 на tun при желании уменьняют вручную (отключение IPv6 на интерфейсе, sysctl) — скрипт это не автоматизирует.
  * QUIC/quic-ext в v1 без изменений (флаг на них не действует). Pong WS на idle не влияет.
  *
@@ -132,16 +132,17 @@ import {
   extractFirstClientHelloBody,
   ja3DebugFromTcpBuf,
   ja3FromTcpBuf,
+  parseFirstTlsClientHelloFromTcpBuf,
 } from './lib/tls-clienthello-ja3.mjs';
 import { ja4FromTcpBuf } from './lib/tls-clienthello-ja4.mjs';
 import {
   profileFileToHelperClientHelloBlock,
   readClienthelloProfileFileSync,
 } from './lib/boring-tls-clienthello-profile.mjs';
-import { TTL_FRAME_MAGIC_PREFIX } from './lib/transparent-tls-wire.mjs';
 import {
   attachTransparentTlsClientSession,
-  wireTransparentTlsExitSession,
+  classifyComboTlsExitPrefix,
+  wireTransparentTlsEncSniSession,
 } from './lib/transparent-tls-runtime.mjs';
 // node-datachannel — native addon; только для --type=webrtc (не rtc-chrome). Lazy import в ensureNodeDatachannelLoaded().
 // @matrixai/logger — CJS; в ESM класс лежит в .default, не в корне namespace.
@@ -4019,12 +4020,10 @@ function parseTransparentTlsTunnelPeerIpv4(s) {
 }
 
 /**
- * На exit после accept: поток начинается с префикса transparent-tls (CVPTX…) → TLS byte-relay;
- * иначе — мост IPv4-пакетов в TUN (как `--type=socket`).
+ * Exit transparent-tls: TLS ClientHello (0x16) → enc-SNI relay; иначе IPv4 mux в TUN.
  * @param {{ tlsLogJa3?: boolean, ja3Verbose?: boolean }} [ttlLogOpts]
  */
-function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, startBridgeTcp, ttlLogOpts) {
-  const need = TTL_FRAME_MAGIC_PREFIX.length;
+function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, publicName, startBridgeTcp, ttlLogOpts) {
   const peer = tlsClientIp(sock);
   const rp = sock.remotePort ?? '?';
   const release = exitPeekAcquire();
@@ -4062,7 +4061,7 @@ function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, startBridg
     finalized = true;
     cleanupPeek();
     console.log(
-      `[clean-vpn transparent-tls exit] peek прерван: peer=${peer}:${rp} reason=${reason} (ожидалось ≥${need} B для CVPTX/IPv4 dispatch)`,
+      `[clean-vpn transparent-tls exit] peek прерван: peer=${peer}:${rp} reason=${reason}`,
     );
     try {
       sock.destroy();
@@ -4085,24 +4084,30 @@ function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, startBridg
     const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     acc.push(b);
     len += b.length;
-    if (len < need) return;
-    finalized = true;
-    cleanupPeek();
+    if (len < 1) return;
 
     const merged = Buffer.concat(acc, len);
-    const head = merged.subarray(0, need);
-
-    if (head.compare(TTL_FRAME_MAGIC_PREFIX) === 0) {
-      wireTransparentTlsExitSession(
-        /** @type {import('net').Socket} */ (sock),
-        vpnSecretBuf,
-        ttlLogOpts,
-      );
-      if (merged.length) process.nextTick(() => sock.emit('data', merged));
+    if (merged[0] !== 0x16) {
+      finalized = true;
+      cleanupPeek();
+      startBridgeTcp(sock, merged, 'tcp');
       return;
     }
 
-    startBridgeTcp(sock, merged, 'tcp');
+    const parsed = parseFirstTlsClientHelloFromTcpBuf(merged);
+    if ('needMore' in parsed && parsed.needMore) {
+      if (len > TLS_MUX_MAX_CLIENT_BUF) failStale('client_hello_oversize');
+      return;
+    }
+
+    finalized = true;
+    cleanupPeek();
+    wireTransparentTlsEncSniSession(/** @type {import('net').Socket} */ (sock), {
+      vpnSecretBuf,
+      publicName,
+      logOpts: ttlLogOpts,
+      initialBuf: merged,
+    });
   }
 
   sock.on('data', onData);
@@ -4111,12 +4116,10 @@ function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, startBridg
 }
 
 /**
- * Exit `--type=combo-tls`: CVPTX → как transparent-tls; иначе → `handleTlsExitInbound` (как `--type=tls`, passthrough).
- * Таймер ~60 с на случай медленного пира без первых TTL_FRAME_MAGIC_PREFIX.length байт.
- * @param {Buffer} vpnSecretBuf общий HMAC для CVPTX OPEN и Bearer в TLS-туннеле
+ * Exit `--type=combo-tls`: enc-SNI relay (SNI `*.publicName` + decrypt OK) или TLS mux.
+ * @param {Buffer} vpnSecretBuf PSK для enc-SNI и Bearer
  */
-function peekDispatchExitComboTlsSock(sock, vpnSecretBuf, tlsCtx, ttlLogOpts) {
-  const need = TTL_FRAME_MAGIC_PREFIX.length;
+function peekDispatchExitComboTlsSock(sock, vpnSecretBuf, publicName, tlsCtx, ttlLogOpts) {
   const peer = tlsClientIp(sock);
   const rp = sock.remotePort ?? '?';
   const release = exitPeekAcquire();
@@ -4138,7 +4141,6 @@ function peekDispatchExitComboTlsSock(sock, vpnSecretBuf, tlsCtx, ttlLogOpts) {
   /** @type {ReturnType<typeof setTimeout>|undefined} */
   let stallTimer;
 
-  /** @type {(...args: any[]) => void} */
   const cleanupPeek = () => {
     sock.off('data', onData);
     sock.off('error', onPeekErrOrClose);
@@ -4155,7 +4157,7 @@ function peekDispatchExitComboTlsSock(sock, vpnSecretBuf, tlsCtx, ttlLogOpts) {
     finalized = true;
     cleanupPeek();
     console.log(
-      `[clean-vpn combo-tls exit] peek прерван: peer=${peer}:${rp} reason=${reason} (ожидалось ≥${need} B для различения CVPTX/TLS)`,
+      `[clean-vpn combo-tls exit] peek прерван: peer=${peer}:${rp} reason=${reason}`,
     );
     try {
       sock.destroy();
@@ -4178,21 +4180,26 @@ function peekDispatchExitComboTlsSock(sock, vpnSecretBuf, tlsCtx, ttlLogOpts) {
     const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     acc.push(b);
     len += b.length;
-    if (len < need) return;
+
+    const merged = Buffer.concat(acc, len);
+    const route = classifyComboTlsExitPrefix(merged, publicName, vpnSecretBuf);
+    if (route.status === 'need_more') {
+      if (len > TLS_MUX_MAX_CLIENT_BUF) failStale('client_hello_oversize');
+      return;
+    }
+
     finalized = true;
     cleanupPeek();
 
-    const merged = Buffer.concat(acc, len);
-    const head = merged.subarray(0, need);
     const tag = `[clean-vpn combo-tls exit] соединение: peer=${peer}:${rp}`;
-    if (head.compare(TTL_FRAME_MAGIC_PREFIX) === 0) {
-      console.log(`${tag} route=transparent-tls`);
-      wireTransparentTlsExitSession(
-        /** @type {import('net').Socket} */ (sock),
+    if (route.status === 'relay') {
+      console.log(`${tag} route=enc-sni-relay`);
+      wireTransparentTlsEncSniSession(/** @type {import('net').Socket} */ (sock), {
         vpnSecretBuf,
-        ttlLogOpts,
-      );
-      if (merged.length) process.nextTick(() => sock.emit('data', merged));
+        publicName,
+        logOpts: ttlLogOpts,
+        initialBuf: merged,
+      });
       return;
     }
     console.log(`${tag} route=tls`);
@@ -9012,9 +9019,16 @@ async function runExit({
         return;
       }
       if (type === 'transparent-tls') {
+        const ttlPublicName = tlsPublicNamePrimary(tlsPublicName);
+        if (!ttlPublicName) {
+          throw new Error(
+            '[clean-vpn] transparent-tls exit: --tls-public-name обязателен для enc-SNI HTTPS relay (BREAKING: обновите client и exit вместе)',
+          );
+        }
         peekDispatchExitTransparentTlsOrIpv4Sock(
           sock,
           /** @type {Buffer} */ (ttlVpnSecretBuf),
+          ttlPublicName,
           startBridge,
           { tlsLogJa3: Boolean(tlsLogJa3), ja3Verbose: Boolean(ja3Verbose) },
         );
@@ -9028,15 +9042,21 @@ async function runExit({
         (Boolean(tlsLogJa3) || Boolean(ja3Verbose))
       ) {
         console.log(
-          '[clean-vpn transparent-tls exit] JA3/JA4/SNI включены: логи по каждому CVPTX-потоку (OPEN + первый блок upstream после restore).\n[clean-vpn transparent-tls exit] Без `--tls-log-ja3` / `--ja3-verbose` на этой стороне логирования transparent-tls не будет.',
+          '[clean-vpn transparent-tls exit] JA3/JA4/SNI: логи по enc-SNI relay (ClientHello до/после restore к origin).\n[clean-vpn transparent-tls exit] Без `--tls-log-ja3` / `--ja3-verbose` на этой стороне логирования transparent-tls не будет.',
         );
       }
     });
     return;
   }
 
-  // --- runExit: --type=combo-tls (CVPTX + TLS mux одним listen TCP) ---
+  // --- runExit: --type=combo-tls (enc-SNI relay + TLS mux одним listen TCP) ---
   if (type === 'combo-tls') {
+    const comboPublicName = tlsPublicNamePrimary(tlsPublicName);
+    if (!comboPublicName) {
+      throw new Error(
+        '[clean-vpn] combo-tls exit: --tls-public-name обязателен для enc-SNI HTTPS relay (BREAKING: обновите client и exit вместе)',
+      );
+    }
     if (tlsServerName) {
       console.warn(
         '[clean-vpn] --tls-server-name на exit не используется (только на client). Для цели passthrough задайте --tls-probe-target=host:port.',
@@ -9126,17 +9146,18 @@ async function runExit({
         peekDispatchExitComboTlsSock(
           sock,
           ttlComboSecretBuf,
+          comboPublicName,
           tlsCtxCombo,
           ttlLogOptsCombo,
         );
       })
       .listen(port, host, () => {
         console.log(
-          `[clean-vpn] exit combo-tls ${host}:${port} (префикс CVPTX→transparent HTTPS relay; иначе TLS mux как type=tls: ${tlsHttpModeCombo}, ALPN ${tlsAlpnOfferCombo.join(',')}; probe → ${pHost}:${pPort})`,
+          `[clean-vpn] exit combo-tls ${host}:${port} (enc-SNI relay при SNI *.${comboPublicName}; иначе TLS mux: ${tlsHttpModeCombo}, ALPN ${tlsAlpnOfferCombo.join(',')}; probe → ${pHost}:${pPort})`,
         );
         if (Boolean(tlsLogJa3) || Boolean(ja3Verbose)) {
           console.log(
-            '[clean-vpn combo-tls exit] JA3: по ветви tls — входящий ClientHello к mux (как --type=tls); по CVPTX — см. сообщения `[clean-vpn transparent-tls exit]`. Включите `--tls-log-ja3` / `--ja3-verbose` на обеих сторонах.',
+            '[clean-vpn combo-tls exit] JA3: по ветви tls — входящий ClientHello к mux (как --type=tls); по enc-SNI relay — см. `[clean-vpn transparent-tls exit]`. Включите `--tls-log-ja3` / `--ja3-verbose` на обеих сторонах.',
           );
         }
       });
@@ -10655,8 +10676,14 @@ async function runClient({
         '[clean-vpn] combo-tls на client требует --split-default (TUN через boring-tls к exit; параллельно tcp/443 как у transparent-tls).',
       );
     }
+    const comboClientPublicName = tlsPublicNamePrimary(tlsPublicName);
+    if (!comboClientPublicName) {
+      throw new Error(
+        '[clean-vpn] combo-tls client: --tls-public-name обязателен для enc-SNI HTTPS relay (BREAKING: обновите client и exit вместе)',
+      );
+    }
     console.log(
-      '[clean-vpn] combo-tls: TUN через boring-tls ↔ exit `--type=combo-tls` (внутренняя ветка TLS как type=tls); HTTPS :443 через transparent-tls/CVPTX.',
+      '[clean-vpn] combo-tls: TUN через boring-tls ↔ exit `--type=combo-tls` (внутренняя ветка TLS как type=tls); HTTPS :443 через enc-SNI relay (raw TCP, без CVPTX).',
     );
     const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
     const ca = loadTlsClientCaPem(certsDir);
@@ -10778,6 +10805,7 @@ async function runClient({
         upstreamHost: host,
         upstreamPort: port,
         vpnSecretBuf,
+        publicName: comboClientPublicName,
         explicitDestination,
         logOpts: ttlLogOptsCombo,
       }).catch((err) => {
@@ -10901,6 +10929,12 @@ async function runClient({
         '[clean-vpn] transparent-tls на client требует --split-default (tun и IPv4-пакеты в exit — как `--type=socket`; tcp/443 к сайтам дополнительно уходит вторым транспортом к тому же exit).',
       );
     }
+    const ttlClientPublicName = tlsPublicNamePrimary(tlsPublicName);
+    if (!ttlClientPublicName) {
+      throw new Error(
+        '[clean-vpn] transparent-tls client: --tls-public-name обязателен для enc-SNI HTTPS relay (BREAKING: обновите client и exit вместе)',
+      );
+    }
 
     const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
     const vpnSecretBuf = ensureSharedHmacKey(certsDir, sharedHmacKey, quicExtCryptoKey, {
@@ -10963,6 +10997,7 @@ async function runClient({
         upstreamHost: host,
         upstreamPort: port,
         vpnSecretBuf,
+        publicName: ttlClientPublicName,
         explicitDestination,
         logOpts: ttlLogOpts,
       }).catch((err) => {
@@ -11131,10 +11166,10 @@ async function main() {
     console.error(`Использование:
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=socket [--ext=eth0]
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=socket --split-default
-  sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=transparent-tls --ext=eth0
-  sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=transparent-tls --split-default
-  sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=combo-tls --ext=eth0
-  sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:443 --type=combo-tls --split-default
+  sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=transparent-tls --tls-public-name=vpn.example.com --ext=eth0
+  sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=transparent-tls --split-default --tls-public-name=vpn.example.com
+  sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=combo-tls --tls-public-name=vpn.example.com --ext=eth0
+  sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:443 --type=combo-tls --split-default --tls-public-name=vpn.example.com
 
 --type: socket | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls | boring-tls | transparent-tls | combo-tls
 --split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 через uplink; /32 bypass к --server и (только webrtc/rtc-chrome/ws-chrome/udp+punch) к IP STUN/TURN из --config. Plain --type=udp STUN не резолвит. IPv6 не в туннеле. Проверка: curl -4 https://ifconfig.me
@@ -11152,17 +11187,17 @@ async function main() {
 --tls-cert-dir=DIR: для --type=tls, boring-tls (client), combo-tls и exit tls/combo — fullchain.pem+privkey.pem (LE) или ca/cert/key как у QUIC; здесь же лежит общий clean-vpn-hmac.key
 --tls-server-name=HOST: только client + tls | boring-tls | combo-tls — проверка сертификата (CN/SAN); также ClientHello SNI для **TUN-туннеля** (boring-путь при combo), если не задан --tls-client-sni. Если --server — IP и оба не заданы, для проверки используется clean-vpn; при ошибочном --tls-server-name=www.google.com и IP тоже принудительно clean-vpn (маскировку SNI см. --tls-client-sni); на exit игнорируется
 --tls-client-sni=HOST: только client + tls | boring-tls | combo-tls — явный SNI в ClientHello (TUN-путь boring); без флага при проверке cert=clean-vpn (часто IP без --tls-server-name) SNI по умолчанию www.google.com; иначе SNI = имя проверки. Маркера VPN в открытой части ClientHello нет — exit отличает VPN по Bearer внутри TLS (TLS 1.3; ALPN по умолчанию h2 + http/1.1; HTTP/1.1 → GET /clean-vpn, HTTP/2 → POST /clean-vpn на одном stream).
---tls-public-name=HOST[,HOST...]: только exit + tls | combo-tls — SNI «честной» страницы It works! (опционально). Несколько имён через запятую: любой из них в ClientHello оставляет сессию на VPN; иначе passthrough (**только поток без префикса CVPTX**, как у tls).
+--tls-public-name=HOST[,HOST...]: **обязателен** для transparent-tls и combo-tls (enc-SNI relay). На exit + tls | combo-tls также SNI «честной» страницы It works! для VPN mux: любой из перечисленных имён в ClientHello → VPN; иначе passthrough.
 --tls-probe-target=host:port: только exit + tls | combo-tls — куда TCP-прокси при passthrough (parse fail ClientHello или SNI ≠ --tls-public-name); default www.google.com:443
 --tls-probe-max-bytes=N: короткий passthrough, лимит байт обоих направлений (default 49152)
 --tls-probe-max-seconds=S: лимит времени passthrough-сессии (default 30)
 --tls-probe-full-proxy-per-ip=K: не более K «длинных» passthrough с одного IP за сутки (default 0 = только короткий)
 --http-vers=1.1: с --type=tls, boring-tls (client) или combo-tls (client и exit); принудительный HTTP/1.1 без h2; совместно обновляйте код на обеих сторонах
---tls-log-ja3: JA3 wire, JA3 sorted (MD5), JA4 (FoxIO JA4.md), **JA4 alt** (JA4_c как ja3.zone: ext с 0000, без 0010), **JA4 raw_o**, **JA4 raw_r**, **JA4 raw_r_alt** (ja3.zone raw). С \`--ja3-verbose\` — строки до MD5 и прочий stderr helper. **transparent-tls** те же флаги: client — JA3/JA4 до и после подмены первого ClientHello; exit — поля OPEN (dst/origin/fake sni как на проводе) и JA4 по mux до/после restore к origin.
+--tls-log-ja3: … **transparent-tls/combo-tls HTTPS**: client — JA3/JA4 до и после enc-SNI rebuild ClientHello; exit — JA4 по mux до/после restore SNI к origin.
 --tls-log-bearer: для проверки H-1/H-2 — полный Bearer token и exporter_b64 в логах client/exit (эквивалент env CLEAN_VPN_TLS_LOG_BEARER=1). Без флага при boring-tls/tls всё равно печатается краткое «channel-binding OK» / «bearer=v2 channel-bound».
 --ja3-verbose: подробный JA3 (обе строки до MD5, поля GREASE-очищенные, hex префикса TCP); сам включает вывод JA3. Env при уже включённом CLEAN_VPN_TLS_LOG_JA3: CLEAN_VPN_JA3_VERBOSE=1.
 --type=boring-tls: только client — TLS 1.3 через процесс boring-tls-helper (BoringSSL), см. scripts/boring-tls-plan.md; на exit используйте --type=tls (тот же сервер). Сборка: npm run build:boring-tls-helper (мало RAM на VPS: npm run build:boring-tls-helper-lowmem). Путь к бинарю: CLEAN_VPN_BORING_TLS_HELPER или --boring-tls-helper=PATH; строковый профиль (резерв): --boring-tls-profile=NAME.
---type=combo-tls: client и exit (**одно имя типа у обеих сторон**, тот же порт). Client: \`--split-default\` + boring-helper для моста TUN + iptables/https как transparent-tls. Exit: если первые байты CVPTX → relay HTTPS; иначе — как \`--type=tls\`.
+--type=combo-tls: client и exit (**одно имя типа**, тот же порт, **BREAKING** без CVPTX). Client: \`--split-default\` + \`--tls-public-name=…\` + boring-helper TUN + enc-SNI HTTPS intercept. Exit: SNI \`*.publicName\` + decrypt OK → relay; иначе — как \`--type=tls\`.
 --boring-tls-clienthello-profile=PATH: только client + boring-tls | combo-tls — JSON профиля ClientHello/JA3 (scripts/lib/boring-tls-clienthello-profile.mjs schema v1; см. ja3-snif-server --profile-save-path). Файл перечитывается перед каждым **TUN TLS** к exit. Env: CLEAN_VPN_BORING_TLS_CLIENTHELLO_PROFILE.
 --boring-tls-profile-ja3-strict: только client + boring-tls | combo-tls — при несовпадении JA3 MD5 с полем ja3_md5 в профиле helper завершится ошибкой. Env: CLEAN_VPN_BORING_TLS_JA3_STRICT=1.
 --type=ws-chrome: client — Puppeteer + Chrome держит WS к exit (npm install puppeteer). exit — HTTP /clean-vpn-chrome + WS только с --ws-server. Медленный CDP: --ws-chrome-cdp-data или CLEAN_VPN_WS_CHROME_CDP_DATA=1. Произвольная страница: --ws-chrome-url=... — только CDP.
@@ -11174,7 +11209,7 @@ async function main() {
 --keep-alive=N: ... ws-chrome: переподключение поднимает новый Chrome (дорого). rtc-chrome: keep-alive рвёт только WebRTC к exit, Chrome остаётся (быстрый reconnect). QUIC/quic-ext: флаг не применяется.
 --keep-alive-reconnect-cooldown=M: целое M≥0; только с --keep-alive>0. После разрыва по idle M с не поднимать lazy по IPv4 с TUN (отбрасываются); не-IPv4 не поднимает сессию в любом случае. После M с следующий IPv4 снова может lazy-connect — cooldown не фильтр «навсегда». Меньше дребезга от DNS/ретрансмитов. По умолчанию 0. CLEAN_VPN_KEEPALIVE_DEBUG=1 — lazy/cooldown и drop не-IPv4 (hex). CLEAN_VPN_TLS_MUX_DEBUG=1 — диагностика TCP до ClientHello на exit и до handshake на client (--type=tls).
 --tunnel-peer=HOST: для websocket/webrtc/rtc-chrome/udp + client при нюансах accept/split-default — см. шапку. Дополнительно: **transparent-tls** и **combo-tls + client** — **IPv4 или IPv4:PORT** (порт по умолчанию **443**) фиксирует один апстрим для всех локальных HTTPS-сессий (**без** iptables REDIRECT; нужен только с тестами на один хост). Обычный режим: **OUTPUT** ipv4/https→локальный intercept; при **--client-lan-subnet** — **PREROUTING DNAT** с LAN→LAN-IPv4 шлюза:intercept (второй listener, см. документацию).
---tls-cert-dir / --shared-hmac-key: для transparent-tls и combo-tls нужен тот же 32-байтовый ключ (CVPTX OPEN-HMAC и Bearer tls), что и для --type=tls (на exit при отсутствии автосоздание как у QUIC каталога).`);
+--tls-cert-dir / --shared-hmac-key: для transparent-tls и combo-tls нужен тот же 32-байтовый ключ (enc-SNI AEAD и Bearer tls), что и для --type=tls (на exit при отсутствии автосоздание как у QUIC каталога).`);
     process.exit(1);
   }
   if (

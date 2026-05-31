@@ -21,6 +21,7 @@
     "ja3-snif-server": "node scripts/ja3-snif-server.mjs",
     "test:boring-tls-smoke": "node scripts/test-boring-tls-smoke.mjs",
     "test:tls-ja4": "node scripts/test-tls-clienthello-ja4.mjs",
+    "test:transparent-tls-enc-sni": "node scripts/test-transparent-tls-enc-sni.mjs",
     "test:boring-tls": "node scripts/test-boring-tls-smoke.mjs",
     "postinstall": "npm run build:tun-linux || true; cd helpers && make 2>/dev/null || true"
   },
