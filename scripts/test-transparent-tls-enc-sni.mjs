@@ -1,12 +1,14 @@
 /**
- * Unit tests: enc-SNI label + ClientHello rebuild (variable-length SNI).
+ * Unit tests: enc-SNI v2 (base62) + ClientHello rebuild.
  * node scripts/test-transparent-tls-enc-sni.mjs
  */
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import {
+  base62Decode,
+  base62Encode,
   buildRelayHostname,
   decodeRelayFromHostname,
   decodeRelaySniLabel,
@@ -21,6 +23,8 @@ import { parseFirstTlsClientHelloFromTcpBuf } from './lib/tls-clienthello-ja3.mj
 
 const PSK = createHmac('sha256', Buffer.from('test-psk')).update('k').digest();
 const PUBLIC = 'vpn.example.com';
+const BASE62 =
+  '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 function clientHelloBodyWithSni(hostname) {
   const hostB = Buffer.from(hostname, 'utf8');
@@ -60,15 +64,68 @@ function tlsTcpFromClientHelloBody(chBody) {
   return rec;
 }
 
+test('base62 roundtrip random buffers including leading zeros', () => {
+  for (let t = 0; t < 32; t++) {
+    const buf = randomBytes(1 + (t % 48));
+    const enc = base62Encode(buf);
+    assert.match(enc, /^[0-9a-zA-Z]*$/);
+    const dec = base62Decode(enc);
+    assert.deepEqual(dec, buf);
+  }
+});
+
+test('base62 alphabet maps all 62 symbols', () => {
+  for (let i = 0; i < 62; i++) {
+    const enc = base62Encode(Buffer.from([i % 256]));
+    assert.ok(enc.length >= 1);
+    assert.ok(BASE62.includes(enc[enc.length - 1]));
+  }
+});
+
 test('encode/decode roundtrip short hostname', () => {
   const labels = encodeRelaySniLabel(PSK, { hostname: 'example.com', port: 443 });
   assert.ok(labels.length >= 1);
+  for (const l of labels) {
+    assert.match(l, /^[0-9a-zA-Z]+$/);
+  }
   const host = buildRelayHostname(labels, PUBLIC);
   assert.ok(host.endsWith(`.${PUBLIC}`));
   const dec = decodeRelayFromHostname(host, PUBLIC, PSK);
   assert.equal(dec.ok, true);
   assert.equal(dec.hostname, 'example.com');
   assert.equal(dec.port, 443);
+});
+
+test('example.com enc blob shorter than base32-era (~76 sym), v2 base62', () => {
+  const labels = encodeRelaySniLabel(PSK, { hostname: 'example.com', port: 443 });
+  const blobLen = labels.join('').length;
+  assert.ok(blobLen < 76, `blob length ${blobLen} expected < 76 (base32 v1)`);
+  assert.ok(labels.length <= 2, `labels=${labels.length}`);
+});
+
+test('parseRelayEncLabels preserves case in enc prefix', () => {
+  const mixed = 'Ab9ZxY.vpn.example.com';
+  const parsed = parseRelayEncLabels(mixed, PUBLIC);
+  assert.deepEqual(parsed, ['Ab9ZxY']);
+  const parsedLowerSuffix = parseRelayEncLabels('Ab9ZxY.VPN.EXAMPLE.COM', PUBLIC);
+  assert.deepEqual(parsedLowerSuffix, ['Ab9ZxY']);
+});
+
+test('case-sensitive base62 survives parseRelayEncLabels roundtrip', () => {
+  let labels = null;
+  let host = null;
+  for (let i = 0; i < 24; i++) {
+    const lb = encodeRelaySniLabel(PSK, { hostname: `case-test-${i}.example.com`, port: 443 });
+    const blob = lb.join('');
+    if (!/[A-Z]/.test(blob)) continue;
+    labels = lb;
+    host = buildRelayHostname(lb, PUBLIC);
+    break;
+  }
+  assert.ok(labels && host, 'need enc blob with uppercase base62 letter');
+  const reparsed = parseRelayEncLabels(host, PUBLIC);
+  assert.deepEqual(reparsed, labels);
+  decodeRelaySniLabel(PSK, /** @type {string[]} */ (reparsed));
 });
 
 test('encode/decode long hostname via multi-label', () => {

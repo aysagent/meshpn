@@ -83,14 +83,16 @@ flowchart LR
 - Совместимость с deployment'ом за Cloudflare (см.
   [`scripts/cloudflare.md`](cloudflare.md)).
 
-## Подход C: enc-SNI relay (реализован, BREAKING)
+## Подход C: enc-SNI relay v2 base62 (реализован, BREAKING)
 
-**Статус:** заменяет CVPTX wire целиком (без dual-version). Client и exit обновляются **вместе**.
+**Статус:** заменяет CVPTX wire целиком (без dual-version). Client и exit обновляются **вместе**.  
+**Wire v2 (2026):** base32hex v1 удалён → **base62** (`0-9`, `a-z`, `A-Z`), plaintext version `0x02`, HKDF context `transparent-tls-enc-sni-v2`.
 
 ### Суть
 
 - Client→exit: **raw TCP**, первые байты — TLS ClientHello с SNI `<encLabels>.--tls-public-name`.
-- Origin hostname + port зашифрованы в DNS-label (AES-256-GCM, HKDF от `clean-vpn-hmac.key`).
+- Origin hostname + port зашифрованы в DNS-label (**AES-256-GCM**, HKDF от `clean-vpn-hmac.key`, blob **base62** LDH-safe).
+- Длинный blob режется на labels ≤63 символа; суффикс `.publicName` match case-insensitive, **enc prefix case-preserving** (для base62).
 - Exit: parse ClientHello → decrypt label → `connect(port, hostname)` → restore origin SNI в CH → duplex pipe.
 - **`--tls-public-name` обязателен** на client и exit для HTTPS intercept (`transparent-tls`, `combo-tls`).
 
