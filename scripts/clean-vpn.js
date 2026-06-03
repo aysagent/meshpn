@@ -213,6 +213,19 @@ function safe(fn) {
   }
 }
 
+/** Ожидаемые ошибки @infisical/quic / Web Streams при закрытии bidi stream (SIGTERM, peer gone). */
+function isBenignCleanVpnShutdownError(err) {
+  if (err == null) return false;
+  const name = err instanceof Error ? err.name : '';
+  const msg = (err instanceof Error ? err.message : String(err)).trim();
+  if (name === 'AbortError' || msg === 'The operation was aborted') return true;
+  // quiche QUICStream: codeToReason → "write 0", "read 0", …
+  if (/^(?:read|write|stop|destroy|recv|send) \d+$/i.test(msg)) return true;
+  return false;
+}
+
+let cleanVpnGracefulShutdown = false;
+
 /** @typedef {{ exitCode: number, reason: string, err?: unknown }} CleanVpnEmergencyOpts */
 
 /** @type {((opts: CleanVpnEmergencyOpts) => void) | null} */
@@ -266,9 +279,25 @@ function installCleanVpnFatalHandlers() {
   if (cleanVpnFatalHandlersInstalled) return;
   cleanVpnFatalHandlersInstalled = true;
   process.on('uncaughtException', (err) => {
+    if (isBenignCleanVpnShutdownError(err)) {
+      if (!cleanVpnGracefulShutdown) {
+        console.log(
+          `[clean-vpn] транспорт: соединение закрыто (${err instanceof Error ? err.message : err})`,
+        );
+      }
+      return;
+    }
     invokeCleanVpnEmergencyShutdown('uncaughtException', err, 1);
   });
   process.on('unhandledRejection', (reason) => {
+    if (isBenignCleanVpnShutdownError(reason)) {
+      if (!cleanVpnGracefulShutdown) {
+        console.log(
+          `[clean-vpn] транспорт: соединение закрыто (${reason instanceof Error ? reason.message : reason})`,
+        );
+      }
+      return;
+    }
     invokeCleanVpnEmergencyShutdown('unhandledRejection', reason, 1);
   });
 }
@@ -2529,6 +2558,9 @@ function bindOrMigrateUdpServerPeer(ep, rinfo) {
   if (!ep.peer) {
     ep.peer = rinfo;
     console.log(`[clean-vpn] udp peer ${rinfo.address}:${rinfo.port}`);
+    if (process.env.CLEAN_VPN_TRANSPORT_TEST === '1') {
+      notifyTransportTestExitBridgeReady();
+    }
     return;
   }
   if (ep.peer.address === rinfo.address && ep.peer.port === rinfo.port) return;
@@ -8841,6 +8873,8 @@ async function runExit({
   let quicSession = null;
   /** @type {any} */
   let quicExtServer = null;
+  /** @type {any} */
+  let quicExtServerConn = null;
   let shuttingDown = false;
 
   const attachInboundBridge = createInboundTunBridgeAttach(
@@ -8865,6 +8899,7 @@ async function runExit({
   const shutdown = (exitCode = 0, reason = 'SIGINT') => {
     if (shuttingDown) return;
     shuttingDown = true;
+    cleanVpnGracefulShutdown = true;
     // Порядок закрытия: сигналинг/транспорт → QUIC → NAT/sysctl/tun → exit.
     safe(() => {
       if (webrtcPc) {
@@ -8956,10 +8991,22 @@ async function runExit({
     };
     let finishExitDeferred = false;
     safe(() => {
+      if (quicExtServerConn) {
+        const c = quicExtServerConn;
+        quicExtServerConn = null;
+        void c.stop({ isApp: true, force: true }).catch(() => {});
+      }
+    });
+    safe(() => {
       if (quicExtServer) {
         const s = quicExtServer;
         quicExtServer = null;
-        void s.stop({ isApp: true, force: true }).then(finishExit, finishExit);
+        void s.stop({ isApp: true, force: true }).then(finishExit, (e) => {
+          if (!isBenignCleanVpnShutdownError(e)) {
+            console.warn('[clean-vpn] QUIC-EXT server stop:', e?.message || e);
+          }
+          finishExit();
+        });
         finishExitDeferred = true;
       }
     });
@@ -9668,8 +9715,6 @@ async function runExit({
       logger,
     });
 
-    /** @type {any} */
-    let quicExtServerConn = null;
     quicExtServer.addEventListener(events.EventQUICServerConnection.name, (evt) => {
       const connection = evt.detail;
       if (quicExtServerConn && quicExtServerConn !== connection) {
@@ -9856,6 +9901,8 @@ async function runClient({
   let quicClientSession = null;
   /** @type {any} */
   let quicExtClient = null;
+  /** @type {any} */
+  let quicExtBridgeSock = null;
   /** @type {import('tls').TLSSocket|null} */
   let tlsVpnSocket = null;
   /** @type {import('net').Server|null} */
@@ -9887,6 +9934,7 @@ async function runClient({
   const shutdown = (exitCode = 0, reason = 'SIGINT') => {
     if (shuttingDown) return;
     shuttingDown = true;
+    cleanVpnGracefulShutdown = true;
     // Порядок: WebRTC/QUIC client → сигналинг WSS → Puppeteer/quic-ext (async finish) → TLS → маршруты/tun.
     safe(() => {
       if (webrtcPc) {
@@ -10020,10 +10068,21 @@ async function runClient({
       }
     });
     safe(() => {
+      if (quicExtBridgeSock && !quicExtBridgeSock.destroyed) {
+        quicExtBridgeSock.destroy();
+        quicExtBridgeSock = null;
+      }
+    });
+    safe(() => {
       if (quicExtClient) {
         const c = quicExtClient;
         quicExtClient = null;
-        void c.destroy({ isApp: true, force: true }).then(finishClient, finishClient);
+        void c.destroy({ isApp: true, force: true }).then(finishClient, (e) => {
+          if (!isBenignCleanVpnShutdownError(e)) {
+            console.warn('[clean-vpn] QUIC-EXT client destroy:', e?.message || e);
+          }
+          finishClient();
+        });
         finishClientDeferred = true;
       }
     });
@@ -10622,6 +10681,7 @@ async function runClient({
     const stream = await quicClientSession.createBidirectionalStream();
     const sock = quicBidiToSocketLike(stream);
     attachTunBridge(tun, 'tcp', sock, BRIDGE_OPTS_CLIENT);
+    notifyTransportTestClientWireReady();
     return;
   }
 
@@ -10632,10 +10692,11 @@ async function runClient({
     const logger = createQuicExtLogger();
     const { QUICClient } = await importQuicExt();
     const connectHost = await resolveHostToIpv4(host);
+    const quicVerifyName = tlsServerName || 'clean-vpn-test';
     quicExtClient = await QUICClient.createQUICClient({
       host: connectHost,
       port,
-      serverName: 'clean-vpn',
+      serverName: quicVerifyName,
       crypto: { ops: { randomBytes: quicExtRandomBytes } },
       config: {
         ca: fs.readFileSync(tlsPaths.caPath, 'utf8'),
@@ -10646,8 +10707,9 @@ async function runClient({
     });
     console.log('[clean-vpn] QUIC-EXT (@infisical/quic) соединение установлено');
     const stream = quicExtClient.connection.newStream('bidi');
-    const sock = quicBidiToSocketLike(stream);
-    attachTunBridge(tun, 'tcp', sock, BRIDGE_OPTS_CLIENT);
+    quicExtBridgeSock = quicBidiToSocketLike(stream);
+    attachTunBridge(tun, 'tcp', quicExtBridgeSock, BRIDGE_OPTS_CLIENT);
+    notifyTransportTestClientWireReady();
     return;
   }
 

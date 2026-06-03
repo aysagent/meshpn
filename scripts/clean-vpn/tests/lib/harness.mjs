@@ -154,8 +154,8 @@ export async function runCase(testCase, opts = {}) {
       durationMs: Date.now() - started,
     };
   } finally {
-    if (clientProc?.pid) killTree(clientProc.pid);
     if (exitProc?.pid) killTree(exitProc.pid);
+    if (clientProc?.pid) killTree(clientProc.pid);
     await new Promise((r) => setTimeout(r, 500));
     cleanupStaleVpnUtuns({ verbose: Boolean(opts.verbose) });
   }

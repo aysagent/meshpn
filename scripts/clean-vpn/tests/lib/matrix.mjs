@@ -141,7 +141,7 @@ export function expandCases(opts = {}) {
         '--type=tls',
         '--server=127.0.0.1:8443',
         `--tls-cert-dir=${tlsDir}`,
-        '--tls-server-name=clean-vpn',
+        '--tls-server-name=clean-vpn-test',
       ],
       { id: 'tls', tier: 2, transport: 'tls', clientTimeoutMs: 60000 },
     ),
@@ -163,7 +163,7 @@ export function expandCases(opts = {}) {
           '--type=boring-tls',
           '--server=127.0.0.1:8443',
           `--tls-cert-dir=${tlsDir}`,
-          '--tls-server-name=clean-vpn',
+          '--tls-server-name=clean-vpn-test',
         ],
         { id: 'boring-tls', tier: 2, transport: 'boring-tls', clientTimeoutMs: 90000 },
       ),
@@ -196,12 +196,15 @@ export function expandCases(opts = {}) {
         '--type=quic-ext',
         '--server=127.0.0.1:8444',
         `--quic-certs-dir=${tlsDir}`,
+        '--tls-server-name=clean-vpn-test',
       ],
       { id: 'quic-ext', tier: 2, transport: 'quic-ext', clientTimeoutMs: 60000 },
     ),
   );
 
-  const pubName = 'clean-vpn.test';
+  // Должно совпадать с CN/SAN тестового cert (clean-vpn-test) и --tls-server-name на client:
+  // exit tls mux сверяет ClientHello SNI с --tls-public-name.
+  const pubName = 'clean-vpn-test';
   push(
     caseBase(
       8450,
@@ -244,7 +247,7 @@ export function expandCases(opts = {}) {
           `--tls-public-name=${pubName}`,
           `--tls-cert-dir=${tlsDir}`,
           '--tunnel-peer=127.0.0.1:9',
-          '--tls-server-name=clean-vpn',
+          '--tls-server-name=clean-vpn-test',
         ],
         { id: 'combo-tls', tier: 2, transport: 'combo-tls', clientTimeoutMs: 90000 },
       ),
