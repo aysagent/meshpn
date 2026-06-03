@@ -1,0 +1,29 @@
+name: clean-vpn-transports
+
+on:
+  push:
+    paths:
+      - 'scripts/clean-vpn.js'
+      - 'scripts/clean-vpn/tests/**'
+      - 'scripts/lib/clean-vpn-platform/**'
+  pull_request:
+    paths:
+      - 'scripts/clean-vpn.js'
+      - 'scripts/clean-vpn/tests/**'
+      - 'scripts/lib/clean-vpn-platform/**'
+
+jobs:
+  tier1-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm run build:tun-linux
+      - run: sudo env PATH=$PATH node scripts/clean-vpn/tests/run.mjs --tier=1 --tier-max=1 --json /tmp/report.json
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: clean-vpn-transport-report
+          path: /tmp/report.json

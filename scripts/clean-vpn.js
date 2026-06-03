@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * Минимальный VPN поверх TCP/WebSocket/UDP/WebRTC/QUIC (node:quic / @infisical/quic) + Linux TUN (native N-API addon).
+ * Минимальный VPN поверх TCP/WebSocket/UDP/WebRTC/QUIC + TUN (Linux: native tun_linux; macOS: utun-helper).
  * Без шифрования и авторизации.
  *
- * Требования: Linux, sudo, собранный addon `native/tun_linux` (`npm run build:tun-linux`; python3, make, g++).
- * После `npm install` addon собирается в postinstall (ошибка сборки не роняет install — тогда соберите вручную).
- * Основной mesh (`src/network/tun.js`) по-прежнему может использовать бинарь `helpers/tun-helper` из `cd helpers && make`.
+ * Требования: Linux или macOS, sudo, TUN backend:
+ *   Linux — addon `native/tun_linux` (`npm run build:tun-linux`)
+ *   macOS — `helpers/utun-helper` (`cd helpers && make`)
  *
  * Exit (VPS): tun + NAT в интернет, без split-default.
  * Client: tun + split-default (опция, только IPv4 default), маршрут к --server через uplink.
@@ -113,7 +113,6 @@
 
 import { execFileSync, spawn } from 'child_process';
 import { EventEmitter, once } from 'events';
-import { createRequire } from 'module';
 import { createHmac, createPrivateKey, randomBytes, timingSafeEqual } from 'crypto';
 import dgram from 'dgram';
 import fs from 'fs';
@@ -148,6 +147,18 @@ import {
   peekPrefixDescribe,
   wireTransparentTlsEncSniSession,
 } from './lib/transparent-tls-runtime.mjs';
+import * as cvpnPlatform from './lib/clean-vpn-platform/index.mjs';
+import {
+  createTransportTestContext,
+  notifyTransportTestClientWireReady,
+  notifyTransportTestExitBridgeReady,
+  PROBE_CLIENT_PORT,
+  PROBE_EXIT_PORT,
+  registerTransportTestBridgeApi,
+  setTransportTestClientWireHook,
+  setTransportTestExitBridgeHook,
+} from './lib/transport-test-probes.mjs';
+import { createTransportTestWireProbes } from './lib/transport-test-wire-probes.mjs';
 // node-datachannel — native addon; только для --type=webrtc (не rtc-chrome). Lazy import в ensureNodeDatachannelLoaded().
 // @matrixai/logger — CJS; в ESM класс лежит в .default, не в корне namespace.
 import matrixAiLogger from '@matrixai/logger';
@@ -156,34 +167,13 @@ const { LogLevel, StreamHandler } = matrixAiLogger;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const requireAddon = createRequire(import.meta.url);
-const TUN_LINUX_ADDON = path.join(__dirname, '../native/tun_linux/build/Release/tun_linux.node');
-
-/** @type {{ open: (name: string) => object }|null} */
-let tunLinuxAddonCache = null;
-
-function loadTunLinuxAddon() {
-  if (tunLinuxAddonCache) return tunLinuxAddonCache;
-  try {
-    tunLinuxAddonCache = requireAddon(TUN_LINUX_ADDON);
-  } catch (e) {
-    throw new Error(
-      `Не удалось загрузить native TUN (${TUN_LINUX_ADDON}). Соберите: npm run build:tun-linux (нужны python3, make, g++; только Linux).`,
-      { cause: e },
-    );
-  }
-  return tunLinuxAddonCache;
-}
 
 /**
- * Открывает TUN через N-API addon (без subprocess tun-helper).
- * @param {string} tunName — желаемое имя, например tun0
- * @returns {{ tun: { ifname: string, write: (b: Buffer) => void, startRead: (cb: (batch: ArrayBuffer[]) => void) => void, close: () => void }, name: string }}
+ * @param {string} tunName
+ * @returns {Promise<{ tun: { ifname: string, write: (b: Buffer) => void, startRead: (cb: (batch: ArrayBuffer[]) => void) => void, close: () => void }, name: string }>}
  */
-function openTunNative(tunName) {
-  const addon = loadTunLinuxAddon();
-  const tun = addon.open(tunName);
-  return { tun, name: tun.ifname };
+async function openTunNative(tunName) {
+  return cvpnPlatform.openTun(tunName);
 }
 
 // =============================================================================
@@ -4253,6 +4243,11 @@ function peekDispatchExitComboTlsSock(sock, vpnSecretBuf, publicName, tlsCtx, tt
  * Откатывается возвращаемым вызовом.
  */
 function installOutputRedirectHttpsToLocalIpv4(localPort, opts = {}) {
+  if (!cvpnPlatform.isFirewallLinux()) {
+    throw new Error(
+      '[clean-vpn] iptables OUTPUT REDIRECT для transparent-tls только на Linux; на macOS — --tunnel-peer=IPv4:PORT',
+    );
+  }
   const commentMarker = String(opts.commentMarker ?? TRANSPARENT_TLS_IPT_COMMENT).slice(0, 200);
   const ex = opts.vpnServerIpv4Exclude;
   const chain = `CVPN-TTL-${process.pid}`;
@@ -4323,6 +4318,9 @@ function installOutputRedirectHttpsToLocalIpv4(localPort, opts = {}) {
  * к клиентам за шлюзом; SO_ORIGINAL_DST по-прежнему даёт апстрим.
  */
 function installPreroutingDnatForwardedHttpsLanToGatewayIpv4(sourceCidr, gatewayIpv4, interceptPort, opts = {}) {
+  if (!cvpnPlatform.isFirewallLinux()) {
+    throw new Error('[clean-vpn] iptables PREROUTING DNAT только на Linux');
+  }
   if (!net.isIPv4(gatewayIpv4)) {
     throw new Error('[clean-vpn] transparent-tls DNAT LAN: нужен ipv4 адрес шлюза в LAN');
   }
@@ -4397,6 +4395,9 @@ function installPreroutingDnatForwardedHttpsLanToGatewayIpv4(sourceCidr, gateway
  * filter INPUT: accept для transparent-tls (127 после OUTPUT DNAT и LAN-трафика на GW:port после PREROUTING DNAT).
  */
 function installFilterInputAcceptTransparentTlsInterceptIpv4(localPort, opts = {}) {
+  if (!cvpnPlatform.isFirewallLinux()) {
+    throw new Error('[clean-vpn] iptables INPUT для transparent-tls только на Linux');
+  }
   const commentMarker = String(opts.commentMarker ?? TRANSPARENT_TLS_IPT_COMMENT).slice(0, 180);
   const run = (/** @type {string[]} */ args) => execFileSync('iptables', args, { stdio: 'inherit' });
   /** @type {(() => void)[]} */
@@ -4549,16 +4550,7 @@ function tryIpRoute(args) {
 // =============================================================================
 
 function findFreeTunName() {
-  try {
-    const out = execIpFileSync(['link', 'show'], { encoding: 'utf8' });
-    const used = new Set();
-    for (const m of out.matchAll(/tun(\d+):/g)) used.add(parseInt(m[1], 10));
-    let i = 0;
-    while (used.has(i)) i += 1;
-    return `tun${i}`;
-  } catch {
-    return 'tun0';
-  }
+  return cvpnPlatform.findFreeTunName();
 }
 
 // =============================================================================
@@ -5038,14 +5030,7 @@ function teardownClientLanGateway(routeCtx) {
 }
 
 function setupTunIp(role, ifname) {
-  if (role === 'exit') {
-    ip(['addr', 'flush', 'dev', ifname]);
-    ip(['addr', 'add', `${IP_EXIT}/32`, 'peer', `${IP_CLIENT}/32`, 'dev', ifname]);
-  } else {
-    ip(['addr', 'flush', 'dev', ifname]);
-    ip(['addr', 'add', `${IP_CLIENT}/32`, 'peer', `${IP_EXIT}/32`, 'dev', ifname]);
-  }
-  ip(['link', 'set', 'dev', ifname, 'mtu', String(TUN_MTU), 'up']);
+  cvpnPlatform.setupTunIp(role, ifname);
 }
 
 /**
@@ -5156,6 +5141,33 @@ async function ensureClientInfraBypass(ctx, configPath, iceMode) {
  * @param {{ deferPeerBypass?: boolean; websocketListenNoSplitDefault?: boolean; deferPeerKind?: 'ws-listen'|'webrtc'; deferSplitDefault?: boolean; configPath?: string|null; iceMode?: string|null }} [opts]
  */
 async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
+  if (process.env.CLEAN_VPN_SKIP_CLIENT_ROUTES === '1') {
+    console.log('[clean-vpn] CLEAN_VPN_SKIP_CLIENT_ROUTES=1 — маршруты client не настраиваются');
+    const dr = cvpnPlatform.getDefaultRoute();
+    return {
+      serverIp: null,
+      peerIp: null,
+      gw: dr?.gw ?? null,
+      dev: dr?.dev ?? null,
+      splitDefault,
+      prevRpAll: null,
+      snapHost: [],
+      snapPeer: [],
+      snap01: [],
+      snap128: [],
+      ifname,
+      splitDefaultApplied: false,
+      infraBypassApplied: false,
+      snapInfra: [],
+      infraBypassIps: [],
+      iceConfigPath: opts?.configPath ?? null,
+      iceMode: opts?.iceMode ?? null,
+      iceInfraBypass: false,
+    };
+  }
+  if (!cvpnPlatform.isLinux()) {
+    return cvpnPlatform.setupClientRoutesDarwinAsync(ifname, serverHost, splitDefault, opts);
+  }
   const deferPeerBypass = opts?.deferPeerBypass === true;
   const websocketListenNoSplitDefault = opts?.websocketListenNoSplitDefault === true;
   const deferKind = opts?.deferPeerKind === 'webrtc' ? 'webrtc' : 'ws-listen';
@@ -5277,6 +5289,10 @@ async function applyDeferredClientSplitDefault(ctx) {
 
 function teardownClientRoutes(ctx) {
   if (!ctx) return;
+  if (!cvpnPlatform.isLinux()) {
+    cvpnPlatform.teardownClientRoutesDarwinOnly(ctx);
+    return;
+  }
   teardownClientLanGateway(ctx);
   const {
     serverIp,
@@ -5339,89 +5355,15 @@ function teardownClientRoutes(ctx) {
 }
 
 function setupExitNat(tunName, extIface) {
-  const prevIpForward = getSysctlNum('net.ipv4.ip_forward');
-  sysctlForward(true);
-  const ext = extIface || getDefaultRouteLinux()?.dev;
-  if (!ext) throw new Error('Укажите --ext=eth0 или настройте default route');
-  console.log(`[clean-vpn] NAT: ${tunName} -> ${ext} (MASQUERADE)`);
-  execFileSync(
-    'iptables',
-    ['-t', 'nat', '-A', 'POSTROUTING', '-s', `${IP_CLIENT}/32`, '-o', ext, '-j', 'MASQUERADE'],
-    { stdio: 'inherit' },
-  );
-  execFileSync('iptables', ['-A', 'FORWARD', '-i', tunName, '-o', ext, '-j', 'ACCEPT'], {
-    stdio: 'inherit',
-  });
-  execFileSync(
-    'iptables',
-    [
-      '-A',
-      'FORWARD',
-      '-i',
-      ext,
-      '-o',
-      tunName,
-      '-m',
-      'conntrack',
-      '--ctstate',
-      'RELATED,ESTABLISHED',
-      '-j',
-      'ACCEPT',
-    ],
-    { stdio: 'inherit' },
-  );
-  return { ext, tunName, prevIpForward };
+  return cvpnPlatform.setupExitNat(tunName, extIface);
 }
 
 function restoreExitSysctl(prevIpForward) {
-  if (prevIpForward == null) return;
-  try {
-    execFileSync('sysctl', [`net.ipv4.ip_forward=${prevIpForward}`], { stdio: 'inherit' });
-    console.log('[clean-vpn] exit: net.ipv4.ip_forward восстановлен');
-  } catch {
-    /* ignore */
-  }
+  cvpnPlatform.restoreExitSysctl(prevIpForward);
 }
 
 function teardownExitNat(tunName, ext) {
-  try {
-    execFileSync(
-      'iptables',
-      ['-t', 'nat', '-D', 'POSTROUTING', '-s', `${IP_CLIENT}/32`, '-o', ext, '-j', 'MASQUERADE'],
-      { stdio: 'inherit' },
-    );
-  } catch {
-    /* ignore */
-  }
-  try {
-    execFileSync('iptables', ['-D', 'FORWARD', '-i', tunName, '-o', ext, '-j', 'ACCEPT'], {
-      stdio: 'inherit',
-    });
-  } catch {
-    /* ignore */
-  }
-  try {
-    execFileSync(
-      'iptables',
-      [
-        '-D',
-        'FORWARD',
-        '-i',
-        ext,
-        '-o',
-        tunName,
-        '-m',
-        'conntrack',
-        '--ctstate',
-        'RELATED,ESTABLISHED',
-        '-j',
-        'ACCEPT',
-      ],
-      { stdio: 'inherit' },
-    );
-  } catch {
-    /* ignore */
-  }
+  cvpnPlatform.teardownExitNat({ tunName, ext, skipped: !cvpnPlatform.isLinux() });
 }
 
 /**
@@ -5497,6 +5439,8 @@ function tryBuildTunIcmpEchoReplyForLocalIp(pkt, localDst4, nextIpIdentification
   icmpPacket.writeUInt8(0, 0);
   icmpPacket.writeUInt8(0, 1);
   icmpPacket.writeUInt16BE(0, 2);
+  // id + seq из запроса — иначе wire-probe / ping не сопоставят ответ
+  pkt.copy(icmpPacket, 4, icmpOff + 4, icmpOff + 8);
   if (icmpBody.length) icmpBody.copy(icmpPacket, 8);
   icmpPacket.writeUInt16BE(internetChecksum16(icmpPacket, 0, icmpPacket.length), 2);
 
@@ -5514,6 +5458,52 @@ function tryBuildTunIcmpEchoReplyForLocalIp(pkt, localDst4, nextIpIdentification
   ipHeader.writeUInt16BE(internetChecksum16(ipHeader, 0, 20), 10);
 
   return Buffer.concat([ipHeader, icmpPacket]);
+}
+
+/**
+ * IPv4 с транспорта: ICMP echo на наш TUN-IP → reply обратно в туннель; иначе inject в TUN.
+ * На macOS utun ответ ядра после writeTun часто не приходит — reply с wire обязателен.
+ *
+ * @param {Buffer} pkt
+ * @param {Uint8Array|null} local4
+ * @param {() => number} nextIpId
+ * @param {(pkt: Buffer) => void} sendOnWire
+ * @param {(pkt: Buffer) => void} writeTun
+ * @param {{ onIcmpReply?: () => void }} [opts]
+ */
+function deliverInboundWireIpv4(pkt, local4, nextIpId, sendOnWire, writeTun, opts = {}) {
+  if (local4) {
+    const reply = tryBuildTunIcmpEchoReplyForLocalIp(pkt, local4, nextIpId);
+    if (reply) {
+      sendOnWire(reply);
+      opts.onIcmpReply?.();
+      return;
+    }
+  }
+  writeTun(pkt);
+}
+
+/**
+ * In-process transport-test probes (same-host macOS: kernel ping/curl обходит utun).
+ *
+ * @param {{ localTunIp?: string }} [bridgeOpts]
+ * @param {(pkt: Buffer) => void} writeTun
+ * @param {(pkt: Buffer) => void} sendOnWire
+ */
+function bindTransportTestWireProbes(bridgeOpts, writeTun, sendOnWire) {
+  if (process.env.CLEAN_VPN_TRANSPORT_TEST !== '1' || !bridgeOpts?.localTunIp) return null;
+  const localProbePort =
+    bridgeOpts.localTunIp === IP_EXIT ? PROBE_EXIT_PORT : PROBE_CLIENT_PORT;
+  const wireProbes = createTransportTestWireProbes({
+    localIp: bridgeOpts.localTunIp,
+    localProbePort,
+  });
+  registerTransportTestBridgeApi({
+    pingPeer: (peerIp) => wireProbes.pingPeer(peerIp, writeTun, sendOnWire),
+    httpGetPeer: (peerIp, peerPort) =>
+      wireProbes.httpGetPeer(peerIp, peerPort, writeTun, sendOnWire),
+  });
+  return wireProbes;
 }
 
 /**
@@ -5626,6 +5616,15 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
 
   const sendTcpFramed = createTcpFramedBatchedWriter(endpoint);
 
+  const logWireIcmpReply = () => {
+    if (!icmpEchoReplyLogged) {
+      icmpEchoReplyLogged = true;
+      console.log(
+        `[clean-vpn] ICMP echo reply с транспорта (${bridgeOpts?.localTunIp}); дальнейшие ответы без лога`,
+      );
+    }
+  };
+
   const sendOnWire = (pkt) => {
     if (transport === 'websocket') {
       endpoint.send(pkt);
@@ -5654,16 +5653,26 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
     }
   };
 
+  const wireProbes = bindTransportTestWireProbes(bridgeOpts, writeTun, sendOnWire);
+
+  const deliverFromWire = (pkt) => {
+    const buf = Buffer.isBuffer(pkt) ? pkt : Buffer.from(pkt);
+    if (!buf.length || buf.length > MAX_PKT) return;
+    if (wireProbes?.tryConsumeInboundWire(buf, sendOnWire)) return;
+    deliverInboundWireIpv4(buf, local4, nextIpId, sendOnWire, writeTun, {
+      onIcmpReply: logWireIcmpReply,
+    });
+  };
+
   if (transport === 'websocket') {
     endpoint.on('message', (data, isBinary) => {
       if (!isBinary) return;
-      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      writeTun(buf);
+      deliverFromWire(data);
     });
   } else if (transport === 'tcp') {
     endpoint.on('data', (chunk) => {
       try {
-        framer.push(chunk, writeTun);
+        framer.push(chunk, deliverFromWire);
       } catch (e) {
         console.error('[clean-vpn] framing error:', e.message);
         endpoint.destroy();
@@ -5671,21 +5680,17 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
     });
   } else if (transport === 'udp-client') {
     endpoint.on('message', (msg) => {
-      if (!msg.length || msg.length > MAX_PKT) return;
-      writeTun(Buffer.isBuffer(msg) ? msg : Buffer.from(msg));
+      deliverFromWire(msg);
     });
   } else if (transport === 'udp-server') {
     endpoint.sock.on('message', (msg, rinfo) => {
-      if (!msg.length || msg.length > MAX_PKT) return;
       bindOrMigrateUdpServerPeer(endpoint, rinfo);
-      writeTun(Buffer.isBuffer(msg) ? msg : Buffer.from(msg));
+      deliverFromWire(msg);
     });
   } else if (transport === 'webrtc-dc') {
     endpoint.onMessage((data) => {
       if (typeof data === 'string') return;
-      const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      if (!buf.length || buf.length > MAX_PKT) return;
-      writeTun(buf);
+      deliverFromWire(data);
     });
   }
 
@@ -5930,6 +5935,27 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     }
   };
 
+  const logWireIcmpReply = () => {
+    if (!icmpEchoReplyLogged) {
+      icmpEchoReplyLogged = true;
+      const ip = bridgeOpts?.localTunIp ?? '?';
+      console.log(
+        `[clean-vpn] ICMP echo reply с транспорта (${ip}); дальнейшие ответы без лога`,
+      );
+    }
+  };
+
+  const wireProbes = bindTransportTestWireProbes(bridgeOpts, writeTun, sendOnWire);
+
+  const deliverFromWire = (pkt) => {
+    const buf = Buffer.isBuffer(pkt) ? pkt : Buffer.from(pkt);
+    if (!buf.length || buf.length > MAX_PKT) return;
+    if (wireProbes?.tryConsumeInboundWire(buf, sendOnWire)) return;
+    deliverInboundWireIpv4(buf, local4, nextIpId, sendOnWire, writeTun, {
+      onIcmpReply: logWireIcmpReply,
+    });
+  };
+
   function applyWireKeepalive() {
     if (!ep || !keepAliveSec) return;
     if (transport === 'tcp' && typeof ep.setKeepAlive === 'function') {
@@ -5959,9 +5985,8 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       const ws = ep;
       const onMsg = (data, isBinary) => {
         if (!isBinary) return;
-        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
         bumpActivity();
-        writeTun(buf);
+        deliverFromWire(data);
       };
       const onPeerClose = () => {
         if (wireArmed) teardownWire('peer_close');
@@ -5987,7 +6012,10 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       const onData = (chunk) => {
         try {
           bumpActivity();
-          framer.push(chunk, writeTun);
+          framer.push(chunk, (pkt) => {
+            bumpActivity();
+            deliverFromWire(pkt);
+          });
         } catch (e) {
           console.error('[clean-vpn] framing error:', e.message);
           try {
@@ -6021,7 +6049,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       const onMsg = (msg) => {
         if (!msg.length || msg.length > MAX_PKT) return;
         bumpActivity();
-        writeTun(Buffer.isBuffer(msg) ? msg : Buffer.from(msg));
+        deliverFromWire(msg);
       };
       const onPeerClose = () => {
         if (wireArmed) teardownWire('peer_close');
@@ -6047,7 +6075,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
         if (!msg.length || msg.length > MAX_PKT) return;
         bindOrMigrateUdpServerPeer(ep, rinfo);
         bumpActivity();
-        writeTun(Buffer.isBuffer(msg) ? msg : Buffer.from(msg));
+        deliverFromWire(msg);
       };
       ep.sock.on('message', onMsg);
       wireOff = () => {
@@ -6061,10 +6089,8 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       const ch = ep;
       const onDc = (data) => {
         if (typeof data === 'string') return;
-        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-        if (!buf.length || buf.length > MAX_PKT) return;
         bumpActivity();
-        writeTun(buf);
+        deliverFromWire(data);
       };
       ch.onMessage(onDc);
       if (typeof ch.onClosed === 'function') {
@@ -6212,6 +6238,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     bumpActivity();
     closeBridgeEndpoint(prev);
     logKa('переподключено', transport);
+    notifyTransportTestClientWireReady();
   }
 
   async function ensureWire() {
@@ -6235,6 +6262,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       for (const q of pending) {
         sendOnWire(q);
       }
+      notifyTransportTestClientWireReady();
     } catch (e) {
       logKa('ошибка lazy-connect', e?.message || String(e));
       console.error('[clean-vpn] keep-alive lazy connect:', e?.message || e);
@@ -6402,6 +6430,7 @@ function createInboundTunBridgeAttach(tun, bridgeBase, keepAliveSec, reconnectCo
       bridgeApi.reconnectWire(endpoint);
     }
     onAttached?.();
+    notifyTransportTestExitBridgeReady();
     return bridgeApi;
   };
 }
@@ -8760,9 +8789,17 @@ async function runExit({
     );
   }
   const tunName = findFreeTunName();
-  const { tun, name: ifname } = openTunNative(tunName);
+  const { tun, name: ifname } = await openTunNative(tunName);
   setupTunIp('exit', ifname);
   const nat = setupExitNat(ifname, extIface);
+
+  /** @type {ReturnType<typeof createTransportTestContext> | null} */
+  let transportTest = null;
+  if (process.env.CLEAN_VPN_TRANSPORT_TEST === '1') {
+    transportTest = createTransportTestContext('exit', ifname);
+    await transportTest.startProbeServer();
+    setTransportTestExitBridgeHook(() => transportTest.scheduleE2c());
+  }
 
   /** @type {((exitCode?: number, reason?: string) => void) | null} */
   let shutdownFn = null;
@@ -8911,6 +8948,7 @@ async function runExit({
     const finishExit = () => {
       teardownExitNat(nat.tunName, nat.ext);
       restoreExitSysctl(nat.prevIpForward);
+      safe(() => transportTest?.close());
       safe(() => tun.close());
       clearCleanVpnEmergencyShutdown();
       console.log(`[clean-vpn] exit: остановка (${reason})`);
@@ -9762,8 +9800,15 @@ async function runClient({
   }
 
   const tunName = findFreeTunName();
-  const { tun, name: ifname } = openTunNative(tunName);
+  const { tun, name: ifname } = await openTunNative(tunName);
   setupTunIp('client', ifname);
+  /** @type {ReturnType<typeof createTransportTestContext> | null} */
+  let transportTest = null;
+  if (process.env.CLEAN_VPN_TRANSPORT_TEST === '1') {
+    transportTest = createTransportTestContext('client', ifname);
+    await transportTest.startProbeServer();
+    setTransportTestClientWireHook(() => transportTest.scheduleC2e());
+  }
   const deferSigBypass =
     deferWsPeerBypass || deferWebrtcPeerBypass || deferRtcChromeSigBypass || deferUdpPeerBypass;
   const deferPeerKindForSetup =
@@ -9873,6 +9918,7 @@ async function runClient({
     });
     const finishClient = () => {
       teardownClientRoutes(routeCtx);
+      safe(() => transportTest?.close());
       safe(() => tun.close());
       clearCleanVpnEmergencyShutdown();
       console.log(`[clean-vpn] client: остановка (${reason})`);
@@ -10707,8 +10753,8 @@ async function runClient({
   // --- runClient: --type=combo-tls (TUN через boring-tls + HTTPS :443 как transparent-tls) ---
   if (type === 'combo-tls') {
     if (!splitDefault) {
-      throw new Error(
-        '[clean-vpn] combo-tls на client требует --split-default (TUN через boring-tls к exit; параллельно tcp/443 как у transparent-tls).',
+      console.warn(
+        '[clean-vpn] combo-tls без --split-default: TUN и IPv4 mux работают; HTTPS intercept без --tunnel-peer на Linux (iptables) или без явного апстрима не активен.',
       );
     }
     const comboClientPublicName = tlsPublicNamePrimary(tlsPublicName);
@@ -10960,8 +11006,8 @@ async function runClient({
   // --- runClient: --type=transparent-tls (tun как socket + параллельно HTTPS-сессии со сменой SNI) ---
   if (type === 'transparent-tls') {
     if (!splitDefault) {
-      throw new Error(
-        '[clean-vpn] transparent-tls на client требует --split-default (tun и IPv4-пакеты в exit — как `--type=socket`; tcp/443 к сайтам дополнительно уходит вторым транспортом к тому же exit).',
+      console.warn(
+        '[clean-vpn] transparent-tls без --split-default: TUN IPv4 mux работает; для перехвата HTTPS нужны --split-default + iptables (Linux) или --tunnel-peer.',
       );
     }
     const ttlClientPublicName = tlsPublicNamePrimary(tlsPublicName);
@@ -11192,8 +11238,8 @@ async function runClient({
 async function main() {
   installCleanVpnFatalHandlers();
   const args = parseArgs(process.argv.slice(2));
-  if (process.platform !== 'linux') {
-    console.error('Только Linux (tun-helper-linux).');
+  if (process.platform !== 'linux' && process.platform !== 'darwin') {
+    console.error('clean-vpn: нужен Linux или macOS (TUN).');
     process.exit(1);
   }
   if (!args.role || !args.server || !args.type) {

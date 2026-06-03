@@ -2,9 +2,7 @@
 
 import net from 'net';
 import { once } from 'events';
-import { createRequire } from 'module';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { originalDstIpv4FromFd } from './clean-vpn-platform/index.mjs';
 import {
   buildRelayHostname,
   decodeRelayFromHostname,
@@ -181,10 +179,6 @@ function logTransparentTlsClientHelloFingerprints(roleTag, phaseLabel, tcpBuf, o
   }
 }
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const requireAddon = createRequire(import.meta.url);
-const TUN_LINUX_ADDON = path.join(__dirname, '../../native/tun_linux/build/Release/tun_linux.node');
-
 /** @returns {{ address: string, port: number }} */
 export function ipv4OriginalDestinationFromSock(sock) {
   const h = sock._handle;
@@ -192,19 +186,7 @@ export function ipv4OriginalDestinationFromSock(sock) {
   if (fd === undefined || fd < 0) {
     throw new Error('transparent-tls: нет fd IPv4 TCP-сокета (нужен accept после REDIRECT)');
   }
-  let mod;
-  try {
-    mod = requireAddon(TUN_LINUX_ADDON);
-  } catch (e) {
-    throw new Error(
-      `transparent-tls: не загрузился tun_linux.node; соберите: npm run build:tun-linux`,
-      { cause: e },
-    );
-  }
-  if (typeof mod.originalDstIpv4FromFd !== 'function') {
-    throw new Error('transparent-tls: tun_linux без originalDstIpv4FromFd — пересоберите addon');
-  }
-  return mod.originalDstIpv4FromFd(fd);
+  return originalDstIpv4FromFd(fd);
 }
 
 export function killPair(a, b) {

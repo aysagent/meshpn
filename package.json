@@ -23,6 +23,10 @@
     "test:tls-ja4": "node scripts/test-tls-clienthello-ja4.mjs",
     "test:transparent-tls-enc-sni": "node scripts/test-transparent-tls-enc-sni.mjs",
     "test:boring-tls": "node scripts/test-boring-tls-smoke.mjs",
+    "test:clean-vpn-transports": "node scripts/clean-vpn/tests/run.mjs --tier=1 --tier-max=1",
+    "test:clean-vpn-transports:tier2": "node scripts/clean-vpn/tests/run.mjs --tier=1 --tier-max=2 --variant=base",
+    "test:clean-vpn-transports:all": "node scripts/clean-vpn/tests/run.mjs --tier=1 --tier-max=2 --variant=all --topology=both",
+    "test:clean-vpn-transports:boring-profile": "node scripts/clean-vpn/tests/run.mjs --suite=boring-profile --tier-max=2",
     "postinstall": "npm run build:tun-linux || true; cd helpers && make 2>/dev/null || true"
   },
   "dependencies": {
