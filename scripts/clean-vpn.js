@@ -1215,6 +1215,75 @@ function loadTlsClientCaPem(dir) {
   return fs.readFileSync(t.caPath, 'utf8');
 }
 
+/** Клиент доверяет exit по LE fullchain (а не только dev ca.pem). */
+function tlsClientTrustUsesLeFullchain(certsDir) {
+  return fs.existsSync(path.join(certsDir, TLS_LE_FULLCHAIN));
+}
+
+/**
+ * Hostname для проверки сертификата exit на TLS-клиенте (не wire SNI / ClientHello).
+ * `--tls-public-name` нужен enc-SNI/combo; для self-signed ca.pem без fullchain проверяем clean-vpn.
+ * @param {{ tlsServerName?: string|null, tlsPublicName?: string|null, host: string, certsDir: string }} opts
+ */
+function resolveTlsClientCertVerifyName({ tlsServerName, tlsPublicName, host, certsDir }) {
+  const hostIsIp = net.isIP(host) !== 0;
+  let explicit = tlsServerName != null ? String(tlsServerName).trim() : '';
+  if (
+    explicit &&
+    hostIsIp &&
+    TLS_VERIFYNAME_DECOY_SNI_ALIASES.has(explicit.toLowerCase())
+  ) {
+    console.warn(
+      '[clean-vpn] TLS: `--tls-server-name` задаёт проверку сертификата, не decoy SNI. При IP-сервере значение www.google.com трактуем как запрос проверки CN/SAN clean-vpn (как без этого флага). Явный ClientHello SNI: `--tls-client-sni=HOST`. Имя под ваш LE-сертификат: `--tls-server-name=ваш.домен`.',
+    );
+    return 'clean-vpn';
+  }
+  if (explicit) return explicit;
+
+  const pub = tlsPublicNamePrimary(tlsPublicName);
+  const usesLeTrust = tlsClientTrustUsesLeFullchain(certsDir);
+  if (pub && usesLeTrust) return pub;
+
+  if (!pub) {
+    if (hostIsIp) {
+      console.warn(
+        '[clean-vpn] TLS: в --server указан IP — для проверки сертификата используется clean-vpn (как у ca/cert из репо); для LE на exit задайте --tls-server-name=ваш.домен.',
+      );
+      return 'clean-vpn';
+    }
+    return host;
+  }
+
+  if (hostIsIp && !usesLeTrust) {
+    console.warn(
+      `[clean-vpn] TLS: --tls-public-name=${pub} — для enc-SNI/combo; проверка VPN-сертификата по clean-vpn (ca.pem, без fullchain.pem в --tls-cert-dir). LE на exit: fullchain.pem + --tls-server-name=${pub}.`,
+    );
+    return 'clean-vpn';
+  }
+  return pub;
+}
+
+/**
+ * ClientHello SNI и имя проверки сертификата для `--type=tls|boring-tls|combo-tls` client.
+ * @param {{ tlsClientSni?: string|null, verifyName: string }} opts
+ */
+function resolveTlsClientHelloSni({ tlsClientSni, verifyName }) {
+  const sniRaw = tlsClientSni != null ? String(tlsClientSni).trim() : '';
+  let clientHelloSni = sniRaw || verifyName;
+  if (!sniRaw && verifyName === 'clean-vpn') {
+    clientHelloSni = 'www.google.com';
+    console.warn(
+      '[clean-vpn] TLS: ClientHello SNI по умолчанию www.google.com (проверка сертификата clean-vpn). Свой SNI: --tls-client-sni=…; LE: --tls-server-name=ваш.домен.',
+    );
+  }
+  if (sniRaw && sniRaw !== verifyName) {
+    console.warn(
+      '[clean-vpn] TLS: ClientHello SNI отличается от имени проверки сертификата; маршрутизация VPN — по Bearer-токену внутри TLS.',
+    );
+  }
+  return clientHelloSni;
+}
+
 /**
  * После TLS с ALPN `h2`: HTTP/2 POST /clean-vpn, ждём `:status 200`, тело запроса не завершаем (duplex).
  *
@@ -1617,15 +1686,13 @@ async function connectCleanVpnBoringTlsClient(opts) {
       `boring-tls-helper не найден (${exe}). Соберите: npm run build:boring-tls-helper (на VPS при OOM/cc1plus Killed: npm run build:boring-tls-helper-lowmem; см. scripts/boring-tls-plan.md). Переменная CLEAN_VPN_BORING_TLS_HELPER или --boring-tls-helper=PATH.`,
     );
   }
-  const sniNote =
-    checkHost !== servername ? `, проверка сертификата для host=${checkHost}` : '';
   if (boringTlsClienthelloProfilePath) {
     console.log(
       `[clean-vpn] boring-tls: профиль ClientHello из файла ${boringTlsClienthelloProfilePath}${boringTlsJa3Strict ? ' (ja3_strict)' : ''}`,
     );
   }
   console.log(
-    `[clean-vpn] boring-tls: helper=${exe} → ${connectHost}:${port}, ClientHello SNI=${servername}${sniNote}`,
+    `[clean-vpn] boring-tls: helper=${exe} → ${connectHost}:${port}, ClientHello SNI=${servername}, verify cert host=${checkHost}`,
   );
   if (tlsLogBearerEnabled()) {
     console.log('[clean-vpn] tls-log-bearer: boring-tls connect…');
@@ -1697,11 +1764,19 @@ async function connectCleanVpnBoringTlsClient(opts) {
       throw new Error('boring-tls: невалидный JSON ответ helper');
     }
     if (!resp || resp.ok !== true) {
-      throw new Error(
+      const errText = Buffer.concat(boringTlsStderrChunks).toString('utf8');
+      const baseErr =
         resp && typeof resp.error === 'string'
           ? resp.error
-          : 'boring-tls-helper отказ (см. stderr)',
-      );
+          : 'boring-tls-helper отказ (см. stderr)';
+      if (baseErr.includes('certificate host verification failed')) {
+        const peerCert = errText.match(/peer_cert="([^"]+)"/);
+        const peerBit = peerCert ? `; peer ${peerCert[1]}` : '';
+        throw new Error(
+          `${baseErr} (verify_host=${checkHost}${peerBit}; LE: fullchain.pem + --tls-server-name=…; self-signed: --tls-server-name=clean-vpn)`,
+        );
+      }
+      throw new Error(baseErr);
     }
     if (tlsLogJa3 || ja3Verbose) {
       const errText = Buffer.concat(boringTlsStderrChunks).toString('utf8');
@@ -10609,41 +10684,13 @@ async function runClient({
   if (isTlsLikeType(type)) {
     const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
     const ca = loadTlsClientCaPem(certsDir);
-    const hostIsIp = net.isIP(host) !== 0;
-    let verifyName = tlsServerName || tlsPublicNamePrimary(tlsPublicName);
-    if (!verifyName) {
-      if (hostIsIp) {
-        verifyName = 'clean-vpn';
-        console.warn(
-          '[clean-vpn] TLS: в --server указан IP — для проверки сертификата используется clean-vpn (как у ca/cert из репо); для LE на exit задайте --tls-server-name=ваш.домен.',
-        );
-      } else {
-        verifyName = host;
-      }
-    }
-    if (
-      hostIsIp &&
-      tlsServerName &&
-      TLS_VERIFYNAME_DECOY_SNI_ALIASES.has(String(tlsServerName).trim().toLowerCase())
-    ) {
-      console.warn(
-        '[clean-vpn] TLS: `--tls-server-name` задаёт проверку сертификата, не decoy SNI. При IP-сервере значение www.google.com трактуем как запрос проверки CN/SAN clean-vpn (как без этого флага). Явный ClientHello SNI: `--tls-client-sni=HOST`. Имя под ваш LE-сертификат: `--tls-server-name=ваш.домен`.',
-      );
-      verifyName = 'clean-vpn';
-    }
-    const sniRaw = tlsClientSni != null ? String(tlsClientSni).trim() : '';
-    let clientHelloSni = sniRaw || verifyName;
-    if (!sniRaw && verifyName === 'clean-vpn') {
-      clientHelloSni = 'www.google.com';
-      console.warn(
-        '[clean-vpn] TLS: ClientHello SNI по умолчанию www.google.com (проверка сертификата clean-vpn). Свой SNI: --tls-client-sni=…; LE: --tls-server-name=ваш.домен.',
-      );
-    }
-    if (sniRaw && sniRaw !== verifyName) {
-      console.warn(
-        '[clean-vpn] TLS: ClientHello SNI отличается от имени проверки сертификата; маршрутизация VPN — по Bearer-токену внутри TLS.',
-      );
-    }
+    const verifyName = resolveTlsClientCertVerifyName({
+      tlsServerName,
+      tlsPublicName,
+      host,
+      certsDir,
+    });
+    const clientHelloSni = resolveTlsClientHelloSni({ tlsClientSni, verifyName });
     if (type === 'boring-tls') {
       console.log(
         '[clean-vpn] boring-tls: TLS через boring-tls-helper (BoringSSL), см. scripts/boring-tls-plan.md',
@@ -10722,41 +10769,13 @@ async function runClient({
     );
     const certsDir = resolveTlsCertsDir({ tlsCertDir, quicCertsDir });
     const ca = loadTlsClientCaPem(certsDir);
-    const hostIsIp = net.isIP(host) !== 0;
-    let verifyName = tlsServerName || tlsPublicNamePrimary(tlsPublicName);
-    if (!verifyName) {
-      if (hostIsIp) {
-        verifyName = 'clean-vpn';
-        console.warn(
-          '[clean-vpn] TLS: в --server указан IP — для проверки сертификата используется clean-vpn (как у ca/cert из репо); для LE на exit задайте --tls-server-name=ваш.домен.',
-        );
-      } else {
-        verifyName = host;
-      }
-    }
-    if (
-      hostIsIp &&
-      tlsServerName &&
-      TLS_VERIFYNAME_DECOY_SNI_ALIASES.has(String(tlsServerName).trim().toLowerCase())
-    ) {
-      console.warn(
-        '[clean-vpn] TLS: `--tls-server-name` задаёт проверку сертификата, не decoy SNI. При IP-сервере значение www.google.com трактуем как запрос проверки CN/SAN clean-vpn (как без этого флага). Явный ClientHello SNI: `--tls-client-sni=HOST`. Имя под ваш LE-сертификат: `--tls-server-name=ваш.домен`.',
-      );
-      verifyName = 'clean-vpn';
-    }
-    const sniRawCombo = tlsClientSni != null ? String(tlsClientSni).trim() : '';
-    let clientHelloSniCombo = sniRawCombo || verifyName;
-    if (!sniRawCombo && verifyName === 'clean-vpn') {
-      clientHelloSniCombo = 'www.google.com';
-      console.warn(
-        '[clean-vpn] TLS: ClientHello SNI по умолчанию www.google.com (проверка сертификата clean-vpn). Свой SNI: --tls-client-sni=…; LE: --tls-server-name=ваш.домен.',
-      );
-    }
-    if (sniRawCombo && sniRawCombo !== verifyName) {
-      console.warn(
-        '[clean-vpn] TLS: ClientHello SNI отличается от имени проверки сертификата; маршрутизация VPN — по Bearer-токену внутри TLS.',
-      );
-    }
+    const verifyName = resolveTlsClientCertVerifyName({
+      tlsServerName,
+      tlsPublicName,
+      host,
+      certsDir,
+    });
+    const clientHelloSniCombo = resolveTlsClientHelloSni({ tlsClientSni, verifyName });
     console.log(
       '[clean-vpn] combo-tls: мост TUN — boring-tls-helper (как `--type=boring-tls`).',
     );

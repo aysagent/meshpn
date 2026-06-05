@@ -20,6 +20,7 @@
 #include <openssl/ssl.h>
 #include <openssl/ssl3.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -80,6 +81,36 @@ std::string Base64Encode(const uint8_t* data, size_t n) {
     out.push_back('=');
   }
   return out;
+}
+
+/** CN и DNS SAN peer-сертификата для диагностики hostname verification. */
+std::string FormatPeerCertNames(X509* cert) {
+  if (!cert) return "(none)";
+  std::ostringstream oss;
+  bool first = true;
+  char cn_buf[256];
+  X509_NAME* subj = X509_get_subject_name(cert);
+  if (subj &&
+      X509_NAME_get_text_by_NID(subj, NID_commonName, cn_buf, sizeof(cn_buf)) > 0) {
+    oss << "CN=" << cn_buf;
+    first = false;
+  }
+  GENERAL_NAMES* sans = reinterpret_cast<GENERAL_NAMES*>(
+      X509_get_ext_d2i(cert, NID_subject_alt_name, nullptr, nullptr));
+  if (sans) {
+    for (int i = 0; i < sk_GENERAL_NAME_num(sans); ++i) {
+      GENERAL_NAME* gen = sk_GENERAL_NAME_value(sans, i);
+      if (!gen || gen->type != GEN_DNS) continue;
+      const unsigned char* dns = ASN1_STRING_get0_data(gen->d.dNSName);
+      if (!dns) continue;
+      if (!first) oss << "; ";
+      oss << "SAN.DNS=" << reinterpret_cast<const char*>(dns);
+      first = false;
+    }
+    GENERAL_NAMES_free(sans);
+  }
+  if (first) return "(no CN/SAN DNS)";
+  return oss.str();
 }
 
 bool WriteExact(int fd, const void* buf, size_t n) {
@@ -1727,13 +1758,17 @@ int main(int argc, char** argv) {
   }
   int chk = X509_check_host(peer, verify_host.c_str(), verify_host.size(), 0,
                             nullptr);
-  X509_free(peer);
   if (chk != 1) {
+    std::cerr << "boring-tls-helper: certificate host verification failed: verify_host="
+              << verify_host << " peer_cert=\"" << FormatPeerCertNames(peer)
+              << "\"\n";
+    X509_free(peer);
     SSL_free(ssl);
     SSL_CTX_free(ctx);
     close(sock);
     return send_err("certificate host verification failed", 11);
   }
+  X509_free(peer);
 
   const uint8_t* proto = nullptr;
   unsigned plen = 0;
