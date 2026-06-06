@@ -204,7 +204,7 @@ const BRIDGE_OPTS_EXIT = { localTunIp: IP_EXIT };
 const BRIDGE_OPTS_CLIENT = { localTunIp: IP_CLIENT };
 
 /** Макс. IPv4-пакетов с TUN в очереди на время lazy-connect (keep-alive). */
-const KEEPALIVE_TUN_QUEUE_MAX = 64;
+const KEEPALIVE_TUN_QUEUE_MAX = 256;
 
 /** Транспорты с единым мостом и reconnectWire (асимметричный keep-alive). */
 const RECONNECT_BRIDGE_TRANSPORTS = new Set([
@@ -6275,9 +6275,9 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     wireOff();
     wireOff = () => {};
     const prev = ep;
+    const pending = tunQueue.splice(0);
     ep = newEp;
     wireArmed = true;
-    tunQueue.length = 0;
     dcQueue.length = 0;
     dcHead = 0;
     dcPumpScheduled = false;
@@ -6286,7 +6286,13 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     applyWireKeepalive();
     bumpActivity();
     closeBridgeEndpoint(prev);
-    logKa('переподключено', transport);
+    logKa(
+      'переподключено',
+      pending.length ? `${transport}, очередь TUN ${pending.length} пакет(ов)` : transport,
+    );
+    for (const q of pending) {
+      sendOnWire(q);
+    }
   }
 
   async function ensureWire() {
@@ -6374,7 +6380,10 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
           const ipProto = pkt.length >= 10 ? pkt.readUInt8(9) : -1;
           logKa('lazy-queue', `${pkt.length} B ip-proto=${ipProto} до=${tunQueue.length + 1}`);
         }
-        if (tunQueue.length >= KEEPALIVE_TUN_QUEUE_MAX) tunQueue.shift();
+        if (tunQueue.length >= KEEPALIVE_TUN_QUEUE_MAX) {
+          if (kaDebug) logKa('lazy-queue-drop', 'старый пакет (очередь полна)');
+          tunQueue.shift();
+        }
         tunQueue.push(pkt);
         void ensureWire();
         continue;
@@ -6422,9 +6431,17 @@ function withKeepalive(base, keepAliveSec, reconnectCooldownSec = 0) {
  * @param {() => Promise<any>} connectFn
  * @param {number} keepAliveSec
  * @param {number} [reconnectCooldownSec]
- * @param {boolean} [eagerOnStart] — сразу connectFn (rtc-chrome / split-default отложен + keep-alive)
+ * @param {boolean} [eagerOnStart] — сразу connectFn (rtc-chrome / split-default + keep-alive на TLS TUN)
  * @returns {{ reconnectWire: (newEp: any) => void } | null}
  */
+function shouldEagerOutboundTunConnect(transportType, splitDefault, keepAliveSec) {
+  return (
+    Boolean(splitDefault) &&
+    keepAliveSec > 0 &&
+    (isTlsLikeType(transportType) || transportType === 'combo-tls' || transportType === 'transparent-tls')
+  );
+}
+
 function attachOutboundTunBridge(
   tun,
   transport,
@@ -6442,7 +6459,7 @@ function attachOutboundTunBridge(
   if (ka === 0 || eagerOnStart) {
     if (eagerOnStart && ka > 0) {
       console.log(
-        `[clean-vpn] ${transport}: eager connect при keep-alive=${ka}s (split-default/STUN до TUN-трафика)`,
+        `[clean-vpn] ${transport}: eager connect при keep-alive=${ka}s (--split-default; TUN-транспорт до первого пакета с tun0)`,
       );
     }
     void connectFn()
@@ -10747,6 +10764,7 @@ async function runClient({
       },
       kaBridge,
       kaCooldown,
+      shouldEagerOutboundTunConnect(type, splitDefault, kaBridge),
     );
     return;
   }
@@ -10836,6 +10854,7 @@ async function runClient({
       },
       kaBridge,
       kaCooldown,
+      shouldEagerOutboundTunConnect('combo-tls', splitDefault, kaBridge),
     );
 
     const ttlLogOptsCombo = { tlsLogJa3: Boolean(tlsLogJa3), ja3Verbose: Boolean(ja3Verbose) };
@@ -11035,6 +11054,7 @@ async function runClient({
       },
       kaBridge,
       kaCooldown,
+      shouldEagerOutboundTunConnect('transparent-tls', splitDefault, kaBridge),
     );
 
     /** @type {string|null} */
