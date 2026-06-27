@@ -92,6 +92,10 @@
  * (idle или закрытие пира) client снова поднимает провод по первому валидному IPv4 с TUN (lazy), exit/inbound —
  * по новому входящему соединению. Флаг асимметричен: достаточно на client или exit. Без N на client исходящие
  * транспорты подключаются сразу, но переподключение после разрыва пира — по TUN/inbound как выше.
+ * TCP (transport=tcp): idle на стороне TCP-сервера (inbound accept) — FIN (`socket.end`); TCP-клиент (outbound
+ * connect, в т.ч. exit с исходящим WS) TUN снимает без FIN, ждёт FIN сервера и отвечает FIN. Таймаут:
+ * CLEAN_VPN_TCP_GRACEFUL_CLOSE_MS (default 5000). Ошибки/framing/перезапуск пира — destroy (RST).
+ * RST также при write/read ECONNRESET|EPIPE и при данных на idle-disarm сокете. WS/WebRTC/UDP — без изменений.
  * не-IPv4 (в т.ч. IPv6 с tun) не ставится в очередь и не уходит на wire — не поднимает сессию после idle.
  * --keep-alive-reconnect-cooldown=M: после разрыва по idle M с не поднимать lazy по TUN (IPv4 в этот интервал отбрасываются);
  * по истечении M с следующий IPv4 снова может подключить lazy — это ожидаемо, не «вечная» блокировка.
@@ -4636,6 +4640,75 @@ function findFreeTunName() {
   }
 }
 
+/** Таймаут graceful FIN при keep-alive idle (TCP server → end()). Env: CLEAN_VPN_TCP_GRACEFUL_CLOSE_MS. */
+const TCP_GRACEFUL_CLOSE_MS_DEFAULT = 5000;
+
+/**
+ * @param {import('net').Socket|null|undefined} sock
+ * @param {number} [timeoutMs]
+ * @returns {Promise<void>}
+ */
+function gracefulCloseTcpEndpoint(sock, timeoutMs = parsePositiveEnvInt(
+  'CLEAN_VPN_TCP_GRACEFUL_CLOSE_MS',
+  TCP_GRACEFUL_CLOSE_MS_DEFAULT,
+)) {
+  return new Promise((resolve) => {
+    if (!sock || sock.destroyed) {
+      resolve();
+      return;
+    }
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      resetTcpEndpoint(sock);
+      finish();
+    }, timeoutMs);
+    timer.unref?.();
+    sock.once('close', () => {
+      clearTimeout(timer);
+      finish();
+    });
+    try {
+      if (!sock.writableEnded) sock.end();
+      else resetTcpEndpoint(sock);
+    } catch {
+      resetTcpEndpoint(sock);
+      clearTimeout(timer);
+      finish();
+    }
+  });
+}
+
+/** @param {import('net').Socket|null|undefined} sock */
+function respondFinTcpEndpoint(sock) {
+  if (!sock || sock.destroyed) return;
+  try {
+    if (!sock.writableEnded) sock.end();
+  } catch {
+    resetTcpEndpoint(sock);
+  }
+}
+
+/** RST (`destroy`) — нештатное закрытие, перезапуск пира, write/read после разрыва. */
+function resetTcpEndpoint(sock) {
+  if (!sock || sock.destroyed) return;
+  try {
+    sock.destroy();
+  } catch {
+    /* ignore */
+  }
+}
+
+/** @param {unknown} err */
+function isTcpWireResetError(err) {
+  const code = err && typeof err === 'object' && 'code' in err ? String(/** @type {{code?: string}} */ (err).code) : '';
+  return Boolean(code && TCP_BENIGN_AFTER_DATA_CODES.has(code));
+}
+
 // =============================================================================
 // === Общее: uint32+IPv4 фрейминг, writeFramed, attachTunBridge (все transport) ===
 // =============================================================================
@@ -4750,14 +4823,21 @@ function encodeCleanVpnFramedPkt(pkt) {
  * Env: `CLEAN_VPN_FRAME_BATCH_BYTES` (=0 выкл), `CLEAN_VPN_FRAME_BATCH_FLUSH_MS`.
  *
  * @param {NodeJS.WritableStream & { write: (...args: any[]) => boolean }} endpoint
+ * @param {(err: Error) => void} [onWriteError]
  * @returns {(pkt: Buffer) => void}
  */
-function createTcpFramedBatchedWriter(endpoint) {
+function createTcpFramedBatchedWriter(endpoint, onWriteError) {
   const maxBatch = parseNonNegativeEnvInt('CLEAN_VPN_FRAME_BATCH_BYTES', 0);
   const flushMs = parseNonNegativeEnvInt('CLEAN_VPN_FRAME_BATCH_FLUSH_MS', 1);
   if (maxBatch <= 0) {
     return (pkt) => {
-      endpoint.write(encodeCleanVpnFramedPkt(pkt));
+      try {
+        endpoint.write(encodeCleanVpnFramedPkt(pkt), (err) => {
+          if (err && onWriteError) onWriteError(err);
+        });
+      } catch (e) {
+        if (onWriteError) onWriteError(/** @type {Error} */ (e));
+      }
     };
   }
 
@@ -4779,9 +4859,11 @@ function createTcpFramedBatchedWriter(endpoint) {
     batch = [];
     batchLen = 0;
     try {
-      endpoint.write(payload);
-    } catch {
-      /* ignore */
+      endpoint.write(payload, (err) => {
+        if (err && onWriteError) onWriteError(err);
+      });
+    } catch (e) {
+      if (onWriteError) onWriteError(/** @type {Error} */ (e));
     }
   };
 
@@ -5816,6 +5898,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
  *   tunOutboundSendIf?: (pkt: Buffer) => boolean,
  *   shouldCountKeepaliveActivity?: () => boolean,
  *   lazyConnectFilter?: (pkt: Buffer) => boolean,
+ *   tcpWireRole?: 'server'|'client', // graceful FIN при keep-alive idle (inbound=server, outbound=client)
  * }} [bridgeOpts]
  * @returns {{ reconnectWire: (newEp: any) => void } | null}
  */
@@ -5874,6 +5957,144 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
   /** @type {((pkt: Buffer) => void)|null} */
   let tcpFramedSend = null;
   let teardownBusy = false;
+  /** После TCP client idle-disarm: ждём FIN сервера на ep. */
+  let tcpIdleDrainOff = () => {};
+
+  const resolveTcpWireRole = () => {
+    const r = bridgeOpts?.tcpWireRole;
+    if (r === 'server' || r === 'client') return r;
+    return lazyConnect ? 'client' : 'server';
+  };
+
+  const clearTcpEndpointRef = (/** @type {import('net').Socket|null|undefined} */ sock) => {
+    if (sock && ep === sock) {
+      ep = null;
+      tcpFramedSend = null;
+    }
+  };
+
+  const handleTcpWireFailure = (phase, err) => {
+    const sock = ep;
+    const resetLike = isTcpWireResetError(err);
+    const detail = resetLike
+      ? `${phase}: ${/** @type {NodeJS.ErrnoException} */ (err)?.code || 'RST'}`
+      : `${phase}: ${/** @type {Error} */ (err)?.message || String(err)}`;
+    logKa(resetLike ? 'TCP RST' : 'ошибка TCP', detail);
+    if (wireArmed) {
+      teardownWire(resetLike ? 'peer_reset' : 'peer_error');
+      return;
+    }
+    if (!sock) return;
+    tcpIdleDrainOff();
+    clearTcpEndpointRef(sock);
+    resetTcpEndpoint(sock);
+  };
+
+  const attachTcpIdleDrainHandlers = (/** @type {import('net').Socket} */ sock) => {
+    tcpIdleDrainOff();
+    const onEnd = () => respondFinTcpEndpoint(sock);
+    const onClose = () => {
+      tcpIdleDrainOff();
+      clearTcpEndpointRef(sock);
+    };
+    const onErr = (e) => handleTcpWireFailure('idle-drain', e);
+    const onUnexpectedData = () => {
+      logKa('TCP RST', 'данные на idle-disarm сокете (пир использует закрываемое соединение)');
+      tcpIdleDrainOff();
+      clearTcpEndpointRef(sock);
+      resetTcpEndpoint(sock);
+    };
+    sock.on('end', onEnd);
+    sock.on('data', onUnexpectedData);
+    sock.once('close', onClose);
+    sock.once('error', onErr);
+    tcpIdleDrainOff = () => {
+      try {
+        sock.off('end', onEnd);
+        sock.off('data', onUnexpectedData);
+        sock.off('close', onClose);
+        sock.off('error', onErr);
+      } catch {
+        /* ignore */
+      }
+      tcpIdleDrainOff = () => {};
+    };
+  };
+
+  const rearmTcpClientWire = () => {
+    if (wireArmed || connecting) return false;
+    if (transport !== 'tcp' || !ep || ep.destroyed) return false;
+    if (resolveTcpWireRole() !== 'client') return false;
+    if (ep.readableEnded || ep.writableEnded || ep.writable === false) {
+      logKa('reuse пропущен', 'сокет уже закрывается (FIN/RST), нужен новый connect');
+      tcpIdleDrainOff();
+      clearTcpEndpointRef(ep);
+      resetTcpEndpoint(ep);
+      return false;
+    }
+    tcpIdleDrainOff();
+    attachWireHandlers();
+    wireArmed = true;
+    bumpActivity();
+    logKa('re-arm', 'reuse открытый TCP client (после idle без FIN)');
+    return true;
+  };
+
+  function tcpClientIdleDisarm(reason) {
+    if (teardownBusy) return;
+    teardownBusy = true;
+    try {
+      if (!wireArmed && !ep) return;
+      cancelTimers();
+      wireOff();
+      wireOff = () => {};
+      wireArmed = false;
+      tunQueue.length = 0;
+      if (reason === 'idle' && reconnectCooldownSec > 0 && lazyConnect) {
+        idleCooldownUntilMs = Date.now() + reconnectCooldownSec * 1000;
+        logKa(
+          'пауза lazy-reconnect',
+          `${reconnectCooldownSec}s (пакеты с TUN до этого времени игнорируются)`,
+        );
+      }
+      if (ep && !ep.destroyed) attachTcpIdleDrainHandlers(ep);
+      logKa(
+        'отключено',
+        `простой ${keepAliveSec}s (TUN снят; TCP client ждёт FIN от сервера)`,
+      );
+    } finally {
+      teardownBusy = false;
+    }
+  }
+
+  async function tcpServerIdleGracefulClose() {
+    if (teardownBusy) return;
+    teardownBusy = true;
+    try {
+      cancelTimers();
+      wireOff();
+      wireOff = () => {};
+      wireArmed = false;
+      tunQueue.length = 0;
+      dcQueue.length = 0;
+      dcHead = 0;
+      dcPumpScheduled = false;
+      if (reconnectCooldownSec > 0 && lazyConnect) {
+        idleCooldownUntilMs = Date.now() + reconnectCooldownSec * 1000;
+        logKa(
+          'пауза lazy-reconnect',
+          `${reconnectCooldownSec}s (пакеты с TUN до этого времени игнорируются)`,
+        );
+      }
+      const sock = ep;
+      ep = null;
+      tcpFramedSend = null;
+      logKa('отключено', `простой ${keepAliveSec}s (TCP server → FIN)`);
+      if (sock && !sock.destroyed) await gracefulCloseTcpEndpoint(sock);
+    } finally {
+      teardownBusy = false;
+    }
+  }
 
   const logKa = (event, detail = '') => {
     const tail = detail ? ` — ${detail}` : '';
@@ -5987,7 +6208,9 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     if (transport === 'websocket') {
       ep.send(pkt);
     } else if (transport === 'tcp') {
-      if (!tcpFramedSend) tcpFramedSend = createTcpFramedBatchedWriter(ep);
+      if (!tcpFramedSend) {
+        tcpFramedSend = createTcpFramedBatchedWriter(ep, (err) => handleTcpWireFailure('write', err));
+      }
       tcpFramedSend(pkt);
     } else if (transport === 'udp-client') {
       if (pkt.length > 65507) {
@@ -6065,26 +6288,25 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
           framer.push(chunk, writeTun);
         } catch (e) {
           console.error('[clean-vpn] framing error:', e.message);
-          try {
-            sock.destroy();
-          } catch {
-            /* ignore */
-          }
+          resetTcpEndpoint(sock);
         }
       };
-      const onPeerClose = () => {
+      const onPeerEnd = () => {
         if (wireArmed) teardownWire('peer_close');
       };
-      const onPeerErr = (e) => {
-        logKa('ошибка TCP', e?.message || String(e));
-        if (wireArmed) teardownWire('peer_error');
+      const onPeerClose = () => {
+        tcpIdleDrainOff();
+        clearTcpEndpointRef(sock);
       };
+      const onPeerErr = (e) => handleTcpWireFailure('read', e);
       sock.on('data', onData);
+      sock.on('end', onPeerEnd);
       sock.once('close', onPeerClose);
       sock.once('error', onPeerErr);
       wireOff = () => {
         try {
           sock.off('data', onData);
+          sock.off('end', onPeerEnd);
           sock.off('close', onPeerClose);
           sock.off('error', onPeerErr);
         } catch {
@@ -6167,6 +6389,22 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       );
       return;
     }
+    if (
+      transport === 'tcp' &&
+      reason === 'idle' &&
+      keepAliveSec > 0 &&
+      !bridgeOpts?.softKeepAliveIdle
+    ) {
+      const role = resolveTcpWireRole();
+      if (role === 'client') {
+        tcpClientIdleDisarm(reason);
+        return;
+      }
+      if (role === 'server') {
+        void tcpServerIdleGracefulClose();
+        return;
+      }
+    }
     if (teardownBusy) return;
     teardownBusy = true;
     try {
@@ -6189,9 +6427,17 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
         `${reconnectCooldownSec}s (пакеты с TUN до этого времени игнорируются)`,
       );
     }
+    const sock = ep;
+    ep = null;
+    tcpFramedSend = null;
+    tcpIdleDrainOff();
     try {
       if (transport === 'tcp') {
-        ep?.destroy?.();
+        if (reason === 'peer_close') {
+          respondFinTcpEndpoint(sock);
+        } else {
+          resetTcpEndpoint(sock);
+        }
       } else if (transport === 'websocket') {
         try {
           ep?.close?.();
@@ -6221,13 +6467,13 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     } catch {
       /* ignore */
     }
-    ep = null;
-    tcpFramedSend = null;
     const reasonRu =
       reason === 'idle'
         ? `простой ${keepAliveSec}s (следующий трафик с TUN поднимет client заново; exit — ждёт пира)`
         : reason === 'peer_close'
-          ? 'пир закрыл соединение'
+          ? 'пир прислал FIN (ответили FIN)'
+          : reason === 'peer_reset'
+            ? 'пир сбросил соединение (RST/ECONNRESET)'
           : reason === 'peer_error'
             ? 'ошибка на транспорте'
             : reason === 'webrtc_dc_close'
@@ -6251,10 +6497,16 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
   }
 
   function closeBridgeEndpoint(prev) {
-    if (!prev) return;
+    if (!prev || prev.destroyed) return;
     try {
       if (transport === 'tcp') {
-        prev.destroy?.();
+        if (prev.readableEnded || prev.writableEnded || prev.writable === false) {
+          resetTcpEndpoint(prev);
+        } else if (resolveTcpWireRole() === 'server') {
+          void gracefulCloseTcpEndpoint(prev);
+        } else {
+          respondFinTcpEndpoint(prev);
+        }
       } else if (transport === 'websocket') {
         prev.close?.();
       } else if (transport === 'udp-client') {
@@ -6296,7 +6548,16 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
   }
 
   async function ensureWire() {
-    if (wireArmed || !lazyConnect || connecting) return;
+    if (wireArmed || connecting) return;
+    if (rearmTcpClientWire()) {
+      const pending = tunQueue.splice(0);
+      logKa('подключено', `reuse TCP client, очередь TUN ${pending.length} пакет(ов)`);
+      for (const q of pending) {
+        sendOnWire(q);
+      }
+      return;
+    }
+    if (!lazyConnect) return;
     connecting = true;
     try {
       const newEp = await lazyConnect();
@@ -6374,6 +6635,21 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
             const ipProto = pkt.length >= 10 ? pkt.readUInt8(9) : -1;
             logKa('lazy-skip', `${pkt.length} B ip-proto=${ipProto} (не триггер lazy-reconnect)`);
           }
+          continue;
+        }
+        if (rearmTcpClientWire()) {
+          try {
+            bridgeOpts?.onTunOutbound?.(pkt);
+          } catch (e) {
+            console.error('[clean-vpn] onTunOutbound:', e?.message || e);
+          }
+          if (
+            typeof bridgeOpts?.tunOutboundSendIf === 'function' &&
+            !bridgeOpts.tunOutboundSendIf(pkt)
+          ) {
+            continue;
+          }
+          sendOnWire(pkt);
           continue;
         }
         if (kaDebug) {
@@ -6455,6 +6731,7 @@ function attachOutboundTunBridge(
   const api = attachTunBridge(tun, transport, null, {
     ...withKeepalive(bridgeBase, ka, reconnectCooldownSec),
     lazyConnect: connectFn,
+    tcpWireRole: 'client',
   });
   if (ka === 0 || eagerOnStart) {
     if (eagerOnStart && ka > 0) {
@@ -6482,7 +6759,10 @@ function attachOutboundTunBridge(
 function createInboundTunBridgeAttach(tun, bridgeBase, keepAliveSec, reconnectCooldownSec = 0) {
   /** @type {{ reconnectWire: (newEp: any) => void } | null} */
   let bridgeApi = null;
-  const bridgeOpts = withKeepalive(bridgeBase, keepAliveSec, reconnectCooldownSec);
+  const bridgeOpts = {
+    ...withKeepalive(bridgeBase, keepAliveSec, reconnectCooldownSec),
+    tcpWireRole: 'server',
+  };
   return (
     /** @type {Parameters<typeof attachTunBridge>[1]} */ transport,
     endpoint,
@@ -8907,7 +9187,11 @@ async function runExit({
 
   const startBridge = (sock, restBuf, transport) => {
     if (transport === 'tcp' && activeTcp && !activeTcp.destroyed) {
-      activeTcp.destroy();
+      if (activeTcp.readableEnded || activeTcp.writableEnded || activeTcp.writable === false) {
+        resetTcpEndpoint(activeTcp);
+      } else {
+        void gracefulCloseTcpEndpoint(activeTcp);
+      }
     }
     if (transport === 'tcp') activeTcp = sock;
     attachInboundBridge(transport, sock, () => {
@@ -10667,7 +10951,7 @@ async function runClient({
     console.log('[clean-vpn] QUIC session установлена');
     const stream = await quicClientSession.createBidirectionalStream();
     const sock = quicBidiToSocketLike(stream);
-    attachTunBridge(tun, 'tcp', sock, BRIDGE_OPTS_CLIENT);
+    attachTunBridge(tun, 'tcp', sock, { ...BRIDGE_OPTS_CLIENT, tcpWireRole: 'client' });
     return;
   }
 
@@ -10693,7 +10977,7 @@ async function runClient({
     console.log('[clean-vpn] QUIC-EXT (@infisical/quic) соединение установлено');
     const stream = quicExtClient.connection.newStream('bidi');
     const sock = quicBidiToSocketLike(stream);
-    attachTunBridge(tun, 'tcp', sock, BRIDGE_OPTS_CLIENT);
+    attachTunBridge(tun, 'tcp', sock, { ...BRIDGE_OPTS_CLIENT, tcpWireRole: 'client' });
     return;
   }
 
@@ -11279,7 +11563,7 @@ async function main() {
 --ws-server: websocket / ws-chrome на exit — слушать HTTP+WS или WSS данных на --server; на client (websocket) — слушать WSS; без флага — исходящий WebSocket к --server.
 --signaling: webrtc (exit|client) или rtc-chrome (client) — слушать WSS сигналинга на --server; без флага — исходящий WS. Для udp — вместе с UDP на PORT поднять WSS на PORT+1 (как webrtc). Алиас: --signalling.
 --punch: только --type=udp — hole punching через STUN + сигналинг на PORT+1; на exit только вместе с --signaling.
---keep-alive=N: ... ws-chrome: переподключение поднимает новый Chrome (дорого). rtc-chrome: keep-alive рвёт только WebRTC к exit, Chrome остаётся (быстрый reconnect). QUIC/quic-ext: флаг не применяется.
+--keep-alive=N: ... ws-chrome: переподключение поднимает новый Chrome (дорого). rtc-chrome: keep-alive рвёт только WebRTC к exit, Chrome остаётся (быстрый reconnect). QUIC/quic-ext: флаг не применяется. transport=tcp (--type=socket): idle на TCP-сервере (inbound) — FIN; на TCP-клиенте (outbound, в т.ч. exit с исходящим WS к client) TUN снимается без FIN, ждёт FIN сервера (CLEAN_VPN_TCP_GRACEFUL_CLOSE_MS, default 5s).
 --keep-alive-reconnect-cooldown=M: целое M≥0; только с --keep-alive>0. После разрыва по idle M с не поднимать lazy по IPv4 с TUN (отбрасываются); не-IPv4 не поднимает сессию в любом случае. После M с следующий IPv4 снова может lazy-connect — cooldown не фильтр «навсегда». Меньше дребезга от DNS/ретрансмитов. По умолчанию 0. CLEAN_VPN_KEEPALIVE_DEBUG=1 — lazy/cooldown и drop не-IPv4 (hex). CLEAN_VPN_TLS_MUX_DEBUG=1 — диагностика TCP до ClientHello на exit и до handshake на client (--type=tls).
 --tunnel-peer=HOST: для websocket/webrtc/rtc-chrome/udp + client при нюансах accept/split-default — см. шапку. Дополнительно: **transparent-tls** и **combo-tls + client** — **IPv4 или IPv4:PORT** (порт по умолчанию **443**) фиксирует один апстрим для всех локальных HTTPS-сессий (**без** iptables REDIRECT; нужен только с тестами на один хост). Обычный режим: **OUTPUT** ipv4/https→локальный intercept; при **--client-lan-subnet** — **PREROUTING DNAT** с LAN→LAN-IPv4 шлюза:intercept (второй listener, см. документацию).
 --tls-cert-dir / --shared-hmac-key: для transparent-tls и combo-tls нужен тот же 32-байтовый ключ (enc-SNI AEAD и Bearer tls), что и для --type=tls (на exit при отсутствии автосоздание как у QUIC каталога).`);
