@@ -96,6 +96,9 @@
  * connect, в т.ч. exit с исходящим WS) TUN снимает без FIN, ждёт FIN сервера и отвечает FIN. Таймаут:
  * CLEAN_VPN_TCP_GRACEFUL_CLOSE_MS (default 5000). Ошибки/framing/перезапуск пира — destroy (RST).
  * RST также при write/read ECONNRESET|EPIPE и при данных на idle-disarm сокете. WS/WebRTC/UDP — без изменений.
+ * Честный FIN (.end()) — только для настоящего net.Socket (raw socket, native tls, exit); socket-like
+ * поверх JSStream/h2/quic (boring-tls, combo-tls на client, QUIC) закрываются через destroy() —
+ * иначе .end() пишет в закрытый JSStream и роняет процесс (ERR_INTERNAL_ASSERTION в JSStreamSocket.doWrite).
  * не-IPv4 (в т.ч. IPv6 с tun) не ставится в очередь и не уходит на wire — не поднимает сессию после idle.
  * --keep-alive-reconnect-cooldown=M: после разрыва по idle M с не поднимать lazy по TUN (IPv4 в этот интервал отбрасываются);
  * по истечении M с следующий IPv4 снова может подключить lazy — это ожидаемо, не «вечная» блокировка.
@@ -2375,6 +2378,9 @@ function quicBidiToSocketLike(qs) {
       /* ignore */
     }
   };
+  // QUIC-поток: нет реального TCP FIN, у socket-like нет writable-end() (только write/destroy).
+  // graceful FIN небезопасен — закрываем через destroy().
+  sock.__cleanVpnGracefulFinUnsafe = true;
   return sock;
 }
 
@@ -2418,6 +2424,11 @@ function http2StreamToSocketLike(stream, session, tlsSocket) {
       /* ignore */
     }
   };
+  // Если под h2 не настоящий net.Socket (boring-tls helper Duplex → Node оборачивает в
+  // JSStreamSocket), то `.end()` при graceful FIN пишет END_STREAM в уже закрывшийся
+  // JSStream → ERR_INTERNAL_ASSERTION в JSStreamSocket.doWrite (краш процесса).
+  // Для таких обёрток закрываемся через destroy(). Настоящий TLSSocket (exit, native tls) — FIN ок.
+  sock.__cleanVpnGracefulFinUnsafe = !(tlsSocket instanceof net.Socket);
   return sock;
 }
 
@@ -4657,6 +4668,13 @@ function gracefulCloseTcpEndpoint(sock, timeoutMs = parsePositiveEnvInt(
       resolve();
       return;
     }
+    // socket-like поверх JSStream/h2/quic (boring-tls, combo-tls на client, QUIC):
+    // честный FIN недоступен и .end() ассертит — рвём через destroy().
+    if (sock.__cleanVpnGracefulFinUnsafe) {
+      resetTcpEndpoint(sock);
+      resolve();
+      return;
+    }
     let settled = false;
     const finish = () => {
       if (settled) return;
@@ -4686,6 +4704,12 @@ function gracefulCloseTcpEndpoint(sock, timeoutMs = parsePositiveEnvInt(
 /** @param {import('net').Socket|null|undefined} sock */
 function respondFinTcpEndpoint(sock) {
   if (!sock || sock.destroyed) return;
+  // Для socket-like без реального FIN (boring-tls/combo/QUIC поверх JSStream/h2) .end()
+  // приводит к ERR_INTERNAL_ASSERTION — закрываем destroy() вместо FIN.
+  if (sock.__cleanVpnGracefulFinUnsafe) {
+    resetTcpEndpoint(sock);
+    return;
+  }
   try {
     if (!sock.writableEnded) sock.end();
   } catch {
