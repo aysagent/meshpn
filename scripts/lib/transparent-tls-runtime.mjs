@@ -493,7 +493,9 @@ export async function attachTransparentTlsClientSession(
           return;
         }
         if (!parsed.sni?.[0]) {
-          reject(new Error('нет plaintext SNI (ECH не поддерживается в v1)'));
+          // Нет открытого SNI вообще (напр. настоящий ECH без outer SNI) — enc-SNI нечего
+          // кодировать. GREASE ECH сюда не попадает: у него есть plaintext outer SNI.
+          reject(new Error('нет plaintext SNI в ClientHello (нечего кодировать для enc-SNI)'));
           return;
         }
         const originHostAscii = parsed.sni[0];

@@ -51,6 +51,36 @@ function clientHelloBodyWithSni(hostname) {
   return Buffer.concat([legacy, random, sid, ciphers, comp, extLen, extBlock]);
 }
 
+function clientHelloBodyWithSniAndEch(hostname) {
+  const hostB = Buffer.from(hostname, 'utf8');
+  const sniPayload = Buffer.concat([
+    Buffer.from([0x00, hostB.length + 3]),
+    Buffer.from([0x00]),
+    Buffer.from([0x00, hostB.length]),
+    hostB,
+  ]);
+  const ext0 = Buffer.concat([
+    Buffer.from([0x00, 0x00]),
+    Buffer.from([0x00, sniPayload.length]),
+    sniPayload,
+  ]);
+  // ECH (0xfe0d) как GREASE ECH: произвольная начинка, сервер игнорирует.
+  const echPayload = Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
+  const echLen = Buffer.alloc(2);
+  echLen.writeUInt16BE(echPayload.length, 0);
+  const extEch = Buffer.concat([Buffer.from([0xfe, 0x0d]), echLen, echPayload]);
+  const ext43 = Buffer.from([0x00, 0x2b, 0x00, 0x03, 0x02, 0x03, 0x04]);
+  const extBlock = Buffer.concat([ext0, extEch, ext43]);
+  const extLen = Buffer.alloc(2);
+  extLen.writeUInt16BE(extBlock.length, 0);
+  const legacy = Buffer.from([0x03, 0x03]);
+  const random = Buffer.alloc(32, 0xab);
+  const sid = Buffer.from([0]);
+  const ciphers = Buffer.from([0x00, 0x02, 0x13, 0x01]);
+  const comp = Buffer.from([1, 0]);
+  return Buffer.concat([legacy, random, sid, ciphers, comp, extLen, extBlock]);
+}
+
 function tlsTcpFromClientHelloBody(chBody) {
   const inner = Buffer.alloc(4 + chBody.length);
   inner[0] = 1;
@@ -174,6 +204,30 @@ test('replaceFirstSniInTcpBuffer: longer relay SNI than origin', () => {
   assert.equal(wr.ok, true);
   if (!wr.ok) return;
   assert.notEqual(wr.prefixBuf.length, tcp.length);
+});
+
+test('enc-SNI пропускает GREASE ECH (0xfe0d) и восстанавливает ClientHello байт-в-байт', () => {
+  const origin = 'sync.browser.yandex.net';
+  const tcp = tlsTcpFromClientHelloBody(clientHelloBodyWithSniAndEch(origin));
+  const relayHost = buildRelayHostname(
+    encodeRelaySniLabel(PSK, { hostname: origin, port: 443 }),
+    PUBLIC,
+  );
+
+  const wr = replaceFirstSniInTcpBuffer(Buffer.from(tcp), relayHost);
+  assert.equal(wr.ok, true, `rewrite не должен отклонять ECH: ${!wr.ok ? wr.reason : ''}`);
+  if (!wr.ok) return;
+
+  const pMid = parseFirstTlsClientHelloFromTcpBuf(wr.prefixBuf);
+  assert.equal('ok' in pMid && pMid.ok, true);
+  assert.equal(pMid.sni?.[0], relayHost);
+
+  // Exit восстанавливает исходный ClientHello — должен совпасть с оригиналом браузера
+  // байт-в-байт (SNI назад + ECH-расширение нетронуто).
+  const rr = restoreFirstSniInTcpBuffer(wr.prefixBuf, relayHost, origin);
+  assert.equal(rr.ok, true);
+  if (!rr.ok) return;
+  assert.deepEqual(rr.prefixBuf, tcp, 'restored ClientHello должен быть равен оригиналу (ECH не тронут)');
 });
 
 test('decodeRelayFromHostname rejects wrong public suffix', () => {

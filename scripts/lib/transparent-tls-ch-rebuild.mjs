@@ -1,14 +1,18 @@
 /**
  * Variable-length SNI replace/restore в первом TLS ClientHello (TCP stream).
- * ECH / HRR / второй ClientHello — отклоняются в v1.
+ *
+ * ECH (0xfe0d, включая GREASE ECH, который Chrome шлёт по умолчанию) НЕ блокируется:
+ * переписывается только строка hostname в SNI, байты ECH-расширения не трогаются, а exit
+ * восстанавливает исходный ClientHello байт-в-байт (SNI назад + ECH как был) и проксирует
+ * сырой TCP — TLS терминируется между браузером и origin. Поэтому сервер видит оригинальный
+ * ClientHello браузера, а JA3/JA4 не меняются (список/порядок расширений те же; значение SNI
+ * в отпечаток не входит). GREASE ECH сервер игнорирует, реальный ECH сохраняется end-to-end.
  */
 
 import {
   parseFirstTlsClientHelloFromTcpBuf,
   parseTlsClientHelloReadableExtensions,
 } from './tls-clienthello-ja3.mjs';
-
-const EXT_ECH = 0xfe0d;
 
 /**
  * @param {Buffer} chBody
@@ -50,8 +54,6 @@ function findFirstSniLayoutInClientHelloBody(chBody) {
     const bodyRel = eo + 4;
     eo += 4 + el;
     const ed = extBlock.subarray(bodyRel, bodyRel + el);
-
-    if (et === EXT_ECH) return null;
 
     if (et === 0 && ed.length >= 2) {
       let listLen = ed.readUInt16BE(0);
@@ -95,12 +97,8 @@ function clientHelloBlockedForEncSni(chBody) {
   o += 2;
   const extEnd = o + extLen;
   if (chBody.length < extEnd) return 'ch_short';
-  let eo = o;
-  while (eo + 4 <= extEnd) {
-    const et = chBody.readUInt16BE(eo);
-    eo += 4 + chBody.readUInt16BE(eo + 2);
-    if (et === EXT_ECH) return 'ech_not_supported';
-  }
+  // ECH (0xfe0d) намеренно НЕ блокируется — см. шапку файла. Переписываем только SNI,
+  // расширение ECH остаётся нетронутым, exit восстанавливает оригинальный ClientHello.
   return null;
 }
 
