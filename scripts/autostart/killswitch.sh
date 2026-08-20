@@ -9,10 +9,15 @@
 # Логика (v4):
 #   OUTPUT  (трафик самой платы)      → CLEANVPN_KS_OUT
 #   FORWARD (форвардинг LAN-клиентов) → CLEANVPN_KS_FWD
-# В цепочке пропускаем (RETURN): loopback, established/related, RFC1918,
+# В цепочке ACCEPT'им: loopback, established/related, RFC1918,
 # IP VPN-сервера (bypass для установки туннеля), tun-интерфейс, DHCP/broadcast.
 # Всё остальное → DROP. Так до поднятия туннеля (и если он упал) наружу мимо
 # tun ничего не уходит.
+#
+# ВАЖНО: INPUT НЕ трогаем — входящий SSH/управление всегда принимается. Ответы SSH
+# уходят через OUTPUT и разрешены правилом ESTABLISHED,RELATED (и для текущей сессии,
+# и для новых входящих подключений), плюс отдельно разрешён весь RFC1918. Разрешённое
+# именно ACCEPT (а не RETURN) — kill-switch самодостаточен независимо от политики цепочек.
 #
 # IPv6: туннель IPv4-only, поэтому весь IPv6-egress режем, кроме link-local,
 # ULA (fc00::/7) и multicast (ND/RA/DHCPv6).
@@ -91,33 +96,33 @@ down() {
 
 build_v4_out() {
   ipt -N "$CH_OUT"
-  ipt -A "$CH_OUT" -o lo -j RETURN
-  ipt -A "$CH_OUT" -o "$TUN" -j RETURN
-  ipt -A "$CH_OUT" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+  ipt -A "$CH_OUT" -o lo -j ACCEPT
+  ipt -A "$CH_OUT" -o "$TUN" -j ACCEPT
+  ipt -A "$CH_OUT" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
   local net
   for net in "${RFC1918[@]}"; do
-    ipt -A "$CH_OUT" -d "$net" -j RETURN
+    ipt -A "$CH_OUT" -d "$net" -j ACCEPT
   done
   # DHCP-клиент (до получения адреса established ещё нет).
-  ipt -A "$CH_OUT" -p udp --sport 68 --dport 67 -j RETURN
-  ipt -A "$CH_OUT" -d 255.255.255.255 -j RETURN
+  ipt -A "$CH_OUT" -p udp --sport 68 --dport 67 -j ACCEPT
+  ipt -A "$CH_OUT" -d 255.255.255.255 -j ACCEPT
   # bypass к VPN-серверу(ам) — чтобы clean-vpn мог поднять туннель.
   local ip
   for ip in ${SERVERS//,/ }; do
-    [[ -n "$ip" ]] && ipt -A "$CH_OUT" -d "$ip" -j RETURN
+    [[ -n "$ip" ]] && ipt -A "$CH_OUT" -d "$ip" -j ACCEPT
   done
   ipt -A "$CH_OUT" -j DROP
 }
 
 build_v4_fwd() {
   ipt -N "$CH_FWD"
-  ipt -A "$CH_FWD" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+  ipt -A "$CH_FWD" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
   # Форвардинг В туннель — ок.
-  ipt -A "$CH_FWD" -o "$TUN" -j RETURN
+  ipt -A "$CH_FWD" -o "$TUN" -j ACCEPT
   # LAN↔LAN.
   local net
   for net in "${RFC1918[@]}"; do
-    ipt -A "$CH_FWD" -d "$net" -j RETURN
+    ipt -A "$CH_FWD" -d "$net" -j ACCEPT
   done
   ipt -A "$CH_FWD" -j DROP
 }
@@ -126,19 +131,19 @@ build_v6() {
   [[ -n "$IP6T" ]] || { log "ip6tables нет — IPv6 не трогаю"; return 0; }
   # OUTPUT
   ip6 -N "$CH_OUT"
-  ip6 -A "$CH_OUT" -o lo -j RETURN
-  ip6 -A "$CH_OUT" -o "$TUN" -j RETURN
-  ip6 -A "$CH_OUT" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-  ip6 -A "$CH_OUT" -d fe80::/10 -j RETURN       # link-local (ND/RA/DHCPv6-LL)
-  ip6 -A "$CH_OUT" -d fc00::/7  -j RETURN       # ULA / локальные IPv6-сети
-  ip6 -A "$CH_OUT" -d ff00::/8  -j RETURN       # multicast (ND/RA/MLD)
+  ip6 -A "$CH_OUT" -o lo -j ACCEPT
+  ip6 -A "$CH_OUT" -o "$TUN" -j ACCEPT
+  ip6 -A "$CH_OUT" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  ip6 -A "$CH_OUT" -d fe80::/10 -j ACCEPT       # link-local (ND/RA/DHCPv6-LL)
+  ip6 -A "$CH_OUT" -d fc00::/7  -j ACCEPT       # ULA / локальные IPv6-сети
+  ip6 -A "$CH_OUT" -d ff00::/8  -j ACCEPT       # multicast (ND/RA/MLD)
   ip6 -A "$CH_OUT" -j DROP
   # FORWARD
   ip6 -N "$CH_FWD"
-  ip6 -A "$CH_FWD" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-  ip6 -A "$CH_FWD" -d fe80::/10 -j RETURN
-  ip6 -A "$CH_FWD" -d fc00::/7  -j RETURN
-  ip6 -A "$CH_FWD" -d ff00::/8  -j RETURN
+  ip6 -A "$CH_FWD" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  ip6 -A "$CH_FWD" -d fe80::/10 -j ACCEPT
+  ip6 -A "$CH_FWD" -d fc00::/7  -j ACCEPT
+  ip6 -A "$CH_FWD" -d ff00::/8  -j ACCEPT
   ip6 -A "$CH_FWD" -j DROP
 }
 
