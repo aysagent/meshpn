@@ -30,6 +30,57 @@ sudo env "PATH=$PATH" scripts/autostart/install.sh \
 
 `sudo env "PATH=$PATH" ...` нужен, чтобы установщик нашёл ваш `node` (важно при nvm).
 
+Установщик делает `systemctl restart --no-block` и **не ждёт** старта сервиса —
+иначе он завис бы, пока systemd в той же транзакции поднимает `network-online.target`
+(`wait-online` может блокировать десятки секунд). Сервис стартует в фоне; смотрите
+`journalctl -u clean-vpn -f`. Первый старт после ребута/установки может подождать
+`network-online.target`; последующие рестарты быстрые.
+
+## Kill-switch (анти-leak)
+
+Для `--role=client` установщик автоматически ставит **kill-switch**: пока туннель
+не поднят (или если он упал), трафик мимо `tun` блокируется — интернет мимо VPN не течёт.
+
+Разрешено всегда (чтобы не потерять управление и дать поднять туннель):
+
+- loopback, `established/related`;
+- вся локальная сеть RFC1918 (`10/8`, `172.16/12`, `192.168/16`) — SSH/управление;
+- IP VPN-сервера (bypass, извлекается из `--server`);
+- исходящее в `tun0`; DHCP/broadcast.
+
+Блокируется (когда туннеля нет): весь остальной egress платы (`OUTPUT`) и форвардинг
+LAN-клиентов (`FORWARD`) в интернет, плюс **весь IPv6-egress** (туннель IPv4-only),
+кроме link-local/ULA/multicast.
+
+Правила живут в отдельных цепочках `CLEANVPN_KS_OUT` / `CLEANVPN_KS_FWD`
+(изолированно от intercept/NAT самого clean-vpn). Kill-switch **привязан к сервису**
+(`tied`): поднимается ДО `clean-vpn` и снимается при остановке сервиса.
+
+```bash
+# посмотреть активные правила / снять-поднять вручную:
+/usr/local/bin/clean-vpn-killswitch.sh status
+sudo /usr/local/bin/clean-vpn-killswitch.sh down
+sudo /usr/local/bin/clean-vpn-killswitch.sh up --server=154.62.226.216 --scope=both --ipv6=block
+```
+
+Env-переключатели установщика:
+
+- `KILLSWITCH=1|0` — ставить kill-switch (default `1` для client, `0` для exit;
+  на exit он вреден — там плата и есть выход в интернет).
+- `KS_SCOPE=both|fwd` — резать `OUTPUT`+`FORWARD` (default `both`) или только `FORWARD`.
+- `KS_IPV6=block|leave` — резать IPv6-egress (default `block`).
+- `KS_SERVER_IPS=IP[,IP...]` — bypass к серверу, если IP не извлёкся из `--server`
+  (напр. когда `--server` задан хостнеймом с меняющимся IP).
+- `KILLSWITCH_PERSIST=1` — kill-switch **не** привязан к сервису: активен с раннего
+  boot (`network-pre.target`) и держится, даже если сервис остановлен/упал; снимается
+  только `uninstall.sh`. Это закрывает крошечное окно между «сеть поднялась» и стартом
+  сервиса на буте. По умолчанию (`tied`) такое окно теоретически возможно, но оно мало.
+
+> ВНИМАНИЕ: kill-switch с `KS_SCOPE=both` блокирует и DNS к публичным резолверам
+> (напр. `8.8.8.8`), пока туннель не поднят. DNS к локальному резолверу (RFC1918)
+> и через `tun0` работает. Если `--server` — хостнейм, его IP резолвится на момент
+> установки; при смене IP переустановите или задайте `KS_SERVER_IPS`.
+
 ## Опции установщика (через env)
 
 - `SERVICE_NAME` — имя сервиса, default `clean-vpn`. Влияет и на имя run.sh
@@ -71,10 +122,15 @@ sudo SERVICE_NAME=clean-vpn-exit scripts/autostart/uninstall.sh
   (с `/usr/sbin`,`/sbin` для `iptables`/`ip`/`sysctl`), делает `cd` в корень репозитория
   и `exec node scripts/clean-vpn.js <аргументы>`.
 - `/etc/systemd/system/<SERVICE_NAME>.service` — юнит: `Type=simple`, `Restart=always`,
-  `After/Wants=network-online.target`, `TimeoutStopSec=15`.
+  `After/Wants=network-online.target`, `StartLimitIntervalSec=0`, `TimeoutStopSec=15`.
+- (client) `/usr/local/bin/<SERVICE_NAME>-killswitch.sh` и
+  `/etc/systemd/system/<SERVICE_NAME>-killswitch.service` — kill-switch (см. выше).
 
 ## Заметки
 
+- `StartLimitIntervalSec=0` отключает лимит рестартов: иначе после нескольких быстрых
+  падений подряд (например, сеть/сервер недоступны на старте) systemd увёл бы сервис в
+  `failed` и перестал бы его поднимать — а это и есть «не запустилось автоматом + leak».
 - Сервис исполняется от root (нужно для TUN/iptables) — это дефолт system-юнита.
 - Пути к сертификатам/`--config` в аргументах лучше указывать **абсолютными**
   (юнит делает `cd` в корень репо, но абсолютные надёжнее).
