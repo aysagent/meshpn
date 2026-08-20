@@ -180,16 +180,14 @@ ExecStop=$KS_SH down --tun=tun0
 WantedBy=multi-user.target
 EOF
   else
-    # tied: стартует ДО clean-vpn (pulled по Requires), снимается при остановке сервиса (PartOf).
+    # tied: обычный oneshot, поднимается ДО clean-vpn (по Requires/After в основном unit)
+    # и снимается при остановке сервиса (PartOf). Без раннего boot-ordering — чтобы не
+    # создавать циклов зависимостей, из-за которых systemd мог отбросить старт сервиса.
     cat > "$KS_UNIT_PATH" <<EOF
 [Unit]
 Description=clean-vpn kill-switch ($SERVICE_NAME)
-DefaultDependencies=no
-Before=network-pre.target
-Wants=network-pre.target
-Conflicts=shutdown.target
-Before=shutdown.target
 PartOf=$SERVICE_NAME.service
+Before=$SERVICE_NAME.service
 
 [Service]
 Type=oneshot
@@ -236,6 +234,9 @@ chmod 0644 "$UNIT_PATH"
 # --- применяем ---
 log "systemctl daemon-reload"
 systemctl daemon-reload
+# Снимаем возможный залипший failed/start-limit, иначе restart может отказать
+# ('start request repeated too quickly').
+systemctl reset-failed "$SERVICE_NAME" "$KS_UNIT_NAME" 2>/dev/null || true
 log "systemctl enable $SERVICE_NAME"
 systemctl enable "$SERVICE_NAME"
 if [[ "$KILLSWITCH" == "1" && "$KILLSWITCH_PERSIST" == "1" ]]; then
