@@ -30,11 +30,12 @@ sudo env "PATH=$PATH" scripts/autostart/install.sh \
 
 `sudo env "PATH=$PATH" ...` нужен, чтобы установщик нашёл ваш `node` (важно при nvm).
 
-Установщик делает `systemctl restart --no-block` и **не ждёт** старта сервиса —
-иначе он завис бы, пока systemd в той же транзакции поднимает `network-online.target`
-(`wait-online` может блокировать десятки секунд). Сервис стартует в фоне; смотрите
-`journalctl -u clean-vpn -f`. Первый старт после ребута/установки может подождать
-`network-online.target`; последующие рестарты быстрые.
+Юнит **намеренно не зависит от `network-online.target`**: на нестабильном uplink
+(например, wifi к телефону) `wait-online` блокирует запуск — `systemctl start/restart`
+и загрузка зависают. Вместо этого сервис стартует сразу; `clean-vpn` сам переподключается,
+а если сети ещё нет (нет default route) — падает и рестартится по `Restart=always`, пока
+uplink не появится. Установщик дополнительно делает `systemctl restart --no-block` и
+не ждёт завершения job'а. Логи: `journalctl -u clean-vpn -f`.
 
 ## Kill-switch (анти-leak)
 
@@ -122,7 +123,8 @@ sudo SERVICE_NAME=clean-vpn-exit scripts/autostart/uninstall.sh
   (с `/usr/sbin`,`/sbin` для `iptables`/`ip`/`sysctl`), делает `cd` в корень репозитория
   и `exec node scripts/clean-vpn.js <аргументы>`.
 - `/etc/systemd/system/<SERVICE_NAME>.service` — юнит: `Type=simple`, `Restart=always`,
-  `After/Wants=network-online.target`, `StartLimitIntervalSec=0`, `TimeoutStopSec=15`.
+  `After=network.target` (без ожидания `network-online.target`),
+  `StartLimitIntervalSec=0`, `TimeoutStopSec=15`.
 - (client) `/usr/local/bin/<SERVICE_NAME>-killswitch.sh` и
   `/etc/systemd/system/<SERVICE_NAME>-killswitch.service` — kill-switch (см. выше).
 

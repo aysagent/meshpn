@@ -56,9 +56,10 @@ done
 IPT="$(command -v iptables || true)"
 IP6T="$(command -v ip6tables || true)"
 [[ -n "$IPT" ]] || die "iptables не найден"
-# -w: ждать xtables lock, чтобы не конфликтовать с clean-vpn.
-ipt() { "$IPT" -w "$@"; }
-ip6() { [[ -n "$IP6T" ]] && "$IP6T" -w "$@"; }
+# -w 5: ждать xtables lock максимум 5с (чтобы не зависнуть навсегда, если lock держит
+# другой процесс — иначе oneshot в systemd мог бы подвесить старт сервиса).
+ipt() { "$IPT" -w 5 "$@"; }
+ip6() { [[ -n "$IP6T" ]] && "$IP6T" -w 5 "$@"; }
 
 RFC1918=(10.0.0.0/8 172.16.0.0/12 192.168.0.0/16)
 

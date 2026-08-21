@@ -212,8 +212,11 @@ fi
 cat > "$UNIT_PATH" <<EOF
 [Unit]
 Description=clean-vpn ($SERVICE_NAME)
-After=network-online.target
-Wants=network-online.target
+# НАМЕРЕННО без Wants/After=network-online.target: на нестабильном uplink (wifi к телефону)
+# wait-online блокирует запуск — 'systemctl start/restart' и загрузка зависают. clean-vpn
+# сам переподключается, а при полном отсутствии сети падает (нет default route) и
+# рестартится по Restart=always, пока uplink не появится. After=network.target не блокирует.
+After=network.target
 ${KS_DEPS}
 # Не сдаваться после нескольких быстрых падений (иначе сервис уходит в failed и не стартует).
 StartLimitIntervalSec=0
