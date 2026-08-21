@@ -6320,6 +6320,16 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       };
       const onPeerClose = () => {
         tcpIdleDrainOff();
+        // 'close' может прийти раньше 'end'/'error' — типично для socket-like поверх
+        // HTTP/2-потока/boring-tls helper (при гибели exit helper выходит → Duplex
+        // заканчивается → H2-поток эмитит только 'close', без FIN/'error'). Если провод
+        // ещё взведён — это неожиданный обрыв: делаем полноценный teardown (сбросит
+        // wireArmed и ep), иначе останется залипшее wireArmed=true/ep=null и следующий
+        // TUN-пакет молча дропнется в sendOnWire без lazy-reconnect.
+        if (wireArmed) {
+          teardownWire('peer_close');
+          return;
+        }
         clearTcpEndpointRef(sock);
       };
       const onPeerErr = (e) => handleTcpWireFailure('read', e);
