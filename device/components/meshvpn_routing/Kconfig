@@ -1,0 +1,11 @@
+menu "meshvpn Routing"
+
+    config MESHVPN_ROUTING_MAX_RULES
+        int "Maximum routing rules"
+        default 32
+
+    config MESHVPN_ROUTING_MAX_DOMAINS
+        int "Maximum domain rules"
+        default 64
+
+endmenu

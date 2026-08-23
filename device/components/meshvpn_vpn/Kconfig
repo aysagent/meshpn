@@ -1,0 +1,9 @@
+menu "meshvpn VPN (phase 2)"
+
+    config MESHVPN_VPN_ENABLE
+        bool "Enable VPN client (experimental)"
+        default n
+        help
+            TLS tunnel to clean-vpn exit. Requires mbedTLS exporter support.
+
+endmenu

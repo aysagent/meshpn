@@ -1,0 +1,58 @@
+menu "meshvpn Board"
+
+    choice MESHVPN_BOARD
+        prompt "Target board"
+        default MESHVPN_BOARD_XIAO_ESP32S3
+
+        config MESHVPN_BOARD_XIAO_ESP32S3
+            bool "Seeed XIAO ESP32-S3"
+
+        config MESHVPN_BOARD_M5_STAMP_P4_C6
+            bool "M5Stack Stamp-P4 + C6 addon (scaffold)"
+    endchoice
+
+endmenu
+
+menu "meshvpn USB"
+
+    config MESHVPN_USB_SUBNET_OCTET_2
+        int "USB host LAN third octet (192.168.X.0/24)"
+        range 1 254
+        default 7
+        help
+            USB-side LAN for connected host. Default 7 → 192.168.7.0/24
+            (compatible with clean-vpn --client-lan-subnet).
+
+    choice MESHVPN_USB_PROFILE
+        prompt "USB network class"
+        default MESHVPN_USB_PROFILE_NCM
+        help
+            Selected by profiles/usb_*.defconfig via ./device/scripts/flash.sh.
+
+        config MESHVPN_USB_PROFILE_NCM
+            bool "CDC-NCM (iPhone USB-C, modern macOS)"
+
+        config MESHVPN_USB_PROFILE_RNDIS
+            bool "RNDIS (Windows)"
+
+        config MESHVPN_USB_PROFILE_ECM
+            bool "CDC-ECM (Linux, legacy macOS)"
+    endchoice
+
+endmenu
+
+menu "meshvpn Setup"
+
+    config MESHVPN_SETUP_AP_SSID
+        string "Setup SoftAP SSID (when WiFi not configured)"
+        default "MeshVPN-Setup"
+
+    config MESHVPN_SETUP_AP_PASSWORD
+        string "Setup SoftAP password (min 8 chars)"
+        default "meshvpn123"
+
+    config MESHVPN_WEB_ADMIN_PASSWORD_DEFAULT
+        string "Default web admin password (change on first login)"
+        default "admin"
+
+endmenu

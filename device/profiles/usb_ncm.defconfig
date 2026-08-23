@@ -1,0 +1,20 @@
+# USB CDC-NCM — iPhone USB-C, modern macOS
+#
+# CDC-ACM is enabled alongside NCM on purpose. The NCM function descriptor
+# starts with an Interface Association Descriptor, and the USB spec then
+# requires the device descriptor to declare class EF/02/01. esp_tinyusb only
+# emits that triple when CFG_TUD_CDC is non-zero — with NCM alone it claims
+# class 0x00, which iOS and macOS refuse to bind their NCM driver to.
+# The extra ACM interface doubles as the serial console.
+
+CONFIG_TINYUSB_DEBUG_LEVEL=0
+CONFIG_TINYUSB_NET_MODE_NCM=y
+CONFIG_TINYUSB_CDC_ENABLED=y
+CONFIG_TINYUSB_CDC_COUNT=1
+CONFIG_MESHVPN_USB_PROFILE_NCM=y
+
+# The ESP32-S3 muxes one internal USB PHY between the USB-Serial-JTAG and the
+# USB-OTG controller. Leaving the JTAG console enabled keeps a second consumer
+# of that PHY alive while TinyUSB drives OTG; the CDC-ACM interface above
+# replaces it as the log console.
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

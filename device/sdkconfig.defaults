@@ -1,0 +1,65 @@
+# meshvpn device — common defaults
+
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+
+CONFIG_FREERTOS_HZ=1000
+# Headroom for the meshvpn_log vprintf hook, which adds a stack frame to every
+# ESP_LOG call made from these tasks.
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=6144
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
+
+# Crash diagnostics: there is no serial console, so the panic reason has to
+# survive the reboot and be readable over the web UI.
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+CONFIG_ESP_COREDUMP_CAPTURE_DRAM=y
+
+# LWIP NAT (bridge + meshvpn_net)
+CONFIG_LWIP_IP_FORWARD=y
+CONFIG_LWIP_IPV4_NAPT=y
+CONFIG_LWIP_L2_TO_L3_COPY=y
+CONFIG_LWIP_TCP_MSS=1360
+CONFIG_LWIP_TCP_OVERSIZE_MSS=y
+CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=6144
+
+# HTTP server (meshvpn_web)
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=512
+
+# Disable BT (not needed)
+CONFIG_BT_ENABLED=n
+
+# meshvpn components
+CONFIG_MESHVPN_BOARD_XIAO_ESP32S3=y
+
+# meshvpn VPN (phase 2 stub)
+CONFIG_MESHVPN_VPN_ENABLE=n
+
+CONFIG_MESHVPN_USB_PROFILE_NCM=y
+
+# ESP-IoT-Bridge: USB NIC + SoftAP LAN + WiFi STA uplink
+CONFIG_BRIDGE_ENABLE=y
+CONFIG_BRIDGE_DATA_FORWARDING_NETIF_USB=y
+CONFIG_BRIDGE_EXTERNAL_NETIF_STATION=y
+# SoftAP is a bridge LAN too, so it gets NAT + DNS like the USB interface.
+# SSID/password are applied at runtime by meshvpn_wifi.
+CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP=y
+CONFIG_BRIDGE_SOFTAP_SSID_END_WITH_THE_MAC=n
+CONFIG_BRIDGE_SOFTAP_MAX_CONNECT_NUMBER=4
+
+# Fallback DNS handed to LAN clients until the uplink reports the real one
+CONFIG_BRIDGE_STATIC_DNS_SERVER_MAIN="8.8.8.8"
+CONFIG_BRIDGE_STATIC_DNS_SERVER_BACKUP="1.1.1.1"
+
+# USB subnet for host (clean-vpn compatible)
+CONFIG_MESHVPN_USB_SUBNET_OCTET_2=7
+
+# WiFi provisioning SoftAP when unconfigured
+CONFIG_MESHVPN_SETUP_AP_SSID="MeshVPN-Setup"
+CONFIG_MESHVPN_SETUP_AP_PASSWORD="meshvpn123"

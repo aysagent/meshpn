@@ -1,0 +1,4 @@
+dependencies:
+  espressif/iot_bridge: "*"
+  idf:
+    version: ">=5.2.0"
