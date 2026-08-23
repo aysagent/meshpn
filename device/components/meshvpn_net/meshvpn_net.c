@@ -8,6 +8,7 @@
 #include "esp_bridge_events.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_netif_net_stack.h"
 #include "lwip/lwip_napt.h"
@@ -206,11 +207,19 @@ esp_err_t meshvpn_net_start_bridge(void)
 #endif
 
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_USB)
+    /* lwIP USB gateway MAC: derived from ETH base, locally administered, and
+     * distinct from NCM (ESP_MAC_ETH), WiFi STA, and SoftAP. */
+    uint8_t usb_lwip_mac[6];
+    esp_read_mac(usb_lwip_mac, ESP_MAC_ETH);
+    usb_lwip_mac[0] |= 0x02;
+    usb_lwip_mac[5] = (uint8_t)(usb_lwip_mac[5] + 1);
+
     meshvpn_net_fill_ip(&ip, CONFIG_MESHVPN_USB_SUBNET_OCTET_2);
-    s_usb_netif = esp_bridge_create_usb_netif(&ip, NULL, true, true);
+    s_usb_netif = esp_bridge_create_usb_netif(&ip, usb_lwip_mac, true, true);
     if (!s_usb_netif) {
         ESP_LOGE(TAG, "USB netif creation failed");
     } else {
+        ESP_LOGI(TAG, "USB lwIP MAC " MACSTR, MAC2STR(usb_lwip_mac));
         meshvpn_usb_attach_netif(s_usb_netif);
         meshvpn_net_configure_lan_dhcp(s_usb_netif);
     }
