@@ -49,6 +49,8 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         snprintf(s_ip, sizeof(s_ip), IPSTR, IP2STR(&ev->ip_info.ip));
         s_sta_connected = true;
         s_disconnect_reason = 0;
+        /* Keep modem awake on the uplink — PS can cut NAT throughput badly. */
+        esp_wifi_set_ps(WIFI_PS_NONE);
         ESP_LOGI(TAG, "STA got IP %s", s_ip);
     }
 }
@@ -104,10 +106,16 @@ esp_err_t meshvpn_wifi_start_sta(const meshvpn_wifi_creds_t *creds)
     }
 
     esp_wifi_disable_pmf_config(WIFI_IF_STA);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    /* Prefer HT40 on 2.4 GHz when the AP allows it; falls back silently. */
+    esp_err_t bw_err = esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT40);
+    if (bw_err != ESP_OK) {
+        ESP_LOGW(TAG, "STA HT40 unavailable (%s), staying on default BW", esp_err_to_name(bw_err));
+    }
 
     strncpy(s_ssid, creds->ssid, sizeof(s_ssid) - 1);
     s_sta_configured = true;
-    ESP_LOGI(TAG, "STA configured for SSID %s", creds->ssid);
+    ESP_LOGI(TAG, "STA configured for SSID %s (PS off)", creds->ssid);
     return meshvpn_wifi_connect();
 }
 
