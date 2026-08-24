@@ -24,17 +24,16 @@ typedef struct {
 
 esp_err_t meshvpn_net_init(void);
 
-/** Re-apply USB/SoftAP DHCP (gateway DNS + captive portal URI). */
+/** Re-apply USB LAN DHCP (gateway DNS + captive portal URI). */
 void meshvpn_net_refresh_lan_dhcp(void);
 
 /**
- * Create the bridge netifs: SoftAP (192.168.4.1/24), USB (192.168.7.1/24) and
- * the WiFi station uplink. Also initialises the WiFi driver, so this must run
- * before any esp_wifi_* configuration.
+ * Create bridge netifs: USB (192.168.7.1/24) and WiFi STA uplink. Also initialises
+ * the WiFi driver, so this must run before any esp_wifi_* configuration.
  */
 esp_err_t meshvpn_net_start_bridge(void);
 
-/** Re-apply NAT to every LAN interface (USB and SoftAP). */
+/** Re-apply NAT on the USB LAN interface. */
 void meshvpn_net_ensure_napt(void);
 
 void meshvpn_net_log_state(void);

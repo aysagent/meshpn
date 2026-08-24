@@ -136,14 +136,22 @@ static void meshvpn_net_read_offered_dns(esp_netif_t *netif, char *out, size_t o
 void meshvpn_net_refresh_lan_dhcp(void)
 {
     char usb_dns[16];
+#if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
     char ap_dns[16];
+#endif
 
     meshvpn_net_configure_lan_dhcp(s_usb_netif);
+#if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
     meshvpn_net_configure_lan_dhcp(s_ap_netif);
+#endif
 
     meshvpn_net_read_offered_dns(s_usb_netif, usb_dns, sizeof(usb_dns));
+#if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
     meshvpn_net_read_offered_dns(s_ap_netif, ap_dns, sizeof(ap_dns));
     ESP_LOGD(TAG, "LAN DHCP DNS: USB=%s AP=%s", usb_dns, ap_dns);
+#else
+    ESP_LOGD(TAG, "LAN DHCP DNS: USB=%s", usb_dns);
+#endif
 }
 
 static void meshvpn_net_on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
@@ -160,8 +168,11 @@ static void meshvpn_net_on_event(void *arg, esp_event_base_t base, int32_t id, v
      * or address changes. That API disables NAPT on every other interface — USB
      * included — so re-apply right after those events, not only on a timer. */
     if ((base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) ||
-        (base == WIFI_EVENT && id == WIFI_EVENT_AP_START) ||
-        (base == BRIDGE_EVENT && id == BRIDGE_EVENT_ID_DNS_UPDATE)) {
+        (base == BRIDGE_EVENT && id == BRIDGE_EVENT_ID_DNS_UPDATE)
+#if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
+        || (base == WIFI_EVENT && id == WIFI_EVENT_AP_START)
+#endif
+        ) {
         /* Bridge overwrites LAN DHCP DNS with the uplink resolver (8.8.8.8 /
          * router) whenever STA gets an address. Undo that so clients keep using
          * the gateway DNS proxy on :53. */
@@ -243,7 +254,9 @@ esp_err_t meshvpn_net_start_bridge(void)
 
     /* Register after iot_bridge so our handlers run after bridge DNS/NAPT hooks. */
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, meshvpn_net_on_event, NULL));
+#if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_START, meshvpn_net_on_event, NULL));
+#endif
     ESP_ERROR_CHECK(esp_event_handler_register(BRIDGE_EVENT, BRIDGE_EVENT_ID_DNS_UPDATE, meshvpn_net_on_event, NULL));
 
     return ESP_OK;
@@ -252,12 +265,17 @@ esp_err_t meshvpn_net_start_bridge(void)
 void meshvpn_net_log_state(void)
 {
     char usb_ip[16];
-    char ap_ip[16];
     meshvpn_net_read_ip(s_usb_netif, usb_ip, sizeof(usb_ip));
-    meshvpn_net_read_ip(s_ap_netif, ap_ip, sizeof(ap_ip));
     meshvpn_net_refresh_napt_flags();
+#if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
+    char ap_ip[16];
+    meshvpn_net_read_ip(s_ap_netif, ap_ip, sizeof(ap_ip));
     ESP_LOGI(TAG, "bridge up: USB %s napt=%d (%s), SoftAP %s napt=%d",
              usb_ip, s_usb_napt, meshvpn_usb_profile_name(), ap_ip, s_ap_napt);
+#else
+    ESP_LOGI(TAG, "bridge up: USB %s napt=%d (%s)",
+             usb_ip, s_usb_napt, meshvpn_usb_profile_name());
+#endif
 }
 
 void meshvpn_net_get_status(meshvpn_net_status_t *status)

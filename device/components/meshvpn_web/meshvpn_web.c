@@ -240,8 +240,6 @@ static esp_err_t handler_wifi_connect(httpd_req_t *req)
     creds.configured = true;
 
     meshvpn_config_save_wifi(&creds);
-    /* The setup AP stays up on purpose: if these credentials turn out to be
-     * wrong there would otherwise be no way back into the device. */
     meshvpn_wifi_start_sta(&creds);
 
     cJSON_Delete(in);

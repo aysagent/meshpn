@@ -41,15 +41,7 @@ menu "meshvpn USB"
 
 endmenu
 
-menu "meshvpn Setup"
-
-    config MESHVPN_SETUP_AP_SSID
-        string "Setup SoftAP SSID (when WiFi not configured)"
-        default "MeshVPN-Setup"
-
-    config MESHVPN_SETUP_AP_PASSWORD
-        string "Setup SoftAP password (min 8 chars)"
-        default "meshvpn123"
+menu "meshvpn Web"
 
     config MESHVPN_WEB_ADMIN_PASSWORD_DEFAULT
         string "Default web admin password (change on first login)"

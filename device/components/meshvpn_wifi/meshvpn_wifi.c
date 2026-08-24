@@ -12,7 +12,6 @@ static const char *TAG = "meshvpn_wifi";
 
 static bool s_sta_connected;
 static bool s_sta_configured;
-static bool s_ap_active;
 static int8_t s_rssi;
 static uint8_t s_disconnect_reason;
 static char s_ssid[33];
@@ -28,18 +27,6 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         s_sta_connected = false;
         s_ip[0] = '\0';
         ESP_LOGW(TAG, "STA disconnected from %.32s, reason %u", s_ssid, ev->reason);
-    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_START) {
-        s_ap_active = true;
-        ESP_LOGI(TAG, "SoftAP started");
-    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STOP) {
-        s_ap_active = false;
-        ESP_LOGW(TAG, "SoftAP stopped");
-    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
-        wifi_event_ap_staconnected_t *ev = data;
-        ESP_LOGI(TAG, "SoftAP client joined, AID %u", ev->aid);
-    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STADISCONNECTED) {
-        wifi_event_ap_stadisconnected_t *ev = data;
-        ESP_LOGW(TAG, "SoftAP client left, AID %u", ev->aid);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *ev = data;
         esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
@@ -59,35 +46,6 @@ esp_err_t meshvpn_wifi_init(void)
 {
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_wifi_event, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi_event, NULL));
-    return ESP_OK;
-}
-
-esp_err_t meshvpn_wifi_start_setup_ap(void)
-{
-    wifi_config_t ap_cfg = {0};
-    strncpy((char *)ap_cfg.ap.ssid, CONFIG_MESHVPN_SETUP_AP_SSID, sizeof(ap_cfg.ap.ssid));
-    ap_cfg.ap.ssid_len = strlen(CONFIG_MESHVPN_SETUP_AP_SSID);
-    ap_cfg.ap.max_connection = 4;
-    ap_cfg.ap.pmf_cfg.required = false;
-    ap_cfg.ap.pmf_cfg.capable = false;
-
-    if (strlen(CONFIG_MESHVPN_SETUP_AP_PASSWORD) >= 8) {
-        strncpy((char *)ap_cfg.ap.password, CONFIG_MESHVPN_SETUP_AP_PASSWORD, sizeof(ap_cfg.ap.password));
-        ap_cfg.ap.authmode = WIFI_AUTH_WPA2_PSK;
-    } else {
-        ap_cfg.ap.authmode = WIFI_AUTH_OPEN;
-    }
-
-    esp_err_t err = esp_wifi_set_config(WIFI_IF_AP, &ap_cfg);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "SoftAP config failed: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    esp_wifi_disable_pmf_config(WIFI_IF_AP);
-    esp_wifi_set_ps(WIFI_PS_NONE);
-
-    ESP_LOGI(TAG, "Setup AP ready: %s (PMF off)", CONFIG_MESHVPN_SETUP_AP_SSID);
     return ESP_OK;
 }
 
@@ -167,7 +125,7 @@ void meshvpn_wifi_get_status(meshvpn_wifi_status_t *status)
     memset(status, 0, sizeof(*status));
     status->sta_connected = s_sta_connected;
     status->setup_mode = !s_sta_configured;
-    status->ap_active = s_ap_active;
+    status->ap_active = false;
     status->rssi = s_rssi;
     status->disconnect_reason = s_disconnect_reason;
     strncpy(status->ssid, s_ssid, sizeof(status->ssid) - 1);

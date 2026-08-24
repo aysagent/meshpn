@@ -24,9 +24,6 @@ typedef struct {
 /** Register event handlers. Call after the WiFi driver is up (bridge netifs). */
 esp_err_t meshvpn_wifi_init(void);
 
-/** Configure the always-on provisioning SoftAP (SSID/password). */
-esp_err_t meshvpn_wifi_start_setup_ap(void);
-
 esp_err_t meshvpn_wifi_start_sta(const meshvpn_wifi_creds_t *creds);
 esp_err_t meshvpn_wifi_connect(void);
 esp_err_t meshvpn_wifi_disconnect(void);

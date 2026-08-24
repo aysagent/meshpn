@@ -50,15 +50,11 @@ CONFIG_MESHVPN_VPN_ENABLE=n
 
 CONFIG_MESHVPN_USB_PROFILE_NCM=y
 
-# ESP-IoT-Bridge: USB NIC + SoftAP LAN + WiFi STA uplink
+# ESP-IoT-Bridge: USB NIC + WiFi STA uplink (no SoftAP — USB-only provisioning)
 CONFIG_BRIDGE_ENABLE=y
 CONFIG_BRIDGE_DATA_FORWARDING_NETIF_USB=y
 CONFIG_BRIDGE_EXTERNAL_NETIF_STATION=y
-# SoftAP is a bridge LAN too, so it gets NAT + DNS like the USB interface.
-# SSID/password are applied at runtime by meshvpn_wifi.
-CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP=y
-CONFIG_BRIDGE_SOFTAP_SSID_END_WITH_THE_MAC=n
-CONFIG_BRIDGE_SOFTAP_MAX_CONNECT_NUMBER=4
+# CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP is not set
 
 # Fallback DNS handed to LAN clients until the uplink reports the real one
 CONFIG_BRIDGE_STATIC_DNS_SERVER_MAIN="8.8.8.8"
@@ -66,7 +62,3 @@ CONFIG_BRIDGE_STATIC_DNS_SERVER_BACKUP="1.1.1.1"
 
 # USB subnet for host (clean-vpn compatible)
 CONFIG_MESHVPN_USB_SUBNET_OCTET_2=7
-
-# WiFi provisioning SoftAP when unconfigured
-CONFIG_MESHVPN_SETUP_AP_SSID="MeshVPN-Setup"
-CONFIG_MESHVPN_SETUP_AP_PASSWORD="meshvpn123"

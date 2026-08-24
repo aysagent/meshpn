@@ -67,13 +67,10 @@ void app_main(void)
     /* Handlers must be in place before the bridge starts the WiFi driver. */
     ESP_ERROR_CHECK(meshvpn_wifi_init());
     ESP_ERROR_CHECK(meshvpn_net_start_bridge());
+    /* Deliberately not fatal: DNS proxy must never turn into a boot loop. */
     if (meshvpn_dns_proxy_init() != ESP_OK) {
-        ESP_LOGW(TAG, "DNS proxy failed to start — USB/SoftAP clients may have no DNS");
+        ESP_LOGW(TAG, "DNS proxy failed to start — USB clients may have no DNS");
     }
-    /* Deliberately not fatal: losing the setup AP must never turn into a boot
-     * loop, since the AP is the only way to reconfigure the device. */
-    meshvpn_wifi_start_setup_ap();
-    meshvpn_net_ensure_napt();
 
     meshvpn_wifi_creds_t creds;
     meshvpn_config_load_wifi(&creds);
@@ -83,8 +80,7 @@ void app_main(void)
         meshvpn_wifi_start_sta(&creds);
         meshvpn_net_ensure_napt();
     } else {
-        ESP_LOGW(TAG, "WiFi not configured — join %s and open http://192.168.4.1/login",
-                 CONFIG_MESHVPN_SETUP_AP_SSID);
+        ESP_LOGW(TAG, "WiFi not configured — open http://192.168.7.1/login over USB");
     }
 
     ESP_ERROR_CHECK(meshvpn_web_start());
