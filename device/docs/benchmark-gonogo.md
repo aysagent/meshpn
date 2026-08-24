@@ -42,6 +42,16 @@ Hard ceiling on this board: USB Full-Speed (~12 Mbps raw) → useful NAT through
 
 Plan target was ≥8 / ≥5 — close to FS USB ceiling (~8–10 useful). Further TX tuning risks regressing stability.
 
+### After CDC console off + no per-second DHCP refresh (Aug 2026)
+
+| Direction | Mbps | Notes |
+|-----------|------|-------|
+| Download | ______ | fill after flash + speedtest |
+| Upload | ______ | |
+| `usb.tx_dropped` | ______ | delta vs previous 661 |
+| `usb.tx_retried` | ______ | delta vs previous 2996 |
+| Ethernet / admin | | `192.168.7.1/login` |
+
 ## Stability (30 min)
 
 - [ ] DHCP survives USB unplug/replug

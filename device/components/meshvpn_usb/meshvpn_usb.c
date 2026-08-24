@@ -11,7 +11,6 @@
 #include "tinyusb_net.h"
 #if CONFIG_TINYUSB_CDC_ENABLED
 #include "tusb_cdc_acm.h"
-#include "tusb_console.h"
 #endif
 
 static const char *TAG = "meshvpn_usb";
@@ -98,12 +97,11 @@ esp_err_t meshvpn_usb_attach_netif(esp_netif_t *netif)
         .usb_dev = TINYUSB_USBDEV_0,
         .cdc_port = TINYUSB_CDC_ACM_0,
     };
+    /* ACM interface stays in the descriptor for iOS/macOS NCM binding; do not
+     * route ESP_LOG to it — console traffic contends with NCM TX on FS USB. */
     err = tusb_cdc_acm_init(&acm_cfg);
-    if (err == ESP_OK) {
-        err = esp_tusb_init_console(TINYUSB_CDC_ACM_0);
-    }
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "USB console unavailable: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "USB CDC-ACM init failed: %s", esp_err_to_name(err));
     }
 #endif
 

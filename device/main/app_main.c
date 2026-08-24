@@ -113,10 +113,8 @@ void app_main(void)
         meshvpn_usb_stats_t us;
         meshvpn_usb_get_stats(&us);
 
-        if (us.host_ready) {
-            meshvpn_net_refresh_lan_dhcp();
-            meshvpn_net_ensure_napt();
-        } else if (tick % 15 == 0) {
+        /* NAPT only here — LAN DHCP is refreshed on STA/AP/bridge DNS events. */
+        if (us.host_ready || tick % 15 == 0) {
             meshvpn_net_ensure_napt();
         }
 
