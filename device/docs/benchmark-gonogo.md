@@ -79,6 +79,15 @@ Decision: **KEEP** — no measurable gain; no regression vs Phase 1.
 
 | Direction | Mbps | Δ vs 7.5/6.0 | tx_dropped | tx_retried | Ethernet |
 |-----------|------|--------------|------------|------------|----------|
+| Download  | **~7.5** | 0 | | | OK |
+| Upload    | **~6.7** | **+0.7** | | | OK |
+
+Decision: **KEEP** — upload gain; download unchanged.
+
+### Phase 4a — NCM NTB count 6×4096 (max, was 5) (Aug 2026)
+
+| Direction | Mbps | Δ vs 7.5/6.7 | tx_dropped | tx_retried | Ethernet |
+|-----------|------|--------------|------------|------------|----------|
 | Download  | ______ | | | | |
 | Upload    | ______ | | | | |
 
