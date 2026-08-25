@@ -55,12 +55,16 @@ Decision: **KEEP** — upload crossed plan floor (≥5); download trending towar
 
 ### Phase 2 — TinyUSB prio 9 + tcpip prio 18 (Aug 2026)
 
-| Direction | Mbps | Δ vs 7.5/6.0 | tx_dropped | tx_retried | Ethernet |
-|-----------|------|--------------|------------|------------|----------|
-| Download  | ______ | | | | |
-| Upload    | ______ | | | | |
+Commit: `2ebfb4d` → **REVERTED** (TinyUSB 9→6).
 
-Decision: KEEP / REVERT.
+Speed-test page barely loaded / never finished — TinyUSB prio 9 likely starved WiFi/tcpip.
+
+| Direction | Mbps | Notes |
+|-----------|------|-------|
+| Download  | — | page failed to load |
+| Upload    | — | |
+
+Decision: **REVERT** TinyUSB priority; keep explicit `LWIP_TCPIP_TASK_PRIO=18` (IDF default).
 
 ### After CDC console off + no per-second DHCP refresh (Aug 2026)
 
