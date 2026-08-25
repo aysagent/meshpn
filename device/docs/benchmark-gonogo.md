@@ -97,6 +97,15 @@ Decision: **KEEP** — no measurable change vs 3b; NTB count at Kconfig max (6).
 
 | Direction | Mbps | Δ vs 7.5/6.7 | tx_dropped | tx_retried | Ethernet |
 |-----------|------|--------------|------------|------------|----------|
+| Download  | **~8.13** | **+0.6** | | | OK |
+| Upload    | **~6.5** | −0.2 | | | OK |
+
+Decision: **KEEP** — download crossed plan target (≥8); slight upload trade-off.
+
+### Phase 5 — ensure_napt every 30s only (Aug 2026)
+
+| Direction | Mbps | Δ vs 8.13/6.5 | tx_dropped | tx_retried | Ethernet |
+|-----------|------|---------------|------------|------------|----------|
 | Download  | ______ | | | | |
 | Upload    | ______ | | | | |
 
