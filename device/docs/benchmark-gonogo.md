@@ -64,7 +64,7 @@ Speed-test page barely loaded / never finished — TinyUSB prio 9 likely starved
 | Download  | — | page failed to load |
 | Upload    | — | |
 
-Decision: **REVERT** TinyUSB priority; keep explicit `LWIP_TCPIP_TASK_PRIO=18` (IDF default).
+Decision: **REVERT** TinyUSB priority; removed explicit `LWIP_TCPIP_TASK_PRIO=18` (was IDF default anyway — verified on Phase 1 build).
 
 ### After CDC console off + no per-second DHCP refresh (Aug 2026)
 
