@@ -42,6 +42,15 @@ Hard ceiling on this board: USB Full-Speed (~12 Mbps raw) → useful NAT through
 
 Plan target was ≥8 / ≥5 — close to FS USB ceiling (~8–10 useful). Further TX tuning risks regressing stability.
 
+### Phase 1 — tcpip CPU0 + LWIP IRAM optimization (Aug 2026)
+
+| Direction | Mbps | Δ vs 7.2/4.9 | tx_dropped Δ | tx_retried Δ | RSSI | Ethernet |
+|-----------|------|--------------|--------------|--------------|------|----------|
+| Download  | ______ | | | | | |
+| Upload    | ______ | | | | | |
+
+Decision: KEEP / REVERT.
+
 ### After CDC console off + no per-second DHCP refresh (Aug 2026)
 
 | Direction | Mbps | Notes |
