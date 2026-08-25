@@ -16,8 +16,9 @@ CONFIG_MESHVPN_USB_PROFILE_NCM=y
 # Phase 4a: max NCM NTB pool (Kconfig range 1–6) for FS USB aggregation
 CONFIG_TINYUSB_NCM_OUT_NTB_BUFFS_COUNT=6
 CONFIG_TINYUSB_NCM_IN_NTB_BUFFS_COUNT=6
-CONFIG_TINYUSB_NCM_OUT_NTB_BUFF_MAX_SIZE=4096
-CONFIG_TINYUSB_NCM_IN_NTB_BUFF_MAX_SIZE=4096
+# Phase 4b: larger NTB frames (multiple MTUs per NTB)
+CONFIG_TINYUSB_NCM_OUT_NTB_BUFF_MAX_SIZE=8192
+CONFIG_TINYUSB_NCM_IN_NTB_BUFF_MAX_SIZE=8192
 
 # The ESP32-S3 muxes one internal USB PHY between the USB-Serial-JTAG and the
 # USB-OTG controller. Leaving the JTAG console enabled keeps a second consumer

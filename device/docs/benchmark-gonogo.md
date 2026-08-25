@@ -88,6 +88,15 @@ Decision: **KEEP** — upload gain; download unchanged.
 
 | Direction | Mbps | Δ vs 7.5/6.7 | tx_dropped | tx_retried | Ethernet |
 |-----------|------|--------------|------------|------------|----------|
+| Download  | **~7.5** | 0 | | | OK |
+| Upload    | **~6.7** | 0 | | | OK |
+
+Decision: **KEEP** — no measurable change vs 3b; NTB count at Kconfig max (6).
+
+### Phase 4b — NCM NTB size 8192 (6×8192) (Aug 2026)
+
+| Direction | Mbps | Δ vs 7.5/6.7 | tx_dropped | tx_retried | Ethernet |
+|-----------|------|--------------|------------|------------|----------|
 | Download  | ______ | | | | |
 | Upload    | ______ | | | | |
 
