@@ -134,6 +134,8 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddBoolToObject(wifi, "setup_mode", ws.setup_mode);
     cJSON_AddBoolToObject(wifi, "ap_active", ws.ap_active);
     cJSON_AddNumberToObject(wifi, "rssi", ws.rssi);
+    cJSON_AddNumberToObject(wifi, "channel", ws.channel);
+    cJSON_AddNumberToObject(wifi, "bandwidth_mhz", ws.bandwidth_mhz);
     cJSON_AddStringToObject(wifi, "ssid", ws.ssid);
     cJSON_AddStringToObject(wifi, "ip", ws.ip);
     cJSON_AddNumberToObject(wifi, "disconnect_reason", ws.disconnect_reason);
@@ -322,14 +324,15 @@ static esp_err_t handler_logs(httpd_req_t *req)
                      "=== meshvpn: uptime %llus, boot #%" PRIu32 ", built %s ===\n"
                      "usb:  %s host_ready=%d can_xmit=%d q=%u tx_ok=%" PRIu32 " retry=%" PRIu32
                      " drop=%" PRIu32 " nohost=%" PRIu32 " timeout=%" PRIu32 " maxlen=%u\n"
-                     "wifi: connected=%d ssid=%.32s ip=%s rssi=%d reason=%u ap=%d\n"
+                     "wifi: connected=%d ssid=%.32s ip=%s rssi=%d ch=%u bw=%u reason=%u ap=%d\n"
                      "net:  usb_ip=%s ap_ip=%s usb_napt=%d ap_napt=%d\n"
                      "--- log ---\n",
                      esp_timer_get_time() / 1000000, meshvpn_config_get_boot_count(),
                      meshvpn_web_build_id(),
                      meshvpn_usb_profile_name(), us.host_ready, us.can_xmit, us.tx_queue_depth, us.tx_ok,
                      us.tx_retried, us.tx_dropped, us.tx_no_host, us.tx_timeout, us.tx_max_len,
-                     ws.sta_connected, ws.ssid, ws.ip, ws.rssi, ws.disconnect_reason, ws.ap_active,
+                     ws.sta_connected, ws.ssid, ws.ip, ws.rssi, ws.channel, ws.bandwidth_mhz,
+                     ws.disconnect_reason, ws.ap_active,
                      ns.usb_ip, ns.ap_ip, ns.usb_napt, ns.ap_napt);
 
     esp_err_t err = httpd_resp_send_chunk(req, header, n);
