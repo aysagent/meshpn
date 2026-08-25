@@ -114,14 +114,11 @@ Decision: **REVERT** — restore ensure_napt every 1s (host ready) / 15s.
 
 Commit: `2a7b75c` → **REVERTED**. Download unchanged; upload drifted down over time.
 
-### Phase 7b — USB TX retry 32×15ms (was 64×25ms) (Aug 2026)
+### Phase 7b — USB TX retry 32×15ms (Aug 2026)
 
-| Direction | Mbps | Δ vs 8.13/6.5 | tx_dropped Δ | tx_retried Δ | Ethernet |
-|-----------|------|---------------|--------------|--------------|----------|
-| Download  | ______ | | | | |
-| Upload    | ______ | | | | |
+Commit: `b16e4c9` → **REVERTED**. Upload drift + sharp `tx_dropped` rise.
 
-Decision: KEEP / REVERT.
+Restored **64×25ms** retry (pre–Phase 7 baseline with 8.13/6.5 stack).
 
 Phase 6 (turbo benchmark) deferred to end of experiment queue.
 
