@@ -44,10 +44,21 @@ Plan target was ≥8 / ≥5 — close to FS USB ceiling (~8–10 useful). Furthe
 
 ### Phase 1 — tcpip CPU0 + LWIP IRAM optimization (Aug 2026)
 
-| Direction | Mbps | Δ vs 7.2/4.9 | tx_dropped Δ | tx_retried Δ | RSSI | Ethernet |
-|-----------|------|--------------|--------------|--------------|------|----------|
-| Download  | ______ | | | | | |
-| Upload    | ______ | | | | | |
+Commit: `ae137fd`.
+
+| Direction | Mbps | Δ vs 7.2/4.9 | tx_dropped | tx_retried | Ethernet |
+|-----------|------|--------------|------------|------------|----------|
+| Download  | **~7.5** | +0.3 | **433** (was 661 cumul.) | 3485 | OK |
+| Upload    | **~6.0** | **+1.1** | | | OK |
+
+Decision: **KEEP** — upload crossed plan floor (≥5); download trending toward 8.
+
+### Phase 2 — TinyUSB prio 9 + tcpip prio 18 (Aug 2026)
+
+| Direction | Mbps | Δ vs 7.5/6.0 | tx_dropped | tx_retried | Ethernet |
+|-----------|------|--------------|------------|------------|----------|
+| Download  | ______ | | | | |
+| Upload    | ______ | | | | |
 
 Decision: KEEP / REVERT.
 

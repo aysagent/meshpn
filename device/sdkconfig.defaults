@@ -34,6 +34,8 @@ CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=64
 # Throughput phase 1: tcpip on CPU0 (TinyUSB stays CPU1), hot path in IRAM
 CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
 CONFIG_LWIP_IRAM_OPTIMIZATION=y
+# Throughput phase 2: keep tcpip above HTTP/WiFi app work under NAT load
+CONFIG_LWIP_TCPIP_TASK_PRIO=18
 # Skip IP/UDP checksum verify on the forward path (CPU-bound NAT)
 # CONFIG_LWIP_CHECKSUM_CHECK_IP is not set
 # CONFIG_LWIP_CHECKSUM_CHECK_UDP is not set
