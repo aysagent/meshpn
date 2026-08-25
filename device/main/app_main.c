@@ -106,14 +106,15 @@ void app_main(void)
             meshvpn_board_led_set(led);
         }
 
-        /* NAPT timer — events in meshvpn_net_on_event handle STA/DNS churn. */
-        if (tick % 30 == 0) {
+        meshvpn_usb_stats_t us;
+        meshvpn_usb_get_stats(&us);
+
+        /* NAPT only here — LAN DHCP is refreshed on STA/AP/bridge DNS events. */
+        if (us.host_ready || tick % 15 == 0) {
             meshvpn_net_ensure_napt();
         }
 
         if (tick % 30 == 0) {
-            meshvpn_usb_stats_t us;
-            meshvpn_usb_get_stats(&us);
             meshvpn_net_log_state();
             meshvpn_net_status_t ns;
             meshvpn_net_get_status(&ns);

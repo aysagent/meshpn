@@ -104,12 +104,11 @@ Decision: **KEEP** — download crossed plan target (≥8); slight upload trade-
 
 ### Phase 5 — ensure_napt every 30s only (Aug 2026)
 
-| Direction | Mbps | Δ vs 8.13/6.5 | tx_dropped | tx_retried | Ethernet |
-|-----------|------|---------------|------------|------------|----------|
-| Download  | ______ | | | | |
-| Upload    | ______ | | | | |
+Commit: `97af89b` → **REVERTED**.
 
-Decision: KEEP / REVERT.
+Upload speed dropped badly under load; iot_bridge can disable USB NAPT without frequent re-apply.
+
+Decision: **REVERT** — restore ensure_napt every 1s (host ready) / 15s.
 
 ### After CDC console off + no per-second DHCP refresh (Aug 2026)
 
