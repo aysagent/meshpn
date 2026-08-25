@@ -16,8 +16,6 @@ typedef struct {
     bool setup_mode;
     bool ap_active;
     int8_t rssi;
-    uint8_t channel;
-    uint8_t bandwidth_mhz;
     uint8_t disconnect_reason;
     char ssid[33];
     char ip[16];

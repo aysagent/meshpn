@@ -66,6 +66,3 @@ CONFIG_BRIDGE_STATIC_DNS_SERVER_BACKUP="1.1.1.1"
 
 # USB subnet for host (clean-vpn compatible)
 CONFIG_MESHVPN_USB_SUBNET_OCTET_2=7
-
-# WiFi lab: HT20 on 2.4 GHz STA (less overlap with neighbors; disable for HT40 peak)
-CONFIG_MESHVPN_WIFI_STA_HT20=y

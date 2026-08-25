@@ -19,40 +19,6 @@ static char s_ip[16];
 static wifi_ap_record_t s_scan_results[20];
 static uint16_t s_scan_count;
 
-static void meshvpn_wifi_apply_bandwidth(void)
-{
-#if CONFIG_MESHVPN_WIFI_STA_HT20
-    esp_err_t err = esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "STA HT20 set failed: %s", esp_err_to_name(err));
-    } else {
-        ESP_LOGI(TAG, "STA bandwidth HT20 (lab: less 2.4 GHz overlap)");
-    }
-#else
-    esp_err_t err = esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT40);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "STA HT40 unavailable (%s), falling back to HT20", esp_err_to_name(err));
-        esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
-    } else {
-        ESP_LOGI(TAG, "STA bandwidth HT40");
-    }
-#endif
-}
-
-static void meshvpn_wifi_log_link(void)
-{
-    wifi_ap_record_t ap;
-    wifi_bandwidth_t bw = WIFI_BW_HT20;
-
-    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
-        return;
-    }
-    esp_wifi_get_bandwidth(WIFI_IF_STA, &bw);
-    ESP_LOGI(TAG, "STA link: ch %u RSSI %d bw %u MHz%s",
-             ap.primary, ap.rssi, bw == WIFI_BW_HT40 ? 40 : 20,
-             ap.second ? " HT40+" : "");
-}
-
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
@@ -72,8 +38,6 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         s_disconnect_reason = 0;
         /* Keep modem awake on the uplink — PS can cut NAT throughput badly. */
         esp_wifi_set_ps(WIFI_PS_NONE);
-        meshvpn_wifi_apply_bandwidth();
-        meshvpn_wifi_log_link();
         ESP_LOGI(TAG, "STA got IP %s", s_ip);
     }
 }
@@ -101,7 +65,11 @@ esp_err_t meshvpn_wifi_start_sta(const meshvpn_wifi_creds_t *creds)
 
     esp_wifi_disable_pmf_config(WIFI_IF_STA);
     esp_wifi_set_ps(WIFI_PS_NONE);
-    meshvpn_wifi_apply_bandwidth();
+    /* Prefer HT40 on 2.4 GHz when the AP allows it; falls back silently. */
+    esp_err_t bw_err = esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT40);
+    if (bw_err != ESP_OK) {
+        ESP_LOGW(TAG, "STA HT40 unavailable (%s), staying on default BW", esp_err_to_name(bw_err));
+    }
 
     strncpy(s_ssid, creds->ssid, sizeof(s_ssid) - 1);
     s_sta_configured = true;
@@ -165,14 +133,9 @@ void meshvpn_wifi_get_status(meshvpn_wifi_status_t *status)
 
     if (s_sta_connected) {
         wifi_ap_record_t ap;
-        wifi_bandwidth_t bw = WIFI_BW_HT20;
         if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
             status->rssi = ap.rssi;
-            status->channel = ap.primary;
             s_rssi = ap.rssi;
-        }
-        if (esp_wifi_get_bandwidth(WIFI_IF_STA, &bw) == ESP_OK) {
-            status->bandwidth_mhz = (bw == WIFI_BW_HT40) ? 40 : 20;
         }
     }
 }

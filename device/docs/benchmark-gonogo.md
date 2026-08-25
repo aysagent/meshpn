@@ -120,17 +120,6 @@ Commit: `b16e4c9` → **REVERTED**. Upload drift + sharp `tx_dropped` rise.
 
 Restored **64×25ms** retry (pre–Phase 7 baseline with 8.13/6.5 stack).
 
-### WiFi lab — HT20 + channel/RSSI/bw in status (Aug 2026)
-
-| Direction | Mbps | Δ vs 8.13/6.5 | tx_dropped Δ | RSSI / ch / bw | Ethernet |
-|-----------|------|---------------|--------------|----------------|----------|
-| Download  | ______ | | | | |
-| Upload    | ______ | | | | |
-
-UI/API: `wifi.channel`, `wifi.bandwidth_mhz`. Disable: `CONFIG_MESHVPN_WIFI_STA_HT20=n` for HT40.
-
-Decision: KEEP / REVERT.
-
 Phase 6 (turbo benchmark) deferred to end of experiment queue.
 
 ### After CDC console off + no per-second DHCP refresh (Aug 2026)

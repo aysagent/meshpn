@@ -46,7 +46,7 @@ static const char MESHVPN_WEB_INDEX_HTML[] =
 "function setMsg(t,ok){const m=document.getElementById('msg');m.textContent=t;m.className=ok?'ok':'err';}"
 "const REASONS={2:'auth expired',15:'wrong password',201:'network not found',202:'auth failed',203:'assoc failed',205:'connection failed'};"
 "function renderWifi(w){const e=document.getElementById('wifistate');if(!w){e.textContent='unknown';return;}"
-"if(w.connected){e.textContent='Connected to '+w.ssid+' \\u2014 '+w.ip+' ('+w.rssi+' dBm, ch '+(w.channel||'?')+', '+(w.bandwidth_mhz||'?')+' MHz)';e.className='ok';return true;}"
+"if(w.connected){e.textContent='Connected to '+w.ssid+' \\u2014 '+w.ip+' ('+w.rssi+' dBm)';e.className='ok';return true;}"
 "const why=w.disconnect_reason?(REASONS[w.disconnect_reason]||('reason '+w.disconnect_reason)):'';"
 "if(w.ssid){e.textContent='Connecting to '+w.ssid+'...'+(why?' last error: '+why:'');e.className=why?'err':'warn';}"
 "else{e.textContent='No network configured \\u2014 pick one below';e.className='warn';}return false;}"

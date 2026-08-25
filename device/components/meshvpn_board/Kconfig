@@ -41,17 +41,6 @@ menu "meshvpn USB"
 
 endmenu
 
-menu "meshvpn WiFi"
-
-    config MESHVPN_WIFI_STA_HT20
-        bool "Force 20 MHz STA bandwidth (lab: less neighbor overlap on 2.4 GHz)"
-        default y
-        help
-            HT40 uses 40 MHz and often collides with neighboring APs in dense 2.4 GHz.
-            Enable for throughput stability experiments; disable to prefer HT40 peak rate.
-
-endmenu
-
 menu "meshvpn Web"
 
     config MESHVPN_WEB_ADMIN_PASSWORD_DEFAULT
