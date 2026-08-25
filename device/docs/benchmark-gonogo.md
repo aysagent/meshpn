@@ -70,6 +70,15 @@ Decision: **REVERT** TinyUSB priority; removed explicit `LWIP_TCPIP_TASK_PRIO=18
 
 | Direction | Mbps | Δ vs 7.5/6.0 | tx_dropped | tx_retried | Ethernet |
 |-----------|------|--------------|------------|------------|----------|
+| Download  | **~7.5** | 0 | | | OK |
+| Upload    | **~6.0** | 0 | | | OK |
+
+Decision: **KEEP** — no measurable gain; no regression vs Phase 1.
+
+### Phase 3b — WiFi buffer pool + AMPDU windows (Aug 2026)
+
+| Direction | Mbps | Δ vs 7.5/6.0 | tx_dropped | tx_retried | Ethernet |
+|-----------|------|--------------|------------|------------|----------|
 | Download  | ______ | | | | |
 | Upload    | ______ | | | | |
 
