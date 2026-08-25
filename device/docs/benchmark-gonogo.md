@@ -110,14 +110,18 @@ Upload speed dropped badly under load; iot_bridge can disable USB NAPT without f
 
 Decision: **REVERT** — restore ensure_napt every 1s (host ready) / 15s.
 
-### Phase 7a — USB TX retry 128×5ms (was 64×25ms) (Aug 2026)
+### Phase 7a — USB TX retry 128×5ms (Aug 2026)
+
+Commit: `2a7b75c` → **REVERTED**. Download unchanged; upload drifted down over time.
+
+### Phase 7b — USB TX retry 32×15ms (was 64×25ms) (Aug 2026)
 
 | Direction | Mbps | Δ vs 8.13/6.5 | tx_dropped Δ | tx_retried Δ | Ethernet |
 |-----------|------|---------------|--------------|--------------|----------|
 | Download  | ______ | | | | |
 | Upload    | ______ | | | | |
 
-Decision: KEEP / REVERT. (Phase 7b: 32×15ms — only if 7a no-go.)
+Decision: KEEP / REVERT.
 
 Phase 6 (turbo benchmark) deferred to end of experiment queue.
 
