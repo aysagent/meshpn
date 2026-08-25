@@ -66,6 +66,15 @@ Speed-test page barely loaded / never finished — TinyUSB prio 9 likely starved
 
 Decision: **REVERT** TinyUSB priority; removed explicit `LWIP_TCPIP_TASK_PRIO=18` (was IDF default anyway — verified on Phase 1 build).
 
+### Phase 3a — TCP_SND_BUF 32768 (WND stays 16320) (Aug 2026)
+
+| Direction | Mbps | Δ vs 7.5/6.0 | tx_dropped | tx_retried | Ethernet |
+|-----------|------|--------------|------------|------------|----------|
+| Download  | ______ | | | | |
+| Upload    | ______ | | | | |
+
+Decision: KEEP / REVERT.
+
 ### After CDC console off + no per-second DHCP refresh (Aug 2026)
 
 | Direction | Mbps | Notes |
