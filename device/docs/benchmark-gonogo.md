@@ -120,24 +120,15 @@ Commit: `b16e4c9` → **REVERTED**. Upload drift + sharp `tx_dropped` rise.
 
 Restored **64×25ms** retry (pre–Phase 7 baseline with 8.13/6.5 stack).
 
-### Phase 8 — async USB TX worker + queue 16 (Aug 2026)
+### Phase 8 — async USB TX (v1/v2/v3) (Aug 2026)
 
-Commit: `1cd4d62` → **REVERTED** (`5ddb4f0`) — v1 silent drop after ESP_OK.
+**ABANDONED** — all attempts reverted to sync **64×25ms** (`13c9cad` USB TX).
 
-### Phase 8 v2 — async + sync fallback + worker no-drop (Aug 2026)
-
-Commit: `54ec2b8` → **REVERTED**. Admin slow/dead, internet unusable (worker HOL blocking).
-
-### Phase 8 v3 — sync TX + can_xmit fast-path (Aug 2026)
-
-Async abandoned. Sync 64×25ms; skip defer on attempt 0 when endpoint busy.
-
-| Direction | Mbps | Admin + internet | tx_dropped Δ | Ethernet |
-|-----------|------|------------------|--------------|----------|
-| Download  | ______ | | | |
-| Upload    | ______ | | | |
-
-Decision: KEEP / REVERT.
+| Attempt | Commit | Result |
+|---------|--------|--------|
+| v1 async queue | `1cd4d62` | admin OK, internet dead |
+| v2 sync fallback | `54ec2b8` | admin/internet unusable |
+| v3 can_xmit fast-path | `2ccd41f` | regression vs baseline |
 
 Phase 6 (turbo benchmark) deferred to end of experiment queue.
 

@@ -33,7 +33,7 @@ const char *meshvpn_usb_profile_name(void);
  * and drops it outright when the NCM/ECM IN endpoint is still busy with the
  * previous frame. That is fatal for anything bigger than a single packet (the
  * web UI never gets through) and the infinite timeout can wedge the whole
- * TCP/IP thread. Sync TX with can_xmit fast-path (Phase 8 v3 — async abandoned).
+ * TCP/IP thread. This installs a bounded, retrying transmit instead.
  */
 esp_err_t meshvpn_usb_attach_netif(esp_netif_t *netif);
 

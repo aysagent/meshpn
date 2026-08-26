@@ -15,47 +15,7 @@
 
 static const char *TAG = "meshvpn_usb";
 
-#define USB_TX_MAX_LEN   1514
-#define USB_TX_RETRY_MAX 64
-#define USB_TX_RETRY_MS  25
-
 static meshvpn_usb_stats_t s_stats;
-
-static esp_err_t meshvpn_usb_send_with_retry(void *buffer, uint16_t len)
-{
-    esp_err_t err = ESP_FAIL;
-
-    for (int attempt = 0; attempt < USB_TX_RETRY_MAX; attempt++) {
-        /* Skip a blocking defer when the host definitely cannot accept yet. */
-        if (attempt == 0 && !tud_network_can_xmit(len)) {
-            err = ESP_FAIL;
-        } else {
-            err = tinyusb_net_send_sync(buffer, len, NULL, pdMS_TO_TICKS(USB_TX_RETRY_MS));
-            if (err == ESP_OK) {
-                if (attempt > 0) {
-                    s_stats.tx_retried++;
-                }
-                s_stats.tx_ok++;
-                s_stats.tx_bytes += len;
-                if (len > s_stats.tx_max_len) {
-                    s_stats.tx_max_len = len;
-                }
-                return ESP_OK;
-            }
-            if (err != ESP_FAIL) {
-                break;
-            }
-        }
-        taskYIELD();
-    }
-
-    if (err == ESP_ERR_TIMEOUT) {
-        s_stats.tx_timeout++;
-    } else {
-        s_stats.tx_dropped++;
-    }
-    return ESP_FAIL;
-}
 
 static esp_err_t meshvpn_usb_transmit(void *h, void *buffer, size_t len)
 {
@@ -66,12 +26,35 @@ static esp_err_t meshvpn_usb_transmit(void *h, void *buffer, size_t len)
         return ESP_ERR_INVALID_STATE;
     }
 
-    if (len == 0 || len > USB_TX_MAX_LEN) {
-        s_stats.tx_dropped++;
-        return ESP_FAIL;
+    esp_err_t err = ESP_FAIL;
+
+    /* Retry without vTaskDelay — tinyusb_net_send_sync blocks on the USB task.
+     * Single-shot TX (phase 3 tune) drove tx_dropped into thousands. */
+    for (int attempt = 0; attempt < 64; attempt++) {
+        err = tinyusb_net_send_sync(buffer, (uint16_t)len, NULL, pdMS_TO_TICKS(25));
+        if (err == ESP_OK) {
+            if (attempt > 0) {
+                s_stats.tx_retried++;
+            }
+            s_stats.tx_ok++;
+            s_stats.tx_bytes += len;
+            if (len > s_stats.tx_max_len) {
+                s_stats.tx_max_len = (uint16_t)len;
+            }
+            return ESP_OK;
+        }
+        if (err != ESP_FAIL) {
+            break;
+        }
+        taskYIELD();
     }
 
-    return meshvpn_usb_send_with_retry(buffer, (uint16_t)len);
+    if (err == ESP_ERR_TIMEOUT) {
+        s_stats.tx_timeout++;
+    } else {
+        s_stats.tx_dropped++;
+    }
+    return ESP_FAIL;
 }
 
 static esp_err_t meshvpn_usb_transmit_wrap(void *h, void *buffer, size_t len, void *netstack_buf)
@@ -107,13 +90,15 @@ esp_err_t meshvpn_usb_attach_netif(esp_netif_t *netif)
         return err;
     }
 
-    ESP_LOGI(TAG, "USB sync TX v3 (64x%dms, can_xmit fast-path)", USB_TX_RETRY_MS);
+    ESP_LOGI(TAG, "USB sync TX installed (64x25ms retry)");
 
 #if CONFIG_TINYUSB_CDC_ENABLED
     const tinyusb_config_cdcacm_t acm_cfg = {
         .usb_dev = TINYUSB_USBDEV_0,
         .cdc_port = TINYUSB_CDC_ACM_0,
     };
+    /* ACM interface stays in the descriptor for iOS/macOS NCM binding; do not
+     * route ESP_LOG to it — console traffic contends with NCM TX on FS USB. */
     err = tusb_cdc_acm_init(&acm_cfg);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "USB CDC-ACM init failed: %s", esp_err_to_name(err));
@@ -127,7 +112,7 @@ void meshvpn_usb_get_stats(meshvpn_usb_stats_t *out)
 {
     memcpy(out, &s_stats, sizeof(*out));
     out->host_ready = tud_ready();
-    out->can_xmit = out->host_ready && tud_network_can_xmit(USB_TX_MAX_LEN);
+    out->can_xmit = out->host_ready && tud_network_can_xmit(1514);
     out->tx_queue_depth = 0;
 }
 
