@@ -1,7 +1,9 @@
+#include "meshvpn_storage.h"
 #include "meshvpn_web.h"
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "cJSON.h"
@@ -177,6 +179,13 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddBoolToObject(vpn, "enabled", vs.enabled);
     cJSON_AddBoolToObject(vpn, "connected", vs.connected);
     cJSON_AddStringToObject(vpn, "server", vs.server);
+    cJSON_AddStringToObject(vpn, "transport", vs.transport);
+    cJSON_AddStringToObject(vpn, "profile", vs.profile_name);
+    cJSON_AddStringToObject(vpn, "last_error", vs.last_error);
+    cJSON_AddNumberToObject(vpn, "bytes_in", (double)vs.bytes_in);
+    cJSON_AddNumberToObject(vpn, "bytes_out", (double)vs.bytes_out);
+    cJSON_AddBoolToObject(vpn, "has_ca", meshvpn_storage_has_ca());
+    cJSON_AddBoolToObject(vpn, "has_psk", meshvpn_storage_has_psk());
 
     cJSON *routing = cJSON_AddObjectToObject(root, "routing");
     const char *def = "direct";
@@ -463,13 +472,141 @@ static esp_err_t handler_routing_default(httpd_req_t *req)
     return send_json(req, out);
 }
 
+static esp_err_t handler_vpn_config_get(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) {
+        return ESP_FAIL;
+    }
+
+    meshvpn_vpn_config_t cfg;
+    meshvpn_config_load_vpn(&cfg);
+
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddStringToObject(out, "transport", cfg.transport);
+    cJSON_AddStringToObject(out, "server", cfg.server);
+    cJSON_AddStringToObject(out, "tls_server_name", cfg.tls_server_name);
+    cJSON_AddStringToObject(out, "tls_public_name", cfg.tls_public_name);
+    cJSON_AddNumberToObject(out, "http_vers", cfg.http_vers);
+    cJSON_AddStringToObject(out, "profile_name", cfg.profile_name);
+    cJSON_AddBoolToObject(out, "ja3_strict", cfg.ja3_strict);
+    cJSON_AddBoolToObject(out, "enabled", cfg.enabled);
+    cJSON_AddBoolToObject(out, "has_ca", meshvpn_storage_has_ca());
+    cJSON_AddBoolToObject(out, "has_psk", meshvpn_storage_has_psk());
+    return send_json(req, out);
+}
+
+static esp_err_t read_upload_body(httpd_req_t *req, uint8_t **out_buf, size_t *out_len)
+{
+    size_t total = req->content_len;
+    if (total == 0 || total > 65536) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    uint8_t *buf = malloc(total);
+    if (!buf) {
+        return ESP_ERR_NO_MEM;
+    }
+    size_t got = 0;
+    while (got < total) {
+        int r = httpd_req_recv(req, (char *)buf + got, total - got);
+        if (r <= 0) {
+            free(buf);
+            return ESP_FAIL;
+        }
+        got += (size_t)r;
+    }
+    *out_buf = buf;
+    *out_len = got;
+    return ESP_OK;
+}
+
+static esp_err_t handler_vpn_cert_ca(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    uint8_t *buf = NULL;
+    size_t len = 0;
+    if (read_upload_body(req, &buf, &len) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    esp_err_t err = meshvpn_storage_write_ca(buf, len);
+    free(buf);
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddBoolToObject(out, "ok", err == ESP_OK);
+    return send_json(req, out);
+}
+
+static esp_err_t handler_vpn_cert_psk(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    uint8_t *buf = NULL;
+    size_t len = 0;
+    if (read_upload_body(req, &buf, &len) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    esp_err_t err = meshvpn_storage_write_psk(buf, len);
+    free(buf);
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddBoolToObject(out, "ok", err == ESP_OK);
+    return send_json(req, out);
+}
+
+static esp_err_t handler_vpn_profiles_get(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    char names[16][32];
+    int n = meshvpn_storage_list_profiles(names, 16, 32);
+    cJSON *out = cJSON_CreateObject();
+    cJSON *arr = cJSON_AddArrayToObject(out, "profiles");
+    for (int i = 0; i < n; i++) {
+        cJSON_AddItemToArray(arr, cJSON_CreateString(names[i]));
+    }
+    return send_json(req, out);
+}
+
+static esp_err_t handler_vpn_profiles_post(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    uint8_t *buf = NULL;
+    size_t len = 0;
+    if (read_upload_body(req, &buf, &len) != ESP_OK) {
+        return ESP_FAIL;
+    }
+
+    const char *name = "profile";
+    char *json_start = memchr(buf, '{', len);
+    if (json_start) {
+        cJSON *root = cJSON_Parse((const char *)json_start);
+        if (root) {
+            const cJSON *ua = cJSON_GetObjectItem(root, "user_agent");
+            if (cJSON_IsString(ua) && ua->valuestring[0]) {
+                name = ua->valuestring;
+            }
+            cJSON_Delete(root);
+        }
+    }
+
+    esp_err_t err = meshvpn_storage_write_profile(name, buf, len);
+    free(buf);
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddBoolToObject(out, "ok", err == ESP_OK);
+    cJSON_AddStringToObject(out, "name", name);
+    return send_json(req, out);
+}
+
 static esp_err_t handler_vpn_config(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) {
         return ESP_FAIL;
     }
 
-    char buf[256];
+    char buf[512];
     int len = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (len <= 0) {
         return ESP_FAIL;
@@ -480,21 +617,46 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     meshvpn_vpn_config_t cfg;
     meshvpn_config_load_vpn(&cfg);
 
+    const cJSON *transport = cJSON_GetObjectItem(in, "transport");
     const cJSON *server = cJSON_GetObjectItem(in, "server");
     const cJSON *sni = cJSON_GetObjectItem(in, "sni");
+    const cJSON *tls_sni = cJSON_GetObjectItem(in, "tls_server_name");
+    const cJSON *pub = cJSON_GetObjectItem(in, "tls_public_name");
+    const cJSON *http = cJSON_GetObjectItem(in, "http_vers");
+    const cJSON *profile = cJSON_GetObjectItem(in, "profile_name");
+    const cJSON *ja3s = cJSON_GetObjectItem(in, "ja3_strict");
     const cJSON *enabled = cJSON_GetObjectItem(in, "enabled");
 
+    if (cJSON_IsString(transport)) {
+        strncpy(cfg.transport, transport->valuestring, sizeof(cfg.transport) - 1);
+    }
     if (cJSON_IsString(server)) {
         strncpy(cfg.server, server->valuestring, sizeof(cfg.server) - 1);
     }
     if (cJSON_IsString(sni)) {
         strncpy(cfg.tls_server_name, sni->valuestring, sizeof(cfg.tls_server_name) - 1);
     }
+    if (cJSON_IsString(tls_sni)) {
+        strncpy(cfg.tls_server_name, tls_sni->valuestring, sizeof(cfg.tls_server_name) - 1);
+    }
+    if (cJSON_IsString(pub)) {
+        strncpy(cfg.tls_public_name, pub->valuestring, sizeof(cfg.tls_public_name) - 1);
+    }
+    if (cJSON_IsNumber(http)) {
+        cfg.http_vers = (uint8_t)(http->valueint == 1 ? 1 : 2);
+    }
+    if (cJSON_IsString(profile)) {
+        strncpy(cfg.profile_name, profile->valuestring, sizeof(cfg.profile_name) - 1);
+    }
+    if (cJSON_IsBool(ja3s)) {
+        cfg.ja3_strict = cJSON_IsTrue(ja3s);
+    }
     if (cJSON_IsBool(enabled)) {
         cfg.enabled = cJSON_IsTrue(enabled);
     }
 
     meshvpn_config_save_vpn(&cfg);
+    meshvpn_vpn_stop();
     meshvpn_vpn_start(&cfg);
     cJSON_Delete(in);
 
@@ -506,7 +668,7 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
 esp_err_t meshvpn_web_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 24;
+    cfg.max_uri_handlers = 32;
     cfg.stack_size = 8192;
 
     ESP_ERROR_CHECK(httpd_start(&s_server, &cfg));
@@ -528,7 +690,12 @@ esp_err_t meshvpn_web_start(void)
         { .uri = "/api/routing/rules", .method = HTTP_GET, .handler = handler_routing_rules_get },
         { .uri = "/api/routing/rules", .method = HTTP_POST, .handler = handler_routing_rules_post },
         { .uri = "/api/routing/default", .method = HTTP_POST, .handler = handler_routing_default },
+        { .uri = "/api/vpn/config", .method = HTTP_GET, .handler = handler_vpn_config_get },
         { .uri = "/api/vpn/config", .method = HTTP_POST, .handler = handler_vpn_config },
+        { .uri = "/api/vpn/certs/ca", .method = HTTP_POST, .handler = handler_vpn_cert_ca },
+        { .uri = "/api/vpn/certs/psk", .method = HTTP_POST, .handler = handler_vpn_cert_psk },
+        { .uri = "/api/vpn/profiles", .method = HTTP_GET, .handler = handler_vpn_profiles_get },
+        { .uri = "/api/vpn/profiles", .method = HTTP_POST, .handler = handler_vpn_profiles_post },
     };
 
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {

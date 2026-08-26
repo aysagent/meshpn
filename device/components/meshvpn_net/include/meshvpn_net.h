@@ -39,6 +39,9 @@ void meshvpn_net_ensure_napt(void);
 void meshvpn_net_log_state(void);
 void meshvpn_net_get_status(meshvpn_net_status_t *status);
 
+/** Inject raw IPv4 packet to USB LAN (tcpip thread). */
+esp_err_t meshvpn_net_inject_ipv4_to_lan(const uint8_t *pkt, uint16_t len);
+
 #ifdef __cplusplus
 }
 #endif

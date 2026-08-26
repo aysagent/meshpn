@@ -11,8 +11,10 @@
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_netif_net_stack.h"
+#include "lwip/ip4.h"
 #include "lwip/lwip_napt.h"
 #include "lwip/netif.h"
+#include "lwip/pbuf.h"
 #include "meshvpn_usb.h"
 #include "meshvpn_wifi.h"
 #include "meshvpn_lwip_hooks.h"
@@ -301,4 +303,40 @@ void meshvpn_net_get_status(meshvpn_net_status_t *status)
     meshvpn_wifi_status_t ws;
     meshvpn_wifi_get_status(&ws);
     status->wifi_uplink = ws.sta_connected;
+}
+
+typedef struct {
+    const uint8_t *pkt;
+    uint16_t len;
+} meshvpn_net_inject_ctx_t;
+
+static esp_err_t meshvpn_net_inject_api(void *ctx)
+{
+    meshvpn_net_inject_ctx_t *inj = ctx;
+    if (!s_usb_netif || !inj->pkt || inj->len < 20) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    struct netif *netif = esp_netif_get_netif_impl(s_usb_netif);
+    if (!netif || !netif_is_up(netif)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    struct pbuf *p = pbuf_alloc(PBUF_RAW, inj->len, PBUF_RAM);
+    if (!p) {
+        return ESP_ERR_NO_MEM;
+    }
+    memcpy(p->payload, inj->pkt, inj->len);
+
+    if (netif->input(p, netif) != ERR_OK) {
+        pbuf_free(p);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+esp_err_t meshvpn_net_inject_ipv4_to_lan(const uint8_t *pkt, uint16_t len)
+{
+    meshvpn_net_inject_ctx_t ctx = { .pkt = pkt, .len = len };
+    return esp_netif_tcpip_exec(meshvpn_net_inject_api, &ctx);
 }

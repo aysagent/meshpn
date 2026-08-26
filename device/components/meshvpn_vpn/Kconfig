@@ -1,9 +1,19 @@
 menu "meshvpn VPN (phase 2)"
 
     config MESHVPN_VPN_ENABLE
-        bool "Enable VPN client (experimental)"
-        default n
+        bool "Enable VPN client"
+        default y
         help
-            TLS tunnel to clean-vpn exit. Requires mbedTLS exporter support.
+            TLS / transparent-tls / boring-tls clean-vpn client.
+
+    config MESHVPN_VPN_TX_QUEUE_DEPTH
+        int "VPN TX queue depth"
+        default 64
+        range 8 256
+
+    config MESHVPN_TRANSPARENT_MAX_FLOWS
+        int "Max concurrent transparent :443 flows"
+        default 8
+        range 1 32
 
 endmenu

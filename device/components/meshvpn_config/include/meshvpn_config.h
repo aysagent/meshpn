@@ -15,6 +15,9 @@ extern "C" {
 #define MESHVPN_ADMIN_PASS_MAX 64
 #define MESHVPN_VPN_SERVER_MAX 128
 #define MESHVPN_VPN_SNI_MAX 128
+#define MESHVPN_VPN_PUBLIC_NAME_MAX 128
+#define MESHVPN_VPN_PROFILE_MAX 64
+#define MESHVPN_VPN_TRANSPORT_MAX 32
 
 typedef struct {
     char ssid[MESHVPN_WIFI_SSID_MAX + 1];
@@ -25,13 +28,16 @@ typedef struct {
 typedef struct {
     char server[MESHVPN_VPN_SERVER_MAX + 1];
     char tls_server_name[MESHVPN_VPN_SNI_MAX + 1];
-    char transport[32];
+    char tls_public_name[MESHVPN_VPN_PUBLIC_NAME_MAX + 1];
+    char transport[MESHVPN_VPN_TRANSPORT_MAX + 1];
+    char profile_name[MESHVPN_VPN_PROFILE_MAX + 1];
+    uint8_t http_vers; /* 2 = HTTP/2 (default), 1 = HTTP/1.1 */
+    bool ja3_strict;
     bool enabled;
 } meshvpn_vpn_config_t;
 
 esp_err_t meshvpn_config_init(void);
 
-/** Increment and return the persistent boot counter (reveals reboot loops). */
 uint32_t meshvpn_config_bump_boot_count(void);
 uint32_t meshvpn_config_get_boot_count(void);
 

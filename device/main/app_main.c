@@ -8,14 +8,16 @@
 #include "freertos/task.h"
 #include "meshvpn_board.h"
 #include "meshvpn_config.h"
+#include "meshvpn_datapath.h"
 #include "meshvpn_dns_proxy.h"
 #include "meshvpn_log.h"
 #include "meshvpn_net.h"
 #include "meshvpn_routing.h"
+#include "meshvpn_storage.h"
 #include "meshvpn_usb.h"
 #include "meshvpn_vpn.h"
-#include "meshvpn_web.h"
 #include "meshvpn_wifi.h"
+#include "meshvpn_web.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "meshvpn";
@@ -54,6 +56,7 @@ void app_main(void)
 
     ESP_ERROR_CHECK(meshvpn_board_init());
     ESP_ERROR_CHECK(meshvpn_config_init());
+    ESP_ERROR_CHECK(meshvpn_storage_init());
     meshvpn_log_report_boot(meshvpn_config_bump_boot_count());
 
     ESP_ERROR_CHECK(esp_netif_init());
@@ -63,6 +66,8 @@ void app_main(void)
     ESP_ERROR_CHECK(meshvpn_usb_init());
     ESP_ERROR_CHECK(meshvpn_routing_init());
     ESP_ERROR_CHECK(meshvpn_vpn_init());
+    meshvpn_vpn_set_inject(meshvpn_net_inject_ipv4_to_lan);
+    ESP_ERROR_CHECK(meshvpn_datapath_init());
 
     /* Handlers must be in place before the bridge starts the WiFi driver. */
     ESP_ERROR_CHECK(meshvpn_wifi_init());

@@ -111,6 +111,7 @@ esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
 {
     memset(out, 0, sizeof(*out));
     strncpy(out->transport, "tls", sizeof(out->transport) - 1);
+    out->http_vers = 2;
 
     size_t len = sizeof(out->server);
     if (nvs_get_str(s_nvs, "vpn_server", out->server, &len) != ESP_OK) {
@@ -120,9 +121,27 @@ esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
     if (nvs_get_str(s_nvs, "vpn_sni", out->tls_server_name, &len) != ESP_OK) {
         out->tls_server_name[0] = '\0';
     }
+    len = sizeof(out->tls_public_name);
+    if (nvs_get_str(s_nvs, "vpn_pubname", out->tls_public_name, &len) != ESP_OK) {
+        out->tls_public_name[0] = '\0';
+    }
+    len = sizeof(out->transport);
+    if (nvs_get_str(s_nvs, "vpn_transport", out->transport, &len) != ESP_OK) {
+        strncpy(out->transport, "tls", sizeof(out->transport) - 1);
+    }
+    len = sizeof(out->profile_name);
+    if (nvs_get_str(s_nvs, "vpn_profile", out->profile_name, &len) != ESP_OK) {
+        out->profile_name[0] = '\0';
+    }
     uint8_t en = 0;
     nvs_get_u8(s_nvs, "vpn_en", &en);
     out->enabled = en != 0;
+    uint8_t hv = 2;
+    nvs_get_u8(s_nvs, "vpn_http", &hv);
+    out->http_vers = hv == 1 ? 1 : 2;
+    uint8_t strict = 0;
+    nvs_get_u8(s_nvs, "vpn_ja3s", &strict);
+    out->ja3_strict = strict != 0;
     return ESP_OK;
 }
 
@@ -130,7 +149,12 @@ esp_err_t meshvpn_config_save_vpn(const meshvpn_vpn_config_t *cfg)
 {
     ESP_ERROR_CHECK(nvs_set_str(s_nvs, "vpn_server", cfg->server));
     ESP_ERROR_CHECK(nvs_set_str(s_nvs, "vpn_sni", cfg->tls_server_name));
+    ESP_ERROR_CHECK(nvs_set_str(s_nvs, "vpn_pubname", cfg->tls_public_name));
+    ESP_ERROR_CHECK(nvs_set_str(s_nvs, "vpn_transport", cfg->transport));
+    ESP_ERROR_CHECK(nvs_set_str(s_nvs, "vpn_profile", cfg->profile_name));
     ESP_ERROR_CHECK(nvs_set_u8(s_nvs, "vpn_en", cfg->enabled ? 1 : 0));
+    ESP_ERROR_CHECK(nvs_set_u8(s_nvs, "vpn_http", cfg->http_vers));
+    ESP_ERROR_CHECK(nvs_set_u8(s_nvs, "vpn_ja3s", cfg->ja3_strict ? 1 : 0));
     return nvs_commit(s_nvs);
 }
 

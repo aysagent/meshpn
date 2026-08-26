@@ -143,6 +143,44 @@ Kconfig: `# CONFIG_LWIP_L2_TO_L3_COPY is not set` — zero-copy RX via `esp_pbuf
 
 Decision: **REVERT** — user reported poor behavior vs baseline; restored `CONFIG_LWIP_L2_TO_L3_COPY=y`.
 
+### Throughput baseline frozen (Aug 2026)
+
+Final KEEP stack before VPN phase 2: **8.13 ↓ / 6.5–6.7 ↑** (Phase 1/3b/4b, sync USB TX 64×25ms). VPN tuning must not regress bridge stack without explicit revert.
+
+### VPN phase 2 — M0 Foundation
+
+| Check | Pass? |
+|-------|-------|
+| Admin: transport tls / transparent-tls / boring-tls | |
+| GET/POST `/api/vpn/config` | |
+| SPIFFS upload CA + PSK | |
+| Routing hook (direct/vpn/block) | |
+| Bridge throughput ≥ 8.13/6.5 − 0.3 with VPN disabled | |
+
+### VPN phase 2 — M1 `tls`
+
+| Direction | Mbps | Notes |
+|-----------|------|-------|
+| Download VPN ON | ______ | exit `--type=tls` |
+| Upload VPN ON | ______ | default route `vpn` |
+| Admin reconnect after reboot | | |
+
+### VPN phase 2 — M2 `transparent-tls`
+
+| Check | Pass? |
+|-------|-------|
+| IPv4 mux (ping/non-443) | |
+| HTTPS enc-SNI on exit log | |
+| Admin switch tls ↔ transparent | |
+
+### VPN phase 2 — M3 `boring-tls`
+
+| Check | Pass? |
+|-------|-------|
+| Profile upload + select | |
+| JA3/JA4 in device log | |
+| VPN session stable | |
+
 ### After CDC console off + no per-second DHCP refresh (Aug 2026)
 
 | Direction | Mbps | Notes |
