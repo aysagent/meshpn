@@ -120,6 +120,19 @@ Commit: `b16e4c9` → **REVERTED**. Upload drift + sharp `tx_dropped` rise.
 
 Restored **64×25ms** retry (pre–Phase 7 baseline with 8.13/6.5 stack).
 
+### WiFi lab — HT20 + link diagnostics (Aug 2026)
+
+Commit: `5b0b799` → **REVERTED** (`d0fec28`). No clear win vs HT40 stack.
+
+### Phase 8 — async USB TX worker + queue 16 (Aug 2026)
+
+| Direction | Mbps | Δ vs 8.13/6.5 | tx_dropped Δ | tx_queue_depth | Ethernet |
+|-----------|------|---------------|--------------|----------------|----------|
+| Download  | ______ | | | | |
+| Upload    | ______ | | | | |
+
+Decision: KEEP / REVERT.
+
 Phase 6 (turbo benchmark) deferred to end of experiment queue.
 
 ### After CDC console off + no per-second DHCP refresh (Aug 2026)
