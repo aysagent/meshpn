@@ -132,6 +132,17 @@ Restored **64×25ms** retry (pre–Phase 7 baseline with 8.13/6.5 stack).
 
 Phase 6 (turbo benchmark) deferred to end of experiment queue.
 
+### Phase 9a — L2_TO_L3_COPY off (Aug 2026) → **REVERT**
+
+Kconfig: `# CONFIG_LWIP_L2_TO_L3_COPY is not set` — zero-copy RX via `esp_pbuf_allocate`.
+
+| Direction | Mbps | Δ vs 8.13/6.5 | tx_dropped Δ | Ethernet / admin |
+|-----------|------|---------------|--------------|------------------|
+| Download  | — | regression | | unstable / not OK |
+| Upload    | — | | | |
+
+Decision: **REVERT** — user reported poor behavior vs baseline; restored `CONFIG_LWIP_L2_TO_L3_COPY=y`.
+
 ### After CDC console off + no per-second DHCP refresh (Aug 2026)
 
 | Direction | Mbps | Notes |
