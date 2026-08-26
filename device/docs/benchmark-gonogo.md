@@ -120,6 +120,19 @@ Commit: `b16e4c9` → **REVERTED**. Upload drift + sharp `tx_dropped` rise.
 
 Restored **64×25ms** retry (pre–Phase 7 baseline with 8.13/6.5 stack).
 
+### Phase 8 — async USB TX worker + queue 16 (Aug 2026)
+
+Commit: `1cd4d62` → **REVERTED** (`5ddb4f0`) — v1 silent drop after ESP_OK.
+
+### Phase 8 v2 — async + sync fallback + worker no-drop (Aug 2026)
+
+| Direction | Mbps | Internet OK | tx_dropped Δ | tx_queue_depth | Ethernet |
+|-----------|------|-------------|--------------|----------------|----------|
+| Download  | ______ | | | | |
+| Upload    | ______ | | | | |
+
+Decision: KEEP / REVERT.
+
 Phase 6 (turbo benchmark) deferred to end of experiment queue.
 
 ### After CDC console off + no per-second DHCP refresh (Aug 2026)
