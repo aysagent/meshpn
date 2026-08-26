@@ -126,10 +126,16 @@ Commit: `1cd4d62` → **REVERTED** (`5ddb4f0`) — v1 silent drop after ESP_OK.
 
 ### Phase 8 v2 — async + sync fallback + worker no-drop (Aug 2026)
 
-| Direction | Mbps | Internet OK | tx_dropped Δ | tx_queue_depth | Ethernet |
-|-----------|------|-------------|--------------|----------------|----------|
-| Download  | ______ | | | | |
-| Upload    | ______ | | | | |
+Commit: `54ec2b8` → **REVERTED**. Admin slow/dead, internet unusable (worker HOL blocking).
+
+### Phase 8 v3 — sync TX + can_xmit fast-path (Aug 2026)
+
+Async abandoned. Sync 64×25ms; skip defer on attempt 0 when endpoint busy.
+
+| Direction | Mbps | Admin + internet | tx_dropped Δ | Ethernet |
+|-----------|------|------------------|--------------|----------|
+| Download  | ______ | | | |
+| Upload    | ______ | | | |
 
 Decision: KEEP / REVERT.
 
