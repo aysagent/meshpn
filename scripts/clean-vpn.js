@@ -1383,6 +1383,16 @@ function establishCleanVpnOverH2(tlsSock, checkHost, vpnSecret, exporter = null)
         );
         return;
       }
+      const ct = headers['content-type'];
+      if (!isCleanVpnTunnelHttpContentType(ct)) {
+        const ctShown = ct != null ? (Array.isArray(ct) ? ct[0] : String(ct)) : '—';
+        fail(
+          new Error(
+            `TLS client: exit ответил cover (content-type=${ctShown}), не VPN-туннель — Bearer не принят (cover_bad_bearer); проверьте clean-vpn-hmac.key на client и exit`,
+          ),
+        );
+        return;
+      }
       if (settled) return;
       settled = true;
       applyCleanVpnHttp2StreamWindow(req);
@@ -1635,6 +1645,20 @@ async function completeCleanVpnTlsSession(sock, opts) {
         reject(
           new Error(
             `TLS client: exit ответил «${head.split('\r\n')[0] || '?'}» — bearer не принят / не VPN-сервер`,
+          ),
+        );
+        return;
+      }
+      const http1Ct = parseHttp1ContentTypeFromHead(head);
+      if (!isCleanVpnTunnelHttpContentType(http1Ct)) {
+        try {
+          sock.destroy();
+        } catch {
+          /* ignore */
+        }
+        reject(
+          new Error(
+            `TLS client: exit ответил cover (content-type=${http1Ct || '—'}), не VPN-туннель — Bearer не принят; проверьте clean-vpn-hmac.key на client и exit`,
           ),
         );
         return;
@@ -6855,6 +6879,40 @@ function tlsVpnBearerFromAuthorizationHeader(raw) {
   return bm ? bm[1] : null;
 }
 
+/** VPN-туннель на exit отвечает `Content-Type: application/octet-stream`; cover — `text/plain`. */
+function isCleanVpnTunnelHttpContentType(raw) {
+  const s = (Array.isArray(raw) ? raw[0] : raw != null ? String(raw) : '')
+    .trim()
+    .toLowerCase();
+  return s.startsWith('application/octet-stream');
+}
+
+/** Content-Type из HTTP/1.1 преамбулы (до CRLFCRLF) или пустая строка. */
+function parseHttp1ContentTypeFromHead(headLatin1) {
+  for (const line of headLatin1.split('\r\n').slice(1)) {
+    const c = line.indexOf(':');
+    if (c <= 0) continue;
+    if (line.slice(0, c).trim().toLowerCase() === 'content-type') {
+      return line.slice(c + 1).trim();
+    }
+  }
+  return '';
+}
+
+/** Диагностика cover_bad_bearer без полного Bearer (полный token — --tls-log-bearer). */
+function logTlsCoverBadBearerHint(side, bearer, exporter) {
+  const exp =
+    exporter && Buffer.isBuffer(exporter) && exporter.length > 0
+      ? `exit_exporter_len=${exporter.length}`
+      : 'exit_exporter=missing';
+  const tok =
+    typeof bearer === 'string' && bearer.length === 32 ? 'bearer_len=32' : 'bearer_len=bad';
+  console.warn(
+    `[clean-vpn] tls: cover_bad_bearer (${side}): ${tok} ${exp} — проверьте одинаковый clean-vpn-hmac.key на client и exit (--shared-hmac-key); при boring-tls client шлёт Bearer v2 (channel-bound). Сверка token/exporter: --tls-log-bearer на обеих сторонах.`,
+  );
+  tlsLogBearerDebug(`${side} reject`, bearer, exporter, false);
+}
+
 /**
  * Общая проверка VPN vs cover по методу, пути и bearer.
  * @param {'http1'|'http2'} layer — GET для h1, POST для h2.
@@ -7055,7 +7113,7 @@ function wireExitTlsSocket(tlsSock, ctx) {
         );
         if (outcome !== 'vpn') {
           if (outcome === 'cover_bad_bearer') {
-            tlsLogBearerDebug('exit http1 reject', parsed.bearer, exporter, false);
+            logTlsCoverBadBearerHint('exit http1', parsed.bearer, exporter);
           }
           respondPublic(outcome, tlsPreviewHex16(httpBuf));
           return;
@@ -7262,7 +7320,7 @@ function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
 
     if (outcome !== 'vpn') {
       if (outcome === 'cover_bad_bearer') {
-        tlsLogBearerDebug('exit http2 reject', bearer, exporter, false);
+        logTlsCoverBadBearerHint('exit http2', bearer, exporter);
       }
       if (tlsCoverShouldThrottle(st.ip)) {
         setOutcomeOnce('cover_ratelimit', `reason=${outcome}`);
