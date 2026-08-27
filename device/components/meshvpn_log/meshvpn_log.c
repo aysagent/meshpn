@@ -86,6 +86,11 @@ static const char *reset_reason_str(esp_reset_reason_t r)
     }
 }
 
+const char *meshvpn_log_reset_reason_str(void)
+{
+    return reset_reason_str(esp_reset_reason());
+}
+
 void meshvpn_log_report_boot(uint32_t boot_count)
 {
     esp_reset_reason_t reason = esp_reset_reason();

@@ -7,6 +7,7 @@
 #include "meshvpn_vpn_protocol.h"
 #include "meshvpn_tls_exporter.h"
 #include "meshvpn_storage.h"
+#include "meshvpn_wifi.h"
 
 #include <string.h>
 #include <unistd.h>
@@ -29,14 +30,59 @@ static SemaphoreHandle_t s_lock;
 static int s_tunnel_fd = -1;
 static esp_tls_t *s_tls;
 
+typedef enum {
+    MESHVPN_TUNNEL_NONE = 0,
+    MESHVPN_TUNNEL_RAW,
+    MESHVPN_TUNNEL_HTTP1,
+    MESHVPN_TUNNEL_H2,
+} meshvpn_tunnel_mode_t;
+
+static meshvpn_tunnel_mode_t s_tunnel_mode = MESHVPN_TUNNEL_NONE;
+
+static void vpn_close_tunnel(void);
+static void vpn_worker(void *arg);
+
 static void set_error(const char *msg)
 {
     strncpy(s_status.last_error, msg, sizeof(s_status.last_error) - 1);
     s_status.last_error[sizeof(s_status.last_error) - 1] = '\0';
+    ESP_LOGW(TAG, "%s", s_status.last_error);
+}
+
+static bool vpn_uplink_ready(char *err, size_t err_len)
+{
+    meshvpn_wifi_status_t ws;
+    meshvpn_wifi_get_status(&ws);
+    if (!ws.sta_connected || ws.ip[0] == '\0') {
+        snprintf(err, err_len, "no WiFi uplink");
+        return false;
+    }
+    if (!meshvpn_wifi_time_ready()) {
+        snprintf(err, err_len, "waiting for time sync");
+        return false;
+    }
+    return true;
+}
+
+static void vpn_ensure_worker(void)
+{
+    s_worker_run = true;
+    if (s_worker != NULL) {
+        eTaskState st = eTaskGetState(s_worker);
+        if (st != eDeleted && st != eInvalid) {
+            return;
+        }
+        s_worker = NULL;
+    }
+    xTaskCreate(vpn_worker, "vpn_worker", 12288, NULL, 5, &s_worker);
 }
 
 static void vpn_close_tunnel(void)
 {
+    meshvpn_vpn_h2_close();
+    meshvpn_vpn_http1_close();
+    s_tunnel_mode = MESHVPN_TUNNEL_NONE;
+
     if (s_tls) {
         esp_tls_conn_destroy(s_tls);
         s_tls = NULL;
@@ -51,6 +97,15 @@ static void vpn_close_tunnel(void)
 static esp_err_t vpn_connect_tls_like(const meshvpn_vpn_config_t *cfg, bool boring)
 {
     char err[96] = {0};
+    if (!vpn_uplink_ready(err, sizeof(err))) {
+        set_error(err);
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (cfg->server[0] == '\0') {
+        set_error("server not set");
+        return ESP_ERR_INVALID_ARG;
+    }
+
     int fd = -1;
     esp_tls_t *tls = NULL;
 
@@ -70,18 +125,40 @@ static esp_err_t vpn_connect_tls_like(const meshvpn_vpn_config_t *cfg, bool bori
     uint8_t psk[64];
     size_t psk_len = 0;
     meshvpn_storage_load_psk(psk, sizeof(psk), &psk_len);
+    if (psk_len == 0) {
+        set_error("missing HMAC key");
+        if (tls) {
+            esp_tls_conn_destroy(tls);
+        }
+        return ESP_ERR_NOT_FOUND;
+    }
 
     if (tls && meshvpn_tls_exporter_from_esp_tls(tls, exporter, sizeof(exporter)) == ESP_OK) {
-        char token[33];
-        meshvpn_vpn_bearer_compute(psk, psk_len, exporter, sizeof(exporter), token, sizeof(token));
         int stream_id = 0;
-        if (meshvpn_vpn_h2_open(fd, cfg, token, &stream_id, err, sizeof(err)) != ESP_OK) {
+        esp_err_t hop_err = ESP_FAIL;
+        for (int64_t woff = -1; woff <= 1 && hop_err != ESP_OK; woff++) {
+            char token[33];
+            meshvpn_vpn_bearer_compute_window(psk, psk_len, exporter, sizeof(exporter), woff, token,
+                                              sizeof(token));
+            if (cfg->http_vers == 1) {
+                hop_err = meshvpn_vpn_http1_open(tls, cfg, token, err, sizeof(err));
+                if (hop_err == ESP_OK) {
+                    s_tunnel_mode = MESHVPN_TUNNEL_HTTP1;
+                }
+            } else {
+                hop_err = meshvpn_vpn_h2_open(tls, cfg, token, &stream_id, err, sizeof(err));
+                if (hop_err == ESP_OK) {
+                    s_tunnel_mode = MESHVPN_TUNNEL_H2;
+                }
+            }
+        }
+        if (hop_err != ESP_OK) {
             esp_tls_conn_destroy(tls);
             set_error(err);
             return ESP_FAIL;
         }
     } else {
-        set_error("exporter/h2 failed");
+        set_error("TLS exporter failed");
         if (tls) {
             esp_tls_conn_destroy(tls);
         }
@@ -95,9 +172,41 @@ static esp_err_t vpn_connect_tls_like(const meshvpn_vpn_config_t *cfg, bool bori
     return ESP_OK;
 }
 
+static esp_err_t vpn_tunnel_read(uint8_t *pkt, uint16_t maxlen, uint16_t *out_len)
+{
+    switch (s_tunnel_mode) {
+    case MESHVPN_TUNNEL_H2:
+        return meshvpn_vpn_h2_read(pkt, maxlen, out_len);
+    case MESHVPN_TUNNEL_HTTP1:
+        return meshvpn_vpn_http1_read(pkt, maxlen, out_len);
+    case MESHVPN_TUNNEL_RAW:
+        return meshvpn_vpn_framing_read(s_tunnel_fd, pkt, maxlen, out_len);
+    default:
+        return ESP_ERR_INVALID_STATE;
+    }
+}
+
+static esp_err_t vpn_tunnel_write(const uint8_t *pkt, uint16_t len)
+{
+    switch (s_tunnel_mode) {
+    case MESHVPN_TUNNEL_H2:
+        return meshvpn_vpn_h2_write(pkt, len);
+    case MESHVPN_TUNNEL_HTTP1:
+        return meshvpn_vpn_http1_write(pkt, len);
+    case MESHVPN_TUNNEL_RAW:
+        return meshvpn_vpn_framing_write(s_tunnel_fd, pkt, len);
+    default:
+        return ESP_ERR_INVALID_STATE;
+    }
+}
+
 static esp_err_t vpn_connect_transparent(const meshvpn_vpn_config_t *cfg)
 {
     char err[96] = {0};
+    if (!vpn_uplink_ready(err, sizeof(err))) {
+        set_error(err);
+        return ESP_ERR_INVALID_STATE;
+    }
     if (cfg->tls_public_name[0] == '\0') {
         set_error("tls_public_name required");
         return ESP_ERR_INVALID_ARG;
@@ -110,7 +219,9 @@ static esp_err_t vpn_connect_transparent(const meshvpn_vpn_config_t *cfg)
         return ESP_FAIL;
     }
 
+    s_tunnel_mode = MESHVPN_TUNNEL_RAW;
     s_status.connected = true;
+    s_status.last_error[0] = '\0';
     return ESP_OK;
 }
 
@@ -141,21 +252,28 @@ static void vpn_worker(void *arg)
             continue;
         }
 
-        if (s_tunnel_fd >= 0) {
+        if (s_status.connected) {
+            if (s_tunnel_mode == MESHVPN_TUNNEL_H2) {
+                meshvpn_vpn_h2_poll();
+            }
+
             uint8_t pkt[1500];
             uint16_t len = 0;
-            if (meshvpn_vpn_framing_read(s_tunnel_fd, pkt, sizeof(pkt), &len) == ESP_OK) {
+            if (vpn_tunnel_read(pkt, sizeof(pkt), &len) == ESP_OK) {
                 s_status.bytes_in += len;
                 if (s_inject) {
                     s_inject(pkt, len);
                 }
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(10));
             }
+            continue;
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
     }
 
     vpn_close_tunnel();
     meshvpn_vpn_transparent_intercept_stop();
+    s_worker = NULL;
     vTaskDelete(NULL);
 }
 
@@ -166,10 +284,21 @@ void meshvpn_vpn_set_inject(meshvpn_vpn_inject_fn fn)
 
 esp_err_t meshvpn_vpn_init(void)
 {
+    if (s_lock) {
+        return ESP_OK;
+    }
     s_lock = xSemaphoreCreateMutex();
+    if (!s_lock) {
+        return ESP_ERR_NO_MEM;
+    }
     meshvpn_storage_init();
     ESP_LOGI(TAG, "VPN init");
     return ESP_OK;
+}
+
+esp_err_t meshvpn_vpn_ensure_init(void)
+{
+    return meshvpn_vpn_init();
 }
 
 esp_err_t meshvpn_vpn_start(const meshvpn_vpn_config_t *cfg)
@@ -186,10 +315,37 @@ esp_err_t meshvpn_vpn_start(const meshvpn_vpn_config_t *cfg)
         xSemaphoreGive(s_lock);
     }
 
-    s_worker_run = true;
-    if (!s_worker) {
-        xTaskCreate(vpn_worker, "vpn_worker", 12288, NULL, 5, &s_worker);
+    vpn_ensure_worker();
+    return ESP_OK;
+}
+
+esp_err_t meshvpn_vpn_apply_config(const meshvpn_vpn_config_t *cfg)
+{
+    if (!cfg) {
+        return ESP_ERR_INVALID_ARG;
     }
+    esp_err_t err = meshvpn_vpn_ensure_init();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    /* Close tunnel and refresh cfg — do not meshvpn_vpn_stop() (kills worker permanently). */
+    vpn_close_tunnel();
+
+    if (s_lock) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+    }
+    memcpy(&s_cfg, cfg, sizeof(s_cfg));
+    memcpy(s_status.server, cfg->server, sizeof(s_status.server));
+    strncpy(s_status.transport, cfg->transport, sizeof(s_status.transport) - 1);
+    strncpy(s_status.profile_name, cfg->profile_name, sizeof(s_status.profile_name) - 1);
+    s_status.enabled = cfg->enabled;
+    s_status.connected = false;
+    if (s_lock) {
+        xSemaphoreGive(s_lock);
+    }
+
+    vpn_ensure_worker();
     return ESP_OK;
 }
 
@@ -208,6 +364,11 @@ bool meshvpn_vpn_is_connected(void)
     return s_status.connected;
 }
 
+bool meshvpn_vpn_routes_via_tunnel(void)
+{
+    return s_cfg.enabled && s_status.connected;
+}
+
 bool meshvpn_vpn_is_transparent(void)
 {
     return s_cfg.enabled && strcmp(s_cfg.transport, "transparent-tls") == 0;
@@ -220,10 +381,10 @@ void meshvpn_vpn_transparent_note_redirect(void)
 
 esp_err_t meshvpn_vpn_send_ipv4(const uint8_t *pkt, uint16_t len)
 {
-    if (!s_status.connected || s_tunnel_fd < 0) {
+    if (!s_status.connected) {
         return ESP_ERR_INVALID_STATE;
     }
-    esp_err_t err = meshvpn_vpn_framing_write(s_tunnel_fd, pkt, len);
+    esp_err_t err = vpn_tunnel_write(pkt, len);
     if (err == ESP_OK) {
         s_status.bytes_out += len;
     }
@@ -232,7 +393,7 @@ esp_err_t meshvpn_vpn_send_ipv4(const uint8_t *pkt, uint16_t len)
 
 esp_err_t meshvpn_vpn_recv_ipv4(uint8_t *pkt, uint16_t maxlen, uint16_t *out_len)
 {
-    return meshvpn_vpn_framing_read(s_tunnel_fd, pkt, maxlen, out_len);
+    return vpn_tunnel_read(pkt, maxlen, out_len);
 }
 
 void meshvpn_vpn_get_status(meshvpn_vpn_status_t *status)

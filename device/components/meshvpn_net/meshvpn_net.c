@@ -233,7 +233,10 @@ esp_err_t meshvpn_net_start_bridge(void)
         ESP_LOGE(TAG, "USB netif creation failed");
     } else {
         ESP_LOGI(TAG, "USB lwIP MAC " MACSTR, MAC2STR(usb_lwip_mac));
-        meshvpn_usb_attach_netif(s_usb_netif);
+        esp_err_t attach_err = meshvpn_usb_attach_netif(s_usb_netif);
+        if (attach_err != ESP_OK) {
+            ESP_LOGE(TAG, "USB transmit path failed: %s", esp_err_to_name(attach_err));
+        }
         meshvpn_net_configure_lan_dhcp(s_usb_netif);
     }
 #endif

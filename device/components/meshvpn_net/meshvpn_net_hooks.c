@@ -23,6 +23,9 @@ static uint32_t s_lan_ip4_rx;
 static uint32_t s_vpn_routed;
 static uint32_t s_blocked;
 
+/* tcpip thread is single-threaded for hooks — static avoids 1.5 KB on its stack. */
+static uint8_t s_hook_pkt[1500];
+
 static bool meshvpn_is_lan_netif(const struct netif *inp)
 {
     if (!inp) {
@@ -121,20 +124,23 @@ static bool meshvpn_handle_routing(struct pbuf *p, struct netif *inp, struct ip_
         return true;
     }
 
+    if (action == MESHVPN_ROUTE_VPN && !meshvpn_vpn_routes_via_tunnel()) {
+        return false;
+    }
+
     if (meshvpn_try_transparent_redirect(p, inp, iphdr, iphdr_hlen)) {
         return false;
     }
 
-    if (p->tot_len > 1500) {
+    if (p->tot_len > sizeof(s_hook_pkt)) {
         return false;
     }
 
-    uint8_t buf[1500];
-    if (pbuf_copy_partial(p, buf, p->tot_len, 0) != p->tot_len) {
+    if (pbuf_copy_partial(p, s_hook_pkt, p->tot_len, 0) != p->tot_len) {
         return false;
     }
 
-    if (meshvpn_datapath_submit_ipv4(buf, (uint16_t)p->tot_len) == ESP_OK) {
+    if (meshvpn_datapath_submit_ipv4(s_hook_pkt, (uint16_t)p->tot_len) == ESP_OK) {
         s_vpn_routed++;
         return true;
     }

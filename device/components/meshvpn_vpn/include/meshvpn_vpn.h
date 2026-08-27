@@ -26,9 +26,15 @@ typedef struct {
 void meshvpn_vpn_set_inject(meshvpn_vpn_inject_fn fn);
 
 esp_err_t meshvpn_vpn_init(void);
+/** Idempotent — safe before first meshvpn_vpn_start (e.g. admin save before bg init). */
+esp_err_t meshvpn_vpn_ensure_init(void);
 esp_err_t meshvpn_vpn_start(const meshvpn_vpn_config_t *cfg);
+/** Persist is caller's job; applies cfg to the running worker. */
+esp_err_t meshvpn_vpn_apply_config(const meshvpn_vpn_config_t *cfg);
 esp_err_t meshvpn_vpn_stop(void);
 bool meshvpn_vpn_is_connected(void);
+/** True when LAN traffic should be tunneled (enabled + tunnel up). */
+bool meshvpn_vpn_routes_via_tunnel(void);
 bool meshvpn_vpn_is_transparent(void);
 void meshvpn_vpn_transparent_note_redirect(void);
 

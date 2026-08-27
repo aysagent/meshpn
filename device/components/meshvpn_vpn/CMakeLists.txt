@@ -9,6 +9,7 @@ idf_component_register(
         "meshvpn_vpn_bearer.c"
         "meshvpn_vpn_framing.c"
         "meshvpn_vpn_h2.c"
+        "meshvpn_vpn_http1.c"
         "meshvpn_vpn_transparent.c"
         "meshvpn_vpn_boring.c"
         "meshvpn_enc_sni.c"
@@ -16,7 +17,7 @@ idf_component_register(
         "meshvpn_tls_exporter.c"
     INCLUDE_DIRS "include"
         "${MBEDTLS_DIR}/library"
-    REQUIRES meshvpn_config meshvpn_storage meshvpn_boringssl esp-tls mbedtls nghttp json lwip freertos
+    REQUIRES meshvpn_config meshvpn_storage meshvpn_boringssl meshvpn_wifi esp-tls mbedtls nghttp json lwip freertos
 )
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE MBEDTLS_ALLOW_PRIVATE_ACCESS)

@@ -1,4 +1,5 @@
 #include "meshvpn_vpn_protocol.h"
+#include "meshvpn_vpn_internal.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -11,11 +12,18 @@ esp_err_t meshvpn_vpn_bearer_compute(const uint8_t *psk, size_t psk_len,
                                      const uint8_t *exporter, size_t exporter_len,
                                      char *token_hex, size_t token_hex_len)
 {
+    return meshvpn_vpn_bearer_compute_window(psk, psk_len, exporter, exporter_len, 0, token_hex, token_hex_len);
+}
+
+esp_err_t meshvpn_vpn_bearer_compute_window(const uint8_t *psk, size_t psk_len,
+                                            const uint8_t *exporter, size_t exporter_len,
+                                            int64_t window_offset, char *token_hex, size_t token_hex_len)
+{
     if (!psk || psk_len == 0 || !token_hex || token_hex_len < 33) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    int64_t window = (int64_t)(time(NULL) / MESHVPN_TLS_BEARER_WINDOW_SEC);
+    int64_t window = (int64_t)(time(NULL) / MESHVPN_TLS_BEARER_WINDOW_SEC) + window_offset;
 
     const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
     if (!md) {

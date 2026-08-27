@@ -23,6 +23,67 @@
 static const char *TAG = "meshvpn";
 
 #define FACTORY_RESET_HOLD_MS 5000
+#define FACTORY_RESET_GRACE_MS 20000
+#define USB_STABLE_MS 3000
+
+static void meshvpn_wifi_start_saved(void)
+{
+    meshvpn_wifi_creds_t creds;
+    meshvpn_config_load_wifi(&creds);
+    if (!meshvpn_config_wifi_is_configured()) {
+        return;
+    }
+
+    ESP_LOGI(TAG, "WiFi reconnect: %s", creds.ssid);
+    meshvpn_wifi_apply_bus_power_limits();
+    meshvpn_wifi_start_sta(&creds);
+    meshvpn_net_ensure_napt();
+}
+
+/* SPIFFS/VPN compete with USB enumeration — defer until NCM is stable. */
+static void meshvpn_background_init_task(void *arg)
+{
+    (void)arg;
+
+    meshvpn_wifi_start_saved();
+
+    int stable_ms = 0;
+    while (stable_ms < USB_STABLE_MS) {
+        meshvpn_usb_stats_t us;
+        meshvpn_usb_get_stats(&us);
+        if (us.host_ready) {
+            stable_ms += 200;
+        } else {
+            stable_ms = 0;
+        }
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    ESP_LOGI(TAG, "USB stable — background init (SPIFFS / VPN)");
+
+    if (meshvpn_storage_init() != ESP_OK) {
+        ESP_LOGW(TAG, "SPIFFS unavailable — VPN cert upload disabled until reflash");
+    }
+
+    if (meshvpn_vpn_init() != ESP_OK) {
+        ESP_LOGW(TAG, "VPN init failed");
+        vTaskDelete(NULL);
+        return;
+    }
+    meshvpn_vpn_set_inject(meshvpn_net_inject_ipv4_to_lan);
+    if (meshvpn_datapath_init() != ESP_OK) {
+        ESP_LOGW(TAG, "VPN datapath init failed");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    meshvpn_vpn_config_t vpn_cfg;
+    meshvpn_config_load_vpn(&vpn_cfg);
+    meshvpn_datapath_ensure_init();
+    meshvpn_vpn_apply_config(&vpn_cfg);
+
+    vTaskDelete(NULL);
+}
 
 /* GPIO0 doubles as the download-mode strapping pin, so it cannot be sampled at
  * power-on. Watch it continuously instead: holding BOOT for five seconds while
@@ -30,6 +91,9 @@ static const char *TAG = "meshvpn";
  * flashed with the NCM firmware (no serial console, no WiFi credentials). */
 static void factory_reset_watch_task(void *arg)
 {
+    vTaskDelay(pdMS_TO_TICKS(FACTORY_RESET_GRACE_MS));
+    ESP_LOGI(TAG, "BOOT button armed (hold %d ms for factory reset)", FACTORY_RESET_HOLD_MS);
+
     int held_ms = 0;
 
     while (true) {
@@ -56,7 +120,6 @@ void app_main(void)
 
     ESP_ERROR_CHECK(meshvpn_board_init());
     ESP_ERROR_CHECK(meshvpn_config_init());
-    ESP_ERROR_CHECK(meshvpn_storage_init());
     meshvpn_log_report_boot(meshvpn_config_bump_boot_count());
 
     ESP_ERROR_CHECK(esp_netif_init());
@@ -65,34 +128,23 @@ void app_main(void)
     ESP_ERROR_CHECK(meshvpn_net_init());
     ESP_ERROR_CHECK(meshvpn_usb_init());
     ESP_ERROR_CHECK(meshvpn_routing_init());
-    ESP_ERROR_CHECK(meshvpn_vpn_init());
-    meshvpn_vpn_set_inject(meshvpn_net_inject_ipv4_to_lan);
-    ESP_ERROR_CHECK(meshvpn_datapath_init());
 
     /* Handlers must be in place before the bridge starts the WiFi driver. */
     ESP_ERROR_CHECK(meshvpn_wifi_init());
+    meshvpn_wifi_restore_saved();
     ESP_ERROR_CHECK(meshvpn_net_start_bridge());
     /* Deliberately not fatal: DNS proxy must never turn into a boot loop. */
     if (meshvpn_dns_proxy_init() != ESP_OK) {
         ESP_LOGW(TAG, "DNS proxy failed to start — USB clients may have no DNS");
     }
 
-    meshvpn_wifi_creds_t creds;
-    meshvpn_config_load_wifi(&creds);
-
-    if (meshvpn_config_wifi_is_configured()) {
-        ESP_LOGI(TAG, "WiFi configured: %s", creds.ssid);
-        meshvpn_wifi_start_sta(&creds);
-        meshvpn_net_ensure_napt();
-    } else {
+    if (!meshvpn_config_wifi_is_configured()) {
         ESP_LOGW(TAG, "WiFi not configured — open http://192.168.7.1/login over USB");
     }
 
     ESP_ERROR_CHECK(meshvpn_web_start());
 
-    meshvpn_vpn_config_t vpn_cfg;
-    meshvpn_config_load_vpn(&vpn_cfg);
-    meshvpn_vpn_start(&vpn_cfg);
+    xTaskCreate(meshvpn_background_init_task, "bg_init", 8192, NULL, 3, NULL);
 
     xTaskCreate(factory_reset_watch_task, "boot_btn", 3072, NULL, 4, NULL);
 

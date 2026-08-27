@@ -27,7 +27,6 @@ CONFIG_TINYUSB_TASK_PRIORITY=6
 # iPhone Ethernet enumerate unreliably on some hosts.
 CONFIG_USJ_ENABLE_USB_SERIAL_JTAG=n
 
-# Brownout: the board is often bus-powered by a phone, where the WiFi TX
-# current spike can dip the rail. Log it instead of silently resetting.
-CONFIG_ESP_BROWNOUT_DET=y
-CONFIG_ESP_BROWNOUT_DET_LVL_SEL_7=y
+# Brownout on ESP32-S3: level 7 = 2.44 V (least sensitive). Phone USB + WiFi TX can
+# still dip below that — disable so resets do not look like Ethernet flapping.
+# CONFIG_ESP_BROWNOUT_DET is not set

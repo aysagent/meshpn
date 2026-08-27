@@ -54,6 +54,11 @@ esp_err_t meshvpn_datapath_init(void)
     return ESP_OK;
 }
 
+esp_err_t meshvpn_datapath_ensure_init(void)
+{
+    return meshvpn_datapath_init();
+}
+
 esp_err_t meshvpn_datapath_submit_ipv4(const uint8_t *pkt, uint16_t len)
 {
     if (!s_queue || !pkt || len < 20 || len > MESHVPN_DATAPATH_MAX_PKT) {

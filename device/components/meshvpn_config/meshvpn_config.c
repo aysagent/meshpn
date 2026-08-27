@@ -16,6 +16,8 @@ esp_err_t meshvpn_config_init(void)
 {
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS erase required (%s) — WiFi/VPN settings reset once",
+                 esp_err_to_name(err));
         ESP_ERROR_CHECK(nvs_flash_erase());
         err = nvs_flash_init();
     }
@@ -67,18 +69,39 @@ esp_err_t meshvpn_config_load_wifi(meshvpn_wifi_creds_t *out)
     }
 
     size_t len = sizeof(out->ssid);
-    ESP_ERROR_CHECK(nvs_get_str(s_nvs, "wifi_ssid", out->ssid, &len));
+    esp_err_t err = nvs_get_str(s_nvs, "wifi_ssid", out->ssid, &len);
+    if (err != ESP_OK) {
+        out->configured = false;
+        return err;
+    }
     len = sizeof(out->password);
-    ESP_ERROR_CHECK(nvs_get_str(s_nvs, "wifi_pass", out->password, &len));
+    err = nvs_get_str(s_nvs, "wifi_pass", out->password, &len);
+    if (err != ESP_OK) {
+        out->configured = false;
+        return err;
+    }
     return ESP_OK;
 }
 
 esp_err_t meshvpn_config_save_wifi(const meshvpn_wifi_creds_t *creds)
 {
-    ESP_ERROR_CHECK(nvs_set_str(s_nvs, "wifi_ssid", creds->ssid));
-    ESP_ERROR_CHECK(nvs_set_str(s_nvs, "wifi_pass", creds->password));
-    ESP_ERROR_CHECK(nvs_set_u8(s_nvs, "wifi_ok", 1));
-    return nvs_commit(s_nvs);
+    esp_err_t err = nvs_set_str(s_nvs, "wifi_ssid", creds->ssid);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_str(s_nvs, "wifi_pass", creds->password);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_u8(s_nvs, "wifi_ok", 1);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_commit(s_nvs);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "WiFi saved: %.32s", creds->ssid);
+    }
+    return err;
 }
 
 esp_err_t meshvpn_config_clear_wifi(void)
@@ -131,7 +154,7 @@ esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
     }
     len = sizeof(out->profile_name);
     if (nvs_get_str(s_nvs, "vpn_profile", out->profile_name, &len) != ESP_OK) {
-        out->profile_name[0] = '\0';
+        strncpy(out->profile_name, "browser", sizeof(out->profile_name) - 1);
     }
     uint8_t en = 0;
     nvs_get_u8(s_nvs, "vpn_en", &en);
@@ -160,7 +183,10 @@ esp_err_t meshvpn_config_save_vpn(const meshvpn_vpn_config_t *cfg)
 
 esp_err_t meshvpn_config_factory_reset(void)
 {
+    ESP_LOGW(TAG, "factory reset — erasing NVS");
     nvs_erase_all(s_nvs);
     nvs_commit(s_nvs);
+    nvs_close(s_nvs);
+    s_nvs = 0;
     return nvs_flash_erase();
 }

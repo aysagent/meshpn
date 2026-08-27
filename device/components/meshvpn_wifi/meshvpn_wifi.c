@@ -1,10 +1,12 @@
 #include "meshvpn_wifi.h"
 
 #include <string.h>
+#include <time.h>
 
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_sntp.h"
 #include "esp_wifi.h"
 #include "sdkconfig.h"
 
@@ -18,6 +20,29 @@ static char s_ssid[33];
 static char s_ip[16];
 static wifi_ap_record_t s_scan_results[20];
 static uint16_t s_scan_count;
+static bool s_sntp_started;
+
+static void meshvpn_wifi_start_time_sync(void)
+{
+    if (s_sntp_started) {
+        return;
+    }
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_init();
+    s_sntp_started = true;
+    ESP_LOGI(TAG, "SNTP started");
+}
+
+bool meshvpn_wifi_time_ready(void)
+{
+    if (esp_sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+        return true;
+    }
+    time_t now = 0;
+    time(&now);
+    return now > 1700000000;
+}
 
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -38,6 +63,7 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         s_disconnect_reason = 0;
         /* Keep modem awake on the uplink — PS can cut NAT throughput badly. */
         esp_wifi_set_ps(WIFI_PS_NONE);
+        meshvpn_wifi_start_time_sync();
         ESP_LOGI(TAG, "STA got IP %s", s_ip);
     }
 }
@@ -47,6 +73,30 @@ esp_err_t meshvpn_wifi_init(void)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_wifi_event, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi_event, NULL));
     return ESP_OK;
+}
+
+void meshvpn_wifi_restore_saved(void)
+{
+    meshvpn_wifi_creds_t creds;
+    if (meshvpn_config_load_wifi(&creds) != ESP_OK || !creds.configured) {
+        s_sta_configured = false;
+        return;
+    }
+
+    strncpy(s_ssid, creds.ssid, sizeof(s_ssid) - 1);
+    s_ssid[sizeof(s_ssid) - 1] = '\0';
+    s_sta_configured = true;
+}
+
+void meshvpn_wifi_apply_bus_power_limits(void)
+{
+    /* 8 dBm (units of 0.25 dBm) — enough for uplink, avoids brownout on phone USB. */
+    esp_err_t err = esp_wifi_set_max_tx_power(32);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "max TX power cap failed: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "WiFi TX capped at 8 dBm (bus power)");
+    }
 }
 
 esp_err_t meshvpn_wifi_start_sta(const meshvpn_wifi_creds_t *creds)
@@ -124,7 +174,8 @@ void meshvpn_wifi_get_status(meshvpn_wifi_status_t *status)
 {
     memset(status, 0, sizeof(*status));
     status->sta_connected = s_sta_connected;
-    status->setup_mode = !s_sta_configured;
+    status->configured = meshvpn_config_wifi_is_configured();
+    status->setup_mode = !status->configured;
     status->ap_active = false;
     status->rssi = s_rssi;
     status->disconnect_reason = s_disconnect_reason;

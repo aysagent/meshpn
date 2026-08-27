@@ -37,12 +37,18 @@ fi
 
 cd "$DEVICE_DIR"
 
+"$DEVICE_DIR/scripts/sync-embed-assets.sh" || true
+
 # An existing sdkconfig overrides sdkconfig.defaults, so values edited in the
 # defaults would silently not apply. Drop it whenever a defaults file is newer.
 if [[ -f sdkconfig ]]; then
   STALE=""
   if ! grep -q '^CONFIG_BRIDGE_ENABLE=' sdkconfig 2>/dev/null; then
     STALE="missing bridge defaults"
+  elif ! grep -q '^CONFIG_BRIDGE_DATA_FORWARDING_NETIF_USB=y' sdkconfig 2>/dev/null; then
+    STALE="USB bridge disabled in sdkconfig"
+  elif grep -q '^CONFIG_ESP_BROWNOUT_DET=y' sdkconfig 2>/dev/null; then
+    STALE="brownout still enabled (phone USB)"
   fi
   for f in sdkconfig.defaults "boards/$BOARD/sdkconfig.defaults" "profiles/usb_$PROFILE.defconfig"; do
     [[ -f "$f" && "$f" -nt sdkconfig ]] && STALE="$f changed"
@@ -66,6 +72,14 @@ else
 fi
 
 idf.py "${BUILD_ARGS[@]}"
+
+if [[ -n "$PORT" ]]; then
+  echo ""
+  echo "==> After flash: unplug USB from phone, replug, wait ~5s for Ethernet in Settings"
+  echo "    Admin: http://192.168.7.1/login  (password: admin)"
+  echo "    Custom browser profile: MESHVPN_BROWSER_PROFILE_SRC=/path/to/browser-profile.json ./device/scripts/flash.sh"
+  echo "    If Ethernet/WiFi act up: cd device && idf.py -p $PORT erase-flash flash"
+fi
 
 if [[ "$MONITOR" == "monitor" ]]; then
   if [[ -z "$PORT" ]]; then

@@ -82,7 +82,8 @@ E meshvpn_log: backtrace: 0x420... 0x420... ...
 A boot counter that keeps climbing means the device is rebooting. `PANIC`,
 `interrupt watchdog` and `task watchdog` come with a core dump summary (task,
 PC, backtrace); `BROWNOUT (power supply)` means the USB host cannot supply the
-WiFi TX current spike — try a powered hub or a different port.
+WiFi TX current spike — the XIAO build disables the brownout detector for
+bus-powered use; if you still see BROWNOUT, try a powered hub or a different port.
 
 Resolve a backtrace address to a source line with:
 

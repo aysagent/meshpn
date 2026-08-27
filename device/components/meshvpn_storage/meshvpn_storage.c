@@ -7,9 +7,59 @@
 
 #include "esp_log.h"
 #include "esp_spiffs.h"
+#include "sdkconfig.h"
 
 static const char *TAG = "meshvpn_storage";
 static bool s_mounted;
+
+static bool file_exists(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+
+#if CONFIG_MESHVPN_STORAGE_EMBED_TEST_CERTS
+extern const uint8_t _binary_ca_pem_start[] asm("_binary_ca_pem_start");
+extern const uint8_t _binary_ca_pem_end[] asm("_binary_ca_pem_end");
+extern const uint8_t _binary_clean_vpn_hmac_key_start[] asm("_binary_clean_vpn_hmac_key_start");
+extern const uint8_t _binary_clean_vpn_hmac_key_end[] asm("_binary_clean_vpn_hmac_key_end");
+extern const uint8_t _binary_browser_json_start[] asm("_binary_browser_json_start");
+extern const uint8_t _binary_browser_json_end[] asm("_binary_browser_json_end");
+
+static esp_err_t install_embedded_if_missing(const char *path, const uint8_t *start, const uint8_t *end,
+                                             const char *label)
+{
+    if (file_exists(path)) {
+        return ESP_OK;
+    }
+
+    size_t len = (size_t)(end - start);
+    if (len == 0) {
+        ESP_LOGW(TAG, "embedded %s is empty", label);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    esp_err_t err = meshvpn_storage_write_file(path, start, len);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "installed default %s (%u bytes)", label, (unsigned)len);
+    } else {
+        ESP_LOGE(TAG, "failed to install default %s", label);
+    }
+    return err;
+}
+
+static void install_embedded_defaults(void)
+{
+    install_embedded_if_missing(MESHVPN_STORAGE_CA_PATH, _binary_ca_pem_start, _binary_ca_pem_end, "CA");
+    install_embedded_if_missing(MESHVPN_STORAGE_PSK_PATH, _binary_clean_vpn_hmac_key_start,
+                                _binary_clean_vpn_hmac_key_end, "HMAC key");
+
+    char profile_path[128];
+    snprintf(profile_path, sizeof(profile_path), "%s/browser.json", MESHVPN_STORAGE_PROFILES_DIR);
+    install_embedded_if_missing(profile_path, _binary_browser_json_start, _binary_browser_json_end,
+                                "browser profile");
+}
+#endif
 
 esp_err_t meshvpn_storage_init(void)
 {
@@ -26,7 +76,7 @@ esp_err_t meshvpn_storage_init(void)
 
     esp_err_t err = esp_vfs_spiffs_register(&conf);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "SPIFFS mount failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "SPIFFS mount failed: %s (check partition table was flashed)", esp_err_to_name(err));
         return err;
     }
 
@@ -35,18 +85,16 @@ esp_err_t meshvpn_storage_init(void)
         mkdir(MESHVPN_STORAGE_PROFILES_DIR, 0755);
     }
 
+#if CONFIG_MESHVPN_STORAGE_EMBED_TEST_CERTS
+    install_embedded_defaults();
+#endif
+
     s_mounted = true;
     size_t total = 0;
     size_t used = 0;
     esp_spiffs_info(NULL, &total, &used);
     ESP_LOGI(TAG, "SPIFFS mounted: %u / %u bytes used", (unsigned)used, (unsigned)total);
     return ESP_OK;
-}
-
-static bool file_exists(const char *path)
-{
-    struct stat st;
-    return stat(path, &st) == 0;
 }
 
 bool meshvpn_storage_has_ca(void)

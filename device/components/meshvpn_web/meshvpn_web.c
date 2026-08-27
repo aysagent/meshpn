@@ -17,6 +17,7 @@
 #include "meshvpn_dns_proxy.h"
 #include "meshvpn_log.h"
 #include "meshvpn_net.h"
+#include "meshvpn_datapath.h"
 #include "meshvpn_routing.h"
 #include "meshvpn_usb.h"
 #include "meshvpn_vpn.h"
@@ -124,21 +125,27 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     meshvpn_net_get_status(&ns);
     meshvpn_vpn_status_t vs;
     meshvpn_vpn_get_status(&vs);
+    meshvpn_vpn_config_t vcfg;
+    meshvpn_config_load_vpn(&vcfg);
 
     const meshvpn_board_config_t *board = meshvpn_board_get_config();
 
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "board", board->name);
     cJSON_AddNumberToObject(root, "uptime_sec", (double)(esp_timer_get_time() / 1000000));
+    cJSON_AddNumberToObject(root, "boot_count", meshvpn_config_get_boot_count());
+    cJSON_AddStringToObject(root, "last_reset", meshvpn_log_reset_reason_str());
 
     cJSON *wifi = cJSON_AddObjectToObject(root, "wifi");
     cJSON_AddBoolToObject(wifi, "connected", ws.sta_connected);
+    cJSON_AddBoolToObject(wifi, "configured", ws.configured);
     cJSON_AddBoolToObject(wifi, "setup_mode", ws.setup_mode);
     cJSON_AddBoolToObject(wifi, "ap_active", ws.ap_active);
     cJSON_AddNumberToObject(wifi, "rssi", ws.rssi);
     cJSON_AddStringToObject(wifi, "ssid", ws.ssid);
     cJSON_AddStringToObject(wifi, "ip", ws.ip);
     cJSON_AddNumberToObject(wifi, "disconnect_reason", ws.disconnect_reason);
+    cJSON_AddBoolToObject(wifi, "time_synced", meshvpn_wifi_time_ready());
 
     cJSON *net = cJSON_AddObjectToObject(root, "net");
     cJSON_AddBoolToObject(net, "bridge", ns.bridge_running);
@@ -176,11 +183,15 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(usb, "tx_queue_depth", us.tx_queue_depth);
 
     cJSON *vpn = cJSON_AddObjectToObject(root, "vpn");
-    cJSON_AddBoolToObject(vpn, "enabled", vs.enabled);
+    cJSON_AddBoolToObject(vpn, "enabled", vcfg.enabled);
     cJSON_AddBoolToObject(vpn, "connected", vs.connected);
-    cJSON_AddStringToObject(vpn, "server", vs.server);
-    cJSON_AddStringToObject(vpn, "transport", vs.transport);
-    cJSON_AddStringToObject(vpn, "profile", vs.profile_name);
+    cJSON_AddStringToObject(vpn, "server", vcfg.server);
+    cJSON_AddStringToObject(vpn, "transport", vcfg.transport);
+    cJSON_AddStringToObject(vpn, "tls_server_name", vcfg.tls_server_name);
+    cJSON_AddStringToObject(vpn, "tls_public_name", vcfg.tls_public_name);
+    cJSON_AddNumberToObject(vpn, "http_vers", vcfg.http_vers);
+    cJSON_AddStringToObject(vpn, "profile_name", vcfg.profile_name);
+    cJSON_AddBoolToObject(vpn, "ja3_strict", vcfg.ja3_strict);
     cJSON_AddStringToObject(vpn, "last_error", vs.last_error);
     cJSON_AddNumberToObject(vpn, "bytes_in", (double)vs.bytes_in);
     cJSON_AddNumberToObject(vpn, "bytes_out", (double)vs.bytes_out);
@@ -248,7 +259,16 @@ static esp_err_t handler_wifi_connect(httpd_req_t *req)
     strncpy(creds.password, cJSON_IsString(pass) ? pass->valuestring : "", sizeof(creds.password) - 1);
     creds.configured = true;
 
-    meshvpn_config_save_wifi(&creds);
+    esp_err_t save_err = meshvpn_config_save_wifi(&creds);
+    if (save_err != ESP_OK) {
+        cJSON_Delete(in);
+        cJSON *out = cJSON_CreateObject();
+        cJSON_AddBoolToObject(out, "ok", false);
+        cJSON_AddStringToObject(out, "error", esp_err_to_name(save_err));
+        return send_json(req, out);
+    }
+
+    meshvpn_wifi_apply_bus_power_limits();
     meshvpn_wifi_start_sta(&creds);
 
     cJSON_Delete(in);
@@ -656,12 +676,15 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     }
 
     meshvpn_config_save_vpn(&cfg);
-    meshvpn_vpn_stop();
-    meshvpn_vpn_start(&cfg);
+    meshvpn_datapath_ensure_init();
+    esp_err_t apply_err = meshvpn_vpn_apply_config(&cfg);
     cJSON_Delete(in);
 
     cJSON *out = cJSON_CreateObject();
-    cJSON_AddBoolToObject(out, "ok", true);
+    cJSON_AddBoolToObject(out, "ok", apply_err == ESP_OK);
+    if (apply_err != ESP_OK) {
+        cJSON_AddStringToObject(out, "error", esp_err_to_name(apply_err));
+    }
     return send_json(req, out);
 }
 

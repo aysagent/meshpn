@@ -1,0 +1,11 @@
+menu "meshvpn storage"
+
+    config MESHVPN_STORAGE_EMBED_TEST_CERTS
+        bool "Embed default CA + HMAC key + browser profile for lab testing"
+        default y
+        help
+            On first boot, copy embedded test CA, clean-vpn-hmac.key and
+            profiles/browser.json into SPIFFS when missing. Admin upload still
+            overwrites them.
+
+endmenu
