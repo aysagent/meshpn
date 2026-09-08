@@ -34,6 +34,8 @@
 
 static const char *TAG = "meshvpn_web";
 static httpd_handle_t s_server, s_redirect;
+static bool s_https, s_https_configured;
+bool meshvpn_web_https_enabled(void) { return s_https; }
 static char s_session_token[33];
 static int64_t s_session_created, s_session_used, s_login_after;
 static unsigned s_login_failures;
@@ -190,6 +192,13 @@ static void heap_json(cJSON *parent, const char *name, uint32_t caps)
     cJSON_AddNumberToObject(h, "minimum_free", info.minimum_free_bytes);
     cJSON_AddNumberToObject(h, "largest_block", info.largest_free_block);
 }
+static void add_https_status(cJSON *root)
+{
+    cJSON_AddBoolToObject(root, "https_enabled", s_https);
+    cJSON_AddBoolToObject(root, "https_configured", s_https_configured);
+    cJSON_AddBoolToObject(root, "https_restart_required", s_https != s_https_configured);
+    cJSON_AddStringToObject(root, "admin_next_url", s_https_configured ? "https://meshpn.local/" : "http://meshpn.local/");
+}
 static void add_telemetry(cJSON *root)
 {
     float temp;
@@ -206,13 +215,9 @@ static void add_telemetry(cJSON *root)
     cJSON_AddStringToObject(root, "build", meshvpn_web_build_id());
     cJSON_AddStringToObject(root, "idf", esp_get_idf_version());
     cJSON_AddStringToObject(root, "hostname", "meshpn.local");
-#if CONFIG_MESHVPN_WEB_HTTPS
-    cJSON_AddBoolToObject(root, "https_enabled", true);
-    cJSON_AddStringToObject(root, "certificate_sha256", meshvpn_web_tls_fingerprint());
-#else
-    cJSON_AddBoolToObject(root, "https_enabled", false);
-    cJSON_AddNullToObject(root, "certificate_sha256");
-#endif
+    add_https_status(root);
+    if (s_https) cJSON_AddStringToObject(root, "certificate_sha256", meshvpn_web_tls_fingerprint());
+    else cJSON_AddNullToObject(root, "certificate_sha256");
     cJSON_AddNumberToObject(root, "ingress_denied", meshvpn_net_denied_count());
 }
 static esp_err_t handler_api_status(httpd_req_t *req)
@@ -523,10 +528,33 @@ static esp_err_t handler_system(httpd_req_t *req)
     esp_restart();
     return ESP_OK;
 }
-#if CONFIG_MESHVPN_WEB_HTTPS
+static esp_err_t handler_https(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    cJSON *in = body(req, 128);
+    if (!in) return ESP_FAIL;
+    cJSON *enabled = cJSON_GetObjectItemCaseSensitive(in, "enabled");
+    if (!cJSON_IsBool(enabled)) {
+        cJSON_Delete(in);
+        return error(req, "400 Bad Request", "enabled must be a boolean");
+    }
+    bool next = cJSON_IsTrue(enabled);
+    cJSON_Delete(in);
+    /* Prepare/validate the identity before committing a transition from HTTP.
+     * Failure leaves both the current listener and saved mode unchanged. */
+    if (next && !s_https && meshvpn_web_tls_init() != ESP_OK)
+        return error(req, "503 Service Unavailable", "Cannot prepare HTTPS identity; settings unchanged");
+    if (meshvpn_config_save_https(next) != ESP_OK)
+        return error(req, "500 Internal Server Error", "Cannot save HTTPS mode");
+    s_https_configured = next;
+    cJSON *out = cJSON_CreateObject();
+    add_https_status(out);
+    return send_json(req, out);
+}
 static esp_err_t handler_certificate(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    if (!s_https) return error(req, "403 Forbidden", "Certificate API requires HTTPS");
     if (req->method == HTTP_GET) {
         httpd_resp_set_type(req, "application/x-pem-file");
         httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=meshpn-device.pem");
@@ -542,7 +570,6 @@ static esp_err_t handler_certificate(httpd_req_t *req)
     cJSON_Delete(in);
     return err == ESP_OK ? ok(req) : error(req, "400 Bad Request", "Invalid certificate/key or storage error");
 }
-#endif
 static esp_err_t handler_unimplemented(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -590,7 +617,6 @@ static esp_err_t handler_ranges_benchmark(httpd_req_t *req)
     cJSON_AddNumberToObject(out, "average_us", elapsed / 20000.0);
     return send_json(req, out);
 }
-#if CONFIG_MESHVPN_WEB_HTTPS
 static esp_err_t handler_redirect(httpd_req_t *req)
 {
     if (!local_socket(req)) return error(req, "403 Forbidden", "USB management only");
@@ -599,9 +625,12 @@ static esp_err_t handler_redirect(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_sendstr(req, "Open https://meshpn.local/ (or HTTPS at the USB gateway IP)");
 }
-#endif
 esp_err_t meshvpn_web_start(void)
 {
+    if (s_server) return ESP_ERR_INVALID_STATE;
+    esp_err_t err = meshvpn_config_load_https(&s_https_configured);
+    if (err != ESP_OK) return err;
+    s_https = s_https_configured;
     httpd_config_t server = HTTPD_DEFAULT_CONFIG();
     server.max_uri_handlers = 24;
     server.stack_size = 12288;
@@ -611,19 +640,17 @@ esp_err_t meshvpn_web_start(void)
     server.send_wait_timeout = 3;
     server.keep_alive_enable = true;
     server.ctrl_port = 32769;
-#if CONFIG_MESHVPN_WEB_HTTPS
-    esp_err_t err = meshvpn_web_tls_init();
-    if (err != ESP_OK) return err; /* Never fall back to plaintext credentials. */
-    httpd_ssl_config_t cfg = HTTPD_SSL_CONFIG_DEFAULT();
-    cfg.httpd = server;
-    cfg.servercert = (const uint8_t *)meshvpn_web_tls_cert();
-    cfg.servercert_len = strlen(meshvpn_web_tls_cert()) + 1;
-    cfg.prvtkey_pem = (const uint8_t *)meshvpn_web_tls_key();
-    cfg.prvtkey_len = strlen(meshvpn_web_tls_key()) + 1;
-    err = httpd_ssl_start(&s_server, &cfg);
-#else
-    esp_err_t err = httpd_start(&s_server, &server);
-#endif
+    if (s_https) {
+        err = meshvpn_web_tls_init();
+        if (err != ESP_OK) return err; /* No silent plaintext fallback. BOOT resets NVS. */
+        httpd_ssl_config_t cfg = HTTPD_SSL_CONFIG_DEFAULT();
+        cfg.httpd = server;
+        cfg.servercert = (const uint8_t *)meshvpn_web_tls_cert();
+        cfg.servercert_len = strlen(meshvpn_web_tls_cert()) + 1;
+        cfg.prvtkey_pem = (const uint8_t *)meshvpn_web_tls_key();
+        cfg.prvtkey_len = strlen(meshvpn_web_tls_key()) + 1;
+        err = httpd_ssl_start(&s_server, &cfg);
+    } else err = httpd_start(&s_server, &server);
     if (err != ESP_OK) return err;
 #define ROUTE(uri_, method_, fn_) { .uri = uri_, .method = method_, .handler = fn_ }
     const httpd_uri_t routes[] = {
@@ -634,11 +661,10 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/wifi/profiles", HTTP_GET, handler_profiles), ROUTE("/api/wifi/profiles", HTTP_POST, handler_profiles),
         ROUTE("/api/wifi/select", HTTP_POST, handler_select),
         ROUTE("/api/admin/password", HTTP_POST, handler_password),
+        ROUTE("/api/admin/https", HTTP_POST, handler_https),
         ROUTE("/api/system/reboot", HTTP_POST, handler_system),
         ROUTE("/api/system/factory-reset", HTTP_POST, handler_system),
-#if CONFIG_MESHVPN_WEB_HTTPS
         ROUTE("/api/certificate", HTTP_GET, handler_certificate), ROUTE("/api/certificate", HTTP_POST, handler_certificate),
-#endif
         ROUTE("/api/vpn/config", HTTP_POST, handler_unimplemented),
         ROUTE("/api/routing/rules", HTTP_POST, handler_unimplemented),
         ROUTE("/api/routing/default", HTTP_POST, handler_unimplemented),
@@ -646,34 +672,33 @@ esp_err_t meshvpn_web_start(void)
     };
     for (unsigned i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         err = httpd_register_uri_handler(s_server, &routes[i]);
-        if (err != ESP_OK) return err;
+        if (err != ESP_OK) { meshvpn_web_stop(); return err; }
     }
-#if CONFIG_MESHVPN_WEB_HTTPS
-    httpd_config_t plain = HTTPD_DEFAULT_CONFIG();
-    plain.ctrl_port = 32768;
-    plain.max_open_sockets = 2;
-    plain.uri_match_fn = httpd_uri_match_wildcard;
-    err = httpd_start(&s_redirect, &plain);
-    if (err == ESP_OK) {
-        const httpd_uri_t redirect = ROUTE("/*", HTTP_GET, handler_redirect);
-        err = httpd_register_uri_handler(s_redirect, &redirect);
+    if (s_https) {
+        httpd_config_t plain = HTTPD_DEFAULT_CONFIG();
+        plain.ctrl_port = 32768;
+        plain.max_open_sockets = 2;
+        plain.uri_match_fn = httpd_uri_match_wildcard;
+        err = httpd_start(&s_redirect, &plain);
+        if (err == ESP_OK) {
+            const httpd_uri_t redirect = ROUTE("/*", HTTP_GET, handler_redirect);
+            err = httpd_register_uri_handler(s_redirect, &redirect);
+        }
+        if (err != ESP_OK) {
+            if (s_redirect) { httpd_stop(s_redirect); s_redirect = NULL; }
+            ESP_LOGW(TAG, "HTTP redirect unavailable; HTTPS remains active");
+        }
     }
-    ESP_LOGI(TAG, "USB HTTPS admin: https://meshpn.local/");
-#else
-    ESP_LOGW(TAG, "USB HTTP admin: http://meshpn.local/ (HTTPS disabled in config)");
-#endif
-    return err;
+    ESP_LOGI(TAG, "USB admin: %s://meshpn.local/", s_https ? "https" : "http");
+    return ESP_OK;
 #undef ROUTE
 }
 esp_err_t meshvpn_web_stop(void)
 {
     if (s_redirect) { httpd_stop(s_redirect); s_redirect = NULL; }
     if (s_server) {
-#if CONFIG_MESHVPN_WEB_HTTPS
-        httpd_ssl_stop(s_server);
-#else
-        httpd_stop(s_server);
-#endif
+        if (s_https) httpd_ssl_stop(s_server);
+        else httpd_stop(s_server);
         s_server = NULL;
     }
     memset(s_session_token, 0, sizeof(s_session_token));

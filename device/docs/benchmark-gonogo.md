@@ -5,7 +5,7 @@ Run after flashing stage-1 firmware (`./device/scripts/flash.sh`).
 ## Setup
 
 1. Connect XIAO ESP32-S3 to host via USB-C.
-2. Open `http://meshpn.local/` (fallback `http://192.168.7.1/`) over USB, password `admin`. With `CONFIG_MESHVPN_WEB_HTTPS=y`, use HTTPS and follow [certificate setup](admin-https.md). No SoftAP is enabled.
+2. Open `http://meshpn.local/` (fallback `http://192.168.7.1/`) over USB, password `admin`. If HTTPS was enabled in the admin checkbox, use HTTPS and follow [certificate setup](admin-https.md). No SoftAP is enabled.
 3. Scan WiFi, save home router credentials.
 4. Verify host gets IP on USB Ethernet (`192.168.7.x`).
 

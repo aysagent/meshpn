@@ -44,13 +44,12 @@ endmenu
 menu "meshvpn Web"
 
     config MESHVPN_WEB_HTTPS
-        bool "Enable HTTPS administration"
+        bool "Enable HTTPS administration by default"
         default n
         help
-            Serve the admin UI/API over HTTPS and redirect HTTP to HTTPS.
-            When disabled, serve the UI/API over HTTP on port 80 without
-            generating a TLS identity. USB-only ingress filtering and login
-            remain enabled, but passwords and tokens travel unencrypted.
+            Initial mode when no HTTPS preference is saved in NVS. Both HTTP
+            and HTTPS are built in; the admin checkbox overrides this default
+            after reboot, without reflashing. HTTP credentials are unencrypted.
 
     config MESHVPN_WEB_REQUIRE_PASSWORD_CHANGE
         bool "Require changing the default admin password"

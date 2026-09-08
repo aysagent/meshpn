@@ -17,7 +17,7 @@ USB compatibility expansion and new composite profiles are deferred.
 USB LAN initially uses 192.168.7.0/24, gateway 192.168.7.1.
 WiFi STA receives its address/DNS from the router. SoftAP is disabled.
 A subnet conflict causes selection of a different private /24; renew DHCP/reconnect USB and open http://meshpn.local/.
-Use HTTPS instead when `CONFIG_MESHVPN_WEB_HTTPS=y` (disabled by default for testing).
+Use HTTPS instead when enabled in **Admin connection** (save and reboot). `CONFIG_MESHVPN_WEB_HTTPS` sets only the initial default, disabled for testing.
 
 USB must stay usable without WiFi because it is the provisioning interface.
 A connected uplink lights the LED; otherwise it blinks.

@@ -23,9 +23,12 @@ There is no setup SoftAP; USB administration works without a WiFi uplink.
 HTTPS is disabled by default for testing (`CONFIG_MESHVPN_WEB_HTTPS=n`). Login and WiFi credentials travel unencrypted over USB in this mode;
 authentication and WiFi-side ingress isolation remain enabled.
 
-To enable HTTPS, set `CONFIG_MESHVPN_WEB_HTTPS=y` in menuconfig (meshvpn Web) and rebuild/flash.
-Then open **https://meshpn.local/**; HTTP only redirects and does not accept login/API requests.
-The first HTTPS boot generates a unique self-signed certificate. HTTP-only mode does not generate or load one, and certificate endpoints are disabled.
+To enable HTTPS, check **Admin connection → Enable HTTPS**, click **Save connection setting**, then **Reboot to apply**.
+Open the displayed **https://meshpn.local/** address and log in again; HTTP now only redirects and does not accept login/API requests.
+Uncheck and save/reboot to return to HTTP. No reflashing is required after installing this firmware.
+The preference persists in NVS; `CONFIG_MESHVPN_WEB_HTTPS` only sets the initial/factory-reset default, not a compile-time restriction.
+Before enabling from HTTP, the device prepares/validates its unique certificate; if that fails the saved mode is unchanged.
+HTTP boot does not initialize the identity; certificate download/import is forbidden over HTTP. Disabling HTTPS preserves the identity for later use.
 See [HTTPS setup](docs/admin-https.md) for fingerprint verification, a personal CA and certificate import.
 
 Default password: **admin**. For development, changing it is optional.

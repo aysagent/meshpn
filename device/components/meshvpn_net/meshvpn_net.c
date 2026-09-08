@@ -33,15 +33,10 @@ static bool s_mdns;
 
 esp_netif_t *meshvpn_net_usb(void) { return s_usb_netif; }
 
-esp_err_t meshvpn_net_start_mdns(void)
+esp_err_t meshvpn_net_start_mdns(bool https_enabled)
 {
-#if CONFIG_MESHVPN_WEB_HTTPS
-    const char *service = "_https";
-    const uint16_t port = 443;
-#else
-    const char *service = "_http";
-    const uint16_t port = 80;
-#endif
+    const char *service = https_enabled ? "_https" : "_http";
+    const uint16_t port = https_enabled ? 443 : 80;
     esp_err_t err = mdns_init();
     if (err != ESP_OK) return err;
     if ((err = mdns_hostname_set("meshpn")) != ESP_OK ||

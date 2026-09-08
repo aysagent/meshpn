@@ -15,6 +15,13 @@ flags=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined)
 "$test_dir/ingress-session"
 node device/tests/test-ip-ranges.mjs
 node device/tests/test-web-ui.mjs
+for default_https in 0 1; do
+  "$cc" "${flags[@]}" -DCONFIG_MESHVPN_WEB_HTTPS="$default_https" \
+    -Idevice/tests/stubs -Idevice/components/meshvpn_config/include \
+    device/tests/test_https_config.c device/components/meshvpn_config/meshvpn_config_web.c \
+    -o "$test_dir/https-config-$default_https"
+  "$test_dir/https-config-$default_https"
+done
 bash -n device/scripts/flash.sh device/scripts/create-admin-ca.sh
 if [[ -n "${IDF_PATH:-}" ]]; then
   source_dir="$IDF_PATH/components/mbedtls/mbedtls"

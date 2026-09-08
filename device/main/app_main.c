@@ -75,12 +75,10 @@ void app_main(void)
     }
 
     ESP_ERROR_CHECK(meshvpn_wifi_start_manager());
-    if (meshvpn_net_start_mdns() != ESP_OK) {
-        ESP_LOGW(TAG, "mDNS unavailable; use USB gateway IP");
-    }
-
     if (meshvpn_web_start() != ESP_OK) {
         ESP_LOGE(TAG, "Web admin unavailable; hold BOOT 5s to reset configuration and identity");
+    } else if (meshvpn_net_start_mdns(meshvpn_web_https_enabled()) != ESP_OK) {
+        ESP_LOGW(TAG, "mDNS unavailable; use USB gateway IP");
     }
 
     meshvpn_vpn_config_t vpn_cfg;

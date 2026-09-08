@@ -40,7 +40,7 @@ void meshvpn_net_ensure_napt(void);
 void meshvpn_net_log_state(void);
 void meshvpn_net_get_status(meshvpn_net_status_t *status);
 esp_netif_t *meshvpn_net_usb(void);
-esp_err_t meshvpn_net_start_mdns(void);
+esp_err_t meshvpn_net_start_mdns(bool https_enabled);
 
 #ifdef __cplusplus
 }

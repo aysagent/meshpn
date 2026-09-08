@@ -1,6 +1,6 @@
 # Current improvements and acceptance checks
 
-Revision: 2026-09-08. Implementation is in the tree; this environment has no attached board.
+Revision: 2026-09-09. Implementation is in the tree; this environment has no attached board.
 The historical 8.13/6.5 Mbps result is **not** a measurement of this revision.
 USB compatibility expansion and VPN/WireGuard implementation are deferred.
 
@@ -12,8 +12,10 @@ USB compatibility expansion and VPN/WireGuard implementation are deferred.
 - Opening the admin page starts a scan automatically. The button repeats it; scans wait for association/DHCP to complete.
 - Two-second visible-page status polling: temperature, internal/DMA/PSRAM free/minimum/largest blocks,
   flash/PSRAM size, stack high-water mark, build ID, USB/DNS counters and certificate fingerprint.
-- Configurable HTTP/HTTPS login and management API (`CONFIG_MESHVPN_WEB_HTTPS=n` by default for testing).
-  HTTP-only mode serves the admin on port 80 without TLS identity initialization or certificate endpoints; credentials are unencrypted.
+- Admin checkbox for HTTP/HTTPS with NVS persistence and explicit save/reboot, no reflashing to change mode.
+  `CONFIG_MESHVPN_WEB_HTTPS=n` sets the initial/factory-reset default. Status distinguishes active and saved modes and provides the next URL.
+  HTTP boot serves the admin on port 80 without TLS identity initialization; certificate APIs reject HTTP requests and credentials are unencrypted.
+  Enabling from HTTP preflights the identity before saving; disabling preserves it. No silent HTTP fallback on HTTPS boot failure.
   HTTPS mode provides a persistent per-device EC identity, certificate import and HTTP redirect. Both retain USB-only mDNS/ingress filtering; IPv6 is disabled.
 - Non-empty expiring sessions, logout/password-change revocation, login throttling and bounded request parsing.
   `CONFIG_MESHVPN_WEB_REQUIRE_PASSWORD_CHANGE` defaults to **n** for testing. Set it to **y** to require changing the configured initial password before configuration mutations.
@@ -34,7 +36,8 @@ IDF_PATH=/path/to/esp-idf-v5.4.1 bash device/scripts/test-host.sh
 Requires C compiler with ASan/UBSan, Node.js and bash; the TLS test additionally requires CMake and OpenSSL 3.
 Tests cover DNS name/bounds/compression/TTL handling, binary-search boundaries, CIDR compilation,
 actual ingress hook with chained pbufs/fragments, session validation, UI JavaScript syntax, DOM references and HTTP/HTTPS status rendering,
-TLS identity persistence, matching-key validation and personal-CA certificate import.
+TLS identity persistence, matching-key validation and personal-CA certificate import; NVS HTTPS defaults/overrides/error propagation,
+checkbox changes surviving status polling, save/reboot confirmation, failed saves and both mode transitions in the UI mock.
 The TLS test uses an in-memory NVS stub, not actual flash/power-loss tests.
 
 The ESP-IDF 5.4.1 NCM firmware builds with the locked dependencies, with mandatory password change both enabled and disabled.
@@ -47,7 +50,9 @@ The previously flashed board's resolved dependency versions are unknown; preserv
 ## Hardware acceptance
 
 Check the default HTTP mode at `http://meshpn.local/`: login, profiles, status and mDNS `_http._tcp:80`, no HTTPS listener or certificate API.
-The HTTPS-specific checks below require enabling `CONFIG_MESHVPN_WEB_HTTPS` and reflashing; verify `_https._tcp:443` and HTTP redirects then.
+Enable HTTPS via the admin checkbox, save and reboot; verify `_https._tcp:443` and HTTP redirects then.
+Confirm the active mode remains unchanged before reboot, changes survive reboot, disabling returns to HTTP, and cancelling a pending change needs no reboot.
+Check the checkbox is not overwritten by status polling. Simulate identity/storage failures and verify error reporting and BOOT recovery.
 
 1. **First boot and recovery:** USB DHCP and HTTPS login work with no saved network or uplink.
    Verify the unique fingerprint using a trusted connection; reboot preserves it. Hold BOOT for five seconds to reset NVS and identity.
