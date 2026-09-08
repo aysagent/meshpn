@@ -80,7 +80,7 @@ void app_main(void)
     }
 
     if (meshvpn_web_start() != ESP_OK) {
-        ESP_LOGE(TAG, "HTTPS unavailable; hold BOOT 5s to reset configuration and identity");
+        ESP_LOGE(TAG, "Web admin unavailable; hold BOOT 5s to reset configuration and identity");
     }
 
     meshvpn_vpn_config_t vpn_cfg;

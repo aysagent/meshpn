@@ -12,8 +12,9 @@ USB compatibility expansion and VPN/WireGuard implementation are deferred.
 - Opening the admin page starts a scan automatically. The button repeats it; scans wait for association/DHCP to complete.
 - Two-second visible-page status polling: temperature, internal/DMA/PSRAM free/minimum/largest blocks,
   flash/PSRAM size, stack high-water mark, build ID, USB/DNS counters and certificate fingerprint.
-- HTTPS-only login and management API, persistent per-device EC identity, authenticated certificate import,
-  USB-only mDNS and management ingress filter. Plain HTTP only redirects; IPv6 is disabled.
+- Configurable HTTP/HTTPS login and management API (`CONFIG_MESHVPN_WEB_HTTPS=n` by default for testing).
+  HTTP-only mode serves the admin on port 80 without TLS identity initialization or certificate endpoints; credentials are unencrypted.
+  HTTPS mode provides a persistent per-device EC identity, certificate import and HTTP redirect. Both retain USB-only mDNS/ingress filtering; IPv6 is disabled.
 - Non-empty expiring sessions, logout/password-change revocation, login throttling and bounded request parsing.
   `CONFIG_MESHVPN_WEB_REQUIRE_PASSWORD_CHANGE` defaults to **n** for testing. Set it to **y** to require changing the configured initial password before configuration mutations.
 - UDP/TCP DNS proxy with response correlation, uplink resolver, TCP fallback and bounded positive TTL cache.
@@ -32,17 +33,21 @@ IDF_PATH=/path/to/esp-idf-v5.4.1 bash device/scripts/test-host.sh
 
 Requires C compiler with ASan/UBSan, Node.js and bash; the TLS test additionally requires CMake and OpenSSL 3.
 Tests cover DNS name/bounds/compression/TTL handling, binary-search boundaries, CIDR compilation,
-actual ingress hook with chained pbufs/fragments, session validation, UI JavaScript syntax and DOM references,
+actual ingress hook with chained pbufs/fragments, session validation, UI JavaScript syntax, DOM references and HTTP/HTTPS status rendering,
 TLS identity persistence, matching-key validation and personal-CA certificate import.
 The TLS test uses an in-memory NVS stub, not actual flash/power-loss tests.
 
 The ESP-IDF 5.4.1 NCM firmware builds with the locked dependencies, with mandatory password change both enabled and disabled.
+HTTP-only and HTTPS modes also pass build checks; the default remains HTTP-only.
 The image is approximately 1.1 MiB in a 3 MiB app partition.
 The generated lwIP customer hook and linked image include the management filter.
 Build success and unit tests do not establish radio/USB timing, handshake stack headroom, runtime RAM or throughput.
 The previously flashed board's resolved dependency versions are unknown; preserve its working image/configuration before comparison.
 
 ## Hardware acceptance
+
+Check the default HTTP mode at `http://meshpn.local/`: login, profiles, status and mDNS `_http._tcp:80`, no HTTPS listener or certificate API.
+The HTTPS-specific checks below require enabling `CONFIG_MESHVPN_WEB_HTTPS` and reflashing; verify `_https._tcp:443` and HTTP redirects then.
 
 1. **First boot and recovery:** USB DHCP and HTTPS login work with no saved network or uplink.
    Verify the unique fingerprint using a trusted connection; reboot preserves it. Hold BOOT for five seconds to reset NVS and identity.

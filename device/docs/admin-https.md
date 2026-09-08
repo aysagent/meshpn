@@ -1,6 +1,11 @@
 # Local HTTPS administration
 
-The firmware generates an individual EC P-256 key and self-signed certificate on first boot, stored together in NVS.
+HTTPS is **disabled by default** for testing. Open `http://meshpn.local/` or `http://192.168.7.1/` in this mode.
+Enable `CONFIG_MESHVPN_WEB_HTTPS` in `menuconfig → meshvpn Web` and rebuild/flash to use the HTTPS setup below.
+HTTP-only mode keeps login and USB ingress isolation, but passwords/tokens are not encrypted in transit.
+It does not initialize the TLS identity or expose certificate download/import endpoints. Any existing NVS identity is preserved for later HTTPS use.
+
+The firmware generates an individual EC P-256 key and self-signed certificate on first HTTPS boot, stored together in NVS.
 The certificate includes meshpn.local, meshpn.home.arpa and the initial 192.168.7.1 address.
 It remains the same after ordinary reboots and flashing an app without erasing NVS. Factory reset generates a new identity.
 

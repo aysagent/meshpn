@@ -35,12 +35,19 @@ esp_netif_t *meshvpn_net_usb(void) { return s_usb_netif; }
 
 esp_err_t meshvpn_net_start_mdns(void)
 {
+#if CONFIG_MESHVPN_WEB_HTTPS
+    const char *service = "_https";
+    const uint16_t port = 443;
+#else
+    const char *service = "_http";
+    const uint16_t port = 80;
+#endif
     esp_err_t err = mdns_init();
     if (err != ESP_OK) return err;
     if ((err = mdns_hostname_set("meshpn")) != ESP_OK ||
         (err = mdns_register_netif(s_usb_netif)) != ESP_OK ||
         (err = mdns_netif_action(s_usb_netif, MDNS_EVENT_ENABLE_IP4)) != ESP_OK ||
-        (err = mdns_service_add(NULL, "_https", "_tcp", 443, NULL, 0)) != ESP_OK) {
+        (err = mdns_service_add(NULL, service, "_tcp", port, NULL, 0)) != ESP_OK) {
         mdns_free();
         return err;
     }

@@ -50,6 +50,7 @@ CONFIG_LWIP_IRAM_OPTIMIZATION=y
 # HTTP server (meshvpn_web)
 # Development default; enable in menuconfig for mandatory password rotation.
 # CONFIG_MESHVPN_WEB_REQUIRE_PASSWORD_CHANGE is not set
+# CONFIG_MESHVPN_WEB_HTTPS is not set
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 CONFIG_HTTPD_MAX_URI_LEN=512
 CONFIG_MBEDTLS_PEM_WRITE_C=y

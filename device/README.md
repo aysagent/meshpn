@@ -18,12 +18,15 @@ The dependency manager applies the iot_bridge lwIP patches to your ESP-IDF check
 
 ## First login
 
-Open **https://meshpn.local/** over USB, or **https://192.168.7.1/**.
+Open **http://meshpn.local/** over USB, or **http://192.168.7.1/**.
 There is no setup SoftAP; USB administration works without a WiFi uplink.
-HTTP only redirects to HTTPS and does not accept login/API requests.
+HTTPS is disabled by default for testing (`CONFIG_MESHVPN_WEB_HTTPS=n`). Login and WiFi credentials travel unencrypted over USB in this mode;
+authentication and WiFi-side ingress isolation remain enabled.
 
-The first boot generates a unique self-signed certificate. Verify the SHA-256 fingerprint using a trusted USB connection/UART log before trusting it.
-See [HTTPS setup](docs/admin-https.md) for installing a personal CA and importing its server certificate.
+To enable HTTPS, set `CONFIG_MESHVPN_WEB_HTTPS=y` in menuconfig (meshvpn Web) and rebuild/flash.
+Then open **https://meshpn.local/**; HTTP only redirects and does not accept login/API requests.
+The first HTTPS boot generates a unique self-signed certificate. HTTP-only mode does not generate or load one, and certificate endpoints are disabled.
+See [HTTPS setup](docs/admin-https.md) for fingerprint verification, a personal CA and certificate import.
 
 Default password: **admin**. For development, changing it is optional.
 To require a change before modifying settings, enable
@@ -70,7 +73,7 @@ This is a membership set, not an ordered list of routing actions. The firmware d
 ## Recovery and tests
 
 Hold BOOT for five seconds during operation to erase NVS settings, WiFi profiles and the HTTPS identity, then reboot.
-The new certificate will need verification. BOOT recovery starts before the HTTPS server, so it also works if HTTPS cannot start.
+With HTTPS enabled, the new certificate will need verification. BOOT recovery starts before the web server, so it also works if that server cannot start.
 
 Logs are available in the UI and authenticated `GET /api/logs`; USB CDC console output remains disabled.
 UART: GPIO43/44 (D6/D7). Hardware notes: [xiao-esp32s3.md](docs/xiao-esp32s3.md).

@@ -11,12 +11,13 @@ It shares the PHY with USB-Serial-JTAG.
 | BOOT | GPIO0 |
 
 NCM remains the existing profile for iPhone/macOS. CDC-ACM is included for descriptor compatibility,
-but ESP_LOG is not routed to it. Debug via UART or the HTTPS log page.
+but ESP_LOG is not routed to it. Debug via UART or the admin log page.
 USB compatibility expansion and new composite profiles are deferred.
 
 USB LAN initially uses 192.168.7.0/24, gateway 192.168.7.1.
 WiFi STA receives its address/DNS from the router. SoftAP is disabled.
-A subnet conflict causes selection of a different private /24; renew DHCP/reconnect USB and open https://meshpn.local/.
+A subnet conflict causes selection of a different private /24; renew DHCP/reconnect USB and open http://meshpn.local/.
+Use HTTPS instead when `CONFIG_MESHVPN_WEB_HTTPS=y` (disabled by default for testing).
 
 USB must stay usable without WiFi because it is the provisioning interface.
 A connected uplink lights the LED; otherwise it blinks.

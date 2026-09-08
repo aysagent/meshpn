@@ -29,6 +29,9 @@ todos:
   - id: usb-compatibility
     content: "ОТЛОЖЕНО владельцем: матрица ОС для NCM и fallback ECM/RNDIS"
     status: pending
+  - id: https-admin-toggle
+    content: "Добавить в админку чекбокс включения HTTPS: настройка в NVS, применение без перепрошивки, по умолчанию выключено"
+    status: pending
   - id: routing-feasibility
     content: "Компилятор/benchmark реализованы; измерить на плате бюджет IP-списков. Domain routing — этап VPN"
     status: pending
@@ -51,6 +54,11 @@ isProject: false
 5. После аппаратной приёмки — отдельный этап VPN/WireGuard. Расширение USB-совместимости **отложено**.
 
 Обязательная смена стандартного пароля управляется `CONFIG_MESHVPN_WEB_REQUIRE_PASSWORD_CHANGE` и по просьбе владельца **выключена по умолчанию**. Смена пароля через UI остаётся доступна.
+HTTPS также **выключен по умолчанию**: `CONFIG_MESHVPN_WEB_HTTPS=n`, админка `http://meshpn.local/` по USB.
+При включении опции и перепрошивке работают HTTPS и HTTP redirect; в HTTP-режиме сертификат не инициализируется и certificate API отключены. Авторизация и изоляция от WiFi сохраняются, но передача credentials по HTTP не зашифрована.
+
+- [ ] Добавить в админку чекбокс «Включить HTTPS»: сохранять выбор в NVS и применять без перепрошивки (при необходимости с перезагрузкой). По умолчанию выключен; при включении показать новый URL и инструкцию по доверию сертификату, предусмотреть восстановление доступа при ошибке запуска. Сейчас доступна только настройка сборки `CONFIG_MESHVPN_WEB_HTTPS`.
+
 Исправлены пустой Bearer, обработка HTTP body, DNS parser, packet hook и утечка credentials в INFO-логах bridge. Убраны подмены connectivity-имён и неверная реклама login как CAPPORT API.
 Закреплены IDF 5.4.1/managed components, добавлен lockfile; build/sdkconfig изолированы по профилю/defaults. Новый образ требует сравнения с ранее прошитой рабочей версией компонентов.
 
