@@ -1,76 +1,44 @@
 #!/usr/bin/env bash
-# Build and flash meshvpn device firmware.
-# Usage:
-#   ./device/scripts/flash.sh              # xiao_esp32s3 + ncm (iPhone)
-#   ./device/scripts/flash.sh rndis        # Windows
-#   ./device/scripts/flash.sh ecm monitor  # Linux/macOS ECM + serial monitor
+# Build/flash the existing selected USB profile. Compatibility expansion is deferred.
 set -euo pipefail
-
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DEVICE_DIR="$ROOT/device"
 BOARD="${BOARD:-xiao_esp32s3}"
-PROFILE="${1:-ncm}"
+PROFILE="${1:-${USB_PROFILE:-ncm}}"
 MONITOR="${2:-}"
-
-if [[ -f "$HOME/esp/esp-idf/export.sh" ]]; then
-  # shellcheck disable=SC1091
-  source "$HOME/esp/esp-idf/export.sh"
-elif [[ -n "${IDF_PATH:-}" && -f "${IDF_PATH}/export.sh" ]]; then
-  # shellcheck disable=SC1091
-  source "${IDF_PATH}/export.sh"
-else
-  echo "ESP-IDF not found. Run: ./device/scripts/setup-macos.sh" >&2
-  exit 1
+case "$PROFILE" in ncm|ecm|rndis) ;; *) echo "Invalid USB profile: $PROFILE" >&2; exit 1;; esac
+if [[ ! -f "$DEVICE_DIR/boards/$BOARD/sdkconfig.defaults" ]]; then
+  echo "Unknown board: $BOARD" >&2; exit 1
 fi
-
-export BOARD
-export USB_PROFILE="$PROFILE"
-
+if [[ -n "${IDF_PATH:-}" && -f "$IDF_PATH/export.sh" ]]; then
+  source "$IDF_PATH/export.sh"
+elif [[ -f "$HOME/esp/esp-idf/export.sh" ]]; then
+  source "$HOME/esp/esp-idf/export.sh"
+else
+  echo "ESP-IDF not found. Run device/scripts/setup-macos.sh." >&2; exit 1
+fi
+export BOARD USB_PROFILE="$PROFILE"
+# Preserve previous builds and menuconfig files. A changed set of defaults gets
+# a new sdkconfig, so security settings and profile changes cannot stay stale.
+config_id="$(cksum "$DEVICE_DIR/sdkconfig.defaults" "$DEVICE_DIR/boards/$BOARD/sdkconfig.defaults" "$DEVICE_DIR/profiles/usb_$PROFILE.defconfig" "$DEVICE_DIR/main/idf_component.yml" | cksum | awk '{print $1}')"
+BUILD_DIR="$DEVICE_DIR/build-$BOARD-$PROFILE-$config_id"
+mkdir -p "$BUILD_DIR"
 PORT="${PORT:-}"
 if [[ -z "$PORT" ]]; then
-  for p in /dev/cu.usbmodem* /dev/cu.SLAB_USBtoUART /dev/cu.wchusbserial*; do
-    [[ -e "$p" ]] || continue
-    PORT="$p"
-    break
+  for candidate in /dev/cu.usbmodem* /dev/cu.SLAB_USBtoUART /dev/cu.wchusbserial* /dev/ttyACM* /dev/ttyUSB*; do
+    [[ -e "$candidate" ]] || continue
+    PORT="$candidate"; break
   done
 fi
-
-cd "$DEVICE_DIR"
-
-# An existing sdkconfig overrides sdkconfig.defaults, so values edited in the
-# defaults would silently not apply. Drop it whenever a defaults file is newer.
-if [[ -f sdkconfig ]]; then
-  STALE=""
-  if ! grep -q '^CONFIG_BRIDGE_ENABLE=' sdkconfig 2>/dev/null; then
-    STALE="missing bridge defaults"
-  fi
-  for f in sdkconfig.defaults "boards/$BOARD/sdkconfig.defaults" "profiles/usb_$PROFILE.defconfig"; do
-    [[ -f "$f" && "$f" -nt sdkconfig ]] && STALE="$f changed"
-  done
-  if [[ -n "$STALE" ]]; then
-    echo "==> Regenerating sdkconfig ($STALE)"
-    rm -f sdkconfig sdkconfig.old
-  fi
-fi
-
-if [[ ! -f sdkconfig ]] || ! grep -q 'IDF_TARGET="esp32s3"' sdkconfig 2>/dev/null; then
-  idf.py set-target esp32s3
-fi
-
-BUILD_ARGS=(build)
+args=(-C "$DEVICE_DIR" -B "$BUILD_DIR" -D "SDKCONFIG=$BUILD_DIR/sdkconfig" -D IDF_TARGET=esp32s3 build)
 if [[ -n "$PORT" ]]; then
-  BUILD_ARGS+=(flash -p "$PORT")
-  echo "==> Flashing to $PORT (board=$BOARD profile=$PROFILE)"
+  args+=(flash -p "$PORT")
 else
-  echo "==> Building only (no serial port found; hold BOOT to flash later)"
+  echo "No serial port found; building only. Hold BOOT while plugging in to flash."
 fi
-
-idf.py "${BUILD_ARGS[@]}"
-
-if [[ "$MONITOR" == "monitor" ]]; then
-  if [[ -z "$PORT" ]]; then
-    echo "No PORT for monitor" >&2
-    exit 1
-  fi
-  idf.py monitor -p "$PORT"
+idf.py "${args[@]}"
+echo "Build artifacts: $BUILD_DIR"
+if [[ "$MONITOR" == monitor ]]; then
+  [[ -n "$PORT" ]] || { echo "No PORT for monitor" >&2; exit 1; }
+  idf.py -C "$DEVICE_DIR" -B "$BUILD_DIR" -p "$PORT" monitor
 fi

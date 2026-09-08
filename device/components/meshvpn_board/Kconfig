@@ -43,8 +43,16 @@ endmenu
 
 menu "meshvpn Web"
 
+    config MESHVPN_WEB_REQUIRE_PASSWORD_CHANGE
+        bool "Require changing the default admin password"
+        default n
+        help
+            When enabled, a session using the default admin password may view
+            status/logs and scan WiFi, but must change the password before
+            changing configuration. Disabled for development/testing.
+
     config MESHVPN_WEB_ADMIN_PASSWORD_DEFAULT
-        string "Default web admin password (change on first login)"
+        string "Default web admin password"
         default "admin"
 
 endmenu

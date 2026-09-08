@@ -17,6 +17,8 @@
 #include "meshvpn_wifi.h"
 #include "meshvpn_lwip_hooks.h"
 #include "sdkconfig.h"
+#include "mdns.h"
+#include "meshvpn_dns_proxy.h"
 
 #define MESHVPN_AP_SUBNET_OCTET_2 4
 
@@ -27,6 +29,24 @@ static esp_netif_t *s_ap_netif;
 static esp_netif_t *s_sta_netif;
 static bool s_usb_napt;
 static bool s_ap_napt;
+static bool s_mdns;
+
+esp_netif_t *meshvpn_net_usb(void) { return s_usb_netif; }
+
+esp_err_t meshvpn_net_start_mdns(void)
+{
+    esp_err_t err = mdns_init();
+    if (err != ESP_OK) return err;
+    if ((err = mdns_hostname_set("meshpn")) != ESP_OK ||
+        (err = mdns_register_netif(s_usb_netif)) != ESP_OK ||
+        (err = mdns_netif_action(s_usb_netif, MDNS_EVENT_ENABLE_IP4)) != ESP_OK ||
+        (err = mdns_service_add(NULL, "_https", "_tcp", 443, NULL, 0)) != ESP_OK) {
+        mdns_free();
+        return err;
+    }
+    s_mdns = true;
+    return ESP_OK;
+}
 
 typedef struct {
     esp_netif_t *netif;
@@ -86,8 +106,8 @@ static void meshvpn_net_refresh_napt_flags(void)
 }
 
 /**
- * DHCP DNS = gateway IP. meshvpn_dns_proxy listens on :53 and hijacks captive
- * portal hostnames to the local web UI while forwarding everything else upstream.
+ * DHCP DNS = gateway IP. The proxy answers local management names and forwards
+ * ordinary queries, including host connectivity checks, upstream.
  */
 static void meshvpn_net_configure_lan_dhcp(esp_netif_t *netif)
 {
@@ -105,8 +125,7 @@ static void meshvpn_net_configure_lan_dhcp(esp_netif_t *netif)
 
     dhcps_offer_t offer_dns = OFFER_DNS;
     uint8_t offer_router = 1;
-    uint32_t lease_sec = 120;
-    char captive[48];
+    uint32_t lease_minutes = 2;
 
     esp_netif_dhcps_stop(netif);
     esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_ROUTER_SOLICITATION_ADDRESS,
@@ -114,11 +133,9 @@ static void meshvpn_net_configure_lan_dhcp(esp_netif_t *netif)
     esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER,
                            &offer_dns, sizeof(offer_dns));
     esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_IP_ADDRESS_LEASE_TIME,
-                           &lease_sec, sizeof(lease_sec));
+                           &lease_minutes, sizeof(lease_minutes));
     esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns);
-    snprintf(captive, sizeof(captive), "http://" IPSTR "/login", IP2STR(&ip.ip));
-    esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI,
-                           captive, strlen(captive) + 1);
+    /* No CAPPORT option: the admin login is not a captive-portal API. */
     esp_netif_dhcps_start(netif);
 }
 
@@ -159,6 +176,34 @@ static void meshvpn_net_on_event(void *arg, esp_event_base_t base, int32_t id, v
     if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *ev = data;
         if (s_sta_netif && ev->esp_netif == s_sta_netif) {
+            meshvpn_dns_clear_cache();
+            esp_netif_ip_info_t usb;
+            esp_netif_get_ip_info(s_usb_netif, &usb);
+            /* Test both masks: uplink may use a subnet wider than /24. */
+            uint32_t mask = usb.netmask.addr & ev->ip_info.netmask.addr;
+            if ((usb.ip.addr & mask) == (ev->ip_info.ip.addr & mask)) {
+                bool moved = false;
+                for (unsigned index = 0; index < 3 * 248; index++) {
+                    esp_netif_ip_info_t candidate;
+                    meshvpn_net_fill_ip(&candidate, 7 + index % 248);
+                    if (index >= 248) {
+                        candidate.ip.addr = index < 496 ?
+                            ESP_IP4TOADDR(10, 203, 7 + index % 248, 1) :
+                            ESP_IP4TOADDR(172, 31, 7 + index % 248, 1);
+                        candidate.gw.addr = candidate.ip.addr;
+                    }
+                    if ((candidate.ip.addr & mask) == (ev->ip_info.ip.addr & mask)) continue;
+                    esp_netif_dhcps_stop(s_usb_netif);
+                    if (esp_netif_set_ip_info(s_usb_netif, &candidate) == ESP_OK) {
+                        moved = true;
+                        ESP_LOGW(TAG, "USB subnet conflict: moved gateway to " IPSTR
+                                 "; renew host DHCP lease", IP2STR(&candidate.ip));
+                    }
+                    break;
+                }
+                if (!moved) ESP_LOGE(TAG, "No non-conflicting USB subnet found");
+                if (s_mdns) mdns_netif_action(s_usb_netif, MDNS_EVENT_ANNOUNCE_IP4);
+            }
             esp_netif_set_default_netif(s_sta_netif);
             ESP_LOGI(TAG, "STA default route set");
         }
@@ -231,12 +276,15 @@ esp_err_t meshvpn_net_start_bridge(void)
         ESP_LOGE(TAG, "USB netif creation failed");
     } else {
         ESP_LOGI(TAG, "USB lwIP MAC " MACSTR, MAC2STR(usb_lwip_mac));
+        meshvpn_net_set_usb_interface(esp_netif_get_netif_impl(s_usb_netif));
         meshvpn_usb_attach_netif(s_usb_netif);
         meshvpn_net_configure_lan_dhcp(s_usb_netif);
     }
 #endif
 
 #if defined(CONFIG_BRIDGE_EXTERNAL_NETIF_STATION)
+    /* This dependency logs driver-owned passwords at INFO during creation. */
+    esp_log_level_set("bridge_wifi", ESP_LOG_WARN);
     s_sta_netif = esp_bridge_create_station_netif(NULL, NULL, false, false);
 #endif
 
@@ -282,7 +330,9 @@ void meshvpn_net_get_status(meshvpn_net_status_t *status)
 {
     memset(status, 0, sizeof(*status));
     status->bridge_running = s_bridge_running;
-    status->usb_subnet_octet2 = CONFIG_MESHVPN_USB_SUBNET_OCTET_2;
+    esp_netif_ip_info_t ip = {0};
+    esp_netif_get_ip_info(s_usb_netif, &ip);
+    status->usb_subnet_octet2 = esp_ip4_addr3(&ip.ip);
     meshvpn_net_read_ip(s_usb_netif, status->usb_ip, sizeof(status->usb_ip));
     meshvpn_net_read_ip(s_ap_netif, status->ap_ip, sizeof(status->ap_ip));
     status->usb_napt = s_usb_napt;

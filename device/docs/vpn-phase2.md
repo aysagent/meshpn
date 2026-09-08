@@ -1,27 +1,14 @@
-# clean-vpn TLS client protocol (device phase 2)
+# VPN phase 2 — planned, not implemented
 
-Implemented in `components/meshvpn_vpn/` when `CONFIG_MESHVPN_VPN_ENABLE=y`.
+The current `meshvpn_vpn` component is a stub, including when its Kconfig option is enabled.
+The current firmware always forwards internet traffic directly over WiFi; saved historical routing rules are not enforced.
 
-## Wire protocol (`--type=tls`)
+The next phase will investigate compatibility with `scripts/clean-vpn.js`, primarily boring-tls,
+and additionally transparent-tls/combo-tls, plus a client for ordinary WireGuard servers.
+The transport choice and feasibility are not settled by the existing TLS placeholder.
 
-1. TCP `server:443`
-2. TLS 1.3, verify `ca.pem`, optional SNI mask
-3. TLS exporter: label `EXPORTER-clean-vpn-bind`, 32 bytes
-4. Bearer: `HMAC-SHA256(PSK, "clean-vpn-tls-v2:" + exporter_hex + ":" + window)`
-5. HTTP/2 `POST /clean-vpn` with `Authorization: Bearer ...`
-6. Duplex stream: `[uint32 BE length][IPv4 packet]`
+Re-derive framing, exporter/HMAC and relay behavior from the current clean-vpn code before implementation.
+The previous device document's exporter_hex formula was not an authoritative wire specification.
+No VPN throughput has been measured on this board.
 
-## Not supported on ESP32-S3
-
-- `boring-tls`, `transparent-tls`, `combo-tls`, enc-SNI relay
-
-## Dependencies (planned)
-
-- mbedTLS / esp-tls (TLS 1.3 + exporter)
-- nghttp2 (HTTP/2 client)
-- Certs in LittleFS: `ca.pem`, `clean-vpn-hmac.key`
-
-## Integration
-
-`meshvpn_routing` sends packets with action `vpn` to `meshvpn_vpn_send_ipv4()`.
-Replies injected back to USB netif.
+See [plan.md](../plan.md) and [current implementation](current-improvements.md).

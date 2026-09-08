@@ -1,4 +1,5 @@
 dependencies:
-  espressif/iot_bridge: "*"
+  espressif/iot_bridge: "1.1.0"
+  espressif/mdns: "1.5.3"
   idf:
-    version: ">=5.2.0"
+    version: ">=5.4.1,<5.5"

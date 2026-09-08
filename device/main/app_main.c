@@ -55,6 +55,8 @@ void app_main(void)
     ESP_ERROR_CHECK(meshvpn_board_init());
     ESP_ERROR_CHECK(meshvpn_config_init());
     meshvpn_log_report_boot(meshvpn_config_bump_boot_count());
+    /* Recovery must be available even if HTTPS identity/startup fails. */
+    xTaskCreate(factory_reset_watch_task, "boot_btn", 3072, NULL, 4, NULL);
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -72,24 +74,19 @@ void app_main(void)
         ESP_LOGW(TAG, "DNS proxy failed to start — USB clients may have no DNS");
     }
 
-    meshvpn_wifi_creds_t creds;
-    meshvpn_config_load_wifi(&creds);
-
-    if (meshvpn_config_wifi_is_configured()) {
-        ESP_LOGI(TAG, "WiFi configured: %s", creds.ssid);
-        meshvpn_wifi_start_sta(&creds);
-        meshvpn_net_ensure_napt();
-    } else {
-        ESP_LOGW(TAG, "WiFi not configured — open http://192.168.7.1/login over USB");
+    ESP_ERROR_CHECK(meshvpn_wifi_start_manager());
+    if (meshvpn_net_start_mdns() != ESP_OK) {
+        ESP_LOGW(TAG, "mDNS unavailable; use USB gateway IP");
     }
 
-    ESP_ERROR_CHECK(meshvpn_web_start());
+    if (meshvpn_web_start() != ESP_OK) {
+        ESP_LOGE(TAG, "HTTPS unavailable; hold BOOT 5s to reset configuration and identity");
+    }
 
     meshvpn_vpn_config_t vpn_cfg;
     meshvpn_config_load_vpn(&vpn_cfg);
     meshvpn_vpn_start(&vpn_cfg);
 
-    xTaskCreate(factory_reset_watch_task, "boot_btn", 3072, NULL, 4, NULL);
 
     bool led = false;
     int tick = 0;

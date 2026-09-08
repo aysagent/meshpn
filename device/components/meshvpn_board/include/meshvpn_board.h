@@ -22,6 +22,7 @@ void meshvpn_board_led_set(bool on);
 
 /** True while the BOOT button is held down. */
 bool meshvpn_board_boot_pressed(void);
+bool meshvpn_board_temperature(float *celsius);
 
 #ifdef __cplusplus
 }

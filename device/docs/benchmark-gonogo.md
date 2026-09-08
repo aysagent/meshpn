@@ -5,7 +5,7 @@ Run after flashing stage-1 firmware (`./device/scripts/flash.sh`).
 ## Setup
 
 1. Connect XIAO ESP32-S3 to host via USB-C.
-2. If WiFi not configured: join SoftAP `MeshVPN-Setup`, open `http://192.168.4.1/login`, password `admin`.
+2. Open `https://meshpn.local/` (fallback `https://192.168.7.1/`) over USB, password `admin`. See [certificate setup](admin-https.md). No SoftAP is enabled.
 3. Scan WiFi, save home router credentials.
 4. Verify host gets IP on USB Ethernet (`192.168.7.x`).
 
@@ -22,6 +22,9 @@ Also compare the same download test on the phone over the **same WiFi without th
 Hard ceiling on this board: USB Full-Speed (~12 Mbps raw) → useful NAT throughput typically **8–10 Mbps**.
 
 ## Recorded results
+
+These are historical measurements of earlier firmware, not results for the HTTPS/multi-profile revision.
+Repeat them with status polling and HTTPS active, recording internal/DMA/PSRAM minimum free and largest blocks.
 
 ### Baseline (before throughput tune, Aug 2026)
 
@@ -159,7 +162,7 @@ Decision: **REVERT** — user reported poor behavior vs baseline; restored `CONF
 - [ ] iPhone resume from sleep recovers IP (NCM)
 - [ ] WiFi reconnect after router reboot
 - [ ] No watchdog resets / Ethernet flap
-- [ ] `http://192.168.7.1/login` still works
+- [ ] `https://meshpn.local/` still works, without a WiFi uplink too
 
 ## Go / no-go for VPN phase 2
 
@@ -168,9 +171,9 @@ Decision: **REVERT** — user reported poor behavior vs baseline; restored `CONF
 | Internet works on iPhone USB-C | |
 | Throughput acceptable for daily use (≥8/5 preferred) | |
 | Web UI provisioning reliable | |
-| Willing to accept 2–8 Mbps with TLS VPN on S3 | |
+| VPN throughput measured separately after implementing a backend | pending |
 
-**Decision:** GO / NO-GO / WAIT for Stamp-P4
+**Decision:** GO / NO-GO / MEASURE. VPN throughput is not yet known.
 
 ## Notes
 

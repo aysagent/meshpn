@@ -1,383 +1,239 @@
 ---
 name: ESP32 VPN Dongle
-overview: "Создание прошивки mesh-vpn dongle на ESP-IDF: этап 1 — USB-сетевая карта + WiFi NAT-мост (iPhone/ПК в интернет через плату), этап 2 — VPN-клиент clean-vpn (--type=tls). Архитектура с board abstraction для XIAO ESP32-S3 и будущего M5Stack Stamp-P4+C6."
+overview: "XIAO ESP32-S3: USB Ethernet → WiFi NAT. Текущие улучшения реализованы в коде, ожидают проверки на плате. Расширение USB-совместимости отложено. VPN и WireGuard — отдельный этап."
 todos:
   - id: scaffold-device
-    content: "Создать device/ tree в корне репо: ESP-IDF project, boards/Kconfig (xiao_esp32s3), setup-macos.sh, flash.sh"
+    content: "ESP-IDF project, XIAO ESP32-S3, сборка и прошивка"
     status: completed
   - id: usb-wifi-bridge
-    content: "Этап 1: USB NCM/RNDIS/ECM profiles + WiFi STA + NAT/DHCP 192.168.7.0/24 + iPhone fixes"
+    content: "USB NCM + WiFi STA + IPv4 NAT/DHCP; iPhone/macOS работают"
     status: completed
   - id: web-provisioning
-    content: "Web UI: SoftAP setup, WiFi scan/connect, status, NVS config, admin password"
+    content: "USB web UI: логи, scan/connect одной WiFi-сети, NVS, admin password"
     status: completed
-  - id: routing-foundation
-    content: "meshvpn_routing: IP/CIDR rules, DNS proxy hook, web UI для правил (default=direct)"
+  - id: benchmark-baseline
+    content: "История оптимизаций сохранена; ориентир 8.13/6.5 Mbps"
     status: completed
-  - id: benchmark-gonogo
-    content: Замер скорости iPhone/PC, документ go/no-go для этапа 2 VPN
-    status: completed
+  - id: harden-existing-network
+    content: "Реализовано; проверить на плате: изоляция админки/DNS от STA, авторизация и DNS"
+    status: pending
+  - id: wifi-profiles
+    content: "Реализовано; проверить на плате: список сетей, приоритеты, автоскан, выбор и reconnect"
+    status: pending
+  - id: device-telemetry
+    content: "Реализовано; проверить на плате: температура и RAM/PSRAM каждые 2 секунды"
+    status: pending
+  - id: local-https-admin
+    content: "Реализовано; проверить на плате: meshpn.local по USB mDNS, HTTPS и доверие сертификату"
+    status: pending
+  - id: usb-compatibility
+    content: "ОТЛОЖЕНО владельцем: матрица ОС для NCM и fallback ECM/RNDIS"
+    status: pending
+  - id: routing-feasibility
+    content: "Компилятор/benchmark реализованы; измерить на плате бюджет IP-списков. Domain routing — этап VPN"
+    status: pending
   - id: vpn-phase2
-    content: "Этап 2 (после OK): meshvpn_vpn TLS+HTTP/2 client, интеграция с clean-vpn exit"
-    status: completed
+    content: "Отдельно: исследование boring-tls/transparent-tls/combo-tls и клиент WireGuard"
+    status: pending
 isProject: false
 ---
 
-# План: USB WiFi-dongle и VPN-клиент на ESP32
-
-## Контекст и ограничения
-
-**Плата прототипа — [Seeed XIAO ESP32-S3](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/):**
-- ESP32-S3R8: dual-core 240 MHz, 512 KB SRAM + **8 MB PSRAM**, **8 MB Flash**
-- WiFi 2.4 GHz (802.11 b/g/n), BLE 5.0
-- Один USB-C: OTG full-speed (12 Mbps теоретический потолок), общий PHY с USB-Serial-JTAG
-- После прошивки в режиме USB-NCM **JTAG-консоль пропадает** — для отладки: UART на D6/D7 (GPIO43/44) или режим BOOT при перепрошивке
-
-**Существующий VPN ([scripts/clean-vpn.js](../scripts/clean-vpn.js)):**
-- Протокол туннеля: `[uint32 BE length][raw IPv4 packet]`
-- Для embedded реалистичен только **`--type=tls` client** (TLS 1.3 + TLS exporter + Bearer HMAC + HTTP/2 POST `/clean-vpn`)
-- `boring-tls`, `transparent-tls`, `combo-tls` — Linux-only (iptables, BoringSSL helper, enc-SNI) — **не целим на ESP32-S3**
-- Аналог `--client-lan-subnet` на устройстве: хост за USB = «LAN», трафик SNAT/маршрутизация через uplink или VPN
-
-**Ожидаемая скорость этапа 1:** 5–12 Mbps (USB FS + NAT на CPU). Этого достаточно для go/no-go решения.
-
-**Будущая цель — M5Stack Stamp-P4 + Stamp-AddOn C6:**
-- P4 (RISC-V 360 MHz, 32 MB PSRAM, USB 2.0 HS) + WiFi на отдельном C6 по SDIO
-- Архитектура должна отделять: `board_*` (пины, USB, WiFi backend) vs `meshvpn_*` (сеть, web, VPN, routing)
-
----
-
-## Целевая архитектура
-
-```mermaid
-flowchart LR
-  subgraph host [Host iPhone PC]
-    HostNIC[USB Ethernet]
-  end
-  subgraph esp [ESP32 Firmware]
-  USB[USB NCM RNDIS ECM]
-  Bridge[L2 Bridge NAT DHCP]
-  Route[Policy Router]
-  Web[Config Web UI]
-  VPN[TLS VPN Client Phase2]
-  WiFi[WiFi STA]
-  end
-  subgraph uplink [Uplink]
-  Router[Home Router]
-  VPSServer[clean-vpn exit]
-  end
-  HostNIC <-->|L2 frames| USB
-  USB <--> Bridge
-  Bridge <--> Route
-  Route -->|direct| WiFi
-  Route -->|vpn match| VPN
-  VPN --> WiFi
-  WiFi --> Router
-  Router --> Internet
-  WiFi -.-> VPSServer
-  Web -.->|setup only| Bridge
-```
-
-### Структура репозитория (новое)
-
-Код прошивки — в корне репозитория, рядом с `scripts/`:
-
-```
-mesh-vpn/new/
-├── scripts/                    # существующий clean-vpn и утилиты
-├── device/                     # ESP-IDF прошивка dongle (новое)
-│   ├── CMakeLists.txt
-│   ├── sdkconfig.defaults
-│   ├── main/
-│   ├── boards/
-│   ├── profiles/
-│   ├── components/
-│   └── scripts/                # setup-macos.sh, flash.sh, monitor.sh
-├── src/
-├── native/
-└── ...
-```
-
-```
-device/
-├── CMakeLists.txt
-├── sdkconfig.defaults
-├── main/
-│   └── app_main.c              # init, task orchestration
-├── boards/
-│   ├── Kconfig                 # choice BOARD_*
-│   ├── xiao_esp32s3/
-│   │   ├── board.cmake
-│   │   ├── sdkconfig.defaults
-│   │   └── pins.h              # LED, UART debug, VBUS sense
-│   └── m5_stamp_p4_c6/         # заглушка + pins, phase 3
-├── profiles/
-│   ├── usb_ncm.defconfig       # iPhone, современный macOS
-│   ├── usb_rndis.defconfig     # Windows
-│   └── usb_ecm.defconfig       # Linux, legacy macOS
-├── components/
-│   ├── meshvpn_board/          # board_init(), get_board_config()
-│   ├── meshvpn_usb/            # TinyUSB net abstraction
-│   ├── meshvpn_net/            # bridge, NAT, DHCP, DNS proxy
-│   ├── meshvpn_wifi/           # STA, reconnect, scan
-│   ├── meshvpn_config/         # NVS JSON schema, migration
-│   ├── meshvpn_web/            # esp_http_server + REST API
-│   ├── meshvpn_routing/        # policy engine (phase 1.5)
-│   └── meshvpn_vpn/            # phase 2: TLS tunnel
-└── scripts/
-    ├── setup-macos.sh          # ESP-IDF, deps, udev не нужен
-    ├── flash.sh                # одна команда прошивки
-    └── monitor.sh              # UART debug
-```
+# План: MeshPN USB WiFi-dongle на XIAO ESP32-S3
 
-**Сборка:** `IDF_TARGET=esp32s3 BOARD=xiao_esp32s3 USB_PROFILE=ncm ./device/scripts/flash.sh`
+Актуализировано 2026-09-08. Улучшения реализованы и проходят программные проверки; аппаратная приёмка остаётся открытой, поэтому задачи ниже не помечены полностью завершёнными.
 
----
+## Актуальный мини-план после реализации
 
-## Этап 1: USB NIC + WiFi NAT (без VPN)
+1. Прошить новый NCM-образ и проверить список до 16 сохранённых WiFi-сетей, приоритеты, редактирование/удаление, миграцию старого SSID и автоматический reconnect. Открытие админки запускает скан; кнопка повторяет его.
+2. Проверить HTTPS и USB-only mDNS `meshpn.local`, fallback `meshpn.home.arpa`/IP, импорт собственного сертификата и недоступность management/DNS со стороны WiFi.
+3. Проверить температуру и раздельную статистику internal/DMA/PSRAM с обновлением раз в 2 секунды; повторить скорость и 30–60 минут нагрузки.
+4. Запустить новый временный PSRAM benchmark компактных IPv4-таблиц, затем выбрать бюджет реальных списков. Компилятор CIDR и binary search готовы, packet routing не подключён.
+5. После аппаратной приёмки — отдельный этап VPN/WireGuard. Расширение USB-совместимости **отложено**.
 
-### 1.1 USB-сетевая карта для всех хостов
+Обязательная смена стандартного пароля управляется `CONFIG_MESHVPN_WEB_REQUIRE_PASSWORD_CHANGE` и по просьбе владельца **выключена по умолчанию**. Смена пароля через UI остаётся доступна.
+Исправлены пустой Bearer, обработка HTTP body, DNS parser, packet hook и утечка credentials в INFO-логах bridge. Убраны подмены connectivity-имён и неверная реклама login как CAPPORT API.
+Закреплены IDF 5.4.1/managed components, добавлен lockfile; build/sdkconfig изолированы по профилю/defaults. Новый образ требует сравнения с ранее прошитой рабочей версией компонентов.
 
-| Профиль | USB-класс | Хосты | Kconfig |
-|---------|-----------|-------|---------|
-| `ncm` | CDC-NCM | iPhone USB-C, iOS 15+ | `CONFIG_TINYUSB_NET_MODE_NCM` |
-| `rndis` | RNDIS | Windows | `CONFIG_TINYUSB_NET_RNDIS` |
-| `ecm` | CDC-ECM | Linux, macOS (старые) | `CONFIG_TINYUSB_NET_ECM` |
+Актуальная реализация, ограничения и аппаратный checklist: [current-improvements.md](docs/current-improvements.md). Настройка сертификата: [admin-https.md](docs/admin-https.md).
 
-**Базовый код:** форк логики из [esp-iot-bridge wireless_nic](https://github.com/espressif/esp-iot-bridge/tree/master/examples/wireless_nic) + патчи из [ESP-IDF tusb_ncm](https://github.com/espressif/esp-idf/tree/master/examples/peripherals/usb/device/tusb_ncm) и [DrWhax/esp32-usb-wifi](https://github.com/DrWhax/esp32-usb-wifi).
+## Сохранённый исходный аудит и обоснование решений
 
-**Критичные iPhone-фиксы (обязательно в `meshvpn_usb`):**
-1. `tud_network_link_state(false)` сразу после init; `link up` только когда WiFi STA connected
-2. В форке `esp_tinyusb`: `tud_mounted()` вместо `tud_ready()` для TX (DHCP на iOS после resume)
-3. Обработка NCM OIDs: `NCM_SET_ETHERNET_PACKET_FILTER`, `NCM_SET_NTB_INPUT_SIZE` (iOS 26+, [tinyusb#3630](https://github.com/hathach/tinyusb/pull/3630))
-4. DHCP relay: ESP выступает DHCP-сервером на USB-стороне (`192.168.7.0/24`, gateway `192.168.7.1` — совместимо с `--client-lan-subnet` в clean-vpn)
+Разделы 1–6 ниже описывают **исходное состояние до реализации**, найденные дефекты и критерии приёмки, а не наличие этих дефектов в новом коде. Раздел USB-совместимости сохранён как отложенная идея и исключён из текущей приёмки. Указанные исторические скорости не являются измерением новой ревизии.
 
-**Composite USB (опционально, profile `ncm+cdc`):** NCM + CDC-ACM для serial CLI без перепрошивки — полезно при разработке, но на iPhone может усложнить enumeration; для production-сборки `ncm` — только NCM.
+## 1. Текущее состояние и границы
 
-### 1.2 Сетевой мост WiFi ↔ USB
+Целевая плата — [Seeed XIAO ESP32-S3](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/): ESP32-S3R8, два ядра до 240 MHz, 512 КиБ внутренней SRAM, 8 МиБ PSRAM, 8 МиБ flash; WiFi только 2.4 GHz; USB OTG Full-Speed, 12 Mbps на линии. Полезная скорость ниже скорости линии.
 
-- **WiFi:** STA mode, auto-reconnect, scan в web UI
-- **NAT:** `esp_netif` + `lwip` IP forwarding + NAPT (как в esp-iot-bridge)
-- **DHCP server** на USB netif для хоста
-- **DNS:** проксирование DNS-запросов хоста на DNS роутера (или 1.1.1.1) — важно для будущей domain-based маршрутизации
-- **MTU/MSS:** clamp MSS ~1360 (WiFi + USB overhead)
+Работает, по подтверждению владельца и [истории измерений](docs/benchmark-gonogo.md):
 
-### 1.3 Минимальный Web UI для настройки
+- USB Ethernet на iPhone/macOS, DHCP и выход в интернет через WiFi STA + IPv4 NAPT.
+- Админка `http://192.168.7.1/login`: логи, поиск сети, сохранение одного SSID/пароля, подключение, смена admin password, reboot/reset.
+- В профиле NCM включён CDC-ACM для совместимости дескрипторов; логи в него намеренно не направляются.
+- BOOT на 5 секунд во время работы сбрасывает настройки; перепрошивка — через BOOT/download mode.
+- Измеренный ориентир после увеличения NTB: около **8.13 Mbps download / 6.5 Mbps upload**. Это исторический замер, а не новое измерение этой ревизии.
 
-Доступ к настройкам **до** полноценного интернета:
-- **Captive/setup:** при первом запуске или отсутствии WiFi creds — SoftAP `MeshVPN-Setup` + `http://192.168.4.1`
-- **После настройки:** `http://192.168.7.1` с USB-интерфейса (хост уже в сети dongle)
+Что старый план описывал неверно:
 
-**Стек:** `esp_http_server` + статика в `embed` / SPIFFS + REST JSON API.
+- SoftAP в текущих defaults **отключён**; настройка идёт по USB даже без uplink. USB link нельзя привязывать к наличию интернета.
+- NCM/ECM/RNDIS существуют как отдельные профили сборки; универсальная прошивка и работа всех ОС не подтверждены.
+- `meshvpn_routing` содержит хранение/редактирование правил и заготовку классификатора, но классификатор не вызывается из пути пакетов. `block` и `vpn` сейчас не обеспечивают заявленное действие.
+- `meshvpn_vpn` — заглушка даже при включении Kconfig. TLS/HTTP2, собственный VPN и WireGuard не реализованы.
+- Раздел storage размечен как SPIFFS, но кода монтирования/хранения сертификатов пока нет.
+- Инструкции про SoftAP/serial и готовый VPN в README и старых docs расходятся с кодом; синхронизировать при реализации улучшений.
 
-**Экраны (этап 1):**
-- WiFi: scan, SSID/password, сохранить
-- Статус: WiFi RSSI, USB link, IP хоста, uptime, throughput counters
-- Система: reboot, factory reset, смена admin password
+В этой среде нет артефактов рабочей сборки, resolved managed components и доступной платы. Выводы о runtime-доступности и остатке памяти требуют проверки на устройстве. Исходники setup указывают IDF v5.4.1, manifest допускает >=5.2; фактическая версия прошитого образа пока неизвестна.
 
-**Экраны (заготовки под этап 2, UI сразу, backend stub):**
-- VPN: server, transport type, cert upload, PSK
-- Routing: правила (см. ниже)
+## 2. Мини-план текущих улучшений
 
-**Хранение:** NVS namespace `meshvpn` + LittleFS partition для PEM-файлов (ca.pem, clean-vpn-hmac.key).
+| Очередь | Задача | Результат и проверка |
+|---|---|---|
+| 0 | Зафиксировать рабочую сборку | IDF/component versions, sdkconfig, бинарник, baseline скорости и RAM; воспроизводимая сборка |
+| 1 | Исправить авторизацию и изоляцию интерфейсов, DNS | Админка и локальный DNS доступны по USB; запросы со STA запрещены; malformed DNS/HTTP не вызывают падений |
+| 2 | Температура + память | Статус обновляется раз в 2 секунды, раздельные RAM/PSRAM показатели; нет влияния на редактирование настроек |
+| 3 | Несколько WiFi-профилей | Приоритеты, scan/select/retry, переход к доступной сети; миграция текущих credentials |
+| 4 | Локальное имя + HTTPS | `https://meshpn.local` по USB; рабочий путь доверия сертификату и резервный доступ по IP |
+| 5 | Совместимость USB | Проверить один NCM-образ на целевых ОС; затем переключаемые fallback-профили и восстановление при неподдерживаемом режиме |
+| 6 | Оценить routing на больших списках | Формат базы, память и время lookup на реальных данных; договориться о семантике domain/DNS/IPv6 перед этапом VPN |
 
-### 1.4 Политическая маршрутизация (заложить архитектуру, базовая реализация в 1.5)
+### 2.1. Исправления, которые стоит сделать первыми
 
-Точка принятия решений: **каждый IPv4-пакет от USB** перед NAT/uplink.
+**Админка видна со стороны WiFi по текущему коду.** В [meshvpn_web.c](components/meshvpn_web/meshvpn_web.c) запускается обычный `httpd_start` без фильтра интерфейса. В [ESP-IDF v5.4.1](https://github.com/espressif/esp-idf/blob/v5.4.1/components/esp_http_server/src/httpd_main.c) listener привязывается к wildcard IPv4/IPv6 адресу. [DNS proxy](components/meshvpn_routing/meshvpn_dns_proxy.c) явно слушает `INADDR_ANY:53`. Поэтому ожидается доступ через STA-IP платы с домашней LAN, если роутер не изолирует клиентов. Это не означает автоматическую доступность из публичного интернета.
 
-```mermaid
-flowchart TD
-  pkt[Packet from USB host]
-  rules[Match rules in priority order]
-  direct[Forward via WiFi NAT]
-  vpn[Inject into VPN tunnel]
-  block[Drop]
-  pkt --> rules
-  rules -->|ip cidr match| vpn
-  rules -->|domain via DNS cache| vpn
-  rules -->|geo list match| vpn
-  rules -->|default| direct
-  rules -->|explicit block| block
-```
+План изоляции: определять входной USB netif по самому интерфейсу, запрещать входящие к локальным службам со STA; покрыть HTTP/HTTPS, DNS, mDNS и служебный UDP control socket HTTPD. Проверка source subnet или одного destination IP недостаточна: клиент со стороны WiFi может направить пакет к USB-IP через STA. При этом разрешить ответы на исходящие DNS/TLS-соединения самой платы. Учесть IPv6 и не переопределять `httpd.open_fn` вслепую: HTTPS использует этот callback внутри.
 
-| Тип правила | Реализация на ESP32 | Сложность |
-|-------------|---------------------|-----------|
-| **IP/CIDR** | Trie или sorted list, match dst/src | Низкая — этап 1.5 |
-| **Domain** | DNS sniffer/proxy: при резолве домена → кэш IP→policy TTL | Средняя — этап 2 |
-| **Geo** | Компактная offline DB (MaxMind GeoLite2 country → CIDR chunks, или prebuilt списки RU/US/EU) в SPIFFS | Высокая — этап 2+ |
-| **Default** | `direct` или `vpn` | Этап 2 |
+Проверка: с USB работают login/status/DNS; с отдельного клиента домашней WiFi-сети недоступны STA-IP:80/443/53 и доступ к USB-IP через STA. Повторить после reconnect и смены адреса STA; mDNS-анонсов в uplink быть не должно.
 
-Конфиг правил — JSON в NVS, редактируется через web UI; применение hot-reload без reboot.
+**Авторизация требует исправления.** `s_session_token` изначально пуст; `meshvpn_web_check_auth()` сравнивает часть после `Bearer ` с этим буфером без проверки существования сессии. На уровне функции пустой Bearer проходит до первого успешного login. Проверить HTTP-воспроизведение с учётом обработки пробелов парсером, затем закрыть случай явным состоянием сессии и проверкой длины токена. Добавить срок сессии, logout/отзыв при смене пароля, ограничение частоты login и смену дефолтного `admin` при настройке.
 
----
+HTTP API читает body одним `httpd_req_recv`, не учитывая частичную доставку, и часто игнорирует ошибки сохранения/подключения. Нужны ограничение `content_len`, дочитывание с таймаутом, проверка JSON/длин, корректные ошибки вместо `ok:true`. Особенно проверить admin password: в NVS можно записать строку, которая не помещается в 64-байтный буфер чтения, а ошибка чтения игнорируется. Ошибки NVS не должны превращать неверные настройки в boot loop.
 
-## Этап 2: VPN-клиент clean-vpn (после тестов этапа 1)
+**В packet hook есть конкретная ошибка.** [meshvpn_net_hooks.c](components/meshvpn_net/meshvpn_net_hooks.c) определяет LAN по `ip4_addr2(ip) == 7 || == 4`; для `192.168.7.1` второй октет — 168. USB не распознаётся; другие STA-подсети могут ошибочно распознаваться как LAN. Заменить на идентичность netif. Перед чтением UDP проверить IHL, длину первого pbuf, фрагментацию и валидность пакета: `p->tot_len` не гарантирует непрерывность заголовков. Hook подключается через генерируемый `customer_lwip_hook.h` в `main/CMakeLists.txt`; подтвердить результат на собранном образе.
 
-### Что портировать с [scripts/clean-vpn.js](../scripts/clean-vpn.js)
+**DNS надо привести к корректному поведению перед добавлением локальных имён.**
 
-Минимальный client path `--type=tls`:
+- `dns_read_qname()` завершает имя через `out[pos - 1] = '\0'` и обрезает последний символ, например `captive.apple.com → captive.apple.co`. Проверить имена, compression pointers и границы буфера.
+- Upstream жёстко задан как `8.8.8.8`, независимо от DHCP роутера; запросы обрабатываются по одному с ожиданием до 2 секунд. Использовать DNS uplink, ограниченное число параллельных запросов и кэш; возвращать SERVFAIL при ошибках.
+- Ответ upstream принимается без сверки отправителя, transaction ID и вопроса. Запоздалый ответ после timeout может попасть к другому клиенту; добавить корреляцию и проверки.
+- Сейчас буфер 512 байт, нет TCP fallback/полноценной обработки EDNS. Определить лимиты, корректно обрабатывать TC, A/AAAA и отрицательные ответы.
+- Постоянная подмена `www.apple.com` и connectivity-check имён не должна быть нормальным online-поведением. После исправления parser это начнёт реально влиять на обычные сайты. Setup/offline-сценарий и online-проверки разнести; NODATA для неподдерживаемого AAAA вместо молчания.
+- Перехват UDP/53 с переписыванием destination требует корректного обратного адреса ответа. Основной путь — DHCP выдаёт USB-IP DNS proxy; отдельный прозрачный перехват включать только после проверки прямых запросов к внешнему DNS.
 
-1. TCP connect к `server:443`
-2. TLS 1.3 (mbedTLS в ESP-IDF) с verify по `ca.pem`, SNI masking (`www.google.com` при verify host `clean-vpn`)
-3. **TLS exporter** RFC 5705, label `EXPORTER-clean-vpn-bind`, 32 bytes — *проверить поддержку в ESP-IDF mbedTLS; при отсутствии — wolfSSL component или патч mbedTLS*
-4. Bearer: `HMAC-SHA256(PSK, "clean-vpn-tls-v2:" + exporter_hex + ":" + window)` , window = 15 мин
-5. HTTP/2 client: SETTINGS → `POST /clean-vpn` + `Authorization: Bearer ...` → duplex stream
-6. Framing на stream: `[u32 BE][IPv4]`
-7. Интеграция: пакеты с `action=vpn` из routing engine → VPN; ответы → обратно на USB
+**UI не должен обещать неработающую защиту.** Пока routing/VPN не подключены к пакетам, пометить их как неработающие заготовки или отключить действия. Исправление полного policy router относится к следующему этапу, но ложное отображение `block/vpn` надо убрать сейчас.
 
-**Библиотеки этапа 2:**
-- `esp-tls` / mbedTLS — TLS
-- `nghttp2` (ESP-IDF component или vendored) — HTTP/2
-- Собственный `meshvpn_vpn` — state machine, reconnect, keepalive
+### 2.2. Температура и телеметрия
 
-**Нереалистично на ESP32-S3 (зафиксировать в docs):** boring-tls, transparent-tls, combo-tls, enc-SNI relay.
+Использовать встроенный [temperature sensor ESP32-S3](https://docs.espressif.com/projects/esp-idf/en/v5.4.1/esp32s3/api-reference/peripherals/temp_sensor.html): установить/включить один раз, читать через `temperature_sensor_get_celsius` из одной задачи. Подпись «Температура чипа», выбранный рабочий диапазон, `null`/сообщение при ошибке; это температура кристалла, не воздуха.
 
-### Производительность VPN на S3
+Расширить `/api/status`: температура, detected PSRAM/flash size, heap total/free/minimum/largest block отдельно для `MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT` и `MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`, диагностически — DMA heap и запас стеков. Категории capabilities могут пересекаться, их нельзя суммировать как независимую RAM.
 
-Ожидание: **2–8 Mbps** (TLS + HTTP/2 + single-core lwIP). Stamp-P4 с HS USB и большим PSRAM — кандидат для production, если S3 не пройдёт порог.
+В UI — небольшой блок метрик и последовательный polling через 2 секунды после завершения предыдущего запроса; пауза в скрытой вкладке и повтор при ошибках. Нынешний `loadStatus()` меняет поле default routing и вызывает `loadRules()`: не использовать его как есть для постоянного polling. Логи загружать отдельно, впоследствии можно добавить чтение с cursor.
 
----
+### 2.3. Несколько WiFi-сетей
 
-## Этап 3 (будущее): M5Stack Stamp-P4 + C6
+Начальный лимит — 16 профилей в версионированной NVS-конфигурации: id, SSID, credentials, enabled, priority, hidden, допустимый режим защиты; BSSID pinning опционален. Мигрировать текущие `wifi_ssid/wifi_pass/wifi_ok` без потери рабочей сети. Пароли не возвращать в API и не печатать в логах.
 
-| Аспект | XIAO ESP32-S3 | Stamp-P4 + C6 |
-|--------|---------------|---------------|
-| SoC | Xtensa LX7 | RISC-V P4 + C6 coprocessor |
-| WiFi | On-chip | C6 via SDIO (`esp_wifi_remote` / esp-hosted) |
-| USB | FS 12 Mbps | HS 480 Mbps |
-| RAM | 8 MB PSRAM | 32 MB PSRAM |
-| Board layer | `meshvpn_wifi` = esp_wifi | `meshvpn_wifi` = esp_hosted slave API |
+Отдельная state machine scan → выбор → подключение → ожидание DHCP → online. Больший приоритет выигрывает; RSSI и последнее успешное подключение разрешают равенство. Успешный текущий uplink сохранять до потери связи или явной команды пользователя; не переключать его каждые несколько секунд. При неудаче — ограниченный retry, backoff и следующая доступная сеть; ручной disconnect не должен запускать немедленный reconnect. Проверить/согласовать reconnect handlers `iot_bridge`, чтобы не было двух управляющих циклов.
 
-Общие компоненты `meshvpn_net`, `meshvpn_web`, `meshvpn_config`, `meshvpn_routing`, `meshvpn_vpn` — без изменений; меняется только `boards/m5_stamp_p4_c6/` и WiFi backend.
+Сканирование сейчас блокирует HTTP handler (`esp_wifi_scan_start(..., true)`); сделать асинхронный запрос и получение результата. Поддержать ручной SSID и hidden network, редактирование/удаление/приоритеты, информативные ошибки. Неверный пароль новой сети не должен уничтожать старый рабочий профиль.
 
----
+Не отключать PMF глобально без необходимости: нынешний `esp_wifi_disable_pmf_config` надо пересмотреть для WPA3/PMF-required роутеров. Определить поддержку open/WPA2/WPA3-Personal; 5 GHz физически недоступен, Enterprise/captive uplink — отдельные случаи, «любой WiFi» не обещать.
 
-## Dev environment на macOS (ноутбук)
+USB-подсеть сейчас фиксирована, conflict check отключён. Для роутера в `192.168.7.0/24` добавить обнаружение конфликта и переход на свободную USB-подсеть с обновлением DHCP/DNS/mDNS; предусмотреть переполучение lease и восстановление админки.
 
-### Установка (один раз) — [device/scripts/setup-macos.sh](scripts/setup-macos.sh)
+Проверки: две сохранённые сети, обе/одна/ни одной в эфире, неверный пароль сети высшего приоритета, hidden SSID, reboot роутера/платы, смена DHCP/DNS, совпадение подсетей. При отсутствии uplink админка по USB остаётся доступна.
 
-```bash
-# Зависимости
-xcode-select --install
-brew install cmake ninja dfu-util python3
+### 2.4. meshpn.local и HTTPS
 
-# ESP-IDF v5.4+ (рекомендуется 5.4.x LTS)
-mkdir -p ~/esp && cd ~/esp
-git clone -b v5.4.1 --recursive https://github.com/espressif/esp-idf.git
-cd esp-idf && ./install.sh esp32s3
-# Добавить в ~/.zshrc:
-# . ~/esp/esp-idf/export.sh
-```
-
-**Альтернатива:** Docker-образ `espressif/idf:v5.4` — если не хотите ставить toolchain локально.
-
-### Прошивка одной командой — [device/scripts/flash.sh](scripts/flash.sh)
-
-```bash
-#!/usr/bin/env bash
-# Использование:
-#   ./device/scripts/flash.sh                    # defaults: xiao_esp32s3, ncm
-#   ./device/scripts/flash.sh rndis             # Windows profile
-#   ./device/scripts/flash.sh ecm monitor       # + serial monitor
-set -euo pipefail
-BOARD="${BOARD:-xiao_esp32s3}"
-PROFILE="${1:-ncm}"
-PORT="${PORT:-$(python3 -m serial.tools.list_ports -q | grep -i 'usbmodem\|SLAB\|wchusb\|esp32' | head -1)}"
-source ~/esp/esp-idf/export.sh
-cd "$(dirname "$0")/.."   # device/
-idf.py -D BOARD="$BOARD" -D USB_PROFILE="$PROFILE" set-target esp32s3
-idf.py -D BOARD="$BOARD" -D USB_PROFILE="$PROFILE" build flash -p "$PORT"
-```
-
-**Первая прошивка:** обычный USB-C, плата в download mode (зажать BOOT → подключить → отпустить BOOT).
-
-**Повторная прошивка после NCM-firmware:** BOOT + подключение, или временно прошить `ncm+cdc` и смотреть логи по CDC.
-
-**Автоопределение порта:** `esptool.py` / `idf.py` + fallback список `/dev/cu.usbmodem*`.
-
-### npm-интеграция (опционально)
-
-В корневой [package.json](../package.json):
-```json
-"scripts": {
-  "device:setup": "./device/scripts/setup-macos.sh",
-  "device:flash": "./device/scripts/flash.sh",
-  "device:flash:rndis": "./device/scripts/flash.sh rndis"
-}
-```
-
----
-
-## Библиотеки и ESP-IDF components
-
-| Компонент | Назначение | Источник |
-|-----------|------------|----------|
-| **esp_tinyusb** | USB device stack | ESP-IDF managed |
-| **espressif/iot_bridge** | NAT bridge reference | Component Registry |
-| **esp_netif + lwip** | TCP/IP, NAPT | ESP-IDF |
-| **esp_wifi** | WiFi STA | ESP-IDF |
-| **esp_http_server** | Web UI / REST | ESP-IDF |
-| **nvs_flash + cJSON** | Config persistence | ESP-IDF |
-| **littlefs** | Cert storage | ESP-IDF spiffs/littlefs |
-| **nghttp2** (этап 2) | HTTP/2 client | component или vendored |
-| **mbedTLS** | TLS 1.3 + exporter | ESP-IDF |
-
----
-
-## Порядок реализации
-
-### Milestone A — Scaffold (1–2 дня)
-- Создать `device/` tree в корне репо (рядом с `scripts/`), board Kconfig, `setup-macos.sh`, `flash.sh`
-- Blink + UART log на XIAO ESP32-S3
-- Документ [device/docs/xiao-esp32s3.md](docs/xiao-esp32s3.md): пины, BOOT, ограничения USB
-
-### Milestone B — USB + WiFi bridge (3–5 дней)
-- Профиль `ncm`: enumeration на iPhone
-- WiFi STA hardcoded → затем из NVS
-- NAT + DHCP `192.168.7.0/24`
-- iPhone получает IP и выходит в интернет
-- Профили `rndis`, `ecm` — smoke test на Windows VM / Linux
-
-### Milestone C — Web UI + provisioning (2–3 дня)
-- SoftAP setup flow
-- REST API: wifi scan/connect, status, reboot
-- Admin password, factory reset
-
-### Milestone D — Routing foundation (2 дня)
-- `meshvpn_routing`: IP/CIDR rules, default=direct
-- Web UI для правил (без VPN backend)
-- DNS proxy с hook для domain rules
-
-### Milestone E — Benchmark + go/no-go (1 день)
-- iperf3/speedtest через dongle, логирование CPU/RAM
-- Документ с результатами и решением о этапе 2
-
-### Milestone F — VPN client (отдельный спринт, после вашего OK)
-- TLS exporter POC
-- HTTP/2 tunnel
-- Routing `vpn` action
-- Интеграционный тест с `clean-vpn.js --role=exit`
-
----
-
-## Риски и митигации
-
-| Риск | Митигация |
-|------|-----------|
-| iPhone не получает IP (NCM quirks) | Патчи link-state + TinyUSB; тест на реальном iPhone USB-C |
-| Потеря serial после NCM | UART debug pins; CDC composite dev build |
-| Скорость < 5 Mbps | Ожидаемо для FS USB; P4 — plan B |
-| TLS exporter в mbedTLS | Ранний spike в Milestone F; fallback wolfSSL |
-| Stamp-P4+C6 WiFi сложность | Абстракция `meshvpn_wifi`; S3 — полнофункциональный прототип |
-| Geo routing на Flash | Только country-level, сжатые списки, лимит правил |
-
----
-
-## Критерии готовности этапа 1
-
-- [ ] `./device/scripts/flash.sh` прошивает плату с macOS без ручных шагов (кроме BOOT при необходимости)
-- [ ] iPhone USB-C: Settings → Ethernet появляется, DHCP, интернет работает
-- [ ] Windows (`rndis`) и Linux (`ecm`): интернет через dongle
-- [ ] Web UI: настройка WiFi без перепрошивки
-- [ ] Throughput замерен и задокументирован
-- [ ] Архитектура `boards/` + `components/` готова к VPN и P4
+`.local` обслуживается [mDNS согласно RFC 6762](https://www.rfc-editor.org/rfc/rfc6762.html). Одной записи в обычном UDP/53 DNS proxy недостаточно. Добавить `espressif/mdns`, зарегистрировать USB custom netif через `mdns_register_netif` и включить его через `mdns_netif_action`; исключить STA из публикаций/ответов. [Документация Espressif](https://docs.espressif.com/projects/esp-protocols/mdns/docs/latest/en/index.html) поддерживает custom netif и управление интерфейсами.
+
+Основное имя — `meshpn.local`, `dongle.local` можно добавить позднее. Обработать конфликты имён, проверить multicast через NCM/ECM/RNDIS. Резерв — текущий USB-IP; дополнительно возможно обычное DNS-имя `meshpn.home.arpa` для клиентов без mDNS.
+
+Для HTTPS использовать [esp_https_server](https://github.com/espressif/esp-idf/blob/v5.4.1/docs/en/api-reference/protocols/esp_https_server.rst). Свой приватный ключ на каждом устройстве, сертификат с SAN для выбранного имени и предусмотренных адресов; постоянное хранение и понятная процедура обновления/reset. API, пароли, токены и логи — только HTTPS. HTTP при необходимости оставлять для redirect и минимальных connectivity probes без секретов и API.
+
+Доверие сертификату — часть реализации: для локального имени исходно будет предупреждение браузера. Предлагаемый путь для личного устройства — собственный CA с установкой доверия на iPhone/macOS/другие хосты и выпуском сертификата платы; CA private key не хранить на dongle. Self-signed допускается как начальный вариант с проверкой отпечатка через доверенное USB-подключение. Не обещать автоматическое доверие `.local` на произвольном хосте.
+
+Использовать HTTP keep-alive и ограниченный пул TLS-соединений; не делать новый handshake на каждом polling. В [header IDF v5.4.1](https://github.com/espressif/esp-idf/blob/v5.4.1/components/esp_https_server/include/esp_https_server.h) указан ориентир ~40 КБ на SSL socket, но реальный расход зависит от сборки. Проверить несколько вкладок, первый вход без интернета и нагрузку одновременно с NAT. После смены USB-IP/имени сертификат должен оставаться валидным либо перевыпускаться.
+
+### 2.5. USB-совместимость — отложено, вне текущего этапа
+
+Цель — один образ, который можно последовательно подключать к разным хостам. Через единственный USB device-порт плата имеет один upstream USB-host; хаб не превращает её в сетевую карту сразу для нескольких независимых компьютеров.
+
+Сначала испытать существующий **NCM** на iPhone, macOS, Linux, Windows 11 и выбранных Android с USB host/Ethernet support. У Windows 11 есть штатный [UsbNcm.sys](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/supported-usb-classes), поэтому RNDIS нужен не каждой Windows. Для Windows 10 проверять конкретную сборку и дескрипторы, не обещать универсальность.
+
+Если покрытия NCM недостаточно, добавить NVS-выбор профиля с reboot/re-enumeration без перепрошивки; fallback по BOOT/таймеру должен вернуть доступ к админке при неудачном выборе. Автоопределение ОС по USB-запросам считать эвристикой. Composite/multiple configurations NCM+ECM/RNDIS исследовать только после проверки возможностей закреплённых TinyUSB и endpoint-бюджета S3; текущие Kconfig-профили этого автоматически не дают.
+
+Проверки для каждой ОС: enumeration, корректные MAC/IAD, DHCP, DNS, NAT, доступ к админке без uplink, unplug/replug, сон/пробуждение, питание. Записывать точную версию ОС, профиль и результат, а не только «Windows/Linux поддерживается».
+
+## 3. Память и реальность routing
+
+### Что есть сейчас
+
+[Defaults XIAO](boards/xiao_esp32s3/sdkconfig.defaults) включают Octal PSRAM 80 MHz и разрешают WiFi/lwIP использовать её. Внутренняя SRAM делится между кодом, данными, стеками и heap. PSRAM не заменяет внутреннюю память для всех DMA/driver allocations и зависит от cache; см. [ограничения ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/v5.4.1/esp32s3/api-guides/external-ram.html).
+
+- Текущие массивы routing: 32 правила с текстовым `match[96]` и 64 записи IP-кэша; без явного размещения в PSRAM. Расширять их до сотен тысяч в нынешнем виде нельзя.
+- Классификатор линейно перебирает правила и парсит CIDR при каждом lookup. В parser смешаны порядки байтов; DNS-кэш игнорирует domain, всегда ставит VPN и не проверяет expiry. Это заготовка, не готовая основа больших списков.
+- NCM defaults задают два пула по 6 × 8192 = **96 КиБ** payload-буферов до накладных расходов; фактическое размещение и дополнительные копии проверить по map/heap рабочей сборки.
+- [partitions.csv](partitions.csv): NVS 24 КиБ, app 3 МиБ, coredump 64 КиБ, storage 1 МиБ. Конец storage — `0x420000`; из 8 МиБ остаётся **3.875 МиБ неразмеченного flash**. Это не RAM и не готовое свободное место файловой системы. OTA-разделов сейчас нет.
+
+### Предлагаемый формат больших IP-списков
+
+Готовить базы на компьютере: нормализовать/объединять IPv4 CIDR в непересекающиеся отсортированные интервалы `start,end`. Для одного набора с одним действием — 8 байт на диапазон; разные действия требуют отдельных наборов либо дополнительного поля/индекса. Эти расчёты относятся к уже скомпилированным диапазонам, а не числу исходных CIDR.
+
+| Число диапазонов | Только start/end, 8 байт |
+|---|---|
+| 10 000 | 78.1 КиБ |
+| 100 000 | 0.763 МиБ |
+| 500 000 | 3.815 МиБ |
+
+100 тысяч диапазонов — реалистичный кандидат для S3: двоичный поиск требует около 17 шагов. Это оценка объёма и алгоритма, не измерение скорости. 500 тысяч могут поместиться в PSRAM, но запас под VPN, HTTPS, DNS и безопасную замену базы уже существенен. Миллион занимает 7.63 МиБ только данными и практически исчерпывает PSRAM.
+
+Хранить бинарную базу в отдельном flash-разделе/файле, загружать рабочий набор в PSRAM; небольшой индекс и кэш потоков — во внутренней RAM. Альтернатива для сравнения — mmap flash. NVS оставить для настроек. Полный JSON/MaxMind MMDB на пакетном пути не нужен; достаточно заранее извлечённых country-наборов.
+
+Сохранить смысл пользовательских приоритетов: overrides → DNS-derived policies/IP-наборы в явно заданном порядке → default. Если исходные правила пересекаются, компилятор обязан разрешить действия заранее; простое объединение может изменить результат. При обновлении — формат/version/checksum, лимиты и атомарная замена; учесть вторую копию таблицы в RAM/flash. Перед переразметкой учесть будущие сертификаты и возможный OTA.
+
+Стартовый экспериментальный бюджет базы — **1–2 МиБ PSRAM**, уточняется после телеметрии, HTTPS-нагрузки и резерва под VPN. Замерить free/minimum/largest block при boot, NAT под нагрузкой, scan/reconnect и нескольких HTTPS-сессиях; затем lookup на 10k/100k/500k реальных диапазонов, packet rate и задержки. Одного `free heap` для решения недостаточно.
+
+### Domain routing: ограничения заранее
+
+DNS proxy должен разбирать ответы A/CNAME, сопоставлять домен с правилом и хранить IP→policy с реальным TTL, eviction и ограничением размера. Для IPv6 нужна отдельная политика/представление.
+
+DoH/DoT, встроенные кэши клиента и несколько доменов на одном CDN-IP ограничивают точность. По одному IP-пакету нельзя восстановить исходное доменное имя; универсальность domain routing обещать нельзя. На этапе VPN определить поведение для encrypted DNS, общий DNS/traffic route, приоритет конфликтов и закрепление решения на время потока. Для `vpn` при обрыве туннеля по умолчанию нужен block, если явно не выбран fallback direct; отдельно проверить IPv6 и утечки.
+
+## 4. Производительность и сопутствующие улучшения
+
+История [benchmark-gonogo.md](docs/benchmark-gonogo.md) уже содержит неудачные эксперименты: async TX, снятие L2-copy, повышение TinyUSB priority, другие retry-параметры и редкий NAPT refresh. Не повторять их без новой измеренной причины. Текущий sync TX и частый NAPT refresh считать рабочей базой.
+
+Конкретные следующие эксперименты, только после исправлений и телеметрии:
+
+1. Замер локальным iperf3-сервером за роутером в обе стороны, несколько прогонов; дельты drops/retries и latency под нагрузкой. Интернет-speedtest не отделяет предел dongle от WAN.
+2. Инструментировать время sync TX, реальное заполнение NCM NTB и давление буферов. По результату искать лишнее копирование/недостаточную агрегацию, сохраняя владение pbuf и рабочий retry.
+3. Аудит MTU/MSS: `CONFIG_LWIP_TCP_MSS=1360` и TCP windows относятся к локальным TCP PCB и сами по себе не доказывают MSS clamp/ускорение транзитного NAT. Проверить SYN хоста; если MSS реально занижен, сравнить direct-путь с MTU 1500/MSS 1460. Для VPN позднее нужен отдельный расчёт MTU.
+4. Устранить последовательное DNS-ожидание и блокирующий scan: это может заметно улучшить открытие страниц/админки без прироста максимальных Mbps.
+
+Дополнительно: закрепить версии managed components вместо `iot_bridge: "*"`, сохранять lockfile и build identity с git revision/sdkconfig. Исправить выбор профиля в `flash.sh`: аргумент скрипта сейчас перекрывает `USB_PROFILE`, а существующий sdkconfig может сохранить старый профиль при переключении, если timestamps не изменились. Предпочтительно отдельные build/config для профилей с проверкой итоговых CONFIG.
+
+Экспорт диагностики без секретов и резервная копия настроек полезнее нового тюнинга приоритетов. OTA рассмотреть позднее вместе с flash-бюджетом, сохранением рабочей прошивки и восстановлением после обрыва питания.
+
+## 5. Следующий этап: собственный VPN и WireGuard
+
+Этот этап отложен до завершения текущих улучшений. Сохраняются два направления:
+
+- Аналог [scripts/clean-vpn.js](../scripts/clean-vpn.js), прежде всего `boring-tls`, дополнительно `transparent-tls`/`combo-tls`.
+- Подключение к обычным WireGuard-серверам.
+
+Старое утверждение «реалистичен только tls, остальные невозможны» убрано: Linux TUN/iptables/child-process реализация не переносится напрямую, но это не доказывает невозможность совместимого embedded-клиента. Нужно отдельно проверить требования к TLS fingerprint, библиотекам, криптографии, relay и памяти. Не выбирать вместо запроса владельца упрощённый `--type=tls` автоматически.
+
+На этом этапе заново сверить wire protocol по актуальному коду clean-vpn, включая binary exporter/HMAC и framing: старые формулы в device/docs не считать спецификацией. Для WireGuard отдельно проверить embedded-библиотеку, ключи/AllowedIPs/DNS, MTU, UDP reconnect и производительность. Для обоих backend — общий интерфейс policy routing и счётчики, предсказуемое поведение при обрыве, интеграционные проверки утечек. Скорость VPN пока не измерена.
+
+## 6. Условия завершения текущего этапа
+
+- [ ] Рабочий образ и конфигурация воспроизводимы; профиль сборки выбирается надёжно.
+- [ ] Админка/DNS/mDNS изолированы от STA; авторизация работает после boot, смены пароля и окончания сессии.
+- [ ] DNS/parser/hook выдерживают некорректные пакеты; обычные DNS и connectivity checks работают.
+- [ ] Несколько WiFi-профилей выбираются и переключаются по описанной политике; USB-admin доступна без WiFi.
+- [ ] Температура/память обновляются каждые 2 секунды без потери ввода пользователя и заметной деградации NAT.
+- [ ] HTTPS и локальное имя проверены на iPhone/macOS; документированы доверие сертификату и доступ по IP.
+- Отложено: матрица совместимости USB и recovery для fallback; не блокирует текущий этап.
+- [ ] Есть измеренный бюджет RAM/PSRAM/flash и benchmark компактных IP-таблиц.
+- [ ] Routing/VPN-заготовки явно обозначены в UI; README/hardware/VPN docs согласованы с фактической прошивкой.
+- [ ] Повторены baseline скорости и тест стабильности: сон/пробуждение, replug, reboot роутера, 30–60 минут нагрузки без reset/утечек памяти.

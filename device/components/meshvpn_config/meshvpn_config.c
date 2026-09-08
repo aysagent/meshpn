@@ -1,6 +1,7 @@
 #include "meshvpn_config.h"
 
 #include <string.h>
+#include <ctype.h>
 
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -67,10 +68,12 @@ esp_err_t meshvpn_config_load_wifi(meshvpn_wifi_creds_t *out)
     }
 
     size_t len = sizeof(out->ssid);
-    ESP_ERROR_CHECK(nvs_get_str(s_nvs, "wifi_ssid", out->ssid, &len));
+    esp_err_t err = nvs_get_str(s_nvs, "wifi_ssid", out->ssid, &len);
+    if (err != ESP_OK) { out->configured = false; return err; }
     len = sizeof(out->password);
-    ESP_ERROR_CHECK(nvs_get_str(s_nvs, "wifi_pass", out->password, &len));
-    return ESP_OK;
+    err = nvs_get_str(s_nvs, "wifi_pass", out->password, &len);
+    if (err != ESP_OK) out->configured = false;
+    return err;
 }
 
 esp_err_t meshvpn_config_save_wifi(const meshvpn_wifi_creds_t *creds)
@@ -91,6 +94,8 @@ esp_err_t meshvpn_config_clear_wifi(void)
 
 esp_err_t meshvpn_config_load_admin_password(char *buf, size_t buflen)
 {
+    if (!buf || buflen == 0) return ESP_ERR_INVALID_ARG;
+    memset(buf, 0, buflen);
     size_t len = buflen;
     esp_err_t err = nvs_get_str(s_nvs, "admin_pass", buf, &len);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
@@ -103,8 +108,70 @@ esp_err_t meshvpn_config_load_admin_password(char *buf, size_t buflen)
 
 esp_err_t meshvpn_config_save_admin_password(const char *password)
 {
-    ESP_ERROR_CHECK(nvs_set_str(s_nvs, "admin_pass", password));
+    if (!password || strlen(password) < 8 || strlen(password) > MESHVPN_ADMIN_PASS_MAX)
+        return ESP_ERR_INVALID_ARG;
+    esp_err_t err = nvs_set_str(s_nvs, "admin_pass", password);
+    if (err != ESP_OK) return err;
     return nvs_commit(s_nvs);
+}
+
+static esp_err_t validate_profiles(const meshvpn_wifi_profiles_t *p)
+{
+    if (!p || p->version != 1 || p->count > MESHVPN_WIFI_PROFILES_MAX || !p->next_id)
+        return ESP_ERR_INVALID_ARG;
+    for (unsigned i = 0; i < p->count; i++) {
+        const meshvpn_wifi_profile_t *r = &p->items[i];
+        if (!r->id || r->id >= p->next_id || !r->ssid[0] ||
+            !memchr(r->ssid, 0, sizeof(r->ssid)) || !memchr(r->password, 0, sizeof(r->password)) ||
+            r->security > 2 || r->enabled > 1 || r->hidden > 1 ||
+            (r->security && (strlen(r->password) < 8 || strlen(r->password) > 64)) ||
+            (!r->security && r->password[0])) return ESP_ERR_INVALID_ARG;
+        if (strlen(r->password) == 64) {
+            if (r->security != 1) return ESP_ERR_INVALID_ARG;
+            for (unsigned j = 0; j < 64; j++)
+                if (!isxdigit((unsigned char)r->password[j])) return ESP_ERR_INVALID_ARG;
+        }
+        for (unsigned j = 0; j < i; j++)
+            if (p->items[j].id == r->id) return ESP_ERR_INVALID_ARG;
+    }
+    return ESP_OK;
+}
+
+esp_err_t meshvpn_config_save_profiles(const meshvpn_wifi_profiles_t *p)
+{
+    esp_err_t err = validate_profiles(p);
+    if (err != ESP_OK) return err;
+    err = nvs_set_blob(s_nvs, "wifi_profiles", p, sizeof(*p));
+    return err == ESP_OK ? nvs_commit(s_nvs) : err;
+}
+
+esp_err_t meshvpn_config_load_profiles(meshvpn_wifi_profiles_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    size_t len = sizeof(*out);
+    esp_err_t err = nvs_get_blob(s_nvs, "wifi_profiles", out, &len);
+    if (err == ESP_OK && len == sizeof(*out) && validate_profiles(out) == ESP_OK) {
+        return ESP_OK;
+    }
+    memset(out, 0, sizeof(*out));
+    out->version = 1;
+    out->next_id = 1;
+    if (err != ESP_ERR_NVS_NOT_FOUND) return ESP_ERR_INVALID_STATE;
+    meshvpn_wifi_creds_t legacy;
+    if (meshvpn_config_load_wifi(&legacy) == ESP_OK && legacy.configured && legacy.ssid[0]) {
+        meshvpn_wifi_profile_t *r = &out->items[0];
+        r->id = out->next_id++;
+        r->enabled = 1;
+        r->security = legacy.password[0] ? 1 : 0;
+        memcpy(r->ssid, legacy.ssid, sizeof(r->ssid));
+        memcpy(r->password, legacy.password, sizeof(r->password));
+        out->count = 1;
+        esp_err_t migrated = meshvpn_config_save_profiles(out);
+        /* Keep the legacy copy until the new blob has committed successfully. */
+        if (migrated == ESP_OK) meshvpn_config_clear_wifi();
+        return migrated;
+    }
+    return ESP_OK;
 }
 
 esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)

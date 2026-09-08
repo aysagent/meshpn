@@ -16,12 +16,14 @@ typedef struct {
     uint32_t forward_fail;
     uint32_t errors;
     uint32_t hijacked;
+    uint32_t cache_hits;
 } meshvpn_dns_stats_t;
 
-/** Start UDP DNS proxy on port 53 (captive hijack + upstream forward). */
+/** Start bounded UDP/TCP DNS proxy on port 53 with local names and TTL cache. */
 esp_err_t meshvpn_dns_proxy_init(void);
 
 void meshvpn_dns_get_stats(meshvpn_dns_stats_t *out);
+void meshvpn_dns_clear_cache(void);
 
 void meshvpn_dns_count_hijack(void);
 

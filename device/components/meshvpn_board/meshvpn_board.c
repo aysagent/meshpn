@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "driver/gpio.h"
+#include "driver/temperature_sensor.h"
 #include "esp_log.h"
 #include "sdkconfig.h"
 
@@ -15,6 +16,7 @@
 #endif
 
 static const char *TAG = "meshvpn_board";
+static temperature_sensor_handle_t s_temp;
 
 static meshvpn_board_config_t s_board = {
     .name = MESHVPN_BOARD_NAME,
@@ -28,6 +30,13 @@ static meshvpn_board_config_t s_board = {
 esp_err_t meshvpn_board_init(void)
 {
     ESP_LOGI(TAG, "Board: %s", s_board.name);
+    temperature_sensor_config_t temp = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
+    if (temperature_sensor_install(&temp, &s_temp) != ESP_OK ||
+        temperature_sensor_enable(s_temp) != ESP_OK) {
+        ESP_LOGW(TAG, "Chip temperature unavailable");
+        if (s_temp) temperature_sensor_uninstall(s_temp);
+        s_temp = NULL;
+    }
 
     if (s_board.pin_led >= 0) {
         gpio_config_t io = {
@@ -61,6 +70,12 @@ bool meshvpn_board_boot_pressed(void)
         return false;
     }
     return gpio_get_level(s_board.pin_boot) == 0;
+}
+
+/* Called only by the web server task. */
+bool meshvpn_board_temperature(float *celsius)
+{
+    return s_temp && temperature_sensor_get_celsius(s_temp, celsius) == ESP_OK;
 }
 
 const meshvpn_board_config_t *meshvpn_board_get_config(void)

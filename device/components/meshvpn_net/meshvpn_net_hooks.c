@@ -1,74 +1,72 @@
 #include "meshvpn_lwip_hooks.h"
+#include <string.h>
 
-#include "lwip/inet_chksum.h"
-#include "lwip/ip4.h"
-#include "lwip/ip4_addr.h"
+#include "lwip/def.h"
 #include "lwip/netif.h"
 #include "lwip/pbuf.h"
-#include "lwip/prot/ip.h"
 #include "lwip/prot/ip4.h"
-#include "lwip/prot/udp.h"
-#include "meshvpn_dns_proxy.h"
 #include "sdkconfig.h"
 
+static struct netif *s_usb;
 static uint32_t s_lan_ip4_rx;
+static uint32_t s_denied;
 
-static bool meshvpn_is_lan_netif(const struct netif *inp)
+void meshvpn_net_set_usb_interface(struct netif *netif) { s_usb = netif; }
+uint32_t meshvpn_net_lan_ip4_rx_count(void) { return s_lan_ip4_rx; }
+uint32_t meshvpn_net_denied_count(void) { return s_denied; }
+
+static int discard(struct pbuf *p)
 {
-    if (!inp) {
-        return false;
-    }
-    const ip4_addr_t *ip = netif_ip4_addr(inp);
-    if (ip4_addr_isany(ip)) {
-        return false;
-    }
-    uint8_t o2 = ip4_addr2(ip);
-    return o2 == CONFIG_MESHVPN_USB_SUBNET_OCTET_2 || o2 == 4;
+    s_denied++;
+    pbuf_free(p);
+    return 1; /* lwIP hook owns consumed pbuf */
 }
 
-uint32_t meshvpn_net_lan_ip4_rx_count(void)
-{
-    return s_lan_ip4_rx;
-}
-
-/**
- * Redirect LAN client DNS queries (UDP/53 to 8.8.8.8, router, etc.) to the
- * gateway address so the local DNS proxy socket receives them even when iot_bridge
- * overwrites the DHCP DNS option to the uplink resolver.
- */
+/* Called before NAPT/reassembly. Never infer trust from an IP address.
+ * DNS is advertised by DHCP; no transparent destination rewrite is performed.
+ * Outbound requests use ephemeral local ports and are unaffected. */
 int meshvpn_hook_ip4_input(struct pbuf *p, struct netif *inp)
 {
-    if (!meshvpn_is_lan_netif(inp) || p == NULL || p->len < sizeof(struct ip_hdr)) {
+    if (!p || !inp) return 0;
+    if (inp == s_usb) {
+        s_lan_ip4_rx++;
         return 0;
     }
+    uint8_t h[60];
+    if (pbuf_copy_partial(p, h, 20, 0) != 20 || (h[0] >> 4) != 4) return discard(p);
+    unsigned ihl = (h[0] & 15) * 4;
+    unsigned total = ((unsigned)h[2] << 8) | h[3];
+    if (ihl < 20 || ihl > 60 || total < ihl || total > p->tot_len) return discard(p);
 
-    s_lan_ip4_rx++;
-
-    struct ip_hdr *iphdr = (struct ip_hdr *)p->payload;
-    if (IPH_V(iphdr) != 4) {
-        return 0;
+    /* mDNS must also be blocked for multicast destinations on uplink. */
+    int local = h[16] == 224 && h[17] == 0 && h[18] == 0 && h[19] == 251;
+    ip4_addr_t dest;
+    memcpy(&dest.addr, h + 16, 4);
+    if (ip4_addr_isbroadcast(&dest, inp)) local = 1;
+    struct netif *n;
+    NETIF_FOREACH(n) {
+        if (!memcmp(h + 16, &netif_ip4_addr(n)->addr, 4)) local = 1;
     }
-
-    uint16_t iphdr_hlen = IPH_HL_BYTES(iphdr);
-    if (IPH_PROTO(iphdr) != IP_PROTO_UDP || p->tot_len < iphdr_hlen + UDP_HLEN) {
-        return 0;
-    }
-
-    struct udp_hdr *udphdr = (struct udp_hdr *)((uint8_t *)p->payload + iphdr_hlen);
-    if (lwip_ntohs(udphdr->dest) != 53) {
-        return 0;
-    }
-
-    const ip4_addr_t *gw = netif_ip4_addr(inp);
-    if (ip4_addr_cmp(&iphdr->dest, gw)) {
-        return 0;
-    }
-
-    ip4_addr_copy(iphdr->dest, *gw);
-    IPH_CHKSUM_SET(iphdr, 0);
-    IPH_CHKSUM_SET(iphdr, inet_chksum(iphdr, iphdr_hlen));
-    udphdr->chksum = 0;
-
-    meshvpn_dns_count_hijack();
+    if (!local) return 0;
+    if (h[9] != 6 && h[9] != 17) return 0;
+    /* Only offset-zero fragments contain ports. Denying that fragment prevents
+     * delivery of the whole protected datagram; later fragments cannot replace
+     * its first four payload bytes. Preserve fragmented NAT return traffic. */
+    if ((h[6] & 0x1f) || h[7]) return 0;
+    uint8_t ports[4];
+    if (total < ihl + 4 || pbuf_copy_partial(p, ports, 4, ihl) != 4) return discard(p);
+    unsigned dst = ((unsigned)ports[2] << 8) | ports[3];
+    if ((h[9] == 6 && (dst == 80 || dst == 443 || dst == 53)) ||
+        (h[9] == 17 && (dst == 53 || dst == 5353 || dst == 32768 || dst == 32769)))
+        return discard(p);
     return 0;
+}
+
+/* The dongle currently routes IPv4 only. Do not expose a second management
+ * path if a dependency enables IPv6 in an existing sdkconfig. */
+int meshvpn_hook_ip6_input(struct pbuf *p, struct netif *inp)
+{
+    (void)inp;
+    if (!p) return 0;
+    return discard(p);
 }

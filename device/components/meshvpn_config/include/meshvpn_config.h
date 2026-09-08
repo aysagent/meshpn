@@ -15,6 +15,28 @@ extern "C" {
 #define MESHVPN_ADMIN_PASS_MAX 64
 #define MESHVPN_VPN_SERVER_MAX 128
 #define MESHVPN_VPN_SNI_MAX 128
+#define MESHVPN_WIFI_PROFILES_MAX 16
+
+/* Versioned single NVS blob; IDs survive reordering/deletion. */
+typedef struct {
+    uint32_t id;
+    int16_t priority;
+    uint8_t enabled;
+    uint8_t hidden;
+    uint8_t security; /* 0=open, 1=WPA2 personal (or WPA3 transition), 2=WPA3 */
+    char ssid[33];
+    char password[65];
+} meshvpn_wifi_profile_t;
+
+typedef struct {
+    uint32_t version;
+    uint32_t count;
+    uint32_t next_id;
+    meshvpn_wifi_profile_t items[MESHVPN_WIFI_PROFILES_MAX];
+} meshvpn_wifi_profiles_t;
+
+esp_err_t meshvpn_config_load_profiles(meshvpn_wifi_profiles_t *out);
+esp_err_t meshvpn_config_save_profiles(const meshvpn_wifi_profiles_t *profiles);
 
 typedef struct {
     char ssid[MESHVPN_WIFI_SSID_MAX + 1];

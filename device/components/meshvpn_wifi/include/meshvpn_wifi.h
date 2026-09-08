@@ -19,12 +19,19 @@ typedef struct {
     uint8_t disconnect_reason;
     char ssid[33];
     char ip[16];
+    uint32_t profile_id;
+    bool scanning;
+    bool paused;
+    char state[24];
 } meshvpn_wifi_status_t;
 
 /** Register event handlers. Call after the WiFi driver is up (bridge netifs). */
 esp_err_t meshvpn_wifi_init(void);
+esp_err_t meshvpn_wifi_start_manager(void);
+esp_err_t meshvpn_wifi_select(uint32_t profile_id);
+esp_err_t meshvpn_wifi_reload(void);
+bool meshvpn_wifi_scan_busy(void);
 
-esp_err_t meshvpn_wifi_start_sta(const meshvpn_wifi_creds_t *creds);
 esp_err_t meshvpn_wifi_connect(void);
 esp_err_t meshvpn_wifi_disconnect(void);
 

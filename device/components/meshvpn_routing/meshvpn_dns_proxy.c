@@ -1,308 +1,334 @@
 #include "meshvpn_dns_proxy.h"
+#include "meshvpn_dns_wire.h"
 
-#include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-
+#include <unistd.h>
+#include "esp_heap_caps.h"
 #include "esp_log.h"
-#include "esp_netif_ip_addr.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "lwip/inet.h"
+#include "esp_netif.h"
+#include "esp_random.h"
+#include "esp_timer.h"
 #include "lwip/sockets.h"
-#include "sdkconfig.h"
+#include "lwip/inet.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 
+#define DNS_MAX 4096
+#define DNS_UDP_MAX 1232
+#define DNS_WORKERS 3
 static const char *TAG = "meshvpn_dns";
-
-#define DNS_PORT 53
-#define DNS_BUF 512
-#define DNS_TASK_STACK 4096
-#define DNS_UPSTREAM "8.8.8.8"
-#define DNS_UPSTREAM_TIMEOUT_MS 2000
-
-static int s_sock = -1;
-static int s_upstream = -1;
+static int s_udp = -1, s_tcp = -1;
+static QueueHandle_t s_queue;
 static meshvpn_dns_stats_t s_stats;
+static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
+#define COUNT(field) do { portENTER_CRITICAL(&s_lock); s_stats.field++; portEXIT_CRITICAL(&s_lock); } while (0)
 
-static const char *const s_captive[] = {
-    "captive.apple.com",
-    "www.apple.com",
-    "connectivitycheck.gstatic.com",
-    "clients3.google.com",
-    "msftconnecttest.com",
-    "detectportal.firefox.com",
-    NULL,
-};
+typedef struct {
+    int fd; /* -1 for UDP */
+    struct sockaddr_in peer;
+    size_t len;
+    uint8_t query[DNS_UDP_MAX + 1];
+} job_t;
+typedef struct { uint8_t *query, *resp; TaskHandle_t task; } worker_t;
+static worker_t s_workers[DNS_WORKERS];
+#define CACHE_SLOTS 8
+typedef struct {
+    uint16_t qlen, rlen;
+    int64_t stored_us;
+    uint32_t ttl;
+    uint8_t query[DNS_UDP_MAX], response[DNS_UDP_MAX];
+} cache_entry_t;
+static cache_entry_t *s_cache;
+static SemaphoreHandle_t s_cache_lock;
+static unsigned s_cache_next;
+static uint32_t s_cache_generation;
 
-static int dns_skip_name(const uint8_t *pkt, int len, int off)
+void meshvpn_dns_clear_cache(void)
 {
-    int hops = 0;
-
-    while (off < len && hops++ < 32) {
-        if ((pkt[off] & 0xC0) == 0xC0) {
-            return (off + 2 <= len) ? off + 2 : -1;
-        }
-        if (pkt[off] == 0) {
-            return off + 1;
-        }
-        uint8_t labellen = pkt[off];
-        if (labellen > 63 || off + 1 + labellen > len) {
-            return -1;
-        }
-        off += 1 + labellen;
+    if (!s_cache || !s_cache_lock) return;
+    xSemaphoreTake(s_cache_lock, portMAX_DELAY);
+    s_cache_generation++;
+    memset(s_cache, 0, CACHE_SLOTS * sizeof(*s_cache));
+    xSemaphoreGive(s_cache_lock);
+}
+static int cache_get(const uint8_t *query, size_t len, uint8_t *response)
+{
+    if (!s_cache || len > DNS_UDP_MAX) return 0;
+    int n = 0;
+    uint32_t age = 0;
+    xSemaphoreTake(s_cache_lock, portMAX_DELAY);
+    for (unsigned i = 0; i < CACHE_SLOTS; i++) {
+        cache_entry_t *e = &s_cache[i];
+        age = (esp_timer_get_time() - e->stored_us) / 1000000;
+        if (e->qlen != len || age >= e->ttl || memcmp(query + 2, e->query + 2, len - 2)) continue;
+        n = e->rlen; memcpy(response, e->response, n); break;
     }
-    return -1;
+    xSemaphoreGive(s_cache_lock);
+    if (n) {
+        response[0] = query[0]; response[1] = query[1];
+        if (!meshvpn_dns_age_ttls(response, n, age)) return 0;
+        COUNT(cache_hits);
+    }
+    return n;
+}
+static uint32_t cache_generation(void)
+{
+    if (!s_cache_lock) return 0;
+    xSemaphoreTake(s_cache_lock, portMAX_DELAY);
+    uint32_t generation = s_cache_generation;
+    xSemaphoreGive(s_cache_lock);
+    return generation;
+}
+static void cache_put(const uint8_t *query, size_t qlen, uint8_t *response, size_t rlen, uint32_t generation)
+{
+    if (!s_cache || qlen > DNS_UDP_MAX || rlen > DNS_UDP_MAX) return;
+    uint32_t ttl = meshvpn_dns_age_ttls(response, rlen, 0);
+    if (!ttl) return;
+    xSemaphoreTake(s_cache_lock, portMAX_DELAY);
+    if (generation != s_cache_generation) {
+        xSemaphoreGive(s_cache_lock);
+        return;
+    }
+    cache_entry_t *e = &s_cache[s_cache_next++ % CACHE_SLOTS];
+    e->qlen = qlen; e->rlen = rlen; e->stored_us = esp_timer_get_time();
+    e->ttl = ttl < 300 ? ttl : 300;
+    memcpy(e->query, query, qlen); memcpy(e->response, response, rlen);
+    xSemaphoreGive(s_cache_lock);
 }
 
-static int dns_read_qname(const uint8_t *pkt, int len, int off, char *out, size_t out_len)
+static void timeout(int fd)
 {
-    size_t pos = 0;
-    int hops = 0;
-
-    out[0] = '\0';
-    while (off < len && hops++ < 32) {
-        if ((pkt[off] & 0xC0) == 0xC0) {
-            if (off + 1 >= len) {
-                return -1;
-            }
-            off = ((pkt[off] & 0x3F) << 8) | pkt[off + 1];
-            continue;
-        }
-
-        uint8_t labellen = pkt[off++];
-        if (labellen == 0) {
-            if (pos > 0 && pos < out_len) {
-                out[pos - 1] = '\0';
-            }
-            return off;
-        }
-        if (labellen > 63 || off + labellen > len) {
-            return -1;
-        }
-        if (pos > 0 && pos < out_len) {
-            out[pos++] = '.';
-        }
-        for (int i = 0; i < labellen && pos + 1 < out_len; i++) {
-            out[pos++] = (char)pkt[off++];
-        }
-    }
-    return -1;
+    struct timeval tv = {.tv_sec = 2};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 }
-
-static bool dns_name_equal_ci(const char *a, const char *b)
+static bool transfer(int fd, uint8_t *buf, size_t len, bool write)
 {
-    while (*a && *b) {
-        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) {
-            return false;
-        }
-        a++;
-        b++;
+    int64_t deadline = esp_timer_get_time() + 5000000;
+    while (len) {
+        if (esp_timer_get_time() >= deadline) return false;
+        int n = write ? send(fd, buf, len, 0) : recv(fd, buf, len, 0);
+        if (n <= 0) return false;
+        buf += n; len -= n;
     }
-    return *a == *b;
-}
-
-static bool dns_is_captive(const char *name)
-{
-    for (int i = 0; s_captive[i]; i++) {
-        if (dns_name_equal_ci(name, s_captive[i])) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static uint32_t dns_gateway_for_client(uint32_t client_ip_be)
-{
-    const uint8_t *b = (const uint8_t *)&client_ip_be;
-
-    if (b[0] == 192 && b[1] == 168 && b[2] == CONFIG_MESHVPN_USB_SUBNET_OCTET_2) {
-        return ESP_IP4TOADDR(192, 168, CONFIG_MESHVPN_USB_SUBNET_OCTET_2, 1);
-    }
-    if (b[0] == 192 && b[1] == 168 && b[2] == 4) {
-        return ESP_IP4TOADDR(192, 168, 4, 1);
-    }
-    return ESP_IP4TOADDR(192, 168, CONFIG_MESHVPN_USB_SUBNET_OCTET_2, 1);
-}
-
-static int dns_build_a_response(const uint8_t *query, int qlen, uint32_t answer_ip, uint8_t *out, int out_max)
-{
-    if (qlen < 12 || qlen + 16 > out_max) {
-        return -1;
-    }
-
-    memcpy(out, query, qlen);
-    out[2] = 0x81;
-    out[3] = 0x80;
-    out[7] = 1;
-
-    int qend = dns_skip_name(query, qlen, 12);
-    if (qend < 0 || qend + 4 > qlen) {
-        return -1;
-    }
-    qend += 4;
-
-    int pos = qend;
-    out[pos++] = 0xC0;
-    out[pos++] = 0x0C;
-    out[pos++] = 0x00;
-    out[pos++] = 0x01;
-    out[pos++] = 0x00;
-    out[pos++] = 0x01;
-    out[pos++] = 0x00;
-    out[pos++] = 0x00;
-    out[pos++] = 0x00;
-    out[pos++] = 60;
-    out[pos++] = 0x00;
-    out[pos++] = 0x04;
-    memcpy(&out[pos], &answer_ip, 4);
-    pos += 4;
-    return pos;
-}
-
-static bool dns_forward_upstream(const uint8_t *query, int qlen, uint8_t *resp, int *resp_len)
-{
-    struct sockaddr_in up = {
-        .sin_family = AF_INET,
-        .sin_port = htons(DNS_PORT),
-    };
-    inet_aton(DNS_UPSTREAM, &up.sin_addr);
-
-    if (sendto(s_upstream, query, qlen, 0, (struct sockaddr *)&up, sizeof(up)) != qlen) {
-        return false;
-    }
-
-    struct timeval tv = {
-        .tv_sec = DNS_UPSTREAM_TIMEOUT_MS / 1000,
-        .tv_usec = (DNS_UPSTREAM_TIMEOUT_MS % 1000) * 1000,
-    };
-    setsockopt(s_upstream, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-    socklen_t slen = sizeof(up);
-    int n = recvfrom(s_upstream, resp, DNS_BUF, 0, (struct sockaddr *)&up, &slen);
-    if (n <= 0) {
-        return false;
-    }
-
-    *resp_len = n;
     return true;
 }
 
-static void dns_task(void *arg)
+static bool upstream_address(struct sockaddr_in *up)
 {
-    uint8_t buf[DNS_BUF];
-    uint8_t resp[DNS_BUF];
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_dns_info_t dns;
+    esp_netif_ip_info_t ip;
+    if (!sta || esp_netif_get_ip_info(sta, &ip) != ESP_OK || !ip.ip.addr) return false;
+    memset(up, 0, sizeof(*up));
+    up->sin_family = AF_INET;
+    up->sin_port = htons(53);
+    if (esp_netif_get_dns_info(sta, ESP_NETIF_DNS_MAIN, &dns) == ESP_OK &&
+        dns.ip.type == ESP_IPADDR_TYPE_V4 && dns.ip.u_addr.ip4.addr)
+        up->sin_addr.s_addr = dns.ip.u_addr.ip4.addr;
+    else inet_aton("1.1.1.1", &up->sin_addr);
+    return true;
+}
 
-    while (true) {
-        struct sockaddr_in src = {0};
-        socklen_t slen = sizeof(src);
-        int n = recvfrom(s_sock, buf, sizeof(buf), 0, (struct sockaddr *)&src, &slen);
-        if (n < 12) {
+/* Connected UDP socket checks source IP+port; fresh random ID and full
+ * question comparison reject unrelated or late replies. One socket per job. */
+static int upstream(uint8_t *query, size_t len, uint8_t *resp, bool tcp)
+{
+    struct sockaddr_in up;
+    if (!upstream_address(&up)) return -1;
+    int fd = socket(AF_INET, tcp ? SOCK_STREAM : SOCK_DGRAM, 0);
+    if (fd < 0) return -1;
+    timeout(fd);
+    /* Nonblocking connect with a deadline, including TCP fallback. */
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    int rc = connect(fd, (struct sockaddr *)&up, sizeof(up));
+    if (rc < 0 && errno == EINPROGRESS) {
+        fd_set wr; FD_ZERO(&wr); FD_SET(fd, &wr);
+        struct timeval tv = {.tv_sec = 2};
+        rc = select(fd + 1, NULL, &wr, NULL, &tv);
+        int error = 0; socklen_t elen = sizeof(error);
+        if (rc > 0 && getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &elen) == 0 && !error) rc = 0;
+        else rc = -1;
+    }
+    fcntl(fd, F_SETFL, flags);
+    int n = -1;
+    if (rc == 0) {
+        if (tcp) {
+            uint8_t prefix[2] = {len >> 8, len};
+            if (transfer(fd, prefix, 2, true) && transfer(fd, query, len, true) &&
+                transfer(fd, prefix, 2, false)) {
+                n = (prefix[0] << 8) | prefix[1];
+                if (n < 12 || n > DNS_MAX || !transfer(fd, resp, n, false)) n = -1;
+            }
+        } else if (send(fd, query, len, 0) == len) {
+            /* Extra byte detects datagrams exceeding our bounded response. */
+            n = recv(fd, resp, DNS_MAX + 1, 0);
+            if (n > DNS_MAX) n = -1;
+        }
+    }
+    close(fd);
+    meshvpn_dns_question_t q, a;
+    if (n < 12 || !(resp[2] & 0x80) || resp[0] != query[0] || resp[1] != query[1] ||
+        !meshvpn_dns_question(query, len, &q) || !meshvpn_dns_question(resp, n, &a) ||
+        strcmp(q.name, a.name) || q.type != a.type || q.klass != a.klass) return -1;
+    if (!tcp && (resp[2] & 2)) return upstream(query, len, resp, true);
+    return n;
+}
+
+static unsigned udp_limit(const uint8_t *query, size_t len, const meshvpn_dns_question_t *q)
+{
+    /* Accept a single standard root-name OPT record. Unsupported extra
+     * records conservatively use the classic 512-byte UDP limit. */
+    size_t off = q->end;
+    if (!query[10] && query[11] == 1 && off + 11 <= len &&
+        query[off] == 0 && query[off + 1] == 0 && query[off + 2] == 41) {
+        unsigned cap = (query[off + 3] << 8) | query[off + 4];
+        return cap < 512 ? 512 : cap > DNS_UDP_MAX ? DNS_UDP_MAX : cap;
+    }
+    return 512;
+}
+
+static void worker(void *arg)
+{
+    worker_t *ctx = arg;
+    uint8_t *query = ctx->query, *resp = ctx->resp;
+    job_t *job;
+    while (xQueueReceive(s_queue, &job, portMAX_DELAY) == pdTRUE) {
+        size_t len = job->len;
+        if (job->fd >= 0) {
+            timeout(job->fd);
+            uint8_t prefix[2];
+            if (!transfer(job->fd, prefix, 2, false)) goto done;
+            len = (prefix[0] << 8) | prefix[1];
+            if (len < 12 || len > DNS_MAX || !transfer(job->fd, query, len, false)) goto done;
+        } else memcpy(query, job->query, len);
+        meshvpn_dns_question_t q;
+        if ((query[2] & 0x80) || !meshvpn_dns_question(query, len, &q)) {
+            COUNT(errors); goto done;
+        }
+        COUNT(queries);
+        int n;
+        if (!strcmp(q.name, "meshpn.home.arpa") || !strcmp(q.name, "meshpn.local")) {
+            esp_netif_t *usb = esp_netif_get_handle_from_ifkey("USB_DEF");
+            esp_netif_ip_info_t ip = {0};
+            if (usb) esp_netif_get_ip_info(usb, &ip);
+            n = meshvpn_dns_reply(query, len, resp, DNS_MAX, 0, false, ip.ip.addr);
+        } else if ((n = cache_get(query, len, resp)) == 0) {
+            uint32_t generation = cache_generation();
+            uint8_t id[2] = {query[0], query[1]};
+            uint16_t random_id = esp_random();
+            query[0] = random_id >> 8; query[1] = random_id;
+            n = upstream(query, len, resp, job->fd >= 0);
+            query[0] = id[0]; query[1] = id[1];
             if (n < 0) {
-                vTaskDelay(pdMS_TO_TICKS(50));
+                COUNT(forward_fail);
+                n = meshvpn_dns_reply(query, len, resp, DNS_MAX, 2, false, 0);
+            } else {
+                resp[0] = id[0]; resp[1] = id[1];
+                COUNT(forwarded);
+                cache_put(query, len, resp, n, generation);
             }
-            continue;
         }
-
-        s_stats.queries++;
-
-        char qname[256];
-        int qname_end = dns_read_qname(buf, n, 12, qname, sizeof(qname));
-        if (qname_end < 0 || qname_end + 4 > n) {
-            s_stats.errors++;
-            continue;
+        if (job->fd < 0 && n > udp_limit(query, len, &q))
+            n = meshvpn_dns_reply(query, len, resp, DNS_MAX, 0, true, 0);
+        if (n > 0) {
+            if (job->fd >= 0) {
+                uint8_t prefix[2] = {n >> 8, n};
+                if (transfer(job->fd, prefix, 2, true)) transfer(job->fd, resp, n, true);
+            } else sendto(s_udp, resp, n, 0, (struct sockaddr *)&job->peer, sizeof(job->peer));
         }
+done:
+        if (job->fd >= 0) close(job->fd);
+        free(job);
+    }
+}
 
-        uint16_t qtype = (uint16_t)((buf[qname_end] << 8) | buf[qname_end + 1]);
-        uint32_t client_ip = src.sin_addr.s_addr;
-        uint32_t gateway_ip = dns_gateway_for_client(client_ip);
-
-        if ((qtype == 1 || qtype == 28) && dns_is_captive(qname)) {
-            s_stats.captive++;
-            if (qtype == 1) {
-                int rlen = dns_build_a_response(buf, n, gateway_ip, resp, sizeof(resp));
-                if (rlen > 0) {
-                    sendto(s_sock, resp, rlen, 0, (struct sockaddr *)&src, slen);
-                } else {
-                    s_stats.errors++;
-                }
-            }
-            continue;
-        }
-
-        int rlen = 0;
-        if (dns_forward_upstream(buf, n, resp, &rlen)) {
-            sendto(s_sock, resp, rlen, 0, (struct sockaddr *)&src, slen);
-            s_stats.forwarded++;
+static void listener(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        fd_set rd; FD_ZERO(&rd); FD_SET(s_udp, &rd); FD_SET(s_tcp, &rd);
+        if (select((s_udp > s_tcp ? s_udp : s_tcp) + 1, &rd, NULL, NULL, NULL) <= 0) continue;
+        job_t *job = calloc(1, sizeof(*job));
+        if (!job) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
+        socklen_t sl = sizeof(job->peer);
+        if (FD_ISSET(s_udp, &rd)) {
+            job->fd = -1;
+            int n = recvfrom(s_udp, job->query, sizeof(job->query), 0, (struct sockaddr *)&job->peer, &sl);
+            if (n < 12 || n > DNS_UDP_MAX) { free(job); COUNT(errors); continue; }
+            job->len = n;
         } else {
-            s_stats.forward_fail++;
+            job->fd = accept(s_tcp, (struct sockaddr *)&job->peer, &sl);
+            if (job->fd < 0) { free(job); continue; }
+        }
+        if (xQueueSend(s_queue, &job, 0) != pdTRUE) {
+            if (job->fd >= 0) close(job->fd);
+            free(job);
+            COUNT(errors);
         }
     }
 }
 
 esp_err_t meshvpn_dns_proxy_init(void)
 {
-    if (s_sock >= 0) {
-        return ESP_OK;
-    }
-
-    s_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (s_sock < 0) {
-        ESP_LOGE(TAG, "DNS socket failed: errno %d", errno);
+    if (s_udp >= 0) return ESP_ERR_INVALID_STATE;
+    s_queue = xQueueCreate(4, sizeof(job_t *));
+    if (!s_queue) return ESP_ERR_NO_MEM;
+    s_cache_lock = xSemaphoreCreateMutex();
+    if (s_cache_lock) s_cache = heap_caps_calloc(CACHE_SLOTS, sizeof(*s_cache), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_udp = socket(AF_INET, SOCK_DGRAM, 0);
+    s_tcp = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(53),
+                               .sin_addr.s_addr = htonl(INADDR_ANY)};
+    if (s_udp < 0 || s_tcp < 0 || bind(s_udp, (struct sockaddr *)&addr, sizeof(addr)) ||
+        bind(s_tcp, (struct sockaddr *)&addr, sizeof(addr)) || listen(s_tcp, 3)) {
+        if (s_udp >= 0) close(s_udp);
+        if (s_tcp >= 0) close(s_tcp);
+        s_udp = s_tcp = -1;
+        vQueueDelete(s_queue);
+        free(s_cache); s_cache = NULL;
+        if (s_cache_lock) vSemaphoreDelete(s_cache_lock);
+        s_cache_lock = NULL;
         return ESP_FAIL;
     }
-
-    int reuse = 1;
-    setsockopt(s_sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-
-    struct sockaddr_in bind_addr = {
-        .sin_family = AF_INET,
-        .sin_port = htons(DNS_PORT),
-        .sin_addr.s_addr = htonl(INADDR_ANY),
-    };
-
-    if (bind(s_sock, (struct sockaddr *)&bind_addr, sizeof(bind_addr)) != 0) {
-        ESP_LOGE(TAG, "DNS bind :53 failed: errno %d", errno);
-        close(s_sock);
-        s_sock = -1;
-        return ESP_FAIL;
+    for (unsigned i = 0; i < DNS_WORKERS; i++) {
+        s_workers[i].query = heap_caps_malloc(DNS_MAX + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        s_workers[i].resp = heap_caps_malloc(DNS_MAX + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s_workers[i].query || !s_workers[i].resp ||
+            xTaskCreate(worker, "dns_worker", 4096, &s_workers[i], 5, &s_workers[i].task) != pdPASS)
+            goto failed;
     }
-
-    s_upstream = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (s_upstream < 0) {
-        ESP_LOGE(TAG, "upstream DNS socket failed: errno %d", errno);
-        close(s_sock);
-        s_sock = -1;
-        return ESP_FAIL;
-    }
-
-    BaseType_t ok = xTaskCreate(dns_task, "dns_proxy", DNS_TASK_STACK, NULL, 5, NULL);
-    if (ok != pdPASS) {
-        ESP_LOGE(TAG, "DNS task create failed");
-        close(s_upstream);
-        close(s_sock);
-        s_upstream = -1;
-        s_sock = -1;
-        return ESP_ERR_NO_MEM;
-    }
-
-    ESP_LOGI(TAG, "DNS proxy on :53 (captive hijack + %s forward)", DNS_UPSTREAM);
+    if (xTaskCreate(listener, "dns_listener", 3072, NULL, 5, NULL) != pdPASS) goto failed;
+    ESP_LOGI(TAG, "USB DNS: bounded UDP/TCP proxy, DHCP uplink resolver");
     return ESP_OK;
+failed:
+    for (unsigned i = 0; i < DNS_WORKERS; i++) {
+        if (s_workers[i].task) vTaskDelete(s_workers[i].task);
+        free(s_workers[i].query); free(s_workers[i].resp);
+        memset(&s_workers[i], 0, sizeof(s_workers[i]));
+    }
+    close(s_udp); close(s_tcp); s_udp = s_tcp = -1;
+    vQueueDelete(s_queue); s_queue = NULL;
+    free(s_cache); s_cache = NULL;
+    if (s_cache_lock) vSemaphoreDelete(s_cache_lock);
+    s_cache_lock = NULL;
+    return ESP_ERR_NO_MEM;
 }
-
 void meshvpn_dns_get_stats(meshvpn_dns_stats_t *out)
 {
-    memcpy(out, &s_stats, sizeof(*out));
+    portENTER_CRITICAL(&s_lock);
+    *out = s_stats;
+    portEXIT_CRITICAL(&s_lock);
 }
-
-void meshvpn_dns_count_hijack(void)
-{
-    s_stats.hijacked++;
-}
-
+void meshvpn_dns_count_hijack(void) { }
 esp_err_t meshvpn_dns_proxy_handle_query(const uint8_t *pkt, uint16_t len)
 {
-    (void)pkt;
-    (void)len;
-    return ESP_OK;
+    (void)pkt; (void)len;
+    return ESP_ERR_NOT_SUPPORTED;
 }
