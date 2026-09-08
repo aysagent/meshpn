@@ -1,0 +1,28 @@
+[
+    { "pattern": "*.youtube.com", "category": "video" },
+    { "pattern": "youtube.com", "category": "video" },
+    { "pattern": "*.googlevideo.com", "category": "video" },
+    { "pattern": "*.ytimg.com", "category": "video" },
+    { "pattern": "netflix.com", "category": "video" },
+    { "pattern": "*.netflix.com", "category": "video" },
+    { "pattern": "*.nflxvideo.net", "category": "video" },
+    { "pattern": "*.twitch.tv", "category": "video" },
+    { "pattern": "twitch.tv", "category": "video" },
+    { "pattern": "*.ttvnw.net", "category": "video" },
+
+    { "pattern": "meet.google.com", "category": "voice" },
+    { "pattern": "*.zoom.us", "category": "voice" },
+    { "pattern": "zoom.us", "category": "voice" },
+    { "pattern": "*.zoomgov.com", "category": "voice" },
+    { "pattern": "*.webex.com", "category": "voice" },
+    { "pattern": "*.discord.com", "category": "voice" },
+    { "pattern": "*.discord.gg", "category": "voice" },
+    { "pattern": "*.discord.media", "category": "voice" },
+    { "pattern": "*.skype.com", "category": "voice" },
+    { "pattern": "*.teams.microsoft.com", "category": "voice" },
+    { "pattern": "*.teams.live.com", "category": "voice" },
+    { "pattern": "*.whatsapp.net", "category": "voice" },
+    { "pattern": "*.fbcdn.net", "category": "voice" },
+    { "pattern": "*.signal.org", "category": "voice" },
+    { "pattern": "*.telegram.org", "category": "voice" }
+]
