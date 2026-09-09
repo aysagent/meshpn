@@ -80,10 +80,6 @@ Configure uplink via USB first, then connect the test client to the AP. You can 
 AP and STA share the radio and channel, with STA taking channel priority; both WiFi hops use airtime.
 No speedup is claimed before measurements. See [AP/USB comparison procedure](docs/apsta-benchmark.md).
 
-The default high-speed WiFi profile prefers 802.11g/n, requests HT40, enlarges aggregation windows and requests maximum configured 802.11n TX power.
-Actual HT20/HT40 and PHY rate are negotiated;
-set `CONFIG_MESHVPN_WIFI_HIGH_SPEED=n` for a compatibility/control build.
-
 ## Memory / IP lists
 
 The UI's **IP-list memory benchmark** measures synthetic binary-search lookups in PSRAM and frees the allocation afterwards.

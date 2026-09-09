@@ -41,19 +41,6 @@ menu "meshvpn USB"
 
 endmenu
 
-menu "meshvpn WiFi"
-
-    config MESHVPN_WIFI_HIGH_SPEED
-        bool "Prefer 802.11n/HT40 high-speed mode"
-        default y
-        help
-            Limit the radio to 802.11g/n (no legacy 802.11b) and request HT40
-            on STA and SoftAP. This can improve throughput but may reduce
-            compatibility with old access points or clients. The connected
-            router still decides the actual channel width and PHY rate.
-
-endmenu
-
 menu "meshvpn Web"
 
     config MESHVPN_WEB_HTTPS

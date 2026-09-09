@@ -38,21 +38,6 @@ static esp_err_t command(int kind, uint32_t id)
     return s_commands && xQueueSend(s_commands, &cmd, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
-static void configure_speed(wifi_interface_t interface)
-{
-#if CONFIG_MESHVPN_WIFI_HIGH_SPEED
-    /* 802.11b has very low basic rates and can force conservative protection
-     * overhead. Keep g/n for compatibility with normal 2.4 GHz routers. */
-    esp_wifi_set_protocol(interface, WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
-    esp_wifi_set_bandwidth(interface, WIFI_BW_HT40);
-    /* IDF uses quarter-dBm units; 78 is the ESP32-S3 802.11n limit (~19.5 dBm).
-     * Actual EIRP remains subject to the selected country/regulatory profile. */
-    esp_wifi_set_max_tx_power(78);
-#else
-    (void)interface;
-#endif
-}
-
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
@@ -254,7 +239,7 @@ static void manager(void *arg)
         cfg.sta.pmf_cfg.required = p->security == 2;
         cfg.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
         esp_wifi_set_ps(WIFI_PS_NONE);
-        configure_speed(WIFI_IF_STA);
+        esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT40);
         esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
         if (err == ESP_OK) err = esp_wifi_connect();
         if (err != ESP_OK) {
