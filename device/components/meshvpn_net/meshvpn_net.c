@@ -322,8 +322,14 @@ esp_err_t meshvpn_net_start_bridge(void)
     err = esp_wifi_set_config(WIFI_IF_AP, &cfg);
     memset(cfg.ap.password, 0, sizeof(cfg.ap.password));
     if (err != ESP_OK) return err;
+#if CONFIG_MESHVPN_WIFI_HIGH_SPEED
+    err = esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+    if (err != ESP_OK) return err;
+    err = esp_wifi_set_max_tx_power(78);
+    if (err != ESP_OK) return err;
     err = esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT40);
     if (err != ESP_OK) return err;
+#endif
     ESP_LOGI(TAG, "SoftAP %s: WPA2, max %u clients; management remains USB-only",
              ssid, (unsigned)CONFIG_BRIDGE_SOFTAP_MAX_CONNECT_NUMBER);
 #endif

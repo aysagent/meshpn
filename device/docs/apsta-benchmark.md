@@ -1,6 +1,9 @@
 # STA + SoftAP + USB benchmark
 
 This revision enables a WPA2 AP while preserving the USB NCM interface and saved STA profile manager.
+The default high-speed profile prefers 802.11g/n (no legacy 802.11b), requests HT40, uses larger WiFi aggregation windows (TX/RX BA 16/32),
+and requests the ESP32-S3 802.11n maximum transmit power (~19.5 dBm).
+The AP/router/client can still negotiate HT20 or a lower PHY rate; verify the actual result in the status/airtime measurements.
 AP and USB clients have separate DHCP subnets and simultaneous IPv4 NAPT to the same STA uplink.
 No VPN or policy routing is active yet. Throughput has not been measured on hardware.
 
@@ -8,6 +11,7 @@ No VPN or policy routing is active yet. Throughput has not been measured on hard
 
 1. Flash with `./device/scripts/flash.sh`. Its defaults hash creates a new build/sdkconfig with AP enabled.
    Existing custom build directories may still have AP disabled: inspect `CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP`.
+   For a compatibility comparison, set `CONFIG_MESHVPN_WIFI_HIGH_SPEED=n` and restore BA windows 10/16 in a separate build.
 2. Over USB, open `http://meshpn.local/` (HTTPS if enabled), configure/connect the upstream WiFi.
 3. Join **MeshPN_XXXXXX**, password **meshpn-test**. The suffix is the AP MAC's last three bytes in hexadecimal.
    These are development credentials, configurable in ESP-IoT-Bridge / SoftAP Config.

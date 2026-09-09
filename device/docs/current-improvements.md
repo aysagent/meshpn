@@ -11,6 +11,8 @@ USB compatibility expansion and VPN/WireGuard implementation are deferred.
   Management/mDNS remain USB-only; AP may use its own gateway DNS, STA cannot use either LAN's DNS.
   Radio is stopped while initial AP credentials are configured; no transient open AP is intentionally started.
   Status adds AP SSID, active channel, client count, NAT, DNS and ingress counter. See [benchmark procedure](apsta-benchmark.md).
+- WiFi high-speed defaults prefer g/n + HT40, larger TX/RX BA windows (16/32), extra IRAM optimization and maximum configured 802.11n TX power.
+  This is a compatibility/performance trade-off controlled by `CONFIG_MESHVPN_WIFI_HIGH_SPEED`; actual PHY rate remains negotiated.
 - Up to 16 versioned NVS WiFi profiles, migration from the old single network, secret-free saved-network list,
   add/edit/delete/select, priorities, enabled/hidden flags and open/WPA2/WPA3 Personal.
   Automatic selection retains a working connection; failures fall through to other candidates with bounded backoff.

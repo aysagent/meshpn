@@ -66,6 +66,13 @@ CONFIG_MESHVPN_BOARD_XIAO_ESP32S3=y
 CONFIG_MESHVPN_VPN_ENABLE=n
 
 CONFIG_MESHVPN_USB_PROFILE_NCM=y
+CONFIG_MESHVPN_WIFI_HIGH_SPEED=y
+
+# Prefer larger WiFi aggregation windows; WiFi driver buffers above are sized
+# for these values and remain in PSRAM where IDF permits.
+CONFIG_ESP_WIFI_TX_BA_WIN=16
+CONFIG_ESP_WIFI_RX_BA_WIN=32
+CONFIG_ESP_WIFI_EXTRA_IRAM_OPT=y
 
 # ESP-IoT-Bridge: USB NIC and SoftAP share the WiFi STA uplink.
 # Management remains USB-only; AP clients can use gateway DNS and IPv4 NAT.
