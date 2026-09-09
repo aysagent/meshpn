@@ -24,7 +24,8 @@ for(const part of text.split('static const char ').slice(1)){
           https_configured:https,https_restart_required:false,admin_next_url:(https?'https':'http')+'://meshpn.local/',
           temperature_c:42,memory:{internal:{free:1024},psram:{free:2048}},
           wifi:{connected:false,state:'setup'},usb:{profile:'ncm',host_ready:true},
-          net:{usb_ip:'192.168.7.1'},must_change_password:false};
+          net:{usb_ip:'192.168.7.1',ap_active:https,ap_ssid:'MeshPN_aabbcc',ap_ip:'192.168.4.1',
+            ap_channel:6,ap_clients:2,ap_napt:true},must_change_password:false};
         let accepted=true,failSave=false,saves=0,reboots=0,revoked=0;
         const context=vm.createContext({
           document:{hidden:false,getElementById:id=>elements[id],addEventListener(){}},
@@ -51,6 +52,9 @@ for(const part of text.split('static const char ').slice(1)){
         assert.equal(elements['certificate-section'].hidden,!https);
         assert.equal(elements.fingerprint.textContent,https?'AA:BB':'');
         assert(elements.usb.textContent.includes((https?'https':'http')+'://192.168.7.1/'));
+        assert.equal(elements.ap.textContent,https?
+          'AP: MeshPN_aabbcc · 192.168.4.1 · channel 6 · clients 2 · NAT on · admin via USB only':
+          'WiFi AP disabled');
         assert.equal(elements['https-enabled'].checked,https);
         assert.equal(elements['https-pending'].hidden,true);
         elements['https-enabled'].checked=!https;

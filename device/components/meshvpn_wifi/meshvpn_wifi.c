@@ -52,6 +52,10 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         s_got_ip = false;
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_SCAN_DONE) {
         s_scan_done = true;
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_START) {
+        s_status.ap_active = true;
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STOP) {
+        s_status.ap_active = false;
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *ev = data;
         snprintf(s_status.ip, sizeof(s_status.ip), IPSTR, IP2STR(&ev->ip_info.ip));

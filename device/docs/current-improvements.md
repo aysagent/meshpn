@@ -6,6 +6,11 @@ USB compatibility expansion and VPN/WireGuard implementation are deferred.
 
 ## Implemented
 
+- Concurrent STA + WPA2 SoftAP + USB NCM: AP/USB have independent DHCP subnets and share the STA IPv4 NAT uplink.
+  AP defaults: `MeshPN_XXXXXX`, test password `meshpn-test`, four clients, 192.168.4.1/24.
+  Management/mDNS remain USB-only; AP may use its own gateway DNS, STA cannot use either LAN's DNS.
+  Radio is stopped while initial AP credentials are configured; no transient open AP is intentionally started.
+  Status adds AP SSID, active channel, client count, NAT, DNS and ingress counter. See [benchmark procedure](apsta-benchmark.md).
 - Up to 16 versioned NVS WiFi profiles, migration from the old single network, secret-free saved-network list,
   add/edit/delete/select, priorities, enabled/hidden flags and open/WPA2/WPA3 Personal.
   Automatic selection retains a working connection; failures fall through to other candidates with bounded backoff.
@@ -21,7 +26,8 @@ USB compatibility expansion and VPN/WireGuard implementation are deferred.
   `CONFIG_MESHVPN_WEB_REQUIRE_PASSWORD_CHANGE` defaults to **n** for testing. Set it to **y** to require changing the configured initial password before configuration mutations.
 - UDP/TCP DNS proxy with response correlation, uplink resolver, TCP fallback and bounded positive TTL cache.
   No connectivity-domain hijacking or captive-portal advertisement.
-- USB subnet conflict detection and reassignment; DHCP renewal/replug may be required on the host.
+- USB/AP subnet conflict detection avoids both the uplink (including wider masks) and the other LAN;
+  DHCP renewal/replug/rejoin may be required on clients.
 - Offline IPv4 range compiler and temporary synthetic PSRAM lookup benchmark, **not routing enforcement**.
 - Pinned dependency lock and separate profile/defaults build directories. The manager applies iot_bridge lwIP patches to the IDF checkout.
 
@@ -38,9 +44,12 @@ Tests cover DNS name/bounds/compression/TTL handling, binary-search boundaries, 
 actual ingress hook with chained pbufs/fragments, session validation, UI JavaScript syntax, DOM references and HTTP/HTTPS status rendering,
 TLS identity persistence, matching-key validation and personal-CA certificate import; NVS HTTPS defaults/overrides/error propagation,
 checkbox changes surviving status polling, save/reboot confirmation, failed saves and both mode transitions in the UI mock.
+AP regression tests cover DHCP/NAT/DNS ingress permissions, USB-only management, changed AP addresses,
+LAN selection against /24, /16 and /8 uplinks, and AP status rendering.
 The TLS test uses an in-memory NVS stub, not actual flash/power-loss tests.
 
 The ESP-IDF 5.4.1 NCM firmware builds with the locked dependencies, with mandatory password change both enabled and disabled.
+The new STA/AP/USB defaults are also built from a fresh sdkconfig; measurements still require the board.
 HTTP-only and HTTPS modes also pass build checks; the default remains HTTP-only.
 The image is approximately 1.1 MiB in a 3 MiB app partition.
 The generated lwIP customer hook and linked image include the management filter.
@@ -48,6 +57,8 @@ Build success and unit tests do not establish radio/USB timing, handshake stack 
 The previously flashed board's resolved dependency versions are unknown; preserve its working image/configuration before comparison.
 
 ## Hardware acceptance
+
+First run the [AP/STA/USB acceptance and comparison](apsta-benchmark.md). These checks supplement, not replace, USB regression tests.
 
 Check the default HTTP mode at `http://meshpn.local/`: login, profiles, status and mDNS `_http._tcp:80`, no HTTPS listener or certificate API.
 Enable HTTPS via the admin checkbox, save and reboot; verify `_https._tcp:443` and HTTP redirects then.

@@ -35,4 +35,16 @@ if(CONFIG_BRIDGE_WIFI_PMF_DISABLE)
     message(FATAL_ERROR "Global PMF disable is incompatible with saved WPA3 profiles.")
 endif()
 
+if(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
+    string(LENGTH "${CONFIG_BRIDGE_SOFTAP_SSID}" ap_ssid_length)
+    string(LENGTH "${CONFIG_BRIDGE_SOFTAP_PASSWORD}" ap_password_length)
+    if(ap_ssid_length LESS 1 OR ap_ssid_length GREATER 32 OR
+       (CONFIG_BRIDGE_SOFTAP_SSID_END_WITH_THE_MAC AND ap_ssid_length GREATER 25))
+        message(FATAL_ERROR "SoftAP SSID must be 1..32 bytes, or at most 25 with MAC suffix.")
+    endif()
+    if(ap_password_length LESS 8 OR ap_password_length GREATER 63)
+        message(FATAL_ERROR "SoftAP requires a WPA2 password of 8..63 bytes; open AP is not supported.")
+    endif()
+endif()
+
 idf_build_set_property(COMPILE_OPTIONS "-I${CMAKE_SOURCE_DIR}/components/meshvpn_net/include" APPEND)

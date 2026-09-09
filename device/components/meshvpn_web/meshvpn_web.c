@@ -260,6 +260,12 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddStringToObject(net, "ap_ip", ns.ap_ip);
     cJSON_AddBoolToObject(net, "usb_napt", ns.usb_napt);
     cJSON_AddBoolToObject(net, "ap_napt", ns.ap_napt);
+    cJSON_AddBoolToObject(net, "ap_active", ns.ap_active);
+    cJSON_AddStringToObject(net, "ap_ssid", ns.ap_ssid);
+    cJSON_AddNumberToObject(net, "ap_clients", ns.ap_clients);
+    cJSON_AddNumberToObject(net, "ap_channel", ns.ap_channel);
+    cJSON_AddStringToObject(net, "ap_dhcps_dns", ns.ap_dhcps_dns);
+    cJSON_AddNumberToObject(net, "ap_ip4_rx", ns.ap_ip4_rx);
     cJSON_AddStringToObject(net, "default_ifkey", ns.default_ifkey);
     cJSON_AddStringToObject(net, "usb_dhcps_dns", ns.usb_dhcps_dns);
     cJSON_AddNumberToObject(net, "lan_ip4_rx", ns.lan_ip4_rx);

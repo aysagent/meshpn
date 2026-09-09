@@ -16,11 +16,13 @@
 #include "meshvpn_usb.h"
 #include "meshvpn_wifi.h"
 #include "meshvpn_lwip_hooks.h"
+#include "meshvpn_subnet.h"
+#include "esp_wifi.h"
 #include "sdkconfig.h"
 #include "mdns.h"
 #include "meshvpn_dns_proxy.h"
 
-#define MESHVPN_AP_SUBNET_OCTET_2 4
+#define MESHVPN_AP_SUBNET_OCTET_2 (CONFIG_MESHVPN_USB_SUBNET_OCTET_2 == 4 ? 3 : 4)
 
 static const char *TAG = "meshvpn_net";
 static bool s_bridge_running;
@@ -173,39 +175,43 @@ void meshvpn_net_refresh_lan_dhcp(void)
 #endif
 }
 
+static void meshvpn_net_resolve_lan_conflict(esp_netif_t *lan, esp_netif_t *other,
+                                           const esp_netif_ip_info_t *uplink)
+{
+    esp_netif_ip_info_t current, peer = {0};
+    if (!lan || esp_netif_get_ip_info(lan, &current) != ESP_OK) return;
+    if (other) esp_netif_get_ip_info(other, &peer);
+    if (!meshvpn_subnets_overlap(ntohl(current.ip.addr), ntohl(current.netmask.addr),
+                                 ntohl(uplink->ip.addr), ntohl(uplink->netmask.addr)) &&
+        (!peer.ip.addr || !meshvpn_subnets_overlap(ntohl(current.ip.addr), ntohl(current.netmask.addr),
+                                                  ntohl(peer.ip.addr), ntohl(peer.netmask.addr)))) return;
+    uint32_t selected;
+    if (!meshvpn_pick_lan_ip(ntohl(uplink->ip.addr), ntohl(uplink->netmask.addr),
+                            ntohl(peer.ip.addr), ntohl(peer.netmask.addr), &selected)) {
+        ESP_LOGE(TAG, "No non-conflicting subnet for %s", esp_netif_get_ifkey(lan));
+        return;
+    }
+    current.ip.addr = current.gw.addr = htonl(selected);
+    current.netmask.addr = htonl(0xffffff00u);
+    esp_netif_dhcps_stop(lan);
+    if (esp_netif_set_ip_info(lan, &current) != ESP_OK) {
+        ESP_LOGE(TAG, "Cannot change subnet on %s", esp_netif_get_ifkey(lan));
+        return; /* DHCP is restarted by the event handler below. */
+    }
+    ESP_LOGW(TAG, "%s subnet conflict: moved gateway to " IPSTR "; renew DHCP/reconnect client",
+             esp_netif_get_ifkey(lan), IP2STR(&current.ip));
+    if (lan == s_ap_netif) esp_wifi_deauth_sta(0);
+    if (lan == s_usb_netif && s_mdns) mdns_netif_action(lan, MDNS_EVENT_ANNOUNCE_IP4);
+}
+
 static void meshvpn_net_on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *ev = data;
         if (s_sta_netif && ev->esp_netif == s_sta_netif) {
             meshvpn_dns_clear_cache();
-            esp_netif_ip_info_t usb;
-            esp_netif_get_ip_info(s_usb_netif, &usb);
-            /* Test both masks: uplink may use a subnet wider than /24. */
-            uint32_t mask = usb.netmask.addr & ev->ip_info.netmask.addr;
-            if ((usb.ip.addr & mask) == (ev->ip_info.ip.addr & mask)) {
-                bool moved = false;
-                for (unsigned index = 0; index < 3 * 248; index++) {
-                    esp_netif_ip_info_t candidate;
-                    meshvpn_net_fill_ip(&candidate, 7 + index % 248);
-                    if (index >= 248) {
-                        candidate.ip.addr = index < 496 ?
-                            ESP_IP4TOADDR(10, 203, 7 + index % 248, 1) :
-                            ESP_IP4TOADDR(172, 31, 7 + index % 248, 1);
-                        candidate.gw.addr = candidate.ip.addr;
-                    }
-                    if ((candidate.ip.addr & mask) == (ev->ip_info.ip.addr & mask)) continue;
-                    esp_netif_dhcps_stop(s_usb_netif);
-                    if (esp_netif_set_ip_info(s_usb_netif, &candidate) == ESP_OK) {
-                        moved = true;
-                        ESP_LOGW(TAG, "USB subnet conflict: moved gateway to " IPSTR
-                                 "; renew host DHCP lease", IP2STR(&candidate.ip));
-                    }
-                    break;
-                }
-                if (!moved) ESP_LOGE(TAG, "No non-conflicting USB subnet found");
-                if (s_mdns) mdns_netif_action(s_usb_netif, MDNS_EVENT_ANNOUNCE_IP4);
-            }
+            meshvpn_net_resolve_lan_conflict(s_usb_netif, s_ap_netif, &ev->ip_info);
+            meshvpn_net_resolve_lan_conflict(s_ap_netif, s_usb_netif, &ev->ip_info);
             esp_netif_set_default_netif(s_sta_netif);
             ESP_LOGI(TAG, "STA default route set");
         }
@@ -255,14 +261,9 @@ esp_err_t meshvpn_net_init(void)
 esp_err_t meshvpn_net_start_bridge(void)
 {
     esp_netif_ip_info_t ip;
-
-#if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
-    meshvpn_net_fill_ip(&ip, MESHVPN_AP_SUBNET_OCTET_2);
-    s_ap_netif = esp_bridge_create_softap_netif(&ip, NULL, true, true);
-    if (!s_ap_netif) {
-        ESP_LOGE(TAG, "SoftAP netif creation failed");
-    }
-#endif
+    /* The dependency can log STA/AP passwords at INFO. Suppress before either
+     * interface is created. Our own logs include SSID, never the password. */
+    esp_log_level_set("bridge_wifi", ESP_LOG_WARN);
 
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_USB)
     /* lwIP USB gateway MAC: derived from ETH base, locally administered, and
@@ -276,6 +277,7 @@ esp_err_t meshvpn_net_start_bridge(void)
     s_usb_netif = esp_bridge_create_usb_netif(&ip, usb_lwip_mac, true, true);
     if (!s_usb_netif) {
         ESP_LOGE(TAG, "USB netif creation failed");
+        return ESP_FAIL;
     } else {
         ESP_LOGI(TAG, "USB lwIP MAC " MACSTR, MAC2STR(usb_lwip_mac));
         meshvpn_net_set_usb_interface(esp_netif_get_netif_impl(s_usb_netif));
@@ -285,9 +287,45 @@ esp_err_t meshvpn_net_start_bridge(void)
 #endif
 
 #if defined(CONFIG_BRIDGE_EXTERNAL_NETIF_STATION)
-    /* This dependency logs driver-owned passwords at INFO during creation. */
-    esp_log_level_set("bridge_wifi", ESP_LOG_WARN);
     s_sta_netif = esp_bridge_create_station_netif(NULL, NULL, false, false);
+    if (!s_sta_netif) return ESP_FAIL;
+#endif
+
+#if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
+    /* Configure before starting AP beacons: never expose a transient open AP.
+     * STA profile manager has not started connecting yet, so stopping the radio
+     * here does not interrupt an established uplink. */
+    esp_err_t err = esp_wifi_stop();
+    if (err != ESP_OK) return err;
+    meshvpn_net_fill_ip(&ip, MESHVPN_AP_SUBNET_OCTET_2);
+    s_ap_netif = esp_bridge_create_softap_netif(&ip, NULL, true, true);
+    if (!s_ap_netif) return ESP_FAIL;
+    meshvpn_net_set_ap_interface(esp_netif_get_netif_impl(s_ap_netif));
+    wifi_config_t cfg = {0};
+    char ssid[33];
+#if CONFIG_BRIDGE_SOFTAP_SSID_END_WITH_THE_MAC
+    uint8_t ap_mac[6];
+    err = esp_wifi_get_mac(WIFI_IF_AP, ap_mac);
+    if (err != ESP_OK) return err;
+    snprintf(ssid, sizeof(ssid), "%s_%02x%02x%02x", CONFIG_BRIDGE_SOFTAP_SSID,
+             ap_mac[3], ap_mac[4], ap_mac[5]);
+#else
+    snprintf(ssid, sizeof(ssid), "%s", CONFIG_BRIDGE_SOFTAP_SSID);
+#endif
+    cfg.ap.ssid_len = strlen(ssid);
+    memcpy(cfg.ap.ssid, ssid, cfg.ap.ssid_len);
+    memcpy(cfg.ap.password, CONFIG_BRIDGE_SOFTAP_PASSWORD, strlen(CONFIG_BRIDGE_SOFTAP_PASSWORD));
+    cfg.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    cfg.ap.pmf_cfg.capable = true;
+    cfg.ap.max_connection = CONFIG_BRIDGE_SOFTAP_MAX_CONNECT_NUMBER;
+    cfg.ap.channel = 1; /* STA association selects the shared channel later. */
+    err = esp_wifi_set_config(WIFI_IF_AP, &cfg);
+    memset(cfg.ap.password, 0, sizeof(cfg.ap.password));
+    if (err != ESP_OK) return err;
+    err = esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT40);
+    if (err != ESP_OK) return err;
+    ESP_LOGI(TAG, "SoftAP %s: WPA2, max %u clients; management remains USB-only",
+             ssid, (unsigned)CONFIG_BRIDGE_SOFTAP_MAX_CONNECT_NUMBER);
 #endif
 
     if (s_usb_netif) {
@@ -308,6 +346,11 @@ esp_err_t meshvpn_net_start_bridge(void)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_START, meshvpn_net_on_event, NULL));
 #endif
     ESP_ERROR_CHECK(esp_event_handler_register(BRIDGE_EVENT, BRIDGE_EVENT_ID_DNS_UPDATE, meshvpn_net_on_event, NULL));
+
+#if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
+    err = esp_wifi_start();
+    if (err != ESP_OK) return err;
+#endif
 
     return ESP_OK;
 }
@@ -349,8 +392,22 @@ void meshvpn_net_get_status(meshvpn_net_status_t *status)
 
     meshvpn_net_read_offered_dns(s_usb_netif, status->usb_dhcps_dns, sizeof(status->usb_dhcps_dns));
     status->lan_ip4_rx = meshvpn_net_lan_ip4_rx_count();
+    status->ap_ip4_rx = meshvpn_net_ap_ip4_rx_count();
+    meshvpn_net_read_offered_dns(s_ap_netif, status->ap_dhcps_dns, sizeof(status->ap_dhcps_dns));
 
     meshvpn_wifi_status_t ws;
     meshvpn_wifi_get_status(&ws);
     status->wifi_uplink = ws.sta_connected;
+    status->ap_active = ws.ap_active;
+#if CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP
+    wifi_config_t cfg;
+    if (s_ap_netif && esp_wifi_get_config(WIFI_IF_AP, &cfg) == ESP_OK) {
+        memcpy(status->ap_ssid, cfg.ap.ssid, sizeof(cfg.ap.ssid));
+        memset(cfg.ap.password, 0, sizeof(cfg.ap.password));
+    }
+    wifi_sta_list_t clients;
+    if (status->ap_active && esp_wifi_ap_get_sta_list(&clients) == ESP_OK) status->ap_clients = clients.num;
+    wifi_second_chan_t secondary;
+    if (status->ap_active) esp_wifi_get_channel(&status->ap_channel, &secondary);
+#endif
 }

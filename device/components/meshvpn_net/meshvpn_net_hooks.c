@@ -8,11 +8,15 @@
 #include "sdkconfig.h"
 
 static struct netif *s_usb;
+static struct netif *s_ap;
 static uint32_t s_lan_ip4_rx;
+static uint32_t s_ap_ip4_rx;
 static uint32_t s_denied;
 
 void meshvpn_net_set_usb_interface(struct netif *netif) { s_usb = netif; }
+void meshvpn_net_set_ap_interface(struct netif *netif) { s_ap = netif; }
 uint32_t meshvpn_net_lan_ip4_rx_count(void) { return s_lan_ip4_rx; }
+uint32_t meshvpn_net_ap_ip4_rx_count(void) { return s_ap_ip4_rx; }
 uint32_t meshvpn_net_denied_count(void) { return s_denied; }
 
 static int discard(struct pbuf *p)
@@ -32,6 +36,7 @@ int meshvpn_hook_ip4_input(struct pbuf *p, struct netif *inp)
         s_lan_ip4_rx++;
         return 0;
     }
+    if (inp == s_ap) s_ap_ip4_rx++;
     uint8_t h[60];
     if (pbuf_copy_partial(p, h, 20, 0) != 20 || (h[0] >> 4) != 4) return discard(p);
     unsigned ihl = (h[0] & 15) * 4;
@@ -56,6 +61,9 @@ int meshvpn_hook_ip4_input(struct pbuf *p, struct netif *inp)
     uint8_t ports[4];
     if (total < ihl + 4 || pbuf_copy_partial(p, ports, 4, ihl) != 4) return discard(p);
     unsigned dst = ((unsigned)ports[2] << 8) | ports[3];
+    /* Only AP's own gateway DNS is permitted. AP is not a trusted management
+     * interface: HTTP(S), mDNS and HTTPD control ports remain USB-only. */
+    if (inp == s_ap && dst == 53 && dest.addr == netif_ip4_addr(s_ap)->addr) return 0;
     if ((h[9] == 6 && (dst == 80 || dst == 443 || dst == 53)) ||
         (h[9] == 17 && (dst == 53 || dst == 5353 || dst == 32768 || dst == 32769)))
         return discard(p);

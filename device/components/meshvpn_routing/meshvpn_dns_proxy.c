@@ -305,7 +305,7 @@ esp_err_t meshvpn_dns_proxy_init(void)
             goto failed;
     }
     if (xTaskCreate(listener, "dns_listener", 3072, NULL, 5, NULL) != pdPASS) goto failed;
-    ESP_LOGI(TAG, "USB DNS: bounded UDP/TCP proxy, DHCP uplink resolver");
+    ESP_LOGI(TAG, "LAN DNS: bounded UDP/TCP proxy, DHCP uplink resolver (ingress-filtered)");
     return ESP_OK;
 failed:
     for (unsigned i = 0; i < DNS_WORKERS; i++) {

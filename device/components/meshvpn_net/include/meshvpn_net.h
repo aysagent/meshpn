@@ -21,20 +21,26 @@ typedef struct {
     char default_ifkey[16];
     char usb_dhcps_dns[16];
     uint32_t lan_ip4_rx;
+    uint32_t ap_ip4_rx;
+    bool ap_active;
+    char ap_ssid[33];
+    uint8_t ap_clients;
+    uint8_t ap_channel;
+    char ap_dhcps_dns[16];
 } meshvpn_net_status_t;
 
 esp_err_t meshvpn_net_init(void);
 
-/** Re-apply USB LAN DHCP (gateway DNS + captive portal URI). */
+/** Re-apply USB/AP LAN DHCP (gateway DNS, no captive portal). */
 void meshvpn_net_refresh_lan_dhcp(void);
 
 /**
- * Create bridge netifs: USB (192.168.7.1/24) and WiFi STA uplink. Also initialises
+ * Create USB (192.168.7.1/24), optional AP (192.168.4.1/24) and WiFi STA uplink. Initialises
  * the WiFi driver, so this must run before any esp_wifi_* configuration.
  */
 esp_err_t meshvpn_net_start_bridge(void);
 
-/** Re-apply NAT on the USB LAN interface. */
+/** Re-apply NAT independently on both USB and AP LANs. */
 void meshvpn_net_ensure_napt(void);
 
 void meshvpn_net_log_state(void);
