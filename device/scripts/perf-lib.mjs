@@ -54,7 +54,7 @@ export async function checked(bin,args,opts) {
   return r.stdout;
 }
 export function iperfArgs(server,port,path,test) {
-  return ['-4','-c',server,'-p',String(port),'-B',path.address,'--bind-dev',path.iface,
+  return ['-4','-c',server,'-p',String(port),'-B',path.address,
     '-t',String(test.seconds),'-J','--get-server-output','--connect-timeout','8000',
     ...(test.direction==='down'?['-R']:[]),...(test.protocol==='udp'?['-u','-b',`${test.rate}M`,'-l','1200']:[])];
 }

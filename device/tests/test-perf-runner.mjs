@@ -7,10 +7,12 @@ import { spawn } from 'node:child_process';
 import http from 'node:http';
 import net from 'node:net';
 import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, quote, command, iperfArgs, parseIperf, stats, parsePing, summarize,
   measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer } from '../scripts/perf-lib.mjs';
 import { discoverBoard, checkRoute, requestBoard, sshArgs } from '../scripts/perf-network.mjs';
+import { prepareIperfBinding, iperfEnvironment, verifyIperfBinding, iperfError } from '../scripts/perf-bind.mjs';
 import { executeSchedule, cleanStatus, telemetrySummary, reportMarkdown, main } from '../scripts/perf-runner.mjs';
 
 const paths=[{kind:'usb',iface:'en7',address:'192.168.7.2',gateway:'192.168.7.1'},
@@ -50,9 +52,45 @@ test('shell quoting and subprocess timeout/cancellation preserve diagnostics',as
 
 test('interface binding, direction and UDP packet size are explicit',()=>{
   const args=iperfArgs('1.2.3.4',5202,paths[1],{seconds:30,protocol:'udp',direction:'down',rate:10});
-  for(const flag of ['-4','-R','--get-server-output','-J','--bind-dev','-B'])assert.ok(args.includes(flag));
-  assert.equal(args[args.indexOf('--bind-dev')+1],'en0');assert.equal(args[args.indexOf('-B')+1],paths[1].address);
+  for(const flag of ['-4','-R','--get-server-output','-J','-B'])assert.ok(args.includes(flag));
+  assert.ok(!args.includes('--bind-dev'));assert.equal(args[args.indexOf('-B')+1],paths[1].address);
   assert.equal(args[args.indexOf('-l')+1],'1200');assert.equal(args[args.indexOf('-b')+1],'10M');
+});
+
+test('macOS helper build, process-only environment and binding evidence fail closed',async()=>{
+  const calls=[];
+  const library=await prepareIperfBinding('/tmp/results with spaces',undefined,{run:async(bin,args)=>{
+    calls.push({bin,args});return calls.length===1?'/toolchain/clang\n':'';
+  }});
+  assert.equal(calls[0].bin,'/usr/bin/xcrun');assert.equal(calls[1].bin,'/toolchain/clang');
+  assert.ok(calls[1].args.includes('-dynamiclib'));assert.ok(calls[1].args.includes('arm64'));
+  assert.ok(calls[1].args.includes('x86_64'));assert.equal(calls[1].args.at(-1),library);
+  const original=process.env.DYLD_INSERT_LIBRARIES;
+  assert.equal(iperfEnvironment(library,'en13').DYLD_INSERT_LIBRARIES,library);
+  assert.equal(iperfEnvironment(library,'en0').MESHPN_IPERF_IFACE,'en0');
+  assert.equal(process.env.DYLD_INSERT_LIBRARIES,original);
+  assert.throws(()=>iperfEnvironment(library,'bad\niface'));
+  verifyIperfBinding('MESHPN_BOUND_IF=en13\n','en13');
+  assert.throws(()=>verifyIperfBinding('MESHPN_BOUND_IF=en0\n','en13'),/unverified/);
+  assert.throws(()=>verifyIperfBinding('','en13'),/unverified/);
+  assert.equal(iperfError({stdout:'{"error":"connection refused"}',stderr:'MESHPN_BOUND_IF=en13\n'}),'connection refused');
+  await assert.rejects(prepareIperfBinding('/tmp/with:colon'),/colon/);
+  await assert.rejects(prepareIperfBinding('/tmp/results',undefined,{run:async()=>{throw Error('missing');}}),/xcode-select --install/);
+});
+
+test('native macOS dyld binds both TCP and UDP sockets without sending traffic',
+  {skip:process.platform!=='darwin'},async()=>{
+    const dir=await mkdtemp(path.join(tmpdir(),'meshpn-native-bind-'));
+    try {
+      const library=await prepareIperfBinding(dir);
+      const probe=path.join(dir,'probe');
+      const built=await command('/usr/bin/xcrun',['clang','-Wall','-Wextra','-Werror',
+        fileURLToPath(new URL('./perf_bind_darwin_probe.c',import.meta.url)),'-o',probe]);
+      assert.equal(built.code,0,built.stderr);
+      const env={...process.env,DYLD_INSERT_LIBRARIES:library,MESHPN_IPERF_IFACE:'lo0'};
+      const raw=await command(probe,[],{env});
+      assert.equal(raw.code,0,raw.stderr);verifyIperfBinding(raw.stderr,'lo0');
+    }finally{await rm(dir,{recursive:true,force:true});}
 });
 
 test('throughput uses receiver, old UDP server JSON fallback, missing data is not zero',()=>{
@@ -230,7 +268,8 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
   const portsSeen=new Set(),signalsBefore=process.listenerCount('SIGINT');
   let ticks=0;
   const dependencies={platform:'darwin',log:()=>{},lookup:async()=>({address:'1.2.3.4'}),delay:async()=>{},
-    checked:async(bin,args)=>bin==='iperf3'?(args.includes('--help')?'--bind-dev':'iperf3 test'):'test',
+    prepareIperfBinding:async()=>'/tmp/test-bind.dylib',
+    checked:async(bin)=>bin==='iperf3'?'iperf3 test':'test',
     discoverBoard:async()=>({paths,initial:fixture(),status:async()=>{const f=fixture();f.uptime_sec+=ticks++;f.cpu.sampled_us+=ticks*2000000;return f;}}),
     checkRoute:async()=> 'validated test route',spawn:()=>({on(){},kill(){}}),
     startServers:async()=>({ports:[5201,5202],assertAlive(){},async close(){closes++;}}),
@@ -240,7 +279,8 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
       assert.equal(bin,'iperf3');portsSeen.add(args[args.indexOf('-p')+1]);
       if(fail==='interrupt'){process.emit('SIGINT');throw Error('Interrupted');}
       return fail?{code:1,stdout:'{"error":"test server busy"}',stderr:''}:
-        {code:0,stdout:iperfJSON(args[args.indexOf('-B')+1],args.includes('-u')),stderr:''};
+        {code:0,stdout:iperfJSON(args[args.indexOf('-B')+1],args.includes('-u')),
+          stderr:`MESHPN_BOUND_IF=${paths.find(p=>p.address===args[args.indexOf('-B')+1]).iface}\n`};
     }};
   try {
     assert.equal(await main(['user@server:2222','--quick','--out',parent],dependencies),0);
@@ -281,6 +321,17 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
     assert.deepEqual(missingPath.discovery,discovery);
     assert.equal(missingPath.records.length,0);
     assert.ok(!JSON.stringify(missingPath).includes('DO_NOT_SAVE'));
+    fail=false;
+    assert.equal(await main(['server','--quick','--out',parent],{...dependencies,command:async(bin,args,opts)=>{
+      const raw=await dependencies.command(bin,args,opts);
+      if(bin==='iperf3') {
+        assert.equal(opts.env.DYLD_INSERT_LIBRARIES,'/tmp/test-bind.dylib');
+        assert.equal(opts.env.MESHPN_IPERF_IFACE,'en7');
+        raw.stderr=''; // A successful but unbound client must never pass preflight.
+      }
+      return raw;
+    }}),1);
+    assert.equal(closes,4);
     assert.equal(process.listenerCount('SIGINT'),signalsBefore);
   }finally{await rm(parent,{recursive:true,force:true});}
 });

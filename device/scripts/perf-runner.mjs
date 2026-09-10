@@ -9,13 +9,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, checked, command, iperfArgs, parseIperf, parsePing, stats,
   summarize, measurementPlan, counterDelta } from './perf-lib.mjs';
 import { discoverBoard, checkRoute, sshArgs, startServers } from './perf-network.mjs';
+import { prepareIperfBinding, iperfEnvironment, verifyIperfBinding, iperfError } from './perf-bind.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const help=`Usage: npm run device:perf -- [user@]SERVER[:SSH_PORT] [options]
 
 macOS runner; connect USB and Mac Wi-Fi to the board AP before starting.
 SSH must already work with a key/agent and a verified known_hosts entry.
-Required: local/remote iperf3, remote python3. Nothing is installed automatically.
+Required: local/remote iperf3, remote python3, Apple Command Line Tools. Nothing is installed automatically.
 
   --quick                 Smoke test: 3s, 2 measured repeats, no soak
   --paths auto|usb|ap|both Auto detects paths; 'both' requires USB + AP
@@ -137,7 +138,7 @@ export function reportMarkdown(result) {
 }
 
 export async function main(args=process.argv.slice(2), dependencies={}) {
-  const runtime={platform:process.platform,command,checked,lookup,discoverBoard,checkRoute,startServers,spawn,delay,...dependencies};
+  const runtime={platform:process.platform,command,checked,lookup,discoverBoard,checkRoute,startServers,prepareIperfBinding,spawn,delay,...dependencies};
   const o=parseArgs(args);
   if(o.help){console.log(help);return 0;}
   if(runtime.platform!=='darwin')throw Error('This runner currently supports macOS hosts (USB + Wi-Fi interface-scoped routes). The SSH server may run Linux or macOS.');
@@ -159,8 +160,8 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     let localVersion;
     try {localVersion=await runtime.checked('iperf3',['--version'],{signal});}
     catch{throw Error('Local iperf3 missing/not runnable. Install on Mac: brew install iperf3');}
-    const iperfHelp=await runtime.checked('iperf3',['--help'],{signal});
-    if(!iperfHelp.includes('--bind-dev'))throw Error('Local iperf3 is too old: brew upgrade iperf3 (--bind-dev required)');
+    const binding=await runtime.prepareIperfBinding(output,signal);
+    result.binding='macOS IP_BOUND_IF (process-local socket helper)';
     const remoteCheck="command -v iperf3 >/dev/null || { echo 'MISSING_IPERF3' >&2; exit 41; }; command -v python3 >/dev/null || { echo 'MISSING_PYTHON3' >&2; exit 42; }; iperf3 --version; python3 --version";
     const remote=await runtime.command('ssh',[...sshArgs(o),remoteCheck],{signal,timeout:20000});
     if(remote.code!==0)throw Error(`SSH prerequisites failed: ${remote.stderr.trim()}. Server Debian/Ubuntu: sudo apt-get install iperf3 python3; Fedora: sudo dnf install iperf3 python3; macOS: brew install iperf3 python. SSH must work without prompts; first verify its host key using ssh -p ${o.sshPort} ${o.sshTarget}.`);
@@ -222,10 +223,12 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
           try {
             const args=iperfArgs(result.serverIP,servers.ports[board.paths.indexOf(p)],p,test);
             r.command=['iperf3',...args];
-            raw=await runtime.command('iperf3',args,{signal,timeout:(test.seconds+20)*1000});
+            raw=await runtime.command('iperf3',args,{signal,timeout:(test.seconds+20)*1000,
+              env:iperfEnvironment(binding,p.iface)});
             await writeFile(path.join(output,`${id}-${p.kind}.iperf.json`),raw.stdout);
             await writeFile(path.join(output,`${id}-${p.kind}.stderr.txt`),raw.stderr);
-            if(raw.code!==0)throw Error(`iperf3 exited ${raw.code}: ${raw.stderr.trim()||JSON.parse(raw.stdout).error||'see raw JSON'}`);
+            if(raw.code!==0)throw Error(`iperf3 exited ${raw.code}: ${iperfError(raw)}`);
+            verifyIperfBinding(raw.stderr,p.iface);
             Object.assign(r,parseIperf(raw.stdout,test.protocol));
             if(r.local_address!==p.address)throw Error(`Unexpected source ${r.local_address}; expected ${p.address}`);
             await runtime.checkRoute(p,result.serverIP,signal);
