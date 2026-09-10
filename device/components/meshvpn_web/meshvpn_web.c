@@ -38,6 +38,9 @@
 static const char *TAG = "meshvpn_web";
 static httpd_handle_t s_server, s_redirect;
 static bool s_https, s_https_configured;
+static uint32_t s_cpu_idle_prev[CONFIG_FREERTOS_NUMBER_OF_CORES];
+static int64_t s_cpu_sample_prev_us;
+static bool s_cpu_sample_valid;
 bool meshvpn_web_https_enabled(void) { return s_https; }
 static char s_session_token[33];
 static int64_t s_session_created, s_session_used, s_login_after;
@@ -219,13 +222,26 @@ static void add_telemetry(cJSON *root)
 #if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
     cJSON *cpu = cJSON_AddObjectToObject(root, "cpu");
     cJSON *cores = cJSON_AddArrayToObject(cpu, "cores");
+    int64_t now_us = esp_timer_get_time();
+    int64_t elapsed_us = s_cpu_sample_valid ? now_us - s_cpu_sample_prev_us : 0;
     for (int core = 0; core < CONFIG_FREERTOS_NUMBER_OF_CORES; ++core) {
         cJSON *item = cJSON_CreateObject();
         cJSON_AddNumberToObject(item, "id", core);
-        cJSON_AddNumberToObject(item, "load_pct",
-                                100 - ulTaskGetIdleRunTimePercentForCore(core));
+        uint32_t idle_now = (uint32_t)ulTaskGetIdleRunTimeCounterForCore(core);
+        if (elapsed_us > 0) {
+            uint32_t idle_delta = idle_now - s_cpu_idle_prev[core];
+            double idle_pct = (double)idle_delta * 100.0 / (double)elapsed_us;
+            if (idle_pct < 0) idle_pct = 0;
+            if (idle_pct > 100) idle_pct = 100;
+            cJSON_AddNumberToObject(item, "load_pct", 100.0 - idle_pct);
+        } else {
+            cJSON_AddNullToObject(item, "load_pct");
+        }
+        s_cpu_idle_prev[core] = idle_now;
         cJSON_AddItemToArray(cores, item);
     }
+    s_cpu_sample_prev_us = now_us;
+    s_cpu_sample_valid = true;
 
     UBaseType_t task_count = uxTaskGetNumberOfTasks();
     TaskStatus_t *tasks = heap_caps_calloc(task_count ? task_count : 1,
