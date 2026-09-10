@@ -16,7 +16,7 @@ No VPN or policy routing is active yet. Throughput has not been measured on hard
 5. USB admin status shows `net.ap_active`, `ap_ssid`, `ap_channel`, `ap_clients`, `ap_napt`, `ap_dhcps_dns`, `ap_ip4_rx`.
    Both `ap_napt` and `usb_napt` should be true once the interfaces are up. Passwords are not returned in status/logs.
 
-The admin and mDNS remain **USB-only**. From AP, only its gateway's DNS service is allowed alongside DHCP and routed internet.
+The admin is available on USB and the dongle's own SoftAP gateway; it remains blocked from the upstream STA/home WiFi. mDNS remains USB-only for now. From AP, the gateway DNS service and HTTP(S) admin are allowed alongside DHCP and routed internet.
 This does not provide full guest/client isolation: routed access to the home LAN or USB hosts is not blocked by a general guest firewall.
 Keep the known test password confined to testing or change it in the build configuration.
 

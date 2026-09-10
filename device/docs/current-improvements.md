@@ -8,7 +8,7 @@ USB compatibility expansion and VPN/WireGuard implementation are deferred.
 
 - Concurrent STA + WPA2 SoftAP + USB NCM: AP/USB have independent DHCP subnets and share the STA IPv4 NAT uplink.
   AP defaults: `MeshPN_XXXXXX`, test password `meshpn-test`, four clients, 192.168.4.1/24.
-  Management/mDNS remain USB-only; AP may use its own gateway DNS, STA cannot use either LAN's DNS.
+  Management is available on USB and the device's own SoftAP; upstream STA cannot reach it. mDNS remains USB-only; AP may use its own gateway DNS.
   Radio is stopped while initial AP credentials are configured; no transient open AP is intentionally started.
   Status adds AP SSID, active channel, client count, NAT, DNS and ingress counter. See [benchmark procedure](apsta-benchmark.md).
 - Up to 16 versioned NVS WiFi profiles, migration from the old single network, secret-free saved-network list,
@@ -21,7 +21,7 @@ USB compatibility expansion and VPN/WireGuard implementation are deferred.
   `CONFIG_MESHVPN_WEB_HTTPS=n` sets the initial/factory-reset default. Status distinguishes active and saved modes and provides the next URL.
   HTTP boot serves the admin on port 80 without TLS identity initialization; certificate APIs reject HTTP requests and credentials are unencrypted.
   Enabling from HTTP preflights the identity before saving; disabling preserves it. No silent HTTP fallback on HTTPS boot failure.
-  HTTPS mode provides a persistent per-device EC identity, certificate import and HTTP redirect. Both retain USB-only mDNS/ingress filtering; IPv6 is disabled.
+  HTTPS mode provides a persistent per-device EC identity, certificate import and HTTP redirect. Ingress filtering permits USB/AP management but blocks upstream STA; mDNS remains USB-only and IPv6 is disabled.
 - Non-empty expiring sessions, logout/password-change revocation, login throttling and bounded request parsing.
   `CONFIG_MESHVPN_WEB_REQUIRE_PASSWORD_CHANGE` defaults to **n** for testing. Set it to **y** to require changing the configured initial password before configuration mutations.
 - UDP/TCP DNS proxy with response correlation, uplink resolver, TCP fallback and bounded positive TTL cache.
@@ -44,7 +44,7 @@ Tests cover DNS name/bounds/compression/TTL handling, binary-search boundaries, 
 actual ingress hook with chained pbufs/fragments, session validation, UI JavaScript syntax, DOM references and HTTP/HTTPS status rendering,
 TLS identity persistence, matching-key validation and personal-CA certificate import; NVS HTTPS defaults/overrides/error propagation,
 checkbox changes surviving status polling, save/reboot confirmation, failed saves and both mode transitions in the UI mock.
-AP regression tests cover DHCP/NAT/DNS ingress permissions, USB-only management, changed AP addresses,
+AP regression tests cover DHCP/NAT/DNS ingress permissions, USB/AP management, changed AP addresses,
 LAN selection against /24, /16 and /8 uplinks, and AP status rendering.
 The TLS test uses an in-memory NVS stub, not actual flash/power-loss tests.
 
