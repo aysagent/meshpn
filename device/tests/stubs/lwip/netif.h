@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 typedef struct { uint32_t addr; } ip4_addr_t;
-struct netif { struct netif *next; ip4_addr_t ip; };
+struct netif { struct netif *next; ip4_addr_t ip; char name[2]; };
 extern struct netif *netif_list;
 #define NETIF_FOREACH(n) for ((n)=netif_list; (n); (n)=(n)->next)
 #define netif_ip4_addr(n) (&(n)->ip)

@@ -55,6 +55,11 @@ TLS identity persistence, matching-key validation and personal-CA certificate im
 checkbox changes surviving status polling, save/reboot confirmation, failed saves and both mode transitions in the UI mock.
 AP regression tests cover DHCP/NAT/DNS ingress permissions, USB/AP management, changed AP addresses,
 LAN selection against /24, /16 and /8 uplinks, and AP status rendering.
+Loopback regression tests permit HTTPD's internal UDP control traffic on 32768/32769
+while rejecting the same traffic from STA/AP, including spoofed 127.0.0.1 sources.
+The exemption uses lwIP's stack-owned `lo` input interface, not packet IP addresses.
+Previously these internal messages were dropped, preventing HTTPD LRU session closure
+when its client slots filled. This firmware fix requires reflashing, not an NVS reset.
 The TLS test uses an in-memory NVS stub, not actual flash/power-loss tests.
 CPU tests exercise the actual sampler with an invalid task-name pointer, new task
 IDs, long uptime, multiple readers, missing/stale samples and runtime stats disabled.
@@ -74,6 +79,10 @@ The previously flashed board's resolved dependency versions are unknown; preserv
 First run the [AP/STA/USB acceptance and comparison](apsta-benchmark.md). These checks supplement, not replace, USB regression tests.
 
 Check the default HTTP mode at `http://meshpn.local/`: login, profiles, status and mDNS `_http._tcp:80`, no HTTPS listener or certificate API.
+After the loopback fix, verify repeated/concurrent HTTP connections from USB and AP
+(including more than three client connections) do not leave new requests waiting
+without a response. Recheck internet access separately; host tests do not prove that
+the reported loss of forwarding had the same cause.
 Enable HTTPS via the admin checkbox, save and reboot; verify `_https._tcp:443` and HTTP redirects then.
 Confirm the active mode remains unchanged before reboot, changes survive reboot, disabling returns to HTTP, and cancelling a pending change needs no reboot.
 Check the checkbox is not overwritten by status polling. Simulate identity/storage failures and verify error reporting and BOOT recovery.

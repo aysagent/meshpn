@@ -36,6 +36,11 @@ int meshvpn_hook_ip4_input(struct pbuf *p, struct netif *inp)
         s_lan_ip4_rx++;
         return 0;
     }
+    /* lwIP names its internal loopback netif "lo" (netif_loopif_init).
+     * HTTPD uses it for UDP control messages, including LRU session closure.
+     * Trust the input interface's stack-owned identity, never a packet's
+     * 127/8 source/destination: STA/AP packets to control ports stay blocked. */
+    if (inp->name[0] == 'l' && inp->name[1] == 'o') return 0;
     if (inp == s_ap) s_ap_ip4_rx++;
     uint8_t h[60];
     if (pbuf_copy_partial(p, h, 20, 0) != 20 || (h[0] >> 4) != 4) return discard(p);

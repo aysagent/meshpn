@@ -30,9 +30,10 @@ uint16_t pbuf_copy_partial(const struct pbuf *p,void *out,uint16_t len,uint16_t 
     return copied;
 }
 void pbuf_free(struct pbuf *p){(void)p;freed++;}
-static void check(struct netif *input,uint32_t dest,int proto,int port,int fragment,bool deny)
+static void check_from(struct netif *input,uint32_t source,uint32_t dest,int proto,int port,int fragment,bool deny)
 {
     uint8_t packet[40]={0x45,0,0,40};
+    memcpy(packet+12,&source,4);
     packet[9]=proto;memcpy(packet+16,&dest,4);
     packet[6]=fragment>>8;packet[7]=fragment;
     packet[22]=port>>8;packet[23]=port;
@@ -43,11 +44,32 @@ static void check(struct netif *input,uint32_t dest,int proto,int port,int fragm
     assert(!!meshvpn_hook_ip4_input(&first,input)==deny);
     assert(freed==(deny?1:0));
 }
+static void check(struct netif *input,uint32_t dest,int proto,int port,int fragment,bool deny)
+{
+    check_from(input,ip(192,168,1,2),dest,proto,port,fragment,deny);
+}
 int main(void)
 {
-    struct netif usb={.ip={ip(192,168,7,1)}},sta={.ip={ip(192,168,1,80)}},ap={.ip={ip(192,168,4,1)}};
-    usb.next=&sta;sta.next=&ap;netif_list=&usb;meshvpn_net_set_usb_interface(&usb);
+    struct netif usb={.ip={ip(192,168,7,1)},.name={'u','s'}},
+        sta={.ip={ip(192,168,1,80)},.name={'s','t'}},
+        ap={.ip={ip(192,168,4,1)},.name={'a','p'}},
+        loop={.ip={ip(127,0,0,1)},.name={'l','o'}};
+    usb.next=&sta;sta.next=&ap;ap.next=&loop;netif_list=&usb;meshvpn_net_set_usb_interface(&usb);
     meshvpn_net_set_ap_interface(&ap);
+    /* HTTPD closes LRU sessions via UDP messages to its own loopback socket.
+     * Losing these messages can leave TCP connections queued with no HTTP reply. */
+    for (int port=32768;port<=32769;port++) {
+        uint32_t denied=meshvpn_net_denied_count();
+        check_from(&loop,loop.ip.addr,loop.ip.addr,17,port,0,false);
+        assert(meshvpn_net_denied_count()==denied);
+        /* A 127.0.0.1 source/destination in an external packet is not loopback. */
+        check_from(&sta,loop.ip.addr,loop.ip.addr,17,port,0,true);
+        check_from(&ap,loop.ip.addr,loop.ip.addr,17,port,0,true);
+        check_from(&sta,loop.ip.addr,sta.ip.addr,17,port,0,true);
+        check_from(&ap,loop.ip.addr,ap.ip.addr,17,port,0,true);
+    }
+    check(&loop,loop.ip.addr,6,80,0,false);
+    check(&loop,loop.ip.addr,6,443,0,false);
     check(&usb,usb.ip.addr,6,443,0,false);
     check(&sta,sta.ip.addr,6,443,0,true);
     check(&sta,usb.ip.addr,6,80,0,true); /* WiFi routing to USB address */
