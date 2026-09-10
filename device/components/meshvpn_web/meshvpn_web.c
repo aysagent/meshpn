@@ -62,14 +62,19 @@ static void headers(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Referrer-Policy", "no-referrer");
 }
 /* Defense in depth; the lwIP ingress hook enforces interface identity even
- * when a WiFi peer routes to the USB destination IP. */
+ * when a WiFi peer routes to a LAN destination. USB and our own AP are trusted
+ * management interfaces; the upstream STA interface is not. */
 static bool local_socket(httpd_req_t *req)
 {
     struct sockaddr_in local; socklen_t len = sizeof(local);
-    esp_netif_ip_info_t usb;
-    return meshvpn_net_usb() && esp_netif_get_ip_info(meshvpn_net_usb(), &usb) == ESP_OK &&
-        getsockname(httpd_req_to_sockfd(req), (struct sockaddr *)&local, &len) == 0 &&
-        local.sin_family == AF_INET && local.sin_addr.s_addr == usb.ip.addr;
+    if (getsockname(httpd_req_to_sockfd(req), (struct sockaddr *)&local, &len) != 0 ||
+        local.sin_family != AF_INET) return false;
+    esp_netif_ip_info_t info;
+    if (meshvpn_net_usb() && esp_netif_get_ip_info(meshvpn_net_usb(), &info) == ESP_OK &&
+        local.sin_addr.s_addr == info.ip.addr) return true;
+    if (meshvpn_net_ap() && esp_netif_get_ip_info(meshvpn_net_ap(), &info) == ESP_OK &&
+        local.sin_addr.s_addr == info.ip.addr) return true;
+    return false;
 }
 static bool password_change_required(void)
 {
@@ -84,7 +89,7 @@ static bool password_change_required(void)
 static esp_err_t meshvpn_web_require_auth(httpd_req_t *req)
 {
     headers(req);
-    if (!local_socket(req)) return error(req, "403 Forbidden", "USB management only");
+    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP management only");
     char auth[64];
     int64_t now = esp_timer_get_time();
     if (httpd_req_get_hdr_value_str(req, "Authorization", auth, sizeof(auth)) != ESP_OK ||

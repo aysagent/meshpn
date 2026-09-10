@@ -34,6 +34,7 @@ static bool s_ap_napt;
 static bool s_mdns;
 
 esp_netif_t *meshvpn_net_usb(void) { return s_usb_netif; }
+esp_netif_t *meshvpn_net_ap(void) { return s_ap_netif; }
 
 esp_err_t meshvpn_net_start_mdns(bool https_enabled)
 {

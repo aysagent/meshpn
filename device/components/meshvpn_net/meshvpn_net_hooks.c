@@ -61,9 +61,11 @@ int meshvpn_hook_ip4_input(struct pbuf *p, struct netif *inp)
     uint8_t ports[4];
     if (total < ihl + 4 || pbuf_copy_partial(p, ports, 4, ihl) != 4) return discard(p);
     unsigned dst = ((unsigned)ports[2] << 8) | ports[3];
-    /* Only AP's own gateway DNS is permitted. AP is not a trusted management
-     * interface: HTTP(S), mDNS and HTTPD control ports remain USB-only. */
+    /* AP clients may use the gateway DNS and admin HTTP(S). The STA uplink
+     * remains blocked from all local management services. */
     if (inp == s_ap && dst == 53 && dest.addr == netif_ip4_addr(s_ap)->addr) return 0;
+    if (inp == s_ap && (dst == 80 || dst == 443) &&
+        dest.addr == netif_ip4_addr(s_ap)->addr) return 0;
     if ((h[9] == 6 && (dst == 80 || dst == 443 || dst == 53)) ||
         (h[9] == 17 && (dst == 53 || dst == 5353 || dst == 32768 || dst == 32769)))
         return discard(p);

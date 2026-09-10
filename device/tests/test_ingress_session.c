@@ -62,11 +62,13 @@ int main(void)
     check(&sta,ip(192,168,7,2),6,443,0,false); /* forwarded host destination */
     check(&ap,ap.ip.addr,17,53,0,false);
     check(&ap,ap.ip.addr,6,53,0,false);
+    check(&ap,ap.ip.addr,6,80,0,false); /* AP clients may open HTTP admin */
+    check(&ap,ap.ip.addr,6,443,0,false); /* AP clients may open HTTPS admin */
     check(&ap,ap.ip.addr,17,53,0x2000,false); /* fragmented DNS first packet */
     check(&ap,usb.ip.addr,17,53,0,true); /* AP DNS exception limited to AP gateway */
     check(&sta,ap.ip.addr,17,53,0,true); /* uplink cannot route to AP DNS */
     check(&sta,ap.ip.addr,6,53,0,true);
-    check(&ap,ap.ip.addr,6,443,0,true);
+    check(&sta,ap.ip.addr,6,443,0,true); /* STA uplink remains denied */
     check(&ap,usb.ip.addr,6,80,0,true);
     check(&ap,sta.ip.addr,6,443,0,true);
     check(&ap,ip(224,0,0,251),17,5353,0,true);
