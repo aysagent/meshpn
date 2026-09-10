@@ -141,6 +141,17 @@ baseline performance testing. Return to `npm run device:flash` for the normal bu
 keep diagnostic settings out of the normal profile. NVS settings are not erased by either command.
 Host utility tests: `npm run device:diag:test`. Actual CDC/NCM coexistence still requires hardware validation.
 
+If diagnostics report `start/server-error` / `ESP_ERR_HTTPD_TASK`, the HTTP task could not
+be created. In the reported `ecffbaf` boot the largest internal heap block was 11264 bytes,
+smaller than the 12288-byte admin stack. ESP-IDF 5.4.1 can leave the listening socket open
+on this failure, so TCP connects while HTTP receives no response. Resetting NVS is not a remedy.
+CPU snapshot buffers now explicitly use PSRAM (no internal fallback on PSRAM boards), and
+the optional sampler starts after the server. HTTP/TLS stacks remain internal and unchanged.
+After flashing, check `/login` from USB and AP, then login, WiFi scan/save and `/api/status`
+CPU updates. In diagnostics, expect `web.stage=ready` (or a later request stage) and no
+server-start error. Repeat on a normal build before performance measurements; HTTPS still
+needs a separate on-device check if enabled.
+
 ```bash
 bash device/scripts/test-host.sh
 ```

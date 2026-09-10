@@ -80,7 +80,7 @@ void app_main(void)
 
     ESP_ERROR_CHECK(meshvpn_wifi_start_manager());
     if (meshvpn_web_start() != ESP_OK) {
-        ESP_LOGE(TAG, "Web admin unavailable; hold BOOT 5s to reset configuration and identity");
+        ESP_LOGE(TAG, "Web admin unavailable; inspect startup error with USB diagnostics or UART (no automatic config reset)");
     } else if (meshvpn_net_start_mdns(meshvpn_web_https_enabled()) != ESP_OK) {
         ESP_LOGW(TAG, "mDNS unavailable; use USB gateway IP");
     }

@@ -2,8 +2,17 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <setjmp.h>
 #include "../components/meshvpn_web/meshvpn_cpu.c"
 
+static unsigned alloc_calls, fail_allocation;
+static jmp_buf task_deleted;
+void *heap_caps_calloc(size_t count, size_t size, uint32_t caps)
+{
+    assert(caps == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (++alloc_calls == fail_allocation) return NULL;
+    return calloc(count, size);
+}
 static int64_t now = 7200000000LL;
 static unsigned calls, task_count = 4;
 static TaskStatus_t fixture[4];
@@ -20,7 +29,7 @@ unsigned uxTaskGetSystemState(TaskStatus_t *out, unsigned capacity, uint64_t *to
 }
 unsigned xTaskGetTickCount(void) { return 0; }
 void vTaskDelayUntil(TickType_t *w, TickType_t t) { (void)w;(void)t;assert(0); }
-void vTaskDelete(TaskHandle_t t) { (void)t;assert(0); }
+void vTaskDelete(TaskHandle_t t) { assert(t == NULL);longjmp(task_deleted, 1); }
 int xTaskCreate(void (*f)(void *), const char *n, unsigned s, void *a, unsigned p, TaskHandle_t *h)
 { (void)f;(void)n;(void)s;(void)a;(void)p;(void)h;return pdPASS; }
 SemaphoreHandle_t xSemaphoreCreateMutex(void) { return (void *)1; }
@@ -33,6 +42,16 @@ int main(void)
 {
     meshvpn_cpu_start();
 #if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+#if CONFIG_SPIRAM
+    /* Every sampler allocation must use PSRAM; partial failure releases the
+     * others and exits without falling back to scarce internal memory. */
+    for (fail_allocation = 1; fail_allocation <= 3; fail_allocation++) {
+        alloc_calls = 0;
+        if (!setjmp(task_deleted)) { sampler(NULL); assert(0); }
+        assert(alloc_calls == 3);
+    }
+    fail_allocation = 0;
+#endif
     TaskStatus_t raw[MAX_TASKS];
     sample_t prev = {0}, next = {0};
     for (unsigned i=0;i<4;i++) fixture[i]=(TaskStatus_t){.xHandle=(void *)(uintptr_t)(i+1),
@@ -58,6 +77,12 @@ int main(void)
     assert(get(get(a,"cpu"),"sampled_us")->valuedouble==get(get(b,"cpu"),"sampled_us")->valuedouble);
     assert(get(get(b,"cpu"),"interval_ms")->valuedouble==2000);
     cJSON_Delete(a);cJSON_Delete(b);
+#if CONFIG_SPIRAM
+    fail_allocation = alloc_calls + 1;
+    a=cJSON_CreateObject();meshvpn_cpu_json(a);
+    assert(cJSON_IsFalse(get(get(a,"cpu"),"available")));
+    cJSON_Delete(a);fail_allocation=0;
+#endif
     now+=11000000;
     a=cJSON_CreateObject();meshvpn_cpu_json(a);
     assert(cJSON_IsFalse(get(get(a,"cpu"),"available")));

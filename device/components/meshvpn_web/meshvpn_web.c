@@ -691,8 +691,6 @@ static esp_err_t handler_redirect(httpd_req_t *req)
 esp_err_t meshvpn_web_start(void)
 {
     if (s_server) return ESP_ERR_INVALID_STATE;
-    diag_stage("start/cpu-sampler");
-    meshvpn_cpu_start();
     diag_stage("start/load-https-mode");
     esp_err_t err = meshvpn_config_load_https(&s_https_configured);
     if (err != ESP_OK) return err;
@@ -706,6 +704,10 @@ esp_err_t meshvpn_web_start(void)
     server.send_wait_timeout = 3;
     server.keep_alive_enable = true;
     server.ctrl_port = 32769;
+    ESP_LOGI(TAG, "Admin stack=%u internal_free=%u internal_largest=%u",
+             (unsigned)server.stack_size,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 #if CONFIG_MESHVPN_USB_DIAGNOSTICS
     /* TLS installs its own open_fn; never replace its handshake callback. */
     if (!s_https) server.open_fn = diag_open;
@@ -729,6 +731,10 @@ esp_err_t meshvpn_web_start(void)
     if (err != ESP_OK) {
         diag_stage("start/server-error");
         ESP_LOGE(TAG, "HTTP(S) server startup failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Internal RAM: free=%u largest=%u; requested stack=%u. Configuration reset will not free task memory",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 (unsigned)server.stack_size);
         return err;
     }
     diag_stage("start/register-handlers");
@@ -769,6 +775,9 @@ esp_err_t meshvpn_web_start(void)
             ESP_LOGW(TAG, "HTTP redirect unavailable; HTTPS remains active");
         }
     }
+    /* Optional telemetry must not take stack memory before the admin server. */
+    diag_stage("start/cpu-sampler");
+    meshvpn_cpu_start();
     diag_stage("ready");
     ESP_LOGI(TAG, "USB/AP admin: %s://meshpn.local/", s_https ? "https" : "http");
     return ESP_OK;

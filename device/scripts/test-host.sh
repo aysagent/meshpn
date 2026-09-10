@@ -29,10 +29,13 @@ bash -n device/scripts/flash.sh device/scripts/create-admin-ca.sh
 if [[ -n "${IDF_PATH:-}" ]]; then
   json_dir="$IDF_PATH/components/json/cJSON"
   for runtime_enabled in 0 1; do
-    "$cc" "${flags[@]}" -DCONFIG_FREERTOS_GENERATE_RUN_TIME_STATS="$runtime_enabled" \
-      -Idevice/tests/cpu_stubs -Idevice/components/meshvpn_web/include -I"$json_dir" \
-      device/tests/test_cpu_sampler.c "$json_dir/cJSON.c" -lm -o "$test_dir/cpu-sampler-$runtime_enabled"
-    "$test_dir/cpu-sampler-$runtime_enabled"
+    for psram_enabled in 0 1; do
+      "$cc" "${flags[@]}" -DCONFIG_FREERTOS_GENERATE_RUN_TIME_STATS="$runtime_enabled" \
+        -DCONFIG_SPIRAM="$psram_enabled" \
+        -Idevice/tests/cpu_stubs -Idevice/components/meshvpn_web/include -I"$json_dir" \
+        device/tests/test_cpu_sampler.c "$json_dir/cJSON.c" -lm -o "$test_dir/cpu-sampler-$runtime_enabled-$psram_enabled"
+      "$test_dir/cpu-sampler-$runtime_enabled-$psram_enabled"
+    done
   done
   source_dir="$IDF_PATH/components/mbedtls/mbedtls"
   cmake -S "$source_dir" -B "$test_dir/mbedtls" -DENABLE_PROGRAMS=OFF -DENABLE_TESTING=OFF > "$test_dir/mbedtls.log" 2>&1

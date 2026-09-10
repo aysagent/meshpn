@@ -3,6 +3,7 @@
 #include "sdkconfig.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -33,6 +34,19 @@ static const char *const s_names[] = {
     "dns_listener", "dns_worker", "mdns", "mdns_recv", "mdns recv task", "httpd",
     "esp_timer", "sys_evt", "Tmr Svc", "ipc0", "ipc1", "IDLE0", "IDLE1", "cpu_stats"
 };
+
+static void *telemetry_calloc(size_t count, size_t size)
+{
+    /* These are data snapshots, not task stacks or DMA buffers. Small plain
+     * calloc() allocations prefer internal RAM (16 KiB threshold on XIAO),
+     * starving the HTTP task of a contiguous stack even with free PSRAM.
+     * Never fall back to internal RAM on a PSRAM board: telemetry is optional. */
+#if CONFIG_SPIRAM
+    return heap_caps_calloc(count, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+    return calloc(count, size);
+#endif
+}
 
 static void collect(TaskStatus_t *raw, sample_t *next, const sample_t *prev)
 {
@@ -81,8 +95,8 @@ static void sampler(void *arg)
 {
     (void)arg;
     /* Allocate once. No unbounded allocation or JSON work under kernel locks. */
-    TaskStatus_t *raw = calloc(MAX_TASKS, sizeof(*raw));
-    sample_t *next = calloc(1, sizeof(*next)), *prev = calloc(1, sizeof(*prev));
+    TaskStatus_t *raw = telemetry_calloc(MAX_TASKS, sizeof(*raw));
+    sample_t *next = telemetry_calloc(1, sizeof(*next)), *prev = telemetry_calloc(1, sizeof(*prev));
     if (!raw || !next || !prev) {
         free(raw); free(next); free(prev);
         ESP_LOGE("cpu_stats", "Not enough memory for telemetry");
@@ -118,7 +132,7 @@ void meshvpn_cpu_json(cJSON *root)
 {
     cJSON *cpu = cJSON_AddObjectToObject(root, "cpu");
 #if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
-    sample_t *copy = s_mutex ? malloc(sizeof(*copy)) : NULL;
+    sample_t *copy = s_mutex ? telemetry_calloc(1, sizeof(*copy)) : NULL;
     if (!copy) { cJSON_AddBoolToObject(cpu, "available", false); return; }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     *copy = s_sample;
