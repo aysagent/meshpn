@@ -113,6 +113,11 @@ Hold BOOT for five seconds during operation to erase NVS settings, WiFi profiles
 With HTTPS enabled, the new certificate will need verification. BOOT recovery starts before the web server, so it also works if that server cannot start.
 
 Logs are available in the UI and authenticated `GET /api/logs`; USB CDC console output remains disabled.
+The 12 KiB log ring is allocated once in PSRAM on XIAO, freeing its previous internal-RAM
+storage. Allocation failure leaves default log output active and does not prevent boot;
+there is no internal-RAM fallback on PSRAM boards. The hook captures normal task-context
+ESP_LOG output, not cache-disabled EARLY/DRAM logging or panic output. Its try-lock/drop
+behavior, ring capacity and API remain unchanged; no allocation is done per log entry.
 UART: GPIO43/44 (D6/D7). Hardware notes: [xiao-esp32s3.md](docs/xiao-esp32s3.md).
 
 If HTTP is unresponsive and no UART adapter is available, use the **opt-in USB diagnostic build**:

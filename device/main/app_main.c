@@ -51,7 +51,9 @@ static void factory_reset_watch_task(void *arg)
 void app_main(void)
 {
     esp_log_level_set("*", ESP_LOG_INFO);
-    ESP_ERROR_CHECK(meshvpn_log_init());
+    if (meshvpn_log_init() != ESP_OK) {
+        ESP_LOGW(TAG, "Buffered logs unavailable; keeping default log output and continuing boot");
+    }
     ESP_LOGI(TAG, "MeshVPN device starting");
 
     ESP_ERROR_CHECK(meshvpn_board_init());

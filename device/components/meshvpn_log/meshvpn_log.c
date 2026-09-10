@@ -2,12 +2,15 @@
 
 #include <inttypes.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "esp_core_dump.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "sdkconfig.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -18,7 +21,10 @@ static const char *TAG = "meshvpn_log";
 /* Kept small: this buffer lands on the stack of whichever task is logging. */
 #define MESHVPN_LOG_LINE_MAX 160
 
-static char s_buf[MESHVPN_LOG_BUF_SIZE];
+/* Normal ESP_LOG task-context output only. EARLY/DRAM and panic output bypass
+ * this hook; neither the hook nor its buffer is usable with cache disabled.
+ * Allocate once, before publishing the hook. No allocation in the log path. */
+static char *s_buf;
 static size_t s_head;
 static bool s_wrapped;
 static SemaphoreHandle_t s_lock;
@@ -61,8 +67,18 @@ esp_err_t meshvpn_log_init(void)
     if (s_lock) {
         return ESP_OK;
     }
+    uint32_t caps = MALLOC_CAP_8BIT;
+#if CONFIG_SPIRAM
+    caps |= MALLOC_CAP_SPIRAM;
+#else
+    caps |= MALLOC_CAP_INTERNAL;
+#endif
+    s_buf = heap_caps_malloc(MESHVPN_LOG_BUF_SIZE, caps);
+    if (!s_buf) return ESP_ERR_NO_MEM; /* Do not consume internal RAM as fallback. */
     s_lock = xSemaphoreCreateMutex();
     if (!s_lock) {
+        free(s_buf);
+        s_buf = NULL;
         return ESP_ERR_NO_MEM;
     }
     s_prev_vprintf = esp_log_set_vprintf(meshvpn_log_vprintf);

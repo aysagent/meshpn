@@ -5,6 +5,12 @@ test_dir="$(mktemp -d /tmp/meshpn-host-tests.XXXXXX)"
 cd "$root"
 cc="${CC:-cc}"
 flags=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined)
+for psram_enabled in 0 1; do
+  "$cc" "${flags[@]}" -DCONFIG_SPIRAM="$psram_enabled" -DpdTRUE=1 \
+    -Idevice/tests/log_stubs -Idevice/tests/cpu_stubs -Idevice/tests/stubs \
+    -Idevice/components/meshvpn_log/include device/tests/test_log_buffer.c -o "$test_dir/log-buffer-$psram_enabled"
+  "$test_dir/log-buffer-$psram_enabled"
+done
 "$cc" "${flags[@]}" -Idevice/components/meshvpn_web/include \
   device/tests/test_cpu_math.c -o "$test_dir/cpu-math"
 "$test_dir/cpu-math"
