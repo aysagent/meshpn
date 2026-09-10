@@ -17,6 +17,9 @@
 #include "esp_psram.h"
 #include "esp_flash.h"
 #include "esp_app_desc.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/idf_additions.h"
 #include "lwip/sockets.h"
 #include "meshvpn_board.h"
 #include "meshvpn_config.h"
@@ -212,6 +215,39 @@ static void add_telemetry(cJSON *root)
     uint32_t flash = 0; esp_flash_get_size(NULL, &flash);
     cJSON_AddNumberToObject(memory, "flash_detected", flash);
     cJSON_AddNumberToObject(memory, "web_stack_free", uxTaskGetStackHighWaterMark(NULL));
+
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+    cJSON *cpu = cJSON_AddObjectToObject(root, "cpu");
+    cJSON *cores = cJSON_AddArrayToObject(cpu, "cores");
+    for (int core = 0; core < CONFIG_FREERTOS_NUMBER_OF_CORES; ++core) {
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddNumberToObject(item, "id", core);
+        cJSON_AddNumberToObject(item, "load_pct",
+                                100 - ulTaskGetIdleRunTimePercentForCore(core));
+        cJSON_AddItemToArray(cores, item);
+    }
+
+    UBaseType_t task_count = uxTaskGetNumberOfTasks();
+    TaskStatus_t *tasks = heap_caps_calloc(task_count ? task_count : 1,
+                                           sizeof(*tasks), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (tasks) {
+        UBaseType_t count = uxTaskGetSystemState(tasks, task_count, NULL);
+        cJSON *task_array = cJSON_AddArrayToObject(cpu, "tasks");
+        for (UBaseType_t i = 0; i < count; ++i) {
+            cJSON *item = cJSON_CreateObject();
+            cJSON_AddStringToObject(item, "name", tasks[i].pcTaskName ? tasks[i].pcTaskName : "?");
+            cJSON_AddNumberToObject(item, "runtime_us", (double)tasks[i].ulRunTimeCounter);
+            cJSON_AddNumberToObject(item, "priority", tasks[i].uxCurrentPriority);
+            cJSON_AddNumberToObject(item, "stack_free", tasks[i].usStackHighWaterMark);
+#if CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID
+            cJSON_AddNumberToObject(item, "core", tasks[i].xCoreID);
+#endif
+            cJSON_AddItemToArray(task_array, item);
+        }
+        free(tasks);
+    }
+#endif
+
     cJSON_AddStringToObject(root, "build", meshvpn_web_build_id());
     cJSON_AddStringToObject(root, "idf", esp_get_idf_version());
     cJSON_AddStringToObject(root, "hostname", "meshpn.local");

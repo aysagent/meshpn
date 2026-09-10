@@ -47,6 +47,12 @@ CONFIG_LWIP_IRAM_OPTIMIZATION=y
 # CONFIG_LWIP_CHECKSUM_CHECK_IP is not set
 # CONFIG_LWIP_CHECKSUM_CHECK_UDP is not set
 
+# Runtime CPU/task telemetry exposed by /api/status. ESP timer keeps values in
+# microseconds and is stable across the fixed 240 MHz CPU configuration.
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
+CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
+
 # HTTP server (meshvpn_web)
 # Development default; enable in menuconfig for mandatory password rotation.
 # CONFIG_MESHVPN_WEB_REQUIRE_PASSWORD_CHANGE is not set
