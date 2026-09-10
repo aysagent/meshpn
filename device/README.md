@@ -58,7 +58,7 @@ validates responses, has three bounded workers and a small TTL cache.
 `meshpn.home.arpa` is an ordinary-DNS alternative to mDNS.
 Apple/Google/Windows connectivity names are no longer redirected to the dongle.
 
-Administration and mDNS remain USB-only. The ingress hook blocks management from both WiFi interfaces and DNS from STA,
+Administration and mDNS are available from USB and the board's own AP. The ingress hook blocks management and DNS from upstream STA,
 including requests routed to a LAN gateway; AP clients may use DNS at their own gateway. IPv6 is disabled.
 Confirm this on hardware using the [acceptance checklist](docs/current-improvements.md).
 
@@ -70,7 +70,7 @@ SoftAP is enabled by default alongside STA and USB NCM:
 - WPA2 password: **meshpn-test** (development default; change before non-test use).
 - Up to four clients. AP gateway/DHCP/DNS: **192.168.4.1/24**, unless a subnet conflict requires reassignment.
 - AP stays enabled without uplink; internet resumes when STA connects. Pause disconnects STA, not AP or USB.
-- AP clients have internet access, but no admin/mDNS access. USB and AP are routed LANs, not a fully isolated guest network.
+- AP clients have internet and admin/mDNS access. USB and AP are routed LANs, not a fully isolated guest network.
 
 Build settings are under ESP-IoT-Bridge / SoftAP Config: `CONFIG_BRIDGE_SOFTAP_SSID`,
 `CONFIG_BRIDGE_SOFTAP_PASSWORD`, `CONFIG_BRIDGE_SOFTAP_SSID_END_WITH_THE_MAC`, `CONFIG_BRIDGE_SOFTAP_MAX_CONNECT_NUMBER`.
@@ -79,6 +79,20 @@ Configure uplink via USB first, then connect the test client to the AP. You can 
 
 AP and STA share the radio and channel, with STA taking channel priority; both WiFi hops use airtime.
 No speedup is claimed before measurements. See [AP/USB comparison procedure](docs/apsta-benchmark.md).
+
+### Automatic benchmarks (Mac)
+
+Connect USB and join the board AP on the Mac, then close the admin browser tab:
+
+```bash
+npm run device:perf -- user@SERVER:22 --paths both --quick
+```
+
+Remove `--quick` for the full TCP/UDP, simultaneous AP+USB, latency and endurance suite (~75 minutes plus overhead).
+The target port is **SSH**, not iperf3. The runner starts its own iperf3 servers, verifies per-interface routes,
+collects board telemetry and writes `device/perf-results/<run>/report.md` plus raw data.
+Missing dependencies produce installation instructions, never automatic installation.
+See [runner options, prerequisites and limitations](perf-testing.md). Tests: `npm run device:perf:test`.
 
 ## Memory / IP lists
 

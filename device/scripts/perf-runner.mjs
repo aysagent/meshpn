@@ -1,0 +1,293 @@
+#!/usr/bin/env node
+import { spawn } from 'node:child_process';
+import { lookup } from 'node:dns/promises';
+import { appendFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
+import { parseArgs, checked, command, iperfArgs, parseIperf, parsePing, stats,
+  summarize, measurementPlan, counterDelta } from './perf-lib.mjs';
+import { discoverBoard, checkRoute, sshArgs, startServers } from './perf-network.mjs';
+
+const root=fileURLToPath(new URL('../../',import.meta.url));
+const help=`Usage: npm run device:perf -- [user@]SERVER[:SSH_PORT] [options]
+
+macOS runner; connect USB and Mac Wi-Fi to the board AP before starting.
+SSH must already work with a key/agent and a verified known_hosts entry.
+Required: local/remote iperf3, remote python3. Nothing is installed automatically.
+
+  --quick                 Smoke test: 3s, 2 measured repeats, no soak
+  --paths auto|usb|ap|both Auto detects paths; 'both' requires USB + AP
+  --seconds N             Per throughput test (default 30)
+  --runs N                Measured repeats, excluding warm-up (default 5)
+  --soak-minutes N         Load/idle endurance stage (default 30; 0 disables)
+  --idle-seconds N         Baseline/final idle periods (default 30)
+  --iperf-port N           First data port (default 5201; second is N+1)
+  --server-ip IPv4         Data destination if different from SSH hostname
+  --admin-url URL          Override discovery, e.g. http://192.168.7.1/
+  --admin-ca cert.pem      Trust the device HTTPS certificate
+  --admin-insecure         Explicitly skip HTTPS certificate verification
+  --out DIRECTORY         Parent for a unique result directory
+
+Admin password: MESHPN_ADMIN_PASSWORD environment variable (default: admin).
+Close the admin browser tab: its Wi-Fi scan/session can disrupt the test.
+Full USB+AP run: ~75 min, potentially several GB. --quick: ~3 min.
+Ctrl-C saves partial results and stops only this runner's remote servers.
+Report: device/perf-results/<timestamp>-<random>/report.md + JSON/raw logs.
+`;
+
+// Dependency injection keeps the complete schedule testable without real networking or waits.
+export async function executeSchedule(o, paths, {batch,idle,now=Date.now,check=()=>{}}) {
+  for(const direction of ['up','down']) {
+    for(const p of paths)await batch({paths:[p],protocol:'tcp',direction,seconds:o.seconds,phase:'warmup',warmup:true,run:0});
+  }
+  await idle('baseline-idle',o.idleSeconds);
+  for(const test of measurementPlan(paths,o)){check();await batch(test);}
+  const deadline=now()+o.soakMinutes*60000;
+  let cycle=0;
+  while(now()<deadline) {
+    check();cycle++;
+    const cycleEnd=Math.min(deadline,now()+900000),loadEnd=now()+(cycleEnd-now())*2/3;
+    let run=0;
+    while(now()+1000<=loadEnd) {
+      check();await batch({paths,protocol:'tcp',direction:run%2?'down':'up',seconds:Math.min(60,Math.floor((loadEnd-now())/1000)),
+        phase:`soak-${cycle}`,warmup:false,run:++run});
+    }
+    await idle(`soak-${cycle}-idle`,Math.max(0,(cycleEnd-now())/1000));
+  }
+  await idle('final-idle',o.idleSeconds);
+}
+
+export function cleanStatus(s) {
+  // Allowlist: never dump login responses, tokens, environment, or future VPN credentials.
+  const pick=(v,keys)=>Object.fromEntries(keys.filter(k=>v?.[k]!==undefined).map(k=>[k,v[k]]));
+  return {...pick(s,['board','build','idf','uptime_sec','temperature_c','https_enabled']),
+    wifi:pick(s.wifi,['connected','scanning','state','ip','rssi','disconnect_reason']),
+    net:pick(s.net,['usb_ip','ap_ip','ap_active','ap_clients','ap_channel','usb_napt','ap_napt','ap_ip4_rx','lan_ip4_rx']),
+    usb:pick(s.usb,['profile','host_ready','tx_ok','tx_dropped','tx_retried','tx_no_host']),
+    memory:Object.fromEntries(['internal','dma','psram'].map(k=>[k,pick(s.memory?.[k],['total','free','minimum_free','largest_block'])])),
+    cpu:{...pick(s.cpu,['available','sampled_us','sample_age_ms','interval_ms','collection_us']),
+      cores:(s.cpu?.cores||[]).map(c=>pick(c,['id','load_pct'])),
+      tasks:(s.cpu?.tasks||[]).map(t=>pick(t,['id','name','core','priority','stack_free','runtime_us','load_pct']))}};
+}
+
+export function telemetrySummary(samples) {
+  const good=samples.filter(s=>s.status),events=[];
+  let previous,epoch=0;
+  const uniqueCPU=new Map();
+  for(const s of good) {
+    const v=s.status;
+    if(previous&&v.uptime_sec<previous.uptime_sec){events.push({time:s.time,event:'uptime decreased: possible reboot'});epoch++;}
+    if(v.wifi.connected===false)events.push({time:s.time,event:'STA disconnected'});
+    if(v.wifi.scanning===true)events.push({time:s.time,event:'Wi-Fi scan during measurements'});
+    if(previous?.usb.host_ready===true&&v.usb.host_ready===false)events.push({time:s.time,event:'USB host disconnected'});
+    if(previous?.net.ap_active===true&&v.net.ap_active===false)events.push({time:s.time,event:'AP stopped'});
+    if(v.cpu.available&&Number.isFinite(v.cpu.sampled_us)&&Number.isFinite(v.cpu.sample_age_ms)&&v.cpu.sample_age_ms<=5000)
+      uniqueCPU.set(`${epoch}/${v.cpu.sampled_us}`,v.cpu);
+    previous=v;
+  }
+  const cpu=[...uniqueCPU.values()];
+  const idleMemory=phase=>{
+    const group=good.filter(s=>s.phase===phase),last=group.at(-1);
+    // Only the tail of equal-duration idle windows; not historical minimum_free.
+    const tail=group.filter(s=>last&&s.elapsed_ms>=last.elapsed_ms-10000);
+    return Object.fromEntries(['internal','dma','psram'].map(k=>[k,{
+      free:stats(tail.map(s=>s.status.memory[k]?.free)),largest_block:stats(tail.map(s=>s.status.memory[k]?.largest_block))}]));
+  };
+  return {samples:good.length,api_errors:samples.length-good.length,events,
+    counter_delta:counterDelta(epoch?null:good[0]?.status,good.at(-1)?.status),
+    temperature_c:stats(good.map(s=>s.status.temperature_c)),rssi:stats(good.map(s=>s.status.wifi.rssi)),
+    cpu_samples:cpu.length,cpu_load:Object.fromEntries([0,1].map(id=>[id,stats(cpu.map(c=>c.cores.find(v=>v.id===id)?.load_pct))])),
+    cpu_collection_us:stats(cpu.map(c=>c.collection_us)),
+    baseline_idle_memory:idleMemory('baseline-idle'),final_idle_memory:idleMemory('final-idle')};
+}
+
+export function reportMarkdown(result) {
+  const fmt=v=>Number.isFinite(v)?v.toFixed(2):'n/a';
+  const lines=['# MeshPN performance report','',`Result: **${result.outcome}**`,
+    `Started: ${result.started}; ended: ${result.ended}`,`Server: ${result.serverIP||'unresolved'}; SSH: ${result.target}`,
+    `Checkout: ${result.git?.commit||'unknown'}${result.git?.dirty?' (dirty)':''}; board build: ${result.board?.build||'unknown'}`,'',
+    'up = Mac → server; down = server → Mac. Throughput is measured at the receiver. Warm-ups excluded.',
+    'WAN servers include ISP/network limits. Percentiles across a few repetitions are only indicative.','',
+    '| Scenario/path/protocol/direction/rate | n | Mbit/s min | median | p95 | max | UDP loss % median | jitter ms median | TCP retransmits median | failed |',
+    '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|'];
+  for(const [name,g] of Object.entries(result.summary||{}))lines.push(`| ${name} | ${g.mbps?.count||0} | ${fmt(g.mbps?.min)} | ${fmt(g.mbps?.median)} | ${fmt(g.mbps?.p95)} | ${fmt(g.mbps?.max)} | ${fmt(g.loss?.median)} | ${fmt(g.jitter?.median)} | ${fmt(g.retransmits?.median)} | ${g.failed} |`);
+  lines.push('','## Ping latency (per test, including idle)','',
+    '| Test | Path | median ms | p95 ms | loss % | error |','|---|---|---:|---:|---:|---|');
+  for(const p of result.pings||[])lines.push(`| ${p.id} | ${p.path} | ${fmt(p.rtt_ms?.median)} | ${fmt(p.rtt_ms?.p95)} | ${fmt(p.loss_percent)} | ${(p.error||'').replaceAll('|','/').replaceAll('\n',' ')} |`);
+  const t=result.telemetry;
+  if(t) {
+    lines.push('','## Board telemetry','',`Samples: ${t.samples}; API errors: ${t.api_errors}; unique CPU samples: ${t.cpu_samples}.`,
+      `Temperature median/max: ${fmt(t.temperature_c?.median)}/${fmt(t.temperature_c?.max)} °C.`,
+      ...[0,1].map(id=>`CPU${id} median/p95/max: ${fmt(t.cpu_load[id]?.median)}/${fmt(t.cpu_load[id]?.p95)}/${fmt(t.cpu_load[id]?.max)}%.`),
+      '', '| Memory (bytes, idle medians) | Free before | Free after | Largest block before | Largest block after |', '|---|---:|---:|---:|---:|');
+    for(const k of ['internal','dma','psram'])lines.push(`| ${k} | ${fmt(t.baseline_idle_memory[k].free?.median)} | ${fmt(t.final_idle_memory[k].free?.median)} | ${fmt(t.baseline_idle_memory[k].largest_block?.median)} | ${fmt(t.final_idle_memory[k].largest_block?.median)} |`);
+    lines.push('','Two idle windows do not prove absence/presence of a leak. Historical minimum_free remains in status.ndjson. Internal and DMA overlap; do not add them.',
+      '',`Detected events: ${t.events.length}. Details in result.json; short flaps/reboots between polls may be missed.`,
+      '', '| Counter | Delta across run |', '|---|---:|',
+      ...Object.entries(t.counter_delta).map(([k,v])=>`| ${k} | ${v??'n/a (missing/reset)'} |`));
+  }
+  lines.push('','## Warnings / omissions','',...(result.warnings||[]).map(s=>`- ${s}`),
+    '- Physical USB reconnect, router reboot, sleep/resume, AP-disabled baseline and STA-side admin isolation are not automated; runner does not change device/network settings.',
+    '- DHCP was inspected and routes checked; this is not a DHCP renewal or DNS/mDNS test. No serial watchdog log is collected.',
+    '- HT20/HT40 negotiation is not currently exposed by the API.');
+  if(result.error)lines.push('',`Error: ${result.error}`);
+  return lines.join('\n')+'\n';
+}
+
+export async function main(args=process.argv.slice(2), dependencies={}) {
+  const runtime={platform:process.platform,command,checked,lookup,discoverBoard,checkRoute,startServers,spawn,delay,...dependencies};
+  const o=parseArgs(args);
+  if(o.help){console.log(help);return 0;}
+  if(runtime.platform!=='darwin')throw Error('This runner currently supports macOS hosts (USB + Wi-Fi interface-scoped routes). The SSH server may run Linux or macOS.');
+  const controller=new AbortController(),signal=controller.signal;
+  const abort=()=>controller.abort();
+  process.once('SIGINT',abort);process.once('SIGTERM',abort);
+  let output,servers,caffeine,samplerDone,samplerStop=false,wakeSampler,samplerError;
+  const started=Date.now(),samples=[],records=[],pings=[];
+  let phase='preflight',sequence=0,board;
+  const result={schema:1,started:new Date(started).toISOString(),target:o.target,options:o,
+    host:{platform:runtime.platform,release:os.release(),arch:process.arch,node:process.version},records,pings,warnings:[],outcome:'failed'};
+  const log=runtime.log||(s=>console.log(`[${new Date().toLocaleTimeString()}] ${s}`));
+  const check=()=>{if(signal.aborted)throw Error('Interrupted');servers?.assertAlive();};
+  try {
+    const parent=path.resolve(o.out||path.join(root,'device/perf-results'));
+    await mkdir(parent,{recursive:true});
+    output=await mkdtemp(path.join(parent,new Date(started).toISOString().replaceAll(':','-')+'-'));
+    log(`Results: ${output}`);
+    let localVersion;
+    try {localVersion=await runtime.checked('iperf3',['--version'],{signal});}
+    catch{throw Error('Local iperf3 missing/not runnable. Install on Mac: brew install iperf3');}
+    const iperfHelp=await runtime.checked('iperf3',['--help'],{signal});
+    if(!iperfHelp.includes('--bind-dev'))throw Error('Local iperf3 is too old: brew upgrade iperf3 (--bind-dev required)');
+    const remoteCheck="command -v iperf3 >/dev/null || { echo 'MISSING_IPERF3' >&2; exit 41; }; command -v python3 >/dev/null || { echo 'MISSING_PYTHON3' >&2; exit 42; }; iperf3 --version; python3 --version";
+    const remote=await runtime.command('ssh',[...sshArgs(o),remoteCheck],{signal,timeout:20000});
+    if(remote.code!==0)throw Error(`SSH prerequisites failed: ${remote.stderr.trim()}. Server Debian/Ubuntu: sudo apt-get install iperf3 python3; Fedora: sudo dnf install iperf3 python3; macOS: brew install iperf3 python. SSH must work without prompts; first verify its host key using ssh -p ${o.sshPort} ${o.sshTarget}.`);
+    result.versions={localIperf:localVersion.trim(),remote:remote.stdout.trim()};
+    try {result.git={commit:(await runtime.checked('git',['-C',root,'rev-parse','HEAD'])).trim(),dirty:Boolean((await runtime.checked('git',['-C',root,'status','--porcelain'])).trim())};}catch{}
+    result.serverIP=o.serverIP||(await runtime.lookup(o.host,{family:4})).address;
+    board=await runtime.discoverBoard(o,signal,log);
+    result.paths=board.paths;result.board=cleanStatus(board.initial);
+    for(const p of board.paths) {
+      log(`${p.kind.toUpperCase()}: ${p.iface} ${p.address} → ${p.gateway} → ${result.serverIP}`);
+      await writeFile(path.join(output,`route-${p.kind}.txt`),await runtime.checkRoute(p,result.serverIP,signal));
+    }
+    for(const kind of ['usb','ap'])if(!board.paths.some(p=>p.kind===kind))result.warnings.push(`${kind.toUpperCase()} not selected/connected; its single and combined tests were skipped.`);
+    if(o.soakMinutes===0)result.warnings.push('Endurance stage disabled.');
+    if(o.adminInsecure)result.warnings.push('HTTPS certificate verification explicitly disabled.');
+    const estimated=(measurementPlan(board.paths,o).length*o.seconds+board.paths.length*2*o.seconds+2*o.idleSeconds)/60+o.soakMinutes;
+    if(estimated>240)throw Error('Requested suite exceeds 4 hours; reduce --runs/--seconds/--soak-minutes (remote safety deadline is 6 hours).');
+    log(`Estimated load/idle time: ${Math.ceil(estimated)} min + process overhead. Close admin UI; keep Mac connected.`);
+    caffeine=runtime.spawn('/usr/bin/caffeinate',['-i','-m','-s','-w',String(process.pid)],{stdio:'ignore'});
+    caffeine.on('error',()=>result.warnings.push('Could not inhibit Mac sleep; keep the host awake.'));
+    servers=await runtime.startServers(o,board.paths.length,signal);
+    const sample=async()=>{
+      const s={time:new Date().toISOString(),elapsed_ms:Date.now()-started,phase};
+      try{s.status=cleanStatus(await board.status());}catch(e){s.error=e.message;}
+      samples.push(s);await appendFile(path.join(output,'status.ndjson'),JSON.stringify(s)+'\n');return s.status;
+    };
+    samplerDone=(async()=>{
+      while(!samplerStop&&!signal.aborted) {
+        const tick=Date.now();await sample();
+        if(!samplerStop&&!signal.aborted)await new Promise(resolve=>{
+          const timer=setTimeout(resolve,Math.max(0,2000-(Date.now()-tick)));
+          wakeSampler=()=>{clearTimeout(timer);resolve();};
+        });
+      }
+    })();
+    // Attach immediately so a disk failure during a long iperf run is never unhandled.
+    samplerDone.catch(e=>{samplerError=e;controller.abort();});
+    const ping=async(p,seconds,id)=>{
+      const record={id,path:p.kind};
+      try {
+        const r=await runtime.command('/sbin/ping',['-n','-b',p.iface,'-S',p.address,'-i','0.2','-c',String(Math.max(1,Math.ceil(seconds*5))),'-t',String(Math.max(1,Math.ceil(seconds))),result.serverIP],{signal,timeout:seconds*1000+5000});
+        await writeFile(path.join(output,`${id}-${p.kind}.ping.txt`),r.stdout+'\n'+r.stderr);
+        Object.assign(record,parsePing(r.stdout));
+        if(!record.rtt_ms||record.loss_percent===null)record.error=`Ping unavailable (exit ${r.code}); server may block ICMP: ${r.stderr.trim()}`;
+      }catch(e){record.error=e.message;}
+      pings.push(record);return record;
+    };
+    const batch=async test=>{
+      check();
+      const id=String(++sequence).padStart(4,'0');phase=`${id}-${test.phase}-${test.protocol}-${test.direction}${test.warmup?'-warmup':''}`;
+      log(`${phase}: ${test.paths.map(p=>p.kind).join('+')}${test.rate?` ${test.rate} Mbit/s`:''}, ${test.seconds}s`);
+      for(const p of test.paths)await runtime.checkRoute(p,result.serverIP,signal);
+      const before=await sample();
+      const measured=await Promise.all(test.paths.map(async p=>{
+        const r={id,phase:test.phase,path:p.kind,protocol:test.protocol,direction:test.direction,rate:test.rate??null,
+          seconds:test.seconds,run:test.run,warmup:test.warmup,started:new Date().toISOString()};
+        const client=async()=>{
+          let raw;
+          try {
+            const args=iperfArgs(result.serverIP,servers.ports[board.paths.indexOf(p)],p,test);
+            r.command=['iperf3',...args];
+            raw=await runtime.command('iperf3',args,{signal,timeout:(test.seconds+20)*1000});
+            await writeFile(path.join(output,`${id}-${p.kind}.iperf.json`),raw.stdout);
+            await writeFile(path.join(output,`${id}-${p.kind}.stderr.txt`),raw.stderr);
+            if(raw.code!==0)throw Error(`iperf3 exited ${raw.code}: ${raw.stderr.trim()||JSON.parse(raw.stdout).error||'see raw JSON'}`);
+            Object.assign(r,parseIperf(raw.stdout,test.protocol));
+            if(r.local_address!==p.address)throw Error(`Unexpected source ${r.local_address}; expected ${p.address}`);
+            await runtime.checkRoute(p,result.serverIP,signal);
+          }catch(e){
+            r.error=e.message;
+            if(!raw) {
+              await writeFile(path.join(output,`${id}-${p.kind}.iperf.json`),e.stdout||'');
+              await writeFile(path.join(output,`${id}-${p.kind}.stderr.txt`),e.stderr||e.message);
+            }
+          }
+          r.ended=new Date().toISOString();return r;
+        };
+        await Promise.all([client(),ping(p,test.seconds,id)]);
+        return r;
+      }));
+      const after=await sample(),deltas=counterDelta(before,after);
+      // Counters describe the entire batch, not each path separately in a combined test.
+      for(const r of measured) {
+        r.batch_counters=deltas;records.push(r);
+        await appendFile(path.join(output,'measurements.ndjson'),JSON.stringify(r)+'\n');
+        log(`${r.path}: ${r.error?'FAILED: '+r.error:r.mbps.toFixed(2)+' Mbit/s'}`);
+      }
+      check();
+      if(test.phase==='preflight'&&measured.some(r=>r.error))throw Error('Preflight failed; inspect raw JSON/stderr. Check interface binding, macOS Local Network permission, server TCP/UDP data ports and firewall. No firewall/route changes were made.');
+    };
+    const idle=async(name,seconds)=>{
+      check();phase=name;log(`${name}: ${Math.round(seconds)}s`);
+      const id=String(++sequence).padStart(4,'0');await sample();
+      await Promise.all([runtime.delay(seconds*1000,undefined,{signal}),...board.paths.map(p=>ping(p,seconds,id))]);
+      await sample();check();
+    };
+    // Fail fast on both directions/protocols before spending an hour on a broken setup.
+    for(const p of board.paths)for(const protocol of ['tcp','udp'])for(const direction of ['up','down'])
+      await batch({paths:[p],protocol,direction,rate:protocol==='udp'?5:null,seconds:1,phase:'preflight',warmup:true,run:0});
+    await executeSchedule(o,board.paths,{batch,idle,check});
+    if(samplerError)throw samplerError;
+    result.outcome=records.some(r=>r.error)?'failed':'completed';
+  }catch(e){result.error=e.message;result.outcome=signal.aborted?'interrupted':'failed';}
+  finally {
+    samplerStop=true;wakeSampler?.();
+    if(samplerDone)await samplerDone.catch(e=>{result.error=e.message;result.outcome='failed';});
+    if(servers)await servers.close().catch(e=>{result.warnings.push(`Server cleanup: ${e.message}`);result.outcome='failed';});
+    caffeine?.kill('SIGTERM');process.removeListener('SIGINT',abort);process.removeListener('SIGTERM',abort);
+    result.ended=new Date().toISOString();result.summary=summarize(records);result.telemetry=telemetrySummary(samples);
+    if(!result.telemetry.cpu_samples&&samples.length) {
+      result.warnings.push('No valid CPU runtime samples; CPU-load results unavailable.');
+      if(result.outcome==='completed')result.outcome='completed-with-warnings';
+    }
+    if(result.telemetry.api_errors||result.telemetry.events.length||pings.some(p=>p.error)) {
+      result.warnings.push('Telemetry/link/ping problems detected; inspect result.json and raw logs.');
+      if(result.outcome==='completed')result.outcome='completed-with-warnings';
+    }
+    if(output) {
+      await writeFile(path.join(output,'result.json'),JSON.stringify(result,null,2)+'\n');
+      await writeFile(path.join(output,'report.md'),reportMarkdown(result));
+      log(`${result.outcome}: ${path.join(output,'report.md')}`);
+    }
+  }
+  if(result.error)console.error(result.error);
+  return result.outcome==='completed'?0:result.outcome==='completed-with-warnings'?2:signal.aborted?130:1;
+}
+
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
+  main().then(code=>{process.exitCode=code;}).catch(e=>{console.error(e.message);process.exitCode=1;});
+}

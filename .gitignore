@@ -1,6 +1,7 @@
 node_modules
 certs/
 native/tun_linux/build/
+device/perf-results/
 
 # Локальные секреты / токены
 .ghtoken
