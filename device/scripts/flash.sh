@@ -17,10 +17,15 @@ elif [[ -f "$HOME/esp/esp-idf/export.sh" ]]; then
 else
   echo "ESP-IDF not found. Run device/scripts/setup-macos.sh." >&2; exit 1
 fi
-export BOARD USB_PROFILE="$PROFILE"
+export BOARD USB_PROFILE="$PROFILE" USB_DIAGNOSTICS="${USB_DIAGNOSTICS:-0}"
+case "$USB_DIAGNOSTICS" in 0|1) ;; *) echo "USB_DIAGNOSTICS must be 0 or 1" >&2; exit 1;; esac
 # Preserve previous builds and menuconfig files. A changed set of defaults gets
 # a new sdkconfig, so security settings and profile changes cannot stay stale.
-config_id="$(cksum "$DEVICE_DIR/sdkconfig.defaults" "$DEVICE_DIR/boards/$BOARD/sdkconfig.defaults" "$DEVICE_DIR/profiles/usb_$PROFILE.defconfig" "$DEVICE_DIR/main/idf_component.yml" | cksum | awk '{print $1}')"
+config_files=("$DEVICE_DIR/sdkconfig.defaults" "$DEVICE_DIR/boards/$BOARD/sdkconfig.defaults" "$DEVICE_DIR/profiles/usb_$PROFILE.defconfig" "$DEVICE_DIR/main/idf_component.yml")
+if [[ "$USB_DIAGNOSTICS" == 1 ]]; then
+  config_files+=("$DEVICE_DIR/profiles/usb_diagnostics.defconfig")
+fi
+config_id="$(cksum "${config_files[@]}" | cksum | awk '{print $1}')"
 BUILD_DIR="$DEVICE_DIR/build-$BOARD-$PROFILE-$config_id"
 mkdir -p "$BUILD_DIR"
 PORT="${PORT:-}"

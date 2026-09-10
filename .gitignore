@@ -2,6 +2,7 @@ node_modules
 certs/
 native/tun_linux/build/
 device/perf-results/
+device/**/__pycache__/
 
 # Локальные секреты / токены
 .ghtoken

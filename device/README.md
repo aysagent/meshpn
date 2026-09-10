@@ -115,6 +115,32 @@ With HTTPS enabled, the new certificate will need verification. BOOT recovery st
 Logs are available in the UI and authenticated `GET /api/logs`; USB CDC console output remains disabled.
 UART: GPIO43/44 (D6/D7). Hardware notes: [xiao-esp32s3.md](docs/xiao-esp32s3.md).
 
+If HTTP is unresponsive and no UART adapter is available, use the **opt-in USB diagnostic build**:
+
+```bash
+npm run device:flash:diag
+# After flashing: release BOOT and boot normally. Close serial monitors/admin tabs.
+npm run device:diag
+```
+
+The second command (Python 3, standard library only) autodetects a single CDC port, requests
+buffered logs, probes HTTP `/login`, then requests another snapshot. Pass `-- --port /dev/cu.usbmodem...`
+if multiple ports exist; `-- --host 192.168.4.1` changes the HTTP probe destination, not the USB log transport.
+`-- --no-http` only reads one snapshot. A missing reply can mean a normal/non-diagnostic firmware,
+wrong/busy port, USB fault or failure before diagnostics startup; it is not proof of an HTTP fault.
+
+Snapshots include firmware build, uptime/reset reason, internal heap, HTTP startup/request stage,
+HTTP accepted-connection count (plain HTTP only) and recent logs. They do not rely on the HTTP server.
+The existing CDC descriptor is unchanged; ESP_LOG is **not** redirected to USB and there is no continuous stream.
+Only `?` requests are supported: no reboot, erase, shell or configuration commands. Requests are coalesced/rate-limited;
+CDC callbacks never wait or print, and the worker's transmit has a deadline.
+
+This build lets a **physically attached USB host read logs without admin authentication**; logs may contain
+network names/addresses. It adds a 4 KiB task stack and a transient 16 KiB PSRAM snapshot, so do not use it for
+baseline performance testing. Return to `npm run device:flash` for the normal build; separate build directories
+keep diagnostic settings out of the normal profile. NVS settings are not erased by either command.
+Host utility tests: `npm run device:diag:test`. Actual CDC/NCM coexistence still requires hardware validation.
+
 ```bash
 bash device/scripts/test-host.sh
 ```

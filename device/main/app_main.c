@@ -18,6 +18,8 @@
 #include "meshvpn_wifi.h"
 #include "sdkconfig.h"
 
+void meshvpn_usb_diag_start(void);
+
 static const char *TAG = "meshvpn";
 
 #define FACTORY_RESET_HOLD_MS 5000
@@ -69,6 +71,8 @@ void app_main(void)
     /* Handlers must be in place before the bridge starts the WiFi driver. */
     ESP_ERROR_CHECK(meshvpn_wifi_init());
     ESP_ERROR_CHECK(meshvpn_net_start_bridge());
+    /* Independent of DNS/web startup: recover diagnostics if either stalls. */
+    meshvpn_usb_diag_start();
     /* Deliberately not fatal: DNS proxy must never turn into a boot loop. */
     if (meshvpn_dns_proxy_init() != ESP_OK) {
         ESP_LOGW(TAG, "DNS proxy failed to start — USB clients may have no DNS");

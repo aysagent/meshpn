@@ -45,6 +45,43 @@ static int64_t s_session_created, s_session_used, s_login_after;
 static unsigned s_login_failures;
 static const char *meshvpn_web_build_id(void) { return esp_app_get_description()->version; }
 
+#if CONFIG_MESHVPN_USB_DIAGNOSTICS
+static portMUX_TYPE s_diag_lock = portMUX_INITIALIZER_UNLOCKED;
+static const char *s_diag_stage = "not-started";
+static int64_t s_diag_since;
+static unsigned s_diag_changes;
+static unsigned s_diag_accepted;
+static void diag_stage(const char *stage)
+{
+    portENTER_CRITICAL(&s_diag_lock);
+    s_diag_stage = stage;
+    s_diag_since = esp_timer_get_time();
+    s_diag_changes++;
+    portEXIT_CRITICAL(&s_diag_lock);
+}
+static esp_err_t diag_open(httpd_handle_t server, int socket)
+{
+    (void)server; (void)socket;
+    portENTER_CRITICAL(&s_diag_lock);
+    s_diag_accepted++;
+    portEXIT_CRITICAL(&s_diag_lock);
+    diag_stage("socket/accepted");
+    return ESP_OK;
+}
+size_t meshvpn_web_diag_snapshot(char *out, size_t capacity)
+{
+    const char *stage; int64_t since; unsigned changes, accepted;
+    portENTER_CRITICAL(&s_diag_lock);
+    stage = s_diag_stage; since = s_diag_since; changes = s_diag_changes; accepted = s_diag_accepted;
+    portEXIT_CRITICAL(&s_diag_lock);
+    int n = snprintf(out, capacity, "web.stage=%s age_ms=%" PRIi64 " changes=%u http_accepted=%u\n",
+                     stage, (esp_timer_get_time() - since) / 1000, changes, accepted);
+    return n > 0 && capacity ? ((size_t)n < capacity ? (size_t)n : capacity - 1) : 0;
+}
+#else
+#define diag_stage(stage) ((void)0)
+#endif
+
 static esp_err_t error(httpd_req_t *req, const char *status, const char *message)
 {
     httpd_resp_set_status(req, status);
@@ -64,9 +101,11 @@ static void headers(httpd_req_t *req)
  * management interfaces; the upstream STA interface is not. */
 static bool local_socket(httpd_req_t *req)
 {
+    diag_stage("request/getsockname");
     struct sockaddr_in local; socklen_t len = sizeof(local);
     if (getsockname(httpd_req_to_sockfd(req), (struct sockaddr *)&local, &len) != 0 ||
         local.sin_family != AF_INET) return false;
+    diag_stage("request/netif-address");
     esp_netif_ip_info_t info;
     if (meshvpn_net_usb() && esp_netif_get_ip_info(meshvpn_net_usb(), &info) == ESP_OK &&
         local.sin_addr.s_addr == info.ip.addr) return true;
@@ -153,14 +192,20 @@ static esp_err_t handler_index(httpd_req_t *req)
     if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP management only");
     headers(req);
     httpd_resp_set_type(req, "text/html");
-    return httpd_resp_send(req, MESHVPN_WEB_INDEX_HTML, HTTPD_RESP_USE_STRLEN);
+    diag_stage("index/send");
+    esp_err_t err = httpd_resp_send(req, MESHVPN_WEB_INDEX_HTML, HTTPD_RESP_USE_STRLEN);
+    diag_stage(err == ESP_OK ? "index/done" : "index/send-error");
+    return err;
 }
 static esp_err_t handler_login_page(httpd_req_t *req)
 {
     if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP management only");
     headers(req);
     httpd_resp_set_type(req, "text/html");
-    return httpd_resp_send(req, MESHVPN_WEB_LOGIN_HTML, HTTPD_RESP_USE_STRLEN);
+    diag_stage("login/send");
+    esp_err_t err = httpd_resp_send(req, MESHVPN_WEB_LOGIN_HTML, HTTPD_RESP_USE_STRLEN);
+    diag_stage(err == ESP_OK ? "login/done" : "login/send-error");
+    return err;
 }
 static esp_err_t handler_api_login(httpd_req_t *req)
 {
@@ -646,7 +691,9 @@ static esp_err_t handler_redirect(httpd_req_t *req)
 esp_err_t meshvpn_web_start(void)
 {
     if (s_server) return ESP_ERR_INVALID_STATE;
+    diag_stage("start/cpu-sampler");
     meshvpn_cpu_start();
+    diag_stage("start/load-https-mode");
     esp_err_t err = meshvpn_config_load_https(&s_https_configured);
     if (err != ESP_OK) return err;
     s_https = s_https_configured;
@@ -659,7 +706,12 @@ esp_err_t meshvpn_web_start(void)
     server.send_wait_timeout = 3;
     server.keep_alive_enable = true;
     server.ctrl_port = 32769;
+#if CONFIG_MESHVPN_USB_DIAGNOSTICS
+    /* TLS installs its own open_fn; never replace its handshake callback. */
+    if (!s_https) server.open_fn = diag_open;
+#endif
     if (s_https) {
+        diag_stage("start/tls-identity");
         err = meshvpn_web_tls_init();
         if (err != ESP_OK) return err; /* No silent plaintext fallback. BOOT resets NVS. */
         httpd_ssl_config_t cfg = HTTPD_SSL_CONFIG_DEFAULT();
@@ -668,9 +720,18 @@ esp_err_t meshvpn_web_start(void)
         cfg.servercert_len = strlen(meshvpn_web_tls_cert()) + 1;
         cfg.prvtkey_pem = (const uint8_t *)meshvpn_web_tls_key();
         cfg.prvtkey_len = strlen(meshvpn_web_tls_key()) + 1;
+        diag_stage("start/https-server");
         err = httpd_ssl_start(&s_server, &cfg);
-    } else err = httpd_start(&s_server, &server);
-    if (err != ESP_OK) return err;
+    } else {
+        diag_stage("start/http-server");
+        err = httpd_start(&s_server, &server);
+    }
+    if (err != ESP_OK) {
+        diag_stage("start/server-error");
+        ESP_LOGE(TAG, "HTTP(S) server startup failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    diag_stage("start/register-handlers");
 #define ROUTE(uri_, method_, fn_) { .uri = uri_, .method = method_, .handler = fn_ }
     const httpd_uri_t routes[] = {
         ROUTE("/", HTTP_GET, handler_index), ROUTE("/login", HTTP_GET, handler_login_page),
@@ -708,6 +769,7 @@ esp_err_t meshvpn_web_start(void)
             ESP_LOGW(TAG, "HTTP redirect unavailable; HTTPS remains active");
         }
     }
+    diag_stage("ready");
     ESP_LOGI(TAG, "USB/AP admin: %s://meshpn.local/", s_https ? "https" : "http");
     return ESP_OK;
 #undef ROUTE

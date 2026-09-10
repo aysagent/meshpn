@@ -17,6 +17,9 @@ set(SDKCONFIG_DEFAULTS
     "${CMAKE_SOURCE_DIR}/boards/${MESHVPN_BOARD}/sdkconfig.defaults"
     "${CMAKE_SOURCE_DIR}/profiles/usb_${MESHVPN_USB_PROFILE}.defconfig"
 )
+if("$ENV{USB_DIAGNOSTICS}" STREQUAL "1")
+    list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_SOURCE_DIR}/profiles/usb_diagnostics.defconfig")
+endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(meshvpn_device)

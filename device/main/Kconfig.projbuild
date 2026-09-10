@@ -1,0 +1,10 @@
+menu "MeshPN diagnostic firmware"
+config MESHVPN_USB_DIAGNOSTICS
+    bool "Read-only diagnostic snapshots over the existing USB CDC interface"
+    depends on TINYUSB_CDC_ENABLED
+    default n
+    help
+        Allows the physically attached USB host to read buffered logs without
+        admin authentication. No commands can modify settings or reboot.
+        Debug only: disable for performance measurements and normal use.
+endmenu
