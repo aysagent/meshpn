@@ -1,6 +1,7 @@
 #include "meshvpn_web.h"
 #include "meshvpn_web_tls.h"
 #include "meshvpn_session.h"
+#include "meshvpn_cpu.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -38,9 +39,6 @@
 static const char *TAG = "meshvpn_web";
 static httpd_handle_t s_server, s_redirect;
 static bool s_https, s_https_configured;
-static uint32_t s_cpu_idle_prev[CONFIG_FREERTOS_NUMBER_OF_CORES];
-static int64_t s_cpu_sample_prev_us;
-static bool s_cpu_sample_valid;
 bool meshvpn_web_https_enabled(void) { return s_https; }
 static char s_session_token[33];
 static int64_t s_session_created, s_session_used, s_login_after;
@@ -152,14 +150,14 @@ static esp_err_t ok(httpd_req_t *req)
 }
 static esp_err_t handler_index(httpd_req_t *req)
 {
-    if (!local_socket(req)) return error(req, "403 Forbidden", "USB management only");
+    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP management only");
     headers(req);
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, MESHVPN_WEB_INDEX_HTML, HTTPD_RESP_USE_STRLEN);
 }
 static esp_err_t handler_login_page(httpd_req_t *req)
 {
-    if (!local_socket(req)) return error(req, "403 Forbidden", "USB management only");
+    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP management only");
     headers(req);
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, MESHVPN_WEB_LOGIN_HTML, HTTPD_RESP_USE_STRLEN);
@@ -167,7 +165,7 @@ static esp_err_t handler_login_page(httpd_req_t *req)
 static esp_err_t handler_api_login(httpd_req_t *req)
 {
     headers(req);
-    if (!local_socket(req)) return error(req, "403 Forbidden", "USB management only");
+    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP management only");
     int64_t now = esp_timer_get_time();
     if (now < s_login_after) return error(req, "429 Too Many Requests", "Wait before retrying");
     cJSON *in = body(req, 1024);
@@ -224,50 +222,7 @@ static void add_telemetry(cJSON *root)
     cJSON_AddNumberToObject(memory, "flash_detected", flash);
     cJSON_AddNumberToObject(memory, "web_stack_free", uxTaskGetStackHighWaterMark(NULL));
 
-#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
-    cJSON *cpu = cJSON_AddObjectToObject(root, "cpu");
-    cJSON *cores = cJSON_AddArrayToObject(cpu, "cores");
-    int64_t now_us = esp_timer_get_time();
-    int64_t elapsed_us = s_cpu_sample_valid ? now_us - s_cpu_sample_prev_us : 0;
-    for (int core = 0; core < CONFIG_FREERTOS_NUMBER_OF_CORES; ++core) {
-        cJSON *item = cJSON_CreateObject();
-        cJSON_AddNumberToObject(item, "id", core);
-        uint32_t idle_now = (uint32_t)ulTaskGetIdleRunTimeCounterForCore(core);
-        if (elapsed_us > 0) {
-            uint32_t idle_delta = idle_now - s_cpu_idle_prev[core];
-            double idle_pct = (double)idle_delta * 100.0 / (double)elapsed_us;
-            if (idle_pct < 0) idle_pct = 0;
-            if (idle_pct > 100) idle_pct = 100;
-            cJSON_AddNumberToObject(item, "load_pct", 100.0 - idle_pct);
-        } else {
-            cJSON_AddNullToObject(item, "load_pct");
-        }
-        s_cpu_idle_prev[core] = idle_now;
-        cJSON_AddItemToArray(cores, item);
-    }
-    s_cpu_sample_prev_us = now_us;
-    s_cpu_sample_valid = true;
-
-    UBaseType_t task_count = uxTaskGetNumberOfTasks();
-    TaskStatus_t *tasks = heap_caps_calloc(task_count ? task_count : 1,
-                                           sizeof(*tasks), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (tasks) {
-        UBaseType_t count = uxTaskGetSystemState(tasks, task_count, NULL);
-        cJSON *task_array = cJSON_AddArrayToObject(cpu, "tasks");
-        for (UBaseType_t i = 0; i < count; ++i) {
-            cJSON *item = cJSON_CreateObject();
-            cJSON_AddStringToObject(item, "name", tasks[i].pcTaskName ? tasks[i].pcTaskName : "?");
-            cJSON_AddNumberToObject(item, "runtime_us", (double)tasks[i].ulRunTimeCounter);
-            cJSON_AddNumberToObject(item, "priority", tasks[i].uxCurrentPriority);
-            cJSON_AddNumberToObject(item, "stack_free", tasks[i].usStackHighWaterMark);
-#if CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID
-            cJSON_AddNumberToObject(item, "core", tasks[i].xCoreID);
-#endif
-            cJSON_AddItemToArray(task_array, item);
-        }
-        free(tasks);
-    }
-#endif
+    meshvpn_cpu_json(root);
 
     cJSON_AddStringToObject(root, "build", meshvpn_web_build_id());
     cJSON_AddStringToObject(root, "idf", esp_get_idf_version());
@@ -682,15 +637,16 @@ static esp_err_t handler_ranges_benchmark(httpd_req_t *req)
 }
 static esp_err_t handler_redirect(httpd_req_t *req)
 {
-    if (!local_socket(req)) return error(req, "403 Forbidden", "USB management only");
+    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP management only");
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "https://meshpn.local/");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_sendstr(req, "Open https://meshpn.local/ (or HTTPS at the USB gateway IP)");
+    return httpd_resp_sendstr(req, "Open https://meshpn.local/ (or HTTPS at the USB/AP gateway IP)");
 }
 esp_err_t meshvpn_web_start(void)
 {
     if (s_server) return ESP_ERR_INVALID_STATE;
+    meshvpn_cpu_start();
     esp_err_t err = meshvpn_config_load_https(&s_https_configured);
     if (err != ESP_OK) return err;
     s_https = s_https_configured;
@@ -752,7 +708,7 @@ esp_err_t meshvpn_web_start(void)
             ESP_LOGW(TAG, "HTTP redirect unavailable; HTTPS remains active");
         }
     }
-    ESP_LOGI(TAG, "USB admin: %s://meshpn.local/", s_https ? "https" : "http");
+    ESP_LOGI(TAG, "USB/AP admin: %s://meshpn.local/", s_https ? "https" : "http");
     return ESP_OK;
 #undef ROUTE
 }

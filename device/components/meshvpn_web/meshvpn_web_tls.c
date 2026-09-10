@@ -105,7 +105,8 @@ static esp_err_t generate(identity_t *id)
     TRY(mbedtls_x509write_crt_set_validity(&crt, "20250101000000", "20450101000000"));
     TRY(mbedtls_x509write_crt_set_basic_constraints(&crt, 0, -1));
     TRY(mbedtls_x509write_crt_set_key_usage(&crt, MBEDTLS_X509_KU_DIGITAL_SIGNATURE));
-    /* DER GeneralNames: DNS names and initial USB IPv4 fallback. */
+    /* DNS names survive subnet changes; IP SANs cover factory LAN defaults.
+     * Existing/imported identities are deliberately preserved. */
     unsigned char san[96] = {0x30, 0};
     size_t pos = 2;
     const char *names[] = {"meshpn.local", "meshpn.home.arpa"};
@@ -116,6 +117,8 @@ static esp_err_t generate(identity_t *id)
     }
     san[pos++] = 0x87; san[pos++] = 4;
     san[pos++] = 192; san[pos++] = 168; san[pos++] = 7; san[pos++] = 1;
+    san[pos++] = 0x87; san[pos++] = 4;
+    san[pos++] = 192; san[pos++] = 168; san[pos++] = 4; san[pos++] = 1;
     san[1] = pos - 2;
     TRY(mbedtls_x509write_crt_set_extension(&crt, MBEDTLS_OID_SUBJECT_ALT_NAME,
         MBEDTLS_OID_SIZE(MBEDTLS_OID_SUBJECT_ALT_NAME), 0, san, pos));

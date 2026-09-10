@@ -16,7 +16,7 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -sha256 \
   -keyout "$output/ca.key" -out "$output/ca.crt"
 openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -sha256 \
   -subj "/CN=meshpn.local" \
-  -addext "subjectAltName=DNS:meshpn.local,DNS:meshpn.home.arpa,IP:192.168.7.1" \
+  -addext "subjectAltName=DNS:meshpn.local,DNS:meshpn.home.arpa,IP:192.168.7.1,IP:192.168.4.1" \
   -addext "basicConstraints=critical,CA:FALSE" \
   -addext "keyUsage=critical,digitalSignature" \
   -addext "extendedKeyUsage=serverAuth" \

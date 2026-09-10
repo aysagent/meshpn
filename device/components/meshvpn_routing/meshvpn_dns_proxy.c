@@ -31,6 +31,7 @@ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 typedef struct {
     int fd; /* -1 for UDP */
     struct sockaddr_in peer;
+    uint32_t local_ip; /* Destination of the query, not an inferred source subnet. */
     size_t len;
     uint8_t query[DNS_UDP_MAX + 1];
 } job_t;
@@ -215,10 +216,8 @@ static void worker(void *arg)
         COUNT(queries);
         int n;
         if (!strcmp(q.name, "meshpn.home.arpa") || !strcmp(q.name, "meshpn.local")) {
-            esp_netif_t *usb = esp_netif_get_handle_from_ifkey("USB_DEF");
-            esp_netif_ip_info_t ip = {0};
-            if (usb) esp_netif_get_ip_info(usb, &ip);
-            n = meshvpn_dns_reply(query, len, resp, DNS_MAX, 0, false, ip.ip.addr);
+            n = meshvpn_dns_reply(query, len, resp, DNS_MAX,
+                                 job->local_ip ? 0 : 2, false, job->local_ip);
         } else if ((n = cache_get(query, len, resp)) == 0) {
             uint32_t generation = cache_generation();
             uint8_t id[2] = {query[0], query[1]};
@@ -260,12 +259,29 @@ static void listener(void *arg)
         socklen_t sl = sizeof(job->peer);
         if (FD_ISSET(s_udp, &rd)) {
             job->fd = -1;
-            int n = recvfrom(s_udp, job->query, sizeof(job->query), 0, (struct sockaddr *)&job->peer, &sl);
+            union { struct cmsghdr align; uint8_t bytes[CMSG_SPACE(sizeof(struct in_pktinfo))]; } control;
+            struct iovec iov = {.iov_base = job->query, .iov_len = sizeof(job->query)};
+            struct msghdr msg = {.msg_name = &job->peer, .msg_namelen = sl,
+                .msg_iov = &iov, .msg_iovlen = 1, .msg_control = control.bytes,
+                .msg_controllen = sizeof(control.bytes)};
+            int n = recvmsg(s_udp, &msg, 0);
+            for (struct cmsghdr *c = CMSG_FIRSTHDR(&msg); n >= 0 && c; c = CMSG_NXTHDR(&msg, c)) {
+                if (c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_PKTINFO &&
+                    c->cmsg_len >= CMSG_LEN(sizeof(struct in_pktinfo))) {
+                    struct in_pktinfo info;
+                    memcpy(&info, CMSG_DATA(c), sizeof(info));
+                    job->local_ip = info.ipi_addr.s_addr;
+                }
+            }
             if (n < 12 || n > DNS_UDP_MAX) { free(job); COUNT(errors); continue; }
             job->len = n;
         } else {
             job->fd = accept(s_tcp, (struct sockaddr *)&job->peer, &sl);
             if (job->fd < 0) { free(job); continue; }
+            struct sockaddr_in local;
+            socklen_t local_len = sizeof(local);
+            if (getsockname(job->fd, (struct sockaddr *)&local, &local_len) == 0 &&
+                local.sin_family == AF_INET) job->local_ip = local.sin_addr.s_addr;
         }
         if (xQueueSend(s_queue, &job, 0) != pdTRUE) {
             if (job->fd >= 0) close(job->fd);
@@ -284,9 +300,12 @@ esp_err_t meshvpn_dns_proxy_init(void)
     if (s_cache_lock) s_cache = heap_caps_calloc(CACHE_SLOTS, sizeof(*s_cache), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     s_udp = socket(AF_INET, SOCK_DGRAM, 0);
     s_tcp = socket(AF_INET, SOCK_STREAM, 0);
+    int pktinfo = 1;
     struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(53),
                                .sin_addr.s_addr = htonl(INADDR_ANY)};
-    if (s_udp < 0 || s_tcp < 0 || bind(s_udp, (struct sockaddr *)&addr, sizeof(addr)) ||
+    if (s_udp < 0 || s_tcp < 0 ||
+        setsockopt(s_udp, IPPROTO_IP, IP_PKTINFO, &pktinfo, sizeof(pktinfo)) ||
+        bind(s_udp, (struct sockaddr *)&addr, sizeof(addr)) ||
         bind(s_tcp, (struct sockaddr *)&addr, sizeof(addr)) || listen(s_tcp, 3)) {
         if (s_udp >= 0) close(s_udp);
         if (s_tcp >= 0) close(s_tcp);

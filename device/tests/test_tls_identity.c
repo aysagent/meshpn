@@ -39,6 +39,16 @@ int main(int argc,char **argv)
     assert(saved_size<2048); /* compact EC identity, not a padded 6 KiB blob */
     char fingerprint[96];strcpy(fingerprint,meshvpn_web_tls_fingerprint());
     assert(strlen(fingerprint)==95);
+    mbedtls_x509_crt parsed; mbedtls_x509_crt_init(&parsed);
+    assert(mbedtls_x509_crt_parse(&parsed, (const unsigned char *)meshvpn_web_tls_cert(),
+        strlen(meshvpn_web_tls_cert()) + 1) == 0);
+    const char *names[] = {"meshpn.local", "meshpn.home.arpa", "192.168.7.1", "192.168.4.1"};
+    for (unsigned i = 0; i < 4; i++) {
+        uint32_t flags = 0;
+        mbedtls_x509_crt_verify(&parsed, &parsed, NULL, names[i], &flags, NULL, NULL);
+        assert(!(flags & MBEDTLS_X509_BADCERT_CN_MISMATCH));
+    }
+    mbedtls_x509_crt_free(&parsed);
     reboot_identity();assert(!strcmp(fingerprint,meshvpn_web_tls_fingerprint()));
     assert(meshvpn_web_tls_import("not a certificate","bad key")==ESP_ERR_INVALID_ARG);
     char *crt=read_pem(argv[1]),*key=read_pem(argv[2]);

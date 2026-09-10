@@ -53,9 +53,19 @@ for(const part of text.split('static const char ').slice(1)){
         assert.equal(elements['certificate-section'].hidden,!https);
         assert.equal(elements.fingerprint.textContent,https?'AA:BB':'');
         assert(elements.usb.textContent.includes((https?'https':'http')+'://192.168.7.1/'));
-        assert.equal(elements.cpu.textContent,'CPU0 37% · CPU1 12%');
+        assert.equal(elements.cpu.textContent,'CPU0 37.0% · CPU1 12.0%');
+        status.cpu.cores[0].load_pct=null;
+        status.cpu.cores[1].load_pct=0.14321;
+        await vm.runInContext('poll()',context);
+        assert.equal(elements.cpu.textContent,'CPU0 — · CPU1 0.1%');
+        status.cpu.available=false;
+        await vm.runInContext('poll()',context);
+        assert.equal(elements.cpu.textContent,'CPU0 — · CPU1 —');
+        delete status.cpu;
+        await vm.runInContext('poll()',context);
+        assert.equal(elements.cpu.textContent,'CPU telemetry unavailable');
         assert.equal(elements.ap.textContent,https?
-          'AP: MeshPN_aabbcc · 192.168.4.1 · channel 6 · clients 2 · NAT on · admin via USB only':
+          'AP: MeshPN_aabbcc · 192.168.4.1 · channel 6 · clients 2 · NAT on · admin: https://192.168.4.1/':
           'WiFi AP disabled');
         assert.equal(elements['https-enabled'].checked,https);
         assert.equal(elements['https-pending'].hidden,true);

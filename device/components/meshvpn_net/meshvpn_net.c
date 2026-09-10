@@ -50,6 +50,12 @@ esp_err_t meshvpn_net_start_mdns(bool https_enabled)
         return err;
     }
     s_mdns = true;
+    if (s_ap_netif && ((err = mdns_register_netif(s_ap_netif)) != ESP_OK ||
+        (err = mdns_netif_action(s_ap_netif, MDNS_EVENT_ENABLE_IP4)) != ESP_OK)) {
+        mdns_free();
+        s_mdns = false;
+        return err;
+    }
     return ESP_OK;
 }
 
@@ -202,7 +208,7 @@ static void meshvpn_net_resolve_lan_conflict(esp_netif_t *lan, esp_netif_t *othe
     ESP_LOGW(TAG, "%s subnet conflict: moved gateway to " IPSTR "; renew DHCP/reconnect client",
              esp_netif_get_ifkey(lan), IP2STR(&current.ip));
     if (lan == s_ap_netif) esp_wifi_deauth_sta(0);
-    if (lan == s_usb_netif && s_mdns) mdns_netif_action(lan, MDNS_EVENT_ANNOUNCE_IP4);
+    if (s_mdns) mdns_netif_action(lan, MDNS_EVENT_ANNOUNCE_IP4);
 }
 
 static void meshvpn_net_on_event(void *arg, esp_event_base_t base, int32_t id, void *data)

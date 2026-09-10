@@ -64,7 +64,10 @@ int meshvpn_hook_ip4_input(struct pbuf *p, struct netif *inp)
     /* AP clients may use the gateway DNS and admin HTTP(S). The STA uplink
      * remains blocked from all local management services. */
     if (inp == s_ap && dst == 53 && dest.addr == netif_ip4_addr(s_ap)->addr) return 0;
-    if (inp == s_ap && (dst == 80 || dst == 443) &&
+    if (inp == s_ap && h[9] == 17 && dst == 5353 &&
+        (dest.addr == netif_ip4_addr(s_ap)->addr ||
+         (h[16] == 224 && h[17] == 0 && h[18] == 0 && h[19] == 251))) return 0;
+    if (inp == s_ap && h[9] == 6 && (dst == 80 || dst == 443) &&
         dest.addr == netif_ip4_addr(s_ap)->addr) return 0;
     if ((h[9] == 6 && (dst == 80 || dst == 443 || dst == 53)) ||
         (h[9] == 17 && (dst == 53 || dst == 5353 || dst == 32768 || dst == 32769)))

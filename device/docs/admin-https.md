@@ -5,21 +5,21 @@ In **Admin connection**, check **Enable HTTPS**, choose **Save connection settin
 Open the displayed HTTPS address after reboot and log in again. The checkbox can also disable HTTPS using the same save/reboot sequence.
 The choice is stored in NVS and overrides `CONFIG_MESHVPN_WEB_HTTPS`, which now only specifies the initial/factory-reset default.
 Once this firmware is installed, switching modes does not require reflashing.
-HTTP-only mode keeps login and USB ingress isolation, but passwords/tokens are not encrypted in transit.
+HTTP-only mode keeps login and USB/AP ingress isolation from upstream STA, but passwords/tokens are not encrypted in transit.
 HTTP boot does not initialize the TLS identity; certificate download/import requests over HTTP are rejected.
 Enabling HTTPS prepares/validates the identity before saving the mode, so preparation failure leaves the previous setting active.
 Any existing NVS identity is preserved when HTTPS is disabled.
 
 The firmware generates an individual EC P-256 key and self-signed certificate when HTTPS is first enabled (or on first boot with HTTPS as the default), stored together in NVS.
-The certificate includes meshpn.local, meshpn.home.arpa and the initial 192.168.7.1 address.
+New certificates include meshpn.local, meshpn.home.arpa and the initial USB/AP addresses 192.168.7.1 and 192.168.4.1. Existing and imported identities are not replaced: use meshpn.local on AP with an older certificate, or import a new identity if direct AP-IP access without a name warning is required.
 It remains the same after ordinary reboots and flashing an app without erasing NVS. Factory reset generates a new identity.
 
-Open https://meshpn.local/ over USB. A self-signed certificate initially produces a browser warning.
+Open https://meshpn.local/ over USB or the device's own AP. A self-signed certificate initially produces a browser warning.
 Establish trust on a direct, trusted USB connection; compare the browser certificate fingerprint with the device's UART/boot log.
 The authenticated status page also shows the fingerprint for later comparison, but a page alone is not independent proof of its own identity.
 
 HTTP on port 80 redirects only; passwords, bearer tokens, logs and APIs are served on HTTPS.
-If mDNS is unavailable, enter the USB gateway as an HTTPS IP address.
+If mDNS is unavailable, try https://meshpn.home.arpa/ using the gateway DNS, or the USB/AP gateway as an HTTPS IP address.
 When subnet conflict recovery changes that IP, the certificate still covers the canonical name; an IP literal may produce a name warning.
 
 ## Personal CA (no browser warning after setup)

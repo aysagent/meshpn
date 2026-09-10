@@ -5,6 +5,9 @@ test_dir="$(mktemp -d /tmp/meshpn-host-tests.XXXXXX)"
 cd "$root"
 cc="${CC:-cc}"
 flags=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined)
+"$cc" "${flags[@]}" -Idevice/components/meshvpn_web/include \
+  device/tests/test_cpu_math.c -o "$test_dir/cpu-math"
+"$test_dir/cpu-math"
 "$cc" "${flags[@]}" -Idevice/components/meshvpn_routing/include \
   device/tests/test_dns_ranges.c device/components/meshvpn_routing/meshvpn_dns_wire.c \
   device/components/meshvpn_routing/meshvpn_ip_ranges.c -o "$test_dir/dns-ranges"
@@ -24,6 +27,13 @@ for default_https in 0 1; do
 done
 bash -n device/scripts/flash.sh device/scripts/create-admin-ca.sh
 if [[ -n "${IDF_PATH:-}" ]]; then
+  json_dir="$IDF_PATH/components/json/cJSON"
+  for runtime_enabled in 0 1; do
+    "$cc" "${flags[@]}" -DCONFIG_FREERTOS_GENERATE_RUN_TIME_STATS="$runtime_enabled" \
+      -Idevice/tests/cpu_stubs -Idevice/components/meshvpn_web/include -I"$json_dir" \
+      device/tests/test_cpu_sampler.c "$json_dir/cJSON.c" -lm -o "$test_dir/cpu-sampler-$runtime_enabled"
+    "$test_dir/cpu-sampler-$runtime_enabled"
+  done
   source_dir="$IDF_PATH/components/mbedtls/mbedtls"
   cmake -S "$source_dir" -B "$test_dir/mbedtls" -DENABLE_PROGRAMS=OFF -DENABLE_TESTING=OFF > "$test_dir/mbedtls.log" 2>&1
   cmake --build "$test_dir/mbedtls" -j 4 >> "$test_dir/mbedtls.log" 2>&1

@@ -71,7 +71,9 @@ int main(void)
     check(&sta,ap.ip.addr,6,443,0,true); /* STA uplink remains denied */
     check(&ap,usb.ip.addr,6,80,0,true);
     check(&ap,sta.ip.addr,6,443,0,true);
-    check(&ap,ip(224,0,0,251),17,5353,0,true);
+    check(&ap,ip(224,0,0,251),17,5353,0,false);
+    check(&ap,ap.ip.addr,17,5353,0,false);
+    check(&ap,usb.ip.addr,17,5353,0,true);
     check(&ap,ap.ip.addr,17,32768,0,true);
     check(&ap,ap.ip.addr,17,32769,0,true);
     check(&ap,ip(255,255,255,255),17,67,0,false); /* DHCP discovery */
@@ -79,6 +81,12 @@ int main(void)
     check(&ap,ip(1,1,1,1),6,443,0,false);
     check(&usb,ap.ip.addr,17,53,0,false);
     ap.ip.addr=ip(10,203,7,1);
+    check(&ap,ap.ip.addr,6,80,0,false);
+    check(&ap,ap.ip.addr,6,443,0,false);
+    check(&ap,ap.ip.addr,17,5353,0,false);
+    check(&sta,ap.ip.addr,6,80,0,true);
+    check(&sta,ap.ip.addr,6,443,0,true);
+    check(&sta,ap.ip.addr,17,5353,0,true);
     check(&ap,ap.ip.addr,17,53,0,false); /* exception follows subnet changes */
     check(&sta,ap.ip.addr,17,53,0,true);
     assert(meshvpn_net_ap_ip4_rx_count()>0);

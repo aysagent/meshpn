@@ -8,7 +8,7 @@ USB compatibility expansion and VPN/WireGuard implementation are deferred.
 
 - Concurrent STA + WPA2 SoftAP + USB NCM: AP/USB have independent DHCP subnets and share the STA IPv4 NAT uplink.
   AP defaults: `MeshPN_XXXXXX`, test password `meshpn-test`, four clients, 192.168.4.1/24.
-  Management is available on USB and the device's own SoftAP; upstream STA cannot reach it. mDNS remains USB-only; AP may use its own gateway DNS.
+  Management is available on USB and the device's own SoftAP; upstream STA cannot reach it. mDNS is registered on USB/AP only; gateway DNS returns the query's destination address for local names.
   Radio is stopped while initial AP credentials are configured; no transient open AP is intentionally started.
   Status adds AP SSID, active channel, client count, NAT, DNS and ingress counter. See [benchmark procedure](apsta-benchmark.md).
 - Up to 16 versioned NVS WiFi profiles, migration from the old single network, secret-free saved-network list,
@@ -21,7 +21,7 @@ USB compatibility expansion and VPN/WireGuard implementation are deferred.
   `CONFIG_MESHVPN_WEB_HTTPS=n` sets the initial/factory-reset default. Status distinguishes active and saved modes and provides the next URL.
   HTTP boot serves the admin on port 80 without TLS identity initialization; certificate APIs reject HTTP requests and credentials are unencrypted.
   Enabling from HTTP preflights the identity before saving; disabling preserves it. No silent HTTP fallback on HTTPS boot failure.
-  HTTPS mode provides a persistent per-device EC identity, certificate import and HTTP redirect. Ingress filtering permits USB/AP management but blocks upstream STA; mDNS remains USB-only and IPv6 is disabled.
+  HTTPS mode provides a persistent per-device EC identity, certificate import and HTTP redirect. Ingress filtering permits USB/AP management but blocks upstream STA; mDNS is enabled on USB/AP only and IPv6 is disabled.
 - Non-empty expiring sessions, logout/password-change revocation, login throttling and bounded request parsing.
   `CONFIG_MESHVPN_WEB_REQUIRE_PASSWORD_CHANGE` defaults to **n** for testing. Set it to **y** to require changing the configured initial password before configuration mutations.
 - UDP/TCP DNS proxy with response correlation, uplink resolver, TCP fallback and bounded positive TTL cache.
@@ -32,6 +32,15 @@ USB compatibility expansion and VPN/WireGuard implementation are deferred.
 - Pinned dependency lock and separate profile/defaults build directories. The manager applies iot_bridge lwIP patches to the IDF checkout.
 
 ## Software checks
+
+CPU telemetry now uses a bounded background snapshot every two seconds and 64-bit
+runtime counters. Readers share the same sample; JSON includes interval, age,
+collection time, per-core load and task IDs/runtime/load. Task names are static
+lookup hints (unknown tasks may have null names), never dereferenced from a
+potentially deleted task. See [performance testing](../perf-testing.md).
+Build with the supplied flash script so the changed defaults generate a fresh
+sdkconfig; custom existing sdkconfigs need U64 runtime counters, two mDNS
+interfaces and LWIP_NETBUF_RECVINFO enabled.
 
 ```bash
 bash device/scripts/test-host.sh
@@ -47,6 +56,10 @@ checkbox changes surviving status polling, save/reboot confirmation, failed save
 AP regression tests cover DHCP/NAT/DNS ingress permissions, USB/AP management, changed AP addresses,
 LAN selection against /24, /16 and /8 uplinks, and AP status rendering.
 The TLS test uses an in-memory NVS stub, not actual flash/power-loss tests.
+CPU tests exercise the actual sampler with an invalid task-name pointer, new task
+IDs, long uptime, multiple readers, missing/stale samples and runtime stats disabled.
+These sampler tests need IDF_PATH for the production cJSON library; pure CPU math
+tests always run. TLS tests check both DNS names and default USB/AP IP SANs.
 
 The ESP-IDF 5.4.1 NCM firmware builds with the locked dependencies, with mandatory password change both enabled and disabled.
 The new STA/AP/USB defaults are also built from a fresh sdkconfig; measurements still require the board.
@@ -78,7 +91,7 @@ Check the checkbox is not overwritten by status polling. Simulate identity/stora
 5. **Authentication:** empty/malformed/expired Bearer fails; logout and password change revoke the token;
    repeated bad logins are delayed. Check mandatory-change option both disabled and enabled. A new login replaces the previous session.
 6. **Network isolation:** from a separate WiFi client probe the dongle's STA IP on TCP 80/443/53 and UDP 53/5353/32768/32769;
-   management must not answer. Repeat with a route to the USB IP through STA. On USB, HTTPS/DNS must work.
+   management must not answer. Repeat with explicit routes to USB/AP IPs through STA. On USB and AP, HTTPS/DNS/mDNS must work.
    Capture uplink multicast: no dongle mDNS announcements on STA. Repeat after reconnect and address changes.
 7. **Names and trust:** test `meshpn.local` on iPhone/macOS and `meshpn.home.arpa` via the supplied DNS.
    Import a personal-CA leaf/key, reboot, verify browser trust and fingerprint. With multiple dongles, check mDNS name conflicts;
@@ -86,6 +99,8 @@ Check the checkbox is not overwritten by status polling. Simulate identity/stora
 8. **Subnet collision:** place uplink in 192.168.7.0/24. Check reassignment, renew host DHCP/replug, resolve the name and verify NAT.
    The new IP is not necessarily covered by the certificate; use the DNS name. Subnet selection is recalculated after reboot.
 9. **DNS:** test UDP/TCP queries, repeated cache hits with decreasing TTL, large EDNS responses, upstream failure and recovery.
+   Query meshpn.home.arpa at each LAN gateway: A answers must match that gateway,
+   including after subnet conflict recovery. Local responses must not leak through the cache between LANs.
    Confirm normal connectivity checks; this is not an uplink captive-portal login implementation.
 10. **Memory and speed:** run UI benchmark at 10k/100k/500k, verify memory returns after completion.
     Repeat [baseline throughput/stability checks](benchmark-gonogo.md) with HTTPS polling. Record IDF, lockfile, profile and binary.

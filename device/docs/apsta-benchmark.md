@@ -16,7 +16,7 @@ No VPN or policy routing is active yet. Throughput has not been measured on hard
 5. USB admin status shows `net.ap_active`, `ap_ssid`, `ap_channel`, `ap_clients`, `ap_napt`, `ap_dhcps_dns`, `ap_ip4_rx`.
    Both `ap_napt` and `usb_napt` should be true once the interfaces are up. Passwords are not returned in status/logs.
 
-The admin is available on USB and the dongle's own SoftAP gateway; it remains blocked from the upstream STA/home WiFi. mDNS remains USB-only for now. From AP, the gateway DNS service and HTTP(S) admin are allowed alongside DHCP and routed internet.
+The admin is available on USB and the dongle's own SoftAP gateway; it remains blocked from the upstream STA/home WiFi. mDNS publishes meshpn.local on USB/AP only. From AP, the gateway DNS service, mDNS and HTTP(S) admin are allowed alongside DHCP and routed internet.
 This does not provide full guest/client isolation: routed access to the home LAN or USB hosts is not blocked by a general guest firewall.
 Keep the known test password confined to testing or change it in the build configuration.
 
@@ -58,7 +58,7 @@ AP forwarding bypasses USB Full-Speed, but shares radio airtime between receive 
 - AP never advertises an open network: the radio is stopped during initial AP creation and configured with WPA2 before restart.
 - STA/AP/USB all work after boot; AP stays present without uplink, and internet resumes after router reboot or profile switching.
 - AP TCP/UDP DNS works; from STA, DNS on either LAN gateway is blocked.
-- HTTP/HTTPS/mDNS and HTTPD control ports are inaccessible from AP and STA, including traffic addressed to the USB gateway.
+- HTTP/HTTPS/DNS/mDNS are available at the AP gateway from AP clients; STA cannot reach these services on any local address or via multicast. HTTPD control ports 32768/32769 remain blocked from AP/STA. Test STA-IP directly and explicit routes to USB/AP gateways via STA-IP; a timeout without a route does not prove ingress filtering.
 - Test router subnets `192.168.4.0/24`, `192.168.7.0/24`, and a wider `192.168.0.0/16`: neither LAN may overlap uplink or the other LAN.
-- Test four AP clients, USB unplug/replug, phone sleep/resume, and 30–60 minutes of traffic with no resets or shrinking minimum heap.
+- Test four AP clients, USB unplug/replug, phone sleep/resume, and 30–60 minutes of traffic with no resets or persistent loss of free memory after equal idle periods.
 - Keep the historical [USB benchmark](benchmark-gonogo.md) separate: its 8.13/6.5 Mbps numbers are not measurements of this revision.
