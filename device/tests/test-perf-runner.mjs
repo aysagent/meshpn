@@ -143,6 +143,34 @@ test('discovery will not send passwords to routers or arbitrary HTTPS redirects'
   assert.equal(posted,false);
 });
 
+test('missing AP reports expected network, preserves board identity and distinguishes timeout',async()=>{
+  for(const timeout of [false,true]) {
+    const initial=fixture();initial.net.ap_ssid='MeshPN_test';
+    const deps={networkInterfaces:interfaces,
+      run:async(bin,args)=>({code:0,stdout:paths.find(p=>p.iface===args[1]).gateway}),
+      request:async(c,url)=>{
+        if(c.iface==='en0') {
+          if(timeout)throw Error('Board API timeout');
+          return {code:200,text:'<title>Router</title>'};
+        }
+        if(url==='/login')return {code:200,text:'<title>MeshPN Login</title>'};
+        if(url==='/api/login')return {code:200,text:'{"token":"test-token"}'};
+        return {code:200,text:JSON.stringify(initial)};
+      }};
+    await assert.rejects(discoverBoard({paths:'both'},new AbortController().signal,()=>{},deps),e=>{
+      assert.match(e.message,/found: usb/);assert.match(e.message,/MeshPN_test/);
+      assert.match(e.message,/--paths usb/);assert.match(e.message,/en0.*192\.168\.4\.1/);
+      assert.match(e.message,timeout?/Board API timeout/:/not a MeshPN login page/);
+      assert.equal(e.boardInitial.build,'test-build');
+      assert.deepEqual(e.discovery.detectedPaths.map(p=>p.kind),['usb']);
+      assert.ok(!JSON.stringify(e.discovery).includes('test-token'));
+      return true;
+    });
+    const board=await discoverBoard({paths:'usb'},new AbortController().signal,()=>{},deps);
+    assert.deepEqual(board.paths.map(p=>p.kind),['usb']);
+  }
+});
+
 test('HTTP API sends credentials only as body, handles HTTP errors and binds source',async()=>{
   let seen;
   const server=http.createServer(async(req,res)=>{
@@ -238,6 +266,21 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
     assert.equal(closes,3); // Dependency failure must not start remote servers.
     const errors=[];for(const d of await readdir(parent))errors.push(JSON.parse(await readFile(path.join(parent,d,'result.json'),'utf8')));
     assert.ok(errors.some(r=>r.error?.includes('brew install iperf3')));
+    const discovery={candidates:paths,errors:['en0: timeout'],detectedPaths:[paths[0]]};
+    assert.equal(await main(['server','--quick','--out',parent],{...dependencies,discoverBoard:async()=>{
+      const e=Error('Requested paths=both, found: usb');
+      e.boardInitial={...fixture(),token:'DO_NOT_SAVE'};e.discovery=discovery;throw e;
+    }}),1);
+    assert.equal(closes,3);
+    let missingPath;
+    for(const d of await readdir(parent)) {
+      const r=JSON.parse(await readFile(path.join(parent,d,'result.json'),'utf8'));
+      if(r.discovery)missingPath=r;
+    }
+    assert.equal(missingPath.board.build,'test-build');
+    assert.deepEqual(missingPath.discovery,discovery);
+    assert.equal(missingPath.records.length,0);
+    assert.ok(!JSON.stringify(missingPath).includes('DO_NOT_SAVE'));
     assert.equal(process.listenerCount('SIGINT'),signalsBefore);
   }finally{await rm(parent,{recursive:true,force:true});}
 });

@@ -62,6 +62,7 @@ export async function discoverBoard(o, signal, log, {networkInterfaces=os.networ
         r=await request(c,'/login',auth);
       }
       if(r.code===200&&/<title>MeshPN(?:[^<]*)<\/title>/i.test(r.text))found.push(c);
+      else errors.push(`${c.iface}/${c.gateway}: HTTP ${r.code}, not a MeshPN login page`);
     } catch(e) {errors.push(`${c.iface}/${c.gateway}: ${e.message}`);}
   }
   if(!found.length)throw Error(`MeshPN admin not found on DHCP gateways. Check USB/AP and macOS Local Network permission. For static IP use --admin-url http://BOARD-IP/. For HTTPS use --admin-ca cert.pem (or explicitly --admin-insecure). ${errors.join('; ')}`);
@@ -96,7 +97,17 @@ export async function discoverBoard(o, signal, log, {networkInterfaces=os.networ
   paths.sort((a,b)=>a.kind==='usb'?-1:b.kind==='usb'?1:0);
   if(!initial.wifi.connected)throw Error('MeshPN STA has no uplink; connect it to the router first.');
   const selected=o.paths==='auto'||o.paths==='both'?paths:paths.filter(p=>p.kind===o.paths);
-  if(!selected.length||(o.paths==='both'&&selected.length!==2))throw Error(`Requested paths=${o.paths}, found: ${paths.map(p=>p.kind).join(', ')||'none'}. Connect USB and Mac Wi-Fi to MeshPN AP.`);
+  if(!selected.length||(o.paths==='both'&&selected.length!==2)) {
+    const diagnostics={candidates,errors,detectedPaths:paths};
+    const e=Error(`Requested paths=${o.paths}, found: ${paths.map(p=>p.kind).join(', ')||'none'}. `+
+      `Connect USB and connect Mac Wi-Fi to the board AP ${JSON.stringify(initial.net.ap_ssid||'MeshPN_*')} `+
+      `(gateway ${initial.net.ap_ip||'unknown'}, active=${Boolean(initial.net.ap_active)}), not to the home router. `+
+      `The board's STA uplink is not a Mac AP connection. For USB-only tests use --paths usb. `+
+      `Probed gateways: ${candidates.map(c=>`${c.iface}: ${c.address} → ${c.gateway}`).join('; ')||'none'}. `+
+      (errors.length?`Probe failures: ${errors.join('; ')}. Check routes/VPN and macOS Local Network permission if already connected to the board AP.`:''));
+    e.boardInitial=initial;e.discovery=diagnostics;
+    throw e;
+  }
   for(const p of selected) {
     if(!initial.net[`${p.kind}_napt`]||(p.kind==='usb'&&!initial.usb?.host_ready)||(p.kind==='ap'&&!initial.net.ap_active))
       throw Error(`${p.kind}: interface/NAT not ready`);

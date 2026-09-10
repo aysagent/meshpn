@@ -263,7 +263,11 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     await executeSchedule(o,board.paths,{batch,idle,check});
     if(samplerError)throw samplerError;
     result.outcome=records.some(r=>r.error)?'failed':'completed';
-  }catch(e){result.error=e.message;result.outcome=signal.aborted?'interrupted':'failed';}
+  }catch(e){
+    result.error=e.message;result.outcome=signal.aborted?'interrupted':'failed';
+    if(e.boardInitial)result.board=cleanStatus(e.boardInitial);
+    if(e.discovery){result.discovery=e.discovery;result.paths=e.discovery.detectedPaths;}
+  }
   finally {
     samplerStop=true;wakeSampler?.();
     if(samplerDone)await samplerDone.catch(e=>{result.error=e.message;result.outcome='failed';});
