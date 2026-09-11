@@ -1,16 +1,39 @@
 import path from 'node:path';
+import { access } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { checked } from './perf-lib.mjs';
 
-export async function prepareIperfBinding(output,signal,{run=checked}={}) {
+export async function macosBuildContext(signal,{run=checked,checkAccess=access}={}) {
+  // Do not let an inherited iOS/stale SDKROOT select the host helper's SDK.
+  // Keep DEVELOPER_DIR: the user's active Xcode/CLT selection remains authoritative.
+  const env={...process.env};delete env.SDKROOT;
+  let compiler;
+  try {compiler=(await run('/usr/bin/xcrun',['--sdk','macosx','--find','clang'],{signal,env})).trim();}
+  catch(e) {
+    if(signal?.aborted)throw e;
+    throw Error(`macOS interface binding needs Apple Command Line Tools. Install once: xcode-select --install. ${e.message}`);
+  }
+  if(!path.isAbsolute(compiler))throw Error('xcrun did not return an absolute clang path. Check xcode-select --install');
+  let sdk;
+  try {
+    sdk=(await run('/usr/bin/xcrun',['--sdk','macosx','--show-sdk-path'],{signal,env})).trim();
+    if(!path.isAbsolute(sdk))throw Error('xcrun did not return an absolute macOS SDK path');
+    await checkAccess(path.join(sdk,'usr/include/sys/socket.h'),constants.R_OK);
+  }catch(e) {
+    if(signal?.aborted)throw e;
+    throw Error(`macOS SDK unavailable/incomplete${sdk?` (${sdk})`:''}: ${e.message}. `+
+      'Check xcode-select -p and xcrun --sdk macosx --show-sdk-path; install/update Apple Command Line Tools or select a complete Xcode installation. No system settings were changed.');
+  }
+  return {compiler,sdk,env:{...env,SDKROOT:sdk}};
+}
+
+export async function prepareIperfBinding(output,signal,deps={}) {
   const library=path.join(output,'iperf-bind.dylib');
   if(library.includes(':'))throw Error('Performance output path cannot contain a colon (DYLD library path separator).');
-  let compiler;
-  try {compiler=(await run('/usr/bin/xcrun',['--find','clang'],{signal})).trim();}
-  catch {throw Error('macOS interface binding needs Apple Command Line Tools. Install once: xcode-select --install');}
-  if(!compiler)throw Error('xcrun did not return a clang path. Check xcode-select --install');
-  await run(compiler,['-dynamiclib','-O2','-Wall','-Wextra','-Werror','-arch','arm64','-arch','x86_64',
-    fileURLToPath(new URL('./perf-bind-darwin.c',import.meta.url)),'-o',library],{signal,timeout:60000});
+  const {compiler,sdk,env}=await macosBuildContext(signal,deps);
+  await (deps.run||checked)(compiler,['-isysroot',sdk,'-dynamiclib','-O2','-Wall','-Wextra','-Werror','-arch','arm64','-arch','x86_64',
+    fileURLToPath(new URL('./perf-bind-darwin.c',import.meta.url)),'-o',library],{signal,env,timeout:60000});
   return library;
 }
 export function iperfEnvironment(library,iface) {

@@ -12,7 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, quote, command, iperfArgs, parseIperf, stats, parsePing, summarize,
   measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer } from '../scripts/perf-lib.mjs';
 import { discoverBoard, checkRoute, requestBoard, sshArgs } from '../scripts/perf-network.mjs';
-import { prepareIperfBinding, iperfEnvironment, verifyIperfBinding, iperfError } from '../scripts/perf-bind.mjs';
+import { prepareIperfBinding, macosBuildContext, iperfEnvironment, verifyIperfBinding, iperfError } from '../scripts/perf-bind.mjs';
 import { executeSchedule, cleanStatus, telemetrySummary, reportMarkdown, main } from '../scripts/perf-runner.mjs';
 
 const paths=[{kind:'usb',iface:'en7',address:'192.168.7.2',gateway:'192.168.7.1'},
@@ -58,13 +58,18 @@ test('interface binding, direction and UDP packet size are explicit',()=>{
 });
 
 test('macOS helper build, process-only environment and binding evidence fail closed',async()=>{
-  const calls=[];
-  const library=await prepareIperfBinding('/tmp/results with spaces',undefined,{run:async(bin,args)=>{
-    calls.push({bin,args});return calls.length===1?'/toolchain/clang\n':'';
-  }});
-  assert.equal(calls[0].bin,'/usr/bin/xcrun');assert.equal(calls[1].bin,'/toolchain/clang');
-  assert.ok(calls[1].args.includes('-dynamiclib'));assert.ok(calls[1].args.includes('arm64'));
-  assert.ok(calls[1].args.includes('x86_64'));assert.equal(calls[1].args.at(-1),library);
+  const calls=[],sdk='/toolchain/SDK with spaces/MacOSX.sdk';
+  const library=await prepareIperfBinding('/tmp/results with spaces',undefined,{run:async(bin,args,opts)=>{
+    calls.push({bin,args,opts});return calls.length===1?'/toolchain/clang\n':calls.length===2?sdk+'\n':'';
+  },checkAccess:async file=>{assert.equal(file,sdk+'/usr/include/sys/socket.h');}});
+  assert.equal(calls[0].bin,'/usr/bin/xcrun');assert.equal(calls[2].bin,'/toolchain/clang');
+  assert.deepEqual(calls[0].args,['--sdk','macosx','--find','clang']);
+  assert.deepEqual(calls[1].args,['--sdk','macosx','--show-sdk-path']);
+  assert.equal(calls[0].opts.env.SDKROOT,undefined);assert.equal(calls[1].opts.env.SDKROOT,undefined);
+  assert.equal(calls[2].opts.env.SDKROOT,sdk);
+  assert.deepEqual(calls[2].args.slice(0,2),['-isysroot',sdk]);
+  assert.ok(calls[2].args.includes('-dynamiclib'));assert.ok(calls[2].args.includes('arm64'));
+  assert.ok(calls[2].args.includes('x86_64'));assert.equal(calls[2].args.at(-1),library);
   const original=process.env.DYLD_INSERT_LIBRARIES;
   assert.equal(iperfEnvironment(library,'en13').DYLD_INSERT_LIBRARIES,library);
   assert.equal(iperfEnvironment(library,'en0').MESHPN_IPERF_IFACE,'en0');
@@ -78,14 +83,28 @@ test('macOS helper build, process-only environment and binding evidence fail clo
   await assert.rejects(prepareIperfBinding('/tmp/results',undefined,{run:async()=>{throw Error('missing');}}),/xcode-select --install/);
 });
 
+test('missing or incomplete macOS SDK fails before compiling; cancellation is preserved',async()=>{
+  for(const sdk of ['', 'relative/path', '/missing/MacOSX.sdk']) {
+    let calls=0;
+    await assert.rejects(prepareIperfBinding('/tmp/results',undefined,{
+      run:async()=>{calls++;return calls===1?'/toolchain/clang':sdk;},
+      checkAccess:async()=>{throw Error('ENOENT: sys/socket.h');}
+    }),/SDK unavailable\/incomplete/);
+    assert.equal(calls,2);
+  }
+  const controller=new AbortController();controller.abort();
+  await assert.rejects(macosBuildContext(controller.signal,{run:async()=>{throw Error('Interrupted');}}),/^Error: Interrupted$/);
+});
+
 test('native macOS dyld binds both TCP and UDP sockets without sending traffic',
   {skip:process.platform!=='darwin'},async()=>{
     const dir=await mkdtemp(path.join(tmpdir(),'meshpn-native-bind-'));
     try {
       const library=await prepareIperfBinding(dir);
       const probe=path.join(dir,'probe');
-      const built=await command('/usr/bin/xcrun',['clang','-Wall','-Wextra','-Werror',
-        fileURLToPath(new URL('./perf_bind_darwin_probe.c',import.meta.url)),'-o',probe]);
+      const {compiler,sdk,env:buildEnv}=await macosBuildContext();
+      const built=await command(compiler,['-isysroot',sdk,'-Wall','-Wextra','-Werror',
+        fileURLToPath(new URL('./perf_bind_darwin_probe.c',import.meta.url)),'-o',probe],{env:buildEnv});
       assert.equal(built.code,0,built.stderr);
       const env={...process.env,DYLD_INSERT_LIBRARIES:library,MESHPN_IPERF_IFACE:'lo0'};
       const raw=await command(probe,[],{env});
