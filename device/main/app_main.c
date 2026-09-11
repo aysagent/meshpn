@@ -126,9 +126,9 @@ void app_main(void)
             meshvpn_dns_get_stats(&ds);
             ESP_LOGI(TAG, "dns q=%" PRIu32 " hij=%" PRIu32 " cap=%" PRIu32 " fwd=%" PRIu32 " fail=%" PRIu32,
                      ds.queries, ds.hijacked, ds.captive, ds.forwarded, ds.forward_fail);
-            ESP_LOGI(TAG, "usb host=%d xmit=%d tx=%" PRIu32 " retry=%" PRIu32
+            ESP_LOGI(TAG, "usb host=%d tx=%" PRIu32 " retry=%" PRIu32
                           " drop=%" PRIu32 " nohost=%" PRIu32 " max=%u",
-                     us.host_ready, us.can_xmit, us.tx_ok, us.tx_retried,
+                     us.host_ready, us.tx_ok, us.tx_retried,
                      us.tx_dropped, us.tx_no_host, us.tx_max_len);
         }
 

@@ -164,6 +164,28 @@ test('counter resets, CPU deduplication, unavailable telemetry and sanitized out
   assert.equal(telemetrySummary(samples).counter_delta['usb.tx_dropped'],null);
 });
 
+test('USB TX telemetry survives sanitization, reports per-batch deltas and keeps missing data unknown',()=>{
+  const before=fixture(),after=fixture();
+  const values={tx_timeout:2,tx_calls:8,tx_attempts:10,tx_busy:4,tx_busy_exhausted:1,
+    tx_no_mem:1,tx_invalid_state:0,tx_other_error:0,tx_wait_us:16000,tx_wait_le_1ms:4,
+    tx_wait_1_5ms:2,tx_wait_5_25ms:1,tx_wait_gt_25ms:1};
+  for(const [k,v] of Object.entries(values)){before.usb[k]=100;after.usb[k]=100+v;}
+  after.usb.tx_wait_max_us=100000;after.usb.tx_attempts_max=64;
+  const clean=cleanStatus(after),delta=counterDelta(cleanStatus(before),clean);
+  for(const [k,v] of Object.entries(values))assert.equal(delta[`usb.${k}`],v);
+  assert.equal(clean.usb.tx_wait_max_us,100000);assert.equal(clean.usb.tx_attempts_max,64);
+  assert.equal(delta['usb.tx_wait_max_us'],undefined);
+  assert.equal(counterDelta(fixture(),fixture())['usb.tx_timeout'],null);
+  const record={id:'0001',phase:'combined',protocol:'tcp',direction:'down',batch_counters:delta};
+  const report=reportMarkdown({records:[{...record,path:'usb'},{...record,path:'ap'}]});
+  assert.equal(report.split('| 0001 |').length-1,1);
+  assert.ok(report.includes('combined/usb+ap/tcp/down'));
+  assert.ok(report.includes('| 2.00 | 1 |'));
+  assert.ok(reportMarkdown({records:[{...record,path:'usb',batch_counters:{}}]}).includes('| n/a |'));
+  after.uptime_sec=0;
+  assert.equal(counterDelta(before,after)['usb.tx_wait_us'],null);
+});
+
 test('route parser and validator fail closed on bypass, missing gateway and vanished address',async()=>{
   assert.deepEqual(macRoute('   gateway: 192.168.7.1\n interface: en7\n'),{gateway:'192.168.7.1',iface:'en7'});
   assert.equal(sameSubnet('192.168.7.2','192.168.7.1','255.255.255.0'),true);

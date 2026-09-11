@@ -5,6 +5,10 @@ test_dir="$(mktemp -d /tmp/meshpn-host-tests.XXXXXX)"
 cd "$root"
 cc="${CC:-cc}"
 flags=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined)
+"$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_PROFILE_NCM=1 \
+  -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
+  -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx.c -o "$test_dir/usb-tx"
+"$test_dir/usb-tx"
 "$cc" "${flags[@]}" device/tests/test_perf_bind.c -o "$test_dir/perf-bind"
 "$test_dir/perf-bind"
 for psram_enabled in 0 1; do

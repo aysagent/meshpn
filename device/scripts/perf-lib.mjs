@@ -110,9 +110,13 @@ export function measurementPlan(paths, o) {
   return plan;
 }
 
+export const usbCounterFields = ['tx_ok','tx_dropped','tx_retried','tx_no_host','tx_timeout',
+  'tx_calls','tx_attempts','tx_busy','tx_busy_exhausted','tx_no_mem','tx_invalid_state','tx_other_error',
+  'tx_bytes','tx_wait_us','tx_wait_le_1ms','tx_wait_1_5ms','tx_wait_5_25ms','tx_wait_gt_25ms'];
+
 export function counterDelta(before,after) {
   const reset=!before||!after||after.uptime_sec<before.uptime_sec;
-  return Object.fromEntries(['usb.tx_ok','usb.tx_dropped','usb.tx_retried','usb.tx_no_host','net.ap_ip4_rx','net.lan_ip4_rx'].map(key=>{
+  return Object.fromEntries([...usbCounterFields.map(k=>`usb.${k}`),'net.ap_ip4_rx','net.lan_ip4_rx'].map(key=>{
     const [group,field]=key.split('.'),a=before?.[group]?.[field],b=after?.[group]?.[field];
     return [key,!reset&&Number.isFinite(a)&&Number.isFinite(b)&&b>=a?b-a:null];
   }));

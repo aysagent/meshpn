@@ -343,7 +343,8 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON *usb = cJSON_AddObjectToObject(root, "usb");
     cJSON_AddStringToObject(usb, "profile", meshvpn_usb_profile_name());
     cJSON_AddBoolToObject(usb, "host_ready", us.host_ready);
-    cJSON_AddBoolToObject(usb, "can_xmit", us.can_xmit);
+    /* Legacy keys: capacity/occupancy cannot be safely polled here. */
+    cJSON_AddNullToObject(usb, "can_xmit");
     cJSON_AddNumberToObject(usb, "tx_ok", us.tx_ok);
     cJSON_AddNumberToObject(usb, "tx_retried", us.tx_retried);
     cJSON_AddNumberToObject(usb, "tx_dropped", us.tx_dropped);
@@ -351,7 +352,21 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(usb, "tx_timeout", us.tx_timeout);
     cJSON_AddNumberToObject(usb, "tx_bytes", us.tx_bytes);
     cJSON_AddNumberToObject(usb, "tx_max_len", us.tx_max_len);
-    cJSON_AddNumberToObject(usb, "tx_queue_depth", us.tx_queue_depth);
+    cJSON_AddNullToObject(usb, "tx_queue_depth");
+    cJSON_AddNumberToObject(usb, "tx_calls", us.tx_calls);
+    cJSON_AddNumberToObject(usb, "tx_attempts", us.tx_attempts);
+    cJSON_AddNumberToObject(usb, "tx_busy", us.tx_busy);
+    cJSON_AddNumberToObject(usb, "tx_busy_exhausted", us.tx_busy_exhausted);
+    cJSON_AddNumberToObject(usb, "tx_no_mem", us.tx_no_mem);
+    cJSON_AddNumberToObject(usb, "tx_invalid_state", us.tx_invalid_state);
+    cJSON_AddNumberToObject(usb, "tx_other_error", us.tx_other_error);
+    cJSON_AddNumberToObject(usb, "tx_attempts_max", us.tx_attempts_max);
+    cJSON_AddNumberToObject(usb, "tx_wait_us", (double)us.tx_wait_us);
+    cJSON_AddNumberToObject(usb, "tx_wait_max_us", (double)us.tx_wait_max_us);
+    cJSON_AddNumberToObject(usb, "tx_wait_le_1ms", us.tx_wait_le_1ms);
+    cJSON_AddNumberToObject(usb, "tx_wait_1_5ms", us.tx_wait_1_5ms);
+    cJSON_AddNumberToObject(usb, "tx_wait_5_25ms", us.tx_wait_5_25ms);
+    cJSON_AddNumberToObject(usb, "tx_wait_gt_25ms", us.tx_wait_gt_25ms);
 
     cJSON *vpn = cJSON_AddObjectToObject(root, "vpn");
     cJSON_AddBoolToObject(vpn, "implemented", false);
@@ -404,14 +419,14 @@ static esp_err_t handler_logs(httpd_req_t *req)
     char header[512];
     int n = snprintf(header, sizeof(header),
                      "=== meshvpn: uptime %llus, boot #%" PRIu32 ", built %s ===\n"
-                     "usb:  %s host_ready=%d can_xmit=%d q=%u tx_ok=%" PRIu32 " retry=%" PRIu32
+                     "usb:  %s host_ready=%d tx_ok=%" PRIu32 " retry=%" PRIu32
                      " drop=%" PRIu32 " nohost=%" PRIu32 " timeout=%" PRIu32 " maxlen=%u\n"
                      "wifi: connected=%d ssid=%.32s ip=%s rssi=%d reason=%u ap=%d\n"
                      "net:  usb_ip=%s ap_ip=%s usb_napt=%d ap_napt=%d\n"
                      "--- log ---\n",
                      esp_timer_get_time() / 1000000, meshvpn_config_get_boot_count(),
                      meshvpn_web_build_id(),
-                     meshvpn_usb_profile_name(), us.host_ready, us.can_xmit, us.tx_queue_depth, us.tx_ok,
+                     meshvpn_usb_profile_name(), us.host_ready, us.tx_ok,
                      us.tx_retried, us.tx_dropped, us.tx_no_host, us.tx_timeout, us.tx_max_len,
                      ws.sta_connected, ws.ssid, ws.ip, ws.rssi, ws.disconnect_reason, ws.ap_active,
                      ns.usb_ip, ns.ap_ip, ns.usb_napt, ns.ap_napt);

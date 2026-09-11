@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, checked, command, iperfArgs, parseIperf, parsePing, stats,
-  summarize, measurementPlan, counterDelta } from './perf-lib.mjs';
+  summarize, measurementPlan, counterDelta, usbCounterFields } from './perf-lib.mjs';
 import { discoverBoard, checkRoute, sshArgs, startServers } from './perf-network.mjs';
 import { prepareIperfBinding, iperfEnvironment, verifyIperfBinding, iperfError } from './perf-bind.mjs';
 
@@ -66,7 +66,7 @@ export function cleanStatus(s) {
   return {...pick(s,['board','build','idf','uptime_sec','temperature_c','https_enabled']),
     wifi:pick(s.wifi,['connected','scanning','state','ip','rssi','disconnect_reason']),
     net:pick(s.net,['usb_ip','ap_ip','ap_active','ap_clients','ap_channel','usb_napt','ap_napt','ap_ip4_rx','lan_ip4_rx']),
-    usb:pick(s.usb,['profile','host_ready','tx_ok','tx_dropped','tx_retried','tx_no_host']),
+    usb:pick(s.usb,['profile','host_ready',...usbCounterFields,'tx_attempts_max','tx_wait_max_us']),
     memory:Object.fromEntries(['internal','dma','psram'].map(k=>[k,pick(s.memory?.[k],['total','free','minimum_free','largest_block'])])),
     cpu:{...pick(s.cpu,['available','sampled_us','sample_age_ms','interval_ms','collection_us']),
       cores:(s.cpu?.cores||[]).map(c=>pick(c,['id','load_pct'])),
@@ -128,6 +128,25 @@ export function reportMarkdown(result) {
       '',`Detected events: ${t.events.length}. Details in result.json; short flaps/reboots between polls may be missed.`,
       '', '| Counter | Delta across run |', '|---|---:|',
       ...Object.entries(t.counter_delta).map(([k,v])=>`| ${k} | ${v??'n/a (missing/reset)'} |`));
+    lines.push('', 'USB counters: tx_ok = accepted by USB stack, not confirmed host delivery. tx_retried = accepted after retry (not loss).',
+      'Failed calls = tx_dropped + tx_timeout + tx_no_host. tx_dropped breakdown = tx_busy_exhausted + tx_no_mem + tx_invalid_state + tx_other_error.',
+      'tx_busy counts rejected attempts, not packets or NTB occupancy. tx_wait_* measures whole TX calls (including failures), not bus completion; histogram buckets are disjoint.',
+      'Lifetime maxima are retained in status.ndjson; they are not per-test maxima. Missing fields on older firmware remain n/a.');
+  }
+  const usbBatches=new Map();
+  for(const r of result.records||[])if(r.batch_counters&&!usbBatches.has(r.id))usbBatches.set(r.id,r);
+  if(usbBatches.size) {
+    lines.push('', '## USB TX by batch', '',
+      'Device-wide deltas, including warm-ups and admin traffic. Combined batches appear once, not once per path. Wait = whole transmit call, not bus completion.', '',
+      '| Test | Scenario | Accepted | Retried OK | Dropped | Timeout | No host | Busy attempts | TX mean ms | TX >25ms |',
+      '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|');
+    for(const r of usbBatches.values()) {
+      const d=r.batch_counters, v=k=>d[`usb.${k}`]??'n/a';
+      const calls=d['usb.tx_calls'],us=d['usb.tx_wait_us'];
+      const mean=Number.isFinite(calls)&&calls>0&&Number.isFinite(us)?us/calls/1000:null;
+      const peers=(result.records||[]).filter(p=>p.id===r.id).map(p=>p.path).join('+');
+      lines.push(`| ${r.id} | ${r.phase}/${peers}/${r.protocol}/${r.direction}${r.rate?`/${r.rate}M`:''} | ${v('tx_ok')} | ${v('tx_retried')} | ${v('tx_dropped')} | ${v('tx_timeout')} | ${v('tx_no_host')} | ${v('tx_busy')} | ${fmt(mean)} | ${v('tx_wait_gt_25ms')} |`);
+    }
   }
   lines.push('','## Warnings / omissions','',...(result.warnings||[]).map(s=>`- ${s}`),
     '- Physical USB reconnect, router reboot, sleep/resume, AP-disabled baseline and STA-side admin isolation are not automated; runner does not change device/network settings.',
