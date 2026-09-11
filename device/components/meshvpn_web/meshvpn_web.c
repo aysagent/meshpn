@@ -31,6 +31,7 @@
 #include "meshvpn_routing.h"
 #include "meshvpn_ip_ranges.h"
 #include "meshvpn_usb.h"
+#include "meshvpn_usb_tx_queue.h"
 #include "meshvpn_ncm_diag.h"
 #include "meshvpn_vpn.h"
 #include "meshvpn_wifi.h"
@@ -368,6 +369,24 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(usb, "tx_wait_1_5ms", us.tx_wait_1_5ms);
     cJSON_AddNumberToObject(usb, "tx_wait_5_25ms", us.tx_wait_5_25ms);
     cJSON_AddNumberToObject(usb, "tx_wait_gt_25ms", us.tx_wait_gt_25ms);
+    meshvpn_usb_tx_queue_stats_t qs;
+    meshvpn_usb_tx_queue_get_stats(&qs);
+    cJSON_AddStringToObject(usb, "tx_mode", qs.enabled ? "queued" : "sync");
+    cJSON *txq = cJSON_AddObjectToObject(usb, "tx_queue");
+    cJSON_AddBoolToObject(txq, "enabled", qs.enabled);
+#define ADD_QUEUE_COUNTER(name) cJSON_AddNumberToObject(txq, #name, qs.name);
+    MESHVPN_USB_QUEUE_COUNTERS(ADD_QUEUE_COUNTER)
+#undef ADD_QUEUE_COUNTER
+    cJSON_AddNumberToObject(txq, "capacity", MESHVPN_USB_TX_SLOTS);
+    cJSON_AddNumberToObject(txq, "max_age_ms", MESHVPN_USB_TX_MAX_AGE_US / 1000);
+    cJSON_AddNumberToObject(txq, "pending", qs.pending);
+    cJSON_AddNumberToObject(txq, "in_use", qs.in_use);
+    cJSON_AddNumberToObject(txq, "high_water", qs.high_water);
+    cJSON_AddBoolToObject(txq, "worker_active", qs.worker_active);
+    cJSON_AddNumberToObject(txq, "queue_wait_us", (double)qs.queue_wait_us);
+    cJSON_AddNumberToObject(txq, "queue_wait_max_us", (double)qs.queue_wait_max_us);
+    cJSON_AddNumberToObject(txq, "residence_us", (double)qs.residence_us);
+    cJSON_AddNumberToObject(txq, "residence_max_us", (double)qs.residence_max_us);
     meshvpn_ncm_stats_t nd;
     meshvpn_ncm_get_stats(&nd);
     cJSON *ncm = cJSON_AddObjectToObject(usb, "ncm");

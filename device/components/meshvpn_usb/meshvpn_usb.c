@@ -1,4 +1,5 @@
 #include "meshvpn_usb.h"
+#include "meshvpn_usb_tx_queue.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -18,13 +19,15 @@ static const char *TAG = "meshvpn_usb";
 
 static meshvpn_usb_stats_t s_stats;
 static portMUX_TYPE s_stats_lock = portMUX_INITIALIZER_UNLOCKED;
+static bool s_use_queue;
 
 static void record_tx(esp_err_t err, size_t len, uint32_t attempts,
                       uint32_t busy, int64_t started)
 {
     uint64_t elapsed = (uint64_t)(esp_timer_get_time() - started);
     /* No driver calls, allocations or waits while holding this lock. TX is
-     * serialized by lwIP; readers run on either core. Publish once per frame. */
+     * serialized by lwIP (fallback) or the TX worker; readers run on either
+     * core. Publish once per frame. */
     portENTER_CRITICAL(&s_stats_lock);
     s_stats.tx_calls++;
     s_stats.tx_attempts += attempts;
@@ -56,9 +59,9 @@ static void record_tx(esp_err_t err, size_t len, uint32_t attempts,
     portEXIT_CRITICAL(&s_stats_lock);
 }
 
-static esp_err_t meshvpn_usb_transmit(void *h, void *buffer, size_t len)
+static esp_err_t meshvpn_usb_send_sync(void *buffer, size_t len, uint32_t epoch)
 {
-    (void)h;
+    (void)epoch;
     int64_t started = esp_timer_get_time();
 
     if (!tud_ready()) {
@@ -72,6 +75,12 @@ static esp_err_t meshvpn_usb_transmit(void *h, void *buffer, size_t len)
     /* Control baseline: keep the 64-attempt yield policy while measuring NCM.
      * A 1-tick sleep removed local drops but worsened end-to-end latency. */
     for (int attempt = 0; attempt < 64; attempt++) {
+#if CONFIG_MESHVPN_USB_TX_QUEUE
+        if (s_use_queue && epoch != meshvpn_usb_tx_queue_epoch()) {
+            err = ESP_ERR_INVALID_STATE;
+            break;
+        }
+#endif
         attempts++;
         err = tinyusb_net_send_sync(buffer, (uint16_t)len, NULL, pdMS_TO_TICKS(25));
         if (err == ESP_OK) {
@@ -87,6 +96,17 @@ static esp_err_t meshvpn_usb_transmit(void *h, void *buffer, size_t len)
 
     record_tx(err, len, attempts, busy, started);
     return ESP_FAIL;
+}
+
+static esp_err_t meshvpn_usb_transmit(void *h, void *buffer, size_t len)
+{
+    (void)h;
+#if CONFIG_MESHVPN_USB_TX_QUEUE
+    if (s_use_queue) return meshvpn_usb_tx_queue_submit(buffer, len);
+#else
+    (void)s_use_queue;
+#endif
+    return meshvpn_usb_send_sync(buffer, len, 0);
 }
 
 static esp_err_t meshvpn_usb_transmit_wrap(void *h, void *buffer, size_t len, void *netstack_buf)
@@ -109,6 +129,12 @@ esp_err_t meshvpn_usb_attach_netif(esp_netif_t *netif)
         return ESP_ERR_INVALID_ARG;
     }
 
+#if CONFIG_MESHVPN_USB_TX_QUEUE
+    esp_err_t queue_err = meshvpn_usb_tx_queue_init(meshvpn_usb_send_sync);
+    s_use_queue = queue_err == ESP_OK;
+    if (!s_use_queue) ESP_LOGW(TAG, "USB TX queue unavailable; keeping sync fallback");
+#endif
+
     esp_netif_driver_ifconfig_t ifconfig = {
         .handle = "USB",
         .transmit = meshvpn_usb_transmit,
@@ -122,7 +148,8 @@ esp_err_t meshvpn_usb_attach_netif(esp_netif_t *netif)
         return err;
     }
 
-    ESP_LOGI(TAG, "USB sync TX installed (64 attempts, 25ms event wait, yield on busy)");
+    ESP_LOGI(TAG, "USB %s TX installed (64 attempts, 25ms event wait, yield on busy)",
+             s_use_queue ? "queued" : "sync");
 
 #if CONFIG_TINYUSB_CDC_ENABLED
     const tinyusb_config_cdcacm_t acm_cfg = {

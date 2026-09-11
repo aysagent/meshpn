@@ -5,10 +5,16 @@ test_dir="$(mktemp -d /tmp/meshpn-host-tests.XXXXXX)"
 cd "$root"
 cc="${CC:-cc}"
 flags=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined)
-"$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_PROFILE_NCM=1 \
-  -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
-  -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx.c -o "$test_dir/usb-tx"
-"$test_dir/usb-tx"
+for queue_enabled in 0 1; do
+  "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_PROFILE_NCM=1 -DCONFIG_MESHVPN_USB_TX_QUEUE="$queue_enabled" \
+    -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
+    -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx.c -o "$test_dir/usb-tx-$queue_enabled"
+  "$test_dir/usb-tx-$queue_enabled"
+done
+"$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_TX_QUEUE=1 \
+  -Idevice/tests/queue_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
+  -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx_queue.c -o "$test_dir/usb-tx-queue"
+"$test_dir/usb-tx-queue"
 "$cc" "${flags[@]}" -pthread -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
   -Idevice/components/meshvpn_usb/include device/tests/test_ncm_diag.c -o "$test_dir/ncm-diag"
 "$test_dir/ncm-diag"

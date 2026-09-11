@@ -12,6 +12,18 @@ static int64_t now_us, per_attempt_us;
 static esp_netif_driver_ifconfig_t driver;
 static atomic_bool stop_reader;
 static atomic_bool reader_started;
+#if CONFIG_MESHVPN_USB_TX_QUEUE
+static esp_err_t queue_init_result = ESP_ERR_NO_MEM;
+static meshvpn_usb_tx_send_fn queue_sender;
+static unsigned enqueues;
+static uint32_t queue_epoch;
+static bool change_epoch_on_send;
+esp_err_t meshvpn_usb_tx_queue_init(meshvpn_usb_tx_send_fn fn)
+{ queue_sender=fn; return queue_init_result; }
+esp_err_t meshvpn_usb_tx_queue_submit(const void *buffer, size_t len)
+{ assert(buffer && len==1514); enqueues++; return ESP_OK; }
+uint32_t meshvpn_usb_tx_queue_epoch(void) { return queue_epoch; }
+#endif
 
 bool tud_ready(void) { return ready; }
 bool tud_network_can_xmit(unsigned size)
@@ -40,6 +52,9 @@ esp_err_t tinyusb_net_send_sync(void *buf, uint16_t len, void *arg, unsigned wai
 {
     assert(buf && len == 1514 && !arg && wait == 25);
     sends++;
+#if CONFIG_MESHVPN_USB_TX_QUEUE
+    if (change_epoch_on_send) { queue_epoch++; change_epoch_on_send=false; }
+#endif
     now_us += per_attempt_us;
     /* Reentrant reader while TX waits must not deadlock or publish half a frame. */
     meshvpn_usb_stats_t snapshot;
@@ -140,5 +155,21 @@ int main(void)
     assert(!pthread_join(thread, NULL));
     meshvpn_usb_get_stats(&s);
     assert(polls && s.tx_ok == 50000 && s.tx_wait_us == 5000000);
+#if CONFIG_MESHVPN_USB_TX_QUEUE
+    /* First part covered allocation-failure fallback. Now verify successful
+     * attachment uses enqueue only, and only the worker calls the sync sender. */
+    queue_init_result=ESP_OK;
+    assert(meshvpn_usb_attach_netif(&netif)==ESP_OK && s_use_queue);
+    unsigned old_sends=sends;
+    assert(driver.transmit(NULL,packet,sizeof(packet))==ESP_OK);
+    assert(enqueues==1 && sends==old_sends);
+    assert(queue_sender(packet,sizeof(packet),queue_epoch)==ESP_OK);
+    assert(sends==old_sends+1);
+    assert(queue_sender(packet,sizeof(packet),queue_epoch+1)==ESP_FAIL);
+    assert(sends==old_sends+1); /* stale frame never reaches TinyUSB */
+    busy_left=10; change_epoch_on_send=true;
+    assert(queue_sender(packet,sizeof(packet),queue_epoch)==ESP_FAIL);
+    assert(sends==old_sends+2); /* disconnect between retries stops the loop */
+#endif
     puts("USB TX accounting, passive snapshots and concurrent reader: OK");
 }

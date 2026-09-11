@@ -10,7 +10,7 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, quote, command, iperfArgs, parseIperf, stats, parsePing, summarize,
-  measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer, ncmCounterFields } from '../scripts/perf-lib.mjs';
+  measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer, ncmCounterFields, usbQueueCounterFields } from '../scripts/perf-lib.mjs';
 import { discoverBoard, checkRoute, requestBoard, sshArgs } from '../scripts/perf-network.mjs';
 import { prepareIperfBinding, macosBuildContext, iperfEnvironment, verifyIperfBinding, iperfError } from '../scripts/perf-bind.mjs';
 import { executeSchedule, cleanStatus, telemetrySummary, reportMarkdown, main } from '../scripts/perf-runner.mjs';
@@ -206,6 +206,32 @@ test('NCM nested telemetry, batch means and unavailable/reset counters are prese
   after.uptime_sec=0;
   assert.equal(counterDelta(before,after)['usb.ncm.ntb_started'],null);
   assert.ok(!reportMarkdown({records:[{...record,batch_counters:{}}]}).includes('NCM transfers by batch'));
+});
+
+test('USB worker queue counters, ownership loss stages and batch means survive reporting',()=>{
+  const before=fixture(),after=fixture();
+  before.usb.tx_queue={enabled:true,...Object.fromEntries(usbQueueCounterFields.map(k=>[k,0]))};
+  after.usb.tx_mode='queued';
+  after.usb.tx_queue={...before.usb.tx_queue,submitted:10,enqueued:8,completed:8,sent:5,full:2,
+    expired:1,stale:1,send_failed:1,queue_wait_us:16000,residence_us:24000,high_water:8,secret:'HIDDEN'};
+  const clean=cleanStatus(after),delta=counterDelta(cleanStatus(before),clean);
+  assert.equal(clean.usb.tx_mode,'queued');
+  assert.ok(!JSON.stringify(clean).includes('HIDDEN'));
+  assert.equal(delta['usb.tx_queue.full'],2);
+  assert.equal(delta['usb.tx_queue.residence_us'],24000);
+  assert.equal(delta['usb.tx_queue.high_water'],undefined);
+  const r={id:'0009',phase:'combined',protocol:'tcp',direction:'down',batch_counters:delta};
+  const report=reportMarkdown({records:[{...r,path:'usb'},{...r,path:'ap'}]});
+  assert.equal(report.split('| 0009 | 8 | 5 | 2 | 1 | 1 | 1 | 2.00 | 3.00 |').length-1,1);
+  assert.equal(counterDelta(fixture(),after)['usb.tx_queue.full'],null);
+  const samples=[before,after].map(status=>({status:cleanStatus(status)}));
+  const summary=telemetrySummary(samples);
+  assert.ok(summary.usb_queue_last.enabled);
+  assert.ok(reportMarkdown({telemetry:summary}).includes('do not add twice'));
+  after.uptime_sec=1;
+  assert.equal(counterDelta(before,after)['usb.tx_queue.full'],null);
+  summary.usb_queue_last={enabled:false,init_failed:1};
+  assert.ok(reportMarkdown({telemetry:summary}).includes('synchronous fallback'));
 });
 
 test('route parser and validator fail closed on bypass, missing gateway and vanished address',async()=>{

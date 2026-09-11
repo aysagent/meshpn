@@ -1,4 +1,13 @@
 menu "MeshPN diagnostic firmware"
+config MESHVPN_USB_TX_QUEUE
+    bool "Experimental bounded USB TX worker queue"
+    depends on SPIRAM && !TINYUSB_MSC_ENABLED
+    default n
+    help
+        Eight owned frame buffers in PSRAM, a 3KiB internal task stack and
+        nonblocking lwIP enqueue. Sync fallback on allocation/task failure.
+        Disable for comparison with the previous synchronous transport.
+
 config MESHVPN_NCM_TELEMETRY
     bool "Passive NCM pool and transfer telemetry"
     depends on TINYUSB_NET_MODE_NCM

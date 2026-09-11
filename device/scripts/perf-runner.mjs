@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, checked, command, iperfArgs, parseIperf, parsePing, stats,
-  summarize, measurementPlan, counterDelta, usbCounterFields, ncmCounterFields } from './perf-lib.mjs';
+  summarize, measurementPlan, counterDelta, usbCounterFields, ncmCounterFields, usbQueueCounterFields } from './perf-lib.mjs';
 import { discoverBoard, checkRoute, sshArgs, startServers } from './perf-network.mjs';
 import { prepareIperfBinding, iperfEnvironment, verifyIperfBinding, iperfError } from './perf-bind.mjs';
 
@@ -66,7 +66,9 @@ export function cleanStatus(s) {
   return {...pick(s,['board','build','idf','uptime_sec','temperature_c','https_enabled']),
     wifi:pick(s.wifi,['connected','scanning','state','ip','rssi','disconnect_reason']),
     net:pick(s.net,['usb_ip','ap_ip','ap_active','ap_clients','ap_channel','usb_napt','ap_napt','ap_ip4_rx','lan_ip4_rx']),
-    usb:{...pick(s.usb,['profile','host_ready',...usbCounterFields,'tx_attempts_max','tx_wait_max_us']),
+    usb:{...pick(s.usb,['profile','host_ready','tx_mode',...usbCounterFields,'tx_attempts_max','tx_wait_max_us']),
+      tx_queue:pick(s.usb?.tx_queue,['enabled',...usbQueueCounterFields,'capacity','max_age_ms','pending','in_use','high_water',
+        'worker_active','queue_wait_max_us','residence_max_us']),
       ncm:pick(s.usb?.ncm,['available',...ncmCounterFields,'sampled_us','sample_age_ms','pool','free','ready',
         'glue','active','glue_frames','max_ntb','max_datagrams','free_min','ready_max','completion_max_us','backlog_gap_max_us'])},
     memory:Object.fromEntries(['internal','dma','psram'].map(k=>[k,pick(s.memory?.[k],['total','free','minimum_free','largest_block'])])),
@@ -86,6 +88,9 @@ export function telemetrySummary(samples) {
     if(v.wifi.scanning===true)events.push({time:s.time,event:'Wi-Fi scan during measurements'});
     if(previous?.usb.host_ready===true&&v.usb.host_ready===false)events.push({time:s.time,event:'USB host disconnected'});
     if(previous?.net.ap_active===true&&v.net.ap_active===false)events.push({time:s.time,event:'AP stopped'});
+    if(v.usb.tx_queue?.enabled===false&&v.usb.tx_queue.init_failed>0&&
+       !(previous?.usb.tx_queue?.enabled===false&&previous.usb.tx_queue.init_failed>0))
+      events.push({time:s.time,event:'USB TX queue initialization failed: synchronous fallback'});
     if(v.cpu.available&&Number.isFinite(v.cpu.sampled_us)&&Number.isFinite(v.cpu.sample_age_ms)&&v.cpu.sample_age_ms<=5000)
       uniqueCPU.set(`${epoch}/${v.cpu.sampled_us}`,v.cpu);
     previous=v;
@@ -101,6 +106,7 @@ export function telemetrySummary(samples) {
   return {samples:good.length,api_errors:samples.length-good.length,events,
     counter_delta:counterDelta(epoch?null:good[0]?.status,good.at(-1)?.status),
     ncm_last:good.at(-1)?.status.usb.ncm,
+    usb_queue_last:good.at(-1)?.status.usb.tx_queue,
     temperature_c:stats(good.map(s=>s.status.temperature_c)),rssi:stats(good.map(s=>s.status.wifi.rssi)),
     cpu_samples:cpu.length,cpu_load:Object.fromEntries([0,1].map(id=>[id,stats(cpu.map(c=>c.cores.find(v=>v.id===id)?.load_pct))])),
     cpu_collection_us:stats(cpu.map(c=>c.collection_us)),
@@ -132,9 +138,16 @@ export function reportMarkdown(result) {
       '', '| Counter | Delta across run |', '|---|---:|',
       ...Object.entries(t.counter_delta).map(([k,v])=>`| ${k} | ${v??'n/a (missing/reset)'} |`));
     lines.push('', 'USB counters: tx_ok = accepted by USB stack, not confirmed host delivery. tx_retried = accepted after retry (not loss).',
-      'Failed calls = tx_dropped + tx_timeout + tx_no_host. tx_dropped breakdown = tx_busy_exhausted + tx_no_mem + tx_invalid_state + tx_other_error.',
+      'Failed sync calls = tx_dropped + tx_timeout + tx_no_host. tx_dropped breakdown = tx_busy_exhausted + tx_no_mem + tx_invalid_state + tx_other_error.',
       'tx_busy counts rejected attempts, not packets or NTB occupancy. tx_wait_* measures whole TX calls (including failures), not bus completion; histogram buckets are disjoint.',
       'Lifetime maxima are retained in status.ndjson; they are not per-test maxima. Missing fields on older firmware remain n/a.');
+    const q=t.usb_queue_last;
+    if(q?.enabled)lines.push('',
+      `USB TX worker queue: capacity=${q.capacity}, in_use=${q.in_use}, pending=${q.pending}, active=${q.worker_active}, lifetime high_water=${q.high_water}; pre-send expiry=${q.max_age_ms} ms.`,
+      'Queue mode: usb.tx_* counts sync sends from the worker, NOT all lwIP submissions. tx_wait excludes queue residence. Queue rejects/expiry/stale frames must be inspected separately.',
+      'Queue losses = full + no_host + invalid_length + not_ready + enqueue_failed + expired + stale + send_failed. send_failed overlaps usb sync-failure counters: do not add twice.',
+      'enqueued means owned copy accepted, sent means accepted by TinyUSB; neither confirms delivery to the host application.');
+    else if(q?.init_failed)lines.push('', 'WARNING: USB TX queue initialization failed; firmware is using the synchronous fallback.');
     const n=t.ncm_last;
     if(n?.available)lines.push('',
       `NCM last event snapshot: pool=${n.pool}; free=${n.free}; ready=${n.ready}; active=${n.active}; glue=${n.glue}; age=${fmt(n.sample_age_ms)} ms.`,
@@ -165,6 +178,17 @@ export function reportMarkdown(result) {
         const d=r.batch_counters,v=k=>d[`usb.ncm.${k}`];
         const mean=(sum,count,scale=1)=>Number.isFinite(v(sum))&&Number.isFinite(v(count))&&v(count)>0?fmt(v(sum)/v(count)/scale):'n/a';
         lines.push(`| ${r.id} | ${v('ntb_started')??'n/a'} | ${mean('bytes_started','ntb_started')} | ${mean('frames_started','ntb_started')} | ${v('busy_no_free')??'n/a'} | ${mean('completion_us','completion_timed',1000)} | ${mean('backlog_gap_us','backlog_gaps',1000)} | ${v('start_errors')??'n/a'} / ${v('completion_errors')??'n/a'} |`);
+      }
+    }
+    if([...usbBatches.values()].some(r=>r.batch_counters['usb.tx_queue.submitted']>0)) {
+      lines.push('', '## USB TX queue by batch', '',
+        'Means describe frames completed in the counter window, possibly enqueued earlier. Includes admin traffic; combined batches appear once.', '',
+        '| Test | Enqueued | Sent | Full | Expired | Stale | Send failed | Queue wait mean ms | Residence mean ms |',
+        '|---|---:|---:|---:|---:|---:|---:|---:|---:|');
+      for(const r of usbBatches.values()) {
+        const v=k=>r.batch_counters[`usb.tx_queue.${k}`];
+        const mean=k=>Number.isFinite(v(k))&&Number.isFinite(v('completed'))&&v('completed')>0?fmt(v(k)/v('completed')/1000):'n/a';
+        lines.push(`| ${r.id} | ${v('enqueued')??'n/a'} | ${v('sent')??'n/a'} | ${v('full')??'n/a'} | ${v('expired')??'n/a'} | ${v('stale')??'n/a'} | ${v('send_failed')??'n/a'} | ${mean('queue_wait_us')} | ${mean('residence_us')} |`);
       }
     }
   }

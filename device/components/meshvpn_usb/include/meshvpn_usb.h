@@ -19,7 +19,7 @@ typedef struct {
     uint32_t tx_timeout;
     uint32_t tx_bytes;
     uint16_t tx_max_len;
-    uint32_t tx_calls;    /**< frames submitted, including initial no-host */
+    uint32_t tx_calls;    /**< completed sync calls; in queue mode worker only */
     uint32_t tx_attempts; /**< tinyusb_net_send_sync calls, including retries */
     uint32_t tx_busy;     /**< attempts rejected by can_xmit in TinyUSB task */
     /* Disjoint breakdown of tx_dropped; retain historical counter semantics. */
@@ -48,7 +48,9 @@ const char *meshvpn_usb_profile_name(void);
  * and drops it outright when the NCM/ECM IN endpoint is still busy with the
  * previous frame. That is fatal for anything bigger than a single packet (the
  * web UI never gets through) and the infinite timeout can wedge the whole
- * TCP/IP thread. This installs a bounded, retrying transmit instead.
+ * TCP/IP thread. Queue mode copies frames to an owned PSRAM pool and calls the
+ * retrying sync transport from one worker. Queue rejections are separate from
+ * the sync-send counters above. Startup allocation failure uses sync fallback.
  */
 esp_err_t meshvpn_usb_attach_netif(esp_netif_t *netif);
 
