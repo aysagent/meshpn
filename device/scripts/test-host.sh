@@ -9,6 +9,21 @@ flags=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined)
   -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
   -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx.c -o "$test_dir/usb-tx"
 "$test_dir/usb-tx"
+"$cc" "${flags[@]}" -pthread -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
+  -Idevice/components/meshvpn_usb/include device/tests/test_ncm_diag.c -o "$test_dir/ncm-diag"
+"$test_dir/ncm-diag"
+python3 -B device/tests/test_instrument_ncm.py
+ncm_src=device/managed_components/espressif__tinyusb/src
+if [[ -f "$ncm_src/class/net/ncm_device.c" ]]; then
+  python3 device/scripts/instrument-ncm.py "$ncm_src/class/net/ncm_device.c" "$test_dir/ncm_device.c"
+  "$cc" "${flags[@]}" -pthread -DMESHVPN_NCM_SOURCE="\"$test_dir/ncm_device.c\"" \
+    -Idevice/tests/ncm_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
+    -I"$ncm_src" -I"$ncm_src/class/net" -Idevice/components/meshvpn_usb/include \
+    device/tests/test_ncm_driver.c device/components/meshvpn_usb/meshvpn_ncm_diag.c -o "$test_dir/ncm-driver"
+  "$test_dir/ncm-driver"
+else
+  echo "Actual NCM driver tests skipped: install device managed dependencies."
+fi
 "$cc" "${flags[@]}" device/tests/test_perf_bind.c -o "$test_dir/perf-bind"
 "$test_dir/perf-bind"
 for psram_enabled in 0 1; do

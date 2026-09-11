@@ -31,6 +31,7 @@
 #include "meshvpn_routing.h"
 #include "meshvpn_ip_ranges.h"
 #include "meshvpn_usb.h"
+#include "meshvpn_ncm_diag.h"
 #include "meshvpn_vpn.h"
 #include "meshvpn_wifi.h"
 #include "web_ui.h"
@@ -367,6 +368,31 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(usb, "tx_wait_1_5ms", us.tx_wait_1_5ms);
     cJSON_AddNumberToObject(usb, "tx_wait_5_25ms", us.tx_wait_5_25ms);
     cJSON_AddNumberToObject(usb, "tx_wait_gt_25ms", us.tx_wait_gt_25ms);
+    meshvpn_ncm_stats_t nd;
+    meshvpn_ncm_get_stats(&nd);
+    cJSON *ncm = cJSON_AddObjectToObject(usb, "ncm");
+    cJSON_AddBoolToObject(ncm, "available", nd.available);
+    if (nd.available) {
+#define ADD_NCM_COUNTER(name) cJSON_AddNumberToObject(ncm, #name, nd.name);
+        MESHVPN_NCM_COUNTERS(ADD_NCM_COUNTER)
+#undef ADD_NCM_COUNTER
+        cJSON_AddNumberToObject(ncm, "sampled_us", (double)nd.sampled_us);
+        cJSON_AddNumberToObject(ncm, "sample_age_ms", (esp_timer_get_time() - nd.sampled_us) / 1000.0);
+        cJSON_AddNumberToObject(ncm, "pool", nd.state.pool);
+        cJSON_AddNumberToObject(ncm, "free", nd.state.free);
+        cJSON_AddNumberToObject(ncm, "ready", nd.state.ready);
+        cJSON_AddBoolToObject(ncm, "glue", nd.state.glue);
+        cJSON_AddBoolToObject(ncm, "active", nd.state.active);
+        cJSON_AddNumberToObject(ncm, "glue_frames", nd.state.glue_frames);
+        cJSON_AddNumberToObject(ncm, "max_ntb", nd.state.max_ntb);
+        cJSON_AddNumberToObject(ncm, "max_datagrams", nd.state.max_datagrams);
+        cJSON_AddNumberToObject(ncm, "free_min", nd.free_min);
+        cJSON_AddNumberToObject(ncm, "ready_max", nd.ready_max);
+        cJSON_AddNumberToObject(ncm, "completion_us", (double)nd.completion_us);
+        cJSON_AddNumberToObject(ncm, "completion_max_us", (double)nd.completion_max_us);
+        cJSON_AddNumberToObject(ncm, "backlog_gap_us", (double)nd.backlog_gap_us);
+        cJSON_AddNumberToObject(ncm, "backlog_gap_max_us", (double)nd.backlog_gap_max_us);
+    }
 
     cJSON *vpn = cJSON_AddObjectToObject(root, "vpn");
     cJSON_AddBoolToObject(vpn, "implemented", false);

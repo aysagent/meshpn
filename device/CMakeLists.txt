@@ -23,6 +23,7 @@ endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(meshvpn_device)
+include("${CMAKE_SOURCE_DIR}/cmake/ncm-telemetry.cmake")
 
 # Refuse stale/unsafe sdkconfig rather than silently exposing the uplink.
 if(CONFIG_LWIP_IPV6)

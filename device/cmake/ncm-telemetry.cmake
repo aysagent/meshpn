@@ -1,0 +1,37 @@
+# Replace one source in TinyUSB's target with a generated build copy.
+# No dependency checkout modifications and no instrumentation for ECM/RNDIS.
+if(CONFIG_MESHVPN_NCM_TELEMETRY)
+    idf_component_get_property(ncm_tusb_lib espressif__tinyusb COMPONENT_LIB)
+    idf_component_get_property(ncm_tusb_dir espressif__tinyusb COMPONENT_DIR)
+    idf_build_get_property(ncm_python PYTHON)
+    set(ncm_original "${ncm_tusb_dir}/src/class/net/ncm_device.c")
+    set(ncm_generator "${CMAKE_SOURCE_DIR}/scripts/instrument-ncm.py")
+    set(ncm_generated "${CMAKE_BINARY_DIR}/meshpn-generated/ncm_device.c")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${ncm_original}" "${ncm_generator}")
+    execute_process(COMMAND "${ncm_python}" "${ncm_generator}" "${ncm_original}" "${ncm_generated}"
+        RESULT_VARIABLE ncm_result ERROR_VARIABLE ncm_error)
+    if(NOT ncm_result EQUAL 0)
+        message(FATAL_ERROR "NCM instrumentation failed: ${ncm_error}")
+    endif()
+    get_target_property(ncm_sources ${ncm_tusb_lib} SOURCES)
+    set(ncm_matches 0)
+    set(ncm_replaced "")
+    foreach(ncm_source IN LISTS ncm_sources)
+        if(ncm_source MATCHES "(^|/)src/class/net/ncm_device\\.c$")
+            list(APPEND ncm_replaced "${ncm_generated}")
+            math(EXPR ncm_matches "${ncm_matches}+1")
+        else()
+            list(APPEND ncm_replaced "${ncm_source}")
+        endif()
+    endforeach()
+    if(NOT ncm_matches EQUAL 1)
+        message(FATAL_ERROR "Expected one TinyUSB NCM source, found ${ncm_matches}")
+    endif()
+    set_property(TARGET ${ncm_tusb_lib} PROPERTY SOURCES "${ncm_replaced}")
+    target_include_directories(${ncm_tusb_lib} PRIVATE
+        "${ncm_tusb_dir}/src/class/net" "${CMAKE_SOURCE_DIR}/components/meshvpn_usb/include")
+    # TinyUSB is linked after the application components. Pull the observer
+    # from meshvpn_usb even if no web consumer references its object yet.
+    target_link_options(${ncm_tusb_lib} INTERFACE "LINKER:--undefined=meshvpn_ncm_record")
+    message(STATUS "MeshPN: passive NCM telemetry enabled (pinned generated driver)")
+endif()

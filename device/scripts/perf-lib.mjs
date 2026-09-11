@@ -113,11 +113,15 @@ export function measurementPlan(paths, o) {
 export const usbCounterFields = ['tx_ok','tx_dropped','tx_retried','tx_no_host','tx_timeout',
   'tx_calls','tx_attempts','tx_busy','tx_busy_exhausted','tx_no_mem','tx_invalid_state','tx_other_error',
   'tx_bytes','tx_wait_us','tx_wait_le_1ms','tx_wait_1_5ms','tx_wait_5_25ms','tx_wait_gt_25ms'];
+export const ncmCounterFields = ['samples','initializations','busy','busy_no_free','busy_active',
+  'ntb_started','start_errors','bytes_started','frames_started','ntb_completed','completion_errors',
+  'bytes_completed','zlp_completed','zlp_errors','completion_timed','completion_us',
+  'completion_le_1ms','completion_1_5ms','completion_5_25ms','completion_gt_25ms','backlog_gaps','backlog_gap_us'];
 
 export function counterDelta(before,after) {
   const reset=!before||!after||after.uptime_sec<before.uptime_sec;
-  return Object.fromEntries([...usbCounterFields.map(k=>`usb.${k}`),'net.ap_ip4_rx','net.lan_ip4_rx'].map(key=>{
-    const [group,field]=key.split('.'),a=before?.[group]?.[field],b=after?.[group]?.[field];
+  return Object.fromEntries([...usbCounterFields.map(k=>`usb.${k}`),...ncmCounterFields.map(k=>`usb.ncm.${k}`),'net.ap_ip4_rx','net.lan_ip4_rx'].map(key=>{
+    const get=v=>key.split('.').reduce((o,k)=>o?.[k],v),a=get(before),b=get(after);
     return [key,!reset&&Number.isFinite(a)&&Number.isFinite(b)&&b>=a?b-a:null];
   }));
 }

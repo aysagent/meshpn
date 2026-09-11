@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, checked, command, iperfArgs, parseIperf, parsePing, stats,
-  summarize, measurementPlan, counterDelta, usbCounterFields } from './perf-lib.mjs';
+  summarize, measurementPlan, counterDelta, usbCounterFields, ncmCounterFields } from './perf-lib.mjs';
 import { discoverBoard, checkRoute, sshArgs, startServers } from './perf-network.mjs';
 import { prepareIperfBinding, iperfEnvironment, verifyIperfBinding, iperfError } from './perf-bind.mjs';
 
@@ -66,7 +66,9 @@ export function cleanStatus(s) {
   return {...pick(s,['board','build','idf','uptime_sec','temperature_c','https_enabled']),
     wifi:pick(s.wifi,['connected','scanning','state','ip','rssi','disconnect_reason']),
     net:pick(s.net,['usb_ip','ap_ip','ap_active','ap_clients','ap_channel','usb_napt','ap_napt','ap_ip4_rx','lan_ip4_rx']),
-    usb:pick(s.usb,['profile','host_ready',...usbCounterFields,'tx_attempts_max','tx_wait_max_us']),
+    usb:{...pick(s.usb,['profile','host_ready',...usbCounterFields,'tx_attempts_max','tx_wait_max_us']),
+      ncm:pick(s.usb?.ncm,['available',...ncmCounterFields,'sampled_us','sample_age_ms','pool','free','ready',
+        'glue','active','glue_frames','max_ntb','max_datagrams','free_min','ready_max','completion_max_us','backlog_gap_max_us'])},
     memory:Object.fromEntries(['internal','dma','psram'].map(k=>[k,pick(s.memory?.[k],['total','free','minimum_free','largest_block'])])),
     cpu:{...pick(s.cpu,['available','sampled_us','sample_age_ms','interval_ms','collection_us']),
       cores:(s.cpu?.cores||[]).map(c=>pick(c,['id','load_pct'])),
@@ -98,6 +100,7 @@ export function telemetrySummary(samples) {
   };
   return {samples:good.length,api_errors:samples.length-good.length,events,
     counter_delta:counterDelta(epoch?null:good[0]?.status,good.at(-1)?.status),
+    ncm_last:good.at(-1)?.status.usb.ncm,
     temperature_c:stats(good.map(s=>s.status.temperature_c)),rssi:stats(good.map(s=>s.status.wifi.rssi)),
     cpu_samples:cpu.length,cpu_load:Object.fromEntries([0,1].map(id=>[id,stats(cpu.map(c=>c.cores.find(v=>v.id===id)?.load_pct))])),
     cpu_collection_us:stats(cpu.map(c=>c.collection_us)),
@@ -132,6 +135,11 @@ export function reportMarkdown(result) {
       'Failed calls = tx_dropped + tx_timeout + tx_no_host. tx_dropped breakdown = tx_busy_exhausted + tx_no_mem + tx_invalid_state + tx_other_error.',
       'tx_busy counts rejected attempts, not packets or NTB occupancy. tx_wait_* measures whole TX calls (including failures), not bus completion; histogram buckets are disjoint.',
       'Lifetime maxima are retained in status.ndjson; they are not per-test maxima. Missing fields on older firmware remain n/a.');
+    const n=t.ncm_last;
+    if(n?.available)lines.push('',
+      `NCM last event snapshot: pool=${n.pool}; free=${n.free}; ready=${n.ready}; active=${n.active}; glue=${n.glue}; age=${fmt(n.sample_age_ms)} ms.`,
+      `NCM lifetime observed free minimum=${n.free_min}, ready maximum=${n.ready_max}; last negotiated NTB limit=${n.max_ntb} bytes / ${n.max_datagrams} datagrams.`,
+      'Occupancy is sampled at driver events, not time-weighted utilization. Gauges may be stale while idle; lifetime extrema are not per-run deltas.');
   }
   const usbBatches=new Map();
   for(const r of result.records||[])if(r.batch_counters&&!usbBatches.has(r.id))usbBatches.set(r.id,r);
@@ -146,6 +154,18 @@ export function reportMarkdown(result) {
       const mean=Number.isFinite(calls)&&calls>0&&Number.isFinite(us)?us/calls/1000:null;
       const peers=(result.records||[]).filter(p=>p.id===r.id).map(p=>p.path).join('+');
       lines.push(`| ${r.id} | ${r.phase}/${peers}/${r.protocol}/${r.direction}${r.rate?`/${r.rate}M`:''} | ${v('tx_ok')} | ${v('tx_retried')} | ${v('tx_dropped')} | ${v('tx_timeout')} | ${v('tx_no_host')} | ${v('tx_busy')} | ${fmt(mean)} | ${v('tx_wait_gt_25ms')} |`);
+    }
+    if([...usbBatches.values()].some(r=>Number.isFinite(r.batch_counters['usb.ncm.ntb_started']))) {
+      lines.push('', '## NCM transfers by batch', '',
+        'Device → host only. NTB bytes include NCM headers/padding; completion time includes bus and TinyUSB event handling, not application delivery or isolated ISR latency.',
+        'Backlog gap = processed NTB completion → next successful NTB submission when frames were already queued. Includes intervening ZLP; not pure endpoint idle time.', '',
+        '| Test | NTB started | Bytes/NTB | Frames/NTB | Busy, no free | Completion mean ms | Backlog gap mean ms | Start / completion errors |',
+        '|---|---:|---:|---:|---:|---:|---:|---:|');
+      for(const r of usbBatches.values()) {
+        const d=r.batch_counters,v=k=>d[`usb.ncm.${k}`];
+        const mean=(sum,count,scale=1)=>Number.isFinite(v(sum))&&Number.isFinite(v(count))&&v(count)>0?fmt(v(sum)/v(count)/scale):'n/a';
+        lines.push(`| ${r.id} | ${v('ntb_started')??'n/a'} | ${mean('bytes_started','ntb_started')} | ${mean('frames_started','ntb_started')} | ${v('busy_no_free')??'n/a'} | ${mean('completion_us','completion_timed',1000)} | ${mean('backlog_gap_us','backlog_gaps',1000)} | ${v('start_errors')??'n/a'} / ${v('completion_errors')??'n/a'} |`);
+      }
     }
   }
   lines.push('','## Warnings / omissions','',...(result.warnings||[]).map(s=>`- ${s}`),

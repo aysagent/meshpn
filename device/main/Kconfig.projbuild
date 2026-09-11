@@ -1,4 +1,14 @@
 menu "MeshPN diagnostic firmware"
+config MESHVPN_NCM_TELEMETRY
+    bool "Passive NCM pool and transfer telemetry"
+    depends on TINYUSB_NET_MODE_NCM
+    default n
+    help
+        Instruments a build-directory copy of the pinned TinyUSB NCM driver.
+        Measures pool occupancy and submit-to-callback time in TinyUSB task
+        context. No payload logging or extra USB requests. Disable to measure
+        instrumentation overhead; unavailable is reported instead of zeros.
+
 config MESHVPN_USB_DIAGNOSTICS
     bool "Read-only diagnostic snapshots over the existing USB CDC interface"
     depends on TINYUSB_CDC_ENABLED

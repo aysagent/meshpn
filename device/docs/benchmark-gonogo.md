@@ -117,6 +117,19 @@ Upload speed dropped badly under load; iot_bridge can disable USB NAPT without f
 
 Decision: **REVERT** — restore ensure_napt every 1s (host ready) / 15s.
 
+### USB busy backoff — 1 tick (`2b41687`, Sep 11 2026) → REVERT
+
+Compared with `6f00e7f` WAN quick run: USB local drops 1166→0, busy attempts
+114705→14555, but USB UDP down 10M receiver loss 10.74→10.48% and loaded
+ping medians 128–175ms with 27–40% loss. TX calls taking 5–25ms: 3→1694.
+USB upload also varied widely, although those batches had no busy retries;
+this does not establish the pause as the sole cause of every slowdown.
+
+Decision: restore `taskYIELD()` with 64 attempts / 25ms event wait, retaining
+TX telemetry. Add event-owned NCM pool/NTB/completion instrumentation before
+changing queue policy. Instrumentation overhead is not yet hardware-measured.
+See [buffers-opt.md](buffers-opt.md) for counters, test coverage and opt-out.
+
 ### Phase 7a — USB TX retry 128×5ms (Aug 2026)
 
 Commit: `2a7b75c` → **REVERTED**. Download unchanged; upload drifted down over time.

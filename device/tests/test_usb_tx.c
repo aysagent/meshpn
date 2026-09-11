@@ -8,7 +8,7 @@
 static bool ready = true;
 static unsigned busy_left, sends, yields, delays, polls;
 static esp_err_t final_result;
-static int64_t now_us, per_attempt_us, ready_at_us;
+static int64_t now_us, per_attempt_us;
 static esp_netif_driver_ifconfig_t driver;
 static atomic_bool stop_reader;
 static atomic_bool reader_started;
@@ -47,14 +47,13 @@ esp_err_t tinyusb_net_send_sync(void *buf, uint16_t len, void *arg, unsigned wai
     assert(snapshot.tx_calls == snapshot.tx_ok + snapshot.tx_dropped +
            snapshot.tx_timeout + snapshot.tx_no_host);
     if (busy_left) { busy_left--; return ESP_FAIL; }
-    if (now_us < ready_at_us) return ESP_FAIL;
     return final_result;
 }
 static void reset(void)
 {
     memset(&s_stats, 0, sizeof(s_stats));
     ready = true; busy_left = sends = yields = delays = 0;
-    final_result = ESP_OK; now_us = ready_at_us = 0; per_attempt_us = 100;
+    final_result = ESP_OK; now_us = 0; per_attempt_us = 100;
 }
 static meshvpn_usb_stats_t send_frame(esp_err_t expected)
 {
@@ -97,20 +96,16 @@ int main(void)
     assert(!delays && !yields);
     reset(); busy_left = 2; per_attempt_us = 2000;
     s = send_frame(ESP_OK);
-    assert(s.tx_ok == 1 && s.tx_retried == 1 && s.tx_busy == 2 && sends == 3 && delays == 2 && !yields);
-    assert(s.tx_attempts == 3 && s.tx_attempts_max == 3 && s.tx_wait_us == 8000 && s.tx_wait_max_us == 8000 && s.tx_wait_5_25ms == 1);
-    reset(); ready_at_us = 1200;
-    s = send_frame(ESP_OK);
-    assert(s.tx_ok == 1 && s.tx_busy == 1 && sends == 2 && delays == 1 && !yields);
-    assert(s.tx_wait_us == 1200 && s.tx_wait_1_5ms == 1);
+    assert(s.tx_ok == 1 && s.tx_retried == 1 && s.tx_busy == 2 && sends == 3 && !delays && yields == 2);
+    assert(s.tx_attempts == 3 && s.tx_attempts_max == 3 && s.tx_wait_us == 6000 && s.tx_wait_max_us == 6000 && s.tx_wait_5_25ms == 1);
     reset(); busy_left = 100;
     s = send_frame(ESP_FAIL);
     assert(s.tx_busy_exhausted == 1 && s.tx_dropped == 1 && s.tx_busy == 64 && sends == 64 && !s.tx_retried);
-    assert(delays == 63 && !yields && s.tx_wait_us == 69400 && s.tx_wait_gt_25ms == 1);
+    assert(!delays && yields == 64 && s.tx_wait_us == 6400 && s.tx_wait_5_25ms == 1);
     reset(); busy_left = 63;
     s = send_frame(ESP_OK);
     assert(s.tx_retried == 1 && s.tx_ok == 1 && !s.tx_dropped && s.tx_busy == 63 && sends == 64);
-    assert(delays == 63 && !yields);
+    assert(!delays && yields == 63);
     const esp_err_t errors[] = {ESP_ERR_TIMEOUT, ESP_ERR_NO_MEM, ESP_ERR_INVALID_STATE, 999};
     for (unsigned i = 0; i < sizeof(errors)/sizeof(errors[0]); i++) {
         reset(); final_result = errors[i]; per_attempt_us = 30000;
@@ -120,7 +115,7 @@ int main(void)
         assert(s.tx_timeout == (i == 0) && s.tx_no_mem == (i == 1) && s.tx_invalid_state == (i == 2) && s.tx_other_error == (i == 3));
         reset(); busy_left = 1; final_result = errors[i];
         s = send_frame(ESP_FAIL);
-        assert(sends == 2 && delays == 1 && !yields && s.tx_busy == 1 && !s.tx_retried);
+        assert(sends == 2 && !delays && yields == 1 && s.tx_busy == 1 && !s.tx_retried);
         assert(s.tx_timeout == (i == 0) && s.tx_no_mem == (i == 1) && s.tx_invalid_state == (i == 2) && s.tx_other_error == (i == 3));
     }
     reset(); ready = false;

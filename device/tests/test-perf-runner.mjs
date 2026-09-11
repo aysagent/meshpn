@@ -10,7 +10,7 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, quote, command, iperfArgs, parseIperf, stats, parsePing, summarize,
-  measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer } from '../scripts/perf-lib.mjs';
+  measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer, ncmCounterFields } from '../scripts/perf-lib.mjs';
 import { discoverBoard, checkRoute, requestBoard, sshArgs } from '../scripts/perf-network.mjs';
 import { prepareIperfBinding, macosBuildContext, iperfEnvironment, verifyIperfBinding, iperfError } from '../scripts/perf-bind.mjs';
 import { executeSchedule, cleanStatus, telemetrySummary, reportMarkdown, main } from '../scripts/perf-runner.mjs';
@@ -184,6 +184,28 @@ test('USB TX telemetry survives sanitization, reports per-batch deltas and keeps
   assert.ok(reportMarkdown({records:[{...record,path:'usb',batch_counters:{}}]}).includes('| n/a |'));
   after.uptime_sec=0;
   assert.equal(counterDelta(before,after)['usb.tx_wait_us'],null);
+});
+
+test('NCM nested telemetry, batch means and unavailable/reset counters are preserved honestly',()=>{
+  const before=fixture(),after=fixture();
+  before.usb.ncm={available:true,...Object.fromEntries(ncmCounterFields.map(k=>[k,0]))};
+  after.usb.ncm={...before.usb.ncm,ntb_started:2,bytes_started:4000,frames_started:6,
+    completion_timed:2,completion_us:6000,backlog_gaps:1,backlog_gap_us:1000,busy_no_free:3,
+    pool:6,free_min:0,ready_max:5,max_ntb:8192,max_datagrams:6,completion_max_us:5000,secret:'HIDDEN'};
+  const clean=cleanStatus(after),delta=counterDelta(cleanStatus(before),clean);
+  assert.equal(delta['usb.ncm.ntb_started'],2);
+  assert.equal(delta['usb.ncm.completion_us'],6000);
+  assert.equal(delta['usb.ncm.completion_max_us'],undefined);
+  assert.equal(clean.usb.ncm.free_min,0);
+  assert.ok(!JSON.stringify(clean).includes('HIDDEN'));
+  const record={id:'0007',phase:'combined',protocol:'tcp',direction:'down',batch_counters:delta};
+  const report=reportMarkdown({records:[{...record,path:'usb'},{...record,path:'ap'}]});
+  assert.ok(report.includes('NCM transfers by batch'));
+  assert.equal(report.split('| 0007 | 2 | 2000.00 | 3.00 | 3 | 3.00 | 1.00 | 0 / 0 |').length-1,1);
+  assert.equal(counterDelta(fixture(),after)['usb.ncm.ntb_started'],null);
+  after.uptime_sec=0;
+  assert.equal(counterDelta(before,after)['usb.ncm.ntb_started'],null);
+  assert.ok(!reportMarkdown({records:[{...record,batch_counters:{}}]}).includes('NCM transfers by batch'));
 });
 
 test('route parser and validator fail closed on bypass, missing gateway and vanished address',async()=>{
