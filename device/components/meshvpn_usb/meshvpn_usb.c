@@ -69,8 +69,9 @@ static esp_err_t meshvpn_usb_transmit(void *h, void *buffer, size_t len)
     esp_err_t err = ESP_FAIL;
     uint32_t attempts = 0, busy = 0;
 
-    /* Retry without vTaskDelay — tinyusb_net_send_sync blocks on the USB task.
-     * Single-shot TX (phase 3 tune) drove tx_dropped into thousands. */
+    /* A busy response can arrive immediately: the 25ms event timeout does not
+     * wait for NCM capacity. Space retries by one tick to let USB completions
+     * progress instead of burning all 64 attempts in a tight loop. */
     for (int attempt = 0; attempt < 64; attempt++) {
         attempts++;
         err = tinyusb_net_send_sync(buffer, (uint16_t)len, NULL, pdMS_TO_TICKS(25));
@@ -82,7 +83,9 @@ static esp_err_t meshvpn_usb_transmit(void *h, void *buffer, size_t len)
             break;
         }
         busy++;
-        taskYIELD();
+        if (attempts < 64) {
+            vTaskDelay(1);
+        }
     }
 
     record_tx(err, len, attempts, busy, started);
@@ -122,7 +125,7 @@ esp_err_t meshvpn_usb_attach_netif(esp_netif_t *netif)
         return err;
     }
 
-    ESP_LOGI(TAG, "USB sync TX installed (64 attempts, 25ms event wait per attempt)");
+    ESP_LOGI(TAG, "USB sync TX installed (64 attempts, 25ms event wait, 1-tick busy backoff)");
 
 #if CONFIG_TINYUSB_CDC_ENABLED
     const tinyusb_config_cdcacm_t acm_cfg = {
