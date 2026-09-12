@@ -5,7 +5,8 @@ config MESHVPN_USB_TX_EVENT_WAIT
     default n
     help
         Replace rapid busy retries with task notifications after NCM IN
-        completion. Capacity retry budget is 25ms; queue remains eight frames.
+        completion. Capacity retry budget is 25ms; queue size is unchanged by
+        this option.
         Only the worker waits. Disable to compare with the yield baseline.
 
 config MESHVPN_USB_TX_QUEUE
@@ -13,7 +14,7 @@ config MESHVPN_USB_TX_QUEUE
     depends on SPIRAM && !TINYUSB_MSC_ENABLED
     default n
     help
-        Eight owned frame buffers in PSRAM, a 3KiB internal task stack and
+        Sixteen owned frame buffers in PSRAM, a 3KiB internal task stack and
         nonblocking lwIP enqueue. Sync fallback on allocation/task failure.
         Disable for comparison with the previous synchronous transport.
 

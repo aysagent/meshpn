@@ -64,12 +64,12 @@ void *heap_caps_calloc(size_t count, size_t size, uint32_t caps)
 {
     alloc_calls++;
     assert(caps == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    assert(count == 8 && size >= 1536);
+    assert(count == MESHVPN_USB_TX_SLOTS && size >= 1536);
     return fail_pool ? NULL : calloc(count, size);
 }
 QueueHandle_t xQueueCreate(unsigned count, unsigned item_size)
 {
-    assert(count == 8 && item_size == 1);
+    assert(count == MESHVPN_USB_TX_SLOTS && item_size == 1);
     if (++queue_calls == fail_queue) return NULL;
     QueueHandle_t q=calloc(1,sizeof(*q)); assert(q);
     pthread_mutex_init(&q->lock,NULL); q->capacity=count; live_queues++;
@@ -105,7 +105,7 @@ BaseType_t xTaskCreate(void (*fn)(void *), const char *name, unsigned stack, voi
 static esp_err_t send_owned(void *buffer, size_t len, uint32_t epoch)
 {
     assert(epoch == meshvpn_usb_tx_queue_epoch());
-    assert(buffer >= (void *)s_pool && (uint8_t *)buffer < (uint8_t *)(s_pool+8));
+    assert(buffer >= (void *)s_pool && (uint8_t *)buffer < (uint8_t *)(s_pool+MESHVPN_USB_TX_SLOTS));
     if(verify_payload)assert(len == expected_len && !memcmp(buffer,expected,len));
     /* Snapshots during the callback must not deadlock or free the active slot. */
     meshvpn_usb_tx_queue_stats_t s;
@@ -121,7 +121,7 @@ static void drain(void) { while(process_one(0)){} }
 static void check_idle(void)
 {
     meshvpn_usb_tx_queue_stats_t s=stats();
-    assert(!s.in_use && !s.pending && !s.worker_active && uxQueueMessagesWaiting(s_free)==8);
+    assert(!s.in_use && !s.pending && !s.worker_active && uxQueueMessagesWaiting(s_free)==MESHVPN_USB_TX_SLOTS);
     assert(s.enqueued == s.completed);
     assert(s.completed == s.sent+s.send_failed+s.expired+s.stale);
     assert(s.submitted == s.enqueued+s.full+s.no_host+s.invalid_length+s.not_ready+s.enqueue_failed);
@@ -163,12 +163,14 @@ int main(void)
 #endif
     expected_len=sizeof(expected); memset(expected,0x4b,sizeof(expected)); verify_payload=true;
     uint8_t *packet=malloc(expected_len); memcpy(packet,expected,expected_len);
-    for(unsigned i=0;i<8;i++)assert(meshvpn_usb_tx_queue_submit(packet,expected_len)==ESP_OK);
-    assert(!sends && stats().in_use==8 && stats().high_water==8);
+    /* Fill every slot (including the upper half in the 16-slot experiment),
+     * reject one more, then verify all copied payloads and slot returns. */
+    for(unsigned i=0;i<MESHVPN_USB_TX_SLOTS;i++)assert(meshvpn_usb_tx_queue_submit(packet,expected_len)==ESP_OK);
+    assert(!sends && stats().in_use==MESHVPN_USB_TX_SLOTS && stats().high_water==MESHVPN_USB_TX_SLOTS);
     assert(meshvpn_usb_tx_queue_submit(packet,expected_len)==ESP_ERR_NO_MEM);
     memset(packet,0xa5,expected_len); free(packet); /* caller lifetime ended */
     atomic_store(&clock_us,1000); drain(); check_idle();
-    assert(sends==8 && stats().sent==8 && stats().queue_wait_us>0);
+    assert(sends==MESHVPN_USB_TX_SLOTS && stats().sent==MESHVPN_USB_TX_SLOTS && stats().queue_wait_us>0);
     verify_payload=false;
     assert(meshvpn_usb_tx_queue_submit(NULL,1)==ESP_ERR_INVALID_ARG);
     assert(meshvpn_usb_tx_queue_submit("x",0)==ESP_ERR_INVALID_ARG);
