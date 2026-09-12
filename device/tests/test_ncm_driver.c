@@ -8,6 +8,18 @@ static bool endpoint_busy, submit_ok = true;
 static unsigned submissions;
 static uint16_t last_bytes;
 static int64_t now_us;
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+static unsigned capacity_notifications;
+void meshvpn_usb_tx_capacity_available(void)
+{
+    /* Runs after old NTB was returned to the pool, not the pre-completion
+     * telemetry hook. No producer has reclaimed this freed slot yet. */
+    unsigned free_count=0;
+    for (unsigned i=0;i<XMIT_NTB_N;i++) free_count += ncm_interface.xmit_free_ntb[i]!=NULL;
+    assert(free_count > 0);
+    capacity_notifications++;
+}
+#endif
 int64_t esp_timer_get_time(void) { return now_us; }
 bool usbd_edpt_busy(uint8_t rhport, uint8_t ep) { (void)rhport; (void)ep; return endpoint_busy; }
 bool usbd_edpt_xfer(uint8_t rhport, uint8_t ep, uint8_t *buffer, uint16_t bytes, bool is_isr)
@@ -55,7 +67,13 @@ static void complete(xfer_result_t result)
     uint16_t bytes=last_bytes;
     endpoint_busy=false;
     now_us+=2000;
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+    unsigned notifications_before=capacity_notifications;
+#endif
     assert(netd_xfer_cb(0,0x81,result,bytes));
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+    assert(capacity_notifications==notifications_before+1);
+#endif
 }
 int main(void)
 {

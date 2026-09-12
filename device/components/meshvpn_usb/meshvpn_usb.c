@@ -72,9 +72,13 @@ static esp_err_t meshvpn_usb_send_sync(void *buffer, size_t len, uint32_t epoch)
     esp_err_t err = ESP_FAIL;
     uint32_t attempts = 0, busy = 0;
 
-    /* Control baseline: keep the 64-attempt yield policy while measuring NCM.
-     * A 1-tick sleep removed local drops but worsened end-to-end latency. */
+    /* Event mode waits only in the worker, with one absolute capacity budget.
+     * Keep the old policy for sync fallback and a 64-attempt storm guard.
+     * The dependency's own callback cleanup still owns the payload on timeout. */
     for (int attempt = 0; attempt < 64; attempt++) {
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+        if (s_use_queue) meshvpn_usb_tx_prepare_wait();
+#endif
 #if CONFIG_MESHVPN_USB_TX_QUEUE
         if (s_use_queue && epoch != meshvpn_usb_tx_queue_epoch()) {
             err = ESP_ERR_INVALID_STATE;
@@ -91,6 +95,15 @@ static esp_err_t meshvpn_usb_send_sync(void *buffer, size_t len, uint32_t epoch)
             break;
         }
         busy++;
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+        if (s_use_queue) {
+            if (attempt == 63) break;
+            err = meshvpn_usb_tx_wait_capacity(epoch, started + 25000);
+            if (err != ESP_OK) break;
+            err = ESP_FAIL;
+            continue;
+        }
+#endif
         taskYIELD();
     }
 
@@ -148,8 +161,11 @@ esp_err_t meshvpn_usb_attach_netif(esp_netif_t *netif)
         return err;
     }
 
-    ESP_LOGI(TAG, "USB %s TX installed (64 attempts, 25ms event wait, yield on busy)",
+    ESP_LOGI(TAG, "USB %s TX installed (64 attempts max, 25ms callback wait)",
              s_use_queue ? "queued" : "sync");
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+    if (s_use_queue) ESP_LOGI(TAG, "NCM completion notifications enabled; capacity budget 25ms");
+#endif
 
 #if CONFIG_TINYUSB_CDC_ENABLED
     const tinyusb_config_cdcacm_t acm_cfg = {

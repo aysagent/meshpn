@@ -383,6 +383,8 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(txq, "in_use", qs.in_use);
     cJSON_AddNumberToObject(txq, "high_water", qs.high_water);
     cJSON_AddBoolToObject(txq, "worker_active", qs.worker_active);
+    cJSON_AddBoolToObject(txq, "event_wait", qs.event_wait);
+    cJSON_AddNumberToObject(txq, "capacity_wait_us", (double)qs.capacity_wait_us);
     cJSON_AddNumberToObject(txq, "queue_wait_us", (double)qs.queue_wait_us);
     cJSON_AddNumberToObject(txq, "queue_wait_max_us", (double)qs.queue_wait_max_us);
     cJSON_AddNumberToObject(txq, "residence_us", (double)qs.residence_us);

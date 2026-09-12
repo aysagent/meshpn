@@ -15,6 +15,48 @@ static unsigned sends;
 static esp_err_t send_result;
 static uint8_t expected[1536];
 static size_t expected_len;
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+static unsigned notification;
+static bool wake_during_wait, disconnect_during_wait;
+BaseType_t xTaskNotifyGive(TaskHandle_t handle)
+{ assert(handle == s_task); notification++; return pdPASS; }
+uint32_t ulTaskNotifyTake(BaseType_t clear, TickType_t wait)
+{
+    assert(clear == pdTRUE);
+    if (wait && !notification) {
+        if (disconnect_during_wait) { disconnect_during_wait=false; tud_umount_cb(); }
+        else if (wake_during_wait) { wake_during_wait=false; meshvpn_usb_tx_capacity_available(); }
+        else atomic_fetch_add(&clock_us, (int64_t)wait * 1000);
+    }
+    unsigned n=notification; notification=0; return n;
+}
+static void test_capacity_wait(void)
+{
+    uint32_t epoch=meshvpn_usb_tx_queue_epoch();
+    meshvpn_usb_tx_capacity_available(); /* stale event must be cleared */
+    meshvpn_usb_tx_prepare_wait(); assert(!notification);
+    meshvpn_usb_tx_capacity_available(); /* completion BEFORE entering wait */
+    int64_t t=esp_timer_get_time();
+    assert(meshvpn_usb_tx_wait_capacity(epoch,t+25000)==ESP_OK);
+    assert(esp_timer_get_time()==t); /* no lost wakeup or unnecessary sleep */
+    meshvpn_usb_tx_prepare_wait(); wake_during_wait=true;
+    assert(meshvpn_usb_tx_wait_capacity(epoch,t+25000)==ESP_OK);
+    meshvpn_usb_tx_prepare_wait();
+    assert(meshvpn_usb_tx_wait_capacity(epoch,t+25000)==ESP_ERR_TIMEOUT);
+    assert(esp_timer_get_time()==t+26000);
+    meshvpn_usb_tx_prepare_wait(); meshvpn_usb_tx_capacity_available();
+    /* Even a pending event cannot restart an exhausted absolute deadline. */
+    assert(meshvpn_usb_tx_wait_capacity(epoch,t+25000)==ESP_ERR_TIMEOUT);
+    meshvpn_usb_tx_prepare_wait(); disconnect_during_wait=true;
+    assert(meshvpn_usb_tx_wait_capacity(epoch,esp_timer_get_time()+25000)==ESP_ERR_INVALID_STATE);
+    meshvpn_usb_tx_prepare_wait(); tud_mount_cb(); /* reconnect already happened */
+    assert(meshvpn_usb_tx_wait_capacity(epoch,esp_timer_get_time()+25000)==ESP_ERR_INVALID_STATE);
+    assert(s_queue_stats.capacity_waits==6 && s_queue_stats.capacity_wakeups==3);
+    assert(s_queue_stats.capacity_timeouts==2 && s_queue_stats.capacity_disconnects==2);
+    assert(s_queue_stats.capacity_wait_us==26000 && s_queue_stats.event_wait);
+    meshvpn_usb_tx_prepare_wait(); atomic_store(&clock_us,0);
+}
+#endif
 
 bool tud_ready(void) { return ready; }
 int64_t esp_timer_get_time(void) { return atomic_load(&clock_us); }
@@ -116,6 +158,9 @@ int main(void)
     unsigned allocations=alloc_calls, tasks=task_calls;
     assert(meshvpn_usb_tx_queue_init(send_owned)==ESP_OK && tasks==task_calls && allocations==alloc_calls);
     assert(stats().init_failed==4 && stats().enabled);
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+    test_capacity_wait();
+#endif
     expected_len=sizeof(expected); memset(expected,0x4b,sizeof(expected)); verify_payload=true;
     uint8_t *packet=malloc(expected_len); memcpy(packet,expected,expected_len);
     for(unsigned i=0;i<8;i++)assert(meshvpn_usb_tx_queue_submit(packet,expected_len)==ESP_OK);

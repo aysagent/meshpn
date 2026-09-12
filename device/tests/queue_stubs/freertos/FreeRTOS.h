@@ -6,3 +6,4 @@ typedef void *TaskHandle_t;
 #define pdTRUE 1
 #define pdPASS 1
 #define portMAX_DELAY 0xffffffffu
+#define configTICK_RATE_HZ 1000

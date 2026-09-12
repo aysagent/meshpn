@@ -10,10 +10,18 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, quote, command, iperfArgs, parseIperf, stats, parsePing, summarize,
-  measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer, ncmCounterFields, usbQueueCounterFields } from '../scripts/perf-lib.mjs';
+  measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer, ncmCounterFields, usbQueueCounterFields, hasPingProblem } from '../scripts/perf-lib.mjs';
 import { discoverBoard, checkRoute, requestBoard, sshArgs } from '../scripts/perf-network.mjs';
 import { prepareIperfBinding, macosBuildContext, iperfEnvironment, verifyIperfBinding, iperfError } from '../scripts/perf-bind.mjs';
 import { executeSchedule, cleanStatus, telemetrySummary, reportMarkdown, main } from '../scripts/perf-runner.mjs';
+
+test('ping packet loss warrants warning even without a command error', () => {
+  assert.equal(hasPingProblem([]),false);
+  assert.equal(hasPingProblem([{loss_percent:0},{loss_percent:null}]),false);
+  assert.equal(hasPingProblem([{loss_percent:0},{loss_percent:0.01}]),true);
+  assert.equal(hasPingProblem([{loss_percent:100}]),true);
+  assert.equal(hasPingProblem([{error:'timeout'}]),true);
+});
 
 const paths=[{kind:'usb',iface:'en7',address:'192.168.7.2',gateway:'192.168.7.1'},
   {kind:'ap',iface:'en0',address:'192.168.4.2',gateway:'192.168.4.1'}];
@@ -213,16 +221,20 @@ test('USB worker queue counters, ownership loss stages and batch means survive r
   before.usb.tx_queue={enabled:true,...Object.fromEntries(usbQueueCounterFields.map(k=>[k,0]))};
   after.usb.tx_mode='queued';
   after.usb.tx_queue={...before.usb.tx_queue,submitted:10,enqueued:8,completed:8,sent:5,full:2,
-    expired:1,stale:1,send_failed:1,queue_wait_us:16000,residence_us:24000,high_water:8,secret:'HIDDEN'};
+    expired:1,stale:1,send_failed:1,queue_wait_us:16000,residence_us:24000,high_water:8,secret:'HIDDEN',
+    event_wait:true,capacity_waits:4,capacity_wakeups:3,capacity_timeouts:1,capacity_wait_us:12000};
   const clean=cleanStatus(after),delta=counterDelta(cleanStatus(before),clean);
   assert.equal(clean.usb.tx_mode,'queued');
   assert.ok(!JSON.stringify(clean).includes('HIDDEN'));
   assert.equal(delta['usb.tx_queue.full'],2);
   assert.equal(delta['usb.tx_queue.residence_us'],24000);
+  assert.equal(delta['usb.tx_queue.capacity_waits'],4);
+  assert.equal(delta['usb.tx_queue.capacity_timeouts'],1);
+  assert.equal(clean.usb.tx_queue.event_wait,true);
   assert.equal(delta['usb.tx_queue.high_water'],undefined);
   const r={id:'0009',phase:'combined',protocol:'tcp',direction:'down',batch_counters:delta};
   const report=reportMarkdown({records:[{...r,path:'usb'},{...r,path:'ap'}]});
-  assert.equal(report.split('| 0009 | 8 | 5 | 2 | 1 | 1 | 1 | 2.00 | 3.00 |').length-1,1);
+  assert.equal(report.split('| 0009 | 8 | 5 | 2 | 1 | 1 | 1 | 2.00 | 3.00 | 4 | 1 | 3.00 |').length-1,1);
   assert.equal(counterDelta(fixture(),after)['usb.tx_queue.full'],null);
   const samples=[before,after].map(status=>({status:cleanStatus(status)}));
   const summary=telemetrySummary(samples);
@@ -421,6 +433,15 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
       return raw;
     }}),1);
     assert.equal(closes,4);
+    // Non-zero ICMP loss is a warning even though ping and iperf exit zero.
+    assert.equal(await main(['server','--quick','--out',parent],{...dependencies,command:async(bin,args,opts)=>{
+      const raw=await dependencies.command(bin,args,opts);
+      if(bin==='/sbin/ping')raw.stdout=pingText.replace('0.0% packet loss','13.3% packet loss');
+      return raw;
+    }}),2); // Runner reserves exit 2 for completed-with-warnings.
+    assert.equal(closes,5);
+    const warned=[];for(const d of await readdir(parent))warned.push(JSON.parse(await readFile(path.join(parent,d,'result.json'),'utf8')));
+    assert.ok(warned.some(r=>r.outcome==='completed-with-warnings'&&r.warnings.some(w=>w.includes('ping packet loss'))));
     assert.equal(process.listenerCount('SIGINT'),signalsBefore);
   }finally{await rm(parent,{recursive:true,force:true});}
 });

@@ -5,16 +5,19 @@ test_dir="$(mktemp -d /tmp/meshpn-host-tests.XXXXXX)"
 cd "$root"
 cc="${CC:-cc}"
 flags=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined)
-for queue_enabled in 0 1; do
-  "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_PROFILE_NCM=1 -DCONFIG_MESHVPN_USB_TX_QUEUE="$queue_enabled" \
+for variant in 0:0 1:0 1:1; do
+  queue_enabled=${variant%:*}; event_enabled=${variant#*:}
+  "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_TX_EVENT_WAIT="$event_enabled" -DCONFIG_MESHVPN_USB_PROFILE_NCM=1 -DCONFIG_MESHVPN_USB_TX_QUEUE="$queue_enabled" \
     -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
-    -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx.c -o "$test_dir/usb-tx-$queue_enabled"
-  "$test_dir/usb-tx-$queue_enabled"
+    -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx.c -o "$test_dir/usb-tx-$queue_enabled-$event_enabled"
+  "$test_dir/usb-tx-$queue_enabled-$event_enabled"
 done
-"$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_TX_QUEUE=1 \
-  -Idevice/tests/queue_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
-  -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx_queue.c -o "$test_dir/usb-tx-queue"
-"$test_dir/usb-tx-queue"
+for event_enabled in 0 1; do
+  "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_TX_EVENT_WAIT="$event_enabled" -DCONFIG_MESHVPN_USB_TX_QUEUE=1 \
+    -Idevice/tests/queue_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
+    -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx_queue.c -o "$test_dir/usb-tx-queue-$event_enabled"
+  "$test_dir/usb-tx-queue-$event_enabled"
+done
 "$cc" "${flags[@]}" -pthread -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
   -Idevice/components/meshvpn_usb/include device/tests/test_ncm_diag.c -o "$test_dir/ncm-diag"
 "$test_dir/ncm-diag"
@@ -22,11 +25,13 @@ python3 -B device/tests/test_instrument_ncm.py
 ncm_src=device/managed_components/espressif__tinyusb/src
 if [[ -f "$ncm_src/class/net/ncm_device.c" ]]; then
   python3 device/scripts/instrument-ncm.py "$ncm_src/class/net/ncm_device.c" "$test_dir/ncm_device.c"
-  "$cc" "${flags[@]}" -pthread -DMESHVPN_NCM_SOURCE="\"$test_dir/ncm_device.c\"" \
-    -Idevice/tests/ncm_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
-    -I"$ncm_src" -I"$ncm_src/class/net" -Idevice/components/meshvpn_usb/include \
-    device/tests/test_ncm_driver.c device/components/meshvpn_usb/meshvpn_ncm_diag.c -o "$test_dir/ncm-driver"
-  "$test_dir/ncm-driver"
+  for event_enabled in 0 1; do
+    "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_TX_EVENT_WAIT="$event_enabled" -DMESHVPN_NCM_SOURCE="\"$test_dir/ncm_device.c\"" \
+      -Idevice/tests/ncm_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
+      -I"$ncm_src" -I"$ncm_src/class/net" -Idevice/components/meshvpn_usb/include \
+      device/tests/test_ncm_driver.c device/components/meshvpn_usb/meshvpn_ncm_diag.c -o "$test_dir/ncm-driver-$event_enabled"
+    "$test_dir/ncm-driver-$event_enabled"
+  done
 else
   echo "Actual NCM driver tests skipped: install device managed dependencies."
 fi

@@ -3,7 +3,8 @@
 
 Pinned to espressif/tinyusb 0.21.0~1. Reject changed inputs until the hooks have
 been audited again. The replacement calls the original xfer exactly once and
-only observes its result; all other insertions are read-only diagnostics.
+only observes its result. Optional worker notification runs AFTER the original
+completion processing; other insertions are read-only diagnostics.
 """
 import argparse
 import hashlib
@@ -13,6 +14,9 @@ SOURCE_SHA256 = "7a73d088e40a32064d4142a78dfb72745e01c04b7abdfb6fed4392bdcdc3e30
 
 HELPER = '''
 #include "meshvpn_ncm_diag.h"
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+#include "meshvpn_usb_tx_queue.h"
+#endif
 static void mesh_ncm_observe(meshvpn_ncm_event_t event, uint32_t bytes, uint16_t frames) {
   meshvpn_ncm_state_t state = {
     .pool = XMIT_NTB_N,
@@ -72,7 +76,12 @@ def instrument(source: bytes) -> str:
     }
     // transmission of an NTB finished''')
     anchor = "    if (!xmit_insert_required_zlp(rhport, xferred_bytes)) {\n      xmit_start_if_possible(rhport);\n    }"
-    replace(anchor, anchor + "\n    mesh_ncm_observe(MESH_NCM_SAMPLE, 0, 0);")
+    replace(anchor, anchor + '''
+    mesh_ncm_observe(MESH_NCM_SAMPLE, 0, 0);
+    #if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+    // State is consistent: old NTB freed, next transfer/ZLP submitted.
+    meshvpn_usb_tx_capacity_available();
+    #endif''')
     return text
 
 

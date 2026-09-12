@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, checked, command, iperfArgs, parseIperf, parsePing, stats,
-  summarize, measurementPlan, counterDelta, usbCounterFields, ncmCounterFields, usbQueueCounterFields } from './perf-lib.mjs';
+  summarize, measurementPlan, counterDelta, usbCounterFields, ncmCounterFields, usbQueueCounterFields, hasPingProblem } from './perf-lib.mjs';
 import { discoverBoard, checkRoute, sshArgs, startServers } from './perf-network.mjs';
 import { prepareIperfBinding, iperfEnvironment, verifyIperfBinding, iperfError } from './perf-bind.mjs';
 
@@ -68,7 +68,7 @@ export function cleanStatus(s) {
     net:pick(s.net,['usb_ip','ap_ip','ap_active','ap_clients','ap_channel','usb_napt','ap_napt','ap_ip4_rx','lan_ip4_rx']),
     usb:{...pick(s.usb,['profile','host_ready','tx_mode',...usbCounterFields,'tx_attempts_max','tx_wait_max_us']),
       tx_queue:pick(s.usb?.tx_queue,['enabled',...usbQueueCounterFields,'capacity','max_age_ms','pending','in_use','high_water',
-        'worker_active','queue_wait_max_us','residence_max_us']),
+        'worker_active','event_wait','queue_wait_max_us','residence_max_us']),
       ncm:pick(s.usb?.ncm,['available',...ncmCounterFields,'sampled_us','sample_age_ms','pool','free','ready',
         'glue','active','glue_frames','max_ntb','max_datagrams','free_min','ready_max','completion_max_us','backlog_gap_max_us'])},
     memory:Object.fromEntries(['internal','dma','psram'].map(k=>[k,pick(s.memory?.[k],['total','free','minimum_free','largest_block'])])),
@@ -144,6 +144,7 @@ export function reportMarkdown(result) {
     const q=t.usb_queue_last;
     if(q?.enabled)lines.push('',
       `USB TX worker queue: capacity=${q.capacity}, in_use=${q.in_use}, pending=${q.pending}, active=${q.worker_active}, lifetime high_water=${q.high_water}; pre-send expiry=${q.max_age_ms} ms.`,
+      `NCM completion wait: ${q.event_wait===true?'enabled (25ms capacity budget)':q.event_wait===false?'disabled':'unknown (older firmware)'}. Capacity timeouts are included in usb.tx_timeout and queue.send_failed; do not add again. Wakeups are hints to retry, not buffer reservations.`,
       'Queue mode: usb.tx_* counts sync sends from the worker, NOT all lwIP submissions. tx_wait excludes queue residence. Queue rejects/expiry/stale frames must be inspected separately.',
       'Queue losses = full + no_host + invalid_length + not_ready + enqueue_failed + expired + stale + send_failed. send_failed overlaps usb sync-failure counters: do not add twice.',
       'enqueued means owned copy accepted, sent means accepted by TinyUSB; neither confirms delivery to the host application.');
@@ -183,12 +184,13 @@ export function reportMarkdown(result) {
     if([...usbBatches.values()].some(r=>r.batch_counters['usb.tx_queue.submitted']>0)) {
       lines.push('', '## USB TX queue by batch', '',
         'Means describe frames completed in the counter window, possibly enqueued earlier. Includes admin traffic; combined batches appear once.', '',
-        '| Test | Enqueued | Sent | Full | Expired | Stale | Send failed | Queue wait mean ms | Residence mean ms |',
-        '|---|---:|---:|---:|---:|---:|---:|---:|---:|');
+        '| Test | Enqueued | Sent | Full | Expired | Stale | Send failed | Queue wait mean ms | Residence mean ms | Capacity waits | Capacity timeouts | Capacity wait mean ms |',
+        '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
       for(const r of usbBatches.values()) {
         const v=k=>r.batch_counters[`usb.tx_queue.${k}`];
         const mean=k=>Number.isFinite(v(k))&&Number.isFinite(v('completed'))&&v('completed')>0?fmt(v(k)/v('completed')/1000):'n/a';
-        lines.push(`| ${r.id} | ${v('enqueued')??'n/a'} | ${v('sent')??'n/a'} | ${v('full')??'n/a'} | ${v('expired')??'n/a'} | ${v('stale')??'n/a'} | ${v('send_failed')??'n/a'} | ${mean('queue_wait_us')} | ${mean('residence_us')} |`);
+        const capacityMean=Number.isFinite(v('capacity_wait_us'))&&v('capacity_waits')>0?fmt(v('capacity_wait_us')/v('capacity_waits')/1000):'n/a';
+        lines.push(`| ${r.id} | ${v('enqueued')??'n/a'} | ${v('sent')??'n/a'} | ${v('full')??'n/a'} | ${v('expired')??'n/a'} | ${v('stale')??'n/a'} | ${v('send_failed')??'n/a'} | ${mean('queue_wait_us')} | ${mean('residence_us')} | ${v('capacity_waits')??'n/a'} | ${v('capacity_timeouts')??'n/a'} | ${capacityMean} |`);
       }
     }
   }
@@ -344,8 +346,8 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
       result.warnings.push('No valid CPU runtime samples; CPU-load results unavailable.');
       if(result.outcome==='completed')result.outcome='completed-with-warnings';
     }
-    if(result.telemetry.api_errors||result.telemetry.events.length||pings.some(p=>p.error)) {
-      result.warnings.push('Telemetry/link/ping problems detected; inspect result.json and raw logs.');
+    if(result.telemetry.api_errors||result.telemetry.events.length||hasPingProblem(pings)) {
+      result.warnings.push('Telemetry/link/ping problems (including ping packet loss) detected; inspect result.json and raw logs.');
       if(result.outcome==='completed')result.outcome='completed-with-warnings';
     }
     if(output) {

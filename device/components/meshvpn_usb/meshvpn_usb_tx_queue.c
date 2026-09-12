@@ -24,6 +24,49 @@ static portMUX_TYPE s_queue_lock = portMUX_INITIALIZER_UNLOCKED;
 static meshvpn_usb_tx_queue_stats_t s_queue_stats;
 static uint32_t s_epoch;
 
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+void meshvpn_usb_tx_capacity_available(void)
+{
+    portENTER_CRITICAL(&s_queue_lock);
+    TaskHandle_t task = s_task;
+    portEXIT_CRITICAL(&s_queue_lock);
+    if (task) xTaskNotifyGive(task);
+}
+
+void meshvpn_usb_tx_prepare_wait(void)
+{
+    /* Notification index 0 belongs exclusively to this worker. A completion
+     * during send/after BUSY remains pending until wait_capacity consumes it. */
+    (void)ulTaskNotifyTake(pdTRUE, 0);
+}
+
+esp_err_t meshvpn_usb_tx_wait_capacity(uint32_t epoch, int64_t deadline_us)
+{
+    int64_t started = esp_timer_get_time();
+    int64_t remaining = deadline_us - started;
+    bool disconnected = epoch != meshvpn_usb_tx_queue_epoch() || !tud_ready();
+    uint32_t notified = 0;
+    if (!disconnected && remaining > 0) {
+        /* Round up plus one tick for tick-phase uncertainty. The deadline is
+         * rechecked after wake; it is not restarted by successive events. */
+        TickType_t ticks = (TickType_t)((remaining * configTICK_RATE_HZ + 999999) / 1000000) + 1;
+        notified = ulTaskNotifyTake(pdTRUE, ticks);
+    }
+    disconnected = epoch != meshvpn_usb_tx_queue_epoch() || !tud_ready();
+    int64_t ended = esp_timer_get_time();
+    esp_err_t result = disconnected ? ESP_ERR_INVALID_STATE :
+        (!notified || ended >= deadline_us ? ESP_ERR_TIMEOUT : ESP_OK);
+    portENTER_CRITICAL(&s_queue_lock);
+    s_queue_stats.capacity_waits++;
+    s_queue_stats.capacity_wait_us += (uint64_t)(ended - started);
+    if (notified) s_queue_stats.capacity_wakeups++;
+    if (result == ESP_ERR_TIMEOUT) s_queue_stats.capacity_timeouts++;
+    if (disconnected) s_queue_stats.capacity_disconnects++;
+    portEXIT_CRITICAL(&s_queue_lock);
+    return result;
+}
+#endif
+
 uint32_t meshvpn_usb_tx_queue_epoch(void)
 {
     portENTER_CRITICAL(&s_queue_lock);
@@ -41,6 +84,9 @@ void tud_mount_cb(void)
     portENTER_CRITICAL(&s_queue_lock);
     s_epoch++;
     portEXIT_CRITICAL(&s_queue_lock);
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+    meshvpn_usb_tx_capacity_available();
+#endif
 }
 void tud_umount_cb(void) { tud_mount_cb(); }
 #endif
@@ -113,9 +159,14 @@ esp_err_t meshvpn_usb_tx_queue_init(meshvpn_usb_tx_send_fn send)
     s_send = send;
     /* Below TinyUSB priority (6 in this build); no CPU affinity change.
      * Keep the small task stack in internal RAM for flash/cache safety. */
-    if (xTaskCreate(tx_worker, "usb_tx", 3072, NULL, 5, &s_task) != pdPASS) goto failed;
+    TaskHandle_t task = NULL;
+    if (xTaskCreate(tx_worker, "usb_tx", 3072, NULL, 5, &task) != pdPASS) goto failed;
     portENTER_CRITICAL(&s_queue_lock);
+    s_task = task; /* Publish only a complete handle to completion callbacks. */
     s_queue_stats.enabled = true;
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+    s_queue_stats.event_wait = true;
+#endif
     portEXIT_CRITICAL(&s_queue_lock);
     return ESP_OK;
 
@@ -123,7 +174,7 @@ failed:
     if (s_pending) vQueueDelete(s_pending);
     if (s_free) vQueueDelete(s_free);
     free(s_pool);
-    s_pool = NULL; s_free = s_pending = NULL; s_task = NULL; s_send = NULL;
+    s_pool = NULL; s_free = s_pending = NULL; s_send = NULL;
     portENTER_CRITICAL(&s_queue_lock);
     s_queue_stats.init_failed++;
     portEXIT_CRITICAL(&s_queue_lock);

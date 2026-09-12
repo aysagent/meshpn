@@ -18,6 +18,18 @@ static meshvpn_usb_tx_send_fn queue_sender;
 static unsigned enqueues;
 static uint32_t queue_epoch;
 static bool change_epoch_on_send;
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+static unsigned prepares, capacity_waits;
+static esp_err_t capacity_result = ESP_OK;
+void meshvpn_usb_tx_prepare_wait(void) { prepares++; }
+esp_err_t meshvpn_usb_tx_wait_capacity(uint32_t epoch, int64_t deadline)
+{
+    assert(prepares > capacity_waits && deadline > now_us);
+    capacity_waits++;
+    now_us += 1000;
+    return epoch != queue_epoch ? ESP_ERR_INVALID_STATE : capacity_result;
+}
+#endif
 esp_err_t meshvpn_usb_tx_queue_init(meshvpn_usb_tx_send_fn fn)
 { queue_sender=fn; return queue_init_result; }
 esp_err_t meshvpn_usb_tx_queue_submit(const void *buffer, size_t len)
@@ -170,6 +182,18 @@ int main(void)
     busy_left=10; change_epoch_on_send=true;
     assert(queue_sender(packet,sizeof(packet),queue_epoch)==ESP_FAIL);
     assert(sends==old_sends+2); /* disconnect between retries stops the loop */
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+    reset(); busy_left=3;
+    assert(queue_sender(packet,sizeof(packet),queue_epoch)==ESP_OK);
+    assert(sends==4 && !yields && s_stats.tx_retried==1);
+    reset(); busy_left=20; capacity_result=ESP_ERR_TIMEOUT;
+    assert(queue_sender(packet,sizeof(packet),queue_epoch)==ESP_FAIL);
+    assert(sends==1 && !yields && s_stats.tx_timeout==1 && !s_stats.tx_dropped);
+    reset(); final_result=ESP_ERR_NO_MEM;
+    unsigned waits=capacity_waits;
+    assert(queue_sender(packet,sizeof(packet),queue_epoch)==ESP_FAIL);
+    assert(sends==1 && capacity_waits==waits && s_stats.tx_no_mem==1);
+#endif
 #endif
     puts("USB TX accounting, passive snapshots and concurrent reader: OK");
 }

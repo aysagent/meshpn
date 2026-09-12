@@ -1,4 +1,13 @@
 menu "MeshPN diagnostic firmware"
+config MESHVPN_USB_TX_EVENT_WAIT
+    bool "Wait for NCM completion in the USB TX worker"
+    depends on MESHVPN_USB_TX_QUEUE && MESHVPN_NCM_TELEMETRY
+    default n
+    help
+        Replace rapid busy retries with task notifications after NCM IN
+        completion. Capacity retry budget is 25ms; queue remains eight frames.
+        Only the worker waits. Disable to compare with the yield baseline.
+
 config MESHVPN_USB_TX_QUEUE
     bool "Experimental bounded USB TX worker queue"
     depends on SPIRAM && !TINYUSB_MSC_ENABLED
