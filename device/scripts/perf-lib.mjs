@@ -3,11 +3,13 @@ import { isIP } from 'node:net';
 
 export function parseArgs(args) {
   const o = { seconds:30, runs:5, soakMinutes:30, idleSeconds:30, iperfPort:5201, paths:'auto' };
+  if(args.includes('--usb-down-sweep'))Object.assign(o,{usbDownSweep:true,seconds:15,runs:3,soakMinutes:0,idleSeconds:10,paths:'usb'});
   const names = {'seconds':'seconds','runs':'runs','soak-minutes':'soakMinutes','idle-seconds':'idleSeconds',
     'iperf-port':'iperfPort','server-ip':'serverIP','paths':'paths','admin-url':'adminURL','admin-ca':'adminCA','out':'out'};
   for(let i=0;i<args.length;i++) {
     const a=args[i];
     if(a==='--help'||a==='-h') o.help=true;
+    else if(a==='--usb-down-sweep') o.usbDownSweep=true;
     else if(a==='--quick') Object.assign(o,{seconds:3,runs:2,soakMinutes:0,idleSeconds:3});
     else if(a==='--admin-insecure') o.adminInsecure=true;
     else if(a.startsWith('--')&&names[a.slice(2)]) {
@@ -17,6 +19,8 @@ export function parseArgs(args) {
     else o.target=a;
   }
   if(o.help) return o;
+  if(o.usbDownSweep&&(args.includes('--quick')||o.paths!=='usb'||Number(o.seconds)!==15||Number(o.runs)!==3||Number(o.soakMinutes)!==0))
+    throw Error('--usb-down-sweep requires USB only, 15s, 3 repeats, no soak; do not combine with --quick or conflicting timing/path options');
   if(!o.target) throw Error('Pass SSH target: user@192.168.1.100:22');
   // No arbitrary SSH options, shell syntax, or IPv6 (the dongle routes IPv4).
   const m=/^(?:([a-zA-Z0-9_][a-zA-Z0-9_.-]*)@)?([a-zA-Z0-9][a-zA-Z0-9.-]*)(?::([0-9]+))?$/.exec(o.target);
@@ -68,7 +72,8 @@ export function parseIperf(text,protocol) {
     receiver=candidates.find(s=>s&&s.sender===false);
   }
   if(!receiver||!Number.isFinite(receiver.bits_per_second)) throw Error('No receiver throughput in iperf3 JSON');
-  return {mbps:receiver.bits_per_second/1e6,retransmits:j.end?.sum_sent?.retransmits??null,
+  return {mbps:receiver.bits_per_second/1e6,sender_mbps:Number.isFinite(j.end?.sum_sent?.bits_per_second)?j.end.sum_sent.bits_per_second/1e6:null,
+    retransmits:j.end?.sum_sent?.retransmits??null,
     lost_percent:receiver.lost_percent??null,jitter_ms:receiver.jitter_ms??null,
     local_address:j.start?.connected?.[0]?.local_host??null};
 }
@@ -97,6 +102,13 @@ export function summarize(records) {
 // One warm-up per scenario/direction; repetitions interleave up/down to reduce drift.
 export function measurementPlan(paths, o) {
   const plan=[];
+  if(o.usbDownSweep) {
+    if(paths.length!==1||paths[0].kind!=='usb')throw Error('USB download sweep requires exactly one USB path');
+    for(const rate of [5,6,7,8,9,10])for(let run=0;run<=o.runs;run++)
+      plan.push({paths,protocol:'udp',direction:'down',rate,seconds:run===0?3:o.seconds,
+        run,warmup:run===0,phase:'usb-down-sweep'});
+    return plan;
+  }
   const add=(selected,protocol,rate,phase)=>{
     for(let run=0;run<=o.runs;run++) for(const direction of ['up','down']) {
       plan.push({paths:selected,protocol,rate,direction,seconds:o.seconds,run,warmup:run===0,phase});
@@ -123,6 +135,26 @@ export const usbQueueCounterFields = ['submitted','enqueued','completed','sent',
 
 export function hasPingProblem(pings) {
   return pings.some(p => p.error || (Number.isFinite(p.loss_percent) && p.loss_percent > 0));
+}
+
+// Strict sums: a missing/reset counter window is unknown, never zero losses.
+export function summarizeUsbDownSweep(records, pings=[]) {
+  const losses=['full','no_host','invalid_length','not_ready','enqueue_failed','expired','stale','send_failed'];
+  return [5,6,7,8,9,10].map(rate=>{
+    const all=records.filter(r=>r.phase==='usb-down-sweep'&&r.path==='usb'&&r.protocol==='udp'&&r.direction==='down'&&!r.warmup&&r.rate===rate);
+    const good=all.filter(r=>!r.error), ids=new Set(good.map(r=>r.id));
+    const ping=pings.filter(p=>p.path==='usb'&&ids.has(p.id)&&!p.error);
+    const sum=keys=>{
+      const values=good.flatMap(r=>keys.map(k=>r.batch_counters?.[`usb.tx_queue.${k}`]));
+      return values.length&&values.every(Number.isFinite)?values.reduce((a,b)=>a+b,0):null;
+    };
+    const submitted=sum(['submitted']),lost=sum(losses),completed=sum(['completed']),residence=sum(['residence_us']);
+    return {rate,n:good.length,failed:all.length-good.length,
+      sender_mbps:stats(good.map(r=>r.sender_mbps)),receiver_mbps:stats(good.map(r=>r.mbps)),udp_loss:stats(good.map(r=>r.lost_percent)),
+      full:sum(['full']),queue_losses:lost,submitted,queue_loss_percent:lost!==null&&submitted>0?100*lost/submitted:null,
+      residence_mean_ms:residence!==null&&completed>0?residence/completed/1000:null,
+      ping_samples:ping.length,ping_p95_ms:stats(ping.map(p=>p.rtt_ms?.p95)),ping_loss:stats(ping.map(p=>p.loss_percent))};
+  });
 }
 
 export function counterDelta(before,after) {

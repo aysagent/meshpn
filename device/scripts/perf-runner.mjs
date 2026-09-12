@@ -7,18 +7,20 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, checked, command, iperfArgs, parseIperf, parsePing, stats,
-  summarize, measurementPlan, counterDelta, usbCounterFields, ncmCounterFields, usbQueueCounterFields, hasPingProblem } from './perf-lib.mjs';
+  summarize, measurementPlan, counterDelta, usbCounterFields, ncmCounterFields, usbQueueCounterFields, hasPingProblem, summarizeUsbDownSweep } from './perf-lib.mjs';
 import { discoverBoard, checkRoute, sshArgs, startServers } from './perf-network.mjs';
 import { prepareIperfBinding, iperfEnvironment, verifyIperfBinding, iperfError } from './perf-bind.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const help=`Usage: npm run device:perf -- [user@]SERVER[:SSH_PORT] [options]
 
-macOS runner; connect USB and Mac Wi-Fi to the board AP before starting.
+macOS runner; connect the selected paths: USB and/or Mac Wi-Fi to the board AP.
+The USB download sweep requires USB only, not a Mac Wi-Fi connection to the AP.
 SSH must already work with a key/agent and a verified known_hosts entry.
 Required: local/remote iperf3, remote python3, Apple Command Line Tools. Nothing is installed automatically.
 
   --quick                 Smoke test: 3s, 2 measured repeats, no soak
+  --usb-down-sweep        USB UDP download 5..10M, 15s x 3 per rate (~7 min)
   --paths auto|usb|ap|both Auto detects paths; 'both' requires USB + AP
   --seconds N             Per throughput test (default 30)
   --runs N                Measured repeats, excluding warm-up (default 5)
@@ -34,12 +36,25 @@ Required: local/remote iperf3, remote python3, Apple Command Line Tools. Nothing
 Admin password: MESHPN_ADMIN_PASSWORD environment variable (default: admin).
 Close the admin browser tab: its Wi-Fi scan/session can disrupt the test.
 Full USB+AP run: ~75 min, potentially several GB. --quick: ~3 min.
+USB download sweep: npm run device:perf:usb-down -- SERVER[:SSH_PORT]
+USB only; 3s warm-up per rate, 3s recovery gaps, no upload/AP/soak tests.
+Do not combine the sweep with --quick or conflicting timing/path options.
 Ctrl-C saves partial results and stops only this runner's remote servers.
 Report: device/perf-results/<timestamp>-<random>/report.md + JSON/raw logs.
 `;
 
 // Dependency injection keeps the complete schedule testable without real networking or waits.
 export async function executeSchedule(o, paths, {batch,idle,now=Date.now,check=()=>{}}) {
+  if(o.usbDownSweep) {
+    const plan=measurementPlan(paths,o);
+    await idle('baseline-idle',o.idleSeconds);
+    for(const [index,test] of plan.entries()) {
+      check();await batch(test);
+      if(index<plan.length-1)await idle(`sweep-recovery-${index+1}`,3);
+    }
+    await idle('final-idle',o.idleSeconds);
+    return;
+  }
   for(const direction of ['up','down']) {
     for(const p of paths)await batch({paths:[p],protocol:'tcp',direction,seconds:o.seconds,phase:'warmup',warmup:true,run:0});
   }
@@ -123,6 +138,16 @@ export function reportMarkdown(result) {
     '| Scenario/path/protocol/direction/rate | n | Mbit/s min | median | p95 | max | UDP loss % median | jitter ms median | TCP retransmits median | failed |',
     '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|'];
   for(const [name,g] of Object.entries(result.summary||{}))lines.push(`| ${name} | ${g.mbps?.count||0} | ${fmt(g.mbps?.min)} | ${fmt(g.mbps?.median)} | ${fmt(g.mbps?.p95)} | ${fmt(g.mbps?.max)} | ${fmt(g.loss?.median)} | ${fmt(g.jitter?.median)} | ${fmt(g.retransmits?.median)} | ${g.failed} |`);
+  if(result.options?.usbDownSweep) {
+    lines.push('', '## USB download rate sweep', '',
+      'Measured runs only. Sender/receiver are achieved rates, not the requested UDP target. Missing sender statistics remain n/a.',
+      'Queue losses include ALL queue rejection/send-failure stages, not usb.tx_dropped again. Device-wide batch counters include admin traffic; missing/reset windows remain n/a.',
+      'Ping p95 = median of per-test p95 values (not a pooled percentile). Residence includes queue wait and sync send, not host delivery. Three repeats and WAN limits do not establish a hard loss-free threshold.', '',
+      '| Target Mbit/s | n / failed | Sender median | Receiver median | UDP loss % median / max | Queue full | All queue losses / % | Residence mean ms | Ping n | Ping p95 ms | Ping loss % max |',
+      '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
+    for(const s of summarizeUsbDownSweep(result.records||[],result.pings||[]))
+      lines.push(`| ${s.rate} | ${s.n} / ${s.failed} | ${fmt(s.sender_mbps?.median)} | ${fmt(s.receiver_mbps?.median)} | ${fmt(s.udp_loss?.median)} / ${fmt(s.udp_loss?.max)} | ${s.full??'n/a'} | ${s.queue_losses??'n/a'} / ${fmt(s.queue_loss_percent)} | ${fmt(s.residence_mean_ms)} | ${s.ping_samples} | ${fmt(s.ping_p95_ms?.median)} | ${fmt(s.ping_loss?.max)} |`);
+  }
   lines.push('','## Ping latency (per test, including idle)','',
     '| Test | Path | median ms | p95 ms | loss % | error |','|---|---|---:|---:|---:|---|');
   for(const p of result.pings||[])lines.push(`| ${p.id} | ${p.path} | ${fmt(p.rtt_ms?.median)} | ${fmt(p.rtt_ms?.p95)} | ${fmt(p.loss_percent)} | ${(p.error||'').replaceAll('|','/').replaceAll('\n',' ')} |`);
@@ -242,7 +267,8 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     for(const kind of ['usb','ap'])if(!board.paths.some(p=>p.kind===kind))result.warnings.push(`${kind.toUpperCase()} not selected/connected; its single and combined tests were skipped.`);
     if(o.soakMinutes===0)result.warnings.push('Endurance stage disabled.');
     if(o.adminInsecure)result.warnings.push('HTTPS certificate verification explicitly disabled.');
-    const estimated=(measurementPlan(board.paths,o).length*o.seconds+board.paths.length*2*o.seconds+2*o.idleSeconds)/60+o.soakMinutes;
+    const plan=measurementPlan(board.paths,o);
+    const estimated=(plan.reduce((sum,t)=>sum+t.seconds,0)+(o.usbDownSweep?(plan.length-1)*3:board.paths.length*2*o.seconds)+2*o.idleSeconds)/60+o.soakMinutes;
     if(estimated>240)throw Error('Requested suite exceeds 4 hours; reduce --runs/--seconds/--soak-minutes (remote safety deadline is 6 hours).');
     log(`Estimated load/idle time: ${Math.ceil(estimated)} min + process overhead. Close admin UI; keep Mac connected.`);
     caffeine=runtime.spawn('/usr/bin/caffeinate',['-i','-m','-s','-w',String(process.pid)],{stdio:'ignore'});
@@ -326,7 +352,7 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
       await sample();check();
     };
     // Fail fast on both directions/protocols before spending an hour on a broken setup.
-    for(const p of board.paths)for(const protocol of ['tcp','udp'])for(const direction of ['up','down'])
+    for(const p of board.paths)for(const protocol of ['tcp','udp'])for(const direction of (o.usbDownSweep?['down']:['up','down']))
       await batch({paths:[p],protocol,direction,rate:protocol==='udp'?5:null,seconds:1,phase:'preflight',warmup:true,run:0});
     await executeSchedule(o,board.paths,{batch,idle,check});
     if(samplerError)throw samplerError;
@@ -342,6 +368,7 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     if(servers)await servers.close().catch(e=>{result.warnings.push(`Server cleanup: ${e.message}`);result.outcome='failed';});
     caffeine?.kill('SIGTERM');process.removeListener('SIGINT',abort);process.removeListener('SIGTERM',abort);
     result.ended=new Date().toISOString();result.summary=summarize(records);result.telemetry=telemetrySummary(samples);
+    if(o.usbDownSweep)result.usb_down_sweep=summarizeUsbDownSweep(records,pings);
     if(!result.telemetry.cpu_samples&&samples.length) {
       result.warnings.push('No valid CPU runtime samples; CPU-load results unavailable.');
       if(result.outcome==='completed')result.outcome='completed-with-warnings';

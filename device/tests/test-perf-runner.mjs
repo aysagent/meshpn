@@ -10,7 +10,7 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, quote, command, iperfArgs, parseIperf, stats, parsePing, summarize,
-  measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer, ncmCounterFields, usbQueueCounterFields, hasPingProblem } from '../scripts/perf-lib.mjs';
+  measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer, ncmCounterFields, usbQueueCounterFields, hasPingProblem, summarizeUsbDownSweep } from '../scripts/perf-lib.mjs';
 import { discoverBoard, checkRoute, requestBoard, sshArgs } from '../scripts/perf-network.mjs';
 import { prepareIperfBinding, macosBuildContext, iperfEnvironment, verifyIperfBinding, iperfError } from '../scripts/perf-bind.mjs';
 import { executeSchedule, cleanStatus, telemetrySummary, reportMarkdown, main } from '../scripts/perf-runner.mjs';
@@ -56,6 +56,57 @@ test('shell quoting and subprocess timeout/cancellation preserve diagnostics',as
   const c=new AbortController();c.abort();
   await assert.rejects(command(process.execPath,['-e','setInterval(()=>{},100)'],{signal:c.signal}),/Interrupted/);
   await assert.rejects(command('/nonexistent-meshpn-test',[]),/ENOENT/);
+});
+
+test('USB sweep preset is order independent and rejects conflicting suites',()=>{
+  for(const args of [['--usb-down-sweep','host'],['host','--usb-down-sweep']]) {
+    const o=parseArgs(args);
+    assert.equal(o.paths,'usb');assert.equal(o.seconds,15);assert.equal(o.runs,3);
+    assert.equal(o.soakMinutes,0);assert.equal(o.idleSeconds,10);
+  }
+  for(const extra of [['--quick'],['--paths','ap'],['--paths','both'],['--seconds','3'],['--runs','2'],['--soak-minutes','1']])
+    for(const args of [['host','--usb-down-sweep',...extra],['host',...extra,'--usb-down-sweep']])assert.throws(()=>parseArgs(args),/requires USB only/);
+  assert.equal(parseArgs(['--usb-down-sweep','--help']).help,true);
+});
+
+test('USB sweep runs 18 measured UDP downloads, six warmups, recovery gaps and no other load',async()=>{
+  const o=parseArgs(['host','--usb-down-sweep']),batches=[],idles=[];
+  assert.throws(()=>measurementPlan(paths,o),/exactly one USB/);
+  assert.throws(()=>measurementPlan([paths[1]],o),/exactly one USB/);
+  await executeSchedule(o,[paths[0]],{batch:async t=>batches.push(t),idle:async(name,seconds)=>idles.push({name,seconds})});
+  assert.equal(batches.length,24);assert.equal(batches.filter(t=>!t.warmup).length,18);
+  assert.ok(batches.every(t=>t.paths.length===1&&t.paths[0].kind==='usb'&&t.direction==='down'&&t.protocol==='udp'));
+  for(const rate of [5,6,7,8,9,10]) {
+    const group=batches.filter(t=>t.rate===rate);
+    assert.deepEqual(group.map(t=>t.run),[0,1,2,3]);
+    assert.deepEqual(group.map(t=>t.seconds),[3,15,15,15]);
+  }
+  assert.equal(idles[0].name,'baseline-idle');assert.equal(idles.at(-1).name,'final-idle');
+  assert.equal(idles.filter(i=>i.name.startsWith('sweep-recovery-')&&i.seconds===3).length,23);
+  assert.equal(batches.reduce((s,t)=>s+t.seconds,0)+idles.reduce((s,t)=>s+t.seconds,0),377);
+});
+
+test('USB sweep summary excludes warmups, matches ping by ID/path, and preserves unknown counters',()=>{
+  const counters=Object.fromEntries(usbQueueCounterFields.map(k=>[`usb.tx_queue.${k}`,0]));
+  Object.assign(counters,{'usb.tx_queue.submitted':100,'usb.tx_queue.full':5,'usb.tx_queue.send_failed':2,
+    'usb.tx_queue.completed':90,'usb.tx_queue.residence_us':180000,'usb.tx_dropped':2});
+  const base={id:'1',phase:'usb-down-sweep',path:'usb',protocol:'udp',direction:'down',rate:5,warmup:false,
+    mbps:4,sender_mbps:4.9,lost_percent:1,batch_counters:counters};
+  const records=[base,{...base,id:'2',mbps:5,lost_percent:3},{...base,id:'warm',warmup:true,mbps:1000},
+    {...base,id:'fail',error:'failed'},{...base,path:'ap',mbps:900}];
+  const pings=[{id:'1',path:'usb',rtt_ms:{p95:10},loss_percent:0},{id:'2',path:'usb',rtt_ms:{p95:30},loss_percent:4},
+    {id:'warm',path:'usb',rtt_ms:{p95:1000}},{id:'1',path:'ap',rtt_ms:{p95:1000}}];
+  let row=summarizeUsbDownSweep(records,pings)[0];
+  assert.equal(row.n,2);assert.equal(row.failed,1);assert.equal(row.receiver_mbps.median,4.5);
+  assert.equal(row.queue_losses,14);assert.equal(row.full,10);assert.equal(row.queue_loss_percent,7);
+  assert.equal(row.residence_mean_ms,2);assert.equal(row.ping_p95_ms.median,20);assert.equal(row.ping_loss.max,4);
+  assert.equal(row.udp_loss.median,2);assert.equal(row.udp_loss.max,3);
+  const report=reportMarkdown({options:{usbDownSweep:true},records,pings});
+  assert.match(report,/USB download rate sweep/);assert.match(report,/14 \/ 7.00/);
+  row=summarizeUsbDownSweep([base,{...base,batch_counters:{}}])[0];
+  assert.equal(row.queue_losses,null);assert.equal(row.queue_loss_percent,null);assert.equal(row.full,null);
+  assert.equal(summarizeUsbDownSweep([])[0].receiver_mbps,null);
+  assert.match(reportMarkdown({options:{usbDownSweep:true}}),/n\/a/);
 });
 
 test('interface binding, direction and UDP packet size are explicit',()=>{
@@ -442,6 +493,32 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
     assert.equal(closes,5);
     const warned=[];for(const d of await readdir(parent))warned.push(JSON.parse(await readFile(path.join(parent,d,'result.json'),'utf8')));
     assert.ok(warned.some(r=>r.outcome==='completed-with-warnings'&&r.warnings.some(w=>w.includes('ping packet loss'))));
+    const sweepCommands=[];
+    assert.equal(await main(['server','--usb-down-sweep','--out',parent],{...dependencies,
+      discoverBoard:async(o)=>{assert.equal(o.paths,'usb');const b=await dependencies.discoverBoard();return {...b,paths:[paths[0]]};},
+      startServers:async(o,count)=>{assert.equal(count,1);return {ports:[5201],assertAlive(){},async close(){closes++;}};},
+      command:async(bin,args,opts)=>{
+        if(bin==='iperf3') {
+          sweepCommands.push(args);assert.ok(args.includes('-R'));
+          assert.equal(args[args.indexOf('-B')+1],paths[0].address);
+          assert.equal(args[args.indexOf('-p')+1],'5201');
+        }
+        return dependencies.command(bin,args,opts);
+      }}),0);
+    assert.equal(closes,6);assert.equal(sweepCommands.length,26);
+    assert.equal(sweepCommands.filter(a=>a.includes('-u')).length,25); // One TCP download preflight only.
+    let sweep;
+    for(const d of await readdir(parent)) {
+      const r=JSON.parse(await readFile(path.join(parent,d,'result.json'),'utf8'));
+      if(r.options.usbDownSweep) {
+        sweep=r;
+        assert.match(await readFile(path.join(parent,d,'report.md'),'utf8'),/USB download rate sweep/);
+      }
+    }
+    assert.equal(sweep.records.filter(r=>!r.warmup).length,18);
+    assert.equal(sweep.records.filter(r=>r.phase==='usb-down-sweep'&&r.warmup).length,6);
+    assert.equal(sweep.usb_down_sweep.length,6);
+    assert.ok(sweep.usb_down_sweep.every(r=>r.n===3&&r.sender_mbps.median===9));
     assert.equal(process.listenerCount('SIGINT'),signalsBefore);
   }finally{await rm(parent,{recursive:true,force:true});}
 });

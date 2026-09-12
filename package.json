@@ -27,6 +27,7 @@
     "device:flash:ecm": "./device/scripts/flash.sh ecm",
     "device:monitor": "./device/scripts/monitor.sh",
     "device:perf": "node device/scripts/perf-runner.mjs",
+    "device:perf:usb-down": "node device/scripts/perf-runner.mjs --usb-down-sweep",
     "device:perf:test": "node --test device/tests/test-perf-runner.mjs",
     "ja3-snif-server": "node scripts/ja3-snif-server.mjs",
     "test:boring-tls-smoke": "node scripts/test-boring-tls-smoke.mjs",
