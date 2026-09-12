@@ -14,6 +14,50 @@ import { parseArgs, quote, command, iperfArgs, parseIperf, stats, parsePing, sum
 import { discoverBoard, checkRoute, requestBoard, sshArgs } from '../scripts/perf-network.mjs';
 import { prepareIperfBinding, macosBuildContext, iperfEnvironment, verifyIperfBinding, iperfError } from '../scripts/perf-bind.mjs';
 import { executeSchedule, cleanStatus, telemetrySummary, reportMarkdown, main } from '../scripts/perf-runner.mjs';
+import { pingEvent, blackoutDiagnostics } from '../scripts/perf-diagnostics.mjs';
+
+test('observed ping events parse Mac replies/timeouts, not summaries or missing packets',()=>{
+  const now=1789246166000;
+  assert.deepEqual(pingEvent('Request timeout for icmp_seq 12',now),
+    {time:new Date(now).toISOString(),kind:'timeout',sequence:12,rtt_ms:null});
+  assert.equal(pingEvent('64 bytes from 192.168.7.1: icmp_seq=13 ttl=64 time=1.2 ms',now).rtt_ms,1.2);
+  assert.equal(pingEvent('2 packets transmitted, 0 packets received, 100% packet loss',now),null);
+  assert.equal(pingEvent('PING 192.168.7.1',now),null);
+});
+
+test('blackout correlation uses distinct targets and real poll brackets; missing/remote/reset remain unknown',()=>{
+  const base=1789246166000,iso=s=>new Date(base+s*1000).toISOString();
+  const record={id:'0008',path:'usb',timing:{client_timestamp_ms:base,receiver_interval_source:'client',
+    zero_receive_intervals:[{start:10,end:11,seconds:1}]}};
+  const pings=[{id:'0008',path:'usb',target:'board',events:[pingEvent('icmp_seq=1 time=1 ms',base+10500)]},
+    {id:'0008',path:'usb',target:'server',events:[pingEvent('Request timeout for icmp_seq 1',base+11000)]},
+    {id:'0009',path:'usb',target:'board',events:[pingEvent('Request timeout for icmp_seq 1',base+11000)]}];
+  const state=n=>({uptime_sec:n,usb:{tx_ok:n,ncm:{ntb_completed:n},tx_queue:{full:0}}});
+  const samples=[{time:iso(8),finished:iso(8.1),status:state(100)},
+    {time:iso(9),finished:iso(12),error:'API timeout'},
+    {time:iso(12),finished:iso(12.1),status:state(104)}];
+  const [b]=blackoutDiagnostics([record],pings,samples);
+  assert.equal(b.board.replies,1);assert.equal(b.board.timeouts,0);assert.equal(b.server.timeouts,1);
+  assert.equal(b.telemetry.api_errors.length,1);assert.equal(b.telemetry.counters['usb.tx_ok'],4);
+  assert.match(reportMarkdown({blackouts:[b]}),/4 \/ 4 \/ 0/);
+  samples[2].status=state(1);
+  assert.equal(blackoutDiagnostics([record],pings,samples)[0].telemetry.counters['usb.tx_ok'],null);
+  samples[2].time=iso(30);samples[2].finished=iso(30.1);
+  assert.equal(blackoutDiagnostics([record],pings,samples)[0].telemetry.counters,null);
+  assert.equal(blackoutDiagnostics([record],[],[])[0].board,null);
+  record.timing.receiver_interval_source='server';
+  assert.equal(blackoutDiagnostics([record],pings,samples)[0].alignment,'unknown');
+  record.timing.receiver_interval_source='client';record.timing.client_timestamp_ms=null;
+  assert.equal(blackoutDiagnostics([record],pings,samples)[0].telemetry,null);
+});
+
+test('subprocess timestamps complete lines across chunks and retains final unterminated line',async()=>{
+  const observed=[];
+  await command(process.execPath,['-e','process.stdout.write("first\\nsec");setTimeout(()=>process.stdout.write("ond"),10)'],
+    {onStdoutLine:(line,ms)=>observed.push({line,ms})});
+  assert.deepEqual(observed.map(x=>x.line),['first','second']);
+  assert.ok(observed.every(x=>Number.isFinite(x.ms)));
+});
 
 // Reduced from the user's 0008 report: last three intervals and unmodified end statistics.
 const tailStall=JSON.parse(await readFile(new URL('./fixtures/iperf-udp-tail-stall.json',import.meta.url),'utf8'));
@@ -32,6 +76,10 @@ test('tail receive blackout and unequal durations warn without rewriting measure
 
 test('timing diagnostics ignore omitted/tiny/sender intervals and retain missing data as unknown',()=>{
   const j=structuredClone(tailStall);
+  j.start.timestamp={timesecs:1789246166,timemillisecs:1789246166176};
+  assert.equal(parseIperf(JSON.stringify(j),'udp').timing.client_timestamp_ms,1789246166176);
+  delete j.start.timestamp.timemillisecs;
+  assert.equal(parseIperf(JSON.stringify(j),'udp').timing.client_timestamp_ms,1789246166000);
   j.end.sum_sent.seconds=15.005008;
   j.intervals=[{sum:{start:0,end:1,seconds:1,bytes:0,sender:false,omitted:true}},
     {sum:{start:1,end:2,seconds:1,bytes:0,sender:true}},
@@ -81,6 +129,9 @@ test('CLI: SSH/data ports, defaults, quick overrides and injection rejection',()
   assert.equal(o.sshTarget,'alice@192.168.1.10');assert.equal(o.sshPort,2222);assert.equal(o.iperfPort,5201);
   assert.equal(o.soakMinutes,0);assert.equal(o.runs,2);assert.equal(o.seconds,7);
   assert.equal(parseArgs(['--help']).help,true);
+  assert.equal(parseArgs(['host','--usb-down-sweep','--start-delay','60']).startDelay,60);
+  assert.equal(parseArgs(['host']).startDelay,0);
+  for(const value of ['-1','601','NaN','1.5'])assert.throws(()=>parseArgs(['host','--start-delay',value]));
   for(const args of [[],['-oProxyCommand=bad'],['user@host;id'],['host:0'],['host','--iperf-port','65535'],
     ['host','--seconds','NaN'],['host','--runs'],['host','--server-ip','::1'],['host','--paths','xxx'],['host','--install']])
     assert.throws(()=>parseArgs(args));
@@ -136,7 +187,8 @@ test('USB sweep summary excludes warmups, matches ping by ID/path, and preserves
   const records=[base,{...base,id:'2',mbps:5,lost_percent:3},{...base,id:'warm',warmup:true,mbps:1000},
     {...base,id:'fail',error:'failed'},{...base,path:'ap',mbps:900}];
   const pings=[{id:'1',path:'usb',rtt_ms:{p95:10},loss_percent:0},{id:'2',path:'usb',rtt_ms:{p95:30},loss_percent:4},
-    {id:'warm',path:'usb',rtt_ms:{p95:1000}},{id:'1',path:'ap',rtt_ms:{p95:1000}}];
+    {id:'warm',path:'usb',rtt_ms:{p95:1000}},{id:'1',path:'ap',rtt_ms:{p95:1000}},
+    {id:'1',path:'usb',target:'board',rtt_ms:{p95:1000},loss_percent:100}];
   let row=summarizeUsbDownSweep(records,pings)[0];
   assert.equal(row.n,2);assert.equal(row.failed,1);assert.equal(row.receiver_mbps.median,4.5);
   assert.equal(row.queue_losses,14);assert.equal(row.full,10);assert.equal(row.queue_loss_percent,7);
@@ -459,16 +511,21 @@ net.createServer().listen(port,'127.0.0.1');
 test('runner integration: full quick suite, files, two ports, cleanup and failure report',async()=>{
   const parent=await mkdtemp(path.join(tmpdir(),'meshpn-perf-runner-'));let closes=0,fail=false;
   const portsSeen=new Set(),signalsBefore=process.listenerCount('SIGINT');
-  let ticks=0;
-  const dependencies={platform:'darwin',log:()=>{},lookup:async()=>({address:'1.2.3.4'}),delay:async()=>{},
+  let ticks=0;const delays=[],pingTargets=new Set();
+  const dependencies={platform:'darwin',log:()=>{},lookup:async()=>({address:'1.2.3.4'}),delay:async(ms)=>{delays.push(ms);},
     prepareIperfBinding:async()=>'/tmp/test-bind.dylib',
     checked:async(bin)=>bin==='iperf3'?'iperf3 test':'test',
     discoverBoard:async()=>({paths,initial:fixture(),status:async()=>{const f=fixture();f.uptime_sec+=ticks++;f.cpu.sampled_us+=ticks*2000000;return f;}}),
     checkRoute:async()=> 'validated test route',spawn:()=>({on(){},kill(){}}),
     startServers:async()=>({ports:[5201,5202],assertAlive(){},async close(){closes++;}}),
-    command:async(bin,args)=>{
+    command:async(bin,args,opts)=>{
       if(bin==='ssh')return {code:0,stdout:'iperf3 test\nPython 3 test',stderr:''};
-      if(bin==='/sbin/ping')return {code:0,stdout:pingText,stderr:''};
+      if(bin==='/sbin/ping'){
+        pingTargets.add(args.at(-1));
+        assert.ok(args.includes('-b'));assert.ok(args.includes('-S'));
+        for(const line of pingText.trim().split('\n'))opts.onStdoutLine?.(line,Date.now());
+        return {code:0,stdout:pingText,stderr:''};
+      }
       assert.equal(bin,'iperf3');portsSeen.add(args[args.indexOf('-p')+1]);
       if(fail==='interrupt'){process.emit('SIGINT');throw Error('Interrupted');}
       return fail?{code:1,stdout:'{"error":"test server busy"}',stderr:''}:
@@ -476,13 +533,19 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
           stderr:`MESHPN_BOUND_IF=${paths.find(p=>p.address===args[args.indexOf('-B')+1]).iface}\n`};
     }};
   try {
-    assert.equal(await main(['user@server:2222','--quick','--out',parent],dependencies),0);
+    assert.equal(await main(['user@server:2222','--quick','--start-delay','60','--out',parent],dependencies),0);
     assert.equal(closes,1);assert.deepEqual([...portsSeen].sort(),['5201','5202']);
     let dirs=await readdir(parent);const dir=path.join(parent,dirs[0]);
     const result=JSON.parse(await readFile(path.join(dir,'result.json'),'utf8'));
     assert.equal(result.outcome,'completed');assert.equal(result.records.filter(r=>!r.warmup&&r.phase==='combined').length,8);
     assert.equal(result.summary['single/usb/tcp/up/'].mbps.median,8);
     assert.equal(result.summary['single/usb/tcp/up/'].mbps.count,2);
+    assert.equal(delays[0],60000);assert.equal(result.records[0].id,'0001');
+    assert.deepEqual([...pingTargets].sort(),['1.2.3.4',...paths.map(p=>p.gateway)].sort());
+    assert.equal(result.pings.filter(p=>p.id==='start-delay').length,4);
+    assert.ok(result.pings.every(p=>p.events.length===2&&p.started&&p.ended));
+    assert.match(await readFile(path.join(dir,'ping.ndjson'),'utf8'),/"target":"board"/);
+    assert.ok((await readdir(dir)).includes('0001-usb-board.ping.txt'));
     assert.ok((await readFile(path.join(dir,'status.ndjson'),'utf8')).includes('temperature_c'));
     assert.match(await readFile(path.join(dir,'report.md'),'utf8'),/completed/);
     fail=true;
@@ -570,6 +633,12 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
     assert.ok(sweep.warnings.some(w=>w.includes('iperf timing anomalies')));
     assert.equal(sweep.records.filter(r=>r.timing?.warnings.length).length,1);
     assert.ok(sweep.records.some(r=>r.mbps===tailStall.end.sum_received.bits_per_second/1e6&&r.timing.zero_receive_intervals?.length===1));
+    assert.equal(sweep.blackouts.length,1);
+    assert.equal(await main(['server','--quick','--start-delay','60','--out',parent],{...dependencies,
+      delay:async()=>{process.emit('SIGINT');throw Error('Interrupted');}}),130);
+    assert.equal(closes,7);
+    const delayReports=await Promise.all((await readdir(parent)).map(async d=>JSON.parse(await readFile(path.join(parent,d,'result.json'),'utf8'))));
+    assert.ok(delayReports.some(r=>r.outcome==='interrupted'&&r.options.startDelay===60&&r.records.length===0));
     assert.equal(process.listenerCount('SIGINT'),signalsBefore);
   }finally{await rm(parent,{recursive:true,force:true});}
 });

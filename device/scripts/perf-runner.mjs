@@ -10,6 +10,7 @@ import { parseArgs, checked, command, iperfArgs, parseIperf, parsePing, stats,
   summarize, measurementPlan, counterDelta, usbCounterFields, ncmCounterFields, usbQueueCounterFields, hasPingProblem, summarizeUsbDownSweep } from './perf-lib.mjs';
 import { discoverBoard, checkRoute, sshArgs, startServers } from './perf-network.mjs';
 import { prepareIperfBinding, iperfEnvironment, verifyIperfBinding, iperfError } from './perf-bind.mjs';
+import { pingEvent, blackoutDiagnostics } from './perf-diagnostics.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const help=`Usage: npm run device:perf -- [user@]SERVER[:SSH_PORT] [options]
@@ -26,6 +27,7 @@ Required: local/remote iperf3, remote python3, Apple Command Line Tools. Nothing
   --runs N                Measured repeats, excluding warm-up (default 5)
   --soak-minutes N         Load/idle endurance stage (default 30; 0 disables)
   --idle-seconds N         Baseline/final idle periods (default 30)
+  --start-delay N          Observe idle N seconds before preflight (0..600; default 0)
   --iperf-port N           First data port (default 5201; second is N+1)
   --server-ip IPv4         Data destination if different from SSH hostname
   --admin-url URL          Override discovery, e.g. http://192.168.7.1/
@@ -132,6 +134,7 @@ export function reportMarkdown(result) {
   const fmt=v=>Number.isFinite(v)?v.toFixed(2):'n/a';
   const lines=['# MeshPN performance report','',`Result: **${result.outcome}**`,
     `Started: ${result.started}; ended: ${result.ended}`,`Server: ${result.serverIP||'unresolved'}; SSH: ${result.target}`,
+    `Preflight start delay: ${result.options?.startDelay??0}s; board discovery uptime: ${result.board?.uptime_sec??'unknown'}s.`,
     `Checkout: ${result.git?.commit||'unknown'}${result.git?.dirty?' (dirty)':''}; board build: ${result.board?.build||'unknown'}`,'',
     'up = Mac → server; down = server → Mac. Throughput is measured at the receiver. Warm-ups excluded.',
     'WAN servers include ISP/network limits. Percentiles across a few repetitions are only indicative.','',
@@ -163,9 +166,24 @@ export function reportMarkdown(result) {
       lines.push(`| ${r.id} | ${r.path}/${r.protocol}/${r.direction} | ${r.warmup?'yes':'no'} | ${fmt(d.sender_seconds)} | ${fmt(d.receiver_seconds)} | ${fmt(d.duration_delta_seconds)} | ${zero===null?'n/a':zero.map(z=>`${fmt(z.start)}–${fmt(z.end)}`).join(', ')||'none'} | ${d.warnings.join(', ')} |`);
     }
   }
+  if(result.blackouts?.length) {
+    lines.push('','## Receive blackout correlation','',
+      'Approximate alignment using the client iperf timestamp, with 1s context on either side for ping/API errors (not a clock-error bound). Remote receiver intervals or missing timestamps remain unaligned.',
+      'Ping times are when Node observes stdout, not send/packet-capture times; buffering and timeout reporting can delay them. No observed events is unknown, not proof of loss.',
+      'USB deltas span the displayed successful API poll bracket, which may be wider than the blackout; n/a means missing/reset/stale (>10s away) data. Counters cover all device traffic, not this flow alone. Neither ping nor accepted/completed USB frames prove application delivery.', '',
+      '| Test / path | Zero RX s | Board replies / timeouts | Server replies / timeouts | API OK / errors | USB accepted / NTB completed / queue full | API bracket UTC |',
+      '|---|---|---|---|---:|---|---|');
+    for(const b of result.blackouts) {
+      const ping=p=>!p?'n/a':!p.events.length?'unknown':`${p.replies} / ${p.timeouts}${p.probe_error?' (probe error)':''}`;
+      const t=b.telemetry,c=t?.counters;
+      lines.push(`| ${b.id} / ${b.path} | ${fmt(b.interval.start)}–${fmt(b.interval.end)} | ${ping(b.board)} | ${ping(b.server)} | ${t?`${t.observations.length} / ${t.api_errors.length}`:'n/a'} | ${c?.['usb.tx_ok']??'n/a'} / ${c?.['usb.ncm.ntb_completed']??'n/a'} / ${c?.['usb.tx_queue.full']??'n/a'} | ${c?`${t.before.time} → ${t.after.finished||t.after.time}`:'n/a'} |`);
+    }
+    lines.push('','Exact observed ping events: ping.ndjson; poll request/finish times: status.ndjson; correlation windows and deltas: result.json → blackouts.');
+  }
   lines.push('','## Ping latency (per test, including idle)','',
-    '| Test | Path | median ms | p95 ms | loss % | error |','|---|---|---:|---:|---:|---|');
-  for(const p of result.pings||[])lines.push(`| ${p.id} | ${p.path} | ${fmt(p.rtt_ms?.median)} | ${fmt(p.rtt_ms?.p95)} | ${fmt(p.loss_percent)} | ${(p.error||'').replaceAll('|','/').replaceAll('\n',' ')} |`);
+    'Board and server probes run concurrently at 5 packets/s each, bound to the selected interface. Sweep summary ping columns remain server-only. This adds local ICMP traffic compared with older runners.', '',
+    '| Test | Path / target | median ms | p95 ms | loss % | error |','|---|---|---:|---:|---:|---|');
+  for(const p of result.pings||[])lines.push(`| ${p.id} | ${p.path} / ${p.target||'server'} | ${fmt(p.rtt_ms?.median)} | ${fmt(p.rtt_ms?.p95)} | ${fmt(p.loss_percent)} | ${(p.error||'').replaceAll('|','/').replaceAll('\n',' ')} |`);
   const t=result.telemetry;
   if(t) {
     lines.push('','## Board telemetry','',`Samples: ${t.samples}; API errors: ${t.api_errors}; unique CPU samples: ${t.cpu_samples}.`,
@@ -283,7 +301,7 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     if(o.soakMinutes===0)result.warnings.push('Endurance stage disabled.');
     if(o.adminInsecure)result.warnings.push('HTTPS certificate verification explicitly disabled.');
     const plan=measurementPlan(board.paths,o);
-    const estimated=(plan.reduce((sum,t)=>sum+t.seconds,0)+(o.usbDownSweep?(plan.length-1)*3:board.paths.length*2*o.seconds)+2*o.idleSeconds)/60+o.soakMinutes;
+    const estimated=(plan.reduce((sum,t)=>sum+t.seconds,0)+(o.usbDownSweep?(plan.length-1)*3:board.paths.length*2*o.seconds)+2*o.idleSeconds+o.startDelay)/60+o.soakMinutes;
     if(estimated>240)throw Error('Requested suite exceeds 4 hours; reduce --runs/--seconds/--soak-minutes (remote safety deadline is 6 hours).');
     log(`Estimated load/idle time: ${Math.ceil(estimated)} min + process overhead. Close admin UI; keep Mac connected.`);
     caffeine=runtime.spawn('/usr/bin/caffeinate',['-i','-m','-s','-w',String(process.pid)],{stdio:'ignore'});
@@ -292,6 +310,7 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     const sample=async()=>{
       const s={time:new Date().toISOString(),elapsed_ms:Date.now()-started,phase};
       try{s.status=cleanStatus(await board.status());}catch(e){s.error=e.message;}
+      s.finished=new Date().toISOString();
       samples.push(s);await appendFile(path.join(output,'status.ndjson'),JSON.stringify(s)+'\n');return s.status;
     };
     samplerDone=(async()=>{
@@ -305,14 +324,19 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     })();
     // Attach immediately so a disk failure during a long iperf run is never unhandled.
     samplerDone.catch(e=>{samplerError=e;controller.abort();});
-    const ping=async(p,seconds,id)=>{
-      const record={id,path:p.kind};
+    const ping=async(p,seconds,id,target)=>{
+      const address=target==='board'?p.gateway:result.serverIP;
+      const record={id,path:p.kind,target,address,started:new Date().toISOString(),events:[]};
+      const observe=(line,ms)=>{const event=pingEvent(line,ms);if(event)record.events.push(event);};
       try {
-        const r=await runtime.command('/sbin/ping',['-n','-b',p.iface,'-S',p.address,'-i','0.2','-c',String(Math.max(1,Math.ceil(seconds*5))),'-t',String(Math.max(1,Math.ceil(seconds))),result.serverIP],{signal,timeout:seconds*1000+5000});
-        await writeFile(path.join(output,`${id}-${p.kind}.ping.txt`),r.stdout+'\n'+r.stderr);
+        const r=await runtime.command('/sbin/ping',['-n','-b',p.iface,'-S',p.address,'-i','0.2','-c',String(Math.max(1,Math.ceil(seconds*5))),'-t',String(Math.max(1,Math.ceil(seconds))),address],{signal,timeout:seconds*1000+5000,onStdoutLine:observe});
+        await writeFile(path.join(output,`${id}-${p.kind}${target==='board'?'-board':''}.ping.txt`),r.stdout+'\n'+r.stderr);
         Object.assign(record,parsePing(r.stdout));
         if(!record.rtt_ms||record.loss_percent===null)record.error=`Ping unavailable (exit ${r.code}); server may block ICMP: ${r.stderr.trim()}`;
-      }catch(e){record.error=e.message;}
+      }catch(e){record.error=e.message;
+        await writeFile(path.join(output,`${id}-${p.kind}${target==='board'?'-board':''}.ping.txt`),(e.stdout||'')+'\n'+(e.stderr||e.message));}
+      record.ended=new Date().toISOString();
+      await appendFile(path.join(output,'ping.ndjson'),JSON.stringify(record)+'\n');
       pings.push(record);return record;
     };
     const batch=async test=>{
@@ -347,7 +371,7 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
           }
           r.ended=new Date().toISOString();return r;
         };
-        await Promise.all([client(),ping(p,test.seconds,id)]);
+        await Promise.all([client(),ping(p,test.seconds,id,'server'),ping(p,test.seconds,id,'board')]);
         return r;
       }));
       const after=await sample(),deltas=counterDelta(before,after);
@@ -360,13 +384,14 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
       check();
       if(test.phase==='preflight'&&measured.some(r=>r.error))throw Error('Preflight failed; inspect raw JSON/stderr. Check interface binding, macOS Local Network permission, server TCP/UDP data ports and firewall. No firewall/route changes were made.');
     };
-    const idle=async(name,seconds)=>{
+    const idle=async(name,seconds,fixedId)=>{
       check();phase=name;log(`${name}: ${Math.round(seconds)}s`);
-      const id=String(++sequence).padStart(4,'0');await sample();
-      await Promise.all([runtime.delay(seconds*1000,undefined,{signal}),...board.paths.map(p=>ping(p,seconds,id))]);
+      const id=fixedId||String(++sequence).padStart(4,'0');await sample();
+      await Promise.all([runtime.delay(seconds*1000,undefined,{signal}),...board.paths.flatMap(p=>['server','board'].map(target=>ping(p,seconds,id,target)))]);
       await sample();check();
     };
     // Fail fast on both directions/protocols before spending an hour on a broken setup.
+    if(o.startDelay)await idle('start-delay',o.startDelay,'start-delay');
     for(const p of board.paths)for(const protocol of ['tcp','udp'])for(const direction of (o.usbDownSweep?['down']:['up','down']))
       await batch({paths:[p],protocol,direction,rate:protocol==='udp'?5:null,seconds:1,phase:'preflight',warmup:true,run:0});
     await executeSchedule(o,board.paths,{batch,idle,check});
@@ -383,6 +408,7 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     if(servers)await servers.close().catch(e=>{result.warnings.push(`Server cleanup: ${e.message}`);result.outcome='failed';});
     caffeine?.kill('SIGTERM');process.removeListener('SIGINT',abort);process.removeListener('SIGTERM',abort);
     result.ended=new Date().toISOString();result.summary=summarize(records);result.telemetry=telemetrySummary(samples);
+    result.blackouts=blackoutDiagnostics(records,pings,samples);
     if(o.usbDownSweep)result.usb_down_sweep=summarizeUsbDownSweep(records,pings);
     if(!result.telemetry.cpu_samples&&samples.length) {
       result.warnings.push('No valid CPU runtime samples; CPU-load results unavailable.');

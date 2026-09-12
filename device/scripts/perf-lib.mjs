@@ -2,10 +2,10 @@ import { spawn } from 'node:child_process';
 import { isIP } from 'node:net';
 
 export function parseArgs(args) {
-  const o = { seconds:30, runs:5, soakMinutes:30, idleSeconds:30, iperfPort:5201, paths:'auto' };
+  const o = { seconds:30, runs:5, soakMinutes:30, idleSeconds:30, startDelay:0, iperfPort:5201, paths:'auto' };
   if(args.includes('--usb-down-sweep'))Object.assign(o,{usbDownSweep:true,seconds:15,runs:3,soakMinutes:0,idleSeconds:10,paths:'usb'});
   const names = {'seconds':'seconds','runs':'runs','soak-minutes':'soakMinutes','idle-seconds':'idleSeconds',
-    'iperf-port':'iperfPort','server-ip':'serverIP','paths':'paths','admin-url':'adminURL','admin-ca':'adminCA','out':'out'};
+    'start-delay':'startDelay','iperf-port':'iperfPort','server-ip':'serverIP','paths':'paths','admin-url':'adminURL','admin-ca':'adminCA','out':'out'};
   for(let i=0;i<args.length;i++) {
     const a=args[i];
     if(a==='--help'||a==='-h') o.help=true;
@@ -26,7 +26,7 @@ export function parseArgs(args) {
   const m=/^(?:([a-zA-Z0-9_][a-zA-Z0-9_.-]*)@)?([a-zA-Z0-9][a-zA-Z0-9.-]*)(?::([0-9]+))?$/.exec(o.target);
   if(!m) throw Error('Expected [user@]IPv4-or-hostname[:SSH-port]');
   o.host=m[2];o.sshTarget=(m[1]?m[1]+'@':'')+m[2];o.sshPort=Number(m[3]||22);
-  for(const [key,min,max] of [['sshPort',1,65535],['iperfPort',1024,65534],['seconds',1,300],['runs',1,20],['soakMinutes',0,120],['idleSeconds',1,600]]) {
+  for(const [key,min,max] of [['sshPort',1,65535],['iperfPort',1024,65534],['seconds',1,300],['runs',1,20],['soakMinutes',0,120],['idleSeconds',1,600],['startDelay',0,600]]) {
     o[key]=Number(o[key]);
     if(!Number.isInteger(o[key])||o[key]<min||o[key]>max) throw Error(`Invalid ${key}: ${min}..${max}`);
   }
@@ -35,18 +35,21 @@ export function parseArgs(args) {
   return o;
 }
 export const quote = s => "'"+String(s).replaceAll("'", "'\\''")+"'";
-export function command(bin,args,{timeout=15000,signal,input,env}={}) {
+export function command(bin,args,{timeout=15000,signal,input,env,onStdoutLine}={}) {
   return new Promise((resolve,reject)=>{
     const p=spawn(bin,args,{stdio:['pipe','pipe','pipe'],env:env||process.env});
-    let stdout='',stderr='',failure,killTimer;
+    let stdout='',stderr='',failure,killTimer,lineBuffer='';
+    const line=s=>{try{onStdoutLine?.(s,Date.now());}catch(e){failure=e;stop();}};
     const stop=()=>{p.kill('SIGTERM');killTimer=setTimeout(()=>p.kill('SIGKILL'),1500);killTimer.unref();};
     const abort=()=>{failure=Error('Interrupted');stop();};
     const timer=setTimeout(()=>{failure=Error(`${bin}: timeout after ${timeout}ms`);stop();},timeout);
     signal?.addEventListener('abort',abort,{once:true});
     p.on('error',e=>{failure=e;});
-    p.stdout.on('data',b=>{stdout+=b;if(stdout.length>16*1024*1024){failure=Error('Excessive process output');stop();}});
+    p.stdout.on('data',b=>{stdout+=b;if(onStdoutLine){lineBuffer+=b;let end;while((end=lineBuffer.indexOf('\n'))>=0){line(lineBuffer.slice(0,end));lineBuffer=lineBuffer.slice(end+1);}}
+      if(stdout.length>16*1024*1024){failure=Error('Excessive process output');stop();}});
     p.stderr.on('data',b=>{stderr=(stderr+b).slice(-1024*1024);});
     p.on('close',(code)=>{clearTimeout(timer);clearTimeout(killTimer);signal?.removeEventListener('abort',abort);
+      if(lineBuffer)line(lineBuffer);
       if(failure) {failure.stdout=stdout;failure.stderr=stderr;reject(failure);} else resolve({code,stdout,stderr});});
     p.stdin.on('error',()=>{});p.stdin.end(input);
     if(signal?.aborted)abort();
@@ -100,6 +103,8 @@ export function iperfTiming(j, receiver) {
     requested_seconds:seconds({seconds:j.start?.test_start?.duration}),
     receiver_interval_source:local.length?'client':remote.length?'server':null,
     receiver_interval_count:intervals.length||null,zero_receive_intervals:intervals.length?zero:null,
+    client_timestamp_ms:Number.isFinite(j.start?.timestamp?.timemillisecs)?j.start.timestamp.timemillisecs:
+      Number.isFinite(j.start?.timestamp?.timesecs)?j.start.timestamp.timesecs*1000:null,
     client_version:typeof j.start?.version==='string'?j.start.version:null,
     server_version:typeof j.server_output_json?.start?.version==='string'?j.server_output_json.start.version:null,warnings};
 }
@@ -169,7 +174,7 @@ export function summarizeUsbDownSweep(records, pings=[]) {
   return [5,6,7,8,9,10].map(rate=>{
     const all=records.filter(r=>r.phase==='usb-down-sweep'&&r.path==='usb'&&r.protocol==='udp'&&r.direction==='down'&&!r.warmup&&r.rate===rate);
     const good=all.filter(r=>!r.error), ids=new Set(good.map(r=>r.id));
-    const ping=pings.filter(p=>p.path==='usb'&&ids.has(p.id)&&!p.error);
+    const ping=pings.filter(p=>p.path==='usb'&&p.target!=='board'&&ids.has(p.id)&&!p.error);
     const sum=keys=>{
       const values=good.flatMap(r=>keys.map(k=>r.batch_counters?.[`usb.tx_queue.${k}`]));
       return values.length&&values.every(Number.isFinite)?values.reduce((a,b)=>a+b,0):null;
