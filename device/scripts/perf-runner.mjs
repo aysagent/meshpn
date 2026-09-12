@@ -148,6 +148,21 @@ export function reportMarkdown(result) {
     for(const s of summarizeUsbDownSweep(result.records||[],result.pings||[]))
       lines.push(`| ${s.rate} | ${s.n} / ${s.failed} | ${fmt(s.sender_mbps?.median)} | ${fmt(s.receiver_mbps?.median)} | ${fmt(s.udp_loss?.median)} / ${fmt(s.udp_loss?.max)} | ${s.full??'n/a'} | ${s.queue_losses??'n/a'} / ${fmt(s.queue_loss_percent)} | ${fmt(s.residence_mean_ms)} | ${s.ping_samples} | ${fmt(s.ping_p95_ms?.median)} | ${fmt(s.ping_loss?.max)} |`);
   }
+  const parsed=(result.records||[]).filter(r=>r.timing);
+  if(parsed.length) {
+    const flagged=parsed.filter(r=>r.timing.warnings.length);
+    lines.push('', '## iperf timing diagnostics', '',
+      `Flagged tests: ${flagged.length}/${parsed.length}, including warm-ups. Receiver interval data available: ${parsed.filter(r=>r.timing.receiver_interval_count!==null).length}/${parsed.length}.`,
+      'Warnings: absolute sender/receiver duration difference > max(0.5s, 5% of receiver duration), or a non-omitted zero-byte receiver interval >= 0.5s. These are diagnostic thresholds, not proof of a device fault.',
+      'Throughput/loss and all runs remain unchanged. UDP sequence-gap loss can miss a trailing receive blackout. Do not compare total sent/received bytes as loss when time windows differ.',
+      'Only flagged tests are listed below; all durations, zero intervals and endpoint versions are retained in measurements.ndjson/result.json (timing). Missing data is unknown, not a clean test.', '',
+      '| Test | Path / protocol / direction | Warm-up | Sender s | Receiver s | Delta s (sender-receiver) | Zero RX intervals (s) | Warnings |',
+      '|---|---|---|---:|---:|---:|---|---|');
+    for(const r of flagged) {
+      const d=r.timing,zero=d.zero_receive_intervals;
+      lines.push(`| ${r.id} | ${r.path}/${r.protocol}/${r.direction} | ${r.warmup?'yes':'no'} | ${fmt(d.sender_seconds)} | ${fmt(d.receiver_seconds)} | ${fmt(d.duration_delta_seconds)} | ${zero===null?'n/a':zero.map(z=>`${fmt(z.start)}–${fmt(z.end)}`).join(', ')||'none'} | ${d.warnings.join(', ')} |`);
+    }
+  }
   lines.push('','## Ping latency (per test, including idle)','',
     '| Test | Path | median ms | p95 ms | loss % | error |','|---|---|---:|---:|---:|---|');
   for(const p of result.pings||[])lines.push(`| ${p.id} | ${p.path} | ${fmt(p.rtt_ms?.median)} | ${fmt(p.rtt_ms?.p95)} | ${fmt(p.loss_percent)} | ${(p.error||'').replaceAll('|','/').replaceAll('\n',' ')} |`);
@@ -375,6 +390,11 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     }
     if(result.telemetry.api_errors||result.telemetry.events.length||hasPingProblem(pings)) {
       result.warnings.push('Telemetry/link/ping problems (including ping packet loss) detected; inspect result.json and raw logs.');
+      if(result.outcome==='completed')result.outcome='completed-with-warnings';
+    }
+    const timingProblems=records.filter(r=>r.timing?.warnings?.length);
+    if(timingProblems.length) {
+      result.warnings.push(`iperf timing anomalies in ${timingProblems.length} tests (including warm-ups); inspect iperf timing diagnostics and raw JSON. Measurements were not corrected or excluded.`);
       if(result.outcome==='completed')result.outcome='completed-with-warnings';
     }
     if(output) {

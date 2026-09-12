@@ -1,0 +1,17 @@
+{
+  "start": {
+    "version": "iperf 3.21",
+    "connected": [{"local_host": "192.168.7.2"}],
+    "test_start": {"protocol": "UDP", "reverse": 1, "duration": 15}
+  },
+  "intervals": [
+    {"sum": {"start": 12.005003, "end": 13.005005, "seconds": 1.0000020265579224, "bytes": 625200, "sender": false, "omitted": false}},
+    {"sum": {"start": 13.005005, "end": 14.005003, "seconds": 0.99999797344207764, "bytes": 492000, "sender": false, "omitted": false}},
+    {"sum": {"start": 14.005003, "end": 15.005008, "seconds": 1.0000050067901611, "bytes": 0, "sender": false, "omitted": false}}
+  ],
+  "end": {
+    "sum_sent": {"seconds": 17.012893, "bytes": 10633200, "bits_per_second": 5000066.7141091181, "sender": true},
+    "sum_received": {"seconds": 15.005008, "bytes": 8581200, "bits_per_second": 4575112.52243251, "lost_packets": 31, "packets": 7182, "lost_percent": 0.34984764699243875, "jitter_ms": 2.33830319729758, "sender": false}
+  },
+  "server_output_json": {"start": {"version": "iperf 3.9"}}
+}

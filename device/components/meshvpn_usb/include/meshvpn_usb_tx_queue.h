@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "esp_err.h"
 
-#define MESHVPN_USB_TX_SLOTS 16
+#define MESHVPN_USB_TX_SLOTS 8
 #define MESHVPN_USB_TX_FRAME_MAX 1536
 #define MESHVPN_USB_TX_MAX_AGE_US 50000
 typedef esp_err_t (*meshvpn_usb_tx_send_fn)(void *, size_t, uint32_t);

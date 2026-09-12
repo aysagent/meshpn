@@ -163,7 +163,7 @@ int main(void)
 #endif
     expected_len=sizeof(expected); memset(expected,0x4b,sizeof(expected)); verify_payload=true;
     uint8_t *packet=malloc(expected_len); memcpy(packet,expected,expected_len);
-    /* Fill every slot (including the upper half in the 16-slot experiment),
+    /* Fill every slot (also covers larger pools in queue-size experiments),
      * reject one more, then verify all copied payloads and slot returns. */
     for(unsigned i=0;i<MESHVPN_USB_TX_SLOTS;i++)assert(meshvpn_usb_tx_queue_submit(packet,expected_len)==ESP_OK);
     assert(!sends && stats().in_use==MESHVPN_USB_TX_SLOTS && stats().high_water==MESHVPN_USB_TX_SLOTS);

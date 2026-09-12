@@ -15,6 +15,47 @@ import { discoverBoard, checkRoute, requestBoard, sshArgs } from '../scripts/per
 import { prepareIperfBinding, macosBuildContext, iperfEnvironment, verifyIperfBinding, iperfError } from '../scripts/perf-bind.mjs';
 import { executeSchedule, cleanStatus, telemetrySummary, reportMarkdown, main } from '../scripts/perf-runner.mjs';
 
+// Reduced from the user's 0008 report: last three intervals and unmodified end statistics.
+const tailStall=JSON.parse(await readFile(new URL('./fixtures/iperf-udp-tail-stall.json',import.meta.url),'utf8'));
+test('tail receive blackout and unequal durations warn without rewriting measurements',()=>{
+  const r=parseIperf(JSON.stringify(tailStall),'udp'),d=r.timing;
+  assert.equal(r.mbps,tailStall.end.sum_received.bits_per_second/1e6);assert.equal(r.lost_percent,0.34984764699243875);
+  assert.equal(d.sender_seconds,17.012893);assert.equal(d.receiver_seconds,15.005008);
+  assert.ok(Math.abs(d.duration_delta_seconds-2.007885)<1e-9);
+  assert.deepEqual(d.warnings,['duration_mismatch','zero_receive_interval']);
+  assert.equal(d.zero_receive_intervals[0].start,14.005003);assert.equal(d.receiver_interval_source,'client');
+  assert.equal(d.client_version,'iperf 3.21');assert.equal(d.server_version,'iperf 3.9');
+  const record={...r,id:'0008',path:'usb',phase:'single',protocol:'udp',direction:'down',warmup:false};
+  assert.equal(summarize([record])['single/usb/udp/down/'].mbps.median,r.mbps);
+  assert.match(reportMarkdown({records:[record]}),/14.01–15.01/);
+});
+
+test('timing diagnostics ignore omitted/tiny/sender intervals and retain missing data as unknown',()=>{
+  const j=structuredClone(tailStall);
+  j.end.sum_sent.seconds=15.005008;
+  j.intervals=[{sum:{start:0,end:1,seconds:1,bytes:0,sender:false,omitted:true}},
+    {sum:{start:1,end:2,seconds:1,bytes:0,sender:true}},
+    {sum:{start:2,end:3,seconds:1,sender:false}},
+    {sum:{start:3,end:3.1,seconds:0.1,bytes:0,sender:false}}];
+  let d=parseIperf(JSON.stringify(j),'udp').timing;
+  assert.deepEqual(d.warnings,[]);assert.equal(d.zero_receive_intervals.length,1);
+  delete j.intervals;delete j.end.sum_sent.seconds;delete j.end.sum_received.seconds;
+  d=parseIperf(JSON.stringify(j),'udp').timing;
+  assert.equal(d.receiver_interval_count,null);assert.equal(d.zero_receive_intervals,null);
+  assert.equal(d.duration_delta_seconds,null);assert.deepEqual(d.warnings,[]);
+  // Upload: client sender stalls must not be labelled as receiver intervals.
+  j.start.test_start.reverse=0;
+  j.intervals=[{sum:{start:0,end:1,seconds:1,bytes:0,sender:true}}];
+  j.server_output_json.intervals=[{sum:{start:0,end:1,seconds:1,bytes:0,sender:false}}];
+  d=parseIperf(JSON.stringify(j),'udp').timing;
+  assert.equal(d.receiver_interval_source,'server');assert.deepEqual(d.warnings,['zero_receive_interval']);
+  // A shorter sender window also needs a warning; small timing drift does not.
+  j.end.sum_sent.seconds=14;j.end.sum_received.seconds=15;
+  assert.ok(parseIperf(JSON.stringify(j),'udp').timing.warnings.includes('duration_mismatch'));
+  j.end.sum_sent.seconds=15.2;
+  assert.ok(!parseIperf(JSON.stringify(j),'udp').timing.warnings.includes('duration_mismatch'));
+});
+
 test('ping packet loss warrants warning even without a command error', () => {
   assert.equal(hasPingProblem([]),false);
   assert.equal(hasPingProblem([{loss_percent:0},{loss_percent:null}]),false);
@@ -493,7 +534,7 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
     assert.equal(closes,5);
     const warned=[];for(const d of await readdir(parent))warned.push(JSON.parse(await readFile(path.join(parent,d,'result.json'),'utf8')));
     assert.ok(warned.some(r=>r.outcome==='completed-with-warnings'&&r.warnings.some(w=>w.includes('ping packet loss'))));
-    const sweepCommands=[];
+    const sweepCommands=[];let injectedTiming=false;
     assert.equal(await main(['server','--usb-down-sweep','--out',parent],{...dependencies,
       discoverBoard:async(o)=>{assert.equal(o.paths,'usb');const b=await dependencies.discoverBoard();return {...b,paths:[paths[0]]};},
       startServers:async(o,count)=>{assert.equal(count,1);return {ports:[5201],assertAlive(){},async close(){closes++;}};},
@@ -503,8 +544,14 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
           assert.equal(args[args.indexOf('-B')+1],paths[0].address);
           assert.equal(args[args.indexOf('-p')+1],'5201');
         }
-        return dependencies.command(bin,args,opts);
-      }}),0);
+        const raw=await dependencies.command(bin,args,opts);
+        if(bin==='iperf3'&&args.includes('-u')&&args[args.indexOf('-t')+1]==='15'&&!injectedTiming) {
+          injectedTiming=true;
+          const j=structuredClone(tailStall);j.start.connected[0].local_host=paths[0].address;
+          raw.stdout=JSON.stringify(j);
+        }
+        return raw;
+      }}),2); // Timing warnings alone must change the outcome, not the measurements.
     assert.equal(closes,6);assert.equal(sweepCommands.length,26);
     assert.equal(sweepCommands.filter(a=>a.includes('-u')).length,25); // One TCP download preflight only.
     let sweep;
@@ -519,6 +566,10 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
     assert.equal(sweep.records.filter(r=>r.phase==='usb-down-sweep'&&r.warmup).length,6);
     assert.equal(sweep.usb_down_sweep.length,6);
     assert.ok(sweep.usb_down_sweep.every(r=>r.n===3&&r.sender_mbps.median===9));
+    assert.equal(sweep.outcome,'completed-with-warnings');
+    assert.ok(sweep.warnings.some(w=>w.includes('iperf timing anomalies')));
+    assert.equal(sweep.records.filter(r=>r.timing?.warnings.length).length,1);
+    assert.ok(sweep.records.some(r=>r.mbps===tailStall.end.sum_received.bits_per_second/1e6&&r.timing.zero_receive_intervals?.length===1));
     assert.equal(process.listenerCount('SIGINT'),signalsBefore);
   }finally{await rm(parent,{recursive:true,force:true});}
 });

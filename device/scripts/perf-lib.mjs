@@ -75,7 +75,33 @@ export function parseIperf(text,protocol) {
   return {mbps:receiver.bits_per_second/1e6,sender_mbps:Number.isFinite(j.end?.sum_sent?.bits_per_second)?j.end.sum_sent.bits_per_second/1e6:null,
     retransmits:j.end?.sum_sent?.retransmits??null,
     lost_percent:receiver.lost_percent??null,jitter_ms:receiver.jitter_ms??null,
+    timing:iperfTiming(j,receiver),
     local_address:j.start?.connected?.[0]?.local_host??null};
+}
+
+// Diagnostics only: never replace receiver throughput/loss or remove a run.
+export function iperfTiming(j, receiver) {
+  const seconds=s=>Number.isFinite(s?.seconds)&&s.seconds>0?s.seconds:null;
+  const sender=j.end?.sum_sent||[j.server_output_json?.end?.sum,j.end?.sum].find(s=>s?.sender===true);
+  const senderSeconds=seconds(sender),receiverSeconds=seconds(receiver);
+  const delta=senderSeconds!==null&&receiverSeconds!==null?senderSeconds-receiverSeconds:null;
+  const durationTolerance=receiverSeconds!==null?Math.max(0.5,receiverSeconds*0.05):null;
+  const receiverIntervals=source=>(source?.intervals||[]).map(i=>i.sum)
+    .filter(s=>s?.sender===false&&s.omitted!==true&&Number.isFinite(s.bytes)&&s.bytes>=0&&Number.isFinite(s.start)&&Number.isFinite(s.end)&&s.end>s.start&&seconds(s)!==null);
+  const local=receiverIntervals(j),remote=receiverIntervals(j.server_output_json);
+  const intervals=local.length?local:remote;
+  // Missing bytes are not zero. Keep short zero intervals too, but do not warn on them.
+  const zero=intervals.filter(s=>s.bytes===0).map(s=>({start:s.start,end:s.end,seconds:s.seconds}));
+  const warnings=[];
+  if(delta!==null&&Math.abs(delta)>durationTolerance)warnings.push('duration_mismatch');
+  if(zero.some(s=>s.seconds>=0.5))warnings.push('zero_receive_interval');
+  return {sender_seconds:senderSeconds,receiver_seconds:receiverSeconds,duration_delta_seconds:delta,
+    duration_tolerance_seconds:durationTolerance,zero_warning_min_seconds:0.5,
+    requested_seconds:seconds({seconds:j.start?.test_start?.duration}),
+    receiver_interval_source:local.length?'client':remote.length?'server':null,
+    receiver_interval_count:intervals.length||null,zero_receive_intervals:intervals.length?zero:null,
+    client_version:typeof j.start?.version==='string'?j.start.version:null,
+    server_version:typeof j.server_output_json?.start?.version==='string'?j.server_output_json.start.version:null,warnings};
 }
 export function stats(values) {
   const a=values.filter(Number.isFinite).sort((a,b)=>a-b);

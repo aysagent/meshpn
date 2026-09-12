@@ -14,7 +14,7 @@ config MESHVPN_USB_TX_QUEUE
     depends on SPIRAM && !TINYUSB_MSC_ENABLED
     default n
     help
-        Sixteen owned frame buffers in PSRAM, a 3KiB internal task stack and
+        Eight owned frame buffers in PSRAM, a 3KiB internal task stack and
         nonblocking lwIP enqueue. Sync fallback on allocation/task failure.
         Disable for comparison with the previous synchronous transport.
 
