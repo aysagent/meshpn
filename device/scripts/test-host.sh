@@ -32,6 +32,7 @@ done
 "$test_dir/usb-double-fifo"
 for event_enabled in 0 1; do
   "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_TX_EVENT_WAIT="$event_enabled" -DCONFIG_MESHVPN_USB_TX_QUEUE=1 \
+    -DCONFIG_MESHVPN_NCM_TELEMETRY="$event_enabled" \
     -Idevice/tests/queue_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
     -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx_queue.c -o "$test_dir/usb-tx-queue-$event_enabled"
   "$test_dir/usb-tx-queue-$event_enabled"
@@ -90,6 +91,7 @@ done
 "$test_dir/ingress-session"
 node device/tests/test-ip-ranges.mjs
 node device/tests/test-web-ui.mjs
+node device/tests/test-web-bursts.mjs
 for default_https in 0 1; do
   "$cc" "${flags[@]}" -DCONFIG_MESHVPN_WEB_HTTPS="$default_https" \
     -Idevice/tests/stubs -Idevice/components/meshvpn_config/include \

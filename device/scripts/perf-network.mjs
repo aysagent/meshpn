@@ -152,11 +152,21 @@ export async function discoverBoard(o, signal, log, {networkInterfaces=os.networ
   // Serialize API readers, including reauthentication after a reboot.
   let pending=Promise.resolve();
   const serializedStatus=()=>{const next=pending.then(()=>status());pending=next.catch(()=>{});return next;};
+  const bursts=()=>{
+    const next=pending.then(async()=>{
+      let r=await request(endpoint,'/api/diag/usb-bursts',{...auth,token});
+      if(r.code===401){await login();r=await request(endpoint,'/api/diag/usb-bursts',{...auth,token});}
+      if(r.code===404)return null;
+      if(r.code!==200)throw Error(`USB burst API HTTP ${r.code}`);
+      return JSON.parse(r.text);
+    });
+    pending=next.catch(()=>{});return next;
+  };
   const download=()=>{
     if(selected.length!==1||selected[0].kind!=='usb')throw Error('Local download requires USB only');
     return downloadBoard(selected[0],{...auth,token});
   };
-  return {paths:selected,status:serializedStatus,initial,endpoint,download};
+  return {paths:selected,status:serializedStatus,initial,endpoint,download,bursts};
 }
 
 export async function checkLocalRoute(path,signal,{run=checked,networkInterfaces=os.networkInterfaces}={}) {

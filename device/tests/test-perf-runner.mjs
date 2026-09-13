@@ -463,16 +463,26 @@ test('route parser and validator fail closed on bypass, missing gateway and vani
 });
 
 test('discover DHCP paths once, reuse a single login and do not invoke Wi-Fi scan',async()=>{
-  let logins=0;const requests=[];
+  let logins=0,expired=false,unsupported=false,active=0,maxActive=0;const requests=[];
   const board=await discoverBoard({paths:'both'},new AbortController().signal,()=>{},
     {networkInterfaces:interfaces,run:async(bin,args)=>({code:0,stdout:paths.find(p=>p.iface===args[1]).gateway}),
       request:async(c,url,auth)=>{
         requests.push(url);
         if(url==='/login')return {code:200,text:'<title>MeshPN Login</title>'};
         if(url==='/api/login'){logins++;return {code:200,text:'{"token":"test-token"}'};}
-        assert.equal(auth.token,'test-token');return {code:200,text:JSON.stringify(fixture())};
+        assert.equal(auth.token,'test-token');
+        maxActive=Math.max(maxActive,++active);await delay(1);active--;
+        if(url==='/api/diag/usb-bursts') {
+          if(expired){expired=false;return {code:401,text:''};}
+          return unsupported?{code:404,text:''}:{code:200,text:'{"version":1}'};
+        }
+        return {code:200,text:JSON.stringify(fixture())};
       }});
   assert.deepEqual(board.paths.map(p=>p.kind),['usb','ap']);await board.status();assert.equal(logins,1);
+  expired=true;
+  const [burst]=await Promise.all([board.bursts(),board.status()]);
+  assert.equal(burst.version,1);assert.equal(logins,2);assert.equal(maxActive,1);
+  unsupported=true;assert.equal(await board.bursts(),null);
   assert.ok(!requests.some(p=>p.includes('scan')));
 });
 
@@ -576,7 +586,9 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
   const dependencies={platform:'darwin',log:()=>{},lookup:async()=>({address:'1.2.3.4'}),delay:async(ms)=>{delays.push(ms);},
     prepareIperfBinding:async()=>'/tmp/test-bind.dylib',
     checked:async(bin)=>bin==='iperf3'?'iperf3 test':'test',
-    discoverBoard:async()=>({paths,initial:fixture(),status:async()=>{const f=fixture();f.uptime_sec+=ticks++;f.cpu.sampled_us+=ticks*2000000;return f;}}),
+    discoverBoard:async()=>({paths,initial:fixture(),status:async()=>{const f=fixture();f.uptime_sec+=ticks++;f.cpu.sampled_us+=ticks*2000000;return f;},
+      bursts:async()=>({version:1,available:true,session_id:1,window_us:1000,capacity:32,
+        sampled_us:ticks*1000000,latest_seq:0,submitted:0,full:0,windows:0,arrival_hist:[0,0,0,0],records:[],token:'DO_NOT_SAVE'})}),
     checkRoute:async()=> 'validated test route',spawn:()=>({on(){},kill(){}}),
     startServers:async()=>({ports:[5201,5202],assertAlive(){},async close(){closes++;}}),
     command:async(bin,args,opts)=>{
@@ -601,6 +613,10 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
     assert.equal(result.outcome,'completed');assert.equal(result.records.filter(r=>!r.warmup&&r.phase==='combined').length,8);
     assert.equal(result.summary['single/usb/tcp/up/'].mbps.median,8);
     assert.equal(result.summary['single/usb/tcp/up/'].mbps.count,2);
+    assert(result.records.filter(r=>r.path==='usb').every(r=>r.batch_bursts.available));
+    assert(result.records.filter(r=>r.path==='ap'&&r.phase==='single').every(r=>!r.batch_bursts));
+    assert(!JSON.stringify(result).includes('DO_NOT_SAVE'));
+    assert.match(await readFile(path.join(dir,'measurements.ndjson'),'utf8'),/batch_bursts/);
     assert.equal(delays[0],60000);assert.equal(result.records[0].id,'0001');
     assert.deepEqual([...pingTargets].sort(),['1.2.3.4',...paths.map(p=>p.gateway)].sort());
     assert.equal(result.pings.filter(p=>p.id==='start-delay').length,4);
@@ -722,6 +738,12 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
     assert.equal(broken.dwc2_diagnostics.mode,'DMA');
     assert.ok(broken.warnings.some(w=>w.startsWith('DWC2 timing diagnostics incomplete')));
     assert.equal(broken.summary['single/usb/tcp/up/'].mbps.median,8);
+    assert.equal(await main(['server','--quick','--out',parent],{...dependencies,
+      discoverBoard:async()=>({...await dependencies.discoverBoard(),bursts:async()=>null})}),2);
+    assert.equal(closes,9);
+    const burstReports=await Promise.all((await readdir(parent)).map(async d=>JSON.parse(await readFile(path.join(parent,d,'result.json'),'utf8'))));
+    const unavailable=burstReports.find(r=>r.warnings.some(w=>w.startsWith('USB burst detail incomplete')));
+    assert(unavailable);assert.equal(unavailable.summary['single/usb/tcp/up/'].mbps.median,8);
   }finally{await rm(parent,{recursive:true,force:true});}
 });
 

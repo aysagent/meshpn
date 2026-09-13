@@ -8,6 +8,9 @@ static meshvpn_ncm_stats_t snap(void)
 {
     meshvpn_ncm_stats_t a, b;
     meshvpn_ncm_get_stats(&a);
+    meshvpn_ncm_state_t cached;uint64_t sampled;
+    assert(meshvpn_ncm_get_state(&cached,&sampled)==a.available);
+    assert(!memcmp(&cached,&a.state,sizeof(cached)) && sampled==a.sampled_us);
     for (unsigned i = 0; i < 100; i++) meshvpn_ncm_get_stats(&b);
     assert(!memcmp(&a, &b, sizeof(a)));
     assert(a.completion_timed == a.completion_le_1ms + a.completion_1_5ms + a.completion_5_25ms + a.completion_gt_25ms);

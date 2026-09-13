@@ -102,6 +102,10 @@ No speedup is claimed before measurements. See [AP/USB comparison procedure](doc
 
 ### Automatic benchmarks (Mac)
 
+Для диагностики кратких переполнений USB-очереди после обновления прошивки:
+`npm run device:perf:usb-bursts -- 62.84.120.30 --start-delay 60`.
+Только 6/7/8 Мбит/с; подробнее [методика и ограничения](perf-testing.md#короткие-переполнения-usb-tx-queue).
+
 Connect USB and join the board AP on the Mac, then close the admin browser tab:
 
 ```bash

@@ -147,6 +147,58 @@ static bool local_download_send(void *ctx, const char *data, size_t len)
 {
     return httpd_resp_send_chunk(ctx, data, len) == ESP_OK;
 }
+static esp_err_t handler_usb_bursts(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    meshvpn_usb_burst_stats_t *s = heap_caps_malloc(sizeof(*s), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s) return error(req, "503 Service Unavailable", "Diagnostic snapshot memory unavailable");
+    /* Avoid hundreds of small cJSON allocations consuming scarce internal RAM.
+     * Only fixed keys and typed integers/booleans are serialized here. */
+    const size_t capacity = 1024 + MESHVPN_USB_BURST_RECORDS * 1024;
+    char *buf = heap_caps_malloc(capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) { free(s); return error(req, "503 Service Unavailable", "Diagnostic JSON memory unavailable"); }
+    meshvpn_usb_tx_burst_get_stats(s);
+    size_t used = 0;
+#define BURST_APPEND(...) do { \
+    int n = snprintf(buf + used, capacity - used, __VA_ARGS__); \
+    if (n < 0 || (size_t)n >= capacity - used) goto overflow; \
+    used += (size_t)n; \
+} while (0)
+    BURST_APPEND("{\"version\":1,\"available\":%s,\"window_us\":%u,\"capacity\":%u",
+        s->available ? "true" : "false", MESHVPN_USB_BURST_WINDOW_US, MESHVPN_USB_BURST_RECORDS);
+#define BURST_TOTAL(name) BURST_APPEND(",\"" #name "\":%" PRIu64, (uint64_t)s->name)
+    BURST_TOTAL(session_id); BURST_TOTAL(sampled_us); BURST_TOTAL(latest_seq); BURST_TOTAL(submitted);
+    BURST_TOTAL(full); BURST_TOTAL(windows);
+#undef BURST_TOTAL
+    BURST_APPEND(",\"arrival_hist\":[");
+    for (unsigned i=0; i<4; i++) BURST_APPEND("%s%" PRIu64, i ? "," : "", s->arrival_hist[i]);
+    BURST_APPEND("],\"records\":[");
+    uint64_t first = s->latest_seq > MESHVPN_USB_BURST_RECORDS ? s->latest_seq - MESHVPN_USB_BURST_RECORDS : 0;
+    for (uint64_t seq=first+1; seq<=s->latest_seq; seq++) {
+        const meshvpn_usb_burst_record_t *r = &s->records[(seq-1) % MESHVPN_USB_BURST_RECORDS];
+        BURST_APPEND("%s{\"seq\":%" PRIu64, seq > first+1 ? "," : "", r->seq);
+#define BURST_NUM(name) BURST_APPEND(",\"" #name "\":%" PRIu64, (uint64_t)r->name)
+        BURST_NUM(window_us); BURST_NUM(first_full_us); BURST_NUM(submitted); BURST_NUM(full);
+        BURST_NUM(epoch); BURST_NUM(in_use); BURST_NUM(worker_started_us); BURST_NUM(last_completed_us);
+        BURST_NUM(ncm_captured_us); BURST_NUM(ncm_sampled_us); BURST_NUM(ncm_free); BURST_NUM(ncm_ready);
+#undef BURST_NUM
+#define BURST_BOOL(name) BURST_APPEND(",\"" #name "\":%s", r->name ? "true" : "false")
+        BURST_BOOL(worker_active); BURST_BOOL(worker_waiting); BURST_BOOL(ncm_available);
+        BURST_BOOL(ncm_active); BURST_BOOL(ncm_glue);
+#undef BURST_BOOL
+        BURST_APPEND("}");
+    }
+    BURST_APPEND("]}");
+#undef BURST_APPEND
+    free(s);
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_send(req, buf, used);
+    free(buf);
+    return err;
+overflow:
+    free(s); free(buf);
+    return error(req, "503 Service Unavailable", "Diagnostic JSON capacity exceeded");
+}
 static int64_t local_download_now(void *ctx)
 {
     (void)ctx;
@@ -916,6 +968,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/routing/default", HTTP_POST, handler_unimplemented),
         ROUTE("/api/routing/benchmark", HTTP_POST, handler_ranges_benchmark),
         ROUTE("/api/diag/usb-download", HTTP_POST, handler_usb_download),
+        ROUTE("/api/diag/usb-bursts", HTTP_GET, handler_usb_bursts),
     };
     for (unsigned i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         err = httpd_register_uri_handler(s_server, &routes[i]);

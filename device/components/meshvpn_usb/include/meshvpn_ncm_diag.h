@@ -36,3 +36,4 @@ typedef struct {
 void meshvpn_ncm_record(meshvpn_ncm_event_t event, const meshvpn_ncm_state_t *state,
                         uint32_t bytes, uint16_t frames);
 void meshvpn_ncm_get_stats(meshvpn_ncm_stats_t *out);
+bool meshvpn_ncm_get_state(meshvpn_ncm_state_t *out, uint64_t *sampled_us);

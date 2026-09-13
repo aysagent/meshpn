@@ -87,3 +87,13 @@ void meshvpn_ncm_get_stats(meshvpn_ncm_stats_t *out)
     memcpy(out, &s_diag, sizeof(*out));
     portEXIT_CRITICAL(&s_lock);
 }
+
+bool meshvpn_ncm_get_state(meshvpn_ncm_state_t *out, uint64_t *sampled_us)
+{
+    portENTER_CRITICAL(&s_lock);
+    *out = s_diag.state;
+    *sampled_us = s_diag.sampled_us;
+    bool available = s_diag.available;
+    portEXIT_CRITICAL(&s_lock);
+    return available;
+}

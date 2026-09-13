@@ -7,6 +7,24 @@
 #define MESHVPN_USB_TX_SLOTS 8
 #define MESHVPN_USB_TX_FRAME_MAX 1536
 #define MESHVPN_USB_TX_MAX_AGE_US 50000
+#define MESHVPN_USB_BURST_RECORDS 32
+#define MESHVPN_USB_BURST_WINDOW_US 1000
+typedef struct {
+    uint64_t seq, window_us, first_full_us, worker_started_us, last_completed_us;
+    uint64_t ncm_captured_us, ncm_sampled_us;
+    uint32_t submitted, full, epoch;
+    uint16_t in_use, ncm_free, ncm_ready;
+    bool worker_active, worker_waiting, ncm_available, ncm_active, ncm_glue;
+} meshvpn_usb_burst_record_t;
+typedef struct {
+    bool available;
+    uint32_t session_id;
+    uint64_t sampled_us, latest_seq, submitted, full, windows;
+    /* Nonempty fixed 1ms windows with 1..4, 5..8, 9..16, >=17 submissions. */
+    uint64_t arrival_hist[4];
+    meshvpn_usb_burst_record_t records[MESHVPN_USB_BURST_RECORDS];
+} meshvpn_usb_burst_stats_t;
+void meshvpn_usb_tx_burst_get_stats(meshvpn_usb_burst_stats_t *out);
 typedef esp_err_t (*meshvpn_usb_tx_send_fn)(void *, size_t, uint32_t);
 #define MESHVPN_USB_QUEUE_COUNTERS(X) \
     X(submitted) X(enqueued) X(completed) X(sent) X(send_failed) \

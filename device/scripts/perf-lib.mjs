@@ -3,13 +3,14 @@ import { isIP } from 'node:net';
 
 export function parseArgs(args) {
   const o = { seconds:30, runs:5, soakMinutes:30, idleSeconds:30, startDelay:0, iperfPort:5201, paths:'auto' };
-  if(args.includes('--usb-down-sweep'))Object.assign(o,{usbDownSweep:true,seconds:15,runs:3,soakMinutes:0,idleSeconds:10,paths:'usb'});
+  if(args.includes('--usb-down-sweep')||args.includes('--usb-burst-sweep'))Object.assign(o,{usbDownSweep:true,seconds:15,runs:3,soakMinutes:0,idleSeconds:10,paths:'usb'});
   const names = {'seconds':'seconds','runs':'runs','soak-minutes':'soakMinutes','idle-seconds':'idleSeconds',
     'start-delay':'startDelay','iperf-port':'iperfPort','server-ip':'serverIP','paths':'paths','admin-url':'adminURL','admin-ca':'adminCA','out':'out'};
   for(let i=0;i<args.length;i++) {
     const a=args[i];
     if(a==='--help'||a==='-h') o.help=true;
     else if(a==='--usb-down-sweep') o.usbDownSweep=true;
+    else if(a==='--usb-burst-sweep') o.usbBurstSweep=true;
     else if(a==='--quick') Object.assign(o,{seconds:3,runs:2,soakMinutes:0,idleSeconds:3});
     else if(a==='--admin-insecure') o.adminInsecure=true;
     else if(a.startsWith('--')&&names[a.slice(2)]) {
@@ -135,7 +136,7 @@ export function measurementPlan(paths, o) {
   const plan=[];
   if(o.usbDownSweep) {
     if(paths.length!==1||paths[0].kind!=='usb')throw Error('USB download sweep requires exactly one USB path');
-    for(const rate of [5,6,7,8,9,10])for(let run=0;run<=o.runs;run++)
+    for(const rate of (o.usbBurstSweep?[6,7,8]:[5,6,7,8,9,10]))for(let run=0;run<=o.runs;run++)
       plan.push({paths,protocol:'udp',direction:'down',rate,seconds:run===0?3:o.seconds,
         run,warmup:run===0,phase:'usb-down-sweep'});
     return plan;

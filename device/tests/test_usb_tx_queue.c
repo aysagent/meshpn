@@ -9,7 +9,7 @@ struct test_queue {
     uint8_t items[MESHVPN_USB_TX_SLOTS];
 };
 static unsigned alloc_calls, queue_calls, task_calls, live_queues, fail_queue;
-static bool fail_pool, fail_task, fail_publish, ready = true, verify_payload;
+static bool fail_pool, fail_diag, fail_task, fail_publish, ready = true, verify_payload;
 static atomic_llong clock_us;
 static unsigned sends;
 static esp_err_t send_result;
@@ -17,12 +17,16 @@ static uint8_t expected[1536];
 static size_t expected_len;
 #if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
 static unsigned notification;
-static bool wake_during_wait, disconnect_during_wait;
+static bool wake_during_wait, disconnect_during_wait, reject_during_wait, test_wait_snapshot;
 BaseType_t xTaskNotifyGive(TaskHandle_t handle)
 { assert(handle == s_task); notification++; return pdPASS; }
 uint32_t ulTaskNotifyTake(BaseType_t clear, TickType_t wait)
 {
     assert(clear == pdTRUE);
+    if(wait && reject_during_wait) {
+        reject_during_wait=false;
+        assert(meshvpn_usb_tx_queue_submit("x",1)==ESP_ERR_NO_MEM);
+    }
     if (wait && !notification) {
         if (disconnect_during_wait) { disconnect_during_wait=false; tud_umount_cb(); }
         else if (wake_during_wait) { wake_during_wait=false; meshvpn_usb_tx_capacity_available(); }
@@ -59,13 +63,20 @@ static void test_capacity_wait(void)
 #endif
 
 bool tud_ready(void) { return ready; }
+uint32_t esp_random(void) { return 12345; }
+bool meshvpn_ncm_get_state(meshvpn_ncm_state_t *s, uint64_t *sampled)
+{
+    *s=(meshvpn_ncm_state_t){.pool=6,.free=0,.ready=5,.active=true};
+    *sampled=esp_timer_get_time();return true;
+}
 int64_t esp_timer_get_time(void) { return atomic_load(&clock_us); }
 void *heap_caps_calloc(size_t count, size_t size, uint32_t caps)
 {
     alloc_calls++;
     assert(caps == (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-    assert(count == MESHVPN_USB_TX_SLOTS && size >= 1536);
-    return fail_pool ? NULL : calloc(count, size);
+    bool diag=count==1 && size==sizeof(meshvpn_usb_burst_stats_t);
+    assert(diag || (count == MESHVPN_USB_TX_SLOTS && size >= 1536));
+    return (diag?fail_diag:fail_pool) ? NULL : calloc(count, size);
 }
 QueueHandle_t xQueueCreate(unsigned count, unsigned item_size)
 {
@@ -111,6 +122,18 @@ static esp_err_t send_owned(void *buffer, size_t len, uint32_t epoch)
     meshvpn_usb_tx_queue_stats_t s;
     meshvpn_usb_tx_queue_get_stats(&s);
     assert(s.worker_active && s.in_use >= 1);
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+    if(test_wait_snapshot) {
+        test_wait_snapshot=false;
+        atomic_fetch_add(&clock_us,250);
+        meshvpn_usb_tx_prepare_wait();reject_during_wait=true;wake_during_wait=true;
+        assert(meshvpn_usb_tx_wait_capacity(epoch,esp_timer_get_time()+25000)==ESP_OK);
+        meshvpn_usb_burst_stats_t b;meshvpn_usb_tx_burst_get_stats(&b);
+        const meshvpn_usb_burst_record_t *r=&b.records[(b.latest_seq-1)%32];
+        assert(r->worker_active && r->worker_waiting && r->in_use==MESHVPN_USB_TX_SLOTS);
+        assert(r->first_full_us-r->worker_started_us==250);
+    }
+#endif
     sends++;
     atomic_fetch_add(&clock_us,100);
     return send_result;
@@ -125,6 +148,38 @@ static void check_idle(void)
     assert(s.enqueued == s.completed);
     assert(s.completed == s.sent+s.send_failed+s.expired+s.stale);
     assert(s.submitted == s.enqueued+s.full+s.no_host+s.invalid_length+s.not_ready+s.enqueue_failed);
+}
+static void test_bursts(void)
+{
+    meshvpn_usb_burst_stats_t b;
+    meshvpn_usb_tx_burst_get_stats(&b);
+    assert(b.available && b.session_id==12345 && b.latest_seq==1 && b.full==1);
+    assert(b.records[0].submitted==MESHVPN_USB_TX_SLOTS+1 && b.records[0].full==1);
+    assert(b.records[0].in_use==MESHVPN_USB_TX_SLOTS && !b.records[0].worker_active);
+#if CONFIG_MESHVPN_NCM_TELEMETRY
+    assert(b.records[0].ncm_available && b.records[0].ncm_free==0 && b.records[0].ncm_ready==5);
+#else
+    assert(!b.records[0].ncm_available);
+#endif
+    for(unsigned w=0;w<36;w++) {
+        atomic_store(&clock_us,100000+w*10000);
+        for(unsigned i=0;i<MESHVPN_USB_TX_SLOTS;i++)assert(meshvpn_usb_tx_queue_submit("x",1)==ESP_OK);
+        assert(meshvpn_usb_tx_queue_submit("x",1)==ESP_ERR_NO_MEM);
+        assert(meshvpn_usb_tx_queue_submit("x",1)==ESP_ERR_NO_MEM);
+        meshvpn_usb_tx_burst_get_stats(&b);
+        const meshvpn_usb_burst_record_t *r=&b.records[(b.latest_seq-1)%32];
+        assert(r->seq==w+2 && r->full==2 && r->submitted==MESHVPN_USB_TX_SLOTS+2);
+        assert(r->window_us==100000+w*10000 && r->first_full_us==r->window_us);
+        drain();check_idle();
+    }
+    assert(b.latest_seq==37 && b.full==73);
+    for(unsigned i=0;i<32;i++)assert(b.records[i].seq>=6 && b.records[i].seq<=37);
+    assert(b.arrival_hist[2]>=35); /* last open window intentionally not finalized */
+#if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
+    atomic_store(&clock_us,500000);
+    for(unsigned i=0;i<MESHVPN_USB_TX_SLOTS;i++)assert(meshvpn_usb_tx_queue_submit("x",1)==ESP_OK);
+    test_wait_snapshot=true;drain();check_idle();assert(!test_wait_snapshot);
+#endif
 }
 static atomic_bool stop_worker;
 static void *worker(void *arg)
@@ -191,13 +246,26 @@ int main(void)
     }
     assert(stats().send_failed==4);
     send_result=ESP_OK;
+    test_bursts();
     pthread_t w,p1,p2;
     assert(!pthread_create(&w,NULL,worker,NULL));
     assert(!pthread_create(&p1,NULL,producer,NULL));
     assert(!pthread_create(&p2,NULL,producer,NULL));
     assert(!pthread_join(p1,NULL) && !pthread_join(p2,NULL));
     atomic_store(&stop_worker,true); assert(!pthread_join(w,NULL)); check_idle();
+    meshvpn_usb_burst_stats_t concurrent;meshvpn_usb_tx_burst_get_stats(&concurrent);
+    assert(concurrent.full==stats().full);
+    assert(concurrent.submitted==stats().enqueued+stats().full+stats().enqueue_failed);
+    assert(concurrent.windows==concurrent.arrival_hist[0]+concurrent.arrival_hist[1]+
+        concurrent.arrival_hist[2]+concurrent.arrival_hist[3]);
+    for(unsigned i=0;i<32;i++)assert(concurrent.records[i].full<=concurrent.records[i].submitted);
     assert(alloc_calls==allocations && task_calls==tasks); /* no per-packet allocation */
-    vQueueDelete(s_pending); vQueueDelete(s_free); free(s_pool);
+    vQueueDelete(s_pending); vQueueDelete(s_free); free(s_pool);free(s_burst);
+    s_task=NULL;s_pool=NULL;s_burst=NULL;s_free=s_pending=NULL;
+    memset(&s_queue_stats,0,sizeof(s_queue_stats));fail_diag=true;
+    assert(meshvpn_usb_tx_queue_init(send_owned)==ESP_OK); /* optional ring OOM must not break traffic */
+    meshvpn_usb_burst_stats_t b;meshvpn_usb_tx_burst_get_stats(&b);assert(!b.available);
+    assert(meshvpn_usb_tx_queue_submit("x",1)==ESP_OK);drain();check_idle();
+    vQueueDelete(s_pending);vQueueDelete(s_free);free(s_pool);
     puts("USB TX queue: ownership, bounds, OOM, stale/expiry, failures, concurrent producer/worker: OK");
 }

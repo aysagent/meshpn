@@ -4,11 +4,13 @@
 #include <string.h>
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
 #include "tinyusb.h"
+#include "meshvpn_ncm_diag.h"
 
 typedef struct {
     int64_t queued_us;
@@ -23,6 +25,61 @@ static meshvpn_usb_tx_send_fn s_send;
 static portMUX_TYPE s_queue_lock = portMUX_INITIALIZER_UNLOCKED;
 static meshvpn_usb_tx_queue_stats_t s_queue_stats;
 static uint32_t s_epoch;
+/* Optional PSRAM-only diagnostics; no per-packet allocation or driver calls.
+ * All bookkeeping uses s_queue_lock. NCM is copied AFTER releasing it. */
+static meshvpn_usb_burst_stats_t *s_burst;
+static uint64_t s_window_us, s_window_seq, s_worker_started_us, s_last_completed_us;
+static uint32_t s_window_submitted;
+static bool s_worker_waiting;
+static unsigned arrival_bin(uint32_t n) { return n <= 4 ? 0 : n <= 8 ? 1 : n <= 16 ? 2 : 3; }
+static void burst_submit_locked(uint64_t now)
+{
+    if (!s_burst) return;
+    uint64_t window = now / MESHVPN_USB_BURST_WINDOW_US * MESHVPN_USB_BURST_WINDOW_US;
+    if (!s_window_submitted || window != s_window_us) {
+        if (s_window_submitted) {
+            s_burst->arrival_hist[arrival_bin(s_window_submitted)]++;
+            s_burst->windows++;
+        }
+        s_window_us = window; s_window_submitted = 0; s_window_seq = 0;
+    }
+    s_window_submitted++;
+    s_burst->submitted++;
+    if (s_window_seq) s_burst->records[(s_window_seq - 1) % MESHVPN_USB_BURST_RECORDS].submitted = s_window_submitted;
+}
+static uint64_t burst_full_locked(uint64_t now)
+{
+    if (!s_burst) return 0;
+    s_burst->full++;
+    bool first = !s_window_seq;
+    if (first) s_window_seq = ++s_burst->latest_seq;
+    meshvpn_usb_burst_record_t *r = &s_burst->records[(s_window_seq - 1) % MESHVPN_USB_BURST_RECORDS];
+    if (first) *r = (meshvpn_usb_burst_record_t){
+        .seq=s_window_seq, .window_us=s_window_us, .first_full_us=now,
+        .submitted=s_window_submitted, .epoch=s_epoch, .in_use=s_queue_stats.in_use,
+        .worker_active=s_queue_stats.worker_active, .worker_waiting=s_worker_waiting,
+        .worker_started_us=s_worker_started_us, .last_completed_us=s_last_completed_us};
+    r->full++;
+    return first ? r->seq : 0;
+}
+static void burst_ncm(uint64_t seq)
+{
+    if (!seq) return;
+#if CONFIG_MESHVPN_NCM_TELEMETRY
+    meshvpn_ncm_state_t state;
+    uint64_t sampled;
+    bool available = meshvpn_ncm_get_state(&state, &sampled);
+    uint64_t captured = esp_timer_get_time();
+    portENTER_CRITICAL(&s_queue_lock);
+    meshvpn_usb_burst_record_t *r = &s_burst->records[(seq - 1) % MESHVPN_USB_BURST_RECORDS];
+    if (r->seq == seq) {
+        r->ncm_available=available; r->ncm_sampled_us=sampled; r->ncm_captured_us=captured;
+        r->ncm_free=state.free; r->ncm_ready=state.ready;
+        r->ncm_active=state.active; r->ncm_glue=state.glue;
+    }
+    portEXIT_CRITICAL(&s_queue_lock);
+#endif
+}
 
 #if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
 void meshvpn_usb_tx_capacity_available(void)
@@ -50,6 +107,9 @@ esp_err_t meshvpn_usb_tx_wait_capacity(uint32_t epoch, int64_t deadline_us)
         /* Round up plus one tick for tick-phase uncertainty. The deadline is
          * rechecked after wake; it is not restarted by successive events. */
         TickType_t ticks = (TickType_t)((remaining * configTICK_RATE_HZ + 999999) / 1000000) + 1;
+        portENTER_CRITICAL(&s_queue_lock);
+        s_worker_waiting = true;
+        portEXIT_CRITICAL(&s_queue_lock);
         notified = ulTaskNotifyTake(pdTRUE, ticks);
     }
     disconnected = epoch != meshvpn_usb_tx_queue_epoch() || !tud_ready();
@@ -57,6 +117,7 @@ esp_err_t meshvpn_usb_tx_wait_capacity(uint32_t epoch, int64_t deadline_us)
     esp_err_t result = disconnected ? ESP_ERR_INVALID_STATE :
         (!notified || ended >= deadline_us ? ESP_ERR_TIMEOUT : ESP_OK);
     portENTER_CRITICAL(&s_queue_lock);
+    s_worker_waiting = false;
     s_queue_stats.capacity_waits++;
     s_queue_stats.capacity_wait_us += (uint64_t)(ended - started);
     if (notified) s_queue_stats.capacity_wakeups++;
@@ -113,6 +174,7 @@ static bool process_one(TickType_t wait)
     bool expired = !stale && age > MESHVPN_USB_TX_MAX_AGE_US;
     portENTER_CRITICAL(&s_queue_lock);
     s_queue_stats.worker_active = true;
+    s_worker_started_us = now;
     portEXIT_CRITICAL(&s_queue_lock);
 
     /* This is the sole sync sender once queue mode is enabled. The dependency
@@ -120,7 +182,8 @@ static bool process_one(TickType_t wait)
      * its timeout cleanup. Never release the slot on an independent timer. */
     esp_err_t result = ESP_FAIL;
     if (!stale && !expired) result = s_send(slot->data, slot->len, slot->epoch);
-    uint64_t residence = (uint64_t)(esp_timer_get_time() - slot->queued_us);
+    uint64_t completed_us = esp_timer_get_time();
+    uint64_t residence = completed_us - slot->queued_us;
     portENTER_CRITICAL(&s_queue_lock);
     s_queue_stats.completed++;
     s_queue_stats.queue_wait_us += age;
@@ -132,6 +195,7 @@ static bool process_one(TickType_t wait)
     s_queue_stats.residence_us += residence;
     if (residence > s_queue_stats.residence_max_us) s_queue_stats.residence_max_us = residence;
     s_queue_stats.worker_active = false;
+    s_last_completed_us = completed_us;
     portEXIT_CRITICAL(&s_queue_lock);
     release_slot(index);
     return true;
@@ -157,6 +221,12 @@ esp_err_t meshvpn_usb_tx_queue_init(meshvpn_usb_tx_send_fn send)
         if (xQueueSend(s_free, &i, 0) != pdTRUE) goto failed;
     }
     s_send = send;
+    s_burst = heap_caps_calloc(1, sizeof(*s_burst), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (s_burst) {
+        s_burst->available = true; /* OOM disables diagnostics, not forwarding. */
+        s_burst->session_id = esp_random();
+        s_window_submitted = 0; s_window_seq = 0;
+    }
     /* Below TinyUSB priority (6 in this build); no CPU affinity change.
      * Keep the small task stack in internal RAM for flash/cache safety. */
     TaskHandle_t task = NULL;
@@ -174,6 +244,7 @@ failed:
     if (s_pending) vQueueDelete(s_pending);
     if (s_free) vQueueDelete(s_free);
     free(s_pool);
+    free(s_burst); s_burst = NULL;
     s_pool = NULL; s_free = s_pending = NULL; s_send = NULL;
     portENTER_CRITICAL(&s_queue_lock);
     s_queue_stats.init_failed++;
@@ -194,13 +265,19 @@ esp_err_t meshvpn_usb_tx_queue_submit(const void *buffer, size_t len)
     portEXIT_CRITICAL(&s_queue_lock);
     if (rejected != ESP_OK) return rejected;
     uint8_t index;
-    if (xQueueReceive(s_free, &index, 0) != pdTRUE) {
-        portENTER_CRITICAL(&s_queue_lock);
+    BaseType_t taken = xQueueReceive(s_free, &index, 0);
+    /* Timestamp decisions after the free-slot attempt, under the same lock as
+     * window accounting. No FreeRTOS queue call under s_queue_lock. */
+    portENTER_CRITICAL(&s_queue_lock);
+    uint64_t decision_us = esp_timer_get_time();
+    burst_submit_locked(decision_us);
+    if (taken != pdTRUE) {
         s_queue_stats.full++;
+        uint64_t seq = burst_full_locked(decision_us);
         portEXIT_CRITICAL(&s_queue_lock);
+        burst_ncm(seq);
         return ESP_ERR_NO_MEM;
     }
-    portENTER_CRITICAL(&s_queue_lock);
     s_queue_stats.in_use++;
     if (s_queue_stats.in_use > s_queue_stats.high_water) s_queue_stats.high_water = s_queue_stats.in_use;
     portEXIT_CRITICAL(&s_queue_lock);
@@ -235,4 +312,14 @@ void meshvpn_usb_tx_queue_get_stats(meshvpn_usb_tx_queue_stats_t *out)
     /* Instantaneous pending depth may differ from the stats snapshot by a
      * concurrent enqueue/dequeue. Includes no driver access or side effects. */
     out->pending = out->enabled ? (uint16_t)uxQueueMessagesWaiting(s_pending) : 0;
+}
+
+void meshvpn_usb_tx_burst_get_stats(meshvpn_usb_burst_stats_t *out)
+{
+    if (!out) return;
+    portENTER_CRITICAL(&s_queue_lock);
+    if (s_burst) *out = *s_burst;
+    else memset(out, 0, sizeof(*out));
+    out->sampled_us = esp_timer_get_time();
+    portEXIT_CRITICAL(&s_queue_lock);
 }

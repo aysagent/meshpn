@@ -11,6 +11,7 @@ import { parseArgs, checked, command, iperfArgs, parseIperf, parsePing, stats,
 import { discoverBoard, checkRoute, sshArgs, startServers } from './perf-network.mjs';
 import { prepareIperfBinding, iperfEnvironment, verifyIperfBinding, iperfError } from './perf-bind.mjs';
 import { pingEvent, blackoutDiagnostics } from './perf-diagnostics.mjs';
+import { readBursts, burstDelta, burstMarkdown } from './perf-bursts.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const help=`Usage: npm run device:perf -- [user@]SERVER[:SSH_PORT] [options]
@@ -22,6 +23,7 @@ Required: local/remote iperf3, remote python3, Apple Command Line Tools. Nothing
 
   --quick                 Smoke test: 3s, 2 measured repeats, no soak
   --usb-down-sweep        USB UDP download 5..10M, 15s x 3 per rate (~7 min)
+  --usb-burst-sweep       Same diagnostics, only 6/7/8M (~4 min)
   --paths auto|usb|ap|both Auto detects paths; 'both' requires USB + AP
   --seconds N             Per throughput test (default 30)
   --runs N                Measured repeats, excluding warm-up (default 5)
@@ -175,7 +177,7 @@ export function reportMarkdown(result) {
       'Ping p95 = median of per-test p95 values (not a pooled percentile). Residence includes queue wait and sync send, not host delivery. Three repeats and WAN limits do not establish a hard loss-free threshold.', '',
       '| Target Mbit/s | n / failed | Sender median | Receiver median | UDP loss % median / max | Queue full | All queue losses / % | Residence mean ms | Ping n | Ping p95 ms | Ping loss % max |',
       '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
-    for(const s of summarizeUsbDownSweep(result.records||[],result.pings||[]))
+    for(const s of summarizeUsbDownSweep(result.records||[],result.pings||[]).filter(s=>!result.options.usbBurstSweep||[6,7,8].includes(s.rate)))
       lines.push(`| ${s.rate} | ${s.n} / ${s.failed} | ${fmt(s.sender_mbps?.median)} | ${fmt(s.receiver_mbps?.median)} | ${fmt(s.udp_loss?.median)} / ${fmt(s.udp_loss?.max)} | ${s.full??'n/a'} | ${s.queue_losses??'n/a'} / ${fmt(s.queue_loss_percent)} | ${fmt(s.residence_mean_ms)} | ${s.ping_samples} | ${fmt(s.ping_p95_ms?.median)} | ${fmt(s.ping_loss?.max)} |`);
   }
   const parsed=(result.records||[]).filter(r=>r.timing);
@@ -297,6 +299,7 @@ export function reportMarkdown(result) {
       }
     }
   }
+  lines.push(...burstMarkdown(result.records||[]));
   lines.push('','## Warnings / omissions','',...(result.warnings||[]).map(s=>`- ${s}`),
     '- Physical USB reconnect, router reboot, sleep/resume, AP-disabled baseline and STA-side admin isolation are not automated; runner does not change device/network settings.',
     '- DHCP was inspected and routes checked; this is not a DHCP renewal or DNS/mDNS test. No serial watchdog log is collected.',
@@ -390,6 +393,7 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
       log(`${phase}: ${test.paths.map(p=>p.kind).join('+')}${test.rate?` ${test.rate} Mbit/s`:''}, ${test.seconds}s`);
       for(const p of test.paths)await runtime.checkRoute(p,result.serverIP,signal);
       const before=await sample();
+      const burstBefore=test.paths.some(p=>p.kind==='usb')?await readBursts(board):null;
       const measured=await Promise.all(test.paths.map(async p=>{
         const r={id,phase:test.phase,path:p.kind,protocol:test.protocol,direction:test.direction,rate:test.rate??null,
           seconds:test.seconds,run:test.run,warmup:test.warmup,started:new Date().toISOString()};
@@ -420,9 +424,12 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
         return r;
       }));
       const after=await sample(),deltas=counterDelta(before,after);
+      const bursts=burstBefore?burstDelta(burstBefore,await readBursts(board)):null;
       // Counters describe the entire batch, not each path separately in a combined test.
       for(const r of measured) {
-        r.batch_counters=deltas;records.push(r);
+        r.batch_counters=deltas;
+        if(bursts)r.batch_bursts=bursts;
+        records.push(r);
         await appendFile(path.join(output,'measurements.ndjson'),JSON.stringify(r)+'\n');
         log(`${r.path}: ${r.error?'FAILED: '+r.error:r.mbps.toFixed(2)+' Mbit/s'}`);
       }
@@ -463,6 +470,12 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
       if(result.outcome==='completed')result.outcome='completed-with-warnings';
     }
     if(o.usbDownSweep)result.usb_down_sweep=summarizeUsbDownSweep(records,pings);
+    const incompleteBursts=new Set(records.filter(r=>r.batch_bursts&&(!r.batch_bursts.available||
+      r.batch_bursts.missing_windows>0||r.batch_bursts.unrepresented_full>0)).map(r=>r.id));
+    if(incompleteBursts.size) {
+      result.warnings.push(`USB burst detail incomplete in ${incompleteBursts.size} batches (unavailable/reset or ring overwrite); see USB queue-full bursts. Throughput and queue totals are unchanged.`);
+      if(result.outcome==='completed')result.outcome='completed-with-warnings';
+    }
     if(!result.telemetry.cpu_samples&&samples.length) {
       result.warnings.push('No valid CPU runtime samples; CPU-load results unavailable.');
       if(result.outcome==='completed')result.outcome='completed-with-warnings';
