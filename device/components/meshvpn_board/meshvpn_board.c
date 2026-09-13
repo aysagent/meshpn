@@ -39,6 +39,8 @@ esp_err_t meshvpn_board_init(void)
     }
 
     if (s_board.pin_led >= 0) {
+        /* Preload off before enabling the active-low output. */
+        ESP_ERROR_CHECK(gpio_set_level(s_board.pin_led, 1));
         gpio_config_t io = {
             .pin_bit_mask = 1ULL << s_board.pin_led,
             .mode = GPIO_MODE_OUTPUT,
@@ -81,12 +83,4 @@ bool meshvpn_board_temperature(float *celsius)
 const meshvpn_board_config_t *meshvpn_board_get_config(void)
 {
     return &s_board;
-}
-
-void meshvpn_board_led_set(bool on)
-{
-    if (s_board.pin_led < 0) {
-        return;
-    }
-    gpio_set_level(s_board.pin_led, on ? 0 : 1);
 }

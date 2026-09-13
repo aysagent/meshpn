@@ -5,7 +5,7 @@ else()
 endif()
 
 idf_component_register(
-    SRCS "meshvpn_board.c"
+    SRCS "meshvpn_board.c" "meshvpn_board_led.c"
     INCLUDE_DIRS "include" "${CMAKE_SOURCE_DIR}/boards/${MESHVPN_BOARD_DIR}"
     REQUIRES driver esp_driver_tsens
 )

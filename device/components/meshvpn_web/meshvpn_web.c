@@ -311,6 +311,25 @@ static void add_telemetry(cJSON *root)
     else cJSON_AddNullToObject(root, "certificate_sha256");
     cJSON_AddNumberToObject(root, "ingress_denied", meshvpn_net_denied_count());
 }
+static void add_led_status(cJSON *root)
+{
+    cJSON *leds = cJSON_AddObjectToObject(root, "leds");
+    cJSON *user = cJSON_AddObjectToObject(leds, "user");
+    bool controllable = meshvpn_board_get_config()->pin_led >= 0;
+    cJSON_AddBoolToObject(user, "controllable", controllable);
+    if (controllable) cJSON_AddBoolToObject(user, "enabled", meshvpn_board_led_enabled());
+    else cJSON_AddNullToObject(user, "enabled");
+    cJSON *charge = cJSON_AddObjectToObject(leds, "charge");
+#if CONFIG_MESHVPN_BOARD_XIAO_ESP32S3
+    cJSON_AddBoolToObject(charge, "present", true);
+#else
+    cJSON_AddBoolToObject(charge, "present", false);
+#endif
+    /* XIAO CHG LED is wired to the charger, not a software-controlled GPIO.
+     * Neither enable state nor physical illumination can be read by the MCU. */
+    cJSON_AddBoolToObject(charge, "controllable", false);
+    cJSON_AddNullToObject(charge, "enabled");
+}
 static esp_err_t handler_api_status(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) {
@@ -328,6 +347,7 @@ static esp_err_t handler_api_status(httpd_req_t *req)
 
     cJSON *root = cJSON_CreateObject();
     add_telemetry(root);
+    add_led_status(root);
     cJSON_AddBoolToObject(root, "must_change_password", password_change_required());
     cJSON_AddStringToObject(root, "board", board->name);
     cJSON_AddNumberToObject(root, "uptime_sec", (double)(esp_timer_get_time() / 1000000));
@@ -709,6 +729,27 @@ static esp_err_t handler_system(httpd_req_t *req)
     esp_restart();
     return ESP_OK;
 }
+static esp_err_t handler_leds(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    cJSON *in = body(req, 128);
+    if (!in) return ESP_FAIL;
+    cJSON *enabled = cJSON_GetObjectItemCaseSensitive(in, "user_enabled");
+    if (!cJSON_IsBool(enabled) || cJSON_GetArraySize(in) != 1) {
+        cJSON_Delete(in);
+        return error(req, "400 Bad Request", "Expected only user_enabled boolean; charge LED is hardware-controlled");
+    }
+    bool next = cJSON_IsTrue(enabled);
+    cJSON_Delete(in);
+    if (meshvpn_board_get_config()->pin_led < 0)
+        return error(req, "409 Conflict", "This board has no supported user LED");
+    if (meshvpn_config_save_user_led(next) != ESP_OK)
+        return error(req, "500 Internal Server Error", "Cannot save LED setting; active setting unchanged");
+    meshvpn_board_led_enable(next);
+    cJSON *out = cJSON_CreateObject();
+    add_led_status(out);
+    return send_json(req, out);
+}
 static esp_err_t handler_https(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -866,6 +907,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/wifi/select", HTTP_POST, handler_select),
         ROUTE("/api/admin/password", HTTP_POST, handler_password),
         ROUTE("/api/admin/https", HTTP_POST, handler_https),
+        ROUTE("/api/admin/leds", HTTP_POST, handler_leds),
         ROUTE("/api/system/reboot", HTTP_POST, handler_system),
         ROUTE("/api/system/factory-reset", HTTP_POST, handler_system),
         ROUTE("/api/certificate", HTTP_GET, handler_certificate), ROUTE("/api/certificate", HTTP_POST, handler_certificate),

@@ -68,6 +68,8 @@ esp_err_t meshvpn_config_save_admin_password(const char *password);
 /** Persistent next-boot mode; missing NVS value uses the Kconfig default. */
 esp_err_t meshvpn_config_load_https(bool *enabled);
 esp_err_t meshvpn_config_save_https(bool enabled);
+esp_err_t meshvpn_config_load_user_led(bool *enabled);
+esp_err_t meshvpn_config_save_user_led(bool enabled);
 
 esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out);
 esp_err_t meshvpn_config_save_vpn(const meshvpn_vpn_config_t *cfg);

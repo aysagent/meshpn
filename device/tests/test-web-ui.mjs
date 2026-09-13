@@ -23,11 +23,12 @@ for(const part of text.split('static const char ').slice(1)){
         const status={https_enabled:https,certificate_sha256:https?'AA:BB':null,
           https_configured:https,https_restart_required:false,admin_next_url:(https?'https':'http')+'://meshpn.local/',
           temperature_c:42,memory:{internal:{free:1024},psram:{free:2048}},
+          leds:{user:{controllable:true,enabled:true},charge:{present:true,controllable:false,enabled:null}},
           cpu:{cores:[{id:0,load_pct:37},{id:1,load_pct:12}],tasks:[]},
           wifi:{connected:false,state:'setup'},usb:{profile:'ncm',host_ready:true},
           net:{usb_ip:'192.168.7.1',ap_active:https,ap_ssid:'MeshPN_aabbcc',ap_ip:'192.168.4.1',
             ap_channel:6,ap_clients:2,ap_napt:true},must_change_password:false};
-        let accepted=true,failSave=false,saves=0,reboots=0,revoked=0;
+        let accepted=true,failSave=false,saves=0,reboots=0,revoked=0,ledFail=false,ledSaves=0;
         const context=vm.createContext({
           document:{hidden:false,getElementById:id=>elements[id],addEventListener(){}},
           sessionStorage:{getItem:()=> 'test-token',removeItem:()=>revoked++},location:{protocol:https?'https:':'http:'},
@@ -42,6 +43,13 @@ for(const part of text.split('static const char ').slice(1)){
               assert.equal(typeof enabled,'boolean');
               status.https_configured=enabled;status.https_restart_required=enabled!==https;
               status.admin_next_url=(enabled?'https':'http')+'://meshpn.local/';
+            }else if(path==='/api/admin/leds'){
+              assert.equal(options.method,'POST');assert.equal(options.headers.Authorization,'Bearer test-token');
+              ledSaves++;
+              if(ledFail)return {ok:false,status:500,text:async()=> 'Cannot save LED setting'};
+              const payload=JSON.parse(options.body);
+              assert.deepEqual(Object.keys(payload),['user_enabled']);assert.equal(typeof payload.user_enabled,'boolean');
+              status.leds.user.enabled=payload.user_enabled;
             }else if(path==='/api/system/reboot'){
               assert.equal(options.method,'POST');reboots++;
             }else assert.equal(path,'/api/status');
@@ -50,6 +58,23 @@ for(const part of text.split('static const char ').slice(1)){
         });
         vm.runInContext(code,context);
         await vm.runInContext('poll()',context);
+        assert.equal(elements['user-led-enabled'].checked,true);
+        assert.equal(elements['charge-led-enabled'].disabled,true);
+        assert.equal(elements['charge-led-enabled'].indeterminate,true,'not a measured on/off state');
+        elements['user-led-enabled'].checked=false;elements['user-led-enabled'].onchange();
+        await vm.runInContext('poll()',context);
+        assert.equal(elements['user-led-enabled'].checked,false,'poll preserves unsaved LED choice');
+        ledFail=true;await elements['save-leds'].onclick();
+        assert.equal(status.leds.user.enabled,true);assert.equal(elements.message.textContent,'Cannot save LED setting');
+        assert.equal(elements['save-leds'].disabled,false);
+        ledFail=false;await elements['save-leds'].onclick();assert.equal(ledSaves,2);
+        assert.equal(status.leds.user.enabled,false);assert.equal(reboots,0);
+        await vm.runInContext('poll()',context);assert.equal(elements['user-led-enabled'].checked,false);
+        status.leds.user={controllable:false,enabled:null};status.leds.charge.present=false;
+        await vm.runInContext('poll()',context);
+        assert.equal(elements['user-led-enabled'].disabled,true);assert.equal(elements['save-leds'].disabled,true);
+        assert.equal(elements['charge-led-row'].hidden,true);
+        delete status.leds;await vm.runInContext('poll()',context);assert.equal(elements['save-leds'].disabled,true);
         assert.equal(elements['certificate-section'].hidden,!https);
         assert.equal(elements.fingerprint.textContent,https?'AA:BB':'');
         assert(elements.usb.textContent.includes((https?'https':'http')+'://192.168.7.1/'));

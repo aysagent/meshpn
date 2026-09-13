@@ -62,6 +62,26 @@ Administration and mDNS are available from USB and the board's own AP. The ingre
 including requests routed to a LAN gateway; AP clients may use DNS at their own gateway. IPv6 is disabled.
 Confirm this on hardware using the [acceptance checklist](docs/current-improvements.md).
 
+## LED indicators
+
+In the admin UI, **LED indicators → Enable user/status LED** controls the XIAO
+ESP32-S3 user LED (GPIO21, active low). Uncheck it and click **Save LED setting**
+to disable both blinking and steady illumination immediately. Re-enabling restores
+normal Wi-Fi status indication. The setting survives reboot; factory reset restores
+the enabled default. It applies in this firmware, not in an external bootloader.
+
+The second checkbox describes the **charge LED** and is deliberately disabled,
+with an indeterminate state: the MCU cannot read or control that light. On this board
+it is wired to the charger, not a GPIO; see the [Seeed documentation and schematics](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/#resources).
+No charging/power settings are changed to suppress it. Unsupported board profiles
+have no editable user-LED control.
+
+Authenticated `POST /api/admin/leds` accepts only `{"user_enabled":false}` (or true).
+It commits NVS before changing the active setting; a save failure leaves active
+indication unchanged. `GET /api/status` exposes `leds.user.controllable/enabled`
+and `leds.charge.present/controllable/enabled`; charge `enabled=null` means unknown,
+not off. The normal USB/AP management authorization and password policy apply.
+
 ## STA + AP + USB throughput experiment
 
 SoftAP is enabled by default alongside STA and USB NCM:

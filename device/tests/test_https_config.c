@@ -4,6 +4,16 @@
 #include "meshvpn_config.h"
 #include "nvs.h"
 
+#ifdef TEST_USER_LED
+#define meshvpn_config_load_https meshvpn_config_load_user_led
+#define meshvpn_config_save_https meshvpn_config_save_user_led
+#define SETTING_KEY "user_led"
+#define DEFAULT_ENABLED true
+#else
+#define SETTING_KEY "web_https"
+#define DEFAULT_ENABLED (!!CONFIG_MESHVPN_WEB_HTTPS)
+#endif
+
 static esp_err_t open_error, read_error, write_error, commit_error;
 static bool present;
 static uint8_t saved;
@@ -13,14 +23,14 @@ esp_err_t nvs_open(const char *ns,int mode,nvs_handle_t *out)
 void nvs_close(nvs_handle_t nvs) { (void)nvs;closes++; }
 esp_err_t nvs_get_u8(nvs_handle_t nvs,const char *key,uint8_t *value)
 {
-    (void)nvs;assert(!strcmp(key,"web_https"));
+    (void)nvs;assert(!strcmp(key,SETTING_KEY));
     if(read_error)return read_error;
     if(!present)return ESP_ERR_NVS_NOT_FOUND;
     *value=saved;return ESP_OK;
 }
 esp_err_t nvs_set_u8(nvs_handle_t nvs,const char *key,uint8_t value)
 {
-    (void)nvs;assert(!strcmp(key,"web_https"));
+    (void)nvs;assert(!strcmp(key,SETTING_KEY));
     if(write_error)return write_error;
     saved=value;present=true;return ESP_OK;
 }
@@ -30,10 +40,10 @@ int main(void)
     bool enabled;
     assert(meshvpn_config_load_https(NULL)==ESP_ERR_INVALID_ARG);
     assert(meshvpn_config_load_https(&enabled)==ESP_OK);
-    assert(enabled==!!CONFIG_MESHVPN_WEB_HTTPS);
+    assert(enabled==DEFAULT_ENABLED);
     open_error=ESP_ERR_NVS_NOT_FOUND;
     assert(meshvpn_config_load_https(&enabled)==ESP_OK);
-    assert(enabled==!!CONFIG_MESHVPN_WEB_HTTPS);
+    assert(enabled==DEFAULT_ENABLED);
     open_error=ESP_FAIL;
     assert(meshvpn_config_load_https(&enabled)==ESP_FAIL);
     assert(meshvpn_config_save_https(true)==ESP_FAIL);
@@ -53,7 +63,7 @@ int main(void)
     read_error=ESP_OK;saved=2;
     assert(meshvpn_config_load_https(&enabled)==ESP_ERR_INVALID_ARG);
     present=false; /* factory reset/missing setting returns to build default */
-    assert(meshvpn_config_load_https(&enabled)==ESP_OK&&enabled==!!CONFIG_MESHVPN_WEB_HTTPS);
+    assert(meshvpn_config_load_https(&enabled)==ESP_OK&&enabled==DEFAULT_ENABLED);
     assert(closes>0);
-    puts("HTTPS NVS mode, defaults, persistence and error propagation passed");
+    puts(SETTING_KEY " NVS defaults, persistence and error propagation passed");
 }

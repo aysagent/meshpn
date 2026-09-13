@@ -58,6 +58,10 @@ void app_main(void)
 
     ESP_ERROR_CHECK(meshvpn_board_init());
     ESP_ERROR_CHECK(meshvpn_config_init());
+    bool user_led_enabled = true;
+    if (meshvpn_config_load_user_led(&user_led_enabled) != ESP_OK)
+        ESP_LOGW(TAG, "Cannot load user LED setting; using enabled default");
+    meshvpn_board_led_enable(user_led_enabled);
     meshvpn_log_report_boot(meshvpn_config_bump_boot_count());
     /* Recovery must be available even if HTTPS identity/startup fails. */
     xTaskCreate(factory_reset_watch_task, "boot_btn", 3072, NULL, 4, NULL);
