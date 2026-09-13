@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate read-only ESP32-S3 slave-mode DWC2 hooks in a pinned build copy."""
+"""Generate read-only DWC2 DMA/slave hooks in a pinned build copy."""
 import argparse
 import hashlib
 from pathlib import Path
@@ -18,7 +18,7 @@ def instrument(source: bytes) -> str:
             raise ValueError(f"Expected one DWC2 anchor: {old!r}")
         text = text.replace(old, new, 1)
 
-    anchor = "static uint16_t epin_write_tx_fifo(dwc2_regs_t *dwc2, uint8_t epnum);"
+    anchor = "TU_ATTR_ALWAYS_INLINE static inline bool edpt_is_enabled(dwc2_dep_t* dep) {"
     replace(anchor, '#include "meshvpn_dwc2_diag.h"\n' + anchor)
     for anchor in ["static void handle_bus_reset(uint8_t rhport) {", "void dcd_edpt_close_all(uint8_t rhport) {"]:
         replace(anchor, anchor + "\n  meshvpn_dwc2_reset();")
@@ -31,13 +31,18 @@ def instrument(source: bytes) -> str:
 ''' + anchor)
     anchor = "  return total_bytes_written;\n}"
     replace(anchor, "  meshvpn_dwc2_refill(epnum | TUSB_DIR_IN_MASK, total_bytes_written);\n" + anchor)
-    anchor = "static void handle_epin_slave(uint8_t rhport, uint8_t epnum, dwc2_diepint_t diepint_bm) {"
-    start = text.index(anchor)
-    end = text.index("\n}", start) + 2
-    original = text[start:end]
-    hooked = original.replace("      dcd_event_xfer_complete(", "      meshvpn_dwc2_complete(epnum | TUSB_DIR_IN_MASK, xfer->total_len);\n      dcd_event_xfer_complete(")
-    hooked = hooked.replace("    epin_write_tx_fifo(dwc2, epnum);", "    meshvpn_dwc2_txfe(epnum | TUSB_DIR_IN_MASK);\n    epin_write_tx_fifo(dwc2, epnum);")
-    replace(original, hooked)
+    for mode in ("slave", "dma"):
+        anchor = f"static void handle_epin_{mode}(uint8_t rhport, uint8_t epnum, dwc2_diepint_t diepint_bm) {{"
+        start = text.index(anchor)
+        end = text.index("\n}", start) + 2
+        original = text[start:end]
+        completion = "      dcd_event_xfer_complete("
+        if original.count(completion) != 1:
+            raise ValueError(f"Expected one {mode} completion anchor")
+        hooked = original.replace(completion, "      meshvpn_dwc2_complete(epnum | TUSB_DIR_IN_MASK, xfer->total_len);\n" + completion)
+        if mode == "slave":
+            hooked = hooked.replace("    epin_write_tx_fifo(dwc2, epnum);", "    meshvpn_dwc2_txfe(epnum | TUSB_DIR_IN_MASK);\n    epin_write_tx_fifo(dwc2, epnum);")
+        replace(original, hooked)
     return text
 
 

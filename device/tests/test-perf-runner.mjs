@@ -13,7 +13,7 @@ import { parseArgs, quote, command, iperfArgs, parseIperf, stats, parsePing, sum
   measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer, ncmCounterFields, dwc2CounterFields, usbQueueCounterFields, hasPingProblem, summarizeUsbDownSweep } from '../scripts/perf-lib.mjs';
 import { discoverBoard, checkRoute, requestBoard, sshArgs } from '../scripts/perf-network.mjs';
 import { prepareIperfBinding, macosBuildContext, iperfEnvironment, verifyIperfBinding, iperfError } from '../scripts/perf-bind.mjs';
-import { executeSchedule, cleanStatus, telemetrySummary, reportMarkdown, main } from '../scripts/perf-runner.mjs';
+import { executeSchedule, cleanStatus, telemetrySummary, reportMarkdown, main, dwc2Mode, dwc2TimingProblems } from '../scripts/perf-runner.mjs';
 import { pingEvent, blackoutDiagnostics } from '../scripts/perf-diagnostics.mjs';
 
 test('observed ping events parse Mac replies/timeouts, not summaries or missing packets',()=>{
@@ -339,6 +339,12 @@ test('USB TX telemetry survives sanitization, reports per-batch deltas and keeps
 });
 
 test('DWC2 readback, service means, histograms and unknown/reset windows',()=>{
+  assert.equal(dwc2Mode({available:true,fifo_valid:true,gahbcfg:39}),'DMA');
+  assert.equal(dwc2Mode({available:true,fifo_valid:true,gahbcfg:7}),'slave');
+  for(const gahbcfg of [undefined,null,NaN,-1,0x100000000,'39'])
+    assert.equal(dwc2Mode({available:true,fifo_valid:true,gahbcfg}),'unknown');
+  assert.equal(dwc2Mode({available:true,fifo_valid:false,gahbcfg:39}),'unknown');
+  assert.equal(dwc2Mode({}),'unknown');
   const before=fixture(),after=fixture();
   before.usb.dwc2={available:true,...Object.fromEntries(dwc2CounterFields.map(k=>[k,0]))};
   after.usb.dwc2={...before.usb.dwc2,fifo_valid:true,endpoint:132,tx_fifo_bytes:128,tx_fifo_start_words:112,
@@ -352,12 +358,30 @@ test('DWC2 readback, service means, histograms and unknown/reset windows',()=>{
   const telemetry=telemetrySummary([{status:clean,elapsed_ms:0,phase:'baseline-idle'}]);
   const report=reportMarkdown({telemetry,records:[{id:'0001',batch_counters:delta}]});
   assert.match(report,/endpoint 132, TX 128 B at word 112, RX 62 words/);
+  assert.match(report,/DWC2 transfer mode: slave/);
   assert.match(report,/120\.00 \| 6\.00 \| 0\.10 \| 2 \/ 0 \/ 0 \/ 0 \| 0 \/ 0/);
   after.uptime_sec=-1;
   assert.equal(counterDelta(before,after)['usb.dwc2.service_us'],null);
   delete before.usb.dwc2;
   assert.equal(counterDelta(before,clean)['usb.dwc2.task_us'],null);
   assert.match(reportMarkdown({telemetry:telemetrySummary([{status:cleanStatus(before),elapsed_ms:0,phase:'baseline-idle'}])}),/DWC2 FIFO register snapshot: unavailable/);
+});
+
+test('DWC2 a986b37 missing DMA hook is a measurement warning, not packet loss',()=>{
+  const counters=Object.fromEntries(dwc2CounterFields.map(k=>[`usb.dwc2.${k}`,0]));
+  Object.assign(counters,{'usb.dwc2.submitted':69854,'usb.dwc2.unmatched':69854,
+    'usb.dwc2.overwritten':69854,'usb.ncm.ntb_completed':69148});
+  assert.deepEqual(dwc2TimingProblems(counters),['unmatched','overwritten','missing_isr','missing_timing']);
+  assert.match(reportMarkdown({records:[{id:'0008',batch_counters:counters}]}),/unmatched, overwritten, missing_isr, missing_timing/);
+  counters['usb.dwc2.unmatched']=counters['usb.dwc2.overwritten']=0;
+  counters['usb.dwc2.isr_completions']=69854;
+  counters['usb.dwc2.service_timed']=69148;
+  counters['usb.dwc2.task_timed']=69147; // A window boundary is not a failure.
+  assert.deepEqual(dwc2TimingProblems(counters),[]);
+  assert.deepEqual(dwc2TimingProblems({}),[]);
+  assert.deepEqual(dwc2TimingProblems({'usb.ncm.ntb_completed':20,'usb.dwc2.isr_completions':null}),[]);
+  assert.deepEqual(dwc2TimingProblems({'usb.ncm.ntb_completed':0,'usb.dwc2.service_timed':0}),[]);
+  assert.deepEqual(dwc2TimingProblems({'usb.ncm.ntb_completed':1,'usb.dwc2.isr_completions':0}),[]);
 });
 
 test('NCM FIFO configuration survives sanitization and reports unknown for old firmware',()=>{
@@ -677,6 +701,27 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
     const delayReports=await Promise.all((await readdir(parent)).map(async d=>JSON.parse(await readFile(path.join(parent,d,'result.json'),'utf8'))));
     assert.ok(delayReports.some(r=>r.outcome==='interrupted'&&r.options.startDelay===60&&r.records.length===0));
     assert.equal(process.listenerCount('SIGINT'),signalsBefore);
+    // Diagnostics alone must produce warnings while preserving throughput.
+    assert.equal(await main(['server','--quick','--out',parent],{...dependencies,
+      discoverBoard:async()=>{
+        const board=await dependencies.discoverBoard();
+        const status=board.status;
+        board.status=async()=>{
+          const f=await status();
+          f.usb.dwc2={available:true,fifo_valid:true,gahbcfg:39,
+            ...Object.fromEntries(dwc2CounterFields.map(k=>[k,0])),
+            submitted:ticks,unmatched:ticks,overwritten:ticks};
+          return f;
+        };
+        return board;
+      }}),2);
+    assert.equal(closes,8);
+    const dwcReports=await Promise.all((await readdir(parent)).map(async d=>JSON.parse(await readFile(path.join(parent,d,'result.json'),'utf8'))));
+    const broken=dwcReports.find(r=>r.dwc2_diagnostics?.warnings.includes('unmatched'));
+    assert.ok(broken);assert.equal(broken.outcome,'completed-with-warnings');
+    assert.equal(broken.dwc2_diagnostics.mode,'DMA');
+    assert.ok(broken.warnings.some(w=>w.startsWith('DWC2 timing diagnostics incomplete')));
+    assert.equal(broken.summary['single/usb/tcp/up/'].mbps.median,8);
   }finally{await rm(parent,{recursive:true,force:true});}
 });
 

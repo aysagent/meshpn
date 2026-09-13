@@ -96,6 +96,28 @@ export function cleanStatus(s) {
       tasks:(s.cpu?.tasks||[]).map(t=>pick(t,['id','name','core','priority','stack_free','runtime_us','load_pct']))}};
 }
 
+export function dwc2Mode(snapshot) {
+  const reg=snapshot?.gahbcfg;
+  // Decode captured GAHBCFG.DMAEN (bit 5), not the build-time DMA option.
+  return snapshot?.available&&snapshot?.fifo_valid&&Number.isInteger(reg)&&reg>=0&&reg<=0xffffffff
+    ?(reg&0x20?'DMA':'slave'):'unknown';
+}
+
+export function dwc2TimingProblems(counters={}) {
+  const v=k=>counters[`usb.dwc2.${k}`],problems=[];
+  if(v('unmatched')>0)problems.push('unmatched');
+  if(v('overwritten')>0)problems.push('overwritten');
+  // Do not demand equal window deltas: one transfer may straddle a poll.
+  // Missing/old/reset counters are unknown, not zero. ZLP-only windows need
+  // no service/task timings. Multiple NTB completions without any ISR or
+  // timing samples cannot be explained by one in-flight transfer.
+  if(counters['usb.ncm.ntb_completed']>1) {
+    if(v('isr_completions')===0)problems.push('missing_isr');
+    if(v('service_timed')===0||v('task_timed')===0)problems.push('missing_timing');
+  }
+  return problems;
+}
+
 export function telemetrySummary(samples) {
   const good=samples.filter(s=>s.status),events=[];
   let previous,epoch=0;
@@ -206,6 +228,7 @@ export function reportMarkdown(result) {
       'Lifetime maxima are retained in status.ndjson; they are not per-test maxima. Missing fields on older firmware remain n/a.');
     const fifo=t.usb_fifo_last;
     const hw=t.dwc2_last;
+    lines.push('', `DWC2 transfer mode: ${dwc2Mode(hw)} (captured GAHBCFG.DMAEN). DMA does not use slave refill/TXFE hooks; zero counts there are expected, not missing IRQs.`);
     lines.push('', `DWC2 FIFO register snapshot: ${hw?.available&&hw?.fifo_valid?`endpoint ${hw.endpoint}, TX ${hw.tx_fifo_bytes} B at word ${hw.tx_fifo_start_words}, RX ${hw.rx_fifo_words} words, GAHBCFG ${hw.gahbcfg}`:'unavailable'}. Captured at DCD submission, not a live API register read.`);
     lines.push('', `NCM IN hardware double FIFO: ${fifo?.configured===true?`configured (128 B, endpoint ${fifo.endpoint})`:fifo?.configured===false?'disabled':'unknown (older firmware)'}. Configuration acknowledgement, not hardware register readback; frame queue and NTB pool are separate.`);
     const q=t.usb_queue_last;
@@ -250,15 +273,15 @@ export function reportMarkdown(result) {
     }
     if([...usbBatches.values()].some(r=>Number.isFinite(r.batch_counters['usb.dwc2.submitted']))) {
       lines.push('', '## DWC2 service diagnostics by batch', '',
-        'Experimental instrumentation adds per-refill overhead. Service = DCD submission → completion observed in ISR (includes bus and interrupt-service delay); task delay = that ISR observation → NCM callback. Neither measures pure wire time or ISR entry latency. Timing excludes ZLPs; refill and IRQ counts include them. Means cover completions in the window, possibly submitted earlier.',
+        'Experimental instrumentation adds submit/completion overhead in both DMA and slave modes, plus per-refill overhead only in slave mode. Service = DCD submission → completion observed in ISR (includes bus and interrupt-service delay); task delay = that ISR observation → NCM callback. Neither measures pure wire time or ISR entry latency. Timing excludes ZLPs; refill and IRQ counts include them. Means cover completions in the window, possibly submitted earlier.',
         'Refill calls include initial fills and TXFE handling; empty means zero bytes written. TXFE counts endpoint service events, not whole-controller IRQ entries. Histogram buckets are disjoint; mismatches/overwrites make timing incomplete.', '',
-        '| Test | TXFE events | Refill calls / empty | Bytes/refill | Service mean ms | ISR→NCM mean ms | Task ≤100us / 100–1000us / 1–5ms / >5ms | Unmatched / overwritten |',
-        '|---|---:|---|---:|---:|---:|---|---|');
+        '| Test | TXFE events | Refill calls / empty | Bytes/refill | Service mean ms | ISR→NCM mean ms | Task ≤100us / 100–1000us / 1–5ms / >5ms | Unmatched / overwritten | Service / task samples | Timing warnings |',
+        '|---|---:|---|---:|---:|---:|---|---|---|---|');
       for(const r of usbBatches.values()) {
         const v=k=>r.batch_counters[`usb.dwc2.${k}`];
         const mean=(sum,count,scale=1)=>Number.isFinite(v(sum))&&v(count)>0?fmt(v(sum)/v(count)/scale):'n/a';
         const hist=['task_le_100us','task_100_1000us','task_1_5ms','task_gt_5ms'].map(k=>v(k)??'n/a').join(' / ');
-        lines.push(`| ${r.id} | ${v('txfe_irqs')??'n/a'} | ${v('refill_calls')??'n/a'} / ${v('refill_empty')??'n/a'} | ${mean('refill_bytes','refill_calls')} | ${mean('service_us','service_timed',1000)} | ${mean('task_us','task_timed',1000)} | ${hist} | ${v('unmatched')??'n/a'} / ${v('overwritten')??'n/a'} |`);
+        lines.push(`| ${r.id} | ${v('txfe_irqs')??'n/a'} | ${v('refill_calls')??'n/a'} / ${v('refill_empty')??'n/a'} | ${mean('refill_bytes','refill_calls')} | ${mean('service_us','service_timed',1000)} | ${mean('task_us','task_timed',1000)} | ${hist} | ${v('unmatched')??'n/a'} / ${v('overwritten')??'n/a'} | ${v('service_timed')??'n/a'} / ${v('task_timed')??'n/a'} | ${dwc2TimingProblems(r.batch_counters).join(', ')} |`);
       }
     }
     if([...usbBatches.values()].some(r=>r.batch_counters['usb.tx_queue.submitted']>0)) {
@@ -431,6 +454,14 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     caffeine?.kill('SIGTERM');process.removeListener('SIGINT',abort);process.removeListener('SIGTERM',abort);
     result.ended=new Date().toISOString();result.summary=summarize(records);result.telemetry=telemetrySummary(samples);
     result.blackouts=blackoutDiagnostics(records,pings,samples);
+    result.dwc2_diagnostics={mode:dwc2Mode(result.telemetry.dwc2_last),
+      warnings:dwc2TimingProblems(result.telemetry.counter_delta),
+      batches:[...new Map(records.filter(r=>r.batch_counters).map(r=>[r.id,r])).values()]
+        .map(r=>({id:r.id,warnings:dwc2TimingProblems(r.batch_counters)})).filter(r=>r.warnings.length)};
+    if(result.dwc2_diagnostics.warnings.length||result.dwc2_diagnostics.batches.length) {
+      result.warnings.push('DWC2 timing diagnostics incomplete: unmatched/overwritten pairs or missing ISR/timing samples; inspect dwc2_diagnostics and per-batch warnings. These are measurement faults, not USB packet-loss counters. Throughput/loss were not corrected or excluded.');
+      if(result.outcome==='completed')result.outcome='completed-with-warnings';
+    }
     if(o.usbDownSweep)result.usb_down_sweep=summarizeUsbDownSweep(records,pings);
     if(!result.telemetry.cpu_samples&&samples.length) {
       result.warnings.push('No valid CPU runtime samples; CPU-load results unavailable.');

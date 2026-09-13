@@ -26,8 +26,9 @@ class Tests(unittest.TestCase):
         self.assertEqual(SOURCE.read_bytes(), raw)
         for call in ["dcd_event_xfer_complete(", "epin_write_tx_fifo(", "edpt_schedule_packets("]:
             self.assertEqual(new.count(call), old.count(call))
-        for call in ["meshvpn_dwc2_submit(", "meshvpn_dwc2_refill(", "meshvpn_dwc2_complete(", "meshvpn_dwc2_txfe("]:
+        for call in ["meshvpn_dwc2_submit(", "meshvpn_dwc2_refill(", "meshvpn_dwc2_txfe("]:
             self.assertEqual(new.count(call), 1)
+        self.assertEqual(new.count('meshvpn_dwc2_complete('), 2)
         self.assertEqual(new.count("meshvpn_dwc2_reset();"), 2)
         self.assertIn("mesh_regs->dieptxf[epnum - 1]", new)
         self.assertLess(new.index("meshvpn_dwc2_submit("), new.index("    // Schedule packets to be sent within interrupt"))
@@ -35,7 +36,7 @@ class Tests(unittest.TestCase):
         self.assertIn("meshvpn_dwc2_refill(epnum | TUSB_DIR_IN_MASK, total_bytes_written);\n  return total_bytes_written", new)
 
     @unittest.skipUnless(SOURCE.exists(), "managed dependencies not installed")
-    def test_actual_slave_handler_and_fifo_writer(self):
+    def test_actual_dma_and_slave_handlers_and_fifo_writer(self):
         source = module.instrument(SOURCE.read_bytes())
 
         def function(anchor):
@@ -57,9 +58,9 @@ typedef struct { bool xfer_complete,txfifo_empty; } dwc2_diepint_t;
 typedef struct { uint16_t max_size,total_len; uint8_t *buffer; void *ff; } xfer_ctl_t;
 static dwc2_regs_t regs;
 static xfer_ctl_t transfers[7];
-static struct { uint16_t ep0_pending[2]; } _dcd_data;
+static struct { uint16_t ep0_pending[2],ep0_xact_bytes[2]; } _dcd_data;
 static int64_t now;
-static unsigned events,order,writes;
+static unsigned events,order,writes,schedules;
 int64_t esp_timer_get_time(void) { return now; }
 #define DWC2_REG(port) ((void)(port), &regs)
 #define TUSB_DIR_IN 1
@@ -69,7 +70,7 @@ int64_t esp_timer_get_time(void) { return now; }
 #define XFER_RESULT_SUCCESS 0
 #define tu_min16(a,b) ((a)<(b)?(a):(b))
 #define tu_bit_test(a,b) ((a)&(1u<<(b)))
-static void edpt_schedule_packets(uint8_t rhport,uint8_t ep,uint8_t dir) { (void)rhport;(void)ep;(void)dir; assert(false); }
+static void edpt_schedule_packets(uint8_t rhport,uint8_t ep,uint8_t dir) { assert(rhport==0 && ep==0 && dir==1); schedules++; }
 static void dcd_event_xfer_complete(uint8_t rhport,uint8_t ep,uint32_t bytes,int result,bool isr) {
   (void)rhport; assert(ep==0x84 && result==0 && isr);
   meshvpn_dwc2_stats_t s; meshvpn_dwc2_get_stats(&s);
@@ -87,6 +88,7 @@ static void tu_hwfifo_write_from_fifo(volatile uint32_t *fifo,void *buffer,uint1
 '''
         harness += function("static uint16_t epin_write_tx_fifo(dwc2_regs_t *dwc2, uint8_t epnum) {")
         harness += function("static void handle_epin_slave(uint8_t rhport, uint8_t epnum, dwc2_diepint_t diepint_bm) {")
+        harness += function("static void handle_epin_dma(uint8_t rhport, uint8_t epnum, dwc2_diepint_t diepint_bm) {")
         harness += r'''
 int main(void) {
   uint8_t buffer[128]; transfers[4]=(xfer_ctl_t){.max_size=64,.total_len=128,.buffer=buffer};
@@ -104,6 +106,24 @@ int main(void) {
   meshvpn_dwc2_submit(0x84,0,32u<<16,62,1); transfers[4].total_len=0;
   handle_epin_slave(0,4,(dwc2_diepint_t){.xfer_complete=true});
   meshvpn_dwc2_get_stats(&s); assert(events==2 && s.zlp_completions==1 && s.task_timed==1);
+  /* The reported hardware mode: GAHBCFG 39 = DMAEN. No slave FIFO fills. */
+  now=10000; meshvpn_dwc2_submit(0x84,128,(32u<<16)|160u,62,39);
+  transfers[4].total_len=128;
+  handle_epin_dma(0,4,(dwc2_diepint_t){0}); assert(events==2);
+  now=16000; handle_epin_dma(0,4,(dwc2_diepint_t){.xfer_complete=true});
+  meshvpn_dwc2_get_stats(&s);
+  assert(events==3 && s.isr_completions==3 && s.service_timed==2 && s.task_timed==2);
+  assert(s.service_us==12000 && s.task_us==200 && s.gahbcfg==39);
+  assert(s.refill_calls==2 && s.refill_bytes==128 && s.txfe_irqs==1);
+  assert(s.unmatched==0 && s.overwritten==0);
+  meshvpn_dwc2_submit(0x84,0,(32u<<16)|160u,62,39); transfers[4].total_len=0;
+  handle_epin_dma(0,4,(dwc2_diepint_t){.xfer_complete=true});
+  meshvpn_dwc2_get_stats(&s);
+  assert(events==4 && s.zlp_completions==2 && s.task_timed==2 && s.service_timed==2);
+  /* A partial EP0 completion must only schedule the next chunk, no hook. */
+  transfers[0].buffer=buffer; _dcd_data.ep0_pending[1]=64; _dcd_data.ep0_xact_bytes[1]=64;
+  handle_epin_dma(0,0,(dwc2_diepint_t){.xfer_complete=true});
+  assert(transfers[0].buffer==buffer+64 && schedules==1 && events==4);
 }
 '''
         with tempfile.TemporaryDirectory(prefix="meshpn-dwc2-hooks-") as work:
