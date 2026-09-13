@@ -1,0 +1,2 @@
+# Control experiment: preserve NCM telemetry, DMA, FIFO and worker queue.
+# CONFIG_MESHVPN_DWC2_TELEMETRY is not set

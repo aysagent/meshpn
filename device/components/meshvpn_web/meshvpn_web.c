@@ -2,6 +2,7 @@
 #include "meshvpn_web_tls.h"
 #include "meshvpn_session.h"
 #include "meshvpn_cpu.h"
+#include "meshvpn_local_download.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -141,6 +142,36 @@ static esp_err_t meshvpn_web_require_auth(httpd_req_t *req)
         strcmp(req->uri, "/api/wifi/scan"))
         return error(req, "403 Forbidden", "Change the default admin password first");
     return ESP_OK;
+}
+static bool local_download_send(void *ctx, const char *data, size_t len)
+{
+    return httpd_resp_send_chunk(ctx, data, len) == ESP_OK;
+}
+static int64_t local_download_now(void *ctx)
+{
+    (void)ctx;
+    return esp_timer_get_time();
+}
+static esp_err_t handler_usb_download(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    struct sockaddr_in local = {0}, peer = {0};
+    socklen_t local_len = sizeof(local), peer_len = sizeof(peer);
+    esp_netif_ip_info_t info;
+    int fd = httpd_req_to_sockfd(req);
+    if (!meshvpn_net_usb() || esp_netif_get_ip_info(meshvpn_net_usb(), &info) != ESP_OK ||
+        getsockname(fd, (struct sockaddr *)&local, &local_len) != 0 ||
+        getpeername(fd, (struct sockaddr *)&peer, &peer_len) != 0 ||
+        local.sin_family != AF_INET || peer.sin_family != AF_INET ||
+        local.sin_addr.s_addr != info.ip.addr ||
+        (peer.sin_addr.s_addr & info.netmask.addr) != (info.ip.addr & info.netmask.addr))
+        return error(req, "403 Forbidden", "USB address and local peer required");
+    if (req->content_len) return error(req, "400 Bad Request", "Empty POST required");
+    httpd_resp_set_type(req, "application/octet-stream");
+    httpd_resp_set_hdr(req, "X-MeshPN-Download-Bytes", "8388608");
+    httpd_resp_set_hdr(req, "Connection", "close");
+    if (!meshvpn_local_download(req, local_download_send, local_download_now)) return ESP_FAIL;
+    return httpd_resp_send_chunk(req, NULL, 0);
 }
 static cJSON *body(httpd_req_t *req, size_t limit)
 {
@@ -842,6 +873,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/routing/rules", HTTP_POST, handler_unimplemented),
         ROUTE("/api/routing/default", HTTP_POST, handler_unimplemented),
         ROUTE("/api/routing/benchmark", HTTP_POST, handler_ranges_benchmark),
+        ROUTE("/api/diag/usb-download", HTTP_POST, handler_usb_download),
     };
     for (unsigned i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         err = httpd_register_uri_handler(s_server, &routes[i]);

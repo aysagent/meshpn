@@ -20,10 +20,16 @@ set(SDKCONFIG_DEFAULTS
 if("$ENV{USB_DIAGNOSTICS}" STREQUAL "1")
     list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_SOURCE_DIR}/profiles/usb_diagnostics.defconfig")
 endif()
+if("$ENV{DWC2_TELEMETRY}" STREQUAL "0")
+    list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_SOURCE_DIR}/profiles/dwc2_telemetry_off.defconfig")
+endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(meshvpn_device)
 include("${CMAKE_SOURCE_DIR}/cmake/ncm-telemetry.cmake")
+if("$ENV{DWC2_TELEMETRY}" STREQUAL "0" AND CONFIG_MESHVPN_DWC2_TELEMETRY)
+    message(FATAL_ERROR "Control build has stale DWC2 telemetry enabled; use a fresh SDKCONFIG.")
+endif()
 
 # Refuse stale/unsafe sdkconfig rather than silently exposing the uplink.
 if(CONFIG_LWIP_IPV6)

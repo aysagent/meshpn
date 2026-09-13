@@ -6,6 +6,41 @@ import { isIP } from 'node:net';
 import { spawn } from 'node:child_process';
 import { command, checked, quote, remoteServer, macRoute, sameSubnet } from './perf-lib.mjs';
 
+export const localDownloadBytes=8*1024*1024;
+// Count the received entity body, never retain it or follow redirects. Includes
+// connection setup (and TLS when enabled); this is not raw USB wire throughput.
+export function downloadBoard(endpoint, {token,signal,ca,insecure=false,timeout=40000}={}) {
+  return new Promise((resolve,reject)=>{
+    const secure=endpoint.protocol==='https:',started=performance.now();
+    let bytes=0,firstByteMs=null;
+    const req=(secure?https:http).request({hostname:endpoint.gateway,port:endpoint.port||(secure?443:80),
+      path:'/api/diag/usb-download',method:'POST',localAddress:endpoint.address,agent:false,
+      servername:'meshpn.local',rejectUnauthorized:!insecure,ca,signal,
+      headers:{Host:'meshpn.local',Authorization:`Bearer ${token}`,'Content-Length':0,'Accept-Encoding':'identity'}},res=>{
+      res.on('error',reject);
+      if(res.statusCode!==200 || res.headers['x-meshpn-download-bytes']!==String(localDownloadBytes) ||
+          res.headers['content-type']!=='application/octet-stream' ||
+          (res.headers['content-encoding'] && res.headers['content-encoding']!=='identity')) {
+        res.resume();req.destroy(Error(`Local download HTTP ${res.statusCode}: unexpected response; flash local-test firmware`));return;
+      }
+      res.on('data',b=>{
+        firstByteMs??=performance.now()-started;bytes+=b.length;
+        if(bytes>localDownloadBytes)req.destroy(Error('Oversized local download'));
+      });
+      res.on('end',()=>{
+        if(!res.complete||bytes!==localDownloadBytes){reject(Error(`Incomplete local download: ${bytes}/${localDownloadBytes} bytes`));return;}
+        const seconds=(performance.now()-started)/1000;
+        resolve({bytes,seconds,receiver_mbps:bytes*8/seconds/1e6,first_byte_ms:firstByteMs});
+      });
+    });
+    req.on('socket',socket=>socket.once('connect',()=>{
+      if(socket.localAddress!==endpoint.address)req.destroy(Error('Local download source IP mismatch'));
+    }));
+    const timer=setTimeout(()=>req.destroy(Error('Local download deadline exceeded')),timeout);
+    req.on('close',()=>clearTimeout(timer));req.on('error',reject);req.end();
+  });
+}
+
 export function requestBoard(endpoint, resource, {token,password,signal,ca,insecure=false}={}) {
   return new Promise((resolve,reject)=>{
     const body=password===undefined?null:JSON.stringify({password});
@@ -95,7 +130,7 @@ export async function discoverBoard(o, signal, log, {networkInterfaces=os.networ
     paths.push({...c,kind});
   }
   paths.sort((a,b)=>a.kind==='usb'?-1:b.kind==='usb'?1:0);
-  if(!initial.wifi.connected)throw Error('MeshPN STA has no uplink; connect it to the router first.');
+  if(!o.localOnly&&!initial.wifi.connected)throw Error('MeshPN STA has no uplink; connect it to the router first.');
   const selected=o.paths==='auto'||o.paths==='both'?paths:paths.filter(p=>p.kind===o.paths);
   if(!selected.length||(o.paths==='both'&&selected.length!==2)) {
     const diagnostics={candidates,errors,detectedPaths:paths};
@@ -109,7 +144,7 @@ export async function discoverBoard(o, signal, log, {networkInterfaces=os.networ
     throw e;
   }
   for(const p of selected) {
-    if(!initial.net[`${p.kind}_napt`]||(p.kind==='usb'&&!initial.usb?.host_ready)||(p.kind==='ap'&&!initial.net.ap_active))
+    if((!o.localOnly&&!initial.net[`${p.kind}_napt`])||(p.kind==='usb'&&!initial.usb?.host_ready)||(p.kind==='ap'&&!initial.net.ap_active))
       throw Error(`${p.kind}: interface/NAT not ready`);
   }
   endpoint=paths.find(p=>p.kind==='usb')||selected[0];
@@ -117,7 +152,20 @@ export async function discoverBoard(o, signal, log, {networkInterfaces=os.networ
   // Serialize API readers, including reauthentication after a reboot.
   let pending=Promise.resolve();
   const serializedStatus=()=>{const next=pending.then(()=>status());pending=next.catch(()=>{});return next;};
-  return {paths:selected,status:serializedStatus,initial,endpoint};
+  const download=()=>{
+    if(selected.length!==1||selected[0].kind!=='usb')throw Error('Local download requires USB only');
+    return downloadBoard(selected[0],{...auth,token});
+  };
+  return {paths:selected,status:serializedStatus,initial,endpoint,download};
+}
+
+export async function checkLocalRoute(path,signal,{run=checked,networkInterfaces=os.networkInterfaces}={}) {
+  // Directly attached routes may report a link/MAC gateway, not the board IP.
+  // Check the ordinary lookup, not just a forced scoped route that could hide a VPN bypass.
+  const raw=await run('/sbin/route',['-n','get',path.gateway],{signal});
+  if(macRoute(raw).iface!==path.iface||!(networkInterfaces()[path.iface]||[]).some(a=>a.address===path.address))
+    throw Error('Local USB route or source address changed');
+  return raw;
 }
 
 export async function checkRoute(path, server, signal, {run=checked,networkInterfaces=os.networkInterfaces}={}) {
