@@ -338,6 +338,21 @@ test('USB TX telemetry survives sanitization, reports per-batch deltas and keeps
   assert.equal(counterDelta(before,after)['usb.tx_wait_us'],null);
 });
 
+test('NCM FIFO configuration survives sanitization and reports unknown for old firmware',()=>{
+  for(const enabled of [true,false,undefined]) {
+    const s=fixture();
+    s.usb.ncm_double_buffer_configured=enabled;
+    s.usb.ncm_in_ep=enabled?132:0;
+    const clean=cleanStatus(s);
+    assert.equal(clean.usb.ncm_double_buffer_configured,enabled);
+    assert.equal(clean.usb.ncm_in_ep,enabled?132:0);
+    const telemetry=telemetrySummary([{status:clean,elapsed_ms:0,phase:'baseline-idle'}]);
+    const report=reportMarkdown({records:[],telemetry});
+    assert.ok(report.includes(`NCM IN hardware double FIFO: ${enabled===true?'configured (128 B, endpoint 132)':enabled===false?'disabled':'unknown (older firmware)'}`));
+    assert.equal(counterDelta(clean,clean)['usb.ncm_in_ep'],undefined);
+  }
+});
+
 test('NCM nested telemetry, batch means and unavailable/reset counters are preserved honestly',()=>{
   const before=fixture(),after=fixture();
   before.usb.ncm={available:true,...Object.fromEntries(ncmCounterFields.map(k=>[k,0]))};

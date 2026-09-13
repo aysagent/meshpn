@@ -11,6 +11,10 @@
 #include "sdkconfig.h"
 #include "tinyusb.h"
 #include "tinyusb_net.h"
+#if CONFIG_MESHVPN_USB_NCM_DOUBLE_BUFFER
+#include "usb_descriptors.h"
+#include "meshvpn_usb_fifo.h"
+#endif
 #if CONFIG_TINYUSB_CDC_ENABLED
 #include "tusb_cdc_acm.h"
 #endif
@@ -197,6 +201,24 @@ void meshvpn_usb_get_stats(meshvpn_usb_stats_t *out)
 esp_err_t meshvpn_usb_init(void)
 {
     ESP_LOGI(TAG, "USB profile: %s", meshvpn_usb_profile_name());
+#if CONFIG_MESHVPN_USB_NCM_DOUBLE_BUFFER
+    /* Before bridge installs TinyUSB. It uses esp_tinyusb's default FS
+     * descriptor. Configure only NCM bulk IN, preserving VBUS policy. */
+    if (tud_inited()) return ESP_ERR_INVALID_STATE;
+    const uint8_t *d = descriptor_fs_cfg_default;
+    size_t size = (size_t)d[2] | ((size_t)d[3] << 8);
+    uint8_t ep = meshvpn_usb_ncm_in_endpoint(d, size);
+    if (!ep || (ep & 15) >= 7) {
+        ESP_LOGE(TAG, "Unsupported NCM descriptor for double-buffer experiment");
+        return ESP_ERR_INVALID_ARG;
+    }
+    tud_configure_param_t cfg = {.dwc2 = CFG_TUD_CONFIGURE_DWC2_DEFAULT};
+    cfg.dwc2.bm_double_buffered |= (uint16_t)(1u << (ep & 15));
+    if (!tud_configure(0, TUD_CFGID_DWC2, &cfg)) return ESP_FAIL;
+    s_stats.ncm_double_buffer_configured = true;
+    s_stats.ncm_in_ep = ep;
+    ESP_LOGI(TAG, "NCM IN EP 0x%02x: double FIFO configured (128 B, not queue/NTB RAM)", ep);
+#endif
     return ESP_OK;
 }
 

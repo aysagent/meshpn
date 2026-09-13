@@ -12,6 +12,27 @@ static int64_t now_us, per_attempt_us;
 static esp_netif_driver_ifconfig_t driver;
 static atomic_bool stop_reader;
 static atomic_bool reader_started;
+#if CONFIG_MESHVPN_USB_NCM_DOUBLE_BUFFER
+static bool inited, configure_ok = true;
+static unsigned configure_calls;
+/* NCM at interfaces 2/3, data EP4, as with diagnostic CDC enabled. */
+const uint8_t descriptor_fs_cfg_default[] = {
+    9,2,33,0,4,1,0,0x80,50,
+    8,11,2,2,2,13,0,0,
+    9,4,3,1,1,10,0,1,0,
+    7,5,0x84,2,64,0,0,
+};
+bool tud_inited(void) { return inited; }
+bool tud_configure(uint8_t rhport, uint32_t id, const void *cfg)
+{
+    const tud_configure_param_t *p=cfg;
+    assert(!inited && rhport==0 && id==TUD_CFGID_DWC2);
+    assert(p->dwc2.bm_double_buffered==(1u<<4));
+    assert(p->dwc2.vbus_sensing); /* Preserve unrelated default policy. */
+    configure_calls++;
+    return configure_ok;
+}
+#endif
 #if CONFIG_MESHVPN_USB_TX_QUEUE
 static esp_err_t queue_init_result = ESP_ERR_NO_MEM;
 static meshvpn_usb_tx_send_fn queue_sender;
@@ -109,6 +130,17 @@ static void *reader(void *unused)
 }
 int main(void)
 {
+#if CONFIG_MESHVPN_USB_NCM_DOUBLE_BUFFER
+    inited=true;
+    assert(meshvpn_usb_init()==ESP_ERR_INVALID_STATE && configure_calls==0);
+    inited=false; configure_ok=false;
+    assert(meshvpn_usb_init()==ESP_FAIL && !s_stats.ncm_double_buffer_configured);
+    configure_ok=true;
+    assert(meshvpn_usb_init()==ESP_OK && s_stats.ncm_double_buffer_configured);
+    assert(s_stats.ncm_in_ep==0x84 && configure_calls==2);
+#else
+    assert(meshvpn_usb_init()==ESP_OK && !s_stats.ncm_double_buffer_configured);
+#endif
     esp_netif_t netif = {0};
     assert(meshvpn_usb_attach_netif(NULL) == ESP_ERR_INVALID_ARG);
     assert(meshvpn_usb_attach_netif(&netif) == ESP_OK);

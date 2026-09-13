@@ -345,6 +345,8 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON *usb = cJSON_AddObjectToObject(root, "usb");
     cJSON_AddStringToObject(usb, "profile", meshvpn_usb_profile_name());
     cJSON_AddBoolToObject(usb, "host_ready", us.host_ready);
+    cJSON_AddBoolToObject(usb, "ncm_double_buffer_configured", us.ncm_double_buffer_configured);
+    cJSON_AddNumberToObject(usb, "ncm_in_ep", us.ncm_in_ep);
     /* Legacy keys: capacity/occupancy cannot be safely polled here. */
     cJSON_AddNullToObject(usb, "can_xmit");
     cJSON_AddNumberToObject(usb, "tx_ok", us.tx_ok);

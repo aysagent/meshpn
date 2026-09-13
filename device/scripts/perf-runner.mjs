@@ -83,7 +83,7 @@ export function cleanStatus(s) {
   return {...pick(s,['board','build','idf','uptime_sec','temperature_c','https_enabled']),
     wifi:pick(s.wifi,['connected','scanning','state','ip','rssi','disconnect_reason']),
     net:pick(s.net,['usb_ip','ap_ip','ap_active','ap_clients','ap_channel','usb_napt','ap_napt','ap_ip4_rx','lan_ip4_rx']),
-    usb:{...pick(s.usb,['profile','host_ready','tx_mode',...usbCounterFields,'tx_attempts_max','tx_wait_max_us']),
+    usb:{...pick(s.usb,['profile','host_ready','tx_mode','ncm_double_buffer_configured','ncm_in_ep',...usbCounterFields,'tx_attempts_max','tx_wait_max_us']),
       tx_queue:pick(s.usb?.tx_queue,['enabled',...usbQueueCounterFields,'capacity','max_age_ms','pending','in_use','high_water',
         'worker_active','event_wait','queue_wait_max_us','residence_max_us']),
       ncm:pick(s.usb?.ncm,['available',...ncmCounterFields,'sampled_us','sample_age_ms','pool','free','ready',
@@ -123,6 +123,8 @@ export function telemetrySummary(samples) {
   return {samples:good.length,api_errors:samples.length-good.length,events,
     counter_delta:counterDelta(epoch?null:good[0]?.status,good.at(-1)?.status),
     ncm_last:good.at(-1)?.status.usb.ncm,
+    usb_fifo_last:{configured:good.at(-1)?.status.usb.ncm_double_buffer_configured,
+      endpoint:good.at(-1)?.status.usb.ncm_in_ep},
     usb_queue_last:good.at(-1)?.status.usb.tx_queue,
     temperature_c:stats(good.map(s=>s.status.temperature_c)),rssi:stats(good.map(s=>s.status.wifi.rssi)),
     cpu_samples:cpu.length,cpu_load:Object.fromEntries([0,1].map(id=>[id,stats(cpu.map(c=>c.cores.find(v=>v.id===id)?.load_pct))])),
@@ -199,6 +201,8 @@ export function reportMarkdown(result) {
       'Failed sync calls = tx_dropped + tx_timeout + tx_no_host. tx_dropped breakdown = tx_busy_exhausted + tx_no_mem + tx_invalid_state + tx_other_error.',
       'tx_busy counts rejected attempts, not packets or NTB occupancy. tx_wait_* measures whole TX calls (including failures), not bus completion; histogram buckets are disjoint.',
       'Lifetime maxima are retained in status.ndjson; they are not per-test maxima. Missing fields on older firmware remain n/a.');
+    const fifo=t.usb_fifo_last;
+    lines.push('', `NCM IN hardware double FIFO: ${fifo?.configured===true?`configured (128 B, endpoint ${fifo.endpoint})`:fifo?.configured===false?'disabled':'unknown (older firmware)'}. Configuration acknowledgement, not hardware register readback; frame queue and NTB pool are separate.`);
     const q=t.usb_queue_last;
     if(q?.enabled)lines.push('',
       `USB TX worker queue: capacity=${q.capacity}, in_use=${q.in_use}, pending=${q.pending}, active=${q.worker_active}, lifetime high_water=${q.high_water}; pre-send expiry=${q.max_age_ms} ms.`,

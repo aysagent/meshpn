@@ -1,4 +1,16 @@
 menu "MeshPN diagnostic firmware"
+config MESHVPN_USB_NCM_DOUBLE_BUFFER
+    bool "Experimental double hardware FIFO for NCM bulk IN"
+    depends on IDF_TARGET_ESP32S3 && TINYUSB_NET_MODE_NCM
+    depends on !TINYUSB_MSC_ENABLED && TINYUSB_CDC_COUNT <= 1 && TINYUSB_VENDOR_COUNT = 0
+    default n
+    help
+        Configure the TinyUSB DWC2 controller before initialization to hold
+        two 64-byte packets on the network IN endpoint (64 extra FIFO bytes).
+        Does not enlarge frame queues, NTB pools or change event waits.
+        Uses the default esp_tinyusb FS descriptor, as installed by iot_bridge.
+        Disable to compare with the single-FIFO baseline.
+
 config MESHVPN_USB_TX_EVENT_WAIT
     bool "Wait for NCM completion in the USB TX worker"
     depends on MESHVPN_USB_TX_QUEUE && MESHVPN_NCM_TELEMETRY

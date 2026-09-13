@@ -2,6 +2,67 @@
 
 Дата аудита: 2026-09-11. Исходники аудита: checkout `b28f3af`. Ниже сохранены исходные находки; статус первого исправления указан отдельно.
 
+## Эксперимент: двойной аппаратный FIFO NCM IN (2026-09-13)
+
+DHCP-исправление `fd1d770` проверено двумя холодными прогонами, начало
+09:19:58 / 09:50:40 UTC, discovery uptime 9/12 с. В обоих start-delay 60 с
+без потерь board/server ping, API errors=0, timing anomalies=0/26.
+Прежний стартовый провал не воспроизвёлся. Это подтверждает исправление
+наблюдавшегося сценария, а не отсутствие всех возможных DHCP-сбоев.
+
+Остаётся насыщение: при target=10M receiver median 8,45/8,50 Мбит/с,
+UDP loss 15,17/14,69%, queue losses 15,17/14,79%. На 6–8M встречаются
+короткие переполнения даже при существенно меньшей средней нагрузке.
+NTB в насыщении ~7,2 КБ / 6,3 мс; backlog gap ~0,06 мс — около 1%
+от этого цикла. Устранение только меж-NTB промежутка не обещает большой
+прибавки. Это измерение включает обработку completion, не чистое время шины.
+
+В установленном `espressif/tinyusb` DWC2 по умолчанию
+`bm_double_buffered=0`: bulk IN FIFO хранит один USB-пакет (64 B на FS).
+Есть штатный pre-init `tud_configure(TUD_CFGID_DWC2)`, позволяющий удвоить
+FIFO выбранного bulk IN endpoint. См. [TinyUSB API](https://github.com/hathach/tinyusb/blob/0.21.0/src/device/usbd.h)
+и [DWC2 FIFO allocator](https://github.com/hathach/tinyusb/blob/0.21.0/src/portable/synopsys/dwc2/dcd_dwc2.c).
+Гипотеза: два пакета в FIFO уменьшат паузы подачи данных между обслуживанием
+прерываний. Текущие данные **не доказывают**, что именно FIFO ограничивает скорость.
+
+В defaults включён `CONFIG_MESHVPN_USB_NCM_DOUBLE_BUFFER=y`. До установки
+TinyUSB разбирается тот же встроенный FS descriptor, который использует
+iot_bridge. Выбирается только bulk IN в data alternate 1 внутри NCM IAD:
+EP0x82 без CDC или EP0x84 с CDC. Номер не захардкожен; неизвестный/неоднозначный
+descriptor или поздний init дают явную ошибку. Сохраняется default VBUS policy.
+Kconfig ограничивает эксперимент ESP32-S3/NCM с максимум одним CDC, без MSC/vendor.
+Если bridge перейдёт на пользовательские descriptors, этот путь нужно пересмотреть.
+
+Меняется только аппаратный FIFO сети **64 → 128 B**. Дополнительные 64 B —
+память USB-контроллера, не internal/DMA heap и не PSRAM. По реальному allocator
+при CDC+NCM заняты 144 из 256 слов FIFO (62 RX + 16 EP0 + 2 CDC notification +
+16 CDC data + 16 NCM notification + 32 NCM data), остаётся 112 слов.
+CDC FIFO не меняется. Worker queue=8, NCM pool=6, NTB limits, event wait=25ms,
+expiry=50ms, копирования, приоритеты, affinity, Wi-Fi и DHCP остаются прежними.
+Новых задач/аллокаторов/обработчиков ISR нет; managed dependencies не правятся.
+
+`usb.ncm_double_buffer_configured` и `usb.ncm_in_ep` сохраняются в status.ndjson
+и сводке perf. Это подтверждение принятой настройки перед init, **не чтение
+регистров**. Старые прошивки показывают unknown, а не disabled.
+Host-тесты используют реальные FS descriptors с/без CDC и настоящий allocator
+с RAM-регистрами; отдельно проверяют malformed input, поздний init, ошибку
+configure, сохранение VBUS policy и сериализацию. Они не моделируют шину/IRQ.
+
+После пересборки/прошивки и отключения/подключения питания:
+
+```bash
+npm run device:perf:usb-down -- 62.84.120.30 --start-delay 60
+```
+
+Проверить `NCM IN hardware double FIFO: configured`, `capacity=8`, event wait
+enabled. Сравнить с двумя `fd1d770` прогонами все queue losses и receiver loss
+на 6–8M, throughput на 9–10M, completion mean, ping board/server, API errors.
+Не считать снижение одного retry успехом. Затем проверить обычный both/quick,
+админку и unplug/replug. Аппаратный эффект ещё не проверен.
+Откат: отключить `MESHVPN_USB_NCM_DOUBLE_BUFFER` в выбранном sdkconfig/menuconfig
+(при пересоздании конфига — также в defaults), пересобрать и перепрошить.
+Не менять одновременно другие размеры или таймауты.
+
 ## Сохранение DHCP-аренд при DNS refresh (2026-09-13)
 
 В присланных `ping.ndjson`/`status.ndjson` холодного запуска с `--start-delay 60`

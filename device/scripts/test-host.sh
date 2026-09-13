@@ -16,6 +16,10 @@ for variant in 0:0 1:0 1:1; do
     -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx.c -o "$test_dir/usb-tx-$queue_enabled-$event_enabled"
   "$test_dir/usb-tx-$queue_enabled-$event_enabled"
 done
+"$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_NCM_DOUBLE_BUFFER=1 \
+  -DCONFIG_MESHVPN_USB_PROFILE_NCM=1 -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
+  -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx.c -o "$test_dir/usb-double-fifo"
+"$test_dir/usb-double-fifo"
 for event_enabled in 0 1; do
   "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_TX_EVENT_WAIT="$event_enabled" -DCONFIG_MESHVPN_USB_TX_QUEUE=1 \
     -Idevice/tests/queue_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
@@ -28,6 +32,16 @@ done
 python3 -B device/tests/test_instrument_ncm.py
 ncm_src=device/managed_components/espressif__tinyusb/src
 if [[ -f "$ncm_src/class/net/ncm_device.c" ]]; then
+  python3 -B device/tests/test_dwc2_fifo.py
+  usb_wrapper=device/managed_components/espressif__esp_tinyusb
+  for cdc_count in 0 1; do
+    "$cc" "${flags[@]}" -DCFG_TUD_CDC="$cdc_count" -DCONFIG_TINYUSB_CDC_ENABLED="$cdc_count" \
+      -DMESHVPN_DESCRIPTOR_SOURCE="\"$root/$usb_wrapper/usb_descriptors.c\"" \
+      -Idevice/tests/ncm_stubs -Idevice/tests/cpu_stubs -I"$ncm_src" \
+      -I"$usb_wrapper/include_private" -I"$usb_wrapper/include" \
+      -Idevice/components/meshvpn_usb/include device/tests/test_usb_fifo.c -o "$test_dir/usb-fifo-descriptor-$cdc_count"
+    "$test_dir/usb-fifo-descriptor-$cdc_count"
+  done
   python3 device/scripts/instrument-ncm.py "$ncm_src/class/net/ncm_device.c" "$test_dir/ncm_device.c"
   for event_enabled in 0 1; do
     "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_TX_EVENT_WAIT="$event_enabled" -DMESHVPN_NCM_SOURCE="\"$test_dir/ncm_device.c\"" \

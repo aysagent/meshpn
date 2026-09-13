@@ -12,6 +12,8 @@ extern "C" {
 
 typedef struct {
     bool host_ready;      /**< USB host has configured the device */
+    bool ncm_double_buffer_configured; /**< init accepted; not register readback */
+    uint8_t ncm_in_ep;    /**< experiment endpoint address, zero when disabled */
     uint32_t tx_ok;
     uint32_t tx_retried;  /**< successfully accepted frames that needed a retry */
     uint32_t tx_dropped;  /**< failed frames, excluding timeout and initial no-host */
