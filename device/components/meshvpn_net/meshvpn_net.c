@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "dhcpserver/dhcpserver.h"
+#include "meshvpn_net_dhcp.h"
 #include "esp_bridge.h"
 #include "esp_bridge_events.h"
 #include "esp_event.h"
@@ -122,32 +122,12 @@ static void meshvpn_net_refresh_napt_flags(void)
  */
 static void meshvpn_net_configure_lan_dhcp(esp_netif_t *netif)
 {
-    esp_netif_ip_info_t ip;
-    if (!netif || esp_netif_get_ip_info(netif, &ip) != ESP_OK) {
-        return;
+    if (!netif) return;
+    esp_err_t err = meshvpn_net_apply_lan_dhcp(netif);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "LAN DHCP configuration failed on %s: %s",
+                 esp_netif_get_ifkey(netif), esp_err_to_name(err));
     }
-
-    esp_netif_dns_info_t dns = {
-        .ip = {
-            .type = IPADDR_TYPE_V4,
-            .u_addr = { .ip4 = ip.ip },
-        },
-    };
-
-    dhcps_offer_t offer_dns = OFFER_DNS;
-    uint8_t offer_router = 1;
-    uint32_t lease_minutes = 2;
-
-    esp_netif_dhcps_stop(netif);
-    esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_ROUTER_SOLICITATION_ADDRESS,
-                           &offer_router, sizeof(offer_router));
-    esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER,
-                           &offer_dns, sizeof(offer_dns));
-    esp_netif_dhcps_option(netif, ESP_NETIF_OP_SET, ESP_NETIF_IP_ADDRESS_LEASE_TIME,
-                           &lease_minutes, sizeof(lease_minutes));
-    esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns);
-    /* No CAPPORT option: the admin login is not a captive-portal API. */
-    esp_netif_dhcps_start(netif);
 }
 
 static void meshvpn_net_read_offered_dns(esp_netif_t *netif, char *out, size_t out_len)

@@ -5,6 +5,10 @@ test_dir="$(mktemp -d /tmp/meshpn-host-tests.XXXXXX)"
 cd "$root"
 cc="${CC:-cc}"
 flags=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined)
+"$cc" "${flags[@]}" -Idevice/tests/dhcp_stubs -Idevice/tests/stubs \
+  -Idevice/components/meshvpn_net/include device/tests/test_lan_dhcp.c \
+  device/components/meshvpn_net/meshvpn_net_dhcp.c -o "$test_dir/lan-dhcp"
+"$test_dir/lan-dhcp"
 for variant in 0:0 1:0 1:1; do
   queue_enabled=${variant%:*}; event_enabled=${variant#*:}
   "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_TX_EVENT_WAIT="$event_enabled" -DCONFIG_MESHVPN_USB_PROFILE_NCM=1 -DCONFIG_MESHVPN_USB_TX_QUEUE="$queue_enabled" \
