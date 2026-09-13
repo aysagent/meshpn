@@ -160,6 +160,9 @@ export const ncmCounterFields = ['samples','initializations','busy','busy_no_fre
   'ntb_started','start_errors','bytes_started','frames_started','ntb_completed','completion_errors',
   'bytes_completed','zlp_completed','zlp_errors','completion_timed','completion_us',
   'completion_le_1ms','completion_1_5ms','completion_5_25ms','completion_gt_25ms','backlog_gaps','backlog_gap_us'];
+export const dwc2CounterFields = ['submitted','resets','refill_calls','refill_empty','refill_bytes','txfe_irqs',
+  'isr_completions','zlp_completions','service_timed','service_us','task_timed','task_us',
+  'task_le_100us','task_100_1000us','task_1_5ms','task_gt_5ms','unmatched','overwritten'];
 export const usbQueueCounterFields = ['submitted','enqueued','completed','sent','send_failed','full','no_host',
   'invalid_length','not_ready','enqueue_failed','expired','stale','bytes_copied','init_failed','queue_wait_us','residence_us',
   'capacity_waits','capacity_wakeups','capacity_timeouts','capacity_disconnects','capacity_wait_us'];
@@ -191,6 +194,7 @@ export function summarizeUsbDownSweep(records, pings=[]) {
 export function counterDelta(before,after) {
   const reset=!before||!after||after.uptime_sec<before.uptime_sec;
   return Object.fromEntries([...usbCounterFields.map(k=>`usb.${k}`),...ncmCounterFields.map(k=>`usb.ncm.${k}`),
+    ...dwc2CounterFields.map(k=>`usb.dwc2.${k}`),
     ...usbQueueCounterFields.map(k=>`usb.tx_queue.${k}`),'net.ap_ip4_rx','net.lan_ip4_rx'].map(key=>{
     const get=v=>key.split('.').reduce((o,k)=>o?.[k],v),a=get(before),b=get(after);
     return [key,!reset&&Number.isFinite(a)&&Number.isFinite(b)&&b>=a?b-a:null];

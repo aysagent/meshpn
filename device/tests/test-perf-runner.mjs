@@ -10,7 +10,7 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, quote, command, iperfArgs, parseIperf, stats, parsePing, summarize,
-  measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer, ncmCounterFields, usbQueueCounterFields, hasPingProblem, summarizeUsbDownSweep } from '../scripts/perf-lib.mjs';
+  measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer, ncmCounterFields, dwc2CounterFields, usbQueueCounterFields, hasPingProblem, summarizeUsbDownSweep } from '../scripts/perf-lib.mjs';
 import { discoverBoard, checkRoute, requestBoard, sshArgs } from '../scripts/perf-network.mjs';
 import { prepareIperfBinding, macosBuildContext, iperfEnvironment, verifyIperfBinding, iperfError } from '../scripts/perf-bind.mjs';
 import { executeSchedule, cleanStatus, telemetrySummary, reportMarkdown, main } from '../scripts/perf-runner.mjs';
@@ -336,6 +336,28 @@ test('USB TX telemetry survives sanitization, reports per-batch deltas and keeps
   assert.ok(reportMarkdown({records:[{...record,path:'usb',batch_counters:{}}]}).includes('| n/a |'));
   after.uptime_sec=0;
   assert.equal(counterDelta(before,after)['usb.tx_wait_us'],null);
+});
+
+test('DWC2 readback, service means, histograms and unknown/reset windows',()=>{
+  const before=fixture(),after=fixture();
+  before.usb.dwc2={available:true,...Object.fromEntries(dwc2CounterFields.map(k=>[k,0]))};
+  after.usb.dwc2={...before.usb.dwc2,fifo_valid:true,endpoint:132,tx_fifo_bytes:128,tx_fifo_start_words:112,
+    rx_fifo_words:62,gahbcfg:1,service_timed:2,service_us:12000,task_timed:2,task_us:200,
+    task_le_100us:2,refill_calls:100,refill_bytes:12000,txfe_irqs:98,secret:'must not survive'};
+  const clean=cleanStatus(after);
+  assert.equal(clean.usb.dwc2.secret,undefined);
+  const delta=counterDelta(cleanStatus(before),clean);
+  assert.equal(delta['usb.dwc2.service_us'],12000);
+  assert.equal(delta['usb.dwc2.tx_fifo_bytes'],undefined);
+  const telemetry=telemetrySummary([{status:clean,elapsed_ms:0,phase:'baseline-idle'}]);
+  const report=reportMarkdown({telemetry,records:[{id:'0001',batch_counters:delta}]});
+  assert.match(report,/endpoint 132, TX 128 B at word 112, RX 62 words/);
+  assert.match(report,/120\.00 \| 6\.00 \| 0\.10 \| 2 \/ 0 \/ 0 \/ 0 \| 0 \/ 0/);
+  after.uptime_sec=-1;
+  assert.equal(counterDelta(before,after)['usb.dwc2.service_us'],null);
+  delete before.usb.dwc2;
+  assert.equal(counterDelta(before,clean)['usb.dwc2.task_us'],null);
+  assert.match(reportMarkdown({telemetry:telemetrySummary([{status:cleanStatus(before),elapsed_ms:0,phase:'baseline-idle'}])}),/DWC2 FIFO register snapshot: unavailable/);
 });
 
 test('NCM FIFO configuration survives sanitization and reports unknown for old firmware',()=>{

@@ -2,6 +2,60 @@
 
 Дата аудита: 2026-09-11. Исходники аудита: checkout `b28f3af`. Ниже сохранены исходные находки; статус первого исправления указан отдельно.
 
+## Диагностика DWC2 FIFO и ISR (2026-09-13)
+
+Первый прогон `09ffd5f` не показал выигрыша от double FIFO: receiver
+на 9/10M = 8,32/8,40 Мбит/с против 8,52/8,50 в последнем `fd1d770`.
+Один WAN-прогон не доказывает регрессию. `configured` подтверждает только
+принятие настройки, а прежний NCM completion включает и шину, и обработку.
+
+Добавлен отдельный `CONFIG_MESHVPN_DWC2_TELEMETRY` (в defaults включён).
+Генератор проверяет SHA256 установленного DWC2 и меняет только build-copy;
+managed_components не редактируются. Очередь 8, пул NTB 6, expiry 50 мс,
+event wait 25 мс и double FIFO остаются прежними.
+
+В `usb.dwc2` доступны:
+
+- readback DIEPTXF выбранного NCM IN, GRXFSIZ и GAHBCFG при DCD submit;
+  снимок устаревает в idle и инвалидируется при USB reset/close-all;
+- refill calls / zero-byte calls / bytes и число обслуживаний TXFE endpoint;
+  это не число всех USB-прерываний, начальные заполнения входят в refill;
+- DCD submit → completion observation в ISR (`service_*`);
+- ISR observation → NCM callback (`task_*`), с четырьмя непересекающимися
+  корзинами ≤100 мкс / 100–1000 мкс / 1–5 мс / >5 мс;
+- unmatched/overwritten для контроля неполных пар замеров. ZLP учитываются
+  отдельно, но не входят в service/task timing.
+
+Service **не равен чистому времени шины**: включает задержку обслуживания
+прерывания. Task delay не равен времени входа в ISR. Callback NCM потребляет
+отметку до запуска следующей передачи; reset сбрасывает незавершённые пары.
+Успешный completion не доказывает доставку приложению на Mac.
+Web читает только копию счётчиков под короткой блокировкой, не USB-регистры.
+Нет динамической памяти или логирования на каждый пакет. Но счётчики на
+каждом refill добавляют overhead: сравнивать с выключенной диагностикой.
+DMA Kconfig сам по себе не означает активный DMA: установленный драйвер
+выбирает его по аппаратному GHWCFG2. ISR hook здесь относится к slave path
+ESP32-S3; при иной аппаратуре требуется повторный аудит.
+
+После прошивки и холодного старта повторить:
+
+```sh
+npm run device:perf:usb-down -- 62.84.120.30 --start-delay 60
+```
+
+Ожидаемый readback double FIFO — 128 B. Проверить пары service/task,
+unmatched/overwritten и refill bytes/call на 6–8M и в насыщении.
+`service_max_us`/`task_max_us` — lifetime maxima, не максимумы теста.
+Для контроля overhead выключить только `CONFIG_MESHVPN_DWC2_TELEMETRY`;
+для сравнения FIFO отдельно выключить `CONFIG_MESHVPN_USB_NCM_DOUBLE_BUFFER`.
+Не менять оба параметра одновременно.
+
+Проверено до аппаратного прогона: ESP-IDF 5.4.1 / ESP32-S3 build с
+включёнными DWC2 hooks; host-suite ASan/UBSan, включая реальные generated
+FIFO writer / slave ISR bodies на модели регистров, NCM callback ordering,
+ZLP, reset и границы гистограмм; perf-runner — 31 pass, 1 macOS-only skip.
+Модель регистров не заменяет измерение реальной USB-шины.
+
 ## Эксперимент: двойной аппаратный FIFO NCM IN (2026-09-13)
 
 DHCP-исправление `fd1d770` проверено двумя холодными прогонами, начало

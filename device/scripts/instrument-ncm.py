@@ -14,6 +14,9 @@ SOURCE_SHA256 = "7a73d088e40a32064d4142a78dfb72745e01c04b7abdfb6fed4392bdcdc3e30
 
 HELPER = '''
 #include "meshvpn_ncm_diag.h"
+#if CONFIG_MESHVPN_DWC2_TELEMETRY
+#include "meshvpn_dwc2_diag.h"
+#endif
 #if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
 #include "meshvpn_usb_tx_queue.h"
 #endif
@@ -67,8 +70,16 @@ def instrument(source: bytes) -> str:
             "  mesh_ncm_observe(MESH_NCM_BUSY, 0, 0);\n  return false;\n} // tud_network_can_xmit")
     replace("} // tud_network_xmit", "  mesh_ncm_observe(MESH_NCM_SAMPLE, 0, 0);\n} // tud_network_xmit")
     replace("} // netd_init", "  mesh_ncm_observe(MESH_NCM_INIT, 0, 0);\n} // netd_init")
+    replace("  return drv_len;\n} // netd_open", '''  #if CONFIG_MESHVPN_DWC2_TELEMETRY
+  meshvpn_dwc2_bind(ncm_interface.ep_in);
+  #endif
+  return drv_len;
+} // netd_open''')
     anchor = "  } else if (ep_addr == ncm_interface.ep_in) {\n    // transmission of an NTB finished"
     replace(anchor, '''  } else if (ep_addr == ncm_interface.ep_in) {
+    #if CONFIG_MESHVPN_DWC2_TELEMETRY
+    meshvpn_dwc2_task(ep_addr, xferred_bytes);
+    #endif
     if (ncm_interface.xmit_tinyusb_ntb) {
       mesh_ncm_observe(result == XFER_RESULT_SUCCESS ? MESH_NCM_COMPLETE : MESH_NCM_COMPLETE_ERROR, xferred_bytes, 0);
     } else {

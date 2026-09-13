@@ -27,7 +27,15 @@ bool usbd_edpt_xfer(uint8_t rhport, uint8_t ep, uint8_t *buffer, uint16_t bytes,
     (void)rhport; (void)buffer;
     assert(ep == 0x81 && !is_isr);
     submissions++;
-    if (submit_ok) { endpoint_busy = true; last_bytes = bytes; }
+    if (submit_ok) {
+        endpoint_busy = true; last_bytes = bytes;
+#if CONFIG_MESHVPN_DWC2_TELEMETRY
+        meshvpn_dwc2_stats_t s;
+        meshvpn_dwc2_get_stats(&s);
+        assert(s.unmatched == 0 && s.overwritten == 0);
+        meshvpn_dwc2_submit(ep, bytes, 32u<<16, 62, 1);
+#endif
+    }
     return submit_ok;
 }
 bool usbd_edpt_open(uint8_t rhport, const tusb_desc_endpoint_t *desc) { (void)rhport; (void)desc; return true; }
@@ -52,6 +60,10 @@ static void init(void)
     ncm_interface.ep_notif=0x83;
     ncm_interface.ep_size=64;
     ncm_interface.itf_data_alt=1;
+#if CONFIG_MESHVPN_DWC2_TELEMETRY
+    meshvpn_dwc2_reset();
+    meshvpn_dwc2_bind(ncm_interface.ep_in);
+#endif
 }
 static meshvpn_ncm_stats_t stats(void)
 {
@@ -67,6 +79,9 @@ static void complete(xfer_result_t result)
     uint16_t bytes=last_bytes;
     endpoint_busy=false;
     now_us+=2000;
+#if CONFIG_MESHVPN_DWC2_TELEMETRY
+    meshvpn_dwc2_complete(0x81,bytes);
+#endif
 #if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
     unsigned notifications_before=capacity_notifications;
 #endif

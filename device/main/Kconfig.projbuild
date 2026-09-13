@@ -1,4 +1,13 @@
 menu "MeshPN diagnostic firmware"
+config MESHVPN_DWC2_TELEMETRY
+    bool "Experimental NCM DWC2 ISR and FIFO telemetry"
+    depends on IDF_TARGET_ESP32S3 && MESHVPN_NCM_TELEMETRY
+    default n
+    help
+        Read FIFO registers in the DCD, count FIFO writes, and time transfer
+        submission to ISR completion and ISR to NCM callback. Adds overhead
+        per FIFO refill; disable for a throughput baseline. No payload logs.
+
 config MESHVPN_USB_NCM_DOUBLE_BUFFER
     bool "Experimental double hardware FIFO for NCM bulk IN"
     depends on IDF_TARGET_ESP32S3 && TINYUSB_NET_MODE_NCM

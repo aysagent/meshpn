@@ -33,6 +33,7 @@
 #include "meshvpn_usb.h"
 #include "meshvpn_usb_tx_queue.h"
 #include "meshvpn_ncm_diag.h"
+#include "meshvpn_dwc2_diag.h"
 #include "meshvpn_vpn.h"
 #include "meshvpn_wifi.h"
 #include "web_ui.h"
@@ -415,6 +416,28 @@ static esp_err_t handler_api_status(httpd_req_t *req)
         cJSON_AddNumberToObject(ncm, "completion_max_us", (double)nd.completion_max_us);
         cJSON_AddNumberToObject(ncm, "backlog_gap_us", (double)nd.backlog_gap_us);
         cJSON_AddNumberToObject(ncm, "backlog_gap_max_us", (double)nd.backlog_gap_max_us);
+    }
+
+    meshvpn_dwc2_stats_t dd;
+    meshvpn_dwc2_get_stats(&dd);
+    cJSON *dwc = cJSON_AddObjectToObject(usb, "dwc2");
+    cJSON_AddBoolToObject(dwc, "available", dd.available);
+    if (dd.available) {
+#define ADD_DWC_COUNTER(name) cJSON_AddNumberToObject(dwc, #name, dd.name);
+        MESHVPN_DWC2_COUNTERS(ADD_DWC_COUNTER)
+#undef ADD_DWC_COUNTER
+        cJSON_AddBoolToObject(dwc, "fifo_valid", dd.fifo_valid);
+        cJSON_AddNumberToObject(dwc, "endpoint", dd.endpoint);
+        cJSON_AddNumberToObject(dwc, "tx_fifo_reg", dd.tx_fifo_reg);
+        cJSON_AddNumberToObject(dwc, "tx_fifo_bytes", (dd.tx_fifo_reg >> 16) * 4);
+        cJSON_AddNumberToObject(dwc, "tx_fifo_start_words", dd.tx_fifo_reg & 0xffff);
+        cJSON_AddNumberToObject(dwc, "rx_fifo_words", dd.rx_fifo_words);
+        cJSON_AddNumberToObject(dwc, "gahbcfg", dd.gahbcfg);
+        cJSON_AddNumberToObject(dwc, "sampled_us", (double)dd.sampled_us);
+        cJSON_AddNumberToObject(dwc, "service_us", (double)dd.service_us);
+        cJSON_AddNumberToObject(dwc, "service_max_us", (double)dd.service_max_us);
+        cJSON_AddNumberToObject(dwc, "task_us", (double)dd.task_us);
+        cJSON_AddNumberToObject(dwc, "task_max_us", (double)dd.task_max_us);
     }
 
     cJSON *vpn = cJSON_AddObjectToObject(root, "vpn");

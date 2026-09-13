@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, checked, command, iperfArgs, parseIperf, parsePing, stats,
-  summarize, measurementPlan, counterDelta, usbCounterFields, ncmCounterFields, usbQueueCounterFields, hasPingProblem, summarizeUsbDownSweep } from './perf-lib.mjs';
+  summarize, measurementPlan, counterDelta, usbCounterFields, ncmCounterFields, dwc2CounterFields, usbQueueCounterFields, hasPingProblem, summarizeUsbDownSweep } from './perf-lib.mjs';
 import { discoverBoard, checkRoute, sshArgs, startServers } from './perf-network.mjs';
 import { prepareIperfBinding, iperfEnvironment, verifyIperfBinding, iperfError } from './perf-bind.mjs';
 import { pingEvent, blackoutDiagnostics } from './perf-diagnostics.mjs';
@@ -86,6 +86,8 @@ export function cleanStatus(s) {
     usb:{...pick(s.usb,['profile','host_ready','tx_mode','ncm_double_buffer_configured','ncm_in_ep',...usbCounterFields,'tx_attempts_max','tx_wait_max_us']),
       tx_queue:pick(s.usb?.tx_queue,['enabled',...usbQueueCounterFields,'capacity','max_age_ms','pending','in_use','high_water',
         'worker_active','event_wait','queue_wait_max_us','residence_max_us']),
+      dwc2:pick(s.usb?.dwc2,['available','fifo_valid','endpoint','tx_fifo_reg','tx_fifo_bytes','tx_fifo_start_words',
+        'rx_fifo_words','gahbcfg','sampled_us','service_max_us','task_max_us',...dwc2CounterFields]),
       ncm:pick(s.usb?.ncm,['available',...ncmCounterFields,'sampled_us','sample_age_ms','pool','free','ready',
         'glue','active','glue_frames','max_ntb','max_datagrams','free_min','ready_max','completion_max_us','backlog_gap_max_us'])},
     memory:Object.fromEntries(['internal','dma','psram'].map(k=>[k,pick(s.memory?.[k],['total','free','minimum_free','largest_block'])])),
@@ -123,6 +125,7 @@ export function telemetrySummary(samples) {
   return {samples:good.length,api_errors:samples.length-good.length,events,
     counter_delta:counterDelta(epoch?null:good[0]?.status,good.at(-1)?.status),
     ncm_last:good.at(-1)?.status.usb.ncm,
+    dwc2_last:good.at(-1)?.status.usb.dwc2,
     usb_fifo_last:{configured:good.at(-1)?.status.usb.ncm_double_buffer_configured,
       endpoint:good.at(-1)?.status.usb.ncm_in_ep},
     usb_queue_last:good.at(-1)?.status.usb.tx_queue,
@@ -202,6 +205,8 @@ export function reportMarkdown(result) {
       'tx_busy counts rejected attempts, not packets or NTB occupancy. tx_wait_* measures whole TX calls (including failures), not bus completion; histogram buckets are disjoint.',
       'Lifetime maxima are retained in status.ndjson; they are not per-test maxima. Missing fields on older firmware remain n/a.');
     const fifo=t.usb_fifo_last;
+    const hw=t.dwc2_last;
+    lines.push('', `DWC2 FIFO register snapshot: ${hw?.available&&hw?.fifo_valid?`endpoint ${hw.endpoint}, TX ${hw.tx_fifo_bytes} B at word ${hw.tx_fifo_start_words}, RX ${hw.rx_fifo_words} words, GAHBCFG ${hw.gahbcfg}`:'unavailable'}. Captured at DCD submission, not a live API register read.`);
     lines.push('', `NCM IN hardware double FIFO: ${fifo?.configured===true?`configured (128 B, endpoint ${fifo.endpoint})`:fifo?.configured===false?'disabled':'unknown (older firmware)'}. Configuration acknowledgement, not hardware register readback; frame queue and NTB pool are separate.`);
     const q=t.usb_queue_last;
     if(q?.enabled)lines.push('',
@@ -241,6 +246,19 @@ export function reportMarkdown(result) {
         const d=r.batch_counters,v=k=>d[`usb.ncm.${k}`];
         const mean=(sum,count,scale=1)=>Number.isFinite(v(sum))&&Number.isFinite(v(count))&&v(count)>0?fmt(v(sum)/v(count)/scale):'n/a';
         lines.push(`| ${r.id} | ${v('ntb_started')??'n/a'} | ${mean('bytes_started','ntb_started')} | ${mean('frames_started','ntb_started')} | ${v('busy_no_free')??'n/a'} | ${mean('completion_us','completion_timed',1000)} | ${mean('backlog_gap_us','backlog_gaps',1000)} | ${v('start_errors')??'n/a'} / ${v('completion_errors')??'n/a'} |`);
+      }
+    }
+    if([...usbBatches.values()].some(r=>Number.isFinite(r.batch_counters['usb.dwc2.submitted']))) {
+      lines.push('', '## DWC2 service diagnostics by batch', '',
+        'Experimental instrumentation adds per-refill overhead. Service = DCD submission → completion observed in ISR (includes bus and interrupt-service delay); task delay = that ISR observation → NCM callback. Neither measures pure wire time or ISR entry latency. Timing excludes ZLPs; refill and IRQ counts include them. Means cover completions in the window, possibly submitted earlier.',
+        'Refill calls include initial fills and TXFE handling; empty means zero bytes written. TXFE counts endpoint service events, not whole-controller IRQ entries. Histogram buckets are disjoint; mismatches/overwrites make timing incomplete.', '',
+        '| Test | TXFE events | Refill calls / empty | Bytes/refill | Service mean ms | ISR→NCM mean ms | Task ≤100us / 100–1000us / 1–5ms / >5ms | Unmatched / overwritten |',
+        '|---|---:|---|---:|---:|---:|---|---|');
+      for(const r of usbBatches.values()) {
+        const v=k=>r.batch_counters[`usb.dwc2.${k}`];
+        const mean=(sum,count,scale=1)=>Number.isFinite(v(sum))&&v(count)>0?fmt(v(sum)/v(count)/scale):'n/a';
+        const hist=['task_le_100us','task_100_1000us','task_1_5ms','task_gt_5ms'].map(k=>v(k)??'n/a').join(' / ');
+        lines.push(`| ${r.id} | ${v('txfe_irqs')??'n/a'} | ${v('refill_calls')??'n/a'} / ${v('refill_empty')??'n/a'} | ${mean('refill_bytes','refill_calls')} | ${mean('service_us','service_timed',1000)} | ${mean('task_us','task_timed',1000)} | ${hist} | ${v('unmatched')??'n/a'} / ${v('overwritten')??'n/a'} |`);
       }
     }
     if([...usbBatches.values()].some(r=>r.batch_counters['usb.tx_queue.submitted']>0)) {
