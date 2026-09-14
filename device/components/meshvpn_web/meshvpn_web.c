@@ -382,6 +382,7 @@ static void add_led_status(cJSON *root)
     cJSON_AddBoolToObject(charge, "controllable", false);
     cJSON_AddNullToObject(charge, "enabled");
 }
+void meshvpn_wifi_diagnostics_json(cJSON *wifi);
 static esp_err_t handler_api_status(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) {
@@ -416,6 +417,7 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddStringToObject(wifi, "ssid", ws.ssid);
     cJSON_AddStringToObject(wifi, "ip", ws.ip);
     cJSON_AddNumberToObject(wifi, "disconnect_reason", ws.disconnect_reason);
+    meshvpn_wifi_diagnostics_json(wifi);
 
     cJSON *net = cJSON_AddObjectToObject(root, "net");
     cJSON_AddBoolToObject(net, "bridge", ns.bridge_running);

@@ -5,6 +5,9 @@ test_dir="$(mktemp -d /tmp/meshpn-host-tests.XXXXXX)"
 cd "$root"
 cc="${CC:-cc}"
 flags=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined)
+"$cc" "${flags[@]}" -pthread -Idevice/tests/wifi_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
+  -Idevice/components/meshvpn_wifi/include device/tests/test_wifi_diag.c -o "$test_dir/wifi-diag"
+"$test_dir/wifi-diag"
 "$cc" "${flags[@]}" -pthread -Idevice/tests/led_stubs -Idevice/tests/usb_stubs \
   -Idevice/components/meshvpn_board/include device/tests/test_board_led.c \
   device/components/meshvpn_board/meshvpn_board_led.c -o "$test_dir/board-led"

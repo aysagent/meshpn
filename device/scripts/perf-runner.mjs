@@ -12,6 +12,7 @@ import { discoverBoard, checkRoute, sshArgs, startServers } from './perf-network
 import { prepareIperfBinding, iperfEnvironment, verifyIperfBinding, iperfError } from './perf-bind.mjs';
 import { pingEvent, blackoutDiagnostics } from './perf-diagnostics.mjs';
 import { readBursts, burstDelta, burstMarkdown } from './perf-bursts.mjs';
+import { cleanWifiDiagnostics, wifiMarkdown } from './perf-wifi.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const help=`Usage: npm run device:perf -- [user@]SERVER[:SSH_PORT] [options]
@@ -24,6 +25,7 @@ Required: local/remote iperf3, remote python3, Apple Command Line Tools. Nothing
   --quick                 Smoke test: 3s, 2 measured repeats, no soak
   --usb-down-sweep        USB UDP download 5..10M, 15s x 3 per rate (~7 min)
   --usb-burst-sweep       Same diagnostics, only 6/7/8M (~4 min)
+  --ap-tcp-up             AP TCP upload: 30s warm-up + 3 x 30s, 10s recovery
   --paths auto|usb|ap|both Auto detects paths; 'both' requires USB + AP
   --seconds N             Per throughput test (default 30)
   --runs N                Measured repeats, excluding warm-up (default 5)
@@ -49,12 +51,12 @@ Report: device/perf-results/<timestamp>-<random>/report.md + JSON/raw logs.
 
 // Dependency injection keeps the complete schedule testable without real networking or waits.
 export async function executeSchedule(o, paths, {batch,idle,now=Date.now,check=()=>{}}) {
-  if(o.usbDownSweep) {
+  if(o.usbDownSweep||o.apTcpUp) {
     const plan=measurementPlan(paths,o);
     await idle('baseline-idle',o.idleSeconds);
     for(const [index,test] of plan.entries()) {
       check();await batch(test);
-      if(index<plan.length-1)await idle(`sweep-recovery-${index+1}`,3);
+      if(index<plan.length-1)await idle(`sweep-recovery-${index+1}`,o.apTcpUp?10:3);
     }
     await idle('final-idle',o.idleSeconds);
     return;
@@ -83,7 +85,7 @@ export function cleanStatus(s) {
   // Allowlist: never dump login responses, tokens, environment, or future VPN credentials.
   const pick=(v,keys)=>Object.fromEntries(keys.filter(k=>v?.[k]!==undefined).map(k=>[k,v[k]]));
   return {...pick(s,['board','build','idf','uptime_sec','temperature_c','https_enabled']),
-    wifi:pick(s.wifi,['connected','scanning','state','ip','rssi','disconnect_reason']),
+    wifi:{...pick(s.wifi,['connected','scanning','state','ip','rssi','disconnect_reason']),...cleanWifiDiagnostics(s.wifi)},
     net:pick(s.net,['usb_ip','ap_ip','ap_active','ap_clients','ap_channel','usb_napt','ap_napt','ap_ip4_rx','lan_ip4_rx']),
     usb:{...pick(s.usb,['profile','host_ready','tx_mode','ncm_double_buffer_configured','ncm_in_ep',...usbCounterFields,'tx_attempts_max','tx_wait_max_us']),
       tx_queue:pick(s.usb?.tx_queue,['enabled',...usbQueueCounterFields,'capacity','max_age_ms','pending','in_use','high_water',
@@ -153,6 +155,7 @@ export function telemetrySummary(samples) {
     usb_fifo_last:{configured:good.at(-1)?.status.usb.ncm_double_buffer_configured,
       endpoint:good.at(-1)?.status.usb.ncm_in_ep},
     usb_queue_last:good.at(-1)?.status.usb.tx_queue,
+    wifi_last:good.at(-1)?.status.wifi,
     temperature_c:stats(good.map(s=>s.status.temperature_c)),rssi:stats(good.map(s=>s.status.wifi.rssi)),
     cpu_samples:cpu.length,cpu_load:Object.fromEntries([0,1].map(id=>[id,stats(cpu.map(c=>c.cores.find(v=>v.id===id)?.load_pct))])),
     cpu_collection_us:stats(cpu.map(c=>c.collection_us)),
@@ -300,10 +303,11 @@ export function reportMarkdown(result) {
     }
   }
   lines.push(...burstMarkdown(result.records||[]));
+  lines.push(...wifiMarkdown(result.records||[]));
   lines.push('','## Warnings / omissions','',...(result.warnings||[]).map(s=>`- ${s}`),
     '- Physical USB reconnect, router reboot, sleep/resume, AP-disabled baseline and STA-side admin isolation are not automated; runner does not change device/network settings.',
     '- DHCP was inspected and routes checked; this is not a DHCP renewal or DNS/mDNS test. No serial watchdog log is collected.',
-    '- HT20/HT40 negotiation is not currently exposed by the API.');
+    '- Per-packet Wi-Fi width/MCS and radio retry/completion counters are not exposed; interface bandwidth and peer capabilities are not equivalent.');
   if(result.error)lines.push('',`Error: ${result.error}`);
   return lines.join('\n')+'\n';
 }
@@ -341,6 +345,8 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     result.serverIP=o.serverIP||(await runtime.lookup(o.host,{family:4})).address;
     board=await runtime.discoverBoard(o,signal,log);
     result.paths=board.paths;result.board=cleanStatus(board.initial);
+    if(o.apTcpUp&&!result.board.wifi.tx.available)
+      throw Error('AP upload diagnostics require Wi-Fi TX telemetry; flash current firmware first.');
     for(const p of board.paths) {
       log(`${p.kind.toUpperCase()}: ${p.iface} ${p.address} → ${p.gateway} → ${result.serverIP}`);
       await writeFile(path.join(output,`route-${p.kind}.txt`),await runtime.checkRoute(p,result.serverIP,signal));
@@ -349,7 +355,7 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     if(o.soakMinutes===0)result.warnings.push('Endurance stage disabled.');
     if(o.adminInsecure)result.warnings.push('HTTPS certificate verification explicitly disabled.');
     const plan=measurementPlan(board.paths,o);
-    const estimated=(plan.reduce((sum,t)=>sum+t.seconds,0)+(o.usbDownSweep?(plan.length-1)*3:board.paths.length*2*o.seconds)+2*o.idleSeconds+o.startDelay)/60+o.soakMinutes;
+    const estimated=(plan.reduce((sum,t)=>sum+t.seconds,0)+(o.apTcpUp?(plan.length-1)*10:o.usbDownSweep?(plan.length-1)*3:board.paths.length*2*o.seconds)+2*o.idleSeconds+o.startDelay)/60+o.soakMinutes;
     if(estimated>240)throw Error('Requested suite exceeds 4 hours; reduce --runs/--seconds/--soak-minutes (remote safety deadline is 6 hours).');
     log(`Estimated load/idle time: ${Math.ceil(estimated)} min + process overhead. Close admin UI; keep Mac connected.`);
     caffeine=runtime.spawn('/usr/bin/caffeinate',['-i','-m','-s','-w',String(process.pid)],{stdio:'ignore'});
@@ -428,6 +434,7 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
       // Counters describe the entire batch, not each path separately in a combined test.
       for(const r of measured) {
         r.batch_counters=deltas;
+        r.batch_wifi={before:before?.wifi,after:after?.wifi};
         if(bursts)r.batch_bursts=bursts;
         records.push(r);
         await appendFile(path.join(output,'measurements.ndjson'),JSON.stringify(r)+'\n');
@@ -444,7 +451,7 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     };
     // Fail fast on both directions/protocols before spending an hour on a broken setup.
     if(o.startDelay)await idle('start-delay',o.startDelay,'start-delay');
-    for(const p of board.paths)for(const protocol of ['tcp','udp'])for(const direction of (o.usbDownSweep?['down']:['up','down']))
+    for(const p of board.paths)for(const protocol of (o.apTcpUp?['tcp']:['tcp','udp']))for(const direction of (o.apTcpUp?['up']:o.usbDownSweep?['down']:['up','down']))
       await batch({paths:[p],protocol,direction,rate:protocol==='udp'?5:null,seconds:1,phase:'preflight',warmup:true,run:0});
     await executeSchedule(o,board.paths,{batch,idle,check});
     if(samplerError)throw samplerError;

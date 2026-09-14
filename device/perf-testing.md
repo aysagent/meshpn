@@ -2,6 +2,53 @@
 
 Цель — отделить предел платы от ограничений USB, Wi‑Fi радиоканала и WAN. Каждый эксперимент меняет только один параметр прошивки.
 
+## Диагностика TCP upload через AP
+
+На Mac после прошивки подключить Wi‑Fi к AP платы (USB можно оставить для
+питания и admin-телеметрии), закрыть веб-интерфейс и выполнить:
+
+```bash
+npm run device:flash
+npm run device:perf:ap-up -- 62.84.120.30 --start-delay 60
+```
+
+Preset `--ap-tcp-up`: только AP/TCP/upload, короткий TCP preflight, один
+30-секундный прогрев, три измерения по 30 секунд, паузы восстановления по 10 с.
+Около трёх минут плюс start-delay. Можно увеличить `--seconds` (15..300) и
+`--runs`; `--quick`, USB sweeps и soak несовместимы. Старая прошивка без
+Wi-Fi TX-телеметрии останавливает этот preset до запуска remote iperf.
+Runner не прошивает плату и не меняет Wi‑Fi/USB/маршруты/настройки сервера.
+
+Authenticated `/api/status` теперь содержит `wifi.tx.sta`, `wifi.tx.ap` и
+`wifi.radio`. В отчёте — отдельные таблицы Wi-Fi handoff и radio snapshots;
+`batch_counters` хранит дельты, `batch_wifi` — before/after, `status.ndjson` —
+периодические снимки под нагрузкой. В combined-тестах одинаковые batch-дельты
+нельзя суммировать повторно. Счётчики общие для платы, включая ACK/admin/ICMP.
+
+STA TX — плата → роутер, AP TX — плата → клиент AP. Перехватываются обе точки
+ESP-NETIF: `esp_wifi_internal_tx` и `esp_wifi_internal_tx_by_ref` (ESP-IDF 5.4.1).
+Аргументы, ownership буферов и return code не меняются; повторных отправок нет.
+Учитываются завершённые API-вызовы: accepted/bytes, no_mem, invalid_arg,
+not_ready (IF/CONN/NOT_INIT/NOT_STARTED/STATE/NOT_ASSOC), tx_disallow, post_failed,
+other_error. Время — вход в вызов драйвера → возврат, включая вытеснение задачей,
+не radio completion. Гистограмма ≤100 µs / 100–1000 µs / 1–5 ms / >5 ms
+непересекающаяся; максимум и последний ненулевой код ошибки — lifetime, не
+максимум теста. Missing/reset → n/a. Никаких per-packet логов/аллокаций;
+измерение времени и короткая critical section всё же добавляют overhead.
+
+Radio: текущие primary/secondary channel, power-save enum, ширина интерфейса
+из `esp_wifi_get_bandwidth`, RSSI uplink и RSSI/PHY-флаги клиентов AP. При ошибке
+API — null/available=false. Опрос не запускает сканирование. Индекс клиента
+действителен только внутри снимка; MAC/SSID не экспортируются диагностикой.
+Ширина интерфейса **не является доказательством ширины каждого кадра**, а PHY
+флаги клиента — не текущий MCS/bitrate. Radio-поля опрашиваются последовательно,
+не являются атомарным снимком; radio retry/delivery counters не доступны.
+
+Сначала сравнивать отказы и длительности STA/AP с ping до платы и TCP retransmits.
+Нулевые ошибки handoff не доказывают отсутствие потерь в радио/приёмном тракте.
+USB queue, NCM pool, FIFO, DMA, Wi-Fi power save и параметры агрегации этим
+изменением не перенастраиваются. Это диагностика, не обещание ускорения.
+
 ## Короткие переполнения USB TX queue
 
 ```bash

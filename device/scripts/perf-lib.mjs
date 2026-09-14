@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
 import { isIP } from 'node:net';
+import { wifiTxCounterFields } from './perf-wifi.mjs';
 
 export function parseArgs(args) {
   const o = { seconds:30, runs:5, soakMinutes:30, idleSeconds:30, startDelay:0, iperfPort:5201, paths:'auto' };
   if(args.includes('--usb-down-sweep')||args.includes('--usb-burst-sweep'))Object.assign(o,{usbDownSweep:true,seconds:15,runs:3,soakMinutes:0,idleSeconds:10,paths:'usb'});
+  if(args.includes('--ap-tcp-up'))Object.assign(o,{apTcpUp:true,seconds:30,runs:3,soakMinutes:0,idleSeconds:10,paths:'ap'});
   const names = {'seconds':'seconds','runs':'runs','soak-minutes':'soakMinutes','idle-seconds':'idleSeconds',
     'start-delay':'startDelay','iperf-port':'iperfPort','server-ip':'serverIP','paths':'paths','admin-url':'adminURL','admin-ca':'adminCA','out':'out'};
   for(let i=0;i<args.length;i++) {
@@ -11,6 +13,7 @@ export function parseArgs(args) {
     if(a==='--help'||a==='-h') o.help=true;
     else if(a==='--usb-down-sweep') o.usbDownSweep=true;
     else if(a==='--usb-burst-sweep') o.usbBurstSweep=true;
+    else if(a==='--ap-tcp-up') o.apTcpUp=true;
     else if(a==='--quick') Object.assign(o,{seconds:3,runs:2,soakMinutes:0,idleSeconds:3});
     else if(a==='--admin-insecure') o.adminInsecure=true;
     else if(a.startsWith('--')&&names[a.slice(2)]) {
@@ -20,6 +23,8 @@ export function parseArgs(args) {
     else o.target=a;
   }
   if(o.help) return o;
+  if(o.apTcpUp&&(o.usbDownSweep||args.includes('--quick')||o.paths!=='ap'||Number(o.seconds)<15||Number(o.soakMinutes)!==0))
+    throw Error('--ap-tcp-up requires AP only, >=15s, no soak; cannot combine with USB sweeps or --quick');
   if(o.usbDownSweep&&(args.includes('--quick')||o.paths!=='usb'||Number(o.seconds)!==15||Number(o.runs)!==3||Number(o.soakMinutes)!==0))
     throw Error('--usb-down-sweep requires USB only, 15s, 3 repeats, no soak; do not combine with --quick or conflicting timing/path options');
   if(!o.target) throw Error('Pass SSH target: user@192.168.1.100:22');
@@ -134,6 +139,12 @@ export function summarize(records) {
 // One warm-up per scenario/direction; repetitions interleave up/down to reduce drift.
 export function measurementPlan(paths, o) {
   const plan=[];
+  if(o.apTcpUp) {
+    if(paths.length!==1||paths[0].kind!=='ap')throw Error('AP TCP upload requires exactly one AP path');
+    for(let run=0;run<=o.runs;run++)plan.push({paths,protocol:'tcp',direction:'up',seconds:o.seconds,
+      run,warmup:run===0,phase:'ap-tcp-up'});
+    return plan;
+  }
   if(o.usbDownSweep) {
     if(paths.length!==1||paths[0].kind!=='usb')throw Error('USB download sweep requires exactly one USB path');
     for(const rate of (o.usbBurstSweep?[6,7,8]:[5,6,7,8,9,10]))for(let run=0;run<=o.runs;run++)
@@ -195,6 +206,7 @@ export function summarizeUsbDownSweep(records, pings=[]) {
 export function counterDelta(before,after) {
   const reset=!before||!after||after.uptime_sec<before.uptime_sec;
   return Object.fromEntries([...usbCounterFields.map(k=>`usb.${k}`),...ncmCounterFields.map(k=>`usb.ncm.${k}`),
+    ...['sta','ap'].flatMap(iface=>wifiTxCounterFields.map(k=>`wifi.tx.${iface}.${k}`)),
     ...dwc2CounterFields.map(k=>`usb.dwc2.${k}`),
     ...usbQueueCounterFields.map(k=>`usb.tx_queue.${k}`),'net.ap_ip4_rx','net.lan_ip4_rx'].map(key=>{
     const get=v=>key.split('.').reduce((o,k)=>o?.[k],v),a=get(before),b=get(after);

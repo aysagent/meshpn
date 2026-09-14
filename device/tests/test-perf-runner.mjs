@@ -744,6 +744,31 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
     const burstReports=await Promise.all((await readdir(parent)).map(async d=>JSON.parse(await readFile(path.join(parent,d,'result.json'),'utf8'))));
     const unavailable=burstReports.find(r=>r.warnings.some(w=>w.startsWith('USB burst detail incomplete')));
     assert(unavailable);assert.equal(unavailable.summary['single/usb/tcp/up/'].mbps.median,8);
+    // AP diagnostics must fail before remote setup on old firmware.
+    assert.equal(await main(['server','--ap-tcp-up','--out',parent],dependencies),1);
+    assert.equal(closes,9);
+    const apCommands=[];
+    assert.equal(await main(['server','--ap-tcp-up','--out',parent],{...dependencies,
+      discoverBoard:async()=>{
+        const board=await dependencies.discoverBoard();
+        const decorate=s=>({...s,wifi:{...s.wifi,tx:{available:true,
+          sta:{calls:10,accepted:10,call_us:2000},ap:{calls:2,accepted:2,call_us:100}},
+          radio:{clients_available:true,clients:[{index:0,rssi:-51,phy_11n:true}],sta_bandwidth_mhz:20,ap_bandwidth_mhz:20}}});
+        return {...board,paths:[paths[1]],initial:decorate(board.initial),status:async()=>decorate(await board.status())};
+      },
+      startServers:async(o,count)=>{assert.equal(count,1);return {ports:[5201],assertAlive(){},async close(){closes++;}};},
+      command:async(bin,args,opts)=>{
+        if(bin==='iperf3') {apCommands.push(args);assert.ok(!args.includes('-R')&&!args.includes('-u'));
+          assert.equal(args[args.indexOf('-B')+1],paths[1].address);}
+        return dependencies.command(bin,args,opts);
+      }}),0);
+    assert.equal(closes,10);assert.equal(apCommands.length,5);
+    assert.equal(apCommands.filter(a=>a[a.indexOf('-t')+1]==='30').length,4);
+    const apReports=await Promise.all((await readdir(parent)).map(async d=>JSON.parse(await readFile(path.join(parent,d,'result.json'),'utf8'))));
+    const ap=apReports.find(r=>r.options.apTcpUp&&r.outcome==='completed');
+    assert(ap);assert.equal(ap.records.filter(r=>!r.warmup).length,3);
+    assert(ap.records.every(r=>r.batch_wifi.after.radio.clients[0].rssi===-51));
+    assert(ap.records.every(r=>r.batch_counters['wifi.tx.sta.calls']===0));
   }finally{await rm(parent,{recursive:true,force:true});}
 });
 
