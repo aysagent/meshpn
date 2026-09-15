@@ -23,9 +23,9 @@ if [[ ! -f "$IDF_PATH/export.sh" ]]; then
   git clone -b "$IDF_VERSION" --recursive https://github.com/espressif/esp-idf.git "$IDF_PATH"
 fi
 
-echo "==> Installing ESP-IDF toolchains for esp32s3"
+echo "==> Installing ESP-IDF toolchains for esp32s3 and esp32p4"
 cd "$IDF_PATH"
-./install.sh esp32s3
+./install.sh esp32s3,esp32p4
 
 MARKER="# meshvpn ESP-IDF"
 if ! grep -q "$MARKER" "$HOME/.zshrc" 2>/dev/null; then

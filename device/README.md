@@ -1,6 +1,7 @@
 # MeshPN USB WiFi dongle
 
-ESP-IDF firmware for XIAO ESP32-S3. USB Ethernet and WiFi SoftAP → IPv4 NAT → WiFi STA.
+ESP-IDF firmware for XIAO ESP32-S3 and Waveshare ESP32-P4-WIFI6. USB Ethernet
+and WiFi SoftAP → IPv4 NAT → WiFi STA.
 VPN, WireGuard and policy enforcement are **not implemented**. USB compatibility expansion is deferred.
 
 ## Build and flash
@@ -11,9 +12,21 @@ source ~/.zshrc
 ./device/scripts/flash.sh             # existing NCM profile
 ```
 
+For the Waveshare ESP32-P4-WIFI6:
+
+```bash
+BOARD=waveshare_esp32_p4_wifi6 PORT=/dev/cu.wchusbserialXXXX \
+  ./device/scripts/flash.sh ncm monitor
+```
+
+Flash the P4 through the board's USB-C/USB-UART connector. MeshPN NCM uses the
+separate four-pin USB 2.0 HS connector. See the
+[board-specific wiring and ESP32-C6 compatibility notes](docs/waveshare-esp32-p4-wifi6.md).
+
 Hold BOOT while connecting USB to enter download mode. Without a serial port the script builds only.
 Set `PORT` explicitly if several serial devices are connected. Each board/profile/defaults combination gets a separate
-`device/build-…` directory and sdkconfig; previous builds and settings are preserved. Keep `dependencies.lock` in version control.
+`device/build-…` directory and sdkconfig; previous builds and settings are preserved. Keep the target-specific
+`dependencies.lock.esp32s3` and `dependencies.lock.esp32p4` files in version control.
 The dependency manager applies the iot_bridge lwIP patches to your ESP-IDF checkout.
 
 ## First login
@@ -73,8 +86,9 @@ the enabled default. It applies in this firmware, not in an external bootloader.
 The second checkbox describes the **charge LED** and is deliberately disabled,
 with an indeterminate state: the MCU cannot read or control that light. On this board
 it is wired to the charger, not a GPIO; see the [Seeed documentation and schematics](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/#resources).
-No charging/power settings are changed to suppress it. Unsupported board profiles
-have no editable user-LED control.
+No charging/power settings are changed to suppress it. The Waveshare P4 board's
+only on-board LED is likewise a non-controllable 5 V power indicator. Board
+profiles without a GPIO LED have no editable user-LED control.
 
 Authenticated `POST /api/admin/leds` accepts only `{"user_enabled":false}` (or true).
 It commits NVS before changing the active setting; a save failure leaves active

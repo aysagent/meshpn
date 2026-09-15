@@ -1,5 +1,11 @@
+set(meshvpn_usb_sources
+    "meshvpn_usb.c" "meshvpn_ncm_diag.c" "meshvpn_usb_tx_queue.c" "meshvpn_dwc2_diag.c")
+if(IDF_TARGET STREQUAL "esp32p4")
+    list(APPEND meshvpn_usb_sources "meshvpn_usb_netif.c")
+endif()
+
 idf_component_register(
-    SRCS "meshvpn_usb.c" "meshvpn_ncm_diag.c" "meshvpn_usb_tx_queue.c" "meshvpn_dwc2_diag.c"
+    SRCS ${meshvpn_usb_sources}
     INCLUDE_DIRS "include"
     REQUIRES esp_netif esp_tinyusb tinyusb esp_timer
 )

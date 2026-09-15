@@ -6,6 +6,25 @@ else()
     set(MESHVPN_BOARD "xiao_esp32s3")
 endif()
 
+set(MESHVPN_BOARD_TARGET_FILE "${CMAKE_SOURCE_DIR}/boards/${MESHVPN_BOARD}/target")
+if(NOT EXISTS "${MESHVPN_BOARD_TARGET_FILE}")
+    message(FATAL_ERROR "Unknown board '${MESHVPN_BOARD}' or missing target metadata")
+endif()
+file(READ "${MESHVPN_BOARD_TARGET_FILE}" MESHVPN_BOARD_TARGET)
+string(STRIP "${MESHVPN_BOARD_TARGET}" MESHVPN_BOARD_TARGET)
+if(DEFINED IDF_TARGET AND NOT "${IDF_TARGET}" STREQUAL "${MESHVPN_BOARD_TARGET}")
+    message(FATAL_ERROR "Board ${MESHVPN_BOARD} requires IDF_TARGET=${MESHVPN_BOARD_TARGET}, got ${IDF_TARGET}")
+endif()
+set(IDF_TARGET "${MESHVPN_BOARD_TARGET}")
+
+# P4 uses a project-owned bridge implementation because iot_bridge 1.1 only
+# supports S2/S3. Keep its compatibility Kconfig out of S3 builds so the
+# upstream iot_bridge symbols are each defined exactly once.
+if("${MESHVPN_BOARD_TARGET}" STREQUAL "esp32p4")
+    list(APPEND EXTRA_COMPONENT_DIRS
+        "${CMAKE_SOURCE_DIR}/target_components/esp32p4_bridge_config")
+endif()
+
 if(DEFINED ENV{USB_PROFILE} AND NOT "$ENV{USB_PROFILE}" STREQUAL "")
     set(MESHVPN_USB_PROFILE $ENV{USB_PROFILE})
 else()
@@ -25,7 +44,12 @@ if("$ENV{DWC2_TELEMETRY}" STREQUAL "0")
 endif()
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+idf_build_set_property(DEPENDENCIES_LOCK
+    "${CMAKE_SOURCE_DIR}/dependencies.lock.${IDF_TARGET}")
 project(meshvpn_device)
+if(NOT "${IDF_TARGET}" STREQUAL "${MESHVPN_BOARD_TARGET}")
+    message(FATAL_ERROR "Resolved IDF target ${IDF_TARGET} does not match board ${MESHVPN_BOARD_TARGET}")
+endif()
 include("${CMAKE_SOURCE_DIR}/cmake/ncm-telemetry.cmake")
 if("$ENV{DWC2_TELEMETRY}" STREQUAL "0" AND CONFIG_MESHVPN_DWC2_TELEMETRY)
     message(FATAL_ERROR "Control build has stale DWC2 telemetry enabled; use a fresh SDKCONFIG.")

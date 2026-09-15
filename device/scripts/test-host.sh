@@ -102,7 +102,17 @@ for default_https in 0 1; do
     -o "$test_dir/https-config-$default_https"
   "$test_dir/https-config-$default_https"
 done
-bash -n device/scripts/flash.sh device/scripts/create-admin-ca.sh
+bash -n device/scripts/flash.sh device/scripts/setup-macos.sh device/scripts/create-admin-ca.sh
+for board_target in \
+  xiao_esp32s3:esp32s3 \
+  m5_stamp_p4_c6:esp32p4 \
+  waveshare_esp32_p4_wifi6:esp32p4; do
+  board=${board_target%:*}
+  expected=${board_target#*:}
+  actual=$(tr -d '[:space:]' < "device/boards/$board/target")
+  [[ "$actual" == "$expected" ]] || { echo "$board target: expected $expected, got $actual" >&2; exit 1; }
+  [[ -f "device/boards/$board/sdkconfig.defaults" ]] || { echo "$board defaults missing" >&2; exit 1; }
+done
 if [[ -n "${IDF_PATH:-}" ]]; then
   json_dir="$IDF_PATH/components/json/cJSON"
   for runtime_enabled in 0 1; do

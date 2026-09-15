@@ -22,6 +22,13 @@ static bool s_enabled;
 static bool s_connected;
 static char s_server[128];
 
+static void copy_string(char *dst, size_t dst_size, const char *src)
+{
+    size_t len = strnlen(src, dst_size - 1);
+    memcpy(dst, src, len);
+    dst[len] = '\0';
+}
+
 esp_err_t meshvpn_vpn_init(void)
 {
 #ifdef CONFIG_MESHVPN_VPN_ENABLE
@@ -35,7 +42,7 @@ esp_err_t meshvpn_vpn_init(void)
 esp_err_t meshvpn_vpn_start(const meshvpn_vpn_config_t *cfg)
 {
     s_enabled = cfg->enabled;
-    strncpy(s_server, cfg->server, sizeof(s_server) - 1);
+    copy_string(s_server, sizeof(s_server), cfg->server);
 
 #if defined(CONFIG_MESHVPN_VPN_ENABLE) && CONFIG_MESHVPN_VPN_ENABLE
     ESP_LOGW(TAG, "VPN start to %s — TLS/HTTP2 stack not yet linked", cfg->server);
@@ -85,5 +92,5 @@ void meshvpn_vpn_get_status(meshvpn_vpn_status_t *status)
     memset(status, 0, sizeof(*status));
     status->enabled = s_enabled;
     status->connected = s_connected;
-    strncpy(status->server, s_server, sizeof(status->server) - 1);
+    copy_string(status->server, sizeof(status->server), s_server);
 }

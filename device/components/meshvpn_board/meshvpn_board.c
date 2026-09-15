@@ -11,6 +11,8 @@
 #include "pins.h"
 #elif CONFIG_MESHVPN_BOARD_M5_STAMP_P4_C6
 #include "pins.h"
+#elif CONFIG_MESHVPN_BOARD_WAVESHARE_ESP32_P4_WIFI6
+#include "pins.h"
 #else
 #error "No board selected in menuconfig"
 #endif

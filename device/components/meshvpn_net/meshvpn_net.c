@@ -4,8 +4,10 @@
 #include <string.h>
 
 #include "meshvpn_net_dhcp.h"
+#if !CONFIG_IDF_TARGET_ESP32P4
 #include "esp_bridge.h"
 #include "esp_bridge_events.h"
+#endif
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -208,7 +210,11 @@ static void meshvpn_net_on_event(void *arg, esp_event_base_t base, int32_t id, v
      * or address changes. That API disables NAPT on every other interface — USB
      * included — so re-apply right after those events, not only on a timer. */
     if ((base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) ||
+#if !CONFIG_IDF_TARGET_ESP32P4
         (base == BRIDGE_EVENT && id == BRIDGE_EVENT_ID_DNS_UPDATE)
+#else
+        false
+#endif
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
         || (base == WIFI_EVENT && id == WIFI_EVENT_AP_START)
 #endif
@@ -252,6 +258,19 @@ esp_err_t meshvpn_net_start_bridge(void)
      * interface is created. Our own logs include SSID, never the password. */
     esp_log_level_set("bridge_wifi", ESP_LOG_WARN);
 
+#if CONFIG_IDF_TARGET_ESP32P4
+    /* ESP-IoT-Bridge 1.1 excludes P4. The standard Wi-Fi netifs work with
+     * esp_wifi_remote/esp_hosted, so create the equivalent STA+AP pair here. */
+    wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
+    esp_err_t err = esp_wifi_init(&wifi_cfg);
+    if (err != ESP_OK) return err;
+    if ((err = esp_wifi_set_storage(WIFI_STORAGE_RAM)) != ESP_OK) return err;
+    s_sta_netif = esp_netif_create_default_wifi_sta();
+    s_ap_netif = esp_netif_create_default_wifi_ap();
+    if (!s_sta_netif || !s_ap_netif) return ESP_ERR_NO_MEM;
+    if ((err = esp_wifi_set_mode(WIFI_MODE_APSTA)) != ESP_OK) return err;
+#endif
+
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_USB)
     /* lwIP USB gateway MAC: derived from ETH base, locally administered, and
      * distinct from NCM (ESP_MAC_ETH), WiFi STA, and SoftAP. */
@@ -261,32 +280,54 @@ esp_err_t meshvpn_net_start_bridge(void)
     usb_lwip_mac[5] = (uint8_t)(usb_lwip_mac[5] + 1);
 
     meshvpn_net_fill_ip(&ip, CONFIG_MESHVPN_USB_SUBNET_OCTET_2);
+#if CONFIG_IDF_TARGET_ESP32P4
+    s_usb_netif = meshvpn_usb_create_netif(ip.ip.addr, ip.netmask.addr,
+                                          ip.gw.addr, usb_lwip_mac);
+#else
     s_usb_netif = esp_bridge_create_usb_netif(&ip, usb_lwip_mac, true, true);
+#endif
     if (!s_usb_netif) {
         ESP_LOGE(TAG, "USB netif creation failed");
         return ESP_FAIL;
     } else {
         ESP_LOGI(TAG, "USB lwIP MAC " MACSTR, MAC2STR(usb_lwip_mac));
         meshvpn_net_set_usb_interface(esp_netif_get_netif_impl(s_usb_netif));
+#if !CONFIG_IDF_TARGET_ESP32P4
         meshvpn_usb_attach_netif(s_usb_netif);
+#else
+        if (meshvpn_usb_start_device(s_usb_netif) != ESP_OK ||
+            meshvpn_usb_attach_netif(s_usb_netif) != ESP_OK) {
+            ESP_LOGE(TAG, "USB High-Speed device initialization failed");
+            return ESP_FAIL;
+        }
+#endif
         meshvpn_net_configure_lan_dhcp(s_usb_netif);
     }
 #endif
 
 #if defined(CONFIG_BRIDGE_EXTERNAL_NETIF_STATION)
+#if !CONFIG_IDF_TARGET_ESP32P4
     s_sta_netif = esp_bridge_create_station_netif(NULL, NULL, false, false);
     if (!s_sta_netif) return ESP_FAIL;
+#endif
 #endif
 
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
     /* Configure before starting AP beacons: never expose a transient open AP.
      * STA profile manager has not started connecting yet, so stopping the radio
      * here does not interrupt an established uplink. */
+#if CONFIG_IDF_TARGET_ESP32P4
+    meshvpn_net_fill_ip(&ip, MESHVPN_AP_SUBNET_OCTET_2);
+    (void)esp_netif_dhcps_stop(s_ap_netif);
+    err = esp_netif_set_ip_info(s_ap_netif, &ip);
+#else
     esp_err_t err = esp_wifi_stop();
     if (err != ESP_OK) return err;
     meshvpn_net_fill_ip(&ip, MESHVPN_AP_SUBNET_OCTET_2);
     s_ap_netif = esp_bridge_create_softap_netif(&ip, NULL, true, true);
     if (!s_ap_netif) return ESP_FAIL;
+#endif
+    if (err != ESP_OK) return err;
     meshvpn_net_set_ap_interface(esp_netif_get_netif_impl(s_ap_netif));
     wifi_config_t cfg = {0};
     char ssid[33];
@@ -316,10 +357,14 @@ esp_err_t meshvpn_net_start_bridge(void)
 #endif
 
     if (s_usb_netif) {
+#if !CONFIG_IDF_TARGET_ESP32P4
         esp_bridge_netif_set_conflict_check(s_usb_netif, false);
+#endif
     }
     if (s_ap_netif) {
+#if !CONFIG_IDF_TARGET_ESP32P4
         esp_bridge_netif_set_conflict_check(s_ap_netif, false);
+#endif
         meshvpn_net_configure_lan_dhcp(s_ap_netif);
     }
 
@@ -332,7 +377,10 @@ esp_err_t meshvpn_net_start_bridge(void)
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_START, meshvpn_net_on_event, NULL));
 #endif
-    ESP_ERROR_CHECK(esp_event_handler_register(BRIDGE_EVENT, BRIDGE_EVENT_ID_DNS_UPDATE, meshvpn_net_on_event, NULL));
+#if !CONFIG_IDF_TARGET_ESP32P4
+    ESP_ERROR_CHECK(esp_event_handler_register(BRIDGE_EVENT, BRIDGE_EVENT_ID_DNS_UPDATE,
+                                               meshvpn_net_on_event, NULL));
+#endif
 
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
     err = esp_wifi_start();

@@ -45,7 +45,7 @@ dependencies:
       require: public
       version: '>=0.14.2'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.7.6~2
   espressif/iot_bridge:
@@ -136,9 +136,10 @@ dependencies:
       type: idf
     version: 5.4.1
 direct_dependencies:
+- espressif/esp_tinyusb
 - espressif/iot_bridge
 - espressif/mdns
 - idf
-manifest_hash: 903f3e313f8a242a720f192b625a11320c6cfd128cb6a433a8e5f02ba4f065ee
+manifest_hash: 06a76880c46e5e00dca344d145d1ac7421854cb3a16ae785a1bef9f00efdcd72
 target: esp32s3
 version: 2.0.0

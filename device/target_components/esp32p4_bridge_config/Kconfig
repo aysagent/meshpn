@@ -1,0 +1,59 @@
+# esp_wifi_remote 0.14.5 keeps its complete 5.4 Kconfig tree in idf_v5.4,
+# while its generic root looks under idf_v5.4.1 for the pinned IDF release.
+# Import the shipped compatible tree explicitly so P4+C6 and its tunables
+# exist. The manifest pins ESP-IDF to 5.4.x and wifi_remote to this series.
+rsource "../../managed_components/espressif__esp_wifi_remote/idf_v5.4/Kconfig.slave_select.in"
+rsource "../../managed_components/espressif__esp_wifi_remote/idf_v5.4/Kconfig.soc_wifi_caps.in"
+rsource "../../managed_components/espressif__esp_wifi_remote/idf_v5.4/Kconfig.wifi.in"
+
+# Compatibility settings for the project-owned ESP32-P4 networking path.
+# ESP-IoT-Bridge 1.1 is limited to S2/S3, while MeshPN only needs its three
+# Ethernet/Wi-Fi netifs and a small set of AP settings on P4.
+config BRIDGE_ENABLE
+    bool
+    default y
+
+config BRIDGE_DATA_FORWARDING_NETIF_USB
+    bool
+    default y
+
+config BRIDGE_EXTERNAL_NETIF_STATION
+    bool
+    default y
+
+config BRIDGE_STATION_CANCEL_AUTO_CONNECT_WHEN_DISCONNECTED
+    bool
+    default y
+
+config BRIDGE_DATA_FORWARDING_NETIF_SOFTAP
+    bool
+    default y
+
+config BRIDGE_SOFTAP_SSID
+    string "SoftAP SSID"
+    default "MeshPN"
+
+config BRIDGE_SOFTAP_SSID_END_WITH_THE_MAC
+    bool "Append MAC suffix to SoftAP SSID"
+    default y
+
+config BRIDGE_SOFTAP_PASSWORD
+    string "SoftAP password"
+    default "meshpn-test"
+
+config BRIDGE_SOFTAP_MAX_CONNECT_NUMBER
+    int "Maximum SoftAP clients"
+    range 1 10
+    default 4
+
+config BRIDGE_WIFI_PMF_DISABLE
+    bool
+    default n
+
+config BRIDGE_STATIC_DNS_SERVER_MAIN
+    string
+    default "8.8.8.8"
+
+config BRIDGE_STATIC_DNS_SERVER_BACKUP
+    string
+    default "1.1.1.1"

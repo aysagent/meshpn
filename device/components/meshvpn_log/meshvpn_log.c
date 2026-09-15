@@ -118,6 +118,7 @@ void meshvpn_log_report_boot(uint32_t boot_count)
     }
 
     if (esp_core_dump_get_summary(summary) == ESP_OK) {
+#if CONFIG_IDF_TARGET_ARCH_XTENSA
         ESP_LOGE(TAG, "last crash in task '%s' pc=0x%08" PRIx32 " cause=%" PRIu32 " vaddr=0x%08" PRIx32,
                  summary->exc_task, summary->exc_pc,
                  summary->ex_info.exc_cause, summary->ex_info.exc_vaddr);
@@ -129,6 +130,18 @@ void meshvpn_log_report_boot(uint32_t boot_count)
         }
         bt[pos] = '\0';
         ESP_LOGE(TAG, "backtrace%s: %s", summary->exc_bt_info.corrupted ? " (corrupted)" : "", bt);
+#elif CONFIG_IDF_TARGET_ARCH_RISCV
+        ESP_LOGE(TAG, "last crash in task '%s' pc=0x%08" PRIx32 " mcause=0x%08" PRIx32
+                      " mtval=0x%08" PRIx32 " ra=0x%08" PRIx32 " sp=0x%08" PRIx32,
+                 summary->exc_task, summary->exc_pc,
+                 summary->ex_info.mcause, summary->ex_info.mtval,
+                 summary->ex_info.ra, summary->ex_info.sp);
+        ESP_LOGE(TAG, "RISC-V stack dump: %" PRIu32 " bytes (decode the core dump with idf.py coredump-info)",
+                 summary->exc_bt_info.dump_size);
+#else
+        ESP_LOGE(TAG, "last crash in task '%s' pc=0x%08" PRIx32,
+                 summary->exc_task, summary->exc_pc);
+#endif
     }
 
     free(summary);

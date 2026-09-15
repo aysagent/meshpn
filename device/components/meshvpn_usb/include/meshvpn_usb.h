@@ -44,6 +44,17 @@ esp_err_t meshvpn_usb_init(void);
 const char *meshvpn_usb_profile_name(void);
 
 /**
+ * Create and start the project-owned USB Ethernet netif and TinyUSB device.
+ *
+ * iot_bridge 1.1 limits its USB netif to ESP32-S2/S3 even though esp_tinyusb
+ * supports the ESP32-P4 High-Speed controller. The P4 board profile uses this
+ * equivalent local path together with the project's native P4 STA/AP netifs.
+ */
+esp_netif_t *meshvpn_usb_create_netif(uint32_t ip_addr, uint32_t netmask,
+                                     uint32_t gateway, const uint8_t mac[6]);
+esp_err_t meshvpn_usb_start_device(esp_netif_t *netif);
+
+/**
  * Replace the USB transmit path installed by iot_bridge.
  *
  * The bridge sends every frame with tinyusb_net_send_sync(..., portMAX_DELAY)
