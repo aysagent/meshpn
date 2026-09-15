@@ -12,7 +12,7 @@ import { discoverBoard, checkRoute, sshArgs, startServers } from './perf-network
 import { prepareIperfBinding, iperfEnvironment, verifyIperfBinding, iperfError } from './perf-bind.mjs';
 import { pingEvent, blackoutDiagnostics } from './perf-diagnostics.mjs';
 import { readBursts, burstDelta, burstMarkdown } from './perf-bursts.mjs';
-import { cleanWifiDiagnostics, wifiMarkdown } from './perf-wifi.mjs';
+import { cleanWifiDiagnostics, validateWifiTxExperiment, wifiMarkdown } from './perf-wifi.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const help=`Usage: npm run device:perf -- [user@]SERVER[:SSH_PORT] [options]
@@ -345,8 +345,8 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     result.serverIP=o.serverIP||(await runtime.lookup(o.host,{family:4})).address;
     board=await runtime.discoverBoard(o,signal,log);
     result.paths=board.paths;result.board=cleanStatus(board.initial);
-    if(o.apTcpUp&&!result.board.wifi.tx.available)
-      throw Error('AP upload diagnostics require Wi-Fi TX telemetry; flash current firmware first.');
+    const wifiExperimentError=o.apTcpUp&&validateWifiTxExperiment(result.board.wifi.tx);
+    if(wifiExperimentError)throw Error(wifiExperimentError);
     for(const p of board.paths) {
       log(`${p.kind.toUpperCase()}: ${p.iface} ${p.address} → ${p.gateway} → ${result.serverIP}`);
       await writeFile(path.join(output,`route-${p.kind}.txt`),await runtime.checkRoute(p,result.serverIP,signal));

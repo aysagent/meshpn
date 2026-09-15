@@ -2,6 +2,7 @@
 #include "esp_wifi.h"
 #include "esp_timer.h"
 #include "meshvpn_wifi_diag.h"
+#include "sdkconfig.h"
 
 static void number_or_null(cJSON *obj, const char *name, esp_err_t err, int value)
 {
@@ -15,6 +16,18 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
     meshvpn_wifi_tx_snapshot(stats);
     cJSON *tx = cJSON_AddObjectToObject(wifi, "tx");
     cJSON_AddBoolToObject(tx, "available", true);
+#ifdef CONFIG_ESP_WIFI_STATIC_TX_BUFFER
+    cJSON_AddStringToObject(tx, "buffer_type", "static");
+    cJSON_AddNumberToObject(tx, "static_buffer_count", CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM);
+#else
+    cJSON_AddStringToObject(tx, "buffer_type", "dynamic");
+    cJSON_AddNumberToObject(tx, "dynamic_buffer_count", CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM);
+#endif
+#ifdef CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM
+    cJSON_AddNumberToObject(tx, "cache_buffer_count", CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM);
+#else
+    cJSON_AddNumberToObject(tx, "cache_buffer_count", 0);
+#endif
     for (int i = 0; i < 2; i++) {
         cJSON *s = cJSON_AddObjectToObject(tx, i ? "ap" : "sta");
 #define ADD(name) cJSON_AddNumberToObject(s, #name, (double)stats[i].name);
