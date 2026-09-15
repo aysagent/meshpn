@@ -47,6 +47,26 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
     cJSON_AddBoolToObject(tx, "ampdu_rx_enabled", false);
     cJSON_AddNumberToObject(tx, "ampdu_rx_ba_window", 0);
 #endif
+#ifdef CONFIG_ESP_WIFI_IRAM_OPT
+    cJSON_AddBoolToObject(tx, "iram_opt_enabled", true);
+#else
+    cJSON_AddBoolToObject(tx, "iram_opt_enabled", false);
+#endif
+#ifdef CONFIG_ESP_WIFI_EXTRA_IRAM_OPT
+    cJSON_AddBoolToObject(tx, "extra_iram_opt_enabled", true);
+#else
+    cJSON_AddBoolToObject(tx, "extra_iram_opt_enabled", false);
+#endif
+#ifdef CONFIG_ESP_WIFI_RX_IRAM_OPT
+    cJSON_AddBoolToObject(tx, "rx_iram_opt_enabled", true);
+#else
+    cJSON_AddBoolToObject(tx, "rx_iram_opt_enabled", false);
+#endif
+#ifdef CONFIG_LWIP_IRAM_OPTIMIZATION
+    cJSON_AddBoolToObject(tx, "lwip_iram_opt_enabled", true);
+#else
+    cJSON_AddBoolToObject(tx, "lwip_iram_opt_enabled", false);
+#endif
     for (int i = 0; i < 2; i++) {
         cJSON *s = cJSON_AddObjectToObject(tx, i ? "ap" : "sta");
 #define ADD(name) cJSON_AddNumberToObject(s, #name, (double)stats[i].name);
