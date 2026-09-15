@@ -18,8 +18,8 @@ export function cleanWifiDiagnostics(wifi) {
 
 export function validateWifiTxExperiment(tx) {
   if(!tx?.available)return 'AP upload diagnostics require Wi-Fi TX telemetry; flash current firmware first.';
-  if(tx.buffer_type!=='static'||tx.static_buffer_count!==24||tx.cache_buffer_count!==128||tx.amsdu_enabled!==true)
-    return `AP A-MSDU A/B requires Wi-Fi TX static=24, cache=128, A-MSDU=true; got type=${tx.buffer_type??'n/a'}, static=${tx.static_buffer_count??'n/a'}, cache=${tx.cache_buffer_count??'n/a'}, A-MSDU=${tx.amsdu_enabled??'n/a'}. Flash current firmware first.`;
+  if(tx.buffer_type!=='static'||tx.static_buffer_count!==24||tx.cache_buffer_count!==128||tx.amsdu_enabled!==false)
+    return `AP control requires Wi-Fi TX static=24, cache=128, A-MSDU=false; got type=${tx.buffer_type??'n/a'}, static=${tx.static_buffer_count??'n/a'}, cache=${tx.cache_buffer_count??'n/a'}, A-MSDU=${tx.amsdu_enabled??'n/a'}. Flash current firmware first.`;
   return null;
 }
 
