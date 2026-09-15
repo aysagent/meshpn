@@ -98,6 +98,9 @@ Set `CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP=n` for a USB-only comparison bui
 Configure uplink via USB first, then connect the test client to the AP. You can power the configured dongle from a USB charger for an AP-only test.
 
 AP and STA share the radio and channel, with STA taking channel priority; both WiFi hops use airtime.
+The firmware permits HT40 on both interfaces, but the upstream AP controls the shared APSTA channel.
+HT40 is used only when it is negotiated with the upstream AP; a status uplink `secondary_channel` of
+`0` means the current connection is HT20 even if the configured interface bandwidth reports 40 MHz.
 No speedup is claimed before measurements. See [AP/USB comparison procedure](docs/apsta-benchmark.md).
 
 ### Automatic benchmarks (Mac)

@@ -28,6 +28,11 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
 #else
     cJSON_AddNumberToObject(tx, "cache_buffer_count", 0);
 #endif
+#ifdef CONFIG_ESP_WIFI_AMSDU_TX_ENABLED
+    cJSON_AddBoolToObject(tx, "amsdu_enabled", true);
+#else
+    cJSON_AddBoolToObject(tx, "amsdu_enabled", false);
+#endif
     for (int i = 0; i < 2; i++) {
         cJSON *s = cJSON_AddObjectToObject(tx, i ? "ap" : "sta");
 #define ADD(name) cJSON_AddNumberToObject(s, #name, (double)stats[i].name);

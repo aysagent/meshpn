@@ -751,7 +751,7 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
     assert.equal(await main(['server','--ap-tcp-up','--out',parent],{...dependencies,
       discoverBoard:async()=>{
         const board=await dependencies.discoverBoard();
-        const decorate=s=>({...s,wifi:{...s.wifi,tx:{available:true,buffer_type:'static',static_buffer_count:24,cache_buffer_count:128,
+        const decorate=s=>({...s,wifi:{...s.wifi,tx:{available:true,buffer_type:'static',static_buffer_count:24,cache_buffer_count:128,amsdu_enabled:true,
           sta:{calls:10,accepted:10,call_us:2000},ap:{calls:2,accepted:2,call_us:100}},
           radio:{clients_available:true,clients:[{index:0,rssi:-51,phy_11n:true}],sta_bandwidth_mhz:20,ap_bandwidth_mhz:20}}});
         return {...board,paths:[paths[1]],initial:decorate(board.initial),status:async()=>decorate(await board.status())};
