@@ -20,8 +20,8 @@ export function cleanWifiDiagnostics(wifi) {
 export function validateWifiTxExperiment(tx) {
   if(!tx?.available)return 'AP upload diagnostics require Wi-Fi TX telemetry; flash current firmware first.';
   if(tx.buffer_type!=='static'||tx.static_buffer_count!==24||tx.cache_buffer_count!==128||tx.amsdu_enabled!==false||
-    tx.ampdu_enabled!==true||tx.ampdu_ba_window!==24||tx.ampdu_rx_enabled!==true||tx.ampdu_rx_ba_window!==24)
-    return `AP A-MPDU A/B requires Wi-Fi TX static=24, cache=128, A-MSDU=false, A-MPDU TX/RX=true, BA=24/24; got type=${tx.buffer_type??'n/a'}, static=${tx.static_buffer_count??'n/a'}, cache=${tx.cache_buffer_count??'n/a'}, A-MSDU=${tx.amsdu_enabled??'n/a'}, A-MPDU TX/RX=${tx.ampdu_enabled??'n/a'}/${tx.ampdu_rx_enabled??'n/a'}, BA=${tx.ampdu_ba_window??'n/a'}/${tx.ampdu_rx_ba_window??'n/a'}. Flash current firmware first.`;
+    tx.ampdu_enabled!==true||tx.ampdu_ba_window!==12||tx.ampdu_rx_enabled!==true||tx.ampdu_rx_ba_window!==24)
+    return `AP control requires Wi-Fi TX static=24, cache=128, A-MSDU=false, A-MPDU TX/RX=true, BA=12/24; got type=${tx.buffer_type??'n/a'}, static=${tx.static_buffer_count??'n/a'}, cache=${tx.cache_buffer_count??'n/a'}, A-MSDU=${tx.amsdu_enabled??'n/a'}, A-MPDU TX/RX=${tx.ampdu_enabled??'n/a'}/${tx.ampdu_rx_enabled??'n/a'}, BA=${tx.ampdu_ba_window??'n/a'}/${tx.ampdu_rx_ba_window??'n/a'}. Flash current firmware first.`;
   return null;
 }
 
