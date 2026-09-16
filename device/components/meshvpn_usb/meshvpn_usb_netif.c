@@ -8,6 +8,7 @@
  */
 #include "meshvpn_usb.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -25,6 +26,26 @@
 
 static const char *TAG = "meshvpn_usb_netif";
 static esp_netif_t *s_usb_netif;
+
+#if CONFIG_TINYUSB_NET_MODE_NCM && CONFIG_TINYUSB_CDC_ENABLED && CONFIG_TINYUSB_CDC_COUNT == 1
+/* Keep the NCM identity distinct from the ESP32-S3/default esp_tinyusb
+ * identity. macOS keys USB class state by VID/PID/serial; the component's
+ * default serial is the literal "123456" on every board. The final string is
+ * also installed before the controller can enumerate, avoiding a brief empty
+ * NCM MAC descriptor while tinyusb_net_init() catches up. */
+static const char s_usb_lang[] = { 0x09, 0x04 };
+static char s_usb_serial[13];
+static char s_usb_mac[13];
+static const char *s_usb_strings[] = {
+    s_usb_lang,
+    "MeshPN",
+    "MeshPN ESP32-P4 HS NCM",
+    s_usb_serial,
+    "MeshPN CDC",
+    "MeshPN NCM",
+    s_usb_mac,
+};
+#endif
 
 /* esp_netif's public custom-stack ABI uses this two-callback layout. */
 typedef struct {
@@ -159,7 +180,8 @@ esp_netif_t *meshvpn_usb_create_netif(uint32_t ip_addr, uint32_t netmask,
         .input_fn = usb_netif_input,
     };
     static const esp_netif_inherent_config_t inherent = {
-        .flags = ESP_NETIF_DHCP_SERVER | ESP_NETIF_FLAG_GARP | ESP_NETIF_FLAG_EVENT_IP_MODIFIED,
+        .flags = ESP_NETIF_DHCP_SERVER | ESP_NETIF_FLAG_AUTOUP |
+                 ESP_NETIF_FLAG_GARP | ESP_NETIF_FLAG_EVENT_IP_MODIFIED,
         .get_ip_event = IP_EVENT_STA_GOT_IP,
         .lost_ip_event = IP_EVENT_STA_LOST_IP,
         .if_key = "USB_DEF",
@@ -187,7 +209,9 @@ esp_netif_t *meshvpn_usb_create_netif(uint32_t ip_addr, uint32_t netmask,
         return NULL;
     }
 
-    /* This action initializes the custom lwIP stack and brings it up. */
+    /* ESP_NETIF_FLAG_AUTOUP makes this manual start initialize and bring up
+     * the lwIP netif. Without it RX is discarded and DHCP/NAPT stay invalid.
+     * iot_bridge's private helper instead calls esp_netif_up() explicitly. */
     esp_netif_action_start(netif, NULL, 0, NULL);
     return netif;
 }
@@ -197,13 +221,28 @@ esp_err_t meshvpn_usb_start_device(esp_netif_t *netif)
     if (!netif || s_usb_netif) return ESP_ERR_INVALID_STATE;
     s_usb_netif = netif;
 
-    const tinyusb_config_t tusb_cfg = {.external_phy = false};
-    esp_err_t err = tinyusb_driver_install(&tusb_cfg);
+    tinyusb_net_config_t net_cfg = {.on_recv_callback = usb_recv};
+    esp_err_t err = esp_read_mac(net_cfg.mac_addr, ESP_MAC_ETH);
+    if (err != ESP_OK) {
+        s_usb_netif = NULL;
+        return err;
+    }
+
+    tinyusb_config_t tusb_cfg = {.external_phy = false};
+#if CONFIG_TINYUSB_NET_MODE_NCM && CONFIG_TINYUSB_CDC_ENABLED && CONFIG_TINYUSB_CDC_COUNT == 1
+    snprintf(s_usb_serial, sizeof(s_usb_serial), "%02X%02X%02X%02X%02X%02X",
+             (unsigned)net_cfg.mac_addr[0], (unsigned)net_cfg.mac_addr[1],
+             (unsigned)net_cfg.mac_addr[2], (unsigned)net_cfg.mac_addr[3],
+             (unsigned)net_cfg.mac_addr[4], (unsigned)net_cfg.mac_addr[5]);
+    memcpy(s_usb_mac, s_usb_serial, sizeof(s_usb_mac));
+    tusb_cfg.string_descriptor = s_usb_strings;
+    tusb_cfg.string_descriptor_count = (int)(sizeof(s_usb_strings) / sizeof(s_usb_strings[0]));
+#endif
+
+    err = tinyusb_driver_install(&tusb_cfg);
     bool driver_installed = err == ESP_OK;
     if (err == ESP_OK) {
-        tinyusb_net_config_t net_cfg = {.on_recv_callback = usb_recv};
-        err = esp_read_mac(net_cfg.mac_addr, ESP_MAC_ETH);
-        if (err == ESP_OK) err = tinyusb_net_init(TINYUSB_USBDEV_0, &net_cfg);
+        err = tinyusb_net_init(TINYUSB_USBDEV_0, &net_cfg);
     }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "USB device start failed: %s", esp_err_to_name(err));
@@ -212,12 +251,15 @@ esp_err_t meshvpn_usb_start_device(esp_netif_t *netif)
         return err;
     }
 
-    ESP_LOGI(TAG, "USB netif started on %s controller",
+    ESP_LOGI(TAG, "USB netif started on %s controller; serial=%02X%02X%02X%02X%02X%02X",
 #if TUD_OPT_HIGH_SPEED
-             "High-Speed"
+             "High-Speed",
 #else
-             "Full-Speed"
+             "Full-Speed",
 #endif
+             (unsigned)net_cfg.mac_addr[0], (unsigned)net_cfg.mac_addr[1],
+             (unsigned)net_cfg.mac_addr[2], (unsigned)net_cfg.mac_addr[3],
+             (unsigned)net_cfg.mac_addr[4], (unsigned)net_cfg.mac_addr[5]
     );
     return ESP_OK;
 }

@@ -18,6 +18,11 @@ Flash through USB-C, then attach the four-pin USB data connector to the client.
 They may be connected at the same time. The on-board power LED is wired to the
 5 V rail, not a P4 GPIO, so the firmware cannot switch it off.
 
+The P4 build gives the HS NCM function a per-board USB serial derived from its
+Ethernet MAC. This keeps macOS from reusing the cached identity of an ESP32-S3
+or another development board that used esp_tinyusb's default `123456` serial.
+The NCM MAC string is populated before the controller starts enumeration.
+
 ## Build and flash
 
 ```bash
@@ -34,6 +39,14 @@ The board profile selects the High-Speed root port. NCM telemetry and the
 owned TX queue remain enabled; the ESP32-S3-only 64-byte double-FIFO experiment
 and its DWC2 register telemetry remain disabled. HS NCM uses the TinyUSB HS
 descriptors and 512-byte bulk endpoints.
+
+At boot, `Using UTMI PHY instead of requested internal PHY` and the messages
+about using default device/configuration descriptors are informational for the
+ESP32-P4 HS controller and esp_tinyusb's Kconfig-generated descriptors. A
+working host connection changes `usb host=0` to `usb host=1`. Persistent
+`host=0` means USB enumeration has not completed; first verify the four-pin
+connector's exact `VBUS`, `D-`, `D+`, `GND` order and inspect the host USB tree.
+The USB-C programming connector carries UART/download traffic, not MeshPN NCM.
 
 ## ESP32-C6 firmware compatibility
 
