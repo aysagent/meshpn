@@ -10,7 +10,8 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, quote, command, iperfArgs, parseIperf, stats, parsePing, summarize,
-  measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer, ncmCounterFields, dwc2CounterFields, usbQueueCounterFields, hasPingProblem, summarizeUsbDownSweep } from '../scripts/perf-lib.mjs';
+  measurementPlan, counterDelta, macRoute, sameSubnet, remoteServer, ncmCounterFields, dwc2CounterFields, usbQueueCounterFields,
+  hasPingProblem, summarizeUsbDownSweep, summarizeApTcpPaced } from '../scripts/perf-lib.mjs';
 import { discoverBoard, checkRoute, requestBoard, sshArgs } from '../scripts/perf-network.mjs';
 import { prepareIperfBinding, macosBuildContext, iperfEnvironment, verifyIperfBinding, iperfError } from '../scripts/perf-bind.mjs';
 import { executeSchedule, cleanStatus, telemetrySummary, reportMarkdown, main, dwc2Mode, dwc2TimingProblems } from '../scripts/perf-runner.mjs';
@@ -178,6 +179,48 @@ test('USB sweep runs 18 measured UDP downloads, six warmups, recovery gaps and n
   assert.equal(batches.reduce((s,t)=>s+t.seconds,0)+idles.reduce((s,t)=>s+t.seconds,0),377);
 });
 
+test('AP paced preset is AP-only and schedules rotated 8/10/12/14M TCP rounds',async()=>{
+  for(const args of [['--ap-tcp-paced','host'],['host','--ap-tcp-paced']]) {
+    const o=parseArgs(args);
+    assert.equal(o.paths,'ap');assert.equal(o.seconds,30);assert.equal(o.runs,3);assert.equal(o.soakMinutes,0);
+  }
+  for(const extra of [['--quick'],['--paths','usb'],['--seconds','3'],['--soak-minutes','1'],
+    ['--usb-down-sweep'],['--ap-tcp-up']])
+    assert.throws(()=>parseArgs(['host','--ap-tcp-paced',...extra]),/AP TCP presets require/);
+  const o=parseArgs(['host','--ap-tcp-paced']),batches=[],idles=[];
+  assert.throws(()=>measurementPlan(paths,o),/exactly one AP/);
+  assert.throws(()=>measurementPlan([paths[0]],o),/exactly one AP/);
+  await executeSchedule(o,[paths[1]],{batch:async t=>batches.push(t),idle:async(name,seconds)=>idles.push({name,seconds})});
+  assert.equal(batches.length,16);assert.equal(batches.filter(t=>!t.warmup).length,12);
+  assert.deepEqual(batches.slice(0,4).map(t=>t.rate),[8,10,12,14]);
+  assert.deepEqual(batches.slice(4,8).map(t=>t.rate),[8,10,12,14]);
+  assert.deepEqual(batches.slice(8,12).map(t=>t.rate),[10,12,14,8]);
+  assert.deepEqual(batches.slice(12,16).map(t=>t.rate),[12,14,8,10]);
+  assert.ok(batches.every(t=>t.paced&&t.protocol==='tcp'&&t.direction==='up'&&t.seconds===30));
+  assert.equal(idles.filter(i=>i.name.startsWith('sweep-recovery-')&&i.seconds===10).length,15);
+  assert.equal(batches.reduce((s,t)=>s+t.seconds,0)+idles.reduce((s,t)=>s+t.seconds,0),650);
+});
+
+test('AP paced summary excludes warmups and preserves missing Wi-Fi counters',()=>{
+  const base={id:'1',phase:'ap-tcp-paced',path:'ap',protocol:'tcp',direction:'up',rate:8,
+    warmup:false,mbps:7.8,sender_mbps:8,retransmits:2,
+    batch_counters:{'wifi.tx.sta.calls':100,'wifi.tx.sta.no_mem':1,'wifi.tx.ap.no_mem':0}};
+  const records=[base,{...base,id:'2',mbps:7.9,retransmits:4,batch_counters:{'wifi.tx.sta.calls':100,
+    'wifi.tx.sta.no_mem':3,'wifi.tx.ap.no_mem':2}},{...base,id:'warm',warmup:true,mbps:100},
+    {...base,id:'failed',error:'failure'},{...base,id:'3',rate:10,batch_counters:{}}];
+  const pings=[{id:'1',path:'ap',target:'board',rtt_ms:{p95:10},loss_percent:0},
+    {id:'2',path:'ap',target:'board',rtt_ms:{p95:20},loss_percent:2},
+    {id:'warm',path:'ap',target:'board',rtt_ms:{p95:1000},loss_percent:100}];
+  const [eight,ten]=summarizeApTcpPaced(records,pings);
+  assert.equal(eight.n,2);assert.equal(eight.failed,1);assert.equal(eight.receiver_mbps.median,7.85);
+  assert.equal(eight.retransmits.median,3);assert.equal(eight.sta_no_mem,4);
+  assert.equal(eight.sta_no_mem_percent,2);assert.equal(eight.ap_no_mem,2);
+  assert.equal(eight.board_ping_p95_ms.median,15);assert.equal(eight.board_ping_loss_percent.max,2);
+  assert.equal(ten.n,1);assert.equal(ten.sta_no_mem,null);assert.equal(ten.sta_no_mem_percent,null);
+  const report=reportMarkdown({options:{apTcpPaced:true},records,pings});
+  assert.match(report,/AP TCP paced upload sweep/);assert.match(report,/4 \/ 200 \(2.00\)/);
+});
+
 test('USB sweep summary excludes warmups, matches ping by ID/path, and preserves unknown counters',()=>{
   const counters=Object.fromEntries(usbQueueCounterFields.map(k=>[`usb.tx_queue.${k}`,0]));
   Object.assign(counters,{'usb.tx_queue.submitted':100,'usb.tx_queue.full':5,'usb.tx_queue.send_failed':2,
@@ -207,6 +250,13 @@ test('interface binding, direction and UDP packet size are explicit',()=>{
   for(const flag of ['-4','-R','--get-server-output','-J','-B'])assert.ok(args.includes(flag));
   assert.ok(!args.includes('--bind-dev'));assert.equal(args[args.indexOf('-B')+1],paths[1].address);
   assert.equal(args[args.indexOf('-l')+1],'1200');assert.equal(args[args.indexOf('-b')+1],'10M');
+  const paced=iperfArgs('1.2.3.4',5201,paths[1],{seconds:30,protocol:'tcp',direction:'up',paced:true,rate:12});
+  assert.ok(!paced.includes('-R')&&!paced.includes('-u'));
+  assert.equal(paced[paced.indexOf('-B')+1],paths[1].address);
+  assert.equal(paced[paced.indexOf('-b')+1],'12M');
+  assert.equal(paced[paced.indexOf('--pacing-timer')+1],'1000');
+  assert.equal(paced[paced.indexOf('-l')+1],'1200');
+  assert.ok(!iperfArgs('1.2.3.4',5201,paths[1],{seconds:30,protocol:'tcp',direction:'up'}).includes('-b'));
 });
 
 test('macOS helper build, process-only environment and binding evidence fail closed',async()=>{
@@ -748,7 +798,7 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
     assert.equal(await main(['server','--ap-tcp-up','--out',parent],dependencies),1);
     assert.equal(closes,9);
     const apCommands=[];
-    assert.equal(await main(['server','--ap-tcp-up','--out',parent],{...dependencies,
+    const apDependencies={...dependencies,
       discoverBoard:async()=>{
         const board=await dependencies.discoverBoard();
         const decorate=s=>({...s,wifi:{...s.wifi,tx:{available:true,buffer_type:'static',static_buffer_count:24,cache_buffer_count:128,amsdu_enabled:false,
@@ -763,7 +813,8 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
         if(bin==='iperf3') {apCommands.push(args);assert.ok(!args.includes('-R')&&!args.includes('-u'));
           assert.equal(args[args.indexOf('-B')+1],paths[1].address);}
         return dependencies.command(bin,args,opts);
-      }}),0);
+      }};
+    assert.equal(await main(['server','--ap-tcp-up','--out',parent],apDependencies),0);
     assert.equal(closes,10);assert.equal(apCommands.length,5);
     assert.equal(apCommands.filter(a=>a[a.indexOf('-t')+1]==='30').length,4);
     const apReports=await Promise.all((await readdir(parent)).map(async d=>JSON.parse(await readFile(path.join(parent,d,'result.json'),'utf8'))));
@@ -771,6 +822,17 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
     assert(ap);assert.equal(ap.records.filter(r=>!r.warmup).length,3);
     assert(ap.records.every(r=>r.batch_wifi.after.radio.clients[0].rssi===-51));
     assert(ap.records.every(r=>r.batch_counters['wifi.tx.sta.calls']===0));
+    apCommands.length=0;
+    assert.equal(await main(['server','--ap-tcp-paced','--out',parent],apDependencies),0);
+    assert.equal(closes,11);assert.equal(apCommands.length,17); // one unpaced preflight, then 16 paced tests
+    assert.ok(!apCommands[0].includes('-b'));
+    assert.deepEqual(apCommands.slice(1).map(a=>a[a.indexOf('-b')+1]),
+      [8,10,12,14,8,10,12,14,10,12,14,8,12,14,8,10].map(rate=>`${rate}M`));
+    const pacedReports=await Promise.all((await readdir(parent)).map(async d=>JSON.parse(await readFile(path.join(parent,d,'result.json'),'utf8'))));
+    const paced=pacedReports.find(r=>r.options.apTcpPaced&&r.outcome==='completed');
+    assert(paced);assert.equal(paced.records.filter(r=>!r.warmup).length,12);
+    assert.equal(paced.ap_tcp_paced.length,4);
+    assert.equal(paced.summary['ap-tcp-paced/ap/tcp/up/8'].mbps.count,3);
   }finally{await rm(parent,{recursive:true,force:true});}
 });
 

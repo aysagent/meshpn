@@ -31,6 +31,7 @@
     "device:perf:usb-down": "node device/scripts/perf-runner.mjs --usb-down-sweep",
     "device:perf:usb-bursts": "node device/scripts/perf-runner.mjs --usb-burst-sweep",
     "device:perf:ap-up": "node device/scripts/perf-runner.mjs --ap-tcp-up",
+    "device:perf:ap-paced": "node device/scripts/perf-runner.mjs --ap-tcp-paced",
     "device:perf:usb-local": "node device/scripts/perf-local.mjs",
     "device:perf:test": "node --test device/tests/test-perf-runner.mjs device/tests/test-perf-local.mjs device/tests/test-perf-bursts.mjs device/tests/test-perf-wifi.mjs",
     "ja3-snif-server": "node scripts/ja3-snif-server.mjs",

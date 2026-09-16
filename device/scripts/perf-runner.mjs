@@ -7,7 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseArgs, checked, command, iperfArgs, parseIperf, parsePing, stats,
-  summarize, measurementPlan, counterDelta, usbCounterFields, ncmCounterFields, dwc2CounterFields, usbQueueCounterFields, hasPingProblem, summarizeUsbDownSweep } from './perf-lib.mjs';
+  summarize, measurementPlan, counterDelta, usbCounterFields, ncmCounterFields, dwc2CounterFields, usbQueueCounterFields, hasPingProblem,
+  summarizeUsbDownSweep, summarizeApTcpPaced } from './perf-lib.mjs';
 import { discoverBoard, checkRoute, sshArgs, startServers } from './perf-network.mjs';
 import { prepareIperfBinding, iperfEnvironment, verifyIperfBinding, iperfError } from './perf-bind.mjs';
 import { pingEvent, blackoutDiagnostics } from './perf-diagnostics.mjs';
@@ -26,6 +27,7 @@ Required: local/remote iperf3, remote python3, Apple Command Line Tools. Nothing
   --usb-down-sweep        USB UDP download 5..10M, 15s x 3 per rate (~7 min)
   --usb-burst-sweep       Same diagnostics, only 6/7/8M (~4 min)
   --ap-tcp-up             AP TCP upload: 30s warm-up + 3 x 30s, 10s recovery
+  --ap-tcp-paced          AP TCP upload targets 8/10/12/14M, 30s warm-up per rate + 3 x 30s, 10s recovery (~12 min)
   --paths auto|usb|ap|both Auto detects paths; 'both' requires USB + AP
   --seconds N             Per throughput test (default 30)
   --runs N                Measured repeats, excluding warm-up (default 5)
@@ -51,12 +53,12 @@ Report: device/perf-results/<timestamp>-<random>/report.md + JSON/raw logs.
 
 // Dependency injection keeps the complete schedule testable without real networking or waits.
 export async function executeSchedule(o, paths, {batch,idle,now=Date.now,check=()=>{}}) {
-  if(o.usbDownSweep||o.apTcpUp) {
+  if(o.usbDownSweep||o.apTcpUp||o.apTcpPaced) {
     const plan=measurementPlan(paths,o);
     await idle('baseline-idle',o.idleSeconds);
     for(const [index,test] of plan.entries()) {
       check();await batch(test);
-      if(index<plan.length-1)await idle(`sweep-recovery-${index+1}`,o.apTcpUp?10:3);
+      if(index<plan.length-1)await idle(`sweep-recovery-${index+1}`,o.apTcpUp||o.apTcpPaced?10:3);
     }
     await idle('final-idle',o.idleSeconds);
     return;
@@ -182,6 +184,15 @@ export function reportMarkdown(result) {
       '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
     for(const s of summarizeUsbDownSweep(result.records||[],result.pings||[]).filter(s=>!result.options.usbBurstSweep||[6,7,8].includes(s.rate)))
       lines.push(`| ${s.rate} | ${s.n} / ${s.failed} | ${fmt(s.sender_mbps?.median)} | ${fmt(s.receiver_mbps?.median)} | ${fmt(s.udp_loss?.median)} / ${fmt(s.udp_loss?.max)} | ${s.full??'n/a'} | ${s.queue_losses??'n/a'} / ${fmt(s.queue_loss_percent)} | ${fmt(s.residence_mean_ms)} | ${s.ping_samples} | ${fmt(s.ping_p95_ms?.median)} | ${fmt(s.ping_loss?.max)} |`);
+  }
+  if(result.options?.apTcpPaced) {
+    lines.push('', '## AP TCP paced upload sweep', '',
+      'Targets are iperf3 client-side TCP pacing limits, not achieved throughput. Each rate has one warm-up and measured repeats; measured rounds rotate rate order. TCP uses a 1 ms pacing timer and 1200-byte writes, so this experiment is not directly comparable to unlimited TCP with default write size.',
+      'Wi-Fi handoff counters are device-wide, including ACK/admin traffic; STA NO_MEM percentage is per STA driver call, not TCP packet loss. Ping p95 is the median of per-test board p95 values. Missing/reset counters remain n/a.', '',
+      '| Target Mbit/s | n / failed | Sender median | Receiver median | TCP retransmits median / max | STA NO_MEM / calls (%) | AP NO_MEM | Board ping p95 ms | Board ping loss % max |',
+      '|---|---:|---:|---:|---:|---:|---:|---:|---:|');
+    for(const s of summarizeApTcpPaced(result.records||[],result.pings||[]))
+      lines.push(`| ${s.rate} | ${s.n} / ${s.failed} | ${fmt(s.sender_mbps?.median)} | ${fmt(s.receiver_mbps?.median)} | ${fmt(s.retransmits?.median)} / ${fmt(s.retransmits?.max)} | ${s.sta_no_mem??'n/a'} / ${s.sta_calls??'n/a'} (${fmt(s.sta_no_mem_percent)}) | ${s.ap_no_mem??'n/a'} | ${fmt(s.board_ping_p95_ms?.median)} | ${fmt(s.board_ping_loss_percent?.max)} |`);
   }
   const parsed=(result.records||[]).filter(r=>r.timing);
   if(parsed.length) {
@@ -345,7 +356,7 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     result.serverIP=o.serverIP||(await runtime.lookup(o.host,{family:4})).address;
     board=await runtime.discoverBoard(o,signal,log);
     result.paths=board.paths;result.board=cleanStatus(board.initial);
-    const wifiExperimentError=o.apTcpUp&&validateWifiTxExperiment(result.board.wifi.tx);
+    const wifiExperimentError=(o.apTcpUp||o.apTcpPaced)&&validateWifiTxExperiment(result.board.wifi.tx);
     if(wifiExperimentError)throw Error(wifiExperimentError);
     for(const p of board.paths) {
       log(`${p.kind.toUpperCase()}: ${p.iface} ${p.address} → ${p.gateway} → ${result.serverIP}`);
@@ -355,7 +366,7 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     if(o.soakMinutes===0)result.warnings.push('Endurance stage disabled.');
     if(o.adminInsecure)result.warnings.push('HTTPS certificate verification explicitly disabled.');
     const plan=measurementPlan(board.paths,o);
-    const estimated=(plan.reduce((sum,t)=>sum+t.seconds,0)+(o.apTcpUp?(plan.length-1)*10:o.usbDownSweep?(plan.length-1)*3:board.paths.length*2*o.seconds)+2*o.idleSeconds+o.startDelay)/60+o.soakMinutes;
+    const estimated=(plan.reduce((sum,t)=>sum+t.seconds,0)+(o.apTcpUp||o.apTcpPaced?(plan.length-1)*10:o.usbDownSweep?(plan.length-1)*3:board.paths.length*2*o.seconds)+2*o.idleSeconds+o.startDelay)/60+o.soakMinutes;
     if(estimated>240)throw Error('Requested suite exceeds 4 hours; reduce --runs/--seconds/--soak-minutes (remote safety deadline is 6 hours).');
     log(`Estimated load/idle time: ${Math.ceil(estimated)} min + process overhead. Close admin UI; keep Mac connected.`);
     caffeine=runtime.spawn('/usr/bin/caffeinate',['-i','-m','-s','-w',String(process.pid)],{stdio:'ignore'});
@@ -451,7 +462,7 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
     };
     // Fail fast on both directions/protocols before spending an hour on a broken setup.
     if(o.startDelay)await idle('start-delay',o.startDelay,'start-delay');
-    for(const p of board.paths)for(const protocol of (o.apTcpUp?['tcp']:['tcp','udp']))for(const direction of (o.apTcpUp?['up']:o.usbDownSweep?['down']:['up','down']))
+    for(const p of board.paths)for(const protocol of (o.apTcpUp||o.apTcpPaced?['tcp']:['tcp','udp']))for(const direction of (o.apTcpUp||o.apTcpPaced?['up']:o.usbDownSweep?['down']:['up','down']))
       await batch({paths:[p],protocol,direction,rate:protocol==='udp'?5:null,seconds:1,phase:'preflight',warmup:true,run:0});
     await executeSchedule(o,board.paths,{batch,idle,check});
     if(samplerError)throw samplerError;
@@ -477,6 +488,7 @@ export async function main(args=process.argv.slice(2), dependencies={}) {
       if(result.outcome==='completed')result.outcome='completed-with-warnings';
     }
     if(o.usbDownSweep)result.usb_down_sweep=summarizeUsbDownSweep(records,pings);
+    if(o.apTcpPaced)result.ap_tcp_paced=summarizeApTcpPaced(records,pings);
     const incompleteBursts=new Set(records.filter(r=>r.batch_bursts&&(!r.batch_bursts.available||
       r.batch_bursts.missing_windows>0||r.batch_bursts.unrepresented_full>0)).map(r=>r.id));
     if(incompleteBursts.size) {

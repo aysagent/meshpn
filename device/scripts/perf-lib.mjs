@@ -2,10 +2,13 @@ import { spawn } from 'node:child_process';
 import { isIP } from 'node:net';
 import { wifiTxCounterFields } from './perf-wifi.mjs';
 
+export const AP_TCP_PACED_RATES = [8,10,12,14];
+
 export function parseArgs(args) {
   const o = { seconds:30, runs:5, soakMinutes:30, idleSeconds:30, startDelay:0, iperfPort:5201, paths:'auto' };
   if(args.includes('--usb-down-sweep')||args.includes('--usb-burst-sweep'))Object.assign(o,{usbDownSweep:true,seconds:15,runs:3,soakMinutes:0,idleSeconds:10,paths:'usb'});
   if(args.includes('--ap-tcp-up'))Object.assign(o,{apTcpUp:true,seconds:30,runs:3,soakMinutes:0,idleSeconds:10,paths:'ap'});
+  if(args.includes('--ap-tcp-paced'))Object.assign(o,{apTcpPaced:true,seconds:30,runs:3,soakMinutes:0,idleSeconds:10,paths:'ap'});
   const names = {'seconds':'seconds','runs':'runs','soak-minutes':'soakMinutes','idle-seconds':'idleSeconds',
     'start-delay':'startDelay','iperf-port':'iperfPort','server-ip':'serverIP','paths':'paths','admin-url':'adminURL','admin-ca':'adminCA','out':'out'};
   for(let i=0;i<args.length;i++) {
@@ -14,6 +17,7 @@ export function parseArgs(args) {
     else if(a==='--usb-down-sweep') o.usbDownSweep=true;
     else if(a==='--usb-burst-sweep') o.usbBurstSweep=true;
     else if(a==='--ap-tcp-up') o.apTcpUp=true;
+    else if(a==='--ap-tcp-paced') o.apTcpPaced=true;
     else if(a==='--quick') Object.assign(o,{seconds:3,runs:2,soakMinutes:0,idleSeconds:3});
     else if(a==='--admin-insecure') o.adminInsecure=true;
     else if(a.startsWith('--')&&names[a.slice(2)]) {
@@ -23,8 +27,9 @@ export function parseArgs(args) {
     else o.target=a;
   }
   if(o.help) return o;
-  if(o.apTcpUp&&(o.usbDownSweep||args.includes('--quick')||o.paths!=='ap'||Number(o.seconds)<15||Number(o.soakMinutes)!==0))
-    throw Error('--ap-tcp-up requires AP only, >=15s, no soak; cannot combine with USB sweeps or --quick');
+  if((o.apTcpUp||o.apTcpPaced)&&(o.apTcpUp&&o.apTcpPaced||o.usbDownSweep||args.includes('--quick')||
+    o.paths!=='ap'||Number(o.seconds)<15||Number(o.soakMinutes)!==0))
+    throw Error('AP TCP presets require AP only, >=15s, no soak; cannot combine with each other, USB sweeps or --quick');
   if(o.usbDownSweep&&(args.includes('--quick')||o.paths!=='usb'||Number(o.seconds)!==15||Number(o.runs)!==3||Number(o.soakMinutes)!==0))
     throw Error('--usb-down-sweep requires USB only, 15s, 3 repeats, no soak; do not combine with --quick or conflicting timing/path options');
   if(!o.target) throw Error('Pass SSH target: user@192.168.1.100:22');
@@ -69,7 +74,8 @@ export async function checked(bin,args,opts) {
 export function iperfArgs(server,port,path,test) {
   return ['-4','-c',server,'-p',String(port),'-B',path.address,
     '-t',String(test.seconds),'-J','--get-server-output','--connect-timeout','8000',
-    ...(test.direction==='down'?['-R']:[]),...(test.protocol==='udp'?['-u','-b',`${test.rate}M`,'-l','1200']:[])];
+    ...(test.direction==='down'?['-R']:[]),...(test.protocol==='udp'?['-u','-b',`${test.rate}M`,'-l','1200']:[]),
+    ...(test.protocol==='tcp'&&test.paced?['-b',`${test.rate}M`,'--pacing-timer','1000','-l','1200']:[])];
 }
 export function parseIperf(text,protocol) {
   const j=JSON.parse(text);
@@ -139,6 +145,18 @@ export function summarize(records) {
 // One warm-up per scenario/direction; repetitions interleave up/down to reduce drift.
 export function measurementPlan(paths, o) {
   const plan=[];
+  if(o.apTcpPaced) {
+    if(paths.length!==1||paths[0].kind!=='ap')throw Error('AP TCP paced sweep requires exactly one AP path');
+    for(const rate of AP_TCP_PACED_RATES)plan.push({paths,protocol:'tcp',direction:'up',paced:true,rate,
+      seconds:o.seconds,run:0,warmup:true,phase:'ap-tcp-paced'});
+    // Rotate rates between rounds so time/temperature drift is not tied to one target.
+    for(let run=1;run<=o.runs;run++)for(let i=0;i<AP_TCP_PACED_RATES.length;i++) {
+      const rate=AP_TCP_PACED_RATES[(i+run-1)%AP_TCP_PACED_RATES.length];
+      plan.push({paths,protocol:'tcp',direction:'up',paced:true,rate,
+        seconds:o.seconds,run,warmup:false,phase:'ap-tcp-paced'});
+    }
+    return plan;
+  }
   if(o.apTcpUp) {
     if(paths.length!==1||paths[0].kind!=='ap')throw Error('AP TCP upload requires exactly one AP path');
     for(let run=0;run<=o.runs;run++)plan.push({paths,protocol:'tcp',direction:'up',seconds:o.seconds,
@@ -200,6 +218,26 @@ export function summarizeUsbDownSweep(records, pings=[]) {
       full:sum(['full']),queue_losses:lost,submitted,queue_loss_percent:lost!==null&&submitted>0?100*lost/submitted:null,
       residence_mean_ms:residence!==null&&completed>0?residence/completed/1000:null,
       ping_samples:ping.length,ping_p95_ms:stats(ping.map(p=>p.rtt_ms?.p95)),ping_loss:stats(ping.map(p=>p.loss_percent))};
+  });
+}
+
+export function summarizeApTcpPaced(records, pings=[]) {
+  return AP_TCP_PACED_RATES.map(rate=>{
+    const all=records.filter(r=>r.phase==='ap-tcp-paced'&&r.path==='ap'&&r.protocol==='tcp'&&
+      r.direction==='up'&&!r.warmup&&r.rate===rate);
+    const good=all.filter(r=>!r.error),ids=new Set(good.map(r=>r.id));
+    const boardPings=pings.filter(p=>p.path==='ap'&&p.target==='board'&&ids.has(p.id)&&!p.error);
+    const sum=key=>{
+      const values=good.map(r=>r.batch_counters?.[key]);
+      return values.length&&values.every(Number.isFinite)?values.reduce((a,b)=>a+b,0):null;
+    };
+    const staCalls=sum('wifi.tx.sta.calls'),staNoMem=sum('wifi.tx.sta.no_mem');
+    return {rate,n:good.length,failed:all.length-good.length,
+      sender_mbps:stats(good.map(r=>r.sender_mbps)),receiver_mbps:stats(good.map(r=>r.mbps)),
+      retransmits:stats(good.map(r=>r.retransmits)),sta_no_mem:staNoMem,sta_calls:staCalls,
+      sta_no_mem_percent:staNoMem!==null&&staCalls>0?100*staNoMem/staCalls:null,
+      ap_no_mem:sum('wifi.tx.ap.no_mem'),board_ping_p95_ms:stats(boardPings.map(p=>p.rtt_ms?.p95)),
+      board_ping_loss_percent:stats(boardPings.map(p=>p.loss_percent))};
   });
 }
 
