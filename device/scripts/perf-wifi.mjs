@@ -22,8 +22,8 @@ export function validateWifiTxExperiment(tx) {
   if(!tx?.available)return 'AP upload diagnostics require Wi-Fi TX telemetry; flash current firmware first.';
   if(tx.buffer_type!=='static'||tx.static_buffer_count!==24||tx.cache_buffer_count!==128||tx.amsdu_enabled!==false||
     tx.ampdu_enabled!==true||tx.ampdu_ba_window!==12||tx.ampdu_rx_enabled!==true||tx.ampdu_rx_ba_window!==24||
-    tx.iram_opt_enabled!==true||tx.extra_iram_opt_enabled!==true||tx.rx_iram_opt_enabled!==true||tx.lwip_iram_opt_enabled!==true)
-    return `AP extra-IRAM A/B requires Wi-Fi TX static=24, cache=128, A-MSDU=false, A-MPDU TX/RX=true, BA=12/24, IRAM Wi-Fi/extra/RX/lwIP=true; got type=${tx.buffer_type??'n/a'}, static=${tx.static_buffer_count??'n/a'}, cache=${tx.cache_buffer_count??'n/a'}, A-MSDU=${tx.amsdu_enabled??'n/a'}, A-MPDU TX/RX=${tx.ampdu_enabled??'n/a'}/${tx.ampdu_rx_enabled??'n/a'}, BA=${tx.ampdu_ba_window??'n/a'}/${tx.ampdu_rx_ba_window??'n/a'}, IRAM=${tx.iram_opt_enabled??'n/a'}/${tx.extra_iram_opt_enabled??'n/a'}/${tx.rx_iram_opt_enabled??'n/a'}/${tx.lwip_iram_opt_enabled??'n/a'}. Flash current firmware first.`;
+    tx.iram_opt_enabled!==true||tx.extra_iram_opt_enabled!==false||tx.rx_iram_opt_enabled!==true||tx.lwip_iram_opt_enabled!==true)
+    return `AP control requires Wi-Fi TX static=24, cache=128, A-MSDU=false, A-MPDU TX/RX=true, BA=12/24, IRAM Wi-Fi/extra/RX/lwIP=true/false/true/true; got type=${tx.buffer_type??'n/a'}, static=${tx.static_buffer_count??'n/a'}, cache=${tx.cache_buffer_count??'n/a'}, A-MSDU=${tx.amsdu_enabled??'n/a'}, A-MPDU TX/RX=${tx.ampdu_enabled??'n/a'}/${tx.ampdu_rx_enabled??'n/a'}, BA=${tx.ampdu_ba_window??'n/a'}/${tx.ampdu_rx_ba_window??'n/a'}, IRAM=${tx.iram_opt_enabled??'n/a'}/${tx.extra_iram_opt_enabled??'n/a'}/${tx.rx_iram_opt_enabled??'n/a'}/${tx.lwip_iram_opt_enabled??'n/a'}. Flash current firmware first.`;
   return null;
 }
 
