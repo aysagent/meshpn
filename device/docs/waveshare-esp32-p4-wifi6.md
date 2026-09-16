@@ -61,6 +61,16 @@ times out, record the resolved `esp_hosted` version from `dependencies.lock.esp3
 and flash the C6 slave image shipped by that exact release. Then verify STA,
 SoftAP, USB NCM, DHCP/DNS/NAT, reconnect and reboot.
 
+If `MeshPN_<MAC suffix>` is absent from nearby Wi-Fi networks, keep using the
+USB-C UART monitor; the four-pin USB data connector is not needed for SoftAP.
+The P4 build logs `AP config start` and `AP radio start` after the C6 reports
+`AP_START`, then repeats them every 30 seconds while AP is active. These lines
+read the mode, SSID, hidden flag, configured and current channel, bandwidth,
+country, security settings and AP MAC back from the C6 over ESP-Hosted. Query
+failures are logged by API. `AP_STOP` is also logged. A successful `AP_START`
+and clean readback still do not prove that the C6 is radiating beacons; a
+nearby Wi-Fi scan is needed for that distinction.
+
 Board references:
 
 - [Waveshare board documentation](https://docs.waveshare.com/ESP32-P4-WIFI6)

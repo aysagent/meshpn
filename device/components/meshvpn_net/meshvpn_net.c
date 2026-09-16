@@ -193,6 +193,61 @@ static void meshvpn_net_resolve_lan_conflict(esp_netif_t *lan, esp_netif_t *othe
     if (s_mdns) mdns_netif_action(lan, MDNS_EVENT_ANNOUNCE_IP4);
 }
 
+#if CONFIG_IDF_TARGET_ESP32P4 && defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
+static void meshvpn_net_log_ap_radio(const char *reason)
+{
+    /* These getters are ESP-Hosted RPCs to the C6. Do not log cfg.ap.password. */
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    wifi_config_t cfg = {0};
+    uint8_t channel = 0;
+    wifi_second_chan_t secondary = WIFI_SECOND_CHAN_NONE;
+    wifi_bandwidth_t bandwidth = WIFI_BW_HT20;
+    wifi_country_t country = {0};
+    uint8_t mac[6] = {0};
+    esp_err_t mode_err = esp_wifi_get_mode(&mode);
+    esp_err_t config_err = esp_wifi_get_config(WIFI_IF_AP, &cfg);
+    esp_err_t channel_err = esp_wifi_get_channel(&channel, &secondary);
+    esp_err_t bandwidth_err = esp_wifi_get_bandwidth(WIFI_IF_AP, &bandwidth);
+    esp_err_t country_err = esp_wifi_get_country(&country);
+    esp_err_t mac_err = esp_wifi_get_mac(WIFI_IF_AP, mac);
+
+    if (mode_err != ESP_OK || config_err != ESP_OK || channel_err != ESP_OK ||
+        bandwidth_err != ESP_OK || country_err != ESP_OK || mac_err != ESP_OK) {
+        ESP_LOGW(TAG, "AP radio %s query errors: mode=%s config=%s channel=%s bandwidth=%s country=%s mac=%s",
+                 reason, esp_err_to_name(mode_err), esp_err_to_name(config_err),
+                 esp_err_to_name(channel_err), esp_err_to_name(bandwidth_err),
+                 esp_err_to_name(country_err), esp_err_to_name(mac_err));
+    }
+
+    if (config_err == ESP_OK) {
+        char ssid[sizeof(cfg.ap.ssid) + 1] = {0};
+        size_t ssid_len = cfg.ap.ssid_len;
+        if (!ssid_len) ssid_len = strnlen((const char *)cfg.ap.ssid, sizeof(cfg.ap.ssid));
+        if (ssid_len > sizeof(cfg.ap.ssid)) ssid_len = sizeof(cfg.ap.ssid);
+        memcpy(ssid, cfg.ap.ssid, ssid_len);
+        ESP_LOGI(TAG, "AP config %s: ssid=%s hidden=%u configured_channel=%u auth=%d pmf_capable=%d pmf_required=%d max_clients=%u beacon_interval_cfg=%u ms",
+                 reason, ssid, (unsigned)cfg.ap.ssid_hidden, (unsigned)cfg.ap.channel,
+                 (int)cfg.ap.authmode, (int)cfg.ap.pmf_cfg.capable,
+                 (int)cfg.ap.pmf_cfg.required, (unsigned)cfg.ap.max_connection,
+                 (unsigned)cfg.ap.beacon_interval);
+    }
+    if (mode_err == ESP_OK && channel_err == ESP_OK && bandwidth_err == ESP_OK && mac_err == ESP_OK) {
+        const char *mode_name = mode == WIFI_MODE_APSTA ? "APSTA" :
+                                mode == WIFI_MODE_AP ? "AP" :
+                                mode == WIFI_MODE_STA ? "STA" : "NULL";
+        const char *bandwidth_name = bandwidth == WIFI_BW_HT40 ? "HT40" : "HT20";
+        ESP_LOGI(TAG, "AP radio %s: mode=%s current_channel=%u secondary=%d configured_bandwidth=%s mac=" MACSTR,
+                 reason, mode_name, (unsigned)channel, (int)secondary,
+                 bandwidth_name, MAC2STR(mac));
+    }
+    if (country_err == ESP_OK) {
+        ESP_LOGI(TAG, "AP country %s: code=%.2s first_channel=%u channel_count=%u",
+                 reason, country.cc, (unsigned)country.schan, (unsigned)country.nchan);
+    }
+    memset(&cfg, 0, sizeof(cfg));
+}
+#endif
+
 static void meshvpn_net_on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
@@ -225,6 +280,15 @@ static void meshvpn_net_on_event(void *arg, esp_event_base_t base, int32_t id, v
         meshvpn_net_refresh_lan_dhcp();
         meshvpn_net_ensure_napt();
     }
+
+#if CONFIG_IDF_TARGET_ESP32P4 && defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
+    if (base == WIFI_EVENT && id == WIFI_EVENT_AP_START) {
+        ESP_LOGI(TAG, "AP_START event from Wi-Fi coprocessor");
+        meshvpn_net_log_ap_radio("start");
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STOP) {
+        ESP_LOGW(TAG, "AP_STOP event from Wi-Fi coprocessor");
+    }
+#endif
 }
 
 void meshvpn_net_ensure_napt(void)
@@ -400,6 +464,11 @@ void meshvpn_net_log_state(void)
     meshvpn_net_read_ip(s_ap_netif, ap_ip, sizeof(ap_ip));
     ESP_LOGI(TAG, "bridge up: USB %s napt=%d (%s), SoftAP %s napt=%d",
              usb_ip, s_usb_napt, meshvpn_usb_profile_name(), ap_ip, s_ap_napt);
+#if CONFIG_IDF_TARGET_ESP32P4
+    meshvpn_wifi_status_t wifi_status;
+    meshvpn_wifi_get_status(&wifi_status);
+    if (wifi_status.ap_active) meshvpn_net_log_ap_radio("periodic");
+#endif
 #else
     ESP_LOGI(TAG, "bridge up: USB %s napt=%d (%s)",
              usb_ip, s_usb_napt, meshvpn_usb_profile_name());
