@@ -27,6 +27,8 @@
     "device:flash:rndis": "./device/scripts/flash.sh rndis",
     "device:flash:ecm": "./device/scripts/flash.sh ecm",
     "device:monitor": "./device/scripts/monitor.sh",
+    "device:remote": "./device/scripts/remote-tunnel.sh",
+    "device:remote:connect": "./device/scripts/remote-connect.sh",
     "device:perf": "node device/scripts/perf-runner.mjs",
     "device:perf:usb-down": "node device/scripts/perf-runner.mjs --usb-down-sweep",
     "device:perf:usb-bursts": "node device/scripts/perf-runner.mjs --usb-burst-sweep",

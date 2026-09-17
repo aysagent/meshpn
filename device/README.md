@@ -29,6 +29,42 @@ Set `PORT` explicitly if several serial devices are connected. Each board/profil
 `dependencies.lock.esp32s3` and `dependencies.lock.esp32p4` files in version control.
 The dependency manager applies the iot_bridge lwIP patches to your ESP-IDF checkout.
 
+## Control a board attached to a Mac from a Linux server
+
+The Mac opens an outbound reverse SSH tunnel to the server. Enable macOS
+**System Settings → General → Sharing → Remote Login** for the Mac user and set
+up SSH-key authentication in both directions. The server needs no direct route
+to the Mac and no router port-forward or public reverse-proxy port is needed.
+From the repo on the Mac, run:
+
+```bash
+npm run device:remote tunneluser@SERVER
+```
+
+Leave that terminal running while using the board. On the Linux server, from
+the repo, connect with the same macOS username as the Linux username, or pass
+the Mac username explicitly:
+
+```bash
+npm run device:remote:connect
+npm run device:remote:connect macuser
+npm run device:remote:connect macuser 'cd ~/dev/home/meshpn && PORT=/dev/cu.usbmodemXXXX npm run device:flash'
+```
+
+The tunnel listens on **127.0.0.1:22022 on the server**, forwarding to the
+Mac's local SSH service. Both commands accept `MESHPN_REMOTE_PORT` if another
+server-local port is needed. Server SSH must permit remote TCP forwarding and
+must not force wildcard binding (`GatewayPorts yes`); verify with
+`ss -ltn '( sport = :22022 )'` that only loopback is listening. The first
+server-to-Mac SSH login should verify and save the Mac's host key; the command
+uses the stable host-key alias `meshpn-mac-via-tunnel`. Do not forward an SSH
+agent or expose this port publicly. For an interactive remote monitor command,
+set `MESHPN_REMOTE_TTY=1` on the Linux command. When the Mac is off or asleep,
+the tunnel drops and hardware actions must wait. Firmware still needs a serial
+download port (and, on XIAO, bootloader mode); the tunnel does not switch the
+board into that mode. The normal XIAO NCM firmware has no continuous USB CDC
+console; use `/api/logs`, diagnostic firmware, or a UART adapter as appropriate.
+
 ## First login
 
 Open **http://meshpn.local/** over USB, or **http://192.168.7.1/**.
