@@ -2,6 +2,9 @@ node_modules
 certs/
 native/tun_linux/build/
 device/perf-results/
+device/perf-managed-results/
+device/perf-remote-results/
+device/.remote-mac.json
 device/**/__pycache__/
 
 # Локальные секреты / токены

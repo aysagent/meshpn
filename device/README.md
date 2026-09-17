@@ -41,7 +41,9 @@ From the repo on the Mac, run:
 npm run device:remote tunneluser@SERVER
 ```
 
-Leave that terminal running while using the board. On the Linux server, from
+Leave that terminal running while using the board. If Mac Wi-Fi drops during
+an AP test, this command reconnects the tunnel after the original network
+returns. On the Linux server, from
 the repo, connect with the same macOS username as the Linux username, or pass
 the Mac username explicitly:
 
@@ -50,6 +52,59 @@ npm run device:remote:connect
 npm run device:remote:connect macuser
 npm run device:remote:connect macuser 'cd ~/dev/home/meshpn && PORT=/dev/cu.usbmodemXXXX npm run device:flash'
 ```
+
+For commands in the Mac checkout, save its absolute path and macOS SSH user
+once on Linux (the path defaults to `~/dev/home/meshpn` on the Mac until set).
+The command writes only `device/.remote-mac.json` on Linux, ignored by git.
+A fast-forward-only update is then:
+
+```bash
+npm run device:remote:config -- /Users/YOUR_MAC_USER/path/to/meshpn YOUR_MAC_USER
+npm run device:remote:repo -- git status --short
+npm run device:remote:repo -- git pull --ff-only
+```
+
+`git pull --ff-only` is explicit, never part of a benchmark, and will refuse
+conflicting local changes. `MESHPN_MAC_REPO_DIR` and `MESHPN_MAC_SSH_USER`
+override the saved values for one command. The Mac checkout needs Node.js,
+npm, iperf3 and the same prerequisites as ordinary `device:perf` runs.
+
+To test the board AP while this reverse tunnel is the only way into the Mac,
+first connect the Mac to the board AP manually once and save its Wi-Fi password
+in macOS, then reconnect to the normal Wi-Fi. Keep USB NCM connected: the job
+discovers the board and its AP SSID via USB before changing Wi-Fi. From Linux:
+
+```bash
+npm run device:remote:ap-test -- user@SERVER --ap-tcp-paced
+```
+
+The command launches a detached job on the Mac, waits through any tunnel
+outage, restores the previous Wi-Fi and DHCP route, copies the complete job
+directory to `device/perf-remote-results/<job-id>/` on Linux, and prints only
+local file paths for `report.md`, `result.json`, and the logs. It does not put
+raw logs in the agent's command output. `--ap-tcp-paced` (8/10/12/14 Mbit/s)
+is the default; `--ap-tcp-up` or other compatible perf-runner options may be
+passed instead. The result also contains `state.json`, `worker.log`, and all
+raw runner files. No AP password is passed in command arguments or stored in
+the result. The Mac may ask for permission to change Wi-Fi; grant it before a
+headless run. If association or restore fails, the job records the error and a
+separate watchdog retries restoration when the worker exits; if the tunnel
+cannot come back, use the Mac locally and collect the job later.
+
+For separate launch/collection (or a retry after a server command times out):
+
+```bash
+npm run device:remote:repo -- npm run --silent device:perf:ap-managed -- user@SERVER --ap-tcp-paced
+npm run device:remote:collect -- JOB_ID
+```
+
+The first command prints only the job ID. Both the one-step and separate
+collector accept `MESHPN_MAC_SSH_USER` and `MESHPN_REMOTE_PORT`; collector wait
+defaults to six hours (`MESHPN_REMOTE_COLLECT_WAIT_MINUTES` can override it).
+If Mac Remote Login is unavailable, the job cannot start. If association with
+the AP fails, the worker attempts to restore the original Wi-Fi and records
+the error. The Wi-Fi switch is not a test of reconnect/sleep behavior of the
+board itself.
 
 The tunnel listens on **127.0.0.1:22022 on the server**, forwarding to the
 Mac's local SSH service. Both commands accept `MESHPN_REMOTE_PORT` if another
