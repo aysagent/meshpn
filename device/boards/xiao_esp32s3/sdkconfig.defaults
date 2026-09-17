@@ -12,13 +12,13 @@ CONFIG_SPIRAM_SPEED_80M=y
 # PSRAM/flash are not encrypted at rest in this development firmware.
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
-# AP->STA TX backpressure experiment: reallocate four 1600-byte DMA buffers
-# from Wi-Fi RX to TX without increasing the static DMA-buffer budget.
+# Control Wi-Fi buffer balance for AP->STA forwarding. The 12/28 RX/TX
+# reallocation experiment did not reduce STA TX NO_MEM; keep 16/24.
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=12
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16
 CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=48
 CONFIG_ESP_WIFI_STATIC_TX_BUFFER=y
-CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=28
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=24
 CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=128
 CONFIG_ESP_WIFI_AMSDU_TX_ENABLED=n
 CONFIG_ESP_WIFI_TX_BA_WIN=12
