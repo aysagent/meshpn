@@ -16,6 +16,9 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
     meshvpn_wifi_tx_snapshot(stats);
     cJSON *tx = cJSON_AddObjectToObject(wifi, "tx");
     cJSON_AddBoolToObject(tx, "available", true);
+#ifdef CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM
+    cJSON_AddNumberToObject(tx, "static_rx_buffer_count", CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM);
+#endif
 #ifdef CONFIG_ESP_WIFI_STATIC_TX_BUFFER
     cJSON_AddStringToObject(tx, "buffer_type", "static");
     cJSON_AddNumberToObject(tx, "static_buffer_count", CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM);

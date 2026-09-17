@@ -801,7 +801,7 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
     const apDependencies={...dependencies,
       discoverBoard:async()=>{
         const board=await dependencies.discoverBoard();
-        const decorate=s=>({...s,wifi:{...s.wifi,tx:{available:true,buffer_type:'static',static_buffer_count:24,cache_buffer_count:128,amsdu_enabled:false,
+        const decorate=s=>({...s,wifi:{...s.wifi,tx:{available:true,buffer_type:'static',static_rx_buffer_count:16,static_buffer_count:24,cache_buffer_count:128,amsdu_enabled:false,
           ampdu_enabled:true,ampdu_ba_window:12,ampdu_rx_enabled:true,ampdu_rx_ba_window:24,
           iram_opt_enabled:true,extra_iram_opt_enabled:false,rx_iram_opt_enabled:true,lwip_iram_opt_enabled:true,
           sta:{calls:10,accepted:10,call_us:2000},ap:{calls:2,accepted:2,call_us:100}},

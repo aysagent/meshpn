@@ -20,7 +20,7 @@ test('AP upload preset: bounded long tests, only AP/up/TCP, warmup and recovery'
 });
 
 test('Wi-Fi diagnostics preserve separate counter deltas, unknown/reset and sanitized peers',()=>{
-  const state=n=>({uptime_sec:n,wifi:{tx:{available:true,buffer_type:'static',static_buffer_count:24,cache_buffer_count:128,amsdu_enabled:false,
+  const state=n=>({uptime_sec:n,wifi:{tx:{available:true,buffer_type:'static',static_rx_buffer_count:16,static_buffer_count:24,cache_buffer_count:128,amsdu_enabled:false,
     ampdu_enabled:true,ampdu_ba_window:12,ampdu_rx_enabled:true,ampdu_rx_ba_window:24,
     iram_opt_enabled:true,extra_iram_opt_enabled:false,rx_iram_opt_enabled:true,lwip_iram_opt_enabled:true,
     ...Object.fromEntries(['sta','ap'].map(k=>[k,Object.fromEntries(wifiTxCounterFields.map(f=>[f,n]))]))},
@@ -31,7 +31,8 @@ test('Wi-Fi diagnostics preserve separate counter deltas, unknown/reset and sani
   assert.equal(counterDelta(after,before)['wifi.tx.ap.calls'],null);
   assert.equal(counterDelta(cleanStatus({}),after)['wifi.tx.sta.calls'],null);
   assert.ok(!JSON.stringify(after).includes('secret'));
-  assert.equal(after.wifi.tx.buffer_type,'static');assert.equal(after.wifi.tx.static_buffer_count,24);
+  assert.equal(after.wifi.tx.buffer_type,'static');assert.equal(after.wifi.tx.static_rx_buffer_count,16);
+  assert.equal(after.wifi.tx.static_buffer_count,24);
   assert.equal(after.wifi.tx.cache_buffer_count,128);
   assert.equal(after.wifi.tx.amsdu_enabled,false);
   assert.equal(after.wifi.tx.ampdu_ba_window,12);assert.equal(after.wifi.tx.ampdu_rx_ba_window,24);
@@ -40,13 +41,15 @@ test('Wi-Fi diagnostics preserve separate counter deltas, unknown/reset and sani
   const text=wifiMarkdown([r,r]).join('\n');
   assert.equal(text.split('| 0001 | sta |').length-1,1);
   assert.ok(text.includes('40 / n/a'));assert.ok(text.includes('0: -50, true'));
-  assert.ok(text.includes('static=24'));assert.ok(text.includes('cache=128'));assert.ok(text.includes('A-MSDU=false'));
+  assert.ok(text.includes('static RX/TX=16/24'));assert.ok(text.includes('cache TX=128'));assert.ok(text.includes('A-MSDU=false'));
   assert.ok(text.includes('A-MPDU TX/RX=true/true'));assert.ok(text.includes('BA=12/24'));
   assert.ok(text.includes('IRAM Wi-Fi/extra/RX/lwIP=true/false/true/true'));
   assert.ok(text.includes('NOT per-packet negotiated width'));
   assert.ok(wifiMarkdown([{...r,batch_counters:{}}]).join('\n').includes('| n/a |'));
   assert.deepEqual(wifiMarkdown([{id:'old'}]),[]);
   assert.equal(validateWifiTxExperiment(after.wifi.tx),null);
+  assert.equal(validateWifiTxExperiment({...after.wifi.tx,static_rx_buffer_count:12,static_buffer_count:28}),null);
+  assert.match(validateWifiTxExperiment({...after.wifi.tx,static_buffer_count:28}),/static RX\/TX=16\/28/);
   assert.match(validateWifiTxExperiment({...after.wifi.tx,cache_buffer_count:48}),/cache=48/);
   assert.match(validateWifiTxExperiment({...after.wifi.tx,amsdu_enabled:true}),/A-MSDU=true/);
   assert.match(validateWifiTxExperiment({...after.wifi.tx,ampdu_ba_window:24}),/BA=24\/24/);
