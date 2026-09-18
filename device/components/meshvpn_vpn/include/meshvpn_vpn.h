@@ -24,6 +24,7 @@ typedef struct {
     char address[16];
     uint32_t wg_handshake_age;
     char wg_address[16], wg_dns[16], wg_public_key[45];
+    char wg_address_input[160];
     uint16_t wg_keepalive;
     bool wg_private_key_set, wg_preshared_key_set;
     int last_error;

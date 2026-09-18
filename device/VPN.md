@@ -111,7 +111,7 @@ Admin fields follow the WireGuard profile order and names:
 ```ini
 [Interface]
 PrivateKey = <device private key>
-Address = 10.0.0.7
+Address = 10.0.0.7/24,fd42:42:42::7/64
 DNS = 1.1.1.1
 
 [Peer]
@@ -121,16 +121,25 @@ AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25
 ```
 
-For a source profile with `Address = 10.0.0.7/24,fd42:42:42::7/64`, enter
-only `10.0.0.7` in this UI. Do not change the original profile: the device backend
-uses /32 internally and does not support IPv6. `AllowedIPs` is read-only; `::/0`
-is not used. Optional `PresharedKey` controls follow the main peer fields.
+Paste the original Address value, including CIDR and comma-separated IPv6:
+`10.0.0.7/24,fd42:42:42::7/64`. Plain `10.0.0.7` and `10.0.0.7/24` also work.
+The original value is saved and restored in the UI; `/api/status` exposes it as
+`wireguard.address_input`, while `wireguard.address` contains the effective IPv4.
+Exactly one IPv4 is required; prefixes are validated (IPv4 0–32, IPv6 0–128).
+IPv6 entries are accepted but **not used**; the UI warns about this explicitly.
+IPv6-only profiles and multiple IPv4 addresses are rejected rather than silently
+selecting an arbitrary address. The backend still uses /32 internally and full
+IPv4 routing; the pasted prefix does not create a directly connected subnet.
+`AllowedIPs` is read-only; `::/0` is not used. Optional `PresharedKey` controls
+follow the main peer fields. Existing stored profiles migrate without losing keys
+or changing the kill switch setting.
 
 Field details:
 
 - Server: numeric IPv4 and UDP port, e.g. `192.0.2.1:51820`.
-- Device tunnel address: the IPv4 from its WireGuard profile, without CIDR suffix;
-  this version installs a /32. It must not overlap the USB/AP or uplink subnet.
+- Device tunnel address: paste Address from the WireGuard profile, optionally
+  including CIDR and IPv6 entries. This version uses the IPv4 with /32 internally.
+  The effective IPv4 must not overlap the USB/AP or uplink subnet.
 - Server public key, device private key, optional preshared key: standard
   44-character base64 WireGuard keys. Provision the matching device **public**
   key on the server; the UI does not generate/import wg-quick files yet.
@@ -153,6 +162,14 @@ to STA by the pinned library. The shared persistent virtual netif applies NAPT,
 MSS clamping and disconnected blackholing. On config changes, the old peer/timers/
 UDP PCB are removed and the library's device key context is wiped before freeing.
 No simultaneous socket and WireGuard connection is maintained.
+
+Decrypted WireGuard IPv4 packets are validated and re-injected through the stable
+`vp` interface **before NAPT**, rather than delivered to sockets on the backend
+`wg` interface. This is required for the interface-bound DNS/probe sockets:
+lwIP rejects a reply arriving on a different interface from the socket binding.
+A regression test models this TCP/UDP interface filter, single-pass NAT/packet
+ownership and rejection of unexpected inner destinations. It is not an on-board
+or server forwarding test.
 
 Boot/recovery states: `wait_time`, `wait_uplink`, `handshake`, `up`, `wg_error`.
 SNTP to `pool.ntp.org` (and its bootstrap DNS) intentionally uses STA directly,

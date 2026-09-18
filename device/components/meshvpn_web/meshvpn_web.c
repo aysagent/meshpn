@@ -36,6 +36,7 @@
 #include "meshvpn_ncm_diag.h"
 #include "meshvpn_dwc2_diag.h"
 #include "meshvpn_vpn.h"
+#include "meshvpn_vpn_profile.h"
 #include "meshvpn_wifi.h"
 #include "web_ui.h"
 #include "sdkconfig.h"
@@ -564,6 +565,8 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddStringToObject(vpn, "address", vs.address);
     cJSON *wg = cJSON_AddObjectToObject(vpn, "wireguard");
     cJSON_AddStringToObject(wg, "address", vs.wg_address);
+    cJSON_AddStringToObject(wg, "address_input", vs.wg_address_input[0] ? vs.wg_address_input : vs.wg_address);
+    cJSON_AddBoolToObject(wg, "ipv6_supported", false);
     cJSON_AddStringToObject(wg, "dns", vs.wg_dns);
     cJSON_AddStringToObject(wg, "public_key", vs.wg_public_key);
     cJSON_AddStringToObject(wg, "allowed_ips", "0.0.0.0/0");
@@ -927,7 +930,19 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
         valid = false; if (!validation_error) validation_error = message; \
     } \
 } while (0)
-    VPN_READ_FIELD(wg_address, false, "Address: enter one IPv4 without /mask or IPv6 (example: 10.0.0.7).");
+    cJSON *address = cJSON_GetObjectItemCaseSensitive(in, "wg_address");
+    if (address) {
+        bool address_ok = cJSON_IsString(address) && strlen(address->valuestring) < sizeof(cfg.wg_address_input);
+        if (address_ok && address->valuestring[0])
+            address_ok = meshvpn_vpn_profile_address(address->valuestring, cfg.wg_address);
+        if (!address_ok) {
+            valid = false;
+            if (!validation_error) validation_error = "Address: paste one IPv4 (optional /0 to /32) with optional comma-separated IPv6 addresses. IPv6-only, multiple IPv4 addresses and invalid prefixes are not supported.";
+        } else {
+            strlcpy(cfg.wg_address_input, address->valuestring, sizeof(cfg.wg_address_input));
+            if (!address->valuestring[0]) cfg.wg_address[0] = 0;
+        }
+    }
     VPN_READ_FIELD(wg_dns, false, "DNS: enter one IPv4 resolver (example: 1.1.1.1).");
     VPN_READ_FIELD(wg_public_key, false, "PublicKey: paste only the 44-character Base64 value, without the PublicKey = label or quotes.");
     VPN_READ_FIELD(wg_private_key, true, "PrivateKey: paste only the 44-character Base64 value, without the PrivateKey = label or quotes.");

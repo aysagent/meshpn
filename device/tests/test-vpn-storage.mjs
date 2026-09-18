@@ -41,17 +41,23 @@ int main(void){
  nvs_set_blob(0,"vpn_cfg2",&c,sizeof(struct old_v2));
  assert(meshvpn_config_load_vpn(&out)==ESP_OK&&out.enabled&&!out.allow_direct);
  assert(!strcmp(out.wg_private_key,"private")&&!strcmp(out.wg_address,"10.0.0.7"));
+ struct old_v3 {struct old_v2 v2;bool allow_direct;};
+ assert(sizeof(struct old_v3)==offsetof(meshvpn_vpn_config_t,wg_address_input));
+ out.allow_direct=true;nvs_set_blob(0,"vpn_cfg3",&out,sizeof(struct old_v3));
+ assert(meshvpn_config_load_vpn(&out)==ESP_OK&&out.allow_direct&&out.enabled&&!out.wg_address_input[0]);
+ strcpy(out.wg_address_input,"10.0.0.7/24,fd42:42:42::7/64");
  out.allow_direct=true;assert(meshvpn_config_save_vpn(&out)==ESP_OK);
- assert(!strcmp(record_key,"vpn_cfg3"));
+ assert(!strcmp(record_key,"vpn_cfg4"));
  assert(meshvpn_config_load_vpn(&c)==ESP_OK&&c.allow_direct&&c.enabled);
+ assert(!strcmp(c.wg_address_input,"10.0.0.7/24,fd42:42:42::7/64"));
  c.allow_direct=false;assert(meshvpn_config_save_vpn(&c)==ESP_OK);
  assert(meshvpn_config_load_vpn(&out)==ESP_OK&&!out.allow_direct);
- record_size--;assert(meshvpn_config_load_vpn(&out)==ESP_FAIL); // corrupt v3 must not restore defaults
+ record_size--;assert(meshvpn_config_load_vpn(&out)==ESP_FAIL); // corrupt v4 must not restore defaults
  commit_fail=true;assert(meshvpn_config_save_vpn(&c)==ESP_FAIL);
  struct {char server[129],sni[129],transport[32];bool enabled;} v1={.transport="socket",.enabled=true};
  nvs_set_blob(0,"vpn_cfg1",&v1,sizeof(v1));
  assert(meshvpn_config_load_vpn(&out)==ESP_OK&&out.enabled&&!out.allow_direct);
- puts("VPN NVS: v1/v2 migration keeps kill switch ON, v3 roundtrip and corruption handling passed");
+ puts("VPN NVS: v1/v2/v3 migration, original Address v4 roundtrip and corruption handling passed");
 }
 `;
 const file=path.join(dir,'test.c'),bin=path.join(dir,'test');fs.writeFileSync(file,source);

@@ -20,6 +20,7 @@ const source=`
 #include <arpa/inet.h>
 #include "meshvpn_vpn.h"
 #include "meshvpn_vpn_frame.h"
+#include "meshvpn_vpn_profile.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/platform_util.h"
 #include "cJSON.h"
@@ -65,10 +66,10 @@ assert(handler_vpn_config(&r)==ESP_FAIL); /* no keys */
 unsigned char raw[32];memset(raw,7,sizeof(raw));unsigned char key[45];size_t len;
 assert(!mbedtls_base64_encode(key,sizeof(key),&len,raw,sizeof(raw))&&len==44);key[44]=0;
 replace("wg_private_key",(char*)key);replace("wg_public_key",(char*)key);replace("wg_preshared_key",(char*)key);
-replace("wg_address","10.0.0.7/24");unsigned before_bad_address=saves;
+replace("wg_address","10.0.0.7/33");unsigned before_bad_address=saves;
 assert(handler_vpn_config(&r)==ESP_FAIL&&saves==before_bad_address&&strstr(last_error_message,"Address:"));
 assert(!strstr(last_error_message,(char*)key));
-replace("wg_address","10.0.0.7/24,fd42:42:42::7/64");
+replace("wg_address","10.0.0.7/24,fd42:42:42::7/129");
 assert(handler_vpn_config(&r)==ESP_FAIL&&strstr(last_error_message,"Address:"));
 replace("wg_address","10.6.0.2");replace("server","vpn.example.com:51820");
 assert(handler_vpn_config(&r)==ESP_FAIL&&strstr(last_error_message,"Endpoint/server:"));
@@ -76,6 +77,12 @@ replace("server","192.0.2.1:51820");replace("wg_dns","1.1.1.1,8.8.8.8");
 assert(handler_vpn_config(&r)==ESP_FAIL&&strstr(last_error_message,"DNS:"));
 replace("wg_dns","1.1.1.1");
 assert(handler_vpn_config(&r)==ESP_OK&&saves==2);
+replace("wg_address","10.0.0.7/24");assert(handler_vpn_config(&r)==ESP_OK);
+assert(!strcmp(saved.wg_address,"10.0.0.7")&&!strcmp(saved.wg_address_input,"10.0.0.7/24"));
+replace("wg_address","10.0.0.7/24,fd42:42:42::7/64");assert(handler_vpn_config(&r)==ESP_OK);
+assert(!strcmp(saved.wg_address,"10.0.0.7")&&!strcmp(saved.wg_address_input,"10.0.0.7/24,fd42:42:42::7/64"));
+cJSON_DeleteItemFromObject(request,"wg_address");assert(handler_vpn_config(&r)==ESP_OK);
+assert(!strcmp(saved.wg_address_input,"10.0.0.7/24,fd42:42:42::7/64")); /* omitted preserves */
 replace("wg_private_key","");replace("wg_preshared_key","");
 assert(handler_vpn_config(&r)==ESP_OK&&!strcmp(saved.wg_private_key,(char*)key)&&saved.wg_preshared_key[0]);
 cJSON_AddBoolToObject(request,"wg_clear_psk",true);assert(handler_vpn_config(&r)==ESP_OK&&!saved.wg_preshared_key[0]);
@@ -111,5 +118,6 @@ execFileSync(process.env.CC||'cc',['-std=c11','-Wall','-Wextra','-Werror','-fsan
   '-I'+new URL('tests/stubs',root).pathname,'-I'+new URL('components/meshvpn_config/include',root).pathname,
   '-I'+new URL('components/meshvpn_vpn/include',root).pathname,'-I'+json,
   '-I'+path.join(idf,'components/mbedtls/mbedtls/include'),file,
-  new URL('components/meshvpn_vpn/meshvpn_vpn_frame.c',root).pathname,path.join(json,'cJSON.c'),process.argv[2],'-lm','-o',bin],{stdio:'inherit'});
+  new URL('components/meshvpn_vpn/meshvpn_vpn_frame.c',root).pathname,
+  new URL('components/meshvpn_vpn/meshvpn_vpn_profile.c',root).pathname,path.join(json,'cJSON.c'),process.argv[2],'-lm','-o',bin],{stdio:'inherit'});
 execFileSync(bin,{stdio:'inherit'});

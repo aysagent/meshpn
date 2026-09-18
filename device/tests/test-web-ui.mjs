@@ -19,6 +19,7 @@ for(const part of text.split('static const char ').slice(1)){
       let previous=-1;
       for(const label of ordered){const index=wgForm.indexOf(label);assert(index>previous,'WireGuard config order: '+label);previous=index;}
       assert(wgForm.includes("id='wg-allowed-ips' value='0.0.0.0/0' readonly"));
+      assert(wgForm.includes("id='wg-address' maxlength='159'"),'Address must fit a CIDR/IPv6 list');
       // Exercise the production status renderer in both modes, without starting
       // the unrelated WiFi scan loop or scheduling real timers/network calls.
       const startup='poll();run(async()=>{await loadProfiles();await scanNetworks(true);})();';
@@ -62,7 +63,7 @@ for(const part of text.split('static const char ').slice(1)){
               const cfg=JSON.parse(options.body);assert(['socket','wireguard'].includes(cfg.transport));
               assert(!cfg.enabled||cfg.transport==='wireguard'||cfg.allow_plaintext);
               Object.assign(status.vpn,{enabled:cfg.enabled,transport:cfg.transport,server:cfg.server,kill_switch:cfg.kill_switch});
-              if(cfg.transport==='wireguard')status.vpn.wireguard={address:cfg.wg_address,dns:cfg.wg_dns,
+              if(cfg.transport==='wireguard')status.vpn.wireguard={address:cfg.wg_address.split(',')[0].split('/')[0],address_input:cfg.wg_address,dns:cfg.wg_dns,
                 public_key:cfg.wg_public_key,keepalive:cfg.wg_keepalive,private_key_set:true,preshared_key_set:false};
             }else if(path==='/api/vpn/restart'||path==='/api/vpn/check'){
               assert.equal(options.method,'POST');assert.equal(options.headers.Authorization,'Bearer test-token');
@@ -91,12 +92,14 @@ for(const part of text.split('static const char ').slice(1)){
         elements['wg-endpoint'].value='198.51.100.7:51820';elements['wg-endpoint'].oninput();
         await vm.runInContext('poll()',context);
         assert.equal(elements['wg-endpoint'].value,'198.51.100.7:51820','poll preserves endpoint edit');
-        elements['wg-address'].value='10.6.0.2';elements['wg-dns'].value='1.1.1.1';
+        elements['wg-address'].value='10.0.0.7/24,fd42:42:42::7/64';elements['wg-dns'].value='1.1.1.1';
         elements['wg-public-key'].value='test-peer-public';elements['wg-private-key'].value='test-device-secret';
         elements['wg-psk'].value='';elements['vpn-enabled'].checked=true;elements['vpn-plaintext'].checked=false;
         await elements['vpn-form'].onsubmit();assert.equal(status.vpn.transport,'wireguard');
         assert.equal(status.vpn.server,'198.51.100.7:51820','WG uses Endpoint, not hidden socket server');
         assert.equal(elements['wg-endpoint'].value,status.vpn.server,'render saved endpoint');
+        assert.equal(status.vpn.wireguard.address,'10.0.0.7','effective IPv4');
+        assert.equal(elements['wg-address'].value,'10.0.0.7/24,fd42:42:42::7/64','original Address survives save and poll');
         assert.equal(elements['wg-private-key'].value,'','clear secret field after success');
         assert(!elements.status.textContent.includes('test-device-secret'),'status must not contain private key');
         assert(status.vpn.kill_switch);

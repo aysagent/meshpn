@@ -103,6 +103,7 @@ static esp_err_t apply_config(void *arg)
     strlcpy(s.state, c->enabled ? "waiting" : "disabled", sizeof(s.state));
     s.last_error = err;
     strlcpy(s.wg_address, c->wg_address, sizeof(s.wg_address));
+    strlcpy(s.wg_address_input, c->wg_address_input, sizeof(s.wg_address_input));
     strlcpy(s.wg_dns, c->wg_dns, sizeof(s.wg_dns));
     strlcpy(s.wg_public_key, c->wg_public_key, sizeof(s.wg_public_key));
     s.wg_keepalive = c->wg_keepalive;
@@ -215,6 +216,13 @@ int meshvpn_vpn_input(struct pbuf *p, struct netif *inp)
     if (inp == meshvpn_wg_netif()) {
         if (p->len < len || !meshvpn_vpn_clamp_mss(p->payload, len)) goto drop;
         LOCK(); s.packets_in++; s.bytes_in += len; UNLOCK();
+        /* Local probe/DNS sockets are pinned to the stable vp interface.
+         * lwIP TCP/UDP rejects replies arriving on wg when pcb->netif_idx is vp.
+         * Re-enter before NAPT so local delivery and forwarded NAT replies share
+         * the same logical ingress as socket transport. This hook consumes p;
+         * the vp pass must not redirect or count the packet again. */
+        ip4_input(p, &s_vpn);
+        return 1;
     }
     return 0;
 drop:

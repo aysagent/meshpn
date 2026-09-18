@@ -179,7 +179,12 @@ esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
     memset(out, 0, sizeof(*out));
     size_t blob_len = sizeof(*out);
     size_t expected = sizeof(*out);
-    esp_err_t blob_err = nvs_get_blob(s_nvs, "vpn_cfg3", out, &blob_len);
+    esp_err_t blob_err = nvs_get_blob(s_nvs, "vpn_cfg4", out, &blob_len);
+    if (blob_err == ESP_ERR_NVS_NOT_FOUND) {
+        expected = offsetof(meshvpn_vpn_config_t, wg_address_input);
+        blob_len = expected;
+        blob_err = nvs_get_blob(s_nvs, "vpn_cfg3", out, &blob_len);
+    }
     if (blob_err == ESP_ERR_NVS_NOT_FOUND) {
         /* v2 ends immediately before allow_direct. Migration stays fail-closed. */
         expected = offsetof(meshvpn_vpn_config_t, allow_direct);
@@ -193,7 +198,8 @@ esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
         memchr(out->wg_public_key, 0, sizeof(out->wg_public_key)) &&
         memchr(out->wg_preshared_key, 0, sizeof(out->wg_preshared_key)) &&
         memchr(out->wg_address, 0, sizeof(out->wg_address)) &&
-        memchr(out->wg_dns, 0, sizeof(out->wg_dns))) return ESP_OK;
+        memchr(out->wg_dns, 0, sizeof(out->wg_dns)) &&
+        memchr(out->wg_address_input, 0, sizeof(out->wg_address_input))) return ESP_OK;
     if (blob_err != ESP_ERR_NVS_NOT_FOUND) return ESP_FAIL;
     memset(out, 0, sizeof(*out));
     strcpy(out->wg_dns, "1.1.1.1"); out->wg_keepalive = 25;
@@ -234,7 +240,7 @@ esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
 esp_err_t meshvpn_config_save_vpn(const meshvpn_vpn_config_t *cfg)
 {
     /* One versioned record: endpoint/mode/enable never mix across power loss. */
-    esp_err_t err = nvs_set_blob(s_nvs, "vpn_cfg3", cfg, sizeof(*cfg));
+    esp_err_t err = nvs_set_blob(s_nvs, "vpn_cfg4", cfg, sizeof(*cfg));
     if (err != ESP_OK) return err;
     return nvs_commit(s_nvs);
 }
