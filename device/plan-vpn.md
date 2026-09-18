@@ -439,6 +439,10 @@ Oversize — диагностируемый отказ/fallback по полит�
 
 ### Этап 0 — совместимость и тестовые векторы
 
+Статус реализации socket и честный список непроверенного на железе: `device/VPN.md`.
+WireGuard планируется отдельным backend с собственным серверным endpoint;
+он не меняет wire-протокол clean-vpn и не реализует браузерные JA3/JA4.
+
 - Зафиксировать server commit, транспорт, адреса, MTU, порт и test-only режим.
 - Подготовить общие JS/C vectors: разбиение/склейка кадров, bad lengths,
   truncated IPv4, HMAC v2 с известными PSK/exporter/time, enc-SNI/rebuild.

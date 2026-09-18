@@ -177,7 +177,18 @@ esp_err_t meshvpn_config_load_profiles(meshvpn_wifi_profiles_t *out)
 esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
 {
     memset(out, 0, sizeof(*out));
-    strncpy(out->transport, "tls", sizeof(out->transport) - 1);
+    size_t blob_len = sizeof(*out);
+    esp_err_t blob_err = nvs_get_blob(s_nvs, "vpn_cfg1", out, &blob_len);
+    if (blob_err == ESP_OK && blob_len == sizeof(*out) &&
+        memchr(out->server, 0, sizeof(out->server)) &&
+        memchr(out->transport, 0, sizeof(out->transport))) return ESP_OK;
+    if (blob_err != ESP_ERR_NVS_NOT_FOUND) return ESP_FAIL;
+    memset(out, 0, sizeof(*out));
+    strncpy(out->transport, "socket", sizeof(out->transport) - 1);
+    size_t transport_len = sizeof(out->transport);
+    esp_err_t transport_err = nvs_get_str(s_nvs, "vpn_transport", out->transport, &transport_len);
+    if (transport_err != ESP_OK)
+        strcpy(out->transport, "socket");
 
     size_t len = sizeof(out->server);
     if (nvs_get_str(s_nvs, "vpn_server", out->server, &len) != ESP_OK) {
@@ -190,14 +201,16 @@ esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
     uint8_t en = 0;
     nvs_get_u8(s_nvs, "vpn_en", &en);
     out->enabled = en != 0;
+    /* Never reinterpret an old TLS/stub enable flag as consent to plaintext. */
+    if (out->enabled && transport_err != ESP_OK) strcpy(out->transport, "legacy-unsupported");
     return ESP_OK;
 }
 
 esp_err_t meshvpn_config_save_vpn(const meshvpn_vpn_config_t *cfg)
 {
-    ESP_ERROR_CHECK(nvs_set_str(s_nvs, "vpn_server", cfg->server));
-    ESP_ERROR_CHECK(nvs_set_str(s_nvs, "vpn_sni", cfg->tls_server_name));
-    ESP_ERROR_CHECK(nvs_set_u8(s_nvs, "vpn_en", cfg->enabled ? 1 : 0));
+    /* One versioned record: endpoint/mode/enable never mix across power loss. */
+    esp_err_t err = nvs_set_blob(s_nvs, "vpn_cfg1", cfg, sizeof(*cfg));
+    if (err != ESP_OK) return err;
     return nvs_commit(s_nvs);
 }
 

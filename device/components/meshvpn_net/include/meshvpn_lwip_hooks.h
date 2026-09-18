@@ -15,3 +15,10 @@ int meshvpn_hook_ip6_input(struct pbuf *p, struct netif *inp);
 
 #define LWIP_HOOK_IP4_INPUT meshvpn_hook_ip4_input
 #define LWIP_HOOK_IP6_INPUT meshvpn_hook_ip6_input
+
+#if CONFIG_MESHVPN_VPN_ENABLE
+struct ip4_addr;
+struct netif *meshvpn_hook_ip4_route_src(const struct ip4_addr *, const struct ip4_addr *);
+#undef LWIP_HOOK_IP4_ROUTE_SRC
+#define LWIP_HOOK_IP4_ROUTE_SRC meshvpn_hook_ip4_route_src
+#endif

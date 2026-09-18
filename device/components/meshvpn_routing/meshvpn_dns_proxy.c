@@ -1,4 +1,5 @@
 #include "meshvpn_dns_proxy.h"
+#include "meshvpn_vpn.h"
 #include "meshvpn_dns_wire.h"
 
 #include <errno.h>
@@ -144,6 +145,7 @@ static int upstream(uint8_t *query, size_t len, uint8_t *resp, bool tcp)
     if (!upstream_address(&up)) return -1;
     int fd = socket(AF_INET, tcp ? SOCK_STREAM : SOCK_DGRAM, 0);
     if (fd < 0) return -1;
+    if (meshvpn_vpn_dns_socket(fd, &up.sin_addr.s_addr) < 0) { close(fd); return -1; }
     timeout(fd);
     /* Nonblocking connect with a deadline, including TCP fallback. */
     int flags = fcntl(fd, F_GETFL, 0);

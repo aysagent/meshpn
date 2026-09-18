@@ -23,6 +23,7 @@ for(const part of text.split('static const char ').slice(1)){
         const status={https_enabled:https,certificate_sha256:https?'AA:BB':null,
           https_configured:https,https_restart_required:false,admin_next_url:(https?'https':'http')+'://meshpn.local/',
           temperature_c:42,memory:{internal:{free:1024},psram:{free:2048}},
+          vpn:{implemented:true,enabled:false,server:'',transport:'socket',state:'disabled'},
           leds:{user:{controllable:true,enabled:true},charge:{present:true,controllable:false,enabled:null}},
           cpu:{cores:[{id:0,load_pct:37},{id:1,load_pct:12}],tasks:[]},
           wifi:{connected:false,state:'setup'},usb:{profile:'ncm',host_ready:true},
@@ -50,6 +51,10 @@ for(const part of text.split('static const char ').slice(1)){
               const payload=JSON.parse(options.body);
               assert.deepEqual(Object.keys(payload),['user_enabled']);assert.equal(typeof payload.user_enabled,'boolean');
               status.leds.user.enabled=payload.user_enabled;
+            }else if(path==='/api/vpn/config'){
+              assert.equal(options.method,'POST'); assert.equal(options.headers.Authorization,'Bearer test-token');
+              const cfg=JSON.parse(options.body);assert.equal(cfg.transport,'socket');
+              assert(!cfg.enabled||cfg.allow_plaintext);Object.assign(status.vpn,cfg);
             }else if(path==='/api/system/reboot'){
               assert.equal(options.method,'POST');reboots++;
             }else assert.equal(path,'/api/status');
@@ -58,6 +63,15 @@ for(const part of text.split('static const char ').slice(1)){
         });
         vm.runInContext(code,context);
         await vm.runInContext('poll()',context);
+        elements['vpn-server'].value='192.0.2.1:8765';elements['vpn-server'].oninput();
+        elements['vpn-enabled'].checked=true;elements['vpn-enabled'].oninput();
+        await vm.runInContext('poll()',context);
+        assert.equal(elements['vpn-server'].value,'192.0.2.1:8765','poll preserves VPN edits');
+        await elements['vpn-form'].onsubmit();assert.equal(status.vpn.enabled,false,'plaintext opt-in required');
+        elements['vpn-plaintext'].checked=true;
+        await elements['vpn-form'].onsubmit();assert.equal(status.vpn.enabled,true);assert.equal(reboots,0);
+        elements['vpn-enabled'].checked=false;elements['vpn-enabled'].oninput();
+        await elements['vpn-form'].onsubmit();assert.equal(status.vpn.enabled,false);
         assert.equal(elements['user-led-enabled'].checked,true);
         assert.equal(elements['charge-led-enabled'].disabled,true);
         assert.equal(elements['charge-led-enabled'].indeterminate,true,'not a measured on/off state');

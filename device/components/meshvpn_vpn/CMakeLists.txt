@@ -1,7 +1,5 @@
-# TLS + HTTP/2 VPN tunnel (phase 2 implementation target)
-
 idf_component_register(
-    SRCS "meshvpn_vpn.c" "meshvpn_vpn_tls.c"
+    SRCS "meshvpn_vpn.c" "meshvpn_vpn_frame.c"
     INCLUDE_DIRS "include"
-    REQUIRES meshvpn_config
+    REQUIRES meshvpn_config lwip esp_netif esp_timer esp_hw_support esp_psram
 )

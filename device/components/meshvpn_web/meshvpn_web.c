@@ -546,10 +546,20 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     }
 
     cJSON *vpn = cJSON_AddObjectToObject(root, "vpn");
-    cJSON_AddBoolToObject(vpn, "implemented", false);
-    cJSON_AddBoolToObject(vpn, "enabled", false);
+    cJSON_AddBoolToObject(vpn, "implemented", vs.implemented);
+    cJSON_AddBoolToObject(vpn, "enabled", vs.enabled);
     cJSON_AddBoolToObject(vpn, "connected", vs.connected);
     cJSON_AddStringToObject(vpn, "server", vs.server);
+    cJSON_AddStringToObject(vpn, "transport", vs.transport);
+    cJSON_AddStringToObject(vpn, "state", vs.state);
+    cJSON_AddStringToObject(vpn, "address", "10.99.0.2");
+    cJSON_AddNumberToObject(vpn, "mtu", 1400);
+#define VPN_COUNTER(name) cJSON_AddNumberToObject(vpn, #name, vs.name)
+    VPN_COUNTER(last_error); VPN_COUNTER(generation); VPN_COUNTER(reconnects);
+    VPN_COUNTER(packets_in); VPN_COUNTER(packets_out); VPN_COUNTER(bytes_in); VPN_COUNTER(bytes_out);
+    VPN_COUNTER(queue_full); VPN_COUNTER(queue_expired); VPN_COUNTER(queue_depth); VPN_COUNTER(queue_high_water);
+    VPN_COUNTER(rx_invalid); VPN_COUNTER(rx_dropped); VPN_COUNTER(tx_dropped);
+#undef VPN_COUNTER
 
     cJSON *routing = cJSON_AddObjectToObject(root, "routing");
     const char *def = "direct";
@@ -561,7 +571,8 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     }
     (void)def;
     cJSON_AddBoolToObject(routing, "implemented", false);
-    cJSON_AddStringToObject(routing, "default", "direct");
+    cJSON_AddStringToObject(routing, "default", vs.enabled ? "vpn" : "direct");
+    cJSON_AddBoolToObject(routing, "full_tunnel", vs.enabled);
 
     return send_json(req, root);
 }
@@ -846,6 +857,34 @@ static esp_err_t handler_certificate(httpd_req_t *req)
     cJSON_Delete(in);
     return err == ESP_OK ? ok(req) : error(req, "400 Bad Request", "Invalid certificate/key or storage error");
 }
+static esp_err_t handler_vpn_config(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    cJSON *in = body(req, 512);
+    if (!in) return ESP_FAIL;
+    cJSON *en = cJSON_GetObjectItemCaseSensitive(in, "enabled");
+    cJSON *server = cJSON_GetObjectItemCaseSensitive(in, "server");
+    cJSON *transport = cJSON_GetObjectItemCaseSensitive(in, "transport");
+    cJSON *ack = cJSON_GetObjectItemCaseSensitive(in, "allow_plaintext");
+    meshvpn_vpn_config_t cfg = {0};
+    bool valid = cJSON_IsBool(en) && cJSON_IsString(server) && cJSON_IsString(transport) &&
+        strlen(server->valuestring) < sizeof(cfg.server) && !strcmp(transport->valuestring, "socket") &&
+        (!cJSON_IsTrue(en) || cJSON_IsTrue(ack));
+    if (valid) {
+        cfg.enabled = cJSON_IsTrue(en);
+        strlcpy(cfg.server, server->valuestring, sizeof(cfg.server));
+        strlcpy(cfg.transport, transport->valuestring, sizeof(cfg.transport));
+        valid = meshvpn_vpn_validate_config(&cfg) == ESP_OK;
+    }
+    cJSON_Delete(in);
+    if (!valid) return error(req, "400 Bad Request", "Expected enabled, transport=socket, server=IPv4:port and allow_plaintext=true when enabling");
+    meshvpn_vpn_status_t status; meshvpn_vpn_get_status(&status);
+    if (!status.implemented) return error(req, "501 Not Implemented", "VPN not compiled in this build");
+    if (meshvpn_config_save_vpn(&cfg) != ESP_OK) return error(req, "500 Internal Server Error", "Cannot persist VPN settings");
+    meshvpn_vpn_start(&cfg);
+    meshvpn_dns_clear_cache();
+    return send_json(req, cJSON_CreateObject());
+}
 static esp_err_t handler_unimplemented(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -965,7 +1004,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/system/reboot", HTTP_POST, handler_system),
         ROUTE("/api/system/factory-reset", HTTP_POST, handler_system),
         ROUTE("/api/certificate", HTTP_GET, handler_certificate), ROUTE("/api/certificate", HTTP_POST, handler_certificate),
-        ROUTE("/api/vpn/config", HTTP_POST, handler_unimplemented),
+        ROUTE("/api/vpn/config", HTTP_POST, handler_vpn_config),
         ROUTE("/api/routing/rules", HTTP_POST, handler_unimplemented),
         ROUTE("/api/routing/default", HTTP_POST, handler_unimplemented),
         ROUTE("/api/routing/benchmark", HTTP_POST, handler_ranges_benchmark),

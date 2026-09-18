@@ -73,6 +73,11 @@ void app_main(void)
     ESP_ERROR_CHECK(meshvpn_usb_init());
     ESP_ERROR_CHECK(meshvpn_routing_init());
     ESP_ERROR_CHECK(meshvpn_vpn_init());
+    /* Apply fail-closed policy before either LAN can start forwarding. */
+    meshvpn_vpn_config_t vpn_cfg;
+    ESP_ERROR_CHECK(meshvpn_config_load_vpn(&vpn_cfg));
+    if (meshvpn_vpn_start(&vpn_cfg) != ESP_OK)
+        ESP_LOGW(TAG, "Saved VPN profile unsupported/invalid; enabled VPN remains blocked");
 
     /* Handlers must be in place before the bridge starts the WiFi driver. */
     ESP_ERROR_CHECK(meshvpn_wifi_init());
@@ -91,9 +96,6 @@ void app_main(void)
         ESP_LOGW(TAG, "mDNS unavailable; use USB gateway IP");
     }
 
-    meshvpn_vpn_config_t vpn_cfg;
-    meshvpn_config_load_vpn(&vpn_cfg);
-    meshvpn_vpn_start(&vpn_cfg);
 
 
     bool led = false;

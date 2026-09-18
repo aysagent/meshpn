@@ -5,6 +5,11 @@ test_dir="$(mktemp -d /tmp/meshpn-host-tests.XXXXXX)"
 cd "$root"
 cc="${CC:-cc}"
 flags=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined)
+"$cc" "${flags[@]}" -Idevice/components/meshvpn_vpn/include device/tests/test_vpn_frame.c \
+  device/components/meshvpn_vpn/meshvpn_vpn_frame.c -o "$test_dir/vpn-frame"
+"$test_dir/vpn-frame"
+node device/tests/test-vpn-wire.mjs "$test_dir/vpn-frame"
+node device/tests/test-vpn-routing.mjs
 "$cc" "${flags[@]}" -pthread -Idevice/tests/wifi_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
   -Idevice/components/meshvpn_wifi/include device/tests/test_wifi_diag.c -o "$test_dir/wifi-diag"
 "$test_dir/wifi-diag"
