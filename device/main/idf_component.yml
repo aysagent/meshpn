@@ -1,9 +1,12 @@
 dependencies:
+  esphome/wireguard: "0.4.6"
   espressif/esp_hosted:
     version: "1.4.*"
     rules:
       - if: "target == esp32p4"
   espressif/esp_tinyusb: "1.7.6~2"
+  # Telemetry generators deliberately validate this exact driver source.
+  espressif/tinyusb: "0.21.0~1"
   espressif/esp_wifi_remote:
     version: "0.14.*"
     rules:

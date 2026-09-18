@@ -17,6 +17,11 @@ typedef struct {
     char server[MESHVPN_VPN_SERVER_MAX + 1];
     char transport[32];
     char state[24];
+    char address[16];
+    uint32_t wg_handshake_age;
+    char wg_address[16], wg_dns[16], wg_public_key[45];
+    uint16_t wg_keepalive;
+    bool wg_private_key_set, wg_preshared_key_set;
     int last_error;
     uint32_t generation, reconnects, packets_in, packets_out;
     uint32_t queue_full, queue_expired, rx_invalid, rx_dropped, tx_dropped;

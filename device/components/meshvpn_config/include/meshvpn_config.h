@@ -49,6 +49,12 @@ typedef struct {
     char tls_server_name[MESHVPN_VPN_SNI_MAX + 1];
     char transport[32];
     bool enabled;
+    char wg_private_key[45];
+    char wg_public_key[45]; /* remote peer */
+    char wg_preshared_key[45];
+    char wg_address[16];
+    char wg_dns[16];
+    uint16_t wg_keepalive;
 } meshvpn_vpn_config_t;
 
 esp_err_t meshvpn_config_init(void);

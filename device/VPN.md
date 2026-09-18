@@ -70,3 +70,57 @@ no `/dev/net/tun`; stages 1–2 hardware acceptance remains **unverified**.
 Run host checks with `bash device/scripts/test-host.sh`; standard board build/flash
 uses the project's existing device scripts. Use a freshly generated sdkconfig:
 VPN and IPv4 reassembly are now enabled in defaults (runtime VPN defaults OFF).
+
+## WireGuard (experimental, one peer)
+
+Second backend: `wireguard`, standard encrypted UDP, **not** compatible with a
+clean-vpn socket server. Uses pinned `esphome/wireguard` 0.4.6 and its libsodium
+dependency (exact transitive versions/hashes in the per-target lockfiles).
+No custom cryptographic protocol or JA3/JA4 emulation is involved.
+
+Admin fields:
+
+- Server: numeric IPv4 and UDP port, e.g. `192.0.2.1:51820`.
+- Device tunnel address: the IPv4 from its WireGuard profile, without CIDR suffix;
+  this version installs a /32. It must not overlap the USB/AP or uplink subnet.
+- Server public key, device private key, optional preshared key: standard
+  44-character base64 WireGuard keys. Provision the matching device **public**
+  key on the server; the UI does not generate/import wg-quick files yet.
+- DNS resolver reached **inside** the tunnel; persistent keepalive 0–65535 sec.
+- AllowedIPs is fixed to `0.0.0.0/0` (full IPv4 tunnel), MTU fixed at 1400.
+
+Server peer AllowedIPs should contain the **device tunnel address /32**, because
+USB/AP traffic is SNATed to that address. Configure forwarding and egress NAT on
+the WireGuard server, as for an ordinary VPN client. Do not deploy/configure a
+server merely by flashing this firmware.
+
+Blank private-key/PSK fields preserve saved values. An explicit checkbox removes
+the PSK. Only presence booleans, the **public** key and handshake age are exposed
+in `/api/status`; private/PSK input fields clear after a successful save. The
+API is authenticated. Provision over trusted USB or HTTPS. NVS is not encrypted
+at rest unless the device's flash/NVS encryption is separately configured.
+
+The backend never changes the default STA route; WireGuard's outer UDP is bound
+to STA by the pinned library. The shared persistent virtual netif applies NAPT,
+MSS clamping and disconnected blackholing. On config changes, the old peer/timers/
+UDP PCB are removed and the library's device key context is wiped before freeing.
+No simultaneous socket and WireGuard connection is maintained.
+
+Boot/recovery states: `wait_time`, `wait_uplink`, `handshake`, `up`, `wg_error`.
+SNTP to `pool.ntp.org` (and its bootstrap DNS) intentionally uses STA directly,
+including periodic time updates, so handshake replay timestamps survive reboot.
+If time cannot be synchronised, no new WireGuard tunnel starts. This control
+traffic is an explicit exception to the forwarded-client full-tunnel policy.
+Handshake age and `connected` indicate valid session keys, **not** a continuous
+Internet reachability probe. WireGuard timers handle handshakes/rekey/retries;
+the socket reconnect/queue counters do not describe WireGuard retries.
+
+Verification: XIAO and Waveshare P4 compile checks, existing host suite, actual
+HTTP handler/config validators (auth, bad/missing/zero keys, overlap, keepalive,
+preserve/clear, storage failure), UI transport selection and secret clearing.
+**No hardware handshake/throughput claim yet.** Repeat the socket hardware
+acceptance checklist with a real WireGuard server; additionally check reboot
+without a saved clock, wrong key/PSK, rekey and STA disconnect/reconnect. Measure
+internal RAM and stack minima under concurrent USB/AP traffic before relying on
+this backend for sustained use. Speed/security audit are not inferred from a
+successful build.

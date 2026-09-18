@@ -53,8 +53,11 @@ for(const part of text.split('static const char ').slice(1)){
               status.leds.user.enabled=payload.user_enabled;
             }else if(path==='/api/vpn/config'){
               assert.equal(options.method,'POST'); assert.equal(options.headers.Authorization,'Bearer test-token');
-              const cfg=JSON.parse(options.body);assert.equal(cfg.transport,'socket');
-              assert(!cfg.enabled||cfg.allow_plaintext);Object.assign(status.vpn,cfg);
+              const cfg=JSON.parse(options.body);assert(['socket','wireguard'].includes(cfg.transport));
+              assert(!cfg.enabled||cfg.transport==='wireguard'||cfg.allow_plaintext);
+              Object.assign(status.vpn,{enabled:cfg.enabled,transport:cfg.transport,server:cfg.server});
+              if(cfg.transport==='wireguard')status.vpn.wireguard={address:cfg.wg_address,dns:cfg.wg_dns,
+                public_key:cfg.wg_public_key,keepalive:cfg.wg_keepalive,private_key_set:true,preshared_key_set:false};
             }else if(path==='/api/system/reboot'){
               assert.equal(options.method,'POST');reboots++;
             }else assert.equal(path,'/api/status');
@@ -72,6 +75,14 @@ for(const part of text.split('static const char ').slice(1)){
         await elements['vpn-form'].onsubmit();assert.equal(status.vpn.enabled,true);assert.equal(reboots,0);
         elements['vpn-enabled'].checked=false;elements['vpn-enabled'].oninput();
         await elements['vpn-form'].onsubmit();assert.equal(status.vpn.enabled,false);
+        elements['vpn-transport'].value='wireguard';elements['vpn-transport'].oninput();
+        assert.equal(elements['vpn-wg-fields'].hidden,false);assert.equal(elements['vpn-socket-fields'].hidden,true);
+        elements['wg-address'].value='10.6.0.2';elements['wg-dns'].value='1.1.1.1';
+        elements['wg-public-key'].value='test-peer-public';elements['wg-private-key'].value='test-device-secret';
+        elements['wg-psk'].value='';elements['vpn-enabled'].checked=true;elements['vpn-plaintext'].checked=false;
+        await elements['vpn-form'].onsubmit();assert.equal(status.vpn.transport,'wireguard');
+        assert.equal(elements['wg-private-key'].value,'','clear secret field after success');
+        assert(!elements.status.textContent.includes('test-device-secret'),'status must not contain private key');
         assert.equal(elements['user-led-enabled'].checked,true);
         assert.equal(elements['charge-led-enabled'].disabled,true);
         assert.equal(elements['charge-led-enabled'].indeterminate,true,'not a measured on/off state');

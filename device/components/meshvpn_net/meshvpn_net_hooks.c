@@ -6,7 +6,7 @@
 #include "lwip/pbuf.h"
 #include "lwip/prot/ip4.h"
 #include "sdkconfig.h"
-#if CONFIG_MESHVPN_VPN_ENABLE
+#if CONFIG_LWIP_IPV4
 #include "meshvpn_vpn.h"
 #include "lwip_default_hooks.h"
 #endif
@@ -18,13 +18,13 @@ static uint32_t s_ap_ip4_rx;
 static uint32_t s_denied;
 
 static void update_vpn_lans(void) {
-#if CONFIG_MESHVPN_VPN_ENABLE
+#if CONFIG_LWIP_IPV4
     meshvpn_vpn_set_lan(s_usb, s_ap);
 #endif
 }
 void meshvpn_net_set_usb_interface(struct netif *netif) { s_usb = netif; update_vpn_lans(); }
 void meshvpn_net_set_ap_interface(struct netif *netif) { s_ap = netif; update_vpn_lans(); }
-#if CONFIG_MESHVPN_VPN_ENABLE
+#if CONFIG_LWIP_IPV4
 struct netif *meshvpn_hook_ip4_route_src(const ip4_addr_t *src, const ip4_addr_t *dst)
 {
     struct netif *vpn = meshvpn_vpn_route(src, dst);
@@ -48,7 +48,7 @@ static int discard(struct pbuf *p)
 int meshvpn_hook_ip4_input(struct pbuf *p, struct netif *inp)
 {
     if (!p || !inp) return 0;
-#if CONFIG_MESHVPN_VPN_ENABLE
+#if CONFIG_LWIP_IPV4
     if (meshvpn_vpn_input(p, inp)) return 1;
 #endif
     if (inp == s_usb) {

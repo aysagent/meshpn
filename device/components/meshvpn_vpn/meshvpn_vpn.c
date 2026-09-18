@@ -2,6 +2,7 @@
  * the outer socket. All netif/input operations execute on the lwIP thread. */
 #include "meshvpn_vpn.h"
 #include "meshvpn_vpn_frame.h"
+#include "meshvpn_wireguard.h"
 #include "sdkconfig.h"
 #include <errno.h>
 #include <stdlib.h>
@@ -21,6 +22,7 @@
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static meshvpn_vpn_status_t s;
+static meshvpn_vpn_config_t s_config; /* never returned by status; contains keys */
 static struct netif s_vpn, *s_usb, *s_ap;
 static bool s_ready;
 typedef struct { uint16_t len; int64_t time; uint8_t data[MESHVPN_VPN_MTU]; } packet_t;
@@ -49,21 +51,37 @@ esp_err_t meshvpn_vpn_validate_config(const meshvpn_vpn_config_t *c)
         strnlen(c->transport, sizeof(c->transport)) == sizeof(c->transport)) return ESP_ERR_INVALID_ARG;
     if (!c->enabled) return ESP_OK;
     uint8_t ip[4]; uint16_t port;
-    if (strcmp(c->transport, "socket")) return ESP_ERR_NOT_SUPPORTED;
-    if (!meshvpn_vpn_endpoint(c->server, ip, &port) ||
-        (ip[0] == 10 && ip[1] == 99 && ip[2] == 0)) return ESP_ERR_INVALID_ARG;
+    bool wg = !strcmp(c->transport, "wireguard");
+    if (!wg && strcmp(c->transport, "socket")) return ESP_ERR_NOT_SUPPORTED;
+    if (!meshvpn_vpn_endpoint(c->server, ip, &port)) return ESP_ERR_INVALID_ARG;
+    if (wg) return meshvpn_wg_validate(c);
+    if (ip[0] == 10 && ip[1] == 99 && ip[2] == 0) return ESP_ERR_INVALID_ARG;
     return ESP_OK;
 }
 static esp_err_t apply_config(void *arg)
 {
     const meshvpn_vpn_config_t *c = arg;
     esp_err_t err = meshvpn_vpn_validate_config(c);
+#if !CONFIG_MESHVPN_VPN_ENABLE
+    if (c->enabled) err = ESP_ERR_NOT_SUPPORTED;
+#endif
+    meshvpn_wg_stop();
+    ip4_addr_t address;
+    if (strcmp(c->transport, "wireguard") || !ip4addr_aton(c->wg_address, &address)) IP4_ADDR(&address,10,99,0,2);
+    netif_set_ipaddr(&s_vpn, &address);
     /* Unsupported saved profiles must never silently enable DIRECT. */
-    LOCK(); s.enabled = c->enabled; s.connected = false; s.generation++;
+    LOCK(); s_config = *c; s.enabled = c->enabled; s.connected = false; s.generation++;
     s.tx_dropped += s_count; s_head = s_count = s.queue_depth = 0;
     strlcpy(s.server, c->server, sizeof(s.server)); strlcpy(s.transport, c->transport, sizeof(s.transport));
     strlcpy(s.state, c->enabled ? "waiting" : "disabled", sizeof(s.state));
-    s.last_error = err; UNLOCK();
+    s.last_error = err;
+    strlcpy(s.wg_address, c->wg_address, sizeof(s.wg_address));
+    strlcpy(s.wg_dns, c->wg_dns, sizeof(s.wg_dns));
+    strlcpy(s.wg_public_key, c->wg_public_key, sizeof(s.wg_public_key));
+    s.wg_keepalive = c->wg_keepalive;
+    s.wg_private_key_set = c->wg_private_key[0] != 0; s.wg_preshared_key_set = c->wg_preshared_key[0] != 0;
+    UNLOCK();
+    LOCK(); ip4addr_ntoa_r(&address, s.address, sizeof(s.address)); s.wg_handshake_age = UINT32_MAX; UNLOCK();
     /* Existing DIRECT mappings must not survive a change of egress identity. */
     bool usb = s_usb && s_usb->napt, ap = s_ap && s_ap->napt;
     if (usb) ip_napt_enable_netif(s_usb, 0);
@@ -112,6 +130,15 @@ static err_t output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst)
     if (p->tot_len > sizeof(buf)) return ERR_BUF;
     pbuf_copy_partial(p, buf, p->tot_len, 0);
     if (!meshvpn_vpn_clamp_mss(buf, p->tot_len)) return ERR_VAL;
+    if (!strcmp(s_config.transport, "wireguard")) {
+        if (!enabled() || !meshvpn_wg_up()) { COUNT(tx_dropped); return ERR_RTE; }
+        struct pbuf *copy = pbuf_alloc(PBUF_RAW, p->tot_len, PBUF_RAM);
+        if (!copy) { COUNT(tx_dropped); return ERR_MEM; }
+        pbuf_take(copy, buf, p->tot_len);
+        err_t result = meshvpn_wg_output(copy, dst); pbuf_free(copy);
+        LOCK(); if (result == ERR_OK) { s.packets_out++; s.bytes_out += p->tot_len; } else s.tx_dropped++; UNLOCK();
+        return result;
+    }
     return meshvpn_vpn_send_ipv4(buf, p->tot_len) == ESP_OK ? ERR_OK : ERR_RTE;
 }
 static err_t net_init(struct netif *n)
@@ -126,14 +153,15 @@ static esp_err_t add_netif(void *arg)
 /* Called before NAPT: reassembly must precede address/port translation. */
 int meshvpn_vpn_input(struct pbuf *p, struct netif *inp)
 {
-    if (!enabled() || (inp != s_usb && inp != s_ap && inp != &s_vpn)) return 0;
+    bool from_vpn = inp == &s_vpn || inp == meshvpn_wg_netif();
+    if (!enabled() || (inp != s_usb && inp != s_ap && !from_vpn)) return 0;
     uint8_t h[60];
     if (pbuf_copy_partial(p, h, 20, 0) != 20 || (h[0] >> 4) != 4) goto drop;
     unsigned ihl = (h[0] & 15) * 4, len = (h[2] << 8) | h[3];
     if (ihl < 20 || ihl > 60 || len < ihl || len > p->tot_len ||
         pbuf_copy_partial(p, h, ihl, 0) != ihl || inet_chksum(h, ihl)) goto drop;
     ip4_addr_t src, dst; memcpy(&src.addr, h + 12, 4); memcpy(&dst.addr, h + 16, 4);
-    if (inp != &s_vpn) {
+    if (!from_vpn) {
         if (ip4_addr_isany_val(src)) {
             /* Only DHCP bootstrap may use 0.0.0.0; it is never forwarded. */
             uint8_t ports[4];
@@ -141,7 +169,7 @@ int meshvpn_vpn_input(struct pbuf *p, struct netif *inp)
                 pbuf_copy_partial(p, ports, 4, ihl) != 4 || ports[0] || ports[1] != 68 || ports[2] || ports[3] != 67) goto drop;
         } else if (!lan(&src, inp) || ip4_addr_cmp(&src, netif_ip4_addr(inp))) goto drop;
     }
-    if (inp == &s_vpn && !ip4_addr_cmp(&dst, netif_ip4_addr(&s_vpn))) goto drop;
+    if (from_vpn && !ip4_addr_cmp(&dst, netif_ip4_addr(&s_vpn))) goto drop;
     if ((h[6] & 0x3f) || h[7]) {
 #if IP_REASSEMBLY
         if (p->len < ihl) goto drop;
@@ -159,6 +187,10 @@ int meshvpn_vpn_input(struct pbuf *p, struct netif *inp)
     unsigned need = h[9] == 6 ? 20 : 8;
     if (h[9] != 6 && h[9] != 17 && h[9] != 1) goto drop;
     if (len < ihl + need || p->len < ihl + need) goto drop;
+    if (inp == meshvpn_wg_netif()) {
+        if (p->len < len || !meshvpn_vpn_clamp_mss(p->payload, len)) goto drop;
+        LOCK(); s.packets_in++; s.bytes_in += len; UNLOCK();
+    }
     return 0;
 drop:
     COUNT(rx_dropped); pbuf_free(p); return 1;
@@ -182,9 +214,33 @@ int meshvpn_vpn_dns_socket(int fd, uint32_t *resolver)
     if (!enabled()) return 0;
     if (!meshvpn_vpn_is_connected()) return -1;
     struct sockaddr_in local = { .sin_family = AF_INET };
-    inet_aton("10.99.0.2", &local.sin_addr);
-    struct in_addr dns; inet_aton("1.1.1.1", &dns); *resolver = dns.s_addr;
+    char address[16], resolver_ip[16];
+    LOCK(); strlcpy(address, s.address, sizeof(address));
+    strlcpy(resolver_ip, !strcmp(s.transport, "wireguard") ? s_config.wg_dns : "1.1.1.1", sizeof(resolver_ip)); UNLOCK();
+    inet_aton(address, &local.sin_addr);
+    struct in_addr dns; inet_aton(resolver_ip, &dns); *resolver = dns.s_addr;
+    struct ifreq iface = {0};
+    if (!netif_index_to_name(netif_get_index(&s_vpn), iface.ifr_name) ||
+        setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, &iface, sizeof(iface))) return -1;
     return bind(fd, (struct sockaddr *)&local, sizeof(local));
+}
+static esp_err_t wg_poll(void *arg)
+{
+    static uint32_t last_uplink;
+    uint32_t g = *(uint32_t *)arg;
+    if (!session(g) || strcmp(s_config.transport, "wireguard")) return ESP_OK;
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t ip;
+    if (!sta || !esp_netif_is_netif_up(sta) || esp_netif_get_ip_info(sta, &ip) != ESP_OK || !ip.ip.addr) {
+        meshvpn_wg_stop(); last_uplink = 0; state(g, "wait_uplink", false, ENETDOWN); return ESP_OK;
+    }
+    if (last_uplink != ip.ip.addr) { meshvpn_wg_stop(); last_uplink = ip.ip.addr; }
+    esp_err_t err = meshvpn_wg_start(&s_config);
+    bool up = err == ESP_OK && meshvpn_wg_up();
+    state(g, up ? "up" : err == ESP_OK ? "handshake" : "wg_error", up, err);
+    uint32_t age = meshvpn_wg_handshake_age();
+    LOCK(); s.wg_handshake_age = age; UNLOCK();
+    return ESP_OK;
 }
 static int connect_exit(const meshvpn_vpn_status_t *cfg)
 {
@@ -217,7 +273,7 @@ static int connect_exit(const meshvpn_vpn_status_t *cfg)
     errno = ETIMEDOUT;
 fail: { int e = errno; close(fd); errno = e; return -1; }
 }
-static void worker(void *arg)
+static void __attribute__((unused)) worker(void *arg)
 {
     (void)arg;
     meshvpn_vpn_decoder_t *d = heap_caps_calloc(1, sizeof(*d), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -229,6 +285,11 @@ static void worker(void *arg)
         meshvpn_vpn_status_t cfg; meshvpn_vpn_get_status(&cfg);
         if (!cfg.enabled || cfg.last_error == ESP_ERR_NOT_SUPPORTED || cfg.last_error == ESP_ERR_INVALID_ARG) {
             vTaskDelay(pdMS_TO_TICKS(100)); continue;
+        }
+        if (!strcmp(cfg.transport, "wireguard")) {
+            if (!meshvpn_wg_clock_ready()) state(cfg.generation, "wait_time", false, 0);
+            else esp_netif_tcpip_exec(wg_poll, &cfg.generation);
+            vTaskDelay(pdMS_TO_TICKS(1000)); continue;
         }
         state(cfg.generation, "wait_uplink", false, 0);
         int fd = connect_exit(&cfg);
@@ -282,8 +343,11 @@ retry:
 esp_err_t meshvpn_vpn_init(void)
 {
     strlcpy(s.state, "disabled", sizeof(s.state)); strlcpy(s.transport, "socket", sizeof(s.transport));
-#if CONFIG_MESHVPN_VPN_ENABLE
+    strlcpy(s.address, "10.99.0.2", sizeof(s.address)); s.wg_handshake_age = UINT32_MAX;
+    /* Keep a blackhole route even in builds without transport workers, so a
+     * saved enable flag cannot turn into DIRECT when flashing another build. */
     if (esp_netif_tcpip_exec(add_netif, NULL) != ESP_OK) return ESP_FAIL;
+#if CONFIG_MESHVPN_VPN_ENABLE
     s_queue = heap_caps_calloc(MESHVPN_VPN_SLOTS, sizeof(packet_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_queue) return ESP_ERR_NO_MEM;
     if (xTaskCreate(worker, "vpn_socket", 4096, NULL, 5, NULL) != pdPASS) return ESP_ERR_NO_MEM;

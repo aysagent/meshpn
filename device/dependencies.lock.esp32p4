@@ -1,4 +1,22 @@
 dependencies:
+  esphome/libsodium:
+    component_hash: 860ef0c4c58b57e5c83f9396cbfb9b664cea8c457fc1baf447518079a3da4207
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.10021.11
+  esphome/wireguard:
+    component_hash: dc76a4b613ca3ceb0eddeb5b011d5a8bcdde021c07f58259b0133417e5002a9c
+    dependencies:
+    - name: esphome/libsodium
+      registry_url: https://components.espressif.com
+      require: private
+      version: ^1.10021.1
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.4.6
   espressif/eppp_link:
     component_hash: c1369b37f2b0b427b198ae14e07e7547d3da92b95fe4dc7f949e5de560b35f21
     dependencies:
@@ -84,7 +102,7 @@ dependencies:
       require: private
       version: '>=5.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     targets:
     - esp32s2
@@ -98,11 +116,13 @@ dependencies:
       type: idf
     version: 5.4.1
 direct_dependencies:
+- esphome/wireguard
 - espressif/esp_hosted
 - espressif/esp_tinyusb
 - espressif/esp_wifi_remote
 - espressif/mdns
+- espressif/tinyusb
 - idf
-manifest_hash: 06a76880c46e5e00dca344d145d1ac7421854cb3a16ae785a1bef9f00efdcd72
+manifest_hash: 913d0cd070da31ca5f3ea8f953c2b232e41e8af37a4029c714bbc02114fb514d
 target: esp32p4
 version: 2.0.0
