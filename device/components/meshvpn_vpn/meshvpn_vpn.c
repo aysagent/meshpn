@@ -25,6 +25,7 @@ static meshvpn_vpn_status_t s;
 static meshvpn_vpn_config_t s_config; /* never returned by status; contains keys */
 static struct netif s_vpn, *s_usb, *s_ap;
 static bool s_ready;
+static uint32_t s_probe_epoch;
 typedef struct { uint16_t len; int64_t time; uint8_t data[MESHVPN_VPN_MTU]; } packet_t;
 static packet_t *s_queue;
 static unsigned s_head, s_count;
@@ -36,27 +37,52 @@ void meshvpn_vpn_get_status(meshvpn_vpn_status_t *out) { LOCK(); *out = s; UNLOC
 bool meshvpn_vpn_is_connected(void) { LOCK(); bool v = s.connected; UNLOCK(); return v; }
 static bool enabled(void) { LOCK(); bool v = s.enabled; UNLOCK(); return v; }
 static bool session(uint32_t g) { LOCK(); bool v = s.enabled && s.generation == g; UNLOCK(); return v; }
-static void state(uint32_t g, const char *name, bool up, int error)
+static void flush_nat(void)
 {
+    bool usb = s_usb && s_usb->napt, ap = s_ap && s_ap->napt;
+    if (usb) ip_napt_enable_netif(s_usb, 0);
+    if (ap) ip_napt_enable_netif(s_ap, 0);
+    if (usb) ip_napt_enable_netif(s_usb, 1);
+    if (ap) ip_napt_enable_netif(s_ap, 1);
+}
+static void state_core(uint32_t g, const char *name, bool up, int error)
+{
+    bool flush = false;
     LOCK();
     if (g == s.generation) {
+        flush = s.enabled && !s.kill_switch && s.connected != up;
+        if (s.connected != up) { s_probe_epoch++; s.probe_at_us = 0; s.probe_ok = false; }
         strlcpy(s.state, name, sizeof(s.state)); s.connected = up; s.last_error = error;
         if (!up) { s.tx_dropped += s_count; s_head = s_count = s.queue_depth = 0; }
     }
     UNLOCK();
+    if (flush) flush_nat(); /* DIRECT and VPN cannot share NAT identities. */
 }
+typedef struct { uint32_t g; const char *name; bool up; int error; } state_change_t;
+static esp_err_t set_state(void *arg)
+{ state_change_t *c = arg; state_core(c->g, c->name, c->up, c->error); return ESP_OK; }
+static void state(uint32_t g, const char *name, bool up, int error)
+{ state_change_t c = {g, name, up, error}; esp_netif_tcpip_exec(set_state, &c); }
 esp_err_t meshvpn_vpn_validate_config(const meshvpn_vpn_config_t *c)
 {
+    const char *error = meshvpn_vpn_config_error(c);
+    if (!error) return ESP_OK;
+    if (c && c->enabled && strnlen(c->transport, sizeof(c->transport)) < sizeof(c->transport) &&
+        strcmp(c->transport, "socket") && strcmp(c->transport, "wireguard")) return ESP_ERR_NOT_SUPPORTED;
+    return ESP_ERR_INVALID_ARG;
+}
+const char *meshvpn_vpn_config_error(const meshvpn_vpn_config_t *c)
+{
     if (!c || strnlen(c->server, sizeof(c->server)) == sizeof(c->server) ||
-        strnlen(c->transport, sizeof(c->transport)) == sizeof(c->transport)) return ESP_ERR_INVALID_ARG;
-    if (!c->enabled) return ESP_OK;
+        strnlen(c->transport, sizeof(c->transport)) == sizeof(c->transport)) return "VPN config contains an invalid or overlong field.";
+    if (!c->enabled) return NULL;
     uint8_t ip[4]; uint16_t port;
     bool wg = !strcmp(c->transport, "wireguard");
-    if (!wg && strcmp(c->transport, "socket")) return ESP_ERR_NOT_SUPPORTED;
-    if (!meshvpn_vpn_endpoint(c->server, ip, &port)) return ESP_ERR_INVALID_ARG;
-    if (wg) return meshvpn_wg_validate(c);
-    if (ip[0] == 10 && ip[1] == 99 && ip[2] == 0) return ESP_ERR_INVALID_ARG;
-    return ESP_OK;
+    if (!wg && strcmp(c->transport, "socket")) return "Transport: select socket or WireGuard.";
+    if (!meshvpn_vpn_endpoint(c->server, ip, &port)) return "Endpoint/server: enter numeric IPv4:port (port 1-65535); hostnames and IPv6 are not supported.";
+    if (wg) return meshvpn_wg_config_error(c);
+    if (ip[0] == 10 && ip[1] == 99 && ip[2] == 0) return "Server overlaps the socket tunnel subnet 10.99.0.0/24.";
+    return NULL;
 }
 static esp_err_t apply_config(void *arg)
 {
@@ -71,6 +97,7 @@ static esp_err_t apply_config(void *arg)
     netif_set_ipaddr(&s_vpn, &address);
     /* Unsupported saved profiles must never silently enable DIRECT. */
     LOCK(); s_config = *c; s.enabled = c->enabled; s.connected = false; s.generation++;
+    s.kill_switch = !c->allow_direct; s_probe_epoch++; s.probe_at_us = 0; s.probe_ok = false; s.probe_error = 0;
     s.tx_dropped += s_count; s_head = s_count = s.queue_depth = 0;
     strlcpy(s.server, c->server, sizeof(s.server)); strlcpy(s.transport, c->transport, sizeof(s.transport));
     strlcpy(s.state, c->enabled ? "waiting" : "disabled", sizeof(s.state));
@@ -83,11 +110,7 @@ static esp_err_t apply_config(void *arg)
     UNLOCK();
     LOCK(); ip4addr_ntoa_r(&address, s.address, sizeof(s.address)); s.wg_handshake_age = UINT32_MAX; UNLOCK();
     /* Existing DIRECT mappings must not survive a change of egress identity. */
-    bool usb = s_usb && s_usb->napt, ap = s_ap && s_ap->napt;
-    if (usb) ip_napt_enable_netif(s_usb, 0);
-    if (ap) ip_napt_enable_netif(s_ap, 0);
-    if (usb) ip_napt_enable_netif(s_usb, 1);
-    if (ap) ip_napt_enable_netif(s_ap, 1);
+    flush_nat();
     return err;
 }
 esp_err_t meshvpn_vpn_start(const meshvpn_vpn_config_t *c)
@@ -97,12 +120,14 @@ esp_err_t meshvpn_vpn_stop(void)
 void meshvpn_vpn_set_lan(struct netif *usb, struct netif *ap) { s_usb = usb; s_ap = ap; }
 static bool lan(const ip4_addr_t *ip, struct netif *n)
 { return n && ip && ip4_addr_netcmp(ip, netif_ip4_addr(n), netif_ip4_netmask(n)); }
+static bool tunnel_policy(void)
+{ LOCK(); bool v = s.enabled && (s.kill_switch || s.connected); UNLOCK(); return v; }
 struct netif *meshvpn_vpn_route(const ip4_addr_t *src, const ip4_addr_t *dst)
 {
     if (!s_ready || !src || !dst) return NULL;
     /* Previously bound DNS sockets remain blackholed after disabling VPN. */
     if (ip4_addr_cmp(src, netif_ip4_addr(&s_vpn))) return &s_vpn;
-    if (!enabled() || (!lan(src, s_usb) && !lan(src, s_ap))) return NULL;
+    if (!tunnel_policy() || (!lan(src, s_usb) && !lan(src, s_ap))) return NULL;
     if ((s_usb && ip4_addr_cmp(src, netif_ip4_addr(s_usb))) ||
         (s_ap && ip4_addr_cmp(src, netif_ip4_addr(s_ap)))) return NULL;
     if (lan(dst, s_usb) || lan(dst, s_ap) || ip4_addr_ismulticast(dst) || dst->addr == IPADDR_BROADCAST) return NULL;
@@ -211,7 +236,7 @@ static bool receive_packet(void *arg, const uint8_t *p, size_t len)
 { rx_t rx = { p, len, *(uint32_t *)arg }; return esp_netif_tcpip_exec(inject, &rx) == ESP_OK; }
 int meshvpn_vpn_dns_socket(int fd, uint32_t *resolver)
 {
-    if (!enabled()) return 0;
+    if (!tunnel_policy()) return 0;
     if (!meshvpn_vpn_is_connected()) return -1;
     struct sockaddr_in local = { .sin_family = AF_INET };
     char address[16], resolver_ip[16];
@@ -224,6 +249,41 @@ int meshvpn_vpn_dns_socket(int fd, uint32_t *resolver)
         setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, &iface, sizeof(iface))) return -1;
     return bind(fd, (struct sockaddr *)&local, sizeof(local));
 }
+esp_err_t meshvpn_vpn_check_internet(void)
+{
+    meshvpn_vpn_status_t before; uint32_t epoch;
+    LOCK(); before = s; epoch = s_probe_epoch; UNLOCK();
+    if (!before.enabled || !before.connected) return ESP_ERR_INVALID_STATE;
+    /* Never use the DNS helper's optional DIRECT fallback for this probe. */
+    int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP), failure = 0;
+    if (fd < 0) failure = errno;
+    else {
+        struct sockaddr_in local = { .sin_family = AF_INET };
+        struct sockaddr_in remote = { .sin_family = AF_INET, .sin_port = htons(443) };
+        inet_aton(before.address, &local.sin_addr); inet_aton("1.1.1.1", &remote.sin_addr);
+        struct ifreq iface = {0};
+        if (!netif_index_to_name(netif_get_index(&s_vpn), iface.ifr_name)) failure = ENODEV;
+        else if (setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, &iface, sizeof(iface)) ||
+                 bind(fd, (struct sockaddr *)&local, sizeof(local)) ||
+                 fcntl(fd, F_SETFL, O_NONBLOCK) < 0) failure = errno;
+        else if (connect(fd, (struct sockaddr *)&remote, sizeof(remote)) < 0) {
+            failure = errno;
+            if (failure == EINPROGRESS) {
+                fd_set wr; FD_ZERO(&wr); FD_SET(fd, &wr);
+                struct timeval tv = { .tv_sec = 5 };
+                int ready = select(fd + 1, NULL, &wr, NULL, &tv);
+                if (ready <= 0) failure = ready == 0 ? ETIMEDOUT : errno;
+                else { socklen_t len = sizeof(failure); if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &failure, &len)) failure = errno; }
+            }
+        }
+        close(fd);
+    }
+    LOCK();
+    bool current = s.enabled && s.connected && s.generation == before.generation && s_probe_epoch == epoch;
+    if (current) { s.probe_ok = !failure; s.probe_error = failure; s.probe_at_us = esp_timer_get_time(); }
+    UNLOCK();
+    return current ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
 static esp_err_t wg_poll(void *arg)
 {
     static uint32_t last_uplink;
@@ -232,12 +292,12 @@ static esp_err_t wg_poll(void *arg)
     esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     esp_netif_ip_info_t ip;
     if (!sta || !esp_netif_is_netif_up(sta) || esp_netif_get_ip_info(sta, &ip) != ESP_OK || !ip.ip.addr) {
-        meshvpn_wg_stop(); last_uplink = 0; state(g, "wait_uplink", false, ENETDOWN); return ESP_OK;
+        meshvpn_wg_stop(); last_uplink = 0; state_core(g, "wait_uplink", false, ENETDOWN); return ESP_OK;
     }
     if (last_uplink != ip.ip.addr) { meshvpn_wg_stop(); last_uplink = ip.ip.addr; }
     esp_err_t err = meshvpn_wg_start(&s_config);
     bool up = err == ESP_OK && meshvpn_wg_up();
-    state(g, up ? "up" : err == ESP_OK ? "handshake" : "wg_error", up, err);
+    state_core(g, up ? "up" : err == ESP_OK ? "handshake" : "wg_error", up, err);
     uint32_t age = meshvpn_wg_handshake_age();
     LOCK(); s.wg_handshake_age = age; UNLOCK();
     return ESP_OK;

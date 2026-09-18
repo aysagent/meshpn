@@ -178,8 +178,15 @@ esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
 {
     memset(out, 0, sizeof(*out));
     size_t blob_len = sizeof(*out);
-    esp_err_t blob_err = nvs_get_blob(s_nvs, "vpn_cfg2", out, &blob_len);
-    if (blob_err == ESP_OK && blob_len == sizeof(*out) &&
+    size_t expected = sizeof(*out);
+    esp_err_t blob_err = nvs_get_blob(s_nvs, "vpn_cfg3", out, &blob_len);
+    if (blob_err == ESP_ERR_NVS_NOT_FOUND) {
+        /* v2 ends immediately before allow_direct. Migration stays fail-closed. */
+        expected = offsetof(meshvpn_vpn_config_t, allow_direct);
+        blob_len = expected;
+        blob_err = nvs_get_blob(s_nvs, "vpn_cfg2", out, &blob_len);
+    }
+    if (blob_err == ESP_OK && blob_len == expected &&
         memchr(out->server, 0, sizeof(out->server)) &&
         memchr(out->transport, 0, sizeof(out->transport)) &&
         memchr(out->wg_private_key, 0, sizeof(out->wg_private_key)) &&
@@ -227,7 +234,7 @@ esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
 esp_err_t meshvpn_config_save_vpn(const meshvpn_vpn_config_t *cfg)
 {
     /* One versioned record: endpoint/mode/enable never mix across power loss. */
-    esp_err_t err = nvs_set_blob(s_nvs, "vpn_cfg2", cfg, sizeof(*cfg));
+    esp_err_t err = nvs_set_blob(s_nvs, "vpn_cfg3", cfg, sizeof(*cfg));
     if (err != ESP_OK) return err;
     return nvs_commit(s_nvs);
 }

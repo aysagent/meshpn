@@ -55,6 +55,7 @@ typedef struct {
     char wg_address[16];
     char wg_dns[16];
     uint16_t wg_keepalive;
+    bool allow_direct; /* false (including migrated profiles) = kill switch ON */
 } meshvpn_vpn_config_t;
 
 esp_err_t meshvpn_config_init(void);

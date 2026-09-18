@@ -14,6 +14,10 @@ typedef struct {
     bool implemented;
     bool connected;
     bool enabled;
+    bool kill_switch;
+    bool probe_ok;
+    int probe_error;
+    int64_t probe_at_us; /* zero = untested; invalidated on config/disconnect */
     char server[MESHVPN_VPN_SERVER_MAX + 1];
     char transport[32];
     char state[24];
@@ -32,9 +36,12 @@ typedef struct {
 
 esp_err_t meshvpn_vpn_init(void);
 esp_err_t meshvpn_vpn_validate_config(const meshvpn_vpn_config_t *cfg);
+const char *meshvpn_vpn_config_error(const meshvpn_vpn_config_t *cfg);
 esp_err_t meshvpn_vpn_start(const meshvpn_vpn_config_t *cfg);
 esp_err_t meshvpn_vpn_stop(void);
 bool meshvpn_vpn_is_connected(void);
+/* Worker/HTTP task only. Bounded TCP reachability test bound to the VPN netif. */
+esp_err_t meshvpn_vpn_check_internet(void);
 
 esp_err_t meshvpn_vpn_send_ipv4(const uint8_t *pkt, uint16_t len);
 esp_err_t meshvpn_vpn_recv_ipv4(uint8_t *pkt, uint16_t maxlen, uint16_t *out_len);

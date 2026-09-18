@@ -26,12 +26,40 @@ Disable VPN to return to DIRECT. TLS transports are not implemented here yet.
 All forwarded Internet traffic from both USB and AP goes through a virtual lwIP
 interface and existing NAPT. LAN-local traffic/admin/DHCP remain local. The outer
 TCP socket binds the STA address, avoiding tunnel recursion. While enabled but
-disconnected, the virtual route remains selected and drops packets; it never
-falls back to STA. IPv6 remains blocked by the existing ingress policy.
+disconnected, the default **Kill switch ON** keeps the virtual route selected and
+drops packets. Turning kill switch OFF explicitly permits DIRECT fallback while
+disconnected, for both socket and WireGuard. Turning **Enable VPN OFF** always
+restores DIRECT; saving a profile alone does not enable it. IPv6 remains blocked
+by the existing ingress policy.
 DNS proxy uses 1.1.1.1 through the VPN (numeric exit eliminates bootstrap DNS).
 Applying settings clears DNS cache and NAPT mappings: restart existing client
 connections. Independently initiated device services other than this DNS proxy
 are not full-tunnelled.
+
+## Admin status and controls
+
+- **Save and apply** persists and immediately applies the selected enable flag,
+  transport and kill switch. No board reboot is needed; success is not proof of
+  connection. The header shows the currently applied state, not unsaved edits.
+- **Reconnect VPN** reapplies the saved enabled profile, flushing old NAT mappings
+  and reconnecting without reboot. Save unsaved edits first.
+- **Check internet via VPN** performs a TCP connection to `1.1.1.1:443` with a
+  five-second timeout, bound to the virtual VPN interface and source address. It
+  never uses DIRECT fallback, even with kill switch OFF. This is a manual,
+  point-in-time reachability test, not a DNS, TLS, exit-IP or continuous health
+  check. Failure does not prove the entire Internet is down. The last result and
+  its age are shown; after 60 seconds it is labelled outdated. Config changes and
+  disconnects invalidate the result. Probe failure does not change routing.
+- Kill switch defaults ON, including migration of existing profiles. It applies
+  only while VPN is enabled and only to traffic through the device, not to other
+  laptop interfaces. OFF allows direct forwarding/DNS while the tunnel reports
+  disconnected; NAT mappings are cleared when switching egress. WireGuard valid
+  session keys are not an immediate liveness detector; outages may take time to
+  be reported as disconnected. Unsupported/misconfigured profiles are not proof
+  of a working VPN; inspect the status/error and perform a reachability test.
+
+These behaviours are host-tested and compile-tested; packet capture on real
+hardware is still required to verify both transports and kill switch transitions.
 
 The queue holds 16 packets in PSRAM, drops entries older than 1 second, and cannot
 grow with traffic. Partial frame/write deadlines are 5 seconds. Connect timeout
@@ -78,7 +106,27 @@ clean-vpn socket server. Uses pinned `esphome/wireguard` 0.4.6 and its libsodium
 dependency (exact transitive versions/hashes in the per-target lockfiles).
 No custom cryptographic protocol or JA3/JA4 emulation is involved.
 
-Admin fields:
+Admin fields follow the WireGuard profile order and names:
+
+```ini
+[Interface]
+PrivateKey = <device private key>
+Address = 10.0.0.7
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = <server public key>
+Endpoint = <numeric server IPv4>:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+```
+
+For a source profile with `Address = 10.0.0.7/24,fd42:42:42::7/64`, enter
+only `10.0.0.7` in this UI. Do not change the original profile: the device backend
+uses /32 internally and does not support IPv6. `AllowedIPs` is read-only; `::/0`
+is not used. Optional `PresharedKey` controls follow the main peer fields.
+
+Field details:
 
 - Server: numeric IPv4 and UDP port, e.g. `192.0.2.1:51820`.
 - Device tunnel address: the IPv4 from its WireGuard profile, without CIDR suffix;

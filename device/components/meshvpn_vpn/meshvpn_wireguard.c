@@ -35,23 +35,30 @@ static bool unicast(const char *text)
     return meshvpn_vpn_endpoint(endpoint, bytes, &port) && ip4addr_aton(text, &parsed) &&
         !memcmp(&parsed.addr, bytes, 4); /* reject ambiguous octal/short forms */
 }
-esp_err_t meshvpn_wg_validate(const meshvpn_vpn_config_t *c)
+const char *meshvpn_wg_config_error(const meshvpn_vpn_config_t *c)
 {
+    if (!unicast(c->wg_address)) return "Address: enter one numeric IPv4 without /mask or IPv6 (example: 10.0.0.7).";
+    if (!unicast(c->wg_dns)) return "DNS: enter one numeric IPv4 resolver (example: 1.1.1.1).";
+    if (!strcmp(c->wg_address, c->wg_dns)) return "DNS must differ from the device tunnel Address.";
     uint8_t key[32];
-    bool ok = unicast(c->wg_address) && unicast(c->wg_dns) && strcmp(c->wg_address, c->wg_dns) &&
-        decode_key(c->wg_private_key, key) && decode_key(c->wg_public_key, key) &&
-        (!c->wg_preshared_key[0] || decode_key(c->wg_preshared_key, key));
+    const char *error = NULL;
+    if (!decode_key(c->wg_private_key, key)) error = "PrivateKey: missing or invalid. Paste the complete 44-character Base64 value from [Interface], including the final =.";
+    else if (!decode_key(c->wg_public_key, key)) error = "PublicKey: missing or invalid. Paste the complete 44-character Base64 value from [Peer], including the final =.";
+    else if (c->wg_preshared_key[0] && !decode_key(c->wg_preshared_key, key)) error = "PresharedKey: invalid Base64 key. Paste the complete value or remove the saved PSK if your profile has none.";
     mbedtls_platform_zeroize(key, sizeof(key));
-    if (ok) {
-        ip4_addr_t address; ip4addr_aton(c->wg_address, &address);
-        unsigned ap_octet = CONFIG_MESHVPN_USB_SUBNET_OCTET_2 == 4 ? 3 : 4;
-        if (ip4_addr1(&address) == 192 && ip4_addr2(&address) == 168 &&
-            (ip4_addr3(&address) == CONFIG_MESHVPN_USB_SUBNET_OCTET_2 || ip4_addr3(&address) == ap_octet)) ok = false;
-        uint8_t peer[4]; uint16_t port;
-        if (!meshvpn_vpn_endpoint(c->server, peer, &port) || !memcmp(&address.addr, peer, 4)) ok = false;
-    }
-    return ok ? ESP_OK : ESP_ERR_INVALID_ARG;
+    if (error) return error;
+    ip4_addr_t address; ip4addr_aton(c->wg_address, &address);
+    unsigned ap_octet = CONFIG_MESHVPN_USB_SUBNET_OCTET_2 == 4 ? 3 : 4;
+    if (ip4_addr1(&address) == 192 && ip4_addr2(&address) == 168 &&
+        (ip4_addr3(&address) == CONFIG_MESHVPN_USB_SUBNET_OCTET_2 || ip4_addr3(&address) == ap_octet))
+        return "Address overlaps the device USB/AP subnet. Use a different tunnel subnet.";
+    uint8_t peer[4]; uint16_t port;
+    if (!meshvpn_vpn_endpoint(c->server, peer, &port)) return "Endpoint: use numeric server IPv4:port, not a hostname or IPv6.";
+    if (!memcmp(&address.addr, peer, 4)) return "Address must differ from the server Endpoint IP.";
+    return NULL;
 }
+esp_err_t meshvpn_wg_validate(const meshvpn_vpn_config_t *c)
+{ return meshvpn_wg_config_error(c) ? ESP_ERR_INVALID_ARG : ESP_OK; }
 bool meshvpn_wg_clock_ready(void)
 {
     /* Worker context. ESP SNTP wrappers marshal calls to lwIP themselves.

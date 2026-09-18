@@ -13,6 +13,12 @@ for(const part of text.split('static const char ').slice(1)){
     if(part.startsWith('MESHVPN_WEB_INDEX_HTML')){
       assert(html.includes('href="//meshpn.local/"'),'admin link must preserve HTTP/HTTPS');
       assert(html.includes('id="certificate-section" hidden'),'certificate controls hidden before status');
+      const wgForm=html.slice(html.indexOf("<div id='vpn-wg-fields'"),html.indexOf("<button id='vpn-save'"));
+      const ordered=['<h3>[Interface]</h3>','<label>PrivateKey','<label>Address','<label>DNS',
+        '<h3>[Peer]</h3>','<label>PublicKey','<label>Endpoint','<label>AllowedIPs','<label>PersistentKeepalive'];
+      let previous=-1;
+      for(const label of ordered){const index=wgForm.indexOf(label);assert(index>previous,'WireGuard config order: '+label);previous=index;}
+      assert(wgForm.includes("id='wg-allowed-ips' value='0.0.0.0/0' readonly"));
       // Exercise the production status renderer in both modes, without starting
       // the unrelated WiFi scan loop or scheduling real timers/network calls.
       const startup='poll();run(async()=>{await loadProfiles();await scanNetworks(true);})();';
@@ -55,9 +61,11 @@ for(const part of text.split('static const char ').slice(1)){
               assert.equal(options.method,'POST'); assert.equal(options.headers.Authorization,'Bearer test-token');
               const cfg=JSON.parse(options.body);assert(['socket','wireguard'].includes(cfg.transport));
               assert(!cfg.enabled||cfg.transport==='wireguard'||cfg.allow_plaintext);
-              Object.assign(status.vpn,{enabled:cfg.enabled,transport:cfg.transport,server:cfg.server});
+              Object.assign(status.vpn,{enabled:cfg.enabled,transport:cfg.transport,server:cfg.server,kill_switch:cfg.kill_switch});
               if(cfg.transport==='wireguard')status.vpn.wireguard={address:cfg.wg_address,dns:cfg.wg_dns,
                 public_key:cfg.wg_public_key,keepalive:cfg.wg_keepalive,private_key_set:true,preshared_key_set:false};
+            }else if(path==='/api/vpn/restart'||path==='/api/vpn/check'){
+              assert.equal(options.method,'POST');assert.equal(options.headers.Authorization,'Bearer test-token');
             }else if(path==='/api/system/reboot'){
               assert.equal(options.method,'POST');reboots++;
             }else assert.equal(path,'/api/status');
@@ -66,6 +74,8 @@ for(const part of text.split('static const char ').slice(1)){
         });
         vm.runInContext(code,context);
         await vm.runInContext('poll()',context);
+        assert(elements['vpn-summary'].textContent.includes('VPN OFF'));
+        assert.equal(elements['vpn-kill-switch'].checked,true);
         elements['vpn-server'].value='192.0.2.1:8765';elements['vpn-server'].oninput();
         elements['vpn-enabled'].checked=true;elements['vpn-enabled'].oninput();
         await vm.runInContext('poll()',context);
@@ -75,14 +85,42 @@ for(const part of text.split('static const char ').slice(1)){
         await elements['vpn-form'].onsubmit();assert.equal(status.vpn.enabled,true);assert.equal(reboots,0);
         elements['vpn-enabled'].checked=false;elements['vpn-enabled'].oninput();
         await elements['vpn-form'].onsubmit();assert.equal(status.vpn.enabled,false);
+        assert(elements.message.textContent.includes('VPN is OFF'));
         elements['vpn-transport'].value='wireguard';elements['vpn-transport'].oninput();
         assert.equal(elements['vpn-wg-fields'].hidden,false);assert.equal(elements['vpn-socket-fields'].hidden,true);
+        elements['wg-endpoint'].value='198.51.100.7:51820';elements['wg-endpoint'].oninput();
+        await vm.runInContext('poll()',context);
+        assert.equal(elements['wg-endpoint'].value,'198.51.100.7:51820','poll preserves endpoint edit');
         elements['wg-address'].value='10.6.0.2';elements['wg-dns'].value='1.1.1.1';
         elements['wg-public-key'].value='test-peer-public';elements['wg-private-key'].value='test-device-secret';
         elements['wg-psk'].value='';elements['vpn-enabled'].checked=true;elements['vpn-plaintext'].checked=false;
         await elements['vpn-form'].onsubmit();assert.equal(status.vpn.transport,'wireguard');
+        assert.equal(status.vpn.server,'198.51.100.7:51820','WG uses Endpoint, not hidden socket server');
+        assert.equal(elements['wg-endpoint'].value,status.vpn.server,'render saved endpoint');
         assert.equal(elements['wg-private-key'].value,'','clear secret field after success');
         assert(!elements.status.textContent.includes('test-device-secret'),'status must not contain private key');
+        assert(status.vpn.kill_switch);
+        status.vpn.connected=false;status.vpn.state='handshake';await vm.runInContext('poll()',context);
+        assert(elements['vpn-summary'].textContent.includes('BLOCKED'));
+        assert(elements['vpn-check'].disabled);
+        elements['vpn-kill-switch'].checked=false;elements['vpn-kill-switch'].oninput();
+        accepted=false;await elements['vpn-form'].onsubmit();assert(status.vpn.kill_switch,'require direct fallback confirmation');
+        accepted=true;await elements['vpn-form'].onsubmit();assert.equal(status.vpn.kill_switch,false);
+        assert(elements['vpn-summary'].textContent.includes('DIRECT fallback'));
+        status.vpn.connected=true;await vm.runInContext('poll()',context);
+        assert(elements['vpn-summary'].textContent.includes('tunnel connected'));
+        assert(elements['vpn-internet'].textContent.includes('not tested'));
+        await elements['vpn-reconnect'].onclick();assert.equal(reboots,0);
+        await elements['vpn-check'].onclick();
+        status.vpn.internet_probe={tested:true,ok:true,age_sec:0,error:0};await vm.runInContext('poll()',context);
+        assert(elements['vpn-internet'].textContent.includes('reachable'));
+        assert(elements['vpn-internet'].textContent.includes('DNS/HTTPS not verified'));
+        status.vpn.internet_probe.age_sec=61;await vm.runInContext('poll()',context);
+        assert(elements['vpn-internet'].textContent.includes('outdated'));
+        status.vpn.internet_probe={tested:true,ok:false,age_sec:0,error:110};await vm.runInContext('poll()',context);
+        assert(elements['vpn-internet'].textContent.includes('FAILED'));
+        vm.runInContext('renderVpn(null)',context);
+        assert(elements['vpn-summary'].textContent.includes('unavailable'));assert(elements['vpn-check'].disabled);
         assert.equal(elements['user-led-enabled'].checked,true);
         assert.equal(elements['charge-led-enabled'].disabled,true);
         assert.equal(elements['charge-led-enabled'].indeterminate,true,'not a measured on/off state');

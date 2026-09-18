@@ -549,6 +549,15 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddBoolToObject(vpn, "implemented", vs.implemented);
     cJSON_AddBoolToObject(vpn, "enabled", vs.enabled);
     cJSON_AddBoolToObject(vpn, "connected", vs.connected);
+    cJSON_AddBoolToObject(vpn, "kill_switch", vs.kill_switch);
+    cJSON_AddBoolToObject(vpn, "direct_fallback", vs.enabled && !vs.kill_switch && !vs.connected);
+    cJSON *probe = cJSON_AddObjectToObject(vpn, "internet_probe");
+    cJSON_AddStringToObject(probe, "target", "1.1.1.1:443 (TCP via VPN; not a DNS/HTTPS test)");
+    cJSON_AddBoolToObject(probe, "tested", vs.probe_at_us != 0);
+    cJSON_AddBoolToObject(probe, "ok", vs.probe_at_us != 0 && vs.probe_ok);
+    cJSON_AddNumberToObject(probe, "error", vs.probe_error);
+    if (vs.probe_at_us) cJSON_AddNumberToObject(probe, "age_sec", (esp_timer_get_time() - vs.probe_at_us) / 1000000);
+    else cJSON_AddNullToObject(probe, "age_sec");
     cJSON_AddStringToObject(vpn, "server", vs.server);
     cJSON_AddStringToObject(vpn, "transport", vs.transport);
     cJSON_AddStringToObject(vpn, "state", vs.state);
@@ -581,7 +590,7 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     }
     (void)def;
     cJSON_AddBoolToObject(routing, "implemented", false);
-    cJSON_AddStringToObject(routing, "default", vs.enabled ? "vpn" : "direct");
+    cJSON_AddStringToObject(routing, "default", vs.enabled && (vs.kill_switch || vs.connected) ? "vpn" : "direct");
     cJSON_AddBoolToObject(routing, "full_tunnel", vs.enabled);
 
     return send_json(req, root);
@@ -899,37 +908,72 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     cJSON *ack = cJSON_GetObjectItemCaseSensitive(in, "allow_plaintext");
     meshvpn_vpn_config_t cfg = {0};
     if (meshvpn_config_load_vpn(&cfg) != ESP_OK) { vpn_delete_body(in); return vpn_config_error(req, &cfg, "500 Internal Server Error", "Cannot load VPN config"); }
+    const char *validation_error = NULL;
     bool valid = cJSON_IsBool(en) && cJSON_IsString(server) && cJSON_IsString(transport) &&
         strlen(server->valuestring) < sizeof(cfg.server) &&
         (!strcmp(transport->valuestring, "socket") || !strcmp(transport->valuestring, "wireguard")) &&
         (!cJSON_IsTrue(en) || strcmp(transport->valuestring, "socket") || cJSON_IsTrue(ack));
-    valid = valid && vpn_string(in, "wg_address", cfg.wg_address, sizeof(cfg.wg_address), false) &&
-        vpn_string(in, "wg_dns", cfg.wg_dns, sizeof(cfg.wg_dns), false) &&
-        vpn_string(in, "wg_public_key", cfg.wg_public_key, sizeof(cfg.wg_public_key), false) &&
-        vpn_string(in, "wg_private_key", cfg.wg_private_key, sizeof(cfg.wg_private_key), true) &&
-        vpn_string(in, "wg_preshared_key", cfg.wg_preshared_key, sizeof(cfg.wg_preshared_key), true);
+    if (!valid) {
+        if (!cJSON_IsBool(en)) validation_error = "Enable VPN: expected a checkbox value.";
+        else if (!cJSON_IsString(server) || strlen(server->valuestring) >= sizeof(cfg.server)) validation_error = "Endpoint/server: missing or too long.";
+        else if (!cJSON_IsString(transport) || (strcmp(transport->valuestring, "socket") && strcmp(transport->valuestring, "wireguard"))) validation_error = "Transport: select socket or WireGuard.";
+        else validation_error = "socket: confirm the plaintext tunnelling warning before enabling.";
+    }
+    cJSON *kill = cJSON_GetObjectItemCaseSensitive(in, "kill_switch");
+    if (kill && !cJSON_IsBool(kill)) { valid = false; validation_error = "Kill switch: expected a checkbox value."; }
+    if (cJSON_IsBool(kill)) cfg.allow_direct = !cJSON_IsTrue(kill);
+#define VPN_READ_FIELD(field, keep, message) do { \
+    if (!vpn_string(in, #field, cfg.field, sizeof(cfg.field), keep)) { \
+        valid = false; if (!validation_error) validation_error = message; \
+    } \
+} while (0)
+    VPN_READ_FIELD(wg_address, false, "Address: enter one IPv4 without /mask or IPv6 (example: 10.0.0.7).");
+    VPN_READ_FIELD(wg_dns, false, "DNS: enter one IPv4 resolver (example: 1.1.1.1).");
+    VPN_READ_FIELD(wg_public_key, false, "PublicKey: paste only the 44-character Base64 value, without the PublicKey = label or quotes.");
+    VPN_READ_FIELD(wg_private_key, true, "PrivateKey: paste only the 44-character Base64 value, without the PrivateKey = label or quotes.");
+    VPN_READ_FIELD(wg_preshared_key, true, "PresharedKey: paste only the 44-character Base64 value, without its label or quotes.");
+#undef VPN_READ_FIELD
     cJSON *clear = cJSON_GetObjectItemCaseSensitive(in, "wg_clear_psk");
-    if (clear && !cJSON_IsBool(clear)) valid = false;
+    if (clear && !cJSON_IsBool(clear)) { valid = false; validation_error = "Remove PresharedKey: expected a checkbox value."; }
     if (cJSON_IsTrue(clear)) memset(cfg.wg_preshared_key, 0, sizeof(cfg.wg_preshared_key));
     cJSON *keep = cJSON_GetObjectItemCaseSensitive(in, "wg_keepalive");
     if (keep) {
-        if (!cJSON_IsNumber(keep) || keep->valuedouble < 0 || keep->valuedouble > 65535 || floor(keep->valuedouble) != keep->valuedouble) valid = false;
+        if (!cJSON_IsNumber(keep) || keep->valuedouble < 0 || keep->valuedouble > 65535 || floor(keep->valuedouble) != keep->valuedouble) { valid = false; validation_error = "PersistentKeepalive: enter an integer from 0 to 65535 seconds."; }
         else cfg.wg_keepalive = keep->valueint;
     }
     if (valid) {
         cfg.enabled = cJSON_IsTrue(en);
         strlcpy(cfg.server, server->valuestring, sizeof(cfg.server));
         strlcpy(cfg.transport, transport->valuestring, sizeof(cfg.transport));
-        valid = meshvpn_vpn_validate_config(&cfg) == ESP_OK;
+        validation_error = meshvpn_vpn_config_error(&cfg);
+        valid = validation_error == NULL;
     }
     vpn_delete_body(in);
-    if (!valid) return vpn_config_error(req, &cfg, "400 Bad Request", "Invalid VPN settings: check transport, numeric IPv4:port, plaintext opt-in or WireGuard keys/address/DNS");
+    if (!valid) return vpn_config_error(req, &cfg, "400 Bad Request", validation_error ? validation_error : "Invalid VPN settings.");
     meshvpn_vpn_status_t status; meshvpn_vpn_get_status(&status);
     if (cfg.enabled && !status.implemented) return vpn_config_error(req, &cfg, "501 Not Implemented", "VPN not compiled in this build");
     if (meshvpn_config_save_vpn(&cfg) != ESP_OK) return vpn_config_error(req, &cfg, "500 Internal Server Error", "Cannot persist VPN settings");
-    meshvpn_vpn_start(&cfg);
+    esp_err_t applied = meshvpn_vpn_start(&cfg);
     vpn_wipe(&cfg, sizeof(cfg));
     meshvpn_dns_clear_cache();
+    if (applied != ESP_OK) return error(req, "500 Internal Server Error", "VPN settings saved, but applying failed. Inspect VPN status; no reboot is required.");
+    return send_json(req, cJSON_CreateObject());
+}
+static esp_err_t handler_vpn_restart(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    meshvpn_vpn_config_t cfg = {0};
+    if (meshvpn_config_load_vpn(&cfg) != ESP_OK) return vpn_config_error(req, &cfg, "500 Internal Server Error", "Cannot load VPN config");
+    if (!cfg.enabled) return vpn_config_error(req, &cfg, "409 Conflict", "VPN is disabled. Enable VPN and Save and apply first.");
+    esp_err_t applied = meshvpn_vpn_start(&cfg);
+    vpn_wipe(&cfg, sizeof(cfg)); meshvpn_dns_clear_cache();
+    if (applied != ESP_OK) return error(req, "500 Internal Server Error", "Cannot restart VPN. Inspect VPN status.");
+    return send_json(req, cJSON_CreateObject());
+}
+static esp_err_t handler_vpn_check(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    if (meshvpn_vpn_check_internet() != ESP_OK) return error(req, "409 Conflict", "VPN is disconnected or changed during the test. Inspect VPN status.");
     return send_json(req, cJSON_CreateObject());
 }
 static esp_err_t handler_unimplemented(httpd_req_t *req)
@@ -995,7 +1039,7 @@ esp_err_t meshvpn_web_start(void)
     if (err != ESP_OK) return err;
     s_https = s_https_configured;
     httpd_config_t server = HTTPD_DEFAULT_CONFIG();
-    server.max_uri_handlers = 24;
+    server.max_uri_handlers = 28;
     server.stack_size = 12288;
     server.max_open_sockets = 3;
     server.lru_purge_enable = true;
@@ -1052,6 +1096,8 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/system/factory-reset", HTTP_POST, handler_system),
         ROUTE("/api/certificate", HTTP_GET, handler_certificate), ROUTE("/api/certificate", HTTP_POST, handler_certificate),
         ROUTE("/api/vpn/config", HTTP_POST, handler_vpn_config),
+        ROUTE("/api/vpn/restart", HTTP_POST, handler_vpn_restart),
+        ROUTE("/api/vpn/check", HTTP_POST, handler_vpn_check),
         ROUTE("/api/routing/rules", HTTP_POST, handler_unimplemented),
         ROUTE("/api/routing/default", HTTP_POST, handler_unimplemented),
         ROUTE("/api/routing/benchmark", HTTP_POST, handler_ranges_benchmark),

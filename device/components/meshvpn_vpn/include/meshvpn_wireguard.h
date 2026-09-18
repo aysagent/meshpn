@@ -3,6 +3,8 @@
 #include "lwip/netif.h"
 /* All lifecycle/packet calls are restricted to the lwIP core thread. */
 esp_err_t meshvpn_wg_validate(const meshvpn_vpn_config_t *cfg);
+/* Static, non-secret diagnostic, or NULL if valid. */
+const char *meshvpn_wg_config_error(const meshvpn_vpn_config_t *cfg);
 esp_err_t meshvpn_wg_start(const meshvpn_vpn_config_t *cfg);
 void meshvpn_wg_stop(void);
 struct netif *meshvpn_wg_netif(void);

@@ -17,8 +17,10 @@ typedef struct ip4_addr {uint32_t addr;} ip4_addr_t;
 struct netif {ip4_addr_t ip,mask;};
 static struct netif s_vpn={{0x0a630002},{0xffffffff}},usb={{0xc0a80701},{0xffffff00}},ap={{0xc0a80401},{0xffffff00}};
 static struct netif *s_usb=&usb,*s_ap=&ap;
-static bool s_ready=true,on=true;
-static bool enabled(void){return on;}
+static bool s_ready=true;
+static struct { bool enabled,kill_switch,connected; } s={true,true,false};
+#define LOCK() ((void)0)
+#define UNLOCK() ((void)0)
 #define netif_ip4_addr(n) (&(n)->ip)
 #define netif_ip4_netmask(n) (&(n)->mask)
 #define ip4_addr_netcmp(a,b,m) (((a)->addr&(m)->addr)==((b)->addr&(m)->addr))
@@ -34,9 +36,15 @@ assert(meshvpn_vpn_route(&sta,&wan)==NULL); /* outer tunnel bypass */
 assert(meshvpn_vpn_route(&usb.ip,&wan)==NULL); /* board services */
 assert(meshvpn_vpn_route(&client,&apclient)==NULL);
 assert(meshvpn_vpn_route(NULL,&wan)==NULL);
-on=false;assert(meshvpn_vpn_route(&client,&wan)==NULL);
+s.enabled=false;assert(meshvpn_vpn_route(&client,&wan)==NULL);
 assert(meshvpn_vpn_route(&s_vpn.ip,&wan)==&s_vpn); /* old DNS cannot leak */
-on=true; /* route does not depend on connected: fail closed on disconnect */
+s.enabled=true;s.kill_switch=false;
+assert(meshvpn_vpn_route(&client,&wan)==NULL);assert(meshvpn_vpn_route(&apclient,&wan)==NULL);
+assert(meshvpn_vpn_route(&s_vpn.ip,&wan)==&s_vpn); /* bound probe NEVER uses fallback */
+s.connected=true;assert(meshvpn_vpn_route(&client,&wan)==&s_vpn);
+assert(meshvpn_vpn_route(&apclient,&wan)==&s_vpn);
+s.connected=false;s.kill_switch=true;
+assert(meshvpn_vpn_route(&client,&wan)==&s_vpn);
 s_usb=NULL;assert(meshvpn_vpn_route(&apclient,&wan)==&s_vpn);
 return 0;
 }`;
