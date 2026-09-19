@@ -5525,23 +5525,33 @@ function setupExitNat(tunName, extIface) {
   const ext = extIface || getDefaultRouteLinux()?.dev;
   if (!ext) throw new Error('Укажите --ext=eth0 или настройте default route');
   console.log(`[clean-vpn] NAT: ${tunName} -> ${ext} (MASQUERADE)`);
+  /* A VPS commonly has ufw/firewalld jumps followed by REJECT in FORWARD.
+   * Appending our ACCEPT rules leaves them unreachable and Linux answers the
+   * tunneled SYN locally with a forged-source TCP RST.  These rules are both
+   * interface- and address-scoped, so insert them before the host firewall's
+   * generic terminal policy rather than weakening unrelated forwarding. */
   execFileSync(
     'iptables',
-    ['-t', 'nat', '-A', 'POSTROUTING', '-s', `${IP_CLIENT}/32`, '-o', ext, '-j', 'MASQUERADE'],
+    ['-t', 'nat', '-I', 'POSTROUTING', '1', '-s', `${IP_CLIENT}/32`, '-o', ext, '-j', 'MASQUERADE'],
     { stdio: 'inherit' },
   );
-  execFileSync('iptables', ['-A', 'FORWARD', '-i', tunName, '-o', ext, '-j', 'ACCEPT'], {
-    stdio: 'inherit',
-  });
+  execFileSync(
+    'iptables',
+    ['-I', 'FORWARD', '1', '-i', tunName, '-s', `${IP_CLIENT}/32`, '-o', ext, '-j', 'ACCEPT'],
+    { stdio: 'inherit' },
+  );
   execFileSync(
     'iptables',
     [
-      '-A',
+      '-I',
       'FORWARD',
+      '1',
       '-i',
       ext,
       '-o',
       tunName,
+      '-d',
+      `${IP_CLIENT}/32`,
       '-m',
       'conntrack',
       '--ctstate',
@@ -5575,9 +5585,11 @@ function teardownExitNat(tunName, ext) {
     /* ignore */
   }
   try {
-    execFileSync('iptables', ['-D', 'FORWARD', '-i', tunName, '-o', ext, '-j', 'ACCEPT'], {
-      stdio: 'inherit',
-    });
+    execFileSync(
+      'iptables',
+      ['-D', 'FORWARD', '-i', tunName, '-s', `${IP_CLIENT}/32`, '-o', ext, '-j', 'ACCEPT'],
+      { stdio: 'inherit' },
+    );
   } catch {
     /* ignore */
   }
@@ -5591,6 +5603,8 @@ function teardownExitNat(tunName, ext) {
         ext,
         '-o',
         tunName,
+        '-d',
+        `${IP_CLIENT}/32`,
         '-m',
         'conntrack',
         '--ctstate',

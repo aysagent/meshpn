@@ -19,6 +19,12 @@ On the **dedicated, firewall-restricted exit**, from the project directory:
 sudo env PATH="$PATH" node scripts/clean-vpn.js --role=exit --type=socket --server=0.0.0.0:8765 --keep-alive=0
 ```
 
+The exit installs address-scoped `10.99.0.2/32` forwarding and masquerade rules
+at the head of their iptables chains. This is intentional: appending after an
+existing ufw/firewalld terminal `REJECT` makes the tunnel TCP connection look
+healthy while forwarded client SYN packets receive immediate synthetic resets.
+The rules are removed on normal shutdown.
+
 In the device admin VPN section select socket, enter the exit's **numeric IPv4:port**,
 acknowledge plaintext, enable and save. Changes apply without reboot and persist.
 Disable VPN to return to DIRECT. TLS transports are not implemented here yet.
