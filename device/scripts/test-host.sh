@@ -16,6 +16,20 @@ node device/tests/test-vpn-routing.mjs
 node device/tests/test-vpn-storage.mjs
 node device/tests/test-vpn-probe.mjs
 node device/tests/test-vpn-ingress.mjs
+wg_src=device/managed_components/esphome__wireguard/src
+if [[ -f "$wg_src/crypto/refc/chacha20.c" ]]; then
+  for optimization in Og O2; do
+    # Upstream has a signed loop counter; match IDF's warning policy without
+    # editing dependency sources. Sanitizers and assertions stay enabled.
+    "$cc" "${flags[@]}" -Wno-sign-compare "-$optimization" -I"$wg_src" -Idevice/tests/wg_crypto_stubs \
+      device/tests/test_wg_aead.c "$wg_src/crypto.c" \
+      "$wg_src/crypto/refc/chacha20.c" "$wg_src/crypto/refc/chacha20poly1305.c" \
+      "$wg_src/crypto/refc/poly1305-donna.c" -o "$test_dir/wg-aead-$optimization"
+  done
+  node device/tests/test-wg-aead.mjs "$test_dir/wg-aead-Og" "$test_dir/wg-aead-O2"
+else
+  echo "WireGuard AEAD tests skipped: install device managed dependencies."
+fi
 "$cc" "${flags[@]}" -pthread -Idevice/tests/wifi_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
   -Idevice/components/meshvpn_wifi/include device/tests/test_wifi_diag.c -o "$test_dir/wifi-diag"
 "$test_dir/wifi-diag"

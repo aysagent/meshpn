@@ -31,6 +31,8 @@ else
 fi
 case "$DWC2_TELEMETRY" in 0|1) ;; *) echo "DWC2_TELEMETRY must be 0 or 1" >&2; exit 1;; esac
 case "$USB_DIAGNOSTICS" in 0|1) ;; *) echo "USB_DIAGNOSTICS must be 0 or 1" >&2; exit 1;; esac
+WIREGUARD_PERF="${WIREGUARD_PERF:-1}"
+case "$WIREGUARD_PERF" in 0|1) ;; *) echo "WIREGUARD_PERF must be 0 or 1" >&2; exit 1;; esac
 # Preserve previous builds and menuconfig files. A changed set of defaults gets
 # a new sdkconfig, so security settings and profile changes cannot stay stale.
 config_files=("$DEVICE_DIR/sdkconfig.defaults" "$DEVICE_DIR/boards/$BOARD/sdkconfig.defaults" "$TARGET_FILE" "$DEVICE_DIR/profiles/usb_$PROFILE.defconfig" "$DEVICE_DIR/main/idf_component.yml")
@@ -41,10 +43,10 @@ if [[ "$DWC2_TELEMETRY" == 0 ]]; then
   config_files+=("$DEVICE_DIR/profiles/dwc2_telemetry_off.defconfig")
 fi
 config_id="$(cksum "${config_files[@]}" | cksum | awk '{print $1}')"
-BUILD_DIR="$DEVICE_DIR/build-$BOARD-$PROFILE-$config_id"
+BUILD_DIR="$DEVICE_DIR/build-$BOARD-$PROFILE-$config_id-wg$WIREGUARD_PERF"
 mkdir -p "$BUILD_DIR"
 # Build before disturbing the running network or entering ROM download mode.
-args=(-C "$DEVICE_DIR" -B "$BUILD_DIR" -D "SDKCONFIG=$BUILD_DIR/sdkconfig" -D "IDF_TARGET=$IDF_TARGET" build)
+args=(-C "$DEVICE_DIR" -B "$BUILD_DIR" -D "SDKCONFIG=$BUILD_DIR/sdkconfig" -D "IDF_TARGET=$IDF_TARGET" -D "MESHVPN_WIREGUARD_PERF=$WIREGUARD_PERF" build)
 echo "Board: $BOARD; target: $IDF_TARGET; USB profile: $PROFILE"
 idf.py "${args[@]}"
 echo "Build artifacts: $BUILD_DIR"

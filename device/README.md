@@ -53,6 +53,28 @@ Set `PORT` explicitly if several serial devices are connected. Each board/profil
 `dependencies.lock.esp32s3` and `dependencies.lock.esp32p4` files in version control.
 The dependency manager applies the iot_bridge lwIP patches to your ESP-IDF checkout.
 
+## WireGuard compiler performance comparison
+
+Normal `npm run device:flash` now compiles only the WireGuard dependency with
+`-O2`, including ChaCha20/Poly1305. Other components keep their IDF optimization
+settings. This does not change algorithms, authentication, MTU, queues, copying,
+Wi-Fi settings or core affinity. It is not a measured speed guarantee.
+
+For a control build using the previous compiler settings:
+
+```bash
+WIREGUARD_PERF=0 npm run device:flash
+# Optimized build (default):
+npm run device:flash
+```
+
+The two variants use separate `build-…-wg0` / `build-…-wg1` directories. The
+configure log prints the selected mode. Direct IDF users can pass
+`-D MESHVPN_WIREGUARD_PERF=OFF` or `ON` explicitly; otherwise the CMake option
+defaults to ON in a fresh build directory. Existing CMake selections persist.
+Compare the same client, VPN endpoint and speed-test server with the phone's
+own VPN disabled. Record CPU0/CPU1 load during transfer, not only after it.
+
 ## Control a board attached to a Mac from a Linux server
 
 The Mac opens an outbound reverse SSH tunnel to the server. Enable macOS
