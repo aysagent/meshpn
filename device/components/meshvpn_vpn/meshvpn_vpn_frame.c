@@ -40,6 +40,7 @@ bool meshvpn_vpn_decode(meshvpn_vpn_decoder_t *d, const uint8_t *p, size_t n,
         if (d->used == d->length) {
             if (!meshvpn_vpn_ipv4_valid(d->packet, d->length) ||
                 !emit(ctx, d->packet, d->length)) return false;
+            d->completed++;
             d->used = d->length = d->header_used = 0;
         }
     }

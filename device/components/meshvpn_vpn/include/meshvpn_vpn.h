@@ -31,6 +31,11 @@ typedef struct {
     uint32_t generation, reconnects, packets_in, packets_out;
     uint32_t queue_full, queue_expired, rx_invalid, rx_dropped, tx_dropped;
     uint32_t queue_depth, queue_high_water;
+    int socket_last_failure_error;
+    char socket_last_failure_reason[24];
+    int64_t socket_last_failure_us;
+    uint32_t socket_last_failure_generation;
+    uint32_t socket_rx_timeouts, socket_tx_timeouts;
     uint64_t bytes_in;
     uint64_t bytes_out;
 } meshvpn_vpn_status_t;

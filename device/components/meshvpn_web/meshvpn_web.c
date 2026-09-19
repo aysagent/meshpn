@@ -3,6 +3,7 @@
 #include "meshvpn_session.h"
 #include "meshvpn_cpu.h"
 #include "meshvpn_wg_json.h"
+#include "meshvpn_vpn_stream.h"
 #include "meshvpn_local_download.h"
 
 #include <inttypes.h>
@@ -584,6 +585,19 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     VPN_COUNTER(queue_full); VPN_COUNTER(queue_expired); VPN_COUNTER(queue_depth); VPN_COUNTER(queue_high_water);
     VPN_COUNTER(rx_invalid); VPN_COUNTER(rx_dropped); VPN_COUNTER(tx_dropped);
 #undef VPN_COUNTER
+    cJSON *socket_diag = cJSON_AddObjectToObject(vpn, "socket");
+    cJSON_AddNumberToObject(socket_diag, "queue_capacity", MESHVPN_VPN_SLOTS);
+    cJSON_AddNumberToObject(socket_diag, "batch_max_frames", MESHVPN_VPN_BATCH_FRAMES);
+    cJSON_AddNumberToObject(socket_diag, "rx_timeouts", vs.socket_rx_timeouts);
+    cJSON_AddNumberToObject(socket_diag, "tx_timeouts", vs.socket_tx_timeouts);
+    cJSON *failure = cJSON_AddObjectToObject(socket_diag, "last_failure");
+    cJSON_AddBoolToObject(failure, "available", vs.socket_last_failure_us != 0);
+    if (vs.socket_last_failure_us) {
+        cJSON_AddNumberToObject(failure, "error", vs.socket_last_failure_error);
+        cJSON_AddStringToObject(failure, "reason", vs.socket_last_failure_reason);
+        cJSON_AddNumberToObject(failure, "generation", vs.socket_last_failure_generation);
+        cJSON_AddNumberToObject(failure, "age_sec", (esp_timer_get_time() - vs.socket_last_failure_us) / 1000000);
+    }
 
     cJSON *routing = cJSON_AddObjectToObject(root, "routing");
     const char *def = "direct";

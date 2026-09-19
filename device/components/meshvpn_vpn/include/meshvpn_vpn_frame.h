@@ -9,6 +9,7 @@
 typedef struct {
     uint8_t header[4], packet[MESHVPN_VPN_MTU];
     size_t header_used, used, length;
+    uint32_t completed; /* Tracks frame boundaries, not recv() boundaries. */
 } meshvpn_vpn_decoder_t;
 typedef bool (*meshvpn_vpn_packet_fn)(void *, const uint8_t *, size_t);
 bool meshvpn_vpn_decode(meshvpn_vpn_decoder_t *, const uint8_t *, size_t,

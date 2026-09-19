@@ -105,6 +105,37 @@ The server/Endpoint field is currently **shared**: after using another socket
 server, restore the WireGuard Endpoint when switching back. A blank private key
 or PSK input keeps the saved key; only the explicit PSK-removal checkbox clears it.
 
+### Socket stream recovery and diagnostics
+
+The socket worker tracks the five-second incomplete-frame deadline per framed
+IP packet, not per sequence of TCP reads. Completing a packet and beginning the
+next in the same read starts a new deadline; trickling bytes of one unfinished
+packet does not extend its deadline. The wire format is unchanged.
+
+TX drains up to eight already-queued frames per batch, with no fill delay. The
+queue remains bounded at 16 frames; the worker can additionally own at most eight
+in-flight frames. This uses approximately 13 KiB more PSRAM (batch + RX buffer)
+than the previous single-frame worker. One read is capped at 4096 bytes and one
+write at the remaining batch, so neither direction has an unbounded drain loop.
+Partial writes preserve framing/order; `packets_out` counts only complete frames
+accepted by the TCP socket, not delivery to the exit. Queue expiry still happens
+before dequeue; in-flight frames use a five-second per-frame send deadline.
+Batching does not guarantee a loss-free tunnel when the exit/uplink is slower
+than producers, and TCP-over-TCP still has head-of-line blocking.
+
+`vpn.socket.last_failure` retains `reason`, `error`, `age_sec` and configuration
+`generation` after successful reconnects. It records connection attempts as well
+as active stream failures. Reasons include `connect`, `remote_closed`, `select`,
+`recv`, `send`, `invalid_frame`, `rx_frame_timeout` and `tx_frame_timeout`.
+`rx_timeouts`/`tx_timeouts` and the last failure are since boot, not reset by a
+transport change. A requested reconfiguration is not recorded as a failure.
+The VPN page shows this history separately from the current `last_error`.
+
+After flashing, repeat opening sites on the same phone/USB connection for at
+least 30 seconds. If it still fails, save Diagnostics with `vpn` and `dns`;
+compare before/after counters, especially `queue_full`, `queue_expired`,
+`reconnects`, and `socket.last_failure`. No exit-side protocol update is needed.
+
 ## Control a board attached to a Mac from a Linux server
 
 The Mac opens an outbound reverse SSH tunnel to the server. Enable macOS

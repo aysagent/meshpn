@@ -8,6 +8,9 @@ flags=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined)
 "$cc" "${flags[@]}" -Idevice/components/meshvpn_vpn/include device/tests/test_vpn_frame.c \
   device/components/meshvpn_vpn/meshvpn_vpn_frame.c -o "$test_dir/vpn-frame"
 "$test_dir/vpn-frame"
+"$cc" "${flags[@]}" -Idevice/components/meshvpn_vpn/include device/tests/test_vpn_stream.c \
+  device/components/meshvpn_vpn/meshvpn_vpn_stream.c device/components/meshvpn_vpn/meshvpn_vpn_frame.c -o "$test_dir/vpn-stream"
+"$test_dir/vpn-stream"
 "$cc" "${flags[@]}" -Idevice/components/meshvpn_vpn/include device/tests/test_vpn_profile.c \
   device/components/meshvpn_vpn/meshvpn_vpn_profile.c -o "$test_dir/vpn-profile"
 "$test_dir/vpn-profile"
@@ -16,6 +19,7 @@ node device/tests/test-vpn-routing.mjs
 node device/tests/test-vpn-storage.mjs
 node device/tests/test-vpn-probe.mjs
 node device/tests/test-vpn-ingress.mjs
+node device/tests/test-vpn-queue.mjs
 wg_src=device/managed_components/esphome__wireguard/src
 if [[ -f "$wg_src/crypto/refc/chacha20.c" ]]; then
   for optimization in Og O2; do

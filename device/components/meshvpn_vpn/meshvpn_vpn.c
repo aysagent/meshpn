@@ -2,6 +2,7 @@
  * the outer socket. All netif/input operations execute on the lwIP thread. */
 #include "meshvpn_vpn.h"
 #include "meshvpn_vpn_frame.h"
+#include "meshvpn_vpn_stream.h"
 #include "meshvpn_wireguard.h"
 #include "sdkconfig.h"
 #include <errno.h>
@@ -341,12 +342,42 @@ static int connect_exit(const meshvpn_vpn_status_t *cfg)
     errno = ETIMEDOUT;
 fail: { int e = errno; close(fd); errno = e; return -1; }
 }
+static void socket_failure(uint32_t generation, int error, const char *reason)
+{
+    LOCK();
+    if (s.generation == generation && s.enabled) {
+        s.socket_last_failure_error = error;
+        s.socket_last_failure_us = esp_timer_get_time();
+        s.socket_last_failure_generation = generation;
+        strlcpy(s.socket_last_failure_reason, reason, sizeof(s.socket_last_failure_reason));
+        if (!strcmp(reason, "rx_frame_timeout")) s.socket_rx_timeouts++;
+        if (!strcmp(reason, "tx_frame_timeout")) s.socket_tx_timeouts++;
+    }
+    UNLOCK();
+}
+static void load_tx_batch(meshvpn_vpn_tx_batch_t *b, uint32_t generation)
+{
+    /* No batching delay: use only packets already queued. Bound each critical
+     * section to one existing frame copy, and never wait for network capacity
+     * on the lwIP core. Expired entries do not stall draining the next ones. */
+    b->length = b->used = b->count = b->completed = 0;
+    for (unsigned scanned = 0; scanned < MESHVPN_VPN_SLOTS && b->count < MESHVPN_VPN_BATCH_FRAMES; scanned++) {
+        LOCK();
+        if (!s_count || s.generation != generation || !s.enabled) { UNLOCK(); break; }
+        packet_t *p = &s_queue[s_head];
+        if (esp_timer_get_time() - p->time > 1000000) s.queue_expired++;
+        else if (!meshvpn_vpn_tx_append(b, p->data, p->len)) { UNLOCK(); break; }
+        s_head = (s_head + 1) % MESHVPN_VPN_SLOTS;
+        s.queue_depth = --s_count;
+        UNLOCK();
+    }
+}
 static void __attribute__((unused)) worker(void *arg)
 {
     (void)arg;
-    meshvpn_vpn_decoder_t *d = heap_caps_calloc(1, sizeof(*d), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    uint8_t *tx = heap_caps_malloc(MESHVPN_VPN_MTU + 4, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    uint8_t *rx = heap_caps_malloc(1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    meshvpn_vpn_rx_stream_t *d = heap_caps_calloc(1, sizeof(*d), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    meshvpn_vpn_tx_batch_t *tx = heap_caps_calloc(1, sizeof(*tx), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    uint8_t *rx = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!d || !tx || !rx) { free(d); free(tx); free(rx); state(s.generation, "no_memory", false, ENOMEM); vTaskDelete(NULL); return; }
     unsigned backoff = 1;
     for (;;) {
@@ -360,49 +391,71 @@ static void __attribute__((unused)) worker(void *arg)
             vTaskDelay(pdMS_TO_TICKS(1000)); continue;
         }
         state(cfg.generation, "wait_uplink", false, 0);
+        int error = 0;
+        const char *failure_reason = "connect";
         int fd = connect_exit(&cfg);
-        if (fd < 0) { state(cfg.generation, "backoff", false, errno); goto retry; }
+        if (fd < 0) { error = errno; goto retry; }
         if (!session(cfg.generation)) { close(fd); continue; }
         state(cfg.generation, "up", true, 0); backoff = 1; memset(d, 0, sizeof(*d));
-        size_t used = 0, length = 0; int64_t tx_since = 0, partial_since = 0; int error = 0;
+        tx->length = tx->used = tx->count = tx->completed = 0;
+        int64_t tx_since = 0;
         while (session(cfg.generation)) {
-            if (!length) {
-                LOCK();
-                if (s_count) {
-                    packet_t *p = &s_queue[s_head];
-                    if (esp_timer_get_time() - p->time > 1000000) s.queue_expired++;
-                    else { length = p->len + 4; meshvpn_vpn_frame_header(tx, p->len); memcpy(tx + 4, p->data, p->len); }
-                    s_head = (s_head + 1) % MESHVPN_VPN_SLOTS; s.queue_depth = --s_count;
-                }
-                UNLOCK(); used = 0; tx_since = esp_timer_get_time();
+            if (tx->used == tx->length) {
+                load_tx_batch(tx, cfg.generation);
+                tx_since = esp_timer_get_time();
             }
-            fd_set rd, wr; FD_ZERO(&rd); FD_ZERO(&wr); FD_SET(fd, &rd); if (length) FD_SET(fd, &wr);
+            if (!session(cfg.generation)) break;
+            fd_set rd, wr; FD_ZERO(&rd); FD_ZERO(&wr); FD_SET(fd, &rd);
+            if (tx->used < tx->length) FD_SET(fd, &wr);
             struct timeval tv = { .tv_usec = 10000 };
-            if (select(fd + 1, &rd, &wr, NULL, &tv) < 0) { error = errno; break; }
+            if (select(fd + 1, &rd, &wr, NULL, &tv) < 0) {
+                if (errno == EINTR) continue;
+                error = errno; failure_reason = "select"; break;
+            }
             if (FD_ISSET(fd, &rd)) {
-                int n = recv(fd, rx, 1024, 0);
-                if (n == 0) { error = ECONNRESET; break; }
-                if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) { error = errno; break; }
+                int n = recv(fd, rx, 4096, 0);
+                if (n == 0) { error = ECONNRESET; failure_reason = "remote_closed"; break; }
+                if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+                    error = errno; failure_reason = "recv"; break;
+                }
                 if (n > 0) {
-                    if (!meshvpn_vpn_decode(d, rx, n, receive_packet, &cfg.generation)) { COUNT(rx_invalid); error = EPROTO; break; }
-                    if (!d->header_used) partial_since = 0;
-                    else if (!partial_since) partial_since = esp_timer_get_time();
+                    if (!meshvpn_vpn_rx_feed(d, rx, n, esp_timer_get_time(), receive_packet, &cfg.generation)) {
+                        if (session(cfg.generation)) COUNT(rx_invalid);
+                        error = EPROTO; failure_reason = "invalid_frame"; break;
+                    }
                 }
             }
-            if (length && FD_ISSET(fd, &wr)) {
-                int n = send(fd, tx + used, length - used, 0);
-                if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) { error = errno; break; }
-                if (n > 0) used += n;
-                if (used == length) { LOCK(); s.packets_out++; s.bytes_out += length - 4; UNLOCK(); length = 0; }
+            if (!session(cfg.generation)) break;
+            if (tx->used < tx->length && FD_ISSET(fd, &wr)) {
+                int n = send(fd, tx->data + tx->used, tx->length - tx->used, 0);
+                if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+                    error = errno; failure_reason = "send"; break;
+                }
+                if (n > 0) {
+                    unsigned packets; size_t bytes;
+                    if (!meshvpn_vpn_tx_advance(tx, n, &packets, &bytes)) {
+                        error = EIO; failure_reason = "tx_accounting"; break;
+                    }
+                    LOCK(); s.packets_out += packets; s.bytes_out += bytes; UNLOCK();
+                    /* Deadline follows the oldest not-yet-completed frame,
+                     * not the batch. A slow byte trickle cannot reset it. */
+                    if (packets) tx_since = esp_timer_get_time();
+                }
             }
             int64_t now = esp_timer_get_time();
-            if ((length && now - tx_since > 5000000) || (partial_since && now - partial_since > 5000000)) { error = ETIMEDOUT; break; }
+            if (tx->used < tx->length && now - tx_since > MESHVPN_VPN_STREAM_TIMEOUT_US) {
+                error = ETIMEDOUT; failure_reason = "tx_frame_timeout"; break;
+            }
+            if (meshvpn_vpn_rx_expired(d, now)) {
+                error = ETIMEDOUT; failure_reason = "rx_frame_timeout"; break;
+            }
         }
-        if (length) COUNT(tx_dropped);
+        LOCK(); s.tx_dropped += tx->count - tx->completed; UNLOCK();
         close(fd);
-        if (!session(cfg.generation)) continue;
-        state(cfg.generation, "backoff", false, error);
 retry:
+        if (!session(cfg.generation)) continue;
+        socket_failure(cfg.generation, error, failure_reason);
+        state(cfg.generation, "backoff", false, error);
         COUNT(reconnects);
         for (unsigned i = 0; i < backoff * 10 && session(cfg.generation); i++) vTaskDelay(pdMS_TO_TICKS(100));
         if (backoff < 16) backoff *= 2;

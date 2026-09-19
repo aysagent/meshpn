@@ -84,6 +84,12 @@ for(const part of text.split('static const char ').slice(1)){
         assert(elements['wg-performance'].textContent.includes('Encrypt 3.000 ms/call'));
         assert(elements['wg-performance'].textContent.includes('Decrypt n/a'));
         assert(elements['wg-performance'].textContent.includes('7 s ago'));
+        vm.runInContext(`renderSocketFailure({last_error:0,connected:true,socket:{last_failure:{available:true,
+          reason:'rx_frame_timeout',error:116,age_sec:9,generation:2}}})`,context);
+        assert(elements['socket-last-failure'].textContent.includes('rx_frame_timeout'));
+        assert(elements['socket-last-failure'].textContent.includes('9 s ago'));
+        vm.runInContext('renderSocketFailure({})',context);
+        assert.equal(elements['socket-last-failure'].textContent,'');
         elements['vpn-server'].value='192.0.2.1:8765';elements['vpn-server'].oninput();
         elements['vpn-enabled'].checked=true;elements['vpn-enabled'].oninput();
         await vm.runInContext('poll()',context);
