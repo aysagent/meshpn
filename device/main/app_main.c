@@ -98,20 +98,17 @@ void app_main(void)
 
 
 
-    bool led = false;
     int tick = 0;
 
     while (true) {
         meshvpn_wifi_status_t ws;
         meshvpn_wifi_get_status(&ws);
 
-        /* Solid LED = uplink online, blinking = no uplink yet. */
-        if (ws.sta_connected) {
-            meshvpn_board_led_set(true);
-        } else {
-            led = !led;
-            meshvpn_board_led_set(led);
-        }
+        /* Use live applied state, including Save/apply and reconnections.
+         * DIRECT fallback must not make an enabled, disconnected VPN look up. */
+        meshvpn_vpn_status_t vpn_status;
+        meshvpn_vpn_get_status(&vpn_status);
+        meshvpn_board_led_status_tick(ws.sta_connected, vpn_status.enabled, vpn_status.connected);
 
         meshvpn_usb_stats_t us;
         meshvpn_usb_get_stats(&us);

@@ -43,23 +43,17 @@ fi
 config_id="$(cksum "${config_files[@]}" | cksum | awk '{print $1}')"
 BUILD_DIR="$DEVICE_DIR/build-$BOARD-$PROFILE-$config_id"
 mkdir -p "$BUILD_DIR"
-PORT="${PORT:-}"
-if [[ -z "$PORT" ]]; then
-  for candidate in /dev/cu.usbmodem* /dev/cu.SLAB_USBtoUART /dev/cu.wchusbserial* /dev/ttyACM* /dev/ttyUSB*; do
-    [[ -e "$candidate" ]] || continue
-    PORT="$candidate"; break
-  done
-fi
+# Build before disturbing the running network or entering ROM download mode.
 args=(-C "$DEVICE_DIR" -B "$BUILD_DIR" -D "SDKCONFIG=$BUILD_DIR/sdkconfig" -D "IDF_TARGET=$IDF_TARGET" build)
-if [[ -n "$PORT" ]]; then
-  args+=(flash -p "$PORT")
-else
-  echo "No serial port found; building only. Hold BOOT while connecting the programming port to flash."
-fi
 echo "Board: $BOARD; target: $IDF_TARGET; USB profile: $PROFILE"
 idf.py "${args[@]}"
 echo "Build artifacts: $BUILD_DIR"
-if [[ "$MONITOR" == monitor ]]; then
-  [[ -n "$PORT" ]] || { echo "No PORT for monitor" >&2; exit 1; }
-  idf.py -C "$DEVICE_DIR" -B "$BUILD_DIR" -p "$PORT" monitor
-fi
+case "${BUILD_ONLY:-0}" in
+  1) exit 0;;
+  0) ;;
+  *) echo "BUILD_ONLY must be 0 or 1" >&2; exit 1;;
+esac
+flash_args=(--device-dir "$DEVICE_DIR" --build-dir "$BUILD_DIR" --target "$IDF_TARGET" --profile "$PROFILE")
+[[ -z "${PORT:-}" ]] || flash_args+=(--port "$PORT")
+[[ "$MONITOR" != monitor ]] || flash_args+=(--monitor)
+python "$DEVICE_DIR/scripts/flash-device.py" "${flash_args[@]}"

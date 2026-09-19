@@ -1,5 +1,6 @@
 #include "meshvpn_usb.h"
 #include "meshvpn_usb_tx_queue.h"
+#include "meshvpn_usb_bootloader.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -181,6 +182,8 @@ esp_err_t meshvpn_usb_attach_netif(esp_netif_t *netif)
     err = tusb_cdc_acm_init(&acm_cfg);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "USB CDC-ACM init failed: %s", esp_err_to_name(err));
+    } else {
+        meshvpn_usb_bootloader_init();
     }
 #endif
 

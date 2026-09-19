@@ -19,6 +19,15 @@ void meshvpn_board_led_set(bool on)
     portEXIT_CRITICAL(&s_led_lock);
 }
 
+void meshvpn_board_led_status_tick(bool sta_connected, bool vpn_enabled, bool vpn_connected)
+{
+    portENTER_CRITICAL(&s_led_lock);
+    bool online = sta_connected && (!vpn_enabled || vpn_connected);
+    s_requested = online ? true : !s_requested;
+    apply_locked();
+    portEXIT_CRITICAL(&s_led_lock);
+}
+
 void meshvpn_board_led_enable(bool enabled)
 {
     portENTER_CRITICAL(&s_led_lock);

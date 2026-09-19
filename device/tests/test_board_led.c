@@ -25,11 +25,31 @@ int main(void)
     meshvpn_board_led_set(false);meshvpn_board_led_set(true);assert(level==1);
     meshvpn_board_led_enable(true);assert(level==0); /* restore requested status */
     meshvpn_board_led_set(false);assert(level==1);
+    /* Disabled VPN follows Wi-Fi; enabled VPN needs both connections. */
+    meshvpn_board_led_status_tick(true,false,false);assert(level==0);
+    meshvpn_board_led_status_tick(true,false,false);assert(level==0);
+    meshvpn_board_led_status_tick(true,true,false);assert(level==1);
+    meshvpn_board_led_status_tick(true,true,false);assert(level==0);
+    meshvpn_board_led_status_tick(true,true,true);assert(level==0);
+    meshvpn_board_led_status_tick(true,true,true);assert(level==0);
+    /* VPN failure, or lost STA with a stale VPN snapshot, resumes blinking. */
+    meshvpn_board_led_status_tick(true,true,false);assert(level==1);
+    meshvpn_board_led_status_tick(false,true,true);assert(level==0);
+    meshvpn_board_led_status_tick(false,true,true);assert(level==1);
+    meshvpn_board_led_status_tick(false,false,false);assert(level==0);
+    meshvpn_board_led_status_tick(false,false,false);assert(level==1);
+    /* Turning VPN off online restores steady indication immediately. */
+    meshvpn_board_led_status_tick(true,false,false);assert(level==0);
+    meshvpn_board_led_enable(false);
+    meshvpn_board_led_status_tick(true,true,false);assert(level==1);
+    meshvpn_board_led_status_tick(true,true,true);assert(level==1);
+    meshvpn_board_led_enable(true);assert(level==0);
     pthread_t thread;assert(!pthread_create(&thread,NULL,blink,NULL));
     meshvpn_board_led_enable(false);
     assert(!pthread_join(thread,NULL));assert(level==1 && !meshvpn_board_led_enabled());
     meshvpn_board_led_enable(true);assert(level==0);
     board.pin_led=-1;unsigned before=writes;
     meshvpn_board_led_set(true);meshvpn_board_led_enable(false);assert(writes==before);
-    puts("LED gating, active-low output, concurrent blinking and unsupported board passed");
+    meshvpn_board_led_status_tick(true,true,true);assert(writes==before);
+    puts("LED gating, Wi-Fi/VPN connection indication, concurrency and unsupported board passed");
 }

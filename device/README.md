@@ -23,7 +23,22 @@ Flash the P4 through the board's USB-C/USB-UART connector. MeshPN NCM uses the
 separate four-pin USB 2.0 HS connector. See the
 [board-specific wiring and ESP32-C6 compatibility notes](docs/waveshare-esp32-p4-wifi6.md).
 
-Hold BOOT while connecting USB to enter download mode. Without a serial port the script builds only.
+For XIAO/NCM, `npm run device:flash` builds first, sends a **1200-baud CDC touch**
+to the running firmware, waits for its ROM programming port, flashes, then waits
+for the application USB port to return. No Wi-Fi, admin password or network access
+is involved. Close monitor/usb-diag before flashing. This is physical-USB access,
+with the same trust boundary as an attached programmer; it is not a network API.
+
+**Install this support once using BOOT with the old firmware** (release BOOT
+after connecting, before running the command). A hung application,
+disabled ROM USB download eFuses, or a profile without CDC still requires manual
+download mode. On P4 the USB-UART connector uses esptool's normal DTR/RTS reset;
+the separate HS connector is not used for flashing. Automatic port selection
+refuses ambiguous devices and follows the selected physical USB location after
+reset. A successful flash/USB reappearance does not certify Wi-Fi or VPN health.
+
+With no board attached, use `BUILD_ONLY=1 npm run device:flash` explicitly;
+ordinary flash now exits with an error instead of silently building only.
 Set `PORT` explicitly if several serial devices are connected. Each board/profile/defaults combination gets a separate
 `device/build-…` directory and sdkconfig; previous builds and settings are preserved. Keep the target-specific
 `dependencies.lock.esp32s3` and `dependencies.lock.esp32p4` files in version control.
@@ -167,6 +182,14 @@ including requests routed to a LAN gateway; AP clients may use DNS at their own 
 Confirm this on hardware using the [acceptance checklist](docs/current-improvements.md).
 
 ## LED indicators
+
+The yellow user/status LED blinks while STA is disconnected. When VPN is enabled,
+it also keeps blinking until the VPN connection is established, and resumes
+blinking if that connection drops (including when DIRECT fallback is allowed).
+With VPN disabled, STA connectivity alone makes it steady. State is refreshed
+once per second from the applied configuration. Steady light means a connection,
+not a successful Internet/DNS/HTTPS probe. The user-LED off setting still overrides
+all indications.
 
 In the admin UI, **LED indicators → Enable user/status LED** controls the XIAO
 ESP32-S3 user LED (GPIO21, active low). Uncheck it and click **Save LED setting**
