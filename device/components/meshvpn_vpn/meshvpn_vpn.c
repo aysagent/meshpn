@@ -31,6 +31,8 @@ typedef struct { uint16_t len; int64_t time; uint8_t data[MESHVPN_VPN_MTU]; } pa
 #define MESHVPN_VPN_SOCKET_RX_BYTES 8192
 #define MESHVPN_VPN_RX_BATCH_BYTES (MESHVPN_VPN_SOCKET_RX_BYTES + MESHVPN_VPN_MTU + 4)
 #define MESHVPN_VPN_RX_BATCH_FRAMES 320
+#define MESHVPN_VPN_SELECT_WAIT_US 2000
+#define MESHVPN_VPN_WORKER_PRIORITY 6
 typedef struct {
     uint32_t generation;
     size_t used;
@@ -519,7 +521,11 @@ static void __attribute__((unused)) worker(void *arg)
             if (!session(cfg.generation)) break;
             fd_set rd, wr; FD_ZERO(&rd); FD_ZERO(&wr); FD_SET(fd, &rd);
             if (tx->used < tx->length) FD_SET(fd, &wr);
-            struct timeval tv = { .tv_usec = 10000 };
+            /* The in-memory LAN TX queue cannot wake select(). Keep this wait
+             * short enough that a USB/TCP burst cannot fill it before the
+             * worker notices. At priority 6 the worker time-slices with
+             * TinyUSB instead of being starved by it under sustained load. */
+            struct timeval tv = { .tv_usec = MESHVPN_VPN_SELECT_WAIT_US };
             if (select(fd + 1, &rd, &wr, NULL, &tv) < 0) {
                 if (errno == EINTR) continue;
                 error = errno; failure_reason = "select"; break;
@@ -593,7 +599,7 @@ esp_err_t meshvpn_vpn_init(void)
 #if CONFIG_MESHVPN_VPN_ENABLE
     s_queue = heap_caps_calloc(MESHVPN_VPN_SLOTS, sizeof(packet_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_queue) return ESP_ERR_NO_MEM;
-    if (xTaskCreate(worker, "vpn_socket", 4096, NULL, 5, NULL) != pdPASS) return ESP_ERR_NO_MEM;
+    if (xTaskCreate(worker, "vpn_socket", 4096, NULL, MESHVPN_VPN_WORKER_PRIORITY, NULL) != pdPASS) return ESP_ERR_NO_MEM;
     s.implemented = true;
 #endif
     return ESP_OK;

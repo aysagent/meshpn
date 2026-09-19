@@ -4845,7 +4845,7 @@ function encodeCleanVpnFramedPkt(pkt) {
 /**
  * TCP-транспорт с опциональным батчем нескольких кадров в одном write (совместимо с StreamFramer).
  * Env: `CLEAN_VPN_FRAME_BATCH_BYTES` (default 8192; =0 disables),
- * `CLEAN_VPN_FRAME_BATCH_FLUSH_MS` (default 1).
+ * `CLEAN_VPN_FRAME_BATCH_FLUSH_MS` (default 0: next event-loop turn).
  *
  * @param {NodeJS.WritableStream & { write: (...args: any[]) => boolean }} endpoint
  * @param {(err: Error) => void} [onWriteError]
@@ -4853,7 +4853,7 @@ function encodeCleanVpnFramedPkt(pkt) {
  */
 function createTcpFramedBatchedWriter(endpoint, onWriteError) {
   const maxBatch = parseNonNegativeEnvInt('CLEAN_VPN_FRAME_BATCH_BYTES', 8192);
-  const flushMs = parseNonNegativeEnvInt('CLEAN_VPN_FRAME_BATCH_FLUSH_MS', 1);
+  const flushMs = parseNonNegativeEnvInt('CLEAN_VPN_FRAME_BATCH_FLUSH_MS', 0);
   if (maxBatch <= 0) {
     return (pkt) => {
       try {
@@ -9529,6 +9529,10 @@ async function runExit({
 
     tcpSrv = net.createServer((sock) => {
       console.log('[clean-vpn] tcp connected', sock.remoteAddress);
+
+      // This is an IP tunnel, not an application byte stream: delaying a
+      // small inner TCP ACK behind Nagle can stall the entire inner flow.
+      sock.setNoDelay(true);
 
       if (type === 'http') {
         sock.__isServer = true;
