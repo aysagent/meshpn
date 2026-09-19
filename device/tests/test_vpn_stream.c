@@ -47,24 +47,27 @@ int main(void)
     assert(!meshvpn_vpn_rx_feed(&rx, invalid, 4, 0, emit, NULL));
 
     meshvpn_vpn_tx_batch_t batch = {0};
-    for (unsigned i = 0; i < 8; i++) assert(meshvpn_vpn_tx_append(&batch, frame + 4, 100));
+    for (unsigned i = 0; i < MESHVPN_VPN_BATCH_FRAMES; i++) assert(meshvpn_vpn_tx_append(&batch, frame + 4, 100));
     assert(!meshvpn_vpn_tx_append(&batch, frame + 4, 100));
-    assert(batch.length == 8 * sizeof(frame));
-    for (unsigned i = 0; i < 8; i++) assert(!memcmp(batch.data + i * sizeof(frame), frame, sizeof(frame)));
+    assert(batch.length == MESHVPN_VPN_BATCH_FRAMES * sizeof(frame));
+    for (unsigned i = 0; i < MESHVPN_VPN_BATCH_FRAMES; i++) assert(!memcmp(batch.data + i * sizeof(frame), frame, sizeof(frame)));
     for (size_t split = 0; split <= batch.length; split++) {
         meshvpn_vpn_tx_batch_t b = batch;
         unsigned packets, packets2; size_t bytes, bytes2;
         assert(meshvpn_vpn_tx_advance(&b, split, &packets, &bytes));
         assert(packets == split / sizeof(frame) && bytes == packets * 100);
         assert(meshvpn_vpn_tx_advance(&b, b.length - b.used, &packets2, &bytes2));
-        assert(packets + packets2 == 8 && bytes + bytes2 == 800 && b.completed == 8);
+        assert(packets + packets2 == MESHVPN_VPN_BATCH_FRAMES &&
+               bytes + bytes2 == MESHVPN_VPN_BATCH_FRAMES * 100 &&
+               b.completed == MESHVPN_VPN_BATCH_FRAMES);
         assert(meshvpn_vpn_tx_advance(&b, 0, &packets, &bytes) && !packets && !bytes);
         assert(!meshvpn_vpn_tx_advance(&b, 1, &packets, &bytes));
     }
     unsigned packets; size_t bytes;
     assert(meshvpn_vpn_tx_advance(&batch, 105, &packets, &bytes));
-    assert(packets == 1 && bytes == 100 && batch.count - batch.completed == 7);
+    assert(packets == 1 && bytes == 100 &&
+           batch.count - batch.completed == MESHVPN_VPN_BATCH_FRAMES - 1);
     assert(!meshvpn_vpn_tx_append(&batch, frame + 4, 100));
-    /* A disconnect counts the remaining 7, not all 8 or only 1 batch. */
+    /* A disconnect counts only the remaining frames, not the entire batch. */
     puts("Socket streams: 50s continuous partial-boundary regression, real stalls, splits, wrap, bounded batches and partial-send accounting passed");
 }

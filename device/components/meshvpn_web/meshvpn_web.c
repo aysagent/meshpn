@@ -594,6 +594,11 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(socket_diag, "tx_timeouts", vs.socket_tx_timeouts);
     cJSON_AddNumberToObject(socket_diag, "rx_batches", vs.socket_rx_batches);
     cJSON_AddNumberToObject(socket_diag, "rx_batch_max", vs.socket_rx_batch_max);
+    cJSON_AddNumberToObject(socket_diag, "tx_batches", vs.socket_tx_batches);
+    cJSON_AddNumberToObject(socket_diag, "tx_batch_max", vs.socket_tx_batch_max);
+    cJSON_AddNumberToObject(socket_diag, "send_calls", vs.socket_send_calls);
+    cJSON_AddNumberToObject(socket_diag, "send_bytes", vs.socket_send_bytes);
+    cJSON_AddNumberToObject(socket_diag, "send_would_block", vs.socket_send_would_block);
     cJSON *path = cJSON_AddObjectToObject(socket_diag, "packet_path");
     cJSON_AddNumberToObject(path, "tx_to_exit", vs.socket_tx_to_exit);
     cJSON_AddNumberToObject(path, "tx_source_tunnel", vs.socket_tx_source_tunnel);

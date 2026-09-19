@@ -28,9 +28,9 @@ static struct netif s_vpn, *s_usb, *s_ap;
 static bool s_ready;
 static uint32_t s_probe_epoch;
 typedef struct { uint16_t len; int64_t time; uint8_t data[MESHVPN_VPN_MTU]; } packet_t;
-#define MESHVPN_VPN_SOCKET_RX_BYTES 4096
+#define MESHVPN_VPN_SOCKET_RX_BYTES 8192
 #define MESHVPN_VPN_RX_BATCH_BYTES (MESHVPN_VPN_SOCKET_RX_BYTES + MESHVPN_VPN_MTU + 4)
-#define MESHVPN_VPN_RX_BATCH_FRAMES 192
+#define MESHVPN_VPN_RX_BATCH_FRAMES 320
 typedef struct {
     uint32_t generation;
     size_t used;
@@ -166,7 +166,7 @@ esp_err_t meshvpn_vpn_send_ipv4(const uint8_t *p, uint16_t len)
     if (len > MESHVPN_VPN_MTU || !meshvpn_vpn_ipv4_valid(p, len)) return ESP_ERR_INVALID_ARG;
     LOCK();
     if (!s.connected || !s_queue) { s.tx_dropped++; UNLOCK(); return ESP_ERR_INVALID_STATE; }
-    if (s_count == MESHVPN_VPN_SLOTS) { s.queue_full++; UNLOCK(); return ESP_ERR_NO_MEM; }
+    if (s_count == MESHVPN_VPN_SLOTS) { s.queue_full++; s.tx_dropped++; UNLOCK(); return ESP_ERR_NO_MEM; }
     packet_t *q = &s_queue[(s_head + s_count) % MESHVPN_VPN_SLOTS];
     q->len = len; q->time = esp_timer_get_time(); memcpy(q->data, p, len);
     s.queue_depth = ++s_count;
@@ -467,10 +467,16 @@ static void load_tx_batch(meshvpn_vpn_tx_batch_t *b, uint32_t generation)
         LOCK();
         if (!s_count || s.generation != generation || !s.enabled) { UNLOCK(); break; }
         packet_t *p = &s_queue[s_head];
-        if (esp_timer_get_time() - p->time > 1000000) s.queue_expired++;
+        if (esp_timer_get_time() - p->time > 1000000) { s.queue_expired++; s.tx_dropped++; }
         else if (!meshvpn_vpn_tx_append(b, p->data, p->len)) { UNLOCK(); break; }
         s_head = (s_head + 1) % MESHVPN_VPN_SLOTS;
         s.queue_depth = --s_count;
+        UNLOCK();
+    }
+    if (b->count) {
+        LOCK();
+        s.socket_tx_batches++;
+        if (b->count > s.socket_tx_batch_max) s.socket_tx_batch_max = b->count;
         UNLOCK();
     }
 }
@@ -542,6 +548,11 @@ static void __attribute__((unused)) worker(void *arg)
                 if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
                     error = errno; failure_reason = "send"; break;
                 }
+                LOCK();
+                s.socket_send_calls++;
+                if (n > 0) s.socket_send_bytes += n;
+                else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) s.socket_send_would_block++;
+                UNLOCK();
                 if (n > 0) {
                     unsigned packets; size_t bytes;
                     if (!meshvpn_vpn_tx_advance(tx, n, &packets, &bytes)) {

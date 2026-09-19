@@ -7,7 +7,7 @@
 /* A browser/phone TCP stack can enqueue a short burst much faster than the
  * outer TCP stream wakes the VPN worker. XIAO has PSRAM, so retain enough
  * packets to absorb that burst instead of dropping it at 16 frames. */
-#define MESHVPN_VPN_SLOTS 64
+#define MESHVPN_VPN_SLOTS 128
 /* No allocation based on an untrusted frame length. */
 typedef struct {
     uint8_t header[4], packet[MESHVPN_VPN_MTU];

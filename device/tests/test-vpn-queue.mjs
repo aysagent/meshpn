@@ -46,7 +46,7 @@ int main(void) {
  assert(b.count==MESHVPN_VPN_BATCH_FRAMES &&
         s_count==MESHVPN_VPN_SLOTS-MESHVPN_VPN_BATCH_FRAMES &&
         s.queue_depth==MESHVPN_VPN_SLOTS-MESHVPN_VPN_BATCH_FRAMES);
- for(unsigned i=0;i<8;i++)assert(b.data[i*104+4+28]==i);
+ for(unsigned i=0;i<MESHVPN_VPN_BATCH_FRAMES;i++)assert(b.data[i*104+4+28]==i);
  for(unsigned base=MESHVPN_VPN_BATCH_FRAMES;base<MESHVPN_VPN_SLOTS;base+=MESHVPN_VPN_BATCH_FRAMES) {
    load_tx_batch(&b,1);assert(b.count==MESHVPN_VPN_BATCH_FRAMES);
    for(unsigned i=0;i<MESHVPN_VPN_BATCH_FRAMES;i++)
@@ -57,13 +57,13 @@ int main(void) {
  assert(meshvpn_vpn_send_ipv4(packet,sizeof(packet))==ESP_OK);
  now+=1000001;
  assert(meshvpn_vpn_send_ipv4(packet,sizeof(packet))==ESP_OK);
- load_tx_batch(&b,1);assert(b.count==1 && s.queue_expired==1 && !s_count);
+ load_tx_batch(&b,1);assert(b.count==1 && s.queue_expired==1 && s.tx_dropped==2 && !s_count);
  assert(meshvpn_vpn_send_ipv4(packet,sizeof(packet))==ESP_OK);
  load_tx_batch(&b,2);assert(!b.count && s_count==1); /* stale worker cannot consume new generation */
  socket_failure(1,ETIMEDOUT,"rx_frame_timeout");
  state_core(1,"backoff",false,ETIMEDOUT);
  assert(!s.connected && s.socket_rx_timeouts==1 && !s_count);
- assert(s.tx_dropped==1);
+ assert(s.tx_dropped==3);
  state_core(1,"up",true,0);
  assert(!s.last_error && s.socket_last_failure_error==ETIMEDOUT);
  assert(s.socket_last_failure_us==now && !strcmp(s.socket_last_failure_reason,"rx_frame_timeout"));

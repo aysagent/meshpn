@@ -1,7 +1,7 @@
 #pragma once
 #include "meshvpn_vpn_frame.h"
 
-#define MESHVPN_VPN_BATCH_FRAMES 8
+#define MESHVPN_VPN_BATCH_FRAMES 16
 #define MESHVPN_VPN_STREAM_TIMEOUT_US 5000000ULL
 typedef struct {
     meshvpn_vpn_decoder_t decoder;
