@@ -183,7 +183,8 @@ static err_t output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst)
     uint8_t buf[MESHVPN_VPN_MTU];
     if (p->tot_len > sizeof(buf)) return ERR_BUF;
     pbuf_copy_partial(p, buf, p->tot_len, 0);
-    if (!meshvpn_vpn_clamp_mss(buf, p->tot_len)) return ERR_VAL;
+    if (!meshvpn_vpn_clamp_mss(buf, p->tot_len) ||
+        !meshvpn_vpn_repair_checksums(buf, p->tot_len)) return ERR_VAL;
     if (!strcmp(s_config.transport, "wireguard")) {
         if (!enabled() || !meshvpn_wg_up()) { COUNT(tx_dropped); return ERR_RTE; }
         struct pbuf *copy = pbuf_alloc(PBUF_RAW, p->tot_len, PBUF_RAM);
@@ -251,7 +252,8 @@ int meshvpn_vpn_input(struct pbuf *p, struct netif *inp)
     if (h[9] != 6 && h[9] != 17 && h[9] != 1) goto drop;
     if (len < ihl + need || p->len < ihl + need) goto drop;
     if (inp == meshvpn_wg_netif()) {
-        if (p->len < len || !meshvpn_vpn_clamp_mss(p->payload, len)) goto drop;
+        if (p->len < len || !meshvpn_vpn_clamp_mss(p->payload, len) ||
+            !meshvpn_vpn_repair_checksums(p->payload, len)) goto drop;
         LOCK(); s.packets_in++; s.bytes_in += len; UNLOCK();
         /* Local probe/DNS sockets are pinned to the stable vp interface.
          * lwIP TCP/UDP rejects replies arriving on wg when pcb->netif_idx is vp.
@@ -273,7 +275,10 @@ static esp_err_t inject(void *arg)
     struct pbuf *p = pbuf_alloc(PBUF_RAW, rx->len, PBUF_RAM);
     if (!p) { COUNT(rx_dropped); return ESP_OK; }
     pbuf_take(p, rx->p, rx->len);
-    if (!meshvpn_vpn_clamp_mss(p->payload, p->tot_len)) { pbuf_free(p); COUNT(rx_invalid); return ESP_FAIL; }
+    if (!meshvpn_vpn_clamp_mss(p->payload, p->tot_len) ||
+        !meshvpn_vpn_repair_checksums(p->payload, p->tot_len)) {
+        pbuf_free(p); COUNT(rx_invalid); return ESP_FAIL;
+    }
     LOCK();
     s.socket_rx_from_exit++;
     tuple(rx->p, rx->len, &s.socket_last_rx_src, &s.socket_last_rx_dst,

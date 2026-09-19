@@ -23,3 +23,6 @@ void meshvpn_vpn_frame_header(uint8_t out[4], size_t length);
 bool meshvpn_vpn_endpoint(const char *, uint8_t address[4], uint16_t *port);
 /* Clamp an existing SYN MSS option. Does not insert options or change length. */
 bool meshvpn_vpn_clamp_mss(uint8_t *, size_t);
+/* Raw IP transports do not carry checksum-offload metadata. Recalculate all
+ * checksums after NAPT/MSS changes before a packet crosses that boundary. */
+bool meshvpn_vpn_repair_checksums(uint8_t *, size_t);

@@ -2,6 +2,18 @@
 #include <string.h>
 
 static unsigned be16(const uint8_t *p) { return ((unsigned)p[0] << 8) | p[1]; }
+static void put16(uint8_t *p, unsigned v) { p[0] = v >> 8; p[1] = v; }
+static uint32_t checksum_add(uint32_t sum, const uint8_t *p, size_t n)
+{
+    while (n >= 2) { sum += ((unsigned)p[0] << 8) | p[1]; p += 2; n -= 2; }
+    if (n) sum += (unsigned)p[0] << 8;
+    return sum;
+}
+static uint16_t checksum_finish(uint32_t sum)
+{
+    while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
+    return (uint16_t)~sum;
+}
 bool meshvpn_vpn_ipv4_valid(const uint8_t *p, size_t n)
 {
     if (!p || n < 20 || (p[0] >> 4) != 4) return false;
@@ -99,5 +111,35 @@ bool meshvpn_vpn_clamp_mss(uint8_t *p, size_t n)
         }
         i += p[i + 1];
     }
+    return true;
+}
+bool meshvpn_vpn_repair_checksums(uint8_t *p, size_t n)
+{
+    if (!meshvpn_vpn_ipv4_valid(p, n)) return false;
+    size_t h = (p[0] & 15) * 4;
+    put16(p + 10, 0);
+    put16(p + 10, checksum_finish(checksum_add(0, p, h)));
+    /* A non-first fragment has no L4 header, while the first fragment lacks
+     * the complete segment. Reassembly in the VPN ingress normally prevents
+     * this path; preserve its existing transport checksum if it does occur. */
+    if (be16(p + 6) & 0x3fff) return true;
+    size_t l4_len = n - h, checksum_offset;
+    uint32_t sum = 0;
+    if (p[9] == 6) checksum_offset = 16;
+    else if (p[9] == 17) checksum_offset = 6;
+    else if (p[9] == 1) {
+        checksum_offset = 2;
+        put16(p + h + checksum_offset, 0);
+        put16(p + h + checksum_offset, checksum_finish(checksum_add(0, p + h, l4_len)));
+        return true;
+    } else return false;
+    put16(p + h + checksum_offset, 0);
+    sum = checksum_add(sum, p + 12, 8);
+    sum += p[9];
+    sum += l4_len;
+    sum = checksum_add(sum, p + h, l4_len);
+    uint16_t checksum = checksum_finish(sum);
+    if (p[9] == 17 && checksum == 0) checksum = 0xffff;
+    put16(p + h + checksum_offset, checksum);
     return true;
 }

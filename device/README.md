@@ -113,15 +113,20 @@ next in the same read starts a new deadline; trickling bytes of one unfinished
 packet does not extend its deadline. The wire format is unchanged.
 
 TX drains up to eight already-queued frames per batch, with no fill delay. The
-queue remains bounded at 16 frames; the worker can additionally own at most eight
-in-flight frames. This uses approximately 13 KiB more PSRAM (batch + RX buffer)
-than the previous single-frame worker. One read is capped at 4096 bytes and one
+queue is bounded at 64 frames; the worker can additionally own at most eight
+in-flight frames. The queue, batch and RX buffer are allocated in PSRAM. One read is capped at 4096 bytes and one
 write at the remaining batch, so neither direction has an unbounded drain loop.
 Partial writes preserve framing/order; `packets_out` counts only complete frames
 accepted by the TCP socket, not delivery to the exit. Queue expiry still happens
 before dequeue; in-flight frames use a five-second per-frame send deadline.
 Batching does not guarantee a loss-free tunnel when the exit/uplink is slower
 than producers, and TCP-over-TCP still has head-of-line blocking.
+
+The socket protocol carries complete raw IPv4 packets, not lwIP checksum-offload
+metadata. IPv4 and TCP/UDP/ICMP checksums are therefore recalculated after
+NAPT/MSS rewriting before packets cross the stream boundary. The same repair is
+performed before received packets are injected into lwIP. This is local packet
+normalization and does not change the clean-vpn framing protocol.
 
 `vpn.socket.last_failure` retains `reason`, `error`, `age_sec` and configuration
 `generation` after successful reconnects. It records connection attempts as well
