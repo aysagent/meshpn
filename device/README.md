@@ -37,6 +37,15 @@ the separate HS connector is not used for flashing. Automatic port selection
 refuses ambiguous devices and follows the selected physical USB location after
 reset. A successful flash/USB reappearance does not certify Wi-Fi or VPN health.
 
+After manual BOOT entry on S3, the default RTS reset can leave GPIO0 latched in
+download mode even after releasing the button. If application USB does not return
+within 30 seconds and the same physical board still exposes its ROM USB port,
+the helper attempts **one full watchdog reset**, without rewriting flash. It
+respects the build's `no_reset` policy and never switches to another board. If
+recovery fails, release BOOT and press RESET once, then inspect startup logs.
+This recovery does not apply to P4 or USB-UART programming ports.
+See Espressif's [USB Serial/JTAG download-mode reset explanation](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/troubleshooting.html#leaving-download-mode-in-usb-serial-jtag-mode).
+
 With no board attached, use `BUILD_ONLY=1 npm run device:flash` explicitly;
 ordinary flash now exits with an error instead of silently building only.
 Set `PORT` explicitly if several serial devices are connected. Each board/profile/defaults combination gets a separate

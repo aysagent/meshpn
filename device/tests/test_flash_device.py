@@ -95,6 +95,78 @@ class FlashTests(unittest.TestCase):
             flash.flash(self.args, lambda: [self.rom], Mock(), run=Mock(), wait=Mock(return_value=self.app))
         touch.assert_not_called()
 
+    def recovery(self, ports, manifest='{"extra_esptool_args":{"chip":"esp32s3","after":"hard_reset"}}'):
+        wait = Mock(side_effect=[flash.ApplicationUSBTimeout("application absent"), self.app])
+        run = Mock()
+        with patch.object(Path, "read_text", return_value=manifest):
+            result = flash.application_port(self.args, self.rom, lambda: ports, run, wait)
+        return result, run, wait
+
+    def test_latched_boot_gets_one_watchdog_reset_on_same_port(self):
+        renamed = port("/dev/cu.renamed-rom", flash.ROM)
+        result, run, wait = self.recovery([renamed])
+        self.assertIs(result, self.app)
+        run.assert_called_once_with([
+            flash.sys.executable, "-m", "esptool", "--chip", "esp32s3", "--port", renamed.device,
+            "--before", "no_reset", "--after", "watchdog_reset", "--no-stub", "read_mac"], check=True)
+        self.assertEqual(wait.call_count, 2)
+
+    def test_late_application_is_not_reset(self):
+        result, run, _ = self.recovery([self.app])
+        self.assertIs(result, self.app)
+        run.assert_not_called()
+
+    def test_recovery_never_resets_missing_other_or_ambiguous_board(self):
+        other = port("/dev/cu.other", flash.ROM, "2-9:1.0")
+        for ports in [[], [other], [self.rom, self.rom], [self.app, self.rom]]:
+            with self.subTest(ports=ports):
+                run = Mock()
+                with self.assertRaises(flash.ApplicationUSBTimeout):
+                    flash.application_port(self.args, self.rom, lambda: ports, run,
+                                           Mock(side_effect=flash.ApplicationUSBTimeout("absent")))
+                run.assert_not_called()
+
+    def test_recovery_respects_manifest_reset_policy(self):
+        for manifest in ['{}', 'null', 'broken',
+                         '{"extra_esptool_args":{"chip":"esp32s3","after":"no_reset"}}',
+                         '{"extra_esptool_args":{"chip":"esp32p4","after":"hard_reset"}}']:
+            with self.subTest(manifest=manifest), self.assertRaises(flash.ApplicationUSBTimeout):
+                self.recovery([self.rom], manifest)
+
+    def test_recovery_without_manifest_does_not_reset(self):
+        run = Mock()
+        with patch.object(Path, "read_text", side_effect=FileNotFoundError), self.assertRaises(flash.ApplicationUSBTimeout):
+            flash.application_port(self.args, self.rom, lambda: [self.rom], run,
+                                   Mock(side_effect=flash.ApplicationUSBTimeout("absent")))
+        run.assert_not_called()
+
+    def test_failed_recovery_is_not_repeated_and_monitor_does_not_start(self):
+        self.args.monitor = True
+        run = Mock()
+        wait = Mock(side_effect=flash.ApplicationUSBTimeout("absent"))
+        with patch.object(Path, "read_text", return_value='{"extra_esptool_args":{"chip":"esp32s3","after":"hard_reset"}}'):
+            with self.assertRaises(flash.ApplicationUSBTimeout):
+                flash.flash(self.args, lambda: [self.rom], Mock(), run=run, wait=wait)
+        self.assertEqual(run.call_count, 2)  # flash, reset; no reflash or monitor
+        self.assertEqual(wait.call_count, 2)
+
+    def test_non_timeout_errors_do_not_trigger_recovery(self):
+        run = Mock()
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous"):
+            flash.application_port(self.args, self.rom, lambda: [self.rom], run,
+                                   Mock(side_effect=RuntimeError("Ambiguous")))
+        run.assert_not_called()
+
+    def test_watchdog_command_failure_stops_before_monitor(self):
+        self.args.monitor = True
+        run = Mock(side_effect=[None, subprocess.CalledProcessError(1, "esptool")])
+        wait = Mock(side_effect=flash.ApplicationUSBTimeout("absent"))
+        with patch.object(Path, "read_text", return_value='{"extra_esptool_args":{"chip":"esp32s3","after":"hard_reset"}}'):
+            with self.assertRaises(subprocess.CalledProcessError):
+                flash.flash(self.args, lambda: [self.rom], Mock(), run=run, wait=wait)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(wait.call_count, 1)
+
     def test_serial_busy_stops_before_flash(self):
         run = Mock()
         with patch.object(flash, "touch", side_effect=OSError("busy")):

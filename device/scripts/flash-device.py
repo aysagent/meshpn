@@ -5,7 +5,9 @@ Uses pyserial from the ESP-IDF Python environment. Never guesses among boards
 or redirects a flash to an unrelated port after USB re-enumeration.
 """
 import argparse
+import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -13,6 +15,10 @@ import time
 APP = (0x303A, 0x4001)
 ROM = (0x303A, 0x1001)
 UART = {(0x10C4, 0xEA60), (0x1A86, 0x7523), (0x1A86, 0x55D4), (0x0403, 0x6001)}
+
+
+class ApplicationUSBTimeout(RuntimeError):
+    """Flash succeeded, but the application's USB identity was not observed."""
 
 
 def usb_id(port):
@@ -55,8 +61,8 @@ def wait_port(original, expected, enumerate_ports, timeout=30, clock=time.monoto
             return matches[0]
         sleep(0.2)
     if expected == APP:
-        raise RuntimeError("Flash completed, but application USB CDC did not return. "
-                           "Release BOOT if held; check startup logs/manual reset. "
+        raise ApplicationUSBTimeout("Flash completed, but application USB CDC did not return. "
+                           "Release BOOT and press RESET once; check startup logs if it still fails. "
                            "No other port was selected.")
     raise RuntimeError("Timed out waiting for the selected board to re-enumerate. "
                        "Old firmware needs ONE manual BOOT flash to install auto-flash support. "
@@ -71,6 +77,42 @@ def touch(port, serial_factory, sleep=time.sleep):
         connection.baudrate = 1200
         sleep(0.1)
         connection.dtr = False
+
+
+def application_port(args, original, enumerate_ports, run, wait):
+    try:
+        return wait(original, APP, enumerate_ports)
+    except ApplicationUSBTimeout:
+        # BOOT-triggered USB Serial/JTAG download can survive the default RTS
+        # core reset: GPIO0 is latched until a full system reset. Do not reset
+        # an application, an ambiguous device, or a different physical board.
+        anchor = location(original)
+        matches = [p for p in enumerate_ports() if anchor and location(p) == anchor
+                   and usb_id(p) in {APP, ROM}]
+        if len(matches) != 1:
+            raise
+        port = matches[0]
+        if usb_id(port) == APP:  # Reappeared just after the timeout.
+            return port
+        # Respect IDF's no-reset policy (including secure flashing builds).
+        # A missing/unknown manifest must not enable this recovery path.
+        try:
+            manifest = json.loads((Path(args.build_dir) / "flasher_args.json").read_text())
+            options = manifest.get("extra_esptool_args", {})
+            reset_allowed = (options.get("chip") == "esp32s3"
+                             and options.get("after") == "hard_reset")
+        except (OSError, ValueError, AttributeError):
+            reset_allowed = False
+        if not reset_allowed:
+            raise
+        print(f"Application USB absent; selected S3 remains in download mode on {port.device}. "
+              "Trying ONE full watchdog reset; release BOOT. No flash rewrite.", flush=True)
+        # esptool v4 shipped with IDF 5.4 uses underscore option values.
+        # Read-only command, followed by a full reset that resamples GPIO0.
+        run([sys.executable, "-m", "esptool", "--chip", "esp32s3", "--port", port.device,
+             "--before", "no_reset", "--after", "watchdog_reset", "--no-stub", "read_mac"],
+            check=True)
+        return wait(original, APP, enumerate_ports)
 
 
 def flash(args, enumerate_ports, serial_factory, run=subprocess.run, wait=wait_port):
@@ -88,7 +130,7 @@ def flash(args, enumerate_ports, serial_factory, run=subprocess.run, wait=wait_p
     # A successful esptool exit proves flashing, not a healthy application.
     # Native S3 USB changes identity again when the application starts.
     if args.target == "esp32s3" and usb_id(port) == ROM and args.profile == "ncm":
-        port = wait(original, APP, enumerate_ports)
+        port = application_port(args, original, enumerate_ports, run, wait)
         print(f"Application USB CDC returned on {port.device}; network/VPN health not tested.", flush=True)
     if args.monitor:
         if usb_id(port) == APP:
