@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 const file=fs.readFileSync(new URL('../components/meshvpn_vpn/meshvpn_vpn.c',import.meta.url),'utf8');
-const start=file.indexOf('static bool lan('),end=file.indexOf('esp_err_t meshvpn_vpn_send_ipv4(',start);
+const start=file.indexOf('static bool lan('),end=file.indexOf('static void notify_socket_tx(',start);
 if(start<0||end<start)throw Error('Production route selector not found');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'meshpn-vpn-route-'));
 const source=`
@@ -31,6 +31,7 @@ static struct { bool enabled,kill_switch,connected; char transport[32];
 #define ip4_addr_cmp(a,b) ((a)->addr==(b)->addr)
 #define ip4_addr_ismulticast(a) (((a)->addr&0xf0000000)==0xe0000000)
 #define IPADDR_BROADCAST 0xffffffff
+static bool plain_transport(const char*n){return n&&(!strcmp(n,"socket")||!strcmp(n,"udp"));}
 ${file.slice(start,end)}
 int main(void){
 ip4_addr_t client={0xc0a80702},apclient={0xc0a80402},wan={0x01010101},sta={0xc0a8010a};
@@ -51,6 +52,9 @@ s.connected=true;assert(meshvpn_vpn_route(&client,&wan)==&s_vpn);
 assert(meshvpn_vpn_route(&apclient,&wan)==&s_vpn);
 s.connected=false;s.kill_switch=true;
 assert(meshvpn_vpn_route(&client,&wan)==&s_vpn);
+s.connected=true;strcpy(s.transport,"udp");
+assert(meshvpn_vpn_route(&client,&wan)==&s_vpn);
+assert(meshvpn_vpn_route(&wan,&client)==NULL);assert(s.socket_rx_to_usb==2);
 s_usb=NULL;assert(meshvpn_vpn_route(&apclient,&wan)==&s_vpn);
 return 0;
 }`;

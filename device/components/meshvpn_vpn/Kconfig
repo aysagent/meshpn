@@ -4,7 +4,7 @@ menu "meshvpn VPN"
         bool "Enable VPN client (experimental)"
         default y
         help
-            Experimental unencrypted socket (TCP) tunnel to clean-vpn exit.
+            Experimental unencrypted socket (TCP) and UDP tunnels to clean-vpn exit.
             Disabled at runtime until explicitly configured. TLS is not implemented.
 
 endmenu

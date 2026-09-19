@@ -1,11 +1,13 @@
 # Experimental device VPN
 
-## socket (clean-vpn)
+## Plain clean-vpn transports
 
 The firmware implements `socket`: TCP carrying `[uint32 big-endian length][IPv4]`.
-There is **no authentication or encryption**. Use a dedicated test exit restricted
+It also implements `udp`: one UDP datagram carries exactly one IPv4 packet, with
+no length prefix or handshake. Neither transport has authentication or encryption.
+Use a dedicated test exit restricted
 by firewall to your trusted client address/network. Never expose an unrestricted
-socket exit on the public Internet. No server protocol changes are required.
+plain exit on the public Internet. No server protocol changes are required.
 
 Contract checked against `scripts/clean-vpn.js` at
 `a49b0baf56db7804b34b6126d8614cecb7050466`: client `10.99.0.2`, peer `10.99.0.1`,
@@ -19,22 +21,32 @@ On the **dedicated, firewall-restricted exit**, from the project directory:
 sudo env PATH="$PATH" node scripts/clean-vpn.js --role=exit --type=socket --server=0.0.0.0:8765 --keep-alive=0
 ```
 
+For UDP, stop the TCP exit and run:
+
+```sh
+sudo env PATH="$PATH" node scripts/clean-vpn.js --role=exit --type=udp --server=0.0.0.0:8765
+```
+
+The current clean-vpn UDP exit tracks one peer. UDP can lose or reorder packets;
+it is intended for transport comparison, not as a secure or reliable VPN protocol.
+
 The exit installs address-scoped `10.99.0.2/32` forwarding and masquerade rules
 at the head of their iptables chains. This is intentional: appending after an
 existing ufw/firewalld terminal `REJECT` makes the tunnel TCP connection look
 healthy while forwarded client SYN packets receive immediate synthetic resets.
 The rules are removed on normal shutdown.
 
-In the device admin VPN section select socket, enter the exit's **numeric IPv4:port**,
+In the device admin VPN section select socket or udp to match the exit, enter its
+**numeric IPv4:port**,
 acknowledge plaintext, enable and save. Changes apply without reboot and persist.
 Disable VPN to return to DIRECT. TLS transports are not implemented here yet.
 
 All forwarded Internet traffic from both USB and AP goes through a virtual lwIP
 interface and existing NAPT. LAN-local traffic/admin/DHCP remain local. The outer
-TCP socket binds the STA address, avoiding tunnel recursion. While enabled but
+TCP/UDP socket binds the STA address, avoiding tunnel recursion. While enabled but
 disconnected, the default **Kill switch ON** keeps the virtual route selected and
 drops packets. Turning kill switch OFF explicitly permits DIRECT fallback while
-disconnected, for both socket and WireGuard. Turning **Enable VPN OFF** always
+disconnected, for both plain transports and WireGuard. Turning **Enable VPN OFF** always
 restores DIRECT; saving a profile alone does not enable it. IPv6 remains blocked
 by the existing ingress policy.
 DNS proxy uses 1.1.1.1 through the VPN (numeric exit eliminates bootstrap DNS).
@@ -64,14 +76,19 @@ are not full-tunnelled.
   be reported as disconnected. Unsupported/misconfigured profiles are not proof
   of a working VPN; inspect the status/error and perform a reachability test.
 
-These behaviours are host-tested and compile-tested; packet capture on real
-hardware is still required to verify both transports and kill switch transitions.
+These behaviours are host-tested and compile-tested. Basic socket forwarding has
+also been exercised on XIAO hardware; the split-worker build, UDP transport and
+kill-switch transitions still require the hardware checks below.
 
-The queue holds 16 packets in PSRAM, drops entries older than 1 second, and cannot
-grow with traffic. Partial frame/write deadlines are 5 seconds. Connect timeout
-is 5 seconds, reconnect backoff 1–16 seconds; TCP keepalive detects idle failures.
-`connected` means **outer TCP established**, not a verified working Internet exit.
-TX counts complete writes to TCP, not delivery to the destination application.
+The TX queue holds 256 packets in PSRAM, drops entries older than 1 second, and
+cannot grow with traffic. Dedicated RX and TX tasks share the full-duplex outer
+socket, so lwIP injection does not block queue draining. TCP sends up to 16 queued
+frames per batch; UDP sends one packet per datagram. Partial TCP frame/write
+deadlines are 5 seconds. TCP connect timeout is 5 seconds, reconnect backoff is
+1–16 seconds and TCP keepalive detects idle failures. For socket, `connected`
+means **outer TCP established**. For UDP it means the local connected UDP socket
+is ready; UDP has no handshake and only the internet probe or actual traffic can
+confirm the exit path. TX counts successful socket writes, not destination delivery.
 MSS options in SYN packets are clamped to 1360; fragmented IPv4 is reassembled
 before NAPT. Native lwIP NAPT limitations (including ICMP error translation)
 still apply. Packet capture is required for the acceptance checks below.

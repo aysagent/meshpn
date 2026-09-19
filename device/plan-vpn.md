@@ -87,7 +87,7 @@ Node.js, TUN addon, iptables, Puppeteer и helper-процесс на плату
 |---|---|---|---|
 | `socket` | TCP, `u32be + IPv4` | Нет шифрования/аутентификации | Первый лабораторный MVP |
 | `http` | GET `/clean-vpn`, ответ HTTP/1.1, далее те же кадры | Не HTTPS; не обычная передача HTTP-body/chunked и не CONNECT | Не нужен перед `socket`; опционально позже |
-| `udp` | Одна UDP-датаграмма = IPv4 | Без шифрования; обычный exit меняет peer по входящей датаграмме | Позже для сравнения с TCP-over-TCP |
+| `udp` | Одна UDP-датаграмма = IPv4 | Без шифрования; обычный exit меняет peer по входящей датаграмме | Реализован как тестовый backend; нужна аппаратная приёмка |
 | `websocket` | Binary WebSocket message = IPv4, пакет `ws` | В обычном `ws://` нет шифрования; роли listener/dialer настраиваются | После основных, если понадобится |
 | `ws-chrome` | Puppeteer/Chrome, HTTP-страница `/clean-vpn-chrome`, WS | Браузерный мост; не самостоятельная криптозащита | Не переносить Chromium на MCU |
 | `tls` | Node TLS, ALPN h2/HTTP1.1, Bearer, затем framed IPv4 | Сертификат сервера + channel-bound HMAC Bearer | Отдельный постоянный режим без браузерного профиля |
@@ -442,6 +442,8 @@ Oversize — диагностируемый отказ/fallback по полит�
 Статус реализации socket и честный список непроверенного на железе: `device/VPN.md`.
 WireGuard планируется отдельным backend с собственным серверным endpoint;
 он не меняет wire-протокол clean-vpn и не реализует браузерные JA3/JA4.
+Тестовый `udp` backend реализован с тем же IPv4/NAPT путём: одна датаграмма на
+пакет, отдельные RX/TX workers, без шифрования, аутентификации и handshake.
 
 - Зафиксировать server commit, транспорт, адреса, MTU, порт и test-only режим.
 - Подготовить общие JS/C vectors: разбиение/склейка кадров, bad lengths,

@@ -21,6 +21,7 @@ const source = `
 #define ESP_ERR_INVALID_STATE 9
 #define LOCK() ((void)0)
 #define UNLOCK() ((void)0)
+static void notify_socket_tx(void) {}
 static meshvpn_vpn_status_t s;
 typedef struct { uint16_t len; int64_t time; uint8_t data[MESHVPN_VPN_MTU]; } packet_t;
 static packet_t storage[MESHVPN_VPN_SLOTS], *s_queue = storage;
@@ -33,7 +34,7 @@ static size_t strlcpy(char *d, const char *p, size_t n) {
 }
 ${section('static void state_core(', 'typedef struct { uint32_t g;')}
 ${section('esp_err_t meshvpn_vpn_send_ipv4(', '/* RX is injected')}
-${section('static void socket_failure(', 'static void __attribute__((unused)) worker(')}
+${section('static void socket_failure(', 'static bool socket_link_current(')}
 int main(void) {
  s.enabled=s.connected=true;s.kill_switch=true;s.generation=1;
  uint8_t packet[100]={0x45,0,0,100};packet[9]=17;packet[25]=80;
@@ -54,6 +55,11 @@ int main(void) {
  }
  assert(!s_count);
  load_tx_batch(&b,1);assert(!b.count); /* never waits for a full batch */
+ uint8_t udp[MESHVPN_VPN_MTU]={0};uint16_t udp_len=0;
+ packet[28]=0xa5;assert(meshvpn_vpn_send_ipv4(packet,sizeof(packet))==ESP_OK);
+ assert(load_udp_packet(udp,&udp_len,1));
+ assert(udp_len==sizeof(packet)&&!memcmp(udp,packet,sizeof(packet))&&!s_count);
+ assert(!load_udp_packet(udp,&udp_len,1));
  assert(meshvpn_vpn_send_ipv4(packet,sizeof(packet))==ESP_OK);
  now+=1000001;
  assert(meshvpn_vpn_send_ipv4(packet,sizeof(packet))==ESP_OK);

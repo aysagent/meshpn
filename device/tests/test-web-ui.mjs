@@ -60,7 +60,7 @@ for(const part of text.split('static const char ').slice(1)){
               status.leds.user.enabled=payload.user_enabled;
             }else if(path==='/api/vpn/config'){
               assert.equal(options.method,'POST'); assert.equal(options.headers.Authorization,'Bearer test-token');
-              const cfg=JSON.parse(options.body);assert(['socket','wireguard'].includes(cfg.transport));
+              const cfg=JSON.parse(options.body);assert(['socket','udp','wireguard'].includes(cfg.transport));
               assert(!cfg.enabled||cfg.transport==='wireguard'||cfg.allow_plaintext);
               Object.assign(status.vpn,{enabled:cfg.enabled,transport:cfg.transport,server:cfg.server,kill_switch:cfg.kill_switch});
               if(cfg.transport==='wireguard')status.vpn.wireguard={address:cfg.wg_address.split(',')[0].split('/')[0],address_input:cfg.wg_address,dns:cfg.wg_dns,

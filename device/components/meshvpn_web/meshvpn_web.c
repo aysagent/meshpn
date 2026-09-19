@@ -979,13 +979,16 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     const char *validation_error = NULL;
     bool valid = cJSON_IsBool(en) && cJSON_IsString(server) && cJSON_IsString(transport) &&
         strlen(server->valuestring) < sizeof(cfg.server) &&
-        (!strcmp(transport->valuestring, "socket") || !strcmp(transport->valuestring, "wireguard")) &&
-        (!cJSON_IsTrue(en) || strcmp(transport->valuestring, "socket") || cJSON_IsTrue(ack));
+        (!strcmp(transport->valuestring, "socket") || !strcmp(transport->valuestring, "udp") ||
+         !strcmp(transport->valuestring, "wireguard")) &&
+        (!cJSON_IsTrue(en) || !strcmp(transport->valuestring, "wireguard") || cJSON_IsTrue(ack));
     if (!valid) {
         if (!cJSON_IsBool(en)) validation_error = "Enable VPN: expected a checkbox value.";
         else if (!cJSON_IsString(server) || strlen(server->valuestring) >= sizeof(cfg.server)) validation_error = "Endpoint/server: missing or too long.";
-        else if (!cJSON_IsString(transport) || (strcmp(transport->valuestring, "socket") && strcmp(transport->valuestring, "wireguard"))) validation_error = "Transport: select socket or WireGuard.";
-        else validation_error = "socket: confirm the plaintext tunnelling warning before enabling.";
+        else if (!cJSON_IsString(transport) || (strcmp(transport->valuestring, "socket") &&
+                 strcmp(transport->valuestring, "udp") && strcmp(transport->valuestring, "wireguard")))
+            validation_error = "Transport: select socket, UDP or WireGuard.";
+        else validation_error = "Plaintext transport: confirm the warning before enabling.";
     }
     cJSON *kill = cJSON_GetObjectItemCaseSensitive(in, "kill_switch");
     if (kill && !cJSON_IsBool(kill)) { valid = false; validation_error = "Kill switch: expected a checkbox value."; }

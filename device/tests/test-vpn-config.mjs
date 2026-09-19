@@ -33,6 +33,7 @@ typedef struct {uint32_t addr;} ip4_addr_t;
 #define ip4_addr3(a) (((uint8_t*)&(a)->addr)[2])
 #define strlcpy test_strlcpy
 static size_t test_strlcpy(char*d,const char*s,size_t n){size_t l=strlen(s);if(n){size_t c=l<n-1?l:n-1;memcpy(d,s,c);d[c]=0;}return l;}
+static bool plain_transport(const char*n){return n&&(!strcmp(n,"socket")||!strcmp(n,"udp"));}
 ${wg}
 ${validate}
 typedef int httpd_req_t;
@@ -60,6 +61,8 @@ auth=false;assert(handler_vpn_config(&r)==ESP_FAIL&&!saves);auth=true;
 assert(handler_vpn_config(&r)==ESP_FAIL&&!saves);cJSON_AddBoolToObject(request,"allow_plaintext",true);
 save_fail=true;assert(handler_vpn_config(&r)==ESP_FAIL&&!applies);save_fail=false;
 assert(handler_vpn_config(&r)==ESP_OK&&saves==1&&applies==1);
+replace("transport","udp");replace("server","192.0.2.1:8765");
+assert(handler_vpn_config(&r)==ESP_OK&&saves==2&&applies==2);
 replace("transport","wireguard");replace("server","192.0.2.1:51820");
 replace("wg_address","10.6.0.2");replace("wg_dns","1.1.1.1");
 assert(handler_vpn_config(&r)==ESP_FAIL); /* no keys */
@@ -76,7 +79,7 @@ assert(handler_vpn_config(&r)==ESP_FAIL&&strstr(last_error_message,"Endpoint/ser
 replace("server","192.0.2.1:51820");replace("wg_dns","1.1.1.1,8.8.8.8");
 assert(handler_vpn_config(&r)==ESP_FAIL&&strstr(last_error_message,"DNS:"));
 replace("wg_dns","1.1.1.1");
-assert(handler_vpn_config(&r)==ESP_OK&&saves==2);
+assert(handler_vpn_config(&r)==ESP_OK&&saves==3);
 replace("wg_address","10.0.0.7/24");assert(handler_vpn_config(&r)==ESP_OK);
 assert(!strcmp(saved.wg_address,"10.0.0.7")&&!strcmp(saved.wg_address_input,"10.0.0.7/24"));
 replace("wg_address","10.0.0.7/24,fd42:42:42::7/64");assert(handler_vpn_config(&r)==ESP_OK);
