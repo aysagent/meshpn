@@ -5727,6 +5727,57 @@ function isIpv4Bridgeable(pkt) {
   return true;
 }
 
+/**
+ * Bounded packet trace at the two sides of the userspace bridge.  This is
+ * deliberately opt-in: it can disclose peer addresses and ports, but never
+ * packet payloads.  It is primarily useful for distinguishing a reply read
+ * from the exit TUN from one synthesized later by the embedded lwIP stack.
+ *
+ * CLEAN_VPN_PACKET_DEBUG=1 logs at most 100 IPv4 packets per bridge.
+ * @param {string} transport
+ */
+function createVpnPacketTracer(transport) {
+  if (process.env.CLEAN_VPN_PACKET_DEBUG !== '1') return () => {};
+  let left = 100;
+  let exhaustedLogged = false;
+  return (direction, pkt) => {
+    if (!left) {
+      if (!exhaustedLogged) {
+        exhaustedLogged = true;
+        console.log(`[clean-vpn] packet [${transport}]: trace limit reached (100)`);
+      }
+      return;
+    }
+    if (!isIpv4Bridgeable(pkt)) return;
+    left--;
+    const ihl = (pkt[0] & 0x0f) * 4;
+    const total = pkt.readUInt16BE(2);
+    const src = `${pkt[12]}.${pkt[13]}.${pkt[14]}.${pkt[15]}`;
+    const dst = `${pkt[16]}.${pkt[17]}.${pkt[18]}.${pkt[19]}`;
+    const proto = pkt[9];
+    const ipChecksum = internetChecksum16(pkt, 0, ihl) === 0 ? 'ok' : 'bad';
+    let detail = `proto=${proto}`;
+    if ((proto === 6 || proto === 17) && total >= ihl + (proto === 6 ? 20 : 8)) {
+      const sport = pkt.readUInt16BE(ihl);
+      const dport = pkt.readUInt16BE(ihl + 2);
+      detail = `${proto === 6 ? 'tcp' : 'udp'} ${sport}>${dport}`;
+      if (proto === 6) {
+        const flags = pkt[ihl + 13];
+        const names = [
+          [0x02, 'S'], [0x10, 'A'], [0x01, 'F'], [0x04, 'R'],
+          [0x08, 'P'], [0x20, 'U'], [0x40, 'E'], [0x80, 'C'],
+        ].filter(([bit]) => flags & bit).map(([, name]) => name).join('') || '-';
+        detail += ` flags=${names} seq=${pkt.readUInt32BE(ihl + 4)} ack=${pkt.readUInt32BE(ihl + 8)}`;
+      }
+    } else if (proto === 1 && total >= ihl + 2) {
+      detail = `icmp type=${pkt[ihl]} code=${pkt[ihl + 1]}`;
+    }
+    console.log(
+      `[clean-vpn] packet [${transport}] ${direction}: ${src} -> ${dst} ${detail} ttl=${pkt[8]} len=${total} ipcsum=${ipChecksum}`,
+    );
+  };
+}
+
 /** rtc-chrome + keep-alive после idle: reconnect только на новый TCP SYN (не ACK). */
 function ipv4TcpSynOnly(pkt) {
   if (!isIpv4Bridgeable(pkt)) return false;
@@ -5761,6 +5812,7 @@ function ipv4TriggersExitLazyConnect(pkt) {
  */
 function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
   const framer = new StreamFramer();
+  const tracePacket = createVpnPacketTracer(transport);
   const local4 = bridgeOpts?.localTunIp
     ? parseDottedIPv4FourOctets(bridgeOpts.localTunIp)
     : null;
@@ -5773,6 +5825,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
 
   const writeTun = (pkt) => {
     try {
+      tracePacket('wire->tun', pkt);
       tun.write(pkt);
     } catch (e) {
       console.error('[clean-vpn] tun write:', e?.message || e);
@@ -5912,6 +5965,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
         }
         continue;
       }
+      tracePacket('tun->wire', pkt);
       sendOnWire(pkt);
     }
   });
@@ -5951,6 +6005,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     typeof cdRaw === 'number' && Number.isFinite(cdRaw) && cdRaw > 0 ? Math.floor(cdRaw) : 0;
   let idleCooldownUntilMs = 0;
   const kaDebug = process.env.CLEAN_VPN_KEEPALIVE_DEBUG === '1';
+  const tracePacket = createVpnPacketTracer(transport);
 
   if (!keepAliveSec && !lazyConnect && !RECONNECT_BRIDGE_TRANSPORTS.has(transport)) {
     attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts);
@@ -5970,6 +6025,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
 
   const writeTun = (pkt) => {
     try {
+      tracePacket('wire->tun', pkt);
       tun.write(pkt);
     } catch (e) {
       console.error('[clean-vpn] tun write:', e?.message || e);
@@ -6725,6 +6781,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
         }
         continue;
       }
+      tracePacket('tun->wire', pkt);
       sendOnWire(pkt);
     }
   });
@@ -11612,7 +11669,7 @@ async function main() {
 --signaling: webrtc (exit|client) или rtc-chrome (client) — слушать WSS сигналинга на --server; без флага — исходящий WS. Для udp — вместе с UDP на PORT поднять WSS на PORT+1 (как webrtc). Алиас: --signalling.
 --punch: только --type=udp — hole punching через STUN + сигналинг на PORT+1; на exit только вместе с --signaling.
 --keep-alive=N: ... ws-chrome: переподключение поднимает новый Chrome (дорого). rtc-chrome: keep-alive рвёт только WebRTC к exit, Chrome остаётся (быстрый reconnect). QUIC/quic-ext: флаг не применяется. transport=tcp (--type=socket): idle на TCP-сервере (inbound) — FIN; на TCP-клиенте (outbound, в т.ч. exit с исходящим WS к client) TUN снимается без FIN, ждёт FIN сервера (CLEAN_VPN_TCP_GRACEFUL_CLOSE_MS, default 5s).
---keep-alive-reconnect-cooldown=M: целое M≥0; только с --keep-alive>0. После разрыва по idle M с не поднимать lazy по IPv4 с TUN (отбрасываются); не-IPv4 не поднимает сессию в любом случае. После M с следующий IPv4 снова может lazy-connect — cooldown не фильтр «навсегда». Меньше дребезга от DNS/ретрансмитов. По умолчанию 0. CLEAN_VPN_KEEPALIVE_DEBUG=1 — lazy/cooldown и drop не-IPv4 (hex). CLEAN_VPN_TLS_MUX_DEBUG=1 — диагностика TCP до ClientHello на exit и до handshake на client (--type=tls).
+--keep-alive-reconnect-cooldown=M: целое M≥0; только с --keep-alive>0. После разрыва по idle M с не поднимать lazy по IPv4 с TUN (отбрасываются); не-IPv4 не поднимает сессию в любом случае. После M с следующий IPv4 снова может lazy-connect — cooldown не фильтр «навсегда». Меньше дребезга от DNS/ретрансмитов. По умолчанию 0. CLEAN_VPN_KEEPALIVE_DEBUG=1 — lazy/cooldown и drop не-IPv4 (hex). CLEAN_VPN_PACKET_DEBUG=1 — до 100 метаданных IPv4-пакетов на границах wire↔TUN (без payload). CLEAN_VPN_TLS_MUX_DEBUG=1 — диагностика TCP до ClientHello на exit и до handshake на client (--type=tls).
 --tunnel-peer=HOST: для websocket/webrtc/rtc-chrome/udp + client при нюансах accept/split-default — см. шапку. Дополнительно: **transparent-tls** и **combo-tls + client** — **IPv4 или IPv4:PORT** (порт по умолчанию **443**) фиксирует один апстрим для всех локальных HTTPS-сессий (**без** iptables REDIRECT; нужен только с тестами на один хост). Обычный режим: **OUTPUT** ipv4/https→локальный intercept; при **--client-lan-subnet** — **PREROUTING DNAT** с LAN→LAN-IPv4 шлюза:intercept (второй listener, см. документацию).
 --tls-cert-dir / --shared-hmac-key: для transparent-tls и combo-tls нужен тот же 32-байтовый ключ (enc-SNI AEAD и Bearer tls), что и для --type=tls (на exit при отсутствии автосоздание как у QUIC каталога).`);
     process.exit(1);
