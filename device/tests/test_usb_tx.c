@@ -5,6 +5,10 @@
 #include <string.h>
 #include "../components/meshvpn_usb/meshvpn_usb.c"
 
+static unsigned lan_egress_calls;
+void meshvpn_vpn_lan_egress(void *frame, size_t length, bool usb)
+{ assert(frame && length && usb); lan_egress_calls++; }
+
 static bool ready = true;
 static unsigned busy_left, sends, yields, delays, polls;
 static esp_err_t final_result;

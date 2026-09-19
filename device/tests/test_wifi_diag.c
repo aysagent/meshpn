@@ -8,6 +8,9 @@ static int result, calls;
 static void *expected_buffer, *expected_ref;
 static size_t expected_len;
 static wifi_interface_t expected_if;
+static unsigned lan_egress_calls;
+void meshvpn_vpn_lan_egress(void *frame, size_t length, bool usb)
+{ assert(frame == expected_buffer && length == expected_len && !usb); lan_egress_calls++; }
 int64_t esp_timer_get_time(void) { return now; }
 int __real_esp_wifi_internal_tx(wifi_interface_t ifx, void *buffer, uint16_t len)
 {
@@ -34,6 +37,7 @@ int main(void)
         assert(__wrap_esp_wifi_internal_tx_by_ref(iface, buffer, 1200, ref) == result);
     }
     meshvpn_wifi_tx_diag_t stats[2]; meshvpn_wifi_tx_snapshot(stats);
+    assert(lan_egress_calls == 24);
     for (int i = 0; i < 2; i++) {
         meshvpn_wifi_tx_diag_t *s = &stats[i];
         assert(s->calls == 24 && s->copy_calls == 12 && s->ref_calls == 12);

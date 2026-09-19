@@ -125,8 +125,11 @@ than producers, and TCP-over-TCP still has head-of-line blocking.
 The socket protocol carries complete raw IPv4 packets, not lwIP checksum-offload
 metadata. IPv4 and TCP/UDP/ICMP checksums are therefore recalculated after
 NAPT/MSS rewriting before packets cross the stream boundary. The same repair is
-performed before received packets are injected into lwIP. This is local packet
-normalization and does not change the clean-vpn framing protocol.
+performed before received packets are injected into lwIP and once more at the
+final USB/AP Ethernet-driver boundary, after reverse NAPT and TTL changes. This
+is local packet normalization and does not change the clean-vpn framing protocol.
+`vpn.socket.packet_path.lan_egress` reports IPv4 frames observed at that final
+boundary, how many checksum fields actually needed repair, and malformed frames.
 
 `vpn.socket.last_failure` retains `reason`, `error`, `age_sec` and configuration
 `generation` after successful reconnects. It records connection attempts as well

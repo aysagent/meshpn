@@ -69,6 +69,15 @@ int main(int argc, char **argv)
         p[10]=p[11]=p[36]=p[37]=0;
         assert(meshvpn_vpn_repair_checksums(p,sizeof(p)));
         assert(sum(p,20)==0 && transport_sum(p,sizeof(p))==0);
+        uint8_t ethernet[14 + sizeof(p)]; memset(ethernet, 0, sizeof(ethernet));
+        ethernet[12]=0x08;ethernet[13]=0x00;memcpy(ethernet+14,p,sizeof(p));
+        ethernet[24]=ethernet[25]=ethernet[50]=ethernet[51]=0;
+        bool changed=false;
+        assert(meshvpn_vpn_repair_ethernet_checksums(ethernet,sizeof(ethernet),&changed)&&changed);
+        assert(sum(ethernet+14,20)==0&&transport_sum(ethernet+14,sizeof(p))==0);
+        assert(meshvpn_vpn_repair_ethernet_checksums(ethernet,sizeof(ethernet),&changed)&&!changed);
+        ethernet[12]=0x08;ethernet[13]=0x06;
+        assert(!meshvpn_vpn_repair_ethernet_checksums(ethernet,sizeof(ethernet),&changed));
         p[off+1]=255; assert(!meshvpn_vpn_clamp_mss(p,sizeof(p)));
     }
     puts("VPN frame splitting/coalescing, bounds, endpoint and MSS checks passed");

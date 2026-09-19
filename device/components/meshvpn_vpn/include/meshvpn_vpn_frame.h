@@ -26,3 +26,6 @@ bool meshvpn_vpn_clamp_mss(uint8_t *, size_t);
 /* Raw IP transports do not carry checksum-offload metadata. Recalculate all
  * checksums after NAPT/MSS changes before a packet crosses that boundary. */
 bool meshvpn_vpn_repair_checksums(uint8_t *, size_t);
+/* Normalize an Ethernet IPv4 frame at the final LAN driver boundary. Returns
+ * false for non-IPv4/malformed frames; changed reports checksum bytes repaired. */
+bool meshvpn_vpn_repair_ethernet_checksums(uint8_t *, size_t, bool *changed);

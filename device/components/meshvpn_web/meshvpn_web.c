@@ -597,6 +597,11 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(path, "rx_from_exit", vs.socket_rx_from_exit);
     cJSON_AddNumberToObject(path, "rx_routed_to_usb", vs.socket_rx_to_usb);
     cJSON_AddNumberToObject(path, "rx_routed_to_ap", vs.socket_rx_to_ap);
+    cJSON *egress = cJSON_AddObjectToObject(path, "lan_egress");
+    cJSON_AddNumberToObject(egress, "usb_ipv4", vs.lan_egress_usb);
+    cJSON_AddNumberToObject(egress, "ap_ipv4", vs.lan_egress_ap);
+    cJSON_AddNumberToObject(egress, "checksum_repaired", vs.lan_egress_repaired);
+    cJSON_AddNumberToObject(egress, "invalid_ipv4", vs.lan_egress_invalid);
 #define VPN_TUPLE_JSON(name) do { \
     cJSON *v = cJSON_AddObjectToObject(path, #name); \
     cJSON_AddBoolToObject(v, "available", vs.socket_last_##name##_us != 0); \

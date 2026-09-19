@@ -177,6 +177,24 @@ static void tuple(const uint8_t *p, size_t len, uint32_t *src, uint32_t *dst,
         *dport = ((uint16_t)p[ihl + 2] << 8) | p[ihl + 3];
     }
 }
+void meshvpn_vpn_lan_egress(void *frame, size_t length, bool usb)
+{
+    LOCK(); bool active = s.enabled; UNLOCK();
+    if (!active || !frame) return;
+    bool changed = false;
+    bool ipv4 = meshvpn_vpn_repair_ethernet_checksums(frame, length, &changed);
+    LOCK();
+    if (ipv4) {
+        if (usb) s.lan_egress_usb++; else s.lan_egress_ap++;
+        if (changed) s.lan_egress_repaired++;
+    } else if (length >= 14) {
+        const uint8_t *b = frame;
+        unsigned type = ((unsigned)b[12] << 8) | b[13];
+        if (type == 0x0800 || ((type == 0x8100 || type == 0x88a8) && length >= 18 &&
+            (((unsigned)b[16] << 8) | b[17]) == 0x0800)) s.lan_egress_invalid++;
+    }
+    UNLOCK();
+}
 static err_t output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst)
 {
     (void)n; (void)dst;

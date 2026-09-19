@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "esp_err.h"
@@ -38,6 +39,7 @@ typedef struct {
     uint32_t socket_rx_timeouts, socket_tx_timeouts;
     uint32_t socket_tx_to_exit, socket_tx_source_tunnel, socket_tx_source_other;
     uint32_t socket_rx_from_exit, socket_rx_to_usb, socket_rx_to_ap;
+    uint32_t lan_egress_usb, lan_egress_ap, lan_egress_repaired, lan_egress_invalid;
     uint32_t socket_last_tx_src, socket_last_tx_dst;
     uint32_t socket_last_rx_src, socket_last_rx_dst;
     uint32_t socket_last_return_src, socket_last_return_dst;
@@ -69,6 +71,8 @@ struct ip4_addr;
 void meshvpn_vpn_set_lan(struct netif *usb, struct netif *ap);
 struct netif *meshvpn_vpn_route(const struct ip4_addr *src, const struct ip4_addr *dst);
 int meshvpn_vpn_input(struct pbuf *, struct netif *);
+/* Final mutable Ethernet-frame boundary, immediately before a LAN driver. */
+void meshvpn_vpn_lan_egress(void *frame, size_t length, bool usb);
 /* DNS proxy: select and bind its egress, never silently use STA in VPN mode. */
 int meshvpn_vpn_dns_socket(int fd, uint32_t *resolver_address);
 

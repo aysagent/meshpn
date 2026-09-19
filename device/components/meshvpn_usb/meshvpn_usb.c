@@ -12,6 +12,7 @@
 #include "sdkconfig.h"
 #include "tinyusb.h"
 #include "tinyusb_net.h"
+#include "meshvpn_vpn_egress.h"
 #if CONFIG_MESHVPN_USB_NCM_DOUBLE_BUFFER
 #include "usb_descriptors.h"
 #include "meshvpn_usb_fifo.h"
@@ -119,6 +120,10 @@ static esp_err_t meshvpn_usb_send_sync(void *buffer, size_t len, uint32_t epoch)
 static esp_err_t meshvpn_usb_transmit(void *h, void *buffer, size_t len)
 {
     (void)h;
+    /* This is after lwIP forwarding/NAPT/TTL updates and before the owned-copy
+     * queue. Materialize checksums here: raw VPN packets have no offload
+     * metadata and the host validates the final translated packet. */
+    meshvpn_vpn_lan_egress(buffer, len, true);
 #if CONFIG_MESHVPN_USB_TX_QUEUE
     if (s_use_queue) return meshvpn_usb_tx_queue_submit(buffer, len);
 #else

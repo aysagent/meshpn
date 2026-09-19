@@ -3,6 +3,7 @@
 #include "esp_private/wifi.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "meshvpn_vpn_egress.h"
 
 static portMUX_TYPE s_tx_lock = portMUX_INITIALIZER_UNLOCKED;
 static meshvpn_wifi_tx_diag_t s_tx[2];
@@ -45,6 +46,7 @@ esp_err_t __real_esp_wifi_internal_tx_by_ref(wifi_interface_t ifx, void *buffer,
 
 int __wrap_esp_wifi_internal_tx(wifi_interface_t ifx, void *buffer, uint16_t len)
 {
+    if (ifx == WIFI_IF_AP) meshvpn_vpn_lan_egress(buffer, len, false);
     int64_t start = esp_timer_get_time();
     int err = __real_esp_wifi_internal_tx(ifx, buffer, len);
     record(ifx, len, err, esp_timer_get_time() - start, false);
@@ -53,6 +55,7 @@ int __wrap_esp_wifi_internal_tx(wifi_interface_t ifx, void *buffer, uint16_t len
 
 esp_err_t __wrap_esp_wifi_internal_tx_by_ref(wifi_interface_t ifx, void *buffer, size_t len, void *netstack_buf)
 {
+    if (ifx == WIFI_IF_AP) meshvpn_vpn_lan_egress(buffer, len, false);
     int64_t start = esp_timer_get_time();
     esp_err_t err = __real_esp_wifi_internal_tx_by_ref(ifx, buffer, len, netstack_buf);
     record(ifx, len, err, esp_timer_get_time() - start, true);

@@ -8,7 +8,7 @@ endif()
 idf_component_register(
     SRCS ${meshvpn_usb_sources}
     INCLUDE_DIRS "include"
-    REQUIRES esp_netif esp_tinyusb tinyusb esp_timer
+    REQUIRES esp_netif esp_tinyusb tinyusb esp_timer meshvpn_vpn
     PRIV_REQUIRES efuse
 )
 if(CONFIG_MESHVPN_USB_NCM_DOUBLE_BUFFER)

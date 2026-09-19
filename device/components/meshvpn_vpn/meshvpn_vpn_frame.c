@@ -143,3 +143,34 @@ bool meshvpn_vpn_repair_checksums(uint8_t *p, size_t n)
     put16(p + h + checksum_offset, checksum);
     return true;
 }
+bool meshvpn_vpn_repair_ethernet_checksums(uint8_t *frame, size_t n, bool *changed)
+{
+    if (changed) *changed = false;
+    if (!frame || n < 14) return false;
+    size_t ip_offset = 14;
+    unsigned type = be16(frame + 12);
+    if (type == 0x8100 || type == 0x88a8) {
+        if (n < 18) return false;
+        type = be16(frame + 16);
+        ip_offset = 18;
+    }
+    if (type != 0x0800 || n < ip_offset + 20) return false;
+    size_t ip_len = be16(frame + ip_offset + 2);
+    if (ip_len < 20 || ip_len > n - ip_offset) return false;
+    uint8_t before_ip[2] = {frame[ip_offset + 10], frame[ip_offset + 11]};
+    size_t h = (frame[ip_offset] & 15) * 4;
+    size_t l4_checksum = 0;
+    if (h >= 20 && h <= ip_len) {
+        if (frame[ip_offset + 9] == 6 && ip_len >= h + 20) l4_checksum = ip_offset + h + 16;
+        else if (frame[ip_offset + 9] == 17 && ip_len >= h + 8) l4_checksum = ip_offset + h + 6;
+        else if (frame[ip_offset + 9] == 1 && ip_len >= h + 8) l4_checksum = ip_offset + h + 2;
+    }
+    uint8_t before_l4[2] = {0, 0};
+    if (l4_checksum) { before_l4[0] = frame[l4_checksum]; before_l4[1] = frame[l4_checksum + 1]; }
+    if (!meshvpn_vpn_repair_checksums(frame + ip_offset, ip_len)) return false;
+    if (changed) {
+        *changed = before_ip[0] != frame[ip_offset + 10] || before_ip[1] != frame[ip_offset + 11] ||
+                   (l4_checksum && (before_l4[0] != frame[l4_checksum] || before_l4[1] != frame[l4_checksum + 1]));
+    }
+    return true;
+}

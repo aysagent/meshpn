@@ -35,7 +35,8 @@ else
   echo "WireGuard AEAD tests skipped: install device managed dependencies."
 fi
 "$cc" "${flags[@]}" -pthread -Idevice/tests/wifi_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
-  -Idevice/components/meshvpn_wifi/include device/tests/test_wifi_diag.c -o "$test_dir/wifi-diag"
+  -Idevice/components/meshvpn_wifi/include -Idevice/components/meshvpn_vpn/include \
+  device/tests/test_wifi_diag.c -o "$test_dir/wifi-diag"
 "$test_dir/wifi-diag"
 "$cc" "${flags[@]}" -pthread -Idevice/tests/led_stubs -Idevice/tests/usb_stubs \
   -Idevice/components/meshvpn_board/include device/tests/test_board_led.c \
@@ -55,12 +56,14 @@ for variant in 0:0 1:0 1:1; do
   queue_enabled=${variant%:*}; event_enabled=${variant#*:}
   "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_TX_EVENT_WAIT="$event_enabled" -DCONFIG_MESHVPN_USB_PROFILE_NCM=1 -DCONFIG_MESHVPN_USB_TX_QUEUE="$queue_enabled" \
     -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
-    -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx.c -o "$test_dir/usb-tx-$queue_enabled-$event_enabled"
+    -Idevice/components/meshvpn_usb/include -Idevice/components/meshvpn_vpn/include \
+    device/tests/test_usb_tx.c -o "$test_dir/usb-tx-$queue_enabled-$event_enabled"
   "$test_dir/usb-tx-$queue_enabled-$event_enabled"
 done
 "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_NCM_DOUBLE_BUFFER=1 \
   -DCONFIG_MESHVPN_USB_PROFILE_NCM=1 -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
-  -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx.c -o "$test_dir/usb-double-fifo"
+  -Idevice/components/meshvpn_usb/include -Idevice/components/meshvpn_vpn/include \
+  device/tests/test_usb_tx.c -o "$test_dir/usb-double-fifo"
 "$test_dir/usb-double-fifo"
 for event_enabled in 0 1; do
   "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_TX_EVENT_WAIT="$event_enabled" -DCONFIG_MESHVPN_USB_TX_QUEUE=1 \
