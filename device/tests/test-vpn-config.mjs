@@ -85,6 +85,16 @@ cJSON_DeleteItemFromObject(request,"wg_address");assert(handler_vpn_config(&r)==
 assert(!strcmp(saved.wg_address_input,"10.0.0.7/24,fd42:42:42::7/64")); /* omitted preserves */
 replace("wg_private_key","");replace("wg_preshared_key","");
 assert(handler_vpn_config(&r)==ESP_OK&&!strcmp(saved.wg_private_key,(char*)key)&&saved.wg_preshared_key[0]);
+/* UI socket saves omit all WG fields. Secrets/profile survive, endpoint is shared. */
+cJSON *wg_request=request;request=cJSON_CreateObject();
+cJSON_AddBoolToObject(request,"enabled",true);cJSON_AddBoolToObject(request,"allow_plaintext",true);
+cJSON_AddStringToObject(request,"transport","socket");cJSON_AddStringToObject(request,"server","192.0.2.2:8765");
+assert(handler_vpn_config(&r)==ESP_OK);
+assert(!strcmp(saved.wg_private_key,(char*)key)&&!strcmp(saved.wg_public_key,(char*)key)&&saved.wg_preshared_key[0]);
+assert(!strcmp(saved.wg_address_input,"10.0.0.7/24,fd42:42:42::7/64")&&!strcmp(saved.wg_dns,"1.1.1.1"));
+assert(saved.wg_keepalive==25&&!strcmp(saved.server,"192.0.2.2:8765"));
+cJSON_Delete(request);request=wg_request;
+assert(handler_vpn_config(&r)==ESP_OK&&!strcmp(saved.server,"192.0.2.1:51820"));
 cJSON_AddBoolToObject(request,"wg_clear_psk",true);assert(handler_vpn_config(&r)==ESP_OK&&!saved.wg_preshared_key[0]);
 replace("wg_address","192.168.7.2");assert(handler_vpn_config(&r)==ESP_FAIL);
 replace("wg_address","192.168.4.2");assert(handler_vpn_config(&r)==ESP_FAIL);

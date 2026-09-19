@@ -77,6 +77,13 @@ for(const part of text.split('static const char ').slice(1)){
         await vm.runInContext('poll()',context);
         assert(elements['vpn-summary'].textContent.includes('VPN OFF'));
         assert.equal(elements['vpn-kill-switch'].checked,true);
+        assert(elements['wg-performance'].textContent.includes('waiting'));
+        vm.runInContext(`renderWgPerformance({wireguard_active:{available:true,interval_ms:2000,age_sec:7,
+          core_load_pct:[98,12],encrypt_us:900000,encrypt_calls:300,decrypt_us:0,decrypt_calls:0}})`,context);
+        assert(elements['wg-performance'].textContent.includes('CPU0 98.0% / CPU1 12.0%'));
+        assert(elements['wg-performance'].textContent.includes('Encrypt 3.000 ms/call'));
+        assert(elements['wg-performance'].textContent.includes('Decrypt n/a'));
+        assert(elements['wg-performance'].textContent.includes('7 s ago'));
         elements['vpn-server'].value='192.0.2.1:8765';elements['vpn-server'].oninput();
         elements['vpn-enabled'].checked=true;elements['vpn-enabled'].oninput();
         await vm.runInContext('poll()',context);

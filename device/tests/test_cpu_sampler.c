@@ -14,6 +14,9 @@ void *heap_caps_calloc(size_t count, size_t size, uint32_t caps)
     return calloc(count, size);
 }
 static int64_t now = 7200000000LL;
+static meshvpn_wg_crypto_stats_t crypto_fixture;
+void meshvpn_wg_crypto_snapshot(meshvpn_wg_crypto_stats_t *out)
+{ *out = crypto_fixture; out->sampled_us = now; }
 static unsigned calls, task_count = 4;
 static TaskStatus_t fixture[4];
 int64_t esp_timer_get_time(void) { return now; }
@@ -59,7 +62,13 @@ int main(void)
         .xTaskNumber=i+10,.ulRunTimeCounter=5000000000ULL,.xCoreID=tskNO_AFFINITY};
     collect(raw,&prev,&next);
     assert(!prev.valid[0] && !prev.valid[1]);
+    assert(!prev.wg_active.sampled_us);
     now+=2000000;
+    crypto_fixture.encrypt.calls = 100;
+    crypto_fixture.encrypt.bytes = 100000;
+    crypto_fixture.encrypt.time_us = 700000;
+    crypto_fixture.decrypt.calls = 1; /* empty keepalive: no data bytes */
+    crypto_fixture.decrypt.time_us = 10;
     fixture[0].ulRunTimeCounter+=1000000;
     fixture[1].ulRunTimeCounter+=1980000;
     fixture[2].ulRunTimeCounter+=1000000;
@@ -70,12 +79,19 @@ int main(void)
     assert(next.tasks[2].load_pct==50 && !strcmp(next.tasks[2].name,"wifi"));
     assert(next.tasks[3].name==NULL && !next.tasks[3].valid);
     assert(next.tasks[2].core==-1);
+    assert(next.wg_active.sampled_us == (uint64_t)now);
+    assert(next.wg_active.encrypt_calls == 100 && next.wg_active.encrypt_us == 700000);
+    assert(next.wg_active.crypto_interval_us == 2000000);
     s_sample=next;
     cJSON *a=cJSON_CreateObject(), *b=cJSON_CreateObject();
     meshvpn_cpu_json(a);now+=1000;meshvpn_cpu_json(b);
     assert(calls==2); /* Readers never collect or reset a measurement. */
     assert(get(get(a,"cpu"),"sampled_us")->valuedouble==get(get(b,"cpu"),"sampled_us")->valuedouble);
     assert(get(get(b,"cpu"),"interval_ms")->valuedouble==2000);
+    cJSON *active = get(get(b,"cpu"),"wireguard_active");
+    assert(cJSON_IsTrue(get(active,"available")));
+    assert(get(active,"encrypt_us")->valuedouble == 700000);
+    assert(cJSON_GetArrayItem(get(active,"core_load_pct"),0)->valuedouble == 50);
     cJSON_Delete(a);cJSON_Delete(b);
 #if CONFIG_SPIRAM
     fail_allocation = alloc_calls + 1;
@@ -90,7 +106,17 @@ int main(void)
     cJSON_Delete(a);
     collect(raw,&prev,&next);
     assert(!prev.valid[0]); /* Delayed sampler does not publish a long average. */
+    assert(prev.wg_active.sampled_us == next.wg_active.sampled_us);
     task_count=0;collect(raw,&next,&prev);assert(!next.complete);
+    assert(next.wg_active.sampled_us == prev.wg_active.sampled_us);
+    /* Idle/keepalive windows must not overwrite retained load under traffic. */
+    task_count=4; now+=2000000; collect(raw,&prev,&next);
+    now+=2000000;
+    fixture[0].ulRunTimeCounter+=2000000; fixture[1].ulRunTimeCounter+=2000000;
+    crypto_fixture.encrypt.calls++;
+    collect(raw,&next,&prev);
+    assert(next.valid[0] && next.load[0] == 0);
+    assert(next.wg_active.load[0] == 50);
 #else
     cJSON *a=cJSON_CreateObject();meshvpn_cpu_json(a);
     assert(cJSON_IsFalse(get(get(a,"cpu"),"available")));

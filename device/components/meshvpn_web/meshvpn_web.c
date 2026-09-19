@@ -2,6 +2,7 @@
 #include "meshvpn_web_tls.h"
 #include "meshvpn_session.h"
 #include "meshvpn_cpu.h"
+#include "meshvpn_wg_json.h"
 #include "meshvpn_local_download.h"
 
 #include <inttypes.h>
@@ -564,6 +565,7 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddStringToObject(vpn, "state", vs.state);
     cJSON_AddStringToObject(vpn, "address", vs.address);
     cJSON *wg = cJSON_AddObjectToObject(vpn, "wireguard");
+    meshvpn_wg_crypto_json(wg);
     cJSON_AddStringToObject(wg, "address", vs.wg_address);
     cJSON_AddStringToObject(wg, "address_input", vs.wg_address_input[0] ? vs.wg_address_input : vs.wg_address);
     cJSON_AddBoolToObject(wg, "ipv6_supported", false);

@@ -141,11 +141,17 @@ for board_target in \
 done
 if [[ -n "${IDF_PATH:-}" ]]; then
   json_dir="$IDF_PATH/components/json/cJSON"
+  "$cc" "${flags[@]}" -pthread -Idevice/tests/wg_diag_stubs -Idevice/tests/usb_stubs \
+    -Idevice/tests/cpu_stubs -Idevice/components/meshvpn_vpn/include \
+    -Idevice/components/meshvpn_web/include -I"$json_dir" \
+    device/tests/test_wg_diag.c "$json_dir/cJSON.c" -o "$test_dir/wg-diag"
+  "$test_dir/wg-diag"
   for runtime_enabled in 0 1; do
     for psram_enabled in 0 1; do
       "$cc" "${flags[@]}" -DCONFIG_FREERTOS_GENERATE_RUN_TIME_STATS="$runtime_enabled" \
         -DCONFIG_SPIRAM="$psram_enabled" \
         -Idevice/tests/cpu_stubs -Idevice/components/meshvpn_web/include -I"$json_dir" \
+        -Idevice/components/meshvpn_vpn/include \
         device/tests/test_cpu_sampler.c "$json_dir/cJSON.c" -lm -o "$test_dir/cpu-sampler-$runtime_enabled-$psram_enabled"
       "$test_dir/cpu-sampler-$runtime_enabled-$psram_enabled"
     done

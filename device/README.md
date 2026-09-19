@@ -75,6 +75,36 @@ defaults to ON in a fresh build directory. Existing CMake selections persist.
 Compare the same client, VPN endpoint and speed-test server with the phone's
 own VPN disabled. Record CPU0/CPU1 load during transfer, not only after it.
 
+### WireGuard performance diagnostics
+
+Run a speed test with WireGuard enabled, then open the VPN section. It retains
+the **last active CPU sample** (normally 2 seconds, at least 64 KiB of combined
+encrypt/decrypt data) and shows its age, CPU0/CPU1 load and crypto mean time per
+call. Idle windows and empty keepalives do not replace it. This is a recent
+window, not a whole-test average or peak. It survives disconnect/reconnect and
+transport changes until another active window or reboot; always check its age.
+
+Copy `cpu.wireguard_active` and `vpn.wireguard.crypto` from Status → Diagnostics
+after the test (or save the full status JSON). Crypto counters are cumulative
+since boot, independent of API readers. They measure **transport data** calls,
+including keepalives, not handshake/X25519 work. Bytes include plaintext padding
+and failed decrypt attempts, exclude authentication tags, and are not delivered
+IP/application bytes. `failed` counts decrypt authentication failures; encryption
+has no failure return. `core_calls` records the core at call entry.
+
+Times are wall-clock microseconds around the original library calls, including
+interrupts/preemption, not pure CPU cycles or time to transmit over Wi-Fi. Calls
+are attributed at completion; a call crossing a sample boundary can contribute
+time from the previous interval. CPU and crypto snapshots are adjacent, not
+atomic; both interval lengths are exposed. Timing adds two clock reads and a
+short counter lock per call. No payload/key logging, allocation or change to
+crypto algorithms is introduced. Missing CPU sampling is unknown, not zero load.
+
+Switching to socket preserves WireGuard keys, Address, DNS and keepalive in NVS.
+The server/Endpoint field is currently **shared**: after using another socket
+server, restore the WireGuard Endpoint when switching back. A blank private key
+or PSK input keeps the saved key; only the explicit PSK-removal checkbox clears it.
+
 ## Control a board attached to a Mac from a Linux server
 
 The Mac opens an outbound reverse SSH tunnel to the server. Enable macOS

@@ -1,5 +1,6 @@
 #include "meshvpn_cpu.h"
 #include "meshvpn_cpu_math.h"
+#include "meshvpn_wg_diag.h"
 #include "sdkconfig.h"
 #include "esp_timer.h"
 #include "esp_log.h"
@@ -12,6 +13,13 @@
 #if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
 _Static_assert(sizeof(configRUN_TIME_COUNTER_TYPE) == 8, "CPU telemetry requires 64-bit runtime counters");
 #define MAX_TASKS 64
+#define WG_ACTIVE_MIN_BYTES 65536
+typedef struct {
+    uint64_t sampled_us, interval_us, crypto_interval_us;
+    uint64_t encrypt_calls, decrypt_calls, encrypt_bytes, decrypt_bytes;
+    uint64_t encrypt_us, decrypt_us, decrypt_failed;
+    double load[CONFIG_FREERTOS_NUMBER_OF_CORES];
+} wg_active_t;
 typedef struct {
     unsigned id, priority, stack_free;
     int core;
@@ -26,6 +34,8 @@ typedef struct {
     double load[CONFIG_FREERTOS_NUMBER_OF_CORES];
     unsigned count;
     task_sample_t tasks[MAX_TASKS];
+    meshvpn_wg_crypto_stats_t crypto;
+    wg_active_t wg_active; /* Last busy window retained, not an idle reading. */
 } sample_t;
 static sample_t s_sample;
 static SemaphoreHandle_t s_mutex;
@@ -61,6 +71,8 @@ static void collect(TaskStatus_t *raw, sample_t *next, const sample_t *prev)
     next->count = uxTaskGetSystemState(raw, MAX_TASKS, &total);
     next->collection_us = esp_timer_get_time() - start;
     next->sampled_us = total ? total : (uint64_t)esp_timer_get_time();
+    meshvpn_wg_crypto_snapshot(&next->crypto);
+    next->wg_active = prev->wg_active;
     next->interval_us = prev->sampled_us ? next->sampled_us - prev->sampled_us : 0;
     next->complete = next->count != 0;
     for (unsigned c = 0; c < CONFIG_FREERTOS_NUMBER_OF_CORES; c++) next->valid[c] = false;
@@ -88,6 +100,24 @@ static void collect(TaskStatus_t *raw, sample_t *next, const sample_t *prev)
             next->valid[c] = t->valid;
             next->load[c] = 100.0 - t->load_pct;
         }
+    }
+    const meshvpn_wg_crypto_stats_t *a = &prev->crypto, *b = &next->crypto;
+    bool valid = next->complete && prev->complete && a->sampled_us && b->sampled_us > a->sampled_us;
+    for (unsigned c = 0; c < CONFIG_FREERTOS_NUMBER_OF_CORES; c++) valid &= next->valid[c];
+    if (valid && b->encrypt.bytes >= a->encrypt.bytes && b->decrypt.bytes >= a->decrypt.bytes &&
+        b->encrypt.bytes - a->encrypt.bytes + b->decrypt.bytes - a->decrypt.bytes >= WG_ACTIVE_MIN_BYTES) {
+        wg_active_t *w = &next->wg_active;
+        w->sampled_us = next->sampled_us;
+        w->interval_us = next->interval_us;
+        w->crypto_interval_us = b->sampled_us - a->sampled_us;
+        w->encrypt_calls = b->encrypt.calls - a->encrypt.calls;
+        w->decrypt_calls = b->decrypt.calls - a->decrypt.calls;
+        w->encrypt_bytes = b->encrypt.bytes - a->encrypt.bytes;
+        w->decrypt_bytes = b->decrypt.bytes - a->decrypt.bytes;
+        w->encrypt_us = b->encrypt.time_us - a->encrypt.time_us;
+        w->decrypt_us = b->decrypt.time_us - a->decrypt.time_us;
+        w->decrypt_failed = b->decrypt.failed - a->decrypt.failed;
+        for (unsigned c = 0; c < CONFIG_FREERTOS_NUMBER_OF_CORES; c++) w->load[c] = next->load[c];
     }
 }
 
@@ -144,6 +174,23 @@ void meshvpn_cpu_json(cJSON *root)
     cJSON_AddNumberToObject(cpu, "sample_age_ms", age / 1000.0);
     cJSON_AddNumberToObject(cpu, "interval_ms", copy->interval_us / 1000.0);
     cJSON_AddNumberToObject(cpu, "collection_us", copy->collection_us);
+    cJSON *active = cJSON_AddObjectToObject(cpu, "wireguard_active");
+    const wg_active_t *w = &copy->wg_active;
+    cJSON_AddBoolToObject(active, "available", w->sampled_us != 0);
+    cJSON_AddNumberToObject(active, "min_bytes", WG_ACTIVE_MIN_BYTES);
+    if (w->sampled_us) {
+        cJSON_AddNumberToObject(active, "sampled_us", (double)w->sampled_us);
+        cJSON_AddNumberToObject(active, "age_sec", (esp_timer_get_time() - w->sampled_us) / 1000000.0);
+        cJSON_AddNumberToObject(active, "interval_ms", w->interval_us / 1000.0);
+        cJSON_AddNumberToObject(active, "crypto_interval_ms", w->crypto_interval_us / 1000.0);
+#define WG_FIELD(n) cJSON_AddNumberToObject(active, #n, (double)w->n)
+        WG_FIELD(encrypt_calls); WG_FIELD(decrypt_calls); WG_FIELD(encrypt_bytes); WG_FIELD(decrypt_bytes);
+        WG_FIELD(encrypt_us); WG_FIELD(decrypt_us); WG_FIELD(decrypt_failed);
+#undef WG_FIELD
+        cJSON *loads = cJSON_AddArrayToObject(active, "core_load_pct");
+        for (unsigned c = 0; c < CONFIG_FREERTOS_NUMBER_OF_CORES; c++)
+            cJSON_AddItemToArray(loads, cJSON_CreateNumber(w->load[c]));
+    }
     cJSON *cores = cJSON_AddArrayToObject(cpu, "cores");
     for (unsigned c = 0; c < CONFIG_FREERTOS_NUMBER_OF_CORES; c++) {
         cJSON *item = cJSON_CreateObject();
