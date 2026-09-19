@@ -134,7 +134,11 @@ The VPN page shows this history separately from the current `last_error`.
 After flashing, repeat opening sites on the same phone/USB connection for at
 least 30 seconds. If it still fails, save Diagnostics with `vpn` and `dns`;
 compare before/after counters, especially `queue_full`, `queue_expired`,
-`reconnects`, and `socket.last_failure`. No exit-side protocol update is needed.
+`reconnects`, `socket.last_failure`, and `socket.packet_path`. The packet-path
+object shows whether packets reached the exit with the tunnel source address
+and whether replies were reverse-NAPT routed back to USB/AP. Diagnostics can be
+frozen with **Pause updates** before selecting/copying JSON. No exit-side
+protocol update is needed.
 
 ## Control a board attached to a Mac from a Linux server
 

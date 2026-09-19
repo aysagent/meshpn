@@ -36,7 +36,7 @@ for(const part of text.split('static const char ').slice(1)){
           wifi:{connected:false,state:'setup'},usb:{profile:'ncm',host_ready:true},
           net:{usb_ip:'192.168.7.1',ap_active:https,ap_ssid:'MeshPN_aabbcc',ap_ip:'192.168.4.1',
             ap_channel:6,ap_clients:2,ap_napt:true},must_change_password:false};
-        let accepted=true,failSave=false,saves=0,reboots=0,revoked=0,ledFail=false,ledSaves=0;
+        let accepted=true,failSave=false,saves=0,reboots=0,revoked=0,ledFail=false,ledSaves=0,statusFetches=0;
         const context=vm.createContext({
           document:{hidden:false,getElementById:id=>elements[id],addEventListener(){}},
           sessionStorage:{getItem:()=> 'test-token',removeItem:()=>revoked++},location:{protocol:https?'https:':'http:'},
@@ -69,12 +69,24 @@ for(const part of text.split('static const char ').slice(1)){
               assert.equal(options.method,'POST');assert.equal(options.headers.Authorization,'Bearer test-token');
             }else if(path==='/api/system/reboot'){
               assert.equal(options.method,'POST');reboots++;
-            }else assert.equal(path,'/api/status');
+            }else {assert.equal(path,'/api/status');statusFetches++;}
             return {ok:true,status:200,json:async()=>({...status})};
           }
         });
         vm.runInContext(code,context);
         await vm.runInContext('poll()',context);
+        const frozen=elements.status.textContent,fetchesBeforePause=statusFetches;
+        elements['status-refresh'].onclick();
+        assert.equal(elements['status-refresh'].textContent,'Resume updates');
+        assert(elements['status-refresh-note'].textContent.includes('frozen'));
+        status.temperature_c=99;
+        await vm.runInContext('poll()',context);
+        assert.equal(statusFetches,fetchesBeforePause,'paused diagnostics must not fetch');
+        assert.equal(elements.status.textContent,frozen,'paused diagnostics must remain copyable');
+        await elements['status-refresh'].onclick();
+        assert.equal(elements['status-refresh'].textContent,'Pause updates');
+        assert.equal(statusFetches,fetchesBeforePause+1,'resume refreshes immediately');
+        assert(elements.status.textContent.includes('99'));
         assert(elements['vpn-summary'].textContent.includes('VPN OFF'));
         assert.equal(elements['vpn-kill-switch'].checked,true);
         assert(elements['wg-performance'].textContent.includes('waiting'));

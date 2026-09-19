@@ -41,12 +41,18 @@ int main(void) {
    packet[28]=i; assert(meshvpn_vpn_send_ipv4(packet,sizeof(packet))==ESP_OK);
  }
  assert(meshvpn_vpn_send_ipv4(packet,sizeof(packet))==ESP_ERR_NO_MEM);
- assert(s.queue_full==1 && s_count==16 && s.queue_high_water==16);
+ assert(s.queue_full==1 && s_count==MESHVPN_VPN_SLOTS && s.queue_high_water==MESHVPN_VPN_SLOTS);
  meshvpn_vpn_tx_batch_t b={0}; load_tx_batch(&b,1);
- assert(b.count==8 && s_count==8 && s.queue_depth==8);
+ assert(b.count==MESHVPN_VPN_BATCH_FRAMES &&
+        s_count==MESHVPN_VPN_SLOTS-MESHVPN_VPN_BATCH_FRAMES &&
+        s.queue_depth==MESHVPN_VPN_SLOTS-MESHVPN_VPN_BATCH_FRAMES);
  for(unsigned i=0;i<8;i++)assert(b.data[i*104+4+28]==i);
- load_tx_batch(&b,1);assert(b.count==8 && !s_count);
- for(unsigned i=0;i<8;i++)assert(b.data[i*104+4+28]==8+i);
+ for(unsigned base=MESHVPN_VPN_BATCH_FRAMES;base<MESHVPN_VPN_SLOTS;base+=MESHVPN_VPN_BATCH_FRAMES) {
+   load_tx_batch(&b,1);assert(b.count==MESHVPN_VPN_BATCH_FRAMES);
+   for(unsigned i=0;i<MESHVPN_VPN_BATCH_FRAMES;i++)
+     assert(b.data[i*104+4+28]==(uint8_t)(base+i));
+ }
+ assert(!s_count);
  load_tx_batch(&b,1);assert(!b.count); /* never waits for a full batch */
  assert(meshvpn_vpn_send_ipv4(packet,sizeof(packet))==ESP_OK);
  now+=1000001;

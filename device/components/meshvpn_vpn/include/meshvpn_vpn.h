@@ -36,6 +36,15 @@ typedef struct {
     int64_t socket_last_failure_us;
     uint32_t socket_last_failure_generation;
     uint32_t socket_rx_timeouts, socket_tx_timeouts;
+    uint32_t socket_tx_to_exit, socket_tx_source_tunnel, socket_tx_source_other;
+    uint32_t socket_rx_from_exit, socket_rx_to_usb, socket_rx_to_ap;
+    uint32_t socket_last_tx_src, socket_last_tx_dst;
+    uint32_t socket_last_rx_src, socket_last_rx_dst;
+    uint32_t socket_last_return_src, socket_last_return_dst;
+    uint16_t socket_last_tx_sport, socket_last_tx_dport;
+    uint16_t socket_last_rx_sport, socket_last_rx_dport;
+    uint8_t socket_last_tx_proto, socket_last_rx_proto;
+    int64_t socket_last_tx_us, socket_last_rx_us, socket_last_return_us;
     uint64_t bytes_in;
     uint64_t bytes_out;
 } meshvpn_vpn_status_t;

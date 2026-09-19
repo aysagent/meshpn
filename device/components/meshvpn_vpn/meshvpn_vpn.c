@@ -129,6 +129,21 @@ struct netif *meshvpn_vpn_route(const ip4_addr_t *src, const ip4_addr_t *dst)
     if (!s_ready || !src || !dst) return NULL;
     /* Previously bound DNS sockets remain blackholed after disabling VPN. */
     if (ip4_addr_cmp(src, netif_ip4_addr(&s_vpn))) return &s_vpn;
+    bool to_usb = lan(dst, s_usb), to_ap = lan(dst, s_ap);
+    if (!lan(src, s_usb) && !lan(src, s_ap) && (to_usb || to_ap)) {
+        /* ip_napt_recv() has already changed the tunnel address back to a LAN
+         * client when route selection reaches this branch. This is the most
+         * useful proof that a return packet did not merely reach the board. */
+        LOCK();
+        if (s.enabled && !strcmp(s.transport, "socket")) {
+            if (to_usb) s.socket_rx_to_usb++; else s.socket_rx_to_ap++;
+            s.socket_last_return_src = src->addr;
+            s.socket_last_return_dst = dst->addr;
+            s.socket_last_return_us = esp_timer_get_time();
+        }
+        UNLOCK();
+        return NULL;
+    }
     if (!tunnel_policy() || (!lan(src, s_usb) && !lan(src, s_ap))) return NULL;
     if ((s_usb && ip4_addr_cmp(src, netif_ip4_addr(s_usb))) ||
         (s_ap && ip4_addr_cmp(src, netif_ip4_addr(s_ap)))) return NULL;
@@ -150,6 +165,18 @@ esp_err_t meshvpn_vpn_send_ipv4(const uint8_t *p, uint16_t len)
 /* RX is injected into lwIP; no second competing consumer. */
 esp_err_t meshvpn_vpn_recv_ipv4(uint8_t *p, uint16_t cap, uint16_t *len)
 { (void)p; (void)cap; if (len) *len = 0; return ESP_ERR_NOT_SUPPORTED; }
+static void tuple(const uint8_t *p, size_t len, uint32_t *src, uint32_t *dst,
+                  uint8_t *proto, uint16_t *sport, uint16_t *dport)
+{
+    memcpy(src, p + 12, 4);
+    memcpy(dst, p + 16, 4);
+    *proto = p[9]; *sport = *dport = 0;
+    unsigned ihl = (p[0] & 15) * 4;
+    if (len >= ihl + 4 && !(p[6] & 0x3f) && !p[7] && (*proto == 6 || *proto == 17)) {
+        *sport = ((uint16_t)p[ihl] << 8) | p[ihl + 1];
+        *dport = ((uint16_t)p[ihl + 2] << 8) | p[ihl + 3];
+    }
+}
 static err_t output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst)
 {
     (void)n; (void)dst;
@@ -166,6 +193,15 @@ static err_t output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst)
         LOCK(); if (result == ERR_OK) { s.packets_out++; s.bytes_out += p->tot_len; } else s.tx_dropped++; UNLOCK();
         return result;
     }
+    LOCK();
+    s.socket_tx_to_exit++;
+    ip4_addr_t packet_src; memcpy(&packet_src.addr, buf + 12, 4);
+    if (ip4_addr_cmp(&packet_src, netif_ip4_addr(&s_vpn))) s.socket_tx_source_tunnel++;
+    else s.socket_tx_source_other++;
+    tuple(buf, p->tot_len, &s.socket_last_tx_src, &s.socket_last_tx_dst,
+          &s.socket_last_tx_proto, &s.socket_last_tx_sport, &s.socket_last_tx_dport);
+    s.socket_last_tx_us = esp_timer_get_time();
+    UNLOCK();
     return meshvpn_vpn_send_ipv4(buf, p->tot_len) == ESP_OK ? ERR_OK : ERR_RTE;
 }
 static err_t net_init(struct netif *n)
@@ -238,6 +274,12 @@ static esp_err_t inject(void *arg)
     if (!p) { COUNT(rx_dropped); return ESP_OK; }
     pbuf_take(p, rx->p, rx->len);
     if (!meshvpn_vpn_clamp_mss(p->payload, p->tot_len)) { pbuf_free(p); COUNT(rx_invalid); return ESP_FAIL; }
+    LOCK();
+    s.socket_rx_from_exit++;
+    tuple(rx->p, rx->len, &s.socket_last_rx_src, &s.socket_last_rx_dst,
+          &s.socket_last_rx_proto, &s.socket_last_rx_sport, &s.socket_last_rx_dport);
+    s.socket_last_rx_us = esp_timer_get_time();
+    UNLOCK();
     ip4_input(p, &s_vpn);
     LOCK(); s.packets_in++; s.bytes_in += rx->len; UNLOCK(); return ESP_OK;
 }

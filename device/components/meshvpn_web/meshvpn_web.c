@@ -590,6 +590,41 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(socket_diag, "batch_max_frames", MESHVPN_VPN_BATCH_FRAMES);
     cJSON_AddNumberToObject(socket_diag, "rx_timeouts", vs.socket_rx_timeouts);
     cJSON_AddNumberToObject(socket_diag, "tx_timeouts", vs.socket_tx_timeouts);
+    cJSON *path = cJSON_AddObjectToObject(socket_diag, "packet_path");
+    cJSON_AddNumberToObject(path, "tx_to_exit", vs.socket_tx_to_exit);
+    cJSON_AddNumberToObject(path, "tx_source_tunnel", vs.socket_tx_source_tunnel);
+    cJSON_AddNumberToObject(path, "tx_source_other", vs.socket_tx_source_other);
+    cJSON_AddNumberToObject(path, "rx_from_exit", vs.socket_rx_from_exit);
+    cJSON_AddNumberToObject(path, "rx_routed_to_usb", vs.socket_rx_to_usb);
+    cJSON_AddNumberToObject(path, "rx_routed_to_ap", vs.socket_rx_to_ap);
+#define VPN_TUPLE_JSON(name) do { \
+    cJSON *v = cJSON_AddObjectToObject(path, #name); \
+    cJSON_AddBoolToObject(v, "available", vs.socket_last_##name##_us != 0); \
+    if (vs.socket_last_##name##_us) { \
+        char src[16], dst[16]; ip4_addr_t a = { .addr = vs.socket_last_##name##_src }; \
+        ip4addr_ntoa_r(&a, src, sizeof(src)); a.addr = vs.socket_last_##name##_dst; \
+        ip4addr_ntoa_r(&a, dst, sizeof(dst)); \
+        cJSON_AddStringToObject(v, "src", src); \
+        cJSON_AddStringToObject(v, "dst", dst); \
+        cJSON_AddNumberToObject(v, "protocol", vs.socket_last_##name##_proto); \
+        cJSON_AddNumberToObject(v, "source_port", vs.socket_last_##name##_sport); \
+        cJSON_AddNumberToObject(v, "destination_port", vs.socket_last_##name##_dport); \
+        cJSON_AddNumberToObject(v, "age_ms", (esp_timer_get_time() - vs.socket_last_##name##_us) / 1000); \
+    } \
+} while (0)
+    VPN_TUPLE_JSON(tx);
+    VPN_TUPLE_JSON(rx);
+#undef VPN_TUPLE_JSON
+    cJSON *return_route = cJSON_AddObjectToObject(path, "last_return_route");
+    cJSON_AddBoolToObject(return_route, "available", vs.socket_last_return_us != 0);
+    if (vs.socket_last_return_us) {
+        char src[16], dst[16]; ip4_addr_t a = { .addr = vs.socket_last_return_src };
+        ip4addr_ntoa_r(&a, src, sizeof(src)); a.addr = vs.socket_last_return_dst;
+        ip4addr_ntoa_r(&a, dst, sizeof(dst));
+        cJSON_AddStringToObject(return_route, "src", src);
+        cJSON_AddStringToObject(return_route, "dst", dst);
+        cJSON_AddNumberToObject(return_route, "age_ms", (esp_timer_get_time() - vs.socket_last_return_us) / 1000);
+    }
     cJSON *failure = cJSON_AddObjectToObject(socket_diag, "last_failure");
     cJSON_AddBoolToObject(failure, "available", vs.socket_last_failure_us != 0);
     if (vs.socket_last_failure_us) {
