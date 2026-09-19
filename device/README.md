@@ -268,6 +268,8 @@ A password change revokes the current session. Sessions expire after 30 minutes 
 - Up to 16 saved profiles; manual/hidden SSID, open/WPA2/WPA3 Personal, priority -1000…1000.
   Higher priority wins, then RSSI; a working connection stays active.
 - Failed connections fall through to other available profiles, with bounded rounds and 2–60 second backoff.
+  The last selected profile (or the sole enabled profile) is also retried directly when an iPhone hotspot stops
+  advertising in scans; the WiFi driver performs three bounded association retries before profile failover.
   **Disconnect / pause** disables automatic reconnect until resumed.
 - Existing single-network credentials migrate to the versioned profile list.
 - Only 2.4 GHz is supported. Enterprise authentication and upstream captive-portal login are outside this implementation.

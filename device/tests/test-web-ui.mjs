@@ -75,6 +75,11 @@ for(const part of text.split('static const char ').slice(1)){
         });
         vm.runInContext(code,context);
         await vm.runInContext('poll()',context);
+        status.wifi={connected:false,state:'waiting_for_network',ssid:'iPhone hotspot',
+          disconnect_reason:39,disconnect_reason_name:'association_timeout'};
+        await vm.runInContext('poll()',context);
+        assert.equal(elements.connection.textContent,
+          'WiFi: waiting_for_network · iPhone hotspot · association_timeout (39)');
         const frozen=elements.status.textContent,fetchesBeforePause=statusFetches;
         elements['status-refresh'].onclick();
         assert.equal(elements['status-refresh'].textContent,'Resume updates');

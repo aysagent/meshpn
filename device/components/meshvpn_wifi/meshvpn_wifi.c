@@ -25,6 +25,14 @@ static bool s_scan_done;
 static bool s_disconnected;
 static bool s_got_ip;
 
+enum {
+    WIFI_SCAN_TIMEOUT_US = 15000000,
+    /* ALL_CHANNEL_SCAN plus driver retries can legitimately take longer than
+     * one association attempt, especially when an iPhone hotspot is asleep. */
+    WIFI_CONNECT_TIMEOUT_US = 30000000,
+    WIFI_CONNECT_DRIVER_RETRIES = 3,
+};
+
 static void state(const char *name)
 {
     portENTER_CRITICAL(&s_lock);
@@ -84,7 +92,7 @@ static void manager(void *arg)
     bool ready = false, paused = false, connecting = false, scanning = false;
     bool automatic_scan = false;
     bool scan_pending = false;
-    uint32_t requested = 0, last_success = 0;
+    uint32_t requested = 0, last_success = 0, last_attempt = 0;
     uint32_t tried = 0;
     int64_t deadline = 0, next_attempt = 0;
     unsigned backoff = 2;
@@ -183,7 +191,7 @@ static void manager(void *arg)
             if (err == ESP_OK) {
                 scanning = true;
                 automatic_scan = false;
-                deadline = now + 15000000;
+                deadline = now + WIFI_SCAN_TIMEOUT_US;
             } else ESP_LOGW(TAG, "Requested scan failed: %s", esp_err_to_name(err));
             scan_pending = false;
         }
@@ -195,15 +203,19 @@ static void manager(void *arg)
             wifi_scan_config_t scan = {.show_hidden = true};
             if (esp_wifi_scan_start(&scan, false) == ESP_OK) {
                 scanning = automatic_scan = true;
-                deadline = now + 15000000;
+                deadline = now + WIFI_SCAN_TIMEOUT_US;
                 state("scanning");
                 continue;
             }
         }
-        int best = -1, best_rssi = -128;
+        int best = -1, best_rssi = -128, only_enabled = -1;
+        unsigned enabled_count = 0;
         for (unsigned i = 0; i < profiles->count; i++) {
             meshvpn_wifi_profile_t *p = &profiles->items[i];
-            if (!p->enabled || (tried & (1u << i))) continue;
+            if (!p->enabled) continue;
+            enabled_count++;
+            only_enabled = i;
+            if (tried & (1u << i)) continue;
             int rssi = -128;
             portENTER_CRITICAL(&s_lock);
             for (unsigned j = 0; j < s_scan_count; j++) {
@@ -219,6 +231,25 @@ static void manager(void *arg)
                 best = i; best_rssi = rssi;
             }
         }
+        /* iOS may stop answering active probes while Personal Hotspot is in
+         * the background.  Once a saved profile has been selected, retry its
+         * SSID directly even if the following scan did not see it.  A sole
+         * enabled profile gets the same treatment on a cold boot.  Visible
+         * alternatives always win, and tried[] still bounds each round. */
+        if (best < 0 && !requested) {
+            const uint32_t fallback_ids[] = {last_success, last_attempt};
+            for (unsigned f = 0; f < sizeof(fallback_ids) / sizeof(fallback_ids[0]) && best < 0; f++) {
+                if (!fallback_ids[f]) continue;
+                for (unsigned i = 0; i < profiles->count; i++) {
+                    if (profiles->items[i].enabled && profiles->items[i].id == fallback_ids[f] &&
+                        !(tried & (1u << i))) {
+                        best = i;
+                        break;
+                    }
+                }
+            }
+            if (best < 0 && enabled_count == 1 && !(tried & (1u << only_enabled))) best = only_enabled;
+        }
         requested = 0;
         if (best < 0) {
             tried = 0;
@@ -230,6 +261,7 @@ static void manager(void *arg)
         }
         meshvpn_wifi_profile_t *p = &profiles->items[best];
         tried |= 1u << best;
+        last_attempt = p->id;
         wifi_config_t cfg = {0};
         memcpy(cfg.sta.ssid, p->ssid, strlen(p->ssid));
         memcpy(cfg.sta.password, p->password, strlen(p->password));
@@ -238,6 +270,9 @@ static void manager(void *arg)
         cfg.sta.pmf_cfg.capable = true;
         cfg.sta.pmf_cfg.required = p->security == 2;
         cfg.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+        cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+        cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+        cfg.sta.failure_retry_cnt = WIFI_CONNECT_DRIVER_RETRIES;
         esp_wifi_set_ps(WIFI_PS_NONE);
         esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT40);
         esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
@@ -252,7 +287,7 @@ static void manager(void *arg)
         snprintf(s_status.ssid, sizeof(s_status.ssid), "%s", p->ssid);
         portEXIT_CRITICAL(&s_lock);
         connecting = true;
-        deadline = now + 15000000;
+        deadline = now + WIFI_CONNECT_TIMEOUT_US;
         state("connecting");
     }
 }
@@ -312,4 +347,30 @@ void meshvpn_wifi_get_status(meshvpn_wifi_status_t *status)
     portEXIT_CRITICAL(&s_lock);
     wifi_ap_record_t ap;
     if (status->sta_connected && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) status->rssi = ap.rssi;
+}
+
+const char *meshvpn_wifi_disconnect_reason_name(uint8_t reason)
+{
+    switch (reason) {
+    case 0: return "none";
+    case WIFI_REASON_UNSPECIFIED: return "unspecified";
+    case WIFI_REASON_AUTH_EXPIRE: return "authentication_expired";
+    case WIFI_REASON_AUTH_LEAVE: return "authentication_left";
+    case WIFI_REASON_DISASSOC_DUE_TO_INACTIVITY: return "inactive";
+    case WIFI_REASON_ASSOC_TOOMANY: return "ap_full";
+    case WIFI_REASON_ASSOC_LEAVE: return "association_left";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: return "four_way_handshake_timeout";
+    case WIFI_REASON_802_1X_AUTH_FAILED: return "authentication_failed";
+    case WIFI_REASON_TIMEOUT: return "association_timeout";
+    case WIFI_REASON_BEACON_TIMEOUT: return "beacon_timeout";
+    case WIFI_REASON_NO_AP_FOUND: return "network_not_found";
+    case WIFI_REASON_AUTH_FAIL: return "authentication_failed";
+    case WIFI_REASON_ASSOC_FAIL: return "association_failed";
+    case WIFI_REASON_HANDSHAKE_TIMEOUT: return "handshake_timeout";
+    case WIFI_REASON_CONNECTION_FAIL: return "connection_failed";
+    case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY: return "incompatible_security";
+    case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD: return "authentication_mode_rejected";
+    case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD: return "signal_too_weak";
+    default: return "other";
+    }
 }

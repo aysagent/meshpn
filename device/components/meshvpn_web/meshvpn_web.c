@@ -420,6 +420,8 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddStringToObject(wifi, "ssid", ws.ssid);
     cJSON_AddStringToObject(wifi, "ip", ws.ip);
     cJSON_AddNumberToObject(wifi, "disconnect_reason", ws.disconnect_reason);
+    cJSON_AddStringToObject(wifi, "disconnect_reason_name",
+                            meshvpn_wifi_disconnect_reason_name(ws.disconnect_reason));
     meshvpn_wifi_diagnostics_json(wifi);
 
     cJSON *net = cJSON_AddObjectToObject(root, "net");
