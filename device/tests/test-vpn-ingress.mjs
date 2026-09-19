@@ -6,6 +6,14 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 const root=new URL('../',import.meta.url);
 const text=fs.readFileSync(new URL('components/meshvpn_vpn/meshvpn_vpn.c',root),'utf8');
+const injectStart=text.indexOf('static esp_err_t inject(');
+const injectEnd=text.indexOf('static bool receive_packet(',injectStart);
+if(injectStart<0||injectEnd<injectStart)throw Error('Production socket RX injector not found');
+const injectCode=text.slice(injectStart,injectEnd);
+if(!injectCode.includes('pbuf_alloc(PBUF_LINK, rx->len, PBUF_RAM)'))
+  throw Error('Socket RX must reserve Ethernet headroom for forwarded replies');
+if(injectCode.includes('pbuf_alloc(PBUF_RAW, rx->len, PBUF_RAM)'))
+  throw Error('PBUF_RAW cannot be forwarded through etharp_output');
 const code=text.slice(text.indexOf('int meshvpn_vpn_input('),text.indexOf('typedef struct { const uint8_t *p;',text.indexOf('int meshvpn_vpn_input(')));
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'meshpn-vpn-ingress-'));
 const source=`

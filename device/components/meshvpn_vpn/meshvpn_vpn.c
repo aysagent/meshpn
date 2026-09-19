@@ -290,7 +290,12 @@ static esp_err_t inject(void *arg)
 {
     rx_t *rx = arg;
     if (!session(rx->generation)) return ESP_FAIL;
-    struct pbuf *p = pbuf_alloc(PBUF_RAW, rx->len, PBUF_RAM);
+    /* The packet already contains its IPv4 header, but forwarding it to a
+     * USB/AP Ethernet netif still requires link-layer headroom. PBUF_RAW has
+     * none, so etharp_output() cannot prepend the Ethernet header and silently
+     * returns ERR_BUF after NAPT/route selection. PBUF_LINK keeps the payload
+     * at the IPv4 header while reserving exactly that outbound L2 headroom. */
+    struct pbuf *p = pbuf_alloc(PBUF_LINK, rx->len, PBUF_RAM);
     if (!p) { COUNT(rx_dropped); return ESP_OK; }
     pbuf_take(p, rx->p, rx->len);
     if (!meshvpn_vpn_clamp_mss(p->payload, p->tot_len) ||
