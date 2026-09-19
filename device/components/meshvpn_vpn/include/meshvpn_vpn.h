@@ -37,6 +37,7 @@ typedef struct {
     int64_t socket_last_failure_us;
     uint32_t socket_last_failure_generation;
     uint32_t socket_rx_timeouts, socket_tx_timeouts;
+    uint32_t socket_rx_batches, socket_rx_batch_max;
     uint32_t socket_tx_to_exit, socket_tx_source_tunnel, socket_tx_source_other;
     uint32_t socket_rx_from_exit, socket_rx_to_usb, socket_rx_to_ap;
     uint32_t lan_egress_usb, lan_egress_ap, lan_egress_repaired, lan_egress_invalid;

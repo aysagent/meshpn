@@ -4844,14 +4844,15 @@ function encodeCleanVpnFramedPkt(pkt) {
 
 /**
  * TCP-транспорт с опциональным батчем нескольких кадров в одном write (совместимо с StreamFramer).
- * Env: `CLEAN_VPN_FRAME_BATCH_BYTES` (=0 выкл), `CLEAN_VPN_FRAME_BATCH_FLUSH_MS`.
+ * Env: `CLEAN_VPN_FRAME_BATCH_BYTES` (default 8192; =0 disables),
+ * `CLEAN_VPN_FRAME_BATCH_FLUSH_MS` (default 1).
  *
  * @param {NodeJS.WritableStream & { write: (...args: any[]) => boolean }} endpoint
  * @param {(err: Error) => void} [onWriteError]
  * @returns {(pkt: Buffer) => void}
  */
 function createTcpFramedBatchedWriter(endpoint, onWriteError) {
-  const maxBatch = parseNonNegativeEnvInt('CLEAN_VPN_FRAME_BATCH_BYTES', 0);
+  const maxBatch = parseNonNegativeEnvInt('CLEAN_VPN_FRAME_BATCH_BYTES', 8192);
   const flushMs = parseNonNegativeEnvInt('CLEAN_VPN_FRAME_BATCH_FLUSH_MS', 1);
   if (maxBatch <= 0) {
     return (pkt) => {

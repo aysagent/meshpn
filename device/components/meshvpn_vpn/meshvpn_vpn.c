@@ -28,6 +28,17 @@ static struct netif s_vpn, *s_usb, *s_ap;
 static bool s_ready;
 static uint32_t s_probe_epoch;
 typedef struct { uint16_t len; int64_t time; uint8_t data[MESHVPN_VPN_MTU]; } packet_t;
+#define MESHVPN_VPN_SOCKET_RX_BYTES 4096
+#define MESHVPN_VPN_RX_BATCH_BYTES (MESHVPN_VPN_SOCKET_RX_BYTES + MESHVPN_VPN_MTU + 4)
+#define MESHVPN_VPN_RX_BATCH_FRAMES 192
+typedef struct {
+    uint32_t generation;
+    size_t used;
+    unsigned count;
+    uint16_t offsets[MESHVPN_VPN_RX_BATCH_FRAMES];
+    uint16_t lengths[MESHVPN_VPN_RX_BATCH_FRAMES];
+    uint8_t data[MESHVPN_VPN_RX_BATCH_BYTES];
+} rx_batch_t;
 static packet_t *s_queue;
 static unsigned s_head, s_count;
 #define LOCK() portENTER_CRITICAL(&s_lock)
@@ -285,34 +296,55 @@ int meshvpn_vpn_input(struct pbuf *p, struct netif *inp)
 drop:
     COUNT(rx_dropped); pbuf_free(p); return 1;
 }
-typedef struct { const uint8_t *p; size_t len; uint32_t generation; } rx_t;
-static esp_err_t inject(void *arg)
+static esp_err_t inject_packet(const uint8_t *data, size_t len, uint32_t generation)
 {
-    rx_t *rx = arg;
-    if (!session(rx->generation)) return ESP_FAIL;
+    if (!session(generation)) return ESP_FAIL;
     /* The packet already contains its IPv4 header, but forwarding it to a
      * USB/AP Ethernet netif still requires link-layer headroom. PBUF_RAW has
      * none, so etharp_output() cannot prepend the Ethernet header and silently
      * returns ERR_BUF after NAPT/route selection. PBUF_LINK keeps the payload
      * at the IPv4 header while reserving exactly that outbound L2 headroom. */
-    struct pbuf *p = pbuf_alloc(PBUF_LINK, rx->len, PBUF_RAM);
+    struct pbuf *p = pbuf_alloc(PBUF_LINK, len, PBUF_RAM);
     if (!p) { COUNT(rx_dropped); return ESP_OK; }
-    pbuf_take(p, rx->p, rx->len);
+    pbuf_take(p, data, len);
     if (!meshvpn_vpn_clamp_mss(p->payload, p->tot_len) ||
         !meshvpn_vpn_repair_checksums(p->payload, p->tot_len)) {
         pbuf_free(p); COUNT(rx_invalid); return ESP_FAIL;
     }
     LOCK();
     s.socket_rx_from_exit++;
-    tuple(rx->p, rx->len, &s.socket_last_rx_src, &s.socket_last_rx_dst,
+    tuple(data, len, &s.socket_last_rx_src, &s.socket_last_rx_dst,
           &s.socket_last_rx_proto, &s.socket_last_rx_sport, &s.socket_last_rx_dport);
     s.socket_last_rx_us = esp_timer_get_time();
     UNLOCK();
     ip4_input(p, &s_vpn);
-    LOCK(); s.packets_in++; s.bytes_in += rx->len; UNLOCK(); return ESP_OK;
+    LOCK(); s.packets_in++; s.bytes_in += len; UNLOCK(); return ESP_OK;
+}
+static esp_err_t inject_batch(void *arg)
+{
+    rx_batch_t *batch = arg;
+    if (!session(batch->generation)) return ESP_FAIL;
+    LOCK();
+    s.socket_rx_batches++;
+    if (batch->count > s.socket_rx_batch_max) s.socket_rx_batch_max = batch->count;
+    UNLOCK();
+    for (unsigned i = 0; i < batch->count; i++) {
+        if (inject_packet(batch->data + batch->offsets[i], batch->lengths[i], batch->generation) != ESP_OK)
+            return ESP_FAIL;
+    }
+    return ESP_OK;
 }
 static bool receive_packet(void *arg, const uint8_t *p, size_t len)
-{ rx_t rx = { p, len, *(uint32_t *)arg }; return esp_netif_tcpip_exec(inject, &rx) == ESP_OK; }
+{
+    rx_batch_t *batch = arg;
+    if (batch->count == MESHVPN_VPN_RX_BATCH_FRAMES || len > UINT16_MAX ||
+        batch->used + len > sizeof(batch->data)) return false;
+    batch->offsets[batch->count] = batch->used;
+    batch->lengths[batch->count++] = len;
+    memcpy(batch->data + batch->used, p, len);
+    batch->used += len;
+    return true;
+}
 int meshvpn_vpn_dns_socket(int fd, uint32_t *resolver)
 {
     if (!tunnel_policy()) return 0;
@@ -447,8 +479,12 @@ static void __attribute__((unused)) worker(void *arg)
     (void)arg;
     meshvpn_vpn_rx_stream_t *d = heap_caps_calloc(1, sizeof(*d), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     meshvpn_vpn_tx_batch_t *tx = heap_caps_calloc(1, sizeof(*tx), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    uint8_t *rx = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!d || !tx || !rx) { free(d); free(tx); free(rx); state(s.generation, "no_memory", false, ENOMEM); vTaskDelete(NULL); return; }
+    uint8_t *rx = heap_caps_malloc(MESHVPN_VPN_SOCKET_RX_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    rx_batch_t *rx_batch = heap_caps_calloc(1, sizeof(*rx_batch), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!d || !tx || !rx || !rx_batch) {
+        free(d); free(tx); free(rx); free(rx_batch);
+        state(s.generation, "no_memory", false, ENOMEM); vTaskDelete(NULL); return;
+    }
     unsigned backoff = 1;
     for (;;) {
         meshvpn_vpn_status_t cfg; meshvpn_vpn_get_status(&cfg);
@@ -483,15 +519,20 @@ static void __attribute__((unused)) worker(void *arg)
                 error = errno; failure_reason = "select"; break;
             }
             if (FD_ISSET(fd, &rd)) {
-                int n = recv(fd, rx, 4096, 0);
+                int n = recv(fd, rx, MESHVPN_VPN_SOCKET_RX_BYTES, 0);
                 if (n == 0) { error = ECONNRESET; failure_reason = "remote_closed"; break; }
                 if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
                     error = errno; failure_reason = "recv"; break;
                 }
                 if (n > 0) {
-                    if (!meshvpn_vpn_rx_feed(d, rx, n, esp_timer_get_time(), receive_packet, &cfg.generation)) {
+                    rx_batch->generation = cfg.generation;
+                    rx_batch->used = rx_batch->count = 0;
+                    if (!meshvpn_vpn_rx_feed(d, rx, n, esp_timer_get_time(), receive_packet, rx_batch)) {
                         if (session(cfg.generation)) COUNT(rx_invalid);
                         error = EPROTO; failure_reason = "invalid_frame"; break;
+                    }
+                    if (rx_batch->count && esp_netif_tcpip_exec(inject_batch, rx_batch) != ESP_OK) {
+                        error = EIO; failure_reason = "inject"; break;
                     }
                 }
             }
