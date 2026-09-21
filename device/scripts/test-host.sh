@@ -20,6 +20,7 @@ node device/tests/test-vpn-storage.mjs
 node device/tests/test-vpn-probe.mjs
 node device/tests/test-vpn-ingress.mjs
 node device/tests/test-vpn-queue.mjs
+node device/tests/test-vpn-udp-batch.mjs
 wg_src=device/managed_components/esphome__wireguard/src
 if [[ -f "$wg_src/crypto/refc/chacha20.c" ]]; then
   for optimization in Og O2; do

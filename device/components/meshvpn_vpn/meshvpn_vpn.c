@@ -30,8 +30,10 @@ static bool s_ready;
 static uint32_t s_probe_epoch;
 typedef struct { uint16_t len; int64_t time; uint8_t data[MESHVPN_VPN_MTU]; } packet_t;
 #define MESHVPN_VPN_SOCKET_RX_BYTES 8192
-#define MESHVPN_VPN_RX_BATCH_BYTES (MESHVPN_VPN_SOCKET_RX_BYTES + MESHVPN_VPN_MTU + 4)
+#define MESHVPN_VPN_UDP_RX_BATCH_FRAMES 16
+#define MESHVPN_VPN_RX_BATCH_BYTES (MESHVPN_VPN_UDP_RX_BATCH_FRAMES * MESHVPN_VPN_MTU)
 #define MESHVPN_VPN_RX_BATCH_FRAMES 320
+#define MESHVPN_VPN_UDP_RX_BATCH_US 2000
 #define MESHVPN_VPN_RX_SELECT_WAIT_US 10000
 #define MESHVPN_VPN_WORKER_PRIORITY 6
 typedef struct {
@@ -369,6 +371,24 @@ static bool receive_packet(void *arg, const uint8_t *p, size_t len)
     batch->used += len;
     return true;
 }
+/* Drain only already-queued UDP datagrams. One bounded callback then injects
+ * them into lwIP; this avoids a cross-task round trip for every IP packet.
+ * Leave the socket readable when the frame/time budget is exhausted. */
+static int receive_udp_batch(int fd, uint8_t *rx, rx_batch_t *batch)
+{
+    int64_t started = esp_timer_get_time();
+    for (unsigned i = 0; i < MESHVPN_VPN_UDP_RX_BATCH_FRAMES; i++) {
+        int n = recv(fd, rx, MESHVPN_VPN_MTU + 1, 0);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+            return errno;
+        }
+        if (!n || !receive_packet(batch, rx, n)) COUNT(rx_invalid);
+        if (esp_timer_get_time() - started >= MESHVPN_VPN_UDP_RX_BATCH_US) break;
+    }
+    return 0;
+}
 int meshvpn_vpn_dns_socket(int fd, uint32_t *resolver)
 {
     if (!tunnel_policy()) return 0;
@@ -518,14 +538,15 @@ static bool load_udp_packet(uint8_t *out, uint16_t *length, uint32_t generation)
         packet_t *p = &s_queue[s_head];
         bool expired = esp_timer_get_time() - p->time > 1000000;
         if (expired) { s.queue_expired++; s.tx_dropped++; }
-        else { *length = p->len; memcpy(out, p->data, p->len); }
+        else {
+            *length = p->len; memcpy(out, p->data, p->len);
+            s.socket_tx_batches++;
+            if (s.socket_tx_batch_max < 1) s.socket_tx_batch_max = 1;
+        }
         s_head = (s_head + 1) % MESHVPN_VPN_SLOTS;
         s.queue_depth = --s_count;
         UNLOCK();
-        if (!expired) {
-            LOCK(); s.socket_tx_batches++; if (s.socket_tx_batch_max < 1) s.socket_tx_batch_max = 1; UNLOCK();
-            return true;
-        }
+        if (!expired) return true;
     }
     return false;
 }
@@ -570,28 +591,34 @@ static void socket_tx_worker(void *arg)
                 ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
                 continue;
             }
-            fd_set wr; FD_ZERO(&wr); FD_SET(fd, &wr);
-            struct timeval tv = { .tv_usec = 100000 };
-            int ready = select(fd + 1, NULL, &wr, NULL, &tv);
-            if (ready < 0) {
-                if (errno == EINTR) continue;
-                error = errno; failure_reason = "tx_select"; break;
+            int ready = 1;
+            if (!datagram) {
+                fd_set wr; FD_ZERO(&wr); FD_SET(fd, &wr);
+                struct timeval tv = { .tv_usec = 100000 };
+                ready = select(fd + 1, NULL, &wr, NULL, &tv);
+                if (ready < 0) {
+                    if (errno == EINTR) continue;
+                    error = errno; failure_reason = "tx_select"; break;
+                }
             }
-            if (ready > 0 && FD_ISSET(fd, &wr)) {
+            if (ready > 0) {
                 const uint8_t *data = datagram ? tx->data : tx->data + tx->used;
                 size_t length = datagram ? udp_length : tx->length - tx->used;
                 int n = send(fd, data, length, 0);
-                if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
-                    error = errno; failure_reason = "send"; break;
+                int send_error = n < 0 ? errno : 0;
+                if (n < 0 && send_error != EAGAIN && send_error != EWOULDBLOCK && send_error != EINTR) {
+                    error = send_error; failure_reason = "send"; break;
                 }
                 LOCK();
                 s.socket_send_calls++;
                 if (n > 0) s.socket_send_bytes += n;
-                else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) s.socket_send_would_block++;
+                else if (send_error == EAGAIN || send_error == EWOULDBLOCK) s.socket_send_would_block++;
+                if (datagram && n > 0 && (size_t)n == length) {
+                    s.packets_out++; s.bytes_out += udp_length;
+                }
                 UNLOCK();
                 if (n > 0) {
                     if (datagram && (size_t)n == length) {
-                        LOCK(); s.packets_out++; s.bytes_out += udp_length; UNLOCK();
                         udp_loaded = false;
                     } else if (datagram) {
                         error = EIO; failure_reason = "tx_accounting"; break;
@@ -602,6 +629,12 @@ static void socket_tx_worker(void *arg)
                         }
                         LOCK(); s.packets_out += packets; s.bytes_out += bytes; UNLOCK();
                         if (packets) tx_since = esp_timer_get_time();
+                    }
+                } else if (datagram && (send_error == EAGAIN || send_error == EWOULDBLOCK)) {
+                    fd_set wr; FD_ZERO(&wr); FD_SET(fd, &wr);
+                    struct timeval tv = { .tv_usec = 100000 };
+                    if (select(fd + 1, NULL, &wr, NULL, &tv) < 0 && errno != EINTR) {
+                        error = errno; failure_reason = "tx_select"; break;
                     }
                 }
             }
@@ -669,25 +702,33 @@ static void __attribute__((unused)) worker(void *arg)
                 error = errno; failure_reason = "rx_select"; break;
             }
             if (FD_ISSET(fd, &rd)) {
-                int n = recv(fd, rx, MESHVPN_VPN_SOCKET_RX_BYTES, 0);
-                if (n == 0 && !datagram) { error = ECONNRESET; failure_reason = "remote_closed"; break; }
-                if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
-                    error = errno; failure_reason = "recv"; break;
-                }
-                if (n > 0) {
-                    rx_batch->generation = cfg.generation;
-                    rx_batch->used = rx_batch->count = 0;
-                    bool decoded = datagram ? receive_packet(rx_batch, rx, n) :
-                        meshvpn_vpn_rx_feed(d, rx, n, esp_timer_get_time(), receive_packet, rx_batch);
-                    if (!decoded) {
+                rx_batch->generation = cfg.generation;
+                rx_batch->used = rx_batch->count = 0;
+                if (datagram) {
+                    error = receive_udp_batch(fd, rx, rx_batch);
+                    if (error) failure_reason = "recv";
+                } else {
+                    int n = recv(fd, rx, MESHVPN_VPN_SOCKET_RX_BYTES, 0);
+                    if (n == 0) { error = ECONNRESET; failure_reason = "remote_closed"; break; }
+                    if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+                        error = errno; failure_reason = "recv"; break;
+                    }
+                    if (n > 0 && !meshvpn_vpn_rx_feed(d, rx, n, esp_timer_get_time(), receive_packet, rx_batch)) {
                         if (session(cfg.generation)) COUNT(rx_invalid);
-                        if (!datagram) { error = EPROTO; failure_reason = "invalid_frame"; break; }
-                        continue;
-                    }
-                    if (rx_batch->count && esp_netif_tcpip_exec(inject_batch, rx_batch) != ESP_OK) {
-                        error = EIO; failure_reason = "inject"; break;
+                        error = EPROTO; failure_reason = "invalid_frame"; break;
                     }
                 }
+                if (rx_batch->count) {
+                    int64_t started = esp_timer_get_time();
+                    esp_err_t result = esp_netif_tcpip_exec(inject_batch, rx_batch);
+                    uint32_t elapsed = (uint32_t)(esp_timer_get_time() - started);
+                    LOCK();
+                    s.socket_rx_inject_exec_us += elapsed;
+                    if (elapsed > s.socket_rx_inject_exec_max_us) s.socket_rx_inject_exec_max_us = elapsed;
+                    UNLOCK();
+                    if (result != ESP_OK) { error = EIO; failure_reason = "inject"; break; }
+                }
+                if (error) break;
             }
             if (!session(cfg.generation)) break;
             int64_t now = esp_timer_get_time();

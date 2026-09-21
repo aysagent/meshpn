@@ -83,7 +83,11 @@ kill-switch transitions still require the hardware checks below.
 The TX queue holds 256 packets in PSRAM, drops entries older than 1 second, and
 cannot grow with traffic. Dedicated RX and TX tasks share the full-duplex outer
 socket, so lwIP injection does not block queue draining. TCP sends up to 16 queued
-frames per batch; UDP sends one packet per datagram. Partial TCP frame/write
+frames per batch; UDP sends one packet per datagram without a writable `select`
+before each send. UDP RX drains up to 16 available datagrams or 2 ms before one
+lwIP injection callback. Diagnostics `socket.rx_inject_exec_us` is the cumulative
+callback round-trip time (including scheduler wait); `rx_inject_exec_max_us` is
+the lifetime maximum, not a per-test sample. Partial TCP frame/write
 deadlines are 5 seconds. TCP connect timeout is 5 seconds, reconnect backoff is
 1–16 seconds and TCP keepalive detects idle failures. For socket, `connected`
 means **outer TCP established**. For UDP it means the local connected UDP socket

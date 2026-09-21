@@ -38,6 +38,8 @@ typedef struct {
     uint32_t socket_last_failure_generation;
     uint32_t socket_rx_timeouts, socket_tx_timeouts;
     uint32_t socket_rx_batches, socket_rx_batch_max;
+    uint64_t socket_rx_inject_exec_us;
+    uint32_t socket_rx_inject_exec_max_us;
     uint32_t socket_tx_batches, socket_tx_batch_max;
     uint32_t socket_send_calls, socket_send_would_block;
     uint64_t socket_send_bytes;
