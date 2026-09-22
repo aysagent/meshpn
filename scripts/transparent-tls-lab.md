@@ -9,6 +9,9 @@
 curl нужен только для необязательной ручной проверки.
 Отдельные 0-RTT тесты требуют Linux, OpenSSL 3.x CLI и `stdbuf` из GNU coreutils;
 обычный стенд и Node-наборы этих дополнительных инструментов не требуют.
+Для отдельного настоящего ECH-набора нужен Go 1.24+ (проверено с Go 1.26.8).
+Он собирает временную fixture только из стандартной библиотеки, без npm/Go-модулей
+и без изменения production BoringSSL-helper.
 
 ## Быстрый запуск
 
@@ -48,6 +51,18 @@ npm run test:transparent-tls-early-data
 
 Отсутствующие OpenSSL/`stdbuf` или несовместимый CLI приводят к ошибке теста,
 не к молчаливому skip. Проверено на Linux: Node 24.13.0, OpenSSL 3.0.13.
+
+Настоящий ECH с Go TLS endpoints:
+
+```bash
+npm run test:transparent-tls-ech
+# Если go не в PATH:
+MESHPN_ECH_GO=/path/to/go npm run test:transparent-tls-ech
+```
+
+Go toolchain тестом не скачивается. Сборка использует `GOTOOLCHAIN=local`,
+`GOPROXY=off`, `GOSUMDB=off`, `GOWORK=off`, выключенный cgo и приватный временный
+build cache. Отсутствие подходящего Go или ошибка сборки — fail, не skip.
 
 ## Ручной curl
 
@@ -389,6 +404,95 @@ session state: каталог создаётся с правами 0700, фай�
 Не покрыты максимальные объёмы early data, все варианты server rejection,
 распределённый replay, HTTP-семантика ранних запросов и браузерные TLS-стеки.
 
+## Настоящий ECH: криптография и границы маршрутизации
+
+[ECH-набор](test-transparent-tls-ech.mjs) использует отдельную
+[Go fixture](fixtures/transparent-ech/main.go) с настоящим `crypto/tls`, а не
+синтетическое расширение GREASE. Сертификаты, CA, ECH private keys и конфигурации
+создаются на запуск и остаются в памяти процесса. TLS завершается только в
+тестовых endpoints; Node relay этих ключей не получает.
+
+В тесте inner SNI — `hidden.ech.test`, outer SNI — `public.ech.test`, а участок
+client→exit несёт enc-SNI с суффиксом `relay.test`. Exit восстанавливает outer SNI;
+origin tap направляет его в фиксированный loopback ECH endpoint. Только там
+расшифровывается inner hello и проверяется скрытое имя. Эти тестовые имена не
+разрешаются через публичный DNS.
+
+Принятие ECH подтверждается `ECHAccepted` **на клиенте и сервере**, проверкой
+сертификата и точным SHA-256/размером принятого HTTP payload. Совпадение байтов
+расширения или одного JA3 само по себе подтверждением не считается.
+
+Девять Go end-to-end проверок покрывают:
+
+- HTTP/1.1 и HTTP/2 с принятым ECH, затем отдельное TCP-соединение с настоящим
+  resumption, подтверждённым обоими endpoints.
+- HRR для обоих HTTP-протоколов; каждый исходный handshake record CH1/CH2 разбит
+  на однобайтовые records. ECH payload не меняется на relay, CH2 содержит новый
+  ciphertext и пустой `enc`; сохраняются прежний route token и один origin connect.
+- Устаревший ECHConfig: отказ без HTTP, затем **явный** новый запрос клиента
+  с аутентифицированными retry configs и успешным ECH.
+- Origin без ECH, неверный сертификат inner имени, неверный сертификат outer
+  имени при отказе от ECH и недоверенный CA. Нет HTTP и автоматического
+  переподключения с отключённым ECH в проверяемом клиенте.
+
+CH1/CH2 сравниваются во всех трёх точках; восстановленный hello и TLS records
+идентичны исходным. В plaintext captures скрытого имени нет. Здесь JA3/JA4 —
+отпечатки **outer** ClientHello, не скрытого inner и не всего сетевого профиля.
+Дополнительно две быстрые runtime-регрессии проверяют отказ client/exit до
+исходящего connect, если есть opaque ECH extension, но отсутствует outer SNI;
+это структурные отрицательные тесты, не успешные ECH handshakes.
+
+Политика текущего relay (без нового wire-format или флага):
+
+- ECH/GREASE ECH остаётся opaque: расширение не удаляется и не подменяется,
+  наличие `0xfe0d` не используется как признак принятого/настоящего ECH.
+- Маршрут выбирается по **outer SNI + порту**. Inner имя не угадывается;
+  отсутствие outer SNI закрывает соединение с `TLS_RELAY_HELLO`, без raw fallback.
+- HRR использует прежний маршрут и сохраняет существующие проверки outer
+  SNI/random/session ID. Варианты второго outer hello, которые этим условиям не
+  соответствуют, отклоняются guard; поддержка всех разрешённых ECH-вариантов и
+  TLS-стеков не заявляется.
+- При отказе TLS endpoint relay передаёт alert/закрытие; сам не отключает ECH,
+  не меняет сертификатную проверку, не переподключается по inner имени и не
+  применяет retry configs. Решение о retry принимает приложение.
+
+Почему возможно восстановление ECH: outer hello участвует в аутентифицируемых
+данных HPKE, поэтому недостаточно сохранить только ciphertext. До ECH endpoint
+нужно восстановить весь исходный outer hello. См.
+[RFC 9849 §5.2](https://www.rfc-editor.org/rfc/rfc9849.html#section-5.2).
+При отклонении ECH сертификат public name не подтверждает inner origin: такой
+handshake не должен отдаваться приложению как успешное подключение к inner.
+В стенде это проверяет Go TLS, см.
+[RFC 9849 §6.1.6–6.1.7](https://www.rfc-editor.org/rfc/rfc9849.html#section-6.1.6)
+и [Go TLS Config](https://pkg.go.dev/crypto/tls#Config).
+
+**Ограничение production routing остаётся:** enc-SNI v2 хранит hostname и порт,
+но не исходный destination IP. DNS outer public name на exit не обязан указывать
+на тот же ECH endpoint, который приложение выбрало по HTTPS/SVCB/DNS. Успешный
+loopback-тест с pinning это не решает. Пакет не вводит автоматический обход ECH,
+передачу исходного IP или новый протокол маршрута; для общего решения потребуется
+отдельный дизайн с destination policy/SSRF-защитой, IPv4/IPv6 и DNS-семантикой.
+
+Саму обработку ECH менять не потребовалось, но многократные прогоны обнаружили
+отдельную runtime-ошибку TCP half-close: стандартный `net.Socket` с
+`allowHalfOpen=false` после FIN закрывал и обратное направление, теряя поздние
+байты. Три регрессии с настоящими TCP-сокетами проверяют FIN сначала от client,
+FIN сначала от origin и зависшую после FIN сторону. `RelaySession` теперь включает
+`allowHalfOpen` у обоих принадлежащих ему сокетов, передаёт каждый EOF независимо
+и сохраняет прежний абсолютный close deadline (`writeTimeoutMs`). Origin tap и
+фрагментирующий proxy стенда тоже сохраняют half-close. Обновить нужно client и
+exit; wire-format не меняется.
+
+Go-клиент при закрытии ограниченно дочитывает TCP после TLS close_notify, чтобы
+непрочитанные завершающие records не создавали тестовый RST после уже проверенного HTTP-ответа.
+Вывод fixture — только ограниченные JSON-результаты (до 64 КиБ на процесс), без
+секретов/сырого TLS debug; дочерние процессы и временные binary/cache удаляются
+cleanup. После SIGKILL самого runner cleanup не гарантирован.
+
+Весь набор: **142 теста** (прежние 128, 9 настоящих ECH и 5 runtime-проверок).
+Проверено на Linux, Node 24.13.0, Go 1.26.8. Не покрыты ECH+0-RTT, DNS HTTPS/SVCB,
+публичные CDN/ECH endpoints, все HPKE suites, браузеры и независимый pcap-анализ.
+
 ## Границы текущего результата
 
 Это первый integration baseline, не законченный аудит VPN или DPI-устойчивости.
@@ -399,9 +503,10 @@ session state: каталог создаётся с правами 0700, фай�
 - JA3/JA4 вычисляются локальными библиотеками проекта, а не независимым внешним анализатором.
 - Автоматический клиент — Node TLS, не Chrome/Firefox. Ручной curl проверяется отдельно;
   браузерный CONNECT-прокси пока не реализован.
-- Настоящие ECH, replay-защита relay и длительный slow-peer soak пока не
-  покрыты. 0-RTT проверен только в описанной выше OpenSSL-матрице, не для всех
-  приложений/протоколов. Для HRR покрыт начальный TLS 1.3 handshake; TLS 1.2
+- Replay-защита relay, общий ECH routing и длительный slow-peer soak пока не
+  покрыты. Настоящий ECH проверен в Go-матрице с pinned loopback origin, 0-RTT —
+  отдельно в OpenSSL-матрице, без проверки их сочетания. Для HRR покрыт начальный
+  TLS 1.3 handshake; TLS 1.2
   renegotiation и произвольные последующие handshake не добавлены.
 - TUN, NAT, LAN, kill-switch, DNS/IPv6-утечки, внешний сетевой путь и реальная производительность
   проверяются следующим отдельным слоем. Дополнительный origin tap тоже влияет на измерения скорости.
@@ -409,4 +514,4 @@ session state: каталог создаётся с правами 0700, фай�
 Основные файлы: [CLI](transparent-tls-lab.mjs), [обвязка](lib/transparent-tls-lab.mjs),
 [интеграционные тесты](test-transparent-tls-integration.mjs),
 [resumption-тесты](test-transparent-tls-resumption.mjs),
-[0-RTT тесты](test-transparent-tls-early-data.mjs).
+[0-RTT тесты](test-transparent-tls-early-data.mjs), [ECH-тесты](test-transparent-tls-ech.mjs).

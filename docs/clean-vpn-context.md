@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–18; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–19; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -361,3 +361,19 @@ Lab-only `externalOriginPort` подключает origin tap к фиксиро�
 На Linux с Node 24.13.0 / OpenSSL 3.0.13: **128 pass, 0 fail, 0 skipped** — прежние 120, 3 guard-регрессии и 5 OpenSSL/lab-тестов. Детальные границы — [в документации стенда](../scripts/transparent-tls-lab.md#настоящий-0-rtt-и-пересечение-ранних-данных-с-hrr). Origin anti-replay не означает защиту enc-SNI metadata или exactly-once для нескольких серверов. Максимальные объёмы early data, HTTP early requests и все причины server rejection не проверены.
 
 Следующий этап — совместимость настоящего ECH с enc-SNI и явная политика неподдерживаемых случаев; затем реальные Chrome/Firefox через локальный CONNECT-стенд и независимые captures. Mesh/TUN/BoringSSL и динамическое клонирование профиля этим пакетом не затронуты.
+
+## 19. Следующий пакет: настоящий ECH и явные границы поддержки
+
+[Go crypto/tls fixture](../scripts/fixtures/transparent-ech/main.go) и [Node orchestration](../scripts/test-transparent-tls-ech.mjs) проверяют настоящий принятый ECH, не GREASE. Inner `hidden.ech.test` и outer `public.ech.test` различаются; ECHAccepted подтверждён обоими TLS endpoints, сертификат проверен для inner, HTTP payload проверен по длине/SHA-256. Client/exit не получают ECH private keys; имена теста не резолвятся публичным DNS.
+
+Покрыты HTTP/1.1/2, отдельное resumed-соединение, HRR с однобайтовыми records для обоих outer ClientHello, устаревший ECHConfig с явным новым запросом по аутентифицированным retry configs, origin без ECH и ошибки CA/inner certificate/outer certificate при rejection. Отклонённый handshake не отправляет HTTP и не запускает автоматический non-ECH reconnect в тестовом клиенте. Проверяются ciphertext, восстановленные records/JA3/JA4, скрытое имя не встречается в plaintext captures. Отпечатки относятся к outer hello.
+
+Две структурные runtime-регрессии подтверждают отказ до connect при ECH extension без outer SNI. Текущая политика: opaque passthrough ECH/GREASE с полным восстановлением outer hello; выбор маршрута по outer SNI+port; без strip/disable ECH, угадывания inner, raw fallback или автоматического применения retry configs. HRR сохраняет прежнюю outer identity-проверку; произвольные RFC-допустимые варианты второго outer hello не объявляются поддержанными.
+
+Саму обработку ECH менять не потребовалось. **Общий ECH routing не решён:** v2 не передаёт исходный destination IP, а DNS outer имени на exit может привести не к тому endpoint, который выбрал клиент. Loopback origin pinning доказывает криптографическую совместимость этого пути, но не работу любых ECH/CDN/DNS deployments. Новое routing metadata потребовало бы отдельного решения по destination policy/SSRF, DNS и IPv6, поэтому не добавлялось скрыто в этот пакет.
+
+При повторных прогонах найден отдельный runtime-дефект half-close: `net.Socket` по умолчанию закрывал writable-направление при FIN, теряя поздний ответ или запрос. Воспроизведено настоящими TCP-сокетами в обе стороны, а не только управляемыми Duplex. `RelaySession` теперь включает `allowHalfOpen` на обоих сокетах; EOF передаётся независимо, прежний абсолютный close deadline сохраняется. Третья реальная TCP-регрессия проверяет его срабатывание при зависшей стороне. Lab origin tap и фрагментирующий proxy тоже исправлены. Обновить client и exit; протокол не меняется.
+
+Проверено на Linux / Node 24.13.0 / Go 1.26.8: **142 pass, 0 fail, 0 skipped** — прежние 128 и 14 новых. Для ECH-набора нужен Go 1.24+ (`MESHPN_ECH_GO` или PATH); сборка standard-library fixture проходит offline с временными binary/cache, никаких скачиваний при запуске тестов. Секреты эфемерны, stdout — ограниченные JSON-результаты, cleanup закрывает процессы и удаляет build artifacts. Подробные ограничения и запуск — [в документации стенда](../scripts/transparent-tls-lab.md#настоящий-ech-криптография-и-границы-маршрутизации).
+
+Следом — локальный CONNECT-стенд без TUN для настоящих Chrome/Firefox и независимых captures. ECH+0-RTT, общий ECH routing, replay/destination policy и production-аудит остаются отдельными задачами. Mesh/TUN/динамическое BoringSSL-клонирование этим пакетом не затронуты.

@@ -5,8 +5,10 @@
  * переписывается только строка hostname в SNI, байты ECH-расширения не трогаются, а exit
  * восстанавливает исходный ClientHello байт-в-байт (SNI назад + ECH как был) и проксирует
  * сырой TCP — TLS терминируется между браузером и origin. Для поддержанного record layout
- * восстанавливаются и ClientHello, и исходные TLS records. GREASE ECH покрыт тестами;
- * сохранение байтов расширения НЕ доказывает работоспособность настоящего ECH/его routing.
+ * восстанавливаются и ClientHello, и исходные TLS records. GREASE ECH покрыт unit-тестами;
+ * настоящий ECH — отдельным Go-стендом для маршрута outer SNI → правильный ECH endpoint.
+ * Само сохранение байтов НЕ доказывает корректность routing для произвольного ECH origin:
+ * exit не знает inner SNI и не сохраняет исходный destination IP (см. transparent-tls-lab.md).
  */
 
 import {

@@ -54,11 +54,15 @@ const PSK = Buffer.alloc(32, 42);
 const PUBLIC = 'relay.example';
 const HOST = 'origin.example';
 const u16 = (n) => { const b = Buffer.alloc(2); b.writeUInt16BE(n); return b; };
-function hello(hostname, tls13 = false) {
+function hello(hostname, tls13 = false, { noSni = false, ech = false } = {}) {
   const host = Buffer.from(hostname);
   const sni = Buffer.concat([u16(host.length + 3), Buffer.from([0]), u16(host.length), host]);
-  const ext = Buffer.concat([u16(0), u16(sni.length), sni,
-    ...(tls13 ? [Buffer.from([0, 43, 0, 3, 2, 3, 4])] : [])]);
+  const ext = Buffer.concat([
+    ...(noSni ? [] : [u16(0), u16(sni.length), sni]),
+    ...(tls13 ? [Buffer.from([0, 43, 0, 3, 2, 3, 4])] : []),
+    // Opaque synthetic ECH bytes for the routing-policy test, NOT an ECH handshake.
+    ...(ech ? [Buffer.from([0xfe, 0x0d, 0, 1, 0])] : []),
+  ]);
   const body = Buffer.concat([
     Buffer.from([3, 3]), Buffer.alloc(32, 0xab), Buffer.from([0, 0, 2, 0x13, 1, 1, 0]), u16(ext.length), ext,
   ]);
@@ -104,6 +108,15 @@ function endpoint(t, role, limits = {}, { blocked = false, connectorError, tls13
 }
 
 for (const role of ['client', 'exit']) {
+  test(`${role}: opaque ECH without outer SNI is rejected before any outgoing connection`, async (t) => {
+    const e = endpoint(t, role);
+    e.inbound.push(hello(HOST, true, { noSni: true, ech: true }));
+    const { error } = await within(e.ready);
+    assert.equal(error.code, 'TLS_RELAY_HELLO');
+    assert.equal(e.calls, 0, 'no fallback to original IP, inner-name guessing or raw transport');
+    assert.ok(e.inbound.destroyed);
+  });
+
   test(`${role}: coalesced TLS 1.3 ClientHello cannot bypass retry inspection`, async (t) => {
     const e = endpoint(t, role, {}, { tls13: true });
     const input = Buffer.concat([e.hello, e.hello.subarray(5)]);
@@ -327,6 +340,65 @@ for (const reverse of [false, true]) {
       assert.equal(source.listenerCount('data'), 0);
       assert.ok(a.destroyed && b.destroyed);
     } finally { a.destroy(); b.destroy(); }
+  });
+}
+
+for (const firstFin of ['client', 'origin', 'client-stall']) {
+  test(`real TCP ${firstFin} half-close preserves reverse data or expires its close deadline`, async (t) => {
+    const sockets = new Set(), servers = [], received = [], replies = [];
+    const track = (socket) => {
+      sockets.add(socket);
+      socket.on('error', () => {});
+      socket.once('close', () => sockets.delete(socket));
+      return socket;
+    };
+    t.after(async () => {
+      for (const socket of sockets) socket.destroy();
+      await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
+    });
+    let originEnded;
+    const originDone = new Promise((resolve) => { originEnded = resolve; });
+    const origin = net.createServer({ allowHalfOpen: true }, (socket) => {
+      track(socket);
+      socket.on('data', (chunk) => received.push(chunk));
+      socket.on('end', () => {
+        originEnded();
+        if (firstFin === 'client') setImmediate(() => socket.end('late reply'));
+      });
+      if (firstFin === 'origin') socket.end('late reply');
+    });
+    servers.push(origin);
+    origin.listen(0, '127.0.0.1');
+    await once(origin, 'listening');
+    let resolveReady;
+    const ready = new Promise((resolve) => { resolveReady = resolve; });
+    let session;
+    // Intentionally use Node's default allowHalfOpen=false on BOTH relay sockets.
+    const relay = net.createServer((socket) => {
+      track(socket);
+      session = new RelaySession(socket, { limits: { writeTimeoutMs: firstFin === 'client-stall' ? 60 : 500 } });
+      (async () => {
+        const upstream = await session.connect(() => track(net.connect(origin.address().port, '127.0.0.1')));
+        await session.bridge(socket, upstream, Buffer.alloc(0));
+        resolveReady();
+      })().catch((error) => session.fail(error));
+    });
+    servers.push(relay);
+    relay.listen(0, '127.0.0.1');
+    await once(relay, 'listening');
+    const app = track(net.connect({ host: '127.0.0.1', port: relay.address().port, allowHalfOpen: true }));
+    app.on('data', (chunk) => replies.push(chunk));
+    const appDone = once(app, 'end');
+    app.on('end', () => { if (firstFin === 'origin') setImmediate(() => app.end('late request')); });
+    await within(ready);
+    if (firstFin !== 'origin') app.end('late request');
+    await within(Promise.all([appDone, originDone]));
+    assert.equal(Buffer.concat(received).toString(), 'late request');
+    assert.equal(Buffer.concat(replies).toString(), firstFin === 'client-stall' ? '' : 'late reply');
+    const error = await within(session.closed);
+    if (firstFin === 'client-stall') assert.equal(error.code, 'TLS_RELAY_CLOSE_TIMEOUT');
+    else assert.equal(error, null);
+    assert.equal(session.timers.size, 0);
   });
 }
 

@@ -53,6 +53,11 @@ export class RelaySession {
       this.fail(relayError('TLS_RELAY_CLOSED'));
       return socket;
     }
+    // Own the two FIN directions independently. Node net.Socket defaults to
+    // allowHalfOpen=false and otherwise ends/rejects reverse writes after FIN,
+    // before the other peer's final TLS records or application bytes arrive.
+    // pump() propagates each EOF; onEnd's absolute close timer bounds the wait.
+    socket.allowHalfOpen = true;
     this.sockets.add(socket);
     const onError = (cause) => this.fail(relayError('TLS_RELAY_SOCKET', 'TLS relay socket failed', cause));
     const onEnd = () => {

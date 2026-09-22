@@ -226,10 +226,10 @@ export async function startTransparentTlsLab({
     // Programmatic test hook only: the destination address is still fixed loopback.
     const backendPort = externalOriginPort ?? await listen(origin, 0);
 
-    const originTap = net.createServer((socket) => {
+    const originTap = net.createServer({ allowHalfOpen: true }, (socket) => {
       originConnections++;
       captureHello(socket, 'origin', captures, diagnose);
-      const upstream = track(net.connect({ host: HOST, port: backendPort }));
+      const upstream = track(net.connect({ host: HOST, port: backendPort, allowHalfOpen: true }));
       socket.pipe(upstream).pipe(socket);
       socket.once('close', () => upstream.destroy());
       upstream.once('close', () => socket.destroy());
