@@ -9,6 +9,8 @@
 #include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <net/if.h>
 
 static const char *TAG = "meshvpn_vpn_tls";
@@ -52,6 +54,15 @@ esp_err_t meshvpn_vpn_tls_connect(const char *server, const char *tls_server_nam
              (unsigned)uxTaskGetStackHighWaterMark(NULL));
     if (result != 1 || esp_tls_get_conn_sockfd(tls, out_fd) != ESP_OK) {
         ESP_LOGW(TAG, "TLS connect to %s failed (%d)", server, result);
+        esp_tls_conn_destroy(tls);
+        return ESP_FAIL;
+    }
+    /* esp_tls_conn_new_sync() restores blocking mode after the handshake.
+     * The VPN RX/TX workers poll this socket with select(), so a partial TLS
+     * record must return WANT_READ instead of blocking up to timeout_ms. */
+    int flags = fcntl(*out_fd, F_GETFL, 0);
+    if (flags < 0 || fcntl(*out_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        ESP_LOGW(TAG, "TLS socket non-blocking setup failed: errno=%d", errno);
         esp_tls_conn_destroy(tls);
         return ESP_FAIL;
     }

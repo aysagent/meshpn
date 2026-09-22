@@ -521,6 +521,10 @@ static void socket_failure(uint32_t generation, int error, const char *reason)
         s.socket_last_failure_us = esp_timer_get_time();
         s.socket_last_failure_generation = generation;
         strlcpy(s.socket_last_failure_reason, reason, sizeof(s.socket_last_failure_reason));
+        if (strcmp(reason, "tls_read") && strcmp(reason, "tls_write")) {
+            s.socket_last_tls_result = s.socket_last_tls_error = 0;
+            s.socket_last_tls_code = s.socket_last_tls_flags = 0;
+        }
         if (!strcmp(reason, "rx_frame_timeout")) s.socket_rx_timeouts++;
         if (!strcmp(reason, "tx_frame_timeout")) s.socket_tx_timeouts++;
     }
@@ -615,6 +619,12 @@ static void log_tls_failure(esp_tls_t *tls, const char *operation, ssize_t resul
     esp_err_t error = ESP_OK;
     if (esp_tls_get_error_handle(tls, &handle) == ESP_OK && handle)
         error = esp_tls_get_and_clear_last_error(handle, &tls_code, &flags);
+    LOCK();
+    s.socket_last_tls_result = (int)result;
+    s.socket_last_tls_error = error;
+    s.socket_last_tls_code = tls_code;
+    s.socket_last_tls_flags = flags;
+    UNLOCK();
     ESP_LOGW(TAG, "TLS %s failed: result=%d esp_error=0x%x tls_code=0x%x flags=0x%x",
              operation, (int)result, (unsigned)error, (unsigned)tls_code, (unsigned)flags);
 }

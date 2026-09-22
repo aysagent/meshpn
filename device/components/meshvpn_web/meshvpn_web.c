@@ -649,6 +649,13 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     if (vs.socket_last_failure_us) {
         cJSON_AddNumberToObject(failure, "error", vs.socket_last_failure_error);
         cJSON_AddStringToObject(failure, "reason", vs.socket_last_failure_reason);
+        if (!strcmp(vs.socket_last_failure_reason, "tls_read") ||
+            !strcmp(vs.socket_last_failure_reason, "tls_write")) {
+            cJSON_AddNumberToObject(failure, "tls_result", vs.socket_last_tls_result);
+            cJSON_AddNumberToObject(failure, "esp_tls_error", vs.socket_last_tls_error);
+            cJSON_AddNumberToObject(failure, "tls_code", vs.socket_last_tls_code);
+            cJSON_AddNumberToObject(failure, "tls_flags", vs.socket_last_tls_flags);
+        }
         cJSON_AddNumberToObject(failure, "generation", vs.socket_last_failure_generation);
         cJSON_AddNumberToObject(failure, "age_sec", (esp_timer_get_time() - vs.socket_last_failure_us) / 1000000);
     }

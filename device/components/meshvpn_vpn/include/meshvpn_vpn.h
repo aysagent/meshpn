@@ -46,6 +46,8 @@ typedef struct {
     char socket_last_failure_reason[24];
     int64_t socket_last_failure_us;
     uint32_t socket_last_failure_generation;
+    int socket_last_tls_result, socket_last_tls_error;
+    int socket_last_tls_code, socket_last_tls_flags;
     uint32_t socket_rx_timeouts, socket_tx_timeouts;
     uint32_t socket_rx_batches, socket_rx_batch_max;
     uint64_t socket_rx_inject_exec_us;
