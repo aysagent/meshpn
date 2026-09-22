@@ -29,6 +29,7 @@ typedef struct {
     int probe_error;
     int64_t probe_at_us; /* zero = untested; invalidated on config/disconnect */
     char server[MESHVPN_VPN_SERVER_MAX + 1];
+    char tls_server_name[MESHVPN_VPN_SNI_MAX + 1];
     char transport[32];
     char state[24];
     char address[16];

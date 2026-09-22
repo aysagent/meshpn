@@ -4,12 +4,14 @@
 #include "meshvpn_vpn.h"
 #include "meshvpn_vpn_frame.h"
 #include "meshvpn_vpn_stream.h"
+#include "meshvpn_vpn_tls.h"
 #include "meshvpn_wireguard.h"
 #include "sdkconfig.h"
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include "esp_heap_caps.h"
+#include "esp_tls_errors.h"
 #include "esp_netif.h"
 #include "esp_netif_net_stack.h"
 #include "esp_timer.h"
@@ -47,7 +49,8 @@ static unsigned s_head, s_count;
 typedef struct {
     int fd;
     uint32_t generation, epoch;
-    bool active, tx_stopped, datagram;
+    bool active, tx_stopped, datagram, tls;
+    esp_tls_t *tls_conn;
     int tx_error;
     char tx_reason[24];
 } socket_link_t;
@@ -63,7 +66,7 @@ bool meshvpn_vpn_is_connected(void) { LOCK(); bool v = s.connected; UNLOCK(); re
 static bool enabled(void) { LOCK(); bool v = s.enabled; UNLOCK(); return v; }
 static bool session(uint32_t g) { LOCK(); bool v = s.enabled && s.generation == g; UNLOCK(); return v; }
 static bool plain_transport(const char *name)
-{ return name && (!strcmp(name, "tcp") || !strcmp(name, "socket") || !strcmp(name, "udp")); }
+{ return name && (!strcmp(name, "tcp") || !strcmp(name, "socket") || !strcmp(name, "udp") || !strcmp(name, "tls")); }
 static void flush_nat(void)
 {
     bool usb = s_usb && s_usb->napt, ap = s_ap && s_ap->napt;
@@ -105,7 +108,7 @@ const char *meshvpn_vpn_config_error(const meshvpn_vpn_config_t *c)
     if (!c->enabled) return NULL;
     uint8_t ip[4]; uint16_t port;
     bool wg = !strcmp(c->transport, "wireguard");
-    if (!wg && !plain_transport(c->transport)) return "Transport: select TCP, UDP or WireGuard.";
+    if (!wg && !plain_transport(c->transport)) return "Transport: select TCP, UDP, TLS or WireGuard.";
     if (!meshvpn_vpn_endpoint(c->server, ip, &port)) return "Endpoint/server: enter numeric IPv4:port (port 1-65535); hostnames and IPv6 are not supported.";
     if (wg) return meshvpn_wg_config_error(c);
     if (ip[0] == 10 && ip[1] == 99 && ip[2] == 0) return "Server overlaps the plain tunnel subnet 10.99.0.0/24.";
@@ -129,6 +132,7 @@ static esp_err_t apply_config(void *arg)
     s.kill_switch = !c->allow_direct; s_probe_epoch++; s.probe_at_us = 0; s.probe_ok = false; s.probe_error = 0;
     s.tx_dropped += s_count; s_head = s_count = s.queue_depth = 0;
     strlcpy(s.server, c->server, sizeof(s.server)); strlcpy(s.transport, s_config.transport, sizeof(s.transport));
+    strlcpy(s.tls_server_name, c->tls_server_name, sizeof(s.tls_server_name));
     strlcpy(s.state, c->enabled ? "waiting" : "disabled", sizeof(s.state));
     s.last_error = err;
     strlcpy(s.wg_address, c->wg_address, sizeof(s.wg_address));
@@ -457,13 +461,24 @@ static esp_err_t wg_poll(void *arg)
     LOCK(); s.wg_handshake_age = age; UNLOCK();
     return ESP_OK;
 }
-static int connect_exit(const meshvpn_vpn_status_t *cfg)
+static int connect_exit(const meshvpn_vpn_status_t *cfg, esp_tls_t **tls_out)
 {
+    if (tls_out) *tls_out = NULL;
     esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"); esp_netif_ip_info_t ip;
     if (!sta || !esp_netif_is_netif_up(sta) || esp_netif_get_ip_info(sta, &ip) != ESP_OK || !ip.ip.addr) { errno = ENETDOWN; return -1; }
     uint8_t addr[4]; uint16_t port;
     bool datagram = !strcmp(cfg->transport, "udp");
     if (!plain_transport(cfg->transport) || !meshvpn_vpn_endpoint(cfg->server, addr, &port)) { errno = EINVAL; return -1; }
+    if (!strcmp(cfg->transport, "tls")) {
+        struct ifreq iface = {0};
+        if (esp_netif_get_netif_impl_name(sta, iface.ifr_name) != ESP_OK) { errno = ENODEV; return -1; }
+        esp_tls_t *tls = NULL; int fd = -1;
+        esp_err_t err = meshvpn_vpn_tls_connect(cfg->server, cfg->tls_server_name, iface.ifr_name, &tls, &fd);
+        if (err != ESP_OK) { errno = ECONNREFUSED; return -1; }
+        if (tls_out) *tls_out = tls;
+        state(cfg->generation, "connecting", false, 0);
+        return fd;
+    }
     int fd = socket(AF_INET, datagram ? SOCK_DGRAM : SOCK_STREAM,
                     datagram ? IPPROTO_UDP : IPPROTO_TCP); if (fd < 0) return -1;
     struct sockaddr_in local = { .sin_family = AF_INET, .sin_addr.s_addr = ip.ip.addr };
@@ -558,6 +573,12 @@ static bool socket_link_current(uint32_t epoch, uint32_t generation, int fd)
     UNLOCK();
     return current && session(generation);
 }
+static ssize_t tunnel_write(esp_tls_t *tls, int fd, bool is_tls, const void *data, size_t length)
+{ return is_tls ? esp_tls_conn_write(tls, data, length) : send(fd, data, length, 0); }
+static ssize_t tunnel_read(esp_tls_t *tls, int fd, bool is_tls, void *data, size_t length)
+{ return is_tls ? esp_tls_conn_read(tls, data, length) : recv(fd, data, length, 0); }
+static bool tls_would_block(ssize_t n)
+{ return n == ESP_TLS_ERR_SSL_WANT_READ || n == ESP_TLS_ERR_SSL_WANT_WRITE; }
 static void socket_tx_worker(void *arg)
 {
     meshvpn_vpn_tx_batch_t *tx = arg;
@@ -566,6 +587,8 @@ static void socket_tx_worker(void *arg)
         LOCK();
         bool active = s_socket.active;
         bool datagram = s_socket.datagram;
+        bool is_tls = s_socket.tls;
+        esp_tls_t *tls = s_socket.tls_conn;
         uint32_t epoch = s_socket.epoch, generation = s_socket.generation;
         int fd = s_socket.fd;
         UNLOCK();
@@ -604,9 +627,10 @@ static void socket_tx_worker(void *arg)
             if (ready > 0) {
                 const uint8_t *data = datagram ? tx->data : tx->data + tx->used;
                 size_t length = datagram ? udp_length : tx->length - tx->used;
-                int n = send(fd, data, length, 0);
+                int n = (int)tunnel_write(tls, fd, is_tls, data, length);
                 int send_error = n < 0 ? errno : 0;
-                if (n < 0 && send_error != EAGAIN && send_error != EWOULDBLOCK && send_error != EINTR) {
+                bool tls_wait = is_tls && tls_would_block(n);
+                if (n < 0 && !tls_wait && send_error != EAGAIN && send_error != EWOULDBLOCK && send_error != EINTR) {
                     error = send_error; failure_reason = "send"; break;
                 }
                 LOCK();
@@ -636,6 +660,8 @@ static void socket_tx_worker(void *arg)
                     if (select(fd + 1, NULL, &wr, NULL, &tv) < 0 && errno != EINTR) {
                         error = errno; failure_reason = "tx_select"; break;
                     }
+                } else if (tls_wait) {
+                    vTaskDelay(pdMS_TO_TICKS(1));
                 }
             }
             if ((udp_loaded || (!datagram && tx->used < tx->length)) &&
@@ -682,14 +708,17 @@ static void __attribute__((unused)) worker(void *arg)
         state(cfg.generation, "wait_uplink", false, 0);
         int error = 0;
         const char *failure_reason = "connect";
-        int fd = connect_exit(&cfg);
+        esp_tls_t *tls_conn = NULL;
+        int fd = connect_exit(&cfg, &tls_conn);
         if (fd < 0) { error = errno; goto retry; }
-        if (!session(cfg.generation)) { close(fd); continue; }
+        if (!session(cfg.generation)) { if (tls_conn) esp_tls_conn_destroy(tls_conn); else close(fd); continue; }
         bool datagram = !strcmp(cfg.transport, "udp");
+        bool is_tls = tls_conn != NULL;
         LOCK();
         s_socket.fd = fd; s_socket.generation = cfg.generation; s_socket.epoch++;
         uint32_t socket_epoch = s_socket.epoch;
-        s_socket.active = true; s_socket.tx_stopped = false; s_socket.datagram = datagram; s_socket.tx_error = 0;
+        s_socket.active = true; s_socket.tx_stopped = false; s_socket.datagram = datagram;
+        s_socket.tls = is_tls; s_socket.tls_conn = tls_conn; s_socket.tx_error = 0;
         s_socket.tx_reason[0] = 0;
         UNLOCK();
         notify_socket_tx();
@@ -708,9 +737,9 @@ static void __attribute__((unused)) worker(void *arg)
                     error = receive_udp_batch(fd, rx, rx_batch);
                     if (error) failure_reason = "recv";
                 } else {
-                    int n = recv(fd, rx, MESHVPN_VPN_SOCKET_RX_BYTES, 0);
+                    int n = (int)tunnel_read(tls_conn, fd, is_tls, rx, MESHVPN_VPN_SOCKET_RX_BYTES);
                     if (n == 0) { error = ECONNRESET; failure_reason = "remote_closed"; break; }
-                    if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+                    if (n < 0 && !tls_would_block(n) && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
                         error = errno; failure_reason = "recv"; break;
                     }
                     if (n > 0 && !meshvpn_vpn_rx_feed(d, rx, n, esp_timer_get_time(), receive_packet, rx_batch)) {
@@ -739,7 +768,7 @@ static void __attribute__((unused)) worker(void *arg)
         LOCK();
         if (s_socket.epoch == socket_epoch) s_socket.active = false;
         UNLOCK();
-        shutdown(fd, SHUT_RDWR);
+        if (!is_tls) shutdown(fd, SHUT_RDWR);
         notify_socket_tx();
         for (;;) {
             LOCK(); bool stopped = s_socket.epoch != socket_epoch || s_socket.tx_stopped; UNLOCK();
@@ -753,9 +782,11 @@ static void __attribute__((unused)) worker(void *arg)
                 failure_reason = s_socket.tx_reason;
             }
             s_socket.fd = -1;
+            s_socket.tls = false;
+            s_socket.tls_conn = NULL;
         }
         UNLOCK();
-        close(fd);
+        if (is_tls) esp_tls_conn_destroy(tls_conn); else close(fd);
 retry:
         if (!session(cfg.generation)) continue;
         socket_failure(cfg.generation, error, failure_reason);

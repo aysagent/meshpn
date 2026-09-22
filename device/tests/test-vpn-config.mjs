@@ -33,7 +33,7 @@ typedef struct {uint32_t addr;} ip4_addr_t;
 #define ip4_addr3(a) (((uint8_t*)&(a)->addr)[2])
 #define strlcpy test_strlcpy
 static size_t test_strlcpy(char*d,const char*s,size_t n){size_t l=strlen(s);if(n){size_t c=l<n-1?l:n-1;memcpy(d,s,c);d[c]=0;}return l;}
-static bool plain_transport(const char*n){return n&&(!strcmp(n,"tcp")||!strcmp(n,"socket")||!strcmp(n,"udp"));}
+static bool plain_transport(const char*n){return n&&(!strcmp(n,"tcp")||!strcmp(n,"socket")||!strcmp(n,"udp")||!strcmp(n,"tls"));}
 ${wg}
 ${validate}
 typedef int httpd_req_t;

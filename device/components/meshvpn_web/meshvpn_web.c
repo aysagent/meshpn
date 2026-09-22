@@ -564,6 +564,7 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     if (vs.probe_at_us) cJSON_AddNumberToObject(probe, "age_sec", (esp_timer_get_time() - vs.probe_at_us) / 1000000);
     else cJSON_AddNullToObject(probe, "age_sec");
     cJSON_AddStringToObject(vpn, "server", vs.server);
+    cJSON_AddStringToObject(vpn, "tls_server_name", vs.tls_server_name);
     cJSON_AddStringToObject(vpn, "transport", vs.transport);
     cJSON_AddStringToObject(vpn, "state", vs.state);
     cJSON_AddStringToObject(vpn, "address", vs.address);
@@ -984,16 +985,16 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     bool valid = cJSON_IsBool(en) && cJSON_IsString(server) && cJSON_IsString(transport) &&
         strlen(server->valuestring) < sizeof(cfg.server) &&
         (!strcmp(transport->valuestring, "tcp") || !strcmp(transport->valuestring, "socket") ||
-         !strcmp(transport->valuestring, "udp") ||
+         !strcmp(transport->valuestring, "udp") || !strcmp(transport->valuestring, "tls") ||
          !strcmp(transport->valuestring, "wireguard")) &&
-        (!cJSON_IsTrue(en) || !strcmp(transport->valuestring, "wireguard") || cJSON_IsTrue(ack));
+        (!cJSON_IsTrue(en) || !strcmp(transport->valuestring, "wireguard") || !strcmp(transport->valuestring, "tls") || cJSON_IsTrue(ack));
     if (!valid) {
         if (!cJSON_IsBool(en)) validation_error = "Enable VPN: expected a checkbox value.";
         else if (!cJSON_IsString(server) || strlen(server->valuestring) >= sizeof(cfg.server)) validation_error = "Endpoint/server: missing or too long.";
         else if (!cJSON_IsString(transport) || (strcmp(transport->valuestring, "tcp") &&
                  strcmp(transport->valuestring, "socket") &&
-                 strcmp(transport->valuestring, "udp") && strcmp(transport->valuestring, "wireguard")))
-            validation_error = "Transport: select TCP, UDP or WireGuard.";
+                 strcmp(transport->valuestring, "udp") && strcmp(transport->valuestring, "tls") && strcmp(transport->valuestring, "wireguard")))
+            validation_error = "Transport: select TCP, UDP, TLS or WireGuard.";
         else validation_error = "Plaintext transport: confirm the warning before enabling.";
     }
     cJSON *kill = cJSON_GetObjectItemCaseSensitive(in, "kill_switch");
@@ -1021,6 +1022,7 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     VPN_READ_FIELD(wg_public_key, false, "PublicKey: paste only the 44-character Base64 value, without the PublicKey = label or quotes.");
     VPN_READ_FIELD(wg_private_key, true, "PrivateKey: paste only the 44-character Base64 value, without the PrivateKey = label or quotes.");
     VPN_READ_FIELD(wg_preshared_key, true, "PresharedKey: paste only the 44-character Base64 value, without its label or quotes.");
+    VPN_READ_FIELD(tls_server_name, true, "TLS server name: enter a hostname up to 128 characters.");
 #undef VPN_READ_FIELD
     cJSON *clear = cJSON_GetObjectItemCaseSensitive(in, "wg_clear_psk");
     if (clear && !cJSON_IsBool(clear)) { valid = false; validation_error = "Remove PresharedKey: expected a checkbox value."; }

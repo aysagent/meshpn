@@ -63,11 +63,14 @@
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:4433 --type=quic-ext
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:4433 --type=quic-ext --split-default
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=tls [--tls-cert-dir=...] [--tls-public-name=vpn.example.com] [--tls-probe-target=host:port] [--shared-hmac-key=PATH]
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=tls --tls-raw [--tls-cert-dir=...]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=tls --split-default [--tls-server-name=...] [--shared-hmac-key=PATH]
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:443 --type=boring-tls --split-default [--tls-server-name=...] — TLS через native/boring_tls/boring-tls-helper (см. scripts/boring-tls-plan.md); exit по-прежнему `--type=tls`.
  *   combo-tls (`--type=combo-tls`): обе стороны **одним** `--server=…:443` — **exit** один TCP listen; поток начинающийся префиксом enc-SNI relay (`*.--tls-public-name`, raw TCP TLS) → HTTPS; иначе → VPN **TLS mux** как `--type=tls`. **BREAKING:** CVPTX удалён; `--tls-public-name` обязателен.
  * transparent-tls (`--type=transparent-tls`): TUN socket mux + enc-SNI v2 (base62) HTTPS intercept; exit: `0x16` → relay, иначе IPv4 в TUN. **BREAKING:** `--tls-public-name` обязателен; base32hex v1 enc-SNI не поддерживается.
  * TLS (--type=tls): TCP + TLS 1.3 only, ALPN в ClientHello по умолчанию [h2, http/1.1]; маркера VPN в открытой части нет.
+ * `--tls-raw` на exit — простой TLS-стенд без HTTP/2, Bearer/HMAC и JA3-мимикрии:
+ * после TLS handshake используется тот же raw IPv4 framing, что у --type=tcp.
  *   После рукопожатия: при согласованном `h2` — VPN поверх HTTP/2 (`POST /clean-vpn` + Bearer, двусторонний DATA на одном stream); при `http/1.1` — как раньше `GET /clean-vpn` с Bearer и hijack сокета после ответа 200.
  *   Флаг `--http-vers=1.1` (обе стороны): только HTTP/1.1 и только ALPN `http/1.1` — для отладки и регрессии GET-пути.
  *   Авторизация: `Authorization: Bearer <token>`; token = HMAC-SHA256 от общего HMAC PSK, **TLS exporter** (RFC 5705, label=EXPORTER-clean-vpn-bind, 32 байта) данной сессии и текущего 15-минутного окна — channel-binding (Phase 2 / H-1+H-2). Перехваченный Bearer вне той самой TLS-сессии не работает (exporter уникален per-session).
@@ -3984,6 +3987,7 @@ function parseArgs(argv) {
     tlsProbeMaxSeconds: null,
     tlsProbeFullProxyPerIp: null,
     tlsHttpVers: null,
+    tlsRaw: false,
     wsChromeExecutable: null,
     wsChromeWsUrl: null,
     wsChromeUrl: null,
@@ -4039,6 +4043,8 @@ function parseArgs(argv) {
       out.tlsProbeFullProxyPerIp = parseInt(a.slice('--tls-probe-full-proxy-per-ip='.length), 10);
     } else if (a.startsWith('--http-vers=')) {
       out.tlsHttpVers = a.slice('--http-vers='.length).trim();
+    } else if (a === '--tls-raw') {
+      out.tlsRaw = true;
     } else if (a.startsWith('--ws-chrome-executable=')) {
       out.wsChromeExecutable = a.slice('--ws-chrome-executable='.length);
     } else if (a.startsWith('--ws-chrome-ws-url=')) {
@@ -9219,6 +9225,7 @@ async function runExit({
   tlsProbeFullProxyPerIp,
   tlsServerName,
   tlsHttpVers,
+  tlsRaw,
   signaling,
   wsServer,
   punch,
@@ -9697,6 +9704,30 @@ async function runExit({
     const creds = loadTlsServerCredentials(certsDir, {
       sanHosts: [tlsPublicName, host].filter(Boolean),
     });
+    if (tlsRaw) {
+      const rawTlsSrv = tls.createServer({
+        cert: creds.cert,
+        key: creds.key,
+        minVersion: 'TLSv1.3',
+        maxVersion: 'TLSv1.3',
+        ciphers: TLS_VPN_CIPHERS_1_3,
+        ecdhCurve: TLS_VPN_ECDH_CURVES,
+      }, (sock) => {
+        console.log('[clean-vpn] tls raw connected', sock.remoteAddress);
+        sock.setNoDelay(true);
+        startBridge(sock, null, 'tcp');
+      });
+      rawTlsSrv.on('tlsClientError', (err, sock) => {
+        console.error('[clean-vpn] tls raw client:', err?.message || err);
+        safe(() => sock.destroy());
+      });
+      rawTlsSrv.on('error', (err) => console.error('[clean-vpn] tls raw server:', err?.message || err));
+      rawTlsSrv.listen(port, host, () => {
+        console.log(`[clean-vpn] exit TLS raw ${host}:${port} (TLS 1.3; raw IPv4 framing; no HMAC/Bearer)`);
+      });
+      tcpSrv = rawTlsSrv;
+      return;
+    }
     const targetStr = tlsProbeTarget || DEFAULT_TLS_PROBE_TARGET;
     const { host: pHost, port: pPort } = parseHostPort(targetStr);
     const probeShortMaxBytes =
@@ -11653,6 +11684,7 @@ async function main() {
 --type=quic: Node.js 25+, node --experimental-quic и бинарь с node_use_quic (см. шапку файла)
 --type=quic-ext: npm install @infisical/quic (prebuild под платформу), Node 18+, см. шапку файла
 --tls-cert-dir=DIR: для --type=tls, boring-tls (client), combo-tls и exit tls/combo — fullchain.pem+privkey.pem (LE) или ca/cert/key как у QUIC; здесь же лежит общий clean-vpn-hmac.key
+--tls-raw: только exit + --type=tls; обычный TLS 1.3 без HTTP/2, Bearer/HMAC и JA3-мимикрии, затем raw IPv4 framing как у --type=tcp (тестовый режим)
 --tls-server-name=HOST: только client + tls | boring-tls | combo-tls — проверка сертификата (CN/SAN); также ClientHello SNI для **TUN-туннеля** (boring-путь при combo), если не задан --tls-client-sni. Если --server — IP и оба не заданы, для проверки используется clean-vpn; при ошибочном --tls-server-name=www.google.com и IP тоже принудительно clean-vpn (маскировку SNI см. --tls-client-sni); на exit игнорируется
 --tls-client-sni=HOST: только client + tls | boring-tls | combo-tls — явный SNI в ClientHello (TUN-путь boring); без флага при проверке cert=clean-vpn (часто IP без --tls-server-name) SNI по умолчанию www.google.com; иначе SNI = имя проверки. Маркера VPN в открытой части ClientHello нет — exit отличает VPN по Bearer внутри TLS (TLS 1.3; ALPN по умолчанию h2 + http/1.1; HTTP/1.1 → GET /clean-vpn, HTTP/2 → POST /clean-vpn на одном stream).
 --tls-public-name=HOST[,HOST...]: **обязателен** для transparent-tls и combo-tls (enc-SNI v2 base62 relay). На exit + tls | combo-tls также SNI «честной» страницы It works! для VPN mux: любой из перечисленных имён в ClientHello → VPN; иначе passthrough.
@@ -11690,6 +11722,11 @@ async function main() {
 
   if (args.punch && args.type !== 'udp') {
     console.error('[clean-vpn] --punch допустим только с --type=udp');
+    process.exit(1);
+  }
+
+  if (args.tlsRaw && (args.role !== 'exit' || args.type !== 'tls')) {
+    console.error('[clean-vpn] --tls-raw допускается только с --role=exit --type=tls');
     process.exit(1);
   }
 
