@@ -1,0 +1,303 @@
+# Контекст clean-vpn и транспортных экспериментов
+
+Срез: 2026-09-22, HEAD `4bfec57`. Это база контекста для дальнейшей работы, а не полный аудит безопасности или сертификат production-ready.
+
+При финальной сверке появились параллельные незакоммиченные изменения в `device/` и `scripts/clean-vpn.js`. Они не принадлежат этой работе и не редактировались. Новый `--tls-raw` учтён ниже отдельно по прочитанному diff; остальные выводы относятся к исследованному срезу, не к законченной проверке параллельной разработки.
+
+Область: `scripts/clean-vpn.js`, его библиотеки, TLS/браузерные профили, нативный BoringSSL-helper, классификатор, связанные планы и эксплуатационные скрипты. Реализация mesh VPN в `src/` намеренно не исследовалась. Существующие результаты в `device/` не менялись.
+
+Источник истины о реализации — код; Markdown часто содержит предыдущие архитектуры и ещё не выполненные предложения. Ниже отдельно обозначены реализованное, ограничения по статическому чтению и фактически выполненные проверки.
+
+Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
+
+### Принятое направление: transparent вместо динамического клонирования
+
+Решение пользователя от 2026-09-22: полностью исключить вариант, при котором ClientHello каждого перехваченного приложения автоматически становится профилем нового BoringSSL TLS-соединения к exit. Не оставлять его экспериментальным режимом или пунктом реализации.
+
+Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
+
+Кандидаты на следующий отдельный этап: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Это направления последующей работы, не уже выполненные исправления и не поручение реализовать их все в рамках сбора контекста.
+
+## 1. Для чего существует этот контур
+
+[`clean-vpn.js`](../scripts/clean-vpn.js) — самостоятельный Linux client↔exit VPN и стенд сравнения транспортов без mesh/onion/multipath. Из простого TUN-моста он вырос в отдельный контур для проверки производительности, NAT traversal, TLS-аутентификации и противодействия распознаванию транспорта.
+
+Здесь решаются разные задачи, которые нельзя смешивать:
+
+- Доставка IPv4 между клиентом и exit через разные носители.
+- Конфиденциальность и допуск клиента: TLS/DTLS, проверка сертификата, PSK.
+- Сходство с браузерным TLS: захват ClientHello, JSON-профиль, BoringSSL-патчи, сравнение отпечатков.
+- Сохранение исходного HTTPS приложения: transparent/enc-SNI relay без завершения TLS на exit.
+- Наблюдение за типами трафика для будущего выбора транспорта: отдельный классификатор.
+
+Шифрованный транспорт не обязательно аутентифицирует клиента. Аутентифицированный VPN не обязательно похож на браузер. Совпадение JA3/JA4 не означает полное совпадение протокольного поведения или неразличимость для DPI.
+
+## 2. Карта файлов
+
+| Файл/группа | Назначение |
+| --- | --- |
+| [`clean-vpn.js`](../scripts/clean-vpn.js) | CLI, TUN, маршруты/NAT, транспортные реализации, TLS auth, Chrome bridge, reconnect и batching |
+| [`tls-clienthello-ja3.mjs`](../scripts/lib/tls-clienthello-ja3.mjs) | Разбор первого ClientHello из TCP/TLS records; JA3 и внутренний sorted-JA3 |
+| [`tls-clienthello-ja4.mjs`](../scripts/lib/tls-clienthello-ja4.mjs) | JA4/JA4_r для TLS поверх TCP и диагностический альтернативный вариант |
+| [`ja3-snif-server.mjs`](../scripts/ja3-snif-server.mjs) | TLS-сервер захвата браузерного ClientHello и экспорта профиля |
+| [`boring-tls-clienthello-profile.mjs`](../scripts/lib/boring-tls-clienthello-profile.mjs) | Схема, валидация, экспорт и преобразование JSON-профиля для helper |
+| [`helper_main.cc`](../native/boring_tls/helper_main.cc), [`CMakeLists.txt`](../native/boring_tls/CMakeLists.txt) | Изолированный TLS-клиент, patched BoringSSL, IPC, измерение реально отправленного ClientHello |
+| [`transparent-tls-enc-sni.mjs`](../scripts/lib/transparent-tls-enc-sni.mjs) | AEAD-кодирование маршрута в SNI, base62, сроки и ограничения hostname |
+| [`transparent-tls-ch-rebuild.mjs`](../scripts/lib/transparent-tls-ch-rebuild.mjs) | Замена SNI с пересчётом длин ClientHello и TLS record |
+| [`transparent-tls-runtime.mjs`](../scripts/lib/transparent-tls-runtime.mjs) | HTTPS intercept, восстановление SNI, маршрутизация relay, логи |
+| [`traffic-classifier.js`](../scripts/traffic-classifier.js), [`traffic-routing-rules.json`](../scripts/traffic-routing-rules.json) | Самостоятельное pcap-наблюдение и эвристическая классификация потоков |
+| [`autostart/README.md`](../scripts/autostart/README.md) | Уже существующие systemd-установка и kill-switch |
+| [`probe.js`](../scripts/probe.js) | Активные TLS/HTTP-пробы; лабораторный клиент с отключённой проверкой сертификата |
+| [`dev-print-boring-tls-ja3.mjs`](../scripts/dev-print-boring-tls-ja3.mjs) | Захват текущего JA3 helper для обновления эталонов smoke-тестов |
+
+Скрипты `test-*-throughput.js` сравнивают сырые UDP/WS/WebRTC и node-datachannel. `check-webrtc-path.js` — диагностика direct/TURN. Часть старых утилит импортирует `werift`, которого нет в текущем `package.json`; они не являются гарантированно рабочими тестами актуального clean-vpn. В старой диагностике также встречаются встроенные настройки TURN и локальный debug-collector: перед запуском проверять конфигурацию и назначения соединений.
+
+`stepwise-test*.js` добавляют слои Packet/crypto/onion из `src/`; изучение этих слоёв оставлено за рамками. `docs/linux-client-routing.md` и большая часть `docs/PERFORMANCE_DEBUG.md` описывают основной mesh, их параметры нельзя механически переносить в clean-vpn.
+
+## 3. Общая механика clean-vpn
+
+- Linux, TUN через N-API addon `native/tun_linux`; сборка `npm run build:tun-linux`. `postinstall` допускает ошибку сборки, поэтому успешный npm install не доказывает наличие addon.
+- Фиксированная пара IPv4: exit `10.99.0.1`, client `10.99.0.2`, MTU 1400. Это не многопользовательский VPN-сервер с выдачей адресов и независимой авторизацией клиентов.
+- Потоковые транспорты: `uint32_be(length) + raw IPv4 packet`. WS/UDP/DataChannel используют границы сообщений/датаграмм.
+- Есть batching TUN и TCP frames, обработка backpressure, лимиты/сброс очередей и reconnect. Текущий TCP batch по умолчанию 8192 байт; настройки `CLEAN_VPN_FRAME_BATCH_BYTES` и `CLEAN_VPN_FRAME_BATCH_FLUSH_MS`.
+- Exit включает forwarding и NAT. `setupExitNat` ставит scoped FORWARD-правила в начало цепочки; это важно после недавней проблемы с преждевременным firewall REJECT/RST.
+- `--split-default` использует два IPv4 `/1`; exit и служебные адреса обходят туннель, частные сети остаются доступны напрямую. DNS через локальный LAN resolver также может идти вне VPN.
+- IPv6-туннеля нет. Без отдельно проверенного ограничения IPv6 это не полный dual-stack VPN.
+- Для WebRTC/punch есть обходные маршруты инфраструктуры и отложенное включение default routing. Поддержан LAN-клиент/шлюз через `--client-lan-subnet`.
+- `--keep-alive=N` — в том числе таймер бездействия с отключением и ленивым переподключением, а не только heartbeat. У QUIC нет той же схемы lazy reconnect. Нельзя интерпретировать этот флаг как универсальную защиту от idle timeout CDN.
+- `--ws-server` и `--signaling`/`--signalling` определяют сторону слушателя независимо от роли client/exit. Имя переменной `wss` означает WebSocketServer, не обязательно защищённый `wss://`.
+
+Последние коммиты этого среза касаются TCP/UDP batching, socket burst stalls, packet tracing и приоритета exit forwarding rules. Это активная разработка, а не замороженный релиз.
+
+## 4. Транспорты: защита и эксплуатационная готовность
+
+Оценка относится к текущему коду и открытому Интернету, без подразумеваемых внешних SSH/VPN/firewall-обёрток. «Условно пригоден» означает кандидат для контролируемой личной эксплуатации после проверок, не безусловную гарантию безопасности.
+
+| Тип | Что реально защищает | Вывод |
+| --- | --- | --- |
+| `tls` | TLS 1.3, CA/hostname verification, PSK Bearer, exporter channel binding v2 | Наиболее подготовленный базовый вариант; остаются legacy auth, routing/IPv6/операционные ограничения |
+| `tls --tls-raw` (параллельный незакоммиченный diff) | TLS 1.3, затем raw IPv4 framing; без Bearer/HMAC и требования клиентского сертификата | Тестовый exit-режим; не наследует авторизацию обычного `tls`, не для открытого production |
+| `boring-tls` | Та же TLS/auth-схема, клиентский patched BoringSSL | Условно пригоден при проверенной сборке; мимикрия экспериментальна, нативный fork требует сопровождения |
+| `combo-tls` | TUN через boring-tls; HTTPS отдельно через enc-SNI relay | TUN-ветка защищена, но режим целиком экспериментальный из-за relay |
+| `transparent-tls` | Исходный HTTPS остаётся TLS; метаданные маршрута защищены GCM | Не для открытого production: остальной TUN идёт сырым неаутентифицированным TCP |
+| `webrtc`, клиент `rtc-chrome` | DTLS DataChannel + PSK-подпись fingerprint при включённом обязательном bind | Защита данных есть; сигналинг/доступность требуют доработки перед публичной эксплуатацией |
+| `quic`, `quic-ext` | Шифрование QUIC/TLS, проверка сервера клиентом | Не для открытого production: на exit нет допуска клиента к TUN |
+| `tcp` / legacy `socket`, `http` | Сырой поток; у HTTP только вступительный HTTP-обмен | Тестовые: без встроенных шифрования и авторизации |
+| `websocket`, `ws-chrome` по умолчанию | Обычный WS; Chrome сам по себе не добавляет TLS | Тестовые в текущем plain-WS режиме; WSS override не добавляет авторизацию exit |
+| `udp`, включая punch | Сырые IPv4-датаграммы, отдельные меры для сигналинга | Тестовые: нет защиты data plane, возможна смена peer по чужой датаграмме |
+
+Особенности, важные для этой оценки:
+
+- `boring-tls` по смыслу клиентский; exit обслуживается Node TLS. Текущая exit-ветка также принимает это имя как TLS-вариант.
+- `quic` использует экспериментальный `node:quic`; собственная проверка CLI требует Node 25+ и соответствующую сборку/флаг. `quic-ext` использует `@infisical/quic`; `verifyPeer:false` на exit не требует клиентского сертификата. Retry HMAC — не PSK-допуск в VPN. Публичный CA-сертификат не является паролем: посторонний клиент может просто не проверять сервер.
+- У WebRTC PSK bind подписывает DTLS fingerprint, но не весь сигналинг. В слушающей exit-ветке новое WS-соединение закрывает прежние соединения и уничтожает активный PeerConnection до проверки bind. Это конкретный риск отказа в обслуживании даже при корректной защите DTLS.
+- `seenNonces` ограничен жизнью соединения/сигнальной сессии, не глобальный replay-cache. Не следует обещать абсолютную защиту сигналинга от повторов.
+- `rtc-chrome` использует настоящий браузерный WebRTC/DTLS; JSON ClientHello-профиль BoringSSL — другой механизм.
+- `ws-chrome` допускает `--ws-chrome-ws-url=wss://...`, но требует подходящей внешней TLS-инфраструктуры. Секрет локального Chrome bridge защищает локальный мост, а не авторизацию удалённого VPN exit.
+- `bindOrMigrateUdpServerPeer` принимает смену адреса по входящей датаграмме. Это уже не просто «первый отправитель занимает слот». UDP punch не добавляет шифрование/аутентификацию пакетов туннеля.
+
+## 5. TLS: сертификаты, авторизация, HTTP и прикрытие
+
+Основные точки: `computeTlsVpnBearerToken`, `verifyTlsVpnBearerToken`, `connectCleanVpnTlsClient`, `connectCleanVpnBoringTlsClient` в [`clean-vpn.js`](../scripts/clean-vpn.js).
+
+Реализовано:
+
+- TLS 1.3, ALPN `h2` / `http/1.1`. Для h2 — двунаправленный POST `/clean-vpn`; для H1 — GET с последующим переходом к бинарному потоку.
+- Общий 32-байтовый PSK: `clean-vpn-hmac.key`, `--shared-hmac-key`; legacy `quic-ext-hmac.key`/старый флаг ещё принимаются. Exit умеет создавать ключ с mode 0600; клиенту нужна его копия.
+- Bearer v2: первые 16 байт HMAC-SHA256 от `"clean-vpn-tls-v2:" || exporter32 || ":" || window`. `exporter32` — сырые байты, не base64. Label — `EXPORTER-clean-vpn-bind`.
+- Окно 15 минут, принимаются текущее и соседние ±1. IPC передаёт exporter в base64, но Node декодирует его перед HMAC.
+- Имя для проверки сертификата и отправляемый SNI разделены: `--tls-server-name` и `--tls-client-sni`. Корректно переданный частный CA может быть надёжным trust anchor; Let's Encrypt не единственный вариант безопасной проверки.
+- Есть SNI dispatch, ответы-прикрытия, ограниченный passthrough к заданному probe upstream и rate limits. Это не доказательство неотличимости сервиса при активном probing.
+
+Ограничения:
+
+- Exit всегда допускает fallback на v1 Bearer без exporter, даже когда exporter доступен. Перехваченный legacy-токен может повторяться в пределах допустимых окон; строгого v2-only режима нет. Это не означает возможность вычислить токен без PSK.
+- User-Agent задан константой, не берётся из захваченного профиля. HTTP/2 SETTINGS, окна, framing и долгоживущий поток не воспроизводят поведение Chrome.
+- TLS-терминирующий reverse proxy/CDN создаёт две разные TLS-сессии. Прямой перенос текущего exporter-bound auth через такой прокси не работает без пересмотра схемы.
+- `--tls-log-bearer` раскрывает токены/exporter в логах; включать только осознанно для диагностики.
+- CA-сертификат публичен; PSK и приватный серверный ключ секретны. Эти сущности нельзя смешивать в модели угроз.
+
+## 6. Браузерные профили: capture → JSON → wire
+
+```text
+Браузер → ja3-snif-server /ja3-snif → JSON-профиль
+                                          ↓ чтение на новом connect
+clean-vpn → config IPC → boring-tls-helper + patched BoringSSL → exit TLS
+                             ↓ callback исходящего ClientHello
+                         реальный JA3/JA4 + profile_vs_wire
+```
+
+### Захват и хранение
+
+[`ja3-snif-server.mjs`](../scripts/ja3-snif-server.mjs) снимает исходный ClientHello до TLS termination, принимает HTTP-запрос и возвращает UA, TLS-поля и отпечатки. Сервер предлагает TLS 1.2–1.3 и ALPN H1. По умолчанию слушает `0.0.0.0:8443`, не только localhost; локальный стенд следует явно ограничивать `127.0.0.1`.
+
+`--profile-save-path` атомарно обновляет один JSON через временный файл и rename. Каждый подходящий GET перезаписывает профиль: это не каталог профилей браузеров и не версионированная база. Захват по hostname и по IP может отличаться наличием SNI.
+
+JSON содержит UA, cipher suites, groups, EC point formats, extension types, signature algorithms, некоторые raw extension bodies, TLS-метаданные и ожидаемые JA3/JA4. Профиль перечитывается при новом TLS-соединении, не меняет уже установленную сессию.
+
+### Что действительно управляет helper
+
+- Cipher suites и их wire-порядок, supported groups, списки signature algorithms.
+- Наличие ряда расширений (например, OCSP/EMS/session ticket), перестановка расширений и разрешённые opaque extensions.
+- SNI/ALPN фактически задаются транспортом; `emit_sni` в JS принудительно true. Захваченный `clienthello_emit_sni:false` не воспроизводится буквально.
+- `extension_types` — прежде всего эталон диагностики, не универсальная инструкция «создать все расширения в этом порядке».
+- `ec_point_formats`, captured TLS versions/legacy version и UA не означают полного управления соответствующим wire/HTTP-поведением.
+- `--boring-tls-profile=NAME` — label/резерв, не встроенный переключатель готовых Chrome/Firefox-пресетов. Рабочая настройка — JSON ClientHello-профиля.
+
+### Нативный процесс и шесть патчей
+
+[`CMakeLists.txt`](../native/boring_tls/CMakeLists.txt) фиксирует BoringSSL на `a7481f34712bc056a47ab91015536166b3a6cebb`, использует C++17 и nlohmann_json 3.11.3. Патчи применяются с проверками маркеров:
+
+1. `tls13-cipher-order`: явный порядок TLS 1.3 suites.
+2. `client-signature-algorithms-cert`: добавление extension 50.
+3. `client-hello-extra-extensions`: opaque bodies дополнительных расширений.
+4. `extra-extensions-emit-dedup`: не дублировать уже созданные стеком расширения.
+5. `tls12-cipher-wire-and-ems`: отдельный advertised TLS 1.2 cipher list и управление EMS.
+6. `signature-algorithms-clienthello-wire`: точный wire-список ext 13 с повторами отдельно от deduplicated verify preferences; разрешение повторов ext 50.
+
+Один subprocess обслуживает одну TLS-сессию. Сначала `u32be + JSON config`, затем ответ `{ok, alpn, exporter}`, после него plaintext приложения идёт через stdin/stdout; TLS и проверка CA/hostname остаются внутри helper. stderr — диагностика. Есть таймаут запуска и завершение дочернего процесса.
+
+Без профиля helper ограничен TLS 1.3; legacy suites в профиле могут включить диапазон TLS 1.2–1.3, но текущий VPN exit остаётся TLS 1.3. Реклама cipher/extension не равна реализации всей связанной криптографии. Opaque replay, например certificate compression/ECH bytes, не добавляет полноценную поддержку этих протоколов. Динамические stateful extensions исключены из простого replay.
+
+Upstream BoringSSL не обещает API/ABI stability; pinned fork необходимо сопровождать. В CMake `BUILD_TESTING` выключен: сборка helper не равна запуску upstream crypto-тестов. Это следует и из [официальной политики BoringSSL](https://boringssl.googlesource.com/boringssl/+/HEAD/README.md).
+
+### Expected vs actual и пределы совпадения
+
+- JA3 — MD5 упорядоченных списков legacyVersion/ciphers/extensions/groups/pointFormats с удалением GREASE. Порядок влияет на результат; это соответствует [описанию Salesforce JA3](https://github.com/salesforce/ja3).
+- `ja3_sorted` — собственная диагностическая нормализация, сортирующая компоненты. Это не канонический JA3 и не замена wire-проверке.
+- JA4 содержит признаки версии/SNI/ALPN/числа элементов и усечённые SHA256. Сортировка suites/extensions уменьшает зависимость от перестановок; SNI/ALPN исключаются из списка для canonical JA4_c. Эталон — [FoxIO JA4 specification](https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md).
+- В репозитории есть также `fingerprint_alt` для отдельного варианта расчёта; его нельзя выдавать за canonical JA4.
+- Текущий модуль разбирает TLS ClientHello поверх TCP, а не QUIC Initial. Наличие QUIC-транспортов не означает их поддержку этим анализатором.
+- `permute_extensions` по умолчанию true. JS при обычной перестановке не передаёт ожидаемый wire JA3 как обязательный эталон; sorted-JA3 нужен для сравнения наборов.
+- `--boring-tls-profile-ja3-strict` требует `permute_extensions:false`. Но выключение перестановки не превращает произвольный captured order в фиксированный порядок BoringSSL.
+- Strict mismatch проверяется после успешного `SSL_connect`: ошибочный ClientHello уже отправлен в сеть. Это проверка пригодности соединения, не предварительное предотвращение утечки отпечатка.
+- JA4 mismatch диагностический, не строгий запрет. `profile_vs_wire` сравнивает в том числе мультимножества extension types: равные наборы не доказывают равный порядок или payload.
+- JS и C++ собирают sigalgs из ext 13 и 50 в порядке появления расширений. Этот случай требует независимой сверки с внешним JA4-анализатором, особенно при перестановке обоих расширений; локальное согласие двух реализаций недостаточно.
+- Resumption, HRR, GREASE, key shares, record fragmentation, HTTP/2 и статистику трафика нужно проверять отдельно. Полная мимикрия браузера этим срезом не доказана.
+
+## 7. Transparent TLS и combo: текущий enc-SNI v2
+
+Актуальная архитектура — raw TCP relay с зашифрованным маршрутом внутри SNI, не прежний CVPTX-префикс из части документов.
+
+```text
+HTTPS приложения → локальный intercept :8443 → замена SNI на enc-labels.public-name
+                 → TCP к exit → GCM decode → восстановление исходного SNI → origin
+
+Остальной IPv4 → TUN → boring-tls (combo) / сырой TCP (transparent-tls) → exit NAT
+```
+
+- OUTPUT REDIRECT перехватывает локальный IPv4 TCP/443. Для LAN используются PREROUTING DNAT и второй listener на адресе шлюза. Есть вариант `--tunnel-peer` без этих redirect-правил.
+- `SO_ORIGINAL_DST` получает исходное назначение, но зашифрованный маршрут содержит hostname и порт, не исходный IP. Exit заново разрешает имя; при split DNS/CDN это может быть другой адрес.
+- Внутри metadata: версия 2, timestamp с допустимым отклонением ±5 минут, порт и hostname. AES-256-GCM, nonce 12 байт, tag 16 байт.
+- Ключ выводится HMAC-SHA256 от PSK и `transparent-tls-enc-sni-v2\0`, не HKDF. Blob кодируется case-sensitive base62; suffix сравнивается без учёта регистра. Лимиты DNS label/hostname ограничивают длину исходного имени.
+- DNS для выдуманного enc-hostname не нужен: клиент напрямую соединяется с exit. Поэтому нельзя бездумно нормализовать регистр encrypted labels как у обычного DNS-имени.
+- На exit combo различает успешно декодируемый enc-SNI relay и обычную TLS VPN-ветку. В transparent остаётся raw IPv4-ветка без auth.
+- TLS приложения не завершается на relay. ClientHello восстанавливается перед origin; защищённые TLS records затем пересылаются как есть. У intercepted HTTPS не запускается BoringSSL-helper на каждую сессию: используется ClientHello исходного приложения.
+
+Ограничения по чтению кода, требующие отдельных интеграционных проверок:
+
+- Нет replay-cache enc-label и привязки metadata к ClientHello random/session. Валидный захваченный label может повторно использоваться в допустимом временном окне.
+- Не обнаружен запрет relay-направлений на private/loopback IP; PSK — важная граница доверия. Обычные квоты после initial peek и полноценная защита от resource exhaustion не завершены.
+- В exit relay очередь `pendingToOrigin` до upstream connect не ограничена; запись upstream не реализует симметричный backpressure. На client initial ClientHello ожидание не имеет аналогичного явного timeout.
+- Переписывается первый ClientHello. Возможный второй ClientHello после HRR дальше идёт через raw pipe и требует отдельной обработки/проверки утечки исходного SNI.
+- Rebuild склеивает ClientHello в один TLS record; исходная record fragmentation не сохраняется.
+- GREASE ECH сейчас пропускается и покрыт roundtrip-тестом. Работоспособность настоящего ECH этим не доказана: видимый outer SNI может не описывать фактический origin, а исходный destination IP не передаётся.
+- HTTP/3/QUIC UDP/443 не перехватывается этой TCP-схемой; в combo он попадает в общий IPv4 TUN.
+- `origin_sni` пишется в обычные логи. Это чувствительные метаданные даже без включения verbose.
+
+Нельзя утверждать, что отсутствие собственного MAC у raw relay позволяет незаметно менять HTTPS payload: TLS имеет Finished и AEAD. Эти гарантии описаны в [TLS 1.3 RFC 8446](https://www.rfc-editor.org/rfc/rfc8446#section-4.4.4). Незащищённость отдельного raw TUN и replay метаданных маршрута — другие проблемы.
+
+## 8. SNI dictionary: ещё план
+
+[`transperent-sni-dictionary.md`](../scripts/transperent-sni-dictionary.md) предлагает сокращать повторяющиеся маршруты до коротких aliases вместо полного enc-SNI. Реализации отдельного dictionary module, sync endpoint или рабочего CLI-флага в просмотренном коде нет.
+
+Текущий enc-SNI stateless. Dictionary потребует согласованного состояния client/exit: аутентифицированной синхронизации, epoch/restart semantics, TTL/eviction, разделения клиентов, обработки miss и fallback на полный маршрут. Кэш классификатора не является этим словарём.
+
+## 9. Классификатор: что уже работает и чего нет
+
+[`traffic-classifier.js`](../scripts/traffic-classifier.js) — самостоятельный pcap-процесс. Он не импортируется в clean-vpn и не переключает его транспорты.
+
+Реализовано:
+
+- IPv4 TCP/UDP flows с нормализованной двунаправленной парой endpoint.
+- Небольшое окно статистики: последние 40 пакетов, классификация примерно раз в 3 секунды после минимум 8 пакетов, сглаживание последних 5 результатов.
+- DNS UDP/53 A-records → IP/hostname; TLS SNI для TCP/443; HTTP Host на 80/8080; портовые, STUN/RTP и QUIC-подобные признаки.
+- Классы `web`, `video`, `voice`, `bulk`, `default`; domain rules из JSON.
+- Приоритеты: rule 100 > early strong 80 > cache 60 > statistical 50 > early weak 30 > default 0.
+- Destination-cache с TTL 30 минут и пределом 4096, необязательное сохранение на диск.
+
+Ограничения:
+
+- Нет полноценного TCP reassembly: простое накопление TLS bytes до 16 KiB не учитывает sequence/retransmission/out-of-order.
+- QUIC Initial не расшифровывается; STUN не обязательно voice, динамический RTP payload type сам по себе не задаёт приложение.
+- DNS/shared CDN IP и выбор первого hostname создают неоднозначность. Cache key IP:port не включает protocol, вытеснение не полноценный LRU; приоритет cache выше statistical способен закреплять старую классификацию.
+- Flows не имеют полноценного expiry; долгий capture требует проверки роста памяти.
+- `--json` не гарантирует чистый NDJSON: периодическая текстовая сводка также идёт в stdout.
+- Нет измеренной accuracy/confusion matrix на размеченном наборе и нет интеграции с транспортным scheduler. Проценты confidence — приоритеты эвристик, не доказанная вероятность правильного класса.
+
+## 10. Эксплуатация и расхождения документации
+
+[`autostart/install.sh`](../scripts/autostart/install.sh), [`killswitch.sh`](../scripts/autostart/killswitch.sh), uninstall и README уже существуют. Поэтому пункт старого TODO «сделать systemd» нельзя считать полностью невыполненным. Автоматическое provisioning VPS из [`clean-vpn-AUTOINSTALLER.md`](../scripts/clean-vpn-AUTOINSTALLER.md) — отдельное предложение; `deploy-exit.mjs` нет.
+
+Kill-switch нельзя считать универсально fail-closed: он разрешает ESTABLISHED/RELATED и private ranges; IPv6 пропускается, если ip6tables отсутствует; default tun0 должен соответствовать реально выбранному интерфейсу. Правила перестраиваются неатомарно, цепочки общие, внешние STUN/TURN могут потребовать отдельных разрешений. Остановка сервиса и persist-mode имеют разную политику снятия правил. Нужен отдельный crash/restart/IPv6/DNS тест, а не доверие заголовку скрипта.
+
+| Документ/утверждение | Как читать на этом срезе |
+| --- | --- |
+| Шапка clean-vpn: «без шифрования/auth» | Верно для ранних raw-транспортов, неверно как описание всех нынешних режимов |
+| [`clean-vpn-security-analysis.md`](../scripts/clean-vpn-security-analysis.md), [`clean-vpn-diagrams.md`](../scripts/clean-vpn-diagrams.md), [`transparent-tls-plan.md`](../scripts/transparent-tls-plan.md) | Полезны как история, но CVPTX и ряд оценок безопасности устарели относительно enc-SNI |
+| CA как пароль для QUIC | Неверная модель допуска клиента; QUIC exit сейчас не требует PSK/mTLS |
+| Enc-SNI KDF называется HKDF | Код использует HMAC-SHA256 |
+| В HMAC Bearer входит base64(exporter) | В коде входят сырые bytes exporter |
+| [`boring-tls-plan.md`](../scripts/boring-tls-plan.md) описывает четыре патча | В CMake уже шесть |
+| [`tls-obfuscation-plan.md`](../scripts/tls-obfuscation-plan.md): helper только будущий крайний вариант | Helper уже реализован; рекомендация ws-chrome сама по себе не обеспечивает auth/WSS |
+| [`combo-tls-improvement.md`](../scripts/combo-tls-improvement.md) | Вариант C ближе к текущему enc-SNI; A/B — история вариантов, не параллельно реализованные режимы |
+| [`wss.md`](../scripts/wss.md), [`nginx.md`](../scripts/nginx.md) | Архитектурные варианты, не доказательство наличия отдельного production `--type=wss` |
+| [`http2.md`](../scripts/http2.md) | H2 уже есть в TLS-ветке; не все предлагаемые меры мимикрии реализованы |
+| [`ipv6-plan.md`](../scripts/ipv6-plan.md) | IPv6 остаётся планом, kill-switch не равен IPv6 transport support |
+| [`cloudflare.md`](../scripts/cloudflare.md) | Не переносить старые значения timeout/тарифов/условий как актуальные; учитывать TLS termination и смысл keep-alive |
+
+Cloudflare завершает клиентский TLS, но это не «стирает JA3» для наблюдателя на участке client→Cloudflare. Текущая [документация Cloudflare WebSockets](https://developers.cloudflare.com/network/websockets/) говорит об idle timeout, heartbeat и необходимости reconnect при рестартах, а не даёт универсальное правило «все WS живут 100 секунд».
+
+Node `exportKeyingMaterial` существует с 12.17.0/13.10.0, а не только с Node 19; источник — [Node TLS API](https://nodejs.org/api/tls.html#tlssocketexportkeyingmateriallength-label-context). Это не обещание совместимости всего проекта со старыми Node.
+
+## 11. Что проверено в этой сессии
+
+Окружение: Node v24.13.0, нет `node_modules` и собранного `native/boring_tls/build/boring-tls-helper`.
+
+Выполнено без TUN/root routing и внешних сетевых проб:
+
+```bash
+node --check scripts/clean-vpn.js
+node --check scripts/traffic-classifier.js
+node --test scripts/test-tls-clienthello-ja4.mjs scripts/test-transparent-tls-enc-sni.mjs scripts/test-boring-tls-smoke.mjs
+```
+
+Результат: syntax checks успешны; 41 тест, 21 pass, 20 skipped, 0 fail. Из успешных: 9 JA4/profile, 11 enc-SNI/rebuild, 1 pure-JS sorted-JA3. Все 20 native smoke-проверок пропущены из-за отсутствия helper. Это не успешная проверка нативной мимикрии.
+
+Не выполнялись npm install, сборка BoringSSL, реальные браузерные захваты, запуск VPN, изменение маршрутов/firewall, тестирование реального exit/DPI, throughput/soak или развёртывание. Синтетический roundtrip не доказывает end-to-end совместимость TLS/ECH/HRR.
+
+## 12. Опорные точки для следующих задач
+
+Не план самовольной доработки, а список проверок, которые не стоит пропускать при соответствующей будущей задаче:
+
+1. Для профилей: собрать pinned helper, выполнить native smoke, захватить конкретные browser/version/OS, сравнить JSON↔helper callback↔независимый pcap-анализатор; отдельно проверить ext 13/50, GREASE, resumption и HRR.
+2. Для TLS production hardening: строгий v2-only auth, отрицательные проверки CA/hostname/PSK, crash/reconnect/IPv6/DNS/kill-switch и лимиты ресурсов.
+3. Для combo: отдельно принимать TUN-ветку и relay; проверять replay, адреса назначения, bounds/backpressure, HRR/ECH и приватность логов.
+4. Для QUIC: сначала явная авторизация клиента, затем эксплуатационная оценка; сертификат сервера эту задачу не решает.
+5. Для WebRTC: проверка допуска до вытеснения активного клиента, защита сигналинга и сценарии reconnect/replay/DoS.
+6. Для классификатора: размеченные captures, метрики ошибок, управление сроком жизни flows/cache; только затем проектировать интеграцию с выбором транспорта.
+7. Для dictionary: отдельный протокол состояния и синхронизации; не считать это небольшой заменой base62 на короткое имя.
+
+Главная рабочая модель: standalone transport lab уже имеет серьёзную TLS/auth-базу и развитую диагностику ClientHello, но browser fidelity, transparent relay, автоматический выбор транспорта и полноценная эксплуатационная безопасность находятся на разных стадиях готовности.
+
+## 13. Последующее дополнение: loopback integration lab
+
+После исходного сбора контекста по запросу пользователя реализован [стенд transparent TLS](../scripts/transparent-tls-lab.md) на одном хосте, без TUN, iptables, root и npm-зависимостей.
+
+- `node scripts/transparent-tls-lab.mjs`: запуск, самопроверка HTTP/1.1 и HTTP/2, затем остановка.
+- `node scripts/transparent-tls-lab.mjs --serve`: тот же стенд остаётся доступным для локального curl; точная команда печатается в выводе.
+- `node --test scripts/test-transparent-tls-integration.mjs`: реальные loopback-соединения, TLS 1.2/1.3, проверка сертификата, данные, ClientHello/JA3/JA4 в трёх точках, фрагментация и отрицательные сценарии.
+
+Стенд использует существующие relay-функции. В runtime добавлен только optional `connectOrigin` для подключения к строго локальному origin; обычный путь без callback не изменён. Lab-specific лимиты/idle timeout/ограничение назначения не являются исправлениями production relay.
+
+Проверено на Node 24.13.0: 17 новых интеграционных тестов и 20 существующих JA4/enc-SNI тестов — 37 pass, 0 fail, 0 skipped; отдельно успешен реальный curl через serve-стенд с проверкой сертификата. Это дополняет, а не заменяет ограничения исходного аудита: HRR/ClientHello2, настоящий ECH, resumption/0-RTT и системная TUN-интеграция пока не проверены этим стендом.

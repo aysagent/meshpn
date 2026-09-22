@@ -278,6 +278,7 @@ export function pipeDuplexWithBackpressure(src, dst) {
  *   logOpts?: TransparentTlsLogOpts|null,
  *   initialBuf?: Buffer,
  *   modeTag?: TransparentTlsModeTag,
+ *   connectOrigin?: (hostname: string, port: number) => import('net').Socket,
  * }} opts
  */
 export function wireTransparentTlsEncSniSession(mux, opts) {
@@ -311,7 +312,16 @@ export function wireTransparentTlsEncSniSession(mux, opts) {
       );
     }
     pendingToOrigin = firstWrites.filter((b) => b.length);
-    origin = net.connect(port, hostname);
+    // Optional connector lets the loopback integration lab pin all egress to its
+    // local origin without DNS overrides, TUN, or a second relay implementation.
+    try {
+      origin = opts.connectOrigin
+        ? opts.connectOrigin(hostname, port)
+        : net.connect(port, hostname);
+    } catch (err) {
+      fail(`origin connect: ${err.message}`);
+      return;
+    }
     origin.once('close', () => killOne(mux));
     origin.once('connect', () => {
       originReady = true;
