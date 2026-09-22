@@ -4,15 +4,19 @@
  * ECH (0xfe0d, включая GREASE ECH, который Chrome шлёт по умолчанию) НЕ блокируется:
  * переписывается только строка hostname в SNI, байты ECH-расширения не трогаются, а exit
  * восстанавливает исходный ClientHello байт-в-байт (SNI назад + ECH как был) и проксирует
- * сырой TCP — TLS терминируется между браузером и origin. Поэтому сервер видит оригинальный
- * ClientHello браузера, а JA3/JA4 не меняются (список/порядок расширений те же; значение SNI
- * в отпечаток не входит). GREASE ECH сервер игнорирует, реальный ECH сохраняется end-to-end.
+ * сырой TCP — TLS терминируется между браузером и origin. Для поддержанного record layout
+ * восстанавливаются и ClientHello, и исходные TLS records. GREASE ECH покрыт тестами;
+ * сохранение байтов расширения НЕ доказывает работоспособность настоящего ECH/его routing.
  */
 
 import {
   parseFirstTlsClientHelloFromTcpBuf,
   parseTlsClientHelloReadableExtensions,
 } from './tls-clienthello-ja3.mjs';
+
+// TLSPlaintext.fragment ceiling, RFC 8446 §5.1. No silent re-fragmentation:
+// https://www.rfc-editor.org/rfc/rfc8446#section-5.1
+const MAX_PLAINTEXT_RECORD_BYTES = 16 * 1024;
 
 /**
  * @param {Buffer} chBody
@@ -141,22 +145,55 @@ function rebuildClientHelloBodyWithHostname(chBody, newHostnameAscii) {
 
 /**
  * @param {Buffer} tcpBuf
- * @param {number} _oldBytesConsumed
+ * @param {{ bytesConsumed: number, clientHelloBody: Buffer }} parsed
  * @param {Buffer} newChBody
  */
-function rebuildTcpPrefixWithClientHelloBody(tcpBuf, _oldBytesConsumed, newChBody) {
-  const hsPlain = Buffer.allocUnsafe(4 + newChBody.length);
-  hsPlain[0] = 1;
-  hsPlain.writeUIntBE(newChBody.length, 1, 3);
-  newChBody.copy(hsPlain, 4);
-
-  const legacy = tcpBuf.length >= 3 && tcpBuf[0] === 0x16 ? tcpBuf.readUInt16BE(1) : 0x0301;
-  const rec = Buffer.allocUnsafe(5 + hsPlain.length);
-  rec[0] = 0x16;
-  rec.writeUInt16BE(legacy, 1);
-  rec.writeUInt16BE(hsPlain.length, 3);
-  hsPlain.copy(rec, 5);
-  return rec;
+function rebuildTcpPrefixWithClientHelloBody(tcpBuf, parsed, newChBody) {
+  const layout = findFirstSniLayoutInClientHelloBody(parsed.clientHelloBody);
+  if (!layout) throw new Error('sni_hostname_offset_not_found');
+  const hostnameStart = 4 + layout.hostnameStartChBodyAbs;
+  const delta = newChBody.length - parsed.clientHelloBody.length;
+  const records = [];
+  const payloads = [];
+  let payloadOffset = 0;
+  for (let at = 0; at < parsed.bytesConsumed;) {
+    const size = tcpBuf.readUInt16BE(at + 3);
+    if (size > MAX_PLAINTEXT_RECORD_BYTES) throw new Error('record_plaintext_oversize');
+    const ownsSniStart = payloadOffset <= hostnameStart && hostnameStart < payloadOffset + size;
+    const newSize = size + (ownsSniStart ? delta : 0);
+    // Keep the first hostname byte in this same record in both directions.
+    // The relay token is longer, so only this record grows on client→exit.
+    // On restore the inverse delta recovers every original boundary, including
+    // records splitting the SNI itself. No extra on-wire metadata is needed.
+    if (newSize < 1 || newSize > MAX_PLAINTEXT_RECORD_BYTES ||
+        (ownsSniStart && newSize <= hostnameStart - payloadOffset)) {
+      throw new Error('record_layout_resize_unsupported');
+    }
+    records.push({ header: tcpBuf.subarray(at, at + 5), size: newSize });
+    payloads.push(tcpBuf.subarray(at + 5, at + 5 + size));
+    payloadOffset += size;
+    at += 5 + size;
+  }
+  const oldPayload = Buffer.concat(payloads, payloadOffset);
+  const handshakeHeader = Buffer.alloc(4);
+  handshakeHeader[0] = 1;
+  handshakeHeader.writeUIntBE(newChBody.length, 1, 3);
+  // bytesConsumed includes the *whole* last record, not just ClientHello.
+  // Preserve opaque bytes of a neighboring message (even its partial header).
+  const newPayload = Buffer.concat([
+    handshakeHeader, newChBody, oldPayload.subarray(4 + parsed.clientHelloBody.length),
+  ]);
+  const out = Buffer.alloc(parsed.bytesConsumed + delta);
+  let source = 0;
+  let target = 0;
+  for (const { header, size } of records) {
+    header.copy(out, target);
+    out.writeUInt16BE(size, target + 3);
+    newPayload.copy(out, target + 5, source, source + size);
+    source += size;
+    target += 5 + size;
+  }
+  return out;
 }
 
 /**
@@ -178,14 +215,14 @@ export function replaceFirstSniInTcpBuffer(tcpBuf, newHostnameAscii) {
   if (blocked) return { ok: false, reason: blocked };
 
   const originHost = extRead.sni[0];
-  let newChBody;
+  let prefixBuf;
   try {
-    newChBody = rebuildClientHelloBodyWithHostname(p.clientHelloBody, newHostnameAscii);
+    const newChBody = rebuildClientHelloBodyWithHostname(p.clientHelloBody, newHostnameAscii);
+    prefixBuf = rebuildTcpPrefixWithClientHelloBody(tcpBuf, p, newChBody);
   } catch (e) {
     return { ok: false, reason: /** @type {Error} */ (e).message, originHost };
   }
 
-  const prefixBuf = rebuildTcpPrefixWithClientHelloBody(tcpBuf, p.bytesConsumed, newChBody);
   const tailAfterPrefix = Buffer.from(tcpBuf.subarray(p.bytesConsumed));
   return { ok: true, originHost, relayHost: newHostnameAscii, prefixBuf, tailAfterPrefix };
 }
@@ -206,14 +243,14 @@ export function restoreFirstSniInTcpBuffer(tcpBuf, relayHostname, originHostname
     return { ok: false, reason: 'sni_hostname_not_relay_expectation' };
   }
 
-  let newChBody;
+  let prefixBuf;
   try {
-    newChBody = rebuildClientHelloBodyWithHostname(p.clientHelloBody, originHostname);
+    const newChBody = rebuildClientHelloBodyWithHostname(p.clientHelloBody, originHostname);
+    prefixBuf = rebuildTcpPrefixWithClientHelloBody(tcpBuf, p, newChBody);
   } catch (e) {
     return { ok: false, reason: /** @type {Error} */ (e).message };
   }
 
-  const prefixBuf = rebuildTcpPrefixWithClientHelloBody(tcpBuf, p.bytesConsumed, newChBody);
   const tailAfterPrefix = Buffer.from(tcpBuf.subarray(p.bytesConsumed));
   return { ok: true, prefixBuf, tailAfterPrefix };
 }

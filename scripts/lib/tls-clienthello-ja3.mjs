@@ -609,6 +609,9 @@ export function parseFirstTlsClientHelloFromTcpBuf(buf) {
 
   /** @type {Buffer[]} */
   const payloads = [];
+  let payloadBytes = 0;
+  const handshakeHeader = Buffer.alloc(4);
+  let headerBytes = 0;
   let offset = 0;
   for (;;) {
     if (buf.length - offset < 5) {
@@ -627,14 +630,23 @@ export function parseFirstTlsClientHelloFromTcpBuf(buf) {
     if (recordEnd > buf.length) {
       return { needMore: true, minTotal: recordEnd };
     }
-    payloads.push(buf.subarray(offset + 5, recordEnd));
+    const payload = buf.subarray(offset + 5, recordEnd);
+    payloads.push(payload);
+    payloadBytes += payload.length;
+    if (headerBytes < 4) {
+      const take = Math.min(4 - headerBytes, payload.length);
+      payload.copy(handshakeHeader, headerBytes, 0, take);
+      headerBytes += take;
+    }
     offset = recordEnd;
-    const combined = Buffer.concat(payloads);
-    if (combined.length < 4) continue;
-    if (combined[0] !== 1) return { ok: false, reason: 'not_client_hello' };
-    const hsLen = combined.readUIntBE(1, 3);
+    if (headerBytes < 4) continue;
+    if (handshakeHeader[0] !== 1) return { ok: false, reason: 'not_client_hello' };
+    const hsLen = handshakeHeader.readUIntBE(1, 3);
     const totalHs = 4 + hsLen;
-    if (combined.length < totalHs) continue;
+    if (payloadBytes < totalHs) continue;
+    // Concatenate only once, after a complete message. Repeated concatenation
+    // per record is quadratic and stalls heavily fragmented ClientHellos.
+    const combined = Buffer.concat(payloads, payloadBytes);
     const ch = combined.subarray(4, totalHs);
     const ext = parseTlsClientHelloReadableExtensions(ch);
     if (!ext.ok) return ext;

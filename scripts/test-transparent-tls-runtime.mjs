@@ -148,6 +148,57 @@ for (const role of ['client', 'exit']) {
     assert.equal(e.calls, 0);
   });
 
+  test(`${role}: unsupported record growth or oversized input fails before connecting`, async (t) => {
+    const e = endpoint(t, role);
+    const size = role === 'client' ? 16384 : 16385;
+    const input = Buffer.alloc(5 + size);
+    e.hello.copy(input);
+    input.writeUInt16BE(size, 3);
+    e.inbound.push(input);
+    const { error } = await within(e.ready);
+    assert.equal(error.code, 'TLS_RELAY_REBUILD');
+    assert.equal(e.calls, 0);
+    assert.ok(e.inbound.destroyed);
+    assert.equal(e.outbound.bytes().length, 0);
+  });
+
+  test(`${role}: fragmented ClientHello preserves same-record suffix and following records`, async (t) => {
+    const e = endpoint(t, role);
+    const suffix = Buffer.from([0x0b, 0, 0, 2, 0xaa, 0xbb]);
+    const tail = Buffer.from([0x14, 3, 3, 0, 1, 1, 0x17, 3]);
+    const payload = Buffer.concat([originalHello.subarray(5), suffix]);
+    const split = payload.indexOf(Buffer.from(HOST)) + 1;
+    const records = [payload.subarray(0, split), payload.subarray(split)].map((body) => {
+      const header = Buffer.from([0x16, 3, 1, 0, 0]);
+      header.writeUInt16BE(body.length, 3);
+      return Buffer.concat([header, body]);
+    });
+    const original = Buffer.concat([...records, tail]);
+    const encoded = replaceFirstSniInTcpBuffer(original, encodedName);
+    assert.ok(encoded.ok);
+    const input = role === 'client' ? original : Buffer.concat([encoded.prefixBuf, encoded.tailAfterPrefix]);
+    e.inbound.push(input);
+    await within(e.connecting);
+    e.outbound.connected();
+    const { session, error } = await within(e.ready);
+    assert.ifError(error);
+    const actual = e.outbound.bytes();
+    if (role === 'client') {
+      const name = parseFirstTlsClientHelloFromTcpBuf(actual).sni[0];
+      const restored = restoreFirstSniInTcpBuffer(actual, name, HOST);
+      assert.ok(restored.ok);
+      assert.deepEqual(Buffer.concat([restored.prefixBuf, restored.tailAfterPrefix]), input);
+    } else {
+      assert.deepEqual(actual, original);
+      const parsed = parseFirstTlsClientHelloFromTcpBuf(actual);
+      assert.deepEqual(actual.subarray(parsed.bytesConsumed), tail);
+      assert.deepEqual(actual.subarray(parsed.bytesConsumed - suffix.length, parsed.bytesConsumed), suffix);
+    }
+    session.fail(relayError('TLS_RELAY_TEST_STOP'));
+    await within(session.closed);
+    assert.equal(session.timers.size, 0);
+  });
+
   test(`${role}: peer disconnect cancels connect and ignores late connect`, async (t) => {
     const e = endpoint(t, role);
     e.inbound.push(e.hello);

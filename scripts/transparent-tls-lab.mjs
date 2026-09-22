@@ -49,7 +49,7 @@ async function main() {
       assert.deepEqual(response.body, body, `HTTP/${httpVersion} echo`);
       const report = assertRelayTrace(lab);
       console.log(`[lab] PASS HTTP/${httpVersion} ${response.tlsVersion}, verified certificate, ${body.length} byte echo`);
-      console.log(`[lab] ClientHello restored; JA3=${report.ja3} JA4=${report.ja4}`);
+      console.log(`[lab] ClientHello and TLS records restored; JA3=${report.ja3} JA4=${report.ja4}`);
       console.log(`[lab] TLS record lengths ${JSON.stringify(report.records)}`);
     }
     if (opts.serve) {

@@ -237,4 +237,139 @@ test('decodeRelayFromHostname rejects wrong public suffix', () => {
   assert.equal(bad.ok, false);
 });
 
-console.log('test-transparent-tls-enc-sni: all assertions passed');
+function recordsFromPayload(payload, cuts = []) {
+  const boundaries = [0, ...cuts, payload.length];
+  return Buffer.concat(boundaries.slice(1).map((end, i) => {
+    const fragment = payload.subarray(boundaries[i], end);
+    const header = Buffer.from([0x16, 3, i % 2 ? 3 : 1, 0, 0]);
+    header.writeUInt16BE(fragment.length, 3);
+    return Buffer.concat([header, fragment]);
+  }));
+}
+
+function recordHeaders(buffer) {
+  const headers = [];
+  for (let at = 0; at < buffer.length;) {
+    const header = buffer.subarray(at, at + 5);
+    headers.push(header);
+    at += 5 + header.readUInt16BE(3);
+  }
+  return headers;
+}
+
+const layoutOrigin = 'records.example';
+const layoutRelay = buildRelayHostname(encodeRelaySniLabel(PSK, { hostname: layoutOrigin, port: 443 }), PUBLIC);
+const layoutHello = tlsTcpFromClientHelloBody(clientHelloBodyWithSni(layoutOrigin)).subarray(5);
+const hostAt = layoutHello.indexOf(Buffer.from(layoutOrigin));
+
+function checkRecordRoundtrip(input) {
+  const saved = Buffer.from(input);
+  const before = parseFirstTlsClientHelloFromTcpBuf(input);
+  assert.ok(before.ok);
+  const written = replaceFirstSniInTcpBuffer(input, layoutRelay);
+  assert.ok(written.ok, written.reason);
+  const wire = Buffer.concat([written.prefixBuf, written.tailAfterPrefix]);
+  const restored = restoreFirstSniInTcpBuffer(wire, layoutRelay, layoutOrigin);
+  assert.ok(restored.ok, restored.reason);
+  assert.deepEqual(Buffer.concat([restored.prefixBuf, restored.tailAfterPrefix]), input);
+  assert.deepEqual(input, saved, 'input buffer is immutable');
+  const oldHeaders = recordHeaders(input.subarray(0, before.bytesConsumed));
+  const newHeaders = recordHeaders(written.prefixBuf);
+  assert.equal(newHeaders.length, oldHeaders.length);
+  let offset = 0;
+  for (let i = 0; i < oldHeaders.length; i++) {
+    const size = oldHeaders[i].readUInt16BE(3);
+    const ownsSniStart = offset <= hostAt && hostAt < offset + size;
+    assert.deepEqual(newHeaders[i].subarray(0, 3), oldHeaders[i].subarray(0, 3));
+    assert.equal(newHeaders[i].readUInt16BE(3), size + (ownsSniStart ? layoutRelay.length - layoutOrigin.length : 0));
+    offset += size;
+  }
+  return written;
+}
+
+test('record layout: every two-record split, including handshake headers and SNI', () => {
+  for (let cut = 1; cut < layoutHello.length; cut++) {
+    checkRecordRoundtrip(recordsFromPayload(layoutHello, [cut]));
+  }
+});
+
+test('record layout: one-byte records and deterministic multi-record layouts', () => {
+  checkRecordRoundtrip(recordsFromPayload(layoutHello, Array.from({ length: layoutHello.length - 1 }, (_, i) => i + 1)));
+  for (let stride = 2; stride <= 17; stride++) {
+    const cuts = [];
+    for (let cut = stride; cut < layoutHello.length; cut += stride) cuts.push(cut);
+    checkRecordRoundtrip(recordsFromPayload(layoutHello, cuts));
+  }
+});
+
+test('fragmented parser concatenates payload once, not once per record', (t) => {
+  const input = recordsFromPayload(layoutHello, Array.from({ length: layoutHello.length - 1 }, (_, i) => i + 1));
+  const concat = t.mock.method(Buffer, 'concat');
+  assert.equal(parseFirstTlsClientHelloFromTcpBuf(input.subarray(0, -1)).needMore, true);
+  assert.equal(concat.mock.callCount(), 0);
+  assert.equal(parseFirstTlsClientHelloFromTcpBuf(input).ok, true);
+  assert.equal(concat.mock.callCount(), 1);
+});
+
+test('record layout: coalesced handshake suffix, following records and partial next header survive', () => {
+  // Byte-conservation fixture, not a claim this is a valid TLS 1.3 handshake sequence.
+  const neighbor = Buffer.from([0x0b, 0, 0, 5, 1, 2, 3, 4, 5]);
+  const tail = Buffer.from([0x14, 3, 3, 0, 1, 1, 0x17, 3, 3, 0, 2, 0xaa, 0xbb, 0x17, 3]);
+  for (const suffix of [neighbor, neighbor.subarray(0, 2)]) {
+    for (const cuts of [[], [2, hostAt + 1], [hostAt, hostAt + layoutOrigin.length]]) {
+      const prefix = recordsFromPayload(Buffer.concat([layoutHello, suffix]), cuts);
+      const written = checkRecordRoundtrip(Buffer.concat([prefix, tail]));
+      assert.deepEqual(written.tailAfterPrefix, tail);
+      const flat = [];
+      for (let at = 0; at < written.prefixBuf.length;) {
+        const end = at + 5 + written.prefixBuf.readUInt16BE(at + 3);
+        flat.push(written.prefixBuf.subarray(at + 5, end));
+        at = end;
+      }
+      const payload = Buffer.concat(flat);
+      assert.deepEqual(payload.subarray(4 + payload.readUIntBE(1, 3)), suffix);
+    }
+  }
+});
+
+function paddedLayoutHello(payloadLength) {
+  const body = clientHelloBodyWithSni(layoutOrigin);
+  const paddingLength = payloadLength - body.length - 8;
+  assert.ok(paddingLength >= 0);
+  const ext = Buffer.alloc(4 + paddingLength);
+  ext.writeUInt16BE(21, 0);
+  ext.writeUInt16BE(paddingLength, 2);
+  body.writeUInt16BE(body.readUInt16BE(41) + ext.length, 41);
+  return tlsTcpFromClientHelloBody(Buffer.concat([body, ext])).subarray(5);
+}
+
+test('record layout: large ClientHello remains multiple legal records', () => {
+  checkRecordRoundtrip(recordsFromPayload(paddedLayoutHello(24_000), [4000, 12000, 20000]));
+});
+
+test('record layout: expansion to 16384 bytes succeeds, overflow fails without mutation', () => {
+  const delta = layoutRelay.length - layoutOrigin.length;
+  checkRecordRoundtrip(recordsFromPayload(paddedLayoutHello(16384 - delta)));
+  const input = recordsFromPayload(paddedLayoutHello(16384 - delta + 1));
+  const before = Buffer.from(input);
+  const result = replaceFirstSniInTcpBuffer(input, layoutRelay);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'record_layout_resize_unsupported');
+  assert.deepEqual(input, before);
+});
+
+test('record layout: oversized input records are rejected as structured errors', () => {
+  const input = recordsFromPayload(paddedLayoutHello(16385));
+  const result = replaceFirstSniInTcpBuffer(input, layoutRelay);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'record_plaintext_oversize');
+});
+
+test('record layout: shrinking across the SNI-start boundary fails closed', () => {
+  const hostname = 'a'.repeat(150);
+  const payload = tlsTcpFromClientHelloBody(clientHelloBodyWithSni(hostname)).subarray(5);
+  const start = payload.indexOf(Buffer.from(hostname));
+  const result = replaceFirstSniInTcpBuffer(recordsFromPayload(payload, [start + 1]), 'x');
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'record_layout_resize_unsupported');
+});

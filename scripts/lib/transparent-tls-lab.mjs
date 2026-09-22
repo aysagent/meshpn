@@ -259,6 +259,7 @@ export function assertRelayTrace(lab, id) {
   assert.ok(exit.sni.endsWith(`.${lab.publicName}`));
   assert.equal(origin.sni, client.sni);
   assert.deepEqual(origin.body, client.body, 'origin receives identical handshake body');
+  assert.deepEqual(origin.prefix, client.prefix, 'origin receives identical TLS records including coalesced bytes');
   assert.notDeepEqual(exit.body, client.body, 'SNI actually changed on client→exit leg');
   assert.ok(client.ja3 && client.ja4, 'both fingerprints were parsed');
   for (const capture of [exit, origin]) {
@@ -267,7 +268,8 @@ export function assertRelayTrace(lab, id) {
   }
   return {
     ja3: client.ja3, ja4: client.ja4, clientHelloSha256: sha256(client.body),
-    restored: true, records: { client: client.records, exit: exit.records, origin: origin.records },
+    restored: true, recordsRestored: true,
+    records: { client: client.records, exit: exit.records, origin: origin.records },
   };
 }
 

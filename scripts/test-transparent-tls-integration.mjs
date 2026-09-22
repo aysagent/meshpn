@@ -61,7 +61,7 @@ test('simultaneous sessions are matched by ClientHello random, not arrival order
 });
 
 /** Test-only byte shaper; alters TLS record boundaries, not handshake contents. */
-async function fragmentingProxy(t, lab) {
+async function fragmentingProxy(t, lab, layout = 'two') {
   const server = net.createServer((socket) => {
     lab.track(socket);
     const upstream = lab.track(net.connect({ host: lab.host, port: lab.clientPort }));
@@ -84,8 +84,16 @@ async function fragmentingProxy(t, lab) {
       message[0] = 1;
       message.writeUIntBE(parsed.clientHelloBody.length, 1, 3);
       parsed.clientHelloBody.copy(message, 4);
-      const split = 43;
-      const records = [message.subarray(0, split), message.subarray(split)].map((body) => {
+      const hostnameAt = message.indexOf(Buffer.from(lab.originName));
+      assert.ok(hostnameAt > 4);
+      const cuts = layout === 'bytes'
+        ? Array.from({ length: message.length - 1 }, (_, i) => i + 1)
+        : layout === 'sni'
+          ? [1, 2, 3, hostnameAt, hostnameAt + 1, hostnameAt + lab.originName.length - 1]
+          : [43];
+      const boundaries = [0, ...cuts, message.length];
+      const records = boundaries.slice(1).map((end, i) => {
+        const body = message.subarray(boundaries[i], end);
         const header = Buffer.from([0x16, all[1], all[2], 0, 0]);
         header.writeUInt16BE(body.length, 3);
         return Buffer.concat([header, body]);
@@ -109,17 +117,27 @@ async function fragmentingProxy(t, lab) {
   return server.address().port;
 }
 
-test('real handshake fragmented across TLS records and TCP writes', TEST_OPTS, async (t) => {
-  const lab = await labFor(t);
-  const port = await fragmentingProxy(t, lab);
-  const response = await requestThroughLab(lab, { port });
-  assert.equal(JSON.parse(response.body).ok, true);
-  const trace = assertRelayTrace(lab);
-  assert.equal(trace.records.client.length, 2);
-  // Current runtime deliberately rebuilds one record: record-layout fidelity is NOT claimed.
-  assert.equal(trace.records.origin.length, 1);
-  assert.ok(lab.captures.find((capture) => capture.stage === 'client').chunkCount > 1);
-});
+for (const layout of ['two', 'sni', 'bytes']) {
+  for (const httpVersion of ['1.1', '2']) {
+    test(`real TLS record layout ${layout}, HTTP/${httpVersion}, fragmented TCP writes`, TEST_OPTS, async (t) => {
+      const lab = await labFor(t, { sessionTimeoutMs: 0 });
+      const port = await fragmentingProxy(t, lab, layout);
+      const response = await requestThroughLab(lab, { port, httpVersion }).catch((error) => {
+        t.diagnostic(JSON.stringify({ stats: lab.stats(), diagnostics: lab.diagnostics,
+          runtimeErrors: lab.runtimeErrors, captures: lab.captures.map((c) => ({ stage: c.stage, records: c.records.length })) }));
+        throw error;
+      });
+      assert.equal(JSON.parse(response.body).ok, true);
+      const trace = assertRelayTrace(lab);
+      assert.equal(trace.recordsRestored, true);
+      assert.equal(trace.records.client.length, layout === 'two' ? 2 : layout === 'sni' ? 7 :
+        lab.captures.find((capture) => capture.stage === 'client').body.length + 4);
+      assert.deepEqual(trace.records.origin, trace.records.client);
+      assert.equal(trace.records.exit.length, trace.records.client.length);
+      assert.ok(lab.captures.find((capture) => capture.stage === 'client').chunkCount > 1);
+    });
+  }
+}
 
 test('wrong enc-SNI PSK is rejected before an origin connection', TEST_OPTS, async (t) => {
   const lab = await labFor(t, { clientPsk: randomBytes(32) });
