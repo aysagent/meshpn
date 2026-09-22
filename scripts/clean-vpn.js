@@ -39,11 +39,11 @@
  *   Явный путь: --shared-hmac-key=PATH (обе стороны). Legacy alias: --quic-ext-crypto-key=PATH; legacy-имя файла quic-ext-hmac.key всё ещё читается, но новые файлы создаются как clean-vpn-hmac.key.
  *
  * Пример:
- *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=socket
- *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=socket --split-default
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=tcp
+ *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=tcp --split-default
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=http
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=http --split-default
- *   HTTP (--type=http): тот же TCP, что socket; клиент — GET /clean-vpn, ответ 200, затем uint32+IPv4 (см. строку «Протокол» выше).
+ *   HTTP (--type=http): тот же TCP, что --type=tcp, но клиент сначала посылает GET /clean-vpn, получает 200, затем uint32+IPv4 (см. строку «Протокол» выше).
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=websocket --ws-server
  *   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=VPS:8765 --type=websocket --split-default
  *   WebSocket «NAT»: client на VPS слушает (--ws-server), exit коннектится без флага к VPS:PORT; при --split-default bypass к пиру по remoteAddress или --tunnel-peer.
@@ -4091,6 +4091,7 @@ function parseArgs(argv) {
     }
   }
   if (out.type) out.type = String(out.type).trim();
+  if (out.type === 'socket') out.type = 'tcp'; // Legacy CLI spelling; wire format is unchanged.
   return out;
 }
 
@@ -7754,7 +7755,7 @@ function handleTlsExitInbound(socket, ctx) {
 }
 
 // =============================================================================
-// === Общее: HTTP-преамбула для --type=socket | --type=http ===
+// === Общее: HTTP-преамбула для --type=tcp | --type=http ===
 // =============================================================================
 
 function handleHttpSocket(sock, onReady) {
@@ -9509,8 +9510,8 @@ async function runExit({
     return;
   }
 
-  // --- runExit: --type=socket | --type=http | --type=transparent-tls ---
-  if (type === 'socket' || type === 'http' || type === 'transparent-tls') {
+  // --- runExit: --type=tcp | --type=http | --type=transparent-tls ---
+  if (type === 'tcp' || type === 'http' || type === 'transparent-tls') {
     const ttlVpnSecretBuf =
       type === 'transparent-tls'
         ? ensureSharedHmacKey(
@@ -11393,7 +11394,7 @@ async function runClient({
   if (type === 'transparent-tls') {
     if (!splitDefault) {
       throw new Error(
-        '[clean-vpn] transparent-tls на client требует --split-default (tun и IPv4-пакеты в exit — как `--type=socket`; tcp/443 к сайтам дополнительно уходит вторым транспортом к тому же exit).',
+        '[clean-vpn] transparent-tls на client требует --split-default (tun и IPv4-пакеты в exit — как `--type=tcp`; tcp/443 к сайтам дополнительно уходит вторым транспортом к тому же exit).',
       );
     }
     const ttlClientPublicName = tlsPublicNamePrimary(tlsPublicName);
@@ -11423,7 +11424,7 @@ async function runClient({
       new Promise((resolve, reject) => {
         const sock = net.connect(port, host, () => {
           console.log(
-            `[clean-vpn transparent-tls client] route=non-tls (TUN IPv4) upstream=${host}:${port} транспорт=IPv4 mux (кадры uint32+pkt, как --type=socket)`,
+            `[clean-vpn transparent-tls client] route=non-tls (TUN IPv4) upstream=${host}:${port} транспорт=IPv4 mux (кадры uint32+pkt, как --type=tcp)`,
           );
           tlsVpnSocket = sock;
           resolve(sock);
@@ -11581,13 +11582,13 @@ async function runClient({
     return;
   }
 
-  if (type !== 'socket' && type !== 'http') {
+  if (type !== 'tcp' && type !== 'http') {
     throw new Error(
-      `Неизвестный --type=${type} для client. Допускаются: tls, boring-tls, combo-tls, transparent-tls (см. документацию), socket, http, …`,
+      `Неизвестный --type=${type} для client. Допускаются: tls, boring-tls, combo-tls, transparent-tls (см. документацию), tcp, http, …`,
     );
   }
 
-  // --- runClient: --type=socket | --type=http (TCP + опционально GET /clean-vpn) ---
+  // --- runClient: --type=tcp | --type=http (TCP + опционально GET /clean-vpn) ---
   attachOutboundTunBridge(
     tun,
     'tcp',
@@ -11596,7 +11597,7 @@ async function runClient({
       new Promise((resolve, reject) => {
         const sock = net.connect(port, host, () => {
           console.log('[clean-vpn] TCP connected');
-          if (type === 'socket') {
+          if (type === 'tcp') {
             resolve(sock);
             return;
           }
@@ -11631,14 +11632,14 @@ async function main() {
   }
   if (!args.role || !args.server || !args.type) {
     console.error(`Использование:
-  sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=socket [--ext=eth0]
-  sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=socket --split-default
+  sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=tcp [--ext=eth0]
+  sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=tcp --split-default
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:8765 --type=transparent-tls --tls-public-name=vpn.example.com --ext=eth0
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:8765 --type=transparent-tls --split-default --tls-public-name=vpn.example.com
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=exit --server=0.0.0.0:443 --type=combo-tls --tls-public-name=vpn.example.com --ext=eth0
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:443 --type=combo-tls --split-default --tls-public-name=vpn.example.com
 
---type: socket | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls | boring-tls | transparent-tls | combo-tls
+--type: tcp (socket alias) | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls | boring-tls | transparent-tls | combo-tls
 --split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 через uplink; /32 bypass к --server и (только webrtc/rtc-chrome/ws-chrome/udp+punch) к IP STUN/TURN из --config. Plain --type=udp STUN не резолвит. IPv6 не в туннеле. Проверка: curl -4 https://ifconfig.me
 --client-lan-subnet=CIDR: только client + --split-default — LAN/USB gadget за клиентом (адрес сети, напр. 192.168.7.0/24): ip_forward, SNAT в ${IP_CLIENT} через tun, FORWARD; иначе устройства за клиентом не попадают под NAT exit.
 --transparent-tls-lan-bind=IPv4: с --type=transparent-tls или combo-tls + --client-lan-subnet — адрес этого шлюза для DNAT второго listener и PREROUTING (должен входить в CIDR), если автопоиск не нашёл нужный интерфейс (часто: на USB/etherнет нет адреса из 192.168.7.x).
@@ -11673,7 +11674,7 @@ async function main() {
 --ws-server: websocket / ws-chrome на exit — слушать HTTP+WS или WSS данных на --server; на client (websocket) — слушать WSS; без флага — исходящий WebSocket к --server.
 --signaling: webrtc (exit|client) или rtc-chrome (client) — слушать WSS сигналинга на --server; без флага — исходящий WS. Для udp — вместе с UDP на PORT поднять WSS на PORT+1 (как webrtc). Алиас: --signalling.
 --punch: только --type=udp — hole punching через STUN + сигналинг на PORT+1; на exit только вместе с --signaling.
---keep-alive=N: ... ws-chrome: переподключение поднимает новый Chrome (дорого). rtc-chrome: keep-alive рвёт только WebRTC к exit, Chrome остаётся (быстрый reconnect). QUIC/quic-ext: флаг не применяется. transport=tcp (--type=socket): idle на TCP-сервере (inbound) — FIN; на TCP-клиенте (outbound, в т.ч. exit с исходящим WS к client) TUN снимается без FIN, ждёт FIN сервера (CLEAN_VPN_TCP_GRACEFUL_CLOSE_MS, default 5s).
+--keep-alive=N: ... ws-chrome: переподключение поднимает новый Chrome (дорого). rtc-chrome: keep-alive рвёт только WebRTC к exit, Chrome остаётся (быстрый reconnect). QUIC/quic-ext: флаг не применяется. transport=tcp (--type=tcp): idle на TCP-сервере (inbound) — FIN; на TCP-клиенте (outbound, в т.ч. exit с исходящим WS к client) TUN снимается без FIN, ждёт FIN сервера (CLEAN_VPN_TCP_GRACEFUL_CLOSE_MS, default 5s).
 --keep-alive-reconnect-cooldown=M: целое M≥0; только с --keep-alive>0. После разрыва по idle M с не поднимать lazy по IPv4 с TUN (отбрасываются); не-IPv4 не поднимает сессию в любом случае. После M с следующий IPv4 снова может lazy-connect — cooldown не фильтр «навсегда». Меньше дребезга от DNS/ретрансмитов. По умолчанию 0. CLEAN_VPN_KEEPALIVE_DEBUG=1 — lazy/cooldown и drop не-IPv4 (hex). CLEAN_VPN_PACKET_DEBUG=1 — до 100 метаданных IPv4-пакетов на границах wire↔TUN (без payload). CLEAN_VPN_TLS_MUX_DEBUG=1 — диагностика TCP до ClientHello на exit и до handshake на client (--type=tls).
 --tunnel-peer=HOST: для websocket/webrtc/rtc-chrome/udp + client при нюансах accept/split-default — см. шапку. Дополнительно: **transparent-tls** и **combo-tls + client** — **IPv4 или IPv4:PORT** (порт по умолчанию **443**) фиксирует один апстрим для всех локальных HTTPS-сессий (**без** iptables REDIRECT; нужен только с тестами на один хост). Обычный режим: **OUTPUT** ipv4/https→локальный intercept; при **--client-lan-subnet** — **PREROUTING DNAT** с LAN→LAN-IPv4 шлюза:intercept (второй listener, см. документацию).
 --tls-cert-dir / --shared-hmac-key: для transparent-tls и combo-tls нужен тот же 32-байтовый ключ (enc-SNI AEAD и Bearer tls), что и для --type=tls (на exit при отсутствии автосоздание как у QUIC каталога).`);

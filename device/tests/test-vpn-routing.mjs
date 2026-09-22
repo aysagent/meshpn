@@ -21,7 +21,7 @@ static struct netif *s_usb=&usb,*s_ap=&ap;
 static bool s_ready=true;
 static struct { bool enabled,kill_switch,connected; char transport[32];
   uint32_t socket_rx_to_usb,socket_rx_to_ap,socket_last_return_src,socket_last_return_dst;
-  int64_t socket_last_return_us; } s={.enabled=true,.kill_switch=true,.transport="socket"};
+  int64_t socket_last_return_us; } s={.enabled=true,.kill_switch=true,.transport="tcp"};
 #define LOCK() ((void)0)
 #define UNLOCK() ((void)0)
 #define esp_timer_get_time() 1234
@@ -31,7 +31,7 @@ static struct { bool enabled,kill_switch,connected; char transport[32];
 #define ip4_addr_cmp(a,b) ((a)->addr==(b)->addr)
 #define ip4_addr_ismulticast(a) (((a)->addr&0xf0000000)==0xe0000000)
 #define IPADDR_BROADCAST 0xffffffff
-static bool plain_transport(const char*n){return n&&(!strcmp(n,"socket")||!strcmp(n,"udp"));}
+static bool plain_transport(const char*n){return n&&(!strcmp(n,"tcp")||!strcmp(n,"socket")||!strcmp(n,"udp"));}
 ${file.slice(start,end)}
 int main(void){
 ip4_addr_t client={0xc0a80702},apclient={0xc0a80402},wan={0x01010101},sta={0xc0a8010a};

@@ -30,10 +30,8 @@ static bool s_ready;
 static uint32_t s_probe_epoch;
 typedef struct { uint16_t len; int64_t time; uint8_t data[MESHVPN_VPN_MTU]; } packet_t;
 #define MESHVPN_VPN_SOCKET_RX_BYTES 8192
-#define MESHVPN_VPN_UDP_RX_BATCH_FRAMES 16
 #define MESHVPN_VPN_RX_BATCH_BYTES (MESHVPN_VPN_UDP_RX_BATCH_FRAMES * MESHVPN_VPN_MTU)
 #define MESHVPN_VPN_RX_BATCH_FRAMES 320
-#define MESHVPN_VPN_UDP_RX_BATCH_US 2000
 #define MESHVPN_VPN_RX_SELECT_WAIT_US 10000
 #define MESHVPN_VPN_WORKER_PRIORITY 6
 typedef struct {
@@ -65,7 +63,7 @@ bool meshvpn_vpn_is_connected(void) { LOCK(); bool v = s.connected; UNLOCK(); re
 static bool enabled(void) { LOCK(); bool v = s.enabled; UNLOCK(); return v; }
 static bool session(uint32_t g) { LOCK(); bool v = s.enabled && s.generation == g; UNLOCK(); return v; }
 static bool plain_transport(const char *name)
-{ return name && (!strcmp(name, "socket") || !strcmp(name, "udp")); }
+{ return name && (!strcmp(name, "tcp") || !strcmp(name, "socket") || !strcmp(name, "udp")); }
 static void flush_nat(void)
 {
     bool usb = s_usb && s_usb->napt, ap = s_ap && s_ap->napt;
@@ -107,10 +105,10 @@ const char *meshvpn_vpn_config_error(const meshvpn_vpn_config_t *c)
     if (!c->enabled) return NULL;
     uint8_t ip[4]; uint16_t port;
     bool wg = !strcmp(c->transport, "wireguard");
-    if (!wg && !plain_transport(c->transport)) return "Transport: select socket, UDP or WireGuard.";
+    if (!wg && !plain_transport(c->transport)) return "Transport: select TCP, UDP or WireGuard.";
     if (!meshvpn_vpn_endpoint(c->server, ip, &port)) return "Endpoint/server: enter numeric IPv4:port (port 1-65535); hostnames and IPv6 are not supported.";
     if (wg) return meshvpn_wg_config_error(c);
-    if (ip[0] == 10 && ip[1] == 99 && ip[2] == 0) return "Server overlaps the socket tunnel subnet 10.99.0.0/24.";
+    if (ip[0] == 10 && ip[1] == 99 && ip[2] == 0) return "Server overlaps the plain tunnel subnet 10.99.0.0/24.";
     return NULL;
 }
 static esp_err_t apply_config(void *arg)
@@ -125,10 +123,12 @@ static esp_err_t apply_config(void *arg)
     if (strcmp(c->transport, "wireguard") || !ip4addr_aton(c->wg_address, &address)) IP4_ADDR(&address,10,99,0,2);
     netif_set_ipaddr(&s_vpn, &address);
     /* Unsupported saved profiles must never silently enable DIRECT. */
-    LOCK(); s_config = *c; s.enabled = c->enabled; s.connected = false; s.generation++;
+    LOCK(); s_config = *c;
+    if (!strcmp(s_config.transport, "socket")) strcpy(s_config.transport, "tcp");
+    s.enabled = c->enabled; s.connected = false; s.generation++;
     s.kill_switch = !c->allow_direct; s_probe_epoch++; s.probe_at_us = 0; s.probe_ok = false; s.probe_error = 0;
     s.tx_dropped += s_count; s_head = s_count = s.queue_depth = 0;
-    strlcpy(s.server, c->server, sizeof(s.server)); strlcpy(s.transport, c->transport, sizeof(s.transport));
+    strlcpy(s.server, c->server, sizeof(s.server)); strlcpy(s.transport, s_config.transport, sizeof(s.transport));
     strlcpy(s.state, c->enabled ? "waiting" : "disabled", sizeof(s.state));
     s.last_error = err;
     strlcpy(s.wg_address, c->wg_address, sizeof(s.wg_address));
@@ -146,7 +146,7 @@ static esp_err_t apply_config(void *arg)
 esp_err_t meshvpn_vpn_start(const meshvpn_vpn_config_t *c)
 { return c ? esp_netif_tcpip_exec(apply_config, (void *)c) : ESP_ERR_INVALID_ARG; }
 esp_err_t meshvpn_vpn_stop(void)
-{ meshvpn_vpn_config_t c = { .transport = "socket" }; return meshvpn_vpn_start(&c); }
+{ meshvpn_vpn_config_t c = { .transport = "tcp" }; return meshvpn_vpn_start(&c); }
 void meshvpn_vpn_set_lan(struct netif *usb, struct netif *ap) { s_usb = usb; s_ap = ap; }
 static bool lan(const ip4_addr_t *ip, struct netif *n)
 { return n && ip && ip4_addr_netcmp(ip, netif_ip4_addr(n), netif_ip4_netmask(n)); }
@@ -767,7 +767,7 @@ retry:
 }
 esp_err_t meshvpn_vpn_init(void)
 {
-    strlcpy(s.state, "disabled", sizeof(s.state)); strlcpy(s.transport, "socket", sizeof(s.transport));
+    strlcpy(s.state, "disabled", sizeof(s.state)); strlcpy(s.transport, "tcp", sizeof(s.transport));
     strlcpy(s.address, "10.99.0.2", sizeof(s.address)); s.wg_handshake_age = UINT32_MAX;
     /* Keep a blackhole route even in builds without transport workers, so a
      * saved enable flag cannot turn into DIRECT when flashing another build. */

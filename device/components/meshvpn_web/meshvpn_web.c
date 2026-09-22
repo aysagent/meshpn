@@ -590,6 +590,8 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON *socket_diag = cJSON_AddObjectToObject(vpn, "socket");
     cJSON_AddNumberToObject(socket_diag, "queue_capacity", MESHVPN_VPN_SLOTS);
     cJSON_AddNumberToObject(socket_diag, "batch_max_frames", MESHVPN_VPN_BATCH_FRAMES);
+    cJSON_AddNumberToObject(socket_diag, "udp_rx_batch_frames", MESHVPN_VPN_UDP_RX_BATCH_FRAMES);
+    cJSON_AddNumberToObject(socket_diag, "udp_rx_batch_budget_us", MESHVPN_VPN_UDP_RX_BATCH_US);
     cJSON_AddNumberToObject(socket_diag, "rx_timeouts", vs.socket_rx_timeouts);
     cJSON_AddNumberToObject(socket_diag, "tx_timeouts", vs.socket_tx_timeouts);
     cJSON_AddNumberToObject(socket_diag, "rx_batches", vs.socket_rx_batches);
@@ -981,15 +983,17 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     const char *validation_error = NULL;
     bool valid = cJSON_IsBool(en) && cJSON_IsString(server) && cJSON_IsString(transport) &&
         strlen(server->valuestring) < sizeof(cfg.server) &&
-        (!strcmp(transport->valuestring, "socket") || !strcmp(transport->valuestring, "udp") ||
+        (!strcmp(transport->valuestring, "tcp") || !strcmp(transport->valuestring, "socket") ||
+         !strcmp(transport->valuestring, "udp") ||
          !strcmp(transport->valuestring, "wireguard")) &&
         (!cJSON_IsTrue(en) || !strcmp(transport->valuestring, "wireguard") || cJSON_IsTrue(ack));
     if (!valid) {
         if (!cJSON_IsBool(en)) validation_error = "Enable VPN: expected a checkbox value.";
         else if (!cJSON_IsString(server) || strlen(server->valuestring) >= sizeof(cfg.server)) validation_error = "Endpoint/server: missing or too long.";
-        else if (!cJSON_IsString(transport) || (strcmp(transport->valuestring, "socket") &&
+        else if (!cJSON_IsString(transport) || (strcmp(transport->valuestring, "tcp") &&
+                 strcmp(transport->valuestring, "socket") &&
                  strcmp(transport->valuestring, "udp") && strcmp(transport->valuestring, "wireguard")))
-            validation_error = "Transport: select socket, UDP or WireGuard.";
+            validation_error = "Transport: select TCP, UDP or WireGuard.";
         else validation_error = "Plaintext transport: confirm the warning before enabling.";
     }
     cJSON *kill = cJSON_GetObjectItemCaseSensitive(in, "kill_switch");
@@ -1029,7 +1033,8 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     if (valid) {
         cfg.enabled = cJSON_IsTrue(en);
         strlcpy(cfg.server, server->valuestring, sizeof(cfg.server));
-        strlcpy(cfg.transport, transport->valuestring, sizeof(cfg.transport));
+        strlcpy(cfg.transport, !strcmp(transport->valuestring, "socket") ? "tcp" : transport->valuestring,
+                sizeof(cfg.transport));
         validation_error = meshvpn_vpn_config_error(&cfg);
         valid = validation_error == NULL;
     }

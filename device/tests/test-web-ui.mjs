@@ -30,7 +30,7 @@ for(const part of text.split('static const char ').slice(1)){
         const status={https_enabled:https,certificate_sha256:https?'AA:BB':null,
           https_configured:https,https_restart_required:false,admin_next_url:(https?'https':'http')+'://meshpn.local/',
           temperature_c:42,memory:{internal:{free:1024},psram:{free:2048}},
-          vpn:{implemented:true,enabled:false,server:'',transport:'socket',state:'disabled'},
+          vpn:{implemented:true,enabled:false,server:'',transport:'tcp',state:'disabled'},
           leds:{user:{controllable:true,enabled:true},charge:{present:true,controllable:false,enabled:null}},
           cpu:{cores:[{id:0,load_pct:37},{id:1,load_pct:12}],tasks:[]},
           wifi:{connected:false,state:'setup'},usb:{profile:'ncm',host_ready:true},
@@ -60,7 +60,7 @@ for(const part of text.split('static const char ').slice(1)){
               status.leds.user.enabled=payload.user_enabled;
             }else if(path==='/api/vpn/config'){
               assert.equal(options.method,'POST'); assert.equal(options.headers.Authorization,'Bearer test-token');
-              const cfg=JSON.parse(options.body);assert(['socket','udp','wireguard'].includes(cfg.transport));
+              const cfg=JSON.parse(options.body);assert(['tcp','udp','wireguard'].includes(cfg.transport));
               assert(!cfg.enabled||cfg.transport==='wireguard'||cfg.allow_plaintext);
               Object.assign(status.vpn,{enabled:cfg.enabled,transport:cfg.transport,server:cfg.server,kill_switch:cfg.kill_switch});
               if(cfg.transport==='wireguard')status.vpn.wireguard={address:cfg.wg_address.split(',')[0].split('/')[0],address_input:cfg.wg_address,dns:cfg.wg_dns,

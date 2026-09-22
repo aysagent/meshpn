@@ -33,7 +33,7 @@ typedef struct {uint32_t addr;} ip4_addr_t;
 #define ip4_addr3(a) (((uint8_t*)&(a)->addr)[2])
 #define strlcpy test_strlcpy
 static size_t test_strlcpy(char*d,const char*s,size_t n){size_t l=strlen(s);if(n){size_t c=l<n-1?l:n-1;memcpy(d,s,c);d[c]=0;}return l;}
-static bool plain_transport(const char*n){return n&&(!strcmp(n,"socket")||!strcmp(n,"udp"));}
+static bool plain_transport(const char*n){return n&&(!strcmp(n,"tcp")||!strcmp(n,"socket")||!strcmp(n,"udp"));}
 ${wg}
 ${validate}
 typedef int httpd_req_t;
@@ -56,11 +56,12 @@ ${handler}
 static void replace(const char*k,const char*v){cJSON_DeleteItemFromObject(request,k);cJSON_AddStringToObject(request,k,v);}
 int main(void){
 httpd_req_t r=0;strcpy(saved.wg_dns,"1.1.1.1");saved.wg_keepalive=25;
-request=cJSON_Parse("{\\"enabled\\":true,\\"transport\\":\\"socket\\",\\"server\\":\\"192.0.2.1:8765\\"}");assert(request);
+request=cJSON_Parse("{\\"enabled\\":true,\\"transport\\":\\"tcp\\",\\"server\\":\\"192.0.2.1:8765\\"}");assert(request);
 auth=false;assert(handler_vpn_config(&r)==ESP_FAIL&&!saves);auth=true;
 assert(handler_vpn_config(&r)==ESP_FAIL&&!saves);cJSON_AddBoolToObject(request,"allow_plaintext",true);
 save_fail=true;assert(handler_vpn_config(&r)==ESP_FAIL&&!applies);save_fail=false;
 assert(handler_vpn_config(&r)==ESP_OK&&saves==1&&applies==1);
+assert(!strcmp(saved.transport,"tcp"));
 replace("transport","udp");replace("server","192.0.2.1:8765");
 assert(handler_vpn_config(&r)==ESP_OK&&saves==2&&applies==2);
 replace("transport","wireguard");replace("server","192.0.2.1:51820");
@@ -91,7 +92,7 @@ assert(handler_vpn_config(&r)==ESP_OK&&!strcmp(saved.wg_private_key,(char*)key)&
 /* UI socket saves omit all WG fields. Secrets/profile survive, endpoint is shared. */
 cJSON *wg_request=request;request=cJSON_CreateObject();
 cJSON_AddBoolToObject(request,"enabled",true);cJSON_AddBoolToObject(request,"allow_plaintext",true);
-cJSON_AddStringToObject(request,"transport","socket");cJSON_AddStringToObject(request,"server","192.0.2.2:8765");
+cJSON_AddStringToObject(request,"transport","tcp");cJSON_AddStringToObject(request,"server","192.0.2.2:8765");
 assert(handler_vpn_config(&r)==ESP_OK);
 assert(!strcmp(saved.wg_private_key,(char*)key)&&!strcmp(saved.wg_public_key,(char*)key)&&saved.wg_preshared_key[0]);
 assert(!strcmp(saved.wg_address_input,"10.0.0.7/24,fd42:42:42::7/64")&&!strcmp(saved.wg_dns,"1.1.1.1"));
@@ -108,6 +109,9 @@ cJSON_DeleteItemFromObject(request,"wg_keepalive");
 replace("wg_private_key","AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");assert(handler_vpn_config(&r)==ESP_FAIL);
 assert(strstr(last_error_message,"PrivateKey:"));
 cJSON_Delete(request);assert(cache_clears==applies&&applies==saves);
+request=cJSON_Parse("{\\"enabled\\":false,\\"transport\\":\\"socket\\",\\"server\\":\\"192.0.2.2:8765\\"}");
+assert(handler_vpn_config(&r)==ESP_OK&&!strcmp(saved.transport,"tcp"));
+cJSON_Delete(request);
 request=cJSON_Parse("{\\"enabled\\":false,\\"transport\\":\\"wireguard\\",\\"server\\":\\"192.0.2.1:51820\\",\\"kill_switch\\":false}");
 assert(handler_vpn_config(&r)==ESP_OK&&saved.allow_direct);
 cJSON_DeleteItemFromObject(request,"kill_switch");

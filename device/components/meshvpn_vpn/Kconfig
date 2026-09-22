@@ -4,7 +4,33 @@ menu "meshvpn VPN"
         bool "Enable VPN client (experimental)"
         default y
         help
-            Experimental unencrypted socket (TCP) and UDP tunnels to clean-vpn exit.
+            Experimental unencrypted TCP and UDP tunnels to clean-vpn exit.
             Disabled at runtime until explicitly configured. TLS is not implemented.
+
+    config MESHVPN_VPN_TX_BATCH_FRAMES
+        int "TCP tunnel TX batch frames"
+        range 1 64
+        default 32
+        help
+            Maximum number of IPv4 frames coalesced into one outer TCP write.
+            Larger values reduce write and wakeup overhead at the cost of queue
+            latency. Set 16 for the previous baseline.
+
+    config MESHVPN_VPN_UDP_RX_BATCH_FRAMES
+        int "UDP tunnel RX batch frames"
+        range 1 64
+        default 32
+        help
+            Maximum number of already queued UDP datagrams injected into lwIP
+            in one bounded batch. Larger values amortize tcpip-thread dispatch.
+
+    config MESHVPN_VPN_UDP_RX_BATCH_US
+        int "UDP tunnel RX batch budget (microseconds)"
+        range 250 10000
+        default 4000
+        help
+            Time budget for draining one UDP RX batch. This is a bound, not a
+            deliberate delay; the drain stops earlier when the socket is empty.
+            Use 2000 for the previous baseline.
 
 endmenu

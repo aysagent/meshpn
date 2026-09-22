@@ -24,6 +24,8 @@ const source = `
 #include <sys/socket.h>
 #include <unistd.h>
 #define MESHVPN_VPN_MTU 1400
+#define MESHVPN_VPN_UDP_RX_BATCH_FRAMES 32
+#define MESHVPN_VPN_UDP_RX_BATCH_US 4000
 #define LOCK() ((void)0)
 #define UNLOCK() ((void)0)
 #define COUNT(field) (++s.field)
@@ -37,19 +39,20 @@ int main(void) {
   assert(fcntl(fd[1], F_SETFL, O_NONBLOCK) == 0);
   uint8_t packet[100] = {0}, rx[MESHVPN_VPN_MTU + 1] = {0};
   rx_batch_t batch = {0};
-  for (unsigned i = 0; i < 20; i++) {
+  for (unsigned i = 0; i < MESHVPN_VPN_UDP_RX_BATCH_FRAMES + 4; i++) {
     packet[0] = (uint8_t)i;
     assert(send(fd[0], packet, sizeof(packet), 0) == sizeof(packet));
   }
   assert(receive_udp_batch(fd[1], rx, &batch) == 0);
-  assert(batch.count == MESHVPN_VPN_UDP_RX_BATCH_FRAMES && batch.used == 1600);
+  assert(batch.count == MESHVPN_VPN_UDP_RX_BATCH_FRAMES &&
+         batch.used == MESHVPN_VPN_UDP_RX_BATCH_FRAMES * 100);
   for (unsigned i = 0; i < batch.count; i++)
     assert(batch.lengths[i] == 100 && batch.data[batch.offsets[i]] == i);
   batch.count = batch.used = 0;
   assert(receive_udp_batch(fd[1], rx, &batch) == 0);
   assert(batch.count == 4 && batch.used == 400);
   for (unsigned i = 0; i < batch.count; i++)
-    assert(batch.data[batch.offsets[i]] == i + 16);
+    assert(batch.data[batch.offsets[i]] == i + MESHVPN_VPN_UDP_RX_BATCH_FRAMES);
   batch.count = batch.used = 0;
   assert(receive_udp_batch(fd[1], rx, &batch) == 0 && !batch.count);
   uint8_t oversized[MESHVPN_VPN_MTU + 1] = {0};
@@ -64,7 +67,7 @@ int main(void) {
     packet[0] = (uint8_t)i;
     assert(send(fd[0], packet, sizeof(packet), 0) == sizeof(packet));
   }
-  clock_step = 1000;
+  clock_step = MESHVPN_VPN_UDP_RX_BATCH_US / 2;
   assert(receive_udp_batch(fd[1], rx, &batch) == 0 && batch.count == 2);
   clock_step = 1;
   batch.count = batch.used = 0;

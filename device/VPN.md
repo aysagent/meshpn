@@ -2,7 +2,7 @@
 
 ## Plain clean-vpn transports
 
-The firmware implements `socket`: TCP carrying `[uint32 big-endian length][IPv4]`.
+The firmware implements `tcp` (formerly `socket`): TCP carrying `[uint32 big-endian length][IPv4]`.
 It also implements `udp`: one UDP datagram carries exactly one IPv4 packet, with
 no length prefix or handshake. Neither transport has authentication or encryption.
 Use a dedicated test exit restricted
@@ -18,7 +18,7 @@ Future TLS/profile/auth vectors in plan stage 0 remain deferred, not claimed tes
 On the **dedicated, firewall-restricted exit**, from the project directory:
 
 ```sh
-sudo env PATH="$PATH" node scripts/clean-vpn.js --role=exit --type=socket --server=0.0.0.0:8765 --keep-alive=0
+sudo env PATH="$PATH" node scripts/clean-vpn.js --role=exit --type=tcp --server=0.0.0.0:8765 --keep-alive=0
 ```
 
 For UDP, stop the TCP exit and run:
@@ -36,7 +36,7 @@ existing ufw/firewalld terminal `REJECT` makes the tunnel TCP connection look
 healthy while forwarded client SYN packets receive immediate synthetic resets.
 The rules are removed on normal shutdown.
 
-In the device admin VPN section select socket or udp to match the exit, enter its
+In the device admin VPN section select tcp or udp to match the exit, enter its
 **numeric IPv4:port**,
 acknowledge plaintext, enable and save. Changes apply without reboot and persist.
 Disable VPN to return to DIRECT. TLS transports are not implemented here yet.
@@ -76,15 +76,15 @@ are not full-tunnelled.
   be reported as disconnected. Unsupported/misconfigured profiles are not proof
   of a working VPN; inspect the status/error and perform a reachability test.
 
-These behaviours are host-tested and compile-tested. Basic socket forwarding has
+These behaviours are host-tested and compile-tested. Basic TCP forwarding has
 also been exercised on XIAO hardware; the split-worker build, UDP transport and
 kill-switch transitions still require the hardware checks below.
 
 The TX queue holds 256 packets in PSRAM, drops entries older than 1 second, and
 cannot grow with traffic. Dedicated RX and TX tasks share the full-duplex outer
-socket, so lwIP injection does not block queue draining. TCP sends up to 16 queued
+socket, so lwIP injection does not block queue draining. TCP sends up to 32 queued
 frames per batch; UDP sends one packet per datagram without a writable `select`
-before each send. UDP RX drains up to 16 available datagrams or 2 ms before one
+before each send. UDP RX drains up to 32 available datagrams or 4 ms before one
 lwIP injection callback. Diagnostics `socket.rx_inject_exec_us` is the cumulative
 callback round-trip time (including scheduler wait); `rx_inject_exec_max_us` is
 the lifetime maximum, not a per-test sample. Partial TCP frame/write

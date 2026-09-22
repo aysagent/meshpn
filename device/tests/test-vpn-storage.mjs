@@ -50,13 +50,15 @@ int main(void){
  assert(!strcmp(record_key,"vpn_cfg4"));
  assert(meshvpn_config_load_vpn(&c)==ESP_OK&&c.allow_direct&&c.enabled);
  assert(!strcmp(c.wg_address_input,"10.0.0.7/24,fd42:42:42::7/64"));
+ strcpy(c.transport,"socket");assert(meshvpn_config_save_vpn(&c)==ESP_OK);
+ assert(meshvpn_config_load_vpn(&out)==ESP_OK&&!strcmp(out.transport,"tcp"));
  c.allow_direct=false;assert(meshvpn_config_save_vpn(&c)==ESP_OK);
  assert(meshvpn_config_load_vpn(&out)==ESP_OK&&!out.allow_direct);
  record_size--;assert(meshvpn_config_load_vpn(&out)==ESP_FAIL); // corrupt v4 must not restore defaults
  commit_fail=true;assert(meshvpn_config_save_vpn(&c)==ESP_FAIL);
  struct {char server[129],sni[129],transport[32];bool enabled;} v1={.transport="socket",.enabled=true};
  nvs_set_blob(0,"vpn_cfg1",&v1,sizeof(v1));
- assert(meshvpn_config_load_vpn(&out)==ESP_OK&&out.enabled&&!out.allow_direct);
+ assert(meshvpn_config_load_vpn(&out)==ESP_OK&&out.enabled&&!out.allow_direct&&!strcmp(out.transport,"tcp"));
  puts("VPN NVS: v1/v2/v3 migration, original Address v4 roundtrip and corruption handling passed");
 }
 `;

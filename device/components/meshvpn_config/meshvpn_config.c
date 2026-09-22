@@ -199,11 +199,14 @@ esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
         memchr(out->wg_preshared_key, 0, sizeof(out->wg_preshared_key)) &&
         memchr(out->wg_address, 0, sizeof(out->wg_address)) &&
         memchr(out->wg_dns, 0, sizeof(out->wg_dns)) &&
-        memchr(out->wg_address_input, 0, sizeof(out->wg_address_input))) return ESP_OK;
+        memchr(out->wg_address_input, 0, sizeof(out->wg_address_input))) {
+        if (!strcmp(out->transport, "socket")) strcpy(out->transport, "tcp");
+        return ESP_OK;
+    }
     if (blob_err != ESP_ERR_NVS_NOT_FOUND) return ESP_FAIL;
     memset(out, 0, sizeof(*out));
     strcpy(out->wg_dns, "1.1.1.1"); out->wg_keepalive = 25;
-    /* Socket-only v1 record migration; original trailing padding included. */
+    /* TCP-only v1 record migration; original trailing padding included. */
     struct { char server[129], sni[129], transport[32]; bool enabled; } old;
     size_t old_len = sizeof(old);
     blob_err = nvs_get_blob(s_nvs, "vpn_cfg1", &old, &old_len);
@@ -212,14 +215,16 @@ esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
         memcpy(out->server, old.server, sizeof(old.server));
         memcpy(out->tls_server_name, old.sni, sizeof(old.sni));
         memcpy(out->transport, old.transport, sizeof(old.transport)); out->enabled = old.enabled;
+        if (!strcmp(out->transport, "socket")) strcpy(out->transport, "tcp");
         return ESP_OK;
     }
     if (blob_err != ESP_ERR_NVS_NOT_FOUND) return ESP_FAIL;
-    strncpy(out->transport, "socket", sizeof(out->transport) - 1);
+    strncpy(out->transport, "tcp", sizeof(out->transport) - 1);
     size_t transport_len = sizeof(out->transport);
     esp_err_t transport_err = nvs_get_str(s_nvs, "vpn_transport", out->transport, &transport_len);
     if (transport_err != ESP_OK)
-        strcpy(out->transport, "socket");
+        strcpy(out->transport, "tcp");
+    else if (!strcmp(out->transport, "socket")) strcpy(out->transport, "tcp");
 
     size_t len = sizeof(out->server);
     if (nvs_get_str(s_nvs, "vpn_server", out->server, &len) != ESP_OK) {

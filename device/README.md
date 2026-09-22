@@ -100,8 +100,8 @@ atomic; both interval lengths are exposed. Timing adds two clock reads and a
 short counter lock per call. No payload/key logging, allocation or change to
 crypto algorithms is introduced. Missing CPU sampling is unknown, not zero load.
 
-Switching to socket preserves WireGuard keys, Address, DNS and keepalive in NVS.
-The server/Endpoint field is currently **shared**: after using another socket
+Switching to TCP preserves WireGuard keys, Address, DNS and keepalive in NVS.
+The server/Endpoint field is currently **shared**: after using another TCP
 server, restore the WireGuard Endpoint when switching back. A blank private key
 or PSK input keeps the saved key; only the explicit PSK-removal checkbox clears it.
 
@@ -112,8 +112,8 @@ IP packet, not per sequence of TCP reads. Completing a packet and beginning the
 next in the same read starts a new deadline; trickling bytes of one unfinished
 packet does not extend its deadline. The wire format is unchanged.
 
-TX drains up to eight already-queued frames per batch, with no fill delay. The
-queue is bounded at 64 frames; the worker can additionally own at most eight
+TX drains up to 32 already-queued frames per batch, with no fill delay. The
+queue is bounded at 256 frames; the worker can additionally own at most 32
 in-flight frames. The queue, batch and RX buffer are allocated in PSRAM. One read is capped at 4096 bytes and one
 write at the remaining batch, so neither direction has an unbounded drain loop.
 Partial writes preserve framing/order; `packets_out` counts only complete frames
