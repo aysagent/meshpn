@@ -809,7 +809,9 @@ esp_err_t meshvpn_vpn_init(void)
     if (!s_queue || !s_socket_tx_batch) return ESP_ERR_NO_MEM;
     if (xTaskCreate(socket_tx_worker, "vpn_tx", 4096, s_socket_tx_batch,
                     MESHVPN_VPN_WORKER_PRIORITY, &s_socket_tx_task) != pdPASS) return ESP_ERR_NO_MEM;
-    if (xTaskCreate(worker, "vpn_rx", 4096, NULL, MESHVPN_VPN_WORKER_PRIORITY,
+    /* ESP-TLS performs the handshake on this task. A 4 KiB TCP/UDP stack
+     * leaves little margin for mbedTLS certificate parsing. */
+    if (xTaskCreate(worker, "vpn_rx", 8192, NULL, MESHVPN_VPN_WORKER_PRIORITY,
                     &s_socket_rx_task) != pdPASS) {
         vTaskDelete(s_socket_tx_task); s_socket_tx_task = NULL; return ESP_ERR_NO_MEM;
     }

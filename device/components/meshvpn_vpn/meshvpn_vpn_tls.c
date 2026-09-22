@@ -4,14 +4,17 @@
 #include "meshvpn_vpn_frame.h"
 #include "esp_log.h"
 #include "esp_tls_errors.h"
+#include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
 #include <net/if.h>
 
 static const char *TAG = "meshvpn_vpn_tls";
 
-#if !CONFIG_MBEDTLS_SSL_PROTO_TLS1_3
-#error "Raw TLS transport requires CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y"
+#if !CONFIG_MBEDTLS_SSL_PROTO_TLS1_2
+#error "Raw TLS transport requires CONFIG_MBEDTLS_SSL_PROTO_TLS1_2=y"
 #endif
 
 esp_err_t meshvpn_vpn_tls_connect(const char *server, const char *tls_server_name,
@@ -29,19 +32,30 @@ esp_err_t meshvpn_vpn_tls_connect(const char *server, const char *tls_server_nam
     esp_tls_cfg_t cfg = {0};
     cfg.if_name = &iface;
     cfg.timeout_ms = 5000;
-    cfg.tls_version = ESP_TLS_VER_TLS_1_3;
+    cfg.tls_version = ESP_TLS_VER_TLS_1_2;
     cfg.skip_common_name = true;
     cfg.common_name = (tls_server_name && tls_server_name[0]) ? tls_server_name : NULL;
     /* This is a deliberately simple test transport. The raw TLS exit uses a
      * generated/self-signed certificate, so verification will be added as a
      * separate CA configuration before this mode is used outside a lab. */
+    ESP_LOGI(TAG, "TLS 1.2 connect start: internal free=%u largest=%u, PSRAM free=%u, rx stack spare=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+             (unsigned)uxTaskGetStackHighWaterMark(NULL));
     int result = esp_tls_conn_new_sync(host, strlen(host), port, &cfg, tls);
+    ESP_LOGI(TAG, "TLS connect done (%d): internal free=%u largest=%u, PSRAM free=%u, rx stack spare=%u",
+             result,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+             (unsigned)uxTaskGetStackHighWaterMark(NULL));
     if (result != 1 || esp_tls_get_conn_sockfd(tls, out_fd) != ESP_OK) {
         ESP_LOGW(TAG, "TLS connect to %s failed (%d)", server, result);
         esp_tls_conn_destroy(tls);
         return ESP_FAIL;
     }
     *out_tls = tls;
-    ESP_LOGI(TAG, "raw TLS 1.3 connected to %s via %s (certificate verification disabled)", server, ifname);
+    ESP_LOGI(TAG, "raw TLS 1.2 connected to %s via %s (certificate verification disabled)", server, ifname);
     return ESP_OK;
 }
