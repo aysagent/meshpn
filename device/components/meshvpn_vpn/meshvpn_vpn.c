@@ -789,6 +789,13 @@ static void __attribute__((unused)) worker(void *arg)
         if (is_tls) esp_tls_conn_destroy(tls_conn); else close(fd);
 retry:
         if (!session(cfg.generation)) continue;
+        if (error == ENETDOWN) {
+            socket_failure(cfg.generation, error, "uplink");
+            state(cfg.generation, "wait_uplink", false, error);
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            backoff = 1;
+            continue;
+        }
         socket_failure(cfg.generation, error, failure_reason);
         state(cfg.generation, "backoff", false, error);
         COUNT(reconnects);
@@ -809,9 +816,9 @@ esp_err_t meshvpn_vpn_init(void)
     if (!s_queue || !s_socket_tx_batch) return ESP_ERR_NO_MEM;
     if (xTaskCreate(socket_tx_worker, "vpn_tx", 4096, s_socket_tx_batch,
                     MESHVPN_VPN_WORKER_PRIORITY, &s_socket_tx_task) != pdPASS) return ESP_ERR_NO_MEM;
-    /* ESP-TLS performs the handshake on this task. A 4 KiB TCP/UDP stack
-     * leaves little margin for mbedTLS certificate parsing. */
-    if (xTaskCreate(worker, "vpn_rx", 8192, NULL, MESHVPN_VPN_WORKER_PRIORITY,
+    /* ESP-TLS performs the handshake on this task. Keep extra headroom over
+     * TCP/UDP without permanently starving Wi-Fi of internal/DMA RAM. */
+    if (xTaskCreate(worker, "vpn_rx", 6144, NULL, MESHVPN_VPN_WORKER_PRIORITY,
                     &s_socket_rx_task) != pdPASS) {
         vTaskDelete(s_socket_tx_task); s_socket_tx_task = NULL; return ESP_ERR_NO_MEM;
     }

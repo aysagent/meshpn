@@ -151,7 +151,7 @@ void meshvpn_cpu_start(void)
     if (s_mutex) return;
     s_mutex = xSemaphoreCreateMutex();
     if (!s_mutex) return;
-    if (xTaskCreate(sampler, "cpu_stats", 4096, NULL, 2, NULL) != pdPASS) {
+    if (xTaskCreate(sampler, "cpu_stats", 2048, NULL, 2, NULL) != pdPASS) {
         vSemaphoreDelete(s_mutex); s_mutex = NULL;
         ESP_LOGE("cpu_stats", "Cannot start sampler");
     }

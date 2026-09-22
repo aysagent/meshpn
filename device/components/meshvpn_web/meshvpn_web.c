@@ -1132,7 +1132,9 @@ esp_err_t meshvpn_web_start(void)
     s_https = s_https_configured;
     httpd_config_t server = HTTPD_DEFAULT_CONFIG();
     server.max_uri_handlers = 28;
-    server.stack_size = 12288;
+    /* HTTP's observed high-water mark leaves >3 KiB spare at 9 KiB.
+     * Keep the larger stack for HTTPS handshakes. */
+    server.stack_size = s_https ? 12288 : 9216;
     server.max_open_sockets = 3;
     server.lru_purge_enable = true;
     server.recv_wait_timeout = 3;
