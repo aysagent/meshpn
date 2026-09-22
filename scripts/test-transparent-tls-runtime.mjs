@@ -12,6 +12,7 @@ import { attachTransparentTlsClientSession, wireTransparentTlsEncSniSession,
 import { buildRelayHostname, encodeRelaySniLabel } from './lib/transparent-tls-enc-sni.mjs';
 import { replaceFirstSniInTcpBuffer, restoreFirstSniInTcpBuffer } from './lib/transparent-tls-ch-rebuild.mjs';
 import { parseFirstTlsClientHelloFromTcpBuf } from './lib/tls-clienthello-ja3.mjs';
+import { HELLO_RETRY_RANDOM_HEX } from './lib/transparent-tls-retry.mjs';
 
 async function within(promise, ms = 1500) {
   let timer;
@@ -53,10 +54,11 @@ const PSK = Buffer.alloc(32, 42);
 const PUBLIC = 'relay.example';
 const HOST = 'origin.example';
 const u16 = (n) => { const b = Buffer.alloc(2); b.writeUInt16BE(n); return b; };
-function hello(hostname) {
+function hello(hostname, tls13 = false) {
   const host = Buffer.from(hostname);
   const sni = Buffer.concat([u16(host.length + 3), Buffer.from([0]), u16(host.length), host]);
-  const ext = Buffer.concat([u16(0), u16(sni.length), sni]);
+  const ext = Buffer.concat([u16(0), u16(sni.length), sni,
+    ...(tls13 ? [Buffer.from([0, 43, 0, 3, 2, 3, 4])] : [])]);
   const body = Buffer.concat([
     Buffer.from([3, 3]), Buffer.alloc(32, 0xab), Buffer.from([0, 0, 2, 0x13, 1, 1, 0]), u16(ext.length), ext,
   ]);
@@ -69,7 +71,7 @@ const originalHello = hello(HOST);
 const encodedName = buildRelayHostname(encodeRelaySniLabel(PSK, { hostname: HOST, port: 443 }), PUBLIC);
 const encodedHello = replaceFirstSniInTcpBuffer(originalHello, encodedName).prefixBuf;
 
-function endpoint(t, role, limits = {}, { blocked = false, connectorError } = {}) {
+function endpoint(t, role, limits = {}, { blocked = false, connectorError, tls13 = false } = {}) {
   const inbound = new TestSocket();
   const outbound = new TestSocket({ blocked });
   let resolveConnecting;
@@ -95,12 +97,61 @@ function endpoint(t, role, limits = {}, { blocked = false, connectorError } = {}
   t.after(() => { inbound.destroy(); outbound.destroy(); });
   return {
     inbound, outbound, ready, connecting, errors, session,
-    hello: role === 'client' ? originalHello : encodedHello,
+    hello: tls13 ? (role === 'client' ? hello(HOST, true) : replaceFirstSniInTcpBuffer(hello(HOST, true), encodedName).prefixBuf)
+      : role === 'client' ? originalHello : encodedHello,
     get calls() { return calls; },
   };
 }
 
 for (const role of ['client', 'exit']) {
+  test(`${role}: coalesced TLS 1.3 ClientHello cannot bypass retry inspection`, async (t) => {
+    const e = endpoint(t, role, {}, { tls13: true });
+    const input = Buffer.concat([e.hello, e.hello.subarray(5)]);
+    input.writeUInt16BE(input.length - 5, 3);
+    e.inbound.push(input);
+    const { error } = await within(e.ready);
+    assert.equal(error.code, 'TLS_RELAY_RETRY_SEQUENCE');
+    assert.equal(e.calls, 0);
+    assert.ok(e.inbound.destroyed);
+  });
+
+  for (const stall of [false, true]) {
+    test(`${role}: CH2 backpressure ${stall ? 'expires' : 'drains without losing bytes'}`, async (t) => {
+      const e = endpoint(t, role, { writeTimeoutMs: 60 }, { tls13: true });
+      e.inbound.push(e.hello);
+      await within(e.connecting);
+      e.outbound.connected();
+      const { session, error } = await within(e.ready);
+      assert.ifError(error);
+      const firstLength = e.outbound.bytes().length;
+      const body = Buffer.concat([Buffer.from([3, 3]), Buffer.from(HELLO_RETRY_RANDOM_HEX, 'hex'),
+        Buffer.from([0, 0x13, 1, 0, 0, 6, 0, 43, 0, 2, 3, 4])]);
+      const header = Buffer.from([0x16, 3, 3, 0, body.length + 4, 2, 0, 0, body.length]);
+      e.outbound.push(Buffer.concat([header, body]));
+      await delay(0);
+      e.outbound.blocked = true;
+      e.inbound.push(e.hello);
+      await delay(0);
+      assert.ok(e.inbound.isPaused());
+      const second = e.outbound.bytes().subarray(firstLength);
+      const first = parseFirstTlsClientHelloFromTcpBuf(e.outbound.bytes()).sni[0];
+      assert.equal(parseFirstTlsClientHelloFromTcpBuf(second).sni[0], first);
+      if (stall) {
+        assert.equal((await within(session.closed)).code, 'TLS_RELAY_WRITE_TIMEOUT');
+      } else {
+        e.outbound.unblock();
+        await delay(0);
+        assert.equal(e.inbound.isPaused(), false);
+        assert.equal(e.outbound.bytes().length, firstLength + second.length);
+        session.fail(relayError('TLS_RELAY_TEST_STOP'));
+        await within(session.closed);
+      }
+      assert.equal(e.outbound.listenerCount('drain'), 0);
+      assert.equal(session.timers.size, 0);
+      assert.equal(e.calls, 1, 'retry never opens another origin/exit connection');
+    });
+  }
+
   test(`${role}: connection deadline and teardown without harness`, async (t) => {
     const e = endpoint(t, role, { connectTimeoutMs: 40 });
     e.inbound.push(e.hello);

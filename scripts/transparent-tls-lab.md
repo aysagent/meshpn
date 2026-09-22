@@ -34,6 +34,7 @@ npm run test:transparent-tls-integration
 
 ```bash
 npm run test:transparent-tls-runtime
+npm run test:transparent-tls-retry
 ```
 
 ## Ручной curl
@@ -100,6 +101,9 @@ enc-SNI по умолчанию скрыты; подробности раскр�
 - Параллельные соединения, сопоставленные по ClientHello random.
 - Настоящий H1/H2 handshake с ClientHello в двух records, с разрезами заголовка/SNI
   и с однобайтовыми records, поверх множества TCP writes; idle-таймеры обвязки отключены.
+- Принудительный TLS 1.3 HRR: origin принимает P-256, клиент сначала предлагает
+  X25519 key share. Для H1/H2 захватываются CH1 и CH2 в трёх точках; проверяются
+  восстановленные records/JA3/JA4 обоих сообщений и отсутствие plaintext SNI в CH2 на exit.
 - Отказ при неправильном PSK, недоверенном CA, неправильном имени сертификата,
   отсутствии SNI, слишком длинном SNI и запрещённом назначении.
 - Некорректный/оборванный ClientHello, idle-timeout обвязки, повторный cleanup,
@@ -119,7 +123,7 @@ transparent-ветку combo-tls. Значения по умолчанию:
 | --- | --- | --- |
 | `maxHelloBytes` | 64 КиБ | Накопленный первый ClientHello вместе с TLS record headers |
 | `maxPendingBytes` | 128 КиБ | Пересобранный ClientHello + уже полученный хвост перед подключением |
-| `helloTimeoutMs` | 10 с | Абсолютное ожидание первого ClientHello, не сбрасывается новыми байтами |
+| `helloTimeoutMs` | 10 с | Первый ClientHello; отдельно каждая фаза TLS 1.3 SH1/CH2/финального SH, без сброса новыми байтами |
 | `connectTimeoutMs` | 10 с | Ожидание исходящего TCP connect, включая асинхронный DNS |
 | `writeTimeoutMs` | 30 с | Ожидание drain при backpressure; также завершение после первого EOF |
 
@@ -191,6 +195,59 @@ record: payload склеивается один раз, когда сообще�
 число вызовов concat, а реальные однобайтовые records проходят с прежним deadline.
 Это не обещание полной защиты от CPU/connection exhaustion.
 
+## TLS 1.3 HelloRetryRequest / ClientHello2
+
+[Общий HRR guard](lib/transparent-tls-retry.mjs) включается, если CH1 предлагает
+TLS 1.3. Он распознаёт специальный ServerHello.random HRR и обрабатывает CCS согласно
+[RFC 8446 §4.1.3–4.1.4](https://www.rfc-editor.org/rfc/rfc8446#section-4.1.3) и
+[§5 / Appendix D.4](https://www.rfc-editor.org/rfc/rfc8446#appendix-D.4).
+
+```text
+CH1 → ждать ServerHello
+        ├─ обычный ServerHello → raw forwarding
+        └─ HRR → собрать/переписать CH2 → ждать финальный ServerHello → raw forwarding
+```
+
+- ServerHello и CH2 собираются с лимитами при любых TCP-разрезах и фрагментации
+  TLS records. До полного разбора CH2 ни один его байт не отправляется дальше.
+- Client повторно подставляет **тот же** enc-SNI. Exit восстанавливает исходное
+  имя и использует **то же** открытое соединение с origin — без нового DNS/connect
+  и без повторного выбора маршрута. Token из CH1 закреплён за сессией; CH2 не
+  декодируется как новый route token с новым сроком действия.
+- SNI, legacy version, random и session ID должны совпадать с CH1. Остальные
+  изменения CH2 (например, key share/cookie) передаются без подмены. Их полную
+  протокольную и криптографическую корректность проверяют TLS endpoints, не relay.
+- Dummy CCS `01` перед CH2 и между HRR/ServerHello не выключает guard. CCS не
+  допускается внутри фрагментированного hello. Второй HRR или неожиданный CH2
+  приводят к закрытию пары сокетов, без raw fallback.
+- CH1/CH2 с TLS 1.3 должны заканчиваться на границе record; соседнее plaintext
+  handshake-сообщение в том же record отклоняется, чтобы не обойти guard.
+  Предыдущее сохранение произвольного suffix в низкоуровневом rebuild остаётся,
+  но runtime TLS 1.3 теперь строже. TLS 1.2 raw-ветка этим ограничением не меняется.
+- После connect включается абсолютный deadline ожидания ServerHello. Новый deadline
+  начинается при HRR (ожидание CH2) и после CH2 (ожидание финального ServerHello).
+  Прогресс по байтам/повторные CCS его не продлевают; используется `helloTimeoutMs`.
+  Завершение/отмена сессии снимает timers и освобождает накопленные данные.
+- CH2 проходит через общий backpressure/drain-timeout. Размеры hello и подготовленной
+  записи ограничены теми же `maxHelloBytes`/`maxPendingBytes`; увеличение SNI, которое
+  не помещается в record, по-прежнему отклоняется.
+
+Ошибки имеют коды `TLS_RELAY_RETRY_SEQUENCE`, `TLS_RELAY_RETRY_IDENTITY`,
+`TLS_RELAY_RETRY_CCS`, `TLS_RELAY_SERVER_HELLO`, `TLS_RELAY_HANDSHAKE_LIMIT`,
+`TLS_RELAY_HANDSHAKE_TIMEOUT`, `TLS_RELAY_HANDSHAKE_EOF` (плюс общие ошибки записи/
+rebuild). Они не включают hostname/token. Это guard начального handshake, не полный
+TLS validator: после обычного финального ServerHello байты снова идут raw.
+
+Стенд теперь хранит `flight: 1 | 2`. `assertRelayTrace(lab, id, flight)` сопоставляет
+захваты по ClientHello random **и номеру сообщения**: random у CH2 тот же, поэтому
+одного random недостаточно. Реальный TLS проверен на Node; cookie/разрезы HRR/CH2,
+нарушения последовательности и медленные peers дополнительно проверяются управляемыми
+байтовыми тестами. Это не проверка всех браузеров или всех TLS-стеков.
+
+Для защиты участка client→exit нужен обновлённый **client**. Один обновлённый exit
+может отклонить plaintext CH2 старого клиента, но не отменяет уже произошедшую утечку
+на проводе. Рекомендуется обновить оба endpoint.
+
 ## Границы текущего результата
 
 Это первый integration baseline, не законченный аудит VPN или DPI-устойчивости.
@@ -201,8 +258,10 @@ record: payload склеивается один раз, когда сообще�
 - JA3/JA4 вычисляются локальными библиотеками проекта, а не независимым внешним анализатором.
 - Автоматический клиент — Node TLS, не Chrome/Firefox. Ручной curl проверяется отдельно;
   браузерный CONNECT-прокси пока не реализован.
-- HRR/ClientHello2, настоящие ECH, resumption/0-RTT, replay-защита и длительный slow-peer soak
-  пока не покрыты. Нельзя считать их исправленными на основании PASS этого стенда.
+- Настоящие ECH, resumption/0-RTT, replay-защита и длительный slow-peer soak пока не
+  покрыты. Guard не отключается после раннего application-data record, но это не
+  end-to-end проверка 0-RTT. Для HRR покрыт начальный TLS 1.3 handshake; TLS 1.2
+  renegotiation и произвольные последующие handshake не добавлены.
 - TUN, NAT, LAN, kill-switch, DNS/IPv6-утечки, внешний сетевой путь и реальная производительность
   проверяются следующим отдельным слоем. Дополнительный origin tap тоже влияет на измерения скорости.
 

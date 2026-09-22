@@ -2,6 +2,7 @@
 
 import net from 'net';
 import { RelaySession, readRelayHello, relayError } from './transparent-tls-io.mjs';
+import { createHelloRetryGuard } from './transparent-tls-retry.mjs';
 import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -272,7 +273,11 @@ export function wireTransparentTlsEncSniSession(mux, opts) {
     const prefix = buffer.subarray(0, parsed.bytesConsumed);
     const restored = restoreFirstSniInTcpBuffer(prefix, parsed.sni[0], dec.hostname);
     if (!restored.ok) throw relayError('TLS_RELAY_REBUILD', 'SNI restore failed');
-    const prelude = relayPrelude(restored.prefixBuf, buffer.subarray(parsed.bytesConsumed), session);
+    const guard = createHelloRetryGuard(session, {
+      parsed, prefix, role: 'exit', relayHost: parsed.sni[0], originHost: dec.hostname,
+    });
+    const tail = buffer.subarray(parsed.bytesConsumed);
+    const prelude = relayPrelude(restored.prefixBuf, guard ? guard.forward(tail) : tail, session);
     const peer = `${mux.remoteAddress ?? '?'}:${mux.remotePort ?? '?'}`;
     logEncSniWire('exit', mode, {
       originSni: dec.hostname, encSni: parsed.sni[0], peer,
@@ -285,7 +290,7 @@ export function wireTransparentTlsEncSniSession(mux, opts) {
     logTransparentTlsClientHelloFingerprints('exit', 'К origin: ClientHello после restore', restored.prefixBuf, logOpts);
     const origin = await session.connect(() => opts.connectOrigin
       ? opts.connectOrigin(dec.hostname, dec.port) : net.connect(dec.port, dec.hostname));
-    await session.bridge(mux, origin, prelude);
+    await session.bridge(mux, origin, prelude, guard);
   })();
   // Keep the accept path free of unhandled rejections; closed reports the reason.
   session.ready = ready.catch((error) => {
@@ -345,7 +350,11 @@ export async function attachTransparentTlsClientSession(appSock, opts) {
     const prefix = buffer.subarray(0, parsed.bytesConsumed);
     const rewritten = replaceFirstSniInTcpBuffer(prefix, relayHostname);
     if (!rewritten.ok) throw relayError('TLS_RELAY_REBUILD', 'SNI rebuild failed');
-    const prelude = relayPrelude(rewritten.prefixBuf, buffer.subarray(parsed.bytesConsumed), session);
+    const guard = createHelloRetryGuard(session, {
+      parsed, prefix, role: 'client', relayHost: relayHostname, originHost: parsed.sni[0],
+    });
+    const tail = buffer.subarray(parsed.bytesConsumed);
+    const prelude = relayPrelude(rewritten.prefixBuf, guard ? guard.forward(tail) : tail, session);
     logEncSniWire('client', mode, {
       originSni: parsed.sni[0], encSni: relayHostname,
       peer: `${appSock.remoteAddress ?? '?'}:${appSock.remotePort ?? '?'}`,
@@ -358,7 +367,7 @@ export async function attachTransparentTlsClientSession(appSock, opts) {
     logTransparentTlsClientHelloFingerprints('client', 'ClientHello после enc-SNI rebuild', rewritten.prefixBuf, logOpts);
     const mux = await session.connect(() => opts.connectExit
       ? opts.connectExit(upstreamHost, upstreamPort) : net.connect(upstreamPort, upstreamHost));
-    await session.bridge(appSock, mux, prelude);
+    await session.bridge(appSock, mux, prelude, guard);
     return session;
   } catch (cause) {
     const error = safeRelayError(cause);

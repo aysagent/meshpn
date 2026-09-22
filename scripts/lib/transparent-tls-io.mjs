@@ -143,7 +143,7 @@ export class RelaySession {
     }
   }
 
-  pump(source, destination) {
+  pump(source, destination, transform, onEnd) {
     this.check();
     let cancelDrainTimer;
     const drain = () => {
@@ -153,16 +153,23 @@ export class RelaySession {
     };
     const data = (chunk) => {
       try {
-        if (!destination.write(chunk)) {
+        const bytes = transform ? transform(chunk) : chunk;
+        if (bytes.length && !destination.write(bytes)) {
           source.pause();
           destination.once('drain', drain);
           cancelDrainTimer = this.timer(this.limits.writeTimeoutMs, () => {
             this.fail(relayError('TLS_RELAY_WRITE_TIMEOUT'));
           });
         }
-      } catch (cause) { this.fail(relayError('TLS_RELAY_WRITE', 'TLS relay write failed', cause)); }
+      } catch (cause) {
+        this.fail(cause?.code?.startsWith('TLS_RELAY_') ? cause
+          : relayError('TLS_RELAY_WRITE', 'TLS relay write failed', cause));
+      }
     };
-    const end = () => destination.end();
+    const end = () => {
+      try { onEnd?.(); destination.end(); }
+      catch (error) { this.fail(error); }
+    };
     const cleanup = () => {
       source.pause();
       source.off('data', data);
@@ -177,13 +184,14 @@ export class RelaySession {
     else source.resume();
   }
 
-  async bridge(source, destination, prelude) {
+  async bridge(source, destination, prelude, guard) {
     this.check();
     this.state = 'streaming';
+    guard?.start();
     // Read the response even if writing the prelude is blocked (full duplex).
-    this.pump(destination, source);
+    this.pump(destination, source, guard?.reverse, guard && (() => guard.end('server')));
     await this.write(destination, prelude);
-    this.pump(source, destination);
+    this.pump(source, destination, guard?.forward, guard && (() => guard.end('client')));
   }
 }
 

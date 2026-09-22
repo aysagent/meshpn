@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–15; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–16; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -199,7 +199,7 @@ HTTPS приложения → локальный intercept :8443 → замен
 - Нет replay-cache enc-label и привязки metadata к ClientHello random/session. Валидный захваченный label может повторно использоваться в допустимом временном окне.
 - Не обнаружен запрет relay-направлений на private/loopback IP; PSK — важная граница доверия. Обычные квоты после initial peek и полноценная защита от resource exhaustion не завершены.
 - На момент исходного аудита очередь `pendingToOrigin` не ограничена, upstream backpressure несимметричен, client ClientHello не имеет явного timeout. Исправлено последующим пакетом в разделе 14.
-- Переписывается первый ClientHello. Возможный второй ClientHello после HRR дальше идёт через raw pipe и требует отдельной обработки/проверки утечки исходного SNI.
+- На момент исходного аудита переписывается только первый ClientHello, CH2 после HRR раскрывает исходный SNI. Исправление начального TLS 1.3 HRR handshake и его ограничения описаны в разделе 16.
 - На момент исходного аудита rebuild склеивает ClientHello в один TLS record. Последующее обратимое сохранение layout с ограничениями описано в разделе 15.
 - GREASE ECH сейчас пропускается и покрыт roundtrip-тестом. Работоспособность настоящего ECH этим не доказана: видимый outer SNI может не описывать фактический origin, а исходный destination IP не передаётся.
 - HTTP/3/QUIC UDP/443 не перехватывается этой TCP-схемой; в combo он попадает в общий IPv4 TUN.
@@ -322,4 +322,16 @@ Rebuild теперь сохраняет число records, их индивид�
 
 Проверки на Node 24.13.0: **80 pass, 0 fail, 0 skipped** — 19 enc-SNI/rebuild, 9 JA4, 22 интеграционных, 30 runtime. Unit-тесты перебирают все позиции двух-record разреза, однобайтовое/многократное разбиение, соседние handshake bytes, большой ClientHello и границы размеров. На настоящем TLS/H1/H2 проходят разрезы заголовка/SNI и однобайтовые records с отключёнными idle-таймерами стенда. Теперь `assertRelayTrace` сравнивает полный record-префикс побайтово, а не только handshake body и JA3/JA4.
 
-Следующий отдельный этап: HRR/ClientHello2 и проверка, что повторный ClientHello не раскрывает исходный SNI на участке client→exit. Resumption/0-RTT, настоящий ECH, replay и destination policy остаются незакрытыми пунктами. Mesh/TUN/BoringSSL этим пакетом не менялись.
+После этого пакета выбран этап HRR/ClientHello2 (реализация ниже). Resumption/0-RTT, настоящий ECH, replay и destination policy остаются незакрытыми пунктами. Mesh/TUN/BoringSSL этим пакетом не менялись.
+
+## 16. Следующий пакет: HRR / ClientHello2
+
+Утечка CH2 воспроизведена настоящим TLS handshake: origin с P-256 вызывает HRR у клиента с X25519:P-256; до исправления HTTP работал, но на exit второй SNI был `localhost`, а не enc-SNI. Теперь [HRR guard](../scripts/lib/transparent-tls-retry.mjs) наблюдает ServerHello, разрешает один HRR и полностью собирает CH2 до отправки. Client использует прежний enc-SNI; exit восстанавливает имя на существующем соединении с origin. CH2 не меняет route и не открывает новое соединение.
+
+Сохраняются records/JA3/JA4 каждого hello, cookie и новый key share. Проверяется соответствие SNI/legacy version/random/session ID исходному CH1. Dummy CCS не отключает guard; второй HRR, неожиданный CH2, подмена identity, переполнение или неполное сообщение закрывают сессию. Для TLS 1.3 запрещён соседний handshake suffix в том же record после CH1/CH2, чтобы не обойти проверку; это дополнительное runtime-ограничение поверх низкоуровневого rebuild.
+
+В каждой фазе ожидания SH1, CH2 и финального SH действует абсолютный `helloTimeoutMs` (10 с); повторные байты/CCS не продлевают ожидание. Guard включается после исходящего connect, использует общие ограничения буферов/backpressure и очищается вместе с сессией. После обычного ServerHello возобновляется raw forwarding; полного TLS validator и обработки TLS 1.2 renegotiation здесь нет. Подробности: [документация стенда](../scripts/transparent-tls-lab.md#tls-13-helloretryrequest--clienthello2).
+
+Проверено на Node 24.13.0: **108 pass, 0 fail, 0 skipped** — 24 integration, 36 runtime, 20 retry-state-machine, 19 enc-SNI/rebuild и 9 JA4. В настоящем H1/H2 HRR проверены CH1/CH2 в трёх точках, идентичность восстановленных records, enc-SNI вместо исходного hostname и ровно один origin connect. Дополнительно покрыты фрагментированные HRR/CH2, cookie, CCS, подмена identity, duplicate HRR, таймауты и backpressure CH2. Сопоставление captures теперь использует random **и** `flight`, поскольку CH2 сохраняет random.
+
+Для устранения wire-утечки обязателен новый client; один новый exit только отклонит уже переданный старым клиентом plaintext CH2. Обновлять следует оба endpoint. Не считать закрытыми resumption/0-RTT, настоящий ECH, replay, destination policy, глобальные квоты или независимые браузерные captures. Mesh/TUN/BoringSSL этим пакетом не менялись.

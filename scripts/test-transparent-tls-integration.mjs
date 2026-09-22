@@ -49,6 +49,25 @@ test('TLS 1.2 also passes through without TLS termination at relay', TEST_OPTS, 
   assertRelayTrace(lab);
 });
 
+for (const httpVersion of ['1.1', '2']) {
+  test(`TLS 1.3 HRR HTTP/${httpVersion}: CH2 is restored without plaintext SNI on relay leg`, TEST_OPTS, async (t) => {
+    const lab = await labFor(t, { sessionTimeoutMs: 0, originTls: { ecdhCurve: 'P-256' } });
+    const body = randomBytes(64 * 1024);
+    const response = await requestThroughLab(lab, {
+      httpVersion, body, path: '/echo', tlsOptions: { ecdhCurve: 'X25519:P-256' },
+    });
+    assert.deepEqual(response.body, body);
+    assert.equal(lab.stats().originConnections, 1);
+    const client = lab.captures.filter((c) => c.stage === 'client');
+    assert.equal(client.length, 2, 'forced HRR really produced a second ClientHello');
+    assert.equal(client[0].id, client[1].id);
+    for (const flight of [1, 2]) assertRelayTrace(lab, client[0].id, flight);
+    const wire = lab.captures.filter((c) => c.stage === 'exit');
+    assert.equal(wire[0].sni, wire[1].sni, 'reuse the route token, not a new connection');
+    assert.ok(!wire[1].prefix.includes(Buffer.from(lab.originName)), 'no original SNI bytes on relay leg');
+  });
+}
+
 test('simultaneous sessions are matched by ClientHello random, not arrival order', TEST_OPTS, async (t) => {
   const lab = await labFor(t);
   await Promise.all(Array.from({ length: 6 }, (_, i) => requestThroughLab(lab, {

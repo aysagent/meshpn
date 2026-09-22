@@ -29,52 +29,62 @@ function validatePort(port) {
   }
 }
 
-/** Observe the actual incoming TCP bytes; never rebuild or replace them here. */
+/** Passive capture of up to two plaintext ClientHellos; no runtime guard reuse. */
 function captureHello(socket, stage, captures, diagnose) {
-  const chunks = [];
+  let pending = Buffer.alloc(0);
+  let records = [];
   let size = 0;
+  let chunkCount = 0;
+  let flight = 0;
+  let stopped = false;
   const cleanup = () => {
+    stopped = true;
     socket.off('data', onData);
     socket.off('close', cleanup);
-    chunks.length = 0;
+    pending = Buffer.alloc(0);
+    records = [];
   };
   const onData = (chunk) => {
-    size += chunk.length;
-    if (size > MAX_CAPTURE_BYTES) {
+    chunkCount++;
+    if (pending.length + chunk.length + size > MAX_CAPTURE_BYTES) {
       diagnose(`${stage}: capture limit exceeded`);
       cleanup();
       return;
     }
-    chunks.push(chunk);
-    const bytes = Buffer.concat(chunks, size);
-    const parsed = parseFirstTlsClientHelloFromTcpBuf(bytes);
-    if (parsed.needMore) return;
-    const chunkCount = chunks.length;
-    cleanup();
-    if (!parsed.ok) {
-      diagnose(`${stage}: ${parsed.reason}`);
-      return;
+    pending = Buffer.concat([pending, chunk]);
+    while (pending.length >= 5) {
+      const type = pending[0];
+      // Encrypted traffic is outside this passive CH1/CH2 capture.
+      if (type !== 0x16 && type !== 0x14) { cleanup(); return; }
+      const length = pending.readUInt16BE(3) + 5;
+      if (pending.length < length) return;
+      const record = pending.subarray(0, length);
+      pending = pending.subarray(length);
+      if (type === 0x14) continue;
+      records.push(record);
+      size += length;
+      const bytes = Buffer.concat(records, size);
+      const parsed = parseFirstTlsClientHelloFromTcpBuf(bytes);
+      if (parsed.needMore) continue;
+      if (!parsed.ok) { diagnose(`${stage}: ${parsed.reason}`); cleanup(); return; }
+      const prefix = Buffer.from(bytes.subarray(0, parsed.bytesConsumed));
+      const body = Buffer.from(parsed.clientHelloBody);
+      captures.push({
+        stage, flight: ++flight, id: body.subarray(2, 34).toString('hex'), body, prefix,
+        sni: parsed.sni[0], records: records.map((r) => r.readUInt16BE(3)), chunkCount,
+        ja3: ja3FromTcpBuf(prefix)?.ja3Digest,
+        ja4: ja4FromTcpBuf(prefix)?.fingerprint,
+      });
+      if (captures.length > MAX_CAPTURES) captures.shift();
+      records = [];
+      size = 0;
+      chunkCount = 0;
+      if (flight === 2) { cleanup(); return; }
     }
-    const prefix = Buffer.from(bytes.subarray(0, parsed.bytesConsumed));
-    const records = [];
-    for (let at = 0; at + 5 <= prefix.length;) {
-      const length = prefix.readUInt16BE(at + 3);
-      records.push(length);
-      at += 5 + length;
-    }
-    const body = Buffer.from(parsed.clientHelloBody);
-    captures.push({
-      stage, id: body.subarray(2, 34).toString('hex'), body, prefix,
-      sni: parsed.sni[0], records, chunkCount,
-      ja3: ja3FromTcpBuf(prefix)?.ja3Digest,
-      ja4: ja4FromTcpBuf(prefix)?.fingerprint,
-    });
-    if (captures.length > MAX_CAPTURES) captures.shift();
   };
   socket.on('data', onData);
   socket.once('close', cleanup);
 }
-
 /**
  * All listeners bind IPv4 loopback; all outgoing sockets are pinned to loopback.
  * The extra origin tap observes raw TLS before forwarding to the local HTTPS server.
@@ -245,13 +255,13 @@ export async function startTransparentTlsLab({
 }
 
 /** Check one real session by its ClientHello random, not by connection timing/order. */
-export function assertRelayTrace(lab, id) {
+export function assertRelayTrace(lab, id, flight = 1) {
   const client = id
-    ? lab.captures.find((c) => c.stage === 'client' && c.id === id)
-    : lab.captures.findLast((c) => c.stage === 'client');
+    ? lab.captures.find((c) => c.stage === 'client' && c.id === id && c.flight === flight)
+    : lab.captures.findLast((c) => c.stage === 'client' && c.flight === flight);
   assert.ok(client, 'captured application ClientHello');
-  const exit = lab.captures.find((c) => c.stage === 'exit' && c.id === client.id);
-  const origin = lab.captures.find((c) => c.stage === 'origin' && c.id === client.id);
+  const exit = lab.captures.find((c) => c.stage === 'exit' && c.id === client.id && c.flight === flight);
+  const origin = lab.captures.find((c) => c.stage === 'origin' && c.id === client.id && c.flight === flight);
   assert.ok(exit, 'captured enc-SNI ClientHello at exit');
   assert.ok(origin, 'captured restored ClientHello at origin');
   assert.equal(client.sni, lab.originName);
