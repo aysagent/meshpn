@@ -79,6 +79,11 @@ CONFIG_MESHVPN_BOARD_XIAO_ESP32S3=y
 # Experimental VPN transports (disabled at runtime until configured)
 CONFIG_MESHVPN_VPN_ENABLE=y
 CONFIG_LWIP_IP4_REASSEMBLY=y
+# ESP-TLS silently falls back to TLS 1.2 when TLS 1.3 is not compiled in.
+# The raw TLS exit requires TLS 1.3; keep its Kconfig prerequisites explicit.
+CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE=y
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=n
+CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y
 # Raw TLS test transport uses the generated clean-vpn certificate. Strict CA
 # verification will be wired after the transport interoperability test.
 CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY=y

@@ -4094,6 +4094,8 @@ function parseArgs(argv) {
       out.signalingPskRequired = false;
     } else if (a === '--signaling-psk-required' || a === '--signaling-psk-required=true') {
       out.signalingPskRequired = true;
+    } else if (a.startsWith('--')) {
+      throw new Error(`Неизвестный параметр clean-vpn: ${a}`);
     }
   }
   if (out.type) out.type = String(out.type).trim();

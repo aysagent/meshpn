@@ -12,6 +12,8 @@ const argsContext = vm.createContext({});
 vm.runInContext(source.slice(argsStart, argsEnd) + ';globalThis.parseArgs=parseArgs;', argsContext);
 assert.equal(argsContext.parseArgs(['--type=tcp']).type, 'tcp');
 assert.equal(argsContext.parseArgs(['--type=socket']).type, 'tcp');
+assert.equal(argsContext.parseArgs(['--type=tls', '--tls-raw']).tlsRaw, true);
+assert.throws(() => argsContext.parseArgs(['--type=tls', '--tls-ra']), /Неизвестный параметр/);
 const start = source.indexOf('const STREAM_FRAMER_CHUNK_MERGE_AFTER =');
 const end = source.indexOf('/**\n * TCP-транспорт с опциональным батчем', start);
 assert(start > 0 && end > start);

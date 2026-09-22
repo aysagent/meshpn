@@ -1,5 +1,6 @@
 #include "meshvpn_vpn_tls.h"
 
+#include "sdkconfig.h"
 #include "meshvpn_vpn_frame.h"
 #include "esp_log.h"
 #include "esp_tls_errors.h"
@@ -8,6 +9,10 @@
 #include <net/if.h>
 
 static const char *TAG = "meshvpn_vpn_tls";
+
+#if !CONFIG_MBEDTLS_SSL_PROTO_TLS1_3
+#error "Raw TLS transport requires CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y"
+#endif
 
 esp_err_t meshvpn_vpn_tls_connect(const char *server, const char *tls_server_name,
                                   const char *ifname, esp_tls_t **out_tls, int *out_fd)
