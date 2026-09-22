@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–17; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–18; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -347,3 +347,17 @@ Rebuild теперь сохраняет число records, их индивид�
 Lab-клиент получает session state только с `captureSession: true`, из TLS-события `session`, хранит максимум 64 КиБ в памяти и исключает его из JSON результата через non-enumerable свойство. Это чувствительные данные: явное логирование всё ещё возможно; общего session cache и сохранения в browser profile нет. Lab-only `rotateTicketKeys()` и `setOriginGroups()` дают управляемые отказ/HRR без раскрытия ключей. Подробности и границы — [в документации стенда](../scripts/transparent-tls-lab.md#tls-session-resumption-без-0-rtt).
 
 На Node 24.13.0: **120 pass, 0 fail, 0 skipped** — прежние 108 и 12 resumption. Это не покрытие 0-RTT, естественного истечения tickets, всех браузеров или настоящего ECH. Replay, destination policy, глобальные квоты, независимые captures и длительный soak остаются отдельными задачами. Mesh/TUN/BoringSSL этим пакетом не менялись.
+
+## 18. Следующий пакет: настоящий 0-RTT и поздние early records при HRR
+
+[Новый OpenSSL-набор](../scripts/test-transparent-tls-early-data.mjs) проверяет принятие early data, отказ от повторно использованной сессии, малые TLS records, HRR и явную повторную отправку приложением после отказа. Используется настоящий `s_client`/`s_server` с проверкой CA/hostname и включённым origin anti-replay. Это TLS payloads без HTTP-семантики; прежние Node HTTP/1.1/2-наборы остаются отдельно.
+
+Найден и воспроизведён runtime-дефект: HRR уже перевёл guard в ожидание CH2, а ранние records ещё идут в противоположном направлении. Они отклонялись с `TLS_RELAY_RETRY_SEQUENCE`. Исправление пропускает их до начала CH2, не отключая проверку второго hello и не продлевая абсолютный deadline. После начала фрагментированного CH2 и после его окончания до финального ServerHello такие records по-прежнему запрещены. Обновить нужно client и exit; wire-format не менялся.
+
+Детерминированный TCP gate задерживает настоящие encrypted early records до прохождения HRR через оба guard, сохраняя порядок каждого направления. Проверены CH1/CH2, extension 42 только в первом, PSK последним, восстановленные records/JA3/JA4 и прежний enc-SNI. Origin получает принятый early payload точно один раз; отвергнутый не получает, пока приложение явно не отправит его после handshake. Relay не делает автоматический resend.
+
+Lab-only `externalOriginPort` подключает origin tap к фиксированному loopback backend без нового CLI-режима и без ослабления destination pinning. Node-origin counters в этом режиме `null`, его ticket/group controls недоступны. Passive capture ограниченно пропускает opaque records, чтобы не потерять CH2. OpenSSL CLI требует Linux, OpenSSL 3.x и GNU `stdbuf`; секретный session state живёт в приватном временном каталоге (0700/0600) до cleanup, вывод процессов ограничен и не печатается. После SIGKILL runner cleanup не гарантирован.
+
+На Linux с Node 24.13.0 / OpenSSL 3.0.13: **128 pass, 0 fail, 0 skipped** — прежние 120, 3 guard-регрессии и 5 OpenSSL/lab-тестов. Детальные границы — [в документации стенда](../scripts/transparent-tls-lab.md#настоящий-0-rtt-и-пересечение-ранних-данных-с-hrr). Origin anti-replay не означает защиту enc-SNI metadata или exactly-once для нескольких серверов. Максимальные объёмы early data, HTTP early requests и все причины server rejection не проверены.
+
+Следующий этап — совместимость настоящего ECH с enc-SNI и явная политика неподдерживаемых случаев; затем реальные Chrome/Firefox через локальный CONNECT-стенд и независимые captures. Mesh/TUN/BoringSSL и динамическое клонирование профиля этим пакетом не затронуты.

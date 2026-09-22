@@ -115,8 +115,11 @@ export function createHelloRetryGuard(session, { parsed, prefix, role, relayHost
         return bytes; // dummy CCS never disables the gate
       }
       if (type === 0x15) return bytes; // alerts remain end-to-end
-      // Early data must not disable CH2 inspection. Full 0-RTT semantics are not claimed.
-      if (type === 0x17 && direction === 'client' && phase === 'server-first') return bytes;
+      // Early records can still be in flight when HRR crosses the other direction
+      // (RFC 8446 §4.2.10). Forward until CH2 starts; never disable its inspection
+      // or refresh the deadline. Only the TLS origin accepts/discards early data.
+      if (type === 0x17 && direction === 'client' &&
+          (phase === 'server-first' || phase === 'client-retry')) return bytes;
       fail('RETRY_SEQUENCE');
     }
     if (direction === 'client' && phase !== 'client-retry') fail('RETRY_SEQUENCE');

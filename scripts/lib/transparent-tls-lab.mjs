@@ -37,6 +37,7 @@ function captureHello(socket, stage, captures, diagnose) {
   let size = 0;
   let chunkCount = 0;
   let flight = 0;
+  let opaqueBytes = 0;
   let stopped = false;
   const cleanup = () => {
     stopped = true;
@@ -55,12 +56,17 @@ function captureHello(socket, stage, captures, diagnose) {
     pending = Buffer.concat([pending, chunk]);
     while (pending.length >= 5) {
       const type = pending[0];
-      // Encrypted traffic is outside this passive CH1/CH2 capture.
-      if (type !== 0x16 && type !== 0x14) { cleanup(); return; }
+      // Skip bounded opaque early data so an HRR's CH2 can still be captured.
+      if (type !== 0x16 && type !== 0x14 && type !== 0x17) { cleanup(); return; }
       const length = pending.readUInt16BE(3) + 5;
       if (pending.length < length) return;
       const record = pending.subarray(0, length);
       pending = pending.subarray(length);
+      if (type === 0x17) {
+        opaqueBytes += length;
+        if (!flight || records.length || opaqueBytes > MAX_CAPTURE_BYTES) { cleanup(); return; }
+        continue;
+      }
       if (type === 0x14) continue;
       records.push(record);
       size += length;
@@ -96,8 +102,13 @@ export async function startTransparentTlsLab({
   clientPort = 0, exitPort = 0, originPort = 0,
   originName = 'localhost', publicName = 'relay.test',
   clientPsk, sessionTimeoutMs = 10_000, originTls = {}, clientLimits, exitLimits,
+  externalOriginPort,
 } = {}) {
   for (const port of [clientPort, exitPort, originPort]) validatePort(port);
+  if (externalOriginPort !== undefined) {
+    validatePort(externalOriginPort);
+    if (!externalOriginPort) throw new Error('external origin must have a bound loopback port');
+  }
   if (!Number.isInteger(sessionTimeoutMs) || (sessionTimeoutMs !== 0 && sessionTimeoutMs < 100)) {
     throw new Error('sessionTimeoutMs must be 0 (disabled) or an integer >= 100');
   }
@@ -212,7 +223,8 @@ export async function startTransparentTlsLab({
         res.end(reply);
       });
     });
-    const backendPort = await listen(origin, 0);
+    // Programmatic test hook only: the destination address is still fixed loopback.
+    const backendPort = externalOriginPort ?? await listen(origin, 0);
 
     const originTap = net.createServer((socket) => {
       originConnections++;
@@ -257,14 +269,19 @@ export async function startTransparentTlsLab({
     return {
       host: HOST, originName, publicName, cert, captures, diagnostics, runtimeErrors, track, close,
       clientPort: boundClientPort, exitPort: boundExitPort, originPort: boundOriginPort,
-      stats: () => ({ originConnections, tlsConnections, resumedTlsConnections, requests, sockets: sockets.size }),
+      stats: () => ({ originConnections, sockets: sockets.size,
+        tlsConnections: externalOriginPort ? null : tlsConnections,
+        resumedTlsConnections: externalOriginPort ? null : resumedTlsConnections,
+        requests: externalOriginPort ? null : requests }),
       // Lab-only controls, no ticket key material returned to the caller or logged.
       rotateTicketKeys() {
         if (closing) throw new Error('lab is closing');
+        if (externalOriginPort) throw new Error('external origin controls its own TLS context');
         origin.setTicketKeys(randomBytes(48));
       },
       setOriginGroups(ecdhCurve) {
         if (closing) throw new Error('lab is closing');
+        if (externalOriginPort) throw new Error('external origin controls its own TLS context');
         if (typeof ecdhCurve !== 'string' || !ecdhCurve) throw new Error('non-empty ecdhCurve required');
         origin.setSecureContext({ ...originContext, ecdhCurve, ticketKeys: origin.getTicketKeys() });
       },

@@ -7,6 +7,8 @@
 
 Нужен Node.js с TLS/HTTP2 и `node:test` (проверено на Node 24.13.0).
 curl нужен только для необязательной ручной проверки.
+Отдельные 0-RTT тесты требуют Linux, OpenSSL 3.x CLI и `stdbuf` из GNU coreutils;
+обычный стенд и Node-наборы этих дополнительных инструментов не требуют.
 
 ## Быстрый запуск
 
@@ -37,6 +39,15 @@ npm run test:transparent-tls-runtime
 npm run test:transparent-tls-retry
 npm run test:transparent-tls-resumption
 ```
+
+Настоящий 0-RTT с OpenSSL endpoints (отдельно от Node HTTPS-тестов):
+
+```bash
+npm run test:transparent-tls-early-data
+```
+
+Отсутствующие OpenSSL/`stdbuf` или несовместимый CLI приводят к ошибке теста,
+не к молчаливому skip. Проверено на Linux: Node 24.13.0, OpenSSL 3.0.13.
 
 ## Ручной curl
 
@@ -315,6 +326,69 @@ HTTP-ответа; если события не было, `session` остане
 Node/OpenSSL; 0-RTT, естественное истечение tickets и все браузерные TLS-стеки ею
 не проверены.
 
+## Настоящий 0-RTT и пересечение ранних данных с HRR
+
+[OpenSSL-набор](test-transparent-tls-early-data.mjs) запускает `s_client` и
+`s_server` как настоящие TLS endpoints. Между ними — прежние client/exit relay
+и origin tap, только IPv4 loopback. TLS проверяет CA и hostname `localhost`;
+relay не получает TLS session keys и не завершает TLS.
+
+Проверяются четыре end-to-end сценария:
+
+- Принятие 0-RTT при resumption и точное получение payload один раз через
+  early-data API origin. Клиент также подтверждает `Reused` и принятие early data.
+- Повтор той же сохранённой сессии отклоняется origin с включённым `-anti_replay`:
+  полный handshake успешен, ранний payload не доставляется повторно. Эти две
+  проверки повторяются с `-max_send_frag 512` для множества малых TLS records.
+- HRR отвергает early data, но завершается обычный handshake. До явного действия
+  приложения payload не появляется у origin; после явной отправки в 1-RTT приходит
+  ровно один раз. Relay ничего не переотправляет самостоятельно.
+- То же с управляемой задержкой настоящих encrypted records до прохождения HRR
+  через оба guard. Порядок байтов внутри каждого TCP-направления не меняется.
+  Проверка не полагается на случайный timing loopback.
+
+Для CH1 подтверждается настоящий `early_data` extension 42 и последний PSK
+extension 41. В CH2 extension 42 уже отсутствует; SNI/records/JA3/JA4
+восстанавливаются, enc-SNI остаётся прежним. После handshake проверяется обмен
+прикладными данными в обе стороны и закрытие соединений. Это тестовые TLS payloads,
+**не** HTTP/1.1 или HTTP/2 early requests и не браузерная проверка.
+
+Именно задержанный сценарий воспроизвёл runtime-ошибку: guard принимал ранние
+records только до получения HRR и отклонял ещё летящие к origin байты после него.
+Теперь records типа 23 пропускаются также в ожидании CH2, пока не началось
+собирание его handshake. После начала фрагментированного CH2 вставка early records
+запрещена; после полного CH2 до финального ServerHello она тоже запрещена.
+Ни размерные ограничения, ни абсолютный deadline не ослаблены; ранние records
+не продлевают ожидание. Исправление нужно на client **и** exit.
+
+Семантика отказа/повторной отправки и пересекающихся потоков описана в
+[RFC 8446 §4.2.10](https://www.rfc-editor.org/rfc/rfc8446#section-4.2.10).
+Принятие или отбрасывание ранних данных остаётся задачей TLS origin. Проверка
+повторного ticket здесь использует одноразовый cache OpenSSL, см.
+[OpenSSL 3.0: replay protection](https://docs.openssl.org/3.0/man3/SSL_read_early_data/#replay-protection).
+Это не новая replay-защита enc-SNI, не проверка повторного воспроизведения целого
+захваченного TCP-потока и не гарантия exactly-once между разными origin/processes.
+
+Программный параметр `externalOriginPort` переключает backend стенда на уже
+запущенный TLS origin, только `127.0.0.1` и непривилегированный порт. CLI-флага нет;
+destination pinning exit не меняется. В этом режиме Node-origin не слушает порт,
+его ticket/group controls отклоняются, а `tlsConnections`, `resumedTlsConnections`
+и `requests` возвращаются как `null`: внешний origin нужно наблюдать отдельно.
+Passive capture теперь пропускает до 64 КиБ opaque records, чтобы увидеть CH2
+после early data; это лимит наблюдения, не лимит production early data.
+
+В отличие от memory-only Node resumption, OpenSSL CLI использует временный файл
+session state: каталог создаётся с правами 0700, файлы с 0600, cleanup завершает
+процессы и удаляет каталог. Stdout/stderr OpenSSL могут содержать секреты: они
+ограничены 512 КиБ суммарно на процесс, не сохраняются и не включаются в ошибки
+теста. `stdbuf` устраняет перемешивание буферизованных диагностических заголовков
+`s_server` с его непосредственной записью payload. Принудительное завершение
+самого test runner через SIGKILL не гарантирует cleanup временного каталога.
+
+Итого 5 новых OpenSSL/lab-тестов и 3 guard-регрессии, весь набор — **128 тестов**.
+Не покрыты максимальные объёмы early data, все варианты server rejection,
+распределённый replay, HTTP-семантика ранних запросов и браузерные TLS-стеки.
+
 ## Границы текущего результата
 
 Это первый integration baseline, не законченный аудит VPN или DPI-устойчивости.
@@ -325,13 +399,14 @@ Node/OpenSSL; 0-RTT, естественное истечение tickets и вс
 - JA3/JA4 вычисляются локальными библиотеками проекта, а не независимым внешним анализатором.
 - Автоматический клиент — Node TLS, не Chrome/Firefox. Ручной curl проверяется отдельно;
   браузерный CONNECT-прокси пока не реализован.
-- Настоящие ECH, 0-RTT, replay-защита и длительный slow-peer soak пока не
-  покрыты. Guard не отключается после раннего application-data record, но это не
-  end-to-end проверка 0-RTT. Для HRR покрыт начальный TLS 1.3 handshake; TLS 1.2
+- Настоящие ECH, replay-защита relay и длительный slow-peer soak пока не
+  покрыты. 0-RTT проверен только в описанной выше OpenSSL-матрице, не для всех
+  приложений/протоколов. Для HRR покрыт начальный TLS 1.3 handshake; TLS 1.2
   renegotiation и произвольные последующие handshake не добавлены.
 - TUN, NAT, LAN, kill-switch, DNS/IPv6-утечки, внешний сетевой путь и реальная производительность
   проверяются следующим отдельным слоем. Дополнительный origin tap тоже влияет на измерения скорости.
 
 Основные файлы: [CLI](transparent-tls-lab.mjs), [обвязка](lib/transparent-tls-lab.mjs),
 [интеграционные тесты](test-transparent-tls-integration.mjs),
-[resumption-тесты](test-transparent-tls-resumption.mjs).
+[resumption-тесты](test-transparent-tls-resumption.mjs),
+[0-RTT тесты](test-transparent-tls-early-data.mjs).

@@ -137,6 +137,36 @@ test('dummy CCS and early-data records do not disable HRR inspection', (t) => {
   assert.equal(parseFirstTlsClientHelloFromTcpBuf(rewritten).sni[0], RELAY);
 });
 
+for (const role of ['client', 'exit']) {
+  test(`${role}: in-flight early data across HRR stays opaque, then CH2 is guarded`, (t) => {
+    const { guard } = setup(t, role);
+    assert.equal(guard.forward(ENCRYPTED.subarray(0, 3)).length, 0);
+    guard.reverse(serverHello());
+    assert.deepEqual(guard.forward(ENCRYPTED.subarray(3)), ENCRYPTED);
+    assert.deepEqual(byteFeed(guard.forward, ENCRYPTED), ENCRYPTED);
+    const hello = clientHello({ hostname: role === 'client' ? HOST : RELAY });
+    const output = byteFeed(guard.forward, hello);
+    assert.equal(parseFirstTlsClientHelloFromTcpBuf(output).sni[0], role === 'client' ? RELAY : HOST);
+    assert.throws(() => guard.forward(ENCRYPTED), { code: 'TLS_RELAY_RETRY_SEQUENCE' },
+      'early data is not allowed after CH2 before the final ServerHello');
+  });
+}
+
+test('early data cannot interrupt a fragmented CH2 or extend its deadline', { timeout: 2000 }, async (t) => {
+  const { guard, session } = setup(t, 'client', { helloTimeoutMs: 60 });
+  guard.reverse(serverHello());
+  for (let i = 0; i < 10 && !session.signal.aborted; i++) {
+    guard.forward(ENCRYPTED);
+    await delay(15);
+  }
+  assert.equal((await session.closed).code, 'TLS_RELAY_HANDSHAKE_TIMEOUT');
+  const other = setup(t).guard;
+  other.reverse(serverHello());
+  const fragmented = clientHello({ cuts: [2] });
+  assert.equal(other.forward(fragmented.subarray(0, 7)).length, 0);
+  assert.throws(() => other.forward(ENCRYPTED), { code: 'TLS_RELAY_RETRY_SEQUENCE' });
+});
+
 test('malformed CCS, interleaved records and HRR without TLS 1.3 are rejected', (t) => {
   const one = setup(t).guard;
   assert.throws(() => one.reverse(Buffer.from([0x14, 3, 3, 0, 1, 2])), { code: 'TLS_RELAY_RETRY_CCS' });
