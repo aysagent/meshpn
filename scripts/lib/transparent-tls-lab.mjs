@@ -20,6 +20,7 @@ const HOST = '127.0.0.1';
 const MAX_CAPTURE_BYTES = 64 * 1024;
 const MAX_CAPTURES = 128;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_SESSION_BYTES = 64 * 1024;
 
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
@@ -70,7 +71,8 @@ function captureHello(socket, stage, captures, diagnose) {
       const prefix = Buffer.from(bytes.subarray(0, parsed.bytesConsumed));
       const body = Buffer.from(parsed.clientHelloBody);
       captures.push({
-        stage, flight: ++flight, id: body.subarray(2, 34).toString('hex'), body, prefix,
+        stage, flight: ++flight, peerPort: socket.remotePort,
+        id: body.subarray(2, 34).toString('hex'), body, prefix,
         sni: parsed.sni[0], records: records.map((r) => r.readUInt16BE(3)), chunkCount,
         ja3: ja3FromTcpBuf(prefix)?.ja3Digest,
         ja4: ja4FromTcpBuf(prefix)?.fingerprint,
@@ -119,6 +121,8 @@ export async function startTransparentTlsLab({
   let closing = false;
   let closePromise;
   let originConnections = 0;
+  let tlsConnections = 0;
+  let resumedTlsConnections = 0;
   let requests = 0;
 
   function track(socket) {
@@ -165,11 +169,17 @@ export async function startTransparentTlsLab({
   }
 
   try {
-    const origin = http2.createSecureServer({
+    const originContext = {
       key, cert, allowHTTP1: true, minVersion: 'TLSv1.2', maxVersion: 'TLSv1.3',
+      sessionIdContext: 'transparent-tls-lab',
       ...originTls,
+    };
+    const origin = http2.createSecureServer(originContext);
+    origin.on('secureConnection', (socket) => {
+      track(socket);
+      tlsConnections++;
+      if (socket.isSessionReused()) resumedTlsConnections++;
     });
-    origin.on('secureConnection', track);
     origin.on('session', (session) => {
       session.on('error', (error) => diagnose(error.message));
       session.setTimeout(sessionTimeoutMs, () => session.destroy());
@@ -195,6 +205,7 @@ export async function startTransparentTlsLab({
           ok: true, origin: 'transparent-tls-loopback-lab',
           httpVersion: req.httpVersion, tlsVersion: req.socket.getProtocol(),
           alpn: req.socket.alpnProtocol, servername: req.socket.servername,
+          sessionReused: req.socket.isSessionReused(),
           receivedBytes: payload.length, receivedSha256: sha256(payload),
         }));
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': reply.length });
@@ -246,7 +257,17 @@ export async function startTransparentTlsLab({
     return {
       host: HOST, originName, publicName, cert, captures, diagnostics, runtimeErrors, track, close,
       clientPort: boundClientPort, exitPort: boundExitPort, originPort: boundOriginPort,
-      stats: () => ({ originConnections, requests, sockets: sockets.size }),
+      stats: () => ({ originConnections, tlsConnections, resumedTlsConnections, requests, sockets: sockets.size }),
+      // Lab-only controls, no ticket key material returned to the caller or logged.
+      rotateTicketKeys() {
+        if (closing) throw new Error('lab is closing');
+        origin.setTicketKeys(randomBytes(48));
+      },
+      setOriginGroups(ecdhCurve) {
+        if (closing) throw new Error('lab is closing');
+        if (typeof ecdhCurve !== 'string' || !ecdhCurve) throw new Error('non-empty ecdhCurve required');
+        origin.setSecureContext({ ...originContext, ecdhCurve, ticketKeys: origin.getTicketKeys() });
+      },
     };
   } catch (error) {
     await close();
@@ -286,7 +307,7 @@ export function assertRelayTrace(lab, id, flight = 1) {
 /** Real verified HTTPS request. No certificate bypass; transport destination is explicit. */
 export async function requestThroughLab(lab, {
   httpVersion = '1.1', body = Buffer.alloc(0), path = '/', ca = lab.cert,
-  tlsOptions = {}, port = lab.clientPort, timeoutMs = 5000,
+  tlsOptions = {}, port = lab.clientPort, timeoutMs = 5000, captureSession = false,
 } = {}) {
   const socket = lab.track(tls.connect({
     host: lab.host, port, servername: lab.originName, ca,
@@ -294,6 +315,16 @@ export async function requestThroughLab(lab, {
     ALPNProtocols: httpVersion === '2' ? ['h2'] : ['http/1.1'],
     ...tlsOptions, rejectUnauthorized: true,
   }));
+  let capturedSession;
+  const onSession = (state) => {
+    if (state.length > MAX_SESSION_BYTES) {
+      socket.destroy(new Error('lab session state limit exceeded'));
+      return;
+    }
+    capturedSession = Buffer.from(state);
+  };
+  // TLS 1.3 tickets arrive after secureConnect. Keep at most one and only opt-in.
+  if (captureSession) socket.once('session', onSession);
   let session;
   const deadline = setTimeout(() => {
     socket.destroy(new Error('lab request deadline exceeded'));
@@ -304,6 +335,15 @@ export async function requestThroughLab(lab, {
     assert.equal(socket.authorized, true);
     assert.equal(socket.alpnProtocol, httpVersion === '2' ? 'h2' : 'http/1.1');
     const tlsVersion = socket.getProtocol();
+    const sessionReused = socket.isSessionReused();
+    const clientHelloId = lab.captures.findLast((c) => c.stage === 'client' &&
+      c.flight === 1 && c.peerPort === socket.localPort)?.id;
+    const result = (payload) => {
+      const response = { body: payload, tlsVersion, httpVersion, sessionReused, clientHelloId };
+      // Resumable state is sensitive: opt-in, memory-only, omitted by JSON.stringify.
+      if (captureSession) Object.defineProperty(response, 'session', { value: capturedSession });
+      return response;
+    };
     if (httpVersion === '2') {
       session = http2.connect(`https://${lab.originName}:${lab.originPort}`, {
         createConnection: () => socket,
@@ -319,7 +359,7 @@ export async function requestThroughLab(lab, {
       req.end(body);
       await ended;
       assert.equal(status, 200);
-      return { body: Buffer.concat(chunks), tlsVersion, httpVersion };
+      return result(Buffer.concat(chunks));
     }
     const chunks = [];
     socket.on('data', (chunk) => chunks.push(chunk));
@@ -334,9 +374,10 @@ export async function requestThroughLab(lab, {
     assert.match(headers, /^HTTP\/1\.1 200 /);
     const payload = response.subarray(split + 4);
     assert.equal(payload.length, Number(/\r\ncontent-length: (\d+)/i.exec(headers)?.[1]));
-    return { body: payload, tlsVersion, httpVersion };
+    return result(payload);
   } finally {
     clearTimeout(deadline);
+    socket.off('session', onSession);
     session?.destroy();
     socket.destroy();
   }

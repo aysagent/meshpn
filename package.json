@@ -48,6 +48,7 @@
     "test:transparent-tls-integration": "node --test scripts/test-transparent-tls-integration.mjs",
     "test:transparent-tls-runtime": "node --test scripts/test-transparent-tls-runtime.mjs",
     "test:transparent-tls-retry": "node --test scripts/test-transparent-tls-retry.mjs",
+    "test:transparent-tls-resumption": "node --test scripts/test-transparent-tls-resumption.mjs",
     "transparent-tls:lab": "node scripts/transparent-tls-lab.mjs",
     "test:boring-tls": "node scripts/test-boring-tls-smoke.mjs",
     "postinstall": "npm run build:tun-linux || true; cd helpers && make 2>/dev/null || true"

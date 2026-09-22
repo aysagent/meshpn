@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–16; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–17; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -335,3 +335,15 @@ Rebuild теперь сохраняет число records, их индивид�
 Проверено на Node 24.13.0: **108 pass, 0 fail, 0 skipped** — 24 integration, 36 runtime, 20 retry-state-machine, 19 enc-SNI/rebuild и 9 JA4. В настоящем H1/H2 HRR проверены CH1/CH2 в трёх точках, идентичность восстановленных records, enc-SNI вместо исходного hostname и ровно один origin connect. Дополнительно покрыты фрагментированные HRR/CH2, cookie, CCS, подмена identity, duplicate HRR, таймауты и backpressure CH2. Сопоставление captures теперь использует random **и** `flight`, поскольку CH2 сохраняет random.
 
 Для устранения wire-утечки обязателен новый client; один новый exit только отклонит уже переданный старым клиентом plaintext CH2. Обновлять следует оба endpoint. Не считать закрытыми resumption/0-RTT, настоящий ECH, replay, destination policy, глобальные квоты или независимые браузерные captures. Mesh/TUN/BoringSSL этим пакетом не менялись.
+
+## 17. Следующий пакет: session resumption без 0-RTT
+
+[Новые реальные тесты](../scripts/test-transparent-tls-resumption.mjs) подтверждают ticket resumption на отдельных TCP-соединениях для TLS 1.2/1.3 и HTTP/1.1/2. Успех проверяется через `isSessionReused()` на обоих TLS endpoints; HTTP-ответ сам по себе не считается подтверждением. Изменений production relay не потребовалось: доработаны lab-обвязка, наблюдаемость и тесты.
+
+Для TLS 1.3 проверены отказ от ticket после ротации ключей origin, полный handshake с выдачей нового пригодного ticket и resumption вместе с настоящим HRR. PSK identities/binders сохраняются побайтово; binder CH2 пересчитывает настоящий TLS-клиент, не relay. Для каждого CH сравниваются восстановленные records/JA3/JA4; равенство cold и resumed отпечатков не требуется. `early_data` отсутствует.
+
+Дополнительно покрыты неверные CA/hostname при полном handshake после отказа от ticket, четыре параллельные сессии, echo и cleanup. При принятом resumption используется прежнее доверие к сессии; отрицательные тесты fallback не доказывают новую проверку сертификата на каждом resumed-соединении.
+
+Lab-клиент получает session state только с `captureSession: true`, из TLS-события `session`, хранит максимум 64 КиБ в памяти и исключает его из JSON результата через non-enumerable свойство. Это чувствительные данные: явное логирование всё ещё возможно; общего session cache и сохранения в browser profile нет. Lab-only `rotateTicketKeys()` и `setOriginGroups()` дают управляемые отказ/HRR без раскрытия ключей. Подробности и границы — [в документации стенда](../scripts/transparent-tls-lab.md#tls-session-resumption-без-0-rtt).
+
+На Node 24.13.0: **120 pass, 0 fail, 0 skipped** — прежние 108 и 12 resumption. Это не покрытие 0-RTT, естественного истечения tickets, всех браузеров или настоящего ECH. Replay, destination policy, глобальные квоты, независимые captures и длительный soak остаются отдельными задачами. Mesh/TUN/BoringSSL этим пакетом не менялись.

@@ -35,6 +35,7 @@ npm run test:transparent-tls-integration
 ```bash
 npm run test:transparent-tls-runtime
 npm run test:transparent-tls-retry
+npm run test:transparent-tls-resumption
 ```
 
 ## Ручной curl
@@ -248,6 +249,72 @@ TLS validator: после обычного финального ServerHello ба
 может отклонить plaintext CH2 старого клиента, но не отменяет уже произошедшую утечку
 на проводе. Рекомендуется обновить оба endpoint.
 
+## TLS session resumption без 0-RTT
+
+[Отдельный набор](test-transparent-tls-resumption.mjs) проверяет настоящие новые
+TCP/TLS-соединения, а не повторные запросы внутри существующей HTTP/2-сессии.
+Изменений production relay для этих сценариев не потребовалось: расширены стенд
+и проверки, TLS-сессия по-прежнему принадлежит приложению и origin.
+
+На Node 24.13.0 проходят 12 новых тестов:
+
+- TLS 1.2 и TLS 1.3 ticket resumption для HTTP/1.1 и HTTP/2; повторное использование
+  подтверждается `isSessionReused()` на клиенте и origin, не только HTTP-ответом.
+- Отказ от старого ticket после ротации ключей origin: полный handshake, выдача
+  нового session state и успешное возобновление с ним. Это управляемая проверка
+  отказа, не ожидание естественного истечения срока ticket.
+- TLS 1.3 resumption вместе с настоящим HRR для обоих HTTP-протоколов: клиент
+  пересчитывает binder CH2, relay сохраняет его, origin принимает сессию.
+  CH2 использует прежний enc-SNI и уже открытое соединение с origin.
+- При полном handshake после отказа от ticket неверные CA/hostname по-прежнему
+  отклоняются до отправки HTTP. Это не обещание новой проверки сертификата при
+  принятом resumption: там используется ранее установленное доверие к сессии.
+- Четыре параллельные независимые сессии, передача echo, сопоставление captures
+  с конкретным клиентским соединением и закрытие всех сокетов.
+- Session state выдаётся только по явному запросу, ограничен 64 КиБ и не попадает
+  в JSON результата.
+
+В TLS 1.3 проверяются реальные байты `pre_shared_key` (extension 41): identities
+и binders неизменны во всех трёх точках, PSK остаётся последним extension,
+`early_data` (42) отсутствует. Для каждого CH1/CH2 отдельно сравниваются исходный
+и восстановленный ClientHello, records и JA3/JA4. Cold и resumed ClientHello могут
+иметь разные отпечатки: добавление PSK — нормальное изменение, их равенство между
+разными соединениями не является критерием приёмки.
+
+Пример программного использования внутри уже запущенного стенда:
+
+```js
+const first = await requestThroughLab(lab, { captureSession: true });
+assert.ok(Buffer.isBuffer(first.session));
+const second = await requestThroughLab(lab, {
+  tlsOptions: { session: first.session },
+});
+assert.equal(second.sessionReused, true);
+assert.equal(JSON.parse(second.body).sessionReused, true);
+```
+
+Состояние берётся из первого события TLS `session`, обработчик ставится до
+`secureConnect`: в TLS 1.3 ticket может прийти после handshake. Отсутствие ticket
+не маскируется под успешное resumption. См. [Node 24.13.0: session event](https://nodejs.org/download/release/v24.13.0/docs/api/tls.html#event-session).
+`requestThroughLab` не ждёт ticket бесконечно: он возвращает результат после
+HTTP-ответа; если события не было, `session` останется `undefined`.
+
+`first.session` содержит чувствительное состояние TLS-клиента, не только публично
+наблюдаемый ticket. Оно хранится в памяти теста, не записывается в профиль или лог;
+свойство non-enumerable исключает случайное включение в `JSON.stringify` результата,
+но не является защитой от явного чтения/логирования. Вызывающий код должен ограничивать
+повторное использование тем же origin и настройками доверия. Общего session cache
+в relay или механизма переноса tickets между браузерными профилями здесь нет.
+
+Только для тестов стенд предоставляет `rotateTicketKeys()` и
+`setOriginGroups(ecdhCurve)`: первый инвалидирует прежние tickets, второй меняет
+группы origin с сохранением текущих ticket keys, позволяя вызвать HRR при resumption.
+Ключи не возвращаются наружу. Эти методы не являются production API транспорта.
+
+Всего вместе с integration/runtime/retry/enc-SNI/JA4 — 120 тестов. Матрица ограничена
+Node/OpenSSL; 0-RTT, естественное истечение tickets и все браузерные TLS-стеки ею
+не проверены.
+
 ## Границы текущего результата
 
 Это первый integration baseline, не законченный аудит VPN или DPI-устойчивости.
@@ -258,7 +325,7 @@ TLS validator: после обычного финального ServerHello ба
 - JA3/JA4 вычисляются локальными библиотеками проекта, а не независимым внешним анализатором.
 - Автоматический клиент — Node TLS, не Chrome/Firefox. Ручной curl проверяется отдельно;
   браузерный CONNECT-прокси пока не реализован.
-- Настоящие ECH, resumption/0-RTT, replay-защита и длительный slow-peer soak пока не
+- Настоящие ECH, 0-RTT, replay-защита и длительный slow-peer soak пока не
   покрыты. Guard не отключается после раннего application-data record, но это не
   end-to-end проверка 0-RTT. Для HRR покрыт начальный TLS 1.3 handshake; TLS 1.2
   renegotiation и произвольные последующие handshake не добавлены.
@@ -266,4 +333,5 @@ TLS validator: после обычного финального ServerHello ба
   проверяются следующим отдельным слоем. Дополнительный origin tap тоже влияет на измерения скорости.
 
 Основные файлы: [CLI](transparent-tls-lab.mjs), [обвязка](lib/transparent-tls-lab.mjs),
-[интеграционные тесты](test-transparent-tls-integration.mjs).
+[интеграционные тесты](test-transparent-tls-integration.mjs),
+[resumption-тесты](test-transparent-tls-resumption.mjs).
