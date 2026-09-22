@@ -83,17 +83,22 @@ function captureHello(socket, stage, captures, diagnose) {
 export async function startTransparentTlsLab({
   clientPort = 0, exitPort = 0, originPort = 0,
   originName = 'localhost', publicName = 'relay.test',
-  clientPsk, sessionTimeoutMs = 10_000, originTls = {},
+  clientPsk, sessionTimeoutMs = 10_000, originTls = {}, clientLimits, exitLimits,
 } = {}) {
   for (const port of [clientPort, exitPort, originPort]) validatePort(port);
-  if (!Number.isInteger(sessionTimeoutMs) || sessionTimeoutMs < 100) {
-    throw new Error('sessionTimeoutMs must be an integer >= 100');
+  if (!Number.isInteger(sessionTimeoutMs) || (sessionTimeoutMs !== 0 && sessionTimeoutMs < 100)) {
+    throw new Error('sessionTimeoutMs must be 0 (disabled) or an integer >= 100');
   }
   const psk = randomBytes(32);
   const cert = readFileSync(LAB_CERT_PATH);
   const key = readFileSync(LAB_KEY_PATH);
   const captures = [];
   const diagnostics = [];
+  const runtimeErrors = [];
+  const onRuntimeError = (role) => (error) => {
+    runtimeErrors.push({ role, code: error.code });
+    if (runtimeErrors.length > MAX_CAPTURES) runtimeErrors.shift();
+  };
   // Keep diagnostics bounded too, including repeated malformed connections in --serve.
   const diagnose = (message) => {
     diagnostics.push(message);
@@ -111,7 +116,7 @@ export async function startTransparentTlsLab({
     socket.on('error', (error) => diagnose(error.message));
     socket.once('close', () => sockets.delete(socket));
     // This is harness containment, not a claim that production relay has this timeout.
-    socket.setTimeout(sessionTimeoutMs, () => socket.destroy());
+    if (sessionTimeoutMs) socket.setTimeout(sessionTimeoutMs, () => socket.destroy());
     if (closing) socket.destroy();
     return socket;
   }
@@ -202,6 +207,7 @@ export async function startTransparentTlsLab({
       captureHello(socket, 'exit', captures, diagnose);
       wireTransparentTlsEncSniSession(socket, {
         vpnSecretBuf: psk, publicName, logOpts: {},
+        limits: exitLimits, onSessionError: onRuntimeError('exit'),
         connectOrigin(hostname, port) {
           // The lab is never a general proxy, even with forged route metadata.
           if (hostname !== originName || port !== boundOriginPort) {
@@ -219,7 +225,7 @@ export async function startTransparentTlsLab({
         upstreamHost: HOST, upstreamPort: boundExitPort,
         vpnSecretBuf: clientPsk ?? psk, publicName,
         explicitDestination: { address: HOST, port: boundOriginPort },
-        logOpts: {},
+        logOpts: {}, limits: clientLimits, onSessionError: onRuntimeError('client'),
       }).catch((error) => {
         diagnose(error.message);
         socket.destroy();
@@ -228,7 +234,7 @@ export async function startTransparentTlsLab({
     const boundClientPort = await listen(client, clientPort);
 
     return {
-      host: HOST, originName, publicName, cert, captures, diagnostics, track, close,
+      host: HOST, originName, publicName, cert, captures, diagnostics, runtimeErrors, track, close,
       clientPort: boundClientPort, exitPort: boundExitPort, originPort: boundOriginPort,
       stats: () => ({ originConnections, requests, sockets: sockets.size }),
     };

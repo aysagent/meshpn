@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Это направления последующей работы, не уже выполненные исправления и не поручение реализовать их все в рамках сбора контекста.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–14; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -198,12 +198,12 @@ HTTPS приложения → локальный intercept :8443 → замен
 
 - Нет replay-cache enc-label и привязки metadata к ClientHello random/session. Валидный захваченный label может повторно использоваться в допустимом временном окне.
 - Не обнаружен запрет relay-направлений на private/loopback IP; PSK — важная граница доверия. Обычные квоты после initial peek и полноценная защита от resource exhaustion не завершены.
-- В exit relay очередь `pendingToOrigin` до upstream connect не ограничена; запись upstream не реализует симметричный backpressure. На client initial ClientHello ожидание не имеет аналогичного явного timeout.
+- На момент исходного аудита очередь `pendingToOrigin` не ограничена, upstream backpressure несимметричен, client ClientHello не имеет явного timeout. Исправлено последующим пакетом в разделе 14.
 - Переписывается первый ClientHello. Возможный второй ClientHello после HRR дальше идёт через raw pipe и требует отдельной обработки/проверки утечки исходного SNI.
 - Rebuild склеивает ClientHello в один TLS record; исходная record fragmentation не сохраняется.
 - GREASE ECH сейчас пропускается и покрыт roundtrip-тестом. Работоспособность настоящего ECH этим не доказана: видимый outer SNI может не описывать фактический origin, а исходный destination IP не передаётся.
 - HTTP/3/QUIC UDP/443 не перехватывается этой TCP-схемой; в combo он попадает в общий IPv4 TUN.
-- `origin_sni` пишется в обычные логи. Это чувствительные метаданные даже без включения verbose.
+- На момент исходного аудита `origin_sni` пишется в обычные логи. Последующее исправление скрывает SNI без verbose — см. раздел 14.
 
 Нельзя утверждать, что отсутствие собственного MAC у raw relay позволяет незаметно менять HTTPS payload: TLS имеет Finished и AEAD. Эти гарантии описаны в [TLS 1.3 RFC 8446](https://www.rfc-editor.org/rfc/rfc8446#section-4.4.4). Незащищённость отдельного raw TUN и replay метаданных маршрута — другие проблемы.
 
@@ -298,6 +298,16 @@ node --test scripts/test-tls-clienthello-ja4.mjs scripts/test-transparent-tls-en
 - `node scripts/transparent-tls-lab.mjs --serve`: тот же стенд остаётся доступным для локального curl; точная команда печатается в выводе.
 - `node --test scripts/test-transparent-tls-integration.mjs`: реальные loopback-соединения, TLS 1.2/1.3, проверка сертификата, данные, ClientHello/JA3/JA4 в трёх точках, фрагментация и отрицательные сценарии.
 
-Стенд использует существующие relay-функции. В runtime добавлен только optional `connectOrigin` для подключения к строго локальному origin; обычный путь без callback не изменён. Lab-specific лимиты/idle timeout/ограничение назначения не являются исправлениями production relay.
+В первом пакете стенд использует существующие relay-функции; в runtime тогда добавлен только optional `connectOrigin` для подключения к строго локальному origin. Lab-specific лимиты/idle timeout/ограничение назначения не являются исправлениями production relay. Последующая доработка общего runtime описана ниже.
 
 Проверено на Node 24.13.0: 17 новых интеграционных тестов и 20 существующих JA4/enc-SNI тестов — 37 pass, 0 fail, 0 skipped; отдельно успешен реальный curl через serve-стенд с проверкой сертификата. Это дополняет, а не заменяет ограничения исходного аудита: HRR/ClientHello2, настоящий ECH, resumption/0-RTT и системная TUN-интеграция пока не проверены этим стендом.
+
+## 14. Следующий пакет: bounded I/O transparent relay
+
+Общий runtime client/exit переведён на [RelaySession](../scripts/lib/transparent-tls-io.mjs): первый ClientHello ≤64 КиБ, подготовленная первая запись ≤128 КиБ, абсолютные hello/connect deadlines по 10 с, drain/close deadline 30 с. Входной сокет приостанавливается до connect/записи префикса; исправлен риск потери байтов на client и убрана растущая очередь на exit. Симметричный backpressure, graceful EOF с ограниченным ожиданием, парный teardown и очистка своих listeners/timers проверены отдельно. SNI/enc-SNI в runtime-логах видны только с `ja3Verbose`; обычные ошибки имеют коды `TLS_RELAY_*` без домена назначения.
+
+Подробные границы и параметры — [в документации стенда](../scripts/transparent-tls-lab.md#лимиты-общего-relay-runtime). Не путать с глобальным лимитом памяти/соединений, policy разрешённых origin, replay-защитой или полным аудитом внешнего peek-dispatch: они не реализованы этим пакетом. Idle established connections не ограничены runtime-таймером.
+
+Проверено на Node 24.13.0: 26 новых runtime-регрессий + 17 integration + 20 JA4/enc-SNI = **63 pass, 0 fail, 0 skipped**. Есть настоящий TLS/H1/H2 с выключенными idle-таймерами обвязки и управляемые Duplex для connect/drain stall, отмены, порядка байтов и EOF. Ни native BoringSSL, ни mesh, ни TUN/firewall этим пакетом не затронуты.
+
+Следующий приоритет для browser fidelity: сохранение TLS record layout и всех соседних handshake bytes, затем явная проверка HRR/ClientHello2, resumption/0-RTT и ECH. Динамическое клонирование профиля BoringSSL остаётся исключённым направлением.

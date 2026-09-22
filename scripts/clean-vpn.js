@@ -4332,6 +4332,7 @@ function peekDispatchExitComboTlsSock(sock, vpnSecretBuf, publicName, tlsCtx, tt
         'ok' in ch && ch.ok && ch.sni?.length ? ch.sni.join(',') : null;
       logComboTlsExitBranch('boring-tls', tagPeer, {
         wireSni,
+        sensitive: ttlLogOpts?.ja3Verbose,
         note: 'TLS ClientHello без enc-SNI → tls-mux (VPN/TUN через boring-tls на client)',
       });
     }

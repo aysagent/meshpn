@@ -1,7 +1,7 @@
 /** Режим --type=transparent-tls без TUN: enc-SNI relay (raw TCP TLS stream). */
 
 import net from 'net';
-import { once } from 'events';
+import { RelaySession, readRelayHello, relayError } from './transparent-tls-io.mjs';
 import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -28,7 +28,7 @@ import { ja4FromTcpBuf } from './tls-clienthello-ja4.mjs';
 /** @typedef {'transparent-tls' | 'combo-tls'} TransparentTlsModeTag */
 
 /**
- * Стандартный лог enc-SNI на проводе client↔exit (всегда, без --tls-log-ja3).
+ * Стандартный лог enc-SNI на проводе client↔exit; SNI только при sensitive=true.
  * @param {'client' | 'exit'} role
  * @param {TransparentTlsModeTag} mode
  * @param {{
@@ -37,14 +37,17 @@ import { ja4FromTcpBuf } from './tls-clienthello-ja4.mjs';
  *   peer?: string,
  *   upstream?: string,
  *   originPort?: number,
+ *   sensitive?: boolean,
  * }} info
  */
 export function logEncSniWire(role, mode, info) {
   const parts = [`[clean-vpn ${mode} ${role}] enc-SNI wire`];
   if (info.peer) parts.push(`peer=${info.peer}`);
   if (info.upstream) parts.push(`upstream=${info.upstream}`);
-  parts.push(`origin_sni=${info.originSni}`);
-  parts.push(`enc_sni=${info.encSni}`);
+  if (info.sensitive) {
+    parts.push(`origin_sni=${info.originSni}`);
+    parts.push(`enc_sni=${info.encSni}`);
+  }
   if (info.originPort != null && info.originPort !== 443) {
     parts.push(`origin_port=${info.originPort}`);
   }
@@ -71,13 +74,13 @@ export function logNonTlsExitDispatch(mode, forwardVia, info) {
  * Лог ветки combo-tls на exit.
  * @param {'transparent' | 'boring-tls'} branch
  * @param {string} peer
- * @param {{ wireSni?: string|null, encSni?: string|null, originSni?: string|null, note?: string }} [extra]
+ * @param {{ wireSni?: string|null, encSni?: string|null, originSni?: string|null, note?: string, sensitive?: boolean }} [extra]
  */
 export function logComboTlsExitBranch(branch, peer, extra = {}) {
   const parts = [`[clean-vpn combo-tls exit] route=${branch}`, `peer=${peer}`];
-  if (extra.wireSni) parts.push(`wire_sni=${extra.wireSni}`);
-  if (extra.encSni) parts.push(`enc_sni=${extra.encSni}`);
-  if (extra.originSni) parts.push(`origin_sni=${extra.originSni}`);
+  if (extra.sensitive && extra.wireSni) parts.push(`wire_sni=${extra.wireSni}`);
+  if (extra.sensitive && extra.encSni) parts.push(`enc_sni=${extra.encSni}`);
+  if (extra.sensitive && extra.originSni) parts.push(`origin_sni=${extra.originSni}`);
   if (extra.note) parts.push(extra.note);
   console.log(parts.join(' '));
 }
@@ -246,352 +249,124 @@ export function classifyComboTlsExitPrefix(buf, publicName, psk) {
 }
 
 /**
- * Duplex pipe с backpressure между двумя сокетами.
- * @param {import('stream').Duplex} src
- * @param {import('stream').Duplex} dst
- */
-export function pipeDuplexWithBackpressure(src, dst) {
-  /** @type {boolean} */
-  let srcDrainWait = false;
-  src.on('data', (chunk) => {
-    const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    if (!b.length || dst.writableEnded || dst.writableFinished) return;
-    if (!dst.write(b)) {
-      src.pause();
-      if (!srcDrainWait) {
-        srcDrainWait = true;
-        dst.once('drain', () => {
-          srcDrainWait = false;
-          src.resume();
-        });
-      }
-    }
-  });
-}
-
-/**
- * Exit: raw TCP enc-SNI relay — decrypt SNI, DNS connect, restore CH, pipe.
- * @param {import('net').Socket} mux
- * @param {{
- *   vpnSecretBuf: Buffer,
- *   publicName: string,
- *   logOpts?: TransparentTlsLogOpts|null,
- *   initialBuf?: Buffer,
- *   modeTag?: TransparentTlsModeTag,
- *   connectOrigin?: (hostname: string, port: number) => import('net').Socket,
- * }} opts
+ * Exit: decrypt SNI, restore ClientHello and relay with bounded I/O.
+ * Returns a session handle; failures are handled internally (accept callbacks
+ * need not await a promise). Optional connectors are used by the loopback lab.
  */
 export function wireTransparentTlsEncSniSession(mux, opts) {
-  const { vpnSecretBuf, publicName, logOpts } = opts;
-  const modeTag = opts.modeTag ?? 'transparent-tls';
-  const peer = `${mux.remoteAddress ?? '?'}:${mux.remotePort ?? '?'}`;
-  /** @type {Buffer[]} */
-  let acc = opts.initialBuf?.length ? [opts.initialBuf] : [];
-  let accLen = acc.reduce((n, b) => n + b.length, 0);
-  /** @type {import('net').Socket|null} */
-  let origin = null;
-  /** @type {{ relaySni: string, originHost: string, port: number } | null} */
-  let sess = null;
-  let clientPrefixDone = false;
-  /** @type {Buffer[]} */
-  let pendingToOrigin = [];
-  let originReady = false;
-  let finalized = false;
-
-  const fail = (msg) => {
-    if (finalized) return;
-    finalized = true;
-    console.error('[transparent-tls exit]', msg);
-    killPair(mux, origin);
-  };
-
-  const startOrigin = (hostname, port, /** @type {Buffer[]} */ firstWrites) => {
-    if (logOpts?.tlsLogJa3) {
-      console.log(
-        `[clean-vpn transparent-tls exit] relay connect: origin=${hostname}:${port} enc_sni=${sess?.relaySni ?? '?'}`,
-      );
-    }
-    pendingToOrigin = firstWrites.filter((b) => b.length);
-    // Optional connector lets the loopback integration lab pin all egress to its
-    // local origin without DNS overrides, TUN, or a second relay implementation.
-    try {
-      origin = opts.connectOrigin
-        ? opts.connectOrigin(hostname, port)
-        : net.connect(port, hostname);
-    } catch (err) {
-      fail(`origin connect: ${err.message}`);
-      return;
-    }
-    origin.once('close', () => killOne(mux));
-    origin.once('connect', () => {
-      originReady = true;
-      for (const p of pendingToOrigin) {
-        if (!(origin.writableEnded || origin.writableFinished)) origin.write(p);
-      }
-      pendingToOrigin.length = 0;
-      if (origin && mux) pipeDuplexWithBackpressure(origin, mux);
-    });
-    origin.on('error', (err) => {
-      console.error('[transparent-tls exit] origin:', err.message);
-      killPair(mux, origin);
-    });
-  };
-
-  const processAccumulated = () => {
-    if (finalized || clientPrefixDone) return;
-    const buf = Buffer.concat(acc, accLen);
-    const parsed = parseFirstTlsClientHelloFromTcpBuf(buf);
-    if ('needMore' in parsed && parsed.needMore) return;
-
-    if (!('ok' in parsed) || !parsed.ok || !parsed.sni?.[0]) {
-      fail(`ClientHello: ${'reason' in parsed ? parsed.reason : 'parse_fail'}`);
-      return;
-    }
-
+  let session;
+  try { session = new RelaySession(mux, opts); }
+  catch (error) {
+    mux.destroy();
+    opts.onSessionError?.(error);
+    console.error('[transparent-tls exit]', error.code ?? 'TLS_RELAY_CONFIG');
+    return null;
+  }
+  const ready = (async () => {
+    const { vpnSecretBuf, publicName, logOpts } = opts;
+    const mode = opts.modeTag ?? 'transparent-tls';
+    const { buffer, parsed } = await readRelayHello(mux, session, opts.initialBuf);
+    session.check();
     const dec = decodeRelayFromHostname(parsed.sni[0], publicName, vpnSecretBuf);
-    if (!dec.ok) {
-      fail(`enc-SNI: ${dec.reason}`);
-      return;
-    }
-
-    sess = { relaySni: parsed.sni[0], originHost: dec.hostname, port: dec.port };
-    logEncSniWire('exit', modeTag, {
-      originSni: sess.originHost,
-      encSni: sess.relaySni,
-      peer,
-      originPort: sess.port,
+    if (!dec.ok) throw relayError('TLS_RELAY_DECODE', 'enc-SNI decode failed');
+    const prefix = buffer.subarray(0, parsed.bytesConsumed);
+    const restored = restoreFirstSniInTcpBuffer(prefix, parsed.sni[0], dec.hostname);
+    if (!restored.ok) throw relayError('TLS_RELAY_REBUILD', 'SNI restore failed');
+    const prelude = relayPrelude(restored.prefixBuf, buffer.subarray(parsed.bytesConsumed), session);
+    const peer = `${mux.remoteAddress ?? '?'}:${mux.remotePort ?? '?'}`;
+    logEncSniWire('exit', mode, {
+      originSni: dec.hostname, encSni: parsed.sni[0], peer,
+      originPort: dec.port, sensitive: logOpts?.ja3Verbose,
     });
-    if (modeTag === 'combo-tls') {
-      logComboTlsExitBranch('transparent', peer, {
-        encSni: sess.relaySni,
-        originSni: sess.originHost,
-      });
-    }
-
-    const chPrefix = Buffer.from(buf.subarray(0, parsed.bytesConsumed));
-    const tail = Buffer.from(buf.subarray(parsed.bytesConsumed));
-
-    const muxTlsBefore =
-      logOpts?.tlsLogJa3 ? Buffer.from(chPrefix) : null;
-    const restored = restoreFirstSniInTcpBuffer(chPrefix, sess.relaySni, sess.originHost);
-    if (!restored.ok) {
-      fail(`restore SNI: ${restored.reason}`);
-      return;
-    }
-
-    if (logOpts?.tlsLogJa3) {
-      console.log(
-        `[clean-vpn transparent-tls exit] restore SNI: ${sess.relaySni} → ${sess.originHost}`,
-      );
-      if (muxTlsBefore) {
-        logTransparentTlsClientHelloFingerprints(
-          'exit',
-          'Mux enc-SNI ClientHello (relay SNI)',
-          muxTlsBefore,
-          logOpts,
-        );
-        logTransparentTlsClientHelloFingerprints(
-          'exit',
-          'К origin: ClientHello после restore',
-          restored.prefixBuf,
-          logOpts,
-        );
-      }
-    }
-
-    clientPrefixDone = true;
-    acc.length = 0;
-    accLen = 0;
-    startOrigin(sess.originHost, sess.port, [restored.prefixBuf, tail]);
-  };
-
-  mux?.once?.('error', () => killPair(mux, origin));
-  mux?.once?.('close', () => killOne(origin));
-
-  mux?.on?.('data', (chunk) => {
-    if (finalized) return;
-    const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    if (clientPrefixDone) {
-      if (originReady && origin && !(origin.writableEnded || origin.writableFinished)) {
-        origin.write(b);
-      } else if (!originReady) {
-        pendingToOrigin.push(b);
-      }
-      return;
-    }
-    acc.push(b);
-    accLen += b.length;
-    processAccumulated();
+    if (mode === 'combo-tls') logComboTlsExitBranch('transparent', peer, {
+      originSni: dec.hostname, encSni: parsed.sni[0], sensitive: logOpts?.ja3Verbose,
+    });
+    logTransparentTlsClientHelloFingerprints('exit', 'Mux enc-SNI ClientHello', prefix, logOpts);
+    logTransparentTlsClientHelloFingerprints('exit', 'К origin: ClientHello после restore', restored.prefixBuf, logOpts);
+    const origin = await session.connect(() => opts.connectOrigin
+      ? opts.connectOrigin(dec.hostname, dec.port) : net.connect(dec.port, dec.hostname));
+    await session.bridge(mux, origin, prelude);
+  })();
+  // Keep the accept path free of unhandled rejections; closed reports the reason.
+  session.ready = ready.catch((error) => {
+    const safe = safeRelayError(error);
+    session.fail(safe);
+    console.error('[transparent-tls exit]', safe.code);
   });
-
-  if (accLen) processAccumulated();
+  return session;
 }
 
-/**
- * Серверную сторону exit (TCP listen без TUN).
- */
+function safeRelayError(error) {
+  return error?.code?.startsWith('TLS_RELAY_')
+    ? error : relayError('TLS_RELAY_INTERNAL', 'TLS relay failed', error);
+}
+
+function relayPrelude(prefix, tail, session) {
+  if (prefix.length + tail.length > session.limits.maxPendingBytes) {
+    throw relayError('TLS_RELAY_PENDING_LIMIT');
+  }
+  return Buffer.concat([prefix, tail]);
+}
+
+/** TCP exit listener without TUN. */
 export function runTransparentTlsExitServer(host, listenPort, vpnSecretBuf, publicName) {
-  const srv = net.createServer((mux) =>
-    wireTransparentTlsEncSniSession(/** @type {import('net').Socket} */ (mux), {
-      vpnSecretBuf,
-      publicName,
-      logOpts: {},
-    }),
-  );
+  const srv = net.createServer((mux) => {
+    wireTransparentTlsEncSniSession(mux, { vpnSecretBuf, publicName, logOpts: {} });
+  });
   srv.listen(listenPort, host, () => {
-    console.log(
-      `[clean-vpn] transparent-tls exit: enc-SNI relay без TUN, слушаю ${host}:${listenPort}`,
-    );
+    console.log(`[clean-vpn] transparent-tls exit: enc-SNI relay без TUN, слушаю ${host}:${listenPort}`);
   });
   return srv;
 }
 
-/**
- * Client: REDIRECT/TCP → rebuild SNI → raw TCP TLS stream к exit.
- */
-export async function attachTransparentTlsClientSession(
-  appSock,
-  {
-    upstreamHost,
-    upstreamPort,
-    vpnSecretBuf,
-    publicName,
-    explicitDestination,
-    logOpts,
-    modeTag,
-  },
-) {
-  const pn = String(publicName || '').trim();
-  const mode = modeTag ?? 'transparent-tls';
-  if (!pn) {
-    throw new Error('transparent-tls: --tls-public-name обязателен для enc-SNI relay');
+/** Client: REDIRECT/TCP → rewrite SNI → raw TCP TLS stream to exit. */
+export async function attachTransparentTlsClientSession(appSock, opts) {
+  let session;
+  try {
+    session = new RelaySession(appSock, opts);
+    const {
+      upstreamHost, upstreamPort, vpnSecretBuf, publicName,
+      explicitDestination, logOpts,
+    } = opts;
+    const pn = String(publicName || '').trim();
+    if (!pn) throw relayError('TLS_RELAY_CONFIG', 'transparent-tls: --tls-public-name обязателен');
+    const mode = opts.modeTag ?? 'transparent-tls';
+    appSock.pause();
+    const dst = explicitDestination != null && typeof explicitDestination.address === 'string'
+      ? explicitDestination : ipv4OriginalDestinationFromSock(appSock);
+    const { buffer, parsed } = await readRelayHello(appSock, session);
+    session.check();
+    let relayHostname;
+    try {
+      relayHostname = buildRelayHostname(encodeRelaySniLabel(vpnSecretBuf, {
+        hostname: parsed.sni[0], port: dst.port,
+      }), pn);
+    } catch (cause) { throw relayError('TLS_RELAY_ENCODE', 'enc-SNI encode failed', cause); }
+    const prefix = buffer.subarray(0, parsed.bytesConsumed);
+    const rewritten = replaceFirstSniInTcpBuffer(prefix, relayHostname);
+    if (!rewritten.ok) throw relayError('TLS_RELAY_REBUILD', 'SNI rebuild failed');
+    const prelude = relayPrelude(rewritten.prefixBuf, buffer.subarray(parsed.bytesConsumed), session);
+    logEncSniWire('client', mode, {
+      originSni: parsed.sni[0], encSni: relayHostname,
+      peer: `${appSock.remoteAddress ?? '?'}:${appSock.remotePort ?? '?'}`,
+      upstream: `${upstreamHost}:${upstreamPort}`, originPort: dst.port,
+      sensitive: logOpts?.ja3Verbose,
+    });
+    if (mode === 'combo-tls') logComboTlsClientBranch('transparent', logOpts?.ja3Verbose
+      ? `origin_sni=${parsed.sni[0]} enc_sni=${relayHostname} so_orig=${dst.address}:${dst.port}` : undefined);
+    logTransparentTlsClientHelloFingerprints('client', 'ClientHello браузера (до подмены)', prefix, logOpts);
+    logTransparentTlsClientHelloFingerprints('client', 'ClientHello после enc-SNI rebuild', rewritten.prefixBuf, logOpts);
+    const mux = await session.connect(() => opts.connectExit
+      ? opts.connectExit(upstreamHost, upstreamPort) : net.connect(upstreamPort, upstreamHost));
+    await session.bridge(appSock, mux, prelude);
+    return session;
+  } catch (cause) {
+    const error = safeRelayError(cause);
+    if (session) session.fail(error);
+    else {
+      appSock.destroy();
+      opts.onSessionError?.(error);
+    }
+    throw error;
   }
-
-  appSock.pause();
-  const peer = `${appSock.remoteAddress ?? '?'}:${appSock.remotePort ?? '?'}`;
-  const upstream = `${upstreamHost}:${upstreamPort}`;
-  const dst =
-    explicitDestination != null && typeof explicitDestination.address === 'string'
-      ? { address: explicitDestination.address, port: explicitDestination.port }
-      : ipv4OriginalDestinationFromSock(appSock);
-  if (logOpts?.tlsLogJa3 || logOpts?.ja3Verbose) {
-    console.log(
-      `[clean-vpn transparent-tls client] enc-SNI relay: апстрим ipv4=${dst.address}:${dst.port}; publicName=${pn}`,
-    );
-  }
-
-  /** @type {Buffer[]} */
-  const chunks = [];
-  const { prefixBuf, remaining, originHostAscii, relayHostname } = await new Promise(
-    (resolve, reject) => {
-      const onErr = reject;
-      const onEnd = () => onErr(new Error('EOF before first TLS ClientHello is complete'));
-      const cleanup = () => {
-        appSock.off('data', onData);
-        appSock.off('end', onEnd);
-        appSock.off('error', onErr);
-        appSock.off('close', onEnd);
-      };
-      function onData(/** @type {Buffer|string} */ piece) {
-        chunks.push(Buffer.isBuffer(piece) ? piece : Buffer.from(piece));
-        const buf = Buffer.concat(chunks);
-        const parsed = parseFirstTlsClientHelloFromTcpBuf(buf);
-        if ('needMore' in parsed && parsed.needMore) return;
-        cleanup();
-        if (!('ok' in parsed) || parsed.ok !== true) {
-          reject(new Error(`ClientHello: ${'reason' in parsed ? parsed.reason : 'parse_fail'}`));
-          return;
-        }
-        if (!parsed.sni?.[0]) {
-          // Нет открытого SNI вообще (напр. настоящий ECH без outer SNI) — enc-SNI нечего
-          // кодировать. GREASE ECH сюда не попадает: у него есть plaintext outer SNI.
-          reject(new Error('нет plaintext SNI в ClientHello (нечего кодировать для enc-SNI)'));
-          return;
-        }
-        const originHostAscii = parsed.sni[0];
-        let relayHostname;
-        try {
-          const labels = encodeRelaySniLabel(vpnSecretBuf, {
-            hostname: originHostAscii,
-            port: dst.port,
-          });
-          relayHostname = buildRelayHostname(labels, pn);
-        } catch (e) {
-          reject(new Error(`enc-SNI encode: ${/** @type {Error} */ (e).message}`));
-          return;
-        }
-
-        const tcpBufOriginalBrowser = Buffer.from(buf.subarray(0, parsed.bytesConsumed));
-        const wr = replaceFirstSniInTcpBuffer(tcpBufOriginalBrowser, relayHostname);
-        if (!wr.ok) {
-          reject(new Error(`rebuild SNI (${originHostAscii} → enc): ${wr.reason}`));
-          return;
-        }
-
-        logEncSniWire('client', mode, {
-          originSni: originHostAscii,
-          encSni: relayHostname,
-          peer,
-          upstream,
-          originPort: dst.port,
-        });
-        if (mode === 'combo-tls') {
-          logComboTlsClientBranch(
-            'transparent',
-            `origin_sni=${originHostAscii} enc_sni=${relayHostname} so_orig=${dst.address}:${dst.port}`,
-          );
-        }
-
-        if (logOpts?.tlsLogJa3) {
-          logTransparentTlsClientHelloFingerprints(
-            'client',
-            'ClientHello браузера (до подмены)',
-            tcpBufOriginalBrowser,
-            logOpts,
-          );
-          logTransparentTlsClientHelloFingerprints(
-            'client',
-            'ClientHello после enc-SNI rebuild (raw TCP к exit)',
-            wr.prefixBuf,
-            logOpts,
-          );
-        }
-
-        const remaining = Buffer.from(buf.subarray(parsed.bytesConsumed));
-        resolve({
-          prefixBuf: wr.prefixBuf,
-          remaining,
-          originHostAscii,
-          relayHostname,
-        });
-      }
-      appSock.on('data', onData);
-      appSock.once('end', onEnd);
-      appSock.once('error', onErr);
-      appSock.once('close', onEnd);
-      queueMicrotask(() => {
-        try {
-          appSock.resume();
-        } catch {
-          /* ignore */
-        }
-      });
-    },
-  );
-
-  const muxSock = /** @type {import('net').Socket} */ (net.connect(upstreamPort, upstreamHost));
-  await once(muxSock, 'connect');
-
-  muxSock.write(prefixBuf);
-  if (remaining.length) muxSock.write(remaining);
-
-  pipeDuplexWithBackpressure(muxSock, appSock);
-  pipeDuplexWithBackpressure(appSock, muxSock);
-
-  muxSock.on?.('error', () => killPair(appSock, muxSock));
-  muxSock.on?.('close', () => killOne(appSock));
-  appSock.on?.('error', () => killPair(appSock, muxSock));
-  appSock.on?.('close', () => killOne(muxSock));
-  muxSock.on?.('end', () => appSock?.end?.());
-  appSock.on?.('end', () => muxSock?.end?.());
 }
