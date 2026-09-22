@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–19; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–20; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -377,3 +377,40 @@ Lab-only `externalOriginPort` подключает origin tap к фиксиро�
 Проверено на Linux / Node 24.13.0 / Go 1.26.8: **142 pass, 0 fail, 0 skipped** — прежние 128 и 14 новых. Для ECH-набора нужен Go 1.24+ (`MESHPN_ECH_GO` или PATH); сборка standard-library fixture проходит offline с временными binary/cache, никаких скачиваний при запуске тестов. Секреты эфемерны, stdout — ограниченные JSON-результаты, cleanup закрывает процессы и удаляет build artifacts. Подробные ограничения и запуск — [в документации стенда](../scripts/transparent-tls-lab.md#настоящий-ech-криптография-и-границы-маршрутизации).
 
 Следом — локальный CONNECT-стенд без TUN для настоящих Chrome/Firefox и независимых captures. ECH+0-RTT, общий ECH routing, replay/destination policy и production-аудит остаются отдельными задачами. Mesh/TUN/динамическое BoringSSL-клонирование этим пакетом не затронуты.
+
+## 20. CONNECT, настоящие браузеры и независимая проверка отпечатков
+
+[CONNECT front door](../scripts/lib/transparent-connect-lab.mjs) принимает только
+`localhost:<originPort>` и подключается к фиксированному loopback client relay.
+CLI: `node scripts/transparent-tls-lab.mjs --serve --connect-port=0`.
+Без TUN, перехвата, публичных listeners или произвольного proxy routing.
+19 новых тестов покрывают verified H1/H2, плохой CA, allowlist/framing, лимиты,
+fragmentation/coalescing, отказ connect и cleanup. Это lab-only, не новый
+production-транспорт; runtime и wire-format не менялись.
+
+[Браузерный runner](../scripts/transparent-browser-lab.mjs) запускает настоящие
+headless Chrome/Firefox через CDP/BiDi. Свежие профили, эфемерные CA/leaf, проверка
+TLS включена, sandbox не отключается. Chrome NSS DB изолирована private mount
+namespace (реальный пользовательский trust store не трогается), Firefox —
+собственным профилем. HOME неизменен. Старый CA:TRUE fixture не годится как
+end entity для Firefox; это обнаружено настоящим прогоном, не обойдено флагом.
+
+В новом rootless user/network namespace существует только lo. tcpdump снимает
+реальные пакеты трёх lab-портов, tshark независимо сверяет SNI/JA3/JA4 с captures;
+восстановленный ClientHello/records дополнительно сравнивается побайтово.
+Положительные сценарии: TLS1.3 + HTTP/2, точное echo 88 КиБ, origin UA равен
+navigator.userAgent; отрицательные: certificate error до первого HTTP-запроса.
+Браузер формирует собственные TLS и HTTP/2, сохранённый JSON-профиль не нужен.
+
+Проверено: **161 Node-тест и 4 browser-сценария**, Linux/Node 24.13.0,
+Chrome for Testing 151.0.7922.10, Firefox 156.0.1, tshark 4.2.2. Все pass.
+Инструменты не скачиваются runner, missing dependency — fail, не skip.
+Временные pcap/ключи/профили приватны и удаляются при cleanup; SIGKILL не покрыт.
+Команды, зависимости и ограничения — [документация стенда](../scripts/transparent-tls-lab.md#connect-настоящие-chromefirefox-и-независимый-pcap).
+
+Следующий небольшой пакет: browser HRR/CH2 и session resumption с независимым
+сопоставлением pcap по stream/random/flight, затем длительная нагрузка и обрывы.
+Текущий browser baseline требует CH1 без HRR. Browser ECH/0-RTT/HTTP3, общий ECH
+routing и replay/destination policy остаются отдельными задачами. Сходство
+JA3/JA4 и нативные UA/HTTP2 не доказывают неотличимость TCP/таймингов от прямого
+соединения. Mesh/TUN/динамическое BoringSSL-клонирование не затронуты.

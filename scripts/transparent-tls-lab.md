@@ -12,6 +12,7 @@ curl нужен только для необязательной ручной п
 Для отдельного настоящего ECH-набора нужен Go 1.24+ (проверено с Go 1.26.8).
 Он собирает временную fixture только из стандартной библиотеки, без npm/Go-модулей
 и без изменения production BoringSSL-helper.
+Браузерный набор с независимым pcap имеет отдельные зависимости — см. ниже.
 
 ## Быстрый запуск
 
@@ -493,6 +494,89 @@ cleanup. После SIGKILL самого runner cleanup не гарантиро�
 Проверено на Linux, Node 24.13.0, Go 1.26.8. Не покрыты ECH+0-RTT, DNS HTTPS/SVCB,
 публичные CDN/ECH endpoints, все HPKE suites, браузеры и независимый pcap-анализ.
 
+## CONNECT, настоящие Chrome/Firefox и независимый pcap
+
+Ручной CONNECT-стенд, без браузерных зависимостей:
+
+```bash
+node scripts/transparent-tls-lab.mjs --serve --connect-port=0
+npm run test:transparent-connect
+```
+
+После self-check `LAB_READY` содержит `connectPort`; CLI печатает готовую команду
+curl с `--proxy`, `--noproxy ''` и `--cacert`. CONNECT направляется **только** на
+`localhost:<originPort>` этого стенда, а TCP — на фиксированный client relay.
+Произвольные hostname/IP/порты, обычный HTTP и неоднозначный framing отклоняются.
+Это не общий SOCKS/HTTP proxy и не production ingress. Лимиты по умолчанию:
+32 соединения, 8 КиБ / 32 заголовка, 3 с на заголовки/connect/blocked write/half-close,
+30 с idle. TLS заканчивается только в браузере и HTTPS origin, не на CONNECT proxy.
+19 Node-тестов проверяют H1/H2, сертификаты, framing/allowlist, fragmented headers,
+coalesced tunnel bytes, лимиты, отказ upstream и освобождение ресурсов.
+
+Полная браузерная проверка:
+
+```bash
+MESHPN_BROWSER_CHROME=/absolute/path/to/chrome \
+MESHPN_BROWSER_FIREFOX=/absolute/path/to/firefox \
+npm run test:transparent-browser
+# Или один браузер:
+MESHPN_BROWSER_CHROME=/absolute/path/to/chrome npm run test:transparent-browser -- chrome
+```
+
+Нужны Linux, Node 22+ с встроенным WebSocket, разрешённые unprivileged user/network/mount
+namespaces, `unshare`, `mount`, `ip`, `openssl` 3.x, NSS `certutil`, `tcpdump`,
+`tshark` с полями `tls.handshake.ja3` и `tls.handshake.ja4` (4.2+) и зависимости
+указанных браузеров. Допустимы `MESHPN_CERTUTIL`, `MESHPN_TCPDUMP`, `MESHPN_TSHARK`.
+Runner ничего не скачивает и не устанавливает. Отсутствие инструментов/прав/полей
+анализатора — ошибка, не skip и не fallback с отключением защиты.
+
+Для каждого браузера создаются два новых профиля: без доверия к тестовому CA
+и с доверием только во временной NSS DB. OpenSSL создаёт эфемерные CA и отдельный
+leaf для `localhost`, действующие один день. Старый self-signed fixture с CA:TRUE
+не используется: Firefox отвергает его как end entity. Сертификатные проверки
+и браузерная sandbox не отключаются; нет `--ignore-certificate-errors`,
+`--no-sandbox` или `acceptInsecureCerts: true`. HOME не переопределяется.
+
+У Chrome существующая legacy `~/.pki/nssdb` имеет приоритет: временная DB
+монтируется поверх неё **только в дочернем mount namespace**, без записи в
+реальное хранилище пользователя. Если legacy отсутствует, используется временный
+XDG_DATA_HOME (современный Chromium, M146+). Firefox использует собственный
+временный профиль и `security.enterprise_roots.enabled=false`.
+См. [Chrome certificate management](https://chromium.googlesource.com/chromium/src/+/main/docs/linux/cert_management.md).
+CONNECT для localhost включён только в тестовом процессе браузера;
+см. [Chromium proxy bypass rules](https://chromium.googlesource.com/chromium/src/+/main/net/docs/proxy.md).
+
+Весь runner работает в **новом network namespace**, в котором только `lo`.
+Нет доступа к внешней сети или localhost-сервисам хоста; поднимается только его
+собственный loopback. tcpdump снимает настоящие пакеты только на трёх портах lab:
+client, exit, origin. Это не синтетический pcap, собранный из собственного parser.
+Tshark независимо собирает TCP/TLS и проверяет SNI/JA3/JA4 по ClientHello random
+в каждой точке. Полный восстановленный ClientHello и TLS record bytes отдельно
+проверяет `assertRelayTrace`. Поля — [Wireshark TLS reference](https://www.wireshark.org/docs/dfref/t/tls.html).
+
+Успешный сценарий проверяет TLS 1.3, HTTP/2, точное echo 88 КиБ и совпадение
+наблюдаемого origin User-Agent с `navigator.userAgent`. UA, TLS extensions,
+HTTP/2 SETTINGS и порядок заголовков не подменяются — их формирует сам браузер.
+Отрицательный сценарий требует конкретной certificate error, нуля HTTP-запросов
+и подтверждения реального CONNECT/ClientHello в pcap. `localhost /browser`
+отдаёт минимальную страницу без внешних ресурсов; `/` — диагностический JSON.
+
+Управление Chrome идёт через CDP, Firefox через WebDriver BiDi, без npm automation
+зависимостей. Есть deadlines команд/всего runner (120 с), ограниченный вывод
+процессов и предел 10 000 пакетов на capture. Каталоги приватные (0700), umask
+0077; TLS secrets/keylogs не пишутся (`SSLKEYLOGFILE` не наследуется). Профили,
+ключи, pcap и дочерние процессы убираются после теста/ошибки/SIGTERM. После
+SIGKILL runner или аварии ОС cleanup не гарантирован. Pcap не коммитится.
+
+Проверено: Linux, Node 24.13.0, OpenSSL 3.0.13, tshark 4.2.2,
+Chrome for Testing 151.0.7922.10, Firefox 156.0.1.
+**161 Node-тест + 4 браузерных сценария**, без ошибок и пропусков.
+Это baseline первого handshake без HRR: неожиданный CH2 вызывает ошибку,
+а не ложное сравнение с CH1. Browser resumption/HRR/ECH/0-RTT, HTTP/3,
+GUI-браузеры, длительный профиль нагрузки и внешний сетевой путь ещё не покрыты.
+Нативный ClientHello и его JA3/JA4 не означают неотличимость всего TCP-потока от
+прямого браузерного соединения: relay меняет соединения, сегментацию и тайминги.
+
 ## Границы текущего результата
 
 Это первый integration baseline, не законченный аудит VPN или DPI-устойчивости.
@@ -500,9 +584,8 @@ cleanup. После SIGKILL самого runner cleanup не гарантиро�
 - TLS record layout сохраняется для поддержанных случаев, описанных выше;
   переполнение при увеличении SNI намеренно приводит к отказу.
 - Нет обещания сохранить TCP packet boundaries, тайминги или размеры всех пакетов.
-- JA3/JA4 вычисляются локальными библиотеками проекта, а не независимым внешним анализатором.
-- Автоматический клиент — Node TLS, не Chrome/Firefox. Ручной curl проверяется отдельно;
-  браузерный CONNECT-прокси пока не реализован.
+- Основные наборы используют Node/OpenSSL/Go; отдельный браузерный набор проверяет
+  реальные Chrome/Firefox через CONNECT и независимо сверяет JA3/JA4 с tshark.
 - Replay-защита relay, общий ECH routing и длительный slow-peer soak пока не
   покрыты. Настоящий ECH проверен в Go-матрице с pinned loopback origin, 0-RTT —
   отдельно в OpenSSL-матрице, без проверки их сочетания. Для HRR покрыт начальный

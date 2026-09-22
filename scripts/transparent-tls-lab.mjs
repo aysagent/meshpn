@@ -2,6 +2,7 @@
 /** Explicit loopback TLS relay lab; never imports clean-vpn.js or configures the OS. */
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { startLabConnectProxy } from './lib/transparent-connect-lab.mjs';
 import {
   LAB_CERT_PATH, startTransparentTlsLab, requestThroughLab, assertRelayTrace,
 } from './lib/transparent-tls-lab.mjs';
@@ -12,6 +13,7 @@ function usage() {
 Default: start loopback client + exit + HTTPS origin, verify HTTP/1.1 and HTTP/2,
 compare real ClientHello/JA3/JA4 at three points, then close everything.
 --serve: after self-check stay running for manual curl; Ctrl+C closes all sockets.
+--connect-port=N: with --serve, add an allowlisted HTTP CONNECT proxy (0 = assigned).
 Ports default to 0 (OS-assigned); explicit ports must be 1024..65535.
 Only 127.0.0.1 is used. No TUN, root, npm dependencies or firewall changes.
 The checked-in certificate/private key are TEST ONLY. Never use them in production.`);
@@ -23,11 +25,12 @@ function parseArgs(argv) {
     if (arg === '--serve') out.serve = true;
     else if (arg === '--help' || arg === '-h') out.help = true;
     else {
-      const match = /^--(client|exit|origin)-port=(\d+)$/.exec(arg);
+      const match = /^--(client|exit|origin|connect)-port=(\d+)$/.exec(arg);
       if (!match) throw new Error(`Unknown argument: ${arg}`);
       out[`${match[1]}Port`] = Number(match[2]);
     }
   }
+  if (out.connectPort !== undefined && !out.serve) throw new Error('--connect-port requires --serve');
   return out;
 }
 
@@ -37,9 +40,10 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) return usage();
   const lab = await startTransparentTlsLab({ ...opts, sessionTimeoutMs: 30_000 });
+  let proxy;
   let stop;
   const stopped = new Promise((resolve) => { stop = resolve; });
-  const onSignal = () => { stop(); void lab.close(); };
+  const onSignal = () => { stop(); };
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
   try {
@@ -53,15 +57,18 @@ async function main() {
       console.log(`[lab] TLS record lengths ${JSON.stringify(report.records)}`);
     }
     if (opts.serve) {
+      if (opts.connectPort !== undefined) proxy = await startLabConnectProxy(lab, { port: opts.connectPort });
       console.log(`LAB_READY ${JSON.stringify({
         host: lab.host, clientPort: lab.clientPort, exitPort: lab.exitPort,
-        originPort: lab.originPort, ca: LAB_CERT_PATH,
+        originPort: lab.originPort, ca: LAB_CERT_PATH, connectPort: proxy?.port,
       })}`);
       console.log(`[lab] curl --noproxy '*' --connect-to localhost:${lab.originPort}:127.0.0.1:${lab.clientPort} --cacert ${shellQuote(LAB_CERT_PATH)} https://localhost:${lab.originPort}/`);
+      if (proxy) console.log(`[lab] curl --proxy http://127.0.0.1:${proxy.port} --noproxy '' --cacert ${shellQuote(LAB_CERT_PATH)} https://${proxy.authority}/`);
       console.log('[lab] Loopback only. Ctrl+C stops the lab. Idle test sockets expire after 30 seconds.');
       await stopped;
     }
   } finally {
+    await proxy?.close();
     await lab.close();
     process.removeListener('SIGINT', onSignal);
     process.removeListener('SIGTERM', onSignal);

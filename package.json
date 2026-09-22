@@ -52,6 +52,8 @@
     "test:transparent-tls-early-data": "node --test scripts/test-transparent-tls-early-data.mjs",
     "test:transparent-tls-ech": "node --test scripts/test-transparent-tls-ech.mjs",
     "transparent-tls:lab": "node scripts/transparent-tls-lab.mjs",
+    "test:transparent-connect": "node --test scripts/test-transparent-connect-lab.mjs",
+    "test:transparent-browser": "node scripts/transparent-browser-lab.mjs",
     "test:boring-tls": "node scripts/test-boring-tls-smoke.mjs",
     "postinstall": "npm run build:tun-linux || true; cd helpers && make 2>/dev/null || true"
   },

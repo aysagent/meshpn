@@ -211,12 +211,18 @@ export async function startTransparentTlsLab({
         body.push(chunk);
       });
       req.on('end', () => {
+        if (req.url === '/browser') {
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+          res.end('<!doctype html><title>Transparent TLS lab</title><link rel="icon" href="data:,"><p>Loopback browser test origin.</p>');
+          return;
+        }
         const payload = Buffer.concat(body);
         const reply = req.url === '/echo' ? payload : Buffer.from(JSON.stringify({
           ok: true, origin: 'transparent-tls-loopback-lab',
           httpVersion: req.httpVersion, tlsVersion: req.socket.getProtocol(),
           alpn: req.socket.alpnProtocol, servername: req.socket.servername,
           sessionReused: req.socket.isSessionReused(),
+          userAgent: String(req.headers['user-agent'] ?? '').slice(0, 1024),
           receivedBytes: payload.length, receivedSha256: sha256(payload),
         }));
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': reply.length });
