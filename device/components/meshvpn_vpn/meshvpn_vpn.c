@@ -11,12 +11,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 #include "esp_tls_errors.h"
 #include "esp_netif.h"
 #include "esp_netif_net_stack.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "lwip/sockets.h"
 #include "lwip/netif.h"
 #include "lwip/ip4.h"
@@ -25,6 +27,7 @@
 #include "lwip/lwip_napt.h"
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
+static const char *TAG = "meshvpn_vpn";
 static meshvpn_vpn_status_t s;
 static meshvpn_vpn_config_t s_config; /* never returned by status; contains keys */
 static struct netif s_vpn, *s_usb, *s_ap;
@@ -51,6 +54,7 @@ typedef struct {
     uint32_t generation, epoch;
     bool active, tx_stopped, datagram, tls;
     esp_tls_t *tls_conn;
+    SemaphoreHandle_t tls_io_mutex;
     int tx_error;
     char tx_reason[24];
 } socket_link_t;
@@ -573,12 +577,47 @@ static bool socket_link_current(uint32_t epoch, uint32_t generation, int fd)
     UNLOCK();
     return current && session(generation);
 }
-static ssize_t tunnel_write(esp_tls_t *tls, int fd, bool is_tls, const void *data, size_t length)
-{ return is_tls ? esp_tls_conn_write(tls, data, length) : send(fd, data, length, 0); }
-static ssize_t tunnel_read(esp_tls_t *tls, int fd, bool is_tls, void *data, size_t length)
-{ return is_tls ? esp_tls_conn_read(tls, data, length) : recv(fd, data, length, 0); }
 static bool tls_would_block(ssize_t n)
 { return n == ESP_TLS_ERR_SSL_WANT_READ || n == ESP_TLS_ERR_SSL_WANT_WRITE; }
+static void log_tls_failure(esp_tls_t *tls, const char *operation, ssize_t result);
+static ssize_t tunnel_write(esp_tls_t *tls, SemaphoreHandle_t mutex, int fd,
+                            const void *data, size_t length)
+{
+    if (!tls) return send(fd, data, length, 0);
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    ssize_t result = esp_tls_conn_write(tls, data, length);
+    if (result < 0 && !tls_would_block(result)) log_tls_failure(tls, "write", result);
+    xSemaphoreGive(mutex);
+    return result;
+}
+static ssize_t tunnel_read(esp_tls_t *tls, SemaphoreHandle_t mutex, int fd,
+                           void *data, size_t length)
+{
+    if (!tls) return recv(fd, data, length, 0);
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    ssize_t result = esp_tls_conn_read(tls, data, length);
+    if (result < 0 && !tls_would_block(result)) log_tls_failure(tls, "read", result);
+    xSemaphoreGive(mutex);
+    return result;
+}
+static bool tls_has_pending(esp_tls_t *tls, SemaphoreHandle_t mutex)
+{
+    if (!tls) return false;
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    ssize_t available = esp_tls_get_bytes_avail(tls);
+    xSemaphoreGive(mutex);
+    return available > 0;
+}
+static void log_tls_failure(esp_tls_t *tls, const char *operation, ssize_t result)
+{
+    esp_tls_error_handle_t handle = NULL;
+    int tls_code = 0, flags = 0;
+    esp_err_t error = ESP_OK;
+    if (esp_tls_get_error_handle(tls, &handle) == ESP_OK && handle)
+        error = esp_tls_get_and_clear_last_error(handle, &tls_code, &flags);
+    ESP_LOGW(TAG, "TLS %s failed: result=%d esp_error=0x%x tls_code=0x%x flags=0x%x",
+             operation, (int)result, (unsigned)error, (unsigned)tls_code, (unsigned)flags);
+}
 static void socket_tx_worker(void *arg)
 {
     meshvpn_vpn_tx_batch_t *tx = arg;
@@ -589,6 +628,7 @@ static void socket_tx_worker(void *arg)
         bool datagram = s_socket.datagram;
         bool is_tls = s_socket.tls;
         esp_tls_t *tls = s_socket.tls_conn;
+        SemaphoreHandle_t tls_mutex = s_socket.tls_io_mutex;
         uint32_t epoch = s_socket.epoch, generation = s_socket.generation;
         int fd = s_socket.fd;
         UNLOCK();
@@ -627,16 +667,23 @@ static void socket_tx_worker(void *arg)
             if (ready > 0) {
                 const uint8_t *data = datagram ? tx->data : tx->data + tx->used;
                 size_t length = datagram ? udp_length : tx->length - tx->used;
-                int n = (int)tunnel_write(tls, fd, is_tls, data, length);
+                int n = (int)tunnel_write(tls, tls_mutex, fd, data, length);
                 int send_error = n < 0 ? errno : 0;
                 bool tls_wait = is_tls && tls_would_block(n);
-                if (n < 0 && !tls_wait && send_error != EAGAIN && send_error != EWOULDBLOCK && send_error != EINTR) {
-                    error = send_error; failure_reason = "send"; break;
+                if (n < 0 && !tls_wait && (is_tls || (send_error != EAGAIN && send_error != EWOULDBLOCK &&
+                                                    send_error != EINTR && send_error != EINPROGRESS))) {
+                    if (is_tls) {
+                        error = EPROTO; failure_reason = "tls_write";
+                    } else {
+                        error = send_error; failure_reason = "send";
+                    }
+                    break;
                 }
                 LOCK();
                 s.socket_send_calls++;
                 if (n > 0) s.socket_send_bytes += n;
-                else if (send_error == EAGAIN || send_error == EWOULDBLOCK) s.socket_send_would_block++;
+                else if (!is_tls && (send_error == EAGAIN || send_error == EWOULDBLOCK ||
+                                     send_error == EINPROGRESS)) s.socket_send_would_block++;
                 if (datagram && n > 0 && (size_t)n == length) {
                     s.packets_out++; s.bytes_out += udp_length;
                 }
@@ -654,7 +701,8 @@ static void socket_tx_worker(void *arg)
                         LOCK(); s.packets_out += packets; s.bytes_out += bytes; UNLOCK();
                         if (packets) tx_since = esp_timer_get_time();
                     }
-                } else if (datagram && (send_error == EAGAIN || send_error == EWOULDBLOCK)) {
+                } else if (datagram && (send_error == EAGAIN || send_error == EWOULDBLOCK ||
+                                        send_error == EINPROGRESS)) {
                     fd_set wr; FD_ZERO(&wr); FD_SET(fd, &wr);
                     struct timeval tv = { .tv_usec = 100000 };
                     if (select(fd + 1, NULL, &wr, NULL, &tv) < 0 && errno != EINTR) {
@@ -714,11 +762,19 @@ static void __attribute__((unused)) worker(void *arg)
         if (!session(cfg.generation)) { if (tls_conn) esp_tls_conn_destroy(tls_conn); else close(fd); continue; }
         bool datagram = !strcmp(cfg.transport, "udp");
         bool is_tls = tls_conn != NULL;
+        SemaphoreHandle_t tls_mutex = is_tls ? xSemaphoreCreateMutex() : NULL;
+        if (is_tls && !tls_mutex) {
+            esp_tls_conn_destroy(tls_conn);
+            error = ENOMEM;
+            failure_reason = "tls_mutex";
+            goto retry;
+        }
         LOCK();
         s_socket.fd = fd; s_socket.generation = cfg.generation; s_socket.epoch++;
         uint32_t socket_epoch = s_socket.epoch;
         s_socket.active = true; s_socket.tx_stopped = false; s_socket.datagram = datagram;
-        s_socket.tls = is_tls; s_socket.tls_conn = tls_conn; s_socket.tx_error = 0;
+        s_socket.tls = is_tls; s_socket.tls_conn = tls_conn;
+        s_socket.tls_io_mutex = tls_mutex; s_socket.tx_error = 0;
         s_socket.tx_reason[0] = 0;
         UNLOCK();
         notify_socket_tx();
@@ -726,21 +782,28 @@ static void __attribute__((unused)) worker(void *arg)
         while (session(cfg.generation)) {
             fd_set rd; FD_ZERO(&rd); FD_SET(fd, &rd);
             struct timeval tv = { .tv_usec = MESHVPN_VPN_RX_SELECT_WAIT_US };
-            if (select(fd + 1, &rd, NULL, NULL, &tv) < 0) {
+            int ready = select(fd + 1, &rd, NULL, NULL, &tv);
+            if (ready < 0) {
                 if (errno == EINTR) continue;
                 error = errno; failure_reason = "rx_select"; break;
             }
-            if (FD_ISSET(fd, &rd)) {
+            if (ready > 0 || tls_has_pending(tls_conn, tls_mutex)) {
                 rx_batch->generation = cfg.generation;
                 rx_batch->used = rx_batch->count = 0;
                 if (datagram) {
                     error = receive_udp_batch(fd, rx, rx_batch);
                     if (error) failure_reason = "recv";
                 } else {
-                    int n = (int)tunnel_read(tls_conn, fd, is_tls, rx, MESHVPN_VPN_SOCKET_RX_BYTES);
+                    int n = (int)tunnel_read(tls_conn, tls_mutex, fd, rx, MESHVPN_VPN_SOCKET_RX_BYTES);
                     if (n == 0) { error = ECONNRESET; failure_reason = "remote_closed"; break; }
-                    if (n < 0 && !tls_would_block(n) && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
-                        error = errno; failure_reason = "recv"; break;
+                    if (n < 0 && !tls_would_block(n) && (is_tls || (errno != EAGAIN &&
+                                errno != EWOULDBLOCK && errno != EINTR && errno != EINPROGRESS))) {
+                        if (is_tls) {
+                            error = EPROTO; failure_reason = "tls_read";
+                        } else {
+                            error = errno; failure_reason = "recv";
+                        }
+                        break;
                     }
                     if (n > 0 && !meshvpn_vpn_rx_feed(d, rx, n, esp_timer_get_time(), receive_packet, rx_batch)) {
                         if (session(cfg.generation)) COUNT(rx_invalid);
@@ -784,9 +847,11 @@ static void __attribute__((unused)) worker(void *arg)
             s_socket.fd = -1;
             s_socket.tls = false;
             s_socket.tls_conn = NULL;
+            s_socket.tls_io_mutex = NULL;
         }
         UNLOCK();
         if (is_tls) esp_tls_conn_destroy(tls_conn); else close(fd);
+        if (tls_mutex) vSemaphoreDelete(tls_mutex);
 retry:
         if (!session(cfg.generation)) continue;
         if (error == ENETDOWN) {
