@@ -8,16 +8,17 @@ import tls from 'node:tls';
 import { setTimeout as delay, setImmediate as immediate } from 'node:timers/promises';
 import { startTransparentTlsLab, requestThroughLab, assertRelayTrace } from './transparent-tls-lab.mjs';
 import { startLabConnectProxy } from './transparent-connect-lab.mjs';
+import { slowReaderCase } from './transparent-slow-reader.mjs';
 
 export function soakOptions(args) {
-  const result = { seconds: 300, concurrency: 4 };
+  const result = { seconds: 300, concurrency: 4, profile: 'basic' };
   const seen = new Set();
   for (const arg of args) {
     if (arg === '--help') { result.help = true; continue; }
-    const match = /^--(seconds|concurrency|report)=(.+)$/.exec(arg);
+    const match = /^--(seconds|concurrency|report|profile)=(.+)$/.exec(arg);
     if (!match || seen.has(match[1])) throw new Error('invalid or duplicate soak argument');
     seen.add(match[1]);
-    if (match[1] === 'report') result.report = match[2];
+    if (['report', 'profile'].includes(match[1])) result[match[1]] = match[2];
     else {
       if (!/^[1-9]\d*$/.test(match[2])) throw new Error('soak limits must be positive integers');
       result[match[1]] = Number(match[2]);
@@ -25,11 +26,12 @@ export function soakOptions(args) {
   }
   if (result.seconds < 1 || result.seconds > 3600) throw new Error('seconds must be 1..3600');
   if (result.concurrency < 2 || result.concurrency > 12) throw new Error('concurrency must be 2..12');
+  if (!['basic', 'slow-reader'].includes(result.profile)) throw new Error('profile must be basic or slow-reader');
   return result;
 }
 
 export function assertIdle(lab, proxy) {
-  for (const key of ['sockets', 'heldResponses', 'h2Sessions', 'pendingClients', 'relaySessions', 'relayTimers', 'cleanupFailures']) {
+  for (const key of ['sockets', 'heldResponses', 'h2Sessions', 'pendingClients', 'relaySessions', 'relayTimers', 'cleanupFailures', 'slowStreams', 'slowStreamTimers']) {
     assert.equal(lab[key], 0, `lab ${key} did not drain`);
   }
   for (const key of ['clients', 'upstreams', 'headerTimers', 'relaySessions', 'relayTimers', 'cleanupFailures']) {
@@ -70,9 +72,10 @@ export function assertResources(current, baseline) {
 
 export async function runSoak(options, { signal, emit = () => {} } = {}) {
   // Programmatic use has the same bounds as the public CLI.
-  const { seconds, concurrency } = soakOptions([`--seconds=${options.seconds}`, `--concurrency=${options.concurrency}`]);
-  const result = { schema: 1, status: 'failed', seconds, concurrency, warmupWaves: 0, waves: 0,
+  const { seconds, concurrency, profile } = soakOptions([`--seconds=${options.seconds}`, `--concurrency=${options.concurrency}`, `--profile=${options.profile ?? 'basic'}`]);
+  const result = { schema: 1, status: 'failed', seconds, concurrency, profile, warmupWaves: 0, waves: 0,
     totals: { echoes: 0, echoBytes: 0, helloAborts: 0, uploadAborts: 0, slowHellos: 0, slowHeaders: 0 }, samples: [] };
+  if (profile === 'slow-reader') result.slowReaders = {};
   const sockets = new Set(), requests = new Set(), timers = new Set();
   let lab, proxy, phase = 'setup', measuredStart, waveTimer, failure;
   const error = (code) => Object.assign(new Error(code), { code });
@@ -203,14 +206,31 @@ export async function runSoak(options, { signal, emit = () => {} } = {}) {
       lab.runtimeErrors.length = 0;
       await echo(1); await idle(); traces(1);
       assert.equal(lab.runtimeErrors.length, 0);
+      if (profile === 'slow-reader') {
+        for (const direction of ['forward', 'reverse']) for (const outcome of ['resume', 'timeout']) {
+          phase = `slow-reader-${direction}-${outcome}`;
+          lab.runtimeErrors.length = 0;
+          const metrics = await slowReaderCase({ lab, tunnel, own, until, signal, direction, outcome,
+            onBlocked: emit,
+            healthy: () => Promise.all(Array.from({ length: concurrency }, (_, i) => echo(i))) });
+          await idle(); traces(concurrency + 1);
+          const total = result.slowReaders[`${direction}-${outcome}`] ??= { cases: 0, bytes: 0, pressureSamples: 0, maxReadable: 0, maxWritable: 0 };
+          total.cases++; total.bytes += metrics.bytes; total.pressureSamples += metrics.pressureSamples;
+          total.maxReadable = Math.max(total.maxReadable, metrics.maxReadable);
+          total.maxWritable = Math.max(total.maxWritable, metrics.maxWritable);
+          if (metrics.timeout) total.timeout = metrics.timeout;
+        }
+      }
       lab.diagnostics.length = 0;
     } finally { clearTimeout(waveTimer); }
   }
   try {
     check();
-    lab = await startTransparentTlsLab({ sessionTimeoutMs: 0,
-      clientLimits: { helloTimeoutMs: 300 }, exitLimits: { helloTimeoutMs: 300 } });
-    proxy = await startLabConnectProxy(lab, { headerTimeoutMs: 300, maxConnections: 16 });
+    const limits = { helloTimeoutMs: 300, ...(profile === 'slow-reader' ? { writeTimeoutMs: 2000 } : {}) };
+    lab = await startTransparentTlsLab({ sessionTimeoutMs: 0, slowStreams: profile === 'slow-reader',
+      clientLimits: limits, exitLimits: limits });
+    proxy = await startLabConnectProxy(lab, { headerTimeoutMs: 300, maxConnections: 16,
+      ...(profile === 'slow-reader' ? { closeTimeoutMs: 10_000 } : {}) });
     for (let i = 0; i < 3; i++) { await wave(); result.warmupWaves++; }
     measuredStart = performance.now();
     result.baseline = resources();

@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–24; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–25; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -582,3 +582,47 @@ concurrency 12: 55+3 волны, 1102 TLS, FD 24→19, RSS 99.8→130.3 МиБ (
 отдельными короткими load-тестами. Более долгий browser soak, replay/destination
 policy, production-квоты и общий ECH routing остаются отдельными задачами.
 Production runtime/wire-format, mesh/TUN и BoringSSL не менялись.
+
+## 25. TLS/H1 slow-reader soak с параллельными здоровыми запросами
+
+В [soak CLI](../scripts/transparent-soak.mjs) добавлен `--profile=slow-reader`,
+default остаётся basic. К basic-волне добавляются forward/reverse × resume/timeout:
+реальные verified TLS1.3/H1 тела по 32 МиБ через тот же CONNECT/client/exit/origin.
+Стенд не перезапускается. При forward origin приостанавливает request, при reverse
+клиент приостанавливает TLS response. В обоих случаях требуется реально наблюдаемый
+pause + writableNeedDrain на streaming relay, а не только ожидание по таймеру.
+Параллельные H1/H2 echo обязаны завершиться до снятия паузы/таймаута slow stream.
+
+Opt-in origin endpoints имеют фиксированный бюджет 32 МиБ, блоки 64 КиБ, cap 2,
+deadline 15 с. Данные хешируются потоково, без накопления тела целиком.
+Resume требует точного размера/SHA-256; timeout — именно TLS_RELAY_WRITE_TIMEOUT
+runtime (2 с), не CONNECT (10 с) и не fixture (15 с). После доказанного timeout
+paused reader разрешается дочитать EOF перед проверкой полного drain: иначе
+TLS/HTTP origin сохранял pause и не видел закрытия уже остановленного relay.
+Это исправление test fixture, production runtime/wire-format не менялись.
+
+Test-only session tracker семплирует raw relay queues каждые 5 мс, граница —
+соответствующий HWM + 64 КиБ. Не измеряются все kernel/TLS/HTTP/tap буферы и
+мгновенные пики. JSON агрегирует cases/bytes/pressureSamples/queue peaks/timeout
+по четырём случаям, включая warmup. В default lab новые endpoints отключены;
+external origin запрещён, размер/назначение не управляются запросом.
+
+Добавлены 11 регрессий: выбор профиля, оба направления pressure census, cleanup
+drain listeners, cap/opt-in origin, корректный отказ H2 без connection-specific headers,
+полная реальная матрица и SIGTERM непосредственно при observed backpressure.
+Acceptance: 15 Node-файлов, **265 Node-тестов + 14 browser-сценариев**.
+Команды и границы — [документация](../scripts/transparent-tls-lab.md#slow-reader-после-handshake-оба-направления).
+
+Самостоятельный VPS-прогон: 300.87 с / concurrency 4, 47+3 волны — PASS.
+По 50 случаев каждого вида: 100 resume (3.125 ГиБ, SHA-256 совпал), 100 runtime
+write timeout; 1050 здоровых echo, всего 1350 TLS. Sampled readable/writable queues
+65 624/65 536 байт; FD всегда 24 между волнами, после shutdown 19, ресурсы нулевые,
+worker exit 0. RSS 94.3→134.0 МиБ (peak 158.7), heapUsed 10.1→12.1 МиБ,
+без утверждения об отсутствии утечки. Дополнительно 60.00 с / concurrency 12 —
+PASS, 9+3 волны, по 12 случаев каждого вида и 768 МиБ resume bodies, FD 24→19.
+
+Следующий пакет: HTTP/2 flow-control — медленный stream рядом со здоровыми streams
+на одном TLS-соединении, отмена stream без потери соседних, освобождение окон/ресурсов.
+Сейчас H2 есть в здоровом параллельном трафике, но stalled stream — H1 на отдельном
+TLS. Browser soak, replay/destination policy, production-квоты и общий ECH routing
+остаются отдельными задачами. Mesh/TUN/BoringSSL не затронуты.

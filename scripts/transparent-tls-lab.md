@@ -16,7 +16,7 @@ curl нужен только для необязательной ручной п
 
 ## Единая acceptance-проверка
 
-[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 14 Node-наборов
+[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 15 Node-наборов
 и полную матрицу Chrome/Firefox. Он ничего не устанавливает и не скачивает.
 Нужны Linux, Node 22+, Go 1.24+, OpenSSL 3, GNU `stdbuf`, а для полного режима —
 зависимости браузерного стенда ниже, включая доступные user/network/mount namespaces.
@@ -70,8 +70,9 @@ JSON пишется один раз в конце: SIGKILL/авария ОС/о�
 или неполный файл. Ошибка аргументов или резервирования пути возникает до отчёта.
 Это не cgroup supervisor; ограничения cleanup процессов описаны ниже.
 
-Текущий полный прогон: **254 Node-теста + 14 browser-сценариев**. Предыдущий пакет
-acceptance был проверен дважды подряд с 235 Node-тестами; soak добавил ещё 19.
+Текущий полный прогон: **265 Node-тестов + 14 browser-сценариев**. Предыдущий пакет
+acceptance был проверен дважды подряд с 235 Node-тестами; basic soak добавил 19,
+slow-reader — ещё 11.
 27 новых регрессий проверяют runner/reporter, включая отсутствие инструмента,
 неполные результаты, timeout/abort/output overflow и запрет перезаписи отчёта.
 Это ограниченный acceptance, не длительный soak и не production-сертификация.
@@ -106,8 +107,8 @@ client/exit/origin/CONNECT на протяжении всего прогона. 
 каждой волны сверяются полные TLS records, тело ClientHello и JA3/JA4 в трёх точках.
 Captures после сверки освобождаются; payload/key material в отчёт не попадает.
 Idle-таймеры lab отключены: slow hello ограничивает runtime deadline 300 мс,
-slow CONNECT — deadline 300 мс самого proxy. Это медленные заголовки, **не slow-reader**
-после handshake; backpressure отдельно проверяет короткий load suite.
+slow CONNECT — deadline 300 мс самого proxy. В default `--profile=basic` это медленные
+заголовки; для slow-reader после handshake есть отдельный профиль ниже.
 
 После каждой фазы проверяется ноль lab/proxy/workload sockets, H2 sessions,
 pending client setup, held responses, header/drip timers и учитываемых relay sessions/timers.
@@ -159,6 +160,69 @@ worker вышел естественно с code 0. RSS 79.3→106.0 МиБ, hea
 754 echo и 348 upload abort; FD снова 24→19. RSS 99.8→130.3 МиБ, sampled peak
 133.4 МиБ. Оба прогона проверяют ограниченный интервал, не многочасовую нагрузку.
 Финальный acceptance: 254 Node-теста + 14 Chrome/Firefox-сценариев, все pass.
+
+### Slow-reader после handshake: оба направления
+
+```bash
+node scripts/transparent-soak.mjs --profile=slow-reader --seconds=300 --concurrency=4
+npm run test:transparent-slow-reader
+```
+
+Профиль сохраняет basic-волны и добавляет четыре случая: forward/reverse ×
+resume/timeout. Сессии используют настоящий verified TLS 1.3 / HTTP/1.1 через
+CONNECT → client → exit → origin. HTTP/2 остаётся среди параллельных здоровых
+запросов, но **медленный H2 stream/flow-control этим профилем не проверяется**.
+Origin/client/exit остаются теми же на всём прогоне.
+
+Opt-in `slowStreams: true` включает только в programmatic lab два endpoint:
+`POST /slow-upload` и `GET /slow-download`, ровно по 32 МиБ фиксированного тела.
+В обычном lab они не включены. Размер/назначение из запроса не выбираются;
+external origin запрещён, максимум два активных stream, страховочный deadline 15 с.
+Тела передаются блоками 64 КиБ с ожиданием drain, digest считается потоково —
+32 МиБ не собираются в Buffer. Обычный `/echo` по-прежнему ограничен 2 МиБ.
+
+Для forward origin приостанавливает IncomingMessage, для reverse TLS-клиент
+приостанавливает чтение ответа после verified handshake. Реальные relay handles
+наблюдаются через test-only `relayPressure`: `source.isPaused()` одновременно с
+`destination.writableNeedDrain`. Нет такого состояния в пределах бюджета — fail,
+а не утверждение, что backpressure проверен. Перед дальнейшими действиями
+`concurrency` здоровых H1/H2 echo должны закончиться, пока slow stream ещё блокирован
+и runtime ещё не сообщал ошибок. В stdout первые четыре наблюдения помечены `blocked`.
+
+При resume проверяются точный размер 32 МиБ и SHA-256 полученного тела, затем
+очистка сокетов/таймеров. При timeout нужен именно `TLS_RELAY_WRITE_TIMEOUT` runtime
+(write deadline 2 с); CONNECT deadline 10 с и fixture deadline 15 с не засчитываются.
+После подтверждения timeout снимается пауза получателя, чтобы buffered EOF мог
+дойти до TLS/HTTP слоя, затем проверяется полный drain. Первый тест обнаружил,
+что paused upload reader не видит EOF сразу: relay уже закрыл свои sessions,
+но origin fixture оставалась активной. Исправлена последовательность уборки стенда,
+а не ослаблены требования к runtime timeout. SIGTERM проверяется во время
+реально наблюдаемого forward backpressure, с освобождением paused origin.
+
+Очереди streaming relay семплируются раз в 5 мс: readable/writable не должны
+превышать соответствующий highWaterMark + 64 КиБ. Это ограничение наблюдаемых
+user-space очередей, не всех kernel/TLS/HTTP/CONNECT/origin-tap буферов и не
+доказательство каждого мгновенного пика. Production runtime не изменён.
+В JSON `result.slowReaders` содержит по четыре агрегата: cases, доставленные bytes,
+pressureSamples, maxReadable/maxWritable и код timeout. Bytes у timeout равен нулю:
+частично переданные байты не засчитываются как доставленное тело.
+Все счётчики включают три warmup-волны. Одна slow-reader-волна занимает несколько
+секунд; `--seconds=1` всё равно проходит полный прогрев и целую измеряемую волну.
+Основные пределы supervisor/волны/памяти и ограничения отчёта описаны выше.
+
+Проверено на VPS (Node 24.13.0 / embedded OpenSSL 3.5.4): 300.87 с,
+concurrency 4, 47 измеряемых + 3 warmup-волны — PASS. По 50 случаев каждого вида:
+100 возобновлённых потоков доставили 3.125 ГиБ с точным SHA-256, ещё 100 получили
+runtime write timeout. Всего 1350 TLS-соединений и 1050 здоровых echo.
+Наблюдаемые peak relay queues: readable 65 624, writable 65 536 байт.
+Idle FD весь прогон 24, после shutdown 19; учитываемые sockets/sessions/timers,
+включая slow fixture, нулевые, worker exit 0. RSS 94.3→134.0 МиБ (sampled peak 158.7),
+heapUsed 10.1→12.1 МиБ: отсутствие memory leak этим не доказано.
+
+Дополнительно 60.00 с при concurrency 12 — PASS: 9+3 волны, по 12 случаев каждого
+вида, 768 МиБ проверенных resume bodies и 732 здоровых echo. FD 24→19,
+RSS 101.9→163.9 МиБ. Отдельно проверено корректное отклонение H2-запросов к H1-only
+fixture без запрещённого для H2 заголовка `Connection`.
 
 ## Быстрый запуск
 
@@ -717,7 +781,7 @@ SIGKILL runner или аварии ОС cleanup не гарантирован. P
 
 Проверено: Linux, Node 24.13.0, OpenSSL 3.0.13, tshark 4.2.2,
 Chrome for Testing 151.0.7922.10, Firefox 156.0.1.
-**254 Node-теста + 14 браузерных сценариев**, без ошибок и пропусков.
+**265 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
 Первоначальный baseline (161 + 4) расширен HRR и resumption, описанными ниже.
 Browser ECH/0-RTT, HTTP/3, GUI-браузеры, длительный профиль нагрузки и внешний
 сетевой путь ещё не покрыты.
@@ -871,8 +935,8 @@ runner и отдельный ограниченный по времени soak �
 - Нет обещания сохранить TCP packet boundaries, тайминги или размеры всех пакетов.
 - Основные наборы используют Node/OpenSSL/Go; отдельный браузерный набор проверяет
   реальные Chrome/Firefox через CONNECT и независимо сверяет JA3/JA4 с tshark.
-- Replay-защита relay, общий ECH routing и длительный slow-reader/browser soak пока не
-  покрыты; есть отдельный bounded Node soak с обрывами и медленными заголовками.
+- Replay-защита relay, общий ECH routing и длительный browser/H2-flow-control soak пока не
+  покрыты; есть bounded Node soak с обрывами, медленными заголовками и H1 slow-reader.
   Настоящий ECH проверен в Go-матрице с pinned loopback origin, 0-RTT —
   отдельно в OpenSSL-матрице, без проверки их сочетания. Для HRR покрыт начальный
   TLS 1.3 handshake; TLS 1.2

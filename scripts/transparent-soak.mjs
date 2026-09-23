@@ -12,8 +12,9 @@ const self = fileURLToPath(import.meta.url), root = dirname(dirname(self));
 const worker = process.argv[2] === '--worker';
 const options = soakOptions(process.argv.slice(worker ? 3 : 2));
 if (options.help) {
-  console.log(`Usage: node scripts/transparent-soak.mjs [--seconds=1..3600] [--concurrency=2..12] [--report=/new/path.json]
+  console.log(`Usage: node scripts/transparent-soak.mjs [--seconds=1..3600] [--concurrency=2..12] [--profile=basic|slow-reader] [--report=/new/path.json]
 Defaults: 300 measured seconds after three warmup waves, concurrency 4. Linux /proc + Node 22+.
+slow-reader adds verified TLS/H1 streaming, forward/reverse resume/timeout with concurrent healthy H1/H2.
 Persistent client/exit/origin; loopback only, no browser, TUN, downloads or global routing changes.
 Report contains counts and sampled memory trends, not a proof of no memory leaks or DPI safety.
 Existing reports are never overwritten. Parent deadline: requested seconds + 60s, then 5s kill grace.`);
@@ -32,7 +33,7 @@ Existing reports are never overwritten. Parent deadline: requested seconds + 60s
   const path = options.report ? resolve(options.report) : join(await mkdtemp(join(tmpdir(), 'meshpn-soak-')), 'report.json');
   const file = await open(path, 'wx', 0o600);
   const report = { schema: 1, status: 'failed', startedAt: new Date().toISOString(),
-    requested: { seconds: options.seconds, concurrency: options.concurrency },
+    requested: { seconds: options.seconds, concurrency: options.concurrency, profile: options.profile },
     platform: { os: process.platform, arch: process.arch, kernel: release(), node: process.version, openssl: process.versions.openssl },
     limitations: ['loopback-only', 'node-clients-not-browser-soak', 'sampled-memory-not-leak-proof',
       'not-production-certification', 'no-global-or-cgroup-resource-bound'] };
@@ -47,9 +48,10 @@ Existing reports are never overwritten. Parent deadline: requested seconds + 60s
     if (git.code !== 0 || git.reason || dirty.code !== 0 || dirty.reason) throw new Error('SOAK_PROVENANCE');
     report.repository = { revision: git.stdout.trim(), dirty: Boolean(dirty.stdout.trim()) };
     if (controller.signal.aborted) throw new Error('SOAK_ABORTED');
-    const proc = child(process.execPath, [self, '--worker', `--seconds=${options.seconds}`, `--concurrency=${options.concurrency}`], { env, cwd: root });
+    const proc = child(process.execPath, [self, '--worker', `--seconds=${options.seconds}`, `--concurrency=${options.concurrency}`, `--profile=${options.profile}`], { env, cwd: root });
     report.worker = { pid: proc.proc.pid, closed: false };
     let buffer = '', bytes = 0, resultCount = 0, reason, stopping, lastProgress = -30_000;
+    const pressureSeen = new Set();
     const stop = (why) => { reason ??= why; stopping ??= proc.stop().catch(() => { reason = 'cleanup-failed'; }); };
     const onAbort = () => stop('aborted');
     controller.signal.addEventListener('abort', onAbort, { once: true });
@@ -76,6 +78,10 @@ Existing reports are never overwritten. Parent deadline: requested seconds + 60s
               lastProgress = event.elapsedMs;
               console.log(`[soak] ${Math.round(event.elapsedMs / 1000)}s, waves=${event.wave}, idle FDs=${event.resources.fds}, RSS=${Math.round(event.resources.memory.rss / 1048576)} MiB`);
             }
+          } else if (event.type === 'pressure') {
+            report.lastPressure = event;
+            const key = `${event.direction}-${event.outcome}`;
+            if (!pressureSeen.has(key)) { pressureSeen.add(key); console.log(`[soak] ${key} blocked; healthy traffic passed`); }
           } else if (event.type === 'result') { resultCount++; report.result = event.result; }
           else stop('unexpected-event');
         } catch { stop('invalid-worker-output'); }

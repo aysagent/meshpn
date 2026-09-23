@@ -61,6 +61,7 @@
     "transparent-tls:acceptance": "node scripts/transparent-acceptance.mjs",
     "transparent-tls:soak": "node scripts/transparent-soak.mjs",
     "test:transparent-soak": "node --test scripts/test-transparent-soak.mjs",
+    "test:transparent-slow-reader": "node --test scripts/test-transparent-slow-reader.mjs",
     "test:boring-tls": "node scripts/test-boring-tls-smoke.mjs",
     "postinstall": "npm run build:tun-linux || true; cd helpers && make 2>/dev/null || true"
   },

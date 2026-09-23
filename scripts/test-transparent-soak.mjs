@@ -9,8 +9,8 @@ import { runCommand, cleanEnvironment } from './lib/transparent-acceptance.mjs';
 import { child } from './lib/browser-lab-driver.mjs';
 
 test('soak has fixed finite duration and concurrency defaults', () => {
-  assert.deepEqual(soakOptions([]), { seconds: 300, concurrency: 4 });
-  assert.deepEqual(soakOptions(['--seconds=3600', '--concurrency=12']), { seconds: 3600, concurrency: 12 });
+  assert.deepEqual(soakOptions([]), { seconds: 300, concurrency: 4, profile: 'basic' });
+  assert.deepEqual(soakOptions(['--seconds=3600', '--concurrency=12']), { seconds: 3600, concurrency: 12, profile: 'basic' });
 });
 for (const option of ['--seconds=0', '--seconds=3601', '--seconds=Infinity', '--seconds=1.5', '--seconds=01',
   '--concurrency=1', '--concurrency=13', '--report=', '--target=example.com']) {
@@ -18,7 +18,7 @@ for (const option of ['--seconds=0', '--seconds=3601', '--seconds=Infinity', '--
 }
 test('duplicate soak options fail', () => assert.throws(() => soakOptions(['--seconds=1', '--seconds=2'])));
 
-const labIdle = { sockets: 0, heldResponses: 0, h2Sessions: 0, pendingClients: 0, relaySessions: 0, relayTimers: 0, cleanupFailures: 0 };
+const labIdle = { sockets: 0, heldResponses: 0, h2Sessions: 0, pendingClients: 0, relaySessions: 0, relayTimers: 0, cleanupFailures: 0, slowStreams: 0, slowStreamTimers: 0 };
 const proxyIdle = { clients: 0, upstreams: 0, headerTimers: 0, relaySessions: 0, relayTimers: 0, cleanupFailures: 0 };
 test('every owned resource counter must drain, including closed-session cleanup failures', () => {
   assertIdle(labIdle, proxyIdle);
