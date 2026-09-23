@@ -15,6 +15,7 @@ export const TEST_FILES = Object.freeze([
   'test-browser-soak.mjs',
   'test-transparent-tls-replay.mjs',
   'test-transparent-tls-destination.mjs',
+  'test-transparent-dns-lab.mjs',
 ]);
 
 export function parseOptions(args) {

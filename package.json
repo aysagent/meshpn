@@ -50,6 +50,8 @@
     "test:transparent-tls-retry": "node --test scripts/test-transparent-tls-retry.mjs",
     "test:transparent-tls-replay": "node --test scripts/test-transparent-tls-replay.mjs",
     "test:transparent-tls-destination": "node --test scripts/test-transparent-tls-destination.mjs",
+    "test:transparent-dns": "node --test scripts/test-transparent-dns-lab.mjs",
+    "transparent-tls:dns-lab": "node scripts/transparent-dns-lab.mjs",
     "test:transparent-tls-resumption": "node --test scripts/test-transparent-tls-resumption.mjs",
     "test:transparent-tls-early-data": "node --test scripts/test-transparent-tls-early-data.mjs",
     "test:transparent-tls-ech": "node --test scripts/test-transparent-tls-ech.mjs",

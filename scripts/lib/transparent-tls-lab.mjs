@@ -36,7 +36,14 @@ function validatePort(port) {
 }
 
 /** Passive capture of up to two plaintext ClientHellos; no runtime guard reuse. */
-function captureHello(socket, stage, captures, diagnose) {
+function captureHello(socket, stage, captures, diagnose, observeWire) {
+  if (observeWire) {
+    const observe = (chunk) => {
+      try { observeWire(stage, Buffer.from(chunk), { peerPort: socket.remotePort }); }
+      catch { diagnose('wire observer failed'); socket.destroy(); }
+    };
+    socket.on('data', observe); socket.once('close', () => socket.off('data', observe));
+  }
   let pending = Buffer.alloc(0);
   let records = [];
   let size = 0;
@@ -109,7 +116,9 @@ export async function startTransparentTlsLab({
   clientPsk, sessionTimeoutMs = 10_000, originTls = {}, clientLimits, exitLimits,
   externalOriginPort, holdResponses = false, slowStreams = false, h2Flow = false,
   exitReplayGuard = new EncSniReplayGuard(),
+  observeWire,
 } = {}) {
+  if (observeWire !== undefined && typeof observeWire !== 'function') throw new Error('invalid wire observer');
   if (!(exitReplayGuard instanceof EncSniReplayGuard)) throw new Error('exitReplayGuard must be an EncSniReplayGuard');
   for (const port of [clientPort, exitPort, originPort]) validatePort(port);
   if (typeof holdResponses !== 'boolean' || (holdResponses && externalOriginPort !== undefined)) {
@@ -275,7 +284,7 @@ export async function startTransparentTlsLab({
 
     const originTap = net.createServer({ allowHalfOpen: true }, (socket) => {
       originConnections++;
-      captureHello(socket, 'origin', captures, diagnose);
+      captureHello(socket, 'origin', captures, diagnose, observeWire);
       const upstream = track(net.connect({ host: HOST, port: backendPort, allowHalfOpen: true }));
       socket.pipe(upstream).pipe(socket);
       socket.once('close', () => upstream.destroy());
@@ -285,7 +294,7 @@ export async function startTransparentTlsLab({
     const destinationPolicy = new ExitDestinationPolicy({ loopback: { hostname: originName, port: boundOriginPort } });
 
     const exit = net.createServer((socket) => {
-      captureHello(socket, 'exit', captures, diagnose);
+      captureHello(socket, 'exit', captures, diagnose, observeWire);
       relay.track(wireTransparentTlsEncSniSession(socket, {
         vpnSecretBuf: psk, publicName, logOpts: {},
         replayGuard: exitReplayGuard,
@@ -303,7 +312,7 @@ export async function startTransparentTlsLab({
     const boundExitPort = await listen(exit, exitPort);
 
     const client = net.createServer((socket) => {
-      captureHello(socket, 'client', captures, diagnose);
+      captureHello(socket, 'client', captures, diagnose, observeWire);
       pendingClients++;
       attachTransparentTlsClientSession(socket, {
         upstreamHost: HOST, upstreamPort: boundExitPort,

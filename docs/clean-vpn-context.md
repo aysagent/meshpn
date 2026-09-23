@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–31; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–32; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -973,3 +973,56 @@ loopback кандидатов допускаются test double, не расш�
 обрывов и отсутствия plaintext fallback, без изменения DNS системы. Декоративные
 cover-запросы не добавляем; собственное публичное имя exit должно иметь реальные
 DNS-записи. План — [clean-vpn-dns-plan.md](clean-vpn-dns-plan.md).
+
+## 32. Explicit-loopback DNS → DoH через transparent relay
+
+Добавлены `scripts/transparent-dns-lab.mjs`, `lib/transparent-dns-lab.mjs`,
+`lib/lab-doh-stub.mjs`, `lib/lab-dns-wire.mjs`, 46 тестов в общем acceptance.
+Команды: `npm run transparent-tls:dns-lab`, `npm run test:transparent-dns`.
+Подробности — [DNS lab](../scripts/transparent-dns-lab.md).
+
+Явный DNS client → loopback UDP/TCP stub → DoH POST через production transparent
+client/exit runtime → локальный HTTPS resolver с синтетическими A/AAAA-ответами.
+TLS 1.3 от stub до resolver, CA+hostname проверяются. Relay не получает TLS keys
+этой сессии, не разбирает HTTP/DNS body. Wire DNS настоящий; resolver **не**
+рекурсивный, никакого внешнего DNS для test names нет. Все IP/порты явные loopback;
+OS resolver, `/etc/resolv.conf`, firewall, TUN, mesh и работающий VPN не менялись.
+
+Одна IN question A/AAAA, DNS wire ≤4096 B, bounded compression/RR framing,
+ID/question/QR matching. UDP 512 B или EDNS(0) 512..4096, большой ответ даёт TC;
+явный TCP retry снова использует DoH. TCP fragmentation, pipelining/half-close,
+NXDOMAIN, TTL=0 проверены. DoH query ID=0, клиентский ID восстанавливается.
+Кэша нет: положительные/отрицательные ответы и HTTP caching/connection pooling
+не внедрены. Fixture HTTP/1.1 POST-only, не полноценный публичный DoH server.
+
+Ошибки сертификата/имени, timeout/reset, HTTP non-200/redirect/content-type/
+encoding/oversize, DNS malformed/mismatched response дают SERVFAIL. Нет fallback
+на plaintext DNS, другой URL/resolver или системный bootstrap. При неверном TLS
+сертификате/имени origin не получает DNS HTTP body. Фактический stop/restart
+HTTPS origin даёт отказ/восстановление без смены upstream.
+
+In-flight и TCP connections ограничены (adapter default16, harness8, max64),
+очереди DoH нет; pending TCP ≤8196 B; absolute TCP lifetime default5/3 с.
+DoH timeout default1.5/1 с. RST TCP-клиента отменяет DoH, FIN сохраняет возможность
+ответить после half-close. UDP отмены не имеет. `close()` ждёт close events,
+обнуляет owned sockets/requests/jobs/timers; startup UDP bind failure откатывает TCP.
+Первый запуск тестов выявил гонку `.closed` до события close и задержку обнаружения
+RST при paused socket; исправлено ожиданием close и bounded чтением во время DoH.
+
+Опциональный lab-only `observeWire` наблюдает копии входящих TCP bytes, включая
+application records, по stage/peer port. Уникального QNAME нет на client→exit и
+exit→resolver, но response подтверждает получение resolver. Spies дополнительно
+запрещают name resolution и неожиданные TCP/UDP endpoints при success/reset/redirect.
+Это **не независимый kernel pcap**, не reverse-direction capture и не доказательство
+отсутствия DNS-утечек произвольных приложений/OS/LAN/IPv6. TLS resolver/public SNI,
+IP и статистика трафика остаются наблюдаемыми.
+
+VPS acceptance: **478 Node-тестов (21 файл) + 14 Chrome/Firefox-сценариев** — PASS,
+без skips; отдельно четыре real-browser soak/SIGTERM регрессии PASS. CLI self-check:
+8 queries, 5 success (включая NXDOMAIN), 3 ожидаемых SERVFAIL, нулевые owned
+sockets/requests/jobs/timers после cleanup. Никаких внешних DNS/QNAME запросов.
+
+Следующий пакет: независимый namespace pcap с позитивным plaintext leak control
+и bounded DNS soak. Затем выбрать production upstream/bootstrap и отдельно
+интегрировать клиент/OS/LAN/IPv6. Cover DNS не включаем; динамическое BoringSSL
+клонирование не возвращаем. Parser/adapter пока лабораторные, не production DNS.
