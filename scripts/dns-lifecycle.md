@@ -19,8 +19,14 @@ npm run dns:lifecycle -- --scenario=restore-failure
 npm run dns:lifecycle-lab -- --family=4
 npm run dns:lifecycle-lab -- --family=6
 
+# Дополнительно настоящий SIGKILL отдельного контроллера и recovery из журнала
+npm run dns:lifecycle-lab -- --family=4 --crash
+npm run dns:lifecycle-lab -- --family=6 --crash
+
 npm run test:dns-lifecycle
 npm run test:dns-lifecycle-real
+npm run test:dns-lifecycle-journal
+npm run test:dns-lifecycle-crash-real
 ```
 
 Dry-run выводит JSON переходов и предлагаемых действий; default scenario `outage`,
@@ -29,16 +35,17 @@ Dry-run выводит JSON переходов и предлагаемых де�
 на хосте. Файл модели — `lib/dns-lifecycle.mjs`.
 
 Стенду нужны Linux, Node22+, glibc `getent` с `-A`, unshare с user namespaces,
-mount, iproute2, iptables/ip6tables и OpenSSL. Запускать без sudo; если namespace
+mount, iproute2, iptables/ip6tables и OpenSSL; для `--crash` также util-linux `flock`.
+Запускать без sudo; если namespace
 или инструмент недоступен, команда завершается ошибкой, без fallback на хост.
-Один запуск ограничен45с (+ ограниченное завершение дочернего процесса).
+Один запуск ограничен45с, с `--crash` —120с (+ ограниченное завершение дочернего процесса).
 Результат — JSON в stdout; временные сертификаты и fixtures удаляются.
 
 ## Согласуемый контракт
 
 | Событие | Предлагаемое поведение |
 | --- | --- |
-| Явное включение | Сохранить baseline, установить независимый DNS guard, запустить adapter, выполнить защищённый DNS probe |
+| Явное включение | Установить независимый DNS guard, сохранить baseline, запустить adapter, выполнить защищённый DNS probe |
 | Probe успешен | Проверить владение настройками, выбрать только managed DNS; подтвердить применение отдельно |
 | Exit/adapter недоступен | Ошибка DNS; не возвращать baseline и не снимать guard автоматически |
 | Restart/recovery | Сохранить первоначальный snapshot, проверить владение, guard и готовность заново |
@@ -55,9 +62,10 @@ mount, iproute2, iptables/ip6tables и OpenSSL. Запускать без sudo; 
 Модель — предложение протокола, не транзакционный исполнитель: её действия
 должен подтверждать backend, ошибки — переводить в безопасное состояние.
 `blocked` описывает требуемое поведение, а не доказательство успешной установки
-firewall. На реальном клиенте ещё необходимы durable journal, блокировка
-конкурентных запусков, проверка владельца/идентичности объекта, атомарные операции
-и recovery после SIGKILL/reboot. Сравнение текста в fixture не заменяет эти проверки.
+firewall. Для namespace backend ниже добавлен отдельный экспериментальный
+journalled executor с process-crash recovery. Это не переносится автоматически
+на resolved/NetworkManager или настоящий resolv.conf. Сравнение текста в базовой
+fixture не заменяет проверки идентичности объекта в crash-стенде.
 
 ## Что реально проверяет стенд
 
@@ -103,9 +111,10 @@ TUN, маршруты, uplink, mesh, live exit не затрагиваются. 
 
 ## Чего этот этап не доказывает
 
-Нет live backend, durable snapshot, process-crash/reboot recovery, DHCP/VPN manager
-races, LAN DNS, split DNS, resolved/NetworkManager integration. Недоступность
-mapping моделирует потерю DNS listener, но это **не SIGKILL тест adapter/supervisor**.
+Нет live backend, reboot/power-loss recovery, произвольных DHCP/VPN manager races,
+LAN DNS, split DNS, resolved/NetworkManager integration. В базовой матрице
+недоступность mapping моделирует потерю DNS listener. В `--crash` действительно
+убивается **контроллер**, но не adapter, не весь backend и не namespace init.
 Жизнь adapter принадлежит fixture; start/stop действия dry-run не управляют сервисом.
 Проверка утечек — sentinel counters с положительными контролями, не pcap-аудит.
 Блокирование53 не является общей защитой от DNS bypass: DoH приложений, DoT853,
@@ -113,6 +122,68 @@ mapping моделирует потерю DNS listener, но это **не SIGKI
 не заменяет полноценный VPN kill-switch.
 
 Далее: read-only диагностика настоящего клиента → выбор **одного** backend →
-журнал владения и crash/reboot tests → opt-in live integration после согласования.
+адаптация журнала к его владению настройками и VM reboot tests → opt-in live
+integration после согласования.
 Существующий autostart kill-switch нельзя молча использовать как DNS guard:
 его lifecycle и разрешения LAN не обеспечивают описанный выше DNS-контракт.
+
+## Журнал и реальные process-crash tests (`--crash`)
+
+`dns-lifecycle-transaction.mjs` работает в отдельном Node-процессе. Он общается
+с fixture backend по ограниченному RPC; backend и настоящий DNS adapter остаются
+в namespace init. Parent посылает **SIGKILL** только после подтверждения выбранной
+контрольной точки, дожидается смерти процесса и запускает новый контроллер,
+который читает журнал с диска, без старого JS state. Проверяется и DNS до recovery.
+
+`flock -n -E 75 -F` удерживает блокировку на стабильном lock inode в течение
+жизни контроллера: второй процесс получает75, после SIGKILL новый получает lock.
+Нет удаления lock по PID/mtime и «протухших» таймеров.
+[util-linux flock](https://man7.org/linux/man-pages/man1/flock.1.html).
+
+Формат журнала фиксирован, ≤8192 байт, файл0600/каталог0700, UID проверяется;
+symlink/hardlink, посторонние поля и неверная версия отклоняются. В журнале нет
+команд, произвольных путей, секретов или текстов DNS-настроек. Snapshot и managed
+config — отдельные приватные файлы. Запись: новый exclusive temp → fsync файла →
+rename → fsync каталога; reader никогда не восстанавливается из оставшегося temp.
+Для сохранения directory entry одного fsync файла недостаточно.
+[Linux fsync](https://man7.org/linux/man-pages/man2/fsync.2.html).
+
+Журнал содержит transaction ID, namespace scope, фазу и `device:inode + SHA-256`
+original/managed/restored объектов. Source snapshots проверяются перед mount;
+восстановленный текст обязан иметь тот же hash, что исходный. Перед изменением
+проверяется текущий объект, а не только его содержимое. Чужой inode с теми же
+байтами — conflict. Это не полная атомарная compare-and-swap операция ядра против
+произвольного внешнего DNS manager; проверенные изменения контролируются стендом.
+
+Порядок уточнён: **сначала guard, затем snapshot/journal**. Если процесс погиб до
+первого commit, recovery блокируется: отсутствующий журнал не разрешает открытый
+fallback или выдумывание baseline. Это сознательно может оставить DNS недоступным
+до ручного разбора. Ошибка установки самого guard не доказывает fail-closed;
+его установка/постоянство на реальной ОС требует отдельного backend.
+
+На каждый IPv4/IPv6 combo вариант выполнены13 убийств контроллера:
+
+- Шесть при enable: после prepared, apply intent, mount; при fsync temp/rename
+  active-журнала и после active commit. Recovery возвращает active, сохраняя ID.
+- Шесть при disable: restore intent, mount baseline, rename restored-журнала,
+  restore commit, снятие guard, released commit. Recovery завершает уже записанное
+  **явное** намерение отключения, а не автоматически отключает VPN после сбоя.
+- Одно после guard до первого journal commit: recovery отказывает, guard остаётся.
+
+Дополнительно проверены отказ второго контроллера, missing/corrupt journal,
+same-content foreign inode, чужой IPv6 DNS, stale namespace scope, повреждённый
+snapshot и отказ readiness из-за остановленного exit. Настройки при отказе не
+перезаписываются, guard UDP/TCP53 обеих семей остаётся. Счётчики baseline не растут
+до авторизованного отключения. После восстановления проверяется glibc lookup.
+
+Released journal сохраняется как terminal record; ротация/архивирование и новый
+enable поверх завершённой транзакции пока не реализованы. Каждый testcase получает
+свой приватный каталог; reset между ними — действие **оператора стенда**, не
+автоматический recovery. После выхода стенда fixtures целиком удаляются.
+
+Флаги отчёта: `crash.journalRecoveryTested=true`, `rebootTested=false`,
+`adapterSigkillTested=false`. Верхний `persistentRecoveryImplemented=false`
+по-прежнему означает отсутствие полноценного установленного OS lifecycle.
+SIGKILL при сохранённом ядре/page cache не моделирует power loss, boot ordering
+firewall/resolver или восстановление namespace после reboot. Это ещё предстоит
+проверять в VM, не перезагружая живой VPS.

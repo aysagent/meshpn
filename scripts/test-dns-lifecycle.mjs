@@ -6,7 +6,7 @@ import { runCommand, cleanEnvironment } from './lib/transparent-acceptance.mjs';
 test('DNS opt-in is explicit and strictly boolean', () => {
   for (const optIn of [undefined, false, 1, 'true']) assert.throws(() => step('idle', 'enable', { optIn }));
   assert.deepEqual(step('idle', 'enable', { optIn: true }).actions,
-    ['snapshot', 'install-guard', 'start-adapter', 'probe-protected-dns']);
+    ['install-guard', 'snapshot', 'start-adapter', 'probe-protected-dns']);
 });
 test('DNS readiness is distinct from listening and selection acknowledgement', () => {
   assert.throws(() => step('preparing', 'selected'));

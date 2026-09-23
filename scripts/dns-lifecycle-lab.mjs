@@ -12,8 +12,10 @@ import { runDnsLifecycleLab } from './lib/dns-lifecycle-lab.mjs';
 const entry = fileURLToPath(import.meta.url), root = dirname(dirname(entry));
 const args = process.argv.slice(2), isolated = args[0] === '--isolated';
 if (isolated) args.shift();
+const crash = args.includes('--crash');
+if (crash) args.splice(args.indexOf('--crash'), 1);
 if (args.length === 1 && args[0] === '--help' && !isolated) {
-  console.log('Usage: node scripts/dns-lifecycle-lab.mjs [--family=4|6]\nNamespace-only glibc DNS lifecycle fixture. Requires Linux, unshare, ip, mount, iptables/ip6tables, getent, OpenSSL. No host DNS/firewall/TUN changes.');
+  console.log('Usage: node scripts/dns-lifecycle-lab.mjs [--family=4|6] [--crash]\nNamespace-only glibc DNS lifecycle fixture. Requires Linux, unshare, ip, mount, iptables/ip6tables, getent, OpenSSL; --crash also flock. No host DNS/firewall/TUN changes.');
 } else {
   let directory;
   const controller = new AbortController(), abort = () => controller.abort();
@@ -24,7 +26,7 @@ if (args.length === 1 && args[0] === '--help' && !isolated) {
     process.umask(0o077);
     if (isolated) {
       console.log = console.warn = console.error = () => {};
-      const result = await runDnsLifecycleLab(process.env.MESHPN_DNS_LIFECYCLE_DIR, family);
+      const result = await runDnsLifecycleLab(process.env.MESHPN_DNS_LIFECYCLE_DIR, family, { crash });
       process.stdout.write(`DNS_LIFECYCLE_RESULT ${JSON.stringify(result)}\n`);
     } else {
       const files = ['/etc/resolv.conf', '/etc/nsswitch.conf'];
@@ -33,7 +35,8 @@ if (args.length === 1 && args[0] === '--help' && !isolated) {
       directory = await mkdtemp(join(tmpdir(), 'meshpn-dns-lifecycle-'));
       const result = await runCommand('unshare', [...namespaceArgs, '--propagation', 'private',
         'sh', '-eu', '-c', 'ulimit -c 0; exec "$@"', 'dns-lifecycle',
-        process.execPath, '--max-old-space-size=128', entry, '--isolated', `--family=${family}`], { cwd: root, timeoutMs: 45000,
+        process.execPath, '--max-old-space-size=128', entry, '--isolated', `--family=${family}`, ...(crash ? ['--crash'] : [])],
+      { cwd: root, timeoutMs: crash ? 120000 : 45000,
         signal: controller.signal, env: { ...cleanEnvironment(process.env), MESHPN_DNS_LIFECYCLE_DIR: directory,
           MESHPN_PARENT_NETNS: await readlink('/proc/self/ns/net'), MESHPN_PARENT_PIDNS: await readlink('/proc/self/ns/pid'),
           MESHPN_PARENT_MNTNS: await readlink('/proc/self/ns/mnt') } });

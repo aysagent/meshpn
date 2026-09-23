@@ -5,7 +5,7 @@ export function dnsLifecycle(state, event, { optIn = false, owned = false } = {}
   const next = (state, ...actions) => ({ state, actions });
   if (event === 'enable' && state === 'idle') {
     if (optIn !== true) throw new Error('explicit DNS opt-in required');
-    return next('preparing', 'snapshot', 'install-guard', 'start-adapter', 'probe-protected-dns');
+    return next('preparing', 'install-guard', 'snapshot', 'start-adapter', 'probe-protected-dns');
   }
   if (event === 'failure' && state !== 'idle') return next('blocked', 'retain-guard-and-snapshot');
   if (event === 'external-change' && state !== 'idle') return next('conflict', 'retain-guard-and-snapshot');

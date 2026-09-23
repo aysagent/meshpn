@@ -118,8 +118,12 @@ HTTPS/SVCB, TXT, SRV, PTR; бинарные labels, EDNS(0), extended RCODE, б�
 Реализован первый этап [DNS lifecycle](../scripts/dns-lifecycle.md): offline dry-run
 и namespace-only glibc DNS стенд. Проверяются readiness, exit outage/recovery,
 guard для UDP/TCP53 IPv4/IPv6, conflict без перезаписи и явное восстановление.
-Это не host backend и не crash/reboot recovery. Следующий шаг — read-only
-диагностика владельца DNS на настоящем клиенте, выбор backend, durable journal
-и отдельные crash/reboot tests до opt-in live integration; LAN/split DNS отдельно.
+Добавлены namespace-only journal и13 реальных SIGKILL контроллера на каждую
+семью IP: recovery прерванных apply/restore, flock, конфликты inode/hash,
+missing/corrupt/stale journal. Backend/adapter остаются в namespace init;
+это не host backend, не SIGKILL adapter и не reboot/power-loss test. Следующий
+шаг — read-only диагностика DNS клиента, выбор backend и адаптация журнала к
+его объектам владения; затем полный adapter lifecycle и VM reboot tests до
+opt-in live integration. LAN/split DNS отдельно.
 Кэша и активного production DNS/bootstrap пока нет.
 Случайные cover DNS запросы не входят в этот план реализации.

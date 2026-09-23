@@ -1480,3 +1480,57 @@ lifecycle не подходит как готовый DNS guard. Текущий 
 Далее: диагностика клиента → один выбранный backend → durable ownership journal
 и SIGKILL/reboot/interrupted transaction tests в изоляции → согласованный opt-in
 live pilot. Production-статус combo-tls пока не повышаем.
+
+## 41. Namespace journal и настоящие SIGKILL DNS-контроллера
+
+В `dns:lifecycle-lab` добавлен `--crash`; отдельная команда проверки:
+`npm run test:dns-lifecycle-crash-real`. Все изменения остаются в лаборатории,
+host backend ещё не выбран. Основное описание — [DNS lifecycle](../scripts/dns-lifecycle.md).
+
+`dns-lifecycle-journal.mjs`: фиксированный bounded JSON≤8192, UID/mode0600,
+каталог0700, без symlink/hardlink и неизвестных полей. Private snapshot/managed
+files fsync до journal commit. Journal writer: exclusive temp → file fsync →
+rename → directory fsync. Незавершённый temp не используется при recovery.
+Сохраняются ID транзакции, namespace scope, фаза, dev:ino и SHA-256 объектов;
+restore hash обязан совпасть с original hash. Журнал не содержит DNS-текста,
+путей для исполнения, ключей или команд.
+
+`dns-lifecycle-transaction.mjs`: experimental executor поверх fixture backend.
+Уточнён порядок enable и dry-run: guard до snapshot/journal. Если commit ещё нет,
+missing journal оставляет защиту и требует ручного разбора, не угадывает baseline.
+Recovery active/applying делает защищённый probe и сохраняет первоначальный ID.
+Restoring/restored/released заканчивает ранее явно запрошенное отключение;
+guard снимается после проверки восстановленного объекта, а не просто по факту
+перезапуска. Released record сохраняется, автоматической ротации/new enable поверх
+завершённого журнала нет. Это не durable OS backend общего назначения.
+
+Отдельный controller-процесс держит flock на стабильном private lock inode,
+через bounded RPC обращается к namespace init. Родитель посылает SIGKILL в
+подтверждённых контрольных точках, ждёт реального завершения, затем запускает
+новый процесс, читающий журнал с диска. Backend, adapter и namespace живут дальше.
+Mount guard вынесен в общий `dns-lifecycle-namespace.mjs` и проверяется до мутаций.
+
+Для IPv4 и IPv6 combo fixture прошли по13 SIGKILL:6 enable (prepared/apply intent/
+applied/active temp fsync/rename/commit),6 disable (restore intent/mount/rename/
+commit/guard removed/released),1 до первого commit. Проверяются getent до/после
+recovery, сохранение ID, отказ второго контроллера с exit75 и освобождение flock
+после смерти первого. Семь отказов recovery: missing/corrupt journal, foreign
+inode с тем же текстом, чужой IPv6 DNS, stale namespace, повреждённый snapshot,
+exit down. Настройки не перезаписываются, guard остаётся; baseline counters не
+растут до разрешённого отключения. В конце sockets/jobs/timers0, children/zombies0.
+
+Добавлены30 journal/transaction unit-тестов; acceptance manifest теперь29 файлов.
+Повторная focused матрица: **54 теста PASS** (20 lifecycle +30 journal +4 real).
+Финальный полный acceptance: **820 Node +14 Chrome/Firefox сценариев PASS**,
+без skips; `/var/tmp/meshpn-acceptance-k2KMmC/report.json`.
+
+Границы: это process crash в том же ядре, **не** reboot/power loss, не SIGKILL
+adapter/backend/PID1, не arbitrary DNS manager race. Dev:ino+hash и проверки перед
+mount не являются kernel CAS против внешнего менеджера. Каждый testcase имеет
+свой каталог; между ними оператор стенда сбрасывает fixture, это не production
+auto-recovery. Нет полного autostart lifecycle, LAN/split DNS или защиты от
+произвольных DoH/DoT. Системный DNS/firewall/TUN, живой VPN и mesh не менялись.
+
+Далее: read-only диагностика реального клиента и выбор backend; адаптация журнала
+к его объектам/владению, полный lifecycle adapter, затем boot ordering и reboot/
+power-loss tests в VM. Живой VPS ради этих тестов не перезагружаем.

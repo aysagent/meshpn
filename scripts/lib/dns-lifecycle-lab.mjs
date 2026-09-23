@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import dgram from 'node:dgram';
 import net from 'node:net';
 import { once } from 'node:events';
-import { readFile, readlink, realpath, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, realpath, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { assertBrowserNamespace, namespaceResources } from './browser-soak.mjs';
+import { namespaceResources } from './browser-soak.mjs';
 import { exec } from './browser-lab-driver.mjs';
 import { runCommand, cleanEnvironment } from './transparent-acceptance.mjs';
 import { startAdapterSoakLab } from './dns-adapter-soak-lab.mjs';
@@ -13,16 +13,9 @@ import { drainAdapter, assertAdapterIdle } from './dns-adapter-soak.mjs';
 import { makeDnsQuery, fixtureDnsAnswer, validateDnsResponse } from './lab-dns-wire.mjs';
 import { queryLabDns } from './transparent-dns-lab.mjs';
 import { dnsLifecycle } from './dns-lifecycle.mjs';
-
-export async function assertDnsMountNamespace() {
-  assertBrowserNamespace();
-  assert.ok(process.env.MESHPN_PARENT_MNTNS, 'private mount namespace provenance required');
-  assert.notEqual(await readlink('/proc/self/ns/mnt'), process.env.MESHPN_PARENT_MNTNS);
-  // Fail before ANY mount if propagation is shared. The launcher requests private.
-  const mounts = await readFile('/proc/self/mountinfo', 'utf8');
-  assert.ok(!mounts.split('\n').some((line) => /\b(?:shared|master|propagate_from):/.test(line.split(' - ')[0])),
-    'all mount propagation must already be private');
-}
+import { runDnsCrashLab } from './dns-lifecycle-crash-lab.mjs';
+import { assertDnsMountNamespace } from './dns-lifecycle-namespace.mjs';
+export { assertDnsMountNamespace } from './dns-lifecycle-namespace.mjs';
 
 async function sentinel(address) {
   const udp = dgram.createSocket(address.includes(':') ? 'udp6' : 'udp4');
@@ -59,7 +52,7 @@ async function sentinel(address) {
   } catch (error) { await close(); throw error; }
 }
 
-export async function runDnsLifecycleLab(directory, family) {
+export async function runDnsLifecycleLab(directory, family, { crash = false } = {}) {
   await assertDnsMountNamespace();
   assert.ok([4, 6].includes(family));
   assert.deepEqual(JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout).map((l) => l.ifname), ['lo']);
@@ -179,6 +172,15 @@ export async function runDnsLifecycleLab(directory, family) {
     const failedBefore = hits(); await lookup('startup-failure-blocked', null); assert.equal(hits(), failedBefore);
     await event('disable'); await event('restored'); await event('released');
     await lookup('startup-failure-explicit-disable', '203.0.113.8');
+    let crashReport;
+    if (crash) {
+      await lab.restartExit();
+      crashReport = await runDnsCrashLab({ directory, baseline, managed, bindText, setGuard, lookup, hits, lab,
+        async probe() {
+          const query = makeDnsQuery('crash-readiness.test');
+          assert.equal(validateDnsResponse(await queryLabDns(lab.adapter.port, query), query).flags & 15, 0);
+        } });
+    }
     await drainAdapter(lab);
     await redirect(false); await lab.close(); assertAdapterIdle(lab.stats());
     await Promise.all(observers.map((server) => server.close())); observers.length = 0;
@@ -191,6 +193,7 @@ export async function runDnsLifecycleLab(directory, family) {
     assert.equal(state, 'idle'); assert.equal(guard, false); assert.equal(snapshot, undefined);
     return { schema: 1, status: 'passed', kind: 'dns-lifecycle-lab', family, modeTag: 'combo-tls',
       backend: 'namespace-resolv.conf-fixture', hostDnsChanged: false, persistentRecoveryImplemented: false,
+      ...(crashReport ? { crash: crashReport } : {}),
       checks, steps, baselineQueriesDuringProtection: 0, dnsCalls: lab.stats().dnsCalls,
       final: { state, resources } };
   } finally { await lab?.close(); await Promise.all(observers.map((server) => server.close())); }

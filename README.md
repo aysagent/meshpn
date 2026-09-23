@@ -162,8 +162,8 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 
 Следующий порядок работ:
 
-1. Выполнить read-only диагностику владельца DNS на реальном клиенте и выбрать backend (resolved/NetworkManager/unmanaged). Уже есть [offline lifecycle и изолированный системный DNS стенд](scripts/dns-lifecycle.md): `npm run dns:lifecycle`, `npm run test:dns-lifecycle-real`. Они проверяют readiness, отказ exit, сохранение защиты, конфликт настроек и явное восстановление; не включают host DNS integration. Затем — durable journal, crash/reboot recovery и согласованный opt-in backend; LAN/IPv6/kill-switch остаются отдельной частью интеграции.
-2. Расширить выбранный backend на изолированном стенде: журнал владения, конкурентные изменения, SIGKILL/reboot и незавершённые apply/restore. Текущий lifecycle-стенд проверяет отказ соединения/listener, но не заменяет эти crash-тесты; DNS, маршруты и firewall работающей системы пока не менять.
+1. Выполнить read-only диагностику владельца DNS на реальном клиенте и выбрать backend (resolved/NetworkManager/unmanaged). Уже есть [offline lifecycle и изолированный системный DNS стенд](scripts/dns-lifecycle.md): `npm run dns:lifecycle`, `npm run test:dns-lifecycle-real`. Они проверяют readiness, отказ exit, сохранение защиты, конфликт настроек и явное восстановление; не включают host DNS integration. Далее — подключение журнала к выбранному backend и согласованный opt-in; LAN/IPv6/kill-switch остаются отдельной частью интеграции.
+2. [Лабораторный журнал и SIGKILL recovery](scripts/dns-lifecycle.md) уже есть: `npm run test:dns-lifecycle-crash-real` —13 аварий отдельного контроллера на IPv4 и IPv6, прерванные apply/restore, lock и конфликты. Далее — адаптация к выбранному OS backend, полный lifecycle adapter и VM reboot/power-loss tests. Стенд не перезагружает живой VPS и не меняет его DNS/firewall/TUN.
 3. Проверить согласованную интеграцию на пилотном развёртывании; только после этого пересматривать production-статус всего `combo-tls`.
 
 ---

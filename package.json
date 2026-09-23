@@ -62,6 +62,8 @@
     "dns:lifecycle-lab": "node scripts/dns-lifecycle-lab.mjs",
     "test:dns-lifecycle": "node --test scripts/test-dns-lifecycle.mjs",
     "test:dns-lifecycle-real": "node --test scripts/test-dns-lifecycle-real.mjs",
+    "test:dns-lifecycle-journal": "node --test scripts/test-dns-lifecycle-journal.mjs",
+    "test:dns-lifecycle-crash-real": "node --test scripts/test-dns-lifecycle-crash-real.mjs",
     "test:dns-exit-adapter": "node --test scripts/test-dns-exit-adapter.mjs",
     "test:dns-exit-adapter-real": "node --test scripts/test-dns-exit-adapter-real.mjs",
     "dns:adapter-soak": "node scripts/dns-adapter-soak.mjs",
