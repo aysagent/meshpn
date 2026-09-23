@@ -13,15 +13,18 @@ import { compileDnsUpstream, dnsUpstreamTlsOptions, dnsUpstreamExitPolicy } from
 import { attachTransparentTlsClientSession, wireTransparentTlsEncSniSession } from './transparent-tls-runtime.mjs';
 import { EncSniReplayGuard } from './transparent-tls-replay.mjs';
 import { makeDnsQuery, fixtureDnsAnswer, validateDnsResponse } from './lab-dns-wire.mjs';
+import { startDnsExitAdapter } from './dns-exit-adapter.mjs';
+import { queryLabDns } from './transparent-dns-lab.mjs';
 
-export async function runPinnedDnsRouteLab(directory, modeTag, family) {
+export async function runPinnedDnsRouteLab(directory, modeTag, family, { adapter = false } = {}) {
   assertBrowserNamespace();
   assert.ok(['transparent-tls', 'combo-tls'].includes(modeTag)); assert.ok([4, 6].includes(family));
   const links = JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout);
   assert.deepEqual(links.map((x) => x.ifname), ['lo']);
   // These addresses exist only inside this net namespace. No default route/NIC.
   const addresses = family === 4 ? ['93.184.216.34', '93.184.216.35'] : ['2606:4700::1112', '2606:4700::1111'];
-  for (const ip of addresses) await exec('ip', [family === 6 ? '-6' : '-4', 'addr', 'add', `${ip}/${family === 6 ? 128 : 32}`, 'dev', 'lo', ...(family === 6 ? ['nodad'] : [])]);
+  const exitAddress = adapter ? (family === 4 ? '93.184.216.36' : '2606:4700::1113') : '127.0.0.1';
+  for (const ip of [...addresses, ...(adapter ? [exitAddress] : [])]) await exec('ip', [family === 6 ? '-6' : '-4', 'addr', 'add', `${ip}/${family === 6 ? 128 : 32}`, 'dev', 'lo', ...(family === 6 ? ['nodad'] : [])]);
   const keyPath = join(directory, 'key.pem'), certPath = join(directory, 'cert.pem');
   await exec('openssl', ['req', '-new', '-newkey', 'rsa:2048', '-nodes', '-x509', '-days', '1',
     '-subj', '/CN=resolver.test', '-addext', 'subjectAltName=DNS:resolver.test', '-keyout', keyPath, '-out', certPath]);
@@ -60,15 +63,26 @@ export async function runPinnedDnsRouteLab(directory, modeTag, family) {
           return track(net.connect({ host: address, port, family: ipFamily, autoSelectFamily: false }));
         } }));
     });
-    const exitPort = await listen(exit, 0, '127.0.0.1');
+    const exitPort = await listen(exit, 0, exitAddress);
     const client = net.createServer((socket) => {
       attachTransparentTlsClientSession(track(socket), { vpnSecretBuf: secret, publicName,
         upstreamHost: '127.0.0.1', upstreamPort: exitPort, explicitDestination: { address: addresses[1], port },
       }).then((session) => sessions.push(session), () => {});
     });
-    const clientPort = await listen(client, 0, '127.0.0.1');
-    async function query(identity = profile) {
-      const packet = makeDnsQuery('private-pinned.dns-lab.test', 1, 1234);
+    const clientPort = adapter ? null : await listen(client, 0, '127.0.0.1');
+    async function query(identity = profile, tcp = false, type = 1) {
+      const packet = makeDnsQuery('private-pinned.dns-lab.test', type, 1234);
+      if (adapter) {
+        const instance = await startDnsExitAdapter({ profile: identity, exitAddress, exitPort, publicName, secret, timeoutMs: 2000 });
+        try {
+          const reply = validateDnsResponse(await queryLabDns(instance.port, packet, { tcp, fragment: tcp }), packet);
+          assert.notEqual(reply.flags & 15, 2, 'adapter SERVFAIL'); return reply;
+        } finally {
+          await instance.close();
+          for (const field of ['sockets', 'jobs']) assert.equal(instance.stats().transport[field], 0);
+          for (const field of ['inflight', 'tcpSockets', 'tlsSockets', 'requests', 'jobs', 'timers']) assert.equal(instance.stats().stub[field], 0);
+        }
+      }
       return new Promise((resolve, reject) => {
         const request = https.request({ host: '127.0.0.1', port: clientPort, ...dnsUpstreamTlsOptions(identity),
           path: identity.path, method: 'POST', agent: false, lookup: forbiddenLookup,
@@ -100,7 +114,8 @@ export async function runPinnedDnsRouteLab(directory, modeTag, family) {
     assert.ok(errors.includes('TLS_RELAY_CONNECT_EXHAUSTED')); assert.equal(dnsCalls, 0);
     mode = 'normal'; await listen(origin, port, addresses[1]);
     assert.equal((await query()).counts[0], 1); assert.equal(bodies, 3); assert.equal(dnsCalls, 0);
-    result = { status: 'passed', modeTag, family, requests: 5, resolverBodies: bodies,
+    if (adapter) for (const [tcp, type] of [[true, 1], [false, 28], [true, 28]]) assert.equal((await query(profile, tcp, type)).counts[0], 1);
+    result = { status: 'passed', modeTag, family, adapter, requests: adapter ? 8 : 5, resolverBodies: bodies,
       tcpAttempts: attempts.length, dnsCalls, exhausted: true, noRetryAfterBody: true, recovered: true };
   } finally {
     for (const s of sockets) s.destroy();

@@ -148,10 +148,11 @@ Lab/forged/cloned profiles не допускаются. Низкоуровнев
 
 При запуске **без флага** exit по-прежнему использует OS resolver, в том числе
 для DNS endpoint. Checker отдельно не активирует route. Клиентский production
-stub ещё не подключён: флаг exit не заставляет OS/приложения отправлять DNS в relay.
+stub не интегрирован с OS: флаг exit не заставляет OS/приложения отправлять DNS в relay.
 Нельзя просто передать первый IP в прямой HTTPS connect клиента: это обойдёт relay.
-Следующий пакет — explicit клиентский DNS adapter через числовой exit endpoint,
-с согласованными hostname/port/path/CA, без системного DNS переключения и TUN.
+Теперь есть отдельный opt-in [клиентский DNS adapter](dns-exit-adapter.md) через
+числовой exit endpoint, с согласованными hostname/port/path/CA, без системного
+DNS переключения и TUN. Его следующий этап — независимый pcap и bounded soak.
 
 Адрес/доверие самого exit тоже требуют отдельной bootstrap-конфигурации.
 OS/LAN/IPv6 DNS integration, общий exit DNS, resolver selection, caching/pooling,

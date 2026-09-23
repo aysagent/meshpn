@@ -1210,3 +1210,63 @@ hostname/port/path/CA из профиля, без прямого resolver connec
 Сначала отдельный no-TUN стенд, затем согласованное включение и OS/LAN/IPv6.
 Bootstrap самого exit, cache/pooling и автоматическая ротация остаются отдельно.
 Cover DNS и динамическое BoringSSL cloning не возвращаются.
+
+## 36. Явный клиентский DNS adapter через числовой exit
+
+Добавлен отдельный `npm run dns:exit-adapter -- ...`, инструкция
+[`scripts/dns-exit-adapter.md`](../scripts/dns-exit-adapter.md). Только явный
+loopback UDP/TCP listener на порту1024..65535; без TUN, system DNS, routes,
+firewall или live VPN. Настоящий resolver не выбирался и не опрашивался.
+Шесть обязательных CLI-аргументов: upstream config, exit-ip/exit-port,
+public-name, shared-hmac-key, listen-port. Unknown/duplicate/malformed flags,
+невалидный profile/IP/PSK отвергаются до listeners. JSON — прежний bounded
+reader; PSK — non-symlink regular file ровно32 байта, без group/other permissions.
+SIGINT/SIGTERM закрывают активные запросы и listeners; ошибки redacted.
+
+`dns-exit-transport.mjs`: HTTPS agent создаёт TLS через `duplexPair` в памяти,
+второй конец читает общий `attachTransparentTlsClientSession`. Нет отдельного
+TCP HTTPS proxy listener. Единственный dial — numeric public-unicast IPv4/IPv6
+exit с family и autoSelectFamily=false; OS hostname lookup запрещён. Исходный
+TLS проверяет hostname и CA **resolver**, а enc-SNI передаёт hostname/port exit.
+Bootstrap IP resolver не становится client TCP target. CA/Host/path берутся
+из настоящего compiled public profile; cloned/lab profiles отвергаются.
+Loopback test factory отдельная, CLI/JSON её не активируют. PSK/options копируются.
+
+`startDnsExitAdapter` переиспользует bounded stub/parser, а не объявляет их
+полноценным DNS stack. `lab-doh-stub.mjs` получил отдельный branded exitTransport
+путь, несовместимый с lab profile/raw upstream overrides; прежний lab API сохранён.
+IN A/AAAA,4096байт,16 in-flight/16 TCP,deadline1500мс,TCP lifetime5000мс по умолчанию.
+Чужие CA/имя/PSK, timeout/reset, bad HTTP и недоступность дают SERVFAIL без
+direct/system/plaintext fallback. HTTP redirects, cache/pooling/retries отсутствуют.
+Client deadline может прервать exit failover раньше перебора всех8 IP.
+Loopback доступен другим локальным процессам, нет per-user ACL/rate limiting.
+
+Exit должен получить согласованный `--tls-dns-upstream-config`: adapter не может
+удалённо доказать наличие pin и не включает его автоматически. Без pin exit
+может использовать свой обычный resolver. Внешнего TLS-сертификата VPN в этой
+ветке нет — это transparent relay, проверяется TLS-сертификат DoH origin.
+IPv6 endpoint поддержан, но IPv6 VPN/системный DNS/общий killswitch не реализованы
+этим пакетом. Состояние ready означает только bind, не доступность upstream.
+
+Проверки:44 новых preflight/runtime/CLI регрессии включены в acceptance.
+Проверены UDP/TCP A/AAAA, wrong CA/name/PSK, timeout/reset/redirect, exit down,
+immutable snapshot, отказ name lookup, ровно exit+origin TCP dials в loopback
+fixture, отсутствие QNAME в наблюдаемом TLS wire, rollback startup, отмена active
+request, private PSK reader, SIGINT/SIGTERM и cleanup. Первые локальные прогоны
+выявили ошибки новых test fixtures (не тот API loopback policy; dgram вызывает
+lookup и для numeric bind); fixtures исправлены, runtime policy не ослаблялась.
+
+Полный acceptance **643 Node-теста (25 файлов) +14 Chrome/Firefox PASS**, без
+skips; report `/var/tmp/meshpn-acceptance-KMjvRH/report.json`. Дополнительно
+**8/8 real namespace tests PASS**: прежние4 pinned route +4 нового adapter
+(IPv4/IPv6 × transparent/combo runtime). Новый public adapter делает по8 запросов,
+16 настоящих exit→origin TCP attempts,6 DoH bodies,0 DNS lookups на case:
+refused first IP, trusted TLS, wrong CA без body, reset без retry после TCP,
+all-down exhaustion, restart recovery, A/AAAA UDP/TCP. Public aliases живут
+только наlo внутри отдельного namespace, uplink отсутствует. Сокеты, таймеры
+и дочерние процессы освобождены; полный clean-vpn/TUN/mux не запускался.
+
+Далее: независимый pcap и bounded soak **нового in-memory client→exit пути**.
+Прежние pcap/soak использовали lab TLS через localhost TCP relay listener;
+их результаты не являются проверкой нового adapter. Затем отдельно согласовать
+OS/LAN/IPv6 integration. Динамические BoringSSL profiles и cover DNS не добавлялись.

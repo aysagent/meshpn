@@ -150,7 +150,7 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 
 На **exit** с `transparent-tls` / `combo-tls` можно явно добавить `--tls-dns-upstream-config=/path/to/upstream.json`: для точного hostname/port используется фиксированный список IP без OS lookup; неверный порт того же имени запрещён. Другие назначения сохраняют обычную destination policy и DNS. Конфигурация проверяется до TUN/NAT и применяется при старте, без hot reload.
 
-Это **только маршрутизация к resolver на exit**, не включение защищённого DNS для client/OS/LAN. Exit не завершает DoH TLS и не проверяет HTTP path внутри него. Клиентский DNS adapter пока лабораторный (IN A/AAAA); системный DNS не переключается. Случайные прямые запросы к «маскировочным» доменам не добавляем.
+Этот флаг — **только маршрутизация к resolver на exit**, не включение защищённого DNS для client/OS/LAN. Exit не завершает DoH TLS и не проверяет HTTP path внутри него. Есть отдельный opt-in [клиентский DNS adapter](scripts/dns-exit-adapter.md): `npm run dns:exit-adapter -- --help`. Он слушает loopback UDP/TCP, отправляет DoH через числовой exit, проверяет CA/имя resolver и не использует прямой/plaintext fallback. Пока ограничен IN A/AAAA и не интегрирован с системным DNS; это пилотный режим. TUN, маршруты и firewall не меняет. Случайные прямые запросы к «маскировочным» доменам не добавляем.
 
 ### Проверки и дальнейшая работа
 
@@ -158,12 +158,12 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 
 Есть [стенд на одном VPS без TUN](scripts/transparent-tls-lab.md): настоящие TLS client/exit, Chrome/Firefox, независимый pcap, HRR/resumption/early-data/ECH-сценарии, обрывы, slow-reader/backpressure, ограниченные soak и контроль ресурсов. Покрытие отдельных сценариев не означает поддержку всех вариантов ECH/0-RTT в эксплуатации.
 
-Полный runner — `npm run transparent-tls:acceptance`; необходимые браузеры, Go и pcap-инструменты перечислены в инструкции. Это не команда запуска VPN. Последний зафиксированный полный прогон после pinned DNS route: **599 Node-тестов + 14 браузерных сценариев, PASS**; отдельная проверка настоящего TCP через pinned IPv4/IPv6 route — также PASS. История, ограничения проверок и карта реализации: [контекст clean-vpn](docs/clean-vpn-context.md).
+Полный runner — `npm run transparent-tls:acceptance`; необходимые браузеры, Go и pcap-инструменты перечислены в инструкции. Это не команда запуска VPN. Последний зафиксированный полный прогон после клиентского DNS adapter: **643 Node-теста + 14 браузерных сценариев, PASS**; отдельные 8 real-проверок pinned route и нового adapter через IPv4/IPv6 — также PASS. История, ограничения проверок и карта реализации: [контекст clean-vpn](docs/clean-vpn-context.md).
 
 Следующий порядок работ:
 
-1. Явный **клиентский DNS adapter через числовой exit endpoint**, использующий настроенные hostname/port/path/CA и pinned route exit. Без прямого подключения клиента к resolver и без системного/plaintext fallback.
-2. Проверить его на изолированном стенде без TUN: успешные запросы, неверные CA/имя, недоступность exit/upstream, перебор IP, отсутствие утечек по pcap и освобождение ресурсов при длительных обрывах.
+1. Независимый **pcap нового клиентского DNS adapter** на изолированном стенде без TUN: контроль plaintext DNS и неожиданных прямых соединений при успехе и отказах. Wire observer и TLS/CA/failover-проверки уже есть, но не заменяют pcap.
+2. Ограниченный длительный soak этого пути: повторные запросы, обрывы exit/upstream, переполнение, отмена, освобождение sockets/timers/processes и контроль памяти.
 3. Затем отдельно согласовать и реализовать интеграцию DNS с client/OS/LAN и IPv6/kill-switch, проверить на пилотном развёртывании. Только после этого пересматривать production-статус всего `combo-tls`.
 
 ---
