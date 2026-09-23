@@ -4,7 +4,7 @@
  * длинный blob — несколько DNS-labels (≤63 B каждый). Wire format v2 (BREAKING vs base32hex v1).
  */
 
-import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEqual } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
 
 export const ENC_SNI_TS_WINDOW_MS = 5 * 60 * 1000;
 const ENC_SNI_VERSION = 0x02;
@@ -114,9 +114,9 @@ function parsePlaintext(pt) {
   if (pt[0] !== ENC_SNI_VERSION) {
     throw new Error(pt[0] === 0x01 ? 'enc-sni: v1 base32hex not supported' : 'enc-sni: bad version');
   }
-  const expiry = pt.readUInt32BE(1);
+  const issuedAtSeconds = pt.readUInt32BE(1);
   const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - expiry) > ENC_SNI_TS_WINDOW_MS / 1000) {
+  if (Math.abs(now - issuedAtSeconds) > ENC_SNI_TS_WINDOW_MS / 1000) {
     throw new Error('enc-sni: ts_window');
   }
   const port = pt.readUInt16BE(5);
@@ -124,7 +124,7 @@ function parsePlaintext(pt) {
   if (pt.length !== 8 + hl) throw new Error('enc-sni: plaintext len');
   const hostname = pt.subarray(8, 8 + hl).toString('utf8');
   assertRelayHostname(hostname);
-  return { hostname, port };
+  return { hostname, port, issuedAtSeconds };
 }
 
 /** @param {string} blob */
@@ -170,7 +170,10 @@ export function decodeRelaySniLabel(psk, labels) {
   const decipher = createDecipheriv('aes-256-gcm', key, nonce);
   decipher.setAuthTag(tag);
   const pt = Buffer.concat([decipher.update(ct), decipher.final()]);
-  return parsePlaintext(pt);
+  const parsed = parsePlaintext(pt);
+  // Hash authenticated binary token, not its DNS spelling: alternate label cuts
+  // and suffix case must not create another replay identity. Never log this ID.
+  return { ...parsed, replayId: createHash('sha256').update(wire).digest('hex') };
 }
 
 /**
@@ -231,8 +234,8 @@ export function decodeRelayFromHostname(sni, publicName, psk) {
   const labels = parseRelayEncLabels(sni, publicName);
   if (!labels) return { ok: false, reason: 'bad_suffix' };
   try {
-    const { hostname, port } = decodeRelaySniLabel(psk, labels);
-    return { ok: true, hostname, port, relaySni: sni, labels };
+    const decoded = decodeRelaySniLabel(psk, labels);
+    return { ok: true, ...decoded, relaySni: sni, labels };
   } catch (e) {
     return { ok: false, reason: /** @type {Error} */ (e).message || String(e) };
   }

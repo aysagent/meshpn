@@ -3,6 +3,7 @@
 import net from 'net';
 import { RelaySession, readRelayHello, relayError } from './transparent-tls-io.mjs';
 import { createHelloRetryGuard } from './transparent-tls-retry.mjs';
+import { EncSniReplayGuard, defaultEncSniReplayGuard } from './transparent-tls-replay.mjs';
 import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -256,7 +257,11 @@ export function classifyComboTlsExitPrefix(buf, publicName, psk) {
  */
 export function wireTransparentTlsEncSniSession(mux, opts) {
   let session;
-  try { session = new RelaySession(mux, opts); }
+  const replayGuard = opts.replayGuard === undefined ? defaultEncSniReplayGuard : opts.replayGuard;
+  try {
+    if (!(replayGuard instanceof EncSniReplayGuard)) throw relayError('TLS_RELAY_CONFIG', 'replay guard required');
+    session = new RelaySession(mux, opts);
+  }
   catch (error) {
     mux.destroy();
     opts.onSessionError?.(error);
@@ -278,6 +283,7 @@ export function wireTransparentTlsEncSniSession(mux, opts) {
     });
     const tail = buffer.subarray(parsed.bytesConsumed);
     const prelude = relayPrelude(restored.prefixBuf, guard ? guard.forward(tail) : tail, session);
+    replayGuard.consume(dec);
     const peer = `${mux.remoteAddress ?? '?'}:${mux.remotePort ?? '?'}`;
     logEncSniWire('exit', mode, {
       originSni: dec.hostname, encSni: parsed.sni[0], peer,

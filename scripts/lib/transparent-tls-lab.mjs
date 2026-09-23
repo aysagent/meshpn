@@ -16,6 +16,7 @@ import { ja4FromTcpBuf } from './tls-clienthello-ja4.mjs';
 import { labSessionStats } from './lab-session-stats.mjs';
 import { slowStreamOrigin } from './lab-slow-streams.mjs';
 import { h2FlowOrigin } from './lab-h2-flow.mjs';
+import { EncSniReplayGuard } from './transparent-tls-replay.mjs';
 
 export const LAB_CERT_PATH = fileURLToPath(new URL('../fixtures/boring-tls-local.cert.pem', import.meta.url));
 const LAB_KEY_PATH = fileURLToPath(new URL('../fixtures/boring-tls-local.key.pem', import.meta.url));
@@ -106,7 +107,9 @@ export async function startTransparentTlsLab({
   originName = 'localhost', publicName = 'relay.test',
   clientPsk, sessionTimeoutMs = 10_000, originTls = {}, clientLimits, exitLimits,
   externalOriginPort, holdResponses = false, slowStreams = false, h2Flow = false,
+  exitReplayGuard = new EncSniReplayGuard(),
 } = {}) {
+  if (!(exitReplayGuard instanceof EncSniReplayGuard)) throw new Error('exitReplayGuard must be an EncSniReplayGuard');
   for (const port of [clientPort, exitPort, originPort]) validatePort(port);
   if (typeof holdResponses !== 'boolean' || (holdResponses && externalOriginPort !== undefined)) {
     throw new Error('holdResponses requires a boolean and the internal lab origin');
@@ -283,6 +286,7 @@ export async function startTransparentTlsLab({
       captureHello(socket, 'exit', captures, diagnose);
       relay.track(wireTransparentTlsEncSniSession(socket, {
         vpnSecretBuf: psk, publicName, logOpts: {},
+        replayGuard: exitReplayGuard,
         limits: exitLimits, onSessionError: onRuntimeError('exit'),
         connectOrigin(hostname, port) {
           // The lab is never a general proxy, even with forged route metadata.
@@ -314,6 +318,7 @@ export async function startTransparentTlsLab({
       host: HOST, originName, publicName, cert, captures, diagnostics, runtimeErrors, track, close,
       clientPort: boundClientPort, exitPort: boundExitPort, originPort: boundOriginPort,
       stats: () => ({ originConnections, sockets: sockets.size,
+        replay: exitReplayGuard.stats(),
         tlsConnections: externalOriginPort ? null : tlsConnections,
         resumedTlsConnections: externalOriginPort ? null : resumedTlsConnections,
         requests: externalOriginPort ? null : requests, heldResponses: heldResponses.size,

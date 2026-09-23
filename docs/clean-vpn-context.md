@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–28; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–29; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -196,7 +196,7 @@ HTTPS приложения → локальный intercept :8443 → замен
 
 Ограничения по чтению кода, требующие отдельных интеграционных проверок:
 
-- Нет replay-cache enc-label и привязки metadata к ClientHello random/session. Валидный захваченный label может повторно использоваться в допустимом временном окне.
+- На момент исходного аудита не было replay-cache enc-label. Process-local cache добавлен в разделе 29; привязка metadata к ClientHello transcript, durable/distributed защита и предотвращение гонки первого предъявления не добавлены.
 - Не обнаружен запрет relay-направлений на private/loopback IP; PSK — важная граница доверия. Обычные квоты после initial peek и полноценная защита от resource exhaustion не завершены.
 - На момент исходного аудита очередь `pendingToOrigin` не ограничена, upstream backpressure несимметричен, client ClientHello не имеет явного timeout. Исправлено последующим пакетом в разделе 14.
 - На момент исходного аудита переписывается только первый ClientHello, CH2 после HRR раскрывает исходный SNI. Исправление начального TLS 1.3 HRR handshake и его ограничения описаны в разделе 16.
@@ -802,3 +802,64 @@ Firefox cleanup получил полный снимок после одного
 route token и ограниченная replay-защита exit с учётом HRR/ClientHello2.
 Политика разрешённых назначений exit, production-квоты и общий ECH routing
 по-прежнему отдельные задачи; успешный soak их не заменяет.
+
+## 29. Process-local replay-защита enc-SNI admission
+
+Изменён общий production `wireTransparentTlsEncSniSession()`: по умолчанию один
+`EncSniReplayGuard` на процесс для всех transparent/combo callers. Запись после
+AES-GCM authentication, timestamp/rebuild/prelude checks, но **до** origin
+DNS/TCP connect. Она синхронна и не снимается при disconnect/connect failure/
+неуспешном TLS handshake. Гонка двух соединений с одним token допускает одно.
+`clean-vpn.js`, TUN/mux dispatch и mesh не редактировались; их transparent-ветки
+вызывают уже защищённый общий runtime. Wire format v2 и клиентский encoder не менялись.
+
+Ключ cache — SHA-256 аутентифицированных бинарных nonce/ciphertext/tag, не текст
+SNI: иное разбиение DNS-labels, пустые labels и uppercase public suffix не обходят
+защиту. Меняющийся ClientHello random не разрешает второй admission старого token.
+Decoder дополнительно возвращает `replayId`/`issuedAtSeconds`; в обычные логи они
+не попадают. Cache не хранит hostname/PSK/raw token; поддельные token его не заполняют.
+
+Default 65 536 записей, каждая удерживается 601 000 мс. Это покрывает всё окно
+±300 секунд с целочисленной включительной границей, даже при первом предъявлении
+future-skew token. Удаляются только истёкшие записи, лениво и в insertion order,
+без per-entry timers. При заполнении fail-closed, без вытеснения живых записей.
+Бюджет около 109 новых admissions/с на полном retention — лишь ориентир без
+burst-запаса, не throughput promise или per-user quota. Уменьшить maxEntries можно
+programmatically; отключение `null/false` запрещено, CLI disable/clear нет.
+
+Clock high-water mark блокирует admissions при откате wall clock до его
+восстановления: иначе уже удалённые записи могли бы снова стать валидными.
+Timestamp ещё раз проверяется при reservation. Коды без route secrets:
+`TLS_RELAY_REPLAY`, `_REPLAY_FULL`, `_REPLAY_CLOCK`, `_REPLAY_STALE`.
+Системная коррекция часов назад может временно отказать легитимным новым
+соединениям; уже открытые sessions не прерываются этим guard.
+
+CH2 после HRR идёт через прежний session-local identity guard, не через новую
+reservation. Работает и при capacity=1. Новый token в CH2 отвергается identity
+guard, копия CH2 на другом TCP — replay guard. Combo classifier остаётся
+stateless: peek не расходует token, валидный повтор не переключается в TLS mux.
+Lab использует отдельный guard на весь lifetime; `stats().replay` — только
+числовые entries/maxEntries/retentionMs. Ненулевые записи после закрытия sockets
+намеренно сохраняются как security state, не означают leaked handles.
+
+Гарантия **ограниченная**: один guard/process lifetime. Restart, другой worker/host
+имеют независимую память. Гонка первого предъявления и привязка token к TLS
+transcript не решены: перехватчик, успевший первым, может занять token. Не заменяет
+origin TLS/0-RTT anti-replay, exactly-once HTTP, destination policy, глобальные
+socket quotas и защиту raw TUN. Полный durable/distributed replay-cache не добавлен.
+
+Добавлены 34 теста: настоящие захваченные CH1/CH2 с нулевым дополнительным origin
+connect, HRR/alias/random, конкурентный default admission, отказ connector,
+полный cache на 65 536, очистка, future timestamp/expiry/clock rollback и приватность
+логов. Временные границы проверены управляемыми часами, не 10-минутным ожиданием.
+Финальный acceptance: **368 Node-тестов (19 файлов) + 14 Chrome/Firefox-сценариев**
+— PASS; ECH, HRR, resumption, 0-RTT сохранены. Четыре real-browser soak/SIGTERM
+регрессии — PASS. Дополнительный browser soak concurrency 12: Chrome 60.11 с /
+99 TLS / 1176 echo / 588 abort; Firefox 60.47 с / 90 TLS / 1068 echo / 534 abort.
+Final replay entries 99/90, worker exit 0, сокеты/таймеры освобождены, FD 19,
+живых browser-процессов после cleanup нет, private profiles удалены.
+Подробности — [документация](../scripts/transparent-tls-lab.md#replay-защита-enc-sni-route-token).
+
+Следующий пакет: явная destination policy exit — разрешённые назначения,
+private/loopback адреса и защита от DNS rebinding, с отдельными негативными тестами.
+Это не изменение mesh или динамическое клонирование браузерных профилей.

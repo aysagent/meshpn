@@ -16,7 +16,7 @@ curl нужен только для необязательной ручной п
 
 ## Единая acceptance-проверка
 
-[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 18 Node-наборов
+[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 19 Node-наборов
 и полную матрицу Chrome/Firefox. Он ничего не устанавливает и не скачивает.
 Нужны Linux, Node 22+, Go 1.24+, OpenSSL 3, GNU `stdbuf`, `unshare`, `ip` и доступные
 user/network/mount/PID namespaces (в том числе для browser-independent lifecycle
@@ -71,10 +71,11 @@ JSON пишется один раз в конце: SIGKILL/авария ОС/о�
 или неполный файл. Ошибка аргументов или резервирования пути возникает до отчёта.
 Это не cgroup supervisor; ограничения cleanup процессов описаны ниже.
 
-Текущий полный прогон: **334 Node-тестов + 14 browser-сценариев**. Предыдущий пакет
+Текущий полный прогон: **368 Node-тестов + 14 browser-сценариев**. Предыдущий пакет
 acceptance был проверен дважды подряд с 235 Node-тестами; basic soak добавил 19,
 slow-reader — ещё 11, H2 flow-control — ещё 12, GOAWAY/drain — ещё 12,
-browser soak lifecycle/resource contracts — ещё 45 (без запуска браузеров).
+browser soak lifecycle/resource contracts — ещё 45 (без запуска браузеров),
+enc-SNI replay admission — ещё 34.
 27 новых регрессий проверяют runner/reporter, включая отсутствие инструмента,
 неполные результаты, timeout/abort/output overflow и запрет перезаписи отчёта.
 Это ограниченный acceptance, не длительный soak и не production-сертификация.
@@ -667,6 +668,105 @@ exit-функция обрабатывает ошибки внутри себя.
 Внешний exit peek-dispatch в `clean-vpn.js` сохраняет собственные лимиты/таймеры
 до передачи соединения relay. Этот пакет не меняет его на глобальную защиту от DoS.
 
+## Replay-защита enc-SNI route token
+
+`wireTransparentTlsEncSniSession()` теперь по умолчанию использует общий
+process-local [EncSniReplayGuard](lib/transparent-tls-replay.mjs). Это изменение
+production relay runtime, не только lab. Через ту же функцию защищены
+transparent-ветки standalone и combo-tls в `clean-vpn.js`, а также no-TUN exit
+helper. TUN/mux dispatch и client wire-format не менялись.
+
+Admission происходит после успешных AES-GCM decode, проверки timestamp,
+восстановления ClientHello и ограничений prelude, но **до** `connectOrigin()`/
+DNS/TCP connect. Синхронная запись в cache предшествует любому await подключения:
+из двух конкурирующих предъявлений одного token допускается только одно.
+Запись не освобождается при закрытии сокета, ошибке подключения или неуспешном
+TLS handshake. Повторный захваченный token не создаёт новый origin socket.
+
+Идентификатор — SHA-256 аутентифицированных бинарных `nonce || ciphertext || tag`,
+а не текст SNI. Переразбиение encrypted prefix на DNS labels, пустые labels,
+допускаемые текущим parser, или регистр public suffix не обходят cache.
+Регистр самого base62 ciphertext по-прежнему значим. Изменение ClientHello
+random/параметров не даёт повторно использовать уже потреблённый token.
+Decoder возвращает дополнительные `issuedAtSeconds` и `replayId`; эти поля
+нельзя писать в обычные логи. Неаутентифицированные/просроченные token не занимают
+cache. В нём хранятся только digest и deadline, не hostname/PSK/raw token.
+
+Default budget — **65 536 записей**, фиксированное удержание **601 000 мс** с
+момента допуска. Причина: timestamp допускает ±300 секунд, включая целую
+граничную секунду; впервые предъявленный на нижней границе token может ещё
+приниматься примерно 600 секунд. Простых пяти минут хранения недостаточно.
+Guard повторно проверяет timestamp непосредственно при reservation.
+
+Cache сохраняет insertion order, лениво удаляет истёкшие записи при новом
+валидном admission (амортизированное O(1), без per-token таймеров). При заполнении
+**не вытесняет ещё удерживаемые записи**: новое соединение отклоняется. Размер
+ограничен числом записей, а не точно измеренным RSS/V8 heap. На полностью занятом
+cache возможен отказ легитимным клиентам; 65 536 / 601 ≈109 новых token/с —
+ориентир длительной нагрузки без запаса на bursts, не гарантированная пропускная
+способность или rate limit. Это общий бюджет всех PSK/listeners в процессе,
+не per-user fairness и не полноценная DoS-защита.
+
+Clock high-water mark не допускает новые соединения при откате `Date.now()`
+до возвращения часов к последнему наблюдённому значению. Иначе шаг вперёд,
+очистка cache и последующий откат могли бы снова сделать старый token валидным.
+Невалидные часы/переполнение тоже дают отказ. Это сознательный fail-closed
+операционный tradeoff: коррекция системных часов назад может временно прервать
+новые relay admissions, но не уже установленные сессии.
+
+| Код | Причина отказа до origin connect |
+|---|---|
+| `TLS_RELAY_REPLAY` | Token уже использован |
+| `TLS_RELAY_REPLAY_FULL` | Cache заполнен, живые записи не вытесняются |
+| `TLS_RELAY_REPLAY_CLOCK` | Часы невалидны или откатились |
+| `TLS_RELAY_REPLAY_STALE` | Timestamp вышел из окна между decode и admission |
+| `TLS_RELAY_CONFIG` | Некорректный явно переданный guard/его параметры |
+
+Обычный HRR не является новым admission: CH2 обрабатывает существующий
+`createHelloRetryGuard` на том же соединении, с прежним relay SNI/random/session
+identity. Повторной записи в cache нет; CH2 работает и при cache capacity=1.
+CH2 с другим token отклоняет identity guard; копия CH2 на новом TCP-соединении
+отклоняется replay guard. `classifyComboTlsExitPrefix()` остаётся stateless:
+peek не расходует token, а уже использованный валидный token всё ещё классифицируется
+как relay, после чего отвергается runtime, без downgrade в TLS/TUN mux.
+
+Programmatic `opts.replayGuard` принимает только `EncSniReplayGuard`, `null/false`
+не выключают защиту. Уменьшенный `maxEntries` доступен через конструктор (1..65536),
+CLI disable/resize/clear не добавлены. Production callers используют singleton;
+нельзя создавать новый guard на каждый accept. Lab создаёт отдельный guard на
+весь свой lifetime и публикует только числовой `stats().replay`. Ненулевые entries
+после закрытия сессий — намеренная security state, не незакрытые handles.
+
+Границы гарантии:
+
+- Это at-most-one admission в пределах **одного guard/process lifetime**, не
+  распределённый/durable cache. Другой worker/host или restart имеют новую память;
+  всё ещё свежий захваченный token там может пройти. Cluster/shared state не добавлены.
+- Не защищает от гонки первого предъявления: перехватчик, успевший первым,
+  может занять token и сорвать легитимное подключение. К ClientHello transcript
+  token криптографически не привязан; последующая end-to-end TLS аутентификация
+  остаётся ответственностью приложения/origin.
+- Не заменяет TLS 0-RTT anti-replay origin, exactly-once HTTP, destination policy,
+  global socket quotas, защиту raw TUN или аудит внешнего peek-dispatch.
+- Wire format v2, AES-GCM/key derivation, ±5-минутное окно, JA3/JA4 и клиентский
+  ClientHello не изменены. Существующий client уже создаёт новый nonce на каждое
+  подключение; повторно использовать ранее сохранённый token нельзя.
+
+`npm run test:transparent-tls-replay`: 34 проверки, включая реальный TLS/HRR,
+перехваченные CH1/CH2 и DNS aliases, отсутствие лишнего origin connect, cache
+capacity=1/65536, inclusive future timestamp, expiry/rollback, ошибки connector,
+повреждённую аутентификацию, process-default scope и отсутствие secrets в логах.
+Криптографические/часовые границы тестируются с управляемыми часами, без ожидания
+10 минут; это не заявление о durable защите после reboot.
+
+Проверено на VPS: полный acceptance **368 Node + 14 browser** — PASS, включая
+HRR/resumption/ECH/0-RTT; четыре отдельные real-browser soak/SIGTERM регрессии
+тоже PASS. С включённым cache прошли concurrency 12 / 60.11 с Chrome и 60.47 с
+Firefox: 99/90 TLS sessions, 1176/1068 echo, 588/534 отмены. Final replay entries
+99/90 совпадают с admissions, несмотря на закрытые сокеты; worker exit 0,
+живых браузерных процессов после cleanup нет, FD 19, private profiles удалены.
+Это проверка совместимости под ограниченной нагрузкой, не production-сертификация.
+
 ## Обратимое сохранение TLS records
 
 [Rebuild](lib/transparent-tls-ch-rebuild.mjs) больше не склеивает первый ClientHello
@@ -1052,7 +1152,7 @@ SIGKILL runner или аварии ОС cleanup не гарантирован. P
 
 Проверено: Linux, Node 24.13.0, OpenSSL 3.0.13, tshark 4.2.2,
 Chrome for Testing 151.0.7922.10, Firefox 156.0.1.
-**334 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
+**368 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
 Первоначальный baseline (161 + 4) расширен HRR и resumption, описанными ниже.
 Browser ECH/0-RTT, HTTP/3, GUI-браузеры, длительный профиль нагрузки и внешний
 сетевой путь ещё не покрыты.
@@ -1207,7 +1307,8 @@ runner и отдельный ограниченный по времени soak �
 - Нет обещания сохранить TCP packet boundaries, тайминги или размеры всех пакетов.
 - Основные наборы используют Node/OpenSSL/Go; отдельный браузерный набор проверяет
   реальные Chrome/Firefox через CONNECT и независимо сверяет JA3/JA4 с tshark.
-- Replay-защита relay и общий ECH routing пока не покрыты. Есть bounded Node soak
+- Добавлена ограниченная process-local replay-защита route token (см. выше);
+  durable/distributed replay-защита и общий ECH routing не добавлены. Есть bounded Node soak
   с обрывами, медленными заголовками, H1 slow-reader, H2 stream flow-control и
   GOAWAY при активных streams; отдельный bounded browser soak описан выше.
   Суточный browser soak, browser slow-reader и внешний сетевой путь не проверены.

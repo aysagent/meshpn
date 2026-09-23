@@ -13,6 +13,7 @@ import { buildRelayHostname, encodeRelaySniLabel } from './lib/transparent-tls-e
 import { replaceFirstSniInTcpBuffer, restoreFirstSniInTcpBuffer } from './lib/transparent-tls-ch-rebuild.mjs';
 import { parseFirstTlsClientHelloFromTcpBuf } from './lib/tls-clienthello-ja3.mjs';
 import { HELLO_RETRY_RANDOM_HEX } from './lib/transparent-tls-retry.mjs';
+import { EncSniReplayGuard } from './lib/transparent-tls-replay.mjs';
 
 async function within(promise, ms = 1500) {
   let timer;
@@ -89,6 +90,9 @@ function endpoint(t, role, limits = {}, { blocked = false, connectorError, tls13
     return outbound;
   };
   const options = {
+    // Each synthetic endpoint is an independent exit fixture; its constant token
+    // is intentionally reused across unrelated tests, not across live admissions.
+    replayGuard: new EncSniReplayGuard(),
     vpnSecretBuf: PSK, publicName: PUBLIC, limits, onSessionError: (e) => errors.push(e),
     explicitDestination: { address: '127.0.0.1', port: 443 },
     upstreamHost: '127.0.0.1', upstreamPort: 12345,
@@ -451,6 +455,7 @@ test('initial peek buffer follows the same limits and remains paused before conn
   const inbound = new TestSocket();
   const outbound = new TestSocket();
   const session = wireTransparentTlsEncSniSession(inbound, {
+    replayGuard: new EncSniReplayGuard(),
     vpnSecretBuf: PSK, publicName: PUBLIC, initialBuf: encodedHello,
     connectOrigin: () => outbound, limits: { connectTimeoutMs: 40 },
   });
