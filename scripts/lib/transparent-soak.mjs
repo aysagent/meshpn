@@ -10,6 +10,7 @@ import { startTransparentTlsLab, requestThroughLab, assertRelayTrace } from './t
 import { startLabConnectProxy } from './transparent-connect-lab.mjs';
 import { slowReaderCase } from './transparent-slow-reader.mjs';
 import { h2FlowMatrix } from './transparent-h2-flow.mjs';
+import { h2GoawayCase } from './transparent-h2-goaway.mjs';
 
 export function soakOptions(args) {
   const result = { seconds: 300, concurrency: 4, profile: 'basic' };
@@ -27,12 +28,12 @@ export function soakOptions(args) {
   }
   if (result.seconds < 1 || result.seconds > 3600) throw new Error('seconds must be 1..3600');
   if (result.concurrency < 2 || result.concurrency > 12) throw new Error('concurrency must be 2..12');
-  if (!['basic', 'slow-reader', 'h2-flow'].includes(result.profile)) throw new Error('profile must be basic, slow-reader or h2-flow');
+  if (!['basic', 'slow-reader', 'h2-flow', 'h2-goaway'].includes(result.profile)) throw new Error('profile must be basic, slow-reader, h2-flow or h2-goaway');
   return result;
 }
 
 export function assertIdle(lab, proxy) {
-  for (const key of ['sockets', 'heldResponses', 'h2Sessions', 'pendingClients', 'relaySessions', 'relayTimers', 'cleanupFailures', 'slowStreams', 'slowStreamTimers', 'h2FlowStreams', 'h2FlowTimers']) {
+  for (const key of ['sockets', 'heldResponses', 'h2Sessions', 'h2DrainTimers', 'pendingClients', 'relaySessions', 'relayTimers', 'cleanupFailures', 'slowStreams', 'slowStreamTimers', 'h2FlowStreams', 'h2FlowTimers']) {
     assert.equal(lab[key], 0, `lab ${key} did not drain`);
   }
   for (const key of ['clients', 'upstreams', 'headerTimers', 'relaySessions', 'relayTimers', 'cleanupFailures']) {
@@ -78,6 +79,7 @@ export async function runSoak(options, { signal, emit = () => {} } = {}) {
     totals: { echoes: 0, echoBytes: 0, helloAborts: 0, uploadAborts: 0, slowHellos: 0, slowHeaders: 0 }, samples: [] };
   if (profile === 'slow-reader') result.slowReaders = {};
   if (profile === 'h2-flow') result.h2Flow = { tlsConnections: 0, healthyEchoes: 0, cases: {} };
+  if (profile === 'h2-goaway') result.h2Goaway = {};
   const sockets = new Set(), requests = new Set(), timers = new Set();
   let lab, proxy, phase = 'setup', measuredStart, waveTimer, failure;
   const error = (code) => Object.assign(new Error(code), { code });
@@ -236,6 +238,16 @@ export async function runSoak(options, { signal, emit = () => {} } = {}) {
           if (item.rstCode !== undefined) total.rstCode = item.rstCode;
         }
       }
+      if (profile === 'h2-goaway') {
+        for (const direction of ['forward', 'reverse']) {
+          phase = `h2-goaway-${direction}`; lab.runtimeErrors.length = 0;
+          const item = await h2GoawayCase({ lab, proxy, tunnel, own, until, concurrency, direction, signal, emit });
+          await idle(); traces(1);
+          const total = result.h2Goaway[direction] ??= { cases: 0, bytes: 0, heldSurvived: 0,
+            refused: 0, tlsConnections: 0, naturalCloses: 0, goaways: 0 };
+          for (const field of Object.keys(total)) total[field] += item[field];
+        }
+      }
       lab.diagnostics.length = 0;
     } finally { clearTimeout(waveTimer); }
   }
@@ -243,7 +255,7 @@ export async function runSoak(options, { signal, emit = () => {} } = {}) {
     check();
     const limits = { helloTimeoutMs: 300, ...(profile === 'slow-reader' ? { writeTimeoutMs: 2000 } : {}) };
     lab = await startTransparentTlsLab({ sessionTimeoutMs: 0, slowStreams: profile === 'slow-reader',
-      h2Flow: profile === 'h2-flow', holdResponses: profile === 'h2-flow',
+      h2Flow: ['h2-flow', 'h2-goaway'].includes(profile), holdResponses: ['h2-flow', 'h2-goaway'].includes(profile),
       clientLimits: limits, exitLimits: limits });
     proxy = await startLabConnectProxy(lab, { headerTimeoutMs: 300, maxConnections: 16,
       ...(profile === 'slow-reader' ? { closeTimeoutMs: 10_000 } : {}) });
@@ -271,6 +283,7 @@ export async function runSoak(options, { signal, emit = () => {} } = {}) {
     result.status = signal?.aborted ? 'aborted' : 'failed';
     result.failure = { phase, code: failure?.code ?? cause.code ?? 'SOAK_FAILURE' };
     if (cause.h2Flow) result.failure.h2Flow = cause.h2Flow;
+    if (cause.h2Goaway) result.failure.h2Goaway = cause.h2Goaway;
     result.atFailure = { lab: lab?.stats(), proxy: proxy?.stats(), workloadSockets: sockets.size,
       workloadTimers: timers.size, workloadRequests: requests.size };
   } finally {

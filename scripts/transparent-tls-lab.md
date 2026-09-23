@@ -16,7 +16,7 @@ curl нужен только для необязательной ручной п
 
 ## Единая acceptance-проверка
 
-[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 16 Node-наборов
+[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 17 Node-наборов
 и полную матрицу Chrome/Firefox. Он ничего не устанавливает и не скачивает.
 Нужны Linux, Node 22+, Go 1.24+, OpenSSL 3, GNU `stdbuf`, а для полного режима —
 зависимости браузерного стенда ниже, включая доступные user/network/mount namespaces.
@@ -70,9 +70,9 @@ JSON пишется один раз в конце: SIGKILL/авария ОС/о�
 или неполный файл. Ошибка аргументов или резервирования пути возникает до отчёта.
 Это не cgroup supervisor; ограничения cleanup процессов описаны ниже.
 
-Текущий полный прогон: **277 Node-тестов + 14 browser-сценариев**. Предыдущий пакет
+Текущий полный прогон: **289 Node-тестов + 14 browser-сценариев**. Предыдущий пакет
 acceptance был проверен дважды подряд с 235 Node-тестами; basic soak добавил 19,
-slow-reader — ещё 11, H2 flow-control — ещё 12.
+slow-reader — ещё 11, H2 flow-control — ещё 12, GOAWAY/drain — ещё 12.
 27 новых регрессий проверяют runner/reporter, включая отсутствие инструмента,
 неполные результаты, timeout/abort/output overflow и запрет перезаписи отчёта.
 Это ограниченный acceptance, не длительный soak и не production-сертификация.
@@ -303,6 +303,80 @@ RSS 88.3→160.0 МиБ (peak 162.3), heapUsed 8.9→11.1 МиБ — отсут�
 После исправления также прошёл прогон 61.71 с / concurrency 12: 13+3 волны,
 16 H2-матриц, 128 МиБ resume, 32 CANCEL, 384 held survivors, 1552 H2 echo,
 FD 24→19. Полный acceptance: 277 Node-тестов + 14 Chrome/Firefox-сценариев, все pass.
+
+### HTTP/2 GOAWAY: drain с активными streams
+
+```bash
+node scripts/transparent-soak.mjs --profile=h2-goaway --seconds=300 --concurrency=4
+node scripts/transparent-soak.mjs --profile=h2-goaway --seconds=60 --concurrency=12
+npm run test:transparent-h2-goaway
+```
+
+К basic-волне добавляются два случая: GOAWAY во время upload и download.
+У каждого случая одна verified TLS 1.3 / H2 session через CONNECT/client/exit.
+Все слушатели живут весь прогон; новые TLS sessions создаёт только явный следующий
+случай/волна. Это тест origin-initiated graceful drain, не остановка VPN-сервиса.
+
+Порядок проверки:
+
+1. Передача 4 МиБ блокируется на уровне stream. Как в `h2-flow`, проверяется
+   нулевое принимающее окно, backpressure отправителя и положительное connection
+   window. TCP/TLS socket не ставится на pause.
+2. На той же session создаются `concurrency` POST `/hold`. Все должны реально
+   поступить на origin до начала drain. Тест знает последний принятый stream ID.
+3. Lab вызывает `Http2Session.close()`. Клиент обязан получить GOAWAY с `NO_ERROR`;
+   границы не возрастают, покрывают все принятые streams, последняя граница точно
+   соответствует последнему принятому ID. Разрешено до восьми GOAWAY events.
+4. Новый POST на закрывающейся session обязан синхронно получить
+   `ERR_HTTP2_GOAWAY_SESSION`. Никакого fallback/reconnect/retry в workload нет.
+   После этого 100 мс сохраняются заблокированный stream и ожидающие responses;
+   ни клиентская session, ни origin drain ещё не должны завершиться.
+5. Origin освобождает held responses, получатель возобновляет slow stream.
+   Проверяются 200, полный END_STREAM без ошибок/reset, точные 4 МиБ/SHA-256 и
+   все соседние responses. Затем обе стороны должны закрыть session естественно.
+   `destroy()` в `finally` — страховка cleanup, а не способ пройти этот критерий.
+6. До и после drain origin request count увеличивается ровно на `concurrency+1`,
+   TLS/origin TCP/CONNECT counters — ровно на один. Это обнаруживает дубликаты и
+   скрытое переподключение в тестируемом пути. После случая проверяются idle ресурсы
+   и полный trace ClientHello/JA3/JA4 на client/exit/origin.
+
+Семантика graceful close — [Node HTTP/2 API](https://nodejs.org/api/http2.html#http2sessionclosecallback),
+границы GOAWAY и запрет новых streams — [RFC 9113 §6.8](https://www.rfc-editor.org/rfc/rfc9113.html#section-6.8).
+Тест намеренно не создаёт admission race: все streams приняты **до** GOAWAY.
+Он не проверяет REFUSED_STREAM для запросов, пересёкшихся с GOAWAY в сети,
+ошибочные GOAWAY, браузерные retry policies или exactly-once доставку в общем случае.
+Наблюдения получены через endpoint API, не через расшифровку H2 frames из pcap.
+
+Существующий lab-only `drainOriginHttp2()` по-прежнему имеет deadline 5 с;
+его таймер теперь явно очищается и учитывается в `h2DrainTimers`/`assertIdle`.
+Deadline не засчитывается как successful close. Fixture deadline 15 с и reset
+медленного stream также недопустимы в успешном случае. Общие лимиты soak, bounded
+cleanup и ограничения измерения памяти остаются прежними. Production relay,
+wire-format, TUN/mesh и BoringSSL не изменялись.
+
+JSON `h2Goaway.forward/reverse`: `cases`, `bytes`, `heldSurvived`, `refused`,
+`tlsConnections`, `naturalCloses`, `goaways`; счётчики включают три warmup-волны,
+basic totals записаны отдельно. При ошибке сохраняются direction/step, числовой
+снимок окон, ограниченный список GOAWAY code/lastStreamID и состояние закрытия;
+opaque debug data, payload, TLS secrets и exception stacks не сохраняются.
+Добавлены проверки границ/ошибочных свидетельств, короткий настоящий soak и
+SIGTERM во время drain в обоих направлениях с проверкой очистки таймеров/сокетов.
+
+Пятиминутный VPS-прогон concurrency 4: 301.64 с после warmup, 106+3 волны — PASS.
+218 graceful closes, 872 МиБ с точным SHA-256, 872 held POST responses завершены,
+218 новых запросов явно отклонены. FD во всех idle samples 24, после shutdown 19;
+отслеживаемые sockets/streams/timers нулевые, fixture CANCEL/deadline 0,
+worker естественно завершился с exit 0. RSS 86.9→141.0 МиБ, peak 142.9;
+heapUsed 9.1→19.2 МиБ, external 3.8→51.9 МиБ, arrayBuffers 0.3→48.3 МиБ.
+Это sampled trend без принудительного GC, не доказательство отсутствия утечек.
+
+VPS-прогон concurrency 12: 61.41 с после warmup, 21+3 волны — PASS.
+48 graceful closes, 192 МиБ с точным SHA-256, 576 held POST responses завершены,
+48 новых запросов явно отклонены, скрытых повторов/переподключений нет.
+FD 24 между волнами → 19 после shutdown; учитываемые ресурсы нулевые,
+fixture CANCEL/deadline 0, worker exit 0. RSS 103.3→115.9 МиБ, sampled peak 120.6.
+Полный acceptance прошёл дважды: 289 Node-тестов + 14 Chrome/Firefox-сценариев,
+второй раз — после усиления проверки cleanup при истечении drain deadline.
 
 ## Быстрый запуск
 
@@ -861,7 +935,7 @@ SIGKILL runner или аварии ОС cleanup не гарантирован. P
 
 Проверено: Linux, Node 24.13.0, OpenSSL 3.0.13, tshark 4.2.2,
 Chrome for Testing 151.0.7922.10, Firefox 156.0.1.
-**277 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
+**289 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
 Первоначальный baseline (161 + 4) расширен HRR и resumption, описанными ниже.
 Browser ECH/0-RTT, HTTP/3, GUI-браузеры, длительный профиль нагрузки и внешний
 сетевой путь ещё не покрыты.

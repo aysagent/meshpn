@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–26; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–27; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -682,3 +682,53 @@ RSS 88.3→160.0 МиБ (peak 162.3), heapUsed 8.9→11.1 МиБ; отсутст
 запросов и явная ошибка новых без скрытой повторной отправки. Browser soak,
 replay/destination policy, production-квоты и общий ECH routing остаются отдельными
 задачами. Mesh/TUN/BoringSSL не затронуты.
+
+## 27. GOAWAY/drain при активных H2 streams
+
+Добавлен `--profile=h2-goaway`: basic-волна плюс origin-initiated graceful close
+во время forward upload / reverse download. Каждый случай использует одну
+verified TLS 1.3 / H2 session через CONNECT/client/exit; слушатели постоянные.
+Медленный 4-МиБ stream должен исчерпать принимающее окно при backpressure и
+доступном connection credit; рядом origin держит `concurrency` уже принятых POST.
+
+Клиент получает GOAWAY(NO_ERROR); lastStreamID покрывает принятые streams,
+не возрастает и в конце совпадает с последним принятым ID. Новый POST отклоняется
+`ERR_HTTP2_GOAWAY_SESSION`. В течение 100 мс session/drain остаются незавершёнными,
+streams — заблокированными/ожидающими. После release/resume все запросы завершаются
+без reset, 4 МиБ проверяются по SHA-256; session закрывается естественно до cleanup.
+Счётчики origin requests и TLS/TCP/CONNECT запрещают скрытые повторы и reconnect.
+
+Lab-only `drainOriginHttp2()` уже существовал для browser resumption между
+запросами; теперь его 5-секундный deadline явно очищается и виден в idle-проверках
+как `h2DrainTimers`. Timeout и fixture reset не считаются успешным drain.
+Добавлены 12 тестов: границы GOAWAY, отрицательные evidence, отсутствие sessions,
+реальная матрица и SIGTERM в обоих направлениях с нулевыми остаточными ресурсами.
+Подробности и команды — [документация](../scripts/transparent-tls-lab.md#http2-goaway-drain-с-активными-streams).
+
+Ограничения: Node endpoints, не браузерный soak; все запросы приняты до GOAWAY,
+admission race/REFUSED_STREAM/error GOAWAY не покрыты. Отсутствие дублей в этих
+сценариях не означает общую exactly-once гарантию; H2 наблюдается endpoint API,
+не расшифрованным pcap. Production runtime/wire-format, mesh/TUN/BoringSSL не менялись.
+
+Полный acceptance на VPS: **289 Node-тестов + 14 Chrome/Firefox-сценариев**, PASS
+без skipped/todo. Повторный полный прогон после усиления существующей проверки
+истечения drain deadline также PASS. Manifest теперь содержит 17 Node-файлов.
+Дополнительный soak concurrency 12: 61.41 с, 21+3 волны; 48 graceful closes,
+192 МиБ SHA-256, 576 завершённых held responses, 48 явных отказов новых запросов.
+FD 24→19, отслеживаемые ресурсы нулевые, worker exit 0; RSS 103.3→115.9 МиБ
+(sampled peak 120.6). Это не доказательство отсутствия утечек.
+
+Пятиминутная проверка concurrency 4: 301.64 с / 106+3 волны — PASS.
+218 graceful closes, 872 МиБ с SHA-256, 872 завершённых held responses,
+218 явно отклонённых новых запросов; hidden replay/reconnect не обнаружен.
+Idle FD постоянно 24 → 19 после shutdown, owned sockets/streams/timers нулевые,
+fixture CANCEL/deadline 0, worker естественно завершился с exit 0.
+RSS 86.9→141.0 МиБ (peak 142.9), heapUsed 9.1→19.2 МиБ,
+external 3.8→51.9 МиБ, arrayBuffers 0.3→48.3 МиБ; GC не форсировался,
+отсутствие утечек из этих замеров не следует.
+
+Следующий пакет: bounded browser soak с настоящими Chrome/Firefox, повторными
+запросами/отменами и контролируемым переоткрытием H2 sessions, сохранением
+браузерного профиля в пределах прогона и контролем дочерних процессов/FD/памяти.
+Не динамическое клонирование ClientHello. Replay/destination policy,
+production-квоты и общий ECH routing остаются отдельными задачами.

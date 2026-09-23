@@ -12,10 +12,11 @@ const self = fileURLToPath(import.meta.url), root = dirname(dirname(self));
 const worker = process.argv[2] === '--worker';
 const options = soakOptions(process.argv.slice(worker ? 3 : 2));
 if (options.help) {
-  console.log(`Usage: node scripts/transparent-soak.mjs [--seconds=1..3600] [--concurrency=2..12] [--profile=basic|slow-reader|h2-flow] [--report=/new/path.json]
+  console.log(`Usage: node scripts/transparent-soak.mjs [--seconds=1..3600] [--concurrency=2..12] [--profile=basic|slow-reader|h2-flow|h2-goaway] [--report=/new/path.json]
 Defaults: 300 measured seconds after three warmup waves, concurrency 4. Linux /proc + Node 22+.
 slow-reader adds verified TLS/H1 streaming, forward/reverse resume/timeout with concurrent healthy H1/H2.
 h2-flow adds per-stream window exhaustion, resume/cancel and healthy siblings on one TLS/H2 connection per wave.
+h2-goaway drains active H2 uploads/downloads and held siblings, refuses new streams and checks natural close without replay.
 Persistent client/exit/origin; loopback only, no browser, TUN, downloads or global routing changes.
 Report contains counts and sampled memory trends, not a proof of no memory leaks or DPI safety.
 Existing reports are never overwritten. Parent deadline: requested seconds + 60s, then 5s kill grace.`);
@@ -83,6 +84,10 @@ Existing reports are never overwritten. Parent deadline: requested seconds + 60s
             report.lastPressure = event;
             const key = `${event.type}-${event.direction}-${event.outcome}`;
             if (!pressureSeen.has(key)) { pressureSeen.add(key); console.log(`[soak] ${key} blocked; healthy traffic passed`); }
+          } else if (event.type === 'h2-goaway') {
+            report.lastDrain = event;
+            const key = `${event.type}-${event.direction}`;
+            if (!pressureSeen.has(key)) { pressureSeen.add(key); console.log(`[soak] ${key} draining; new stream refused`); }
           } else if (event.type === 'result') { resultCount++; report.result = event.result; }
           else stop('unexpected-event');
         } catch { stop('invalid-worker-output'); }

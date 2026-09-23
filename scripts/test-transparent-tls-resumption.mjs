@@ -59,6 +59,8 @@ test('lab GOAWAY control has a deadline for an unfinished HTTP/2 request', TEST_
     await new Promise((resolve) => setImmediate(resolve));
   }
   await assert.rejects(lab.drainOriginHttp2(), { name: 'AbortError' });
+  assert.equal(lab.stats().h2DrainTimers, 0, 'expired drain deadline must release its timer');
+  assert.equal(session.destroyed, false, 'deadline is a reported failure, not a forced successful close');
 });
 
 for (const httpVersion of ['1.1', '2']) {

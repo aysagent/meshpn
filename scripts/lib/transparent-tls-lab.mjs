@@ -148,6 +148,7 @@ export async function startTransparentTlsLab({
   let resumedTlsConnections = 0;
   let requests = 0;
   const heldResponses = new Map();
+  const h2DrainTimers = new Set();
   const relay = labSessionStats();
   const streaming = slowStreams ? slowStreamOrigin() : null;
   const flow = h2Flow ? h2FlowOrigin() : null;
@@ -316,7 +317,7 @@ export async function startTransparentTlsLab({
         tlsConnections: externalOriginPort ? null : tlsConnections,
         resumedTlsConnections: externalOriginPort ? null : resumedTlsConnections,
         requests: externalOriginPort ? null : requests, heldResponses: heldResponses.size,
-        h2Sessions: originH2Sessions.size, pendingClients, ...relay.stats(),
+        h2Sessions: originH2Sessions.size, h2DrainTimers: h2DrainTimers.size, pendingClients, ...relay.stats(),
         ...(streaming?.stats() ?? { slowStreams: 0, slowStreamTimers: 0 }),
         ...(flow?.stats() ?? { h2FlowStreams: 0, h2FlowTimers: 0, h2FlowCancels: 0, h2FlowDeadlines: 0 }) }),
       relayPressure: (direction) => relay.pressure(direction),
@@ -331,11 +332,17 @@ export async function startTransparentTlsLab({
         if (closing) throw new Error('lab is closing');
         if (externalOriginPort) throw new Error('external origin controls its own HTTP/2 sessions');
         // GOAWAY followed by graceful session close; do not erase browser TLS tickets.
-        // Only call between completed requests. Hanging streams fail this test control.
+        // May run while requests are active: the caller must release them before
+        // this bounded control expires. Timeout is a failure, not forced success.
         await Promise.all([...originH2Sessions].map(async (session) => {
-          const closed = once(session, 'close', { signal: AbortSignal.timeout(5000) });
-          session.close();
-          await closed;
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 5000);
+          h2DrainTimers.add(timer);
+          try {
+            const closed = once(session, 'close', { signal: controller.signal });
+            session.close();
+            await closed;
+          } finally { clearTimeout(timer); h2DrainTimers.delete(timer); }
         }));
       },
       rotateTicketKeys() {
