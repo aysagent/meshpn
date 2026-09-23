@@ -152,7 +152,8 @@ stub не интегрирован с OS: флаг exit не заставляе�
 Нельзя просто передать первый IP в прямой HTTPS connect клиента: это обойдёт relay.
 Теперь есть отдельный opt-in [клиентский DNS adapter](dns-exit-adapter.md) через
 числовой exit endpoint, с согласованными hostname/port/path/CA, без системного
-DNS переключения и TUN. Его следующий этап — независимый pcap и bounded soak.
+DNS переключения и TUN. Для него добавлены отдельные
+[независимый pcap и bounded soak](dns-adapter-soak.md).
 
 Адрес/доверие самого exit тоже требуют отдельной bootstrap-конфигурации.
 OS/LAN/IPv6 DNS integration, общий exit DNS, resolver selection, caching/pooling,

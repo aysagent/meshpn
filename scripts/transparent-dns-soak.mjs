@@ -4,23 +4,24 @@ import assert from 'node:assert/strict';
 import { mkdtemp, open, readlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { child } from './lib/browser-lab-driver.mjs';
 import { cleanEnvironment, runCommand } from './lib/transparent-acceptance.mjs';
 import { namespaceArgs } from './lib/browser-soak.mjs';
 import { dnsSoakOptions, assertDnsSoakResult } from './lib/dns-soak.mjs';
 import { runDnsSoak } from './lib/dns-soak-workload.mjs';
 
-async function main() {
+export async function dnsSoakMain({ parse = dnsSoakOptions, run = runDnsSoak, validate = assertDnsSoakResult,
+  entry = fileURLToPath(import.meta.url), adapter = false } = {}) {
   const worker = process.argv[2] === '--isolated';
-  const options = dnsSoakOptions(process.argv.slice(worker ? 3 : 2));
+  const options = parse(process.argv.slice(worker ? 3 : 2));
   if (options.help) {
-    console.log('Usage: node scripts/transparent-dns-soak.mjs [--seconds=1..600] [--concurrency=1..8] [--report=/new/file.json]\nDefaults: 60 seconds, concurrency 4 after independent pcap and ten warmup waves.\nRequires Linux user/net/mount/PID namespaces, ip, tcpdump, tshark (MESHPN_TCPDUMP/MESHPN_TSHARK).\nPrivate loopback only; no TUN, system DNS, firewall, downloads or TLS bypass.\nRaw pcap removed; exclusive 0600 report, no QNAME/keys. Sampled budgets, not proof of no leaks.'); return;
+    console.log(`Usage: node ${adapter ? 'scripts/dns-adapter-soak.mjs' : 'scripts/transparent-dns-soak.mjs'} [--seconds=1..600] [--concurrency=1..8] [--report=/new/file.json]${adapter ? ' [--family=4|6] [--mode=transparent-tls|combo-tls]' : ''}\nDefaults: 60 seconds, concurrency 4 after independent pcap and ten warmup waves.\nRequires Linux user/net/mount/PID namespaces, ip, tcpdump, tshark (MESHPN_TCPDUMP/MESHPN_TSHARK)${adapter ? ', OpenSSL' : ''}.\nPrivate loopback only; no TUN, system DNS, firewall, downloads or TLS bypass.\nRaw pcap removed; exclusive 0600 report, no QNAME/keys. Sampled budgets, not proof of no leaks.`); return;
   }
   process.umask(0o077); delete process.env.SSLKEYLOGFILE;
   if (worker) {
     console.log = console.warn = console.error = () => {};
-    const result = await runDnsSoak(options, process.env.MESHPN_DNS_SOAK_DIR, () => process.stdout.write('DNS_SOAK_READY\n'));
+    const result = await run(options, process.env.MESHPN_DNS_SOAK_DIR, () => process.stdout.write('DNS_SOAK_READY\n'));
     process.stdout.write(`DNS_SOAK_RESULT ${JSON.stringify(result)}\n`);
     process.exitCode = result.status === 'passed' ? 0 : 1; return;
   }
@@ -28,6 +29,7 @@ async function main() {
   const file = await open(path, 'wx', 0o600), report = { schema: 1, status: 'failed', requested: options,
     startedAt: new Date().toISOString(), node: process.version,
     workerV8: { maxOldSpaceMiB: 64, maxSemiSpaceMiB: 8 },
+    kind: adapter ? 'dns-exit-adapter' : 'transparent-dns-lab',
     limitations: ['loopback-fixture-only', 'pcap-smoke-not-whole-soak', 'sampled-resource-budgets', 'not-production-dns'] };
   let directory, proc, stopping, reason, timer, aborted = false;
   const stop = (why) => { reason ??= why; if (proc) stopping ??= proc.stop().catch(() => { reason = 'cleanup-failed'; }); };
@@ -44,12 +46,13 @@ async function main() {
     if (aborted) throw new Error('ABORTED');
     directory = await mkdtemp(join(tmpdir(), 'meshpn-dns-soak-private-'));
     proc = child('unshare', [...namespaceArgs, 'sh', '-eu', '-c', 'ulimit -c 0; ip link set lo up; exec "$@"', 'dns-soak',
-      process.execPath, '--max-old-space-size=64', '--max-semi-space-size=8', fileURLToPath(import.meta.url),
-      '--isolated', `--seconds=${options.seconds}`, `--concurrency=${options.concurrency}`],
+      process.execPath, '--max-old-space-size=64', '--max-semi-space-size=8', entry,
+      '--isolated', `--seconds=${options.seconds}`, `--concurrency=${options.concurrency}`,
+      ...(adapter ? [`--family=${options.family}`, `--mode=${options.modeTag}`] : [])],
     { env: { ...env, MESHPN_DNS_SOAK_DIR: directory, MESHPN_PARENT_NETNS: await readlink('/proc/self/ns/net'),
       MESHPN_PARENT_PIDNS: await readlink('/proc/self/ns/pid') } });
     const closed = new Promise((resolve) => proc.proc.once('close', (code, signal) => resolve({ code, signal })));
-    timer = setTimeout(() => stop('deadline'), (options.seconds + 45) * 1000);
+    timer = setTimeout(() => stop('deadline'), (options.seconds + (adapter ? 60 : 45)) * 1000);
     let buffer = '', bytes = 0, count = 0, ready = false;
     proc.proc.on('error', () => stop('spawn-error'));
     const budget = (chunk) => { bytes += Buffer.byteLength(chunk); if (bytes > 1024 * 1024) { stop('output-limit'); return false; } return true; };
@@ -70,7 +73,7 @@ async function main() {
     report.worker = { ...await closed, reason: reason ?? null, closed: true }; await stopping;
     assert.equal(reason, undefined); assert.equal(buffer, ''); assert.equal(count, 1); assert.ok(ready);
     assert.equal(report.worker.code, 0); assert.equal(report.worker.signal, null);
-    assertDnsSoakResult(report.result, options);
+    validate(report.result, options);
     report.status = 'passed';
   } catch { report.status = aborted ? 'aborted' : 'failed'; }
   finally {
@@ -85,4 +88,6 @@ async function main() {
   console.log(`[dns-soak] ${report.status.toUpperCase()}; report=${path}`);
   process.exitCode = report.status === 'passed' ? 0 : 1;
 }
-main().catch(() => { console.error('[dns-soak] FAILED (arguments, report path or namespace)'); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  dnsSoakMain().catch(() => { console.error('[dns-soak] FAILED (arguments, report path or namespace)'); process.exitCode = 1; });
+}

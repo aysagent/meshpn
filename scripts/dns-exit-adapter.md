@@ -125,8 +125,9 @@ IPv4/IPv6 aliases внутри него; нужен OpenSSL и `ip`. Насто�
 метки runtime transparent/combo, TCP/UDP A/AAAA, отсутствие DNS lookup и
 освобождение sockets/timers/processes. Это не запуск full clean-vpn/TUN/mux.
 
-Следующий пакет — **независимый pcap и ограниченный soak именно этого нового
-client→exit пути**, включая длительные обрывы и отмену при переполнении.
-Прежний DNS pcap/soak проверял lab TLS через локальный relay listener; его
-результаты нельзя автоматически переносить на новую in-memory ветку.
-После этого — отдельное согласование OS/LAN/IPv6-интеграции, не в этом пакете.
+Теперь есть отдельные [независимый pcap и ограниченный soak](dns-adapter-soak.md)
+именно нового client→exit пути: `npm run dns:adapter-soak -- --help`. Проверяются
+IPv4/IPv6 endpoints, обрывы exit/resolver, переполнение, отмена и освобождение
+ресурсов. Прежний DNS pcap/soak сохраняется для старого localhost relay пути.
+Следующий шаг перед OS-интеграцией — расширить поддерживаемый DNS wire contract
+за пределы A/AAAA, затем согласовать opt-in client/OS/LAN/IPv6-интеграцию.

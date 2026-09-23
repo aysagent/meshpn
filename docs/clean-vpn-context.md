@@ -1270,3 +1270,81 @@ all-down exhaustion, restart recovery, A/AAAA UDP/TCP. Public aliases живут
 Прежние pcap/soak использовали lab TLS через localhost TCP relay listener;
 их результаты не являются проверкой нового adapter. Затем отдельно согласовать
 OS/LAN/IPv6 integration. Динамические BoringSSL profiles и cover DNS не добавлялись.
+
+## 37. Независимый pcap и bounded soak нового DNS adapter
+
+Добавлен `npm run dns:adapter-soak`: отдельный namespace runner для реального
+`startDnsExitAdapter` с in-memory TLS/enc-SNI, не старого localhost TLS listener.
+Инструкция — [`scripts/dns-adapter-soak.md`](../scripts/dns-adapter-soak.md).
+Используется настоящий public compiled profile и pinned route exit, ephemeral
+CA и проверка имени resolver. Public IPv4/IPv6 aliases существуют только наlo
+в приватном user/net/mount/PID namespace; uplink отсутствует. Linux namespace,
+PID1/private proc и отсутствие других интерфейсов проверяются до fixture.
+Mesh, clean-vpn CLI, TUN, host firewall/routes/system DNS/live VPN не менялись.
+
+Общий launcher прежнего DNS soak выделен в вызываемую `dnsSoakMain`; старый CLI
+и его workload сохранены. Новый entry выбирает строго свой parser/workload/
+validator. Seconds1..600, concurrency1..8, family4/6 и две runtime modeTag.
+Report exclusive0600, bounded stdout, parent deadline seconds+60с, SIGINT/SIGTERM
+с cleanup и aborted. Нет аргументов deployment IP/config/PSK и нет сетевых
+скачиваний. Ключи/pcap удаляются из собственного mkdtemp, report остаётся.
+
+pcap: tcpdump всех namespace TCP/UDP, tshark без DNS/decryption keys.
+Точные address+port endpoints: loopback stub, plaintext positive control,
+exit, resolver, refused first IP. IPv4/IPv6, оба направления обязательны,
+включая refused SYN/RST; payload на refused запрещён. Контрольный QNAME обязан
+найтись у stub/control, но не на двух TLS legs. Reassembly проверяет prefix,
+seq/gaps/overlap/retransmits; unknown endpoints/UDP на TLS/truncation/drop/empty
+capture вызывают fail. Capture count сравнивается с tshark. Это короткая
+fault-matrix перед soak, не захват всего длительного прогона. В одном worker
+pcap не атрибутирует PID отправителя на разрешённом origin leg; дополнительно
+проверяются exact dial/body counters и отдельные adapter tests.
+
+Один adapter живёт весь workload.10 warmup waves; измеряемые циклы normal,
+NXDOMAIN, large/UDP TC, reset/hold/redirect, origin down/restart, exit listener
+down/restart, silent accepted exit, cut active exit, заполнение in-flight
+лимита (лишний SERVFAIL без dial), TCP requester reset после origin body.
+Fixture deadline250мс, production default1500мс не изменён. Проверяется
+освобождение client sockets/jobs и exit sockets/sessions/timers, DNS lookups=0.
+Parent сверяет точные counts ответов, ошибок, отказов/отмен, connection attempts
+и bodies относительно baseline — не только exit0.
+
+На каждом цикле idle fd/memory/active resources/private process tree сверяются
+с бюджетами; JSON sample примерно раз в5с. V8 old64MiB/semi8MiB, без forced GC;
+RSS ceiling256MiB, fd128, idle fd≤baseline, рост RSS≤64MiB/heapUsed≤32MiB от
+warmup high-water. Replay cache удерживается штатные601с, не очищается между
+запросами ради красивой памяти. Успех ограничен данными сценариями/временем;
+не доказательство отсутствия всех side channels или вечных memory leaks.
+
+Следующий шаг — расширение DNS wire contract за пределы IN A/AAAA перед
+системной интеграцией. Затем отдельно согласовать opt-in client/OS/LAN/IPv6.
+
+Real regression matrix:9 новых проверок PASS (IPv4/IPv6 × transparent/combo,
+concurrency1/8; SIGINT/SIGTERM; missing tcpdump/tshark; exclusive report и отказ
+worker вне namespace). Прежние6 DNS pcap/soak real tests также PASS после
+выделения общего launcher. Новый real-набор повторён после усиления endpoint/
+traffic-counter audit:9/9 PASS. Unit audit/validator/options:35 новых проверок,
+включая injected plaintext обоих TLS legs/направлений, разрезанный marker,
+gaps/overlap/truncation, чужие endpoints и фальсифицированные итоговые counters.
+
+Два длительных прогона выполнены параллельно в разных namespaces, оба PASS:
+
+- IPv4 transparent concurrency4:300.055с,279 waves,13671 replies (9207 ожидаемых
+  SERVFAIL),558 listener restarts,279 overload rejects и279 TCP cancellations.
+  Pcap1631 packets; sampled RSS106.93MiB / heap21.99MiB, рост от warmup6.06/3.09MiB.
+  Report `/var/tmp/meshpn-dns-soak-report-3Pl6Ou/report.json`.
+- IPv6 combo concurrency8:301.050с,228 waves,22116 replies (14820 ожидаемых
+  SERVFAIL),456 restarts,228 rejects/cancellations. Pcap3119 packets;
+  sampled RSS107.93MiB / heap23.42MiB, рост6.11/3.01MiB.
+  Report `/var/tmp/meshpn-dns-soak-report-Libb6L/report.json`.
+
+Final owned sockets/jobs/timers/sessions/listeners=0; worker fd23→19,
+children/zombies=0, DNS lookups=0. Replay entries11893/19362 остаются в штатном
+окне601с; память не «улучшалась» принудительной очисткой/GC. Expected failures
+сверены точными counters. Raw pcap/ephemeral keys удалены, reports сохранены.
+
+Финальный общий acceptance выполнен отдельно после soak: **678 Node-тестов
+(26 файлов) +14 Chrome/Firefox сценариев PASS**, без skips. Report
+`/var/tmp/meshpn-acceptance-kmeQCV/report.json`. Runtime DNS adapter и relay
+в этом пакете не менялись: добавлены тестовый fixture, audit, workload/runner,
+регрессии и документация. README обновлён с результатами и следующим этапом.

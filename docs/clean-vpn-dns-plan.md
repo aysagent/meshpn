@@ -6,6 +6,9 @@
 DNS клиента/системы и firewall не менялись. Production DNS интеграции пока нет.
 Upstream/bootstrap JSON contract и offline CLI реализованы отдельно:
 [конфигурация](../scripts/dns-upstream-config.md), раздел 34 context.
+Есть opt-in pinned route exit и [явный клиентский adapter](../scripts/dns-exit-adapter.md)
+через числовой exit endpoint, а также его собственные
+[pcap/soak](../scripts/dns-adapter-soak.md), отдельно от прежнего lab TLS пути.
 Динамическое клонирование BoringSSL-профиля не возвращаем.
 
 ## Что есть сейчас
@@ -105,8 +108,13 @@ bundled/custom CA, строгая offline validation и применение TLS
 Configured hostname+port использует static public-IP snapshot без OS lookup;
 другой port того же имени запрещён, остальные routes сохраняют старую policy.
 Перебор только до успешного TCP выбора, без DNS/mux fallback; live exit не менялся.
-Следующий шаг — explicit клиентский DNS adapter через числовой exit endpoint,
+Explicit клиентский DNS adapter через числовой exit endpoint реализован,
 с TLS hostname/CA validation, без системного переключения DNS/TUN.
-Затем отдельно согласовать включение и системную интеграцию.
+Следующий шаг перед системной интеграцией — расширить проверяемый DNS wire
+contract: сейчас принимаются только IN A/AAAA, что недостаточно для обычного
+системного resolver (HTTPS/SVCB, TXT, SRV, PTR и другие типы). Не просто убрать
+проверку qtype, а отдельно проверить framing, matching вопроса/ответа, EDNS,
+большие/усечённые ответы и ошибки, сохранив лимиты и отсутствие fallback.
+После этого отдельно согласовать opt-in client/OS/LAN/IPv6 integration.
 Кэша и активного production DNS/bootstrap пока нет.
 Случайные cover DNS запросы не входят в этот план реализации.
