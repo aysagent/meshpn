@@ -1438,3 +1438,45 @@ zombies=0, DNS lookups=0, ресурсные бюджеты соблюдены; 
 Финальный acceptance после уточнений CNAME/SOA и strict HTTP OWS: **770 Node-тестов
 (27 файлов) +14 Chrome/Firefox сценариев PASS**, без skips, выполнен отдельно
 после soak. Report `/var/tmp/meshpn-acceptance-kuHqW2/report.json`.
+
+## 40. DNS lifecycle: dry-run и системный resolver в namespace
+
+Добавлены [описание и команды](../scripts/dns-lifecycle.md), чистая модель
+`scripts/lib/dns-lifecycle.mjs`, offline CLI `npm run dns:lifecycle` и отдельный
+`npm run dns:lifecycle-lab -- --family=4|6`. Host backend не выбран: пользователь
+пока не знает владельца DNS на настоящем клиенте; нужна read-only диагностика.
+Нет `--apply`, установки сервиса или автоматического изменения host DNS.
+
+Контракт: snapshot → независимый guard → adapter/readiness probe → выбор DNS
+с проверкой владения и отдельным acknowledgement. Потеря exit/listener не
+восстанавливает открытый DNS. Restart сохраняет исходный snapshot. Чужое изменение
+настроек → conflict без перезаписи. Только явный disable восстанавливает baseline
+под guard, подтверждает восстановление и затем снимает guard.
+
+Реальный стенд — user/net/mount/PID namespaces, private propagation, PID1, только
+lo; mount guard проверяется до мутаций. Synthetic resolv.conf/nsswitch bind mounts,
+приватный /run без host nscd, сравнение host файлов до/после. Namespace-only DNAT
+port53→high-port adapter; остальные UDP/TCP53 блокируются IPv4/IPv6. Через glibc
+getent проверены23 lookup на каждый IPv4/IPv6 combo exit/upstream вариант:
+A/AAAA UDP/TCP, baseline positive controls, exit outage/recovery, недоступный
+mapping, external config conflict, блокирование foreign DNS, explicit restore,
+startup readiness failure. Флаг getent -A нужен для A lookup в IPv6-only fixture,
+иначе AI_ADDRCONFIG подавляет запрос ещё до DNS.
+
+Оба real-теста PASS: запросов к baseline во время защиты0, exit OS lookup0;
+owned adapter sockets/jobs/timers0, children/zombies0 после cleanup.
+Добавлены20 unit/CLI тестов, включены в acceptance manifest (теперь28 файлов).
+Полный acceptance **790 Node +14 Chrome/Firefox сценариев PASS**, без skips;
+report `/var/tmp/meshpn-acceptance-SBJc54/report.json`.
+
+Ограничения: state model — не durable executor; fixture владеет жизнью adapter,
+потеря mapping — не SIGKILL процесса. Не проверены reboot, journal recovery,
+concurrent apply/restore, NetworkManager/resolved, LAN/split DNS. Sentinel counters
+не заменяют pcap. Guard53 не блокирует произвольные DoH/DoT и не заменяет VPN
+kill-switch; существующий autostart kill-switch с LAN exceptions и своим stop
+lifecycle не подходит как готовый DNS guard. Текущий adapter требует enc-SNI exit,
+не обычный tls-only. Host DNS/firewall/routes/TUN, live VPN и mesh не менялись.
+
+Далее: диагностика клиента → один выбранный backend → durable ownership journal
+и SIGKILL/reboot/interrupted transaction tests в изоляции → согласованный opt-in
+live pilot. Production-статус combo-tls пока не повышаем.

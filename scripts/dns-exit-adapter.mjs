@@ -40,7 +40,7 @@ export async function readDnsExitSecret(path) {
 async function main() {
   const options = parseDnsExitArgs(process.argv.slice(2));
   if (options.help) {
-    console.log('Usage: node scripts/dns-exit-adapter.mjs --config=/path/upstream.json --exit-ip=PUBLIC_IP --exit-port=443 --public-name=vpn.example.com --shared-hmac-key=/path/key --listen-port=1053\nExplicit 127.0.0.1 UDP/TCP DNS adapter (IN A/AAAA only), through enc-SNI exit. No TUN, system DNS, direct resolver or plaintext fallback. See scripts/dns-exit-adapter.md.'); return;
+    console.log('Usage: node scripts/dns-exit-adapter.mjs --config=/path/upstream.json --exit-ip=PUBLIC_IP --exit-port=443 --public-name=vpn.example.com --shared-hmac-key=/path/key --listen-port=1053\nExplicit 127.0.0.1 UDP/TCP DNS adapter (ordinary IN types), through enc-SNI exit. No TUN, system DNS, direct resolver or plaintext fallback. See scripts/dns-exit-adapter.md.'); return;
   }
   let adapter, secret, stopped = false, stop;
   const stopping = new Promise((resolve) => { stop = resolve; });

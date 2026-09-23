@@ -22,6 +22,7 @@ export const TEST_FILES = Object.freeze([
   'test-dns-upstream-route.mjs',
   'test-dns-exit-adapter.mjs',
   'test-dns-adapter-soak.mjs',
+  'test-dns-lifecycle.mjs',
 ]);
 
 export function parseOptions(args) {

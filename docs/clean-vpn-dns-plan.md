@@ -115,7 +115,11 @@ HTTPS/SVCB, TXT, SRV, PTR; бинарные labels, EDNS(0), extended RCODE, б�
 и matching вопроса/ответа. RDATA передаются непрозрачно, без semantic/DNSSEC validation.
 Реализованы TCP/DoH DNS65535 с отдельным UDP cap4096 и фиксированными buffers,
 локальный BADVERS для новых EDNS versions и HTTP Age/TTL (включая negative SOA).
-Следующий шаг — отдельно согласовать opt-in client/OS/LAN/IPv6 integration:
-lifecycle, fail-closed, восстановление настроек; сначала dry-run и namespace tests.
+Реализован первый этап [DNS lifecycle](../scripts/dns-lifecycle.md): offline dry-run
+и namespace-only glibc DNS стенд. Проверяются readiness, exit outage/recovery,
+guard для UDP/TCP53 IPv4/IPv6, conflict без перезаписи и явное восстановление.
+Это не host backend и не crash/reboot recovery. Следующий шаг — read-only
+диагностика владельца DNS на настоящем клиенте, выбор backend, durable journal
+и отдельные crash/reboot tests до opt-in live integration; LAN/split DNS отдельно.
 Кэша и активного production DNS/bootstrap пока нет.
 Случайные cover DNS запросы не входят в этот план реализации.

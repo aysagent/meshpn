@@ -162,8 +162,8 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 
 Следующий порядок работ:
 
-1. Согласовать opt-in интеграцию DNS с client/OS/LAN и IPv6/kill-switch: кто управляет настройками DNS, порядок запуска/остановки, восстановление после сбоя, поведение без exit. [Wire contract](scripts/dns-wire.md) уже поддерживает большие TCP/DoH сообщения, ограниченные буферы, EDNS negotiation и Age/TTL; это не разрешение автоматически переключать системный DNS.
-2. Реализовать согласованный lifecycle сначала в dry-run и изолированном namespace: без изменения DNS, маршрутов и firewall работающей системы. Проверить отсутствие открытого fallback при старте, обрыве, рестарте и аварийном завершении.
+1. Выполнить read-only диагностику владельца DNS на реальном клиенте и выбрать backend (resolved/NetworkManager/unmanaged). Уже есть [offline lifecycle и изолированный системный DNS стенд](scripts/dns-lifecycle.md): `npm run dns:lifecycle`, `npm run test:dns-lifecycle-real`. Они проверяют readiness, отказ exit, сохранение защиты, конфликт настроек и явное восстановление; не включают host DNS integration. Затем — durable journal, crash/reboot recovery и согласованный opt-in backend; LAN/IPv6/kill-switch остаются отдельной частью интеграции.
+2. Расширить выбранный backend на изолированном стенде: журнал владения, конкурентные изменения, SIGKILL/reboot и незавершённые apply/restore. Текущий lifecycle-стенд проверяет отказ соединения/listener, но не заменяет эти crash-тесты; DNS, маршруты и firewall работающей системы пока не менять.
 3. Проверить согласованную интеграцию на пилотном развёртывании; только после этого пересматривать production-статус всего `combo-tls`.
 
 ---
