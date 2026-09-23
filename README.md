@@ -1,12 +1,176 @@
-# Mesh VPN
+# clean-vpn и Mesh VPN
+
+## clean-vpn: эксплуатация, транспорты и быстрый старт
+
+[`scripts/clean-vpn.js`](scripts/clean-vpn.js) — самостоятельный **Linux client ↔ exit VPN**: IPv4 через TUN, выход в интернет через NAT на exit, несколько транспортов и инструменты исследования TLS. Это отдельный контур: mesh, onion и multipath из `src/index.js` в нём **не используются**. Документация mesh сохранена [ниже](#mesh-vpn).
+
+Навигация: [транспорты](#clean-vpn-transports) · [запуск](#clean-vpn-start) · [опции](#clean-vpn-options) · [профили и transparent](#clean-vpn-profiles) · [DNS](#clean-vpn-dns) · [проверки и дальнейшая работа](#clean-vpn-next).
+
+### Какие транспорты считаем пригодными для эксплуатации
+
+<a id="clean-vpn-transports"></a>
+
+Здесь «production» означает кандидат для **контролируемой личной эксплуатации**, а не независимый аудит, гарантию неразличимости для DPI или готовый многопользовательский сервис. Базовый выбор — **`tls`**. Оценка ниже относится к текущему коду; старые security/design-документы местами описывают уже заменённые протоколы.
+
+| Client → exit | Статус | Что защищено / что ограничивает применение |
+| --- | --- | --- |
+| `tls` → `tls` | Основной эксплуатационный вариант | TLS 1.3, проверка CA и имени exit, общий PSK, Bearer с привязкой к TLS exporter. Остаются legacy auth и общие ограничения маршрутизации ниже. |
+| `boring-tls` → `tls` | Условно эксплуатационный | Та же схема TLS/auth, но клиент использует нативный patched BoringSSL helper. Нужны проверенная сборка и smoke-тесты; мимикрия браузера остаётся экспериментальной. |
+| `combo-tls` → `combo-tls` | Экспериментальный, контролируемый пилот | TUN через `boring-tls`, HTTPS отдельно через enc-SNI relay. Relay существенно доработан и проверен на стенде, но весь режим пока не объявляем production-ready. |
+| `transparent-tls` → `transparent-tls` | Стенд / исследование HTTPS, не публичный full VPN | HTTPS сохраняет TLS приложения, но оставшийся TUN-трафик передаётся сырым неаутентифицированным TCP. |
+| `webrtc`, клиент `rtc-chrome` | Требует доработки перед публичной эксплуатацией | DTLS и PSK-привязка fingerprint есть; сигналинг допускает вытеснение активного соединения до авторизации нового. |
+| `quic`, `quic-ext` | Тестовые для публичного exit | Шифрование и проверка сервера есть, допуска клиента к TUN на exit нет. |
+| `tcp` / `socket`, `http`, `udp` (включая punch) | Только доверенный стенд | Нет шифрования и авторизации data plane; HTTP-вступление / подписанный punch-сигналинг этого не исправляют. |
+| `websocket`, `ws-chrome` | Только доверенный стенд | По умолчанию plain WS; внешняя WSS-обёртка сама по себе не добавляет авторизацию exit. |
+| `tls --tls-raw` (exit) | Только тесты | Отдельный TLS 1.2/raw IPv4 режим **без** Bearer и аутентификации клиента. Не вариант обычного защищённого `tls`. |
+
+Общие границы эксплуатации:
+
+- Фиксированная пара адресов `10.99.0.1` (exit) / `10.99.0.2` (client), MTU 1400. Нет выдачи независимых адресов и ключей множеству пользователей.
+- `--split-default` направляет в туннель IPv4 default двумя маршрутами `/1`. Exit/служебные адреса и RFC1918 идут напрямую; локальный DNS также может обойти VPN. **IPv6 не туннелируется.**
+- Сам CLI не предоставляет полноценный kill-switch. Есть отдельный systemd-установщик с firewall kill-switch, но у него тоже есть исключения для LAN и особенности жизненного цикла — см. ниже.
+- Очистка маршрутов/NAT при завершении предусмотрена, но не гарантирует отсутствие утечек при аварии. Шифрование транспорта не заменяет проверку DNS, IPv6, правил шлюза и поведения при разрыве.
+
+### Быстрый старт: `tls` client + exit
+
+<a id="clean-vpn-start"></a>
+
+Команды выполнять из корня репозитория на **двух Linux-хостах**. Это настоящий VPN: запуск меняет TUN, маршруты, forwarding и iptables/NAT. Для проверки на одном VPS **без этих изменений** используйте [отдельный стенд](scripts/transparent-tls-lab.md), а не два запуска CLI на хосте.
+
+Нужны Node.js/npm, `/dev/net/tun`, `ip`, `iptables`, `sysctl`, OpenSSL и права root для запуска. Для сборки addon — Python 3, make и C++. Стенд проверялся на Node 24.13.0; минимальная версия из `package.json` не является подтверждением работы всех транспортов.
+
+```bash
+npm install
+npm run build:tun-linux
+```
+
+Явная сборка обязательна для проверки: `postinstall` допускает ошибку addon, поэтому одного успешного `npm install` недостаточно.
+
+Перед запуском подготовьте сертификат и ключи (пример использует ваш домен `vpn.example.com`):
+
+| Хост / путь из примера | Содержимое |
+| --- | --- |
+| Exit: `/etc/clean-vpn/tls/fullchain.pem` | Сертификат exit и промежуточная цепочка, с SAN `vpn.example.com`; например, выданные Let's Encrypt. |
+| Exit: `/etc/clean-vpn/tls/privkey.pem` | Соответствующий закрытый ключ; остаётся **только на exit**. |
+| Client: `/etc/clean-vpn/trust/fullchain.pem` | PEM доверенных CA для проверки exit, включая нужный корневой CA. Это **trust bundle**, несмотря на имя файла, а не закрытый ключ или обязательная копия серверной цепочки. |
+| Оба: `/etc/clean-vpn/clean-vpn-hmac.key` | Один и тот же случайный **32-байтовый бинарный** PSK; не 64-символьная hex-строка. Передать клиенту по доверенному каналу, права `0600`. |
+
+PSK создаётся один раз, например `openssl rand -out clean-vpn-hmac.key 32` в приватном каталоге с `umask 077`; не перезаписывайте действующий ключ при обновлении. Сертификат, CA и PSK не брать из тестовых fixtures и не коммитить. Публичный сертификат/CA не заменяет секретный PSK.
+
+Особенность текущего loader: клиент читает CA из файла **`fullchain.pem`**, если тот существует; заданный CA заменяет стандартное доверие. Обычная серверная fullchain может не содержать корневого CA — одной её копии недостаточно. Альтернативный формат `ca.pem/cert.pem/key.pem` поддержан, но при неполном наборе loader может запустить генерацию тестовых сертификатов. Для этого примера заранее подготовьте явно указанный trust bundle и не копируйте на клиент `privkey.pem`.
+
+Exit (замените `eth0` на интерфейс выхода в интернет; без `--ext` он определяется по default route):
+
+```bash
+sudo env "PATH=$PATH" node scripts/clean-vpn.js \
+  --role=exit --type=tls --server=0.0.0.0:443 --ext=eth0 \
+  --tls-cert-dir=/etc/clean-vpn/tls \
+  --shared-hmac-key=/etc/clean-vpn/clean-vpn-hmac.key \
+  --tls-public-name=vpn.example.com
+```
+
+Client (замените `203.0.113.10` на настоящий IPv4 exit, а домен — на имя из сертификата):
+
+```bash
+sudo env "PATH=$PATH" node scripts/clean-vpn.js \
+  --role=client --type=tls --server=203.0.113.10:443 --split-default \
+  --tls-cert-dir=/etc/clean-vpn/trust \
+  --shared-hmac-key=/etc/clean-vpn/clean-vpn-hmac.key \
+  --tls-server-name=vpn.example.com --tls-client-sni=vpn.example.com
+```
+
+На exit должен быть доступен TCP-порт 443 и разрешён выход в интернет. Числовой адрес exit не требует клиентского DNS bootstrap для его поиска; имя сертификата всё равно проверяется. Не подставляйте чужой домен вместо собственного имени сертификата. Обновляйте client и exit согласованно.
+
+После запуска проверьте внешний IPv4 через свой контрольный endpoint, доступность нужных ресурсов и поведение при обрыве. Успешный запрос по IPv4 **не** доказывает отсутствие DNS/IPv6-утечек. Сначала проверяйте вручную с резервным доступом к хостам, затем включайте автозапуск.
+
+Для `boring-tls` соберите helper **на клиенте**, выполните smoke и замените только клиентское `--type=tls` на `--type=boring-tls`; exit остаётся `--type=tls`:
+
+```bash
+npm run build:boring-tls-helper-lowmem
+npm run test:boring-tls-smoke
+```
+
+Сборка требует CMake, C++ и git; первый запуск загружает зависимости. Есть параллельный вариант `npm run build:boring-tls-helper`. Подробности и патчи — [BoringSSL/helper](scripts/boring-tls-plan.md).
+
+### Основные опции и возможности
+
+<a id="clean-vpn-options"></a>
+
+CLI использует форму **`--имя=значение`**; boolean-флаги — без значения. Ниже рабочие опции основного TLS-контура; полный перечень и транспортные ограничения — в [CLI/help исходника](scripts/clean-vpn.js).
+
+| Опция | Назначение |
+| --- | --- |
+| `--role=client\|exit`, `--type=...`, `--server=HOST:PORT` | Роль, транспорт и адрес; для TLS exit — listen, client — подключение. |
+| `--ext=IFACE` | Внешний интерфейс NAT на exit. |
+| `--split-default` | IPv4 default через client TUN с прямыми исключениями выше. |
+| `--client-lan-subnet=192.168.7.0/24` | Client-шлюз для своей LAN/USB/AP-подсети; требует `--split-default`, добавляет forwarding/SNAT. Не указывайте чужую или чрезмерно широкую подсеть. |
+| `--tls-cert-dir=DIR`, `--shared-hmac-key=PATH` | PEM и общий PSK. Используйте абсолютные пути, особенно в systemd. |
+| `--tls-server-name=HOST` | **Client:** имя для проверки сертификата exit. |
+| `--tls-client-sni=HOST` | **Client:** SNI TUN TLS-соединения; отдельно от проверки сертификата. В базовой конфигурации задавайте то же имя. |
+| `--tls-public-name=HOST[,HOST...]` | На TLS/combo exit — SNI dispatch; также обязательное имя enc-SNI для transparent/combo. Не DNS-allowlist. |
+| `--http-vers=1.1` | Принудительный HTTP/1.1 вместо обычного согласования h2 / HTTP/1.1 в TLS-ветке. |
+| `--keep-alive=N` | Таймер бездействия в секундах, отключение и ленивое переподключение; не обещание постоянного heartbeat. Для QUIC не применяется. |
+| `--keep-alive-reconnect-cooldown=M` | Пауза после idle-disconnect; требует ненулевой keep-alive. В паузе TUN-пакеты могут отбрасываться. |
+| `--boring-tls-helper=PATH` | Явный путь к клиентскому helper (`boring-tls` / `combo-tls`). |
+| `--boring-tls-clienthello-profile=PATH` | Сохранённый JSON ClientHello-профиль для helper; перечитывается перед новым TUN TLS-соединением. |
+| `--boring-tls-profile-ja3-strict` | Отказ при несовпадении ожидаемого JA3; требует `permute_extensions: false` в профиле. |
+| `--tls-log-ja3`, `--ja3-verbose` | Диагностика JA3/JA4 и полей ClientHello; Node TLS-client сам свой JA3 не считает — смотрите exit. Подробные логи могут раскрывать SNI и параметры соединения. |
+| `--tls-probe-target=HOST:PORT` | Upstream для ограниченного passthrough на TLS/combo exit; по умолчанию `www.google.com:443`. Это отдельное внешнее соединение, не гарантия маскировки. |
+| `--tls-probe-max-bytes=N`, `--tls-probe-max-seconds=S` | Ограничения probe passthrough; defaults 49152 байта / 30 секунд. |
+| `--tls-probe-full-proxy-per-ip=K` | Квота full-proxy на IP в день; default `0`, оставляйте выключенной без отдельной необходимости. |
+
+**Не включайте `--tls-log-bearer` в эксплуатации:** он выводит Bearer/exporter-секреты. `--boring-tls-profile=NAME` — служебная метка, а не готовый пресет Chrome/Firefox.
+
+Есть batching, backpressure и reconnect; это не гарантия бесшовного восстановления всех потоков. Тюнинг очередей лучше начинать с измерений, а не случайных env-параметров.
+
+Автозапуск и управление: [systemd-установщик](scripts/autostart/README.md) принимает те же CLI-аргументы, создаёт сервис с restart и для client по умолчанию устанавливает **отдельный firewall kill-switch**. Это не механизм внутри приложения. Он разрешает RFC1918, exit и established-трафик; по умолчанию привязан к сервису и снимается при его остановке. Persistent-режим, IPv6-ограничения и LAN-исключения требуют отдельной проверки — локальные DNS-запросы не становятся защищёнными автоматически. Установщик меняет систему и перезапускает сервис; не запускайте его только ради ознакомления. Старые примеры `combo-tls` в его инструкции не меняют статус транспорта в таблице выше.
+
+### Браузерные профили и transparent HTTPS
+
+<a id="clean-vpn-profiles"></a>
+
+- **Сохранённый профиль:** [ja3-snif-server](scripts/ja3-snif-server.mjs) принимает реальный браузерный HTTPS-запрос и сохраняет JSON через `--profile-save-path=PATH`. Затем файл подключается через `--boring-tls-clienthello-profile=PATH`; helper сравнивает ожидаемые и реально отправленные поля/отпечатки. [Формат и ограничения](scripts/boring-tls-plan.md).
+- **Граница мимикрии:** patched BoringSSL воспроизводит отдельные параметры ClientHello. User-Agent и HTTP/2-поведение не синхронизированы с JSON; совпадение JA3/JA4 не доказывает неотличимость от Chrome. Перестановка расширений может менять wire-JA3; strict-режим не следует включать для произвольного браузерного снимка без проверки.
+- **Transparent/enc-SNI:** сохраняет TLS самого приложения end-to-end; client заменяет SNI на защищённый маршрут, exit восстанавливает исходный ClientHello и соединяет с назначением без MITM. Это не динамическая генерация BoringSSL-профиля. На участке client→exit ClientHello изменён, поэтому нельзя обещать неизменный отпечаток на каждом участке.
+- **Что уже укреплено в relay:** PSK/AEAD и process-local replay guard, ограничения ресурсов/таймеров, backpressure/cleanup, проверка всех DNS-кандидатов на public IP, контроль фактического TCP peer и ограниченный последовательный перебор IP. После выбора TCP повторной отправки TLS/HTTP на другой IP нет. Replay guard не переживает restart; эти меры не защищают сырой TUN в standalone `transparent-tls`.
+- **Особые CLI-параметры:** `combo-tls` client требует `--split-default` и helper; transparent/combo требуют общего PSK и `--tls-public-name`. `--transparent-tls-lan-bind=IPv4` задаёт listener на LAN-шлюзе. `--tunnel-peer=IPv4[:PORT]` фиксирует одно HTTPS-назначение для тестов без REDIRECT — это не production DNS bootstrap.
+- [Классификатор](scripts/traffic-classifier.js) — отдельный pcap-инструмент, не автоматическое переключение транспортов. [SNI dictionary](scripts/transperent-sni-dictionary.md) — проектное описание, не действующий список разрешённых доменов.
+
+Динамическое клонирование профиля каждого текущего соединения **не планируем**: приоритет — сохранение настоящего TLS в transparent и его надёжность.
+
+### DNS: что уже есть, а что ещё не подключено
+
+<a id="clean-vpn-dns"></a>
+
+Есть [конфигурация DoH upstream/bootstrap](scripts/dns-upstream-config.md): согласованные TLS hostname / HTTP Host, port/path, проверенные публичные IP и CA, без открытого fallback. Проверить файл **без сети и изменения системы**:
+
+```bash
+npm run dns:check-upstream -- --config=/path/to/upstream.json
+```
+
+На **exit** с `transparent-tls` / `combo-tls` можно явно добавить `--tls-dns-upstream-config=/path/to/upstream.json`: для точного hostname/port используется фиксированный список IP без OS lookup; неверный порт того же имени запрещён. Другие назначения сохраняют обычную destination policy и DNS. Конфигурация проверяется до TUN/NAT и применяется при старте, без hot reload.
+
+Это **только маршрутизация к resolver на exit**, не включение защищённого DNS для client/OS/LAN. Exit не завершает DoH TLS и не проверяет HTTP path внутри него. Клиентский DNS adapter пока лабораторный (IN A/AAAA); системный DNS не переключается. Случайные прямые запросы к «маскировочным» доменам не добавляем.
+
+### Проверки и дальнейшая работа
+
+<a id="clean-vpn-next"></a>
+
+Есть [стенд на одном VPS без TUN](scripts/transparent-tls-lab.md): настоящие TLS client/exit, Chrome/Firefox, независимый pcap, HRR/resumption/early-data/ECH-сценарии, обрывы, slow-reader/backpressure, ограниченные soak и контроль ресурсов. Покрытие отдельных сценариев не означает поддержку всех вариантов ECH/0-RTT в эксплуатации.
+
+Полный runner — `npm run transparent-tls:acceptance`; необходимые браузеры, Go и pcap-инструменты перечислены в инструкции. Это не команда запуска VPN. Последний зафиксированный полный прогон после pinned DNS route: **599 Node-тестов + 14 браузерных сценариев, PASS**; отдельная проверка настоящего TCP через pinned IPv4/IPv6 route — также PASS. История, ограничения проверок и карта реализации: [контекст clean-vpn](docs/clean-vpn-context.md).
+
+Следующий порядок работ:
+
+1. Явный **клиентский DNS adapter через числовой exit endpoint**, использующий настроенные hostname/port/path/CA и pinned route exit. Без прямого подключения клиента к resolver и без системного/plaintext fallback.
+2. Проверить его на изолированном стенде без TUN: успешные запросы, неверные CA/имя, недоступность exit/upstream, перебор IP, отсутствие утечек по pcap и освобождение ресурсов при длительных обрывах.
+3. Затем отдельно согласовать и реализовать интеграцию DNS с client/OS/LAN и IPv6/kill-switch, проверить на пилотном развёртывании. Только после этого пересматривать production-статус всего `combo-tls`.
+
+---
+
+## Mesh VPN
 
 Децентрализованная mesh VPN система с WebRTC (node-datachannel), onion-шифрованием и multipath routing.
-
-## Run
-- sudo env PATH=$PATH SIGNALLING_SERVER=62.84.
-120.30:8888 npm run sig:exit
-- sudo env PATH=$PATH node src/index.js --role 
-client --signalling ws://62.84.120.30:8080
 
 **Полный контекст для разработки и LLM-агентов:** [FULL_SUMMARIZATION.md](FULL_SUMMARIZATION.md) — развёртывание, потоки данных, карта модулей, известные проблемы Linux full tunnel + WebRTC.
 
