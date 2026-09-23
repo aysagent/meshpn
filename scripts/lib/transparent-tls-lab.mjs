@@ -186,12 +186,15 @@ export async function startTransparentTlsLab({
       ...originTls,
     };
     const origin = http2.createSecureServer(originContext);
+    const originH2Sessions = new Set();
     origin.on('secureConnection', (socket) => {
       track(socket);
       tlsConnections++;
       if (socket.isSessionReused()) resumedTlsConnections++;
     });
     origin.on('session', (session) => {
+      originH2Sessions.add(session);
+      session.once('close', () => originH2Sessions.delete(session));
       session.on('error', (error) => diagnose(error.message));
       session.setTimeout(sessionTimeoutMs, () => session.destroy());
     });
@@ -280,6 +283,17 @@ export async function startTransparentTlsLab({
         resumedTlsConnections: externalOriginPort ? null : resumedTlsConnections,
         requests: externalOriginPort ? null : requests }),
       // Lab-only controls, no ticket key material returned to the caller or logged.
+      async drainOriginHttp2() {
+        if (closing) throw new Error('lab is closing');
+        if (externalOriginPort) throw new Error('external origin controls its own HTTP/2 sessions');
+        // GOAWAY followed by graceful session close; do not erase browser TLS tickets.
+        // Only call between completed requests. Hanging streams fail this test control.
+        await Promise.all([...originH2Sessions].map(async (session) => {
+          const closed = once(session, 'close', { signal: AbortSignal.timeout(5000) });
+          session.close();
+          await closed;
+        }));
+      },
       rotateTicketKeys() {
         if (closing) throw new Error('lab is closing');
         if (externalOriginPort) throw new Error('external origin controls its own TLS context');

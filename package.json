@@ -54,6 +54,7 @@
     "transparent-tls:lab": "node scripts/transparent-tls-lab.mjs",
     "test:transparent-connect": "node --test scripts/test-transparent-connect-lab.mjs",
     "test:transparent-browser": "node scripts/transparent-browser-lab.mjs",
+    "test:browser-pcap": "node --test scripts/test-browser-lab-pcap.mjs",
     "test:boring-tls": "node scripts/test-boring-tls-smoke.mjs",
     "postinstall": "npm run build:tun-linux || true; cd helpers && make 2>/dev/null || true"
   },

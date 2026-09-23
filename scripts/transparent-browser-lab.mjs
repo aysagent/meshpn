@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { startTransparentTlsLab, assertRelayTrace } from './lib/transparent-tls-lab.mjs';
 import { startLabConnectProxy } from './lib/transparent-connect-lab.mjs';
 import { child, exec, launchBrowser } from './lib/browser-lab-driver.mjs';
+import { PCAP_FIELDS, parseBrowserPcap, assertBrowserPcap } from './lib/browser-lab-pcap.mjs';
 
 const self = fileURLToPath(import.meta.url);
 const mode = process.argv[2] ?? 'all';
@@ -39,7 +40,7 @@ if (mode !== '--isolated') {
   const kinds = process.argv[3] === 'all' ? ['chrome', 'firefox'] : [process.argv[3]];
   assert.ok(kinds.every((kind) => ['chrome', 'firefox'].includes(kind)));
   const directory = await mkdtemp(join(tmpdir(), 'meshpn-browser-lab-'));
-  const deadline = setTimeout(() => { console.error('Browser lab deadline exceeded'); process.kill(process.pid, 'SIGTERM'); }, 120_000);
+  const deadline = setTimeout(() => { console.error('Browser lab deadline exceeded'); process.kill(process.pid, 'SIGTERM'); }, 180_000);
   const cleanups = new Set();
   let cleanupPromise;
   function cleanup() {
@@ -73,10 +74,13 @@ if (mode !== '--isolated') {
     await exec('openssl', ['x509', '-req', '-in', csr, '-CA', caPath, '-CAkey', caKey,
       '-set_serial', '2', '-days', '1', '-copy_extensions', 'copy', '-out', certPath]);
     const originTls = { cert: await readFile(certPath), key: await readFile(keyPath) };
-    for (const kind of kinds) for (const trusted of [false, true]) {
-      const caseDir = join(directory, `${kind}-${trusted}`);
+    for (const kind of kinds) for (const scenario of ['untrusted', 'baseline', 'hrr', 'resumption', 'resumption-hrr', 'ticket-rejection']) {
+      const trusted = scenario !== 'untrusted';
+      const retryGroup = kind === 'firefox' ? 'P-384' : 'P-256';
+      const caseDir = join(directory, `${kind}-${scenario}`);
       await mkdir(caseDir, { mode: 0o700 });
-      const lab = await startTransparentTlsLab({ sessionTimeoutMs: 30_000, originTls });
+      const lab = await startTransparentTlsLab({ sessionTimeoutMs: 30_000,
+        originTls: { ...originTls, ...(scenario === 'hrr' ? { ecdhCurve: retryGroup } : {}) } });
       cleanups.add(lab.close);
       const proxy = await startLabConnectProxy(lab);
       cleanups.add(proxy.close);
@@ -95,10 +99,36 @@ if (mode !== '--isolated') {
       });
       cleanups.delete(stopBrowserProcess);
       cleanups.add(browser.close);
+      const expectations = new Map();
+      function expectConnection({ hrr = false, offered = false, resumed = false } = {}) {
+        const fresh = lab.captures.filter((hello) => hello.stage === 'client' && hello.flight === 1 && !expectations.has(hello.id));
+        assert.equal(fresh.length, 1, 'exactly one new browser TLS connection per phase');
+        expectations.set(fresh[0].id, { hrr, offered, resumed });
+        for (let flight = 1; flight <= (hrr ? 2 : 1); flight++) assertRelayTrace(lab, fresh[0].id, flight);
+        if (hrr) {
+          const wire = lab.captures.filter((hello) => hello.stage === 'exit' && hello.id === fresh[0].id);
+          assert.equal(wire.length, 2);
+          assert.equal(wire[1].sni, wire[0].sni, 'CH2 reuses the original enc-SNI route token');
+        }
+      }
+      async function echoAndInfo() {
+        const result = await browser.evaluate(`(async () => {
+          const body = 'browser-native-payload:'.repeat(4096);
+          const echo = await (await fetch('/echo', { method: 'POST', body, cache: 'no-store' })).text();
+          const info = await (await fetch('/', { cache: 'no-store' })).json();
+          return { echo: echo === body, info, userAgent: navigator.userAgent };
+        })()`);
+        assert.equal(result.echo, true);
+        assert.equal(result.info.httpVersion, '2.0');
+        assert.equal(result.info.tlsVersion, 'TLSv1.3');
+        assert.equal(result.info.userAgent, result.userAgent);
+        return result.info;
+      }
       const url = `https://${proxy.authority}/browser`;
       if (!trusted) {
         await assert.rejects(browser.navigate(url), /ERR_CERT_AUTHORITY_INVALID|MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT|SEC_ERROR_UNKNOWN_ISSUER/);
         assert.equal(lab.stats().requests, 0, 'untrusted connection must not send HTTP');
+        expectConnection();
       } else {
         await browser.navigate(url);
         // CDP Page.navigate precedes load. Wait for the expected document, not a fixed sleep.
@@ -107,46 +137,39 @@ if (mode !== '--isolated') {
           if (Date.now() > until) throw new Error('browser document deadline');
           await new Promise((resolve) => setTimeout(resolve, 25));
         }
-        const result = await browser.evaluate(`(async () => {
-          const body = 'browser-native-payload:'.repeat(4096);
-          const echo = await (await fetch('/echo', { method: 'POST', body })).text();
-          const info = await (await fetch('/')).json();
-          return { echo: echo === body, info, userAgent: navigator.userAgent };
-        })()`);
-        assert.equal(result.echo, true);
-        assert.equal(result.info.httpVersion, '2.0');
-        assert.equal(result.info.tlsVersion, 'TLSv1.3');
-        assert.equal(result.info.userAgent, result.userAgent);
-        assertRelayTrace(lab);
+        assert.equal((await echoAndInfo()).sessionReused, false);
+        expectConnection({ hrr: scenario === 'hrr' });
+        assert.equal(lab.stats().tlsConnections, 1);
+        if (['resumption', 'resumption-hrr', 'ticket-rejection'].includes(scenario)) {
+          const resumed = scenario !== 'ticket-rejection';
+          // Separate cold profiles for acceptance/rejection: a browser may consume
+          // its only ticket on resume and offer no PSK on a third connection.
+          if (!resumed) lab.rotateTicketKeys();
+          if (scenario === 'resumption-hrr') lab.setOriginGroups(retryGroup);
+          await lab.drainOriginHttp2();
+          assert.equal((await echoAndInfo()).sessionReused, resumed, 'new TLS connection must match ticket acceptance policy');
+          expectConnection({ offered: true, resumed, hrr: scenario === 'resumption-hrr' });
+          assert.equal(lab.stats().tlsConnections, 2);
+          assert.equal(lab.stats().resumedTlsConnections, resumed ? 1 : 0);
+        }
       }
       assert.ok(proxy.stats().tunnels > 0, 'browser must actually use CONNECT');
+      assert.equal(proxy.stats().tunnels, expectations.size, 'no hidden CONNECT retry');
+      assert.equal(lab.stats().originConnections, expectations.size, 'HRR does not create another origin connection');
       await browser.close(); cleanups.delete(browser.close);
       // tcpdump capture buffer is not flushed by -U until packets reach userspace.
       await new Promise((resolve) => setTimeout(resolve, 1100));
       await stopCapture(); cleanups.delete(stopCapture);
       assert.ok((await stat(pcap)).size > 24, 'nonempty real network capture');
       const args = ['-r', pcap, ...Object.values(ports).flatMap((port) => ['-d', `tcp.port==${port},tls`]),
-        '-Y', 'tls.handshake.type==1', '-T', 'fields', '-E', 'occurrence=f',
-        ...['tcp.dstport', 'tls.handshake.random', 'tls.handshake.extensions_server_name', 'tls.handshake.ja3', 'tls.handshake.ja4'].flatMap((field) => ['-e', field])];
+        '-Y', 'tls.handshake.type==1 || tls.handshake.type==2', '-T', 'fields', '-E', 'occurrence=a',
+        ...PCAP_FIELDS.flatMap((field) => ['-e', field])];
       const { stdout } = await exec(tshark, args);
-      const rows = stdout.trim().split('\n').map((line) => line.split('\t'));
-      let checked = 0;
-      for (const hello of lab.captures) {
-        assert.equal(hello.flight, 1, 'this browser baseline expects no HRR');
-        const row = rows.find(([port, random]) => Number(port) === ports[hello.stage] && random.replaceAll(':', '') === hello.id);
-        assert.ok(row, `pcap missing ${hello.stage} ClientHello`);
-        assert.equal(row[2], hello.sni, `${hello.stage} independent SNI`);
-        assert.equal(row[3], hello.ja3, `${hello.stage} independent JA3`);
-        assert.equal(row[4], hello.ja4, `${hello.stage} independent JA4`);
-        checked++;
-      }
-      assert.ok(checked >= 3, 'all three relay stages captured');
-      assert.deepEqual(new Set(lab.captures.map((hello) => hello.stage)), new Set(Object.keys(ports)));
-      for (const hello of lab.captures.filter((hello) => hello.stage === 'client')) assertRelayTrace(lab, hello.id);
+      const checked = assertBrowserPcap(parseBrowserPcap(stdout, ports), lab.captures, expectations);
       await proxy.close(); cleanups.delete(proxy.close);
       await lab.close(); cleanups.delete(lab.close);
       assert.equal(proxy.stats().clients + proxy.stats().upstreams + proxy.stats().headerTimers + lab.stats().sockets, 0);
-      console.log(`PASS ${browser.version}: ${trusted ? 'verified TLS1.3 + HTTP/2 + echo + native UA' : 'untrusted certificate rejected before HTTP'}; ${checked} ClientHellos independently checked by tshark`);
+      console.log(`PASS ${browser.version} ${scenario}: ${trusted ? 'verified TLS1.3 + HTTP/2 + echo + native UA' : 'untrusted certificate rejected before HTTP'}; ${expectations.size} connections, ${checked} ClientHellos independently checked by tshark`);
     }
   } finally {
     clearTimeout(deadline); await cleanup();

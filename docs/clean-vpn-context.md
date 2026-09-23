@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–20; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–21; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -414,3 +414,47 @@ Chrome for Testing 151.0.7922.10, Firefox 156.0.1, tshark 4.2.2. Все pass.
 routing и replay/destination policy остаются отдельными задачами. Сходство
 JA3/JA4 и нативные UA/HTTP2 не доказывают неотличимость TCP/таймингов от прямого
 соединения. Mesh/TUN/динамическое BoringSSL-клонирование не затронуты.
+
+## 21. Браузерные CH2/HRR, ticket resumption и независимая идентификация потоков
+
+Браузерная матрица расширена до шести сценариев на Chrome/Firefox: untrusted CA,
+cold baseline, HRR, resumption, resumption+HRR и rejected-ticket fallback.
+Успех требует настоящих verified TLS1.3/HTTP2/echo, не только одинаковых хешей.
+Для HRR origin ограничен P-256 в Chrome и P-384 в Firefox: Firefox 156 уже
+отправляет P-256 share в CH1 и на таком origin не делает HRR. Настройки и
+ClientHello браузера не меняются; неподходящий будущий browser fixture даст fail.
+
+Для нового TLS-соединения `drainOriginHttp2()` закрывает текущую H2 session через
+GOAWAY с deadline 5 с, не перезапуская браузер и не очищая tickets. Node-регрессии
+проверяют сохранение возможности resume и отказ по deadline для незавершённого
+request. Origin counters доказывают новый TCP/TLS и `isSessionReused`; число
+CONNECT/origin соединений не допускает скрытых reconnect вместо HRR.
+PSK/ticket bytes не извлекаются из браузера и не попадают в отчёт.
+
+Новый [pcap matcher](../scripts/lib/browser-lab-pcap.mjs) сопоставляет stage,
+peer port, tcp.stream, random и flight, а не первый найденный random.
+Каждый CH1/CH2 проверяется по SNI/JA3/JA4 во всех трёх точках; полный ClientHello
+и TLS record prefix дополнительно сравниваются побайтово. Проверяются порядок
+CH1→HRR→CH2→SH, прежний enc-SNI token, PSK offer в CH и selection в SH.
+CH2 binder при resumption+HRR остаётся частью исходного восстанавливаемого hello.
+Отпечаток CH2 не обязан быть равен CH1; сравнение идёт отдельно по flight.
+
+Важное наблюдение: Firefox в прогоне после resume не предложил PSK на третьем
+соединении. Это не доказательство отклонения ticket сервером. Поэтому acceptance
+и rejection используют разные свежие профили: rejection требует реального PSK
+offer до origin со сменёнными ticket keys и полного handshake без PSK selection.
+Отсутствующий PSK считается fail. Никакого принудительного reuse tickets или
+ослабления проверки сертификатов для прохождения тестов не добавлено.
+
+Проверено: **193 Node-теста и 12 browser-сценариев**, Linux/Node 24.13.0,
+Chrome for Testing 151.0.7922.10, Firefox 156.0.1, tshark 4.2.2.
+Новые 30 matcher-регрессий — синтетические строки fields, не сетевые captures;
+два дополнительных Node-теста проверяют GOAWAY control. Полный browser-прогон
+разбирает 66 ClientHello captures (18 попыток TLS-подключения через relay, три точки).
+Ограничения и запуск — [документация](../scripts/transparent-tls-lab.md#браузерные-hrr-resumption-и-отклонение-ticket).
+
+Следующий пакет: ограниченный параллельный прогон, обрывы/slow peers, контроль
+освобождения сокетов и процессов. Browser ECH/0-RTT, ticket renewal после resume,
+certificate-error при browser ticket fallback, общий ECH routing и replay policy
+остаются отдельными задачами. Production runtime/wire-format, mesh/TUN/BoringSSL
+не менялись; этот пакет усиливает стенд и доказательства совместимости.

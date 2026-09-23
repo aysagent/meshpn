@@ -2,6 +2,8 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import tls from 'node:tls';
+import http2 from 'node:http2';
+import { once } from 'node:events';
 import test from 'node:test';
 import { startTransparentTlsLab, requestThroughLab, assertRelayTrace } from './lib/transparent-tls-lab.mjs';
 
@@ -14,6 +16,50 @@ async function labFor(t, options = {}) {
   });
   return lab;
 }
+
+test('lab GOAWAY drains persistent HTTP/2 without closing listeners or discarding tickets', TEST_OPTS, async (t) => {
+  const lab = await labFor(t);
+  const socket = tls.connect({ host: lab.host, port: lab.clientPort, servername: lab.originName,
+    ca: lab.cert, ALPNProtocols: ['h2'], minVersion: 'TLSv1.3' });
+  t.after(() => socket.destroy());
+  const ticket = once(socket, 'session');
+  const session = http2.connect(`https://localhost:${lab.originPort}`, { createConnection: () => socket });
+  session.on('error', () => {});
+  t.after(() => session.destroy());
+  const req = session.request({ ':path': '/' });
+  const data = []; req.on('data', (chunk) => data.push(chunk));
+  const ended = once(req, 'end'); req.end(); await ended;
+  assert.equal(JSON.parse(Buffer.concat(data)).sessionReused, false);
+  const [state] = await ticket;
+  const goaway = once(session, 'goaway'), closed = once(session, 'close');
+  await lab.drainOriginHttp2();
+  await goaway; await closed;
+  // Idempotent when there are no active sessions; no new HTTP endpoint was added.
+  await lab.drainOriginHttp2();
+  const resumed = await requestThroughLab(lab, { httpVersion: '2', tlsOptions: { session: state } });
+  assert.equal(resumed.sessionReused, true);
+  assert.equal(lab.stats().tlsConnections, 2);
+  assert.equal(lab.stats().resumedTlsConnections, 1);
+});
+
+test('lab GOAWAY control has a deadline for an unfinished HTTP/2 request', TEST_OPTS, async (t) => {
+  const lab = await labFor(t);
+  const socket = tls.connect({ host: lab.host, port: lab.clientPort, servername: lab.originName,
+    ca: lab.cert, ALPNProtocols: ['h2'] });
+  socket.on('error', () => {});
+  t.after(() => socket.destroy());
+  const session = http2.connect(`https://localhost:${lab.originPort}`, { createConnection: () => socket });
+  session.on('error', () => {});
+  t.after(() => session.destroy());
+  const req = session.request({ ':path': '/echo', ':method': 'POST' });
+  req.on('error', () => {}); req.write('unfinished');
+  const deadline = Date.now() + 2000;
+  while (lab.stats().requests !== 1) {
+    if (Date.now() > deadline) throw new Error('origin request observation deadline');
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  await assert.rejects(lab.drainOriginHttp2(), { name: 'AbortError' });
+});
 
 for (const httpVersion of ['1.1', '2']) {
   test(`TLS 1.2 HTTP/${httpVersion}: ticket resumption also preserves the raw relay path`, TEST_OPTS, async (t) => {
@@ -89,6 +135,7 @@ test('resumable session state is opt-in, bounded and absent from JSON results', 
   await lab.close();
   assert.throws(() => lab.rotateTicketKeys(), /closing/);
   assert.throws(() => lab.setOriginGroups('P-256'), /closing/);
+  await assert.rejects(lab.drainOriginHttp2(), /closing/);
 });
 
 function requireTicket(response) {

@@ -530,8 +530,8 @@ namespaces, `unshare`, `mount`, `ip`, `openssl` 3.x, NSS `certutil`, `tcpdump`,
 Runner ничего не скачивает и не устанавливает. Отсутствие инструментов/прав/полей
 анализатора — ошибка, не skip и не fallback с отключением защиты.
 
-Для каждого браузера создаются два новых профиля: без доверия к тестовому CA
-и с доверием только во временной NSS DB. OpenSSL создаёт эфемерные CA и отдельный
+Для каждого браузера создаётся свежий профиль на каждый сценарий: без доверия
+к тестовому CA либо с доверием только во временной NSS DB. OpenSSL создаёт эфемерные CA и отдельный
 leaf для `localhost`, действующие один день. Старый self-signed fixture с CA:TRUE
 не используется: Firefox отвергает его как end entity. Сертификатные проверки
 и браузерная sandbox не отключаются; нет `--ignore-certificate-errors`,
@@ -550,8 +550,9 @@ CONNECT для localhost включён только в тестовом про�
 Нет доступа к внешней сети или localhost-сервисам хоста; поднимается только его
 собственный loopback. tcpdump снимает настоящие пакеты только на трёх портах lab:
 client, exit, origin. Это не синтетический pcap, собранный из собственного parser.
-Tshark независимо собирает TCP/TLS и проверяет SNI/JA3/JA4 по ClientHello random
-в каждой точке. Полный восстановленный ClientHello и TLS record bytes отдельно
+Tshark независимо собирает TCP/TLS и проверяет SNI/JA3/JA4 по TCP stream,
+стороне/peer port, ClientHello random и номеру flight в каждой точке.
+Полный восстановленный ClientHello и TLS record bytes отдельно
 проверяет `assertRelayTrace`. Поля — [Wireshark TLS reference](https://www.wireshark.org/docs/dfref/t/tls.html).
 
 Успешный сценарий проверяет TLS 1.3, HTTP/2, точное echo 88 КиБ и совпадение
@@ -562,7 +563,7 @@ HTTP/2 SETTINGS и порядок заголовков не подменяютс
 отдаёт минимальную страницу без внешних ресурсов; `/` — диагностический JSON.
 
 Управление Chrome идёт через CDP, Firefox через WebDriver BiDi, без npm automation
-зависимостей. Есть deadlines команд/всего runner (120 с), ограниченный вывод
+зависимостей. Есть deadlines команд/всего runner (180 с), ограниченный вывод
 процессов и предел 10 000 пакетов на capture. Каталоги приватные (0700), umask
 0077; TLS secrets/keylogs не пишутся (`SSLKEYLOGFILE` не наследуется). Профили,
 ключи, pcap и дочерние процессы убираются после теста/ошибки/SIGTERM. После
@@ -570,12 +571,76 @@ SIGKILL runner или аварии ОС cleanup не гарантирован. P
 
 Проверено: Linux, Node 24.13.0, OpenSSL 3.0.13, tshark 4.2.2,
 Chrome for Testing 151.0.7922.10, Firefox 156.0.1.
-**161 Node-тест + 4 браузерных сценария**, без ошибок и пропусков.
-Это baseline первого handshake без HRR: неожиданный CH2 вызывает ошибку,
-а не ложное сравнение с CH1. Browser resumption/HRR/ECH/0-RTT, HTTP/3,
-GUI-браузеры, длительный профиль нагрузки и внешний сетевой путь ещё не покрыты.
+**193 Node-теста + 12 браузерных сценариев**, без ошибок и пропусков.
+Первоначальный baseline (161 + 4) расширен HRR и resumption, описанными ниже.
+Browser ECH/0-RTT, HTTP/3, GUI-браузеры, длительный профиль нагрузки и внешний
+сетевой путь ещё не покрыты.
 Нативный ClientHello и его JA3/JA4 не означают неотличимость всего TCP-потока от
 прямого браузерного соединения: relay меняет соединения, сегментацию и тайминги.
+
+### Браузерные HRR, resumption и отклонение ticket
+
+Без дополнительных CLI-флагов runner выполняет по шесть сценариев на браузер:
+
+| Сценарий | Обязательное доказательство |
+| --- | --- |
+| `untrusted` | Certificate error, ноль HTTP, реальный CONNECT/ClientHello |
+| `baseline` | Полный verified TLS 1.3 + HTTP/2 + echo |
+| `hrr` | На каждом участке CH1 → HRR → CH2 → SH, один origin connect |
+| `resumption` | Новый TCP/TLS, PSK offer и selection, origin `sessionReused=true` |
+| `resumption-hrr` | Новый resumed TLS с HRR; PSK в обоих CH, binder/records восстановлены |
+| `ticket-rejection` | PSK действительно предложен, не выбран сервером; полный verified handshake |
+
+HRR вызывается ограничением групп **только на origin**: P-256 для проверенного
+Chrome и P-384 для Firefox. Firefox 156 уже присылает P-256 key share в CH1,
+поэтому P-256 не вызывал HRR — тест это обнаружил, а не зачёл как PASS.
+ClientHello/список групп браузера не подменяется. Если будущая версия браузера
+станет сразу предлагать нужный share, сценарий завершится ошибкой и потребует
+пересмотра origin fixture. CH2 сохраняет random и прежний enc-SNI token;
+побайтовое восстановление проверяется отдельно для каждого flight.
+
+Для нового соединения programmatic lab-only `drainOriginHttp2()` отправляет
+GOAWAY через `Http2Session.close()` и ждёт закрытия с deadline 5 с. Процесс браузера
+и его TLS-кеш остаются прежними; listeners, CA и ticket keys не меняются.
+См. [Node HTTP/2 session close](https://nodejs.org/api/http2.html#http2sessionclosecallback).
+Контроль вызывается между завершёнными запросами, не через доступный по HTTP endpoint.
+Две Node-регрессии проверяют новое возобновлённое соединение после GOAWAY и
+ограниченное ожидание незавершённого запроса. Смена групп при resumption+HRR
+сохраняет ticket keys, а `ticket-rejection` явно их ротирует до повторного connect.
+
+Принятие и отказ ticket проверяются в отдельных свежих профилях: в реальном
+прогоне Firefox после успешного resume не предложил PSK на третьем соединении.
+Отсутствие PSK нельзя выдавать за server rejection. Поэтому `ticket-rejection`
+требует PSK в CH первого повторного соединения, его отсутствия в финальном SH,
+`sessionReused=false`, нового origin connect и успешного verified HTTP/2 echo.
+Сами tickets не извлекаются из браузера, не инжектируются и не логируются.
+
+[Pcap matcher](lib/browser-lab-pcap.mjs) сопоставляет каждый пассивный capture
+ровно с одним `tcp.stream`/peer/random/flight; проверяет полноту обеих сторон,
+порядок CH/HRR/SH и extension 41 (`pre_shared_key`) в CH и финальном SH.
+HRR распознаётся по специальному ServerHello random. Отпечатки CH1 и CH2 не
+обязаны совпадать между собой: каждый flight сравнивается с **собственным**
+оригиналом во всех трёх точках. Количество CONNECT/origin соединений тоже
+проверяется, чтобы скрытый reconnect не подменил проверку HRR/resumption.
+
+```bash
+npm run test:browser-pcap
+```
+
+30 быстрых регрессий matcher используют **синтетические строки tshark**, отдельно
+от настоящего сетевого захвата в браузерной матрице. Покрыты потеря CH2/HRR/SH,
+ошибки отпечатков/SNI, ложный PSK/resume, перемешанные потоки, повторное
+использование peer port, дубли, лишние/отсутствующие captures и ошибочные поля.
+Неоднозначные несколько hello в одной строке fields, неожиданные потоки или
+неполный capture дают fail, не частичный PASS. Это ограниченный analyser стенда,
+не универсальный парсер произвольных pcap/ретрансляций.
+
+Ограничения: browser ticket renewal после resume, 0-RTT и certificate-error
+именно при rejected-ticket fallback ещё не проверены этой браузерной матрицей
+(отрицательный CA baseline и соответствующие Node-тесты существуют отдельно).
+Нет browser-нагрузки с параллельными соединениями/обрывами или долгого soak.
+Следующий пакет — ограниченный многопоточный прогон с обрывами и проверкой
+освобождения сокетов/процессов, без TUN и изменения production routing.
 
 ## Границы текущего результата
 
