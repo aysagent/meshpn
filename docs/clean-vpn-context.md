@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–27; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–28; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -732,3 +732,73 @@ external 3.8→51.9 МиБ, arrayBuffers 0.3→48.3 МиБ; GC не форсир
 браузерного профиля в пределах прогона и контролем дочерних процессов/FD/памяти.
 Не динамическое клонирование ClientHello. Replay/destination policy,
 production-квоты и общий ECH routing остаются отдельными задачами.
+
+## 28. Bounded browser soak: реальные профили Chrome/Firefox
+
+Добавлен `scripts/transparent-browser-soak.mjs`, по умолчанию последовательно
+300 секунд **на каждый браузер** плюс три warmup-волны. Один процесс/временный
+профиль/страница на браузер; lab/client/exit/origin/CONNECT живут весь прогон.
+Каждая волна: параллельные 64-КиБ POST echo, уже принятые POST `/hold`, отмена
+половины через AbortController, завершение остальных, проверка TLS 1.3/H2/native UA
+и маркера в странице/localStorage. После всех ответов origin делает GOAWAY/drain,
+следующий запрос открывает ровно одну новую TLS session без рестарта браузера.
+Origin requests и TLS/TCP/CONNECT counters проверяют отсутствие дублей workload;
+bounded ClientHello captures сверяют байты/record layout/JA3/JA4 и очищаются.
+Реальное потребление браузером tickets не подменяется; resumption не обязателен
+на каждом reconnect. Фоновые обращения браузера отвергает фиксированный CONNECT gate.
+
+Worker работает как PID 1 в отдельных user/network/mount/PID namespaces с private
+`/proc` и единственным `lo`. Учёт охватывает **всё** дерево browser+worker.
+Kernel cleanup PID namespace покрывает и потомков в отдельных process groups;
+два теста проверяют TERM-resistant detached child при SIGTERM/SIGKILL владельца.
+Private profiles/NSS/CA/key удаляет supervisor; личные профили/trust store не трогаются.
+CA/leaf generator выделен в общий helper с существующим browser acceptance.
+
+Ресурсные tripwires: дерево ≤64 live процессов/64 zombies/4096 FD/3 ГиБ summed RSS,
+worker ≤512 МиБ RSS. После warmup worker FD не растут; дерево ограничено baseline
++8 live/+8 zombies/+128 FD. RSS суммируется с повторным учётом общих страниц,
+не является PSS/уникальной RAM. Измерения после каждой волны, JSON samples ≥5 с.
+Cleanup требует единственного живого worker, нулевых relay/CONNECT ресурсов и
+отсутствия TCP/server/timer/process handles. Zombies учитываются отдельно и
+исчезают вместе с namespace, не выдаются за живые процессы.
+
+Выявлены и сохранены как неуспешные диагностические прогоны: начальный лимит
+1.5 ГиБ summed RSS оказался меньше холодного Chrome (~1.6 ГиБ), поэтому порог
+откалиброван до 3 ГиБ до длинной проверки; Firefox сначала запускался без нужного
+LD_LIBRARY_PATH к уже подготовленным GTK-библиотекам. Установок не было.
+Первый длинный Firefox выполнил 300 секунд нагрузки, но завершился с cleanupFailed
+(старый отчёт ещё не содержал конкретный код). При отдельных SIGTERM-проверках
+подтверждён EACCES при чтении `/proc/<pid>/fd` завершающегося sandboxed процесса.
+Теперь после остановки bounded wait ≤5 с требует **полный читаемый** снимок;
+EACCES/EPERM не превращаются в нули, постоянная недоступность остаётся fail.
+В обычной нагрузке чтение ресурсов остаётся fail-closed. Добавлены четыре
+детерминированные регрессии этой гонки/таймаута/остаточных процессов.
+
+Acceptance: 18 Node-файлов, **334 Node-теста + 14 Chrome/Firefox-сценариев** — PASS.
+Отдельно `test:browser-soak-real`: четыре настоящих browser-теста, concurrency 12
+и SIGTERM при ожидающих запросах в Chrome/Firefox — PASS, cleanup проверен.
+Этот набор требует браузеры и не включён в Node-only suite. Команды/границы —
+[документация](../scripts/transparent-tls-lab.md#bounded-soak-с-настоящими-chromefirefox).
+
+Не добавлены независимый pcap в долгий soak (он остаётся в acceptance), browser
+slow-reader/active GOAWAY, суточный тест, внешний сетевой путь или production
+сертификация. Все изменения относятся к стенду; mesh/TUN/BoringSSL и production
+relay/wire-format не менялись.
+
+Финальные VPS-прогоны после исправления cleanup: Chrome 300.20 с / 592+3 волны,
+2380 echo, 1190 abort и 1190 завершённых held, 596 TLS/1788 ClientHello traces;
+Firefox 300.51 с / 574+3, 2308 echo, 1154 abort/1154 held, 578 TLS/1734 traces.
+Оба PASS с одним browser launch, суммарно 293 МиБ точного echo. Worker FD постоянно
+27 → 19 после cleanup; tree FD Chrome 611→582 (peak 612), Firefox 465→500 (peak 510).
+Summed tree RSS Chrome 1648.5→1586.7 МиБ, Firefox 1030.5→1157.7 МиБ;
+worker RSS 76.4→91.8 / 75.2→93.8 МиБ. Отсутствие утечек не доказано.
+В финальном снимке только живой worker, owned sockets/timers нулевые; 7/11 zombies
+учтены отдельно до выхода PID 1. Worker exit 0, privateFilesRemoved=true;
+Firefox cleanup получил полный снимок после одного временного EACCES.
+Дополнительно PASS финальные concurrency 12 / 60.38 с Chrome и 60.56 с Firefox:
+1164/1068 echo, 582/534 abort, 98/90 TLS sessions. Все raw отчёты остались вне git.
+
+Следующий отдельный пакет: негативные тесты повторного использования enc-SNI
+route token и ограниченная replay-защита exit с учётом HRR/ClientHello2.
+Политика разрешённых назначений exit, production-квоты и общий ECH routing
+по-прежнему отдельные задачи; успешный soak их не заменяет.

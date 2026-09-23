@@ -12,6 +12,7 @@ export const TEST_FILES = Object.freeze([
   'test-transparent-slow-reader.mjs',
   'test-transparent-h2-flow.mjs',
   'test-transparent-h2-goaway.mjs',
+  'test-browser-soak.mjs',
 ]);
 
 export function parseOptions(args) {

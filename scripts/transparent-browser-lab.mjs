@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /** Linux rootless real-browser + real-pcap acceptance test; no host traffic capture. */
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, readlink, stat, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, readlink, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startTransparentTlsLab, assertRelayTrace } from './lib/transparent-tls-lab.mjs';
 import { startLabConnectProxy } from './lib/transparent-connect-lab.mjs';
 import { child, exec, launchBrowser, BROWSER_SCENARIOS } from './lib/browser-lab-driver.mjs';
+import { browserOrigin } from './lib/browser-lab-origin.mjs';
 import { PCAP_FIELDS, parseBrowserPcap, assertBrowserPcap } from './lib/browser-lab-pcap.mjs';
 
 const self = fileURLToPath(import.meta.url);
@@ -61,19 +62,7 @@ if (mode !== '--isolated') {
     for (const name of ['tls.handshake.ja3', 'tls.handshake.ja4']) assert.ok(fields.includes(`\t${name}\t`), `tshark missing ${name}`);
     // Firefox correctly rejects CA:TRUE used as a TLS end entity. Keep old
     // fixtures unchanged; generate a real CA/leaf pair just for this run.
-    const caPath = join(directory, 'ca.pem'), caKey = join(directory, 'ca.key');
-    const certPath = join(directory, 'leaf.pem'), keyPath = join(directory, 'leaf.key');
-    const csr = join(directory, 'leaf.csr');
-    await exec('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
-      '-subj', '/CN=meshpn-ephemeral-browser-lab', '-addext', 'basicConstraints=critical,CA:TRUE',
-      '-addext', 'keyUsage=critical,keyCertSign,cRLSign', '-keyout', caKey, '-out', caPath]);
-    await exec('openssl', ['req', '-new', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=localhost',
-      '-addext', 'subjectAltName=DNS:localhost', '-addext', 'basicConstraints=critical,CA:FALSE',
-      '-addext', 'keyUsage=critical,digitalSignature,keyEncipherment', '-addext', 'extendedKeyUsage=serverAuth',
-      '-keyout', keyPath, '-out', csr]);
-    await exec('openssl', ['x509', '-req', '-in', csr, '-CA', caPath, '-CAkey', caKey,
-      '-set_serial', '2', '-days', '1', '-copy_extensions', 'copy', '-out', certPath]);
-    const originTls = { cert: await readFile(certPath), key: await readFile(keyPath) };
+    const { caPath, originTls } = await browserOrigin(directory);
     for (const kind of kinds) for (const scenario of BROWSER_SCENARIOS) {
       const trusted = scenario !== 'untrusted';
       const retryGroup = kind === 'firefox' ? 'P-384' : 'P-256';

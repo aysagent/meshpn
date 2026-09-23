@@ -16,10 +16,11 @@ curl нужен только для необязательной ручной п
 
 ## Единая acceptance-проверка
 
-[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 17 Node-наборов
+[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 18 Node-наборов
 и полную матрицу Chrome/Firefox. Он ничего не устанавливает и не скачивает.
-Нужны Linux, Node 22+, Go 1.24+, OpenSSL 3, GNU `stdbuf`, а для полного режима —
-зависимости браузерного стенда ниже, включая доступные user/network/mount namespaces.
+Нужны Linux, Node 22+, Go 1.24+, OpenSSL 3, GNU `stdbuf`, `unshare`, `ip` и доступные
+user/network/mount/PID namespaces (в том числе для browser-independent lifecycle
+регрессий). Для полного режима нужны зависимости браузерного стенда ниже.
 
 ```bash
 MESHPN_ECH_GO=/path/to/go \
@@ -70,9 +71,10 @@ JSON пишется один раз в конце: SIGKILL/авария ОС/о�
 или неполный файл. Ошибка аргументов или резервирования пути возникает до отчёта.
 Это не cgroup supervisor; ограничения cleanup процессов описаны ниже.
 
-Текущий полный прогон: **289 Node-тестов + 14 browser-сценариев**. Предыдущий пакет
+Текущий полный прогон: **334 Node-тестов + 14 browser-сценариев**. Предыдущий пакет
 acceptance был проверен дважды подряд с 235 Node-тестами; basic soak добавил 19,
-slow-reader — ещё 11, H2 flow-control — ещё 12, GOAWAY/drain — ещё 12.
+slow-reader — ещё 11, H2 flow-control — ещё 12, GOAWAY/drain — ещё 12,
+browser soak lifecycle/resource contracts — ещё 45 (без запуска браузеров).
 27 новых регрессий проверяют runner/reporter, включая отсутствие инструмента,
 неполные результаты, timeout/abort/output overflow и запрет перезаписи отчёта.
 Это ограниченный acceptance, не длительный soak и не production-сертификация.
@@ -377,6 +379,121 @@ FD 24 между волнами → 19 после shutdown; учитываемы
 fixture CANCEL/deadline 0, worker exit 0. RSS 103.3→115.9 МиБ, sampled peak 120.6.
 Полный acceptance прошёл дважды: 289 Node-тестов + 14 Chrome/Firefox-сценариев,
 второй раз — после усиления проверки cleanup при истечении drain deadline.
+
+### Bounded soak с настоящими Chrome/Firefox
+
+```bash
+# Используются уже настроенные MESHPN_BROWSER_CHROME / MESHPN_BROWSER_FIREFOX,
+# MESHPN_CERTUTIL и, если бинарникам нужны локальные shared libraries, LD_LIBRARY_PATH.
+node scripts/transparent-browser-soak.mjs --seconds=300 --concurrency=4
+node scripts/transparent-browser-soak.mjs --browser=firefox --seconds=60 --concurrency=12
+npm run test:browser-soak
+npm run test:browser-soak-real
+```
+
+По умолчанию Chrome и Firefox выполняются **последовательно по 300 измеряемых
+секунд каждый**, после трёх warmup-волн. Диапазоны: 1..3600 секунд на браузер,
+concurrency 2..12; `--browser=chrome|firefox|all`. Никаких скачиваний, установки
+библиотек или отключения browser sandbox/TLS verification. Missing browser — fail,
+не skip. Нельзя указать внешний target или использовать личный профиль.
+
+Каждый browser worker держит один реальный browser process/profile, одну страницу
+и постоянные lab/client/exit/origin/CONNECT listeners весь прогон. Временная CA
+доверена только приватному профилю; тот же генератор CA/leaf теперь используется
+коротким browser acceptance. TLS 1.3, HTTP/2, ClientHello и HTTP/User-Agent создаёт
+сам браузер, без BoringSSL-профилей или динамического клонирования.
+
+Волна:
+
+1. `concurrency` параллельных POST echo по 64 КиБ: точное сравнение тела в браузере.
+2. `concurrency` POST `/hold` должны реально поступить на origin; половина
+   отменяется `AbortController`, origin обязан освободить соответствующие responses.
+3. Оставшиеся ответы освобождаются и должны завершиться с 200/`released`.
+   Отменённые fetch должны вернуть именно `AbortError`.
+4. Диагностический запрос проверяет TLS 1.3/H2 и native UA. Маркер страницы и
+   localStorage остаётся тем же; браузер не перезапускается. Счётчик origin requests
+   требует ровно `2*concurrency+1`, без скрытых повторов workload-запросов.
+5. После завершённых запросов origin делает GOAWAY/drain. Все lab/CONNECT ресурсы
+   должны стать idle; следующая волна открывает ровно одну новую TLS session.
+   Счётчики origin TCP/TLS/CONNECT и один ClientHello в каждой из трёх точек
+   исключают скрытые переподключения. `assertRelayTrace` проверяет восстановленные
+   байты ClientHello, record layout, JA3/JA4, затем bounded captures очищаются.
+
+Это не browser GOAWAY с активными запросами: активный drain покрывает отдельный
+Node `h2-goaway`. Здесь браузер переоткрывает session **после** завершения волны.
+TLS resumption возможен и учитывается origin, но не требуется на каждом reconnect:
+браузер управляет потреблением tickets. Ни TLS secrets, ни ticket bytes не пишутся.
+Браузерные фоновые попытки доступа вне фиксированного lab origin отклоняются
+CONNECT gate и видны в его rejected counter; они не считаются workload retries.
+
+У каждого worker отдельные user/network/mount/**PID** namespaces; `/proc` отражает
+только его процессы, сеть содержит только `lo`. Worker — PID 1; Chrome NSS mount
+остаётся приватным. `unshare --kill-child=SIGKILL` связывает жизнь namespace init
+с launcher; завершение init убирает также потомков с отдельной process group.
+См. [unshare](https://man7.org/linux/man-pages/man1/unshare.1.html) и
+[PID namespaces](https://man7.org/linux/man-pages/man7/pid_namespaces.7.html).
+Две регрессии проверяют это для TERM-resistant detached descendant при SIGTERM
+и SIGKILL владельца namespace. Это не cgroup и не гарантия cleanup файлов при
+SIGKILL внешнего supervisor/аварии ОС.
+
+Ресурсы семплируются в idle после каждой волны, JSON time series — раз в ≥5 с:
+
+- дерево worker+browser: ≤64 живых процессов, ≤64 zombies, ≤4096 FD,
+  сумма RSS ≤3 ГиБ; worker отдельно ≤512 МиБ RSS;
+- после warmup: worker FD не растут; дерево допускает до baseline+8 процессов,
+  baseline+8 zombies, baseline+128 FD из-за ленивого запуска browser subprocesses;
+- сумма RSS **повторно считает общие страницы**, не равна уникально занятой RAM.
+  Нет принудительного GC, PSS/cgroup измерений или мгновенного OS-enforced лимита;
+- после close требуется полный читаемый снимок с единственным живым worker,
+  нулевыми lab/CONNECT counters и отсутствием TCP/server/timer/process handles.
+  Zombies считаются отдельно, не выдаются за живые процессы; они исчезают вместе
+  с PID namespace. Истёкший/недоступный cleanup snapshot — fail.
+
+Во время завершения sandboxed Firefox чтение `/proc/<pid>/fd` может временно
+вернуть EACCES. После stop используется bounded wait до 5 с за полным снимком;
+EACCES/EPERM не заменяются нулями. Постоянная недоступность, живой остаточный
+процесс и неожиданные ошибки проверяются отрицательными unit tests. Чтение
+ресурсов во время обычной нагрузки остаётся fail-closed без таких повторов.
+
+Wave deadline 30 с, команды CDP/BiDi ≤15 с, supervisor deadline `seconds+90` на
+браузер с kill grace 5 с. Вывод worker ограничен 4 МиБ, отчёт создаётся `wx/0600`
+и не перезаписывается. Приватные profile/NSS/CA/key файлы удаляются родителем;
+JSON содержит версии браузеров, revision+dirty, counters и числовые ресурсы,
+не raw stderr/RPC/stack, URL назначения, payload или TLS secrets. Независимого
+pcap/tshark внутри долгого soak нет: он остаётся отдельной acceptance-проверкой.
+
+`test:browser-soak` — 45 browser-independent проверок bounds/evidence/resource
+accounting/namespace ownership. `test:browser-soak-real` — четыре отдельные
+проверки Chrome/Firefox: короткий soak с concurrency 12 и SIGTERM во время held
+requests. Этот opt-in набор требует настоящих браузеров и не входит в Node-only
+acceptance. Длительность в несколько минут не доказывает отсутствие утечек,
+DPI-неотличимость или production-ready состояние.
+
+Финальные VPS-прогоны с исправленным cleanup (Node 24.13.0):
+
+| Браузер | Измеряемое время | Волны + warmup | Echo по 64 КиБ | Отменено / завершено held | TLS sessions / traces ClientHello |
+|---|---:|---:|---:|---:|---:|
+| Chrome 151.0.7922.10 | 300.20 с | 592 + 3 | 2380 | 1190 / 1190 | 596 / 1788 |
+| Firefox 156.0.1 | 300.51 с | 574 + 3 | 2308 | 1154 / 1154 | 578 / 1734 |
+
+Оба PASS, ровно один browser launch на прогон. Counters включают warmup и одну
+начальную navigation session. Суммарно 293 МиБ echo с точным сравнением байтов.
+Worker FD стабильно 27 → 19 после cleanup. Sampled tree FD: Chrome 611→582
+(521..612), Firefox 465→500 (465..510). Live tree: 15..17 и 12..13 процессов.
+Summed tree RSS: Chrome 1648.5→1586.7 МиБ (peak 1699.4), Firefox 1030.5→1157.7
+(peak 1165.6); worker RSS 76.4→91.8 и 75.2→93.8 МиБ соответственно.
+Показатели не доказывают отсутствие утечек.
+
+После cleanup у обоих только живой worker/PipeWrap; отслеживаемые relay/CONNECT
+сокеты/таймеры нулевые. Chrome оставляет 7 zombies, Firefox 11 внутри PID namespace
+до выхода init; оба worker завершаются естественно с exit 0, namespace закрывается,
+приватные profile/NSS/CA/key файлы удалены. Firefox cleanup потребовал один повтор
+чтения после временного EACCES и получил полный снимок; ошибка не скрыта нулями.
+
+Дополнительно на финальном коде PASS по минуте с concurrency 12, оба браузера
+последовательно: Chrome 60.38 с / 94+3 волны / 1164 echo / 582 abort / 98 TLS;
+Firefox 60.56 с / 86+3 / 1068 echo / 534 abort / 90 TLS. Полный acceptance:
+334 Node-теста + 14 browser-сценариев, отдельно четыре real-soak регрессии — PASS.
 
 ## Быстрый запуск
 
@@ -935,7 +1052,7 @@ SIGKILL runner или аварии ОС cleanup не гарантирован. P
 
 Проверено: Linux, Node 24.13.0, OpenSSL 3.0.13, tshark 4.2.2,
 Chrome for Testing 151.0.7922.10, Firefox 156.0.1.
-**289 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
+**334 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
 Первоначальный baseline (161 + 4) расширен HRR и resumption, описанными ниже.
 Browser ECH/0-RTT, HTTP/3, GUI-браузеры, длительный профиль нагрузки и внешний
 сетевой путь ещё не покрыты.
@@ -1004,7 +1121,8 @@ npm run test:browser-pcap
 именно при rejected-ticket fallback ещё не проверены этой браузерной матрицей
 (отрицательный CA baseline и соответствующие Node-тесты существуют отдельно).
 Короткий параллельный прогон и отмены HTTP/2 streams добавлены ниже; множество
-независимых браузерных процессов, browser slow-reader и долгий soak пока не покрыты.
+независимых браузерных процессов и browser slow-reader здесь не покрыты.
+Отдельный bounded browser soak с ресурсными счётчиками описан выше.
 
 ## Ограниченная нагрузка, медленные стороны и отмена запросов
 
@@ -1089,9 +1207,10 @@ runner и отдельный ограниченный по времени soak �
 - Нет обещания сохранить TCP packet boundaries, тайминги или размеры всех пакетов.
 - Основные наборы используют Node/OpenSSL/Go; отдельный браузерный набор проверяет
   реальные Chrome/Firefox через CONNECT и независимо сверяет JA3/JA4 с tshark.
-- Replay-защита relay, общий ECH routing и длительный browser soak пока не покрыты;
-  есть bounded Node soak с обрывами, медленными заголовками, H1 slow-reader и H2
-  stream flow-control. GOAWAY при активных/заблокированных streams ещё не покрыт.
+- Replay-защита relay и общий ECH routing пока не покрыты. Есть bounded Node soak
+  с обрывами, медленными заголовками, H1 slow-reader, H2 stream flow-control и
+  GOAWAY при активных streams; отдельный bounded browser soak описан выше.
+  Суточный browser soak, browser slow-reader и внешний сетевой путь не проверены.
   Настоящий ECH проверен в Go-матрице с pinned loopback origin, 0-RTT —
   отдельно в OpenSSL-матрице, без проверки их сочетания. Для HRR покрыт начальный
   TLS 1.3 handshake; TLS 1.2
