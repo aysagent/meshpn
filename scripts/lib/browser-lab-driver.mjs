@@ -21,6 +21,16 @@ export function child(file, args, options = {}) {
   });
   let failure;
   proc.on('error', (e) => { failure = e; });
+  const killGroup = (signal) => {
+    if (!proc.pid) return;
+    try { process.kill(-proc.pid, signal); }
+    catch (error) { if (error.code !== 'ESRCH') throw error; }
+  };
+  // The group belongs to this detached test process. Do not cancel cleanup just
+  // because its leader exited: descendants may ignore TERM or keep pipes open.
+  proc.once('exit', () => {
+    try { killGroup('SIGKILL'); } catch (error) { failure ??= error; }
+  });
   const closed = new Promise((resolve) => proc.once('close', () => {
     ended = true; for (const notify of listeners) notify(); resolve();
   }));
@@ -43,9 +53,8 @@ export function child(file, args, options = {}) {
     async stop(signal = 'SIGTERM') {
       if (ended) return;
       if (!proc.pid) { await closed; return; }
-      const kill = (sig) => { try { process.kill(-proc.pid, sig); } catch (error) { if (error.code !== 'ESRCH') throw error; } };
-      kill(signal);
-      const timer = setTimeout(() => kill('SIGKILL'), 5000);
+      killGroup(signal);
+      const timer = setTimeout(() => killGroup('SIGKILL'), 5000);
       await closed; clearTimeout(timer);
     },
   };

@@ -74,12 +74,13 @@ if (mode !== '--isolated') {
     await exec('openssl', ['x509', '-req', '-in', csr, '-CA', caPath, '-CAkey', caKey,
       '-set_serial', '2', '-days', '1', '-copy_extensions', 'copy', '-out', certPath]);
     const originTls = { cert: await readFile(certPath), key: await readFile(keyPath) };
-    for (const kind of kinds) for (const scenario of ['untrusted', 'baseline', 'hrr', 'resumption', 'resumption-hrr', 'ticket-rejection']) {
+    for (const kind of kinds) for (const scenario of ['untrusted', 'baseline', 'hrr', 'resumption', 'resumption-hrr', 'ticket-rejection', 'parallel-abort']) {
       const trusted = scenario !== 'untrusted';
       const retryGroup = kind === 'firefox' ? 'P-384' : 'P-256';
       const caseDir = join(directory, `${kind}-${scenario}`);
       await mkdir(caseDir, { mode: 0o700 });
       const lab = await startTransparentTlsLab({ sessionTimeoutMs: 30_000,
+        holdResponses: scenario === 'parallel-abort',
         originTls: { ...originTls, ...(scenario === 'hrr' ? { ecdhCurve: retryGroup } : {}) } });
       cleanups.add(lab.close);
       const proxy = await startLabConnectProxy(lab);
@@ -140,6 +141,41 @@ if (mode !== '--isolated') {
         assert.equal((await echoAndInfo()).sessionReused, false);
         expectConnection({ hrr: scenario === 'hrr' });
         assert.equal(lab.stats().tlsConnections, 1);
+        if (scenario === 'parallel-abort') {
+          async function held(count) {
+            const deadline = Date.now() + 3000;
+            while (lab.stats().heldResponses !== count) {
+              if (Date.now() > deadline) throw new Error(`held responses never reached ${count}`);
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+          }
+          for (let wave = 0; wave < 4; wave++) {
+            await browser.evaluate(`(() => {
+              window.labControllers = Array.from({ length: 8 }, () => new AbortController());
+              window.labResults = Promise.all(window.labControllers.map(async (controller) => {
+                try {
+                  const response = await fetch('/hold', { signal: controller.signal, cache: 'no-store' });
+                  return response.status === 200 && await response.text() === 'released' ? 'ok' : 'bad-response';
+                } catch (error) { return error.name; }
+              }));
+              return true;
+            })()`);
+            await held(8); // prove all aborted requests actually reached the origin
+            await browser.evaluate('(() => { window.labControllers.slice(0, 4).forEach(c => c.abort()); return true; })()');
+            await held(4);
+            lab.releaseHeldResponses();
+            assert.deepEqual(await browser.evaluate('window.labResults'), [...Array(4).fill('AbortError'), ...Array(4).fill('ok')]);
+            await held(0);
+            const results = await browser.evaluate(`Promise.all(Array.from({ length: 8 }, async (_, i) => {
+              const body = String(i).repeat(65536);
+              const response = await fetch('/echo', { method: 'POST', body, cache: 'no-store' });
+              return response.status === 200 && await response.text() === body;
+            }))`);
+            assert.deepEqual(results, Array(8).fill(true));
+          }
+          assert.equal((await echoAndInfo()).httpVersion, '2.0');
+          assert.equal(lab.stats().tlsConnections, 1, 'HTTP/2 stream aborts must not destroy the TLS connection');
+        }
         if (['resumption', 'resumption-hrr', 'ticket-rejection'].includes(scenario)) {
           const resumed = scenario !== 'ticket-rejection';
           // Separate cold profiles for acceptance/rejection: a browser may consume
@@ -168,7 +204,7 @@ if (mode !== '--isolated') {
       const checked = assertBrowserPcap(parseBrowserPcap(stdout, ports), lab.captures, expectations);
       await proxy.close(); cleanups.delete(proxy.close);
       await lab.close(); cleanups.delete(lab.close);
-      assert.equal(proxy.stats().clients + proxy.stats().upstreams + proxy.stats().headerTimers + lab.stats().sockets, 0);
+      assert.equal(proxy.stats().clients + proxy.stats().upstreams + proxy.stats().headerTimers + lab.stats().sockets + lab.stats().heldResponses, 0);
       console.log(`PASS ${browser.version} ${scenario}: ${trusted ? 'verified TLS1.3 + HTTP/2 + echo + native UA' : 'untrusted certificate rejected before HTTP'}; ${expectations.size} connections, ${checked} ClientHellos independently checked by tshark`);
     }
   } finally {

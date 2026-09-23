@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–21; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–22; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -458,3 +458,44 @@ Chrome for Testing 151.0.7922.10, Firefox 156.0.1, tshark 4.2.2.
 certificate-error при browser ticket fallback, общий ECH routing и replay policy
 остаются отдельными задачами. Production runtime/wire-format, mesh/TUN/BoringSSL
 не менялись; этот пакет усиливает стенд и доказательства совместимости.
+
+## 22. Короткая нагрузка, slow peers, отмены HTTP/2 и владение процессами
+
+[Load suite](../scripts/test-transparent-tls-load.mjs), `npm run test:transparent-load`:
+72 verified независимых CONNECT/TLS-соединения (6×12, H1/H2, echo 18 МиБ),
+72 обрыва неполного ClientHello, 24 обрыва H1 upload после handshake,
+6 drip-fed hello и 6 CONNECT headers с абсолютными deadlines.
+После волн обязателен нулевой счётчик lab/proxy сокетов и header timers;
+внутренние idle-таймеры harness выключены. Здоровые запросы продолжают работать.
+
+Отдельные реальные raw TCP pump тесты проверяют forward/reverse backpressure:
+pause/drain, resume с точной передачей 32 МиБ или write deadline, очистку
+session sockets/timers/listeners. Бюджет фиксирован, отсутствие настоящего
+backpressure даёт fail. Наблюдаемые queue peaks 64/64 КиБ в проверенном окружении;
+семплирование не доказывает предел каждого краткого пика. RSS диагностический,
+не критерий отсутствия утечек/глобальный memory bound; суточный soak не запускался.
+
+В Chrome/Firefox добавлен `parallel-abort`: 4×8 удерживаемых HTTP/2 requests,
+в каждой волне четыре отмены после подтверждённого поступления на origin,
+четыре успешных ответа и восемь параллельных echo по 64 КиБ.
+Остаётся одно TLS/CONNECT-соединение: это multiplexed H2, а не независимые TCP.
+Opt-in gate внутреннего origin ограничен 16 ответами / 5 с, по умолчанию отключён,
+очищается при abort/close; три Node-теста проверяют лимит/release/deadline/config.
+
+[Process suite](../scripts/test-browser-lab-process.mjs), `npm run test:browser-process`,
+воспроизвёл реальную ошибку test driver: лидер завершился, таймер kill отменился,
+потомок с SIGTERM handler продолжил работу. Driver теперь завершает оставшуюся
+принадлежащую ему detached process group при exit лидера. Покрыты наследуемые
+stdio pipes и обычная повторная остановка. /proc-проверка отличает работающий
+процесс от zombie; PID 1 reaping и escaped process groups не контролируются.
+Production relay менять не потребовалось; исправлена именно обвязка стенда.
+
+Проверено: **208 Node-тестов + 14 browser-сценариев**, Linux/Node 24.13.0,
+Chrome for Testing 151.0.7922.10, Firefox 156.0.1, tshark 4.2.2.
+Новых Node-тестов 15 (12 load/gate + 3 process), browser-сценариев 2.
+Детали и границы — [документация](../scripts/transparent-tls-lab.md#ограниченная-нагрузка-медленные-стороны-и-отмена-запросов).
+
+Следующий пакет: единый acceptance runner с версиями инструментов, машинным
+отчётом и ограниченными повторами. Длительный soak, browser multi-process/slow-reader,
+ECH/0-RTT браузеров, production глобальные квоты, replay/destination policy и общий
+ECH routing остаются отдельными задачами. Mesh/TUN/BoringSSL не затронуты.

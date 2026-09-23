@@ -102,9 +102,12 @@ export async function startTransparentTlsLab({
   clientPort = 0, exitPort = 0, originPort = 0,
   originName = 'localhost', publicName = 'relay.test',
   clientPsk, sessionTimeoutMs = 10_000, originTls = {}, clientLimits, exitLimits,
-  externalOriginPort,
+  externalOriginPort, holdResponses = false,
 } = {}) {
   for (const port of [clientPort, exitPort, originPort]) validatePort(port);
+  if (typeof holdResponses !== 'boolean' || (holdResponses && externalOriginPort !== undefined)) {
+    throw new Error('holdResponses requires a boolean and the internal lab origin');
+  }
   if (externalOriginPort !== undefined) {
     validatePort(externalOriginPort);
     if (!externalOriginPort) throw new Error('external origin must have a bound loopback port');
@@ -135,6 +138,7 @@ export async function startTransparentTlsLab({
   let tlsConnections = 0;
   let resumedTlsConnections = 0;
   let requests = 0;
+  const heldResponses = new Map();
 
   function track(socket) {
     sockets.add(socket);
@@ -214,6 +218,20 @@ export async function startTransparentTlsLab({
         body.push(chunk);
       });
       req.on('end', () => {
+        // Opt-in test gate: no slow endpoint in the ordinary manual lab.
+        if (holdResponses && req.url === '/hold') {
+          if (heldResponses.size >= 16) { res.writeHead(503); res.end(); return; }
+          let released = false;
+          const release = (status = 200) => {
+            if (released || res.destroyed) return;
+            released = true; clearTimeout(timer);
+            res.writeHead(status); res.end('released');
+          };
+          const timer = setTimeout(() => release(504), 5000);
+          heldResponses.set(res, release);
+          res.once('close', () => { clearTimeout(timer); heldResponses.delete(res); });
+          return;
+        }
         if (req.url === '/browser') {
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
           res.end('<!doctype html><title>Transparent TLS lab</title><link rel="icon" href="data:,"><p>Loopback browser test origin.</p>');
@@ -281,8 +299,11 @@ export async function startTransparentTlsLab({
       stats: () => ({ originConnections, sockets: sockets.size,
         tlsConnections: externalOriginPort ? null : tlsConnections,
         resumedTlsConnections: externalOriginPort ? null : resumedTlsConnections,
-        requests: externalOriginPort ? null : requests }),
+        requests: externalOriginPort ? null : requests, heldResponses: heldResponses.size }),
       // Lab-only controls, no ticket key material returned to the caller or logged.
+      releaseHeldResponses() {
+        for (const release of heldResponses.values()) release();
+      },
       async drainOriginHttp2() {
         if (closing) throw new Error('lab is closing');
         if (externalOriginPort) throw new Error('external origin controls its own HTTP/2 sessions');
