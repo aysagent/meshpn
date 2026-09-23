@@ -1348,3 +1348,41 @@ children/zombies=0, DNS lookups=0. Replay entries11893/19362 остаются в
 `/var/tmp/meshpn-acceptance-kmeQCV/report.json`. Runtime DNS adapter и relay
 в этом пакете не менялись: добавлены тестовый fixture, audit, workload/runner,
 регрессии и документация. README обновлён с результатами и следующим этапом.
+
+## 38. Расширение DNS wire contract (2026-09-23)
+
+Снято ограничение только A/AAAA в общем bounded parser, используемом lab и
+explicit client→exit adapter. Теперь обычные IN-типы, в том числе HTTPS/SVCB,
+TXT, SRV, PTR и неизвестные типы, передаются без изменения RDATA. Проверяются
+DNS envelope, question matching, RR/OPT lengths и limits, но не семантика новых
+RDATA/подписи DNSSEC. Контракт и точные exclusions — [dns-wire.md](../scripts/dns-wire.md).
+
+Бинарные labels принимаются; сравнение question ASCII-only с сохранением границ
+labels, без коллизии embedded-dot и разделителя. Сканирование всех байтов question
+на compression marker заменено проверкой реально разобранных указателей.
+EDNS(0) допускает extended response RCODE, проверяет наличие request OPT;
+UDP truncation больше не теряет high RCODE. Синтетический TC не содержит частичных
+RR/ссылок на удалённые данные, сохраняет RA/RD/CD, сбрасывает AA/AD. Неизвестные
+EDNS options передаются в полном сообщении, не копируются в локальную ошибку/TC.
+
+Новые39 wire-регрессий и13 adapter-регрессий (12 для дополнительных типов UDP/TCP,
+одна HTTPS UDP TC→TCP с extended RCODE). Восемь типов через реальный TLS
+client→exit→resolver сверяются побайтно. Общий acceptance: **730 Node-тестов
+(27 файлов) +14 Chrome/Firefox сценариев PASS**, без skips. Report:
+`/var/tmp/meshpn-acceptance-r56pU9/report.json`.
+
+Сохранены общий лимит4096 байт/128 RR, IN/QUERY/single-question policy; исключены
+meta/transfer/ANY, другие EDNS versions. Это ещё не универсальный системный DNS.
+Следующий этап: полный размер TCP/DoH DNS65535 с отдельным UDP cap и memory budgets,
+EDNS negotiation и HTTP cache-age/TTL contract; затем согласовать opt-in OS/LAN/IPv6
+lifecycle. Действующая система, OS DNS, firewall, TUN и mesh не менялись.
+
+После изменения parser повторены4 public-contract real-теста IPv4/IPv6 ×
+transparent/combo: PASS. Короткие повторные pcap/soak (старые A/AAAA fault-matrices,
+не pcap всех новых типов) по30с измеряемой нагрузки, concurrency4:
+
+- IPv4/transparent: PASS, `/var/tmp/meshpn-dns-soak-report-zoP4lN/report.json`.
+- IPv6/combo: PASS, `/var/tmp/meshpn-dns-soak-report-UW5sYR/report.json`.
+
+Оба прогона: ресурсные бюджеты соблюдены, после cleanup owned sockets/jobs/timers/
+sessions/listeners=0, fd23→19, DNS lookups=0; raw pcap/PEM удалены. Отчёты сохранены.

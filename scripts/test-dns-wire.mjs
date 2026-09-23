@@ -1,0 +1,100 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { makeDnsQuery, parseDnsQuery, parseDns, validateDnsResponse, fixtureDnsAnswer,
+  dnsFailure, truncateDnsResponse, DNS_MAX_BYTES } from './lib/lab-dns-wire.mjs';
+
+const query = (type = 65, size = 1232) => makeDnsQuery('_svc.Example.test', type, 0xabcd, size);
+const rejected = (fn) => assert.throws(fn, { code: 'DNS_WIRE' });
+function options(packet, data) {
+  const opt = parseDns(packet).records.find((rr) => rr.type === 41);
+  assert.equal(opt.offset, packet.length);
+  const copy = Buffer.from(packet); copy.writeUInt16BE(data.length, opt.offset - 2);
+  return Buffer.concat([copy, data]);
+}
+function rawQuestion(labels) {
+  const header = Buffer.from('abcd01000001000000000000', 'hex');
+  return Buffer.concat([header, ...labels.flatMap((label) => [Buffer.from([label.length]), label]), Buffer.from('0000100001', 'hex')]);
+}
+
+for (const type of [1, 2, 5, 6, 12, 15, 16, 28, 33, 39, 43, 46, 47, 48, 50, 51, 52, 64, 65, 257, 65280]) {
+  test(`ordinary IN type ${type}: envelope and opaque RDATA round trip`, () => {
+    const q = query(type), reply = fixtureDnsAnswer(q);
+    const before = Buffer.from(reply), parsed = validateDnsResponse(reply, q);
+    assert.equal(parsed.type, type); assert.equal(parsed.counts[0], 1);
+    assert.deepEqual(reply, before);
+  });
+}
+for (const type of [0, 41, 249, 250, 251, 252, 253, 254, 255, 65535]) {
+  test(`pilot excludes meta/transfer/reserved type ${type}`, () => rejected(() => makeDnsQuery('example.test', type)));
+}
+test('root question, trailing dot, ASCII case folding and binary label boundaries', () => {
+  assert.equal(parseDnsQuery(makeDnsQuery('.', 2)).nameKey, '');
+  assert.deepEqual(makeDnsQuery('example.test.'), makeDnsQuery('example.test'));
+  const q = rawQuestion([Buffer.from([65, 0, 192, 255]), Buffer.from('test')]);
+  const r = dnsFailure(q); r[13] = 97; validateDnsResponse(r, q);
+  r[16] = 223; rejected(() => validateDnsResponse(r, q)); // no Unicode case folding
+  const one = rawQuestion([Buffer.from('a.b')]), two = rawQuestion([Buffer.from('a'), Buffer.from('b')]);
+  assert.equal(parseDnsQuery(one).name, parseDnsQuery(two).name);
+  rejected(() => validateDnsResponse(dnsFailure(one), two));
+});
+test('EDNS options and DO/CD/AD pass unchanged; local errors omit request options and AD', () => {
+  const q = options(query(), Buffer.from('fde8000500ff41c000000c0003000000', 'hex'));
+  q.writeUInt16BE(0x0130, 2);
+  const opt = parseDns(q).records[0]; q.writeUInt32BE(0x8000, opt.offset - 6);
+  const reply = fixtureDnsAnswer(q); reply.writeUInt16BE(reply.readUInt16BE(2) | 0x20, 2);
+  const withOptions = options(reply, Buffer.from('fde8000300ff41', 'hex'));
+  assert.equal(validateDnsResponse(withOptions, q).edns.flags, 0x8000);
+  const failure = dnsFailure(q), parsed = validateDnsResponse(failure, q);
+  assert.equal(parsed.flags & 0x30, 0x10); assert.equal(parsed.edns.flags, 0x8000);
+  assert.equal(parsed.records[0].length, 0);
+});
+test('extended RCODE, including BADVERS and 4095, survives safe UDP truncation', () => {
+  for (const rcode of [0, 3, 16, 23, 4095]) {
+    const q = query(), r = dnsFailure(q, rcode); r.writeUInt16BE(r.readUInt16BE(2) | 0x420, 2);
+    const small = truncateDnsResponse(q, r), parsed = validateDnsResponse(small, q);
+    assert.equal(parsed.rcode, rcode); assert.equal(parsed.flags & 0x200, 0x200);
+    assert.equal(parsed.flags & 0x420, 0); assert.equal(parsed.id, 0xabcd);
+    assert.deepEqual(parsed.counts, [0, 0, 1]); assert.ok(small.length <= 512);
+  }
+  const plain = makeDnsQuery('example.test');
+  rejected(() => dnsFailure(plain, 16));
+  for (const code of [-1, 4096, 1.5]) rejected(() => dnsFailure(query(), code));
+});
+test('truncation preserves upstream RA/RD/CD, not fabricated recursion capability', () => {
+  const q = query(), r = fixtureDnsAnswer(q); r.writeUInt16BE(0x8010, 2);
+  assert.equal(parseDns(truncateDnsResponse(q, r)).flags, 0x8210);
+});
+test('EDNS envelope rejects duplicate/wrong-section/nonroot OPT and broken option lengths', () => {
+  const q = query(), opt = q.subarray(parseDns(q).questionEnd);
+  const duplicate = Buffer.concat([q, opt]); duplicate.writeUInt16BE(2, 10);
+  rejected(() => parseDnsQuery(duplicate));
+  const wrongSection = Buffer.from(q); wrongSection.writeUInt16BE(1, 6); wrongSection.writeUInt16BE(0, 10);
+  rejected(() => parseDns(wrongSection));
+  const nonroot = Buffer.concat([q.subarray(0, q.length - 11), Buffer.from([1, 97]), opt]);
+  rejected(() => parseDnsQuery(nonroot));
+  for (const bytes of ['00', '000100', '0001000400']) rejected(() => parseDnsQuery(options(q, Buffer.from(bytes, 'hex'))));
+});
+test('query extended RCODE/nonzero version and unsolicited response OPT are rejected', () => {
+  for (const ttl of [0x1000000, 0x10000]) {
+    const q = query(); q.writeUInt32BE(ttl, q.length - 6); rejected(() => parseDnsQuery(q));
+  }
+  rejected(() => validateDnsResponse(dnsFailure(query()), makeDnsQuery('_svc.Example.test', 65, 0xabcd)));
+  const q = query(), r = dnsFailure(q); r.writeUInt32BE(0x10000, r.length - 6);
+  rejected(() => validateDnsResponse(r, q));
+});
+test('upstream TC remains valid only with complete record framing; response matching stays strict', () => {
+  const q = query(), r = fixtureDnsAnswer(q); r[2] |= 2;
+  validateDnsResponse(r, q);
+  rejected(() => validateDnsResponse(r.subarray(0, r.length - 1), q));
+  for (const at of [0, 13, parseDns(q).questionEnd - 3, parseDns(q).questionEnd - 1]) {
+    const copy = Buffer.from(r); copy[at] ^= 1; rejected(() => validateDnsResponse(copy, q));
+  }
+});
+test('name, RR and message limits remain bounded', () => {
+  rejected(() => makeDnsQuery(Array(4).fill('a'.repeat(63)).join('.'), 65));
+  rejected(() => parseDns(Buffer.alloc(DNS_MAX_BYTES + 1)));
+  const q = query(), r = fixtureDnsAnswer(q); r.writeUInt16BE(129, 6);
+  rejected(() => validateDnsResponse(r, q));
+  const loop = fixtureDnsAnswer(q); loop.writeUInt16BE(0xc000 | parseDns(q).questionEnd, parseDns(q).questionEnd);
+  rejected(() => validateDnsResponse(loop, q));
+});

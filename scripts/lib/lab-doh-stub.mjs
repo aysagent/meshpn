@@ -3,7 +3,7 @@ import dgram from 'node:dgram';
 import net from 'node:net';
 import https from 'node:https';
 import { once } from 'node:events';
-import { DNS_MAX_BYTES, dnsError, parseDnsQuery, validateDnsResponse, dnsFailure } from './lab-dns-wire.mjs';
+import { DNS_MAX_BYTES, dnsError, parseDnsQuery, validateDnsResponse, dnsFailure, truncateDnsResponse } from './lab-dns-wire.mjs';
 import { labDnsUpstreamTarget } from './dns-upstream-config.mjs';
 import { dnsExitTransportTarget } from './dns-exit-transport.mjs';
 
@@ -100,7 +100,10 @@ export async function startLabDohStub({ port = 0, upstream, profile, relayPort, 
       const upstreamQuery = Buffer.from(query); upstreamQuery.writeUInt16BE(0);
       const reply = await doh(upstreamQuery, signal);
       counts.succeeded++;
-      if (udp && reply.length > parsed.udpSize) return dnsFailure(query, reply.readUInt16BE(2) & 15, true);
+      if (udp && reply.length > parsed.udpSize) {
+        const originalIdReply = Buffer.from(reply); originalIdReply.writeUInt16BE(parsed.id, 0);
+        return truncateDnsResponse(query, originalIdReply);
+      }
       reply.writeUInt16BE(parsed.id); return reply;
     } catch (error) {
       counts.failed++; errors[error.code] = (errors[error.code] ?? 0) + 1;

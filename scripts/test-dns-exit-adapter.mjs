@@ -54,7 +54,7 @@ test('public IPv4/IPv6 transport creation is offline, branded, and close is idem
   }
 });
 
-async function fixture(t, { badCa = false, wrongName = false, wrongSecret = false, mode = 'normal', timeoutMs = 300 } = {}) {
+async function fixture(t, { badCa = false, wrongName = false, wrongSecret = false, mode = 'normal', timeoutMs = 300, answer = fixtureDnsAnswer } = {}) {
   let bodies = 0, attempts = 0;
   const wire = [];
   const sockets = new Set(), sessions = [];
@@ -69,7 +69,7 @@ async function fixture(t, { badCa = false, wrongName = false, wrongSecret = fals
       if (mode === 'hold') return;
       if (mode === 'reset') { req.socket.destroy(); return; }
       if (mode === 'redirect') { res.writeHead(302, { location: 'http://resolver.test:53' }).end(); return; }
-      res.writeHead(200, { 'content-type': 'application/dns-message' }).end(fixtureDnsAnswer(Buffer.concat(chunks)));
+      res.writeHead(200, { 'content-type': 'application/dns-message' }).end(answer(Buffer.concat(chunks)));
     });
   });
   origin.on('connection', track); origin.on('tlsClientError', () => {});
@@ -106,13 +106,30 @@ async function fixture(t, { badCa = false, wrongName = false, wrongSecret = fals
   return { stub, transport, wire, exitPort: exit.address().port, originPort: origin.address().port,
     counts: () => ({ bodies, attempts }), stopExit: () => new Promise((resolve) => exit.close(resolve)) };
 }
-for (const tcp of [false, true]) for (const type of [1, 28]) test(`in-memory relay ${tcp ? 'TCP' : 'UDP'} type ${type}: verified TLS, identity/path, snapshot, no listener`, async (t) => {
+for (const tcp of [false, true]) for (const type of [1, 28, 12, 16, 33, 64, 65, 65280]) test(`in-memory relay ${tcp ? 'TCP' : 'UDP'} type ${type}: verified TLS, identity/path, snapshot, no listener`, async (t) => {
   const lab = await fixture(t);
   const packet = makeDnsQuery('private-adapter.dns-lab.test', type, 4321);
   const reply = await queryLabDns(lab.stub.port, packet, { tcp, fragment: true });
   assert.equal(validateDnsResponse(reply, packet).counts[0], 1);
+  assert.deepEqual(reply, fixtureDnsAnswer(packet));
   assert.deepEqual(lab.counts(), { bodies: 1, attempts: 1 });
   assert.equal(lab.transport.stats().connections, 1);
+});
+test('HTTPS UDP truncation then TCP retry preserves complete opaque answer and extended RCODE', async (t) => {
+  const answer = (q) => {
+    const r = fixtureDnsAnswer(q, { count: 40 });
+    r.writeUInt32BE(0x01008000, r.length - 6); // extended RCODE 16 + DO
+    return r;
+  };
+  const lab = await fixture(t, { answer });
+  const q = makeDnsQuery('service.test', 65, 0xabcd, 512);
+  const udp = await queryLabDns(lab.stub.port, q);
+  const small = validateDnsResponse(udp, q);
+  assert.ok(udp.length <= 512); assert.equal(small.rcode, 16);
+  assert.equal(small.flags & 0x200, 0x200); assert.equal(small.counts[0], 0);
+  const tcp = await queryLabDns(lab.stub.port, q, { tcp: true, fragment: true });
+  assert.deepEqual(tcp, answer(q)); assert.equal(validateDnsResponse(tcp, q).counts[0], 40);
+  assert.deepEqual(lab.counts(), { bodies: 2, attempts: 2 });
 });
 for (const options of [{ badCa: true }, { wrongName: true }, { wrongSecret: true }, { mode: 'hold' }, { mode: 'reset' }, { mode: 'redirect' }]) {
   test(`in-memory relay fails closed: ${JSON.stringify(options)}`, async (t) => {

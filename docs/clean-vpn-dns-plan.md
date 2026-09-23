@@ -110,11 +110,11 @@ Configured hostname+port использует static public-IP snapshot без O
 Перебор только до успешного TCP выбора, без DNS/mux fallback; live exit не менялся.
 Explicit клиентский DNS adapter через числовой exit endpoint реализован,
 с TLS hostname/CA validation, без системного переключения DNS/TUN.
-Следующий шаг перед системной интеграцией — расширить проверяемый DNS wire
-contract: сейчас принимаются только IN A/AAAA, что недостаточно для обычного
-системного resolver (HTTPS/SVCB, TXT, SRV, PTR и другие типы). Не просто убрать
-проверку qtype, а отдельно проверить framing, matching вопроса/ответа, EDNS,
-большие/усечённые ответы и ошибки, сохранив лимиты и отсутствие fallback.
+Расширен [DNS wire contract](../scripts/dns-wire.md): обычные IN-типы, включая
+HTTPS/SVCB, TXT, SRV, PTR; бинарные labels, EDNS(0), extended RCODE, безопасный TC
+и matching вопроса/ответа. RDATA передаются непрозрачно, без semantic/DNSSEC validation.
+Следующий шаг перед системной интеграцией — полный TCP/DoH размер DNS65535 с
+ограниченными memory/framing budgets, EDNS negotiation и HTTP cache-age/TTL contract.
 После этого отдельно согласовать opt-in client/OS/LAN/IPv6 integration.
 Кэша и активного production DNS/bootstrap пока нет.
 Случайные cover DNS запросы не входят в этот план реализации.

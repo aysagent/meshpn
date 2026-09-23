@@ -158,7 +158,8 @@ DNS переключения и TUN. Для него добавлены отде
 Адрес/доверие самого exit тоже требуют отдельной bootstrap-конфигурации.
 OS/LAN/IPv6 DNS integration, общий exit DNS, resolver selection, caching/pooling,
 secret URL/header support и эксплуатационная ротация IP/CA пока вне пакета.
-DNS wire/parser и stub всё ещё лабораторные, поддерживают только IN A/AAAA.
+DNS wire/parser и stub остаются пилотными: [обычные IN-типы и EDNS(0)](dns-wire.md),
+но лимит4096 также для TCP/DoH, без полного DNSSEC validator.
 
 ## Проверка на VPS
 

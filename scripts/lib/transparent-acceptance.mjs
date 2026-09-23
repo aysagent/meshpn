@@ -16,6 +16,7 @@ export const TEST_FILES = Object.freeze([
   'test-transparent-tls-replay.mjs',
   'test-transparent-tls-destination.mjs',
   'test-transparent-dns-lab.mjs',
+  'test-dns-wire.mjs',
   'test-dns-soak.mjs',
   'test-dns-upstream-config.mjs',
   'test-dns-upstream-route.mjs',

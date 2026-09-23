@@ -53,11 +53,12 @@ CA заданы отдельно; `rejectUnauthorized:true` не отключа�
 
 ## Поддержанный DNS subset
 
-[Wire-модуль](lib/lab-dns-wire.mjs) проверяет header, одну IN-question A/AAAA,
+[Wire-модуль](lib/lab-dns-wire.mjs) проверяет header, одну IN-question обычного типа,
 границы labels/records, размеры A/AAAA RDATA, отсутствие trailing bytes, opcode,
 QR, ID и соответствие question в ответе. Compression names в RR ограничены
 backward pointers/128 шагами; циклы/выход за границы отвергаются. Questions с
-compression, бинарные labels и другие qtypes пока не поддержаны.
+compression не поддержаны; бинарные labels и обычные qtypes теперь принимаются.
+Подробные правила, EDNS/TC и ограничения — [DNS wire contract](dns-wire.md).
 Это bounded parser для стенда, не полный DNS validator и не DNSSEC implementation.
 Непрозрачные RDATA других RR не получают полной семантической проверки.
 

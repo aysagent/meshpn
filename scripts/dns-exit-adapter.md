@@ -81,11 +81,11 @@ exit может использовать обычный OS resolver. Устан�
 ## Лимиты и ещё не сделанное
 
 Используется существующий bounded stub/parser из `lab-doh-stub.mjs` и
-`lab-dns-wire.mjs`, а не новый расширенный DNS stack:
+`lab-dns-wire.mjs`, см. полный [DNS wire contract](dns-wire.md):
 
-- Только один IN A/AAAA вопрос, максимум4096 байт, ограниченный EDNS; прочие
-  типы/некорректные запросы не обслуживаются. Это не полная поддержка DNSSEC,
-  HTTPS/SVCB, SRV, TXT, PTR и прочих DNS-сценариев.
+- Один IN вопрос: A/AAAA, HTTPS/SVCB, TXT, SRV, PTR и другие обычные типы;
+  максимум4096 байт/128 RR, EDNS(0). RDATA передаются непрозрачно, это не
+  семантический validator и не проверка DNSSEC. Meta/transfer/ANY исключены.
 - По умолчанию16 in-flight запросов и16 локальных TCP-соединений; общий deadline
   DoH1500мс, lifetime входного TCP5000мс, bounded framing/HTTP headers/body.
   Deadline клиента может закончиться раньше exit failover — достижение каждого
@@ -112,7 +112,8 @@ npm run test:dns-exit-adapter
 npm run test:dns-exit-adapter-real
 ```
 
-Первый набор включён в общий acceptance: preflight, ключи, A/AAAA UDP/TCP,
+Первый набор включён в общий acceptance: preflight, ключи, восемь типов UDP/TCP,
+побайтная сохранность ответов, HTTPS UDP TC→TCP и extended EDNS RCODE,
 TLS name/CA rejection, PSK rejection, timeout/reset/redirect, недоступный exit,
 snapshot, отсутствие системных name lookups/лишнего TCP dial, закрытие запросов,
 SIGINT/SIGTERM и освобождение listeners. Wire observer проверяет отсутствие
@@ -129,5 +130,6 @@ IPv4/IPv6 aliases внутри него; нужен OpenSSL и `ip`. Насто�
 именно нового client→exit пути: `npm run dns:adapter-soak -- --help`. Проверяются
 IPv4/IPv6 endpoints, обрывы exit/resolver, переполнение, отмена и освобождение
 ресурсов. Прежний DNS pcap/soak сохраняется для старого localhost relay пути.
-Следующий шаг перед OS-интеграцией — расширить поддерживаемый DNS wire contract
-за пределы A/AAAA, затем согласовать opt-in client/OS/LAN/IPv6-интеграцию.
+Следующий шаг перед OS-интеграцией — полный TCP/DoH размер DNS с ограниченными
+memory budgets, EDNS negotiation и HTTP cache-age/TTL contract; затем согласовать
+opt-in client/OS/LAN/IPv6-интеграцию. Сейчас переключать системный DNS ещё рано.
