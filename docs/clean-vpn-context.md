@@ -1026,3 +1026,64 @@ sockets/requests/jobs/timers после cleanup. Никаких внешних D
 и bounded DNS soak. Затем выбрать production upstream/bootstrap и отдельно
 интегрировать клиент/OS/LAN/IPv6. Cover DNS не включаем; динамическое BoringSSL
 клонирование не возвращаем. Parser/adapter пока лабораторные, не production DNS.
+
+## 33. Независимый DNS pcap и namespace soak
+
+`scripts/transparent-dns-soak.mjs` добавляет отдельный opt-in runner без TUN,
+host firewall/DNS/routes, mesh и изменений работающего VPN. User/net/mount/PID
+namespaces, только `lo`, worker PID1. Все адреса числовые loopback, resolver
+синтетический. Команды и ограничения — [DNS lab](../scripts/transparent-dns-lab.md).
+
+Перед нагрузкой tcpdump захватывает весь TCP/UDP namespace; tshark независимо
+читает payload обоих направлений, без TLS keys. Уникальный label намеренно
+передаётся открытым UDP DNS на отдельный fixture port: detector обязан найти
+его и в запросе, и в ответе. У локального stub plaintext также ожидается.
+На четырёх TLS legs, включая client↔exit и exit↔resolver, label отсутствует.
+Собираются TCP stream/direction/sequence, split labels не обходят detector.
+Gaps, conflicting retransmits, truncated packets, kernel drops, неизвестные
+IP/ports, пустые направления/pcap, packet/output limits → FAIL, не skip.
+Pcap покрывает короткую success/failure/restart матрицу **до soak**, не весь soak
+и не DNS произвольных приложений, OS/LAN/IPv6. Положительный real-контроль — UDP;
+split TCP plaintext detector проверяется отдельной регрессией.
+
+Десять warmup waves, затем 1..600 с измерения (default60), concurrency1..8
+(default4). Волна: normal/NXDOMAIN/large/reset/hold/redirect/origin offline/
+recovered, по одной группе UDP/TCP A/AAAA запросов на режим. Реальные stop/restart
+HTTPS resolver; ответы, expected SERVFAIL, counters, cleanup проверяются.
+Worker V8 ограничен old-space64/semi-space8 MiB; это **lab-only**, не production
+настройка. Core dumps выключены у дочернего namespace. RSS ≤256 MiB и рост
+≤64 MiB от warmup high-water, heapUsed рост≤32 MiB, idle FDs не выше baseline.
+После волн нет живых TCP client sockets/timers/processes; после close также
+нет TCP listeners/UDP sockets. Replay entries удерживаются штатно (601 с,
+65536 максимум) и не считаются открытыми ресурсами. Это sampled budgets, не
+cgroup и не доказательство отсутствия утечки при других runtime settings.
+
+Первый unconstrained V8 эксперимент остановился по росту RSS/heap: reserved
+heap расширялся, а heapUsed после обычного GC возвращался к низким значениям.
+Исправлен метод измерения (warmup high-water вместо единичного post-GC trough),
+задан явный heap budget worker; принудительный GC не используется. Не следует
+читать успешный constrained soak как подтверждение unlimited-V8 поведения.
+
+Parent deadline seconds+45 с, kill grace5 с, сигналы → aborted+cleanup. JSON0600
+создаётся исключительно новым файлом, без QNAME/keys/payload/raw logs. Private
+pcap удаляется после завершения, включая штатные failure/signal. Kernel убирает
+остатки PID namespace после выхода init. SIGKILL parent/авария ОС может оставить
+temp files/неполный report; никакой гарантии аварийной файловой уборки нет.
+
+VPS: **506 Node-тестов (22 файла) + 14 browser-сценариев**, отдельно **6 real DNS
+регрессий** PASS, без skips. Последние проверяют concurrency1/8, SIGTERM, missing
+tcpdump/tshark, запрет overwrite и запуска worker вне namespace.
+120-секундный concurrency8 soak: 142 волны, 9088 measured queries (4544 expected
+SERVFAIL), 142 restart, 9744 queries с прогревом/capture. RSS samples98.7–103.8 MiB,
+heapUsed13.3–21.1 MiB, idleFD25, finalFD19, нулевые owned sockets/timers/jobs и
+child processes. Pcap1020 packets/382738 B, положительный контроль PASS,
+protected plaintext не найден. Acceptance report:
+`/var/tmp/meshpn-acceptance-tMbS6J/report.json`; soak report:
+`/var/tmp/meshpn-dns-soak-report-Tk4H57/report.json` (локальные артефакты, не git).
+
+Дальше: production upstream/bootstrap configuration contract — TLS hostname
+отдельно от endpoint IP, CA validation, pinned/проверенные IP, отсутствие
+системного/plaintext fallback. Сначала validation и loopback tests, затем
+отдельное согласованное включение клиента/OS/LAN/IPv6. Доверенный публичный
+resolver пока не выбран, внешний трафик не включён. Кэш/pooling, cover DNS и
+динамический BoringSSL cloning не добавлялись.

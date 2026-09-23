@@ -3,7 +3,8 @@
 Это **стенд**, а не включение DNS-защиты в системе. Ничего не меняет в
 `resolv.conf`, systemd-resolved, браузерах, firewall, маршрутах, TUN или mesh.
 Работающий VPN не перезапускает. Внешние DNS/TCP-сервисы не используются,
-пакеты не отправляются на порт 53. Нужен только Node (проверено 24.13.0).
+пакеты не отправляются на порт 53. Для базового smoke нужен только Node
+(проверено 24.13.0); независимый pcap/soak требует дополнительных Linux tools ниже.
 
 ```bash
 npm run transparent-tls:dns-lab
@@ -121,6 +122,78 @@ Node dgram вызывает для IP, разрешён: он не делает 
 тоже получает plaintext query. Снаружи остаются видимыми IP, TLS metadata,
 тайминги/размеры и resolver/public SNI соответствующего участка.
 
+Отдельный runner ниже уже добавляет независимый pcap в обоих направлениях.
+Ограничения выше относятся к исходному smoke и его in-process taps.
+
+## Независимый pcap и ограниченный DNS soak
+
+```bash
+npm run transparent-tls:dns-soak -- --seconds=120 --concurrency=8
+npm run test:dns-soak
+npm run test:dns-soak-real
+```
+
+Нужны Linux, Node 22+, rootless `unshare`, `ip`, `tcpdump`, `tshark`.
+`MESHPN_TCPDUMP`/`MESHPN_TSHARK` выбирают существующие binaries; runner ничего
+не устанавливает. Если для tshark нужны отдельные shared libraries, их путь
+задаётся обычным `LD_LIBRARY_PATH`. Отсутствие tools/namespace — FAIL, не skip.
+
+Parent создаёт отдельные user/network/mount/PID namespaces; worker — PID 1,
+проверяет отличие namespaces от родителя и наличие только `lo`. Никакого
+доступа к uplink в этом namespace нет. Kernel завершает оставшиеся процессы
+namespace при выходе init; parent имеет deadline `seconds + 45 с` и 5 с kill grace.
+SIGINT/SIGTERM прерывает работу с cleanup и ненулевым результатом `aborted`.
+
+Перед soak `tcpdump` захватывает **весь TCP/UDP** namespace на loopback:
+
+- Явный UDP DNS-запрос с уникальным синтетическим label идёт на отдельный
+  plaintext fixture-port: это положительный контроль детектора, не внешний DNS.
+- Одна короткая матрица UDP/TCP: A/AAAA, NXDOMAIN, большой ответ/TC,
+  reset, timeout, HTTP redirect, stop/restart resolver и восстановление.
+- `tshark` читает packet payload без ключей TLS. Label обязан присутствовать
+  в запросах и ответах control и локального stub; на всех четырёх TLS-участках
+  (включая client↔exit и exit↔resolver) — отсутствовать в обоих направлениях.
+- TCP payload собирается по stream/direction/sequence; split labels не обходят
+  поиск. Identical retransmit допустим, gap/conflicting overlap — FAIL.
+- Неизвестный IP/port, UDP на защищённом участке, пустое направление, truncated
+  packet, kernel drops, 20000-packet limit, неполный вывод tshark — FAIL.
+  Итоговый pcap дополнительно ограничен 8 MiB, вывод анализа — 16 MiB.
+
+Захват заканчивается **до** длительной нагрузки. Это независимая проверка
+короткой матрицы, не continuous pcap всего soak и тем более не аудит host/OS/LAN/IPv6.
+Сам детектор отдельно проверен на искусственно разделённом plaintext TCP label.
+Реальный положительный контроль в namespace — UDP.
+
+Затем десять прогревочных волн и `seconds` измеряемой нагрузки (default60,
+1..600; concurrency default4, 1..8). Каждая волна — восемь групп запросов
+с теми же success/failure режимами и фактическим restart HTTPS resolver.
+До следующей группы запросов owned sockets/requests/jobs/timers должны освободиться.
+Проверяются ответы, итоговые счётчики и ресурсы после каждой измеряемой волны.
+
+Worker запускается с явным V8 budget: old-space64 MiB, semi-space8 MiB,
+core dumps выключены только у namespace worker и его потомков.
+Это ограничение **тестового процесса**, не настройка VPN и не общий RSS limit.
+Без такого ограничения V8 на этом VPS расширял reserved heap задолго до
+роста live heap; единичный снимок сразу после GC давал ложную базу сравнения.
+Принудительный GC не вызывается. Сохраняется реальный warmup snapshot и отдельно
+максимум памяти прогревочных волн. RSS ≤256 MiB и прирост ≤64 MiB относительно
+warmup maximum; heapUsed прирост ≤32 MiB; FD ≤128 и не выше idle baseline.
+Это sampled guardrails, не cgroup и не доказательство отсутствия утечек.
+
+После capture/warmup в namespace должен остаться только worker, без zombies.
+Между волнами нет активных TCP client sockets/timers/child processes; после
+cleanup также нет TCP listeners/UDP sockets. Replay guard entries намеренно
+сохраняются до expiry (601 с, максимум65536), это не открытые соединения.
+Насыщение admission или превышение бюджета — FAIL, параметры не гарантируют
+успех при любой скорости/нагрузке.
+
+Отчёт — новый `0600` JSON, путь выводится runner или задаётся `--report=/new/path`.
+Существующий файл не перезаписывается. Нет QNAME, payload, ключей или raw logs.
+Сохраняются revision/dirty, pcap counters, workload totals, memory/FD/process
+samples и final cleanup. Raw pcap лежит в private temp directory и удаляется
+parent при завершении, в том числе при обычной ошибке/сигнале. SIGKILL самого
+parent/авария ОС могут оставить временные файлы и пустой/неполный отчёт.
+
 ## Тесты и следующий шаг
 
 46 регрессий: wire parser/EDNS, A/AAAA через UDP/TCP, fragmentation/pipelining,
@@ -134,11 +207,31 @@ PASS, без skips. Отдельно четыре real-browser soak/SIGTERM ре
 Самостоятельный CLI: 8 queries, 5 успешных DNS-ответов (включая NXDOMAIN),
 3 ожидаемых SERVFAIL, по завершении owned sockets/requests/jobs/timers = 0.
 
-Следующий отдельный пакет — независимый pcap в изолированной network namespace
-с позитивным контролем утечки и ограниченный DNS soak. После этого — решение о
-production upstream/bootstrap и отдельная интеграция с клиентом/OS/LAN/IPv6.
+Независимый pcap/soak реализован отдельным runner; 28 unit/contract регрессий
+включены в общий Node acceptance. Шесть opt-in real-тестов проверяют concurrency1/8,
+SIGTERM, отсутствие tcpdump/tshark, exclusive report и запрет direct worker вне
+namespace. Их нужно запускать отдельно: полный browser acceptance сам по себе
+не означает запуск DNS pcap/soak.
+
+VPS проверка этого пакета: **506 Node-тестов (22 файла) + 14 browser-сценариев**,
+отдельно **6 real DNS pcap/soak тестов**, без skips. Длинный запуск:
+120047 мс, concurrency8, 142 измеряемые волны, 9088 запросов (4544 ожидаемых
+SERVFAIL), 142 restart. С прогревом и pcap — 9744 запросов. Pcap: 1020 пакетов,
+382738 байт, control/stub plaintext обнаружен, protected plaintext отсутствует.
+Из сохранённых samples RSS 98.7–103.8 MiB, heapUsed 13.3–21.1 MiB, idle FD25,
+после cleanup FD19; owned sockets/timers/jobs и child processes = 0.
+Это результат **V8-constrained worker**, не обещание того же RSS у production
+Node без flags. Первый вариант проверки на unconstrained V8 ловил увеличение
+reserved heap и GC trough вместо надёжной оценки live memory; raw результаты
+не выдаются за успешный soak. Проверка без ограничения V8 остаётся отдельной задачей.
+
+Дальше — явный production upstream/bootstrap contract: отдельно TLS hostname,
+проверенные endpoint IP, CA и политика ошибок, без системного DNS fallback.
+Затем отдельная интеграция с клиентом/OS/LAN/IPv6.
 Декоративный cover DNS, системная перенастройка и расширение domain/IP admission
 в этот результат не входят.
 
 Файлы: [CLI](transparent-dns-lab.mjs), [harness](lib/transparent-dns-lab.mjs),
-[stub](lib/lab-doh-stub.mjs), [wire](lib/lab-dns-wire.mjs), [tests](test-transparent-dns-lab.mjs).
+[stub](lib/lab-doh-stub.mjs), [wire](lib/lab-dns-wire.mjs), [tests](test-transparent-dns-lab.mjs),
+[soak runner](transparent-dns-soak.mjs), [pcap audit](lib/dns-lab-pcap.mjs),
+[workload](lib/dns-soak-workload.mjs), [budgets](lib/dns-soak.mjs).

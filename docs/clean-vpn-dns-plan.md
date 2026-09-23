@@ -1,7 +1,8 @@
 # DNS: конфиденциальность, bootstrap и публичные имена
 
 План по обсуждению 2026-09-23. Первый explicit-loopback DoH стенд **реализован**:
-[запуск и границы](../scripts/transparent-dns-lab.md), раздел 32 context.
+[запуск и границы](../scripts/transparent-dns-lab.md), разделы 32–33 context.
+Дополнительно реализованы независимый namespace pcap и bounded DNS soak.
 DNS клиента/системы и firewall не менялись. Production DNS интеграции пока нет.
 Динамическое клонирование BoringSSL-профиля не возвращаем.
 
@@ -91,8 +92,11 @@ plaintext TLS SNI на других путях или все посещаемы�
 польза не оправдывает добавление новых наблюдаемых признаков. Для публичного
 имени exit предпочтителен собственный домен с настоящими A/AAAA-записями.
 Безопасный bounded IP failover exit реализован (раздел 31 context).
-Explicit-loopback DoH стенд проверяет основные success/failure/resource сценарии
-и входящие TLS-байты запросов. Следующий шаг — независимый namespace pcap с
-позитивным контролем утечки и bounded DNS soak, затем отдельное решение о системной
-интеграции. Кэша и production upstream/bootstrap пока нет. Случайные cover DNS
-запросы не входят в этот план реализации.
+Explicit-loopback DoH стенд проверяет success/failure/resource сценарии;
+отдельный namespace runner добавляет независимый pcap обоих направлений,
+plaintext positive control, повторные запросы/обрывы/restart и resource budgets.
+Pcap покрывает короткую матрицу перед soak, а не весь длительный прогон.
+Следующий шаг — contract production upstream/bootstrap (TLS hostname отдельно
+от endpoint IP, CA, отсутствие OS/plaintext fallback); затем согласованная
+системная интеграция. Кэша и production upstream/bootstrap пока нет.
+Случайные cover DNS запросы не входят в этот план реализации.
