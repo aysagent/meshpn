@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–29; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–30; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -197,7 +197,7 @@ HTTPS приложения → локальный intercept :8443 → замен
 Ограничения по чтению кода, требующие отдельных интеграционных проверок:
 
 - На момент исходного аудита не было replay-cache enc-label. Process-local cache добавлен в разделе 29; привязка metadata к ClientHello transcript, durable/distributed защита и предотвращение гонки первого предъявления не добавлены.
-- Не обнаружен запрет relay-направлений на private/loopback IP; PSK — важная граница доверия. Обычные квоты после initial peek и полноценная защита от resource exhaustion не завершены.
+- На момент исходного аудита не было запрета relay-направлений на private/loopback IP; application-level public-unicast policy добавлена в разделе 30. PSK остаётся важной границей доверия. Полноценные per-client/socket квоты и защита от resource exhaustion не завершены.
 - На момент исходного аудита очередь `pendingToOrigin` не ограничена, upstream backpressure несимметричен, client ClientHello не имеет явного timeout. Исправлено последующим пакетом в разделе 14.
 - На момент исходного аудита переписывается только первый ClientHello, CH2 после HRR раскрывает исходный SNI. Исправление начального TLS 1.3 HRR handshake и его ограничения описаны в разделе 16.
 - На момент исходного аудита rebuild склеивает ClientHello в один TLS record. Последующее обратимое сохранение layout с ограничениями описано в разделе 15.
@@ -863,3 +863,63 @@ Final replay entries 99/90, worker exit 0, сокеты/таймеры осво�
 Следующий пакет: явная destination policy exit — разрешённые назначения,
 private/loopback адреса и защита от DNS rebinding, с отдельными негативными тестами.
 Это не изменение mesh или динамическое клонирование браузерных профилей.
+
+## 30. Application-level destination policy exit
+
+В общем production runtime добавлена default `ExitDestinationPolicy`:
+`scripts/lib/transparent-tls-destination.mjs`. Действует на transparent/enc-SNI
+ветки transparent-tls и combo-tls, в том числе standalone listener. Это не
+firewall: mesh/TUN, iptables/nftables, маршруты, системный DNS и запущенные
+VPN-сервисы не менялись. Wire v2 и TLS transcript не менялись.
+
+После auth/rebuild и replay reservation проверяется hostname/port. IP literal
+v4 проходит без DNS; для имени один OS lookup абсолютного имени (`hostname.`),
+`all:true, verbatim:true`. Проверяется весь возвращённый набор A/AAAA: если хотя
+бы один адрес запрещён, отказ всему admission, включая public+private mix.
+Default закрывает RFC1918/loopback/link-local/CGNAT/multicast/reserved/doc/benchmark
+IPv4, а для IPv6 разрешает консервативное подмножество `2000::/3`, исключая
+special ranges. Mapped IPv4, известные NAT64, 6to4/Teredo, ULA и scopes запрещены.
+Точная политика/обоснование диапазонов — [документация стенда](../scripts/transparent-tls-lab.md#destination-policy-exit-и-dns-rebinding).
+
+Первый проверенный IP копируется в immutable target, `net.connect` получает
+только numeric address/family/port, без повторного DNS. Перед отправкой prelude
+сверяется фактический peer IP/port. Подмена DNS между проверкой и connect не
+изменяет target. Следующее новое соединение повторяет lookup+проверку. Combo
+отказ не fallback в mux; HRR продолжает то же соединение. Отказ policy/DNS
+не освобождает token и не позволяет тем же token повторять lookup.
+
+Один connect deadline включает DNS+TCP; close/timeout прекращает ожидание,
+поздний resolver result не открывает сокеты. Не более 64 OS lookups одновременно
+на default process-local policy и 64 адресов на ответ; очередь не создаётся.
+Неотменяемый OS lookup после timeout сохраняет слот до settlement — иначе
+bounded session всё равно позволяла бы неограниченно забивать libuv запросами.
+Коды: `TLS_RELAY_DESTINATION`, `_DESTINATION_PEER`, `_DNS`, `_DNS_BUSY`,
+общий `_CONNECT_TIMEOUT`. Raw resolver message и ответы в обычный лог не выводятся.
+
+Lab получает явный pin `{hostname:originName, port:boundOriginPort}` только на
+`127.0.0.1`; другой hostname/port не разрешён. Generic `allowPrivate`/CLI bypass нет.
+Programmatic connector теперь принимает `(address, port, family)`, не hostname.
+Test doubles адаптированы явно; даже custom connector проходит policy/peer check.
+
+37 новых тестов: IP ranges/encodings, malformed/local names, DNS mixed/rebinding,
+default production path и numeric connector, wrong peer до отправки CH, exact
+lab pin, quota/timeout/close/late resolve/reject, auth/replay ordering. Реальный
+loopback negative test требует ноль origin accepts. Полный VPS acceptance:
+**405 Node-тестов (20 файлов) + 14 Chrome/Firefox-сценариев** — PASS, без skips.
+Отдельные четыре real-browser soak/SIGTERM регрессии Chrome/Firefox также PASS.
+
+Изменение совместимости намеренное: private/split-DNS назначения закрываются.
+Пока выбирается первый адрес OS без Happy Eyeballs/fallback; недоступный первый
+не заменяется вторым. Это следующий короткий пакет для восстановления доступности
+без DNS re-resolution — retries только по заранее проверенному набору, общий
+deadline, без отправки prelude проигравшим sockets. Не решены публичные IP
+самого exit, специфичная маршрутизация/DNAT/custom NAT64, provider service IP
+в публичном диапазоне, domain/port allowlist, глобальные/per-client socket quotas.
+Это не универсальная SSRF-изоляция и не защита non-transparent transport веток.
+
+Пользователь дополнительно предложил защищённый реальный DNS и редкие прямые
+cover-domain запросы. Зафиксирован [отдельный DNS-план](clean-vpn-dns-plan.md):
+privacy и bootstrap сначала, cover DNS только после проверки согласованности
+имени/ответа/exit и отдельного решения. Сейчас ни прямые cover-запросы, ни
+перенастройка DNS не включены. `sni-dictionary` остаётся планом alias-cache;
+`--tls-public-name` — список публичных SNI-имён, не domain allowlist resolver.

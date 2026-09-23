@@ -17,6 +17,7 @@ import { labSessionStats } from './lab-session-stats.mjs';
 import { slowStreamOrigin } from './lab-slow-streams.mjs';
 import { h2FlowOrigin } from './lab-h2-flow.mjs';
 import { EncSniReplayGuard } from './transparent-tls-replay.mjs';
+import { ExitDestinationPolicy } from './transparent-tls-destination.mjs';
 
 export const LAB_CERT_PATH = fileURLToPath(new URL('../fixtures/boring-tls-local.cert.pem', import.meta.url));
 const LAB_KEY_PATH = fileURLToPath(new URL('../fixtures/boring-tls-local.key.pem', import.meta.url));
@@ -281,16 +282,18 @@ export async function startTransparentTlsLab({
       upstream.once('close', () => socket.destroy());
     });
     const boundOriginPort = await listen(originTap, originPort);
+    const destinationPolicy = new ExitDestinationPolicy({ loopback: { hostname: originName, port: boundOriginPort } });
 
     const exit = net.createServer((socket) => {
       captureHello(socket, 'exit', captures, diagnose);
       relay.track(wireTransparentTlsEncSniSession(socket, {
         vpnSecretBuf: psk, publicName, logOpts: {},
         replayGuard: exitReplayGuard,
+        destinationPolicy,
         limits: exitLimits, onSessionError: onRuntimeError('exit'),
-        connectOrigin(hostname, port) {
+        connectOrigin(address, port, family) {
           // The lab is never a general proxy, even with forged route metadata.
-          if (hostname !== originName || port !== boundOriginPort) {
+          if (address !== HOST || family !== 4 || port !== boundOriginPort) {
             throw new Error('lab denies destination outside its configured origin');
           }
           return track(net.connect({ host: HOST, port: boundOriginPort }));

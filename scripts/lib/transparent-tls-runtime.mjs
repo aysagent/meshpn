@@ -4,6 +4,7 @@ import net from 'net';
 import { RelaySession, readRelayHello, relayError } from './transparent-tls-io.mjs';
 import { createHelloRetryGuard } from './transparent-tls-retry.mjs';
 import { EncSniReplayGuard, defaultEncSniReplayGuard } from './transparent-tls-replay.mjs';
+import { ExitDestinationPolicy, defaultExitDestinationPolicy, connectRelayDestination } from './transparent-tls-destination.mjs';
 import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -258,8 +259,10 @@ export function classifyComboTlsExitPrefix(buf, publicName, psk) {
 export function wireTransparentTlsEncSniSession(mux, opts) {
   let session;
   const replayGuard = opts.replayGuard === undefined ? defaultEncSniReplayGuard : opts.replayGuard;
+  const destinationPolicy = opts.destinationPolicy === undefined ? defaultExitDestinationPolicy : opts.destinationPolicy;
   try {
     if (!(replayGuard instanceof EncSniReplayGuard)) throw relayError('TLS_RELAY_CONFIG', 'replay guard required');
+    if (!(destinationPolicy instanceof ExitDestinationPolicy)) throw relayError('TLS_RELAY_CONFIG', 'destination policy required');
     session = new RelaySession(mux, opts);
   }
   catch (error) {
@@ -294,8 +297,7 @@ export function wireTransparentTlsEncSniSession(mux, opts) {
     });
     logTransparentTlsClientHelloFingerprints('exit', 'Mux enc-SNI ClientHello', prefix, logOpts);
     logTransparentTlsClientHelloFingerprints('exit', 'К origin: ClientHello после restore', restored.prefixBuf, logOpts);
-    const origin = await session.connect(() => opts.connectOrigin
-      ? opts.connectOrigin(dec.hostname, dec.port) : net.connect(dec.port, dec.hostname));
+    const origin = await connectRelayDestination(session, destinationPolicy, dec.hostname, dec.port, opts.connectOrigin);
     await session.bridge(mux, origin, prelude, guard);
   })();
   // Keep the accept path free of unhandled rejections; closed reports the reason.

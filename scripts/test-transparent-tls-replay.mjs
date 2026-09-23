@@ -7,6 +7,7 @@ import { Duplex } from 'node:stream';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { EncSniReplayGuard, ENC_SNI_REPLAY_RETENTION_MS } from './lib/transparent-tls-replay.mjs';
+import { ExitDestinationPolicy } from './lib/transparent-tls-destination.mjs';
 import { encodeRelayHostname, decodeRelayFromHostname, parseRelayEncLabels } from './lib/transparent-tls-enc-sni.mjs';
 import { wireTransparentTlsEncSniSession, classifyComboTlsExitPrefix } from './lib/transparent-tls-runtime.mjs';
 import { startTransparentTlsLab, requestThroughLab, assertRelayTrace } from './lib/transparent-tls-lab.mjs';
@@ -128,7 +129,7 @@ test('local cache scope does not claim durable or multi-process replay preventio
 });
 
 class Socket extends Duplex {
-  constructor() { super(); this.connecting = false; this.remoteAddress = '127.0.0.1'; this.writes = []; }
+  constructor() { super(); this.connecting = false; this.remoteAddress = '127.0.0.1'; this.remotePort = 443; this.writes = []; }
   _read() {}
   _write(bytes, encoding, callback) { this.writes.push(Buffer.from(bytes)); callback(); }
 }
@@ -142,6 +143,7 @@ function endpoint(t, prefix, { guard, failConnect = false, modeTag, psk = PSK } 
   let calls = 0;
   const session = wireTransparentTlsEncSniSession(inbound, { vpnSecretBuf: psk, publicName: PUBLIC,
     initialBuf: prefix, ...(guard ? { replayGuard: guard } : {}), modeTag,
+    destinationPolicy: new ExitDestinationPolicy({ loopback: { hostname: ORIGIN, port: 443 } }),
     connectOrigin: () => { calls++; if (failConnect) throw new Error('test connector failure'); return outbound; } });
   t.after(async () => { inbound.destroy(); outbound.destroy(); await session?.closed; });
   return { inbound, outbound, session, get calls() { return calls; } };

@@ -16,7 +16,7 @@ curl нужен только для необязательной ручной п
 
 ## Единая acceptance-проверка
 
-[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 19 Node-наборов
+[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 20 Node-наборов
 и полную матрицу Chrome/Firefox. Он ничего не устанавливает и не скачивает.
 Нужны Linux, Node 22+, Go 1.24+, OpenSSL 3, GNU `stdbuf`, `unshare`, `ip` и доступные
 user/network/mount/PID namespaces (в том числе для browser-independent lifecycle
@@ -71,11 +71,11 @@ JSON пишется один раз в конце: SIGKILL/авария ОС/о�
 или неполный файл. Ошибка аргументов или резервирования пути возникает до отчёта.
 Это не cgroup supervisor; ограничения cleanup процессов описаны ниже.
 
-Текущий полный прогон: **368 Node-тестов + 14 browser-сценариев**. Предыдущий пакет
+Текущий полный прогон: **405 Node-тестов + 14 browser-сценариев**. Предыдущий пакет
 acceptance был проверен дважды подряд с 235 Node-тестами; basic soak добавил 19,
 slow-reader — ещё 11, H2 flow-control — ещё 12, GOAWAY/drain — ещё 12,
 browser soak lifecycle/resource contracts — ещё 45 (без запуска браузеров),
-enc-SNI replay admission — ещё 34.
+enc-SNI replay admission — ещё 34, destination policy — ещё 37.
 27 новых регрессий проверяют runner/reporter, включая отсутствие инструмента,
 неполные результаты, timeout/abort/output overflow и запрет перезаписи отчёта.
 Это ограниченный acceptance, не длительный soak и не production-сертификация.
@@ -590,8 +590,8 @@ TLS-клиент / curl
 
 TCP tap только наблюдает и пересылает байты; TLS завершается в HTTPS origin.
 Client/exit не получают TLS private/session keys приложения. На запуск создаётся
-новый случайный relay PSK. Фабрика подключения origin разрешает только заданное
-имя и порт стенда, затем соединяется с фиксированным IPv4 loopback, без DNS.
+новый случайный relay PSK. Destination policy разрешает только заданное имя и
+порт стенда, затем connector получает фиксированный IPv4 loopback, без DNS.
 Даже валидный enc-SNI для другого назначения не превращает стенд в открытый proxy.
 
 Доступны `/` (JSON с TLS/HTTP-параметрами и сведениями о полученном теле) и `/echo`
@@ -667,6 +667,100 @@ exit-функция обрабатывает ошибки внутри себя.
 
 Внешний exit peek-dispatch в `clean-vpn.js` сохраняет собственные лимиты/таймеры
 до передачи соединения relay. Этот пакет не меняет его на глобальную защиту от DoS.
+
+## Destination policy exit и DNS rebinding
+
+[Policy](lib/transparent-tls-destination.mjs) включена по умолчанию в общий
+`wireTransparentTlsEncSniSession`: transparent exit, transparent-ветку combo и
+standalone exit listener. Это **проверка внутри приложения**, не firewall.
+Mesh, TUN, NAT, iptables/nftables, системный DNS и работающие VPN-процессы не меняются.
+Wire format v2 и TLS bytes после восстановления исходного SNI не меняются.
+
+Порядок допуска: authentication/rebuild → replay reservation → проверка имени и
+порта → одно разрешение DNS → проверка **всех** полученных IP → TCP к одному
+числовому IP → проверка remoteAddress/remotePort → отправка ClientHello.
+Denied/DNS-failed route тоже расходует token: повтор не должен повторять DNS.
+Combo classifier остаётся stateless; policy failure после relay dispatch не
+переключает соединение на mux. CH2/HRR использует уже открытый проверенный origin.
+
+Default разрешает консервативное подмножество public-unicast IPv4/IPv6:
+
+- IPv4: запрещены `0/8`, RFC1918, `100.64/10`, `127/8`, `169.254/16`,
+  `192.0.0/24`, `192.0.2/24`, `192.88.99/24`, `198.18/15`, `198.51.100/24`,
+  `203.0.113/24`, multicast/reserved `224/3`.
+- IPv6: только `2000::/3`, за исключением `2001::/23`, `2001:db8::/32`,
+  `2002::/16`, `3fff::/20`. ULA, link-local, multicast, mapped/compatible IPv4,
+  известные NAT64 prefixes, Teredo/6to4, scoped addresses не проходят.
+- Это намеренно более строгая политика, чем точная копия флага IANA Globally
+  Reachable: некоторые специальные globally-reachable exceptions тоже закрыты.
+  Основание диапазонов: [IANA IPv4](https://www.iana.org/assignments/iana-ipv4-special-registry/)
+  и [IANA IPv6](https://www.iana.org/assignments/iana-ipv6-special-registry/).
+- Порт должен быть целым `1..65535`; нового ограничения «только 443» нет.
+  DNS labels — ASCII/IDNA LDH, без пустых/слишком длинных labels, trailing dot,
+  single-label names, legacy numeric IPv4 и локальных suffixes
+  `.localhost`, `.local`, `.internal`, `.home.arpa`. IP literal v4 проверяется
+  без DNS; literal IPv6 по-прежнему не представлен в enc-SNI v2 hostname.
+
+OS `dns.lookup` получает абсолютное имя с завершающей точкой и
+`{all:true, verbatim:true}`. Проверяются все A/AAAA-адреса из результата системного
+resolver; смешанный public/private ответ отвергается целиком, а не фильтруется.
+Не более 64 ответов. Затем **первый** проверенный адрес копируется в immutable
+target. `net.connect` получает IP, family и `autoSelectFamily:false`, не hostname:
+повторного lookup и окна check-by-name/connect-by-name нет. Новый admission делает
+новый lookup и заново проверяет результат. DNS authenticity этим не обеспечивается.
+
+Один deadline `connectTimeoutMs` (default 10 с) охватывает DNS **и** TCP.
+Close/timeout прекращает ожидание; поздний DNS success/rejection не открывает
+сокет и не оставляет необработанный reject. В default singleton не более 64
+незавершённых DNS lookup, без очереди. OS getaddrinfo нельзя надёжно отменить:
+после timeout его слот удерживается до фактического settlement, чтобы поток новых
+соединений не создал неограниченную очередь libuv. Постоянно зависшие OS lookup
+могут исчерпать бюджет; это fail-closed, не автоматический обход проверки.
+Семантика системного lookup описана в [Node DNS](https://nodejs.org/docs/latest-v24.x/api/dns.html#implementation-considerations).
+
+Programmatic test hook `connectOrigin(address, port, family)` теперь получает
+**числовой адрес**, а не исходный hostname. Policy проверяется и при custom
+connector; перед отправкой prelude его фактический peer обязан совпасть с target.
+В harness используется `new ExitDestinationPolicy({loopback:{hostname,port}})`:
+разрешено только точное имя и порт собственного origin, адрес всегда `127.0.0.1`.
+Это не общий `allowPrivate`, не DNS bypass для произвольного назначения и не CLI
+флаг. Явные `destinationPolicy:null/false/{}` отклоняются как configuration error.
+
+| Код | Причина |
+| --- | --- |
+| `TLS_RELAY_DESTINATION` | Имя/порт/IP или смешанный DNS ответ запрещён |
+| `TLS_RELAY_DESTINATION_PEER` | Connector подключился не к проверенному адресу/порту |
+| `TLS_RELAY_DNS` | Ошибка, пустой/неправильный/слишком большой DNS ответ |
+| `TLS_RELAY_DNS_BUSY` | Все 64 resolver slots заняты |
+| `TLS_RELAY_CONNECT_TIMEOUT` | Истёк общий бюджет DNS+TCP |
+
+В обычный лог попадает код, не DNS answer или raw resolver exception.
+`ja3Verbose` остаётся явно sensitive режимом. Нет CLI отключения policy.
+
+Проверка: `npm run test:transparent-tls-destination` — 37 тестов. DNS rebinding,
+mixed A/AAAA, IPv4 encodings/IPv6 prefixes, connector pin/peer mismatch, malformed
+routes, bounded DNS, abort/late success/late failure, deadline DNS+TCP проверяются
+детерминированными doubles без внешних DNS/TCP запросов. Реальный TCP negative
+test отправляет валидный token на loopback origin через default exit и требует
+**ноль** origin connections. Положительный настоящий TLS H1/H2/HRR/browser путь
+проверяется общим lab с узким loopback pin. Полный acceptance на VPS:
+**405 Node-тестов (20 файлов) + 14 Chrome/Firefox-сценариев** — PASS.
+Отдельные четыре real-browser soak/SIGTERM регрессии — PASS.
+
+Ограничения и совместимость:
+
+- Ранее доступные private/split-DNS origin теперь будут отвергаться — это
+  намеренное изменение admission. Mixed DNS также fail-closed.
+- Выбирается первый адрес в порядке OS resolver, **без Happy Eyeballs/fallback**;
+  недоступный первый IP ведёт к отказу даже при доступном втором. Безопасный
+  failover только по уже проверенному набору — отдельное улучшение.
+- Не выявляются публичные IP собственных интерфейсов, нестандартные NAT64 prefixes,
+  DNAT/маршрутизация публичного IP во внутреннюю сеть и публичные provider service
+  addresses вне запрещённых диапазонов. Это не полная SSRF-изоляция окружения.
+- Нет domain allowlist, per-client quotas, DNSSEC/DoH, запрета всех не-HTTPS
+  public ports, общего ECH routing или защиты остальных transport/mux веток.
+- DNS клиента не перенастроен и его возможная LAN/IPv6 утечка не устранена.
+  Политика exit не делает клиентский DNS конфиденциальным.
 
 ## Replay-защита enc-SNI route token
 
@@ -1152,7 +1246,7 @@ SIGKILL runner или аварии ОС cleanup не гарантирован. P
 
 Проверено: Linux, Node 24.13.0, OpenSSL 3.0.13, tshark 4.2.2,
 Chrome for Testing 151.0.7922.10, Firefox 156.0.1.
-**368 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
+**405 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
 Первоначальный baseline (161 + 4) расширен HRR и resumption, описанными ниже.
 Browser ECH/0-RTT, HTTP/3, GUI-браузеры, длительный профиль нагрузки и внешний
 сетевой путь ещё не покрыты.
@@ -1308,6 +1402,8 @@ runner и отдельный ограниченный по времени soak �
 - Основные наборы используют Node/OpenSSL/Go; отдельный браузерный набор проверяет
   реальные Chrome/Firefox через CONNECT и независимо сверяет JA3/JA4 с tshark.
 - Добавлена ограниченная process-local replay-защита route token (см. выше);
+  public-unicast destination policy и numeric IP pinning действуют на transparent
+  ветке exit, но не заменяют DNS privacy клиента или firewall (см. выше);
   durable/distributed replay-защита и общий ECH routing не добавлены. Есть bounded Node soak
   с обрывами, медленными заголовками, H1 slow-reader, H2 stream flow-control и
   GOAWAY при активных streams; отдельный bounded browser soak описан выше.

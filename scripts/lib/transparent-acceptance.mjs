@@ -14,6 +14,7 @@ export const TEST_FILES = Object.freeze([
   'test-transparent-h2-goaway.mjs',
   'test-browser-soak.mjs',
   'test-transparent-tls-replay.mjs',
+  'test-transparent-tls-destination.mjs',
 ]);
 
 export function parseOptions(args) {

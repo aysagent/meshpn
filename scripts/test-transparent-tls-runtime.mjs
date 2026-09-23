@@ -14,6 +14,7 @@ import { replaceFirstSniInTcpBuffer, restoreFirstSniInTcpBuffer } from './lib/tr
 import { parseFirstTlsClientHelloFromTcpBuf } from './lib/tls-clienthello-ja3.mjs';
 import { HELLO_RETRY_RANDOM_HEX } from './lib/transparent-tls-retry.mjs';
 import { EncSniReplayGuard } from './lib/transparent-tls-replay.mjs';
+import { ExitDestinationPolicy } from './lib/transparent-tls-destination.mjs';
 
 async function within(promise, ms = 1500) {
   let timer;
@@ -29,6 +30,8 @@ class TestSocket extends Duplex {
   constructor({ blocked = false } = {}) {
     super({ highWaterMark: 16 });
     this.connecting = true;
+    this.remoteAddress = '127.0.0.1';
+    this.remotePort = 443;
     this.blocked = blocked;
     this.writes = [];
     this.pending = [];
@@ -93,6 +96,7 @@ function endpoint(t, role, limits = {}, { blocked = false, connectorError, tls13
     // Each synthetic endpoint is an independent exit fixture; its constant token
     // is intentionally reused across unrelated tests, not across live admissions.
     replayGuard: new EncSniReplayGuard(),
+    destinationPolicy: new ExitDestinationPolicy({ loopback: { hostname: HOST, port: 443 } }),
     vpnSecretBuf: PSK, publicName: PUBLIC, limits, onSessionError: (e) => errors.push(e),
     explicitDestination: { address: '127.0.0.1', port: 443 },
     upstreamHost: '127.0.0.1', upstreamPort: 12345,
@@ -456,6 +460,7 @@ test('initial peek buffer follows the same limits and remains paused before conn
   const outbound = new TestSocket();
   const session = wireTransparentTlsEncSniSession(inbound, {
     replayGuard: new EncSniReplayGuard(),
+    destinationPolicy: new ExitDestinationPolicy({ loopback: { hostname: HOST, port: 443 } }),
     vpnSecretBuf: PSK, publicName: PUBLIC, initialBuf: encodedHello,
     connectOrigin: () => outbound, limits: { connectTimeoutMs: 40 },
   });
