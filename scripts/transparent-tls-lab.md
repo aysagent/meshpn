@@ -16,7 +16,7 @@ curl нужен только для необязательной ручной п
 
 ## Единая acceptance-проверка
 
-[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 15 Node-наборов
+[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 16 Node-наборов
 и полную матрицу Chrome/Firefox. Он ничего не устанавливает и не скачивает.
 Нужны Linux, Node 22+, Go 1.24+, OpenSSL 3, GNU `stdbuf`, а для полного режима —
 зависимости браузерного стенда ниже, включая доступные user/network/mount namespaces.
@@ -70,9 +70,9 @@ JSON пишется один раз в конце: SIGKILL/авария ОС/о�
 или неполный файл. Ошибка аргументов или резервирования пути возникает до отчёта.
 Это не cgroup supervisor; ограничения cleanup процессов описаны ниже.
 
-Текущий полный прогон: **265 Node-тестов + 14 browser-сценариев**. Предыдущий пакет
+Текущий полный прогон: **277 Node-тестов + 14 browser-сценариев**. Предыдущий пакет
 acceptance был проверен дважды подряд с 235 Node-тестами; basic soak добавил 19,
-slow-reader — ещё 11.
+slow-reader — ещё 11, H2 flow-control — ещё 12.
 27 новых регрессий проверяют runner/reporter, включая отсутствие инструмента,
 неполные результаты, timeout/abort/output overflow и запрет перезаписи отчёта.
 Это ограниченный acceptance, не длительный soak и не production-сертификация.
@@ -223,6 +223,86 @@ heapUsed 10.1→12.1 МиБ: отсутствие memory leak этим не до
 вида, 768 МиБ проверенных resume bodies и 732 здоровых echo. FD 24→19,
 RSS 101.9→163.9 МиБ. Отдельно проверено корректное отклонение H2-запросов к H1-only
 fixture без запрещённого для H2 заголовка `Connection`.
+
+### HTTP/2 flow-control: медленный stream и соседи на одном TLS
+
+```bash
+node scripts/transparent-soak.mjs --profile=h2-flow --seconds=300 --concurrency=4
+npm run test:transparent-h2-flow
+```
+
+Профиль добавляет к basic-волне H2-матрицу forward/reverse × resume/cancel.
+**Все четыре случая одной волны используют одну verified TLS 1.3 / H2 session**
+через CONNECT/client/exit; следующая волна открывает новую session. Lab/exit/origin
+не перезапускаются. Это Node H2, не браузерный H2 soak.
+
+При forward origin приостанавливает чтение request stream, при reverse клиент
+приостанавливает response stream. TCP/TLS socket не ставится на pause.
+Обязательные наблюдения до и после соседнего трафика:
+
+- `Http2Stream.state.localWindowSize === 0` на получателе;
+- `writableNeedDrain === true` на отправляющем stream;
+- `Http2Session.state.remoteWindowSize > 0` у отправителя — connection ещё может
+  передавать данные других streams.
+
+Смысл полей — [Node HTTP/2 API](https://nodejs.org/api/http2.html#http2streamstate).
+Это наблюдения endpoint API, не независимая расшифровка H2 frames из pcap.
+Настройки окон не подменяются; тест использует defaults проверенной версии Node.
+Отсутствие ожидаемого состояния считается fail.
+
+Во время блокировки `concurrency` соседних echo по 128 КиБ проходят на той же
+session. Resume должен доставить ровно 4 МиБ с проверенным SHA-256. Для cancel
+дополнительно создаются `concurrency` запросов `/hold`; тест ждёт их поступления
+на origin и отправляет `RST_STREAM(CANCEL=8)` только медленному stream.
+Origin обязан наблюдать CANCEL, соседние held responses — завершиться с 200,
+телом `released` и без reset. После каждого случая проходят новые 128-КиБ echo
+на той же session, что проверяет дальнейшую передачу с WINDOW_UPDATE, а не только
+возможность открыть пустой stream. Точные значения возвращённого credit/число
+WINDOW_UPDATE frames не утверждаются.
+
+Счётчики CONNECT, origin TCP и TLS должны вырасти ровно на один за матрицу.
+GOAWAY, session error, runtime error и срабатывание fixture deadline недопустимы;
+скрытый reconnect не засчитывается. Между случаями освобождаются все клиентские
+streams, slow fixture и held responses, сама session остаётся живой. После матрицы
+проверяется обычный полный drain и побайтовое восстановление ClientHello/records/JA3/JA4.
+
+Programmatic `h2Flow: true` включает `/h2-flow-upload` и `/h2-flow-download` только
+на внутреннем origin. Это H2-only endpoints, фиксированное тело 4 МиБ, блоки 16 КиБ,
+максимум два slow streams и deadline 15 с. Deadline закрывает **stream**, не session,
+но в успешном тесте вообще не должен срабатывать. H1/неверные параметры отвергаются,
+в default lab endpoints отключены. Production runtime/wire-format не менялись.
+
+В `result.h2Flow` отчёта: число TLS-соединений матриц, здоровые echo (отдельно от
+basic `totals`) и четыре агрегата cases/bytes/zeroWindowSamples/healthyWhileBlocked/
+healthyAfter/heldSurvived/rstCode. Счётчики включают warmup. Очереди H2 stream
+семплируются раз в 5 мс, fixture budget 256 КиБ на readable/writable очередь;
+это не общий предел TLS/kernel buffers и не доказательство каждого мгновенного пика.
+Действуют прежние deadlines, лимит RSS, защита отчёта и ограничения cleanup.
+Отдельная регрессия прерывает runner SIGTERM после наблюдения исчерпанного окна.
+
+Первый длинный H2-прогон остановился на 57-й волне (включая три warmup) с assertion,
+по счётчикам — в начале reverse-resume; ресурсы после cleanup освободились. Исходный отчёт не
+сохранял конкретное поле assertion. Обнаружен дефект ожидания: оно проверяло только
+stream window и needDrain, после чего отдельная assertion требовала положительный
+connection window. Эти значения на двух endpoints обновляются асинхронно.
+Теперь bounded wait ждёт все три условия, а assertion проверяет тот же снимок,
+не повторный потенциально изменившийся. Две детерминированные регрессии проверяют
+позднее появление connection credit и запрет повторного чтения при валидации.
+При ошибке отчёт сохраняет case/step/снимок окон и числовые actual/expected,
+без payload или stack. Неуспешный прогон не засчитан как pass.
+
+Финальный VPS-прогон после исправления: 303.33 с, concurrency 4, 98 измеряемых
++ 3 warmup-волны — PASS. 101 H2-матрица/соединение, по 101 случаю каждого вида:
+202 resume доставили 808 МиБ с точным SHA-256; 202 CANCEL не повредили 808 уже
+ожидавших соседних responses. 3333 H2 echo прошли на тех же sessions, отдельно
+от basic-трафика. Все counters включают warmup. Sampled очереди: readable до
+131 070, writable до 65 536 байт. Idle FD постоянно 24, после shutdown 19;
+учитываемые sockets/streams/timers нулевые, fixture deadlines 0, worker exit 0.
+RSS 88.3→160.0 МиБ (peak 162.3), heapUsed 8.9→11.1 МиБ — отсутствие утечек не заявляется.
+
+После исправления также прошёл прогон 61.71 с / concurrency 12: 13+3 волны,
+16 H2-матриц, 128 МиБ resume, 32 CANCEL, 384 held survivors, 1552 H2 echo,
+FD 24→19. Полный acceptance: 277 Node-тестов + 14 Chrome/Firefox-сценариев, все pass.
 
 ## Быстрый запуск
 
@@ -781,7 +861,7 @@ SIGKILL runner или аварии ОС cleanup не гарантирован. P
 
 Проверено: Linux, Node 24.13.0, OpenSSL 3.0.13, tshark 4.2.2,
 Chrome for Testing 151.0.7922.10, Firefox 156.0.1.
-**265 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
+**277 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
 Первоначальный baseline (161 + 4) расширен HRR и resumption, описанными ниже.
 Browser ECH/0-RTT, HTTP/3, GUI-браузеры, длительный профиль нагрузки и внешний
 сетевой путь ещё не покрыты.
@@ -935,8 +1015,9 @@ runner и отдельный ограниченный по времени soak �
 - Нет обещания сохранить TCP packet boundaries, тайминги или размеры всех пакетов.
 - Основные наборы используют Node/OpenSSL/Go; отдельный браузерный набор проверяет
   реальные Chrome/Firefox через CONNECT и независимо сверяет JA3/JA4 с tshark.
-- Replay-защита relay, общий ECH routing и длительный browser/H2-flow-control soak пока не
-  покрыты; есть bounded Node soak с обрывами, медленными заголовками и H1 slow-reader.
+- Replay-защита relay, общий ECH routing и длительный browser soak пока не покрыты;
+  есть bounded Node soak с обрывами, медленными заголовками, H1 slow-reader и H2
+  stream flow-control. GOAWAY при активных/заблокированных streams ещё не покрыт.
   Настоящий ECH проверен в Go-матрице с pinned loopback origin, 0-RTT —
   отдельно в OpenSSL-матрице, без проверки их сочетания. Для HRR покрыт начальный
   TLS 1.3 handshake; TLS 1.2

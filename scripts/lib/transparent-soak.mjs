@@ -9,6 +9,7 @@ import { setTimeout as delay, setImmediate as immediate } from 'node:timers/prom
 import { startTransparentTlsLab, requestThroughLab, assertRelayTrace } from './transparent-tls-lab.mjs';
 import { startLabConnectProxy } from './transparent-connect-lab.mjs';
 import { slowReaderCase } from './transparent-slow-reader.mjs';
+import { h2FlowMatrix } from './transparent-h2-flow.mjs';
 
 export function soakOptions(args) {
   const result = { seconds: 300, concurrency: 4, profile: 'basic' };
@@ -26,12 +27,12 @@ export function soakOptions(args) {
   }
   if (result.seconds < 1 || result.seconds > 3600) throw new Error('seconds must be 1..3600');
   if (result.concurrency < 2 || result.concurrency > 12) throw new Error('concurrency must be 2..12');
-  if (!['basic', 'slow-reader'].includes(result.profile)) throw new Error('profile must be basic or slow-reader');
+  if (!['basic', 'slow-reader', 'h2-flow'].includes(result.profile)) throw new Error('profile must be basic, slow-reader or h2-flow');
   return result;
 }
 
 export function assertIdle(lab, proxy) {
-  for (const key of ['sockets', 'heldResponses', 'h2Sessions', 'pendingClients', 'relaySessions', 'relayTimers', 'cleanupFailures', 'slowStreams', 'slowStreamTimers']) {
+  for (const key of ['sockets', 'heldResponses', 'h2Sessions', 'pendingClients', 'relaySessions', 'relayTimers', 'cleanupFailures', 'slowStreams', 'slowStreamTimers', 'h2FlowStreams', 'h2FlowTimers']) {
     assert.equal(lab[key], 0, `lab ${key} did not drain`);
   }
   for (const key of ['clients', 'upstreams', 'headerTimers', 'relaySessions', 'relayTimers', 'cleanupFailures']) {
@@ -76,6 +77,7 @@ export async function runSoak(options, { signal, emit = () => {} } = {}) {
   const result = { schema: 1, status: 'failed', seconds, concurrency, profile, warmupWaves: 0, waves: 0,
     totals: { echoes: 0, echoBytes: 0, helloAborts: 0, uploadAborts: 0, slowHellos: 0, slowHeaders: 0 }, samples: [] };
   if (profile === 'slow-reader') result.slowReaders = {};
+  if (profile === 'h2-flow') result.h2Flow = { tlsConnections: 0, healthyEchoes: 0, cases: {} };
   const sockets = new Set(), requests = new Set(), timers = new Set();
   let lab, proxy, phase = 'setup', measuredStart, waveTimer, failure;
   const error = (code) => Object.assign(new Error(code), { code });
@@ -221,6 +223,19 @@ export async function runSoak(options, { signal, emit = () => {} } = {}) {
           if (metrics.timeout) total.timeout = metrics.timeout;
         }
       }
+      if (profile === 'h2-flow') {
+        phase = 'h2-flow'; lab.runtimeErrors.length = 0;
+        const matrix = await h2FlowMatrix({ lab, proxy, tunnel, own, until, concurrency, signal, emit });
+        await idle(); traces(1);
+        result.h2Flow.tlsConnections += matrix.tlsConnections; result.h2Flow.healthyEchoes += matrix.healthyEchoes;
+        for (const [key, item] of Object.entries(matrix.cases)) {
+          const total = result.h2Flow.cases[key] ??= { cases: 0, bytes: 0, zeroWindowSamples: 0,
+            maxReadable: 0, maxWritable: 0, healthyWhileBlocked: 0, healthyAfter: 0, heldSurvived: 0 };
+          for (const field of ['cases', 'bytes', 'zeroWindowSamples', 'healthyWhileBlocked', 'healthyAfter', 'heldSurvived']) total[field] += item[field];
+          for (const field of ['maxReadable', 'maxWritable']) total[field] = Math.max(total[field], item[field]);
+          if (item.rstCode !== undefined) total.rstCode = item.rstCode;
+        }
+      }
       lab.diagnostics.length = 0;
     } finally { clearTimeout(waveTimer); }
   }
@@ -228,6 +243,7 @@ export async function runSoak(options, { signal, emit = () => {} } = {}) {
     check();
     const limits = { helloTimeoutMs: 300, ...(profile === 'slow-reader' ? { writeTimeoutMs: 2000 } : {}) };
     lab = await startTransparentTlsLab({ sessionTimeoutMs: 0, slowStreams: profile === 'slow-reader',
+      h2Flow: profile === 'h2-flow', holdResponses: profile === 'h2-flow',
       clientLimits: limits, exitLimits: limits });
     proxy = await startLabConnectProxy(lab, { headerTimeoutMs: 300, maxConnections: 16,
       ...(profile === 'slow-reader' ? { closeTimeoutMs: 10_000 } : {}) });
@@ -254,6 +270,7 @@ export async function runSoak(options, { signal, emit = () => {} } = {}) {
   } catch (cause) {
     result.status = signal?.aborted ? 'aborted' : 'failed';
     result.failure = { phase, code: failure?.code ?? cause.code ?? 'SOAK_FAILURE' };
+    if (cause.h2Flow) result.failure.h2Flow = cause.h2Flow;
     result.atFailure = { lab: lab?.stats(), proxy: proxy?.stats(), workloadSockets: sockets.size,
       workloadTimers: timers.size, workloadRequests: requests.size };
   } finally {

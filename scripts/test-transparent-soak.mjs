@@ -18,7 +18,7 @@ for (const option of ['--seconds=0', '--seconds=3601', '--seconds=Infinity', '--
 }
 test('duplicate soak options fail', () => assert.throws(() => soakOptions(['--seconds=1', '--seconds=2'])));
 
-const labIdle = { sockets: 0, heldResponses: 0, h2Sessions: 0, pendingClients: 0, relaySessions: 0, relayTimers: 0, cleanupFailures: 0, slowStreams: 0, slowStreamTimers: 0 };
+const labIdle = { sockets: 0, heldResponses: 0, h2Sessions: 0, pendingClients: 0, relaySessions: 0, relayTimers: 0, cleanupFailures: 0, slowStreams: 0, slowStreamTimers: 0, h2FlowStreams: 0, h2FlowTimers: 0 };
 const proxyIdle = { clients: 0, upstreams: 0, headerTimers: 0, relaySessions: 0, relayTimers: 0, cleanupFailures: 0 };
 test('every owned resource counter must drain, including closed-session cleanup failures', () => {
   assertIdle(labIdle, proxyIdle);

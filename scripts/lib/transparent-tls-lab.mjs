@@ -15,6 +15,7 @@ import { ja3FromTcpBuf, parseFirstTlsClientHelloFromTcpBuf } from './tls-clienth
 import { ja4FromTcpBuf } from './tls-clienthello-ja4.mjs';
 import { labSessionStats } from './lab-session-stats.mjs';
 import { slowStreamOrigin } from './lab-slow-streams.mjs';
+import { h2FlowOrigin } from './lab-h2-flow.mjs';
 
 export const LAB_CERT_PATH = fileURLToPath(new URL('../fixtures/boring-tls-local.cert.pem', import.meta.url));
 const LAB_KEY_PATH = fileURLToPath(new URL('../fixtures/boring-tls-local.key.pem', import.meta.url));
@@ -104,7 +105,7 @@ export async function startTransparentTlsLab({
   clientPort = 0, exitPort = 0, originPort = 0,
   originName = 'localhost', publicName = 'relay.test',
   clientPsk, sessionTimeoutMs = 10_000, originTls = {}, clientLimits, exitLimits,
-  externalOriginPort, holdResponses = false, slowStreams = false,
+  externalOriginPort, holdResponses = false, slowStreams = false, h2Flow = false,
 } = {}) {
   for (const port of [clientPort, exitPort, originPort]) validatePort(port);
   if (typeof holdResponses !== 'boolean' || (holdResponses && externalOriginPort !== undefined)) {
@@ -112,6 +113,9 @@ export async function startTransparentTlsLab({
   }
   if (typeof slowStreams !== 'boolean' || (slowStreams && externalOriginPort !== undefined)) {
     throw new Error('slowStreams requires a boolean and the internal lab origin');
+  }
+  if (typeof h2Flow !== 'boolean' || (h2Flow && externalOriginPort !== undefined)) {
+    throw new Error('h2Flow requires a boolean and the internal lab origin');
   }
   if (externalOriginPort !== undefined) {
     validatePort(externalOriginPort);
@@ -146,6 +150,7 @@ export async function startTransparentTlsLab({
   const heldResponses = new Map();
   const relay = labSessionStats();
   const streaming = slowStreams ? slowStreamOrigin() : null;
+  const flow = h2Flow ? h2FlowOrigin() : null;
   let pendingClients = 0;
 
   function track(socket) {
@@ -218,6 +223,7 @@ export async function startTransparentTlsLab({
       req.on('error', (error) => diagnose(error.message));
       res.on('error', (error) => diagnose(error.message));
       if (streaming?.handle(req, res)) return;
+      if (flow?.handle(req, res)) return;
       req.on('data', (chunk) => {
         size += chunk.length;
         if (size > MAX_BODY_BYTES) {
@@ -311,9 +317,12 @@ export async function startTransparentTlsLab({
         resumedTlsConnections: externalOriginPort ? null : resumedTlsConnections,
         requests: externalOriginPort ? null : requests, heldResponses: heldResponses.size,
         h2Sessions: originH2Sessions.size, pendingClients, ...relay.stats(),
-        ...(streaming?.stats() ?? { slowStreams: 0, slowStreamTimers: 0 }) }),
+        ...(streaming?.stats() ?? { slowStreams: 0, slowStreamTimers: 0 }),
+        ...(flow?.stats() ?? { h2FlowStreams: 0, h2FlowTimers: 0, h2FlowCancels: 0, h2FlowDeadlines: 0 }) }),
       relayPressure: (direction) => relay.pressure(direction),
       resumeSlowUploads: () => streaming?.resumeUploads(),
+      h2FlowSnapshots: () => flow?.snapshots() ?? [],
+      resumeH2Uploads: () => flow?.resumeUploads(),
       // Lab-only controls, no ticket key material returned to the caller or logged.
       releaseHeldResponses() {
         for (const release of heldResponses.values()) release();

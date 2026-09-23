@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–25; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–26; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -626,3 +626,59 @@ PASS, 9+3 волны, по 12 случаев каждого вида и 768 Ми
 Сейчас H2 есть в здоровом параллельном трафике, но stalled stream — H1 на отдельном
 TLS. Browser soak, replay/destination policy, production-квоты и общий ECH routing
 остаются отдельными задачами. Mesh/TUN/BoringSSL не затронуты.
+
+## 26. HTTP/2 stream flow-control на одном TLS-соединении
+
+`--profile=h2-flow` в [soak CLI](../scripts/transparent-soak.mjs): basic-волна плюс
+forward/reverse × resume/cancel на **одной TLS/H2 session за всю матрицу**.
+Следующая волна создаёт новую session, сам стенд/exit/origin живут весь прогон.
+Приостанавливается stream, не TCP socket. На принимающем endpoint необходимо
+localWindowSize=0, у отправляющего stream — writableNeedDrain, connection remote
+window при этом положителен. Это Node endpoint API, не расшифровка H2 pcap.
+Настройки HTTP/2 окон не переопределяются.
+
+До снятия блокировки проходят concurrency соседних 128-КиБ echo на той же session.
+Resume требует точных 4 МиБ и SHA-256. При cancel уже находящиеся на origin `/hold`
+запросы остаются живы: только slow stream получает RST_STREAM CANCEL=8, origin
+подтверждает reset, соседи отвечают 200/released без reset. После каждого случая
+новые echo снова проходят на той же session. CONNECT/TCP/TLS counters +1 за матрицу,
+GOAWAY/session/runtime errors запрещены. Проверяется продолжение flow-control после
+reset, но не точное число WINDOW_UPDATE frames или равенство остаточного credit.
+
+Opt-in `h2Flow` origin: H2-only endpoints, тело 4 МиБ / блок 16 КиБ, cap 2 slow streams,
+deadline 15 с закрывает только stream и считается ошибкой теста. H1 и external origin
+запрещены. После случаев проверяется освобождение клиентских streams, fixture timers,
+held responses; после матрицы — всего TLS/CONNECT и полный trace ClientHello.
+H2 readable/writable queues семплируются раз в 5 мс, предел fixture 256 КиБ,
+не OS/global memory bound. Production runtime/wire-format не менялись.
+
+JSON `h2Flow`: TLS matrices/healthyEchoes и четыре агрегата cases, bytes,
+zeroWindowSamples, healthyWhileBlocked/After, heldSurvived, rstCode, queue peaks.
+Basic totals и H2 counters разделены; все включают warmup. Добавлены 12 регрессий,
+включая отрицательные проверки flow evidence, cap/opt-in/H1 refusal, настоящую
+матрицу и SIGTERM после наблюдаемого исчерпания окна.
+Acceptance: 16 Node-файлов, **277 Node-тестов + 14 browser-сценариев**.
+Подробности — [документация](../scripts/transparent-tls-lab.md#http2-flow-control-медленный-stream-и-соседи-на-одном-tls).
+
+Первый длинный прогон: assertion на 57-й общей волне, по счётчикам — начало reverse-resume;
+конкретное поле старый отчёт не сохранял. Найден дефект readiness: ожидались только
+stream window/needDrain, а положительный connection window требовался уже отдельной
+assertion. Исправлено ожидание всех трёх асинхронных условий и проверка того же
+снимка без повторного чтения. Добавлены две регрессии позднего credit/повторного
+чтения; новые failure reports содержат case/step/числовой снимок. Исходный fail
+не маскируется повтором «до зелёного», production runtime не менялся.
+
+Финальная проверка на VPS после исправления: 303.33 с / concurrency 4,
+98+3 волны, 101 H2-матрица, по 101 случаю каждого вида — PASS.
+202 resume доставили 808 МиБ (SHA-256), 202 CANCEL сохранили 808 уже ожидавших
+соседних responses; 3333 H2 echo прошли на тех же sessions (basic-трафик отдельно).
+Sampled readable/writable peaks 131 070/65 536 байт, FD 24 между волнами → 19
+после cleanup, учитываемые ресурсы нулевые, fixture deadline 0, worker exit 0.
+RSS 88.3→160.0 МиБ (peak 162.3), heapUsed 8.9→11.1 МиБ; отсутствие утечек не доказано.
+Дополнительно PASS 61.71 с / concurrency 12: 13+3 волны, 128 МиБ resume, 32 CANCEL,
+384 held survivors и 1552 H2 echo. Финальный acceptance 277 Node + 14 browser — PASS.
+
+Следующий пакет: GOAWAY/drain при активных H2 streams, завершение уже принятых
+запросов и явная ошибка новых без скрытой повторной отправки. Browser soak,
+replay/destination policy, production-квоты и общий ECH routing остаются отдельными
+задачами. Mesh/TUN/BoringSSL не затронуты.

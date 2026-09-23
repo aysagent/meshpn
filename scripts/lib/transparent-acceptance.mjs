@@ -10,6 +10,7 @@ export const TEST_FILES = Object.freeze([
   'test-transparent-acceptance.mjs',
   'test-transparent-soak.mjs',
   'test-transparent-slow-reader.mjs',
+  'test-transparent-h2-flow.mjs',
 ]);
 
 export function parseOptions(args) {
