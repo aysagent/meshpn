@@ -3,6 +3,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { once } from 'node:events';
 import { RelaySession, relayError } from './transparent-tls-io.mjs';
+import { labSessionStats } from './lab-session-stats.mjs';
 
 export async function startLabConnectProxy(lab, {
   port = 0, maxConnections = 32, headerTimeoutMs = 3000,
@@ -20,6 +21,7 @@ export async function startLabConnectProxy(lab, {
   }
   const authority = `localhost:${lab.originPort}`;
   const clients = new Set(), upstreams = new Set(), headerTimers = new Map();
+  const relay = labSessionStats();
   let closing = false, closePromise, accepted = 0, rejected = 0, tunnels = 0;
   const clearHeader = (socket) => { clearTimeout(headerTimers.get(socket)); headerTimers.delete(socket); };
   function reject(socket, status) {
@@ -62,6 +64,7 @@ export async function startLabConnectProxy(lab, {
       reject(socket, '403 Forbidden'); return;
     }
     const session = new RelaySession(socket, { limits: { connectTimeoutMs, writeTimeoutMs: closeTimeoutMs } });
+    relay.track(session);
     (async () => {
       const upstream = await session.connect(() => {
         const s = net.connect({ host: '127.0.0.1', port: lab.clientPort });
@@ -98,6 +101,7 @@ export async function startLabConnectProxy(lab, {
     server.listen(port, '127.0.0.1');
     await once(server, 'listening');
     return { host: '127.0.0.1', port: server.address().port, authority, close,
-      stats: () => ({ accepted, rejected, tunnels, clients: clients.size, upstreams: upstreams.size, headerTimers: headerTimers.size }) };
+      stats: () => ({ accepted, rejected, tunnels, clients: clients.size, upstreams: upstreams.size,
+        headerTimers: headerTimers.size, ...relay.stats() }) };
   } catch (error) { await close(); throw error; }
 }

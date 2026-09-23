@@ -13,6 +13,7 @@ import {
 } from './transparent-tls-runtime.mjs';
 import { ja3FromTcpBuf, parseFirstTlsClientHelloFromTcpBuf } from './tls-clienthello-ja3.mjs';
 import { ja4FromTcpBuf } from './tls-clienthello-ja4.mjs';
+import { labSessionStats } from './lab-session-stats.mjs';
 
 export const LAB_CERT_PATH = fileURLToPath(new URL('../fixtures/boring-tls-local.cert.pem', import.meta.url));
 const LAB_KEY_PATH = fileURLToPath(new URL('../fixtures/boring-tls-local.key.pem', import.meta.url));
@@ -139,6 +140,8 @@ export async function startTransparentTlsLab({
   let resumedTlsConnections = 0;
   let requests = 0;
   const heldResponses = new Map();
+  const relay = labSessionStats();
+  let pendingClients = 0;
 
   function track(socket) {
     sockets.add(socket);
@@ -265,7 +268,7 @@ export async function startTransparentTlsLab({
 
     const exit = net.createServer((socket) => {
       captureHello(socket, 'exit', captures, diagnose);
-      wireTransparentTlsEncSniSession(socket, {
+      relay.track(wireTransparentTlsEncSniSession(socket, {
         vpnSecretBuf: psk, publicName, logOpts: {},
         limits: exitLimits, onSessionError: onRuntimeError('exit'),
         connectOrigin(hostname, port) {
@@ -275,21 +278,22 @@ export async function startTransparentTlsLab({
           }
           return track(net.connect({ host: HOST, port: boundOriginPort }));
         },
-      });
+      }));
     });
     const boundExitPort = await listen(exit, exitPort);
 
     const client = net.createServer((socket) => {
       captureHello(socket, 'client', captures, diagnose);
+      pendingClients++;
       attachTransparentTlsClientSession(socket, {
         upstreamHost: HOST, upstreamPort: boundExitPort,
         vpnSecretBuf: clientPsk ?? psk, publicName,
         explicitDestination: { address: HOST, port: boundOriginPort },
         logOpts: {}, limits: clientLimits, onSessionError: onRuntimeError('client'),
-      }).catch((error) => {
+      }).then((session) => relay.track(session)).catch((error) => {
         diagnose(error.message);
         socket.destroy();
-      });
+      }).finally(() => { pendingClients--; });
     });
     const boundClientPort = await listen(client, clientPort);
 
@@ -299,7 +303,8 @@ export async function startTransparentTlsLab({
       stats: () => ({ originConnections, sockets: sockets.size,
         tlsConnections: externalOriginPort ? null : tlsConnections,
         resumedTlsConnections: externalOriginPort ? null : resumedTlsConnections,
-        requests: externalOriginPort ? null : requests, heldResponses: heldResponses.size }),
+        requests: externalOriginPort ? null : requests, heldResponses: heldResponses.size,
+        h2Sessions: originH2Sessions.size, pendingClients, ...relay.stats() }),
       // Lab-only controls, no ticket key material returned to the caller or logged.
       releaseHeldResponses() {
         for (const release of heldResponses.values()) release();

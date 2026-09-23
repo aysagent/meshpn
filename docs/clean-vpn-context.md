@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–23; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–24; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -530,3 +530,55 @@ Firefox 156.0.1, tshark 4.2.2). Полные команды и ограниче�
 не заменяют длительный прогон. Browser ECH/0-RTT, общий ECH routing,
 replay/destination policy и production-квоты всё ещё отдельные задачи.
 Mesh/TUN, wire-format и BoringSSL не менялись.
+
+## 24. Persistent bounded soak и наблюдение ресурсов
+
+[Soak CLI](../scripts/transparent-soak.mjs), `npm run transparent-tls:soak`: Linux/Node 22+,
+один worker и один lab/proxy на весь прогон без перезапуска между волнами.
+Default — 300 измеряемых секунд после трёх полных волн прогрева, concurrency 4;
+границы CLI 1..3600 с и 2..12 клиентов. Нет браузеров/Go/внешней сети/TUN.
+Acceptance теперь содержит 14 Node-файлов: добавлены 19 коротких регрессий soak,
+полный набор **254 Node-теста + 14 browser-сценариев**.
+
+Волна: параллельные verified H1/H2 echo по 64 КиБ, FIN неполного hello,
+H1 upload abort после появления запроса на origin, drip-fed ClientHello и CONNECT
+headers до настоящего deadline 300 мс, затем здоровый H2 echo. Полные ClientHello,
+TLS records и JA3/JA4 сверяются в каждой волне; captures после проверки удаляются.
+Это не HRR/resumption/browser/slow-reader soak — они остаются отдельными режимами.
+
+Lab/proxy получили только test-only accounting возвращённых RelaySession handles:
+active sessions/timers и cleanupFailures при closed; закрытые handles не удерживаются.
+Также учитываются pendingClients и origin H2 sessions. До выдачи client handle
+failed setup наблюдается по pendingClients/сокету, не прямым census всех unref timers.
+После фаз все учитываемые ресурсы должны быть нулевыми, после каждой волны FD
+не выше прогретого baseline и нет child processes worker. После остановки worker
+не остаётся TCP/Timeout/Process handles, удерживающих event loop; supervisor ждёт
+его естественного выхода, не маскирует остатки через process.exit().
+
+JSON: Git revision/dirty, OS/Node/embedded OpenSSL, параметры, totals (с прогревом),
+baseline/idle samples/final cleanup, фаза ошибки и код, exit/signal worker.
+Секреты, payload, runtime stdout/stderr и FD targets не сохраняются. Samples примерно
+раз в 5 с; RSS/heapUsed/external/arrayBuffers имеют first/last/peak/delta/slope без
+forced GC. Пики только idle sampled, рост RSS сам по себе не равен утечке.
+512 МиБ RSS — семплируемая страховка, не cgroup bound; измерения включают harness.
+Deadline волны 20 с, drain 5 с, supervisor seconds+60 с и kill grace до 5 с.
+SIGTERM regression требует aborted + cleanup, не ложный passed.
+
+Отчёт — новый файл 0600 в приватном temp-каталоге или явный --report, без перезаписи.
+Пишется в конце; SIGKILL/ошибка записи могут оставить неполный файл.
+См. [полные команды и ограничения](../scripts/transparent-tls-lab.md#ограниченный-по-времени-soak).
+
+Самостоятельно прогнано на VPS: 300.35 с / concurrency 4, 294+3 волны, 2079 TLS,
+1485 echo (92.81 МиБ), 594 upload abort, 1188 hello abort и по 594 slow hello/header.
+Idle FD 24 весь прогон, после shutdown 19, учитываемые sessions/sockets/timers нулевые,
+worker exit 0. RSS 79.3→106.0 МиБ, heapUsed 12.8→13.0 МиБ; RSS во второй половине
+ещё +1.25 МиБ, поэтому отсутствие утечки не заявляется. Дополнительно 60.40 с при
+concurrency 12: 55+3 волны, 1102 TLS, FD 24→19, RSS 99.8→130.3 МиБ (peak 133.4).
+Оба PASS. Финальный acceptance 254 Node + 14 Chrome/Firefox тоже PASS.
+
+Следующий пакет: длительная проверка медленного чтения после handshake в обоих
+направлениях, пауза/возобновление и write deadline под параллельными здоровыми
+соединениями. Текущий slow-peer soak покрывает заголовки; backpressure пока проверен
+отдельными короткими load-тестами. Более долгий browser soak, replay/destination
+policy, production-квоты и общий ECH routing остаются отдельными задачами.
+Production runtime/wire-format, mesh/TUN и BoringSSL не менялись.

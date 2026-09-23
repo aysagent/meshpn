@@ -8,6 +8,7 @@ export const TEST_FILES = Object.freeze([
   'test-transparent-tls-early-data.mjs', 'test-transparent-tls-ech.mjs', 'test-transparent-connect-lab.mjs',
   'test-browser-lab-pcap.mjs', 'test-browser-lab-process.mjs', 'test-transparent-tls-load.mjs',
   'test-transparent-acceptance.mjs',
+  'test-transparent-soak.mjs',
 ]);
 
 export function parseOptions(args) {

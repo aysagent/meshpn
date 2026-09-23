@@ -16,7 +16,7 @@ curl нужен только для необязательной ручной п
 
 ## Единая acceptance-проверка
 
-[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 13 Node-наборов
+[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 14 Node-наборов
 и полную матрицу Chrome/Firefox. Он ничего не устанавливает и не скачивает.
 Нужны Linux, Node 22+, Go 1.24+, OpenSSL 3, GNU `stdbuf`, а для полного режима —
 зависимости браузерного стенда ниже, включая доступные user/network/mount namespaces.
@@ -70,10 +70,95 @@ JSON пишется один раз в конце: SIGKILL/авария ОС/о�
 или неполный файл. Ошибка аргументов или резервирования пути возникает до отчёта.
 Это не cgroup supervisor; ограничения cleanup процессов описаны ниже.
 
-Проверено два полных прогона подряд: **235 Node-тестов + 14 browser-сценариев в каждом**.
+Текущий полный прогон: **254 Node-теста + 14 browser-сценариев**. Предыдущий пакет
+acceptance был проверен дважды подряд с 235 Node-тестами; soak добавил ещё 19.
 27 новых регрессий проверяют runner/reporter, включая отсутствие инструмента,
 неполные результаты, timeout/abort/output overflow и запрет перезаписи отчёта.
 Это ограниченный acceptance, не длительный soak и не production-сертификация.
+
+## Ограниченный по времени soak
+
+```bash
+# Самостоятельный прогон, без Go/браузеров/pcap-инструментов:
+npm run transparent-tls:soak
+# Пять минут после прогрева, четыре параллельных HTTPS-клиента:
+node scripts/transparent-soak.mjs --seconds=300 --concurrency=4
+# Короткие регрессии runner (включены в обычный acceptance):
+npm run test:transparent-soak
+```
+
+[Supervisor](transparent-soak.mjs) держит один worker с одним и тем же
+client/exit/origin/CONNECT на протяжении всего прогона. Между волнами стенд не
+перезапускается. Нужны Linux `/proc` и Node 22+; проверено на Node 24.13.0.
+Нет TUN, перенаправления, изменения DNS/маршрутов, внешнего трафика и установки ПО.
+Это Node/OpenSSL-нагрузка, не длительный прогон Chrome/Firefox.
+
+Три полные волны прогрева предшествуют измеряемым `--seconds=1..3600` (default 300).
+Каждая волна последовательно выполняет:
+
+- `concurrency` verified TLS 1.3 соединений через CONNECT с HTTP/1.1/HTTP2 echo 64 КиБ;
+- столько же FIN-обрывов неполного ClientHello без выхода на origin;
+- `floor(concurrency/2)` TLS/H1 upload abort после подтверждённого запроса на origin;
+- два drip-fed ClientHello и два drip-fed CONNECT header до реальных deadline;
+- здоровый H2 echo после ошибок, чтобы проверить восстановление обслуживания.
+
+`--concurrency=2..12`, default 4, CONNECT admission cap 16. Для законченных hello
+каждой волны сверяются полные TLS records, тело ClientHello и JA3/JA4 в трёх точках.
+Captures после сверки освобождаются; payload/key material в отчёт не попадает.
+Idle-таймеры lab отключены: slow hello ограничивает runtime deadline 300 мс,
+slow CONNECT — deadline 300 мс самого proxy. Это медленные заголовки, **не slow-reader**
+после handshake; backpressure отдельно проверяет короткий load suite.
+
+После каждой фазы проверяется ноль lab/proxy/workload sockets, H2 sessions,
+pending client setup, held responses, header/drip timers и учитываемых relay sessions/timers.
+Test-only tracker получает возвращённые runtime session handles и проверяет их
+sockets/timers при `closed`, затем удаляет handle из Set. Client setup, завершившийся
+ошибкой до возврата handle, учитывается через pendingClients и закрытие сокета:
+прямого census его unref timers нет. Production runtime и wire-format не менялись.
+
+Каждая волна требует отсутствия роста FD относительно прогретого worker и нуля
+дочерних процессов worker (в этой нагрузке они вообще не создаются). После закрытия
+стенда также не должно остаться TCP/Timeout/Process ресурсов, удерживающих event loop.
+`getActiveResourcesInfo()` — не полный учёт всех unref/нативных ресурсов;
+см. [Node process API](https://nodejs.org/api/process.html#processgetactiveresourcesinfo).
+Supervisor требует естественного выхода worker, без `process.exit()` в рабочем коде.
+Его `close`/exit/signal попадают в отчёт; остановка использует принадлежащую ему группу
+процессов. Это не проверка полного дерева браузера и не cgroup-супервизор.
+
+Волна ограничена 20 с, ожидание освобождения — 5 с, supervisor — seconds+60 с
+плюс до 5 с на принудительную остановку. Между волнами пауза 250 мс; последняя волна
+может выйти за requested seconds. Runtime stdout/stderr не сохраняются, структурированный
+вывод worker ограничен 4 МиБ. На каждую волну проверяется аварийный порог RSS 512 МиБ;
+это семплируемая страховка, не жёсткий memory limit ОС и не критерий утечки.
+
+JSON schema 1: версии Node/embedded OpenSSL/ОС, Git revision/dirty, параметры,
+результат/счётчики/фаза сбоя, baseline, samples примерно раз в 5 с и final cleanup.
+Totals включают прогрев; `waves` — только измеряемые волны, warmupWaves отдельно.
+RSS/heapUsed/external/arrayBuffers записываются без forced GC: first/last/peak/delta
+и линейный тренд bytesPerMinute. Пики только среди idle-сэмплов, не во время нагрузки.
+Рост RSS может отражать allocator/GC; короткая стабилизация не доказывает отсутствие
+утечки. В память также входят накопленные samples самого harness.
+
+Путь печатается при старте/окончании, default — приватный `meshpn-soak-*/report.json`
+в temp ОС. `--report=/existing/directory/new.json` резервирует новый файл 0600,
+существующий файл/symlink не перезаписывается. Отчёт записывается в конце даже при
+обычном fail/abort, остаётся после cleanup; SIGKILL/сбой записи могут оставить его
+пустым или неполным. Ctrl+C/SIGTERM дают aborted и ненулевой exit. Частичный worker
+result никогда не заменяет итоговый status supervisor. Dirty исходники не архивируются.
+
+Реальный прогон на текущем VPS (Linux, Node 24.13.0 / embedded OpenSSL 3.5.4):
+300.35 с после прогрева, 294 измеряемых + 3 прогревочных волны, concurrency 4 — PASS.
+Всего 2079 TLS-соединений: 1485 echo (92.81 МиБ) и 594 upload abort;
+дополнительно 1188 неполных hello abort, 594 slow hello и 594 slow CONNECT.
+Idle FD всегда 24, после shutdown 19; учитываемые сокеты/таймеры/сессии нулевые,
+worker вышел естественно с code 0. RSS 79.3→106.0 МиБ, heapUsed 12.8→13.0 МиБ;
+во второй половине RSS вырос ещё примерно на 1.25 МиБ — строгого «нулевого роста» нет.
+Это не доказательство отсутствия memory leak.
+
+Дополнительный прогон 60.40 с, concurrency 12 — PASS: 55+3 волны, 1102 TLS,
+754 echo и 348 upload abort; FD снова 24→19. RSS 99.8→130.3 МиБ, sampled peak
+133.4 МиБ. Оба прогона проверяют ограниченный интервал, не многочасовую нагрузку.
+Финальный acceptance: 254 Node-теста + 14 Chrome/Firefox-сценариев, все pass.
 
 ## Быстрый запуск
 
@@ -632,7 +717,7 @@ SIGKILL runner или аварии ОС cleanup не гарантирован. P
 
 Проверено: Linux, Node 24.13.0, OpenSSL 3.0.13, tshark 4.2.2,
 Chrome for Testing 151.0.7922.10, Firefox 156.0.1.
-**235 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
+**254 Node-теста + 14 браузерных сценариев**, без ошибок и пропусков.
 Первоначальный baseline (161 + 4) расширен HRR и resumption, описанными ниже.
 Browser ECH/0-RTT, HTTP/3, GUI-браузеры, длительный профиль нагрузки и внешний
 сетевой путь ещё не покрыты.
@@ -774,8 +859,8 @@ SIGKILL runner и авария ОС не покрыты; это не замен�
 Проверено **208 Node-тестов + 14 browser-сценариев**; браузерная матрица повторена.
 Это короткая ограниченная проверка стабильности, не benchmark, не суточный soak
 и не доказательство production/DPI-безопасности. Единый повторяемый acceptance
-runner уже добавлен (см. начало документа); следующий пакет — отдельный
-ограниченный по времени soak с наблюдением ресурсов.
+runner и отдельный ограниченный по времени soak с наблюдением ресурсов
+уже добавлены (см. начало документа).
 
 ## Границы текущего результата
 
@@ -786,8 +871,9 @@ runner уже добавлен (см. начало документа); след
 - Нет обещания сохранить TCP packet boundaries, тайминги или размеры всех пакетов.
 - Основные наборы используют Node/OpenSSL/Go; отдельный браузерный набор проверяет
   реальные Chrome/Firefox через CONNECT и независимо сверяет JA3/JA4 с tshark.
-- Replay-защита relay, общий ECH routing и длительный slow-peer soak пока не
-  покрыты. Настоящий ECH проверен в Go-матрице с pinned loopback origin, 0-RTT —
+- Replay-защита relay, общий ECH routing и длительный slow-reader/browser soak пока не
+  покрыты; есть отдельный bounded Node soak с обрывами и медленными заголовками.
+  Настоящий ECH проверен в Go-матрице с pinned loopback origin, 0-RTT —
   отдельно в OpenSSL-матрице, без проверки их сочетания. Для HRR покрыт начальный
   TLS 1.3 handshake; TLS 1.2
   renegotiation и произвольные последующие handshake не добавлены.
