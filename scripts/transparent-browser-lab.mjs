@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startTransparentTlsLab, assertRelayTrace } from './lib/transparent-tls-lab.mjs';
 import { startLabConnectProxy } from './lib/transparent-connect-lab.mjs';
-import { child, exec, launchBrowser } from './lib/browser-lab-driver.mjs';
+import { child, exec, launchBrowser, BROWSER_SCENARIOS } from './lib/browser-lab-driver.mjs';
 import { PCAP_FIELDS, parseBrowserPcap, assertBrowserPcap } from './lib/browser-lab-pcap.mjs';
 
 const self = fileURLToPath(import.meta.url);
@@ -74,7 +74,7 @@ if (mode !== '--isolated') {
     await exec('openssl', ['x509', '-req', '-in', csr, '-CA', caPath, '-CAkey', caKey,
       '-set_serial', '2', '-days', '1', '-copy_extensions', 'copy', '-out', certPath]);
     const originTls = { cert: await readFile(certPath), key: await readFile(keyPath) };
-    for (const kind of kinds) for (const scenario of ['untrusted', 'baseline', 'hrr', 'resumption', 'resumption-hrr', 'ticket-rejection', 'parallel-abort']) {
+    for (const kind of kinds) for (const scenario of BROWSER_SCENARIOS) {
       const trusted = scenario !== 'untrusted';
       const retryGroup = kind === 'firefox' ? 'P-384' : 'P-256';
       const caseDir = join(directory, `${kind}-${scenario}`);
@@ -206,6 +206,8 @@ if (mode !== '--isolated') {
       await lab.close(); cleanups.delete(lab.close);
       assert.equal(proxy.stats().clients + proxy.stats().upstreams + proxy.stats().headerTimers + lab.stats().sockets + lab.stats().heldResponses, 0);
       console.log(`PASS ${browser.version} ${scenario}: ${trusted ? 'verified TLS1.3 + HTTP/2 + echo + native UA' : 'untrusted certificate rejected before HTTP'}; ${expectations.size} connections, ${checked} ClientHellos independently checked by tshark`);
+      console.log(`BROWSER_RESULT ${JSON.stringify({ schema: 1, kind, scenario, version: browser.version,
+        connections: expectations.size, clientHellos: checked })}`);
     }
   } finally {
     clearTimeout(deadline); await cleanup();

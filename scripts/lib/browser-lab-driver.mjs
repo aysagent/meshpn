@@ -6,6 +6,9 @@ import { mkdir, writeFile, access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+export const BROWSER_SCENARIOS = Object.freeze(['untrusted', 'baseline', 'hrr', 'resumption',
+  'resumption-hrr', 'ticket-rejection', 'parallel-abort']);
+
 export const exec = (file, args, options = {}) => promisify(execFile)(file, args, {
   timeout: 15_000, maxBuffer: 1024 * 1024, ...options,
 });

@@ -14,6 +14,67 @@ curl нужен только для необязательной ручной п
 и без изменения production BoringSSL-helper.
 Браузерный набор с независимым pcap имеет отдельные зависимости — см. ниже.
 
+## Единая acceptance-проверка
+
+[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 13 Node-наборов
+и полную матрицу Chrome/Firefox. Он ничего не устанавливает и не скачивает.
+Нужны Linux, Node 22+, Go 1.24+, OpenSSL 3, GNU `stdbuf`, а для полного режима —
+зависимости браузерного стенда ниже, включая доступные user/network/mount namespaces.
+
+```bash
+MESHPN_ECH_GO=/path/to/go \
+MESHPN_BROWSER_CHROME=/path/to/chrome \
+MESHPN_BROWSER_FIREFOX=/path/to/firefox \
+MESHPN_CERTUTIL=/path/to/certutil \
+MESHPN_TSHARK=/path/to/tshark \
+npm run transparent-tls:acceptance -- --repeat=2
+
+# Без браузерных инструментов: только частичная проверка, не full acceptance.
+MESHPN_ECH_GO=/path/to/go npm run transparent-tls:acceptance -- --suite=node
+```
+
+Go/certutil/tshark/tcpdump можно брать из PATH; пути к обоим браузерам задаются
+явно. `MESHPN_TCPDUMP` переопределяет tcpdump, `LD_LIBRARY_PATH` при необходимости
+задаётся для извлечённых библиотек. `--repeat=1..3` означает полные последовательные
+прогоны, по умолчанию один. Первый сбой прекращает всё: повторов «до зелёного» нет.
+Ненулевой exit, deadline, skip/todo, неполная матрица или пропавший инструмент — fail.
+Проверяются также дубли сценариев, число TLS-подключений/ClientHello captures и
+постоянство версии каждого браузера внутри матрицы.
+
+На preflight-команду отведено 15 с, Node-этап — 180 с, browser-этап — 240 с;
+остановка дочерней process group имеет grace 5 с. Вывод ограничен 1 МиБ для
+preflight / 4 МиБ для этапа. Собственный deadline browser runner — 180 с.
+`SSLKEYLOGFILE`, `NODE_OPTIONS`, `NODE_TEST_CONTEXT` не наследуются; Go запускается
+с локальным toolchain и выключенной загрузкой модулей. HOME не подменяется.
+
+Путь к JSON печатается при запуске и завершении. По умолчанию это новый приватный
+`meshpn-acceptance-*/report.json` во временном каталоге ОС. Можно указать
+`--report=/existing/directory/new-report.json`; существующие файлы и symlinks
+не перезаписываются, родительский каталог должен уже существовать. Права файла 0600.
+Отчёт сохраняется и при ошибке проверки, не удаляется вместе с browser fixtures.
+
+Schema 1 содержит status, fullAcceptance, Git revision/dirty, фиксированный manifest,
+ОС/архитектуру/kernel, Node/embedded OpenSSL, пути и версии внешних инструментов,
+длительность/exit/reason каждого этапа, Node counts/имена проваленных тестов и
+структурированные результаты браузерных сценариев. У NSS certutil нет надёжного
+version-флага: записывается `version: null` и результат проверки `-H`, не выдуманная
+версия. Git dirty — только флаг: незакоммиченные исходники и бинарники не архивируются
+и не хешируются, поэтому отчёт сам по себе не обеспечивает воспроизводимость сборки.
+Raw stdout/stderr, exception stacks, pcap и TLS secrets в JSON не копируются.
+Сбор Node-результатов идёт через события [test reporter API](https://nodejs.org/api/test.html#custom-reporters),
+а не через нестабильный текст TAP/spec. Уже завершённые этапы сохраняются при сбое
+следующего. `--suite=node` может иметь status=passed, но всегда fullAcceptance=false.
+
+SIGINT/SIGTERM запрашивают остановку и отчёт aborted с ненулевым exit.
+JSON пишется один раз в конце: SIGKILL/авария ОС/ошибка записи могут оставить пустой
+или неполный файл. Ошибка аргументов или резервирования пути возникает до отчёта.
+Это не cgroup supervisor; ограничения cleanup процессов описаны ниже.
+
+Проверено два полных прогона подряд: **235 Node-тестов + 14 browser-сценариев в каждом**.
+27 новых регрессий проверяют runner/reporter, включая отсутствие инструмента,
+неполные результаты, timeout/abort/output overflow и запрет перезаписи отчёта.
+Это ограниченный acceptance, не длительный soak и не production-сертификация.
+
 ## Быстрый запуск
 
 Из корня репозитория:
@@ -571,7 +632,7 @@ SIGKILL runner или аварии ОС cleanup не гарантирован. P
 
 Проверено: Linux, Node 24.13.0, OpenSSL 3.0.13, tshark 4.2.2,
 Chrome for Testing 151.0.7922.10, Firefox 156.0.1.
-**208 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
+**235 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
 Первоначальный baseline (161 + 4) расширен HRR и resumption, описанными ниже.
 Browser ECH/0-RTT, HTTP/3, GUI-браузеры, длительный профиль нагрузки и внешний
 сетевой путь ещё не покрыты.
@@ -712,9 +773,9 @@ SIGKILL runner и авария ОС не покрыты; это не замен�
 Итого добавлены 12 Node load/gate тестов, 3 process-теста и 2 browser-сценария.
 Проверено **208 Node-тестов + 14 browser-сценариев**; браузерная матрица повторена.
 Это короткая ограниченная проверка стабильности, не benchmark, не суточный soak
-и не доказательство production/DPI-безопасности. Следующий пакет — единый
-повторяемый acceptance runner с машинным отчётом, версиями инструментов и
-ограниченным числом повторов, затем отдельный длительный soak.
+и не доказательство production/DPI-безопасности. Единый повторяемый acceptance
+runner уже добавлен (см. начало документа); следующий пакет — отдельный
+ограниченный по времени soak с наблюдением ресурсов.
 
 ## Границы текущего результата
 

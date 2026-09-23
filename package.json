@@ -57,6 +57,8 @@
     "test:browser-pcap": "node --test scripts/test-browser-lab-pcap.mjs",
     "test:transparent-load": "node --test scripts/test-transparent-tls-load.mjs",
     "test:browser-process": "node --test scripts/test-browser-lab-process.mjs",
+    "test:transparent-acceptance": "node --test scripts/test-transparent-acceptance.mjs",
+    "transparent-tls:acceptance": "node scripts/transparent-acceptance.mjs",
     "test:boring-tls": "node scripts/test-boring-tls-smoke.mjs",
     "postinstall": "npm run build:tun-linux || true; cd helpers && make 2>/dev/null || true"
   },

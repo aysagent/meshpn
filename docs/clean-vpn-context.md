@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–22; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–23; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -499,3 +499,34 @@ Chrome for Testing 151.0.7922.10, Firefox 156.0.1, tshark 4.2.2.
 отчётом и ограниченными повторами. Длительный soak, browser multi-process/slow-reader,
 ECH/0-RTT браузеров, production глобальные квоты, replay/destination policy и общий
 ECH routing остаются отдельными задачами. Mesh/TUN/BoringSSL не затронуты.
+
+## 23. Единый acceptance runner и машинный отчёт
+
+[Runner](../scripts/transparent-acceptance.mjs), `npm run transparent-tls:acceptance`:
+фиксированный manifest из 13 Node-файлов плюс 14 сценариев реальных Chrome/Firefox.
+`--repeat=1..3` повторяет всю матрицу и прекращает её при первом сбое, не маскирует
+flaky-падения повтором до успеха. `--suite=node` явно оставляет fullAcceptance=false.
+Недостающий инструмент, timeout, skip/todo, неполная/дублированная матрица — fail.
+Node reporter читает test events; браузер выдаёт структурированный результат только
+после успешного сценария и cleanup. Сверяются manifest, версии внутри browser-матрицы,
+числа соединений и ClientHello captures. Go auto-download отключён.
+
+JSON schema 1: Git revision/dirty, ОС/kernel/Node/OpenSSL, пути и версии инструментов,
+этапы/длительности/exit/reason, counts и имена проваленных тестов, browser scenarios.
+NSS certutil проверяется через `-H`, version=null: проверка capability не версия.
+Отчёт не архивирует dirty исходники/бинарники, не гарантирует воспроизводимость сборки.
+Raw logs/stacks/pcap/TLS secrets не включаются. Новый файл 0600, по умолчанию в
+приватном temp-каталоге; existing file/symlink не перезаписываются. SIGTERM даёт
+aborted; SIGKILL/ошибка записи могут оставить неполный файл, поскольку запись в конце.
+Дедлайны preflight/Node/browser — 15/180/240 с, bounded output, group cleanup grace 5 с.
+
+Добавлены 27 runner/reporter-регрессий. Проверено **235 Node-тестов + 14 browser-сценариев
+дважды подряд** (Node 24.13.0, Go 1.26.8, OpenSSL 3.0.13, Chrome 151.0.7922.10,
+Firefox 156.0.1, tshark 4.2.2). Полные команды и ограничения —
+[документация стенда](../scripts/transparent-tls-lab.md#единая-acceptance-проверка).
+
+Следующий пакет: отдельный bounded soak с повторными волнами соединений/обрывов,
+наблюдением сокетов/таймеров/процессов и трендов памяти. Два acceptance-повтора
+не заменяют длительный прогон. Browser ECH/0-RTT, общий ECH routing,
+replay/destination policy и production-квоты всё ещё отдельные задачи.
+Mesh/TUN, wire-format и BoringSSL не менялись.
