@@ -113,8 +113,9 @@ Explicit клиентский DNS adapter через числовой exit endpo
 Расширен [DNS wire contract](../scripts/dns-wire.md): обычные IN-типы, включая
 HTTPS/SVCB, TXT, SRV, PTR; бинарные labels, EDNS(0), extended RCODE, безопасный TC
 и matching вопроса/ответа. RDATA передаются непрозрачно, без semantic/DNSSEC validation.
-Следующий шаг перед системной интеграцией — полный TCP/DoH размер DNS65535 с
-ограниченными memory/framing budgets, EDNS negotiation и HTTP cache-age/TTL contract.
-После этого отдельно согласовать opt-in client/OS/LAN/IPv6 integration.
+Реализованы TCP/DoH DNS65535 с отдельным UDP cap4096 и фиксированными buffers,
+локальный BADVERS для новых EDNS versions и HTTP Age/TTL (включая negative SOA).
+Следующий шаг — отдельно согласовать opt-in client/OS/LAN/IPv6 integration:
+lifecycle, fail-closed, восстановление настроек; сначала dry-run и namespace tests.
 Кэша и активного production DNS/bootstrap пока нет.
 Случайные cover DNS запросы не входят в этот план реализации.

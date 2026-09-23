@@ -3,7 +3,8 @@ import dgram from 'node:dgram';
 import net from 'node:net';
 import https from 'node:https';
 import { once } from 'node:events';
-import { DNS_MAX_BYTES, dnsError, parseDnsQuery, validateDnsResponse, dnsFailure, truncateDnsResponse } from './lab-dns-wire.mjs';
+import { DNS_MAX_BYTES, DNS_UDP_MAX_BYTES, dnsError, parseDnsQuery, validateDnsResponse, dnsFailure, truncateDnsResponse, ageDnsResponse } from './lab-dns-wire.mjs';
+import { dnsHttpAge } from './dns-http-age.mjs';
 import { labDnsUpstreamTarget } from './dns-upstream-config.mjs';
 import { dnsExitTransportTarget } from './dns-exit-transport.mjs';
 
@@ -31,6 +32,7 @@ export async function startLabDohStub({ port = 0, upstream, profile, relayPort, 
   let inflight = 0, peakInflight = 0, closing = false, closePromise, udpBound = false;
   const counts = { queries: 0, forwarded: 0, succeeded: 0, failed: 0, rejected: 0 };
   const errors = {};
+  let peakTcpPendingBytes = 0, peakDohBodyBytes = 0;
   const timer = (ms, fn) => {
     const handle = setTimeout(() => { timers.delete(handle); fn(); }, ms); timers.add(handle);
     return () => { clearTimeout(handle); timers.delete(handle); };
@@ -43,6 +45,7 @@ export async function startLabDohStub({ port = 0, upstream, profile, relayPort, 
     return new Promise((resolve, reject) => {
       if (signal?.aborted) { reject(dnsError('DNS_ABORTED')); return; }
       let done = false, req;
+      const started = performance.now();
       const finish = (error, reply) => {
         if (done) return; done = true; cancel();
         signal?.removeEventListener('abort', aborted);
@@ -59,7 +62,7 @@ export async function startLabDohStub({ port = 0, upstream, profile, relayPort, 
           method: 'POST', path: contracted ? target.path : '/dns-query', maxHeaderSize: 8192,
           lookup: () => { throw dnsError('DNS_BOOTSTRAP_FORBIDDEN'); },
           headers: { host: target.authority, accept: 'application/dns-message', 'content-type': 'application/dns-message',
-            'content-length': query.length, 'cache-control': 'no-store' },
+            'content-length': query.length, 'cache-control': 'no-cache, no-store' },
         }, (res) => {
           res.on('aborted', () => finish(dnsError('DNS_HTTP')));
           res.on('error', () => finish(dnsError('DNS_HTTP')));
@@ -68,17 +71,24 @@ export async function startLabDohStub({ port = 0, upstream, profile, relayPort, 
             || res.headers['content-encoding'] || (length !== undefined && (!/^\d+$/.test(length) || Number(length) > DNS_MAX_BYTES))) {
             res.resume(); finish(dnsError('DNS_HTTP')); return;
           }
-          const chunks = []; let size = 0;
+          let age;
+          try { age = dnsHttpAge(res.rawHeaders); } catch (error) { res.resume(); finish(error); return; }
+          // One fixed body buffer, not a list of potentially 65k tiny chunks.
+          const body = Buffer.alloc(DNS_MAX_BYTES); let size = 0;
           res.on('data', (chunk) => {
             if (done) return;
-            size += chunk.length;
-            if (size > DNS_MAX_BYTES) { finish(dnsError('DNS_SIZE')); return; }
-            chunks.push(chunk);
+            if (size + chunk.length > DNS_MAX_BYTES) { finish(dnsError('DNS_SIZE')); return; }
+            chunk.copy(body, size); size += chunk.length;
+            peakDohBodyBytes = Math.max(peakDohBodyBytes, size);
           });
           res.on('end', () => {
             if (done) return;
             try {
-              const reply = Buffer.concat(chunks, size); validateDnsResponse(reply, query); finish(null, reply);
+              const reply = body.subarray(0, size); validateDnsResponse(reply, query);
+              // Conservative monotonic elapsed time, including body transfer;
+              // wall-clock Date skew cannot lengthen DNS TTLs.
+              ageDnsResponse(reply, age + Math.floor((performance.now() - started) / 1000));
+              finish(null, reply);
             } catch { finish(dnsError('DNS_RESPONSE')); }
           });
         });
@@ -94,17 +104,16 @@ export async function startLabDohStub({ port = 0, upstream, profile, relayPort, 
     let parsed;
     try { parsed = parseDnsQuery(query); } catch { counts.rejected++; return null; }
     if (closing) return null;
+    if (parsed.edns?.version > 0) { counts.rejected++; return dnsFailure(query, 16); }
     if (inflight >= maxInflight) { counts.rejected++; return dnsFailure(query); }
     inflight++; peakInflight = Math.max(peakInflight, inflight); counts.forwarded++;
     try {
       const upstreamQuery = Buffer.from(query); upstreamQuery.writeUInt16BE(0);
       const reply = await doh(upstreamQuery, signal);
       counts.succeeded++;
-      if (udp && reply.length > parsed.udpSize) {
-        const originalIdReply = Buffer.from(reply); originalIdReply.writeUInt16BE(parsed.id, 0);
-        return truncateDnsResponse(query, originalIdReply);
-      }
-      reply.writeUInt16BE(parsed.id); return reply;
+      reply.writeUInt16BE(parsed.id);
+      if (udp && reply.length > parsed.udpSize) return truncateDnsResponse(query, reply);
+      return reply;
     } catch (error) {
       counts.failed++; errors[error.code] = (errors[error.code] ?? 0) + 1;
       return dnsFailure(query);
@@ -117,7 +126,7 @@ export async function startLabDohStub({ port = 0, upstream, profile, relayPort, 
   }
   const udp = dgram.createSocket('udp4'); udp.on('error', () => {});
   udp.on('message', (query, peer) => {
-    if (peer.address !== '127.0.0.1' || query.length > DNS_MAX_BYTES) { counts.rejected++; return; }
+    if (peer.address !== '127.0.0.1' || query.length > DNS_UDP_MAX_BYTES) { counts.rejected++; return; }
     run(query, true, (reply) => { if (reply) udp.send(reply, peer.port, peer.address, () => {}); });
   });
   const tcp = net.createServer({ allowHalfOpen: true }, (socket) => {
@@ -126,14 +135,18 @@ export async function startLabDohStub({ port = 0, upstream, profile, relayPort, 
     track(socket, tcpSockets);
     const controller = new AbortController(); socket.once('close', () => controller.abort());
     const cancel = timer(tcpLifetimeMs, () => socket.destroy()); socket.once('close', cancel);
-    let pending = Buffer.alloc(0), busy = false;
+    // Fixed two-frame input capacity per admitted socket. No repeated concat
+    // of a growing buffer when a client dribbles a maximum-sized frame.
+    const pending = Buffer.alloc(2 * (DNS_MAX_BYTES + 2));
+    let pendingSize = 0, busy = false;
     const pump = () => {
       if (busy || socket.destroyed) return;
-      if (pending.length < 2) { if (socket.readableEnded) socket.end(); return; }
+      if (pendingSize < 2) { if (socket.readableEnded) socket.end(); return; }
       const length = pending.readUInt16BE(0);
       if (length < 12 || length > DNS_MAX_BYTES) { counts.rejected++; socket.destroy(); return; }
-      if (pending.length < length + 2) { if (socket.readableEnded) socket.destroy(); return; }
-      const query = Buffer.from(pending.subarray(2, length + 2)); pending = pending.subarray(length + 2);
+      if (pendingSize < length + 2) { if (socket.readableEnded) socket.destroy(); return; }
+      const query = Buffer.from(pending.subarray(2, length + 2));
+      pending.copyWithin(0, length + 2, pendingSize); pendingSize -= length + 2;
       // Continue reading into the bounded two-frame buffer so RST/close is
       // observable while DoH is pending. Overflow closes, never grows a queue.
       busy = true;
@@ -145,8 +158,9 @@ export async function startLabDohStub({ port = 0, upstream, profile, relayPort, 
       }, controller.signal);
     };
     socket.on('data', (chunk) => {
-      if (pending.length + chunk.length > 2 * (DNS_MAX_BYTES + 2)) { counts.rejected++; socket.destroy(); return; }
-      pending = Buffer.concat([pending, chunk]); pump();
+      if (pendingSize + chunk.length > pending.length) { counts.rejected++; socket.destroy(); return; }
+      chunk.copy(pending, pendingSize); pendingSize += chunk.length;
+      peakTcpPendingBytes = Math.max(peakTcpPendingBytes, pendingSize); pump();
     });
     socket.on('end', pump);
   });
@@ -170,5 +184,6 @@ export async function startLabDohStub({ port = 0, upstream, profile, relayPort, 
     udp.bind(tcp.address().port, '127.0.0.1'); await once(udp, 'listening'); udpBound = true;
   } catch (error) { await close(); try { udp.close(); } catch {} throw error; }
   return { port: tcp.address().port, close, stats: () => ({ ...counts, errors: { ...errors }, inflight, peakInflight,
+    peakTcpPendingBytes, peakDohBodyBytes,
     tcpSockets: tcpSockets.size, tlsSockets: tlsSockets.size, requests: requests.size, jobs: jobs.size, timers: timers.size }) };
 }

@@ -8,7 +8,7 @@ import { cleanEnvironment, runCommand } from './lib/transparent-acceptance.mjs';
 import { namespaceArgs } from './lib/browser-soak.mjs';
 
 for (const modeTag of ['transparent-tls', 'combo-tls']) for (const family of [4, 6]) {
-  test(`DNS adapter public IPv${family}/${modeTag}: A/AAAA UDP/TCP, CA, failover, reset, recovery, cleanup`, { timeout: 20000 }, async (t) => {
+  test(`DNS adapter public IPv${family}/${modeTag}: large TCP/DoH, EDNS, Age, CA, failover, cleanup`, { timeout: 20000 }, async (t) => {
     const directory = await mkdtemp(join(tmpdir(), 'meshpn-dns-adapter-real-'));
     t.after(() => rm(directory, { recursive: true, force: true }));
     const source = `
@@ -28,8 +28,8 @@ for (const modeTag of ['transparent-tls', 'combo-tls']) for (const family of [4,
     const lines = result.stdout.trim().split('\n'); assert.equal(lines.length, 1); assert.ok(lines[0].startsWith('DNS_ADAPTER_RESULT '));
     const report = JSON.parse(lines[0].slice(19));
     assert.equal(report.status, 'passed'); assert.equal(report.family, family); assert.equal(report.modeTag, modeTag);
-    assert.equal(report.adapter, true); assert.equal(report.requests, 8);
-    assert.equal(report.tcpAttempts, 16); assert.equal(report.dnsCalls, 0); assert.equal(report.resolverBodies, 6);
+    assert.equal(report.adapter, true); assert.equal(report.requests, 15);
+    assert.equal(report.tcpAttempts, 26); assert.equal(report.dnsCalls, 0); assert.equal(report.resolverBodies, 11);
     assert.equal(report.resources.tree.live, 1); assert.ok(!result.stdout.includes('private-pinned'));
   });
 }

@@ -1386,3 +1386,55 @@ transparent/combo: PASS. Короткие повторные pcap/soak (стар
 
 Оба прогона: ресурсные бюджеты соблюдены, после cleanup owned sockets/jobs/timers/
 sessions/listeners=0, fd23→19, DNS lookups=0; raw pcap/PEM удалены. Отчёты сохранены.
+
+## 39. Полный размер TCP/DoH, EDNS negotiation и HTTP Age (2026-09-23)
+
+В shared DNS stub/parser TCP/DoH query и response теперь до65535 байт;
+UDP input/output отдельно ограничен4096. Лимит128 RR и остальные pilot exclusions
+сохранены. DNS/DoH body больше не собирается списком chunks: фиксированный
+buffer65535; TCP pending input — фиксированные131074 байта (два максимальных
+frames). Нет repeated concat растущего input. In-flight/socket caps, absolute
+deadline/lifetime, cancellation по RST и backpressure сохранены. Stats добавляют
+`peakTcpPendingBytes`/`peakDohBodyBytes`. Payload-buffer budget при default16/16
+консервативно6MiB, при caps64/64 —24MiB, без Node/TLS/kernel overhead.
+
+Unknown EDNS query version1..255 после проверки envelope получает локальный
+BADVERS/version0 с пустым OPT до admission, без TCP dial/DoH/fallback. Invalid
+extended query RCODE/options по-прежнему отбрасываются; response EDNS version>0
+не принимается. Никакого автоматического downgrade/retry.
+
+DoH request `Cache-Control: no-cache, no-store`. `dns-http-age.mjs` разбирает raw
+Age headers: только один decimal delta-seconds, OWS только SP/HTAB; malformed/
+duplicate → SERVFAIL, overflow насыщается на2^31. Возраст + целые monotonic секунды
+exchange вычитаются из RR-header TTL всех секций с нижней границей0; high-bit TTL
+трактуется как0. OPT/RDATA/signatures/AD полного ответа не переписываются.
+Для Authority SOA в NOERROR/NXDOMAIN TTL сначала ограничивается MINIMUM, включая
+ответ с CNAME chain; два SOA names и20 байт полей проверяются. Malformed SOA →
+SERVFAIL, не попытка читать последние4 байта произвольного RDATA. Кэша/HTTP
+revalidation/локальной DNSSEC validation нет. Детали и RFC — [wire contract](../scripts/dns-wire.md).
+
+Добавлены23 wire-регрессии и17 adapter-регрессий: TXT4096/4097/65535, padded query65535,
+local BADVERS без dial, chunked/Content-Length overflow, Age/negative SOA/CNAME,
+slow body, буферизация и отмена. Public-contract real matrix расширена для всех
+IPv4/IPv6 × transparent/combo:15 запросов на сценарий,26 pinned TCP attempts,
+11 resolver bodies,0 DNS lookups; CA/reset/exhaustion/recovery/cleanup сохранены.
+Все4 real-теста PASS после SOA/CNAME уточнения.
+
+С новыми буферами повторены два60с soak, concurrency8, с независимым pcap перед
+измерением. Матрица soak остаётся A/AAAA с обрывами/перегрузкой/отменой; **не**
+длительный soak максимальных TXT65535. Каждый:48 волн,4656 ответов,3120 ожидаемых
+SERVFAIL,384 NXDOMAIN,192 TC,96 рестартов,48 отклонений перегрузки и48 отмен.
+
+- IPv4/transparent PASS: sampled RSS≤105.04MiB, heap≤18.50MiB;
+  `/var/tmp/meshpn-dns-soak-report-iOjswX/report.json`.
+- IPv6/combo PASS: sampled RSS≤106.80MiB, heap≤18.13MiB;
+  `/var/tmp/meshpn-dns-soak-report-Gheu7M/report.json`.
+
+Финал обоих: owned sockets/jobs/timers/sessions/listeners=0, fd23→19, children/
+zombies=0, DNS lookups=0, ресурсные бюджеты соблюдены; raw pcap/PEM удалены.
+Следующий шаг — согласованный opt-in OS/client/LAN/IPv6 lifecycle, сначала dry-run
+и изолированный стенд. Live VPN, системный DNS, TUN/firewall и mesh не менялись.
+
+Финальный acceptance после уточнений CNAME/SOA и strict HTTP OWS: **770 Node-тестов
+(27 файлов) +14 Chrome/Firefox сценариев PASS**, без skips, выполнен отдельно
+после soak. Report `/var/tmp/meshpn-acceptance-kuHqW2/report.json`.

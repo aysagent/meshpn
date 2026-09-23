@@ -159,7 +159,7 @@ DNS переключения и TUN. Для него добавлены отде
 OS/LAN/IPv6 DNS integration, общий exit DNS, resolver selection, caching/pooling,
 secret URL/header support и эксплуатационная ротация IP/CA пока вне пакета.
 DNS wire/parser и stub остаются пилотными: [обычные IN-типы и EDNS(0)](dns-wire.md),
-но лимит4096 также для TCP/DoH, без полного DNSSEC validator.
+TCP/DoH≤65535 байт, UDP≤4096,128 RR; Age/TTL учитывается, без DNSSEC validator.
 
 ## Проверка на VPS
 

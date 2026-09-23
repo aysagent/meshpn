@@ -1,5 +1,6 @@
 /** Bounded DNS forwarding envelope, not a recursive resolver or RDATA validator. */
-export const DNS_MAX_BYTES = 4096;
+export const DNS_MAX_BYTES = 65535;
+export const DNS_UDP_MAX_BYTES = 4096;
 export const dnsError = (code) => Object.assign(new Error(code), { code });
 const need = (condition) => { if (!condition) throw dnsError('DNS_WIRE'); };
 const u16 = (n) => { const b = Buffer.alloc(2); b.writeUInt16BE(n); return b; };
@@ -54,7 +55,7 @@ export function parseDns(packet) {
     if (rrtype === 41) {
       need(section === 2 && !edns && name.nameKey === '' && !name.compressed);
       edns = { extendedRcode: ttl >>> 24, version: (ttl >>> 16) & 255, flags: ttl & 65535 };
-      udpSize = Math.min(DNS_MAX_BYTES, Math.max(512, rrclass));
+      udpSize = Math.min(DNS_UDP_MAX_BYTES, Math.max(512, rrclass));
       let option = at;
       while (option < at + length) {
         need(option + 4 <= at + length);
@@ -76,7 +77,8 @@ export function parseDnsQuery(packet) {
   need(q.records.every((rr) => rr.type === 41));
   // Rebuilt errors/truncation copy the question; external compression pointers
   // in a question would become invalid after removing records.
-  need(!q.questionCompressed && (!q.edns || (q.edns.version === 0 && q.edns.extendedRcode === 0)));
+  // Accept the envelope of newer EDNS versions so the stub can reply BADVERS.
+  need(!q.questionCompressed && (!q.edns || q.edns.extendedRcode === 0));
   return q;
 }
 
@@ -109,6 +111,30 @@ export function truncateDnsResponse(query, response) {
   return reply;
 }
 
+/** Adjust only RR-header TTLs; OPT is not a TTL and signed RDATA stays intact.
+ * Negative SOA lifetime is bounded by MINIMUM before subtracting HTTP age.
+ * Mutates an already received message without changing compression offsets.
+ */
+export function ageDnsResponse(packet, seconds) {
+  need(Number.isSafeInteger(seconds) && seconds >= 0);
+  const parsed = parseDns(packet);
+  const ttlValue = (value) => value > 0x7fffffff ? 0 : value;
+  for (const rr of parsed.records) {
+    if (rr.type === 41) continue;
+    let ttl = ttlValue(rr.ttl);
+    // A negative result can carry a CNAME chain in Answer. Conservatively
+    // bound every authority SOA on NOERROR/NXDOMAIN, not only empty Answer.
+    if (rr.type === 6 && rr.section === 1 && [0, 3].includes(parsed.rcode)) {
+      const end = rr.offset + rr.length;
+      const mname = nameAt(packet, rr.offset); need(mname.end <= end);
+      const rname = nameAt(packet, mname.end); need(rname.end + 20 === end);
+      ttl = Math.min(ttl, ttlValue(packet.readUInt32BE(end - 4)));
+    }
+    packet.writeUInt32BE(Math.max(0, ttl - seconds), rr.offset - 6);
+  }
+  return packet;
+}
+
 export function makeDnsQuery(name, type = 1, id = 123, udpSize) {
   const labels = (name === '.' ? [] : name.replace(/\.$/, '').split('.')).map((label) => { need(/^[a-z0-9_-]{1,63}$/i.test(label)); return Buffer.concat([Buffer.from([label.length]), Buffer.from(label)]); });
   const header = Buffer.alloc(12); header.writeUInt16BE(id); header.writeUInt16BE(0x100, 2); header.writeUInt16BE(1, 4);
@@ -119,7 +145,7 @@ export function makeDnsQuery(name, type = 1, id = 123, udpSize) {
 }
 
 /** Static documentation IPs only; no network resolution by the test origin. */
-export function fixtureDnsAnswer(query, { count = 1, ttl = 30, rcode = 0 } = {}) {
+export function fixtureDnsAnswer(query, { count = 1, ttl = 30, rcode = 0, rdata } = {}) {
   const q = parseDnsQuery(query), reply = dnsFailure(query, rcode);
   if (rcode) return reply;
   const target = Buffer.from('066f726967696e047465737400', 'hex'); // origin.test.
@@ -132,7 +158,7 @@ export function fixtureDnsAnswer(query, { count = 1, ttl = 30, rcode = 0 } = {})
     [64, Buffer.from('00010000010003026832fde8000300c0ff', 'hex')],
     [65, Buffer.from('00010000010003026832fde8000300c0ff', 'hex')],
   ]);
-  const address = data.get(q.type) ?? Buffer.from('00c0ff41', 'hex');
+  const address = rdata ?? data.get(q.type) ?? Buffer.from('00c0ff41', 'hex');
   const record = Buffer.concat([Buffer.from([0xc0, 0x0c]), u16(q.type), u16(1), Buffer.alloc(4), u16(address.length), address]);
   record.writeUInt32BE(ttl, 6); reply.writeUInt16BE(count, 6);
   const packet = Buffer.concat([reply.subarray(0, q.questionEnd), ...Array.from({ length: count }, () => record), reply.subarray(q.questionEnd)]);

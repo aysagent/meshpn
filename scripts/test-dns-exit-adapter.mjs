@@ -17,7 +17,8 @@ import { queryLabDns } from './lib/transparent-dns-lab.mjs';
 import { wireTransparentTlsEncSniSession } from './lib/transparent-tls-runtime.mjs';
 import { ExitDestinationPolicy } from './lib/transparent-tls-destination.mjs';
 import { EncSniReplayGuard } from './lib/transparent-tls-replay.mjs';
-import { makeDnsQuery, fixtureDnsAnswer, validateDnsResponse } from './lib/lab-dns-wire.mjs';
+import { makeDnsQuery, fixtureDnsAnswer, validateDnsResponse, parseDns, DNS_MAX_BYTES, DNS_UDP_MAX_BYTES } from './lib/lab-dns-wire.mjs';
+import { sizedTxtAnswer, paddedDnsQuery, negativeSoaAnswer } from './lib/dns-wire-fixtures.mjs';
 import { parseDnsExitArgs, readDnsExitSecret } from './dns-exit-adapter.mjs';
 import { runCommand, cleanEnvironment } from './lib/transparent-acceptance.mjs';
 import { child } from './lib/browser-lab-driver.mjs';
@@ -54,7 +55,8 @@ test('public IPv4/IPv6 transport creation is offline, branded, and close is idem
   }
 });
 
-async function fixture(t, { badCa = false, wrongName = false, wrongSecret = false, mode = 'normal', timeoutMs = 300, answer = fixtureDnsAnswer } = {}) {
+async function fixture(t, { badCa = false, wrongName = false, wrongSecret = false, mode = 'normal', timeoutMs = 300,
+  answer = fixtureDnsAnswer, responseHeaders = {}, chunkBytes = 0, bodyDelayMs = 0, onQuery = () => {} } = {}) {
   let bodies = 0, attempts = 0;
   const wire = [];
   const sockets = new Set(), sessions = [];
@@ -66,10 +68,21 @@ async function fixture(t, { badCa = false, wrongName = false, wrongSecret = fals
       bodies++;
       assert.equal(req.url, '/custom/dns'); assert.equal(req.headers.host, `localhost:${origin.address().port}`);
       assert.equal(req.socket.servername, 'localhost');
+      assert.equal(req.headers['cache-control'], 'no-cache, no-store');
+      onQuery(Buffer.concat(chunks));
       if (mode === 'hold') return;
       if (mode === 'reset') { req.socket.destroy(); return; }
       if (mode === 'redirect') { res.writeHead(302, { location: 'http://resolver.test:53' }).end(); return; }
-      res.writeHead(200, { 'content-type': 'application/dns-message' }).end(answer(Buffer.concat(chunks)));
+      const body = answer(Buffer.concat(chunks));
+      res.writeHead(200, { 'content-type': 'application/dns-message', ...responseHeaders });
+      const send = () => {
+        if (chunkBytes) for (let at = 0; at < body.length; at += chunkBytes) res.write(body.subarray(at, at + chunkBytes));
+        else res.write(body);
+        res.end();
+      };
+      if (bodyDelayMs) {
+        res.flushHeaders(); const timer = setTimeout(send, bodyDelayMs); res.once('close', () => clearTimeout(timer));
+      } else send();
     });
   });
   origin.on('connection', track); origin.on('tlsClientError', () => {});
@@ -114,6 +127,90 @@ for (const tcp of [false, true]) for (const type of [1, 28, 12, 16, 33, 64, 65, 
   assert.deepEqual(reply, fixtureDnsAnswer(packet));
   assert.deepEqual(lab.counts(), { bodies: 1, attempts: 1 });
   assert.equal(lab.transport.stats().connections, 1);
+});
+for (const size of [4096, 4097, 65535]) test(`large TXT ${size} bytes: UDP cap and full fragmented TCP via exit`, async (t) => {
+  const lab = await fixture(t, { answer: (q) => sizedTxtAnswer(q, size), chunkBytes: 127, timeoutMs: 1500 });
+  const q = makeDnsQuery('large-adapter.test', 16, 4123, 65535);
+  const udp = await queryLabDns(lab.stub.port, q), small = validateDnsResponse(udp, q);
+  if (size > DNS_UDP_MAX_BYTES) { assert.equal(small.flags & 0x200, 0x200); assert.ok(udp.length <= DNS_UDP_MAX_BYTES); }
+  else assert.deepEqual(udp, sizedTxtAnswer(q, size));
+  const tcp = await queryLabDns(lab.stub.port, q, { tcp: true, fragment: true });
+  assert.deepEqual(tcp, sizedTxtAnswer(q, size));
+  assert.equal(lab.stub.stats().peakDohBodyBytes, size);
+  assert.ok(lab.stub.stats().peakTcpPendingBytes <= 2 * (DNS_MAX_BYTES + 2));
+});
+test('maximum padded TCP query reaches resolver intact except ID; oversized UDP never dials exit', async (t) => {
+  const base = makeDnsQuery('padded-adapter.test', 16, 4123, 65535);
+  const q = paddedDnsQuery(base, DNS_MAX_BYTES), normalized = Buffer.from(q); normalized.writeUInt16BE(0);
+  const lab = await fixture(t, { timeoutMs: 1500, onQuery: (packet) => assert.deepEqual(packet, normalized) });
+  const r = await queryLabDns(lab.stub.port, q, { tcp: true, fragment: true });
+  assert.deepEqual(r, fixtureDnsAnswer(q));
+  await assert.rejects(queryLabDns(lab.stub.port, paddedDnsQuery(base, 4097), { timeoutMs: 50 }), { code: 'DNS_CLIENT_TIMEOUT' });
+  assert.equal(lab.transport.stats().connections, 1);
+  assert.equal(lab.stub.stats().rejected, 1);
+});
+for (const tcp of [false, true]) test(`EDNS BADVERS is local with no exit dial (${tcp ? 'TCP' : 'UDP'})`, async (t) => {
+  const lab = await fixture(t, { mode: 'hold' });
+  for (const version of [1, 255]) {
+    const q = makeDnsQuery('version.test', 65, 42, 1232); q.writeUInt32BE(version * 65536 + 0x8000, q.length - 6);
+    const r = validateDnsResponse(await queryLabDns(lab.stub.port, q, { tcp }), q);
+    assert.equal(r.rcode, 16); assert.equal(r.edns.version, 0); assert.equal(r.edns.flags, 0x8000);
+  }
+  assert.deepEqual(lab.counts(), { attempts: 0, bodies: 0 }); assert.equal(lab.transport.stats().connections, 0);
+});
+for (const responseHeaders of [{ age: '250' }, { age: '999999999999999999999' }]) {
+  test(`HTTP Age ${responseHeaders.age} reduces DNS TTL through exit`, async (t) => {
+    const lab = await fixture(t, { responseHeaders, answer: (q) => fixtureDnsAnswer(q, { ttl: 600 }) });
+    const q = makeDnsQuery('age.test', 1);
+    const r = validateDnsResponse(await queryLabDns(lab.stub.port, q), q);
+    assert.equal(r.records[0].ttl, responseHeaders.age === '250' ? 350 : 0);
+  });
+}
+test('negative cached NXDOMAIN accounts for SOA MINIMUM before HTTP Age', async (t) => {
+  const lab = await fixture(t, { responseHeaders: { age: '30' }, answer: negativeSoaAnswer });
+  const q = makeDnsQuery('missing.test');
+  const r = validateDnsResponse(await queryLabDns(lab.stub.port, q), q);
+  assert.equal(r.rcode, 3); assert.equal(r.records[0].ttl, 30);
+});
+test('malformed negative SOA fails closed instead of forwarding an unchecked lifetime', async (t) => {
+  const lab = await fixture(t, { answer: (q) => {
+    const r = negativeSoaAnswer(q); r.writeUInt16BE(0xffff, parseDns(r).records[0].offset); return r;
+  } });
+  const q = makeDnsQuery('broken-soa.test');
+  assert.equal(validateDnsResponse(await queryLabDns(lab.stub.port, q), q).rcode, 2);
+  assert.equal(lab.stub.stats().errors.DNS_RESPONSE, 1); assert.equal(lab.transport.stats().connections, 1);
+});
+for (const age of ['-1', '1, 2', ['1', '1']]) test(`invalid/duplicate Age fails closed: ${age}`, async (t) => {
+  const lab = await fixture(t, { responseHeaders: { age } });
+  const q = makeDnsQuery('age.test');
+  assert.equal(validateDnsResponse(await queryLabDns(lab.stub.port, q), q).rcode, 2);
+  assert.equal(lab.stub.stats().errors.DNS_HTTP_AGE, 1); assert.equal(lab.transport.stats().connections, 1);
+});
+test('slow HTTP body transfer cannot extend TTL', async (t) => {
+  const lab = await fixture(t, { timeoutMs: 2500, responseHeaders: { age: '10' }, bodyDelayMs: 1100 });
+  const q = makeDnsQuery('slow-age.test');
+  const r = validateDnsResponse(await queryLabDns(lab.stub.port, q), q);
+  assert.ok(r.records[0].ttl <= 19 && r.records[0].ttl >= 18);
+});
+for (const declared of [false, true]) test(`65536-byte HTTP body rejected (${declared ? 'content-length' : 'chunked'})`, async (t) => {
+  const lab = await fixture(t, { answer: () => Buffer.alloc(DNS_MAX_BYTES + 1),
+    responseHeaders: declared ? { 'content-length': String(DNS_MAX_BYTES + 1) } : {}, timeoutMs: 1500 });
+  const q = makeDnsQuery('oversize.test');
+  assert.equal(validateDnsResponse(await queryLabDns(lab.stub.port, q), q).rcode, 2);
+  assert.equal(lab.stub.stats().failed, 1); assert.ok(lab.stub.stats().peakDohBodyBytes <= DNS_MAX_BYTES);
+});
+test('TCP pending buffer overflow cancels a held query and releases capacity', async (t) => {
+  const lab = await fixture(t, { mode: 'hold', timeoutMs: 1500 });
+  const socket = net.connect(lab.stub.port, '127.0.0.1'); socket.on('error', () => {}); t.after(() => socket.destroy());
+  await once(socket, 'connect');
+  const q = makeDnsQuery('buffer.test'), frame = Buffer.alloc(q.length + 2); frame.writeUInt16BE(q.length); q.copy(frame, 2);
+  socket.write(frame);
+  const deadline = Date.now() + 1000;
+  while (!lab.counts().bodies) { assert.ok(Date.now() < deadline); await delay(5); }
+  const closed = new Promise((resolve) => socket.once('close', resolve));
+  socket.write(Buffer.alloc(2 * (DNS_MAX_BYTES + 2) + 1)); await closed;
+  assert.ok(lab.stub.stats().peakTcpPendingBytes <= 2 * (DNS_MAX_BYTES + 2));
+  assert.equal(lab.stub.stats().rejected, 1); assert.equal(lab.transport.stats().connections, 1);
 });
 test('HTTPS UDP truncation then TCP retry preserves complete opaque answer and extended RCODE', async (t) => {
   const answer = (q) => {

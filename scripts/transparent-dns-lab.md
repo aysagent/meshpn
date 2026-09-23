@@ -72,23 +72,26 @@ DNS framing основан на [RFC 1035](https://www.rfc-editor.org/rfc/rfc103
 Основа EDNS — [RFC 6891](https://www.rfc-editor.org/rfc/rfc6891.html).
 
 DoH query ID нормализуется в 0; соответствие upstream response проверяется,
-затем восстанавливается исходный ID клиента. NXDOMAIN и TTL, включая TTL=0,
-передаются без кэширования. Каждый запрос создаёт отдельный HTTPS exchange/TLS
+затем восстанавливается исходный ID клиента. NXDOMAIN передаётся без кэширования;
+TTL уменьшается с учётом HTTP Age и времени exchange, с нижней границей0.
+Для negative SOA сначала применяется MINIMUM, подробнее — [wire contract](dns-wire.md).
+Каждый запрос создаёт отдельный HTTPS exchange/TLS
 connection (`agent:false`); нет DNS cache, negative cache, shared HTTP cache,
-HTTP Age обработки или connection pooling. Fixture использует `Cache-Control:
-no-store`; этот subset не готов для произвольного кэширующего публичного DoH.
+или connection pooling. Запрос содержит `Cache-Control: no-cache, no-store`;
+malformed/duplicate Age отвергается. Unknown EDNS version получает локальный BADVERS.
 Некорректный DNS query UDP отбрасывается, TCP-соединение закрывается без upstream.
 
 ## Лимиты и отказы
 
 | Ресурс | Default адаптера / harness |
 | --- | --- |
-| DNS wire message | 4096 байт, до 128 RR |
+| DNS wire message | TCP/DoH65535 байт, UDP4096, до128 RR |
 | HTTP response headers | 8192 байта |
 | DoH deadline | 1500 / 1000 мс, programmatic 10..10000 мс |
 | In-flight DoH | 16 / 8, максимальная настройка 64 |
 | TCP DNS clients | 16 / 8, максимальная настройка 64 |
-| TCP pending buffer | два максимальных frames, 8196 байт |
+| TCP pending buffer | два максимальных frames, фиксированные131074 байта |
+| DoH body buffer | фиксированные65535 байт на in-flight exchange |
 | TCP absolute lifetime | 5000 / 3000 мс, maximum 30 с |
 
 Переполнение in-flight даёт SERVFAIL без очереди. TCP connections/buffer ограничены;

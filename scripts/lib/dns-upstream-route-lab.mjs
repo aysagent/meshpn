@@ -12,7 +12,8 @@ import { assertBrowserNamespace, namespaceResources } from './browser-soak.mjs';
 import { compileDnsUpstream, dnsUpstreamTlsOptions, dnsUpstreamExitPolicy } from './dns-upstream-config.mjs';
 import { attachTransparentTlsClientSession, wireTransparentTlsEncSniSession } from './transparent-tls-runtime.mjs';
 import { EncSniReplayGuard } from './transparent-tls-replay.mjs';
-import { makeDnsQuery, fixtureDnsAnswer, validateDnsResponse } from './lab-dns-wire.mjs';
+import { makeDnsQuery, fixtureDnsAnswer, validateDnsResponse, DNS_MAX_BYTES } from './lab-dns-wire.mjs';
+import { sizedTxtAnswer, paddedDnsQuery, negativeSoaAnswer } from './dns-wire-fixtures.mjs';
 import { startDnsExitAdapter } from './dns-exit-adapter.mjs';
 import { queryLabDns } from './transparent-dns-lab.mjs';
 
@@ -38,12 +39,17 @@ export async function runPinnedDnsRouteLab(directory, modeTag, family, { adapter
   const origin = https.createServer({ key, cert, minVersion: 'TLSv1.3' }, (req, res) => {
     req.on('error', () => {}); res.on('error', () => {});
     const chunks = []; let size = 0;
-    req.on('data', (data) => { size += data.length; if (size > 4096) req.destroy(); else chunks.push(data); });
+    req.on('data', (data) => { size += data.length; if (size > DNS_MAX_BYTES) req.destroy(); else chunks.push(data); });
     req.on('end', () => {
       bodies++;
       assert.equal(req.method, 'POST'); assert.equal(req.url, '/dns-query'); assert.equal(req.socket.servername, 'resolver.test');
       if (mode === 'reset') { res.socket.destroy(); return; }
-      res.writeHead(200, { 'content-type': 'application/dns-message' }).end(fixtureDnsAnswer(Buffer.concat(chunks)));
+      const packet = Buffer.concat(chunks), headers = { 'content-type': 'application/dns-message' };
+      if (mode === 'age') headers.age = '250';
+      if (mode === 'negative-age') headers.age = '30';
+      const body = mode === 'large' ? sizedTxtAnswer(packet, DNS_MAX_BYTES)
+        : mode === 'negative-age' ? negativeSoaAnswer(packet) : fixtureDnsAnswer(packet, { ttl: mode === 'age' ? 600 : 30 });
+      res.writeHead(200, headers).end(body);
     });
   });
   origin.on('connection', track); origin.on('tlsClientError', () => {});
@@ -70,13 +76,13 @@ export async function runPinnedDnsRouteLab(directory, modeTag, family, { adapter
       }).then((session) => sessions.push(session), () => {});
     });
     const clientPort = adapter ? null : await listen(client, 0, '127.0.0.1');
-    async function query(identity = profile, tcp = false, type = 1) {
-      const packet = makeDnsQuery('private-pinned.dns-lab.test', type, 1234);
+    async function query(identity = profile, tcp = false, type = 1, packet = makeDnsQuery('private-pinned.dns-lab.test', type, 1234)) {
       if (adapter) {
         const instance = await startDnsExitAdapter({ profile: identity, exitAddress, exitPort, publicName, secret, timeoutMs: 2000 });
         try {
-          const reply = validateDnsResponse(await queryLabDns(instance.port, packet, { tcp, fragment: tcp }), packet);
-          assert.notEqual(reply.flags & 15, 2, 'adapter SERVFAIL'); return reply;
+          const bytes = await queryLabDns(instance.port, packet, { tcp, fragment: tcp });
+          const reply = validateDnsResponse(bytes, packet);
+          assert.notEqual(reply.flags & 15, 2, 'adapter SERVFAIL'); return { ...reply, wireBytes: bytes.length };
         } finally {
           await instance.close();
           for (const field of ['sockets', 'jobs']) assert.equal(instance.stats().transport[field], 0);
@@ -115,7 +121,21 @@ export async function runPinnedDnsRouteLab(directory, modeTag, family, { adapter
     mode = 'normal'; await listen(origin, port, addresses[1]);
     assert.equal((await query()).counts[0], 1); assert.equal(bodies, 3); assert.equal(dnsCalls, 0);
     if (adapter) for (const [tcp, type] of [[true, 1], [false, 28], [true, 28]]) assert.equal((await query(profile, tcp, type)).counts[0], 1);
-    result = { status: 'passed', modeTag, family, adapter, requests: adapter ? 8 : 5, resolverBodies: bodies,
+    if (adapter) {
+      const packet = makeDnsQuery('private-pinned.dns-lab.test', 16, 1234, 65535);
+      mode = 'large';
+      assert.equal((await query(profile, false, 16, packet)).flags & 0x200, 0x200);
+      assert.equal((await query(profile, true, 16, packet)).wireBytes, DNS_MAX_BYTES);
+      mode = 'normal';
+      assert.equal((await query(profile, true, 16, paddedDnsQuery(packet, DNS_MAX_BYTES))).counts[0], 1);
+      const version = Buffer.from(packet); version.writeUInt32BE(0xff0000, version.length - 6);
+      const before = attempts.length;
+      for (const tcp of [false, true]) assert.equal((await query(profile, tcp, 16, version)).rcode, 16);
+      assert.equal(attempts.length, before, 'local BADVERS must not dial exit');
+      mode = 'age'; assert.equal((await query()).records[0].ttl, 350);
+      mode = 'negative-age'; assert.equal((await query()).records[0].ttl, 30);
+    }
+    result = { status: 'passed', modeTag, family, adapter, requests: adapter ? 15 : 5, resolverBodies: bodies,
       tcpAttempts: attempts.length, dnsCalls, exhausted: true, noRetryAfterBody: true, recovered: true };
   } finally {
     for (const s of sockets) s.destroy();

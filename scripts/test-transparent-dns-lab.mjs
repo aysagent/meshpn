@@ -37,13 +37,13 @@ test('wire A/AAAA, compressed RR names, ID, TTL and EDNS payload size roundtrip'
   }
 });
 for (const [name, mutate] of [
-  ['short', () => Buffer.alloc(11)], ['too large', () => Buffer.alloc(4097)],
+  ['short', () => Buffer.alloc(11)], ['too large', () => Buffer.alloc(DNS_MAX_BYTES + 1)],
   ['QR', (b) => { b[2] |= 128; return b; }], ['opcode', (b) => { b[2] |= 8; return b; }],
   ['multi-question', (b) => { b[5] = 2; return b; }], ['trailing bytes', (b) => Buffer.concat([b, Buffer.from([0])])],
   ['compression loop', (b) => { b[12] = 0xc0; b[13] = 12; return b; }],
   ['pointer outside packet', (b) => { b[12] = 0xff; b[13] = 255; return b; }],
   ['unsupported qtype', (b) => { b.writeUInt16BE(255, b.length - 4); return b; }],
-  ['unsupported EDNS version', () => { const b = query(1, 123, 1232); b[b.length - 5] = 1; return b; }],
+  ['nonzero query EDNS RCODE', () => { const b = query(1, 123, 1232); b[b.length - 6] = 1; return b; }],
 ]) test(`wire rejects ${name}`, () => assert.throws(() => parseDnsQuery(mutate(query())), { code: 'DNS_WIRE' }));
 test('response mismatch, malformed RR length and wrong QR are rejected', () => {
   for (const mutate of [
@@ -120,11 +120,11 @@ test('invalid UDP query is dropped before any TLS connection', async (t) => {
   await assert.rejects(queryLabDns(lab.stub.port, Buffer.alloc(4), { timeoutMs: 50 }), { code: 'DNS_CLIENT_TIMEOUT' });
   assert.equal(lab.stub.stats().forwarded, 0); assert.equal(lab.relay.stats().originConnections, 0);
 });
-for (const kind of ['oversize-frame', 'partial-frame', 'overflow-buffer']) test(`TCP ${kind} closes within bound without DNS`, async (t) => {
+for (const kind of ['incomplete-max-frame', 'partial-frame', 'overflow-buffer']) test(`TCP ${kind} closes within bound without DNS`, async (t) => {
   const lab = await fixture(t, { tcpLifetimeMs: 70 });
   const socket = net.connect(lab.stub.port, '127.0.0.1'); socket.on('error', () => {}); t.after(() => socket.destroy());
   await once(socket, 'connect'); const closed = new Promise((resolve) => socket.once('close', resolve));
-  if (kind === 'oversize-frame') socket.write(Buffer.from([0xff, 0xff]));
+  if (kind === 'incomplete-max-frame') socket.write(Buffer.from([0xff, 0xff]));
   if (kind === 'partial-frame') socket.write(Buffer.from([0]));
   if (kind === 'overflow-buffer') socket.write(Buffer.alloc(2 * (DNS_MAX_BYTES + 2) + 1));
   await closed; assert.equal(lab.stub.stats().forwarded, 0);

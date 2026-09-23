@@ -84,7 +84,8 @@ exit может использовать обычный OS resolver. Устан�
 `lab-dns-wire.mjs`, см. полный [DNS wire contract](dns-wire.md):
 
 - Один IN вопрос: A/AAAA, HTTPS/SVCB, TXT, SRV, PTR и другие обычные типы;
-  максимум4096 байт/128 RR, EDNS(0). RDATA передаются непрозрачно, это не
+  TCP/DoH≤65535 байт, UDP≤4096,128 RR, EDNS(0); для новых EDNS versions локальный
+  BADVERS без dial. RDATA передаются непрозрачно (кроме чтения negative SOA MINIMUM), это не
   семантический validator и не проверка DNSSEC. Meta/transfer/ANY исключены.
 - По умолчанию16 in-flight запросов и16 локальных TCP-соединений; общий deadline
   DoH1500мс, lifetime входного TCP5000мс, bounded framing/HTTP headers/body.
@@ -93,6 +94,10 @@ exit может использовать обычный OS resolver. Устан�
 - UDP-ответ больше объявленного лимита → TC; приложение может повторить через TCP.
   Проверяются ID/вопрос/структура ответа, status200, DNS content-type, отсутствие
   content encoding, размер; cache/pooling/HTTP retries отсутствуют.
+- HTTP Age и время обмена уменьшают TTL до0; negative SOA сначала ограничен MINIMUM.
+  Дублирующийся/неверный Age и malformed negative SOA дают SERVFAIL. Fixed body/TCP
+  buffers и admission caps ограничивают собственные DNS payload buffers примерно6MiB
+  при default caps; это не лимит общего RSS (он проверяется отдельно в soak).
 - Один новый TLS/exit connection на запрос. Ограничение in-flight — не полная
   защита от локального DoS/rate limiting; пользоваться loopback listener могут
   и другие локальные процессы. Нет LAN listener, ACL по локальным пользователям.
@@ -114,6 +119,7 @@ npm run test:dns-exit-adapter-real
 
 Первый набор включён в общий acceptance: preflight, ключи, восемь типов UDP/TCP,
 побайтная сохранность ответов, HTTPS UDP TC→TCP и extended EDNS RCODE,
+TXT65535/padded query, local BADVERS, Age/negative SOA/slow body, bounded buffers,
 TLS name/CA rejection, PSK rejection, timeout/reset/redirect, недоступный exit,
 snapshot, отсутствие системных name lookups/лишнего TCP dial, закрытие запросов,
 SIGINT/SIGTERM и освобождение listeners. Wire observer проверяет отсутствие
@@ -123,13 +129,14 @@ Real-набор использует Linux user/net/mount/PID namespaces тол�
 IPv4/IPv6 aliases внутри него; нужен OpenSSL и `ip`. Настоящий public contract
 клиента и exit, без mock resolver/private exemption; первый IP refused, второй
 проходит TLS и DoH, затем wrong CA/reset/exhaustion/recovery. Проверяются обе
-метки runtime transparent/combo, TCP/UDP A/AAAA, отсутствие DNS lookup и
+метки runtime transparent/combo, TCP/UDP A/AAAA, TXT65535/padded query, local BADVERS,
+Age/negative SOA, отсутствие DNS lookup и
 освобождение sockets/timers/processes. Это не запуск full clean-vpn/TUN/mux.
 
 Теперь есть отдельные [независимый pcap и ограниченный soak](dns-adapter-soak.md)
 именно нового client→exit пути: `npm run dns:adapter-soak -- --help`. Проверяются
 IPv4/IPv6 endpoints, обрывы exit/resolver, переполнение, отмена и освобождение
 ресурсов. Прежний DNS pcap/soak сохраняется для старого localhost relay пути.
-Следующий шаг перед OS-интеграцией — полный TCP/DoH размер DNS с ограниченными
-memory budgets, EDNS negotiation и HTTP cache-age/TTL contract; затем согласовать
-opt-in client/OS/LAN/IPv6-интеграцию. Сейчас переключать системный DNS ещё рано.
+Следующий шаг — согласовать opt-in client/OS/LAN/IPv6-интеграцию: lifecycle,
+fail-closed и восстановление настроек; сначала dry-run/изолированный стенд.
+Сейчас автоматически переключать системный DNS ещё рано.
