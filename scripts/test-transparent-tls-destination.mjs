@@ -7,8 +7,9 @@ import { Duplex } from 'node:stream';
 import { randomBytes } from 'node:crypto';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { ExitDestinationPolicy, isPublicRelayAddress, EXIT_DNS_MAX_PENDING } from './lib/transparent-tls-destination.mjs';
-import { wireTransparentTlsEncSniSession, classifyComboTlsExitPrefix } from './lib/transparent-tls-runtime.mjs';
+import { ExitDestinationPolicy, isPublicRelayAddress, EXIT_DNS_MAX_PENDING, EXIT_CONNECT_ATTEMPT_MS } from './lib/transparent-tls-destination.mjs';
+import { wireTransparentTlsEncSniSession, classifyComboTlsExitPrefix, attachTransparentTlsClientSession } from './lib/transparent-tls-runtime.mjs';
+import { startTransparentTlsLab, requestThroughLab } from './lib/transparent-tls-lab.mjs';
 import { encodeRelayHostname } from './lib/transparent-tls-enc-sni.mjs';
 import { EncSniReplayGuard } from './lib/transparent-tls-replay.mjs';
 
@@ -86,16 +87,18 @@ test('invalid/local/legacy-numeric routes never invoke DNS', async () => {
 });
 test('public IP literal skips DNS and preserves a valid non-443 port', async () => {
   const policy = new ExitDestinationPolicy({ lookup: () => assert.fail('must not query DNS') });
-  assert.deepEqual(await policy.resolve('8.8.8.8', 8443), { address: '8.8.8.8', family: 4, port: 8443 });
+  assert.deepEqual(await policy.resolve('8.8.8.8', 8443), [{ address: '8.8.8.8', family: 4, port: 8443 }]);
 });
 test('DNS is absolute, all families inspected, target copied and immutable', async () => {
   const answers = [v6(), v4()];
   const policy = new ExitDestinationPolicy({ lookup: async (host, options) => {
     assert.equal(host, `${HOST}.`); assert.deepEqual(options, { all: true, verbatim: true }); return answers;
   } });
-  const target = await policy.resolve(HOST, 443);
+  const targets = await policy.resolve(HOST, 443);
+  const target = targets[0];
   answers[0].address = '::1';
   assert.equal(target.address, '2606:4700:4700::1111'); assert.equal(target.family, 6); assert.ok(Object.isFrozen(target));
+  assert.equal(targets.length, 2); assert.ok(Object.isFrozen(targets)); assert.ok(Object.isFrozen(targets[1]));
 });
 test('mixed answers rejected in either order and across families', async () => {
   for (const forbidden of [v4('127.0.0.1'), v4('10.0.0.1'), v6('::1'), v6('::ffff:127.0.0.1'), v6('fd00::1')]) {
@@ -120,7 +123,7 @@ test('loopback exception is exact hostname/port pin, immutable and never invokes
   const pin = { hostname: HOST, port: 8443 };
   const policy = new ExitDestinationPolicy({ loopback: pin, lookup: () => assert.fail('must not query DNS') });
   pin.hostname = 'other.test'; pin.port = 22;
-  assert.deepEqual(await policy.resolve(HOST, 8443), { address: '127.0.0.1', family: 4, port: 8443 });
+  assert.deepEqual(await policy.resolve(HOST, 8443), [{ address: '127.0.0.1', family: 4, port: 8443 }]);
   for (const [host, port] of [[HOST, 443], ['other.test', 8443], ['127.0.0.1', 8443], ['sub.origin.test', 8443]]) {
     await assert.rejects(policy.resolve(host, port), { code: 'TLS_RELAY_DESTINATION' });
   }
@@ -257,4 +260,185 @@ test('real loopback origin receives zero connections from default exit policy', 
   client.write(hello('127.0.0.1', origin.address().port)); await within(closed);
   assert.equal((await sessions[0].closed).code, 'TLS_RELAY_DESTINATION'); assert.equal(connections, 0);
   assert.equal(sessions[0].timers.size, 0);
+});
+
+const turn = () => new Promise((resolve) => setImmediate(resolve));
+const refused = () => Object.assign(new Error('secret candidate details'), { code: 'ECONNREFUSED' });
+
+test('candidate snapshot preserves order, deduplicates equivalent IPs and copies every answer', async () => {
+  const answers = [v6(), v4(), v6('2606:4700:4700:0:0:0:0:1111'), v4(), v4('1.1.1.1')];
+  const targets = await policyWith(answers).resolve(HOST, 443);
+  assert.deepEqual(targets.map((x) => x.address), ['2606:4700:4700::1111', '8.8.8.8', '1.1.1.1']);
+  answers[4].address = '127.0.0.1'; answers.length = 0;
+  assert.equal(targets[2].address, '1.1.1.1');
+  assert.ok(Object.isFrozen(targets)); assert.ok(targets.every(Object.isFrozen));
+});
+test('sparse resolver result cannot bypass whole-set validation', async () => {
+  const answers = [v4()]; answers.length = 2;
+  await assert.rejects(policyWith(answers).resolve(HOST, 443), { code: 'TLS_RELAY_DESTINATION' });
+});
+for (const code of ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENETUNREACH', 'EHOSTUNREACH', 'ENETDOWN', 'EHOSTDOWN', 'EADDRNOTAVAIL']) {
+  test(`pre-connect ${code} tries the next pinned IP, with no data sent to the loser`, async (t) => {
+    const first = new Socket('1.1.1.1'); first.connecting = true;
+    t.after(() => first.destroy());
+    let lookups = 0;
+    const policy = new ExitDestinationPolicy({ lookup: async () => { lookups++; return [v4('1.1.1.1'), v4()]; } });
+    const a = endpoint(t, { policy, connector: (address) => {
+      if (address === '1.1.1.1') { queueMicrotask(() => first.destroy(Object.assign(new Error('secret'), { code }))); return first; }
+      return a.outbound;
+    } });
+    await within(a.session.ready); await turn();
+    assert.equal(a.session.state, 'streaming'); assert.equal(lookups, 1);
+    assert.deepEqual(a.calls.map((x) => x[0]), ['1.1.1.1', '8.8.8.8']);
+    assert.ok(first.destroyed); assert.equal(first.writes.length, 0); assert.equal(a.outbound.writes.length, 1);
+    assert.equal(a.session.timers.size, 0); assert.equal(a.session.sockets.size, 2);
+    assert.equal(first.listenerCount('error'), 0); assert.equal(first.listenerCount('connect'), 0);
+  });
+}
+test('synchronous refused connector is retryable, but all failures produce a safe exhaustion code', async (t) => {
+  const a = endpoint(t, { policy: policyWith([v4(), v4('1.1.1.1')]), connector: () => { throw refused(); } });
+  const error = await within(a.session.closed);
+  assert.equal(error.code, 'TLS_RELAY_CONNECT_EXHAUSTED'); assert.equal(error.cause, undefined);
+  assert.ok(!String(error).includes('secret')); assert.equal(a.calls.length, 2); assert.equal(a.session.timers.size, 0);
+});
+test('async exhaustion owns and closes every retired socket', async (t) => {
+  const sockets = [];
+  const a = endpoint(t, { policy: policyWith([v4(), v6(), v4('1.1.1.1')]), connector: (address) => {
+    const socket = new Socket(address); socket.connecting = true; sockets.push(socket);
+    queueMicrotask(() => socket.destroy(refused())); return socket;
+  } });
+  assert.equal((await within(a.session.closed)).code, 'TLS_RELAY_CONNECT_EXHAUSTED');
+  assert.equal(sockets.length, 3); assert.equal(a.session.sockets.size, 0); assert.equal(a.session.timers.size, 0);
+  for (const socket of sockets) { assert.ok(socket.closed); assert.equal(socket.writes.length, 0); assert.equal(socket.listenerCount('error'), 0); }
+});
+for (const code of ['EPERM', 'EACCES', 'EMFILE', 'UNKNOWN']) {
+  test(`local/configuration error ${code} is fatal, not a reason to retry`, async (t) => {
+    const a = endpoint(t, { policy: policyWith([v4(), v6()]), connector: () => { throw Object.assign(new Error('secret'), { code }); } });
+    assert.equal((await within(a.session.closed)).code, 'TLS_RELAY_CONNECT'); assert.equal(a.calls.length, 1);
+  });
+}
+test('blackholed first candidate expires; late connect and queued errors cannot replace winner', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const first = new Socket('2606:4700:4700::1111'); first.connecting = true;
+  const a = endpoint(t, { policy: policyWith([v6(), v4()]), connector: (address) => address.includes(':') ? first : a.outbound });
+  await turn(); assert.equal(a.calls.length, 1);
+  t.mock.timers.tick(EXIT_CONNECT_ATTEMPT_MS - 1); assert.equal(a.calls.length, 1);
+  t.mock.timers.tick(1);
+  assert.ok(first.destroyed); first.emit('connect'); first.emit('error', refused());
+  await a.session.ready; await turn();
+  assert.equal(a.session.state, 'streaming'); assert.equal(a.calls.length, 2);
+  assert.equal(first.writes.length, 0); assert.equal(a.outbound.writes.length, 1); assert.equal(a.session.timers.size, 0);
+});
+test('all attempts share DNS+TCP deadline, and the final candidate gets remaining time', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let release;
+  const policy = new ExitDestinationPolicy({ lookup: () => new Promise((resolve) => { release = resolve; }) });
+  const sockets = [];
+  const a = endpoint(t, { policy, limits: { connectTimeoutMs: 1000 }, connector: (address) => {
+    const socket = new Socket(address); socket.connecting = true; sockets.push(socket); return socket;
+  } });
+  await turn(); t.mock.timers.tick(100); release([v6(), v4()]); await turn();
+  t.mock.timers.tick(250); await turn(); assert.equal(a.calls.length, 2); assert.ok(sockets[0].destroyed);
+  t.mock.timers.tick(649); assert.equal(a.session.signal.aborted, false);
+  t.mock.timers.tick(1);
+  assert.equal((await a.session.closed).code, 'TLS_RELAY_CONNECT_TIMEOUT');
+  assert.equal(a.session.sockets.size, 0); assert.equal(a.session.timers.size, 0); assert.ok(sockets[1].destroyed);
+});
+test('deadline shorter than attempt budget never starts a second candidate', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const first = new Socket(); first.connecting = true;
+  const a = endpoint(t, { policy: policyWith([v4(), v6()]), limits: { connectTimeoutMs: 100 }, connector: () => first });
+  await turn(); t.mock.timers.tick(100);
+  assert.equal((await a.session.closed).code, 'TLS_RELAY_CONNECT_TIMEOUT');
+  t.mock.timers.tick(1000); await turn(); assert.equal(a.calls.length, 1); assert.equal(first.writes.length, 0);
+});
+test('peer abort during second attempt closes it and never reaches a third address', async (t) => {
+  const second = new Socket(); second.connecting = true;
+  const a = endpoint(t, { policy: policyWith([v6(), v4(), v4('1.1.1.1')]), connector: (address) => {
+    if (address.includes(':')) throw refused(); return second;
+  } });
+  await turn(); assert.equal(a.calls.length, 2); a.inbound.destroy();
+  assert.equal((await within(a.session.closed)).code, 'TLS_RELAY_CLOSED');
+  second.emit('connect'); await turn();
+  assert.equal(a.calls.length, 2); assert.ok(second.destroyed); assert.equal(a.session.timers.size, 0);
+});
+test('wrong connected peer fails policy even if another candidate could work', async (t) => {
+  const a = endpoint(t, { policy: policyWith([v4('1.1.1.1'), v4()]) });
+  assert.equal((await within(a.session.closed)).code, 'TLS_RELAY_DESTINATION_PEER');
+  assert.equal(a.calls.length, 1); assert.equal(a.outbound.writes.length, 0);
+});
+test('reset after selected TCP connect never replays ClientHello on another IP', async (t) => {
+  const a = endpoint(t, { policy: policyWith([v4(), v6()]) });
+  await within(a.session.ready); assert.equal(a.outbound.writes.length, 1);
+  a.outbound.destroy(Object.assign(new Error('reset after ClientHello'), { code: 'ECONNRESET' }));
+  assert.equal((await within(a.session.closed)).code, 'TLS_RELAY_SOCKET'); assert.equal(a.calls.length, 1);
+});
+test('retry candidates are immutable and never consult the resolver again', async (t) => {
+  let lookups = 0;
+  const answers = [v4('1.1.1.1'), v4()];
+  const policy = new ExitDestinationPolicy({ lookup: async () => { lookups++; return answers; } });
+  const a = endpoint(t, { policy, connector: (address) => {
+    if (address === '1.1.1.1') { answers[1].address = '127.0.0.1'; throw refused(); }
+    return a.outbound;
+  } });
+  await within(a.session.ready);
+  assert.equal(a.session.state, 'streaming'); assert.equal(lookups, 1);
+  assert.deepEqual(a.calls.map((x) => x[0]), ['1.1.1.1', '8.8.8.8']);
+});
+test('even the last forbidden candidate prevents ALL connection attempts', async (t) => {
+  const answers = Array.from({ length: 63 }, () => v4()); answers.push(v6('::1'));
+  const a = endpoint(t, { policy: policyWith(answers) });
+  assert.equal((await within(a.session.closed)).code, 'TLS_RELAY_DESTINATION'); assert.equal(a.calls.length, 0);
+});
+test('64-address answer remains bounded, and duplicate IPs are not retried', async (t) => {
+  const a = endpoint(t, { policy: policyWith(Array.from({ length: 64 }, () => v4())), connector: () => { throw refused(); } });
+  assert.equal((await within(a.session.closed)).code, 'TLS_RELAY_CONNECT_EXHAUSTED'); assert.equal(a.calls.length, 1);
+  const b = endpoint(t, { policy: policyWith(Array.from({ length: 64 }, (_, i) => v4(`8.8.8.${i}`))), connector: () => { throw refused(); } });
+  assert.equal((await within(b.session.closed)).code, 'TLS_RELAY_CONNECT_EXHAUSTED'); assert.equal(b.calls.length, 64);
+  assert.equal(b.session.timers.size, 0);
+});
+
+for (const hrr of [false, true]) test(`real TLS H2 ${hrr ? 'HRR' : 'baseline'} succeeds after refused numeric TCP candidate`, { timeout: 10000 }, async (t) => {
+  const lab = await startTransparentTlsLab({ originTls: hrr ? { ecdhCurve: 'P-256' } : {} });
+  t.after(() => lab.close());
+  const sockets = new Set(), sessions = [], servers = [];
+  const track = (socket) => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); return socket; };
+  t.after(async () => {
+    for (const socket of sockets) socket.destroy();
+    await Promise.all(sessions.map((session) => session.closed));
+    await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))));
+  });
+  // Trusted, explicit test-only candidate list. Production policy still rejects
+  // both loopback addresses; this fixture tests real TCP failover + TLS, not DNS.
+  const policy = new ExitDestinationPolicy({ loopback: { hostname: lab.originName, port: lab.originPort } });
+  let resolutions = 0;
+  t.mock.method(policy, 'resolve', async () => {
+    resolutions++;
+    return Object.freeze(['127.0.0.2', '127.0.0.1'].map((address) => Object.freeze({ address, family: 4, port: lab.originPort })));
+  });
+  const attempts = [];
+  const exit = net.createServer((socket) => {
+    sessions.push(wireTransparentTlsEncSniSession(track(socket), {
+      vpnSecretBuf: PSK, publicName: PUBLIC, destinationPolicy: policy,
+      connectOrigin: (address, port, family) => {
+        const outgoing = track(net.connect({ host: address, port, family, autoSelectFamily: false }));
+        const record = { address, error: null }; attempts.push(record);
+        outgoing.on('error', (error) => { record.error = error.code; }); return outgoing;
+      },
+    }));
+  });
+  servers.push(exit); exit.listen(0, '127.0.0.1'); await once(exit, 'listening');
+  const client = net.createServer((socket) => {
+    attachTransparentTlsClientSession(track(socket), {
+      vpnSecretBuf: PSK, publicName: PUBLIC, upstreamHost: '127.0.0.1', upstreamPort: exit.address().port,
+      explicitDestination: { address: '127.0.0.1', port: lab.originPort },
+    }).then((session) => sessions.push(session), () => {});
+  });
+  servers.push(client); client.listen(0, '127.0.0.1'); await once(client, 'listening');
+  const body = Buffer.alloc(65536, 31);
+  const response = await requestThroughLab({ ...lab, clientPort: client.address().port }, { httpVersion: '2', path: '/echo', body });
+  assert.equal(response.httpVersion, '2'); assert.equal(response.tlsVersion, 'TLSv1.3'); assert.deepEqual(response.body, body);
+  assert.equal(resolutions, 1); assert.equal(lab.stats().originConnections, 1);
+  assert.deepEqual(attempts, [{ address: '127.0.0.2', error: 'ECONNREFUSED' }, { address: '127.0.0.1', error: null }]);
+  assert.equal(lab.captures.filter((capture) => capture.stage === 'origin').length, hrr ? 2 : 1);
 });

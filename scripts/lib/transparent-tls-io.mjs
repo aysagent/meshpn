@@ -47,7 +47,7 @@ export class RelaySession {
     return () => { clearTimeout(timer); this.timers.delete(timer); };
   }
 
-  add(socket) {
+  add(socket, connectingFailure) {
     this.check();
     if (socket.closed) {
       this.fail(relayError('TLS_RELAY_CLOSED'));
@@ -59,9 +59,15 @@ export class RelaySession {
     // pump() propagates each EOF; onEnd's absolute close timer bounds the wait.
     socket.allowHalfOpen = true;
     this.sockets.add(socket);
-    const onError = (cause) => this.fail(relayError('TLS_RELAY_SOCKET', 'TLS relay socket failed', cause));
+    const onError = (cause) => {
+      const error = relayError('TLS_RELAY_SOCKET', 'TLS relay socket failed', cause);
+      if (!connectingFailure?.(error)) this.fail(error);
+    };
     const onEnd = () => {
-      if (this.state !== 'streaming') this.fail(relayError('TLS_RELAY_EOF', 'EOF before relay is ready'));
+      if (this.state !== 'streaming') {
+        const error = relayError('TLS_RELAY_EOF', 'EOF before relay is ready');
+        if (!connectingFailure?.(error)) this.fail(error);
+      }
       else if (!this.cancelCloseTimer) {
         this.cancelCloseTimer = this.timer(this.limits.writeTimeoutMs, () => {
           this.fail(relayError('TLS_RELAY_CLOSE_TIMEOUT'));
@@ -76,6 +82,7 @@ export class RelaySession {
         if (!this.sockets.size) this.resolveClosed(this.error ?? null);
         return;
       }
+      if (connectingFailure?.(relayError('TLS_RELAY_CLOSED'))) return;
       if (this.state !== 'streaming' || !socket.readableEnded || !socket.writableFinished) {
         this.fail(relayError('TLS_RELAY_CLOSED', 'TLS relay peer closed'));
       } else if (!this.sockets.size) this.finish();
@@ -137,6 +144,54 @@ export class RelaySession {
     if (!socket.connecting && socket.remoteAddress) return socket;
     await this.wait(socket, 'connect', this.limits.connectTimeoutMs, 'TLS_RELAY_CONNECT_TIMEOUT');
     return socket;
+  }
+
+  /** A provisional TCP candidate. Only pre-connect failures are recoverable.
+   * Retired sockets remain owned until close, including queued error events.
+   * After connect, ordinary session fail-closed lifecycle resumes immediately.
+   */
+  connectCandidate(factory, attemptTimeoutMs) {
+    this.check();
+    this.state = 'connecting';
+    return new Promise((resolve, reject) => {
+      let socket, state = 'pending', cancel = () => {};
+      const cleanup = () => {
+        cancel();
+        socket?.off('connect', connected);
+        this.signal.removeEventListener('abort', aborted);
+      };
+      const failed = (error) => {
+        if (state === 'connected') return false;
+        if (state === 'failed') return true;
+        state = 'failed';
+        cleanup();
+        socket?.destroy();
+        reject(error);
+        return true;
+      };
+      const aborted = () => failed(this.signal.reason);
+      const connected = () => {
+        if (state !== 'pending') return;
+        state = 'connected'; cleanup(); resolve(socket);
+      };
+      try {
+        socket = factory();
+        this.add(socket, failed);
+        socket.pause();
+        this.check();
+      } catch (cause) {
+        failed(cause?.code?.startsWith('TLS_RELAY_') ? cause
+          : relayError('TLS_RELAY_CONNECT', 'TLS relay connect failed', cause));
+        return;
+      }
+      if (state !== 'pending') return;
+      this.signal.addEventListener('abort', aborted, { once: true });
+      socket.once('connect', connected);
+      if (attemptTimeoutMs !== undefined) {
+        cancel = this.timer(attemptTimeoutMs, () => failed(relayError('TLS_RELAY_CONNECT_ATTEMPT_TIMEOUT')));
+      }
+      if (!socket.connecting && socket.remoteAddress) connected();
+    });
   }
 
   async write(socket, buffer) {

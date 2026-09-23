@@ -16,7 +16,7 @@
 
 Для индивидуальных HTTPS-соединений приоритет — улучшение transparent/enc-SNI relay с сохранением настоящего TLS приложения. Сохранённые BoringSSL-профили общего TUN-транспорта этим решением не отменены. Речь о relay-ветке, в том числе внутри combo-tls, а не о признании безопасной raw TUN-ветки standalone transparent-tls.
 
-Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–30; остальные пункты не следует считать выполненными.
+Кандидаты на следующий отдельный этап исходного аудита: корректность ClientHello2/HRR и ECH, сохранение TLS record layout, защита route metadata от replay, лимиты/таймауты/backpressure, политика relay-направлений, приватность логов и end-to-end тесты. Последующие реализованные части отдельно зафиксированы в разделах 13–31; остальные пункты не следует считать выполненными.
 
 ## 1. Для чего существует этот контур
 
@@ -881,7 +881,8 @@ IPv4, а для IPv6 разрешает консервативное подмн�
 special ranges. Mapped IPv4, известные NAT64, 6to4/Teredo, ULA и scopes запрещены.
 Точная политика/обоснование диапазонов — [документация стенда](../scripts/transparent-tls-lab.md#destination-policy-exit-и-dns-rebinding).
 
-Первый проверенный IP копируется в immutable target, `net.connect` получает
+В исходном пакете первый проверенный IP копировался в immutable target (перебор
+остальных добавлен в разделе 31). `net.connect` получает
 только numeric address/family/port, без повторного DNS. Перед отправкой prelude
 сверяется фактический peer IP/port. Подмена DNS между проверкой и connect не
 изменяет target. Следующее новое соединение повторяет lookup+проверку. Combo
@@ -909,10 +910,8 @@ loopback negative test требует ноль origin accepts. Полный VPS 
 Отдельные четыре real-browser soak/SIGTERM регрессии Chrome/Firefox также PASS.
 
 Изменение совместимости намеренное: private/split-DNS назначения закрываются.
-Пока выбирается первый адрес OS без Happy Eyeballs/fallback; недоступный первый
-не заменяется вторым. Это следующий короткий пакет для восстановления доступности
-без DNS re-resolution — retries только по заранее проверенному набору, общий
-deadline, без отправки prelude проигравшим sockets. Не решены публичные IP
+В исходном пакете выбирался только первый адрес OS; pinned-IP fallback добавлен
+в разделе 31. Не решены публичные IP
 самого exit, специфичная маршрутизация/DNAT/custom NAT64, provider service IP
 в публичном диапазоне, domain/port allowlist, глобальные/per-client socket quotas.
 Это не универсальная SSRF-изоляция и не защита non-transparent transport веток.
@@ -923,3 +922,54 @@ privacy и bootstrap сначала, cover DNS только после пров�
 имени/ответа/exit и отдельного решения. Сейчас ни прямые cover-запросы, ни
 перенастройка DNS не включены. `sni-dictionary` остаётся планом alias-cache;
 `--tls-public-name` — список публичных SNI-имён, не domain allowlist resolver.
+
+## 31. Перебор проверенных IP сайта до TCP connect
+
+`ExitDestinationPolicy.resolve()` теперь возвращает immutable массив immutable
+`{address,family,port}`, а не один target. Проверяется весь DNS ответ (до 64 IP),
+затем эквивалентные IP, включая разные IPv6 записи, дедуплицируются с сохранением
+порядка. Даже последний запрещённый адрес блокирует весь набор до первого socket.
+Sparse arrays также отвергаются. Ни один retry не вызывает DNS заново.
+
+`connectRelayDestination()` перебирает IP последовательно. Отказ до TCP connect
+(ECONNREFUSED/ECONNRESET/ETIMEDOUT/unreachable/down/EADDRNOTAVAIL) позволяет перейти
+к следующему. Для незавершённой не-последней попытки выделяется 250 мс, затем
+socket.destroy() и следующий адрес. Последнему достаётся остаток общего бюджета
+DNS+TCP (default 10 с). При exhaustion — `TLS_RELAY_CONNECT_EXHAUSTED`, без raw
+host/IP/errors. При общем deadline — прежний `TLS_RELAY_CONNECT_TIMEOUT`.
+
+`RelaySession.connectCandidate()` допускает локальный отказ предварительного
+TCP socket, не разрушая inbound и всю session. Отменённый socket остаётся owned
+до close; отложенные error не становятся unhandled и не убивают новый candidate.
+Connect/abort/timer listeners снимаются. После connect ошибки снова завершают
+всю session. Клиентское подключение к exit использует прежний `connect()`.
+
+Принципиальная граница: никакого retry после выбора TCP, ошибки TLS или отправки
+ClientHello. Prelude и coalesced bytes попадают только выбранному socket. Peer
+mismatch и локальные permission/resource/config ошибки не маскируются перебором.
+HRR/CH2 идут по выбранному соединению. Один enc-SNI token и reservation на весь
+перебор; внешний wire-format и поведение браузерного TLS не меняются.
+
+27 новых проверок, всего 64 destination-теста. Управляемые часы проверяют 250 мс,
+общий deadline, DNS latency и abort без реальных blackhole IP. Есть sync/async
+failures, late events, 64-address bound/dedup, immutable answers, forbidden last
+IP, wrong peer и reset после CH без повторной отправки. Два настоящих loopback
+TLS 1.3 H2 echo по 64 КиБ (baseline/forced HRR): первый IP возвращает ECONNREFUSED,
+второй работает, CA проверен, origin принимает ровно одно соединение. Несколько
+loopback кандидатов допускаются test double, не расширением production policy.
+
+На VPS полный acceptance: **432 Node-теста (20 файлов) + 14 Chrome/Firefox
+сценариев** — PASS, без ошибок/пропусков. Отдельно четыре real-browser soak/SIGTERM
+регрессии — PASS. Весь набор проверяет общий runtime после изменения lifecycle
+предварительного подключения; публичные DNS/TCP destinations для failover-тестов
+не использовались.
+
+Ограничения: это bounded sequential fallback, не параллельный Happy Eyeballs;
+порядок семейств OS не переставляется, RTT не запоминается. 250 мс может отсеять
+медленный работающий IP. Общий deadline может закончиться до перебора всех 64.
+Системный DNS, firewall, TUN, mesh и работающий VPN не менялись.
+
+Следующий пакет: explicit-loopback стенд защищённого DNS с проверкой CA/hostname,
+обрывов и отсутствия plaintext fallback, без изменения DNS системы. Декоративные
+cover-запросы не добавляем; собственное публичное имя exit должно иметь реальные
+DNS-записи. План — [clean-vpn-dns-plan.md](clean-vpn-dns-plan.md).

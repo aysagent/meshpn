@@ -36,6 +36,23 @@ function validRoute(hostname, port) {
 
 export const EXIT_DNS_MAX_PENDING = 64;
 export const EXIT_DNS_MAX_ANSWERS = 64;
+export const EXIT_CONNECT_ATTEMPT_MS = 250;
+const RETRYABLE_CONNECT_ERRORS = new Set([
+  'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENETUNREACH', 'EHOSTUNREACH',
+  'ENETDOWN', 'EHOSTDOWN', 'EADDRNOTAVAIL',
+]);
+
+function pinnedCandidates(answers, port) {
+  const seen = new net.BlockList();
+  const candidates = [];
+  for (const { address, family } of answers) {
+    const type = family === 4 ? 'ipv4' : 'ipv6';
+    if (seen.check(address, type)) continue;
+    seen.addAddress(address, type);
+    candidates.push(Object.freeze({ address, family, port }));
+  }
+  return Object.freeze(candidates);
+}
 
 export class ExitDestinationPolicy {
   #lookup;
@@ -56,11 +73,11 @@ export class ExitDestinationPolicy {
     if (!validRoute(hostname, port)) throw relayError('TLS_RELAY_DESTINATION');
     if (this.#loopback) {
       if (hostname !== this.#loopback.hostname || port !== this.#loopback.port) throw relayError('TLS_RELAY_DESTINATION');
-      return Object.freeze({ address: '127.0.0.1', family: 4, port });
+      return pinnedCandidates([{ address: '127.0.0.1', family: 4 }], port);
     }
     if (net.isIP(hostname)) {
       if (!isPublicRelayAddress(hostname)) throw relayError('TLS_RELAY_DESTINATION');
-      return Object.freeze({ address: hostname, family: 4, port });
+      return pinnedCandidates([{ address: hostname, family: 4 }], port);
     }
     // No resolver search domains, local aliases, or legacy numeric IP syntax.
     if (!hostname.includes('.') || /^(?:0x[\da-f]+|\d+)(?:\.(?:0x[\da-f]+|\d+))*$/i.test(hostname)
@@ -72,7 +89,7 @@ export class ExitDestinationPolicy {
     let answers;
     try {
       // Absolute name prevents OS search-suffix expansion. One lookup, both
-      // families; inspect ALL answers before selecting a numeric destination.
+      // families; inspect ALL answers before creating the numeric candidate set.
       answers = await this.#lookup(`${hostname}.`, { all: true, verbatim: true });
     } catch {
       throw relayError('TLS_RELAY_DNS');
@@ -82,10 +99,13 @@ export class ExitDestinationPolicy {
       this.#pending--;
     }
     if (!Array.isArray(answers) || !answers.length || answers.length > EXIT_DNS_MAX_ANSWERS) throw relayError('TLS_RELAY_DNS');
-    if (!answers.every((entry) => entry && entry.family === net.isIP(entry.address)
-      && isPublicRelayAddress(entry.address))) throw relayError('TLS_RELAY_DESTINATION');
-    const { address, family } = answers[0];
-    return Object.freeze({ address, family, port });
+    // for...of also rejects sparse arrays, unlike Array.every().
+    for (const entry of answers) {
+      if (!entry || entry.family !== net.isIP(entry.address) || !isPublicRelayAddress(entry.address)) {
+        throw relayError('TLS_RELAY_DESTINATION');
+      }
+    }
+    return pinnedCandidates(answers, port);
   }
 }
 
@@ -102,21 +122,36 @@ export async function connectRelayDestination(session, policy, hostname, port, c
     session.signal.addEventListener('abort', aborted, { once: true });
   });
   try {
-    const target = await Promise.race([policy.resolve(hostname, port), abort]);
+    const targets = await Promise.race([policy.resolve(hostname, port), abort]);
     session.check();
-    const socket = await session.connect(() => connector
-      ? connector(target.address, target.port, target.family)
-      : net.connect({ host: target.address, port: target.port, family: target.family, autoSelectFamily: false }));
-    session.check();
-    // Defence against accidental connector re-resolution or a wrong test pin.
-    const allowed = new net.BlockList();
-    allowed.addAddress(target.address, target.family === 4 ? 'ipv4' : 'ipv6');
-    const peerFamily = net.isIP(socket.remoteAddress);
-    if (!peerFamily || socket.remotePort !== target.port || socket.remoteAddress.includes('%')
-      || !allowed.check(socket.remoteAddress, peerFamily === 4 ? 'ipv4' : 'ipv6')) {
-      throw relayError('TLS_RELAY_DESTINATION_PEER');
+    for (const [index, target] of targets.entries()) {
+      session.check();
+      let socket;
+      try {
+        socket = await session.connectCandidate(() => connector
+          ? connector(target.address, target.port, target.family)
+          : net.connect({ host: target.address, port: target.port, family: target.family, autoSelectFamily: false }),
+        index + 1 < targets.length ? EXIT_CONNECT_ATTEMPT_MS : undefined);
+      } catch (error) {
+        session.check();
+        const retryable = error.code === 'TLS_RELAY_CONNECT_ATTEMPT_TIMEOUT'
+          || RETRYABLE_CONNECT_ERRORS.has(error.cause?.code);
+        if (!retryable) throw error;
+        if (index + 1 === targets.length) throw relayError('TLS_RELAY_CONNECT_EXHAUSTED');
+        continue;
+      }
+      session.check();
+      // A peer mismatch is a policy failure, never a reason to try another IP.
+      const allowed = new net.BlockList();
+      allowed.addAddress(target.address, target.family === 4 ? 'ipv4' : 'ipv6');
+      const peerFamily = net.isIP(socket.remoteAddress);
+      if (!peerFamily || socket.remotePort !== target.port || socket.remoteAddress.includes('%')
+        || !allowed.check(socket.remoteAddress, peerFamily === 4 ? 'ipv4' : 'ipv6')) {
+        throw relayError('TLS_RELAY_DESTINATION_PEER');
+      }
+      return socket;
     }
-    return socket;
+    throw relayError('TLS_RELAY_DESTINATION');
   } finally {
     cancel();
     session.signal.removeEventListener('abort', aborted);

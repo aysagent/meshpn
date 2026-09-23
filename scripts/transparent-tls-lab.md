@@ -71,11 +71,11 @@ JSON пишется один раз в конце: SIGKILL/авария ОС/о�
 или неполный файл. Ошибка аргументов или резервирования пути возникает до отчёта.
 Это не cgroup supervisor; ограничения cleanup процессов описаны ниже.
 
-Текущий полный прогон: **405 Node-тестов + 14 browser-сценариев**. Предыдущий пакет
+Текущий полный прогон: **432 Node-тестов + 14 browser-сценариев**. Предыдущий пакет
 acceptance был проверен дважды подряд с 235 Node-тестами; basic soak добавил 19,
 slow-reader — ещё 11, H2 flow-control — ещё 12, GOAWAY/drain — ещё 12,
 browser soak lifecycle/resource contracts — ещё 45 (без запуска браузеров),
-enc-SNI replay admission — ещё 34, destination policy — ещё 37.
+enc-SNI replay admission — ещё 34, destination policy — ещё 37, pinned-IP failover — ещё 27.
 27 новых регрессий проверяют runner/reporter, включая отсутствие инструмента,
 неполные результаты, timeout/abort/output overflow и запрет перезаписи отчёта.
 Это ограниченный acceptance, не длительный soak и не production-сертификация.
@@ -704,10 +704,29 @@ Default разрешает консервативное подмножество
 OS `dns.lookup` получает абсолютное имя с завершающей точкой и
 `{all:true, verbatim:true}`. Проверяются все A/AAAA-адреса из результата системного
 resolver; смешанный public/private ответ отвергается целиком, а не фильтруется.
-Не более 64 ответов. Затем **первый** проверенный адрес копируется в immutable
-target. `net.connect` получает IP, family и `autoSelectFamily:false`, не hostname:
+Не более 64 ответов. Все проверенные адреса копируются в immutable список
+targets, эквивалентные IP дедуплицируются с сохранением порядка OS resolver.
+`net.connect` получает IP, family и `autoSelectFamily:false`, не hostname:
 повторного lookup и окна check-by-name/connect-by-name нет. Новый admission делает
 новый lookup и заново проверяет результат. DNS authenticity этим не обеспечивается.
+
+Перебор происходит **только до выбора TCP-соединения**, последовательно:
+`ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `ENETUNREACH`, `EHOSTUNREACH`,
+`ENETDOWN`, `EHOSTDOWN`, `EADDRNOTAVAIL` до connect дают перейти к следующему
+проверенному адресу. Незавершённая попытка, если за ней есть ещё адреса, получает
+250 мс; затем её socket.destroy() вызывается до запуска следующей. Последний
+кандидат получает остаток общего connect deadline, не новый полный таймаут.
+Не более 64 кандидатов, один ещё не отменённый TCP connect за раз. Дубликаты не
+создают дополнительные попытки. Это bounded sequential fallback, не параллельный
+Happy Eyeballs: порядок семейств не меняется и RTT не обучается.
+
+`RelaySession.connectCandidate` удерживает закрываемые сокеты в owned set до
+`close`, поглощает их отложенные ошибки и снимает попыточные таймеры/listeners.
+После TCP connect обычный fail-closed lifecycle восстанавливается сразу.
+Peer mismatch, локальные configuration/resource/permission ошибки, ошибка TLS,
+write/reset после выбора соединения **не** запускают новый IP. ClientHello и его
+coalesced tail отправляются только выбранному socket, один раз. Один token и
+одна replay reservation охватывают весь перебор; нового DNS при retry нет.
 
 Один deadline `connectTimeoutMs` (default 10 с) охватывает DNS **и** TCP.
 Close/timeout прекращает ожидание; поздний DNS success/rejection не открывает
@@ -733,27 +752,40 @@ connector; перед отправкой prelude его фактический p
 | `TLS_RELAY_DNS` | Ошибка, пустой/неправильный/слишком большой DNS ответ |
 | `TLS_RELAY_DNS_BUSY` | Все 64 resolver slots заняты |
 | `TLS_RELAY_CONNECT_TIMEOUT` | Истёк общий бюджет DNS+TCP |
+| `TLS_RELAY_CONNECT_EXHAUSTED` | Все кандидаты закончились retryable TCP-ошибкой |
+
+`TLS_RELAY_CONNECT_ATTEMPT_TIMEOUT` — внутренний переход после 250 мс, не
+ошибка всей session. Если общий deadline наступил раньше — приоритет у него.
 
 В обычный лог попадает код, не DNS answer или raw resolver exception.
 `ja3Verbose` остаётся явно sensitive режимом. Нет CLI отключения policy.
 
-Проверка: `npm run test:transparent-tls-destination` — 37 тестов. DNS rebinding,
+Проверка: `npm run test:transparent-tls-destination` — 64 теста. DNS rebinding,
 mixed A/AAAA, IPv4 encodings/IPv6 prefixes, connector pin/peer mismatch, malformed
 routes, bounded DNS, abort/late success/late failure, deadline DNS+TCP проверяются
 детерминированными doubles без внешних DNS/TCP запросов. Реальный TCP negative
 test отправляет валидный token на loopback origin через default exit и требует
 **ноль** origin connections. Положительный настоящий TLS H1/H2/HRR/browser путь
 проверяется общим lab с узким loopback pin. Полный acceptance на VPS:
-**405 Node-тестов (20 файлов) + 14 Chrome/Firefox-сценариев** — PASS.
+**432 Node-теста (20 файлов) + 14 Chrome/Firefox-сценариев** — PASS.
 Отдельные четыре real-browser soak/SIGTERM регрессии — PASS.
+
+27 новых failover-проверок покрывают sync/async отказ, 250 мс blackhole,
+late connect/error, дедупликацию IPv6, immutable snapshot, исчерпание всех 64
+кандидатов, отказ при последнем forbidden IP, отмену второй попытки, запрет
+повторной отправки ClientHello после reset, общий DNS+TCP deadline и peer mismatch.
+Два настоящих TLS 1.3 H2 echo (64 КиБ), baseline и forced HRR, сначала получают
+ECONNREFUSED на первом loopback IP, затем завершаются на втором с проверенным CA.
+Для этих двух тестов список loopback кандидатов задан **только test double**
+policy; production public-unicast policy не ослабляется.
 
 Ограничения и совместимость:
 
 - Ранее доступные private/split-DNS origin теперь будут отвергаться — это
   намеренное изменение admission. Mixed DNS также fail-closed.
-- Выбирается первый адрес в порядке OS resolver, **без Happy Eyeballs/fallback**;
-  недоступный первый IP ведёт к отказу даже при доступном втором. Безопасный
-  failover только по уже проверенному набору — отдельное улучшение.
+- Sequential fallback не обещает проверить все 64 IP за 10 с: общий deadline
+  приоритетнее полноты перебора. 250 мс может быть недостаточно для медленного,
+  но работающего не-последнего IP. Параллельный Happy Eyeballs/адаптация RTT не добавлены.
 - Не выявляются публичные IP собственных интерфейсов, нестандартные NAT64 prefixes,
   DNAT/маршрутизация публичного IP во внутреннюю сеть и публичные provider service
   addresses вне запрещённых диапазонов. Это не полная SSRF-изоляция окружения.
@@ -1246,7 +1278,7 @@ SIGKILL runner или аварии ОС cleanup не гарантирован. P
 
 Проверено: Linux, Node 24.13.0, OpenSSL 3.0.13, tshark 4.2.2,
 Chrome for Testing 151.0.7922.10, Firefox 156.0.1.
-**405 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
+**432 Node-теста + 14 браузерных сценариев**, без ошибок и пропусков.
 Первоначальный baseline (161 + 4) расширен HRR и resumption, описанными ниже.
 Browser ECH/0-RTT, HTTP/3, GUI-браузеры, длительный профиль нагрузки и внешний
 сетевой путь ещё не покрыты.
