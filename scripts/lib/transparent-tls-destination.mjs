@@ -34,6 +34,12 @@ function validRoute(hostname, port) {
     && Number.isInteger(port) && port >= 1 && port <= 65535;
 }
 
+function publicHostname(hostname) {
+  return !net.isIP(hostname) && hostname.includes('.')
+    && !/^(?:0x[\da-f]+|\d+)(?:\.(?:0x[\da-f]+|\d+))*$/i.test(hostname)
+    && !/(?:^|\.)(?:localhost|local|internal|home\.arpa)$/i.test(hostname);
+}
+
 export const EXIT_DNS_MAX_PENDING = 64;
 export const EXIT_DNS_MAX_ANSWERS = 64;
 export const EXIT_CONNECT_ATTEMPT_MS = 250;
@@ -57,9 +63,10 @@ function pinnedCandidates(answers, port) {
 export class ExitDestinationPolicy {
   #lookup;
   #loopback;
+  #pinned;
   #pending = 0;
 
-  constructor({ lookup = (...args) => dns.lookup(...args), loopback } = {}) {
+  constructor({ lookup = (...args) => dns.lookup(...args), loopback, pinnedRoute } = {}) {
     if (typeof lookup !== 'function' || (loopback !== undefined
       && (!loopback || !validRoute(loopback.hostname, loopback.port)))) {
       throw relayError('TLS_RELAY_CONFIG', 'invalid destination policy');
@@ -67,6 +74,19 @@ export class ExitDestinationPolicy {
     this.#lookup = lookup;
     // Explicit test-only pin; never a wildcard permission for private networks.
     this.#loopback = loopback === undefined ? undefined : Object.freeze({ ...loopback });
+    if (pinnedRoute !== undefined) {
+      try {
+        if (loopback !== undefined || !pinnedRoute || !validRoute(pinnedRoute.hostname, pinnedRoute.port)
+          || !publicHostname(pinnedRoute.hostname) || !Array.isArray(pinnedRoute.addresses)
+          || !pinnedRoute.addresses.length || pinnedRoute.addresses.length > 8) throw new Error();
+        for (const target of pinnedRoute.addresses) {
+          if (!target || !isPublicRelayAddress(target.address) || target.family !== net.isIP(target.address)
+            || target.port !== pinnedRoute.port) throw new Error();
+        }
+        this.#pinned = Object.freeze({ hostname: pinnedRoute.hostname.toLowerCase(), port: pinnedRoute.port,
+          targets: pinnedCandidates(pinnedRoute.addresses, pinnedRoute.port) });
+      } catch { throw relayError('TLS_RELAY_CONFIG', 'invalid pinned resolver route'); }
+    }
   }
 
   async resolve(hostname, port) {
@@ -75,13 +95,18 @@ export class ExitDestinationPolicy {
       if (hostname !== this.#loopback.hostname || port !== this.#loopback.port) throw relayError('TLS_RELAY_DESTINATION');
       return pinnedCandidates([{ address: '127.0.0.1', family: 4 }], port);
     }
+    if (this.#pinned && hostname.toLowerCase() === this.#pinned.hostname) {
+      // Reserve the entire configured hostname: a different port must not turn
+      // a static resolver route into an OS DNS lookup or another destination.
+      if (port !== this.#pinned.port) throw relayError('TLS_RELAY_DESTINATION');
+      return this.#pinned.targets;
+    }
     if (net.isIP(hostname)) {
       if (!isPublicRelayAddress(hostname)) throw relayError('TLS_RELAY_DESTINATION');
       return pinnedCandidates([{ address: hostname, family: 4 }], port);
     }
     // No resolver search domains, local aliases, or legacy numeric IP syntax.
-    if (!hostname.includes('.') || /^(?:0x[\da-f]+|\d+)(?:\.(?:0x[\da-f]+|\d+))*$/i.test(hostname)
-      || /(?:^|\.)(?:localhost|local|internal|home\.arpa)$/i.test(hostname)) {
+    if (!publicHostname(hostname)) {
       throw relayError('TLS_RELAY_DESTINATION');
     }
     if (this.#pending >= EXIT_DNS_MAX_PENDING) throw relayError('TLS_RELAY_DNS_BUSY');

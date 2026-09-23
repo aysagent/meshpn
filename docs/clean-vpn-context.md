@@ -1148,3 +1148,65 @@ acceptance. Повторный полный прогон отдельно от r
 Сначала loopback tests, затем отдельное включение. Bootstrap самого exit,
 OS/LAN/IPv6 integration, cache/pooling и выбор реального resolver остаются
 отдельными задачами. Mesh/firewall/TUN/system DNS/live VPN не менялись.
+
+## 35. Opt-in pinned resolver route на exit
+
+`ExitDestinationPolicy` принимает один operator `pinnedRoute` и повторно
+валидирует public hostname/port/1..8 IP, family/port соответствие, отсутствие
+private/special-use кандидатов. Копирует/dedup/freezes snapshot. Сочетание с
+lab loopback exception запрещено. `dnsUpstreamExitPolicy(compiledProfile)`
+принимает только настоящий public-contract profile, не lab/clone/forged object.
+
+Точное case-insensitive hostname+port возвращает pinned IP без OS lookup и
+без расхода DNS pending slots. То же имя на другом порту запрещено, не fallback
+в DNS. Другие имена/subdomains/IP literals проходят прежнюю destination policy;
+это не wildcard/domain allowlist и не защита всего DNS exit. Private/mixed
+answers по обычному пути остаются запрещены. Pinned route работает даже когда
+64 DNS slots заняты другими доменами. PSK/replay admission остаётся до route.
+
+Используется существующий connector: numeric IP+port+family, autoSelectFamily=false,
+последовательный failover только до выбранного TCP, общий deadline default10 с,
+non-final attempt250 мс. Selected peer проверяется. ClientHello не дублируется
+после успешного TCP; TLS/HTTP failure/reset не вызывает retry. Exhaustion →
+TLS_RELAY_CONNECT_EXHAUSTED, без OS DNS/другого resolver/combo mux fallback.
+Abort/deadline прекращают список, поздние completion не создают новое соединение.
+
+`clean-vpn.js` получил флаг **`--tls-dns-upstream-config=PATH`** только для exit
+transparent-tls/combo-tls. Флаг обрабатывается отдельным preflight helper перед
+runExit/runClient (до TUN/NAT/listeners). Bad context, bare/empty/duplicate/
+malformed flag, invalid/missing file → redacted failure. Общий bounded reader
+вынесен в `lib/dns-upstream-config-file.mjs`, используется и offline checker.
+Без флага default policy не меняется. Policy загружается один раз и передаётся
+в обе enc-SNI ветки; mesh/mux/probe/обычный IP путь не модифицировались.
+Нет hot reload/polling; изменение файла не меняет snapshot живого exit.
+
+Флаг **не запускался на live exit**. Он не включает DNS stub на клиенте, не
+меняет OS resolver и не выбирает публичный DNS provider. Exit проверяет адресную
+route, не TLS certificate/HTTP path/body: TLS остаётся end-to-end, CA/name/path
+проверяет будущий клиентский DoH adapter. Любая авторизованная enc-SNI session
+к configured hostname+port использует pin — не per-client DNS ACL.
+
+Тесты: 28 новых unit/runtime/preflight регрессий включены в общий acceptance,
+**599 Node-тестов (24 файла) +14 Chrome/Firefox сценариев PASS**, без skips.
+Report `/var/tmp/meshpn-acceptance-9X9rn3/report.json`. Проверены immutable pin,
+exact/port matching, обычные routes, DNS saturation, failover, default numeric
+connector, abort/deadline, peer mismatch, отсутствие повторной отправки CH,
+auth/replay, startup validation/snapshot и wiring clean-vpn без запуска TUN.
+
+Отдельно4 real namespace tests: IPv4/IPv6 × transparent-tls/combo-tls runtime.
+Private user/net/mount/PID namespace, толькоlo, на нём public-unicast aliases;
+никаких host/uplink изменений или внешней сети. Политика настоящая public,
+без resolve mocks/private admission. Первый TCP IP refused, второй делает
+реальный проверенный TLS1.3/DoH. Wrong CA не получает DNS body, reset не повторяет
+запрос, оба IP down → exhaustion без lookup, restart → recovery. По5 запросов,
+10 TCP attempts, 3 resolver bodies, 0 DNS lookups на case. После cleanup
+owned sockets/timers=0, namespace children=0. Полный clean-vpn/TUN не запускался;
+проверяется общий enc-SNI runtime обеих веток, dispatch wiring проверен отдельно.
+Повторный отдельный запуск прежних6 real DNS pcap/soak tests и новых4 route tests:
+**10/10 PASS**, без skips. Host DNS/firewall/routes/live VPN не менялись.
+
+Дальше: explicit клиентский DNS adapter через **числовой exit endpoint**, с
+hostname/port/path/CA из профиля, без прямого resolver connect/OS fallback.
+Сначала отдельный no-TUN стенд, затем согласованное включение и OS/LAN/IPv6.
+Bootstrap самого exit, cache/pooling и автоматическая ротация остаются отдельно.
+Cover DNS и динамическое BoringSSL cloning не возвращаются.

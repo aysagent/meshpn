@@ -158,6 +158,7 @@ import {
   peekPrefixDescribe,
   wireTransparentTlsEncSniSession,
 } from './lib/transparent-tls-runtime.mjs';
+import { loadExitDnsUpstreamPolicy } from './lib/dns-upstream-exit.mjs';
 // node-datachannel — native addon; только для --type=webrtc (не rtc-chrome). Lazy import в ensureNodeDatachannelLoaded().
 // @matrixai/logger — CJS; в ESM класс лежит в .default, не в корне namespace.
 import matrixAiLogger from '@matrixai/logger';
@@ -4126,7 +4127,7 @@ function parseTransparentTlsTunnelPeerIpv4(s) {
  * Exit transparent-tls: TLS ClientHello (0x16) → enc-SNI relay; иначе IPv4 mux в TUN.
  * @param {{ tlsLogJa3?: boolean, ja3Verbose?: boolean }} [ttlLogOpts]
  */
-function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, publicName, startBridgeTcp, ttlLogOpts) {
+function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, publicName, startBridgeTcp, ttlLogOpts, destinationPolicy) {
   const peer = tlsClientIp(sock);
   const rp = sock.remotePort ?? '?';
   const release = exitPeekAcquire();
@@ -4221,6 +4222,7 @@ function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, publicName
       logOpts: ttlLogOpts,
       initialBuf: merged,
       modeTag: 'transparent-tls',
+      destinationPolicy,
     });
   }
 
@@ -4233,7 +4235,7 @@ function peekDispatchExitTransparentTlsOrIpv4Sock(sock, vpnSecretBuf, publicName
  * Exit `--type=combo-tls`: enc-SNI relay (SNI `*.publicName` + decrypt OK) или TLS mux.
  * @param {Buffer} vpnSecretBuf PSK для enc-SNI и Bearer
  */
-function peekDispatchExitComboTlsSock(sock, vpnSecretBuf, publicName, tlsCtx, ttlLogOpts) {
+function peekDispatchExitComboTlsSock(sock, vpnSecretBuf, publicName, tlsCtx, ttlLogOpts, destinationPolicy) {
   const peer = tlsClientIp(sock);
   const rp = sock.remotePort ?? '?';
   const release = exitPeekAcquire();
@@ -4313,6 +4315,7 @@ function peekDispatchExitComboTlsSock(sock, vpnSecretBuf, publicName, tlsCtx, tt
         logOpts: ttlLogOpts,
         initialBuf: merged,
         modeTag: 'combo-tls',
+        destinationPolicy,
       });
       return;
     }
@@ -9214,6 +9217,7 @@ async function createRtcChromeClientBridge(opts) {
 async function runExit({
   server,
   type,
+  dnsUpstreamDestinationPolicy,
   extIface,
   configPath,
   iceMode,
@@ -9563,6 +9567,7 @@ async function runExit({
           ttlPublicName,
           startBridge,
           { tlsLogJa3: Boolean(tlsLogJa3), ja3Verbose: Boolean(ja3Verbose) },
+          dnsUpstreamDestinationPolicy,
         );
         return;
       }
@@ -9681,6 +9686,7 @@ async function runExit({
           comboPublicName,
           tlsCtxCombo,
           ttlLogOptsCombo,
+          dnsUpstreamDestinationPolicy,
         );
       })
       .listen(port, host, () => {
@@ -11691,6 +11697,7 @@ async function main() {
 --tls-server-name=HOST: только client + tls | boring-tls | combo-tls — проверка сертификата (CN/SAN); также ClientHello SNI для **TUN-туннеля** (boring-путь при combo), если не задан --tls-client-sni. Если --server — IP и оба не заданы, для проверки используется clean-vpn; при ошибочном --tls-server-name=www.google.com и IP тоже принудительно clean-vpn (маскировку SNI см. --tls-client-sni); на exit игнорируется
 --tls-client-sni=HOST: только client + tls | boring-tls | combo-tls — явный SNI в ClientHello (TUN-путь boring); без флага при проверке cert=clean-vpn (часто IP без --tls-server-name) SNI по умолчанию www.google.com; иначе SNI = имя проверки. Маркера VPN в открытой части ClientHello нет — exit отличает VPN по Bearer внутри TLS (TLS 1.3; ALPN по умолчанию h2 + http/1.1; HTTP/1.1 → GET /clean-vpn, HTTP/2 → POST /clean-vpn на одном stream).
 --tls-public-name=HOST[,HOST...]: **обязателен** для transparent-tls и combo-tls (enc-SNI v2 base62 relay). На exit + tls | combo-tls также SNI «честной» страницы It works! для VPN mux: любой из перечисленных имён в ClientHello → VPN; иначе passthrough.
+--tls-dns-upstream-config=PATH: только exit + transparent-tls | combo-tls; статические IP для одного resolver hostname+port, без DNS lookup/fallback этой route. JSON проверяется до TUN; не включает DNS клиента. См. scripts/dns-upstream-config.md.
 --tls-probe-target=host:port: только exit + tls | combo-tls — куда TCP-прокси при passthrough (parse fail ClientHello или SNI ≠ --tls-public-name); default www.google.com:443
 --tls-probe-max-bytes=N: короткий passthrough, лимит байт обоих направлений (default 49152)
 --tls-probe-max-seconds=S: лимит времени passthrough-сессии (default 30)
@@ -11894,6 +11901,7 @@ async function main() {
     );
   }
 
+  args.dnsUpstreamDestinationPolicy = await loadExitDnsUpstreamPolicy(args, process.argv.slice(2));
   if (args.role === 'exit') {
     await runExit(args);
   } else if (args.role === 'client') {

@@ -100,9 +100,13 @@ plaintext positive control, повторные запросы/обрывы/resta
 Pcap покрывает короткую матрицу перед soak, а не весь длительный прогон.
 Contract upstream/bootstrap реализован: TLS hostname отдельно от numeric IP,
 bundled/custom CA, строгая offline validation и применение TLS/HTTP identity
-на loopback-стенде. Public profiles пока не подключены к рабочему connector.
-Следующий шаг — узкая операторская pinned route на exit для конкретного DNS
-resolver hostname+port, без OS lookup для этой route и без расширения общей
-destination policy. Затем отдельно согласовать включение и системную интеграцию.
+на loopback-стенде. Public profiles подключаются к exit connector явно через
+`--tls-dns-upstream-config=PATH` (только exit transparent-tls/combo-tls).
+Configured hostname+port использует static public-IP snapshot без OS lookup;
+другой port того же имени запрещён, остальные routes сохраняют старую policy.
+Перебор только до успешного TCP выбора, без DNS/mux fallback; live exit не менялся.
+Следующий шаг — explicit клиентский DNS adapter через числовой exit endpoint,
+с TLS hostname/CA validation, без системного переключения DNS/TUN.
+Затем отдельно согласовать включение и системную интеграцию.
 Кэша и активного production DNS/bootstrap пока нет.
 Случайные cover DNS запросы не входят в этот план реализации.

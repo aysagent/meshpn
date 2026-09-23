@@ -234,9 +234,12 @@ reserved heap и GC trough вместо надёжной оценки live memor
 Upstream/bootstrap contract и offline validation реализованы отдельным пакетом;
 65 новых регрессий включены в общий acceptance. Подробности и ограничения —
 [конфигурация DNS upstream](dns-upstream-config.md).
-Дальше — операторская pinned route на exit для конкретного resolver hostname+port,
-чтобы рабочее подключение действительно использовало configured IP без lookup.
-Затем отдельная интеграция с клиентом/OS/LAN/IPv6.
+Pinned route exit реализована opt-in флагом `--tls-dns-upstream-config=PATH`:
+только заданное hostname+port использует configured public IP без lookup/fallback.
+Проверена на настоящем TCP/TLS IPv4/IPv6 в отдельной namespace; общий DNS стенд
+остаётся loopback-only и не активирует production flag сам.
+Дальше — explicit клиентский DNS adapter через числовой exit endpoint, затем
+отдельная интеграция с клиентом/OS/LAN/IPv6.
 Декоративный cover DNS, системная перенастройка и расширение domain/IP admission
 в этот результат не входят.
 

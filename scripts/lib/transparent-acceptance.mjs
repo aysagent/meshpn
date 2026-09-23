@@ -18,6 +18,7 @@ export const TEST_FILES = Object.freeze([
   'test-transparent-dns-lab.mjs',
   'test-dns-soak.mjs',
   'test-dns-upstream-config.mjs',
+  'test-dns-upstream-route.mjs',
 ]);
 
 export function parseOptions(args) {

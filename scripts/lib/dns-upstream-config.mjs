@@ -2,7 +2,7 @@
 import net from 'node:net';
 import tls from 'node:tls';
 import { X509Certificate } from 'node:crypto';
-import { isPublicRelayAddress } from './transparent-tls-destination.mjs';
+import { isPublicRelayAddress, ExitDestinationPolicy } from './transparent-tls-destination.mjs';
 
 export const DNS_UPSTREAM_CONFIG_MAX_BYTES = 128 * 1024;
 const compiled = new WeakSet();
@@ -107,4 +107,12 @@ export function dnsUpstreamSummary(profile) {
   return { schema: 1, scope: profile.scope, status: 'validated-offline', transport: profile.transport,
     addressCount: profile.addresses.length, families: [...new Set(profile.addresses.map((x) => x.family))],
     trust: profile.trust.mode, caCount: profile.ca.length, runtimeEnabled: false };
+}
+
+/** Trusted operator config only, never route metadata supplied by a client. */
+export function dnsUpstreamExitPolicy(profile, { lookup } = {}) {
+  requireValue(compiled.has(profile) && profile.scope === 'public-contract');
+  return new ExitDestinationPolicy({ ...(lookup === undefined ? {} : { lookup }), pinnedRoute: {
+    hostname: profile.hostname, port: profile.port, addresses: profile.addresses,
+  } });
 }

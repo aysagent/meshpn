@@ -1,8 +1,9 @@
-# DNS upstream/bootstrap: offline configuration contract
+# DNS upstream/bootstrap: конфигурация и pinned route exit
 
-Это **конфигурационный контракт и его проверка на loopback-стенде**, не включение
-production DNS. Не выбирает публичный resolver, не отправляет внешние запросы,
-не меняет OS DNS, TUN, firewall, mesh или работающий VPN.
+Есть offline checker, проверка на стенде и **явный opt-in pinned route на exit**.
+Checker ничего не запускает; флаг exit применяется только при отдельном запуске
+VPN оператором. Resolver не выбирается автоматически, DNS клиента/системы не
+перенастраивается. При разработке работающий VPN, TUN, firewall и mesh не менялись.
 
 ```bash
 npm run dns:check-upstream -- --config=/path/to/upstream.json
@@ -47,8 +48,8 @@ resolver. Нужно указать выбранный оператором се
   одновременно для TLS SNI, certificate hostname check и HTTP Host. Отдельных
   override для этих трёх значений нет.
 - `port`: integer1..65535. При443 HTTP Host — hostname, иначе hostname:port.
-  Число не включает runtime доступ к этому порту: будущая route policy
-  должна отдельно разрешить назначение. Только DoH POST поверх TLS1.3+.
+  Runtime route подключается только явным флагом ниже. DNS adapter использует
+  DoH POST поверх TLS1.3+; exit не терминирует и не проверяет этот TLS/HTTP.
 - `path`: простой абсолютный путь ≤256 символов, например `/operator/dns`.
   Без URL, query string, `%` escapes, fragment, dot segments, пустых segments,
   auth/token, URI template. Такие DoH deployments пока не поддерживаются.
@@ -56,8 +57,8 @@ resolver. Нужно указать выбранный оператором се
   Весь список проходит существующую консервативную exit IP policy; один private/
   loopback/special-use адрес отвергает **всю** конфигурацию. Duplicate/equivalent
   IPv6 удаляются с сохранением порядка. Никакого DNS lookup для bootstrap.
-  Список становится immutable snapshot с address/family/port; он **пока не
-  подключён к connector** и не означает реализованный failover resolver.
+  Список становится immutable snapshot с address/family/port. При opt-in на
+  exit connector использует только этот список для configured hostname+port.
 - `trust.mode: bundled`: явная копия CA bundle текущей версии Node, не
   автоматически меняющийся OS/default store. Она не расширяется через
   `NODE_EXTRA_CA_CERTS` или default CA overrides. Это следует из семантики
@@ -96,15 +97,61 @@ A/AAAA, CA/hostname rejection до получения DNS HTTP body. Certificate
 всегда использует hostname профиля, а не переданный IP/постороннее имя.
 После мутации исходного JSON/object поведение уже compiled profile не меняется.
 
+## Opt-in на exit
+
+К обычному запуску `clean-vpn.js` оператор может явно добавить:
+
+```text
+--tls-dns-upstream-config=/path/to/upstream.json
+```
+
+Только `--role=exit` с `--type=transparent-tls` или `--type=combo-tls`.
+Client/другой transport, bare/empty/duplicate/malformed flag и невалидный JSON
+отвергаются **до runExit/runClient**, то есть до TUN/NAT/listeners.
+Загрузка использует тот же bounded reader, что offline checker; ошибки redacted.
+Без флага действует прежняя policy. Этот пакет не запускал флаг на live exit.
+
+Policy создаётся один раз при старте. Файл потом не перечитывается, DNS polling/
+hot reload/автоматической ротации нет. Для смены списка нужен отдельно управляемый
+restart приложения. Политика общая для enc-SNI sessions этого exit, не per-client.
+
+- Auth/replay admission остаётся **до** выбора адреса. ClientHello/enc-SNI
+  metadata не может передать или изменить configured bootstrap-IP.
+- Case-insensitive точное hostname + настроенный port → статический список,
+  без OS DNS lookup и без расхода DNS pending slots. Заполненный DNS budget
+  других routes не блокирует эту route.
+- То же hostname на **другом порту запрещено**, а не отправлено в DNS.
+  Subdomains/другие hostname не становятся aliases pinned route: для них
+  сохраняется обычная destination policy и OS DNS. Это не общая DNS allowlist.
+- Private/mixed/special-use candidates не разрешаются даже в operator pin.
+  Programmatic loopback exception нельзя сочетать с production pin.
+- Используется существующий bounded sequential TCP failover: default общий
+  бюджет10 с, non-final attempt250 мс; конкретные retryable TCP ошибки идут к
+  следующему IP. Реальный peer IP/port сверяется с выбранным кандидатом.
+- После успешного TCP выбора ClientHello отправляется только на выбранный IP.
+  TLS/certificate/HTTP/reset после выбора не повторяет DNS request на другом IP.
+  Исчерпание списка → `TLS_RELAY_CONNECT_EXHAUSTED`, без DNS, другого resolver,
+  direct-client или combo-mux fallback. Abort/deadline останавливает перебор.
+
+Exit использует из профиля только hostname/port/IP для маршрутизации. Полная
+конфигурация всё равно валидируется, но CA/name/path/HTTP validation выполняет
+**клиент DoH**, не exit. TLS end-to-end; exit не может гарантировать, что внутри
+идёт именно DoH, а не другой TLS-трафик к разрешённому endpoint. Это не DPI/ACL
+по URL и не отключение OS DNS для остальных назначений.
+
+JS API: `dnsUpstreamExitPolicy(compileDnsUpstream(json))` даёт настоящий
+`ExitDestinationPolicy`, передаваемый в `wireTransparentTlsEncSniSession`.
+Lab/forged/cloned profiles не допускаются. Низкоуровневый constructor также
+повторно валидирует/copies public pin, не доверяя внешним mutable candidates.
+
 ## Что ещё не сделано
 
-Рабочий exit всё ещё разрешает destination hostname через свой OS resolver.
-Загрузка этого JSON **не** меняет это поведение. Следующий отдельный пакет —
-узкая операторская pinned route на exit для конкретного resolver hostname+port:
-подключаться к проверенному snapshot IP без lookup и без расширения общей
-destination policy. Проверить это на стенде, прежде чем включать где-либо.
-Нельзя просто передать первый IP в прямой HTTPS connect клиента: это обойдёт
-согласованный relay-путь.
+При запуске **без флага** exit по-прежнему использует OS resolver, в том числе
+для DNS endpoint. Checker отдельно не активирует route. Клиентский production
+stub ещё не подключён: флаг exit не заставляет OS/приложения отправлять DNS в relay.
+Нельзя просто передать первый IP в прямой HTTPS connect клиента: это обойдёт relay.
+Следующий пакет — explicit клиентский DNS adapter через числовой exit endpoint,
+с согласованными hostname/port/path/CA, без системного DNS переключения и TUN.
 
 Адрес/доверие самого exit тоже требуют отдельной bootstrap-конфигурации.
 OS/LAN/IPv6 DNS integration, общий exit DNS, resolver selection, caching/pooling,
@@ -120,3 +167,18 @@ DNS wire/parser и stub всё ещё лабораторные, поддержи
 process ownership тесте; он не замалчивается, report и подробности сохранены
 в разделе34 [контекста](../docs/clean-vpn-context.md). Повтор не является
 доказательством устранения причины того единичного сбоя; process runtime не менялся.
+
+Для pinned route добавлены 28 unit/runtime/preflight регрессий в общий acceptance
+и отдельные4 real tests: `npm run test:dns-upstream-route-real`. Последние
+используют user/net/mount/PID namespace только с loopback. На него назначаются
+IPv4/IPv6 из public-unicast диапазона, поэтому проверяется **настоящая public
+policy**, не mocked resolver/loopback exemption. Внешних интерфейсов/маршрутов нет.
+Настоящий TCP: первый IP refused, второй выполняет TLS1.3 и DoH; wrong CA не
+доставляет DNS body, reset после TCP не вызывает retry, all-down даёт exhaustion
+без lookup, restart восстанавливает работу. По5 запросов/10 TCP attempts на
+каждый family×modeTag; owned sockets/timers/child processes освобождаются.
+Тестирует общий enc-SNI runtime обеих веток; полный clean-vpn с TUN не запускается,
+его wiring/preflight дополнительно проверены статически и отдельными unit tests.
+Полный acceptance этого пакета: **599 Node-тестов (24 файла) +14 браузерных
+сценариев PASS**, report `/var/tmp/meshpn-acceptance-9X9rn3/report.json`.
+Отдельно6 прежних real DNS pcap/soak +4 новых route tests: **10/10 PASS**.
