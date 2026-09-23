@@ -71,12 +71,13 @@ JSON пишется один раз в конце: SIGKILL/авария ОС/о�
 или неполный файл. Ошибка аргументов или резервирования пути возникает до отчёта.
 Это не cgroup supervisor; ограничения cleanup процессов описаны ниже.
 
-Текущий полный прогон: **506 Node-тестов + 14 browser-сценариев**. Предыдущий пакет
+Текущий полный прогон: **571 Node-тест + 14 browser-сценариев**. Предыдущий пакет
 acceptance был проверен дважды подряд с 235 Node-тестами; basic soak добавил 19,
 slow-reader — ещё 11, H2 flow-control — ещё 12, GOAWAY/drain — ещё 12,
 browser soak lifecycle/resource contracts — ещё 45 (без запуска браузеров),
 enc-SNI replay admission — ещё 34, destination policy — ещё 37, pinned-IP failover — ещё 27.
 Explicit-loopback DNS/DoH стенд добавил ещё 46, DNS pcap/soak contracts — 28.
+Upstream/bootstrap config contract добавил 65.
 27 новых регрессий проверяют runner/reporter, включая отсутствие инструмента,
 неполные результаты, timeout/abort/output overflow и запрет перезаписи отчёта.
 Это ограниченный acceptance, не длительный soak и не production-сертификация.
@@ -93,6 +94,9 @@ Explicit-loopback DNS/DoH стенд добавил ещё 46, DNS pcap/soak con
 `npm run transparent-tls:dns-soak` отдельно запускает namespace pcap с plaintext
 positive control, затем bounded DNS workload и resource checks. Шесть real
 регрессий — `npm run test:dns-soak-real`; они не входят в browser acceptance.
+[Upstream config](dns-upstream-config.md) задаёт identity/CA/static IP contract;
+`npm run dns:check-upstream -- --config=...` только проверяет JSON без сети.
+Рабочий exit пока не использует эти bootstrap-IP.
 
 ## Ограниченный по времени soak
 
@@ -1292,7 +1296,7 @@ SIGKILL runner или аварии ОС cleanup не гарантирован. P
 
 Проверено: Linux, Node 24.13.0, OpenSSL 3.0.13, tshark 4.2.2,
 Chrome for Testing 151.0.7922.10, Firefox 156.0.1.
-**506 Node-тестов + 14 браузерных сценариев**, без ошибок и пропусков.
+**571 Node-тест + 14 браузерных сценариев**, без ошибок и пропусков.
 Первоначальный baseline (161 + 4) расширен HRR и resumption, описанными ниже.
 Browser ECH/0-RTT, HTTP/3, GUI-браузеры, длительный профиль нагрузки и внешний
 сетевой путь ещё не покрыты.

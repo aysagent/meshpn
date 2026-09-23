@@ -6,10 +6,14 @@ import { readFileSync } from 'node:fs';
 import { once } from 'node:events';
 import { startTransparentTlsLab, LAB_CERT_PATH } from './transparent-tls-lab.mjs';
 import { startLabDohStub } from './lab-doh-stub.mjs';
+import { compileLabDnsUpstream } from './dns-upstream-config.mjs';
 import { DNS_MAX_BYTES, parseDnsQuery, fixtureDnsAnswer, dnsError } from './lab-dns-wire.mjs';
 
 export async function startTransparentDnsLab({ mode = 'normal', ca, servername = 'localhost', timeoutMs = 1000,
-  maxInflight = 8, maxTcpConnections = 8, tcpLifetimeMs = 3000, observeWire } = {}) {
+  maxInflight = 8, maxTcpConnections = 8, tcpLifetimeMs = 3000, observeWire, upstreamConfig } = {}) {
+  if (upstreamConfig !== undefined && (ca !== undefined || servername !== 'localhost')) throw dnsError('DNS_CONFIG');
+  let profile = upstreamConfig === undefined ? undefined : compileLabDnsUpstream(upstreamConfig);
+  if (profile) servername = profile.hostname;
   const cert = readFileSync(LAB_CERT_PATH);
   const key = readFileSync(new URL('../fixtures/boring-tls-local.key.pem', import.meta.url));
   const sockets = new Set();
@@ -20,7 +24,8 @@ export async function startTransparentDnsLab({ mode = 'normal', ca, servername =
   setMode(mode);
   const origin = https.createServer({ key, cert, minVersion: 'TLSv1.3', maxHeaderSize: 8192 }, (req, res) => {
     req.on('error', () => {}); res.on('error', () => {});
-    if (req.method !== 'POST' || req.url !== '/dns-query' || req.headers['content-type'] !== 'application/dns-message') {
+    if (req.method !== 'POST' || req.url !== (profile?.path ?? '/dns-query')
+      || (profile && req.headers.host !== profile.authority) || req.headers['content-type'] !== 'application/dns-message') {
       res.writeHead(400).end(); return;
     }
     const chunks = []; let size = 0;
@@ -68,9 +73,16 @@ export async function startTransparentDnsLab({ mode = 'normal', ca, servername =
   try {
     origin.listen(0, '127.0.0.1'); await once(origin, 'listening');
     const originPort = origin.address().port;
+    // The ordinary smoke/pcap/soak now exercises the same identity contract.
+    // Legacy ca/servername overrides remain only for existing fault injection.
+    if (!profile && ca === undefined && servername === 'localhost') profile = compileLabDnsUpstream({
+      schema: 1, transport: 'doh', hostname: 'localhost', port: originPort, path: '/dns-query',
+      bootstrap: { addresses: ['127.0.0.1'] }, trust: { mode: 'custom', certificates: [cert.toString()] },
+    });
     relay = await startTransparentTlsLab({ originName: servername, externalOriginPort: originPort, observeWire, sessionTimeoutMs: 0 });
-    stub = await startLabDohStub({ upstream: { address: '127.0.0.1', port: relay.clientPort, servername,
-      authority: `localhost:${originPort}`, ca: ca === undefined ? cert : ca }, timeoutMs, maxInflight, maxTcpConnections, tcpLifetimeMs });
+    const target = profile ? { profile, relayPort: relay.clientPort } : { upstream: { address: '127.0.0.1', port: relay.clientPort,
+      servername, authority: `localhost:${originPort}`, ca: ca === undefined ? cert : ca } };
+    stub = await startLabDohStub({ ...target, timeoutMs, maxInflight, maxTcpConnections, tcpLifetimeMs });
     return { stub, relay, resolverPort: originPort, setMode, stopOrigin, close,
       async restartOrigin() {
         if (closed || origin.listening) throw dnsError('DNS_LAB_STATE');

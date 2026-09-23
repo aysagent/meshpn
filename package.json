@@ -55,6 +55,8 @@
     "transparent-tls:dns-soak": "node scripts/transparent-dns-soak.mjs",
     "test:dns-soak": "node --test scripts/test-dns-soak.mjs",
     "test:dns-soak-real": "node --test scripts/test-dns-soak-real.mjs",
+    "test:dns-upstream-config": "node --test scripts/test-dns-upstream-config.mjs",
+    "dns:check-upstream": "node scripts/dns-upstream-check.mjs",
     "test:transparent-tls-resumption": "node --test scripts/test-transparent-tls-resumption.mjs",
     "test:transparent-tls-early-data": "node --test scripts/test-transparent-tls-early-data.mjs",
     "test:transparent-tls-ech": "node --test scripts/test-transparent-tls-ech.mjs",

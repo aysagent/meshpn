@@ -4,6 +4,8 @@
 [запуск и границы](../scripts/transparent-dns-lab.md), разделы 32–33 context.
 Дополнительно реализованы независимый namespace pcap и bounded DNS soak.
 DNS клиента/системы и firewall не менялись. Production DNS интеграции пока нет.
+Upstream/bootstrap JSON contract и offline CLI реализованы отдельно:
+[конфигурация](../scripts/dns-upstream-config.md), раздел 34 context.
 Динамическое клонирование BoringSSL-профиля не возвращаем.
 
 ## Что есть сейчас
@@ -96,7 +98,11 @@ Explicit-loopback DoH стенд проверяет success/failure/resource с�
 отдельный namespace runner добавляет независимый pcap обоих направлений,
 plaintext positive control, повторные запросы/обрывы/restart и resource budgets.
 Pcap покрывает короткую матрицу перед soak, а не весь длительный прогон.
-Следующий шаг — contract production upstream/bootstrap (TLS hostname отдельно
-от endpoint IP, CA, отсутствие OS/plaintext fallback); затем согласованная
-системная интеграция. Кэша и production upstream/bootstrap пока нет.
+Contract upstream/bootstrap реализован: TLS hostname отдельно от numeric IP,
+bundled/custom CA, строгая offline validation и применение TLS/HTTP identity
+на loopback-стенде. Public profiles пока не подключены к рабочему connector.
+Следующий шаг — узкая операторская pinned route на exit для конкретного DNS
+resolver hostname+port, без OS lookup для этой route и без расширения общей
+destination policy. Затем отдельно согласовать включение и системную интеграцию.
+Кэша и активного production DNS/bootstrap пока нет.
 Случайные cover DNS запросы не входят в этот план реализации.

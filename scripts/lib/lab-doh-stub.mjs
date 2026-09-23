@@ -4,12 +4,17 @@ import net from 'node:net';
 import https from 'node:https';
 import { once } from 'node:events';
 import { DNS_MAX_BYTES, dnsError, parseDnsQuery, validateDnsResponse, dnsFailure } from './lab-dns-wire.mjs';
+import { labDnsUpstreamTarget } from './dns-upstream-config.mjs';
 
-export async function startLabDohStub({ port = 0, upstream, timeoutMs = 1500, maxInflight = 16,
+export async function startLabDohStub({ port = 0, upstream, profile, relayPort, timeoutMs = 1500, maxInflight = 16,
   maxTcpConnections = 16, tcpLifetimeMs = 5000 } = {}) {
+  if (profile !== undefined) {
+    if (upstream !== undefined) throw dnsError('DNS_CONFIG');
+    upstream = labDnsUpstreamTarget(profile, relayPort);
+  } else if (relayPort !== undefined) throw dnsError('DNS_CONFIG');
   if (!upstream || upstream.address !== '127.0.0.1' || !Number.isInteger(upstream.port) || upstream.port < 1024 || upstream.port > 65535
     || typeof upstream.servername !== 'string' || !/^[a-z0-9.-]{1,253}$/i.test(upstream.servername)
-    || typeof upstream.authority !== 'string' || !/^localhost:\d{1,5}$/.test(upstream.authority)
+    || typeof upstream.authority !== 'string' || (!profile && !/^localhost:\d{1,5}$/.test(upstream.authority))
     || !Number.isInteger(port) || (port !== 0 && (port < 1024 || port > 65535))) throw dnsError('DNS_CONFIG');
   for (const [value, min, max] of [[timeoutMs, 10, 10000], [maxInflight, 1, 64], [maxTcpConnections, 1, 64], [tcpLifetimeMs, 50, 30000]]) {
     if (!Number.isInteger(value) || value < min || value > max) throw dnsError('DNS_CONFIG');
@@ -44,7 +49,8 @@ export async function startLabDohStub({ port = 0, upstream, timeoutMs = 1500, ma
       try {
         req = https.request({ host: target.address, port: target.port, servername: target.servername,
           ca: target.ca, rejectUnauthorized: true, minVersion: 'TLSv1.3', agent: false,
-          method: 'POST', path: '/dns-query', maxHeaderSize: 8192,
+          ...(profile ? { checkServerIdentity: target.checkServerIdentity } : {}),
+          method: 'POST', path: profile ? target.path : '/dns-query', maxHeaderSize: 8192,
           lookup: () => { throw dnsError('DNS_BOOTSTRAP_FORBIDDEN'); },
           headers: { host: target.authority, accept: 'application/dns-message', 'content-type': 'application/dns-message',
             'content-length': query.length, 'cache-control': 'no-store' },

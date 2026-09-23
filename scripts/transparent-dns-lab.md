@@ -18,6 +18,12 @@ cleanup и дают ненулевой результат. Успех — еди
 `DNS_LAB_RESULT {...}` после проверки cleanup, без реальных QNAME/ответов/ключей.
 Это stdout-отчёт, не сохраняемый автоматически JSON-файл или pcap.
 
+Теперь обычный стенд создаёт TLS/HTTP identity через
+[upstream/bootstrap contract](dns-upstream-config.md). `upstreamConfig` в JS API
+принимает только lab-профиль с bootstrap127.0.0.1, не публичную runtime
+конфигурацию. Старые ca/servername fault overrides сохранены для негативных
+тестов. При явном профиле resolver проверяет также согласованные Host и path.
+
 ## Путь запроса
 
 ```text
@@ -225,8 +231,11 @@ Node без flags. Первый вариант проверки на unconstrain
 reserved heap и GC trough вместо надёжной оценки live memory; raw результаты
 не выдаются за успешный soak. Проверка без ограничения V8 остаётся отдельной задачей.
 
-Дальше — явный production upstream/bootstrap contract: отдельно TLS hostname,
-проверенные endpoint IP, CA и политика ошибок, без системного DNS fallback.
+Upstream/bootstrap contract и offline validation реализованы отдельным пакетом;
+65 новых регрессий включены в общий acceptance. Подробности и ограничения —
+[конфигурация DNS upstream](dns-upstream-config.md).
+Дальше — операторская pinned route на exit для конкретного resolver hostname+port,
+чтобы рабочее подключение действительно использовало configured IP без lookup.
 Затем отдельная интеграция с клиентом/OS/LAN/IPv6.
 Декоративный cover DNS, системная перенастройка и расширение domain/IP admission
 в этот результат не входят.

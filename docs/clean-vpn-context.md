@@ -1087,3 +1087,64 @@ protected plaintext не найден. Acceptance report:
 отдельное согласованное включение клиента/OS/LAN/IPv6. Доверенный публичный
 resolver пока не выбран, внешний трафик не включён. Кэш/pooling, cover DNS и
 динамический BoringSSL cloning не добавлялись.
+
+## 34. DNS upstream/bootstrap contract и offline checker
+
+Добавлены `scripts/lib/dns-upstream-config.mjs`, `scripts/dns-upstream-check.mjs`,
+шаблон `scripts/fixtures/dns-upstream.example.json` и 65 регрессий в общем
+acceptance. [Формат, запуск и ограничения](../scripts/dns-upstream-config.md).
+Команды: `npm run dns:check-upstream -- --config=/path/to/upstream.json`,
+`npm run test:dns-upstream-config`. Это не запуск production DNS.
+
+Строгий schema1 JSON: transport=doh, hostname, port, path, bootstrap.addresses,
+trust. TLS SNI, certificate hostname check и HTTP Host используют одно
+canonical ASCII имя; IP не подменяет TLS identity. HTTP Host добавляет port,
+если он не443. Простой POST path без URL/query/fragment/escapes/credentials.
+Нет произвольных TLS/HTTP options, insecure/fallback/allowPrivate switches.
+
+Static bootstrap list1..8 содержит только numeric public IPv4/IPv6 по существующей
+exit admission policy; mixed private/special-use set отвергается целиком.
+Эквивалентные IP dedup с сохранением порядка; immutable address/family/port
+snapshot. Offline compile не вызывает DNS/TCP/HTTP. Это **валидация кандидатов**,
+не подтверждение доступности/принадлежности IP и не готовое переключение connector.
+
+Trust modes: bundled — явно переданный Mozilla bundle текущего Node; custom —
+1..8 отдельных CA PEM ≤16 KiB с проверкой CA flag/validity, без keys/мусора.
+Custom заменяет bundled, не добавляется к нему. Нет неявного расширения доверия
+через OS/default CA overrides или NODE_EXTRA_CA_CERTS. Не означает автоматическую
+CRL/OCSP/revocation проверку. TLS1.3+, rejectUnauthorized=true, проверка имени
+профиля обязательна независимо от переданного в callback имени dial target.
+
+CLI читает regular non-symlink файл ≤128 KiB с bounded read, strict UTF-8,
+duplicate/escaped-equivalent JSON keys и >16 nesting запрещены. Unknown keys,
+невалидный trust/IP/path/hostname → стабильная redacted ошибка. Успешный summary
+не содержит hostname/IP/PEM, имеет status=validated-offline/runtimeEnabled=false.
+Шаблон намеренно содержит invalid placeholder, публичный resolver не выбран.
+
+Явный compileLabDnsUpstream разрешает только127.0.0.1, дополнительно localhost;
+он недоступен через JSON/CLI как режим. Публичный profile не принимается lab
+target adapter. Обычные DNS smoke/pcap/soak теперь создают профиль через этот
+контракт; старые ca/servername overrides остаются test fault injection.
+Lab отображает logical identity/Host/path на фиксированные numeric loopback
+порты transparent relay и синтетического resolver. Нет direct external connect.
+Проверены нестандартные Host/path, UDP/TCP A/AAAA, wrong CA/hostname (resolver
+не получает DNS body), snapshot isolation, запрет network I/O при compile.
+
+Первый общий прогон при параллельном real DNS soak имел 570/571 PASS: упал
+существующий `owner exit kills a TERM-resistant descendant (stdio=inherit)`
+из test-browser-lab-process.mjs. Отдельный запуск его трёх тестов PASS;
+production/browser process code не менялся. Первый report сохранён:
+`/var/tmp/meshpn-acceptance-2IEaFj/report.json`. Нельзя считать его успешным
+acceptance. Повторный полный прогон отдельно от real DNS soak: **дважды подряд
+571 Node-тест (23 файла) + 14 browser-сценариев PASS**, без skips, report:
+`/var/tmp/meshpn-acceptance-BnJv7y/report.json`. Отдельно **6 real DNS pcap/soak
+регрессий PASS** уже с profile-backed default harness. Шаблон с placeholder
+проверен CLI и ожидаемо отклонён; настоящие внешние DNS-запросы не выполнялись.
+
+Рабочий exit **всё ещё использует OS resolver** для destination hostname:
+загрузка JSON его не меняет. Следующий пакет — узкая операторская pinned route
+для resolver hostname+port с подключением к configured snapshot IP без lookup,
+без расширения общей destination policy и без изменения enc-SNI протокола.
+Сначала loopback tests, затем отдельное включение. Bootstrap самого exit,
+OS/LAN/IPv6 integration, cache/pooling и выбор реального resolver остаются
+отдельными задачами. Mesh/firewall/TUN/system DNS/live VPN не менялись.

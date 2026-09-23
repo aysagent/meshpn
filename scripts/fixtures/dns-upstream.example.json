@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "transport": "doh",
+  "hostname": "resolver.operator.example",
+  "port": 443,
+  "path": "/dns-query",
+  "bootstrap": {
+    "addresses": ["REPLACE_WITH_VERIFIED_PUBLIC_IP"]
+  },
+  "trust": {
+    "mode": "bundled"
+  }
+}
