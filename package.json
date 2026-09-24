@@ -65,6 +65,8 @@
     "test:dns-resolved-real": "node --test scripts/test-dns-resolved-real.mjs",
     "test:dns-resolved-journal": "node --test scripts/test-dns-resolved-journal.mjs",
     "test:dns-resolved-journal-real": "node --test scripts/test-dns-resolved-journal-real.mjs",
+    "test:dns-adapter-process": "node --test scripts/test-dns-adapter-process.mjs",
+    "test:dns-adapter-process-real": "node --test scripts/test-dns-adapter-process-real.mjs",
     "dns:lifecycle-lab": "node scripts/dns-lifecycle-lab.mjs",
     "test:dns-lifecycle": "node --test scripts/test-dns-lifecycle.mjs",
     "test:dns-lifecycle-real": "node --test scripts/test-dns-lifecycle-real.mjs",

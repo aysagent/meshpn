@@ -12,6 +12,7 @@ npm run test:dns-resolved-journal
 # Нужен уже доступный локальный бинарник systemd-resolved:
 MESHPN_SYSTEMD_RESOLVED=/path/to/systemd-resolved npm run test:dns-resolved-real
 MESHPN_SYSTEMD_RESOLVED=/path/to/systemd-resolved npm run test:dns-resolved-journal-real
+MESHPN_SYSTEMD_RESOLVED=/path/to/systemd-resolved npm run test:dns-adapter-process-real
 
 # Один сценарий, JSON в stdout:
 MESHPN_SYSTEMD_RESOLVED=/path/to/systemd-resolved \
@@ -28,6 +29,8 @@ MESHPN_SYSTEMD_RESOLVED=/path/to/systemd-resolved \
 `dbus-daemon`, `busctl`, `hostname`, поддержка dummy links и UTS namespace.
 Запуск без sudo, от непривилегированного пользователя; mapping UID0 отклоняется.
 `--resolved`/`--resolved-journal` нельзя сочетать с `--crash` (другой backend).
+Для отдельной [матрицы смерти/перезапуска adapter](dns-adapter-process.md) есть
+`--resolved-adapter`; она не совмещается с controller-crash матрицей.
 Deadline обычного resolved запуска120с, journal-матрицы240с, одного контроллера15с,
 RPC10с; busctl —2с/64KiB output cap.
 
@@ -134,8 +137,9 @@ flock и disable частичного apply. Всего31 настоящий SIG
 и recovery, а также после отказов проверяются DNS-ответы/ошибки и sentinel counters.
 
 В этом режиме `durableResolvedRecoveryImplemented=true` означает реализацию
-и проверку **только внутри namespace**. Без `--resolved-journal` исходный smoke
-по-прежнему in-memory и это поле false. При SIGKILL контроллера D-Bus adapter,
+и проверку **только внутри namespace**. Обычный `--resolved` smoke по-прежнему
+in-memory и это поле false; `--resolved-adapter` тоже использует journal и true.
+При SIGKILL контроллера D-Bus adapter,
 DNS adapter, guard и namespace init остаются живы.
 
 ## Границы и следующий этап
@@ -145,14 +149,16 @@ DNS adapter, guard и namespace init остаются живы.
 для автоматически вычисляемых настроек; восстановление состояния сетевого
 менеджера целиком этим ещё не обеспечено.
 
-Нет теста crash самого adapter, reboot/power loss, boot ordering, arbitrary
+Crash самого adapter проверяется отдельным режимом `--resolved-adapter`.
+Нет reboot/power loss, boot ordering, arbitrary
 DHCP/NetworkManager races, сложного split DNS, конкурирующих links/route domains,
 IPv6 локального stub, политики DoT/DNSSEC для реального link. Read/check/set —
 не атомарный CAS resolved. Пока это выделенный управляемый link в пустой сети,
 не разрешение менять рабочий uplink или глобальные DNS-настройки.
 Guard53 не является универсальным VPN kill-switch и не блокирует DoH приложений.
 
-Следующий пакет: полный lifecycle adapter (смерть/перезапуск процесса, стабильный
-endpoint, readiness и сохранение guard), затем VM reboot/power-loss tests.
+Отдельный [process lifecycle adapter](dns-adapter-process.md) уже проверяет
+SIGKILL/restart, стабильный endpoint, readiness и сохранение guard.
+Следующий пакет: boot/recovery protocol и VM reboot/power-loss tests.
 Восстановление штатного resolved на Radxa и live opt-in — отдельно
 согласуемые операции, не побочный эффект запуска VPN.

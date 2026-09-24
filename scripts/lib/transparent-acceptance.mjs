@@ -27,6 +27,7 @@ export const TEST_FILES = Object.freeze([
   'test-dns-inspect.mjs',
   'test-dns-resolved.mjs',
   'test-dns-resolved-journal.mjs',
+  'test-dns-adapter-process.mjs',
 ]);
 
 export function parseOptions(args) {

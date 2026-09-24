@@ -13,6 +13,7 @@ import { startDnsExitAdapter } from './dns-exit-adapter.mjs';
 import { wireTransparentTlsEncSniSession } from './transparent-tls-runtime.mjs';
 import { EncSniReplayGuard } from './transparent-tls-replay.mjs';
 import { fixtureDnsAnswer, parseDnsQuery } from './lab-dns-wire.mjs';
+import { createNamespaceDnsAdapter } from './dns-adapter-process.mjs';
 
 export async function startAdapterSoakLab({ family, modeTag, concurrency }, directory) {
   assertBrowserNamespace(); assert.ok([4, 6].includes(family)); assert.ok(['transparent-tls', 'combo-tls'].includes(modeTag));
@@ -28,7 +29,7 @@ export async function startAdapterSoakLab({ family, modeTag, concurrency }, dire
   const key = await readFile(keyPath), cert = await readFile(certPath, 'utf8');
   const resolverSockets = new Set(), exitSockets = new Set(), sessions = new Set();
   const track = (set, socket) => { set.add(socket); socket.on('error', () => {}); socket.once('close', () => set.delete(socket)); return socket; };
-  let mode = 'normal', exitMode = 'normal', bodies = 0, dnsCalls = 0, attempts = 0, adapter, closePromise;
+  let mode = 'normal', exitMode = 'normal', bodies = 0, dnsCalls = 0, attempts = 0, adapter, processAdapter, closePromise;
   const replayGuard = new EncSniReplayGuard(), secret = randomBytes(32), publicName = 'relay.test';
   const origin = https.createServer({ key, cert, minVersion: 'TLSv1.3', maxHeaderSize: 8192 }, (req, res) => {
     req.on('error', () => {}); res.on('error', () => {});
@@ -65,14 +66,15 @@ export async function startAdapterSoakLab({ family, modeTag, concurrency }, dire
   };
   async function close() {
     closePromise ??= (async () => {
-      await adapter?.close(); await stop(exit, exitSockets); await Promise.all([...sessions].map((s) => s.closed));
+      await processAdapter?.close(); await adapter?.close(); await stop(exit, exitSockets); await Promise.all([...sessions].map((s) => s.closed));
       await stop(origin, resolverSockets); secret.fill(0);
     })(); return closePromise;
   }
   try {
     originPort = await listen(origin, 0, addresses[1]);
-    const profile = compileDnsUpstream({ schema: 1, transport: 'doh', hostname: 'resolver.test', port: originPort, path: '/dns-query',
-      bootstrap: { addresses: addresses.slice(0, 2) }, trust: { mode: 'custom', certificates: [cert] } });
+    const profileConfig = { schema: 1, transport: 'doh', hostname: 'resolver.test', port: originPort, path: '/dns-query',
+      bootstrap: { addresses: addresses.slice(0, 2) }, trust: { mode: 'custom', certificates: [cert] } };
+    const profile = compileDnsUpstream(profileConfig);
     policy = dnsUpstreamExitPolicy(profile, { lookup: () => { dnsCalls++; throw new Error('lookup forbidden'); } });
     exitPort = await listen(exit, 0, addresses[2]);
     adapter = await startDnsExitAdapter({ profile, secret, publicName, exitAddress: addresses[2], exitPort,
@@ -81,6 +83,12 @@ export async function startAdapterSoakLab({ family, modeTag, concurrency }, dire
       exitSockets: exitSockets.size, sessions: sessions.size, relayTimers: [...sessions].reduce((n, s) => n + s.timers.size, 0),
       dnsCalls, attempts, replay: replayGuard.stats() });
     return { adapter, stub: { port: adapter.port, stats: () => adapter.stats().stub }, stats, close,
+      async createProcessAdapter() {
+        assert.equal(processAdapter, undefined); await adapter.close();
+        processAdapter = await createNamespaceDnsAdapter({ profile: profileConfig, secretHex: secret.toString('hex'),
+          publicName, exitAddress: addresses[2], exitPort, port: adapter.port });
+        return processAdapter;
+      },
       relay: { stats: () => ({ sockets: exitSockets.size, pendingClients: 0, relaySessions: sessions.size,
         relayTimers: stats().relayTimers, cleanupFailures: 0 }) },
       setMode(value) { assert.ok(['normal', 'nxdomain', 'large', 'hold', 'reset', 'redirect'].includes(value)); mode = value; },

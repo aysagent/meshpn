@@ -1703,3 +1703,63 @@ reboot/power-loss. Radxa DNS repair и live opt-in остаются отдель
 adapter sockets/jobs/timers освобождены; файлы DNS/NSS/passwd/group хоста неизменны.
 Полный acceptance: **944 Node +14 Chrome/Firefox сценариев PASS**, без skips;
 `/var/tmp/meshpn-acceptance-HdpwwM/report.json` (рабочее дерево перед коммитом).
+
+## 45. Настоящий процесс DNS-adapter: SIGKILL, прежний endpoint, readiness
+
+Добавлен namespace-only режим `dns:lifecycle-lab --resolved-adapter` и
+[его контракт](../scripts/dns-adapter-process.md). В отличие от раздел44 убивается
+не controller, а процесс с настоящим `startDnsExitAdapter`. Родительская fixture
+владеет guard, resolved/D-Bus, exit/origin и журналом. После штатного smoke старый
+in-process adapter закрывается, child занимает тот же high port127.0.0.1.
+Никаких изменений live DNS/firewall/TUN/mesh, systemd unit или установки resolved.
+
+`dns-adapter-process.mjs` — explicit start/refresh/stop/close без autorestart,
+до12 запусков/256 IPC запросов, один запрос одновременно, IPC5с, reaping с
+SIGKILL escalation5с. `dns-adapter-process-worker.mjs` — private namespace child
+с проверкой PID1 parent и provenance net/mnt/pid. Config и секрет идут по IPC,
+не argv/env/file; child заново компилирует public pinned upstream profile.
+Строгие поля, config15KiB/message16KiB, stdout/stderr4KiB, heap96MiB. Не live CLI.
+
+Bind не равен readiness. Persistent resolved transaction перед apply/recover
+требует живой child, его IPC snapshot и успешные UDP+TCP queries через exit/DoH.
+При SIGKILL/неудачном bind/upstream outage guard остаётся, snapshot и journal
+не перезаписываются, transaction ID сохраняется. Порт не меняется автоматически.
+После смерти child кеш stats инвалидируется, не подменяется нулями. После
+graceful shutdown реальные final stats проверяются, child reaped. Родительский
+lab.stats продолжает описывать закрытый исходный adapter и общий exit/origin;
+новый child проверяется отдельно через refresh, эти наблюдения не смешиваются.
+
+Для каждой семьи pinned exit/upstream: initial enable без adapter, listener
+при остановленном exit, protected recovery,3 idle SIGKILL,1 SIGKILL с2 реально
+in-flight UDP/TCP queries (held DoH origin, child inflight/requests==2), UDP и
+TCP bind conflicts, повторный старт, graceful stop, explicit disable при мёртвом
+adapter.5 successful starts,2 failed starts,10 refused enable/recover операций.
+62 glibc checks:23 базовых+9 resolved+30 process-lifecycle. Baseline positive
+controls до/после, sentinel counters и guard checks в обоих IP families.
+
+Обнаружено: glibc TCP к живому resolved при мёртвом upstream иногда не укладывается
+в RES_OPTIONS timeout:1. Новый режим для ожидаемого отказа ограничивает getent3с;
+такая отмена явно отмечена `:client-deadline` и не называется SERVFAIL/ответом.
+Проверки ожидаемого успеха по-прежнему проваливаются на timeout. Доступность
+ограничена: отсутствие утечки не означает немедленный возврат ошибки приложению.
+
+35 новых unit/CLI tests, manifest33 файла; отдельные real tests для IPv4/IPv6.
+Child idle RSS<192MiB,FD<64 и owned resources0; final namespace children/zombies0.
+Это конечный lifecycle smoke, не длительный soak, не смерть namespace init,
+не совместное падение controller+adapter и не reboot/power-loss. Непрерывная
+доступность при рестарте, недоверенный локальный захват порта, implicit/default
+настройки менеджера, split DNS и production permissions не подтверждены.
+
+Далее — boot/recovery protocol и VM reboot/power-loss. Старый journal привязан
+к scope/bus/owner/link; после смены context он безопасно отказывает, но не умеет
+автоматически присваивать новое состояние. Runtime guard после reboot потерян:
+нужны отдельные boot ordering/guard-before-DNS проверки, а не просто повторное
+чтение JSON. Live opt-in и восстановление DNS Radxa отдельно согласуются.
+
+Проверка с systemd255.4-1ubuntu8.17: все10 real-тестов PASS без skips — base,
+file journal, in-memory resolved, resolved journal и adapter process, каждый
+IPv4/IPv6. Новый process lifecycle занимает около31с на семью (deadline120с).
+Отдельный повтор с явной проверкой2 in-flight jobs перед SIGKILL тоже PASS
+для обеих семей. Host resolver/NSS/passwd/group bytes неизменны.
+Полный acceptance: **979 Node +14 Chrome/Firefox сценариев PASS**, без skips;
+`/var/tmp/meshpn-acceptance-5pqIe6/report.json` (рабочее дерево перед коммитом).

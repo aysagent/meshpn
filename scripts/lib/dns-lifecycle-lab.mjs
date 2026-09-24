@@ -53,7 +53,7 @@ async function sentinel(address) {
   } catch (error) { await close(); throw error; }
 }
 
-export async function runDnsLifecycleLab(directory, family, { crash = false, resolved = false, resolvedJournal = false } = {}) {
+export async function runDnsLifecycleLab(directory, family, { crash = false, resolved = false, resolvedJournal = false, adapterProcess = false } = {}) {
   await assertDnsMountNamespace();
   assert.ok([4, 6].includes(family));
   assert.deepEqual(JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout).map((l) => l.ifname), ['lo']);
@@ -84,10 +84,15 @@ export async function runDnsLifecycleLab(directory, family, { crash = false, res
   const hits = () => observers.reduce((n, server) => n + server.hits(), 0);
   const env = cleanEnvironment(process.env);
   for (const key of ['RES_OPTIONS', 'LOCALDOMAIN', 'HOSTALIASES', 'LD_PRELOAD', 'LD_AUDIT']) delete env[key];
-  async function lookup(label, expected, tcp = false, queryFamily = 4, suffix = 'test') {
+  async function lookup(label, expected, tcp = false, queryFamily = 4, suffix = 'test', allowDeadline = false) {
     assert.ok(['test', 'baseline.test'].includes(suffix));
     const result = await runCommand('getent', ['-A', '-s', 'dns', `ahostsv${queryFamily}`, `lifecycle-${++lookupNumber}.${suffix}`],
-      { env: { ...env, RES_OPTIONS: `timeout:1 attempts:1${tcp ? ' use-vc' : ''}` }, timeoutMs: 5000 });
+      { env: { ...env, RES_OPTIONS: `timeout:1 attempts:1${tcp ? ' use-vc' : ''}` }, timeoutMs: allowDeadline ? 3000 : 5000 });
+    // glibc TCP queries to a live resolved stub can outlive RES_OPTIONS when its upstream is down.
+    // A bounded caller cancellation is recorded separately, never counted as a DNS error response.
+    if (allowDeadline && expected === null && result.reason === 'timeout') {
+      assert.equal(result.stdout, '', label); checks.push(`${label}:client-deadline`); return;
+    }
     assert.equal(result.reason, null, label);
     assert.equal(result.code, expected ? 0 : 2, `${label}: ${result.stderr}`);
     if (expected) assert.ok(result.stdout.split('\n').filter(Boolean).every((line) => line.startsWith(`${expected} `)), label);
@@ -188,7 +193,7 @@ export async function runDnsLifecycleLab(directory, family, { crash = false, res
     let resolvedReport;
     if (resolved) {
       await lab.restartExit();
-      resolvedReport = await runResolvedLab({ directory, lab, bindText, setGuard, lookup, hits, journal: resolvedJournal });
+      resolvedReport = await runResolvedLab({ directory, lab, bindText, setGuard, lookup, hits, journal: resolvedJournal, adapterProcess });
       await drainAdapter(lab);
     }
     await lab.close(); assertAdapterIdle(lab.stats());

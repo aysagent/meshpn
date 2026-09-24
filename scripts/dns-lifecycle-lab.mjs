@@ -16,22 +16,25 @@ const crash = args.includes('--crash');
 if (crash) args.splice(args.indexOf('--crash'), 1);
 const resolvedJournal = args.includes('--resolved-journal');
 if (resolvedJournal) args.splice(args.indexOf('--resolved-journal'), 1);
-const resolved = args.includes('--resolved') || resolvedJournal;
+const adapterProcess = args.includes('--resolved-adapter');
+if (adapterProcess) args.splice(args.indexOf('--resolved-adapter'), 1);
+const resolved = args.includes('--resolved') || resolvedJournal || adapterProcess;
 if (args.includes('--resolved')) args.splice(args.indexOf('--resolved'), 1);
 if (args.length === 1 && args[0] === '--help' && !isolated) {
-  console.log('Usage: node scripts/dns-lifecycle-lab.mjs [--family=4|6] [--crash | --resolved | --resolved-journal]\nNamespace-only glibc DNS lifecycle fixture. --resolved and --resolved-journal require real systemd-resolved, dbus-daemon and busctl. --resolved-journal adds durable controller SIGKILL recovery. MESHPN_SYSTEMD_RESOLVED selects a local binary. No host DNS/firewall/TUN changes.');
+  console.log('Usage: node scripts/dns-lifecycle-lab.mjs [--family=4|6] [--crash | --resolved | --resolved-journal | --resolved-adapter]\nNamespace-only glibc DNS lifecycle fixture. Resolved modes require real systemd-resolved, dbus-daemon and busctl. --resolved-journal tests controller SIGKILL; --resolved-adapter tests adapter process SIGKILL/restart with a durable journal. MESHPN_SYSTEMD_RESOLVED selects a local binary. No host DNS/firewall/TUN changes.');
 } else {
   let directory;
   const controller = new AbortController(), abort = () => controller.abort();
   process.once('SIGINT', abort); process.once('SIGTERM', abort);
   try {
     assert.ok(!(crash && resolved), 'choose one extended suite');
+    assert.ok(!(resolvedJournal && adapterProcess), 'choose one crash suite');
     assert.ok(args.length === 0 || (args.length === 1 && /^--family=[46]$/.test(args[0])), 'invalid arguments');
     const family = Number(args[0]?.slice(9) ?? 4);
     process.umask(0o077);
     if (isolated) {
       console.log = console.warn = console.error = () => {};
-      const result = await runDnsLifecycleLab(process.env.MESHPN_DNS_LIFECYCLE_DIR, family, { crash, resolved, resolvedJournal });
+      const result = await runDnsLifecycleLab(process.env.MESHPN_DNS_LIFECYCLE_DIR, family, { crash, resolved, resolvedJournal, adapterProcess });
       process.stdout.write(`DNS_LIFECYCLE_RESULT ${JSON.stringify(result)}\n`);
     } else {
       const files = ['/etc/resolv.conf', '/etc/nsswitch.conf', ...(resolved ? ['/etc/passwd', '/etc/group'] : [])];
@@ -41,7 +44,7 @@ if (args.length === 1 && args[0] === '--help' && !isolated) {
       const result = await runCommand('unshare', [...namespaceArgs, ...(resolved ? ['--uts'] : []), '--propagation', 'private',
         'sh', '-eu', '-c', 'ulimit -c 0; exec "$@"', 'dns-lifecycle',
         process.execPath, '--max-old-space-size=128', entry, '--isolated', `--family=${family}`,
-        ...(crash ? ['--crash'] : []), ...(resolved ? [resolvedJournal ? '--resolved-journal' : '--resolved'] : [])],
+        ...(crash ? ['--crash'] : []), ...(resolved ? [adapterProcess ? '--resolved-adapter' : resolvedJournal ? '--resolved-journal' : '--resolved'] : [])],
       { cwd: root, timeoutMs: resolvedJournal ? 240000 : crash || resolved ? 120000 : 45000,
         signal: controller.signal, env: { ...cleanEnvironment(process.env), MESHPN_DNS_LIFECYCLE_DIR: directory,
           MESHPN_PARENT_NETNS: await readlink('/proc/self/ns/net'), MESHPN_PARENT_PIDNS: await readlink('/proc/self/ns/pid'),

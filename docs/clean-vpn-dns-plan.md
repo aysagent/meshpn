@@ -131,7 +131,10 @@ live integration нужны диагностика DNS клиента, подт�
 с реальным namespace daemon/bus, apply/restore, ownership conflict и daemon
 SIGKILL/restart. Добавлен отдельный `--resolved-journal`: persistent snapshots,
 bus ID/owner/link/scope, per-setter intents, flock и controller-crash матрица.
-Следующий этап — полный adapter lifecycle и VM reboot/power-loss tests.
+Добавлен [отдельный процесс adapter и SIGKILL/restart](../scripts/dns-adapter-process.md):
+`--resolved-adapter`, стабильный high port, protected UDP/TCP readiness, bind
+conflicts, explicit disable при мёртвом adapter; journal и guard остаются живы.
+Следующий этап — boot/recovery protocol и VM reboot/power-loss tests.
 Radxa с disabled resolved и оборванной ссылкой автоматически
 не исправляется; восстановление штатного DNS нужно согласовать отдельно.
 Кэша и активного production DNS/bootstrap пока нет.

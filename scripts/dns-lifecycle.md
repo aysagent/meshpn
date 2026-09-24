@@ -13,6 +13,8 @@ NetworkManager, resolvconf либо unmanaged `/etc/resolv.conf`. Автоуст
 реальный namespace-стенд](dns-resolved.md): `--resolved` для in-memory smoke,
 `--resolved-journal` для persistent per-setter intents и SIGKILL recovery.
 Оба режима не являются разрешением на live настройку клиента.
+Отдельный `--resolved-adapter` проверяет [смерть/перезапуск процесса adapter](dns-adapter-process.md)
+при живых resolved, journal controller и guard.
 
 ## Запуск
 

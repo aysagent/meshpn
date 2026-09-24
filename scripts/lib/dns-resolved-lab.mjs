@@ -10,8 +10,9 @@ import { createResolvedBackend, resolvedMethod } from './dns-resolved-backend.mj
 import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
 import { queryLabDns } from './transparent-dns-lab.mjs';
 import { runResolvedCrashLab } from './dns-resolved-crash-lab.mjs';
+import { runAdapterCrashLab } from './dns-adapter-crash-lab.mjs';
 
-export async function runResolvedLab({ directory, lab, bindText, setGuard, lookup, hits, journal = false }) {
+export async function runResolvedLab({ directory, lab, bindText, setGuard, lookup, hits, journal = false, adapterProcess = false }) {
   await assertDnsMountNamespace();
   assert.ok(process.env.MESHPN_PARENT_UTSNS);
   assert.notEqual(await readlink('/proc/self/ns/uts'), process.env.MESHPN_PARENT_UTSNS);
@@ -111,10 +112,11 @@ export async function runResolvedLab({ directory, lab, bindText, setGuard, looku
     await setGuard(false);
     const journalReport = journal ? await runResolvedCrashLab({ directory, bus, ifindex, identity, setGuard, probe,
       port: lab.adapter.port, lookup, hits, lab, restartDaemon: async () => { await resolved.stop('SIGKILL'); await start(); } }) : undefined;
+    const adapterReport = adapterProcess ? await runAdapterCrashLab({ directory, lab, bus, ifindex, identity, setGuard, lookup, hits }) : undefined;
     assert.equal(await readFile('/etc/resolv.conf', 'utf8'), resolverBefore);
     return { status: 'passed', version, privateBus: true, backend: 'resolved-owned-link-experimental',
       resolvConfRewrittenByBackend: false, daemonSigkill: true, ownerChangeRefused: true,
-      runtimeSettingsSurvivedRestart: true, baselineQueriesDuringProtection: 0, durableResolvedRecoveryImplemented: journal,
-      ...(journalReport ? { journal: journalReport } : {}) };
+      runtimeSettingsSurvivedRestart: true, baselineQueriesDuringProtection: 0, durableResolvedRecoveryImplemented: journal || adapterProcess,
+      ...(journalReport ? { journal: journalReport } : {}), ...(adapterReport ? { adapterProcess: adapterReport } : {}) };
   } finally { await resolved?.stop(); await dbus?.stop(); }
 }
