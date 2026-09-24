@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readlink } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { dnsTransaction } from './dns-lifecycle-transaction.mjs';
+import { resolvedTransaction } from './dns-resolved-journal.mjs';
 
 let input, timer;
 try {
@@ -35,9 +36,12 @@ try {
     } catch { process.exit(2); }
   });
   input.once('close', () => { if (pending) { clearTimeout(timer); pending.reject(new Error('backend disconnected')); pending = undefined; } });
-  const backend = Object.fromEntries(['ensureGuard', 'prepare', 'current', 'verifySnapshots', 'select', 'removeGuard', 'probe']
+  const kind = process.argv[4] ?? 'file'; assert.ok(['file', 'resolved'].includes(kind));
+  const methods = kind === 'resolved' ? ['ensureGuard', 'view', 'set', 'removeGuard', 'probe', 'adapterPort']
+    : ['ensureGuard', 'prepare', 'current', 'verifySnapshots', 'select', 'removeGuard', 'probe'];
+  const backend = Object.fromEntries(methods
     .map((method) => [method, (...args) => call('backend', { method, args })]));
-  const result = await dnsTransaction({ directory: process.argv[2], operation: process.argv[3], scope, backend,
+  const result = await (kind === 'resolved' ? resolvedTransaction : dnsTransaction)({ directory: process.argv[2], operation: process.argv[3], scope, backend,
     checkpoint: (point) => call('checkpoint', { point }) });
   process.stdout.write(`${JSON.stringify({ type: 'result', result })}\n`);
 } catch { process.stderr.write('DNS_CONTROLLER_REFUSED\n'); process.exitCode = 2; }

@@ -9,8 +9,9 @@ import { cleanEnvironment } from './transparent-acceptance.mjs';
 import { createResolvedBackend, resolvedMethod } from './dns-resolved-backend.mjs';
 import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
 import { queryLabDns } from './transparent-dns-lab.mjs';
+import { runResolvedCrashLab } from './dns-resolved-crash-lab.mjs';
 
-export async function runResolvedLab({ directory, lab, bindText, setGuard, lookup, hits }) {
+export async function runResolvedLab({ directory, lab, bindText, setGuard, lookup, hits, journal = false }) {
   await assertDnsMountNamespace();
   assert.ok(process.env.MESHPN_PARENT_UTSNS);
   assert.notEqual(await readlink('/proc/self/ns/uts'), process.env.MESHPN_PARENT_UTSNS);
@@ -39,6 +40,7 @@ export async function runResolvedLab({ directory, lab, bindText, setGuard, looku
     '--allow-interactive-authorization=no', '--json=short', ...args], { env, timeout: 3000, maxBuffer: 65536 });
   const value = async (args) => JSON.parse((await busRun(args)).stdout).data;
   const bus = {
+    async id() { return (await value(['call', 'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'GetId']))[0]; },
     async owner() { const data = await value(['call', 'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'GetNameOwner', 's', 'org.freedesktop.resolve1']); return data[0]; },
     async property(owner, index, property) {
       const [path] = await value(['call', owner, '/org/freedesktop/resolve1', 'org.freedesktop.resolve1.Manager', 'GetLink', 'i', String(index)]);
@@ -81,8 +83,8 @@ export async function runResolvedLab({ directory, lab, bindText, setGuard, looku
     for (const protocol of ['udp', 'tcp']) await exec('iptables', ['-w', '2', '-I', 'OUTPUT', '1', '-d', '127.0.0.53', '-p', protocol, '--dport', '53', '-j', 'ACCEPT']);
     await lookup('resolved-baseline-udp', '203.0.113.8');
     await lookup('resolved-baseline-tcp', '203.0.113.8', true);
-    const create = () => createResolvedBackend({ bus, ifindex, identity, ensureGuard: () => setGuard(true), removeGuard: () => setGuard(false),
-      async probe() { const q = makeDnsQuery('resolved-readiness.test'); assert.equal(validateDnsResponse(await queryLabDns(lab.adapter.port, q), q).flags & 15, 0); } });
+    const probe = async () => { const q = makeDnsQuery('resolved-readiness.test'); assert.equal(validateDnsResponse(await queryLabDns(lab.adapter.port, q), q).flags & 15, 0); };
+    const create = () => createResolvedBackend({ bus, ifindex, identity, ensureGuard: () => setGuard(true), removeGuard: () => setGuard(false), probe });
     const backend = await create(), baseline = backend.snapshot(), before = hits();
     await backend.apply(lab.adapter.port);
     await lookup('resolved-managed-a', '192.0.2.123');
@@ -107,8 +109,12 @@ export async function runResolvedLab({ directory, lab, bindText, setGuard, looku
     assert.equal(hits(), restartBefore);
     // Finish isolated fixture under explicit operator control; not production recovery.
     await setGuard(false);
+    const journalReport = journal ? await runResolvedCrashLab({ directory, bus, ifindex, identity, setGuard, probe,
+      port: lab.adapter.port, lookup, hits, lab, restartDaemon: async () => { await resolved.stop('SIGKILL'); await start(); } }) : undefined;
+    assert.equal(await readFile('/etc/resolv.conf', 'utf8'), resolverBefore);
     return { status: 'passed', version, privateBus: true, backend: 'resolved-owned-link-experimental',
       resolvConfRewrittenByBackend: false, daemonSigkill: true, ownerChangeRefused: true,
-      runtimeSettingsSurvivedRestart: true, baselineQueriesDuringProtection: 0, durableResolvedRecoveryImplemented: false };
+      runtimeSettingsSurvivedRestart: true, baselineQueriesDuringProtection: 0, durableResolvedRecoveryImplemented: journal,
+      ...(journalReport ? { journal: journalReport } : {}) };
   } finally { await resolved?.stop(); await dbus?.stop(); }
 }

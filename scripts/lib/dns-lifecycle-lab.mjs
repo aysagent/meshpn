@@ -53,7 +53,7 @@ async function sentinel(address) {
   } catch (error) { await close(); throw error; }
 }
 
-export async function runDnsLifecycleLab(directory, family, { crash = false, resolved = false } = {}) {
+export async function runDnsLifecycleLab(directory, family, { crash = false, resolved = false, resolvedJournal = false } = {}) {
   await assertDnsMountNamespace();
   assert.ok([4, 6].includes(family));
   assert.deepEqual(JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout).map((l) => l.ifname), ['lo']);
@@ -84,8 +84,9 @@ export async function runDnsLifecycleLab(directory, family, { crash = false, res
   const hits = () => observers.reduce((n, server) => n + server.hits(), 0);
   const env = cleanEnvironment(process.env);
   for (const key of ['RES_OPTIONS', 'LOCALDOMAIN', 'HOSTALIASES', 'LD_PRELOAD', 'LD_AUDIT']) delete env[key];
-  async function lookup(label, expected, tcp = false, queryFamily = 4) {
-    const result = await runCommand('getent', ['-A', '-s', 'dns', `ahostsv${queryFamily}`, `lifecycle-${++lookupNumber}.test`],
+  async function lookup(label, expected, tcp = false, queryFamily = 4, suffix = 'test') {
+    assert.ok(['test', 'baseline.test'].includes(suffix));
+    const result = await runCommand('getent', ['-A', '-s', 'dns', `ahostsv${queryFamily}`, `lifecycle-${++lookupNumber}.${suffix}`],
       { env: { ...env, RES_OPTIONS: `timeout:1 attempts:1${tcp ? ' use-vc' : ''}` }, timeoutMs: 5000 });
     assert.equal(result.reason, null, label);
     assert.equal(result.code, expected ? 0 : 2, `${label}: ${result.stderr}`);
@@ -187,7 +188,7 @@ export async function runDnsLifecycleLab(directory, family, { crash = false, res
     let resolvedReport;
     if (resolved) {
       await lab.restartExit();
-      resolvedReport = await runResolvedLab({ directory, lab, bindText, setGuard, lookup, hits });
+      resolvedReport = await runResolvedLab({ directory, lab, bindText, setGuard, lookup, hits, journal: resolvedJournal });
       await drainAdapter(lab);
     }
     await lab.close(); assertAdapterIdle(lab.stats());

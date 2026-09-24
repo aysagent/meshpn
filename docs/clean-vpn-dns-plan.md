@@ -121,18 +121,18 @@ guard для UDP/TCP53 IPv4/IPv6, conflict без перезаписи и явн
 Добавлены namespace-only journal и13 реальных SIGKILL контроллера на каждую
 семью IP: recovery прерванных apply/restore, flock, конфликты inode/hash,
 missing/corrupt/stale journal. Backend/adapter остаются в namespace init;
-это не host backend, не SIGKILL adapter и не reboot/power-loss test. Следующий
-шаг — read-only диагностика DNS клиента, выбор backend и адаптация журнала к
-его объектам владения; затем полный adapter lifecycle и VM reboot tests до
-opt-in live integration. LAN/split DNS отдельно.
+это не host backend, не SIGKILL adapter и не reboot/power-loss test. До opt-in
+live integration нужны диагностика DNS клиента, подтверждённое владение
+настройками, полный adapter lifecycle и VM reboot tests. LAN/split DNS отдельно.
 Для сбора evidence на реальном клиенте: `npm run dns:inspect`,
 [контракт диагностики](../scripts/dns-inspect.md). Backend не выбирается автоматически;
 отчёт рабочего окружения не заменяет диагностику клиентской машины.
 Для resolved сделан [экспериментальный D-Bus backend](../scripts/dns-resolved.md)
 с реальным namespace daemon/bus, apply/restore, ownership conflict и daemon
-SIGKILL/restart. Snapshot пока in-memory; файловый journal к этому backend
-не подключён. Следующий этап — journal per-setter intents и controller-crash
-матрица resolved. Radxa с disabled resolved и оборванной ссылкой автоматически
+SIGKILL/restart. Добавлен отдельный `--resolved-journal`: persistent snapshots,
+bus ID/owner/link/scope, per-setter intents, flock и controller-crash матрица.
+Следующий этап — полный adapter lifecycle и VM reboot/power-loss tests.
+Radxa с disabled resolved и оборванной ссылкой автоматически
 не исправляется; восстановление штатного DNS нужно согласовать отдельно.
 Кэша и активного production DNS/bootstrap пока нет.
 Случайные cover DNS запросы не входят в этот план реализации.

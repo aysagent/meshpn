@@ -81,3 +81,30 @@ export async function createResolvedBackend({ bus, ifindex, identity, ensureGuar
     }),
   };
 }
+
+/** Context-checked adapter for the persistent transaction controller. Caller owns flock. */
+export function createResolvedJournalBackend({ bus, ifindex, identity, scope, ensureGuard, removeGuard, probe, port }) {
+  assert.ok(Number.isSafeInteger(ifindex) && ifindex > 1);
+  assert.ok(Number.isInteger(port) && port >= 1024 && port <= 65535);
+  const context = async () => ({ scope: structuredClone(scope), busId: await bus.id(), owner: await bus.owner(), link: await identity() });
+  const view = async () => {
+    const before = await context(); assert.equal(before.link.ifindex, ifindex);
+    const settings = {};
+    for (const property of properties) settings[property] = await bus.property(before.owner, ifindex, property);
+    assert.deepEqual(await context(), before, 'resolved context changed during read');
+    return { context: before, settings: validateResolvedSettings(settings) };
+  };
+  const check = async (expectedContext, expectedSettings) => {
+    const current = await view(); assert.deepEqual(current.context, expectedContext, 'resolved context changed');
+    assert.deepEqual(current.settings, expectedSettings, 'resolved ownership conflict');
+  };
+  return {
+    view, ensureGuard, probe, adapterPort: async () => port,
+    async set(expectedContext, property, value, before) {
+      assert.ok(properties.includes(property)); validateResolvedSettings({ ...before, [property]: value });
+      await check(expectedContext, before);
+      await bus.set(expectedContext.owner, resolvedMethod(property, value, ifindex));
+    },
+    async removeGuard(expectedContext, expectedSettings) { await check(expectedContext, expectedSettings); await removeGuard(); },
+  };
+}

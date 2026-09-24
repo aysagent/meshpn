@@ -1639,3 +1639,67 @@ production polkit и manager races, сложного split DNS/нескольк�
 контроллера на каждом переходе, далее adapter lifecycle и VM reboot. Восстановление
 штатного resolved на Radxa и live opt-in на VPS отдельно согласуются. Живой VPN,
 системный DNS/firewall/TUN и mesh не менялись.
+
+## 44. Persistent journal для resolved и recovery между D-Bus setters
+
+Раздел43 описывает прежний in-memory smoke; он сохранён. Новый opt-in стенда
+`dns:lifecycle-lab --resolved-journal` связывает persistent transaction controller
+с настоящим resolved backend. Live integration не включена.
+
+`dns-resolved-journal.mjs`: отдельная строгая bounded схема, transaction ID,
+scope net/mnt/pid, bus GetId, unique resolved owner, link ifindex/name/MAC,
+original/managed/start snapshots DNSEx/Domains/DefaultRoute, direction/cursor/
+pending/stage. Общие private read/write helpers вынесены из inode journal без
+изменения старой схемы. Directory0700, regular single-link journal0600, UID check,
+no-follow,64KiB cap. В resolved журнале есть **исходные адреса и домены**; он
+не предназначен для публикации. В отчёте lab их нет.
+
+Отдельный namespace child держит process-lifetime flock, shared worker выбирает
+только file/resolved transaction. Для каждого setter: durable intent → D-Bus →
+read-back → durable ack; каждая запись fsync(temp)/rename/fsync(directory).
+При pending принимаются только полные snapshots «до»/«после» текущего setter;
+успешный setter с потерянным ответом не повторяется. Любое третье состояние,
+изменённый bus/owner/link/scope, отсутствующий/испорченный журнал → отказ с guard.
+Для apply recovery проверяются прежний порт adapter и protected readiness.
+Guard удаляется только после сверки восстановленных настроек и context.
+Disable частичного apply сначала фиксирует restore intent; recovery следует
+durable направлению, не придумывает rollback. Terminal released record остаётся;
+повторный enable с ним отвергается, автоматической ротации нет.
+
+Private bus adapter использует GetId: один unique owner не защищает от новой
+шины с повторившимся именем. Смена owner resolved после SIGKILL/restart по-прежнему
+не означает автоматическое разрешение на adoption. Read/check/set не CAS;
+конкурирующие сетевые менеджеры и ABA этим протоколом не устранены.
+
+Новая real-матрица:27 точек prepared, intent/set/ack каждого из трёх setters
+apply/restore, fsync/rename, restore intent/completion и guard removal/released.
+Ещё missing journal, corrupt, foreign pending state, stale scope, bus-ID mismatch,
+exit outage, daemon-owner change; flock contention, partial-apply disable.
+Всего31 реальный SIGKILL контроллера на семью IP. Baseline отличается во всех
+свойствах; resolved нормализует стандартный DNS порт в DNSEx к0. Используется
+baseline.test с явным route/search domain, положительными controls до/после и
+реальными glibc lookups между crash/recovery и после отказов. UDP/TCP53 guards
+и sentinel counters проверяют отсутствие fallback. Report содержит nested
+resolved.journal; durableResolvedRecoveryImplemented=true только в этом режиме.
+
+90 новых unit-тестов охватывают все fsync/rename/ack границы, lost replies,
+recovery/disable частичного apply, identity/endpoint conflicts, readiness failure,
+unsafe journal files, смену durable направления и проверку перед guard removal.
+Acceptance manifest расширен до32 файлов. Тяжёлая real-матрица запускается отдельно:
+`MESHPN_SYSTEMD_RESOLVED=/path/to/systemd-resolved npm run test:dns-resolved-journal-real`.
+
+Границы: backend RPC/adapter/namespace init остаются живы при смерти контроллера;
+это не проверка смерти DNS adapter, reboot/power loss, production polkit,
+сложного split DNS или implicit/default происхождения настроек менеджера.
+Следующий шаг — вынести adapter в отдельный управляемый процесс, проверить его
+SIGKILL/перезапуск, стабильный endpoint, readiness и сохранение guard. Затем VM
+reboot/power-loss. Radxa DNS repair и live opt-in остаются отдельным согласованием.
+
+Проверено с настоящим systemd255.4-1ubuntu8.17: все8 real-тестов PASS без skips
+(базовый lifecycle, file journal crash, in-memory resolved и resolved journal,
+каждый IPv4/IPv6). Новая матрица занимает около99с на семью IP; deadline240с.
+В каждой новой матрице31 controller SIGKILL,27 восстановленных checkpoints,
+7 refusal cases и1 lock conflict. На завершении нет дочерних процессов/zombies,
+adapter sockets/jobs/timers освобождены; файлы DNS/NSS/passwd/group хоста неизменны.
+Полный acceptance: **944 Node +14 Chrome/Firefox сценариев PASS**, без skips;
+`/var/tmp/meshpn-acceptance-HdpwwM/report.json` (рабочее дерево перед коммитом).

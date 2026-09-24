@@ -35,32 +35,35 @@ export async function syncDirectory(directory) {
   try { await fd.sync(); } finally { await fd.close(); }
 }
 
-export async function readDnsJournal(directory) {
+export async function readPrivateJournal(directory, validate, maxBytes = MAX_BYTES) {
   await privateJournalDirectory(directory);
   const fd = await open(join(directory, 'journal.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const stat = await fd.stat();
     assert.ok(stat.isFile() && stat.nlink === 1 && stat.uid === process.getuid(), 'private regular journal required');
     assert.equal(stat.mode & 0o777, 0o600);
-    assert.ok(stat.size > 0 && stat.size <= MAX_BYTES, 'journal size limit');
-    const buffer = Buffer.alloc(MAX_BYTES + 1);
+    assert.ok(stat.size > 0 && stat.size <= maxBytes, 'journal size limit');
+    const buffer = Buffer.alloc(maxBytes + 1);
     const { bytesRead } = await fd.read(buffer, 0, buffer.length, 0);
     assert.equal(bytesRead, stat.size, 'journal changed or oversized');
-    return validateDnsJournal(JSON.parse(buffer.subarray(0, bytesRead).toString('utf8')));
+    return validate(JSON.parse(buffer.subarray(0, bytesRead).toString('utf8')));
   } finally { await fd.close(); }
 }
 
 // Caller holds a process-lifetime flock on the private, stable lock inode.
 // A killed writer may leave a temp file. Readers NEVER use it as recovery input.
-export async function writeDnsJournal(directory, value, checkpoint = async () => {}) {
-  validateDnsJournal(value); await privateJournalDirectory(directory);
-  const body = `${JSON.stringify(value)}\n`; assert.ok(Buffer.byteLength(body) <= MAX_BYTES);
+export async function writePrivateJournal(directory, value, validate, checkpoint = async () => {}, maxBytes = MAX_BYTES, label = value.stage) {
+  validate(value); await privateJournalDirectory(directory);
+  const body = `${JSON.stringify(value)}\n`; assert.ok(Buffer.byteLength(body) <= maxBytes);
   const temporary = join(directory, `journal-${randomBytes(12).toString('hex')}.tmp`);
   const fd = await open(temporary, 'wx', 0o600);
   try { await fd.writeFile(body); await fd.sync(); } finally { await fd.close(); }
-  await checkpoint(`${value.stage}:file-synced`);
+  await checkpoint(`${label}:file-synced`);
   await rename(temporary, join(directory, 'journal.json'));
-  await checkpoint(`${value.stage}:renamed`);
+  await checkpoint(`${label}:renamed`);
   await syncDirectory(directory);
-  await checkpoint(`${value.stage}:dir-synced`);
+  await checkpoint(`${label}:dir-synced`);
 }
+
+export const readDnsJournal = (directory) => readPrivateJournal(directory, validateDnsJournal);
+export const writeDnsJournal = (directory, value, checkpoint) => writePrivateJournal(directory, value, validateDnsJournal, checkpoint);
