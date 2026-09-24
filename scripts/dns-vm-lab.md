@@ -30,6 +30,9 @@ npm run dns:vm-lab -- \
 # Только graceful reboot или одна точка аварии:
 # ... --case=cycle
 # ... --case=apply:DNSEx:set
+# Четыре ранних отказа; отдельно настоящий systemd PID1:
+# ... --case=faults
+# ... --case=systemd
 npm run test:dns-vm
 ```
 
@@ -88,6 +91,26 @@ enc-SNI exit и TLS DoH fixture. Интернет и TUN не нужны. Реа
 отчёты/диски `0600`. Хеши и metadata resolver/NSS/passwd/group хоста сравниваются
 до/после; host firewall командами launcher не изменяется.
 
+### Ранние отказы (`--case=faults`)
+
+Отдельная конечная матрица из4 свежих загрузок:
+
+- `guard-unavailable`: реальная iptables ошибка после удаления CAP_NET_ADMIN
+  у процесса установки; контроллер не доходит до DNS backend, lo остаётся down,
+  consumers ещё не запущены. Затем fixture явно восстанавливает защиту.
+- `storage-readonly`: bind-remount journal storage read-only, ошибка EROFS до setters.
+- `corrupt-journal`: повреждённый committed JSON не перезаписывается; recovery
+  отклоняется. Испорченные bytes сохраняются при явной fixture-архивации.
+- `adapter-unready`: exit остановлен, readiness не проходит, prepared journal
+  остаётся с cursor0 без setters. После восстановления exit recovery сохраняет ID.
+
+Во всех случаях baseline/settings неизменны, guard удерживается (либо старт
+вообще прерван до его успешной установки), UDP/TCP baseline IPv4/IPv6 заблокирован.
+Затем обязательны успешные protected A/AAAA и explicit disable с positive controls.
+Чтобы измерять guard, тест не переименовывает resolv.conf работающего resolved:
+используются прямые ограниченные socket probes к двум guest-only sentinels.
+Для TCG glibc deadline5s, attempts1; это не изменение таймаутов production adapter.
+
 ## Границы результата и следующий этап
 
 SIGKILL QEMU **не уничтожает host page cache**. Это guest power-cut, но не
@@ -96,15 +119,14 @@ SIGKILL QEMU **не уничтожает host page cache**. Это guest power-c
 committed journal; orphan temp не используется для recovery.
 [ext4 journaling](https://www.kernel.org/doc/html/latest/filesystems/ext4/journal.html).
 
-PID1 гостя — BusyBox, **не systemd**. Тест не подтверждает ordering обычного
+В базовой reboot/fault матрице PID1 гостя — BusyBox, **не systemd**. Она не подтверждает ordering обычного
 дистрибутива, NetworkManager/networkd/DHCP hooks, отсутствие запросов всех ранних
 сервисов или реальный uplink. Namespace guard/архивация новой эпохи — только
 fixture, не перенесённый на хост backend. Наличие boot ID в control fixture
 не меняет schema существующего resolved journal.
 
-Дальше: fault cases ранней загрузки (storage, guard, испорченный journal,
-неготовый adapter), затем отдельный гостевой systemd PID1/boot ordering.
-Только после этого — review владельца DNS конкретного клиента и согласованный
+Отдельный следующий режим — [гостевой systemd PID1/boot ordering](dns-systemd-vm.md)
+(`--case=systemd`, до15 минут на загрузку). После VM — review владельца DNS конкретного клиента и согласованный
 live opt-in с безопасным откатом. Сломанный symlink resolv.conf на Radxa
 автоматически не исправляется.
 
@@ -113,3 +135,13 @@ live opt-in с безопасным откатом. Сломанный symlink r
 с проверкой init commit marker и kernel restart message также PASS:
 `/var/tmp/meshpn-dns-vm-J64ZJO/report.json`. В обоих hostDnsFilesUnchanged=true.
 Регрессия: 1040 Node +14 Chrome/Firefox сценариев и10 реальных DNS lifecycle-тестов PASS.
+
+Дополнительная boot-fault матрица: **4/4 PASS**,4 новых boot ID,
+`/var/tmp/meshpn-dns-vm-rnhZv5/report.json`; hostDnsFilesUnchanged=true,
+baselineQueriesDuringProtection=0. Предшествующие неуспешные прогоны выявили
+слишком короткий glibc deadline: при1s вызов завершался, пока TLS request ещё
+находился in-flight без ошибки adapter. Они не включены в PASS.
+
+Контрольный повтор на окончательном коде: **4/4 PASS**,
+`/var/tmp/meshpn-dns-vm-fvtXdN/report.json`; hostDnsFilesUnchanged=true,
+запрещённых baseline queries=0 во всех четырёх сценариях.

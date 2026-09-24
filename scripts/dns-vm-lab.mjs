@@ -8,18 +8,19 @@ import { mkdtemp, open, writeFile, readFile, lstat, readlink } from 'node:fs/pro
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildDnsVmImage, verifyVmPackages, sha256 } from './lib/dns-vm-image.mjs';
-import { qemuDnsArgs, VM_CUT_POINTS } from './lib/dns-vm-protocol.mjs';
+import { qemuDnsArgs, VM_FAULTS, vmCases, assertVmFaultEvidence, assertVmSystemdEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
 
 const exec = promisify(execFile);
 async function main() {
   const flags = new Map();
   for (const arg of process.argv.slice(2)) {
     const match = /^--(tools|kernel|resolved|case)=(.+)$/.exec(arg);
-    assert.ok(match && !flags.has(match[1]), 'expected --tools=DIR --kernel=FILE --resolved=FILE [--case=all|cycle|CHECKPOINT]');
+    assert.ok(match && !flags.has(match[1]), 'expected --tools=DIR --kernel=FILE --resolved=FILE [--case=all|faults|systemd|cycle|CASE]');
     flags.set(match[1], match[2]);
   }
   for (const key of ['tools', 'kernel', 'resolved']) assert.ok(flags.get(key)?.startsWith('/'), `absolute --${key} required`);
-  const selected = flags.get('case') ?? 'all'; assert.ok(['all', 'cycle', ...VM_CUT_POINTS].includes(selected));
+  const cases = vmCases(flags.get('case'));
+  const systemd = flags.get('case') === 'systemd';
   const tools = resolve(flags.get('tools')), root = join(tools, 'root');
   const packages = await verifyVmPackages(tools);
   const env = { ...process.env, LD_LIBRARY_PATH: `${root}/usr/lib/x86_64-linux-gnu:${root}/lib/x86_64-linux-gnu`,
@@ -37,14 +38,14 @@ async function main() {
   const before = await hostSnapshot();
   const report = { schema: 1, kind: 'clean-vpn-dns-vm-lab', status: 'failed', version, packages,
     nic: 'none', accelerator: 'tcg', diskCache: 'writeback', hostSharedFilesystem: false,
-    systemdPid1: false, physicalPowerLossTested: false, inProcessHotResetTested: false, cases: [] };
+    systemdPid1: systemd, physicalPowerLossTested: false, inProcessHotResetTested: false, cases: [] };
   try {
-    const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved') });
+    const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved'), systemd });
     report.image = { kernelSha256: image.manifest.kernelSha256, initrdSha256: image.manifest.initrdSha256 };
     let launchNumber = 0;
     async function launch(disk, phase, point, expectReboot = false) {
       const args = qemuDnsArgs({ root, ...image, disk, phase, point });
-      const events = []; let pending = '', failure, killedAtCheckpoint = false, logBytes = 0, kernelRestart = false;
+      const events = []; let pending = '', failure, killedAtCheckpoint = false, logBytes = 0, kernelRestart = false, shutdownSynced = false, shutdownUnmounted = false;
       const log = join(directory, `serial-${++launchNumber}.log`);
       const logFd = openSync(log, 'wx', 0o600);
       const proc = spawn(qemu, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -56,7 +57,8 @@ async function main() {
       };
       const onSignal = () => abort(new Error('VM lab interrupted'));
       process.on('SIGINT', onSignal); process.on('SIGTERM', onSignal);
-      const timer = setTimeout(() => abort(new Error('VM deadline exceeded (240 seconds)')), 240000);
+      const deadlineMs = systemd ? 900000 : 240000;
+      const timer = setTimeout(() => abort(new Error(`VM deadline exceeded (${deadlineMs / 1000} seconds)`)), deadlineMs);
       proc.on('error', (error) => { failure ??= error; });
       proc.stderr.on('data', capture);
       proc.stdout.on('data', (data) => {
@@ -64,12 +66,17 @@ async function main() {
         if (pending.length > 65536) return abort(new Error('oversized serial line'));
         for (;;) {
           const end = pending.indexOf('\n'); if (end < 0) break;
-          const line = pending.slice(0, end).trim(); pending = pending.slice(end + 1);
+          const line = pending.slice(0, end).replace(/\x1b\[[0-9;]*m/g, '').trim(); pending = pending.slice(end + 1);
+          if (/Freezing execution\.|Kernel panic - not syncing/.test(line)) abort(new Error('guest init/kernel failed'));
+          if (/dns-vm-driver\.service: Failed with result/.test(line)) abort(new Error('systemd acceptance driver failed'));
+          if (/\.mount: Mount process exited,.*status=203\/EXEC/.test(line)) abort(new Error('guest mount helper missing'));
           if (/reboot: Restarting system$/.test(line)) kernelRestart = true;
+          if (/^(?:.*systemd-shutdown[^:]*: )?Syncing filesystems and block devices\.$/.test(line)) shutdownSynced = true;
+          if (/^(?:.*systemd-shutdown[^:]*: )?All filesystems unmounted\.$/.test(line)) shutdownUnmounted = true;
           if (line === 'DNS_VM_GUEST_FAILURE') abort(new Error('guest init failed'));
-          if (!line.startsWith('DNS_VM_EVENT ')) continue;
           try {
-            const event = JSON.parse(line.slice(13)); assert.ok(events.length < 32); events.push(event);
+            const event = vmSerialEvent(line); if (!event) continue;
+            assert.ok(events.length < 32); events.push(event);
             console.error(`VM ${phase}/${point}: ${event.event}`);
             if (event.event === 'failed') abort(new Error(event.message));
             if (event.event === 'cut-ready') {
@@ -88,23 +95,31 @@ async function main() {
         assert.equal(exit.code, 0, `QEMU exit; serial log: ${log}`);
         assert.equal(events.filter((e) => e.event === 'passed').length, expectReboot ? 0 : 1, `guest result missing; serial log: ${log}`);
         assert.equal(events.filter((e) => e.event === 'reboot-ready').length, expectReboot ? 1 : 0, `unexpected reboot; serial log: ${log}`);
-        assert.equal(events.filter((e) => e.event === 'reboot-committed').length, expectReboot ? 1 : 0, `missing sync/remount-ro; serial log: ${log}`);
+        assert.equal(events.filter((e) => e.event === 'reboot-committed').length, expectReboot && !systemd ? 1 : 0, `missing sync/remount-ro; serial log: ${log}`);
+        if (systemd) { assert.equal(shutdownSynced, true, `systemd shutdown sync missing: ${log}`); assert.equal(shutdownUnmounted, true, `systemd unmount missing: ${log}`); }
         assert.equal(kernelRestart, expectReboot, `guest reboot request not observed; serial log: ${log}`);
       }
       return events;
     }
-    for (const point of selected === 'all' ? ['none', ...VM_CUT_POINTS] : [selected === 'cycle' ? 'none' : selected]) {
+    for (const point of cases) {
+      const fault = VM_FAULTS.includes(point);
       const disk = join(directory, `state-${report.cases.length}.raw`);
       const fd = await open(disk, 'wx', 0o600); try { await fd.truncate(256 * 1024 * 1024); } finally { await fd.close(); }
       await exec('mke2fs', ['-q', '-F', '-t', 'ext4', '-O', '^metadata_csum_seed,^orphan_file', disk], { timeout: 30000 });
       let events;
-      if (point === 'none') events = [...await launch(disk, 'cycle', point, true), ...await launch(disk, 'cycle', point)];
+      if (systemd) events = [...await launch(disk, 'systemd', point, true), ...await launch(disk, 'systemd', point)];
+      else if (fault) events = await launch(disk, 'fault', point);
+      else if (point === 'none') events = [...await launch(disk, 'cycle', point, true), ...await launch(disk, 'cycle', point)];
       else events = [...await launch(disk, 'cut', point), ...await launch(disk, 'inspect', point)];
       const boots = events.filter((e) => e.event === 'boot-guard').map((e) => e.bootId);
-      assert.equal(boots.length, 2); assert.notEqual(boots[0], boots[1]);
+      assert.equal(boots.length, fault ? 1 : 2);
+      if (!fault) assert.notEqual(boots[0], boots[1]);
       const passed = events.find((e) => e.event === 'passed');
-      assert.equal(passed.previousBootId, boots[0]); assert.equal(passed.bootId, boots[1]);
-      report.cases.push({ point, gracefulReboot: point === 'none', qemuRelaunched: true, guestPowerCut: point !== 'none', ...passed });
+      if (fault) assertVmFaultEvidence(point, passed.fault);
+      else assert.equal(passed.previousBootId, boots[0]);
+      if (systemd) { assertVmSystemdEvidence(passed); assert.ok(events.filter((e) => e.event === 'boot-guard').every((e) => e.pid1 === 'systemd')); }
+      assert.equal(passed.bootId, boots.at(-1));
+      report.cases.push({ point, gracefulReboot: point === 'none' || systemd, qemuRelaunched: !fault, guestPowerCut: !fault && point !== 'none' && !systemd, ...passed });
     }
     report.status = 'passed';
   } catch (error) { report.error = error.message; throw error; }

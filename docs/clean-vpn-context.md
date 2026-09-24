@@ -1884,3 +1884,75 @@ resolved: `/tmp/meshpn-resolved-tools.IwwVqt/root/usr/lib/systemd/systemd-resolv
 kernel: `/boot/vmlinuz-5.4.210-39.1.pagevecsize`. Это локальные временные артефакты,
 не переносимые зависимости репозитория; при повторе launcher снова сверяет
 SHA-256 `.deb` с APT metadata. Бинарники/диски/serial logs в git не добавлены.
+
+## DNS v1: boot faults и systemd VM (2026-09-25)
+
+Зафиксирована конечная граница в [`scripts/dns-v1.md`](../scripts/dns-v1.md):
+один выбранный клиент, systemd-resolved, без произвольного split DNS/LAN и без
+автоматического присвоения чужих настроек. После VM — конфигурация/развёртывание
+на согласованном клиенте и один24-часовой пилот по
+[`dns-pilot.md`](../scripts/dns-pilot.md), затем возврат к транспорту.
+VM не заменяет пилот; Radxa/VPS автоматически не перенастраиваются.
+
+`dns:vm-lab --case=faults`:4/4 PASS,
+`/var/tmp/meshpn-dns-vm-rnhZv5/report.json`, hostDnsFilesUnchanged=true.
+Реальная ошибка iptables без CAP_NET_ADMIN до поднятия lo/consumers; bind-remount
+journal read-only/EROFS; повреждённый JSON с сохранением bytes; stopped exit
+и провал readiness до setters. После отказов — отсутствие baseline fallback,
+явное восстановление protected A/AAAA и disable с positive controls обоих
+baseline sentinels. Readiness recovery сохраняет transaction ID.
+
+Новые режимы не расширяют `--case=all` молча: он по-прежнему9 reboot/cut кейсов;
+`faults` —4 загрузки, `systemd` — отдельный двухзагрузочный lifecycle.
+Обычный VM lookup теперь timeout5s/attempts1: в TCG старый1s обрывал здоровый
+TLS-запрос; диагностика показала2 успешных probes и1 ещё in-flight без ошибок.
+Production таймауты не менялись, проверки ответов/fallback не ослаблялись.
+
+[`dns-systemd-vm.md`](../scripts/dns-systemd-vm.md): минимальный образ с настоящим
+systemd255 PID1. Builder добавляет явные ELF/systemd-executor/shutdown/umount,
+синтетические units/config и offline `systemd-analyze verify --root=GUEST`.
+Guard ставится ещё BusyBox init до exec PID1; systemd сам может поднять lo.
+Network/adapter/controller/consumer управляются настоящими unit dependencies,
+не моделью в JS. Adapter Type=notify после protected UDP/TCP readiness;
+controller — persistent resolved backend/journal под flock; BindsTo+After
+останавливают consumers при потере зависимости.
+
+`stop` и SIGKILL не выполняют disable. Включение перепроверяет реальные rules,
+даже если oneshot guard unit показывает active: explicit disable мог их снять.
+Released/stale journal не разрешает молчаливое повторное включение. Чужие Domains
+не затираются; explicit disable восстанавливает только свой context baseline.
+После reboot старый journal сохраняется, но не используется новым bus/link;
+новая эпоха разрешается явным действием fixture, не автоматической live policy.
+Это fail-closed, а не обещание unattended DNS availability после reboot.
+
+Root fixture adapter объединяет adapter+exit+DoH origin в одном сервисе.
+Его SIGKILL шире adapter-only; последний отдельно покрыт namespace process lab.
+VM entrypoints отказывают на хосте до изменений; допустимы только QEMU marker,
+systemd PID1, guest root namespaces и интерфейсы lo/dnsfixture. Fixture D-Bus
+policy/units не переносятся в production. Системный DNS/маршруты/TUN хоста
+и mesh-код не менялись; независимый uplink capture остаётся частью пилота.
+
+При подготовке минимального образа обнаружены missing systemd-executor/umount,
+неправильный StandardOutput=console (нужен tty), права synthetic /etc под umask077,
+неверный владелец заранее созданного resolved runtime directory. Исправлены в
+builder; ошибочные запуски не объявлялись PASS. Старое ядро5.4 отклоняет часть
+auxiliary cgroup kill: тест использует точный systemctl SIGKILL MainPID сервиса.
+Serial parser допускает приставленный без newline статус PID1, но не повреждённый
+JSON; проверяет реальные sync/unmount и kernel reboot, а не только намерение.
+
+Полная регрессия: **1051 Node +14 Chrome/Firefox PASS**, без skips,
+`/var/tmp/meshpn-acceptance-KwYJYR/report.json`. Отдельно10/10 real DNS tests
+IPv4/IPv6 (base/file journal/resolved/resolved journal/adapter process) PASS.
+До запуска клиентского пилота нужны выбранный узел, ownership review, конкретная
+service/guard конфигурация и разрешение/аварийный доступ. Документы не являются
+установщиком и не объявляют DNS v1 или весь combo-tls production-ready.
+
+Systemd VM завершена: **PASS,2 загрузки PID1,11 проверок/9 критериев**,
+`/var/tmp/meshpn-dns-vm-lJHO3D/report.json`. Host DNS files и guest resolv.conf
+не изменены, baselineQueriesDuringProtection=0, automaticStaleAdoption=false.
+Оба shutdown прошли sync/unmount; reboot подтверждён ядром и разными boot ID.
+Все144 JS files в image manifest совпадают с текущим рабочим деревом.
+
+После systemd доработок обычная boot-fault матрица повторена на окончательном
+коде: **4/4 PASS**, `/var/tmp/meshpn-dns-vm-fvtXdN/report.json`;
+hostDnsFilesUnchanged=true, baselineQueriesDuringProtection=0 во всех кейсах.

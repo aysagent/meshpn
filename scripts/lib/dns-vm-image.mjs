@@ -9,6 +9,7 @@ import { createGzip } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dnsSystemdVmUnits } from './dns-systemd-vm-units.mjs';
 
 const exec = (file, args, options = {}) => promisify(execFile)(file, args, { timeout: 30000, maxBuffer: 1024 * 1024, ...options });
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -28,7 +29,7 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved }) {
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false }) {
   const root = join(directory, 'guest'); await mkdir(root, { mode: 0o700 });
   const copied = new Map(), modules = new Set();
   const destination = (path) => { assert.ok(path.startsWith('/') && !path.split('/').includes('..')); return join(root, path); };
@@ -50,6 +51,16 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved }
   await elf(process.execPath, '/usr/bin/node');
   for (const name of ['ip', 'unshare', 'setpriv', 'hostname', 'flock', 'getent', 'openssl', 'busctl', 'dbus-daemon']) await elf(`/usr/bin/${name}`);
   await elf('/usr/sbin/xtables-legacy-multi'); await elf(resolved, '/usr/lib/systemd/systemd-resolved');
+  if (systemd) {
+    for (const path of ['/usr/lib/systemd/systemd', '/usr/lib/systemd/systemd-executor', '/usr/lib/systemd/systemd-shutdown', '/usr/bin/systemctl', '/usr/bin/systemd-notify', '/usr/bin/umount']) await elf(path);
+    for (const name of ['shutdown.target', 'umount.target', 'final.target', 'reboot.target', 'poweroff.target', 'systemd-reboot.service', 'systemd-poweroff.service']) {
+      await copy(`/usr/lib/systemd/system/${name}`);
+    }
+    await mkdir(destination('/etc/systemd/system'), { recursive: true });
+    for (const [name, contents] of Object.entries(dnsSystemdVmUnits())) await writeFile(destination(`/etc/systemd/system/${name}`), contents, { mode: 0o644 });
+    await writeFile(destination('/etc/systemd/resolved.conf'), '[Resolve]\nDNS=\nFallbackDNS=\nLLMNR=no\nMulticastDNS=no\nDNSSEC=no\nDNSOverTLS=no\nCache=no\nReadEtcHosts=no\nDNSStubListener=yes\n', { mode: 0o644 });
+    await writeFile(destination('/etc/dbus-vm.conf'), '<busconfig><type>system</type><listen>unix:path=/run/dbus/system_bus_socket</listen><auth>EXTERNAL</auth><policy context="default"><allow user="*"/><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>', { mode: 0o644 });
+  }
   for (const name of ['libxt_tcp.so', 'libxt_udp.so', 'libipt_REJECT.so', 'libip6t_REJECT.so', 'libxt_standard.so']) {
     await elf(`/usr/lib/x86_64-linux-gnu/xtables/${name}`);
   }
@@ -75,11 +86,11 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved }
     await symlink('/bin/busybox', destination(`/bin/${name}`));
   }
   for (const name of ['iptables', 'ip6tables']) await symlink('/usr/sbin/xtables-legacy-multi', destination(`/usr/sbin/${name}`));
-  await writeFile(destination('/etc/passwd'), 'root:x:0:0:root:/root:/bin/sh\nfixture:x:1000:1000:fixture:/tmp:/bin/sh\n');
-  await writeFile(destination('/etc/group'), 'root:x:0:\nfixture:x:1000:\n');
-  await writeFile(destination('/etc/nsswitch.conf'), 'passwd: files\ngroup: files\nhosts: dns\n');
-  await writeFile(destination('/etc/resolv.conf'), 'nameserver 127.0.0.55\n');
-  await writeFile(destination('/etc/machine-id'), '11111111111111111111111111111111\n');
+  await writeFile(destination('/etc/passwd'), 'root:x:0:0:root:/root:/bin/sh\nfixture:x:1000:1000:fixture:/tmp:/bin/sh\nsystemd-resolve:x:193:193:resolver:/nonexistent:/bin/false\n', { mode: 0o644 });
+  await writeFile(destination('/etc/group'), 'root:x:0:\nfixture:x:1000:\nsystemd-resolve:x:193:\n', { mode: 0o644 });
+  await writeFile(destination('/etc/nsswitch.conf'), 'passwd: files\ngroup: files\nhosts: dns\n', { mode: 0o644 });
+  await writeFile(destination('/etc/resolv.conf'), `nameserver ${systemd ? '127.0.0.53' : '127.0.0.55'}\n`, { mode: 0o644 });
+  await writeFile(destination('/etc/machine-id'), '11111111111111111111111111111111\n', { mode: 0o644 });
   const init = `#!/bin/sh
 set -eu
 export PATH=/usr/bin:/usr/sbin:/bin:/sbin
@@ -96,6 +107,12 @@ for tool in iptables ip6tables; do
   for protocol in udp tcp; do "$tool" -A OUTPUT -p "$protocol" --dport 53 -j REJECT; done
 done
 mount -t ext4 -o rw /dev/vda /state
+${systemd ? `# Real systemd PID1, not a service wrapper around the namespace fixture.
+chmod 700 /state
+mkdir -p /run/dbus /run/meshpn
+chmod 700 /run/meshpn
+exec /usr/lib/systemd/systemd --system --log-target=console --log-level=info --show-status=no
+` : ''}
 chown 1000:1000 /state
 chmod 700 /state
 export MESHPN_PARENT_NETNS="$(readlink /proc/self/ns/net)"
@@ -125,10 +142,23 @@ poweroff -f
     names.push(path);
     for (const entry of await readdir(join(root, path), { withFileTypes: true })) {
       const name = `${path}/${entry.name}`; assert.ok(!name.includes('\n'));
-      if (entry.isDirectory()) await walk(name); else names.push(name);
+      if (entry.isDirectory()) await walk(name);
+      else {
+        // These /etc files are synthetic, public guest configuration (not host
+        // secrets). Host umask077 must not hide them from resolved's guest UID.
+        if (entry.isFile() && name.startsWith('./etc/')) await chmod(join(root, name), 0o644);
+        names.push(name);
+      }
     }
   }
   await walk();
+  if (systemd) {
+    // Offline verification in the staged root catches unit syntax/ExecStart
+    // mistakes before spending a TCG boot. It does not contact host PID1.
+    await exec('/usr/bin/systemd-analyze', [`--root=${root}`, '--man=no', 'verify',
+      ...Object.keys(dnsSystemdVmUnits()).filter((name) => name.endsWith('.service'))],
+    { env: { PATH: '/usr/bin:/usr/sbin:/bin:/sbin', SYSTEMD_LOG_LEVEL: 'warning', SYSTEMD_PAGER: 'cat' } });
+  }
   const cpio = spawn('cpio', ['--create', '--format=newc', '--owner=0:0', '--quiet'], { cwd: root, timeout: 60000, killSignal: 'SIGKILL', stdio: ['pipe', 'pipe', 'pipe'] });
   let error = ''; cpio.stderr.on('data', (chunk) => { error = (error + chunk).slice(-4096); });
   const completed = new Promise((resolve, reject) => { cpio.on('error', reject); cpio.once('close', (code) => code === 0 ? resolve() : reject(new Error(error))); });

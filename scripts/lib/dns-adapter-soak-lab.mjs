@@ -14,14 +14,26 @@ import { wireTransparentTlsEncSniSession } from './transparent-tls-runtime.mjs';
 import { EncSniReplayGuard } from './transparent-tls-replay.mjs';
 import { fixtureDnsAnswer, parseDnsQuery } from './lab-dns-wire.mjs';
 import { createNamespaceDnsAdapter } from './dns-adapter-process.mjs';
+import { assertSystemdDnsVm } from './dns-systemd-vm-safety.mjs';
 
 export async function startAdapterSoakLab({ family, modeTag, concurrency, timeoutMs = 250 }, directory) {
   assertBrowserNamespace(); assert.ok([4, 6].includes(family)); assert.ok(['transparent-tls', 'combo-tls'].includes(modeTag));
   const links = JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout);
   assert.deepEqual(links.map((l) => l.ifname), ['lo']);
+  return startFixture({ family, modeTag, concurrency, timeoutMs }, directory);
+}
+
+export async function startSystemdVmAdapterFixture(directory) {
+  await assertSystemdDnsVm();
+  const links = JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout);
+  assert.deepEqual(links.map((l) => l.ifname).sort(), ['dnsfixture', 'lo']);
+  return startFixture({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 5000, port: 2053, replace: true }, directory);
+}
+
+async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0, replace = false }, directory) {
   const addresses = family === 4 ? ['93.184.216.34', '93.184.216.35', '93.184.216.36']
     : ['2606:4700::1112', '2606:4700::1111', '2606:4700::1113'];
-  for (const ip of addresses) await exec('ip', [family === 4 ? '-4' : '-6', 'addr', 'add', `${ip}/${family === 4 ? 32 : 128}`,
+  for (const ip of addresses) await exec('ip', [family === 4 ? '-4' : '-6', 'addr', replace ? 'replace' : 'add', `${ip}/${family === 4 ? 32 : 128}`,
     'dev', 'lo', ...(family === 6 ? ['nodad'] : [])]);
   const keyPath = join(directory, 'key.pem'), certPath = join(directory, 'cert.pem');
   await exec('openssl', ['req', '-new', '-newkey', 'rsa:2048', '-nodes', '-x509', '-days', '1', '-subj', '/CN=resolver.test',
@@ -78,7 +90,7 @@ export async function startAdapterSoakLab({ family, modeTag, concurrency, timeou
     policy = dnsUpstreamExitPolicy(profile, { lookup: () => { dnsCalls++; throw new Error('lookup forbidden'); } });
     exitPort = await listen(exit, 0, addresses[2]);
     adapter = await startDnsExitAdapter({ profile, secret, publicName, exitAddress: addresses[2], exitPort,
-      timeoutMs, maxInflight: concurrency, maxTcpConnections: concurrency, tcpLifetimeMs: Math.max(3000, timeoutMs) });
+      port, timeoutMs, maxInflight: concurrency, maxTcpConnections: concurrency, tcpLifetimeMs: Math.max(3000, timeoutMs) });
     const stats = () => ({ ...adapter.stats(), resolverSockets: resolverSockets.size, resolverBodies: bodies,
       exitSockets: exitSockets.size, sessions: sessions.size, relayTimers: [...sessions].reduce((n, s) => n + s.timers.size, 0),
       dnsCalls, attempts, replay: replayGuard.stats() });

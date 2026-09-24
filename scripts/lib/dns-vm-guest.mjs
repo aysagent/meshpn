@@ -14,6 +14,7 @@ import { syncDirectory } from './dns-lifecycle-journal.mjs';
 import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
 import { queryLabDns } from './transparent-dns-lab.mjs';
 import { sha256 } from './dns-vm-image.mjs';
+import { failVmGuardBeforeNetwork, runVmStartupFault, assertVmBaselineBlocked } from './dns-vm-fault-lab.mjs';
 
 const emit = (event, data = {}) => console.log(`DNS_VM_EVENT ${JSON.stringify({ event, ...data })}`);
 async function main() {
@@ -30,6 +31,9 @@ async function main() {
   await exec('mount', ['--bind', privateRun, '/run']);
   const journal = '/state/transaction'; await mkdir(journal, { mode: 0o700, recursive: true });
   await syncDirectory('/state');
+  const scope = Object.fromEntries(await Promise.all(['net', 'mnt', 'pid'].map(async (key) => [key, await readlink(`/proc/self/ns/${key}`)])));
+  const guardFailure = options.phase === 'fault' && options.point === 'guard-unavailable'
+    ? await failVmGuardBeforeNetwork({ journal, scope }) : undefined;
   let guard = false, lab, observer, observer6, fileId = 0;
   const hits = () => (observer?.hits() ?? 0) + (observer6?.hits() ?? 0);
   const checks = [];
@@ -47,10 +51,14 @@ async function main() {
     await writeFile(path, contents, { flag: 'wx', mode: 0o600 }); await exec('mount', ['--bind', path, target]);
   };
   const lookup = async (label, expected, tcp = false, family = 4) => {
+    const started = performance.now();
     let code = 0, stdout;
     try { ({ stdout } = await exec('getent', ['-A', '-s', 'dns', `ahostsv${family}`, `vm-${checks.length}.test`],
-      { env: { ...process.env, RES_OPTIONS: `timeout:1 attempts:1${tcp ? ' use-vc' : ''}` }, timeout: 15000 })); }
+      // TCG emulates TLS and the guest scheduler: a 1s glibc deadline can expire
+      // with a healthy protected query still in flight. No retry/fallback added.
+      { env: { ...process.env, RES_OPTIONS: `timeout:5 attempts:1${tcp ? ' use-vc' : ''}` }, timeout: 15000 })); }
     catch (e) { assert.equal(e.killed, false, label); code = e.code; stdout = e.stdout; }
+    if (code !== (expected ? 0 : 2)) emit('lookup-diagnostic', { label, code, elapsedMs: Math.round(performance.now() - started), stats: lab?.stats() });
     assert.equal(code, expected ? 0 : 2, label);
     if (expected) assert.ok(stdout.split('\n').filter(Boolean).every((line) => line.startsWith(`${expected} `)), label);
     else assert.equal(stdout, '', label);
@@ -76,16 +84,43 @@ async function main() {
     lab = await startAdapterSoakLab({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 5000 }, directory);
     return await runResolvedLab({ directory, lab, bindText, setGuard, lookup, hits,
       async bootRunner({ bus, ifindex, identity, version }) {
-        const scope = Object.fromEntries(await Promise.all(['net', 'mnt', 'pid'].map(async (key) => [key, await readlink(`/proc/self/ns/${key}`)])));
         const probe = async () => {
           for (const tcp of [false, true]) {
             const q = makeDnsQuery('vm-ready.test');
-            assert.equal(validateDnsResponse(await queryLabDns(lab.adapter.port, q, { tcp, timeoutMs: 10000 }), q).flags & 15, 0);
+            assert.equal(validateDnsResponse(await queryLabDns(lab.adapter.port, q, { tcp, timeoutMs: 10000 }), q).flags & 15, 0, 'protected VM DNS readiness failed');
           }
         };
         const backend = createResolvedJournalBackend({ bus, scope, ifindex, identity, port: lab.adapter.port,
           ensureGuard: () => setGuard(true), removeGuard: () => setGuard(false), probe });
         const transact = (operation, checkpoint) => resolvedTransaction({ directory: journal, operation, scope, backend, checkpoint });
+        if (options.phase === 'fault') {
+          const fault = await runVmStartupFault({ point: options.point, journal, scope, backend, lab, guardFailure,
+            async blocked() {
+              assert.equal(guard, true);
+              for (const address of ['127.0.0.55', '::1']) {
+                for (const tcp of [false, true]) {
+                  await assertVmBaselineBlocked(address, tcp); checks.push(`fault-${address}-${tcp ? 'tcp' : 'udp'}-blocked`);
+                }
+              }
+              assert.equal(hits(), 0);
+            },
+            async managed() {
+              await lookup('fault-recovered-managed-a', '192.0.2.123');
+              await lookup('fault-recovered-managed-aaaa-tcp', '2001:db8::12', true, 6);
+              assert.equal(hits(), 0);
+            },
+            async restored() {
+              await lookup('fault-explicit-disable-baseline-udp', '203.0.113.8');
+              await lookup('fault-explicit-disable-baseline-tcp', '203.0.113.8', true);
+              assert.ok(observer.hits() >= 2);
+              await bindText('/etc/resolv.conf', 'nameserver ::1\noptions timeout:1 attempts:1\n');
+              await lookup('fault-explicit-disable-ipv6-udp', '203.0.113.8');
+              await lookup('fault-explicit-disable-ipv6-tcp', '203.0.113.8', true);
+              assert.ok(observer6.hits() >= 2); assert.equal(lab.stats().dnsCalls, 0);
+            } });
+          emit('passed', { bootId, ...options, version, checks, fault, baselineQueriesDuringProtection: 0, baselinePositiveControl: true });
+          return 0;
+        }
         const control = await readControl();
         const afterBoot = options.phase === 'inspect' || control !== null;
         if (afterBoot) {
