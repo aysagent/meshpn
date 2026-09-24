@@ -12,7 +12,7 @@ import { queryLabDns } from './transparent-dns-lab.mjs';
 import { runResolvedCrashLab } from './dns-resolved-crash-lab.mjs';
 import { runAdapterCrashLab } from './dns-adapter-crash-lab.mjs';
 
-export async function runResolvedLab({ directory, lab, bindText, setGuard, lookup, hits, journal = false, adapterProcess = false }) {
+export async function runResolvedLab({ directory, lab, bindText, setGuard, lookup, hits, journal = false, adapterProcess = false, bootRunner }) {
   await assertDnsMountNamespace();
   assert.ok(process.env.MESHPN_PARENT_UTSNS);
   assert.notEqual(await readlink('/proc/self/ns/uts'), process.env.MESHPN_PARENT_UTSNS);
@@ -75,6 +75,7 @@ export async function runResolvedLab({ directory, lab, bindText, setGuard, looku
       return { ifindex: link.ifindex, ifname: link.ifname, address: link.address };
     };
     const ifindex = (await identity()).ifindex, owner = await bus.owner();
+    if (bootRunner) assert.deepEqual(await bus.property(owner, ifindex, 'DNSEx'), [], 'new guest runtime must not retain old link DNS');
     for (const [key, setting] of Object.entries({ DNSEx: [[2, [127, 0, 0, 55], 53, '']], Domains: [['.', true], ['baseline.test', false]], DefaultRoute: true })) {
       await bus.set(owner, resolvedMethod(key, setting, ifindex));
     }
@@ -82,6 +83,8 @@ export async function runResolvedLab({ directory, lab, bindText, setGuard, looku
     const resolverBefore = await readFile('/etc/resolv.conf', 'utf8');
     // Permit the application->stub hop; the existing guard still blocks other UDP/TCP53 destinations.
     for (const protocol of ['udp', 'tcp']) await exec('iptables', ['-w', '2', '-I', 'OUTPUT', '1', '-d', '127.0.0.53', '-p', protocol, '--dport', '53', '-j', 'ACCEPT']);
+    // VM fixture keeps the boot guard installed even during baseline setup.
+    if (bootRunner) return await bootRunner({ bus, ifindex, identity, version });
     await lookup('resolved-baseline-udp', '203.0.113.8');
     await lookup('resolved-baseline-tcp', '203.0.113.8', true);
     const probe = async () => { const q = makeDnsQuery('resolved-readiness.test'); assert.equal(validateDnsResponse(await queryLabDns(lab.adapter.port, q), q).flags & 15, 0); };

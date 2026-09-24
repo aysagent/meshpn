@@ -1,8 +1,10 @@
 # DNS после reboot: offline-протокол и подготовка VM
 
 Это следующий **подготовительный** этап после [SIGKILL/restart adapter](dns-adapter-process.md).
-Реализованы pure state machine и read-only preflight, **не VM launcher, не live
-backend, не systemd installer**. Настоящий reboot/power-cut пока не проверен.
+Здесь описаны pure state machine и read-only preflight, **не VM launcher, не live
+backend, не systemd installer**. После отдельного согласования добавлена
+[настоящая изолированная VM-лаборатория](dns-vm-lab.md); её результаты и ограничения
+не следует смешивать с offline JSON ниже.
 
 ```bash
 npm run dns:boot
@@ -108,6 +110,7 @@ SIGKILL QEMU моделирует потерю guest RAM/процессов, н�
 нужно явно описать disk cache/flush модель и fault injection. Не использовать
 режим, игнорирующий guest flush, как доказательство durable correctness.
 
-В текущем окружении preflight обнаружил kernel, но не QEMU/KVM; гостевые initramfs
-и disk не предоставлены. Скачивание/подготовка инструментов вынесены на отдельное
-подтверждение. Пока выполнены только offline тесты, не настоящие VM-сценарии.
+На этапе подготовки preflight обнаружил kernel, но не QEMU/KVM; готовых гостевых
+initramfs/disk не было. Затем пользователь согласовал отдельную подготовку:
+QEMU распакован без установки, initramfs и диски создаёт [VM launcher](dns-vm-lab.md).
+Команды `dns:boot`/`dns:vm-preflight` по-прежнему VM не запускают.

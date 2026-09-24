@@ -61,6 +61,8 @@
     "dns:lifecycle": "node scripts/dns-lifecycle.mjs",
     "dns:boot": "node scripts/dns-boot.mjs",
     "dns:vm-preflight": "node scripts/dns-vm-preflight.mjs",
+    "dns:vm-lab": "node scripts/dns-vm-lab.mjs",
+    "test:dns-vm": "node --test scripts/test-dns-vm.mjs",
     "test:dns-boot": "node --test scripts/test-dns-boot.mjs",
     "dns:inspect": "node scripts/dns-inspect.mjs",
     "test:dns-inspect": "node --test scripts/test-dns-inspect.mjs",

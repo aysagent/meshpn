@@ -1811,3 +1811,76 @@ reboot и abrupt guest power-cut с описанной cache/flush модель�
 `/var/tmp/meshpn-acceptance-5vvunE/report.json` (рабочее дерево перед коммитом).
 Новых real/VM тестов этот этап не добавляет; прежние namespace real suites
 не выдаются за проверку настоящего reboot.
+
+## 47. Настоящая изолированная QEMU VM: persistent journal и новые загрузки
+
+Пользователь согласовал локальную VM после раздела46. Добавлен
+[`dns:vm-lab`](../scripts/dns-vm-lab.md): explicit paths tools/kernel/resolved,
+новые временные initramfs и raw ext4-диски, без установки пакетов на хост,
+без host initramfs, общего filesystem, физического диска или сети VM.
+QEMU8.2.2 распакован из Ubuntu `.deb`; hashes сверены с локальными APT pool
+metadata. Минимальный гость использует доступное ядро5.4.210-39.1.pagevecsize,
+BusyBox init и явный набор локальных ELF/библиотек; manifest хеширует inputs.
+Это не скачанный полный Linux-дистрибутив и не systemd PID1.
+
+1 vCPU/1024MiB/TCG, `-nic none`, отдельный256MiB ext4 на сценарий,
+`cache=writeback` с guest flush. Внутри guest UID1000 и реальные private
+user/net/mount/pid/uts namespaces, private D-Bus, systemd-resolved255,
+настоящий DNS adapter→enc-SNI exit→TLS DoH fixture. Нет TUN или интернет-адресатов:
+public-contract IP aliases принадлежат только loopback namespace.
+Timeout adapter увеличен только параметром fixture для TCG; default250ms
+существующих стендов не изменён. Fixture CA extension теперь явный, без
+зависимости от host OpenSSL config; TLS verification не отключалась.
+
+Guard UDP/TCP53 IPv4/IPv6 ставится до lo/workload. Реальные glibc запросы к
+двум baseline sentinels блокируются; после explicit disable оба дают ответы
+по UDP/TCP. Protected A/AAAA и UDP/TCP readiness идут через настоящий adapter.
+После новой загрузки меняется boot ID, `/run` новый, link DNS runtime пустой.
+Старый journal проверяется на ожидаемые direction/cursor/pending/stage,
+но не применяется к новому bus/context. Missing committed journal не подменяется
+orphan temp. Старый каталог сохраняется; новая эпоха разрешается **только
+сценарием fixture** и начинает новую транзакцию текущего baseline. Это не
+production adoption API и не изменение schema namespace journal.
+
+Матрица: graceful guest reboot и8 SIGKILL QEMU checkpoints — prepared
+file-fsync/rename, apply DNSEx intent-dir-fsync/set, Domains ack-dir-fsync,
+restore DNSEx set/DefaultRoute ack-dir-fsync, guard-removed. 18 холодных загрузок
+ядра на9 приватных дисках. На процесс QEMU deadline240s; serial logs bounded,
+ошибка останавливает дальнейшие кейсы; артефакты приватные и сохраняются для разбора.
+
+Важная обнаруженная граница: hot reset внутри одного QEMU зависал после
+`Restarting system` (с1/2 vCPU и другим reboot method тоже). Эти запуски
+завершены по deadline и не объявлены PASS. Рабочий graceful протокол:
+guest sync/remount-ro → guest reboot syscall → QEMU `-no-reboot` exit →
+перезапуск QEMU с тем же диском. Последняя версия отдельно проверяет marker
+от init после sync/remount-ro и kernel restart message. Это настоящая новая
+загрузка с потерей guest runtime, но **не успешный in-process hardware hot reset**.
+SIGKILL QEMU сохраняет host page cache: physicalPowerLossTested=false.
+
+Live clean-vpn/DNS/firewall/TUN хоста не менялись; данные `device/ap-*`
+не включаются в этот этап. Дальше — guest boot-fault cases (guard/storage/
+corrupt journal/adapter readiness), затем systemd PID1 и ordering ранних
+consumer/services в госте. Для live opt-in по-прежнему нужен отдельный review
+владельца DNS клиента; повреждённый resolv.conf Radxa не исправляется автоматически.
+
+Регрессия этого этапа: 10 реальных DNS lifecycle-тестов PASS (IPv4/IPv6 для base,
+file journal, resolved, resolved journal, adapter process). Полный acceptance:
+**1040 Node +14 Chrome/Firefox сценариев PASS**, без skips,
+`/var/tmp/meshpn-acceptance-7x4L83/report.json`. Добавлены18 unit/CLI VM checks,
+acceptance manifest35 файлов. Строгий graceful reboot с marker после
+sync/remount-ro и kernel restart evidence — PASS,
+`/var/tmp/meshpn-dns-vm-J64ZJO/report.json`; hostDnsFilesUnchanged=true.
+
+Полная VM-матрица: **9/9 сценариев PASS, 18 разных boot ID**, 8 SIGKILL QEMU,
+`/var/tmp/meshpn-dns-vm-iTdXxF/report.json`; hostDnsFilesUnchanged=true,
+baselineQueriesDuringProtection=0 во всех кейсах. Для prepared:file-synced
+committed journal отсутствовал, orphan не принимался за recovery input;
+после prepared:renamed (ещё без directory fsync) committed journal тоже отсутствовал.
+Отсутствие журнала не снимало guard. Физический power-loss
+и обычный systemd boot этим результатом не подтверждены.
+
+Подготовленные здесь tools: `/tmp/meshpn-dns-vm-tools.dXb7TM`;
+resolved: `/tmp/meshpn-resolved-tools.IwwVqt/root/usr/lib/systemd/systemd-resolved`;
+kernel: `/boot/vmlinuz-5.4.210-39.1.pagevecsize`. Это локальные временные артефакты,
+не переносимые зависимости репозитория; при повторе launcher снова сверяет
+SHA-256 `.deb` с APT metadata. Бинарники/диски/serial logs в git не добавлены.

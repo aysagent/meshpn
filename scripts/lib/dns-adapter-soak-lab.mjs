@@ -15,7 +15,7 @@ import { EncSniReplayGuard } from './transparent-tls-replay.mjs';
 import { fixtureDnsAnswer, parseDnsQuery } from './lab-dns-wire.mjs';
 import { createNamespaceDnsAdapter } from './dns-adapter-process.mjs';
 
-export async function startAdapterSoakLab({ family, modeTag, concurrency }, directory) {
+export async function startAdapterSoakLab({ family, modeTag, concurrency, timeoutMs = 250 }, directory) {
   assertBrowserNamespace(); assert.ok([4, 6].includes(family)); assert.ok(['transparent-tls', 'combo-tls'].includes(modeTag));
   const links = JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout);
   assert.deepEqual(links.map((l) => l.ifname), ['lo']);
@@ -25,7 +25,7 @@ export async function startAdapterSoakLab({ family, modeTag, concurrency }, dire
     'dev', 'lo', ...(family === 6 ? ['nodad'] : [])]);
   const keyPath = join(directory, 'key.pem'), certPath = join(directory, 'cert.pem');
   await exec('openssl', ['req', '-new', '-newkey', 'rsa:2048', '-nodes', '-x509', '-days', '1', '-subj', '/CN=resolver.test',
-    '-addext', 'subjectAltName=DNS:resolver.test', '-keyout', keyPath, '-out', certPath]);
+    '-addext', 'subjectAltName=DNS:resolver.test', '-addext', 'basicConstraints=critical,CA:TRUE', '-keyout', keyPath, '-out', certPath]);
   const key = await readFile(keyPath), cert = await readFile(certPath, 'utf8');
   const resolverSockets = new Set(), exitSockets = new Set(), sessions = new Set();
   const track = (set, socket) => { set.add(socket); socket.on('error', () => {}); socket.once('close', () => set.delete(socket)); return socket; };
@@ -78,7 +78,7 @@ export async function startAdapterSoakLab({ family, modeTag, concurrency }, dire
     policy = dnsUpstreamExitPolicy(profile, { lookup: () => { dnsCalls++; throw new Error('lookup forbidden'); } });
     exitPort = await listen(exit, 0, addresses[2]);
     adapter = await startDnsExitAdapter({ profile, secret, publicName, exitAddress: addresses[2], exitPort,
-      timeoutMs: 250, maxInflight: concurrency, maxTcpConnections: concurrency, tcpLifetimeMs: 3000 });
+      timeoutMs, maxInflight: concurrency, maxTcpConnections: concurrency, tcpLifetimeMs: Math.max(3000, timeoutMs) });
     const stats = () => ({ ...adapter.stats(), resolverSockets: resolverSockets.size, resolverBodies: bodies,
       exitSockets: exitSockets.size, sessions: sessions.size, relayTimers: [...sessions].reduce((n, s) => n + s.timers.size, 0),
       dnsCalls, attempts, replay: replayGuard.stats() });

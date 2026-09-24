@@ -18,7 +18,7 @@ import { runResolvedLab } from './dns-resolved-lab.mjs';
 import { assertDnsMountNamespace } from './dns-lifecycle-namespace.mjs';
 export { assertDnsMountNamespace } from './dns-lifecycle-namespace.mjs';
 
-async function sentinel(address) {
+export async function sentinel(address) {
   const udp = dgram.createSocket(address.includes(':') ? 'udp6' : 'udp4');
   const sockets = new Set(); let hits = 0;
   const answer = (query) => { hits++; return fixtureDnsAnswer(query, { rdata: Buffer.from([203, 0, 113, 8]) }); };
