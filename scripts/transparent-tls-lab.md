@@ -16,7 +16,7 @@ curl нужен только для необязательной ручной п
 
 ## Единая acceptance-проверка
 
-[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 29 Node-наборов
+[Acceptance runner](transparent-acceptance.mjs) запускает фиксированные 30 Node-наборов
 и полную матрицу Chrome/Firefox. Он ничего не устанавливает и не скачивает.
 Нужны Linux, Node 22+, Go 1.24+, OpenSSL 3, GNU `stdbuf`, `unshare`, `ip` и доступные
 user/network/mount/PID namespaces (в том числе для browser-independent lifecycle

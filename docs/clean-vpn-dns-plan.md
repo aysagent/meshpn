@@ -125,5 +125,8 @@ missing/corrupt/stale journal. Backend/adapter остаются в namespace ini
 шаг — read-only диагностика DNS клиента, выбор backend и адаптация журнала к
 его объектам владения; затем полный adapter lifecycle и VM reboot tests до
 opt-in live integration. LAN/split DNS отдельно.
+Для сбора evidence на реальном клиенте: `npm run dns:inspect`,
+[контракт диагностики](../scripts/dns-inspect.md). Backend не выбирается автоматически;
+отчёт рабочего окружения не заменяет диагностику клиентской машины.
 Кэша и активного production DNS/bootstrap пока нет.
 Случайные cover DNS запросы не входят в этот план реализации.

@@ -1534,3 +1534,40 @@ auto-recovery. Нет полного autostart lifecycle, LAN/split DNS или �
 Далее: read-only диагностика реального клиента и выбор backend; адаптация журнала
 к его объектам/владению, полный lifecycle adapter, затем boot ordering и reboot/
 power-loss tests в VM. Живой VPS ради этих тестов не перезагружаем.
+
+## 42. Read-only DNS evidence collector
+
+Добавлена команда `npm run dns:inspect` / `node scripts/dns-inspect.mjs`
+([контракт](../scripts/dns-inspect.md)). Запуск без sudo на настоящем Linux VPN
+клиенте; нет сетевых DNS/upstream probes, записи конфигов, установки сервиса,
+SSH или автоматического выбора backend. JSON stdout не содержит nameserver IP,
+search domains, hostname, произвольных путей, raw comments/errors или секретов.
+
+Bounded reads фиксированных resolv.conf/nsswitch/proc1 comm/mountinfo; metadata
+и известная категория resolver symlink, отдельная mountpoint, counts/booleans.
+Только при PID1=systemd — четыре фиксированных read-only systemctl is-active,
+2с/4KiB каждый, минимальное environment без remote bus settings. В другом init
+service probes пропускаются, чтобы не обращаться к проброшенному host bus.
+Нет доступа/ошибка → unknown/unavailable, не доказательство отсутствия менеджера.
+
+Из symlink, NSS resolve, комментариев и service states получаем кандидатов,
+но `backend=unselected`, `actualClientConfirmed=false`, `requiresReview=true`
+остаются всегда. NM+resolved могут составлять цепочку управления, не конфликт.
+Regular resolv.conf и отсутствие признаков сервисов не доказывают unmanaged DNS.
+Это point-in-time evidence, не effective-config/ownership/health audit.
+
+В доступном рабочем окружении PID1 не systemd, resolver regular, hosts=files dns;
+это не подтверждённая машина VPN-клиента. Отчёт не использован для выбора backend.
+Повторный запуск с побайтовой проверкой resolver/nss до/после подтвердил неизменность
+обоих файлов. Живой VPN, DNS/firewall/routes/TUN и mesh не менялись.
+
+Добавлены14 unit/CLI тестов: resolved/NM/resolvconf evidence, цепочка менеджеров,
+отсутствие обращения к bus при другом init, redaction, denied/unknown, mountpoint,
+bounded file reads и строгий CLI без apply/remote/file flags. Manifest30 файлов.
+Полный acceptance: **834 Node +14 Chrome/Firefox сценариев PASS**, без skips;
+`/var/tmp/meshpn-acceptance-ZMOhtn/report.json`.
+
+Для продолжения нужен JSON этой команды именно с настоящего клиента и
+подтверждение роли машины. Затем — адресная проверка эффективной конфигурации
+менеджера, выбор одного backend, адаптация журнала; полный adapter lifecycle и
+VM boot/reboot tests остаются впереди. Live переключение отдельно согласуется.

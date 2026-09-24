@@ -5,6 +5,10 @@
 NetworkManager, resolvconf либо unmanaged `/etc/resolv.conf`. Автоустановки,
 `--apply`, правок systemd units и изменений live VPN здесь нет.
 
+Для первого шага на настоящем клиенте добавлен `npm run dns:inspect`
+([read-only диагностика](dns-inspect.md)), без DNS-запросов и изменений настроек.
+Не запускайте выбор backend по отчёту контейнера/рабочего окружения вместо клиента.
+
 ## Запуск
 
 ```bash
