@@ -9,6 +9,10 @@ NetworkManager, resolvconf либо unmanaged `/etc/resolv.conf`. Автоуст
 ([read-only диагностика](dns-inspect.md)), без DNS-запросов и изменений настроек.
 Не запускайте выбор backend по отчёту контейнера/рабочего окружения вместо клиента.
 
+Для выбранного направления resolved есть [экспериментальный D-Bus backend и
+реальный namespace-стенд](dns-resolved.md): `--resolved`. Он не подключён к
+durable journal и не является разрешением на live настройку клиента.
+
 ## Запуск
 
 ```bash

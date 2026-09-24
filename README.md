@@ -163,7 +163,7 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 Следующий порядок работ:
 
 1. На настоящем Linux VPN-клиенте выполнить `npm run dns:inspect` без sudo ([read-only диагностика](scripts/dns-inspect.md)). Команда не отправляет DNS-запросы, не меняет настройки и не выводит адреса/search domains. По отчёту проверить владельца настроек и выбрать backend (resolved/NetworkManager/unmanaged), не выбирать его автоматически по обычному файлу resolv.conf. Уже есть [offline lifecycle и изолированный системный DNS стенд](scripts/dns-lifecycle.md): `npm run dns:lifecycle`, `npm run test:dns-lifecycle-real`. Далее — подключение журнала к выбранному backend и согласованный opt-in; LAN/IPv6/kill-switch остаются отдельной частью интеграции.
-2. [Лабораторный журнал и SIGKILL recovery](scripts/dns-lifecycle.md) уже есть: `npm run test:dns-lifecycle-crash-real` —13 аварий отдельного контроллера на IPv4 и IPv6, прерванные apply/restore, lock и конфликты. Далее — адаптация к выбранному OS backend, полный lifecycle adapter и VM reboot/power-loss tests. Стенд не перезагружает живой VPS и не меняет его DNS/firewall/TUN.
+2. [Лабораторный журнал и SIGKILL recovery](scripts/dns-lifecycle.md) уже есть. Добавлен [экспериментальный resolved backend](scripts/dns-resolved.md), проверенный с настоящими resolved и приватным D-Bus: `npm run test:dns-resolved-real`. Далее — подключить к нему durable journal и проверить аварии контроллера между D-Bus setters; затем полный lifecycle adapter и VM reboot/power-loss tests. Live DNS/firewall/TUN не меняются, resolved на клиенте автоматически не включается.
 3. Проверить согласованную интеграцию на пилотном развёртывании; только после этого пересматривать production-статус всего `combo-tls`.
 
 ---

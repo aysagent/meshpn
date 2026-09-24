@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtemp, writeFile, rm, mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { inspectSystemDns, boundedInspectRead, DNS_INSPECT_FILES, DNS_INSPECT_UNITS } from './lib/dns-inspect.mjs';
+import { inspectSystemDns, inspectResolverMetadata, boundedInspectRead, DNS_INSPECT_FILES, DNS_INSPECT_UNITS } from './lib/dns-inspect.mjs';
 import { runCommand } from './lib/transparent-acceptance.mjs';
 
 function fixture(overrides = {}) {
@@ -52,6 +52,35 @@ test('denied reads and probes are unknown, not absence', async () => {
 test('mountpoint is detected without exposing source paths or device ids', async () => {
   const r = await inspectSystemDns(fixture({ mounts: '123 456 0:789 /private/secret /etc/resolv.conf rw - ext4 /dev/secret rw\n' }));
   assert.equal(r.resolver.mountpoint, true); assert.ok(!JSON.stringify(r).includes('secret'));
+});
+test('unavailable metadata plus trailing blank mountinfo never creates a false mountpoint', async () => {
+  const f = fixture(); f.metadata = async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); };
+  const r = await inspectSystemDns(f); assert.equal(r.resolver.mountpoint, false);
+  assert.ok(!r.assessment.reasons.includes('resolver-is-a-mountpoint: do-not-replace-it-as-an-ordinary-file'));
+});
+test('Radxa dangling resolved symlink remains recognizable without a false mount', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'meshpn-inspect-link-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'resolv.conf'); await symlink('missing/stub-resolv.conf', path);
+  const metadata = await inspectResolverMetadata(path);
+  assert.equal(metadata.kind, 'symlink'); assert.equal(metadata.targetStatus, 'missing');
+  const f = fixture(), originalRead = f.read;
+  f.metadata = async () => ({ ...metadata, declaredTarget: '/run/systemd/resolve/stub-resolv.conf' });
+  f.read = async (file) => file === DNS_INSPECT_FILES.resolver ? boundedInspectRead(path) : originalRead(file);
+  const r = await inspectSystemDns(f);
+  assert.equal(r.resolver.object, 'symlink'); assert.equal(r.resolver.targetKind, 'resolved-stub');
+  assert.equal(r.resolver.readError, 'missing'); assert.equal(r.resolver.targetStatus, 'missing');
+  assert.equal(r.resolver.mountpoint, false); assert.ok(r.assessment.reasons.includes('dangling-resolver-symlink'));
+  assert.equal(r.backend, 'unselected'); assert.ok(!JSON.stringify(r).includes(dir));
+});
+test('symlink loops are distinct from missing targets', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'meshpn-inspect-loop-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'loop'); await symlink('loop', path);
+  assert.equal((await inspectResolverMetadata(path)).targetStatus, 'symlink-loop');
+});
+test('missing metadata does not hide a real resolver mountpoint', async () => {
+  const f = fixture({ mounts: '1 2 0:1 / /etc/resolv.conf rw - tmpfs tmpfs rw\n' });
+  f.metadata = async () => { throw new Error('missing'); };
+  assert.equal((await inspectSystemDns(f)).resolver.mountpoint, true);
 });
 test('IP addresses, search domains, paths and raw comments omitted', async () => {
   const f = fixture({ resolver: '# private-label\nnameserver 10.23.45.67\nnameserver 2001:db8::5\nnameserver ::1\nnameserver bad-secret\nsearch secret.corp\n' });

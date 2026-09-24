@@ -61,6 +61,8 @@
     "dns:lifecycle": "node scripts/dns-lifecycle.mjs",
     "dns:inspect": "node scripts/dns-inspect.mjs",
     "test:dns-inspect": "node --test scripts/test-dns-inspect.mjs",
+    "test:dns-resolved": "node --test scripts/test-dns-resolved.mjs",
+    "test:dns-resolved-real": "node --test scripts/test-dns-resolved-real.mjs",
     "dns:lifecycle-lab": "node scripts/dns-lifecycle-lab.mjs",
     "test:dns-lifecycle": "node --test scripts/test-dns-lifecycle.mjs",
     "test:dns-lifecycle-real": "node --test scripts/test-dns-lifecycle-real.mjs",

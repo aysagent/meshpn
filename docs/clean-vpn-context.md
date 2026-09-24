@@ -1571,3 +1571,71 @@ bounded file reads и строгий CLI без apply/remote/file flags. Manifes
 подтверждение роли машины. Затем — адресная проверка эффективной конфигурации
 менеджера, выбор одного backend, адаптация журнала; полный adapter lifecycle и
 VM boot/reboot tests остаются впереди. Live переключение отдельно согласуется.
+
+## 43. Исправление Radxa inspection и настоящий resolved backend в namespace
+
+Уточнены реальные роли: VPS предполагается также использовать **клиентом другого
+exit**, не self-connect. На VPS из отчёта пользователя active resolved/networkd.
+На Radxa loaded resolved, inactive/dead, disabled; journal текущей загрузки пуст,
+`/etc/resolv.conf` ссылается на отсутствующий `/run/systemd/resolve/stub-resolv.conf`.
+Причина отключения неизвестна. Ничего на этих машинах агент не включал/не менял.
+
+Исправлен баг `dns:inspect`: при unavailable metadata target был undefined,
+пустая строка mountinfo давала undefined mount path, `.includes(undefined)`
+ошибочно возвращал true. Теперь учитываются только валидные строки и строковые
+пути, декодируются mount escapes. Реальный mount не теряется при metadata error.
+Metadata читает lstat/readlink отдельно от realpath, сохраняет тип оборванной
+ссылки и известную категорию declared target. В redacted JSON добавлены
+`targetStatus`, `readError`; missing/permission-denied/symlink-loop различаются,
+без raw paths/errors. Radxa case показывает dangling-resolver-symlink, не mount.
+Добавлены4 регрессии, включая настоящий dangling symlink и loop во временных файлах.
+
+Добавлен [экспериментальный resolved backend](../scripts/dns-resolved.md):
+`dns-resolved-backend.mjs` с инъекцией namespace bus, snapshot DNSEx/Domains/
+DefaultRoute, захватом unique D-Bus owner и identity выделенного link. Guard →
+protected readiness → SetLinkDNSEx/SetLinkDomains/SetLinkDefaultRoute с read-back.
+Managed destination127.0.0.1:high-port adapter, ~., DefaultRoute=true; resolv.conf
+backend не переписывает. Явный disable восстанавливает снимок, не RevertLink.
+Foreign properties, смена owner/link, lost setter reply → conflict, guard остаётся.
+Пустой DNS baseline отклоняется; параллельные операции одного controller запрещены.
+
+В `dns:lifecycle-lab --resolved` настоящий dbus-daemon и systemd-resolved запускаются
+в private net/mount/PID/user/UTS, без systemd PID1 и host system bus. Private /run,
+systemd config, passwd/group/NSS; имя хоста fixture. passwd нужен для D-Bus EXTERNAL:
+host UID здесь обычно предоставляется cauth NSS, недоступным после изоляции /run.
+Root-mapped запуск этого расширения отклоняется. Dummy link принадлежит fixture;
+host resolver/NSS/passwd/group bytes проверяются до/после. No network uplink/TUN.
+DNAT базового стенда удаляется: getent идёт в настоящий resolved stub, затем через
+SetLinkDNSEx в high-port adapter → enc-SNI combo exit → проверенный DoH upstream.
+Другие UDP/TCP53 блокируются для обеих семей, app→stub разрешён отдельно.
+
+Тестовый binary: systemd255.4-1ubuntu8.17, пакет скачан `apt-get download` и
+распакован `dpkg-deb --extract`, **не установлен**. Для повторения в этом окружении:
+`MESHPN_SYSTEMD_RESOLVED=/tmp/meshpn-resolved-tools.IwwVqt/root/usr/lib/systemd/systemd-resolved
+npm run test:dns-resolved-real` (переменная и команда на одной shell строке).
+Host libsystemd-shared той же версии. Default CLI ничего не скачивает и не пропускает
+проверки при отсутствии daemon/busctl/dbus-daemon.
+
+IPv4 и IPv6 real tests PASS: каждый23 базовых+9 resolved glibc lookups, exact
+snapshot restore, foreign-domain refusal, exit outage/recovery, настоящий SIGKILL
+resolved. В255.4 link settings переживают restart в /run: защищённый DNS снова
+работает, но owner изменён, старый controller отказывает в disable. Это не
+неожиданный fallback и не успешный автоматический adoption нового daemon.
+Baseline counters во время защиты не растут; final owned resources0,
+children/zombies0. Повторно прошли все6 real-тестов: базовый lifecycle, journal
+crash и resolved, каждый IPv4/IPv6. Добавлены16 resolved unit-тестов; manifest31 файл.
+Полный acceptance: **854 Node +14 Chrome/Firefox сценариев PASS**, без skips;
+`/var/tmp/meshpn-acceptance-010Gcb/report.json`.
+
+Ограничения: snapshot resolved **in-memory**, не связан с inode journal.
+Нет durableResolvedRecovery, controller-crash reconciliation D-Bus setters,
+межпроцессного lock resolved backend, adapter crash, reboot/power loss,
+production polkit и manager races, сложного split DNS/нескольких links. Snapshot
+содержит значения API, не происхождение implicit/default настроек менеджера.
+Базовая fixture отключает cache/fallback/LLMNR/mDNS/DoT/DNSSEC только внутри lab;
+это не production политика. Guard53 не универсальный kill-switch.
+
+Далее — journal schema owner/link/properties и per-setter intents, SIGKILL
+контроллера на каждом переходе, далее adapter lifecycle и VM reboot. Восстановление
+штатного resolved на Radxa и live opt-in на VPS отдельно согласуются. Живой VPN,
+системный DNS/firewall/TUN и mesh не менялись.

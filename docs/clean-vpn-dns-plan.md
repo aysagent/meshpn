@@ -128,5 +128,11 @@ opt-in live integration. LAN/split DNS отдельно.
 Для сбора evidence на реальном клиенте: `npm run dns:inspect`,
 [контракт диагностики](../scripts/dns-inspect.md). Backend не выбирается автоматически;
 отчёт рабочего окружения не заменяет диагностику клиентской машины.
+Для resolved сделан [экспериментальный D-Bus backend](../scripts/dns-resolved.md)
+с реальным namespace daemon/bus, apply/restore, ownership conflict и daemon
+SIGKILL/restart. Snapshot пока in-memory; файловый journal к этому backend
+не подключён. Следующий этап — journal per-setter intents и controller-crash
+матрица resolved. Radxa с disabled resolved и оборванной ссылкой автоматически
+не исправляется; восстановление штатного DNS нужно согласовать отдельно.
 Кэша и активного production DNS/bootstrap пока нет.
 Случайные cover DNS запросы не входят в этот план реализации.

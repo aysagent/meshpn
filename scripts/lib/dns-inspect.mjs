@@ -1,6 +1,7 @@
 /** Read-only evidence collection. Never selects or applies an OS DNS backend. */
 import { constants } from 'node:fs';
-import { open, lstat, realpath } from 'node:fs/promises';
+import { open, lstat, realpath, readlink } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { isIP } from 'node:net';
 import { runCommand } from './transparent-acceptance.mjs';
 
@@ -9,6 +10,22 @@ export const DNS_INSPECT_FILES = Object.freeze({
 });
 export const DNS_INSPECT_UNITS = Object.freeze(['systemd-resolved.service', 'NetworkManager.service',
   'systemd-networkd.service', 'resolvconf.service']);
+
+function errorKind(error) {
+  return ({ ENOENT: 'missing', ENOTDIR: 'missing', EACCES: 'permission-denied', EPERM: 'permission-denied',
+    ELOOP: 'symlink-loop' })[error.code] ?? 'unavailable';
+}
+export async function inspectResolverMetadata(path = DNS_INSPECT_FILES.resolver) {
+  const stat = await lstat(path), kind = stat.isSymbolicLink() ? 'symlink' : stat.isFile() ? 'regular' : 'other';
+  // Preserve the symlink and its declared target even if realpath fails.
+  let declaredTarget;
+  if (kind === 'symlink') {
+    try { declaredTarget = resolve(dirname(path), await readlink(path)); }
+    catch (error) { return { kind, targetStatus: errorKind(error) }; }
+  }
+  try { return { kind, declaredTarget, target: await realpath(path), targetStatus: 'available' }; }
+  catch (error) { return { kind, declaredTarget, targetStatus: errorKind(error) }; }
+}
 
 export async function boundedInspectRead(path, limit = 65536) {
   const fd = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
@@ -68,7 +85,7 @@ export function analyzeDnsInspection(evidence) {
   const resolver = evidence.resolver.status === 'ok' ? resolverSummary(evidence.resolver.text) : null;
   const nss = evidence.nss.status === 'ok' ? nssSummary(evidence.nss.text) : null;
   const initIsSystemd = evidence.init.status === 'ok' && evidence.init.text.trim() === 'systemd';
-  const target = evidence.metadata.status === 'ok' ? targetKind(evidence.metadata.target) : 'unknown';
+  const target = evidence.metadata.status === 'ok' ? targetKind(evidence.metadata.target ?? evidence.metadata.declaredTarget) : 'unknown';
   if (target.startsWith('resolved-') || resolver?.resolvedStubAddress || resolver?.hints.includes('resolved')
     || nss?.services.includes('resolve') || evidence.units['systemd-resolved.service'] === 'active') candidates.add('systemd-resolved');
   if (target === 'networkmanager' || resolver?.hints.includes('networkmanager') || evidence.units['NetworkManager.service'] === 'active') candidates.add('NetworkManager');
@@ -77,9 +94,14 @@ export function analyzeDnsInspection(evidence) {
   if (!candidates.size) reasons.push('no-manager-evidence-is-not-proof-of-unmanaged-DNS');
   if (candidates.size > 1) reasons.push('multiple-components-may-form-a-manager-to-resolver-chain');
   for (const key of ['resolver', 'nss', 'init', 'mounts', 'metadata']) if (evidence[key].status !== 'ok') reasons.push(`${key}-unavailable`);
+  if (evidence.metadata.kind === 'symlink' && evidence.metadata.targetStatus === 'missing') reasons.push('dangling-resolver-symlink');
+  const mountTargets = ['/etc/resolv.conf', evidence.metadata.target, evidence.metadata.declaredTarget]
+    .filter((path) => typeof path === 'string' && path.startsWith('/'));
   const mount = evidence.mounts.status === 'ok' ? evidence.mounts.text.split('\n').some((line) => {
+    if (!line.includes(' - ')) return false;
     const fields = line.split(' - ')[0].split(' ');
-    return ['/etc/resolv.conf', evidence.metadata.target].includes(fields[4]);
+    const mountPath = fields[4]?.replace(/\\(040|011|012|134)/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)));
+    return typeof mountPath === 'string' && mountTargets.includes(mountPath);
   }) : null;
   if (mount) reasons.push('resolver-is-a-mountpoint: do-not-replace-it-as-an-ordinary-file');
   if (Object.values(evidence.units).some((value) => value === 'unknown')) reasons.push('service-state-incomplete');
@@ -87,6 +109,7 @@ export function analyzeDnsInspection(evidence) {
     dnsQueriesSent: 0, backend: 'unselected', actualClientConfirmed: false,
     environment: { pid1: initIsSystemd ? 'systemd' : evidence.init.status === 'ok' ? 'other' : 'unknown' },
     resolver: { status: evidence.resolver.status, object: evidence.metadata.kind ?? 'unknown', targetKind: target,
+      readError: evidence.resolver.error ?? null, targetStatus: evidence.metadata.targetStatus ?? 'unknown',
       mountpoint: mount, ...(resolver ?? {}) },
     nss: { status: evidence.nss.status, ...(nss ?? {}) }, units: evidence.units,
     assessment: { candidates: [...candidates], requiresReview: true, reasons,
@@ -95,11 +118,7 @@ export function analyzeDnsInspection(evidence) {
       'no-listener-or-upstream-health-check', 'no-VPN-routing-or-kill-switch-check', 'no-network-access'] };
 }
 
-export async function inspectSystemDns({ read = boundedInspectRead, metadata = async () => {
-  const stat = await lstat(DNS_INSPECT_FILES.resolver);
-  return { kind: stat.isSymbolicLink() ? 'symlink' : stat.isFile() ? 'regular' : 'other',
-    target: await realpath(DNS_INSPECT_FILES.resolver) };
-}, probe = async (unit) => {
+export async function inspectSystemDns({ read = boundedInspectRead, metadata = inspectResolverMetadata, probe = async (unit) => {
   // Minimal environment avoids inherited remote bus/proxy/Node settings and pagers.
   const result = await runCommand('/usr/bin/systemctl', ['--system', '--no-pager', 'is-active', unit],
     { env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C', SYSTEMD_PAGER: 'cat' }, timeoutMs: 2000, maxBytes: 4096 });
@@ -112,7 +131,7 @@ export async function inspectSystemDns({ read = boundedInspectRead, metadata = a
   const evidence = { units: {} };
   await Promise.all(Object.entries(DNS_INSPECT_FILES).map(async ([key, path]) => {
     try { evidence[key] = { status: 'ok', text: await read(path, key === 'mounts' ? 1048576 : 65536) }; }
-    catch { evidence[key] = { status: 'unavailable' }; }
+    catch (error) { evidence[key] = { status: 'unavailable', error: errorKind(error) }; }
   }));
   try { evidence.metadata = { status: 'ok', ...await metadata() }; }
   catch { evidence.metadata = { status: 'unavailable' }; }

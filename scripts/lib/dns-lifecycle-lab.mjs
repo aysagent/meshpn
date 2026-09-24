@@ -14,6 +14,7 @@ import { makeDnsQuery, fixtureDnsAnswer, validateDnsResponse } from './lab-dns-w
 import { queryLabDns } from './transparent-dns-lab.mjs';
 import { dnsLifecycle } from './dns-lifecycle.mjs';
 import { runDnsCrashLab } from './dns-lifecycle-crash-lab.mjs';
+import { runResolvedLab } from './dns-resolved-lab.mjs';
 import { assertDnsMountNamespace } from './dns-lifecycle-namespace.mjs';
 export { assertDnsMountNamespace } from './dns-lifecycle-namespace.mjs';
 
@@ -52,7 +53,7 @@ async function sentinel(address) {
   } catch (error) { await close(); throw error; }
 }
 
-export async function runDnsLifecycleLab(directory, family, { crash = false } = {}) {
+export async function runDnsLifecycleLab(directory, family, { crash = false, resolved = false } = {}) {
   await assertDnsMountNamespace();
   assert.ok([4, 6].includes(family));
   assert.deepEqual(JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout).map((l) => l.ifname), ['lo']);
@@ -182,7 +183,14 @@ export async function runDnsLifecycleLab(directory, family, { crash = false } = 
         } });
     }
     await drainAdapter(lab);
-    await redirect(false); await lab.close(); assertAdapterIdle(lab.stats());
+    await redirect(false);
+    let resolvedReport;
+    if (resolved) {
+      await lab.restartExit();
+      resolvedReport = await runResolvedLab({ directory, lab, bindText, setGuard, lookup, hits });
+      await drainAdapter(lab);
+    }
+    await lab.close(); assertAdapterIdle(lab.stats());
     await Promise.all(observers.map((server) => server.close())); observers.length = 0;
     await new Promise((resolve) => setTimeout(resolve, 20));
     const resources = namespaceResources();
@@ -194,6 +202,7 @@ export async function runDnsLifecycleLab(directory, family, { crash = false } = 
     return { schema: 1, status: 'passed', kind: 'dns-lifecycle-lab', family, modeTag: 'combo-tls',
       backend: 'namespace-resolv.conf-fixture', hostDnsChanged: false, persistentRecoveryImplemented: false,
       ...(crashReport ? { crash: crashReport } : {}),
+      ...(resolvedReport ? { resolved: resolvedReport } : {}),
       checks, steps, baselineQueriesDuringProtection: 0, dnsCalls: lab.stats().dnsCalls,
       final: { state, resources } };
   } finally { await lab?.close(); await Promise.all(observers.map((server) => server.close())); }

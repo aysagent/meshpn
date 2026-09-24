@@ -32,6 +32,13 @@ node scripts/dns-inspect.mjs
 `/usr/bin/systemctl`; на системе без него service evidence будет `unknown`.
 Если PID1 не systemd, обращения к потенциально проброшенной host system bus нет.
 
+Оборванный symlink больше не теряется при ошибке realpath: `object=symlink`,
+`targetKind` отражает известную категорию объявленного назначения,
+`targetStatus=missing`, reason `dangling-resolver-symlink`. `readError` различает
+missing/permission-denied/symlink-loop/unavailable без раскрытия raw error/path.
+Объявленный target — не доказательство работающего сервиса. Пустые строки
+mountinfo игнорируются; недоступные metadata не создают ложный `mountpoint=true`.
+
 В отчёт не попадают IP-адреса, search domains, hostname, произвольные пути,
 mount source/device IDs, комментарии конфигов, журналы, connection profiles,
 PSK/CA и тексты ошибок. Содержимое файлов используется только локально для
