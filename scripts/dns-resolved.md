@@ -159,6 +159,7 @@ Guard53 не является универсальным VPN kill-switch и не
 
 Отдельный [process lifecycle adapter](dns-adapter-process.md) уже проверяет
 SIGKILL/restart, стабильный endpoint, readiness и сохранение guard.
-Следующий пакет: boot/recovery protocol и VM reboot/power-loss tests.
+Добавлены [offline boot/recovery protocol и VM preflight](dns-boot.md);
+VM reboot/power-loss tests пока не выполнены.
 Восстановление штатного resolved на Radxa и live opt-in — отдельно
 согласуемые операции, не побочный эффект запуска VPN.

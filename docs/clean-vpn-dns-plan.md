@@ -134,7 +134,9 @@ bus ID/owner/link/scope, per-setter intents, flock и controller-crash матр�
 Добавлен [отдельный процесс adapter и SIGKILL/restart](../scripts/dns-adapter-process.md):
 `--resolved-adapter`, стабильный high port, protected UDP/TCP readiness, bind
 conflicts, explicit disable при мёртвом adapter; journal и guard остаются живы.
-Следующий этап — boot/recovery protocol и VM reboot/power-loss tests.
+Подготовлены [offline boot/recovery protocol и read-only VM preflight](../scripts/dns-boot.md).
+Настоящие VM reboot/power-loss tests ещё не выполнены: нужны QEMU и изолированные
+гостевые артефакты; старый journal не разрешает автоматическое adoption после reboot.
 Radxa с disabled resolved и оборванной ссылкой автоматически
 не исправляется; восстановление штатного DNS нужно согласовать отдельно.
 Кэша и активного production DNS/bootstrap пока нет.

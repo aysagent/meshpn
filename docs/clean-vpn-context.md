@@ -1763,3 +1763,51 @@ IPv4/IPv6. Новый process lifecycle занимает около31с на с�
 для обеих семей. Host resolver/NSS/passwd/group bytes неизменны.
 Полный acceptance: **979 Node +14 Chrome/Firefox сценариев PASS**, без skips;
 `/var/tmp/meshpn-acceptance-5pqIe6/report.json` (рабочее дерево перед коммитом).
+
+## 46. Offline boot/recovery protocol и VM preflight; VM ещё не запускалась
+
+Следующий этап раздел45 начат с [контракта boot/recovery](../scripts/dns-boot.md),
+pure state machine `lib/dns-boot.mjs`, CLI `npm run dns:boot` и read-only
+`npm run dns:vm-preflight`. Это подготовка, **не завершённые reboot/power-cut tests**.
+Не созданы live units/installer, VM launcher, guest image или новая journal schema.
+
+Сценарии fresh/previous-boot/same-boot/corrupt/adapter-down/disable/power-loss
+детерминированы; default previous-boot останавливается для review. После new-boot
+сбрасываются guard/readiness/admission. Сначала явный opt-in, установка guard и
+его acknowledgement; затем journal/current owner. Старый boot/context не даёт
+права overwrite/restore; новый epoch требует operator approval, owned link,
+текущий проверенный baseline и сохранение старого journal. Текущий durable
+restore intent не превращается в apply. Adapter bound не readiness; нужны
+protected UDP+TCP, matching context, DNS read-back и durable ack перед admission.
+Explicit disable записывает intent до restore, guard снимается после проверки.
+
+Это модель желаемых действий и входного evidence, не исполнитель и не измерение
+реального guard. Boot ID — часть предлагаемого протокола, не молчаливая миграция
+существующего namespace journal. Все JSON reports сохраняют vmStarted/rebootTested/
+powerLossTested=false. Нельзя использовать offline scenario power-loss как
+доказательство сохранности fsync при настоящем отключении питания.
+
+Preflight смотрит metadata QEMU/kernel/initrd/disk без запуска процессов и без
+записи. QEMU read/execute, непустые regular files, disk symlink/block-device
+отклоняются; initrd/disk не выбираются из host defaults. Только kernel может
+использовать `/boot/vmlinuz`. Никакого использования host initramfs. Path values
+не выводятся. Даже при наличии всех файлов launchAuthorized=false,
+artifactVerificationRequired=true; executable/image authenticity не проверяется.
+TCG запланирован без KVM, без сетевых устройств, host shared folders/disks/ports.
+
+Фактический preflight этого окружения: QEMU отсутствует, `/dev/kvm` отсутствует,
+kernel доступен (7253760 bytes), guest initrd/disk не предоставлены. apt metadata
+содержит QEMU, но пакеты/образы не скачивались и не устанавливались. Запрошено
+отдельное подтверждение локальной загрузки/подготовки VM; ответа на момент этого
+этапа нет. VM, guest reboot и QEMU power-cut **не выполнялись**.
+
+43 новых unit/CLI tests, acceptance manifest34 файла. Документированы ограничения
+systemd ordering: Before/After не гарантируют успешный запуск dependency;
+network-pre.target сам не фильтрует DNS. Для VM нужны guard-before-consumer,
+ошибки раннего boot, current-owner proof, сохранение прежнего journal, graceful
+reboot и abrupt guest power-cut с описанной cache/flush моделью. SIGKILL QEMU
+не уничтожает host page cache и не является физическим power-loss proof.
+Полный acceptance: **1022 Node +14 Chrome/Firefox сценариев PASS**, без skips;
+`/var/tmp/meshpn-acceptance-5vvunE/report.json` (рабочее дерево перед коммитом).
+Новых real/VM тестов этот этап не добавляет; прежние namespace real suites
+не выдаются за проверку настоящего reboot.

@@ -89,7 +89,8 @@ init, совместного падения controller/adapter, reboot или po
 Текущий journal привязан к namespace/bus/owner/link и после смены context
 отказывает, а не автоматически присваивает себе настройки.
 
-Далее — отдельный boot/recovery protocol и VM-тесты: guard должен действовать
+Добавлены [offline boot/recovery protocol и read-only VM preflight](dns-boot.md),
+но настоящие VM-тесты ещё не выполнены. Guard должен действовать
 до допуска обычного DNS, старый журнал нельзя слепо применять к новому владельцу.
 Существование сохранённого journal само по себе не обеспечивает защиту после
 перезагрузки, когда runtime firewall rules и процессы потеряны. Live opt-in и
