@@ -4063,7 +4063,7 @@ function parseArgs(argv) {
     } else if (a.startsWith('--tunnel-peer=')) {
       out.tunnelPeer = a.slice('--tunnel-peer='.length);
     } else if (a === '--split-default') out.splitDefault = true;
-    else if (a.startsWith('--from-tun=') || a.startsWith('--form-tun=')) {
+    else if (a.startsWith('--from-tun=')) {
       if (out.fromTun !== null) throw new Error('--from-tun указан повторно');
       out.fromTun = a.slice(a.indexOf('=') + 1);
     } else if (a === '--signaling' || a === '--signalling') out.signaling = true;
@@ -11712,7 +11712,7 @@ async function main() {
 
 --type: tcp (socket alias) | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls | boring-tls | transparent-tls | combo-tls
 --split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 через uplink; /32 bypass к --server и (только webrtc/rtc-chrome/ws-chrome/udp+punch) к IP STUN/TURN из --config. Plain --type=udp STUN не резолвит. IPv6 не в туннеле. Проверка: curl -4 https://ifconfig.me
---from-tun=IFACE: только client, вместо --split-default — внешний IPv4 с входного интерфейса (например wg0) через VPN; host OUTPUT/default без изменений. Нужен готовый шлюз с ip_forward=1. IPv6 forwarding этого входа блокируется. Alias: --form-tun. См. scripts/clean-vpn-from-tun.md (исключения, DNS, остановка/авария).
+--from-tun=IFACE: только client, вместо --split-default — внешний IPv4 с входного интерфейса (например wg0) через VPN; host OUTPUT/default без изменений. Нужен готовый шлюз с ip_forward=1. IPv6 forwarding этого входа блокируется. См. scripts/clean-vpn-from-tun.md (исключения, DNS, остановка/авария).
 --client-lan-subnet=CIDR: только client + --split-default — LAN/USB gadget за клиентом (адрес сети, напр. 192.168.7.0/24): ip_forward, SNAT в ${IP_CLIENT} через tun, FORWARD; иначе устройства за клиентом не попадают под NAT exit.
 --transparent-tls-lan-bind=IPv4: с --type=transparent-tls или combo-tls + --client-lan-subnet — адрес этого шлюза для DNAT второго listener и PREROUTING (должен входить в CIDR), если автопоиск не нашёл нужный интерфейс (часто: на USB/etherнет нет адреса из 192.168.7.x).
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)

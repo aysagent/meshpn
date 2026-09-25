@@ -10,7 +10,7 @@ sudo env "PATH=$PATH" node scripts/clean-vpn.js \
   --tls-server-name=vpn.example.com --tls-client-sni=vpn.example.com
 ```
 
-Адрес, домен и пути заменить своими; подготовка CA/PSK/exit — в README. Exit не требует новой опции. Совместимый alias опечатки: `--form-tun=wg0`. Это **не** подключение native helper к существующему `/dev/net/tun`: ядро пересылает пакеты из входного интерфейса в отдельный TUN clean-vpn. Поддерживаются также другие L3-интерфейсы, не только WireGuard.
+Адрес, домен и пути заменить своими; подготовка CA/PSK/exit — в README. Exit не требует новой опции. Это **не** подключение native helper к существующему `/dev/net/tun`: ядро пересылает пакеты из входного интерфейса в отдельный TUN clean-vpn. Поддерживаются также другие L3-интерфейсы, не только WireGuard.
 
 ## Условия и область действия
 

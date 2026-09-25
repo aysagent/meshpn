@@ -107,12 +107,19 @@ test('HTTPS partial-install failure is cleaned by the routing owner', () => {
 });
 
 test('CLI rejects bad ingress flags before opening TUN or changing routing', () => {
-  for (const flags of [['--from-tun='], ['--form-tun=lo'], ['--from-tun=wg0', '--split-default'],
-    ['--from-tun=wg0', '--form-tun=wg1'], ['--from-tun=wg0', '--client-lan-subnet=10.0.0.0/24']]) {
+  for (const flags of [['--from-tun='], ['--from-tun=lo'], ['--from-tun=wg0', '--split-default'],
+    ['--from-tun=wg0', '--from-tun=wg1'], ['--from-tun=wg0', '--client-lan-subnet=10.0.0.0/24']]) {
     const result = spawnSync(process.execPath, ['scripts/clean-vpn.js', '--role=client', '--type=tls', '--server=127.0.0.1:443', ...flags],
       { encoding: 'utf8', timeout: 5000 });
     assert.equal(result.status, 1, result.stderr);
     assert.match(result.stderr, /--from-tun/);
     assert.doesNotMatch(result.stderr, /\/dev\/net\/tun|ip route|Cannot find module/);
   }
+});
+
+test('CLI rejects the form-tun typo as an unknown option', () => {
+  const result = spawnSync(process.execPath, ['scripts/clean-vpn.js', '--role=client', '--type=tls',
+    '--server=127.0.0.1:443', '--form-tun=wg0'], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /Неизвестный параметр clean-vpn: --form-tun=wg0/);
 });

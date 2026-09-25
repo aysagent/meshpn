@@ -12,7 +12,7 @@
 
 ### Дополнение 2026-09-25: выбор входного интерфейса
 
-Добавлен пилотный `--from-tun=wg0` (alias `--form-tun`), вместо `--split-default` и независимо от транспорта. Общая реализация — `scripts/lib/ingress-routing.mjs`: policy routing по `iif`, SNAT через собственный TUN, scoped FORWARD guard и блокировка IPv6 forwarding выбранного входа. Host OUTPUT/default и DNS хоста не меняются. Нужен уже настроенный шлюз с `ip_forward=1`; частные/подключённые сети остаются исключениями.
+Добавлен пилотный `--from-tun=wg0`, вместо `--split-default` и независимо от транспорта. Общая реализация — `scripts/lib/ingress-routing.mjs`: policy routing по `iif`, SNAT через собственный TUN, scoped FORWARD guard и блокировка IPv6 forwarding выбранного входа. Host OUTPUT/default и DNS хоста не меняются. Нужен уже настроенный шлюз с `ip_forward=1`; частные/подключённые сети остаются исключениями.
 
 Для transparent/combo HTTPS-перехват в этом режиме только через PREROUTING выбранного интерфейса, listener на собственном TUN IPv4; прежний OUTPUT-перехват не включается. Это не исправляет отсутствие защиты сырого TUN у standalone transparent. Штатный stop возвращает прежний forwarding; после fatal/SIGKILL guard/rules сохраняются и повторный запуск требует проверки остатков. Подробности, тесты и ограничения — [руководство ingress-шлюза](../scripts/clean-vpn-from-tun.md). Автоустановщик/systemd, DNS-прокси LAN и реальный WireGuard-пилот этим изменением не покрыты.
 
