@@ -10,6 +10,34 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-26: транзитный DNS FORWARD
+
+USB-стенд расширен до **61 проверки**: внешний наблюдатель в третьем network
+namespace, второй veth, IPv4/IPv6 маршруты в обе стороны. 203.0.113.53 и
+2001:db8:54::53 не принадлежат шлюзу: запросы USB-клиента идут через FORWARD.
+До guard и после explicit disable оба наблюдателя отвечают по UDP/TCP.
+В managed mode, при отказе exit/adapter и после restart dnsmasq прямой DNS
+блокируется; ноль запросов у upstream и ненулевые четыре REJECT counters.
+INPUT проверки с адресами самого шлюза сохранены. Не покрыты DoH/DoT, другие
+порты и защита всего VPN dataplane; это пока правила fixture, не live installer.
+
+Первый прогон выявил ложный success от sysctl: stdout сообщал forwarding=1,
+но stderr — permission denied, фактически оставалось 0. Причина не SSH/host
+firewall: map-current-user не даёт нужного UID для namespace network sysctl.
+USB launcher теперь использует map-root-user (как ingress lab), без host sudo,
+проверяет read-back обоих forwarding значений и неизменность host forwarding.
+Расширены host-refusal проверки worker, включая его роль upstream. Обычный
+14-check smoke не изменён. Все процессы после теста остановлены, зомби нет.
+
+Окончательный код: оба real tests PASS (14 smoke +61 USB checks), 10 целевых
+unit/CLI PASS; Node acceptance **1106/1106 PASS**, без skips,
+`/var/tmp/meshpn-acceptance-jauuxQ/report.json`. Браузеры и VM не повторялись.
+
+Дальше: durable dnsmasq ownership/journal/recovery и проверка настоящего
+resolved 249/networkd для VPS 2, затем явно согласованные пользовательские
+запуски и ограниченные пилоты. DNS v1 всё ещё не закрыт. Помощник не получает
+SSH-доступа к VPS/Radxa и не меняет их настройки.
+
 ### Дополнение 2026-09-26: реальный USB peer и DHCP
 
 Рабочий процесс согласован: **никакого SSH со стороны помощника**. Здесь —

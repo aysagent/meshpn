@@ -15,13 +15,16 @@ npm run test:dhcp-lab-wire
 ```
 
 Нужен Linux с user/net/PID/mount namespaces, Node 22+, iproute2, openssl и локальный
-dnsmasq; для `--usb` также iptables/ip6tables. Путь задаётся явно; автоскачивания,
+dnsmasq; для `--usb` также sysctl, iptables/ip6tables и их `*-save`. Путь задаётся явно; автоскачивания,
 установки службы и sudo нет.
 Runner проверяет private namespaces и запускает dnsmasq только с собственным
 временным конфигом и leasefile. Без флага DNS high port, с `--usb` настоящий
 порт 53 и отдельный сетевой namespace USB-клиента, соединённый veth с usb0.
 Система хоста не переключается; host TUN/firewall не меняются. В `--usb` правила
 DNS guard создаются **только в namespace лабораторного шлюза**. Внешних NIC нет.
+USB-режим отображает текущего пользователя в UID 0 **внутри user namespace**,
+что необходимо для network sysctl. Host sudo не нужен; фактическое включение
+forwarding в лаборатории и неизменность host forwarding проверяются отдельно.
 
 В простом режиме создаётся dummy usb0, в USB-режиме — veth-пара. Локальные aliases
 1.1.1.1/8.8.8.8 (в USB-режиме также 2001:db8:53::1) с
@@ -36,7 +39,7 @@ DNS guard создаются **только в namespace лабораторно�
 При мёртвом adapter UDP может закончиться deadline клиента; отчёт отличает его
 от DNS error. Кэш стенда выключен, имена проверок уникальны.
 
-## USB/DHCP: 36 проверок
+## USB/DHCP: 61 проверка
 
 Клиент в отдельном namespace выполняет настоящий DISCOVER → OFFER → REQUEST → ACK
 по UDP 68/67, принимает адрес/маску/шлюз/DNS/lease time из пакета и настраивает
@@ -64,9 +67,19 @@ DNS-запросы идут на адрес, полученный в DHCP ACK, �
 
 Прямые DNS-запросы к лабораторным upstream по IPv4/IPv6 × UDP/TCP сначала
 успешны, затем блокируются guard, после explicit disable снова успешны.
-Эти адреса принадлежат самому namespace шлюза, поэтому трафиком проверен
-**INPUT**, не FORWARD. FORWARD-правила также установлены, но их транзитный путь
-ещё требует отдельного внешнего peer. Это не полный шлюзовой DNS kill-switch.
+Адреса 1.1.1.1/8.8.8.8/2001:db8:53::1 принадлежат самому namespace шлюза —
+этот трафик проверяет **INPUT**. Дополнительно отдельный namespace внешнего
+наблюдателя соединён с шлюзом второй veth-парой. Его 203.0.113.53 и
+2001:db8:54::53 доступны только через **FORWARD**, с обратными маршрутами к
+USB-клиенту. Forwarding включается только у лабораторного шлюза.
+
+Транзитный путь IPv4/IPv6 × UDP/TCP проверяется до защиты, во время managed mode,
+при выключенном exit, после restart dnsmasq, при выключенном adapter и после
+explicit disable. Внешние наблюдатели не получают запросов в protected phase;
+каждый из четырёх FORWARD REJECT counters должен увеличиться минимум на четыре
+пакета. Positive controls до и после исключают «успех» из-за отсутствующего
+маршрута или неработающего сервера. Это тест правил лаборатории, не готовый
+системный kill-switch; DoH/DoT, другие порты и общий VPN data plane не покрыты.
 Для IPv6 заданы статические documentation addresses только внутри стенда;
 это не DHCPv6/RA и не IPv6 data plane clean-vpn.
 
@@ -88,5 +101,5 @@ SHA256 исходного архива: `8f6666b542403b5ee7ccce66ea73a4a51cf19dd
 файла: dnsmasq этого не делает. Выбор restart или отдельного managed servers-file
 потребует ownership/journal и проверки сохранности DHCP.
 [Официальная документация dnsmasq](https://thekelleys.org.uk/dnsmasq/docs/dnsmasq-man.html).
-Следующие шаги: транзитный FORWARD guard, durable recovery, resolved 249/networkd
+Следующие шаги: durable recovery, resolved 249/networkd
 по [матрице клиентов](dns-client-matrix.md). Физическая USB-связь и arm64 не проверены.

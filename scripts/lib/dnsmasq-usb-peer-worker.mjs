@@ -8,10 +8,13 @@ import { randomBytes } from 'node:crypto';
 import { exec } from './browser-lab-driver.mjs';
 import { makeDhcpLabRequest, parseDhcpLabReply } from './dhcp-lab-wire.mjs';
 import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
+import { sentinel } from './dns-lifecycle-lab.mjs';
 
 const gateway = '192.168.7.1';
 const report = (id, result) => process.stdout.write(`USB_PEER ${id} ${JSON.stringify(result)}\n`);
 let configured = false, lease;
+const upstream = process.argv[2] === '--upstream';
+const observers = [];
 
 async function acquire() {
   assert.ok(configured);
@@ -54,13 +57,15 @@ async function acquire() {
   } finally { socket.close(); }
 }
 
-async function lookup({ sequence, tcp, type, local = false, direct = false, family = 4 }) {
+async function lookup({ sequence, tcp, type, local = false, direct = false, forwarded = false, family = 4 }) {
   assert.ok(lease && Number.isSafeInteger(sequence) && sequence > 0 && sequence <= 100);
   assert.equal(typeof tcp, 'boolean'); assert.ok([1, 28].includes(type));
   assert.equal(typeof local, 'boolean'); assert.equal(typeof direct, 'boolean');
+  assert.equal(typeof forwarded, 'boolean'); assert.ok(!forwarded || direct);
   assert.ok(family === 4 || family === 6 && direct);
-  const host = direct ? family === 6 ? '2001:db8:53::1' : '1.1.1.1' : lease.dns[0];
-  assert.ok(['192.168.7.1', '1.1.1.1', '8.8.8.8', '2001:db8:53::1'].includes(host));
+  const host = forwarded ? family === 6 ? '2001:db8:54::53' : '203.0.113.53'
+    : direct ? family === 6 ? '2001:db8:53::1' : '1.1.1.1' : lease.dns[0];
+  assert.ok(['192.168.7.1', '1.1.1.1', '8.8.8.8', '2001:db8:53::1', '203.0.113.53', '2001:db8:54::53'].includes(host));
   const query = makeDnsQuery(local ? 'usb-client' : `usb-peer-${sequence}.test`, type);
   const socket = tcp ? net.connect({ host, port: 53 }) : dgram.createSocket(family === 6 ? 'udp6' : 'udp4');
   let timer;
@@ -95,6 +100,7 @@ async function lookup({ sequence, tcp, type, local = false, direct = false, fami
 }
 
 try {
+  assert.ok(process.argv.length === 2 || process.argv.length === 3 && upstream, 'unknown worker arguments');
   for (const [kind, original] of [['net', process.env.MESHPN_PARENT_NETNS], ['pid', process.env.MESHPN_PARENT_PIDNS],
     ['mnt', process.env.MESHPN_PARENT_MNTNS], ['net', process.env.MESHPN_DNSMASQ_GATEWAY_NETNS]]) {
     assert.ok(original); assert.notEqual(await readlink(`/proc/self/ns/${kind}`), original, 'isolated USB peer required');
@@ -119,14 +125,28 @@ try {
       if (operation === 'configure') {
         assert.equal(configured, false);
         const links = JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout);
-        assert.deepEqual(links.map((l) => l.ifname).sort(), ['lo', 'usbpeer']);
+        assert.deepEqual(links.map((l) => l.ifname).sort(), ['lo', upstream ? 'wanpeer' : 'usbpeer']);
         await exec('ip', ['link', 'set', 'lo', 'up']);
-        await exec('ip', ['link', 'set', 'usbpeer', 'address', '02:00:00:07:00:02']);
-        await exec('ip', ['link', 'set', 'usbpeer', 'up']); configured = true; result = { configured: true };
-        await exec('ip', ['-6', 'addr', 'add', '2001:db8:7::2/64', 'dev', 'usbpeer', 'nodad']);
-        await exec('ip', ['-6', 'route', 'add', 'default', 'via', '2001:db8:7::1', 'dev', 'usbpeer']);
-      } else if (operation === 'acquire') result = await acquire();
-      else if (operation === 'lookup') result = await lookup(options);
+        if (upstream) {
+          await exec('ip', ['link', 'set', 'wanpeer', 'up']);
+          await exec('ip', ['addr', 'add', '198.18.0.2/30', 'dev', 'wanpeer']);
+          await exec('ip', ['-6', 'addr', 'add', '2001:db8:8::2/64', 'dev', 'wanpeer', 'nodad']);
+          await exec('ip', ['addr', 'add', '203.0.113.53/32', 'dev', 'lo']);
+          await exec('ip', ['-6', 'addr', 'add', '2001:db8:54::53/128', 'dev', 'lo', 'nodad']);
+          await exec('ip', ['route', 'add', '192.168.7.0/24', 'via', '198.18.0.1']);
+          await exec('ip', ['-6', 'route', 'add', '2001:db8:7::/64', 'via', '2001:db8:8::1']);
+          for (const address of ['203.0.113.53', '2001:db8:54::53']) observers.push(await sentinel(address));
+          configured = true; result = { configured: true };
+        } else {
+          await exec('ip', ['link', 'set', 'usbpeer', 'address', '02:00:00:07:00:02']);
+          await exec('ip', ['link', 'set', 'usbpeer', 'up']);
+          await exec('ip', ['-6', 'addr', 'add', '2001:db8:7::2/64', 'dev', 'usbpeer', 'nodad']);
+          await exec('ip', ['-6', 'route', 'add', 'default', 'via', '2001:db8:7::1', 'dev', 'usbpeer']);
+          configured = true; result = { configured: true };
+        }
+      } else if (operation === 'hits' && upstream && configured) result = observers.map((s) => s.hits());
+      else if (operation === 'acquire' && !upstream) result = await acquire();
+      else if (operation === 'lookup' && !upstream) result = await lookup(options);
       else throw new Error('unknown USB peer operation');
       report(id, { ok: true, result });
     })().catch((error) => { process.stderr.write(`USB_PEER_FAILED ${error.message}\n`); process.exitCode = 1; process.stdin.destroy(); })

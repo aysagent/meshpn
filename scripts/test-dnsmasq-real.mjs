@@ -21,10 +21,16 @@ test('USB peer: DHCP DORA, real port 53, local names, IPv4/IPv6 direct guard and
   const report = JSON.parse(result.stdout);
   assert.equal(report.status, 'passed'); assert.equal(report.hostDnsChanged, false);
   assert.equal(report.dhcpLeaseExchangeTested, true); assert.equal(report.usbPeerSeparateNetworkNamespace, true);
-  assert.equal(report.usbDirectDnsGuardTested, 'IPv4-and-IPv6-INPUT');
-  assert.equal(report.usbForwardRulesInstalledButNotTrafficTested, true);
+  assert.equal(report.usbDirectDnsGuardTested, 'IPv4-and-IPv6-INPUT-and-FORWARD');
+  assert.equal(report.usbForwardRulesInstalledButNotTrafficTested, false);
+  assert.equal(report.upstreamSeparateNetworkNamespace, true);
+  assert.equal(report.hostForwardingUnchanged, true);
+  assert.equal(report.forwardedQueriesDuringProtection, 0);
+  assert.deepEqual(report.forwardGuardCounters.map(({ family, protocol }) => [family, protocol]),
+    [[4, 'udp'], [4, 'tcp'], [6, 'udp'], [6, 'tcp']]);
+  for (const counter of report.forwardGuardCounters) assert.ok(counter.packets >= 4);
   assert.equal(report.staleDhcpDnsRequiresReacquire, true);
-  assert.equal(report.checks.length, 36); assert.equal(new Set(report.checks).size, 36);
+  assert.equal(report.checks.length, 61); assert.equal(new Set(report.checks).size, 61);
   assert.equal(report.dhcp.length, 6);
   for (const exchange of report.dhcp) {
     assert.deepEqual(exchange.stages, ['DISCOVER', 'OFFER', 'REQUEST', 'ACK']);

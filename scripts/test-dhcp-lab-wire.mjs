@@ -54,6 +54,8 @@ test('truncated, repeated, overloaded and malformed critical options are rejecte
 test('USB peer worker refuses ordinary host invocation before creating sockets or changing links', () => {
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (key.startsWith('MESHPN_PARENT_') || key === 'MESHPN_DNSMASQ_GATEWAY_NETNS') delete env[key];
-  const result = spawnSync(process.execPath, ['scripts/lib/dnsmasq-usb-peer-worker.mjs'], { env, encoding: 'utf8', timeout: 5000 });
-  assert.equal(result.status, 1); assert.equal(result.stdout, ''); assert.match(result.stderr, /USB_PEER_FAILED/);
+  for (const args of [[], ['--upstream'], ['--unknown'], ['--upstream', '--upstream']]) {
+    const result = spawnSync(process.execPath, ['scripts/lib/dnsmasq-usb-peer-worker.mjs', ...args], { env, encoding: 'utf8', timeout: 5000 });
+    assert.equal(result.status, 1); assert.equal(result.stdout, ''); assert.match(result.stderr, /USB_PEER_FAILED/);
+  }
 });

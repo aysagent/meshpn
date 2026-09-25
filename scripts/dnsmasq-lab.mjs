@@ -28,17 +28,24 @@ try {
     process.umask(0o077);
     const hash = async () => createHash('sha256').update(await readFile('/etc/resolv.conf')).digest('hex');
     const before = await hash();
+    const hostForwarding = () => Promise.all(['/proc/sys/net/ipv4/ip_forward', '/proc/sys/net/ipv6/conf/all/forwarding']
+      .map((path) => readFile(path, 'utf8')));
+    const forwardingBefore = usb ? await hostForwarding() : null;
     directory = await mkdtemp(join(tmpdir(), 'meshpn-dnsmasq-lab-'));
-    const result = await runCommand('unshare', [...namespaceArgs, '--propagation', 'private',
+    // Namespace-local root is needed for network sysctl ownership, not host sudo.
+    const isolation = namespaceArgs.map((arg) => usb && arg === '--map-current-user' ? '--map-root-user' : arg);
+    const result = await runCommand('unshare', [...isolation, '--propagation', 'private',
       process.execPath, entry, '--isolated', ...(usb ? ['--usb'] : [])], { timeoutMs: usb ? 90000 : 60000, signal: controller.signal,
       env: { ...cleanEnvironment(process.env), MESHPN_DNSMASQ_LAB_DIR: directory,
         MESHPN_PARENT_NETNS: await readlink('/proc/self/ns/net'), MESHPN_PARENT_PIDNS: await readlink('/proc/self/ns/pid'),
         MESHPN_PARENT_MNTNS: await readlink('/proc/self/ns/mnt') } });
     assert.equal(await hash(), before, 'host resolver changed');
+    if (usb) assert.deepEqual(await hostForwarding(), forwardingBefore, 'host forwarding changed');
     assert.equal(result.reason, null); assert.equal(result.code, 0, result.stderr);
     const lines = result.stdout.trim().split('\n'); assert.equal(lines.length, 1);
     assert.ok(lines[0].startsWith('DNSMASQ_LAB_RESULT '));
     const report = JSON.parse(lines[0].slice('DNSMASQ_LAB_RESULT '.length));
+    if (usb) report.hostForwardingUnchanged = true;
     assert.equal(report.status, 'passed'); process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   }
 } catch (error) { process.stderr.write(`DNSMASQ_LAB_FAILED ${error.message}\n`); process.exitCode = 1; }

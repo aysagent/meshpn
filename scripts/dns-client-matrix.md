@@ -44,8 +44,9 @@ reboot и guard заранее описываются и требуют отде
    не исполнять конфиги/хуки при сборе; не выбирать backend автоматически.
 2. Два изолированных профиля: resolved 249 + cloud DNS/DHCP reapply; dnsmasq +
    USB peer с настоящим DHCP/DNS. [Dnsmasq smoke и USB/DHCP режим](dnsmasq-lab.md)
-   реализованы: 14 и 36 проверок, 6 DHCP DORA, IPv4/IPv6 direct DNS INPUT guard.
-   Транзитный FORWARD, host takeover, durable recovery и реальные версии клиентов
+   реализованы: 14 и 61 проверка, 6 DHCP DORA, IPv4/IPv6 direct DNS INPUT/FORWARD
+   guard с отдельным внешним namespace и счётчиками пакетов.
+   Host takeover, durable recovery и реальные версии клиентов
    ещё впереди. Unicast renewal/T1/T2 и физический USB не проверены.
 3. Реальные ownership/journal/guard и start/stop/restart/reboot для обеих схем.
    Radxa resolv.conf переключается отдельной проверяемой транзакцией, а не

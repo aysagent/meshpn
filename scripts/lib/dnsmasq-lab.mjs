@@ -11,7 +11,7 @@ import { sentinel } from './dns-lifecycle-lab.mjs';
 import { queryLabDns } from './transparent-dns-lab.mjs';
 import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
 import { compileRadxaDnsmasqLabConfig } from './dnsmasq-lab-config.mjs';
-import { startDnsmasqUsbPeer } from './dnsmasq-usb-peer.mjs';
+import { startDnsmasqUsbPeer, startDnsmasqUpstreamPeer } from './dnsmasq-usb-peer.mjs';
 
 export async function runDnsmasqLab(directory, executable, { usb = false } = {}) {
   await assertDnsMountNamespace();
@@ -23,7 +23,8 @@ export async function runDnsmasqLab(directory, executable, { usb = false } = {})
   const env = { PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C' };
   const version = (await exec(executable, ['--version'], { env })).stdout.split('\n')[0];
   const executableSha256 = createHash('sha256').update(await readFile(executable)).digest('hex');
-  let lab, daemon, peer, daemonDiagnostics = '';
+  let lab, daemon, peer, upstream, daemonDiagnostics = '';
+  let forwardedBefore, forwardGuardCounters;
   const observers = [], checks = [];
   const dhcp = [];
   const configPath = join(directory, 'dnsmasq.conf'), listenPort = usb ? 53 : 1054;
@@ -80,6 +81,16 @@ export async function runDnsmasqLab(directory, executable, { usb = false } = {})
         '-p', protocol, '--dport', '53', '-j', 'REJECT']);
     }
   }
+  async function forwardedProbes(phase, blocked) {
+    if (!upstream) return;
+    for (const family of [4, 6]) for (const tcp of [false, true]) {
+      const result = await peer.lookup({ direct: true, forwarded: true, family, tcp });
+      const label = `${phase} IPv${family} ${tcp ? 'TCP' : 'UDP'} ${JSON.stringify(result)}`;
+      if (blocked) assert.ok(['client-deadline', 'transport-error'].includes(result.outcome), label);
+      else { assert.equal(result.rcode, 0, label); assert.equal(result.answer, 'cb007108', label); }
+      checks.push(`forward-ipv${family}-${tcp ? 'tcp' : 'udp'}-${phase}`);
+    }
+  }
   try {
     lab = await startAdapterSoakLab({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 1000 }, directory);
     // Baseline "public" resolvers are only local aliases in a NIC-less namespace.
@@ -95,7 +106,7 @@ export async function runDnsmasqLab(directory, executable, { usb = false } = {})
       await exec('ip', ['-6', 'addr', 'add', '2001:db8:53::1/128', 'dev', 'upstreamfixture', 'nodad']);
       observers.push(await sentinel('2001:db8:53::1'));
     }
-    if (usb) peer = await startDnsmasqUsbPeer();
+    if (usb) { peer = await startDnsmasqUsbPeer(); upstream = await startDnsmasqUpstreamPeer(); }
     else {
       await exec('ip', ['link', 'add', 'usb0', 'type', 'dummy']);
       await exec('ip', ['addr', 'add', '192.168.7.1/24', 'dev', 'usb0']);
@@ -105,6 +116,7 @@ export async function runDnsmasqLab(directory, executable, { usb = false } = {})
     await start(baseline);
     if (peer) {
       await lease('baseline-dhcp-dora', false);
+      await forwardedProbes('positive-control', false);
       for (const family of [4, 6]) for (const tcp of [false, true]) {
         const r = await peer.lookup({ direct: true, tcp, family });
         assert.equal(r.rcode, 0); assert.equal(r.answer, 'cb007108');
@@ -115,7 +127,9 @@ export async function runDnsmasqLab(directory, executable, { usb = false } = {})
     await lookup('baseline-tcp-positive-control', '203.0.113.8', true);
     assert.ok(hits() >= 2); await stop();
     // Config switch/restart is fixture-owned, not a crash-safe host transaction.
-    const before = hits(); await usbGuard(true); await start(plan.managed);
+    const before = hits(); forwardedBefore = await upstream?.hits();
+    if (upstream) assert.deepEqual(forwardedBefore, [2, 2], 'both external sentinels must receive UDP and TCP controls');
+    await usbGuard(true); await start(plan.managed);
     if (peer) {
       // This dnsmasq fixture advertises 1.1.1.1 in the original duplicate option 6.
       // DHCP clients do not learn the changed option until another exchange.
@@ -124,6 +138,7 @@ export async function runDnsmasqLab(directory, executable, { usb = false } = {})
       assert.ok(['client-deadline', 'transport-error'].includes(stale.outcome));
       checks.push('stale-dhcp-dns-blocked-until-reacquire');
       const acquired = await lease('managed-dhcp-dora', true);
+      await forwardedProbes('managed-blocked', true);
       for (const family of [4, 6]) for (const tcp of [false, true]) {
         const direct = await peer.lookup({ direct: true, tcp, family });
         assert.ok(['client-deadline', 'transport-error'].includes(direct.outcome));
@@ -140,17 +155,20 @@ export async function runDnsmasqLab(directory, executable, { usb = false } = {})
       await lookup(`managed-${tcp ? 'tcp' : 'udp'}-${type}`, '192.0.2.123', tcp, type);
     }
     await lab.stopExit();
+    await forwardedProbes('exit-down-blocked', true);
     if (peer) await lease('exit-down-dhcp-still-works', true);
     await lookup('exit-down-udp-no-baseline-fallback', null);
     await lookup('exit-down-tcp-no-baseline-fallback', null, true);
     await lab.restartExit(); await lookup('exit-recovered', '192.0.2.123');
     await stop('SIGKILL'); await start(plan.managed);
+    await forwardedProbes('dnsmasq-restart-blocked', true);
     if (peer) {
       const acquired = await lease('dnsmasq-restart-dhcp', true);
       assert.equal(acquired.address, dhcp[1].ack.address, 'lease survives dnsmasq restart');
     }
     await lookup('dnsmasq-restarted-protected', '192.0.2.123');
     await lab.adapter.close();
+    await forwardedProbes('adapter-down-blocked', true);
     if (peer) {
       await lease('adapter-down-dhcp-still-works', true);
       const local = await peer.lookup({ local: true });
@@ -171,6 +189,22 @@ export async function runDnsmasqLab(directory, executable, { usb = false } = {})
     }
     assert.equal(hits(), before, 'direct baseline upstream used during managed mode');
     checks.push('zero-baseline-queries-during-protection');
+    if (upstream) {
+      assert.deepEqual(await upstream.hits(), forwardedBefore, 'forwarded DNS escaped the guard');
+      forwardGuardCounters = [];
+      for (const tool of ['iptables-save', 'ip6tables-save']) {
+        const rules = (await exec(tool, ['-c', '-t', 'filter'])).stdout.split('\n')
+          .filter((line) => line.includes('-A FORWARD -i usb0 ') && line.includes('--dport 53 -j REJECT'));
+        assert.equal(rules.length, 2, 'both UDP and TCP FORWARD guards required');
+        for (const protocol of ['udp', 'tcp']) {
+          const rule = rules.find((line) => line.includes(`-p ${protocol} `));
+          const packets = Number(/^\[(\d+):\d+\]/.exec(rule)?.[1]);
+          assert.ok(packets >= 4, 'each fault phase must traverse its FORWARD guard');
+          forwardGuardCounters.push({ family: tool === 'iptables-save' ? 4 : 6, protocol, packets });
+        }
+      }
+      checks.push('forward-zero-upstream-queries-and-four-rule-counters');
+    }
     await stop(); await start(plan.baseline); await usbGuard(false);
     assert.equal(await readFile(configPath, 'utf8'), baseline);
     if (peer) {
@@ -179,27 +213,30 @@ export async function runDnsmasqLab(directory, executable, { usb = false } = {})
     }
     await lookup('explicit-restore-udp', '203.0.113.8');
     await lookup('explicit-restore-tcp', '203.0.113.8', true);
+    await forwardedProbes('restored', false);
+    if (upstream) assert.deepEqual(await upstream.hits(), [4, 4], 'both restored external sentinels must answer');
     if (peer) for (const family of [4, 6]) for (const tcp of [false, true]) {
       const direct = await peer.lookup({ direct: true, tcp, family });
       assert.equal(direct.rcode, 0); assert.equal(direct.answer, 'cb007108');
       checks.push(`usb-direct-ipv${family}-${tcp ? 'tcp' : 'udp'}-restored`);
     }
     assert.ok(hits() > before);
-    await stop(); await peer?.close(); await lab.close();
+    await stop(); await peer?.close(); await upstream?.close(); await lab.close();
     for (const observer of observers) await observer.close(); observers.length = 0;
     const final = namespaceResources();
     assert.equal(final.tree.live, 1); assert.equal(final.tree.zombies, 0);
     return { schema: 1, kind: 'clean-vpn-dnsmasq-lab', status: 'passed', version, executableSha256,
       hostDnsChanged: false, backend: 'radxa-fixture-only', checks, baselineQueriesDuringProtection: 0,
       exactFixtureBaselineRestored: true, dhcpRangeAndRouterRetained: true, dhcpLeaseExchangeTested: usb,
-      ...(usb ? { dhcp, usbPeerSeparateNetworkNamespace: true, usbDirectDnsGuardTested: 'IPv4-and-IPv6-INPUT',
-        usbForwardRulesInstalledButNotTrafficTested: true, staleDhcpDnsRequiresReacquire: true } : {}),
+      ...(usb ? { dhcp, usbPeerSeparateNetworkNamespace: true, usbDirectDnsGuardTested: 'IPv4-and-IPv6-INPUT-and-FORWARD',
+        upstreamSeparateNetworkNamespace: true, forwardGuardCounters, forwardedQueriesDuringProtection: 0,
+        usbForwardRulesInstalledButNotTrafficTested: false, staleDhcpDnsRequiresReacquire: true } : {}),
       durableRecoveryImplemented: false, systemResolverTakeoverTested: false, independentPcap: false,
       final: { processes: final.tree.live, zombies: final.tree.zombies } };
   } catch (error) {
     throw new Error(`${error.message}\nfixture dnsmasq: ${daemonDiagnostics}`);
   } finally {
-    await stop(); await peer?.close(); await lab?.close();
+    await stop(); await peer?.close(); await upstream?.close(); await lab?.close();
     for (const observer of observers) await observer.close();
   }
 }
