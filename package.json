@@ -70,6 +70,8 @@
     "test:dns-vm": "node --test scripts/test-dns-vm.mjs",
     "test:dns-boot": "node --test scripts/test-dns-boot.mjs",
     "dns:inspect": "node scripts/dns-inspect.mjs",
+    "dns:diagnostic": "node scripts/dns-diagnostic.mjs",
+    "test:dns-diagnostic": "node --test scripts/test-dns-diagnostic.mjs",
     "test:dns-inspect": "node --test scripts/test-dns-inspect.mjs",
     "test:dns-resolved": "node --test scripts/test-dns-resolved.mjs",
     "test:dns-resolved-real": "node --test scripts/test-dns-resolved-real.mjs",

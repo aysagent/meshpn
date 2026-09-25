@@ -25,6 +25,7 @@ export const TEST_FILES = Object.freeze([
   'test-dns-lifecycle.mjs',
   'test-dns-lifecycle-journal.mjs',
   'test-dns-inspect.mjs',
+  'test-dns-diagnostic.mjs',
   'test-dns-resolved.mjs',
   'test-dns-resolved-journal.mjs',
   'test-dns-adapter-process.mjs',
