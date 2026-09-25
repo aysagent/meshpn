@@ -43,6 +43,8 @@ for (const [name, modify] of [
   ['unbounded cursor', (v) => { v.count = 99999; }],
   ['bad port', (v) => { v.port = 65536; }],
   ['wrong stage', (v) => { v.stage = 'execute'; }],
+  ['invalid hold cursor', (v) => { v.schema = 2; v.hold = { id: v.id, name: 'wg0', count: 4 }; }],
+  ['foreign hold interface', (v) => { v.schema = 2; v.hold = { id: v.id, name: 'other0', count: 1 }; }],
 ]) test(`journal rejects ${name} before network access`, (t) => {
   const { directory, path } = fixture(t); const v = JSON.parse(fs.readFileSync(path)); modify(v);
   fs.writeFileSync(path, JSON.stringify(v)); assert.throws(() => openIngressJournal(directory));

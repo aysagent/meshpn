@@ -29,8 +29,9 @@ function identity(run, name) {
   return link ? { ifindex: link.ifindex, address: link.address ?? '', type: link.link_type } : null;
 }
 function validate(v) {
-  keys(v, ['schema', 'id', 'scope', 'config', 'original', 'links', 'port', 'count', 'stage']);
-  assert.equal(v.schema, 1); assert.match(v.id, /^[a-f0-9]{24}$/);
+  assert.ok(v.schema === 1 || v.schema === 2);
+  keys(v, ['schema', 'id', 'scope', 'config', 'original', 'links', 'port', 'count', 'stage', ...(v.schema === 2 ? ['hold'] : [])]);
+  assert.match(v.id, /^[a-f0-9]{24}$/);
   keys(v.scope, ['boot', 'net', 'user']);
   assert.match(v.scope.boot, /^[a-f0-9-]{36}$/);
   for (const key of ['net', 'user']) assert.match(v.scope[key], new RegExp(`^${key}:\\[\\d+\\]$`));
@@ -52,6 +53,11 @@ function validate(v) {
   assert.ok(['installing', 'restoring', 'released'].includes(v.stage));
   assert.ok(Number.isSafeInteger(v.count) && v.count >= 0 && v.count <= operations(v).length);
   assert.ok(v.stage !== 'released' || v.count === 0);
+  if (v.schema === 2 && v.hold !== null) {
+    keys(v.hold, ['id', 'name', 'count']); assert.match(v.hold.id, /^[a-f0-9]{24}$/);
+    assert.equal(v.hold.name, v.config.ingress.name);
+    assert.ok(Number.isInteger(v.hold.count) && v.hold.count >= 0 && v.hold.count <= 3);
+  }
   return v;
 }
 
@@ -135,14 +141,40 @@ function openLocalJournal(directory, { run: customRun, checkpoint = () => {} }, 
     fs.fsyncSync(dirfd); checkpoint('dir-synced', value);
   };
   const assertScope = () => assert.deepEqual(value.scope, scope(), 'journal belongs to a different boot/network/user namespace; manual review required');
-  const restore = ({ apply = true, name = value?.config.ingress.name } = {}) => {
+  const ensureHold = () => {
+    assertScope(); audit(value, operations(value), run);
+    if (!value.hold) {
+      value.schema = 2; value.hold = { id: randomBytes(12).toString('hex'), name: value.config.ingress.name, count: 0 }; save();
+    }
+    for (const [index, op] of holdOperations(value).entries()) {
+      value.hold.count = Math.max(value.hold.count, index + 1); save();
+      if (!present(value, op, run)) run(op.file, op.args);
+      assert.ok(present(value, op, run), 'restart guard installation failed');
+      checkpoint('hold-applied', value);
+    }
+  };
+  const removeHold = () => {
+    if (!value.hold) return;
+    const plan = holdOperations(value);
+    while (value.hold.count > 0) {
+      const op = plan[value.hold.count - 1];
+      if (present(value, op, run)) run(op.file, op.remove);
+      assert.ok(!present(value, op, run), 'restart guard removal failed');
+      checkpoint('hold-removed', value);
+      value.hold.count--; save();
+    }
+    value.hold = null; save();
+  };
+  const restore = ({ apply = true, name = value?.config.ingress.name, keepHold = false } = {}) => {
     assert.ok(value, 'no saved ingress journal; legacy/manual state is not adopted'); assertScope();
     assert.equal(name, value.config.ingress.name, 'ingress name does not match journal');
     const plan = operations(value);
     const count = value.count;
     // Audit the whole owned scope BEFORE touching anything, including shared interface settings.
     audit(value, plan, run);
-    if (!apply) return { mode: 'dry-run', stage: value.stage, operations: count, restoresPreviousForwarding: true };
+    if (!apply) return { mode: 'dry-run', stage: value.stage, operations: count,
+      restartGuardOperations: value.hold?.count ?? 0, restoresPreviousForwarding: !keepHold };
+    if (keepHold) ensureHold();
     value.stage = 'restoring'; save();
     while (value.count > 0) {
       const op = plan[value.count - 1];
@@ -153,25 +185,37 @@ function openLocalJournal(directory, { run: customRun, checkpoint = () => {} }, 
       checkpoint('removed', value);
       value.count--; save();
     }
+    if (!keepHold) removeHold();
     value.stage = 'released'; save();
-    return { mode: 'restored', operations: count, restoresPreviousForwarding: true };
+    return { mode: keepHold ? 'parked' : 'restored', operations: count, restoresPreviousForwarding: !keepHold };
   };
   return {
     release,
     // Mutating subprocesses inherit these descriptors: killing Node must not unlock
     // recovery while an already-running iptables/ip/sysctl can still change state.
     get lockDescriptors() { assert.ok(!released); return [lockfd, ...(coordination?.lockDescriptors ?? [])]; },
-    assertAvailable() { assert.ok(!value || value.stage === 'released', '--from-tun: unfinished journal; run clean-vpn-recover.mjs first'); },
-    begin(config) {
-      this.assertAvailable();
+    assertAvailable({ allowHold = false } = {}) {
+      assert.ok(!value || (value.stage === 'released' && (allowHold || !value.hold)),
+        '--from-tun: unfinished journal/guard; use --from-tun-restart-safe or clean-vpn-recover.mjs');
+    },
+    prepareRestart(name) {
+      if (!value || (value.stage === 'released' && !value.hold)) return;
+      restore({ name, keepHold: true }); // lock remains held across cleanup, preflight and new installation
+    },
+    begin(config, { restartSafe = false } = {}) {
+      this.assertAvailable({ allowHold: restartSafe });
+      if (value?.hold) assert.equal(value.hold.name, config.ingress.name);
+      const hold = value?.hold ?? null;
       const original = {}, links = {};
       for (const name of [config.ingress.name, config.tun]) {
         links[name] = identity(run, name); assert.ok(links[name], `missing interface ${name}`);
         original[name] = run('sysctl', ['-n', `net/ipv4/conf/${name}/rp_filter`]);
       }
-      value = { schema: 1, id: randomBytes(12).toString('hex'), scope: scope(),
+      value = { schema: restartSafe ? 2 : 1, id: randomBytes(12).toString('hex'), scope: scope(),
+        ...(restartSafe ? { hold } : {}),
         config: { ...config, address: config.address ?? '10.99.0.2' }, original, links, port: null, count: 0, stage: 'installing' };
       save();
+      if (restartSafe) ensureHold();
       return {
         tag: `cvpn-${value.id}`,
         apply(op) {
@@ -184,11 +228,34 @@ function openLocalJournal(directory, { run: customRun, checkpoint = () => {} }, 
           }
         },
         https(port) { assert.equal(value.port, null); value.port = port; save(); },
-        close() { restore(); release(); },
+        activate() {
+          assertScope(); const plan = operations(value);
+          assert.equal(value.stage, 'installing'); assert.equal(value.count, plan.length, 'incomplete ingress installation');
+          audit(value, plan, run);
+          for (const op of plan) {
+            if (op.file === 'sysctl') {
+              assert.equal(run('sysctl', ['-n', op.args[1].split('=')[0]]), '2');
+            } else assert.ok(present(value, op, run), 'missing ingress state; restart guard retained');
+          }
+          removeHold();
+        },
+        close() { restore({ keepHold: restartSafe }); release(); },
       };
     },
     restore,
   };
+}
+
+function holdOperations(v) {
+  if (!v.hold) return [];
+  // Existing conntrack DNAT may become local again when the new TUN gets its IPv4.
+  // Do not deliver those packets to an unrelated host listener during the transition.
+  return [['iptables', 'INPUT'], ['iptables', 'FORWARD'], ['ip6tables', 'FORWARD']].map(([file, chain]) => {
+    const spec = ['-i', v.hold.name, ...(chain === 'INPUT' ? ['-m', 'conntrack', '--ctstate', 'DNAT'] : []),
+      '-m', 'comment', '--comment', `cvpn-hold-${v.hold.id}`, '-j', 'DROP'];
+    return { file, args: ['-w', '5', '-t', 'filter', '-I', chain, '1', ...spec],
+      remove: ['-w', '5', '-t', 'filter', '-D', chain, ...spec] };
+  });
 }
 
 // Compare canonical rule tokens; iptables -S adds implicit protocol modules and /32 suffixes.
@@ -255,11 +322,11 @@ function audit(v, plan, run) {
     const link = identity(run, name);
     if (link) assert.deepEqual(link, v.links[name], `interface identity changed: ${name}`);
   }
-  const active = plan.slice(0, v.count);
+  const active = [...plan.slice(0, v.count), ...holdOperations(v).slice(0, v.hold?.count ?? 0)];
   for (const file of ['iptables', 'ip6tables']) for (const table of file === 'iptables' ? ['filter', 'nat'] : ['filter']) {
     const relevant = active.filter((op) => op.file === file && (op.args.includes('-t') ? op.args[op.args.indexOf('-t') + 1] : 'filter') === table);
     const allowed = relevant.map(firewallExpected);
-    const lines = firewallLines(run, { file, args: ['-t', table] }).filter((l) => /CVPN-INGRESS|cvpn-[a-f0-9]{24}/.test(l));
+    const lines = firewallLines(run, { file, args: ['-t', table] }).filter((l) => /CVPN-INGRESS|cvpn-(?:hold-)?[a-f0-9]{24}/.test(l));
     assert.ok(lines.every((l) => allowed.includes(l)) && new Set(lines).size === lines.length, `foreign/duplicate firewall state: ${file}/${table}`);
   }
   const allowed = active.filter((op) => op.file === 'ip' && op.args[1] === 'route').map(expectedRoute);

@@ -32,6 +32,7 @@ export const TEST_FILES = Object.freeze([
   'test-dns-vm.mjs',
   'test-ingress-routing.mjs',
   'test-ingress-journal.mjs',
+  'test-tun-bridge-startup.mjs',
 ]);
 
 export function parseOptions(args) {

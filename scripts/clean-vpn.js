@@ -3979,6 +3979,7 @@ function parseArgs(argv) {
     splitDefault: false,
     fromTun: null,
     fromTunStateDir: null,
+    fromTunRestartSafe: false,
     extIface: null,
     configPath: null,
     iceMode: null,
@@ -4068,6 +4069,9 @@ function parseArgs(argv) {
     else if (a.startsWith('--from-tun=')) {
       if (out.fromTun !== null) throw new Error('--from-tun указан повторно');
       out.fromTun = a.slice(a.indexOf('=') + 1);
+    } else if (a === '--from-tun-restart-safe') {
+      if (out.fromTunRestartSafe) throw new Error('--from-tun-restart-safe указан повторно');
+      out.fromTunRestartSafe = true;
     } else if (a.startsWith('--from-tun-state-dir=')) {
       if (out.fromTunStateDir !== null) throw new Error('--from-tun-state-dir указан повторно');
       out.fromTunStateDir = a.slice('--from-tun-state-dir='.length);
@@ -6031,7 +6035,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
  *   lazyConnectFilter?: (pkt: Buffer) => boolean,
  *   tcpWireRole?: 'server'|'client', // graceful FIN при keep-alive idle (inbound=server, outbound=client)
  * }} [bridgeOpts]
- * @returns {{ reconnectWire: (newEp: any) => void } | null}
+ * @returns {{ reconnectWire: (newEp: any) => void, ensureWire: () => Promise<void> } | null}
  */
 function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
   const kaRaw = bridgeOpts?.keepAliveSec;
@@ -6051,7 +6055,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     return null;
   }
 
-  const framer = new StreamFramer();
+  let framer = new StreamFramer();
   const local4 = bridgeOpts?.localTunIp
     ? parseDottedIPv4FourOctets(bridgeOpts.localTunIp)
     : null;
@@ -6342,7 +6346,10 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
       ep.send(pkt);
     } else if (transport === 'tcp') {
       if (!tcpFramedSend) {
-        tcpFramedSend = createTcpFramedBatchedWriter(ep, (err) => handleTcpWireFailure('write', err));
+        const writerEndpoint = ep;
+        tcpFramedSend = createTcpFramedBatchedWriter(ep, (err) => {
+          if (ep === writerEndpoint) handleTcpWireFailure('write', err);
+        });
       }
       tcpFramedSend(pkt);
     } else if (transport === 'udp-client') {
@@ -6677,6 +6684,8 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     dcHead = 0;
     dcPumpScheduled = false;
     tcpFramedSend = null;
+    // A new byte stream must not inherit a partial frame from an interrupted peer.
+    framer = new StreamFramer();
     attachWireHandlers();
     applyWireKeepalive();
     bumpActivity();
@@ -6711,6 +6720,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
         applyWireKeepalive();
         bumpActivity();
       } else {
+        framer = new StreamFramer();
         attachWireHandlers();
         applyWireKeepalive();
         bumpActivity();
@@ -6825,7 +6835,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     }
   });
 
-  return { reconnectWire };
+  return { reconnectWire, ensureWire };
 }
 
 /**
@@ -6852,7 +6862,7 @@ function withKeepalive(base, keepAliveSec, reconnectCooldownSec = 0) {
  * @param {number} keepAliveSec
  * @param {number} [reconnectCooldownSec]
  * @param {boolean} [eagerOnStart] — сразу connectFn (rtc-chrome / split-default + keep-alive на TLS TUN)
- * @returns {{ reconnectWire: (newEp: any) => void } | null}
+ * @returns {{ reconnectWire: (newEp: any) => void, ensureWire: () => Promise<void> } | null}
  */
 function shouldEagerOutboundTunConnect(transportType, splitDefault, keepAliveSec) {
   return (
@@ -6883,11 +6893,9 @@ function attachOutboundTunBridge(
         `[clean-vpn] ${transport}: eager connect при keep-alive=${ka}s (--split-default; TUN-транспорт до первого пакета с tun0)`,
       );
     }
-    void connectFn()
-      .then((ep) => api?.reconnectWire(ep))
-      .catch((e) => {
-        console.error(`[clean-vpn] eager connect [${transport}]:`, e?.message || e);
-      });
+    // Share the lazy connection gate: TUN traffic can arrive during eager startup.
+    // A separate connectFn() here races with ensureWire() and creates two sessions.
+    void api?.ensureWire();
   }
   return api;
 }
@@ -10232,12 +10240,23 @@ async function runExit({
 // === runClient: tun + маршруты, затем ветки по --type ===
 // =============================================================================
 
-async function runClient({
+async function runClient(options) {
+  let activate;
+  await runClientImpl({ ...options, ingressPrepared: (transaction) => { activate = () => transaction.activate(); } });
+  // All transport handlers/listeners have been installed. Lazy transports may still
+  // connect on the first packet; the verified TUN routing remains fail-closed meanwhile.
+  activate?.();
+  if (options.fromTunRestartSafe) console.log('[clean-vpn] --from-tun-restart-safe: data path installed; restart guard released');
+}
+
+async function runClientImpl({
   server,
   type,
   splitDefault,
   fromTun,
   fromTunStateDir,
+  fromTunRestartSafe,
+  ingressPrepared,
   clientLanSubnet,
   transparentTlsLanBind,
   boringTlsHelper,
@@ -10272,7 +10291,8 @@ async function runClient({
   signalingPskRequired,
 }) {
   const ingressJournal = fromTun ? openIngressJournal(fromTunStateDir ?? undefined) : null;
-  ingressJournal?.assertAvailable();
+  if (fromTunRestartSafe) ingressJournal.prepareRestart(fromTun);
+  else ingressJournal?.assertAvailable();
   const ingress = fromTun ? inspectIngress(fromTun) : null;
   const { host, port } = parseHostPort(server);
   const kaBridge = type === 'quic' || type === 'quic-ext' ? 0 : keepAliveSec ?? 0;
@@ -10359,8 +10379,9 @@ async function runClient({
 
   if (ingress) {
     const config = { ingress, tun: ifname, address: IP_CLIENT };
-    const transaction = ingressJournal.begin(config);
+    const transaction = ingressJournal.begin(config, { restartSafe: fromTunRestartSafe });
     routeCtx.ingressRouting = installIngressRouting({ ...config, tag: transaction.tag }, { transaction });
+    if (fromTunRestartSafe) ingressPrepared(transaction);
     console.log(`[clean-vpn] --from-tun=${fromTun}: внешний IPv4 через ${ifname}; host OUTPUT/default без изменений; forwarding IPv6 заблокирован`);
   }
 
@@ -11709,6 +11730,7 @@ async function main() {
   installCleanVpnFatalHandlers();
   const args = parseArgs(process.argv.slice(2));
   if (args.fromTunStateDir !== null && !args.fromTun) throw new Error('--from-tun-state-dir требует --from-tun');
+  if (args.fromTunRestartSafe && !args.fromTun) throw new Error('--from-tun-restart-safe требует --from-tun');
   if (process.platform !== 'linux') {
     console.error('Только Linux (tun-helper-linux).');
     process.exit(1);
@@ -11726,6 +11748,7 @@ async function main() {
 --split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 через uplink; /32 bypass к --server и (только webrtc/rtc-chrome/ws-chrome/udp+punch) к IP STUN/TURN из --config. Plain --type=udp STUN не резолвит. IPv6 не в туннеле. Проверка: curl -4 https://ifconfig.me
 --from-tun=IFACE: только client, вместо --split-default — внешний IPv4 с входного интерфейса (например wg0) через VPN; host OUTPUT/default без изменений. Нужен готовый шлюз с ip_forward=1. IPv6 forwarding этого входа блокируется. См. scripts/clean-vpn-from-tun.md (исключения, DNS, остановка/авария).
 --from-tun-state-dir=DIR: закрытый каталог журнала восстановления (0700); default /run/clean-vpn-ingress-NETNS. После аварии: node scripts/clean-vpn-recover.mjs --from-tun=IFACE (проверка), затем --apply (возврат прежнего forwarding).
+--from-tun-restart-safe: с --from-tun сохранять guard при штатной остановке и принимать незавершённый журнал при следующем запуске под блокировкой forwarding. Полное отключение — clean-vpn-recover.mjs --apply. Не reboot kill-switch.
 --client-lan-subnet=CIDR: только client + --split-default — LAN/USB gadget за клиентом (адрес сети, напр. 192.168.7.0/24): ip_forward, SNAT в ${IP_CLIENT} через tun, FORWARD; иначе устройства за клиентом не попадают под NAT exit.
 --transparent-tls-lan-bind=IPv4: с --type=transparent-tls или combo-tls + --client-lan-subnet — адрес этого шлюза для DNAT второго listener и PREROUTING (должен входить в CIDR), если автопоиск не нашёл нужный интерфейс (часто: на USB/etherнет нет адреса из 192.168.7.x).
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)

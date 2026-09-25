@@ -108,6 +108,7 @@ test('HTTPS partial-install failure is cleaned by the routing owner', () => {
 
 test('CLI rejects bad ingress flags before opening TUN or changing routing', () => {
   for (const flags of [['--from-tun='], ['--from-tun=lo'], ['--from-tun=wg0', '--split-default'],
+    ['--from-tun-restart-safe'], ['--from-tun=wg0', '--from-tun-restart-safe', '--from-tun-restart-safe'],
     ['--from-tun=wg0', '--from-tun=wg1'], ['--from-tun=wg0', '--client-lan-subnet=10.0.0.0/24']]) {
     const result = spawnSync(process.execPath, ['scripts/clean-vpn.js', '--role=client', '--type=tls', '--server=127.0.0.1:443', ...flags],
       { encoding: 'utf8', timeout: 5000 });

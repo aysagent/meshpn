@@ -44,13 +44,16 @@ export function runIngressRecoveryLab() {
     import {installIngressRouting} from './scripts/lib/ingress-routing.mjs';
     const config=${JSON.stringify(config)};
     const journal=openIngressJournal(${JSON.stringify(directory)}, {checkpoint(label,v) {
-      if (label === process.env.CUT_LABEL && v.stage === process.env.CUT_STAGE && v.count === Number(process.env.CUT_COUNT)) process.kill(process.pid,'SIGKILL');
+      if (label === process.env.CUT_LABEL && v.stage === process.env.CUT_STAGE && v.count === Number(process.env.CUT_COUNT)
+        && (!process.env.CUT_HOLD || v.hold?.count === Number(process.env.CUT_HOLD))) process.kill(process.pid,'SIGKILL');
     }});
     if (process.env.RESTORE === '1') journal.restore();
     else {
-      const transaction=journal.begin(config);
+      if (process.env.RESTART === '1') journal.prepareRestart('wg0');
+      const transaction=journal.begin(config, {restartSafe:process.env.RESTART === '1'});
       const owner=installIngressRouting({...config,tag:transaction.tag},{transaction});
       owner.installHttpsRedirect(19443);
+      if (process.env.RESTART === '1') transaction.activate();
       process.kill(process.pid,'SIGKILL');
     }
   `;
@@ -94,6 +97,39 @@ export function runIngressRecoveryLab() {
   assert.match(run('iptables', ['-S', 'INPUT']), /--dport 123/);
   run('iptables', ['-D', 'INPUT', '-p', 'udp', '--dport', '123', '-j', 'DROP']);
   assert.equal(snapshot(), before); checks.push('unrelated administrator rules preserved');
+  // Each interrupted restart must be repairable without releasing the temporary guard.
+  const safeStart = () => {
+    const j = open(); j.prepareRestart('wg0');
+    const tr = j.begin(config, { restartSafe: true });
+    const owner = installIngressRouting({ ...config, tag: tr.tag }, { transaction: tr });
+    owner.installHttpsRedirect(19443); tr.activate(); return owner;
+  };
+  safeStart().close();
+  for (const binary of ['iptables', 'ip6tables']) assert.match(run(binary, ['-S', 'FORWARD']), /cvpn-hold-/);
+  const parked = open();
+  try {
+    const dry = parked.restore({ apply: false });
+    assert.equal(dry.operations, 0); assert.equal(dry.restartGuardOperations, 3);
+    assert.equal(dry.restoresPreviousForwarding, true);
+  } finally { parked.release(); }
+  journal = open(); assert.throws(() => journal.assertAvailable(), /unfinished/); journal.release();
+  checks.push('safe stop parks IPv4/IPv6 guards and refuses ordinary startup');
+  const cuts = [
+    ['hold-applied', 'released', 0, 3], ['file-synced', 'released', 0, 3],
+    ['dir-synced', 'installing', 0, 3], ['applied', 'installing', 1, 3],
+    ['applied', 'installing', 20, 3], ['applied', 'installing', total, 3],
+    ['hold-removed', 'installing', total, 3], ['hold-removed', 'installing', total, 2], ['hold-removed', 'installing', total, 1],
+  ];
+  for (const [label, stage, count, hold] of cuts) {
+    crash({ RESTART: '1', CUT_LABEL: label, CUT_STAGE: stage, CUT_COUNT: String(count), CUT_HOLD: String(hold) });
+    safeStart().close();
+    for (const binary of ['iptables', 'ip6tables']) assert.match(run(binary, ['-S', 'FORWARD']), /cvpn-hold-/);
+  }
+  recover(); assert.equal(snapshot(), before);
+  checks.push('nine restart interruption points resume and preserve original baseline');
+  crash(); // schema 1 journal produced by a pre-restart-safe client
+  safeStart().close(); recover(); assert.equal(snapshot(), before);
+  checks.push('schema 1 crash journal can be adopted under guard, then explicitly released');
   crash(); ip('link', 'del', 'cvpntun');
   ip('link', 'add', 'cvpntun', 'type', 'veth', 'peer', 'name', 'newpeer');
   const replaced = snapshot(); assert.throws(recover, /identity changed/); assert.equal(snapshot(), replaced);
@@ -107,5 +143,5 @@ export function runIngressRecoveryLab() {
   fs.writeFileSync(path, '{broken'); assert.throws(() => open());
   fs.writeFileSync(path, saved); fs.chmodSync(path, 0o644); assert.throws(() => open(), /unsafe/);
   checks.push('old-boot/corrupt/insecure journal refused');
-  return { status: 'passed', checks, faultPoints: 24, hostNetworkChanged: false };
+  return { status: 'passed', checks, faultPoints: 24, restartFaultPoints: cuts.length, hostNetworkChanged: false };
 }

@@ -2,12 +2,14 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { once } from 'node:events';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { statSync, writeFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { assertBrowserNamespace } from './browser-soak.mjs';
 import { inspectIngress, installIngressRouting, INGRESS_TABLE, INGRESS_PRIORITY } from './ingress-routing.mjs';
 import { recoverIngress } from '../clean-vpn-recover.mjs';
+import { openIngressJournal } from './ingress-journal.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const run = (file, args) => execFileSync(file, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const ip = (...args) => run('ip', args);
@@ -25,7 +27,16 @@ const source = `
     server.listen(port, '0.0.0.0', resolve);
   }));
   servers.push(new Promise(resolve => {
-    const s = dgram.createSocket('udp4'); s.on('message', (b,r) => s.send(Buffer.from(tag + ':' + r.address), r.port, r.address)); s.bind(53, '93.184.216.34', resolve);
+    const s = dgram.createSocket('udp4'); s.on('message', (b,r) => {
+      // Leakage probes are one-way: receipt is the evidence, not reflected load.
+      if (b.toString() === 'restart-probe') { console.log('EGRESS_PROBE'); return; }
+      s.send(Buffer.from(tag + ':' + r.address), r.port, r.address);
+    }); s.bind(53, '93.184.216.34', resolve);
+  }));
+  servers.push(new Promise(resolve => {
+    const s = dgram.createSocket('udp6'); s.on('message', b => {
+      if (b.toString() === 'restart-probe') console.log('EGRESS_PROBE');
+    }); s.bind(53, '2606:4700::1111', resolve);
   }));
   servers.push(new Promise(resolve => net.createServer(s => s.end(tag)).listen({port:18080, host:'::', ipv6Only:true}, resolve)));
   if (process.env.INGRESS_CERT_DIR) servers.push(new Promise(resolve => {
@@ -54,23 +65,35 @@ async function ready(child) {
 }
 
 async function query(namespace, address = '93.184.216.34', port = 18080, udp = false, certificate = null) {
+  // TCG must also initialize OpenSSL while the gateway handles continuous probes.
+  // Keep a fixed bound, but do not use the short blocked-TCP budget for application TLS.
+  const timeoutMs = process.env.MESHPN_INGRESS_VM === '1' ? (certificate ? 12000 : 4000) : 900;
   const code = `
-    const finish = b => { console.log(String(b)); process.exit(0); };
-    setTimeout(() => finish('BLOCKED'), ${process.env.MESHPN_INGRESS_VM === '1' ? 4000 : 900});
+    const started=performance.now(); let connected=false, secured=false, reason='deadline';
+    const finish = b => {
+      if (String(b)==='BLOCKED' || process.env.MESHPN_INGRESS_VM==='1') console.error(JSON.stringify({
+        query:${JSON.stringify(`${namespace ?? 'host'} ${address}:${port}`)},connected,secured,
+        reason:String(b)==='BLOCKED'?reason:'reply',elapsedMs:Math.round(performance.now()-started)}));
+      console.log(String(b)); process.exit(0);
+    };
+    setTimeout(() => finish('BLOCKED'), ${timeoutMs});
     ${udp ? `const s = require('dgram').createSocket('udp4'); s.on('error',()=>finish('BLOCKED'));
       s.on('message',finish); s.send(Buffer.from('test'), ${port}, '${address}');`
     : `const s = require('${certificate ? 'tls' : 'net'}').connect({host:'${address}',port:${port},
       ${certificate ? `servername:'origin.test', ca:require('fs').readFileSync(${JSON.stringify(certificate)}), minVersion:'TLSv1.3',` : ''}});
-      s.on('error',()=>finish('BLOCKED')); s.on('data',finish);`}
+      s.on('connect',()=>{connected=true}); s.on('secureConnect',()=>{secured=true});
+      s.on('error',e=>{reason=e.code;finish('BLOCKED')}); s.on('data',finish);`}
   `;
   const child = spawn(namespace ? 'ip' : process.execPath,
     namespace ? ['netns', 'exec', namespace, process.execPath, '-e', code] : ['-e', code], { stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '', error = '';
   child.stdout.on('data', (b) => { output += b; }); child.stderr.on('data', (b) => { error += b; });
-  const [status] = await once(child, 'exit'); assert.equal(status, 0, error); return output.trim();
+  const [status] = await once(child, 'exit'); assert.equal(status, 0, error);
+  if (process.env.MESHPN_INGRESS_VM === '1' && error) console.error(error.trim());
+  return output.trim();
 }
 
-export async function runIngressRoutingLab({ transport = null, directory = null } = {}) {
+export async function runIngressRoutingLab({ transport = null, directory = null, restart = false } = {}) {
   assertBrowserNamespace();
   assert.deepEqual(JSON.parse(ip('-j', 'link', 'show')).map((l) => l.ifname), ['lo']);
   // /run/netns belongs solely to this private mount namespace, never to the host.
@@ -81,7 +104,25 @@ export async function runIngressRoutingLab({ transport = null, directory = null 
   run('sysctl', ['-w', 'net.ipv6.conf.default.forwarding=1']);
   run('sysctl', ['-w', 'net.ipv6.conf.default.accept_dad=0']);
   const children = [], servers = [], checks = [];
-  const check = (name, actual, expected) => { assert.equal(actual, expected, name); checks.push(name); };
+  const probePackets = { uplink: 0, tunnel: 0 };
+  const startProbe = async () => {
+    const child = spawn('ip', ['netns', 'exec', 'peer', process.execPath, '-e', `
+      const d = require('dgram'), a = d.createSocket('udp4'), b = d.createSocket('udp6');
+      a.on('error',()=>{}); b.on('error',()=>{});
+      const t = setInterval(() => {
+        a.send(Buffer.from('restart-probe'), 53, '93.184.216.34');
+        b.send(Buffer.from('restart-probe'), 53, '2606:4700::1111');
+      }, 5);
+      process.on('SIGTERM',()=>{clearInterval(t);a.close();b.close();});
+      console.log('READY');
+    `], { stdio: ['ignore', 'pipe', 'pipe'] });
+    children.push(child); await ready(child); return child;
+  };
+  const stopProbe = async (child) => { const ended = once(child, 'exit'); child.kill('SIGTERM'); await ended; await delay(50); };
+  const check = (name, actual, expected) => {
+    assert.equal(actual, expected, name); checks.push(name);
+    if (process.env.MESHPN_INGRESS_VM === '1') console.error(`INGRESS_CHECK ${name}`);
+  };
   async function link(name, iface, prefix, v6) {
     ip('netns', 'add', name);
     ip('link', 'add', iface, 'type', 'veth', 'peer', 'name', `${iface}p`);
@@ -140,10 +181,71 @@ export async function runIngressRoutingLab({ transport = null, directory = null 
         stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...(transport ? { INGRESS_CERT_DIR: directory } : {}) },
       });
       children.push(child); await ready(child);
+      let lines = '';
+      child.stdout.on('data', (b) => {
+        lines += b;
+        for (;;) { const at = lines.indexOf('\n'); if (at < 0) break;
+          if (lines.slice(0, at) === 'EGRESS_PROBE') probePackets[name]++;
+          lines = lines.slice(at + 1);
+        }
+      });
     }
     await listen('10.44.0.1', 443, 'gateway');
     check('baseline forwarded IPv4', await query('peer'), 'uplink:192.0.2.1');
     check('baseline forwarded IPv6', await query('peer', '2606:4700::1111'), 'uplink');
+    if (restart) {
+      const baseline = snapshot();
+      const config = { ingress, tun: 'cvpntun', address: '10.99.0.2' };
+      const start = () => {
+        const j = openIngressJournal(); j.prepareRestart('wg0');
+        const tr = j.begin(config, { restartSafe: true });
+        const owner = installIngressRouting({ ...config, tag: tr.tag }, { transaction: tr });
+        tr.activate(); return owner;
+      };
+      let owner = start();
+      const probe = await startProbe();
+      check('restart fixture active TUN path', await query('peer'), 'tunnel:10.99.0.2');
+      for (let cycle = 0; cycle < 3; cycle++) {
+        owner.close();
+        check(`park ${cycle} blocks IPv4`, await query('peer'), 'BLOCKED');
+        check(`park ${cycle} blocks IPv6`, await query('peer', '2606:4700::1111'), 'BLOCKED');
+        check(`park ${cycle} leaves host direct`, await query(null), 'uplink:192.0.2.1');
+        check(`park ${cycle} leaves other ingress direct`, await query('other'), 'uplink:192.0.2.1');
+        if (cycle === 0) {
+          const spec = ['PREROUTING', '-i', 'wg0', '-d', '93.184.216.34', '-p', 'tcp', '--dport', '18443',
+            '-j', 'DNAT', '--to-destination', '10.44.0.1:443'];
+          run('iptables', ['-t', 'nat', '-A', ...spec]);
+          check('park blocks conntrack DNAT delivery to a local listener', await query('peer', '93.184.216.34', 18443), 'BLOCKED');
+          check('park preserves non-DNAT local gateway service', await query('peer', '10.44.0.1', 443), 'gateway');
+          run('iptables', ['-t', 'nat', '-D', ...spec]);
+        }
+        owner = start();
+        check(`resume ${cycle} restores TUN path`, await query('peer'), 'tunnel:10.99.0.2');
+      }
+      owner.close();
+      for (const cut of [{ label: 'dir-synced', count: 0 }, { label: 'applied', count: 20 }, { label: 'hold-removed', hold: 1 }]) {
+        const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+          import {openIngressJournal} from './scripts/lib/ingress-journal.mjs';
+          import {installIngressRouting} from './scripts/lib/ingress-routing.mjs';
+          const cut=${JSON.stringify(cut)}, config=${JSON.stringify(config)};
+          const j=openIngressJournal(undefined,{checkpoint(label,v){
+            if (v.stage==='installing' && label===cut.label && (cut.count===undefined || v.count===cut.count)
+              && (cut.hold===undefined || v.hold?.count===cut.hold)) process.kill(process.pid,'SIGKILL');
+          }});
+          j.prepareRestart('wg0'); const tr=j.begin(config,{restartSafe:true});
+          installIngressRouting({...config,tag:tr.tag},{transaction:tr}); tr.activate(); process.exit(2);
+        `], { encoding: 'utf8', timeout: 10000 });
+        assert.equal(child.signal, 'SIGKILL', child.stderr);
+        assert.notEqual(await query('peer'), 'uplink:192.0.2.1');
+        owner = start(); check(`resume after ${cut.label} SIGKILL`, await query('peer'), 'tunnel:10.99.0.2'); owner.close();
+      }
+      await stopProbe(probe);
+      assert.ok(probePackets.tunnel > 0, 'continuous probe actually reached the tunnel endpoint');
+      check('no IPv4/IPv6 probe escaped via direct uplink during restarts', probePackets.uplink, 0);
+      check('explicit recovery after safe stop', recoverIngress(['--from-tun=wg0', '--apply']).mode, 'restored');
+      check('explicit recovery restores original baseline', snapshot(), baseline);
+      return { status: 'passed', checks, probePackets, hostNetworkChanged: false, actualTransportTested: false };
+    }
     if (transport) {
       // Replace the simulated TUN link with an ordinary transport network. The CLI creates real TUNs.
       ip('addr', 'del', '10.99.0.2/24', 'dev', 'cvpntun');
@@ -181,7 +283,7 @@ export async function runIngressRoutingLab({ transport = null, directory = null 
         exitType === 'tls' ? 'exit TLS 192.0.3.2:24443' : `exit ${exitType} `);
       await exit.started;
       const client = launch(null, ['--role=client', `--type=${transport}`, '--server=192.0.3.2:24443', '--from-tun=wg0',
-        '--tls-server-name=vpn.test', '--tls-client-sni=vpn.test', ...common], '--from-tun=wg0:');
+        '--from-tun-restart-safe', '--tls-server-name=vpn.test', '--tls-client-sni=vpn.test', ...common], 'restart guard released');
       await client.started;
       try {
         assert.throws(() => recoverIngress(['--from-tun=wg0', '--apply']), /locked/);
@@ -197,10 +299,12 @@ export async function runIngressRoutingLab({ transport = null, directory = null 
         check('actual CLI other ingress unaffected', await query('other'), 'uplink:192.0.2.1');
         check('actual CLI external UDP DNS through TUN', await query('peer', '93.184.216.34', 53, true), 'tunnel:10.99.0.2');
         check('actual CLI selected IPv6 blocked', await query('peer', '2606:4700::1111'), 'BLOCKED');
+        const probe = await startProbe();
         await stop(client.child, 'SIGTERM');
-        check('actual CLI graceful cleanup exact', snapshot(), baseline);
+        check('actual CLI safe stop keeps IPv4 blocked', await query('peer'), 'BLOCKED');
+        check('actual CLI safe stop keeps IPv6 blocked', await query('peer', '2606:4700::1111'), 'BLOCKED');
         const crashing = launch(null, ['--role=client', `--type=${transport}`, '--server=192.0.3.2:24443', '--from-tun=wg0',
-          '--tls-server-name=vpn.test', '--tls-client-sni=vpn.test', ...common], '--from-tun=wg0:');
+          '--from-tun-restart-safe', '--tls-server-name=vpn.test', '--tls-client-sni=vpn.test', ...common], 'restart guard released');
         await crashing.started;
         // Confirm complete transport/interception startup before killing the owner.
         for (let attempt = 0; attempt < 4; attempt++) { reply = await query('peer'); if (reply !== 'BLOCKED') break; }
@@ -213,12 +317,27 @@ export async function runIngressRoutingLab({ transport = null, directory = null 
         const crashed = snapshot();
         check('actual CLI recovery dry-run', recoverIngress(['--from-tun=wg0']).mode, 'dry-run');
         check('actual CLI dry-run leaves guard intact', snapshot(), crashed);
+        const resumed = launch(null, ['--role=client', `--type=${transport}`, '--server=192.0.3.2:24443', '--from-tun=wg0',
+          '--from-tun-restart-safe', '--tls-server-name=vpn.test', '--tls-client-sni=vpn.test', ...common], 'restart guard released');
+        await resumed.started;
+        for (let attempt = 0; attempt < 4; attempt++) { reply = await query('peer'); if (reply !== 'BLOCKED') break; }
+        check('actual CLI resumes after SIGKILL', reply, 'tunnel:10.99.0.2');
+        const resumedTls = await query('peer', '93.184.216.34', 443, false, cert);
+        if (resumedTls === 'BLOCKED') {
+          await stopProbe(probe);
+          console.error(`Diagnostic TLS without load: ${await query('peer', '93.184.216.34', 443, false, cert)}`);
+        }
+        check('actual CLI resumed application TLS', resumedTls,
+          ['combo-tls', 'transparent-tls'].includes(transport) ? 'tunnel:93.184.216.34' : 'tunnel:10.99.0.2');
+        await stop(resumed.child, 'SIGTERM'); await stopProbe(probe);
+        assert.ok(probePackets.tunnel > 0, 'continuous probe actually reached exit');
+        check('continuous IPv4/IPv6 restart probes never reach direct uplink', probePackets.uplink, 0);
         check('actual CLI recovery applies', recoverIngress(['--from-tun=wg0', '--apply']).mode, 'restored');
         check('actual CLI recovery restores baseline', snapshot(), baseline);
         check('actual CLI recovery restores previous direct path', await query('peer'), 'uplink:192.0.2.1');
         check('actual CLI recovery idempotent', recoverIngress(['--from-tun=wg0', '--apply']).operations, 0);
         await stop(exit.child, 'SIGTERM');
-        return { status: 'passed', checks, hostNetworkChanged: false, actualTransportTested: transport };
+        return { status: 'passed', checks, probePackets, hostNetworkChanged: false, actualTransportTested: transport };
       } catch (error) { throw new Error(`${error.stack}\nCLI logs:\n${logs.join('')}`, { cause: error }); }
     }
     const before = snapshot();

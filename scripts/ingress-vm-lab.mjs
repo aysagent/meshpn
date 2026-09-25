@@ -52,7 +52,7 @@ try {
   const abort = (reason) => { failure ??= reason; child.kill('SIGKILL'); };
   const interrupt = () => abort('interrupted');
   process.on('SIGINT', interrupt); process.on('SIGTERM', interrupt);
-  const timer = setTimeout(() => abort('VM deadline exceeded'), 900000);
+  const timer = setTimeout(() => abort('VM deadline exceeded'), 1800000);
   log.on('error', (error) => abort(error.message));
   for (const stream of [child.stdout, child.stderr]) stream.on('data', (b) => {
     bytes += b.length;
@@ -64,6 +64,7 @@ try {
       const end = pending.indexOf('\n'); if (end < 0) break;
       const line = pending.slice(0, end).trim(); pending = pending.slice(end + 1);
       if (line === 'INGRESS_VM_PASS') passed = true;
+      if (line.startsWith('INGRESS_VM_ERROR ')) abort('guest transport case failed; see serial.log');
       if (/INGRESS_VM_FAIL|Kernel panic/.test(line)) abort('guest failed');
       if (line.startsWith('# {"status":"passed"') || line.startsWith('{"status":"passed"')) {
         try { const evidence = JSON.parse(line.replace(/^# /, '')); report.transports.push(evidence); console.error(`VM ${evidence.actualTransportTested}: ${evidence.checks.length} checks passed`); }
