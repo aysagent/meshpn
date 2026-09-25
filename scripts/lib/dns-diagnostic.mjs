@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { inspectSystemDns, boundedInspectRead } from './dns-inspect.mjs';
 import { runCommand } from './transparent-acceptance.mjs';
+import { filterDnsmasqDiagnostic, summarizeDnsmasqDiagnostic } from './dnsmasq-config.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 export const DIAGNOSTIC_ENV = Object.freeze({ PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C',
@@ -59,6 +60,15 @@ export async function collectDnsDiagnostic({ probe = false } = {}, {
   find = systemExecutable, run = runCommand, budgetMs = 60000,
 } = {}) {
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), budgetMs);
+  // Nested link/property batches must share one limit, not multiply it to 16.
+  let active = 0;
+  const waiting = [];
+  const limited = async (fn) => {
+    if (active >= 4) await new Promise((resolve) => waiting.push(resolve));
+    else active++;
+    try { return await fn(); }
+    finally { const next = waiting.shift(); if (next) next(); else active--; }
+  };
   const report = { schema: 1, kind: 'clean-vpn-dns-diagnostic', timestamp: new Date().toISOString(),
     mode: probe ? 'inspection-with-dns-probes' : 'inspection-only', systemSettingsChanged: false,
     privacy: 'Contains IP addresses, interface names and DNS domains. No credentials, process argv or journals collected.',
@@ -68,17 +78,18 @@ export async function collectDnsDiagnostic({ probe = false } = {}, {
       'filtered-config-inventory-not-an-effective-config-parser', 'no-process-argv-or-VPN-role-detection',
       'non-systemd-PID1-system-bus-not-probed', 'limits-8-resolved-links-48-network-config-files',
     ] };
-  const command = async (name, args) => {
+  const command = (name, args) => limited(async () => {
     if (controller.signal.aborted) return { status: 'unavailable', reason: 'report-deadline' };
     try {
       const file = await find(name);
       if (!file) return { status: 'unavailable', reason: 'command-not-found' };
+      if (controller.signal.aborted) return { status: 'unavailable', reason: 'report-deadline' };
       const r = await run(file, args, { cwd: ROOT, env: { ...DIAGNOSTIC_ENV }, signal: controller.signal,
         timeoutMs: 3000, maxBytes: 8192 });
       return { status: r.reason === null && r.code === 0 ? 'ok' : 'unavailable', code: r.code, reason: r.reason,
         stdout: r.stdout, stderr: r.stderr, durationMs: r.durationMs };
     } catch (error) { return unavailable(error); }
-  };
+  });
   const file = async (path, filter) => {
     try {
       const data = filter(await read(path, 32768));
@@ -115,6 +126,7 @@ export async function collectDnsDiagnostic({ probe = false } = {}, {
     ];
     if (report.inspection.environment.pid1 === 'systemd') plan.push(['units', 'systemctl', ['--system', '--no-pager',
       'show', 'systemd-resolved.service', 'systemd-networkd.service', 'NetworkManager.service', 'resolvconf.service',
+      'dnsmasq.service',
       '-p', 'Id', '-p', 'LoadState', '-p', 'ActiveState', '-p', 'SubState', '-p', 'UnitFileState']]);
     await batch(plan, async ([id, name, args]) => { report.commands[id] = await command(name, args); });
 
@@ -152,6 +164,19 @@ export async function collectDnsDiagnostic({ probe = false } = {}, {
     report.configs = {};
     await batch(configs, async (path) => { report.configs[path] = await file(path, filterDiagnosticIni); });
     report.limitations.push('NetworkManager-connection-profiles-not-collected', 'at-most-16-network-dropin-directories-per-location');
+
+    // Inventory only fixed conventional locations. Includes and executable hooks
+    // are never followed; this is not the daemon's effective configuration.
+    report.dnsmasq = { configs: {}, directory: {}, effectiveConfigKnown: false };
+    const dnsmasqPaths = ['/etc/dnsmasq.conf'];
+    try {
+      const names = (await list('/etc/dnsmasq.d')).filter((n) => /^[\w.-]+$/.test(n) && !n.startsWith('.')).sort();
+      report.dnsmasq.directory = { count: names.length, truncated: names.length > 16 };
+      dnsmasqPaths.push(...names.slice(0, 16).map((n) => join('/etc/dnsmasq.d', n)));
+    } catch (error) { report.dnsmasq.directory = unavailable(error); }
+    await batch(dnsmasqPaths, async (path) => { report.dnsmasq.configs[path] = await file(path, filterDnsmasqDiagnostic); });
+    report.dnsmasq.assessment = summarizeDnsmasqDiagnostic(report.dnsmasq);
+    report.limitations.push('dnsmasq-fixed-location-inventory-not-effective-config-no-include-or-hook-execution');
 
     if (report.inspection.environment.pid1 !== 'systemd') report.resolved.status = 'not-probed-non-systemd';
     else {

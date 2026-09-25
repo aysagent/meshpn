@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { createResolvedBackend, validateResolvedSettings, resolvedMethod } from './lib/dns-resolved-backend.mjs';
 
 const baseline = () => ({ DNSEx: [[2, [192, 0, 2, 53], 53, '']], Domains: [['corp.test', false]], DefaultRoute: false });
@@ -104,4 +105,23 @@ test('D-Bus signatures preserve port, routeOnly and empty arrays without shell e
     ['SetLinkDNSEx', 'ia(iayqs)', '2', '1', '2', '4', '127', '0', '0', '1', '1053', '']);
   assert.deepEqual(resolvedMethod('Domains', [], 2), ['SetLinkDomains', 'ia(sb)', '2', '0']);
   assert.throws(() => resolvedMethod('RevertLink', [], 2));
+});
+
+const vps2 = JSON.parse(await readFile(new URL('./fixtures/dns-clients/vps2-resolved.json', import.meta.url), 'utf8'));
+const vps2Settings = () => structuredClone({ DNSEx: vps2.DNSEx, Domains: vps2.Domains, DefaultRoute: vps2.DefaultRoute });
+test('VPS2 observed cloud DNS settings round-trip in mock backend; no cloud-policy approval inferred', async () => {
+  assert.equal(vps2.internalNamesPolicy, 'unselected'); assert.equal(vps2.liveTakeoverAllowed, false);
+  const { state, backend } = await fixture(vps2Settings());
+  await backend.apply(1053);
+  assert.deepEqual(state.settings.DNSEx, [[2, [127, 0, 0, 1], 1053, '']]);
+  await backend.disable(); assert.deepEqual(state.settings, vps2Settings());
+});
+test('VPS2 DHCP-like reapplication during protection is a conflict, not automatic baseline overwrite', async () => {
+  const { state, backend } = await fixture(vps2Settings()); await backend.apply(1053);
+  state.settings = vps2Settings();
+  await assert.rejects(backend.verify(), /ownership conflict/);
+  const writes = state.writes.length;
+  await assert.rejects(backend.disable(), /ownership conflict/);
+  assert.equal(state.writes.length, writes); assert.ok(state.guard);
+  assert.deepEqual(state.settings, vps2Settings());
 });

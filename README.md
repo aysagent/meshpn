@@ -147,8 +147,10 @@ CLI использует форму **`--имя=значение`**; boolean-ф�
 <a id="clean-vpn-dns"></a>
 
 Граница готовности зафиксирована отдельно: [DNS v1 — конечный объём и критерии завершения](scripts/dns-v1.md).
-Первый релиз системной интеграции ограничен одним выбранным клиентом/backend;
-его готовность не требует поддержки всех Linux-менеджеров DNS.
+Целевые интеграции — `systemd-resolved` на VPS и `dnsmasq` на Radxa. Основные
+тестовые клиенты — **VPS 2 и Radxa**; VPS 1 не используется для живых клиентских
+испытаний. [Матрица и оставшиеся этапы](scripts/dns-client-matrix.md).
+Это ещё не готовые системные backend для установки на живой клиент.
 
 Есть [конфигурация DoH upstream/bootstrap](scripts/dns-upstream-config.md): согласованные TLS hostname / HTTP Host, port/path, проверенные публичные IP и CA, без открытого fallback. Проверить файл **без сети и изменения системы**:
 
@@ -170,9 +172,9 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 
 Следующий порядок работ:
 
-1. На настоящем Linux VPN-клиенте собрать [один диагностический отчёт](scripts/dns-inspect.md): `node scripts/dns-diagnostic.mjs --probe`, затем передать весь вывод. Настройки не меняются; `--probe` отправляет тестовые запросы для example.com через текущий DNS (возможно напрямую). Без флага запросов нет. Отчёт содержит IP/домены, но не собирает ключи/пароли. Прежний краткий `npm run dns:inspect` остаётся доступен без адресов/search domains и сетевых запросов. По отчёту проверить владельца настроек; для DNS v1 выбран только systemd-resolved, остальные менеджеры не становятся новыми обязательными этапами. Backend не выбирается автоматически по обычному файлу resolv.conf. Уже есть [offline lifecycle и изолированный системный DNS стенд](scripts/dns-lifecycle.md): `npm run dns:lifecycle`, `npm run test:dns-lifecycle-real`. Перед live opt-in нужны подтверждение владения настройками и исправный исходный DNS; LAN/IPv6/kill-switch остаются отдельной частью интеграции.
+1. На клиенте собрать [диагностику](scripts/dns-inspect.md): `node scripts/dns-diagnostic.mjs --probe`. Настройки не меняются; флаг разрешает запросы example.com через текущий DNS (возможно напрямую). Без флага запросов нет. Есть ограниченный инвентарь dnsmasq; includes/хуки не исполняются. Отчёт содержит IP/домены; backend не выбирается автоматически. Для VPS 2 и Radxa исходные отчёты уже получены; оставшиеся вопросы и проверки — в [матрице клиентов](scripts/dns-client-matrix.md). Прежний `npm run dns:inspect` остаётся краткой диагностикой без адресов. До live opt-in нужны подтверждение владельца, политика DNS и проверенный откат.
 2. [Лабораторный журнал и SIGKILL recovery](scripts/dns-lifecycle.md), [resolved backend](scripts/dns-resolved.md) и [отдельный процесс DNS-adapter](scripts/dns-adapter-process.md) уже проверены. [QEMU-лаборатория](scripts/dns-vm-lab.md):9/9 reboot/power-cut сценариев и4/4 boot-fault PASS; физический power-loss не моделируется. Отдельный [systemd PID1/lifecycle режим](scripts/dns-systemd-vm.md) тоже PASS:11 проверок в2 загрузках (`npm run dns:vm-lab -- --tools=... --kernel=... --resolved=... --case=systemd`). Это VM-only исполнитель, не установщик на клиент. Live DNS/firewall/TUN не меняются, resolved на клиенте автоматически не включается.
-3. [Подготовить один клиент и провести ограниченный24-часовой пилот](scripts/dns-pilot.md). После выполнения [критериев DNS v1](scripts/dns-v1.md) закрыть DNS-этап и вернуться к транспорту; готовность всей `combo-tls` оценивается отдельно.
+3. Подготовить оба backend по [матрице VPS 2/Radxa](scripts/dns-client-matrix.md), проверить cloud DNS/DHCP reapply и USB DHCP/DNS, затем [провести по одному ограниченному 24-часовому пилоту](scripts/dns-pilot.md). Первый [настоящий dnsmasq namespace smoke](scripts/dnsmasq-lab.md) уже есть, но это не host takeover/reboot recovery. После выполнения [критериев DNS v1](scripts/dns-v1.md) закрыть DNS-этап и вернуться к транспорту; готовность всей `combo-tls` оценивается отдельно.
 
 ---
 

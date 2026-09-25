@@ -1,0 +1,14 @@
+{
+  "kind": "observed-dns-baseline-not-deployment-config",
+  "backend": "systemd-resolved",
+  "systemdMajor": 249,
+  "interface": "eth0",
+  "manager": "systemd-networkd",
+  "addressSource": "dhcp",
+  "DNSEx": [[2, [10, 129, 0, 2], 0, ""]],
+  "Domains": [["ru-central1.internal", false], ["auto.internal", false]],
+  "DefaultRoute": true,
+  "effectiveNetworkConfigRead": false,
+  "internalNamesPolicy": "unselected",
+  "liveTakeoverAllowed": false
+}

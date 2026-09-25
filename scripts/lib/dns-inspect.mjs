@@ -118,15 +118,20 @@ export function analyzeDnsInspection(evidence) {
       'no-listener-or-upstream-health-check', 'no-VPN-routing-or-kill-switch-check', 'no-network-access'] };
 }
 
+export function inspectUnitState(result) {
+  if (result.reason || ![0, 4].includes(result.code)) return 'unknown';
+  const fields = Object.fromEntries(result.stdout.trim().split('\n').map((line) => line.split('=')));
+  if (fields.LoadState === 'not-found') return 'not-found';
+  if (result.code === 0 && ['loaded', 'masked'].includes(fields.LoadState)
+    && ['active', 'inactive', 'failed', 'activating', 'deactivating', 'reloading'].includes(fields.ActiveState)) return fields.ActiveState;
+  return 'unknown';
+}
+
 export async function inspectSystemDns({ read = boundedInspectRead, metadata = inspectResolverMetadata, probe = async (unit) => {
   // Minimal environment avoids inherited remote bus/proxy/Node settings and pagers.
-  const result = await runCommand('/usr/bin/systemctl', ['--system', '--no-pager', 'is-active', unit],
+  const result = await runCommand('/usr/bin/systemctl', ['--system', '--no-pager', 'show', unit, '-p', 'LoadState', '-p', 'ActiveState'],
     { env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C', SYSTEMD_PAGER: 'cat' }, timeoutMs: 2000, maxBytes: 4096 });
-  if (result.reason) return 'unknown';
-  const value = result.stdout.trim();
-  if (result.code === 0 && value === 'active') return value;
-  if (result.code === 3 && ['inactive', 'failed', 'activating', 'deactivating'].includes(value)) return value;
-  return 'unknown';
+  return inspectUnitState(result);
 } } = {}) {
   const evidence = { units: {} };
   await Promise.all(Object.entries(DNS_INSPECT_FILES).map(async ([key, path]) => {

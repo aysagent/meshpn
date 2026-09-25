@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { getEventListeners } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import { collectDnsDiagnostic, filterDiagnosticIni, parseDiagnosticArgs, DIAGNOSTIC_ENV } from './lib/dns-diagnostic.mjs';
 
 function fixture({ systemd = true, owner = true } = {}) {
@@ -107,7 +109,7 @@ test('deadline stops further commands and is not represented as a healthy diagno
 test('configuration and link inventories are bounded and truncation is explicit', async () => {
   const f = fixture(); f.deps.list = async () => Array.from({ length: 100 }, (_, n) => `${n}.network`);
   const r = await collectDnsDiagnostic({}, f.deps);
-  assert.equal(f.reads.filter((p) => p.endsWith('.network')).length, 48);
+  assert.equal(f.reads.filter((p) => p.includes('/systemd/network/') && p.endsWith('.network')).length, 48);
   assert.equal(r.configDirectories['/etc/systemd/network'].truncated, true);
 });
 
@@ -118,4 +120,66 @@ test('oversized filtered output and malformed bus data remain explicit failures'
   const r = await collectDnsDiagnostic({}, f.deps);
   assert.equal(r.configs['/etc/systemd/resolved.conf'].reason, 'filtered-output-limit');
   assert.equal(r.resolved.owner.reason, 'invalid-bus-json'); assert.equal(r.resolved.status, 'unavailable-owner');
+});
+
+test('nested eight-link inspection has at most four commands and releases abort listeners', async () => {
+  const f = fixture(), originalRun = f.deps.run;
+  let active = 0, peak = 0, peakListeners = 0, signal;
+  f.deps.run = async (file, args, options) => {
+    signal = options.signal;
+    const abort = () => {};
+    signal.addEventListener('abort', abort);
+    peak = Math.max(peak, ++active);
+    peakListeners = Math.max(peakListeners, getEventListeners(signal, 'abort').length);
+    try {
+      await delay(2);
+      const r = await originalRun(file, args, options);
+      if (file.endsWith('/ip') && args.includes('link')) r.stdout = JSON.stringify(
+        Array.from({ length: 8 }, (_, i) => ({ ifindex: i + 2, ifname: `eth${i}` })));
+      return r;
+    } finally { active--; signal.removeEventListener('abort', abort); }
+  };
+  const r = await collectDnsDiagnostic({}, f.deps);
+  assert.equal(r.resolved.links.length, 8);
+  assert.equal(peak, 4); assert.equal(peakListeners, 4);
+  assert.equal(active, 0); assert.equal(getEventListeners(signal, 'abort').length, 0);
+});
+
+test('deadline is checked after executable discovery, before spawning', async () => {
+  const f = fixture(); f.deps.find = async (name) => { await delay(10); return `/usr/bin/${name}`; };
+  const r = await collectDnsDiagnostic({}, { ...f.deps, budgetMs: 2 });
+  assert.equal(r.deadlineExceeded, true); assert.equal(f.calls.length, 0);
+});
+
+test('Radxa inventory flags duplicate DHCP DNS without reading arbitrary includes or secrets', async () => {
+  const f = fixture({ owner: false }), originalRead = f.deps.read, originalList = f.deps.list;
+  const config = await readFile(new URL('./fixtures/dns-clients/radxa-dnsmasq.conf', import.meta.url), 'utf8');
+  f.deps.list = async (path) => path === '/etc/dnsmasq.d' ? ['usb-gadget', '.hidden', '../shadow'] : originalList(path);
+  f.deps.read = async (path) => {
+    if (path === '/etc/dnsmasq.conf') return 'conf-dir=/private/not-followed\ndhcp-script=/private/secret-script\n';
+    if (path === '/etc/dnsmasq.d/usb-gadget') return config;
+    return originalRead(path);
+  };
+  const r = await collectDnsDiagnostic({}, f.deps);
+  assert.equal(r.dnsmasq.effectiveConfigKnown, false);
+  assert.equal(r.dnsmasq.assessment.backend, 'unselected');
+  assert.deepEqual(r.dnsmasq.assessment.upstreamsObserved, ['1.1.1.1', '8.8.8.8']);
+  assert.deepEqual(r.dnsmasq.assessment.dhcpDnsObserved, ['192.168.7.1', '1.1.1.1']);
+  assert.ok(r.dnsmasq.assessment.reasons.includes('multiple-dhcp-dns-declarations-in-inventory-review-effective-offer'));
+  assert.ok(!f.reads.some((p) => p.includes('/private/')));
+  assert.doesNotMatch(JSON.stringify(r.dnsmasq), /secret-script|private|shadow/);
+});
+
+test('dnsmasq inventory caps conventional files, marks inaccessible files and never follows includes', async () => {
+  const f = fixture();
+  f.deps.list = async (p) => p === '/etc/dnsmasq.d' ? Array.from({ length: 20 }, (_, i) => `usb-${i}.conf`) : [];
+  f.deps.read = async (p) => {
+    if (p.includes('dnsmasq.d')) throw Object.assign(new Error('private path'), { code: 'EACCES' });
+    return 'conf-file=/etc/shadow\n';
+  };
+  const r = await collectDnsDiagnostic({}, f.deps);
+  assert.equal(Object.keys(r.dnsmasq.configs).length, 17);
+  assert.equal(r.dnsmasq.directory.truncated, true);
+  assert.ok(r.dnsmasq.assessment.reasons.includes('config-read-incomplete'));
+  assert.doesNotMatch(JSON.stringify(r.dnsmasq), /shadow|private path/);
 });

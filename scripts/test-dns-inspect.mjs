@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtemp, writeFile, rm, mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { inspectSystemDns, inspectResolverMetadata, boundedInspectRead, DNS_INSPECT_FILES, DNS_INSPECT_UNITS } from './lib/dns-inspect.mjs';
+import { inspectSystemDns, inspectResolverMetadata, inspectUnitState, boundedInspectRead, DNS_INSPECT_FILES, DNS_INSPECT_UNITS } from './lib/dns-inspect.mjs';
 import { runCommand } from './lib/transparent-acceptance.mjs';
 
 function fixture(overrides = {}) {
@@ -12,6 +12,14 @@ function fixture(overrides = {}) {
   return { read: async (path) => data[Object.keys(DNS_INSPECT_FILES).find((key) => DNS_INSPECT_FILES[key] === path)],
     metadata: async () => ({ kind: 'regular', target: '/etc/resolv.conf' }), probe: async () => 'inactive' };
 }
+test('unit show distinguishes absent service from permission, transport and parse failures', () => {
+  const result = (stdout, code = 0, reason = null) => ({ stdout, code, reason });
+  for (const code of [0, 4]) assert.equal(inspectUnitState(result('LoadState=not-found\nActiveState=inactive\n', code)), 'not-found');
+  assert.equal(inspectUnitState(result('LoadState=loaded\nActiveState=active\n')), 'active');
+  assert.equal(inspectUnitState(result('LoadState=masked\nActiveState=inactive\n')), 'inactive');
+  for (const r of [result('', 1), result('inactive', 3), result('LoadState=not-found', 0, 'timeout'),
+    result('LoadState=error\nActiveState=inactive\n'), result('ActiveState=active\n')]) assert.equal(inspectUnitState(r), 'unknown');
+});
 test('regular resolv.conf and inactive units never authorize unmanaged backend', async () => {
   const r = await inspectSystemDns(fixture()); assert.equal(r.backend, 'unselected');
   assert.deepEqual(r.assessment.candidates, []); assert.equal(r.assessment.requiresReview, true);

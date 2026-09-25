@@ -10,6 +10,49 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-26: VPS 2 и Radxa, dnsmasq-стенд
+
+**Актуализация DNS, 2026-09-26:** пользователь изменил границу «один клиент»:
+нужны VPS и Radxa; основные живые тестовые клиенты теперь VPS 2 и Radxa,
+VPS 1 исключён из клиентских пилотов. [Матрица](../scripts/dns-client-matrix.md)
+и обновлённые dns-v1/dns-pilot имеют приоритет над прежними записями об одном
+resolved-клиенте ниже. Никакие живые настройки не менялись.
+
+VPS 2: resolved 249/networkd, DHCP, DNS 10.129.0.2, cloud search domains;
+effective network config был EACCES. Политика внутренних имён не выбрана.
+Radxa: dnsmasq для USB gadget с no-resolv и явными 1.1.1.1/8.8.8.8; одновременно
+обслуживает сам хост. Dangling resolved symlink не означает неработающий DNS.
+Обе DHCP DNS-декларации сохранены в исходном fixture; нормализация в lab явная.
+Нет разрешения автоматически включать resolved, менять symlink или direct exemptions.
+
+Реализованы общий лимит 4 команд диагностики (вложенные batches прежде давали
+до 16 AbortSignal listeners), повторная проверка deadline после find и снятие
+неоднозначности отсутствующей службы через LoadState. Добавлен ограниченный
+фильтр dnsmasq в обычный диагностический отчёт: fixed paths, без include traversal,
+argv, hook execution и vendor DHCP values; это inventory, не effective config.
+
+Добавлен [dnsmasq namespace smoke](../scripts/dnsmasq-lab.md): настоящий dnsmasq
+2.90 + настоящий exit adapter/relay/DoH. Проверены 14 сценариев: baseline UDP/TCP,
+managed A/AAAA, exit down/recovery, daemon SIGKILL/restart, adapter down, ноль
+baseline queries, точное восстановление временного baseline. UDP при мёртвом
+adapter закончился client deadline, не DNS SERVFAIL. Только namespace-local
+IP aliases и dummy usb0. Нет DHCP lease exchange, host NSS takeover, pcap,
+durable dnsmasq journal или reboot. Это не готовая live интеграция Radxa/arm64.
+VPS 2 пока покрыт mock baseline round-trip и DHCP-like ownership conflict,
+не настоящим networkd/DHCP reapply. Следом — USB peer/DHCP и resolved 249,
+затем transactional backend/guard/recovery и клиентские units.
+
+Проверки этого этапа: 56 целевых unit/CLI тестов PASS; настоящий dnsmasq smoke
+14/14 PASS и отдельный real-test PASS. Inspection-only сбор на локальном хосте
+не изменил resolv.conf и не отправлял DNS probes. Окончательный Node acceptance:
+1101 PASS, 0 failed/skipped (`/var/tmp/meshpn-acceptance-wbONRG/report.json`);
+браузеры и VM в этом изменении не запускались. Первый preflight без указания
+локального Go завершился spawn-error (`/var/tmp/meshpn-acceptance-tbdAfF/report.json`),
+затем с MESHPN_ECH_GO пройдены 1100 тестов до добавления последнего CLI regression
+(`/var/tmp/meshpn-acceptance-w8wkp7/report.json`) и финальные 1101. В первом целевом
+прогоне исправлена проверка подсчёта network-файлов: новые dnsmasq fixtures с
+суффиксом .network не должны учитываться как systemd network inventory.
+
 ### Дополнение 2026-09-25: выбор входного интерфейса
 
 Добавлен пилотный `--from-tun=wg0`, вместо `--split-default` и независимо от транспорта. Общая реализация — `scripts/lib/ingress-routing.mjs`: policy routing по `iif`, SNAT через собственный TUN, scoped FORWARD guard и блокировка IPv6 forwarding выбранного входа. Host OUTPUT/default и DNS хоста не меняются. Нужен уже настроенный шлюз с `ip_forward=1`; частные/подключённые сети остаются исключениями.

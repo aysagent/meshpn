@@ -1,5 +1,13 @@
 # DNS: конфиденциальность, bootstrap и публичные имена
 
+Актуализация 2026-09-26: [матрица клиентов](../scripts/dns-client-matrix.md)
+заменяет прежнюю границу «один клиент/resolved». Основные испытания — VPS 2 и
+Radxa; VPS 1 не используется как живой тестовый client. Два целевых backend:
+resolved и dnsmasq, общий exit adapter. Есть первый настоящий dnsmasq namespace
+smoke, но нет live takeover/durable recovery для dnsmasq. Исторические записи
+ниже отражают последовательность разработки; текущий статус VM и конечный
+чек-лист — в [DNS v1](../scripts/dns-v1.md).
+
 План по обсуждению 2026-09-23. Первый explicit-loopback DoH стенд **реализован**:
 [запуск и границы](../scripts/transparent-dns-lab.md), разделы 32–33 context.
 Дополнительно реализованы независимый namespace pcap и bounded DNS soak.
