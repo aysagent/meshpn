@@ -7,6 +7,7 @@ import { statSync, writeFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { assertBrowserNamespace } from './browser-soak.mjs';
 import { inspectIngress, installIngressRouting, INGRESS_TABLE, INGRESS_PRIORITY } from './ingress-routing.mjs';
+import { recoverIngress } from '../clean-vpn-recover.mjs';
 
 const run = (file, args) => execFileSync(file, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const ip = (...args) => run('ip', args);
@@ -183,6 +184,8 @@ export async function runIngressRoutingLab({ transport = null, directory = null 
         '--tls-server-name=vpn.test', '--tls-client-sni=vpn.test', ...common], '--from-tun=wg0:');
       await client.started;
       try {
+        assert.throws(() => recoverIngress(['--from-tun=wg0', '--apply']), /locked/);
+        checks.push('actual CLI recovery refuses live owner');
         let reply;
         for (let attempt = 0; attempt < 4; attempt++) { reply = await query('peer'); if (reply !== 'BLOCKED') break; }
         check(`${transport} actual TUN data plane`, reply, 'tunnel:10.99.0.2');
@@ -207,6 +210,13 @@ export async function runIngressRoutingLab({ transport = null, directory = null 
         check('actual CLI SIGKILL leaves HTTPS blocked', await query('peer', '93.184.216.34', 443, false, cert), 'BLOCKED');
         check('actual CLI SIGKILL leaves IPv6 guard', await query('peer', '2606:4700::1111'), 'BLOCKED');
         check('actual CLI SIGKILL does not affect host', await query(null), 'uplink:192.0.2.1');
+        const crashed = snapshot();
+        check('actual CLI recovery dry-run', recoverIngress(['--from-tun=wg0']).mode, 'dry-run');
+        check('actual CLI dry-run leaves guard intact', snapshot(), crashed);
+        check('actual CLI recovery applies', recoverIngress(['--from-tun=wg0', '--apply']).mode, 'restored');
+        check('actual CLI recovery restores baseline', snapshot(), baseline);
+        check('actual CLI recovery restores previous direct path', await query('peer'), 'uplink:192.0.2.1');
+        check('actual CLI recovery idempotent', recoverIngress(['--from-tun=wg0', '--apply']).operations, 0);
         await stop(exit.child, 'SIGTERM');
         return { status: 'passed', checks, hostNetworkChanged: false, actualTransportTested: transport };
       } catch (error) { throw new Error(`${error.stack}\nCLI logs:\n${logs.join('')}`, { cause: error }); }

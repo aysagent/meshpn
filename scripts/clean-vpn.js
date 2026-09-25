@@ -141,6 +141,7 @@ import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
 import dns from 'dns/promises';
 import { validateFromTun, inspectIngress, installIngressRouting } from './lib/ingress-routing.mjs';
+import { openIngressJournal } from './lib/ingress-journal.mjs';
 import {
   extractFirstClientHelloBody,
   ja3DebugFromTcpBuf,
@@ -3977,6 +3978,7 @@ function parseArgs(argv) {
     type: null,
     splitDefault: false,
     fromTun: null,
+    fromTunStateDir: null,
     extIface: null,
     configPath: null,
     iceMode: null,
@@ -4066,6 +4068,10 @@ function parseArgs(argv) {
     else if (a.startsWith('--from-tun=')) {
       if (out.fromTun !== null) throw new Error('--from-tun указан повторно');
       out.fromTun = a.slice(a.indexOf('=') + 1);
+    } else if (a.startsWith('--from-tun-state-dir=')) {
+      if (out.fromTunStateDir !== null) throw new Error('--from-tun-state-dir указан повторно');
+      out.fromTunStateDir = a.slice('--from-tun-state-dir='.length);
+      if (!out.fromTunStateDir) throw new Error('--from-tun-state-dir требует абсолютный путь');
     } else if (a === '--signaling' || a === '--signalling') out.signaling = true;
     else if (a === '--ws-server') out.wsServer = true;
     else if (a === '--punch') out.punch = true;
@@ -10231,6 +10237,7 @@ async function runClient({
   type,
   splitDefault,
   fromTun,
+  fromTunStateDir,
   clientLanSubnet,
   transparentTlsLanBind,
   boringTlsHelper,
@@ -10264,6 +10271,8 @@ async function runClient({
   allowHostCandidates,
   signalingPskRequired,
 }) {
+  const ingressJournal = fromTun ? openIngressJournal(fromTunStateDir ?? undefined) : null;
+  ingressJournal?.assertAvailable();
   const ingress = fromTun ? inspectIngress(fromTun) : null;
   const { host, port } = parseHostPort(server);
   const kaBridge = type === 'quic' || type === 'quic-ext' ? 0 : keepAliveSec ?? 0;
@@ -10349,7 +10358,9 @@ async function runClient({
   });
 
   if (ingress) {
-    routeCtx.ingressRouting = installIngressRouting({ ingress, tun: ifname, address: IP_CLIENT });
+    const config = { ingress, tun: ifname, address: IP_CLIENT };
+    const transaction = ingressJournal.begin(config);
+    routeCtx.ingressRouting = installIngressRouting({ ...config, tag: transaction.tag }, { transaction });
     console.log(`[clean-vpn] --from-tun=${fromTun}: внешний IPv4 через ${ifname}; host OUTPUT/default без изменений; forwarding IPv6 заблокирован`);
   }
 
@@ -11697,6 +11708,7 @@ async function runClient({
 async function main() {
   installCleanVpnFatalHandlers();
   const args = parseArgs(process.argv.slice(2));
+  if (args.fromTunStateDir !== null && !args.fromTun) throw new Error('--from-tun-state-dir требует --from-tun');
   if (process.platform !== 'linux') {
     console.error('Только Linux (tun-helper-linux).');
     process.exit(1);
@@ -11713,6 +11725,7 @@ async function main() {
 --type: tcp (socket alias) | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls | boring-tls | transparent-tls | combo-tls
 --split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 через uplink; /32 bypass к --server и (только webrtc/rtc-chrome/ws-chrome/udp+punch) к IP STUN/TURN из --config. Plain --type=udp STUN не резолвит. IPv6 не в туннеле. Проверка: curl -4 https://ifconfig.me
 --from-tun=IFACE: только client, вместо --split-default — внешний IPv4 с входного интерфейса (например wg0) через VPN; host OUTPUT/default без изменений. Нужен готовый шлюз с ip_forward=1. IPv6 forwarding этого входа блокируется. См. scripts/clean-vpn-from-tun.md (исключения, DNS, остановка/авария).
+--from-tun-state-dir=DIR: закрытый каталог журнала восстановления (0700); default /run/clean-vpn-ingress-NETNS. После аварии: node scripts/clean-vpn-recover.mjs --from-tun=IFACE (проверка), затем --apply (возврат прежнего forwarding).
 --client-lan-subnet=CIDR: только client + --split-default — LAN/USB gadget за клиентом (адрес сети, напр. 192.168.7.0/24): ip_forward, SNAT в ${IP_CLIENT} через tun, FORWARD; иначе устройства за клиентом не попадают под NAT exit.
 --transparent-tls-lan-bind=IPv4: с --type=transparent-tls или combo-tls + --client-lan-subnet — адрес этого шлюза для DNAT второго listener и PREROUTING (должен входить в CIDR), если автопоиск не нашёл нужный интерфейс (часто: на USB/etherнет нет адреса из 192.168.7.x).
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)

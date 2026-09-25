@@ -58,18 +58,26 @@ export function inspectIngress(name, { run = nativeRun } = {}) {
 }
 
 /** Transactions delete only successfully installed, exact rules; cleanup errors are not swallowed. */
-export function installIngressRouting({ ingress, tun, address = '10.99.0.2' }, { run = nativeRun } = {}) {
+export function installIngressRouting({ ingress, tun, address = '10.99.0.2', tag = TAG }, { run = nativeRun, transaction } = {}) {
   if (ingress.name === tun) throw new Error('incoming interface must differ from clean-vpn TUN');
   const undo = [];
   let closed = false;
-  const apply = (file, args, remove) => { run(file, args); undo.unshift(() => run(file, remove)); };
+  const apply = (file, args, remove) => {
+    if (transaction) transaction.apply({ file, args, remove }); else run(file, args);
+    undo.unshift(() => run(file, remove));
+  };
   const ip = (args, remove) => apply('ip', args, remove);
-  const rule = (binary, table, chain, spec, first = false) => apply(binary,
+  const rule = (binary, table, chain, spec, first = false) => {
+    spec = spec.map((s) => s === TAG ? tag : s);
+    if (tag !== TAG && !spec.includes('--comment')) spec = ['-m', 'comment', '--comment', tag, ...spec];
+    apply(binary,
     ['-w', '5', '-t', table, first ? '-I' : '-A', chain, ...(first ? ['1'] : []), ...spec],
     ['-w', '5', '-t', table, '-D', chain, ...spec]);
+  };
   const chain = (binary) => apply(binary, ['-w', '5', '-N', CHAIN], ['-w', '5', '-X', CHAIN]);
   const close = () => {
     if (closed) return;
+    if (transaction) { transaction.close(); closed = true; return; }
     const errors = [];
     // Do not remove the safety rules if route/NAT cleanup has failed.
     while (undo.length) {
@@ -119,6 +127,7 @@ export function installIngressRouting({ ingress, tun, address = '10.99.0.2' }, {
     /** Call only after the relay is listening on the private TUN IPv4 address. */
     installHttpsRedirect(port) {
       if (closed || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('invalid ingress HTTPS redirect');
+      transaction?.https(port);
       // A dedicated chain gives both routing and interception identical bypass semantics.
       const natChain = `${CHAIN}-HTTPS`;
       // After TUN disappears, old conntrack DNAT entries must not escape via the private-net bypass.
