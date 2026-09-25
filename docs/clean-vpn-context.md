@@ -10,6 +10,37 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-26: реальный USB peer и DHCP
+
+Рабочий процесс согласован: **никакого SSH со стороны помощника**. Здесь —
+изолированные стенды; на VPS 2/Radxa пользователь сам запускает подготовленные
+скрипты и присылает отчёты. Живые изменения не подразумеваются диагностикой.
+
+`dnsmasq-lab.mjs --usb` добавляет отдельный network namespace с veth-клиентом,
+настоящий UDP DHCP DISCOVER/OFFER/REQUEST/ACK и DNS на полученный из ACK адрес.
+36 проверок PASS с dnsmasq 2.90: шесть DORA обменов, диапазон/шлюз/lease,
+локальное имя USB-клиента, managed A/AAAA UDP/TCP, отказ exit/adapter,
+SIGKILL/restart dnsmasq, сохранение lease и явное восстановление baseline.
+DHCP и локальное имя остаются доступны при отказе адаптера. Это ограниченный
+DHCP test subset, не системный клиент: T1/T2 renewal и DHCPv6 не проверены.
+
+В данной версии dnsmasq исходные две option 6 реально дают клиенту 1.1.1.1.
+После переключения конфигурации старый клиент сохраняет этот DNS и блокируется
+guard до нового DHCP обмена. Бесшовная миграция старых leases не заявляется.
+IPv4/IPv6 UDP/TCP direct DNS: positive controls до, блокировка во время и
+восстановление после защиты. Пока проверена **INPUT**, поскольку фиктивные
+upstream IP принадлежат namespace шлюза. FORWARD rules установлены, но ещё
+не проверены транзитным трафиком; нужен отдельный внешний namespace.
+
+10 unit/CLI checks и оба real tests (14 basic +36 USB checks) PASS.
+Node acceptance: **1106/1106 PASS**, без skips,
+`/var/tmp/meshpn-acceptance-k1Fu5j/report.json`; браузеры/VM здесь не повторялись.
+При разработке исправлены bootstrap route до DHCP lease (OFFER не доходил
+без обратного маршрута) и неверный ожидаемый AAAA hex в тесте.
+Host DNS/firewall/routes не менялись. Нет durable dnsmasq journal, host NSS
+takeover, independent pcap, живого Radxa/arm64 или resolved 249 integration.
+DNS v1 не закрыт: далее FORWARD, затем ownership/recovery и клиентский пилот.
+
 ### Дополнение 2026-09-26: VPS 2 и Radxa, dnsmasq-стенд
 
 **Актуализация DNS, 2026-09-26:** пользователь изменил границу «один клиент»:

@@ -11,8 +11,9 @@ import { sentinel } from './dns-lifecycle-lab.mjs';
 import { queryLabDns } from './transparent-dns-lab.mjs';
 import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
 import { compileRadxaDnsmasqLabConfig } from './dnsmasq-lab-config.mjs';
+import { startDnsmasqUsbPeer } from './dnsmasq-usb-peer.mjs';
 
-export async function runDnsmasqLab(directory, executable) {
+export async function runDnsmasqLab(directory, executable, { usb = false } = {}) {
   await assertDnsMountNamespace();
   assert.ok(executable?.startsWith('/'), 'absolute MESHPN_DNSMASQ executable required');
   const links = JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout);
@@ -22,9 +23,10 @@ export async function runDnsmasqLab(directory, executable) {
   const env = { PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C' };
   const version = (await exec(executable, ['--version'], { env })).stdout.split('\n')[0];
   const executableSha256 = createHash('sha256').update(await readFile(executable)).digest('hex');
-  let lab, daemon;
+  let lab, daemon, peer, daemonDiagnostics = '';
   const observers = [], checks = [];
-  const configPath = join(directory, 'dnsmasq.conf'), listenPort = 1054;
+  const dhcp = [];
+  const configPath = join(directory, 'dnsmasq.conf'), listenPort = usb ? 53 : 1054;
   const hits = () => observers.reduce((n, s) => n + s.hits(), 0);
   const daemonArgs = ['--no-daemon', `--conf-file=${configPath}`, '--bind-interfaces', '--no-hosts',
     '--cache-size=0', `--port=${listenPort}`, '--pid-file=', '--log-facility=-', `--dhcp-leasefile=${join(directory, 'leases')}`];
@@ -32,11 +34,24 @@ export async function runDnsmasqLab(directory, executable) {
     await writeFile(configPath, contents, { mode: 0o600 }); // exclusively owned temporary fixture
     await exec(executable, [...daemonArgs, '--test'], { env });
     daemon = child(executable, daemonArgs, { env });
+    daemonDiagnostics = '';
+    daemon.proc.stderr.on('data', (part) => { daemonDiagnostics = (daemonDiagnostics + part).slice(-4096); });
     await daemon.waitFor(/using nameserver/, 5000);
   }
   async function stop(signal) { await daemon?.stop(signal); daemon = undefined; }
   let sequence = 0;
   async function lookup(label, expected, tcp = false, type = 1) {
+    if (peer) {
+      const result = await peer.lookup({ tcp, type });
+      assert.equal(result.outcome, 'dns-response', label);
+      assert.equal(result.rcode, expected === null ? 2 : 0, label);
+      if (expected !== null) {
+        assert.ok(result.answer, label);
+        assert.equal(result.answer, type === 1 ? Buffer.from(expected.split('.').map(Number)).toString('hex')
+          : Buffer.from([0x20, 1, 0x0d, 0xb8, ...Array(11).fill(0), 0x12]).toString('hex'), label);
+      }
+      checks.push(label); return;
+    }
     const query = makeDnsQuery(`dnsmasq-${++sequence}.test`, type);
     const reply = await queryLabDns(listenPort, query, { tcp, timeoutMs: 4000 });
     const parsed = validateDnsResponse(reply, query);
@@ -49,37 +64,106 @@ export async function runDnsmasqLab(directory, executable) {
     }
     checks.push(label);
   }
+  async function lease(label, managed) {
+    const result = await peer.acquire();
+    assert.deepEqual(result.stages, ['DISCOVER', 'OFFER', 'REQUEST', 'ACK']);
+    if (managed) assert.deepEqual(result.ack.dns, ['192.168.7.1']);
+    dhcp.push({ label, ...result }); checks.push(label); return result.ack;
+  }
+  async function usbGuard(enabled) {
+    if (!peer) return;
+    for (const tool of ['iptables', 'ip6tables']) for (const protocol of ['udp', 'tcp']) {
+      await exec(tool, ['-w', '2', enabled ? '-A' : '-D', 'INPUT', '-i', 'usb0',
+        ...(tool === 'iptables' ? ['!', '-d', '192.168.7.1'] : []),
+        '-p', protocol, '--dport', '53', '-j', 'REJECT']);
+      await exec(tool, ['-w', '2', enabled ? '-A' : '-D', 'FORWARD', '-i', 'usb0',
+        '-p', protocol, '--dport', '53', '-j', 'REJECT']);
+    }
+  }
   try {
     lab = await startAdapterSoakLab({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 1000 }, directory);
     // Baseline "public" resolvers are only local aliases in a NIC-less namespace.
+    if (usb) {
+      await exec('ip', ['link', 'add', 'upstreamfixture', 'type', 'dummy']);
+      await exec('ip', ['link', 'set', 'upstreamfixture', 'up']);
+    }
     for (const address of ['1.1.1.1', '8.8.8.8']) {
-      await exec('ip', ['addr', 'add', `${address}/32`, 'dev', 'lo']);
+      await exec('ip', ['addr', 'add', `${address}/32`, 'dev', usb ? 'upstreamfixture' : 'lo']);
       observers.push(await sentinel(address));
     }
-    await exec('ip', ['link', 'add', 'usb0', 'type', 'dummy']);
-    await exec('ip', ['addr', 'add', '192.168.7.1/24', 'dev', 'usb0']);
-    await exec('ip', ['link', 'set', 'usb0', 'up']);
+    if (usb) {
+      await exec('ip', ['-6', 'addr', 'add', '2001:db8:53::1/128', 'dev', 'upstreamfixture', 'nodad']);
+      observers.push(await sentinel('2001:db8:53::1'));
+    }
+    if (usb) peer = await startDnsmasqUsbPeer();
+    else {
+      await exec('ip', ['link', 'add', 'usb0', 'type', 'dummy']);
+      await exec('ip', ['addr', 'add', '192.168.7.1/24', 'dev', 'usb0']);
+      await exec('ip', ['link', 'set', 'usb0', 'up']);
+    }
     const plan = compileRadxaDnsmasqLabConfig(baseline, { port: lab.adapter.port, normalizeDhcpDns: true });
     await start(baseline);
+    if (peer) {
+      await lease('baseline-dhcp-dora', false);
+      for (const family of [4, 6]) for (const tcp of [false, true]) {
+        const r = await peer.lookup({ direct: true, tcp, family });
+        assert.equal(r.rcode, 0); assert.equal(r.answer, 'cb007108');
+        checks.push(`usb-direct-ipv${family}-${tcp ? 'tcp' : 'udp'}-positive-control`);
+      }
+    }
     await lookup('baseline-udp-positive-control', '203.0.113.8');
     await lookup('baseline-tcp-positive-control', '203.0.113.8', true);
     assert.ok(hits() >= 2); await stop();
     // Config switch/restart is fixture-owned, not a crash-safe host transaction.
-    const before = hits(); await start(plan.managed);
+    const before = hits(); await usbGuard(true); await start(plan.managed);
+    if (peer) {
+      // This dnsmasq fixture advertises 1.1.1.1 in the original duplicate option 6.
+      // DHCP clients do not learn the changed option until another exchange.
+      assert.deepEqual(dhcp[0].ack.dns, ['1.1.1.1'], 'baseline duplicate option behavior changed; review fixture');
+      const stale = await peer.lookup();
+      assert.ok(['client-deadline', 'transport-error'].includes(stale.outcome));
+      checks.push('stale-dhcp-dns-blocked-until-reacquire');
+      const acquired = await lease('managed-dhcp-dora', true);
+      for (const family of [4, 6]) for (const tcp of [false, true]) {
+        const direct = await peer.lookup({ direct: true, tcp, family });
+        assert.ok(['client-deadline', 'transport-error'].includes(direct.outcome));
+        checks.push(`usb-direct-ipv${family}-${tcp ? 'tcp' : 'udp'}-blocked`);
+      }
+      for (const tcp of [false, true]) {
+        const local = await peer.lookup({ local: true, tcp });
+        assert.equal(local.rcode, 0);
+        assert.equal(local.answer, Buffer.from(acquired.address.split('.').map(Number)).toString('hex'));
+        checks.push(`usb-local-name-${tcp ? 'tcp' : 'udp'}`);
+      }
+    }
     for (const tcp of [false, true]) for (const type of [1, 28]) {
       await lookup(`managed-${tcp ? 'tcp' : 'udp'}-${type}`, '192.0.2.123', tcp, type);
     }
     await lab.stopExit();
+    if (peer) await lease('exit-down-dhcp-still-works', true);
     await lookup('exit-down-udp-no-baseline-fallback', null);
     await lookup('exit-down-tcp-no-baseline-fallback', null, true);
     await lab.restartExit(); await lookup('exit-recovered', '192.0.2.123');
     await stop('SIGKILL'); await start(plan.managed);
+    if (peer) {
+      const acquired = await lease('dnsmasq-restart-dhcp', true);
+      assert.equal(acquired.address, dhcp[1].ack.address, 'lease survives dnsmasq restart');
+    }
     await lookup('dnsmasq-restarted-protected', '192.0.2.123');
     await lab.adapter.close();
+    if (peer) {
+      await lease('adapter-down-dhcp-still-works', true);
+      const local = await peer.lookup({ local: true });
+      assert.equal(local.rcode, 0); assert.ok(local.answer); checks.push('adapter-down-local-name-still-works');
+    }
     // TCP refusal is returned as SERVFAIL by dnsmasq; UDP may wait longer than
     // the client budget. Record cancellation separately, never as SERVFAIL.
     const q = makeDnsQuery('adapter-down.test');
-    try {
+    if (peer) {
+      const result = await peer.lookup();
+      assert.ok(result.outcome === 'client-deadline' || result.outcome === 'dns-response' && result.rcode !== 0);
+      checks.push(result.outcome === 'client-deadline' ? 'adapter-down-client-deadline' : 'adapter-down-dns-error');
+    } else try {
       const result = validateDnsResponse(await queryLabDns(listenPort, q, { timeoutMs: 1200 }), q);
       assert.notEqual(result.rcode, 0); checks.push('adapter-down-dns-error');
     } catch (error) {
@@ -87,22 +171,35 @@ export async function runDnsmasqLab(directory, executable) {
     }
     assert.equal(hits(), before, 'direct baseline upstream used during managed mode');
     checks.push('zero-baseline-queries-during-protection');
-    await stop(); await start(plan.baseline);
+    await stop(); await start(plan.baseline); await usbGuard(false);
     assert.equal(await readFile(configPath, 'utf8'), baseline);
+    if (peer) {
+      await lease('explicit-restore-dhcp', false);
+      assert.deepEqual(dhcp.at(-1).ack.dns, dhcp[0].ack.dns, 'baseline DHCP DNS restored');
+    }
     await lookup('explicit-restore-udp', '203.0.113.8');
     await lookup('explicit-restore-tcp', '203.0.113.8', true);
+    if (peer) for (const family of [4, 6]) for (const tcp of [false, true]) {
+      const direct = await peer.lookup({ direct: true, tcp, family });
+      assert.equal(direct.rcode, 0); assert.equal(direct.answer, 'cb007108');
+      checks.push(`usb-direct-ipv${family}-${tcp ? 'tcp' : 'udp'}-restored`);
+    }
     assert.ok(hits() > before);
-    await stop(); await lab.close();
+    await stop(); await peer?.close(); await lab.close();
     for (const observer of observers) await observer.close(); observers.length = 0;
     const final = namespaceResources();
     assert.equal(final.tree.live, 1); assert.equal(final.tree.zombies, 0);
     return { schema: 1, kind: 'clean-vpn-dnsmasq-lab', status: 'passed', version, executableSha256,
       hostDnsChanged: false, backend: 'radxa-fixture-only', checks, baselineQueriesDuringProtection: 0,
-      exactFixtureBaselineRestored: true, dhcpRangeAndRouterRetained: true, dhcpLeaseExchangeTested: false,
+      exactFixtureBaselineRestored: true, dhcpRangeAndRouterRetained: true, dhcpLeaseExchangeTested: usb,
+      ...(usb ? { dhcp, usbPeerSeparateNetworkNamespace: true, usbDirectDnsGuardTested: 'IPv4-and-IPv6-INPUT',
+        usbForwardRulesInstalledButNotTrafficTested: true, staleDhcpDnsRequiresReacquire: true } : {}),
       durableRecoveryImplemented: false, systemResolverTakeoverTested: false, independentPcap: false,
       final: { processes: final.tree.live, zombies: final.tree.zombies } };
+  } catch (error) {
+    throw new Error(`${error.message}\nfixture dnsmasq: ${daemonDiagnostics}`);
   } finally {
-    await stop(); await lab?.close();
+    await stop(); await peer?.close(); await lab?.close();
     for (const observer of observers) await observer.close();
   }
 }

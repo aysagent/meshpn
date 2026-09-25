@@ -34,11 +34,19 @@ dnsmasq и требуют отдельной routing/guard проверки. DHC
 
 ## Порядок работ и конечная граница
 
+Работа с реальными машинами — **без SSH-доступа ассистента**. Ассистент пишет
+локальные стенды и скрипты; пользователь запускает нужный скрипт на VPS/Radxa
+и передаёт отчёт. Диагностика по умолчанию read-only. Любые setters, restart,
+reboot и guard заранее описываются и требуют отдельного явного согласования.
+Независимый аварийный доступ нужен пользователю для опасного live-этапа, не ассистенту.
+
 1. Диагностика и исходные fixtures. Ограничить общий command concurrency;
    не исполнять конфиги/хуки при сборе; не выбирать backend автоматически.
 2. Два изолированных профиля: resolved 249 + cloud DNS/DHCP reapply; dnsmasq +
-   USB peer с настоящим DHCP/DNS. [Первый dnsmasq smoke](dnsmasq-lab.md) реализован,
-   но lease exchange, host takeover, guard и durable recovery в нём отсутствуют.
+   USB peer с настоящим DHCP/DNS. [Dnsmasq smoke и USB/DHCP режим](dnsmasq-lab.md)
+   реализованы: 14 и 36 проверок, 6 DHCP DORA, IPv4/IPv6 direct DNS INPUT guard.
+   Транзитный FORWARD, host takeover, durable recovery и реальные версии клиентов
+   ещё впереди. Unicast renewal/T1/T2 и физический USB не проверены.
 3. Реальные ownership/journal/guard и start/stop/restart/reboot для обеих схем.
    Radxa resolv.conf переключается отдельной проверяемой транзакцией, а не
    слепой заменой dangling symlink. DHCP не должен отключаться при отказе exit.
