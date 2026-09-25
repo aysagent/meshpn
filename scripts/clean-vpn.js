@@ -12,6 +12,7 @@
  * Без --split-default на TUN всё равно может попадать трафик: к VPN-peer (point-to-point, напр. 10.99.0.1), IPv6 link-local/ND/RA
  * на интерфейсе tun при включённом IPv6 на хосте. Мостируем только валидный IPv4; cooldown по idle не заменяет этот фильтр.
  * USB gadget / клиент как роутер: с `--split-default` опционально `--client-lan-subnet=192.168.7.0/24` — ip_forward + iptables SNAT LAN→10.99.0.2 через tun и FORWARD; иначе в VPN доходят пакеты в основном с самого клиента (src уже туннельный).
+ * Отдельный ingress-шлюз: `--from-tun=wg0` вместо `--split-default` — только входящий внешний IPv4 этого интерфейса, без host OUTPUT/default. Нужен ip_forward=1; IPv6 forwarding этого входа блокируется. См. clean-vpn-from-tun.md.
  *
  * Протокол (socket / http после преамбулы): uint32 BE + сырой IPv4-пакет (как у прежнего tun-helper по транспорту).
  * WebSocket / UDP: одно binary-сообщение или одна датаграмма = один IPv4-пакет (без префикса длины).
@@ -113,6 +114,7 @@
  *
  * При SIGINT/SIGTERM и при uncaughtException/unhandledRejection: снимаются iptables/NAT (exit),
  * net.ipv4.ip_forward, маршруты и rp_filter (client) восстанавливаются по снимку `ip -json route`.
+ * Исключение --from-tun: после fatal/SIGKILL guard/rules оставляются для проверки; штатные SIGINT/SIGTERM возвращают прежний forwarding.
  *
  * Производительность (Linux, опционально, вручную):
  *   Высокий PPS / UDP / QUIC: увеличить лимиты сокетных буферов ядра, например:
@@ -138,6 +140,7 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
 import dns from 'dns/promises';
+import { validateFromTun, inspectIngress, installIngressRouting } from './lib/ingress-routing.mjs';
 import {
   extractFirstClientHelloBody,
   ja3DebugFromTcpBuf,
@@ -3973,6 +3976,7 @@ function parseArgs(argv) {
     server: null,
     type: null,
     splitDefault: false,
+    fromTun: null,
     extIface: null,
     configPath: null,
     iceMode: null,
@@ -4059,7 +4063,10 @@ function parseArgs(argv) {
     } else if (a.startsWith('--tunnel-peer=')) {
       out.tunnelPeer = a.slice('--tunnel-peer='.length);
     } else if (a === '--split-default') out.splitDefault = true;
-    else if (a === '--signaling' || a === '--signalling') out.signaling = true;
+    else if (a.startsWith('--from-tun=') || a.startsWith('--form-tun=')) {
+      if (out.fromTun !== null) throw new Error('--from-tun указан повторно');
+      out.fromTun = a.slice(a.indexOf('=') + 1);
+    } else if (a === '--signaling' || a === '--signalling') out.signaling = true;
     else if (a === '--ws-server') out.wsServer = true;
     else if (a === '--punch') out.punch = true;
     else if (a.startsWith('--keep-alive=')) {
@@ -5348,9 +5355,13 @@ async function ensureClientInfraBypass(ctx, configPath, iceMode) {
  * @param {string} ifname
  * @param {string} serverHost
  * @param {boolean} splitDefault
- * @param {{ deferPeerBypass?: boolean; websocketListenNoSplitDefault?: boolean; deferPeerKind?: 'ws-listen'|'webrtc'; deferSplitDefault?: boolean; configPath?: string|null; iceMode?: string|null }} [opts]
+ * @param {{ fromTun?: string|null; deferPeerBypass?: boolean; websocketListenNoSplitDefault?: boolean; deferPeerKind?: 'ws-listen'|'webrtc'; deferSplitDefault?: boolean; configPath?: string|null; iceMode?: string|null }} [opts]
  */
 async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
+  if (opts?.fromTun) {
+    // No host routes, global rp_filter changes, or exit bypass are needed: only ingress is selected.
+    return { ifname, fromTun: opts.fromTun, splitDefault: false, iceInfraBypass: false };
+  }
   const deferPeerBypass = opts?.deferPeerBypass === true;
   const websocketListenNoSplitDefault = opts?.websocketListenNoSplitDefault === true;
   const deferKind = opts?.deferPeerKind === 'webrtc' ? 'webrtc' : 'ws-listen';
@@ -5470,8 +5481,16 @@ async function applyDeferredClientSplitDefault(ctx) {
   }
 }
 
-function teardownClientRoutes(ctx) {
+function teardownClientRoutes(ctx, { retainIngress = false } = {}) {
   if (!ctx) return;
+  if (ctx.fromTun) {
+    if (retainIngress && ctx.ingressRouting) {
+      console.error('[clean-vpn] аварийная остановка: --from-tun guard/rules сохранены; перед перезапуском нужна проверка (scripts/clean-vpn-from-tun.md)');
+      return;
+    }
+    ctx.ingressRouting?.close();
+    return;
+  }
   teardownClientLanGateway(ctx);
   const {
     serverIp,
@@ -10211,6 +10230,7 @@ async function runClient({
   server,
   type,
   splitDefault,
+  fromTun,
   clientLanSubnet,
   transparentTlsLanBind,
   boringTlsHelper,
@@ -10244,6 +10264,7 @@ async function runClient({
   allowHostCandidates,
   signalingPskRequired,
 }) {
+  const ingress = fromTun ? inspectIngress(fromTun) : null;
   const { host, port } = parseHostPort(server);
   const kaBridge = type === 'quic' || type === 'quic-ext' ? 0 : keepAliveSec ?? 0;
   const kaCooldown =
@@ -10304,6 +10325,7 @@ async function runClient({
       (type === 'udp' && punch) ||
       (type === 'webrtc' && !webrtcSigListenClient));
   const routeCtx = await setupClientRoutesAsync(ifname, routeHost, splitDefault, {
+    fromTun,
     deferPeerBypass: deferSigBypass,
     deferPeerKind: deferPeerKindForSetup,
     websocketListenNoSplitDefault: type === 'websocket' && wsServer && !splitDefault,
@@ -10320,11 +10342,16 @@ async function runClient({
       shutdownFn(exitCode, reason);
       return;
     }
-    safe(() => teardownClientRoutes(routeCtx));
+    safe(() => teardownClientRoutes(routeCtx, { retainIngress: exitCode !== 0 }));
     safe(() => tun.close());
     clearCleanVpnEmergencyShutdown();
     process.exit(exitCode);
   });
+
+  if (ingress) {
+    routeCtx.ingressRouting = installIngressRouting({ ingress, tun: ifname, address: IP_CLIENT });
+    console.log(`[clean-vpn] --from-tun=${fromTun}: внешний IPv4 через ${ifname}; host OUTPUT/default без изменений; forwarding IPv6 заблокирован`);
+  }
 
   if (clientLanSubnet && !(type === 'udp' && punch)) {
     setupClientLanGateway(routeCtx, clientLanSubnet);
@@ -10399,7 +10426,7 @@ async function runClient({
       }
     });
     const finishClient = () => {
-      teardownClientRoutes(routeCtx);
+      teardownClientRoutes(routeCtx, { retainIngress: exitCode !== 0 });
       safe(() => tun.close());
       clearCleanVpnEmergencyShutdown();
       console.log(`[clean-vpn] client: остановка (${reason})`);
@@ -11206,9 +11233,9 @@ async function runClient({
 
   // --- runClient: --type=combo-tls (TUN через boring-tls + HTTPS :443 как transparent-tls) ---
   if (type === 'combo-tls') {
-    if (!splitDefault) {
+    if (!splitDefault && !fromTun) {
       throw new Error(
-        '[clean-vpn] combo-tls на client требует --split-default (TUN через boring-tls к exit; параллельно tcp/443 как у transparent-tls).',
+        '[clean-vpn] combo-tls на client требует --split-default или --from-tun (TUN через boring-tls; HTTPS через relay).',
       );
     }
     const comboClientPublicName = tlsPublicNamePrimary(tlsPublicName);
@@ -11325,13 +11352,13 @@ async function runClient({
     ttlHttpsInterceptSrv = net.createServer(onInterceptHttpsSock);
 
     await new Promise((resolve, reject) => {
-      ttlHttpsInterceptSrv.listen(TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT, '127.0.0.1', () =>
+      ttlHttpsInterceptSrv.listen(TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT, fromTun ? IP_CLIENT : '127.0.0.1', () =>
         resolve(undefined),
       );
       ttlHttpsInterceptSrv.once('error', reject);
     });
     console.log(
-      `[clean-vpn] combo-tls: HTTPS intercept 127.0.0.1:${TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT} (OUTPUT REDIRECT :443 как у transparent-tls).`,
+      `[clean-vpn] combo-tls: HTTPS intercept ${fromTun ? IP_CLIENT : '127.0.0.1'}:${TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT} (${fromTun ? `PREROUTING только ${fromTun}` : 'OUTPUT REDIRECT :443'}).`,
     );
 
     if (!explicitDestination && clientLanSubnet) {
@@ -11375,7 +11402,9 @@ async function runClient({
       );
     }
 
-    if (!explicitDestination) {
+    if (!explicitDestination && fromTun) {
+      routeCtx.ingressRouting.installHttpsRedirect(TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT);
+    } else if (!explicitDestination) {
       const serverExCombo = routeCtx.serverIp && net.isIPv4(routeCtx.serverIp) ? routeCtx.serverIp : null;
       try {
         ttlInputInterceptUndo = installFilterInputAcceptTransparentTlsInterceptIpv4(
@@ -11432,9 +11461,9 @@ async function runClient({
 
   // --- runClient: --type=transparent-tls (tun как socket + параллельно HTTPS-сессии со сменой SNI) ---
   if (type === 'transparent-tls') {
-    if (!splitDefault) {
+    if (!splitDefault && !fromTun) {
       throw new Error(
-        '[clean-vpn] transparent-tls на client требует --split-default (tun и IPv4-пакеты в exit — как `--type=tcp`; tcp/443 к сайтам дополнительно уходит вторым транспортом к тому же exit).',
+        '[clean-vpn] transparent-tls на client требует --split-default или --from-tun (оставшийся TUN-трафик — сырой TCP, HTTPS через relay).',
       );
     }
     const ttlClientPublicName = tlsPublicNamePrimary(tlsPublicName);
@@ -11517,13 +11546,13 @@ async function runClient({
     ttlHttpsInterceptSrv = net.createServer(onInterceptHttpsSock);
 
     await new Promise((resolve, reject) => {
-      ttlHttpsInterceptSrv.listen(TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT, '127.0.0.1', () =>
+      ttlHttpsInterceptSrv.listen(TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT, fromTun ? IP_CLIENT : '127.0.0.1', () =>
         resolve(undefined),
       );
       ttlHttpsInterceptSrv.once('error', reject);
     });
     console.log(
-      `[clean-vpn] transparent-tls: HTTPS intercept слушает 127.0.0.1:${TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT} (процессы на этом хосте, OUTPUT REDIRECT)`,
+      `[clean-vpn] transparent-tls: HTTPS intercept ${fromTun ? IP_CLIENT : '127.0.0.1'}:${TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT} (${fromTun ? `PREROUTING только ${fromTun}` : 'OUTPUT REDIRECT'})`,
     );
 
     if (!explicitDestination && clientLanSubnet) {
@@ -11570,7 +11599,9 @@ async function runClient({
       );
     }
 
-    if (!explicitDestination) {
+    if (!explicitDestination && fromTun) {
+      routeCtx.ingressRouting.installHttpsRedirect(TRANSPARENT_TLS_LOCAL_INTERCEPT_PORT);
+    } else if (!explicitDestination) {
       const serverEx = routeCtx.serverIp && net.isIPv4(routeCtx.serverIp) ? routeCtx.serverIp : null;
       try {
         ttlInputInterceptUndo = installFilterInputAcceptTransparentTlsInterceptIpv4(
@@ -11681,6 +11712,7 @@ async function main() {
 
 --type: tcp (socket alias) | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls | boring-tls | transparent-tls | combo-tls
 --split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 через uplink; /32 bypass к --server и (только webrtc/rtc-chrome/ws-chrome/udp+punch) к IP STUN/TURN из --config. Plain --type=udp STUN не резолвит. IPv6 не в туннеле. Проверка: curl -4 https://ifconfig.me
+--from-tun=IFACE: только client, вместо --split-default — внешний IPv4 с входного интерфейса (например wg0) через VPN; host OUTPUT/default без изменений. Нужен готовый шлюз с ip_forward=1. IPv6 forwarding этого входа блокируется. Alias: --form-tun. См. scripts/clean-vpn-from-tun.md (исключения, DNS, остановка/авария).
 --client-lan-subnet=CIDR: только client + --split-default — LAN/USB gadget за клиентом (адрес сети, напр. 192.168.7.0/24): ip_forward, SNAT в ${IP_CLIENT} через tun, FORWARD; иначе устройства за клиентом не попадают под NAT exit.
 --transparent-tls-lan-bind=IPv4: с --type=transparent-tls или combo-tls + --client-lan-subnet — адрес этого шлюза для DNAT второго listener и PREROUTING (должен входить в CIDR), если автопоиск не нашёл нужный интерфейс (часто: на USB/etherнет нет адреса из 192.168.7.x).
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)
@@ -11788,6 +11820,8 @@ async function main() {
       '[clean-vpn] --http-vers действует только с --type=tls, boring-tls или combo-tls; флаг проигнорирован',
     );
   }
+
+  validateFromTun(args);
 
   if (args.clientLanSubnet) {
     if (args.role !== 'client') {

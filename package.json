@@ -5,6 +5,9 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
+    "test:ingress-routing": "node --test scripts/test-ingress-routing.mjs",
+    "test:ingress-routing-real": "node --test scripts/test-ingress-routing-real.mjs",
+    "test:ingress-transport-real": "node --test scripts/test-ingress-transport-real.mjs",
     "start": "node src/index.js",
     "server": "node server/signalling-server.js",
     "client": "node src/index.js --role client",

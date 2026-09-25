@@ -29,7 +29,8 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false }) {
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false }) {
+  assert.ok(!(systemd && ingress), 'separate systemd DNS and ingress fixtures');
   const root = join(directory, 'guest'); await mkdir(root, { mode: 0o700 });
   const copied = new Map(), modules = new Set();
   const destination = (path) => { assert.ok(path.startsWith('/') && !path.split('/').includes('..')); return join(root, path); };
@@ -51,6 +52,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   await elf(process.execPath, '/usr/bin/node');
   for (const name of ['ip', 'unshare', 'setpriv', 'hostname', 'flock', 'getent', 'openssl', 'busctl', 'dbus-daemon']) await elf(`/usr/bin/${name}`);
   await elf('/usr/sbin/xtables-legacy-multi'); await elf(resolved, '/usr/lib/systemd/systemd-resolved');
+  if (ingress) await elf('/usr/sbin/sysctl');
   if (systemd) {
     for (const path of ['/usr/lib/systemd/systemd', '/usr/lib/systemd/systemd-executor', '/usr/lib/systemd/systemd-shutdown', '/usr/bin/systemctl', '/usr/bin/systemd-notify', '/usr/bin/umount']) await elf(path);
     for (const name of ['shutdown.target', 'umount.target', 'final.target', 'reboot.target', 'poweroff.target', 'systemd-reboot.service', 'systemd-poweroff.service']) {
@@ -61,12 +63,14 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     await writeFile(destination('/etc/systemd/resolved.conf'), '[Resolve]\nDNS=\nFallbackDNS=\nLLMNR=no\nMulticastDNS=no\nDNSSEC=no\nDNSOverTLS=no\nCache=no\nReadEtcHosts=no\nDNSStubListener=yes\n', { mode: 0o644 });
     await writeFile(destination('/etc/dbus-vm.conf'), '<busconfig><type>system</type><listen>unix:path=/run/dbus/system_bus_socket</listen><auth>EXTERNAL</auth><policy context="default"><allow user="*"/><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>', { mode: 0o644 });
   }
-  for (const name of ['libxt_tcp.so', 'libxt_udp.so', 'libipt_REJECT.so', 'libip6t_REJECT.so', 'libxt_standard.so']) {
+  for (const name of ['libxt_tcp.so', 'libxt_udp.so', 'libipt_REJECT.so', 'libip6t_REJECT.so', 'libxt_standard.so',
+    ...(ingress ? ['libxt_conntrack.so', 'libxt_comment.so', 'libxt_addrtype.so', 'libxt_SNAT.so', 'libxt_DNAT.so', 'libxt_MASQUERADE.so'] : [])]) {
     await elf(`/usr/lib/x86_64-linux-gnu/xtables/${name}`);
   }
   const release = (await exec('uname', ['-r'])).stdout.trim();
   assert.equal(await realpath(kernel), `/boot/vmlinuz-${release}`, 'this builder requires the matching local kernel/modules');
-  for (const name of ['iptable_filter', 'ip6table_filter', 'ipt_REJECT', 'ip6t_REJECT', 'xt_tcpudp', 'dummy']) {
+  for (const name of ['iptable_filter', 'ip6table_filter', 'ipt_REJECT', 'ip6t_REJECT', 'xt_tcpudp', 'dummy',
+    ...(ingress ? ['tun', 'veth', 'iptable_nat', 'xt_conntrack', 'xt_comment', 'xt_addrtype', 'xt_nat', 'xt_MASQUERADE'] : [])]) {
     const dependencies = (await exec('modprobe', ['--show-depends', name])).stdout;
     for (const match of dependencies.matchAll(/^insmod (\/[^\s]+\.ko)\b/gm)) { await copy(match[1]); modules.add(match[1]); }
   }
@@ -79,6 +83,15 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     }
   }
   await copyTree(join(project, 'scripts'), '/project/scripts');
+  if (ingress) {
+    await copy(join(project, 'package.json'), '/project/package.json');
+    for (const name of ['ws', '@matrixai/logger']) {
+      await copyTree(join(project, 'node_modules', name), `/project/node_modules/${name}`);
+      await copy(join(project, 'node_modules', name, 'package.json'), `/project/node_modules/${name}/package.json`);
+    }
+    await elf(join(project, 'native/tun_linux/build/Release/tun_linux.node'), '/project/native/tun_linux/build/Release/tun_linux.node');
+    await elf(join(project, 'native/boring_tls/build/boring-tls-helper'), '/project/native/boring_tls/build/boring-tls-helper');
+  }
   for (const dir of ['/proc', '/sys', '/dev', '/run', '/tmp', '/state', '/etc/systemd', '/etc/ssl', '/usr/sbin', '/sbin', '/lib64']) {
     await mkdir(destination(dir), { recursive: true });
   }
@@ -91,7 +104,29 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   await writeFile(destination('/etc/nsswitch.conf'), 'passwd: files\ngroup: files\nhosts: dns\n', { mode: 0o644 });
   await writeFile(destination('/etc/resolv.conf'), `nameserver ${systemd ? '127.0.0.53' : '127.0.0.55'}\n`, { mode: 0o644 });
   await writeFile(destination('/etc/machine-id'), '11111111111111111111111111111111\n', { mode: 0o644 });
-  const init = `#!/bin/sh
+  const init = ingress ? `#!/bin/sh
+set -eu
+echo INGRESS_VM_INIT
+export PATH=/usr/bin:/usr/sbin:/bin:/sbin
+export OPENSSL_CONF=/dev/null
+export MESHPN_INGRESS_VM=1
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mount -t tmpfs tmpfs /run
+mount -t tmpfs tmpfs /tmp
+chmod 1777 /tmp
+${[...modules].map((path) => `insmod ${path}${basename(path) === 'dummy.ko' ? ' numdummies=0' : ''}`).join('\n')}
+cd /project
+echo INGRESS_VM_TESTS
+node --version
+set +e
+node --max-old-space-size=192 scripts/test-ingress-transport-real.mjs
+result=$?
+set -e
+if [ "$result" = 0 ]; then echo INGRESS_VM_PASS; else echo INGRESS_VM_FAIL; fi
+poweroff -f
+` : `#!/bin/sh
 set -eu
 export PATH=/usr/bin:/usr/sbin:/bin:/sbin
 export OPENSSL_CONF=/dev/null

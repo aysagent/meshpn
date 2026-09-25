@@ -28,6 +28,7 @@
 
 - Фиксированная пара адресов `10.99.0.1` (exit) / `10.99.0.2` (client), MTU 1400. Нет выдачи независимых адресов и ключей множеству пользователей.
 - `--split-default` направляет в туннель IPv4 default двумя маршрутами `/1`. Exit/служебные адреса и RFC1918 идут напрямую; локальный DNS также может обойти VPN. **IPv6 не туннелируется.**
+- Новый пилотный режим [`--from-tun=wg0`](scripts/clean-vpn-from-tun.md) вместо `--split-default`: внешний IPv4 только из входного интерфейса через VPN; host default/OUTPUT остаются прежними. Требует готовый шлюз (`ip_forward=1`), блокирует IPv6 forwarding этого входа; DNS-прокси хоста автоматически не туннелируется. Штатная остановка возвращает прежний forwarding, авария оставляет scoped guard для ручной проверки.
 - Сам CLI не предоставляет полноценный kill-switch. Есть отдельный systemd-установщик с firewall kill-switch, но у него тоже есть исключения для LAN и особенности жизненного цикла — см. ниже.
 - Очистка маршрутов/NAT при завершении предусмотрена, но не гарантирует отсутствие утечек при аварии. Шифрование транспорта не заменяет проверку DNS, IPv6, правил шлюза и поведения при разрыве.
 
@@ -103,6 +104,7 @@ CLI использует форму **`--имя=значение`**; boolean-ф�
 | `--role=client\|exit`, `--type=...`, `--server=HOST:PORT` | Роль, транспорт и адрес; для TLS exit — listen, client — подключение. |
 | `--ext=IFACE` | Внешний интерфейс NAT на exit. |
 | `--split-default` | IPv4 default через client TUN с прямыми исключениями выше. |
+| `--from-tun=wg0` | Вместо `--split-default`: только внешний IPv4, пришедший через этот интерфейс. Host default/OUTPUT не меняются; нужен готовый шлюз с `ip_forward=1`. [Ограничения и проверки](scripts/clean-vpn-from-tun.md). |
 | `--client-lan-subnet=192.168.7.0/24` | Client-шлюз для своей LAN/USB/AP-подсети; требует `--split-default`, добавляет forwarding/SNAT. Не указывайте чужую или чрезмерно широкую подсеть. |
 | `--tls-cert-dir=DIR`, `--shared-hmac-key=PATH` | PEM и общий PSK. Используйте абсолютные пути, особенно в systemd. |
 | `--tls-server-name=HOST` | **Client:** имя для проверки сертификата exit. |
@@ -133,7 +135,7 @@ CLI использует форму **`--имя=значение`**; boolean-ф�
 - **Граница мимикрии:** patched BoringSSL воспроизводит отдельные параметры ClientHello. User-Agent и HTTP/2-поведение не синхронизированы с JSON; совпадение JA3/JA4 не доказывает неотличимость от Chrome. Перестановка расширений может менять wire-JA3; strict-режим не следует включать для произвольного браузерного снимка без проверки.
 - **Transparent/enc-SNI:** сохраняет TLS самого приложения end-to-end; client заменяет SNI на защищённый маршрут, exit восстанавливает исходный ClientHello и соединяет с назначением без MITM. Это не динамическая генерация BoringSSL-профиля. На участке client→exit ClientHello изменён, поэтому нельзя обещать неизменный отпечаток на каждом участке.
 - **Что уже укреплено в relay:** PSK/AEAD и process-local replay guard, ограничения ресурсов/таймеров, backpressure/cleanup, проверка всех DNS-кандидатов на public IP, контроль фактического TCP peer и ограниченный последовательный перебор IP. После выбора TCP повторной отправки TLS/HTTP на другой IP нет. Replay guard не переживает restart; эти меры не защищают сырой TUN в standalone `transparent-tls`.
-- **Особые CLI-параметры:** `combo-tls` client требует `--split-default` и helper; transparent/combo требуют общего PSK и `--tls-public-name`. `--transparent-tls-lan-bind=IPv4` задаёт listener на LAN-шлюзе. `--tunnel-peer=IPv4[:PORT]` фиксирует одно HTTPS-назначение для тестов без REDIRECT — это не production DNS bootstrap.
+- **Особые CLI-параметры:** `combo-tls` client требует `--split-default` либо `--from-tun=IFACE` и helper; transparent/combo требуют общего PSK и `--tls-public-name`. `--transparent-tls-lan-bind=IPv4` задаёт listener на LAN-шлюзе в прежнем режиме `--split-default`. `--tunnel-peer=IPv4[:PORT]` фиксирует одно HTTPS-назначение для тестов без REDIRECT — это не production DNS bootstrap.
 - [Классификатор](scripts/traffic-classifier.js) — отдельный pcap-инструмент, не автоматическое переключение транспортов. [SNI dictionary](scripts/transperent-sni-dictionary.md) — проектное описание, не действующий список разрешённых доменов.
 
 Динамическое клонирование профиля каждого текущего соединения **не планируем**: приоритет — сохранение настоящего TLS в transparent и его надёжность.
