@@ -10,6 +10,22 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: явная readiness CLI адаптера
+
+`dns-exit-adapter.mjs --ready-name=example.com` проверяет четыре положительных
+ответа A/AAAA UDP/TCP через собственный adapter/exit, с bounded deadline/cancellation.
+Default остаётся bind-only без начальных запросов. Opt-in `--systemd-notify`
+требует system service и ready-name, посылает READY только после проверки,
+через bounded helper с reception barrier. Не устанавливает unit/guard/OS DNS.
+Это startup-only readiness, не непрерывная проверка и не proof of leak freedom.
+
+Node **1544/1544 PASS**, `/var/tmp/meshpn-acceptance-0OrqSN/report.json`;
+CLI public-contract namespace IPv4/IPv6 — по семь сценариев PASS: нормальный
+старт/stop, denied name, exit down, upstream reset/NXDOMAIN, отмена и восстановление.
+После закрытия процессов/сокетов/таймеров нет. Настоящий notification пока
+не проверен в VM, только unit tests: это следующий отдельный этап перед units.
+Live VPS2/Radxa и DNS v1 не объявлены завершёнными.
+
 ### Дополнение 2026-09-27: клиентский read-only preflight
 
 `scripts/dns-client-preflight.mjs --client=vps2|radxa [--probe]` дополняет прежний

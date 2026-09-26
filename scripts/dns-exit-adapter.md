@@ -39,8 +39,8 @@ PSK читается из regular non-symlink файла ровно32 байта
 JSON читается тем же bounded reader, что offline checker. Всё загружается
 один раз, копируется; смена файлов требует управляемого перезапуска.
 
-Готовность: `DNS_EXIT_ADAPTER {"status":"listening",...}` — это bind, **не**
-проверка доступности exit/upstream. До первого DNS-запроса внешнего TCP нет.
+Без дополнительных флагов `DNS_EXIT_ADAPTER {"status":"listening",...}` — это bind,
+**не** проверка доступности exit/upstream. До первого DNS-запроса внешнего TCP нет.
 Ошибки запуска: `DNS_EXIT_ADAPTER_INVALID`, exit1, без пути/PEM/PSK/stack.
 SIGINT/SIGTERM закрывают listeners, активные запросы и relay-соединения.
 
@@ -57,6 +57,36 @@ dig @127.0.0.1 -p 1053 example.com AAAA +tcp
 
 Первый этап интеграции — [offline lifecycle и namespace-only системный DNS стенд](dns-lifecycle.md).
 Он проверяет запуск/отказ/явное восстановление и не добавляет OS backend в этот CLI.
+
+## Проверка перед объявлением готовности
+
+Необязательный `--ready-name=example.com` перед выводом `status: "ready"` отправляет
+четыре запроса через собственный adapter: A и AAAA по UDP, затем A и AAAA по TCP.
+У каждого запроса deadline 2 секунды, повторов и прямого fallback нет. Нужны
+положительные ответы обоих типов без TC; NXDOMAIN/NODATA, отказ exit, неверный CA/PSK,
+отмена или timeout не считаются готовностью. Имя выбирается явно, должно иметь
+публичную hostname-форму и не попадать под настроенную deny-policy. Само имя в
+строку готовности не записывается; добавляются `readinessQueries: 4` и
+`systemdNotified: false`. При ошибке процесс закрывает adapter и завершается с кодом 1.
+Остановка SIGINT/SIGTERM во время проверки отменяет её, закрывает ресурсы и не
+объявляет готовность. Это реальные запросы к выбранному resolver через exit.
+
+Для будущего system service есть дополнительный **явный** `--systemd-notify`
+(только вместе с `--ready-name`). Он допускает запуск непосредственно systemd PID1,
+проверяет `INVOCATION_ID` и socket `/run/systemd/notify`, после четырёх ответов вызывает
+`/usr/bin/systemd-notify --ready --pid=<PID адаптера>` с ограниченным окружением и
+deadline 3 секунды. Вызов сохраняет стандартное ожидание обработки уведомления:
+`--no-block` не используется. В unit нужны `Type=notify` и `NotifyAccess=all` для
+helper-процесса; пользовательские units и нестандартный notify socket не поддержаны.
+[Семантика systemd-notify 249](https://github.com/systemd/systemd/blob/v249/man/systemd-notify.xml).
+Без флага переменные notify сами по себе уведомление не включают.
+
+Это **стартовая проверка**, не постоянный health monitor, не установка systemd unit,
+не подтверждение firewall guard и не разрешение переключить системный DNS. Guard,
+журнал и управление зависимостями остаются отдельной обязанностью контроллера.
+CLI-путь проверен в изолированных IPv4/IPv6 namespaces (по семь сценариев);
+systemd notification пока проверен unit-тестами, реальная проверка этого CLI в VM —
+следующий этап. Прежний VM fixture не заменяет эту проверку.
 
 ## Явная политика внутренних имён
 
@@ -156,6 +186,8 @@ API `startDnsExitAdapter` принимает только настоящий pub
 npm run test:dns-exit-adapter
 npm run test:dns-domain-policy
 npm run test:dns-exit-adapter-real
+npm run test:dns-adapter-ready
+npm run test:dns-adapter-ready-real
 ```
 
 Первый набор включён в общий acceptance: preflight, ключи, восемь типов UDP/TCP,

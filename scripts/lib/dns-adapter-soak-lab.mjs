@@ -4,7 +4,7 @@ import net from 'node:net';
 import https from 'node:https';
 import { once } from 'node:events';
 import { randomBytes } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { exec } from './browser-lab-driver.mjs';
 import { assertBrowserNamespace } from './browser-soak.mjs';
@@ -105,6 +105,15 @@ async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0,
       exitSockets: exitSockets.size, sessions: sessions.size, relayTimers: [...sessions].reduce((n, s) => n + s.timers.size, 0),
       dnsCalls, attempts, replay: replayGuard.stats() });
     return { adapter, stub: { port: adapter.port, stats: () => adapter.stats().stub }, stats, close,
+      async prepareCliAdapter() {
+        await adapter.close();
+        const configPath = join(directory, 'cli-upstream.json'), secretPath = join(directory, 'cli-key'), policyPath = join(directory, 'cli-domain-policy.json');
+        await writeFile(configPath, JSON.stringify(profileConfig), { flag: 'wx', mode: 0o600 });
+        await writeFile(secretPath, secret, { flag: 'wx', mode: 0o600 });
+        if (domainPolicy) await writeFile(policyPath, JSON.stringify(domainPolicy), { flag: 'wx', mode: 0o600 });
+        return [`--config=${configPath}`, `--shared-hmac-key=${secretPath}`, `--exit-ip=${addresses[2]}`, `--exit-port=${exitPort}`,
+          `--public-name=${publicName}`, `--listen-port=${adapter.port}`, ...(domainPolicy ? [`--domain-policy=${policyPath}`] : [])];
+      },
       async createProcessAdapter() {
         assert.equal(domainPolicy, undefined, 'process fixture does not implement domain policy');
         assert.equal(processAdapter, undefined); await adapter.close();

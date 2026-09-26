@@ -65,6 +65,10 @@ boot-context. Это не live host takeover и не автоматическо�
 Для следующего клиентского этапа подготовлен [read-only preflight](dns-client-preflight.md):
 служба/процесс/источники config и networkd-selected file собираются одной командой.
 Он не устанавливает интеграцию и не закрывает live-критерии ниже.
+CLI адаптера получил [явную стартовую readiness](dns-exit-adapter.md#проверка-перед-объявлением-готовности)
+через UDP/TCP A/AAAA и opt-in systemd notification. Ошибки/отмена/восстановление
+проверены на настоящем CLI в IPv4/IPv6 namespaces; notification пока unit-tested.
+Реальный systemd-запуск именно этого CLI, установщик и клиентские пилоты остаются.
 
 ## Три этапа и текущий статус
 

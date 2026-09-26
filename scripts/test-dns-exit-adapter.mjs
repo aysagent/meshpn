@@ -23,6 +23,7 @@ import { parseDnsExitArgs, readDnsExitSecret } from './dns-exit-adapter.mjs';
 import { runCommand, cleanEnvironment } from './lib/transparent-acceptance.mjs';
 import { child } from './lib/browser-lab-driver.mjs';
 import { startDnsExitAdapter } from './lib/dns-exit-adapter.mjs';
+import { probeDnsAdapterReady } from './lib/dns-adapter-ready.mjs';
 
 const cert = await readFile(new URL('./fixtures/boring-tls-local.cert.pem', import.meta.url), 'utf8');
 const key = await readFile(new URL('./fixtures/boring-tls-local.key.pem', import.meta.url));
@@ -317,6 +318,48 @@ test('CLI help is offline; errors are redacted', async () => {
     assert.equal(result.code, code); assert.equal(result.reason, null);
     if (code) { assert.equal(result.stderr.trim(), 'DNS_EXIT_ADAPTER_INVALID'); assert.equal(result.stdout, ''); }
   }
+});
+for (const extra of [['--systemd-notify'], ['--ready-name=localhost'], ['--ready-name=internal'], ['--ready-name=https://example.com'],
+  ['--ready-name=example.com', '--ready-name=other.test'], ['--ready-name=example.com', '--systemd-notify', '--systemd-notify']]) {
+  test(`readiness CLI rejects ${extra.join(' ')}`, () => assert.throws(() => parseDnsExitArgs([...argv, ...extra]), /DNS_EXIT_ADAPTER_INVALID/));
+}
+test('CLI readiness is explicit; notification alone is not enabled by environment', () => {
+  const r = parseDnsExitArgs([...argv, '--ready-name=Example.com', '--systemd-notify']);
+  assert.equal(r['ready-name'], 'example.com'); assert.equal(r['systemd-notify'], true);
+  assert.equal(parseDnsExitArgs(argv)['systemd-notify'], undefined);
+});
+test('readiness crosses real verified TLS four times and requires both local protocols and answer families', async (t) => {
+  const lab = await fixture(t);
+  const adapter = { port: lab.stub.port, stats: () => ({ stub: lab.stub.stats(), transport: lab.transport.stats() }) };
+  assert.deepEqual(await probeDnsAdapterReady(adapter, { name: 'ready.test' }),
+    { status: 'ready', protocols: ['udp', 'tcp'], types: ['A', 'AAAA'], queries: 4, systemDnsChanged: false });
+  assert.deepEqual(lab.counts(), { bodies: 4, attempts: 4 });
+});
+for (const [name, options] of [['wrong CA', { badCa: true }], ['wrong PSK', { wrongSecret: true }],
+  ['upstream reset', { mode: 'reset' }], ['redirect', { mode: 'redirect' }],
+  ['NXDOMAIN', { answer: (q) => fixtureDnsAnswer(q, { rcode: 3 }) }],
+  ['NODATA', { answer: (q) => fixtureDnsAnswer(q, { count: 0 }) }],
+  ['TC', { answer: (q) => { const r = fixtureDnsAnswer(q); r.writeUInt16BE(r.readUInt16BE(2) | 0x200, 2); return r; } }]]) {
+  test(`readiness refuses ${name}`, async (t) => {
+    const lab = await fixture(t, options);
+    await assert.rejects(probeDnsAdapterReady({ port: lab.stub.port, stats: () => ({ stub: lab.stub.stats(), transport: lab.transport.stats() }) },
+      { name: 'ready.test' }), { code: 'DNS_ADAPTER_NOT_READY' });
+  });
+}
+test('aborted readiness sends no DNS; mid-flight cancellation is bounded and closes its client', async (t) => {
+  const lab = await fixture(t, { mode: 'hold', timeoutMs: 1000 });
+  const adapter = { port: lab.stub.port, stats: () => ({ stub: lab.stub.stats(), transport: lab.transport.stats() }) };
+  const first = new AbortController(); first.abort();
+  await assert.rejects(probeDnsAdapterReady(adapter, { name: 'ready.test', signal: first.signal }), { code: 'DNS_ADAPTER_NOT_READY' });
+  assert.equal(lab.counts().bodies, 0);
+  const second = new AbortController(), pending = probeDnsAdapterReady(adapter, { name: 'ready.test', signal: second.signal });
+  const timer = setTimeout(() => second.abort(), 20);
+  try { await assert.rejects(pending, { code: 'DNS_ADAPTER_NOT_READY' }); } finally { clearTimeout(timer); }
+});
+test('notification CLI refuses an ordinary process before reading config or binding', async () => {
+  const r = await runCommand(process.execPath, ['scripts/dns-exit-adapter.mjs', ...argv, '--ready-name=example.com', '--systemd-notify'],
+    { env: { ...cleanEnvironment(process.env), NOTIFY_SOCKET: '/run/systemd/notify', INVOCATION_ID: 'a'.repeat(32) } });
+  assert.equal(r.code, 1); assert.equal(r.stdout, ''); assert.equal(r.stderr.trim(), 'DNS_EXIT_ADAPTER_INVALID');
 });
 test('PSK reader requires exactly 32 binary bytes, private regular file, no symlink', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'meshpn-dns-exit-key-')); t.after(() => rm(dir, { recursive: true, force: true }));
