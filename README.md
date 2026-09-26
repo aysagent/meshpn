@@ -177,6 +177,12 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 восстановление связи после перезагрузки. Актуальные Node-регрессии: **1191/1191 PASS**;
 отдельно три настоящих dnsmasq namespace-теста — PASS.
 
+[Профиль VPS 2: resolved 249 + networkd](scripts/dns-networkd-lab.md) — **9/9 PASS**:
+настоящие DHCP renew/reconfigure, отдельный VPN DNS-link без захвата `eth0`,
+возврат к актуальному DHCP-DNS. Это namespace-стенд, не установщик; независимая
+от DHCP политика cloud-имён и journal/lifecycle нового link ещё впереди.
+После добавления стенда Node-регрессии: **1196/1196 PASS**.
+
 Следующий порядок работ:
 
 1. На клиенте собрать [диагностику](scripts/dns-inspect.md): `node scripts/dns-diagnostic.mjs --probe`. Настройки не меняются; флаг разрешает запросы example.com через текущий DNS (возможно напрямую). Без флага запросов нет. Есть ограниченный инвентарь dnsmasq; includes/хуки не исполняются. Отчёт содержит IP/домены; backend не выбирается автоматически. Для VPS 2 и Radxa исходные отчёты уже получены; оставшиеся вопросы и проверки — в [матрице клиентов](scripts/dns-client-matrix.md). Прежний `npm run dns:inspect` остаётся краткой диагностикой без адресов. До live opt-in нужны подтверждение владельца, политика DNS и проверенный откат.

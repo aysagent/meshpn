@@ -41,6 +41,9 @@ journal, SIGKILL/restart контроллера и adapter, VM reboot/power-cut 
 Отдельный [dnsmasq systemd/reboot стенд](dnsmasq-vm.md) проверяет настоящий
 service lifecycle в VM, сохранение DHCP при отказе adapter и отклонение старого
 boot-context. Это не live host takeover и не автоматическое принятие старого журнала.
+Для VPS 2 [resolved 249 + networkd](dns-networkd-lab.md): 9 namespace-проверок
+настоящего DHCP renew/reconfigure и отдельного VPN DNS-link, без takeover `eth0`.
+Его durable lifecycle и cloud-name policy, независимая от DHCP domains, ещё нужны.
 В README отдельно отмечены ограничения транспортов, маршрутов и IPv6.
 
 ## Три этапа и текущий статус
@@ -91,5 +94,5 @@ resolv.conf symlink сначала требует согласованного �
 validator и физическое отключение питания накопителя не становятся новыми
 обязательными этапами v1. Критерии не ослабляются ради даты; новые пожелания
 выносятся в отдельные задачи. Прежние VM результаты не закрывают новые сценарии
-resolved 249 или live dnsmasq/USB: точные версии, системный resolver Radxa и обе
-live-конфигурации ещё требуют проверки.
+нового VPN DNS-link или live dnsmasq/USB: точные клиентские конфигурации,
+cloud-name policy, системный resolver Radxa и оба пилота ещё требуют проверки.

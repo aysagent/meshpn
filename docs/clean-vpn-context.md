@@ -10,6 +10,36 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-26: реальный resolved 249/networkd/DHCP
+
+Добавлен [networkd namespace-стенд](../scripts/dns-networkd-lab.md), 9/9 PASS:
+Ubuntu `249.11-0ubuntu3.22` (у пользователя `.21`), настоящий networkd DHCP-клиент,
+dnsmasq-сервер в другом network namespace, DORA/renew/reconfigure, private bus,
+adapter → combo exit → TLS DoH. Нет SSH, TUN и host DNS/firewall изменений.
+
+Ключевое уточнение архитектуры: resolved отказывает SetLinkDNSEx на networkd-
+managed `eth0` (измерено), прежний owned-link backend не был backend захвата
+этого uplink. Новый fixture применяет его к отдельному unmanaged `vpndns` dummy
+с `~.`. Networkd продолжает владеть DHCP/address/routes/domains на `eth0`.
+Смена DHCP-DNS 10.129.0.2 → 10.129.0.3 и reconfigure не меняют VPN DNS; disable
+удаляет owned link под guard и оставляет актуальный DHCP baseline, не старый снимок.
+
+Cloud queries в этой матрице блокируются благодаря сохранённым более специфичным
+DHCP domains и guard. Это НЕ готовая независимая deny-policy: удаление этих
+domains DHCP-сервером может отправить cloud-имя в публичный DoH через `~.`.
+Следующий шаг — explicit cloud-name policy до DoH и её тест при исчезновении/
+замене DHCP domains; затем durable create/delete/ownership нового DNS-link в VM.
+Живые настройки не выбираются автоматически.
+
+Проверки: 3 DHCP ACK, 2 DISCOVER, 3 REQUEST; direct DNS queries во время защиты=0,
+final processes=1/zombies=0; 6 TCP blocked lookups — bounded client deadlines,
+не DNS error replies. Real integration test повторён PASS (~39 сек), 5 unit/CLI
+PASS, Node acceptance **1196/1196** без skips
+(`/var/tmp/meshpn-acceptance-XtFfKZ/report.json`). Tools из проверенного пакета
+APT только извлечены в `/tmp`, без установки. Точные hashes и ограничения в
+документе стенда. Это не Ubuntu22 VM rootfs, не live VPS, не reboot-журнал и не
+IPv6 traffic matrix; DNS v1 не закрыт.
+
 ### Дополнение 2026-09-26: dnsmasq systemd/reboot VM
 
 Добавлен отдельный `dns-vm-lab.mjs --case=dnsmasq --dnsmasq=/absolute/executable`.

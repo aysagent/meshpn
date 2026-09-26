@@ -7,7 +7,7 @@
 
 | Клиент | Наблюдаемая схема | Оставшаяся работа |
 | --- | --- | --- |
-| VPS 2 | Ubuntu 22.04, resolved 249, networkd/DHCP, DNS 10.129.0.2, ru-central1.internal / auto.internal | Прочитать effective network config (в отчёте EACCES), выбрать политику внутренних имён, проверить DHCP reapply и версию 249 |
+| VPS 2 | Ubuntu 22.04, resolved 249, networkd/DHCP, DNS 10.129.0.2, ru-central1.internal / auto.internal | Namespace DHCP renew/reconfigure пройден; нужны effective network config (в отчёте EACCES), независимая cloud-name policy, durable lifecycle VPN DNS-link и пилот |
 | Radxa | Armbian/Debian 12 arm64, dnsmasq, usb0, no-resolv, два публичных upstream, dangling resolved symlink | Подтвердить include/daemon config, сохранить USB DHCP/локальные имена, исправить неоднозначную DHCP option 6 и системный resolver через управляемый переход |
 | VPS 1 | Ubuntu 24.04, resolved 255/networkd, явный DNS 8.8.8.8, Docker | Не использовать как живой тестовый client; контейнерный DNS не считать покрытым системным |
 
@@ -24,8 +24,13 @@
 
 На VPS 2 политика облачных имён остаётся невыбранной. Нельзя ни автоматически
 оставить direct exception, ни молча отправить внутренние имена публичному resolver.
-Mock backend уже проверяет точное восстановление наблюдённого DNSEx/Domains и
-отказ при DHCP-подобном возврате чужих настроек; это не настоящий DHCP/networkd тест.
+Mock backend проверяет восстановление DNSEx/Domains и конфликт настроек.
+Теперь [настоящий resolved 249/networkd стенд](dns-networkd-lab.md) проверяет
+DHCP renew/reconfigure: **9/9 PASS**, без перезаписи networkd-owned `eth0`.
+Прямой resolved setter на нём отклоняется; проверенный вариант — отдельный
+принадлежащий VPN DNS-link. Disable оставляет актуальный DHCP-DNS, не старый
+снимок uplink. Пока нет durable lifecycle этого link и независимой от DHCP
+deny-policy облачных имён: их исчезновение из DHCP domains ещё требует защиты.
 
 Общий dnsmasq Radxa обслуживает системные и USB-запросы одним upstream. Его
 переключение затрагивает обе группы: нельзя обещать защиту только одного входа
@@ -43,7 +48,9 @@ reboot и guard заранее описываются и требуют отде
 1. Диагностика и исходные fixtures. Ограничить общий command concurrency;
    не исполнять конфиги/хуки при сборе; не выбирать backend автоматически.
 2. Два изолированных профиля: resolved 249 + cloud DNS/DHCP reapply; dnsmasq +
-   USB peer с настоящим DHCP/DNS. [Dnsmasq smoke и USB/DHCP режим](dnsmasq-lab.md)
+   USB peer с настоящим DHCP/DNS. [Networkd namespace-режим](dns-networkd-lab.md)
+   выполнен на Ubuntu 249.11 `.22` (в отчёте VPS `.21`), 9 проверок; это ещё
+   не boot/systemd lifecycle нового DNS-link. [Dnsmasq smoke и USB/DHCP режим](dnsmasq-lab.md)
    реализованы: 14 и 61 проверка, 6 DHCP DORA, IPv4/IPv6 direct DNS INPUT/FORWARD
    guard с отдельным внешним namespace и счётчиками пакетов.
    [Journal-режим](dnsmasq-journal.md) добавляет persistent fixture recovery,
