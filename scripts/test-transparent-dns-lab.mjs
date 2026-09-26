@@ -223,10 +223,24 @@ test('DNS CLI refuses deployment-style flags instead of changing OS DNS', async 
   assert.equal(result.code, 1); assert.ok(!result.stdout.includes('DNS_LAB_RESULT'));
 });
 test('UDP bind failure rolls back the already-opened TCP listener', async (t) => {
-  const occupied = dgram.createSocket('udp4'); occupied.bind(0, '127.0.0.1'); await once(occupied, 'listening');
-  t.after(() => occupied.close()); const port = occupied.address().port;
-  await assert.rejects(startLabDohStub({ port, upstream: { address: '127.0.0.1', port: 12345,
+  // Reserving an ephemeral UDP port does not reserve its TCP counterpart.
+  // Inject the UDP failure after a real kernel-selected TCP bind, and inspect
+  // that exact listener rather than racing another process to rebind its port.
+  const createServer = net.createServer, createSocket = dgram.createSocket;
+  let listener, failedBind = false;
+  t.mock.method(net, 'createServer', (...args) => { listener = createServer(...args); return listener; });
+  t.mock.method(dgram, 'createSocket', (...args) => {
+    const udp = createSocket(...args);
+    t.mock.method(udp, 'bind', (port, address) => {
+      assert.equal(listener.listening, true); assert.equal(listener.address().port, port);
+      assert.equal(address, '127.0.0.1'); failedBind = true;
+      queueMicrotask(() => udp.emit('error', Object.assign(new Error('injected UDP bind failure'), { code: 'EADDRINUSE' })));
+      return udp;
+    });
+    return udp;
+  });
+  t.after(async () => { if (listener?.listening) await new Promise((resolve) => listener.close(resolve)); });
+  await assert.rejects(startLabDohStub({ upstream: { address: '127.0.0.1', port: 12345,
     servername: 'localhost', authority: 'localhost:12345' } }), { code: 'EADDRINUSE' });
-  const probe = net.createServer(); probe.listen(port, '127.0.0.1'); await once(probe, 'listening');
-  await new Promise((resolve) => probe.close(resolve));
+  assert.equal(failedBind, true); assert.equal(listener.listening, false); assert.equal(listener.address(), null);
 });

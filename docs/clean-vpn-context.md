@@ -10,6 +10,29 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: устранение нестабильности тестового барьера
+
+В подробном прогоне воспроизведена точная причина старого process-cleanup
+failure: `ESRCH: no such process, read` из `/proc/<pid>/stat`. Процесс успевал
+исчезнуть между open/read; обработчик принимал только ENOENT. Исправлена только
+тестовая проверка `running`: ESRCH тоже означает отсутствие процесса, EACCES
+по-прежнему ошибка. Добавлены три unit-регрессии, test timeouts не увеличены.
+
+После исправления прогон `/var/tmp/meshpn-acceptance-qNKele/report.json` имел
+1480/1481 PASS и остановился на прежнем UDP bind rollback тесте; process-тесты
+прошли. У этого теста устранена независимая гонка выбора порта: занятый UDP
+port не гарантировал свободный TCP counterpart, а повторный bind после cleanup
+мог конкурировать с чужим тестом. Теперь fault-injection явно выдаёт EADDRINUSE
+при UDP bind **после настоящего kernel-selected TCP bind**, затем проверяется
+закрытие того же TCP server. Это synthetic fault, не заявка на повтор kernel
+UDP collision. Ошибка того конкретного общего прогона не содержала stack;
+портовая гонка установлена по коду, в отличие от прямо воспроизведённого ESRCH.
+Production socket/control code не изменялся. Целевые тесты — 52/52 PASS.
+Финальный фиксированный Node repeat=3: **3 × 1481/1481 PASS**, без skips,
+`/var/tmp/meshpn-acceptance-FuyURi/report.json`. Это Node suite, не браузерный
+или live acceptance. Ранние ошибки/отчёты сохранены. Далее client preflight,
+ownership и opt-in deployment для VPS2/Radxa; без SSH и host setters.
+
 ### Дополнение 2026-09-27: явный localhost-file baseline Radxa
 
 Resolver-object backend поддерживает второй узкий baseline: regular 0644,

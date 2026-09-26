@@ -196,7 +196,8 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 У [Radxa paired coordinator проверен VM lifecycle](scripts/dns-radxa-vm.md):
 **12/12 PASS в двух загрузках**, плюс **3/3 whole-guest crash точки** (шесть загрузок).
 Старые журналы сохраняются для review, а не принимаются новым boot автоматически.
-Node-регрессии после добавления этого VM-режима: **1440/1440 PASS**;
+Последние Node-регрессии (localhost baseline и исправление тестовых гонок):
+**3 × 1481/1481 PASS**, без skips;
 пять реальных namespace-тестов dnsmasq/resolver-object/paired — PASS. Это не новый
 полный браузерный acceptance.
 

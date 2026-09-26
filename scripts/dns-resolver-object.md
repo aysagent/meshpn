@@ -73,6 +73,8 @@ Node acceptance сначала 1478/1478 PASS (`/var/tmp/meshpn-acceptance-S01I6
 повтор 1476/1478 (`/var/tmp/meshpn-acceptance-RxCxSd/report.json`) выявил ESRCH-race
 в старом process-cleanup тесте; он исправляется отдельно. DNS-тесты прошли,
 но неуспешный общий прогон не считается acceptance.
+После отдельных исправлений ESRCH и UDP-test race: **3 × 1481/1481 PASS**,
+`/var/tmp/meshpn-acceptance-FuyURi/report.json`. Браузеры и VM заново не запускались.
 
 Пакеты автоматически не устанавливаются. Нужны инструменты прежнего
 [dnsmasq namespace-стенда](dnsmasq-lab.md); `--resolver-object` включает USB и
