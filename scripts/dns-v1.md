@@ -77,6 +77,10 @@ CLI адаптера получил [явную стартовую readiness](dn
 VM использует2 vCPU MTTCG при неизменном DoH deadline1500мс; это не benchmark
 Radxa или подтверждение live-конфигурации. Подробности отказов и диагностики —
 в отчёте [systemd VM](dns-systemd-vm.md).
+Выделен общий [client guard executor](dns-client-guard.md): собственные цепочки,
+проверка порядка/владения, отдельные IPv4/IPv6 commits, без global firewall restore.
+Это следующий компонент deployment; persistent guard journal и systemd entrypoint
+ещё нужны, как и opt-in установщик/откат.
 
 ## Три этапа и текущий статус
 

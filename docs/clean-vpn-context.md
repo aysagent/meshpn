@@ -10,6 +10,31 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: общий client guard executor
+
+`lib/dns-client-guard.mjs` компилирует и исполняет фиксированные VPS2/Radxa
+DNS53 policies. Свои CVD_* chains/full ID comments, first-hook/exact rule order,
+оба family snapshots до writes; неизвестные/чужие состояния не исправляются.
+Atomic batch на семью через `iptables-restore --noflush` с `-N`, без деклараций
+chain, global restore или flush. Частично успешная установка сохраняется;
+подтверждение обеих IP-семей обязательно. Release только с явным callback
+проверенного baseline; нет cleanup-on-stop. Caller всё ещё должен предоставить
+durable intent, flock, boot/netns/backend/interface identity: это **не host CLI**.
+
+Namespace `dns-client-guard-lab.mjs` прошёл **11/11** на iptables1.8.10 nf_tables:
+UDP/TCP53 IPv4/IPv6, local RETURN не обходит чужой firewall, отказ IPv6 commit,
+foreign preceding hook, concurrent foreign chain edit during release (batch
+не удаляет частично собственные правила), USB INPUT/FORWARD bypass, два DHCP DORA,
+снятие без изменения посторонних правил. Host DNS/NSS/forwarding неизменны.
+**30 unit/host-refusal**, **1602 Node PASS**, `/var/tmp/meshpn-acceptance-bKaw65/report.json`.
+Неудачные начальные lab runs выявили неверное использование localhost-only query
+helper и необходимость map-root-user для private sysctl; исправлены только fixture.
+
+Далее: persistent guard journal + systemd entrypoint, интеграция с обоими
+controller и установщик/откат. Live preflight reports/решения cloud DNS/Radxa
+baseline и отдельное согласование пилотов по-прежнему не получены. DNS v1 открыт.
+Документ/команды: [client guard](../scripts/dns-client-guard.md).
+
 ### Дополнение 2026-09-27: offline service plan и unprivileged VM PASS
 
 Новый `dns-adapter-service-plan.mjs --config=...` читает bounded JSON и печатает

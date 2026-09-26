@@ -29,6 +29,7 @@ export const TEST_FILES = Object.freeze([
   'test-dns-inspect.mjs',
   'test-dns-diagnostic.mjs',
   'test-dns-client-preflight.mjs',
+  'test-dns-client-guard.mjs',
   'test-dnsmasq-config.mjs',
   'test-dnsmasq-journal.mjs',
   'test-dns-networkd.mjs',
