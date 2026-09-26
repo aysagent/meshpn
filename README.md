@@ -212,6 +212,21 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 отправляет example.com через текущий DNS (возможно напрямую), без флага запросов
 нет. Отчёт содержит IP/домены, backend автоматически не выбирает.
 
+Для подготовки DNS v1 на выбранных клиентах теперь есть [один расширенный
+preflight-отчёт](scripts/dns-client-preflight.md):
+
+```bash
+# На VPS 2:
+sudo node scripts/dns-client-preflight.mjs --client=vps2 --probe
+# На Radxa:
+sudo node scripts/dns-client-preflight.mjs --client=radxa --probe
+```
+
+К прежней диагностике добавлены сведения о реальном PID/службе dnsmasq,
+разрешённых config sources и выбранном networkd-файле. Скопировать весь вывод
+с BEGIN до END. Это только чтение и явные DNS-пробы, не установка/repair;
+без `--probe` DNS-запросов нет. `installationAllowed` всегда false.
+
 ---
 
 ## Mesh VPN

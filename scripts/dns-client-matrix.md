@@ -53,6 +53,10 @@ reboot и guard заранее описываются и требуют отде
 
 1. Диагностика и исходные fixtures. Ограничить общий command concurrency;
    не исполнять конфиги/хуки при сборе; не выбирать backend автоматически.
+   [Расширенный client preflight](dns-client-preflight.md) собирает единый отчёт:
+   PID/InvocationID/cgroup/namespace dnsmasq, ограниченный include inventory,
+   runtime-selected networkd config и явные недостающие сведения. Read-only,
+   не готовность к takeover и не доказательство уже загруженных bytes.
 2. Два изолированных профиля: resolved 249 + cloud DNS/DHCP reapply; dnsmasq +
    USB peer с настоящим DHCP/DNS. [Networkd namespace-режим](dns-networkd-lab.md)
    выполнен на Ubuntu 249.11 `.22` (в отчёте VPS `.21`), 11 проверок; это ещё

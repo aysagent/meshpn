@@ -10,6 +10,31 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: клиентский read-only preflight
+
+`scripts/dns-client-preflight.mjs --client=vps2|radxa [--probe]` дополняет прежний
+diagnostic одним ownership bundle. Только чтение; root нужен для полноты, не
+для setters. Системные службы не запускаются, hooks не исполняются, SSH не нужен.
+Новые модули `dns-client-ownership`/`dns-client-preflight`: allowlisted systemctl
+properties; dnsmasq MainPID/start-time/InvocationID/cgroup/ns/executable;
+argv только от проверенного dnsmasq, фильтрованные DNS values без raw argv/env.
+Ограниченный conf-file/conf-dir graph только в /etc/dnsmasq.conf и /etc/dnsmasq.d,
+без произвольных sources/quotes/mixed suffixes/scripts. Пределы явно в отчёте/документе.
+Для networkd читается runtime NETWORK_FILE и выбранный .network, проверяются
+метаданные/дрейф. Это hints, не полный effective parser или proof of loaded bytes.
+
+`installationAllowed=false` всегда: результаты не выбирают cloud-name policy,
+не разрешают takeover и не исправляют baseline. Недостающие права, dangling
+resolver, конкурирующие менеджеры, namespace mismatch и incomplete graph
+перечисляются отдельно от будущих решений оператора. Даже ready-for-manual-review
+не является зелёным installer gate. [Команды и границы](../scripts/dns-client-preflight.md).
+
+Проверки: 30 новых + прежние inspect/diagnostic — **63/63 PASS**; Node acceptance
+**1511/1511 PASS**, `/var/tmp/meshpn-acceptance-WX0uMf/report.json`. Host read-only
+smoke корректно сообщил non-systemd, probes=0; живые VPS2/Radxa не проверены.
+Следом: получить bundle от пользователя, готовить строгий opt-in клиентский
+plan/install/rollback и реальные units/config в VM. DNS v1 остаётся открыт.
+
 ### Дополнение 2026-09-27: устранение нестабильности тестового барьера
 
 В подробном прогоне воспроизведена точная причина старого process-cleanup
