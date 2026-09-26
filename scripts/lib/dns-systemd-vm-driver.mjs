@@ -9,6 +9,7 @@ import { assertSystemdVmBaselineBlocked } from './dns-vm-fault-lab.mjs';
 import { readResolvedJournal } from './dns-resolved-journal.mjs';
 import { resolvedMethod } from './dns-resolved-backend.mjs';
 import { syncDirectory } from './dns-lifecycle-journal.mjs';
+import { boundedInspectRead } from './dns-inspect.mjs';
 
 const ctl = (...args) => exec('/usr/bin/systemctl', ['--no-pager', ...args], { timeout: 200000 });
 const worker = '/project/scripts/lib/dns-systemd-vm-worker.mjs';
@@ -61,6 +62,8 @@ async function main() {
     const before = (await control('fixture', 'stats')).resolverBodies;
     await assert.rejects(ctl('start', 'dns-vm-consumer.service'));
     assert.equal(await state('dns-vm-adapter.service'), 'failed');
+    assert.equal((await ctl('show', 'dns-vm-adapter.service', '--property=ExecMainStatus', '--value')).stdout.trim(), '1',
+      'expected CLI failure, not systemd namespace/credential/exec setup failure');
     assert.equal(await exists('/run/meshpn/consumers'), false);
     assert.equal(await exists(`${journal}/journal.json`), false);
     assert.equal((await control('fixture', 'stats')).resolverBodies, before);
@@ -73,7 +76,17 @@ async function main() {
   const adapterPid = (await ctl('show', 'dns-vm-adapter.service', '--property=MainPID', '--value')).stdout.trim();
   assert.match(adapterPid, /^[1-9]\d*$/); assert.notEqual(adapterPid, fixturePid);
   const argv = (await readFile(`/proc/${adapterPid}/cmdline`, 'utf8')).split('\0');
-  assert.ok(argv.includes('/project/scripts/dns-exit-adapter.mjs') && argv.includes('--systemd-notify'));
+  assert.ok(argv.includes('/opt/clean-vpn/scripts/dns-exit-adapter.mjs') && argv.includes('--systemd-notify'));
+  const status = await readFile(`/proc/${adapterPid}/status`, 'utf8');
+  const uids = /^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)$/m.exec(status)?.slice(1).map(Number);
+  assert.ok(uids?.length === 4 && uids.every((uid) => uid > 0 && uid === uids[0]), 'unprivileged dynamic UID required');
+  assert.match(status, /^CapEff:\s+0+$/m);
+  assert.match(status, /^NoNewPrivs:\s+1$/m);
+  const credentialArg = argv.find((arg) => arg.startsWith('--shared-hmac-key='));
+  assert.equal(credentialArg, '--shared-hmac-key=/run/credentials/dns-vm-adapter.service/hmac.key');
+  await assert.rejects(exec('/usr/bin/setpriv', [`--reuid=${uids[0]}`, `--regid=${uids[0]}`, '--clear-groups',
+    '/usr/bin/node', '-e', 'require("node:fs").openSync("/etc/clean-vpn/dns/hmac.key", "r")']),
+  (error) => error.code === 1 && /EACCES/.test(error.stderr));
   const { bus, ifindex, backend } = await busContext();
   const noFallback = async () => {
     for (const address of ['127.0.0.55', '::1']) for (const tcp of [false, true]) await assertSystemdVmBaselineBlocked(address, tcp);
@@ -155,11 +168,21 @@ async function main() {
   }
   emit('passed', { ...options, bootId, previousBootId: previous.bootId, systemdPid1: true,
     adapterImplementation: 'cli', separateExitFixture: true, readinessQueriesPerStart: 4,
+    unprivilegedAdapter: true, systemdCredentials: true,
     checks: [...previous.checks, ...checks], baselineQueriesDuringProtection: 0, baselinePositiveControl: true,
     hostNetworkUnavailable: true, automaticStaleAdoption: false, explicitDisablePassed: true, resolvConfUnchanged: true });
   await ctl('--no-block', 'poweroff');
 }
 main().catch(async (error) => {
+  try {
+    await assertSystemdDnsVm();
+    const pid = (await ctl('show', 'dns-vm-adapter.service', '--property=MainPID', '--value')).stdout.trim();
+    if (/^[1-9]\d*$/.test(pid)) {
+      const records = JSON.parse(await boundedInspectRead(`/proc/${pid}/root/tmp/dns-vm-adapter-failures.json`, 16384));
+      assert.ok(Array.isArray(records) && records.length <= 16);
+      emit('adapter-diagnostics', { records });
+    }
+  } catch { /* Keep the original failure if the service is gone or diagnostics unavailable. */ }
   emit('failed', { message: error.stack });
   // The host runner kills this owned guest on failure. Never issue poweroff
   // when the VM authority check failed (e.g. accidental host invocation).

@@ -182,6 +182,18 @@ API `startDnsExitAdapter` принимает только настоящий pub
 `createLabDnsExitTransport` — отдельный JS test API с loopback profile, без
 соответствующего CLI/JSON переключателя. Фальшивые/cloned profiles не принимаются.
 
+Для локальной инструментальной диагностики stub публикует событие
+`clean-vpn.dns.query-failure` через [Node diagnostics_channel](https://nodejs.org/docs/latest-v24.x/api/diagnostics_channel.html)
+только при наличии подписчика. Объект frozen: `code` из фиксированного набора
+(неизвестное → `DNS_OTHER`), `elapsedMs`, `timeoutMs`, `inflight`, `tcpSockets`,
+`tlsSockets`, `requests`, `timers`. Нет QNAME, ID, IP, URL, PEM/PSK или raw error.
+Счётчики сняты в момент отказа, до завершения всех close callbacks: это не
+заявление об утечке ресурсов. Событие не включает malformed/policy-denied запросы.
+Без подписчика нет журналирования/записи на диск. Подписчик — доверенный код
+того же процесса, не внешний API; он обязан быть быстрым и не бросать exceptions.
+VM-only preload сохраняет последние16 отказов в private tmp; в клиентский
+service plan этот preload не включён. DNS deadline, retries и fallback он не меняет.
+
 ## Проверки и следующий шаг
 
 ```bash

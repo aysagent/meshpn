@@ -209,8 +209,8 @@ A/AAAA-пробами, adapter-only SIGKILL, reboot и откатом. Посл�
 
 Для подготовки установки есть [offline service plan](scripts/dns-adapter-service-plan.md):
 строго проверенный вход → unit и два config-файла с hashes, без чтения PSK и
-изменения системы. План использует DynamicUser/credentials, но его полный
-VM-прогон пока не принят из-за позднего SERVFAIL. Это не команда установки.
+изменения системы. План использует DynamicUser/credentials; его отдельный
+systemd VM-прогон прошёл 12/12 проверок в двух загрузках. Это не команда установки.
 
 Следующий порядок работ:
 

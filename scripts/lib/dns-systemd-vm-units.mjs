@@ -1,4 +1,5 @@
 /** Synthetic guest units only: never install these on a host. */
+import { compileDnsAdapterServicePlan } from './dns-adapter-service-plan.mjs';
 const worker = '/usr/bin/node --max-old-space-size=192 /project/scripts/lib/dns-systemd-vm-worker.mjs';
 const common = 'DefaultDependencies=no\nConflicts=shutdown.target\nBefore=shutdown.target\n';
 const service = 'Environment=PATH=/usr/bin:/usr/sbin:/bin:/sbin OPENSSL_CONF=/dev/null\nUMask=0077\nStandardInput=null\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/console\nTimeoutStartSec=180\nTimeoutStopSec=15\nKillMode=control-group\n';
@@ -32,10 +33,22 @@ export function dnsSystemdVmUnits({ cliAdapter = false } = {}) {
     units['dns-vm-fixture.service'] = unit('Separate synthetic exit and DoH origin',
       'Requires=dns-vm-network.service\nAfter=dns-vm-network.service',
       `Type=notify\nNotifyAccess=all\nExecStart=${worker} cli-fixture`);
-    units['dns-vm-adapter.service'] = unit('Actual DNS adapter CLI with protected readiness',
-      'BindsTo=dns-vm-fixture.service\nAfter=dns-vm-fixture.service',
-      'Type=notify\nNotifyAccess=all\nEnvironmentFile=/run/meshpn/cli-adapter.env\n'
-      + 'ExecStart=/usr/bin/node --max-old-space-size=192 /project/scripts/dns-exit-adapter.mjs $DNS_ADAPTER_ARGS --ready-name=systemd-ready.test --systemd-notify');
+    const plan = compileDnsAdapterServicePlan({ schema: 1, exitIp: '93.184.216.36', exitPort: 44443,
+      publicName: 'relay.test', listenPort: 2053, readyName: 'systemd-ready.test',
+      upstream: { schema: 1, transport: 'doh', hostname: 'resolver.test', port: 443, path: '/dns-query',
+        bootstrap: { addresses: ['93.184.216.35'] }, trust: { mode: 'bundled' } },
+      domainPolicy: { schema: 1, denySuffixes: ['blocked.test'] } });
+    // Only boot graph/log sink differ in the synthetic guest. Keep the rendered
+    // CLI, credentials, dynamic UID, capabilities and sandbox directives intact.
+    units['dns-vm-adapter.service'] = plan.files[0].contents
+      .replace('ExecStart=/usr/bin/node ', 'ExecStart=/usr/bin/node --import=/opt/clean-vpn/scripts/lib/dns-vm-adapter-observe.mjs ')
+      .replace('[Unit]\n', `[Unit]\n${common}`)
+      .replace('Wants=network-online.target\n', '')
+      .replace('BindsTo=clean-vpn-dns-guard.service', 'BindsTo=dns-vm-guard.service dns-vm-fixture.service')
+      .replace('After=network-online.target clean-vpn-dns-guard.service', 'After=dns-vm-guard.service dns-vm-fixture.service')
+      // PrivateDevices intentionally hides console; guest has no journald.
+      // The driver measures unit state, MainPID, DNS counters and /proc instead.
+      .replace('StandardOutput=journal\nStandardError=journal', 'StandardOutput=null\nStandardError=null');
   }
   return units;
 }

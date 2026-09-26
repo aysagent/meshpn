@@ -92,6 +92,11 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     }
   }
   await copyTree(join(project, 'scripts'), '/project/scripts');
+  if (systemd && !dnsmasq && !coupled) {
+    // Match the real deployment path: a symlink changes import.meta.url while
+    // Node keeps the argv entrypoint spelling, bypassing its main guard.
+    await copyTree(join(project, 'scripts'), '/opt/clean-vpn/scripts');
+  }
   if (dnsmasq) await copy(join(project, 'scripts/fixtures/dns-clients/radxa-dnsmasq.conf'), '/project/scripts/fixtures/dns-clients/radxa-dnsmasq.conf');
   if (ingress) {
     await copy(join(project, 'package.json'), '/project/package.json');

@@ -10,7 +10,7 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
-### Дополнение 2026-09-27: offline service plan; unprivileged VM ещё не принят
+### Дополнение 2026-09-27: offline service plan и unprivileged VM PASS
 
 Новый `dns-adapter-service-plan.mjs --config=...` читает bounded JSON и печатает
 три артефакта/hash без setters/PSK read/network. Строгие upstream/domain policy,
@@ -19,22 +19,36 @@ DynamicUser, LoadCredential (upstream/domains/PSK), empty capabilities, NNP,
 readonly system/home, private tmp/devices, явные readiness и guard dependency.
 Нет install section, auto restart, disable hook или автоматического выбора
 cloud-policy. Для systemd249 — ${CREDENTIALS_DIRECTORY}, не новый %d.
-**25/25 unit/CLI PASS**; рабочее дерево с pending VM доработками —
-**1570/1570 Node PASS**, `/var/tmp/meshpn-acceptance-9nemPI/report.json`.
+**25/25 unit/CLI PASS**, **1572/1572 Node PASS**,
+`/var/tmp/meshpn-acceptance-0wWNMq/report.json`.
 
-Новый VM профиль ещё НЕ PASS. Сохранены три терминальных failed попытки:
+Новый VM профиль: **12/12 PASS, две загрузки**, systemd255/x64,
+`/var/tmp/meshpn-dns-vm-WlsDhv/report.json`, 2 vCPU MTTCG при штатных deadlines.
+UID>0, CapEff0, NNP1, credentials/source-PSK EACCES проверены на обеих загрузках;
+baseline queries0, явный disable, отказ stale journal, sync/unmount/reboot,
+host DNS неизменен. Все444 копии JS совпали с manifest. VM не имеет journald:
+stdout/stderr null; диагностический preload сохраняет лишь bounded scalar failures.
+
+Сохранены терминальные failed попытки (они не включаются в PASS):
 `PGF8u0`: STDOUT209, PrivateDevices несовместим с прежним tty sink;
 `836N7E`: protocol/exit0, /opt→/project symlink обходил import.meta.url main guard;
 `4tfNnf`: сервис реально прошёл UID>0/CapEff0/NNP1/source-PSK EACCES,
 readiness, stop/restart, outage, adapter SIGKILL, foreign conflict, disable,
 released-journal refusal, но затем controller protectedProbe получил SERVFAIL2
 перед reboot. Полные пути: `/var/tmp/meshpn-dns-vm-<имя>/report.json`.
-Последняя VM завершена, живого session handle нет. Причина позднего SERVFAIL
-не доказана: нельзя объявлять timeout установленным, повышать deadline или
-просто повторять до зелёного. Следующий шаг — bounded VM diagnostics для ошибки
-adapter/relay/upstream и измерение времени/ресурсов при том же сценарии.
-CLI deadlines сохранены. Текущие VM edits ещё не приняты и остаются рабочими;
-предыдущий root CLI PASS не заменяет принятие DynamicUser service.
+`z0rskP` воспроизвёл отказ с redacted diagnostics_channel: DNS_TIMEOUT1718мс
+при deadline1500мс, inflight1/tlsSockets1/requests0/timers0, RSS≈65MB;
+`MFbU7s` на2 vCPU прошёл прежнюю точку, но host harness ошибочно счёл штатный
+driver SIGTERM после reboot-ready аварией. Теперь только signal result после
+ожидаемого terminal marker разрешён; остальные причины и обязательные
+sync/unmount/reboot/result проверки сохранены. `WlsDhv` завершён, handles нет.
+Deadlines/retry не ослаблены;2 vCPU — сравнение мощности эмуляции, не benchmark
+целевых машин и не доказательство единственной причины по одному counter.
+
+Далее — deployment guard/controller и opt-in installer/rollback для обоих
+backend, затем согласованные пользовательские пилоты. Preflight VPS2/Radxa
+запрошен, отчётов пока нет; cloud-policy и live baseline repair требуют выбора.
+Не SSH, не live setters; DNS v1 остаётся открыт.
 
 ### Дополнение 2026-09-27: настоящий CLI adapter под systemd в VM
 

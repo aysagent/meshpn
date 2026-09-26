@@ -95,9 +95,12 @@ read-only CLI и совместимость аргументов с настоя
 [systemd VM](dns-systemd-vm.md); это не live PASS на VPS2/Radxa. Другие VM cases
 сохраняют прежние fixture units до отдельного переноса.
 
-Текущий результат: **25/25 unit/CLI PASS**. Полный новый VM lifecycle пока
-**не принят**: после успешных readiness, UID/capability/credentials checks,
-SIGKILL/recovery и disable получен SERVFAIL на последующей проверке перед
-reboot (`/var/tmp/meshpn-dns-vm-4tfNnf/report.json`). Причина не установлена;
-deadline/retry не ослаблены. Прежний PASS root CLI не доказывает прохождение
-этого профиля. Установка на клиента до завершения проверки не разрешается.
+Результат: **25/25 unit/CLI PASS**, **12/12 VM lifecycle PASS в двух загрузках**,
+`/var/tmp/meshpn-dns-vm-WlsDhv/report.json`. Проверены UID>0, CapEff0, NNP1,
+runtime credentials и отказ чтения исходного PSK от UID адаптера; SIGKILL/recovery,
+reboot и disable. Node-регрессия:1572/1572, `/var/tmp/meshpn-acceptance-0wWNMq/report.json`.
+В VM2 vCPU MTTCG; deadlines/retry не ослаблены. Прежний1-vCPU SERVFAIL
+инструментирован: DNS_TIMEOUT1718мс при deadline1500мс, не доказательство утечки.
+История исправлений стенда и ограничения — в [VM-документе](dns-systemd-vm.md).
+Это systemd255/x64 без journald, не проверка systemd249/ARM на живых клиентах.
+Установщик, guard/controller deployment и live-пилоты всё ещё требуются.

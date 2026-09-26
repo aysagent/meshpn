@@ -5,6 +5,7 @@ import https from 'node:https';
 import dns from 'node:dns';
 import dnsPromises from 'node:dns/promises';
 import { once } from 'node:events';
+import { channel } from 'node:diagnostics_channel';
 import { readFile, mkdtemp, writeFile, chmod, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,6 +32,19 @@ const input = { schema: 1, transport: 'doh', hostname: 'resolver.test', port: 44
   bootstrap: { addresses: ['93.184.216.34'] }, trust: { mode: 'custom', certificates: [cert] } };
 const publicOptions = () => ({ profile: compileDnsUpstream(input), exitAddress: '93.184.216.35', exitPort: 443,
   publicName: 'relay.test', secret: randomBytes(32) });
+
+test('DNS failure diagnostic is opt-in, bounded and excludes query/endpoint/secret data', async (t) => {
+  const events = [], ch = channel('clean-vpn.dns.query-failure'), handler = (record) => events.push(record);
+  ch.subscribe(handler); t.after(() => ch.unsubscribe(handler));
+  const lab = await fixture(t, { mode: 'hold', timeoutMs: 50 });
+  const q = makeDnsQuery('private-diagnostic-name.test');
+  assert.equal(validateDnsResponse(await queryLabDns(lab.stub.port, q), q).rcode, 2);
+  assert.equal(events.length, 1); const r = events[0];
+  assert.deepEqual(Object.keys(r).sort(), ['code', 'elapsedMs', 'timeoutMs', 'inflight', 'tcpSockets', 'tlsSockets', 'requests', 'timers'].sort());
+  assert.equal(r.code, 'DNS_TIMEOUT'); assert.equal(r.timeoutMs, 50); assert.ok(r.elapsedMs >= 0);
+  for (const [k, v] of Object.entries(r)) if (k !== 'code') assert.ok(Number.isSafeInteger(v) && v >= 0);
+  assert.ok(Object.isFrozen(r)); assert.ok(!JSON.stringify(r).includes('private-diagnostic-name'));
+});
 
 for (const [label, patch] of [
   ['hostname exit', { exitAddress: 'exit.test' }], ['loopback exit', { exitAddress: '127.0.0.1' }],

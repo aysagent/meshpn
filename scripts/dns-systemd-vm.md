@@ -21,6 +21,16 @@ systemd-executor, systemd-shutdown, systemctl, systemd-notify и явный на
 для сгенерированных units; нужен локальный systemd-analyze.
 Временный образ не требует установки пакетов или служб на хосте.
 
+Для `--case=systemd` теперь явно выделены **2 vCPU, MTTCG**; остальные случаи
+сохраняют1 vCPU. Это не увеличение DNS deadline: client, exit/origin и controller
+размещены в одной эмулируемой машине, хотя в целевой эксплуатации exit отдельный.
+Прежний1-vCPU прогон воспроизвёл `DNS_TIMEOUT`: 1718мс при deadline1500мс,
+inflight1, requests0/timers0 в момент обработки отказа, RSS≈65MB. Отчёт:
+`/var/tmp/meshpn-dns-vm-z0rskP/report.json`, подробности в `serial-1.log`.
+Сам timeout установлен прямо; влияние CPU contention проверяется сравнением,
+а не объявляется доказанным только по этому счётчику.
+[QEMU MTTCG](https://www.qemu.org/docs/master/devel/multi-thread-tcg.html).
+
 ## Что проверяется
 
 BusyBox `/init` монтирует гостевые файловые системы и устанавливает DNS53 guard
@@ -46,6 +56,13 @@ resolved + adapter + guard + baseline → controller → consumer
 объединённый worker: exit/origin теперь живут в независимом fixture service.
 Проверяется MainPID и argv адаптера, ровно четыре ответа до завершения start;
 при первом запуске с отключённым exit unit отказывает до создания journal/consumer.
+Unit строится из [клиентского service plan](dns-adapter-service-plan.md):
+DynamicUser, credentials, readonly filesystem и capability restrictions не
+снимаются. В VM отличаются boot dependencies, диагностический preload и вывод
+(null вместо journald, отсутствующего в минимальном образе). Проверяются ненулевые UID,
+нулевой CapEff, NoNewPrivs=1 и EACCES при чтении исходного PSK от этого UID.
+Credentials используются из отдельной runtime-копии, а код действительно
+размещён в `/opt/clean-vpn`, без симлинка на лабораторный checkout.
 Controller использует существующий persistent
 resolved journal, реальные D-Bus setters/read-back и отдельный `flock`.
 Consumer запускает glibc lookup и фиксирует успешную готовность.
@@ -87,6 +104,12 @@ sentinels считают запрещённые baseline запросы IPv4/IPv
 На одну VM до15 минут, две загрузки, ограниченный serial log. Это TCG acceptance,
 не benchmark: glibc deadline5s вместо1s, без дополнительного retry или fallback.
 Ошибка прекращает матрицу, незавершённый/проваленный запуск не считается PASS.
+После ожидаемого `reboot-ready`/`passed` допускается только завершение driver
+с systemd result `signal`: shutdown может опередить возврат systemctl. До маркера
+это ошибка, другие failed results остаются ошибками и после него. Маркер сам по
+себе недостаточен: sync/unmount, exit QEMU, reboot и обе boot identity всё ещё
+обязательны. Эта гонка остановила прежний прогон `MFbU7s` после `reboot-ready`;
+он не считается успешным.
 Reboot всё ещё использует `-no-reboot` и перезапуск QEMU с тем же private disk,
 не in-process hot reset; физическая потеря host page cache не моделируется.
 
@@ -94,10 +117,16 @@ Reboot всё ещё использует `-no-reboot` и перезапуск Q
 exit/origin остаётся жив. Другие VM cases пока сохраняют свой объединённый
 fixture; результат этого режима нельзя автоматически переносить на них.
 CLI использует обычные production deadlines (DoH1500мс, readiness2000мс на запрос),
-не увеличенные fixture DNS deadlines. Root units остаются лабораторными.
+не увеличенные fixture DNS deadlines. Adapter работает без root; остальные
+fixture/controller units остаются лабораторными root services.
+VM-only `--import` observer сохраняет последние16 отказов (код, время, counters,
+RSS/heap) в PrivateTmp. При ошибке driver читает их через namespace root процесса
+и добавляет `adapter-diagnostics` перед `failed`. Нет QNAME/IP/ключей, retries
+или изменения deadline; в клиентский service plan observer не включён.
 
-Synthetic D-Bus policy и root fixture services удобны для изолированной проверки,
-**не являются production unit hardening**. Entry points проверяют QEMU marker,
+Synthetic D-Bus policy и root fixture/controller services удобны для изолированной
+проверки, **не являются production controller hardening**. Adapter service plan
+не устанавливает эти зависимости на клиент. Entry points проверяют QEMU marker,
 PID1, root guest namespaces и отсутствие посторонних NIC; на обычном хосте
 отказывают до изменений. Backend не пишет resolv.conf. Автоматического adoption
 старого журнала после reboot нет: fail-closed может требовать операторского review.
@@ -109,6 +138,24 @@ adapter/exit, клиентских units/guard и аварийного дост�
 остальные DNS backends. Реальный24-часовой пилот не заменяется этой VM.
 
 ## Зафиксированный результат
+
+2026-09-27: настоящий CLI с **DynamicUser/credentials —12/12 PASS в двух загрузках**,
+`/var/tmp/meshpn-dns-vm-WlsDhv/report.json`. Systemd255/x64, QEMU8.2.2,
+2 vCPU MTTCG, штатные CLI deadlines; 444 копии JS исходников совпали с manifest.
+`unprivilegedAdapter=true`, `systemdCredentials=true`, baseline queries0,
+host DNS и guest resolv.conf неизменны. Проверены настоящие sync/unmount,
+kernel reboot и разные boot ID; второй запуск завершился poweroff.
+Node-регрессия **1572/1572 PASS**, `/var/tmp/meshpn-acceptance-0wWNMq/report.json`.
+
+Предшествующие failed попытки не входят в PASS: `PGF8u0` — несовместимый tty
+sink при PrivateDevices, `836N7E` — symlink entrypoint вместо реального /opt layout,
+`4tfNnf` — поздний SERVFAIL, `z0rskP` — его инструментированное воспроизведение
+с DNS_TIMEOUT, `MFbU7s` — гонка driver shutdown после успешного первого boot.
+Полные пути: `/var/tmp/meshpn-dns-vm-<имя>/report.json`.
+2-vCPU результат согласуется с гипотезой CPU contention в эмуляции, но не доказывает
+производительность живой Radxa и не принимает прежние failed прогоны задним числом.
+
+### Исторический результат исходного fixture
 
 Текущий CLI-прогон: **PASS:2 загрузки systemd 255 PID1,12 проверок
 (10 разных критериев)**, `/var/tmp/meshpn-dns-vm-fZOFw7/report.json`.

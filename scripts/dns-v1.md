@@ -73,7 +73,10 @@ CLI адаптера получил [явную стартовую readiness](dn
 пилоты остаются; другие VM cases пока используют свои прежние fixture services.
 Добавлен [offline renderer клиентского adapter service](dns-adapter-service-plan.md)
 с DynamicUser/credentials. Он ничего не устанавливает; 25 unit/CLI проверок
-прошли, полный новый VM lifecycle ещё не принят (поздний SERVFAIL расследуется).
+и новый непривилегированный VM lifecycle (12/12, две загрузки) прошли.
+VM использует2 vCPU MTTCG при неизменном DoH deadline1500мс; это не benchmark
+Radxa или подтверждение live-конфигурации. Подробности отказов и диагностики —
+в отчёте [systemd VM](dns-systemd-vm.md).
 
 ## Три этапа и текущий статус
 

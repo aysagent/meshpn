@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { mkdtemp, open, writeFile, readFile, lstat, readlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { vmDriverFailureIsFatal } from './lib/dns-vm-protocol.mjs';
 import { buildDnsVmImage, verifyVmPackages, sha256 } from './lib/dns-vm-image.mjs';
 import { qemuDnsArgs, VM_FAULTS, vmCases, assertVmFaultEvidence, assertVmSystemdEvidence, assertVmDnsmasqEvidence, assertVmCoupledEvidence, assertVmRadxaEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
 
@@ -45,6 +46,7 @@ async function main() {
   const report = { schema: 1, kind: 'clean-vpn-dns-vm-lab', status: 'failed', version, packages,
     nic: 'none', accelerator: 'tcg', diskCache: 'writeback', hostSharedFilesystem: false,
     systemdPid1: systemd, ...(dnsmasq ? { backend: radxa ? 'radxa-paired' : 'dnsmasq' } : {}), physicalPowerLossTested: false, inProcessHotResetTested: false, cases: [] };
+  report.vcpus = flags.get('case') === 'systemd' ? 2 : 1;
   try {
     const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved'), systemd,
       dnsmasq: dnsmasq ? flags.get('dnsmasq') : null, coupled, radxa });
@@ -75,7 +77,7 @@ async function main() {
           const end = pending.indexOf('\n'); if (end < 0) break;
           const line = pending.slice(0, end).replace(/\x1b\[[0-9;]*m/g, '').trim(); pending = pending.slice(end + 1);
           if (/Freezing execution\.|Kernel panic - not syncing/.test(line)) abort(new Error('guest init/kernel failed'));
-          if (/dns-vm-driver\.service: Failed with result/.test(line)) abort(new Error('systemd acceptance driver failed'));
+          if (vmDriverFailureIsFatal(line, events.some((e) => e.event === (expectReboot ? 'reboot-ready' : 'passed')))) abort(new Error('systemd acceptance driver failed'));
           if (/\.mount: Mount process exited,.*status=203\/EXEC/.test(line)) abort(new Error('guest mount helper missing'));
           if (/reboot: Restarting system$/.test(line)) kernelRestart = true;
           if (/^(?:.*systemd-shutdown[^:]*: )?Syncing filesystems and block devices\.$/.test(line)) shutdownSynced = true;

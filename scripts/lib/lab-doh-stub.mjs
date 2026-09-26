@@ -3,11 +3,15 @@ import dgram from 'node:dgram';
 import net from 'node:net';
 import https from 'node:https';
 import { once } from 'node:events';
+import { channel } from 'node:diagnostics_channel';
 import { DNS_MAX_BYTES, DNS_UDP_MAX_BYTES, dnsError, parseDnsQuery, validateDnsResponse, dnsFailure, truncateDnsResponse, ageDnsResponse } from './lab-dns-wire.mjs';
 import { dnsHttpAge } from './dns-http-age.mjs';
 import { labDnsUpstreamTarget } from './dns-upstream-config.mjs';
 import { dnsExitTransportTarget } from './dns-exit-transport.mjs';
 import { compileDnsDomainPolicy } from './dns-domain-policy.mjs';
+
+const failureChannel = channel('clean-vpn.dns.query-failure');
+const failureCodes = new Set(['DNS_TIMEOUT', 'DNS_ABORTED', 'DNS_HTTP', 'DNS_SIZE', 'DNS_RESPONSE', 'DNS_UPSTREAM', 'DNS_HTTP_AGE']);
 
 export async function startLabDohStub({ port = 0, upstream, profile, relayPort, exitTransport, timeoutMs = 1500, maxInflight = 16,
   maxTcpConnections = 16, tcpLifetimeMs = 5000, domainPolicy } = {}) {
@@ -110,6 +114,7 @@ export async function startLabDohStub({ port = 0, upstream, profile, relayPort, 
     if (policy?.denies(parsed)) { counts.policyDenied++; return dnsFailure(query, 5); }
     if (inflight >= maxInflight) { counts.rejected++; return dnsFailure(query); }
     inflight++; peakInflight = Math.max(peakInflight, inflight); counts.forwarded++;
+    const started = performance.now();
     try {
       const upstreamQuery = Buffer.from(query); upstreamQuery.writeUInt16BE(0);
       const reply = await doh(upstreamQuery, signal);
@@ -119,6 +124,11 @@ export async function startLabDohStub({ port = 0, upstream, profile, relayPort, 
       return reply;
     } catch (error) {
       counts.failed++; errors[error.code] = (errors[error.code] ?? 0) + 1;
+      if (failureChannel.hasSubscribers) failureChannel.publish(Object.freeze({
+        code: failureCodes.has(error.code) ? error.code : 'DNS_OTHER',
+        elapsedMs: Math.round(performance.now() - started), timeoutMs,
+        inflight, tcpSockets: tcpSockets.size, tlsSockets: tlsSockets.size, requests: requests.size, timers: timers.size,
+      }));
       return dnsFailure(query);
     } finally { inflight--; }
   }

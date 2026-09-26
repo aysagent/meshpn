@@ -123,13 +123,16 @@ async function main(command) {
     return;
   }
   if (command === 'adapter' || command === 'cli-fixture') {
-    const lab = await startSystemdVmAdapterFixture(await mkdtemp('/run/meshpn/adapter-'));
+    const lab = await startSystemdVmAdapterFixture(await mkdtemp('/run/meshpn/adapter-'), { cli: command === 'cli-fixture' });
     if (command === 'cli-fixture') {
       const args = await lab.prepareCliAdapter();
-      // Generated synthetic paths/addresses only; never accept operator input
-      // as EnvironmentFile/systemd command syntax. The PSK itself is not here.
-      assert.ok(args.every((arg) => /^--[a-z-]+=[A-Za-z0-9./:-]+$/.test(arg)));
-      await writeFile('/run/meshpn/cli-adapter.env', `DNS_ADAPTER_ARGS="${args.join(' ')}"\n`, { flag: 'wx', mode: 0o600 });
+      const paths = Object.fromEntries(args.map((arg) => arg.slice(2).split('=')));
+      assert.equal(paths['exit-port'], '44443');
+      await mkdir('/etc/clean-vpn/dns', { recursive: true, mode: 0o700 });
+      await writeFile('/etc/clean-vpn/dns/upstream.json', await readFile(paths.config), { flag: 'wx', mode: 0o600 });
+      const key = await readFile(paths['shared-hmac-key']);
+      try { await writeFile('/etc/clean-vpn/dns/hmac.key', key, { flag: 'wx', mode: 0o600 }); } finally { key.fill(0); }
+      await writeFile('/etc/clean-vpn/dns/domains.json', JSON.stringify({ schema: 1, denySuffixes: ['blocked.test'] }), { flag: 'wx', mode: 0o600 });
     } else await protectedProbe();
     return serve('fixture', async (operation) => {
       if (operation === 'stop-exit') await lab.stopExit();

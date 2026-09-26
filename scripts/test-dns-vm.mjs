@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { vmDriverFailureIsFatal } from './lib/dns-vm-protocol.mjs';
 import { VM_CUT_POINTS, VM_FAULTS, VM_SYSTEMD_CHECKS, VM_DNSMASQ_CHECKS, vmCases, vmBootOptions, qemuDnsArgs, assertVmJournalCheckpoint, assertVmFaultEvidence, assertVmSystemdEvidence, assertVmDnsmasqEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
 import { runCommand } from './lib/transparent-acceptance.mjs';
 import { dnsSystemdVmUnits } from './lib/dns-systemd-vm-units.mjs';
@@ -14,6 +15,17 @@ import { radxaVmContext } from './lib/dns-radxa-vm-worker.mjs';
 import { queryDnsmasqVm53 } from './lib/transparent-dns-lab.mjs';
 
 const input = { root: '/private/tools', kernel: '/private/kernel', initrd: '/private/initrd', disk: '/private/state.raw', phase: 'cycle', point: 'none' };
+test('driver signal termination is expected only after the requested terminal event', () => {
+  const signal = "dns-vm-driver.service: Failed with result 'signal'.";
+  assert.equal(vmDriverFailureIsFatal(signal), true);
+  assert.equal(vmDriverFailureIsFatal(signal, true), false);
+  assert.equal(vmDriverFailureIsFatal(`[123] ${signal}`, true), false);
+  for (const result of ['exit-code', 'timeout', 'core-dump', 'protocol', 'resources']) {
+    assert.equal(vmDriverFailureIsFatal(`dns-vm-driver.service: Failed with result '${result}'.`, true), true);
+  }
+  assert.equal(vmDriverFailureIsFatal(`${signal} extra`, true), true);
+  assert.equal(vmDriverFailureIsFatal('unrelated service message', true), false);
+});
 test('shared console framing tolerates a PID1 prefix, never malformed JSON', () => {
   assert.equal(vmSerialEvent('ordinary kernel log'), null);
   for (const prefix of ['', 'service: Deactivated successfully.']) {
@@ -47,6 +59,8 @@ test('fault group is bounded and cannot silently extend the original reboot matr
 test('systemd lifecycle selection remains separate and uses the same NIC-less QEMU isolation', () => {
   assert.deepEqual(vmCases('systemd'), ['lifecycle']);
   const args = qemuDnsArgs({ ...input, phase: 'systemd', point: 'lifecycle' });
+  assert.equal(args[args.indexOf('-smp') + 1], '2');
+  assert.equal(args[args.indexOf('-accel') + 1], 'tcg,thread=multi');
   assert.deepEqual(vmBootOptions(args[args.indexOf('-append') + 1]), { phase: 'systemd', point: 'lifecycle' });
   assert.ok(args.includes('-no-reboot')); assert.ok(args.includes('none'));
   assert.throws(() => qemuDnsArgs({ ...input, phase: 'systemd', point: 'none' }));
@@ -63,6 +77,7 @@ test('VM units gate consumers on readiness and stop does not implicitly disable 
 test('systemd evidence needs both boots and all lifecycle gates, not just a passed marker', () => {
   const evidence = { phase: 'systemd', point: 'lifecycle', systemdPid1: true, automaticStaleAdoption: false,
     adapterImplementation: 'cli', separateExitFixture: true, readinessQueriesPerStart: 4,
+    unprivilegedAdapter: true, systemdCredentials: true,
     baselineQueriesDuringProtection: 0, baselinePositiveControl: true, explicitDisablePassed: true, resolvConfUnchanged: true,
     checks: [...VM_SYSTEMD_CHECKS, 'real-service-readiness-before-consumer', 'explicit-disable-restores-owned-baseline'] };
   assertVmSystemdEvidence(evidence);
@@ -77,9 +92,13 @@ test('systemd evidence needs both boots and all lifecycle gates, not just a pass
 test('CLI VM adapter is the real entrypoint, not the combined root fixture', () => {
   const units = dnsSystemdVmUnits({ cliAdapter: true });
   assert.match(units['dns-vm-fixture.service'], /cli-fixture/);
-  assert.match(units['dns-vm-adapter.service'], /BindsTo=dns-vm-fixture.service\nAfter=dns-vm-fixture.service/);
+  assert.match(units['dns-vm-adapter.service'], /BindsTo=dns-vm-guard.service dns-vm-fixture.service\nAfter=dns-vm-guard.service dns-vm-fixture.service/);
   assert.match(units['dns-vm-adapter.service'], /Type=notify\nNotifyAccess=all/);
-  assert.match(units['dns-vm-adapter.service'], /\/project\/scripts\/dns-exit-adapter.mjs \$DNS_ADAPTER_ARGS --ready-name=systemd-ready.test --systemd-notify/);
+  assert.match(units['dns-vm-adapter.service'], /\/opt\/clean-vpn\/scripts\/dns-exit-adapter.mjs /);
+  assert.match(units['dns-vm-adapter.service'], /--ready-name=systemd-ready.test --systemd-notify/);
+  assert.match(units['dns-vm-adapter.service'], /DynamicUser=yes/);
+  assert.match(units['dns-vm-adapter.service'], /LoadCredential=hmac.key:/);
+  assert.match(units['dns-vm-adapter.service'], /CapabilityBoundingSet=\n/);
   assert.ok(!units['dns-vm-adapter.service'].includes('dns-systemd-vm-worker'));
   assert.ok(!dnsSystemdVmUnits()['dns-vm-fixture.service']);
 });

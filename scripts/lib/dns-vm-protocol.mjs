@@ -80,6 +80,7 @@ export function assertVmSystemdEvidence(evidence) {
   assert.equal(evidence.systemdPid1, true); assert.equal(evidence.automaticStaleAdoption, false);
   assert.equal(evidence.adapterImplementation, 'cli'); assert.equal(evidence.separateExitFixture, true);
   assert.equal(evidence.readinessQueriesPerStart, 4);
+  assert.equal(evidence.unprivilegedAdapter, true); assert.equal(evidence.systemdCredentials, true);
   assert.equal(evidence.baselineQueriesDuringProtection, 0); assert.equal(evidence.baselinePositiveControl, true);
   assert.equal(evidence.explicitDisablePassed, true); assert.equal(evidence.resolvConfUnchanged, true);
   assert.deepEqual([...new Set(evidence.checks)].sort(), [...VM_SYSTEMD_CHECKS].sort());
@@ -163,13 +164,24 @@ export function vmBootOptions(cmdline) {
         : phase.startsWith('coupled-') ? VM_COUPLED_CUTS.includes(point) : VM_CUT_POINTS.includes(point));
   return { phase, point };
 }
+// A shutdown request may terminate the driver before systemctl returns. This
+// only classifies the log: actual sync/unmount/reboot and result evidence remain
+// mandatory in the launcher, including after an expected signal termination.
+export function vmDriverFailureIsFatal(line, terminalRequested = false) {
+  if (!/dns-vm-driver\.service: Failed with result/.test(line)) return false;
+  return !(terminalRequested && /dns-vm-driver\.service: Failed with result 'signal'\.$/.test(line));
+}
 export function qemuDnsArgs({ root, kernel, initrd, disk, phase, point }) {
   vmBootOptions(`meshpn_dns_vm=isolated-v1 meshpn_phase=${phase} meshpn_point=${point}`);
   for (const path of [root, kernel, initrd, disk]) assert.ok(path.startsWith('/') && !/[,\n\r\0]/.test(path));
   return ['-nodefaults', '-no-user-config', '-nic', 'none', '-display', 'none', '-monitor', 'none',
     // Only the parent may launch another boot; unexpected reboot/panic cannot hide a failed attempt.
     '-no-reboot',
-    '-serial', 'stdio', '-accel', 'tcg', '-cpu', 'max', '-m', '1024', '-smp', '1',
+    // The real CLI keeps its 1500ms production deadline. Give the synthetic
+    // client and separate exit/origin CPU execution capacity as on two hosts;
+    // other historical fault/fixture cases retain their original single vCPU.
+    '-serial', 'stdio', '-accel', phase === 'systemd' ? 'tcg,thread=multi' : 'tcg',
+    '-cpu', 'max', '-m', '1024', '-smp', phase === 'systemd' ? '2' : '1',
     '-machine', 'pc,dump-guest-core=off', '-bios', `${root}/usr/share/seabios/bios-256k.bin`,
     '-L', `${root}/usr/share/qemu`, '-kernel', kernel, '-initrd', initrd,
     '-append', `console=ttyS0 quiet panic=-1 reboot=t random.trust_cpu=on meshpn_dns_vm=isolated-v1 meshpn_phase=${phase} meshpn_point=${point}`,

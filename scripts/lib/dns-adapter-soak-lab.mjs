@@ -24,13 +24,14 @@ export async function startAdapterSoakLab({ family, modeTag, concurrency, timeou
   return startFixture({ family, modeTag, concurrency, timeoutMs, domainPolicy }, directory);
 }
 
-export async function startSystemdVmAdapterFixture(directory) {
+export async function startSystemdVmAdapterFixture(directory, { cli = false } = {}) {
   const options = await assertSystemdDnsVm();
+  assert.equal(typeof cli, 'boolean'); assert.ok(!cli || options.phase === 'systemd');
   const links = JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout);
   assert.deepEqual(links.map((l) => l.ifname).filter((name) => !(options.phase.startsWith('coupled')
     && /^cvdns[a-f0-9]{8}$/.test(name))).sort(), ['dnsfixture', 'lo']);
   return startFixture({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 5000, port: 2053, replace: true,
-    certificateTimeoutMs: 120000 }, directory);
+    certificateTimeoutMs: 120000, exitListenPort: cli ? 44443 : 0 }, directory);
 }
 
 export async function startDnsmasqVmAdapterFixture(directory) {
@@ -39,7 +40,7 @@ export async function startDnsmasqVmAdapterFixture(directory) {
     certificateTimeoutMs: 120000 }, directory);
 }
 
-async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0, replace = false, domainPolicy, certificateTimeoutMs = 15000 }, directory) {
+async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0, replace = false, domainPolicy, certificateTimeoutMs = 15000, exitListenPort = 0 }, directory) {
   const addresses = family === 4 ? ['93.184.216.34', '93.184.216.35', '93.184.216.36']
     : ['2606:4700::1112', '2606:4700::1111', '2606:4700::1113'];
   for (const ip of addresses) await exec('ip', [family === 4 ? '-4' : '-6', 'addr', replace ? 'replace' : 'add', `${ip}/${family === 4 ? 32 : 128}`,
@@ -98,7 +99,7 @@ async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0,
       bootstrap: { addresses: addresses.slice(0, 2) }, trust: { mode: 'custom', certificates: [cert] } };
     const profile = compileDnsUpstream(profileConfig);
     policy = dnsUpstreamExitPolicy(profile, { lookup: () => { dnsCalls++; throw new Error('lookup forbidden'); } });
-    exitPort = await listen(exit, 0, addresses[2]);
+    exitPort = await listen(exit, exitListenPort, addresses[2]);
     adapter = await startDnsExitAdapter({ profile, secret, publicName, exitAddress: addresses[2], exitPort,
       port, timeoutMs, maxInflight: concurrency, maxTcpConnections: concurrency, tcpLifetimeMs: Math.max(3000, timeoutMs), domainPolicy });
     const stats = () => ({ ...adapter.stats(), resolverSockets: resolverSockets.size, resolverBodies: bodies,
