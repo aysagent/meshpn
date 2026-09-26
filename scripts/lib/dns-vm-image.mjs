@@ -37,7 +37,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   assert.ok(!dnsmasq || systemd && !ingress && dnsmasq.startsWith('/'));
   assert.ok(!coupled || systemd && !dnsmasq && !ingress);
   assert.ok(!radxa || systemd && dnsmasq && !coupled && !ingress);
-  const units = radxa ? radxaVmUnits() : coupled ? dnsCoupledVmUnits() : dnsmasq ? dnsmasqVmUnits() : dnsSystemdVmUnits();
+  const units = radxa ? radxaVmUnits() : coupled ? dnsCoupledVmUnits() : dnsmasq ? dnsmasqVmUnits() : dnsSystemdVmUnits({ cliAdapter: true });
   const root = join(directory, 'guest'); await mkdir(root, { mode: 0o700 });
   const copied = new Map(), modules = new Set();
   const destination = (path) => { assert.ok(path.startsWith('/') && !path.split('/').includes('..')); return join(root, path); };

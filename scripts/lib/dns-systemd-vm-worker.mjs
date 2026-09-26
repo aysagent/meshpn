@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
-import { readFile, readlink, mkdir, mkdtemp, appendFile, access, unlink } from 'node:fs/promises';
+import { readFile, readlink, mkdir, mkdtemp, appendFile, access, unlink, writeFile } from 'node:fs/promises';
 import { exec } from './browser-lab-driver.mjs';
 import { assertSystemdDnsVm } from './dns-systemd-vm-safety.mjs';
 import { startSystemdVmAdapterFixture } from './dns-adapter-soak-lab.mjs';
@@ -105,7 +105,8 @@ async function serve(name, action, close) {
 }
 async function main(command) {
   const options = await assertSystemdDnsVm(), coupled = options.phase.startsWith('coupled');
-  assert.ok(['guard', 'network', 'baseline', 'adapter', 'sentinel', 'activate', 'disable', 'consumer'].includes(command));
+  assert.ok(['guard', 'network', 'baseline', 'adapter', 'cli-fixture', 'sentinel', 'activate', 'disable', 'consumer'].includes(command));
+  assert.ok(command !== 'cli-fixture' || options.phase === 'systemd', 'CLI fixture is a separate systemd-only case');
   assert.ok(!coupled || !['activate', 'disable'].includes(command), 'use coupled VM controller');
   process.umask(0o077); await mkdir('/run/meshpn', { recursive: true, mode: 0o700 });
   if (command === 'guard') {
@@ -121,9 +122,15 @@ async function main(command) {
     await exec('ip', ['link', 'set', 'dnsfixture', 'up']);
     return;
   }
-  if (command === 'adapter') {
+  if (command === 'adapter' || command === 'cli-fixture') {
     const lab = await startSystemdVmAdapterFixture(await mkdtemp('/run/meshpn/adapter-'));
-    await protectedProbe();
+    if (command === 'cli-fixture') {
+      const args = await lab.prepareCliAdapter();
+      // Generated synthetic paths/addresses only; never accept operator input
+      // as EnvironmentFile/systemd command syntax. The PSK itself is not here.
+      assert.ok(args.every((arg) => /^--[a-z-]+=[A-Za-z0-9./:-]+$/.test(arg)));
+      await writeFile('/run/meshpn/cli-adapter.env', `DNS_ADAPTER_ARGS="${args.join(' ')}"\n`, { flag: 'wx', mode: 0o600 });
+    } else await protectedProbe();
     return serve('fixture', async (operation) => {
       if (operation === 'stop-exit') await lab.stopExit();
       else if (operation === 'start-exit') await lab.restartExit();

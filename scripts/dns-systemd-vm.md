@@ -35,13 +35,18 @@ A/AAAA не означает поддержку IPv6 data plane VPN.
 ```text
 early guest guard → systemd PID1 → guard.service → network.service
                                                    ├─ dbus → resolved → baseline
-                                                   ├─ adapter (protected readiness)
+                                                   ├─ exit/origin fixture → adapter CLI
                                                    └─ independent DNS sentinels
 resolved + adapter + guard + baseline → controller → consumer
 ```
 
 Управляет порядком настоящий systemd; `Type=notify` у adapter подтверждается
-после UDP/TCP protected probes. Controller использует существующий persistent
+после четырёх UDP/TCP A/AAAA protected probes. Используется настоящий
+`dns-exit-adapter.mjs --ready-name=systemd-ready.test --systemd-notify`, а не
+объединённый worker: exit/origin теперь живут в независимом fixture service.
+Проверяется MainPID и argv адаптера, ровно четыре ответа до завершения start;
+при первом запуске с отключённым exit unit отказывает до создания journal/consumer.
+Controller использует существующий persistent
 resolved journal, реальные D-Bus setters/read-back и отдельный `flock`.
 Consumer запускает glibc lookup и фиксирует успешную готовность.
 `BindsTo` вместе с `After` связывает остановку зависимых служб с зависимостью.
@@ -59,7 +64,8 @@ Consumer запускает glibc lookup и фиксирует успешную 
    возвращает открытый DNS. Повторный start восстанавливает ту же транзакцию.
 4. Отказ exit не вызывает baseline DNS fallback; восстановление exit возвращает DNS.
 5. SIGKILL adapter unit останавливает зависимые controller/consumer;
-   guard и журнал остаются. Start на том же порту восстанавливает transaction ID.
+   guard и журнал остаются; exit/origin service продолжает работу с прежним PID.
+   Start на том же порту восстанавливает transaction ID.
 6. Чужое изменение Domains: disable отклоняется, чужие свойства и journal
    сохраняются. Исправление конфликта в fixture — отдельное явное действие.
 7. Только explicit disable под flock восстанавливает принадлежащий контексту
@@ -84,9 +90,11 @@ sentinels считают запрещённые baseline запросы IPv4/IPv
 Reboot всё ещё использует `-no-reboot` и перезапуск QEMU с тем же private disk,
 не in-process hot reset; физическая потеря host page cache не моделируется.
 
-Сервис fixture объединяет adapter/exit/origin. Его SIGKILL шире, чем авария одного
-adapter; отдельный adapter-only SIGKILL проверяется
-[namespace process-стендом](dns-adapter-process.md).
+В `--case=systemd` SIGKILL относится только к настоящему CLI adapter; fixture
+exit/origin остаётся жив. Другие VM cases пока сохраняют свой объединённый
+fixture; результат этого режима нельзя автоматически переносить на них.
+CLI использует обычные production deadlines (DoH1500мс, readiness2000мс на запрос),
+не увеличенные fixture DNS deadlines. Root units остаются лабораторными.
 
 Synthetic D-Bus policy и root fixture services удобны для изолированной проверки,
 **не являются production unit hardening**. Entry points проверяют QEMU marker,
@@ -102,7 +110,19 @@ adapter/exit, клиентских units/guard и аварийного дост�
 
 ## Зафиксированный результат
 
-**PASS:2 загрузки systemd PID1,11 проверок (9 разных критериев)**,
+Текущий CLI-прогон: **PASS:2 загрузки systemd 255 PID1,12 проверок
+(10 разных критериев)**, `/var/tmp/meshpn-dns-vm-fZOFw7/report.json`.
+`adapterImplementation=cli`, `separateExitFixture=true`,
+`readinessQueriesPerStart=4`; `hostDnsFilesUnchanged=true`,
+`resolvConfUnchanged=true`, `baselineQueriesDuringProtection=0`,
+`automaticStaleAdoption=false`. Оба shutdown прошли sync/unmount;
+218 JS исходников image manifest совпали с рабочим деревом.
+Node regression **1545/1545 PASS**, без skips,
+`/var/tmp/meshpn-acceptance-KGIaIf/report.json`. Это не новый browser acceptance,
+не power-cut прогон и не проверка клиентских версий/arm64.
+
+Исторический результат до выделения CLI: **PASS:2 загрузки systemd PID1,
+11 проверок (9 разных критериев)**,
 `/var/tmp/meshpn-dns-vm-lJHO3D/report.json`.
 `hostDnsFilesUnchanged=true`, `resolvConfUnchanged=true`,
 `baselineQueriesDuringProtection=0`, `automaticStaleAdoption=false`.

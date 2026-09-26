@@ -10,6 +10,25 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: настоящий CLI adapter под systemd в VM
+
+`--case=systemd` теперь запускает `dns-exit-adapter.mjs` отдельным Type=notify
+service. Exit/origin выделены в независимый synthetic fixture, без production
+флага обхода проверки TLS/public addresses. Проверяются MainPID/argv, четыре
+пробы до start completion, отказ запуска без exit до журнала/consumer, SIGKILL
+только adapter с сохранением PID exit, recovery, reboot и explicit disable.
+Остальные coupled/dnsmasq/Radxa VM cases сохраняют старый combined fixture;
+новый результат автоматически на них не переносится.
+
+**12/12 PASS в двух загрузках systemd 255**,
+`/var/tmp/meshpn-dns-vm-fZOFw7/report.json`: запрет baseline fallback, positive
+control, отсутствие automatic stale adoption, сохранность host DNS и guest
+resolv.conf; оба shutdown sync/unmount. Все218 JS files manifest совпали.
+Node **1545/1545 PASS**, `/var/tmp/meshpn-acceptance-KGIaIf/report.json`.
+Root synthetic units не являются live installer/hardening, реальные VPS2/Radxa
+не менялись. Далее: opt-in client deployment plan/units/rollback с ownership
+review, затем отдельно согласованные клиентские пилоты. DNS v1 открыт.
+
 ### Дополнение 2026-09-27: явная readiness CLI адаптера
 
 `dns-exit-adapter.mjs --ready-name=example.com` проверяет четыре положительных
@@ -22,8 +41,8 @@ Default остаётся bind-only без начальных запросов. O
 Node **1544/1544 PASS**, `/var/tmp/meshpn-acceptance-0OrqSN/report.json`;
 CLI public-contract namespace IPv4/IPv6 — по семь сценариев PASS: нормальный
 старт/stop, denied name, exit down, upstream reset/NXDOMAIN, отмена и восстановление.
-После закрытия процессов/сокетов/таймеров нет. Настоящий notification пока
-не проверен в VM, только unit tests: это следующий отдельный этап перед units.
+После закрытия процессов/сокетов/таймеров нет. На этом этапе notification был
+проверен только unit tests; следующий VM-прогон описан выше отдельно.
 Live VPS2/Radxa и DNS v1 не объявлены завершёнными.
 
 ### Дополнение 2026-09-27: клиентский read-only preflight

@@ -68,6 +68,7 @@ export function assertVmCoupledEvidence(evidence, cut) {
   }
 }
 export const VM_SYSTEMD_CHECKS = Object.freeze([
+  'cli-start-refuses-unready-exit',
   'failed-guard-prevents-network-and-consumer', 'real-service-readiness-before-consumer',
   'controller-stop-retains-guard-and-restart-recovers', 'exit-outage-no-baseline-fallback',
   'adapter-sigkill-stops-dependents-restart-recovers', 'foreign-policy-not-overwritten',
@@ -77,6 +78,8 @@ export const VM_SYSTEMD_CHECKS = Object.freeze([
 export function assertVmSystemdEvidence(evidence) {
   assert.equal(evidence.phase, 'systemd'); assert.equal(evidence.point, 'lifecycle');
   assert.equal(evidence.systemdPid1, true); assert.equal(evidence.automaticStaleAdoption, false);
+  assert.equal(evidence.adapterImplementation, 'cli'); assert.equal(evidence.separateExitFixture, true);
+  assert.equal(evidence.readinessQueriesPerStart, 4);
   assert.equal(evidence.baselineQueriesDuringProtection, 0); assert.equal(evidence.baselinePositiveControl, true);
   assert.equal(evidence.explicitDisablePassed, true); assert.equal(evidence.resolvConfUnchanged, true);
   assert.deepEqual([...new Set(evidence.checks)].sort(), [...VM_SYSTEMD_CHECKS].sort());

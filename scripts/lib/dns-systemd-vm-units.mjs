@@ -3,8 +3,8 @@ const worker = '/usr/bin/node --max-old-space-size=192 /project/scripts/lib/dns-
 const common = 'DefaultDependencies=no\nConflicts=shutdown.target\nBefore=shutdown.target\n';
 const service = 'Environment=PATH=/usr/bin:/usr/sbin:/bin:/sbin OPENSSL_CONF=/dev/null\nUMask=0077\nStandardInput=null\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/console\nTimeoutStartSec=180\nTimeoutStopSec=15\nKillMode=control-group\n';
 const unit = (description, deps, body) => `[Unit]\nDescription=${description}\n${common}${deps}\n[Service]\n${service}${body}\n`;
-export function dnsSystemdVmUnits() {
-  return {
+export function dnsSystemdVmUnits({ cliAdapter = false } = {}) {
+  const units = {
     'default.target': '[Unit]\nDescription=Isolated DNS VM\nDefaultDependencies=no\nWants=dns-vm-driver.service\n',
     'dbus.service': unit('Private guest D-Bus', 'Requires=dns-vm-network.service\nAfter=dns-vm-network.service',
       'Type=notify\nUMask=0022\nExecStart=/usr/bin/dbus-daemon --nofork --nopidfile --systemd-activation --config-file=/etc/dbus-vm.conf'),
@@ -28,4 +28,14 @@ export function dnsSystemdVmUnits() {
     'dns-vm-driver.service': unit('Bounded systemd lifecycle acceptance', '',
       `Type=oneshot\nTimeoutStartSec=15min\nExecStart=/usr/bin/node --max-old-space-size=192 /project/scripts/lib/dns-systemd-vm-driver.mjs`),
   };
+  if (cliAdapter) {
+    units['dns-vm-fixture.service'] = unit('Separate synthetic exit and DoH origin',
+      'Requires=dns-vm-network.service\nAfter=dns-vm-network.service',
+      `Type=notify\nNotifyAccess=all\nExecStart=${worker} cli-fixture`);
+    units['dns-vm-adapter.service'] = unit('Actual DNS adapter CLI with protected readiness',
+      'BindsTo=dns-vm-fixture.service\nAfter=dns-vm-fixture.service',
+      'Type=notify\nNotifyAccess=all\nEnvironmentFile=/run/meshpn/cli-adapter.env\n'
+      + 'ExecStart=/usr/bin/node --max-old-space-size=192 /project/scripts/dns-exit-adapter.mjs $DNS_ADAPTER_ARGS --ready-name=systemd-ready.test --systemd-notify');
+  }
+  return units;
 }

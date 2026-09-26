@@ -62,6 +62,7 @@ test('VM units gate consumers on readiness and stop does not implicitly disable 
 });
 test('systemd evidence needs both boots and all lifecycle gates, not just a passed marker', () => {
   const evidence = { phase: 'systemd', point: 'lifecycle', systemdPid1: true, automaticStaleAdoption: false,
+    adapterImplementation: 'cli', separateExitFixture: true, readinessQueriesPerStart: 4,
     baselineQueriesDuringProtection: 0, baselinePositiveControl: true, explicitDisablePassed: true, resolvConfUnchanged: true,
     checks: [...VM_SYSTEMD_CHECKS, 'real-service-readiness-before-consumer', 'explicit-disable-restores-owned-baseline'] };
   assertVmSystemdEvidence(evidence);
@@ -72,6 +73,15 @@ test('systemd evidence needs both boots and all lifecycle gates, not just a pass
     assert.throws(() => assertVmSystemdEvidence({ ...evidence, checks: evidence.checks.filter((_, i) => i !== n) }));
   }
   assert.throws(() => assertVmSystemdEvidence({ ...evidence, checks: [...evidence.checks, evidence.checks[0]] }));
+});
+test('CLI VM adapter is the real entrypoint, not the combined root fixture', () => {
+  const units = dnsSystemdVmUnits({ cliAdapter: true });
+  assert.match(units['dns-vm-fixture.service'], /cli-fixture/);
+  assert.match(units['dns-vm-adapter.service'], /BindsTo=dns-vm-fixture.service\nAfter=dns-vm-fixture.service/);
+  assert.match(units['dns-vm-adapter.service'], /Type=notify\nNotifyAccess=all/);
+  assert.match(units['dns-vm-adapter.service'], /\/project\/scripts\/dns-exit-adapter.mjs \$DNS_ADAPTER_ARGS --ready-name=systemd-ready.test --systemd-notify/);
+  assert.ok(!units['dns-vm-adapter.service'].includes('dns-systemd-vm-worker'));
+  assert.ok(!dnsSystemdVmUnits()['dns-vm-fixture.service']);
 });
 for (const point of VM_FAULTS) test(`VM fault ${point} has strict selection and evidence`, () => {
   const args = qemuDnsArgs({ ...input, phase: 'fault', point });

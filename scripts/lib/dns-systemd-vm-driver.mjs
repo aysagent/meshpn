@@ -54,7 +54,26 @@ async function main() {
     await unlink('/run/meshpn/deny-start'); await ctl('reset-failed');
     check('failed-guard-prevents-network-and-consumer');
   }
-  await ctl('start', 'dns-vm-sentinel.service', 'dns-vm-baseline.service', 'dns-vm-adapter.service');
+  await ctl('start', 'dns-vm-sentinel.service', 'dns-vm-baseline.service', 'dns-vm-fixture.service');
+  const fixturePid = (await ctl('show', 'dns-vm-fixture.service', '--property=MainPID', '--value')).stdout.trim();
+  if (!previous) {
+    await control('fixture', 'stop-exit');
+    const before = (await control('fixture', 'stats')).resolverBodies;
+    await assert.rejects(ctl('start', 'dns-vm-consumer.service'));
+    assert.equal(await state('dns-vm-adapter.service'), 'failed');
+    assert.equal(await exists('/run/meshpn/consumers'), false);
+    assert.equal(await exists(`${journal}/journal.json`), false);
+    assert.equal((await control('fixture', 'stats')).resolverBodies, before);
+    await control('fixture', 'start-exit'); await ctl('reset-failed');
+    check('cli-start-refuses-unready-exit');
+  }
+  const probeBefore = (await control('fixture', 'stats')).resolverBodies;
+  await ctl('start', 'dns-vm-adapter.service');
+  assert.equal((await control('fixture', 'stats')).resolverBodies - probeBefore, 4);
+  const adapterPid = (await ctl('show', 'dns-vm-adapter.service', '--property=MainPID', '--value')).stdout.trim();
+  assert.match(adapterPid, /^[1-9]\d*$/); assert.notEqual(adapterPid, fixturePid);
+  const argv = (await readFile(`/proc/${adapterPid}/cmdline`, 'utf8')).split('\0');
+  assert.ok(argv.includes('/project/scripts/dns-exit-adapter.mjs') && argv.includes('--systemd-notify'));
   const { bus, ifindex, backend } = await busContext();
   const noFallback = async () => {
     for (const address of ['127.0.0.55', '::1']) for (const tcp of [false, true]) await assertSystemdVmBaselineBlocked(address, tcp);
@@ -91,6 +110,8 @@ async function main() {
     check('exit-outage-no-baseline-fallback');
     await ctl('kill', '--signal=SIGKILL', '--kill-whom=main', 'dns-vm-adapter.service');
     await inactive('dns-vm-adapter.service'); await inactive('dns-vm-controller.service'); await inactive('dns-vm-consumer.service');
+    assert.equal(await state('dns-vm-fixture.service'), 'active');
+    assert.equal((await ctl('show', 'dns-vm-fixture.service', '--property=MainPID', '--value')).stdout.trim(), fixturePid);
     await lookup('adapter-dead-no-fallback', null); await noFallback();
     await ctl('reset-failed'); await ctl('start', 'dns-vm-consumer.service');
     assert.equal((await readResolvedJournal(journal)).id, id); await lookup('adapter-restarted', '192.0.2.123');
@@ -133,6 +154,7 @@ async function main() {
     return;
   }
   emit('passed', { ...options, bootId, previousBootId: previous.bootId, systemdPid1: true,
+    adapterImplementation: 'cli', separateExitFixture: true, readinessQueriesPerStart: 4,
     checks: [...previous.checks, ...checks], baselineQueriesDuringProtection: 0, baselinePositiveControl: true,
     hostNetworkUnavailable: true, automaticStaleAdoption: false, explicitDisablePassed: true, resolvConfUnchanged: true });
   await ctl('--no-block', 'poweroff');
