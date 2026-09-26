@@ -44,10 +44,14 @@ boot-context. Это не live host takeover и не автоматическо�
 Для VPS 2 [resolved 249 + networkd](dns-networkd-lab.md): 11 namespace-проверок
 настоящего DHCP renew/reconfigure и отдельного VPN DNS-link, без takeover `eth0`.
 Явная QNAME deny-policy проверена при удалении/замене DHCP domains. Ещё нужны
-VM lifecycle совместного DNS-link/settings координатора и выбор live-политики
-(блокирование/защищённый resolver). Отдельный [empty-link journal](dns-owned-link-journal.md)
+выбор live-политики (блокирование/защищённый resolver) и установщик/откат.
+Отдельный [empty-link journal](dns-owned-link-journal.md)
 проверен с 18 controller SIGKILL, [coupled namespace-координатор](dns-coupled-journal.md)
-с address/UP и DNS-state — с 17 controller SIGKILL. Это ещё не его reboot/power-loss тест.
+с address/UP и DNS-state — с 17 controller SIGKILL. Его
+[systemd/reboot VM-режим](dns-coupled-vm.md) — 11/11 PASS в двух загрузках,
+без автоматического принятия старого epoch; три whole-guest crash точки —
+3/3 PASS (ещё шесть загрузок). Физический power loss хоста не моделируется.
+Это ещё не live-проверка VPS 2.
 В README отдельно отмечены ограничения транспортов, маршрутов и IPv6.
 
 ## Три этапа и текущий статус

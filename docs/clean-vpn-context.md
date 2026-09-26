@@ -10,7 +10,46 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
-### Дополнение 2026-09-26: совместный link/address/resolved journal
+### Дополнение 2026-09-26: coupled coordinator под настоящим systemd в VM
+
+Добавлен [coupled VM-стенд](../scripts/dns-coupled-vm.md): `--case=coupled`
+и отдельный `--case=coupled-cuts`. Namespace API сохраняет прежний gate;
+VM factory имеет собственную проверку kernel marker, QEMU DMI, systemd PID1,
+namespace identity, UID и отсутствия внешних NIC. Публичного allowHost нет.
+Службы synthetic/offline, не устанавливаются на хост или живой клиент.
+
+Lifecycle **11/11 PASS** в двух загрузках:
+`/var/tmp/meshpn-dns-vm-QiEv8R/report.json`. Проверены общий flock controller,
+readiness, failed guard, stop/restart, exit outage, SIGKILL adapter, чужие Domains,
+disable обоих journals и удаление link до guard release; настоящий systemd
+reboot с sync/unmount, отказ старого epoch, побайтная сохранность обоих journals
+и отдельная новая транзакция после явного fixture archive.
+
+Whole-guest crash **3/3 PASS**, шесть загрузок, отдельные свежие диски:
+`apply:DNSEx:set` — `/var/tmp/meshpn-dns-vm-LbNCji/report.json`;
+`restore:DNSEx:set` — `/var/tmp/meshpn-dns-vm-prvnJs/report.json`;
+`link-released` — `/var/tmp/meshpn-dns-vm-yWyXSz/report.json`.
+Host сравнивает оба прочитанных журнала с событием cut-ready; после смены boot
+старые журналы сохраняются и не применяются автоматически. Новая транзакция
+проходит enable/disable только после явного fixture archive. Исправлены две
+ошибки стенда: RSA generation timeout под TCG (VM-only 120 секунд вместо 15)
+и buffered stdout cut-worker при disable (теперь inherited console).
+Первоначальные failed отчёты сохранены и перечислены в документации стенда;
+финальные три точки повторены отдельно, а не объявлены PASS задним числом.
+
+Повтор старого systemd VM — **11/11 PASS**:
+`/var/tmp/meshpn-dns-vm-GBznOd/report.json`. Повтор coupled namespace resolved249/
+networkd — PASS (~183 сек, 17 controller SIGKILL). VM использует systemd/resolved255,
+а не точный VPS2/249 rootfs. DHCP reapply проверяется в namespace, не в этой VM.
+Физический power loss хоста не моделируется; автоматического stale adoption нет.
+Node acceptance после изменений — **1323/1323 PASS**, без skips:
+`/var/tmp/meshpn-acceptance-eWYgro/report.json`.
+
+Следом: системный resolver Radxa (сейчас dangling resolv.conf), согласованные
+live-политики и установщик/откат, затем пользовательские пилоты VPS2/Radxa.
+Без SSH ассистента, без автоматического включения resolved на Radxa. DNS v1 не закрыт.
+
+### Предыдущий этап 2026-09-26: совместный link/address/resolved journal
 
 Добавлен [coupled coordinator](../scripts/dns-coupled-journal.md) и флаг
 `dns-networkd-lab.mjs --coupled-journal` (не совмещается с `--link-journal`).

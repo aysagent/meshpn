@@ -11,6 +11,7 @@ import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dnsSystemdVmUnits } from './dns-systemd-vm-units.mjs';
 import { dnsmasqVmUnits } from './dnsmasq-vm-units.mjs';
+import { dnsCoupledVmUnits } from './dns-coupled-vm-units.mjs';
 
 const exec = (file, args, options = {}) => promisify(execFile)(file, args, { timeout: 30000, maxBuffer: 1024 * 1024, ...options });
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -30,10 +31,11 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, dnsmasq = null }) {
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, dnsmasq = null, coupled = false }) {
   assert.ok(!(systemd && ingress), 'separate systemd DNS and ingress fixtures');
   assert.ok(!dnsmasq || systemd && !ingress && dnsmasq.startsWith('/'));
-  const units = dnsmasq ? dnsmasqVmUnits() : dnsSystemdVmUnits();
+  assert.ok(!coupled || systemd && !dnsmasq && !ingress);
+  const units = coupled ? dnsCoupledVmUnits() : dnsmasq ? dnsmasqVmUnits() : dnsSystemdVmUnits();
   const root = join(directory, 'guest'); await mkdir(root, { mode: 0o700 });
   const copied = new Map(), modules = new Set();
   const destination = (path) => { assert.ok(path.startsWith('/') && !path.split('/').includes('..')); return join(root, path); };

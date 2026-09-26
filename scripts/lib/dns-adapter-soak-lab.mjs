@@ -25,25 +25,29 @@ export async function startAdapterSoakLab({ family, modeTag, concurrency, timeou
 }
 
 export async function startSystemdVmAdapterFixture(directory) {
-  await assertSystemdDnsVm();
+  const options = await assertSystemdDnsVm();
   const links = JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout);
-  assert.deepEqual(links.map((l) => l.ifname).sort(), ['dnsfixture', 'lo']);
-  return startFixture({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 5000, port: 2053, replace: true }, directory);
+  assert.deepEqual(links.map((l) => l.ifname).filter((name) => !(options.phase.startsWith('coupled')
+    && /^cvdns[a-f0-9]{8}$/.test(name))).sort(), ['dnsfixture', 'lo']);
+  return startFixture({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 5000, port: 2053, replace: true,
+    certificateTimeoutMs: 120000 }, directory);
 }
 
 export async function startDnsmasqVmAdapterFixture(directory) {
   await assertDnsmasqVm();
-  return startFixture({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 5000, port: 2053, replace: true }, directory);
+  return startFixture({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 5000, port: 2053, replace: true,
+    certificateTimeoutMs: 120000 }, directory);
 }
 
-async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0, replace = false, domainPolicy }, directory) {
+async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0, replace = false, domainPolicy, certificateTimeoutMs = 15000 }, directory) {
   const addresses = family === 4 ? ['93.184.216.34', '93.184.216.35', '93.184.216.36']
     : ['2606:4700::1112', '2606:4700::1111', '2606:4700::1113'];
   for (const ip of addresses) await exec('ip', [family === 4 ? '-4' : '-6', 'addr', replace ? 'replace' : 'add', `${ip}/${family === 4 ? 32 : 128}`,
     'dev', 'lo', ...(family === 6 ? ['nodad'] : [])]);
   const keyPath = join(directory, 'key.pem'), certPath = join(directory, 'cert.pem');
   await exec('openssl', ['req', '-new', '-newkey', 'rsa:2048', '-nodes', '-x509', '-days', '1', '-subj', '/CN=resolver.test',
-    '-addext', 'subjectAltName=DNS:resolver.test', '-addext', 'basicConstraints=critical,CA:TRUE', '-keyout', keyPath, '-out', certPath]);
+    '-addext', 'subjectAltName=DNS:resolver.test', '-addext', 'basicConstraints=critical,CA:TRUE', '-keyout', keyPath, '-out', certPath],
+  { timeout: certificateTimeoutMs }); // RSA generation under TCG is much slower; DNS deadlines remain unchanged.
   const key = await readFile(keyPath), cert = await readFile(certPath, 'utf8');
   const resolverSockets = new Set(), exitSockets = new Set(), sessions = new Set();
   const track = (set, socket) => { set.add(socket); socket.on('error', () => {}); socket.once('close', () => set.delete(socket)); return socket; };

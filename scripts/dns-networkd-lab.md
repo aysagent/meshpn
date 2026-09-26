@@ -108,7 +108,8 @@ runtime Domains resolved и счётчики adapter/exit/resolver, без по�
 
 Отдельный durable ownership/journal пустого link проверен опцией `--link-journal`,
 связка с address/UP и DNS-settings — опцией `--coupled-journal`.
-Следующий этап — lifecycle нового координатора в VM. Нельзя ни добавлять прямое
+Lifecycle нового координатора вынесен в [отдельную VM-матрицу](dns-coupled-vm.md).
+Нельзя ни добавлять прямое
 исключение, ни молча разрешать публичный DNS для cloud-имён. Live-политика ещё
 не согласована. Оставшиеся установщик/откат и пилоты — в [матрице](dns-client-matrix.md).
 

@@ -1,11 +1,13 @@
-/** Private namespace adapter for coupled address/link/resolved operations. */
+/** Separate namespace and VM-gated adapters for coupled address/link/resolved operations. */
 import assert from 'node:assert/strict';
-import { createOwnedLinkBackend } from './dns-owned-link-backend.mjs';
+import { createOwnedLinkBackend, createVmOwnedLinkBackend } from './dns-owned-link-backend.mjs';
 import { resolvedMethod } from './dns-resolved-backend.mjs';
 import { exec } from './browser-lab-driver.mjs';
 
-export async function createCoupledBackend({ bus, ensureGuard, releaseGuard, port, probe }) {
-  const link = await createOwnedLinkBackend({ bus, ensureGuard, releaseGuard });
+export const createCoupledBackend = (options) => buildBackend(options, createOwnedLinkBackend);
+export const createVmCoupledBackend = (options) => buildBackend(options, createVmOwnedLinkBackend);
+async function buildBackend({ bus, ensureGuard, releaseGuard, port, probe }, factory) {
+  const link = await factory({ bus, ensureGuard, releaseGuard });
   const view = async (name) => {
     const v = await link.view(name); if (!v) return null;
     const [info] = JSON.parse((await exec('ip', ['-d', '-j', 'link', 'show', 'dev', name])).stdout);

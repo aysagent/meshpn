@@ -1,20 +1,24 @@
-/** Empty link backend: usable only by private namespace PID1, private bus injected. */
+/** Empty link backend: private namespace PID1 or separately gated offline systemd VM. */
 import assert from 'node:assert/strict';
 import { readFile, readlink } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { exec } from './browser-lab-driver.mjs';
 import { assertDnsMountNamespace } from './dns-lifecycle-namespace.mjs';
 import { validateOwnedLinkContext } from './dns-owned-link-journal.mjs';
+import { assertCoupledDnsVm } from './dns-systemd-vm-safety.mjs';
 
-export async function createOwnedLinkBackend({ bus, ensureGuard, releaseGuard }) {
-  await assertDnsMountNamespace();
+export const createOwnedLinkBackend = (options) => buildBackend(options, assertDnsMountNamespace);
+export const createVmOwnedLinkBackend = (options) => buildBackend(options, assertCoupledDnsVm);
+// Authority is selected by the exported factory, never supplied by a caller.
+async function buildBackend({ bus, ensureGuard, releaseGuard }, authority) {
+  await authority();
   const scope = {};
   for (const key of ['net', 'mnt', 'pid']) scope[key] = await readlink(`/proc/self/ns/${key}`);
   const context = async () => validateOwnedLinkContext({ scope: structuredClone(scope), bootId: (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim(),
     busId: await bus.id(), owner: await bus.owner() });
   const nameCheck = (name) => assert.match(name, /^cvdns[a-f0-9]{8}$/);
   const view = async (name) => {
-    await assertDnsMountNamespace(); nameCheck(name);
+    await authority(); nameCheck(name);
     const links = JSON.parse((await exec('ip', ['-d', '-j', 'link', 'show'])).stdout);
     const link = links.find((v) => v.ifname === name); if (!link) return null;
     const addresses = JSON.parse((await exec('ip', ['-j', 'addr', 'show', 'dev', name])).stdout);
@@ -31,7 +35,7 @@ export async function createOwnedLinkBackend({ bus, ensureGuard, releaseGuard })
       alias: link.ifalias ?? '', mtu: link.mtu, up: link.flags.includes('UP'), master: link.master ?? null,
       addresses: addresses.flatMap((v) => v.addr_info.map((a) => `${a.family}:${a.local}/${a.prefixlen}`)).sort(), dns };
   };
-  const check = async (expected) => { await assertDnsMountNamespace(); assert.deepEqual(await context(), expected, 'link backend context changed'); };
+  const check = async (expected) => { await authority(); assert.deepEqual(await context(), expected, 'link backend context changed'); };
   return { context, view, ensureGuard,
     async create(expected, spec) {
       await check(expected); nameCheck(spec.name); assert.equal(spec.kind, 'dummy');

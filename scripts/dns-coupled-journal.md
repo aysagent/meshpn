@@ -6,7 +6,9 @@ remaining owned links=0, final processes=1/zombies=0. Node acceptance —
 
 Изолированный namespace-координатор: один контроллер и один process-lifetime
 `flock` управляют созданием dummy-link, адресом/UP, настройками resolved и
-отключением в обратном порядке. **Не live-установщик, не VM/reboot recovery.**
+отключением в обратном порядке. **Не live-установщик.** Отдельный
+[systemd VM-режим](dns-coupled-vm.md) проверяет этот же координатор через
+настоящие службы и смену boot ID; автоматического принятия старого epoch нет.
 
 ```bash
 node scripts/dns-networkd-lab.mjs --coupled-journal \
@@ -82,6 +84,6 @@ adapter → exit → DoH fixture, а также локальный запрет 
 Верхнее `durableJournalTested=false` пока относится к исходным 11 DHCP-сценариям,
 которые запускаются перед ней и сохраняют прежний in-memory backend.
 
-Следующий этап — systemd lifecycle и reboot/power-loss для нового координатора
-в VM, затем интеграция системного resolver Radxa и согласованные пользовательские
-пилоты. DNS v1 не закрывается только этим namespace-тестом.
+Systemd lifecycle и reboot вынесены в [отдельный VM-стенд](dns-coupled-vm.md).
+Затем — интеграция системного resolver Radxa, live-установщик/откат и согласованные
+пользовательские пилоты. DNS v1 не закрывается только лабораторными тестами.

@@ -1,4 +1,4 @@
-/** One controller/lock for link ownership, address/UP and resolved settings. Namespace only. */
+/** One controller/lock for link ownership, address/UP and resolved settings. Isolated backends only. */
 import assert from 'node:assert/strict';
 import { isDeepStrictEqual as same } from 'node:util';
 import { randomBytes } from 'node:crypto';

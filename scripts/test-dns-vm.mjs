@@ -4,6 +4,10 @@ import { VM_CUT_POINTS, VM_FAULTS, VM_SYSTEMD_CHECKS, VM_DNSMASQ_CHECKS, vmCases
 import { runCommand } from './lib/transparent-acceptance.mjs';
 import { dnsSystemdVmUnits } from './lib/dns-systemd-vm-units.mjs';
 import { dnsmasqVmUnits } from './lib/dnsmasq-vm-units.mjs';
+import { dnsCoupledVmUnits } from './lib/dns-coupled-vm-units.mjs';
+import { VM_COUPLED_CUTS, VM_COUPLED_CHECKS, assertVmCoupledEvidence } from './lib/dns-vm-protocol.mjs';
+import { createVmCoupledBackend } from './lib/dns-coupled-backend.mjs';
+import { createVmOwnedLinkBackend } from './lib/dns-owned-link-backend.mjs';
 
 const input = { root: '/private/tools', kernel: '/private/kernel', initrd: '/private/initrd', disk: '/private/state.raw', phase: 'cycle', point: 'none' };
 test('shared console framing tolerates a PID1 prefix, never malformed JSON', () => {
@@ -149,4 +153,69 @@ test('VM flag alone cannot authorize peer work on host', async () => {
   const r = await runCommand(process.execPath, ['scripts/lib/dnsmasq-usb-peer-worker.mjs'],
     { env: { ...process.env, MESHPN_DNSMASQ_VM: '1' } });
   assert.equal(r.code, 1); assert.equal(r.stdout, ''); assert.match(r.stderr, /USB_PEER_FAILED/);
+});
+
+test('coupled VM has independent bounded selection and lock, without changing old fixture units', () => {
+  assert.deepEqual(vmCases('coupled'), ['lifecycle']); assert.deepEqual(vmCases('coupled-cuts'), VM_COUPLED_CUTS);
+  for (const point of VM_COUPLED_CUTS) assert.deepEqual(vmCases(`coupled-cut:${point}`), [point]);
+  for (const point of ['', 'none', 'lifecycle', 'guard-removed']) assert.throws(() => vmCases(`coupled-cut:${point}`));
+  assert.equal(vmCases().length, 9);
+  const old = dnsSystemdVmUnits(), units = dnsCoupledVmUnits();
+  assert.match(units['dns-vm-controller.service'], /flock -n -F \/state\/controller.lock.*dns-coupled-vm-worker.mjs activate/);
+  assert.match(units['dns-vm-controller.service'], /BindsTo=dns-vm-guard.service dns-vm-adapter.service systemd-resolved.service/);
+  assert.match(units['dns-vm-driver.service'], /dns-coupled-vm-driver.mjs/);
+  assert.deepEqual(dnsSystemdVmUnits(), old);
+  for (const [name, unit] of Object.entries(units)) {
+    assert.doesNotMatch(unit, /ExecStop=|\[Install\]/);
+    if (!['dns-vm-controller.service', 'dns-vm-driver.service'].includes(name)) assert.equal(unit, old[name]);
+  }
+  for (const phase of ['coupled-cut', 'coupled-inspect']) for (const point of VM_COUPLED_CUTS) {
+    assert.deepEqual(vmBootOptions(qemuDnsArgs({ ...input, phase, point }).find((v) => v.startsWith('console='))), { phase, point });
+  }
+  for (const [phase, point] of [['coupled', 'apply:DNSEx:set'], ['coupled-cut', 'lifecycle'], ['coupled-inspect', 'guard-removed'], ['cut', 'link-released']]) {
+    assert.throws(() => qemuDnsArgs({ ...input, phase, point }));
+  }
+});
+const coupledEvidence = () => ({ phase: 'coupled', point: 'lifecycle', systemdPid1: true, automaticStaleAdoption: false,
+  baselineQueriesDuringProtection: 0, baselinePositiveControl: true, explicitDisablePassed: true, resolvConfUnchanged: true,
+  ownedLinkRemoved: true, bothJournalsPreservedOnRefusal: true,
+  checks: [...VM_COUPLED_CHECKS, 'readiness-owned-link-and-protected-dns', 'disable-removes-owned-link-before-baseline-release'] });
+test('coupled lifecycle evidence requires exactly both boots and all checks', () => {
+  const e = coupledEvidence(); assertVmCoupledEvidence(e);
+  for (const key of Object.keys(e).filter((k) => k !== 'checks')) assert.throws(() => assertVmCoupledEvidence({ ...e,
+    [key]: typeof e[key] === 'boolean' ? !e[key] : 'bad' }));
+  for (let i = 0; i < e.checks.length; i++) assert.throws(() => assertVmCoupledEvidence({ ...e, checks: e.checks.filter((_, n) => n !== i) }));
+  assert.throws(() => assertVmCoupledEvidence({ ...e, checks: [...e.checks, e.checks[0]] }));
+});
+for (const point of VM_COUPLED_CUTS) test(`whole-guest cut evidence compares both on-disk journals to checkpoint: ${point}`, () => {
+  const [phase, direction, level, pending, stage] = ({
+    'apply:DNSEx:set': ['settings', 'apply', 4, true, 'created'],
+    'restore:DNSEx:set': ['settings', 'restore', 5, true, 'created'],
+    'link-released': ['unlink', 'restore', 0, false, 'released'],
+  })[point];
+  const context = { bootId: 'previous' }, root = { id: 'same', context, phase, direction, level, pending }, child = { id: 'same', context, stage };
+  const cut = { event: 'cut-ready', point, root, child };
+  const e = { ...coupledEvidence(), phase: 'coupled-inspect', point, previousBootId: 'previous', inspected: { root, child },
+    checks: ['stale-journals-preserved-start-refused', 'readiness-owned-link-and-protected-dns', 'disable-removes-owned-link-before-baseline-release'] };
+  assertVmCoupledEvidence(e, cut);
+  for (const key of ['root', 'child']) {
+    const bad = structuredClone(e); bad.inspected[key].id = 'changed';
+    assert.throws(() => assertVmCoupledEvidence(bad, cut));
+  }
+  for (const key of ['phase', 'direction', 'level', 'pending']) {
+    const bad = structuredClone(e), badCut = structuredClone(cut);
+    bad.inspected.root[key] = badCut.root[key] = 'bad'; assert.throws(() => assertVmCoupledEvidence(bad, badCut));
+  }
+  assert.throws(() => assertVmCoupledEvidence(e));
+});
+for (const entry of ['worker', 'driver']) test(`coupled VM ${entry} refuses host execution`, async () => {
+  const r = await runCommand(process.execPath, [`scripts/lib/dns-coupled-vm-${entry}.mjs`, 'activate']);
+  assert.equal(r.code, 1); assert.ok(!r.stdout.includes('boot-guard')); assert.ok(!r.stdout.includes('DNS_COUPLED_TRANSACTION'));
+});
+test('VM backend factories refuse the host before contacting injected bus or guard', async () => {
+  let calls = 0; const action = () => { calls++; throw new Error('must not be called'); };
+  for (const factory of [createVmCoupledBackend, createVmOwnedLinkBackend]) {
+    await assert.rejects(factory({ bus: { id: action, owner: action }, ensureGuard: action, releaseGuard: action, probe: action, port: 2053 }));
+  }
+  assert.equal(calls, 0);
 });

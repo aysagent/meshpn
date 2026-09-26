@@ -15,6 +15,7 @@ import { queryLabDns } from './transparent-dns-lab.mjs';
 
 export const journal = '/state/transaction';
 export const baseline = { DNSEx: [[2, [127, 0, 0, 55], 0, '']], Domains: [['.', true], ['baseline.test', false]], DefaultRoute: true };
+export const coupledBaseline = { ...baseline, Domains: [['baseline.test', false]] };
 export const emitSystemd = (event, data = {}) => console.log(`DNS_VM_EVENT ${JSON.stringify({ event, ...data })}`);
 export async function exists(path) { try { await access(path); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; } }
 export async function guard(enabled) {
@@ -103,8 +104,9 @@ async function serve(name, action, close) {
   await new Promise(() => {});
 }
 async function main(command) {
-  await assertSystemdDnsVm();
+  const options = await assertSystemdDnsVm(), coupled = options.phase.startsWith('coupled');
   assert.ok(['guard', 'network', 'baseline', 'adapter', 'sentinel', 'activate', 'disable', 'consumer'].includes(command));
+  assert.ok(!coupled || !['activate', 'disable'].includes(command), 'use coupled VM controller');
   process.umask(0o077); await mkdir('/run/meshpn', { recursive: true, mode: 0o700 });
   if (command === 'guard') {
     assert.equal(await exists('/run/meshpn/deny-start'), false, 'injected guard dependency failure');
@@ -115,7 +117,7 @@ async function main(command) {
     for (const protocol of ['udp', 'tcp']) await exec('iptables', ['-w', '2', '-I', 'OUTPUT', '1', '-d', '127.0.0.53', '-p', protocol, '--dport', '53', '-j', 'ACCEPT']);
     await exec('ip', ['link', 'set', 'lo', 'up']);
     await exec('ip', ['link', 'add', 'dnsfixture', 'type', 'dummy']);
-    await exec('ip', ['addr', 'add', '192.0.2.1/32', 'dev', 'dnsfixture']);
+    await exec('ip', ['addr', 'add', coupled ? '192.0.2.2/32' : '192.0.2.1/32', 'dev', 'dnsfixture']);
     await exec('ip', ['link', 'set', 'dnsfixture', 'up']);
     return;
   }
@@ -145,7 +147,7 @@ async function main(command) {
   const { bus, ifindex, scope, backend } = await busContext();
   if (command === 'baseline') {
     const owner = await bus.owner(); assert.deepEqual(await bus.property(owner, ifindex, 'DNSEx'), []);
-    for (const [property, value] of Object.entries(baseline)) await bus.set(owner, resolvedMethod(property, value, ifindex));
+    for (const [property, value] of Object.entries(coupled ? coupledBaseline : baseline)) await bus.set(owner, resolvedMethod(property, value, ifindex));
     return;
   }
   await mkdir(journal, { recursive: true, mode: 0o700 });

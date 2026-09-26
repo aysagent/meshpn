@@ -174,7 +174,7 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 **12/12 проверок в двух загрузках, PASS** — DHCP/локальные имена при отказе
 адаптера, восстановление после SIGKILL dnsmasq, точный disable и отказ от
 старого журнала после reboot. Это не live-установщик Radxa и не автоматическое
-восстановление связи после перезагрузки. Актуальные Node-регрессии: **1191/1191 PASS**;
+восстановление связи после перезагрузки. Node-регрессии того этапа: **1191/1191 PASS**;
 отдельно три настоящих dnsmasq namespace-теста — PASS.
 
 [Профиль VPS 2: resolved 249 + networkd](scripts/dns-networkd-lab.md) — **11/11 PASS**:
@@ -187,14 +187,24 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 удаления пустого DNS-link: **18 controller SIGKILL**, отказы при конфликте и
 очистку ресурсов. Отдельный [`--coupled-journal`](scripts/dns-coupled-journal.md)
 уже связывает link/address/UP с DNS-state: **17 controller SIGKILL, PASS**,
-восстановление защищённого DNS и обратный disable. VM lifecycle нового
-координатора и live-выбор политики ещё впереди. Node-регрессии: **1315/1315 PASS**.
+восстановление защищённого DNS и обратный disable. Отдельный
+[systemd VM lifecycle нового координатора](scripts/dns-coupled-vm.md) —
+**11/11 PASS в двух загрузках**, сохранение обоих journals и отказ старого epoch
+после reboot. Дополнительно **3/3 аварийных остановки QEMU PASS** (шесть загрузок):
+применение DNS, откат DNS и удаление link до снятия guard. Это потеря гостевой RAM,
+не физическое отключение диска хоста. Live-выбор политики и установщик/откат ещё впереди.
+Node-регрессии: **1323/1323 PASS**.
 
 Следующий порядок работ:
 
-1. На клиенте собрать [диагностику](scripts/dns-inspect.md): `node scripts/dns-diagnostic.mjs --probe`. Настройки не меняются; флаг разрешает запросы example.com через текущий DNS (возможно напрямую). Без флага запросов нет. Есть ограниченный инвентарь dnsmasq; includes/хуки не исполняются. Отчёт содержит IP/домены; backend не выбирается автоматически. Для VPS 2 и Radxa исходные отчёты уже получены; оставшиеся вопросы и проверки — в [матрице клиентов](scripts/dns-client-matrix.md). Прежний `npm run dns:inspect` остаётся краткой диагностикой без адресов. До live opt-in нужны подтверждение владельца, политика DNS и проверенный откат.
-2. [Лабораторный журнал и SIGKILL recovery](scripts/dns-lifecycle.md), [resolved backend](scripts/dns-resolved.md) и [отдельный процесс DNS-adapter](scripts/dns-adapter-process.md) уже проверены. [QEMU-лаборатория](scripts/dns-vm-lab.md):9/9 reboot/power-cut сценариев и4/4 boot-fault PASS; физический power-loss не моделируется. Отдельный [systemd PID1/lifecycle режим](scripts/dns-systemd-vm.md) тоже PASS:11 проверок в2 загрузках (`npm run dns:vm-lab -- --tools=... --kernel=... --resolved=... --case=systemd`). Это VM-only исполнитель, не установщик на клиент. Live DNS/firewall/TUN не меняются, resolved на клиенте автоматически не включается.
-3. Подготовить оба backend по [матрице VPS 2/Radxa](scripts/dns-client-matrix.md), проверить cloud DNS/DHCP reapply и USB DHCP/DNS, затем [провести по одному ограниченному 24-часовому пилоту](scripts/dns-pilot.md). [Настоящий dnsmasq namespace стенд](scripts/dnsmasq-lab.md) включает USB-peer с DHCP DORA, DNS-отказами и внешним наблюдателем для INPUT/FORWARD guard (61 проверка). [Journal-режим](scripts/dnsmasq-journal.md) добавляет OUTPUT guard и восстановление после семи SIGKILL контроллера, но ещё не host takeover/reboot recovery. Живые проверки пользователь запускает скриптами и передаёт отчёт; SSH-доступ ассистента не предполагается. После выполнения [критериев DNS v1](scripts/dns-v1.md) закрыть DNS-этап и вернуться к транспорту; готовность всей `combo-tls` оценивается отдельно.
+1. Доделать системный resolver Radxa: отдельная проверяемая транзакция для исходного dangling `resolv.conf`, сохранение dnsmasq и USB DHCP; сначала изолированный стенд. Автоматически включать resolved или заменять настройки живой Radxa не предполагается.
+2. Подготовить opt-in установщик/откат для обоих backend по [матрице VPS 2/Radxa](scripts/dns-client-matrix.md): подтвердить владельца настроек, выбрать политику cloud DNS на VPS 2, проверить реальные units/config в VM. Исходные диагностические отчёты уже получены; лабораторный PASS не разрешает host takeover.
+3. С отдельным согласованием и независимым аварийным доступом [провести по одному ограниченному 24-часовому пилоту](scripts/dns-pilot.md) на VPS 2 и Radxa. Пользователь запускает подготовленные скрипты и передаёт отчёт; SSH-доступ ассистента не нужен. После [критериев DNS v1](scripts/dns-v1.md) закрыть DNS-этап и вернуться к транспорту; готовность всей `combo-tls` оценивается отдельно.
+
+Повторная [диагностика](scripts/dns-inspect.md), если изменились настройки:
+`node scripts/dns-diagnostic.mjs --probe`. Настройки не меняет; с `--probe`
+отправляет example.com через текущий DNS (возможно напрямую), без флага запросов
+нет. Отчёт содержит IP/домены, backend автоматически не выбирает.
 
 ---
 

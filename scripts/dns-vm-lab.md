@@ -33,8 +33,15 @@ npm run dns:vm-lab -- \
 # Четыре ранних отказа; отдельно настоящий systemd PID1:
 # ... --case=faults
 # ... --case=systemd
+# Совместный link/address/resolved coordinator (отдельные матрицы):
+# ... --case=coupled
+# ... --case=coupled-cuts
 npm run test:dns-vm
 ```
+
+Новый [coupled systemd/reboot и whole-guest crash режим](dns-coupled-vm.md)
+использует тот же NIC-less builder, но отдельные VM-gated backend и controller.
+Он не расширяет старый набор `--case=all`.
 
 Все три пути обязательны, неизвестные/повторные флаги отклоняются. Launcher
 не скачивает файлы самостоятельно и не принимает host disk/initramfs.

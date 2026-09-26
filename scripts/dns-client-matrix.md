@@ -34,8 +34,9 @@ DHCP domains: перечисленные cloud suffixes не отправляю�
 Это не автообнаружение всех внутренних имён и не контроль рекурсии upstream.
 Есть [отдельный журнал пустого link](dns-owned-link-journal.md), 18 controller
 SIGKILL, и [совместный link/address/DNS координатор](dns-coupled-journal.md),
-17 controller SIGKILL. Пока нет его systemd/reboot VM lifecycle и согласованной
-live-политики. Namespace PASS не является разрешением на host takeover.
+17 controller SIGKILL. Его [systemd/reboot VM lifecycle](dns-coupled-vm.md) теперь
+проверен отдельно (11/11 PASS); согласованной live-политики ещё нет.
+Лабораторный PASS не является разрешением на host takeover.
 
 Общий dnsmasq Radxa обслуживает системные и USB-запросы одним upstream. Его
 переключение затрагивает обе группы: нельзя обещать защиту только одного входа
@@ -55,7 +56,8 @@ reboot и guard заранее описываются и требуют отде
 2. Два изолированных профиля: resolved 249 + cloud DNS/DHCP reapply; dnsmasq +
    USB peer с настоящим DHCP/DNS. [Networkd namespace-режим](dns-networkd-lab.md)
    выполнен на Ubuntu 249.11 `.22` (в отчёте VPS `.21`), 11 проверок; это ещё
-   не boot/systemd lifecycle нового DNS-link. [Dnsmasq smoke и USB/DHCP режим](dnsmasq-lab.md)
+   не точный rootfs VPS. [Lifecycle нового DNS-link](dns-coupled-vm.md) проверяется
+   отдельно на systemd/resolved 255 в VM. [Dnsmasq smoke и USB/DHCP режим](dnsmasq-lab.md)
    реализованы: 14 и 61 проверка, 6 DHCP DORA, IPv4/IPv6 direct DNS INPUT/FORWARD
    guard с отдельным внешним namespace и счётчиками пакетов.
    [Journal-режим](dnsmasq-journal.md) добавляет persistent fixture recovery,

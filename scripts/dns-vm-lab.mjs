@@ -8,21 +8,23 @@ import { mkdtemp, open, writeFile, readFile, lstat, readlink } from 'node:fs/pro
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildDnsVmImage, verifyVmPackages, sha256 } from './lib/dns-vm-image.mjs';
-import { qemuDnsArgs, VM_FAULTS, vmCases, assertVmFaultEvidence, assertVmSystemdEvidence, assertVmDnsmasqEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
+import { qemuDnsArgs, VM_FAULTS, vmCases, assertVmFaultEvidence, assertVmSystemdEvidence, assertVmDnsmasqEvidence, assertVmCoupledEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
 
 const exec = promisify(execFile);
 async function main() {
   const flags = new Map();
   for (const arg of process.argv.slice(2)) {
     const match = /^--(tools|kernel|resolved|case|dnsmasq)=(.+)$/.exec(arg);
-    assert.ok(match && !flags.has(match[1]), 'expected --tools=DIR --kernel=FILE --resolved=FILE [--case=all|faults|systemd|dnsmasq|cycle|CASE] [--dnsmasq=FILE]');
+    assert.ok(match && !flags.has(match[1]), 'expected --tools=DIR --kernel=FILE --resolved=FILE [--case=all|faults|systemd|dnsmasq|coupled|coupled-cuts|cycle|CASE] [--dnsmasq=FILE]');
     flags.set(match[1], match[2]);
   }
   for (const key of ['tools', 'kernel', 'resolved']) assert.ok(flags.get(key)?.startsWith('/'), `absolute --${key} required`);
   const cases = vmCases(flags.get('case'));
   const dnsmasq = flags.get('case') === 'dnsmasq';
   assert.ok(dnsmasq ? flags.get('dnsmasq')?.startsWith('/') : !flags.has('dnsmasq'), 'absolute --dnsmasq required only for --case=dnsmasq');
-  const systemd = dnsmasq || flags.get('case') === 'systemd';
+  const coupledCut = flags.get('case') === 'coupled-cuts' || Boolean(flags.get('case')?.startsWith('coupled-cut:'));
+  const coupled = flags.get('case') === 'coupled' || coupledCut;
+  const systemd = coupled || dnsmasq || flags.get('case') === 'systemd';
   const tools = resolve(flags.get('tools')), root = join(tools, 'root');
   const packages = await verifyVmPackages(tools);
   const env = { ...process.env, LD_LIBRARY_PATH: `${root}/usr/lib/x86_64-linux-gnu:${root}/lib/x86_64-linux-gnu`,
@@ -43,7 +45,7 @@ async function main() {
     systemdPid1: systemd, ...(dnsmasq ? { backend: 'dnsmasq' } : {}), physicalPowerLossTested: false, inProcessHotResetTested: false, cases: [] };
   try {
     const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved'), systemd,
-      dnsmasq: dnsmasq ? flags.get('dnsmasq') : null });
+      dnsmasq: dnsmasq ? flags.get('dnsmasq') : null, coupled });
     report.image = { kernelSha256: image.manifest.kernelSha256, initrdSha256: image.manifest.initrdSha256 };
     let launchNumber = 0;
     async function launch(disk, phase, point, expectReboot = false) {
@@ -83,7 +85,7 @@ async function main() {
             console.error(`VM ${phase}/${point}: ${event.event}`);
             if (event.event === 'failed') abort(new Error(event.message));
             if (event.event === 'cut-ready') {
-              assert.equal(phase, 'cut'); assert.equal(event.point, point); assert.equal(killedAtCheckpoint, false);
+              assert.ok(['cut', 'coupled-cut'].includes(phase)); assert.equal(event.point, point); assert.equal(killedAtCheckpoint, false);
               killedAtCheckpoint = true; proc.kill('SIGKILL');
             }
           } catch (error) { abort(error); }
@@ -93,7 +95,7 @@ async function main() {
       try { exit = await new Promise((resolve) => proc.once('close', (code, signal) => resolve({ code, signal }))); }
       finally { clearTimeout(timer); process.removeListener('SIGINT', onSignal); process.removeListener('SIGTERM', onSignal); closeSync(logFd); }
       if (failure) throw new Error(`${failure.message}\nSerial log: ${log}`);
-      if (phase === 'cut') { assert.equal(killedAtCheckpoint, true); assert.equal(exit.signal, 'SIGKILL'); }
+      if (['cut', 'coupled-cut'].includes(phase)) { assert.equal(killedAtCheckpoint, true); assert.equal(exit.signal, 'SIGKILL'); }
       else {
         assert.equal(exit.code, 0, `QEMU exit; serial log: ${log}`);
         assert.equal(events.filter((e) => e.event === 'passed').length, expectReboot ? 0 : 1, `guest result missing; serial log: ${log}`);
@@ -110,7 +112,11 @@ async function main() {
       const fd = await open(disk, 'wx', 0o600); try { await fd.truncate(256 * 1024 * 1024); } finally { await fd.close(); }
       await exec('mke2fs', ['-q', '-F', '-t', 'ext4', '-O', '^metadata_csum_seed,^orphan_file', disk], { timeout: 30000 });
       let events;
-      if (systemd) events = [...await launch(disk, dnsmasq ? 'dnsmasq' : 'systemd', point, true), ...await launch(disk, dnsmasq ? 'dnsmasq' : 'systemd', point)];
+      if (coupledCut) events = [...await launch(disk, 'coupled-cut', point), ...await launch(disk, 'coupled-inspect', point)];
+      else if (systemd) {
+        const phase = coupled ? 'coupled' : dnsmasq ? 'dnsmasq' : 'systemd';
+        events = [...await launch(disk, phase, point, true), ...await launch(disk, phase, point)];
+      }
       else if (fault) events = await launch(disk, 'fault', point);
       else if (point === 'none') events = [...await launch(disk, 'cycle', point, true), ...await launch(disk, 'cycle', point)];
       else events = [...await launch(disk, 'cut', point), ...await launch(disk, 'inspect', point)];
@@ -120,9 +126,14 @@ async function main() {
       const passed = events.find((e) => e.event === 'passed');
       if (fault) assertVmFaultEvidence(point, passed.fault);
       else assert.equal(passed.previousBootId, boots[0]);
-      if (systemd) { (dnsmasq ? assertVmDnsmasqEvidence : assertVmSystemdEvidence)(passed); assert.ok(events.filter((e) => e.event === 'boot-guard').every((e) => e.pid1 === 'systemd')); }
+      if (systemd) {
+        if (coupled) assertVmCoupledEvidence(passed, coupledCut ? events.find((e) => e.event === 'cut-ready') : undefined);
+        else (dnsmasq ? assertVmDnsmasqEvidence : assertVmSystemdEvidence)(passed);
+        assert.ok(events.filter((e) => e.event === 'boot-guard').every((e) => e.pid1 === 'systemd'));
+      }
       assert.equal(passed.bootId, boots.at(-1));
-      report.cases.push({ point, gracefulReboot: point === 'none' || systemd, qemuRelaunched: !fault, guestPowerCut: !fault && point !== 'none' && !systemd, ...passed });
+      report.cases.push({ point, gracefulReboot: point === 'none' || systemd && !coupledCut, qemuRelaunched: !fault,
+        guestPowerCut: coupledCut || !fault && point !== 'none' && !systemd, ...passed });
     }
     report.status = 'passed';
   } catch (error) { report.error = error.message; throw error; }
