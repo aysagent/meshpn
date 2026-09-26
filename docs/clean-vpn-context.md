@@ -10,6 +10,31 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: Radxa paired coordinator в systemd VM
+
+[Новый VM-режим](../scripts/dns-radxa-vm.md) проверяет общую транзакцию dnsmasq
+и resolver-object: lifecycle **12/12 PASS, две загрузки**, три whole-guest crash
+точки **3/3 PASS, шесть загрузок**. Точки: resolver apply/restore после rename,
+dnsmasq daemon restore до завершения journal. Все три журнала сверяются после
+потери гостя; старый boot не принимается автоматически. DHCP сохраняется при
+отказе adapter; foreign resolver не перезаписывается; offline rollback держит guard.
+Синтетический `/etc` гостя находится на persistent ext4; host DNS не менялся.
+Это x64/systemd255, не arm64/252 и не физический power loss диска хоста.
+
+Отчёты: `/var/tmp/meshpn-dns-vm-nh7rFm/report.json` (lifecycle),
+`/var/tmp/meshpn-dns-vm-ef69KR/report.json` (cuts),
+`/var/tmp/meshpn-dns-vm-lKuXk0/report.json` (старый dnsmasq VM, 12/12 PASS).
+Paired namespace повторён: PASS, 15 controller SIGKILL. VM unit/protocol 50/50.
+Node **1440/1440 PASS**: `/var/tmp/meshpn-acceptance-2Kesg9/report.json`.
+Первые VM попытки выявили неверный порядок теста local DNS после baseline DHCP
+с DNS1.1.1.1: guard его корректно блокировал. Тест исправлен, guard не ослаблен.
+Первый Node-прогон 1439/1440 имел process descendant-cleanup failure, причина
+не установлена; отчёты не удалены, подробнее в документе стенда.
+
+Следом клиентский opt-in/откат: точный ownership, согласованный здоровый baseline
+Radxa и cloud policy VPS2. Установщика на хост пока нет. Пилоты пользовательские,
+без SSH ассистента, отдельно согласуются. DNS v1 не закрыт.
+
 ### Дополнение 2026-09-26: общий Radxa coordinator
 
 [Paired namespace-режим](../scripts/dns-radxa-journal.md), `--radxa-journal`,

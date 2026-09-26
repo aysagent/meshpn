@@ -8,6 +8,10 @@ import { dnsCoupledVmUnits } from './lib/dns-coupled-vm-units.mjs';
 import { VM_COUPLED_CUTS, VM_COUPLED_CHECKS, assertVmCoupledEvidence } from './lib/dns-vm-protocol.mjs';
 import { createVmCoupledBackend } from './lib/dns-coupled-backend.mjs';
 import { createVmOwnedLinkBackend } from './lib/dns-owned-link-backend.mjs';
+import { radxaVmUnits } from './lib/dns-radxa-vm-units.mjs';
+import { VM_RADXA_CUTS, VM_RADXA_CHECKS, assertVmRadxaEvidence } from './lib/dns-vm-protocol.mjs';
+import { radxaVmContext } from './lib/dns-radxa-vm-worker.mjs';
+import { queryDnsmasqVm53 } from './lib/transparent-dns-lab.mjs';
 
 const input = { root: '/private/tools', kernel: '/private/kernel', initrd: '/private/initrd', disk: '/private/state.raw', phase: 'cycle', point: 'none' };
 test('shared console framing tolerates a PID1 prefix, never malformed JSON', () => {
@@ -218,4 +222,55 @@ test('VM backend factories refuse the host before contacting injected bus or gua
     await assert.rejects(factory({ bus: { id: action, owner: action }, ensureGuard: action, releaseGuard: action, probe: action, port: 2053 }));
   }
   assert.equal(calls, 0);
+});
+test('Radxa VM cases remain bounded and separate; shared DNS/DHCP units keep dependencies', () => {
+  assert.deepEqual(vmCases('radxa'), ['lifecycle']); assert.deepEqual(vmCases('radxa-cuts'), VM_RADXA_CUTS);
+  for (const point of VM_RADXA_CUTS) {
+    assert.deepEqual(vmCases(`radxa-cut:${point}`), [point]);
+    for (const phase of ['radxa-cut', 'radxa-inspect']) qemuDnsArgs({ ...input, phase, point });
+  }
+  assert.throws(() => vmCases('radxa-cut:active')); assert.throws(() => qemuDnsArgs({ ...input, phase: 'radxa', point: 'none' }));
+  assert.equal(vmCases().length, 9);
+  const units = radxaVmUnits();
+  assert.match(units['dns-vm-controller.service'], /flock -n -F .*dns-radxa-vm-worker.mjs activate/);
+  assert.match(units['dns-vm-driver.service'], /dns-radxa-vm-driver.mjs/);
+  for (const key of ['dns-vm-dnsmasq.service', 'dns-vm-adapter.service', 'dns-vm-guard.service']) assert.equal(units[key], dnsmasqVmUnits()[key]);
+  for (const unit of Object.values(units)) { assert.ok(!unit.includes('[Install]')); assert.ok(!unit.includes('ExecStop=')); }
+});
+const radxaEvidence = () => ({ phase: 'radxa', point: 'lifecycle', systemdPid1: true, threeJournalsPreserved: true,
+  exactResolverLinkRestored: true, rollbackGuardRetained: true, dhcpPreservedOnAdapterFailure: true, baselinePositiveControl: true,
+  automaticStaleAdoption: false, baselineQueriesDuringProtection: 0,
+  checks: [...VM_RADXA_CHECKS, 'paired-readiness-and-dhcp', 'offline-rollback-retains-guard'] });
+test('Radxa lifecycle evidence requires the exact two-boot criteria and retained guard', () => {
+  const e = radxaEvidence(); assertVmRadxaEvidence(e);
+  for (const key of Object.keys(e).filter((k) => k !== 'checks')) assert.throws(() => assertVmRadxaEvidence({ ...e, [key]: typeof e[key] === 'boolean' ? !e[key] : 'bad' }));
+  for (let i = 0; i < e.checks.length; i++) assert.throws(() => assertVmRadxaEvidence({ ...e, checks: e.checks.filter((_, n) => n !== i) }));
+  assert.throws(() => assertVmRadxaEvidence({ ...e, checks: [...e.checks, e.checks[0]] }));
+});
+for (const point of VM_RADXA_CUTS) test(`Radxa cut compares all three journals: ${point}`, () => {
+  const [phase, direction, cursor, pending, sphase] = ({
+    'resolver:apply:set': ['resolver', 'apply', 2, false, 'apply-intent'],
+    'resolver:restore:set': ['restore-resolver', 'apply', 2, false, 'restore-intent'],
+    'dnsmasq:restore:daemon:set': ['restore-dnsmasq', 'restore', 1, true, 'restored'],
+  })[point];
+  const context = { bootId: 'old' }, journals = {
+    root: { phase, id: 'same', dnsmasq: { context } }, dnsmasq: { id: 'same', direction, cursor, pending, context }, resolver: { id: 'same', phase: sphase, context },
+  };
+  const cut = { event: 'cut-ready', point, journals }, e = { ...radxaEvidence(), phase: 'radxa-inspect', point, previousBootId: 'old',
+    inspected: structuredClone(journals), dhcpPreservedOnAdapterFailure: false,
+    checks: ['stale-three-journals-refused', 'paired-readiness-and-dhcp', 'offline-rollback-retains-guard'] };
+  assertVmRadxaEvidence(e, cut);
+  for (const key of ['root', 'dnsmasq', 'resolver']) {
+    const bad = structuredClone(e); bad.inspected[key].id = 'other'; assert.throws(() => assertVmRadxaEvidence(bad, cut));
+  }
+  const bad = structuredClone(e), badCut = structuredClone(cut);
+  bad.inspected.root.phase = badCut.journals.root.phase = 'wrong'; assert.throws(() => assertVmRadxaEvidence(bad, badCut));
+  assert.throws(() => assertVmRadxaEvidence(e));
+});
+for (const entry of ['worker', 'driver']) test(`Radxa VM ${entry} refuses ordinary host execution`, async () => {
+  const r = await runCommand(process.execPath, [`scripts/lib/dns-radxa-vm-${entry}.mjs`, 'activate']);
+  assert.equal(r.code, 1); assert.ok(!r.stdout.includes('boot-guard')); assert.ok(!r.stdout.includes('DNS_RADXA_TRANSACTION'));
+});
+test('Radxa factory and explicit VM DNS probe refuse host before mutations or DNS', async () => {
+  await assert.rejects(radxaVmContext()); await assert.rejects(queryDnsmasqVm53(Buffer.alloc(12)));
 });

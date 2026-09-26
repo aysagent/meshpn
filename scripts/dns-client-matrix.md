@@ -70,7 +70,8 @@ reboot и guard заранее описываются и требуют отде
    [Radxa resolv.conf](dns-resolver-object.md) уже переключается отдельной
    namespace-транзакцией (7 SIGKILL, 9 NSS-проб, 3 отказа при конфликте, PASS).
    [Общий координатор с dnsmasq journal](dns-radxa-journal.md) также готов в
-   namespace: 15 controller SIGKILL, 7 DHCP DORA, PASS. Дальше — VM lifecycle новой пары.
+   namespace: 15 controller SIGKILL, 7 DHCP DORA, PASS. Его [VM lifecycle](dns-radxa-vm.md)
+   также PASS: 12 проверок в двух загрузках и три аварийные точки в шести загрузках.
    DHCP не должен отключаться при отказе exit; возврат dangling symlink сам
    по себе не делает baseline исправным и не разрешает снятие guard.
 4. Реальные units/config и откат проверяются в VM, затем с отдельным разрешением

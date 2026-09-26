@@ -6,7 +6,8 @@ import { exec } from './browser-lab-driver.mjs';
 
 export async function assertDnsmasqVm({ peer = false } = {}) {
   const options = vmBootOptions(await readFile('/proc/cmdline', 'utf8'));
-  assert.equal(options.phase, 'dnsmasq'); assert.equal(options.point, 'lifecycle');
+  assert.ok(['dnsmasq', 'radxa', 'radxa-cut', 'radxa-inspect'].includes(options.phase));
+  if (['dnsmasq', 'radxa'].includes(options.phase)) assert.equal(options.point, 'lifecycle');
   assert.match(await readFile('/sys/class/dmi/id/sys_vendor', 'utf8'), /^QEMU\s*$/);
   assert.equal((await readFile('/proc/1/comm', 'utf8')).trim(), 'systemd');
   assert.equal(process.getuid(), 0);

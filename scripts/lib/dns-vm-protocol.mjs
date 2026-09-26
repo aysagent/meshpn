@@ -14,6 +14,33 @@ export const VM_CUT_POINTS = Object.freeze([
 ]);
 export const VM_FAULTS = Object.freeze(['guard-unavailable', 'storage-readonly', 'corrupt-journal', 'adapter-unready']);
 export const VM_COUPLED_CUTS = Object.freeze(['apply:DNSEx:set', 'restore:DNSEx:set', 'link-released']);
+export const VM_RADXA_CUTS = Object.freeze(['resolver:apply:set', 'resolver:restore:set', 'dnsmasq:restore:daemon:set']);
+export const VM_RADXA_CHECKS = Object.freeze(['failed-guard-prevents-services', 'paired-readiness-and-dhcp',
+  'controller-restart-same-transaction', 'exit-outage-preserves-dhcp', 'adapter-sigkill-preserves-dhcp',
+  'dnsmasq-sigkill-recovered', 'foreign-resolver-preserves-three-journals', 'offline-rollback-retains-guard',
+  'restored-start-refused', 'stale-three-journals-refused']);
+export function assertVmRadxaEvidence(e, cut) {
+  assert.equal(e.phase, cut ? 'radxa-inspect' : 'radxa');
+  assert.ok(cut ? VM_RADXA_CUTS.includes(e.point) : e.point === 'lifecycle');
+  for (const key of ['systemdPid1', 'threeJournalsPreserved', 'exactResolverLinkRestored', 'rollbackGuardRetained',
+    'baselinePositiveControl']) assert.equal(e[key], true, key);
+  assert.equal(e.dhcpPreservedOnAdapterFailure, !cut);
+  assert.equal(e.automaticStaleAdoption, false); assert.equal(e.baselineQueriesDuringProtection, 0);
+  const once = ['stale-three-journals-refused', 'paired-readiness-and-dhcp', 'offline-rollback-retains-guard'];
+  assert.deepEqual([...e.checks].sort(), (cut ? once : [...VM_RADXA_CHECKS, ...once.slice(1)]).sort());
+  if (cut) {
+    assert.equal(cut.event, 'cut-ready'); assert.equal(cut.point, e.point); assert.deepEqual(e.inspected, cut.journals);
+    const { root, dnsmasq: d, resolver: s } = cut.journals;
+    assert.equal(root.id, d.id); assert.equal(root.id, s.id);
+    assert.equal(root.dnsmasq.context.bootId, e.previousBootId);
+    assert.equal(d.context.bootId, e.previousBootId); assert.equal(s.context.bootId, e.previousBootId);
+    assert.deepEqual([root.phase, d.direction, d.cursor, d.pending, s.phase], ({
+      'resolver:apply:set': ['resolver', 'apply', 2, false, 'apply-intent'],
+      'resolver:restore:set': ['restore-resolver', 'apply', 2, false, 'restore-intent'],
+      'dnsmasq:restore:daemon:set': ['restore-dnsmasq', 'restore', 1, true, 'restored'],
+    })[e.point]);
+  }
+}
 export const VM_COUPLED_CHECKS = Object.freeze(['failed-guard-prevents-services', 'readiness-owned-link-and-protected-dns',
   'controller-stop-retains-protection', 'exit-outage-no-baseline-fallback', 'adapter-sigkill-recovery-same-transaction',
   'foreign-policy-preserved', 'disable-removes-owned-link-before-baseline-release', 'released-journal-start-refused',
@@ -76,6 +103,11 @@ export function vmCases(selected = 'all') {
   if (selected === 'cycle') return ['none'];
   if (selected === 'systemd') return ['lifecycle'];
   if (selected === 'dnsmasq') return ['lifecycle'];
+  if (selected === 'radxa') return ['lifecycle'];
+  if (selected === 'radxa-cuts') return [...VM_RADXA_CUTS];
+  if (selected.startsWith('radxa-cut:')) {
+    const point = selected.slice('radxa-cut:'.length); assert.ok(VM_RADXA_CUTS.includes(point)); return [point];
+  }
   if (selected === 'coupled') return ['lifecycle'];
   if (selected === 'coupled-cuts') return [...VM_COUPLED_CUTS];
   if (selected.startsWith('coupled-cut:')) {
@@ -121,10 +153,11 @@ export function vmBootOptions(cmdline) {
   };
   assert.equal(get('meshpn_dns_vm'), 'isolated-v1');
   const phase = get('meshpn_phase'), point = get('meshpn_point');
-  assert.ok(['cycle', 'cut', 'inspect', 'fault', 'systemd', 'dnsmasq', 'coupled', 'coupled-cut', 'coupled-inspect'].includes(phase));
+  assert.ok(['cycle', 'cut', 'inspect', 'fault', 'systemd', 'dnsmasq', 'coupled', 'coupled-cut', 'coupled-inspect', 'radxa', 'radxa-cut', 'radxa-inspect'].includes(phase));
   assert.ok(phase === 'cycle' ? point === 'none' : phase === 'fault' ? VM_FAULTS.includes(point)
-    : ['systemd', 'dnsmasq', 'coupled'].includes(phase) ? point === 'lifecycle'
-      : phase.startsWith('coupled-') ? VM_COUPLED_CUTS.includes(point) : VM_CUT_POINTS.includes(point));
+    : ['systemd', 'dnsmasq', 'coupled', 'radxa'].includes(phase) ? point === 'lifecycle'
+      : phase.startsWith('radxa-') ? VM_RADXA_CUTS.includes(point)
+        : phase.startsWith('coupled-') ? VM_COUPLED_CUTS.includes(point) : VM_CUT_POINTS.includes(point));
   return { phase, point };
 }
 export function qemuDnsArgs({ root, kernel, initrd, disk, phase, point }) {

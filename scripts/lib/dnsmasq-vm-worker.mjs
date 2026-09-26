@@ -11,7 +11,7 @@ import { sentinel } from './dns-lifecycle-lab.mjs';
 import { createDnsmasqJournalFiles } from './dnsmasq-journal-files.mjs';
 import { dnsmasqTransaction, readDnsmasqJournal, dnsmasqHash } from './dnsmasq-journal.mjs';
 import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
-import { queryLabDns } from './transparent-dns-lab.mjs';
+import { queryLabDns, queryDnsmasqVm53 } from './transparent-dns-lab.mjs';
 
 export const journal = '/state/dnsmasq';
 export const emit = (event, data = {}) => console.log(`DNS_VM_EVENT ${JSON.stringify({ event, ...data })}`);
@@ -33,12 +33,14 @@ export async function guard(enabled) {
 export async function probe(port = 2053) {
   await assertDnsmasqVm(); assert.ok([53, 2053].includes(port));
   for (const tcp of [false, true]) {
-    // The guest has a synthetic loopback resolv.conf. Keep queryLabDns's
-    // high-port-only contract; exercise the actual system resolver for :53.
-    if (port === 53) { await lookup('daemon-ready', '192.0.2.123', tcp); continue; }
     const query = makeDnsQuery('vm-ready.test');
-    const reply = await queryLabDns(port, query, { tcp, timeoutMs: 10000 });
-    assert.equal(validateDnsResponse(reply, query).rcode, 0, 'protected readiness');
+    const reply = await (port === 53 ? queryDnsmasqVm53(query, { tcp, timeoutMs: 10000 }) : queryLabDns(port, query, { tcp, timeoutMs: 10000 }));
+    const parsed = validateDnsResponse(reply, query);
+    assert.equal(parsed.rcode, 0, 'protected readiness');
+    if (port === 53) {
+      const rr = parsed.records.find((r) => r.section === 0 && r.type === 1);
+      assert.ok(rr); assert.equal(reply.subarray(rr.offset, rr.offset + rr.length).toString('hex'), 'c000027b');
+    }
   }
 }
 export async function lookup(label, expected, tcp = false) {

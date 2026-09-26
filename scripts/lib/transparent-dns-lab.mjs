@@ -135,3 +135,9 @@ async function queryLoopbackDns(port, packet, { tcp = false, timeoutMs = 3000, f
     });
   } finally { clearTimeout(timer); socket.close(); }
 }
+
+/** Separate VM authority; never relax the namespace gate for host execution. */
+export async function queryDnsmasqVm53(packet, options = {}) {
+  const { assertDnsmasqVm } = await import('./dnsmasq-vm-safety.mjs');
+  await assertDnsmasqVm(); return queryLoopbackDns(53, packet, options);
+}

@@ -193,13 +193,16 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 после reboot. Дополнительно **3/3 аварийных остановки QEMU PASS** (шесть загрузок):
 применение DNS, откат DNS и удаление link до снятия guard. Это потеря гостевой RAM,
 не физическое отключение диска хоста. Live-выбор политики и установщик/откат ещё впереди.
-Node-регрессии после добавления Radxa paired coordinator: **1432/1432 PASS**;
+У [Radxa paired coordinator проверен VM lifecycle](scripts/dns-radxa-vm.md):
+**12/12 PASS в двух загрузках**, плюс **3/3 whole-guest crash точки** (шесть загрузок).
+Старые журналы сохраняются для review, а не принимаются новым boot автоматически.
+Node-регрессии после добавления этого VM-режима: **1440/1440 PASS**;
 пять реальных namespace-тестов dnsmasq/resolver-object/paired — PASS. Это не новый
 полный браузерный acceptance.
 
 Следующий порядок работ:
 
-1. Проверить systemd/reboot в VM для [общего координатора Radxa](scripts/dns-radxa-journal.md). Журналы dnsmasq и dangling `resolv.conf` уже связаны: namespace-стенд прошёл 15 controller SIGKILL, 9 NSS-проб и 7 DHCP DORA. Откат сохраняет guard; возврат сломанной ссылки не считается исправлением baseline. Это ещё не live-backend. Автоматически включать resolved или заменять настройки живой Radxa не предполагается.
+1. Подготовить клиентский переход для Radxa с согласованным исправным baseline. Журналы dnsmasq и dangling `resolv.conf` связаны и проверены в namespace и VM; откат сохраняет guard, но возврат сломанной ссылки не считается исправлением baseline. Это ещё не live-backend. Автоматически включать resolved или заменять настройки живой Radxa не предполагается.
 2. Подготовить opt-in установщик/откат для обоих backend по [матрице VPS 2/Radxa](scripts/dns-client-matrix.md): подтвердить владельца настроек, выбрать политику cloud DNS на VPS 2, проверить реальные units/config в VM. Исходные диагностические отчёты уже получены; лабораторный PASS не разрешает host takeover.
 3. С отдельным согласованием и независимым аварийным доступом [провести по одному ограниченному 24-часовому пилоту](scripts/dns-pilot.md) на VPS 2 и Radxa. Пользователь запускает подготовленные скрипты и передаёт отчёт; SSH-доступ ассистента не нужен. После [критериев DNS v1](scripts/dns-v1.md) закрыть DNS-этап и вернуться к транспорту; готовность всей `combo-tls` оценивается отдельно.
 
