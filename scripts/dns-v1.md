@@ -71,6 +71,9 @@ CLI адаптера получил [явную стартовую readiness](dn
 прошёл [systemd 255 VM lifecycle](dns-systemd-vm.md): 12/12 проверок в двух загрузках,
 с независимым exit/origin fixture и adapter-only SIGKILL. Установщик и клиентские
 пилоты остаются; другие VM cases пока используют свои прежние fixture services.
+Добавлен [offline renderer клиентского adapter service](dns-adapter-service-plan.md)
+с DynamicUser/credentials. Он ничего не устанавливает; 25 unit/CLI проверок
+прошли, полный новый VM lifecycle ещё не принят (поздний SERVFAIL расследуется).
 
 ## Три этапа и текущий статус
 

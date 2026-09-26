@@ -105,6 +105,8 @@
     "test:dns-lifecycle-crash-real": "node --test scripts/test-dns-lifecycle-crash-real.mjs",
     "test:dns-exit-adapter": "node --test scripts/test-dns-exit-adapter.mjs",
     "test:dns-adapter-ready": "node --test scripts/test-dns-adapter-ready.mjs",
+    "dns:adapter-service-plan": "node scripts/dns-adapter-service-plan.mjs",
+    "test:dns-adapter-service-plan": "node --test scripts/test-dns-adapter-service-plan.mjs",
     "test:dns-adapter-ready-real": "node --test scripts/test-dns-adapter-ready-real.mjs",
     "test:dns-exit-adapter-real": "node --test scripts/test-dns-exit-adapter-real.mjs",
     "dns:adapter-soak": "node scripts/dns-adapter-soak.mjs",

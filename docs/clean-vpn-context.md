@@ -10,6 +10,32 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: offline service plan; unprivileged VM ещё не принят
+
+Новый `dns-adapter-service-plan.mjs --config=...` читает bounded JSON и печатает
+три артефакта/hash без setters/PSK read/network. Строгие upstream/domain policy,
+numeric public exit, enc-SNI size; fixed root-owned /opt + /etc layout. Unit:
+DynamicUser, LoadCredential (upstream/domains/PSK), empty capabilities, NNP,
+readonly system/home, private tmp/devices, явные readiness и guard dependency.
+Нет install section, auto restart, disable hook или автоматического выбора
+cloud-policy. Для systemd249 — ${CREDENTIALS_DIRECTORY}, не новый %d.
+**25/25 unit/CLI PASS**; рабочее дерево с pending VM доработками —
+**1570/1570 Node PASS**, `/var/tmp/meshpn-acceptance-9nemPI/report.json`.
+
+Новый VM профиль ещё НЕ PASS. Сохранены три терминальных failed попытки:
+`PGF8u0`: STDOUT209, PrivateDevices несовместим с прежним tty sink;
+`836N7E`: protocol/exit0, /opt→/project symlink обходил import.meta.url main guard;
+`4tfNnf`: сервис реально прошёл UID>0/CapEff0/NNP1/source-PSK EACCES,
+readiness, stop/restart, outage, adapter SIGKILL, foreign conflict, disable,
+released-journal refusal, но затем controller protectedProbe получил SERVFAIL2
+перед reboot. Полные пути: `/var/tmp/meshpn-dns-vm-<имя>/report.json`.
+Последняя VM завершена, живого session handle нет. Причина позднего SERVFAIL
+не доказана: нельзя объявлять timeout установленным, повышать deadline или
+просто повторять до зелёного. Следующий шаг — bounded VM diagnostics для ошибки
+adapter/relay/upstream и измерение времени/ресурсов при том же сценарии.
+CLI deadlines сохранены. Текущие VM edits ещё не приняты и остаются рабочими;
+предыдущий root CLI PASS не заменяет принятие DynamicUser service.
+
 ### Дополнение 2026-09-27: настоящий CLI adapter под systemd в VM
 
 `--case=systemd` теперь запускает `dns-exit-adapter.mjs` отдельным Type=notify

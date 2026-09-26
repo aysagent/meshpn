@@ -207,6 +207,11 @@ A/AAAA-пробами, adapter-only SIGKILL, reboot и откатом. Посл�
 **1545/1545 PASS**. Opt-in `--ready-name=example.com` проверяет путь перед READY,
 `--systemd-notify` предназначен для system service; это ещё не установка OS DNS.
 
+Для подготовки установки есть [offline service plan](scripts/dns-adapter-service-plan.md):
+строго проверенный вход → unit и два config-файла с hashes, без чтения PSK и
+изменения системы. План использует DynamicUser/credentials, но его полный
+VM-прогон пока не принят из-за позднего SERVFAIL. Это не команда установки.
+
 Следующий порядок работ:
 
 1. Подготовить клиентский переход для Radxa с согласованным исправным baseline. Журналы dnsmasq и dangling `resolv.conf` связаны и проверены в namespace и VM; отдельно в namespace проверен явный [localhost-file baseline](scripts/dns-resolver-object.md), 15 controller SIGKILL и 13 NSS-проб. Откат сохраняет guard; ни файл, ни возврат сломанной ссылки сами по себе не доказывают здоровье baseline. Это ещё не live-backend. Автоматически включать resolved или заменять настройки живой Radxa не предполагается.
