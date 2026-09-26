@@ -26,7 +26,7 @@ async function fingerprint(path, privateSource = false) {
 }
 
 export function controller(directory, operation, backend, pause, kind = 'file') {
-  assert.ok(['file', 'resolved', 'dnsmasq', 'link', 'coupled', 'resolver-object', 'radxa'].includes(kind));
+  assert.ok(['file', 'resolved', 'dnsmasq', 'link', 'coupled', 'resolver-object', 'radxa', 'guard'].includes(kind));
   const paired = ['coupled', 'radxa'].includes(kind);
   const worker = fileURLToPath(new URL('./dns-lifecycle-crash-worker.mjs', import.meta.url));
   const proc = spawn('flock', ['-n', '-E', '75', '-F', join(directory, 'lock'), process.execPath, worker, directory, operation, kind],

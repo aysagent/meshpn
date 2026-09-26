@@ -111,11 +111,13 @@ export function createDnsClientGuard({ input, read, restore, assertContext }) {
     for (const family of [4, 6]) states.push(inspectDnsClientGuard(plan, family, await read(family)));
     return states;
   };
-  const change = async (action) => {
+  const change = async (action, onlyFamily) => {
+    assert.ok(onlyFamily === undefined || [4, 6].includes(onlyFamily));
     // Validate BOTH families before the first setter. A previous interrupted
     // family transaction is resumed, not rolled back to an open baseline.
     const before = await inspect();
     for (const [index, family] of [4, 6].entries()) {
+      if (onlyFamily !== undefined && family !== onlyFamily) continue;
       const wanted = action === 'install' ? 'present' : 'absent';
       if (before[index] === wanted) continue;
       await assertContext();
@@ -124,15 +126,23 @@ export function createDnsClientGuard({ input, read, restore, assertContext }) {
       assert.equal(inspectDnsClientGuard(plan, family, await read(family)), wanted, 'guard commit readback failed');
     }
     const final = await inspect();
-    assert.deepEqual(final, [action === 'install' ? 'present' : 'absent', action === 'install' ? 'present' : 'absent']);
-    return { schema: 1, kind: 'clean-vpn-dns-client-guard', action, verified: true, families: [4, 6] };
+    const expected = action === 'install' ? 'present' : 'absent';
+    if (onlyFamily === undefined) assert.deepEqual(final, [expected, expected]);
+    else assert.equal(final[onlyFamily === 4 ? 0 : 1], expected);
+    return { schema: 1, kind: 'clean-vpn-dns-client-guard', action, verified: true, families: onlyFamily === undefined ? [4, 6] : [onlyFamily] };
   };
   return { inspect, ensure: () => change('install'),
+    ensureFamily: (family) => { assert.ok([4, 6].includes(family)); return change('install', family); },
     // This callback must read durable restore intent and verify current baseline;
     // a caller-supplied boolean or service stop is not a release protocol.
     async release(authorizeRestoredBaseline) {
       assert.equal(typeof authorizeRestoredBaseline, 'function');
       await assertContext(); assert.equal(await authorizeRestoredBaseline(), true, 'explicit verified restore required');
       return change('release');
+    },
+    async releaseFamily(family, authorizeRestoredBaseline) {
+      assert.ok([4, 6].includes(family)); assert.equal(typeof authorizeRestoredBaseline, 'function');
+      await assertContext(); assert.equal(await authorizeRestoredBaseline(), true, 'explicit verified restore required');
+      return change('release', family);
     } };
 }

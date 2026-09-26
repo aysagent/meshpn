@@ -213,7 +213,8 @@ A/AAAA-пробами, adapter-only SIGKILL, reboot и откатом. Посл�
 systemd VM-прогон прошёл 12/12 проверок в двух загрузках. Это не команда установки.
 Общий [клиентский DNS guard](scripts/dns-client-guard.md) проверяет собственные
 правила для VPS 2/Radxa без перезаписи всего firewall; его namespace-стенд не
-является host installer. Подключение постоянного журнала и службы ещё впереди.
+является host installer. [Постоянный журнал](scripts/dns-client-guard-journal.md)
+прошёл16 SIGKILL контроллера; подключение службы и ранняя boot-защита ещё впереди.
 
 Следующий порядок работ:
 

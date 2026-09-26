@@ -3,8 +3,9 @@
 `lib/dns-client-guard.mjs` — reusable исполнитель правил для будущего клиентского
 controller, **не установщик и не самостоятельная команда host apply**.
 Ранее guard жил внутри конкретных стендов; теперь правила и проверка владения
-общие для обоих клиентских профилей. Persistent guard journal/systemd entrypoint
-ещё не подключены. Нельзя копировать лабораторные команды на рабочий хост.
+общие для обоих клиентских профилей. Добавлен [persistent guard journal](dns-client-guard-journal.md)
+с SIGKILL recovery; systemd entrypoint ещё не подключён.
+Нельзя копировать лабораторные команды на рабочий хост.
 
 ## Политика
 
@@ -89,6 +90,6 @@ IPv4 deny, обе IP-семьи и UDP/TCP, локальный stub, непер�
 2026-09-27: **30/30 unit/host-refusal PASS**, **11/11 namespace PASS**,
 iptables/ip6tables1.8.10 `nf_tables`, dnsmasq2.90; два настоящих DHCP DORA.
 Node-регрессия **1602/1602 PASS**, `/var/tmp/meshpn-acceptance-bKaw65/report.json`.
-Legacy backend, persistent journal, boot ordering и реальные версии клиентов
-не выводятся автоматически из этого результата. Следующий шаг — сохранить
-guard intent/identity и подключить проверку к клиентскому systemd controller.
+Legacy backend, boot ordering и реальные версии клиентов не выводятся автоматически
+из этого результата. Persistent journal проверен отдельным [crash-режимом](dns-client-guard-journal.md).
+Следующий шаг — подключить проверку к клиентскому systemd controller.

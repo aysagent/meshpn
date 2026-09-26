@@ -74,6 +74,7 @@
     "dns:client-preflight": "node scripts/dns-client-preflight.mjs",
     "test:dns-client-preflight": "node --test scripts/test-dns-client-preflight.mjs",
     "test:dns-client-guard": "node --test scripts/test-dns-client-guard.mjs",
+    "test:dns-client-guard-journal": "node --test scripts/test-dns-client-guard-journal.mjs",
     "dns:client-guard-lab": "node scripts/dns-client-guard-lab.mjs",
     "test:dns-diagnostic": "node --test scripts/test-dns-diagnostic.mjs",
     "test:dnsmasq-config": "node --test scripts/test-dnsmasq-config.mjs",

@@ -79,8 +79,9 @@ Radxa или подтверждение live-конфигурации. Подр�
 в отчёте [systemd VM](dns-systemd-vm.md).
 Выделен общий [client guard executor](dns-client-guard.md): собственные цепочки,
 проверка порядка/владения, отдельные IPv4/IPv6 commits, без global firewall restore.
-Это следующий компонент deployment; persistent guard journal и systemd entrypoint
-ещё нужны, как и opt-in установщик/откат.
+Его [persistent journal](dns-client-guard-journal.md) прошёл16 controller SIGKILL
+для двух профилей. Systemd entrypoint/ранняя boot-защита ещё нужны, как и opt-in
+установщик/откат; stale boot не принимается автоматически.
 
 ## Три этапа и текущий статус
 

@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import dgram from 'node:dgram';
 import net from 'node:net';
-import { readlink, readFile } from 'node:fs/promises';
+import { readlink, readFile, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { namespaceArgs } from './lib/browser-soak.mjs';
@@ -15,8 +17,9 @@ import { sentinel } from './lib/dns-lifecycle-lab.mjs';
 import { child } from './lib/browser-lab-driver.mjs';
 import { makeDnsQuery, validateDnsResponse } from './lib/lab-dns-wire.mjs';
 import { startDnsmasqUsbPeer, startDnsmasqUpstreamPeer } from './lib/dnsmasq-usb-peer.mjs';
+import { runDnsGuardCrashLab } from './lib/dns-client-guard-crash-lab.mjs';
 
-async function isolated() {
+async function isolated(journal) {
   await assertDnsMountNamespace();
   const run = (file, args, input) => {
     const result = spawnSync(file, args, { input, encoding: 'utf8', timeout: 5000, maxBuffer: 262144,
@@ -146,28 +149,38 @@ async function isolated() {
     assert.deepEqual(await Promise.all([4, 6].map(read)), before);
     for (const tcp of [false, true]) assert.equal((await peer.lookup({ direct: true, forwarded: true, family: 6, tcp })).outcome, 'dns-response');
     check('radxa-release-restores-forwarding-baseline');
+    const journalResult = journal ? await runDnsGuardCrashLab({ directory: process.env.MESHPN_DNS_GUARD_LAB_DIR, read, restore, run, versions }) : undefined;
     return { schema: 1, kind: 'clean-vpn-dns-client-guard-lab', status: 'passed', checks, versions,
-      hostNetworkChanged: false, durableGuardJournalImplemented: false, liveInstaller: false };
+      hostNetworkChanged: false, durableGuardJournalTested: journal, ...(journal ? { journal: journalResult } : {}), liveInstaller: false };
   } finally { await dhcp?.stop(); await peer?.close(); await upstream?.close(); await Promise.all(observers.map((s) => s.close())); }
 }
 
 async function main() {
   const args = process.argv.slice(2);
+  const journal = args.includes('--journal');
+  if (journal) args.splice(args.indexOf('--journal'), 1);
   assert.ok(args.length === 0 || args.length === 1 && args[0] === '--isolated', 'no host apply option');
-  if (args[0] === '--isolated') { console.log(JSON.stringify(await isolated())); return; }
+  if (args[0] === '--isolated') { console.log(JSON.stringify(await isolated(journal))); return; }
   const env = { ...cleanEnvironment(process.env), MESHPN_PARENT_NETNS: await readlink('/proc/self/ns/net'),
     MESHPN_PARENT_PIDNS: await readlink('/proc/self/ns/pid'), MESHPN_PARENT_MNTNS: await readlink('/proc/self/ns/mnt') };
   assert.ok(env.MESHPN_DNSMASQ?.startsWith('/'), 'absolute MESHPN_DNSMASQ required');
   const snapshot = () => Promise.all(['/etc/resolv.conf', '/etc/nsswitch.conf', '/proc/sys/net/ipv4/ip_forward', '/proc/sys/net/ipv6/conf/all/forwarding']
     .map(async (path) => createHash('sha256').update(await readFile(path)).digest('hex')));
   const before = await snapshot();
+  const directory = journal ? await mkdtemp(join(tmpdir(), 'meshpn-client-guard-')) : null;
+  if (directory) env.MESHPN_DNS_GUARD_LAB_DIR = directory;
   const controller = new AbortController(), abort = () => controller.abort();
   process.once('SIGINT', abort); process.once('SIGTERM', abort);
   let result;
   try {
     result = await runCommand('unshare', [...namespaceArgs.map((arg) => arg === '--map-current-user' ? '--map-root-user' : arg),
-      '--propagation', 'private', process.execPath, fileURLToPath(import.meta.url), '--isolated'], { env, signal: controller.signal, timeoutMs: 60000 });
-  } finally { process.off('SIGINT', abort); process.off('SIGTERM', abort); assert.deepEqual(await snapshot(), before); }
+      '--propagation', 'private', process.execPath, fileURLToPath(import.meta.url), '--isolated', ...(journal ? ['--journal'] : [])],
+    { env, signal: controller.signal, timeoutMs: journal ? 120000 : 60000 });
+  } finally {
+    process.off('SIGINT', abort); process.off('SIGTERM', abort);
+    if (directory) await rm(directory, { recursive: true, force: true });
+    assert.deepEqual(await snapshot(), before);
+  }
   assert.equal(result.reason, null); assert.equal(result.code, 0, result.stderr);
   const report = JSON.parse(result.stdout); assert.equal(report.status, 'passed');
   report.hostDnsFilesAndForwardingUnchanged = true;

@@ -9,6 +9,7 @@ import { ownedLinkTransaction } from './dns-owned-link-journal.mjs';
 import { coupledDnsTransaction } from './dns-coupled-journal.mjs';
 import { resolverObjectTransaction } from './dns-resolver-object-journal.mjs';
 import { radxaDnsTransaction, RADXA_METHODS, radxaMethod } from './dns-radxa-journal.mjs';
+import { dnsGuardTransaction } from './dns-client-guard-journal.mjs';
 
 let input, timer;
 try {
@@ -41,8 +42,9 @@ try {
     } catch { process.exit(2); }
   });
   input.once('close', () => { if (pending) { clearTimeout(timer); pending.reject(new Error('backend disconnected')); pending = undefined; } });
-  const kind = process.argv[4] ?? 'file'; assert.ok(['file', 'resolved', 'dnsmasq', 'link', 'coupled', 'resolver-object', 'radxa'].includes(kind));
-  const methods = kind === 'radxa' ? ['ensureGuard', ...Object.entries(RADXA_METHODS).flatMap(([k, names]) => names.map((n) => radxaMethod(k, n)))]
+  const kind = process.argv[4] ?? 'file'; assert.ok(['file', 'resolved', 'dnsmasq', 'link', 'coupled', 'resolver-object', 'radxa', 'guard'].includes(kind));
+  const methods = kind === 'guard' ? ['config', 'context', 'inspect', 'authorizeRelease', 'commit']
+    : kind === 'radxa' ? ['ensureGuard', ...Object.entries(RADXA_METHODS).flatMap(([k, names]) => names.map((n) => radxaMethod(k, n)))]
     : kind === 'resolver-object' ? ['ensureGuard', 'view', 'prepare', 'verifySnapshots', 'select', 'probe']
     : kind === 'coupled' ? ['ensureGuard', 'context', 'view', 'linkView', 'create', 'stamp', 'remove', 'releaseGuard', 'adapterPort', 'probe', 'set']
     : kind === 'link' ? ['ensureGuard', 'context', 'view', 'create', 'stamp', 'remove', 'releaseGuard']
@@ -51,7 +53,7 @@ try {
     : ['ensureGuard', 'prepare', 'current', 'verifySnapshots', 'select', 'removeGuard', 'probe'];
   const backend = Object.fromEntries(methods
     .map((method) => [method, (...args) => call('backend', { method, args })]));
-  const transaction = kind === 'radxa' ? radxaDnsTransaction : kind === 'resolver-object' ? resolverObjectTransaction : kind === 'coupled' ? coupledDnsTransaction : kind === 'link' ? ownedLinkTransaction : kind === 'dnsmasq' ? dnsmasqTransaction : kind === 'resolved' ? resolvedTransaction : dnsTransaction;
+  const transaction = kind === 'guard' ? dnsGuardTransaction : kind === 'radxa' ? radxaDnsTransaction : kind === 'resolver-object' ? resolverObjectTransaction : kind === 'coupled' ? coupledDnsTransaction : kind === 'link' ? ownedLinkTransaction : kind === 'dnsmasq' ? dnsmasqTransaction : kind === 'resolved' ? resolvedTransaction : dnsTransaction;
   const result = await transaction({ directory: process.argv[2], operation: process.argv[3], scope, backend,
     checkpoint: (point) => call('checkpoint', { point }) });
   process.stdout.write(`${JSON.stringify({ type: 'result', result })}\n`);

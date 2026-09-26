@@ -10,6 +10,30 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: persistent client guard journal
+
+`dns-client-guard-journal.mjs`: installing/active/releasing/released, stable ID
+до первого setter, private fsync/rename journal8KiB. Start не отменяет release,
+recover следует intent; callback baseline proof перед каждым release-family.
+Контекст: boot/netns/directory dev:ino/firewall backend/USB incarnation;
+неизвестные/чужие context и policy drift отклоняются без auto adoption.
+Caller держит flock; concrete production paths/commands/boot ordering ещё
+не подключены. Это не самостоятельный live service/boot shield.
+
+`dns:client-guard-lab -- --journal`: **16/16 реальных controller SIGKILL**, по8
+точек на VPS2/Radxa; **2 lock conflicts**, повтор всех **11 packet checks** PASS.
+RPC firewall setters завершены до SIGKILL; это не убийство iptables внутри commit.
+**41 journal units**, **1643 Node PASS**, `/var/tmp/meshpn-acceptance-l2aoDI/report.json`.
+Restore proof проверяется и перед финальной записью released после последнего
+removal: потеря подтверждения не позволяет молча принять изменившийся baseline.
+Host resolver/NSS/forwarding неизменны; новые проверки whole-guest reboot не проводились.
+Исходные lab cases используют iptables1.8.10 nf_tables/dnsmasq2.90.
+
+Далее — systemd entrypoint и ранний guard при boot (stale journal пока только
+отклоняется, это не защита новой загрузки), общий restore proof с DNS controller,
+opt-in installer/rollback; затем пользовательские пилоты. DNS v1 открыт,
+preflight/решения live policy по-прежнему ожидаются. [Подробности](../scripts/dns-client-guard-journal.md).
+
 ### Дополнение 2026-09-27: общий client guard executor
 
 `lib/dns-client-guard.mjs` компилирует и исполняет фиксированные VPS2/Radxa
