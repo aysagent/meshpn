@@ -94,6 +94,17 @@ export async function startTransparentDnsLab({ mode = 'normal', ca, servername =
 /** Explicit clients: numerical loopback only, never the system resolver. */
 export async function queryLabDns(port, packet, { tcp = false, timeoutMs = 3000, fragment = false } = {}) {
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw dnsError('DNS_CONFIG');
+  return queryLoopbackDns(port, packet, { tcp, timeoutMs, fragment });
+}
+
+/** Port 53 is allowed only behind the private network/PID/mount namespace gate. */
+export async function queryNamespaceDns53(packet, options = {}) {
+  const { assertDnsMountNamespace } = await import('./dns-lifecycle-namespace.mjs');
+  await assertDnsMountNamespace();
+  return queryLoopbackDns(53, packet, options);
+}
+
+async function queryLoopbackDns(port, packet, { tcp = false, timeoutMs = 3000, fragment = false } = {}) {
   if (tcp) {
     const socket = net.connect({ host: '127.0.0.1', port });
     const timer = setTimeout(() => socket.destroy(dnsError('DNS_CLIENT_TIMEOUT')), timeoutMs);

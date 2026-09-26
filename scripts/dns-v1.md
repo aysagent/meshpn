@@ -41,6 +41,11 @@ journal, SIGKILL/restart контроллера и adapter, VM reboot/power-cut 
 Отдельный [dnsmasq systemd/reboot стенд](dnsmasq-vm.md) проверяет настоящий
 service lifecycle в VM, сохранение DHCP при отказе adapter и отклонение старого
 boot-context. Это не live host takeover и не автоматическое принятие старого журнала.
+Для системного resolver Radxa добавлена [транзакция dangling symlink](dns-resolver-object.md):
+7 controller SIGKILL, 9 реальных NSS-проверок и 3 конфликта в synthetic `/etc`, PASS.
+Она сохраняет USB DHCP, точно возвращает ссылку и сама не снимает guard.
+Общий координатор с dnsmasq и VM lifecycle новой пары ещё не выполнены;
+точный возврат сломанной ссылки не означает восстановление исправного baseline.
 Для VPS 2 [resolved 249 + networkd](dns-networkd-lab.md): 11 namespace-проверок
 настоящего DHCP renew/reconfigure и отдельного VPN DNS-link, без takeover `eth0`.
 Явная QNAME deny-policy проверена при удалении/замене DHCP domains. Ещё нужны

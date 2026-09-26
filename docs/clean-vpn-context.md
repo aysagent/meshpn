@@ -10,6 +10,35 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-26: системный resolver Radxa в private namespace
+
+Добавлены [отдельный object journal и стенд](../scripts/dns-resolver-object.md)
+для dangling `/etc/resolv.conf`: nofollow snapshot, подготовленные managed file/
+restored symlink, atomic rename + fsync, phase-aware recovery, чужой inode и
+stale boot/scope не принимаются. Restore возвращает текст/метаданные ссылки,
+не исходный inode; сломанный baseline не становится исправным. Сам журнал
+никогда не снимает guard. Backend ограничен owned 0700 fixture directory.
+
+`dnsmasq-lab --resolver-object` создаёт synthetic `/etc` и `/run` внутри private
+net/PID/mount namespaces. Настоящие getent/NSS → localhost dnsmasq → adapter →
+числовой enc-SNI exit → проверенный DoH fixture. **7 controller SIGKILL, 9 NSS-проб,
+3 ownership/environment refusal — PASS**. USB DHCP сохранён: прежние 61 проверка,
+6 DHCP DORA и ещё 7 dnsmasq journal SIGKILL. Отдельно повторены все три прежних
+dnsmasq namespace-теста — PASS. В конце один процесс, ноль zombies; host resolver/
+NSS/identity files и forwarding совпадают до/после. Новая матрица первоначально
+выявила ошибки стенда: hidden Debian alternatives и вызов high-port-only probe
+на порту 53. Исправлены; для localhost:53 введён отдельный namespace gate.
+
+Unit-набор нового компонента: **53/53 PASS**. Общий Node acceptance:
+**1376/1376 PASS**, без skips, `/var/tmp/meshpn-acceptance-PiYDVh/report.json`.
+Это Node-only, не повтор всей браузерной матрицы.
+
+Граница: parent-owned backend переживает смерть дочернего controller. Новый
+object journal ещё не скоординирован с dnsmasq journal на durable уровне и
+не прошёл VM reboot/power-cut. Следом — общий координатор и VM lifecycle,
+затем установщик/откат и согласованные пользовательские пилоты VPS2/Radxa.
+Live DNS не менялся, SSH не использовался, DNS v1 остаётся открытым.
+
 ### Дополнение 2026-09-26: coupled coordinator под настоящим systemd в VM
 
 Добавлен [coupled VM-стенд](../scripts/dns-coupled-vm.md): `--case=coupled`

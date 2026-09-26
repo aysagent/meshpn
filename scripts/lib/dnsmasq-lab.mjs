@@ -8,18 +8,21 @@ import { assertDnsMountNamespace } from './dns-lifecycle-namespace.mjs';
 import { namespaceResources } from './browser-soak.mjs';
 import { startAdapterSoakLab } from './dns-adapter-soak-lab.mjs';
 import { sentinel } from './dns-lifecycle-lab.mjs';
-import { queryLabDns } from './transparent-dns-lab.mjs';
+import { queryLabDns, queryNamespaceDns53 } from './transparent-dns-lab.mjs';
 import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
 import { compileRadxaDnsmasqLabConfig } from './dnsmasq-lab-config.mjs';
 import { startDnsmasqUsbPeer, startDnsmasqUpstreamPeer } from './dnsmasq-usb-peer.mjs';
 import { createDnsmasqJournalFiles } from './dnsmasq-journal-files.mjs';
 import { readDnsmasqJournal, inspectDnsmasqTransaction } from './dnsmasq-journal.mjs';
 import { controller } from './dns-lifecycle-crash-lab.mjs';
+import { setupResolverObjectLab } from './dns-resolver-object-lab.mjs';
 
-export async function runDnsmasqLab(directory, executable, { usb = false, journal = false } = {}) {
+export async function runDnsmasqLab(directory, executable, { usb = false, journal = false, resolverObject = false } = {}) {
   await assertDnsMountNamespace();
   assert.ok(!journal || usb, 'journal lab requires USB fixture');
+  assert.ok(!resolverObject || journal, 'resolver object requires journal guard and USB fixture');
   directory = await realpath(directory);
+  const resolver = resolverObject ? await setupResolverObjectLab(directory) : null;
   assert.ok(executable?.startsWith('/'), 'absolute MESHPN_DNSMASQ executable required');
   const links = JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout);
   assert.deepEqual(links.map((l) => l.ifname), ['lo']);
@@ -90,6 +93,13 @@ export async function runDnsmasqLab(directory, executable, { usb = false, journa
   }
   async function journalGuard(enabled) {
     // Unlike the USB-only smoke guard this also blocks the daemon's old upstreams.
+    if (resolver) for (const protocol of ['udp', 'tcp']) {
+      // Host resolver is allowed to reach only the local managed dnsmasq. Its
+      // upstream still traverses the OUTPUT reject installed below.
+      const rule = ['OUTPUT', '-o', 'lo', '-d', '127.0.0.1', '-p', protocol, '--dport', '53', '-j', 'ACCEPT'];
+      try { await exec('iptables', ['-w', '2', '-C', ...rule]); }
+      catch (e) { assert.equal(e.code, 1); await exec('iptables', ['-w', '2', '-I', 'OUTPUT', '1', ...rule.slice(1)]); }
+    }
     for (const tool of ['iptables', 'ip6tables']) for (const protocol of ['udp', 'tcp']) {
       const rules = [ ['OUTPUT', '-p', protocol, '--dport', '53', '-j', 'REJECT'],
         ['INPUT', '-i', 'usb0', ...(tool === 'iptables' ? ['!', '-d', '192.168.7.1'] : []),
@@ -196,6 +206,16 @@ export async function runDnsmasqLab(directory, executable, { usb = false, journa
       const activated = await runJournal('recover'); journalEvidence.id = activated.id;
       assert.equal(activated.status, 'active');
     } else { await usbGuard(true); await start(plan.managed); }
+    if (resolver) await resolver.enable({ ensureGuard: () => journalGuard(true), probe: async () => {
+      await journalBackend.probe(lab.adapter.port);
+      // Require the actual localhost dnsmasq path, not just the adapter socket.
+      for (const tcp of [false, true]) {
+        const q = makeDnsQuery(`resolver-ready-${++sequence}.test`);
+        const reply = await queryNamespaceDns53(q, { tcp, timeoutMs: 4000 }), parsed = validateDnsResponse(reply, q);
+        assert.equal(parsed.rcode, 0); const answer = parsed.records.find((r) => r.section === 0 && r.type === 1);
+        assert.ok(answer); assert.equal(reply.subarray(answer.offset, answer.offset + answer.length).toString('hex'), 'c000027b');
+      }
+    } });
     if (peer) {
       // This dnsmasq fixture advertises 1.1.1.1 in the original duplicate option 6.
       // DHCP clients do not learn the changed option until another exchange.
@@ -229,6 +249,7 @@ export async function runDnsmasqLab(directory, executable, { usb = false, journa
     if (peer) await lease('exit-down-dhcp-still-works', true);
     await lookup('exit-down-udp-no-baseline-fallback', null);
     await lookup('exit-down-tcp-no-baseline-fallback', null, true);
+    if (resolver) for (const tcp of [false, true]) await resolver.systemLookup(`system-exit-down-${tcp ? 'tcp' : 'udp'}`, null, tcp);
     await lab.restartExit(); await lookup('exit-recovered', '192.0.2.123');
     await stop('SIGKILL');
     if (journal) assert.equal((await runJournal('recover')).status, 'active');
@@ -239,6 +260,7 @@ export async function runDnsmasqLab(directory, executable, { usb = false, journa
       assert.equal(acquired.address, dhcp[1].ack.address, 'lease survives dnsmasq restart');
     }
     await lookup('dnsmasq-restarted-protected', '192.0.2.123');
+    if (resolver) await resolver.systemLookup('system-dnsmasq-restarted', '192.0.2.123');
     await lab.adapter.close();
     await forwardedProbes('adapter-down-blocked', true);
     if (peer) {
@@ -259,6 +281,7 @@ export async function runDnsmasqLab(directory, executable, { usb = false, journa
     } catch (error) {
       assert.equal(error.code, 'DNS_CLIENT_TIMEOUT'); checks.push('adapter-down-client-deadline');
     }
+    if (resolver) for (const tcp of [false, true]) await resolver.systemLookup(`system-adapter-down-${tcp ? 'tcp' : 'udp'}`, null, tcp);
     assert.equal(hits(), before, 'direct baseline upstream used during managed mode');
     checks.push('zero-baseline-queries-during-protection');
     if (upstream) {
@@ -280,6 +303,7 @@ export async function runDnsmasqLab(directory, executable, { usb = false, journa
     if (journal) {
       // Explicit disable works even with the adapter down. Each file/daemon
       // boundary is killed and completed by a new flock-owning controller.
+      if (resolver) await resolver.restore();
       await runJournal('disable', 'restore-start');
       await runJournal('recover', 'restore:config:set');
       await runJournal('recover', 'restore:daemon:set');
@@ -320,7 +344,7 @@ export async function runDnsmasqLab(directory, executable, { usb = false, journa
         usbForwardRulesInstalledButNotTrafficTested: false, staleDhcpDnsRequiresReacquire: true } : {}),
       durableRecoveryImplemented: journal, ...(journal ? { journal: journalEvidence, recoveryScope: 'same-namespace-fixture',
         controllerBackend: 'parent-owned-rpc', rebootTested: false } : {}),
-      systemResolverTakeoverTested: false, independentPcap: false,
+      systemResolverTakeoverTested: false, ...(resolver ? { resolverObject: resolver.evidence, systemResolverFixtureTested: true } : {}), independentPcap: false,
       final: { processes: final.tree.live, zombies: final.tree.zombies } };
   } catch (error) {
     throw new Error(`${error.message}\nfixture dnsmasq: ${daemonDiagnostics}`);

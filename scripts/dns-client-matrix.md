@@ -67,8 +67,11 @@ reboot и guard заранее описываются и требуют отде
    восстановление после reboot и реальные версии клиентов ещё впереди.
    Unicast renewal/T1/T2 и физический USB не проверены.
 3. Реальные ownership/journal/guard и start/stop/restart/reboot для обеих схем.
-   Radxa resolv.conf переключается отдельной проверяемой транзакцией, а не
-   слепой заменой dangling symlink. DHCP не должен отключаться при отказе exit.
+   [Radxa resolv.conf](dns-resolver-object.md) уже переключается отдельной
+   namespace-транзакцией (7 SIGKILL, 9 NSS-проб, 3 отказа при конфликте, PASS).
+   Дальше — общий координатор с dnsmasq journal и VM lifecycle новой пары.
+   DHCP не должен отключаться при отказе exit; возврат dangling symlink сам
+   по себе не делает baseline исправным и не разрешает снятие guard.
 4. Реальные units/config и откат проверяются в VM, затем с отдельным разрешением
    и независимым аварийным доступом — по одному ограниченному 24-часовому пилоту
    на VPS 2 и Radxa. VPS client соединяется с другим exit.

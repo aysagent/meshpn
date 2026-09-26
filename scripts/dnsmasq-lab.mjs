@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readlink, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readlink, lstat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,8 +10,10 @@ import { cleanEnvironment, runCommand } from './lib/transparent-acceptance.mjs';
 import { runDnsmasqLab } from './lib/dnsmasq-lab.mjs';
 
 const args = process.argv.slice(2), entry = fileURLToPath(import.meta.url);
-const journal = args.includes('--journal');
-if (journal) args.splice(args.indexOf('--journal'), 1);
+const resolverObject = args.includes('--resolver-object');
+if (resolverObject) args.splice(args.indexOf('--resolver-object'), 1);
+const journal = resolverObject || args.includes('--journal');
+if (args.includes('--journal')) args.splice(args.indexOf('--journal'), 1);
 const usb = journal || args.includes('--usb');
 if (args.includes('--usb')) args.splice(args.indexOf('--usb'), 1);
 let directory;
@@ -19,17 +21,23 @@ const controller = new AbortController(), abort = () => controller.abort();
 process.once('SIGINT', abort); process.once('SIGTERM', abort);
 try {
   if (args.length === 1 && args[0] === '--help') {
-    process.stdout.write('Usage: MESHPN_DNSMASQ=/absolute/path/dnsmasq node scripts/dnsmasq-lab.mjs [--usb | --journal]\nPrivate namespace only; --usb adds DHCP peer and namespace-only DNS guards; --journal adds persistent fixture recovery and controller SIGKILLs. No installation or host DNS/firewall/TUN changes.\n');
+    process.stdout.write('Usage: MESHPN_DNSMASQ=/absolute/path/dnsmasq node scripts/dnsmasq-lab.mjs [--usb | --journal | --resolver-object]\nPrivate namespace only; --resolver-object adds synthetic /etc/resolv.conf object recovery to the journal/USB fixture. No installation or host DNS/firewall/TUN changes.\n');
   } else if (args.length === 1 && args[0] === '--isolated') {
     console.log = console.warn = console.error = () => {};
-    const report = await runDnsmasqLab(process.env.MESHPN_DNSMASQ_LAB_DIR, process.env.MESHPN_DNSMASQ, { usb, journal });
+    const report = await runDnsmasqLab(process.env.MESHPN_DNSMASQ_LAB_DIR, process.env.MESHPN_DNSMASQ, { usb, journal, resolverObject });
     process.stdout.write(`DNSMASQ_LAB_RESULT ${JSON.stringify(report)}\n`);
   } else {
     assert.equal(args.length, 0, 'unknown arguments');
     assert.ok(process.env.MESHPN_DNSMASQ?.startsWith('/'), 'set absolute MESHPN_DNSMASQ; no automatic installation');
     process.umask(0o077);
-    const hash = async () => createHash('sha256').update(await readFile('/etc/resolv.conf')).digest('hex');
-    const before = await hash();
+    const hostFiles = async () => Promise.all(['/etc/resolv.conf', '/etc/nsswitch.conf', '/etc/passwd', '/etc/group'].map(async (path) => {
+      const stat = await lstat(path);
+      return { path, dev: stat.dev, ino: stat.ino, mode: stat.mode, uid: stat.uid, gid: stat.gid,
+        target: stat.isSymbolicLink() ? await readlink(path) : null,
+        hash: await readFile(path).then((bytes) => createHash('sha256').update(bytes).digest('hex'))
+          .catch((e) => { if (e.code === 'ENOENT') return null; throw e; }) };
+    }));
+    const before = await hostFiles();
     const hostForwarding = () => Promise.all(['/proc/sys/net/ipv4/ip_forward', '/proc/sys/net/ipv6/conf/all/forwarding']
       .map((path) => readFile(path, 'utf8')));
     const forwardingBefore = usb ? await hostForwarding() : null;
@@ -37,16 +45,17 @@ try {
     // Namespace-local root is needed for network sysctl ownership, not host sudo.
     const isolation = namespaceArgs.map((arg) => usb && arg === '--map-current-user' ? '--map-root-user' : arg);
     const result = await runCommand('unshare', [...isolation, '--propagation', 'private',
-      process.execPath, entry, '--isolated', ...(journal ? ['--journal'] : usb ? ['--usb'] : [])], { timeoutMs: journal ? 120000 : usb ? 90000 : 60000, signal: controller.signal,
+      process.execPath, entry, '--isolated', ...(resolverObject ? ['--resolver-object'] : journal ? ['--journal'] : usb ? ['--usb'] : [])], { timeoutMs: resolverObject ? 180000 : journal ? 120000 : usb ? 90000 : 60000, signal: controller.signal,
       env: { ...cleanEnvironment(process.env), MESHPN_DNSMASQ_LAB_DIR: directory,
         MESHPN_PARENT_NETNS: await readlink('/proc/self/ns/net'), MESHPN_PARENT_PIDNS: await readlink('/proc/self/ns/pid'),
         MESHPN_PARENT_MNTNS: await readlink('/proc/self/ns/mnt') } });
-    assert.equal(await hash(), before, 'host resolver changed');
+    assert.deepEqual(await hostFiles(), before, 'host resolver/NSS/identity files changed');
     if (usb) assert.deepEqual(await hostForwarding(), forwardingBefore, 'host forwarding changed');
     assert.equal(result.reason, null); assert.equal(result.code, 0, result.stderr);
     const lines = result.stdout.trim().split('\n'); assert.equal(lines.length, 1);
     assert.ok(lines[0].startsWith('DNSMASQ_LAB_RESULT '));
     const report = JSON.parse(lines[0].slice('DNSMASQ_LAB_RESULT '.length));
+    report.hostDnsFilesUnchanged = true;
     if (usb) report.hostForwardingUnchanged = true;
     assert.equal(report.status, 'passed'); process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   }
