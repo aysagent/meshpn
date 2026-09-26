@@ -14,6 +14,7 @@ import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
 import { queryLabDns } from './transparent-dns-lab.mjs';
 import { startNetworkdPeer } from './dns-networkd-peer.mjs';
 import { runOwnedLinkCrashLab, assertOwnedLinkEvidence } from './dns-owned-link-crash-lab.mjs';
+import { runCoupledCrashLab, assertCoupledEvidence } from './dns-coupled-crash-lab.mjs';
 
 export const NETWORKD_CHECKS = Object.freeze(['real-dhcp-baseline', 'resolved-refuses-networkd-owned-link',
   'owned-link-protected-without-uplink-takeover', 'cloud-names-blocked-not-publicly-forwarded',
@@ -21,7 +22,7 @@ export const NETWORKD_CHECKS = Object.freeze(['real-dhcp-baseline', 'resolved-re
   'dhcp-domain-removal-policy-refuses-before-doh', 'dhcp-domain-replacement-policy-refuses-before-doh',
   'exit-outage-no-direct-fallback', 'foreign-owned-link-edit-not-overwritten',
   'disable-preserves-latest-dhcp-not-stale-snapshot']);
-export function assertNetworkdEvidence(report, { linkJournal = false } = {}) {
+export function assertNetworkdEvidence(report, { linkJournal = false, coupledJournal = false } = {}) {
   assert.equal(report.status, 'passed'); assert.deepEqual(report.checks, NETWORKD_CHECKS);
   for (const k of ['realDhcpRenew', 'privateBus', 'hostDnsFilesUnchanged', 'hostForwardingUnchanged']) assert.equal(report[k], true, k);
   for (const k of ['networkdOwnedLinkTakeover', 'hostDeploymentImplemented', 'rebootTested', 'durableJournalTested']) assert.equal(report[k], false, k);
@@ -33,19 +34,22 @@ export function assertNetworkdEvidence(report, { linkJournal = false } = {}) {
   assert.equal(report.final.processes, 1); assert.equal(report.final.zombies, 0);
   assert.ok(Number.isSafeInteger(report.blockedLookupDeadlines) && report.blockedLookupDeadlines >= 0);
   if (linkJournal) assertOwnedLinkEvidence(report.ownedLinkJournal);
+  if (coupledJournal) assertCoupledEvidence(report.coupledJournal);
 }
 
 export function networkdLabOptions(args) {
   if (args.length === 1 && args[0] === '--help') return { help: true };
   const result = {}, seen = new Set();
   for (const arg of args) {
+    if (arg === '--coupled-journal' && !seen.has(arg)) { seen.add(arg); result.coupledJournal = true; continue; }
     if (arg === '--link-journal' && !seen.has(arg)) { seen.add(arg); result.linkJournal = true; continue; }
     if (arg === '--isolated' && !seen.has(arg)) { seen.add(arg); result.isolated = true; continue; }
     const m = /^--(systemd-dir|dnsmasq)=(\/[^\n\0]+)$/.exec(arg);
     assert.ok(m && !seen.has(m[1]), 'explicit absolute --systemd-dir and --dnsmasq required');
     seen.add(m[1]); result[m[1] === 'systemd-dir' ? 'systemdDir' : 'dnsmasq'] = m[2];
   }
-  assert.ok(result.systemdDir && result.dnsmasq, 'explicit tools required'); return result;
+  assert.ok(result.systemdDir && result.dnsmasq, 'explicit tools required');
+  assert.ok(!(result.linkJournal && result.coupledJournal), 'choose one bounded journal matrix'); return result;
 }
 
 export async function runNetworkdLab(directory, options) {
@@ -243,8 +247,12 @@ export async function runNetworkdLab(directory, options) {
     assert.ok((await hits())[1] > protectedHits[1], 'latest DHCP DNS is the restored path'); checks.push('disable-preserves-latest-dhcp-not-stale-snapshot');
     assert.deepEqual(checks, NETWORKD_CHECKS); assert.equal(lab.stats().dnsCalls, 0);
     const ownedLinkJournal = options.linkJournal ? await runOwnedLinkCrashLab({ directory, bus, setGuard: guard, lookup, hits }) : undefined;
+    const coupledJournal = options.coupledJournal ? await runCoupledCrashLab({ directory, bus, setGuard: guard, lookup, hits, lab, cloudSettings,
+      probe: async () => { for (const tcp of [false, true]) { const q = makeDnsQuery('ready.test');
+        assert.equal(validateDnsResponse(await queryLabDns(lab.adapter.port, q, { tcp }), q).rcode, 0); } } }) : undefined;
     report = { schema: 1, kind: 'clean-vpn-networkd-lab', status: 'passed', versions, hashes, checks,
       realDhcpRenew: true, dhcp: await peer.stats(), separateCloudNamespace: true, ...(ownedLinkJournal ? { ownedLinkJournal } : {}),
+      ...(coupledJournal ? { coupledJournal } : {}),
       cloudDnsChanged: ['10.129.0.2', '10.129.0.3'], networkdOwnedLinkTakeover: false,
       cloudPolicy: 'explicit-qname-deny-suffixes-before-doh-plus-guard', baselineQueriesDuringProtection: 0,
       dhcpDomainChanges: ['original', 'removed', 'replaced'], policyDenied: lab.adapter.stats().stub.policyDenied,

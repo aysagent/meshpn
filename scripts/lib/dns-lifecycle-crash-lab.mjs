@@ -26,7 +26,7 @@ async function fingerprint(path, privateSource = false) {
 }
 
 export function controller(directory, operation, backend, pause, kind = 'file') {
-  assert.ok(['file', 'resolved', 'dnsmasq', 'link'].includes(kind));
+  assert.ok(['file', 'resolved', 'dnsmasq', 'link', 'coupled'].includes(kind));
   const worker = fileURLToPath(new URL('./dns-lifecycle-crash-worker.mjs', import.meta.url));
   const proc = spawn('flock', ['-n', '-E', '75', '-F', join(directory, 'lock'), process.execPath, worker, directory, operation, kind],
     { env: { ...cleanEnvironment(process.env), MESHPN_DNS_CONTROLLER: 'namespace-rpc' }, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -34,14 +34,14 @@ export function controller(directory, operation, backend, pause, kind = 'file') 
   let reach, rejectReach;
   const reached = pause ? new Promise((resolve, reject) => { reach = resolve; rejectReach = reject; }) : undefined;
   reached?.catch(() => {});
-  const timer = setTimeout(() => { failure = new Error('controller deadline'); proc.kill('SIGKILL'); }, 15000);
+  const timer = setTimeout(() => { failure = new Error('controller deadline'); proc.kill('SIGKILL'); }, kind === 'coupled' ? 30000 : 15000);
   proc.on('error', (error) => { failure = error; }); proc.stdin.on('error', () => {});
   proc.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-4096); });
-  proc.stdout.on('data', (chunk) => { bytes += chunk.length; if (bytes > 65536) { failure = new Error('controller output limit'); proc.kill('SIGKILL'); } });
+  proc.stdout.on('data', (chunk) => { bytes += chunk.length; if (bytes > (kind === 'coupled' ? 262144 : 65536)) { failure = new Error('controller output limit'); proc.kill('SIGKILL'); } });
   const lines = createInterface({ input: proc.stdout });
   lines.on('line', (line) => {
     chain = chain.then(async () => {
-      assert.ok(++count <= 128 && line.length < 16384);
+      assert.ok(++count <= (kind === 'coupled' ? 512 : 128) && line.length < 16384);
       const message = JSON.parse(line);
       if (message.type === 'result') { assert.equal(result, undefined); result = message.result; return; }
       let value, error;

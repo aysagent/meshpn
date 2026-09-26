@@ -20,6 +20,12 @@ npm run test:dns-networkd
 конфликты и освобождение ресурсов. Это пока отдельный слой, не recovery основной
 DNS-транзакции; её `durableJournalTested` остаётся false.
 
+Альтернативный `--coupled-journal` проверяет уже [совместный координатор](dns-coupled-journal.md)
+link/address/UP/resolved: 17 controller SIGKILL, восстановление защищённого DNS,
+конфликты, exit-down и обратный disable. Режимы journal взаимоисключающие;
+coupled имеет бюджет 240 секунд. Верхние 11 проверок сохраняют in-memory backend,
+результат новой матрицы выделен в `coupledJournal`.
+
 Запуск обычным пользователем Linux, без sudo. Нужны user/net/PID/mount/UTS
 namespaces, Node 22+, iproute2, mount, iptables/ip6tables, openssl, dbus-daemon,
 busctl и getent. Runner ничего не скачивает и не устанавливает. Tools directory
@@ -100,12 +106,12 @@ runtime Domains resolved и счётчики adapter/exit/resolver, без по�
 автоматически. Не обещает фильтрацию upstream recursion/CNAME/EDNS и всех возможных
 внутренних имён. Встроенный список здесь — выбор fixture, не live-настройка VPS 2.
 
-Отдельный durable ownership/journal создания/удаления пустого link уже проверен
-опцией `--link-journal`. Следующий этап — совместить его с address/UP и
-DNS-settings journal, затем lifecycle в VM. Нельзя ни добавлять прямое
+Отдельный durable ownership/journal пустого link проверен опцией `--link-journal`,
+связка с address/UP и DNS-settings — опцией `--coupled-journal`.
+Следующий этап — lifecycle нового координатора в VM. Нельзя ни добавлять прямое
 исключение, ни молча разрешать публичный DNS для cloud-имён. Live-политика ещё
 не согласована. Оставшиеся установщик/откат и пилоты — в [матрице](dns-client-matrix.md).
 
-Здесь нет reboot/SIGKILL-журнала, live VPS, полноценного Ubuntu 22.04 rootfs,
+Здесь нет reboot/power-loss проверки новых координаторов, live VPS, полноценного Ubuntu 22.04 rootfs,
 независимого uplink pcap, IPv6 DNS traffic matrix (IPv6 guard только установлен),
 TUN/data plane или общего VPN kill-switch. DNS v1 не объявляется завершённым.

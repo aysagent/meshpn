@@ -8,6 +8,9 @@ test('networkd lab requires explicit tools, rejects duplicates and host actions'
   const args = ['--systemd-dir=/tools/systemd', '--dnsmasq=/tools/dnsmasq'];
   assert.deepEqual(networkdLabOptions(args), { systemdDir: '/tools/systemd', dnsmasq: '/tools/dnsmasq' });
   assert.equal(networkdLabOptions([...args, '--link-journal']).linkJournal, true);
+  assert.equal(networkdLabOptions([...args, '--coupled-journal']).coupledJournal, true);
+  assert.throws(() => networkdLabOptions([...args, '--coupled-journal', '--coupled-journal']));
+  assert.throws(() => networkdLabOptions([...args, '--link-journal', '--coupled-journal']));
   assert.throws(() => networkdLabOptions([...args, '--link-journal', '--link-journal']));
   for (const extra of ['--apply', '--ssh=host', '--systemd-dir=/other', '--dnsmasq=/other', '--help'])
     assert.throws(() => networkdLabOptions([...args, extra]));
@@ -39,6 +42,7 @@ test('networkd evidence requires exact gates, real renewal and complete cleanup'
     final: { processes: 1, zombies: 0 }, blockedLookupDeadlines: 0 };
   assertNetworkdEvidence(evidence);
   assert.throws(() => assertNetworkdEvidence(evidence, { linkJournal: true }));
+  assert.throws(() => assertNetworkdEvidence(evidence, { coupledJournal: true }));
   for (const key of Object.keys(evidence).filter((k) => !['checks', 'final'].includes(k)))
     assert.throws(() => assertNetworkdEvidence({ ...evidence, [key]: typeof evidence[key] === 'boolean' ? !evidence[key] : null }), key);
   for (let i = 0; i < NETWORKD_CHECKS.length; i++) assert.throws(() =>

@@ -78,12 +78,13 @@ root/CAP_NET_ADMIN противника: он может подделать ма
 его namespace supervisor. Это не SIGKILL supervisor/daemon/ядра, не power loss и
 не VM reboot. Подменённый boot ID — тест отказа, не выполненная перезагрузка.
 
-## Следующий этап
+## Связка с DNS и следующий этап
 
-Согласовать в одном write-ahead координаторе создание link, address/UP, применение
-DNSEx/Domains/DefaultRoute, отказ адаптера и отключение в обратном порядке.
-Только после освобождения DNS/address-state разрешать удаление link и снятие
-guard. Затем проверить совместные границы SIGKILL и systemd/reboot в VM.
+Отдельный [coupled coordinator](dns-coupled-journal.md) теперь связывает создание
+link, address/UP, DNSEx/Domains/DefaultRoute и обратный disable. Его namespace
+матрица прошла 17 controller SIGKILL: удаление link и снятие guard разрешаются
+только после освобождения DNS/address-state. Следующий этап — systemd/reboot в VM.
+Этот standalone empty-link режим сохраняет прежние ограничения.
 
 В JSON отдельный `ownedLinkJournal` имеет `dnsSettingsCoupled:false` и
 `rebootTested:false`; верхний `durableJournalTested:false` по-прежнему означает,

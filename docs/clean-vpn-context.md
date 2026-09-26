@@ -10,7 +10,39 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
-### Дополнение 2026-09-26: durable ownership пустого DNS-link
+### Дополнение 2026-09-26: совместный link/address/resolved journal
+
+Добавлен [coupled coordinator](../scripts/dns-coupled-journal.md) и флаг
+`dns-networkd-lab.mjs --coupled-journal` (не совмещается с `--link-journal`).
+Один root-lock, согласованные root/child journals с одинаковыми id/context,
+дочерний owned-link lifecycle не снимает guard. Совместный settings cursor
+покрывает pin DefaultRoute=false, addrgenmode=none, fixture IPv4 /32, UP,
+DNSEx, Domains=~., DefaultRoute=true; disable выполняется в обратном порядке,
+затем удаляется link и только после этого снимается guard.
+
+Проверяется до/после pending setter, partial apply можно явно отключить без
+здорового exit, apply recovery требует прежнего порта и успешного DNS probe.
+Потеря child journal не даёт создать новый link. Boot/bus/owner/namespace,
+ifindex/alias, адреса, addrgenmode и DNS-state сверяются; чужие изменения не
+исправляются автоматически. Конфигурация networkd uplink не перезаписывается.
+
+Два реальных прогона PASS (повторный integration ~165 сек): 16 совместных crash points + SIGKILL после guard
+без журнала (17 всего), lock conflict, 6 отказов, UDP/TCP через настоящий
+adapter/exit/DoH fixture после recovery, QNAME deny, актуальный DHCP после disable.
+remaining owned links=0, final processes=1/zombies=0, host DNS/forwarding прежние.
+Node acceptance **1315/1315 PASS** без skips:
+`/var/tmp/meshpn-acceptance-qAWoEe/report.json`; targeted 82/82 PASS.
+
+`coupledJournal.dnsSettingsCoupled=true` относится к новой матрице; верхний
+`durableJournalTested=false` остаётся для исходных 11 in-memory DHCP-сценариев.
+Supervisor/backend RPC переживают SIGKILL child-контроллера. Это не падение
+supervisor/ядра, не systemd lifecycle, не reboot/power-loss и не live-клиент.
+Адрес 192.0.2.1/32 — только fixture, не адресный план реального VPS.
+
+Следом: systemd/reboot/power-loss для нового координатора в VM; далее системный
+resolver Radxa и пользовательские пилоты с отдельным согласованием. DNS v1 не закрыт.
+
+### Предыдущий этап 2026-09-26: durable ownership пустого DNS-link
 
 Добавлен [empty-link journal](../scripts/dns-owned-link-journal.md), запускаемый
 через `dns-networkd-lab.mjs --link-journal`. Отдельный namespace-only слой:

@@ -81,6 +81,8 @@
     "test:dns-networkd": "node --test scripts/test-dns-networkd.mjs",
     "test:dns-domain-policy": "node --test scripts/test-dns-domain-policy.mjs",
     "test:dns-owned-link": "node --test scripts/test-dns-owned-link.mjs",
+    "test:dns-coupled": "node --test scripts/test-dns-coupled.mjs",
+    "test:dns-coupled-real": "node --test scripts/test-dns-coupled-real.mjs",
     "test:dns-owned-link-real": "node --test scripts/test-dns-owned-link-real.mjs",
     "test:dns-networkd-real": "node --test scripts/test-dns-networkd-real.mjs",
     "test:dns-inspect": "node --test scripts/test-dns-inspect.mjs",

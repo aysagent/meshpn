@@ -185,8 +185,10 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 Это namespace-стенд, не установщик. Дополнительный
 [`--link-journal`](scripts/dns-owned-link-journal.md) проверяет журнал создания/
 удаления пустого DNS-link: **18 controller SIGKILL**, отказы при конфликте и
-очистку ресурсов. Связка с DNS/address-state, VM lifecycle и live-выбор политики
-ещё впереди. С этим расширением Node-регрессии: **1238/1238 PASS**.
+очистку ресурсов. Отдельный [`--coupled-journal`](scripts/dns-coupled-journal.md)
+уже связывает link/address/UP с DNS-state: **17 controller SIGKILL, PASS**,
+восстановление защищённого DNS и обратный disable. VM lifecycle нового
+координатора и live-выбор политики ещё впереди. Node-регрессии: **1315/1315 PASS**.
 
 Следующий порядок работ:
 
