@@ -45,3 +45,22 @@ test('USB peer: DHCP DORA, real port 53, local names, IPv4/IPv6 direct guard and
   assert.equal(report.durableRecoveryImplemented, false); assert.equal(report.systemResolverTakeoverTested, false);
   assert.equal(report.final.processes, 1); assert.equal(report.final.zombies, 0);
 });
+
+test('dnsmasq journal: real controller SIGKILL, lock contention, USB DHCP, daemon restart and explicit restore', { timeout: 125000 }, async () => {
+  const result = await runCommand(process.execPath, ['scripts/dnsmasq-lab.mjs', '--journal'],
+    { timeoutMs: 122000, env: cleanEnvironment(process.env) });
+  assert.equal(result.reason, null); assert.equal(result.code, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, 'passed'); assert.equal(report.hostDnsChanged, false); assert.equal(report.hostForwardingUnchanged, true);
+  assert.equal(report.durableRecoveryImplemented, true); assert.equal(report.recoveryScope, 'same-namespace-fixture');
+  assert.equal(report.controllerBackend, 'parent-owned-rpc'); assert.equal(report.rebootTested, false);
+  assert.equal(report.journal.controllerSigkills, 7); assert.equal(report.journal.lockConflicts, 1);
+  assert.equal(report.journal.exitDownRecoveryRefused, true);
+  assert.equal(report.journal.baselineDaemonBlockedBeforeRelease, true);
+  assert.deepEqual(report.journal.checkpoints, ['prepared', 'apply:config:set', 'apply:daemon:set',
+    'restore-start', 'restore:config:set', 'restore:daemon:set', 'guard-removed']);
+  assert.equal(report.checks.length, 61); assert.equal(report.dhcp.length, 6);
+  assert.equal(report.baselineQueriesDuringProtection, 0); assert.equal(report.forwardedQueriesDuringProtection, 0);
+  assert.equal(report.exactFixtureBaselineRestored, true); assert.equal(report.systemResolverTakeoverTested, false);
+  assert.equal(report.final.processes, 1); assert.equal(report.final.zombies, 0);
+});

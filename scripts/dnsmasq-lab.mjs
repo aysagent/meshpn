@@ -10,17 +10,19 @@ import { cleanEnvironment, runCommand } from './lib/transparent-acceptance.mjs';
 import { runDnsmasqLab } from './lib/dnsmasq-lab.mjs';
 
 const args = process.argv.slice(2), entry = fileURLToPath(import.meta.url);
-const usb = args.includes('--usb');
-if (usb) args.splice(args.indexOf('--usb'), 1);
+const journal = args.includes('--journal');
+if (journal) args.splice(args.indexOf('--journal'), 1);
+const usb = journal || args.includes('--usb');
+if (args.includes('--usb')) args.splice(args.indexOf('--usb'), 1);
 let directory;
 const controller = new AbortController(), abort = () => controller.abort();
 process.once('SIGINT', abort); process.once('SIGTERM', abort);
 try {
   if (args.length === 1 && args[0] === '--help') {
-    process.stdout.write('Usage: MESHPN_DNSMASQ=/absolute/path/dnsmasq node scripts/dnsmasq-lab.mjs [--usb]\nPrivate namespace only; --usb adds DHCP peer and namespace-only DNS guards. No installation or host DNS/firewall/TUN changes.\n');
+    process.stdout.write('Usage: MESHPN_DNSMASQ=/absolute/path/dnsmasq node scripts/dnsmasq-lab.mjs [--usb | --journal]\nPrivate namespace only; --usb adds DHCP peer and namespace-only DNS guards; --journal adds persistent fixture recovery and controller SIGKILLs. No installation or host DNS/firewall/TUN changes.\n');
   } else if (args.length === 1 && args[0] === '--isolated') {
     console.log = console.warn = console.error = () => {};
-    const report = await runDnsmasqLab(process.env.MESHPN_DNSMASQ_LAB_DIR, process.env.MESHPN_DNSMASQ, { usb });
+    const report = await runDnsmasqLab(process.env.MESHPN_DNSMASQ_LAB_DIR, process.env.MESHPN_DNSMASQ, { usb, journal });
     process.stdout.write(`DNSMASQ_LAB_RESULT ${JSON.stringify(report)}\n`);
   } else {
     assert.equal(args.length, 0, 'unknown arguments');
@@ -35,7 +37,7 @@ try {
     // Namespace-local root is needed for network sysctl ownership, not host sudo.
     const isolation = namespaceArgs.map((arg) => usb && arg === '--map-current-user' ? '--map-root-user' : arg);
     const result = await runCommand('unshare', [...isolation, '--propagation', 'private',
-      process.execPath, entry, '--isolated', ...(usb ? ['--usb'] : [])], { timeoutMs: usb ? 90000 : 60000, signal: controller.signal,
+      process.execPath, entry, '--isolated', ...(journal ? ['--journal'] : usb ? ['--usb'] : [])], { timeoutMs: journal ? 120000 : usb ? 90000 : 60000, signal: controller.signal,
       env: { ...cleanEnvironment(process.env), MESHPN_DNSMASQ_LAB_DIR: directory,
         MESHPN_PARENT_NETNS: await readlink('/proc/self/ns/net'), MESHPN_PARENT_PIDNS: await readlink('/proc/self/ns/pid'),
         MESHPN_PARENT_MNTNS: await readlink('/proc/self/ns/mnt') } });

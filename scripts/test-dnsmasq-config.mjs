@@ -40,7 +40,8 @@ test('fixture compiler refuses extra sources, execution hooks, malformed and unr
 test('lab CLI refuses host execution of worker and unknown options before mutation', () => {
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (key.startsWith('MESHPN_PARENT_')) delete env[key];
-  for (const args of [['--apply'], ['--isolated'], ['--isolated', '--usb'], ['--usb', '--usb'], ['--help', '--apply']]) {
+  for (const args of [['--apply'], ['--isolated'], ['--isolated', '--usb'], ['--isolated', '--journal'],
+    ['--usb', '--usb'], ['--journal', '--journal'], ['--help', '--apply']]) {
     const result = spawnSync(process.execPath, ['scripts/dnsmasq-lab.mjs', ...args], { env, encoding: 'utf8', timeout: 5000 });
     assert.equal(result.status, 1); assert.equal(result.stdout, '');
   }

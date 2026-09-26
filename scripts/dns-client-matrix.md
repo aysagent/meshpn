@@ -46,8 +46,10 @@ reboot и guard заранее описываются и требуют отде
    USB peer с настоящим DHCP/DNS. [Dnsmasq smoke и USB/DHCP режим](dnsmasq-lab.md)
    реализованы: 14 и 61 проверка, 6 DHCP DORA, IPv4/IPv6 direct DNS INPUT/FORWARD
    guard с отдельным внешним namespace и счётчиками пакетов.
-   Host takeover, durable recovery и реальные версии клиентов
-   ещё впереди. Unicast renewal/T1/T2 и физический USB не проверены.
+   [Journal-режим](dnsmasq-journal.md) добавляет persistent fixture recovery,
+   семь SIGKILL контроллера и OUTPUT guard для старого upstream dnsmasq.
+   Host takeover, service/reboot recovery и реальные версии клиентов ещё впереди.
+   Unicast renewal/T1/T2 и физический USB не проверены.
 3. Реальные ownership/journal/guard и start/stop/restart/reboot для обеих схем.
    Radxa resolv.conf переключается отдельной проверяемой транзакцией, а не
    слепой заменой dangling symlink. DHCP не должен отключаться при отказе exit.

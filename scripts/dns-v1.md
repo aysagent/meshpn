@@ -36,6 +36,9 @@ Resolved имеет несколько API и источников конфиг�
 DoH wire/CA/bootstrap, bounded adapter, private resolved backend, write-ahead
 journal, SIGKILL/restart контроллера и adapter, VM reboot/power-cut матрица.
 Это проверенные составляющие, **не установленная системная DNS-интеграция**.
+Для dnsmasq добавлены [private file journal и namespace recovery](dnsmasq-journal.md)
+с сохранением USB DHCP, семью SIGKILL контроллера и OUTPUT/INPUT/FORWARD guard.
+Этот результат не подтверждает host service lifecycle или reboot dnsmasq.
 В README отдельно отмечены ограничения транспортов, маршрутов и IPv6.
 
 ## Три этапа и текущий статус

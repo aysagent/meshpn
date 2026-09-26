@@ -10,6 +10,45 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-26: dnsmasq journal и controller recovery
+
+Добавлены `dnsmasq-journal.mjs` и `dnsmasq-journal-files.mjs`: strict schema,
+исходный текст, inode/SHA256 original/managed/restored, context namespace/boot/
+usb0/executable/directory, file+directory fsync, write-ahead intent отдельно для
+замены config и активации daemon. Read-only inspection API ничего не меняет.
+Чужие bytes/inode, stale context, повреждённые snapshots/journal и отсутствие
+committed journal не разрешают setters или снятие guard. Подготовительные orphan
+files сохраняются для review, повторный enable поверх журнала запрещён.
+
+`dnsmasq-lab.mjs --journal` включает USB fixture и OUTPUT guard (TCP/UDP53 обоих
+семейств) дополнительно к INPUT/FORWARD. Поэтому baseline daemon тоже не может
+обратиться к старым upstream до explicit disable. Readiness адаптера проверяется
+до и после daemon activation; complete journal не заменяет проверку живого
+процесса/загруженного config. Disable может завершиться при выключенном adapter.
+Исходные комментарии/дублирующая DHCP option 6 возвращаются точно, leasefile
+сохраняется. Исходные 14 smoke и 61 USB checks остаются отдельными режимами.
+
+Настоящий journal-прогон PASS: 61 USB/DNS check, 6 DORA, **7 controller SIGKILL**
+на prepared/apply config/apply daemon/restore intent/restore config/restore
+daemon/guard removal; 1 flock conflict, exit-down recovery refusal, baseline
+daemon blocked до release, ноль direct baseline/forwarded DNS во время защиты,
+точный restore, final processes=1/zombies=0. Три dnsmasq real tests PASS.
+Добавлены **80 unit/file tests**; Node acceptance **1186/1186 PASS**, без skips:
+`/var/tmp/meshpn-acceptance-geb0W7/report.json`. Первый unit run отказал на
+неканоническом /var/tmp (symlink); fixture теперь передаёт realpath созданного
+каталога, сама проверка private path не ослаблена.
+После расширения общего RPC launcher повторены старые file/resolved journal
+real tests: **4/4 PASS**, оба backend по IPv4/IPv6. Браузеры и VM не запускались.
+
+Важная граница: backend выполняет PID1 через RPC, SIGKILL контроллера ставится
+после подтверждённого setter, не внутри продолжающейся backend-операции.
+Приватный каталог/lock не дают kernel CAS против same-uid adversary. Это не
+host installer, не принятие произвольных includes/0644/ACL и не reboot recovery.
+Физический power-loss, Radxa arm64, host resolv.conf и systemd service lifecycle
+этим этапом не проверены. Следом — ownership/service/reboot в VM, resolved 249/
+networkd и согласованные пользовательские скрипты/пилоты. DNS v1 не закрыт.
+Подробнее: [dnsmasq journal](../scripts/dnsmasq-journal.md).
+
 ### Дополнение 2026-09-26: транзитный DNS FORWARD
 
 USB-стенд расширен до **61 проверки**: внешний наблюдатель в третьем network

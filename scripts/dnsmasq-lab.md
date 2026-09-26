@@ -10,6 +10,7 @@
 npm run test:dnsmasq-config
 MESHPN_DNSMASQ=/absolute/path/to/dnsmasq npm run dns:dnsmasq-lab
 MESHPN_DNSMASQ=/absolute/path/to/dnsmasq npm run dns:dnsmasq-lab -- --usb
+MESHPN_DNSMASQ=/absolute/path/to/dnsmasq npm run dns:dnsmasq-lab -- --journal
 MESHPN_DNSMASQ=/absolute/path/to/dnsmasq npm run test:dnsmasq-real
 npm run test:dhcp-lab-wire
 ```
@@ -35,7 +36,9 @@ forwarding в лаборатории и неизменность host forwarding
 возврат exit, SIGKILL/restart dnsmasq с managed config, отказ adapter, ноль
 обращений к исходным DNS во время managed mode, explicit restore UDP/TCP.
 Точный исходный текст восстанавливается только во временном файле; это пока
-не durable журнал и не восстановление системного baseline после аварии.
+не восстановление системного baseline после аварии. Отдельный `--journal`
+использует [persistent fixture journal и SIGKILL recovery](dnsmasq-journal.md);
+обычные smoke/USB режимы журнал не включают.
 При мёртвом adapter UDP может закончиться deadline клиента; отчёт отличает его
 от DNS error. Кэш стенда выключен, имена проверок уникальны.
 
@@ -86,7 +89,8 @@ explicit disable. Внешние наблюдатели не получают з
 ## Ограничения
 
 Нет системного NSS/resolv.conf takeover,
-independent pcap, boot guard или crash/reboot recovery. Нулевые счётчики baseline
+independent pcap, boot guard или host crash/reboot recovery. `--journal` проверяет
+same-namespace controller recovery, но не живую системную службу. Нулевые счётчики baseline
 upstreams не объявляются полной проверкой DNS-утечек. Эта x64 проверка не заменяет
 пилот Radxa/arm64. При окончании дочерние процессы остановлены; проверены отсутствие
 зомби и неизменность host resolv.conf. Временные файлы самого прогона удаляются.
@@ -101,5 +105,5 @@ SHA256 исходного архива: `8f6666b542403b5ee7ccce66ea73a4a51cf19dd
 файла: dnsmasq этого не делает. Выбор restart или отдельного managed servers-file
 потребует ownership/journal и проверки сохранности DHCP.
 [Официальная документация dnsmasq](https://thekelleys.org.uk/dnsmasq/docs/dnsmasq-man.html).
-Следующие шаги: durable recovery, resolved 249/networkd
+Следующие шаги: системное ownership/service/reboot recovery, resolved 249/networkd
 по [матрице клиентов](dns-client-matrix.md). Физическая USB-связь и arm64 не проверены.
