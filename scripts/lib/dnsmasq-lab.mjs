@@ -17,10 +17,11 @@ import { readDnsmasqJournal, inspectDnsmasqTransaction } from './dnsmasq-journal
 import { controller } from './dns-lifecycle-crash-lab.mjs';
 import { setupResolverObjectLab } from './dns-resolver-object-lab.mjs';
 
-export async function runDnsmasqLab(directory, executable, { usb = false, journal = false, resolverObject = false } = {}) {
+export async function runDnsmasqLab(directory, executable, { usb = false, journal = false, resolverObject = false, radxa = false } = {}) {
   await assertDnsMountNamespace();
   assert.ok(!journal || usb, 'journal lab requires USB fixture');
   assert.ok(!resolverObject || journal, 'resolver object requires journal guard and USB fixture');
+  assert.ok(!radxa || resolverObject, 'paired journal requires resolver fixture');
   directory = await realpath(directory);
   const resolver = resolverObject ? await setupResolverObjectLab(directory) : null;
   assert.ok(executable?.startsWith('/'), 'absolute MESHPN_DNSMASQ executable required');
@@ -197,16 +198,18 @@ export async function runDnsmasqLab(directory, executable, { usb = false, journa
           if (daemon && daemon.proc.exitCode === null && daemon.proc.signalCode === null && loadedIdentity === selected.identity) return;
           await stop(); await start(); loadedIdentity = selected.identity;
         } });
-      await runJournal('enable', 'prepared');
-      const beforeDryRun = await readFile(join(directory, 'journal.json'));
-      const dryRun = await inspectDnsmasqTransaction({ directory, scope: journalScope, backend: journalBackend });
-      assert.equal(dryRun.mode, 'dry-run'); assert.deepEqual(await readFile(join(directory, 'journal.json')), beforeDryRun);
-      await runJournal('recover', 'apply:config:set');
-      await runJournal('recover', 'apply:daemon:set');
-      const activated = await runJournal('recover'); journalEvidence.id = activated.id;
-      assert.equal(activated.status, 'active');
+      if (!radxa) {
+        await runJournal('enable', 'prepared');
+        const beforeDryRun = await readFile(join(directory, 'journal.json'));
+        const dryRun = await inspectDnsmasqTransaction({ directory, scope: journalScope, backend: journalBackend });
+        assert.equal(dryRun.mode, 'dry-run'); assert.deepEqual(await readFile(join(directory, 'journal.json')), beforeDryRun);
+        await runJournal('recover', 'apply:config:set');
+        await runJournal('recover', 'apply:daemon:set');
+        const activated = await runJournal('recover'); journalEvidence.id = activated.id;
+        assert.equal(activated.status, 'active');
+      }
     } else { await usbGuard(true); await start(plan.managed); }
-    if (resolver) await resolver.enable({ ensureGuard: () => journalGuard(true), probe: async () => {
+    if (resolver) await resolver.enable({ ensureGuard: () => journalGuard(true), ...(radxa ? { dnsmasq: journalBackend } : {}), probe: async () => {
       await journalBackend.probe(lab.adapter.port);
       // Require the actual localhost dnsmasq path, not just the adapter socket.
       for (const tcp of [false, true]) {
@@ -242,7 +245,7 @@ export async function runDnsmasqLab(directory, executable, { usb = false, journa
     }
     await lab.stopExit();
     if (journal) {
-      const result = await controller(directory, 'recover', journalBackend, undefined, 'dnsmasq').done;
+      const result = await (radxa ? resolver.recoveryResult() : controller(directory, 'recover', journalBackend, undefined, 'dnsmasq').done);
       assert.equal(result.code, 2); journalEvidence.exitDownRecoveryRefused = true;
     }
     await forwardedProbes('exit-down-blocked', true);
@@ -252,7 +255,7 @@ export async function runDnsmasqLab(directory, executable, { usb = false, journa
     if (resolver) for (const tcp of [false, true]) await resolver.systemLookup(`system-exit-down-${tcp ? 'tcp' : 'udp'}`, null, tcp);
     await lab.restartExit(); await lookup('exit-recovered', '192.0.2.123');
     await stop('SIGKILL');
-    if (journal) assert.equal((await runJournal('recover')).status, 'active');
+    if (journal) assert.equal((await (radxa ? resolver.recover() : runJournal('recover'))).status, 'active');
     else await start(plan.managed);
     await forwardedProbes('dnsmasq-restart-blocked', true);
     if (peer) {
@@ -304,18 +307,30 @@ export async function runDnsmasqLab(directory, executable, { usb = false, journa
       // Explicit disable works even with the adapter down. Each file/daemon
       // boundary is killed and completed by a new flock-owning controller.
       if (resolver) await resolver.restore();
-      await runJournal('disable', 'restore-start');
-      await runJournal('recover', 'restore:config:set');
-      await runJournal('recover', 'restore:daemon:set');
+      if (!radxa) {
+        await runJournal('disable', 'restore-start');
+        await runJournal('recover', 'restore:config:set');
+        await runJournal('recover', 'restore:daemon:set');
+      }
       const held = await peer.lookup();
       assert.ok(held.outcome === 'client-deadline' || held.outcome === 'dns-response' && held.rcode !== 0,
         'baseline daemon must not reach direct upstream before release');
       assert.equal(hits(), before, 'baseline must stay blocked before explicit release');
       journalEvidence.baselineDaemonBlockedBeforeRelease = true;
-      await runJournal('recover', 'guard-removed');
-      const released = await runJournal('recover');
-      assert.equal(released.status, 'released'); assert.equal(released.id, journalEvidence.id);
-      assert.equal((await readDnsmasqJournal(directory)).stage, 'released');
+      if (radxa) {
+        await stop('SIGKILL'); assert.equal((await resolver.recover()).status, 'restored');
+        await lease('paired-restored-daemon-dhcp', false);
+        resolver.evidence.paired.restoredDaemonReconciled = true;
+        // Explicit fixture teardown ONLY. Paired recovery never authorizes a
+        // live guard release merely because the dangling baseline was restored.
+        await journalGuard(false);
+        resolver.evidence.paired.fixtureGuardReleaseAfterChecks = true;
+      } else {
+        await runJournal('recover', 'guard-removed');
+        const released = await runJournal('recover');
+        assert.equal(released.status, 'released'); assert.equal(released.id, journalEvidence.id);
+        assert.equal((await readDnsmasqJournal(directory)).stage, 'released');
+      }
     } else { await stop(); await start(plan.baseline); await usbGuard(false); }
     assert.equal(await readFile(configPath, 'utf8'), baseline);
     if (peer) {

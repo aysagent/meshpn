@@ -7,6 +7,7 @@ import { assertDnsMountNamespace } from './dns-lifecycle-namespace.mjs';
 import { createResolverObjectFiles } from './dns-resolver-object-files.mjs';
 import { RESOLVER_TARGET, RESOLVER_MANAGED, readResolverObjectJournal, inspectResolverObjectTransaction } from './dns-resolver-object-journal.mjs';
 import { controller } from './dns-lifecycle-crash-lab.mjs';
+import { radxaCrashLab } from './dns-radxa-crash-lab.mjs';
 
 export const RESOLVER_CRASH_POINTS = Object.freeze(['prepared', 'apply-intent', 'apply:set', 'active', 'restore-intent', 'restore:set', 'restored']);
 export async function setupResolverObjectLab(parent) {
@@ -54,7 +55,7 @@ export async function setupResolverObjectLab(parent) {
     else assert.equal(stdout, '', label);
     evidence.checks.push(label);
   }
-  let backend, backendError = '';
+  let backend, paired, backendError = '';
   const run = async (operation, pause) => {
     const worker = controller(directory, operation, backend, pause, 'resolver-object');
     if (!pause) { const r = await worker.done; assert.equal(r.code, 0, `${r.stderr} ${backendError}`); return r.result; }
@@ -68,30 +69,36 @@ export async function setupResolverObjectLab(parent) {
     finally { worker.kill(); }
     assert.equal((await worker.done).signal, 'SIGKILL'); evidence.controllerSigkills++; evidence.checkpoints.push(pause);
   };
-  return { evidence, systemLookup,
-    async enable({ ensureGuard, probe }) {
+  return { evidence, systemLookup, recover: () => paired.recover(), recoveryResult: () => paired.raw('recover').done,
+    async enable({ ensureGuard, probe, dnsmasq }) {
       const files = await createResolverObjectFiles({ directory, checkEnvironment, ensureGuard, probe,
         identity: async () => ({ scope, bootId: (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim() }) });
       backend = Object.fromEntries(Object.entries(files).map(([name, fn]) => [name, async (...args) => {
         try { return await fn(...args); } catch (e) { backendError = `${name}: ${e.stack}`.slice(0, 4096); throw e; }
       }]));
-      await run('enable', 'prepared');
-      const before = await readFile(join(directory, 'journal.json'));
-      assert.equal((await inspectResolverObjectTransaction({ directory, scope, backend })).readinessVerified, false);
-      assert.deepEqual(await readFile(join(directory, 'journal.json')), before);
-      for (const point of ['apply-intent', 'apply:set', 'active']) await run('recover', point);
-      assert.equal((await run('recover')).status, 'active');
+      if (dnsmasq) {
+        paired = await radxaCrashLab(parent, scope, dnsmasq, backend);
+        evidence.paired = paired.evidence; await paired.enable();
+      } else {
+        await run('enable', 'prepared');
+        const before = await readFile(join(directory, 'journal.json'));
+        assert.equal((await inspectResolverObjectTransaction({ directory, scope, backend })).readinessVerified, false);
+        assert.deepEqual(await readFile(join(directory, 'journal.json')), before);
+        for (const point of ['apply-intent', 'apply:set', 'active']) await run('recover', point);
+        assert.equal((await run('recover')).status, 'active');
+      }
       assert.equal(await readFile('/etc/resolv.conf', 'utf8'), RESOLVER_MANAGED);
       assert.equal((await readResolverObjectJournal(directory)).phase, 'active');
       for (const family of [4, 6]) for (const tcp of [false, true]) {
         await systemLookup(`system-managed-${family}-${tcp ? 'tcp' : 'udp'}`, family === 4 ? '192.0.2.123' : '2001:db8::12', tcp, family);
       }
       const refuse = async (label) => {
-        const before = await readFile(join(directory, 'journal.json'));
-        const result = await controller(directory, 'recover', backend, undefined, 'resolver-object').done;
+        const journals = [join(directory, 'journal.json'), ...(paired ? [join(parent, 'journal.json'), join(parent, 'radxa', 'journal.json')] : [])];
+        const before = await Promise.all(journals.map((path) => readFile(path)));
+        const result = await (paired ? paired.raw('recover') : controller(directory, 'recover', backend, undefined, 'resolver-object')).done;
         assert.notEqual(result.code, 0, label); assert.equal(result.signal, null, label);
         assert.match(result.stderr, /DNS_CONTROLLER_REFUSED/);
-        assert.deepEqual(await readFile(join(directory, 'journal.json')), before);
+        assert.deepEqual(await Promise.all(journals.map((path) => readFile(path))), before);
         for (const tool of ['iptables', 'ip6tables']) for (const protocol of ['udp', 'tcp']) {
           await exec(tool, ['-w', '2', '-C', 'OUTPUT', '-p', protocol, '--dport', '53', '-j', 'REJECT']);
         }
@@ -111,17 +118,20 @@ export async function setupResolverObjectLab(parent) {
       await refuse('resolved-target-appeared');
       assert.equal(await readFile(RESOLVER_TARGET, 'utf8'), 'nameserver 192.0.2.1\n');
       await rename(RESOLVER_TARGET, `${RESOLVER_TARGET}.saved`);
-      assert.equal((await run('recover')).status, 'active');
+      assert.equal((await (paired ? paired.recover() : run('recover'))).status, 'active');
     },
     async restore() {
-      await run('disable', 'restore-intent'); await run('recover', 'restore:set'); await run('recover', 'restored');
-      const r = await run('recover'); assert.equal(r.status, 'restored'); assert.equal(r.protectionRetained, true);
+      if (paired) await paired.restore();
+      else {
+        await run('disable', 'restore-intent'); await run('recover', 'restore:set'); await run('recover', 'restored');
+        const r = await run('recover'); assert.equal(r.status, 'restored'); assert.equal(r.protectionRetained, true);
+      }
       assert.equal(await readlink('/etc/resolv.conf'), RESOLVER_TARGET); await checkEnvironment();
       for (const tool of ['iptables', 'ip6tables']) for (const protocol of ['udp', 'tcp']) {
         await exec(tool, ['-w', '2', '-C', 'OUTPUT', '-p', protocol, '--dport', '53', '-j', 'REJECT']);
       }
       evidence.exactSymlinkTextRestored = true; evidence.protectionRetainedAfterRestore = true;
-      assert.deepEqual(evidence.checkpoints, RESOLVER_CRASH_POINTS);
+      if (!paired) assert.deepEqual(evidence.checkpoints, RESOLVER_CRASH_POINTS);
     },
   };
 }

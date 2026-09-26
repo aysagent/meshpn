@@ -44,7 +44,8 @@ boot-context. Это не live host takeover и не автоматическо�
 Для системного resolver Radxa добавлена [транзакция dangling symlink](dns-resolver-object.md):
 7 controller SIGKILL, 9 реальных NSS-проверок и 3 конфликта в synthetic `/etc`, PASS.
 Она сохраняет USB DHCP, точно возвращает ссылку и сама не снимает guard.
-Общий координатор с dnsmasq и VM lifecycle новой пары ещё не выполнены;
+Общий [координатор с dnsmasq](dns-radxa-journal.md) прошёл 15 controller SIGKILL,
+62 USB/dnsmasq проверки и 7 DHCP DORA в namespace. VM lifecycle новой пары ещё впереди;
 точный возврат сломанной ссылки не означает восстановление исправного baseline.
 Для VPS 2 [resolved 249 + networkd](dns-networkd-lab.md): 11 namespace-проверок
 настоящего DHCP renew/reconfigure и отдельного VPN DNS-link, без takeover `eth0`.

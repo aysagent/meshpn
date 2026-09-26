@@ -85,6 +85,8 @@
     "test:dns-coupled-real": "node --test scripts/test-dns-coupled-real.mjs",
     "test:dns-resolver-object": "node --test scripts/test-dns-resolver-object.mjs",
     "test:dns-resolver-object-real": "node --test scripts/test-dns-resolver-object-real.mjs",
+    "test:dns-radxa": "node --test scripts/test-dns-radxa.mjs",
+    "test:dns-radxa-real": "node --test scripts/test-dns-radxa-real.mjs",
     "test:dns-owned-link-real": "node --test scripts/test-dns-owned-link-real.mjs",
     "test:dns-networkd-real": "node --test scripts/test-dns-networkd-real.mjs",
     "test:dns-inspect": "node --test scripts/test-dns-inspect.mjs",

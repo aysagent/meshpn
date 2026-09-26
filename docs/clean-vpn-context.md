@@ -10,6 +10,37 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-26: общий Radxa coordinator
+
+[Paired namespace-режим](../scripts/dns-radxa-journal.md), `--radxa-journal`,
+связывает dnsmasq и resolver-object одним controller/flock и третьим журналом.
+Общий transaction ID, immutable seeds детей, cross-context/phase checks до
+восстановления, durable переходы между детьми. Apply: dnsmasq/daemon/readiness,
+затем resolver. Disable: сначала resolver, затем dnsmasq, включая offline режим.
+Recovery сверяет/возвращает daemon также после завершённого отката.
+
+Guard остаётся установленным: дочерний removeGuard подавлен, внешний результат
+`restored, protectionRetained: true`. Возврат dangling ссылки не означает здоровый
+baseline. Снятие guard для финальных positive controls — явно отдельное действие
+изолированного стенда, не возможность координатора. Standalone дочерние runners
+не должны использоваться параллельно с paired lifecycle.
+
+Настоящий namespace: **15 controller SIGKILL, 9 NSS-проб, 3 конфликта с сохранением
+трёх journals, 62 dnsmasq/USB проверки и 7 DHCP DORA — PASS**. Последний DHCP
+сценарий включает рестарт уже восстановленного baseline daemon под guard.
+Четыре прежних namespace-сценария также PASS. Ресурсы: один процесс, ноль zombies;
+старые upstream/внешний DNS не получили запросов во время защиты.
+
+Новый unit-набор **56/56 PASS**, Node acceptance **1432/1432 PASS**, без skips:
+`/var/tmp/meshpn-acceptance-PBAdjE/report.json` (Node-only, не браузерный full).
+Исходный общий прогон прошёл, затем усилена проверка неизменности всех трёх
+journals при реальных конфликтах и повторены paired real/unit тесты.
+
+Следом — systemd/reboot и ограниченные whole-guest crash проверки именно этой
+пары в VM. Старые VM результаты на неё не распространяются. Живые настройки
+не менялись, SSH не использовался. Установщик и пилоты VPS2/Radxa ещё впереди;
+DNS v1 не закрыт.
+
 ### Дополнение 2026-09-26: системный resolver Radxa в private namespace
 
 Добавлены [отдельный object journal и стенд](../scripts/dns-resolver-object.md)

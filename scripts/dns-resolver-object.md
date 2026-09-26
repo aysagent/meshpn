@@ -81,11 +81,12 @@ rename точки, offline disable, конфликты, orphan preparation и о
 
 Результат — same-namespace recovery. Родительский backend переживает смерть
 дочернего контроллера; смерть всей VM/ядра этим тестом не моделируется. Новый
-resolver journal **ещё не связан одним durable coordinator с dnsmasq journal**.
+resolver journal теперь [связан одним durable coordinator с dnsmasq journal](dns-radxa-journal.md)
+в отдельном `--radxa-journal` режиме; старый `--resolver-object` остаётся standalone тестом.
 Прежний dnsmasq VM PASS не распространяется на новую транзакцию resolver.
 
-Дальше: общий координатор и порядок apply/disable обоих журналов, systemd/reboot
-в VM, затем opt-in установщик и согласованный baseline/rollback на Radxa.
+Дальше: systemd/reboot общего координатора в VM, затем opt-in установщик
+и согласованный baseline/rollback на Radxa.
 Для живого этапа нужны проверенные daemon/includes/владелец настроек и отдельное
 разрешение пользователя. Включать resolved, менять DNS хоста или подключаться
 по SSH этот стенд не разрешает. Физический USB, arm64, долгоживущие resolver

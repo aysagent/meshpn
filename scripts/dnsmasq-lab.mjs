@@ -10,8 +10,10 @@ import { cleanEnvironment, runCommand } from './lib/transparent-acceptance.mjs';
 import { runDnsmasqLab } from './lib/dnsmasq-lab.mjs';
 
 const args = process.argv.slice(2), entry = fileURLToPath(import.meta.url);
-const resolverObject = args.includes('--resolver-object');
-if (resolverObject) args.splice(args.indexOf('--resolver-object'), 1);
+const radxa = args.includes('--radxa-journal');
+if (radxa) args.splice(args.indexOf('--radxa-journal'), 1);
+const resolverObject = radxa || args.includes('--resolver-object');
+if (args.includes('--resolver-object')) args.splice(args.indexOf('--resolver-object'), 1);
 const journal = resolverObject || args.includes('--journal');
 if (args.includes('--journal')) args.splice(args.indexOf('--journal'), 1);
 const usb = journal || args.includes('--usb');
@@ -21,10 +23,10 @@ const controller = new AbortController(), abort = () => controller.abort();
 process.once('SIGINT', abort); process.once('SIGTERM', abort);
 try {
   if (args.length === 1 && args[0] === '--help') {
-    process.stdout.write('Usage: MESHPN_DNSMASQ=/absolute/path/dnsmasq node scripts/dnsmasq-lab.mjs [--usb | --journal | --resolver-object]\nPrivate namespace only; --resolver-object adds synthetic /etc/resolv.conf object recovery to the journal/USB fixture. No installation or host DNS/firewall/TUN changes.\n');
+    process.stdout.write('Usage: MESHPN_DNSMASQ=/absolute/path/dnsmasq node scripts/dnsmasq-lab.mjs [--usb | --journal | --resolver-object | --radxa-journal]\nPrivate namespace only; --radxa-journal coordinates dnsmasq and synthetic /etc/resolv.conf journals. No installation or host DNS/firewall/TUN changes.\n');
   } else if (args.length === 1 && args[0] === '--isolated') {
     console.log = console.warn = console.error = () => {};
-    const report = await runDnsmasqLab(process.env.MESHPN_DNSMASQ_LAB_DIR, process.env.MESHPN_DNSMASQ, { usb, journal, resolverObject });
+    const report = await runDnsmasqLab(process.env.MESHPN_DNSMASQ_LAB_DIR, process.env.MESHPN_DNSMASQ, { usb, journal, resolverObject, radxa });
     process.stdout.write(`DNSMASQ_LAB_RESULT ${JSON.stringify(report)}\n`);
   } else {
     assert.equal(args.length, 0, 'unknown arguments');
@@ -45,7 +47,7 @@ try {
     // Namespace-local root is needed for network sysctl ownership, not host sudo.
     const isolation = namespaceArgs.map((arg) => usb && arg === '--map-current-user' ? '--map-root-user' : arg);
     const result = await runCommand('unshare', [...isolation, '--propagation', 'private',
-      process.execPath, entry, '--isolated', ...(resolverObject ? ['--resolver-object'] : journal ? ['--journal'] : usb ? ['--usb'] : [])], { timeoutMs: resolverObject ? 180000 : journal ? 120000 : usb ? 90000 : 60000, signal: controller.signal,
+      process.execPath, entry, '--isolated', ...(radxa ? ['--radxa-journal'] : resolverObject ? ['--resolver-object'] : journal ? ['--journal'] : usb ? ['--usb'] : [])], { timeoutMs: resolverObject ? 180000 : journal ? 120000 : usb ? 90000 : 60000, signal: controller.signal,
       env: { ...cleanEnvironment(process.env), MESHPN_DNSMASQ_LAB_DIR: directory,
         MESHPN_PARENT_NETNS: await readlink('/proc/self/ns/net'), MESHPN_PARENT_PIDNS: await readlink('/proc/self/ns/pid'),
         MESHPN_PARENT_MNTNS: await readlink('/proc/self/ns/mnt') } });
