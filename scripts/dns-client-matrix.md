@@ -32,7 +32,8 @@ DHCP renew/reconfigure: **11/11 PASS**, без перезаписи networkd-own
 снимок uplink. Явная QNAME deny-policy в adapter проверена при исчезновении/замене
 DHCP domains: перечисленные cloud suffixes не отправляются в публичный DoH.
 Это не автообнаружение всех внутренних имён и не контроль рекурсии upstream.
-Пока нет durable lifecycle этого link и согласованной live-политики.
+Есть [отдельный журнал пустого link](dns-owned-link-journal.md), 18 controller
+SIGKILL; пока нет его связки с DNS/address-state и согласованной live-политики.
 
 Общий dnsmasq Radxa обслуживает системные и USB-запросы одним upstream. Его
 переключение затрагивает обе группы: нельзя обещать защиту только одного входа

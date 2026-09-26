@@ -30,6 +30,7 @@ export const TEST_FILES = Object.freeze([
   'test-dnsmasq-journal.mjs',
   'test-dns-networkd.mjs',
   'test-dns-domain-policy.mjs',
+  'test-dns-owned-link.mjs',
   'test-dhcp-lab-wire.mjs',
   'test-dns-resolved.mjs',
   'test-dns-resolved-journal.mjs',

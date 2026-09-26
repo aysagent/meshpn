@@ -10,7 +10,46 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
-### Дополнение 2026-09-26: явная QNAME policy независимо от DHCP
+### Дополнение 2026-09-26: durable ownership пустого DNS-link
+
+Добавлен [empty-link journal](../scripts/dns-owned-link-journal.md), запускаемый
+через `dns-networkd-lab.mjs --link-journal`. Отдельный namespace-only слой:
+случайные name/MAC, затем отдельный alias intent/set/ACK, pinned ifindex,
+boot ID + namespace + bus ID/unique resolved owner, private fsync/rename journal
+и process-lifetime flock. Не меняет uplink и не принимает существующий link.
+
+Практический finding: на стенде Linux 5.4 `ip link add … alias …` не сохранил
+alias; MAC сохранился. Поэтому нельзя было считать создание и alias одним
+атомарным действием. Теперь до alias идентичность задают независимые случайные
+части id в name/MAC; установка alias имеет свою crash-safe фазу.
+
+Два реальных прогона PASS, повторный integration test ~58 сек:
+основные 11 DNS/DHCP проверок плюс 18 controller SIGKILL (17 границ + missing
+journal после guard), lock conflict и 6 отказов. Подтверждены foreign alias,
+configured DNS, same markers/different ifindex, corrupt/missing journal и stale
+boot context. Recovery при конфликте оставляет guard; явная fixture repair
+в тесте не считается автоматическим recovery. Итог: remaining owned links=0,
+processes=1/zombies=0; host DNS/forwarding не менялись.
+
+Node acceptance **1238/1238 PASS** без skips:
+`/var/tmp/meshpn-acceptance-9HbOOT/report.json`. Дополнительно повторён прежний
+resolved journal **IPv4** real-тест: PASS, 31 controller SIGKILL (~99 сек),
+поскольку его RPC worker расширен новым kind=link. IPv6 этого набора повторно
+не запускался. Не новый browser/VM прогон.
+
+Граница: слой допускает только пустой DOWN dummy, без addresses/DNSEx/Domains.
+Он намеренно отказывает удалять уже настроенный DNS-link. Namespace supervisor
+переживает SIGKILL child-контроллера и исполняет backend RPC; reboot/power loss
+здесь не проверены. Root/CAP_NET_ADMIN attacker и атомарный CAS kernel state
+не обещаются. `ownedLinkJournal.dnsSettingsCoupled=false`; основной
+`durableJournalTested=false` в networkd-отчёте остаётся корректным.
+
+Следующий этап: общий write-ahead координатор link + address/UP + resolved
+settings, обратный порядок disable, совместная SIGKILL-матрица, затем VM lifecycle.
+После него всё ещё нужны системный resolver Radxa и согласованные пользователем
+live-пилоты. DNS v1 не закрыт.
+
+### Предыдущий этап 2026-09-26: явная QNAME policy независимо от DHCP
 
 Добавлен opt-in `--domain-policy=/path/domains.json` в DNS exit adapter:
 schema 1 / denySuffixes, локальный REFUSED до DoH/exit dial. Матчинг по binary

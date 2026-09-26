@@ -16,7 +16,7 @@ const controller = new AbortController(), abort = () => controller.abort();
 process.once('SIGINT', abort); process.once('SIGTERM', abort);
 try {
   const options = networkdLabOptions(process.argv.slice(2));
-  if (options.help) console.log('Usage: node scripts/dns-networkd-lab.mjs --systemd-dir=/path/to/systemd249/lib/systemd --dnsmasq=/path/to/dnsmasq\nPrivate namespaces only; real networkd DHCP renew + resolved 249. No downloads, host services, SSH, TUN or host DNS/firewall changes.');
+  if (options.help) console.log('Usage: node scripts/dns-networkd-lab.mjs --systemd-dir=/path/to/systemd249/lib/systemd --dnsmasq=/path/to/dnsmasq [--link-journal]\nPrivate namespaces only; real networkd DHCP renew + resolved 249. Optional empty-link journal SIGKILL matrix, not coupled DNS recovery. No downloads, host services, SSH, TUN or host DNS/firewall changes.');
   else if (options.isolated) {
     console.log = console.warn = console.error = () => {};
     const report = await runNetworkdLab(process.env.MESHPN_NETWORKD_LAB_DIR, options);
@@ -29,7 +29,7 @@ try {
     const before = await snapshot();
     directory = await mkdtemp(join(tmpdir(), 'meshpn-networkd-lab-'));
     const result = await runCommand('unshare', [...namespaceArgs, '--uts', '--propagation', 'private',
-      process.execPath, entry, '--isolated', `--systemd-dir=${options.systemdDir}`, `--dnsmasq=${options.dnsmasq}`],
+      process.execPath, entry, '--isolated', `--systemd-dir=${options.systemdDir}`, `--dnsmasq=${options.dnsmasq}`, ...(options.linkJournal ? ['--link-journal'] : [])],
     { timeoutMs: 120000, maxBytes: 128 * 1024, signal: controller.signal,
       env: { ...cleanEnvironment(process.env), MESHPN_NETWORKD_LAB_DIR: directory,
         MESHPN_PARENT_NETNS: await readlink('/proc/self/ns/net'), MESHPN_PARENT_PIDNS: await readlink('/proc/self/ns/pid'),
@@ -40,7 +40,7 @@ try {
     assert.ok(lines[0].startsWith('NETWORKD_LAB_RESULT '));
     const report = JSON.parse(lines[0].slice('NETWORKD_LAB_RESULT '.length));
     Object.assign(report, { hostDnsFilesUnchanged: true, hostForwardingUnchanged: true });
-    assertNetworkdEvidence(report); console.log(JSON.stringify(report, null, 2));
+    assertNetworkdEvidence(report, options); console.log(JSON.stringify(report, null, 2));
   }
 } catch (error) { process.stderr.write(`NETWORKD_LAB_FAILED ${error.stack}\n`); process.exitCode = 1; }
 finally {

@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline';
 import { dnsTransaction } from './dns-lifecycle-transaction.mjs';
 import { resolvedTransaction } from './dns-resolved-journal.mjs';
 import { dnsmasqTransaction } from './dnsmasq-journal.mjs';
+import { ownedLinkTransaction } from './dns-owned-link-journal.mjs';
 
 let input, timer;
 try {
@@ -37,13 +38,14 @@ try {
     } catch { process.exit(2); }
   });
   input.once('close', () => { if (pending) { clearTimeout(timer); pending.reject(new Error('backend disconnected')); pending = undefined; } });
-  const kind = process.argv[4] ?? 'file'; assert.ok(['file', 'resolved', 'dnsmasq'].includes(kind));
-  const methods = kind === 'resolved' ? ['ensureGuard', 'view', 'set', 'removeGuard', 'probe', 'adapterPort']
+  const kind = process.argv[4] ?? 'file'; assert.ok(['file', 'resolved', 'dnsmasq', 'link'].includes(kind));
+  const methods = kind === 'link' ? ['ensureGuard', 'context', 'view', 'create', 'stamp', 'remove', 'releaseGuard']
+    : kind === 'resolved' ? ['ensureGuard', 'view', 'set', 'removeGuard', 'probe', 'adapterPort']
     : kind === 'dnsmasq' ? ['ensureGuard', 'view', 'prepare', 'verifySnapshots', 'select', 'activate', 'removeGuard', 'probe']
     : ['ensureGuard', 'prepare', 'current', 'verifySnapshots', 'select', 'removeGuard', 'probe'];
   const backend = Object.fromEntries(methods
     .map((method) => [method, (...args) => call('backend', { method, args })]));
-  const transaction = kind === 'dnsmasq' ? dnsmasqTransaction : kind === 'resolved' ? resolvedTransaction : dnsTransaction;
+  const transaction = kind === 'link' ? ownedLinkTransaction : kind === 'dnsmasq' ? dnsmasqTransaction : kind === 'resolved' ? resolvedTransaction : dnsTransaction;
   const result = await transaction({ directory: process.argv[2], operation: process.argv[3], scope, backend,
     checkpoint: (point) => call('checkpoint', { point }) });
   process.stdout.write(`${JSON.stringify({ type: 'result', result })}\n`);

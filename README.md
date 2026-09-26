@@ -182,8 +182,11 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 возврат к актуальному DHCP-DNS. Явная QNAME deny-policy в adapter сохраняет отказ
 для заданных cloud-имён после удаления/замены DHCP domains; включается отдельным
 [`--domain-policy=/path/domains.json`](scripts/dns-exit-adapter.md#явная-политика-внутренних-имён).
-Это namespace-стенд, не установщик; journal/lifecycle нового link и live-выбор
-политики ещё впереди. С этим расширением Node-регрессии: **1202/1202 PASS**.
+Это namespace-стенд, не установщик. Дополнительный
+[`--link-journal`](scripts/dns-owned-link-journal.md) проверяет журнал создания/
+удаления пустого DNS-link: **18 controller SIGKILL**, отказы при конфликте и
+очистку ресурсов. Связка с DNS/address-state, VM lifecycle и live-выбор политики
+ещё впереди. С этим расширением Node-регрессии: **1238/1238 PASS**.
 
 Следующий порядок работ:
 

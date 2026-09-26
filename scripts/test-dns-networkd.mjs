@@ -7,6 +7,8 @@ test('networkd lab requires explicit tools, rejects duplicates and host actions'
   assert.deepEqual(networkdLabOptions(['--help']), { help: true });
   const args = ['--systemd-dir=/tools/systemd', '--dnsmasq=/tools/dnsmasq'];
   assert.deepEqual(networkdLabOptions(args), { systemdDir: '/tools/systemd', dnsmasq: '/tools/dnsmasq' });
+  assert.equal(networkdLabOptions([...args, '--link-journal']).linkJournal, true);
+  assert.throws(() => networkdLabOptions([...args, '--link-journal', '--link-journal']));
   for (const extra of ['--apply', '--ssh=host', '--systemd-dir=/other', '--dnsmasq=/other', '--help'])
     assert.throws(() => networkdLabOptions([...args, extra]));
   for (const bad of [[], ['--isolated'], ['--systemd-dir=relative', '--dnsmasq=/tool'], [...args, '--isolated', '--isolated']])
@@ -36,6 +38,7 @@ test('networkd evidence requires exact gates, real renewal and complete cleanup'
     cloudPolicy: 'explicit-qname-deny-suffixes-before-doh-plus-guard',
     final: { processes: 1, zombies: 0 }, blockedLookupDeadlines: 0 };
   assertNetworkdEvidence(evidence);
+  assert.throws(() => assertNetworkdEvidence(evidence, { linkJournal: true }));
   for (const key of Object.keys(evidence).filter((k) => !['checks', 'final'].includes(k)))
     assert.throws(() => assertNetworkdEvidence({ ...evidence, [key]: typeof evidence[key] === 'boolean' ? !evidence[key] : null }), key);
   for (let i = 0; i < NETWORKD_CHECKS.length; i++) assert.throws(() =>

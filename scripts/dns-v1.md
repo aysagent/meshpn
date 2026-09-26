@@ -44,7 +44,9 @@ boot-context. Это не live host takeover и не автоматическо�
 Для VPS 2 [resolved 249 + networkd](dns-networkd-lab.md): 11 namespace-проверок
 настоящего DHCP renew/reconfigure и отдельного VPN DNS-link, без takeover `eth0`.
 Явная QNAME deny-policy проверена при удалении/замене DHCP domains. Ещё нужны
-durable lifecycle DNS-link и выбор live-политики (блокирование/защищённый resolver).
+совместный durable lifecycle DNS-link/settings и выбор live-политики
+(блокирование/защищённый resolver). Отдельный [empty-link journal](dns-owned-link-journal.md)
+уже проверен с 18 controller SIGKILL; пока не связан с DNS/address-state.
 В README отдельно отмечены ограничения транспортов, маршрутов и IPv6.
 
 ## Три этапа и текущий статус

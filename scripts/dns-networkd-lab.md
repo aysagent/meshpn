@@ -15,6 +15,11 @@ MESHPN_DNSMASQ=/absolute/path/to/dnsmasq npm run test:dns-networkd-real
 npm run test:dns-networkd
 ```
 
+Дополнительный `--link-journal` запускает после основной матрицы
+[журнал пустого owned DNS-link](dns-owned-link-journal.md): 18 SIGKILL контроллера,
+конфликты и освобождение ресурсов. Это пока отдельный слой, не recovery основной
+DNS-транзакции; её `durableJournalTested` остаётся false.
+
 Запуск обычным пользователем Linux, без sudo. Нужны user/net/PID/mount/UTS
 namespaces, Node 22+, iproute2, mount, iptables/ip6tables, openssl, dbus-daemon,
 busctl и getent. Runner ничего не скачивает и не устанавливает. Tools directory
@@ -95,8 +100,9 @@ runtime Domains resolved и счётчики adapter/exit/resolver, без по�
 автоматически. Не обещает фильтрацию upstream recursion/CNAME/EDNS и всех возможных
 внутренних имён. Встроенный список здесь — выбор fixture, не live-настройка VPS 2.
 
-Следующий ограниченный этап: durable ownership/journal для
-создания/удаления VPN DNS-link и lifecycle в VM. Нельзя ни добавлять прямое
+Отдельный durable ownership/journal создания/удаления пустого link уже проверен
+опцией `--link-journal`. Следующий этап — совместить его с address/UP и
+DNS-settings journal, затем lifecycle в VM. Нельзя ни добавлять прямое
 исключение, ни молча разрешать публичный DNS для cloud-имён. Live-политика ещё
 не согласована. Оставшиеся установщик/откат и пилоты — в [матрице](dns-client-matrix.md).
 
