@@ -29,11 +29,26 @@ export function assertVmSystemdEvidence(evidence) {
   for (const label of VM_SYSTEMD_CHECKS) assert.equal(evidence.checks.filter((v) => v === label).length,
     ['real-service-readiness-before-consumer', 'explicit-disable-restores-owned-baseline'].includes(label) ? 2 : 1, label);
 }
+export const VM_DNSMASQ_CHECKS = Object.freeze([
+  'failed-guard-prevents-services', 'service-readiness-and-usb-dhcp', 'controller-stop-retains-protection',
+  'exit-outage-preserves-dhcp-local-name', 'adapter-sigkill-preserves-dhcp-and-stops-consumer',
+  'daemon-sigkill-and-journal-recovery', 'foreign-config-not-overwritten', 'explicit-disable-restores-baseline',
+  'released-journal-start-refused', 'reboot-stale-journal-refused',
+]);
+export function assertVmDnsmasqEvidence(evidence) {
+  assert.equal(evidence.phase, 'dnsmasq'); assert.equal(evidence.point, 'lifecycle');
+  for (const key of ['systemdPid1', 'dhcpPreservedOnAdapterFailure', 'explicitDisablePassed', 'resolvConfUnchanged', 'baselinePositiveControl']) assert.equal(evidence[key], true, key);
+  assert.equal(evidence.automaticStaleAdoption, false); assert.equal(evidence.baselineQueriesDuringProtection, 0);
+  assert.deepEqual([...new Set(evidence.checks)].sort(), [...VM_DNSMASQ_CHECKS].sort());
+  for (const label of VM_DNSMASQ_CHECKS) assert.equal(evidence.checks.filter((v) => v === label).length,
+    ['service-readiness-and-usb-dhcp', 'explicit-disable-restores-baseline'].includes(label) ? 2 : 1);
+}
 export function vmCases(selected = 'all') {
   if (selected === 'all') return ['none', ...VM_CUT_POINTS];
   if (selected === 'faults') return [...VM_FAULTS];
   if (selected === 'cycle') return ['none'];
   if (selected === 'systemd') return ['lifecycle'];
+  if (selected === 'dnsmasq') return ['lifecycle'];
   assert.ok([...VM_CUT_POINTS, ...VM_FAULTS].includes(selected), 'unknown VM case');
   return [selected];
 }
@@ -73,9 +88,9 @@ export function vmBootOptions(cmdline) {
   };
   assert.equal(get('meshpn_dns_vm'), 'isolated-v1');
   const phase = get('meshpn_phase'), point = get('meshpn_point');
-  assert.ok(['cycle', 'cut', 'inspect', 'fault', 'systemd'].includes(phase));
+  assert.ok(['cycle', 'cut', 'inspect', 'fault', 'systemd', 'dnsmasq'].includes(phase));
   assert.ok(phase === 'cycle' ? point === 'none' : phase === 'fault' ? VM_FAULTS.includes(point)
-    : phase === 'systemd' ? point === 'lifecycle' : VM_CUT_POINTS.includes(point));
+    : ['systemd', 'dnsmasq'].includes(phase) ? point === 'lifecycle' : VM_CUT_POINTS.includes(point));
   return { phase, point };
 }
 export function qemuDnsArgs({ root, kernel, initrd, disk, phase, point }) {

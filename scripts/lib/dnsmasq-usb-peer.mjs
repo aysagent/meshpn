@@ -3,6 +3,7 @@ import { readlink } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { child, exec } from './browser-lab-driver.mjs';
 import { assertDnsMountNamespace } from './dns-lifecycle-namespace.mjs';
+import { assertDnsmasqVm } from './dnsmasq-vm-safety.mjs';
 
 /** Creates only a namespace-local veth and bounded test RPC worker. */
 export async function startDnsmasqUsbPeer() {
@@ -14,7 +15,8 @@ export async function startDnsmasqUpstreamPeer() {
 }
 
 async function startPeer(upstream) {
-  await assertDnsMountNamespace();
+  if (process.env.MESHPN_DNSMASQ_VM === '1') { await assertDnsmasqVm(); assert.equal(upstream, false); }
+  else await assertDnsMountNamespace();
   const gatewayNetns = await readlink('/proc/self/ns/net');
   const worker = fileURLToPath(new URL('./dnsmasq-usb-peer-worker.mjs', import.meta.url));
   const peer = child('unshare', ['--net', process.execPath, worker, ...(upstream ? ['--upstream'] : [])], { stdio: ['pipe', 'pipe', 'pipe'],
@@ -23,7 +25,7 @@ async function startPeer(upstream) {
   let id = 0, sequence = 0;
   async function call(operation, options) {
     const request = ++id;
-    const reply = peer.waitFor(new RegExp(`USB_PEER ${request} ([^\\n]+)\\n`), 12000);
+    const reply = peer.waitFor(new RegExp(`USB_PEER ${request} ([^\\n]+)\\n`), process.env.MESHPN_DNSMASQ_VM === '1' ? 30000 : 12000);
     peer.proc.stdin.write(`${JSON.stringify({ id: request, operation, options })}\n`);
     const result = JSON.parse((await reply)[1]); assert.equal(result.ok, true); return result.result;
   }

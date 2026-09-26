@@ -15,6 +15,7 @@ import { EncSniReplayGuard } from './transparent-tls-replay.mjs';
 import { fixtureDnsAnswer, parseDnsQuery } from './lab-dns-wire.mjs';
 import { createNamespaceDnsAdapter } from './dns-adapter-process.mjs';
 import { assertSystemdDnsVm } from './dns-systemd-vm-safety.mjs';
+import { assertDnsmasqVm } from './dnsmasq-vm-safety.mjs';
 
 export async function startAdapterSoakLab({ family, modeTag, concurrency, timeoutMs = 250 }, directory) {
   assertBrowserNamespace(); assert.ok([4, 6].includes(family)); assert.ok(['transparent-tls', 'combo-tls'].includes(modeTag));
@@ -27,6 +28,11 @@ export async function startSystemdVmAdapterFixture(directory) {
   await assertSystemdDnsVm();
   const links = JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout);
   assert.deepEqual(links.map((l) => l.ifname).sort(), ['dnsfixture', 'lo']);
+  return startFixture({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 5000, port: 2053, replace: true }, directory);
+}
+
+export async function startDnsmasqVmAdapterFixture(directory) {
+  await assertDnsmasqVm();
   return startFixture({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 5000, port: 2053, replace: true }, directory);
 }
 

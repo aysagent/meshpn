@@ -38,7 +38,9 @@ journal, SIGKILL/restart контроллера и adapter, VM reboot/power-cut 
 Это проверенные составляющие, **не установленная системная DNS-интеграция**.
 Для dnsmasq добавлены [private file journal и namespace recovery](dnsmasq-journal.md)
 с сохранением USB DHCP, семью SIGKILL контроллера и OUTPUT/INPUT/FORWARD guard.
-Этот результат не подтверждает host service lifecycle или reboot dnsmasq.
+Отдельный [dnsmasq systemd/reboot стенд](dnsmasq-vm.md) проверяет настоящий
+service lifecycle в VM, сохранение DHCP при отказе adapter и отклонение старого
+boot-context. Это не live host takeover и не автоматическое принятие старого журнала.
 В README отдельно отмечены ограничения транспортов, маршрутов и IPv6.
 
 ## Три этапа и текущий статус
@@ -89,4 +91,5 @@ resolv.conf symlink сначала требует согласованного �
 validator и физическое отключение питания накопителя не становятся новыми
 обязательными этапами v1. Критерии не ослабляются ради даты; новые пожелания
 выносятся в отдельные задачи. Прежние VM результаты не закрывают новые сценарии
-dnsmasq/USB и resolved 249: эти проверки и обе live-конфигурации ещё впереди.
+resolved 249 или live dnsmasq/USB: точные версии, системный resolver Radxa и обе
+live-конфигурации ещё требуют проверки.

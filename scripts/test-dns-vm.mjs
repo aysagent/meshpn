@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { VM_CUT_POINTS, VM_FAULTS, VM_SYSTEMD_CHECKS, vmCases, vmBootOptions, qemuDnsArgs, assertVmJournalCheckpoint, assertVmFaultEvidence, assertVmSystemdEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
+import { VM_CUT_POINTS, VM_FAULTS, VM_SYSTEMD_CHECKS, VM_DNSMASQ_CHECKS, vmCases, vmBootOptions, qemuDnsArgs, assertVmJournalCheckpoint, assertVmFaultEvidence, assertVmSystemdEvidence, assertVmDnsmasqEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
 import { runCommand } from './lib/transparent-acceptance.mjs';
 import { dnsSystemdVmUnits } from './lib/dns-systemd-vm-units.mjs';
+import { dnsmasqVmUnits } from './lib/dnsmasq-vm-units.mjs';
 
 const input = { root: '/private/tools', kernel: '/private/kernel', initrd: '/private/initrd', disk: '/private/state.raw', phase: 'cycle', point: 'none' };
 test('shared console framing tolerates a PID1 prefix, never malformed JSON', () => {
@@ -114,4 +115,38 @@ test('guest entrypoint refuses host execution before fixture mutations', async (
 for (const entry of ['worker', 'driver']) test(`systemd VM ${entry} refuses the host before any mutation`, async () => {
   const r = await runCommand(process.execPath, [`scripts/lib/dns-systemd-vm-${entry}.mjs`, 'guard']);
   assert.equal(r.code, 1); assert.ok(!r.stdout.includes('boot-guard'));
+});
+test('dnsmasq VM is separately selected and preserves DHCP independence from adapter', () => {
+  assert.deepEqual(vmCases('dnsmasq'), ['lifecycle']); assert.equal(vmCases().length, 9);
+  assert.deepEqual(vmBootOptions(qemuDnsArgs({ ...input, phase: 'dnsmasq', point: 'lifecycle' }).find((arg) => arg.startsWith('console='))),
+    { phase: 'dnsmasq', point: 'lifecycle' });
+  const units = dnsmasqVmUnits();
+  assert.doesNotMatch(units['dns-vm-dnsmasq.service'], /BindsTo=.*(?:adapter|controller)/);
+  assert.match(units['dns-vm-dnsmasq.service'], /ExecStartPre=.*daemon-check/);
+  assert.match(units['dns-vm-controller.service'], /BindsTo=dns-vm-guard.service dns-vm-adapter.service/);
+  assert.match(units['dns-vm-controller.service'], /flock -n -F \/state\/controller.lock/);
+  assert.match(units['dns-vm-consumer.service'], /After=dns-vm-controller.service/);
+  assert.match(units['dns-vm-driver.service'], /SuccessExitStatus=SIGTERM/);
+  for (const [name, unit] of Object.entries(units)) if (name !== 'dns-vm-driver.service') assert.doesNotMatch(unit, /SuccessExitStatus=/);
+  for (const unit of Object.values(units)) assert.doesNotMatch(unit, /ExecStop=|\[Install\]/);
+});
+test('dnsmasq VM evidence requires both boots, DHCP preservation and exact lifecycle criteria', () => {
+  const evidence = { phase: 'dnsmasq', point: 'lifecycle', systemdPid1: true, automaticStaleAdoption: false,
+    baselineQueriesDuringProtection: 0, baselinePositiveControl: true, explicitDisablePassed: true, resolvConfUnchanged: true,
+    dhcpPreservedOnAdapterFailure: true,
+    checks: [...VM_DNSMASQ_CHECKS, 'service-readiness-and-usb-dhcp', 'explicit-disable-restores-baseline'] };
+  assertVmDnsmasqEvidence(evidence);
+  for (const key of Object.keys(evidence).filter((k) => k !== 'checks')) assert.throws(() =>
+    assertVmDnsmasqEvidence({ ...evidence, [key]: typeof evidence[key] === 'boolean' ? !evidence[key] : 'bad' }));
+  for (let i = 0; i < evidence.checks.length; i++) assert.throws(() =>
+    assertVmDnsmasqEvidence({ ...evidence, checks: evidence.checks.filter((_, n) => n !== i) }));
+});
+for (const entry of ['worker', 'driver']) test(`dnsmasq VM ${entry} refuses ordinary host execution`, async () => {
+  const r = await runCommand(process.execPath, [`scripts/lib/dnsmasq-vm-${entry}.mjs`, 'guard']);
+  assert.equal(r.code, 1); assert.ok(!r.stdout.includes('boot-guard'));
+});
+test('VM flag alone cannot authorize peer work on host', async () => {
+  const r = await runCommand(process.execPath, ['scripts/lib/dnsmasq-usb-peer-worker.mjs'],
+    { env: { ...process.env, MESHPN_DNSMASQ_VM: '1' } });
+  assert.equal(r.code, 1); assert.equal(r.stdout, ''); assert.match(r.stderr, /USB_PEER_FAILED/);
 });

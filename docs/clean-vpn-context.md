@@ -10,6 +10,45 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-26: dnsmasq systemd/reboot VM
+
+Добавлен отдельный `dns-vm-lab.mjs --case=dnsmasq --dnsmasq=/absolute/executable`.
+Общий QEMU runner сохраняет NIC-less/TCG изоляцию и прежнюю матрицу `all`;
+новый режим использует настоящий systemd PID1, dnsmasq, USB veth/DHCP peer и
+adapter → combo exit → TLS DoH fixture. DNS/firewall хоста не переключаются.
+Units — только синтетическая VM, не установщик Radxa.
+
+Проверено: dnsmasq VM **12/12 PASS в двух загрузках**, direct baseline queries
+в protected phase = 0 с positive controls после disable; host DNS unchanged.
+Отчёт `/var/tmp/meshpn-dns-vm-wUVAii/report.json`, Node acceptance **1191/1191**
+без skips (`/var/tmp/meshpn-acceptance-vQNdgB/report.json`), три dnsmasq namespace
+real-теста PASS. Браузерная матрица этим пакетом не повторялась.
+Прежний resolved/systemd VM-режим повторён после изменения общего builder:
+**11/11 PASS в двух загрузках**, `/var/tmp/meshpn-dns-vm-ZfTjNz/report.json`,
+host DNS unchanged. Это resolved 255, не запланированный профиль VPS 2/249.
+
+Контроллер непосредственно исполняет file journal под flock; активация службы
+проверяет config/context и сверяет runtime cache с MainPID/InvocationID.
+dnsmasq независим от adapter/controller, чтобы их отказ не выключал DHCP и
+локальные имена. Consumer зависит от готового контроллера, но не является
+непрерывным монитором dnsmasq. Explicit disable восстанавливает точные исходные
+байты; stop не снимает guard. Старый journal после reboot отклоняется, driver
+явно архивирует fixture-эпоху; автоматического принятия чужого context нет.
+
+VM authority проверяется по kernel cmdline, QEMU DMI, PID1, namespace identity
+и netlink-инвентарю интерфейсов; переменная окружения одна не даёт разрешения.
+Guest passwd/group синтетические; порт 53 проверяется guest NSS, не high-port
+lab helper. SIGTERM признаётся нормальным только для acceptance driver при
+shutdown; host runner всё равно требует boot IDs, kernel reboot, sync/unmount
+и полный набор evidence.
+
+Ограничения: systemd 255/x64, не Radxa 252/arm64; нет host resolver takeover,
+unattended reboot availability, mid-setter controller SIGKILL, физического
+power-loss и uplink pcap. Транзитный USB FORWARD отдельно проверен namespace
+стендом. Дальше — resolved 249/networkd и политика облачных имён VPS 2, затем
+согласованные пользовательские deployment/recovery скрипты и два пилота.
+Подробнее: [dnsmasq VM](../scripts/dnsmasq-vm.md).
+
 ### Дополнение 2026-09-26: dnsmasq journal и controller recovery
 
 Добавлены `dnsmasq-journal.mjs` и `dnsmasq-journal-files.mjs`: strict schema,

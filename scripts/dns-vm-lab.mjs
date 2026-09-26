@@ -8,19 +8,21 @@ import { mkdtemp, open, writeFile, readFile, lstat, readlink } from 'node:fs/pro
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildDnsVmImage, verifyVmPackages, sha256 } from './lib/dns-vm-image.mjs';
-import { qemuDnsArgs, VM_FAULTS, vmCases, assertVmFaultEvidence, assertVmSystemdEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
+import { qemuDnsArgs, VM_FAULTS, vmCases, assertVmFaultEvidence, assertVmSystemdEvidence, assertVmDnsmasqEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
 
 const exec = promisify(execFile);
 async function main() {
   const flags = new Map();
   for (const arg of process.argv.slice(2)) {
-    const match = /^--(tools|kernel|resolved|case)=(.+)$/.exec(arg);
-    assert.ok(match && !flags.has(match[1]), 'expected --tools=DIR --kernel=FILE --resolved=FILE [--case=all|faults|systemd|cycle|CASE]');
+    const match = /^--(tools|kernel|resolved|case|dnsmasq)=(.+)$/.exec(arg);
+    assert.ok(match && !flags.has(match[1]), 'expected --tools=DIR --kernel=FILE --resolved=FILE [--case=all|faults|systemd|dnsmasq|cycle|CASE] [--dnsmasq=FILE]');
     flags.set(match[1], match[2]);
   }
   for (const key of ['tools', 'kernel', 'resolved']) assert.ok(flags.get(key)?.startsWith('/'), `absolute --${key} required`);
   const cases = vmCases(flags.get('case'));
-  const systemd = flags.get('case') === 'systemd';
+  const dnsmasq = flags.get('case') === 'dnsmasq';
+  assert.ok(dnsmasq ? flags.get('dnsmasq')?.startsWith('/') : !flags.has('dnsmasq'), 'absolute --dnsmasq required only for --case=dnsmasq');
+  const systemd = dnsmasq || flags.get('case') === 'systemd';
   const tools = resolve(flags.get('tools')), root = join(tools, 'root');
   const packages = await verifyVmPackages(tools);
   const env = { ...process.env, LD_LIBRARY_PATH: `${root}/usr/lib/x86_64-linux-gnu:${root}/lib/x86_64-linux-gnu`,
@@ -38,9 +40,10 @@ async function main() {
   const before = await hostSnapshot();
   const report = { schema: 1, kind: 'clean-vpn-dns-vm-lab', status: 'failed', version, packages,
     nic: 'none', accelerator: 'tcg', diskCache: 'writeback', hostSharedFilesystem: false,
-    systemdPid1: systemd, physicalPowerLossTested: false, inProcessHotResetTested: false, cases: [] };
+    systemdPid1: systemd, ...(dnsmasq ? { backend: 'dnsmasq' } : {}), physicalPowerLossTested: false, inProcessHotResetTested: false, cases: [] };
   try {
-    const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved'), systemd });
+    const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved'), systemd,
+      dnsmasq: dnsmasq ? flags.get('dnsmasq') : null });
     report.image = { kernelSha256: image.manifest.kernelSha256, initrdSha256: image.manifest.initrdSha256 };
     let launchNumber = 0;
     async function launch(disk, phase, point, expectReboot = false) {
@@ -107,7 +110,7 @@ async function main() {
       const fd = await open(disk, 'wx', 0o600); try { await fd.truncate(256 * 1024 * 1024); } finally { await fd.close(); }
       await exec('mke2fs', ['-q', '-F', '-t', 'ext4', '-O', '^metadata_csum_seed,^orphan_file', disk], { timeout: 30000 });
       let events;
-      if (systemd) events = [...await launch(disk, 'systemd', point, true), ...await launch(disk, 'systemd', point)];
+      if (systemd) events = [...await launch(disk, dnsmasq ? 'dnsmasq' : 'systemd', point, true), ...await launch(disk, dnsmasq ? 'dnsmasq' : 'systemd', point)];
       else if (fault) events = await launch(disk, 'fault', point);
       else if (point === 'none') events = [...await launch(disk, 'cycle', point, true), ...await launch(disk, 'cycle', point)];
       else events = [...await launch(disk, 'cut', point), ...await launch(disk, 'inspect', point)];
@@ -117,7 +120,7 @@ async function main() {
       const passed = events.find((e) => e.event === 'passed');
       if (fault) assertVmFaultEvidence(point, passed.fault);
       else assert.equal(passed.previousBootId, boots[0]);
-      if (systemd) { assertVmSystemdEvidence(passed); assert.ok(events.filter((e) => e.event === 'boot-guard').every((e) => e.pid1 === 'systemd')); }
+      if (systemd) { (dnsmasq ? assertVmDnsmasqEvidence : assertVmSystemdEvidence)(passed); assert.ok(events.filter((e) => e.event === 'boot-guard').every((e) => e.pid1 === 'systemd')); }
       assert.equal(passed.bootId, boots.at(-1));
       report.cases.push({ point, gracefulReboot: point === 'none' || systemd, qemuRelaunched: !fault, guestPowerCut: !fault && point !== 'none' && !systemd, ...passed });
     }

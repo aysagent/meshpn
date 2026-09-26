@@ -9,6 +9,7 @@ import { exec } from './browser-lab-driver.mjs';
 import { makeDhcpLabRequest, parseDhcpLabReply } from './dhcp-lab-wire.mjs';
 import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
 import { sentinel } from './dns-lifecycle-lab.mjs';
+import { assertDnsmasqVm } from './dnsmasq-vm-safety.mjs';
 
 const gateway = '192.168.7.1';
 const report = (id, result) => process.stdout.write(`USB_PEER ${id} ${JSON.stringify(result)}\n`);
@@ -71,7 +72,8 @@ async function lookup({ sequence, tcp, type, local = false, direct = false, forw
   let timer;
   try {
     const response = await new Promise((resolve, reject) => {
-      timer = setTimeout(() => reject(Object.assign(new Error('DNS deadline'), { code: 'DNS_CLIENT_TIMEOUT' })), 1800);
+      timer = setTimeout(() => reject(Object.assign(new Error('DNS deadline'), { code: 'DNS_CLIENT_TIMEOUT' })),
+        process.env.MESHPN_DNSMASQ_VM === '1' ? 10000 : 1800);
       socket.once('error', reject);
       if (tcp) {
         let buffer = Buffer.alloc(0);
@@ -101,7 +103,8 @@ async function lookup({ sequence, tcp, type, local = false, direct = false, forw
 
 try {
   assert.ok(process.argv.length === 2 || process.argv.length === 3 && upstream, 'unknown worker arguments');
-  for (const [kind, original] of [['net', process.env.MESHPN_PARENT_NETNS], ['pid', process.env.MESHPN_PARENT_PIDNS],
+  if (process.env.MESHPN_DNSMASQ_VM === '1') { await assertDnsmasqVm({ peer: true }); assert.equal(upstream, false); }
+  else for (const [kind, original] of [['net', process.env.MESHPN_PARENT_NETNS], ['pid', process.env.MESHPN_PARENT_PIDNS],
     ['mnt', process.env.MESHPN_PARENT_MNTNS], ['net', process.env.MESHPN_DNSMASQ_GATEWAY_NETNS]]) {
     assert.ok(original); assert.notEqual(await readlink(`/proc/self/ns/${kind}`), original, 'isolated USB peer required');
   }

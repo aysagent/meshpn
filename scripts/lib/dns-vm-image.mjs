@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dnsSystemdVmUnits } from './dns-systemd-vm-units.mjs';
+import { dnsmasqVmUnits } from './dnsmasq-vm-units.mjs';
 
 const exec = (file, args, options = {}) => promisify(execFile)(file, args, { timeout: 30000, maxBuffer: 1024 * 1024, ...options });
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -29,8 +30,10 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false }) {
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, dnsmasq = null }) {
   assert.ok(!(systemd && ingress), 'separate systemd DNS and ingress fixtures');
+  assert.ok(!dnsmasq || systemd && !ingress && dnsmasq.startsWith('/'));
+  const units = dnsmasq ? dnsmasqVmUnits() : dnsSystemdVmUnits();
   const root = join(directory, 'guest'); await mkdir(root, { mode: 0o700 });
   const copied = new Map(), modules = new Set();
   const destination = (path) => { assert.ok(path.startsWith('/') && !path.split('/').includes('..')); return join(root, path); };
@@ -52,6 +55,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   await elf(process.execPath, '/usr/bin/node');
   for (const name of ['ip', 'unshare', 'setpriv', 'hostname', 'flock', 'getent', 'openssl', 'busctl', 'dbus-daemon']) await elf(`/usr/bin/${name}`);
   await elf('/usr/sbin/xtables-legacy-multi'); await elf(resolved, '/usr/lib/systemd/systemd-resolved');
+  if (dnsmasq) await elf(dnsmasq, '/usr/sbin/dnsmasq');
   if (ingress) await elf('/usr/sbin/sysctl');
   if (systemd) {
     for (const path of ['/usr/lib/systemd/systemd', '/usr/lib/systemd/systemd-executor', '/usr/lib/systemd/systemd-shutdown', '/usr/bin/systemctl', '/usr/bin/systemd-notify', '/usr/bin/umount']) await elf(path);
@@ -59,7 +63,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
       await copy(`/usr/lib/systemd/system/${name}`);
     }
     await mkdir(destination('/etc/systemd/system'), { recursive: true });
-    for (const [name, contents] of Object.entries(dnsSystemdVmUnits())) await writeFile(destination(`/etc/systemd/system/${name}`), contents, { mode: 0o644 });
+    for (const [name, contents] of Object.entries(units)) await writeFile(destination(`/etc/systemd/system/${name}`), contents, { mode: 0o644 });
     await writeFile(destination('/etc/systemd/resolved.conf'), '[Resolve]\nDNS=\nFallbackDNS=\nLLMNR=no\nMulticastDNS=no\nDNSSEC=no\nDNSOverTLS=no\nCache=no\nReadEtcHosts=no\nDNSStubListener=yes\n', { mode: 0o644 });
     await writeFile(destination('/etc/dbus-vm.conf'), '<busconfig><type>system</type><listen>unix:path=/run/dbus/system_bus_socket</listen><auth>EXTERNAL</auth><policy context="default"><allow user="*"/><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>', { mode: 0o644 });
   }
@@ -70,6 +74,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   const release = (await exec('uname', ['-r'])).stdout.trim();
   assert.equal(await realpath(kernel), `/boot/vmlinuz-${release}`, 'this builder requires the matching local kernel/modules');
   for (const name of ['iptable_filter', 'ip6table_filter', 'ipt_REJECT', 'ip6t_REJECT', 'xt_tcpudp', 'dummy',
+    ...(dnsmasq ? ['veth'] : []),
     ...(ingress ? ['tun', 'veth', 'iptable_nat', 'xt_conntrack', 'xt_comment', 'xt_addrtype', 'xt_nat', 'xt_MASQUERADE'] : [])]) {
     const dependencies = (await exec('modprobe', ['--show-depends', name])).stdout;
     for (const match of dependencies.matchAll(/^insmod (\/[^\s]+\.ko)\b/gm)) { await copy(match[1]); modules.add(match[1]); }
@@ -83,6 +88,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     }
   }
   await copyTree(join(project, 'scripts'), '/project/scripts');
+  if (dnsmasq) await copy(join(project, 'scripts/fixtures/dns-clients/radxa-dnsmasq.conf'), '/project/scripts/fixtures/dns-clients/radxa-dnsmasq.conf');
   if (ingress) {
     await copy(join(project, 'package.json'), '/project/package.json');
     for (const name of ['ws', '@matrixai/logger']) {
@@ -99,10 +105,12 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     await symlink('/bin/busybox', destination(`/bin/${name}`));
   }
   for (const name of ['iptables', 'ip6tables']) await symlink('/usr/sbin/xtables-legacy-multi', destination(`/usr/sbin/${name}`));
-  await writeFile(destination('/etc/passwd'), 'root:x:0:0:root:/root:/bin/sh\nfixture:x:1000:1000:fixture:/tmp:/bin/sh\nsystemd-resolve:x:193:193:resolver:/nonexistent:/bin/false\n', { mode: 0o644 });
-  await writeFile(destination('/etc/group'), 'root:x:0:\nfixture:x:1000:\nsystemd-resolve:x:193:\n', { mode: 0o644 });
+  await writeFile(destination('/etc/passwd'), 'root:x:0:0:root:/root:/bin/sh\nfixture:x:1000:1000:fixture:/tmp:/bin/sh\nsystemd-resolve:x:193:193:resolver:/nonexistent:/bin/false\n'
+    + (dnsmasq ? 'nobody:x:65534:65534:Unprivileged fixture:/nonexistent:/bin/false\n' : ''), { mode: 0o644 });
+  await writeFile(destination('/etc/group'), 'root:x:0:\nfixture:x:1000:\nsystemd-resolve:x:193:\n'
+    + (dnsmasq ? 'nogroup:x:65534:\n' : ''), { mode: 0o644 });
   await writeFile(destination('/etc/nsswitch.conf'), 'passwd: files\ngroup: files\nhosts: dns\n', { mode: 0o644 });
-  await writeFile(destination('/etc/resolv.conf'), `nameserver ${systemd ? '127.0.0.53' : '127.0.0.55'}\n`, { mode: 0o644 });
+  await writeFile(destination('/etc/resolv.conf'), `nameserver ${dnsmasq ? '127.0.0.1' : systemd ? '127.0.0.53' : '127.0.0.55'}\n`, { mode: 0o644 });
   await writeFile(destination('/etc/machine-id'), '11111111111111111111111111111111\n', { mode: 0o644 });
   const init = ingress ? `#!/bin/sh
 set -eu
@@ -191,7 +199,7 @@ poweroff -f
     // Offline verification in the staged root catches unit syntax/ExecStart
     // mistakes before spending a TCG boot. It does not contact host PID1.
     await exec('/usr/bin/systemd-analyze', [`--root=${root}`, '--man=no', 'verify',
-      ...Object.keys(dnsSystemdVmUnits()).filter((name) => name.endsWith('.service'))],
+      ...Object.keys(units).filter((name) => name.endsWith('.service'))],
     { env: { PATH: '/usr/bin:/usr/sbin:/bin:/sbin', SYSTEMD_LOG_LEVEL: 'warning', SYSTEMD_PAGER: 'cat' } });
   }
   const cpio = spawn('cpio', ['--create', '--format=newc', '--owner=0:0', '--quiet'], { cwd: root, timeout: 60000, killSignal: 'SIGKILL', stdio: ['pipe', 'pipe', 'pipe'] });

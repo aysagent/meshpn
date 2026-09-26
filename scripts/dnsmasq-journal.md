@@ -90,6 +90,9 @@ fixture backend не поддержаны. Не реализованы host reso
 boot guard, принятие новой boot-эпохи, independent pcap и live arm64-пилот.
 Старые DHCP leases также требуют явной политики обновления DNS.
 
-Дальше: ownership/service lifecycle и reboot в VM для dnsmasq; затем реальные
-версии resolved 249/networkd, пользовательские dry-run/apply/recovery скрипты
+Отдельный [systemd/reboot VM-режим](dnsmasq-vm.md) проверяет service lifecycle
+с непосредственным файловым исполнителем, DHCP при отказе adapter и отклонение
+старого boot-context. Это не расширяет полномочия данного namespace backend.
+
+Дальше: реальные версии resolved 249/networkd, пользовательские dry-run/apply/recovery скрипты
 и пилоты по [матрице клиентов](dns-client-matrix.md). Никакого SSH от помощника.
