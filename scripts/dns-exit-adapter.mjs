@@ -5,13 +5,14 @@ import { constants } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { readDnsUpstreamConfig } from './lib/dns-upstream-config-file.mjs';
 import { startDnsExitAdapter } from './lib/dns-exit-adapter.mjs';
+import { readDnsDomainPolicy } from './lib/dns-domain-policy.mjs';
 
 const fail = () => { throw new Error('DNS_EXIT_ADAPTER_INVALID'); };
 export function parseDnsExitArgs(args) {
   if (args.length === 1 && args[0] === '--help') return { help: true };
   const values = {};
   for (const arg of args) {
-    const match = /^--(config|exit-ip|exit-port|public-name|shared-hmac-key|listen-port)=(.+)$/.exec(arg);
+    const match = /^--(config|exit-ip|exit-port|public-name|shared-hmac-key|listen-port|domain-policy)=(.+)$/.exec(arg);
     if (!match || Object.hasOwn(values, match[1])) fail(); values[match[1]] = match[2];
   }
   for (const key of ['config', 'exit-ip', 'exit-port', 'public-name', 'shared-hmac-key', 'listen-port']) if (!values[key]) fail();
@@ -40,7 +41,7 @@ export async function readDnsExitSecret(path) {
 async function main() {
   const options = parseDnsExitArgs(process.argv.slice(2));
   if (options.help) {
-    console.log('Usage: node scripts/dns-exit-adapter.mjs --config=/path/upstream.json --exit-ip=PUBLIC_IP --exit-port=443 --public-name=vpn.example.com --shared-hmac-key=/path/key --listen-port=1053\nExplicit 127.0.0.1 UDP/TCP DNS adapter (ordinary IN types), through enc-SNI exit. No TUN, system DNS, direct resolver or plaintext fallback. See scripts/dns-exit-adapter.md.'); return;
+    console.log('Usage: node scripts/dns-exit-adapter.mjs --config=/path/upstream.json --exit-ip=PUBLIC_IP --exit-port=443 --public-name=vpn.example.com --shared-hmac-key=/path/key --listen-port=1053 [--domain-policy=/path/domains.json]\nExplicit 127.0.0.1 UDP/TCP DNS adapter (ordinary IN types), through enc-SNI exit. No TUN, system DNS, direct resolver or plaintext fallback. See scripts/dns-exit-adapter.md.'); return;
   }
   let adapter, secret, stopped = false, stop;
   const stopping = new Promise((resolve) => { stop = resolve; });
@@ -48,13 +49,14 @@ async function main() {
   process.on('SIGINT', signal); process.on('SIGTERM', signal);
   try {
     const profile = await readDnsUpstreamConfig(options.config);
+    const domainPolicy = options['domain-policy'] === undefined ? undefined : await readDnsDomainPolicy(options['domain-policy']);
     secret = await readDnsExitSecret(options['shared-hmac-key']);
     if (stopped) return;
     adapter = await startDnsExitAdapter({ profile, secret, exitAddress: options['exit-ip'], exitPort: options['exit-port'],
-      publicName: options['public-name'], port: options['listen-port'] });
+      publicName: options['public-name'], port: options['listen-port'], domainPolicy });
     secret.fill(0);
     if (!stopped) console.log(`DNS_EXIT_ADAPTER ${JSON.stringify({ status: 'listening', address: '127.0.0.1', port: adapter.port,
-      systemDnsChanged: false })}`);
+      systemDnsChanged: false, domainPolicyEnabled: domainPolicy !== undefined })}`);
     await stopping;
   } finally {
     secret?.fill(0); await adapter?.close();

@@ -32,6 +32,8 @@ test('networkd evidence requires exact gates, real renewal and complete cleanup'
     hostDnsFilesUnchanged: true, hostForwardingUnchanged: true, networkdOwnedLinkTakeover: false,
     hostDeploymentImplemented: false, rebootTested: false, durableJournalTested: false,
     baselineQueriesDuringProtection: 0, dnsCalls: 0, cloudDnsChanged: ['10.129.0.2', '10.129.0.3'],
+    dhcpDomainChanges: ['original', 'removed', 'replaced'], policyDenied: 8,
+    cloudPolicy: 'explicit-qname-deny-suffixes-before-doh-plus-guard',
     final: { processes: 1, zombies: 0 }, blockedLookupDeadlines: 0 };
   assertNetworkdEvidence(evidence);
   for (const key of Object.keys(evidence).filter((k) => !['checks', 'final'].includes(k)))

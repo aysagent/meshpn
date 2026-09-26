@@ -41,9 +41,10 @@ journal, SIGKILL/restart контроллера и adapter, VM reboot/power-cut 
 Отдельный [dnsmasq systemd/reboot стенд](dnsmasq-vm.md) проверяет настоящий
 service lifecycle в VM, сохранение DHCP при отказе adapter и отклонение старого
 boot-context. Это не live host takeover и не автоматическое принятие старого журнала.
-Для VPS 2 [resolved 249 + networkd](dns-networkd-lab.md): 9 namespace-проверок
+Для VPS 2 [resolved 249 + networkd](dns-networkd-lab.md): 11 namespace-проверок
 настоящего DHCP renew/reconfigure и отдельного VPN DNS-link, без takeover `eth0`.
-Его durable lifecycle и cloud-name policy, независимая от DHCP domains, ещё нужны.
+Явная QNAME deny-policy проверена при удалении/замене DHCP domains. Ещё нужны
+durable lifecycle DNS-link и выбор live-политики (блокирование/защищённый resolver).
 В README отдельно отмечены ограничения транспортов, маршрутов и IPv6.
 
 ## Три этапа и текущий статус

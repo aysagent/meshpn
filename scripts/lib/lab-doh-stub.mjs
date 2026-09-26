@@ -7,9 +7,11 @@ import { DNS_MAX_BYTES, DNS_UDP_MAX_BYTES, dnsError, parseDnsQuery, validateDnsR
 import { dnsHttpAge } from './dns-http-age.mjs';
 import { labDnsUpstreamTarget } from './dns-upstream-config.mjs';
 import { dnsExitTransportTarget } from './dns-exit-transport.mjs';
+import { compileDnsDomainPolicy } from './dns-domain-policy.mjs';
 
 export async function startLabDohStub({ port = 0, upstream, profile, relayPort, exitTransport, timeoutMs = 1500, maxInflight = 16,
-  maxTcpConnections = 16, tcpLifetimeMs = 5000 } = {}) {
+  maxTcpConnections = 16, tcpLifetimeMs = 5000, domainPolicy } = {}) {
+  const policy = domainPolicy === undefined ? null : compileDnsDomainPolicy(domainPolicy);
   if (exitTransport !== undefined) {
     if (upstream !== undefined || profile !== undefined || relayPort !== undefined) throw dnsError('DNS_CONFIG');
     upstream = dnsExitTransportTarget(exitTransport);
@@ -30,7 +32,7 @@ export async function startLabDohStub({ port = 0, upstream, profile, relayPort, 
   const target = { ...upstream };
   const tcpSockets = new Set(), tlsSockets = new Set(), requests = new Set(), jobs = new Set(), timers = new Set();
   let inflight = 0, peakInflight = 0, closing = false, closePromise, udpBound = false;
-  const counts = { queries: 0, forwarded: 0, succeeded: 0, failed: 0, rejected: 0 };
+  const counts = { queries: 0, forwarded: 0, succeeded: 0, failed: 0, rejected: 0, policyDenied: 0 };
   const errors = {};
   let peakTcpPendingBytes = 0, peakDohBodyBytes = 0;
   const timer = (ms, fn) => {
@@ -105,6 +107,7 @@ export async function startLabDohStub({ port = 0, upstream, profile, relayPort, 
     try { parsed = parseDnsQuery(query); } catch { counts.rejected++; return null; }
     if (closing) return null;
     if (parsed.edns?.version > 0) { counts.rejected++; return dnsFailure(query, 16); }
+    if (policy?.denies(parsed)) { counts.policyDenied++; return dnsFailure(query, 5); }
     if (inflight >= maxInflight) { counts.rejected++; return dnsFailure(query); }
     inflight++; peakInflight = Math.max(peakInflight, inflight); counts.forwarded++;
     try {

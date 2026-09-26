@@ -17,11 +17,11 @@ import { createNamespaceDnsAdapter } from './dns-adapter-process.mjs';
 import { assertSystemdDnsVm } from './dns-systemd-vm-safety.mjs';
 import { assertDnsmasqVm } from './dnsmasq-vm-safety.mjs';
 
-export async function startAdapterSoakLab({ family, modeTag, concurrency, timeoutMs = 250 }, directory) {
+export async function startAdapterSoakLab({ family, modeTag, concurrency, timeoutMs = 250, domainPolicy }, directory) {
   assertBrowserNamespace(); assert.ok([4, 6].includes(family)); assert.ok(['transparent-tls', 'combo-tls'].includes(modeTag));
   const links = JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout);
   assert.deepEqual(links.map((l) => l.ifname), ['lo']);
-  return startFixture({ family, modeTag, concurrency, timeoutMs }, directory);
+  return startFixture({ family, modeTag, concurrency, timeoutMs, domainPolicy }, directory);
 }
 
 export async function startSystemdVmAdapterFixture(directory) {
@@ -36,7 +36,7 @@ export async function startDnsmasqVmAdapterFixture(directory) {
   return startFixture({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 5000, port: 2053, replace: true }, directory);
 }
 
-async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0, replace = false }, directory) {
+async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0, replace = false, domainPolicy }, directory) {
   const addresses = family === 4 ? ['93.184.216.34', '93.184.216.35', '93.184.216.36']
     : ['2606:4700::1112', '2606:4700::1111', '2606:4700::1113'];
   for (const ip of addresses) await exec('ip', [family === 4 ? '-4' : '-6', 'addr', replace ? 'replace' : 'add', `${ip}/${family === 4 ? 32 : 128}`,
@@ -96,12 +96,13 @@ async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0,
     policy = dnsUpstreamExitPolicy(profile, { lookup: () => { dnsCalls++; throw new Error('lookup forbidden'); } });
     exitPort = await listen(exit, 0, addresses[2]);
     adapter = await startDnsExitAdapter({ profile, secret, publicName, exitAddress: addresses[2], exitPort,
-      port, timeoutMs, maxInflight: concurrency, maxTcpConnections: concurrency, tcpLifetimeMs: Math.max(3000, timeoutMs) });
+      port, timeoutMs, maxInflight: concurrency, maxTcpConnections: concurrency, tcpLifetimeMs: Math.max(3000, timeoutMs), domainPolicy });
     const stats = () => ({ ...adapter.stats(), resolverSockets: resolverSockets.size, resolverBodies: bodies,
       exitSockets: exitSockets.size, sessions: sessions.size, relayTimers: [...sessions].reduce((n, s) => n + s.timers.size, 0),
       dnsCalls, attempts, replay: replayGuard.stats() });
     return { adapter, stub: { port: adapter.port, stats: () => adapter.stats().stub }, stats, close,
       async createProcessAdapter() {
+        assert.equal(domainPolicy, undefined, 'process fixture does not implement domain policy');
         assert.equal(processAdapter, undefined); await adapter.close();
         processAdapter = await createNamespaceDnsAdapter({ profile: profileConfig, secretHex: secret.toString('hex'),
           publicName, exitAddress: addresses[2], exitPort, port: adapter.port });

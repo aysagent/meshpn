@@ -58,6 +58,43 @@ dig @127.0.0.1 -p 1053 example.com AAAA +tcp
 Первый этап интеграции — [offline lifecycle и namespace-only системный DNS стенд](dns-lifecycle.md).
 Он проверяет запуск/отказ/явное восстановление и не добавляет OS backend в этот CLI.
 
+## Явная политика внутренних имён
+
+Необязательный `--domain-policy=/absolute/path/domains.json` включает локальный
+отказ **до DoH/соединения с exit**, независимо от DHCP search/routing domains.
+Пример для стенда VPS 2 (не автоматический выбор политики живого клиента):
+
+```json
+{
+  "schema": 1,
+  "denySuffixes": ["ru-central1.internal", "auto.internal"]
+}
+```
+
+Каждая запись запрещает само имя и все его поддомены для любого принимаемого
+IN-типа, UDP и TCP. Ответ — `REFUSED`, без ответа от upstream; счётчик
+`stats().stub.policyDenied` не содержит имён. ASCII-регистр и завершающая точка
+нормализуются; сравниваются границы wire labels, не строковое совпадение.
+`notauto.internal` и `auto.internal.example` не совпадают с `auto.internal`.
+
+Конфигурация: ровно schema/denySuffixes, 1–128 уникальных суффиксов, ASCII labels
+до 63 байт, полное имя до 253 символов без финальной точки. Допустим underscore;
+IDN задаётся A-label (`xn--…`), Unicode/wildcard/URL/пустые labels запрещены.
+Файл regular, не symlink, UTF-8 JSON до 16 KiB. Ошибка останавливает запуск до
+bind; снимок загружается один раз, изменение файла не является hot reload.
+Строка готовности содержит `domainPolicyEnabled`, но не список имён.
+
+Без флага политики нет. Это **фильтр QNAME**, не универсальная защита внутренних
+имён: новые DHCP-домены не добавляются автоматически; short names, reverse zones
+и другие внутренние суффиксы нужно учитывать отдельно. Не анализирует имена в
+EDNS/RDATA, CNAME/DNAME/HTTPS-цепочки, которые рекурсивный upstream может пройти
+внутри обработки разрешённого QNAME. Следующий явный запрос к запрещённому имени
+будет отклонён, но фильтр не контролирует рекурсию публичного resolver.
+Не блокирует DNS других приложений вне адаптера. Системной интеграции всё ещё
+нужен guard: retained cloud domains на `eth0` могут направить запрос мимо адаптера.
+Live-выбор «блокировать внутренние имена или обеспечить отдельный защищённый
+внутренний resolver» требует согласования; прямых исключений здесь нет.
+
 ## Как исключён direct fallback
 
 DoH использует `https.Agent` с собственной фабрикой TLS-соединения. TLS получает
@@ -117,6 +154,7 @@ API `startDnsExitAdapter` принимает только настоящий pub
 
 ```bash
 npm run test:dns-exit-adapter
+npm run test:dns-domain-policy
 npm run test:dns-exit-adapter-real
 ```
 

@@ -56,7 +56,7 @@ test('public IPv4/IPv6 transport creation is offline, branded, and close is idem
 });
 
 async function fixture(t, { badCa = false, wrongName = false, wrongSecret = false, mode = 'normal', timeoutMs = 300,
-  answer = fixtureDnsAnswer, responseHeaders = {}, chunkBytes = 0, bodyDelayMs = 0, onQuery = () => {} } = {}) {
+  answer = fixtureDnsAnswer, responseHeaders = {}, chunkBytes = 0, bodyDelayMs = 0, onQuery = () => {}, domainPolicy } = {}) {
   let bodies = 0, attempts = 0;
   const wire = [];
   const sockets = new Set(), sessions = [];
@@ -104,7 +104,7 @@ async function fixture(t, { badCa = false, wrongName = false, wrongSecret = fals
   const transport = createLabDnsExitTransport(options);
   // Transport owns snapshots, not the caller's mutable key/options.
   options.secret.fill(0); options.exitAddress = 'resolver.test'; options.exitPort = 1;
-  const stub = await startLabDohStub({ exitTransport: transport, timeoutMs, maxInflight: 2 });
+  const stub = await startLabDohStub({ exitTransport: transport, timeoutMs, maxInflight: 2, domainPolicy });
   t.after(async () => {
     await stub.close(); await transport.close();
     for (const socket of sockets) socket.destroy();
@@ -119,6 +119,25 @@ async function fixture(t, { badCa = false, wrongName = false, wrongSecret = fals
   return { stub, transport, wire, exitPort: exit.address().port, originPort: origin.address().port,
     counts: () => ({ bodies, attempts }), stopExit: () => new Promise((resolve) => exit.close(resolve)) };
 }
+test('QNAME policy refuses ordinary query types locally before exit TLS/DoH, UDP and TCP', async (t) => {
+  const domainPolicy = { schema: 1, denySuffixes: ['auto.internal'] };
+  const lab = await fixture(t, { domainPolicy });
+  domainPolicy.denySuffixes[0] = 'changed.test'; // The running policy is a snapshot.
+  let denied = 0;
+  for (const tcp of [false, true]) for (const type of [1, 28, 5, 12, 16, 33, 64, 65, 65280]) {
+    const q = makeDnsQuery('Case.AUTO.internal.', type, 456, 1232);
+    const r = validateDnsResponse(await queryLabDns(lab.stub.port, q, { tcp }), q);
+    assert.equal(r.rcode, 5); assert.deepEqual(r.counts, [0, 0, 1]); assert.equal(r.flags & 0x20, 0); denied++;
+  }
+  assert.equal(lab.stub.stats().policyDenied, denied); assert.equal(lab.stub.stats().forwarded, 0);
+  assert.equal(lab.transport.stats().connections, 0); assert.deepEqual(lab.counts(), { bodies: 0, attempts: 0 });
+  for (const tcp of [false, true]) {
+    const q = makeDnsQuery('notauto.internal');
+    assert.equal(validateDnsResponse(await queryLabDns(lab.stub.port, q, { tcp }), q).rcode, 0);
+  }
+  assert.equal(lab.counts().bodies, 2);
+});
+
 for (const tcp of [false, true]) for (const type of [1, 28, 12, 16, 33, 64, 65, 65280]) test(`in-memory relay ${tcp ? 'TCP' : 'UDP'} type ${type}: verified TLS, identity/path, snapshot, no listener`, async (t) => {
   const lab = await fixture(t);
   const packet = makeDnsQuery('private-adapter.dns-lab.test', type, 4321);
@@ -319,7 +338,28 @@ for (const signal of ['SIGINT', 'SIGTERM']) test(`CLI explicit bind then ${signa
     '--exit-port=443', '--public-name=relay.test', `--shared-hmac-key=${secret}`, `--listen-port=${port}`], { env: cleanEnvironment(process.env) });
   t.after(() => proc.stop());
   const ready = await proc.waitFor(/DNS_EXIT_ADAPTER (\{[^\n]+\})/, 5000);
-  assert.deepEqual(JSON.parse(ready[1]), { status: 'listening', address: '127.0.0.1', port, systemDnsChanged: false });
+  assert.deepEqual(JSON.parse(ready[1]), { status: 'listening', address: '127.0.0.1', port, systemDnsChanged: false, domainPolicyEnabled: false });
   await proc.stop(signal); assert.equal(proc.proc.exitCode, 0);
   portProbe.listen(port, '127.0.0.1'); await once(portProbe, 'listening'); await new Promise((resolve) => portProbe.close(resolve));
+});
+test('CLI loads domain policy before listening; rejects invalid file and answers denied queries locally', { timeout: 10000 }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'meshpn-dns-policy-cli-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const config = join(dir, 'upstream.json'), secret = join(dir, 'key'), policy = join(dir, 'policy.json');
+  await writeFile(config, JSON.stringify(input)); await writeFile(secret, randomBytes(32), { mode: 0o600 });
+  const probe = net.createServer(); probe.listen(0, '127.0.0.1'); await once(probe, 'listening');
+  const port = probe.address().port; await new Promise((resolve) => probe.close(resolve));
+  const args = ['scripts/dns-exit-adapter.mjs', `--config=${config}`, '--exit-ip=93.184.216.35',
+    '--exit-port=443', '--public-name=relay.test', `--shared-hmac-key=${secret}`, `--listen-port=${port}`, `--domain-policy=${policy}`];
+  await writeFile(policy, '{}');
+  const bad = await runCommand(process.execPath, args, { env: cleanEnvironment(process.env) });
+  assert.equal(bad.code, 1); assert.equal(bad.stdout, ''); assert.equal(bad.stderr.trim(), 'DNS_EXIT_ADAPTER_INVALID');
+  await writeFile(policy, JSON.stringify({ schema: 1, denySuffixes: ['auto.internal'] }));
+  const proc = child(process.execPath, args, { env: cleanEnvironment(process.env) }); t.after(() => proc.stop());
+  const ready = JSON.parse((await proc.waitFor(/DNS_EXIT_ADAPTER (\{[^\n]+\})/, 5000))[1]);
+  assert.equal(ready.domainPolicyEnabled, true);
+  for (const tcp of [false, true]) {
+    const q = makeDnsQuery('vm.auto.internal');
+    assert.equal(validateDnsResponse(await queryLabDns(port, q, { tcp }), q).rcode, 5);
+  }
+  await proc.stop(); assert.equal(proc.proc.exitCode, 0);
 });

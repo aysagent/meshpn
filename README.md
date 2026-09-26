@@ -177,11 +177,13 @@ npm run dns:check-upstream -- --config=/path/to/upstream.json
 восстановление связи после перезагрузки. Актуальные Node-регрессии: **1191/1191 PASS**;
 отдельно три настоящих dnsmasq namespace-теста — PASS.
 
-[Профиль VPS 2: resolved 249 + networkd](scripts/dns-networkd-lab.md) — **9/9 PASS**:
+[Профиль VPS 2: resolved 249 + networkd](scripts/dns-networkd-lab.md) — **11/11 PASS**:
 настоящие DHCP renew/reconfigure, отдельный VPN DNS-link без захвата `eth0`,
-возврат к актуальному DHCP-DNS. Это namespace-стенд, не установщик; независимая
-от DHCP политика cloud-имён и journal/lifecycle нового link ещё впереди.
-После добавления стенда Node-регрессии: **1196/1196 PASS**.
+возврат к актуальному DHCP-DNS. Явная QNAME deny-policy в adapter сохраняет отказ
+для заданных cloud-имён после удаления/замены DHCP domains; включается отдельным
+[`--domain-policy=/path/domains.json`](scripts/dns-exit-adapter.md#явная-политика-внутренних-имён).
+Это namespace-стенд, не установщик; journal/lifecycle нового link и live-выбор
+политики ещё впереди. С этим расширением Node-регрессии: **1202/1202 PASS**.
 
 Следующий порядок работ:
 

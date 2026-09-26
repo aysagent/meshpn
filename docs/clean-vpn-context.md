@@ -10,7 +10,34 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
-### Дополнение 2026-09-26: реальный resolved 249/networkd/DHCP
+### Дополнение 2026-09-26: явная QNAME policy независимо от DHCP
+
+Добавлен opt-in `--domain-policy=/path/domains.json` в DNS exit adapter:
+schema 1 / denySuffixes, локальный REFUSED до DoH/exit dial. Матчинг по binary
+wire label boundaries, ASCII case-fold, snapshot, bounded regular nofollow JSON.
+Без флага поведения не меняет. Это список QNAME suffixes, не автообнаружение
+внутренних имён, не фильтр EDNS/RDATA или рекурсивных CNAME/DNAME/HTTPS-цепочек.
+Полный контракт и пример: [DNS adapter](../scripts/dns-exit-adapter.md).
+
+[Networkd-стенд](../scripts/dns-networkd-lab.md) расширен до **11/11 PASS**:
+настоящие Renew с удалением и заменой DHCP domains. Запросы к прежним
+ru-central1.internal/auto.internal теперь проходят к adapter через `~.` и
+отклоняются его политикой. Счётчики resolver bodies / exit attempts и direct DNS
+не растут, обычный публичный UDP/TCP DNS работает. Новый неизвестный домен
+не становится запрещённым автоматически; live-политика ещё не выбрана.
+Guard сохраняется для путей, где resolved выбирает uplink вместо adapter.
+
+Два реальных прогона PASS; в итоговом отчёте 5 ACK / 2 DISCOVER / 5 REQUEST,
+policyDenied=12, blockedLookupDeadlines=4, final processes=1/zombies=0,
+host DNS files/forwarding неизменны. Targeted 85/85, Node **1202/1202 PASS**, без skips:
+`/var/tmp/meshpn-acceptance-KZPgj3/report.json`. Браузеры/VM заново не прогонялись.
+
+Следующий этап: durable create/delete/ownership отдельного VPN DNS-link,
+аварийное восстановление и systemd/VM lifecycle этого варианта. Затем остаются
+системный resolver Radxa, согласованный live opt-in и пользовательские пилоты.
+DNS v1 не закрыт. Ниже предыдущий этап зафиксирован как история.
+
+### Предыдущий этап 2026-09-26: реальный resolved 249/networkd/DHCP
 
 Добавлен [networkd namespace-стенд](../scripts/dns-networkd-lab.md), 9/9 PASS:
 Ubuntu `249.11-0ubuntu3.22` (у пользователя `.21`), настоящий networkd DHCP-клиент,

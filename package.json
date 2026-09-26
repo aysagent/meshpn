@@ -79,6 +79,7 @@
     "test:dnsmasq-real": "node --test scripts/test-dnsmasq-real.mjs",
     "dns:networkd-lab": "node scripts/dns-networkd-lab.mjs",
     "test:dns-networkd": "node --test scripts/test-dns-networkd.mjs",
+    "test:dns-domain-policy": "node --test scripts/test-dns-domain-policy.mjs",
     "test:dns-networkd-real": "node --test scripts/test-dns-networkd-real.mjs",
     "test:dns-inspect": "node --test scripts/test-dns-inspect.mjs",
     "test:dns-resolved": "node --test scripts/test-dns-resolved.mjs",

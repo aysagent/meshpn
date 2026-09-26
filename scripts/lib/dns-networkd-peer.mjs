@@ -14,9 +14,9 @@ export async function startNetworkdPeer(executable) {
     stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, MESHPN_NETWORKD_GATEWAY: await readlink('/proc/self/ns/net'),
       MESHPN_NETWORKD_PEER_MOUNT: await readlink('/proc/self/ns/mnt') } });
   let id = 0, closed = false;
-  const call = async (op, dns) => {
+  const call = async (op, dns, domains) => {
     const n = ++id, reply = peer.waitFor(new RegExp(`CLOUD_REPLY ${n} ([^\\n]+)\\n`), 10000);
-    peer.proc.stdin.write(`${JSON.stringify({ id: n, op, dns })}\n`);
+    peer.proc.stdin.write(`${JSON.stringify({ id: n, op, dns, domains })}\n`);
     const value = JSON.parse((await reply)[1]); assert.equal(value.ok, true, value.error); return value.result;
   };
   try {
@@ -24,7 +24,7 @@ export async function startNetworkdPeer(executable) {
     await exec('ip', ['link', 'add', 'eth0', 'type', 'veth', 'peer', 'name', 'cloud0']);
     await exec('ip', ['link', 'set', 'cloud0', 'netns', String(peer.proc.pid)]);
     await exec('ip', ['link', 'set', 'eth0', 'up']); await call('configure');
-    return { start: (dns) => call('start', dns), stats: () => call('stats'),
+    return { start: (dns, domains = 'original') => call('start', dns, domains), stats: () => call('stats'),
       async close() { if (closed) return; closed = true; try { await call('close'); } finally { await peer.stop(); } } };
   } catch (e) { await peer.stop(); throw e; }
 }
@@ -42,7 +42,7 @@ async function main(executable) {
   let daemon, configured = false, log = '', acks = 0, discovers = 0, requests = 0, pendingLog = '';
   const servers = [];
   const close = async () => { await daemon?.stop(); await Promise.all(servers.map((s) => s.close())); };
-  const handle = async ({ op, dns }) => {
+  const handle = async ({ op, dns, domains }) => {
     if (op === 'configure') {
       assert.equal(configured, false); configured = true;
       await exec('ip', ['link', 'set', 'lo', 'up']); await exec('ip', ['link', 'set', 'cloud0', 'up']);
@@ -53,9 +53,12 @@ async function main(executable) {
     if (op === 'stats') return { hits: servers.map((s) => s.hits()), acks, discovers, requests };
     if (op === 'close') { await close(); return {}; }
     assert.equal(op, 'start'); assert.ok(['10.129.0.2', '10.129.0.3'].includes(dns));
+    assert.ok(['original', 'removed', 'replaced'].includes(domains));
+    const search = { original: 'dhcp-option=option:domain-search,ru-central1.internal,auto.internal\n',
+      removed: '', replaced: 'dhcp-option=option:domain-search,changed.internal\n' }[domains];
     await daemon?.stop(); pendingLog = '';
     const cfg = '/run/networkd-lab/cloud-dhcp.conf';
-    await writeFile(cfg, `port=0\ninterface=cloud0\nbind-interfaces\ndhcp-authoritative\nno-ping\ndhcp-range=10.129.0.18,10.129.0.18,255.255.255.0,2m\ndhcp-option=3,10.129.0.2\ndhcp-option=6,${dns}\ndhcp-option=option:domain-search,ru-central1.internal,auto.internal\n`);
+    await writeFile(cfg, `port=0\ninterface=cloud0\nbind-interfaces\ndhcp-authoritative\nno-ping\ndhcp-range=10.129.0.18,10.129.0.18,255.255.255.0,2m\ndhcp-option=3,10.129.0.2\ndhcp-option=6,${dns}\n${search}`);
     daemon = child(executable, ['--no-daemon', `--conf-file=${cfg}`, '--pid-file=', '--log-facility=-', '--dhcp-leasefile=/run/networkd-lab/cloud-leases'],
       { env: { PATH: '/usr/bin:/usr/sbin:/bin:/sbin', LC_ALL: 'C' } });
     daemon.proc.stderr.on('data', (b) => {

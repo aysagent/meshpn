@@ -1,7 +1,7 @@
 # VPS 2: resolved 249, networkd и настоящий DHCP
 
 Статус: изолированный namespace-стенд, **не установщик DNS на VPS**.
-На 2026-09-26: **9/9 проверок PASS** с Ubuntu `249.11-0ubuntu3.22` и dnsmasq 2.90.
+На 2026-09-26: **11/11 проверок PASS** с Ubuntu `249.11-0ubuntu3.22` и dnsmasq 2.90.
 В пользовательском отчёте была `.21`: проверена ветка 249 с более новым Ubuntu
 patchlevel, не идентичный образ VPS. Host DNS files и forwarding не изменены.
 
@@ -62,12 +62,17 @@ loopback adapter и routing domain `~.`. Никакого TUN. Запросы о
 4. Внутренние имена недоступны, ни cloud DNS, ни DoH fixture их не получают.
 5. DHCP renew меняет DNS на `10.129.0.3`; VPN DNS не меняется.
 6. Networkd Reconfigure с новым DHCP обменом сохраняет VPN DNS.
-7. Отказ/возврат exit без прямого DNS fallback.
-8. Чужая правка owned link не затирается, guard сохраняется.
-9. Disable возвращает путь через текущий DHCP-DNS; UDP/TCP positive controls.
+7. DHCP renew удаляет cloud domains; прежние cloud-имена отклоняет adapter до DoH.
+8. DHCP renew заменяет domains на `changed.internal`; прежние cloud-имена по-прежнему
+   отклоняются, публичный UDP/TCP DNS продолжает работать.
+9. Отказ/возврат exit без прямого DNS fallback.
+10. Чужая правка owned link не затирается, guard сохраняется.
+11. Disable возвращает путь через текущий DHCP-DNS; UDP/TCP positive controls.
 
-В прогоне: три DHCP ACK, два DISCOVER, три REQUEST; protected baseline queries=0,
-final processes=1/zombies=0. Шесть облачных TCP lookup завершены ограниченным
+В расширенном прогоне требуется минимум пять DHCP ACK; protected baseline queries=0,
+final processes=1/zombies=0. После удаления/замены domains увеличивается именно
+`policyDenied`, а DoH bodies/exit attempts и direct DNS observer counts не растут.
+Облачные TCP lookup с сохранёнными domains могут завершаться ограниченным
 таймаутом клиента: это явно `blockedLookupDeadlines`, **не DNS error response**.
 Host launcher ограничивает весь прогон 120 секундами; диагностика демонов bounded.
 После завершения удаляются только собственные временные файлы стенда.
@@ -78,16 +83,19 @@ resolv.conf и systemd config перекрываются mount-ами, host inod
 Namespace-local kernel sysctl networkd в этом режиме не управляются; предупреждения
 о невозможности их менять не выдаются за проверку sysctl-интеграции.
 
-## Важная незакрытая граница: внутренние имена
+## Политика внутренних имён и оставшиеся границы
 
-Отказ cloud DNS в этой матрице зависит от сохранённых более специфичных
-`ru-central1.internal` / `auto.internal` на `eth0` и OUTPUT guard. Это **не
-самостоятельная deny-policy**. Если DHCP уберёт эти domains, одно `~.` может
-отправить такие имена в публичный DoH. Поэтому данный fixture нельзя переносить
-на live-клиент как готовую защиту внутренних имён.
+Adapter запускается с явной [QNAME deny-policy](dns-exit-adapter.md#явная-политика-внутренних-имён)
+для `ru-central1.internal` / `auto.internal`. Пока более специфичные domains
+сохраняются на `eth0`, direct DNS блокирует OUTPUT guard. После их удаления или
+замены DHCP-сервером запрос попадает через `~.` в adapter и получает локальный
+`REFUSED`, не отправляется в DoH. Это проверяется через настоящий DHCP Renew,
+runtime Domains resolved и счётчики adapter/exit/resolver, без подделки lease.
+Политика покрывает перечисленные QNAME suffixes; `changed.internal` не добавляется
+автоматически. Не обещает фильтрацию upstream recursion/CNAME/EDNS и всех возможных
+внутренних имён. Встроенный список здесь — выбор fixture, не live-настройка VPS 2.
 
-Следующий ограниченный этап: явная политика внутренних доменов перед DoH,
-проверка удаления/замены DHCP domains; затем durable ownership/journal для
+Следующий ограниченный этап: durable ownership/journal для
 создания/удаления VPN DNS-link и lifecycle в VM. Нельзя ни добавлять прямое
 исключение, ни молча разрешать публичный DNS для cloud-имён. Live-политика ещё
 не согласована. Оставшиеся установщик/откат и пилоты — в [матрице](dns-client-matrix.md).

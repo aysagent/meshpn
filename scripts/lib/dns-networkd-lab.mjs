@@ -17,6 +17,7 @@ import { startNetworkdPeer } from './dns-networkd-peer.mjs';
 export const NETWORKD_CHECKS = Object.freeze(['real-dhcp-baseline', 'resolved-refuses-networkd-owned-link',
   'owned-link-protected-without-uplink-takeover', 'cloud-names-blocked-not-publicly-forwarded',
   'real-dhcp-renew-does-not-replace-vpn-dns', 'networkd-reconfigure-preserves-owned-vpn-link',
+  'dhcp-domain-removal-policy-refuses-before-doh', 'dhcp-domain-replacement-policy-refuses-before-doh',
   'exit-outage-no-direct-fallback', 'foreign-owned-link-edit-not-overwritten',
   'disable-preserves-latest-dhcp-not-stale-snapshot']);
 export function assertNetworkdEvidence(report) {
@@ -25,6 +26,9 @@ export function assertNetworkdEvidence(report) {
   for (const k of ['networkdOwnedLinkTakeover', 'hostDeploymentImplemented', 'rebootTested', 'durableJournalTested']) assert.equal(report[k], false, k);
   assert.equal(report.baselineQueriesDuringProtection, 0); assert.equal(report.dnsCalls, 0);
   assert.deepEqual(report.cloudDnsChanged, ['10.129.0.2', '10.129.0.3']);
+  assert.deepEqual(report.dhcpDomainChanges, ['original', 'removed', 'replaced']);
+  assert.equal(report.cloudPolicy, 'explicit-qname-deny-suffixes-before-doh-plus-guard');
+  assert.ok(Number.isSafeInteger(report.policyDenied) && report.policyDenied >= 8);
   assert.equal(report.final.processes, 1); assert.equal(report.final.zombies, 0);
   assert.ok(Number.isSafeInteger(report.blockedLookupDeadlines) && report.blockedLookupDeadlines >= 0);
 }
@@ -149,7 +153,8 @@ export async function runNetworkdLab(directory, options) {
   };
   const hits = async () => [...(await peer.stats()).hits, ...observers.map((s) => s.hits())];
   try {
-    lab = await startAdapterSoakLab({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 500 }, directory);
+    lab = await startAdapterSoakLab({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 500,
+      domainPolicy: { schema: 1, denySuffixes: ['ru-central1.internal', 'auto.internal'] } }, directory);
     for (const proto of ['udp', 'tcp']) await exec('iptables', ['-w', '2', '-A', 'OUTPUT', '-d', '127.0.0.53', '-p', proto, '--dport', '53', '-j', 'ACCEPT']);
     peer = await startNetworkdPeer(options.dnsmasq);
     for (const address of ['127.0.0.55', '::1']) observers.push(await sentinel(address));
@@ -163,9 +168,10 @@ export async function runNetworkdLab(directory, options) {
     const eth = (await links()).find((l) => l.ifname === 'eth0').ifindex;
     const dns = (last) => [[2, [10, 129, 0, last], 0, '']];
     const domains = [['ru-central1.internal', false], ['auto.internal', false]];
+    let expectedDomains = domains;
     const cloudSettings = async (last) => {
       await wait(async () => assert.deepEqual(await bus.property(ro, eth, 'DNSEx'), dns(last)), 'DHCP DNS applied');
-      assert.deepEqual(await bus.property(ro, eth, 'Domains'), domains);
+      await wait(async () => assert.deepEqual(await bus.property(ro, eth, 'Domains'), expectedDomains), 'DHCP domains applied');
       const lease = await readFile(`/run/systemd/netif/leases/${eth}`, 'utf8');
       assert.match(lease, /^ADDRESS=10\.129\.0\.18$/m); assert.match(lease, new RegExp(`^DNS=10\\.129\\.0\\.${last}$`, 'm'));
     };
@@ -205,6 +211,22 @@ export async function runNetworkdLab(directory, options) {
     await wait(async () => assert.ok((await peer.stats()).acks > reconfigureAcks), 'DHCP after reconfigure');
     await cloudSettings(3); await backend.verify(); await lookup('test', '192.0.2.123');
     assert.deepEqual(await hits(), protectedHits); checks.push('networkd-reconfigure-preserves-owned-vpn-link');
+    for (const [mode, nextDomains, check] of [
+      ['removed', [], 'dhcp-domain-removal-policy-refuses-before-doh'],
+      ['replaced', [['changed.internal', false]], 'dhcp-domain-replacement-policy-refuses-before-doh'],
+    ]) {
+      await peer.start('10.129.0.3', mode); const beforeAcks = (await peer.stats()).acks;
+      expectedDomains = nextDomains;
+      await busRun(['call', no, networkPath, 'org.freedesktop.network1.Link', 'Renew']);
+      await wait(async () => assert.ok((await peer.stats()).acks > beforeAcks), 'DHCP domain-change ACK');
+      await cloudSettings(3); await backend.verify();
+      const deniedBefore = lab.adapter.stats().stub.policyDenied, attemptsBefore = lab.stats().attempts;
+      await blockedCloud();
+      assert.ok(lab.adapter.stats().stub.policyDenied >= deniedBefore + 4, 'removed cloud routing must reach adapter policy');
+      assert.equal(lab.stats().attempts, attemptsBefore, 'denied names opened an exit connection');
+      for (const tcp of [false, true]) await lookup('test', '192.0.2.123', tcp);
+      checks.push(check);
+    }
     await lab.stopExit(); await lookup('test', null); await blockedCloud(); assert.deepEqual(await hits(), protectedHits);
     await lab.restartExit(); await lookup('test', '192.0.2.123'); checks.push('exit-outage-no-direct-fallback');
     await bus.set(ro, resolvedMethod('Domains', [['foreign.test', true]], vpn));
@@ -219,7 +241,8 @@ export async function runNetworkdLab(directory, options) {
     report = { schema: 1, kind: 'clean-vpn-networkd-lab', status: 'passed', versions, hashes, checks,
       realDhcpRenew: true, dhcp: await peer.stats(), separateCloudNamespace: true,
       cloudDnsChanged: ['10.129.0.2', '10.129.0.3'], networkdOwnedLinkTakeover: false,
-      cloudPolicy: 'fixture-only-block-with-retained-specific-domains-and-guard', baselineQueriesDuringProtection: 0,
+      cloudPolicy: 'explicit-qname-deny-suffixes-before-doh-plus-guard', baselineQueriesDuringProtection: 0,
+      dhcpDomainChanges: ['original', 'removed', 'replaced'], policyDenied: lab.adapter.stats().stub.policyDenied,
       privateBus: true, blockedLookupDeadlines, dnsCalls: 0, hostDeploymentImplemented: false, rebootTested: false, durableJournalTested: false,
       limitations: ['no-uplink-pcap', 'no-live-VPS', 'no-arbitrary-cloud-domain-policy',
         'not-complete-Ubuntu22-rootfs', 'IPv6-guard-installed-not-traffic-tested', 'no-networkd-sysctl-management'] };

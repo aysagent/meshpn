@@ -11,6 +11,6 @@ test('resolved 249 + networkd: real DHCP renewal/reconfigure, owned VPN link and
   { env: cleanEnvironment(process.env), timeoutMs: 130000, maxBytes: 128 * 1024 });
   assert.equal(r.reason, null); assert.equal(r.code, 0, r.stderr);
   const report = JSON.parse(r.stdout); assertNetworkdEvidence(report);
-  assert.equal(report.separateCloudNamespace, true); assert.ok(report.dhcp.acks >= 3);
+  assert.equal(report.separateCloudNamespace, true); assert.ok(report.dhcp.acks >= 5);
   assert.match(report.versions['systemd-resolved'], /^systemd 249 /);
 });
