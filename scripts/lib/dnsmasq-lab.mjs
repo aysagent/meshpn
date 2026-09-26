@@ -17,13 +17,14 @@ import { readDnsmasqJournal, inspectDnsmasqTransaction } from './dnsmasq-journal
 import { controller } from './dns-lifecycle-crash-lab.mjs';
 import { setupResolverObjectLab } from './dns-resolver-object-lab.mjs';
 
-export async function runDnsmasqLab(directory, executable, { usb = false, journal = false, resolverObject = false, radxa = false } = {}) {
+export async function runDnsmasqLab(directory, executable, { usb = false, journal = false, resolverObject = false, radxa = false, localhostBaseline = false } = {}) {
   await assertDnsMountNamespace();
   assert.ok(!journal || usb, 'journal lab requires USB fixture');
   assert.ok(!resolverObject || journal, 'resolver object requires journal guard and USB fixture');
   assert.ok(!radxa || resolverObject, 'paired journal requires resolver fixture');
+  assert.ok(!localhostBaseline || resolverObject, 'localhost baseline requires resolver fixture');
   directory = await realpath(directory);
-  const resolver = resolverObject ? await setupResolverObjectLab(directory) : null;
+  const resolver = resolverObject ? await setupResolverObjectLab(directory, { localhostBaseline }) : null;
   assert.ok(executable?.startsWith('/'), 'absolute MESHPN_DNSMASQ executable required');
   const links = JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout);
   assert.deepEqual(links.map((l) => l.ifname), ['lo']);
@@ -317,6 +318,10 @@ export async function runDnsmasqLab(directory, executable, { usb = false, journa
         'baseline daemon must not reach direct upstream before release');
       assert.equal(hits(), before, 'baseline must stay blocked before explicit release');
       journalEvidence.baselineDaemonBlockedBeforeRelease = true;
+      if (localhostBaseline) {
+        for (const tcp of [false, true]) await resolver.systemLookup(`system-restored-guarded-${tcp ? 'tcp' : 'udp'}`, null, tcp, 4, true);
+        assert.equal(hits(), before, 'restored system resolver must not reach direct upstream under guard');
+      }
       if (radxa) {
         await stop('SIGKILL'); assert.equal((await resolver.recover()).status, 'restored');
         await lease('paired-restored-daemon-dhcp', false);
@@ -339,6 +344,7 @@ export async function runDnsmasqLab(directory, executable, { usb = false, journa
     }
     await lookup('explicit-restore-udp', '203.0.113.8');
     await lookup('explicit-restore-tcp', '203.0.113.8', true);
+    if (localhostBaseline) for (const tcp of [false, true]) await resolver.systemLookup(`system-baseline-positive-${tcp ? 'tcp' : 'udp'}`, '203.0.113.8', tcp);
     await forwardedProbes('restored', false);
     if (upstream) assert.deepEqual(await upstream.hits(), [4, 4], 'both restored external sentinels must answer');
     if (peer) for (const family of [4, 6]) for (const tcp of [false, true]) {

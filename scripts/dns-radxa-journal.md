@@ -84,6 +84,11 @@ dry-run, restart daemon. Node acceptance — **1432/1432 PASS**, без skips;
 
 ## Дальше
 
+Дополнение: `--radxa-journal --localhost-baseline` проверяет также заранее
+выбранный regular localhost resolver, без изменения исходного DHCP/upstream
+fixture. Recovery и offline disable различают объекты по inode даже при
+одинаковых байтах; guard остаётся. Это не автоматический repair живой Radxa.
+
 [Пара проверена под настоящим systemd в VM](dns-radxa-vm.md): 12/12 проверок
 в двух загрузках, сохранность трёх журналов и отказ старого epoch; три
 whole-guest crash точки — 3/3 PASS (ещё шесть загрузок).

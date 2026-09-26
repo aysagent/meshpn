@@ -10,6 +10,36 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: явный localhost-file baseline Radxa
+
+Resolver-object backend поддерживает второй узкий baseline: regular 0644,
+точные bytes `nameserver 127.0.0.1\n`, тот же uid/gid. Выбор явный, legacy
+dangling-stub остаётся default. Original/managed/restored сохраняют три разных
+identity даже при одинаковом содержимом; чужой inode не принимается по hash.
+Откат не снимает guard, наличие файла не означает здоровье upstream.
+Не live repair; backend всё ещё private fixture 0700, не запись в host `/etc`.
+
+`dnsmasq-lab.mjs --radxa-journal --localhost-baseline`: **PASS**, 15 controller
+SIGKILL, 13 NSS-проб, 62 USB/dnsmasq проверки, 7 DHCP DORA, 3 ownership refusals.
+Повтор legacy paired и standalone resolver — также PASS. Восстановленный DNS
+проверен заблокированным под guard и работающим по UDP/TCP после отдельного
+fixture teardown. Первый новый прогон упал: заблокированный TCP-запрос через
+baseline dnsmasq не завершился за 5 секунд. Отрицательный probe теперь отдельно
+учитывает deadline/SIGTERM без ответа и сверяет нулевые upstream counters;
+успешные DNS-пробы timeout не принимают, общий deadline не увеличен.
+
+Целевые unit/protocol проверки **202/202 PASS**, включая прежний VM protocol.
+Первый Node acceptance **1478/1478 PASS**:
+`/var/tmp/meshpn-acceptance-S01I6C/report.json`. Повтор на окончательной версии
+negative probe — **1476/1478**, `/var/tmp/meshpn-acceptance-RxCxSd/report.json`:
+два старых process-cleanup теста. В ограниченной диагностической серии ошибка
+воспроизведена: `/proc/<pid>/stat` возвращает ESRCH, когда процесс исчезает во
+время read; тест обрабатывал только ENOENT. Отдельное исправление следует дальше,
+неуспешный отчёт не выдаётся за PASS. DNS namespace проверки прошли на конечном коде.
+Новый baseline пока не переносит на себя результат VM для dangling-link варианта.
+Следом — ограниченный read-only client preflight/ownership и opt-in deployment;
+не SSH, не автоматическое исправление живой Radxa. DNS v1 остаётся открыт.
+
 ### Дополнение 2026-09-27: Radxa paired coordinator в systemd VM
 
 [Новый VM-режим](../scripts/dns-radxa-vm.md) проверяет общую транзакцию dnsmasq

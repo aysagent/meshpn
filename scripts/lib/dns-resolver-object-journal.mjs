@@ -1,4 +1,4 @@
-/** Narrow dangling-symlink transition; private fixtures only, no guard release. */
+/** Narrow reviewed symlink/localhost-file transition; private fixtures only, no guard release. */
 import assert from 'node:assert/strict';
 import { randomBytes, createHash } from 'node:crypto';
 import { isDeepStrictEqual as same } from 'node:util';
@@ -27,7 +27,8 @@ export function validateResolverObjectJournal(r) {
   assert.equal(r.schema, 1); assert.equal(r.backend, 'resolver-object-private-fixture'); assert.match(r.id, /^[a-f0-9]{32}$/);
   validateResolverContext(r.context);
   for (const key of ['original', 'managed', 'restored', 'start']) validateResolverObject(r[key]);
-  assert.equal(r.original.kind, 'symlink'); assert.equal(r.restored.kind, 'symlink'); assert.equal(r.managed.kind, 'file');
+  assert.equal(r.restored.kind, r.original.kind); assert.equal(r.restored.value, r.original.value);
+  assert.equal(r.restored.mode, r.original.mode); assert.equal(r.managed.kind, 'file');
   for (const key of ['uid', 'gid']) assert.ok([r.managed, r.restored].every((v) => v[key] === r.original[key]));
   assert.equal(new Set([r.original, r.managed, r.restored].map((v) => v.identity)).size, 3);
   assert.ok(['prepared', 'apply-intent', 'active', 'restore-intent', 'restored'].includes(r.phase));
@@ -77,7 +78,7 @@ export async function resolverObjectTransaction({ directory, operation, scope, b
   }
   if (!restore) await backend.probe();
   await observe(r, scope, backend);
-  // The enclosing DNS integration owns guard lifetime. Returning a dangling
-  // link is exact rollback, NOT proof of healthy baseline or authority to release.
+  // The enclosing DNS integration owns guard lifetime. Exact link/file rollback
+  // is NOT proof of healthy baseline or authority to release.
   return { status: restore ? 'restored' : 'active', id: r.id, protectionRetained: true };
 }

@@ -10,7 +10,7 @@ import { controller } from './dns-lifecycle-crash-lab.mjs';
 import { radxaCrashLab } from './dns-radxa-crash-lab.mjs';
 
 export const RESOLVER_CRASH_POINTS = Object.freeze(['prepared', 'apply-intent', 'apply:set', 'active', 'restore-intent', 'restore:set', 'restored']);
-export async function setupResolverObjectLab(parent) {
+export async function setupResolverObjectLab(parent, { localhostBaseline = false } = {}) {
   await assertDnsMountNamespace();
   const directory = join(parent, 'resolver-etc'), privateRun = join(parent, 'resolver-run');
   await mkdir(directory, { mode: 0o700 }); await mkdir(privateRun, { mode: 0o700 });
@@ -24,13 +24,17 @@ export async function setupResolverObjectLab(parent) {
   await writeFile(join(directory, 'group'), 'root:x:0:\nnogroup:x:65534:\n');
   await writeFile(join(directory, 'nsswitch.conf'), 'passwd: files\ngroup: files\nhosts: dns\n');
   await writeFile(join(directory, 'lock'), '', { mode: 0o600, flag: 'wx' });
-  await symlink(RESOLVER_TARGET, join(directory, 'resolv.conf'));
+  if (localhostBaseline) {
+    await writeFile(join(directory, 'resolv.conf'), RESOLVER_MANAGED, { flag: 'wx' });
+    await chmod(join(directory, 'resolv.conf'), 0o644);
+  } else await symlink(RESOLVER_TARGET, join(directory, 'resolv.conf'));
   await exec('mount', ['--bind', privateRun, '/run']); await exec('mount', ['--bind', directory, '/etc']);
   process.env.OPENSSL_CONF = '/dev/null';
   const scope = {};
   for (const key of ['net', 'mnt', 'pid']) scope[key] = await readlink(`/proc/self/ns/${key}`);
   let sequence = 0;
   const evidence = { controllerSigkills: 0, lockConflicts: 0, checkpoints: [], checks: [], exactSymlinkTextRestored: false,
+    baseline: localhostBaseline ? 'localhost-file' : 'dangling-stub', exactLocalhostFileRestored: false, boundedBlockedLookups: [],
     protectionRetainedAfterRestore: false, refusals: [], fixtureOnly: true, rebootTested: false };
   const checkEnvironment = async () => {
     await assertDnsMountNamespace();
@@ -44,12 +48,18 @@ export async function setupResolverObjectLab(parent) {
     await assert.rejects(lstat(RESOLVER_TARGET), { code: 'ENOENT' }, 'resolved target appeared; explicit review required');
   };
   await checkEnvironment();
-  async function systemLookup(label, expected, tcp = false, family = 4) {
+  async function systemLookup(label, expected, tcp = false, family = 4, allowBlockedDeadline = false) {
+    assert.ok(!allowBlockedDeadline || expected === null, 'deadline is never a successful lookup');
     await checkEnvironment();
     let code = 0, stdout = '';
     try { ({ stdout } = await exec('getent', ['-A', '-s', 'dns', `ahostsv${family}`, `resolver-${++sequence}.test`],
       { timeout: 5000, env: { ...process.env, RES_OPTIONS: `timeout:1 attempts:1${tcp ? ' use-vc' : ''}` } })); }
-    catch (e) { assert.equal(e.killed, false, label); code = e.code; stdout = e.stdout; }
+    catch (e) {
+      if (allowBlockedDeadline && e.killed) {
+        assert.equal(e.signal, 'SIGTERM', label); assert.equal(e.code, null, label); assert.equal(e.stdout, '', label);
+        evidence.boundedBlockedLookups.push(label); code = 2; stdout = '';
+      } else { assert.equal(e.killed, false, label); code = e.code; stdout = e.stdout; }
+    }
     assert.equal(code, expected ? 0 : 2, label);
     if (expected) assert.ok(stdout.trim().split('\n').every((line) => line.startsWith(`${expected} `)), label);
     else assert.equal(stdout, '', label);
@@ -72,6 +82,7 @@ export async function setupResolverObjectLab(parent) {
   return { evidence, systemLookup, recover: () => paired.recover(), recoveryResult: () => paired.raw('recover').done,
     async enable({ ensureGuard, probe, dnsmasq }) {
       const files = await createResolverObjectFiles({ directory, checkEnvironment, ensureGuard, probe,
+        baseline: localhostBaseline ? 'localhost-file' : 'dangling-stub',
         identity: async () => ({ scope, bootId: (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim() }) });
       backend = Object.fromEntries(Object.entries(files).map(([name, fn]) => [name, async (...args) => {
         try { return await fn(...args); } catch (e) { backendError = `${name}: ${e.stack}`.slice(0, 4096); throw e; }
@@ -126,11 +137,16 @@ export async function setupResolverObjectLab(parent) {
         await run('disable', 'restore-intent'); await run('recover', 'restore:set'); await run('recover', 'restored');
         const r = await run('recover'); assert.equal(r.status, 'restored'); assert.equal(r.protectionRetained, true);
       }
-      assert.equal(await readlink('/etc/resolv.conf'), RESOLVER_TARGET); await checkEnvironment();
+      if (localhostBaseline) {
+        assert.equal(await readFile('/etc/resolv.conf', 'utf8'), RESOLVER_MANAGED);
+        const stat = await lstat('/etc/resolv.conf'); assert.ok(stat.isFile()); assert.equal(stat.mode & 0o7777, 0o644);
+      } else assert.equal(await readlink('/etc/resolv.conf'), RESOLVER_TARGET);
+      await checkEnvironment();
       for (const tool of ['iptables', 'ip6tables']) for (const protocol of ['udp', 'tcp']) {
         await exec(tool, ['-w', '2', '-C', 'OUTPUT', '-p', protocol, '--dport', '53', '-j', 'REJECT']);
       }
-      evidence.exactSymlinkTextRestored = true; evidence.protectionRetainedAfterRestore = true;
+      evidence.exactSymlinkTextRestored = !localhostBaseline; evidence.exactLocalhostFileRestored = localhostBaseline;
+      evidence.protectionRetainedAfterRestore = true;
       if (!paired) assert.deepEqual(evidence.checkpoints, RESOLVER_CRASH_POINTS);
     },
   };

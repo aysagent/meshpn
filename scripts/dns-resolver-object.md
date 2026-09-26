@@ -4,6 +4,10 @@
 `/etc/resolv.conf` — dangling symlink на
 `/run/systemd/resolve/stub-resolv.conf`. Автоматического включения resolved нет.
 Это не live-установщик и не команда исправления DNS на настоящем клиенте.
+Также поддержан **явно выбранный** исходный regular file 0644 с единственной
+строкой `nameserver 127.0.0.1\n`. Это основа будущего согласованного baseline
+Radxa, не автоматическое исправление её текущей ссылки. Доступность dnsmasq и
+его upstream проверяется отдельно; наличие файла само по себе не доказывает здоровье DNS.
 
 ## Что реализовано
 
@@ -23,6 +27,11 @@ Symlink проверяется через lstat/readlink, а не открыти
 читается с O_NOFOLLOW и проверками inode, uid/gid, mode, nlink и содержимого.
 
 Disable возвращает **точный текст и метаданные ссылки**, но не исходный inode.
+В режиме `localhost-file` возвращаются точные байты, uid/gid и mode исходного
+файла. Original/managed/restored имеют три разных inode, даже при одинаковых
+байтах. Recovery проверяет выбор baseline, не принимает чужой файл по одному hash.
+По умолчанию backend по-прежнему требует dangling link; обычный файл не выбирается
+автоматически. Только фиксированные bytes/mode, не произвольный `resolv.conf`.
 Возврат dangling symlink — точный rollback, **не исправление baseline DNS**.
 Журнал resolver не снимает guard: `protectionRetained: true`. Снятием владеет
 внешняя интеграция. Исчезнувший/повреждённый журнал, чужой inode даже с тем же
@@ -41,6 +50,29 @@ MESHPN_DNSMASQ=/absolute/path/to/dnsmasq npm run test:dns-resolver-object-real
 ```bash
 MESHPN_DNSMASQ=/absolute/path/to/dnsmasq node scripts/dnsmasq-lab.mjs --resolver-object
 ```
+
+Проверка пары с заранее выбранным localhost baseline в synthetic `/etc`:
+
+```bash
+MESHPN_DNSMASQ=/absolute/path/to/dnsmasq node scripts/dnsmasq-lab.mjs --radxa-journal --localhost-baseline
+```
+
+Дополнительные NSS-пробы проверяют блокировку после offline rollback под guard,
+затем успешный UDP/TCP lookup после **отдельного явного fixture teardown** guard.
+Для заблокированного baseline TCP dnsmasq может держать запрос без ответа:
+отрицательная проверка ограничена 5 секундами и учитывает завершение getent по
+дедлайну отдельно в `boundedBlockedLookups`. Это не успешный DNS-ответ и не
+измерение production resolver timeout. Успешные пробы никогда не принимают timeout.
+Нулевые счётчики baseline upstream проверяются также после заблокированных NSS-проб.
+Прогон 2026-09-27: PASS, 15 controller SIGKILL, 13 NSS-проб, 62 USB/dnsmasq
+проверки и 7 DHCP DORA. Legacy paired и standalone resolver также повторены, PASS.
+Первый новый прогон остановился на TCP deadline после rollback; отдельно учтённая
+bounded negative probe исправляет модель ожидания, не ослабляет guard. Целевые
+unit/protocol проверки resolver/paired/config/VM — 202/202 PASS.
+Node acceptance сначала 1478/1478 PASS (`/var/tmp/meshpn-acceptance-S01I6C/report.json`),
+повтор 1476/1478 (`/var/tmp/meshpn-acceptance-RxCxSd/report.json`) выявил ESRCH-race
+в старом process-cleanup тесте; он исправляется отдельно. DNS-тесты прошли,
+но неуспешный общий прогон не считается acceptance.
 
 Пакеты автоматически не устанавливаются. Нужны инструменты прежнего
 [dnsmasq namespace-стенда](dnsmasq-lab.md); `--resolver-object` включает USB и
@@ -83,10 +115,12 @@ rename точки, offline disable, конфликты, orphan preparation и о
 дочернего контроллера; смерть всей VM/ядра этим тестом не моделируется. Новый
 resolver journal теперь [связан одним durable coordinator с dnsmasq journal](dns-radxa-journal.md)
 в отдельном `--radxa-journal` режиме; старый `--resolver-object` остаётся standalone тестом.
-Прежний dnsmasq VM PASS не распространяется на новую транзакцию resolver.
+Для dangling-link пары [systemd/reboot и три power-cut точки VM](dns-radxa-vm.md)
+уже PASS. Новый localhost-file baseline пока проверяется отдельно в namespace,
+не подменяет VM результат другой исходной конфигурации.
 
-Дальше: systemd/reboot общего координатора в VM, затем opt-in установщик
-и согласованный baseline/rollback на Radxa.
+Дальше: клиентские ownership/preflight, opt-in установщик и согласованный
+baseline/rollback на Radxa с проверкой реальных units/config в VM.
 Для живого этапа нужны проверенные daemon/includes/владелец настроек и отдельное
 разрешение пользователя. Включать resolved, менять DNS хоста или подключаться
 по SSH этот стенд не разрешает. Физический USB, arm64, долгоживущие resolver

@@ -42,6 +42,8 @@ test('lab CLI refuses host execution of worker and unknown options before mutati
   for (const key of Object.keys(env)) if (key.startsWith('MESHPN_PARENT_')) delete env[key];
   for (const args of [['--apply'], ['--isolated'], ['--isolated', '--usb'], ['--isolated', '--journal'], ['--isolated', '--resolver-object'],
     ['--resolver-object', '--resolver-object'], ['--isolated', '--radxa-journal'], ['--radxa-journal', '--radxa-journal'],
+    ['--localhost-baseline'], ['--usb', '--localhost-baseline'], ['--isolated', '--radxa-journal', '--localhost-baseline'],
+    ['--radxa-journal', '--localhost-baseline', '--localhost-baseline'],
     ['--usb', '--usb'], ['--journal', '--journal'], ['--help', '--apply']]) {
     const result = spawnSync(process.execPath, ['scripts/dnsmasq-lab.mjs', ...args], { env, encoding: 'utf8', timeout: 5000 });
     assert.equal(result.status, 1); assert.equal(result.stdout, '');

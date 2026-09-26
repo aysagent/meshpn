@@ -26,7 +26,10 @@ async function snapshot(path) {
   assert.equal(after.dev, before.dev); assert.equal(after.ino, before.ino); assert.equal(after.ctimeNs, before.ctimeNs);
   return validateResolverObject({ kind, value, identity: `${before.dev}:${before.ino}`, uid: Number(before.uid), gid: Number(before.gid), mode: Number(before.mode & 0o7777n) });
 }
-export async function createResolverObjectFiles({ directory, identity, checkEnvironment, ensureGuard, probe, checkpoint = async () => {} }) {
+export async function createResolverObjectFiles({ directory, identity, checkEnvironment, ensureGuard, probe,
+  baseline = 'dangling-stub', checkpoint = async () => {} }) {
+  assert.ok(['dangling-stub', 'localhost-file'].includes(baseline), 'unsupported resolver baseline');
+  const originalKind = baseline === 'dangling-stub' ? 'symlink' : 'file';
   await privateJournalDirectory(directory); assert.equal(await realpath(directory), resolve(directory));
   const initial = await lstat(directory, { bigint: true }), directoryIdentity = `${initial.dev}:${initial.ino}`;
   const paths = { current: join(directory, 'resolv.conf'), managed: join(directory, 'managed.conf'), restored: join(directory, 'restored.conf') };
@@ -39,17 +42,23 @@ export async function createResolverObjectFiles({ directory, identity, checkEnvi
   const match = async (r, expected) => {
     const v = await view(); assert.deepEqual(v.context, r.context, 'resolver context changed'); assert.deepEqual(v.snapshot, expected, 'resolver ownership conflict');
   };
+  const writeLocalhost = async (path) => {
+    const fd = await open(path, 'wx', 0o644);
+    try { await fd.chmod(0o644); await fd.writeFile(RESOLVER_MANAGED); await fd.sync(); } finally { await fd.close(); }
+  };
   const backend = { ensureGuard, probe, view,
     async prepare() {
-      const v = await view(); assert.equal(v.snapshot.kind, 'symlink', 'only reviewed dangling symlink baseline supported');
-      const fd = await open(paths.managed, 'wx', 0o644);
-      try { await fd.chmod(0o644); await fd.writeFile(RESOLVER_MANAGED); await fd.sync(); } finally { await fd.close(); }
+      const v = await view(); assert.equal(v.snapshot.kind, originalKind, 'resolver baseline selection mismatch');
+      await writeLocalhost(paths.managed);
       await checkpoint('managed:file-synced');
-      await symlink(RESOLVER_TARGET, paths.restored); await syncDirectory(directory); await checkpoint('snapshots:dir-synced');
+      if (originalKind === 'symlink') await symlink(RESOLVER_TARGET, paths.restored);
+      else { await writeLocalhost(paths.restored); await checkpoint('restored:file-synced'); }
+      await syncDirectory(directory); await checkpoint('snapshots:dir-synced');
       const r = { context: v.context, original: v.snapshot, managed: await snapshot(paths.managed), restored: await snapshot(paths.restored) };
       await match(r, r.original); return r;
     },
     async verifySnapshots(r) {
+      assert.equal(r.original.kind, originalKind, 'resolver baseline selection mismatch');
       const v = await view(); assert.deepEqual(v.context, r.context, 'resolver context changed');
       for (const name of ['managed', 'restored']) {
         if (v.snapshot.identity === r[name].identity) { assert.deepEqual(v.snapshot, r[name]); continue; }

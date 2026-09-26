@@ -1,23 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, realpath, mkdir, writeFile, readFile, symlink, readlink, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, mkdir, writeFile, readFile, symlink, readlink, rm, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createDnsmasqJournalFiles } from './lib/dnsmasq-journal-files.mjs';
 import { createResolverObjectFiles } from './lib/dns-resolver-object-files.mjs';
 import { readDnsmasqJournal } from './lib/dnsmasq-journal.mjs';
-import { RESOLVER_TARGET } from './lib/dns-resolver-object-journal.mjs';
+import { RESOLVER_TARGET, RESOLVER_MANAGED, readResolverObjectJournal } from './lib/dns-resolver-object-journal.mjs';
 import { pairRadxaBackends, radxaDnsTransaction, inspectRadxaTransaction, readRadxaJournal } from './lib/dns-radxa-journal.mjs';
 import { RADXA_APPLY_CUTS, RADXA_RESTORE_CUTS } from './lib/dns-radxa-crash-lab.mjs';
 const scope = { net: 'net:[1]', mnt: 'mnt:[2]', pid: 'pid:[3]' };
 const baseline = await readFile(new URL('./fixtures/dns-clients/radxa-dnsmasq.conf', import.meta.url), 'utf8');
 const crash = (at) => async (p) => { if (p === at) throw new Error('interruption'); };
-async function fixture(t) {
+async function fixture(t, resolverBaseline = 'dangling-stub') {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'meshpn-radxa-test-'))), resolverDir = join(directory, 'resolver-etc');
   t.after(() => rm(directory, { recursive: true, force: true }));
   await mkdir(resolverDir, { mode: 0o700 }); await mkdir(join(directory, 'radxa'), { mode: 0o700 });
   await writeFile(join(directory, 'dnsmasq.conf'), baseline, { mode: 0o600 });
-  await symlink(RESOLVER_TARGET, join(resolverDir, 'resolv.conf'));
+  if (resolverBaseline === 'localhost-file') {
+    await writeFile(join(resolverDir, 'resolv.conf'), RESOLVER_MANAGED); await chmod(join(resolverDir, 'resolv.conf'), 0o644);
+  } else await symlink(RESOLVER_TARGET, join(resolverDir, 'resolv.conf'));
   const state = { guard: false, ready: true, loaded: null, events: [],
     bootId: '12345678-1234-1234-1234-123456789abc', targetMissing: true };
   const ensureGuard = async () => { state.guard = true; }, identity = () => ({ scope, bootId: state.bootId });
@@ -26,7 +28,7 @@ async function fixture(t) {
     ensureGuard, removeGuard: async () => { throw new Error('guard release forbidden'); },
     probe: async () => { assert.ok(state.guard); assert.ok(state.ready, 'adapter down'); },
     activate: async (r) => { state.events.push(`daemon:${r.direction}`); state.loaded = r.direction; } });
-  const resolver = await createResolverObjectFiles({ directory: resolverDir, identity, ensureGuard,
+  const resolver = await createResolverObjectFiles({ directory: resolverDir, baseline: resolverBaseline, identity, ensureGuard,
     checkEnvironment: async () => assert.ok(state.targetMissing),
     probe: async () => { assert.ok(state.guard); assert.ok(state.ready); assert.equal(state.loaded, 'apply'); } });
   const select = resolver.select;
@@ -51,6 +53,18 @@ test('paired lifecycle: daemon before resolver, reverse offline rollback, stable
   f.state.loaded = null;
   assert.deepEqual(await f.run('recover'), restored); assert.equal(f.state.loaded, 'restore');
   await assert.rejects(f.run('enable'), /already exists/);
+});
+for (const point of [...RADXA_APPLY_CUTS, ...RADXA_RESTORE_CUTS]) test(`paired localhost-file rollback after ${point}`, async (t) => {
+  const f = await fixture(t, 'localhost-file'), restoring = RADXA_RESTORE_CUTS.includes(point);
+  if (restoring) await f.run('enable');
+  await assert.rejects(f.run(restoring ? 'disable' : 'enable', crash(point)), /interruption/);
+  f.state.ready = false;
+  const restored = await f.run('disable'); assert.equal(restored.status, 'restored'); assert.equal(restored.protectionRetained, true);
+  assert.equal(await readFile(join(f.resolverDir, 'resolv.conf'), 'utf8'), RESOLVER_MANAGED);
+  const r = await readResolverObjectJournal(f.resolverDir); assert.equal(r.original.kind, 'file'); assert.equal(r.restored.kind, 'file');
+  assert.notEqual(r.restored.identity, r.original.identity); assert.notEqual(r.restored.identity, r.managed.identity);
+  assert.equal(await readFile(join(f.directory, 'dnsmasq.conf'), 'utf8'), baseline);
+  assert.deepEqual(await f.run('recover'), restored); assert.ok(f.state.guard);
 });
 const applyCuts = [...RADXA_APPLY_CUTS, ...['dnsmasq', 'resolver', 'active'].flatMap((p) => ['file-synced', 'renamed', 'dir-synced'].map((s) => `${p}:${s}`))];
 const restoreCuts = [...RADXA_RESTORE_CUTS, ...['restore-resolver', 'restore-dnsmasq', 'restored'].flatMap((p) => ['file-synced', 'renamed', 'dir-synced'].map((s) => `${p}:${s}`))];

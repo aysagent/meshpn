@@ -11,14 +11,16 @@ const scope = { net: 'net:[1]', mnt: 'mnt:[2]', pid: 'pid:[3]' };
 test('namespace-only port 53 probe refuses ordinary host execution before sending DNS', async () => {
   await assert.rejects(queryNamespaceDns53(Buffer.alloc(12)));
 });
-async function fixture(t) {
+async function fixture(t, baseline = 'dangling-stub') {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'meshpn-resolver-object-test-')));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const path = join(directory, 'resolv.conf'); await symlink(RESOLVER_TARGET, path);
+  const path = join(directory, 'resolv.conf');
+  if (baseline === 'localhost-file') { await writeFile(path, RESOLVER_MANAGED); await chmod(path, 0o644); }
+  else await symlink(RESOLVER_TARGET, path);
   const state = { guard: false, ready: true, targetMissing: true, mounted: false, probes: 0,
     context: { scope: structuredClone(scope), bootId: '12345678-1234-1234-1234-123456789abc' } };
   let hook = async () => {};
-  const backend = await createResolverObjectFiles({ directory, identity: async () => structuredClone(state.context),
+  const backend = await createResolverObjectFiles({ directory, baseline, identity: async () => structuredClone(state.context),
     checkEnvironment: async () => { assert.ok(state.targetMissing, 'target appeared'); assert.equal(state.mounted, false, 'mountpoint'); },
     ensureGuard: async () => { state.guard = true; }, probe: async () => { state.probes++; assert.ok(state.guard); assert.ok(state.ready, 'not ready'); },
     checkpoint: (p) => hook(p) });
@@ -27,6 +29,61 @@ async function fixture(t) {
     inspect: () => inspectResolverObjectTransaction({ directory, scope, backend }) };
 }
 const interrupt = (at) => async (p) => { if (at === p) throw new Error('interruption'); };
+test('explicit localhost-file baseline keeps exact bytes/metadata and three distinct identities', async (t) => {
+  const f = await fixture(t, 'localhost-file'), original = (await f.backend.view()).snapshot;
+  const active = await f.run('enable'), r = await readResolverObjectJournal(f.directory);
+  assert.equal(active.status, 'active'); assert.deepEqual(r.original, original);
+  assert.equal(new Set([r.original, r.managed, r.restored].map((v) => v.identity)).size, 3);
+  for (const key of ['kind', 'uid', 'gid', 'mode', 'value']) assert.equal(r.restored[key], original[key]);
+  f.state.ready = false; const restored = await f.run('disable');
+  assert.equal(restored.status, 'restored'); assert.equal(restored.protectionRetained, true);
+  assert.equal(await readFile(f.path, 'utf8'), RESOLVER_MANAGED);
+  assert.deepEqual((await f.backend.view()).snapshot, r.restored);
+  assert.deepEqual(await f.run('recover'), restored); assert.ok(f.state.guard);
+});
+for (const point of ['prepared', 'apply-intent', 'apply:object:renamed', 'apply:object:dir-synced', 'apply:set', 'active',
+  'restore-intent', 'restore:object:renamed', 'restore:object:dir-synced', 'restore:set', 'restored']) {
+  test(`localhost-file identity-based recovery after ${point}`, async (t) => {
+    const f = await fixture(t, 'localhost-file'), restore = point.startsWith('restore');
+    if (restore) await f.run('enable');
+    await assert.rejects(f.run(restore ? 'disable' : 'enable', interrupt(point)), /interruption/);
+    const r = await readResolverObjectJournal(f.directory);
+    assert.equal((await f.run('recover')).status, restore ? 'restored' : 'active');
+    assert.deepEqual((await f.backend.view()).snapshot, r[restore ? 'restored' : 'managed']);
+    assert.ok(f.state.guard);
+  });
+}
+for (const point of ['prepared', 'apply-intent', 'apply:set', 'active']) test(`localhost-file offline disable from ${point}`, async (t) => {
+  const f = await fixture(t, 'localhost-file'); await assert.rejects(f.run('enable', interrupt(point)), /interruption/);
+  f.state.ready = false; assert.equal((await f.run('disable')).status, 'restored');
+  assert.equal(await readFile(f.path, 'utf8'), RESOLVER_MANAGED); assert.ok(f.state.guard);
+});
+test('localhost-file orphan restored snapshot is never adopted', async (t) => {
+  const f = await fixture(t, 'localhost-file'), before = await f.backend.view();
+  await assert.rejects(f.run('enable', interrupt('restored:file-synced')), /interruption/);
+  await assert.rejects(f.run('recover'), { code: 'ENOENT' }); await assert.rejects(f.run('enable'), { code: 'EEXIST' });
+  assert.deepEqual(await f.backend.view(), before);
+});
+for (const mutation of ['bytes', 'mode', 'hardlink', 'same-content-new-inode', 'restored-snapshot']) {
+  test(`localhost-file refuses ${mutation} without rewriting journal`, async (t) => {
+    const f = await fixture(t, 'localhost-file'); await f.run('enable');
+    if (mutation === 'bytes') await writeFile(f.path, 'nameserver 8.8.8.8\n');
+    if (mutation === 'mode') await chmod(f.path, 0o666);
+    if (mutation === 'hardlink') await link(f.path, join(f.directory, 'alias'));
+    if (mutation === 'same-content-new-inode') { await writeFile(join(f.directory, 'foreign'), RESOLVER_MANAGED); await chmod(join(f.directory, 'foreign'), 0o644); await rename(join(f.directory, 'foreign'), f.path); }
+    if (mutation === 'restored-snapshot') await writeFile(join(f.directory, 'restored.conf'), 'nameserver 8.8.8.8\n');
+    const journal = await readFile(join(f.directory, 'journal.json'));
+    await assert.rejects(f.run('disable')); assert.ok(f.state.guard);
+    assert.deepEqual(await readFile(join(f.directory, 'journal.json')), journal);
+  });
+}
+test('localhost-file recovery cannot silently change back to legacy baseline policy', async (t) => {
+  const f = await fixture(t, 'localhost-file'); await f.run('enable');
+  const r = await readResolverObjectJournal(f.directory);
+  const legacy = await createResolverObjectFiles({ directory: f.directory, identity: async () => f.state.context,
+    checkEnvironment: async () => {}, ensureGuard: f.backend.ensureGuard, probe: f.backend.probe });
+  await assert.rejects(legacy.verifySnapshots(r), /baseline selection mismatch/);
+});
 test('guard failure cannot prepare snapshots or write a journal', async (t) => {
   const f = await fixture(t); f.backend.ensureGuard = async () => { throw new Error('guard unavailable'); };
   const files = await readdir(f.directory);

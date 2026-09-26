@@ -48,6 +48,8 @@ boot-context. Это не live host takeover и не автоматическо�
 62 USB/dnsmasq проверки и 7 DHCP DORA в namespace. Его [VM lifecycle](dns-radxa-vm.md)
 прошёл 12/12 проверок в двух загрузках и 3/3 whole-guest crash точки (ещё шесть загрузок);
 точный возврат сломанной ссылки не означает восстановление исправного baseline.
+Добавлен явный localhost-file baseline resolver для будущего согласованного
+перехода Radxa; live repair и снятие guard этим не разрешаются.
 Для VPS 2 [resolved 249 + networkd](dns-networkd-lab.md): 11 namespace-проверок
 настоящего DHCP renew/reconfigure и отдельного VPN DNS-link, без takeover `eth0`.
 Явная QNAME deny-policy проверена при удалении/замене DHCP domains. Ещё нужны
