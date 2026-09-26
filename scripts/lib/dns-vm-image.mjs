@@ -72,12 +72,14 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     await writeFile(destination('/etc/dbus-vm.conf'), '<busconfig><type>system</type><listen>unix:path=/run/dbus/system_bus_socket</listen><auth>EXTERNAL</auth><policy context="default"><allow user="*"/><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>', { mode: 0o644 });
   }
   for (const name of ['libxt_tcp.so', 'libxt_udp.so', 'libipt_REJECT.so', 'libip6t_REJECT.so', 'libxt_standard.so',
+    ...(systemd ? ['libxt_comment.so'] : []),
     ...(ingress ? ['libxt_conntrack.so', 'libxt_comment.so', 'libxt_addrtype.so', 'libxt_SNAT.so', 'libxt_DNAT.so', 'libxt_MASQUERADE.so'] : [])]) {
     await elf(`/usr/lib/x86_64-linux-gnu/xtables/${name}`);
   }
   const release = (await exec('uname', ['-r'])).stdout.trim();
   assert.equal(await realpath(kernel), `/boot/vmlinuz-${release}`, 'this builder requires the matching local kernel/modules');
   for (const name of ['iptable_filter', 'ip6table_filter', 'ipt_REJECT', 'ip6t_REJECT', 'xt_tcpudp', 'dummy',
+    ...(systemd ? ['xt_comment'] : []),
     ...(dnsmasq ? ['veth'] : []),
     ...(ingress ? ['tun', 'veth', 'iptable_nat', 'xt_conntrack', 'xt_comment', 'xt_addrtype', 'xt_nat', 'xt_MASQUERADE'] : [])]) {
     const dependencies = (await exec('modprobe', ['--show-depends', name])).stdout;
@@ -113,7 +115,13 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   for (const name of ['sh', 'mount', 'mkdir', 'chmod', 'chown', 'insmod', 'readlink', 'cat', 'sync', 'reboot', 'poweroff', 'sleep']) {
     await symlink('/bin/busybox', destination(`/bin/${name}`));
   }
-  for (const name of ['iptables', 'ip6tables']) await symlink('/usr/sbin/xtables-legacy-multi', destination(`/usr/sbin/${name}`));
+  for (const name of ['iptables', 'ip6tables', ...(systemd ? ['iptables-restore', 'ip6tables-restore'] : [])]) await symlink('/usr/sbin/xtables-legacy-multi', destination(`/usr/sbin/${name}`));
+  if (systemd && !dnsmasq && !coupled) {
+    await mkdir(destination('/etc/clean-vpn/dns'), { recursive: true });
+    await writeFile(destination('/etc/clean-vpn/dns/guard-policy.json'), JSON.stringify({ schema: 1,
+      kind: 'clean-vpn-dns-boot-policy', enabled: true, firewallBackend: 'legacy',
+      input: { schema: 1, client: 'vps2', id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } }), { mode: 0o600 });
+  }
   await writeFile(destination('/etc/passwd'), 'root:x:0:0:root:/root:/bin/sh\nfixture:x:1000:1000:fixture:/tmp:/bin/sh\nsystemd-resolve:x:193:193:resolver:/nonexistent:/bin/false\n'
     + (dnsmasq ? 'nobody:x:65534:65534:Unprivileged fixture:/nonexistent:/bin/false\n' : ''), { mode: 0o644 });
   await writeFile(destination('/etc/group'), 'root:x:0:\nfixture:x:1000:\nsystemd-resolve:x:193:\n'
@@ -130,7 +138,7 @@ export MESHPN_INGRESS_VM=1
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
-mount -t tmpfs tmpfs /run
+mount -t tmpfs -o mode=0755 tmpfs /run
 mount -t tmpfs tmpfs /tmp
 chmod 1777 /tmp
 ${[...modules].map((path) => `insmod ${path}${basename(path) === 'dummy.ko' ? ' numdummies=0' : ''}`).join('\n')}
@@ -150,7 +158,7 @@ export OPENSSL_CONF=/dev/null
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
-mount -t tmpfs tmpfs /run
+mount -t tmpfs -o mode=0755 tmpfs /run
 mount -t tmpfs tmpfs /tmp
 chmod 1777 /tmp
 ${[...modules].map((path) => `insmod ${path}${basename(path) === 'dummy.ko' ? ' numdummies=0' : ''}`).join('\n')}
@@ -198,7 +206,7 @@ poweroff -f
       else {
         // These /etc files are synthetic, public guest configuration (not host
         // secrets). Host umask077 must not hide them from resolved's guest UID.
-        if (entry.isFile() && name.startsWith('./etc/')) await chmod(join(root, name), 0o644);
+        if (entry.isFile() && name.startsWith('./etc/')) await chmod(join(root, name), name.endsWith('/guard-policy.json') ? 0o600 : 0o644);
         names.push(name);
       }
     }

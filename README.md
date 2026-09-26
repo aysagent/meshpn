@@ -214,7 +214,11 @@ systemd VM-прогон прошёл 12/12 проверок в двух загр
 Общий [клиентский DNS guard](scripts/dns-client-guard.md) проверяет собственные
 правила для VPS 2/Radxa без перезаписи всего firewall; его namespace-стенд не
 является host installer. [Постоянный журнал](scripts/dns-client-guard-journal.md)
-прошёл16 SIGKILL контроллера; подключение службы и ранняя boot-защита ещё впереди.
+прошёл16 SIGKILL контроллера. Добавлен [ранний boot guard](scripts/dns-boot-guard.md)
+с фиксированной root policy и отдельным systemd entrypoint: **16/16 проверок в
+двух загрузках VM, PASS**. Node-регрессия1659/1659; повтор namespace guard:
+16 SIGKILL и11 packet checks PASS. Совместный lifecycle с journal и opt-in
+установщик/откат ещё нужны; это не закрытие DNS v1.
 
 Следующий порядок работ:
 

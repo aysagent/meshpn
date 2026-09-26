@@ -10,6 +10,37 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: ранний systemd guard
+
+Добавлен [`dns-boot-guard.mjs`](../scripts/dns-boot-guard.md): root policy
+в `/etc/clean-vpn/dns`, фиксированные iptables paths/backend, inherited flock,
+проверка root ownership/modes/identity/context, собственные CVD chains.
+Boot policy с устойчивым ID независима от старого DNS journal: он не читается
+и не принимается автоматически. Нет release CLI/ExecStop или установщика.
+Основной процесс ограничен NET_ADMIN (+NET_RAW для legacy); короткий root
+ExecStartPre аттестует PID1 network namespace/boot в закрытом runtime-файле.
+Выполняющийся restore child наследует flock; отдельный mid-commit kill ещё не проверен.
+
+В systemd VM заменён именно guard CLI/unit, не остальные VM cases. Старый
+outer init guard удаляется после проверки обеих семей нового. Добавлены
+проверки stop-retains-rules и измеренного порядка guard-before-network.
+**16/16 проверок в двух загрузках PASS**, `/var/tmp/meshpn-dns-vm-7CL1sN/report.json`.
+Systemd255, legacy firewall,2 vCPU MTTCG; boot guard до сети, stop сохраняет
+правила, старый DNS journal не принимается. Host DNS/guest resolv.conf неизменны,
+baseline queries0;462 копии JS совпали с manifest. **1659 Node PASS**,
+`/var/tmp/meshpn-acceptance-3CbkEG/report.json`; namespace journal повторно:
+**16 SIGKILL,2 lock conflicts,11 packet checks PASS**, host snapshots неизменны.
+
+Обнаруженные отказы не объявлялись PASS: restricted процесс получает EACCES
+при чтении namespace PID1; попытка nsfs bind закончилась226/NAMESPACE;
+synthetic `/run` оказался слишком открытым (исправлен mount mode0755).
+Безусловный CAP_NET_RAW не добавлен: namespace-проверка подтвердила, что он
+нужен legacy; nf_tables unit остаётся только с NET_ADMIN.
+
+Далее — явная привязка guard journal к ID boot policy, общий restore proof,
+opt-in install/rollback обоих клиентов и согласованные пользовательские пилоты.
+Preflight и live-policy решения ещё ожидаются. DNS v1 открыт; SSH/live setters не выполнялись.
+
 ### Дополнение 2026-09-27: persistent client guard journal
 
 `dns-client-guard-journal.mjs`: installing/active/releasing/released, stable ID

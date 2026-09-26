@@ -10,10 +10,17 @@ import { readResolvedJournal } from './dns-resolved-journal.mjs';
 import { resolvedMethod } from './dns-resolved-backend.mjs';
 import { syncDirectory } from './dns-lifecycle-journal.mjs';
 import { boundedInspectRead } from './dns-inspect.mjs';
+import { DNS_BOOT_LOCK } from './dns-boot-guard.mjs';
 
 const ctl = (...args) => exec('/usr/bin/systemctl', ['--no-pager', ...args], { timeout: 200000 });
 const worker = '/project/scripts/lib/dns-systemd-vm-worker.mjs';
 const disable = () => exec('/usr/bin/flock', ['-n', '/state/controller.lock', '/usr/bin/node', worker, 'disable'], { timeout: 180000 });
+const inspectBootGuard = async () => {
+  const result = JSON.parse((await exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
+    '/opt/clean-vpn/scripts/dns-boot-guard.mjs', '--inspect'], { timeout: 60000 })).stdout);
+  assert.equal(result.kind, 'clean-vpn-dns-boot-guard'); assert.equal(result.dnsJournalAdopted, false);
+  assert.deepEqual(result.states, ['present', 'present']);
+};
 async function state(name) { return (await ctl('show', name, '--property=ActiveState', '--value')).stdout.trim(); }
 async function inactive(name) {
   const deadline = performance.now() + 20000;
@@ -55,7 +62,15 @@ async function main() {
     await unlink('/run/meshpn/deny-start'); await ctl('reset-failed');
     check('failed-guard-prevents-network-and-consumer');
   }
+  await ctl('start', 'dns-vm-guard.service'); await inspectBootGuard();
+  await ctl('stop', 'dns-vm-guard.service'); await inspectBootGuard();
+  assert.equal(await state('dns-vm-guard.service'), 'inactive');
+  check('boot-guard-stop-retains-owned-rules');
   await ctl('start', 'dns-vm-sentinel.service', 'dns-vm-baseline.service', 'dns-vm-fixture.service');
+  const guardEnd = BigInt((await ctl('show', 'dns-vm-guard.service', '--property=ExecMainExitTimestampMonotonic', '--value')).stdout.trim());
+  const networkStart = BigInt((await ctl('show', 'dns-vm-network.service', '--property=ExecMainStartTimestampMonotonic', '--value')).stdout.trim());
+  assert.ok(guardEnd > 0n && networkStart >= guardEnd);
+  await inspectBootGuard(); check('boot-guard-cli-before-network');
   const fixturePid = (await ctl('show', 'dns-vm-fixture.service', '--property=MainPID', '--value')).stdout.trim();
   if (!previous) {
     await control('fixture', 'stop-exit');
@@ -169,6 +184,7 @@ async function main() {
   emit('passed', { ...options, bootId, previousBootId: previous.bootId, systemdPid1: true,
     adapterImplementation: 'cli', separateExitFixture: true, readinessQueriesPerStart: 4,
     unprivilegedAdapter: true, systemdCredentials: true,
+    bootGuardImplementation: 'cli', bootGuardBeforeNetwork: true,
     checks: [...previous.checks, ...checks], baselineQueriesDuringProtection: 0, baselinePositiveControl: true,
     hostNetworkUnavailable: true, automaticStaleAdoption: false, explicitDisablePassed: true, resolvConfUnchanged: true });
   await ctl('--no-block', 'poweroff');
@@ -176,6 +192,7 @@ async function main() {
 main().catch(async (error) => {
   try {
     await assertSystemdDnsVm();
+    try { emit('boot-guard-diagnostics', { log: await boundedInspectRead('/run/meshpn/boot-guard.log', 16384) }); } catch { /* optional VM-only bounded log */ }
     const pid = (await ctl('show', 'dns-vm-adapter.service', '--property=MainPID', '--value')).stdout.trim();
     if (/^[1-9]\d*$/.test(pid)) {
       const records = JSON.parse(await boundedInspectRead(`/proc/${pid}/root/tmp/dns-vm-adapter-failures.json`, 16384));

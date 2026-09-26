@@ -12,6 +12,7 @@ import { createResolvedJournalBackend, resolvedMethod } from './dns-resolved-bac
 import { resolvedTransaction, readResolvedJournal } from './dns-resolved-journal.mjs';
 import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
 import { queryLabDns } from './transparent-dns-lab.mjs';
+import { DNS_BOOT_LOCK, loadDnsBootGuard } from './dns-boot-guard.mjs';
 
 export const journal = '/state/transaction';
 export const baseline = { DNSEx: [[2, [127, 0, 0, 55], 0, '']], Domains: [['.', true], ['baseline.test', false]], DefaultRoute: true };
@@ -19,7 +20,13 @@ export const coupledBaseline = { ...baseline, Domains: [['baseline.test', false]
 export const emitSystemd = (event, data = {}) => console.log(`DNS_VM_EVENT ${JSON.stringify({ event, ...data })}`);
 export async function exists(path) { try { await access(path); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; } }
 export async function guard(enabled) {
-  await assertSystemdDnsVm();
+  const options = await assertSystemdDnsVm();
+  if (options.phase === 'systemd') {
+    await exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
+      enabled ? '/opt/clean-vpn/scripts/dns-boot-guard.mjs' : '/project/scripts/lib/dns-systemd-vm-worker.mjs',
+      enabled ? '--start' : 'guard-release'], { timeout: 60000 });
+    return;
+  }
   for (const tool of ['iptables', 'ip6tables']) for (const protocol of ['udp', 'tcp']) {
     const rule = ['OUTPUT', '-p', protocol, '--dport', '53', '-j', 'REJECT'];
     let present = true;
@@ -105,17 +112,27 @@ async function serve(name, action, close) {
 }
 async function main(command) {
   const options = await assertSystemdDnsVm(), coupled = options.phase.startsWith('coupled');
-  assert.ok(['guard', 'network', 'baseline', 'adapter', 'cli-fixture', 'sentinel', 'activate', 'disable', 'consumer'].includes(command));
+  assert.ok(['guard', 'guard-release', 'network', 'baseline', 'adapter', 'cli-fixture', 'sentinel', 'activate', 'disable', 'consumer'].includes(command));
   assert.ok(command !== 'cli-fixture' || options.phase === 'systemd', 'CLI fixture is a separate systemd-only case');
   assert.ok(!coupled || !['activate', 'disable'].includes(command), 'use coupled VM controller');
   process.umask(0o077); await mkdir('/run/meshpn', { recursive: true, mode: 0o700 });
+  if (command === 'guard-release') {
+    assert.equal(options.phase, 'systemd');
+    // Fixture-only release after the existing DNS controller verified restore;
+    // the real boot CLI deliberately has no --release operation.
+    await (await loadDnsBootGuard()).guard.release(async () => true); return;
+  }
   if (command === 'guard') {
     assert.equal(await exists('/run/meshpn/deny-start'), false, 'injected guard dependency failure');
     await guard(true); return;
   }
   if (command === 'network') {
     assert.deepEqual(JSON.parse((await exec('ip', ['-j', 'link'])).stdout).map((l) => l.ifname), ['lo']);
-    for (const protocol of ['udp', 'tcp']) await exec('iptables', ['-w', '2', '-I', 'OUTPUT', '1', '-d', '127.0.0.53', '-p', protocol, '--dport', '53', '-j', 'ACCEPT']);
+    if (options.phase === 'systemd') {
+      await guard(true); // Both families proved before removing the outer init fixture guard.
+      for (const tool of ['iptables', 'ip6tables']) for (const protocol of ['udp', 'tcp'])
+        await exec(tool, ['-w', '2', '-D', 'OUTPUT', '-p', protocol, '--dport', '53', '-j', 'REJECT']);
+    } else for (const protocol of ['udp', 'tcp']) await exec('iptables', ['-w', '2', '-I', 'OUTPUT', '1', '-d', '127.0.0.53', '-p', protocol, '--dport', '53', '-j', 'ACCEPT']);
     await exec('ip', ['link', 'set', 'lo', 'up']);
     await exec('ip', ['link', 'add', 'dnsfixture', 'type', 'dummy']);
     await exec('ip', ['addr', 'add', coupled ? '192.0.2.2/32' : '192.0.2.1/32', 'dev', 'dnsfixture']);

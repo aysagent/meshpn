@@ -78,8 +78,9 @@ test('systemd evidence needs both boots and all lifecycle gates, not just a pass
   const evidence = { phase: 'systemd', point: 'lifecycle', systemdPid1: true, automaticStaleAdoption: false,
     adapterImplementation: 'cli', separateExitFixture: true, readinessQueriesPerStart: 4,
     unprivilegedAdapter: true, systemdCredentials: true,
+    bootGuardImplementation: 'cli', bootGuardBeforeNetwork: true,
     baselineQueriesDuringProtection: 0, baselinePositiveControl: true, explicitDisablePassed: true, resolvConfUnchanged: true,
-    checks: [...VM_SYSTEMD_CHECKS, 'real-service-readiness-before-consumer', 'explicit-disable-restores-owned-baseline'] };
+    checks: [...VM_SYSTEMD_CHECKS, 'boot-guard-cli-before-network', 'boot-guard-stop-retains-owned-rules', 'real-service-readiness-before-consumer', 'explicit-disable-restores-owned-baseline'] };
   assertVmSystemdEvidence(evidence);
   for (const key of Object.keys(evidence).filter((k) => k !== 'checks')) {
     assert.throws(() => assertVmSystemdEvidence({ ...evidence, [key]: typeof evidence[key] === 'boolean' ? !evidence[key] : 'wrong' }));

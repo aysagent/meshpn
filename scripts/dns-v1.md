@@ -80,8 +80,11 @@ Radxa или подтверждение live-конфигурации. Подр�
 Выделен общий [client guard executor](dns-client-guard.md): собственные цепочки,
 проверка порядка/владения, отдельные IPv4/IPv6 commits, без global firewall restore.
 Его [persistent journal](dns-client-guard-journal.md) прошёл16 controller SIGKILL
-для двух профилей. Systemd entrypoint/ранняя boot-защита ещё нужны, как и opt-in
-установщик/откат; stale boot не принимается автоматически.
+для двух профилей. Добавлен [ранний systemd guard](dns-boot-guard.md), проверяемый
+на реальном CLI в VM: независимая boot policy, stop без удаления правил,
+без принятия stale DNS journal. **16/16 проверок в двух загрузках VM, PASS**,
+Node1659/1659. Ещё нужны
+привязка journal к ID boot policy, общий restore proof и opt-in установщик/откат.
 
 ## Три этапа и текущий статус
 
@@ -92,8 +95,8 @@ Radxa или подтверждение live-конфигурации. Подр�
 2. **[Интеграция и systemd в VM](dns-systemd-vm.md) (выполнен в VM):** обычный guest systemd PID1, явный opt-in,
    управляемые start/stop/restart/boot, отказ dependencies, актуальный baseline,
    отказ при конфликте владельца и безопасный disable. Проверен реальный исполнитель
-   и измеренный порядок запуска; повтор на настоящем CLI adapter:12 проверок
-   в2 загрузках, PASS. Это не live installer.
+   и измеренный порядок запуска; повтор на настоящих CLI adapter/boot guard:
+   16 проверок в2 загрузках, PASS. Это не live installer.
 3. **[Пилоты VPS 2 и Radxa](dns-pilot.md):** сначала доделать обе системные интеграции
    и проверить их клиентские профили по матрице, затем проверить исходный DNS
    и аварийный доступ; с отдельным разрешением установить интеграцию. Один

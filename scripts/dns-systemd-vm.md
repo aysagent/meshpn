@@ -33,6 +33,13 @@ inflight1, requests0/timers0 в момент обработки отказа, RS
 
 ## Что проверяется
 
+Текущая итерация подключает [ранний boot guard CLI](dns-boot-guard.md) вместо
+fixture-only root worker: фиксированная policy, inherited flock и настоящий
+unit sandbox. Две новые проверки в каждой загрузке: stop сохраняет собственные
+chains; guard ExecMainExit предшествует network ExecMainStart. **16/16 PASS**;
+исторические12-проверочные результаты ниже относятся к прежнему guard.
+У guest `/run` теперь явно0755, а boot policy0600; `/tmp` остаётся1777.
+
 BusyBox `/init` монтирует гостевые файловые системы и устанавливает DNS53 guard
 до `exec systemd`. Затем **systemd действительно является PID1**. У гостя нет
 NIC, shared filesystem, TUN, доступа к сети хоста или интернету. DNS adapter,
@@ -138,6 +145,20 @@ adapter/exit, клиентских units/guard и аварийного дост�
 остальные DNS backends. Реальный24-часовой пилот не заменяется этой VM.
 
 ## Зафиксированный результат
+
+2026-09-27: CLI adapter + **настоящий boot guard CLI —16/16 PASS в двух загрузках**,
+`/var/tmp/meshpn-dns-vm-7CL1sN/report.json`. Systemd255/legacy firewall,
+QEMU8.2.2 TCG2 vCPU. Guard stop оставляет chains; старт измеренно завершён до
+network; после reboot stale DNS journal отклонён без direct fallback.
+Host DNS/guest resolv.conf неизменны, baseline queries0;462 JS copies совпали
+с image manifest. Реальные sync/unmount, kernel reboot/new boot ID и poweroff.
+Node1659/1659 PASS, `/var/tmp/meshpn-acceptance-3CbkEG/report.json`.
+Namespace guard/journal повторён:16 SIGKILL,2 lock conflicts,11 packet checks PASS.
+Подготовительные отказы перечислены в [boot guard](dns-boot-guard.md).
+Persistent guard journal пока отдельно; VM release всё ещё fixture-only после
+проверки baseline. Совместный installed lifecycle/rollback не объявлен готовым.
+
+### Предыдущий результат: DynamicUser adapter и fixture guard
 
 2026-09-27: настоящий CLI с **DynamicUser/credentials —12/12 PASS в двух загрузках**,
 `/var/tmp/meshpn-dns-vm-WlsDhv/report.json`. Systemd255/x64, QEMU8.2.2,
