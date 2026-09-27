@@ -33,6 +33,20 @@ NXDOMAIN/REFUSED не является отказом транспорта и н
 Общая Node-регрессия этого компонента:2096/2096 PASS, без skips,
 `/var/tmp/meshpn-acceptance-wMBlU5/report.json`.
 
+Следующий проверенный компонент: ограниченный UDP/TCP listener и фиксированный
+план правил/маршрутов. `npm run test:dns-tunnel`:21/21 PASS.
+`npm run test:dns-tunnel-routing-real`:3/3 PASS (host, `--from-tun`, LAN).
+Настоящие пакеты в приватных namespace подтверждают primary/backup через
+моделирующий TUN veth, перехват исходного частного DNS, отсутствие прямого
+fallback после down/delete интерфейса и восстановление baseline после удаления
+своих правил. В ingress-режиме DNS шлюза не меняется; LAN-режим охватывает
+и host, и выбранную LAN. IPv6 UDP/TCP53 проверен отдельно: отвечающий сервер
+доступен до установки правил и недоступен в защищённой области после неё.
+Всего26 сетевых проверок в трёх сценариях. Это не тест шифрования транспорта или системного
+resolved/dnsmasq. Lifecycle/journal и CLI ещё не подключены; default не изменён.
+Общая Node-регрессия:2107/2107 PASS, без skips,
+`/var/tmp/meshpn-acceptance-b5VgtH/report.json`.
+
 Для реализации и проверки простого режима остаются:
 
 - маршрутизация/перенаправление UDP **и** TCP53, включая исходные частные DNS;
@@ -95,8 +109,9 @@ Resolved имеет несколько API и источников конфиг�
 защиту при отказе и проверенный откат. Этот объём не считается выполненным
 за счёт работоспособности отдельного адаптера.
 
-1. VPS2: installed start/disable проверены; единый реальный
-   [install/start/disable/uninstall](dns-uninstall-vm.md) сейчас проверяется.
+1. VPS2: installed start/disable и единый реальный
+   [install/start/disable/uninstall](dns-uninstall-vm.md) проверены в VM
+   (12/12, два полных цикла на двух загрузках).
    Пользовательский installer/recovery entrypoint и проверка установленного
    boot graph с активной транзакцией ещё не закончены.
 2. Radxa: лабораторные dnsmasq/USB/resolver lifecycle и аварийные сценарии

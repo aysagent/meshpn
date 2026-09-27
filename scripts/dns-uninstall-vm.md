@@ -37,7 +37,11 @@ start/disable и removal. Таймаут installed controller остаётся18
 в заново распакованном initramfs. Файловые crash-точки coordinator отдельно
 проверяются в `test-dns-released-removal.mjs`.
 
-Текущий запуск: `/var/tmp/meshpn-dns-vm-nSxWC2`; полный результат ещё не получен.
-VM protocol/host-refusal тесты:59/59 PASS. Это не объявление VM PASS.
+Завершённый запуск: `/var/tmp/meshpn-dns-vm-nSxWC2/report.json`: **12/12 PASS**,
+шесть проверок на каждой из двух загрузок. `hostDnsFilesUnchanged=true`,
+`runtimeHistoryRetained=true`, `resolvConfUnchanged=true`. Образ соответствует
+исходникам этапа `012a4e3` (позднейшая правка строки help не меняет сценарий).
+Он не проверяет более поздний общий source packager или простой tunnel DNS.
+VM protocol/host-refusal тесты:59/59 PASS.
 Общая Node-регрессия:2075/2075 PASS, без skips,
 `/var/tmp/meshpn-acceptance-4p80HU/report.json`.

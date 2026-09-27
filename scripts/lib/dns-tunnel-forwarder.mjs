@@ -69,7 +69,12 @@ export async function exchangePlainDns({ server, localAddress, port = 53, query,
         socket.on('message', reply);
         socket.bind(0, localAddress, () => {
           if (done) return;
-          socket.connect(port, server, () => { if (!done) socket.send(query, (e) => { if (e) finish(dnsError('DNS_UPSTREAM')); }); });
+          socket.connect(port, server, (error) => {
+            if (done) return;
+            if (error) return finish(dnsError('DNS_UPSTREAM'));
+            try { socket.send(query, (e) => { if (e) finish(dnsError('DNS_UPSTREAM')); }); }
+            catch { finish(dnsError('DNS_UPSTREAM')); }
+          });
         });
       }
     });
