@@ -3,11 +3,16 @@
 import assert from 'node:assert/strict';
 import { constants } from 'node:fs';
 import { open, lstat, readlink } from 'node:fs/promises';
-import { timingSafeEqual, createHash } from 'node:crypto';
+import { timingSafeEqual, createHash, randomInt } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { assertDnsInstalledAuthority, dnsInstalledAuthorityInfo } from './dns-installed-authority.mjs';
 import { createDnsSystemCommands, inspectDnsSystemExecutable } from './dns-system-command.mjs';
 import { readTrustedDnsText } from './dns-installed-vps2.mjs';
 import { compileDnsAdapterServicePlan } from './dns-adapter-service-plan.mjs';
+import { inspectDnsAdapterSockets } from './dns-adapter-sockets.mjs';
+import { loadDnsBootGuard } from './dns-boot-guard.mjs';
+import { queryDnsReadiness, validateDnsReadyName } from './dns-adapter-ready.mjs';
+import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
 
 export const DNS_ADAPTER_UNIT = 'clean-vpn-dns-adapter.service';
 const unitPath = `/etc/systemd/system/${DNS_ADAPTER_UNIT}`;
@@ -87,7 +92,7 @@ async function boundedBytes(path, max, { uid, mode, credentialUid, proc = false 
 const decode = (bytes) => new TextDecoder('utf8', { fatal: true }).decode(bytes);
 const nulList = (bytes) => { const text = decode(bytes); assert.ok(text.endsWith('\0')); return text.slice(0, -1).split('\0'); };
 
-export async function inspectInstalledDnsAdapter(token) {
+async function collectInstalledDnsAdapter(token) {
   await assertDnsInstalledAuthority(token);
   const info = dnsInstalledAuthorityInfo(token);
   const commands = await createDnsSystemCommands({ assertAuthority: () => assertDnsInstalledAuthority(token), required: ['systemctl'] });
@@ -114,6 +119,8 @@ export async function inspectInstalledDnsAdapter(token) {
     return { uid: Number(uid[1]), startTime, executable, netns, cgroup, credentialMount };
   };
   const processBefore = await processState();
+  const sockets = () => inspectDnsAdapterSockets({ pid, uid: processBefore.uid, port: info.config.adapterPort, netns: info.scope.net });
+  const listeners = await sockets();
   const argv = nulList(await boundedBytes(`${base}/cmdline`, 16384, { proc: true }));
   const environment = nulList(await boundedBytes(`${base}/environ`, 65536, { proc: true }));
   const unitBefore = await readTrustedDnsText(unitPath, 0o644);
@@ -148,7 +155,38 @@ export async function inspectInstalledDnsAdapter(token) {
   }
   assert.deepEqual(await readTrustedDnsText(unitPath, 0o644), unitBefore);
   await assertDnsInstalledAuthority(token);
-  return { schema: 1, kind: 'clean-vpn-dns-loaded-adapter', mode: 'read-only', loadedCredentialsVerified: true,
-    activationAuthorized: false, systemSettingsChanged: false, dnsQueriesSent: 0,
-    limitations: ['point-in-time-not-service-lock', 'no-listener-ownership-or-readiness-proof', 'not-a-leak-test'] };
+  assert.deepEqual(await sockets(), listeners, 'adapter listeners changed during inspection');
+  const report = { schema: 1, kind: 'clean-vpn-dns-loaded-adapter', mode: 'read-only', loadedCredentialsVerified: true,
+    listenerOwnershipVerified: true, activationAuthorized: false, systemSettingsChanged: false, dnsQueriesSent: 0,
+    limitations: ['point-in-time-not-service-lock', 'no-protected-readiness-proof', 'not-a-leak-test'] };
+  return { report, identity: { unit: before, process: processBefore, listeners, unitFile: unitBefore.identity, sources } };
+}
+export async function inspectInstalledDnsAdapter(token) {
+  return (await collectInstalledDnsAdapter(token)).report;
+}
+
+// Opt-in bounded DNS traffic only. No guard installation, DNS takeover, service
+// start, retry or fallback; absence of the real guard stops before any query.
+export async function probeInstalledDnsAdapter(token) {
+  await assertDnsInstalledAuthority(token);
+  const info = dnsInstalledAuthorityInfo(token), boot = await loadDnsBootGuard();
+  assert.equal(boot.policy.input.client, info.client); assert.equal(boot.policy.input.id, info.guardId);
+  const protectedNow = async () => {
+    await assertDnsInstalledAuthority(token);
+    assert.deepEqual(await boot.guard.inspect(), ['present', 'present'], 'installed DNS guard required before probe');
+  };
+  await protectedNow(); const before = await collectInstalledDnsAdapter(token);
+  const name = validateDnsReadyName(info.config.readyName, info.config.domainPolicy);
+  for (const tcp of [false, true]) for (const type of [1, 28]) {
+    await protectedNow();
+    const query = makeDnsQuery(name, type, randomInt(65536), 1232);
+    const reply = validateDnsResponse(await queryDnsReadiness(info.config.adapterPort, query, { tcp }), query);
+    assert.equal(reply.rcode, 0); assert.equal(reply.flags & 0x200, 0);
+    assert.ok(reply.records.some((rr) => rr.section === 0 && rr.klass === 1 && rr.type === type), 'positive A/AAAA required');
+  }
+  await protectedNow(); const after = await collectInstalledDnsAdapter(token);
+  assert.ok(isDeepStrictEqual(after.identity, before.identity), 'adapter changed during protected readiness');
+  return { ...after.report, kind: 'clean-vpn-dns-installed-adapter-readiness', mode: 'protected-dns-probes',
+    protectedReadinessVerified: true, dnsQueriesSent: 4, protocols: ['udp', 'tcp'], types: ['A', 'AAAA'],
+    limitations: ['point-in-time-not-service-lock', 'not-a-leak-test', 'not-a-DNS-takeover-authorization'] };
 }

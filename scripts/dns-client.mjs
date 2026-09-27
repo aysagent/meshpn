@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-/** Installed DNS controller entrypoint. Inspection only until OS factories and
- * activation/rollback integration are verified. No live mutation commands. */
+/** Installed DNS controller entrypoint. Inspection and explicit protected
+ * probes only until activation/rollback is verified. No settings mutations. */
 import { fileURLToPath } from 'node:url';
 import { loadDnsInstalledAuthority, assertDnsInstalledAuthority, dnsInstalledAuthorityInfo } from './lib/dns-installed-authority.mjs';
 import { inspectInstalledVps2Dns } from './lib/dns-installed-vps2.mjs';
-import { inspectInstalledDnsAdapter } from './lib/dns-installed-adapter.mjs';
+import { inspectInstalledDnsAdapter, probeInstalledDnsAdapter } from './lib/dns-installed-adapter.mjs';
 
 export function parseDnsClientArgs(argv) {
-  if (argv.length === 1 && ['--help', '--inspect', '--inspect-adapter'].includes(argv[0])) return argv[0].slice(2);
+  if (argv.length === 1 && ['--help', '--inspect', '--inspect-adapter', '--probe-adapter'].includes(argv[0])) return argv[0].slice(2);
   throw Object.assign(new Error('DNS_CLIENT_ARGUMENTS'), { code: 'DNS_CLIENT_ARGUMENTS' });
 }
 // Fixed code + source location only: no assertion message, values, paths or raw
@@ -25,11 +25,14 @@ export function dnsClientFailureLocation(error) {
 async function main() {
   const command = parseDnsClientArgs(process.argv.slice(2));
   if (command === 'help') {
-    console.log('Usage: node scripts/dns-client.mjs --inspect | --inspect-adapter | --help\nRead-only installed authority/adapter inspection; no DNS switch or installer.'); return;
+    console.log('Usage: node scripts/dns-client.mjs --inspect | --inspect-adapter | --probe-adapter | --help\nInspection changes no settings. --probe-adapter sends four protected DNS queries only with a verified guard and installed adapter. No DNS switch or installer.'); return;
   }
   const token = await loadDnsInstalledAuthority(), info = dnsInstalledAuthorityInfo(token);
   if (command === 'inspect-adapter') {
     console.log(JSON.stringify(await inspectInstalledDnsAdapter(token))); return;
+  }
+  if (command === 'probe-adapter') {
+    console.log(JSON.stringify(await probeInstalledDnsAdapter(token))); return;
   }
   const baseline = info.client === 'vps2' ? await inspectInstalledVps2Dns(token) : null;
   await assertDnsInstalledAuthority(token);

@@ -167,6 +167,14 @@ NIC-less VM проверены позитивный случай и отказ �
 UDP/TCP listener к этому PID, readiness под guard и installed setters/lifecycle;
 на живых клиентах ничего не менялось.
 
+Socket ownership и явный `--probe-adapter` реализованы следующим срезом:
+проверяются реальные loopback UDP/TCP inode, FD MainPID и UID; guard должен
+уже присутствовать перед четырьмя запросами, процесс/credentials/listener
+повторно сверяются после них.1890/1890 Node PASS, включая реальные сокеты
+чужого PID и закрытие listener. Это ещё **не VM PASS нового probe**: выполняющийся
+`meshpn-dns-vm-TJnMKi` содержит предыдущий617cb49; следующий образ должен
+проверить новые socket/readiness-сценарии и точные счётчики запросов.
+
 ## Три этапа и текущий статус
 
 1. **Boot-fault VM (выполнен:4/4 PASS):** ошибка установки guard, read-only storage журнала,

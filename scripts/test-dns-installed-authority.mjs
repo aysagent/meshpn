@@ -99,8 +99,9 @@ test('installed CLI exposes inspection only and rejects mutating or ambiguous ar
 test('installed CLI help is offline; ordinary repo inspection fails with a redacted result', async () => {
   const path = new URL('./dns-client.mjs', import.meta.url).pathname;
   const help = await runCommand(process.execPath, [path, '--help']);
-  assert.equal(help.code, 0); assert.match(help.stdout, /Read-only installed authority/); assert.equal(help.stderr, '');
-  for (const [arg, expected] of [['--inspect', 'DNS_CLIENT_REFUSED'], ['--start', 'DNS_CLIENT_ARGUMENTS']]) {
+  assert.equal(help.code, 0); assert.match(help.stdout, /Inspection changes no settings/); assert.equal(help.stderr, '');
+  assert.match(help.stdout, /--probe-adapter sends four protected DNS queries/);
+  for (const [arg, expected] of [['--inspect', 'DNS_CLIENT_REFUSED'], ['--probe-adapter', 'DNS_CLIENT_REFUSED'], ['--start', 'DNS_CLIENT_ARGUMENTS']]) {
     const r = await runCommand(process.execPath, [path, arg]);
     assert.equal(r.code, 1); assert.equal(r.stdout, ''); assert.equal(r.stderr.trim(), expected);
   }

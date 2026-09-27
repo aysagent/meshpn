@@ -7,7 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { assertCoupledDnsVm } from './dns-systemd-vm-safety.mjs';
 import { exec } from './browser-lab-driver.mjs';
 import { DNS_BOOT_LOCK } from './dns-boot-guard.mjs';
-import { busContext, coupledBaseline } from './dns-systemd-vm-worker.mjs';
+import { busContext, coupledBaseline, control } from './dns-systemd-vm-worker.mjs';
 import { resolvedMethod } from './dns-resolved-backend.mjs';
 import { DNS_NETWORKD_POLICY, DNS_NETWORKD_CONTENTS } from './dns-networkd-policy.mjs';
 import { compileDnsAdapterServicePlan } from './dns-adapter-service-plan.mjs';
@@ -81,13 +81,22 @@ export async function checkInstalledDnsVmBaseline() {
     await symlink('/etc/systemd/system/dns-vm-guard.service', guardAlias);
     try {
       await ctl('daemon-reload'); await ctl('start', 'clean-vpn-dns-adapter.service');
+      const queriesBefore = (await control('fixture', 'stats')).resolverBodies;
       const loaded = JSON.parse((await inspect('--inspect-adapter')).stdout);
       assert.equal(loaded.loadedCredentialsVerified, true); assert.equal(loaded.activationAuthorized, false);
+      assert.equal(loaded.listenerOwnershipVerified, true);
       assert.equal(loaded.dnsQueriesSent, 0); assert.equal(loaded.systemSettingsChanged, false);
+      assert.equal((await control('fixture', 'stats')).resolverBodies, queriesBefore);
+      const ready = JSON.parse((await inspect('--probe-adapter')).stdout);
+      assert.equal(ready.protectedReadinessVerified, true); assert.equal(ready.dnsQueriesSent, 4);
+      assert.equal(ready.activationAuthorized, false); assert.equal(ready.systemSettingsChanged, false);
+      assert.equal((await control('fixture', 'stats')).resolverBodies, queriesBefore + 4);
       const keyPath = '/etc/clean-vpn/dns/hmac.key', key = await readFile(keyPath);
       const changed = Buffer.from(key); changed[0] ^= 1;
       try {
         await writeFile(keyPath, changed); await assert.rejects(inspect('--inspect-adapter'), refused);
+        await assert.rejects(inspect('--probe-adapter'), refused);
+        assert.equal((await control('fixture', 'stats')).resolverBodies, queriesBefore + 4);
       } finally { await writeFile(keyPath, key); key.fill(0); changed.fill(0); }
       assert.equal(JSON.parse((await inspect('--inspect-adapter')).stdout).loadedCredentialsVerified, true);
     } finally {

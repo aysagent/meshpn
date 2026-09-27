@@ -3,6 +3,8 @@
 `lib/dns-installed-authority.mjs` — read-only граница будущего системного
 entrypoint. `scripts/dns-client.mjs` имеет `--help`, read-only `--inspect`
 и [проверку загруженного adapter](dns-installed-adapter.md) `--inspect-adapter`;
+явный `--probe-adapter` отправляет четыре DNS-запроса только после проверки
+установки, guard и владельца loopback-сокетов. Настройки не меняются;
 `--start`, `--disable`, `--install` пока отвергаются. **Это не команда установки
 или включения DNS.** Файл boot
 policy разрешает только guard; наличие его или корректного DNS journal не

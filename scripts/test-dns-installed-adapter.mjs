@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assessLoadedDnsAdapter, parseLoadedDnsAdapterUnit, inspectInstalledDnsAdapter } from './lib/dns-installed-adapter.mjs';
+import { assessLoadedDnsAdapter, parseLoadedDnsAdapterUnit, inspectInstalledDnsAdapter, probeInstalledDnsAdapter } from './lib/dns-installed-adapter.mjs';
 import { compileDnsAdapterServicePlan } from './lib/dns-adapter-service-plan.mjs';
 import { parseDnsClientArgs } from './dns-client.mjs';
 
@@ -47,4 +47,9 @@ test('adapter OS collector rejects forged authority before system operations', a
   for (const token of [{}, null, { installedAuthorityVerified: true }]) await assert.rejects(inspectInstalledDnsAdapter(token), /installed authority token required/);
   assert.equal(parseDnsClientArgs(['--inspect-adapter']), 'inspect-adapter');
   assert.throws(() => parseDnsClientArgs(['--inspect-adapter', '--start']));
+});
+test('protected installed probe rejects fake authority before firewall reads or network', async () => {
+  for (const token of [{}, null, { guardVerified: true }]) await assert.rejects(probeInstalledDnsAdapter(token), /installed authority token required/);
+  assert.equal(parseDnsClientArgs(['--probe-adapter']), 'probe-adapter');
+  assert.throws(() => parseDnsClientArgs(['--probe-adapter', '--inspect']));
 });

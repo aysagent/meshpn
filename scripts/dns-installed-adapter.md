@@ -11,6 +11,10 @@ flock. Запуск из checkout отказывается до системны
   DynamicUser, MainPID, InvocationID, отсутствие drop-ins и pending daemon-reload.
 - Доверенный Node, точный argv, отсутствие переменных инъекции, ненулевой UID,
   нулевые capabilities, NoNewPrivs, системный service cgroup и network namespace.
+- UDP4 и TCP4 listener на точном `127.0.0.1:adapterPort`, UID службы и inode,
+  присутствующие в FD выбранного MainPID до и после чтения таблиц ядра.
+  Проверяются оба семейства; wildcard/IPv6/дублирующие listener на этом порту
+  отвергаются. Между началом и концом всей inspection inode не меняются.
 - Unit на диске совпадает с нашим полным шаблоном для фактических аргументов
   процесса и текущих upstream/domain-policy; порт, readiness-имя и политика
   совпадают с client config.
@@ -27,9 +31,30 @@ UID службы на read-only mount. Учитываются оба предс�
 [Реализация systemd249 write_credential](https://github.com/systemd/systemd/blob/v249/src/core/execute.c#L2282).
 
 Ограничения: это снимок состояния, не блокировка systemd и не защита от
-враждебного root. Пока не доказаны принадлежность UDP/TCP listener и защищённый
-readiness непосредственно перед takeover; `activationAuthorized=false`.
+враждебного root. Read-only inspection не проверяет readiness непосредственно
+перед takeover; `activationAuthorized=false`.
 Успешная проверка не разрешает installed start/disable сама по себе.
+
+## Явный защищённый probe
+
+`--probe-adapter` дополнительно отправляет ровно четыре запроса: A/AAAA по UDP
+и TCP, только на проверенный loopback-listener. До первого запроса и между
+запросами проверяет реальный guard обеих семей, сверяет его client/ID с opt-in.
+Он не устанавливает отсутствующий guard и не запускает adapter. Нет retry или
+прямого fallback. Нужны положительные нетранкированные ответы каждого типа.
+После запросов повторяются полная inspection и сравнение invocation/PID,
+процесса, listener inode, unit и credentials. Изменение контекста — отказ,
+не успешный readiness для нового процесса. Настройки DNS не меняются;
+вывод указывает `dnsQueriesSent:4`, `activationAuthorized:false`.
+
+Socket collector читает bounded `/proc/PID/net/{tcp,udp,tcp6,udp6}` и `/proc/PID/fd`,
+проверяя net namespace. Лимиты:256 FD и4096 строк/512KiB на таблицу;
+превышение или недоступный procfs дают отказ, не пропуск проверки. Это
+read-only evidence, не эксклюзивная блокировка порта. Поля TCP описаны в
+[документации ядра](https://docs.kernel.org/networking/proc_net_tcp.html).
+Тесты с реальными loopback-сокетами проверяют closure и другой PID в том же netns;
+они не отправляют DNS. Исторический VM-срез ниже предшествует добавлению
+socket ownership/probe; эти новые проверки требуют следующего VM-прогона.
 
 Тесты: `node --test scripts/test-dns-installed-adapter.mjs` проверяет точный
 шаблон, аргументы, unit state, несовпадения политики и отказ поддельного token.
