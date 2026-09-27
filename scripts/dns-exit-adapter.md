@@ -161,6 +161,17 @@ Readiness завершилась DNS_TIMEOUT1560мс при DoH deadline1500мс
 ушло только на CA. Трасса ограничена24 записями без имён/IP/содержимого запросов,
 включается после VM authority gates и выводится при отказе. Таймауты, число
 попыток, доверенные CA и правила проверки сертификата не ослаблены.
+После повторного timeout во второй загрузке public-layout Radxa VM добавлены
+`http:finish` у клиента и ограниченные фазы connection/handshake/request/end/
+response у тестового DoH origin. Общий guest wall clock сопоставляет процессы;
+монотонное время остаётся для интервалов внутри процесса. Receipt timestamp
+записывается до обработки DNS-body fixture. Трасса origin включается только
+через VM-gated Radxa CLI fixture, а не на обычном exit/upstream; сообщения
+не содержат запроса, headers, сертификатов или endpoint. При отказе driver
+забирает её через существующий ограниченный локальный control socket, без
+дополнительных DNS-запросов. Node1779/1779 PASS, без skips,
+`/var/tmp/meshpn-acceptance-37J4t3/report.json`. Это проверка инструмента
+наблюдения, не утверждение об устранении VM timeout.
 
 Exit расшифровывает маршрут hostname/port из SNI и выбирает configured IP.
 Клиент не может проверить, включил ли оператор на exit pinned route: без неё

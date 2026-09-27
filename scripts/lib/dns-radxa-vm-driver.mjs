@@ -216,5 +216,6 @@ async function main() {
 main().catch(async (e) => {
   try { await assertRadxaVm(); emit('boot-guard-diagnostics', { log: await boundedInspectRead('/run/meshpn/boot-guard.log', 16384) }); } catch { /* guest only */ }
   try { await assertRadxaVm(); emit('adapter-diagnostics', { log: await boundedInspectRead('/run/meshpn/adapter.log', 16384) }); } catch { /* guest only */ }
+  try { await assertRadxaVm(); emit('fixture-diagnostics', { stats: await control('fixture', 'stats') }); } catch { /* optional VM-only bounded control */ }
   emit('failed', { message: e.stack }); process.exitCode = 1;
 });

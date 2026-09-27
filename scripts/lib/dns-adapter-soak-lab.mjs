@@ -16,6 +16,7 @@ import { fixtureDnsAnswer, parseDnsQuery } from './lab-dns-wire.mjs';
 import { createNamespaceDnsAdapter } from './dns-adapter-process.mjs';
 import { assertSystemdDnsVm } from './dns-systemd-vm-safety.mjs';
 import { assertDnsmasqVm } from './dnsmasq-vm-safety.mjs';
+import { traceVmHttpsServer } from './dns-vm-transport-trace.mjs';
 
 export async function startAdapterSoakLab({ family, modeTag, concurrency, timeoutMs = 250, domainPolicy }, directory) {
   assertBrowserNamespace(); assert.ok([4, 6].includes(family)); assert.ok(['transparent-tls', 'combo-tls'].includes(modeTag));
@@ -39,11 +40,11 @@ export async function startDnsmasqVmAdapterFixture(directory, { cli = false } = 
   const options = await assertDnsmasqVm(); assert.equal(typeof cli, 'boolean');
   assert.ok(!cli || options.phase.startsWith('radxa'));
   return startFixture({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 5000, port: 2053, replace: true,
-    certificateTimeoutMs: 120000, certificateKey: cli ? 'p256' : 'rsa', exitListenPort: cli ? 44443 : 0 }, directory);
+    certificateTimeoutMs: 120000, certificateKey: cli ? 'p256' : 'rsa', exitListenPort: cli ? 44443 : 0, traceOrigin: cli }, directory);
 }
 
 async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0, replace = false, domainPolicy, certificateTimeoutMs = 15000,
-  certificateKey = 'rsa', exitListenPort = 0 }, directory) {
+  certificateKey = 'rsa', exitListenPort = 0, traceOrigin = false }, directory) {
   const addresses = family === 4 ? ['93.184.216.34', '93.184.216.35', '93.184.216.36']
     : ['2606:4700::1112', '2606:4700::1111', '2606:4700::1113'];
   for (const ip of addresses) await exec('ip', [family === 4 ? '-4' : '-6', 'addr', replace ? 'replace' : 'add', `${ip}/${family === 4 ? 32 : 128}`,
@@ -77,6 +78,7 @@ async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0,
       }));
     });
   });
+  const originTrace = traceOrigin ? traceVmHttpsServer(origin, { now: () => performance.now(), cpu: () => process.cpuUsage() }) : null;
   origin.on('connection', (s) => track(resolverSockets, s)); origin.on('tlsClientError', () => {});
   let policy, originPort, exitPort;
   const exit = net.createServer((socket) => {
@@ -97,7 +99,7 @@ async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0,
   async function close() {
     closePromise ??= (async () => {
       await processAdapter?.close(); await adapter?.close(); await stop(exit, exitSockets); await Promise.all([...sessions].map((s) => s.closed));
-      await stop(origin, resolverSockets); secret.fill(0);
+      await stop(origin, resolverSockets); originTrace?.close(); secret.fill(0);
     })(); return closePromise;
   }
   try {
@@ -111,7 +113,7 @@ async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0,
       port, timeoutMs, maxInflight: concurrency, maxTcpConnections: concurrency, tcpLifetimeMs: Math.max(3000, timeoutMs), domainPolicy });
     const stats = () => ({ ...adapter.stats(), resolverSockets: resolverSockets.size, resolverBodies: bodies,
       exitSockets: exitSockets.size, sessions: sessions.size, relayTimers: [...sessions].reduce((n, s) => n + s.timers.size, 0),
-      dnsCalls, attempts, replay: replayGuard.stats() });
+      dnsCalls, attempts, replay: replayGuard.stats(), ...(originTrace ? { vmOriginTrace: originTrace.snapshot() } : {}) });
     return { adapter, stub: { port: adapter.port, stats: () => adapter.stats().stub }, stats, close,
       async prepareCliAdapter() {
         await adapter.close();
