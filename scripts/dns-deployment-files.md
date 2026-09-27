@@ -23,8 +23,17 @@ deployment lock. Здесь нет SSH, systemctl, enable, DNS-проб или f
 Файловая транзакция не выполняет networkd Reload и не доказывает, что правило
 уже загружено. Перед DNS setters требуется реальный unmanaged state своего link.
 
-Units не содержат `[Install]`; symlink в `.wants` или dependency drop-in не
-создаётся. Boot policy имеет `enabled:true`, но этот файл сам не запускает unit.
+Явный `compileDnsDeploymentFiles({adapter, guard, controller: true})` расширяет
+VPS2-набор до десяти файлов: добавляет start/disable units и оба manager drop-in
+из [controller plan](dns-controller-service-plan.md). Это только полный набор;
+частичные группы, отсутствие networkd exclusion, произвольный текст controller
+units, смешанные firewall backends или несовпадение с guard policy запрещены.
+Radxa с `controller:true` отклоняется до публикации. По умолчанию прежние пять/шесть
+файлов не меняются; recovery старого журнала не добавляет controller artifacts.
+
+Units не содержат `[Install]`; symlink в `.wants` не создаётся. Два dependency
+drop-in публикуются только в явном десятифайловом наборе; daemon-reload отсутствует.
+Boot policy имеет `enabled:true`, но этот файл сам не запускает unit.
 После публикации **нельзя вручную запускать эти units**: файловая транзакция не
 доказывает готовность полного deployment. PSK и исходники не копируются; конфиги
 существующего resolved/dnsmasq/resolv.conf не входят в allowlist. При совпадении
@@ -75,6 +84,16 @@ writes и при дальнейших проверках. Отдельный bin
 и отдельный private mount namespace с same-device bind mount. Проверены
 публикация/удаление шестого artifact, строгие contents/hash, отказ при чужом
 файле/drift, сохранение старого пятифайлового rollback и отдельного Radxa plan.
+
+Расширенный десятифайловый набор: **66/66 PASS**, включая **14 настоящих SIGKILL**
+под flock. Дополнительно проверены публикация и удаление controller/drop-in,
+отказ до staging при неполной/смешанной группе, сохранение всего набора при
+чужом изменении drop-in и recovery старого шестифайлового журнала без upgrade.
+Полная Node-регрессия **1912/1912 PASS**, без skips:
+`/var/tmp/meshpn-acceptance-EDSJDr/report.json`. Первый общий прогон
+`meshpn-acceptance-lcxpSf` имел9 ECH failures при1903 passed; детали причин тот
+отчёт не сохранил. Отдельные9/9 ECH и повтор всей Node-suite прошли, причина
+первого отказа не установлена; DNS/transport таймауты не увеличивались.
 
 Файловый remove разрешён только **до активации**. Он не заменяет DNS disable:
 для активного клиента сначала нужны proof восстановленного DNS, guard release,

@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, mkdir, rm, writeFile, readFile, lstat, chmod, rename, symlink, unlink, link, readdir, realpath } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { runCommand } from './lib/transparent-acceptance.mjs';
 import { compileDnsDeploymentFiles, dnsDeploymentFiles, readDnsDeploymentJournal, validateDnsDeploymentJournal } from './lib/dns-deployment-files.mjs';
 import { DNS_NETWORKD_POLICY, DNS_NETWORKD_CONTENTS, dnsNetworkdPolicyArtifact, assertDnsNetworkdUnmanaged } from './lib/dns-networkd-policy.mjs';
+import { compileDnsControllerServicePlan } from './lib/dns-controller-service-plan.mjs';
+import { createHash } from 'node:crypto';
 
 const input = () => ({ adapter: { schema: 1, exitIp: '93.184.216.36', exitPort: 443, publicName: 'relay.example',
   listenPort: 1053, readyName: 'example.com', upstream: { schema: 1, transport: 'doh', hostname: 'resolver.example',
@@ -16,18 +18,56 @@ const input = () => ({ adapter: { schema: 1, exitIp: '93.184.216.36', exitPort: 
 guard: { schema: 1, kind: 'clean-vpn-dns-boot-policy', enabled: true, firewallBackend: 'nf_tables',
   input: { schema: 1, client: 'vps2', id: 'a'.repeat(32) } } });
 
-async function fixture(t) {
+async function fixture(t, controller = false) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'meshpn-deploy-files-'))); t.after(() => rm(base, { recursive: true, force: true }));
   const root = join(base, 'root'), directory = join(base, 'journal');
   for (const p of [root, directory, join(root, 'etc/systemd/system'), join(root, 'etc/systemd/network'), join(root, 'etc/clean-vpn/dns')]) await mkdir(p, { recursive: true, mode: 0o700 });
   let inactive = true;
-  const files = compileDnsDeploymentFiles(input());
+  const files = compileDnsDeploymentFiles({ ...input(), controller });
+  for (const file of files) await mkdir(dirname(join(root, file.path)), { recursive: true, mode: 0o700 });
   const options = { root, directory, files, assertInactive: async () => inactive };
   return { root, directory, files, options, setActive: () => { inactive = false; },
     run: (operation, extra = {}) => dnsDeploymentFiles({ ...options, operation, ...extra }),
     target: (i = 0) => join(root, files[i].path) };
 }
 const absent = async (p) => assert.rejects(lstat(p), { code: 'ENOENT' });
+
+test('opt-in full VPS2 file set journals and removes all controller units/drop-ins without activation', async (t) => {
+  const f = await fixture(t, true); assert.equal(f.files.length, 10);
+  assert.deepEqual(f.files.slice(6), compileDnsControllerServicePlan({ schema: 1, client: 'vps2', firewallBackend: 'nf_tables' }).files);
+  assert.equal((await f.run('install')).files, 10);
+  assert.equal((await f.run('recover')).activated, false);
+  const record = await readDnsDeploymentJournal(f.directory); assert.equal(record.files.length, 10);
+  assert.ok(Buffer.byteLength(JSON.stringify(record)) <= 8192);
+  for (const [i, file] of f.files.entries()) assert.equal(await readFile(f.target(i), 'utf8'), file.contents);
+  await f.run('remove'); for (let i = 0; i < f.files.length; i++) await absent(f.target(i));
+});
+test('old six-file journals recover without implicitly adding controller units', async (t) => {
+  const f = await fixture(t); await f.run('install');
+  assert.equal((await f.run('recover', { files: compileDnsDeploymentFiles({ ...input(), controller: true }) })).files, 6);
+  for (const file of compileDnsControllerServicePlan({ schema: 1, client: 'vps2', firewallBackend: 'nf_tables' }).files)
+    await absent(join(f.root, file.path));
+});
+test('controller group refuses partial sets, missing exclusion, rewritten units and mixed backends before staging', async (t) => {
+  const legacy = compileDnsControllerServicePlan({ schema: 1, client: 'vps2', firewallBackend: 'legacy' }).files;
+  for (const mutate of [(v) => v.splice(8, 1), (v) => v.splice(5, 1),
+    (v) => { v[6] = legacy[0]; }, (v) => { v.splice(6, 4, ...legacy); }, (v) => {
+      v[9].contents = '[Unit]\nAfter=network-online.target\n';
+      v[9].sha256 = createHash('sha256').update(v[9].contents).digest('hex');
+    }]) {
+    const f = await fixture(t, true), files = structuredClone(f.files); mutate(files);
+    await assert.rejects(f.run('install', { files })); assert.deepEqual(await readdir(f.directory), []);
+  }
+  const bad = input(); bad.guard.input = { ...bad.guard.input, client: 'radxa', usbInterface: 'usb0', usbAddress: '192.168.7.1' };
+  assert.throws(() => compileDnsDeploymentFiles({ ...bad, controller: true }));
+  assert.throws(() => compileDnsDeploymentFiles({ ...input(), controller: 'yes' }));
+});
+test('foreign manager drop-in edit prevents removal of the entire installed file set', async (t) => {
+  const f = await fixture(t, true); await f.run('install');
+  await writeFile(f.target(8), '[Unit]\nDescription=operator change\n');
+  await assert.rejects(f.run('remove'));
+  for (const [i, file] of f.files.entries()) assert.equal(await readFile(f.target(i), 'utf8'), i === 8 ? '[Unit]\nDescription=operator change\n' : file.contents);
+});
 
 test('networkd exclusion is a fixed artifact for exactly eight hexadecimal name characters', () => {
   const f = dnsNetworkdPolicyArtifact(); assert.equal(f.path, DNS_NETWORKD_POLICY); assert.equal(f.mode, '0644');
@@ -216,15 +256,18 @@ test('corrupt journal cannot authorize rollback', async (t) => {
   for (const [i, file] of f.files.entries()) assert.equal(await readFile(f.target(i), 'utf8'), file.contents);
 });
 
-for (const [operation, point, expected] of [
+for (const [operation, point, expected, controller = false] of [
   ['install', 'prepared:dir-synced', 'installed'], ['install', 'file-0:published', 'installed'],
   ['install', 'file-2:detached', 'installed'], ['install', 'installed:dir-synced', 'installed'],
   ['install', 'file-5:published', 'installed'],
   ['remove', 'removing:dir-synced', 'removed'], ['remove', 'file-2:removed', 'removed'],
   ['remove', 'removed:dir-synced', 'removed'],
   ['remove', 'file-5:removed', 'removed'],
+  ['install', 'file-6:published', 'installed', true], ['install', 'file-8:published', 'installed', true],
+  ['install', 'file-9:detached', 'installed', true], ['remove', 'file-9:removed', 'removed', true],
+  ['remove', 'file-6:removed', 'removed', true],
 ]) test(`actual SIGKILL under flock at ${point}`, async (t) => {
-  const f = await fixture(t); if (operation === 'remove') await f.run('install');
+  const f = await fixture(t, controller); if (operation === 'remove') await f.run('install');
   const lock = join(f.root, 'deployment.lock');
   const script = `
     import { dnsDeploymentFiles } from ${JSON.stringify(new URL('./lib/dns-deployment-files.mjs', import.meta.url).href)};

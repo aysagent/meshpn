@@ -7,6 +7,7 @@ import { open, lstat, realpath, link, unlink, readdir, readFile } from 'node:fs/
 import { dirname, join, resolve } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { compileDnsAdapterServicePlan } from './dns-adapter-service-plan.mjs';
+import { compileDnsControllerServicePlan } from './dns-controller-service-plan.mjs';
 import { validateDnsBootPolicy, dnsBootGuardUnit } from './dns-boot-guard.mjs';
 import { privateJournalDirectory, readPrivateJournal, writePrivateJournal, syncDirectory } from './dns-lifecycle-journal.mjs';
 import { DNS_NETWORKD_POLICY, DNS_NETWORKD_CONTENTS, dnsNetworkdPolicyArtifact } from './dns-networkd-policy.mjs';
@@ -20,10 +21,21 @@ const paths = new Map([
   [DNS_NETWORKD_POLICY, '0644'],
 ]);
 const basePaths = [...paths.keys()].filter((p) => p !== DNS_NETWORKD_POLICY);
+const controllerPlans = ['legacy', 'nf_tables'].map((firewallBackend) =>
+  compileDnsControllerServicePlan({ schema: 1, client: 'vps2', firewallBackend }).files);
+const controllerPaths = controllerPlans[0].map((f) => f.path);
+for (const path of controllerPaths) paths.set(path, '0644');
 function selectedPaths(files) {
   assert.ok(Array.isArray(files));
   const selected = files.map((f) => f.path);
-  assert.deepEqual([...selected].sort(), [...basePaths, ...(selected.includes(DNS_NETWORKD_POLICY) ? [DNS_NETWORKD_POLICY] : [])].sort());
+  const controller = selected.some((p) => controllerPaths.includes(p));
+  assert.deepEqual([...selected].sort(), [...basePaths,
+    ...(controller || selected.includes(DNS_NETWORKD_POLICY) ? [DNS_NETWORKD_POLICY] : []),
+    ...(controller ? controllerPaths : [])].sort());
+  // A new controller group must be complete and match ONE reviewed backend,
+  // including both manager drop-ins. No arbitrary unit payload or mixed pair.
+  if (controller) assert.ok(controllerPlans.some((plan) => plan.every((f) =>
+    files.find((v) => v.path === f.path)?.sha256 === f.sha256)), 'unreviewed controller artifacts');
   return selected;
 }
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -31,12 +43,15 @@ const keys = (v, names) => {
   assert.ok(v && typeof v === 'object' && !Array.isArray(v));
   assert.deepEqual(Object.keys(v).sort(), [...names].sort());
 };
-export function compileDnsDeploymentFiles({ adapter, guard }) {
+export function compileDnsDeploymentFiles({ adapter, guard, controller = false }) {
   const plan = compileDnsAdapterServicePlan(adapter); validateDnsBootPolicy(guard);
+  assert.equal(typeof controller, 'boolean');
+  if (controller) assert.equal(guard.input.client, 'vps2', 'installed controller is VPS2-only');
   return [...plan.files,
     { path: '/etc/systemd/system/clean-vpn-dns-guard.service', mode: '0644', contents: dnsBootGuardUnit(guard.firewallBackend) },
     { path: '/etc/clean-vpn/dns/guard-policy.json', mode: '0600', contents: `${JSON.stringify(guard)}\n` },
     ...(guard.input.client === 'vps2' ? [dnsNetworkdPolicyArtifact()] : []),
+    ...(controller ? compileDnsControllerServicePlan({ schema: 1, client: 'vps2', firewallBackend: guard.firewallBackend }).files : []),
   ].map((f) => ({ ...f, sha256: hash(f.contents) }));
 }
 function validateFiles(files) {
@@ -47,6 +62,12 @@ function validateFiles(files) {
     assert.ok(Buffer.byteLength(f.contents) > 0 && Buffer.byteLength(f.contents) <= 131072);
     assert.equal(f.sha256, hash(f.contents));
     if (f.path === DNS_NETWORKD_POLICY) assert.equal(f.contents, DNS_NETWORKD_CONTENTS);
+  }
+  if (files.some((f) => controllerPaths.includes(f.path))) {
+    const policy = validateDnsBootPolicy(JSON.parse(files.find((f) => f.path === '/etc/clean-vpn/dns/guard-policy.json').contents));
+    assert.equal(policy.input.client, 'vps2');
+    const expected = compileDnsControllerServicePlan({ schema: 1, client: 'vps2', firewallBackend: policy.firewallBackend }).files;
+    for (const f of expected) assert.equal(files.find((v) => v.path === f.path).sha256, f.sha256, 'controller/guard backend mismatch');
   }
   return files;
 }
@@ -89,7 +110,8 @@ function parentPaths(selected) {
   return [...result].sort();
 }
 
-// Five fixed legacy/Radxa artifacts, plus the VPS2 networkd exclusion. The future
+// Five legacy/Radxa artifacts, plus VPS2 exclusion and optional full controller
+// group (ten files). Old journals are never implicitly upgraded. The future
 // live entrypoint must validate root ownership, code, authorization and lock.
 // Tests use a private root; importing the module has no filesystem effects.
 export async function dnsDeploymentFiles({ root, directory, operation, files, assertInactive, checkpoint = async () => {} }) {
