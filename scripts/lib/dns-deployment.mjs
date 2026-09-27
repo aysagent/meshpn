@@ -23,7 +23,7 @@ export function validateDnsDeployment(v) {
   assert.match(v.id, /^[a-f0-9]{32}$/); assert.equal(resolve(v.root), v.root);
   keys(v.children, ['code', 'files']);
   for (const id of [v.rootIdentity, v.directoryIdentity, ...Object.values(v.children)]) assert.match(id, /^\d+:\d+:\d+$/);
-  assert.ok(['code', 'files', 'installed', 'removing-files', 'removing-code', 'removed'].includes(v.stage));
+  assert.ok(['code', 'files', 'installed', 'detaching-files', 'detached', 'removing-files', 'removing-code', 'removed'].includes(v.stage));
   assert.match(v.bundleSha256, /^[a-f0-9]{64}$/); validateDnsClientDeploymentDescriptors(v.files); return v;
 }
 export const readDnsDeployment = (directory) => readPrivateJournal(directory, validateDnsDeployment, 8192);
@@ -45,7 +45,7 @@ export async function dnsDeployment(options) {
 }
 async function applyDeployment({ root, directory, operation, source, expectedSha256, files,
   lockFd, assertInactive, checkpoint = async () => {} }) {
-  assert.ok(['install', 'recover', 'remove', 'inspect'].includes(operation));
+  assert.ok(['install', 'recover', 'detach', 'remove', 'inspect'].includes(operation));
   assert.equal(typeof assertInactive, 'function');
   assert.equal(resolve(root), root); assert.equal(resolve(directory), directory);
   assert.equal(await realpath(root), root); assert.equal(await realpath(directory), directory);
@@ -124,13 +124,19 @@ async function applyDeployment({ root, directory, operation, source, expectedSha
     if (record.stage === 'code') assert.ok(!result.files && [undefined, 'prepared', 'installed'].includes(c));
     if (record.stage === 'files') assert.ok(c === 'installed' && [undefined, 'installing', 'installed'].includes(f));
     if (record.stage === 'installed') assert.ok(c === 'installed' && f === 'installed');
-    if (record.stage === 'removing-files') assert.ok(['prepared', 'installed'].includes(c) && [undefined, 'installing', 'installed', 'removing', 'removed'].includes(f));
+    if (record.stage === 'detaching-files') assert.ok(c === 'installed' && ['installed', 'detaching', 'detached'].includes(f));
+    if (record.stage === 'detached') assert.ok(c === 'installed' && f === 'detached');
+    if (record.stage === 'removing-files') assert.ok(['prepared', 'installed'].includes(c) && [undefined, 'installing', 'installed', 'detaching', 'detached', 'removing', 'removed'].includes(f));
     if (record.stage === 'removing-code') assert.ok([undefined, 'removed'].includes(f) && ['prepared', 'installed', 'removing', 'removed'].includes(c));
     if (record.stage === 'removed') assert.ok([undefined, 'removed'].includes(f) && c === 'removed');
     return result;
   };
   let state = await children(); // Refuse drift in EITHER child before next mutation.
   if (operation !== 'inspect') {
+    if (operation === 'detach') {
+      assert.ok(['installed', 'detaching-files', 'detached'].includes(record.stage), 'detach requires a complete installed deployment');
+      if (record.stage === 'installed') await save('detaching-files');
+    }
     if (operation === 'remove' && !['removing-files', 'removing-code', 'removed'].includes(record.stage)) {
       assert.ok(state.code, 'no published/prepared code journal to roll back'); await save('removing-files');
     }
@@ -142,6 +148,11 @@ async function applyDeployment({ root, directory, operation, source, expectedSha
     if (record.stage === 'files') {
       assert.ok(state.files || files, 'sensitive client plan required to begin file staging');
       assert.equal((await config(state.files ? 'recover' : 'install')).stage, 'installed'); await save('installed');
+    }
+    if (record.stage === 'detaching-files') {
+      assert.equal((await config('detach')).stage, 'detached'); await save('detached');
+      // recover repeats ONLY the recorded partial direction. A separate
+      // explicit remove with strict OS authority is required to go further.
     }
     if (record.stage === 'removing-files') {
       if (state.files) assert.equal((await config('remove')).stage, 'removed');

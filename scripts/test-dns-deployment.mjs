@@ -60,6 +60,36 @@ test('opt-in mismatch is refused before journal or code staging', async (t) => {
   assert.notEqual((await f.run('install', '', { expectedSha256: 'f'.repeat(64) })).code, 0);
   assert.deepEqual(await readdir(f.directory), []); await absent(f.target);
 });
+test('dependency detach revokes only the fixed suffix, retains code and requires explicit full removal', async (t) => {
+  const f = await fixture(t); await f.ok('install');
+  const detached = await f.ok('detach'); assert.equal(detached.stage, 'detached'); assert.equal(detached.files, 'detached');
+  for (const [i, file] of f.files.entries()) {
+    if (i >= 8) await absent(f.configPath(i));
+    else assert.deepEqual(await readFile(f.configPath(i)), Buffer.from(file.contents));
+  }
+  await lstat(f.target);
+  for (const op of ['inspect', 'recover', 'detach']) assert.deepEqual(await f.ok(op), detached);
+  await lstat(f.configPath(7)); await lstat(f.target);
+  assert.equal((await f.ok('remove')).stage, 'removed'); await absent(f.target);
+});
+test('detach refuses incomplete publication and preserves all remaining files on drift', async (t) => {
+  const f = await fixture(t);
+  assert.notEqual((await f.run('install', `if(point==='files:dir-synced') throw new Error('CUT');`)).code, 0);
+  assert.notEqual((await f.run('detach')).code, 0);
+  assert.equal((await readDnsDeployment(f.directory)).stage, 'files');
+  await f.ok('recover', '', { withInput: true });
+  await writeFile(f.configPath(8), 'foreign dependency');
+  assert.notEqual((await f.run('detach')).code, 0);
+  await lstat(f.configPath(12)); assert.equal((await readDnsDeployment(f.directory)).stage, 'installed');
+});
+test('detached state refuses missing retained files or reappearing dependencies', async (t) => {
+  const f = await fixture(t); await f.ok('install'); await f.ok('detach');
+  const saved = f.configPath(7) + '.saved'; await rename(f.configPath(7), saved);
+  assert.notEqual((await f.run('recover')).code, 0); await lstat(f.target);
+  await rename(saved, f.configPath(7)); await writeFile(f.configPath(8), f.files[8].contents);
+  for (const op of ['inspect', 'recover', 'detach', 'remove']) assert.notEqual((await f.run(op)).code, 0);
+  await lstat(f.configPath(7)); await lstat(f.target);
+});
 test('caller cannot mutate sensitive plan while code publication is in flight', async (t) => {
   const f = await fixture(t);
   await f.ok('install', `if(point==='code:bundle:published') {
@@ -134,8 +164,14 @@ for (const [operation, point, expected] of [
   ['remove', 'files:file-12:removed', 'removed'],
   ['remove', 'removing-code:dir-synced', 'removed'],
   ['remove', 'code:bundle:retired', 'removed'],
-]) test(`real process SIGKILL resumes only recorded direction at ${point}`, async (t) => {
-  const f = await fixture(t); if (operation === 'remove') await f.ok('install');
+  ['detach', 'detaching-files:dir-synced', 'detached'],
+  ['detach', 'files:detaching:dir-synced', 'detached'],
+  ['detach', 'files:file-12:removed', 'detached'],
+  ['detach', 'files:file-9:removed', 'detached'],
+  ['detach', 'files:file-8:removed', 'detached'],
+  ['detach', 'files:detached:dir-synced', 'detached'],
+]) test(`real process SIGKILL resumes only recorded ${operation} direction at ${point}`, async (t) => {
+  const f = await fixture(t); if (operation !== 'install') await f.ok('install');
   const child = spawn('/usr/bin/unshare', f.args(operation,
     `if(point===${JSON.stringify(point)}) {process.stdout.write('CUT\\n'); await new Promise(()=>setInterval(()=>{},1000));}`), { stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '', err = ''; child.stdout.on('data', (b) => { out += b; }); child.stderr.on('data', (b) => { err += b; });
@@ -150,8 +186,12 @@ for (const [operation, point, expected] of [
   } finally { clearTimeout(timer); if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await closed; }
   // Early code cuts need the original client input to stage files, but cuts
   // after its journal is durable do not need the key/config or original source.
+  if (operation === 'detach') await rename(f.source, join(f.base, 'data/source-unavailable'));
   const withInput = point.startsWith('code:') && operation === 'install';
   const r = await f.ok('recover', '', { withInput }); assert.equal(r.stage, expected);
   if (expected === 'removed') { await absent(f.target); await absent(f.configPath(12)); }
-  else await lstat(f.configPath(12));
+  else if (expected === 'detached') {
+    await absent(f.configPath(12)); await absent(f.configPath(8)); await lstat(f.configPath(7)); await lstat(f.target);
+    assert.equal((await f.ok('recover')).stage, 'detached');
+  } else await lstat(f.configPath(12));
 });

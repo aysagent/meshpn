@@ -24,6 +24,27 @@ Radxa этим VPS2-набором не устанавливается.
 
 `code → files → installed → removing-files → removing-code → removed`
 
+Для будущего согласованного снятия systemd-зависимостей добавлена отдельная
+файловая ветка `installed → detaching-files → detached`. Явная операция
+`detach` применима только к полному13-файловому installed набору и удаляет
+фиксированный suffix в обратном порядке: opt-in, client config, ключ, затем
+networkd/resolved drop-ins. Остальные восемь файлов и весь код сохраняются.
+Child file journal использует `detaching → detached`; parent остаётся
+`detaching-files`, пока дочерний журнал не завершён. После любого обрыва
+`recover` продолжает только эту ветку и останавливается в `detached`.
+Продолжить полный rollback может лишь явный `remove` с отдельным OS-proof.
+Данный файловый этап не выполняет daemon-reload/stop и не принимает quiescent
+report сам по себе: его подключение к настоящему lifecycle ещё впереди.
+
+Новая ветка проверена шестью process SIGKILL: durable parent intent,
+durable child intent, отзыв opt-in, удаление первого/последнего drop-in,
+durable child completion. После обрыва исходный source-каталог переименован;
+`recover` работает по журналам без него, но не удаляет сохранённую часть.
+Предварительный общий файловый прогон107/107 PASS; после добавления отказов
+legacy/OS-proof и недоступного source — отдельные19/19 PASS. Полная Node
+регрессия этого среза ещё впереди. Эти проверки используют тестовый OS callback,
+а не заменяют настоящий integrated uninstall VM.
+
 - До staging проверяется соответствие opt-in выбранному bundle. Существующий
   code/config не принимается, даже если байты совпадают.
 - Конфигурация публикуется только после полного code bundle. При её операциях

@@ -30,6 +30,8 @@ const controllerPlans = ['legacy', 'nf_tables'].map((firewallBackend) =>
 const controllerPaths = controllerPlans[0].map((f) => f.path);
 for (const path of controllerPaths) paths.set(path, '0644');
 const privatePaths = ['/etc/clean-vpn/dns/hmac.key', '/etc/clean-vpn/dns/client.json', '/etc/clean-vpn/dns/client-opt-in.json'];
+// Fixed boundary, not a caller-selected path or arbitrary partial deletion.
+const dependencyBoundary = controllerPaths[2];
 for (const path of privatePaths) paths.set(path, '0600');
 function selectedPaths(files) {
   assert.ok(Array.isArray(files));
@@ -147,7 +149,11 @@ export function validateDnsDeploymentJournal(r) {
   assert.ok(Array.isArray(r.parents));
   assert.deepEqual(r.parents.map((p) => p.path), parentPaths(selectedPaths(r.files)));
   for (const p of r.parents) { keys(p, ['path', 'identity']); assert.match(p.identity, /^\d+:\d+$/); }
-  assert.ok(['installing', 'installed', 'removing', 'removed'].includes(r.stage));
+  assert.ok(['installing', 'installed', 'detaching', 'detached', 'removing', 'removed'].includes(r.stage));
+  if (['detaching', 'detached'].includes(r.stage)) {
+    validateDnsClientDeploymentDescriptors(r.files.map(({ path, mode, sha256 }) => ({ path, mode, sha256 })));
+    assert.equal(r.files[8].path, dependencyBoundary);
+  }
   for (const f of r.files) {
     keys(f, ['path', 'mode', 'sha256', 'identity', 'mtimeNs']);
     assert.equal(f.mode, paths.get(f.path)); assert.match(f.sha256, /^[a-f0-9]{64}$/);
@@ -191,7 +197,7 @@ export async function dnsDeploymentFiles({ root, directory, operation, files, as
   finally { if (operation === 'install') for (const f of files) if (Buffer.isBuffer(f.contents)) f.contents.fill(0); }
 }
 async function applyFiles({ root, directory, operation, files, assertInactive, checkpoint }) {
-  assert.ok(['install', 'recover', 'remove', 'inspect'].includes(operation));
+  assert.ok(['install', 'recover', 'detach', 'remove', 'inspect'].includes(operation));
   assert.equal(typeof assertInactive, 'function', 'inactive deployment proof required');
   assert.equal(resolve(root), root); assert.equal(resolve(directory), directory);
   assert.equal(await realpath(root), root); assert.equal(await realpath(directory), directory);
@@ -256,6 +262,11 @@ async function applyFiles({ root, directory, operation, files, assertInactive, c
   assert.equal(record.root, root); assert.equal(record.rootIdentity, rootIdentity, 'deployment root changed');
   assert.equal(record.directoryIdentity, directoryIdentity, 'deployment journal moved');
   assert.deepEqual(record.parents, parents, 'deployment parent context changed');
+  if (operation === 'detach') {
+    assert.ok(['installed', 'detaching', 'detached'].includes(record.stage), 'detach requires a complete client deployment');
+    validateDnsClientDeploymentDescriptors(record.files.map(({ path, mode, sha256 }) => ({ path, mode, sha256 })));
+    assert.equal(record.files[8].path, dependencyBoundary);
+  }
   const save = async (stage) => {
     record = { ...record, stage }; await writePrivateJournal(directory, record, validateDnsDeploymentJournal, checkpoint, 8192, stage);
   };
@@ -284,6 +295,11 @@ async function applyFiles({ root, directory, operation, files, assertInactive, c
     if (record.stage === 'installed') assert.ok(!a && b, 'installed file missing or still staged');
     if (record.stage === 'installing') assert.ok(a || b, 'prepared file lost');
     if (record.stage === 'removed') assert.ok(!a && !b, 'removed deployment reappeared');
+    if (['detaching', 'detached'].includes(record.stage)) {
+      assert.ok(!a, 'detaching file unexpectedly staged');
+      if (i < 8) assert.ok(b, 'dependency detach must preserve the remaining client files');
+      else if (record.stage === 'detached') assert.ok(!b, 'detached dependency reappeared');
+    }
     return { staged, target, a, b };
   };
   // Detect pre-existing drift across the whole set before any next mutation.
@@ -292,6 +308,7 @@ async function applyFiles({ root, directory, operation, files, assertInactive, c
     await context(true); return { stage: record.stage, id: record.id, files: record.files.length, activated: false };
   }
   if (operation === 'remove' && !['removing', 'removed'].includes(record.stage)) await save('removing');
+  if (operation === 'detach' && record.stage === 'installed') await save('detaching');
   assert.ok(operation !== 'install' || record.stage === 'installing');
   if (record.stage === 'installing') {
     for (const [i, f] of record.files.entries()) {
@@ -302,13 +319,15 @@ async function applyFiles({ root, directory, operation, files, assertInactive, c
       const view = await state(f, i); assert.ok(!view.a && view.b);
     }
     await save('installed');
-  } else if (record.stage === 'removing') {
+  } else if (['detaching', 'removing'].includes(record.stage)) {
+    const detaching = record.stage === 'detaching';
     for (const [i, f] of [...record.files.entries()].reverse()) {
+      if (detaching && i < 8) break;
       const { staged, target, a, b } = await state(f, i);
       if (b) { await context(true); await unlink(target); await syncDirectory(dirname(target)); await checkpoint(`file-${i}:removed`); }
       if (a) { await state(f, i); await unlink(staged); await syncDirectory(directory); }
     }
-    await save('removed');
+    await save(detaching ? 'detached' : 'removed');
   }
   for (const [i, f] of record.files.entries()) await state(f, i);
   await context(true);

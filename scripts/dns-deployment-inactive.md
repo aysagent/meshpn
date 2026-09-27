@@ -147,9 +147,11 @@ start/disable. Отчёты/логи/диски отказов сохранен�
 
 После перехода на типизированные свойства общая Node-регрессия прошла
 **2053/2053**, без skips (`meshpn-acceptance-G8f2nt/report.json`). Повторная
-VM `meshpn-dns-vm-SVccio` запущена с276 проверенными по SHA256 project files;
-ранняя проверка настоящих guard properties прошла. Полный результат двух
-загрузок пока не получен, это не VM PASS или разрешение живого uninstall.
+VM `meshpn-dns-vm-SVccio` прошла **20/20 проверок в двух загрузках**;
+`report.json` подтверждает `installed-quiescent`, сохранение host DNS и
+неизменность manager PID/InvocationID. Образ был собран до последующей
+файловой ветки `detach`, поэтому этот VM PASS не является доказательством
+актуального full uninstall или разрешением живого uninstall.
 
 ## Изолированный сценарий
 

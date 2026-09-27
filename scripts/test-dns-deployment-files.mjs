@@ -38,6 +38,25 @@ async function fixture(t, controller = false, client = false) {
 }
 const absent = async (p) => assert.rejects(lstat(p), { code: 'ENOENT' });
 
+test('fixed dependency detach refuses legacy sets without altering installed files', async (t) => {
+  for (const controller of [false, true]) {
+    const f = await fixture(t, controller); await f.run('install');
+    await assert.rejects(f.run('detach'));
+    assert.equal((await readDnsDeploymentJournal(f.directory)).stage, 'installed');
+    for (const [i, file] of f.files.entries()) assert.deepEqual(await readFile(f.target(i)), Buffer.from(file.contents));
+  }
+});
+test('dependency detach stops on loss of OS proof before deleting another file', async (t) => {
+  const f = await fixture(t, true, true); await f.run('install');
+  await assert.rejects(f.run('detach', { checkpoint: async (point) => {
+    if (point === 'file-12:removed') f.setActive();
+  } }), /inactive deployment proof/);
+  await absent(f.target(12));
+  for (let i = 0; i < 12; i++) await lstat(f.target(i));
+  await assert.rejects(f.run('recover'), /inactive deployment proof/);
+  assert.equal((await readDnsDeploymentJournal(f.directory)).stage, 'detaching');
+});
+
 test('private client set binds exact config/bundle/guard and preserves the binary PSK', async (t) => {
   const input = clientInput(), compiled = compileDnsClientDeploymentFiles(input);
   input.secret.fill(0); assert.notDeepEqual(compiled[10].contents, input.secret);
