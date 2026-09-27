@@ -86,6 +86,11 @@ async function pinnedTool(path) {
   const s = await stat(actual, { bigint: true }); assert.ok(s.isFile() && (s.mode & 0o111n));
   return { actual, entries };
 }
+// Read-only identity primitive; does not authorize or execute the supplied path.
+export async function inspectDnsSystemExecutable(path) {
+  assert.ok(typeof path === 'string' && isAbsolute(path) && resolve(path) === path, 'absolute normalized executable path required');
+  return pinnedTool(path);
+}
 export async function createDnsSystemCommands({ assertAuthority, required = ['ip', 'busctl', 'systemctl'] }) {
   assert.equal(typeof assertAuthority, 'function');
   await assertAuthority(); assert.equal(process.platform, 'linux'); assert.equal(process.getuid(), 0);

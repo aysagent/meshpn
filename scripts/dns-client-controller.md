@@ -83,6 +83,15 @@ baseline. VM-only gates нельзя просто удалить или заме
 флагом. Затем — реальные controller units и единая транзакция
 install/activate/disable/uninstall с [файловой частью](dns-deployment-files.md).
 
+Начата [отдельная installed-authority проверка](dns-installed-authority.md):
+opt-in привязывает client/guard ID к hash bundle/config, loader проверяет fixed
+entrypoint, root-owned файлы, namespaces/interpreter и inherited lock.23 local
+tests PASS; есть только read-only main `--inspect`, положительный installed
+VM-путь ещё не проверен, mutating commands/factories пока не подключены.
+Boot policy сама по себе разрешением DNS takeover не стала.
+Полная Node-регрессия1803/1803 PASS (`meshpn-acceptance-nrWdSd`), без skips;
+эта проверка не заменяет installed VM lifecycle.
+
 Только после проверки этой связки в VM можно готовить согласованные live-пилоты.
 Ни перенос кода, ни его unit PASS не закрывают [DNS v1](dns-v1.md).
 
@@ -91,8 +100,10 @@ resolver и private snapshots/journal разделены; VM больше не �
 каталогом0700 и проверяет NSS от UID65534. Это файловая часть будущей OS factory,
 не live authority. После сохранённых отказов startup новая VM прошла
 26/26 в двух загрузках (`meshpn-dns-vm-L5itxn`, `1de98a7`): NSS/recovery/private
-state, host DNS unchanged. Причина прежней нестабильности timing этим не доказана;
-новая crash-матрица ещё требуется. Подробности — в resolver object выше.
+state, host DNS unchanged. Новая crash-матрица также прошла3/3, шесть загрузок,
+по12 проверок (`meshpn-dns-vm-ZqbtFB`, `c3ccc0c`, уже с TCP noDelay).
+Причина прежней нестабильности timing этим не доказана. Эти образы не включают
+последующую installed-authority логику. Подробности — в resolver object выше.
 Установщик должен выбрать same-mount
 расположение snapshots относительно target (журнал может быть отдельно),
 проверить реальные config sources dnsmasq и установленный здоровый baseline.

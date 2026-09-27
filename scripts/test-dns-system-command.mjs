@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { runCommand } from './lib/transparent-acceptance.mjs';
-import { assertDnsSystemCommands, createDnsSystemCommands, runLockedDnsCommand } from './lib/dns-system-command.mjs';
+import { assertDnsSystemCommands, createDnsSystemCommands, runLockedDnsCommand, inspectDnsSystemExecutable } from './lib/dns-system-command.mjs';
 
 const moduleUrl = new URL('./lib/dns-system-command.mjs', import.meta.url).href;
 const prelude = `import { runLockedDnsCommand } from ${JSON.stringify(moduleUrl)};
@@ -61,6 +61,14 @@ test('no lock, invalid argv, fake runner and absent authority are refused', asyn
   let checked = false;
   await assert.rejects(createDnsSystemCommands({ assertAuthority: async () => { checked = true; throw new Error('NO_AUTHORITY'); } }), /NO_AUTHORITY/);
   assert.equal(checked, true);
+});
+test('read-only executable inventory refuses invalid spelling, untrusted files and fake authority', async (t) => {
+  assert.throws(() => assertDnsSystemCommands({ actual: '/usr/bin/true', entries: [] }));
+  for (const path of ['true', '.', '/usr/bin/../bin/true', '/usr//bin/true', null])
+    await assert.rejects(inspectDnsSystemExecutable(path), /absolute normalized executable path required/);
+  await assert.rejects(inspectDnsSystemExecutable('/'));
+  const f = await fixture(t), path = join(f.dir, 'untrusted'); await writeFile(path, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  await assert.rejects(inspectDnsSystemExecutable(path));
 });
 test('a shared lock cannot authorize commands', async (t) => {
   const f = await fixture(t);
