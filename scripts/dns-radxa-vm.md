@@ -95,6 +95,17 @@ SIGKILL QEMU не моделирует физический power loss диск�
 
 ## Диагностика текущей интеграции
 
+Public-layout lifecycle: **26/26 PASS в двух загрузках**,
+`/var/tmp/meshpn-dns-vm-L5itxn/report.json`. Все488 JS-копий соответствуют
+`1de98a7`; Node1779/1779 PASS (`meshpn-acceptance-37J4t3`). Обычный UID читает
+resolver и делает NSS-запрос, но не читает private state; подтверждены оба
+каталога/restore после reboot, baseline queries0 под guard и positive controls
+после release. Host DNS unchanged. Это новый layout, не inherited PASS старых
+результатов ниже. Последующая TCP noDelay правка в этом образе ещё отсутствует.
+Повтор трёх whole-guest cuts для новой схемы остаётся отдельным этапом.
+Успешный прогон не объясняет прежние startup timing failures и не измеряет
+производительность настоящей Radxa; эти отказы сохранены в resolver object.
+
 Public-layout добавлен после приведённых ниже20-check результатов. Они не
 подтверждают новую схему каталогов и непривилегированный NSS. Отказы EXDEV и
 startup deadline, исправления и актуальный статус перечислены в

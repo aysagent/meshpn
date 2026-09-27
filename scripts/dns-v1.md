@@ -122,11 +122,13 @@ OS authority/entrypoint и не установка; private fixture files нел
 подставлять вместо публично читаемого resolver настоящего клиента.
 Добавлен public-layout resolver backend: target0644/parent0755 отдельно от
 private snapshots/journal0700, проверка same mount и identity обоих каталогов.
-Файловые проверки проходят; после исправления EXDEV и подготовки TLS-контекста
-один раз при startup новая Radxa VM прошла первую загрузку, включая NSS от
-обычного UID и offline restore. Однако во второй загрузке readiness adapter
-превысила1500мс: полный lifecycle **FAIL**, не завершённая интеграция.
-Node1778/1778 PASS. Трассы и точный статус — [resolver object](dns-resolver-object.md).
+После исправления EXDEV, подготовки TLS-контекста один раз при startup и
+добавления ограниченной трассы новая public-layout Radxa VM прошла
+**26/26 в двух загрузках**, включая NSS обычного UID, private state и offline
+restore (`meshpn-dns-vm-L5itxn`, срез `1de98a7`). Node1779/1779 PASS.
+Прежние отказы startup1500мс не скрыты; успешный прогон не устанавливает их
+причину. Трассы и границы результата — [resolver object](dns-resolver-object.md).
+Новая трёхточечная crash-матрица, installed entrypoint/установщик и пилоты остаются.
 
 ## Три этапа и текущий статус
 
