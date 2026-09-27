@@ -6,6 +6,7 @@ const input = { schema: 1, client: 'vps2', firewallBackend: 'legacy' };
 test('controller units are fixed offline artifacts without install or boot-enable authority', () => {
   const p = compileDnsControllerServicePlan(input);
   assert.equal(p.installationAllowed, false); assert.equal(p.systemSettingsChanged, false); assert.equal(p.dnsQueriesSent, 0);
+  assert.ok(p.limitations.includes('service-plan-is-not-loaded-service-proof'));
   assert.equal(p.files.length, 4); assert.deepEqual(p, compileDnsControllerServicePlan(input));
   for (const f of p.files) {
     assert.equal(f.mode, '0644'); assert.equal(f.sha256, createHash('sha256').update(f.contents).digest('hex'));

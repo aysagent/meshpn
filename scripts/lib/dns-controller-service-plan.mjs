@@ -64,5 +64,5 @@ ${common('disable')}`;
   return { schema: 1, kind: 'clean-vpn-dns-controller-service-plan', mode: 'offline-render', files,
     installationAllowed: false, systemSettingsChanged: false, dnsQueriesSent: 0,
     limitations: ['no-automatic-enable', 'not-an-installer', 'not-a-live-ownership-proof',
-      'disable-restores-current-boot-not-uninstall', 'restricted-controller-unit-needs-VM-verification', 'vps2-only'] };
+      'disable-restores-current-boot-not-uninstall', 'service-plan-is-not-loaded-service-proof', 'vps2-only'] };
 }

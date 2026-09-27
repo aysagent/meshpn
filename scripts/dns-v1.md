@@ -208,8 +208,11 @@ resolv.conf symlink сначала требует согласованного �
 прошёл настоящий CLI start/disable на двух загрузках NIC-less VM,6/6 PASS
 (`meshpn-dns-vm-M08EIu`). Проверены active/released journals и удаление link;
 это не active-transaction reboot, не готовый installer и не live-пилот.
-Подготовлен отдельный сценарий ограниченных [systemd controller units](dns-controller-service-plan.md),
-далее — установка/откат и installed Radxa backend. Живые критерии ниже не закрыты.
+Ограниченные [systemd controller units](dns-controller-service-plan.md) затем прошли
+8/8 в двух загрузках (`meshpn-dns-vm-SGJprZ`,6961374): stop/restart, SIGKILL adapter
+и disable без adapter. Ранний boot graph опубликованных drop-ins, полноценный
+baseline-positive-control и installer ещё впереди; далее также installed Radxa
+backend. Живые критерии ниже не закрыты.
 
 Этот чек-лист выполняется для VPS 2 и Radxa. VM PASS подтверждает отдельные
 механизмы, но не ставит автоматически галочки за live-конфигурацию и пилот.
