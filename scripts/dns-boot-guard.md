@@ -108,8 +108,14 @@ release при active DNS и потеря guard journal без автомати�
 запрещён, даже если интерфейс уже удалён. Поддержан явный rollback до создания
 link; занятое заново имя и смена владельца отклоняются. DNS uplink не перезаписывается.
 
+Для [Radxa coordinator](dns-radxa-vm.md) `verifyRadxaGuardRestore` теперь требует
+завершённые root/dnsmasq/resolver journals, точные восстановленные файлы, исправный
+localhost-file baseline и подтверждение загруженного restored config актуального
+dnsmasq. Guard release повторяет proof под общим lock; dangling symlink запрещён.
+Lifecycle настоящих CLI guard/adapter:20/20 в двух загрузках VM PASS.
+
 **Совместная live-установка ещё не готова:** остаются
-Radxa restore proof, конкретные клиентские controllers и отключение boot policy/dependency
+конкретные клиентские controllers и отключение boot policy/dependency
 dropins. Release журнала сам по себе не выключает установленную boot policy:
 при следующем boot она снова потребует защиту. Это не постоянный uninstall.
 

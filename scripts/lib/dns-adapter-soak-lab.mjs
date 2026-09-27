@@ -35,19 +35,25 @@ export async function startSystemdVmAdapterFixture(directory, { cli = false } = 
     certificateTimeoutMs: 120000, exitListenPort: cli ? 44443 : 0 }, directory);
 }
 
-export async function startDnsmasqVmAdapterFixture(directory) {
-  await assertDnsmasqVm();
+export async function startDnsmasqVmAdapterFixture(directory, { cli = false } = {}) {
+  const options = await assertDnsmasqVm(); assert.equal(typeof cli, 'boolean');
+  assert.ok(!cli || options.phase.startsWith('radxa'));
   return startFixture({ family: 4, modeTag: 'combo-tls', concurrency: 4, timeoutMs: 5000, port: 2053, replace: true,
-    certificateTimeoutMs: 120000 }, directory);
+    certificateTimeoutMs: 120000, certificateKey: cli ? 'p256' : 'rsa', exitListenPort: cli ? 44443 : 0 }, directory);
 }
 
-async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0, replace = false, domainPolicy, certificateTimeoutMs = 15000, exitListenPort = 0 }, directory) {
+async function startFixture({ family, modeTag, concurrency, timeoutMs, port = 0, replace = false, domainPolicy, certificateTimeoutMs = 15000,
+  certificateKey = 'rsa', exitListenPort = 0 }, directory) {
   const addresses = family === 4 ? ['93.184.216.34', '93.184.216.35', '93.184.216.36']
     : ['2606:4700::1112', '2606:4700::1111', '2606:4700::1113'];
   for (const ip of addresses) await exec('ip', [family === 4 ? '-4' : '-6', 'addr', replace ? 'replace' : 'add', `${ip}/${family === 4 ? 32 : 128}`,
     'dev', 'lo', ...(family === 6 ? ['nodad'] : [])]);
   const keyPath = join(directory, 'key.pem'), certPath = join(directory, 'cert.pem');
-  await exec('openssl', ['req', '-new', '-newkey', 'rsa:2048', '-nodes', '-x509', '-days', '1', '-subj', '/CN=resolver.test',
+  assert.ok(['rsa', 'p256'].includes(certificateKey));
+  // Only CLI VM fixtures use ECDSA to avoid emulating cold RSA signing inside
+  // the real 1500ms DNS deadline. Trust, hostname and TLS verification stay on.
+  const keyArgs = certificateKey === 'p256' ? ['ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1'] : ['rsa:2048'];
+  await exec('openssl', ['req', '-new', '-newkey', ...keyArgs, '-nodes', '-x509', '-days', '1', '-subj', '/CN=resolver.test',
     '-addext', 'subjectAltName=DNS:resolver.test', '-addext', 'basicConstraints=critical,CA:TRUE', '-keyout', keyPath, '-out', certPath],
   { timeout: certificateTimeoutMs }); // RSA generation under TCG is much slower; DNS deadlines remain unchanged.
   const key = await readFile(keyPath), cert = await readFile(certPath, 'utf8');

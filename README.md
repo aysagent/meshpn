@@ -223,12 +223,15 @@ VM**, Node1670/1670 и22 namespace SIGKILL. Отказ при active DNS/пот�
 проверен. Связка с целевым [VPS2 coupled controller](scripts/dns-coupled-vm.md)
 теперь прошла **19/19 в двух загрузках VM**, Node1674/1674: общий lock и три
 журнала, отдельный DNS-link, проверка его удаления перед release без отката DNS
-uplink к старому snapshot. Radxa controller, opt-in установка и постоянный
-откат boot policy ещё нужны. Это не закрытие DNS v1.
+uplink к старому snapshot. [Radxa coordinator](scripts/dns-radxa-vm.md) с
+localhost-file baseline и тем же guard теперь прошёл **20/20 в двух загрузках**,
+Node1677/1677; DHCP сохранён, release требует подтверждённого восстановленного
+dnsmasq. Live controllers, opt-in установка и постоянный откат boot policy
+ещё нужны. Это не закрытие DNS v1 и не ремонт настоящей Radxa.
 
 Следующий порядок работ:
 
-1. Подготовить клиентский переход для Radxa с согласованным исправным baseline. Журналы dnsmasq и dangling `resolv.conf` связаны и проверены в namespace и VM; отдельно в namespace проверен явный [localhost-file baseline](scripts/dns-resolver-object.md), 15 controller SIGKILL и 13 NSS-проб. Откат сохраняет guard; ни файл, ни возврат сломанной ссылки сами по себе не доказывают здоровье baseline. Это ещё не live-backend. Автоматически включать resolved или заменять настройки живой Radxa не предполагается.
+1. Подготовить клиентский переход для Radxa с согласованным исправным baseline. [Localhost-file baseline](scripts/dns-resolver-object.md) проверен в namespace и с общим guard/daemon proof в VM. Возврат сломанной ссылки или только файла без подтверждения daemon не разрешает release. Это ещё не live-backend; автоматически включать resolved или заменять настройки живой Radxa не предполагается.
 2. Подготовить opt-in установщик/откат для обоих backend по [матрице VPS 2/Radxa](scripts/dns-client-matrix.md): подтвердить владельца настроек, выбрать политику cloud DNS на VPS 2, проверить реальные units/config в VM. Исходные диагностические отчёты уже получены; лабораторный PASS не разрешает host takeover.
 3. С отдельным согласованием и независимым аварийным доступом [провести по одному ограниченному 24-часовому пилоту](scripts/dns-pilot.md) на VPS 2 и Radxa. Пользователь запускает подготовленные скрипты и передаёт отчёт; SSH-доступ ассистента не нужен. После [критериев DNS v1](scripts/dns-v1.md) закрыть DNS-этап и вернуться к транспорту; готовность всей `combo-tls` оценивается отдельно.
 

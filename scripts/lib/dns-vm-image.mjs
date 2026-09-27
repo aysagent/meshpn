@@ -94,7 +94,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     }
   }
   await copyTree(join(project, 'scripts'), '/project/scripts');
-  if (systemd && !dnsmasq) {
+  if (systemd && (!dnsmasq || radxa)) {
     // Match the real deployment path: a symlink changes import.meta.url while
     // Node keeps the argv entrypoint spelling, bypassing its main guard.
     await copyTree(join(project, 'scripts'), '/opt/clean-vpn/scripts');
@@ -116,11 +116,12 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     await symlink('/bin/busybox', destination(`/bin/${name}`));
   }
   for (const name of ['iptables', 'ip6tables', ...(systemd ? ['iptables-restore', 'ip6tables-restore'] : [])]) await symlink('/usr/sbin/xtables-legacy-multi', destination(`/usr/sbin/${name}`));
-  if (systemd && !dnsmasq) {
+  if (systemd && (!dnsmasq || radxa)) {
     await mkdir(destination('/etc/clean-vpn/dns'), { recursive: true });
     await writeFile(destination('/etc/clean-vpn/dns/guard-policy.json'), JSON.stringify({ schema: 1,
       kind: 'clean-vpn-dns-boot-policy', enabled: true, firewallBackend: 'legacy',
-      input: { schema: 1, client: 'vps2', id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } }), { mode: 0o600 });
+      input: radxa ? { schema: 1, client: 'radxa', id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', usbInterface: 'usb0', usbAddress: '192.168.7.1' }
+        : { schema: 1, client: 'vps2', id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } }), { mode: 0o600 });
   }
   await writeFile(destination('/etc/passwd'), 'root:x:0:0:root:/root:/bin/sh\nfixture:x:1000:1000:fixture:/tmp:/bin/sh\nsystemd-resolve:x:193:193:resolver:/nonexistent:/bin/false\n'
     + (dnsmasq ? 'nobody:x:65534:65534:Unprivileged fixture:/nonexistent:/bin/false\n' : ''), { mode: 0o644 });

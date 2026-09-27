@@ -10,6 +10,39 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: guard journal и здоровый baseline Radxa
+
+Целевой Radxa coordinator теперь использует настоящий boot guard/CLI adapter
+с DynamicUser и отдельным exit/origin fixture. Общий inherited flock, четыре
+journal, refusal active-release/потерянного guard journal без нового bind.
+`verifyRadxaGuardRestore` требует завершённых root/dnsmasq/resolver journals,
+точных восстановленных файлов и подтверждения реально загруженного restored
+config актуальным dnsmasq; callback повторно проверяет daemon identity. Это
+exact-state proof, не DNS health probe. Dangling baseline всегда отклоняется.
+Pure paired transaction по-прежнему сохраняет guard; release делает внешний
+lifecycle только после явного disable и proof. Boot policy остаётся enabled.
+
+Lifecycle **20/20 PASS в двух загрузках**, `/var/tmp/meshpn-dns-vm-BOtUpP/report.json`;
+все466 JS-копии совпали с исходниками. DHCP сохранён при отказе adapter/exit,
+dnsmasq SIGKILL/recovery, чужой resolver и старый boot не затираются. Baseline
+queries0 во время защиты; после проверенного release positive controls PASS.
+Host DNS unchanged. Node **1677/1677 PASS**, без skips,
+`/var/tmp/meshpn-acceptance-okPKfI/report.json`.
+Crash matrix **3/3 PASS, шесть загрузок, по9 проверок**,
+`/var/tmp/meshpn-dns-vm-Z9nHVV/report.json`; сохранены все четыре journals,
+baseline queries0, host DNS unchanged. Образ cuts предшествует VM-only OpenSSL
+аргументу и откату P-256 в несвязанной factory-ветке; финальный adapter restart
+проверен lifecycle `BOtUpP`, DNS/guard-код cuts совпадает. Подробнее — Radxa VM.
+
+VM2 vCPU MTTCG. Только synthetic Radxa CLI DoH origin переведён на P-256:
+ранний холодный запрос превысил deadline (1597мс против1500мс). Production
+deadline/CA не изменены. VM-only Node `--openssl-config=/dev/null` нужен после
+bind private0700 synthetic `/etc`; production UnsetEnvironment сохранён.
+Неуспешные прогоны и их причины записаны в [Radxa VM](../scripts/dns-radxa-vm.md).
+Это x64/systemd255, не live Radxa/arm64 и не разрешение исправить её resolver.
+Далее — live controllers, opt-in установка/откат и пользовательские пилоты.
+Никаких SSH/live setters; DNS v1 остаётся открытым.
+
 ### Дополнение 2026-09-27: guard journal целевого VPS2 DNS-link
 
 Coupled VM теперь использует настоящий boot guard CLI и непривилегированный
@@ -38,8 +71,8 @@ queries0, host DNS unchanged. Первый образ совпал с текущ
 у остальных различаются только более поздний test assertion/лог другого driver.
 Причина прежнего startup failure не установлена и повтором не объявляется исправленной.
 
-Следующий этап — такой же guard lifecycle для Radxa coordinator, но без снятия
-защиты после возврата dangling symlink; нужен явный исправный localhost baseline.
+На этом срезе следующим этапом был такой же guard lifecycle для Radxa coordinator;
+он выполнен в дополнении выше с явным исправным localhost baseline.
 Live repair, cloud policy, preflight, installer/uninstall и пилоты ещё не закрыты.
 Никаких SSH/live setters. DNS v1 остаётся открытым.
 

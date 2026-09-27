@@ -76,7 +76,9 @@ reboot и guard заранее описываются и требуют отде
    namespace-транзакцией (7 SIGKILL, 9 NSS-проб, 3 отказа при конфликте, PASS).
    [Общий координатор с dnsmasq journal](dns-radxa-journal.md) также готов в
    namespace: 15 controller SIGKILL, 7 DHCP DORA, PASS. Его [VM lifecycle](dns-radxa-vm.md)
-   также PASS: 12 проверок в двух загрузках и три аварийные точки в шести загрузках.
+   сначала проверен с dangling baseline:12 проверок и три аварийные точки.
+   Новая связка с настоящим boot guard/CLI adapter и явным localhost-file baseline:
+   20/20 в двух загрузках PASS, четыре журнала, loaded-daemon proof перед release.
    DHCP не должен отключаться при отказе exit; возврат dangling symlink сам
    по себе не делает baseline исправным и не разрешает снятие guard.
 4. Реальные units/config и откат проверяются в VM, затем с отдельным разрешением

@@ -17,19 +17,25 @@ export const VM_COUPLED_CUTS = Object.freeze(['apply:DNSEx:set', 'restore:DNSEx:
 export const VM_RADXA_CUTS = Object.freeze(['resolver:apply:set', 'resolver:restore:set', 'dnsmasq:restore:daemon:set']);
 export const VM_RADXA_CHECKS = Object.freeze(['failed-guard-prevents-services', 'paired-readiness-and-dhcp',
   'controller-restart-same-transaction', 'exit-outage-preserves-dhcp', 'adapter-sigkill-preserves-dhcp',
-  'dnsmasq-sigkill-recovered', 'foreign-resolver-preserves-three-journals', 'offline-rollback-retains-guard',
-  'restored-start-refused', 'stale-three-journals-refused']);
+  'dnsmasq-sigkill-recovered', 'foreign-resolver-preserves-four-journals', 'offline-rollback-verifies-daemon-before-release',
+  'restored-start-refused', 'stale-four-journals-refused']);
+export const VM_RADXA_GUARD_CHECKS = Object.freeze(['boot-guard-cli-before-network', 'cli-adapter-readiness-and-isolation',
+  'active-dns-refuses-release', 'missing-guard-journal-retains-protection']);
 export function assertVmRadxaEvidence(e, cut) {
   assert.equal(e.phase, cut ? 'radxa-inspect' : 'radxa');
   assert.ok(cut ? VM_RADXA_CUTS.includes(e.point) : e.point === 'lifecycle');
-  for (const key of ['systemdPid1', 'threeJournalsPreserved', 'exactResolverLinkRestored', 'rollbackGuardRetained',
-    'baselinePositiveControl']) assert.equal(e[key], true, key);
+  for (const key of ['systemdPid1', 'fourJournalsPreserved', 'exactLocalhostBaselineRestored', 'verifiedGuardRelease',
+    'baselinePositiveControl', 'unprivilegedAdapter', 'sharedGuardDnsLock']) assert.equal(e[key], true, key);
+  assert.equal(e.bootGuardImplementation, 'cli'); assert.equal(e.adapterImplementation, 'cli');
   assert.equal(e.dhcpPreservedOnAdapterFailure, !cut);
   assert.equal(e.automaticStaleAdoption, false); assert.equal(e.baselineQueriesDuringProtection, 0);
-  const once = ['stale-three-journals-refused', 'paired-readiness-and-dhcp', 'offline-rollback-retains-guard'];
-  assert.deepEqual([...e.checks].sort(), (cut ? once : [...VM_RADXA_CHECKS, ...once.slice(1)]).sort());
+  const once = ['stale-four-journals-refused', 'paired-readiness-and-dhcp', 'offline-rollback-verifies-daemon-before-release'];
+  assert.deepEqual([...e.checks].sort(), (cut ? [...once, ...VM_RADXA_GUARD_CHECKS.slice(0, 2), ...VM_RADXA_GUARD_CHECKS]
+    : [...VM_RADXA_CHECKS, ...once.slice(1), ...VM_RADXA_GUARD_CHECKS, ...VM_RADXA_GUARD_CHECKS]).sort());
   if (cut) {
-    assert.equal(cut.event, 'cut-ready'); assert.equal(cut.point, e.point); assert.deepEqual(e.inspected, cut.journals);
+    assert.equal(cut.event, 'cut-ready'); assert.equal(cut.point, e.point); assert.deepEqual(e.inspected, { ...cut.journals, guard: cut.guard });
+    assert.equal(cut.guard.stage, 'active'); assert.equal(cut.guard.input.client, 'radxa');
+    assert.equal(cut.guard.context.bootId, e.previousBootId);
     const { root, dnsmasq: d, resolver: s } = cut.journals;
     assert.equal(root.id, d.id); assert.equal(root.id, s.id);
     assert.equal(root.dnsmasq.context.bootId, e.previousBootId);
@@ -193,8 +199,8 @@ export function qemuDnsArgs({ root, kernel, initrd, disk, phase, point }) {
     // The real CLI keeps its 1500ms production deadline. Give the synthetic
     // client and separate exit/origin CPU execution capacity as on two hosts;
     // other historical fault/fixture cases retain their original single vCPU.
-    '-serial', 'stdio', '-accel', phase === 'systemd' || phase.startsWith('coupled') ? 'tcg,thread=multi' : 'tcg',
-    '-cpu', 'max', '-m', '1024', '-smp', phase === 'systemd' || phase.startsWith('coupled') ? '2' : '1',
+    '-serial', 'stdio', '-accel', phase === 'systemd' || /^(coupled|radxa)/.test(phase) ? 'tcg,thread=multi' : 'tcg',
+    '-cpu', 'max', '-m', '1024', '-smp', phase === 'systemd' || /^(coupled|radxa)/.test(phase) ? '2' : '1',
     '-machine', 'pc,dump-guest-core=off', '-bios', `${root}/usr/share/seabios/bios-256k.bin`,
     '-L', `${root}/usr/share/qemu`, '-kernel', kernel, '-initrd', initrd,
     '-append', `console=ttyS0 quiet panic=-1 reboot=t random.trust_cpu=on meshpn_dns_vm=isolated-v1 meshpn_phase=${phase} meshpn_point=${point}`,

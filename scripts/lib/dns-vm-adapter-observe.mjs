@@ -6,12 +6,13 @@ import { vmBootOptions } from './dns-vm-protocol.mjs';
 
 const { phase } = vmBootOptions(readFileSync('/proc/cmdline', 'utf8'));
 const coupled = ['coupled', 'coupled-cut', 'coupled-inspect'].includes(phase);
-assert.ok(phase === 'systemd' || coupled);
+const radxa = ['radxa', 'radxa-cut', 'radxa-inspect'].includes(phase);
+assert.ok(phase === 'systemd' || coupled || radxa);
 assert.match(readFileSync('/sys/class/dmi/id/sys_vendor', 'utf8'), /^QEMU\s*$/);
 assert.equal(readFileSync('/proc/1/comm', 'utf8').trim(), 'systemd');
 assert.equal(process.ppid, 1); assert.ok(process.getuid() > 0);
 assert.ok(readdirSync('/sys/class/net').every((name) => ['lo', 'dnsfixture'].includes(name)
-  || coupled && /^cvdns[a-f0-9]{8}$/.test(name)));
+  || coupled && /^cvdns[a-f0-9]{8}$/.test(name) || radxa && name === 'usb0'));
 assert.ok(process.argv.includes('--systemd-notify'));
 const records = []; let fd;
 channel('clean-vpn.dns.query-failure').subscribe((record) => {

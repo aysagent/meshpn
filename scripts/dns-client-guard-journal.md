@@ -87,6 +87,10 @@ SIGKILL, не whole-guest power loss или убийство iptables внутр
 Целевой [VPS2 coupled controller](dns-coupled-vm.md) теперь также использует этот
 журнал/lock:19/19 в двух загрузках VM PASS, отдельный root/link restore proof.
 Binding и release proof не означают установленный live VPS2/Radxa backend.
+Целевой [Radxa coordinator](dns-radxa-vm.md) с localhost-file baseline также
+подключён:20/20 в двух загрузках VM PASS, четыре журнала, общий lock и отдельный
+proof восстановленных файлов и реально загруженного dnsmasq. Dangling baseline
+не разрешает release; остановка adapter сохраняет DHCP и защиту.
 
 Исторический результат: **41/41 journal unit PASS**, общий guard+journal71/71;
 **16/16 controller SIGKILL,2/2 lock conflicts,11/11 packet checks PASS**,
@@ -94,6 +98,5 @@ iptables1.8.10 nf_tables/dnsmasq2.90. Host resolver/NSS/forwarding неизме�
 Node-регрессия **1643/1643 PASS**, `/var/tmp/meshpn-acceptance-l2aoDI/report.json`.
 Physical power loss, reboot нового guard, legacy и live VPS2/ARM здесь не проверены.
 
-Далее: завершить совместный boot/journal lifecycle и restore proof Radxa,
-подготовить live controllers, opt-in установку и откат, затем согласованные
+Далее: подготовить live controllers, opt-in установку и откат, затем согласованные
 пилоты. Этот результат не закрывает DNS v1.

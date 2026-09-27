@@ -12,6 +12,7 @@ import { createDnsmasqJournalFiles } from './dnsmasq-journal-files.mjs';
 import { dnsmasqTransaction, readDnsmasqJournal, dnsmasqHash } from './dnsmasq-journal.mjs';
 import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
 import { queryLabDns, queryDnsmasqVm53 } from './transparent-dns-lab.mjs';
+import { DNS_BOOT_LOCK } from './dns-boot-guard.mjs';
 
 export const journal = '/state/dnsmasq';
 export const emit = (event, data = {}) => console.log(`DNS_VM_EVENT ${JSON.stringify({ event, ...data })}`);
@@ -92,7 +93,7 @@ async function cache() {
   try { return JSON.parse(await readFile('/run/meshpn/dnsmasq-loaded.json', 'utf8')); }
   catch (e) { if (e.code === 'ENOENT' || e instanceof SyntaxError) return null; throw e; }
 }
-export async function backendContext() {
+export async function backendContext({ ensureGuard = () => guard(true), removeGuard = () => guard(false) } = {}) {
   await assertDnsmasqVm();
   const scope = Object.fromEntries(await Promise.all(['net', 'mnt', 'pid'].map(async (key) => [key, await readlink(`/proc/self/ns/${key}`)])));
   const backend = await createDnsmasqJournalFiles({ directory: journal, port: 2053, normalizeDhcpDns: true,
@@ -101,7 +102,7 @@ export async function backendContext() {
       return { scope, bootId: (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim(),
         executableSha256: dnsmasqHash(await readFile('/usr/sbin/dnsmasq')),
         link: { ifindex: link.ifindex, ifname: link.ifname, address: link.address } };
-    }, ensureGuard: () => guard(true), removeGuard: () => guard(false), probe: () => probe(),
+    }, ensureGuard, removeGuard, probe: () => probe(),
     activate: async (record) => {
       const view = await backend.view(), current = await daemonIdentity(), loaded = await cache();
       if (current.ActiveState === 'active' && current.MainPID !== '0'
@@ -114,24 +115,46 @@ export async function backendContext() {
       if (record.direction === 'apply') await probe(53);
       await writeFile('/run/meshpn/dnsmasq-loaded.json', JSON.stringify({ ...view, daemon }), { mode: 0o600 });
     } });
-  return { scope, backend };
+  const verifyRestoredDaemon = async (record) => {
+    await assertDnsmasqVm();
+    const first = await daemonIdentity(), view = await backend.view(), loaded = await cache();
+    assert.equal(first.ActiveState, 'active'); assert.match(first.MainPID, /^[1-9]\d*$/);
+    assert.match(first.InvocationID, /^[a-f0-9]{32}$/);
+    assert.deepEqual(view.context, record.context); assert.deepEqual(view.snapshot, record.restored);
+    assert.deepEqual(loaded, { ...view, daemon: first }, 'restored daemon/config not acknowledged');
+    assert.deepEqual(await daemonIdentity(), first, 'daemon changed during proof'); return true;
+  };
+  return { scope, backend, verifyRestoredDaemon };
 }
 async function main(command) {
-  await assertDnsmasqVm();
-  assert.ok(['guard', 'network', 'adapter', 'sentinel', 'activate', 'disable', 'daemon-check', 'consumer'].includes(command));
+  const options = await assertDnsmasqVm(), radxa = options.phase.startsWith('radxa');
+  assert.ok(['guard', 'network', 'adapter', 'cli-fixture', 'sentinel', 'activate', 'disable', 'daemon-check', 'consumer'].includes(command));
+  assert.ok(command !== 'cli-fixture' || radxa);
   process.umask(0o077); await mkdir('/run/meshpn', { recursive: true, mode: 0o700 });
   if (command === 'guard') { assert.equal(await exists('/run/meshpn/deny-start'), false, 'injected guard failure'); return guard(true); }
   if (command === 'network') {
     assert.deepEqual(JSON.parse((await exec('ip', ['-j', 'link'])).stdout).map((l) => l.ifname), ['lo']);
-    for (const protocol of ['udp', 'tcp']) await exec('iptables', ['-w', '2', '-I', 'OUTPUT', '1', '-d', '127.0.0.1', '-p', protocol, '--dport', '53', '-j', 'ACCEPT']);
+    if (radxa) {
+      await exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node', '/opt/clean-vpn/scripts/dns-boot-guard.mjs', '--start'], { timeout: 60000 });
+      for (const tool of ['iptables', 'ip6tables']) for (const protocol of ['udp', 'tcp'])
+        await exec(tool, ['-w', '2', '-D', 'OUTPUT', '-p', protocol, '--dport', '53', '-j', 'REJECT']);
+    } else for (const protocol of ['udp', 'tcp']) await exec('iptables', ['-w', '2', '-I', 'OUTPUT', '1', '-d', '127.0.0.1', '-p', protocol, '--dport', '53', '-j', 'ACCEPT']);
     await exec('ip', ['link', 'set', 'lo', 'up']);
     await exec('ip', ['link', 'add', 'dnsfixture', 'type', 'dummy']);
     await exec('ip', ['link', 'set', 'dnsfixture', 'up']);
     for (const address of ['1.1.1.1', '8.8.8.8']) await exec('ip', ['addr', 'add', `${address}/32`, 'dev', 'dnsfixture']);
     await exec('ip', ['-6', 'addr', 'add', '2001:db8:53::1/128', 'dev', 'dnsfixture', 'nodad']); return;
   }
-  if (command === 'adapter') {
-    const lab = await startDnsmasqVmAdapterFixture(await mkdtemp('/run/meshpn/adapter-')); await probe();
+  if (command === 'adapter' || command === 'cli-fixture') {
+    const lab = await startDnsmasqVmAdapterFixture(await mkdtemp('/run/meshpn/adapter-'), { cli: command === 'cli-fixture' });
+    if (command === 'cli-fixture') {
+      const paths = Object.fromEntries((await lab.prepareCliAdapter()).map((arg) => arg.slice(2).split('=')));
+      assert.equal(paths['exit-port'], '44443');
+      await writeFile('/etc/clean-vpn/dns/upstream.json', await readFile(paths.config), { flag: 'wx', mode: 0o600 });
+      const key = await readFile(paths['shared-hmac-key']);
+      try { await writeFile('/etc/clean-vpn/dns/hmac.key', key, { flag: 'wx', mode: 0o600 }); } finally { key.fill(0); }
+      await writeFile('/etc/clean-vpn/dns/domains.json', JSON.stringify({ schema: 1, denySuffixes: ['blocked.test'] }), { flag: 'wx', mode: 0o600 });
+    } else await probe();
     return serve('fixture', async (op) => {
       if (op === 'stop-exit') await lab.stopExit(); else if (op === 'start-exit') await lab.restartExit(); else assert.equal(op, 'stats');
       return lab.stats();

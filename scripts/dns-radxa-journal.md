@@ -41,6 +41,18 @@ boot/context не принимается. Полностью подготовл�
 dangling symlink не становится исправным baseline и не даёт разрешения на
 прямой DNS. У координатора вообще нет backend-метода снятия guard.
 
+Внешний контроллер может завершать отдельную guard-транзакцию лишь после
+`verifyRadxaGuardRestore` (`dns-radxa-guard-restore.mjs`): root restored,
+dnsmasq restore/released/cursor2/no-pending, resolver restored с явно выбранным
+localhost-file baseline, неизменные связанные журналы и текущие объекты/context.
+Дополнительно обязателен read-only callback подтверждения загруженного baseline
+daemon. Это не вызов restart или DNS health probe. Dangling stub отклоняется
+даже после точного rollback; отсутствие daemon proof также означает отказ.
+В [Radxa VM](dns-radxa-vm.md) это проверка ActiveState/MainPID/InvocationID,
+точного file snapshot/context и подтверждения загрузки, записанного после
+разрешённого старта dnsmasq; личность процесса проверяется повторно. Снятие
+guard выполняет внешний journal под общим flock, не дочерний removeGuard.
+
 Все операции пары должны идти через координатор и общий lock. Standalone
 дочерние runners оставлены для своих изолированных тестов, их нельзя смешивать
 с paired lifecycle. Это не защита от постороннего root/same-UID writer.

@@ -9,6 +9,7 @@ import { readDnsmasqJournal } from './lib/dnsmasq-journal.mjs';
 import { RESOLVER_TARGET, RESOLVER_MANAGED, readResolverObjectJournal } from './lib/dns-resolver-object-journal.mjs';
 import { pairRadxaBackends, radxaDnsTransaction, inspectRadxaTransaction, readRadxaJournal } from './lib/dns-radxa-journal.mjs';
 import { RADXA_APPLY_CUTS, RADXA_RESTORE_CUTS } from './lib/dns-radxa-crash-lab.mjs';
+import { verifyRadxaGuardRestore } from './lib/dns-radxa-guard-restore.mjs';
 const scope = { net: 'net:[1]', mnt: 'mnt:[2]', pid: 'pid:[3]' };
 const baseline = await readFile(new URL('./fixtures/dns-clients/radxa-dnsmasq.conf', import.meta.url), 'utf8');
 const crash = (at) => async (p) => { if (p === at) throw new Error('interruption'); };
@@ -53,6 +54,32 @@ test('paired lifecycle: daemon before resolver, reverse offline rollback, stable
   f.state.loaded = null;
   assert.deepEqual(await f.run('recover'), restored); assert.equal(f.state.loaded, 'restore');
   await assert.rejects(f.run('enable'), /already exists/);
+});
+test('Radxa guard release requires explicit localhost baseline and loaded restored daemon', async (t) => {
+  const f = await fixture(t, 'localhost-file');
+  const proof = (verifyDaemon = async () => f.state.loaded === 'restore') =>
+    verifyRadxaGuardRestore({ directory: f.directory, scope, backend: f.backend, verifyDaemon });
+  await f.run('enable'); await assert.rejects(proof());
+  await f.run('disable'); assert.equal(await proof(), true);
+  f.state.loaded = null; await assert.rejects(proof(), /daemon proof/);
+  f.state.loaded = 'restore';
+  await assert.rejects(proof(async () => { f.state.bootId = '22345678-1234-1234-1234-123456789abc'; return true; }));
+});
+test('Radxa guard proof refuses exact rollback to dangling stub and absent daemon proof', async (t) => {
+  const f = await fixture(t); await f.run('enable'); await f.run('disable');
+  let calls = 0;
+  await assert.rejects(verifyRadxaGuardRestore({ directory: f.directory, scope, backend: f.backend,
+    verifyDaemon: async () => { calls++; return true; } }), /localhost-file baseline/);
+  assert.equal(calls, 0);
+  const healthy = await fixture(t, 'localhost-file'); await healthy.run('enable'); await healthy.run('disable');
+  await assert.rejects(verifyRadxaGuardRestore({ directory: healthy.directory, scope, backend: healthy.backend }), /daemon proof/);
+});
+test('Radxa guard proof rejects a foreign resolver and unfinished paired rollback', async (t) => {
+  const f = await fixture(t, 'localhost-file'), proof = () => verifyRadxaGuardRestore({ directory: f.directory,
+    scope, backend: f.backend, verifyDaemon: async () => true });
+  await f.run('enable'); await assert.rejects(f.run('disable', crash('restore-dnsmasq')), /interruption/);
+  await assert.rejects(proof()); await f.run('disable');
+  await writeFile(join(f.resolverDir, 'resolv.conf'), 'nameserver 192.0.2.1\n'); await assert.rejects(proof());
 });
 for (const point of [...RADXA_APPLY_CUTS, ...RADXA_RESTORE_CUTS]) test(`paired localhost-file rollback after ${point}`, async (t) => {
   const f = await fixture(t, 'localhost-file'), restoring = RADXA_RESTORE_CUTS.includes(point);

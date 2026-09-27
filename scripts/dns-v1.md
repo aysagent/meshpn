@@ -92,7 +92,14 @@ link перед release. **19/19 в двух загрузках VM PASS**, Node1
 Новая аварийная матрица **3/3 PASS, шесть загрузок, по9 проверок**.
 Результаты и отказы этой новой связки учитываются отдельно в
 [coupled VM](dns-coupled-vm.md), не наследуются от прежнего fixture.
-Далее — Radxa coordinator с исправным baseline, opt-in установщик/откат и пилоты.
+Radxa coordinator с явно заданным localhost-file baseline теперь также связан
+с boot guard/CLI adapter: **20/20 в двух загрузках VM PASS**, Node1677/1677.
+Аварийная матрица этой связки: **3/3 PASS, шесть загрузок, по9 проверок**;
+точные snapshot-границы записаны в [Radxa VM](dns-radxa-vm.md).
+Его guard снимается только после завершения трёх DNS-журналов и подтверждения
+реального dnsmasq с restored config; dangling baseline этим не разрешён.
+Далее — live controllers, opt-in установщик/откат и пилоты. VM не выполняет
+согласование или repair baseline настоящей Radxa.
 
 ## Три этапа и текущий статус
 

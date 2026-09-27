@@ -24,36 +24,53 @@ Provenance tools/APT metadata и kernel/modules: [общая VM-инструкц
 
 ## Исполнитель и persistent resolver
 
-Контроллер напрямую исполняет обе файловые транзакции, держа общий flock:
-parent-owned RPC здесь нет. Guard устанавливается guest init до systemd,
-network/adapter/controller/consumer имеют проверяемые зависимости. dnsmasq
+Контроллер напрямую исполняет обе файловые транзакции, держа общий boot/DNS
+flock `/run/clean-vpn-dns-guard/lock`: parent-owned RPC здесь нет. Настоящий
+boot guard CLI проверяется до сети; только после обеих его IP-семей удаляется
+внешний init guard. Постоянный guard journal привязан к boot policy ID и USB
+ifindex/MAC/адресу, старое состояние не присваивается. Network/adapter/controller/consumer
+имеют проверяемые зависимости. Настоящий adapter CLI работает с DynamicUser и
+credentials отдельно от exit/origin fixture. Его readiness включает4 UDP/TCP
+A/AAAA запроса. dnsmasq
 не зависит от живости adapter/controller, поэтому может сохранять DHCP и
 локальные имена при их отказе.
 
 Синтетический гостевой `/etc` копируется в приватный каталог на ext4-диске
 `/state/dnsmasq/resolver-etc` и монтируется **каталогом**, а не отдельным файлом.
 Systemd units сохраняются, atomic rename resolver виден NSS, inode объектов
-переживает потерю RAM. Исходный `resolv.conf` — ссылка на отсутствующий
-`/run/systemd/resolve/stub-resolv.conf`. Включение выбирает regular localhost
-resolver; disable возвращает ссылку без снятия guard. Явный localhost:53 probe
+переживает потерю RAM. В текущем режиме исходный `resolv.conf` — явно заданный
+regular localhost-file (`nameserver 127.0.0.1`), как после будущего согласованного
+repair. Стенд не ремонтирует реальную Radxa. Явный localhost:53 probe
 проверяет ответ dnsmasq до выбора системного resolver и имеет отдельный VM gate.
 
 Откат восстанавливает и исходное DHCP option 6 (`1.1.1.1`). Поэтому после новой
-DHCP аренды клиентский DNS остаётся заблокирован guard — это точный исходный
-конфиг, не обещание исправного baseline. Локальные имена проверяются через
-dnsmasq **до** повторного DHCP; после него проверяется блокировка прямого DNS.
-
-Только test driver после проверки rollback отдельно снимает guard для baseline
-positive controls. Это не действие coordinator или service stop. Архивирование
-старой эпохи также явно делает driver; live-сервисы не получают такой политики.
+DHCP аренды клиент снова использует исходный DNS. Локальные имена проверяются
+через dnsmasq **до** повторного DHCP. Explicit disable сначала завершает все
+три DNS-журнала, затем внешний контроллер требует `verifyRadxaGuardRestore`
+(exact localhost baseline + загруженная конфигурация текущего dnsmasq) перед
+каждой release-операцией guard journal. После этого выполняются положительные
+baseline controls. Service stop сам ничего не откатывает и guard не снимает.
+Архивирование всех четырёх журналов после stale refusal явно делает fixture
+driver; live-сервисы не получают такой политики. Старый dangling-stub rollback
+сохраняется в namespace/unit тестах и никогда не проходит новый release proof.
 
 ## Конечные проверки
 
-Lifecycle: 12 проверок в двух загрузках — failed guard, readiness/DHCP, restart
+Lifecycle: 20 проверок в двух загрузках — failed guard, boot CLI до сети,
+отдельный непривилегированный CLI adapter, отказ release при active DNS и
+отказ нового bind при потерянном guard journal, readiness/DHCP, restart
 controller с тем же ID, отказ exit, SIGKILL adapter с сохранением DHCP, SIGKILL
-dnsmasq/recovery, чужой resolver без перезаписи трёх journals, offline rollback
-под guard, отказ start после rollback, reboot со старой эпохой и новая явная
-fixture-транзакция. После reboot сравниваются побайтно все три журнала.
+dnsmasq/recovery, чужой resolver без перезаписи четырёх journals, offline rollback
+с проверкой daemon перед release, отказ start после rollback, reboot со старой
+эпохой и новая явная fixture-транзакция. После reboot сравниваются побайтно все
+четыре журнала. VM использует2 vCPU MTTCG, обычные DNS deadlines не увеличены.
+Radxa CLI fixture использует P-256 сертификат вместо RSA2048: при холодном
+TLS в TCG наблюдался DNS_TIMEOUT1597мс при реальном deadline1500мс. Это изменение
+только synthetic DoH origin, не production crypto/deadline или отключение CA.
+Режимы прежних systemd/coupled и namespace RSA fixtures не изменены.
+Адаптер VM получает `--openssl-config=/dev/null`: после bind синтетический
+`/etc` остаётся private0700 журналом и недоступен DynamicUser. Остальная очистка
+окружения, credentials, пустой capability set и TLS verification сохранены.
 
 Три whole-guest crash точки, по две загрузки на отдельном диске:
 
@@ -63,12 +80,49 @@ fixture-транзакция. После reboot сравниваются поб�
 | `resolver:restore:set` | restore-resolver | apply/complete | restore-intent |
 | `dnsmasq:restore:daemon:set` | restore-dnsmasq | restore, cursor=1, pending | restored |
 
-Host сверяет все три журнала после ext4 recovery с событием cut-ready и требует
+Host сверяет все четыре журнала после ext4 recovery с событием cut-ready и требует
 нового boot ID, отказа stale adoption и фиксированного набора критериев.
 SIGKILL QEMU не моделирует физический power loss диска хоста: его page cache
 жив. Hot reset внутри одного процесса QEMU не проверяется.
 
-## Статус прогонов
+## Диагностика текущей интеграции
+
+Текущий lifecycle: **20/20 PASS в двух загрузках**, 2026-09-27,
+`/var/tmp/meshpn-dns-vm-BOtUpP/report.json`. Все466 JS-копии совпали с рабочими
+исходниками. Guard до сети, отдельный CLI adapter, четыре persistent journal,
+DHCP при отказе adapter, SIGKILL dnsmasq/recovery, отказ чужому resolver и
+offline disable с loaded-daemon proof проверены. Baseline queries0 во время
+защиты, positive controls после release пройдены, host DNS unchanged.
+
+Новая аварийная матрица: **3/3 PASS, шесть загрузок, по9 проверок**,
+`/var/tmp/meshpn-dns-vm-Z9nHVV/report.json`. Все четыре журнала совпали с
+checkpoint после перезагрузки; baseline queries0, host DNS unchanged.
+Образ матрицы собран до окончательного VM-only `--openssl-config` аргумента
+и возврата RSA в несвязанной systemd/coupled fixture-ветке; эти две правки и
+unit assertion — единственные отличия JS snapshot. Radxa coordinator/guard
+и DNS-транзакции совпадают. Аварийная матрица не проверяет adapter restart
+после bind `/etc`: именно этот путь на окончательных исходниках проверен
+отдельным lifecycle `BOtUpP` выше.
+
+2026-09-27: unit/VM-protocol127/127, полный Node1677/1677 PASS,
+`/var/tmp/meshpn-acceptance-okPKfI/report.json`. Это не VM acceptance.
+
+Неуспешные прогоны сохранены отдельно:
+
+- `4c8JXb`: после adapter SIGKILL непривилегированный новый Node получил EACCES
+  на `/etc/ssl/openssl.cnf`, потому что synthetic `/etc` уже private directory.
+- `2oZDwG`: попытка задать OPENSSL_CONF не сработала — production unit правильно
+  очищает эту переменную через UnsetEnvironment. Использован явный VM-only
+  Node argument; проверка очистки окружения не удалялась.
+- `i82SnF`: первый запрос после холодной загрузки превысил1500мс:
+  DNS_TIMEOUT, elapsed1597мс. Это измеренный timeout, не отключение CA или
+  прямой fallback. Radxa CLI fixture переведён на P-256 без изменения deadline.
+
+Отчёты и serial logs остаются в соответствующих `/var/tmp/meshpn-dns-vm-*/`.
+Пересоздаваемый образ `4c8JXb` удалён для освобождения места; отчёт, manifest и
+console log сохранены. Эти отказы не учитываются как PASS.
+
+## Исторические прогоны: dangling baseline без общего boot journal
 
 Проверки 2026-09-27: lifecycle **12/12 PASS в двух загрузках**,
 `/var/tmp/meshpn-dns-vm-nh7rFm/report.json`, host DNS files unchanged.
