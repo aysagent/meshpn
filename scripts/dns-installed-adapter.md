@@ -70,7 +70,11 @@ adapter без preload, отказ до его запуска, проверка 
 `/var/tmp/meshpn-dns-vm-TJnMKi` уже прошёл `installed-cli-baseline-and-refusals`,
 включающий настоящий adapter, отличие загруженного ключа от файла на диске
 и повторную проверку после возврата ключа. Полный двухзагрузочный lifecycle
-на момент этой записи ещё выполняется; это не итоговый VM PASS.
+затем завершился: **21/21 PASS**, baseline DNS queries под защитой0,
+host DNS unchanged. Все254 файла installed bundle сверены с617cb49. Это
+доказательство загруженных credentials; последующее добавление socket
+ownership/probe в452ac37 оно не проверяет. Пересоздаваемый образ удалён,
+report/serial/manifest сохранены.
 
 Предыдущий `meshpn-dns-vm-wTzDMt` остановился до запуска adapter: минимальному
 guest не хватало `sysinit.target`. В fixture добавлены пассивные sysinit/basic/

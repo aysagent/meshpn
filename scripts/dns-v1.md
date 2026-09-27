@@ -162,7 +162,8 @@ installed start/disable и интеграция установщика всё е
 через installed `--inspect-adapter`: настоящий PID/unit/argv, изоляция процесса
 и побайтное совпадение трёх credentials с исходными файлами. На первом boot
 NIC-less VM проверены позитивный случай и отказ после изменения ключа только
-на диске. Общая Node-регрессия1870/1870 PASS; двухзагрузочный прогон ещё идёт.
+на диске. Общая Node-регрессия1870/1870 PASS; двухзагрузочный прогон затем
+завершился21/21 PASS (`meshpn-dns-vm-TJnMKi`, source617cb49).
 Проверка не отправляет DNS и не разрешает takeover. Следом нужны привязка
 UDP/TCP listener к этому PID, readiness под guard и installed setters/lifecycle;
 на живых клиентах ничего не менялось.
@@ -171,7 +172,7 @@ Socket ownership и явный `--probe-adapter` реализованы след
 проверяются реальные loopback UDP/TCP inode, FD MainPID и UID; guard должен
 уже присутствовать перед четырьмя запросами, процесс/credentials/listener
 повторно сверяются после них.1890/1890 Node PASS, включая реальные сокеты
-чужого PID и закрытие listener. Это ещё **не VM PASS нового probe**: выполняющийся
+чужого PID и закрытие listener. Это ещё **не VM PASS нового probe**: завершённый
 `meshpn-dns-vm-TJnMKi` содержит предыдущий617cb49; следующий образ должен
 проверить новые socket/readiness-сценарии и точные счётчики запросов.
 
