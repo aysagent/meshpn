@@ -121,6 +121,23 @@ function validateFiles(files) {
   }
   return files;
 }
+// Metadata-only binding for the enclosing code/config publication transaction.
+// Validate sensitive contents before returning descriptors; never serialize keys.
+export function dnsClientDeploymentDescriptors(files, bundleSha256) {
+  validateFiles(files); assert.match(bundleSha256, /^[a-f0-9]{64}$/);
+  assert.equal(files.length, 13); assert.equal(files.at(-1).path, privatePaths[2]);
+  assert.equal(JSON.parse(files.at(-1).contents).bundleSha256, bundleSha256, 'opt-in/code bundle mismatch');
+  return validateDnsClientDeploymentDescriptors(files.map(({ path, mode, sha256 }) => ({ path, mode, sha256 })));
+}
+export function validateDnsClientDeploymentDescriptors(files) {
+  assert.equal(files.length, 13); selectedPaths(files);
+  for (const f of files) {
+    keys(f, ['path', 'mode', 'sha256']); assert.equal(f.mode, paths.get(f.path));
+    assert.match(f.sha256, /^[a-f0-9]{64}$/);
+    if (f.path === DNS_NETWORKD_POLICY) assert.equal(f.sha256, dnsNetworkdPolicyArtifact().sha256);
+  }
+  return files;
+}
 export function validateDnsDeploymentJournal(r) {
   keys(r, ['schema', 'backend', 'id', 'root', 'rootIdentity', 'directoryIdentity', 'parents', 'stage', 'files']);
   assert.equal(r.schema, 1); assert.equal(r.backend, 'dns-deployment-files');

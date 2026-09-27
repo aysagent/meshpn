@@ -27,6 +27,7 @@ export const TEST_FILES = Object.freeze([
   'test-dns-deployment-files.mjs',
   'test-dns-deployment-bundle.mjs',
   'test-dns-deployment-inactive.mjs',
+  'test-dns-deployment.mjs',
   'test-dns-client-controller.mjs',
   'test-dns-system-command.mjs', 'test-dns-system-bus.mjs', 'test-dns-installed-authority.mjs', 'test-dns-vps2-baseline.mjs', 'test-dns-installed-adapter.mjs', 'test-dns-adapter-sockets.mjs', 'test-dns-installed-backend.mjs',
   'test-dns-adapter-soak.mjs',
