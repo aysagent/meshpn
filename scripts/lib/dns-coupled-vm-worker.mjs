@@ -4,7 +4,9 @@ import { readFile, rename } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { assertCoupledDnsVm } from './dns-systemd-vm-safety.mjs';
 import { journal, guardJournal, createVmGuardLifecycle, busContext, protectedProbe, exists, emitSystemd as emit } from './dns-systemd-vm-worker.mjs';
-import { createVmCoupledBackend } from './dns-coupled-backend.mjs';
+import { createVmCoupledBackend, createVmLockedCoupledBackend } from './dns-coupled-backend.mjs';
+import { createDnsSystemCommands } from './dns-system-command.mjs';
+import { createDnsSystemBus } from './dns-system-bus.mjs';
 import { readCoupledJournal } from './dns-coupled-journal.mjs';
 import { createDnsClientController } from './dns-client-controller.mjs';
 import { loadDnsBootGuard } from './dns-boot-guard.mjs';
@@ -16,10 +18,12 @@ const guard = async (enabled) => {
   return enabled ? lifecycle.prepare() : lifecycle.release();
 };
 
-export async function coupledVmContext({ ensureGuard = () => guard(true), releaseGuard = () => guard(false) } = {}) {
+export async function coupledVmContext({ ensureGuard = () => guard(true), releaseGuard = () => guard(false), locked = false } = {}) {
   await assertCoupledDnsVm();
-  const { bus, scope, ifindex } = await busContext();
-  const backend = await createVmCoupledBackend({ bus, ensureGuard, releaseGuard,
+  const context = await busContext(), { scope, ifindex } = context;
+  const commands = locked ? await createDnsSystemCommands({ assertAuthority: assertCoupledDnsVm, required: ['ip', 'busctl'] }) : undefined;
+  const bus = locked ? createDnsSystemBus(commands.run) : context.bus;
+  const backend = await (locked ? createVmLockedCoupledBackend : createVmCoupledBackend)({ bus, ensureGuard, releaseGuard, commands,
     port: 2053, probe: protectedProbe });
   return { bus, scope, ifindex, backend };
 }
@@ -36,7 +40,7 @@ async function main(command) {
     await new Promise(() => { setInterval(() => {}, 1000); });
   };
   const controller = await createDnsClientController({ client: 'vps2', command: command === 'disable' ? 'disable' : 'start',
-    directory: journal, createGuard: createVmGuardLifecycle, createContext: coupledVmContext, checkpoint });
+    directory: journal, createGuard: createVmGuardLifecycle, createContext: (hooks) => coupledVmContext({ ...hooks, locked: true }), checkpoint });
   lifecycle = controller.guard;
   if (command === 'guard-proof-check') {
     const before = await readFile(`${guardJournal}/journal.json`);

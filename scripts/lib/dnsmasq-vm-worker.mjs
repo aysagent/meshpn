@@ -1,3 +1,4 @@
+import { assertDnsSystemCommands } from './dns-system-command.mjs';
 /** Actual systemd/file executor. Refuses everything outside the dnsmasq VM. */
 import assert from 'node:assert/strict';
 import net from 'node:net';
@@ -83,46 +84,49 @@ async function serve(name, action, close) {
   await exec('/usr/bin/systemd-notify', ['--ready', `--pid=${process.pid}`]);
   await new Promise(() => {});
 }
-async function daemonIdentity() {
+async function daemonIdentity(control = ctl) {
   const result = {};
   for (const key of ['ActiveState', 'MainPID', 'InvocationID']) result[key] =
-    (await ctl('show', 'dns-vm-dnsmasq.service', `--property=${key}`, '--value')).stdout.trim();
+    (await control('show', 'dns-vm-dnsmasq.service', `--property=${key}`, '--value')).stdout.trim();
   return result;
 }
 async function cache() {
   try { return JSON.parse(await readFile('/run/meshpn/dnsmasq-loaded.json', 'utf8')); }
   catch (e) { if (e.code === 'ENOENT' || e instanceof SyntaxError) return null; throw e; }
 }
-export async function backendContext({ ensureGuard = () => guard(true), removeGuard = () => guard(false) } = {}) {
+export async function backendContext({ ensureGuard = () => guard(true), removeGuard = () => guard(false), commands } = {}) {
   await assertDnsmasqVm();
+  if (commands) assertDnsSystemCommands(commands);
+  const run = commands ? (file, args) => commands.run(file === 'ip' ? 'ip' : 'dnsmasq', args) : exec;
+  const control = commands ? (...args) => commands.run('systemctl', ['--no-pager', ...args], { timeoutMs: 180000 }) : ctl;
   const scope = Object.fromEntries(await Promise.all(['net', 'mnt', 'pid'].map(async (key) => [key, await readlink(`/proc/self/ns/${key}`)])));
   const backend = await createDnsmasqJournalFiles({ directory: journal, port: 2053, normalizeDhcpDns: true,
     identity: async () => {
-      const [link] = JSON.parse((await exec('ip', ['-j', 'link', 'show', 'dev', 'usb0'])).stdout);
+      const [link] = JSON.parse((await run('ip', ['-j', 'link', 'show', 'dev', 'usb0'])).stdout);
       return { scope, bootId: (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim(),
         executableSha256: dnsmasqHash(await readFile('/usr/sbin/dnsmasq')),
         link: { ifindex: link.ifindex, ifname: link.ifname, address: link.address } };
     }, ensureGuard, removeGuard, probe: () => probe(),
     activate: async (record) => {
-      const view = await backend.view(), current = await daemonIdentity(), loaded = await cache();
+      const view = await backend.view(), current = await daemonIdentity(control), loaded = await cache();
       if (current.ActiveState === 'active' && current.MainPID !== '0'
         && JSON.stringify(loaded) === JSON.stringify({ ...view, daemon: current })) return;
-      await exec('/usr/sbin/dnsmasq', ['--test', `--conf-file=${journal}/dnsmasq.conf`]);
+      await run('/usr/sbin/dnsmasq', ['--test', `--conf-file=${journal}/dnsmasq.conf`]);
       await writeFile('/run/meshpn/dnsmasq-permit.json', JSON.stringify(view), { mode: 0o600 });
-      await ctl('restart', 'dns-vm-dnsmasq.service');
-      const daemon = await daemonIdentity(); assert.equal(daemon.ActiveState, 'active'); assert.notEqual(daemon.MainPID, '0');
+      await control('restart', 'dns-vm-dnsmasq.service');
+      const daemon = await daemonIdentity(control); assert.equal(daemon.ActiveState, 'active'); assert.notEqual(daemon.MainPID, '0');
       assert.match(daemon.InvocationID, /^[a-f0-9]{32}$/);
       if (record.direction === 'apply') await probe(53);
       await writeFile('/run/meshpn/dnsmasq-loaded.json', JSON.stringify({ ...view, daemon }), { mode: 0o600 });
     } });
   const verifyRestoredDaemon = async (record) => {
     await assertDnsmasqVm();
-    const first = await daemonIdentity(), view = await backend.view(), loaded = await cache();
+    const first = await daemonIdentity(control), view = await backend.view(), loaded = await cache();
     assert.equal(first.ActiveState, 'active'); assert.match(first.MainPID, /^[1-9]\d*$/);
     assert.match(first.InvocationID, /^[a-f0-9]{32}$/);
     assert.deepEqual(view.context, record.context); assert.deepEqual(view.snapshot, record.restored);
     assert.deepEqual(loaded, { ...view, daemon: first }, 'restored daemon/config not acknowledged');
-    assert.deepEqual(await daemonIdentity(), first, 'daemon changed during proof'); return true;
+    assert.deepEqual(await daemonIdentity(control), first, 'daemon changed during proof'); return true;
   };
   return { scope, backend, verifyRestoredDaemon };
 }

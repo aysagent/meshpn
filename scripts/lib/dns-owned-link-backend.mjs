@@ -6,11 +6,16 @@ import { exec } from './browser-lab-driver.mjs';
 import { assertDnsMountNamespace } from './dns-lifecycle-namespace.mjs';
 import { validateOwnedLinkContext } from './dns-owned-link-journal.mjs';
 import { assertCoupledDnsVm } from './dns-systemd-vm-safety.mjs';
+import { assertDnsSystemCommands } from './dns-system-command.mjs';
 
 export const createOwnedLinkBackend = (options) => buildBackend(options, assertDnsMountNamespace);
 export const createVmOwnedLinkBackend = (options) => buildBackend(options, assertCoupledDnsVm);
+export async function createVmLockedOwnedLinkBackend(options) {
+  await assertCoupledDnsVm(); assertDnsSystemCommands(options.commands);
+  return buildBackend(options, assertCoupledDnsVm, (_file, args) => options.commands.run('ip', args));
+}
 // Authority is selected by the exported factory, never supplied by a caller.
-async function buildBackend({ bus, ensureGuard, releaseGuard }, authority) {
+async function buildBackend({ bus, ensureGuard, releaseGuard }, authority, run = exec) {
   await authority();
   const scope = {};
   for (const key of ['net', 'mnt', 'pid']) scope[key] = await readlink(`/proc/self/ns/${key}`);
@@ -19,9 +24,9 @@ async function buildBackend({ bus, ensureGuard, releaseGuard }, authority) {
   const nameCheck = (name) => assert.match(name, /^cvdns[a-f0-9]{8}$/);
   const view = async (name) => {
     await authority(); nameCheck(name);
-    const links = JSON.parse((await exec('ip', ['-d', '-j', 'link', 'show'])).stdout);
+    const links = JSON.parse((await run('ip', ['-d', '-j', 'link', 'show'])).stdout);
     const link = links.find((v) => v.ifname === name); if (!link) return null;
-    const addresses = JSON.parse((await exec('ip', ['-j', 'addr', 'show', 'dev', name])).stdout);
+    const addresses = JSON.parse((await run('ip', ['-j', 'addr', 'show', 'dev', name])).stdout);
     const dns = {}, owner = await bus.owner();
     // A newly created link may not yet have reached resolved's netlink monitor.
     const end = performance.now() + 2000;
@@ -43,16 +48,16 @@ async function buildBackend({ bus, ensureGuard, releaseGuard }, authority) {
       assert.deepEqual(spec, { name: spec.name, kind: 'dummy', alias: spec.alias, mac: spec.mac, mtu: 1500, up: false, master: null, addresses: [] });
       assert.equal(await view(spec.name), null, 'name occupied before creation'); await check(expected);
       // The 5.4 fixture retains name + MAC on creation, but needs a separate alias setter.
-      await exec('ip', ['link', 'add', 'name', spec.name, 'address', spec.mac, 'mtu', '1500', 'type', 'dummy']);
+      await run('ip', ['link', 'add', 'name', spec.name, 'address', spec.mac, 'mtu', '1500', 'type', 'dummy']);
     },
     async stamp(expected, current, alias) {
       await check(expected); assert.equal(current.alias, ''); assert.match(alias, /^clean-vpn-dns:[a-f0-9]{32}$/);
       assert.deepEqual(await view(current.name), current, 'link changed before stamp'); await check(expected);
-      await exec('ip', ['link', 'set', 'dev', current.name, 'alias', alias]);
+      await run('ip', ['link', 'set', 'dev', current.name, 'alias', alias]);
     },
     async remove(expected, current) {
       await check(expected); assert.deepEqual(await view(current.name), current, 'link changed before deletion'); await check(expected);
-      await exec('ip', ['link', 'delete', 'dev', current.name]);
+      await run('ip', ['link', 'delete', 'dev', current.name]);
     },
     async releaseGuard(expected, name) {
       await check(expected); assert.equal(await view(name), null, 'name reused before guard release'); await check(expected); await releaseGuard();

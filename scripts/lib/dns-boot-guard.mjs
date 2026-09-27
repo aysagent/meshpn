@@ -78,6 +78,8 @@ async function lockHeld() {
   }
   throw new Error('inherited exclusive guard flock required');
 }
+// Shared by fixed-layout client OS helpers; this does not acquire a new lock.
+export const requireDnsBootGuardLock = lockHeld;
 async function readPolicy() {
   for (const path of ['/etc', '/etc/clean-vpn', '/etc/clean-vpn/dns']) await trustedDirectory(path);
   const fd = await open(DNS_BOOT_POLICY, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);

@@ -113,6 +113,13 @@ Radxa coordinator с явно заданным localhost-file baseline тепе�
 Последующий fix делает начальное разрешение guard binding одноразовым внутри
 lifecycle; потеря журнала не вызывает повторную привязку.57 unit/1740 Node PASS,
 граница VM-среза и исправления — в [guard journal](dns-client-guard-journal.md).
+Общий [исполнитель команд ОС](dns-system-command.md) подключён к обоим VM
+controller: root-pinned tools, fixed system D-Bus, наследование lifecycle flock
+командами. Новый прогон VPS2:19/19, Radxa:20/20, по две загрузки PASS;
+Node1754/1754 PASS. Сохранён также первый отказ readiness Radxa до запуска
+controller; отдельный повтор прошёл без увеличения таймаутов. Это ещё не live
+OS authority/entrypoint и не установка; private fixture files нельзя напрямую
+подставлять вместо публично читаемого resolver настоящего клиента.
 
 ## Три этапа и текущий статус
 

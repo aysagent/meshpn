@@ -65,10 +65,19 @@ guard binding проверено отдельно:57/57 unit, Node1740/1740 (`me
 
 ## Оставшаяся связь с установщиком
 
+Общий [исполнитель команд ОС](dns-system-command.md) уже подключён к VM controller:
+фиксированные root-pinned tools, system D-Bus и наследование общего flock
+дочерними командами. Обычные host/namespace gates не ослаблены; это не live CLI.
+Эта связка повторно прошла VPS2:19/19 (`meshpn-dns-vm-JvWiYh`) и Radxa:20/20
+(`meshpn-dns-vm-Z8KVkG`), каждый в двух загрузках; Node1754/1754 PASS. В обоих
+образах все482 JS-копии совпали. Срез включает одноразовый guard binding fix.
+Первый отказ readiness Radxa и ограничения доказательств сохранены в описании
+исполнителя; новые whole-guest power-cut матрицы этим не заявляются.
+
 Следующий конкретный этап — live OS factories и entrypoint с fixed layout:
 проверка root-owned кода/конфигов, текущего ownership/profile и inherited lock;
-root-pinned команды ОС с наследованием lock мутирующим subprocess; system bus
-и readiness непривилегированного adapter; VPS2 cloud-name policy и резервирование
+подключение проверенного command runner/system bus и readiness непривилегированного
+adapter к установленной конфигурации; VPS2 cloud-name policy и резервирование
 адреса owned link; Radxa include/daemon ownership и согласованный здоровый
 baseline. VM-only gates нельзя просто удалить или заменить пользовательским
 флагом. Затем — реальные controller units и единая транзакция
@@ -76,3 +85,11 @@ install/activate/disable/uninstall с [файловой частью](dns-deploy
 
 Только после проверки этой связки в VM можно готовить согласованные live-пилоты.
 Ни перенос кода, ни его unit PASS не закрывают [DNS v1](dns-v1.md).
+
+Важно для следующего шага Radxa: private file backends сейчас работают в0700
+fixture directory, а VM подставляет synthetic `/etc`. Их нельзя просто направить
+в настоящий `/etc` или сделать `/etc/resolv.conf` ссылкой внутрь0700 state:
+обычный непривилегированный процесс должен читать resolver. Live factory должна
+разделять публично читаемый resolver и private journal/snapshots, проверять
+реальные config sources dnsmasq и сохранять установленный baseline. Это часть
+уже запланированной OS-интеграции, не новая фича DNS v1.

@@ -12,6 +12,7 @@ import { createBootGuardLifecycle } from './dns-boot-guard-lifecycle.mjs';
 import { readDnsGuardJournal } from './dns-client-guard-journal.mjs';
 import { createDnsClientController } from './dns-client-controller.mjs';
 import { exec } from './browser-lab-driver.mjs';
+import { createDnsSystemCommands } from './dns-system-command.mjs';
 export const guardJournal = '/state/dns-guard';
 let lifecycle;
 const guard = async (enabled) => {
@@ -50,7 +51,9 @@ export async function journalRecords() {
   const [root, dnsmasq, resolver] = (await journalBytes()).map(JSON.parse); return { root, dnsmasq, resolver };
 }
 export async function radxaVmContext({ ensureGuard = () => guard(true), releaseGuard = () => guard(false) } = {}) {
-  await assertRadxaVm(); const { scope, backend: dnsmasq, verifyRestoredDaemon } = await backendContext({ ensureGuard, removeGuard: releaseGuard });
+  await assertRadxaVm();
+  const commands = await createDnsSystemCommands({ assertAuthority: assertRadxaVm, required: ['ip', 'systemctl', 'dnsmasq'] });
+  const { scope, backend: dnsmasq, verifyRestoredDaemon } = await backendContext({ ensureGuard, removeGuard: releaseGuard, commands });
   const directory = `${journal}/resolver-etc`;
   const resolver = await createResolverObjectFiles({ directory, baseline: 'localhost-file', ensureGuard,
     identity: async () => ({ scope, bootId: (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim() }),
