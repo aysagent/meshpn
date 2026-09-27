@@ -10,11 +10,15 @@ import { buildDnsVmImage, verifyVmPackages, sha256 } from './lib/dns-vm-image.mj
 
 const flags = new Map();
 for (const arg of process.argv.slice(2)) {
+  if (arg === '--dns-ingress-only') {
+    assert.ok(!flags.has('dns-ingress-only'), 'duplicate --dns-ingress-only'); flags.set('dns-ingress-only', true); continue;
+  }
   const match = /^--(tools|kernel|resolved|verified-report|dns-conntrack)=(\/[^\n\r,]+)$/.exec(arg);
   assert.ok(match && !flags.has(match[1]), 'absolute --tools=DIR --kernel=FILE --resolved=FILE required');
   flags.set(match[1], match[2]);
 }
 for (const key of ['tools', 'kernel', 'resolved']) assert.ok(flags.has(key), `missing --${key}`);
+assert.ok(!flags.has('dns-ingress-only') || flags.has('dns-conntrack'), '--dns-ingress-only requires --dns-conntrack');
 process.umask(0o077);
 const directory = await mkdtemp(join(tmpdir(), 'meshpn-ingress-vm-'));
 console.error(`Ingress VM artifacts: ${directory}`);
@@ -37,7 +41,7 @@ try {
     report.packages = packages; report.packageTrust = { previousReport: flags.get('verified-report'), sha256: sha256(bytes) };
   } else report.packages = await verifyVmPackages(flags.get('tools'));
   const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved'), ingress: true,
-    dnsConntrack: flags.get('dns-conntrack') });
+    dnsConntrack: flags.get('dns-conntrack'), dnsIngressOnly: flags.has('dns-ingress-only') });
   report.image = image.manifest;
   const env = { ...process.env, LD_LIBRARY_PATH: `${root}/usr/lib/x86_64-linux-gnu:${root}/lib/x86_64-linux-gnu`,
     QEMU_MODULE_DIR: `${root}/usr/lib/x86_64-linux-gnu/qemu` };
@@ -53,7 +57,8 @@ try {
   const abort = (reason) => { failure ??= reason; child.kill('SIGKILL'); };
   const interrupt = () => abort('interrupted');
   process.on('SIGINT', interrupt); process.on('SIGTERM', interrupt);
-  const timer = setTimeout(() => abort('VM deadline exceeded'), 1800000);
+  report.deadlineMs = flags.has('dns-conntrack') && !flags.has('dns-ingress-only') ? 2700000 : 1800000;
+  const timer = setTimeout(() => abort('VM deadline exceeded'), report.deadlineMs);
   log.on('error', (error) => abort(error.message));
   for (const stream of [child.stdout, child.stderr]) stream.on('data', (b) => {
     bytes += b.length;
@@ -78,9 +83,12 @@ try {
   finally { clearTimeout(timer); process.off('SIGINT', interrupt); process.off('SIGTERM', interrupt); await new Promise((resolve) => log.end(resolve)); }
   assert.equal(failure, undefined, failure); assert.equal(exit, 0); assert.equal(passed, true);
   if (flags.has('dns-conntrack')) {
+    const expected = [['tls', 'host'], ['tls', 'ingress'], ['tls', 'lan'], ['boring-tls', 'ingress'], ['combo-tls', 'ingress']]
+      .filter(([, scope]) => !flags.has('dns-ingress-only') || scope === 'ingress');
     assert.deepEqual(report.transports.map(v => [v.actualTransportTested, v.scope]),
-      [['tls', 'host'], ['tls', 'ingress'], ['tls', 'lan'], ['boring-tls', 'ingress'], ['combo-tls', 'ingress']]);
+      expected);
     assert.ok(report.transports.every(v => v.actualDnsDefaultTested === true));
+    report.dnsCoverage = flags.has('dns-ingress-only') ? 'ingress-only' : 'host-ingress-lan';
   } else assert.deepEqual(report.transports.map((v) => v.actualTransportTested), ['tls', 'boring-tls', 'transparent-tls', 'combo-tls']);
   assert.ok(report.transports.every((v) => v.hostNetworkChanged === false && v.checks.length >= 12));
   report.status = 'passed';

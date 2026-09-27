@@ -10400,9 +10400,13 @@ async function runClientImpl({
       let code = exitCode;
       try {
         const runtime = routeCtx.dnsRuntime ?? await routeCtx.dnsStartup;
-        if (runtime) await runtime.close({ restore: code === 0 });
+        // Park restart-safe ingress BEFORE releasing DNS capture. Otherwise a
+        // private/LAN DNS destination can use the direct exemption between the
+        // DNS rollback and the later ingress hold installation.
+        if (code === 0 && fromTunRestartSafe) routeCtx.ingressRouting?.close();
+        if (runtime) await runtime.close({ restore: code === 0 && !fromTunRestartSafe });
         else if (routeCtx.dnsJournal) {
-          if (code === 0 && routeCtx.dnsJournal.state && routeCtx.dnsJournal.state.stage !== 'released') routeCtx.dnsJournal.restore();
+          if (code === 0 && !fromTunRestartSafe && routeCtx.dnsJournal.state && routeCtx.dnsJournal.state.stage !== 'released') routeCtx.dnsJournal.restore();
           routeCtx.dnsJournal.release();
         }
       }
@@ -11793,7 +11797,7 @@ async function main() {
 --dns-state-dir=DIR: приватный журнал DNS (default /run/clean-vpn-tunnel-dns-NETNS). При следующем запуске восстанавливается только собственное состояние той же загрузки; конфликты требуют проверки.
 --from-tun=IFACE: только client, вместо --split-default — внешний IPv4 с входного интерфейса (например wg0) через VPN; host OUTPUT/default без изменений. Нужен готовый шлюз с ip_forward=1. IPv6 forwarding этого входа блокируется. См. scripts/clean-vpn-from-tun.md (исключения, DNS, остановка/авария).
 --from-tun-state-dir=DIR: закрытый каталог журнала восстановления (0700); default /run/clean-vpn-ingress-NETNS. После аварии: node scripts/clean-vpn-recover.mjs --from-tun=IFACE (проверка), затем --apply (возврат прежнего forwarding).
---from-tun-restart-safe: с --from-tun сохранять guard при штатной остановке и принимать незавершённый журнал при следующем запуске под блокировкой forwarding. Полное отключение — clean-vpn-recover.mjs --apply. Не reboot kill-switch.
+--from-tun-restart-safe: с --from-tun сохранять ingress guard и DNS-защиту при штатной остановке; следующий запуск восстанавливает их под блокировкой. Полное отключение: сначала clean-vpn-dns-recover.mjs --apply (если DNS tunnel включён), затем clean-vpn-recover.mjs --from-tun=IFACE --apply. Не reboot kill-switch.
 --client-lan-subnet=CIDR: только client + --split-default — LAN/USB gadget за клиентом (адрес сети, напр. 192.168.7.0/24): ip_forward, SNAT в ${IP_CLIENT} через tun, FORWARD; иначе устройства за клиентом не попадают под NAT exit.
 --transparent-tls-lan-bind=IPv4: с --type=transparent-tls или combo-tls + --client-lan-subnet — адрес этого шлюза для DNAT второго listener и PREROUTING (должен входить в CIDR), если автопоиск не нашёл нужный интерфейс (часто: на USB/etherнет нет адреса из 192.168.7.x).
 --ext: только exit, интерфейс в интернет для NAT (иначе из default route)

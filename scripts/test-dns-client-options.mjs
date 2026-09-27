@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { cleanVpnDnsOptions, tunnelDnsLanInterface } from './lib/dns-client-options.mjs';
 import { recoverTunnelDns } from './clean-vpn-dns-recover.mjs';
+import { tunnelDnsFixtureAnswer } from './lib/dns-tunnel-cli-lab.mjs';
+import { makeDnsQuery, validateDnsResponse } from './lib/lab-dns-wire.mjs';
 
 const source = readFileSync(new URL('./clean-vpn.js', import.meta.url), 'utf8');
 const slice = (start, end) => {
@@ -12,6 +14,14 @@ const slice = (start, end) => {
 };
 const parseArgs = runInNewContext(`${slice('function parseArgs(argv)', '\nfunction parseHostPort')}\nparseArgs`, { cleanVpnDnsOptions });
 const base = ['--role=client', '--type=tls', '--server=192.0.2.1:443'];
+
+test('actual CLI lab fixture emits valid A and 16-byte AAAA records for every endpoint', () => {
+  for (const type of [1, 28]) for (const suffix of [10, 20, 30]) {
+    const q = makeDnsQuery('origin.test', type), r = tunnelDnsFixtureAnswer(q, suffix);
+    const rr = validateDnsResponse(r, q).records[0];
+    assert.equal(rr.length, type === 28 ? 16 : 4); assert.equal(r[rr.offset + rr.length - 1], suffix);
+  }
+});
 
 test('actual CLI defaults to tunnel DNS; override and explicit off are separate', () => {
   assert.equal(parseArgs(base).dnsMode, 'tunnel');
@@ -83,12 +93,13 @@ test('stop during transport setup prevents subsequent DNS/ingress activation', a
   assert.deepEqual(f.events, ['park', 'transport']);
 });
 
-test('actual shutdown waits for DNS startup and cleanup before removing routes/TUN', async () => {
-  for (const exitCode of [0, 1]) {
+test('actual shutdown waits for DNS startup and parks safe ingress before DNS release', async () => {
+  for (const exitCode of [0, 1]) for (const fromTunRestartSafe of [false, true]) {
     const events = []; let finishStartup;
-    const routeCtx = { dnsStartup: new Promise(resolve => { finishStartup = resolve; }) };
+    const routeCtx = { dnsStartup: new Promise(resolve => { finishStartup = resolve; }),
+      ingressRouting: { close() { events.push('ingress-hold'); } } };
     const finish = runInNewContext(`${slice('  let finishNetworkPromise;', '\n  registerCleanVpnEmergencyShutdown(')}\nfinishNetwork`, {
-      routeCtx, console: { log() {}, error() {} },
+      routeCtx, fromTunRestartSafe, console: { log() {}, error() {} },
       teardownClientRoutes(_ctx, { retainIngress }) { events.push(`routes:${retainIngress}`); },
       safe: fn => fn(), tun: { close() { events.push('tun'); } }, clearCleanVpnEmergencyShutdown() {},
       process: { exit(code) { events.push(`exit:${code}`); } },
@@ -98,7 +109,8 @@ test('actual shutdown waits for DNS startup and cleanup before removing routes/T
     assert.equal(finish(exitCode, 'again'), done);
     finishStartup({ async close({ restore }) { events.push(`dns:${restore}`); } });
     await done;
-    assert.deepEqual(events, [`dns:${exitCode === 0}`, `routes:${exitCode !== 0}`, 'tun', `exit:${exitCode}`]);
+    assert.deepEqual(events, [...(exitCode === 0 && fromTunRestartSafe ? ['ingress-hold'] : []),
+      `dns:${exitCode === 0 && !fromTunRestartSafe}`, `routes:${exitCode !== 0}`, 'tun', `exit:${exitCode}`]);
   }
 });
 
@@ -117,4 +129,18 @@ test('DNS recovery is audit-only by default, validates flags before opening, and
   let released = false;
   assert.throws(() => recoverTunnelDns([], () => ({ state: null, release() { released = true; } })), /no tunnel DNS journal/);
   assert.equal(released, true);
+});
+
+test('failed safe-stop gate never releases DNS protection or restores direct ingress', async () => {
+  const events = [], routeCtx = {
+    ingressRouting: { close() { throw Error('hold failed'); } },
+    dnsRuntime: { close() { assert.fail('must retain DNS guard'); } },
+  };
+  const finish = runInNewContext(`${slice('  let finishNetworkPromise;', '\n  registerCleanVpnEmergencyShutdown(')}\nfinishNetwork`, {
+    routeCtx, fromTunRestartSafe: true, console: { log() {}, error() {} },
+    teardownClientRoutes(_ctx, { retainIngress }) { events.push(retainIngress); },
+    safe: fn => fn(), tun: { close() { events.push('tun'); } }, clearCleanVpnEmergencyShutdown() {},
+    process: { exit(code) { events.push(code); } },
+  });
+  await finish(0, 'test'); assert.deepEqual(events, [true, 'tun', 1]);
 });

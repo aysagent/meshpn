@@ -6,8 +6,11 @@ import { join } from 'node:path';
 import { namespaceArgs } from './lib/browser-soak.mjs';
 import { cleanEnvironment, runCommand } from './lib/transparent-acceptance.mjs';
 
-const cases = [['tls', 'host'], ['tls', 'ingress'], ['tls', 'lan'], ['boring-tls', 'ingress'], ['combo-tls', 'ingress']];
-for (const [transport, dnsScope] of cases) test(`default tunnel DNS CLI: ${transport}/${dnsScope}`, { timeout: 420000 }, async t => {
+const cases = [['tls', 'host'], ['tls', 'ingress'], ['tls', 'lan'], ['boring-tls', 'ingress'], ['combo-tls', 'ingress']]
+  .filter(([, scope]) => process.env.MESHPN_DNS_CLI_INGRESS_ONLY !== '1' || scope === 'ingress');
+// Includes real rollback under TCG plus gateway DNS and continuous stop probes.
+// This is a harness budget, not a change to client DNS/socket deadlines.
+for (const [transport, dnsScope] of cases) test(`default tunnel DNS CLI: ${transport}/${dnsScope}`, { timeout: 510000 }, async t => {
   const directory = await mkdtemp(join(tmpdir(), 'meshpn-dns-cli-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   console.error(`INGRESS_VM_START DNS ${transport}/${dnsScope}`);
@@ -15,7 +18,7 @@ for (const [transport, dnsScope] of cases) test(`default tunnel DNS CLI: ${trans
     process.execPath, '--input-type=module', '-e', `
       import {runIngressRoutingLab} from './scripts/lib/ingress-routing-lab.mjs';
       console.log(JSON.stringify(await runIngressRoutingLab(${JSON.stringify({ transport, dnsScope, directory })})));
-    `], { timeoutMs: 410000, env: { ...cleanEnvironment(process.env),
+    `], { timeoutMs: 500000, env: { ...cleanEnvironment(process.env),
       MESHPN_PARENT_NETNS: await readlink('/proc/self/ns/net'), MESHPN_PARENT_PIDNS: await readlink('/proc/self/ns/pid') } });
   if (result.reason !== null || result.code !== 0)
     console.error(`INGRESS_VM_ERROR ${JSON.stringify({ transport, dnsScope, reason: result.reason, code: result.code, stderr: result.stderr.slice(-96000) })}`);

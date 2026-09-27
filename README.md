@@ -157,7 +157,9 @@ CLI использует форму **`--имя=значение`**; boolean-ф�
 от ещё не работающего DNS-туннеля. TLS-имя задаётся отдельно `--tls-server-name`.
 Режим не меняет `resolv.conf`, resolved/dnsmasq или systemd. Он добавляет свои
 правила iptables/ip6tables и policy routing; при отсутствии туннеля прямого
-DNS fallback нет. При штатной остановке снимает свои правила. Аварийный restart
+DNS fallback нет. При штатной остановке снимает свои правила, кроме явного
+`--from-tun-restart-safe`: там DNS-защита остаётся вместе с ingress guard
+до следующего запуска или явного recovery. Аварийный restart
 и явное восстановление описаны [отдельно](scripts/dns-tunnel-recovery.md).
 
 Без `--from-tun` перехватывается DNS хоста, с `--client-lan-subnet` — также LAN.

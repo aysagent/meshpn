@@ -13,13 +13,24 @@
 `--dns-mode=tunnel`, добавлены `--dns-server`, `--dns-state-dir`, явный `off`
 и отдельный `clean-vpn-dns-recover.mjs` (аудит по умолчанию, откат с `--apply`).
 `managed` явно отклоняется как незавершённый; существующий отдельный managed
-workflow не включается автоматически. CLI/unit:62/62, повторные namespace
-routing/persistent проверки:12/12 PASS. Общая Node-регрессия:2148/2148 PASS,
-без skips (`/var/tmp/meshpn-acceptance-UaRav7/report.json`). Сквозная пятисценарная VM-проверка
-TLS host/ingress/LAN, boring-tls и combo-tls ingress ещё выполняется.
-Первый сценарий TLS host прошёл20 проверок DNS, включая настоящий TUN,
-primary/backup, отказ exit, SIGKILL и same-boot restart; остальные сценарии
-ещё не подтверждены (`/var/tmp/meshpn-ingress-vm-2s1UDR/serial.log`).
+workflow не включается автоматически. Повторные namespace routing/persistent
+проверки:12/12 PASS. Общая Node-регрессия:2150/2150 PASS, без skips
+(`/var/tmp/meshpn-acceptance-b2OxHF/report.json`). Основная VM-матрица завершилась
+общим timeout30min: TLS host20, ingress22, LAN21 и boring-tls ingress22 проверок
+прошли; combo-tls не завершился. Это **не полный PASS**
+(`/var/tmp/meshpn-ingress-vm-2s1UDR/report.json`).
+
+Дополнительно исправляется restart-safe остановка: ingress закрывается до
+остановки DNS, а DNS-правила сохраняются до restart/явного recovery. Без этого
+возникает окно для частного DNS; после снятия DNS-перехвата запрос к DNS на
+самом шлюзе также не защищается одним FORWARD hold. Новый сквозной сценарий
+проверяет оба назначения, непрерывные запросы при stop и A/AAAA через UDP/TCP.
+В `/var/tmp/meshpn-ingress-vm-h8NR05/report.json` эти проверки прошли, но внешний
+deadline410s прервал завершающий explicit recovery — весь сценарий не PASS.
+Новый бюджет **только стенда**500s на сценарий; DNS/socket deadlines приложения
+не менялись. Повтор трёх ingress-транспортов идёт в
+`/var/tmp/meshpn-ingress-vm-ky2zPm`. Исправление тестовой AAAA-фикстуры (17 вместо16
+байт) отдельно покрыто unit-тестом; ошибочный прогон `w8bEaf` не засчитывается.
 Предварительный host-прогон подтвердил UDP/TCP primary/backup, отсутствие
 прямого DNS при SIGKILL/отказе exit и DNS restart, но весь прогон не PASS:
 проверка общего сетевого baseline обнаружила старый host bypass `/32` к exit
