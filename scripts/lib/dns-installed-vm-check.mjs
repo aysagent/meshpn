@@ -10,6 +10,7 @@ import { DNS_BOOT_LOCK } from './dns-boot-guard.mjs';
 import { busContext, coupledBaseline } from './dns-systemd-vm-worker.mjs';
 import { resolvedMethod } from './dns-resolved-backend.mjs';
 import { DNS_NETWORKD_POLICY, DNS_NETWORKD_CONTENTS } from './dns-networkd-policy.mjs';
+import { compileDnsAdapterServicePlan } from './dns-adapter-service-plan.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 export async function checkInstalledDnsVmBaseline() {
@@ -18,8 +19,8 @@ export async function checkInstalledDnsVmBaseline() {
   const domainsBefore = await readFile('/etc/clean-vpn/dns/domains.json');
   const ctl = (...args) => exec('/usr/bin/systemctl', args, { timeout: 30000 });
   const environment = { PATH: '/usr/bin:/usr/sbin:/bin:/sbin', LC_ALL: 'C', LANG: 'C' };
-  const inspect = () => exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
-    '/opt/clean-vpn/scripts/dns-client.mjs', '--inspect'], { env: environment, timeout: 90000 });
+  const inspect = (command = '--inspect') => exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
+    '/opt/clean-vpn/scripts/dns-client.mjs', command], { env: environment, timeout: 90000 });
   const refused = (e) => e.code === 1 && /^DNS_CLIENT_REFUSED\n(?:DNS_CLIENT_LOCATION=[a-z0-9-]+\.mjs:\d+\n)?$/.test(e.stderr) && e.stdout === '';
   await assert.rejects(inspect(), refused);
   const networkPath = '/etc/systemd/network/10-dnsfixture.network';
@@ -62,6 +63,39 @@ export async function checkInstalledDnsVmBaseline() {
     assert.equal(report.systemSettingsChanged, false); assert.equal(report.dnsQueriesSent, 0);
     await assert.rejects(exec('/usr/bin/node', ['/opt/clean-vpn/scripts/dns-client.mjs', '--inspect'],
       { env: environment, timeout: 90000 }), refused);
+    await assert.rejects(inspect('--inspect-adapter'), refused); // No loaded service yet.
+    const adapterPlan = compileDnsAdapterServicePlan({ schema: 1, exitIp: '93.184.216.36', exitPort: 44443,
+      publicName: 'relay.test', listenPort: 2053, readyName: 'systemd-ready.test',
+      upstream: JSON.parse(await readFile('/etc/clean-vpn/dns/upstream.json', 'utf8')), domainPolicy: policy });
+    const adapterUnit = adapterPlan.files[0], guardAlias = '/etc/systemd/system/clean-vpn-dns-guard.service';
+    // The tiny guest normally runs only DefaultDependencies=no fixture units.
+    // Supply passive targets for the UNMODIFIED production adapter unit; this
+    // does not claim a complete distro boot graph or a wait-online test.
+    const passiveTargets = ['sysinit.target', 'basic.target', 'network-online.target'];
+    for (const name of passiveTargets) {
+      const path = `/etc/systemd/system/${name}`;
+      await writeFile(path, '[Unit]\nDescription=Passive installed-adapter VM fixture target\nDefaultDependencies=no\n', { flag: 'wx', mode: 0o644 });
+      await chmod(path, 0o644);
+    }
+    await writeFile(adapterUnit.path, adapterUnit.contents, { flag: 'wx', mode: 0o644 }); await chmod(adapterUnit.path, 0o644);
+    await symlink('/etc/systemd/system/dns-vm-guard.service', guardAlias);
+    try {
+      await ctl('daemon-reload'); await ctl('start', 'clean-vpn-dns-adapter.service');
+      const loaded = JSON.parse((await inspect('--inspect-adapter')).stdout);
+      assert.equal(loaded.loadedCredentialsVerified, true); assert.equal(loaded.activationAuthorized, false);
+      assert.equal(loaded.dnsQueriesSent, 0); assert.equal(loaded.systemSettingsChanged, false);
+      const keyPath = '/etc/clean-vpn/dns/hmac.key', key = await readFile(keyPath);
+      const changed = Buffer.from(key); changed[0] ^= 1;
+      try {
+        await writeFile(keyPath, changed); await assert.rejects(inspect('--inspect-adapter'), refused);
+      } finally { await writeFile(keyPath, key); key.fill(0); changed.fill(0); }
+      assert.equal(JSON.parse((await inspect('--inspect-adapter')).stdout).loadedCredentialsVerified, true);
+    } finally {
+      await ctl('stop', 'clean-vpn-dns-adapter.service');
+      await unlink(adapterUnit.path); await unlink(guardAlias); await ctl('daemon-reload');
+      for (const name of passiveTargets) await unlink(`/etc/systemd/system/${name}`);
+      await ctl('daemon-reload');
+    }
     await writeFile('/etc/clean-vpn/dns/domains.json', domainsBefore);
     await assert.rejects(inspect(), refused);
   } finally {

@@ -4,9 +4,10 @@
 import { fileURLToPath } from 'node:url';
 import { loadDnsInstalledAuthority, assertDnsInstalledAuthority, dnsInstalledAuthorityInfo } from './lib/dns-installed-authority.mjs';
 import { inspectInstalledVps2Dns } from './lib/dns-installed-vps2.mjs';
+import { inspectInstalledDnsAdapter } from './lib/dns-installed-adapter.mjs';
 
 export function parseDnsClientArgs(argv) {
-  if (argv.length === 1 && ['--help', '--inspect'].includes(argv[0])) return argv[0].slice(2);
+  if (argv.length === 1 && ['--help', '--inspect', '--inspect-adapter'].includes(argv[0])) return argv[0].slice(2);
   throw Object.assign(new Error('DNS_CLIENT_ARGUMENTS'), { code: 'DNS_CLIENT_ARGUMENTS' });
 }
 // Fixed code + source location only: no assertion message, values, paths or raw
@@ -14,7 +15,7 @@ export function parseDnsClientArgs(argv) {
 export function dnsClientFailureLocation(error) {
   if (!(error instanceof Error) || typeof error.stack !== 'string') return null;
   const allowed = new Set(['dns-installed-authority.mjs', 'dns-installed-vps2.mjs', 'dns-vps2-baseline.mjs',
-    'dns-system-bus.mjs', 'dns-system-command.mjs', 'dns-boot-guard.mjs']);
+    'dns-system-bus.mjs', 'dns-system-command.mjs', 'dns-boot-guard.mjs', 'dns-installed-adapter.mjs']);
   for (const line of error.stack.split('\n').slice(1, 20)) {
     const match = /\bfile:\/\/\/opt\/clean-vpn\/scripts\/lib\/([a-z0-9-]+\.mjs):(\d{1,6}):\d{1,6}\)?$/.exec(line);
     if (match && allowed.has(match[1])) return `${match[1]}:${match[2]}`;
@@ -24,9 +25,12 @@ export function dnsClientFailureLocation(error) {
 async function main() {
   const command = parseDnsClientArgs(process.argv.slice(2));
   if (command === 'help') {
-    console.log('Usage: node scripts/dns-client.mjs --inspect | --help\nRead-only installed authority inspection; no DNS switch or installer.'); return;
+    console.log('Usage: node scripts/dns-client.mjs --inspect | --inspect-adapter | --help\nRead-only installed authority/adapter inspection; no DNS switch or installer.'); return;
   }
   const token = await loadDnsInstalledAuthority(), info = dnsInstalledAuthorityInfo(token);
+  if (command === 'inspect-adapter') {
+    console.log(JSON.stringify(await inspectInstalledDnsAdapter(token))); return;
+  }
   const baseline = info.client === 'vps2' ? await inspectInstalledVps2Dns(token) : null;
   await assertDnsInstalledAuthority(token);
   console.log(JSON.stringify({ schema: 1, kind: 'clean-vpn-dns-client-inspection', mode: 'read-only', client: info.client,

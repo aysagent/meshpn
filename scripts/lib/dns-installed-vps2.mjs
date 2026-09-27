@@ -26,7 +26,7 @@ export function validateVps2DnsUnit(text, name, busPid) {
   return fields;
 }
 const identity = (s) => `${s.dev}:${s.ino}:${s.ctimeNs}:${s.mode}`;
-async function trustedText(path, mode, delegated, max = 65536) {
+export async function readTrustedDnsText(path, mode, delegated, max = 65536) {
   const owner = (name, uid) => uid === 0n || (delegated && (name === delegated.root || name.startsWith(`${delegated.root}/`)) && uid === BigInt(delegated.uid));
   for (let parent = dirname(path);; parent = dirname(parent)) {
     const p = await lstat(parent, { bigint: true }), target = await stat(parent, { bigint: true });
@@ -46,6 +46,7 @@ async function trustedText(path, mode, delegated, max = 65536) {
     return { text: new TextDecoder('utf8', { fatal: true }).decode(bytes.subarray(0, used)), identity: identity(s) };
   } finally { await fd.close(); }
 }
+const trustedText = readTrustedDnsText;
 export async function inspectInstalledVps2Dns(token) {
   await assertDnsInstalledAuthority(token);
   const info = dnsInstalledAuthorityInfo(token); assert.equal(info.client, 'vps2');

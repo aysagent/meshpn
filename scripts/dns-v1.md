@@ -158,6 +158,15 @@ Installed baseline проверяет файл исключения, но это
 setters. Предыдущие 21 VM-проверка предшествуют этому новому file gate;
 installed start/disable и интеграция установщика всё ещё впереди.
 
+Следующий шаг: добавлена [проверка загруженного adapter](dns-installed-adapter.md)
+через installed `--inspect-adapter`: настоящий PID/unit/argv, изоляция процесса
+и побайтное совпадение трёх credentials с исходными файлами. На первом boot
+NIC-less VM проверены позитивный случай и отказ после изменения ключа только
+на диске. Общая Node-регрессия1870/1870 PASS; двухзагрузочный прогон ещё идёт.
+Проверка не отправляет DNS и не разрешает takeover. Следом нужны привязка
+UDP/TCP listener к этому PID, readiness под guard и installed setters/lifecycle;
+на живых клиентах ничего не менялось.
+
 ## Три этапа и текущий статус
 
 1. **Boot-fault VM (выполнен:4/4 PASS):** ошибка установки guard, read-only storage журнала,
