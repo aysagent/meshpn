@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { vmDriverFailureIsFatal, VM_INSTALLED_CHECKS, assertVmInstalledEvidence } from './lib/dns-vm-protocol.mjs';
+import { vmDriverFailureIsFatal, VM_INSTALLED_CHECKS, assertVmInstalledEvidence, VM_DEPLOYMENT_CHECKS, assertVmDeploymentEvidence } from './lib/dns-vm-protocol.mjs';
 import { VM_CUT_POINTS, VM_FAULTS, VM_SYSTEMD_CHECKS, VM_DNSMASQ_CHECKS, vmCases, vmBootOptions, qemuDnsArgs, assertVmJournalCheckpoint, assertVmFaultEvidence, assertVmSystemdEvidence, assertVmDnsmasqEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
 import { runCommand } from './lib/transparent-acceptance.mjs';
 import { dnsSystemdVmUnits } from './lib/dns-systemd-vm-units.mjs';
@@ -16,6 +16,19 @@ import { queryDnsmasqVm53 } from './lib/transparent-dns-lab.mjs';
 import { createVmGuardLifecycle } from './lib/dns-systemd-vm-worker.mjs';
 
 const input = { root: '/private/tools', kernel: '/private/kernel', initrd: '/private/initrd', disk: '/private/state.raw', phase: 'cycle', point: 'none' };
+test('fresh deployment VM has separate evidence and cannot count as installed activation', async () => {
+  assert.deepEqual(vmCases('deployment'), ['deployment']);
+  const args = qemuDnsArgs({ ...input, phase: 'coupled', point: 'deployment' });
+  assert.deepEqual(vmBootOptions(args[args.indexOf('-append') + 1]), { phase: 'coupled', point: 'deployment' });
+  const e = { phase: 'coupled', point: 'deployment', systemdPid1: true, freshDeploymentCheck: true,
+    installationTested: false, dnsQueriesSent: 0, resolvConfUnchanged: true, checks: [...VM_DEPLOYMENT_CHECKS, ...VM_DEPLOYMENT_CHECKS] };
+  assertVmDeploymentEvidence(e); assert.throws(() => assertVmInstalledEvidence(e)); assert.throws(() => assertVmCoupledEvidence(e));
+  for (const key of Object.keys(e).filter((k) => k !== 'checks'))
+    assert.throws(() => assertVmDeploymentEvidence({ ...e, [key]: typeof e[key] === 'boolean' ? !e[key] : 'wrong' }));
+  assert.throws(() => assertVmDeploymentEvidence({ ...e, checks: e.checks.slice(1) }));
+  const { checkFreshDnsDeploymentVm } = await import('./lib/dns-deployment-vm-check.mjs');
+  await assert.rejects(checkFreshDnsDeploymentVm());
+});
 test('installed CLI VM is a separate bounded case, not substituted coupled crash evidence', () => {
   assert.deepEqual(vmCases('installed'), ['installed']);
   const args = qemuDnsArgs({ ...input, phase: 'coupled', point: 'installed' });

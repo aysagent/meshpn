@@ -17,6 +17,7 @@ import { DNS_BOOT_LOCK } from './dns-boot-guard.mjs';
 import { readDnsGuardJournal } from './dns-client-guard-journal.mjs';
 import { boundedInspectRead } from './dns-inspect.mjs';
 import { checkInstalledDnsVmBaseline } from './dns-installed-vm-check.mjs';
+import { checkFreshDnsDeploymentVm } from './dns-deployment-vm-check.mjs';
 
 const ctl = (...args) => exec('/usr/bin/systemctl', ['--no-pager', ...args], { timeout: 200000 });
 const disable = () => exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
@@ -73,6 +74,17 @@ async function main() {
     await exec(tool, ['-w', '2', '-C', 'OUTPUT', '-p', protocol, '--dport', '53', '-j', 'REJECT']);
   }
   emit('boot-guard', { bootId, ...options, pid1: (await readFile('/proc/1/comm', 'utf8')).trim() });
+  if (options.point === 'deployment') {
+    assert.equal(options.phase, 'coupled');
+    if (previous) assert.notEqual(bootId, previous.bootId);
+    for (const label of await checkFreshDnsDeploymentVm()) check(label);
+    assert.deepEqual(await readFile('/etc/resolv.conf'), resolverBefore);
+    if (!previous) { await persist({ bootId, checks }); emit('reboot-ready', { bootId }); await ctl('--no-block', 'reboot'); return; }
+    emit('passed', { ...options, bootId, previousBootId: previous.bootId, systemdPid1: true,
+      checks: [...previous.checks, ...checks], freshDeploymentCheck: true, installationTested: false,
+      dnsQueriesSent: 0, resolvConfUnchanged: true });
+    await ctl('--no-block', 'poweroff'); return;
+  }
   if (!previous && options.phase === 'coupled' && options.point === 'lifecycle') {
     await writeFile('/run/meshpn/deny-start', 'fixture\n', { flag: 'wx', mode: 0o600 });
     await assert.rejects(ctl('start', 'dns-vm-consumer.service'));

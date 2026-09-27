@@ -64,7 +64,8 @@ export async function runLockedDnsCommand(file, args, { lockFd, timeoutMs = 1000
   });
 }
 
-const tools = Object.freeze({ ip: '/usr/bin/ip', busctl: '/usr/bin/busctl', systemctl: '/usr/bin/systemctl', dnsmasq: '/usr/sbin/dnsmasq' });
+const tools = Object.freeze({ ip: '/usr/bin/ip', busctl: '/usr/bin/busctl', systemctl: '/usr/bin/systemctl', dnsmasq: '/usr/sbin/dnsmasq',
+  iptables: '/usr/sbin/iptables', ip6tables: '/usr/sbin/ip6tables' });
 const instances = new WeakSet();
 export function assertDnsSystemCommands(value) { assert.ok(instances.has(value), 'checked DNS system commands required'); }
 async function pinnedTool(path) {
@@ -94,7 +95,7 @@ export async function inspectDnsSystemExecutable(path) {
 export async function createDnsSystemCommands({ assertAuthority, required = ['ip', 'busctl', 'systemctl'] }) {
   assert.equal(typeof assertAuthority, 'function');
   await assertAuthority(); assert.equal(process.platform, 'linux'); assert.equal(process.getuid(), 0);
-  assert.ok(Array.isArray(required) && required.length > 0 && required.length <= 4 && new Set(required).size === required.length);
+  assert.ok(Array.isArray(required) && required.length > 0 && required.length <= Object.keys(tools).length && new Set(required).size === required.length);
   assert.ok(required.every((name) => Object.hasOwn(tools, name)));
   required = [...required]; const lockFd = await requireDnsBootGuardLock();
   const pinned = Object.fromEntries(await Promise.all(required.map(async (name) => [name, await pinnedTool(tools[name])])));

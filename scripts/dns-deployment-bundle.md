@@ -78,5 +78,5 @@ umask077, отказ при source/target drift и same-device/different-mount.
 GNU coreutils9.4; отдельный distro/installed VM-прогон этим не подменяется.
 
 Следом — собрать реальный source bundle, связать обе файловые транзакции с
-inactive OS-проверкой и активацией/отключением служб, затем проверить единый
+[inactive OS-проверкой](dns-deployment-inactive.md) и активацией/отключением служб, затем проверить единый
 install/activate/disable/uninstall в VM. DNS v1 и Radxa остаются в полном объёме.

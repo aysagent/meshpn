@@ -32,12 +32,23 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, dnsmasq = null, coupled = false, radxa = false }) {
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, dnsmasq = null, coupled = false, radxa = false, deployment = false }) {
   assert.ok(!(systemd && ingress), 'separate systemd DNS and ingress fixtures');
   assert.ok(!dnsmasq || systemd && !ingress && dnsmasq.startsWith('/'));
   assert.ok(!coupled || systemd && !dnsmasq && !ingress);
   assert.ok(!radxa || systemd && dnsmasq && !coupled && !ingress);
+  assert.ok(!deployment || coupled);
   const units = radxa ? radxaVmUnits() : coupled ? dnsCoupledVmUnits() : dnsmasq ? dnsmasqVmUnits() : dnsSystemdVmUnits({ cliAdapter: true });
+  // This separate case inspects a genuinely never-activated deployment. Only
+  // its private D-Bus fixture starts; no guard/network/DNS service is pulled in.
+  if (deployment) {
+    // PID1 exposes its API only when both D-Bus service AND socket are running
+    // (systemd v255 manager_dbus_is_running). The older fixture only needed
+    // resolve1/network1, whose registration does not establish PID1 authority.
+    units['dbus.service'] = units['dbus.service'].replace('Requires=dns-vm-network.service\nAfter=dns-vm-network.service',
+      'Requires=dbus.socket\nAfter=dbus.socket');
+    units['dbus.socket'] = '[Unit]\nDescription=Private guest system bus socket\nDefaultDependencies=no\n[Socket]\nListenStream=/run/dbus/system_bus_socket\nSocketMode=0666\n';
+  }
   const root = join(directory, 'guest'); await mkdir(root, { mode: 0o700 });
   const copied = new Map(), modules = new Set();
   const destination = (path) => { assert.ok(path.startsWith('/') && !path.split('/').includes('..')); return join(root, path); };

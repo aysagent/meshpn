@@ -222,6 +222,11 @@ backend. Живые критерии ниже не закрыты.
 Для кода добавлена [отдельная файловая транзакция](dns-deployment-bundle.md):
 проверенная копия, write-ahead publication без overwrite и rollback с сохранением
 bundle в private archive. Это ещё не единый installer или live activation.
+Добавлена [настоящая OS-проверка неактивности перед первой установкой](dns-deployment-inactive.md):
+PID1/D-Bus, jobs/cgroups, процессы, links, оба firewall и отсутствие runtime history.
+Она не является restore proof и не разрешает удаление после активации.
+Отдельный VM-сценарий прошёл14/14 на двух загрузках (`meshpn-dns-vm-RchXdO`),
+без DNS queries и изменений DNS хоста; это ещё не installer PASS.
 
 Этот чек-лист выполняется для VPS 2 и Radxa. VM PASS подтверждает отдельные
 механизмы, но не ставит автоматически галочки за live-конфигурацию и пилот.
