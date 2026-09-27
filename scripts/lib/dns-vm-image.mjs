@@ -13,6 +13,7 @@ import { dnsSystemdVmUnits } from './dns-systemd-vm-units.mjs';
 import { dnsmasqVmUnits } from './dnsmasq-vm-units.mjs';
 import { dnsCoupledVmUnits } from './dns-coupled-vm-units.mjs';
 import { radxaVmUnits } from './dns-radxa-vm-units.mjs';
+import { packageDnsSource } from './dns-source-package.mjs';
 
 const exec = (file, args, options = {}) => promisify(execFile)(file, args, { timeout: 30000, maxBuffer: 1024 * 1024, ...options });
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -116,14 +117,14 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     // Match the real deployment path: a symlink changes import.meta.url while
     // Node keeps the argv entrypoint spelling, bypassing its main guard.
     const codeRoot = publication ? '/source/clean-vpn' : '/opt/clean-vpn';
-    await copyTree(join(project, 'scripts'), `${codeRoot}/scripts`);
     if (coupled) {
-      const files = Object.fromEntries([...copied].filter(([path]) => path.startsWith(`${codeRoot}/`))
-        .map(([path, digest]) => [path.slice(codeRoot.length + 1), digest]));
-      await writeFile(destination(`${codeRoot}/bundle.json`), JSON.stringify({ schema: 1, kind: 'clean-vpn-dns-code-bundle', files }), { mode: 0o644 });
-      await chmod(destination(`${codeRoot}/bundle.json`), 0o644);
-      for (const path of Object.keys(files)) await chmod(destination(`${codeRoot}/${path}`), 0o644);
-    }
+      await mkdir(dirname(destination(codeRoot)), { recursive: true });
+      const output = join(await realpath(dirname(destination(codeRoot))), basename(codeRoot));
+      const packaged = await packageDnsSource({ source: await realpath(project), output });
+      const manifest = JSON.parse(await readFile(join(output, 'bundle.json'), 'utf8'));
+      for (const [path, digest] of Object.entries(manifest.files)) copied.set(`${codeRoot}/${path}`, digest);
+      copied.set(`${codeRoot}/bundle.json`, packaged.bundleSha256);
+    } else await copyTree(join(project, 'scripts'), `${codeRoot}/scripts`);
   }
   if (dnsmasq) await copy(join(project, 'scripts/fixtures/dns-clients/radxa-dnsmasq.conf'), '/project/scripts/fixtures/dns-clients/radxa-dnsmasq.conf');
   if (ingress) {

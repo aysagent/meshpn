@@ -7,6 +7,12 @@
 start/reload/enable служб и post-activation uninstall здесь отсутствуют.
 Radxa этим VPS2-набором не устанавливается.
 
+Исходный пакет теперь можно подготовить общей [offline-командой](dns-source-package.md)
+`npm run dns:source-package -- --output=/absolute/new-directory` без sudo.
+Она не подготавливает root-owned installer, не устанавливает конфигурацию
+и не активирует службы. Дальнейшие упоминания отсутствующего packager ниже
+относятся к историческим VM-срезам.
+
 Для post-disable removal добавлена отдельная [журналируемая связка](dns-released-removal.md)
 с сохранённой guard-политикой и runtime-history fingerprint. Старый publisher
 не получает автоматического права снимать работающий DNS; новая связка пока
