@@ -66,6 +66,14 @@ export function assertVmDeploymentEvidence(e) {
   assert.equal(e.installationTested, false); assert.equal(e.dnsQueriesSent, 0); assert.equal(e.resolvConfUnchanged, true);
   assert.deepEqual([...e.checks].sort(), [...VM_DEPLOYMENT_CHECKS, ...VM_DEPLOYMENT_CHECKS].sort());
 }
+export const VM_PUBLICATION_CHECKS = Object.freeze(['full-code-and-client-files-published',
+  'installed-entrypoint-imports', 'inactive-config-revoked-code-retained']);
+export function assertVmPublicationEvidence(e) {
+  assert.equal(e.phase, 'coupled'); assert.equal(e.point, 'publication');
+  assert.equal(e.systemdPid1, true); assert.equal(e.filePublicationTested, true); assert.equal(e.activationTested, false);
+  assert.equal(e.dnsQueriesSent, 0); assert.equal(e.resolvConfUnchanged, true);
+  assert.deepEqual([...e.checks].sort(), [...VM_PUBLICATION_CHECKS, ...VM_PUBLICATION_CHECKS].sort());
+}
 export function assertVmInstalledEvidence(e) {
   assert.equal(e.phase, 'coupled'); assert.ok(['installed', 'installed-units'].includes(e.point));
   assert.equal(e.systemdPid1, true); assert.equal(e.installedController, true);
@@ -156,6 +164,7 @@ export function vmCases(selected = 'all') {
   if (selected === 'installed') return ['installed'];
   if (selected === 'installed-units') return ['installed-units'];
   if (selected === 'deployment') return ['deployment'];
+  if (selected === 'publication') return ['publication'];
   if (selected === 'coupled-cuts') return [...VM_COUPLED_CUTS];
   if (selected.startsWith('coupled-cut:')) {
     const point = selected.slice('coupled-cut:'.length);
@@ -202,7 +211,7 @@ export function vmBootOptions(cmdline) {
   const phase = get('meshpn_phase'), point = get('meshpn_point');
   assert.ok(['cycle', 'cut', 'inspect', 'fault', 'systemd', 'dnsmasq', 'coupled', 'coupled-cut', 'coupled-inspect', 'radxa', 'radxa-cut', 'radxa-inspect'].includes(phase));
   assert.ok(phase === 'cycle' ? point === 'none' : phase === 'fault' ? VM_FAULTS.includes(point)
-    : phase === 'coupled' ? ['lifecycle', 'installed', 'installed-units', 'deployment'].includes(point)
+    : phase === 'coupled' ? ['lifecycle', 'installed', 'installed-units', 'deployment', 'publication'].includes(point)
       : ['systemd', 'dnsmasq', 'radxa'].includes(phase) ? point === 'lifecycle'
       : phase.startsWith('radxa-') ? VM_RADXA_CUTS.includes(point)
         : phase.startsWith('coupled-') ? VM_COUPLED_CUTS.includes(point) : VM_CUT_POINTS.includes(point));

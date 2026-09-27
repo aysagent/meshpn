@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { privateJournalDirectory, syncDirectory, readPrivateJournal, writePrivateJournal } from './dns-lifecycle-journal.mjs';
 import { assertDnsCommandLock } from './dns-system-command.mjs';
+import { inspectDnsInstalledBundle } from './dns-installed-authority.mjs';
 import { dnsDeploymentBundle, readDnsBundleJournal } from './dns-deployment-bundle.mjs';
 import { dnsDeploymentFiles, readDnsDeploymentJournal, dnsClientDeploymentDescriptors,
   validateDnsClientDeploymentDescriptors } from './dns-deployment-files.mjs';
@@ -54,15 +55,16 @@ async function applyDeployment({ root, directory, operation, source, expectedSha
   const rootIdentity = await directoryIdentity(root), ownIdentity = await directoryIdentity(directory, 0o700);
   const paths = { code: join(directory, 'code'), files: join(directory, 'files') };
   let record;
-  const context = async () => {
+  const context = async (checkInactive = false) => {
     assert.equal(await realpath(root), root); assert.equal(await realpath(directory), directory);
     assert.equal(await directoryIdentity(root), rootIdentity);
     assert.equal(await directoryIdentity(directory, 0o700), ownIdentity);
-    await assertDnsCommandLock(lockFd); assert.equal(await assertInactive(), true, 'inactive deployment proof required');
+    await assertDnsCommandLock(lockFd);
+    if (checkInactive) assert.equal(await assertInactive(), true, 'inactive deployment proof required');
     if (record) for (const name of ['code', 'files'])
       assert.equal(await directoryIdentity(paths[name], 0o700), record.children[name], 'deployment child directory changed');
   };
-  await context();
+  await context(true);
   if (operation === 'install') {
     const descriptors = dnsClientDeploymentDescriptors(files, expectedSha256);
     assert.deepEqual(await readdir(directory), [], 'fresh deployment journal required');
@@ -85,13 +87,20 @@ async function applyDeployment({ root, directory, operation, source, expectedSha
   };
   const hook = (name) => async (point) => { await checkpoint(`${name}:${point}`); };
   const code = (op) => dnsDeploymentBundle({ root, directory: paths.code, operation: op, source,
-    expectedSha256: record.bundleSha256, lockFd, assertInactive: async () => { await context(); return true; }, checkpoint: hook('code') });
+    expectedSha256: record.bundleSha256, lockFd, assertInactive: async () => { await context(true); return true; }, checkpoint: hook('code') });
   const config = (op) => dnsDeploymentFiles({ root, directory: paths.files, operation: op, files,
     assertInactive: async () => {
-      await context(); const status = (await code('inspect')).stage;
-      if (op === 'inspect' && ['removing-code', 'removed'].includes(record.stage))
-        assert.ok(['prepared', 'installed', 'removing', 'removed'].includes(status));
-      else assert.equal(status, 'installed', 'complete unchanged code required for client files');
+      await context(true);
+      // Read-only code inventory does not recursively launch another OS
+      // inactivity inspection. Before each client mutation the outer check is
+      // fresh, and the exact installed inode/hash inventory is still mandatory.
+      if (!(op === 'inspect' && ['removing-code', 'removed'].includes(record.stage))) {
+        const bundle = await readDnsBundleJournal(paths.code);
+        assert.equal(bundle.stage, 'installed', 'complete unchanged code required for client files');
+        assert.equal(bundle.root, root); assert.equal(bundle.bundle.sha256, record.bundleSha256);
+        assert.deepEqual(await inspectDnsInstalledBundle(target, process.getuid()), bundle.bundle, 'installed code changed');
+      }
+      await context();
       return true;
     }, checkpoint: hook('files') });
   const children = async () => {
@@ -146,6 +155,7 @@ async function applyDeployment({ root, directory, operation, source, expectedSha
     }
     state = await children();
   }
+  await context(true);
   return { schema: 1, kind: 'clean-vpn-dns-deployment', id: record.id, stage: record.stage,
     code: state.code?.stage ?? null, files: state.files?.stage ?? null, bundleSha256: record.bundleSha256,
     activated: false, postActivationUninstall: false };

@@ -103,6 +103,11 @@ test('a prepared bundle may be rolled back without publication', async (t) => {
   assert.notEqual((await f.run('install', `if(point==='prepared:dir-synced') throw new Error('CUT');`)).code, 0);
   await absent(f.target); assert.equal((await f.ok('remove')).stage, 'removed'); await absent(f.target);
 });
+for (const point of ['bundle:staged', 'bundle:before-move']) test(`loss of inactivity at ${point} still prevents visible code publication`, async (t) => {
+  const f = await fixture(t);
+  assert.notEqual((await f.run('install', `if(point===${JSON.stringify(point)}) options.inactive=false;`)).code, 0);
+  await absent(f.target); await lstat(join(f.directory, 'bundle'));
+});
 test('journal rejects unknown fields, arbitrary paths, stages, and missing service entrypoints', async (t) => {
   const f = await fixture(t); await f.ok('install'); const journal = await readDnsBundleJournal(f.directory);
   for (const mutate of [(v) => { v.target = '/etc'; }, (v) => { v.stage = 'active'; },

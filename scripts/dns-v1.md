@@ -230,7 +230,11 @@ PID1/D-Bus, jobs/cgroups, процессы, links, оба firewall и отсут
 Обе файловые транзакции связаны [общим журналом публикации](dns-deployment.md):
 код перед opt-in, откат конфигурации перед архивированием кода. Это ещё
 библиотечная inactive-only установка, без host CLI/активации; полный bundle
-с реальными OS-проверками и единый VM lifecycle остаются следующим шагом.
+с реальными OS-проверками теперь прошёл отдельную файловую VM-проверку:
+270 code files +13 client files, публикация/import graph/inactive rollback,
+**6/6 PASS на двух загрузках** (`meshpn-dns-vm-9CAnjT`). Это не запуск DNS,
+не active-transaction reboot и не uninstall после использования; единый
+activate/disable/uninstall и ранний boot graph остаются следующим шагом.
 
 Этот чек-лист выполняется для VPS 2 и Radxa. VM PASS подтверждает отдельные
 механизмы, но не ставит автоматически галочки за live-конфигурацию и пилот.

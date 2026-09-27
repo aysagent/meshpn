@@ -216,12 +216,12 @@ async function applyFiles({ root, directory, operation, files, assertInactive, c
     return current;
   };
   let parents;
-  const context = async () => {
+  const context = async (checkInactive = false) => {
     await privateJournalDirectory(directory);
     assert.equal(await realpath(directory), directory);
     assert.equal(identity(await lstat(directory, { bigint: true })), directoryIdentity, 'journal directory changed');
     assert.equal(await realpath(root), root); assert.equal(identity(await lstat(root, { bigint: true })), rootIdentity);
-    assert.equal(await assertInactive(), true, 'inactive deployment proof required');
+    if (checkInactive) assert.equal(await assertInactive(), true, 'inactive deployment proof required');
     const mount = await mountIdentity(directory);
     for (const path of selected) {
       const targetParent = await parent(path);
@@ -288,26 +288,29 @@ async function applyFiles({ root, directory, operation, files, assertInactive, c
   };
   // Detect pre-existing drift across the whole set before any next mutation.
   for (const [i, f] of record.files.entries()) await state(f, i);
-  if (operation === 'inspect') return { stage: record.stage, id: record.id, files: record.files.length, activated: false };
+  if (operation === 'inspect') {
+    await context(true); return { stage: record.stage, id: record.id, files: record.files.length, activated: false };
+  }
   if (operation === 'remove' && !['removing', 'removed'].includes(record.stage)) await save('removing');
   assert.ok(operation !== 'install' || record.stage === 'installing');
   if (record.stage === 'installing') {
     for (const [i, f] of record.files.entries()) {
       const { staged, target, a, b } = await state(f, i);
-      if (!b) { await context(); await link(staged, target); await checkpoint(`file-${i}:published`); }
+      if (!b) { await context(true); await link(staged, target); await checkpoint(`file-${i}:published`); }
       await syncDirectory(dirname(target));
-      if (a) { await state(f, i); await unlink(staged); await syncDirectory(directory); await checkpoint(`file-${i}:detached`); }
+      if (a) { await state(f, i); await context(true); await unlink(staged); await syncDirectory(directory); await checkpoint(`file-${i}:detached`); }
       const view = await state(f, i); assert.ok(!view.a && view.b);
     }
     await save('installed');
   } else if (record.stage === 'removing') {
     for (const [i, f] of [...record.files.entries()].reverse()) {
       const { staged, target, a, b } = await state(f, i);
-      if (b) { await unlink(target); await syncDirectory(dirname(target)); await checkpoint(`file-${i}:removed`); }
+      if (b) { await context(true); await unlink(target); await syncDirectory(dirname(target)); await checkpoint(`file-${i}:removed`); }
       if (a) { await state(f, i); await unlink(staged); await syncDirectory(directory); }
     }
     await save('removed');
   }
   for (const [i, f] of record.files.entries()) await state(f, i);
+  await context(true);
   return { stage: record.stage, id: record.id, files: record.files.length, activated: false };
 }

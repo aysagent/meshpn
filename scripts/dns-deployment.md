@@ -72,3 +72,46 @@ VM PASS и не live-пилот.
 стоимость повторных OS/inventory проверок на полном bundle; текущий короткий
 fixture не подтверждает ни достаточную скорость, ни укладывание в VM deadlines.
 После этого остаются installed Radxa и оба согласованных клиентских пилота.
+
+## Стоимость проверки и полный файловый VM-сценарий
+
+Замер исходной связки показал349 вызовов `assertInactive` за одну установку
+даже с четырьмя code files. При примерно6с на реальную OS-проверку в TCG это
+непригодно для ограниченного VM-прогона. Теперь полный OS-check остаётся на
+входе/выходе операции и перед каждой публичной публикацией/удалением, включая
+detach staging hardlink: этот detach делает opt-in single-link authority file.
+Приватное staging и чтение собственного inventory проверяют lock/контекст,
+inode/hash/mount, но не запускают вложенные полные OS-проверки.
+При публикации конфигурации точный inventory установленного кода всё равно
+сверяется. Нет TTL-cache неактивности или исключения по «слишком медленной VM».
+
+Регрессионные проверки отклоняют потерю неактивности перед move, перед первым
+config link и между publication opt-in и его detach. Число полных проверок для
+набора68 code files ограничено числом видимых операций, а не числом файлов.
+
+Новый `dns-vm-lab.mjs --case=publication` использует все JS/MJS скрипты snapshot,
+собранные builder в `/source/clean-vpn`, настоящий PID1/D-Bus/firewall collector
+и общий boot flock. Проверяет file publication, загрузку import graph трёх
+entrypoints через заведомо неверные аргументы, затем inactive rollback с
+сохранением кода в архиве. Повторяется на двух загрузках VM без NIC/shared FS.
+Первоначальный firewall и `/etc/resolv.conf` должны сохраниться.
+
+Это ещё **не** готовый live source packager, активация DNS, early boot graph
+или post-activation uninstall. Синтетическая конфигурация для публикации не
+имеет готового networkd baseline, и её службы в этом сценарии не запускаются.
+Состояние полностью откатывается **до** reboot; active-transaction reboot
+этим не проверяется. Initramfs root пересоздаётся на каждой загрузке; сохранение
+архива в настоящем persistent root через reboot этим также не доказано.
+
+Результат: **6/6 PASS на двух загрузках**
+(`/var/tmp/meshpn-dns-vm-9CAnjT/report.json`), host DNS unchanged. Все270 файлов
+кода frozen snapshot совпадают с рабочим кодом после прогона. Установка:
+216139/218615мс и40 полных OS-checks; откат:163134/164597мс и33 проверки.
+Это TCG timing, не прогноз для Radxa/VPS. Оба лимита420с на операцию и900с
+на загрузку сохранены; DNS queries0. Промежуточный набор125 тестов файловых
+транзакций прошёл до добавления пяти новых boundary/count регрессий; отдельно
+эти5/5 и57/57 VM protocol/host-refusal тестов также прошли.
+Финальная общая Node-регрессия: **1997/1997 PASS**, без skips
+(`/var/tmp/meshpn-acceptance-8QpRuR/report.json`), включая все новые boundary
+проверки и прежние SIGKILL. Пересоздаваемые guest/initrd/kernel завершённой VM
+удалены для места; report, serial logs, image manifest и raw state disk сохранены.

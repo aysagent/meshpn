@@ -91,15 +91,16 @@ export async function dnsDeploymentBundle({ root, directory, operation, source, 
     directoryIdentity: await trustedDirectory(directory, 0o700) };
   await privateJournalDirectory(directory);
   const tool = await inspectDnsSystemExecutable('/usr/bin/mv');
-  const context = async () => {
+  const context = async (checkInactive = false) => {
     assert.equal(await realpath(root), root); assert.equal(await realpath(directory), directory);
     assert.equal(await trustedDirectory(root), identity.rootIdentity);
     assert.equal(await trustedDirectory(parent, 0o755), identity.parentIdentity);
     assert.equal(await trustedDirectory(directory, 0o700), identity.directoryIdentity);
-    await assertDnsCommandLock(lockFd); assert.equal(await assertInactive(), true, 'inactive deployment proof required');
+    await assertDnsCommandLock(lockFd);
+    if (checkInactive) assert.equal(await assertInactive(), true, 'inactive deployment proof required');
     assert.equal(await mountId(parent), await mountId(directory), 'cross-mount bundle publication unsupported');
   };
-  await context();
+  await context(true);
   let record;
   if (operation === 'install') {
     assert.match(expectedSha256, /^[a-f0-9]{64}$/);
@@ -156,12 +157,12 @@ export async function dnsDeploymentBundle({ root, directory, operation, source, 
     if (from !== to) {
       await context(); assert.equal(await absent(to), true, 'bundle destination exists');
       await checkpoint('bundle:before-move');
-      await state(); await context(); assert.deepEqual(await inspectDnsSystemExecutable('/usr/bin/mv'), tool);
+      await state(); await context(true); assert.deepEqual(await inspectDnsSystemExecutable('/usr/bin/mv'), tool);
       // -n never replaces a foreign destination; -T never nests into it. Same
       // mount is required above: no cross-filesystem copy/remove fallback.
       await runLockedDnsCommand('/usr/bin/mv', ['--no-clobber', '--no-target-directory', '--', from, to], { lockFd });
       await checkpoint(record.stage === 'prepared' ? 'bundle:published' : 'bundle:retired');
-      await context(); assert.deepEqual(await inspectDnsSystemExecutable('/usr/bin/mv'), tool);
+      await context(true); assert.deepEqual(await inspectDnsSystemExecutable('/usr/bin/mv'), tool);
       assert.equal(await absent(from), true, 'bundle move did not occur');
       await syncDirectory(dirname(from)); await syncDirectory(dirname(to));
       await state();
@@ -170,6 +171,7 @@ export async function dnsDeploymentBundle({ root, directory, operation, source, 
     else if (record.stage === 'removing') await save('removed');
     await state();
   }
+  await context(true);
   return { stage: record.stage, id: record.id, bundleSha256: record.bundle.sha256,
     files: Object.keys(record.bundle.files).length, activated: false, codeRetained: record.stage === 'removed' };
 }

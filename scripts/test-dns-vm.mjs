@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { vmDriverFailureIsFatal, VM_INSTALLED_CHECKS, assertVmInstalledEvidence, VM_DEPLOYMENT_CHECKS, assertVmDeploymentEvidence } from './lib/dns-vm-protocol.mjs';
+import { vmDriverFailureIsFatal, VM_INSTALLED_CHECKS, assertVmInstalledEvidence, VM_DEPLOYMENT_CHECKS, assertVmDeploymentEvidence,
+  VM_PUBLICATION_CHECKS, assertVmPublicationEvidence } from './lib/dns-vm-protocol.mjs';
 import { VM_CUT_POINTS, VM_FAULTS, VM_SYSTEMD_CHECKS, VM_DNSMASQ_CHECKS, vmCases, vmBootOptions, qemuDnsArgs, assertVmJournalCheckpoint, assertVmFaultEvidence, assertVmSystemdEvidence, assertVmDnsmasqEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
 import { runCommand } from './lib/transparent-acceptance.mjs';
 import { dnsSystemdVmUnits } from './lib/dns-systemd-vm-units.mjs';
@@ -16,6 +17,19 @@ import { queryDnsmasqVm53 } from './lib/transparent-dns-lab.mjs';
 import { createVmGuardLifecycle } from './lib/dns-systemd-vm-worker.mjs';
 
 const input = { root: '/private/tools', kernel: '/private/kernel', initrd: '/private/initrd', disk: '/private/state.raw', phase: 'cycle', point: 'none' };
+test('real file publication VM evidence remains distinct from DNS activation and rejects host execution', async () => {
+  assert.deepEqual(vmCases('publication'), ['publication']);
+  const args = qemuDnsArgs({ ...input, phase: 'coupled', point: 'publication' });
+  assert.deepEqual(vmBootOptions(args[args.indexOf('-append') + 1]), { phase: 'coupled', point: 'publication' });
+  const e = { phase: 'coupled', point: 'publication', systemdPid1: true, filePublicationTested: true,
+    activationTested: false, dnsQueriesSent: 0, resolvConfUnchanged: true, checks: [...VM_PUBLICATION_CHECKS, ...VM_PUBLICATION_CHECKS] };
+  assertVmPublicationEvidence(e); assert.throws(() => assertVmInstalledEvidence(e)); assert.throws(() => assertVmDeploymentEvidence(e));
+  for (const key of Object.keys(e).filter((k) => k !== 'checks'))
+    assert.throws(() => assertVmPublicationEvidence({ ...e, [key]: typeof e[key] === 'boolean' ? !e[key] : 'wrong' }));
+  assert.throws(() => assertVmPublicationEvidence({ ...e, checks: e.checks.slice(1) }));
+  const { checkDnsPublicationVm } = await import('./lib/dns-publication-vm-check.mjs');
+  await assert.rejects(checkDnsPublicationVm());
+});
 test('fresh deployment VM has separate evidence and cannot count as installed activation', async () => {
   assert.deepEqual(vmCases('deployment'), ['deployment']);
   const args = qemuDnsArgs({ ...input, phase: 'coupled', point: 'deployment' });

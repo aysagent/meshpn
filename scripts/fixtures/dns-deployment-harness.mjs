@@ -63,8 +63,9 @@ export async function deploymentHarness(t, { moduleName = 'dns-deployment-bundle
       }
       const options=JSON.parse(process.argv[1]);
       process.umask(0o077);\n      ${setup}
-      const result=await ${entry}({...options,lockFd:options.withoutLock?undefined:lockFd,assertInactive:async()=>options.inactive!==false,
-        checkpoint:async(point)=>{${hook}}}); console.log(JSON.stringify(result));`;
+      let inactiveChecks=0;
+      const result=await ${entry}({...options,lockFd:options.withoutLock?undefined:lockFd,assertInactive:async()=>{inactiveChecks++; return options.inactive!==false;},
+        checkpoint:async(point)=>{${hook}}}); console.log(JSON.stringify({...result,...(options.countInactive?{inactiveChecks}:{})}));`;
     return ['--user', '--map-root-user', '--mount', '--propagation', 'private', '--net', '--pid', '--fork', '--kill-child=SIGKILL',
       process.execPath, '--input-type=module', '-e', bootstrap,
       JSON.stringify({ jail, binds: extra.crossMount ? [...binds, [directory, '/data/journal']] : binds, namespace }),

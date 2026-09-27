@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdir, readFile, writeFile, lstat, readdir, rename } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, lstat, readdir, rename, chmod } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -67,6 +68,26 @@ test('caller cannot mutate sensitive plan while code publication is in flight', 
   assert.deepEqual(await readFile(f.configPath(10)), Buffer.alloc(32, 0x5a));
   assert.deepEqual(await readFile(f.configPath(11)), Buffer.from(f.files[11].contents));
 });
+test('full OS checks are bounded by visible operations, not code-file count or nested inventories', async (t) => {
+  const f = await fixture(t), manifest = JSON.parse(await readFile(join(f.source, 'bundle.json'), 'utf8'));
+  for (let i = 0; i < 64; i++) {
+    const path = `scripts/lib/module-${i}.mjs`, body = `export const value = ${i};\n`;
+    await writeFile(join(f.source, path), body, { mode: 0o644 }); await chmod(join(f.source, path), 0o644);
+    manifest.files[path] = createHash('sha256').update(body).digest('hex');
+  }
+  const body = JSON.stringify(manifest); await writeFile(join(f.source, 'bundle.json'), body);
+  f.options.expectedSha256 = createHash('sha256').update(body).digest('hex');
+  const r = await f.ok('install', '', { countInactive: true });
+  assert.ok(r.inactiveChecks >= 26 && r.inactiveChecks <= 60, `full inactivity checks: ${r.inactiveChecks}`);
+});
+for (const point of ['files:prepared:dir-synced', 'files:file-12:published'])
+  test(`loss of inactivity at ${point} prevents next publication step`, async (t) => {
+    const f = await fixture(t);
+    assert.notEqual((await f.run('install', `if(point===${JSON.stringify(point)}) options.inactive=false;`)).code, 0);
+    if (point === 'files:prepared:dir-synced') await absent(f.configPath(0));
+    else assert.equal((await lstat(f.configPath(12))).nlink, 2, 'unapproved opt-in must not become a single-link authority file');
+    assert.notEqual((await f.run('recover', '', { inactive: false })).code, 0);
+  });
 for (const kind of ['code', 'config', 'active', 'lock']) test(`combined removal refuses ${kind} drift before revoking anything`, async (t) => {
   const f = await fixture(t); await f.ok('install'); const opt = await readFile(f.configPath(12));
   if (kind === 'code') await writeFile(join(f.target, 'scripts/dns-client.mjs'), '// foreign\n');
