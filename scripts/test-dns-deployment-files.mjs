@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { runCommand } from './lib/transparent-acceptance.mjs';
-import { compileDnsDeploymentFiles, dnsDeploymentFiles, readDnsDeploymentJournal, validateDnsDeploymentJournal } from './lib/dns-deployment-files.mjs';
+import { compileDnsDeploymentFiles, compileDnsClientDeploymentFiles, dnsDeploymentFiles, readDnsDeploymentJournal, validateDnsDeploymentJournal } from './lib/dns-deployment-files.mjs';
 import { DNS_NETWORKD_POLICY, DNS_NETWORKD_CONTENTS, dnsNetworkdPolicyArtifact, assertDnsNetworkdUnmanaged } from './lib/dns-networkd-policy.mjs';
 import { compileDnsControllerServicePlan } from './lib/dns-controller-service-plan.mjs';
 import { createHash } from 'node:crypto';
@@ -18,12 +18,18 @@ const input = () => ({ adapter: { schema: 1, exitIp: '93.184.216.36', exitPort: 
 guard: { schema: 1, kind: 'clean-vpn-dns-boot-policy', enabled: true, firewallBackend: 'nf_tables',
   input: { schema: 1, client: 'vps2', id: 'a'.repeat(32) } } });
 
-async function fixture(t, controller = false) {
+const clientInput = () => ({ ...input(), config: { schema: 1, kind: 'clean-vpn-dns-client', client: 'vps2',
+  uplink: 'eth0', networkFile: { path: '/run/systemd/network/10-netplan-eth0.network', sha256: 'c'.repeat(64) },
+  adapterPort: 1053, readyName: 'example.com', domainPolicy: { schema: 1, denySuffixes: ['internal'] } },
+  bundle: JSON.stringify({ schema: 1, kind: 'clean-vpn-dns-code-bundle', files: {
+    'scripts/dns-client.mjs': 'd'.repeat(64), 'scripts/lib/dns-installed-authority.mjs': 'e'.repeat(64) } }),
+  secret: Buffer.from(Array.from({ length: 32 }, (_, i) => i * 8)) });
+async function fixture(t, controller = false, client = false) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'meshpn-deploy-files-'))); t.after(() => rm(base, { recursive: true, force: true }));
   const root = join(base, 'root'), directory = join(base, 'journal');
   for (const p of [root, directory, join(root, 'etc/systemd/system'), join(root, 'etc/systemd/network'), join(root, 'etc/clean-vpn/dns')]) await mkdir(p, { recursive: true, mode: 0o700 });
   let inactive = true;
-  const files = compileDnsDeploymentFiles({ ...input(), controller });
+  const files = client ? compileDnsClientDeploymentFiles(clientInput()) : compileDnsDeploymentFiles({ ...input(), controller });
   for (const file of files) await mkdir(dirname(join(root, file.path)), { recursive: true, mode: 0o700 });
   const options = { root, directory, files, assertInactive: async () => inactive };
   return { root, directory, files, options, setActive: () => { inactive = false; },
@@ -31,6 +37,75 @@ async function fixture(t, controller = false) {
     target: (i = 0) => join(root, files[i].path) };
 }
 const absent = async (p) => assert.rejects(lstat(p), { code: 'ENOENT' });
+
+test('private client set binds exact config/bundle/guard and preserves the binary PSK', async (t) => {
+  const input = clientInput(), compiled = compileDnsClientDeploymentFiles(input);
+  input.secret.fill(0); assert.notDeepEqual(compiled[10].contents, input.secret);
+  const f = await fixture(t, true, true); assert.equal(f.files.length, 13);
+  const permit = JSON.parse(f.files[12].contents);
+  assert.equal(permit.configSha256, createHash('sha256').update(f.files[11].contents).digest('hex'));
+  assert.equal(permit.bundleSha256, createHash('sha256').update(clientInput().bundle).digest('hex'));
+  assert.equal(permit.guardId, clientInput().guard.input.id);
+  await f.run('install');
+  assert.deepEqual(await readFile(f.target(10)), clientInput().secret);
+  for (const i of [10, 11, 12]) assert.equal((await lstat(f.target(i))).mode & 0o7777, 0o600);
+  const journal = await readDnsDeploymentJournal(f.directory);
+  assert.equal(journal.files.length, 13); assert.ok(Buffer.byteLength(JSON.stringify(journal)) <= 8192);
+  for (const file of journal.files) assert.equal(Object.hasOwn(file, 'contents'), false);
+  assert.equal((await f.run('recover')).files, 13); await f.run('remove');
+  for (let i = 0; i < 13; i++) await absent(f.target(i));
+});
+test('client opt-in is last to publish, first to revoke on inactive rollback', async (t) => {
+  const f = await fixture(t, true, true), published = [], removed = [];
+  await f.run('install', { checkpoint: async (name) => {
+    if (!name.endsWith(':published')) return;
+    published.push(name);
+    if (name !== 'file-12:published') await absent(f.target(12));
+    else for (let i = 0; i < 12; i++) assert.equal((await lstat(f.target(i))).nlink, 1);
+  } });
+  await f.run('remove', { checkpoint: async (name) => {
+    if (!name.endsWith(':removed')) return;
+    removed.push(name); await absent(f.target(12));
+  } });
+  assert.deepEqual(published, Array.from({ length: 13 }, (_, i) => `file-${i}:published`));
+  assert.deepEqual(removed, Array.from({ length: 13 }, (_, i) => `file-${12 - i}:removed`));
+});
+test('private client set refuses mismatched inputs and invalid keys without serializing the key', () => {
+  for (const mutate of [(v) => { v.config.adapterPort++; }, (v) => { v.config.readyName = 'different.example'; },
+    (v) => { v.config.domainPolicy.denySuffixes = ['elsewhere']; }, (v) => { v.secret = Buffer.alloc(31); },
+    (v) => { v.secret = 'f'.repeat(32); }, (v) => { v.bundle = '{}'; },
+    (v) => { v.config.client = 'radxa'; }, (v) => { v.guard.input.client = 'radxa'; }]) {
+    const v = clientInput(); mutate(v); assert.throws(() => compileDnsClientDeploymentFiles(v));
+  }
+});
+test('private set revalidates raw files: incomplete/reordered sets and altered opt-in cannot stage', async (t) => {
+  for (const mutate of [(v) => v.splice(12, 1), (v) => v.splice(6, 4), (v) => v.reverse(),
+    (v) => { const p = JSON.parse(v[12].contents); p.guardId = '0'.repeat(32); v[12].contents = JSON.stringify(p); },
+    (v) => { const p = JSON.parse(v[12].contents); p.configSha256 = '0'.repeat(64); v[12].contents = JSON.stringify(p); },
+    (v) => { v[0].contents += 'ExecStart=/bin/false\n'; },
+    (v) => { const c = JSON.parse(v[2].contents); c.denySuffixes = []; v[2].contents = JSON.stringify(c); }]) {
+    const f = await fixture(t, true, true);
+    const files = f.files.map((v) => ({ ...v })); mutate(files);
+    for (const file of files) file.sha256 = createHash('sha256').update(file.contents).digest('hex');
+    await assert.rejects(f.run('install', { files })); assert.deepEqual(await readdir(f.directory), []);
+  }
+});
+test('an existing PSK is never adopted even when its bytes match', async (t) => {
+  const f = await fixture(t, true, true); await writeFile(f.target(10), clientInput().secret, { mode: 0o600 });
+  const before = await lstat(f.target(10)); await assert.rejects(f.run('install'), /already exists/);
+  assert.equal((await lstat(f.target(10))).ino, before.ino); assert.deepEqual(await readdir(f.directory), []);
+  await absent(f.target(12));
+});
+test('private input buffers are copied before publication checkpoints', async (t) => {
+  const f = await fixture(t, true, true);
+  await f.run('install', { checkpoint: async (name) => { if (name === 'prepared:dir-synced') f.files[10].contents.fill(0); } });
+  assert.deepEqual(await readFile(f.target(10)), clientInput().secret);
+});
+test('older controller journal never adds credentials or client opt-in on recovery', async (t) => {
+  const f = await fixture(t, true); await f.run('install');
+  assert.equal((await f.run('recover', { files: compileDnsClientDeploymentFiles(clientInput()) })).files, 10);
+  for (const file of compileDnsClientDeploymentFiles(clientInput()).slice(10)) await absent(join(f.root, file.path));
+});
 
 test('opt-in full VPS2 file set journals and removes all controller units/drop-ins without activation', async (t) => {
   const f = await fixture(t, true); assert.equal(f.files.length, 10);
@@ -256,7 +331,7 @@ test('corrupt journal cannot authorize rollback', async (t) => {
   for (const [i, file] of f.files.entries()) assert.equal(await readFile(f.target(i), 'utf8'), file.contents);
 });
 
-for (const [operation, point, expected, controller = false] of [
+for (const [operation, point, expected, controller = false, client = false] of [
   ['install', 'prepared:dir-synced', 'installed'], ['install', 'file-0:published', 'installed'],
   ['install', 'file-2:detached', 'installed'], ['install', 'installed:dir-synced', 'installed'],
   ['install', 'file-5:published', 'installed'],
@@ -266,14 +341,17 @@ for (const [operation, point, expected, controller = false] of [
   ['install', 'file-6:published', 'installed', true], ['install', 'file-8:published', 'installed', true],
   ['install', 'file-9:detached', 'installed', true], ['remove', 'file-9:removed', 'removed', true],
   ['remove', 'file-6:removed', 'removed', true],
+  ['install', 'file-10:published', 'installed', true, true], ['install', 'file-12:published', 'installed', true, true],
+  ['remove', 'file-12:removed', 'removed', true, true], ['remove', 'file-10:removed', 'removed', true, true],
 ]) test(`actual SIGKILL under flock at ${point}`, async (t) => {
-  const f = await fixture(t, controller); if (operation === 'remove') await f.run('install');
+  const f = await fixture(t, controller, client); if (operation === 'remove') await f.run('install');
   const lock = join(f.root, 'deployment.lock');
   const script = `
     import { dnsDeploymentFiles } from ${JSON.stringify(new URL('./lib/dns-deployment-files.mjs', import.meta.url).href)};
     import { ownsBootGuardLock } from ${JSON.stringify(new URL('./lib/dns-boot-guard.mjs', import.meta.url).href)};
     import { readdir, readFile } from 'node:fs/promises';
     const o = JSON.parse(process.argv[1]), point = process.argv[2];
+    for (const file of o.files) if (file.contents?.type === 'Buffer') file.contents = Buffer.from(file.contents.data);
     const infos = await Promise.all((await readdir('/proc/self/fdinfo')).map(n => readFile('/proc/self/fdinfo/' + n, 'utf8').catch(e => { if(e.code==='ENOENT') return ''; throw e; })));
     if (!infos.some(s => ownsBootGuardLock(s, process.pid))) throw new Error('lock missing');
     await dnsDeploymentFiles({ ...o, assertInactive: async () => true, checkpoint: async p => {
@@ -298,7 +376,9 @@ for (const [operation, point, expected, controller = false] of [
   const released = await runCommand('/usr/bin/flock', ['-n', '-E', '75', '-F', lock, '/usr/bin/true']); assert.equal(released.code, 0);
   assert.equal((await f.run('recover')).stage, expected);
   for (const [i, file] of f.files.entries()) {
-    if (expected === 'installed') { assert.equal(await readFile(f.target(i), 'utf8'), file.contents); assert.equal((await lstat(f.target(i))).nlink, 1); }
+    if (expected === 'installed') {
+      assert.deepEqual(await readFile(f.target(i)), Buffer.from(file.contents)); assert.equal((await lstat(f.target(i))).nlink, 1);
+    }
     else await absent(f.target(i));
   }
 });

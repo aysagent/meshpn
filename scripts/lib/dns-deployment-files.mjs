@@ -1,6 +1,7 @@
 /** File-only part of the opt-in installer. Caller holds its deployment lock and
  * proves services/boot dependencies have NOT been activated. No service calls,
- * DNS setters, directory creation, PSK handling or source-code installation. */
+ * DNS setters, directory creation or source-code installation. Credentials in
+ * the explicit client set remain private; the journal contains only hashes. */
 import assert from 'node:assert/strict';
 import { constants } from 'node:fs';
 import { open, lstat, realpath, link, unlink, readdir, readFile } from 'node:fs/promises';
@@ -11,6 +12,9 @@ import { compileDnsControllerServicePlan } from './dns-controller-service-plan.m
 import { validateDnsBootPolicy, dnsBootGuardUnit } from './dns-boot-guard.mjs';
 import { privateJournalDirectory, readPrivateJournal, writePrivateJournal, syncDirectory } from './dns-lifecycle-journal.mjs';
 import { DNS_NETWORKD_POLICY, DNS_NETWORKD_CONTENTS, dnsNetworkdPolicyArtifact } from './dns-networkd-policy.mjs';
+import { validateDnsClientOptIn, validateDnsInstalledBundle } from './dns-installed-authority.mjs';
+import { validateVps2DnsConfig } from './dns-vps2-baseline.mjs';
+import { assessLoadedDnsAdapter } from './dns-installed-adapter.mjs';
 
 const paths = new Map([
   ['/etc/systemd/system/clean-vpn-dns-adapter.service', '0644'],
@@ -25,13 +29,21 @@ const controllerPlans = ['legacy', 'nf_tables'].map((firewallBackend) =>
   compileDnsControllerServicePlan({ schema: 1, client: 'vps2', firewallBackend }).files);
 const controllerPaths = controllerPlans[0].map((f) => f.path);
 for (const path of controllerPaths) paths.set(path, '0644');
+const privatePaths = ['/etc/clean-vpn/dns/hmac.key', '/etc/clean-vpn/dns/client.json', '/etc/clean-vpn/dns/client-opt-in.json'];
+for (const path of privatePaths) paths.set(path, '0600');
 function selectedPaths(files) {
   assert.ok(Array.isArray(files));
   const selected = files.map((f) => f.path);
   const controller = selected.some((p) => controllerPaths.includes(p));
+  const client = selected.some((p) => privatePaths.includes(p));
+  if (client) {
+    // The opt-in is published LAST and removed FIRST, never while another
+    // member of the initial file set is missing. Old sets keep their order.
+    assert.deepEqual(selected, [...basePaths, DNS_NETWORKD_POLICY, ...controllerPaths, ...privatePaths]);
+  }
   assert.deepEqual([...selected].sort(), [...basePaths,
     ...(controller || selected.includes(DNS_NETWORKD_POLICY) ? [DNS_NETWORKD_POLICY] : []),
-    ...(controller ? controllerPaths : [])].sort());
+    ...(controller ? controllerPaths : []), ...(client ? privatePaths : [])].sort());
   // A new controller group must be complete and match ONE reviewed backend,
   // including both manager drop-ins. No arbitrary unit payload or mixed pair.
   if (controller) assert.ok(controllerPlans.some((plan) => plan.every((f) =>
@@ -54,11 +66,31 @@ export function compileDnsDeploymentFiles({ adapter, guard, controller = false }
     ...(controller ? compileDnsControllerServicePlan({ schema: 1, client: 'vps2', firewallBackend: guard.firewallBackend }).files : []),
   ].map((f) => ({ ...f, sha256: hash(f.contents) }));
 }
+/** Explicit sensitive file set, NOT a printable plan or a live authorization.
+ * Caller must independently verify/publish the approved code bundle before
+ * installing this set, and hold the deployment lock with real inactive proof.
+ * This function neither reads nor generates a key; secret is an existing PSK. */
+export function compileDnsClientDeploymentFiles({ adapter, guard, config, bundle, secret }) {
+  validateVps2DnsConfig(config);
+  assert.equal(typeof bundle, 'string'); assert.ok(Buffer.byteLength(bundle) <= 131072);
+  validateDnsInstalledBundle(JSON.parse(bundle));
+  assert.ok(Buffer.isBuffer(secret) && secret.length === 32, '32-byte binary PSK required');
+  const files = compileDnsDeploymentFiles({ adapter, guard, controller: true });
+  const contents = `${JSON.stringify(config)}\n`;
+  const permit = validateDnsClientOptIn({ schema: 1, kind: 'clean-vpn-dns-client-opt-in', enabled: true,
+    client: 'vps2', guardId: guard.input.id, bundleSha256: hash(bundle), configSha256: hash(contents) });
+  const extra = [Buffer.from(secret), contents, `${JSON.stringify(permit)}\n`];
+  for (const [i, path] of privatePaths.entries()) files.push({ path, mode: '0600', contents: extra[i], sha256: hash(extra[i]) });
+  try { return validateFiles(files); }
+  catch (error) { extra[0].fill(0); throw error; }
+}
 function validateFiles(files) {
   selectedPaths(files);
   for (const f of files) {
     keys(f, ['path', 'mode', 'contents', 'sha256']);
-    assert.equal(f.mode, paths.get(f.path)); assert.equal(typeof f.contents, 'string');
+    assert.equal(f.mode, paths.get(f.path));
+    if (f.path === privatePaths[0]) assert.ok(Buffer.isBuffer(f.contents) && f.contents.length === 32, '32-byte binary PSK required');
+    else assert.equal(typeof f.contents, 'string');
     assert.ok(Buffer.byteLength(f.contents) > 0 && Buffer.byteLength(f.contents) <= 131072);
     assert.equal(f.sha256, hash(f.contents));
     if (f.path === DNS_NETWORKD_POLICY) assert.equal(f.contents, DNS_NETWORKD_CONTENTS);
@@ -68,6 +100,24 @@ function validateFiles(files) {
     assert.equal(policy.input.client, 'vps2');
     const expected = compileDnsControllerServicePlan({ schema: 1, client: 'vps2', firewallBackend: policy.firewallBackend }).files;
     for (const f of expected) assert.equal(files.find((v) => v.path === f.path).sha256, f.sha256, 'controller/guard backend mismatch');
+  }
+  if (files.some((f) => privatePaths.includes(f.path))) {
+    const get = (path) => files.find((v) => v.path === path).contents;
+    const config = validateVps2DnsConfig(JSON.parse(get(privatePaths[1])));
+    assert.ok(Buffer.byteLength(get(privatePaths[1])) <= 65536 && Buffer.byteLength(get(privatePaths[2])) <= 2048);
+    const permit = validateDnsClientOptIn(JSON.parse(get(privatePaths[2])));
+    const guard = validateDnsBootPolicy(JSON.parse(get('/etc/clean-vpn/dns/guard-policy.json')));
+    assert.equal(permit.client, config.client); assert.equal(permit.client, guard.input.client);
+    assert.equal(permit.guardId, guard.input.id); assert.equal(permit.configSha256, hash(get(privatePaths[1])));
+    const unitText = get('/etc/systemd/system/clean-vpn-dns-adapter.service');
+    const starts = [...unitText.matchAll(/^ExecStart=(.+)$/gm)]; assert.equal(starts.length, 1);
+    // Reuse the strict loaded-template assessment: rejects arbitrary commands,
+    // a wrong listener/readiness name, or differing private domain policy.
+    assessLoadedDnsAdapter({ config, unitText,
+      argv: starts[0][1].replaceAll('${CREDENTIALS_DIRECTORY}', '/run/credentials/clean-vpn-dns-adapter.service').split(' '),
+      environment: ['CREDENTIALS_DIRECTORY=/run/credentials/clean-vpn-dns-adapter.service'],
+      upstream: JSON.parse(get('/etc/clean-vpn/dns/upstream.json')),
+      domainPolicy: JSON.parse(get('/etc/clean-vpn/dns/domains.json')) });
   }
   return files;
 }
@@ -111,10 +161,19 @@ function parentPaths(selected) {
 }
 
 // Five legacy/Radxa artifacts, plus VPS2 exclusion and optional full controller
-// group (ten files). Old journals are never implicitly upgraded. The future
+// group (ten files), or explicit credentials/config/opt-in (thirteen). Old
+// journals are never implicitly upgraded. The future
 // live entrypoint must validate root ownership, code, authorization and lock.
 // Tests use a private root; importing the module has no filesystem effects.
 export async function dnsDeploymentFiles({ root, directory, operation, files, assertInactive, checkpoint = async () => {} }) {
+  // Own only a private copy of the caller's key; wipe it on success AND failure.
+  // The caller remains responsible for disposing its original sensitive plan.
+  if (operation === 'install') files = validateFiles(files).map((f) => ({ ...f,
+    contents: Buffer.isBuffer(f.contents) ? Buffer.from(f.contents) : f.contents }));
+  try { return await applyFiles({ root, directory, operation, files, assertInactive, checkpoint }); }
+  finally { if (operation === 'install') for (const f of files) if (Buffer.isBuffer(f.contents)) f.contents.fill(0); }
+}
+async function applyFiles({ root, directory, operation, files, assertInactive, checkpoint }) {
   assert.ok(['install', 'recover', 'remove', 'inspect'].includes(operation));
   assert.equal(typeof assertInactive, 'function', 'inactive deployment proof required');
   assert.equal(resolve(root), root); assert.equal(resolve(directory), directory);
@@ -122,8 +181,7 @@ export async function dnsDeploymentFiles({ root, directory, operation, files, as
   await privateJournalDirectory(directory);
   assert.equal(await assertInactive(), true, 'inactive deployment proof required');
   let record;
-  if (operation === 'install') files = structuredClone(validateFiles(files));
-  else record = await readDnsDeploymentJournal(directory);
+  if (operation !== 'install') record = await readDnsDeploymentJournal(directory);
   const selected = selectedPaths(record?.files ?? files);
   const rootStat = await lstat(root, { bigint: true });
   assert.ok(rootStat.isDirectory() && rootStat.uid === BigInt(process.getuid()) && !(rootStat.mode & 0o022n));
@@ -186,18 +244,20 @@ export async function dnsDeploymentFiles({ root, directory, operation, files, as
   };
   const inspect = async (path, f) => maybe(async () => {
     const fd = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
+    let bytes;
     try {
       const s = await fd.stat({ bigint: true });
       assert.ok(s.isFile() && s.uid === BigInt(process.getuid()) && [1n, 2n].includes(s.nlink));
       assert.equal(identity(s), f.identity, 'foreign deployment inode');
       assert.equal(s.mode & 0o7777n, BigInt(Number.parseInt(f.mode, 8))); assert.equal(String(s.mtimeNs), f.mtimeNs);
       assert.ok(s.size > 0n && s.size <= 131072n);
-      const bytes = Buffer.alloc(Number(s.size) + 1), { bytesRead } = await fd.read(bytes, 0, bytes.length, 0);
+      bytes = Buffer.alloc(Number(s.size) + 1);
+      const { bytesRead } = await fd.read(bytes, 0, bytes.length, 0);
       assert.equal(BigInt(bytesRead), s.size); assert.equal(hash(bytes.subarray(0, bytesRead)), f.sha256, 'deployment file changed');
       const after = await fd.stat({ bigint: true }); assert.equal(after.ctimeNs, s.ctimeNs);
       assert.equal(identity(await lstat(path, { bigint: true })), f.identity);
       return s;
-    } finally { await fd.close(); }
+    } finally { bytes?.fill(0); await fd.close(); }
   });
   const state = async (f, i) => {
     await context(); const staged = join(directory, `file-${i}`), target = destination(f.path);
