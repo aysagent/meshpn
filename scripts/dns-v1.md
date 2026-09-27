@@ -100,6 +100,10 @@ Radxa coordinator с явно заданным localhost-file baseline тепе�
 реального dnsmasq с restored config; dangling baseline этим не разрешён.
 Далее — live controllers, opt-in установщик/откат и пилоты. VM не выполняет
 согласование или repair baseline настоящей Radxa.
+Файловая часть opt-in установки теперь имеет [журнал и точный откат](dns-deployment-files.md):
+пять фиксированных новых artifacts, без overwrite существующих файлов, 47/47
+проверок, включая7 process SIGKILL. Это ещё не live entrypoint: активация служб,
+реальные клиентские controllers и полный uninstall остаются следующим шагом.
 
 ## Три этапа и текущий статус
 

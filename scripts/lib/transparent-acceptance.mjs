@@ -23,6 +23,7 @@ export const TEST_FILES = Object.freeze([
   'test-dns-exit-adapter.mjs',
   'test-dns-adapter-ready.mjs',
   'test-dns-adapter-service-plan.mjs',
+  'test-dns-deployment-files.mjs',
   'test-dns-adapter-soak.mjs',
   'test-dns-lifecycle.mjs',
   'test-dns-lifecycle-journal.mjs',

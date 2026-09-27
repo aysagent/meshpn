@@ -10,6 +10,25 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: файловая транзакция opt-in установки
+
+`dns-deployment-files.mjs` публикует пять фиксированных adapter/guard artifacts
+без overwrite. Write-ahead manifest, fsync, no-replace hardlink publication и
+удаление staging-link до installed. Итоговые files single-link совместимы с
+boot reader. Root/journal/parents dev:ino и file mode/mtime/hash связывают recovery
+с текущим контекстом; чужие файлы или loss proof — отказ. `recover` следует
+install/remove intent, journal после удаления остаётся, каталоги не удаляются.
+До первого target orphan staging не считается recovery authority.
+
+47/47 file tests PASS, включая7 настоящих SIGKILL под flock и7 lock conflicts.
+Node1724/1724 PASS, без skips, `/var/tmp/meshpn-acceptance-aIKWA7/report.json`.
+Это временные каталоги, не VM install/whole-guest power loss. Публичного apply
+CLI нет; callback неактивного deployment и общий lock должен обеспечить будущий
+live entrypoint, `() => true` допустим только в fixture. PSK/source deployment,
+активация/controllers, permanent disable и единый VM install/uninstall ещё нужны.
+Модуль не выключает активную DNS-интеграцию и не даёт разрешения запускать units.
+Подробности: [файловая установка](../scripts/dns-deployment-files.md).
+
 ### Дополнение 2026-09-27: guard journal и здоровый baseline Radxa
 
 Целевой Radxa coordinator теперь использует настоящий boot guard/CLI adapter

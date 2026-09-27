@@ -103,4 +103,8 @@ reboot и disable. Node-регрессия:1572/1572, `/var/tmp/meshpn-acceptanc
 инструментирован: DNS_TIMEOUT1718мс при deadline1500мс, не доказательство утечки.
 История исправлений стенда и ограничения — в [VM-документе](dns-systemd-vm.md).
 Это systemd255/x64 без journald, не проверка systemd249/ARM на живых клиентах.
-Установщик, guard/controller deployment и live-пилоты всё ещё требуются.
+Для пяти файлов adapter/boot guard добавлена отдельная
+[файловая транзакция установки](dns-deployment-files.md): журнал, восстановление
+и отказ удалять чужие files, 47 проверок и7 process SIGKILL PASS. Она не запускает
+службы и не разрешает установку по одному этому renderer. Полный установщик,
+guard/controller deployment и live-пилоты всё ещё требуются.
