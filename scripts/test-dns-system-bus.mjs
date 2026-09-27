@@ -42,3 +42,32 @@ test('invalid D-Bus replies fail without authorizing a setter', async () => {
     const bus=createDnsSystemBus(async()=>({stdout})); await assert.rejects(bus.id()); await assert.rejects(bus.owner());
   }
 });
+test('read-only manager inspection uses fixed properties and unique peers', async () => {
+  const calls = [], values = { DNSEx: [[2, 2, [10,129,0,2], 0, '']], FallbackDNSEx: [], Domains: [[2, 'auto.internal', false]], ResolvConfMode: ['stub'] };
+  const bus = createDnsSystemBus(async (_tool, args) => {
+    calls.push(args); let data;
+    if (args.includes('GetNameOwner')) data = [args.at(-1) === 'org.freedesktop.network1' ? ':1.24' : ':1.23'];
+    else if (args.includes('GetConnectionUnixProcessID')) data = [42];
+    else if (args.includes('GetConnectionUnixUser')) data = [101];
+    else data = values[args.at(-1)];
+    return { stdout: JSON.stringify({ data }) };
+  });
+  assert.equal(await bus.owner('org.freedesktop.network1'), ':1.24');
+  assert.equal(await bus.ownerPid(':1.23'), 42); assert.equal(await bus.ownerUid(':1.23'), 101);
+  assert.deepEqual(await bus.managerSnapshot(':1.23'), { ...values, ResolvConfMode: 'stub' });
+  assert.ok(calls.slice(-4).every((args) => args[5] === 'get-property' && args[6] === ':1.23'));
+  const before = calls.length;
+  await assert.rejects(bus.owner('org.freedesktop.systemd1'));
+  for (const method of ['ownerPid', 'ownerUid', 'managerSnapshot']) await assert.rejects(bus[method]('org.freedesktop.resolve1'));
+  assert.equal(calls.length, before);
+});
+test('read-only manager refuses malformed scalar and oversized list replies', async () => {
+  for (const data of [null, [], ['42'], [-1], [4294967295], [42, 43]]) {
+    const bus = createDnsSystemBus(async () => ({ stdout: JSON.stringify({ data }) }));
+    await assert.rejects(bus.ownerPid(':1.2')); await assert.rejects(bus.ownerUid(':1.2'));
+  }
+  for (const data of [null, 'bad', Array(65).fill(0)]) {
+    const bus = createDnsSystemBus(async (_tool, args) => ({ stdout: JSON.stringify({ data: args.at(-1) === 'ResolvConfMode' ? ['stub'] : data }) }));
+    await assert.rejects(bus.managerSnapshot(':1.2'));
+  }
+});

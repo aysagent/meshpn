@@ -137,6 +137,11 @@ public-layout завершена; installed entrypoint/установщик и �
 `dns-client.mjs --inspect`. Это ещё не положительно проверенный VM installed
 путь и не готовая команда переключения DNS; OS factories/mutating commands
 пока не подключены.
+VPS2 installed `--inspect` получил строгий config и read-only baseline проверки:
+уникальные D-Bus владельцы resolved/networkd, runtime-selected network file/hash,
+явная deny-policy внутренних имён, stub/NSS и отсутствие конфликтов DNS-link.
+Node1839/1839 PASS. Это ещё не mutation authority и не положительный installed
+VM acceptance; ограничения и схема — [installed authority](dns-installed-authority.md).
 
 ## Три этапа и текущий статус
 

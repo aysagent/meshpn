@@ -48,9 +48,30 @@ export function createDnsSystemBus(run) {
       const id = singleton(await call(['call', 'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'GetId']));
       assert.match(id, /^[a-f0-9]{32}$/); return id;
     },
-    async owner() {
-      const owner = singleton(await call(['call', 'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'GetNameOwner', 's', 'org.freedesktop.resolve1']));
+    async owner(service = 'org.freedesktop.resolve1') {
+      assert.ok(['org.freedesktop.resolve1', 'org.freedesktop.network1'].includes(service));
+      const owner = singleton(await call(['call', 'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'GetNameOwner', 's', service]));
       ownerCheck(owner); return owner;
+    },
+    async ownerPid(owner) {
+      ownerCheck(owner);
+      const pid = singleton(await call(['call', 'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'GetConnectionUnixProcessID', 's', owner]));
+      assert.ok(Number.isInteger(pid) && pid > 1 && pid <= 2147483647); return pid;
+    },
+    async ownerUid(owner) {
+      ownerCheck(owner);
+      const uid = singleton(await call(['call', 'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'GetConnectionUnixUser', 's', owner]));
+      assert.ok(Number.isInteger(uid) && uid >= 0 && uid < 4294967295); return uid;
+    },
+    async managerSnapshot(owner) {
+      ownerCheck(owner); const result = {};
+      for (const name of ['DNSEx', 'FallbackDNSEx', 'Domains', 'ResolvConfMode'])
+        result[name] = await call(['get-property', owner, root, manager, name]);
+      // busctl represents strings as singleton arrays, arrays directly.
+      result.ResolvConfMode = singleton(result.ResolvConfMode);
+      assert.equal(typeof result.ResolvConfMode, 'string');
+      for (const key of ['DNSEx', 'FallbackDNSEx', 'Domains']) assert.ok(Array.isArray(result[key]) && result[key].length <= 64);
+      return result;
     },
     async property(owner, index, property) {
       ownerCheck(owner); indexCheck(index); assert.ok(properties.includes(property));

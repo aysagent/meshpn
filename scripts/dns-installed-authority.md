@@ -64,7 +64,58 @@ hardlink и отказ выдавать token обычному repo-процес
 ожидание теста, не owner check; положительный installed runtime по-прежнему
 требует VM. Это не положительный installed/live acceptance.
 
-Далее — строгие client-specific config/ownership проверки, installed entrypoint,
+## Read-only baseline VPS 2
+
+`--inspect` теперь дополнительно проверяет VPS2 baseline через настоящий fixed
+system bus и pinned command runner. Требуется строгий `client.json`:
+
+```json
+{
+  "schema": 1,
+  "kind": "clean-vpn-dns-client",
+  "client": "vps2",
+  "uplink": "eth0",
+  "networkFile": {
+    "path": "/run/systemd/network/10-netplan-eth0.network",
+    "sha256": "SHA256_СОГЛАСОВАННОГО_ФАЙЛА"
+  },
+  "adapterPort": 2053,
+  "readyName": "example.com",
+  "domainPolicy": {
+    "schema": 1,
+    "denySuffixes": ["auto.internal", "ru-central1.internal"]
+  }
+}
+```
+
+Это пример формы, **не выбранная за пользователя live-политика** и не готовый
+файл установки. Hash должен быть64 lowercase hex. Неизвестные поля, неявный
+uplink/deny-policy, неподходящий readiness-name отвергаются. В этой версии
+поддержано явное блокирование внутренних доменов, не protected cloud resolver.
+
+Проверяются активные resolved/networkd и совпадение MainPID с уникальным D-Bus
+владельцем, invocation, executable и net namespace. Файлы перечитываются с
+проверкой identity; root-owned конфигурация отделена от runtime-файлов служб,
+для которых разрешён UID соответствующего D-Bus peer только в его runtime tree.
+Проверяются выбранный networkd-файл/hash, stub symlink, NSS `files dns`,
+uplink/default route, отсутствие `cvdns*` и конфликтов адреса/маршрута192.0.2.1,
+отсутствие global/чужих DNS-источников и resolved fallback. Все наблюдаемые
+search/route domains должны покрываться явной deny-policy; policy на диске
+должна совпадать с `/etc/clean-vpn/dns/domains.json`.
+
+Это **проверка исходного состояния**, не active recovery и не разрешение setters:
+`baselineChecksPassed:true`, но `activationAuthorized:false`,
+`dnsOwnershipVerified:false`. Нет доказательства loaded adapter credentials,
+исключения будущего DNS-link из networkd, непрерывного manager lock/readiness.
+Radxa пока проходит только прежнюю authority-проверку (`baseline:null`).
+Новый collector не имеет injectable IO или обхода installed authority; чистый
+assessor принимает тестовые данные, но не выдаёт token.
+
+62/62 targeted tests и1839/1839 Node PASS (без skips),
+`/var/tmp/meshpn-acceptance-KwkR6E/report.json`. Это unit/read-only evidence,
+не положительный VM installed acceptance; такой прогон следующий.
+
+Далее — завершение client-specific ownership checks, installed entrypoint,
 controller units и связь install/activate/disable/uninstall. Только установщик
 после проверки всех artifacts и неактивного deployment сможет публиковать opt-in;
 пять файлов прежней [файловой транзакции](dns-deployment-files.md) его ещё не
