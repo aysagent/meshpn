@@ -1,7 +1,8 @@
 # Простой DNS: владение правилами и восстановление
 
-Это компонент нового default `--dns-mode=tunnel` в CLI clean-vpn;
-сквозная CLI-проверка пока выполняется. Он не устанавливает службы и не меняет настройки resolved/dnsmasq,
+Это компонент нового default `--dns-mode=tunnel` в CLI clean-vpn.
+Сквозной ingress-only VM-прогон TLS/boring-tls/combo-tls прошёл 99 проверок;
+живой пилот не выполнен. DNS-компонент не устанавливает службы и не меняет настройки resolved/dnsmasq,
 `resolv.conf`, default route или sysctl. Не путать с managed DNS installer.
 
 `lib/dns-tunnel-journal.mjs` записывает небольшой журнал в приватный каталог
@@ -101,10 +102,11 @@ deadline10s ограничивают работу cleanup; ошибка оста
 сценариев прошли. Общая Node-регрессия:2139/2139 PASS, без skips,
 `/var/tmp/meshpn-acceptance-MKY2P8/report.json`.
 
-Границы: это не запуск полного clean-vpn и не проверка TLS-транспорта.
-Реальный lifecycle resolved/dnsmasq ещё должен проверяться при CLI-интеграции.
-Whole-VM reboot, live VPS/Radxa,
-DoH/DoT приложений и общий VPN kill-switch этим компонентом не подтверждаются.
+Границы перечисленных выше компонентных проверок: это не запуск полного
+clean-vpn и не проверка TLS-транспорта; для этого есть отдельный CLI-стенд ниже.
+Простой режим не управляет lifecycle resolved/dnsmasq; проверка установки этих
+служб относится к отдельному managed workflow. Whole-VM reboot, live VPS/Radxa,
+DoH/DoT приложений и общий VPN kill-switch этими проверками не подтверждаются.
 
 ## Сквозной CLI-стенд
 
@@ -126,3 +128,8 @@ Default DNS-матрица: TLS host/ingress/LAN, boring-tls и combo-tls ingres
 непрерывные DNS-запросы во время safe stop, DNS самого шлюза и explicit recovery.
 Все адреса и DNS endpoints находятся внутри VM/namespace. Результаты и
 незавершённые прогоны перечислены в [DNS v1](dns-v1.md); deadline не считается PASS.
+
+Последний ingress-only прогон: **3/3 сценария, 99/99 проверок PASS**, без skips,
+`/var/tmp/meshpn-ingress-vm-ky2zPm/report.json`. В каждом сценарии explicit recovery
+вернул полный сетевой baseline; VM штатно выключилась. Это не повтор host/LAN
+и не подтверждение работы на живых VPS 2/Radxa.
