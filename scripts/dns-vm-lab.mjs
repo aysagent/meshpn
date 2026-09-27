@@ -16,7 +16,7 @@ async function main() {
   const flags = new Map();
   for (const arg of process.argv.slice(2)) {
     const match = /^--(tools|kernel|resolved|case|dnsmasq)=(.+)$/.exec(arg);
-    assert.ok(match && !flags.has(match[1]), 'expected --tools=DIR --kernel=FILE --resolved=FILE [--case=all|faults|systemd|dnsmasq|radxa|radxa-cuts|coupled|coupled-cuts|installed|installed-units|deployment|publication|cycle|CASE] [--dnsmasq=FILE]');
+    assert.ok(match && !flags.has(match[1]), 'expected --tools=DIR --kernel=FILE --resolved=FILE [--case=all|faults|systemd|dnsmasq|radxa|radxa-cuts|coupled|coupled-cuts|installed|installed-units|installed-released|deployment|publication|cycle|CASE] [--dnsmasq=FILE]');
     flags.set(match[1], match[2]);
   }
   for (const key of ['tools', 'kernel', 'resolved']) assert.ok(flags.get(key)?.startsWith('/'), `absolute --${key} required`);
@@ -28,7 +28,8 @@ async function main() {
   const coupledCut = flags.get('case') === 'coupled-cuts' || Boolean(flags.get('case')?.startsWith('coupled-cut:'));
   const publication = flags.get('case') === 'publication';
   const deployment = flags.get('case') === 'deployment' || publication;
-  const coupled = ['coupled', 'installed', 'installed-units'].includes(flags.get('case')) || deployment || coupledCut;
+  const releasedInspection = flags.get('case') === 'installed-released';
+  const coupled = ['coupled', 'installed', 'installed-units'].includes(flags.get('case')) || releasedInspection || deployment || coupledCut;
   const systemd = coupled || dnsmasq || flags.get('case') === 'systemd';
   const tools = resolve(flags.get('tools')), root = join(tools, 'root');
   const packages = await verifyVmPackages(tools);
@@ -51,7 +52,7 @@ async function main() {
   report.vcpus = flags.get('case') === 'systemd' || coupled || radxa ? 2 : 1;
   try {
     const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved'), systemd,
-      dnsmasq: dnsmasq ? flags.get('dnsmasq') : null, coupled, radxa, deployment, publication });
+      dnsmasq: dnsmasq ? flags.get('dnsmasq') : null, coupled, radxa, deployment, publication, releasedInspection });
     report.image = { kernelSha256: image.manifest.kernelSha256, initrdSha256: image.manifest.initrdSha256 };
     let launchNumber = 0;
     async function launch(disk, phase, point, expectReboot = false) {
@@ -137,7 +138,7 @@ async function main() {
         if (radxa) assertVmRadxaEvidence(passed, radxaCut ? events.find((e) => e.event === 'cut-ready') : undefined);
         else if (point === 'deployment') assertVmDeploymentEvidence(passed);
         else if (point === 'publication') assertVmPublicationEvidence(passed);
-        else if (['installed', 'installed-units'].includes(point)) assertVmInstalledEvidence(passed);
+        else if (['installed', 'installed-units', 'installed-released'].includes(point)) assertVmInstalledEvidence(passed);
         else if (coupled) assertVmCoupledEvidence(passed, coupledCut ? events.find((e) => e.event === 'cut-ready') : undefined);
         else (dnsmasq ? assertVmDnsmasqEvidence : assertVmSystemdEvidence)(passed);
         assert.ok(events.filter((e) => e.event === 'boot-guard').every((e) => e.pid1 === 'systemd'));

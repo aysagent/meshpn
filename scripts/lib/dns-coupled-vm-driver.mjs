@@ -106,18 +106,21 @@ async function main() {
   const networkStart = BigInt((await ctl('show', 'dns-vm-network.service', '--property=ExecMainStartTimestampMonotonic', '--value')).stdout.trim());
   assert.ok(guardEnd > 0n && networkStart >= guardEnd); await inspectGuard();
   check('boot-guard-cli-before-network');
-  if (['installed', 'installed-units'].includes(options.point)) {
+  if (['installed', 'installed-units', 'installed-released'].includes(options.point)) {
     if (previous) assert.notEqual(bootId, previous.bootId);
-    await checkInstalledDnsVmBaseline({ controller: true, service: options.point === 'installed-units' });
+    const released = options.point === 'installed-released';
+    const releaseChecks = await checkInstalledDnsVmBaseline({ controller: true, service: options.point === 'installed-units', releasedInspection: released });
     check('installed-cli-baseline-and-refusals'); check('installed-controller-start-disable');
     if (options.point === 'installed-units') check('installed-service-stop-restart-adapter-failure');
+    for (const label of releaseChecks) check(label);
     assert.deepEqual(await readFile('/etc/resolv.conf'), resolverBefore);
     if (!previous) {
       await persist({ bootId, checks }); emit('reboot-ready', { bootId }); await ctl('--no-block', 'reboot'); return;
     }
     emit('passed', { ...options, bootId, previousBootId: previous.bootId, systemdPid1: true,
       checks: [...previous.checks, ...checks], installedController: true, resolvConfUnchanged: true,
-      activeTransactionRebootTested: false });
+      activeTransactionRebootTested: false, ...(released ? { releasedInspectionTested: true,
+        runtimeHistoryRetained: true, fileUninstallTested: false, baselinePositiveControl: false } : {}) });
     await ctl('--no-block', 'poweroff'); return;
   }
   if (options.phase === 'coupled') {

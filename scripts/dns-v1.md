@@ -237,9 +237,12 @@ PID1/D-Bus, jobs/cgroups, процессы, links, оба firewall и отсут
 activate/disable/uninstall и ранний boot graph остаются следующим шагом.
 Для uninstall подготовлен отдельный read-only `inspectReleasedDnsDeployment`:
 три released-журнала, текущий boot/bus/resolved context и реальная неактивность
-ОС проверяются без удаления истории. Fresh gate не ослаблен. Режим пока не
-подключён к установщику; реальный VM `start → disable → inspection` и
-последующий файловый rollback ещё должны быть проверены вместе.
+ОС проверяются без удаления истории. Fresh gate не ослаблен. Отдельный
+VM `start → disable → inspection` прошёл **14/14 на двух загрузках**
+(`meshpn-dns-vm-2CDNva`), включая отказ при активном журнале/работающем service
+и успешную проверку без opt-in/config. Режим пока не подключён к установщику;
+последующий файловый rollback ещё должен быть проверен в едином сценарии.
+Это не active-transaction reboot и не положительный baseline health test.
 
 Этот чек-лист выполняется для VPS 2 и Radxa. VM PASS подтверждает отдельные
 механизмы, но не ставит автоматически галочки за live-конфигурацию и пилот.

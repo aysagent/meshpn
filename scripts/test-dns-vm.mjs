@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { vmDriverFailureIsFatal, VM_INSTALLED_CHECKS, assertVmInstalledEvidence, VM_DEPLOYMENT_CHECKS, assertVmDeploymentEvidence,
+import { vmDriverFailureIsFatal, VM_INSTALLED_CHECKS, VM_RELEASED_CHECKS, assertVmInstalledEvidence, VM_DEPLOYMENT_CHECKS, assertVmDeploymentEvidence,
   VM_PUBLICATION_CHECKS, assertVmPublicationEvidence } from './lib/dns-vm-protocol.mjs';
 import { VM_CUT_POINTS, VM_FAULTS, VM_SYSTEMD_CHECKS, VM_DNSMASQ_CHECKS, vmCases, vmBootOptions, qemuDnsArgs, assertVmJournalCheckpoint, assertVmFaultEvidence, assertVmSystemdEvidence, assertVmDnsmasqEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
 import { runCommand } from './lib/transparent-acceptance.mjs';
@@ -67,6 +67,23 @@ test('installed CLI VM is a separate bounded case, not substituted coupled crash
   assert.throws(() => assertVmInstalledEvidence({ ...unitEvidence, checks: e.checks }));
   assert.throws(() => assertVmInstalledEvidence({ ...unitEvidence, point: 'installed' }));
   assert.throws(() => assertVmCoupledEvidence(unitEvidence));
+});
+test('post-disable VM requires actual installed lifecycle evidence, without claiming uninstall or baseline health', async () => {
+  assert.deepEqual(vmCases('installed-released'), ['installed-released']);
+  const args = qemuDnsArgs({ ...input, phase: 'coupled', point: 'installed-released' });
+  assert.deepEqual(vmBootOptions(args[args.indexOf('-append') + 1]), { phase: 'coupled', point: 'installed-released' });
+  const checks = [...VM_INSTALLED_CHECKS, ...VM_RELEASED_CHECKS];
+  const e = { phase: 'coupled', point: 'installed-released', systemdPid1: true, installedController: true,
+    resolvConfUnchanged: true, activeTransactionRebootTested: false, releasedInspectionTested: true,
+    runtimeHistoryRetained: true, fileUninstallTested: false, baselinePositiveControl: false, checks: [...checks, ...checks] };
+  assertVmInstalledEvidence(e);
+  for (const key of Object.keys(e).filter((k) => typeof e[k] === 'boolean'))
+    assert.throws(() => assertVmInstalledEvidence({ ...e, [key]: !e[key] }));
+  for (let i = 0; i < e.checks.length; i++)
+    assert.throws(() => assertVmInstalledEvidence({ ...e, checks: e.checks.filter((_, n) => n !== i) }));
+  assert.throws(() => assertVmInstalledEvidence({ ...e, point: 'installed' }));
+  const { inspectReleasedDnsVm } = await import('./lib/dns-released-vm-check.mjs');
+  await assert.rejects(inspectReleasedDnsVm());
 });
 test('driver signal termination is expected only after the requested terminal event', () => {
   const signal = "dns-vm-driver.service: Failed with result 'signal'.";
