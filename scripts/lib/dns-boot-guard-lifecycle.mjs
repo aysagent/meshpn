@@ -3,6 +3,9 @@
 import assert from 'node:assert/strict';
 import { dnsGuardTransaction, readDnsGuardJournal } from './dns-client-guard-journal.mjs';
 import { readResolvedJournal } from './dns-resolved-journal.mjs';
+import { readCoupledJournal } from './dns-coupled-journal.mjs';
+import { readOwnedLinkJournal } from './dns-owned-link-journal.mjs';
+import { join } from 'node:path';
 
 export function createBootGuardLifecycle({ directory, boot, backend, restoring = false, allowBind = false, checkpoint }) {
   assert.equal(typeof restoring, 'boolean'); assert.equal(typeof allowBind, 'boolean');
@@ -43,5 +46,22 @@ export async function verifyResolvedGuardRestore({ directory, backend }) {
   assert.deepEqual(view.context, record.context, 'resolved restore context changed');
   assert.deepEqual(view.settings, record.original, 'resolved restored baseline changed');
   assert.deepEqual(await readResolvedJournal(directory), record, 'resolved restore journal changed during proof');
+  return true;
+}
+
+// Target VPS2 architecture: uplink DNS is never restored from a stale snapshot.
+// Prove the coupled transaction and its owned-link child are released, and no
+// interface has reused the owned name, in the same current bus/boot context.
+export async function verifyCoupledGuardRestore({ directory, backend }) {
+  const root = await readCoupledJournal(directory), child = await readOwnedLinkJournal(join(directory, 'link'));
+  assert.equal(root.phase, 'released'); assert.equal(root.direction, 'restore');
+  assert.equal(root.level, 0); assert.equal(root.pending, false); assert.equal(child.stage, 'released');
+  assert.equal(child.id, root.id); assert.equal(child.name, root.name); assert.deepEqual(child.context, root.context);
+  if (root.original) assert.equal(child.ifindex, root.original.ifindex);
+  assert.deepEqual(await backend.context(), root.context, 'coupled restore context changed');
+  assert.equal(await backend.view(root.name), null, 'owned name reused before guard release');
+  assert.deepEqual(await backend.context(), root.context, 'coupled restore context changed');
+  assert.deepEqual(await readCoupledJournal(directory), root, 'coupled restore journal changed during proof');
+  assert.deepEqual(await readOwnedLinkJournal(join(directory, 'link')), child, 'owned-link journal changed during proof');
   return true;
 }

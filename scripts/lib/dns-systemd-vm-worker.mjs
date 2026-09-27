@@ -37,7 +37,8 @@ export async function guard(enabled) {
     if (enabled) await exec(tool, ['-w', '2', '-C', ...rule]);
   }
 }
-async function controllerGuard(restoring) {
+export async function createVmGuardLifecycle({ restoring, authorizeRelease, dnsStateExists = () => exists(`${journal}/journal.json`) }) {
+  await assertSystemdDnsVm();
   const boot = await loadDnsBootGuard(); // Refuses before any setter without our own inherited flock.
   // Protect before creating storage or refusing unreadable metadata. A valid
   // partial release is handled below without automatically reinstalling it.
@@ -51,13 +52,15 @@ async function controllerGuard(restoring) {
         netns: await readlink('/proc/self/ns/net'), directoryIdentity: `${s.dev}:${s.ino}`,
         firewall: { ipv4: boot.policy.firewallBackend, ipv6: boot.policy.firewallBackend }, usb: null };
     },
-    authorizeRelease: async () => verifyResolvedGuardRestore({ directory: journal, backend: (await busContext()).backend }),
+    authorizeRelease,
   });
   let allowBind;
-  try { allowBind = !await exists(`${journal}/journal.json`); }
+  try { allowBind = !await dnsStateExists(); }
   catch (error) { await boot.guard.ensure(); throw error; }
   return createBootGuardLifecycle({ directory: guardJournal, boot, backend, restoring, allowBind });
 }
+const controllerGuard = (restoring) => createVmGuardLifecycle({ restoring,
+  authorizeRelease: async () => verifyResolvedGuardRestore({ directory: journal, backend: (await busContext()).backend }) });
 export async function busContext() {
   await assertSystemdDnsVm();
   const run = (args) => exec('/usr/bin/busctl', ['--address=unix:path=/run/dbus/system_bus_socket', '--timeout=5s',
@@ -136,7 +139,7 @@ async function serve(name, action, close) {
 async function main(command) {
   const options = await assertSystemdDnsVm(), coupled = options.phase.startsWith('coupled');
   assert.ok(['guard', 'guard-release-check', 'network', 'baseline', 'adapter', 'cli-fixture', 'sentinel', 'activate', 'disable', 'consumer'].includes(command));
-  assert.ok(command !== 'cli-fixture' || options.phase === 'systemd', 'CLI fixture is a separate systemd-only case');
+  assert.ok(command !== 'cli-fixture' || options.phase === 'systemd' || coupled, 'CLI fixture needs a supported VM case');
   assert.ok(!coupled || !['activate', 'disable'].includes(command), 'use coupled VM controller');
   process.umask(0o077); await mkdir('/run/meshpn', { recursive: true, mode: 0o700 });
   if (command === 'guard-release-check') {
@@ -167,7 +170,7 @@ async function main(command) {
   }
   if (command === 'network') {
     assert.deepEqual(JSON.parse((await exec('ip', ['-j', 'link'])).stdout).map((l) => l.ifname), ['lo']);
-    if (options.phase === 'systemd') {
+    if (options.phase === 'systemd' || coupled) {
       await exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
         '/opt/clean-vpn/scripts/dns-boot-guard.mjs', '--start'], { timeout: 60000 });
       // Both families proved before removing the outer init fixture guard.

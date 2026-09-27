@@ -53,9 +53,10 @@ export function dnsSystemdVmUnits({ cliAdapter = false } = {}) {
       .replace('Wants=network-online.target\n', '')
       .replace('BindsTo=clean-vpn-dns-guard.service', 'BindsTo=dns-vm-guard.service dns-vm-fixture.service')
       .replace('After=network-online.target clean-vpn-dns-guard.service', 'After=dns-vm-guard.service dns-vm-fixture.service')
-      // PrivateDevices intentionally hides console; guest has no journald.
-      // The driver measures unit state, MainPID, DNS counters and /proc instead.
-      .replace('StandardOutput=journal\nStandardError=journal', 'StandardOutput=null\nStandardError=null');
+      // PID1 opens the guest-only sink before sandboxing. It survives failed
+      // startup/PrivateTmp removal; no journald or console device is needed.
+      .replace('StandardOutput=journal\nStandardError=journal',
+        'StandardOutput=append:/run/meshpn/adapter.log\nStandardError=append:/run/meshpn/adapter.log');
   }
   return units;
 }

@@ -46,7 +46,7 @@ async function main() {
   const report = { schema: 1, kind: 'clean-vpn-dns-vm-lab', status: 'failed', version, packages,
     nic: 'none', accelerator: 'tcg', diskCache: 'writeback', hostSharedFilesystem: false,
     systemdPid1: systemd, ...(dnsmasq ? { backend: radxa ? 'radxa-paired' : 'dnsmasq' } : {}), physicalPowerLossTested: false, inProcessHotResetTested: false, cases: [] };
-  report.vcpus = flags.get('case') === 'systemd' ? 2 : 1;
+  report.vcpus = flags.get('case') === 'systemd' || coupled ? 2 : 1;
   try {
     const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved'), systemd,
       dnsmasq: dnsmasq ? flags.get('dnsmasq') : null, coupled, radxa });

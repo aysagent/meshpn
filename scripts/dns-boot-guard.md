@@ -101,8 +101,14 @@ bind. В VM это допустимо лишь при отсутствии DNS j
 прежнего fixture callback `() => true`. Новый прогон: **20/20 PASS в двух загрузках**,
 `/var/tmp/meshpn-dns-vm-YsGwNF/report.json`. В обеих загрузках проверены отказ
 release при active DNS и потеря guard journal без автоматического bind.
-**Совместная live-установка ещё не готова:** этот resolved proof не заменяет
-целевой coupled backend VPS2 с отдельным VPN DNS-link. Остаются его связка и
+Для целевого [coupled backend VPS2](dns-coupled-vm.md) добавлен отдельный
+`verifyCoupledGuardRestore`: root journal released/restore/level0, child released
+с тем же ID/context/ifindex, принадлежащий VPN link отсутствует, оба журнала
+не меняются во время проверки. До полного завершения обоих журналов release
+запрещён, даже если интерфейс уже удалён. Поддержан явный rollback до создания
+link; занятое заново имя и смена владельца отклоняются. DNS uplink не перезаписывается.
+
+**Совместная live-установка ещё не готова:** остаются
 Radxa restore proof, конкретные клиентские controllers и отключение boot policy/dependency
 dropins. Release журнала сам по себе не выключает установленную boot policy:
 при следующем boot она снова потребует защиту. Это не постоянный uninstall.

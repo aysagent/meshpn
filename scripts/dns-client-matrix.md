@@ -35,7 +35,8 @@ DHCP domains: перечисленные cloud suffixes не отправляю�
 Есть [отдельный журнал пустого link](dns-owned-link-journal.md), 18 controller
 SIGKILL, и [совместный link/address/DNS координатор](dns-coupled-journal.md),
 17 controller SIGKILL. Его [systemd/reboot VM lifecycle](dns-coupled-vm.md) теперь
-проверен отдельно (11/11 PASS); согласованной live-политики ещё нет.
+проверен отдельно: текущая связка с boot guard journal и настоящим CLI adapter —
+19/19 PASS в двух загрузках; согласованной live-политики ещё нет.
 Лабораторный PASS не является разрешением на host takeover.
 
 Общий dnsmasq Radxa обслуживает системные и USB-запросы одним upstream. Его

@@ -85,9 +85,14 @@ Radxa или подтверждение live-конфигурации. Подр�
 без принятия stale DNS journal. **16/16 проверок в двух загрузках VM, PASS**,
 Node1659/1659. Привязка journal к ID boot policy и exact resolved restore proof
 теперь проверены под одним lock: **20/20 в двух загрузках VM, Node1670/1670,
-22 namespace SIGKILL PASS**. Это ещё resolved fixture с non-empty baseline;
-нужна интеграция этой связки с целевым coupled backend VPS2 и Radxa coordinator,
-затем opt-in установщик/откат и пилоты.
+22 namespace SIGKILL PASS**. Следующая связка уже подключена к целевому
+coupled backend VPS2: отдельный DNS-link, настоящий CLI adapter с DynamicUser,
+общий boot/DNS lock, root/link/guard журналы и доказательство удаления своего
+link перед release. **19/19 в двух загрузках VM PASS**, Node1674/1674.
+Новая аварийная матрица **3/3 PASS, шесть загрузок, по9 проверок**.
+Результаты и отказы этой новой связки учитываются отдельно в
+[coupled VM](dns-coupled-vm.md), не наследуются от прежнего fixture.
+Далее — Radxa coordinator с исправным baseline, opt-in установщик/откат и пилоты.
 
 ## Три этапа и текущий статус
 

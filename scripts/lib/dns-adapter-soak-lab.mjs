@@ -26,7 +26,8 @@ export async function startAdapterSoakLab({ family, modeTag, concurrency, timeou
 
 export async function startSystemdVmAdapterFixture(directory, { cli = false } = {}) {
   const options = await assertSystemdDnsVm();
-  assert.equal(typeof cli, 'boolean'); assert.ok(!cli || options.phase === 'systemd');
+  assert.equal(typeof cli, 'boolean');
+  assert.ok(!cli || options.phase === 'systemd' || options.phase.startsWith('coupled'));
   const links = JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout);
   assert.deepEqual(links.map((l) => l.ifname).filter((name) => !(options.phase.startsWith('coupled')
     && /^cvdns[a-f0-9]{8}$/.test(name))).sort(), ['dnsfixture', 'lo']);

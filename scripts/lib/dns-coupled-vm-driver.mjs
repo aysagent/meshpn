@@ -6,22 +6,25 @@ import { readFile, open, mkdir, rename, unlink, writeFile } from 'node:fs/promis
 import { setTimeout as delay } from 'node:timers/promises';
 import { exec } from './browser-lab-driver.mjs';
 import { assertCoupledDnsVm } from './dns-systemd-vm-safety.mjs';
-import { journal, coupledBaseline, emitSystemd as emit, exists, lookup, control } from './dns-systemd-vm-worker.mjs';
+import { journal, guardJournal, coupledBaseline, emitSystemd as emit, exists, lookup, control } from './dns-systemd-vm-worker.mjs';
 import { coupledVmContext } from './dns-coupled-vm-worker.mjs';
 import { readCoupledJournal, coupledExpected } from './dns-coupled-journal.mjs';
 import { readOwnedLinkJournal } from './dns-owned-link-journal.mjs';
 import { assertSystemdVmBaselineBlocked } from './dns-vm-fault-lab.mjs';
 import { resolvedMethod } from './dns-resolved-backend.mjs';
 import { syncDirectory } from './dns-lifecycle-journal.mjs';
+import { DNS_BOOT_LOCK } from './dns-boot-guard.mjs';
+import { readDnsGuardJournal } from './dns-client-guard-journal.mjs';
+import { boundedInspectRead } from './dns-inspect.mjs';
 
 const ctl = (...args) => exec('/usr/bin/systemctl', ['--no-pager', ...args], { timeout: 200000 });
-const disable = () => exec('/usr/bin/flock', ['-n', '-F', '/state/controller.lock', '/usr/bin/node',
+const disable = () => exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
   '/project/scripts/lib/dns-coupled-vm-worker.mjs', 'disable'], { timeout: 180000 });
 async function cutDisable() {
   await assertCoupledDnsVm();
   // Unlike execFile's buffered stdout, inherited console delivers cut-ready
   // while the worker is still alive and waiting for the host to kill QEMU.
-  const child = spawn('/usr/bin/flock', ['-n', '-F', '/state/controller.lock', '/usr/bin/node',
+  const child = spawn('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
     '/project/scripts/lib/dns-coupled-vm-worker.mjs', 'disable'], { stdio: ['ignore', 'inherit', 'inherit'] });
   const timer = setTimeout(() => child.kill('SIGKILL'), 180000);
   try { const [code, signal] = await once(child, 'close'); assert.equal(code, 0); assert.equal(signal, null); }
@@ -34,7 +37,13 @@ async function inactive(name) {
     assert.ok(performance.now() < deadline, `${name} failed to stop`); await delay(100);
   }
 }
-const bytes = async () => Promise.all(['journal.json', 'link/journal.json'].map((name) => readFile(`${journal}/${name}`, 'utf8')));
+const bytes = async () => Promise.all([`${journal}/journal.json`, `${journal}/link/journal.json`, `${guardJournal}/journal.json`]
+  .map((path) => readFile(path, 'utf8')));
+const inspectGuard = async () => {
+  const { stdout } = await exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
+    '/opt/clean-vpn/scripts/dns-boot-guard.mjs', '--inspect'], { timeout: 60000 });
+  assert.deepEqual(JSON.parse(stdout).states, ['present', 'present']);
+};
 async function archive(label) {
   const before = await bytes();
   await rename(journal, `/state/archived-${label}`); await syncDirectory('/state');
@@ -42,6 +51,9 @@ async function archive(label) {
   for (const [i, name] of ['journal.json', 'link/journal.json'].entries()) {
     assert.equal(await readFile(`/state/archived-${label}/${name}`, 'utf8'), before[i]);
   }
+  await rename(guardJournal, `/state/archived-guard-${label}`); await syncDirectory('/state');
+  await mkdir(guardJournal, { mode: 0o700 }); await syncDirectory('/state');
+  assert.equal(await readFile(`/state/archived-guard-${label}/journal.json`, 'utf8'), before[2]);
 }
 async function persist(value) {
   const fd = await open('/state/coupled-first-boot.json', 'wx', 0o600);
@@ -71,7 +83,24 @@ async function main() {
     await unlink('/run/meshpn/deny-start'); await ctl('reset-failed');
     check('failed-guard-prevents-services');
   }
-  await ctl('start', 'dns-vm-sentinel.service', 'dns-vm-baseline.service', 'dns-vm-adapter.service');
+  await ctl('start', 'dns-vm-guard.service'); await inspectGuard();
+  await ctl('stop', 'dns-vm-guard.service'); await inspectGuard();
+  assert.equal(await state('dns-vm-guard.service'), 'inactive');
+  await ctl('start', 'dns-vm-sentinel.service', 'dns-vm-baseline.service', 'dns-vm-fixture.service');
+  const guardEnd = BigInt((await ctl('show', 'dns-vm-guard.service', '--property=ExecMainExitTimestampMonotonic', '--value')).stdout.trim());
+  const networkStart = BigInt((await ctl('show', 'dns-vm-network.service', '--property=ExecMainStartTimestampMonotonic', '--value')).stdout.trim());
+  assert.ok(guardEnd > 0n && networkStart >= guardEnd); await inspectGuard();
+  check('boot-guard-cli-before-network');
+  const probeBefore = (await control('fixture', 'stats')).resolverBodies;
+  await ctl('start', 'dns-vm-adapter.service');
+  assert.equal((await control('fixture', 'stats')).resolverBodies - probeBefore, 4);
+  const fixturePid = (await ctl('show', 'dns-vm-fixture.service', '--property=MainPID', '--value')).stdout.trim();
+  const adapterPid = (await ctl('show', 'dns-vm-adapter.service', '--property=MainPID', '--value')).stdout.trim();
+  assert.match(adapterPid, /^[1-9]\d*$/); assert.notEqual(adapterPid, fixturePid);
+  assert.ok((await readFile(`/proc/${adapterPid}/cmdline`, 'utf8')).split('\0').includes('/opt/clean-vpn/scripts/dns-exit-adapter.mjs'));
+  const adapterStatus = await readFile(`/proc/${adapterPid}/status`, 'utf8');
+  assert.match(adapterStatus, /^Uid:\s+[1-9]\d*\s+/m); assert.match(adapterStatus, /^CapEff:\s+0+$/m);
+  assert.match(adapterStatus, /^NoNewPrivs:\s+1$/m); check('cli-adapter-readiness-and-isolation');
   const { bus, backend, ifindex } = await coupledVmContext();
   const baseline = async () => {
     const owner = await bus.owner();
@@ -85,8 +114,9 @@ async function main() {
   if (previous) {
     assert.notEqual(bootId, previous.bootId);
     const before = await bytes();
-    inspected = { root: await readCoupledJournal(journal), child: await readOwnedLinkJournal(`${journal}/link`) };
+    inspected = { root: await readCoupledJournal(journal), child: await readOwnedLinkJournal(`${journal}/link`), guard: await readDnsGuardJournal(guardJournal) };
     assert.equal(inspected.root.context.bootId, previous.bootId);
+    assert.equal(inspected.guard.context.bootId, previous.bootId); assert.equal(inspected.guard.input.id, 'b'.repeat(32));
     assert.equal(inspected.child.id, inspected.root.id);
     assert.deepEqual(inspected.child.context, inspected.root.context);
     assert.equal(await backend.view(inspected.root.name), null, 'old kernel link must not survive a new boot');
@@ -96,7 +126,7 @@ async function main() {
     assert.deepEqual(await bytes(), before);
     assert.equal(await backend.view(inspected.root.name), null);
     await noFallback(); check('stale-journals-preserved-start-refused');
-    // Explicit test operator archives BOTH journals. This is not automatic
+    // Explicit test operator archives all THREE journals. This is not automatic
     // recovery authority and must never be copied into a live service.
     await archive('previous-boot'); await ctl('reset-failed');
   }
@@ -105,6 +135,11 @@ async function main() {
   assert.equal(await state('dns-vm-controller.service'), 'active');
   assert.equal(await state('dns-vm-consumer.service'), 'active');
   const active = await readCoupledJournal(journal);
+  const guardRecord = await readDnsGuardJournal(guardJournal);
+  assert.equal(guardRecord.stage, 'active'); assert.equal(guardRecord.input.id, 'b'.repeat(32)); assert.equal(guardRecord.context.bootId, bootId);
+  await exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
+    '/project/scripts/lib/dns-coupled-vm-worker.mjs', 'guard-proof-check'], { timeout: 60000 });
+  check('bound-guard-refuses-active-link'); check('missing-guard-journal-retains-protection');
   assert.deepEqual(await backend.view(active.name), coupledExpected(active, 7));
   await lookup('coupled-aaaa', '2001:db8::12', true, 6); await noFallback();
   check('readiness-owned-link-and-protected-dns');
@@ -123,6 +158,8 @@ async function main() {
     check('exit-outage-no-baseline-fallback');
     await ctl('kill', '--signal=SIGKILL', '--kill-whom=main', 'dns-vm-adapter.service');
     for (const unit of ['adapter', 'controller', 'consumer']) await inactive(`dns-vm-${unit}.service`);
+    assert.equal(await state('dns-vm-fixture.service'), 'active');
+    assert.equal((await ctl('show', 'dns-vm-fixture.service', '--property=MainPID', '--value')).stdout.trim(), fixturePid);
     await lookup('adapter-dead', null); await noFallback();
     await ctl('reset-failed'); await ctl('start', 'dns-vm-consumer.service');
     assert.equal((await readCoupledJournal(journal)).id, active.id);
@@ -139,6 +176,7 @@ async function main() {
   }
   await ctl('stop', 'dns-vm-controller.service'); await inactive('dns-vm-consumer.service'); await noFallback();
   await disable();
+  assert.equal((await readDnsGuardJournal(guardJournal)).stage, 'released');
   assert.equal((await readCoupledJournal(journal)).phase, 'released');
   assert.equal((await readOwnedLinkJournal(`${journal}/link`)).stage, 'released');
   assert.equal(await backend.view(active.name), null); await baseline();
@@ -160,8 +198,14 @@ async function main() {
   }
   emit('passed', { ...options, bootId, previousBootId: previous.bootId, systemdPid1: true,
     checks: [...previous.checks, ...checks], automaticStaleAdoption: false, baselineQueriesDuringProtection: 0,
+    bootGuardImplementation: 'cli', adapterImplementation: 'cli', unprivilegedAdapter: true,
+    persistentBootGuardJournal: true, sharedGuardDnsLock: true, coupledRestoreProof: true, threeJournalsPreservedOnRefusal: true,
     baselinePositiveControl: true, explicitDisablePassed: true, ownedLinkRemoved: true, bothJournalsPreservedOnRefusal: true,
     resolvConfUnchanged: true, ...(options.phase === 'coupled-inspect' ? { inspected } : {}) });
   await ctl('--no-block', 'poweroff');
 }
-main().catch((error) => { emit('failed', { message: error.stack }); process.exitCode = 1; });
+main().catch(async (error) => {
+  try { await assertCoupledDnsVm(); emit('boot-guard-diagnostics', { log: await boundedInspectRead('/run/meshpn/boot-guard.log', 16384) }); } catch { /* guest-only diagnostic */ }
+  try { await assertCoupledDnsVm(); emit('adapter-diagnostics', { log: await boundedInspectRead('/run/meshpn/adapter.log', 16384) }); } catch { /* optional guest-only sink */ }
+  emit('failed', { message: error.stack }); process.exitCode = 1;
+});

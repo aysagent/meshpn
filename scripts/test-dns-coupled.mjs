@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { coupledDnsTransaction, readCoupledJournal, COUPLED_STEPS, validateCoupledJournal } from './lib/dns-coupled-journal.mjs';
+import { coupledDnsTransaction, readCoupledJournal, writeCoupledJournal, COUPLED_STEPS, validateCoupledJournal } from './lib/dns-coupled-journal.mjs';
 import { createCoupledBackend } from './lib/dns-coupled-backend.mjs';
 import { assertCoupledEvidence, COUPLED_CRASH_POINTS } from './lib/dns-coupled-crash-lab.mjs';
+import { verifyCoupledGuardRestore } from './lib/dns-boot-guard-lifecycle.mjs';
+import { readOwnedLinkJournal, writeOwnedLinkJournal } from './lib/dns-owned-link-journal.mjs';
 
 const scope = { net: 'net:[1]', mnt: 'mnt:[2]', pid: 'pid:[3]' };
 async function fixture(t) {
@@ -26,8 +28,38 @@ async function fixture(t) {
     async set(ctx, before, step, after) { assert.equal(s.guard, true); assert.deepEqual(s.current, before); s.setters.push(step); s.current = structuredClone(after); },
   };
   const run = (operation, checkpoint) => coupledDnsTransaction({ directory, operation, scope, backend: b, checkpoint });
-  return { directory, s, run };
+  return { directory, s, run, backend: b };
 }
+test('guard proof requires both durable releases and absence of the owned name, without uplink restore', async (t) => {
+  const f = await fixture(t), proof = () => verifyCoupledGuardRestore({ directory: f.directory, backend: f.backend });
+  f.backend.releaseGuard = async () => { assert.equal(await proof(), true); f.s.guard = false; };
+  await f.run('enable'); await assert.rejects(proof());
+  await assert.rejects(f.run('disable', async (p) => { if (p === 'link-released') throw new Error('cut'); }), /cut/);
+  assert.equal(f.s.current, null); assert.equal(f.s.guard, true); await assert.rejects(proof());
+  await f.run('disable'); assert.equal(await proof(), true);
+  f.s.current = { name: (await readCoupledJournal(f.directory)).name }; await assert.rejects(proof(), /name reused/); f.s.current = null;
+  f.s.context.owner = ':1.9'; await assert.rejects(proof(), /context changed/);
+});
+test('guard proof refuses replaced child, unfinished child and journals changing during observation', async (t) => {
+  const f = await fixture(t); await f.run('enable'); await f.run('disable');
+  const proof = () => verifyCoupledGuardRestore({ directory: f.directory, backend: f.backend });
+  const childPath = join(f.directory, 'link'), child = await readOwnedLinkJournal(childPath), root = await readCoupledJournal(f.directory);
+  await writeOwnedLinkJournal(childPath, { ...child, ifindex: child.ifindex + 1 }); await assert.rejects(proof());
+  await writeOwnedLinkJournal(childPath, { ...child, stage: 'delete-intent' }); await assert.rejects(proof());
+  await writeOwnedLinkJournal(childPath, child);
+  f.backend.view = async () => { await writeCoupledJournal(f.directory, { ...root, phase: 'unlink' }); return null; };
+  await assert.rejects(proof(), /journal changed during proof/);
+});
+test('guard proof permits explicit rollback before link creation without inventing an uplink snapshot', async (t) => {
+  const f = await fixture(t);
+  f.backend.releaseGuard = async () => {
+    assert.equal(await verifyCoupledGuardRestore({ directory: f.directory, backend: f.backend }), true);
+    f.s.guard = false;
+  };
+  await assert.rejects(f.run('enable', async (point) => { if (point === 'prepared') throw new Error('cut'); }), /cut/);
+  await f.run('disable'); assert.equal((await readCoupledJournal(f.directory)).original, null);
+  assert.deepEqual(f.s.setters, []); assert.equal(f.s.current, null); assert.equal(f.s.guard, false);
+});
 const apply = ['prepared', 'link:link-created', 'link:link-stamped', 'link-ready', 'settings-prepared',
   ...COUPLED_STEPS.flatMap((s) => ['intent', 'set', 'ack'].map((p) => `apply:${s}:${p}`)), 'active'];
 const restore = ['restore-intent', ...[...COUPLED_STEPS].reverse().flatMap((s) => ['intent', 'set', 'ack'].map((p) => `restore:${s}:${p}`)),

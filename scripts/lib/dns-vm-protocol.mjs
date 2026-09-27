@@ -45,21 +45,28 @@ export const VM_COUPLED_CHECKS = Object.freeze(['failed-guard-prevents-services'
   'controller-stop-retains-protection', 'exit-outage-no-baseline-fallback', 'adapter-sigkill-recovery-same-transaction',
   'foreign-policy-preserved', 'disable-removes-owned-link-before-baseline-release', 'released-journal-start-refused',
   'stale-journals-preserved-start-refused']);
+export const VM_COUPLED_GUARD_CHECKS = Object.freeze(['boot-guard-cli-before-network', 'cli-adapter-readiness-and-isolation',
+  'bound-guard-refuses-active-link', 'missing-guard-journal-retains-protection']);
 export function assertVmCoupledEvidence(evidence, cut) {
   assert.equal(evidence.phase, cut ? 'coupled-inspect' : 'coupled');
   assert.ok(cut ? VM_COUPLED_CUTS.includes(evidence.point) : evidence.point === 'lifecycle');
   for (const key of ['systemdPid1', 'baselinePositiveControl', 'explicitDisablePassed', 'ownedLinkRemoved',
-    'bothJournalsPreservedOnRefusal', 'resolvConfUnchanged']) assert.equal(evidence[key], true, key);
+    'bothJournalsPreservedOnRefusal', 'resolvConfUnchanged', 'unprivilegedAdapter', 'persistentBootGuardJournal',
+    'sharedGuardDnsLock', 'coupledRestoreProof', 'threeJournalsPreservedOnRefusal']) assert.equal(evidence[key], true, key);
+  assert.equal(evidence.bootGuardImplementation, 'cli'); assert.equal(evidence.adapterImplementation, 'cli');
   assert.equal(evidence.automaticStaleAdoption, false); assert.equal(evidence.baselineQueriesDuringProtection, 0);
   const once = ['stale-journals-preserved-start-refused', 'readiness-owned-link-and-protected-dns', 'disable-removes-owned-link-before-baseline-release'];
-  const expected = cut ? once : [...VM_COUPLED_CHECKS, ...once.slice(1)];
+  const expected = cut ? [...once, ...VM_COUPLED_GUARD_CHECKS.slice(0, 2), ...VM_COUPLED_GUARD_CHECKS]
+    : [...VM_COUPLED_CHECKS, ...once.slice(1), ...VM_COUPLED_GUARD_CHECKS, ...VM_COUPLED_GUARD_CHECKS];
   assert.deepEqual([...evidence.checks].sort(), expected.sort());
   if (cut) {
     assert.equal(cut.event, 'cut-ready'); assert.equal(cut.point, evidence.point);
-    assert.deepEqual(evidence.inspected, { root: cut.root, child: cut.child });
+    assert.deepEqual(evidence.inspected, { root: cut.root, child: cut.child, guard: cut.guard });
     const r = cut.root, child = cut.child;
     assert.equal(child.id, r.id); assert.deepEqual(child.context, r.context);
     assert.equal(r.context.bootId, evidence.previousBootId);
+    assert.equal(cut.guard.context.bootId, evidence.previousBootId); assert.equal(cut.guard.input.id, 'b'.repeat(32));
+    assert.equal(cut.guard.stage, 'active');
     assert.deepEqual([r.phase, r.direction, r.level, r.pending, child.stage], ({
       'apply:DNSEx:set': ['settings', 'apply', 4, true, 'created'],
       'restore:DNSEx:set': ['settings', 'restore', 5, true, 'created'],
@@ -186,8 +193,8 @@ export function qemuDnsArgs({ root, kernel, initrd, disk, phase, point }) {
     // The real CLI keeps its 1500ms production deadline. Give the synthetic
     // client and separate exit/origin CPU execution capacity as on two hosts;
     // other historical fault/fixture cases retain their original single vCPU.
-    '-serial', 'stdio', '-accel', phase === 'systemd' ? 'tcg,thread=multi' : 'tcg',
-    '-cpu', 'max', '-m', '1024', '-smp', phase === 'systemd' ? '2' : '1',
+    '-serial', 'stdio', '-accel', phase === 'systemd' || phase.startsWith('coupled') ? 'tcg,thread=multi' : 'tcg',
+    '-cpu', 'max', '-m', '1024', '-smp', phase === 'systemd' || phase.startsWith('coupled') ? '2' : '1',
     '-machine', 'pc,dump-guest-core=off', '-bios', `${root}/usr/share/seabios/bios-256k.bin`,
     '-L', `${root}/usr/share/qemu`, '-kernel', kernel, '-initrd', initrd,
     '-append', `console=ttyS0 quiet panic=-1 reboot=t random.trust_cpu=on meshpn_dns_vm=isolated-v1 meshpn_phase=${phase} meshpn_point=${point}`,

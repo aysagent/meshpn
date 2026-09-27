@@ -94,7 +94,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     }
   }
   await copyTree(join(project, 'scripts'), '/project/scripts');
-  if (systemd && !dnsmasq && !coupled) {
+  if (systemd && !dnsmasq) {
     // Match the real deployment path: a symlink changes import.meta.url while
     // Node keeps the argv entrypoint spelling, bypassing its main guard.
     await copyTree(join(project, 'scripts'), '/opt/clean-vpn/scripts');
@@ -116,7 +116,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     await symlink('/bin/busybox', destination(`/bin/${name}`));
   }
   for (const name of ['iptables', 'ip6tables', ...(systemd ? ['iptables-restore', 'ip6tables-restore'] : [])]) await symlink('/usr/sbin/xtables-legacy-multi', destination(`/usr/sbin/${name}`));
-  if (systemd && !dnsmasq && !coupled) {
+  if (systemd && !dnsmasq) {
     await mkdir(destination('/etc/clean-vpn/dns'), { recursive: true });
     await writeFile(destination('/etc/clean-vpn/dns/guard-policy.json'), JSON.stringify({ schema: 1,
       kind: 'clean-vpn-dns-boot-policy', enabled: true, firewallBackend: 'legacy',

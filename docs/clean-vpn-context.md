@@ -10,6 +10,39 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: guard journal целевого VPS2 DNS-link
+
+Coupled VM теперь использует настоящий boot guard CLI и непривилегированный
+adapter CLI с отдельным exit/origin fixture, общий inherited boot/DNS flock.
+Guard journal привязывается к installed policy ID; присутствие любого root/link
+DNS journal запрещает трактовать пропавший guard journal как новую установку.
+`verifyCoupledGuardRestore` требует root released/restore/level0/no-pending,
+child released с тем же ID/context/ifindex, отсутствующее owned name и стабильные
+журналы. Uplink не восстанавливается из snapshot — его DNS остаётся у networkd.
+Проверены active/unfinished refusal, reused name/owner drift, изменение journal
+во время proof и rollback до создания link. Это exact-state, не health probe.
+
+Lifecycle **19/19 PASS в двух загрузках**, `/var/tmp/meshpn-dns-vm-ZHZoKE/report.json`;
+464 JS copies совпали с manifest, baseline queries0, host DNS/guest resolver
+неизменны. Регрессия прежнего systemd fixture **20/20 PASS**, `hYAVIb`.
+Node **1674/1674 PASS**, `/var/tmp/meshpn-acceptance-bTHMkQ/report.json`.
+Coupled теперь также2 vCPU MTTCG; DNS deadlines прежние. Первые отказы image
+policy/phase gates исправлены. Позднее `ux34V3` остановился на startup adapter
+во второй аварийной точке: причина не установлена; этот отказ не считается PASS.
+После него добавлен VM-only persistent adapter log, переживающий PrivateTmp
+cleanup. Подробная история и аварийные результаты — [coupled VM](../scripts/dns-coupled-vm.md).
+Финальные отдельные crash-прогоны **3/3 PASS**, шесть загрузок, по9 проверок:
+`FmlilO` (apply DNSEx), `0FXAJ6` (restore DNSEx), `OyQuDh` (link-released).
+Все три durable журнала совпали с checkpoint после перезагрузки, baseline
+queries0, host DNS unchanged. Первый образ совпал с текущими464 JS-копиями;
+у остальных различаются только более поздний test assertion/лог другого driver.
+Причина прежнего startup failure не установлена и повтором не объявляется исправленной.
+
+Следующий этап — такой же guard lifecycle для Radxa coordinator, но без снятия
+защиты после возврата dangling symlink; нужен явный исправный localhost baseline.
+Live repair, cloud policy, preflight, installer/uninstall и пилоты ещё не закрыты.
+Никаких SSH/live setters. DNS v1 остаётся открытым.
+
 ### Дополнение 2026-09-27: binding boot policy и общего журнала
 
 `bind-boot` принимает только отсутствующий guard journal, точную installed

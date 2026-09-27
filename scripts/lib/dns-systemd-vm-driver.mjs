@@ -208,6 +208,7 @@ main().catch(async (error) => {
   try {
     await assertSystemdDnsVm();
     try { emit('boot-guard-diagnostics', { log: await boundedInspectRead('/run/meshpn/boot-guard.log', 16384) }); } catch { /* optional VM-only bounded log */ }
+    try { emit('adapter-log', { log: await boundedInspectRead('/run/meshpn/adapter.log', 16384) }); } catch { /* persists even when MainPID is gone */ }
     const pid = (await ctl('show', 'dns-vm-adapter.service', '--property=MainPID', '--value')).stdout.trim();
     if (/^[1-9]\d*$/.test(pid)) {
       const records = JSON.parse(await boundedInspectRead(`/proc/${pid}/root/tmp/dns-vm-adapter-failures.json`, 16384));

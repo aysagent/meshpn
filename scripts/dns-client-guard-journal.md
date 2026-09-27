@@ -84,7 +84,9 @@ SIGKILL, не whole-guest power loss или убийство iptables внутр
 2026-09-27: **52/52 journal/lifecycle unit PASS**, Node1670/1670 PASS,
 `/var/tmp/meshpn-acceptance-ES0qES/report.json`. Shared boot/journal lifecycle
 настоящего CLI в [resolved VM](dns-systemd-vm.md):20/20 в двух загрузках PASS.
-Binding и release proof не означают установленный target VPS2/Radxa backend.
+Целевой [VPS2 coupled controller](dns-coupled-vm.md) теперь также использует этот
+журнал/lock:19/19 в двух загрузках VM PASS, отдельный root/link restore proof.
+Binding и release proof не означают установленный live VPS2/Radxa backend.
 
 Исторический результат: **41/41 journal unit PASS**, общий guard+journal71/71;
 **16/16 controller SIGKILL,2/2 lock conflicts,11/11 packet checks PASS**,
@@ -92,6 +94,6 @@ iptables1.8.10 nf_tables/dnsmasq2.90. Host resolver/NSS/forwarding неизме�
 Node-регрессия **1643/1643 PASS**, `/var/tmp/meshpn-acceptance-l2aoDI/report.json`.
 Physical power loss, reboot нового guard, legacy и live VPS2/ARM здесь не проверены.
 
-Далее: завершить совместный boot/journal lifecycle и restore proof обоих
-клиентских controllers, opt-in установка и откат, затем согласованные
+Далее: завершить совместный boot/journal lifecycle и restore proof Radxa,
+подготовить live controllers, opt-in установку и откат, затем согласованные
 пилоты. Этот результат не закрывает DNS v1.

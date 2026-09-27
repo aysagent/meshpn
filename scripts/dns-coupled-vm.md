@@ -4,6 +4,51 @@
 [совместного link/address/resolved journal](dns-coupled-journal.md).
 Это VM-only исполнитель, **не live-установщик** для VPS/Radxa.
 
+Текущая интеграция использует настоящий boot guard CLI и отдельный adapter CLI
+с DynamicUser/credentials. Coupled controller и boot guard держат один
+`/run/clean-vpn-dns-guard/lock`; постоянный guard journal привязан к ID boot policy.
+Снятие защиты требует завершённых root/link журналов, актуального context и
+отсутствия принадлежащего VPN интерфейса. Настройки uplink не восстанавливаются
+из старого снимка: ими по-прежнему управляет networkd.
+
+2026-09-27: новый lifecycle — **19/19 PASS в двух загрузках**,
+`/var/tmp/meshpn-dns-vm-ZHZoKE/report.json`. Node **1674/1674 PASS**,
+`/var/tmp/meshpn-acceptance-BIoAF2/report.json`. Все464 JS-копии этого образа
+совпали с исходниками. Регрессия прежнего resolved fixture —20/20 PASS,
+`/var/tmp/meshpn-dns-vm-hYAVIb/report.json`.
+
+При подключении исправлены состав образа (отсутствовавшая boot policy), допуск
+CLI fixture и VM-only observer к coupled-фазам. Отказы `YUfJ7E`, `f7yZYj`,
+`GLCkS6`, `K85i7L` не считаются PASS; их отчёты/логи сохранены, пересоздаваемые
+образы удалены. В матрице `ux34V3` первая точка прошла, но запуск adapter после
+второй аварии завершился отказом после первого соединения с exit, до READY и DNS setters. Причина этого
+конкретного отказа не установлена: stderr был отключён, PrivateTmp утрачен после
+выхода службы. Поэтому добавлен guest-only PID1-opened log и ограниченные
+редактированные failure records; DNS deadlines не увеличены. Это диагностическое
+дополнение после lifecycle-прогона выше, не доказательство исправления timeout.
+Node после этого дополнения —1674/1674 PASS,
+`/var/tmp/meshpn-acceptance-bTHMkQ/report.json`.
+
+Финальный повтор аварийных точек отдельными ограниченными запусками —
+**3/3 PASS, шесть загрузок, по9 проверок**:
+
+- `apply:DNSEx:set`: `/var/tmp/meshpn-dns-vm-FmlilO/report.json`.
+- `restore:DNSEx:set`: `/var/tmp/meshpn-dns-vm-0FXAJ6/report.json`.
+- `link-released`: `/var/tmp/meshpn-dns-vm-OyQuDh/report.json`.
+
+Во всех трёх случаях guard active в момент обрыва, root/link/guard прочитаны
+после загрузки без изменений, старый context отвергнут, independent boot guard
+проверен до сети. После явного fixture archive новая транзакция и disable
+завершены; baseline queries0 во время защиты, положительный baseline контроль
+пройден, host DNS/guest resolv.conf неизменны. Финальный `FmlilO` содержит464
+JS-копии текущих исходников; `0FXAJ6` отличается только последующими unit assertion
+и логированием другого systemd driver, `OyQuDh` — только этим другим driver.
+DNS/link/guard и исполняемый coupled driver у всех трёх совпадают.
+Прежний необъяснённый startup failure остаётся в истории; повтор PASS не
+доказывает его причину. Настоящая версия клиента/пилот этим не проверены.
+
+## Исторические результаты до общего boot guard
+
 Проверено 2026-09-26: lifecycle **11/11 PASS**, две загрузки,
 `/var/tmp/meshpn-dns-vm-QiEv8R/report.json`.
 Повтор старого systemd-режима — **11/11 PASS**,
@@ -55,19 +100,23 @@ enc-SNI exit и проверяемый TLS DoH fixture. Это не образ V
 `coupled` проверяет службы, а не только RPC child-контроллер:
 
 - Ошибка guard не допускает старта adapter/controller/consumer.
-- Один `flock` удерживается самим Node-контроллером (`-F`); readiness предшествует consumer.
+- Общий boot/DNS `flock` удерживается самим Node-контроллером (`-F`);
+  readiness настоящего непривилегированного adapter предшествует consumer.
+- Guard CLI проверен до network; stop не удаляет правила. Активный DNS-link
+  запрещает release; пропавший guard journal рядом с DNS-state не принимается
+  как новая установка, защита сохраняется.
 - Создание dummy-link, адрес/UP и DNS-state выполняются общим координатором.
 - Остановка controller сохраняет защиту; повторный старт продолжает тот же journal ID.
 - Отказ exit не разрешает fallback; SIGKILL adapter останавливает зависимые службы,
   последующий запуск восстанавливает ту же транзакцию.
-- Чужие Domains не перезаписываются; оба журнала сохраняются при отказе disable.
+- Чужие Domains не перезаписываются; все три журнала сохраняются при отказе disable.
 - Явный disable снимает настройки, удаляет принадлежащий VPN link, затем guard.
   UDP/TCP baseline становится доступен как положительный контроль наблюдателя.
 - Released journal не разрешает повторное включение без нового epoch.
-- После настоящего systemd reboot старые boot/context отклоняются, оба файла
+- После настоящего systemd reboot старые boot/context отклоняются, все три файла
   сохраняются побайтно, исчезнувший link не создаётся автоматически; guard остаётся.
 
-Для продолжения теста явный fixture-оператор архивирует **оба** журнала и создаёт
+Для продолжения теста явный fixture-оператор архивирует **все три** журнала и создаёт
 новую транзакцию. Эта операция не является автоматическим recovery и не
 предлагается как готовая команда восстановления живого клиента.
 
@@ -87,7 +136,8 @@ enc-SNI exit и проверяемый TLS DoH fixture. Это не образ V
 
 Host убивает QEMU по контрольному событию, без дополнительного guest sync.
 Теряются все процессы, kernel state и RAM гостя. Следующая загрузка читает
-ext4-диск; host сравнивает оба прочитанных журнала с контрольной точкой. Затем
+ext4-диск; host сравнивает root/link/guard журналы с контрольной точкой. Во всех
+трёх точках guard journal ещё active и принадлежит предыдущему boot. Затем
 проверяется отказ старого epoch под guard и отдельная новая enable/disable
 транзакция. PASS требует точного набора проверок и смены boot ID, а не одного
 маркера успешного завершения.

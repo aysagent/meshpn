@@ -154,6 +154,11 @@ adapter/exit, клиентских units/guard и аварийного дост�
 
 ## Зафиксированный результат
 
+Регрессионный повтор при подключении coupled controller: **20/20 PASS**, две
+загрузки, `/var/tmp/meshpn-dns-vm-hYAVIb/report.json` (2026-09-27).
+Shared-lock factory не нарушил прежний resolved lifecycle; host DNS unchanged,
+baseline queries0. Окончательные coupled-образ и результаты учитываются отдельно.
+
 2026-09-27: boot policy + guard journal + resolved fixture controller:
 **20/20 PASS в двух загрузках**, `/var/tmp/meshpn-dns-vm-YsGwNF/report.json`.
 Один inherited flock, точный ID установленной policy, обязательный current
@@ -164,7 +169,8 @@ release, а потеря guard journal не создала новую эпоху
 resolv.conf неизменны, baseline queries0, shutdown/sync/unmount подтверждены.
 Node1670/1670 PASS, `/var/tmp/meshpn-acceptance-ES0qES/report.json`.
 Промежуточный18-проверочный прогон `G9gHz0` тоже PASS, но финальный snapshot —YsGwNF.
-Это не целевой coupled backend VPS2 и не Radxa backend; их подключение остаётся,
+Это не целевой coupled backend VPS2 и не Radxa backend; подключение первого
+проверяется отдельно в [coupled VM](dns-coupled-vm.md), Radxa остаётся,
 как и постоянный uninstall boot policy/dependency dropins и клиентские пилоты.
 
 ### Предыдущий результат: boot CLI без guard journal
