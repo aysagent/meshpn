@@ -7,6 +7,11 @@
 start/reload/enable служб и post-activation uninstall здесь отсутствуют.
 Radxa этим VPS2-набором не устанавливается.
 
+Для post-disable removal добавлена отдельная [журналируемая связка](dns-released-removal.md)
+с сохранённой guard-политикой и runtime-history fingerprint. Старый publisher
+не получает автоматического права снимать работающий DNS; новая связка пока
+не является host CLI и ещё требует единого VM-прогона.
+
 ## Порядок и восстановление
 
 В отдельном private0700 каталоге находятся главный `journal.json` и дочерние

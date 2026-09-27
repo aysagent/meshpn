@@ -243,6 +243,11 @@ VM `start → disable → inspection` прошёл **14/14 на двух заг�
 и успешную проверку без opt-in/config. Режим пока не подключён к установщику;
 последующий файловый rollback ещё должен быть проверен в едином сценарии.
 Это не active-transaction reboot и не положительный baseline health test.
+Для следующего шага добавлена [транзакция удаления после disable](dns-released-removal.md):
+durable guard-policy/history binding, повторные OS-проверки, опережающий отзыв
+opt-in и сохранение кода/истории. Файловое восстановление проверяется отдельно;
+fixed-layout factory пока не подключён к CLI. Единый VM uninstall, включая
+обработку manager drop-ins/daemon-reload, остаётся незакрытым.
 
 Этот чек-лист выполняется для VPS 2 и Radxa. VM PASS подтверждает отдельные
 механизмы, но не ставит автоматически галочки за live-конфигурацию и пилот.

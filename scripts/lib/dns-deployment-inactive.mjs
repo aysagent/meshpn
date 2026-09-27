@@ -1,6 +1,7 @@
 /** Distinct fresh and released deployment observations. Read-only, no implicit
  * service stop, guard release, state adoption or uninstall authority. */
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { lstat, readFile, readlink, readdir, open } from 'node:fs/promises';
 import { assertDnsSystemCommands, inspectDnsSystemExecutable } from './dns-system-command.mjs';
 import { requireDnsBootGuardLock, readDnsBootNamespaceAnchor } from './dns-boot-guard.mjs';
@@ -183,6 +184,7 @@ async function inspectDnsDeployment({ commands, input, firewallBackend }, releas
   if (released) assert.deepEqual(await releasedSnapshot(), history, 'released DNS evidence changed');
   assert.deepEqual(await busContext(), bus, 'system manager changed'); await context();
   if (released) return { schema: 1, kind: 'clean-vpn-dns-released-deployment-check', releasedInactive: true,
+    historySha256: createHash('sha256').update(JSON.stringify(history.history)).digest('hex'),
     systemSettingsChanged: false, dnsQueriesSent: 0, activationAuthorized: false, uninstallAuthorized: false,
     limitations: ['not-a-baseline-health-proof', 'not-a-file-ownership-or-uninstall-authority',
       'same-boot-and-resolved-owner-only', 'runtime-history-retained',
