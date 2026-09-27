@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
-import { readFile, readlink, mkdir, mkdtemp, appendFile, access, unlink, writeFile } from 'node:fs/promises';
+import { readFile, readlink, mkdir, mkdtemp, appendFile, access, unlink, writeFile, lstat, rename } from 'node:fs/promises';
 import { exec } from './browser-lab-driver.mjs';
 import { assertSystemdDnsVm } from './dns-systemd-vm-safety.mjs';
 import { startSystemdVmAdapterFixture } from './dns-adapter-soak-lab.mjs';
@@ -13,8 +13,11 @@ import { resolvedTransaction, readResolvedJournal } from './dns-resolved-journal
 import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
 import { queryLabDns } from './transparent-dns-lab.mjs';
 import { DNS_BOOT_LOCK, loadDnsBootGuard } from './dns-boot-guard.mjs';
+import { createBootGuardLifecycle, verifyResolvedGuardRestore } from './dns-boot-guard-lifecycle.mjs';
 
 export const journal = '/state/transaction';
+export const guardJournal = '/state/guard-transaction';
+let bootLifecycle;
 export const baseline = { DNSEx: [[2, [127, 0, 0, 55], 0, '']], Domains: [['.', true], ['baseline.test', false]], DefaultRoute: true };
 export const coupledBaseline = { ...baseline, Domains: [['baseline.test', false]] };
 export const emitSystemd = (event, data = {}) => console.log(`DNS_VM_EVENT ${JSON.stringify({ event, ...data })}`);
@@ -22,9 +25,8 @@ export async function exists(path) { try { await access(path); return true; } ca
 export async function guard(enabled) {
   const options = await assertSystemdDnsVm();
   if (options.phase === 'systemd') {
-    await exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
-      enabled ? '/opt/clean-vpn/scripts/dns-boot-guard.mjs' : '/project/scripts/lib/dns-systemd-vm-worker.mjs',
-      enabled ? '--start' : 'guard-release'], { timeout: 60000 });
+    assert.ok(bootLifecycle, 'controller must own the shared boot/DNS flock');
+    await (enabled ? bootLifecycle.prepare() : bootLifecycle.release());
     return;
   }
   for (const tool of ['iptables', 'ip6tables']) for (const protocol of ['udp', 'tcp']) {
@@ -34,6 +36,27 @@ export async function guard(enabled) {
     if (present !== enabled) await exec(tool, ['-w', '2', enabled ? '-A' : '-D', ...rule]);
     if (enabled) await exec(tool, ['-w', '2', '-C', ...rule]);
   }
+}
+async function controllerGuard(restoring) {
+  const boot = await loadDnsBootGuard(); // Refuses before any setter without our own inherited flock.
+  // Protect before creating storage or refusing unreadable metadata. A valid
+  // partial release is handled below without automatically reinstalling it.
+  try {
+    if (!await exists(guardJournal)) { await boot.guard.ensure(); await mkdir(guardJournal, { mode: 0o700 }); }
+  } catch (error) { await boot.guard.ensure(); throw error; }
+  const backend = boot.createJournalBackend({
+    context: async () => {
+      const s = await lstat(guardJournal); assert.ok(s.isDirectory() && s.uid === 0 && (s.mode & 0o777) === 0o700);
+      return { bootId: (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim(),
+        netns: await readlink('/proc/self/ns/net'), directoryIdentity: `${s.dev}:${s.ino}`,
+        firewall: { ipv4: boot.policy.firewallBackend, ipv6: boot.policy.firewallBackend }, usb: null };
+    },
+    authorizeRelease: async () => verifyResolvedGuardRestore({ directory: journal, backend: (await busContext()).backend }),
+  });
+  let allowBind;
+  try { allowBind = !await exists(`${journal}/journal.json`); }
+  catch (error) { await boot.guard.ensure(); throw error; }
+  return createBootGuardLifecycle({ directory: guardJournal, boot, backend, restoring, allowBind });
 }
 export async function busContext() {
   await assertSystemdDnsVm();
@@ -112,15 +135,31 @@ async function serve(name, action, close) {
 }
 async function main(command) {
   const options = await assertSystemdDnsVm(), coupled = options.phase.startsWith('coupled');
-  assert.ok(['guard', 'guard-release', 'network', 'baseline', 'adapter', 'cli-fixture', 'sentinel', 'activate', 'disable', 'consumer'].includes(command));
+  assert.ok(['guard', 'guard-release-check', 'network', 'baseline', 'adapter', 'cli-fixture', 'sentinel', 'activate', 'disable', 'consumer'].includes(command));
   assert.ok(command !== 'cli-fixture' || options.phase === 'systemd', 'CLI fixture is a separate systemd-only case');
   assert.ok(!coupled || !['activate', 'disable'].includes(command), 'use coupled VM controller');
   process.umask(0o077); await mkdir('/run/meshpn', { recursive: true, mode: 0o700 });
-  if (command === 'guard-release') {
+  if (command === 'guard-release-check') {
     assert.equal(options.phase, 'systemd');
-    // Fixture-only release after the existing DNS controller verified restore;
-    // the real boot CLI deliberately has no --release operation.
-    await (await loadDnsBootGuard()).guard.release(async () => true); return;
+    const lifecycle = await controllerGuard(false), bytes = await readFile(`${guardJournal}/journal.json`);
+    assert.equal((await readResolvedJournal(journal)).direction, 'apply');
+    await assert.rejects(lifecycle.release());
+    assert.deepEqual(await readFile(`${guardJournal}/journal.json`), bytes);
+    assert.deepEqual(await (await loadDnsBootGuard()).guard.inspect(), ['present', 'present']);
+    // Synthetic loss under the same lock: do not create a replacement epoch
+    // while the DNS transaction exists. Restore only our exact fixture bytes.
+    const saved = `${guardJournal}/missing-journal-fixture.json`;
+    assert.equal(await exists(saved), false);
+    await rename(`${guardJournal}/journal.json`, saved);
+    try {
+      await assert.rejects(lifecycle.prepare(), /explicit new guard binding/);
+      assert.equal(await exists(`${guardJournal}/journal.json`), false);
+      assert.deepEqual(await (await loadDnsBootGuard()).guard.inspect(), ['present', 'present']);
+    } finally {
+      assert.equal(await exists(`${guardJournal}/journal.json`), false);
+      assert.deepEqual(await readFile(saved), bytes); await rename(saved, `${guardJournal}/journal.json`);
+    }
+    return;
   }
   if (command === 'guard') {
     assert.equal(await exists('/run/meshpn/deny-start'), false, 'injected guard dependency failure');
@@ -129,7 +168,9 @@ async function main(command) {
   if (command === 'network') {
     assert.deepEqual(JSON.parse((await exec('ip', ['-j', 'link'])).stdout).map((l) => l.ifname), ['lo']);
     if (options.phase === 'systemd') {
-      await guard(true); // Both families proved before removing the outer init fixture guard.
+      await exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
+        '/opt/clean-vpn/scripts/dns-boot-guard.mjs', '--start'], { timeout: 60000 });
+      // Both families proved before removing the outer init fixture guard.
       for (const tool of ['iptables', 'ip6tables']) for (const protocol of ['udp', 'tcp'])
         await exec(tool, ['-w', '2', '-D', 'OUTPUT', '-p', protocol, '--dport', '53', '-j', 'REJECT']);
     } else for (const protocol of ['udp', 'tcp']) await exec('iptables', ['-w', '2', '-I', 'OUTPUT', '1', '-d', '127.0.0.53', '-p', protocol, '--dport', '53', '-j', 'ACCEPT']);
@@ -170,7 +211,10 @@ async function main(command) {
   // A previous explicit disable may have released rules while the oneshot
   // guard unit still reads "active". Recheck actual protection BEFORE parsing
   // even a corrupt/released journal or contacting the DNS backend.
-  if (command === 'activate' || command === 'disable') await guard(true);
+  if (command === 'activate' || command === 'disable') {
+    if (options.phase === 'systemd') bootLifecycle = await controllerGuard(command === 'disable');
+    await guard(true);
+  }
   const { bus, ifindex, scope, backend } = await busContext();
   if (command === 'baseline') {
     const owner = await bus.owner(); assert.deepEqual(await bus.property(owner, ifindex, 'DNSEx'), []);

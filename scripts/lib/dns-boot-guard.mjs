@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { compileDnsClientGuard, createDnsClientGuard } from './dns-client-guard.mjs';
+import { createDnsGuardJournalBackend } from './dns-client-guard-journal.mjs';
 
 export const DNS_BOOT_POLICY = '/etc/clean-vpn/dns/guard-policy.json';
 export const DNS_BOOT_LOCK = '/run/clean-vpn-dns-guard/lock';
@@ -150,7 +151,20 @@ export async function loadDnsBootGuard({ onPhase = () => {} } = {}) {
   const guard = createDnsClientGuard({ input: configured.policy.input, assertContext,
     read: (family) => run(family, '', ['-w', '2', '-S']),
     restore: (family, batch) => run(family, '-restore', ['--wait', '2', '--noflush'], batch) });
-  return { guard, policy: configured.policy, versions };
+  return { guard, policy: configured.policy, versions,
+    createJournalBackend({ context, authorizeRelease }) {
+      const { id, ...config } = configured.policy.input;
+      return createDnsGuardJournalBackend({ config, authorizeRelease,
+        installedInput: async () => { await assertContext(); return structuredClone(configured.policy.input); },
+        context: async () => {
+          await assertContext(); const value = await context();
+          assert.equal(value.bootId, bootId); assert.equal(value.netns, netns);
+          assert.deepEqual(value.firewall, { ipv4: configured.policy.firewallBackend, ipv6: configured.policy.firewallBackend });
+          return value;
+        },
+        read: (family) => run(family, '', ['-w', '2', '-S']),
+        restore: (family, batch) => run(family, '-restore', ['--wait', '2', '--noflush'], batch) });
+    } };
 }
 
 export function dnsBootGuardUnit(backend) {

@@ -41,12 +41,20 @@ export const writeDnsGuardJournal = (directory, record, checkpoint) => writePriv
 
 /** Production-shaped backend adapter: commands/context/restore proof are injected,
  * never reconstructed from executable paths or commands in the journal. */
-export function createDnsGuardJournalBackend({ config, context, read, restore, authorizeRelease }) {
+export function createDnsGuardJournalBackend({ config, context, read, restore, authorizeRelease, installedInput }) {
   const checkedConfig = () => {
     assert.ok(!Object.hasOwn(config, 'id')); compileDnsClientGuard({ ...config, id: '0'.repeat(32) });
     return structuredClone(config);
   };
   checkedConfig();
+  assert.ok(installedInput === undefined || typeof installedInput === 'function');
+  const bootInput = async () => {
+    if (!installedInput) return null;
+    const input = await installedInput(); compileDnsClientGuard(input);
+    const { id, ...fromBoot } = input;
+    assert.deepEqual(fromBoot, checkedConfig(), 'installed boot policy changed');
+    return structuredClone(input);
+  };
   const current = async () => validateDnsGuardContext(await context());
   const guard = (record) => {
     validateDnsGuardJournal(record);
@@ -55,10 +63,12 @@ export function createDnsGuardJournalBackend({ config, context, read, restore, a
         assert.deepEqual(await current(), record.context, 'guard context changed');
         const { id, ...configFromJournal } = record.input;
         assert.deepEqual(checkedConfig(), configFromJournal, 'guard policy changed');
+        const installed = await bootInput();
+        if (installed) assert.deepEqual(record.input, installed, 'journal does not belong to installed boot policy');
       } });
   };
   return {
-    config: async () => checkedConfig(), context: current,
+    config: async () => checkedConfig(), context: current, installedInput: bootInput,
     inspect: (record) => guard(record).inspect(),
     async authorizeRelease(record) {
       await guard(record).inspect(); assert.equal(typeof authorizeRelease, 'function');
@@ -76,26 +86,36 @@ export function createDnsGuardJournalBackend({ config, context, read, restore, a
 }
 
 /** enable creates a fresh intent; start only ensures install intent; recover
- * follows the recorded direction; disable alone may switch it to release. */
+ * follows the recorded direction; disable alone may switch it to release.
+ * bind-boot explicitly records already verified rules from a durable installed
+ * policy. It never adopts another journal/epoch or generates a replacement ID. */
 export async function dnsGuardTransaction({ directory, operation, backend, checkpoint = async () => {} }) {
-  assert.ok(['enable', 'start', 'recover', 'disable', 'inspect'].includes(operation));
+  assert.ok(['enable', 'bind-boot', 'start', 'recover', 'disable', 'inspect'].includes(operation));
   let record;
   const save = async (stage) => {
     record = { ...record, stage }; await writeDnsGuardJournal(directory, record, checkpoint); await checkpoint(stage);
   };
-  if (operation === 'enable') {
+  if (operation === 'enable' || operation === 'bind-boot') {
     try { await readDnsGuardJournal(directory); throw new Error('guard journal already exists'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
-    record = { schema: 1, backend: 'client-dns-guard', input: { ...await backend.config(), id: randomBytes(16).toString('hex') },
-      context: await backend.context(), stage: 'installing' };
+    const installed = structuredClone(await backend.installedInput?.() ?? null);
+    if (operation === 'bind-boot') assert.ok(installed, 'explicit installed boot policy required');
+    else assert.equal(installed, null, 'installed policy requires explicit bind-boot');
+    record = { schema: 1, backend: 'client-dns-guard', input: installed ?? { ...await backend.config(), id: randomBytes(16).toString('hex') },
+      context: await backend.context(), stage: installed ? 'active' : 'installing' };
     validateDnsGuardJournal(record);
-    assert.deepEqual(await backend.inspect(record), ['absent', 'absent'], 'guard exists without durable intent');
-    await save('installing');
+    assert.deepEqual(await backend.inspect(record), installed ? ['present', 'present'] : ['absent', 'absent'],
+      installed ? 'both installed boot guard families must be verified' : 'guard exists without durable intent');
+    assert.deepEqual(await backend.context(), record.context, 'guard context changed before intent');
+    if (installed) assert.deepEqual(await backend.installedInput(), installed, 'installed boot policy changed before binding');
+    await save(record.stage);
   } else record = await readDnsGuardJournal(directory);
   const observe = async () => {
     assert.deepEqual(await backend.context(), record.context, 'stale guard context');
     const { id, ...config } = record.input;
     assert.deepEqual(await backend.config(), config, 'guard policy changed');
+    const installed = await backend.installedInput?.() ?? null;
+    if (installed) assert.deepEqual(record.input, installed, 'journal does not belong to installed boot policy');
     const states = await backend.inspect(record);
     assert.ok(Array.isArray(states) && states.length === 2 && states.every((state) => ['present', 'absent'].includes(state)));
     assert.deepEqual(await backend.context(), record.context, 'guard context changed during read');

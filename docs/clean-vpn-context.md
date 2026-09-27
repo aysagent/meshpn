@@ -10,6 +10,37 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: binding boot policy и общего журнала
+
+`bind-boot` принимает только отсутствующий guard journal, точную installed
+policy/ID, обе verified families и стабильный context; не делает firewall
+setters. Backend проверяет installed ID при следующих reads/commits, ordinary
+enable с такой policy запрещён. Existing stale/released record не усыновляется.
+`createBootGuardLifecycle` требует явного allowBind; VM разрешает его только
+когда DNS journal отсутствует. Потеря guard journal при existing DNS state —
+отказ под независимой защитой, не новая автоматическая эпоха.
+
+Resolved fixture VM controller использует тот же inherited flock, что boot guard,
+на весь DNS переход. Callback release больше не `true`: читается настоящий
+resolved restore-complete journal и текущие owner/link/context/settings,
+повторно проверяется journal; это exact-state proof, не health probe baseline.
+Partial release можно продолжить только с proof; иначе boot policy снова
+защищает DNS, не переписывая старый intent. VM-only explicit archive теперь
+сохраняет оба журнала, старый boot не принимается автоматически.
+
+Namespace: **22 SIGKILL,4 lock conflicts,11 packet checks PASS**; новые6 kills
+покрывают binding file fsync/rename/directory fsync для обоих профилей. Host
+DNS/forwarding неизменны. Unit cases включают policy/ID drift, неполные families,
+потерю guard journal/proof и foreign/unfinished DNS restore. **20/20 в двух
+загрузках VM PASS**, `/var/tmp/meshpn-dns-vm-YsGwNF/report.json`;464 JS copies
+совпали с manifest, host DNS/guest resolver неизменны, baseline queries0.
+Промежуточный18-проверочный G9gHz0 также PASS, но финальный snapshot —YsGwNF.
+Node **1670/1670 PASS**, `/var/tmp/meshpn-acceptance-ES0qES/report.json`, без skips.
+Этот non-empty resolved baseline не является целевой
+VPS2-схемой: далее эта связка нужна coupled coordinator отдельного VPN DNS-link
+и Radxa dnsmasq/resolver coordinator. Live controllers/installer и постоянный
+disable boot policy ещё нужны. DNS v1 открыт.
+
 ### Дополнение 2026-09-27: ранний systemd guard
 
 Добавлен [`dns-boot-guard.mjs`](../scripts/dns-boot-guard.md): root policy

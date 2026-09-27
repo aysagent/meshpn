@@ -83,8 +83,11 @@ Radxa или подтверждение live-конфигурации. Подр�
 для двух профилей. Добавлен [ранний systemd guard](dns-boot-guard.md), проверяемый
 на реальном CLI в VM: независимая boot policy, stop без удаления правил,
 без принятия stale DNS journal. **16/16 проверок в двух загрузках VM, PASS**,
-Node1659/1659. Ещё нужны
-привязка journal к ID boot policy, общий restore proof и opt-in установщик/откат.
+Node1659/1659. Привязка journal к ID boot policy и exact resolved restore proof
+теперь проверены под одним lock: **20/20 в двух загрузках VM, Node1670/1670,
+22 namespace SIGKILL PASS**. Это ещё resolved fixture с non-empty baseline;
+нужна интеграция этой связки с целевым coupled backend VPS2 и Radxa coordinator,
+затем opt-in установщик/откат и пилоты.
 
 ## Три этапа и текущий статус
 
@@ -96,7 +99,8 @@ Node1659/1659. Ещё нужны
    управляемые start/stop/restart/boot, отказ dependencies, актуальный baseline,
    отказ при конфликте владельца и безопасный disable. Проверен реальный исполнитель
    и измеренный порядок запуска; повтор на настоящих CLI adapter/boot guard:
-   16 проверок в2 загрузках, PASS. Это не live installer.
+   20 проверок в2 загрузках с общим guard journal/lock, PASS. Это не live installer
+   и не замена отдельных target VPS2/Radxa интеграций.
 3. **[Пилоты VPS 2 и Radxa](dns-pilot.md):** сначала доделать обе системные интеграции
    и проверить их клиентские профили по матрице, затем проверить исходный DNS
    и аварийный доступ; с отдельным разрешением установить интеграцию. Один

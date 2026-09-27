@@ -1,6 +1,6 @@
 /** Synthetic guest units only: never install these on a host. */
 import { compileDnsAdapterServicePlan } from './dns-adapter-service-plan.mjs';
-import { dnsBootGuardUnit } from './dns-boot-guard.mjs';
+import { dnsBootGuardUnit, DNS_BOOT_LOCK } from './dns-boot-guard.mjs';
 const worker = '/usr/bin/node --max-old-space-size=192 /project/scripts/lib/dns-systemd-vm-worker.mjs';
 const common = 'DefaultDependencies=no\nConflicts=shutdown.target\nBefore=shutdown.target\n';
 const service = 'Environment=PATH=/usr/bin:/usr/sbin:/bin:/sbin OPENSSL_CONF=/dev/null\nUMask=0077\nStandardInput=null\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/console\nTimeoutStartSec=180\nTimeoutStopSec=15\nKillMode=control-group\n';
@@ -31,6 +31,8 @@ export function dnsSystemdVmUnits({ cliAdapter = false } = {}) {
       `Type=oneshot\nTimeoutStartSec=15min\nExecStart=/usr/bin/node --max-old-space-size=192 /project/scripts/lib/dns-systemd-vm-driver.mjs`),
   };
   if (cliAdapter) {
+    units['dns-vm-controller.service'] = units['dns-vm-controller.service']
+      .replace('/usr/bin/flock -n /state/controller.lock', `/usr/bin/flock -n -E 75 -F ${DNS_BOOT_LOCK}`);
     units['network-pre.target'] = '[Unit]\nDescription=Guest passive network-pre target\nDefaultDependencies=no\n';
     units['dns-vm-guard.service'] = dnsBootGuardUnit('legacy')
       .replace('[Service]\n', "[Service]\nExecStartPre=/bin/busybox test ! -e /run/meshpn/deny-start\n")

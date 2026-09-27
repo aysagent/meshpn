@@ -4,17 +4,18 @@ import { readFile, writeFile, mkdir, rename, unlink, open } from 'node:fs/promis
 import { setTimeout as delay } from 'node:timers/promises';
 import { exec } from './browser-lab-driver.mjs';
 import { assertSystemdDnsVm } from './dns-systemd-vm-safety.mjs';
-import { journal, baseline, emitSystemd as emit, exists, busContext, lookup, control } from './dns-systemd-vm-worker.mjs';
+import { journal, guardJournal, baseline, emitSystemd as emit, exists, busContext, lookup, control } from './dns-systemd-vm-worker.mjs';
 import { assertSystemdVmBaselineBlocked } from './dns-vm-fault-lab.mjs';
 import { readResolvedJournal } from './dns-resolved-journal.mjs';
 import { resolvedMethod } from './dns-resolved-backend.mjs';
 import { syncDirectory } from './dns-lifecycle-journal.mjs';
 import { boundedInspectRead } from './dns-inspect.mjs';
 import { DNS_BOOT_LOCK } from './dns-boot-guard.mjs';
+import { readDnsGuardJournal } from './dns-client-guard-journal.mjs';
 
 const ctl = (...args) => exec('/usr/bin/systemctl', ['--no-pager', ...args], { timeout: 200000 });
 const worker = '/project/scripts/lib/dns-systemd-vm-worker.mjs';
-const disable = () => exec('/usr/bin/flock', ['-n', '/state/controller.lock', '/usr/bin/node', worker, 'disable'], { timeout: 180000 });
+const disable = () => exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node', worker, 'disable'], { timeout: 180000 });
 const inspectBootGuard = async () => {
   const result = JSON.parse((await exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
     '/opt/clean-vpn/scripts/dns-boot-guard.mjs', '--inspect'], { timeout: 60000 })).stdout);
@@ -33,6 +34,10 @@ async function archive(label) {
   await rename(journal, `/state/archived-${label}`); await syncDirectory('/state');
   await mkdir(journal, { mode: 0o700 }); await syncDirectory('/state');
   assert.deepEqual(await readFile(`/state/archived-${label}/journal.json`), bytes);
+  const guardBytes = await readFile(`${guardJournal}/journal.json`);
+  await rename(guardJournal, `/state/archived-guard-${label}`); await syncDirectory('/state');
+  await mkdir(guardJournal, { mode: 0o700 }); await syncDirectory('/state');
+  assert.deepEqual(await readFile(`/state/archived-guard-${label}/journal.json`), guardBytes);
 }
 async function main() {
   const options = await assertSystemdDnsVm(); process.umask(0o077);
@@ -110,10 +115,12 @@ async function main() {
   if (previous) {
     assert.notEqual(bootId, previous.bootId);
     const bytes = await readFile(`${journal}/journal.json`);
+    const guardBytes = await readFile(`${guardJournal}/journal.json`);
     await assert.rejects(ctl('start', 'dns-vm-consumer.service'));
     assert.equal(await state('dns-vm-controller.service'), 'failed');
     assert.equal(await exists('/run/meshpn/consumers'), false);
     assert.deepEqual(await readFile(`${journal}/journal.json`), bytes);
+    assert.deepEqual(await readFile(`${guardJournal}/journal.json`), guardBytes);
     assert.deepEqual((await backend.view()).settings, baseline);
     await noFallback(); check('reboot-stale-journal-refused-with-guard');
     // Explicit fixture operator authorizes a NEW baseline epoch. Never an
@@ -124,6 +131,12 @@ async function main() {
   assert.equal(await state('dns-vm-controller.service'), 'active');
   assert.equal(await state('dns-vm-consumer.service'), 'active');
   assert.equal(await readFile('/run/meshpn/consumers', 'utf8'), 'ready\n');
+  const boundGuard = await readDnsGuardJournal(guardJournal);
+  assert.equal(boundGuard.input.id, 'b'.repeat(32)); assert.equal(boundGuard.stage, 'active');
+  assert.equal(boundGuard.context.bootId, bootId);
+  await exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node', worker, 'guard-release-check'], { timeout: 60000 });
+  check('boot-journal-release-refuses-active-dns');
+  check('missing-guard-journal-retains-protection');
   await lookup('managed-aaaa', '2001:db8::12', true, 6); await noFallback();
   check('real-service-readiness-before-consumer');
   if (!previous) {
@@ -156,6 +169,7 @@ async function main() {
   await ctl('stop', 'dns-vm-controller.service'); await inactive('dns-vm-consumer.service');
   await noFallback();
   await disable();
+  assert.equal((await readDnsGuardJournal(guardJournal)).stage, 'released');
   assert.deepEqual((await backend.view()).settings, baseline);
   await lookup('explicit-disable-udp', '203.0.113.8'); await lookup('explicit-disable-tcp', '203.0.113.8', true);
   assert.ok((await control('sentinel', 'stats')).ipv4 >= 2);
@@ -185,6 +199,7 @@ async function main() {
     adapterImplementation: 'cli', separateExitFixture: true, readinessQueriesPerStart: 4,
     unprivilegedAdapter: true, systemdCredentials: true,
     bootGuardImplementation: 'cli', bootGuardBeforeNetwork: true,
+    persistentBootGuardJournal: true, sharedGuardDnsLock: true, exactRestoreProof: true,
     checks: [...previous.checks, ...checks], baselineQueriesDuringProtection: 0, baselinePositiveControl: true,
     hostNetworkUnavailable: true, automaticStaleAdoption: false, explicitDisablePassed: true, resolvConfUnchanged: true });
   await ctl('--no-block', 'poweroff');

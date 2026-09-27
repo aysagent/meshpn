@@ -217,8 +217,11 @@ systemd VM-прогон прошёл 12/12 проверок в двух загр
 прошёл16 SIGKILL контроллера. Добавлен [ранний boot guard](scripts/dns-boot-guard.md)
 с фиксированной root policy и отдельным systemd entrypoint: **16/16 проверок в
 двух загрузках VM, PASS**. Node-регрессия1659/1659; повтор namespace guard:
-16 SIGKILL и11 packet checks PASS. Совместный lifecycle с journal и opt-in
-установщик/откат ещё нужны; это не закрытие DNS v1.
+16 SIGKILL и11 packet checks PASS. Следующая связка boot policy + journal под
+одним lock с current restore proof уже прошла **20/20 в двух загрузках resolved
+VM**, Node1670/1670 и22 namespace SIGKILL. Отказ при active DNS/потерянном журнале
+проверен; подключение к целевым VPS2 coupled/Radxa controllers, opt-in установка
+и постоянный откат boot policy ещё нужны. Это не закрытие DNS v1.
 
 Следующий порядок работ:
 

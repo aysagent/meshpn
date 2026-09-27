@@ -73,11 +73,39 @@ DNS baseline, ни принятия DNS-журнала после reboot в нё
 когда DNS controller отказывает по старому boot/context; это fail-closed, не
 обещание unattended DNS availability.
 
-Общий persistent guard journal пока генерирует собственный ID при enable.
-**Совместная live-установка этих двух компонентов ещё не готова:** нужны явная
-привязка journal к boot-policy ID, общий lock, проверенное восстановление baseline
-и транзакция отключения boot policy/dependency dropins. Нельзя просто включить
-оба entrypoint с разными ID: ownership checks должны отказать.
+`bind-boot` теперь явно связывает новый guard journal с установленной policy:
+тот же ID и config, обе семьи уже present, текущий context стабилен. Операция
+не вызывает firewall setters и не генерирует новый ID. Любой существующий
+journal, включая stale/released, исключает повторный bind. При checkpoint до
+rename новый journal может отсутствовать: retry снова проверяет policy и обе
+семьи; временные файлы не принимаются за authority.
+
+`createBootGuardLifecycle` соединяет эту привязку с prepare/release. Все DNS
+setters и guard transitions должны выполняться под **одним stable flock**,
+а не под отдельными последовательно взятыми locks. Root boot loader строит
+backend со своими проверенными commands, backend и policy identity; ID журнала
+перепроверяется на соответствие установленной policy.
+
+Для resolved `verifyResolvedGuardRestore` проверяет durable restore-complete,
+context/owner/link, точный текущий baseline и неизменность journal во время
+проверки. Это не проверка здоровья сети или исходного resolver. Proof требуется
+до release intent, перед каждой IP-семьёй и финальной записью released.
+Уже начатое отключение можно продолжить только с актуальным proof, не включая
+managed DNS заново. Если proof пропал, independent boot policy снова обеспечивает
+guard, а ошибочный/старый journal сохраняется без изменения intent.
+Новая привязка по умолчанию запрещена: controller должен явно разрешить первый
+bind. В VM это допустимо лишь при отсутствии DNS journal; потеря guard journal
+рядом с существующей DNS-транзакцией означает отказ под защитой, а не новую эпоху.
+
+В VM с resolved fixture controller уже подключён к общему lock и guard journal, вместо
+прежнего fixture callback `() => true`. Новый прогон: **20/20 PASS в двух загрузках**,
+`/var/tmp/meshpn-dns-vm-YsGwNF/report.json`. В обеих загрузках проверены отказ
+release при active DNS и потеря guard journal без автоматического bind.
+**Совместная live-установка ещё не готова:** этот resolved proof не заменяет
+целевой coupled backend VPS2 с отдельным VPN DNS-link. Остаются его связка и
+Radxa restore proof, конкретные клиентские controllers и отключение boot policy/dependency
+dropins. Release журнала сам по себе не выключает установленную boot policy:
+при следующем boot она снова потребует защиту. Это не постоянный uninstall.
 
 VPS2 cloud-name policy, Radxa baseline repair/USB ownership, клиентские preflight
 и24-часовые пилоты остаются отдельными критериями [DNS v1](dns-v1.md).
@@ -92,10 +120,18 @@ npm run test:dns-boot-guard
 В VM добавлены только отказ ExecStartPre для dependency-теста и ограниченный
 log sink вместо отсутствующего journald. Outer init guard защищает гостевой lo
 до PID1; его старые правила удаляются только после проверки нового guard.
-Fixture-only release выполняется после проверки восстановленного DNS baseline;
-в публичном CLI такого режима нет.
+Release связан с guard journal и повторной проверкой resolved baseline;
+публичный boot CLI по-прежнему не имеет такого режима.
 
-2026-09-27: **16/16 проверок в двух загрузках VM, PASS**,
+2026-09-27: совместный lifecycle **20/20 PASS в двух загрузках VM**,
+`/var/tmp/meshpn-dns-vm-YsGwNF/report.json`; все464 копии JS совпали с manifest.
+`persistentBootGuardJournal/sharedGuardDnsLock/exactRestoreProof=true`, host DNS
+и guest resolv.conf неизменны, baseline queries0. Предыдущий промежуточный
+18-проверочный прогон также PASS (`G9gHz0`), но не заменяет последний snapshot.
+Node1670/1670 PASS (`/var/tmp/meshpn-acceptance-ES0qES/report.json`), без skips.
+Namespace journal:22 SIGKILL (включая6 binding),4 lock conflicts,11 packet checks PASS.
+
+Исторический результат до привязки журнала: **16/16 в двух загрузках VM, PASS**,
 `/var/tmp/meshpn-dns-vm-7CL1sN/report.json`. Systemd255/legacy firewall,
 QEMU8.2.2 TCG2 vCPU. Host DNS snapshots/guest resolv.conf неизменны;
 baseline queries0, разные boot ID, настоящие sync/unmount/reboot/poweroff.

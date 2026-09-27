@@ -79,8 +79,9 @@ test('systemd evidence needs both boots and all lifecycle gates, not just a pass
     adapterImplementation: 'cli', separateExitFixture: true, readinessQueriesPerStart: 4,
     unprivilegedAdapter: true, systemdCredentials: true,
     bootGuardImplementation: 'cli', bootGuardBeforeNetwork: true,
+    persistentBootGuardJournal: true, sharedGuardDnsLock: true, exactRestoreProof: true,
     baselineQueriesDuringProtection: 0, baselinePositiveControl: true, explicitDisablePassed: true, resolvConfUnchanged: true,
-    checks: [...VM_SYSTEMD_CHECKS, 'boot-guard-cli-before-network', 'boot-guard-stop-retains-owned-rules', 'real-service-readiness-before-consumer', 'explicit-disable-restores-owned-baseline'] };
+    checks: [...VM_SYSTEMD_CHECKS, 'boot-guard-cli-before-network', 'boot-guard-stop-retains-owned-rules', 'boot-journal-release-refuses-active-dns', 'missing-guard-journal-retains-protection', 'real-service-readiness-before-consumer', 'explicit-disable-restores-owned-baseline'] };
   assertVmSystemdEvidence(evidence);
   for (const key of Object.keys(evidence).filter((k) => k !== 'checks')) {
     assert.throws(() => assertVmSystemdEvidence({ ...evidence, [key]: typeof evidence[key] === 'boolean' ? !evidence[key] : 'wrong' }));
@@ -92,6 +93,7 @@ test('systemd evidence needs both boots and all lifecycle gates, not just a pass
 });
 test('CLI VM adapter is the real entrypoint, not the combined root fixture', () => {
   const units = dnsSystemdVmUnits({ cliAdapter: true });
+  assert.match(units['dns-vm-controller.service'], /flock -n -E 75 -F \/run\/clean-vpn-dns-guard\/lock/);
   assert.match(units['dns-vm-fixture.service'], /cli-fixture/);
   assert.match(units['dns-vm-adapter.service'], /BindsTo=dns-vm-guard.service dns-vm-fixture.service\nAfter=dns-vm-guard.service dns-vm-fixture.service/);
   assert.match(units['dns-vm-adapter.service'], /Type=notify\nNotifyAccess=all/);

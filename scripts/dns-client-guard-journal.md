@@ -21,6 +21,12 @@
 install/active в releasing только после явного подтверждения baseline.
 `inspect` читает состояния и не вызывает setters, пробы или journal writes.
 
+`bind-boot` — отдельная явная операция для [установленной boot policy](dns-boot-guard.md):
+отсутствующий journal, точный установленный ID/config, обе семьи уже present,
+стабильный context. Записывает active без firewall setters. При installed policy
+обычный enable запрещён: он не должен создавать другой случайный ID. Existing
+stale/released journal не архивируется и не принимается автоматически.
+
 Для каждой семьи commit атомарен в проверенном backend; общей атомарности IPv4+
 IPv6 нет. После SIGKILL фактическое состояние читается заново: подтверждение
 commit могло потеряться. Частичное состояние не превращается в полный PASS.
@@ -41,13 +47,14 @@ backends и для Radxa имя/ifindex/MAC/IPv4 USB-интерфейса. См�
 backends запрещены. Политика сравнивается с текущим согласованным config,
 не выбирается из чужого журнала. `createDnsGuardJournalBackend` перепроверяет
 context/policy перед командами и требует актуальный callback restore proof.
-Конкретные executable paths, root layout и версия команд контролируются будущим
-клиентским entrypoint, а не берутся из journal.
+Конкретные executable paths, root layout и версия команд контролируются
+[boot entrypoint](dns-boot-guard.md), а не берутся из journal. Его factory также
+проверяет ID journal против installed policy на каждом guard read/commit.
 
 Смена загрузки, namespace, directory, backend или интерфейса приводит к отказу
 без присвоения старого контекста. Это **не автоматический reboot recovery** и
-не обещание защиты после новой загрузки: ранний boot guard и порядок запуска
-сети/контролируемых служб ещё должны быть подключены отдельно. Один этот модуль
+не обещание доступного DNS после новой загрузки: независимый ранний boot guard
+подключён в VM, но клиентский установщик ещё нужен. Один этот модуль
 нельзя устанавливать как готовую boot-защиту. Он также не делает active oneshot
 service доказательством текущего наличия правил.
 
@@ -67,12 +74,24 @@ setter уже завершился; это не имитация убийств�
 rename released. Проверяются сохранённый ID, направление recovery, обе семьи,
 неизменность посторонних правил и два отказа конкурирующему flock.
 
-2026-09-27: **41/41 journal unit PASS**, общий guard+journal71/71;
+Матрица дополнена6 binding SIGKILL: для обоих профилей после fsync temp,
+rename и fsync directory. При первом checkpoint journal действительно отсутствует,
+но обе семьи остаются; retry не меняет policy ID. Ещё два конфликта flock.
+Расширенный namespace-прогон: **22/22 SIGKILL,4/4 lock conflicts,11/11 packet
+checks PASS**, host DNS/forwarding snapshots неизменны. Это настоящие process
+SIGKILL, не whole-guest power loss или убийство iptables внутри commit.
+
+2026-09-27: **52/52 journal/lifecycle unit PASS**, Node1670/1670 PASS,
+`/var/tmp/meshpn-acceptance-ES0qES/report.json`. Shared boot/journal lifecycle
+настоящего CLI в [resolved VM](dns-systemd-vm.md):20/20 в двух загрузках PASS.
+Binding и release proof не означают установленный target VPS2/Radxa backend.
+
+Исторический результат: **41/41 journal unit PASS**, общий guard+journal71/71;
 **16/16 controller SIGKILL,2/2 lock conflicts,11/11 packet checks PASS**,
 iptables1.8.10 nf_tables/dnsmasq2.90. Host resolver/NSS/forwarding неизменны.
 Node-регрессия **1643/1643 PASS**, `/var/tmp/meshpn-acceptance-l2aoDI/report.json`.
 Physical power loss, reboot нового guard, legacy и live VPS2/ARM здесь не проверены.
 
-Далее: клиентский systemd entrypoint/ранний boot guard и общий restore proof,
-интеграция с VPS2/Radxa controller, opt-in установка и откат, затем согласованные
+Далее: завершить совместный boot/journal lifecycle и restore proof обоих
+клиентских controllers, opt-in установка и откат, затем согласованные
 пилоты. Этот результат не закрывает DNS v1.

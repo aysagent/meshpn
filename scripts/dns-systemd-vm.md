@@ -40,6 +40,14 @@ chains; guard ExecMainExit предшествует network ExecMainStart. **16/
 исторические12-проверочные результаты ниже относятся к прежнему guard.
 У guest `/run` теперь явно0755, а boot policy0600; `/tmp` остаётся1777.
 
+Последний прогон соединяет boot policy с persistent guard journal и DNS
+controller под одним flock. Убрано fixture-разрешение release `() => true`:
+каждое удаление требует durable resolved restore-complete и точного live
+context/baseline. Проверяются также отказ release при active DNS и отсутствие
+автоматического bind после потери guard journal рядом с DNS-транзакцией.
+Оба сценария повторяются после reboot; итоговая матрица20 проверок.
+Расширенный запуск прошёл **20/20 в двух загрузках**. Старые результаты ниже сохранены.
+
 BusyBox `/init` монтирует гостевые файловые системы и устанавливает DNS53 guard
 до `exec systemd`. Затем **systemd действительно является PID1**. У гостя нет
 NIC, shared filesystem, TUN, доступа к сети хоста или интернету. DNS adapter,
@@ -145,6 +153,21 @@ adapter/exit, клиентских units/guard и аварийного дост�
 остальные DNS backends. Реальный24-часовой пилот не заменяется этой VM.
 
 ## Зафиксированный результат
+
+2026-09-27: boot policy + guard journal + resolved fixture controller:
+**20/20 PASS в двух загрузках**, `/var/tmp/meshpn-dns-vm-YsGwNF/report.json`.
+Один inherited flock, точный ID установленной policy, обязательный current
+restore proof перед снятием guard. В обеих загрузках active DNS не разрешил
+release, а потеря guard journal не создала новую эпоху. Старые DNS/guard журналы
+отклонены после reboot без перезаписи; только explicit fixture archive разрешил
+новую транзакцию.464 JS copies совпали с image manifest; host DNS/guest
+resolv.conf неизменны, baseline queries0, shutdown/sync/unmount подтверждены.
+Node1670/1670 PASS, `/var/tmp/meshpn-acceptance-ES0qES/report.json`.
+Промежуточный18-проверочный прогон `G9gHz0` тоже PASS, но финальный snapshot —YsGwNF.
+Это не целевой coupled backend VPS2 и не Radxa backend; их подключение остаётся,
+как и постоянный uninstall boot policy/dependency dropins и клиентские пилоты.
+
+### Предыдущий результат: boot CLI без guard journal
 
 2026-09-27: CLI adapter + **настоящий boot guard CLI —16/16 PASS в двух загрузках**,
 `/var/tmp/meshpn-dns-vm-7CL1sN/report.json`. Systemd255/legacy firewall,

@@ -5,14 +5,18 @@ import { join } from 'node:path';
 import { assertDnsMountNamespace } from './dns-lifecycle-namespace.mjs';
 import { controller } from './dns-lifecycle-crash-lab.mjs';
 import { createDnsGuardJournalBackend, readDnsGuardJournal } from './dns-client-guard-journal.mjs';
+import { createDnsClientGuard } from './dns-client-guard.mjs';
 
 export const DNS_GUARD_CRASH_POINTS = ['installing:dir-synced', 'installing:4:committed', 'installing:6:committed', 'active:renamed',
   'releasing:dir-synced', 'releasing:4:committed', 'releasing:6:committed', 'released:renamed'];
+export const DNS_GUARD_BIND_POINTS = ['active:file-synced', 'active:renamed', 'active:dir-synced'];
 export async function runDnsGuardCrashLab({ directory, read, restore, run, versions }) {
   await assertDnsMountNamespace();
   const baseline = await Promise.all([4, 6].map(read)), cases = [];
   let lockConflicts = 0;
-  for (const client of ['vps2', 'radxa']) for (const point of DNS_GUARD_CRASH_POINTS) {
+  const scenarios = [...DNS_GUARD_CRASH_POINTS.map((point) => ({ point, binding: false })),
+    ...DNS_GUARD_BIND_POINTS.map((point) => ({ point, binding: true }))];
+  for (const client of ['vps2', 'radxa']) for (const { point, binding } of scenarios) {
     const path = join(directory, `case-${cases.length}`); await mkdir(path, { mode: 0o700 });
     await writeFile(join(path, 'lock'), '', { flag: 'wx', mode: 0o600 });
     const config = { schema: 1, client, ...(client === 'radxa' ? { usbInterface: 'usb0', usbAddress: '192.168.7.1' } : {}) };
@@ -26,14 +30,20 @@ export async function runDnsGuardCrashLab({ directory, read, restore, run, versi
     };
     // No OS DNS was changed in this guard-only fixture; explicit release is
     // authorized only by this scenario. Not a production restore-proof callback.
-    const backend = createDnsGuardJournalBackend({ config, context, read, restore, authorizeRelease: async () => true });
+    const input = { ...config, id: 'c'.repeat(32) };
+    if (binding) {
+      await writeFile(join(path, 'boot-policy.json'), JSON.stringify(input), { flag: 'wx', mode: 0o600 });
+      await createDnsClientGuard({ input, read, restore, assertContext: assertDnsMountNamespace }).ensure();
+    }
+    const backend = createDnsGuardJournalBackend({ config, context, read, restore, authorizeRelease: async () => true,
+      ...(binding ? { installedInput: async () => JSON.parse(await readFile(join(path, 'boot-policy.json'), 'utf8')) } : {}) });
     const execute = async (operation) => {
       const result = await controller(path, operation, backend, undefined, 'guard').done;
       assert.equal(result.code, 0, result.stderr); assert.equal(result.signal, null); return result.result;
     };
     const releasing = /^(releasing|released)/.test(point);
     if (releasing) await execute('enable');
-    const childController = controller(path, releasing ? 'disable' : 'enable', backend, point, 'guard');
+    const childController = controller(path, binding ? 'bind-boot' : releasing ? 'disable' : 'enable', backend, point, 'guard');
     try {
       await childController.reached;
       if (point === 'active:renamed') {
@@ -42,18 +52,24 @@ export async function runDnsGuardCrashLab({ directory, read, restore, run, versi
       }
     } finally { childController.kill(); }
     assert.equal((await childController.done).signal, 'SIGKILL');
-    const record = await readDnsGuardJournal(path), beforeRecovery = await backend.inspect(record);
+    let record;
+    if (binding && point === 'active:file-synced') {
+      await assert.rejects(readDnsGuardJournal(path), { code: 'ENOENT' });
+      record = { schema: 1, backend: 'client-dns-guard', input, context: await context(), stage: 'active' };
+    } else record = await readDnsGuardJournal(path);
+    const beforeRecovery = await backend.inspect(record);
     const expectedBefore = point === 'installing:dir-synced' || ['releasing:6:committed', 'released:renamed'].includes(point) ? ['absent', 'absent']
       : point === 'installing:4:committed' ? ['present', 'absent']
         : point === 'releasing:4:committed' ? ['absent', 'present'] : ['present', 'present'];
     assert.deepEqual(beforeRecovery, expectedBefore, `unexpected state at ${point}`);
-    const result = await execute('recover'); assert.equal(result.id, record.input.id);
+    const result = await execute(binding && point === 'active:file-synced' ? 'bind-boot' : 'recover'); assert.equal(result.id, record.input.id);
+    if (binding) assert.equal(result.id, input.id);
     assert.equal(result.stage, releasing ? 'released' : 'active');
     assert.deepEqual(result.states, releasing ? ['absent', 'absent'] : ['present', 'present']);
     if (!releasing) await execute('disable');
     assert.deepEqual(await Promise.all([4, 6].map(read)), baseline, 'foreign baseline rules changed');
-    cases.push({ client, point, signal: 'SIGKILL', beforeRecovery, recovered: result.stage });
+    cases.push({ client, point, binding, signal: 'SIGKILL', beforeRecovery, recovered: result.stage });
   }
-  assert.equal(cases.length, 16); assert.equal(lockConflicts, 2);
-  return { status: 'passed', controllerSigkills: 16, lockConflicts, cases, wholeGuestPowerLossTested: false };
+  assert.equal(cases.length, 22); assert.equal(lockConflicts, 4);
+  return { status: 'passed', controllerSigkills: 22, bootBindingSigkills: 6, lockConflicts, cases, wholeGuestPowerLossTested: false };
 }

@@ -69,6 +69,8 @@ export function assertVmCoupledEvidence(evidence, cut) {
 }
 export const VM_SYSTEMD_CHECKS = Object.freeze([
   'boot-guard-cli-before-network', 'boot-guard-stop-retains-owned-rules',
+  'boot-journal-release-refuses-active-dns',
+  'missing-guard-journal-retains-protection',
   'cli-start-refuses-unready-exit',
   'failed-guard-prevents-network-and-consumer', 'real-service-readiness-before-consumer',
   'controller-stop-retains-guard-and-restart-recovers', 'exit-outage-no-baseline-fallback',
@@ -83,11 +85,13 @@ export function assertVmSystemdEvidence(evidence) {
   assert.equal(evidence.readinessQueriesPerStart, 4);
   assert.equal(evidence.unprivilegedAdapter, true); assert.equal(evidence.systemdCredentials, true);
   assert.equal(evidence.bootGuardImplementation, 'cli'); assert.equal(evidence.bootGuardBeforeNetwork, true);
+  assert.equal(evidence.persistentBootGuardJournal, true); assert.equal(evidence.sharedGuardDnsLock, true);
+  assert.equal(evidence.exactRestoreProof, true);
   assert.equal(evidence.baselineQueriesDuringProtection, 0); assert.equal(evidence.baselinePositiveControl, true);
   assert.equal(evidence.explicitDisablePassed, true); assert.equal(evidence.resolvConfUnchanged, true);
   assert.deepEqual([...new Set(evidence.checks)].sort(), [...VM_SYSTEMD_CHECKS].sort());
   for (const label of VM_SYSTEMD_CHECKS) assert.equal(evidence.checks.filter((v) => v === label).length,
-    ['boot-guard-cli-before-network', 'boot-guard-stop-retains-owned-rules', 'real-service-readiness-before-consumer', 'explicit-disable-restores-owned-baseline'].includes(label) ? 2 : 1, label);
+    ['boot-guard-cli-before-network', 'boot-guard-stop-retains-owned-rules', 'boot-journal-release-refuses-active-dns', 'missing-guard-journal-retains-protection', 'real-service-readiness-before-consumer', 'explicit-disable-restores-owned-baseline'].includes(label) ? 2 : 1, label);
 }
 export const VM_DNSMASQ_CHECKS = Object.freeze([
   'failed-guard-prevents-services', 'service-readiness-and-usb-dhcp', 'controller-stop-retains-protection',

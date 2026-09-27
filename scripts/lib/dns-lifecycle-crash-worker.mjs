@@ -43,7 +43,7 @@ try {
   });
   input.once('close', () => { if (pending) { clearTimeout(timer); pending.reject(new Error('backend disconnected')); pending = undefined; } });
   const kind = process.argv[4] ?? 'file'; assert.ok(['file', 'resolved', 'dnsmasq', 'link', 'coupled', 'resolver-object', 'radxa', 'guard'].includes(kind));
-  const methods = kind === 'guard' ? ['config', 'context', 'inspect', 'authorizeRelease', 'commit']
+  const methods = kind === 'guard' ? ['config', 'context', 'installedInput', 'inspect', 'authorizeRelease', 'commit']
     : kind === 'radxa' ? ['ensureGuard', ...Object.entries(RADXA_METHODS).flatMap(([k, names]) => names.map((n) => radxaMethod(k, n)))]
     : kind === 'resolver-object' ? ['ensureGuard', 'view', 'prepare', 'verifySnapshots', 'select', 'probe']
     : kind === 'coupled' ? ['ensureGuard', 'context', 'view', 'linkView', 'create', 'stamp', 'remove', 'releaseGuard', 'adapterPort', 'probe', 'set']
