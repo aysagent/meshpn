@@ -15,6 +15,7 @@ function fixture(t) {
   const links = [{ ifname: 'tun0', ifindex: 11, address: '', link_type: 'none' },
     { ifname: 'wg0', ifindex: 10, address: '', link_type: 'none' }];
   const run = (file, args) => {
+    if (file === 'conntrack' && args[0] === '-L') return '';
     const val = (key) => args[args.indexOf(key) + 1];
     if (file === 'iptables' || file === 'ip6tables') {
       if (args[0] === '--version') return `${file} v1.8.10 (nf_tables)`;

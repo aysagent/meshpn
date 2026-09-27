@@ -35,6 +35,7 @@ clean-vpn**. Он не устанавливает службы и не меня�
 ```bash
 npm run test:dns-tunnel
 npm run test:dns-tunnel-routing-real
+npm run test:dns-tunnel-persistent-real
 ```
 
 Первый набор включает storage/ownership, ошибки запуска, порядок активации,
@@ -50,8 +51,28 @@ veth и повторный rollback с возвращением исходных
 unit-тестов журнала и5 unit-тестов общего runtime в Node suite. Общая регрессия:
 **2131/2131 PASS**, без skips, `/var/tmp/meshpn-acceptance-4gp2kj/report.json`.
 
-Границы: это не запуск полного clean-vpn и не проверка TLS-транспорта. Сетевые
-пробы пока создают новые клиентские сокеты. Сохранённые conntrack/NAT-состояния
-у уже открытого DNS-сокета и реальный lifecycle resolved/dnsmasq ещё должны
-проверяться перед включением режима по умолчанию. Whole-VM reboot, live VPS/Radxa,
+Переход существующих UDP-сокетов теперь проверен отдельно: тот же сокет получает
+baseline-ответ, затем туннельный, затем опять baseline после остановки. Без
+точечного сброса conntrack ingress-сценарий воспроизводил ECONNREFUSED при
+включении и timeout после отключения. Исправление — `dns-tunnel-conntrack.mjs`:
+перед активацией сбрасываются старые DNS-tuples выбранной области; при rollback
+с закрытым guard — только tuples нашего DNAT на10.99.0.2:1053. Используются обе
+пары адресов/портов, протокол и zone0; общего flush и смены connmark нет.
+Существующие TCP DNS-сессии при смене пути требуют нового соединения.
+
+Нужна утилита **conntrack**: её доступность и формат проверяются до установки
+правил. Поддерживается обычная zone0; найденные нестандартные зоны отклоняются.
+Для ingress/LAN источник должен иметь обратный маршрут через выбранный интерфейс;
+асимметричная маршрутизация не угадывается. Лимит128 DNS-tuples на протокол и
+deadline10s ограничивают работу cleanup; ошибка оставляет защиту закрытой.
+Фильтры соответствуют [руководству conntrack](https://netfilter.org/projects/conntrack-tools/conntrack-manpage.html).
+В лаборатории бинарник1.4.8 и зависимости распакованы из Ubuntu packages только
+в `/tmp/meshpn-conntrack-tools.856s8f`, системные пакеты не устанавливались.
+После исправления:6/6 persistent UDP сценариев и6/6 обычных routing/recovery
+сценариев прошли. Общая Node-регрессия:2139/2139 PASS, без skips,
+`/var/tmp/meshpn-acceptance-MKY2P8/report.json`.
+
+Границы: это не запуск полного clean-vpn и не проверка TLS-транспорта.
+Реальный lifecycle resolved/dnsmasq ещё должен проверяться при CLI-интеграции.
+Whole-VM reboot, live VPS/Radxa,
 DoH/DoT приложений и общий VPN kill-switch этим компонентом не подтверждаются.

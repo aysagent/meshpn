@@ -9,6 +9,7 @@ import { createTunnelDnsForwarder, exchangePlainDns } from './dns-tunnel-forward
 import { startTunnelDnsStub } from './dns-tunnel-stub.mjs';
 import { openTunnelDnsJournal } from './dns-tunnel-journal.mjs';
 import { startTunnelDnsRuntime } from './dns-tunnel-runtime.mjs';
+import { resetTunnelDnsConntrack } from './dns-tunnel-conntrack.mjs';
 import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
 
 const run = (file, args) => execFileSync(file, args, { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -37,7 +38,7 @@ const serverSource = `
     process.once('SIGUSR1',async()=>{const p=pairs[0];for(const s of p.sockets)s.destroy();await closePair(p.pair);console.log('PRIMARY_OFF');});
     console.log('READY');})();
 `;
-export async function runTunnelDnsRoutingLab({ ingress = false, lan = false, journaled = false } = {}) {
+export async function runTunnelDnsRoutingLab({ ingress = false, lan = false, journaled = false, persistent = false } = {}) {
   assertBrowserNamespace(); assert.equal(typeof ingress, 'boolean'); assert.equal(typeof lan, 'boolean');
   assert.ok(!(ingress && lan));
   assert.deepEqual(JSON.parse(ip('-j', 'link', 'show')).map((l) => l.ifname), ['lo']);
@@ -47,6 +48,22 @@ export async function runTunnelDnsRoutingLab({ ingress = false, lan = false, jou
   run('sysctl', ['-w', 'net.ipv6.conf.default.forwarding=1']);
   run('sysctl', ['-w', 'net.ipv4.conf.all.rp_filter=0']);
   const children = [], installed = [], checks = []; let stub, journal, owner, deletedTun = false;
+  let oldSocket, tunnelSocket; const persistentFlows = {};
+  const persistentSocket = async (namespace) => {
+    const code = `import dgram from 'node:dgram';import {makeDnsQuery,validateDnsResponse} from './scripts/lib/lab-dns-wire.mjs';
+      const s=dgram.createSocket('udp4');let pending=null,id=0;
+      const finish=r=>{if(!pending)return;clearTimeout(pending.timer);pending=null;process.send(r);};
+      s.on('error',e=>finish({error:e.code}));s.on('message',r=>{if(!pending)return;
+        try{const p=validateDnsResponse(r,pending.q);finish({rcode:p.rcode,answer:r[p.records[0]?.offset+3]});}catch{}});
+      s.bind(0,${JSON.stringify(namespace ? '10.44.0.2' : '192.0.2.1')},()=>s.connect(53,'10.123.0.1',()=>process.send({ready:true})));
+      process.on('message',()=>{const q=makeDnsQuery('persistent.test',1,++id);pending={q,timer:setTimeout(()=>finish({error:'timeout'}),500)};
+        s.send(q,e=>{if(e)finish({error:e.code});});});`;
+    const args = ['--input-type=module', '-e', code];
+    const child = namespace ? spawn('ip', ['netns', 'exec', namespace, process.execPath, ...args], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] })
+      : spawn(process.execPath, args, { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+    children.push(child); const [ready] = await once(child, 'message'); assert.equal(ready.ready, true);
+    return async () => { const response = once(child, 'message'); child.send({ query: true }); return (await response)[0]; };
+  };
   const link = (name, iface, gateway, peer) => {
     ip('netns', 'add', name); ip('link', 'add', iface, 'type', 'veth', 'peer', 'name', `${iface}p`);
     ip('link', 'set', `${iface}p`, 'netns', name);
@@ -125,10 +142,19 @@ export async function runTunnelDnsRoutingLab({ ingress = false, lan = false, jou
       at('uplink', 'ip', '-6', 'route', 'add', 'fd00:200::/64', 'via', 'fd00:100::1');
       run('iptables', ['-t', 'nat', '-A', 'POSTROUTING', '-o', 'up0', '-j', 'MASQUERADE']); }
     const uplink = await startServer('uplink'), tunnel = await startServer('tunnel');
+    // A real gateway commonly tracks connections before VPN startup. Keep an
+    // unrelated NAT rule throughout; otherwise an empty host fixture can hide
+    // persistent pre-existing tuple failures by not tracking its baseline DNS.
+    const unrelated = ['-t', 'nat', '-A', 'POSTROUTING', '-p', 'tcp', '--dport', '8080', '-j', 'RETURN'];
+    run('iptables', unrelated);
     for (const tcp of [false, true]) assert.equal((await query(null, tcp)).answer, 30);
     checks.push('answering-uplink-positive-control');
     for (const tcp of [false, true]) assert.equal(await query6(ingress || lan ? 'peer' : null, tcp), 'answer');
     checks.push('answering-ipv6-uplink-positive-control');
+    if (persistent) {
+      oldSocket = await persistentSocket(ingress || lan ? 'peer' : null);
+      persistentFlows.before = await oldSocket(); assert.equal(persistentFlows.before.answer, 30);
+    }
     const config = { tun: 'cvpntun', fromTun: ingress ? 'wg0' : null,
       lanSubnet: lan ? '10.44.0.0/24' : null, lanInterface: lan ? 'usb0' : null };
     const plan = compileTunnelDnsPlan(config);
@@ -153,10 +179,16 @@ export async function runTunnelDnsRoutingLab({ ingress = false, lan = false, jou
     } else {
       apply('guard'); apply('route');
       stub = await startTunnelDnsStub({ forwarder: createTunnelDnsForwarder({ timeoutMs: 150 }) }); apply('activate');
+      if (persistent) resetTunnelDnsConntrack(config, 'enable', run);
     }
     const before = uplink.count();
     for (const tcp of [false, true]) assert.equal((await query(ingress || lan ? 'peer' : null, tcp)).answer, 10);
     assert.equal(uplink.count(), before); assert.equal(tunnel.count(), 2); checks.push('udp-tcp-private-original-dns-through-tunnel');
+    if (persistent) {
+      persistentFlows.existingAtEnable = await oldSocket();
+      tunnelSocket = await persistentSocket(ingress || lan ? 'peer' : null);
+      persistentFlows.openedDuringTunnel = await tunnelSocket(); assert.equal(persistentFlows.openedDuringTunnel.answer, 10);
+    }
     for (const tcp of [false, true]) assert.equal(await query6(ingress || lan ? 'peer' : null, tcp), 'blocked');
     assert.equal(uplink.count(), before); checks.push('ipv6-udp-tcp-dns-bypass-blocked');
     tunnel.child.kill('SIGUSR1'); await tunnel.wait('PRIMARY_OFF');
@@ -196,9 +228,16 @@ export async function runTunnelDnsRoutingLab({ ingress = false, lan = false, jou
       if (deletedTun && op.file === 'ip' && op.remove.includes('route') && op.remove.includes('cvpntun')) continue;
       run(op.file, op.remove);
     }
+    if (persistent && !journaled) resetTunnelDnsConntrack(config, 'disable', run);
+    run('iptables', unrelated.map((s) => s === '-A' ? '-C' : s));
     for (const tcp of [false, true]) assert.equal((await query(null, tcp)).answer, 30);
     checks.push('explicit-cleanup-restores-baseline');
-    return { status: 'passed', hostNetworkChanged: false, transportEncryptionTested: false, scope: ingress ? 'ingress' : lan ? 'lan' : 'host', checks };
+    if (persistent) {
+      persistentFlows.existingAfterDisable = await oldSocket();
+      persistentFlows.tunneledAfterDisable = await tunnelSocket();
+    }
+    return { status: 'passed', hostNetworkChanged: false, transportEncryptionTested: false, scope: ingress ? 'ingress' : lan ? 'lan' : 'host', checks,
+      ...(persistent ? { persistentFlows } : {}) };
   } catch (error) {
     error.message = `after [${checks.join(', ')}]: ${error.message}`;
     console.error(run('iptables-save', ['-c']));

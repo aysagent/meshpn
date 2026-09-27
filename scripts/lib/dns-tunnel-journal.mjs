@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { compileTunnelDnsPlan, compileTunnelDnsHold, TUNNEL_DNS_TABLE, TUNNEL_DNS_PRIORITIES } from './dns-tunnel-plan.mjs';
+import { resetTunnelDnsConntrack } from './dns-tunnel-conntrack.mjs';
 
 const C = fs.constants, LIMIT = 16384;
 const keys = (v, names) => assert.deepEqual(Object.keys(v).sort(), [...names].sort(), 'unexpected tunnel DNS journal fields');
@@ -146,7 +147,7 @@ function openLocal(directory, { run: customRun, checkpoint = () => {} }, coordin
       assert.ok(!present(op), 'DNS network undo failed'); checkpoint('removed', value);
       value.count--; save();
     }
-    if (!keepHold) removeHold();
+    if (!keepHold) { resetTunnelDnsConntrack(value.config, 'disable', run); removeHold(); }
     value.stage = keepHold ? 'parked' : 'released'; save();
     return { mode: keepHold ? 'parked' : 'restored', operations: count };
   };
@@ -169,6 +170,7 @@ function openLocal(directory, { run: customRun, checkpoint = () => {} }, coordin
       }
       const snapshot = readNetwork(run);
       audit(snapshot, value?.stage === 'parked' ? holds(value) : []);
+      resetTunnelDnsConntrack(config, 'preflight', run);
       const links = {};
       for (const name of linkNames(config)) { assert.ok(snapshot.links[name], `missing interface ${name}`); links[name] = snapshot.links[name]; }
       const oldHold = value?.stage === 'parked' ? value.hold : 0, id = oldHold ? value.id : randomBytes(12).toString('hex');
@@ -187,6 +189,7 @@ function openLocal(directory, { run: customRun, checkpoint = () => {} }, coordin
     activate() {
       assert.equal(value?.stage, 'installing'); assert.equal(value.count, operations(value).length, 'incomplete DNS installation');
       const snapshot = observe(); assert.ok(operations(value).every((op) => present(op, snapshot)), 'missing DNS network state');
+      resetTunnelDnsConntrack(value.config, 'enable', run);
       removeHold(); value.stage = 'active'; save();
     },
   };
