@@ -6,11 +6,11 @@ import { assertDnsmasqVm } from './dnsmasq-vm-safety.mjs';
 import { journal, backendContext, probe, exists, emit } from './dnsmasq-vm-worker.mjs';
 import { createResolverObjectFiles } from './dns-resolver-object-files.mjs';
 import { RESOLVER_TARGET } from './dns-resolver-object-journal.mjs';
-import { pairRadxaBackends, radxaDnsTransaction, readRadxaJournal } from './dns-radxa-journal.mjs';
+import { pairRadxaBackends, readRadxaJournal } from './dns-radxa-journal.mjs';
 import { loadDnsBootGuard } from './dns-boot-guard.mjs';
 import { createBootGuardLifecycle } from './dns-boot-guard-lifecycle.mjs';
 import { readDnsGuardJournal } from './dns-client-guard-journal.mjs';
-import { verifyRadxaGuardRestore } from './dns-radxa-guard-restore.mjs';
+import { createDnsClientController } from './dns-client-controller.mjs';
 import { exec } from './browser-lab-driver.mjs';
 export const guardJournal = '/state/dns-guard';
 let lifecycle;
@@ -18,8 +18,9 @@ const guard = async (enabled) => {
   assert.ok(lifecycle, 'shared boot/DNS lifecycle required');
   return enabled ? lifecycle.prepare() : lifecycle.release();
 };
-export async function createRadxaVmGuardLifecycle(restoring) {
+export async function createRadxaVmGuardLifecycle({ restoring, authorizeRelease, dnsStateExists, client }) {
   await assertRadxaVm(); const boot = await loadDnsBootGuard();
+  assert.equal(client, 'radxa'); assert.equal(boot.policy.input.client, client);
   if (!restoring) await boot.guard.ensure();
   try { await mkdir(guardJournal, { recursive: true, mode: 0o700 }); }
   catch (e) { await boot.guard.ensure(); throw e; }
@@ -34,11 +35,10 @@ export async function createRadxaVmGuardLifecycle(restoring) {
         firewall: { ipv4: boot.policy.firewallBackend, ipv6: boot.policy.firewallBackend },
         usb: { name: link.ifname, ifindex: link.ifindex, mac: link.address, address: '192.168.7.1' } };
     },
-    authorizeRelease: async () => verifyRadxaGuardRestore({ directory: journal, ...await radxaVmContext() }),
+    authorizeRelease,
   });
   let allowBind;
-  try { allowBind = !(await Promise.all(['radxa/journal.json', 'journal.json', 'resolver-etc/journal.json']
-    .map((name) => exists(`${journal}/${name}`)))).some(Boolean); }
+  try { allowBind = !await dnsStateExists(); }
   catch (e) { await boot.guard.ensure(); throw e; }
   return createBootGuardLifecycle({ directory: guardJournal, boot, backend, restoring, allowBind });
 }
@@ -49,10 +49,10 @@ export const journalBytes = () => Promise.all(['radxa/journal.json', 'journal.js
 export async function journalRecords() {
   const [root, dnsmasq, resolver] = (await journalBytes()).map(JSON.parse); return { root, dnsmasq, resolver };
 }
-export async function radxaVmContext() {
-  await assertRadxaVm(); const { scope, backend: dnsmasq, verifyRestoredDaemon } = await backendContext({ ensureGuard: () => guard(true), removeGuard: () => guard(false) });
+export async function radxaVmContext({ ensureGuard = () => guard(true), releaseGuard = () => guard(false) } = {}) {
+  await assertRadxaVm(); const { scope, backend: dnsmasq, verifyRestoredDaemon } = await backendContext({ ensureGuard, removeGuard: releaseGuard });
   const directory = `${journal}/resolver-etc`;
-  const resolver = await createResolverObjectFiles({ directory, baseline: 'localhost-file', ensureGuard: () => guard(true),
+  const resolver = await createResolverObjectFiles({ directory, baseline: 'localhost-file', ensureGuard,
     identity: async () => ({ scope, bootId: (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim() }),
     checkEnvironment: async () => {
       await assertRadxaVm(); const a = await lstat('/etc', { bigint: true }), b = await lstat(directory, { bigint: true });
@@ -65,7 +65,15 @@ export async function radxaVmContext() {
 }
 async function main(command) {
   const options = await assertRadxaVm(); assert.ok(['activate', 'disable', 'guard-proof-check'].includes(command)); process.umask(0o077);
-  lifecycle = await createRadxaVmGuardLifecycle(command === 'disable');
+  const checkpoint = async (point) => {
+    if (options.phase !== 'radxa-cut' || options.point !== point) return;
+    assert.ok(await exists('/state/radxa-first-boot.json'));
+    emit('cut-ready', { point, journals: await journalRecords(), guard: await readDnsGuardJournal(guardJournal) });
+    await new Promise(() => { setInterval(() => {}, 1000); });
+  };
+  const controller = await createDnsClientController({ client: 'radxa', command: command === 'disable' ? 'disable' : 'start',
+    directory: journal, createGuard: createRadxaVmGuardLifecycle, createContext: radxaVmContext, checkpoint });
+  lifecycle = controller.guard;
   if (command === 'guard-proof-check') {
     const before = await readFile(`${guardJournal}/journal.json`);
     assert.equal((await readRadxaJournal(journal)).phase, 'active'); await assert.rejects(lifecycle.release());
@@ -81,16 +89,6 @@ async function main(command) {
     }
     return;
   }
-  await guard(true); const { scope, backend } = await radxaVmContext();
-  const operation = command === 'disable' ? 'disable' : await exists(`${journal}/radxa/journal.json`) ? 'recover' : 'enable';
-  if (operation === 'recover') assert.ok(['dnsmasq', 'resolver', 'active'].includes((await readRadxaJournal(journal)).phase), 'restored/restoring journal requires explicit epoch');
-  const checkpoint = async (point) => {
-    if (options.phase !== 'radxa-cut' || options.point !== point) return;
-    assert.ok(await exists('/state/radxa-first-boot.json'));
-    emit('cut-ready', { point, journals: await journalRecords(), guard: await readDnsGuardJournal(guardJournal) });
-    await new Promise(() => { setInterval(() => {}, 1000); });
-  };
-  console.log('DNS_RADXA_TRANSACTION', await radxaDnsTransaction({ directory: journal, operation, scope, backend, checkpoint }));
-  if (command === 'disable') await lifecycle.release();
+  console.log('DNS_RADXA_TRANSACTION', await controller.run());
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) main(process.argv[2]).catch((e) => { console.error(e.stack); process.exitCode = 1; });

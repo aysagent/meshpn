@@ -10,6 +10,25 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: общий controller двух клиентских профилей
+
+`dns-client-controller.mjs` теперь исполняет start/disable для coupled VPS2 и
+paired Radxa; VM workers оставляют OS authority/factories и synthetic checkpoints.
+Release proof выбирается общим модулем по профилю, guard precedes storage/context,
+restoring/released не принимается за start, dangling journal считается existing.
+После успешного disable результат отражает protectionRetained=false, включая
+Radxa outer release, а не прежний intermediate результат paired transaction.
+Boot policy от этого не отключается. Private/VM authority и shared flock сохранены.
+
+Unit+VM-protocol218/218 PASS; Node1735/1735 PASS, без skips,
+`/var/tmp/meshpn-acceptance-mCnlAj/report.json`. Это не live controller CLI: следующими нужны
+root-pinned OS factories/entrypoint и реальный service/deployment lifecycle,
+а не снятие VM gate флагом. [Подробности](../scripts/dns-client-controller.md).
+Новые lifecycle VM: VPS2 **19/19 в двух загрузках PASS** (`NGWKRQ`), Radxa
+**20/20 в двух загрузках PASS** (`gVjWqh`). Отчёты в соответствующих
+`/var/tmp/meshpn-dns-vm-<имя>/report.json`,474 JS copies соответствуют срезу
+выделения controller, baseline queries0, positive controls PASS, host DNS unchanged.
+
 ### Дополнение 2026-09-27: файловая транзакция opt-in установки
 
 `dns-deployment-files.mjs` публикует пять фиксированных adapter/guard artifacts

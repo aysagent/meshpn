@@ -87,7 +87,12 @@ SIGKILL QEMU не моделирует физический power loss диск�
 
 ## Диагностика текущей интеграции
 
-Текущий lifecycle: **20/20 PASS в двух загрузках**, 2026-09-27,
+После переноса координации в [общий controller](dns-client-controller.md):
+**20/20 PASS в двух загрузках**, `/var/tmp/meshpn-dns-vm-gVjWqh/report.json`.
+Все474 JS copies соответствуют этому срезу. Baseline queries0, positive controls
+PASS, host DNS unchanged. Node1735/1735 PASS (`meshpn-acceptance-mCnlAj`).
+
+До выделения общего controller: **20/20 PASS в двух загрузках**, 2026-09-27,
 `/var/tmp/meshpn-dns-vm-BOtUpP/report.json`. Все466 JS-копии совпали с рабочими
 исходниками. Guard до сети, отдельный CLI adapter, четыре persistent journal,
 DHCP при отказе adapter, SIGKILL dnsmasq/recovery, отказ чужому resolver и

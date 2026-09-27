@@ -10,6 +10,7 @@ import { RESOLVER_TARGET, RESOLVER_MANAGED, readResolverObjectJournal } from './
 import { pairRadxaBackends, radxaDnsTransaction, inspectRadxaTransaction, readRadxaJournal } from './lib/dns-radxa-journal.mjs';
 import { RADXA_APPLY_CUTS, RADXA_RESTORE_CUTS } from './lib/dns-radxa-crash-lab.mjs';
 import { verifyRadxaGuardRestore } from './lib/dns-radxa-guard-restore.mjs';
+import { createDnsClientController } from './lib/dns-client-controller.mjs';
 const scope = { net: 'net:[1]', mnt: 'mnt:[2]', pid: 'pid:[3]' };
 const baseline = await readFile(new URL('./fixtures/dns-clients/radxa-dnsmasq.conf', import.meta.url), 'utf8');
 const crash = (at) => async (p) => { if (p === at) throw new Error('interruption'); };
@@ -42,6 +43,31 @@ async function fixture(t, resolverBaseline = 'dangling-stub') {
     run: (operation, checkpoint) => radxaDnsTransaction({ directory, scope, backend, operation, checkpoint }),
     inspect: () => inspectRadxaTransaction({ directory, scope, backend }) };
 }
+for (const baselineKind of ['localhost-file', 'dangling-stub']) test(`shared Radxa controller uses real release verifier: ${baselineKind}`, async (t) => {
+  const f = await fixture(t, baselineKind); let releases = 0, proof;
+  const controller = (command, checkpoint) => createDnsClientController({ client: 'radxa', command, directory: f.directory, checkpoint,
+    createGuard: async ({ client, restoring, authorizeRelease }) => {
+      assert.equal(client, 'radxa'); assert.equal(restoring, command === 'disable'); proof = authorizeRelease;
+      return { prepare: async () => { f.state.guard = true; },
+        release: async () => { assert.equal(await authorizeRelease(), true); releases++; f.state.guard = false; } };
+    },
+    createContext: async ({ ensureGuard }) => ({ scope, backend: { ...f.backend, ensureGuard }, verifyDaemon: async () => f.state.loaded === 'restore' }),
+  });
+  const active = await (await controller('start')).run(); assert.equal(active.client, 'radxa'); await assert.rejects(proof());
+  assert.equal((await (await controller('start')).run()).id, active.id);
+  await assert.rejects((await controller('disable', crash('restore-resolver'))).run(), /interruption/);
+  const before = await readFile(join(f.directory, 'radxa/journal.json'));
+  await assert.rejects((await controller('start')).run(), /explicit disable/);
+  assert.deepEqual(await readFile(join(f.directory, 'radxa/journal.json')), before); assert.equal(releases, 0);
+  f.state.ready = false;
+  if (baselineKind === 'localhost-file') {
+    const result = await (await controller('disable')).run(); assert.equal(result.protectionRetained, false);
+    assert.equal(releases, 1); assert.equal(f.state.guard, false); assert.equal(result.id, active.id);
+  } else {
+    await assert.rejects((await controller('disable')).run(), /localhost-file baseline/);
+    assert.equal(releases, 0); assert.equal(f.state.guard, true);
+  }
+});
 test('paired lifecycle: daemon before resolver, reverse offline rollback, stable id, guard retained', async (t) => {
   const f = await fixture(t), active = await f.run('enable'); assert.equal(active.status, 'active');
   assert.deepEqual(await f.run('recover'), active);

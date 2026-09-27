@@ -37,9 +37,10 @@ export async function guard(enabled) {
     if (enabled) await exec(tool, ['-w', '2', '-C', ...rule]);
   }
 }
-export async function createVmGuardLifecycle({ restoring, authorizeRelease, dnsStateExists = () => exists(`${journal}/journal.json`) }) {
+export async function createVmGuardLifecycle({ restoring, authorizeRelease, dnsStateExists = () => exists(`${journal}/journal.json`), client = 'vps2' }) {
   await assertSystemdDnsVm();
   const boot = await loadDnsBootGuard(); // Refuses before any setter without our own inherited flock.
+  assert.equal(boot.policy.input.client, client);
   // Protect before creating storage or refusing unreadable metadata. A valid
   // partial release is handled below without automatically reinstalling it.
   try {

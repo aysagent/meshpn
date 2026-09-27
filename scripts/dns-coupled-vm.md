@@ -11,7 +11,12 @@
 отсутствия принадлежащего VPN интерфейса. Настройки uplink не восстанавливаются
 из старого снимка: ими по-прежнему управляет networkd.
 
-2026-09-27: новый lifecycle — **19/19 PASS в двух загрузках**,
+После переноса координации в [общий controller](dns-client-controller.md):
+**19/19 PASS в двух загрузках**, `/var/tmp/meshpn-dns-vm-NGWKRQ/report.json`.
+Все474 JS copies соответствуют этому срезу. Baseline queries0, positive controls
+PASS, host DNS unchanged. Node1735/1735 PASS (`meshpn-acceptance-mCnlAj`).
+
+До выделения общего controller, 2026-09-27: **19/19 PASS в двух загрузках**,
 `/var/tmp/meshpn-dns-vm-ZHZoKE/report.json`. Node **1674/1674 PASS**,
 `/var/tmp/meshpn-acceptance-BIoAF2/report.json`. Все464 JS-копии этого образа
 совпали с исходниками. Регрессия прежнего resolved fixture —20/20 PASS,

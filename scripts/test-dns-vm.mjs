@@ -328,6 +328,6 @@ for (const entry of ['worker', 'driver']) test(`Radxa VM ${entry} refuses ordina
   assert.equal(r.code, 1); assert.ok(!r.stdout.includes('boot-guard')); assert.ok(!r.stdout.includes('DNS_RADXA_TRANSACTION'));
 });
 test('Radxa factory and explicit VM DNS probe refuse host before mutations or DNS', async () => {
-  await assert.rejects(createRadxaVmGuardLifecycle(false));
+  await assert.rejects(createRadxaVmGuardLifecycle({ restoring: false }));
   await assert.rejects(radxaVmContext()); await assert.rejects(queryDnsmasqVm53(Buffer.alloc(12)));
 });

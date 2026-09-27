@@ -232,6 +232,10 @@ dnsmasq. Live controllers, opt-in установка и постоянный о�
 пяти фиксированных artifacts без overwrite, журнал и точный откат до активации.
 47/47 проверок, включая7 process SIGKILL, и Node1724/1724 PASS. Публичного live
 apply пока нет; запуск служб и отключение активной интеграции этим не разрешены.
+Координация `start`/`disable` для VPS2 и Radxa перенесена в
+[общий controller](scripts/dns-client-controller.md). Оба VM-профиля повторно
+прошли lifecycle:19/19 и20/20, по две загрузки; Node1735/1735 PASS. Live OS
+factories, entrypoint и полный install/uninstall остаются следующей связкой.
 
 Следующий порядок работ:
 

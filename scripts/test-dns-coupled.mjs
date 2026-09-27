@@ -8,6 +8,7 @@ import { createCoupledBackend } from './lib/dns-coupled-backend.mjs';
 import { assertCoupledEvidence, COUPLED_CRASH_POINTS } from './lib/dns-coupled-crash-lab.mjs';
 import { verifyCoupledGuardRestore } from './lib/dns-boot-guard-lifecycle.mjs';
 import { readOwnedLinkJournal, writeOwnedLinkJournal } from './lib/dns-owned-link-journal.mjs';
+import { createDnsClientController } from './lib/dns-client-controller.mjs';
 
 const scope = { net: 'net:[1]', mnt: 'mnt:[2]', pid: 'pid:[3]' };
 async function fixture(t) {
@@ -30,6 +31,28 @@ async function fixture(t) {
   const run = (operation, checkpoint) => coupledDnsTransaction({ directory, operation, scope, backend: b, checkpoint });
   return { directory, s, run, backend: b };
 }
+test('shared VPS2 controller preserves start identity, requires explicit disable, and proves release', async (t) => {
+  const f = await fixture(t); let proof, releases = 0;
+  const controller = (command, checkpoint) => createDnsClientController({ client: 'vps2', command, directory: f.directory, checkpoint,
+    createGuard: async ({ client, restoring, authorizeRelease, dnsStateExists }) => {
+      assert.equal(client, 'vps2'); assert.equal(restoring, command === 'disable'); proof = authorizeRelease;
+      assert.equal(await dnsStateExists(), releases > 0 || f.s.current !== null);
+      return { prepare: f.backend.ensureGuard, release: async () => { assert.equal(await authorizeRelease(), true); releases++; f.s.guard = false; } };
+    },
+    createContext: async ({ ensureGuard, releaseGuard }) => ({ scope, backend: { ...f.backend, ensureGuard, releaseGuard } }),
+  });
+  const first = await controller('start'), active = await first.run(); await assert.rejects(first.run(), /one command/);
+  assert.equal(active.client, 'vps2'); assert.equal(active.protectionRetained, true); await assert.rejects(proof());
+  assert.equal((await (await controller('start')).run()).id, active.id);
+  await assert.rejects((await controller('disable', async (p) => { if (p === 'restore-intent') throw new Error('cut'); })).run(), /cut/);
+  const before = await readFile(join(f.directory, 'journal.json'));
+  await assert.rejects((await controller('start')).run(), /explicit disable/);
+  assert.deepEqual(await readFile(join(f.directory, 'journal.json')), before); assert.equal(releases, 0);
+  f.s.ready = false;
+  const restored = await (await controller('disable')).run(); assert.equal(restored.id, active.id);
+  assert.equal(restored.protectionRetained, false); assert.equal(f.s.guard, false); assert.equal(releases, 1);
+  await assert.rejects((await controller('start')).run(), /explicit disable/);
+});
 test('guard proof requires both durable releases and absence of the owned name, without uplink restore', async (t) => {
   const f = await fixture(t), proof = () => verifyCoupledGuardRestore({ directory: f.directory, backend: f.backend });
   f.backend.releaseGuard = async () => { assert.equal(await proof(), true); f.s.guard = false; };

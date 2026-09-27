@@ -104,6 +104,12 @@ Radxa coordinator с явно заданным localhost-file baseline тепе�
 пять фиксированных новых artifacts, без overwrite существующих файлов, 47/47
 проверок, включая7 process SIGKILL. Это ещё не live entrypoint: активация служб,
 реальные клиентские controllers и полный uninstall остаются следующим шагом.
+Координация двух профилей выделена в [общий client controller](dns-client-controller.md)
+и подключена к обоим VM workers: единые `start`/`disable`, guard-first порядок,
+выбор настоящего restore proof, запрет неявного разворота restore в start.
+Это ещё не live OS factories/entrypoint; прежние VM authority gates сохранены.
+Новые lifecycle VM общего controller: VPS2 **19/19**, Radxa **20/20**, каждый
+в двух загрузках PASS; Node1735/1735 PASS. Это не установка на живых клиентах.
 
 ## Три этапа и текущий статус
 
