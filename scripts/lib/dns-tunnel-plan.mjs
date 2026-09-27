@@ -16,7 +16,8 @@ function cidr(v) {
   const mask = (0xffffffff << (32 - Number(prefix))) >>> 0;
   assert.equal((n & mask) >>> 0, n, 'LAN network address required'); return v;
 }
-export function compileTunnelDnsPlan({ tun, primary, fromTun = null, lanSubnet = null, lanInterface = null }) {
+export function compileTunnelDnsPlan({ tun, primary, fromTun = null, lanSubnet = null, lanInterface = null, tag = 'clean-vpn-dns-tunnel' }) {
+  assert.match(tag, /^clean-vpn-dns-tunnel(?:-[a-f0-9]{24})?$/);
   iface(tun);
   if (fromTun !== null) { iface(fromTun); assert.notEqual(tun, fromTun); assert.equal(lanSubnet, null); }
   if (lanSubnet !== null) { cidr(lanSubnet); iface(lanInterface); assert.notEqual(tun, lanInterface); }
@@ -26,7 +27,7 @@ export function compileTunnelDnsPlan({ tun, primary, fromTun = null, lanSubnet =
   const add = (stage, file, args, remove) => operations.push({ stage, file, args, remove });
   const chain = (stage, table, name) => add(stage, 'iptables', ['-w', '5', '-t', table, '-N', name], ['-w', '5', '-t', table, '-X', name]);
   const rule = (stage, file, table, name, spec, first = false) => {
-    const tagged = ['-m', 'comment', '--comment', 'clean-vpn-dns-tunnel', ...spec];
+    const tagged = ['-m', 'comment', '--comment', tag, ...spec];
     add(stage, file, ['-w', '5', '-t', table, first ? '-I' : '-A', name, ...(first ? ['1'] : []), ...tagged],
       ['-w', '5', '-t', table, '-D', name, ...tagged]);
   };
@@ -79,4 +80,27 @@ export function compileTunnelDnsPlan({ tun, primary, fromTun = null, lanSubnet =
   }
   return { schema: 1, kind: 'clean-vpn-tunnel-dns-plan', tun, servers, fromTun, lanSubnet, lanInterface,
     listener: { address: ADDRESS, port: PORT }, operations };
+}
+
+/** Temporary closed gate during restart/rollback. It remains while the old
+ * TUN/rules are removed and is released only after the replacement is ready. */
+export function compileTunnelDnsHold(config, id) {
+  const plan = compileTunnelDnsPlan(config); assert.match(id, /^[a-f0-9]{24}$/);
+  const operations = [], selected = plan.fromTun ? ['-i', plan.fromTun]
+    : plan.lanSubnet ? ['-i', plan.lanInterface, '-s', plan.lanSubnet] : null;
+  const add = (file, chain, args) => {
+    const spec = ['-m', 'comment', '--comment', `clean-vpn-dns-hold-${id}`, ...args, '-j', 'DROP'];
+    operations.push({ file, args: ['-w', '5', '-t', 'filter', '-I', chain, '1', ...spec],
+      remove: ['-w', '5', '-t', 'filter', '-D', chain, ...spec] });
+  };
+  for (const protocol of ['udp', 'tcp']) {
+    add('iptables', 'OUTPUT', [...(plan.fromTun ? ['-s', ADDRESS] : []), '-p', protocol, '--dport', '53']);
+    add('iptables', 'OUTPUT', ['-d', ADDRESS, '-p', protocol, '--dport', String(PORT)]);
+    if (!plan.fromTun) add('ip6tables', 'OUTPUT', ['-p', protocol, '--dport', '53']);
+    if (selected) for (const hook of ['INPUT', 'FORWARD']) {
+      add('iptables', hook, [...selected, '-p', protocol, '-m', 'multiport', '--dports', `53,${PORT}`]);
+      add('ip6tables', hook, ['-i', plan.fromTun ?? plan.lanInterface, '-p', protocol, '--dport', '53']);
+    }
+  }
+  return operations;
 }

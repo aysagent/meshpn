@@ -7,6 +7,8 @@ import { assertBrowserNamespace } from './browser-soak.mjs';
 import { compileTunnelDnsPlan } from './dns-tunnel-plan.mjs';
 import { createTunnelDnsForwarder, exchangePlainDns } from './dns-tunnel-forwarder.mjs';
 import { startTunnelDnsStub } from './dns-tunnel-stub.mjs';
+import { openTunnelDnsJournal } from './dns-tunnel-journal.mjs';
+import { startTunnelDnsRuntime } from './dns-tunnel-runtime.mjs';
 import { makeDnsQuery, validateDnsResponse } from './lab-dns-wire.mjs';
 
 const run = (file, args) => execFileSync(file, args, { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -35,7 +37,7 @@ const serverSource = `
     process.once('SIGUSR1',async()=>{const p=pairs[0];for(const s of p.sockets)s.destroy();await closePair(p.pair);console.log('PRIMARY_OFF');});
     console.log('READY');})();
 `;
-export async function runTunnelDnsRoutingLab({ ingress = false, lan = false } = {}) {
+export async function runTunnelDnsRoutingLab({ ingress = false, lan = false, journaled = false } = {}) {
   assertBrowserNamespace(); assert.equal(typeof ingress, 'boolean'); assert.equal(typeof lan, 'boolean');
   assert.ok(!(ingress && lan));
   assert.deepEqual(JSON.parse(ip('-j', 'link', 'show')).map((l) => l.ifname), ['lo']);
@@ -44,7 +46,7 @@ export async function runTunnelDnsRoutingLab({ ingress = false, lan = false } = 
   run('sysctl', ['-w', 'net.ipv6.conf.all.forwarding=1']);
   run('sysctl', ['-w', 'net.ipv6.conf.default.forwarding=1']);
   run('sysctl', ['-w', 'net.ipv4.conf.all.rp_filter=0']);
-  const children = [], installed = [], checks = []; let stub, deletedTun = false;
+  const children = [], installed = [], checks = []; let stub, journal, owner, deletedTun = false;
   const link = (name, iface, gateway, peer) => {
     ip('netns', 'add', name); ip('link', 'add', iface, 'type', 'veth', 'peer', 'name', `${iface}p`);
     ip('link', 'set', `${iface}p`, 'netns', name);
@@ -127,11 +129,31 @@ export async function runTunnelDnsRoutingLab({ ingress = false, lan = false } = 
     checks.push('answering-uplink-positive-control');
     for (const tcp of [false, true]) assert.equal(await query6(ingress || lan ? 'peer' : null, tcp), 'answer');
     checks.push('answering-ipv6-uplink-positive-control');
-    const plan = compileTunnelDnsPlan({ tun: 'cvpntun', fromTun: ingress ? 'wg0' : null,
-      lanSubnet: lan ? '10.44.0.0/24' : null, lanInterface: lan ? 'usb0' : null });
-    const apply = (stage) => { for (const op of plan.operations.filter((v) => v.stage === stage)) { run(op.file, op.args); installed.unshift(op); } };
-    apply('guard'); apply('route');
-    stub = await startTunnelDnsStub({ forwarder: createTunnelDnsForwarder({ timeoutMs: 150 }) }); apply('activate');
+    const config = { tun: 'cvpntun', fromTun: ingress ? 'wg0' : null,
+      lanSubnet: lan ? '10.44.0.0/24' : null, lanInterface: lan ? 'usb0' : null };
+    const plan = compileTunnelDnsPlan(config);
+    const apply = (stage) => {
+      if (journal) return journal.applyStage(stage);
+      for (const op of plan.operations.filter((v) => v.stage === stage)) { run(op.file, op.args); installed.unshift(op); }
+    };
+    if (journaled) {
+      const code = `import {openTunnelDnsJournal} from './scripts/lib/dns-tunnel-journal.mjs';
+        import {startTunnelDnsRuntime} from './scripts/lib/dns-tunnel-runtime.mjs';
+        const runtime=await startTunnelDnsRuntime({journal:openTunnelDnsJournal(),config:${JSON.stringify(config)},timeoutMs:150});
+        runtime.activate();
+        process.send({ready:true});`;
+      owner = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+      children.push(owner); let errors = ''; owner.stderr.on('data', (b) => { errors += b; });
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`DNS owner readiness timeout: ${errors}`)), 10000);
+        owner.once('message', (m) => { clearTimeout(timer); m.ready ? resolve() : reject(new Error('bad owner readiness')); });
+        owner.once('exit', () => { clearTimeout(timer); reject(new Error(`DNS owner exited: ${errors}`)); });
+        owner.once('error', (error) => { clearTimeout(timer); reject(error); });
+      });
+    } else {
+      apply('guard'); apply('route');
+      stub = await startTunnelDnsStub({ forwarder: createTunnelDnsForwarder({ timeoutMs: 150 }) }); apply('activate');
+    }
     const before = uplink.count();
     for (const tcp of [false, true]) assert.equal((await query(ingress || lan ? 'peer' : null, tcp)).answer, 10);
     assert.equal(uplink.count(), before); assert.equal(tunnel.count(), 2); checks.push('udp-tcp-private-original-dns-through-tunnel');
@@ -143,13 +165,32 @@ export async function runTunnelDnsRoutingLab({ ingress = false, lan = false } = 
     if (ingress) { for (const tcp of [false, true]) assert.equal((await query(null, tcp)).answer, 30); checks.push('gateway-own-dns-unchanged'); }
     if (lan) { for (const tcp of [false, true]) assert.equal((await query(null, tcp)).answer, 20); checks.push('lan-mode-also-protects-host-dns'); }
     const protectedHits = uplink.count();
+    if (journaled) {
+      const exited = once(owner, 'close'); owner.kill('SIGKILL'); await exited;
+      assert.equal(owner.signalCode, 'SIGKILL');
+      for (const tcp of [false, true]) await assert.rejects(query(ingress || lan ? 'peer' : null, tcp, '10.123.0.1', 250));
+      assert.equal(uplink.count(), protectedHits); checks.push('sigkill-owner-no-direct-dns');
+      journal = openTunnelDnsJournal(); journal.prepareRestart(config);
+      assert.equal(journal.state.stage, 'parked');
+      for (const tcp of [false, true]) await assert.rejects(query(ingress || lan ? 'peer' : null, tcp, '10.123.0.1', 250));
+      assert.equal(uplink.count(), protectedHits); checks.push('recovery-gate-no-direct-dns');
+      stub = await startTunnelDnsRuntime({ journal, config, timeoutMs: 150 }); stub.activate();
+      for (const tcp of [false, true]) assert.equal((await query(ingress || lan ? 'peer' : null, tcp)).answer, 20);
+      assert.equal(uplink.count(), protectedHits); checks.push('restart-restores-tunnel-dns');
+    }
     ip('link', 'set', 'cvpntun', 'down');
     for (const tcp of [false, true]) assert.equal((await query(ingress || lan ? 'peer' : null, tcp)).rcode, 2);
     assert.equal(uplink.count(), protectedHits); checks.push('down-tunnel-servfail-no-direct-fallback');
     ip('link', 'delete', 'cvpntun'); deletedTun = true;
     for (const tcp of [false, true]) await assert.rejects(query(ingress || lan ? 'peer' : null, tcp, '10.123.0.1', 250));
     assert.equal(uplink.count(), protectedHits); checks.push('deleted-tunnel-no-dnat-escape');
-    await stub.close(); stub = null;
+    await stub.close({ restore: !journaled }); stub = null;
+    if (journal) {
+      // Runtime abnormal close released the flock but retained the journal.
+      journal = openTunnelDnsJournal();
+      journal.restore(); assert.equal(journal.state.stage, 'released');
+      journal.restore(); journal.release(); journal = null;
+    }
     while (installed.length) {
       const op = installed.shift();
       if (deletedTun && op.file === 'ip' && op.remove.includes('route') && op.remove.includes('cvpntun')) continue;
@@ -168,7 +209,11 @@ export async function runTunnelDnsRoutingLab({ ingress = false, lan = false } = 
     throw error;
   } finally {
     await stub?.close();
-    for (const child of children) { const closed = once(child, 'close'); child.kill('SIGKILL'); await closed; }
+    journal?.release();
+    for (const child of children) {
+      if (child.exitCode !== null || child.signalCode !== null) continue;
+      const closed = once(child, 'close'); child.kill('SIGKILL'); await closed;
+    }
     // Namespace init lifetime removes any residual rules. Never flush host state.
   }
 }

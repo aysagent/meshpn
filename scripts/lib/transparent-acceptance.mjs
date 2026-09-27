@@ -30,6 +30,8 @@ export const TEST_FILES = Object.freeze([
   'test-dns-tunnel-forwarder.mjs',
   'test-dns-tunnel-stub.mjs',
   'test-dns-tunnel-plan.mjs',
+  'test-dns-tunnel-journal.mjs',
+  'test-dns-tunnel-runtime.mjs',
   'test-dns-deployment-inactive.mjs',
   'test-dns-released-history.mjs',
   'test-dns-released-removal.mjs',
