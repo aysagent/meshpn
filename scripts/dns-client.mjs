@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-/** Installed DNS controller entrypoint. Inspection and explicit protected
- * probes only until activation/rollback is verified. No settings mutations. */
+/** Fixed installed entrypoint. Explicit opt-in and shared guard lock required;
+ * VPS2 start/disable use the journal controller, never arbitrary host paths. */
 import { fileURLToPath } from 'node:url';
 import { loadDnsInstalledAuthority, assertDnsInstalledAuthority, dnsInstalledAuthorityInfo } from './lib/dns-installed-authority.mjs';
 import { inspectInstalledVps2Dns } from './lib/dns-installed-vps2.mjs';
 import { inspectInstalledDnsAdapter, probeInstalledDnsAdapter } from './lib/dns-installed-adapter.mjs';
+import { createInstalledVps2Controller } from './lib/dns-installed-controller.mjs';
 
 export function parseDnsClientArgs(argv) {
-  if (argv.length === 1 && ['--help', '--inspect', '--inspect-adapter', '--probe-adapter'].includes(argv[0])) return argv[0].slice(2);
+  if (argv.length === 1 && ['--help', '--inspect', '--inspect-adapter', '--probe-adapter', '--start', '--disable'].includes(argv[0])) return argv[0].slice(2);
   throw Object.assign(new Error('DNS_CLIENT_ARGUMENTS'), { code: 'DNS_CLIENT_ARGUMENTS' });
 }
 // Fixed code + source location only: no assertion message, values, paths or raw
@@ -15,7 +16,9 @@ export function parseDnsClientArgs(argv) {
 export function dnsClientFailureLocation(error) {
   if (!(error instanceof Error) || typeof error.stack !== 'string') return null;
   const allowed = new Set(['dns-installed-authority.mjs', 'dns-installed-vps2.mjs', 'dns-vps2-baseline.mjs',
-    'dns-system-bus.mjs', 'dns-system-command.mjs', 'dns-boot-guard.mjs', 'dns-installed-adapter.mjs']);
+    'dns-system-bus.mjs', 'dns-system-command.mjs', 'dns-boot-guard.mjs', 'dns-installed-adapter.mjs',
+    'dns-installed-controller.mjs', 'dns-installed-vps2-runtime.mjs', 'dns-owned-link-backend.mjs',
+    'dns-coupled-backend.mjs', 'dns-adapter-sockets.mjs']);
   for (const line of error.stack.split('\n').slice(1, 20)) {
     const match = /\bfile:\/\/\/opt\/clean-vpn\/scripts\/lib\/([a-z0-9-]+\.mjs):(\d{1,6}):\d{1,6}\)?$/.exec(line);
     if (match && allowed.has(match[1])) return `${match[1]}:${match[2]}`;
@@ -25,9 +28,12 @@ export function dnsClientFailureLocation(error) {
 async function main() {
   const command = parseDnsClientArgs(process.argv.slice(2));
   if (command === 'help') {
-    console.log('Usage: node scripts/dns-client.mjs --inspect | --inspect-adapter | --probe-adapter | --help\nInspection changes no settings. --probe-adapter sends four protected DNS queries only with a verified guard and installed adapter. No DNS switch or installer.'); return;
+    console.log('Usage: node scripts/dns-client.mjs --inspect | --inspect-adapter | --probe-adapter | --start | --disable | --help\nInspection changes no settings. --probe-adapter sends four protected DNS queries only with a verified guard and installed adapter. --start/--disable change DNS only for an explicitly installed VPS2 client with the shared guard lock. No installer.'); return;
   }
   const token = await loadDnsInstalledAuthority(), info = dnsInstalledAuthorityInfo(token);
+  if (command === 'start' || command === 'disable') {
+    console.log(JSON.stringify(await (await createInstalledVps2Controller({ token, command })).run())); return;
+  }
   if (command === 'inspect-adapter') {
     console.log(JSON.stringify(await inspectInstalledDnsAdapter(token))); return;
   }

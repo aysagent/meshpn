@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { vmDriverFailureIsFatal } from './lib/dns-vm-protocol.mjs';
+import { vmDriverFailureIsFatal, VM_INSTALLED_CHECKS, assertVmInstalledEvidence } from './lib/dns-vm-protocol.mjs';
 import { VM_CUT_POINTS, VM_FAULTS, VM_SYSTEMD_CHECKS, VM_DNSMASQ_CHECKS, vmCases, vmBootOptions, qemuDnsArgs, assertVmJournalCheckpoint, assertVmFaultEvidence, assertVmSystemdEvidence, assertVmDnsmasqEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
 import { runCommand } from './lib/transparent-acceptance.mjs';
 import { dnsSystemdVmUnits } from './lib/dns-systemd-vm-units.mjs';
@@ -16,6 +16,31 @@ import { queryDnsmasqVm53 } from './lib/transparent-dns-lab.mjs';
 import { createVmGuardLifecycle } from './lib/dns-systemd-vm-worker.mjs';
 
 const input = { root: '/private/tools', kernel: '/private/kernel', initrd: '/private/initrd', disk: '/private/state.raw', phase: 'cycle', point: 'none' };
+test('installed CLI VM is a separate bounded case, not substituted coupled crash evidence', () => {
+  assert.deepEqual(vmCases('installed'), ['installed']);
+  const args = qemuDnsArgs({ ...input, phase: 'coupled', point: 'installed' });
+  assert.deepEqual(vmBootOptions(args[args.indexOf('-append') + 1]), { phase: 'coupled', point: 'installed' });
+  assert.equal(args[args.indexOf('-nic') + 1], 'none');
+  for (const phase of ['systemd', 'radxa', 'coupled-cut', 'coupled-inspect'])
+    assert.throws(() => qemuDnsArgs({ ...input, phase, point: 'installed' }));
+  const e = { phase: 'coupled', point: 'installed', systemdPid1: true, installedController: true,
+    resolvConfUnchanged: true, activeTransactionRebootTested: false, checks: [...VM_INSTALLED_CHECKS, ...VM_INSTALLED_CHECKS] };
+  assertVmInstalledEvidence(e); assert.throws(() => assertVmCoupledEvidence(e));
+  for (const key of Object.keys(e).filter((k) => k !== 'checks'))
+    assert.throws(() => assertVmInstalledEvidence({ ...e, [key]: typeof e[key] === 'boolean' ? !e[key] : 'wrong' }));
+  for (let i = 0; i < e.checks.length; i++)
+    assert.throws(() => assertVmInstalledEvidence({ ...e, checks: e.checks.filter((_, n) => n !== i) }));
+  assert.throws(() => assertVmInstalledEvidence({ ...e, checks: [...e.checks, e.checks[0]] }));
+  assert.deepEqual(vmCases('installed-units'), ['installed-units']);
+  const unitArgs = qemuDnsArgs({ ...input, phase: 'coupled', point: 'installed-units' });
+  assert.deepEqual(vmBootOptions(unitArgs[unitArgs.indexOf('-append') + 1]), { phase: 'coupled', point: 'installed-units' });
+  const unitEvidence = { ...e, point: 'installed-units', checks: [...e.checks,
+    'installed-service-stop-restart-adapter-failure', 'installed-service-stop-restart-adapter-failure'] };
+  assertVmInstalledEvidence(unitEvidence);
+  assert.throws(() => assertVmInstalledEvidence({ ...unitEvidence, checks: e.checks }));
+  assert.throws(() => assertVmInstalledEvidence({ ...unitEvidence, point: 'installed' }));
+  assert.throws(() => assertVmCoupledEvidence(unitEvidence));
+});
 test('driver signal termination is expected only after the requested terminal event', () => {
   const signal = "dns-vm-driver.service: Failed with result 'signal'.";
   assert.equal(vmDriverFailureIsFatal(signal), true);
@@ -231,7 +256,7 @@ const coupledEvidence = () => ({ phase: 'coupled', point: 'lifecycle', systemdPi
   bootGuardImplementation: 'cli', adapterImplementation: 'cli', unprivilegedAdapter: true,
   persistentBootGuardJournal: true, sharedGuardDnsLock: true, coupledRestoreProof: true, threeJournalsPreservedOnRefusal: true,
   checks: [...VM_COUPLED_CHECKS, 'readiness-owned-link-and-protected-dns', 'disable-removes-owned-link-before-baseline-release',
-    ...VM_COUPLED_GUARD_CHECKS, ...VM_COUPLED_GUARD_CHECKS, 'installed-cli-baseline-and-refusals', 'installed-cli-baseline-and-refusals'] });
+    ...VM_COUPLED_GUARD_CHECKS, ...VM_COUPLED_GUARD_CHECKS, 'installed-cli-baseline-and-refusals', 'installed-cli-baseline-and-refusals', 'installed-controller-start-disable'] });
 test('coupled lifecycle evidence requires exactly both boots and all checks', () => {
   const e = coupledEvidence(); assertVmCoupledEvidence(e);
   for (const key of Object.keys(e).filter((k) => k !== 'checks')) assert.throws(() => assertVmCoupledEvidence({ ...e,

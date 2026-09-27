@@ -135,9 +135,17 @@ export function dnsInstalledAuthorityInfo(token) {
   const v = instances.get(token); assert.ok(v, 'installed authority token required');
   return structuredClone({ client: v.input.permit.client, guardId: v.input.permit.guardId, config: v.input.config, ...v.scope });
 }
-export async function assertDnsInstalledAuthority(token) {
+// Process/namespace/lock checks for READ-ONLY helpers between full authority
+// barriers. Configuration/code checks belong to those barriers; this MUST NOT
+// authorize a mutation on its own. The fixed runner separately pins each tool.
+export async function assertDnsInstalledSession(token) {
   const v = instances.get(token); assert.ok(v, 'installed authority token required');
-  assert.deepEqual(await runtimeScope(), v.scope); assert.deepEqual(await configuration(), v.input);
+  assert.deepEqual(await runtimeScope(), v.scope);
+}
+export async function assertDnsInstalledAuthority(token) {
+  await assertDnsInstalledSession(token);
+  const v = instances.get(token);
+  assert.deepEqual(await configuration(), v.input);
   assert.equal(await realpath(process.execPath), v.executable.actual);
   assert.deepEqual(await inspectDnsSystemExecutable('/usr/bin/node'), v.executable);
   assert.equal((await boundedFile(`${ROOT}/bundle.json`, 0, 0o644, 131072)).identity, v.bundle.manifestIdentity);

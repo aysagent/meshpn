@@ -4,7 +4,7 @@ import { constants } from 'node:fs';
 import { lstat, stat, open, readlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
-import { assertDnsInstalledAuthority, dnsInstalledAuthorityInfo } from './dns-installed-authority.mjs';
+import { assertDnsInstalledAuthority, assertDnsInstalledSession, dnsInstalledAuthorityInfo } from './dns-installed-authority.mjs';
 import { createDnsSystemCommands, inspectDnsSystemExecutable } from './dns-system-command.mjs';
 import { createDnsSystemBus } from './dns-system-bus.mjs';
 import { validateVps2DnsConfig, assessVps2DnsBaseline } from './dns-vps2-baseline.mjs';
@@ -51,7 +51,7 @@ export async function inspectInstalledVps2Dns(token) {
   await assertDnsInstalledAuthority(token);
   const info = dnsInstalledAuthorityInfo(token); assert.equal(info.client, 'vps2');
   const config = validateVps2DnsConfig(info.config);
-  const commands = await createDnsSystemCommands({ assertAuthority: () => assertDnsInstalledAuthority(token) });
+  const commands = await createDnsSystemCommands({ assertAuthority: () => assertDnsInstalledSession(token) });
   const run = (tool, args) => commands.run(tool, args), bus = createDnsSystemBus(run);
   const tracked = new Map();
   const read = async (path, mode, delegated) => {

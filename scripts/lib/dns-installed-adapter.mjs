@@ -5,7 +5,7 @@ import { constants } from 'node:fs';
 import { open, lstat, readlink } from 'node:fs/promises';
 import { timingSafeEqual, createHash, randomInt } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { assertDnsInstalledAuthority, dnsInstalledAuthorityInfo } from './dns-installed-authority.mjs';
+import { assertDnsInstalledAuthority, assertDnsInstalledSession, dnsInstalledAuthorityInfo } from './dns-installed-authority.mjs';
 import { createDnsSystemCommands, inspectDnsSystemExecutable } from './dns-system-command.mjs';
 import { readTrustedDnsText } from './dns-installed-vps2.mjs';
 import { compileDnsAdapterServicePlan } from './dns-adapter-service-plan.mjs';
@@ -95,7 +95,7 @@ const nulList = (bytes) => { const text = decode(bytes); assert.ok(text.endsWith
 async function collectInstalledDnsAdapter(token) {
   await assertDnsInstalledAuthority(token);
   const info = dnsInstalledAuthorityInfo(token);
-  const commands = await createDnsSystemCommands({ assertAuthority: () => assertDnsInstalledAuthority(token), required: ['systemctl'] });
+  const commands = await createDnsSystemCommands({ assertAuthority: () => assertDnsInstalledSession(token), required: ['systemctl'] });
   const unit = async () => parseLoadedDnsAdapterUnit((await commands.run('systemctl', ['show', DNS_ADAPTER_UNIT,
     ...fields.map((f) => `--property=${f}`)])).stdout);
   const before = await unit(), pid = Number(before.MainPID), base = `/proc/${pid}`;

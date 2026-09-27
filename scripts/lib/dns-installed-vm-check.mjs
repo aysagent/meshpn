@@ -1,26 +1,45 @@
 /** Synthetic installed baseline check inside the existing NIC-less coupled VM.
  * No host installer: every fixture write follows the VM gate. */
 import assert from 'node:assert/strict';
-import { readFile, writeFile, mkdir, unlink, symlink, chmod } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, unlink, symlink, chmod, rename, rmdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { assertCoupledDnsVm } from './dns-systemd-vm-safety.mjs';
 import { exec } from './browser-lab-driver.mjs';
 import { DNS_BOOT_LOCK } from './dns-boot-guard.mjs';
-import { busContext, coupledBaseline, control } from './dns-systemd-vm-worker.mjs';
+import { busContext, coupledBaseline, control, lookup } from './dns-systemd-vm-worker.mjs';
 import { resolvedMethod } from './dns-resolved-backend.mjs';
 import { DNS_NETWORKD_POLICY, DNS_NETWORKD_CONTENTS } from './dns-networkd-policy.mjs';
 import { compileDnsAdapterServicePlan } from './dns-adapter-service-plan.mjs';
+import { compileDnsControllerServicePlan } from './dns-controller-service-plan.mjs';
+import { readCoupledJournal } from './dns-coupled-journal.mjs';
+import { readDnsGuardJournal } from './dns-client-guard-journal.mjs';
+import { DNS_INSTALLED_STATE, DNS_INSTALLED_TRANSACTION, DNS_INSTALLED_GUARD } from './dns-installed-controller.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
-export async function checkInstalledDnsVmBaseline() {
+export async function checkInstalledDnsVmBaseline({ controller = false, service = false } = {}) {
   const options = await assertCoupledDnsVm(); assert.equal(options.phase, 'coupled');
+  assert.equal(typeof controller, 'boolean'); assert.equal(typeof service, 'boolean'); assert.ok(!service || controller);
   const resolverBefore = await readFile('/etc/resolv.conf'), nssBefore = await readFile('/etc/nsswitch.conf');
   const domainsBefore = await readFile('/etc/clean-vpn/dns/domains.json');
   const ctl = (...args) => exec('/usr/bin/systemctl', args, { timeout: 30000 });
   const environment = { PATH: '/usr/bin:/usr/sbin:/bin:/sbin', LC_ALL: 'C', LANG: 'C' };
-  const inspect = (command = '--inspect') => exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
-    '/opt/clean-vpn/scripts/dns-client.mjs', command], { env: environment, timeout: 90000 });
+  const inspect = async (command = '--inspect') => {
+    const started = performance.now();
+    const transaction = ['--start', '--disable'].includes(command);
+    if (transaction) console.log(`DNS_INSTALLED_STAGE ${command} begin`);
+    try {
+      const result = await exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
+        '/opt/clean-vpn/scripts/dns-client.mjs', command], { env: environment, timeout: transaction ? 180000 : 90000 });
+      if (transaction) console.log(`DNS_INSTALLED_STAGE ${command} passed elapsedMs=${Math.round(performance.now() - started)}`);
+      return result;
+    }
+    catch (e) {
+      if (e.killed || e.signal) throw new Error(`installed ${command} terminated: killed=${e.killed === true} signal=${['SIGTERM', 'SIGKILL'].includes(e.signal) ? e.signal : 'other'} elapsedMs=${Math.round(performance.now() - started)}`);
+      throw e;
+    }
+  };
   const refused = (e) => e.code === 1 && /^DNS_CLIENT_REFUSED\n(?:DNS_CLIENT_LOCATION=[a-z0-9-]+\.mjs:\d+\n)?$/.test(e.stderr) && e.stdout === '';
   await assert.rejects(inspect(), refused);
   const networkPath = '/etc/systemd/network/10-dnsfixture.network';
@@ -79,6 +98,26 @@ export async function checkInstalledDnsVmBaseline() {
     }
     await writeFile(adapterUnit.path, adapterUnit.contents, { flag: 'wx', mode: 0o644 }); await chmod(adapterUnit.path, 0o644);
     await symlink('/etc/systemd/system/dns-vm-guard.service', guardAlias);
+    const controllerFiles = service ? compileDnsControllerServicePlan({ schema: 1, client: 'vps2', firewallBackend: 'legacy' }).files : [];
+    for (const file of controllerFiles) {
+      if (file.path.endsWith('.conf')) await mkdir(dirname(file.path), { mode: 0o755 });
+      await writeFile(file.path, file.contents, { flag: 'wx', mode: 0o644 }); await chmod(file.path, 0o644);
+    }
+    const controllerUnit = 'clean-vpn-dns-client.service';
+    const unitState = async (unit) => (await ctl('show', unit, '--property=ActiveState', '--value')).stdout.trim();
+    const serviceCommand = async (command) => {
+      const name = command === 'start' ? controllerUnit : 'clean-vpn-dns-disable.service', began = performance.now();
+      console.log(`DNS_INSTALLED_STAGE service-${command} begin`);
+      try { await exec('/usr/bin/systemctl', ['start', name], { timeout: 200000 }); }
+      catch (e) {
+        const { stdout } = await ctl('show', name, '--property=Result', '--property=ExecMainStatus', '--property=ActiveState');
+        throw new Error(`installed service-${command} failed: ${stdout.trim()}`, { cause: e });
+      }
+      assert.equal((await ctl('show', name, '--property=Result', '--value')).stdout.trim(), 'success');
+      assert.equal((await ctl('show', name, '--property=ExecMainStatus', '--value')).stdout.trim(), '0');
+      assert.equal(await unitState(name), command === 'start' ? 'active' : 'inactive');
+      console.log(`DNS_INSTALLED_STAGE service-${command} passed elapsedMs=${Math.round(performance.now() - began)}`);
+    };
     try {
       await ctl('daemon-reload'); await ctl('start', 'clean-vpn-dns-adapter.service');
       const queriesBefore = (await control('fixture', 'stats')).resolverBodies;
@@ -99,8 +138,58 @@ export async function checkInstalledDnsVmBaseline() {
         assert.equal((await control('fixture', 'stats')).resolverBodies, queriesBefore + 4);
       } finally { await writeFile(keyPath, key); key.fill(0); changed.fill(0); }
       assert.equal(JSON.parse((await inspect('--inspect-adapter')).stdout).loadedCredentialsVerified, true);
+      if (controller) {
+      // Persistent fixed installed paths inside the VM, not an alternate
+      // caller-selected controller journal directory. Keep completed evidence.
+      await mkdir('/var/lib/clean-vpn', { recursive: true, mode: 0o700 });
+      await chmod('/var', 0o755); await chmod('/var/lib', 0o755); await chmod('/var/lib/clean-vpn', 0o700);
+      await mkdir('/state/installed-controller', { recursive: true, mode: 0o700 });
+      await exec('mount', ['--bind', '/state/installed-controller', '/var/lib/clean-vpn']);
+      if (service) await serviceCommand('start');
+      else {
+        const start = JSON.parse((await inspect('--start')).stdout); assert.equal(start.status, 'active');
+        assert.equal(start.protectionRetained, true);
+      }
+      const active = await readCoupledJournal(DNS_INSTALLED_TRANSACTION);
+      assert.equal(active.phase, 'settings'); assert.equal(active.level, 7); assert.equal(active.pending, false);
+      assert.equal((await readDnsGuardJournal(DNS_INSTALLED_GUARD)).stage, 'active');
+      if (service) {
+        await lookup('installed-service-a', '192.0.2.123');
+        await lookup('installed-service-aaaa', '2001:db8::12', true, 6);
+        await ctl('stop', controllerUnit); assert.equal(await unitState(controllerUnit), 'inactive');
+        assert.deepEqual(await readCoupledJournal(DNS_INSTALLED_TRANSACTION), active);
+        await lookup('installed-controller-stopped', '192.0.2.123');
+        await serviceCommand('start');
+        assert.deepEqual(await readCoupledJournal(DNS_INSTALLED_TRANSACTION), active);
+        await ctl('kill', '--signal=SIGKILL', '--kill-whom=main', 'clean-vpn-dns-adapter.service');
+        const stoppedBy = performance.now() + 15000;
+        while (['active', 'activating', 'deactivating'].includes(await unitState(controllerUnit))) {
+          assert.ok(performance.now() < stoppedBy); await delay(100);
+        }
+        await lookup('installed-adapter-dead', null);
+        assert.equal((await readDnsGuardJournal(DNS_INSTALLED_GUARD)).stage, 'active');
+        assert.deepEqual(await control('sentinel', 'stats'), { ipv4: 0, ipv6: 0 });
+        await serviceCommand('disable');
+      } else {
+        const disabled = JSON.parse((await inspect('--disable')).stdout); assert.equal(disabled.status, 'released');
+        assert.equal(disabled.protectionRetained, false);
+      }
+      assert.equal((await readCoupledJournal(DNS_INSTALLED_TRANSACTION)).phase, 'released');
+      assert.equal((await readDnsGuardJournal(DNS_INSTALLED_GUARD)).stage, 'released');
+      assert.ok(!JSON.parse((await exec('ip', ['-j', 'link', 'show'])).stdout).some((v) => v.ifname === active.name));
+      // Restore the outer lab's early guard before unrelated legacy lifecycle
+      // scenarios. The installed controller itself never silently rebinds.
+      await exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
+        '/opt/clean-vpn/scripts/dns-boot-guard.mjs', '--start'], { env: environment, timeout: 60000 });
+      const bootId = (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim();
+      await rename(DNS_INSTALLED_STATE, `/var/lib/clean-vpn/completed-${bootId}`);
+      }
     } finally {
+      if (service) await ctl('stop', controllerUnit, 'clean-vpn-dns-disable.service');
       await ctl('stop', 'clean-vpn-dns-adapter.service');
+      for (const file of controllerFiles) {
+        await unlink(file.path); if (file.path.endsWith('.conf')) await rmdir(dirname(file.path));
+      }
       await unlink(adapterUnit.path); await unlink(guardAlias); await ctl('daemon-reload');
       for (const name of passiveTargets) await unlink(`/etc/systemd/system/${name}`);
       await ctl('daemon-reload');

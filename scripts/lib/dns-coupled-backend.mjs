@@ -1,13 +1,18 @@
-/** Separate namespace and VM-gated adapters for coupled address/link/resolved operations. */
+/** Separately authorized namespace, VM and installed address/link/resolved adapters. */
 import assert from 'node:assert/strict';
-import { createOwnedLinkBackend, createVmOwnedLinkBackend, createVmLockedOwnedLinkBackend } from './dns-owned-link-backend.mjs';
+import { createOwnedLinkBackend, createVmOwnedLinkBackend, createVmLockedOwnedLinkBackend, createInstalledOwnedLinkContext } from './dns-owned-link-backend.mjs';
 import { resolvedMethod } from './dns-resolved-backend.mjs';
 import { exec } from './browser-lab-driver.mjs';
+import { probeInstalledDnsAdapter } from './dns-installed-adapter.mjs';
 
 export const createCoupledBackend = (options) => buildBackend(options, createOwnedLinkBackend);
 export const createVmCoupledBackend = (options) => buildBackend(options, createVmOwnedLinkBackend);
 export const createVmLockedCoupledBackend = (options) => buildBackend(options, createVmLockedOwnedLinkBackend,
   (_file, args) => options.commands.run('ip', args));
+export async function createInstalledCoupledBackend({ token, ensureGuard, releaseGuard }) {
+  const { link, bus, run, config } = await createInstalledOwnedLinkContext({ token, ensureGuard, releaseGuard });
+  return buildBackend({ bus, port: config.adapterPort, probe: () => probeInstalledDnsAdapter(token) }, async () => link, run);
+}
 async function buildBackend({ bus, ensureGuard, releaseGuard, port, probe, commands }, factory, run = exec) {
   const link = await factory({ bus, ensureGuard, releaseGuard, commands });
   const view = async (name) => {
@@ -20,6 +25,7 @@ async function buildBackend({ bus, ensureGuard, releaseGuard, port, probe, comma
       assert.deepEqual(await link.context(), context); assert.deepEqual(await view(current.name), current);
       assert.equal(target.name, current.name); assert.equal(target.ifindex, current.ifindex);
       assert.deepEqual(await link.context(), context);
+      await link.assertMutation(current);
       if (step === 'addrgen') {
         assert.ok(['eui64', 'none', 'stable_secret', 'random'].includes(target.addrgen));
         await run('ip', ['link', 'set', 'dev', current.name, 'addrgenmode', target.addrgen]);

@@ -73,7 +73,7 @@ async function main() {
     await exec(tool, ['-w', '2', '-C', 'OUTPUT', '-p', protocol, '--dport', '53', '-j', 'REJECT']);
   }
   emit('boot-guard', { bootId, ...options, pid1: (await readFile('/proc/1/comm', 'utf8')).trim() });
-  if (!previous && options.phase === 'coupled') {
+  if (!previous && options.phase === 'coupled' && options.point === 'lifecycle') {
     await writeFile('/run/meshpn/deny-start', 'fixture\n', { flag: 'wx', mode: 0o600 });
     await assert.rejects(ctl('start', 'dns-vm-consumer.service'));
     assert.equal(await state('dns-vm-guard.service'), 'failed');
@@ -92,7 +92,24 @@ async function main() {
   const networkStart = BigInt((await ctl('show', 'dns-vm-network.service', '--property=ExecMainStartTimestampMonotonic', '--value')).stdout.trim());
   assert.ok(guardEnd > 0n && networkStart >= guardEnd); await inspectGuard();
   check('boot-guard-cli-before-network');
-  if (options.phase === 'coupled') { await checkInstalledDnsVmBaseline(); check('installed-cli-baseline-and-refusals'); }
+  if (['installed', 'installed-units'].includes(options.point)) {
+    if (previous) assert.notEqual(bootId, previous.bootId);
+    await checkInstalledDnsVmBaseline({ controller: true, service: options.point === 'installed-units' });
+    check('installed-cli-baseline-and-refusals'); check('installed-controller-start-disable');
+    if (options.point === 'installed-units') check('installed-service-stop-restart-adapter-failure');
+    assert.deepEqual(await readFile('/etc/resolv.conf'), resolverBefore);
+    if (!previous) {
+      await persist({ bootId, checks }); emit('reboot-ready', { bootId }); await ctl('--no-block', 'reboot'); return;
+    }
+    emit('passed', { ...options, bootId, previousBootId: previous.bootId, systemdPid1: true,
+      checks: [...previous.checks, ...checks], installedController: true, resolvConfUnchanged: true,
+      activeTransactionRebootTested: false });
+    await ctl('--no-block', 'poweroff'); return;
+  }
+  if (options.phase === 'coupled') {
+    await checkInstalledDnsVmBaseline({ controller: Boolean(previous) }); check('installed-cli-baseline-and-refusals');
+    if (previous) check('installed-controller-start-disable');
+  }
   const probeBefore = (await control('fixture', 'stats')).resolverBodies;
   await ctl('start', 'dns-vm-adapter.service');
   assert.equal((await control('fixture', 'stats')).resolverBodies - probeBefore, 4);

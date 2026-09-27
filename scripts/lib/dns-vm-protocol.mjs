@@ -55,6 +55,15 @@ export const VM_COUPLED_CHECKS = Object.freeze(['failed-guard-prevents-services'
   'stale-journals-preserved-start-refused']);
 export const VM_COUPLED_GUARD_CHECKS = Object.freeze(['boot-guard-cli-before-network', 'cli-adapter-readiness-and-isolation',
   'bound-guard-refuses-active-link', 'missing-guard-journal-retains-protection']);
+export const VM_INSTALLED_CHECKS = Object.freeze(['boot-guard-cli-before-network',
+  'installed-cli-baseline-and-refusals', 'installed-controller-start-disable']);
+export function assertVmInstalledEvidence(e) {
+  assert.equal(e.phase, 'coupled'); assert.ok(['installed', 'installed-units'].includes(e.point));
+  assert.equal(e.systemdPid1, true); assert.equal(e.installedController, true);
+  assert.equal(e.resolvConfUnchanged, true); assert.equal(e.activeTransactionRebootTested, false);
+  const checks = e.point === 'installed-units' ? [...VM_INSTALLED_CHECKS, 'installed-service-stop-restart-adapter-failure'] : VM_INSTALLED_CHECKS;
+  assert.deepEqual([...e.checks].sort(), [...checks, ...checks].sort());
+}
 export function assertVmCoupledEvidence(evidence, cut) {
   assert.equal(evidence.phase, cut ? 'coupled-inspect' : 'coupled');
   assert.ok(cut ? VM_COUPLED_CUTS.includes(evidence.point) : evidence.point === 'lifecycle');
@@ -66,7 +75,7 @@ export function assertVmCoupledEvidence(evidence, cut) {
   const once = ['stale-journals-preserved-start-refused', 'readiness-owned-link-and-protected-dns', 'disable-removes-owned-link-before-baseline-release'];
   const expected = cut ? [...once, ...VM_COUPLED_GUARD_CHECKS.slice(0, 2), ...VM_COUPLED_GUARD_CHECKS]
     : [...VM_COUPLED_CHECKS, ...once.slice(1), ...VM_COUPLED_GUARD_CHECKS, ...VM_COUPLED_GUARD_CHECKS,
-      'installed-cli-baseline-and-refusals', 'installed-cli-baseline-and-refusals'];
+      'installed-cli-baseline-and-refusals', 'installed-cli-baseline-and-refusals', 'installed-controller-start-disable'];
   assert.deepEqual([...evidence.checks].sort(), expected.sort());
   if (cut) {
     assert.equal(cut.event, 'cut-ready'); assert.equal(cut.point, evidence.point);
@@ -135,6 +144,8 @@ export function vmCases(selected = 'all') {
     const point = selected.slice('radxa-cut:'.length); assert.ok(VM_RADXA_CUTS.includes(point)); return [point];
   }
   if (selected === 'coupled') return ['lifecycle'];
+  if (selected === 'installed') return ['installed'];
+  if (selected === 'installed-units') return ['installed-units'];
   if (selected === 'coupled-cuts') return [...VM_COUPLED_CUTS];
   if (selected.startsWith('coupled-cut:')) {
     const point = selected.slice('coupled-cut:'.length);
@@ -181,7 +192,8 @@ export function vmBootOptions(cmdline) {
   const phase = get('meshpn_phase'), point = get('meshpn_point');
   assert.ok(['cycle', 'cut', 'inspect', 'fault', 'systemd', 'dnsmasq', 'coupled', 'coupled-cut', 'coupled-inspect', 'radxa', 'radxa-cut', 'radxa-inspect'].includes(phase));
   assert.ok(phase === 'cycle' ? point === 'none' : phase === 'fault' ? VM_FAULTS.includes(point)
-    : ['systemd', 'dnsmasq', 'coupled', 'radxa'].includes(phase) ? point === 'lifecycle'
+    : phase === 'coupled' ? ['lifecycle', 'installed', 'installed-units'].includes(point)
+      : ['systemd', 'dnsmasq', 'radxa'].includes(phase) ? point === 'lifecycle'
       : phase.startsWith('radxa-') ? VM_RADXA_CUTS.includes(point)
         : phase.startsWith('coupled-') ? VM_COUPLED_CUTS.includes(point) : VM_CUT_POINTS.includes(point));
   return { phase, point };

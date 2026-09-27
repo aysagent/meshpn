@@ -3,6 +3,31 @@ import test from 'node:test';
 import { createDnsSystemBus, validateResolvedCall } from './lib/dns-system-bus.mjs';
 import { resolvedMethod } from './lib/dns-resolved-backend.mjs';
 const values = { DNSEx: [[2,[127,0,0,1],2053,'']], Domains: [['.',true]], DefaultRoute: true };
+test('link observation batches typed properties into two fixed helper calls without caching', async () => {
+  const calls = [], types = ['a(iayqs)', 'a(sb)', 'b'];
+  const bus = createDnsSystemBus(async (_tool, args) => {
+    calls.push(args);
+    if (args.includes('GetLink')) return { stdout: JSON.stringify({ data: ['/org/freedesktop/resolve1/link/_32'] }) };
+    assert.deepEqual(args.slice(5), ['get-property', ':1.23', '/org/freedesktop/resolve1/link/_32',
+      'org.freedesktop.resolve1.Link', 'DNSEx', 'Domains', 'DefaultRoute']);
+    return { stdout: Object.values(values).map((data, i) => JSON.stringify({ type: types[i], data })).join('\n') + '\n' };
+  });
+  assert.deepEqual(await bus.linkSnapshot(':1.23', 32), values); assert.equal(calls.length, 2);
+  assert.deepEqual(await bus.linkSnapshot(':1.23', 32), values); assert.equal(calls.length, 4);
+  await assert.rejects(bus.linkSnapshot('org.freedesktop.resolve1', 32));
+  await assert.rejects(bus.linkSnapshot(':1.23', 1)); assert.equal(calls.length, 4);
+});
+test('batched link read refuses missing, extra, malformed, reordered and mistyped properties', async () => {
+  const good = [{ type: 'a(iayqs)', data: values.DNSEx }, { type: 'a(sb)', data: values.Domains }, { type: 'b', data: true }];
+  const text = (v) => v.map((x) => JSON.stringify(x)).join('\n');
+  for (const stdout of ['', text(good.slice(1)), text([...good, good[0]]), text([...good].reverse()),
+    text([good[0], good[1], { type: 'b', data: 'true' }]), text([good[0], good[1], { type: 'b', data: true, extra: true }]),
+    text([good[0], { type: 'a(sb)', data: [['.', 'true']] }, good[2]]), '[bad]', 'x'.repeat(262145)]) {
+    const bus = createDnsSystemBus(async (_tool, args) => args.includes('GetLink')
+      ? { stdout: JSON.stringify({ data: ['/org/freedesktop/resolve1/link/_32'] }) } : { stdout });
+    await assert.rejects(bus.linkSnapshot(':1.23', 32));
+  }
+});
 test('fixed bus endpoint, unique owner, validated property readback and void setters', async () => {
   const calls=[];
   const bus=createDnsSystemBus(async (tool,args) => {

@@ -90,9 +90,10 @@ test('installed bundle bounds total code bytes, not only each file', async (t) =
   await writeFile(f.path('bundle.json'), JSON.stringify(manifest));
   await assert.rejects(f.inspect(), /bundle total size limit/);
 });
-test('installed CLI exposes inspection only and rejects mutating or ambiguous arguments', () => {
+test('installed CLI requires one explicit supported operation and rejects installer or ambiguous arguments', () => {
   assert.equal(parseDnsClientArgs(['--help']), 'help'); assert.equal(parseDnsClientArgs(['--inspect']), 'inspect');
-  for (const args of [[], ['--start'], ['--disable'], ['--apply'], ['--install'], ['--inspect', '--help'],
+  assert.equal(parseDnsClientArgs(['--start']), 'start'); assert.equal(parseDnsClientArgs(['--disable']), 'disable');
+  for (const args of [[], ['--apply'], ['--install'], ['--inspect', '--help'],
     ['--inspect', '--inspect'], ['--inspect=true'], ['--root=/tmp'], ['--client=radxa']])
     assert.throws(() => parseDnsClientArgs(args), { code: 'DNS_CLIENT_ARGUMENTS' });
 });
@@ -101,7 +102,7 @@ test('installed CLI help is offline; ordinary repo inspection fails with a redac
   const help = await runCommand(process.execPath, [path, '--help']);
   assert.equal(help.code, 0); assert.match(help.stdout, /Inspection changes no settings/); assert.equal(help.stderr, '');
   assert.match(help.stdout, /--probe-adapter sends four protected DNS queries/);
-  for (const [arg, expected] of [['--inspect', 'DNS_CLIENT_REFUSED'], ['--probe-adapter', 'DNS_CLIENT_REFUSED'], ['--start', 'DNS_CLIENT_ARGUMENTS']]) {
+  for (const [arg, expected] of [['--inspect', 'DNS_CLIENT_REFUSED'], ['--probe-adapter', 'DNS_CLIENT_REFUSED'], ['--start', 'DNS_CLIENT_REFUSED'], ['--disable', 'DNS_CLIENT_REFUSED']]) {
     const r = await runCommand(process.execPath, [path, arg]);
     assert.equal(r.code, 1); assert.equal(r.stdout, ''); assert.equal(r.stderr.trim(), expected);
   }

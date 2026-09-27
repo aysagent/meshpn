@@ -79,6 +79,25 @@ export function createDnsSystemBus(run) {
       const result = await call(['get-property', owner, path, 'org.freedesktop.resolve1.Link', property]);
       validateResolvedSettings({ ...empty(), [property]: result }); return result;
     },
+    // One GetLink and one multi-property helper instead of six processes.
+    // busctl emits one typed JSON line per property, in requested order. This
+    // is a bounded observation, NOT an atomic snapshot or cached OS state.
+    async linkSnapshot(owner, index) {
+      ownerCheck(owner); indexCheck(index);
+      const path = singleton(await call(['call', owner, root, manager, 'GetLink', 'i', String(index)]));
+      assert.match(path, /^\/org\/freedesktop\/resolve1\/link\/[A-Za-z0-9_]+$/);
+      const { stdout } = await execute(['get-property', owner, path, 'org.freedesktop.resolve1.Link', ...properties]);
+      assert.equal(typeof stdout, 'string'); assert.ok(Buffer.byteLength(stdout) <= 262144);
+      const lines = stdout.trim().split('\n'); assert.equal(lines.length, 3);
+      const signatures = ['a(iayqs)', 'a(sb)', 'b'], result = {};
+      for (let i = 0; i < properties.length; i++) {
+        const value = JSON.parse(lines[i]);
+        assert.ok(value && typeof value === 'object');
+        assert.deepEqual(Object.keys(value).sort(), ['data', 'type']); assert.equal(value.type, signatures[i]);
+        result[properties[i]] = value.data;
+      }
+      validateResolvedSettings(result); return result;
+    },
     // Void methods can return empty stdout. Success still requires the caller's
     // journaled readback; process completion alone is not a DNS state proof.
     async set(owner, args) { ownerCheck(owner); validateResolvedCall(args); await execute(['call', owner, root, manager, ...args]); },
