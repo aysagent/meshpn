@@ -128,7 +128,15 @@ private snapshots/journal0700, проверка same mount и identity обои�
 restore (`meshpn-dns-vm-L5itxn`, срез `1de98a7`). Node1779/1779 PASS.
 Прежние отказы startup1500мс не скрыты; успешный прогон не устанавливает их
 причину. Трассы и границы результата — [resolver object](dns-resolver-object.md).
-Новая трёхточечная crash-матрица, installed entrypoint/установщик и пилоты остаются.
+Новая трёхточечная crash-матрица выполнена: **3/3, шесть загрузок, по12 проверок
+PASS** (`meshpn-dns-vm-ZqbtFB`, `c3ccc0c`, уже с TCP noDelay). Baseline queries0
+под guard, positive controls PASS, host DNS unchanged. Эта конечная матрица
+public-layout завершена; installed entrypoint/установщик и пилоты остаются.
+Начат [installed opt-in/authority](dns-installed-authority.md): отдельное
+разрешение связано с bundle/config hash и guard ID, есть только read-only
+`dns-client.mjs --inspect`. Это ещё не положительно проверенный VM installed
+путь и не готовая команда переключения DNS; OS factories/mutating commands
+пока не подключены.
 
 ## Три этапа и текущий статус
 

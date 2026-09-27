@@ -111,8 +111,12 @@ Baseline queries0 под guard, positive controls пройдены, host DNS unc
 правку адаптера. PASS подтверждает lifecycle этого среза, **не устанавливает
 причину прежних timing-отказов** и не гарантирует время запуска на реальной Radxa.
 Образ завершённого BP4yC0 также удалён для места; его evidence сохранены.
-Далее — повтор прежних трёх whole-guest cut точек для нового layout; прошлые
-crash-результаты private-layout их не заменяют. Установщик/живой пилот остаются.
+Повтор прежних трёх whole-guest cut точек для нового layout теперь выполнен:
+**3/3 PASS, шесть загрузок, по12 проверок**, `meshpn-dns-vm-ZqbtFB/report.json`.
+Все488 JS-копий соответствуют `c3ccc0c`, включая TCP noDelay адаптера; baseline
+queries0, positive controls PASS, host DNS unchanged. Это отдельный новый
+результат, не перенесённый PASS private-layout. Установщик/живой пилот остаются;
+последующая installed-authority логика ещё не проверялась в этом VM-срезе.
 
 ## Настоящий изолированный сценарий
 

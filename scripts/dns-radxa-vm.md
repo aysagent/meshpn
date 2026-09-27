@@ -102,7 +102,12 @@ resolver и делает NSS-запрос, но не читает private state;
 каталога/restore после reboot, baseline queries0 под guard и positive controls
 после release. Host DNS unchanged. Это новый layout, не inherited PASS старых
 результатов ниже. Последующая TCP noDelay правка в этом образе ещё отсутствует.
-Повтор трёх whole-guest cuts для новой схемы остаётся отдельным этапом.
+Повтор трёх whole-guest cuts для новой схемы выполнен: **3/3 PASS, шесть
+загрузок, по12 проверок**, `/var/tmp/meshpn-dns-vm-ZqbtFB/report.json`.
+Все488 JS-копий соответствуют `c3ccc0c`, включая TCP noDelay адаптера. Во всех
+точках сохранены четыре журнала, baseline queries0 под защитой, positive
+controls пройдены, host DNS unchanged. Новая installed-authority проверка,
+написанная позже, в этот VM-срез не входит.
 Успешный прогон не объясняет прежние startup timing failures и не измеряет
 производительность настоящей Radxa; эти отказы сохранены в resolver object.
 
