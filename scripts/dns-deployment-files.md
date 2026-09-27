@@ -8,16 +8,27 @@ deployment lock. Здесь нет SSH, systemctl, enable, DNS-проб или f
 
 ## Объём
 
-Из существующих renderer формируются ровно пять файлов:
+Общие пять файлов из существующих renderer:
 
 - `clean-vpn-dns-adapter.service` и `clean-vpn-dns-guard.service` в `/etc/systemd/system`;
 - `upstream.json`, `domains.json` и `guard-policy.json` в `/etc/clean-vpn/dns`.
+
+Для новых VPS2 plans добавляется шестой фиксированный artifact:
+`/etc/systemd/network/00-clean-vpn-dns.network`0644. Он содержит только Match
+для `cvdns` + ровно8 lowercase hex символов и `[Link] Unmanaged=yes`, без
+настроек uplink, DHCP, адресов или DNS. Для Radxa остаются пять файлов.
+Прежние пятифайловые журналы VPS2 можно inspect/recover/remove; это **не**
+автоматическое обновление до полной новой установки. Новая installed baseline
+проверка требует exclusion-файл и отвергает его отсутствие/изменение.
+Файловая транзакция не выполняет networkd Reload и не доказывает, что правило
+уже загружено. Перед DNS setters требуется реальный unmanaged state своего link.
 
 Units не содержат `[Install]`; symlink в `.wants` или dependency drop-in не
 создаётся. Boot policy имеет `enabled:true`, но этот файл сам не запускает unit.
 После публикации **нельзя вручную запускать эти units**: файловая транзакция не
 доказывает готовность полного deployment. PSK и исходники не копируются; конфиги
-существующего resolved/dnsmasq/resolv.conf не входят в allowlist.
+существующего resolved/dnsmasq/resolv.conf не входят в allowlist. При совпадении
+имени networkd artifact чужой файл не принимается даже с идентичными байтами.
 
 Установщик обязан предоставить заранее проверенные каталоги и функцию
 `assertInactive`, которая подтверждает отсутствие активации под своим общим
@@ -50,13 +61,20 @@ directory; затем записывается write-ahead manifest. Публи�
 файла состояние проверяется снова. Уже удалённый target допустим только при
 записанном `removing`, а не как пропавший `installed` файл.
 
-Staging и targets должны находиться на одной файловой системе; это проверяется
-до staging writes. Существующие каталоги не удаляются даже после remove, чужие
+Staging и target parents должны находиться на одном **mount**, а не просто
+иметь одинаковый `st_dev`: проверяется `mnt_id` открытых каталогов, до staging
+writes и при дальнейших проверках. Отдельный bind mount на том же устройстве
+отвергается до публикации любого artifact. Существующие каталоги не удаляются даже после remove, чужие
 файлы не затрагиваются. При обрыве **до** появления журнала orphan staging/temp
 сохраняются для review: они никогда не становятся recovery authority.
 Если сторонний root меняет файлы одновременно с setter, общий lock его не
 останавливает: это не атомарная защита от враждебного root или другого менеджера,
 не соблюдающего ownership. Такая машина не является поддержанным deployment.
+
+Дополнение проверки:57/57 файловых tests, включая9 реальных SIGKILL под flock
+и отдельный private mount namespace с same-device bind mount. Проверены
+публикация/удаление шестого artifact, строгие contents/hash, отказ при чужом
+файле/drift, сохранение старого пятифайлового rollback и отдельного Radxa plan.
 
 Файловый remove разрешён только **до активации**. Он не заменяет DNS disable:
 для активного клиента сначала нужны proof восстановленного DNS, guard release,

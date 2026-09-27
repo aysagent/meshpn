@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { validateVps2DnsConfig, assessVps2DnsBaseline } from './lib/dns-vps2-baseline.mjs';
 import { inspectInstalledVps2Dns, validateVps2DnsUnit } from './lib/dns-installed-vps2.mjs';
+import { DNS_NETWORKD_CONTENTS } from './lib/dns-networkd-policy.mjs';
 
 const config = () => ({ schema: 1, kind: 'clean-vpn-dns-client', client: 'vps2', uplink: 'eth0',
   networkFile: { path: '/run/systemd/network/10-netplan-eth0.network', sha256: 'a'.repeat(64) },
@@ -14,6 +15,7 @@ const evidence = () => ({ resolverTarget: '/run/systemd/resolve/stub-resolv.conf
   routes4: [{ dst: 'default', dev: 'eth0' }, { dst: '10.129.0.0/24', dev: 'eth0' }, { dst: '127.0.0.1', type: 'local', dev: 'lo' }],
   networkState: 'NETWORK_FILE=/run/systemd/network/10-netplan-eth0.network\nADMIN_STATE=configured\nDOMAINS=auto.internal ru-central1.internal\n',
   networkFileSha256: 'a'.repeat(64), adapterDomainPolicy: config().domainPolicy,
+  networkdExclusion: DNS_NETWORKD_CONTENTS,
   manager: { DNSEx: [[2, 2, [10, 129, 0, 2], 0, '']], FallbackDNSEx: [],
     Domains: [[2, 'auto.internal', false], [2, 'ru-central1.internal', false]], ResolvConfMode: 'stub' } });
 test('strict VPS2 config has no implicit cloud policy, backend, uplink or paths', () => {
@@ -50,6 +52,8 @@ for (const [name, change] of [
   ['networkd selected file changed', (e) => { e.networkState = e.networkState.replace('10-netplan-eth0', '20-other'); }],
   ['networkd not configured', (e) => { e.networkState = e.networkState.replace('configured', 'configuring'); }],
   ['network file bytes changed', (e) => { e.networkFileSha256 = 'b'.repeat(64); }],
+  ['missing networkd exclusion', (e) => { delete e.networkdExclusion; }],
+  ['changed networkd exclusion', (e) => { e.networkdExclusion = DNS_NETWORKD_CONTENTS.replace('Unmanaged=yes', 'Unmanaged=no'); }],
   ['new DHCP domain', (e) => { e.networkState = e.networkState.replace('DOMAINS=', 'DOMAINS=other.internal '); }],
   ['DHCP catch-all', (e) => { e.networkState += 'ROUTE_DOMAINS=.\n'; }],
   ['adapter policy mismatch', (e) => { e.adapterDomainPolicy.denySuffixes.pop(); }],

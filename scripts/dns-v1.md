@@ -147,6 +147,17 @@ authority**. Следом — installed запуск/отключение, со�
 DNS-link из networkd, loaded adapter credentials, установщик/откат обеих
 платформ. Ограничения и схема — [installed authority](dns-installed-authority.md).
 
+Явное networkd-исключение теперь входит в VPS2 file plan (шесть файлов;
+Radxa по-прежнему пять). Реальный networkd249 подтвердил unmanaged для нашего
+link и managed для отрицательного контроля, включая DHCP renew/reconfigure.
+Coupled journal прошёл 17 SIGKILL, чужие/повреждённые/stale данные отклонены,
+оставшихся owned links и baseline DNS queries под защитой — 0.
+Node **1853/1853 PASS**, включая same-device/different-mount отказ публикации.
+Installed baseline проверяет файл исключения, но это ещё не доказательство
+загруженной политики: runtime-проверка нужна в installed OS factory перед
+setters. Предыдущие 21 VM-проверка предшествуют этому новому file gate;
+installed start/disable и интеграция установщика всё ещё впереди.
+
 ## Три этапа и текущий статус
 
 1. **Boot-fault VM (выполнен:4/4 PASS):** ошибка установки guard, read-only storage журнала,

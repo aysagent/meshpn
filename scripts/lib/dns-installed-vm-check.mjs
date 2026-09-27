@@ -9,6 +9,7 @@ import { exec } from './browser-lab-driver.mjs';
 import { DNS_BOOT_LOCK } from './dns-boot-guard.mjs';
 import { busContext, coupledBaseline } from './dns-systemd-vm-worker.mjs';
 import { resolvedMethod } from './dns-resolved-backend.mjs';
+import { DNS_NETWORKD_POLICY, DNS_NETWORKD_CONTENTS } from './dns-networkd-policy.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 export async function checkInstalledDnsVmBaseline() {
@@ -34,6 +35,7 @@ export async function checkInstalledDnsVmBaseline() {
     guardId: 'b'.repeat(32), bundleSha256: hash(await readFile('/opt/clean-vpn/bundle.json')), configSha256: hash(config) });
   await mkdir('/etc/systemd/network', { recursive: true }); await chmod('/etc/systemd/network', 0o755);
   await writeFile(networkPath, network, { flag: 'wx', mode: 0o644 }); await chmod(networkPath, 0o644);
+  await writeFile(DNS_NETWORKD_POLICY, DNS_NETWORKD_CONTENTS, { flag: 'wx', mode: 0o644 }); await chmod(DNS_NETWORKD_POLICY, 0o644);
   // No udev in this minimal guest; the same networkd mode is used in its
   // existing namespace DHCP test. This is NOT a full Ubuntu rootfs proof.
   await writeFile('/run/systemd/container', 'other\n', { flag: 'wx', mode: 0o644 });
@@ -71,6 +73,6 @@ export async function checkInstalledDnsVmBaseline() {
     await exec('ip', ['route', 'del', 'default', 'dev', 'dnsfixture']);
     await unlink('/etc/resolv.conf'); await writeFile('/etc/resolv.conf', resolverBefore, { flag: 'wx', mode: 0o644 }); await chmod('/etc/resolv.conf', 0o644);
     await writeFile('/etc/nsswitch.conf', nssBefore); await writeFile('/etc/clean-vpn/dns/domains.json', domainsBefore);
-    for (const path of [networkPath, '/run/systemd/container', '/etc/clean-vpn/dns/client.json', '/etc/clean-vpn/dns/client-opt-in.json']) await unlink(path);
+    for (const path of [networkPath, DNS_NETWORKD_POLICY, '/run/systemd/container', '/etc/clean-vpn/dns/client.json', '/etc/clean-vpn/dns/client-opt-in.json']) await unlink(path);
   }
 }

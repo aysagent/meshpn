@@ -6,6 +6,7 @@ import { compileDnsDomainPolicy } from './dns-domain-policy.mjs';
 import { validateDnsReadyName } from './dns-adapter-ready.mjs';
 import { makeDnsQuery, parseDnsQuery } from './lab-dns-wire.mjs';
 import { validateResolvedSettings } from './dns-resolved-backend.mjs';
+import { DNS_NETWORKD_CONTENTS } from './dns-networkd-policy.mjs';
 
 const exact = (v, names) => {
   assert.ok(v && typeof v === 'object' && !Array.isArray(v));
@@ -81,6 +82,7 @@ export function assessVps2DnsBaseline(config, evidence) {
   const network = filterNetworkdState(evidence.networkState);
   assert.equal(network.NETWORK_FILE, config.networkFile.path);
   assert.equal(evidence.networkFileSha256, config.networkFile.sha256);
+  assert.equal(evidence.networkdExclusion, DNS_NETWORKD_CONTENTS, 'missing or changed networkd exclusion');
   assert.equal(network.ADMIN_STATE, 'configured');
   for (const name of [...(network.DOMAINS ?? []), ...(network.ROUTE_DOMAINS ?? [])]) checkDomain(name);
   assert.deepEqual(evidence.adapterDomainPolicy, config.domainPolicy);
@@ -96,7 +98,7 @@ export function assessVps2DnsBaseline(config, evidence) {
     assert.ok(Array.isArray(item) && item.length === 3 && item[0] === uplink.ifindex && typeof item[2] === 'boolean'); checkDomain(item[1]);
   }
   return { schema: 1, kind: 'clean-vpn-dns-vps2-baseline', mode: 'read-only', baselineChecksPassed: true,
-    activationAuthorized: false, systemSettingsChanged: false, dnsQueriesSent: 0,
+    activationAuthorized: false, networkdExclusionFileVerified: true, systemSettingsChanged: false, dnsQueriesSent: 0,
     limitations: ['baseline-only-not-active-recovery', 'point-in-time-not-manager-lock', 'disk-config-not-loaded-config-proof',
-      'no-adapter-credential-or-readiness-proof', 'no-networkd-owned-link-exclusion-proof', 'not-a-leak-test'] };
+      'no-adapter-credential-or-readiness-proof', 'no-loaded-owned-link-exclusion-proof', 'not-a-leak-test'] };
 }

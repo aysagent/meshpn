@@ -116,3 +116,30 @@ Lifecycle нового координатора вынесен в [отдель�
 Здесь нет reboot/power-loss проверки новых координаторов, live VPS, полноценного Ubuntu 22.04 rootfs,
 независимого uplink pcap, IPv6 DNS traffic matrix (IPv6 guard только установлен),
 TUN/data plane или общего VPN kill-switch. DNS v1 не объявляется завершённым.
+
+## Явное исключение DNS-link из networkd
+
+Новый обычный прогон:12/12 PASS на resolved/networkd249, пять DHCP ACK,
+policyDenied12, baseline queries0, dnsCalls0, final processes1/zombies0;
+host DNS и forwarding unchanged. В fixture устанавливается тот же artifact,
+который теперь включён в [VPS2 file plan](dns-deployment-files.md):
+`00-clean-vpn-dns.network` с точным именованием `cvdns` +8 lowercase hex
+и `[Link] Unmanaged=yes`. Поддержка параметра —
+[systemd249 network documentation](https://github.com/systemd/systemd/blob/v249/man/systemd.network.xml).
+
+Позднее общее правило `99-dns-catchall.network` действительно управляет
+контрольным `cvdnsbadname`: runtime state configured и отказ resolved от
+ручного изменения DNS. Наш `cvdns0123abcd` при этом имеет runtime state
+unmanaged, сохраняет его после DHCP renew/reconfigure uplink и перед disable.
+Без раннего исключения общий rule затронул бы и наш link. Это положительный
+и отрицательный контроль загруженной политики, не только сравнение её текста.
+Не разрешает считать любую конфигурацию unmanaged по наличию файла: более
+ранние правила/drop-ins и смену владельца должен проверять installed backend.
+
+Повтор с `--coupled-journal`:12/12 основных проверок,17 SIGKILL контроллера,
+lock conflict и отказы missing/corrupt journal, foreign settings/address,
+exit-down и stale boot; remaining owned links0. Baseline queries под защитой0,
+policyDenied20, final processes1/zombies0, host DNS/forwarding unchanged.
+Полный отчёт: `/var/tmp/meshpn-networkd-policy-result.x3DJdT/report.json`.
+Общая Node-регрессия1853/1853 PASS:
+`/var/tmp/meshpn-acceptance-uvkYwC/report.json`.

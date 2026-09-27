@@ -136,6 +136,15 @@ resolved публикует для localhost DNS индекс loopback, неза
 это видно в [dns_server_ifindex systemd v255](https://github.com/systemd/systemd/blob/v255/src/resolve/resolved-dns-server.c#L581).
 Строгий отказ collector для такого неоднозначного baseline сохранён.
 
+Последующее дополнение: теперь baseline также читает root-owned0644
+`/etc/systemd/network/00-clean-vpn-dns.network`, требует точное тело renderer
+и повторно сверяет identity. Результат содержит
+`networkdExclusionFileVerified:true`; это проверка файла, **не** доказательство
+его загрузки или текущего unmanaged state ещё не созданного link. Такая
+runtime-проверка добавлена в отдельный networkd249 namespace-стенд и остаётся
+обязательной для будущего installed setter backend. Прежний21-check VM ниже
+предшествует этому дополнению, не является его положительной VM-проверкой.
+
 Сохранённые неудачные прогоны: `meshpn-dns-vm-2Tmfnt` — в минимальном guest
 не было пользователя systemd-network; `t4Qnjh` — generic refused до исправления
 scalar property; `fGT77Y`/`bX7iYP` — отказ проверки DNS-источника (в bX7iYP

@@ -8,6 +8,7 @@ import { assertDnsInstalledAuthority, dnsInstalledAuthorityInfo } from './dns-in
 import { createDnsSystemCommands, inspectDnsSystemExecutable } from './dns-system-command.mjs';
 import { createDnsSystemBus } from './dns-system-bus.mjs';
 import { validateVps2DnsConfig, assessVps2DnsBaseline } from './dns-vps2-baseline.mjs';
+import { DNS_NETWORKD_POLICY } from './dns-networkd-policy.mjs';
 
 const unitFields = ['Id', 'LoadState', 'ActiveState', 'SubState', 'MainPID', 'InvocationID', 'NeedDaemonReload'];
 export function validateVps2DnsUnit(text, name, busPid) {
@@ -80,6 +81,7 @@ export async function inspectInstalledVps2Dns(token) {
     resolverText: await read(resolverTarget, 0o644, { root: '/run/systemd/resolve', uid: before['systemd-resolved'].uid }), nssText: await read('/etc/nsswitch.conf'),
     networkState: await read(`/run/systemd/netif/links/${uplink.ifindex}`, undefined, { root: '/run/systemd/netif', uid: before['systemd-networkd'].uid }),
     networkFileSha256: createHash('sha256').update(await read(config.networkFile.path)).digest('hex'),
+    networkdExclusion: await read(DNS_NETWORKD_POLICY, 0o644),
     adapterDomainPolicy: JSON.parse(await read('/etc/clean-vpn/dns/domains.json', 0o600)),
     routes4: JSON.parse((await run('ip', ['-j', '-4', 'route', 'show', 'table', 'all'])).stdout),
     manager: await bus.managerSnapshot(before['systemd-resolved'].owner) };

@@ -15,8 +15,10 @@ import { queryLabDns } from './transparent-dns-lab.mjs';
 import { startNetworkdPeer } from './dns-networkd-peer.mjs';
 import { runOwnedLinkCrashLab, assertOwnedLinkEvidence } from './dns-owned-link-crash-lab.mjs';
 import { runCoupledCrashLab, assertCoupledEvidence } from './dns-coupled-crash-lab.mjs';
+import { DNS_NETWORKD_POLICY, DNS_NETWORKD_CONTENTS, assertDnsNetworkdUnmanaged } from './dns-networkd-policy.mjs';
 
 export const NETWORKD_CHECKS = Object.freeze(['real-dhcp-baseline', 'resolved-refuses-networkd-owned-link',
+  'explicit-networkd-exclusion-with-managed-negative-control',
   'owned-link-protected-without-uplink-takeover', 'cloud-names-blocked-not-publicly-forwarded',
   'real-dhcp-renew-does-not-replace-vpn-dns', 'networkd-reconfigure-preserves-owned-vpn-link',
   'dhcp-domain-removal-policy-refuses-before-doh', 'dhcp-domain-replacement-policy-refuses-before-doh',
@@ -108,6 +110,10 @@ export async function runNetworkdLab(directory, options) {
   await writeFile('/run/systemd/container', 'other\n');
   await writeFile('/etc/systemd/resolved.conf', '[Resolve]\nDNS=\nFallbackDNS=\nLLMNR=no\nMulticastDNS=no\nDNSSEC=no\nDNSOverTLS=no\nCache=no\nReadEtcHosts=no\nDNSStubListener=yes\n');
   await writeFile('/etc/systemd/network/10-cloud.network', '[Match]\nName=eth0\n[Network]\nDHCP=ipv4\nIPv6AcceptRA=no\nLinkLocalAddressing=no\nLLMNR=no\nMulticastDNS=no\n[DHCPv4]\nUseDNS=yes\nUseDomains=yes\nUseRoutes=yes\nClientIdentifier=mac\n');
+  await writeFile(DNS_NETWORKD_POLICY, DNS_NETWORKD_CONTENTS);
+  // Without our earlier exclusion this later rule would manage every cvdns*
+  // link, not just the deliberately invalid name used as a negative control.
+  await writeFile('/etc/systemd/network/99-dns-catchall.network', '[Match]\nName=cvdns*\n[Network]\nDHCP=no\nConfigureWithoutCarrier=yes\nLinkLocalAddressing=no\nIPv6AcceptRA=no\nDNS=10.129.0.2\nDomains=interference.test\n');
   await writeFile('/run/networkd-lab/bus.conf', `<busconfig><type>system</type><listen>${daemonEnv.DBUS_SYSTEM_BUS_ADDRESS}</listen><auth>EXTERNAL</auth><policy context="default"><allow user="*"/><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>`);
   await exec('hostname', ['networkd-lab']); await exec('ip', ['link', 'set', 'lo', 'up']);
   const processes = [], observers = [], checks = [];
@@ -188,10 +194,21 @@ export async function runNetworkdLab(directory, options) {
     await assert.rejects(bus.set(ro, resolvedMethod('DNSEx', [[2, [127, 0, 0, 1], lab.adapter.port, '']], eth)), /managed/);
     await cloudSettings(2); checks.push('resolved-refuses-networkd-owned-link');
     await guard(true); const protectedHits = await hits();
-    await exec('ip', ['link', 'add', 'vpndns', 'type', 'dummy']);
-    await exec('ip', ['addr', 'add', '192.0.2.1/32', 'dev', 'vpndns']); await exec('ip', ['link', 'set', 'vpndns', 'up']);
-    const identity = async () => { const l = (await links()).find((v) => v.ifname === 'vpndns'); return { ifindex: l.ifindex, ifname: l.ifname, address: l.address }; };
+    const vpnName = 'cvdns0123abcd';
+    await exec('ip', ['link', 'add', vpnName, 'type', 'dummy']);
+    await exec('ip', ['addr', 'add', '192.0.2.1/32', 'dev', vpnName]); await exec('ip', ['link', 'set', vpnName, 'up']);
+    const identity = async () => { const l = (await links()).find((v) => v.ifname === vpnName); return { ifindex: l.ifindex, ifname: l.ifname, address: l.address }; };
     const vpn = (await identity()).ifindex;
+    const unmanaged = async () => assertDnsNetworkdUnmanaged({ name: vpnName, ifindex: vpn,
+      state: await readFile(`/run/systemd/netif/links/${vpn}`, 'utf8') });
+    await wait(unmanaged, 'explicit DNS link unmanaged');
+    await exec('ip', ['link', 'add', 'cvdnsbadname', 'type', 'dummy']);
+    await exec('ip', ['link', 'set', 'cvdnsbadname', 'up']);
+    const managed = (await links()).find((v) => v.ifname === 'cvdnsbadname').ifindex;
+    await wait(async () => assert.match(await readFile(`/run/systemd/netif/links/${managed}`, 'utf8'), /^ADMIN_STATE=configured$/m), 'catchall negative control');
+    await assert.rejects(bus.set(ro, resolvedMethod('DNSEx', [[2, [127, 0, 0, 1], lab.adapter.port, '']], managed)), /managed/);
+    await exec('ip', ['link', 'del', 'cvdnsbadname']); await unmanaged();
+    checks.push('explicit-networkd-exclusion-with-managed-negative-control');
     for (const [p, v] of Object.entries({ DNSEx: [[2, [127, 0, 0, 55], 0, '']], Domains: [], DefaultRoute: false }))
       await bus.set(ro, resolvedMethod(p, v, vpn));
     const backend = await createResolvedBackend({ bus, ifindex: vpn, identity, ensureGuard: () => guard(true), removeGuard: async () => {},
@@ -212,12 +229,12 @@ export async function runNetworkdLab(directory, options) {
     assert.match(networkPath, /^\/org\/freedesktop\/network1\/link\/[A-Za-z0-9_]+$/);
     await busRun(['call', no, networkPath, 'org.freedesktop.network1.Link', 'Renew']);
     await cloudSettings(3); assert.ok((await peer.stats()).acks > ackBefore);
-    await backend.verify(); for (const tcp of [false, true]) await lookup('test', '192.0.2.123', tcp);
+    await unmanaged(); await backend.verify(); for (const tcp of [false, true]) await lookup('test', '192.0.2.123', tcp);
     await blockedCloud(); checks.push('real-dhcp-renew-does-not-replace-vpn-dns');
     const reconfigureAcks = (await peer.stats()).acks;
     await busRun(['call', no, networkPath, 'org.freedesktop.network1.Link', 'Reconfigure']);
     await wait(async () => assert.ok((await peer.stats()).acks > reconfigureAcks), 'DHCP after reconfigure');
-    await cloudSettings(3); await backend.verify(); await lookup('test', '192.0.2.123');
+    await cloudSettings(3); await unmanaged(); await backend.verify(); await lookup('test', '192.0.2.123');
     assert.deepEqual(await hits(), protectedHits); checks.push('networkd-reconfigure-preserves-owned-vpn-link');
     for (const [mode, nextDomains, check] of [
       ['removed', [], 'dhcp-domain-removal-policy-refuses-before-doh'],
@@ -241,7 +258,7 @@ export async function runNetworkdLab(directory, options) {
     await assert.rejects(backend.disable(), /ownership conflict/);
     assert.deepEqual(await bus.property(ro, vpn, 'Domains'), [['foreign.test', true]]); assert.deepEqual(await hits(), protectedHits);
     await bus.set(ro, resolvedMethod('Domains', [['.', true]], vpn)); checks.push('foreign-owned-link-edit-not-overwritten');
-    await backend.disable(); await exec('ip', ['link', 'del', 'vpndns']); await cloudSettings(3);
+    await unmanaged(); await backend.disable(); await exec('ip', ['link', 'del', vpnName]); await cloudSettings(3);
     assert.deepEqual(await hits(), protectedHits); await guard(false);
     for (const tcp of [false, true]) { await lookup('test', '203.0.113.8', tcp); await lookup('auto.internal', '203.0.113.8', tcp); }
     assert.ok((await hits())[1] > protectedHits[1], 'latest DHCP DNS is the restored path'); checks.push('disable-preserves-latest-dhcp-not-stale-snapshot');

@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { runCommand } from './lib/transparent-acceptance.mjs';
 import { compileDnsDeploymentFiles, dnsDeploymentFiles, readDnsDeploymentJournal, validateDnsDeploymentJournal } from './lib/dns-deployment-files.mjs';
+import { DNS_NETWORKD_POLICY, DNS_NETWORKD_CONTENTS, dnsNetworkdPolicyArtifact, assertDnsNetworkdUnmanaged } from './lib/dns-networkd-policy.mjs';
 
 const input = () => ({ adapter: { schema: 1, exitIp: '93.184.216.36', exitPort: 443, publicName: 'relay.example',
   listenPort: 1053, readyName: 'example.com', upstream: { schema: 1, transport: 'doh', hostname: 'resolver.example',
@@ -18,7 +19,7 @@ guard: { schema: 1, kind: 'clean-vpn-dns-boot-policy', enabled: true, firewallBa
 async function fixture(t) {
   const base = await realpath(await mkdtemp(join(tmpdir(), 'meshpn-deploy-files-'))); t.after(() => rm(base, { recursive: true, force: true }));
   const root = join(base, 'root'), directory = join(base, 'journal');
-  for (const p of [root, directory, join(root, 'etc/systemd/system'), join(root, 'etc/clean-vpn/dns')]) await mkdir(p, { recursive: true, mode: 0o700 });
+  for (const p of [root, directory, join(root, 'etc/systemd/system'), join(root, 'etc/systemd/network'), join(root, 'etc/clean-vpn/dns')]) await mkdir(p, { recursive: true, mode: 0o700 });
   let inactive = true;
   const files = compileDnsDeploymentFiles(input());
   const options = { root, directory, files, assertInactive: async () => inactive };
@@ -27,6 +28,62 @@ async function fixture(t) {
     target: (i = 0) => join(root, files[i].path) };
 }
 const absent = async (p) => assert.rejects(lstat(p), { code: 'ENOENT' });
+
+test('networkd exclusion is a fixed artifact for exactly eight hexadecimal name characters', () => {
+  const f = dnsNetworkdPolicyArtifact(); assert.equal(f.path, DNS_NETWORKD_POLICY); assert.equal(f.mode, '0644');
+  assert.equal(f.contents, DNS_NETWORKD_CONTENTS);
+  assert.equal(f.contents.split('\n').filter((v) => v.startsWith('Name=')).join(''), `Name=cvdns${'[0-9a-f]'.repeat(8)}`);
+  assert.match(f.contents, /\[Link\]\nUnmanaged=yes\n$/); assert.doesNotMatch(f.contents, /DNS=|DHCP=|Address=|eth0|wg0/);
+  assert.equal(assertDnsNetworkdUnmanaged({ name: 'cvdns0123abcd', ifindex: 3, state: 'ADMIN_STATE=unmanaged\n' }), true);
+  for (const state of ['', 'ADMIN_STATE=configured\n', 'ADMIN_STATE=unmanaged\nADMIN_STATE=configured\n', 'x'.repeat(65537)])
+    assert.throws(() => assertDnsNetworkdUnmanaged({ name: 'cvdns0123abcd', ifindex: 3, state }));
+  for (const name of ['eth0', 'cvdns', 'cvdns1234567', 'cvdns123456789', 'cvdnsABCDEF12', 'cvdns1234567z'])
+    assert.throws(() => assertDnsNetworkdUnmanaged({ name, ifindex: 3, state: 'ADMIN_STATE=unmanaged\n' }));
+  for (const ifindex of [1, 0, '3', 2147483648]) assert.throws(() => assertDnsNetworkdUnmanaged({ name: 'cvdns0123abcd', ifindex, state: 'ADMIN_STATE=unmanaged\n' }));
+});
+test('legacy five-file VPS2 journal can recover/remove but is not silently upgraded', async (t) => {
+  const f = await fixture(t), files = f.files.filter((v) => v.path !== DNS_NETWORKD_POLICY);
+  await f.run('install', { files }); assert.equal((await f.run('recover')).files, 5);
+  await absent(join(f.root, DNS_NETWORKD_POLICY)); await f.run('remove');
+});
+test('networkd policy refuses foreign contents even with a matching digest', async (t) => {
+  const f = await fixture(t), files = structuredClone(f.files);
+  const policy = files.find((v) => v.path === DNS_NETWORKD_POLICY);
+  policy.contents = '[Match]\nName=*\n[Link]\nUnmanaged=yes\n';
+  const { createHash } = await import('node:crypto'); policy.sha256 = createHash('sha256').update(policy.contents).digest('hex');
+  await assert.rejects(f.run('install', { files })); assert.deepEqual(await readdir(f.directory), []);
+});
+test('existing networkd exclusion is never adopted and drift prevents whole-set removal', async (t) => {
+  const f = await fixture(t), path = join(f.root, DNS_NETWORKD_POLICY);
+  await writeFile(path, DNS_NETWORKD_CONTENTS); const before = await lstat(path);
+  await assert.rejects(f.run('install'), /already exists/); assert.equal((await lstat(path)).ino, before.ino);
+  assert.deepEqual(await readdir(f.directory), []);
+  await unlink(path); await f.run('install'); await writeFile(path, 'foreign policy');
+  await assert.rejects(f.run('remove')); assert.equal(await readFile(f.target(), 'utf8'), f.files[0].contents);
+});
+test('same-device bind mount is rejected before staging or publishing artifacts', async (t) => {
+  const f = await fixture(t), target = join(f.root, 'etc/systemd/network');
+  const script = `
+    import assert from 'node:assert/strict';
+    import { readlink, readdir, lstat } from 'node:fs/promises';
+    import { execFileSync } from 'node:child_process';
+    import { dnsDeploymentFiles } from ${JSON.stringify(new URL('./lib/dns-deployment-files.mjs', import.meta.url).href)};
+    const options = JSON.parse(process.argv[1]), target = process.argv[2], parentNamespace = process.argv[3];
+    assert.notEqual(await readlink('/proc/self/ns/mnt'), parentNamespace);
+    const before = await lstat(target);
+    execFileSync('/usr/bin/mount', ['--bind', target, target]);
+    assert.equal((await lstat(target)).dev, before.dev);
+    await assert.rejects(dnsDeploymentFiles({ ...options, operation: 'install', assertInactive: async () => true }), /cross-mount/);
+    assert.deepEqual(await readdir(options.directory), []);
+    for (const f of options.files) await assert.rejects(lstat(options.root + f.path), { code: 'ENOENT' });
+    console.log('CROSS_MOUNT_REFUSED');`;
+  const { readlink } = await import('node:fs/promises');
+  const r = await runCommand('/usr/bin/unshare', ['--user', '--map-root-user', '--mount', '--propagation', 'private', '--fork',
+    process.execPath, '--input-type=module', '-e', script, JSON.stringify({ root: f.root, directory: f.directory, files: f.files }),
+    target, await readlink('/proc/self/ns/mnt')]);
+  assert.equal(r.code, 0, r.stderr); assert.equal(r.reason, null); assert.equal(r.stdout.trim(), 'CROSS_MOUNT_REFUSED');
+  assert.deepEqual(await readdir(f.directory), []);
+});
 
 test('file-only install and rollback preserve unrelated files, retain journal, do not enable units', async (t) => {
   const f = await fixture(t); const foreign = join(f.root, 'etc/keep'); await writeFile(foreign, 'baseline');
@@ -49,7 +106,8 @@ test('same file transaction supports Radxa policy without changing dnsmasq or re
   const f = await fixture(t), config = input();
   config.guard.input = { ...config.guard.input, client: 'radxa', usbInterface: 'usb0', usbAddress: '192.168.7.1' };
   const files = compileDnsDeploymentFiles(config);
-  assert.deepEqual(files.map((x) => x.path), f.files.map((x) => x.path));
+  assert.deepEqual(files.map((x) => x.path), f.files.filter((x) => x.path !== DNS_NETWORKD_POLICY).map((x) => x.path));
+  assert.equal(files.length, 5); assert.equal(f.files.length, 6);
   await writeFile(join(f.root, 'etc/resolv.conf'), 'baseline'); await writeFile(join(f.root, 'etc/dnsmasq.conf'), 'no-resolv\n');
   assert.equal((await f.run('install', { files })).stage, 'installed');
   assert.deepEqual(JSON.parse(await readFile(f.target(4), 'utf8')), config.guard);
@@ -58,7 +116,7 @@ test('same file transaction supports Radxa policy without changing dnsmasq or re
   assert.equal(await readFile(join(f.root, 'etc/dnsmasq.conf'), 'utf8'), 'no-resolv\n');
 });
 
-const cuts = ['prepared:renamed', 'prepared:dir-synced', ...Array.from({ length: 5 }, (_, i) => [`file-${i}:published`, `file-${i}:detached`]).flat(),
+const cuts = ['prepared:renamed', 'prepared:dir-synced', ...Array.from({ length: 6 }, (_, i) => [`file-${i}:published`, `file-${i}:detached`]).flat(),
   'installed:renamed', 'installed:dir-synced'];
 for (const point of cuts) test(`install interruption ${point}: exact recovery or explicit rollback`, async (t) => {
   for (const operation of ['recover', 'remove']) {
@@ -72,7 +130,7 @@ for (const point of cuts) test(`install interruption ${point}: exact recovery or
     }
   }
 });
-for (const point of ['removing:renamed', ...Array.from({ length: 5 }, (_, i) => `file-${i}:removed`), 'removed:renamed']) {
+for (const point of ['removing:renamed', ...Array.from({ length: 6 }, (_, i) => `file-${i}:removed`), 'removed:renamed']) {
   test(`removal interruption ${point}: recovery follows removal intent`, async (t) => {
     const f = await fixture(t); await f.run('install');
     await assert.rejects(f.run('remove', { checkpoint: async (p) => { if (p === point) throw new Error('cut'); } }), /cut/);
@@ -161,8 +219,10 @@ test('corrupt journal cannot authorize rollback', async (t) => {
 for (const [operation, point, expected] of [
   ['install', 'prepared:dir-synced', 'installed'], ['install', 'file-0:published', 'installed'],
   ['install', 'file-2:detached', 'installed'], ['install', 'installed:dir-synced', 'installed'],
+  ['install', 'file-5:published', 'installed'],
   ['remove', 'removing:dir-synced', 'removed'], ['remove', 'file-2:removed', 'removed'],
   ['remove', 'removed:dir-synced', 'removed'],
+  ['remove', 'file-5:removed', 'removed'],
 ]) test(`actual SIGKILL under flock at ${point}`, async (t) => {
   const f = await fixture(t); if (operation === 'remove') await f.run('install');
   const lock = join(f.root, 'deployment.lock');
