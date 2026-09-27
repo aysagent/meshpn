@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { vmDriverFailureIsFatal, VM_INSTALLED_CHECKS, VM_RELEASED_CHECKS, assertVmInstalledEvidence, VM_DEPLOYMENT_CHECKS, assertVmDeploymentEvidence,
+import { vmDriverFailureIsFatal, VM_INSTALLED_CHECKS, VM_RELEASED_CHECKS, VM_QUIESCENT_CHECKS, assertVmInstalledEvidence, VM_DEPLOYMENT_CHECKS, assertVmDeploymentEvidence,
   VM_PUBLICATION_CHECKS, assertVmPublicationEvidence } from './lib/dns-vm-protocol.mjs';
 import { VM_CUT_POINTS, VM_FAULTS, VM_SYSTEMD_CHECKS, VM_DNSMASQ_CHECKS, vmCases, vmBootOptions, qemuDnsArgs, assertVmJournalCheckpoint, assertVmFaultEvidence, assertVmSystemdEvidence, assertVmDnsmasqEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
 import { runCommand } from './lib/transparent-acceptance.mjs';
@@ -84,6 +84,13 @@ test('post-disable VM requires actual installed lifecycle evidence, without clai
   assert.throws(() => assertVmInstalledEvidence({ ...e, point: 'installed' }));
   const { inspectReleasedDnsVm } = await import('./lib/dns-released-vm-check.mjs');
   await assert.rejects(inspectReleasedDnsVm());
+  assert.deepEqual(vmCases('installed-quiescent'), ['installed-quiescent']);
+  const q = { ...e, point: 'installed-quiescent', quiescentInspectionTested: true,
+    checks: [...e.checks, ...VM_QUIESCENT_CHECKS, ...VM_QUIESCENT_CHECKS] };
+  assertVmInstalledEvidence(q);
+  assert.throws(() => assertVmInstalledEvidence({ ...q, quiescentInspectionTested: false }));
+  for (let i = 0; i < q.checks.length; i++) assert.throws(() => assertVmInstalledEvidence({ ...q, checks: q.checks.filter((_, n) => n !== i) }));
+  await assert.rejects(inspectReleasedDnsVm({ quiescent: true }));
 });
 test('driver signal termination is expected only after the requested terminal event', () => {
   const signal = "dns-vm-driver.service: Failed with result 'signal'.";

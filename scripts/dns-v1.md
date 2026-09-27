@@ -248,6 +248,14 @@ durable guard-policy/history binding, повторные OS-проверки, о
 opt-in и сохранение кода/истории. Файловое восстановление проверяется отдельно;
 fixed-layout factory пока не подключён к CLI. Единый VM uninstall, включая
 обработку manager drop-ins/daemon-reload, остаётся незакрытым.
+Для этого перехода добавлен отдельный quiescent collector: released history,
+нет workers/link/firewall, разрешён только пустой active/exited guard без
+stop hooks. Он не подменяет strict inactive и не даёт права на удаление.
+Общая Node-регрессия **2053/2053 PASS** (`meshpn-acceptance-G8f2nt`);
+новая VM `installed-quiescent` ещё проверяется. Два отказа чтения пустых
+ExecStop properties описаны в [проверке deployment](dns-deployment-inactive.md);
+исправление читает типизированные D-Bus-массивы вместо вывода systemctl.
+Это не завершённый uninstall и не закрытие DNS v1.
 
 Этот чек-лист выполняется для VPS 2 и Radxa. VM PASS подтверждает отдельные
 механизмы, но не ставит автоматически галочки за live-конфигурацию и пилот.

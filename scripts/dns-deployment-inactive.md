@@ -100,6 +100,57 @@ Node+VM столкнулся с нехваткой места: VM не была 
 регрессия fresh gate, **не** VM-проверка released collector. После завершения
 удалены только пересоздаваемые guest/initrd/kernel; отчёт, manifest и логи сохранены.
 
+## Переходное состояние до остановки guard-unit
+
+Manager drop-in'ы содержат `Requires=clean-vpn-dns-guard.service`. Поэтому
+остановка guard раньше удаления этих зависимостей остановила бы и managers:
+это предусмотрено [семантикой Requires в systemd249](https://github.com/systemd/systemd/blob/v249/man/systemd.unit.xml).
+Остановленный/restarted resolved уже не соответствует released-журналу.
+
+Для проверки порядка добавлен отдельный `inspectQuiescentDnsDeployment`.
+Он **не заменяет** fresh/releasedInactive и не принимается существующей
+транзакцией файлового удаления как inactive proof. Все runtime-журналы всё
+ещё должны быть released в текущем контексте; owned link и обе guard families
+должны отсутствовать, jobs/manual workers/MainPID/ControlPID/cgroups — пусты.
+Исключение ровно одно: guard-unit может оставаться `loaded/active/exited`,
+`Type=oneshot`, `RemainAfterExit=yes`, `Restart=no`, без ExecStop/ExecStopPost.
+Чужие hook strings не включаются в ошибки. Active client/adapter/disable и
+running/activating guard по-прежнему запрещены.
+
+Только этот read-only режим допускает `NeedDaemonReload=yes` у того же
+resolved процесса и **явно сообщает** `managerNeedsReload`. Это не принятие
+новой конфигурации и не разрешение выполнять DNS setters. Строгие baseline
+и releasedInactive validators по-прежнему требуют `no`.
+Результат имеет отдельный kind, `releasedInactive:false`,
+`releasedQuiescent:true`, `uninstallAuthorized:false`.
+
+`--case=installed-quiescent` устанавливает настоящие manager drop-in'ы и
+проверяет после реального start/disable: переходное доказательство при
+active/exited guard, состояние после удаления только двух точных fixture
+drop-in'ов, daemon-reload и остановку guard без смены PID/InvocationID
+resolved/networkd. Затем нужна обычная строгая releasedInactive-проверка.
+Runtime-history fingerprint должен совпасть на всех шагах.
+Изменения unit-файлов здесь выполняет явно разрешённая VM fixture; durable
+dependency-detach в live uninstall ещё не реализован. Это не весь installer.
+
+Первые два VM-прогона (`meshpn-dns-vm-bItTif`, `meshpn-dns-vm-8RmlJi`)
+прошли start/disable, но отказали на чтении guard hooks. Добавления `--all`
+оказалось недостаточно: отдельный [Exec*-форматтер systemctl255](https://github.com/systemd/systemd/blob/v255/src/systemctl/systemctl-show.c)
+печатает только элементы массива, поэтому пустой массив не даёт строки.
+Collector теперь читает пять типизированных D-Bus properties в фиксированном
+порядке: `s:oneshot`, `b:true`, `s:no`, два `a(sasbttttuii):[]`.
+Именно пустые массивы подтверждают отсутствие ExecStop/ExecStopPost;
+пропуски, неверные типы и непустые hooks отклоняются. Parse errors и argv
+не печатаются даже при malformed JSON. VM проверяет формат также до длинного
+start/disable. Отчёты/логи/диски отказов сохранены, удалены только
+пересоздаваемые guest/initrd/kernel.
+
+После перехода на типизированные свойства общая Node-регрессия прошла
+**2053/2053**, без skips (`meshpn-acceptance-G8f2nt/report.json`). Повторная
+VM `meshpn-dns-vm-SVccio` запущена с276 проверенными по SHA256 project files;
+ранняя проверка настоящих guard properties прошла. Полный результат двух
+загрузок пока не получен, это не VM PASS или разрешение живого uninstall.
+
 ## Изолированный сценарий
 
 `dns-vm-lab.mjs --case=deployment` проверяет настоящий collector на PID1 systemd

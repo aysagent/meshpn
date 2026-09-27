@@ -12,6 +12,15 @@ import { DNS_NETWORKD_POLICY } from './dns-networkd-policy.mjs';
 
 const unitFields = ['Id', 'LoadState', 'ActiveState', 'SubState', 'MainPID', 'InvocationID', 'NeedDaemonReload'];
 export function validateVps2DnsUnit(text, name, busPid) {
+  return validateManagerUnit(text, name, busPid, false);
+}
+// A released-state observer does not authorize DNS setters or adoption of
+// pending unit configuration. Report the pending reload instead of confusing
+// it with a restarted manager; its process/owner must still match the journal.
+export function validateReleasedDnsManagerUnit(text, name, busPid) {
+  return validateManagerUnit(text, name, busPid, true);
+}
+function validateManagerUnit(text, name, busPid, allowPendingReload) {
   assert.ok(['systemd-resolved', 'systemd-networkd'].includes(name));
   const fields = {};
   for (const line of text.trim().split('\n')) {
@@ -21,7 +30,8 @@ export function validateVps2DnsUnit(text, name, busPid) {
   assert.deepEqual(Object.keys(fields).sort(), [...unitFields].sort());
   assert.equal(fields.Id, `${name}.service`); assert.equal(fields.LoadState, 'loaded');
   assert.equal(fields.ActiveState, 'active'); assert.equal(fields.SubState, 'running');
-  assert.equal(fields.NeedDaemonReload, 'no'); assert.match(fields.InvocationID, /^[a-f0-9]{32}$/);
+  assert.ok((allowPendingReload ? ['no', 'yes'] : ['no']).includes(fields.NeedDaemonReload));
+  assert.match(fields.InvocationID, /^[a-f0-9]{32}$/);
   assert.ok(Number.isInteger(busPid) && busPid > 1); assert.equal(fields.MainPID, String(busPid));
   return fields;
 }

@@ -8,7 +8,7 @@ import { requireDnsBootGuardLock, readDnsBootNamespaceAnchor } from './dns-boot-
 import { compileDnsClientGuard, inspectDnsClientGuard } from './dns-client-guard.mjs';
 import { readReleasedDnsHistory } from './dns-released-history.mjs';
 import { createDnsSystemBus } from './dns-system-bus.mjs';
-import { validateVps2DnsUnit } from './dns-installed-vps2.mjs';
+import { validateVps2DnsUnit, validateReleasedDnsManagerUnit } from './dns-installed-vps2.mjs';
 
 const units = new Set(['clean-vpn-dns-guard.service', 'clean-vpn-dns-adapter.service',
   'clean-vpn-dns-client.service', 'clean-vpn-dns-disable.service']);
@@ -22,18 +22,40 @@ function typed(text, signature) {
   const v = JSON.parse(text); assert.ok(v && typeof v === 'object');
   assert.deepEqual(Object.keys(v).sort(), ['data', 'type']); assert.equal(v.type, signature); return v.data;
 }
-export function parseDnsDeploymentUnits(text) {
+export function parseDnsDeploymentUnits(text, { allowExitedGuard = false } = {}) {
+  assert.equal(typeof allowExitedGuard, 'boolean');
   const tuple = typed(text, 'a(ssssssouso)'); assert.ok(Array.isArray(tuple) && tuple.length === 1);
   const rows = tuple[0]; assert.ok(Array.isArray(rows) && rows.length <= 16); const names = new Set();
   for (const row of rows) {
     assert.ok(Array.isArray(row) && row.length === 10);
     for (const i of [0, 1, 2, 3, 4, 5, 6, 8, 9]) assert.equal(typeof row[i], 'string');
     assert.ok(units.has(row[0]) && !names.has(row[0]), 'unknown or duplicate DNS service'); names.add(row[0]);
-    assert.ok(['loaded', 'not-found'].includes(row[2])); assert.equal(row[3], 'inactive', 'DNS service is not inactive'); assert.equal(row[4], 'dead');
+    assert.ok(['loaded', 'not-found'].includes(row[2]));
+    const exitedGuard = allowExitedGuard && row[0] === 'clean-vpn-dns-guard.service' && row[2] === 'loaded' && row[3] === 'active' && row[4] === 'exited';
+    if (!exitedGuard) { assert.equal(row[3], 'inactive', 'DNS service is not inactive'); assert.equal(row[4], 'dead'); }
     assert.equal(row[5], '', 'aliased DNS service'); assert.equal(row[7], 0, 'pending DNS job'); assert.equal(row[8], '');
     assert.match(row[6], /^\/org\/freedesktop\/systemd1\/unit\/[a-zA-Z0-9_]+$/); objectPath(row[9]);
   }
-  return rows.map((v) => ({ name: v[0], path: v[6] }));
+  return rows.map((v) => ({ name: v[0], path: v[6], ...(v[3] === 'active' ? { exitedGuard: true } : {}) }));
+}
+export function assertQuiescentDnsGuardProperties(text) {
+  // systemctl's custom Exec* formatter omits empty arrays even with --all.
+  // Read the five ordered, typed D-Bus properties instead. Unlike a missing
+  // printed field, an explicit empty array proves there are no loaded hooks.
+  try {
+    assert.equal(typeof text, 'string'); assert.ok(Buffer.byteLength(text) <= 8192);
+    const lines = text.trim().split('\n'); assert.equal(lines.length, 5);
+    const expected = [['s', 'oneshot'], ['b', true], ['s', 'no'],
+      ['a(sasbttttuii)', []], ['a(sasbttttuii)', []]];
+    for (let i = 0; i < expected.length; i++) {
+      const value = typed(lines[i], expected[i][0]);
+      assert.ok(i < 3 ? value === expected[i][1] : Array.isArray(value) && value.length === 0);
+    }
+  } catch {
+    // Hook argv and malformed JSON can contain secrets. Do not expose the
+    // parser error, actual/expected payload or an Error cause.
+    throw new Error('DNS_DEPLOYMENT_EXITED_GUARD_PROPERTIES_REFUSED');
+  }
 }
 export function assertNoDnsDeploymentJobs(text) {
   const tuple = typed(text, 'a(usssoo)'); assert.ok(Array.isArray(tuple) && tuple.length === 1);
@@ -103,11 +125,15 @@ async function noRuntimeHistory() {
 /** Genuine pinned commands only. The installer must additionally prove its
  * own reviewed code/profile and validate prospective DNS ownership before
  * activation. This check can be repeated even while opt-in files are absent. */
-export const inspectFreshDnsDeployment = (options) => inspectDnsDeployment(options, false);
+export const inspectFreshDnsDeployment = (options) => inspectDnsDeployment(options, 'fresh');
 /** Separate post-disable observation. Retains all journals and requires their
  * current boot/bus/manager binding. NOT an uninstall or reactivation command. */
-export const inspectReleasedDnsDeployment = (options) => inspectDnsDeployment(options, true);
-async function inspectDnsDeployment({ commands, input, firewallBackend }, released) {
+export const inspectReleasedDnsDeployment = (options) => inspectDnsDeployment(options, 'released');
+/** Transitional observation only: no running DNS worker, but the guard oneshot
+ * may remain active/exited until its owned manager dependencies are detached. */
+export const inspectQuiescentDnsDeployment = (options) => inspectDnsDeployment(options, 'quiescent');
+async function inspectDnsDeployment({ commands, input, firewallBackend }, mode) {
+  const released = mode !== 'fresh', quiescent = mode === 'quiescent';
   assertDnsSystemCommands(commands); input = structuredClone(input); const plan = compileDnsClientGuard(input);
   assert.equal(input.client, 'vps2', 'installed Radxa lifecycle is not covered by this check');
   assert.ok(['legacy', 'nf_tables'].includes(firewallBackend));
@@ -144,7 +170,7 @@ async function inspectDnsDeployment({ commands, input, firewallBackend }, releas
     const resolveBus = createDnsSystemBus((tool, args) => run(tool, args, 'released-resolved'));
     const owner = await resolveBus.owner(), pid = await resolveBus.ownerPid(owner), uid = await resolveBus.ownerUid(owner);
     const fields = ['Id', 'LoadState', 'ActiveState', 'SubState', 'MainPID', 'InvocationID', 'NeedDaemonReload'];
-    const unit = validateVps2DnsUnit((await run('systemctl', ['show', 'systemd-resolved.service',
+    const unit = (quiescent ? validateReleasedDnsManagerUnit : validateVps2DnsUnit)((await run('systemctl', ['show', 'systemd-resolved.service',
       ...fields.map((f) => `--property=${f}`)], 'released-resolved-unit')).stdout, 'systemd-resolved', pid);
     const executable = await inspectDnsSystemExecutable(await readlink(`/proc/${pid}/exe`));
     assert.ok(['/usr/lib/systemd/systemd-resolved', '/lib/systemd/systemd-resolved'].includes(executable.actual));
@@ -164,11 +190,13 @@ async function inspectDnsDeployment({ commands, input, firewallBackend }, releas
     'call', bus.owner, managerPath, managerInterface, method, ...args], method)).stdout;
   const services = async () => {
     assertNoDnsDeploymentJobs(await rawCall('ListJobs'));
-    const rows = parseDnsDeploymentUnits(await rawCall('ListUnitsByPatterns', 'asas', '0', '1', 'clean-vpn-dns-*'));
-    for (const { name, path } of rows) {
+    const rows = parseDnsDeploymentUnits(await rawCall('ListUnitsByPatterns', 'asas', '0', '1', 'clean-vpn-dns-*'), { allowExitedGuard: quiescent });
+    for (const { name, path, exitedGuard } of rows) {
       const { stdout } = await run('busctl', [...busArgs, 'get-property', bus.owner, path,
         'org.freedesktop.systemd1.Service', 'MainPID', 'ControlPID'], 'service-pids');
       assertNoDnsDeploymentProcesses(stdout, await rawCall('GetUnitProcesses', 's', name));
+      if (exitedGuard) assertQuiescentDnsGuardProperties((await run('busctl', [...busArgs, 'get-property', bus.owner, path,
+        'org.freedesktop.systemd1.Service', 'Type', 'RemainAfterExit', 'Restart', 'ExecStop', 'ExecStopPost'], 'exited-guard-properties')).stdout);
     }
     assertNoDnsDeploymentJobs(await rawCall('ListJobs')); return rows;
   };
@@ -183,7 +211,9 @@ async function inspectDnsDeployment({ commands, input, firewallBackend }, releas
   assert.deepEqual(await services(), before, 'DNS service set changed');
   if (released) assert.deepEqual(await releasedSnapshot(), history, 'released DNS evidence changed');
   assert.deepEqual(await busContext(), bus, 'system manager changed'); await context();
-  if (released) return { schema: 1, kind: 'clean-vpn-dns-released-deployment-check', releasedInactive: true,
+  if (released) return { schema: 1, kind: quiescent ? 'clean-vpn-dns-quiescent-deployment-check' : 'clean-vpn-dns-released-deployment-check',
+    releasedInactive: !quiescent, ...(quiescent ? { releasedQuiescent: true, guardUnitActiveExited: before.some((v) => v.exitedGuard === true),
+      managerNeedsReload: history.manager.unit.NeedDaemonReload === 'yes' } : {}),
     historySha256: createHash('sha256').update(JSON.stringify(history.history)).digest('hex'),
     systemSettingsChanged: false, dnsQueriesSent: 0, activationAuthorized: false, uninstallAuthorized: false,
     limitations: ['not-a-baseline-health-proof', 'not-a-file-ownership-or-uninstall-authority',

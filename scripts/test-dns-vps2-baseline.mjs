@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { validateVps2DnsConfig, assessVps2DnsBaseline } from './lib/dns-vps2-baseline.mjs';
-import { inspectInstalledVps2Dns, validateVps2DnsUnit } from './lib/dns-installed-vps2.mjs';
+import { inspectInstalledVps2Dns, validateVps2DnsUnit, validateReleasedDnsManagerUnit } from './lib/dns-installed-vps2.mjs';
 import { DNS_NETWORKD_CONTENTS } from './lib/dns-networkd-policy.mjs';
 
 const config = () => ({ schema: 1, kind: 'clean-vpn-dns-client', client: 'vps2', uplink: 'eth0',
@@ -95,4 +95,12 @@ test('unit evidence binds service invocation and MainPID to unique D-Bus peer', 
 });
 test('installed collector rejects fake tokens before executing any system commands', async () => {
   for (const token of [{}, null, config(), evidence()]) await assert.rejects(inspectInstalledVps2Dns(token), /token required/);
+});
+test('quiescent manager evidence reports pending reload without authorizing an active baseline', () => {
+  const pending = unit().replace('NeedDaemonReload=no', 'NeedDaemonReload=yes');
+  assert.equal(validateReleasedDnsManagerUnit(pending, 'systemd-resolved', 42).NeedDaemonReload, 'yes');
+  assert.throws(() => validateVps2DnsUnit(pending, 'systemd-resolved', 42));
+  for (const text of [pending.replace('=yes', '=unknown'), pending.replace('active', 'inactive'),
+    pending.replace('running', 'dead'), pending.replace('MainPID=42', 'MainPID=43')])
+    assert.throws(() => validateReleasedDnsManagerUnit(text, 'systemd-resolved', 42));
 });

@@ -97,6 +97,8 @@ test('foreign code/config drift refuses removal intent and keeps opt-in', async 
 });
 test('strict removal metadata excludes credentials, arbitrary commands and fabricated OS status', async () => {
   assert.equal(validateDnsReleasedObservation(observation), observation.historySha256);
+  assert.throws(() => validateDnsReleasedObservation({ ...observation,
+    kind: 'clean-vpn-dns-quiescent-deployment-check', releasedInactive: false, releasedQuiescent: true }));
   for (const [key, value] of [['historySha256', 'x'], ['releasedInactive', false], ['systemSettingsChanged', true],
     ['dnsQueriesSent', 1], ['uninstallAuthorized', true], ['kind', 'other']])
     assert.throws(() => validateDnsReleasedObservation({ ...observation, [key]: value }));

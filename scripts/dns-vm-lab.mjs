@@ -16,7 +16,7 @@ async function main() {
   const flags = new Map();
   for (const arg of process.argv.slice(2)) {
     const match = /^--(tools|kernel|resolved|case|dnsmasq)=(.+)$/.exec(arg);
-    assert.ok(match && !flags.has(match[1]), 'expected --tools=DIR --kernel=FILE --resolved=FILE [--case=all|faults|systemd|dnsmasq|radxa|radxa-cuts|coupled|coupled-cuts|installed|installed-units|installed-released|deployment|publication|cycle|CASE] [--dnsmasq=FILE]');
+    assert.ok(match && !flags.has(match[1]), 'expected --tools=DIR --kernel=FILE --resolved=FILE [--case=all|faults|systemd|dnsmasq|radxa|radxa-cuts|coupled|coupled-cuts|installed|installed-units|installed-released|installed-quiescent|deployment|publication|cycle|CASE] [--dnsmasq=FILE]');
     flags.set(match[1], match[2]);
   }
   for (const key of ['tools', 'kernel', 'resolved']) assert.ok(flags.get(key)?.startsWith('/'), `absolute --${key} required`);
@@ -28,7 +28,7 @@ async function main() {
   const coupledCut = flags.get('case') === 'coupled-cuts' || Boolean(flags.get('case')?.startsWith('coupled-cut:'));
   const publication = flags.get('case') === 'publication';
   const deployment = flags.get('case') === 'deployment' || publication;
-  const releasedInspection = flags.get('case') === 'installed-released';
+  const releasedInspection = ['installed-released', 'installed-quiescent'].includes(flags.get('case'));
   const coupled = ['coupled', 'installed', 'installed-units'].includes(flags.get('case')) || releasedInspection || deployment || coupledCut;
   const systemd = coupled || dnsmasq || flags.get('case') === 'systemd';
   const tools = resolve(flags.get('tools')), root = join(tools, 'root');
@@ -138,7 +138,7 @@ async function main() {
         if (radxa) assertVmRadxaEvidence(passed, radxaCut ? events.find((e) => e.event === 'cut-ready') : undefined);
         else if (point === 'deployment') assertVmDeploymentEvidence(passed);
         else if (point === 'publication') assertVmPublicationEvidence(passed);
-        else if (['installed', 'installed-units', 'installed-released'].includes(point)) assertVmInstalledEvidence(passed);
+        else if (['installed', 'installed-units', 'installed-released', 'installed-quiescent'].includes(point)) assertVmInstalledEvidence(passed);
         else if (coupled) assertVmCoupledEvidence(passed, coupledCut ? events.find((e) => e.event === 'cut-ready') : undefined);
         else (dnsmasq ? assertVmDnsmasqEvidence : assertVmSystemdEvidence)(passed);
         assert.ok(events.filter((e) => e.event === 'boot-guard').every((e) => e.pid1 === 'systemd'));

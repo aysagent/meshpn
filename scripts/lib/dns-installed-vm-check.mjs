@@ -16,23 +16,26 @@ import { compileDnsControllerServicePlan } from './dns-controller-service-plan.m
 import { readCoupledJournal } from './dns-coupled-journal.mjs';
 import { readDnsGuardJournal } from './dns-client-guard-journal.mjs';
 import { DNS_INSTALLED_STATE, DNS_INSTALLED_TRANSACTION, DNS_INSTALLED_GUARD } from './dns-installed-controller.mjs';
+import { assertQuiescentDnsGuardProperties } from './dns-deployment-inactive.mjs';
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 export async function checkInstalledDnsVmBaseline({ controller = false, service = false, releasedInspection = false } = {}) {
   const options = await assertCoupledDnsVm(); assert.equal(options.phase, 'coupled');
   assert.equal(typeof controller, 'boolean'); assert.equal(typeof service, 'boolean'); assert.ok(!service || controller);
   assert.equal(typeof releasedInspection, 'boolean');
-  if (releasedInspection) { assert.equal(options.point, 'installed-released'); assert.ok(controller && !service); }
+  if (releasedInspection) { assert.ok(['installed-released', 'installed-quiescent'].includes(options.point)); assert.ok(controller && !service); }
+  const quiescentInspection = releasedInspection && options.point === 'installed-quiescent';
   const releaseChecks = [];
   const resolverBefore = await readFile('/etc/resolv.conf'), nssBefore = await readFile('/etc/nsswitch.conf');
   const domainsBefore = await readFile('/etc/clean-vpn/dns/domains.json');
   const ctl = (...args) => exec('/usr/bin/systemctl', args, { timeout: 30000 });
   const environment = { PATH: '/usr/bin:/usr/sbin:/bin:/sbin', LC_ALL: 'C', LANG: 'C' };
-  const releasedProbe = async () => {
+  const releasedProbe = async (quiescent = false) => {
     const result = await exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
-      '/project/scripts/lib/dns-released-vm-check.mjs'], { env: environment, timeout: 90000 });
+      '/project/scripts/lib/dns-released-vm-check.mjs', ...(quiescent ? ['--quiescent'] : [])], { env: environment, timeout: 90000 });
     const report = JSON.parse(result.stdout);
-    assert.equal(report.releasedInactive, true); assert.equal(report.uninstallAuthorized, false);
+    assert.equal(report.releasedInactive, !quiescent); if (quiescent) assert.equal(report.releasedQuiescent, true);
+    assert.equal(report.uninstallAuthorized, false);
     assert.equal(report.activationAuthorized, false); assert.equal(report.dnsQueriesSent, 0); return report;
   };
   const releasedRefused = async (pattern) => assert.rejects(releasedProbe(),
@@ -114,7 +117,8 @@ export async function checkInstalledDnsVmBaseline({ controller = false, service 
       // fixture network/resolve1 via its dns-vm-guard dependency chain.
       await writeFile(guardAlias, dnsBootGuardUnit('legacy'), { flag: 'wx', mode: 0o644 }); await chmod(guardAlias, 0o644);
     } else await symlink('/etc/systemd/system/dns-vm-guard.service', guardAlias);
-    const controllerFiles = service ? compileDnsControllerServicePlan({ schema: 1, client: 'vps2', firewallBackend: 'legacy' }).files : [];
+    const controllerFiles = service || quiescentInspection ? compileDnsControllerServicePlan({ schema: 1, client: 'vps2', firewallBackend: 'legacy' }).files : [];
+    const removedDropins = new Set();
     for (const file of controllerFiles) {
       if (file.path.endsWith('.conf')) await mkdir(dirname(file.path), { mode: 0o755 });
       await writeFile(file.path, file.contents, { flag: 'wx', mode: 0o644 }); await chmod(file.path, 0o644);
@@ -136,6 +140,15 @@ export async function checkInstalledDnsVmBaseline({ controller = false, service 
     };
     try {
       await ctl('daemon-reload'); await ctl('start', 'clean-vpn-dns-adapter.service');
+      if (quiescentInspection) {
+        // Check the real typed-property format before the lengthy lifecycle;
+        // the genuine collector repeats this after disable under its lock.
+        assertQuiescentDnsGuardProperties((await exec('/usr/bin/busctl', ['--system', '--json=short',
+          'get-property', 'org.freedesktop.systemd1', '/org/freedesktop/systemd1/unit/clean_2dvpn_2ddns_2dguard_2eservice',
+          'org.freedesktop.systemd1.Service', 'Type', 'RemainAfterExit', 'Restart', 'ExecStop', 'ExecStopPost'],
+        { timeout: 10000 })).stdout);
+        console.log('DNS_INSTALLED_STAGE typed-guard-properties passed');
+      }
       const queriesBefore = (await control('fixture', 'stats')).resolverBodies;
       const loaded = JSON.parse((await inspect('--inspect-adapter')).stdout);
       assert.equal(loaded.loadedCredentialsVerified, true); assert.equal(loaded.activationAuthorized, false);
@@ -200,8 +213,27 @@ export async function checkInstalledDnsVmBaseline({ controller = false, service 
         const paths = [`${DNS_INSTALLED_TRANSACTION}/journal.json`, `${DNS_INSTALLED_TRANSACTION}/link/journal.json`, `${DNS_INSTALLED_GUARD}/journal.json`];
         const bytes = () => Promise.all(paths.map((path) => readFile(path, 'utf8'))), history = await bytes();
         await releasedRefused(/DNS service is not inactive/); releaseChecks.push('released-history-running-service-refused');
-        await ctl('stop', 'clean-vpn-dns-adapter.service', 'clean-vpn-dns-guard.service');
-        await releasedProbe(); releaseChecks.push('installed-disable-released-os-proof');
+        await ctl('stop', 'clean-vpn-dns-adapter.service');
+        let proof;
+        if (quiescentInspection) {
+          const managers = ['systemd-resolved.service', 'systemd-networkd.service'];
+          const identities = () => Promise.all(managers.map(async (name) => (await ctl('show', name,
+            '--property=MainPID', '--property=InvocationID', '--property=ActiveState')).stdout));
+          const originalManagers = await identities();
+          proof = await releasedProbe(true); assert.equal(proof.guardUnitActiveExited, true); assert.equal(proof.managerNeedsReload, false);
+          releaseChecks.push('released-exited-guard-quiescent');
+          for (const file of controllerFiles.filter((f) => f.path.endsWith('.conf'))) {
+            assert.equal(await readFile(file.path, 'utf8'), file.contents); await unlink(file.path); removedDropins.add(file.path);
+          }
+          const pending = await releasedProbe(true); assert.equal(pending.managerNeedsReload, true);
+          assert.equal(pending.historySha256, proof.historySha256); releaseChecks.push('released-manager-reload-pending-observed');
+          await ctl('daemon-reload');
+          await ctl('stop', 'clean-vpn-dns-guard.service');
+          assert.deepEqual(await identities(), originalManagers, 'guard stop restarted or stopped a DNS manager');
+          releaseChecks.push('released-manager-dependencies-detached');
+        } else await ctl('stop', 'clean-vpn-dns-guard.service');
+        const strict = await releasedProbe(); if (proof) assert.equal(strict.historySha256, proof.historySha256);
+        releaseChecks.push('installed-disable-released-os-proof');
         const optPath = '/etc/clean-vpn/dns/client-opt-in.json', configPath = '/etc/clean-vpn/dns/client.json';
         await unlink(optPath); await unlink(configPath);
         try { await releasedProbe(); releaseChecks.push('released-proof-without-opt-in-or-config'); }
@@ -222,7 +254,7 @@ export async function checkInstalledDnsVmBaseline({ controller = false, service 
       if (service) await ctl('stop', controllerUnit, 'clean-vpn-dns-disable.service');
       await ctl('stop', 'clean-vpn-dns-adapter.service');
       for (const file of controllerFiles) {
-        await unlink(file.path); if (file.path.endsWith('.conf')) await rmdir(dirname(file.path));
+        if (!removedDropins.has(file.path)) await unlink(file.path); if (file.path.endsWith('.conf')) await rmdir(dirname(file.path));
       }
       await unlink(adapterUnit.path); await unlink(guardAlias); await ctl('daemon-reload');
       for (const name of passiveTargets) await unlink(`/etc/systemd/system/${name}`);

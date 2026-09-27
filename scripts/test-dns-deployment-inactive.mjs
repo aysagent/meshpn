@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseDnsDeploymentUnits, assertNoDnsDeploymentJobs, assertNoDnsDeploymentProcesses,
-  assertNoDnsDeploymentLinks, assertNoManualDnsDeploymentProcess, inspectFreshDnsDeployment } from './lib/dns-deployment-inactive.mjs';
+  assertNoDnsDeploymentLinks, assertNoManualDnsDeploymentProcess, inspectFreshDnsDeployment,
+  assertQuiescentDnsGuardProperties, inspectQuiescentDnsDeployment } from './lib/dns-deployment-inactive.mjs';
 
 const json = (type, data) => JSON.stringify({ type, data });
 const unit = () => ['clean-vpn-dns-client.service', 'Client', 'loaded', 'inactive', 'dead', '',
@@ -58,4 +59,35 @@ test('caller cannot substitute a fake command runner for fresh deployment inspec
   let called = false;
   await assert.rejects(inspectFreshDnsDeployment({ commands: { run: () => { called = true; } } }), /checked DNS system commands/);
   assert.equal(called, false);
+});
+test('only explicit quiescent observation permits an exited guard, never another active service', () => {
+  const row = unit(); row[0] = 'clean-vpn-dns-guard.service'; row[3] = 'active'; row[4] = 'exited';
+  const text = () => json('a(ssssssouso)', [[row]]);
+  assert.throws(() => parseDnsDeploymentUnits(text()));
+  assert.equal(parseDnsDeploymentUnits(text(), { allowExitedGuard: true })[0].exitedGuard, true);
+  for (const name of ['clean-vpn-dns-client.service', 'clean-vpn-dns-adapter.service', 'clean-vpn-dns-disable.service']) {
+    row[0] = name; assert.throws(() => parseDnsDeploymentUnits(text(), { allowExitedGuard: true }));
+  }
+  row[0] = 'clean-vpn-dns-guard.service';
+  for (const state of ['running', 'start', 'stop', 'failed']) { row[4] = state; assert.throws(() => parseDnsDeploymentUnits(text(), { allowExitedGuard: true })); }
+});
+test('exited guard requires exact oneshot lifecycle and no stop hooks; PID/cgroup checks remain mandatory', () => {
+  const rows = [json('s', 'oneshot'), json('b', true), json('s', 'no'), json('a(sasbttttuii)', []), json('a(sasbttttuii)', [])];
+  const text = rows.join('\n') + '\n'; assertQuiescentDnsGuardProperties(text);
+  for (const [i, bad] of [[0, json('s', 'simple')], [1, json('b', false)], [1, json('s', 'true')],
+    [2, json('s', 'always')], [3, json('a(sasbttttuii)', [['/bin/private', ['SECRET']]])],
+    [4, json('a(sasbttttuii)', [['/bin/private', ['SECRET']]])], [3, json('as', [])],
+    [3, json('a(sasbttttuii)', [[]])], [4, json('a(sasbttttuii)', null)], [3, '{SECRET']]) {
+    const changed = [...rows]; changed[i] = bad;
+    assert.throws(() => assertQuiescentDnsGuardProperties(changed.join('\n')),
+      (e) => e.message === 'DNS_DEPLOYMENT_EXITED_GUARD_PROPERTIES_REFUSED' && !e.stack.includes('SECRET') && !JSON.stringify(e).includes('SECRET'));
+  }
+  for (const bad of [rows.slice(0, 4).join('\n'), text + rows[2], 'x'.repeat(8193),
+    'Type=oneshot\nRemainAfterExit=yes\nRestart=no\nExecStop=\nExecStopPost=\n'])
+    assert.throws(() => assertQuiescentDnsGuardProperties(bad));
+  assert.throws(() => assertNoDnsDeploymentProcesses(`${json('u', 42)}\n${json('u', 0)}`, json('a(sus)', [[]])));
+  assert.throws(() => assertNoDnsDeploymentProcesses(`${json('u', 0)}\n${json('u', 0)}`, json('a(sus)', [[['/group', 42, 'private']]])));
+});
+test('quiescent collector also refuses fabricated command runners', async () => {
+  await assert.rejects(inspectQuiescentDnsDeployment({ commands: { run() {} } }), /checked DNS system commands/);
 });

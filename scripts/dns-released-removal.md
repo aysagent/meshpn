@@ -54,6 +54,23 @@ boot lock, root-owned parents и только branded pinned OS commands. Пол
 обойти запрет или изменять службы на живом клиенте. Новая boot/bus/owner epoch
 также не усыновляется. Radxa этим VPS2-набором не обслуживается.
 
+Следующий интеграционный переход ограничен одним порядком:
+
+1. После настоящего disable остановить adapter и доказать отсутствие workers;
+   guard oneshot временно остаётся active/exited. Это отдельное
+   [quiescent-наблюдение](dns-deployment-inactive.md), не strict inactive proof.
+2. До удаления сохранить policy/history binding; отозвать opt-in и удалить
+   принадлежащие deployment manager drop-ins в существующем обратном порядке.
+   Частично удалённый набор обязан оставаться распознаваемым по журналу.
+3. Проверить ownership оставшихся файлов и неизменность manager context;
+   daemon-reload, остановить guard без stop hooks, получить strict released
+   proof с тем же history fingerprint и без перезапуска resolved/networkd.
+4. Лишь затем завершить оставшийся файловый rollback и архивирование кода.
+
+Требуются ограниченные crash-точки между этими шагами и единый VM-прогон.
+Это план следующего изменения, **не реализованный recovery**: текущий removal
+по-прежнему отвергает quiescent-отчёт, и нельзя вручную выдавать его за inactive.
+
 ## Проверки
 
 `node --test scripts/test-dns-released-removal.mjs` использует реальные GNU mv,
