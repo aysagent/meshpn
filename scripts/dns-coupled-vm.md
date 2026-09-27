@@ -155,3 +155,23 @@ ext4-диск; host сравнивает root/link/guard журналы с ко�
 Ограничения DNS v1 и последующие клиентские пилоты остаются в
 [конечном чек-листе](dns-v1.md). Рабочие адреса и политика внутренних доменов
 клиента этим fixture не выбираются.
+
+## Installed read-only baseline в том же lifecycle
+
+Новый прогон `/var/tmp/meshpn-dns-vm-KXJ20n/report.json`: **21/21 PASS**, две
+загрузки; Node1841/1841 PASS (`meshpn-acceptance-N3lmI5`). Добавлены два
+`installed-cli-baseline-and-refusals`, по одному на boot: реальный entrypoint
+из `/opt/clean-vpn`, bundle/config opt-in, тот же flock и настоящий networkd.
+Положительный baseline и отказы без opt-in, без lock и при несовпадающей
+domain-policy проверены до запуска adapter. Все502 JS-копии manifest совпадают
+с исходниками этой записи. Baseline queries0 под guard, positive controls PASS,
+host DNS unchanged; прежние guard/откат/stale-journal критерии сохранены.
+
+Fixture временно использует DNS10.129.0.2 без отправки запросов к нему, а затем
+останавливает networkd и точно возвращает loopback sentinel, NSS/resolver,
+маршрут и policy. Нелокальный DNS нужен для проверки именно uplink-profile:
+manager API resolved сообщает localhost DNS с индексом loopback. Это не DHCP
+renew/reconfigure проверка и не полный Ubuntu rootfs; прежний networkd namespace
+стенд остаётся отдельным. Никакие VM authority gates не сняты; установленный
+CLI **только читает**, реальные setters/установщик и live пилоты ещё предстоят.
+Ошибки подготовки этого прогона и ограничения — [installed authority](dns-installed-authority.md).

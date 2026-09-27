@@ -7,5 +7,22 @@ export function dnsCoupledVmUnits() {
   units['dns-vm-driver.service'] = units['dns-vm-driver.service']
     .replace('dns-systemd-vm-driver.mjs', 'dns-coupled-vm-driver.mjs')
     .replace('Type=oneshot', 'Type=oneshot\nSuccessExitStatus=SIGTERM');
+  units['systemd-networkd.service'] = `[Unit]
+Description=Read-only installed inspection networkd fixture
+DefaultDependencies=no
+Requires=dbus.service
+After=dbus.service
+Conflicts=shutdown.target
+Before=shutdown.target
+[Service]
+Type=notify
+ExecStart=/usr/lib/systemd/systemd-networkd
+Environment=PATH=/usr/bin:/usr/sbin:/bin:/sbin SYSTEMD_LOG_TARGET=console
+TimeoutStartSec=30
+TimeoutStopSec=15
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/console
+`;
   return units;
 }

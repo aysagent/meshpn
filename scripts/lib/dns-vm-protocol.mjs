@@ -65,7 +65,8 @@ export function assertVmCoupledEvidence(evidence, cut) {
   assert.equal(evidence.automaticStaleAdoption, false); assert.equal(evidence.baselineQueriesDuringProtection, 0);
   const once = ['stale-journals-preserved-start-refused', 'readiness-owned-link-and-protected-dns', 'disable-removes-owned-link-before-baseline-release'];
   const expected = cut ? [...once, ...VM_COUPLED_GUARD_CHECKS.slice(0, 2), ...VM_COUPLED_GUARD_CHECKS]
-    : [...VM_COUPLED_CHECKS, ...once.slice(1), ...VM_COUPLED_GUARD_CHECKS, ...VM_COUPLED_GUARD_CHECKS];
+    : [...VM_COUPLED_CHECKS, ...once.slice(1), ...VM_COUPLED_GUARD_CHECKS, ...VM_COUPLED_GUARD_CHECKS,
+      'installed-cli-baseline-and-refusals', 'installed-cli-baseline-and-refusals'];
   assert.deepEqual([...evidence.checks].sort(), expected.sort());
   if (cut) {
     assert.equal(cut.event, 'cut-ready'); assert.equal(cut.point, evidence.point);

@@ -134,14 +134,18 @@ PASS** (`meshpn-dns-vm-ZqbtFB`, `c3ccc0c`, уже с TCP noDelay). Baseline quer
 public-layout завершена; installed entrypoint/установщик и пилоты остаются.
 Начат [installed opt-in/authority](dns-installed-authority.md): отдельное
 разрешение связано с bundle/config hash и guard ID, есть только read-only
-`dns-client.mjs --inspect`. Это ещё не положительно проверенный VM installed
-путь и не готовая команда переключения DNS; OS factories/mutating commands
-пока не подключены.
+`dns-client.mjs --inspect`. Это не готовая команда переключения DNS;
+OS factories/mutating commands пока не подключены.
 VPS2 installed `--inspect` получил строгий config и read-only baseline проверки:
 уникальные D-Bus владельцы resolved/networkd, runtime-selected network file/hash,
 явная deny-policy внутренних имён, stub/NSS и отсутствие конфликтов DNS-link.
-Node1839/1839 PASS. Это ещё не mutation authority и не положительный installed
-VM acceptance; ограничения и схема — [installed authority](dns-installed-authority.md).
+После исправления scalar D-Bus property и подготовки настоящего networkd
+в VM installed CLI прошёл позитивный и три отрицательных сценария в каждой
+загрузке. Новый coupled lifecycle: **21/21, две загрузки PASS**,
+`meshpn-dns-vm-KXJ20n`; Node1841/1841 PASS. Это read-only baseline, **не mutation
+authority**. Следом — installed запуск/отключение, согласованное исключение
+DNS-link из networkd, loaded adapter credentials, установщик/откат обеих
+платформ. Ограничения и схема — [installed authority](dns-installed-authority.md).
 
 ## Три этапа и текущий статус
 

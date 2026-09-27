@@ -43,7 +43,7 @@ test('invalid D-Bus replies fail without authorizing a setter', async () => {
   }
 });
 test('read-only manager inspection uses fixed properties and unique peers', async () => {
-  const calls = [], values = { DNSEx: [[2, 2, [10,129,0,2], 0, '']], FallbackDNSEx: [], Domains: [[2, 'auto.internal', false]], ResolvConfMode: ['stub'] };
+  const calls = [], values = { DNSEx: [[2, 2, [10,129,0,2], 0, '']], FallbackDNSEx: [], Domains: [[2, 'auto.internal', false]], ResolvConfMode: 'stub' };
   const bus = createDnsSystemBus(async (_tool, args) => {
     calls.push(args); let data;
     if (args.includes('GetNameOwner')) data = [args.at(-1) === 'org.freedesktop.network1' ? ':1.24' : ':1.23'];
@@ -67,7 +67,9 @@ test('read-only manager refuses malformed scalar and oversized list replies', as
     await assert.rejects(bus.ownerPid(':1.2')); await assert.rejects(bus.ownerUid(':1.2'));
   }
   for (const data of [null, 'bad', Array(65).fill(0)]) {
-    const bus = createDnsSystemBus(async (_tool, args) => ({ stdout: JSON.stringify({ data: args.at(-1) === 'ResolvConfMode' ? ['stub'] : data }) }));
+    const bus = createDnsSystemBus(async (_tool, args) => ({ stdout: JSON.stringify({ data: args.at(-1) === 'ResolvConfMode' ? 'stub' : data }) }));
     await assert.rejects(bus.managerSnapshot(':1.2'));
   }
+  const tuple = createDnsSystemBus(async (_tool, args) => ({ stdout: JSON.stringify({ data: args.at(-1) === 'ResolvConfMode' ? ['stub'] : [] }) }));
+  await assert.rejects(tuple.managerSnapshot(':1.2'));
 });

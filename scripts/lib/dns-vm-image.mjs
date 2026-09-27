@@ -71,6 +71,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     await writeFile(destination('/etc/systemd/resolved.conf'), '[Resolve]\nDNS=\nFallbackDNS=\nLLMNR=no\nMulticastDNS=no\nDNSSEC=no\nDNSOverTLS=no\nCache=no\nReadEtcHosts=no\nDNSStubListener=yes\n', { mode: 0o644 });
     await writeFile(destination('/etc/dbus-vm.conf'), '<busconfig><type>system</type><listen>unix:path=/run/dbus/system_bus_socket</listen><auth>EXTERNAL</auth><policy context="default"><allow user="*"/><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>', { mode: 0o644 });
   }
+  if (coupled) await elf('/usr/lib/systemd/systemd-networkd');
   for (const name of ['libxt_tcp.so', 'libxt_udp.so', 'libipt_REJECT.so', 'libip6t_REJECT.so', 'libxt_standard.so',
     ...(systemd ? ['libxt_comment.so'] : []),
     ...(ingress ? ['libxt_conntrack.so', 'libxt_comment.so', 'libxt_addrtype.so', 'libxt_SNAT.so', 'libxt_DNAT.so', 'libxt_MASQUERADE.so'] : [])]) {
@@ -98,6 +99,13 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     // Match the real deployment path: a symlink changes import.meta.url while
     // Node keeps the argv entrypoint spelling, bypassing its main guard.
     await copyTree(join(project, 'scripts'), '/opt/clean-vpn/scripts');
+    if (coupled) {
+      const files = Object.fromEntries([...copied].filter(([path]) => path.startsWith('/opt/clean-vpn/'))
+        .map(([path, digest]) => [path.slice('/opt/clean-vpn/'.length), digest]));
+      await writeFile(destination('/opt/clean-vpn/bundle.json'), JSON.stringify({ schema: 1, kind: 'clean-vpn-dns-code-bundle', files }), { mode: 0o644 });
+      await chmod(destination('/opt/clean-vpn/bundle.json'), 0o644);
+      for (const path of Object.keys(files)) await chmod(destination(`/opt/clean-vpn/${path}`), 0o644);
+    }
   }
   if (dnsmasq) await copy(join(project, 'scripts/fixtures/dns-clients/radxa-dnsmasq.conf'), '/project/scripts/fixtures/dns-clients/radxa-dnsmasq.conf');
   if (ingress) {
@@ -124,8 +132,10 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
         : { schema: 1, client: 'vps2', id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } }), { mode: 0o600 });
   }
   await writeFile(destination('/etc/passwd'), 'root:x:0:0:root:/root:/bin/sh\nfixture:x:1000:1000:fixture:/tmp:/bin/sh\nsystemd-resolve:x:193:193:resolver:/nonexistent:/bin/false\n'
+    + (coupled ? 'systemd-network:x:192:192:network:/nonexistent:/bin/false\n' : '')
     + (dnsmasq ? 'nobody:x:65534:65534:Unprivileged fixture:/nonexistent:/bin/false\n' : ''), { mode: 0o644 });
   await writeFile(destination('/etc/group'), 'root:x:0:\nfixture:x:1000:\nsystemd-resolve:x:193:\n'
+    + (coupled ? 'systemd-network:x:192:\n' : '')
     + (dnsmasq ? 'nogroup:x:65534:\n' : ''), { mode: 0o644 });
   await writeFile(destination('/etc/nsswitch.conf'), 'passwd: files\ngroup: files\nhosts: dns\n', { mode: 0o644 });
   await writeFile(destination('/etc/resolv.conf'), `nameserver ${dnsmasq ? '127.0.0.1' : systemd ? '127.0.0.53' : '127.0.0.55'}\n`, { mode: 0o644 });

@@ -13,7 +13,8 @@ Loader требует отдельно установленные root-owned0600
 клиентской конфигурации. ID/клиент должны совпасть с boot policy. Hash определяет
 согласованный вход, **не доказывает пригодность профиля или владение DNS**:
 проверки менеджеров, выбранных config sources, reserved IP и readiness остаются
-обязанностью клиентской OS factory. Сейчас её подключения ещё нет.
+обязанностью клиентской OS factory. Подключены только read-only baseline
+проверки VPS2; mutation authority/readiness пока не подключены.
 
 Код предполагается в `/opt/clean-vpn`, manifest `bundle.json`0644 перечисляет
 относительные `scripts/*.mjs/js/json` и их SHA256. Обязательны сам модуль проверки
@@ -52,11 +53,14 @@ read-only inventory. Нет произвольного authority callback, root/
 private temp files. Проверены формат/ограничения opt-in/manifest, полный inventory,
 подмена bytes/mode/owner, missing/unlisted/oversized/malformed файлы, symlink/
 hardlink и отказ выдавать token обычному repo-процессу/поддельным объектам.
-Это **не положительная VM-проверка installed loader**: read-only main entrypoint
-ещё предстоит прогнать в VM; mutating commands и OS factories пока не подключены.
-Успешный `--inspect` будет сообщать `dnsOwnershipVerified:false`, а не готовность
-к переключению DNS. Ошибки CLI редактируются до фиксированного кода без путей,
-конфигурации и stack trace; `--help` не читает системные файлы.
+Эти unit tests сами по себе **не положительная VM-проверка installed loader**;
+последующий реальный installed прогон описан ниже. Mutating commands и OS
+factories пока не подключены.
+Успешный `--inspect` сообщает `dnsOwnershipVerified:false`, а не готовность
+к переключению DNS. Ошибки CLI редактируются до фиксированного кода; для
+installed path допускается также `DNS_CLIENT_LOCATION=модуль.mjs:строка`
+из фиксированного allowlist. Абсолютные пути, значения конфигурации, assertion
+message и полный stack trace не выводятся; `--help` не читает системные файлы.
 Полная Node-регрессия1803/1803 PASS, без skips:
 `/var/tmp/meshpn-acceptance-nrWdSd/report.json` (2026-09-27).
 Прежний общий `meshpn-acceptance-KdDWdH` — FAIL: тест ошибочно ожидал root-владельца
@@ -112,8 +116,39 @@ Radxa пока проходит только прежнюю authority-прове
 assessor принимает тестовые данные, но не выдаёт token.
 
 62/62 targeted tests и1839/1839 Node PASS (без skips),
-`/var/tmp/meshpn-acceptance-KwkR6E/report.json`. Это unit/read-only evidence,
-не положительный VM installed acceptance; такой прогон следующий.
+`/var/tmp/meshpn-acceptance-KwkR6E/report.json` — первый срез baseline.
+Последующий VM запуск выявил ошибку string property: `get-property` возвращает
+`ResolvConfMode` как строку, а не singleton method tuple. Исправлены парсер и
+тест, требования к владельцам/политике не ослаблены. Node1841/1841 PASS,
+`/var/tmp/meshpn-acceptance-N3lmI5/report.json`.
+
+В existing coupled VM добавлен реальный read-only installed CLI: bundle/code
+0644/0755, opt-in/config0600, тот же flock, настоящий networkd и resolved.
+Проверяются положительный baseline и отказы без opt-in, без lock, при другой
+policy на диске. Fixture затем удаляет временный opt-in и возвращает прежний
+sentinel, NSS/resolver и маршрут перед обычным lifecycle; controller всё ещё
+использует VM-gated backend, а не installed setters. Нет проверки loaded
+adapter credentials: adapter ещё не запущен на этапе inspection.
+
+Для inspection используется синтетический нелокальный DNS10.129.0.2 без
+запросов к нему. Loopback sentinel не подходит для строгого VPS2 uplink-profile:
+resolved публикует для localhost DNS индекс loopback, независимо от link;
+это видно в [dns_server_ifindex systemd v255](https://github.com/systemd/systemd/blob/v255/src/resolve/resolved-dns-server.c#L581).
+Строгий отказ collector для такого неоднозначного baseline сохранён.
+
+Сохранённые неудачные прогоны: `meshpn-dns-vm-2Tmfnt` — в минимальном guest
+не было пользователя systemd-network; `t4Qnjh` — generic refused до исправления
+scalar property; `fGT77Y`/`bX7iYP` — отказ проверки DNS-источника (в bX7iYP
+точно локализован на ifindex-check). Reports/manifests/serial logs сохранены,
+пересоздаваемые guest/initrd/kernel/disks удалены для освобождения места.
+
+Итоговый installed + coupled lifecycle: **21/21 PASS, две загрузки**,
+`/var/tmp/meshpn-dns-vm-KXJ20n/report.json`. В каждой загрузке прошёл настоящий
+installed `--inspect` и три отрицательных сценария. После возврата fixture
+прошли прежние lifecycle/guard/откат проверки; baseline queries0 под guard,
+positive controls PASS, host DNS unchanged. Все502 JS-копии manifest сверены
+с исходниками этой записи. Минимальный x64 guest/systemd255, не настоящий
+VPS2 systemd249 и не Radxa ARM64; VM не заменяет пилоты или live-установщик.
 
 Далее — завершение client-specific ownership checks, installed entrypoint,
 controller units и связь install/activate/disable/uninstall. Только установщик

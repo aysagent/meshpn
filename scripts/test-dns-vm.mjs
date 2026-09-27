@@ -206,10 +206,12 @@ test('coupled VM shares real boot guard/CLI and lock without changing legacy fix
   assert.match(units['dns-vm-controller.service'], /flock -n -E 75 -F \/run\/clean-vpn-dns-guard\/lock.*dns-coupled-vm-worker.mjs activate/);
   assert.match(units['dns-vm-controller.service'], /BindsTo=dns-vm-guard.service dns-vm-adapter.service systemd-resolved.service/);
   assert.match(units['dns-vm-driver.service'], /dns-coupled-vm-driver.mjs/);
+  assert.match(units['systemd-networkd.service'], /ExecStart=\/usr\/lib\/systemd\/systemd-networkd/);
+  assert.doesNotMatch(units['default.target'], /networkd/);
   assert.deepEqual(dnsSystemdVmUnits(), old);
   for (const [name, unit] of Object.entries(units)) {
     assert.doesNotMatch(unit, /ExecStop=|\[Install\]/);
-    if (!['dns-vm-controller.service', 'dns-vm-driver.service'].includes(name)) assert.equal(unit, shared[name]);
+    if (!['dns-vm-controller.service', 'dns-vm-driver.service', 'systemd-networkd.service'].includes(name)) assert.equal(unit, shared[name]);
   }
   for (const phase of ['coupled-cut', 'coupled-inspect']) for (const point of VM_COUPLED_CUTS) {
     assert.deepEqual(vmBootOptions(qemuDnsArgs({ ...input, phase, point }).find((v) => v.startsWith('console='))), { phase, point });
@@ -219,13 +221,17 @@ test('coupled VM shares real boot guard/CLI and lock without changing legacy fix
     assert.throws(() => qemuDnsArgs({ ...input, phase, point }));
   }
 });
+test('installed baseline fixture refuses host execution before fixture writes', async () => {
+  const { checkInstalledDnsVmBaseline } = await import('./lib/dns-installed-vm-check.mjs');
+  await assert.rejects(checkInstalledDnsVmBaseline());
+});
 const coupledEvidence = () => ({ phase: 'coupled', point: 'lifecycle', systemdPid1: true, automaticStaleAdoption: false,
   baselineQueriesDuringProtection: 0, baselinePositiveControl: true, explicitDisablePassed: true, resolvConfUnchanged: true,
   ownedLinkRemoved: true, bothJournalsPreservedOnRefusal: true,
   bootGuardImplementation: 'cli', adapterImplementation: 'cli', unprivilegedAdapter: true,
   persistentBootGuardJournal: true, sharedGuardDnsLock: true, coupledRestoreProof: true, threeJournalsPreservedOnRefusal: true,
   checks: [...VM_COUPLED_CHECKS, 'readiness-owned-link-and-protected-dns', 'disable-removes-owned-link-before-baseline-release',
-    ...VM_COUPLED_GUARD_CHECKS, ...VM_COUPLED_GUARD_CHECKS] });
+    ...VM_COUPLED_GUARD_CHECKS, ...VM_COUPLED_GUARD_CHECKS, 'installed-cli-baseline-and-refusals', 'installed-cli-baseline-and-refusals'] });
 test('coupled lifecycle evidence requires exactly both boots and all checks', () => {
   const e = coupledEvidence(); assertVmCoupledEvidence(e);
   for (const key of Object.keys(e).filter((k) => k !== 'checks')) assert.throws(() => assertVmCoupledEvidence({ ...e,

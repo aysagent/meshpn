@@ -9,6 +9,18 @@ export function parseDnsClientArgs(argv) {
   if (argv.length === 1 && ['--help', '--inspect'].includes(argv[0])) return argv[0].slice(2);
   throw Object.assign(new Error('DNS_CLIENT_ARGUMENTS'), { code: 'DNS_CLIENT_ARGUMENTS' });
 }
+// Fixed code + source location only: no assertion message, values, paths or raw
+// stack. Useful for diagnosing refused installs without exposing configuration.
+export function dnsClientFailureLocation(error) {
+  if (!(error instanceof Error) || typeof error.stack !== 'string') return null;
+  const allowed = new Set(['dns-installed-authority.mjs', 'dns-installed-vps2.mjs', 'dns-vps2-baseline.mjs',
+    'dns-system-bus.mjs', 'dns-system-command.mjs', 'dns-boot-guard.mjs']);
+  for (const line of error.stack.split('\n').slice(1, 20)) {
+    const match = /\bfile:\/\/\/opt\/clean-vpn\/scripts\/lib\/([a-z0-9-]+\.mjs):(\d{1,6}):\d{1,6}\)?$/.exec(line);
+    if (match && allowed.has(match[1])) return `${match[1]}:${match[2]}`;
+  }
+  return null;
+}
 async function main() {
   const command = parseDnsClientArgs(process.argv.slice(2));
   if (command === 'help') {
@@ -22,5 +34,7 @@ async function main() {
     baseline, limitations: ['not-an-installer', 'no-mutation-ownership-authority', 'no-live-activation-or-rollback', 'not-a-readiness-or-leak-test'] }));
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) main().catch((e) => {
-  console.error(e.code === 'DNS_CLIENT_ARGUMENTS' ? 'DNS_CLIENT_ARGUMENTS' : 'DNS_CLIENT_REFUSED'); process.exitCode = 1;
+  console.error(e.code === 'DNS_CLIENT_ARGUMENTS' ? 'DNS_CLIENT_ARGUMENTS' : 'DNS_CLIENT_REFUSED');
+  const location = dnsClientFailureLocation(e); if (location) console.error(`DNS_CLIENT_LOCATION=${location}`);
+  process.exitCode = 1;
 });

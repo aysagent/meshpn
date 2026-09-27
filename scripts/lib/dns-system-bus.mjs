@@ -67,8 +67,7 @@ export function createDnsSystemBus(run) {
       ownerCheck(owner); const result = {};
       for (const name of ['DNSEx', 'FallbackDNSEx', 'Domains', 'ResolvConfMode'])
         result[name] = await call(['get-property', owner, root, manager, name]);
-      // busctl represents strings as singleton arrays, arrays directly.
-      result.ResolvConfMode = singleton(result.ResolvConfMode);
+      // get-property uses a bare scalar, unlike the tuple returned by call.
       assert.equal(typeof result.ResolvConfMode, 'string');
       for (const key of ['DNSEx', 'FallbackDNSEx', 'Domains']) assert.ok(Array.isArray(result[key]) && result[key].length <= 64);
       return result;

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { runCommand } from './lib/transparent-acceptance.mjs';
-import { parseDnsClientArgs } from './dns-client.mjs';
+import { parseDnsClientArgs, dnsClientFailureLocation } from './dns-client.mjs';
 import { validateDnsClientOptIn, validateDnsInstalledBundle, inspectDnsInstalledBundle,
   loadDnsInstalledAuthority, assertDnsInstalledAuthority, dnsInstalledAuthorityInfo } from './lib/dns-installed-authority.mjs';
 
@@ -103,5 +103,15 @@ test('installed CLI help is offline; ordinary repo inspection fails with a redac
   for (const [arg, expected] of [['--inspect', 'DNS_CLIENT_REFUSED'], ['--start', 'DNS_CLIENT_ARGUMENTS']]) {
     const r = await runCommand(process.execPath, [path, arg]);
     assert.equal(r.code, 1); assert.equal(r.stdout, ''); assert.equal(r.stderr.trim(), expected);
+  }
+});
+test('installed refusal location omits message, absolute path and other stack frames', () => {
+  const e = new Error('secret configuration value');
+  e.stack = 'Error: secret configuration value\n    at private (file:///secret/private.mjs:1:1)\n    at check (file:///opt/clean-vpn/scripts/lib/dns-installed-vps2.mjs:42:12)';
+  assert.equal(dnsClientFailureLocation(e), 'dns-installed-vps2.mjs:42');
+  assert.equal(dnsClientFailureLocation({ stack: e.stack }), null);
+  for (const frame of ['file:///opt/clean-vpn/scripts/lib/unknown.mjs:42:12', 'file:///tmp/dns-installed-vps2.mjs:42:12',
+    'file:///opt/clean-vpn/scripts/lib/dns-installed-vps2.mjs:9999999:12']) {
+    e.stack = `Error: secret\n    at check (${frame})`; assert.equal(dnsClientFailureLocation(e), null);
   }
 });

@@ -16,6 +16,7 @@ import { syncDirectory } from './dns-lifecycle-journal.mjs';
 import { DNS_BOOT_LOCK } from './dns-boot-guard.mjs';
 import { readDnsGuardJournal } from './dns-client-guard-journal.mjs';
 import { boundedInspectRead } from './dns-inspect.mjs';
+import { checkInstalledDnsVmBaseline } from './dns-installed-vm-check.mjs';
 
 const ctl = (...args) => exec('/usr/bin/systemctl', ['--no-pager', ...args], { timeout: 200000 });
 const disable = () => exec('/usr/bin/flock', ['-n', '-E', '75', '-F', DNS_BOOT_LOCK, '/usr/bin/node',
@@ -91,6 +92,7 @@ async function main() {
   const networkStart = BigInt((await ctl('show', 'dns-vm-network.service', '--property=ExecMainStartTimestampMonotonic', '--value')).stdout.trim());
   assert.ok(guardEnd > 0n && networkStart >= guardEnd); await inspectGuard();
   check('boot-guard-cli-before-network');
+  if (options.phase === 'coupled') { await checkInstalledDnsVmBaseline(); check('installed-cli-baseline-and-refusals'); }
   const probeBefore = (await control('fixture', 'stats')).resolverBodies;
   await ctl('start', 'dns-vm-adapter.service');
   assert.equal((await control('fixture', 'stats')).resolverBodies - probeBefore, 4);
