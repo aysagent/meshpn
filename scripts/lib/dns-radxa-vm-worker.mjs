@@ -4,7 +4,7 @@ import { readFile, lstat, mkdir, readlink, rename } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { assertDnsmasqVm } from './dnsmasq-vm-safety.mjs';
 import { journal, backendContext, probe, exists, emit } from './dnsmasq-vm-worker.mjs';
-import { createResolverObjectFiles } from './dns-resolver-object-files.mjs';
+import { createPublicResolverObjectFiles } from './dns-resolver-object-files.mjs';
 import { RESOLVER_TARGET } from './dns-resolver-object-journal.mjs';
 import { pairRadxaBackends, readRadxaJournal } from './dns-radxa-journal.mjs';
 import { loadDnsBootGuard } from './dns-boot-guard.mjs';
@@ -54,11 +54,11 @@ export async function radxaVmContext({ ensureGuard = () => guard(true), releaseG
   await assertRadxaVm();
   const commands = await createDnsSystemCommands({ assertAuthority: assertRadxaVm, required: ['ip', 'systemctl', 'dnsmasq'] });
   const { scope, backend: dnsmasq, verifyRestoredDaemon } = await backendContext({ ensureGuard, removeGuard: releaseGuard, commands });
-  const directory = `${journal}/resolver-etc`;
-  const resolver = await createResolverObjectFiles({ directory, baseline: 'localhost-file', ensureGuard,
+  const directory = '/etc/clean-vpn/dns/resolver-state';
+  const resolver = await createPublicResolverObjectFiles({ directory, targetDirectory: '/etc', baseline: 'localhost-file', ensureGuard,
     identity: async () => ({ scope, bootId: (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim() }),
     checkEnvironment: async () => {
-      await assertRadxaVm(); const a = await lstat('/etc', { bigint: true }), b = await lstat(directory, { bigint: true });
+      await assertRadxaVm(); const a = await lstat('/etc', { bigint: true }), b = await lstat(`${journal}/public-etc`, { bigint: true });
       assert.equal(a.ino, b.ino); assert.equal(a.dev, b.dev);
       const mounts = (await readFile('/proc/self/mountinfo', 'utf8')).split('\n').map((s) => s.split(' ')[4]);
       for (const path of ['/etc/resolv.conf', ...['resolv.conf', 'managed.conf', 'restored.conf'].map((n) => `${directory}/${n}`)]) assert.ok(!mounts.includes(path));

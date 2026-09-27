@@ -86,10 +86,11 @@ install/activate/disable/uninstall с [файловой частью](dns-deploy
 Только после проверки этой связки в VM можно готовить согласованные live-пилоты.
 Ни перенос кода, ни его unit PASS не закрывают [DNS v1](dns-v1.md).
 
-Важно для следующего шага Radxa: private file backends сейчас работают в0700
-fixture directory, а VM подставляет synthetic `/etc`. Их нельзя просто направить
-в настоящий `/etc` или сделать `/etc/resolv.conf` ссылкой внутрь0700 state:
-обычный непривилегированный процесс должен читать resolver. Live factory должна
-разделять публично читаемый resolver и private journal/snapshots, проверять
-реальные config sources dnsmasq и сохранять установленный baseline. Это часть
-уже запланированной OS-интеграции, не новая фича DNS v1.
+Для Radxa добавлен [public resolver backend](dns-resolver-object.md): readable
+resolver и private snapshots/journal разделены; VM больше не делает весь `/etc`
+каталогом0700 и проверяет NSS от UID65534. Это файловая часть будущей OS factory,
+не live authority; новая VM-проверка пока остановилась до controller на readiness,
+и PASS прежней схемы её не подтверждает. Установщик должен выбрать same-mount
+расположение snapshots относительно target (журнал может быть отдельно),
+проверить реальные config sources dnsmasq и установленный здоровый baseline.
+Публиковать resolver ссылкой внутрь0700 state по-прежнему нельзя.

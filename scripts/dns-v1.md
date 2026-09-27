@@ -120,6 +120,11 @@ Node1754/1754 PASS. Сохранён также первый отказ readines
 controller; отдельный повтор прошёл без увеличения таймаутов. Это ещё не live
 OS authority/entrypoint и не установка; private fixture files нельзя напрямую
 подставлять вместо публично читаемого resolver настоящего клиента.
+Добавлен public-layout resolver backend: target0644/parent0755 отдельно от
+private snapshots/journal0700, проверка same mount и identity обоих каталогов.
+Файловые проверки проходят, но новая Radxa VM пока не подтверждена: после
+исправления обнаруженного EXDEV два запуска остановились на readiness адаптера
+до controller. Точный статус — [resolver object](dns-resolver-object.md).
 
 ## Три этапа и текущий статус
 

@@ -1,4 +1,5 @@
-/** Narrow reviewed symlink/localhost-file transition; private fixtures only, no guard release. */
+/** Narrow reviewed resolver transition. The legacy on-disk backend tag is not
+ * OS authority. Public-layout contexts are distinct and require healthy files. */
 import assert from 'node:assert/strict';
 import { randomBytes, createHash } from 'node:crypto';
 import { isDeepStrictEqual as same } from 'node:util';
@@ -9,10 +10,13 @@ export const RESOLVER_MANAGED = 'nameserver 127.0.0.1\n';
 export const resolverHash = (text) => createHash('sha256').update(text).digest('hex');
 const keys = (v, k) => { assert.ok(v && typeof v === 'object' && !Array.isArray(v)); assert.deepEqual(Object.keys(v).sort(), [...k].sort()); };
 export function validateResolverContext(v) {
-  keys(v, ['scope', 'bootId', 'directoryIdentity']); keys(v.scope, ['net', 'mnt', 'pid']);
+  const external = Object.hasOwn(v, 'targetDirectoryIdentity');
+  keys(v, ['scope', 'bootId', 'directoryIdentity', ...(external ? ['targetDirectoryIdentity'] : [])]); keys(v.scope, ['net', 'mnt', 'pid']);
   for (const key of ['net', 'mnt', 'pid']) assert.match(v.scope[key], new RegExp(`^${key}:\\[\\d+\\]$`));
   assert.match(v.bootId, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
-  assert.match(v.directoryIdentity, /^\d+:\d+$/); return v;
+  assert.match(v.directoryIdentity, /^\d+:\d+$/);
+  if (external) { assert.match(v.targetDirectoryIdentity, /^\d+:\d+$/); assert.notEqual(v.targetDirectoryIdentity, v.directoryIdentity); }
+  return v;
 }
 export function validateResolverObject(v) {
   keys(v, ['kind', 'identity', 'uid', 'gid', 'mode', 'value']);
@@ -27,6 +31,7 @@ export function validateResolverObjectJournal(r) {
   assert.equal(r.schema, 1); assert.equal(r.backend, 'resolver-object-private-fixture'); assert.match(r.id, /^[a-f0-9]{32}$/);
   validateResolverContext(r.context);
   for (const key of ['original', 'managed', 'restored', 'start']) validateResolverObject(r[key]);
+  if (Object.hasOwn(r.context, 'targetDirectoryIdentity')) assert.equal(r.original.kind, 'file');
   assert.equal(r.restored.kind, r.original.kind); assert.equal(r.restored.value, r.original.value);
   assert.equal(r.restored.mode, r.original.mode); assert.equal(r.managed.kind, 'file');
   for (const key of ['uid', 'gid']) assert.ok([r.managed, r.restored].every((v) => v[key] === r.original[key]));

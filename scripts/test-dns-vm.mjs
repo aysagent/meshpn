@@ -294,6 +294,7 @@ const radxaEvidence = () => ({ phase: 'radxa', point: 'lifecycle', systemdPid1: 
   bootGuardImplementation: 'cli', adapterImplementation: 'cli', unprivilegedAdapter: true, sharedGuardDnsLock: true,
   automaticStaleAdoption: false, baselineQueriesDuringProtection: 0,
   checks: [...VM_RADXA_CHECKS, 'paired-readiness-and-dhcp', 'offline-rollback-verifies-daemon-before-release',
+    'unprivileged-system-dns-and-private-journal', 'unprivileged-baseline-after-restore', 'cross-mount-resolver-rejected',
     ...VM_RADXA_GUARD_CHECKS, ...VM_RADXA_GUARD_CHECKS] });
 test('Radxa lifecycle evidence requires exact two-boot criteria and verified healthy rollback', () => {
   const e = radxaEvidence(); assertVmRadxaEvidence(e);
@@ -314,6 +315,7 @@ for (const point of VM_RADXA_CUTS) test(`Radxa cut compares all four journals: $
   const cut = { event: 'cut-ready', point, journals, guard }, e = { ...radxaEvidence(), phase: 'radxa-inspect', point, previousBootId: 'old',
     inspected: structuredClone({ ...journals, guard }), dhcpPreservedOnAdapterFailure: false,
     checks: ['stale-four-journals-refused', 'paired-readiness-and-dhcp', 'offline-rollback-verifies-daemon-before-release',
+      'unprivileged-system-dns-and-private-journal', 'unprivileged-baseline-after-restore', 'cross-mount-resolver-rejected',
       ...VM_RADXA_GUARD_CHECKS.slice(0, 2), ...VM_RADXA_GUARD_CHECKS] };
   assertVmRadxaEvidence(e, cut);
   for (const key of ['root', 'dnsmasq', 'resolver', 'guard']) {

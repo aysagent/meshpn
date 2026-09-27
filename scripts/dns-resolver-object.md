@@ -12,8 +12,11 @@ Radxa, не автоматическое исправление её текущ�
 ## Что реализовано
 
 Отдельный журнал `dns-resolver-object-journal.mjs` и файловый backend
-`dns-resolver-object-files.mjs` работают только с фиксированными именами в
-принадлежащем процессу приватном каталоге 0700. Фазы:
+`dns-resolver-object-files.mjs` используют фиксированные имена. Исходная factory
+`createResolverObjectFiles` хранит всё в приватном каталоге0700; новая
+`createPublicResolverObjectFiles` отделяет публичный resolver от snapshots/journal.
+Обе — внутренние файловые backend, не live entrypoint и не разрешение takeover.
+Фазы:
 
 ```text
 prepared → apply-intent → active → restore-intent → restored
@@ -38,6 +41,53 @@ Disable возвращает **точный текст и метаданные �
 содержимым, другой boot/namespace, заменённые snapshots требуют отказа и review.
 Это не CAS против враждебного процесса с тем же UID/root: нужны owned directory
 и внешний flock.
+
+## Публичный resolver и закрытый журнал
+
+Public factory принимает только явно выбранный `localhost-file`. Текущий
+`resolv.conf` остаётся обычным0644 файлом в отдельном0755 каталоге; snapshots и
+журнал лежат в0700 каталогах. Это не ссылка из `/etc` внутрь закрытого state.
+Snapshots и target должны находиться в одном mount для атомарного rename;
+журнал может храниться отдельно. Совпадение device не заменяет проверку mount ID:
+разные bind-mount пути той же filesystem могут дать EXDEV.
+[Linux rename(2)](https://man7.org/linux/man-pages/man2/rename.2.html).
+Установщик обязан выбрать такое расположение либо отказать до изменений:
+копирование поверх target как fallback не допускается. После rename синхронизируются
+**оба** каталога; промежуточные состояния восстанавливаются по identity и intent.
+
+Context публичной схемы дополнительно содержит `targetDirectoryIdentity`.
+Повторное создание backend не принимает заменённый публичный каталог, даже если
+туда перемещён прежний resolver inode. Старый private context несовместим с новым;
+нет автоматического принятия/миграции его журнала. Legacy backend tag сохранён
+как формат данных, не как признак разрешения работы на хосте. Dangling baseline
+в публичной схеме запрещён. Проверяются canonical path, owner/mode, filesystem
+и отсутствие file bind-mount на resolver/snapshots; `checkEnvironment` и внешний
+flock/OS authority остаются обязанностью вызывающего installed controller.
+
+`node --test scripts/test-dns-public-resolver.mjs` — apply/offline
+restore,11 interruption точек, сохранность private journal, подмена public
+directory даже после пересоздания backend, чужие bytes/mode/symlink и потеря
+authority. Interruption hooks не выдаются за реальные power-loss проверки.
+Есть отдельный тест независимого расположения журнала и snapshots.
+Финальный public-resolver набор:19/19 PASS; полная Node-регрессия1773/1773,
+без skips, `/var/tmp/meshpn-acceptance-pPA4XX/report.json` (2026-09-27).
+Новая Radxa VM использует раздельные каталоги и проверяет обычный UID65534:
+чтение resolver, NSS-запрос при защите и после restore, EACCES на журнал.
+Результат этого прогона учитывается отдельно от старой0700 synthetic `/etc`.
+Первый новый VM `/var/tmp/meshpn-dns-vm-7AjwGi/report.json` обнаружил EXDEV:
+snapshots находились по пути другого bind mount. Это FAIL; после него добавлена
+предварительная проверка mount ID, snapshots размещены под
+`/etc/clean-vpn/dns/resolver-state`, private journal оставлен отдельно.
+VM дополнительно воспроизводит и отклоняет прежнее ошибочное расположение
+до создания snapshots/журнала; fallback с копированием не добавлен.
+Следующий запуск `/var/tmp/meshpn-dns-vm-eZ3GIw/report.json` остановился раньше
+controller: adapter startup DNS_TIMEOUT2171мс при лимите1500мс. Он не проверил
+новый backend и не засчитывается как PASS. Образы обоих завершённых неудачных
+запусков удалены для освобождения места; reports/manifests/serial logs сохранены.
+Одиночный повтор `/var/tmp/meshpn-dns-vm-8ILa38/report.json` также остановился
+до controller: DNS_TIMEOUT1565мс. **Новая public-layout VM-интеграция пока
+не подтверждена.** Нужна диагностика этого startup timing, затем успешный
+lifecycle и повтор прежних трёх whole-guest cut точек для нового layout.
 
 ## Настоящий изолированный сценарий
 
@@ -113,13 +163,13 @@ rename точки, offline disable, конфликты, orphan preparation и о
 
 ## Граница результата и следующий шаг
 
-Результат — same-namespace recovery. Родительский backend переживает смерть
+Исторический namespace-результат — same-namespace recovery. Родительский backend переживает смерть
 дочернего контроллера; смерть всей VM/ядра этим тестом не моделируется. Новый
 resolver journal теперь [связан одним durable coordinator с dnsmasq journal](dns-radxa-journal.md)
 в отдельном `--radxa-journal` режиме; старый `--resolver-object` остаётся standalone тестом.
-Для dangling-link пары [systemd/reboot и три power-cut точки VM](dns-radxa-vm.md)
-уже PASS. Новый localhost-file baseline пока проверяется отдельно в namespace,
-не подменяет VM результат другой исходной конфигурации.
+Для прежних private-layout пар [systemd/reboot и три power-cut точки VM](dns-radxa-vm.md)
+уже есть отдельные PASS, включая явно выбранный localhost-file baseline.
+Они не подтверждают новую public-layout схему: её текущий статус указан выше.
 
 Дальше: клиентские ownership/preflight, opt-in установщик и согласованный
 baseline/rollback на Radxa с проверкой реальных units/config в VM.

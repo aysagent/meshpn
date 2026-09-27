@@ -2,13 +2,14 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, cp, chmod, unlink, readFile, writeFile, rename, open } from 'node:fs/promises';
+import { mkdir, cp, chmod, unlink, readFile, writeFile, rename, open, readdir } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { exec } from './browser-lab-driver.mjs';
 import { assertRadxaVm, journalBytes as dnsJournalBytes, journalRecords, guardJournal } from './dns-radxa-vm-worker.mjs';
 import { journal, emit, exists, ctl, lookup, control } from './dnsmasq-vm-worker.mjs';
 import { readRadxaJournal } from './dns-radxa-journal.mjs';
 import { RESOLVER_MANAGED } from './dns-resolver-object-journal.mjs';
+import { createPublicResolverObjectFiles } from './dns-resolver-object-files.mjs';
 import { syncDirectory } from './dns-lifecycle-journal.mjs';
 import { startDnsmasqUsbPeer } from './dnsmasq-usb-peer.mjs';
 import { DNS_BOOT_LOCK } from './dns-boot-guard.mjs';
@@ -34,14 +35,31 @@ async function seed() {
   try { await fd.writeFile(await readFile('/project/scripts/fixtures/dns-clients/radxa-dnsmasq.conf')); await fd.sync(); } finally { await fd.close(); }
   // Copy the synthetic guest /etc, NOT host files. Directory bind preserves
   // systemd units while making atomic resolver rename visible to NSS.
-  await cp('/etc', `${journal}/resolver-etc`, { recursive: true, verbatimSymlinks: true });
-  await chmod(`${journal}/resolver-etc`, 0o700);
-  await unlink(`${journal}/resolver-etc/resolv.conf`);
-  await writeFile(`${journal}/resolver-etc/resolv.conf`, RESOLVER_MANAGED, { flag: 'wx', mode: 0o644 });
-  await chmod(`${journal}/resolver-etc/resolv.conf`, 0o644);
-  await syncDirectory(`${journal}/resolver-etc`); await syncDirectory(journal); await syncDirectory('/state');
+  await cp('/etc', `${journal}/public-etc`, { recursive: true, verbatimSymlinks: true });
+  await chmod(`${journal}/public-etc`, 0o755);
+  await mkdir(`${journal}/resolver-etc`, { mode: 0o700 });
+  await mkdir(`${journal}/public-etc/clean-vpn/dns/resolver-state`, { mode: 0o700 });
+  await unlink(`${journal}/public-etc/resolv.conf`);
+  await writeFile(`${journal}/public-etc/resolv.conf`, RESOLVER_MANAGED, { flag: 'wx', mode: 0o644 });
+  await chmod(`${journal}/public-etc/resolv.conf`, 0o644);
+  await syncDirectory(`${journal}/public-etc`); await syncDirectory(`${journal}/resolver-etc`);
+  await syncDirectory(journal); await syncDirectory('/state');
 }
-const bind = () => exec('mount', ['--bind', `${journal}/resolver-etc`, '/etc']);
+const bind = () => exec('mount', ['--bind', `${journal}/public-etc`, '/etc']);
+async function unprivilegedLookup(label, expected) {
+  await assertRadxaVm(); assert.match(label, /^[a-z-]+$/);
+  const code = `const assert=require('node:assert/strict');
+    const fs=require('node:fs/promises'); const dns=require('node:dns/promises');
+    (async()=>{ assert.equal(process.getuid(),65534); assert.equal(process.getgid(),65534);
+      assert.equal(await fs.readFile('/etc/resolv.conf','utf8'),${JSON.stringify(RESOLVER_MANAGED)});
+      await assert.rejects(fs.readFile('/state/dnsmasq/resolver-etc/journal.json'),{code:'EACCES'});
+      await assert.rejects(fs.readFile('/etc/clean-vpn/dns/resolver-state/restored.conf'),{code:'EACCES'});
+      const r=await dns.lookup(${JSON.stringify(`${label}.test`)},{family:4});
+      assert.equal(r.address,${JSON.stringify(expected)}); console.log('UNPRIVILEGED_DNS_OK');
+    })().catch(e=>{console.error(e.code||e.name);process.exitCode=1});`;
+  const r = await exec('/usr/bin/setpriv', ['--reuid=65534', '--regid=65534', '--clear-groups', '/usr/bin/node', '-e', code], { timeout: 10000 });
+  assert.equal(r.stdout.trim(), 'UNPRIVILEGED_DNS_OK');
+}
 async function archive(label) {
   await bootGuard('--start'); await ctl('stop', 'dns-vm-controller.service', 'dns-vm-dnsmasq.service');
   const before = await journalBytes(); await exec('/usr/bin/umount', ['/etc']);
@@ -111,6 +129,11 @@ async function main() {
       await noFallback(); check('stale-four-journals-refused'); await archive('previous-boot'); await ctl('reset-failed');
     } else { await seed(); await bind(); }
     if (options.phase === 'radxa-cut') await persist({ bootId, checks });
+    await assert.rejects(createPublicResolverObjectFiles({ directory: `${journal}/resolver-etc`, targetDirectory: '/etc',
+      baseline: 'localhost-file', checkEnvironment: assertRadxaVm }), /same mount/);
+    assert.deepEqual(await readdir(`${journal}/resolver-etc`), []);
+    assert.equal(await readFile('/etc/resolv.conf', 'utf8'), RESOLVER_MANAGED);
+    check('cross-mount-resolver-rejected');
     await ctl('start', 'dns-vm-consumer.service');
     assert.equal(await state('controller'), 'active'); assert.equal(await state('dnsmasq'), 'active');
     assert.equal(await readFile('/etc/resolv.conf', 'utf8'), RESOLVER_MANAGED);
@@ -126,6 +149,8 @@ async function main() {
       assert.equal(r.answer, Buffer.from(lease.split('.').map(Number)).toString('hex'));
     };
     await local(); await lookup('managed-tcp', '192.0.2.123', true); await noFallback(); check('paired-readiness-and-dhcp');
+    await unprivilegedLookup('unprivileged-managed', '192.0.2.123'); await noFallback();
+    check('unprivileged-system-dns-and-private-journal');
     if (options.phase === 'radxa-cut') {
       await ctl('stop', 'dns-vm-controller.service'); await inactive('consumer');
       await cutDisable(); throw new Error('cut checkpoint not reached');
@@ -166,6 +191,8 @@ async function main() {
     assert.equal(baselineClient.rcode, 0); assert.equal(baselineClient.answer, 'cb007108');
     check('offline-rollback-verifies-daemon-before-release');
     await lookup('baseline-udp', '203.0.113.8'); await lookup('baseline-tcp', '203.0.113.8', true);
+    await unprivilegedLookup('unprivileged-restored', '203.0.113.8');
+    check('unprivileged-baseline-after-restore');
     assert.ok((await control('sentinel', 'stats')).reduce((a, b) => a + b, 0) >= 2);
     assert.equal((await control('fixture', 'stats')).dnsCalls, 0);
     if (!previous) {

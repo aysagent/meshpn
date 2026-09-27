@@ -1,7 +1,9 @@
-/** Fixed names inside an owned 0700 fixture directory. Never accepts /etc as a target. */
+/** File backends only; OS authority and the lifecycle lock belong to the caller.
+ * The original fixture factory keeps all files private. The public-layout
+ * factory separates a readable resolver from private snapshots/journal. */
 import assert from 'node:assert/strict';
 import { constants } from 'node:fs';
-import { open, lstat, readlink, symlink, rename, realpath } from 'node:fs/promises';
+import { open, lstat, readlink, symlink, rename, realpath, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { privateJournalDirectory, syncDirectory } from './dns-lifecycle-journal.mjs';
 import { RESOLVER_TARGET, RESOLVER_MANAGED, resolverHash, validateResolverContext, validateResolverObject } from './dns-resolver-object-journal.mjs';
@@ -26,17 +28,55 @@ async function snapshot(path) {
   assert.equal(after.dev, before.dev); assert.equal(after.ino, before.ino); assert.equal(after.ctimeNs, before.ctimeNs);
   return validateResolverObject({ kind, value, identity: `${before.dev}:${before.ino}`, uid: Number(before.uid), gid: Number(before.gid), mode: Number(before.mode & 0o7777n) });
 }
-export async function createResolverObjectFiles({ directory, identity, checkEnvironment, ensureGuard, probe,
-  baseline = 'dangling-stub', checkpoint = async () => {} }) {
+async function mountIdentity(path) {
+  const fd = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try {
+    const match = /^mnt_id:\s+(\d+)$/m.exec(await readFile(`/proc/self/fdinfo/${fd.fd}`, 'utf8'));
+    assert.ok(match, 'mount identity unavailable'); return match[1];
+  } finally { await fd.close(); }
+}
+export const createResolverObjectFiles = (options) => buildFiles(options, null);
+export async function createPublicResolverObjectFiles({ targetDirectory, ...options }) {
+  assert.equal(process.platform, 'linux');
+  assert.equal(options.baseline, 'localhost-file', 'public resolver requires reviewed healthy baseline');
+  assert.equal(typeof targetDirectory, 'string');
+  assert.equal(resolve(targetDirectory), targetDirectory, 'absolute canonical target directory required');
+  assert.equal(typeof options.checkEnvironment, 'function', 'OS ownership/authority check required');
+  return buildFiles(options, targetDirectory);
+}
+async function buildFiles({ directory, identity, checkEnvironment, ensureGuard, probe,
+  baseline = 'dangling-stub', checkpoint = async () => {} }, targetDirectory) {
   assert.ok(['dangling-stub', 'localhost-file'].includes(baseline), 'unsupported resolver baseline');
   const originalKind = baseline === 'dangling-stub' ? 'symlink' : 'file';
   await privateJournalDirectory(directory); assert.equal(await realpath(directory), resolve(directory));
   const initial = await lstat(directory, { bigint: true }), directoryIdentity = `${initial.dev}:${initial.ino}`;
-  const paths = { current: join(directory, 'resolv.conf'), managed: join(directory, 'managed.conf'), restored: join(directory, 'restored.conf') };
+  const currentDirectory = targetDirectory ?? directory;
+  const paths = { current: join(currentDirectory, 'resolv.conf'), managed: join(directory, 'managed.conf'), restored: join(directory, 'restored.conf') };
+  const publicDirectory = async () => {
+    assert.equal(await realpath(currentDirectory), resolve(currentDirectory));
+    const s = await lstat(currentDirectory, { bigint: true });
+    assert.ok(s.isDirectory() && s.uid === BigInt(process.getuid()) && s.gid === BigInt(process.getgid()));
+    assert.equal(s.mode & 0o7777n, 0o755n, 'public resolver directory must be searchable/readable');
+    assert.equal(s.dev, initial.dev, 'atomic resolver replacement requires same filesystem');
+    assert.equal(await mountIdentity(currentDirectory), await mountIdentity(directory),
+      'atomic resolver replacement requires same mount, not only same device');
+    assert.notEqual(`${s.dev}:${s.ino}`, directoryIdentity);
+    const mounts = (await readFile('/proc/self/mountinfo', 'utf8')).split('\n').map((line) =>
+      line.split(' ')[4]?.replace(/\\([0-7]{3})/g, (_all, octal) => String.fromCharCode(parseInt(octal, 8))));
+    for (const path of Object.values(paths)) assert.ok(!mounts.includes(resolve(path)), 'resolver object must not be a mountpoint');
+    return `${s.dev}:${s.ino}`;
+  };
+  // Before any staging writes. Re-created backends also bind this identity into
+  // the journal context, so replacing the public directory cannot reset trust.
+  await checkEnvironment();
+  const targetDirectoryIdentity = targetDirectory ? await publicDirectory() : undefined;
   const context = async () => {
     await privateJournalDirectory(directory); assert.equal(await realpath(directory), resolve(directory));
     const stat = await lstat(directory, { bigint: true }); assert.equal(`${stat.dev}:${stat.ino}`, directoryIdentity, 'directory replaced');
-    await checkEnvironment(); return validateResolverContext({ ...await identity(), directoryIdentity });
+    await checkEnvironment();
+    if (targetDirectory) assert.equal(await publicDirectory(), targetDirectoryIdentity, 'public resolver directory replaced');
+    return validateResolverContext({ ...await identity(), directoryIdentity,
+      ...(targetDirectory ? { targetDirectoryIdentity } : {}) });
   };
   const view = async () => ({ context: await context(), snapshot: await snapshot(paths.current) });
   const match = async (r, expected) => {
@@ -73,6 +113,9 @@ export async function createResolverObjectFiles({ directory, identity, checkEnvi
       // Owned directory + caller's flock; not CAS against hostile same-uid/root writers.
       const direction = r.phase === 'apply-intent' ? 'apply' : 'restore';
       await rename(paths[name], paths.current); await checkpoint(`${direction}:object:renamed`);
+      if (targetDirectory) {
+        await syncDirectory(currentDirectory); await checkpoint(`${direction}:target:dir-synced`);
+      }
       await syncDirectory(directory); await checkpoint(`${direction}:object:dir-synced`);
       await match(r, r[name]);
     },

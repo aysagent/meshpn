@@ -18,7 +18,8 @@ export const VM_RADXA_CUTS = Object.freeze(['resolver:apply:set', 'resolver:rest
 export const VM_RADXA_CHECKS = Object.freeze(['failed-guard-prevents-services', 'paired-readiness-and-dhcp',
   'controller-restart-same-transaction', 'exit-outage-preserves-dhcp', 'adapter-sigkill-preserves-dhcp',
   'dnsmasq-sigkill-recovered', 'foreign-resolver-preserves-four-journals', 'offline-rollback-verifies-daemon-before-release',
-  'restored-start-refused', 'stale-four-journals-refused']);
+  'restored-start-refused', 'stale-four-journals-refused',
+  'unprivileged-system-dns-and-private-journal', 'unprivileged-baseline-after-restore', 'cross-mount-resolver-rejected']);
 export const VM_RADXA_GUARD_CHECKS = Object.freeze(['boot-guard-cli-before-network', 'cli-adapter-readiness-and-isolation',
   'active-dns-refuses-release', 'missing-guard-journal-retains-protection']);
 export function assertVmRadxaEvidence(e, cut) {
@@ -29,7 +30,8 @@ export function assertVmRadxaEvidence(e, cut) {
   assert.equal(e.bootGuardImplementation, 'cli'); assert.equal(e.adapterImplementation, 'cli');
   assert.equal(e.dhcpPreservedOnAdapterFailure, !cut);
   assert.equal(e.automaticStaleAdoption, false); assert.equal(e.baselineQueriesDuringProtection, 0);
-  const once = ['stale-four-journals-refused', 'paired-readiness-and-dhcp', 'offline-rollback-verifies-daemon-before-release'];
+  const once = ['stale-four-journals-refused', 'paired-readiness-and-dhcp', 'offline-rollback-verifies-daemon-before-release',
+    'unprivileged-system-dns-and-private-journal', 'unprivileged-baseline-after-restore', 'cross-mount-resolver-rejected'];
   assert.deepEqual([...e.checks].sort(), (cut ? [...once, ...VM_RADXA_GUARD_CHECKS.slice(0, 2), ...VM_RADXA_GUARD_CHECKS]
     : [...VM_RADXA_CHECKS, ...once.slice(1), ...VM_RADXA_GUARD_CHECKS, ...VM_RADXA_GUARD_CHECKS]).sort());
   if (cut) {
