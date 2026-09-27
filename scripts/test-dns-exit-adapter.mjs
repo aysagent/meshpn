@@ -346,7 +346,11 @@ test('CLI readiness is explicit; notification alone is not enabled by environmen
 });
 test('readiness crosses real verified TLS four times and reuses context, never sockets or sessions', async (t) => {
   const lab = await fixture(t);
-  const connect = tls.connect, contexts = [], sockets = [], negotiated = [];
+  const connect = tls.connect, netConnect = net.connect, contexts = [], sockets = [], negotiated = [], exitOptions = [];
+  net.connect = function (options, ...rest) {
+    if (options?.port === lab.exitPort) exitOptions.push(options);
+    return Reflect.apply(netConnect, this, [options, ...rest]);
+  };
   tls.connect = function (options, ...rest) {
     contexts.push(options.secureContext);
     assert.equal(options.minVersion, 'TLSv1.3'); assert.equal(options.rejectUnauthorized, true);
@@ -356,11 +360,13 @@ test('readiness crosses real verified TLS four times and reuses context, never s
     socket.once('secureConnect', () => negotiated.push({ protocol: socket.getProtocol(), reused: socket.isSessionReused(), authorized: socket.authorized }));
     return socket;
   };
-  t.after(() => { tls.connect = connect; });
+  t.after(() => { tls.connect = connect; net.connect = netConnect; });
   const adapter = { port: lab.stub.port, stats: () => ({ stub: lab.stub.stats(), transport: lab.transport.stats() }) };
   assert.deepEqual(await probeDnsAdapterReady(adapter, { name: 'ready.test' }),
     { status: 'ready', protocols: ['udp', 'tcp'], types: ['A', 'AAAA'], queries: 4, systemDnsChanged: false });
   assert.deepEqual(lab.counts(), { bodies: 4, attempts: 4 });
+  assert.equal(exitOptions.length, 4);
+  assert.ok(exitOptions.every((o) => o.noDelay === true && o.host === '127.0.0.1' && o.family === 4 && o.autoSelectFamily === false));
   assert.equal(contexts.length, 4); assert.ok(contexts[0] instanceof tls.SecureContext);
   assert.ok(contexts.every((context) => context === contexts[0])); assert.equal(new Set(sockets).size, 4);
   assert.deepEqual(negotiated, Array.from({ length: 4 }, () => ({ protocol: 'TLSv1.3', reused: false, authorized: true })));

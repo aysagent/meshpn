@@ -58,7 +58,9 @@ function create(options, lab) {
         connectExit: () => {
           if (closing) throw invalid();
           connections++;
-          return track(net.connect({ host: exitAddress, port: exitPort, family: net.isIP(exitAddress), autoSelectFamily: false,
+          // HTTPS normally carries noDelay through its connection factory.
+          // Our TLS socket wraps memory, so apply it to the actual exit TCP leg.
+          return track(net.connect({ host: exitAddress, port: exitPort, family: net.isIP(exitAddress), autoSelectFamily: false, noDelay: true,
             lookup: () => { throw invalid(); } }));
         },
       }).then((session) => session.closed).catch(() => {}).finally(() => { destroy(); jobs.delete(job); });

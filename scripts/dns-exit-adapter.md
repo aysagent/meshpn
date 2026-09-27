@@ -135,6 +135,17 @@ DoH использует `https.Agent` с собственной фабрико�
 клиента — `net.connect` к закреплённому числовому exit IP/port; bootstrap IP
 resolver **никогда не передаётся в клиентский TCP connect**. Переменные HTTP proxy
 и глобальный HTTPS agent этот путь не выбирают. Клиент не перебирает exit IP.
+На этом TCP-сокете явно включён `noDelay`: штатный HTTP agent передаёт эту
+настройку своей фабрике, но наша фабрика строит отдельный TLS поверх memory
+stream и раньше теряла её. Настройка применяется к реальному client→exit TCP,
+не к memory socket. Это возвращает обычную для HTTP политику TCP без Nagle;
+CA/hostname, TLS records и DNS deadlines от этого не меняются. Перебор адресов,
+повторы, pooling и plaintext fallback не добавлены. Само исправление не доказывает,
+что прежние timeout в TCG были вызваны Nagle.
+[Node24.13 HTTP agent](https://github.com/nodejs/node/blob/v24.13.0/lib/_http_agent.js).
+Readiness-тест проверяет `noDelay` на всех четырёх реальных client→exit dial,
+отдельно от TLS-context/socket/session проверок. Node1779/1779 PASS,
+`/var/tmp/meshpn-acceptance-28aIgR/report.json` (2026-09-27).
 
 SNI и certificate hostname check берутся из upstream hostname; HTTP Host/port/path
 из того же compiled profile. TLS1.3+, `rejectUnauthorized: true`, явный bundled
