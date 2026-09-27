@@ -10,11 +10,13 @@ import { join } from 'node:path';
 export function createBootGuardLifecycle({ directory, boot, backend, restoring = false, allowBind = false, checkpoint }) {
   assert.equal(typeof restoring, 'boolean'); assert.equal(typeof allowBind, 'boolean');
   const run = (operation) => dnsGuardTransaction({ directory, operation, backend, checkpoint });
+  let bindingAvailable = allowBind;
   return {
     async prepare() {
       let record;
-      try { record = await readDnsGuardJournal(directory); }
+      try { record = await readDnsGuardJournal(directory); bindingAvailable = false; }
       catch (error) {
+        if (error.code !== 'ENOENT') bindingAvailable = false;
         // Even a corrupt/missing journal must not stop the independent boot
         // policy protecting DNS before a controller refuses to continue.
         await boot.guard.ensure();
@@ -29,10 +31,16 @@ export function createBootGuardLifecycle({ directory, boot, backend, restoring =
         } catch (error) { await boot.guard.ensure(); throw error; }
       }
       await boot.guard.ensure();
-      if (!record) assert.equal(allowBind, true, 'explicit new guard binding required');
+      if (!record) {
+        // Initial absence may authorize ONE binding attempt. Repeated prepare
+        // calls surround DNS setters; a later loss must not reuse the initial
+        // permission after this instance has observed or created its journal.
+        assert.equal(bindingAvailable, true, 'explicit new guard binding required');
+        bindingAvailable = false;
+      }
       return run(record ? 'start' : 'bind-boot');
     },
-    release: () => run('disable'),
+    release: () => { bindingAvailable = false; return run('disable'); },
   };
 }
 

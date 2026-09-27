@@ -175,6 +175,41 @@ test('missing guard journal is not silently rebound during an existing DNS trans
   await assert.rejects(readDnsGuardJournal(f.directory), { code: 'ENOENT' });
   assert.deepEqual(f.state.families, ['present', 'present']);
 });
+for (const initial of ['bind', 'existing']) test(`one initial bind permission cannot recreate a lost journal: ${initial}`, async (t) => {
+  const f = await fixture(t); f.backend.installedInput = async () => ({ ...f.config, id: 'b'.repeat(32) });
+  const boot = { guard: { ensure: async () => { f.state.families = ['present', 'present']; } } };
+  if (initial === 'existing') { await boot.guard.ensure(); await f.run('bind-boot'); }
+  const lifecycle = createBootGuardLifecycle({ directory: f.directory, backend: f.backend, boot, allowBind: true });
+  await lifecycle.prepare(); const before = await readFile(join(f.directory, 'journal.json'));
+  await rename(join(f.directory, 'journal.json'), join(f.directory, 'lost-journal.json'));
+  await assert.rejects(lifecycle.prepare(), /explicit new guard binding/);
+  await assert.rejects(readDnsGuardJournal(f.directory), { code: 'ENOENT' });
+  assert.deepEqual(await readFile(join(f.directory, 'lost-journal.json')), before);
+  assert.deepEqual(f.state.families, ['present', 'present']);
+});
+for (const initial of ['interrupted-bind', 'corrupt']) test(`failed initial binding requires a new reviewed lifecycle: ${initial}`, async (t) => {
+  const f = await fixture(t); f.backend.installedInput = async () => ({ ...f.config, id: 'b'.repeat(32) });
+  const boot = { guard: { ensure: async () => { f.state.families = ['present', 'present']; } } };
+  if (initial === 'corrupt') await writeFile(join(f.directory, 'journal.json'), '{}', { mode: 0o600 });
+  let interrupted = false;
+  const lifecycle = createBootGuardLifecycle({ directory: f.directory, backend: f.backend, boot, allowBind: true,
+    checkpoint: async (p) => { if (p === 'active:file-synced' && !interrupted) { interrupted = true; throw new Error('cut'); } } });
+  await assert.rejects(lifecycle.prepare());
+  if (initial === 'corrupt') await rename(join(f.directory, 'journal.json'), join(f.directory, 'corrupt-journal.json'));
+  await assert.rejects(lifecycle.prepare(), /explicit new guard binding/);
+  await assert.rejects(readDnsGuardJournal(f.directory), { code: 'ENOENT' });
+  assert.deepEqual(f.state.families, ['present', 'present']);
+});
+test('release cannot leave unused initial binding permission behind', async (t) => {
+  const f = await fixture(t); f.backend.installedInput = async () => ({ ...f.config, id: 'b'.repeat(32) });
+  const boot = { guard: { ensure: async () => { f.state.families = ['present', 'present']; } } };
+  await boot.guard.ensure(); await f.run('bind-boot');
+  const lifecycle = createBootGuardLifecycle({ directory: f.directory, backend: f.backend, boot, allowBind: true });
+  await lifecycle.release(); await rename(join(f.directory, 'journal.json'), join(f.directory, 'lost-journal.json'));
+  await assert.rejects(lifecycle.prepare(), /explicit new guard binding/);
+  await assert.rejects(readDnsGuardJournal(f.directory), { code: 'ENOENT' });
+  assert.deepEqual(f.state.families, ['present', 'present']);
+});
 test('resolved release proof requires durable completion, same owner/context and exact current baseline', async (t) => {
   const f = await fixture(t);
   const context = { scope: { net: 'net:[1]', mnt: 'mnt:[2]', pid: 'pid:[3]' }, busId: 'a'.repeat(32), owner: ':1.5',

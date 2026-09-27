@@ -110,6 +110,9 @@ Radxa coordinator с явно заданным localhost-file baseline тепе�
 Это ещё не live OS factories/entrypoint; прежние VM authority gates сохранены.
 Новые lifecycle VM общего controller: VPS2 **19/19**, Radxa **20/20**, каждый
 в двух загрузках PASS; Node1735/1735 PASS. Это не установка на живых клиентах.
+Последующий fix делает начальное разрешение guard binding одноразовым внутри
+lifecycle; потеря журнала не вызывает повторную привязку.57 unit/1740 Node PASS,
+граница VM-среза и исправления — в [guard journal](dns-client-guard-journal.md).
 
 ## Три этапа и текущий статус
 

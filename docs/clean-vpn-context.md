@@ -10,6 +10,22 @@
 
 Конкретные предложения по развитию сохранённых браузерных профилей вынесены в [план улучшения мимикрии](browser-profile-mimicry-plan.md): schema v2, GREASE/key shares, штатные API BoringSSL, проверка до отправки ClientHello, HTTP/2 и критерии приёмки.
 
+### Дополнение 2026-09-27: одноразовое разрешение начального guard binding
+
+После `059ff0d` обнаружено, что captured `allowBind:true` можно было повторно
+использовать в том же lifecycle, если journal исчез между prepare-вызовами.
+Два regression tests (первоначальный bind и existing journal) воспроизвели
+повторную привязку до fix. Теперь успешное чтение, повреждённый journal,
+попытка bind и release исчерпывают разрешение. При последующей потере journal
+независимый guard reassert-ится, журнал не создаётся заново. Retry старого
+instance после pre-rename interruption тоже запрещён; новый instance требует
+нового review контекста caller factory.
+
+57/57 journal/lifecycle tests и Node1740/1740 PASS, без skips,
+`/var/tmp/meshpn-acceptance-Ukdj9G/report.json`. VM NGWKRQ/gVjWqh ниже относятся
+к controller commit `059ff0d` до этого fix:474 copies именно этого среза
+проверены по manifest. Fix не выдаётся за новый VM acceptance.
+
 ### Дополнение 2026-09-27: общий controller двух клиентских профилей
 
 `dns-client-controller.mjs` теперь исполняет start/disable для coupled VPS2 и
