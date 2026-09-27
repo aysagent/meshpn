@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { mkdtemp, open, writeFile, readFile, lstat, readlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { vmDriverFailureIsFatal, assertVmInstalledEvidence, assertVmDeploymentEvidence, assertVmPublicationEvidence } from './lib/dns-vm-protocol.mjs';
+import { vmDriverFailureIsFatal, assertVmInstalledEvidence, assertVmDeploymentEvidence, assertVmPublicationEvidence, assertVmUninstallEvidence } from './lib/dns-vm-protocol.mjs';
 import { buildDnsVmImage, verifyVmPackages, sha256 } from './lib/dns-vm-image.mjs';
 import { qemuDnsArgs, VM_FAULTS, vmCases, assertVmFaultEvidence, assertVmSystemdEvidence, assertVmDnsmasqEvidence, assertVmCoupledEvidence, assertVmRadxaEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
 
@@ -16,7 +16,7 @@ async function main() {
   const flags = new Map();
   for (const arg of process.argv.slice(2)) {
     const match = /^--(tools|kernel|resolved|case|dnsmasq)=(.+)$/.exec(arg);
-    assert.ok(match && !flags.has(match[1]), 'expected --tools=DIR --kernel=FILE --resolved=FILE [--case=all|faults|systemd|dnsmasq|radxa|radxa-cuts|coupled|coupled-cuts|installed|installed-units|installed-released|installed-quiescent|deployment|publication|cycle|CASE] [--dnsmasq=FILE]');
+    assert.ok(match && !flags.has(match[1]), 'expected --tools=DIR --kernel=FILE --resolved=FILE [--case=all|faults|systemd|dnsmasq|radxa|radxa-cuts|coupled|coupled-cuts|installed|installed-units|installed-released|installed-quiescent|installed-uninstall|deployment|publication|cycle|CASE] [--dnsmasq=FILE]');
     flags.set(match[1], match[2]);
   }
   for (const key of ['tools', 'kernel', 'resolved']) assert.ok(flags.get(key)?.startsWith('/'), `absolute --${key} required`);
@@ -26,7 +26,8 @@ async function main() {
   const dnsmasq = radxa || flags.get('case') === 'dnsmasq';
   assert.ok(dnsmasq ? flags.get('dnsmasq')?.startsWith('/') : !flags.has('dnsmasq'), 'absolute --dnsmasq required only for dnsmasq/Radxa cases');
   const coupledCut = flags.get('case') === 'coupled-cuts' || Boolean(flags.get('case')?.startsWith('coupled-cut:'));
-  const publication = flags.get('case') === 'publication';
+  const uninstall = flags.get('case') === 'installed-uninstall';
+  const publication = flags.get('case') === 'publication' || uninstall;
   const deployment = flags.get('case') === 'deployment' || publication;
   const releasedInspection = ['installed-released', 'installed-quiescent'].includes(flags.get('case'));
   const coupled = ['coupled', 'installed', 'installed-units'].includes(flags.get('case')) || releasedInspection || deployment || coupledCut;
@@ -52,7 +53,7 @@ async function main() {
   report.vcpus = flags.get('case') === 'systemd' || coupled || radxa ? 2 : 1;
   try {
     const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved'), systemd,
-      dnsmasq: dnsmasq ? flags.get('dnsmasq') : null, coupled, radxa, deployment, publication, releasedInspection });
+      dnsmasq: dnsmasq ? flags.get('dnsmasq') : null, coupled, radxa, deployment, publication, releasedInspection, uninstall });
     report.image = { kernelSha256: image.manifest.kernelSha256, initrdSha256: image.manifest.initrdSha256 };
     let launchNumber = 0;
     async function launch(disk, phase, point, expectReboot = false) {
@@ -69,7 +70,7 @@ async function main() {
       };
       const onSignal = () => abort(new Error('VM lab interrupted'));
       process.on('SIGINT', onSignal); process.on('SIGTERM', onSignal);
-      const deadlineMs = systemd ? 900000 : 240000;
+      const deadlineMs = uninstall ? 2100000 : systemd ? 900000 : 240000;
       const timer = setTimeout(() => abort(new Error(`VM deadline exceeded (${deadlineMs / 1000} seconds)`)), deadlineMs);
       proc.on('error', (error) => { failure ??= error; });
       proc.stderr.on('data', capture);
@@ -138,6 +139,7 @@ async function main() {
         if (radxa) assertVmRadxaEvidence(passed, radxaCut ? events.find((e) => e.event === 'cut-ready') : undefined);
         else if (point === 'deployment') assertVmDeploymentEvidence(passed);
         else if (point === 'publication') assertVmPublicationEvidence(passed);
+        else if (point === 'installed-uninstall') assertVmUninstallEvidence(passed);
         else if (['installed', 'installed-units', 'installed-released', 'installed-quiescent'].includes(point)) assertVmInstalledEvidence(passed);
         else if (coupled) assertVmCoupledEvidence(passed, coupledCut ? events.find((e) => e.event === 'cut-ready') : undefined);
         else (dnsmasq ? assertVmDnsmasqEvidence : assertVmSystemdEvidence)(passed);

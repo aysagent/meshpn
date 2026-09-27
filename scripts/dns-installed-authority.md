@@ -1,12 +1,15 @@
 # Проверка opt-in установленного DNS-контроллера
 
-`lib/dns-installed-authority.mjs` — read-only граница будущего системного
-entrypoint. `scripts/dns-client.mjs` имеет `--help`, read-only `--inspect`
-и [проверку загруженного adapter](dns-installed-adapter.md) `--inspect-adapter`;
-явный `--probe-adapter` отправляет четыре DNS-запроса только после проверки
-установки, guard и владельца loopback-сокетов. Настройки не меняются;
-`--start`, `--disable`, `--install` пока отвергаются. **Это не команда установки
-или включения DNS.** Файл boot
+`lib/dns-installed-authority.mjs` — read-only проверка полномочий установленного
+системного entrypoint. Сам loader не меняет настройки. `scripts/dns-client.mjs`
+поддерживает `--help`, read-only `--inspect` и `--inspect-adapter`, явный
+`--probe-adapter`, а также **`--start` и `--disable` для установленного VPS2**.
+Последние команды меняют DNS через [installed controller](dns-installed-controller.md)
+с общим lock и журналом. Для Radxa установленный mutating backend ещё не подключён.
+`--probe-adapter` отправляет четыре DNS-запроса только после проверки установки,
+guard и владельца loopback-сокетов; детали — [adapter](dns-installed-adapter.md).
+**Это не пользовательский установщик:** `--install` отсутствует, вручную создавать
+opt-in на живом клиенте пока не предлагается. Файл boot
 policy разрешает только guard; наличие его или корректного DNS journal не
 разрешает самостоятельно переключать resolver.
 
@@ -16,8 +19,9 @@ Loader требует отдельно установленные root-owned0600
 клиентской конфигурации. ID/клиент должны совпасть с boot policy. Hash определяет
 согласованный вход, **не доказывает пригодность профиля или владение DNS**:
 проверки менеджеров, выбранных config sources, reserved IP и readiness остаются
-обязанностью клиентской OS factory. Подключены только read-only baseline
-проверки VPS2; mutation authority/readiness пока не подключены.
+обязанностью клиентской OS factory. Для VPS2 подключены baseline, проверка
+загруженного adapter/readiness и журналируемые start/disable. Успешный `--inspect`
+сам по себе не выдаёт разрешение на переключение DNS.
 
 Код предполагается в `/opt/clean-vpn`, manifest `bundle.json`0644 перечисляет
 относительные `scripts/*.mjs/js/json` и их SHA256. Обязательны сам модуль проверки
@@ -57,8 +61,9 @@ private temp files. Проверены формат/ограничения opt-i
 подмена bytes/mode/owner, missing/unlisted/oversized/malformed файлы, symlink/
 hardlink и отказ выдавать token обычному repo-процессу/поддельным объектам.
 Эти unit tests сами по себе **не положительная VM-проверка installed loader**;
-последующий реальный installed прогон описан ниже. Mutating commands и OS
-factories пока не подключены.
+последующий реальный installed прогон описан ниже. Остальная часть этого документа
+описывает последовательные read-only этапы и их границы на момент проверки;
+актуальные start/disable описаны в [installed controller](dns-installed-controller.md).
 Успешный `--inspect` сообщает `dnsOwnershipVerified:false`, а не готовность
 к переключению DNS. Ошибки CLI редактируются до фиксированного кода; для
 installed path допускается также `DNS_CLIENT_LOCATION=модуль.mjs:строка`
@@ -162,9 +167,10 @@ positive controls PASS, host DNS unchanged. Все502 JS-копии manifest с�
 с исходниками этой записи. Минимальный x64 guest/systemd255, не настоящий
 VPS2 systemd249 и не Radxa ARM64; VM не заменяет пилоты или live-установщик.
 
-Далее — завершение client-specific ownership checks, installed entrypoint,
-controller units и связь install/activate/disable/uninstall. Только установщик
-после проверки всех artifacts и неактивного deployment сможет публиковать opt-in;
-пять файлов прежней [файловой транзакции](dns-deployment-files.md) его ещё не
-создают. Вручную создавать эти файлы или запускать новый путь на VPS/Radxa пока
-не предлагается. [DNS v1](dns-v1.md) остаётся открытым.
+После описанных здесь read-only этапов добавлены VPS2 installed controller,
+его systemd units и [публикация полного набора кода/config/opt-in](dns-deployment.md).
+Сквозная проверка install/activate/disable/uninstall описана отдельно в
+[VM uninstall](dns-uninstall-vm.md); её результат нельзя выводить из старых
+inspection-тестов этого документа. Пользовательский установщик, installed Radxa
+и живые пилоты остаются незавершёнными. Вручную создавать эти файлы или запускать
+новый путь на VPS/Radxa пока не предлагается. [DNS v1](dns-v1.md) остаётся открытым.

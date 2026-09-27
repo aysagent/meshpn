@@ -72,6 +72,16 @@ export function assertVmDeploymentEvidence(e) {
 }
 export const VM_PUBLICATION_CHECKS = Object.freeze(['full-code-and-client-files-published',
   'installed-entrypoint-imports', 'inactive-config-revoked-code-retained']);
+export const VM_UNINSTALL_CHECKS = Object.freeze(['answering-baseline-positive-control', 'full-source-and-client-publication',
+  'protected-nss-and-outage-no-baseline-fallback', 'real-detach-reload-stop-and-file-uninstall',
+  'uninstall-repeat-preserves-runtime-history', 'restored-baseline-positive-control']);
+export function assertVmUninstallEvidence(e) {
+  assert.equal(e.phase, 'coupled'); assert.equal(e.point, 'installed-uninstall');
+  for (const key of ['systemdPid1', 'filePublicationTested', 'activationTested', 'fileUninstallTested',
+    'baselinePositiveControl', 'runtimeHistoryRetained', 'resolvConfUnchanged']) assert.equal(e[key], true, key);
+  assert.equal(e.activeTransactionRebootTested, false);
+  assert.deepEqual([...e.checks].sort(), [...VM_UNINSTALL_CHECKS, ...VM_UNINSTALL_CHECKS].sort());
+}
 export function assertVmPublicationEvidence(e) {
   assert.equal(e.phase, 'coupled'); assert.equal(e.point, 'publication');
   assert.equal(e.systemdPid1, true); assert.equal(e.filePublicationTested, true); assert.equal(e.activationTested, false);
@@ -175,6 +185,7 @@ export function vmCases(selected = 'all') {
   if (selected === 'installed-units') return ['installed-units'];
   if (selected === 'installed-released') return ['installed-released'];
   if (selected === 'installed-quiescent') return ['installed-quiescent'];
+  if (selected === 'installed-uninstall') return ['installed-uninstall'];
   if (selected === 'deployment') return ['deployment'];
   if (selected === 'publication') return ['publication'];
   if (selected === 'coupled-cuts') return [...VM_COUPLED_CUTS];
@@ -223,7 +234,7 @@ export function vmBootOptions(cmdline) {
   const phase = get('meshpn_phase'), point = get('meshpn_point');
   assert.ok(['cycle', 'cut', 'inspect', 'fault', 'systemd', 'dnsmasq', 'coupled', 'coupled-cut', 'coupled-inspect', 'radxa', 'radxa-cut', 'radxa-inspect'].includes(phase));
   assert.ok(phase === 'cycle' ? point === 'none' : phase === 'fault' ? VM_FAULTS.includes(point)
-    : phase === 'coupled' ? ['lifecycle', 'installed', 'installed-units', 'installed-released', 'installed-quiescent', 'deployment', 'publication'].includes(point)
+    : phase === 'coupled' ? ['lifecycle', 'installed', 'installed-units', 'installed-released', 'installed-quiescent', 'installed-uninstall', 'deployment', 'publication'].includes(point)
       : ['systemd', 'dnsmasq', 'radxa'].includes(phase) ? point === 'lifecycle'
       : phase.startsWith('radxa-') ? VM_RADXA_CUTS.includes(point)
         : phase.startsWith('coupled-') ? VM_COUPLED_CUTS.includes(point) : VM_CUT_POINTS.includes(point));

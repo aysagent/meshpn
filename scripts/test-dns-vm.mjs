@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { vmDriverFailureIsFatal, VM_INSTALLED_CHECKS, VM_RELEASED_CHECKS, VM_QUIESCENT_CHECKS, assertVmInstalledEvidence, VM_DEPLOYMENT_CHECKS, assertVmDeploymentEvidence,
-  VM_PUBLICATION_CHECKS, assertVmPublicationEvidence } from './lib/dns-vm-protocol.mjs';
+  VM_PUBLICATION_CHECKS, assertVmPublicationEvidence, VM_UNINSTALL_CHECKS, assertVmUninstallEvidence } from './lib/dns-vm-protocol.mjs';
 import { VM_CUT_POINTS, VM_FAULTS, VM_SYSTEMD_CHECKS, VM_DNSMASQ_CHECKS, vmCases, vmBootOptions, qemuDnsArgs, assertVmJournalCheckpoint, assertVmFaultEvidence, assertVmSystemdEvidence, assertVmDnsmasqEvidence, vmSerialEvent } from './lib/dns-vm-protocol.mjs';
 import { runCommand } from './lib/transparent-acceptance.mjs';
 import { dnsSystemdVmUnits } from './lib/dns-systemd-vm-units.mjs';
@@ -17,6 +17,20 @@ import { queryDnsmasqVm53 } from './lib/transparent-dns-lab.mjs';
 import { createVmGuardLifecycle } from './lib/dns-systemd-vm-worker.mjs';
 
 const input = { root: '/private/tools', kernel: '/private/kernel', initrd: '/private/initrd', disk: '/private/state.raw', phase: 'cycle', point: 'none' };
+test('integrated uninstall requires publication, active use, healthy baseline, removal and both boots; refuses host', async () => {
+  assert.deepEqual(vmCases('installed-uninstall'), ['installed-uninstall']);
+  const args = qemuDnsArgs({ ...input, phase: 'coupled', point: 'installed-uninstall' });
+  assert.deepEqual(vmBootOptions(args[args.indexOf('-append') + 1]), { phase: 'coupled', point: 'installed-uninstall' });
+  const e = { phase: 'coupled', point: 'installed-uninstall', systemdPid1: true, filePublicationTested: true,
+    activationTested: true, fileUninstallTested: true, baselinePositiveControl: true, runtimeHistoryRetained: true,
+    resolvConfUnchanged: true, activeTransactionRebootTested: false, checks: [...VM_UNINSTALL_CHECKS, ...VM_UNINSTALL_CHECKS] };
+  assertVmUninstallEvidence(e);
+  for (const key of Object.keys(e).filter((k) => k !== 'checks'))
+    assert.throws(() => assertVmUninstallEvidence({ ...e, [key]: typeof e[key] === 'boolean' ? !e[key] : 'wrong' }));
+  for (let i = 0; i < e.checks.length; i++) assert.throws(() => assertVmUninstallEvidence({ ...e, checks: e.checks.filter((_, j) => i !== j) }));
+  assert.throws(() => assertVmPublicationEvidence(e)); assert.throws(() => assertVmInstalledEvidence(e));
+  const { checkDnsUninstallVm } = await import('./lib/dns-uninstall-vm-check.mjs'); await assert.rejects(checkDnsUninstallVm());
+});
 test('real file publication VM evidence remains distinct from DNS activation and rejects host execution', async () => {
   assert.deepEqual(vmCases('publication'), ['publication']);
   const args = qemuDnsArgs({ ...input, phase: 'coupled', point: 'publication' });

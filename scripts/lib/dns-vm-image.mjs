@@ -32,7 +32,7 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false }) {
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
   assert.ok(!(systemd && ingress), 'separate systemd DNS and ingress fixtures');
   assert.ok(!dnsmasq || systemd && !ingress && dnsmasq.startsWith('/'));
   assert.ok(!coupled || systemd && !dnsmasq && !ingress);
@@ -40,7 +40,9 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   assert.ok(!deployment || coupled);
   assert.ok(!publication || deployment);
   assert.ok(!releasedInspection || coupled && !deployment);
+  assert.ok(!uninstall || publication && coupled);
   const units = radxa ? radxaVmUnits() : coupled ? dnsCoupledVmUnits() : dnsmasq ? dnsmasqVmUnits() : dnsSystemdVmUnits({ cliAdapter: true });
+  if (uninstall) units['dns-vm-driver.service'] = units['dns-vm-driver.service'].replace('TimeoutStartSec=15min', 'TimeoutStartSec=35min');
   // This separate case inspects a genuinely never-activated deployment. Only
   // its private D-Bus fixture starts; no guard/network/DNS service is pulled in.
   if (deployment || releasedInspection) {
