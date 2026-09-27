@@ -35,10 +35,15 @@ A/AAAA запроса. dnsmasq
 не зависит от живости adapter/controller, поэтому может сохранять DHCP и
 локальные имена при их отказе.
 
-Синтетический гостевой `/etc` копируется в приватный каталог на ext4-диске
-`/state/dnsmasq/resolver-etc` и монтируется **каталогом**, а не отдельным файлом.
+Синтетический гостевой `/etc` копируется в публично читаемый0755 каталог на ext4-диске
+`/state/dnsmasq/public-etc` и монтируется **каталогом**, а не отдельным файлом.
 Systemd units сохраняются, atomic rename resolver виден NSS, inode объектов
-переживает потерю RAM. В текущем режиме исходный `resolv.conf` — явно заданный
+переживает потерю RAM. Resolver0644 доступен обычному UID; snapshots находятся
+в закрытом `/etc/clean-vpn/dns/resolver-state`, журнал — отдельно в
+`/state/dnsmasq/resolver-etc`. Snapshot и target используют один mount: одного
+совпадения device для rename недостаточно. Прежний ошибочный cross-mount layout
+отклоняется отдельной проверкой до записи файлов.
+В текущем режиме исходный `resolv.conf` — явно заданный
 regular localhost-file (`nameserver 127.0.0.1`), как после будущего согласованного
 repair. Стенд не ремонтирует реальную Radxa. Явный localhost:53 probe
 проверяет ответ dnsmasq до выбора системного resolver и имеет отдельный VM gate.
@@ -56,20 +61,23 @@ driver; live-сервисы не получают такой политики. �
 
 ## Конечные проверки
 
-Lifecycle: 20 проверок в двух загрузках — failed guard, boot CLI до сети,
+Lifecycle: 26 проверок в двух загрузках — failed guard, boot CLI до сети,
 отдельный непривилегированный CLI adapter, отказ release при active DNS и
 отказ нового bind при потерянном guard journal, readiness/DHCP, restart
 controller с тем же ID, отказ exit, SIGKILL adapter с сохранением DHCP, SIGKILL
 dnsmasq/recovery, чужой resolver без перезаписи четырёх journals, offline rollback
 с проверкой daemon перед release, отказ start после rollback, reboot со старой
 эпохой и новая явная fixture-транзакция. После reboot сравниваются побайтно все
-четыре журнала. VM использует2 vCPU MTTCG, обычные DNS deadlines не увеличены.
+четыре журнала. В каждой загрузке дополнительно проверяются отказ cross-mount
+layout, NSS от UID65534 при защите/после restore и недоступность ему private state.
+VM использует2 vCPU MTTCG, обычные DNS deadlines не увеличены.
 Radxa CLI fixture использует P-256 сертификат вместо RSA2048: при холодном
 TLS в TCG наблюдался DNS_TIMEOUT1597мс при реальном deadline1500мс. Это изменение
 только synthetic DoH origin, не production crypto/deadline или отключение CA.
 Режимы прежних systemd/coupled и namespace RSA fixtures не изменены.
-Адаптер VM получает `--openssl-config=/dev/null`: после bind синтетический
-`/etc` остаётся private0700 журналом и недоступен DynamicUser. Остальная очистка
+Адаптер VM получает `--openssl-config=/dev/null`: аргумент сохранился после
+устранения прежнего private0700 `/etc` layout. Это изоляция от гостевого OpenSSL
+config, не отключение проверки CA/hostname. Остальная очистка
 окружения, credentials, пустой capability set и TLS verification сохранены.
 
 Три whole-guest crash точки, по две загрузки на отдельном диске:
@@ -86,6 +94,13 @@ SIGKILL QEMU не моделирует физический power loss диск�
 жив. Hot reset внутри одного процесса QEMU не проверяется.
 
 ## Диагностика текущей интеграции
+
+Public-layout добавлен после приведённых ниже20-check результатов. Они не
+подтверждают новую схему каталогов и непривилегированный NSS. Отказы EXDEV и
+startup deadline, исправления и актуальный статус перечислены в
+[resolver object](dns-resolver-object.md). Подготовка TLS-контекста вынесена
+из отдельных DNS-запросов в startup adapter; проверки CA/hostname, отдельные
+handshake и deadline сохранены: [диагностика adapter](dns-exit-adapter.md).
 
 После переноса координации в [общий controller](dns-client-controller.md):
 **20/20 PASS в двух загрузках**, `/var/tmp/meshpn-dns-vm-gVjWqh/report.json`.

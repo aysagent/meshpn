@@ -89,8 +89,10 @@ install/activate/disable/uninstall с [файловой частью](dns-deploy
 Для Radxa добавлен [public resolver backend](dns-resolver-object.md): readable
 resolver и private snapshots/journal разделены; VM больше не делает весь `/etc`
 каталогом0700 и проверяет NSS от UID65534. Это файловая часть будущей OS factory,
-не live authority; новая VM-проверка пока остановилась до controller на readiness,
-и PASS прежней схемы её не подтверждает. Установщик должен выбрать same-mount
+не live authority. Новая VM прошла первую загрузку с проверками NSS/recovery,
+но остановилась на readiness после reboot: полный lifecycle пока FAIL,
+и PASS прежней схемы его не заменяет. Подробности — в resolver object выше.
+Установщик должен выбрать same-mount
 расположение snapshots относительно target (журнал может быть отдельно),
 проверить реальные config sources dnsmasq и установленный здоровый baseline.
 Публиковать resolver ссылкой внутрь0700 state по-прежнему нельзя.

@@ -85,9 +85,27 @@ controller: adapter startup DNS_TIMEOUT2171мс при лимите1500мс. О�
 новый backend и не засчитывается как PASS. Образы обоих завершённых неудачных
 запусков удалены для освобождения места; reports/manifests/serial logs сохранены.
 Одиночный повтор `/var/tmp/meshpn-dns-vm-8ILa38/report.json` также остановился
-до controller: DNS_TIMEOUT1565мс. **Новая public-layout VM-интеграция пока
-не подтверждена.** Нужна диагностика этого startup timing, затем успешный
-lifecycle и повтор прежних трёх whole-guest cut точек для нового layout.
+до controller: DNS_TIMEOUT1565мс. Следующая ограниченная VM-only трасса
+`meshpn-dns-vm-CJ2cP1` показала443мс внутри `tls.connect` и поздний handshake;
+подготовка TLS-контекста вынесена в startup adapter. Проверки сертификата,
+отдельные handshake и deadline1500мс сохранены, Node1778/1778 PASS.
+Подробности — [adapter](dns-exit-adapter.md).
+
+Прогон с этой правкой `/var/tmp/meshpn-dns-vm-BP4yC0/report.json` прошёл первую
+загрузку: cross-mount refusal, protected/unprotected NSS от UID65534, EACCES
+на private state, отказы exit/adapter/dnsmasq, восстановление и reboot-ready.
+Однако на второй загрузке adapter снова не прошёл readiness: DNS_TIMEOUT1568мс.
+Трасса:147мс внутри `tls.connect`, `secureConnect` примерно через960мс от HTTP call,
+до отказа событие HTTP response не наблюдалось. Это не контролируемый benchmark
+и не доказательство единственной причины задержки. Весь lifecycle — **FAIL**,
+несмотря на успешные проверки первого boot. Host DNS unchanged, все488 JS-копий
+образа совпадают с исходниками `17e3c1c`. Reports/manifests/serial logs сохранены;
+пересоздаваемые образы CJ2cP1/8ILa38 удалены, чтобы освободить место.
+
+**Новая public-layout VM-интеграция полностью пока не подтверждена.** Далее —
+диагностика интервала после handshake, успешный полный lifecycle и повтор
+прежних трёх whole-guest cut точек для нового layout; простое повышение deadline
+или случайный успешный повтор не объяснит наблюдавшийся отказ.
 
 ## Настоящий изолированный сценарий
 
