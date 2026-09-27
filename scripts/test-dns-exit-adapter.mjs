@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import net from 'node:net';
 import https from 'node:https';
+import tls from 'node:tls';
 import dns from 'node:dns';
 import dnsPromises from 'node:dns/promises';
 import { once } from 'node:events';
@@ -71,12 +72,13 @@ test('public IPv4/IPv6 transport creation is offline, branded, and close is idem
 });
 
 async function fixture(t, { badCa = false, wrongName = false, wrongSecret = false, mode = 'normal', timeoutMs = 300,
-  answer = fixtureDnsAnswer, responseHeaders = {}, chunkBytes = 0, bodyDelayMs = 0, onQuery = () => {}, domainPolicy } = {}) {
+  answer = fixtureDnsAnswer, responseHeaders = {}, chunkBytes = 0, bodyDelayMs = 0, onQuery = () => {}, domainPolicy, legacyTls = false } = {}) {
   let bodies = 0, attempts = 0;
   const wire = [];
   const sockets = new Set(), sessions = [];
   const track = (s) => { sockets.add(s); s.on('error', () => {}); s.once('close', () => sockets.delete(s)); };
-  const origin = https.createServer({ key, cert, minVersion: 'TLSv1.3' }, (req, res) => {
+  const origin = https.createServer({ key, cert, minVersion: legacyTls ? 'TLSv1.2' : 'TLSv1.3',
+    ...(legacyTls ? { maxVersion: 'TLSv1.2' } : {}) }, (req, res) => {
     req.on('error', () => {}); res.on('error', () => {});
     const chunks = []; req.on('data', (b) => chunks.push(b));
     req.on('end', () => {
@@ -262,7 +264,7 @@ test('HTTPS UDP truncation then TCP retry preserves complete opaque answer and e
   assert.deepEqual(tcp, answer(q)); assert.equal(validateDnsResponse(tcp, q).counts[0], 40);
   assert.deepEqual(lab.counts(), { bodies: 2, attempts: 2 });
 });
-for (const options of [{ badCa: true }, { wrongName: true }, { wrongSecret: true }, { mode: 'hold' }, { mode: 'reset' }, { mode: 'redirect' }]) {
+for (const options of [{ badCa: true }, { wrongName: true }, { wrongSecret: true }, { legacyTls: true }, { mode: 'hold' }, { mode: 'reset' }, { mode: 'redirect' }]) {
   test(`in-memory relay fails closed: ${JSON.stringify(options)}`, async (t) => {
     const lab = await fixture(t, options), packet = makeDnsQuery('private-adapter.dns-lab.test', 1, 77);
     const reply = await queryLabDns(lab.stub.port, packet);
@@ -342,12 +344,48 @@ test('CLI readiness is explicit; notification alone is not enabled by environmen
   assert.equal(r['ready-name'], 'example.com'); assert.equal(r['systemd-notify'], true);
   assert.equal(parseDnsExitArgs(argv)['systemd-notify'], undefined);
 });
-test('readiness crosses real verified TLS four times and requires both local protocols and answer families', async (t) => {
+test('readiness crosses real verified TLS four times and reuses context, never sockets or sessions', async (t) => {
   const lab = await fixture(t);
+  const connect = tls.connect, contexts = [], sockets = [], negotiated = [];
+  tls.connect = function (options, ...rest) {
+    contexts.push(options.secureContext);
+    assert.equal(options.minVersion, 'TLSv1.3'); assert.equal(options.rejectUnauthorized, true);
+    assert.equal(options.servername, 'localhost'); assert.equal(typeof options.checkServerIdentity, 'function');
+    assert.equal(options.session, undefined);
+    const socket = Reflect.apply(connect, this, [options, ...rest]); sockets.push(socket);
+    socket.once('secureConnect', () => negotiated.push({ protocol: socket.getProtocol(), reused: socket.isSessionReused(), authorized: socket.authorized }));
+    return socket;
+  };
+  t.after(() => { tls.connect = connect; });
   const adapter = { port: lab.stub.port, stats: () => ({ stub: lab.stub.stats(), transport: lab.transport.stats() }) };
   assert.deepEqual(await probeDnsAdapterReady(adapter, { name: 'ready.test' }),
     { status: 'ready', protocols: ['udp', 'tcp'], types: ['A', 'AAAA'], queries: 4, systemDnsChanged: false });
   assert.deepEqual(lab.counts(), { bodies: 4, attempts: 4 });
+  assert.equal(contexts.length, 4); assert.ok(contexts[0] instanceof tls.SecureContext);
+  assert.ok(contexts.every((context) => context === contexts[0])); assert.equal(new Set(sockets).size, 4);
+  assert.deepEqual(negotiated, Array.from({ length: 4 }, () => ({ protocol: 'TLSv1.3', reused: false, authorized: true })));
+});
+test('explicit TLS contexts are created during offline startup and isolated per adapter', async () => {
+  const create = tls.createSecureContext, contexts = [], options = [];
+  tls.createSecureContext = function (input) {
+    options.push(input); const context = Reflect.apply(create, this, [input]); contexts.push(context); return context;
+  };
+  const transports = [];
+  try {
+    for (let i = 0; i < 2; i++) transports.push(createDnsExitTransport(publicOptions()));
+    assert.equal(contexts.length, 2); assert.notEqual(contexts[0], contexts[1]);
+    assert.ok(options.every((v) => v.minVersion === 'TLSv1.3' && v.ca.length === 1 && v.ca[0] === cert));
+    assert.ok(transports.every((v) => v.stats().connections === 0));
+  } finally { tls.createSecureContext = create; await Promise.all(transports.map((v) => v.close())); }
+});
+test('TLS context initialization failure is redacted before any network operation', () => {
+  const create = tls.createSecureContext, connect = net.connect; let dials = 0;
+  tls.createSecureContext = () => { throw new Error('PRIVATE-CA-DATA'); };
+  net.connect = () => { dials++; throw new Error('unexpected dial'); };
+  try {
+    assert.throws(() => createDnsExitTransport(publicOptions()), { code: 'DNS_EXIT_CONFIG', message: 'DNS_EXIT_CONFIG' });
+    assert.equal(dials, 0);
+  } finally { tls.createSecureContext = create; net.connect = connect; }
 });
 for (const [name, options] of [['wrong CA', { badCa: true }], ['wrong PSK', { wrongSecret: true }],
   ['upstream reset', { mode: 'reset' }], ['redirect', { mode: 'redirect' }],

@@ -28,6 +28,13 @@ function create(options, lab) {
     encodeRelayHostname(secret, { hostname: profile.hostname, port: profile.port }, publicName);
   } catch { throw invalid(); }
 
+  // CA parsing/context initialization belongs to bounded adapter startup, not
+  // every DNS request. Connections still perform their own handshake and name
+  // verification; neither sessions nor TLS sockets are shared here.
+  const tlsOptions = dnsUpstreamTlsOptions(profile);
+  let secureContext;
+  try { secureContext = tls.createSecureContext({ ca: tlsOptions.ca, minVersion: tlsOptions.minVersion }); }
+  catch { secret.fill(0); throw invalid(); }
   const sockets = new Set(), jobs = new Set();
   let closing = false, closePromise, connections = 0;
   const track = (socket) => {
@@ -42,7 +49,7 @@ function create(options, lab) {
     const destroy = () => { tlsSide.destroy(); relaySide.destroy(); secure?.destroy(); };
     tlsSide.once('close', destroy); relaySide.once('close', destroy);
     try {
-      secure = track(tls.connect({ socket: tlsSide, ...dnsUpstreamTlsOptions(profile), ALPNProtocols: ['http/1.1'] }));
+      secure = track(tls.connect({ socket: tlsSide, ...tlsOptions, secureContext, ALPNProtocols: ['http/1.1'] }));
       secure.once('close', destroy);
       const job = attachTransparentTlsClientSession(relaySide, {
         vpnSecretBuf: secret, publicName, upstreamHost: exitAddress, upstreamPort: exitPort,

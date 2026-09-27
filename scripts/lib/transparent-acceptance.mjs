@@ -50,6 +50,7 @@ export const TEST_FILES = Object.freeze([
   'test-dns-boot.mjs',
   'test-dns-boot-guard.mjs',
   'test-dns-vm.mjs',
+  'test-dns-vm-transport-trace.mjs',
   'test-ingress-routing.mjs',
   'test-ingress-journal.mjs',
   'test-tun-bridge-startup.mjs',
