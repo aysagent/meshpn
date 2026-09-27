@@ -1,10 +1,13 @@
-/** Fresh/unactivated deployment check. Read-only, no implicit service stop or
- * guard release. NOT a restore proof or post-activation uninstall authority. */
+/** Distinct fresh and released deployment observations. Read-only, no implicit
+ * service stop, guard release, state adoption or uninstall authority. */
 import assert from 'node:assert/strict';
 import { lstat, readFile, readlink, readdir, open } from 'node:fs/promises';
-import { assertDnsSystemCommands } from './dns-system-command.mjs';
-import { requireDnsBootGuardLock } from './dns-boot-guard.mjs';
+import { assertDnsSystemCommands, inspectDnsSystemExecutable } from './dns-system-command.mjs';
+import { requireDnsBootGuardLock, readDnsBootNamespaceAnchor } from './dns-boot-guard.mjs';
 import { compileDnsClientGuard, inspectDnsClientGuard } from './dns-client-guard.mjs';
+import { readReleasedDnsHistory } from './dns-released-history.mjs';
+import { createDnsSystemBus } from './dns-system-bus.mjs';
+import { validateVps2DnsUnit } from './dns-installed-vps2.mjs';
 
 const units = new Set(['clean-vpn-dns-guard.service', 'clean-vpn-dns-adapter.service',
   'clean-vpn-dns-client.service', 'clean-vpn-dns-disable.service']);
@@ -99,8 +102,12 @@ async function noRuntimeHistory() {
 /** Genuine pinned commands only. The installer must additionally prove its
  * own reviewed code/profile and validate prospective DNS ownership before
  * activation. This check can be repeated even while opt-in files are absent. */
-export async function inspectFreshDnsDeployment({ commands, input, firewallBackend }) {
-  assertDnsSystemCommands(commands); const plan = compileDnsClientGuard(input);
+export const inspectFreshDnsDeployment = (options) => inspectDnsDeployment(options, false);
+/** Separate post-disable observation. Retains all journals and requires their
+ * current boot/bus/manager binding. NOT an uninstall or reactivation command. */
+export const inspectReleasedDnsDeployment = (options) => inspectDnsDeployment(options, true);
+async function inspectDnsDeployment({ commands, input, firewallBackend }, released) {
+  assertDnsSystemCommands(commands); input = structuredClone(input); const plan = compileDnsClientGuard(input);
   assert.equal(input.client, 'vps2', 'installed Radxa lifecycle is not covered by this check');
   assert.ok(['legacy', 'nf_tables'].includes(firewallBackend));
   assert.equal(process.platform, 'linux'); assert.equal(process.getuid(), 0);
@@ -114,7 +121,7 @@ export async function inspectFreshDnsDeployment({ commands, input, firewallBacke
     await requireDnsBootGuardLock();
     // Runtime journals cannot be interpreted as fresh or silently retired.
     // Released journals need the separate, explicit uninstall protocol too.
-    await noRuntimeHistory();
+    if (!released) await noRuntimeHistory();
   };
   const call = async (args, signature) => {
     const { stdout } = await run('busctl', [...busArgs, ...args], args[4]); return typed(stdout, signature);
@@ -129,6 +136,29 @@ export async function inspectFreshDnsDeployment({ commands, input, firewallBacke
     return { id, owner };
   };
   await context(); const bus = await busContext();
+  const releasedSnapshot = async () => {
+    const scope = {};
+    for (const name of ['mnt', 'net', 'pid']) scope[name] = await readlink(`/proc/self/ns/${name}`);
+    const bootId = (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim();
+    const resolveBus = createDnsSystemBus((tool, args) => run(tool, args, 'released-resolved'));
+    const owner = await resolveBus.owner(), pid = await resolveBus.ownerPid(owner), uid = await resolveBus.ownerUid(owner);
+    const fields = ['Id', 'LoadState', 'ActiveState', 'SubState', 'MainPID', 'InvocationID', 'NeedDaemonReload'];
+    const unit = validateVps2DnsUnit((await run('systemctl', ['show', 'systemd-resolved.service',
+      ...fields.map((f) => `--property=${f}`)], 'released-resolved-unit')).stdout, 'systemd-resolved', pid);
+    const executable = await inspectDnsSystemExecutable(await readlink(`/proc/${pid}/exe`));
+    assert.ok(['/usr/lib/systemd/systemd-resolved', '/lib/systemd/systemd-resolved'].includes(executable.actual));
+    assert.equal(await readlink(`/proc/${pid}/ns/net`), scope.net);
+    let anchor = null;
+    // Missing anchor is legal for a root CLI guard that did not need the
+    // capability-limited unit's attestation. A present stale anchor is not.
+    try { anchor = await readDnsBootNamespaceAnchor(); }
+    catch (e) { if (e.code !== 'ENOENT') throw e; }
+    if (anchor) assert.deepEqual(anchor, { schema: 1, bootId, netns: scope.net });
+    const history = await readReleasedDnsHistory({ directory: '/var/lib/clean-vpn/dns-v1', input,
+      context: { scope, bootId, busId: bus.id, owner }, firewallBackend });
+    return { history, anchor, manager: { owner, pid, uid, unit, executable } };
+  };
+  const history = released ? await releasedSnapshot() : null;
   const rawCall = async (method, ...args) => (await run('busctl', [...busArgs,
     'call', bus.owner, managerPath, managerInterface, method, ...args], method)).stdout;
   const services = async () => {
@@ -150,7 +180,13 @@ export async function inspectFreshDnsDeployment({ commands, input, firewallBacke
     assert.equal(inspectDnsClientGuard(plan, family, (await run(tool, ['-w', '5', '-S'], `${tool}-rules`)).stdout), 'absent', 'DNS guard remains');
   }
   assert.deepEqual(await services(), before, 'DNS service set changed');
+  if (released) assert.deepEqual(await releasedSnapshot(), history, 'released DNS evidence changed');
   assert.deepEqual(await busContext(), bus, 'system manager changed'); await context();
+  if (released) return { schema: 1, kind: 'clean-vpn-dns-released-deployment-check', releasedInactive: true,
+    systemSettingsChanged: false, dnsQueriesSent: 0, activationAuthorized: false, uninstallAuthorized: false,
+    limitations: ['not-a-baseline-health-proof', 'not-a-file-ownership-or-uninstall-authority',
+      'same-boot-and-resolved-owner-only', 'runtime-history-retained',
+      'point-in-time-under-cooperative-lock', 'no-renamed-or-arbitrary-script-process-detection'] };
   return { schema: 1, kind: 'clean-vpn-dns-fresh-deployment-check', freshInactive: true,
     systemSettingsChanged: false, dnsQueriesSent: 0, activationAuthorized: false,
     limitations: ['not-a-DNS-ownership-or-readiness-proof', 'not-a-restore-proof',

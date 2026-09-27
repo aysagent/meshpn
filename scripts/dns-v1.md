@@ -235,6 +235,11 @@ PID1/D-Bus, jobs/cgroups, процессы, links, оба firewall и отсут
 **6/6 PASS на двух загрузках** (`meshpn-dns-vm-9CAnjT`). Это не запуск DNS,
 не active-transaction reboot и не uninstall после использования; единый
 activate/disable/uninstall и ранний boot graph остаются следующим шагом.
+Для uninstall подготовлен отдельный read-only `inspectReleasedDnsDeployment`:
+три released-журнала, текущий boot/bus/resolved context и реальная неактивность
+ОС проверяются без удаления истории. Fresh gate не ослаблен. Режим пока не
+подключён к установщику; реальный VM `start → disable → inspection` и
+последующий файловый rollback ещё должны быть проверены вместе.
 
 Этот чек-лист выполняется для VPS 2 и Radxa. VM PASS подтверждает отдельные
 механизмы, но не ставит автоматически галочки за live-конфигурацию и пилот.

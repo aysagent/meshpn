@@ -49,6 +49,8 @@ async function readNamespaceAnchor() {
     return validateBootNamespace(JSON.parse(new TextDecoder('utf8', { fatal: true }).decode(bytes.subarray(0, bytesRead))));
   } finally { await fd.close(); }
 }
+// Read-only evidence for post-disable inspection; does not grant authority.
+export { readNamespaceAnchor as readDnsBootNamespaceAnchor };
 export function validateDnsBootPolicy(value) {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value));
   assert.deepEqual(Object.keys(value).sort(), ['schema', 'kind', 'enabled', 'firewallBackend', 'input'].sort());
