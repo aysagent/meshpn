@@ -33,7 +33,8 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, dnsConntrack = null, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
+  assert.ok(!dnsConntrack || ingress && dnsConntrack.startsWith('/'));
   assert.ok(!(systemd && ingress), 'separate systemd DNS and ingress fixtures');
   assert.ok(!dnsmasq || systemd && !ingress && dnsmasq.startsWith('/'));
   assert.ok(!coupled || systemd && !dnsmasq && !ingress);
@@ -78,6 +79,15 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   await elf('/usr/sbin/xtables-legacy-multi'); await elf(resolved, '/usr/lib/systemd/systemd-resolved');
   if (dnsmasq) await elf(dnsmasq, '/usr/sbin/dnsmasq');
   if (ingress) await elf('/usr/sbin/sysctl');
+  if (dnsConntrack) {
+    await copy(dnsConntrack, '/usr/sbin/conntrack');
+    const output = (await exec('ldd', [dnsConntrack])).stdout;
+    assert.ok(!output.includes('not found'), 'conntrack libraries missing; supply private LD_LIBRARY_PATH');
+    for (const line of output.split('\n')) {
+      const path = /(?:=>\s+|^\s*)(\/\S+)\s+\(/.exec(line)?.[1];
+      if (path) await copy(path, path.startsWith('/lib') || path.startsWith('/usr/lib') ? path : `/usr/lib/x86_64-linux-gnu/${basename(path)}`);
+    }
+  }
   if (systemd) {
     for (const path of ['/usr/lib/systemd/systemd', '/usr/lib/systemd/systemd-executor', '/usr/lib/systemd/systemd-shutdown', '/usr/bin/systemctl', '/usr/bin/systemd-notify', '/usr/bin/umount']) await elf(path);
     for (const name of ['shutdown.target', 'umount.target', 'final.target', 'reboot.target', 'poweroff.target', 'systemd-reboot.service', 'systemd-poweroff.service']) {
@@ -92,6 +102,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   if (publication) await elf('/usr/bin/mv');
   for (const name of ['libxt_tcp.so', 'libxt_udp.so', 'libipt_REJECT.so', 'libip6t_REJECT.so', 'libxt_standard.so',
     ...(systemd ? ['libxt_comment.so'] : []),
+    ...(dnsConntrack ? ['libxt_multiport.so'] : []),
     ...(ingress ? ['libxt_conntrack.so', 'libxt_comment.so', 'libxt_addrtype.so', 'libxt_SNAT.so', 'libxt_DNAT.so', 'libxt_MASQUERADE.so'] : [])]) {
     await elf(`/usr/lib/x86_64-linux-gnu/xtables/${name}`);
   }
@@ -99,6 +110,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   assert.equal(await realpath(kernel), `/boot/vmlinuz-${release}`, 'this builder requires the matching local kernel/modules');
   for (const name of ['iptable_filter', 'ip6table_filter', 'ipt_REJECT', 'ip6t_REJECT', 'xt_tcpudp', 'dummy',
     ...(systemd ? ['xt_comment'] : []),
+    ...(dnsConntrack ? ['xt_multiport', 'nf_conntrack_netlink'] : []),
     ...(dnsmasq ? ['veth'] : []),
     ...(ingress ? ['tun', 'veth', 'iptable_nat', 'xt_conntrack', 'xt_comment', 'xt_addrtype', 'xt_nat', 'xt_MASQUERADE'] : [])]) {
     const dependencies = (await exec('modprobe', ['--show-depends', name])).stdout;
@@ -176,7 +188,7 @@ cd /project
 echo INGRESS_VM_TESTS
 node --version
 set +e
-node --max-old-space-size=192 scripts/test-ingress-transport-real.mjs
+node --max-old-space-size=192 scripts/${dnsConntrack ? 'test-dns-tunnel-cli-real.mjs' : 'test-ingress-transport-real.mjs'}
 result=$?
 set -e
 if [ "$result" = 0 ]; then echo INGRESS_VM_PASS; else echo INGRESS_VM_FAIL; fi

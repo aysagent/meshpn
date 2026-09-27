@@ -10,6 +10,7 @@ import { inspectIngress, installIngressRouting, INGRESS_TABLE, INGRESS_PRIORITY 
 import { recoverIngress } from '../clean-vpn-recover.mjs';
 import { openIngressJournal } from './ingress-journal.mjs';
 import { setTimeout as delay } from 'node:timers/promises';
+import { tunnelDnsFixtureSource, runTunnelDnsCliChecks } from './dns-tunnel-cli-lab.mjs';
 
 const run = (file, args) => execFileSync(file, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const ip = (...args) => run('ip', args);
@@ -51,6 +52,7 @@ const source = `
     });
     dns.bind(53, '127.0.0.55', resolve);
   }));
+  ${tunnelDnsFixtureSource}
   Promise.all(servers).then(() => console.log('READY'));
 `;
 
@@ -93,7 +95,8 @@ async function query(namespace, address = '93.184.216.34', port = 18080, udp = f
   return output.trim();
 }
 
-export async function runIngressRoutingLab({ transport = null, directory = null, restart = false } = {}) {
+export async function runIngressRoutingLab({ transport = null, directory = null, restart = false, dnsScope = null } = {}) {
+  assert.ok(dnsScope === null || transport && ['host', 'ingress', 'lan'].includes(dnsScope));
   assertBrowserNamespace();
   assert.deepEqual(JSON.parse(ip('-j', 'link', 'show')).map((l) => l.ifname), ['lo']);
   // /run/netns belongs solely to this private mount namespace, never to the host.
@@ -105,6 +108,7 @@ export async function runIngressRoutingLab({ transport = null, directory = null,
   run('sysctl', ['-w', 'net.ipv6.conf.default.accept_dad=0']);
   const children = [], servers = [], checks = [];
   const probePackets = { uplink: 0, tunnel: 0 };
+  const dnsPackets = { uplink: 0, tunnel: 0 }, dnsFixtures = {};
   const startProbe = async () => {
     const child = spawn('ip', ['netns', 'exec', 'peer', process.execPath, '-e', `
       const d = require('dgram'), a = d.createSocket('udp4'), b = d.createSocket('udp6');
@@ -174,18 +178,22 @@ export async function runIngressRoutingLab({ transport = null, directory = null,
     at('tunnel', 'ip', 'addr', 'add', '10.99.0.1/24', 'dev', 'cvpntunp');
     at('tunnel', 'ip', 'route', 'replace', 'default', 'via', '10.99.0.2');
     for (const name of ['uplink', 'tunnel']) {
+      if (dnsScope) for (const address of ['1.1.1.1', '8.8.8.8']) at(name, 'ip', 'addr', 'add', `${address}/32`, 'dev', 'lo');
       at(name, 'ip', 'addr', 'add', '93.184.216.34/32', 'dev', 'lo');
       at(name, 'ip', 'addr', 'add', '10.55.0.1/32', 'dev', 'lo');
       at(name, 'ip', '-6', 'addr', 'add', '2606:4700::1111/128', 'dev', 'lo', 'nodad');
       const child = spawn('ip', ['netns', 'exec', name, process.execPath, '-e', source, name], {
-        stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...(transport ? { INGRESS_CERT_DIR: directory } : {}) },
+        stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...(transport ? { INGRESS_CERT_DIR: directory } : {}),
+          ...(dnsScope ? { TUNNEL_DNS_CLI_LAB: '1' } : {}) },
       });
       children.push(child); await ready(child);
+      dnsFixtures[name] = child;
       let lines = '';
       child.stdout.on('data', (b) => {
         lines += b;
         for (;;) { const at = lines.indexOf('\n'); if (at < 0) break;
           if (lines.slice(0, at) === 'EGRESS_PROBE') probePackets[name]++;
+          if (lines.slice(0, at).startsWith('DNS_QUERY ')) dnsPackets[name]++;
           lines = lines.slice(at + 1);
         }
       });
@@ -253,6 +261,13 @@ export async function runIngressRoutingLab({ transport = null, directory = null,
       ip('addr', 'add', '192.0.3.1/24', 'dev', 'cvpntun');
       at('tunnel', 'ip', 'addr', 'add', '192.0.3.2/24', 'dev', 'cvpntunp');
       at('tunnel', 'ip', 'route', 'replace', 'default', 'via', '192.0.3.1');
+      if (dnsScope) {
+        // The legacy host client installs exit /32 via its default gateway.
+        // Model that ordinary topology, while independent /32 DNS routes still
+        // lead to the leak-detection uplink (not to the exit fixture).
+        if (dnsScope !== 'ingress') ip('route', 'replace', 'default', 'via', '192.0.3.2');
+        for (const address of ['1.1.1.1', '8.8.8.8']) ip('route', 'add', `${address}/32`, 'via', '192.0.2.2');
+      }
       // TUN ioctls create interfaces in the caller's private network namespace, not on the host.
       // Do not try to create device nodes from an unprivileged user namespace; use the VM fixture if absent.
       assert.ok(statSync('/dev/net/tun', { throwIfNoEntry: false })?.isCharacterDevice(),
@@ -282,8 +297,13 @@ export async function runIngressRoutingLab({ transport = null, directory = null,
       const exit = launch('tunnel', ['--role=exit', `--type=${exitType}`, '--server=192.0.3.2:24443', '--ext=cvpntunp', ...common],
         exitType === 'tls' ? 'exit TLS 192.0.3.2:24443' : `exit ${exitType} `);
       await exit.started;
+      if (dnsScope) {
+        try { return await runTunnelDnsCliChecks({ scope: dnsScope, transport, launch, stop, common, exit,
+          fixture: dnsFixtures.tunnel, counters: dnsPackets, snapshot, check, checks }); }
+        catch (error) { throw new Error(`${error.stack}\nCLI logs:\n${logs.join('')}`, { cause: error }); }
+      }
       const client = launch(null, ['--role=client', `--type=${transport}`, '--server=192.0.3.2:24443', '--from-tun=wg0',
-        '--from-tun-restart-safe', '--tls-server-name=vpn.test', '--tls-client-sni=vpn.test', ...common], 'restart guard released');
+        '--dns-mode=off', '--from-tun-restart-safe', '--tls-server-name=vpn.test', '--tls-client-sni=vpn.test', ...common], 'restart guard released');
       await client.started;
       try {
         assert.throws(() => recoverIngress(['--from-tun=wg0', '--apply']), /locked/);
@@ -304,7 +324,7 @@ export async function runIngressRoutingLab({ transport = null, directory = null,
         check('actual CLI safe stop keeps IPv4 blocked', await query('peer'), 'BLOCKED');
         check('actual CLI safe stop keeps IPv6 blocked', await query('peer', '2606:4700::1111'), 'BLOCKED');
         const crashing = launch(null, ['--role=client', `--type=${transport}`, '--server=192.0.3.2:24443', '--from-tun=wg0',
-          '--from-tun-restart-safe', '--tls-server-name=vpn.test', '--tls-client-sni=vpn.test', ...common], 'restart guard released');
+          '--dns-mode=off', '--from-tun-restart-safe', '--tls-server-name=vpn.test', '--tls-client-sni=vpn.test', ...common], 'restart guard released');
         await crashing.started;
         // Confirm complete transport/interception startup before killing the owner.
         for (let attempt = 0; attempt < 4; attempt++) { reply = await query('peer'); if (reply !== 'BLOCKED') break; }
@@ -318,7 +338,7 @@ export async function runIngressRoutingLab({ transport = null, directory = null,
         check('actual CLI recovery dry-run', recoverIngress(['--from-tun=wg0']).mode, 'dry-run');
         check('actual CLI dry-run leaves guard intact', snapshot(), crashed);
         const resumed = launch(null, ['--role=client', `--type=${transport}`, '--server=192.0.3.2:24443', '--from-tun=wg0',
-          '--from-tun-restart-safe', '--tls-server-name=vpn.test', '--tls-client-sni=vpn.test', ...common], 'restart guard released');
+          '--dns-mode=off', '--from-tun-restart-safe', '--tls-server-name=vpn.test', '--tls-client-sni=vpn.test', ...common], 'restart guard released');
         await resumed.started;
         for (let attempt = 0; attempt < 4; attempt++) { reply = await query('peer'); if (reply !== 'BLOCKED') break; }
         check('actual CLI resumes after SIGKILL', reply, 'tunnel:10.99.0.2');

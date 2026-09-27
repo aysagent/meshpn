@@ -10,7 +10,7 @@ import { buildDnsVmImage, verifyVmPackages, sha256 } from './lib/dns-vm-image.mj
 
 const flags = new Map();
 for (const arg of process.argv.slice(2)) {
-  const match = /^--(tools|kernel|resolved|verified-report)=(\/[^\n\r,]+)$/.exec(arg);
+  const match = /^--(tools|kernel|resolved|verified-report|dns-conntrack)=(\/[^\n\r,]+)$/.exec(arg);
   assert.ok(match && !flags.has(match[1]), 'absolute --tools=DIR --kernel=FILE --resolved=FILE required');
   flags.set(match[1], match[2]);
 }
@@ -36,7 +36,8 @@ try {
     assert.ok(packages.some((p) => p.package === 'busybox-static'));
     report.packages = packages; report.packageTrust = { previousReport: flags.get('verified-report'), sha256: sha256(bytes) };
   } else report.packages = await verifyVmPackages(flags.get('tools'));
-  const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved'), ingress: true });
+  const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved'), ingress: true,
+    dnsConntrack: flags.get('dns-conntrack') });
   report.image = image.manifest;
   const env = { ...process.env, LD_LIBRARY_PATH: `${root}/usr/lib/x86_64-linux-gnu:${root}/lib/x86_64-linux-gnu`,
     QEMU_MODULE_DIR: `${root}/usr/lib/x86_64-linux-gnu/qemu` };
@@ -76,7 +77,11 @@ try {
   try { exit = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', (code) => resolve(code)); }); }
   finally { clearTimeout(timer); process.off('SIGINT', interrupt); process.off('SIGTERM', interrupt); await new Promise((resolve) => log.end(resolve)); }
   assert.equal(failure, undefined, failure); assert.equal(exit, 0); assert.equal(passed, true);
-  assert.deepEqual(report.transports.map((v) => v.actualTransportTested), ['tls', 'boring-tls', 'transparent-tls', 'combo-tls']);
+  if (flags.has('dns-conntrack')) {
+    assert.deepEqual(report.transports.map(v => [v.actualTransportTested, v.scope]),
+      [['tls', 'host'], ['tls', 'ingress'], ['tls', 'lan'], ['boring-tls', 'ingress'], ['combo-tls', 'ingress']]);
+    assert.ok(report.transports.every(v => v.actualDnsDefaultTested === true));
+  } else assert.deepEqual(report.transports.map((v) => v.actualTransportTested), ['tls', 'boring-tls', 'transparent-tls', 'combo-tls']);
   assert.ok(report.transports.every((v) => v.hostNetworkChanged === false && v.checks.length >= 12));
   report.status = 'passed';
 } catch (error) { report.error = error.message; process.exitCode = 1; console.error(error.stack); }

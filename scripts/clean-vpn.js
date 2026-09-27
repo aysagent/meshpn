@@ -142,6 +142,9 @@ import WebSocket from 'ws';
 import dns from 'dns/promises';
 import { validateFromTun, inspectIngress, installIngressRouting } from './lib/ingress-routing.mjs';
 import { openIngressJournal } from './lib/ingress-journal.mjs';
+import { openTunnelDnsJournal } from './lib/dns-tunnel-journal.mjs';
+import { startTunnelDnsRuntime } from './lib/dns-tunnel-runtime.mjs';
+import { cleanVpnDnsOptions, tunnelDnsLanInterface } from './lib/dns-client-options.mjs';
 import {
   extractFirstClientHelloBody,
   ja3DebugFromTcpBuf,
@@ -4021,6 +4024,7 @@ function parseArgs(argv) {
     signalingPskRequired: true,
   };
   for (const a of argv) {
+    if (/^--dns-(mode|server|state-dir)=/.test(a)) continue;
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
     else if (a.startsWith('--server=')) out.server = a.slice('--server='.length);
     else if (a.startsWith('--type=')) out.type = a.slice('--type='.length);
@@ -4118,6 +4122,7 @@ function parseArgs(argv) {
   }
   if (out.type) out.type = String(out.type).trim();
   if (out.type === 'socket') out.type = 'tcp'; // Legacy CLI spelling; wire format is unchanged.
+  Object.assign(out, cleanVpnDnsOptions(argv, out));
   return out;
 }
 
@@ -10241,12 +10246,33 @@ async function runExit({
 // =============================================================================
 
 async function runClient(options) {
-  let activate;
-  await runClientImpl({ ...options, ingressPrepared: (transaction) => { activate = () => transaction.activate(); } });
-  // All transport handlers/listeners have been installed. Lazy transports may still
-  // connect on the first packet; the verified TUN routing remains fail-closed meanwhile.
-  activate?.();
-  if (options.fromTunRestartSafe) console.log('[clean-vpn] --from-tun-restart-safe: data path installed; restart guard released');
+  let activate, routeCtx, dnsRuntime;
+  const dnsScope = { fromTun: options.fromTun ?? null, lanSubnet: options.clientLanSubnet ?? null,
+    lanInterface: options.dnsMode === 'tunnel' && options.clientLanSubnet
+      ? tunnelDnsLanInterface(options.clientLanSubnet, JSON.parse(execIpFileSync(['-j', '-4', 'addr', 'show'], { encoding: 'utf8' }))) : null };
+  const dnsJournal = options.dnsMode === 'tunnel' ? openTunnelDnsJournal(options.dnsStateDir) : null;
+  try {
+    dnsJournal?.prepareRestart(dnsScope);
+    await runClientImpl({ ...options, ingressPrepared: (transaction) => { activate = () => transaction.activate(); },
+      dnsNetworkPrepared: (ctx) => { routeCtx = ctx; ctx.dnsJournal = dnsJournal; } });
+    if (routeCtx?.stopping) return;
+    if (dnsJournal) {
+      routeCtx.dnsStartup = startTunnelDnsRuntime({ journal: dnsJournal,
+        config: { tun: routeCtx.ifname, primary: options.dnsServer, ...dnsScope } });
+      dnsRuntime = await routeCtx.dnsStartup;
+      routeCtx.dnsRuntime = dnsRuntime;
+      if (routeCtx.stopping) return;
+      dnsRuntime.activate();
+      console.log(`[clean-vpn] DNS tunnel: ${options.dnsServer ?? '1.1.1.1'}${options.dnsServer === '8.8.8.8' ? '' : ', backup 8.8.8.8'}; ${options.fromTun ? `only ${options.fromTun}` : 'host' + (options.clientLanSubnet ? ' + LAN' : '')}; system DNS settings unchanged`);
+    } else console.log('[clean-vpn] --dns-mode=off: DNS interception/guard disabled; system DNS is operator-managed');
+    // Lazy transports may connect on the first packet. DNS is protected before
+    // the ingress restart gate releases application traffic.
+    activate?.();
+    if (options.fromTunRestartSafe) console.log('[clean-vpn] --from-tun-restart-safe: data path installed; restart guard released');
+  } catch (error) {
+    try { await dnsRuntime?.close({ restore: false }); } finally { dnsJournal?.release(); }
+    throw error;
+  }
 }
 
 async function runClientImpl({
@@ -10257,6 +10283,7 @@ async function runClientImpl({
   fromTunStateDir,
   fromTunRestartSafe,
   ingressPrepared,
+  dnsNetworkPrepared,
   clientLanSubnet,
   transparentTlsLanBind,
   boringTlsHelper,
@@ -10366,16 +10393,35 @@ async function runClientImpl({
 
   /** @type {((exitCode?: number, reason?: string) => void) | null} */
   let shutdownFn = null;
+  let finishNetworkPromise;
+  const finishNetwork = (exitCode, reason) => {
+    routeCtx.stopping = true;
+    finishNetworkPromise ??= (async () => {
+      let code = exitCode;
+      try {
+        const runtime = routeCtx.dnsRuntime ?? await routeCtx.dnsStartup;
+        if (runtime) await runtime.close({ restore: code === 0 });
+        else if (routeCtx.dnsJournal) {
+          if (code === 0 && routeCtx.dnsJournal.state && routeCtx.dnsJournal.state.stage !== 'released') routeCtx.dnsJournal.restore();
+          routeCtx.dnsJournal.release();
+        }
+      }
+      catch (error) { code = 1; console.error('[clean-vpn] DNS recovery retained for review:', error.message); }
+      try { teardownClientRoutes(routeCtx, { retainIngress: code !== 0 }); }
+      catch (error) { code = 1; console.error('[clean-vpn] route cleanup:', error.message); }
+      safe(() => tun.close()); clearCleanVpnEmergencyShutdown();
+      console.log(`[clean-vpn] client: остановка (${reason})`); process.exit(code);
+    })();
+    return finishNetworkPromise;
+  };
   registerCleanVpnEmergencyShutdown(({ exitCode, reason }) => {
     if (shutdownFn) {
       shutdownFn(exitCode, reason);
       return;
     }
-    safe(() => teardownClientRoutes(routeCtx, { retainIngress: exitCode !== 0 }));
-    safe(() => tun.close());
-    clearCleanVpnEmergencyShutdown();
-    process.exit(exitCode);
+    void finishNetwork(exitCode, reason);
   });
+  dnsNetworkPrepared?.(routeCtx);
 
   if (ingress) {
     const config = { ingress, tun: ifname, address: IP_CLIENT };
@@ -10458,11 +10504,7 @@ async function runClientImpl({
       }
     });
     const finishClient = () => {
-      teardownClientRoutes(routeCtx, { retainIngress: exitCode !== 0 });
-      safe(() => tun.close());
-      clearCleanVpnEmergencyShutdown();
-      console.log(`[clean-vpn] client: остановка (${reason})`);
-      process.exit(exitCode);
+      void finishNetwork(exitCode, reason);
     };
     safe(() => {
       if (clientUdpSigWss) {
@@ -11746,6 +11788,9 @@ async function main() {
 
 --type: tcp (socket alias) | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls | boring-tls | transparent-tls | combo-tls
 --split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 через uplink; /32 bypass к --server и (только webrtc/rtc-chrome/ws-chrome/udp+punch) к IP STUN/TURN из --config. Plain --type=udp STUN не резолвит. IPv6 не в туннеле. Проверка: curl -4 https://ifconfig.me
+--dns-mode=tunnel|off: client default tunnel — обычный UDP/TCP53 через TUN к 1.1.1.1, backup 8.8.8.8; settings resolved/dnsmasq не меняются. Требует conntrack и --server=IPv4:PORT (TLS-имя отдельно). off отключает DNS-перехват и его guard, не снимает оставшуюся аварийную защиту. managed зарезервирован и пока отклоняется: системный opt-in workflow остаётся отдельным.
+--dns-server=IPv4: публичный основной resolver простого режима; backup остаётся 8.8.8.8. Участок exit → DNS — обычный DNS. Защита client → exit зависит от транспорта.
+--dns-state-dir=DIR: приватный журнал DNS (default /run/clean-vpn-tunnel-dns-NETNS). При следующем запуске восстанавливается только собственное состояние той же загрузки; конфликты требуют проверки.
 --from-tun=IFACE: только client, вместо --split-default — внешний IPv4 с входного интерфейса (например wg0) через VPN; host OUTPUT/default без изменений. Нужен готовый шлюз с ip_forward=1. IPv6 forwarding этого входа блокируется. См. scripts/clean-vpn-from-tun.md (исключения, DNS, остановка/авария).
 --from-tun-state-dir=DIR: закрытый каталог журнала восстановления (0700); default /run/clean-vpn-ingress-NETNS. После аварии: node scripts/clean-vpn-recover.mjs --from-tun=IFACE (проверка), затем --apply (возврат прежнего forwarding).
 --from-tun-restart-safe: с --from-tun сохранять guard при штатной остановке и принимать незавершённый журнал при следующем запуске под блокировкой forwarding. Полное отключение — clean-vpn-recover.mjs --apply. Не reboot kill-switch.

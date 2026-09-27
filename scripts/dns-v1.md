@@ -9,6 +9,25 @@
 Ранее выполненные работы и незакрытые managed-критерии ниже сохраняются;
 это не объявление старой полной цели завершённой.
 
+Текущий этап: простой runtime подключён к `clean-vpn.js` как client default
+`--dns-mode=tunnel`, добавлены `--dns-server`, `--dns-state-dir`, явный `off`
+и отдельный `clean-vpn-dns-recover.mjs` (аудит по умолчанию, откат с `--apply`).
+`managed` явно отклоняется как незавершённый; существующий отдельный managed
+workflow не включается автоматически. CLI/unit:62/62, повторные namespace
+routing/persistent проверки:12/12 PASS. Общая Node-регрессия:2148/2148 PASS,
+без skips (`/var/tmp/meshpn-acceptance-UaRav7/report.json`). Сквозная пятисценарная VM-проверка
+TLS host/ingress/LAN, boring-tls и combo-tls ingress ещё выполняется.
+Первый сценарий TLS host прошёл20 проверок DNS, включая настоящий TUN,
+primary/backup, отказ exit, SIGKILL и same-boot restart; остальные сценарии
+ещё не подтверждены (`/var/tmp/meshpn-ingress-vm-2s1UDR/serial.log`).
+Предварительный host-прогон подтвердил UDP/TCP primary/backup, отсутствие
+прямого DNS при SIGKILL/отказе exit и DNS restart, но весь прогон не PASS:
+проверка общего сетевого baseline обнаружила старый host bypass `/32` к exit
+после SIGKILL (`/var/tmp/meshpn-ingress-vm-vxnWjy/report.json`). Это состояние
+не принадлежит DNS-журналу. Новый отчёт отдельно различает восстановление DNS
+и полное восстановление legacy host-маршрутов; последнее не заявляется.
+Ниже сохранена история компонентов, включая прежние отметки «CLI не подключён».
+
 Простой режим не переписывает `/etc/resolv.conf`, не вызывает setters DNS-менеджеров
 и не устанавливает systemd services. Он направляет обычный UDP/TCP DNS в основной
 IP-туннель к явно выбранному числовому resolver; после exit используется обычный
