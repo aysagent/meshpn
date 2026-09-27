@@ -3,13 +3,17 @@
 `scripts/lib/dns-released-removal.mjs` связывает read-only доказательство
 [released-состояния](dns-deployment-inactive.md) с
 [журналом code/config deployment](dns-deployment.md). Это библиотечная
-транзакция, **не host CLI и не проверенный живой uninstall**. Она не вызывает
-stop/reload/restart служб, не снимает firewall и не удаляет runtime-журналы.
+транзакция, **не host CLI и не проверенный живой uninstall**. Schema2 связывает
+файловое удаление с callback перезагрузки unit-конфигурации и остановки guard;
+fixed-layout factory выполняет эти действия через проверенные OS-команды.
+Firewall и runtime-журналы не удаляются этой операцией.
 
 ## Что сохраняется до первого удаления
 
-Отдельный private0700 каталог содержит журнал с двумя стадиями:
-`removing → removed`. В нём записаны:
+Отдельный private0700 каталог содержит журнал. Прежний schema1 сохраняет
+две стадии `removing → removed` и требует strict inactive proof на каждом шаге.
+Новый schema2 использует `detaching → detached → removing → removed`.
+В нём записаны:
 
 - identity root и собственного каталога, путь и SHA256 неизменяемых полей
   исходного deployment journal: его ID, identities, bundle и все13 descriptors;
@@ -18,6 +22,9 @@ stop/reload/restart служб, не снимает firewall и не удаля�
 - `historySha256` реального released collector: SHA256 трёх runtime-журналов
   и проверенных inode/mode/ctime metadata. Это не подпись и не самостоятельная
   авторизация: свежий OS-check всё равно нужен перед каждым изменением.
+- Для schema2 — `managersSha256`: текущие bus owner, PID, InvocationID и
+  executable identity обоих менеджеров. `NeedDaemonReload` исключён из hash:
+  его изменение ожидается при снятии drop-ins, смена процессов — нет.
 
 Исходные PSK, upstream/config/opt-in contents сюда не копируются. Общий inherited
 flock удерживается и при OS-проверках, и при файловых операциях. Нужны отдельные,
@@ -47,14 +54,11 @@ boot lock, root-owned parents и только branded pinned OS commands. Пол
 читается с установленного пути лишь при создании нового intent; затем берётся
 из журнала. Каждый callback вызывает настоящий released collector.
 
-Связка пока **не подключена к CLI и не прошла единый VM uninstall**. В частности,
-ещё нужно согласовать `daemon-reload` после удаления manager drop-ins: collector
-сейчас строго требует `NeedDaemonReload=no`, а библиотека ничего автоматически
-не перезагружает. Это проверка следующего интеграционного этапа, не разрешение
-обойти запрет или изменять службы на живом клиенте. Новая boot/bus/owner epoch
-также не усыновляется. Radxa этим VPS2-набором не обслуживается.
+Связка пока **не подключена к CLI и не прошла единый VM uninstall**.
+Новая boot/bus/owner epoch не усыновляется. Radxa этим VPS2-набором не
+обслуживается. Прежний schema1 не повышается до schema2 при recovery.
 
-Следующий интеграционный переход ограничен одним порядком:
+Реализован переход в одном порядке:
 
 1. После настоящего disable остановить adapter и доказать отсутствие workers;
    guard oneshot временно остаётся active/exited. Это отдельное
@@ -67,9 +71,17 @@ boot lock, root-owned parents и только branded pinned OS commands. Пол
    proof с тем же history fingerprint и без перезапуска resolved/networkd.
 4. Лишь затем завершить оставшийся файловый rollback и архивирование кода.
 
-Требуются ограниченные crash-точки между этими шагами и единый VM-прогон.
-Это план следующего изменения, **не реализованный recovery**: текущий removal
-по-прежнему отвергает quiescent-отчёт, и нельзя вручную выдавать его за inactive.
+`recover` повторяет service transition, если обрыв произошёл после reload/stop,
+но до durable перехода к `removing`. Перед продолжением снова нужны прежние
+runtime history и оба manager identity. `inspect` не выполняет service callbacks.
+После `removing` допустим только строгий inactive proof. Schema1 по-прежнему
+отвергает quiescent-отчёт.
+
+Factory после daemon-reload проверяет отсутствие оставшихся manager/foreign
+dependencies guard, stop propagation и OnSuccess/OnFailure triggers, затем
+останавливает guard. Наличие adapter/controller workers до операции запрещено;
+factory не вызывает их неявную остановку и не выполняет disable за пользователя.
+Эти реальные OS-действия ещё требуют единого VM-прогона с файловыми журналами.
 
 ## Проверки
 
@@ -91,3 +103,10 @@ fixed-layout factory отдельно проверен лишь на отказ 
 Этот файловый прогон **не заменяет** единый реальный
 `install → start → disable → remove → recover` в VM, early boot/fault проверки
 или клиентские пилоты.
+
+Schema2: **27/27 PASS** в отдельном файловом прогоне, включая11 process SIGKILL
+(пять прежних и шесть на detaching/detached/reload/stop/removing).
+Recovery выполняется после удаления доступности исходного source-каталога.
+Service callbacks в этом прогоне — явная модель; реальные factory команды
+нужно проверить в integrated VM. Общая Node-регрессия: **2074/2074 PASS**,
+без skips (`meshpn-acceptance-iQeMc9/report.json`).

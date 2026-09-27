@@ -132,7 +132,8 @@ export const inspectReleasedDnsDeployment = (options) => inspectDnsDeployment(op
 /** Transitional observation only: no running DNS worker, but the guard oneshot
  * may remain active/exited until its owned manager dependencies are detached. */
 export const inspectQuiescentDnsDeployment = (options) => inspectDnsDeployment(options, 'quiescent');
-async function inspectDnsDeployment({ commands, input, firewallBackend }, mode) {
+async function inspectDnsDeployment({ commands, input, firewallBackend, trackManagers = false }, mode) {
+  assert.equal(typeof trackManagers, 'boolean');
   const released = mode !== 'fresh', quiescent = mode === 'quiescent';
   assertDnsSystemCommands(commands); input = structuredClone(input); const plan = compileDnsClientGuard(input);
   assert.equal(input.client, 'vps2', 'installed Radxa lifecycle is not covered by this check');
@@ -183,7 +184,17 @@ async function inspectDnsDeployment({ commands, input, firewallBackend }, mode) 
     if (anchor) assert.deepEqual(anchor, { schema: 1, bootId, netns: scope.net });
     const history = await readReleasedDnsHistory({ directory: '/var/lib/clean-vpn/dns-v1', input,
       context: { scope, bootId, busId: bus.id, owner }, firewallBackend });
-    return { history, anchor, manager: { owner, pid, uid, unit, executable } };
+    let networkd;
+    if (trackManagers) {
+      const owner = await resolveBus.owner('org.freedesktop.network1'), pid = await resolveBus.ownerPid(owner), uid = await resolveBus.ownerUid(owner);
+      const unit = (quiescent ? validateReleasedDnsManagerUnit : validateVps2DnsUnit)((await run('systemctl', ['show', 'systemd-networkd.service',
+        ...fields.map((f) => `--property=${f}`)], 'released-networkd-unit')).stdout, 'systemd-networkd', pid);
+      const executable = await inspectDnsSystemExecutable(await readlink(`/proc/${pid}/exe`));
+      assert.ok(['/usr/lib/systemd/systemd-networkd', '/lib/systemd/systemd-networkd'].includes(executable.actual));
+      assert.equal(await readlink(`/proc/${pid}/ns/net`), scope.net);
+      networkd = { owner, pid, uid, unit, executable };
+    }
+    return { history, anchor, manager: { owner, pid, uid, unit, executable }, ...(trackManagers ? { networkd } : {}) };
   };
   const history = released ? await releasedSnapshot() : null;
   const rawCall = async (method, ...args) => (await run('busctl', [...busArgs,
@@ -213,8 +224,10 @@ async function inspectDnsDeployment({ commands, input, firewallBackend }, mode) 
   assert.deepEqual(await busContext(), bus, 'system manager changed'); await context();
   if (released) return { schema: 1, kind: quiescent ? 'clean-vpn-dns-quiescent-deployment-check' : 'clean-vpn-dns-released-deployment-check',
     releasedInactive: !quiescent, ...(quiescent ? { releasedQuiescent: true, guardUnitActiveExited: before.some((v) => v.exitedGuard === true),
-      managerNeedsReload: history.manager.unit.NeedDaemonReload === 'yes' } : {}),
+      managerNeedsReload: [history.manager, history.networkd].some((v) => v?.unit.NeedDaemonReload === 'yes') } : {}),
     historySha256: createHash('sha256').update(JSON.stringify(history.history)).digest('hex'),
+    ...(trackManagers ? { managersSha256: createHash('sha256').update(JSON.stringify({ bus,
+      managers: [history.manager, history.networkd].map(({ unit: { NeedDaemonReload, ...unit }, ...rest }) => ({ ...rest, unit })) })).digest('hex') } : {}),
     systemSettingsChanged: false, dnsQueriesSent: 0, activationAuthorized: false, uninstallAuthorized: false,
     limitations: ['not-a-baseline-health-proof', 'not-a-file-ownership-or-uninstall-authority',
       'same-boot-and-resolved-owner-only', 'runtime-history-retained',

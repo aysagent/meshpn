@@ -6,8 +6,8 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { deploymentHarness } from './fixtures/dns-deployment-harness.mjs';
 import { runCommand } from './lib/transparent-acceptance.mjs';
-import { readDnsReleasedRemoval, validateDnsReleasedRemoval, validateDnsReleasedObservation } from './lib/dns-released-removal.mjs';
-import { removeInstalledReleasedDnsDeployment } from './lib/dns-installed-removal.mjs';
+import { readDnsReleasedRemoval, validateDnsReleasedRemoval, validateDnsReleasedObservation, validateDnsQuiescentObservation } from './lib/dns-released-removal.mjs';
+import { removeInstalledReleasedDnsDeployment, assertDnsGuardStopDependencies } from './lib/dns-installed-removal.mjs';
 
 const policy = { schema: 1, kind: 'clean-vpn-dns-boot-policy', enabled: true, firewallBackend: 'nf_tables',
   input: { schema: 1, client: 'vps2', id: 'a'.repeat(32) } };
@@ -33,8 +33,30 @@ async function fixture(t) {
       const r=await dnsDeployment({...options,directory:options.deploymentDirectory,files,lockFd,assertInactive:async()=>true});
       console.log(JSON.stringify(r)); process.exit(0);
     }
-    options.inspectReleased=async()=>({...${JSON.stringify(observation)},
-      historySha256:options.historySha256??${JSON.stringify(observation.historySha256)},releasedInactive:options.inactive!==false});
+    const report=()=>({...${JSON.stringify(observation)},
+      historySha256:options.historySha256??${JSON.stringify(observation.historySha256)},releasedInactive:options.inactive!==false,
+      managersSha256:options.managersSha256??'f'.repeat(64)});
+    options.inspectReleased=async()=>{
+      if(options.lifecycle) assert.equal(await readFile('/data/settled','utf8'),'yes');
+      return report();
+    };
+    if(options.lifecycle) {
+      options.inspectQuiescent=async()=>({...report(),kind:'clean-vpn-dns-quiescent-deployment-check',
+        releasedInactive:false,releasedQuiescent:options.inactive!==false,guardUnitActiveExited:true,managerNeedsReload:false});
+      options.settleServices=async(policy,evidence)=>{
+        const {lstat}=await import('node:fs/promises');
+        for(const p of ['/etc/clean-vpn/dns/client-opt-in.json','/etc/clean-vpn/dns/hmac.key',
+          '/etc/systemd/system/systemd-resolved.service.d/60-clean-vpn-dns-guard.conf',
+          '/etc/systemd/system/systemd-networkd.service.d/60-clean-vpn-dns-guard.conf'])
+          await assert.rejects(lstat(options.root+p),{code:'ENOENT'});
+        await lstat(options.root+'/opt/clean-vpn/bundle.json');
+        await lstat(options.root+'/etc/clean-vpn/dns/guard-policy.json');
+        if(options.failSettle) throw new Error('fixture settle failed');
+        await evidence.checkpoint('reloaded');
+        await writeFile('/data/settled','yes');
+        await evidence.checkpoint('guard-stopped');
+      };
+    }
   `;
   const h = await deploymentHarness(t, { moduleName: 'dns-released-removal', entry: 'removeReleasedDnsDeployment', setup });
   await h.ok('install');
@@ -42,6 +64,41 @@ async function fixture(t) {
     policy: join(h.root, 'etc/clean-vpn/dns/guard-policy.json'), deployment: join(h.base, 'data/deployment') };
 }
 const absent = (path) => assert.rejects(lstat(path), { code: 'ENOENT' });
+test('lifecycle removal detaches before service transition then requires strict proof', async (t) => {
+  const h = await fixture(t);
+  const r = await h.ok('remove', '', { policyText, lifecycle: true });
+  assert.equal(r.stage, 'removed'); assert.equal(r.servicesStoppedByThisOperation, true);
+  const record = await readDnsReleasedRemoval(h.directory);
+  assert.equal(record.schema, 2); assert.equal(record.managersSha256, 'f'.repeat(64));
+  assert.equal((await h.ok('recover', '', { lifecycle: true })).stage, 'removed');
+  assert.notEqual((await h.run('recover')).code, 0, 'schema2 recovery must provide lifecycle checks');
+  await absent(h.opt); await absent(h.target); await lstat(join(h.deployment, 'code/retired/bundle.json'));
+});
+test('failed service transition keeps guard and code; inspect is read-only and recovery revalidates managers', async (t) => {
+  const h = await fixture(t);
+  assert.notEqual((await h.run('remove', '', { policyText, lifecycle: true, failSettle: true })).code, 0);
+  assert.equal((await readDnsReleasedRemoval(h.directory)).stage, 'detached');
+  await absent(h.opt); await lstat(h.policy); await lstat(h.target);
+  assert.equal((await h.ok('inspect', '', { lifecycle: true })).stage, 'detached');
+  await absent(join(h.base, 'data/settled'));
+  assert.notEqual((await h.run('recover', '', { lifecycle: true, managersSha256: 'e'.repeat(64) })).code, 0);
+  await absent(join(h.base, 'data/settled')); await lstat(h.policy);
+  assert.equal((await h.ok('recover', '', { lifecycle: true })).stage, 'removed');
+});
+test('manager change after service transition prevents removal of remaining files', async (t) => {
+  const h = await fixture(t);
+  assert.notEqual((await h.run('remove', `if(point==='services:guard-stopped') options.managersSha256='e'.repeat(64);`,
+    { policyText, lifecycle: true })).code, 0);
+  assert.equal((await readDnsReleasedRemoval(h.directory)).stage, 'detached'); await lstat(h.policy); await lstat(h.target);
+});
+test('guard stop rejects remaining manager dependencies and stop-triggered units', () => {
+  const text = 'RequiredBy=clean-vpn-dns-disable.service\nBoundBy=clean-vpn-dns-client.service clean-vpn-dns-adapter.service\nConsistsOf=\nPropagatesStopTo=\nOnSuccess=\nOnFailure=\n';
+  assertDnsGuardStopDependencies(text);
+  for (const bad of [text.replace('RequiredBy=', 'RequiredBy=systemd-networkd.service '),
+    text.replace('OnSuccess=', 'OnSuccess=clean-vpn-dns-client.service'), text.replace('ConsistsOf=', 'ConsistsOf=foreign.service'),
+    text.replace('OnFailure=\n', ''), text + 'RequiredBy=\n']) assert.throws(() => assertDnsGuardStopDependencies(bad));
+  assert.throws(() => validateDnsQuiescentObservation(observation));
+});
 test('released rollback binds exact policy/history, revokes files before code, and retains code archive', async (t) => {
   const h = await fixture(t);
   const r = await h.ok('remove', '', { policyText }); assert.equal(r.stage, 'removed');
@@ -104,12 +161,16 @@ test('strict removal metadata excludes credentials, arbitrary commands and fabri
     assert.throws(() => validateDnsReleasedObservation({ ...observation, [key]: value }));
   await assert.rejects(removeInstalledReleasedDnsDeployment({ commands: { run() {} }, operation: 'remove' }), /checked DNS system commands/);
 });
-for (const point of ['removing:dir-synced', 'deployment:files:file-12:removed',
-  'deployment:files:file-4:removed', 'deployment:removing-code:dir-synced', 'deployment:code:bundle:retired'])
-  test(`real SIGKILL resumes released removal without original config/key/source at ${point}`, async (t) => {
+for (const [lifecycle, point] of [
+  ...['removing:dir-synced', 'deployment:files:file-12:removed', 'deployment:files:file-4:removed',
+    'deployment:removing-code:dir-synced', 'deployment:code:bundle:retired'].map((p) => [false, p]),
+  ...['detaching:dir-synced', 'deployment:files:file-9:removed', 'detached:dir-synced',
+    'services:reloaded', 'services:guard-stopped', 'removing:dir-synced'].map((p) => [true, p]),
+])
+  test(`real SIGKILL resumes released removal lifecycle=${lifecycle} without original config/key/source at ${point}`, async (t) => {
     const h = await fixture(t);
     const child = spawn('/usr/bin/unshare', h.args('remove',
-      `if(point===${JSON.stringify(point)}) {process.stdout.write('CUT\\n');await new Promise(()=>setInterval(()=>{},1000));}`, { policyText }),
+      `if(point===${JSON.stringify(point)}) {process.stdout.write('CUT\\n');await new Promise(()=>setInterval(()=>{},1000));}`, { policyText, lifecycle }),
     { stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '', error = ''; child.stdout.on('data', (b) => { output += b; }); child.stderr.on('data', (b) => { error += b; });
     const closed = once(child, 'close'), timer = setTimeout(() => child.kill('SIGKILL'), 20000);
@@ -122,7 +183,7 @@ for (const point of ['removing:dir-synced', 'deployment:files:file-12:removed',
       child.kill('SIGKILL'); assert.deepEqual(await closed, [null, 'SIGKILL']);
     } finally { clearTimeout(timer); if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await closed; }
     await rename(h.source, join(h.base, 'data/source-unavailable'));
-    assert.equal((await h.ok('recover')).stage, 'removed'); await absent(h.opt); await absent(h.target);
+    assert.equal((await h.ok('recover', '', { lifecycle })).stage, 'removed'); await absent(h.opt); await absent(h.target);
     const record = await readDnsReleasedRemoval(h.directory);
     for (const mutate of [(v) => { v.stage = 'active'; }, (v) => { v.secret = 'bad'; }, (v) => { v.policyText = '{}'; }]) {
       const v = structuredClone(record); mutate(v); assert.throws(() => validateDnsReleasedRemoval(v));

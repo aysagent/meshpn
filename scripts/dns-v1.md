@@ -252,10 +252,16 @@ fixed-layout factory пока не подключён к CLI. Единый VM un
 нет workers/link/firewall, разрешён только пустой active/exited guard без
 stop hooks. Он не подменяет strict inactive и не даёт права на удаление.
 Общая Node-регрессия **2053/2053 PASS** (`meshpn-acceptance-G8f2nt`);
-новая VM `installed-quiescent` ещё проверяется. Два отказа чтения пустых
+новая VM `installed-quiescent` прошла **20/20 в двух загрузках**
+(`meshpn-dns-vm-SVccio`). Два отказа чтения пустых
 ExecStop properties описаны в [проверке deployment](dns-deployment-inactive.md);
 исправление читает типизированные D-Bus-массивы вместо вывода systemctl.
 Это не завершённый uninstall и не закрытие DNS v1.
+Далее файловая `detach`-граница прошла2064/2064 Node (`meshpn-acceptance-vZDxYJ`)
+и связана с schema2 removal: durable policy/history/manager fingerprints,
+снятие suffix, daemon-reload/stop guard, strict proof и удаление остального.
+Сейчас эта связка проверяется в файловом crash-стенде; единый реальный VM
+install/start/disable/uninstall остаётся ближайшим интеграционным этапом.
 
 Этот чек-лист выполняется для VPS 2 и Radxa. VM PASS подтверждает отдельные
 механизмы, но не ставит автоматически галочки за live-конфигурацию и пилот.
