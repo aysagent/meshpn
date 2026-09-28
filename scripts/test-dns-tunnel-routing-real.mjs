@@ -14,5 +14,5 @@ for (const journaled of [false, true]) for (const scope of ['host', 'ingress', '
   assert.equal(result.reason, null, result.stderr); assert.equal(result.code, 0, result.stderr);
   const report = JSON.parse(result.stdout); assert.equal(report.status, 'passed');
   assert.equal(report.hostNetworkChanged, false); assert.equal(report.transportEncryptionTested, false);
-  assert.equal(report.scope, scope); assert.equal(report.checks.length, (scope === 'host' ? 8 : 9) + (journaled ? 3 : 0)); console.log(JSON.stringify(report));
+  assert.equal(report.scope, scope); assert.equal(report.checks.length, (scope === 'host' ? 8 : 9) + (journaled ? 5 : 0)); console.log(JSON.stringify(report));
 });

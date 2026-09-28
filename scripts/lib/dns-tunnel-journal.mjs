@@ -2,11 +2,15 @@
  * service, default-route or sysctl setters. Journal data is never executable. */
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { compileTunnelDnsPlan, compileTunnelDnsHold, TUNNEL_DNS_TABLE, TUNNEL_DNS_PRIORITIES } from './dns-tunnel-plan.mjs';
 import { resetTunnelDnsConntrack } from './dns-tunnel-conntrack.mjs';
+import { runTunnelDnsCommand } from './dns-tunnel-command.mjs';
+
+export function reportTunnelDnsProgress(p) {
+  console.error(`[clean-vpn] DNS recovery: ${p.phase}; remaining=${p.operations}; hold=${p.hold}; elapsed=${(p.elapsedMs / 1000).toFixed(1)}s; budget=${p.timeoutMs / 1000}s`);
+}
 
 const C = fs.constants, LIMIT = 16384;
 const keys = (v, names) => assert.deepEqual(Object.keys(v).sort(), [...names].sort(), 'unexpected tunnel DNS journal fields');
@@ -64,7 +68,9 @@ export function openTunnelDnsJournal(directory = tunnelDnsStateDirectory(), opti
     ? openTunnelDnsJournal(tunnelDnsStateDirectory(), { ...options, coordinate: false }) : null;
   try { return openLocal(directory, options, coordination); } catch (e) { coordination?.release(); throw e; }
 }
-function openLocal(directory, { run: customRun, checkpoint = () => {} }, coordination) {
+function openLocal(directory, { run: customRun, checkpoint = () => {}, onProgress = () => {},
+  now = () => performance.now(), restoreTimeoutMs = 120000 }, coordination) {
+  assert.ok(Number.isFinite(restoreTimeoutMs) && restoreTimeoutMs > 0 && restoreTimeoutMs <= 120000);
   for (let p = dirname(directory); ; p = dirname(p)) {
     const s = fs.lstatSync(p);
     assert.ok(s.isDirectory() && !s.isSymbolicLink() && trustedOwner(s.uid), 'unsafe DNS state ancestor');
@@ -78,13 +84,20 @@ function openLocal(directory, { run: customRun, checkpoint = () => {} }, coordin
     if (released) return; released = true;
     if (lockfd !== undefined) fs.closeSync(lockfd); fs.closeSync(dirfd); coordination?.release();
   };
-  const run = customRun ?? ((file, args) => execFileSync(file, args, { encoding: 'utf8', timeout: 10000,
-    stdio: ['ignore', 'pipe', 'pipe', lockfd, ...(coordination?.lockDescriptors ?? [])] }).trim());
+  let deadline = Infinity;
+  const checkDeadline = () => assert.ok(now() < deadline, 'DNS recovery time budget exceeded; journal retained; run clean-vpn-dns-recover.mjs');
+  const run = (file, args) => {
+    checkDeadline();
+    const result = customRun ? customRun(file, args) : runTunnelDnsCommand(file, args, {
+      timeoutMs: Math.min(10000, deadline - now()), lockDescriptors: [lockfd, ...(coordination?.lockDescriptors ?? [])],
+    });
+    checkDeadline(); return result;
+  };
   try {
     const s = fs.fstatSync(dirfd);
     assert.ok(s.uid === process.getuid() && (s.mode & 0o777) === 0o700, 'DNS state directory must be owned, mode 0700');
     lockfd = fs.openSync(join(base, 'lock'), C.O_RDWR | C.O_CREAT | C.O_NOFOLLOW | C.O_NONBLOCK, 0o600); privateFile(lockfd);
-    try { execFileSync('flock', ['--exclusive', '--nonblock', '3'], { stdio: ['ignore', 'pipe', 'pipe', lockfd, ...(coordination?.lockDescriptors ?? [])] }); }
+    try { runTunnelDnsCommand('flock', ['--exclusive', '--nonblock', '3'], { lockDescriptors: [lockfd, ...(coordination?.lockDescriptors ?? [])] }); }
     catch { throw new Error('tunnel DNS journal locked by a live owner/recovery process'); }
     fs.fsyncSync(dirfd);
     let fd;
@@ -119,37 +132,61 @@ function openLocal(directory, { run: customRun, checkpoint = () => {} }, coordin
     return snapshot;
   };
   const present = (op, snapshot = observe()) => snapshot.items.includes(operationKey(op));
-  const ensureHold = () => {
-    observe(); value.stage = 'restoring'; save();
+  const ensureHold = (snapshot, progress) => {
+    value.stage = 'restoring'; save();
     for (const [index, op] of holds(value).entries()) {
+      checkDeadline(); progress('hold');
       value.hold = Math.max(value.hold, index + 1); save();
-      if (!present(op)) run(op.file, op.args);
-      assert.ok(present(op), 'DNS hold read-back failed'); checkpoint('hold-applied', value);
+      if (!present(op, snapshot)) run(op.file, op.args);
+      snapshot = observe();
+      assert.ok(present(op, snapshot), 'DNS hold read-back failed'); checkpoint('hold-applied', value);
     }
+    return snapshot;
   };
-  const removeHold = () => {
+  const removeHold = (snapshot = observe(), progress = () => {}) => {
     while (value.hold > 0) {
+      checkDeadline(); progress('release-hold');
       const op = holds(value)[value.hold - 1];
-      if (present(op)) run(op.file, op.remove);
-      assert.ok(!present(op), 'DNS hold undo failed'); checkpoint('hold-removed', value);
+      if (present(op, snapshot)) run(op.file, op.remove);
+      snapshot = observe();
+      assert.ok(!present(op, snapshot), 'DNS hold undo failed'); checkpoint('hold-removed', value);
       value.hold--; save();
     }
   };
   const restore = ({ keepHold = false, apply = true } = {}) => {
-    observe();
-    if (!apply) return { stage: value.stage, operations: value.count, hold: value.hold, mode: 'dry-run' };
-    if (value.stage === 'released' && !keepHold) return { mode: 'restored', operations: 0 };
-    // Audited before installing anything; a foreign rule is never adopted/deleted.
-    ensureHold(); const count = value.count;
-    while (value.count > 0) {
-      const op = operations(value)[value.count - 1];
-      if (present(op)) run(op.file, op.remove);
-      assert.ok(!present(op), 'DNS network undo failed'); checkpoint('removed', value);
-      value.count--; save();
-    }
-    if (!keepHold) { resetTunnelDnsConntrack(value.config, 'disable', run); removeHold(); }
-    value.stage = keepHold ? 'parked' : 'released'; save();
-    return { mode: keepHold ? 'parked' : 'restored', operations: count };
+    const started = now(), previousDeadline = deadline; deadline = started + restoreTimeoutMs;
+    let lastPhase, lastReport = -Infinity;
+    const progress = (phase) => {
+      const time = now();
+      if (apply && (phase !== lastPhase || time - lastReport >= 2000)) {
+        lastPhase = phase; lastReport = time;
+        onProgress({ phase, operations: value?.count ?? 0, hold: value?.hold ?? 0,
+          elapsedMs: time - started, timeoutMs: restoreTimeoutMs });
+      }
+    };
+    try {
+      progress('audit'); let snapshot = observe();
+      if (!apply) return { stage: value.stage, operations: value.count, hold: value.hold, mode: 'dry-run' };
+      if (value.stage === 'released' && !keepHold) { progress('released'); return { mode: 'restored', operations: 0 }; }
+      // Full ownership audit before starting and after EVERY operation. Reuse
+      // that read-back for the next step, not a second identical full snapshot.
+      snapshot = ensureHold(snapshot, progress); const count = value.count, plan = operations(value);
+      while (value.count > 0) {
+        checkDeadline(); progress('rollback');
+        const op = plan[value.count - 1];
+        if (present(op, snapshot)) run(op.file, op.remove);
+        snapshot = observe();
+        assert.ok(!present(op, snapshot), 'DNS network undo failed'); checkpoint('removed', value);
+        value.count--; save();
+      }
+      if (!keepHold) {
+        progress('conntrack'); resetTunnelDnsConntrack(value.config, 'disable', run);
+        removeHold(observe(), progress);
+      }
+      checkDeadline(); value.stage = keepHold ? 'parked' : 'released'; save(); progress(value.stage);
+      return { mode: keepHold ? 'parked' : 'restored', operations: count };
+    } catch (error) { progress('failed'); throw error; }
+    finally { deadline = previousDeadline; }
   };
   return {
     release, restore,

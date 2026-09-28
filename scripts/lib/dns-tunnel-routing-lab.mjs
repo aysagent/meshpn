@@ -162,13 +162,15 @@ export async function runTunnelDnsRoutingLab({ ingress = false, lan = false, jou
       if (journal) return journal.applyStage(stage);
       for (const op of plan.operations.filter((v) => v.stage === stage)) { run(op.file, op.args); installed.unshift(op); }
     };
-    if (journaled) {
-      const code = `import {openTunnelDnsJournal} from './scripts/lib/dns-tunnel-journal.mjs';
+    const startOwner = async () => {
+      const code = `import {openTunnelDnsJournal,reportTunnelDnsProgress} from './scripts/lib/dns-tunnel-journal.mjs';
         import {startTunnelDnsRuntime} from './scripts/lib/dns-tunnel-runtime.mjs';
-        const runtime=await startTunnelDnsRuntime({journal:openTunnelDnsJournal(),config:${JSON.stringify(config)},timeoutMs:150});
+        const runtime=await startTunnelDnsRuntime({journal:openTunnelDnsJournal(undefined,{onProgress:reportTunnelDnsProgress}),config:${JSON.stringify(config)},timeoutMs:150});
         runtime.activate();
+        let stopping=false;
+        process.on('SIGINT',()=>{if(stopping)return;stopping=true;runtime.close().then(()=>process.exit(0),e=>{console.error(e);process.exit(1)});});
         process.send({ready:true});`;
-      owner = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+      owner = spawn(process.execPath, ['--input-type=module', '-e', code], { detached: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
       children.push(owner); let errors = ''; owner.stderr.on('data', (b) => { errors += b; });
       await new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error(`DNS owner readiness timeout: ${errors}`)), 10000);
@@ -176,7 +178,9 @@ export async function runTunnelDnsRoutingLab({ ingress = false, lan = false, jou
         owner.once('exit', () => { clearTimeout(timer); reject(new Error(`DNS owner exited: ${errors}`)); });
         owner.once('error', (error) => { clearTimeout(timer); reject(error); });
       });
-    } else {
+    };
+    if (journaled) await startOwner();
+    else {
       apply('guard'); apply('route');
       stub = await startTunnelDnsStub({ forwarder: createTunnelDnsForwarder({ timeoutMs: 150 }) }); apply('activate');
       if (persistent) resetTunnelDnsConntrack(config, 'enable', run);
@@ -196,6 +200,27 @@ export async function runTunnelDnsRoutingLab({ ingress = false, lan = false, jou
     assert.equal(uplink.count(), before); checks.push('primary-failure-uses-backup-through-tunnel');
     if (ingress) { for (const tcp of [false, true]) assert.equal((await query(null, tcp)).answer, 30); checks.push('gateway-own-dns-unchanged'); }
     if (lan) { for (const tcp of [false, true]) assert.equal((await query(null, tcp)).answer, 20); checks.push('lan-mode-also-protects-host-dns'); }
+    if (journaled && !persistent) {
+      const ended = once(owner, 'close'); let repeated = 0, stopLog = '';
+      const interrupt = b => {
+        stopLog += b;
+        if (!repeated && stopLog.includes('DNS recovery: rollback;')) {
+          process.kill(-owner.pid, 'SIGINT'); repeated++;
+        }
+      };
+      owner.stderr.on('data', interrupt);
+      process.kill(-owner.pid, 'SIGINT');
+      const [status, signal] = await ended;
+      assert.equal(status, 0, stopLog); assert.equal(signal, null); assert.equal(repeated, 1);
+      const audit = openTunnelDnsJournal();
+      try { assert.deepEqual(audit.restore({ apply: false }), { stage: 'released', operations: 0, hold: 0, mode: 'dry-run' }); }
+      finally { audit.release(); }
+      checks.push('repeated-group-sigint-restores-dns-without-manual-recovery');
+      for (const tcp of [false, true]) assert.equal((await query(ingress || lan ? 'peer' : null, tcp)).answer, 30);
+      await startOwner();
+      for (const tcp of [false, true]) assert.equal((await query(ingress || lan ? 'peer' : null, tcp)).answer, 20);
+      checks.push('baseline-and-restart-work-after-group-sigint');
+    }
     const protectedHits = uplink.count();
     if (journaled) {
       const exited = once(owner, 'close'); owner.kill('SIGKILL'); await exited;

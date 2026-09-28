@@ -104,7 +104,8 @@ function openLocalJournal(directory, { run: customRun, checkpoint = () => {} }, 
   const dirfd = fs.openSync(directory, C.O_RDONLY | C.O_DIRECTORY | C.O_NOFOLLOW);
   let lockfd, released = false, value = null;
   const run = customRun ?? ((file, args) => execFileSync(file, args, {
-    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe', lockfd, ...(coordination?.lockDescriptors ?? [])],
+    encoding: 'utf8', detached: true, timeout: 10000, killSignal: 'SIGKILL',
+    stdio: ['ignore', 'pipe', 'pipe', lockfd, ...(coordination?.lockDescriptors ?? [])],
   }).trim());
   const base = `/proc/self/fd/${dirfd}`;
   const release = () => {
@@ -116,7 +117,7 @@ function openLocalJournal(directory, { run: customRun, checkpoint = () => {} }, 
     assert.ok(s.uid === process.getuid() && (s.mode & 0o777) === 0o700, 'state directory must be owned by caller, mode 0700');
     lockfd = fs.openSync(join(base, 'lock'), C.O_RDWR | C.O_CREAT | C.O_NOFOLLOW | C.O_NONBLOCK, 0o600);
     privateFile(lockfd, 0o600);
-    try { execFileSync('flock', ['--exclusive', '--nonblock', '3'], { stdio: ['ignore', 'pipe', 'pipe', lockfd, ...(coordination?.lockDescriptors ?? [])] }); }
+    try { execFileSync('flock', ['--exclusive', '--nonblock', '3'], { detached: true, timeout: 10000, killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'pipe', lockfd, ...(coordination?.lockDescriptors ?? [])] }); }
     catch { throw new Error('--from-tun: journal locked by a live owner/recovery process'); }
     fs.fsyncSync(dirfd);
     let fd;

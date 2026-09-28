@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { openTunnelDnsJournal } from './lib/dns-tunnel-journal.mjs';
+import { openTunnelDnsJournal, reportTunnelDnsProgress } from './lib/dns-tunnel-journal.mjs';
 
 export function recoverTunnelDns(argv, open = openTunnelDnsJournal) {
   let directory, apply = false;
@@ -16,7 +16,7 @@ export function recoverTunnelDns(argv, open = openTunnelDnsJournal) {
       assert.ok(isAbsolute(directory) && resolve(directory) === directory, 'absolute normalized --state-dir required');
     } else throw Error(`unknown DNS recovery option: ${arg}`);
   }
-  const journal = open(directory);
+  const journal = open(directory, { onProgress: reportTunnelDnsProgress });
   try {
     assert.ok(journal.state, 'no tunnel DNS journal; no network changes made');
     return journal.restore({ apply });

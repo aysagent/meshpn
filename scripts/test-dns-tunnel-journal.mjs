@@ -11,10 +11,11 @@ const config = { tun: 'tun0', fromTun: 'wg0' };
 function fixture(t) {
   const dir = fs.mkdtempSync(join(fs.realpathSync(tmpdir()), 'meshpn-tunnel-dns-journal-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const tables = new Map(), routes = [], policies = [], mutations = [];
+  const tables = new Map(), routes = [], policies = [], mutations = [], calls = [];
   const links = [{ ifname: 'tun0', ifindex: 11, address: '', link_type: 'none' },
     { ifname: 'wg0', ifindex: 10, address: '', link_type: 'none' }];
   const run = (file, args) => {
+    calls.push([file, args]);
     if (file === 'conntrack' && args[0] === '-L') return '';
     const val = (key) => args[args.indexOf(key) + 1];
     if (file === 'iptables' || file === 'ip6tables') {
@@ -43,7 +44,7 @@ function fixture(t) {
     return '';
   };
   const open = (options = {}) => openTunnelDnsJournal(dir, { coordinate: false, run, ...options });
-  return { dir, path: join(dir, 'journal.json'), open, run, tables, routes, policies, links, mutations };
+  return { dir, path: join(dir, 'journal.json'), open, run, tables, routes, policies, links, mutations, calls };
 }
 const install = (j) => { for (const stage of ['guard', 'route', 'activate']) j.applyStage(stage); j.activate(); };
 
@@ -69,6 +70,45 @@ test('restart preserves a closed gate across cleanup, replacement TUN and new in
   j.begin({ ...config, primary: '9.9.9.9' }); assert.ok(j.state.hold > 0);
   for (const stage of ['guard', 'route', 'activate']) { j.applyStage(stage); assert.ok(j.state.hold > 0); }
   j.activate(); assert.equal(j.state.hold, 0); assert.equal(j.state.stage, 'active'); j.restore();
+});
+
+test('rollback reports progress before inspection and reuses each full audited read-back once', (t) => {
+  const f = fixture(t), progress = [];
+  const j = f.open({ onProgress: p => progress.push({ ...p, reads: f.calls.length }) }); t.after(() => j.release());
+  j.begin(config); install(j); f.calls.length = 0; const before = f.mutations.length;
+  j.restore();
+  assert.equal(progress[0].phase, 'audit'); assert.equal(progress[0].reads, 0);
+  assert.deepEqual(progress.map(p => p.phase), ['audit', 'hold', 'rollback', 'conntrack', 'release-hold', 'released']);
+  assert.equal(progress.at(-1).operations, 0); assert.equal(progress.at(-1).hold, 0);
+  const snapshots = f.calls.filter(([file, args]) => file === 'iptables' && args[0] === '--version').length;
+  const mutations = f.mutations.length - before;
+  assert.ok(snapshots >= mutations, 'read-back after every operation');
+  assert.ok(snapshots <= mutations + 3, `redundant full snapshots: ${snapshots} for ${mutations} changes`);
+  const reports = progress.length; j.restore({ apply: false }); assert.equal(progress.length, reports);
+});
+
+test('whole rollback command budget retains durable intent and is recoverable on the next attempt', (t) => {
+  const f = fixture(t), progress = []; let clock = 0, armed = false;
+  const j = f.open({ now: () => clock, restoreTimeoutMs: 50, onProgress: p => progress.push(p),
+    run(file, args) { const out = f.run(file, args); if (armed) clock += 5; return out; } });
+  j.begin(config); install(j); armed = true;
+  assert.throws(() => j.restore(), /time budget exceeded/);
+  assert.equal(j.state.stage, 'restoring'); assert.ok(j.state.hold > 0);
+  assert.equal(progress.at(-1).phase, 'failed'); j.release();
+  const recovered = f.open(); try { recovered.restore(); assert.equal(recovered.state.stage, 'released'); }
+  finally { recovered.release(); }
+});
+
+test('host stop does not amplify full network reads relative to startup', t => {
+  const f = fixture(t), j = f.open(); t.after(() => j.release());
+  const snapshots = () => f.calls.filter(([file, args]) => file === 'iptables' && args[0] === '--version').length;
+  j.begin({ tun: 'tun0' }); install(j);
+  const startup = { commands: f.calls.length, snapshots: snapshots(), changes: f.mutations.length };
+  f.calls.length = 0; f.mutations.length = 0; j.restore();
+  const stop = { commands: f.calls.length, snapshots: snapshots(), changes: f.mutations.length };
+  assert.equal(startup.changes, 26); assert.equal(stop.changes, 38);
+  assert.equal(stop.snapshots, 40); assert.ok(stop.commands < startup.commands);
+  t.diagnostic(JSON.stringify({ startup, stop, measured: 'command-counts-not-wall-clock' }));
 });
 
 test('interruption after a durable mutation intent is recoverable without applying unknown commands', (t) => {

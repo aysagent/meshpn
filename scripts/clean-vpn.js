@@ -123,7 +123,7 @@
  *   Аномалии фрагментации или латентности на физическом NIC: `ethtool -k <iface>` (иногда GRO/LRO влияют на кейс).
  */
 
-import { execFileSync, spawn } from 'child_process';
+import { execFileSync as nativeExecFileSync, spawn } from 'child_process';
 import { EventEmitter, once } from 'events';
 import { createRequire } from 'module';
 import { createHmac, createPrivateKey, randomBytes, timingSafeEqual } from 'crypto';
@@ -142,7 +142,16 @@ import WebSocket from 'ws';
 import dns from 'dns/promises';
 import { validateFromTun, inspectIngress, installIngressRouting } from './lib/ingress-routing.mjs';
 import { openIngressJournal } from './lib/ingress-journal.mjs';
-import { openTunnelDnsJournal } from './lib/dns-tunnel-journal.mjs';
+import { openTunnelDnsJournal, reportTunnelDnsProgress } from './lib/dns-tunnel-journal.mjs';
+
+// A repeated terminal Ctrl+C must not kill route/sysctl helpers during cleanup.
+// Normal startup commands retain their existing execution options.
+let cleanVpnClientCleanup = false;
+function execFileSync(file, args, options = {}) {
+  return nativeExecFileSync(file, args, cleanVpnClientCleanup ? {
+    ...options, detached: true, timeout: Math.min(options.timeout || 10000, 10000), killSignal: 'SIGKILL',
+  } : options);
+}
 import { startTunnelDnsRuntime } from './lib/dns-tunnel-runtime.mjs';
 import { cleanVpnDnsOptions, tunnelDnsLanInterface } from './lib/dns-client-options.mjs';
 import {
@@ -10250,7 +10259,8 @@ async function runClient(options) {
   const dnsScope = { fromTun: options.fromTun ?? null, lanSubnet: options.clientLanSubnet ?? null,
     lanInterface: options.dnsMode === 'tunnel' && options.clientLanSubnet
       ? tunnelDnsLanInterface(options.clientLanSubnet, JSON.parse(execIpFileSync(['-j', '-4', 'addr', 'show'], { encoding: 'utf8' }))) : null };
-  const dnsJournal = options.dnsMode === 'tunnel' ? openTunnelDnsJournal(options.dnsStateDir) : null;
+  const dnsJournal = options.dnsMode === 'tunnel'
+    ? openTunnelDnsJournal(options.dnsStateDir, { onProgress: reportTunnelDnsProgress }) : null;
   try {
     dnsJournal?.prepareRestart(dnsScope);
     await runClientImpl({ ...options, ingressPrepared: (transaction) => { activate = () => transaction.activate(); },
@@ -10399,6 +10409,7 @@ async function runClientImpl({
     finishNetworkPromise ??= (async () => {
       let code = exitCode;
       try {
+        console.log('[clean-vpn] client: закрываю DNS-сокеты и восстанавливаю сетевые правила…');
         const runtime = routeCtx.dnsRuntime ?? await routeCtx.dnsStartup;
         // Park restart-safe ingress BEFORE releasing DNS capture. Otherwise a
         // private/LAN DNS destination can use the direct exemption between the
@@ -10476,8 +10487,12 @@ async function runClientImpl({
 
   let shuttingDown = false;
   const shutdown = (exitCode = 0, reason = 'SIGINT') => {
-    if (shuttingDown) return;
-    shuttingDown = true;
+    if (shuttingDown) {
+      console.log('[clean-vpn] client: остановка уже выполняется; повторный сигнал не отменяет восстановление');
+      return;
+    }
+    shuttingDown = true; cleanVpnClientCleanup = true;
+    console.log(`[clean-vpn] client: начинаю остановку (${reason}); дождитесь сообщения о завершении`);
     // Порядок: WebRTC/QUIC client → сигналинг WSS → Puppeteer/quic-ext (async finish) → TLS → маршруты/tun.
     safe(() => {
       if (webrtcPc) {

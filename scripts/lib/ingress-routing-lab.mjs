@@ -277,7 +277,8 @@ export async function runIngressRoutingLab({ transport = null, directory = null,
       const logs = [];
       const launch = (namespace, args, marker) => {
         const child = spawn(namespace ? 'ip' : process.execPath,
-          namespace ? ['netns', 'exec', namespace, process.execPath, cli, ...args] : [cli, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+          namespace ? ['netns', 'exec', namespace, process.execPath, cli, ...args] : [cli, ...args],
+          { detached: Boolean(dnsScope), stdio: ['ignore', 'pipe', 'pipe'] });
         children.push(child);
         const started = new Promise((resolve, reject) => {
           let output = '';

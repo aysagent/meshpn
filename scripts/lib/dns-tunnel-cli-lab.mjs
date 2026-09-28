@@ -150,7 +150,29 @@ export async function runTunnelDnsCliChecks({ scope, transport, launch, stop, co
   }
   check('no direct DNS queries during backup, crash, restart or exit outage', counters.uplink, upstreamBefore);
   const stopProbe = scope === 'ingress' ? await ingressStopProbe() : null;
-  try { await stop(client.child, 'SIGTERM'); } finally { await stopProbe?.(); }
+  let stopDurationMs;
+  try {
+    if (scope === 'ingress') await stop(client.child, 'SIGTERM');
+    else {
+      // A terminal sends SIGINT to the entire foreground group, not just Node.
+      const child = client.child, ended = once(child, 'close'), started = performance.now();
+      let output = '', repeated = false;
+      const repeat = b => {
+        output += b;
+        if (!repeated && output.includes('DNS recovery: rollback;')) {
+          repeated = true; process.kill(-child.pid, 'SIGINT');
+        }
+      };
+      child.stderr.on('data', repeat);
+      try {
+        process.kill(-child.pid, 'SIGINT');
+        const [code, signal] = await ended;
+        stopDurationMs = Math.round(performance.now() - started);
+        assert.equal(code, 0, `shutdown signal=${signal}: ${output}`);
+        check('repeated process-group SIGINT during rollback exits cleanly', repeated, true);
+      } finally { child.stderr.off('data', repeat); }
+    }
+  } finally { await stopProbe?.(); }
   if (stopProbe) check('continuous private DNS stays blocked throughout safe stop', counters.uplink, upstreamBefore);
   if (gateway) {
     for (const tcp of [false, true]) check(`safe stop keeps gateway ${tcp ? 'TCP' : 'UDP'} DNS blocked`, await dnsQuery(namespace, tcp, 1, '10.44.0.1'), 'BLOCKED');
@@ -174,7 +196,7 @@ export async function runTunnelDnsCliChecks({ scope, transport, launch, stop, co
   const nonDnsDifferences = Object.keys(beforeState).filter(k => beforeState[k] !== afterState[k]);
   for (const tcp of [false, true]) check(`${scope === 'ingress' ? 'explicit recovery' : 'normal stop'} restores baseline ${tcp ? 'TCP' : 'UDP'} DNS`, await dnsQuery(namespace, tcp), '192.0.2.30');
   return { status: 'passed', checks, scope, hostNetworkChanged: false, actualTransportTested: transport,
-    actualDnsDefaultTested: true, nonDnsNetworkRestored, nonDnsDifferences,
+    actualDnsDefaultTested: true, stopDurationMs, nonDnsNetworkRestored, nonDnsDifferences,
     limitations: scope === 'ingress' ? [] : ['legacy-host-routing-is-not-journaled-across-SIGKILL'] };
   } finally { await gateway?.close(); }
 }

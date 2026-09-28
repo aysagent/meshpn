@@ -7,7 +7,8 @@ import { namespaceArgs } from './lib/browser-soak.mjs';
 import { cleanEnvironment, runCommand } from './lib/transparent-acceptance.mjs';
 
 const cases = [['tls', 'host'], ['tls', 'ingress'], ['tls', 'lan'], ['boring-tls', 'ingress'], ['combo-tls', 'ingress']]
-  .filter(([, scope]) => process.env.MESHPN_DNS_CLI_INGRESS_ONLY !== '1' || scope === 'ingress');
+  .filter(([, scope]) => (process.env.MESHPN_DNS_CLI_INGRESS_ONLY !== '1' || scope === 'ingress') &&
+    (process.env.MESHPN_DNS_CLI_HOST_ONLY !== '1' || scope === 'host'));
 // Includes real rollback under TCG plus gateway DNS and continuous stop probes.
 // This is a harness budget, not a change to client DNS/socket deadlines.
 for (const [transport, dnsScope] of cases) test(`default tunnel DNS CLI: ${transport}/${dnsScope}`, { timeout: 510000 }, async t => {

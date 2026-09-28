@@ -33,9 +33,11 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, dnsConntrack = null, dnsIngressOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
   assert.ok(!dnsConntrack || ingress && dnsConntrack.startsWith('/'));
   assert.equal(typeof dnsIngressOnly, 'boolean'); assert.ok(!dnsIngressOnly || dnsConntrack);
+  assert.equal(typeof dnsHostOnly, 'boolean'); assert.ok(!dnsHostOnly || dnsConntrack);
+  assert.ok(!(dnsHostOnly && dnsIngressOnly));
   assert.ok(!(systemd && ingress), 'separate systemd DNS and ingress fixtures');
   assert.ok(!dnsmasq || systemd && !ingress && dnsmasq.startsWith('/'));
   assert.ok(!coupled || systemd && !dnsmasq && !ingress);
@@ -179,6 +181,7 @@ export PATH=/usr/bin:/usr/sbin:/bin:/sbin
 export OPENSSL_CONF=/dev/null
 export MESHPN_INGRESS_VM=1
 ${dnsIngressOnly ? 'export MESHPN_DNS_CLI_INGRESS_ONLY=1' : ''}
+${dnsHostOnly ? 'export MESHPN_DNS_CLI_HOST_ONLY=1' : ''}
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev

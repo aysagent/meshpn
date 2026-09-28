@@ -15,6 +15,19 @@ const slice = (start, end) => {
 const parseArgs = runInNewContext(`${slice('function parseArgs(argv)', '\nfunction parseHostPort')}\nparseArgs`, { cleanVpnDnsOptions });
 const base = ['--role=client', '--type=tls', '--server=192.0.2.1:443'];
 
+test('client cleanup isolates legacy route/sysctl commands without changing startup options', () => {
+  const calls = [];
+  const run = runInNewContext(`${slice('let cleanVpnClientCleanup = false;', '\nimport ')}
+    ({execFileSync, stop:()=>{cleanVpnClientCleanup=true;}})`, {
+    nativeExecFileSync(file, args, options) { calls.push({ file, args, options }); },
+  });
+  const options = { stdio: 'inherit' };
+  run.execFileSync('ip', ['route', 'show'], options); assert.equal(calls[0].options, options);
+  run.stop(); run.execFileSync('sysctl', ['example=0'], options);
+  assert.equal(calls[1].options.detached, true); assert.equal(calls[1].options.timeout, 10000);
+  assert.equal(calls[1].options.killSignal, 'SIGKILL'); assert.equal(calls[1].options.stdio, 'inherit');
+});
+
 test('actual CLI lab fixture emits valid A and 16-byte AAAA records for every endpoint', () => {
   for (const type of [1, 28]) for (const suffix of [10, 20, 30]) {
     const q = makeDnsQuery('origin.test', type), r = tunnelDnsFixtureAnswer(q, suffix);
@@ -59,7 +72,7 @@ function clientFixture({ off = false, failure = null, stopping = false } = {}) {
   const runtime = { activate() { events.push('dns-activate'); if (failure === 'activate') throw Error('activate'); },
     async close({ restore }) { events.push(`close:${restore}`); } };
   const runClient = runInNewContext(`${slice('async function runClient(options)', '\nasync function runClientImpl(')}\nrunClient`, {
-    console: { log() {} }, openTunnelDnsJournal: () => journal,
+    console: { log() {} }, openTunnelDnsJournal: () => journal, reportTunnelDnsProgress() {},
     async runClientImpl(options) {
       events.push('transport'); options.dnsNetworkPrepared(ctx);
       options.ingressPrepared({ activate() { events.push('ingress-activate'); } });

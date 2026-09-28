@@ -116,7 +116,7 @@
     "dns:source-package": "node scripts/dns-source-package.mjs",
     "test:dns-source-package": "node --test scripts/test-dns-source-package.mjs",
     "test:dns-tunnel-forwarder": "node --test scripts/test-dns-tunnel-forwarder.mjs",
-    "test:dns-tunnel": "node --test scripts/test-dns-tunnel-forwarder.mjs scripts/test-dns-tunnel-stub.mjs scripts/test-dns-tunnel-plan.mjs scripts/test-dns-tunnel-journal.mjs scripts/test-dns-tunnel-runtime.mjs scripts/test-dns-tunnel-conntrack.mjs scripts/test-dns-client-options.mjs",
+    "test:dns-tunnel": "node --test scripts/test-dns-tunnel-forwarder.mjs scripts/test-dns-tunnel-stub.mjs scripts/test-dns-tunnel-plan.mjs scripts/test-dns-tunnel-journal.mjs scripts/test-dns-tunnel-command.mjs scripts/test-dns-tunnel-runtime.mjs scripts/test-dns-tunnel-conntrack.mjs scripts/test-dns-client-options.mjs",
     "test:dns-tunnel-cli-real": "node --test scripts/test-dns-tunnel-cli-real.mjs",
     "test:dns-tunnel-routing-real": "node --test scripts/test-dns-tunnel-routing-real.mjs",
     "test:dns-tunnel-persistent-real": "node --test scripts/test-dns-tunnel-persistent-real.mjs",
