@@ -72,6 +72,8 @@
     "test:dns-boot-guard": "node --test scripts/test-dns-boot-guard.mjs",
     "dns:inspect": "node scripts/dns-inspect.mjs",
     "dns:diagnostic": "node scripts/dns-diagnostic.mjs",
+    "check:client": "node scripts/clean-vpn-client-check.mjs",
+    "test:client-check": "node --test scripts/test-client-check.mjs",
     "dns:client-preflight": "node scripts/dns-client-preflight.mjs",
     "test:dns-client-preflight": "node --test scripts/test-dns-client-preflight.mjs",
     "test:dns-client-guard": "node --test scripts/test-dns-client-guard.mjs",
