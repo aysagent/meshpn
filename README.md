@@ -95,6 +95,10 @@ sudo env "PATH=$PATH" node scripts/clean-vpn-client-check.mjs --probe --expect-e
 `--split-default` у client) сетевые пробы пропускаются. Не включайте этот флаг
 на удалённом VPS по единственному публичному SSH без независимого доступа.
 
+После успешного IPv4 smoke: [отдельная проверка DNS capture и IPv6-обхода](scripts/clean-vpn-client-leak-check.md)
+одной командой, без изменения сети. Требует `tcpdump`; намеренно проверяет
+возможный прямой IPv6 HTTPS, а не объявляет отсутствие утечек по одному маршруту.
+
 Для `boring-tls` соберите helper **на клиенте**, выполните smoke и замените только клиентское `--type=tls` на `--type=boring-tls`; exit остаётся `--type=tls`:
 
 ```bash
