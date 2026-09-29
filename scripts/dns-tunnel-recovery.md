@@ -2,7 +2,8 @@
 
 Это компонент нового default `--dns-mode=tunnel` в CLI clean-vpn.
 Сквозной ingress-only VM-прогон TLS/boring-tls/combo-tls прошёл 99 проверок;
-живой пилот ещё не завершён. DNS-компонент не устанавливает службы и не меняет настройки resolved/dnsmasq,
+базовые host smoke на Radxa и `r` прошли, но длительный пилот/live leak-test
+не выполнены. DNS-компонент не устанавливает службы и не меняет настройки resolved/dnsmasq,
 `resolv.conf`, default route или sysctl. Не путать с managed DNS installer.
 
 `lib/dns-tunnel-journal.mjs` записывает небольшой журнал в приватный каталог
