@@ -143,6 +143,8 @@ import dns from 'dns/promises';
 import { validateFromTun, inspectIngress, installIngressRouting } from './lib/ingress-routing.mjs';
 import { openIngressJournal } from './lib/ingress-journal.mjs';
 import { openTunnelDnsJournal, reportTunnelDnsProgress } from './lib/dns-tunnel-journal.mjs';
+import { IPV6_HEADER, ipv6PacketAllowed, validateIpv6Options } from './lib/vpn-ipv6.mjs';
+import { openIpv6Runtime } from './lib/vpn-ipv6-runtime.mjs';
 
 // A repeated terminal Ctrl+C must not kill route/sysctl helpers during cleanup.
 // Normal startup commands retain their existing execution options.
@@ -1406,7 +1408,9 @@ function establishCleanVpnOverH2(tlsSock, checkHost, vpnSecret, exporter = null)
       if (settled) return;
       settled = true;
       applyCleanVpnHttp2StreamWindow(req);
-      resolve(http2StreamToSocketLike(req, clientSession, tlsSock));
+      const wrapped = http2StreamToSocketLike(req, clientSession, tlsSock);
+      wrapped.cleanVpnIpv6 = headers[IPV6_HEADER];
+      resolve(wrapped);
     });
   });
 }
@@ -1659,6 +1663,8 @@ async function completeCleanVpnTlsSession(sock, opts) {
         );
         return;
       }
+      const ipv6Headers = head.split('\r\n').filter(line => line.toLowerCase().startsWith(`${IPV6_HEADER}:`));
+      sock.cleanVpnIpv6 = ipv6Headers.length === 1 ? ipv6Headers[0].slice(IPV6_HEADER.length + 1).trim() : undefined;
       const rest = respBuf.subarray(idx + 4);
       if (rest.length) setImmediate(() => sock.emit('data', rest));
       resolve(undefined);
@@ -3989,6 +3995,7 @@ function parseArgs(argv) {
     server: null,
     type: null,
     splitDefault: false,
+    ipv6: null,
     fromTun: null,
     fromTunStateDir: null,
     fromTunRestartSafe: false,
@@ -4037,6 +4044,10 @@ function parseArgs(argv) {
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
     else if (a.startsWith('--server=')) out.server = a.slice('--server='.length);
     else if (a.startsWith('--type=')) out.type = a.slice('--type='.length);
+    else if (a.startsWith('--ipv6=')) {
+      if (out.ipv6 !== null) throw new Error('duplicate --ipv6');
+      out.ipv6 = a.slice('--ipv6='.length);
+    }
     else if (a.startsWith('--ext=')) out.extIface = a.slice('--ext='.length);
     else if (a.startsWith('--config=')) out.configPath = a.slice('--config='.length);
     else if (a.startsWith('--ice-mode=')) out.iceMode = a.slice('--ice-mode='.length);
@@ -5489,7 +5500,7 @@ function applyClientSplitDefaultRoutes(ifname, gw, dev) {
     dev,
   );
   console.warn(
-    '[clean-vpn] split-default только для IPv4; IPv6 default не в туннеле. Проверка внешнего IPv4: curl -4 https://ifconfig.me',
+    '[clean-vpn] split-default: IPv4 готов; IPv6 настраивается отдельно только с --ipv6=auto. Проверка внешнего IPv4: curl -4 https://ifconfig.me',
   );
 }
 
@@ -5881,6 +5892,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
   let icmpEchoReplyLogged = false;
 
   const writeTun = (pkt) => {
+    if (pkt[0] >>> 4 === 6 && (!bridgeOpts?.ipv6Role || !ipv6PacketAllowed(pkt, bridgeOpts.ipv6Role, 'in'))) return;
     try {
       tracePacket('wire->tun', pkt);
       tun.write(pkt);
@@ -6012,7 +6024,7 @@ function attachTunBridgeNoKeepalive(tun, transport, endpoint, bridgeOpts) {
           continue;
         }
       }
-      if (!isIpv4Bridgeable(pkt)) {
+      if (!isIpv4Bridgeable(pkt) && !(bridgeOpts?.ipv6Role && ipv6PacketAllowed(pkt, bridgeOpts.ipv6Role, 'out'))) {
         if (process.env.CLEAN_VPN_KEEPALIVE_DEBUG === '1') {
           const v = pkt[0] >> 4;
           const hex = pkt.subarray(0, Math.min(8, pkt.length)).toString('hex');
@@ -6081,6 +6093,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
   let icmpEchoReplyLogged = false;
 
   const writeTun = (pkt) => {
+    if (pkt[0] >>> 4 === 6 && (!bridgeOpts?.ipv6Role || !ipv6PacketAllowed(pkt, bridgeOpts.ipv6Role, 'in'))) return;
     try {
       tracePacket('wire->tun', pkt);
       tun.write(pkt);
@@ -6780,7 +6793,7 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
           continue;
         }
       }
-      if (!isIpv4Bridgeable(pkt)) {
+      if (!isIpv4Bridgeable(pkt) && !(bridgeOpts?.ipv6Role && ipv6PacketAllowed(pkt, bridgeOpts.ipv6Role, 'out'))) {
         if (kaDebug) {
           const v = pkt.length ? pkt[0] >> 4 : -1;
           const hex = pkt.subarray(0, Math.min(8, pkt.length)).toString('hex');
@@ -7194,7 +7207,7 @@ function wireExitTlsSocket(tlsSock, ctx) {
         }
         st.windowOffset = windowOffset;
         setOutcomeOnce('vpn');
-        const ack = `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Type: application/octet-stream\r\n\r\n`;
+        const ack = `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Type: application/octet-stream\r\n${ctx.ipv6Capability ? `${IPV6_HEADER}: ${ctx.ipv6Capability}\r\n` : ''}\r\n`;
         tlsSock.write(ack);
         const rest = httpBuf.subarray(idx + 4);
         const bearerLabel = legacy ? ' bearer_legacy=1' : '';
@@ -7443,6 +7456,7 @@ function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
         {
           ':status': '200',
           'content-type': 'application/octet-stream',
+          ...(ctx.ipv6Capability ? { [IPV6_HEADER]: ctx.ipv6Capability } : {}),
         },
         { endStream: false },
       );
@@ -9264,6 +9278,7 @@ async function createRtcChromeClientBridge(opts) {
 async function runExit({
   server,
   type,
+  ipv6Runtime,
   dnsUpstreamDestinationPolicy,
   extIface,
   configPath,
@@ -9311,6 +9326,8 @@ async function runExit({
       shutdownFn(exitCode, reason);
       return;
     }
+    try { ipv6Runtime?.restore(); } catch (error) { console.error('[clean-vpn] IPv6 recovery retained:', error.message); exitCode = 1; }
+    ipv6Runtime?.release();
     safe(() => teardownExitNat(nat.tunName, nat.ext));
     safe(() => restoreExitSysctl(nat.prevIpForward));
     safe(() => tun.close());
@@ -9346,9 +9363,11 @@ async function runExit({
   let quicExtServer = null;
   let shuttingDown = false;
 
+  const ipv6Capability = ipv6Runtime?.begin('exit', ifname, nat.ext);
+  if (ipv6Runtime) console.log(`[clean-vpn] IPv6 exit: ${ipv6Capability}; требуется global IPv6 + маршрут через ${nat.ext} + заранее настроенный IPv6 forwarding`);
   const attachInboundBridge = createInboundTunBridgeAttach(
     tun,
-    BRIDGE_OPTS_EXIT,
+    { ...BRIDGE_OPTS_EXIT, ipv6Role: ipv6Runtime ? 'exit' : null },
     kaBridge,
     kaCooldown,
   );
@@ -9453,6 +9472,8 @@ async function runExit({
       }
     });
     const finishExit = () => {
+      try { ipv6Runtime?.restore(); } catch (error) { console.error('[clean-vpn] IPv6 recovery retained:', error.message); exitCode = 1; }
+      ipv6Runtime?.release();
       teardownExitNat(nat.tunName, nat.ext);
       restoreExitSysctl(nat.prevIpForward);
       safe(() => tun.close());
@@ -9836,6 +9857,7 @@ async function runExit({
       console.error('[clean-vpn] tls HTTP/2 server:', err?.message || err);
     });
     const tlsCtx = {
+      ipv6Capability,
       startBridge,
       creds,
       tlsPublicName: tlsPublicName || null,
@@ -10288,6 +10310,7 @@ async function runClient(options) {
 async function runClientImpl({
   server,
   type,
+  ipv6Runtime,
   splitDefault,
   fromTun,
   fromTunStateDir,
@@ -10422,6 +10445,15 @@ async function runClientImpl({
         }
       }
       catch (error) { code = 1; console.error('[clean-vpn] DNS recovery retained for review:', error.message); }
+      try {
+        if (code === 0 && ipv6Runtime) {
+          console.log('[clean-vpn] IPv6: восстанавливаю собственные правила…');
+          ipv6Runtime.restore();
+          console.log('[clean-vpn] IPv6: восстановление завершено');
+        }
+        else if (ipv6Runtime?.state) console.error('[clean-vpn] IPv6 guard retained; use clean-vpn-ipv6-recover.mjs after review');
+      } catch (error) { code = 1; console.error('[clean-vpn] IPv6 recovery retained:', error.message); }
+      finally { ipv6Runtime?.release(); }
       try { teardownClientRoutes(routeCtx, { retainIngress: code !== 0 }); }
       catch (error) { code = 1; console.error('[clean-vpn] route cleanup:', error.message); }
       safe(() => tun.close()); clearCleanVpnEmergencyShutdown();
@@ -10437,6 +10469,10 @@ async function runClientImpl({
     void finishNetwork(exitCode, reason);
   });
   dnsNetworkPrepared?.(routeCtx);
+  if (ipv6Runtime) {
+    ipv6Runtime.begin('client', ifname);
+    console.log('[clean-vpn] IPv6 client: direct external IPv6 blocked; waiting for authenticated exit capability');
+  }
 
   if (ingress) {
     const config = { ingress, tun: ifname, address: IP_CLIENT };
@@ -11311,9 +11347,13 @@ async function runClientImpl({
     attachOutboundTunBridge(
       tun,
       'tcp',
-      BRIDGE_OPTS_CLIENT,
+      { ...BRIDGE_OPTS_CLIENT, ipv6Role: ipv6Runtime ? 'client' : null },
       async () => {
         const sock = await connectTlsVpn(tlsConnectOpts);
+        try {
+          if (routeCtx.stopping) throw new Error('client stopping');
+          if (ipv6Runtime) console.log(`[clean-vpn] IPv6 client: ${ipv6Runtime.capability(sock.cleanVpnIpv6)} (outer TLS over IPv4)`);
+        } catch (error) { sock.destroy(); throw error; }
         tlsVpnSocket = sock;
         return sock;
       },
@@ -11790,6 +11830,7 @@ async function runClientImpl({
 async function main() {
   installCleanVpnFatalHandlers();
   const args = parseArgs(process.argv.slice(2));
+  validateIpv6Options(args);
   if (args.fromTunStateDir !== null && !args.fromTun) throw new Error('--from-tun-state-dir требует --from-tun');
   if (args.fromTunRestartSafe && !args.fromTun) throw new Error('--from-tun-restart-safe требует --from-tun');
   if (process.platform !== 'linux') {
@@ -11806,6 +11847,7 @@ async function main() {
   sudo env PATH=$PATH node scripts/clean-vpn.js --role=client --server=HOST:443 --type=combo-tls --split-default --tls-public-name=vpn.example.com
 
 --type: tcp (socket alias) | http | websocket | ws-chrome | rtc-chrome | udp | webrtc | quic | quic-ext | tls | boring-tls | transparent-tls | combo-tls
+--ipv6=auto|off: opt-in host IPv6 inside authenticated --type=tls over IPv4; client requires --split-default. Enable on both peers. Exit requires configured global IPv6 and IPv6 forwarding; otherwise client blocks external IPv6. See scripts/clean-vpn-ipv6.md.
 --split-default: только client, IPv4 default через tun (0.0.0.0/1 + 128.0.0.0/1); RFC1918 через uplink; /32 bypass к --server и (только webrtc/rtc-chrome/ws-chrome/udp+punch) к IP STUN/TURN из --config. Plain --type=udp STUN не резолвит. IPv6 не в туннеле. Проверка: curl -4 https://ifconfig.me
 --dns-mode=tunnel|off: client default tunnel — обычный UDP/TCP53 через TUN к 1.1.1.1, backup 8.8.8.8; settings resolved/dnsmasq не меняются. Требует conntrack и --server=IPv4:PORT (TLS-имя отдельно). off отключает DNS-перехват и его guard, не снимает оставшуюся аварийную защиту. managed зарезервирован и пока отклоняется: системный opt-in workflow остаётся отдельным.
 --dns-server=IPv4: публичный основной resolver простого режима; backup остаётся 8.8.8.8. Участок exit → DNS — обычный DNS. Защита client → exit зависит от транспорта.
@@ -12036,6 +12078,13 @@ async function main() {
   }
 
   args.dnsUpstreamDestinationPolicy = await loadExitDnsUpstreamPolicy(args, process.argv.slice(2));
+  if (args.ipv6 === 'auto') {
+    args.ipv6Runtime = openIpv6Runtime();
+    if (args.ipv6Runtime.state && args.ipv6Runtime.state.stage !== 'released') {
+      args.ipv6Runtime.release();
+      throw new Error('IPv6 recovery required: node scripts/clean-vpn-ipv6-recover.mjs --apply');
+    }
+  }
   if (args.role === 'exit') {
     await runExit(args);
   } else if (args.role === 'client') {

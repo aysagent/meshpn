@@ -9,7 +9,7 @@ const ok = stdout => ({ code: 0, signal: null, reason: null, stdout, stderr: '',
 const stats = '10 packets captured\n10 packets received by filter\n0 packets dropped by kernel\n';
 const v6 = '2001:4860::123';
 const trace = `ip=${v6}\nsecret=must-not-appear\nLEAK_CHECK_METRICS\t200\t${V6_TARGET}\t${v6}\t0\n`;
-function fixture({ dnsLeak = false, noise = false, drops = false, emptyTun = false, captureFailure = false, noTun = false, https = true, routeChange = false } = {}) {
+function fixture({ dnsLeak = false, noise = false, drops = false, emptyTun = false, captureFailure = false, noTun = false, https = true, routeChange = false, tunnel6 = false, noV6Packets = false } = {}) {
   const calls = [], names = [], finishes = []; let captures = 0, internetCalls = 0;
   return { calls, names, finishes, settle: async () => {}, run: async (file, args, opts) => {
     calls.push({ file, args, opts });
@@ -18,10 +18,10 @@ function fixture({ dnsLeak = false, noise = false, drops = false, emptyTun = fal
     if (file === 'tcpdump') return ok('tcpdump fixture\n');
     if (file === 'ip') {
       if (args.includes('addr')) return ok(JSON.stringify([
-        ...(!noTun ? [{ ifname: 'tun0', flags: ['UP'], addr_info: [{ family: 'inet', local: '10.99.0.2' }] }] : []),
+        ...(!noTun ? [{ ifname: 'tun0', flags: ['UP'], addr_info: [{ family: 'inet', local: '10.99.0.2' }, ...(tunnel6 ? [{ family: 'inet6', local: v6 }] : [])] }] : []),
         { ifname: 'wlan0', flags: ['UP'], addr_info: [{ family: 'inet6', local: v6 }] }]));
       if (args.at(-1) === '1.0.0.1') internetCalls++;
-      return ok(JSON.stringify([{ dev: args.at(-1) === '1.0.0.1' && !(routeChange && internetCalls > 1) ? 'tun0' : 'wlan0' }]));
+      return ok(JSON.stringify([{ dev: args.at(-1) === '1.0.0.1' && !(routeChange && internetCalls > 1) || tunnel6 && args.includes('-6') ? 'tun0' : 'wlan0' }]));
     }
     if (file === 'dig') { names.push(args.find(a => a.startsWith('cv-')).slice(0, -1)); return ok(';; status: NXDOMAIN,\n'); }
     assert.equal(file, 'curl'); return https ? ok(trace) : { ...ok(''), code: 7 };
@@ -31,7 +31,8 @@ function fixture({ dnsLeak = false, noise = false, drops = false, emptyTun = fal
     return { finish: async () => {
       finishes.push(iface);
       return { ...ok((iface === 'tun0' && !emptyTun || iface === 'wlan0' && dnsLeak ? names.map(n => `IP 10.0.0.1.123 > 1.1.1.1.53: 1+ A? ${n}.\n`).join('') : '') +
-        (iface === 'wlan0' && noise ? 'IP 1.2.3.4.111 > 1.1.1.1.53: A? unrelated-private.example.\n' : '')),
+        (iface === 'wlan0' && noise ? 'IP 1.2.3.4.111 > 1.1.1.1.53: A? unrelated-private.example.\n' : '') +
+        (iface === 'tun0' && tunnel6 && !noV6Packets ? `IP6 ${v6}.123 > ${V6_TARGET}.443: Flags [S]\n` : '')),
       stderr: drops ? stats.replace('0 packets dropped', '2 packets dropped') : stats };
     } };
   } };
@@ -60,6 +61,13 @@ test('probe DNS on uplink is reported independently of IPv6 success', async () =
   const r = await collectLeakCheck(options, fixture({ dnsLeak: true, https: false }));
   assert.equal(r.dnsObservation, 'probe-DNS-on-uplink'); assert.equal(r.ipv6.status, 'not-established');
   assert.equal(r.status, 'bypass-or-uplink-traffic-observed');
+});
+test('dual-stack observation requires HTTPS, TUN route/source and positive IPv6 capture', async () => {
+  const r = await collectLeakCheck(options, fixture({ tunnel6: true }));
+  assert.equal(r.ipv6.status, 'tunnel-https-observed'); assert.equal(r.status, 'dns-and-ipv6-seen-on-TUN-not-on-uplink');
+  for (const patch of [{ noV6Packets: true }, { https: false }, { drops: true }]) {
+    const r = await collectLeakCheck(options, fixture({ tunnel6: true, ...patch })); assert.equal(r.status, 'inconclusive');
+  }
 });
 test('unrelated port53 traffic is review evidence, not attributed to generated probes', async () => {
   const r = await collectLeakCheck(options, fixture({ noise: true }));

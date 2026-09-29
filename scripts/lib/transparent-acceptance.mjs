@@ -10,6 +10,7 @@ export const TEST_FILES = Object.freeze([
   'test-transparent-acceptance.mjs',
   'test-client-check.mjs',
   'test-client-leak-check.mjs',
+  'test-vpn-ipv6.mjs',
   'test-transparent-soak.mjs',
   'test-transparent-slow-reader.mjs',
   'test-transparent-h2-flow.mjs',

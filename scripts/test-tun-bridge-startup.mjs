@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
+import { ipv6PacketAllowed } from './lib/vpn-ipv6.mjs';
 
 // Evaluate the actual CLI bridge functions without running main(), opening a TUN,
 // loading native transports, or changing the host. Only endpoint IO is replaced.
@@ -16,7 +17,7 @@ const framerEnd = source.indexOf('\n/** Uint32 BE', framerStart);
 assert.ok(framerStart > 0 && framerEnd > framerStart);
 const { attachOutboundTunBridge: attach, attachTunBridge } = runInNewContext(
   `${source.slice(framerStart, framerEnd)}\n${source.slice(start, end)}\n({attachOutboundTunBridge, attachTunBridge});`, {
-  Buffer, process: { env: {} }, randomBytes,
+  Buffer, process: { env: {} }, randomBytes, ipv6PacketAllowed,
   setTimeout: () => ({ unref() {} }), clearTimeout() {}, setInterval, clearInterval,
   setImmediate, console: { log() {}, error() {}, warn() {} }, MAX_PKT: 65535, KEEPALIVE_TUN_QUEUE_MAX: 256,
   STREAM_FRAMER_CHUNK_MERGE_AFTER: 24, RECONNECT_BRIDGE_TRANSPORTS: new Set(['tcp']),
@@ -30,21 +31,36 @@ const { attachOutboundTunBridge: attach, attachTunBridge } = runInNewContext(
   },
 });
 
-function fixture({ keepAlive = 0, eager = false, failFirst = false } = {}) {
+function fixture({ keepAlive = 0, eager = false, failFirst = false, ipv6Role = null } = {}) {
   let read, calls = 0, resolve, reject;
   const endpoint = new EventEmitter(); endpoint.sent = [];
-  const api = attach({ startRead(callback) { read = callback; }, write() {} }, 'tcp', {}, () => {
+  const received = [];
+  const api = attach({ startRead(callback) { read = callback; }, write(b) { received.push(b); } }, 'tcp', { ipv6Role }, () => {
     calls++;
     return new Promise((yes, no) => { resolve = yes; reject = no; });
   }, keepAlive, 0, eager);
   const packet = Buffer.alloc(20); packet[0] = 0x45;
-  return { api, endpoint, packet, read: () => read([packet]), calls: () => calls,
+  return { api, endpoint, packet, received, read: (b = packet) => read([b]), calls: () => calls,
     finish: async () => {
       if (failFirst && calls === 1) reject(new Error('injected connection failure'));
       else resolve(endpoint);
       await new Promise(setImmediate);
     } };
 }
+
+test('IPv6 alone wakes lazy bridge; multicast cannot; inbound address validation enforced', async () => {
+  const f = fixture({ keepAlive: 30, ipv6Role: 'client' });
+  const packet = Buffer.alloc(48); packet[0] = 0x60; packet.writeUInt16BE(8, 4); packet[6] = 17;
+  const client = Buffer.from('fd426376706e00000000000000000002', 'hex'), remote = Buffer.from('26064700470000000000000000001111', 'hex');
+  client.copy(packet, 8); remote.copy(packet, 24);
+  const multicast = Buffer.from(packet); multicast[24] = 255;
+  f.read(multicast); assert.equal(f.calls(), 0);
+  f.read(packet); assert.equal(f.calls(), 1); await f.finish(); assert.equal(f.endpoint.sent.length, 1);
+  const reply = Buffer.from(packet); remote.copy(reply, 8); client.copy(reply, 24);
+  const frame = b => { const n = Buffer.alloc(4); n.writeUInt32BE(b.length); return Buffer.concat([n, b]); };
+  f.endpoint.emit('data', frame(reply)); assert.equal(f.received.length, 1);
+  f.endpoint.emit('data', frame(packet)); assert.equal(f.received.length, 1);
+});
 
 test('eager startup and concurrent TUN packets share one outbound connection', async () => {
   const f = fixture(); assert.equal(f.calls(), 1);

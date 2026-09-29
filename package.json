@@ -76,6 +76,7 @@
     "test:client-check": "node --test scripts/test-client-check.mjs",
     "check:client-leaks": "node scripts/clean-vpn-client-leak-check.mjs",
     "test:client-leaks": "node --test scripts/test-client-leak-check.mjs",
+    "test:ipv6": "node --test scripts/test-vpn-ipv6.mjs scripts/test-tun-bridge-startup.mjs scripts/test-client-leak-check.mjs",
     "dns:client-preflight": "node scripts/dns-client-preflight.mjs",
     "test:dns-client-preflight": "node --test scripts/test-dns-client-preflight.mjs",
     "test:dns-client-guard": "node --test scripts/test-dns-client-guard.mjs",

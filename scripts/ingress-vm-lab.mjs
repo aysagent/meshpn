@@ -10,7 +10,7 @@ import { buildDnsVmImage, verifyVmPackages, sha256 } from './lib/dns-vm-image.mj
 
 const flags = new Map();
 for (const arg of process.argv.slice(2)) {
-  if (arg === '--dns-ingress-only' || arg === '--dns-host-only') {
+  if (arg === '--dns-ingress-only' || arg === '--dns-host-only' || arg === '--ipv6') {
     const name = arg.slice(2);
     assert.ok(!flags.has(name), `duplicate ${arg}`); flags.set(name, true); continue;
   }
@@ -22,6 +22,7 @@ for (const key of ['tools', 'kernel', 'resolved']) assert.ok(flags.has(key), `mi
 assert.ok(!flags.has('dns-ingress-only') || flags.has('dns-conntrack'), '--dns-ingress-only requires --dns-conntrack');
 assert.ok(!flags.has('dns-host-only') || flags.has('dns-conntrack'), '--dns-host-only requires --dns-conntrack');
 assert.ok(!(flags.has('dns-host-only') && flags.has('dns-ingress-only')), 'select only one DNS subset');
+assert.ok(!flags.has('ipv6') || !flags.has('dns-conntrack'), 'IPv6 and DNS VM cases are separate');
 process.umask(0o077);
 const directory = await mkdtemp(join(tmpdir(), 'meshpn-ingress-vm-'));
 console.error(`Ingress VM artifacts: ${directory}`);
@@ -44,7 +45,7 @@ try {
     report.packages = packages; report.packageTrust = { previousReport: flags.get('verified-report'), sha256: sha256(bytes) };
   } else report.packages = await verifyVmPackages(flags.get('tools'));
   const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved'), ingress: true,
-    dnsConntrack: flags.get('dns-conntrack'), dnsIngressOnly: flags.has('dns-ingress-only'), dnsHostOnly: flags.has('dns-host-only') });
+    ipv6: flags.has('ipv6'), dnsConntrack: flags.get('dns-conntrack'), dnsIngressOnly: flags.has('dns-ingress-only'), dnsHostOnly: flags.has('dns-host-only') });
   report.image = image.manifest;
   const env = { ...process.env, LD_LIBRARY_PATH: `${root}/usr/lib/x86_64-linux-gnu:${root}/lib/x86_64-linux-gnu`,
     QEMU_MODULE_DIR: `${root}/usr/lib/x86_64-linux-gnu/qemu` };
@@ -92,7 +93,7 @@ try {
       expected);
     assert.ok(report.transports.every(v => v.actualDnsDefaultTested === true));
     report.dnsCoverage = flags.has('dns-host-only') ? 'host-only' : flags.has('dns-ingress-only') ? 'ingress-only' : 'host-ingress-lan';
-  } else assert.deepEqual(report.transports.map((v) => v.actualTransportTested), ['tls', 'boring-tls', 'transparent-tls', 'combo-tls']);
+  } else assert.deepEqual(report.transports.map((v) => v.actualTransportTested), flags.has('ipv6') ? ['tls-ipv6'] : ['tls', 'boring-tls', 'transparent-tls', 'combo-tls']);
   assert.ok(report.transports.every((v) => v.hostNetworkChanged === false && v.checks.length >= 12));
   report.status = 'passed';
 } catch (error) { report.error = error.message; process.exitCode = 1; console.error(error.stack); }

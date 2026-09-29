@@ -99,6 +99,10 @@ sudo env "PATH=$PATH" node scripts/clean-vpn-client-check.mjs --probe --expect-e
 одной командой, без изменения сети. Требует `tcpdump`; намеренно проверяет
 возможный прямой IPv6 HTTPS, а не объявляет отсутствие утечек по одному маршруту.
 
+Для обычного `--type=tls` доступен [opt-in IPv6 внутри того же IPv4 TLS-соединения](scripts/clean-vpn-ipv6.md):
+`--ipv6=auto` на client и exit, client с `--split-default`. При неготовом IPv6
+на exit клиент блокирует внешний IPv6. LAN и остальные транспорты пока не поддержаны.
+
 Для `boring-tls` соберите helper **на клиенте**, выполните smoke и замените только клиентское `--type=tls` на `--type=boring-tls`; exit остаётся `--type=tls`:
 
 ```bash

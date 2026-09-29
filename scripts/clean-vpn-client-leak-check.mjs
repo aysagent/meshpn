@@ -13,6 +13,7 @@ try {
     console.log('=== CLEAN-VPN CLIENT LEAK CHECK BEGIN ===');
     console.log(JSON.stringify(report, null, 2));
     console.log('=== CLEAN-VPN CLIENT LEAK CHECK END ===');
-    if (report.status !== 'inspection-only') process.exitCode = report.status === 'bypass-or-uplink-traffic-observed' ? 2 : 1;
+    if (report.status !== 'inspection-only') process.exitCode = report.status === 'dns-and-ipv6-seen-on-TUN-not-on-uplink' ? 0
+      : report.status === 'bypass-or-uplink-traffic-observed' ? 2 : 1;
   }
 } catch { console.error('LEAK_CHECK_FAILED: check --help, Linux and sudo. No network settings changed.'); process.exitCode = 1; }

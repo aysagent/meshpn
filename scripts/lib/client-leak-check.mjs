@@ -112,7 +112,7 @@ export async function collectLeakCheck(options, { run = runCommand, capture = st
     report.commands.tcpdumpVersion = await exec('tcpdump', ['--version']);
     if (!good(report.commands.tcpdumpVersion)) { report.detail = 'tcpdump-required-no-probes-sent'; return report; }
     onProgress('Запускаю ограниченный захват DNS на TUN/uplink; нужен tcpdump');
-    captures.push(await capture(options.tun, '(udp or tcp) and dst port 53', controller.signal));
+    captures.push(await capture(options.tun, `((udp or tcp) and dst port 53) or (ip6 and tcp and dst host ${V6_TARGET} and dst port 443)`, controller.signal));
     captures.push(await capture(up.dev, `((udp or tcp) and dst port 53) or (tcp and host ${options.exitIp} and port 443) or (ip6 and tcp and dst host ${V6_TARGET} and dst port 443)`, controller.signal));
     const nonce = randomBytes(10).toString('hex');
     for (const resolver of ['system', '1.1.1.1']) for (const type of ['A', 'AAAA']) for (const transport of ['udp', 'tcp']) {
@@ -123,14 +123,17 @@ export async function collectLeakCheck(options, { run = runCommand, capture = st
       const dnsStatus = /status: ([A-Z]+),/.exec(r.stdout)?.[1] ?? null;
       report.dns.push({ name, resolver, type, transport, answered: good(r) && ['NOERROR', 'NXDOMAIN'].includes(dnsStatus), dnsStatus, code: r.code, reason: r.reason });
     }
-    onProgress('Проверяю прямой IPv6 HTTPS: запрос может выйти вне VPN');
+    onProgress('Проверяю IPv6 HTTPS и его путь: без защиты запрос может выйти вне VPN');
     const v6Before = route(await record('ipv6Before', ['-j', '-6', 'route', 'get', V6_TARGET]));
-    if (v6?.dev === up.dev && v6Before?.dev === up.dev && !controller.signal.aborted) {
+    if (!controller.signal.aborted) {
       report.ipv6 = parseIpv6Probe(await exec('curl', ipv6CurlArgs(), 12000));
       const after = route(await record('ipv6After', ['-j', '-6', 'route', 'get', V6_TARGET]));
       const sourceOnUplink = links.find(l => l.ifname === up.dev)?.addr_info?.some(a => a.family === 'inet6' && a.local === report.ipv6.localIp);
-      report.ipv6.status = report.ipv6.status === 'https-connected' && after?.dev === up.dev && sourceOnUplink
-        ? 'bypass-confirmed' : 'not-established';
+      const sourceOnTun = link.addr_info?.some(a => a.family === 'inet6' && a.local === report.ipv6.localIp);
+      const connected = report.ipv6.status === 'https-connected';
+      report.ipv6.status = connected && v6?.dev === up.dev && v6Before?.dev === up.dev && after?.dev === up.dev && sourceOnUplink
+        ? 'bypass-confirmed' : connected && v6?.dev === options.tun && v6Before?.dev === options.tun && after?.dev === options.tun && sourceOnTun
+          ? 'tunnel-https-observed' : connected ? 'https-path-unconfirmed' : 'not-established';
     } else report.ipv6 = { status: 'not-tested', detail: 'no-matching-uplink-IPv6-route-or-aborted' };
     const endInternet = route(await record('internetAfter', ['-j', '-4', 'route', 'get', '1.0.0.1']));
     const endExit = route(await record('exitAfter', ['-j', '-4', 'route', 'get', options.exitIp]));
@@ -152,6 +155,7 @@ export async function collectLeakCheck(options, { run = runCommand, capture = st
   report.dnsObservation = leak ? 'probe-DNS-on-uplink' : uplink?.dnsOutboundPackets > 0 ? 'other-port53-traffic-on-uplink-review'
     : complete ? 'probes-seen-on-TUN-not-on-uplink' : 'inconclusive';
   if (!report.aborted) report.status = leak || uplink?.dnsOutboundPackets > 0 || report.ipv6?.status === 'bypass-confirmed' || uplink?.ipv6TargetOutboundPackets > 0
-    ? 'bypass-or-uplink-traffic-observed' : 'inconclusive';
+    ? 'bypass-or-uplink-traffic-observed' : complete && report.ipv6?.status === 'tunnel-https-observed' && tun.ipv6TargetOutboundPackets > 0
+      ? 'dns-and-ipv6-seen-on-TUN-not-on-uplink' : 'inconclusive';
   return report;
 }

@@ -33,7 +33,8 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, ipv6 = false, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
+  assert.ok(!ipv6 || ingress && !dnsConntrack);
   assert.ok(!dnsConntrack || ingress && dnsConntrack.startsWith('/'));
   assert.equal(typeof dnsIngressOnly, 'boolean'); assert.ok(!dnsIngressOnly || dnsConntrack);
   assert.equal(typeof dnsHostOnly, 'boolean'); assert.ok(!dnsHostOnly || dnsConntrack);
@@ -112,6 +113,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   const release = (await exec('uname', ['-r'])).stdout.trim();
   assert.equal(await realpath(kernel), `/boot/vmlinuz-${release}`, 'this builder requires the matching local kernel/modules');
   for (const name of ['iptable_filter', 'ip6table_filter', 'ipt_REJECT', 'ip6t_REJECT', 'xt_tcpudp', 'dummy',
+    ...(ipv6 ? ['ip6table_nat'] : []),
     ...(systemd ? ['xt_comment'] : []),
     ...(dnsConntrack ? ['xt_multiport', 'nf_conntrack_netlink'] : []),
     ...(dnsmasq ? ['veth'] : []),
@@ -193,7 +195,7 @@ cd /project
 echo INGRESS_VM_TESTS
 node --version
 set +e
-node --max-old-space-size=192 scripts/${dnsConntrack ? 'test-dns-tunnel-cli-real.mjs' : 'test-ingress-transport-real.mjs'}
+node --max-old-space-size=192 scripts/${ipv6 ? 'test-vpn-ipv6-real.mjs' : dnsConntrack ? 'test-dns-tunnel-cli-real.mjs' : 'test-ingress-transport-real.mjs'}
 result=$?
 set -e
 if [ "$result" = 0 ]; then echo INGRESS_VM_PASS; else echo INGRESS_VM_FAIL; fi
