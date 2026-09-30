@@ -40,11 +40,29 @@ export const HOST_STOP_FAULT_CHECKS = [
   ...['IPv4','IPv6','DNS'].map(n=>`fault lab clean uninstall restores ${n}`),
 ];
 
-export function assertHostSystemdEvidence(evidence, { stopFaults = false } = {}) {
+export const HOST_BOOT_ORDER_CHECKS = [
+  ...HOST_SYSTEMD_CHECKS.slice(0, 10),
+  ...['healthy', 'failed'].flatMap(phase => [
+    ...['baseline IPv4', 'baseline IPv6', 'baseline DNS', 'start result', 'observer active',
+      'observer IPv4', 'observer IPv6', 'observer DNS', 'guard result'].map(n => `${phase} boot ordering ${n}`),
+    ...(phase === 'healthy' ? ['healthy boot ordering VPN follows observer'] :
+      ['failed boot ordering VPN never started', 'failed boot ordering guard failed']),
+  ]),
+  ...['IPv4', 'IPv6', 'DNS'].map(n => `boot ordering explicit guard repair blocks ${n}`),
+  'boot ordering clean uninstall IPv4',
+];
+
+export function assertHostSystemdEvidence(evidence, { stopFaults = false, bootOrder = false } = {}) {
+  assert.ok(!(stopFaults && bootOrder));
   assert.equal(evidence?.status, 'passed');
   assert.equal(evidence.actualTransportTested, 'tls-ipv6');
   assert.equal(evidence.hostNetworkChanged, false);
-  assert.deepEqual(evidence.checks, stopFaults ? HOST_STOP_FAULT_CHECKS : HOST_SYSTEMD_CHECKS);
+  assert.deepEqual(evidence.checks, bootOrder ? HOST_BOOT_ORDER_CHECKS : stopFaults ? HOST_STOP_FAULT_CHECKS : HOST_SYSTEMD_CHECKS);
+  assert.equal(evidence.hostSystemd?.bootOrder === true, bootOrder);
+  if (bootOrder) {
+    assert.equal(evidence.hostSystemd.failClosed, false);
+    assert.equal(evidence.hostSystemd.finding, 'network-consumer-ran-after-guard-failure');
+  }
   assert.equal(evidence.hostSystemd?.stopFaults === true, stopFaults);
   if (stopFaults) assert.equal(evidence.hostSystemd.acceleratedStopTimeoutSec, 5);
   assert.equal(evidence.hostSystemd?.systemdPid1, true);
