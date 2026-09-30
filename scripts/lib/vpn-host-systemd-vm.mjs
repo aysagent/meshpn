@@ -27,11 +27,26 @@ export const HOST_SYSTEMD_CHECKS = [
   ...['IPv4', 'IPv6', 'DNS'].map(n => `clean uninstall restores baseline ${n}`),
 ];
 
-export function assertHostSystemdEvidence(evidence) {
+export const HOST_STOP_FAULT_CHECKS = [
+  ...HOST_SYSTEMD_CHECKS.slice(0,10),
+  ...['error','timeout'].flatMap(phase => [
+    'fault reached DNS cleanup','systemd result','main exit status','detached helper gone','guard active',
+    'DNS journal retained','IPv6 journal retained','host journal retained',
+    'blocks IPv4','blocks IPv6','blocks DNS','restart refuses unfinished journals',
+    'updater refuses unfinished journals','uninstall refuses unfinished journals','installed files unchanged',
+    'recovery restores routes','recovery retains guard','restart after recovery',
+  ].map(n=>`${phase} stop ${n}`)),
+  'fault fixture restored production timeout',
+  ...['IPv4','IPv6','DNS'].map(n=>`fault lab clean uninstall restores ${n}`),
+];
+
+export function assertHostSystemdEvidence(evidence, { stopFaults = false } = {}) {
   assert.equal(evidence?.status, 'passed');
   assert.equal(evidence.actualTransportTested, 'tls-ipv6');
   assert.equal(evidence.hostNetworkChanged, false);
-  assert.deepEqual(evidence.checks, HOST_SYSTEMD_CHECKS);
+  assert.deepEqual(evidence.checks, stopFaults ? HOST_STOP_FAULT_CHECKS : HOST_SYSTEMD_CHECKS);
+  assert.equal(evidence.hostSystemd?.stopFaults === true, stopFaults);
+  if (stopFaults) assert.equal(evidence.hostSystemd.acceleratedStopTimeoutSec, 5);
   assert.equal(evidence.hostSystemd?.systemdPid1, true);
   assert.equal(evidence.hostSystemd?.actualInstaller, true);
   assert.equal(evidence.hostSystemd?.acceptance, 'not-ready-for-deployment');
