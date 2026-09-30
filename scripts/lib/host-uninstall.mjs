@@ -9,16 +9,22 @@ import { openHostRoutes } from './vpn-host-routes.mjs';
 import { openTunnelDnsJournal } from './dns-tunnel-journal.mjs';
 import { openIpv6Runtime } from './vpn-ipv6-runtime.mjs';
 import { runTunnelDnsCommand } from './dns-tunnel-command.mjs';
+import { usesNetworkdGate, assertNetworkdGate, detachNetworkdGate } from './host-networkd-gate.mjs';
 
 const properties = ['LoadState', 'ActiveState', 'PartOf', 'BindsTo', 'NetworkNamespacePath', 'PrivateNetwork', 'PrivateUsers',
   'RootDirectory', 'RootImage', 'BindPaths', 'BindReadOnlyPaths', 'TemporaryFileSystem',
   'Requires', 'Requisite', 'Conflicts', 'PropagatesStopTo', 'StopWhenUnneeded'];
 export function uninstallHostService({ service = 'clean-vpn', io = fs, run = runTunnelDnsCommand,
   open = [openHostRoutes, openTunnelDnsJournal, openIpv6Runtime], log = console.error } = {}) {
-  return withStoppedHostService({ service, io, run, open, log }, ({ installed, ctl, command, exists, paths }) => {
+  let gated = false;
+  return withStoppedHostService({ service, io, run, open, log, beforeStop({ installed, paths, ctl }) {
+    gated = installed[1] && usesNetworkdGate(io.readFileSync(paths[1], 'utf8'));
+    if (gated) assertNetworkdGate({ service, io, ctl, allowDetached: true });
+  } }, ({ installed, ctl, command, exists, inspect, paths }) => {
     const [unitPath, guardPath, wrapper, guardScript] = paths;
     const unit = `${service}.service`, guard = `${service}-killswitch.service`;
-    if (installed[1]) ctl('stop', guard);
+    if (gated) detachNetworkdGate({ service, io, ctl });
+    if (installed[1]) { ctl('stop', guard); assert.equal(inspect(guard).ActiveState, 'inactive', 'guard stop failed; protection retained'); }
     if (installed[3]) command(guardScript, ['down', '--tun=tun0']);
     if (installed[0]) ctl('disable', unit);
     if (installed[1]) ctl('disable', guard);

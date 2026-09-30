@@ -15,6 +15,7 @@ import { dnsCoupledVmUnits } from './dns-coupled-vm-units.mjs';
 import { radxaVmUnits } from './dns-radxa-vm-units.mjs';
 import { packageDnsSource } from './dns-source-package.mjs';
 import { hostSystemdVmUnits } from './vpn-host-systemd-vm.mjs';
+import { hostBootVmUnits } from './vpn-host-boot-vm.mjs';
 
 const exec = (file, args, options = {}) => promisify(execFile)(file, args, { timeout: 30000, maxBuffer: 1024 * 1024, ...options });
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -34,7 +35,9 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, ipv6 = false, hostResilience = false, hostJoint = false, hostSystemd = false, hostNetworkd = false, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, ipv6 = false, hostResilience = false, hostJoint = false, hostSystemd = false, hostNetworkd = false, hostColdBoot = false, bootDnsmasq = null, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
+  assert.ok(!hostColdBoot || hostNetworkd && hostSystemd && bootDnsmasq);
+  assert.ok(!bootDnsmasq || hostColdBoot);
   assert.ok(!hostNetworkd || hostSystemd, 'networkd host fixture requires host systemd');
   assert.ok(!hostSystemd || ingress && ipv6 && dnsConntrack && !systemd && !hostJoint && !hostResilience && !dnsHostOnly && !dnsIngressOnly);
   assert.ok(!ipv6 || ingress && (!dnsConntrack || hostJoint || hostSystemd));
@@ -52,7 +55,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   assert.ok(!publication || deployment);
   assert.ok(!releasedInspection || coupled && !deployment);
   assert.ok(!uninstall || publication && coupled);
-  const units = hostSystemd ? hostSystemdVmUnits() : radxa ? radxaVmUnits() : coupled ? dnsCoupledVmUnits() : dnsmasq ? dnsmasqVmUnits() : dnsSystemdVmUnits({ cliAdapter: true });
+  const units = hostColdBoot ? hostBootVmUnits() : hostSystemd ? hostSystemdVmUnits() : radxa ? radxaVmUnits() : coupled ? dnsCoupledVmUnits() : dnsmasq ? dnsmasqVmUnits() : dnsSystemdVmUnits({ cliAdapter: true });
   if (uninstall) units['dns-vm-driver.service'] = units['dns-vm-driver.service'].replace('TimeoutStartSec=15min', 'TimeoutStartSec=35min');
   // This separate case inspects a genuinely never-activated deployment. Only
   // its private D-Bus fixture starts; no guard/network/DNS service is pulled in.
@@ -115,7 +118,13 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     await elf('/bin/false');
     await copy('/usr/lib/systemd/system/systemd-networkd.service');
     // A netlink socket opened by PID1 would bind to the wrong network namespace.
-    await symlink('/dev/null', destination('/etc/systemd/system/systemd-networkd.socket'));
+    if (!hostColdBoot) await symlink('/dev/null', destination('/etc/systemd/system/systemd-networkd.socket'));
+  }
+  if (hostColdBoot) {
+    await elf('/bin/true');
+    await elf(bootDnsmasq, '/usr/sbin/dnsmasq');
+    for (const path of ['/usr/lib/systemd/systemd-udevd', '/usr/bin/udevadm']) await elf(path);
+    for (const unit of ['systemd-networkd.socket', 'systemd-udevd.service', 'systemd-udev-trigger.service', 'systemd-udevd-control.socket', 'systemd-udevd-kernel.socket']) await copy(`/usr/lib/systemd/system/${unit}`);
   }
   if (publication) await elf('/usr/bin/mv');
   for (const name of ['libxt_tcp.so', 'libxt_udp.so', 'libipt_REJECT.so', 'libip6t_REJECT.so', 'libxt_standard.so',
@@ -212,6 +221,7 @@ mount -t tmpfs tmpfs /tmp
 chmod 1777 /tmp
 ${[...modules].map((path) => `insmod ${path}${basename(path) === 'dummy.ko' ? ' numdummies=0' : ''}`).join('\n')}
 cd /project
+${hostColdBoot ? 'mount -t ext4 -o rw /dev/vda /state\nnode scripts/lib/vpn-host-boot-vm.mjs prepare' : ''}
 ${hostSystemd ? 'mkdir -p /run/dbus\nexec /usr/lib/systemd/systemd --system --log-target=console --log-level=info --show-status=no' : ''}
 echo INGRESS_VM_TESTS
 node --version

@@ -16,11 +16,11 @@ function fixture({ present = -1, errorCode = 'ENOENT', metadata = {}, failComman
     },
   } };
 }
-test('fresh installer gate only reads four paths and two absent unit states', () => {
+test('fresh installer gate reads installation/gate paths and two absent unit states', () => {
   const f=fixture(); assert.equal(assertFreshHostInstall(f.options).status, 'fresh-install-only');
-  assert.equal(f.paths.length, 4); assert.equal(f.commands.length, 2);
+  assert.equal(f.paths.length, 6); assert.equal(f.commands.length, 2);
 });
-for (let present=0; present<4; present++) test(`any existing entry (including dangling symlink) refuses: ${present}`, () => {
+for (let present=0; present<6; present++) test(`any existing entry (including dangling symlink) refuses: ${present}`, () => {
   const f=fixture({present}); assert.throws(()=>assertFreshHostInstall(f.options), /in-place update refused/);
   assert.equal(f.commands.length, 0);
 });

@@ -7,6 +7,7 @@ import * as fs from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { withStoppedHostService } from './host-uninstall.mjs';
+import { usesNetworkdGate, assertNetworkdGate } from './host-networkd-gate.mjs';
 
 const hash = b => createHash('sha256').update(b).digest('hex');
 const pathPattern = '/[A-Za-z0-9_./-]+';
@@ -87,7 +88,7 @@ export function checkHostUpdateUnits(service, main, guard) {
   assert.ok(m, 'persist both/block guard required');
   assert.deepEqual(g, ['[Unit]', `Description=clean-vpn kill-switch (${service}, persist)`, 'DefaultDependencies=no',
     'Before=network-pre.target', 'Wants=network-pre.target', 'Conflicts=shutdown.target', 'Before=shutdown.target',
-    '[Service]', 'Type=oneshot', 'RemainAfterExit=yes', up, `ExecStop=${gs} down --tun=tun0`, '[Install]', 'WantedBy=multi-user.target']);
+    '[Service]', 'Type=oneshot', 'RemainAfterExit=yes', up, usesNetworkdGate(guard) ? 'ExecStop=/bin/true' : `ExecStop=${gs} down --tun=tun0`, '[Install]', 'WantedBy=multi-user.target']);
   return `cvks2:both:block:tun0:${m[2]}:${m[1]}`;
 }
 
@@ -124,6 +125,7 @@ export function updateHostService({ service = 'clean-vpn', release, log = consol
   return lifecycle({ service, requireGuard: true, log, beforeStop({ paths, ctl, inspect }) {
     pinned = paths.map(read); source = pinned[2]; next = switchHostWrapper(source, release);
     marker = checkHostUpdateUnits(service, pinned[0], pinned[1]);
+    if (usesNetworkdGate(pinned[1])) assertNetworkdGate({ service, ctl });
     assert.equal(pinned[3], guardSource, 'installed guard implementation requires review');
     assert.ok(marker.split(':')[4].split(',').includes(next.serverIp), 'exit not allowed by installed guard');
     assert.equal(inspect(`${service}-killswitch.service`).ActiveState, 'active', 'guard is not active');

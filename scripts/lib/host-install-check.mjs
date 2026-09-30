@@ -5,13 +5,14 @@
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { runTunnelDnsCommand } from './dns-tunnel-command.mjs';
+import { networkdGatePaths } from './host-networkd-gate.mjs';
 
 export function assertFreshHostInstall({ service = 'clean-vpn', io = fs, run = runTunnelDnsCommand } = {}) {
   assert.match(service, /^[A-Za-z0-9_][A-Za-z0-9._-]*$/);
   assert.ok(service.length <= 200);
   const units = [`${service}.service`, `${service}-killswitch.service`];
   const paths = [...units.map(n => `/etc/systemd/system/${n}`),
-    `/usr/local/bin/${service}-run.sh`, `/usr/local/bin/${service}-killswitch.sh`];
+    `/usr/local/bin/${service}-run.sh`, `/usr/local/bin/${service}-killswitch.sh`, ...networkdGatePaths(service)];
   for (const path of paths) {
     let present = false;
     try { io.lstatSync(path); present = true; }

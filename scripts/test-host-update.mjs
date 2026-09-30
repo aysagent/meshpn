@@ -12,6 +12,7 @@ const main = installer.split('cat > "$UNIT_PATH" <<EOF\n')[1].split('\nEOF')[0]
   .replaceAll('$SERVICE_NAME','clean-vpn').replaceAll('$RUN_SH',wrapperPath)
   .replace('${KS_DEPS}', 'Requires=clean-vpn-killswitch.service\nAfter=clean-vpn-killswitch.service');
 const guard = installer.split('cat > "$KS_UNIT_PATH" <<EOF\n')[1].split('\nEOF')[0]
+  .replace('$KS_GATE_MARKER', '').replace('$KS_STOP', `${scriptPath} down --tun=tun0`)
   .replaceAll('$SERVICE_NAME','clean-vpn').replaceAll('$KS_SH',scriptPath)
   .replace('$KS_UP_ARGS','up --scope=both --ipv6=block --tun=tun0 --ssh-port=22 --server=198.51.100.2');
 const wrapper = '#!/usr/bin/env bash\n# generated\nset -euo pipefail\nexport PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/usr/bin:/bin"\ncd "/old"\nexec "/usr/bin/node" "/old/scripts/clean-vpn.js" --role=client --split-default --type=tls --server=198.51.100.2:443 \n';
@@ -55,6 +56,12 @@ test('release switch preserves argv/node and changes only cwd/entrypoint',()=>{
   const n=switchHostWrapper(wrapper,'/new'); assert.equal(n.serverIp,'198.51.100.2');
   assert.equal(n.contents,wrapper.replace('cd "/old"','cd "/new"').replace('"/old/scripts/','"/new/scripts/'));
   assert.equal(checkHostUpdateUnits('clean-vpn',main,guard),'cvks2:both:block:tun0:198.51.100.2:22');
+});
+test('networkd update template requires retain-rules stop only with explicit marker', () => {
+  const gated = '# clean-vpn-networkd-gate-v1\n' + guard.replace(`ExecStop=${scriptPath} down --tun=tun0`, 'ExecStop=/bin/true');
+  assert.equal(checkHostUpdateUnits('clean-vpn', main, gated), 'cvks2:both:block:tun0:198.51.100.2:22');
+  assert.throws(() => checkHostUpdateUnits('clean-vpn', main, gated.replace('# clean-vpn-networkd-gate-v1\n', '')));
+  assert.throws(() => checkHostUpdateUnits('clean-vpn', main, '# clean-vpn-networkd-gate-v1\n' + guard));
 });
 for(const [name, source, release] of [
   ['same',wrapper,'/old'],['nested',wrapper,'/old/new'],['relative',wrapper,'new'],['parent',wrapper,'/'],

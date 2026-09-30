@@ -5,11 +5,11 @@
 # Ставит новый systemd-сервис, который запускает clean-vpn.js из ЭТОГО репозитория
 # (dev/тест) с переданными аргументами. Аргументы зашиваются в генерируемый
 # /usr/local/bin/<SERVICE_NAME>-run.sh, поэтому повторный запуск с новыми аргументами
-# отклоняется до изменений. Безопасное обновление пока не реализовано.
+# отклоняется до изменений. Ограниченное обновление — clean-vpn-update.mjs.
 #
 # Для --role=client дополнительно ставится kill-switch: пока туннель не поднят (или упал),
-# трафик мимо tun блокируется. Kill-switch привязан к сервису (стартует ДО clean-vpn,
-# снимается при остановке сервиса).
+# публичный трафик мимо tun блокируется с оговорёнными исключениями.
+# По умолчанию kill-switch привязан к сервису; persist/networkd — отдельный opt-in.
 #
 # Использование:
 #   sudo env "PATH=$PATH" scripts/autostart/install.sh <аргументы clean-vpn>
@@ -31,6 +31,9 @@
 #   KS_IPV6            block|leave — резать прямой IPv6-egress (default block; TUN разрешён)
 #   KS_SSH_PORT        входящий SSH: разрешить ответы с этого порта (default 22; 0 отключает)
 #   KS_SERVER_IPS      IP[,IP...] — bypass к серверу(ам), если не удалось извлечь из --server
+#   NETWORKD_GUARD     1 — opt-in host TLS/H2 candidate: networkd requires guard;
+#                      stop retains rules, explicit uninstall releases them.
+#                      Requires console recovery if boot guard fails.
 #
 set -euo pipefail
 
@@ -102,6 +105,21 @@ KS_SCOPE="${KS_SCOPE:-both}"
 KS_IPV6="${KS_IPV6:-block}"
 KS_SSH_PORT="${KS_SSH_PORT:-22}"
 KILLSWITCH_PERSIST="${KILLSWITCH_PERSIST:-0}"
+NETWORKD_GUARD="${NETWORKD_GUARD:-0}"
+[[ "$NETWORKD_GUARD" == 0 || "$NETWORKD_GUARD" == 1 ]] || die 'NETWORKD_GUARD must be 0 or 1'
+if [[ "$NETWORKD_GUARD" == 1 ]]; then
+  [[ "$ROLE" == client && "$KILLSWITCH" == 1 && "$KILLSWITCH_PERSIST" == 1 && "$KS_SCOPE" == both && "$KS_IPV6" == block ]] || die 'networkd gate requires persist host-client both/block guard'
+  have_tls=0; have_split=0; have_ipv6=0
+  for a in "$@"; do
+    case "$a" in
+      --type=tls) have_tls=1 ;;
+      --split-default) have_split=1 ;;
+      --ipv6=auto) have_ipv6=1 ;;
+      --client-lan-*|--from-tun*|--dns-state-dir*|--config*|--http-vers=1.1) die 'networkd candidate: unsupported client scope' ;;
+    esac
+  done
+  [[ "$have_tls$have_split$have_ipv6" == 111 ]] || die 'networkd candidate requires --type=tls --split-default --ipv6=auto'
+fi
 
 # IP VPN-сервера для bypass (иначе kill-switch не даст поднять туннель).
 KS_SERVER_IPS="${KS_SERVER_IPS:-}"
@@ -148,6 +166,10 @@ fi
 log "args        = $*"
 
 # --- генерируем run.sh ---
+if [[ "$NETWORKD_GUARD" == 1 ]]; then
+  "$NODE_BIN" "$REPO_ROOT/scripts/clean-vpn-networkd-gate.mjs" "--prepare=$SERVICE_NAME" "$@"
+  log 'networkd gate: boot failure blocks network/SSH; local console recovery required'
+fi
 cat > "$RUN_SH" <<EOF
 #!/usr/bin/env bash
 # Сгенерировано scripts/autostart/install.sh — не редактируйте вручную,
@@ -168,8 +190,15 @@ if [[ "$KILLSWITCH" == "1" ]]; then
   [[ -n "$KS_SERVER_IPS" ]] && KS_UP_ARGS="$KS_UP_ARGS --server=$KS_SERVER_IPS"
 
   if [[ "$KILLSWITCH_PERSIST" == "1" ]]; then
+    KS_STOP="$KS_SH down --tun=tun0"
+    KS_GATE_MARKER=''
+    if [[ "$NETWORKD_GUARD" == 1 ]]; then
+      KS_STOP=/bin/true
+      KS_GATE_MARKER='# clean-vpn-networkd-gate-v1'
+    fi
     # Не привязан к сервису: активен с раннего boot, держится всегда.
     cat > "$KS_UNIT_PATH" <<EOF
+$KS_GATE_MARKER
 [Unit]
 Description=clean-vpn kill-switch ($SERVICE_NAME, persist)
 DefaultDependencies=no
@@ -182,7 +211,7 @@ Before=shutdown.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=$KS_SH $KS_UP_ARGS
-ExecStop=$KS_SH down --tun=tun0
+ExecStop=$KS_STOP
 
 [Install]
 WantedBy=multi-user.target

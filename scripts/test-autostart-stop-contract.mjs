@@ -70,7 +70,7 @@ test('shell uninstaller delegates to the journal-gated implementation', () => {
 
 function uninstallFixture({ states = [null, {stage:'released'}, {stage:'released'}], openError = -1,
   fail = '', tied = false, wrongNamespace = false, customDns = false, partial = false, stillActive = false,
-  metadata = {} } = {}) {
+  metadata = {}, guardStopFailed = false } = {}) {
   const calls = [], held = new Set(), removed = [];
   const options = { log() {}, io: {
     lstatSync(path) { if (partial && path.endsWith('-run.sh')) throw Object.assign(Error('missing'), {code:'ENOENT'});
@@ -84,7 +84,7 @@ function uninstallFixture({ states = [null, {stage:'released'}, {stage:'released
   }), run(file, args, opts) {
     const command = [file, ...args].join(' '); calls.push(command);
     if (fail && command.includes(fail)) throw Error('injected command failure');
-    if (args.includes('show')) return Object.entries({ LoadState: 'loaded', ActiveState: stillActive ? 'active' : 'inactive',
+    if (args.includes('show')) return Object.entries({ LoadState: 'loaded', ActiveState: guardStopFailed && args.includes('clean-vpn-killswitch.service') ? 'failed' : stillActive ? 'active' : 'inactive',
       PartOf: tied && args.includes('clean-vpn-killswitch.service') ? 'clean-vpn.service' : '', BindsTo: '',
       NetworkNamespacePath: '', PrivateNetwork: 'no', PrivateUsers: 'no', RootDirectory: '', RootImage: '',
       BindPaths: '', BindReadOnlyPaths: '', TemporaryFileSystem: '', Requires: '', Requisite: '', Conflicts: '',
@@ -130,6 +130,12 @@ for (const fail of ['stop clean-vpn.service', 'stop clean-vpn-killswitch.service
 test('uninstall refuses a main unit still active after stop', () => {
   const f=uninstallFixture({stillActive:true}); assert.throws(()=>uninstallHostService(f.options), /VPN is not stopped/);
   assert.deepEqual(f.removed, []); assert.equal(f.held.size, 0);
+});
+test('uninstall retains rules/files when stop returns success but guard unit failed', () => {
+  const f = uninstallFixture({ guardStopFailed: true });
+  assert.throws(() => uninstallHostService(f.options), /guard stop failed/);
+  assert.equal(f.held.size, 0); assert.deepEqual(f.removed, []);
+  assert.ok(!f.calls.some(c => c.includes(' down ') || c.includes('disable')));
 });
 test('uninstall service name and CLI reject unsafe input before touching installed units', () => {
   for (const service of ['../other', '--help', '', 'x\nother', 'x'.repeat(201)]) {

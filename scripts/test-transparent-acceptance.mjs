@@ -5,7 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import reporter from './lib/acceptance-reporter.mjs';
 import { BROWSER_SCENARIOS } from './lib/browser-lab-driver.mjs';
-import { parseOptions, cleanEnvironment, runCommand, nodeSummary, browserSummary, repeatMatrix } from './lib/transparent-acceptance.mjs';
+import { TEST_FILES, parseOptions, cleanEnvironment, runCommand, nodeSummary, browserSummary, repeatMatrix } from './lib/transparent-acceptance.mjs';
+
+test('acceptance manifest includes host boot/lifecycle/preflight regressions without duplicates', () => {
+  assert.equal(new Set(TEST_FILES).size, TEST_FILES.length);
+  for (const name of ['install-check', 'update', 'stop-faults', 'boot-order', 'network-gate', 'networkd', 'networkd-gate', 'cold-boot', 'preflight']) assert.ok(TEST_FILES.includes(`test-host-${name}.mjs`));
+});
 
 test('acceptance defaults to full matrix and bounded repeats', () => {
   assert.deepEqual(parseOptions([]), { suite: 'full', repeat: 1 });
