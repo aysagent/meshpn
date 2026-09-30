@@ -27,6 +27,17 @@
 
 ## Как читать отчёт
 
+Отдельный сценарий настоящего systemd PID1 запускается с
+`--ipv6 --host-systemd --dns-conntrack=/absolute/path/to/conntrack`
+и теми же параметрами tools/kernel/resolved/verified-report. Он не совмещается
+с `--host-joint`, `--host-resilience` или DNS subsets. Внешнего NIC и общей с
+хостом файловой системы нет. Драйвер отказывает вне специально помеченной QEMU VM.
+Сценарий вызывает настоящий `autostart/install.sh`; только `NetworkNamespacePath`
+и место вывода логов заданы лабораторными drop-in. Это **не** проверка раннего
+boot: сеть в VM подготовлена до установки сервиса. Проверяются persist-mode,
+H2, DNS/IPv4/IPv6, start/stop/restart, SIGKILL и явный recovery, чистое удаление.
+Результат этого отдельного сценария — `transports[].hostSystemd`.
+
 `status=passed` означает, что **лабораторные утверждения подтверждены**.
 В историческом отчёте аудита старого kill-switch сюда входят отрицательные контрольные случаи:
 утечка ранее установленного соединения считается воспроизведённым дефектом,
@@ -47,7 +58,8 @@
   `restore --noflush`, отдельный commit для каждой семьи IP, без общего flush.
   Старые немаркированные цепочки не мигрируются автоматически;
 - старый systemd unit давал лишь 15 секунд на stop; шаблон исправлен на 420 секунд
-  и `KillMode=mixed`, но полный lifecycle этого шаблона под PID1 ещё не проверен;
+  и `KillMode=mixed`; базовый persist-mode lifecycle под PID1 проверен ниже,
+  ранняя загрузка, обновление и ошибочная остановка пока не приняты;
 - незавершённый IPv6 journal после SIGKILL требует явного recovery: обычный
   `Restart=always` сам по себе не является безопасным восстановлением;
 - исторический DNS crash-test восстановил DNS, но не весь исходный набор IPv4
@@ -62,7 +74,8 @@ Guard сам по себе не маршрутизирует ответы пуб
 туннеля требует отдельного маршрута управления. Лабораторные пробы не являются
 доказательством отсутствия утечек при произвольных конкурентных изменениях firewall.
 Uninstaller теперь прекращает работу при ошибке stop/guard down и сохраняет
-установленные файлы; это проверено как контракт шаблона, не полный PID1 lifecycle.
+установленные файлы; это проверено как контракт шаблона. Ниже добавлен настоящий
+PID1-тест **чистого** удаления, не удаления после аварийной/незавершённой остановки.
 
 DNS-прокси в этой новой матрице выключен. Его failover, SIGKILL/restart,
 недоступность exit и повторный SIGINT при cleanup проверяются отдельно:
@@ -251,3 +264,37 @@ node --test scripts/test-autostart-stop-contract.mjs scripts/test-vpn-ipv6.mjs \
   scripts/test-dns-tunnel-journal.mjs scripts/test-dns-tunnel-forwarder.mjs \
   scripts/test-transparent-acceptance.mjs scripts/test-dns-vm.mjs
 ```
+
+## Настоящий systemd PID1: базовый persist lifecycle (2026-09-30)
+
+`/var/tmp/meshpn-ingress-vm-Q5L5AD/report.json`: **31/31 PASS**.
+Настоящий `autostart/install.sh`, сгенерированные main/guard units, systemd 255,
+TLS/H2, совместно DNS tunnel + IPv6 runtime + host IPv4 journal + persist guard.
+Production-код в этом этапе не менялся; добавлены VM-драйвер и проверки.
+
+Подтверждены DNS и обе семьи HTTPS через exit, `systemctl restart`, штатный stop,
+точное восстановление исходных IPv4-маршрутов/`rp_filter`, три released-журнала.
+При stop guard продолжает блокировать проверенные IPv4/IPv6/DNS-запросы.
+После `systemctl kill --kill-whom=main --signal=SIGKILL` systemd действительно
+предпринял restart, а client отказался стартовать с незавершёнными журналами;
+проверенные прямые запросы остались заблокированы. Явный recovery DNS → IPv6 → IPv4
+восстановил исходную сеть под guard; затем сервис снова передал HTTPS через exit.
+После штатного stop настоящий uninstall удалил main unit/wrapper и вернул
+исходную доступность IPv4/IPv6/DNS.
+
+Это **не автоматическое crash recovery** и не разрешение развёртывать autostart:
+`deploymentAcceptance=not-ready-for-deployment`. Не проверены ранний boot/reboot,
+потеря питания, update, ошибочный stop/uninstall, tied-mode, nft backend и H1
+в этом systemd-сценарии. В частности, успешный `systemctl stop` уже упавшего
+процесса сам по себе не подтверждает очистку его журналов; чистый uninstall-тест
+не покрывает этот случай. Следующий этап — негативные сценарии удаления/обновления.
+
+Неудачные подготовительные прогоны сохранены: `7pZpiP` — циклический импорт
+драйвера; `ilxX7b` — отсутствующий BusyBox applet `install`; `Hjhlgj` — `bash`
+не находился в compiled PATH systemd минимального образа. Исправлен стенд
+(отдельный entrypoint, настоящая утилита install, /usr/bin aliases), production
+проверки не ослаблялись. Эти прогоны не засчитываются как успешные VPN-тесты.
+
+Локальная регрессия после добавления стенда: **251 passed, 0 failed, 0 skipped**.
+Проверки включают отказ VM-драйвера на хосте, несовместимые флаги и строгий
+перечень всех 31 утверждений в итоговом отчёте; общий маркер PASS недостаточен.

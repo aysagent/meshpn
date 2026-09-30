@@ -14,6 +14,7 @@ import { dnsmasqVmUnits } from './dnsmasq-vm-units.mjs';
 import { dnsCoupledVmUnits } from './dns-coupled-vm-units.mjs';
 import { radxaVmUnits } from './dns-radxa-vm-units.mjs';
 import { packageDnsSource } from './dns-source-package.mjs';
+import { hostSystemdVmUnits } from './vpn-host-systemd-vm.mjs';
 
 const exec = (file, args, options = {}) => promisify(execFile)(file, args, { timeout: 30000, maxBuffer: 1024 * 1024, ...options });
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -33,8 +34,9 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, ipv6 = false, hostResilience = false, hostJoint = false, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
-  assert.ok(!ipv6 || ingress && (!dnsConntrack || hostJoint));
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, ipv6 = false, hostResilience = false, hostJoint = false, hostSystemd = false, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
+  assert.ok(!hostSystemd || ingress && ipv6 && dnsConntrack && !systemd && !hostJoint && !hostResilience && !dnsHostOnly && !dnsIngressOnly);
+  assert.ok(!ipv6 || ingress && (!dnsConntrack || hostJoint || hostSystemd));
   assert.ok(!hostJoint || ipv6 && dnsConntrack && !hostResilience);
   assert.ok(!hostResilience || ipv6);
   assert.ok(!dnsConntrack || ingress && dnsConntrack.startsWith('/'));
@@ -49,7 +51,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   assert.ok(!publication || deployment);
   assert.ok(!releasedInspection || coupled && !deployment);
   assert.ok(!uninstall || publication && coupled);
-  const units = radxa ? radxaVmUnits() : coupled ? dnsCoupledVmUnits() : dnsmasq ? dnsmasqVmUnits() : dnsSystemdVmUnits({ cliAdapter: true });
+  const units = hostSystemd ? hostSystemdVmUnits() : radxa ? radxaVmUnits() : coupled ? dnsCoupledVmUnits() : dnsmasq ? dnsmasqVmUnits() : dnsSystemdVmUnits({ cliAdapter: true });
   if (uninstall) units['dns-vm-driver.service'] = units['dns-vm-driver.service'].replace('TimeoutStartSec=15min', 'TimeoutStartSec=35min');
   // This separate case inspects a genuinely never-activated deployment. Only
   // its private D-Bus fixture starts; no guard/network/DNS service is pulled in.
@@ -85,7 +87,9 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   await elf('/usr/sbin/xtables-legacy-multi'); await elf(resolved, '/usr/lib/systemd/systemd-resolved');
   if (dnsmasq) await elf(dnsmasq, '/usr/sbin/dnsmasq');
   if (ingress) await elf('/usr/sbin/sysctl');
-  if (hostResilience || hostJoint) await elf('/bin/bash');
+  if (hostResilience || hostJoint || hostSystemd) await elf('/bin/bash');
+  if (hostSystemd) await elf('/bin/bash', '/usr/bin/bash');
+  if (hostSystemd) for (const name of ['env', 'install']) await elf(`/usr/bin/${name}`);
   if (dnsConntrack) {
     await copy(dnsConntrack, '/usr/sbin/conntrack');
     const output = (await exec('ldd', [dnsConntrack])).stdout;
@@ -95,7 +99,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
       if (path) await copy(path, path.startsWith('/lib') || path.startsWith('/usr/lib') ? path : `/usr/lib/x86_64-linux-gnu/${basename(path)}`);
     }
   }
-  if (systemd) {
+  if (systemd || hostSystemd) {
     for (const path of ['/usr/lib/systemd/systemd', '/usr/lib/systemd/systemd-executor', '/usr/lib/systemd/systemd-shutdown', '/usr/bin/systemctl', '/usr/bin/systemd-notify', '/usr/bin/umount']) await elf(path);
     for (const name of ['shutdown.target', 'umount.target', 'final.target', 'reboot.target', 'poweroff.target', 'systemd-reboot.service', 'systemd-poweroff.service']) {
       await copy(`/usr/lib/systemd/system/${name}`);
@@ -133,7 +137,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     }
   }
   await copyTree(join(project, 'scripts'), '/project/scripts');
-  if (hostResilience || hostJoint) for (const name of ['killswitch.sh', 'install.sh'])
+  if (hostResilience || hostJoint || hostSystemd) for (const name of ['killswitch.sh', 'install.sh', 'uninstall.sh'])
     await copy(join(project, 'scripts/autostart', name), `/project/scripts/autostart/${name}`);
   if (systemd && (!dnsmasq || radxa)) {
     // Match the real deployment path: a symlink changes import.meta.url while
@@ -158,13 +162,15 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     await elf(join(project, 'native/tun_linux/build/Release/tun_linux.node'), '/project/native/tun_linux/build/Release/tun_linux.node');
     await elf(join(project, 'native/boring_tls/build/boring-tls-helper'), '/project/native/boring_tls/build/boring-tls-helper');
   }
-  for (const dir of ['/proc', '/sys', '/dev', '/run', '/tmp', '/state', '/etc/systemd', '/etc/ssl', '/usr/sbin', '/sbin', '/lib64']) {
+  for (const dir of ['/proc', '/sys', '/dev', '/run', '/tmp', '/state', '/etc/systemd', '/etc/ssl', '/usr/sbin', '/sbin', '/lib64', '/usr/local/bin']) {
     await mkdir(destination(dir), { recursive: true });
   }
-  for (const name of ['sh', 'mount', 'mkdir', 'chmod', 'chown', 'stat', 'insmod', 'readlink', 'cat', 'sync', 'reboot', 'poweroff', 'sleep']) {
+  for (const name of ['sh', 'mount', 'mkdir', 'chmod', 'chown', 'stat', 'insmod', 'readlink', 'cat', 'sync', 'reboot', 'poweroff', 'sleep', 'realpath', 'dirname', 'rm']) {
     await symlink('/bin/busybox', destination(`/bin/${name}`));
+    // Ubuntu systemd's compiled service PATH may omit /bin (merged-/usr).
+    if (hostSystemd) await symlink('/bin/busybox', destination(`/usr/bin/${name}`));
   }
-  for (const name of ['iptables', 'ip6tables', ...(systemd || hostResilience || hostJoint ? ['iptables-restore', 'ip6tables-restore'] : [])]) await symlink('/usr/sbin/xtables-legacy-multi', destination(`/usr/sbin/${name}`));
+  for (const name of ['iptables', 'ip6tables', ...(systemd || hostResilience || hostJoint || hostSystemd ? ['iptables-restore', 'ip6tables-restore'] : [])]) await symlink('/usr/sbin/xtables-legacy-multi', destination(`/usr/sbin/${name}`));
   if (systemd && (!dnsmasq || radxa) && !publication) {
     await mkdir(destination('/etc/clean-vpn/dns'), { recursive: true });
     await writeFile(destination('/etc/clean-vpn/dns/guard-policy.json'), JSON.stringify({ schema: 1,
@@ -199,6 +205,7 @@ mount -t tmpfs tmpfs /tmp
 chmod 1777 /tmp
 ${[...modules].map((path) => `insmod ${path}${basename(path) === 'dummy.ko' ? ' numdummies=0' : ''}`).join('\n')}
 cd /project
+${hostSystemd ? 'mkdir -p /run/dbus\nexec /usr/lib/systemd/systemd --system --log-target=console --log-level=info --show-status=no' : ''}
 echo INGRESS_VM_TESTS
 node --version
 set +e
@@ -268,7 +275,7 @@ poweroff -f
     }
   }
   await walk();
-  if (systemd) {
+  if (systemd || hostSystemd) {
     // Offline verification in the staged root catches unit syntax/ExecStart
     // mistakes before spending a TCG boot. It does not contact host PID1.
     await exec('/usr/bin/systemd-analyze', [`--root=${root}`, '--man=no', 'verify',

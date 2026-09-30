@@ -9,13 +9,16 @@ import dgram from 'node:dgram';
 import { assertBrowserNamespace } from './browser-soak.mjs';
 import { runHostResilienceChecks } from './vpn-host-resilience-lab.mjs';
 import { runHostJointChecks } from './vpn-host-joint-lab.mjs';
+import { assertHostSystemdVm } from './vpn-host-systemd-vm.mjs';
 const run = (file, args) => execFileSync(file, args, { encoding: 'utf8', timeout: 20000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const ip = (...args) => run('ip', args);
 const at = (ns, file, ...args) => ip('netns', 'exec', ns, file, ...args);
 
-export async function runIpv6Lab(directory, { resilience = false, joint = false } = {}) {
-  assertBrowserNamespace(); assert.deepEqual(JSON.parse(ip('-j', 'link', 'show')).map(l => l.ifname), ['lo']);
-  run('mount', ['--make-rprivate', '/']); run('mount', ['-t', 'tmpfs', '-o', 'mode=0755', 'tmpfs', '/run']); ip('link', 'set', 'lo', 'up');
+export async function runIpv6Lab(directory, { resilience = false, joint = false, systemd = false } = {}) {
+  if (systemd) assertHostSystemdVm(); else assertBrowserNamespace();
+  assert.deepEqual(JSON.parse(ip('-j', 'link', 'show')).map(l => l.ifname), ['lo']);
+  if (!systemd) { run('mount', ['--make-rprivate', '/']); run('mount', ['-t', 'tmpfs', '-o', 'mode=0755', 'tmpfs', '/run']); }
+  ip('link', 'set', 'lo', 'up');
   run('sysctl', ['-w', 'net.ipv4.ip_forward=1']);
   const children = [], servers = [], checks = [];
   const check = (name, actual, expected) => { assert.deepEqual(actual, expected, name); checks.push(name); console.error(`IPV6_CHECK ${name}`); };
@@ -98,7 +101,7 @@ export async function runIpv6Lab(directory, { resilience = false, joint = false 
     const base = ['scripts/clean-vpn.js', '--type=tls', `--tls-cert-dir=${directory}`, `--shared-hmac-key=${directory}/secret.key`, '--tls-server-name=vpn.test', '--tls-public-name=vpn.test'];
     const startExit = (auto, extra = [], env = {}) => start('exit', [...base, '--role=exit', '--server=0.0.0.0:443', '--ext=eth0', ...(auto ? ['--ipv6=auto'] : []), ...extra], env);
     const startClient = (h1, extra = [], env = {}) => start('client', [...base, '--role=client', '--server=198.51.100.2:443', '--split-default', ...(joint ? [] : ['--dns-mode=off']), '--ipv6=auto', ...(h1 ? ['--http-vers=1.1'] : []), ...extra], env);
-    if (!resilience && !joint) {
+    if (!resilience && !joint && !systemd) {
     let exit = await startExit(true); await wait(exit, 'exit TLS');
     for (const h1 of [false, true]) {
       const client = await startClient(h1); await wait(client, 'IPv6 client: tunnel');
@@ -155,7 +158,8 @@ export async function runIpv6Lab(directory, { resilience = false, joint = false 
     }
     const hostResilience = resilience ? await runHostResilienceChecks({ directory, start, wait, stop, startExit, startClient, query, check, at, ip }) : undefined;
     const hostJoint = joint ? await runHostJointChecks({ start, wait, stop, startExit, startClient, query, check, at, ip }) : undefined;
-    return { status: 'passed', actualTransportTested: 'tls-ipv6', hostNetworkChanged: false, checks, hostResilience, hostJoint };
+    const hostSystemd = systemd ? await (await import('./vpn-host-systemd-lab.mjs')).runHostSystemdChecks({ directory, start, wait, stop, startExit, query, check, at, ip }) : undefined;
+    return { status: 'passed', actualTransportTested: 'tls-ipv6', hostNetworkChanged: false, checks, hostResilience, hostJoint, hostSystemd };
   } finally {
     for (const p of children) if (p.exitCode === null && p.signalCode === null) p.kill('SIGKILL');
     for (const s of servers) s.close();
