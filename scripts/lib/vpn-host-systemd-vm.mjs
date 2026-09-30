@@ -10,6 +10,8 @@ export const HOST_SYSTEMD_CHECKS = [
   ...['clean-vpn-dns-recover.mjs', 'clean-vpn-ipv6-recover.mjs', 'clean-vpn-host-recover.mjs'].map(n => `systemctl stop ${n} released`),
   ...['IPv4', 'IPv6', 'DNS'].map(n => `persist guard survives systemctl stop ${n}`),
   'SIGKILL restart refuses stale ownership', ...['IPv4', 'IPv6', 'DNS'].map(n => `SIGKILL persists ${n} guard`),
+  'uninstall after SIGKILL refuses unfinished journals', 'refused uninstall retains installed files',
+  'refused uninstall retains active guard unit', ...['IPv4', 'IPv6', 'DNS'].map(n => `refused uninstall blocks ${n}`),
   'explicit recovery restores original routes under systemd', 'explicit recovery leaves persist guard',
   'systemd starts after explicit recovery', 'clean uninstall removes installed main unit', 'clean uninstall removes installed wrapper',
   ...['IPv4', 'IPv6', 'DNS'].map(n => `clean uninstall restores baseline ${n}`),

@@ -93,13 +93,25 @@ export async function runHostSystemdChecks({ directory, start, wait, stop, start
     check('SIGKILL persists IPv4 guard', await query('1.0.0.1'), 'BLOCKED');
     check('SIGKILL persists IPv6 guard', await query('2606:4700:4700::1111'), 'BLOCKED');
     check('SIGKILL persists DNS guard', await dns(), 'BLOCKED');
+    let refused;
+    try { await exec('ip', ['netns', 'exec', 'client', '/bin/bash', 'scripts/autostart/uninstall.sh']); }
+    catch (error) { refused = error; }
+    check('uninstall after SIGKILL refuses unfinished journals', !!refused && /unfinished VPN journal/.test(refused.stderr), true);
+    check('refused uninstall retains installed files', [
+      `/etc/systemd/system/${main}`, `/etc/systemd/system/${guard}`,
+      '/usr/local/bin/clean-vpn-run.sh', '/usr/local/bin/clean-vpn-killswitch.sh',
+    ].every(existsSync), true);
+    check('refused uninstall retains active guard unit', await property(guard, 'ActiveState'), 'active');
+    check('refused uninstall blocks IPv4', await query('1.0.0.1'), 'BLOCKED');
+    check('refused uninstall blocks IPv6', await query('2606:4700:4700::1111'), 'BLOCKED');
+    check('refused uninstall blocks DNS', await dns(), 'BLOCKED');
     for (const script of ['clean-vpn-dns-recover.mjs', 'clean-vpn-ipv6-recover.mjs', 'clean-vpn-host-recover.mjs']) await recover(script, true);
     check('explicit recovery restores original routes under systemd', snapshot(), baseline);
     check('explicit recovery leaves persist guard', await query('1.0.0.1'), 'BLOCKED');
     const restored = logs().length; await ctl('start', main); await ready(restored);
     check('systemd starts after explicit recovery', await query('1.0.0.1'), '198.51.100.2');
     await ctl('stop', main);
-    await exec('/bin/bash', ['scripts/autostart/uninstall.sh']);
+    await exec('ip', ['netns', 'exec', 'client', '/bin/bash', 'scripts/autostart/uninstall.sh']);
     check('clean uninstall removes installed main unit', existsSync(`/etc/systemd/system/${main}`), false);
     check('clean uninstall removes installed wrapper', existsSync('/usr/local/bin/clean-vpn-run.sh'), false);
     check('clean uninstall restores baseline IPv4', await query('1.0.0.1'), '192.0.2.2');
@@ -108,7 +120,7 @@ export async function runHostSystemdChecks({ directory, start, wait, stop, start
     await stop(exit);
     return { systemdPid1: true, actualInstaller: true, acceptance: 'not-ready-for-deployment', limitations: [
       'fixture-network-namespace-dropins', 'persist-mode-only', 'no-early-boot-or-reboot', 'explicit-recovery-not-auto-restart',
-      'no-failed-stop-uninstall-or-update-test', 'iptables-legacy-only', 'H2-only-systemd-cycle'] };
+      'no-stop-timeout-or-update-test', 'no-crash-during-uninstall-test', 'iptables-legacy-only', 'H2-only-systemd-cycle'] };
   } catch (error) { console.error('HOST_SYSTEMD_LOG', logs()); throw error; }
   finally { for (const s of sockets) s.close(); }
 }

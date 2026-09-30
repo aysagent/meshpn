@@ -144,9 +144,25 @@ sudo systemctl stop clean-vpn       # SIGTERM → откат маршрутов/
 ## Удаление
 
 ```bash
-sudo scripts/autostart/uninstall.sh
-sudo SERVICE_NAME=clean-vpn-exit scripts/autostart/uninstall.sh
+sudo env "PATH=$PATH" scripts/autostart/uninstall.sh
+sudo env "PATH=$PATH" SERVICE_NAME=clean-vpn-exit scripts/autostart/uninstall.sh
 ```
+
+Удаление теперь требует доступного Node (`NODE_BIN` можно задать явно).
+Успешный `systemctl stop` **не считается доказательством восстановления сети**:
+до снятия guard проверяются журналы host IPv4, DNS tunnel и IPv6. Разрешены только
+`released` либо отсутствие журнала; блокировки удерживаются до завершения удаления.
+Активный/незавершённый/повреждённый журнал или занятая блокировка вызывают отказ,
+guard и файлы не снимаются. Автоматического `--apply` нет; журналы не удаляются.
+
+Пока поддержано аудированное удаление **persist-mode** (либо сервиса без guard).
+Tied-mode (`PartOf`/`BindsTo`, в том числе текущий default установщика) отклоняется
+**до stop**, поскольку systemd может снять такой guard до проверки rollback.
+Это намеренный отказ вместо небезопасного удаления; не обходить его ручным flush
+или удалением unit-файлов. Также требуют отдельного разбора нестандартный
+`--dns-state-dir`, частичная установка, приватные namespace/root/bind mounts.
+Проверка должна выполняться в том же network namespace, что и сервис.
+Конкурентные изменения unit/firewall другим администратором не покрываются.
 
 ## Что создаётся
 

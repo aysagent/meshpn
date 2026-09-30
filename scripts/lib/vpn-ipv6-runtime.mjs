@@ -97,6 +97,7 @@ export function openIpv6Runtime({ run: injectedRun, checkpoint = () => {} } = {}
   }
   const remove = op => { if (present(op)) run(op.file, op.remove); assert.ok(!present(op) || op.kind === 'sysctl' && state.config.tunForward === '1', 'IPv6 restore read-back failed'); };
   return {
+    get lockDescriptors() { assert.ok(!released); return [lock]; },
     get state() { return state; }, release, audit() { resetBudget(); return audit(); },
     begin(role, tun, ext = null) {
       resetBudget();

@@ -85,6 +85,7 @@ export function openHostRoutes({ directory = hostRouteStateDirectory(), run: inj
     return table;
   }
   return {
+    get lockDescriptors() { assert.ok(!closed); return [lock]; },
     get state() { return state; }, release,
     assertAvailable() { assert.ok(!state || state.stage === 'released', 'Host IPv4 recovery required: node scripts/clean-vpn-host-recover.mjs --apply'); },
     audit() { deadline = performance.now() + 120000; return audit(); },
