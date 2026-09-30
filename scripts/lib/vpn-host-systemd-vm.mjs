@@ -68,12 +68,33 @@ export const HOST_NETWORK_GATE_CHECKS = [
   'network gate fixture teardown restores IPv4',
 ];
 
-export function assertHostSystemdEvidence(evidence, { stopFaults = false, bootOrder = false, networkGate = false } = {}) {
-  assert.ok([stopFaults, bootOrder, networkGate].filter(Boolean).length <= 1);
+export const HOST_NETWORKD_CHECKS = [
+  ...HOST_SYSTEMD_CHECKS.slice(0, 10),
+  ...['healthy', 'failed', 'late-carrier'].flatMap(phase => [
+    ...['starts without link or addresses', 'start result'].map(n => `${phase} networkd ${n}`),
+    ...(phase === 'failed' ? ['guard failed', 'daemon absent', 'link stays down', 'routes absent', 'blocks IPv4', 'blocks IPv6', 'blocks DNS'] : [
+      'daemon active', 'guard precedes daemon',
+      ...(phase === 'late-carrier' ? ['no default before carrier', 'client retried', 'journal unchanged'] : []),
+      'configured IPv4 and IPv6',
+      ...(phase === 'healthy' ? ['pre-VPN blocks IPv4', 'pre-VPN blocks IPv6', 'pre-VPN blocks DNS'] : []),
+      'VPN IPv4', 'VPN IPv6', 'VPN DNS', 'stop releases host journal', 'guard stop stops daemon', 'stop lowers link', 'guard released',
+    ]).map(n => `${phase} networkd ${n}`),
+  ]),
+  'networkd fixture teardown restores direct IPv4',
+];
+
+export function assertHostSystemdEvidence(evidence, { stopFaults = false, bootOrder = false, networkGate = false, networkd = false } = {}) {
+  assert.ok([stopFaults, bootOrder, networkGate, networkd].filter(Boolean).length <= 1);
   assert.equal(evidence?.status, 'passed');
   assert.equal(evidence.actualTransportTested, 'tls-ipv6');
   assert.equal(evidence.hostNetworkChanged, false);
-  assert.deepEqual(evidence.checks, networkGate ? HOST_NETWORK_GATE_CHECKS : bootOrder ? HOST_BOOT_ORDER_CHECKS : stopFaults ? HOST_STOP_FAULT_CHECKS : HOST_SYSTEMD_CHECKS);
+  assert.deepEqual(evidence.checks, networkd ? HOST_NETWORKD_CHECKS : networkGate ? HOST_NETWORK_GATE_CHECKS : bootOrder ? HOST_BOOT_ORDER_CHECKS : stopFaults ? HOST_STOP_FAULT_CHECKS : HOST_SYSTEMD_CHECKS);
+  assert.equal(evidence.hostSystemd?.networkd === true, networkd);
+  if (networkd) {
+    assert.equal(evidence.hostSystemd.actualNetworkd, true);
+    for (const limit of ['minimal-root-networkd-unit-not-vendor-sandbox', 'container-marker-no-udev', 'static-addresses-late-carrier-not-DHCP'])
+      assert.ok(evidence.hostSystemd.limitations.includes(limit));
+  }
   assert.equal(evidence.hostSystemd?.networkGate === true, networkGate);
   if (networkGate) {
     assert.equal(evidence.hostSystemd.managedLinkFailClosed, true);

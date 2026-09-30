@@ -94,6 +94,31 @@ reboot и не готовая процедура установки на хос�
 host-журнала, блокировка проб persist guard, затем успешный автоматический
 старт после возвращения маршрута без ручного recovery/reset/restart.
 
+`--host-networkd` выбирает отдельную матрицу с настоящим daemon networkd.
+Она требует `--ipv6 --host-systemd --dns-conntrack=...` и несовместима с
+`--host-stop-faults`, `--host-boot-order`, `--host-network-gate`. Образ дополнительно
+включает `/usr/lib/systemd/systemd-networkd` и его ELF-зависимости. Проверяются
+ровно 50 утверждений: обычный запуск, отказ guard, поздний carrier с автоматическим
+retry клиента, реальная передача через exit, остановка и опускание link.
+
+Unit пока лабораторный: root, `NetworkNamespacePath`, без vendor sandbox/udev;
+для networkd выставлен стандартный для этой лаборатории container marker.
+`.network` совпадает только с `eth0`, задаёт статические IPv4/IPv6 и gateway.
+После очистки адресов их создаёт networkd, а не сценарий. Поздняя сеть моделируется
+отсутствием carrier, **не DHCP**. При снятии guard зависимость `Requires/After`
+останавливает networkd; лабораторный `ExecStopPost` опускает link. Это существенно:
+по [документации networkd v255](https://github.com/systemd/systemd/blob/v255/man/systemd-networkd.service.xml)
+сам daemon обычно оставляет сетевую конфигурацию после завершения.
+
+Это ещё не vendor-unit интеграция, cold boot/reboot или доказательство защиты
+интерфейсов, поднятых initramfs/другим менеджером. Перед legacy uninstall
+лабораторный сетевой unit удаляется; production update/uninstall с такой
+зависимостью отдельно не принят. На рабочих машинах этот сценарий отказывает
+до сетевых изменений; он не является командой для Radxa.
+Отказ самой команды опускания link пока не проверен: один stop-ordering не
+гарантирует сохранение guard при такой ошибке. До production нужен отдельный
+проверяемый запрет снятия защиты, если управляемая сеть осталась поднятой.
+
 `status=passed` означает, что **лабораторные утверждения подтверждены**.
 В историческом отчёте аудита старого kill-switch сюда входят отрицательные контрольные случаи:
 утечка ранее установленного соединения считается воспроизведённым дефектом,
@@ -652,3 +677,37 @@ kill-switch совпали с manifest образа.
 незавершённым мутациям/аварийному завершению, а не к этому read-only отказу.
 Блокер отсутствующего default route закрыт для проверенного пути; реальный
 networkd/cold boot и остальные три этапа в начале документа ещё не приняты.
+
+## Настоящий networkd: журнал лабораторных прогонов (2026-09-30)
+
+Первый прогон `--host-networkd`,
+`/var/tmp/meshpn-ingress-vm-Y4VlB4/report.json`: **failed**, runner exit 1.
+Исходный VPN lifecycle и выключенный интерфейс прошли проверку, guard стартовал,
+но networkd завершился с `Cannot resolve user name systemd-network`.
+В минимальный образ был добавлен daemon, но не его пользователь/группа.
+Исправлена только упаковка VM: запись UID/GID 192 включается вместе с daemon
+для `hostNetworkd`, как раньше для coupled DNS lab. Добавлен регрессионный
+контракт состава образа. Этот первый отчёт не доказывает работу networkd.
+
+Повторный прогон `/var/tmp/meshpn-ingress-vm-a8yu8H/report.json`:
+**50/50 PASS**, runner exit 0, нормальное выключение VM. Подтверждено:
+
+- networkd стартует после успешного guard и сам создаёт адреса/маршруты;
+- до VPN IPv4/IPv6 HTTPS и DNS заблокированы, после запуска идут через exit;
+- отказ guard не запускает networkd, link остаётся down, маршрутов нет;
+- без carrier клиент повторяет запуск, сохраняя released-журнал; после
+  появления carrier networkd настраивает сеть, штатный retry поднимает VPN;
+- после остановки клиента журнал released; остановка guard останавливает
+  networkd и лабораторный `ExecStopPost` опускает link;
+- после удаления лабораторного unit и чистого uninstall прямой IPv4 восстановлен.
+
+Manifest совпал с текущими сценариями, клиентом, installer/kill-switch и
+бинарником networkd. Локальная регрессия после исправления образа:
+**352 passed, 0 failed, 0 skipped**. Production-код не изменялся.
+
+Это закрывает проверку настоящего daemon в минимальной VM, но не весь этап
+networkd из roadmap. Далее нужны vendor unit/sandbox и udev, DHCP/cold boot/reboot,
+а также fail-closed отказ опускания link перед снятием guard. В minimal-unit
+логе есть предупреждение `FileDescriptorStoreMax=0` при остановке networkd:
+хранение FD через перезапуск vendor-unit здесь не воспроизведено. Installer
+пока не устанавливает networkd-зависимость; Radxa/VPS не затронуты.

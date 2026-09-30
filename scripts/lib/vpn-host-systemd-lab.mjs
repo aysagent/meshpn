@@ -12,7 +12,7 @@ import { switchHostWrapper } from './host-update.mjs';
 const exec = (file, args, env = process.env) => promisify(execFile)(file, args, { env, encoding: 'utf8', timeout: 500000, maxBuffer: 1024 * 1024 });
 const ctl = (...args) => exec('/usr/bin/systemctl', ['--no-pager', ...args]);
 
-export async function runHostSystemdChecks({ directory, start, wait, stop, startExit, query, check, at, ip, stopFaults = false, bootOrder = false, networkGate = false }) {
+export async function runHostSystemdChecks({ directory, start, wait, stop, startExit, query, check, at, ip, stopFaults = false, bootOrder = false, networkGate = false, networkd = false }) {
   assertHostSystemdVm();
   const main = 'clean-vpn.service', guard = 'clean-vpn-killswitch.service', logfile = '/run/host-vm-client.log';
   const logs = () => existsSync(logfile) ? readFileSync(logfile, 'utf8') : '';
@@ -88,6 +88,12 @@ export async function runHostSystemdChecks({ directory, start, wait, stop, start
     check('installed service IPv6 HTTPS', await query('2606:4700:4700::1111'), '2001:db8:2::2');
     check('installed service DNS', await dns(), '192.0.2.10');
     check('installed service DNS peer is exit', dnsPeers.at(-1), '198.51.100.2');
+    if (networkd) {
+      const result = await (await import('./vpn-host-networkd-lab.mjs')).runHostNetworkdChecks({
+        check, query, dns, ready, logs, property, ctl, exec, at, ip,
+      });
+      await stop(exit); return result;
+    }
     if (networkGate) {
       const result = await (await import('./vpn-host-network-gate-lab.mjs')).runHostNetworkGateChecks({
         directory, check, query, dns, ready, logs, property, ctl, exec, at,

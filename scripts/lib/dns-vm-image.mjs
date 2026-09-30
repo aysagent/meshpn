@@ -34,7 +34,8 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, ipv6 = false, hostResilience = false, hostJoint = false, hostSystemd = false, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, ipv6 = false, hostResilience = false, hostJoint = false, hostSystemd = false, hostNetworkd = false, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
+  assert.ok(!hostNetworkd || hostSystemd, 'networkd host fixture requires host systemd');
   assert.ok(!hostSystemd || ingress && ipv6 && dnsConntrack && !systemd && !hostJoint && !hostResilience && !dnsHostOnly && !dnsIngressOnly);
   assert.ok(!ipv6 || ingress && (!dnsConntrack || hostJoint || hostSystemd));
   assert.ok(!hostJoint || ipv6 && dnsConntrack && !hostResilience);
@@ -109,7 +110,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     await writeFile(destination('/etc/systemd/resolved.conf'), '[Resolve]\nDNS=\nFallbackDNS=\nLLMNR=no\nMulticastDNS=no\nDNSSEC=no\nDNSOverTLS=no\nCache=no\nReadEtcHosts=no\nDNSStubListener=yes\n', { mode: 0o644 });
     await writeFile(destination('/etc/dbus-vm.conf'), '<busconfig><type>system</type><listen>unix:path=/run/dbus/system_bus_socket</listen><auth>EXTERNAL</auth><policy context="default"><allow user="*"/><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>', { mode: 0o644 });
   }
-  if (coupled) await elf('/usr/lib/systemd/systemd-networkd');
+  if (coupled || hostNetworkd) await elf('/usr/lib/systemd/systemd-networkd');
   if (publication) await elf('/usr/bin/mv');
   for (const name of ['libxt_tcp.so', 'libxt_udp.so', 'libipt_REJECT.so', 'libip6t_REJECT.so', 'libxt_standard.so',
     ...(systemd ? ['libxt_comment.so'] : []),
@@ -179,10 +180,10 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
         : { schema: 1, client: 'vps2', id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } }), { mode: 0o600 });
   }
   await writeFile(destination('/etc/passwd'), 'root:x:0:0:root:/root:/bin/sh\nfixture:x:1000:1000:fixture:/tmp:/bin/sh\nsystemd-resolve:x:193:193:resolver:/nonexistent:/bin/false\n'
-    + (coupled ? 'systemd-network:x:192:192:network:/nonexistent:/bin/false\n' : '')
+    + (coupled || hostNetworkd ? 'systemd-network:x:192:192:network:/nonexistent:/bin/false\n' : '')
     + (dnsmasq ? 'nobody:x:65534:65534:Unprivileged fixture:/nonexistent:/bin/false\n' : ''), { mode: 0o644 });
   await writeFile(destination('/etc/group'), 'root:x:0:\nfixture:x:1000:\nsystemd-resolve:x:193:\n'
-    + (coupled ? 'systemd-network:x:192:\n' : '')
+    + (coupled || hostNetworkd ? 'systemd-network:x:192:\n' : '')
     + (dnsmasq ? 'nogroup:x:65534:\n' : ''), { mode: 0o644 });
   await writeFile(destination('/etc/nsswitch.conf'), 'passwd: files\ngroup: files\nhosts: dns\n', { mode: 0o644 });
   await writeFile(destination('/etc/resolv.conf'), `nameserver ${dnsmasq ? '127.0.0.1' : systemd ? '127.0.0.53' : '127.0.0.55'}\n`, { mode: 0o644 });

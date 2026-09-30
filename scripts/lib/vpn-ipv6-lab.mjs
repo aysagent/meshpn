@@ -14,7 +14,8 @@ const run = (file, args) => execFileSync(file, args, { encoding: 'utf8', timeout
 const ip = (...args) => run('ip', args);
 const at = (ns, file, ...args) => ip('netns', 'exec', ns, file, ...args);
 
-export async function runIpv6Lab(directory, { resilience = false, joint = false, systemd = false, stopFaults = false, bootOrder = false, networkGate = false } = {}) {
+export async function runIpv6Lab(directory, { resilience = false, joint = false, systemd = false, stopFaults = false, bootOrder = false, networkGate = false, networkd = false } = {}) {
+  assert.ok(!networkd || systemd && !stopFaults && !bootOrder && !networkGate, 'networkd requires separate systemd VM');
   assert.ok(!stopFaults || systemd, 'stop faults require systemd VM');
   assert.ok(!bootOrder || systemd && !stopFaults, 'boot ordering requires separate systemd VM');
   assert.ok(!networkGate || systemd && !stopFaults && !bootOrder, 'network gate requires separate systemd VM');
@@ -161,7 +162,7 @@ export async function runIpv6Lab(directory, { resilience = false, joint = false,
     }
     const hostResilience = resilience ? await runHostResilienceChecks({ directory, start, wait, stop, startExit, startClient, query, check, at, ip }) : undefined;
     const hostJoint = joint ? await runHostJointChecks({ start, wait, stop, startExit, startClient, query, check, at, ip }) : undefined;
-    const hostSystemd = systemd ? await (await import('./vpn-host-systemd-lab.mjs')).runHostSystemdChecks({ directory, start, wait, stop, startExit, query, check, at, ip, stopFaults, bootOrder, networkGate }) : undefined;
+    const hostSystemd = systemd ? await (await import('./vpn-host-systemd-lab.mjs')).runHostSystemdChecks({ directory, start, wait, stop, startExit, query, check, at, ip, stopFaults, bootOrder, networkGate, networkd }) : undefined;
     return { status: 'passed', actualTransportTested: 'tls-ipv6', hostNetworkChanged: false, checks, hostResilience, hostJoint, hostSystemd };
   } finally {
     for (const p of children) if (p.exitCode === null && p.signalCode === null) p.kill('SIGKILL');
