@@ -11,7 +11,7 @@ import { assertHostSystemdEvidence } from './lib/vpn-host-systemd-vm.mjs';
 
 const flags = new Map();
 for (const arg of process.argv.slice(2)) {
-  if (arg === '--dns-ingress-only' || arg === '--dns-host-only' || arg === '--ipv6' || arg === '--host-resilience' || arg === '--host-joint' || arg === '--host-systemd' || arg === '--host-stop-faults' || arg === '--host-boot-order') {
+  if (arg === '--dns-ingress-only' || arg === '--dns-host-only' || arg === '--ipv6' || arg === '--host-resilience' || arg === '--host-joint' || arg === '--host-systemd' || arg === '--host-stop-faults' || arg === '--host-boot-order' || arg === '--host-network-gate') {
     const name = arg.slice(2);
     assert.ok(!flags.has(name), `duplicate ${arg}`); flags.set(name, true); continue;
   }
@@ -27,6 +27,7 @@ assert.ok(!flags.has('ipv6') || !flags.has('dns-conntrack') || flags.has('host-j
 assert.ok(!flags.has('host-systemd') || flags.has('ipv6') && flags.has('dns-conntrack') && !['host-joint', 'host-resilience', 'dns-host-only', 'dns-ingress-only'].some(k => flags.has(k)), 'invalid host systemd combination');
 assert.ok(!flags.has('host-stop-faults') || flags.has('host-systemd'), '--host-stop-faults requires --host-systemd');
 assert.ok(!flags.has('host-boot-order') || flags.has('host-systemd') && !flags.has('host-stop-faults'), '--host-boot-order requires --host-systemd without --host-stop-faults');
+assert.ok(!flags.has('host-network-gate') || flags.has('host-systemd') && !flags.has('host-stop-faults') && !flags.has('host-boot-order'), '--host-network-gate requires a separate --host-systemd case');
 assert.ok(!flags.has('host-joint') || flags.has('ipv6') && flags.has('dns-conntrack') && !flags.has('host-resilience'), '--host-joint requires IPv6 and conntrack, not resilience');
 assert.ok(!flags.has('host-resilience') || flags.has('ipv6'), '--host-resilience requires --ipv6');
 process.umask(0o077);
@@ -60,7 +61,7 @@ try {
     '-nodefaults', '-no-user-config', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-no-reboot',
     '-serial', 'stdio', '-accel', 'tcg', '-cpu', 'max', '-m', '1024', '-smp', '1', '-machine', 'pc,dump-guest-core=off',
     '-bios', `${root}/usr/share/seabios/bios-256k.bin`, '-L', `${root}/usr/share/qemu`,
-    '-kernel', image.kernel, '-initrd', image.initrd, '-append', 'console=ttyS0 loglevel=7 panic=-1 reboot=t random.trust_cpu=on' + (flags.has('host-systemd') ? ' meshpn.host-systemd=1' : '') + (flags.has('host-stop-faults') ? ' meshpn.host-stop-faults=1' : '') + (flags.has('host-boot-order') ? ' meshpn.host-boot-order=1' : ''),
+    '-kernel', image.kernel, '-initrd', image.initrd, '-append', 'console=ttyS0 loglevel=7 panic=-1 reboot=t random.trust_cpu=on' + (flags.has('host-systemd') ? ' meshpn.host-systemd=1' : '') + (flags.has('host-stop-faults') ? ' meshpn.host-stop-faults=1' : '') + (flags.has('host-boot-order') || flags.has('host-network-gate') ? ' meshpn.host-boot-order=1' : '') + (flags.has('host-network-gate') ? ' meshpn.host-network-gate=1' : ''),
   ], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   const log = createWriteStream(join(directory, 'serial.log'), { flags: 'wx', mode: 0o600 });
   let bytes = 0, pending = '', passed = false, failure;
@@ -110,7 +111,7 @@ try {
   } else assert.deepEqual(report.transports.map((v) => v.actualTransportTested), flags.has('ipv6') ? ['tls-ipv6'] : ['tls', 'boring-tls', 'transparent-tls', 'combo-tls']);
   assert.ok(report.transports.every((v) => v.hostNetworkChanged === false && v.checks.length >= 12));
   if (flags.has('host-systemd')) {
-    assertHostSystemdEvidence(report.transports[0], { stopFaults: flags.has('host-stop-faults'), bootOrder: flags.has('host-boot-order') });
+    assertHostSystemdEvidence(report.transports[0], { stopFaults: flags.has('host-stop-faults'), bootOrder: flags.has('host-boot-order'), networkGate: flags.has('host-network-gate') });
     const evidence = report.transports[0].hostSystemd;
     assert.equal(evidence?.systemdPid1, true); assert.equal(evidence?.actualInstaller, true);
     report.deploymentAcceptance = evidence.acceptance; report.deploymentBlockers = evidence.limitations;

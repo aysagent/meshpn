@@ -52,12 +52,31 @@ export const HOST_BOOT_ORDER_CHECKS = [
   'boot ordering clean uninstall IPv4',
 ];
 
-export function assertHostSystemdEvidence(evidence, { stopFaults = false, bootOrder = false } = {}) {
-  assert.ok(!(stopFaults && bootOrder));
+export const HOST_NETWORK_GATE_CHECKS = [
+  ...HOST_SYSTEMD_CHECKS.slice(0, 10),
+  ...['IPv4', 'IPv6', 'DNS'].map(n => `network gate initial direct ${n}`),
+  ...['healthy', 'failed', 'repair'].flatMap(phase => [
+    ...['link initially down', 'start result'].map(n => `${phase} network gate ${n}`),
+    ...(phase === 'failed' ? ['guard failed', 'VPN absent', 'consumer absent', 'consumer never executed',
+      'link stays down', 'blocks IPv4', 'blocks IPv6', 'blocks DNS'] :
+      ['link raised', 'guard active', 'guard precedes consumer', 'pre-VPN ipv4', 'pre-VPN ipv6', 'pre-VPN dns',
+        'VPN IPv4', 'VPN IPv6', 'VPN DNS', 'stop lowers link']).map(n => `${phase} network gate ${n}`),
+  ]),
+  'network gate fixture teardown restores IPv4',
+];
+
+export function assertHostSystemdEvidence(evidence, { stopFaults = false, bootOrder = false, networkGate = false } = {}) {
+  assert.ok([stopFaults, bootOrder, networkGate].filter(Boolean).length <= 1);
   assert.equal(evidence?.status, 'passed');
   assert.equal(evidence.actualTransportTested, 'tls-ipv6');
   assert.equal(evidence.hostNetworkChanged, false);
-  assert.deepEqual(evidence.checks, bootOrder ? HOST_BOOT_ORDER_CHECKS : stopFaults ? HOST_STOP_FAULT_CHECKS : HOST_SYSTEMD_CHECKS);
+  assert.deepEqual(evidence.checks, networkGate ? HOST_NETWORK_GATE_CHECKS : bootOrder ? HOST_BOOT_ORDER_CHECKS : stopFaults ? HOST_STOP_FAULT_CHECKS : HOST_SYSTEMD_CHECKS);
+  assert.equal(evidence.hostSystemd?.networkGate === true, networkGate);
+  if (networkGate) {
+    assert.equal(evidence.hostSystemd.managedLinkFailClosed, true);
+    for (const limit of ['synthetic-network-manager-not-networkd', 'managed-link-initially-down-only', 'failed-guard-also-prevents-SSH'])
+      assert.ok(evidence.hostSystemd.limitations.includes(limit));
+  }
   assert.equal(evidence.hostSystemd?.bootOrder === true, bootOrder);
   if (bootOrder) {
     assert.equal(evidence.hostSystemd.failClosed, false);

@@ -14,9 +14,10 @@ const run = (file, args) => execFileSync(file, args, { encoding: 'utf8', timeout
 const ip = (...args) => run('ip', args);
 const at = (ns, file, ...args) => ip('netns', 'exec', ns, file, ...args);
 
-export async function runIpv6Lab(directory, { resilience = false, joint = false, systemd = false, stopFaults = false, bootOrder = false } = {}) {
+export async function runIpv6Lab(directory, { resilience = false, joint = false, systemd = false, stopFaults = false, bootOrder = false, networkGate = false } = {}) {
   assert.ok(!stopFaults || systemd, 'stop faults require systemd VM');
   assert.ok(!bootOrder || systemd && !stopFaults, 'boot ordering requires separate systemd VM');
+  assert.ok(!networkGate || systemd && !stopFaults && !bootOrder, 'network gate requires separate systemd VM');
   if (systemd) assertHostSystemdVm(); else assertBrowserNamespace();
   assert.deepEqual(JSON.parse(ip('-j', 'link', 'show')).map(l => l.ifname), ['lo']);
   if (!systemd) { run('mount', ['--make-rprivate', '/']); run('mount', ['-t', 'tmpfs', '-o', 'mode=0755', 'tmpfs', '/run']); }
@@ -160,7 +161,7 @@ export async function runIpv6Lab(directory, { resilience = false, joint = false,
     }
     const hostResilience = resilience ? await runHostResilienceChecks({ directory, start, wait, stop, startExit, startClient, query, check, at, ip }) : undefined;
     const hostJoint = joint ? await runHostJointChecks({ start, wait, stop, startExit, startClient, query, check, at, ip }) : undefined;
-    const hostSystemd = systemd ? await (await import('./vpn-host-systemd-lab.mjs')).runHostSystemdChecks({ directory, start, wait, stop, startExit, query, check, at, ip, stopFaults, bootOrder }) : undefined;
+    const hostSystemd = systemd ? await (await import('./vpn-host-systemd-lab.mjs')).runHostSystemdChecks({ directory, start, wait, stop, startExit, query, check, at, ip, stopFaults, bootOrder, networkGate }) : undefined;
     return { status: 'passed', actualTransportTested: 'tls-ipv6', hostNetworkChanged: false, checks, hostResilience, hostJoint, hostSystemd };
   } finally {
     for (const p of children) if (p.exitCode === null && p.signalCode === null) p.kill('SIGKILL');
