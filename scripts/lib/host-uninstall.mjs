@@ -15,6 +15,26 @@ const properties = ['LoadState', 'ActiveState', 'PartOf', 'BindsTo', 'NetworkNam
   'Requires', 'Requisite', 'Conflicts', 'PropagatesStopTo', 'StopWhenUnneeded'];
 export function uninstallHostService({ service = 'clean-vpn', io = fs, run = runTunnelDnsCommand,
   open = [openHostRoutes, openTunnelDnsJournal, openIpv6Runtime], log = console.error } = {}) {
+  return withStoppedHostService({ service, io, run, open, log }, ({ installed, ctl, command, exists, paths }) => {
+    const [unitPath, guardPath, wrapper, guardScript] = paths;
+    const unit = `${service}.service`, guard = `${service}-killswitch.service`;
+    if (installed[1]) ctl('stop', guard);
+    if (installed[3]) command(guardScript, ['down', '--tun=tun0']);
+    if (installed[0]) ctl('disable', unit);
+    if (installed[1]) ctl('disable', guard);
+    for (const [index, path] of paths.entries()) {
+      if (installed[index]) { assert.ok(exists(path), 'installed file changed'); io.unlinkSync(path); }
+    }
+    ctl('daemon-reload');
+    return { status: 'uninstalled', journalAudit: 'released-or-absent', automaticRecovery: false };
+  });
+}
+
+/** The action runs only after stop and released-state proof, with all three
+ * lifetime locks held. beforeStop is inspection only; it must not change state. */
+export function withStoppedHostService({ service = 'clean-vpn', io = fs, run = runTunnelDnsCommand,
+  open = [openHostRoutes, openTunnelDnsJournal, openIpv6Runtime], log = console.error,
+  requireGuard = false, beforeStop = () => {} } = {}, action) {
   assert.match(service, /^[A-Za-z0-9_][A-Za-z0-9._-]*$/);
   assert.ok(service.length <= 200);
   const unit = `${service}.service`, guard = `${service}-killswitch.service`;
@@ -48,6 +68,7 @@ export function uninstallHostService({ service = 'clean-vpn', io = fs, run = run
   };
   try {
     const installed = [unitPath, guardPath, wrapper, guardScript].map(exists);
+    if (requireGuard) assert.ok(installed.every(Boolean), 'complete persist installation required');
     if (installed.every(v => !v)) return { status: 'not-installed', automaticRecovery: false };
     assert.ok(installed[0] === installed[2] && installed[1] === installed[3] && (!installed[1] || installed[0]),
       'partial installation requires manual review; no guard removal');
@@ -61,6 +82,8 @@ export function uninstallHostService({ service = 'clean-vpn', io = fs, run = run
       for (const key of ['Requires', 'Requisite', 'Conflicts'])
         assert.ok(!g[key].split(/\s+/).includes(unit), 'guard dependency on VPN requires manual review');
     }
+    const context = { installed, ctl, command, exists, inspect, paths: [unitPath, guardPath, wrapper, guardScript] };
+    beforeStop(context);
     if (installed[0]) { log('Stopping VPN; guard retained until released-journal audit'); ctl('stop', unit); }
     // Nonblocking locks: live client/recovery, damaged files, or any unfinished
     // transaction refuses uninstall. Absence is allowed for never-used modes.
@@ -69,15 +92,6 @@ export function uninstallHostService({ service = 'clean-vpn', io = fs, run = run
       assert.ok(!j.state || j.state.stage === 'released', 'unfinished VPN journal; explicit recovery required; guard and installed files retained');
     }
     if (installed[0]) assert.equal(inspect(unit).ActiveState, 'inactive', 'VPN is not stopped');
-    if (installed[1]) ctl('stop', guard);
-    if (installed[3]) command(guardScript, ['down', '--tun=tun0']);
-    // Never remove runtime journals: they remain available for inspection.
-    if (installed[0]) ctl('disable', unit);
-    if (installed[1]) ctl('disable', guard);
-    for (const [index, path] of [unitPath, guardPath, wrapper, guardScript].entries()) {
-      if (installed[index]) { assert.ok(exists(path), 'installed file changed'); io.unlinkSync(path); }
-    }
-    ctl('daemon-reload');
-    return { status: 'uninstalled', journalAudit: 'released-or-absent', automaticRecovery: false };
+    return action(context);
   } finally { for (const j of journals.reverse()) j.release(); }
 }

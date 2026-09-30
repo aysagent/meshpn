@@ -2,10 +2,10 @@
 #
 # clean-vpn systemd autostart installer (+ kill-switch).
 #
-# Ставит/обновляет systemd-сервис, который запускает clean-vpn.js из ЭТОГО репозитория
+# Ставит новый systemd-сервис, который запускает clean-vpn.js из ЭТОГО репозитория
 # (dev/тест) с переданными аргументами. Аргументы зашиваются в генерируемый
 # /usr/local/bin/<SERVICE_NAME>-run.sh, поэтому повторный запуск с новыми аргументами
-# полностью перезаписывает сервис и делает restart.
+# отклоняется до изменений. Безопасное обновление пока не реализовано.
 #
 # Для --role=client дополнительно ставится kill-switch: пока туннель не поднят (или упал),
 # трафик мимо tun блокируется. Kill-switch привязан к сервису (стартует ДО clean-vpn,
@@ -44,7 +44,7 @@ fi
 
 # --- пути ---
 SERVICE_NAME="${SERVICE_NAME:-clean-vpn}"
-if [[ ! "$SERVICE_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+if [[ ! "$SERVICE_NAME" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ || ${#SERVICE_NAME} -gt 200 ]]; then
   die "недопустимое SERVICE_NAME='$SERVICE_NAME' (разрешены [A-Za-z0-9._-])"
 fi
 
@@ -72,6 +72,10 @@ if [[ -z "$NODE_BIN" && -n "${SUDO_USER:-}" ]]; then
 fi
 [[ -n "$NODE_BIN" ]] || die "не найден node. Запустите как 'sudo env \"PATH=\$PATH\" ...' или задайте NODE_BIN=/путь/к/node"
 [[ -x "$NODE_BIN" ]] || die "NODE_BIN='$NODE_BIN' не исполняемый"
+
+# Never replace live files or disable an existing guard. A successful stop is
+# not sufficient: stale DNS/IPv6/host journals can still own network state.
+"$NODE_BIN" "$REPO_ROOT/scripts/clean-vpn-install-check.mjs" "$SERVICE_NAME"
 
 # --- аргументы clean-vpn ---
 if [[ "$#" -eq 0 ]]; then
@@ -147,7 +151,7 @@ log "args        = $*"
 cat > "$RUN_SH" <<EOF
 #!/usr/bin/env bash
 # Сгенерировано scripts/autostart/install.sh — не редактируйте вручную,
-# перезапустите установщик с нужными аргументами.
+# обновление требует отдельной проверенной процедуры.
 set -euo pipefail
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/usr/bin:/bin"
 cd "$REPO_ROOT"
@@ -203,13 +207,6 @@ EOF
   chmod 0644 "$KS_UNIT_PATH"
   # Основной сервис требует kill-switch и стартует ПОСЛЕ него (fail-closed).
   KS_DEPS=$'Requires='"$KS_UNIT_NAME"$'\nAfter='"$KS_UNIT_NAME"
-else
-  # Уберём kill-switch, если он был поставлен ранее для этого SERVICE_NAME.
-  if [[ -f "$KS_UNIT_PATH" ]]; then
-    systemctl disable --now "$KS_UNIT_NAME" 2>/dev/null || true
-    [[ -x "$KS_SH" ]] && "$KS_SH" down --tun=tun0 2>/dev/null || true
-    rm -f "$KS_UNIT_PATH" "$KS_SH"
-  fi
 fi
 
 # --- генерируем основной unit ---
@@ -259,7 +256,7 @@ systemctl restart --no-block "$SERVICE_NAME"
 
 log "Готово. Сервис запускается в фоне (первый старт может подождать network-online.target)."
 if [[ "$KILLSWITCH" == "1" ]]; then
-  log "kill-switch активен; проверить правила: $KS_SH status"
+log "kill-switch запрошен; проверить состояние: systemctl status $KS_UNIT_NAME; $KS_SH status"
 fi
 log "Проверить/следить:"
 log "  systemctl status $SERVICE_NAME"

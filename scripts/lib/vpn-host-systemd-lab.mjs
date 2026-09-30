@@ -2,12 +2,13 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, cpSync } from 'node:fs';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import dgram from 'node:dgram';
 import { assertHostSystemdVm } from './vpn-host-systemd-vm.mjs';
 import { tunnelDnsFixtureAnswer } from './dns-tunnel-cli-lab.mjs';
+import { switchHostWrapper } from './host-update.mjs';
 const exec = (file, args, env = process.env) => promisify(execFile)(file, args, { env, encoding: 'utf8', timeout: 500000, maxBuffer: 1024 * 1024 });
 const ctl = (...args) => exec('/usr/bin/systemctl', ['--no-pager', ...args]);
 
@@ -64,6 +65,22 @@ export async function runHostSystemdChecks({ directory, start, wait, stop, start
       `--tls-cert-dir=${directory}`, `--shared-hmac-key=${directory}/secret.key`, '--tls-server-name=vpn.test', '--tls-public-name=vpn.test'];
     const installed = await exec('/bin/bash', args, { ...process.env, NODE_BIN: '/usr/bin/node', KILLSWITCH: '1', KILLSWITCH_PERSIST: '1' });
     assert.match(installed.stdout, /Готово/); await ready(0);
+    const installedFiles = [`/etc/systemd/system/${main}`, `/etc/systemd/system/${guard}`,
+      '/usr/local/bin/clean-vpn-run.sh', '/usr/local/bin/clean-vpn-killswitch.sh'];
+    const fileContents = () => JSON.stringify(installedFiles.map(p => readFileSync(p, 'utf8')));
+    const refuseUpdate = async phase => {
+      const before = fileContents(), pid = await property(main, 'MainPID');
+      for (const enabled of ['0', '1']) {
+        let error;
+        try { await exec('/bin/bash', [...args, '--keep-alive=9'], {
+          ...process.env, NODE_BIN: '/usr/bin/node', KILLSWITCH: enabled, KILLSWITCH_PERSIST: '1',
+        }); } catch (e) { error = e; }
+        check(`${phase} update KILLSWITCH=${enabled} refused`, !!error && /in-place update refused/.test(error.stderr), true);
+      }
+      check(`${phase} update preserves files`, fileContents(), before);
+      check(`${phase} update preserves main PID`, await property(main, 'MainPID'), pid);
+      check(`${phase} update retains guard`, await property(guard, 'ActiveState'), 'active');
+    };
     check('installed service KillMode', await property(main, 'KillMode'), 'mixed');
     check('installed service stop budget', await property(main, 'TimeoutStopUSec'), '7min');
     check('installed guard active', await property(guard, 'ActiveState'), 'active');
@@ -71,6 +88,44 @@ export async function runHostSystemdChecks({ directory, start, wait, stop, start
     check('installed service IPv6 HTTPS', await query('2606:4700:4700::1111'), '2001:db8:2::2');
     check('installed service DNS', await dns(), '192.0.2.10');
     check('installed service DNS peer is exit', dnsPeers.at(-1), '198.51.100.2');
+    await refuseUpdate('active');
+    check('refused active update IPv4 HTTPS', await query('1.0.0.1'), '198.51.100.2');
+    check('refused active update IPv6 HTTPS', await query('2606:4700:4700::1111'), '2001:db8:2::2');
+    check('refused active update DNS', await dns(), '192.0.2.10');
+    // Separate immutable-in-this-test releases; never edit the running tree.
+    const releaseA='/opt/clean-vpn-release-a', releaseB='/opt/clean-vpn-release-b';
+    mkdirSync('/opt', {recursive:true});
+    for (const release of [releaseA,releaseB]) cpSync('/project', release, {recursive:true});
+    const originalWrapper=readFileSync(installedFiles[2],'utf8');
+    const unchangedUnits=[0,1,3].map(i=>readFileSync(installedFiles[i],'utf8'));
+    for (const phase of ['prepared','renamed']) {
+      let cut;
+      try { await exec('ip',['netns','exec','client','/usr/bin/node','--input-type=module','-e',`
+        import {updateHostService,publishHostWrapper} from './scripts/lib/host-update.mjs';
+        updateHostService({release:${JSON.stringify(releaseA)},publish:(p,b,a)=>publishHostWrapper(p,b,a,stage=>{
+          if(stage===${JSON.stringify(phase)})process.kill(process.pid,'SIGKILL');
+        })});
+      `]); } catch(error) { cut=error; }
+      check(`updater ${phase} SIGKILL injected`,cut?.signal,'SIGKILL');
+      check(`updater ${phase} complete wrapper`,readFileSync(installedFiles[2],'utf8'),
+        phase==='prepared'?originalWrapper:switchHostWrapper(originalWrapper,releaseA).contents);
+      check(`updater ${phase} retains units`,[0,1,3].map(i=>readFileSync(installedFiles[i],'utf8')).join('\n'),unchangedUnits.join('\n'));
+      check(`updater ${phase} leaves service stopped`,await property(main,'ActiveState'),'inactive');
+      check(`updater ${phase} retains guard`,await property(guard,'ActiveState'),'active');
+      check(`updater ${phase} blocks IPv4`,await query('1.0.0.1'),'BLOCKED');
+      check(`updater ${phase} blocks IPv6`,await query('2606:4700:4700::1111'),'BLOCKED');
+      check(`updater ${phase} blocks DNS`,await dns(),'BLOCKED');
+    }
+    const updated = await exec('ip',['netns','exec','client','/usr/bin/node','scripts/clean-vpn-update.mjs',`--release=${releaseB}`]);
+    const updateResult=JSON.parse(updated.stdout);
+    check('updater CLI publishes stopped release',updateResult.status,'updated-stopped');
+    check('updater CLI retains previous wrapper',readFileSync(`${updateResult.backupDirectory}/previous-wrapper`,'utf8'),switchHostWrapper(originalWrapper,releaseA).contents);
+    check('updater CLI selects new release',readFileSync(installedFiles[2],'utf8'),switchHostWrapper(originalWrapper,releaseB).contents);
+    check('updater CLI preserves units',[0,1,3].map(i=>readFileSync(installedFiles[i],'utf8')).join('\n'),unchangedUnits.join('\n'));
+    const updatedOffset=logs().length; await ctl('start',main); await ready(updatedOffset);
+    check('updated release IPv4 HTTPS',await query('1.0.0.1'),'198.51.100.2');
+    check('updated release IPv6 HTTPS',await query('2606:4700:4700::1111'),'2001:db8:2::2');
+    check('updated release DNS',await dns(),'192.0.2.10');
     const oldPid = await property(main, 'MainPID'), offset = logs().length;
     await ctl('restart', main); await ready(offset);
     check('systemctl restart replaces main PID', await property(main, 'MainPID') !== oldPid, true);
@@ -93,6 +148,19 @@ export async function runHostSystemdChecks({ directory, start, wait, stop, start
     check('SIGKILL persists IPv4 guard', await query('1.0.0.1'), 'BLOCKED');
     check('SIGKILL persists IPv6 guard', await query('2606:4700:4700::1111'), 'BLOCKED');
     check('SIGKILL persists DNS guard', await dns(), 'BLOCKED');
+    await refuseUpdate('crashed');
+    check('refused crashed update blocks IPv4', await query('1.0.0.1'), 'BLOCKED');
+    check('refused crashed update blocks IPv6', await query('2606:4700:4700::1111'), 'BLOCKED');
+    check('refused crashed update blocks DNS', await dns(), 'BLOCKED');
+    const beforeUpdater=fileContents(); let failedUpdate;
+    try { await exec('ip',['netns','exec','client','/usr/bin/node','scripts/clean-vpn-update.mjs',`--release=${releaseA}`]); }
+    catch(error) { failedUpdate=error; }
+    check('updater CLI refuses unfinished journal',!!failedUpdate&&/unfinished VPN journal/.test(failedUpdate.stderr),true);
+    check('refused updater CLI retains files',fileContents(),beforeUpdater);
+    check('refused updater CLI retains guard',await property(guard,'ActiveState'),'active');
+    check('refused updater CLI blocks IPv4',await query('1.0.0.1'),'BLOCKED');
+    check('refused updater CLI blocks IPv6',await query('2606:4700:4700::1111'),'BLOCKED');
+    check('refused updater CLI blocks DNS',await dns(),'BLOCKED');
     let refused;
     try { await exec('ip', ['netns', 'exec', 'client', '/bin/bash', 'scripts/autostart/uninstall.sh']); }
     catch (error) { refused = error; }
@@ -120,7 +188,8 @@ export async function runHostSystemdChecks({ directory, start, wait, stop, start
     await stop(exit);
     return { systemdPid1: true, actualInstaller: true, acceptance: 'not-ready-for-deployment', limitations: [
       'fixture-network-namespace-dropins', 'persist-mode-only', 'no-early-boot-or-reboot', 'explicit-recovery-not-auto-restart',
-      'no-stop-timeout-or-update-test', 'no-crash-during-uninstall-test', 'iptables-legacy-only', 'H2-only-systemd-cycle'] };
+      'no-stop-timeout-test', 'release-switch-only-same-argv-no-auto-start', 'no-power-loss-durability-test', 'no-concurrent-installer-test',
+      'no-crash-during-uninstall-test', 'iptables-legacy-only', 'H2-only-systemd-cycle'] };
   } catch (error) { console.error('HOST_SYSTEMD_LOG', logs()); throw error; }
   finally { for (const s of sockets) s.close(); }
 }
