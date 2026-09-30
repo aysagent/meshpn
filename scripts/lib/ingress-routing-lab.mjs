@@ -100,7 +100,7 @@ export async function runIngressRoutingLab({ transport = null, directory = null,
   assertBrowserNamespace();
   assert.deepEqual(JSON.parse(ip('-j', 'link', 'show')).map((l) => l.ifname), ['lo']);
   // /run/netns belongs solely to this private mount namespace, never to the host.
-  run('mount', ['--make-rprivate', '/']); run('mount', ['-t', 'tmpfs', 'tmpfs', '/run']);
+  run('mount', ['--make-rprivate', '/']); run('mount', ['-t', 'tmpfs', '-o', 'mode=0755', 'tmpfs', '/run']);
   ip('link', 'set', 'lo', 'up');
   run('sysctl', ['-w', 'net.ipv4.ip_forward=1']);
   run('sysctl', ['-w', 'net.ipv6.conf.all.forwarding=1']);

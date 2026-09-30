@@ -145,6 +145,7 @@ import { openIngressJournal } from './lib/ingress-journal.mjs';
 import { openTunnelDnsJournal, reportTunnelDnsProgress } from './lib/dns-tunnel-journal.mjs';
 import { IPV6_HEADER, ipv6PacketAllowed, validateIpv6Options } from './lib/vpn-ipv6.mjs';
 import { openIpv6Runtime } from './lib/vpn-ipv6-runtime.mjs';
+import { openHostRoutes } from './lib/vpn-host-routes.mjs';
 
 // A repeated terminal Ctrl+C must not kill route/sysctl helpers during cleanup.
 // Normal startup commands retain their existing execution options.
@@ -627,8 +628,9 @@ const SPLIT_PRIVATE_V4 = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
  * @param {string|null|undefined} gw
  * @param {string} dev
  */
-function addSplitPrivateUplinkRoutes(gw, dev) {
+function addSplitPrivateUplinkRoutes(gw, dev, hostRoutes) {
   for (const dst of SPLIT_PRIVATE_V4) {
+    if (hostRoutes) { hostRoutes.add(dst, dev, gw ?? null); continue; }
     if (gw) {
       ip(['route', 'replace', dst, 'via', gw, 'dev', dev]);
     } else {
@@ -5316,7 +5318,9 @@ function addClientWsPeerBypass(ctx, peerIp) {
   console.log(
     `[clean-vpn] bypass маршрут к пиру WebSocket ${peerIp}/32 через ${dev}`,
   );
-  if (gw) {
+  if (ctx.hostRoutes) {
+    ctx.hostRoutes.add(`${peerIp}/32`, dev, gw ?? null);
+  } else if (gw) {
     ip(['route', 'replace', `${peerIp}/32`, 'via', gw, 'dev', dev]);
   } else {
     ip(['route', 'replace', `${peerIp}/32`, 'dev', dev]);
@@ -5340,7 +5344,9 @@ function addClientInfraBypassIp(ctx, infraIp, logLabel = 'STUN/TURN') {
   if (!ctx.snapInfra) ctx.snapInfra = [];
   const { gw, dev } = ctx;
   ctx.snapInfra.push(...captureServerRoutes(infraIp));
-  if (gw) {
+  if (ctx.hostRoutes) {
+    ctx.hostRoutes.add(`${infraIp}/32`, dev, gw ?? null);
+  } else if (gw) {
     ip(['route', 'replace', `${infraIp}/32`, 'via', gw, 'dev', dev]);
   } else {
     ip(['route', 'replace', `${infraIp}/32`, 'dev', dev]);
@@ -5413,7 +5419,9 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
       serverIp = await resolveHostToIpv4(serverHost);
       snapHost = captureServerRoutes(serverIp);
       console.log(`[clean-vpn] bypass маршрут к серверу ${serverIp} через ${dev}`);
-      if (gw) {
+      if (opts?.hostRoutes) {
+        opts.hostRoutes.add(`${serverIp}/32`, dev, gw ?? null);
+      } else if (gw) {
         ip(['route', 'replace', `${serverIp}/32`, 'via', gw, 'dev', dev]);
       } else {
         ip(['route', 'replace', `${serverIp}/32`, 'dev', dev]);
@@ -5445,20 +5453,22 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
 
   let splitDefaultApplied = false;
   if (splitDefault && !deferSplitDefault) {
-    applyClientSplitDefaultRoutes(ifname, gw, dev);
+    applyClientSplitDefaultRoutes(ifname, gw, dev, opts?.hostRoutes);
     splitDefaultApplied = true;
   } else if (splitDefault && deferSplitDefault) {
     console.log(
       '[clean-vpn] split-default: отложен до готовности туннеля (STUN/сигналинг/Puppeteer — uplink остаётся рабочим)',
     );
   }
-  try {
+  if (opts?.hostRoutes) opts.hostRoutes.relaxRpFilter();
+  else try {
     execFileSync('sysctl', ['net.ipv4.conf.all.rp_filter=2'], { stdio: 'inherit' });
   } catch {
     /* ignore */
   }
 
   const routeCtx = {
+    hostRoutes: opts?.hostRoutes,
     serverIp,
     peerIp: null,
     gw,
@@ -5487,10 +5497,15 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
 }
 
 /** IPv4 default через TUN (split-default). */
-function applyClientSplitDefaultRoutes(ifname, gw, dev) {
-  ip(['route', 'replace', '0.0.0.0/1', 'dev', ifname]);
-  ip(['route', 'replace', '128.0.0.0/1', 'dev', ifname]);
-  addSplitPrivateUplinkRoutes(gw, dev);
+function applyClientSplitDefaultRoutes(ifname, gw, dev, hostRoutes) {
+  if (hostRoutes) {
+    hostRoutes.add('0.0.0.0/1', ifname);
+    hostRoutes.add('128.0.0.0/1', ifname);
+  } else {
+    ip(['route', 'replace', '0.0.0.0/1', 'dev', ifname]);
+    ip(['route', 'replace', '128.0.0.0/1', 'dev', ifname]);
+  }
+  addSplitPrivateUplinkRoutes(gw, dev, hostRoutes);
   console.log('[clean-vpn] split-default (0.0.0.0/1 + 128.0.0.0/1) через', ifname);
   console.log(
     '[clean-vpn] split-default: частные сети',
@@ -5508,7 +5523,7 @@ function applyClientSplitDefaultRoutes(ifname, gw, dev) {
 async function applyDeferredClientSplitDefault(ctx) {
   if (!ctx?.splitDefault) return;
   if (!ctx.splitDefaultApplied) {
-    applyClientSplitDefaultRoutes(ctx.ifname, ctx.gw, ctx.dev);
+    applyClientSplitDefaultRoutes(ctx.ifname, ctx.gw, ctx.dev, ctx.hostRoutes);
     ctx.splitDefaultApplied = true;
   }
   if (ctx.iceInfraBypass) {
@@ -5527,6 +5542,13 @@ function teardownClientRoutes(ctx, { retainIngress = false } = {}) {
     return;
   }
   teardownClientLanGateway(ctx);
+  if (ctx.hostRoutes) {
+    try {
+      if (retainIngress) console.error('[clean-vpn] Host IPv4 journal retained; use clean-vpn-host-recover.mjs after review');
+      else { ctx.hostRoutes.restore(); console.log('[clean-vpn] client: маршруты и rp_filter восстановлены'); }
+    } finally { ctx.hostRoutes.release(); }
+    return;
+  }
   const {
     serverIp,
     peerIp,
@@ -6741,6 +6763,13 @@ function attachTunBridge(tun, transport, endpoint, bridgeOpts) {
     try {
       const newEp = await lazyConnect();
       const sameEp = ep && newEp === ep;
+      if (!sameEp) {
+        // An idle-disarmed socket can already be destroyed while its 'close'
+        // event is still pending. Do not wait for that event to release its
+        // cached writer/listeners: pending TUN packets belong to the new wire.
+        tcpIdleDrainOff();
+        tcpFramedSend = null;
+      }
       ep = newEp;
       wireArmed = true;
       if (sameEp) {
@@ -6911,7 +6940,12 @@ function attachOutboundTunBridge(
   const ka = keepAliveSec > 0 ? Math.floor(keepAliveSec) : 0;
   const api = attachTunBridge(tun, transport, null, {
     ...withKeepalive(bridgeBase, ka, reconnectCooldownSec),
-    lazyConnect: connectFn,
+    // Do not open TCP/start TLS deadlines while synchronous DNS installation
+    // can still block the event loop before ClientHello is sent.
+    lazyConnect: bridgeBase.networkReady ? async () => {
+      if (!await bridgeBase.networkReady) throw new Error('client network startup cancelled');
+      return connectFn();
+    } : connectFn,
     tcpWireRole: 'client',
   });
   if (ka === 0 || eagerOnStart) {
@@ -10277,15 +10311,20 @@ async function runExit({
 // =============================================================================
 
 async function runClient(options) {
-  let activate, routeCtx, dnsRuntime;
-  const dnsScope = { fromTun: options.fromTun ?? null, lanSubnet: options.clientLanSubnet ?? null,
-    lanInterface: options.dnsMode === 'tunnel' && options.clientLanSubnet
-      ? tunnelDnsLanInterface(options.clientLanSubnet, JSON.parse(execIpFileSync(['-j', '-4', 'addr', 'show'], { encoding: 'utf8' }))) : null };
-  const dnsJournal = options.dnsMode === 'tunnel'
-    ? openTunnelDnsJournal(options.dnsStateDir, { onProgress: reportTunnelDnsProgress }) : null;
+  let activate, routeCtx, dnsRuntime, dnsJournal;
+  let allowTransport;
+  const networkReady = new Promise(resolve => { allowTransport = resolve; });
+  const hostRoutes = options.fromTun ? null : openHostRoutes();
+  // Refuse stale ownership before creating a new TUN or taking DNS snapshots.
+  try { hostRoutes?.assertAvailable(); } catch (e) { hostRoutes?.release(); throw e; }
   try {
+    const dnsScope = { fromTun: options.fromTun ?? null, lanSubnet: options.clientLanSubnet ?? null,
+      lanInterface: options.dnsMode === 'tunnel' && options.clientLanSubnet
+        ? tunnelDnsLanInterface(options.clientLanSubnet, JSON.parse(execIpFileSync(['-j', '-4', 'addr', 'show'], { encoding: 'utf8' }))) : null };
+    dnsJournal = options.dnsMode === 'tunnel'
+      ? openTunnelDnsJournal(options.dnsStateDir, { onProgress: reportTunnelDnsProgress }) : null;
     dnsJournal?.prepareRestart(dnsScope);
-    await runClientImpl({ ...options, ingressPrepared: (transaction) => { activate = () => transaction.activate(); },
+    await runClientImpl({ ...options, hostRoutes, networkReady, ingressPrepared: (transaction) => { activate = () => transaction.activate(); },
       dnsNetworkPrepared: (ctx) => { routeCtx = ctx; ctx.dnsJournal = dnsJournal; } });
     if (routeCtx?.stopping) return;
     if (dnsJournal) {
@@ -10300,16 +10339,19 @@ async function runClient(options) {
     // Lazy transports may connect on the first packet. DNS is protected before
     // the ingress restart gate releases application traffic.
     activate?.();
+    allowTransport(true);
     if (options.fromTunRestartSafe) console.log('[clean-vpn] --from-tun-restart-safe: data path installed; restart guard released');
   } catch (error) {
-    try { await dnsRuntime?.close({ restore: false }); } finally { dnsJournal?.release(); }
+    try { await dnsRuntime?.close({ restore: false }); } finally { dnsJournal?.release(); hostRoutes?.release(); }
     throw error;
-  }
+  } finally { allowTransport(false); }
 }
 
 async function runClientImpl({
   server,
   type,
+  hostRoutes,
+  networkReady,
   ipv6Runtime,
   splitDefault,
   fromTun,
@@ -10401,6 +10443,7 @@ async function runClientImpl({
   const tunName = findFreeTunName();
   const { tun, name: ifname } = openTunNative(tunName);
   setupTunIp('client', ifname);
+  hostRoutes?.begin(ifname);
   const deferSigBypass =
     deferWsPeerBypass || deferWebrtcPeerBypass || deferRtcChromeSigBypass || deferUdpPeerBypass;
   const deferPeerKindForSetup =
@@ -10415,6 +10458,7 @@ async function runClientImpl({
       (type === 'webrtc' && !webrtcSigListenClient));
   const routeCtx = await setupClientRoutesAsync(ifname, routeHost, splitDefault, {
     fromTun,
+    hostRoutes,
     deferPeerBypass: deferSigBypass,
     deferPeerKind: deferPeerKindForSetup,
     websocketListenNoSplitDefault: type === 'websocket' && wsServer && !splitDefault,
@@ -11347,8 +11391,9 @@ async function runClientImpl({
     attachOutboundTunBridge(
       tun,
       'tcp',
-      { ...BRIDGE_OPTS_CLIENT, ipv6Role: ipv6Runtime ? 'client' : null },
+      { ...BRIDGE_OPTS_CLIENT, networkReady, ipv6Role: ipv6Runtime ? 'client' : null },
       async () => {
+        if (routeCtx.stopping) throw new Error('client stopping');
         const sock = await connectTlsVpn(tlsConnectOpts);
         try {
           if (routeCtx.stopping) throw new Error('client stopping');

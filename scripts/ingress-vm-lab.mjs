@@ -10,7 +10,7 @@ import { buildDnsVmImage, verifyVmPackages, sha256 } from './lib/dns-vm-image.mj
 
 const flags = new Map();
 for (const arg of process.argv.slice(2)) {
-  if (arg === '--dns-ingress-only' || arg === '--dns-host-only' || arg === '--ipv6') {
+  if (arg === '--dns-ingress-only' || arg === '--dns-host-only' || arg === '--ipv6' || arg === '--host-resilience' || arg === '--host-joint') {
     const name = arg.slice(2);
     assert.ok(!flags.has(name), `duplicate ${arg}`); flags.set(name, true); continue;
   }
@@ -22,12 +22,14 @@ for (const key of ['tools', 'kernel', 'resolved']) assert.ok(flags.has(key), `mi
 assert.ok(!flags.has('dns-ingress-only') || flags.has('dns-conntrack'), '--dns-ingress-only requires --dns-conntrack');
 assert.ok(!flags.has('dns-host-only') || flags.has('dns-conntrack'), '--dns-host-only requires --dns-conntrack');
 assert.ok(!(flags.has('dns-host-only') && flags.has('dns-ingress-only')), 'select only one DNS subset');
-assert.ok(!flags.has('ipv6') || !flags.has('dns-conntrack'), 'IPv6 and DNS VM cases are separate');
+assert.ok(!flags.has('ipv6') || !flags.has('dns-conntrack') || flags.has('host-joint'), 'IPv6 + DNS requires --host-joint');
+assert.ok(!flags.has('host-joint') || flags.has('ipv6') && flags.has('dns-conntrack') && !flags.has('host-resilience'), '--host-joint requires IPv6 and conntrack, not resilience');
+assert.ok(!flags.has('host-resilience') || flags.has('ipv6'), '--host-resilience requires --ipv6');
 process.umask(0o077);
 const directory = await mkdtemp(join(tmpdir(), 'meshpn-ingress-vm-'));
 console.error(`Ingress VM artifacts: ${directory}`);
 const root = join(flags.get('tools'), 'root');
-const report = { schema: 1, status: 'failed', nic: 'none', hostSharedFilesystem: false, transports: [] };
+const report = { schema: 1, status: 'failed', nic: 'none', hostSharedFilesystem: false, transports: [], completedChecks: [], partialEvidence: [] };
 try {
   if (flags.has('verified-report')) {
     // Explicit trust in a previous, locally retained successful lab report; never an automatic fallback.
@@ -45,7 +47,7 @@ try {
     report.packages = packages; report.packageTrust = { previousReport: flags.get('verified-report'), sha256: sha256(bytes) };
   } else report.packages = await verifyVmPackages(flags.get('tools'));
   const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved'), ingress: true,
-    ipv6: flags.has('ipv6'), dnsConntrack: flags.get('dns-conntrack'), dnsIngressOnly: flags.has('dns-ingress-only'), dnsHostOnly: flags.has('dns-host-only') });
+    ipv6: flags.has('ipv6'), hostResilience: flags.has('host-resilience'), hostJoint: flags.has('host-joint'), dnsConntrack: flags.get('dns-conntrack'), dnsIngressOnly: flags.has('dns-ingress-only'), dnsHostOnly: flags.has('dns-host-only') });
   report.image = image.manifest;
   const env = { ...process.env, LD_LIBRARY_PATH: `${root}/usr/lib/x86_64-linux-gnu:${root}/lib/x86_64-linux-gnu`,
     QEMU_MODULE_DIR: `${root}/usr/lib/x86_64-linux-gnu/qemu` };
@@ -73,6 +75,12 @@ try {
     for (;;) {
       const end = pending.indexOf('\n'); if (end < 0) break;
       const line = pending.slice(0, end).trim(); pending = pending.slice(end + 1);
+      const progress = line.replace(/^# /, '');
+      if (progress.startsWith('IPV6_CHECK ')) report.completedChecks.push(progress.slice('IPV6_CHECK '.length));
+      if (progress.startsWith('HOST_RESILIENCE_PROGRESS ')) {
+        try { report.partialEvidence.push(JSON.parse(progress.slice('HOST_RESILIENCE_PROGRESS '.length))); }
+        catch (error) { abort(`invalid progress evidence: ${error.message}`); }
+      }
       if (line === 'INGRESS_VM_PASS') passed = true;
       if (line.startsWith('INGRESS_VM_ERROR ')) abort('guest transport case failed; see serial.log');
       if (/INGRESS_VM_FAIL|Kernel panic/.test(line)) abort('guest failed');
@@ -86,7 +94,7 @@ try {
   try { exit = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', (code) => resolve(code)); }); }
   finally { clearTimeout(timer); process.off('SIGINT', interrupt); process.off('SIGTERM', interrupt); await new Promise((resolve) => log.end(resolve)); }
   assert.equal(failure, undefined, failure); assert.equal(exit, 0); assert.equal(passed, true);
-  if (flags.has('dns-conntrack')) {
+  if (flags.has('dns-conntrack') && !flags.has('host-joint')) {
     const expected = [['tls', 'host'], ['tls', 'ingress'], ['tls', 'lan'], ['boring-tls', 'ingress'], ['combo-tls', 'ingress']]
       .filter(([, scope]) => (!flags.has('dns-ingress-only') || scope === 'ingress') && (!flags.has('dns-host-only') || scope === 'host'));
     assert.deepEqual(report.transports.map(v => [v.actualTransportTested, v.scope]),
@@ -95,6 +103,23 @@ try {
     report.dnsCoverage = flags.has('dns-host-only') ? 'host-only' : flags.has('dns-ingress-only') ? 'ingress-only' : 'host-ingress-lan';
   } else assert.deepEqual(report.transports.map((v) => v.actualTransportTested), flags.has('ipv6') ? ['tls-ipv6'] : ['tls', 'boring-tls', 'transparent-tls', 'combo-tls']);
   assert.ok(report.transports.every((v) => v.hostNetworkChanged === false && v.checks.length >= 12));
+  if (flags.has('host-joint')) {
+    const evidence = report.transports[0].hostJoint;
+    assert.deepEqual(evidence?.cases, ['h2', 'h1']);
+    report.deploymentAcceptance = evidence.acceptance;
+    report.deploymentBlockers = evidence.limitations;
+  }
+  if (flags.has('host-resilience')) {
+    const evidence = report.transports[0].hostResilience;
+    assert.ok(evidence && evidence.soaks.length === 2);
+    assert.deepEqual(evidence.soaks.map(v => v.transport), ['h2', 'h1']);
+    assert.deepEqual(evidence.reconnects.map(v => [v.transport, v.phase]), [
+      ['h2', 'before-load'], ['h2', 'after-load'], ['h1', 'before-load'], ['h1', 'after-load'],
+    ]);
+    report.deploymentAcceptance = evidence.acceptance;
+    report.deploymentBlockers = evidence.gaps;
+    console.error(`Deployment acceptance: ${evidence.acceptance}; blockers=${evidence.gaps.length}`);
+  }
   report.status = 'passed';
 } catch (error) { report.error = error.message; process.exitCode = 1; console.error(error.stack); }
 finally {

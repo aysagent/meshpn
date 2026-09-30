@@ -28,7 +28,8 @@
 #   KILLSWITCH_PERSIST 1 — kill-switch НЕ привязан к сервису: активен с раннего boot и
 #                      держится, даже если сервис остановлен (снимается только uninstall)
 #   KS_SCOPE           both|fwd — блокировать и OUTPUT платы, и FORWARD LAN (default both)
-#   KS_IPV6            block|leave — резать IPv6-egress (default block; туннель IPv4-only)
+#   KS_IPV6            block|leave — резать прямой IPv6-egress (default block; TUN разрешён)
+#   KS_SSH_PORT        входящий SSH: разрешить ответы с этого порта (default 22; 0 отключает)
 #   KS_SERVER_IPS      IP[,IP...] — bypass к серверу(ам), если не удалось извлечь из --server
 #
 set -euo pipefail
@@ -95,6 +96,7 @@ if [[ -z "${KILLSWITCH:-}" ]]; then
 fi
 KS_SCOPE="${KS_SCOPE:-both}"
 KS_IPV6="${KS_IPV6:-block}"
+KS_SSH_PORT="${KS_SSH_PORT:-22}"
 KILLSWITCH_PERSIST="${KILLSWITCH_PERSIST:-0}"
 
 # IP VPN-сервера для bypass (иначе kill-switch не даст поднять туннель).
@@ -120,7 +122,9 @@ fi
 
 if [[ "$KILLSWITCH" == "1" ]]; then
   [[ -f "$KS_SRC" ]] || die "не найден $KS_SRC"
-  [[ -n "$KS_SERVER_IPS" ]] || log "ВНИМАНИЕ: KS_SERVER_IPS пуст — kill-switch может заблокировать подключение к серверу."
+  # Validate before overwriting installed files; this emits a plan, never rules.
+  bash "$KS_SRC" plan "--scope=$KS_SCOPE" "--ipv6=$KS_IPV6" "--tun=tun0" \
+    "--server=$KS_SERVER_IPS" "--ssh-port=$KS_SSH_PORT" >/dev/null
 fi
 
 # Безопасно сериализуем аргументы для вставки в run.sh (сохраняет кавычки/пробелы).
@@ -156,7 +160,7 @@ KS_DEPS=""
 if [[ "$KILLSWITCH" == "1" ]]; then
   install -m 0755 "$KS_SRC" "$KS_SH"
 
-  KS_UP_ARGS="up --scope=$KS_SCOPE --ipv6=$KS_IPV6 --tun=tun0"
+  KS_UP_ARGS="up --scope=$KS_SCOPE --ipv6=$KS_IPV6 --tun=tun0 --ssh-port=$KS_SSH_PORT"
   [[ -n "$KS_SERVER_IPS" ]] && KS_UP_ARGS="$KS_UP_ARGS --server=$KS_SERVER_IPS"
 
   if [[ "$KILLSWITCH_PERSIST" == "1" ]]; then
@@ -226,8 +230,11 @@ Type=simple
 ExecStart=$RUN_SH
 Restart=always
 RestartSec=2
-# clean-vpn ловит SIGTERM и откатывает маршруты/NAT — даём время на cleanup.
-TimeoutStopSec=15
+# First SIGTERM goes only to Node: rollback helpers must not receive it too.
+# At the deadline systemd still kills the whole service control group.
+KillMode=mixed
+# DNS, IPv6 and host-route rollback each have a 120s budget, plus margin.
+TimeoutStopSec=420
 
 [Install]
 WantedBy=multi-user.target

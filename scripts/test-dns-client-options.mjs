@@ -67,6 +67,7 @@ test('LAN DNS scope requires a unique matching interface', () => {
 });
 
 function clientFixture({ off = false, failure = null, stopping = false } = {}) {
+  let networkReady;
   const events = [], ctx = { ifname: 'tun0' };
   const journal = { prepareRestart() { events.push('park'); }, release() { events.push('release'); } };
   const runtime = { activate() { events.push('dns-activate'); if (failure === 'activate') throw Error('activate'); },
@@ -74,6 +75,7 @@ function clientFixture({ off = false, failure = null, stopping = false } = {}) {
   const runClient = runInNewContext(`${slice('async function runClient(options)', '\nasync function runClientImpl(')}\nrunClient`, {
     console: { log() {} }, openTunnelDnsJournal: () => journal, reportTunnelDnsProgress() {},
     async runClientImpl(options) {
+      networkReady = options.networkReady;
       events.push('transport'); options.dnsNetworkPrepared(ctx);
       options.ingressPrepared({ activate() { events.push('ingress-activate'); } });
       ctx.stopping = stopping;
@@ -83,12 +85,13 @@ function clientFixture({ off = false, failure = null, stopping = false } = {}) {
       if (failure === 'start') throw Error('start'); return runtime;
     },
   });
-  return { events, run: () => runClient({ dnsMode: off ? 'off' : 'tunnel', fromTun: 'wg0' }) };
+  return { events, readiness: () => networkReady, run: () => runClient({ dnsMode: off ? 'off' : 'tunnel', fromTun: 'wg0' }) };
 }
 
 test('actual client opens ingress only after transport handlers and DNS activation', async () => {
   const f = clientFixture(); await f.run();
   assert.deepEqual(f.events, ['park', 'transport', 'dns-start', 'dns-activate', 'ingress-activate']);
+  assert.equal(await f.readiness(), true);
 });
 test('explicit off does not touch DNS ownership or runtime', async () => {
   const f = clientFixture({ off: true }); await f.run();
@@ -99,11 +102,30 @@ test('failed DNS activation leaves ingress closed and retains guards', async () 
     const f = clientFixture({ failure }); await assert.rejects(f.run(), new RegExp(failure));
     assert.ok(!f.events.includes('ingress-activate')); assert.equal(f.events.at(-1), 'release');
     if (failure === 'activate') assert.ok(f.events.includes('close:false'));
+    assert.equal(await f.readiness(), false);
   }
 });
 test('stop during transport setup prevents subsequent DNS/ingress activation', async () => {
   const f = clientFixture({ stopping: true }); await f.run();
   assert.deepEqual(f.events, ['park', 'transport']);
+  assert.equal(await f.readiness(), false);
+});
+
+test('host stale-route preflight precedes DNS and TUN; early DNS open failure releases host lock', async () => {
+  for (const stale of [true, false]) {
+    const events = [];
+    const run = runInNewContext(`${slice('async function runClient(options)', '\nasync function runClientImpl(')}\nrunClient`, {
+      openHostRoutes: () => ({
+        assertAvailable() { events.push('host-audit'); if (stale) throw Error('stale'); },
+        release() { events.push('host-release'); },
+      }),
+      openTunnelDnsJournal() { events.push('dns-open'); throw Error('dns-open'); },
+      reportTunnelDnsProgress() {},
+      runClientImpl() { assert.fail('must not create TUN'); },
+    });
+    await assert.rejects(run({ dnsMode: 'tunnel' }), stale ? /stale/ : /dns-open/);
+    assert.deepEqual(events, ['host-audit', ...(!stale ? ['dns-open'] : []), 'host-release']);
+  }
 });
 
 test('actual shutdown waits for DNS startup and parks safe ingress before DNS release', async () => {
@@ -112,7 +134,7 @@ test('actual shutdown waits for DNS startup and parks safe ingress before DNS re
     const routeCtx = { dnsStartup: new Promise(resolve => { finishStartup = resolve; }),
       ingressRouting: { close() { events.push('ingress-hold'); } } };
     const finish = runInNewContext(`${slice('  let finishNetworkPromise;', '\n  registerCleanVpnEmergencyShutdown(')}\nfinishNetwork`, {
-      routeCtx, fromTunRestartSafe, console: { log() {}, error() {} },
+      routeCtx, fromTunRestartSafe, ipv6Runtime: null, console: { log() {}, error() {} },
       teardownClientRoutes(_ctx, { retainIngress }) { events.push(`routes:${retainIngress}`); },
       safe: fn => fn(), tun: { close() { events.push('tun'); } }, clearCleanVpnEmergencyShutdown() {},
       process: { exit(code) { events.push(`exit:${code}`); } },
@@ -150,10 +172,27 @@ test('failed safe-stop gate never releases DNS protection or restores direct ing
     dnsRuntime: { close() { assert.fail('must retain DNS guard'); } },
   };
   const finish = runInNewContext(`${slice('  let finishNetworkPromise;', '\n  registerCleanVpnEmergencyShutdown(')}\nfinishNetwork`, {
-    routeCtx, fromTunRestartSafe: true, console: { log() {}, error() {} },
+    routeCtx, fromTunRestartSafe: true, ipv6Runtime: null, console: { log() {}, error() {} },
     teardownClientRoutes(_ctx, { retainIngress }) { events.push(retainIngress); },
     safe: fn => fn(), tun: { close() { events.push('tun'); } }, clearCleanVpnEmergencyShutdown() {},
     process: { exit(code) { events.push(code); } },
   });
   await finish(0, 'test'); assert.deepEqual(events, [true, 'tun', 1]);
+});
+
+test('joint shutdown orders DNS, IPv6 and IPv4; failed recovery retains later protection', async () => {
+  for (const failure of [null, 'dns', 'ipv6']) {
+    const events = [], step = name => { events.push(name); if (failure === name) throw Error(name); };
+    const finish = runInNewContext(`${slice('  let finishNetworkPromise;', '\n  registerCleanVpnEmergencyShutdown(')}\nfinishNetwork`, {
+      routeCtx: { dnsRuntime: { async close() { step('dns'); } } }, fromTunRestartSafe: false,
+      ipv6Runtime: { state: {}, restore() { step('ipv6'); }, release() { events.push('release6'); } },
+      console: { log() {}, error() {} },
+      teardownClientRoutes(_ctx, { retainIngress }) { events.push(retainIngress ? 'retain4' : 'restore4'); },
+      safe: fn => fn(), tun: { close() { events.push('tun'); } }, clearCleanVpnEmergencyShutdown() {},
+      process: { exit(code) { events.push(code); } },
+    });
+    await finish(0, 'test');
+    assert.deepEqual(events, ['dns', ...(failure !== 'dns' ? ['ipv6'] : []), 'release6',
+      failure ? 'retain4' : 'restore4', 'tun', failure ? 1 : 0]);
+  }
 });

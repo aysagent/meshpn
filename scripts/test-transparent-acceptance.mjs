@@ -97,6 +97,17 @@ test('bounded command distinguishes success, nonzero exit and missing executable
   const missing = await runCommand('/meshpn-missing-test-executable', []);
   assert.equal(missing.reason, 'spawn-error');
 });
+test('optional live stderr preserves the report and obeys the output limit', async () => {
+  let live = '';
+  const result = await runCommand(process.execPath, ['-e', 'console.error("progress");console.log("result")'],
+    { onStderr: text => { live += text; } });
+  assert.equal(live, 'progress\n'); assert.equal(result.stderr, live);
+  assert.equal(result.stdout, 'result\n'); assert.equal(result.code, 0);
+  live = '';
+  const overflow = await runCommand(process.execPath, ['-e', 'console.error("x".repeat(10000))'],
+    { maxBytes: 100, onStderr: text => { live += text; } });
+  assert.equal(overflow.reason, 'output-limit'); assert.ok(Buffer.byteLength(live) <= 100);
+});
 test('command timeout, cancellation and output overflow cannot become success', { timeout: 10_000 }, async () => {
   const timed = await runCommand(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 100 });
   assert.equal(timed.reason, 'timeout');

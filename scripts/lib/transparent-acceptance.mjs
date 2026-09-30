@@ -11,6 +11,9 @@ export const TEST_FILES = Object.freeze([
   'test-client-check.mjs',
   'test-client-leak-check.mjs',
   'test-vpn-ipv6.mjs',
+  'test-vpn-host-routes.mjs',
+  'test-autostart-stop-contract.mjs',
+  'test-killswitch-plan.mjs',
   'test-transparent-soak.mjs',
   'test-transparent-slow-reader.mjs',
   'test-transparent-h2-flow.mjs',
@@ -95,7 +98,7 @@ export function cleanEnvironment(env) {
   return result;
 }
 
-export async function runCommand(file, args, { cwd, env, signal, timeoutMs = 15_000, maxBytes = 1024 * 1024 } = {}) {
+export async function runCommand(file, args, { cwd, env, signal, timeoutMs = 15_000, maxBytes = 1024 * 1024, onStderr } = {}) {
   if (signal?.aborted) return { code: null, signal: null, reason: 'aborted', stdout: '', stderr: '', durationMs: 0 };
   const started = performance.now(), proc = child(file, args, { cwd, env });
   let stdout = '', stderr = '', bytes = 0, reason = null, stopping;
@@ -109,7 +112,10 @@ export async function runCommand(file, args, { cwd, env, signal, timeoutMs = 15_
     stream.on('data', (text) => {
       bytes += Buffer.byteLength(text);
       if (bytes > maxBytes) stop('output-limit');
-      else append(text);
+      else {
+        append(text);
+        if (stream === proc.proc.stderr) onStderr?.(text);
+      }
     });
   }
   if (signal?.aborted) abort();

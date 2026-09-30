@@ -7,6 +7,7 @@ import dgram from 'node:dgram';
 import { fixtureDnsAnswer, parseDnsQuery } from './lab-dns-wire.mjs';
 import { openTunnelDnsJournal } from './dns-tunnel-journal.mjs';
 import { recoverIngress } from '../clean-vpn-recover.mjs';
+import { recoverHost } from '../clean-vpn-host-recover.mjs';
 
 export function tunnelDnsFixtureAnswer(query, suffix) {
   const ipv6 = parseDnsQuery(query).type === 28;
@@ -140,6 +141,7 @@ export async function runTunnelDnsCliChecks({ scope, transport, launch, stop, co
   for (const tcp of [false, true]) check(`backup ${tcp ? 'TCP' : 'UDP'} via ${transport}`, await dnsQuery(namespace, tcp), '192.0.2.20');
   await stop(client.child, 'SIGKILL');
   for (const tcp of [false, true]) check(`crashed client blocks ${tcp ? 'TCP' : 'UDP'} DNS`, await dnsQuery(namespace, tcp), 'BLOCKED');
+  if (scope !== 'ingress') recoverHost(['--apply']); // DNS guard remains installed.
   client = start(); await client.started;
   check('same-boot restart restores backup DNS', await dnsQuery(namespace), '192.0.2.20');
   await stop(exit.child, 'SIGTERM');
@@ -191,12 +193,12 @@ export async function runTunnelDnsCliChecks({ scope, transport, launch, stop, co
   } finally { j.release(); }
   if (scope === 'ingress') recoverIngress(['--from-tun=wg0', '--apply']);
   const after = snapshot(), nonDnsNetworkRestored = after === baseline;
-  if (scope === 'ingress') check('ingress recovery restores original routes and rules', after, baseline);
+  if (scope === 'ingress' || scope === 'host') check('recovery restores original routes and rules', after, baseline);
   const beforeState = JSON.parse(baseline), afterState = JSON.parse(after);
   const nonDnsDifferences = Object.keys(beforeState).filter(k => beforeState[k] !== afterState[k]);
   for (const tcp of [false, true]) check(`${scope === 'ingress' ? 'explicit recovery' : 'normal stop'} restores baseline ${tcp ? 'TCP' : 'UDP'} DNS`, await dnsQuery(namespace, tcp), '192.0.2.30');
   return { status: 'passed', checks, scope, hostNetworkChanged: false, actualTransportTested: transport,
     actualDnsDefaultTested: true, stopDurationMs, nonDnsNetworkRestored, nonDnsDifferences,
-    limitations: scope === 'ingress' ? [] : ['legacy-host-routing-is-not-journaled-across-SIGKILL'] };
+    limitations: scope === 'lan' ? ['LAN-firewall-and-forwarding-crash-ownership-not-covered'] : [] };
   } finally { await gateway?.close(); }
 }

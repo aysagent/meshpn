@@ -28,18 +28,25 @@ KS_SH="/usr/local/bin/${SERVICE_NAME}-killswitch.sh"
 KS_UNIT_NAME="${SERVICE_NAME}-killswitch.service"
 KS_UNIT_PATH="/etc/systemd/system/${KS_UNIT_NAME}"
 
-log "systemctl disable --now $SERVICE_NAME"
-systemctl disable --now "$SERVICE_NAME" 2>/dev/null || log "сервис $SERVICE_NAME не активен/не найден — продолжаю"
+if [[ -f "$UNIT_PATH" ]]; then
+  log "systemctl stop $SERVICE_NAME"
+  systemctl stop "$SERVICE_NAME" || die 'VPN stop failed; installed files retained for recovery'
+fi
 
 # kill-switch
 if [[ -f "$KS_UNIT_PATH" ]]; then
-  log "systemctl disable --now $KS_UNIT_NAME"
-  systemctl disable --now "$KS_UNIT_NAME" 2>/dev/null || true
+  log "systemctl stop $KS_UNIT_NAME"
+  systemctl stop "$KS_UNIT_NAME" || die 'guard stop failed; installed files retained for recovery'
 fi
 # На всякий случай снимаем правила напрямую (если unit уже удалён/не сработал ExecStop).
 if [[ -x "$KS_SH" ]]; then
-  "$KS_SH" down --tun=tun0 2>/dev/null || true
+  "$KS_SH" down --tun=tun0 || die 'guard removal refused; installed files retained for recovery'
 fi
+
+# Disable/remove only after successful stop and audited guard removal. A failed
+# ownership check must not delete the recovery tool or claim success.
+if [[ -f "$UNIT_PATH" ]]; then systemctl disable "$SERVICE_NAME"; fi
+if [[ -f "$KS_UNIT_PATH" ]]; then systemctl disable "$KS_UNIT_NAME"; fi
 
 for f in "$UNIT_PATH" "$KS_UNIT_PATH" "$RUN_SH" "$KS_SH"; do
   if [[ -f "$f" ]]; then

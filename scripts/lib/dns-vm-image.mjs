@@ -33,8 +33,10 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, ipv6 = false, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
-  assert.ok(!ipv6 || ingress && !dnsConntrack);
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, ipv6 = false, hostResilience = false, hostJoint = false, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
+  assert.ok(!ipv6 || ingress && (!dnsConntrack || hostJoint));
+  assert.ok(!hostJoint || ipv6 && dnsConntrack && !hostResilience);
+  assert.ok(!hostResilience || ipv6);
   assert.ok(!dnsConntrack || ingress && dnsConntrack.startsWith('/'));
   assert.equal(typeof dnsIngressOnly, 'boolean'); assert.ok(!dnsIngressOnly || dnsConntrack);
   assert.equal(typeof dnsHostOnly, 'boolean'); assert.ok(!dnsHostOnly || dnsConntrack);
@@ -83,6 +85,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   await elf('/usr/sbin/xtables-legacy-multi'); await elf(resolved, '/usr/lib/systemd/systemd-resolved');
   if (dnsmasq) await elf(dnsmasq, '/usr/sbin/dnsmasq');
   if (ingress) await elf('/usr/sbin/sysctl');
+  if (hostResilience || hostJoint) await elf('/bin/bash');
   if (dnsConntrack) {
     await copy(dnsConntrack, '/usr/sbin/conntrack');
     const output = (await exec('ldd', [dnsConntrack])).stdout;
@@ -130,6 +133,8 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     }
   }
   await copyTree(join(project, 'scripts'), '/project/scripts');
+  if (hostResilience || hostJoint) for (const name of ['killswitch.sh', 'install.sh'])
+    await copy(join(project, 'scripts/autostart', name), `/project/scripts/autostart/${name}`);
   if (systemd && (!dnsmasq || radxa)) {
     // Match the real deployment path: a symlink changes import.meta.url while
     // Node keeps the argv entrypoint spelling, bypassing its main guard.
@@ -156,10 +161,10 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   for (const dir of ['/proc', '/sys', '/dev', '/run', '/tmp', '/state', '/etc/systemd', '/etc/ssl', '/usr/sbin', '/sbin', '/lib64']) {
     await mkdir(destination(dir), { recursive: true });
   }
-  for (const name of ['sh', 'mount', 'mkdir', 'chmod', 'chown', 'insmod', 'readlink', 'cat', 'sync', 'reboot', 'poweroff', 'sleep']) {
+  for (const name of ['sh', 'mount', 'mkdir', 'chmod', 'chown', 'stat', 'insmod', 'readlink', 'cat', 'sync', 'reboot', 'poweroff', 'sleep']) {
     await symlink('/bin/busybox', destination(`/bin/${name}`));
   }
-  for (const name of ['iptables', 'ip6tables', ...(systemd ? ['iptables-restore', 'ip6tables-restore'] : [])]) await symlink('/usr/sbin/xtables-legacy-multi', destination(`/usr/sbin/${name}`));
+  for (const name of ['iptables', 'ip6tables', ...(systemd || hostResilience || hostJoint ? ['iptables-restore', 'ip6tables-restore'] : [])]) await symlink('/usr/sbin/xtables-legacy-multi', destination(`/usr/sbin/${name}`));
   if (systemd && (!dnsmasq || radxa) && !publication) {
     await mkdir(destination('/etc/clean-vpn/dns'), { recursive: true });
     await writeFile(destination('/etc/clean-vpn/dns/guard-policy.json'), JSON.stringify({ schema: 1,
@@ -182,6 +187,8 @@ echo INGRESS_VM_INIT
 export PATH=/usr/bin:/usr/sbin:/bin:/sbin
 export OPENSSL_CONF=/dev/null
 export MESHPN_INGRESS_VM=1
+${hostResilience ? 'export MESHPN_HOST_RESILIENCE=1' : ''}
+${hostJoint ? 'export MESHPN_HOST_JOINT=1' : ''}
 ${dnsIngressOnly ? 'export MESHPN_DNS_CLI_INGRESS_ONLY=1' : ''}
 ${dnsHostOnly ? 'export MESHPN_DNS_CLI_HOST_ONLY=1' : ''}
 mount -t proc proc /proc

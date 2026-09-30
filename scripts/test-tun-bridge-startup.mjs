@@ -15,10 +15,12 @@ assert.ok(start > 0 && end > start);
 const framerStart = source.indexOf('class StreamFramer {');
 const framerEnd = source.indexOf('\n/** Uint32 BE', framerStart);
 assert.ok(framerStart > 0 && framerEnd > framerStart);
+const timers = [];
 const { attachOutboundTunBridge: attach, attachTunBridge } = runInNewContext(
   `${source.slice(framerStart, framerEnd)}\n${source.slice(start, end)}\n({attachOutboundTunBridge, attachTunBridge});`, {
   Buffer, process: { env: {} }, randomBytes, ipv6PacketAllowed,
-  setTimeout: () => ({ unref() {} }), clearTimeout() {}, setInterval, clearInterval,
+  setTimeout: fn => { const timer = { fn, unref() {} }; timers.push(timer); return timer; },
+  clearTimeout: timer => { if (timer) timer.cancelled = true; }, setInterval, clearInterval,
   setImmediate, console: { log() {}, error() {}, warn() {} }, MAX_PKT: 65535, KEEPALIVE_TUN_QUEUE_MAX: 256,
   STREAM_FRAMER_CHUNK_MERGE_AFTER: 24, RECONNECT_BRIDGE_TRANSPORTS: new Set(['tcp']),
   createVpnPacketTracer: () => () => {}, gracefulCloseTcpEndpoint: async () => {},
@@ -31,22 +33,36 @@ const { attachOutboundTunBridge: attach, attachTunBridge } = runInNewContext(
   },
 });
 
-function fixture({ keepAlive = 0, eager = false, failFirst = false, ipv6Role = null } = {}) {
+function fixture({ keepAlive = 0, eager = false, failFirst = false, ipv6Role = null, networkReady } = {}) {
   let read, calls = 0, resolve, reject;
   const endpoint = new EventEmitter(); endpoint.sent = [];
   const received = [];
-  const api = attach({ startRead(callback) { read = callback; }, write(b) { received.push(b); } }, 'tcp', { ipv6Role }, () => {
+  const api = attach({ startRead(callback) { read = callback; }, write(b) { received.push(b); } }, 'tcp', { ipv6Role, networkReady }, () => {
     calls++;
     return new Promise((yes, no) => { resolve = yes; reject = no; });
   }, keepAlive, 0, eager);
   const packet = Buffer.alloc(20); packet[0] = 0x45;
   return { api, endpoint, packet, received, read: (b = packet) => read([b]), calls: () => calls,
-    finish: async () => {
+    finish: async (connectedEndpoint = endpoint) => {
       if (failFirst && calls === 1) reject(new Error('injected connection failure'));
-      else resolve(endpoint);
+      else resolve(connectedEndpoint);
       await new Promise(setImmediate);
     } };
 }
+
+test('eager and packet-triggered TLS wait for network startup without opening sockets', async () => {
+  let ready;
+  const f = fixture({ networkReady: new Promise(resolve => { ready = resolve; }) });
+  f.read(); f.read(); await new Promise(setImmediate); assert.equal(f.calls(), 0);
+  ready(true); await new Promise(setImmediate); assert.equal(f.calls(), 1);
+  await f.finish(); assert.equal(f.endpoint.sent.length, 2);
+});
+test('failed network startup never dials even when TUN has queued packets', async () => {
+  let ready;
+  const f = fixture({ networkReady: new Promise(resolve => { ready = resolve; }) });
+  f.read(); ready(false); await new Promise(setImmediate);
+  assert.equal(f.calls(), 0); await f.api.ensureWire(); assert.equal(f.calls(), 0);
+});
 
 test('IPv6 alone wakes lazy bridge; multicast cannot; inbound address validation enforced', async () => {
   const f = fixture({ keepAlive: 30, ipv6Role: 'client' });
@@ -88,6 +104,22 @@ test('keep-alive remains lazy unless eager startup is explicitly requested', asy
     f.read(); f.read(); assert.equal(f.calls(), 1);
     await f.finish(); assert.equal(f.endpoint.sent.length, 2);
   }
+});
+
+test('idle reconnect before old close event replaces the cached framed writer', async () => {
+  const f = fixture({ keepAlive: 30 });
+  f.read(); await f.finish(); assert.equal(f.endpoint.sent.length, 1);
+  // Idle-disarm keeps the writer for possible reuse. Node marks the old stream
+  // destroyed before its asynchronous close event; TUN may wake in between.
+  timers.findLast(t => !t.cancelled).fn();
+  f.endpoint.destroyed = true;
+  const second = new EventEmitter(); second.sent = [];
+  f.read(); assert.equal(f.calls(), 2); await f.finish(second);
+  assert.equal(second.sent.length, 1, 'queued wake-up packet must use the new endpoint');
+  assert.equal(f.endpoint.sent.length, 1, 'old endpoint must receive no new packets');
+  f.endpoint.emit('close');
+  f.read(); assert.equal(second.sent.length, 2);
+  assert.equal(second.listenerCount('data'), 1);
 });
 
 test('a truncated frame from the old inbound connection cannot corrupt the next session', () => {
