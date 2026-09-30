@@ -1,9 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, chmodSync, renameSync, symlinkSync, linkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, chmodSync, renameSync, symlinkSync, linkSync, existsSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { tmpdir } from 'node:os';
 import { openHostRoutes, validateHostRouteState } from './lib/vpn-host-routes.mjs';
 import { recoverHost } from './clean-vpn-host-recover.mjs';
+
+// Execute the real CLI route setup with fake kernel IO and a real durable journal.
+const clientSource = readFileSync(new URL('./clean-vpn.js', import.meta.url), 'utf8');
+const setupStart = clientSource.indexOf('async function setupClientRoutesAsync(');
+const setupEnd = clientSource.indexOf('\n/** IPv4 default через TUN', setupStart);
+assert.ok(setupStart > 0 && setupEnd > setupStart);
+function routeSetup(f, defaultRoute) {
+  return runInNewContext(`${clientSource.slice(setupStart, setupEnd)}\nsetupClientRoutesAsync`, {
+    getDefaultRouteLinux: defaultRoute, resolveHostToIpv4: async () => '198.51.100.2',
+    captureServerRoutes: () => [], getSysctlNum: () => f.rp,
+    console: { log() {} },
+  });
+}
 function fixture(t) {
   const directory = mkdtempSync(`${tmpdir()}/host-routes-test-`);
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -27,6 +41,42 @@ function fixture(t) {
   f.open = checkpoint => openHostRoutes({ directory, run: f.run, checkpoint });
   return f;
 }
+for (const previous of ['absent', 'released']) test(`missing default route preserves ${previous} journal and permits retry`, async t => {
+  const f = fixture(t);
+  if (previous === 'released') { const r = f.open(); r.begin('tun0'); r.restore(); r.release(); }
+  const path = `${f.directory}/journal.json`, contents = () => existsSync(path) ? readFileSync(path, 'utf8') : null;
+  const before = contents();
+  let available = false;
+  const setup = routeSetup(f, () => available ? { gw: '192.0.2.1', dev: 'eth0' } : null);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const r = f.open();
+    try { r.assertAvailable(); await assert.rejects(setup('tun0', '198.51.100.2', false, { hostRoutes: r }), /Не найден default route/); }
+    finally { r.release(); }
+    assert.equal(contents(), before); assert.equal(f.changes, 0);
+  }
+  available = true;
+  const r = f.open();
+  try {
+    r.assertAvailable(); await setup('tun0', '198.51.100.2', false, { hostRoutes: r });
+    assert.equal(r.state.stage, 'active'); assert.equal(f.routes.length, 1); assert.equal(f.rp, 2);
+    r.restore(); assert.equal(r.state.stage, 'released'); assert.equal(f.routes.length, 0); assert.equal(f.rp, 0);
+  } finally { r.release(); }
+});
+test('route lookup error publishes no journal; ingress does not need a host default', async t => {
+  const f = fixture(t), r = f.open();
+  try {
+    const setup = routeSetup(f, () => { throw Error('route lookup failed'); });
+    await assert.rejects(setup('tun0', '198.51.100.2', false, { hostRoutes: r }), /route lookup failed/);
+    assert.equal(r.state, null); assert.equal(f.changes, 0);
+    await setup('tun0', '198.51.100.2', false, { fromTun: 'ingress0' });
+  } finally { r.release(); }
+});
+test('CLI does not begin ownership before route setup; stale journal gate remains before TUN startup', () => {
+  const impl = clientSource.slice(clientSource.indexOf('async function runClientImpl('));
+  assert.doesNotMatch(impl, /hostRoutes\?\.begin\(ifname\)/);
+  const entry = clientSource.slice(clientSource.indexOf('async function runClient(options)'), clientSource.indexOf('async function runClientImpl('));
+  assert.ok(entry.indexOf('hostRoutes?.assertAvailable()') < entry.indexOf('await runClientImpl('));
+});
 test('durable add-only routes and rp_filter restore exactly; repeated recovery is harmless', t => {
   const f = fixture(t), r = f.open(); r.begin('tun0');
   r.add('198.51.100.2/32', 'eth0', '192.0.2.1'); r.add('0.0.0.0/1', 'tun0'); r.relaxRpFilter();

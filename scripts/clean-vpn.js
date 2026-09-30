@@ -5409,6 +5409,9 @@ async function setupClientRoutesAsync(ifname, serverHost, splitDefault, opts) {
   const dr = getDefaultRouteLinux();
   if (!dr) throw new Error('Не найден default route (ip route show default)');
   const { gw, dev } = dr;
+  // A late uplink is retryable: do not publish ownership until this read-only
+  // prerequisite succeeds. Once begun, partial mutations still require recovery.
+  opts?.hostRoutes?.begin(ifname);
 
   /** @type {string|null} */
   let serverIp = null;
@@ -10443,7 +10446,6 @@ async function runClientImpl({
   const tunName = findFreeTunName();
   const { tun, name: ifname } = openTunNative(tunName);
   setupTunIp('client', ifname);
-  hostRoutes?.begin(ifname);
   const deferSigBypass =
     deferWsPeerBypass || deferWebrtcPeerBypass || deferRtcChromeSigBypass || deferUdpPeerBypass;
   const deferPeerKindForSetup =

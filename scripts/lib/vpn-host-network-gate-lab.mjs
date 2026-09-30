@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { assertHostSystemdVm } from './vpn-host-systemd-vm.mjs';
 import { bootObserverUnit } from './vpn-host-boot-order-lab.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export function gatedNetworkUnit(directory) {
   return bootObserverUnit(directory)
@@ -25,6 +26,33 @@ export async function runHostNetworkGateChecks({ directory, check, query, dns, r
   writeFileSync(`/etc/systemd/system/${network}`, gatedNetworkUnit(directory), { flag: 'wx', mode: 0o644 });
   await ctl('daemon-reload');
   await ctl('stop', main);
+  // A late DHCP/default route must not poison ownership on each Restart=always
+  // attempt. Exercise the actual installed CLI, without any recovery --apply.
+  const netns = at('client', 'readlink', '/proc/self/ns/net').match(/\d+/)[0];
+  const journal = `/run/clean-vpn-host-routes-${netns}/journal.json`;
+  const released = readFileSync(journal, 'utf8');
+  assert.equal(JSON.parse(released).stage, 'released');
+  at('client', 'ip', '-4', 'route', 'del', 'default');
+  const retryOffset = logs().length;
+  await ctl('start', main);
+  const deadline = Date.now() + 180000;
+  while ((logs().slice(retryOffset).match(/Не найден default route/g) ?? []).length < 2) {
+    assert.ok(Date.now() < deadline, logs().slice(retryOffset)); await delay(250);
+  }
+  check('late route systemd retried', Number(await property(main, 'NRestarts')) >= 1, true);
+  check('late route journal unchanged', readFileSync(journal, 'utf8'), released);
+  check('late route no stale ownership error', logs().slice(retryOffset).includes('Host IPv4 recovery required'), false);
+  check('late route guard active', await property(guard, 'ActiveState'), 'active');
+  for (const [name, probe] of [['IPv4', () => query('1.0.0.1')], ['IPv6', () => query('2606:4700:4700::1111')], ['DNS', dns]])
+    check(`late route blocks ${name}`, await probe(), 'BLOCKED');
+  at('client', 'ip', '-4', 'route', 'replace', 'default', 'via', '192.0.2.1', 'dev', 'eth0');
+  // Do not restart/reset-failed manually: the existing systemd retry must work.
+  await ready(retryOffset);
+  check('late route automatic recovery IPv4', await query('1.0.0.1'), '198.51.100.2');
+  check('late route automatic recovery IPv6', await query('2606:4700:4700::1111'), '2001:db8:2::2');
+  check('late route automatic recovery DNS', await dns(), '192.0.2.10');
+  await ctl('stop', main);
+  check('late route clean stop releases journal', JSON.parse(readFileSync(journal, 'utf8')).stage, 'released');
   await ctl('stop', guard, 'network.target', 'network-pre.target');
   for (const [name, probe, expected] of [['IPv4', () => query('1.0.0.1'), '192.0.2.2'],
     ['IPv6', () => query('2606:4700:4700::1111'), '2001:db8:1::2'], ['DNS', dns, '192.0.2.10']])

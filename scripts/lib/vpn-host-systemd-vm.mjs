@@ -54,6 +54,9 @@ export const HOST_BOOT_ORDER_CHECKS = [
 
 export const HOST_NETWORK_GATE_CHECKS = [
   ...HOST_SYSTEMD_CHECKS.slice(0, 10),
+  ...['systemd retried', 'journal unchanged', 'no stale ownership error', 'guard active',
+    'blocks IPv4', 'blocks IPv6', 'blocks DNS', 'automatic recovery IPv4', 'automatic recovery IPv6',
+    'automatic recovery DNS', 'clean stop releases journal'].map(n => `late route ${n}`),
   ...['IPv4', 'IPv6', 'DNS'].map(n => `network gate initial direct ${n}`),
   ...['healthy', 'failed', 'repair'].flatMap(phase => [
     ...['link initially down', 'start result'].map(n => `${phase} network gate ${n}`),
