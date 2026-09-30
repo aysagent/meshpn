@@ -97,12 +97,17 @@ host-журнала, блокировка проб persist guard, затем у�
 `--host-networkd` выбирает отдельную матрицу с настоящим daemon networkd.
 Она требует `--ipv6 --host-systemd --dns-conntrack=...` и несовместима с
 `--host-stop-faults`, `--host-boot-order`, `--host-network-gate`. Образ дополнительно
-включает `/usr/lib/systemd/systemd-networkd` и его ELF-зависимости. Проверяются
-ровно 50 утверждений: обычный запуск, отказ guard, поздний carrier с автоматическим
-retry клиента, реальная передача через exit, остановка и опускание link.
+включает `/usr/lib/systemd/systemd-networkd`, его ELF-зависимости и штатный
+`/usr/lib/systemd/system/systemd-networkd.service`. Матрица требует 75 утверждений:
+обычный запуск, отказ guard, поздний carrier с автоматическим retry клиента,
+реальная передача через exit, остановка, опускание link и отказ этой операции.
 
-Unit пока лабораторный: root, `NetworkNamespacePath`, без vendor sandbox/udev;
-для networkd выставлен стандартный для этой лаборатории container marker.
+Штатный unit не переписывается. Лабораторный drop-in добавляет зависимость guard,
+`NetworkNamespacePath`, опускание link и ограниченные таймауты/логи. Vendor User,
+sandbox, основной ExecStart и FileDescriptorStoreMax сохраняются; кроме effective
+properties проверяются реальный UID 192 и NoNewPrivs процесса daemon.
+Socket activation явно замаскирована только в VM: vendor socket иначе принадлежал бы netns PID1,
+а не клиентскому. Udev пока отсутствует; используется container marker.
 `.network` совпадает только с `eth0`, задаёт статические IPv4/IPv6 и gateway.
 После очистки адресов их создаёт networkd, а не сценарий. Поздняя сеть моделируется
 отсутствием carrier, **не DHCP**. При снятии guard зависимость `Requires/After`
@@ -110,14 +115,26 @@ Unit пока лабораторный: root, `NetworkNamespacePath`, без ven
 по [документации networkd v255](https://github.com/systemd/systemd/blob/v255/man/systemd-networkd.service.xml)
 сам daemon обычно оставляет сетевую конфигурацию после завершения.
 
-Это ещё не vendor-unit интеграция, cold boot/reboot или доказательство защиты
+Это ещё не полная distro-интеграция, cold boot/reboot или доказательство защиты
 интерфейсов, поднятых initramfs/другим менеджером. Перед legacy uninstall
-лабораторный сетевой unit удаляется; production update/uninstall с такой
+лабораторные drop-in удаляются; production update/uninstall с такой
 зависимостью отдельно не принят. На рабочих машинах этот сценарий отказывает
 до сетевых изменений; он не является командой для Radxa.
-Отказ самой команды опускания link пока не проверен: один stop-ordering не
-гарантирует сохранение guard при такой ошибке. До production нужен отдельный
-проверяемый запрет снятия защиты, если управляемая сеть осталась поднятой.
+Особенно важно: прежний uninstaller после `systemctl stop` отдельно вызывает
+`killswitch down`. При подключении сетевого release-gate этот путь обязан
+проверять отказ guard и сетевые предусловия, иначе обойдёт запрет снятия защиты.
+Для отказа команды опускания link добавлен VM-only guard ExecStop: он проверяет
+остановку networkd, неизменность ifindex/MAC закреплённого uplink и отсутствие
+поднятых non-loopback links, затем вызывает прежний killswitch down. При отказе
+проверки unit guard станет failed, но его firewall-правила должны сохраниться.
+Принципиально проверяется не только ActiveState, но и фактические правила плюс
+отрицательные DNS/HTTPS-пробы при остающемся поднятым интерфейсе с default route.
+После явного устранения fault повторяются start/stop с корректным опусканием link.
+Это не production-интерфейс и не защита от конкурентного администратора/другого
+менеджера сети: установщик эту проверку пока не подключает.
+Код возврата `systemctl stop` не считается доказательством успешного ExecStop:
+матрица проверяет `ActiveState=failed`, `Result=exit-code`, фактические правила
+и блокировку трафика независимо от результата команды stop.
 
 `status=passed` означает, что **лабораторные утверждения подтверждены**.
 В историческом отчёте аудита старого kill-switch сюда входят отрицательные контрольные случаи:
@@ -711,3 +728,47 @@ networkd из roadmap. Далее нужны vendor unit/sandbox и udev, DHCP/c
 логе есть предупреждение `FileDescriptorStoreMax=0` при остановке networkd:
 хранение FD через перезапуск vendor-unit здесь не воспроизведено. Installer
 пока не устанавливает networkd-зависимость; Radxa/VPS не затронуты.
+
+### Vendor networkd и отказ опускания link: промежуточные прогоны 2026-09-30
+
+`/var/tmp/meshpn-ingress-vm-O3KAqi` остановлен вручную до vendor-проверок:
+при просмотре fixture обнаружено, что пустой `Wants=` в drop-in не удаляет
+зависимости. Вместо него socket activation явно замаскирована внутри VM.
+Этот незавершённый прогон не является PASS.
+
+`/var/tmp/meshpn-ingress-vm-PthPXO/report.json` — **FAILED**, 61 завершённое
+утверждение. Vendor-unit с сохранёнными настройками защиты прошёл здоровый
+цикл, отказ guard и late-carrier/retry. На fault остановки release worker
+отказался снимать защиту (`network link still UP; guard retained`), unit стал
+failed, но `systemctl stop` вернул 0. Сценарий ошибочно ожидал ненулевой код
+команды и завершился до проверок firewall/трафика; их успех не заявляется.
+Также `/bin/false` отсутствовал в образе: fault давал `203/EXEC`, а не
+намеренный exit 1. Теперь бинарник включён в эту матрицу, а stop-fault
+оценивается по unit properties, правилам и сетевым пробам.
+
+После исправления критериев локальная регрессия: **355 passed, 0 failed,
+0 skipped**. Ни таймауты, ни production-код ради прохождения теста не менялись.
+
+### Vendor networkd: итоговый VM-прогон 2026-09-30
+
+`/var/tmp/meshpn-ingress-vm-zO05vv/report.json` — **PASSED, 75 утверждений**,
+runner exit 0. Проверены сохранённые vendor unit properties и UID/NoNewPrivs
+настоящего daemon, guard-before-network, здоровый цикл, отказ guard,
+late-carrier с автоматическим retry VPN, DNS/IPv4/IPv6 через exit и stop.
+
+При намеренном exit 1 в networkd ExecStopPost daemon завершился, но интерфейс
+и default route остались. Guard ExecStop отказался снимать защиту: unit failed,
+обе семьи firewall-правил сохранены, настоящие DNS/IPv4/IPv6 пробы заблокированы.
+После явного устранения fault start/stop выключил интерфейс и освободил guard.
+Очистка fixture и uninstall восстановили прямой IPv4.
+
+SHA-256 manifest совпал с клиентом, сценариями networkd/release, installer,
+kill-switch, vendor binary/unit и `/bin/false`. Первые два неполных прогона
+выше сохранены отдельно; итоговый PASS не отменяет их результатов.
+
+Это закрывает vendor-unit и отказ опускания link в текущей изолированной
+матрице. Пока не проверены udev/socket activation, DHCP, cold boot/reboot,
+конкурентное управление сетью и production install/update/uninstall с release-gate.
+Следующий обязательный этап — ранний запуск и перезагрузка с реальным сетевым
+менеджером; затем lifecycle-интеграция и согласованный прогон на Radxa.
+Production-код и настройки рабочих Radxa/VPS не менялись.

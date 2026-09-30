@@ -111,6 +111,12 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     await writeFile(destination('/etc/dbus-vm.conf'), '<busconfig><type>system</type><listen>unix:path=/run/dbus/system_bus_socket</listen><auth>EXTERNAL</auth><policy context="default"><allow user="*"/><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>', { mode: 0o644 });
   }
   if (coupled || hostNetworkd) await elf('/usr/lib/systemd/systemd-networkd');
+  if (hostNetworkd) {
+    await elf('/bin/false');
+    await copy('/usr/lib/systemd/system/systemd-networkd.service');
+    // A netlink socket opened by PID1 would bind to the wrong network namespace.
+    await symlink('/dev/null', destination('/etc/systemd/system/systemd-networkd.socket'));
+  }
   if (publication) await elf('/usr/bin/mv');
   for (const name of ['libxt_tcp.so', 'libxt_udp.so', 'libipt_REJECT.so', 'libip6t_REJECT.so', 'libxt_standard.so',
     ...(systemd ? ['libxt_comment.so'] : []),

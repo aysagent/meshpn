@@ -70,16 +70,19 @@ export const HOST_NETWORK_GATE_CHECKS = [
 
 export const HOST_NETWORKD_CHECKS = [
   ...HOST_SYSTEMD_CHECKS.slice(0, 10),
+  ...['fragment selected', 'socket masked', 'User', 'ProtectSystem', 'NoNewPrivileges', 'MemoryDenyWriteExecute', 'RestrictNamespaces', 'FileDescriptorStoreMax'].map(n => `networkd vendor ${n}`),
   ...['healthy', 'failed', 'late-carrier'].flatMap(phase => [
     ...['starts without link or addresses', 'start result'].map(n => `${phase} networkd ${n}`),
     ...(phase === 'failed' ? ['guard failed', 'daemon absent', 'link stays down', 'routes absent', 'blocks IPv4', 'blocks IPv6', 'blocks DNS'] : [
-      'daemon active', 'guard precedes daemon',
+      'daemon active', 'daemon unprivileged UID', 'daemon NoNewPrivs', 'guard precedes daemon',
       ...(phase === 'late-carrier' ? ['no default before carrier', 'client retried', 'journal unchanged'] : []),
       'configured IPv4 and IPv6',
       ...(phase === 'healthy' ? ['pre-VPN blocks IPv4', 'pre-VPN blocks IPv6', 'pre-VPN blocks DNS'] : []),
       'VPN IPv4', 'VPN IPv6', 'VPN DNS', 'stop releases host journal', 'guard stop stops daemon', 'stop lowers link', 'guard released',
     ]).map(n => `${phase} networkd ${n}`),
   ]),
+  ...['guard failed', 'daemon gone', 'daemon result', 'link remains up', 'default remains', 'guard result', 'rules retained',
+    'blocks IPv4', 'blocks IPv6', 'blocks DNS', 'repair guard active', 'repaired link down', 'repaired guard released'].map(n => `networkd stop fault ${n}`),
   'networkd fixture teardown restores direct IPv4',
 ];
 
@@ -92,7 +95,9 @@ export function assertHostSystemdEvidence(evidence, { stopFaults = false, bootOr
   assert.equal(evidence.hostSystemd?.networkd === true, networkd);
   if (networkd) {
     assert.equal(evidence.hostSystemd.actualNetworkd, true);
-    for (const limit of ['minimal-root-networkd-unit-not-vendor-sandbox', 'container-marker-no-udev', 'static-addresses-late-carrier-not-DHCP'])
+    assert.equal(evidence.hostSystemd.vendorNetworkd, true);
+    assert.equal(evidence.hostSystemd.guardedRelease, true);
+    for (const limit of ['vendor-unit-with-fixture-dropins', 'no-networkd-socket-activation', 'container-marker-no-udev', 'static-addresses-late-carrier-not-DHCP'])
       assert.ok(evidence.hostSystemd.limitations.includes(limit));
   }
   assert.equal(evidence.hostSystemd?.networkGate === true, networkGate);

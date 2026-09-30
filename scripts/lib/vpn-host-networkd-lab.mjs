@@ -1,19 +1,15 @@
-/** Real networkd, but only a minimal NIC-less VM unit, not a production drop-in. */
+/** Vendor networkd plus VM-only drop-ins, not a production installation. */
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { assertHostSystemdVm } from './vpn-host-systemd-vm.mjs';
 
-export const hostNetworkdUnit = `[Unit]
-Description=VM-only real networkd behind persistent VPN guard
-DefaultDependencies=no
+export const hostNetworkdDropIn = `[Unit]
+# The image masks socket activation; dependencies cannot be cleared by a drop-in.
 Requires=dbus.service clean-vpn-killswitch.service
 After=dbus.service network-pre.target clean-vpn-killswitch.service
-Before=network.target
 [Service]
-Type=notify
 NetworkNamespacePath=/run/netns/client
-ExecStart=/usr/lib/systemd/systemd-networkd
 ExecStopPost=/usr/bin/ip link set eth0 down
 Environment=PATH=/usr/bin:/usr/sbin:/bin:/sbin SYSTEMD_LOG_TARGET=console
 TimeoutStartSec=60
@@ -31,6 +27,7 @@ IPv6AcceptRA=no
 LinkLocalAddressing=no
 LLMNR=no
 MulticastDNS=no
+KeepConfiguration=yes
 Address=192.0.2.2/24
 Address=2001:db8:1::2/64
 Gateway=192.0.2.1
@@ -41,8 +38,9 @@ export async function runHostNetworkdChecks({ check, query, dns, ready, logs, pr
   assertHostSystemdVm();
   assert.match(readFileSync('/proc/cmdline', 'utf8'), /(?:^|\s)meshpn.host-networkd=1(?:\s|$)/);
   const main = 'clean-vpn.service', guard = 'clean-vpn-killswitch.service', manager = 'systemd-networkd.service';
-  const unit = `/etc/systemd/system/${manager}`, config = '/etc/systemd/network/10-host-vm.network';
+  const unit = `/etc/systemd/system/${manager}.d/lab.conf`, config = '/etc/systemd/network/10-host-vm.network';
   const fault = `/etc/systemd/system/${guard}.d/networkd-fault.conf`;
+  const releaseGate = `/etc/systemd/system/${guard}.d/networkd-release.conf`;
   const link = () => JSON.parse(at('client', 'ip', '-j', 'address', 'show', 'eth0'))[0];
   const routes = () => JSON.parse(at('client', 'ip', '-j', '-4', 'route', 'show', 'default'));
   const until = async (test, detail, budget = 90000) => {
@@ -52,13 +50,23 @@ export async function runHostNetworkdChecks({ check, query, dns, ready, logs, pr
   const netns = at('client', 'readlink', '/proc/self/ns/net').match(/\d+/)[0];
   const journal = `/run/clean-vpn-host-routes-${netns}/journal.json`;
   mkdirSync('/etc/systemd/network', { recursive: true });
+  mkdirSync(`/etc/systemd/system/${manager}.d`, { recursive: true });
   // Like the existing networkd lab: no udev in this minimal initramfs.
   writeFileSync('/run/systemd/container', 'other\n', { flag: 'wx', mode: 0o644 });
-  writeFileSync(unit, hostNetworkdUnit, { flag: 'wx', mode: 0o644 });
+  writeFileSync(unit, hostNetworkdDropIn, { flag: 'wx', mode: 0o644 });
   writeFileSync(config, hostNetworkdConfig, { flag: 'wx', mode: 0o644 });
   writeFileSync('/run/host-networkd.log', '', { flag: 'wx', mode: 0o600 });
   await ctl('daemon-reload'); await ctl('stop', main); await ctl('stop', guard);
+  const identity = link();
+  writeFileSync('/run/host-networkd-link.json', JSON.stringify({ ifname: identity.ifname, ifindex: identity.ifindex, address: identity.address }), { flag: 'wx', mode: 0o600 });
+  writeFileSync(releaseGate, '[Service]\nExecStop=\nExecStop=/usr/bin/node /project/scripts/lib/vpn-host-network-release-worker.mjs\n', { flag: 'wx', mode: 0o644 });
+  await ctl('daemon-reload');
   try {
+    check('networkd vendor fragment selected', await property(manager, 'FragmentPath'), '/usr/lib/systemd/system/systemd-networkd.service');
+    check('networkd vendor socket masked', await property('systemd-networkd.socket', 'LoadState'), 'masked');
+    for (const [key, value] of [['User', 'systemd-network'], ['ProtectSystem', 'strict'], ['NoNewPrivileges', 'yes'],
+      ['MemoryDenyWriteExecute', 'yes'], ['RestrictNamespaces', 'yes'], ['FileDescriptorStoreMax', '512']])
+      check(`networkd vendor ${key}`, await property(manager, key), value);
     for (const phase of ['healthy', 'failed', 'late-carrier']) {
       at('client', 'ip', 'link', 'set', 'eth0', 'down');
       // Exact laboratory interface only; force networkd to create addresses/routes.
@@ -85,6 +93,10 @@ export async function runHostNetworkdChecks({ check, query, dns, ready, logs, pr
         continue;
       }
       check(`${phase} networkd daemon active`, await property(manager, 'ActiveState'), 'active');
+      const pid = await property(manager, 'MainPID'); assert.match(pid, /^[1-9][0-9]*$/);
+      const processStatus = readFileSync(`/proc/${pid}/status`, 'utf8');
+      check(`${phase} networkd daemon unprivileged UID`, /^Uid:\s+192\s+192\s+192\s+192$/m.test(processStatus), true);
+      check(`${phase} networkd daemon NoNewPrivs`, /^NoNewPrivs:\s+1$/m.test(processStatus), true);
       const guardDone = BigInt(await property(guard, 'ExecMainExitTimestampMonotonic'));
       check(`${phase} networkd guard precedes daemon`, guardDone > 0n && BigInt(await property(manager, 'ExecMainStartTimestampMonotonic')) >= guardDone, true);
       const offset = logs().length;
@@ -116,20 +128,48 @@ export async function runHostNetworkdChecks({ check, query, dns, ready, logs, pr
       check(`${phase} networkd stop lowers link`, link().flags.includes('UP'), false);
       check(`${phase} networkd guard released`, await property(guard, 'ActiveState'), 'inactive');
     }
-    unlinkSync(unit); unlinkSync(config); await ctl('daemon-reload');
+    // Keep the link UP when networkd stops, mimicking an unsuccessful ip link down.
+    // A stop-ordering dependency alone would still run guard's ExecStop.
+    await ctl('start', manager);
+    await until(() => routes().some(r => r.gateway === '192.0.2.1') && link().flags.includes('UP'), 'fault setup networkd not ready');
+    const stopFault = `/etc/systemd/system/${manager}.d/zz-stop-fault.conf`;
+    writeFileSync(stopFault, '[Service]\nExecStopPost=\nExecStopPost=/bin/false\n', { flag: 'wx', mode: 0o644 });
+    await ctl('daemon-reload');
+    // A successful stop job does not imply successful ExecStop/ExecStopPost.
+    // Inspect the unit and actual protection regardless of systemctl's exit code.
+    await ctl('stop', guard).catch(() => {});
+    check('networkd stop fault guard failed', await property(guard, 'ActiveState'), 'failed');
+    check('networkd stop fault daemon gone', await property(manager, 'MainPID'), '0');
+    check('networkd stop fault daemon result', await property(manager, 'Result'), 'exit-code');
+    check('networkd stop fault link remains up', link().flags.includes('UP'), true);
+    check('networkd stop fault default remains', routes().some(r => r.gateway === '192.0.2.1'), true);
+    check('networkd stop fault guard result', await property(guard, 'Result'), 'exit-code');
+    const status = at('client', '/usr/local/bin/clean-vpn-killswitch.sh', 'status');
+    check('networkd stop fault rules retained', [4, 6].every(f => status.includes(`IPv${f}: cvks2:both:block:tun0:198.51.100.2:22`)), true);
+    for (const [name, probe] of [['IPv4', () => query('1.0.0.1')], ['IPv6', () => query('2606:4700:4700::1111')], ['DNS', dns]])
+      check(`networkd stop fault blocks ${name}`, await probe(), 'BLOCKED');
+    // Explicit repair under retained protection, not an automatic fail-open.
+    unlinkSync(stopFault); await ctl('daemon-reload'); await ctl('reset-failed', manager, guard);
+    await ctl('start', manager);
+    await until(() => routes().some(r => r.gateway === '192.0.2.1') && link().flags.includes('UP'), 'repair networkd not ready');
+    check('networkd stop fault repair guard active', await property(guard, 'ActiveState'), 'active');
+    await ctl('stop', guard);
+    check('networkd stop fault repaired link down', link().flags.includes('UP'), false);
+    check('networkd stop fault repaired guard released', await property(guard, 'ActiveState'), 'inactive');
+    unlinkSync(releaseGate); unlinkSync(unit); unlinkSync(config); await ctl('daemon-reload');
     await exec('ip', ['netns', 'exec', 'client', '/bin/bash', 'scripts/autostart/uninstall.sh']);
     at('client', 'ip', 'link', 'set', 'eth0', 'up');
     at('client', 'ip', '-4', 'addr', 'replace', '192.0.2.2/24', 'dev', 'eth0');
     at('client', 'ip', '-4', 'route', 'replace', 'default', 'via', '192.0.2.1', 'dev', 'eth0');
     check('networkd fixture teardown restores direct IPv4', await query('1.0.0.1'), '192.0.2.2');
-    return { systemdPid1: true, actualInstaller: true, networkd: true, actualNetworkd: true,
+    return { systemdPid1: true, actualInstaller: true, networkd: true, actualNetworkd: true, vendorNetworkd: true, guardedRelease: true,
       acceptance: 'not-ready-for-deployment', limitations: [
         'fixture-network-namespace-dropins', 'no-early-boot-or-reboot', 'explicit-recovery-not-auto-restart',
-        'minimal-root-networkd-unit-not-vendor-sandbox', 'container-marker-no-udev',
+        'vendor-unit-with-fixture-dropins', 'container-marker-no-udev', 'no-networkd-socket-activation',
         'static-addresses-late-carrier-not-DHCP', 'failed-guard-also-prevents-SSH',
         'candidate-not-installed-by-production-installer', 'production-update-uninstall-integration-pending',
         'no-runtime-guard-rule-loss-test',
-        'link-teardown-command-failure-not-tested',
+        'single-pinned-uplink-no-concurrent-admin', 'release-gate-not-installed-in-production',
       ] };
   } catch (error) { console.error('HOST_NETWORKD_LOG', readFileSync('/run/host-networkd.log', 'utf8')); throw error; }
 }
