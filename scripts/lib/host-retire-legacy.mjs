@@ -18,6 +18,7 @@ export const LEGACY_FILES = ['/etc/systemd/system/clean-vpn.service', '/etc/syst
 export const RETIRABLE_GUARD_HASHES = new Set([
   '5b99335723dcab4a1c3b472307e61bb082496b81ab9e73d9f9ca75139f25172e', // a47c939, reported Radxa
   'edd7637a3babbfc595e513a88974c4da9047e589336cd2859782f779abf07fbd', // v2, stopped tied fixture
+  'a46ebd191032da2e2205a5babfbad31d3daa274d3e857b8327e1e4ba6078164b', // v2 with read-only active-client audit
 ]);
 const hash = b => createHash('sha256').update(b).digest('hex');
 const units = ['clean-vpn.service', 'clean-vpn-killswitch.service'];

@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { BOOT_FILES, hostBootVmUnits, assertHostBootVm } from './lib/vpn-host-boot-vm.mjs';
 import { hostBootChecks, assertHostBootEvidence } from './lib/vpn-host-boot-evidence.mjs';
+import { buildDnsVmImage } from './lib/dns-vm-image.mjs';
 
 const evidence = () => ({ nic: 'none', hostSharedFilesystem: false, acceptance: 'lab-ready-for-host-review',
   boots: [0, 1, 2].map(phase => ({ phase, exitCode: 0, kernelRestart: phase < 2, powerDown: phase === 2, synced: true, unmounted: true,
@@ -48,8 +49,15 @@ test('fixture uses real networkd/udev socket activation, not a container marker 
   assert.ok(hostBootVmUnits()['default.target'].includes('systemd-networkd.service'));
 });
 test('cold boot runner rejects missing/ambiguous flags before QEMU or disk creation', () => {
-  for (const a of [[], ['--apply'], ['--tools=/tmp/a', '--tools=/tmp/b'], ['--tools=relative']]) {
+  for (const a of [[], ['--apply'], ['--tools=/tmp/a', '--tools=/tmp/b'], ['--tools=relative'], ['--firewall-backend=unknown'], ['--firewall-backend=nft', '--firewall-backend=legacy']]) {
     const p = spawnSync(process.execPath, ['scripts/clean-vpn-host-boot-lab.mjs', ...a], { encoding: 'utf8', timeout: 5000 });
     assert.equal(p.status, 1); assert.doesNotMatch(p.stderr, /Host boot VM artifacts/);
   }
+});
+test('nft image selection is explicit, restricted to cold boot, and uses real nft tools/modules', async () => {
+  await assert.rejects(buildDnsVmImage({ firewallBackend: 'unknown' }));
+  await assert.rejects(buildDnsVmImage({ firewallBackend: 'nft' }), /limited to host cold boot/);
+  const source = readFileSync(new URL('./lib/dns-vm-image.mjs', import.meta.url), 'utf8');
+  assert.ok(source.includes('/usr/sbin/xtables-${firewallBackend}-multi'));
+  for (const mod of ['nft_compat', 'nft_ct', 'nft_counter', 'nft_chain_nat', 'nft_masq']) assert.ok(source.includes(`'${mod}'`));
 });

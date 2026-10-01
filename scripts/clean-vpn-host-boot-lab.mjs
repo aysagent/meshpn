@@ -12,6 +12,8 @@ import { assertHostBootEvidence } from './lib/vpn-host-boot-evidence.mjs';
 
 const args = new Map();
 for (const arg of process.argv.slice(2)) {
+  const backend = /^--firewall-backend=(legacy|nft)$/.exec(arg);
+  if (backend) { assert.ok(!args.has('firewall-backend'), 'duplicate firewall backend'); args.set('firewall-backend', backend[1]); continue; }
   const m = /^--(tools|kernel|resolved|dns-conntrack|dnsmasq|verified-report)=(\/[^\r\n,]+)$/.exec(arg);
   assert.ok(m && !args.has(m[1]), 'six unique absolute tool/report paths required'); args.set(m[1], m[2]);
 }
@@ -19,7 +21,7 @@ for (const key of ['tools', 'kernel', 'resolved', 'dns-conntrack', 'dnsmasq', 'v
 process.umask(0o077);
 const directory = await mkdtemp(join(tmpdir(), 'meshpn-host-boot-'));
 console.error(`Host boot VM artifacts: ${directory}`);
-const report = { schema: 1, kind: 'clean-vpn-host-boot-lab', status: 'failed', nic: 'none', hostSharedFilesystem: false, boots: [], acceptance: 'not-ready-for-deployment' };
+const report = { schema: 1, kind: 'clean-vpn-host-boot-lab', status: 'failed', firewallBackend: args.get('firewall-backend') ?? 'legacy', nic: 'none', hostSharedFilesystem: false, boots: [], acceptance: 'not-ready-for-deployment' };
 try {
   const previousBytes = await readFile(args.get('verified-report')), previous = JSON.parse(previousBytes);
   assert.equal(previous.status, 'passed'); assert.ok(Array.isArray(previous.packages));
@@ -31,7 +33,7 @@ try {
   assert.equal(packages.length, previous.packages.length); assert.ok(packages.some(p => p.package === 'qemu-system-x86')); assert.ok(packages.some(p => p.package === 'busybox-static'));
   report.packages = packages; report.packageTrust = { previousReport: args.get('verified-report'), sha256: sha256(previousBytes) };
   const root = join(args.get('tools'), 'root');
-  const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: args.get('kernel'), resolved: args.get('resolved'), dnsConntrack: args.get('dns-conntrack'), bootDnsmasq: args.get('dnsmasq'), ingress: true, ipv6: true, hostSystemd: true, hostNetworkd: true, hostColdBoot: true });
+  const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: args.get('kernel'), resolved: args.get('resolved'), dnsConntrack: args.get('dns-conntrack'), bootDnsmasq: args.get('dnsmasq'), ingress: true, ipv6: true, hostSystemd: true, hostNetworkd: true, hostColdBoot: true, firewallBackend: report.firewallBackend });
   report.image = image.manifest;
   const disk = join(directory, 'state.raw'), fd = await open(disk, 'wx', 0o600);
   try { await fd.truncate(256 * 1024 * 1024); } finally { await fd.close(); }

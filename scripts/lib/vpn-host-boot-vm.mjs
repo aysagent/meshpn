@@ -155,6 +155,17 @@ async function run() {
   }
   await ready();
   check('client active', await property('clean-vpn.service', 'ActiveState'), 'active');
+  const activeRules = ['iptables', 'ip6tables'].map(tool => sync('/usr/sbin/' + tool, ['-w', '5', '-t', 'filter', '-S']));
+  const activeGuard = sync('/usr/local/bin/clean-vpn-killswitch.sh', ['status']);
+  check('active guard audit passes', [4, 6].every(f => activeGuard.includes(`IPv${f}: cvks2:both:block:tun0:198.51.100.2:22`)), true);
+  check('active guard audit read-only', ['iptables', 'ip6tables'].every((tool, i) => sync('/usr/sbin/' + tool, ['-w', '5', '-t', 'filter', '-S']) === activeRules[i]), true);
+  // A real active-client prefix must not authorize destructive reorder/removal.
+  for (const action of ['up', 'down']) {
+    let rejected = false;
+    try { sync('/usr/local/bin/clean-vpn-killswitch.sh', [action, '--server=198.51.100.2']); } catch (e) { rejected = e.status !== 0 && String(e.stderr).includes('mutation requires first hook'); }
+    check(`active guard ${action} refused`, rejected, true);
+  }
+  check('active guard mutations unchanged', ['iptables', 'ip6tables'].every((tool, i) => sync('/usr/sbin/' + tool, ['-w', '5', '-t', 'filter', '-S']) === activeRules[i]), true);
   check('DHCP IPv4 address', link().addr_info.some(a => a.local === '192.0.2.2' && a.dynamic), true);
   check('DHCP lease recorded', readFileSync('/run/boot.leases', 'utf8').includes('02:00:00:00:01:02 192.0.2.2 '), true);
   check('IPv4 through exit', await query('1.0.0.1'), '198.51.100.2');

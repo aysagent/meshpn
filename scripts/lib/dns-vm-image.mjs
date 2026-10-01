@@ -35,7 +35,9 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, ipv6 = false, hostResilience = false, hostJoint = false, hostSystemd = false, hostNetworkd = false, hostColdBoot = false, bootDnsmasq = null, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, ipv6 = false, hostResilience = false, hostJoint = false, hostSystemd = false, hostNetworkd = false, hostColdBoot = false, firewallBackend = 'legacy', bootDnsmasq = null, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
+  assert.ok(['legacy', 'nft'].includes(firewallBackend));
+  assert.ok(firewallBackend === 'legacy' || hostColdBoot, 'nft matrix is limited to host cold boot');
   assert.ok(!hostColdBoot || hostNetworkd && hostSystemd && bootDnsmasq);
   assert.ok(!bootDnsmasq || hostColdBoot);
   assert.ok(!hostNetworkd || hostSystemd, 'networkd host fixture requires host systemd');
@@ -88,7 +90,8 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   await copy(join(toolsRoot, 'usr/bin/busybox'), '/bin/busybox');
   await elf(process.execPath, '/usr/bin/node');
   for (const name of ['ip', 'unshare', 'setpriv', 'hostname', 'flock', 'getent', 'openssl', 'busctl', 'dbus-daemon']) await elf(`/usr/bin/${name}`);
-  await elf('/usr/sbin/xtables-legacy-multi'); await elf(resolved, '/usr/lib/systemd/systemd-resolved');
+  const xtables = `/usr/sbin/xtables-${firewallBackend}-multi`;
+  await elf(xtables); await elf(resolved, '/usr/lib/systemd/systemd-resolved');
   if (dnsmasq) await elf(dnsmasq, '/usr/sbin/dnsmasq');
   if (ingress) await elf('/usr/sbin/sysctl');
   if (hostResilience || hostJoint || hostSystemd) await elf('/bin/bash');
@@ -136,6 +139,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
   const release = (await exec('uname', ['-r'])).stdout.trim();
   assert.equal(await realpath(kernel), `/boot/vmlinuz-${release}`, 'this builder requires the matching local kernel/modules');
   for (const name of ['iptable_filter', 'ip6table_filter', 'ipt_REJECT', 'ip6t_REJECT', 'xt_tcpudp', 'dummy',
+    ...(firewallBackend === 'nft' ? ['nft_compat', 'nft_counter', 'nft_ct', 'nft_chain_nat', 'nft_nat', 'nft_masq', 'nft_redir', 'nft_reject_ipv4', 'nft_reject_ipv6'] : []),
     ...(ipv6 ? ['ip6table_nat'] : []),
     ...(systemd ? ['xt_comment'] : []),
     ...(dnsConntrack ? ['xt_multiport', 'nf_conntrack_netlink'] : []),
@@ -186,7 +190,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     // Ubuntu systemd's compiled service PATH may omit /bin (merged-/usr).
     if (hostSystemd) await symlink('/bin/busybox', destination(`/usr/bin/${name}`));
   }
-  for (const name of ['iptables', 'ip6tables', ...(systemd || hostResilience || hostJoint || hostSystemd ? ['iptables-restore', 'ip6tables-restore'] : [])]) await symlink('/usr/sbin/xtables-legacy-multi', destination(`/usr/sbin/${name}`));
+  for (const name of ['iptables', 'ip6tables', ...(systemd || hostResilience || hostJoint || hostSystemd ? ['iptables-restore', 'ip6tables-restore'] : [])]) await symlink(xtables, destination(`/usr/sbin/${name}`));
   if (systemd && (!dnsmasq || radxa) && !publication) {
     await mkdir(destination('/etc/clean-vpn/dns'), { recursive: true });
     await writeFile(destination('/etc/clean-vpn/dns/guard-policy.json'), JSON.stringify({ schema: 1,
