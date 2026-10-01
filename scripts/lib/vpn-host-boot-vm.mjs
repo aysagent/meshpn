@@ -118,6 +118,29 @@ async function run() {
   if (!p) {
     await until(() => link().addr_info.some(a => a.local === '192.0.2.2'), 'initial DHCP lease');
     check('direct baseline IPv4', await query('1.0.0.1'), '192.0.2.2');
+    mkdirSync('/var', { recursive: true, mode: 0o755 }); // Minimal initramfs omits the normal backup parent.
+    // Reproduce the Radxa starting point, WITHOUT running any old wrapper or
+    // guard: disabled main + inactive tied guard, four installed files, no rules.
+    put('/usr/local/bin/clean-vpn-run.sh', '#!/bin/bash\nexit 93\n', 0o755);
+    copyFileSync('/project/scripts/autostart/killswitch.sh', '/usr/local/bin/clean-vpn-killswitch.sh'); chmodSync('/usr/local/bin/clean-vpn-killswitch.sh', 0o755);
+    put('/etc/systemd/system/clean-vpn.service', '[Unit]\nRequires=clean-vpn-killswitch.service\nAfter=network.target\n[Service]\nType=simple\nExecStart=/usr/local/bin/clean-vpn-run.sh\n[Install]\nWantedBy=multi-user.target\n');
+    put('/etc/systemd/system/clean-vpn-killswitch.service', '[Unit]\nPartOf=clean-vpn.service\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/local/bin/clean-vpn-killswitch.sh up --server=198.51.100.2\nExecStop=/usr/local/bin/clean-vpn-killswitch.sh down\n');
+    // Logging overrides belong to the NEW installation only. Retirement refuses
+    // arbitrary overrides, even if their services are inactive.
+    for (const unit of ['clean-vpn', 'clean-vpn-killswitch']) unlinkSync(`/etc/systemd/system/${unit}.service.d/log.conf`);
+    await ctl('daemon-reload');
+    const managerPid = await property('systemd-networkd.service', 'MainPID');
+    const old = BOOT_FILES.slice(0, 4).map(n => readFileSync('/' + n));
+    const dry = JSON.parse((await exec('/usr/bin/node', ['scripts/clean-vpn-retire-legacy.mjs'])).stdout);
+    check('legacy audit eligible', dry.status, 'eligible');
+    check('legacy audit preserves files', BOOT_FILES.slice(0, 4).every(n => existsSync('/' + n)), true);
+    const retired = JSON.parse((await exec('/usr/bin/node', ['scripts/clean-vpn-retire-legacy.mjs', '--apply'])).stdout);
+    check('legacy retired', retired.status, 'retired');
+    check('legacy backup exact', BOOT_FILES.slice(0, 4).every((n, i) => readFileSync(retired.backupDirectory + '/' + n.split('/').at(-1)).equals(old[i])), true);
+    check('legacy files removed', BOOT_FILES.slice(0, 4).every(n => !existsSync('/' + n)), true);
+    check('legacy retirement keeps networkd PID', await property('systemd-networkd.service', 'MainPID'), managerPid);
+    check('legacy retirement keeps direct IPv4', await query('1.0.0.1'), '192.0.2.2');
+    for (const unit of ['clean-vpn', 'clean-vpn-killswitch']) put(`/etc/systemd/system/${unit}.service.d/log.conf`, '[Service]\nStandardOutput=append:/run/host-boot-client.log\nStandardError=append:/run/host-boot-client.log\n');
     const args = ['scripts/autostart/install.sh', '--role=client', '--type=tls', '--server=198.51.100.2:443', '--split-default', '--ipv6=auto', '--tls-cert-dir=/state/cert', '--shared-hmac-key=/state/cert/secret.key', '--tls-server-name=vpn.test', '--tls-public-name=vpn.test'];
     await promisify(execFile)('/bin/bash', args, { env: { ...process.env, NODE_BIN: '/usr/bin/node', KILLSWITCH: '1', KILLSWITCH_PERSIST: '1', NETWORKD_GUARD: '1' }, timeout: 450000 });
   } else if (p === 2) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 export const hostBootChecks = phase => [
   'systemd PID1', 'udev active', 'networkd socket gated', 'no container marker',
-  ...(phase === 0 ? ['direct baseline IPv4'] : phase === 2 ? ['failed guard', 'failed guard prevents networkd', 'failed guard prevents VPN', 'failed guard link down', 'failed guard no addresses', ...['IPv4', 'IPv6', 'DNS'].map(n => 'failed guard blocks ' + n)] : []),
+  ...(phase === 0 ? ['direct baseline IPv4', 'legacy audit eligible', 'legacy audit preserves files', 'legacy retired', 'legacy backup exact', 'legacy files removed', 'legacy retirement keeps networkd PID', 'legacy retirement keeps direct IPv4'] : phase === 2 ? ['failed guard', 'failed guard prevents networkd', 'failed guard prevents VPN', 'failed guard link down', 'failed guard no addresses', ...['IPv4', 'IPv6', 'DNS'].map(n => 'failed guard blocks ' + n)] : []),
   'client active', 'DHCP IPv4 address', 'DHCP lease recorded', 'IPv4 through exit', 'IPv6 through exit', 'DNS through exit', 'DNS peer exit',
   ...(phase ? ['guard precedes networkd', 'boot differs', ...(phase === 1 ? ['late DHCP retried'] : [])] : []),
   'client stopped', ...['IPv4', 'IPv6', 'DNS'].map(n => 'stopped VPN blocks ' + n),

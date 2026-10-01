@@ -41,7 +41,8 @@ export function assessHostPreflight(r) {
   if (!links || links.some(l => !l || typeof l.ifname !== 'string')) issues.push('link-inventory-unavailable');
   else if (links.some(l => l.ifname === 'tun0' || l.linkinfo?.info_kind === 'tun')) issues.push('manual-TUN-present-stop-before-install');
   if (!route?.[0]?.dev || route[0].dev === 'lo' || route[0].dev === 'tun0') issues.push('exit-uplink-not-confirmed');
-  if (!r.uplinkNetworkd?.NETWORK_FILE || r.uplinkNetworkd.SETUP_STATE !== 'configured') issues.push('uplink-networkd-ownership-review');
+  const setup = [r.uplinkNetworkd?.SETUP_STATE, r.uplinkNetworkd?.ADMIN_STATE].filter(v => v !== undefined);
+  if (!r.uplinkNetworkd?.NETWORK_FILE || !setup.length || !setup.every(v => v === 'configured')) issues.push('uplink-networkd-ownership-review');
   for (const name of ['clean-vpn.service', 'clean-vpn-killswitch.service']) {
     const u = r.units[name];
     if (!u || u.LoadState !== 'not-found' || u.ActiveState !== 'inactive') issues.push(`existing-or-uncertain-unit:${name}`);

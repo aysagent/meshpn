@@ -9,7 +9,7 @@ import { TEST_FILES, parseOptions, cleanEnvironment, runCommand, nodeSummary, br
 
 test('acceptance manifest includes host boot/lifecycle/preflight regressions without duplicates', () => {
   assert.equal(new Set(TEST_FILES).size, TEST_FILES.length);
-  for (const name of ['install-check', 'update', 'stop-faults', 'boot-order', 'network-gate', 'networkd', 'networkd-gate', 'cold-boot', 'preflight']) assert.ok(TEST_FILES.includes(`test-host-${name}.mjs`));
+  for (const name of ['install-check', 'update', 'stop-faults', 'boot-order', 'network-gate', 'networkd', 'networkd-gate', 'cold-boot', 'preflight', 'retire-legacy']) assert.ok(TEST_FILES.includes(`test-host-${name}.mjs`));
 });
 
 test('acceptance defaults to full matrix and bounded repeats', () => {

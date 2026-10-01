@@ -67,3 +67,11 @@ test('manager, installation, prerequisites and early network uncertainty fail re
     const value = structuredClone(r); change(value); assert.equal(assessHostPreflight(value).status, 'review-required');
   }
 });
+test('Radxa ADMIN_STATE is accepted; missing/conflicting/unfinished setup is not', async () => {
+  const r = await collectHostPreflight({ exitIp: '1.2.3.4' }, fixture());
+  r.uplinkNetworkd = { NETWORK_FILE: '/run/systemd/network/10-netplan-wlan0.network', ADMIN_STATE: 'configured' };
+  assert.equal(assessHostPreflight(r).status, 'inventory-ready-for-review');
+  for (const change of [{ ADMIN_STATE: 'configuring' }, { SETUP_STATE: 'failed' }, { ADMIN_STATE: undefined }, { NETWORK_FILE: '' }]) {
+    const value = structuredClone(r); Object.assign(value.uplinkNetworkd, change); assert.ok(assessHostPreflight(value).issues.includes('uplink-networkd-ownership-review'));
+  }
+});

@@ -16,6 +16,7 @@ export const TEST_FILES = Object.freeze([
   'test-host-install-check.mjs', 'test-host-update.mjs', 'test-host-stop-faults.mjs',
   'test-host-boot-order.mjs', 'test-host-network-gate.mjs', 'test-host-networkd.mjs',
   'test-host-networkd-gate.mjs', 'test-host-cold-boot.mjs', 'test-host-preflight.mjs',
+  'test-host-retire-legacy.mjs',
   'test-killswitch-plan.mjs',
   'test-transparent-soak.mjs',
   'test-transparent-slow-reader.mjs',
