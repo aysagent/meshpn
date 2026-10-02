@@ -146,6 +146,7 @@ import { openTunnelDnsJournal, reportTunnelDnsProgress } from './lib/dns-tunnel-
 import { IPV6_HEADER, ipv6PacketAllowed, validateIpv6Options } from './lib/vpn-ipv6.mjs';
 import { openIpv6Runtime } from './lib/vpn-ipv6-runtime.mjs';
 import { openHostRoutes } from './lib/vpn-host-routes.mjs';
+import { createHttpDateRecovery, CLOCK_UPDATED, responseHeaders, vpnResponseAccepted } from './lib/vpn-http-date.mjs';
 
 // A repeated terminal Ctrl+C must not kill route/sysctl helpers during cleanup.
 // Normal startup commands retain their existing execution options.
@@ -394,6 +395,7 @@ const EXIT_PEEK_TIMEOUT_MS_DEFAULT = 10 * 1000;
 const EXIT_PEEK_MAX_PENDING_DEFAULT = 1000;
 /** Окно ротации Bearer-токена (мс) — защита от долгого replay при утечке логов. */
 const TLS_VPN_TOKEN_WINDOW_MS = 15 * 60 * 1000;
+const tlsHttpDateRecovery = createHttpDateRecovery({ windowMs: TLS_VPN_TOKEN_WINDOW_MS });
 /** Контекст HMAC v1 (legacy, без channel binding). */
 const TLS_VPN_TOKEN_CONTEXT_V1 = 'clean-vpn-tls-v1';
 /** Контекст HMAC v2 — с привязкой к TLS exporter (RFC 5705) данной сессии. */
@@ -1323,7 +1325,7 @@ function resolveTlsClientHelloSni({ tlsClientSni, verifyName }) {
  * @param {Buffer} vpnSecret
  * @returns {Promise<any>} socket-like для `attachTunBridge`
  */
-function establishCleanVpnOverH2(tlsSock, checkHost, vpnSecret, exporter = null) {
+function establishCleanVpnOverH2(tlsSock, checkHost, vpnSecret, exporter = null, rejectedResponse = null) {
   const ek = exporter ?? tlsVpnExporterFromSocket(tlsSock);
   if (!ek) {
     console.warn(
@@ -1395,16 +1397,15 @@ function establishCleanVpnOverH2(tlsSock, checkHost, vpnSecret, exporter = null)
     }
 
     req.on('error', fail);
+    req.once('close', () => fail(new Error('TLS client: HTTP/2 закрыт до VPN-ответа')));
     req.on('response', (headers) => {
+      if (settled) return;
       cleanupTimers();
       const rawStatus = headers[':status'];
       const statusStr = rawStatus != null ? String(rawStatus) : '';
-      if (statusStr !== '200') {
-        fail(
-          new Error(
-            `TLS client: HTTP/2 ответ :status=${rawStatus ?? '—'} — bearer не принят / не VPN-сервер`,
-          ),
-        );
+      if (!vpnResponseAccepted(statusStr, headers['content-type'])) {
+        const message = `TLS client: HTTP/2 ответ :status=${rawStatus ?? '—'} — bearer не принят / не VPN-сервер`;
+        fail(rejectedResponse ? rejectedResponse(headers, message) : new Error(message));
         return;
       }
       if (settled) return;
@@ -1610,6 +1611,7 @@ async function completeCleanVpnTlsSession(sock, opts) {
       checkHost,
       vpnSecret,
       exporter,
+      opts.rejectedResponse,
     );
     const cbLabel = exporter ? ' bearer=v2 channel-bound' : ' bearer=v1 legacy';
     console.log(`[clean-vpn] TLS (VPN) соединение установлено http=HTTP/2${cbLabel}`);
@@ -1633,44 +1635,52 @@ async function completeCleanVpnTlsSession(sock, opts) {
   /** @type {Buffer} */
   let respBuf = Buffer.alloc(0);
   await new Promise((resolve, reject) => {
+    let done = false;
+    const finish = (error) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      sock.off('data', onResp);
+      sock.off('error', onError);
+      sock.off('end', onClose);
+      sock.off('close', onClose);
+      if (error) { sock.destroy(); reject(error); }
+      else resolve(undefined);
+    };
+    const onError = error => finish(error);
+    const onClose = () => finish(new Error('TLS client: HTTP/1.1 закрыт до VPN-ответа'));
+    const timer = setTimeout(() => finish(new Error('TLS client: таймаут HTTP/1.1 ответа')), TLS_CLIENT_HANDSHAKE_MS);
+    timer.unref?.();
     const onResp = (chunk) => {
       respBuf =
         respBuf.length === 0 ? Buffer.from(chunk) : Buffer.concat([respBuf, chunk]);
       const idx = respBuf.indexOf('\r\n\r\n');
+      if (idx > 16384 || (idx === -1 && respBuf.length > 16384)) {
+        finish(new Error('TLS client: HTTP-заголовки exit > 16 KiB'));
+        return;
+      }
       if (idx === -1) {
-        if (respBuf.length > 16384) {
-          sock.off('data', onResp);
-          try {
-            sock.destroy();
-          } catch {
-            /* ignore */
-          }
-          reject(new Error('TLS client: HTTP-ответ exit > 16 KiB без \\r\\n\\r\\n'));
-        }
         return;
       }
       sock.off('data', onResp);
       const head = respBuf.subarray(0, idx).toString('latin1');
       const status = /^HTTP\/1\.1 (\d{3})/.exec(head);
-      if (!status || status[1] !== '200') {
-        try {
-          sock.destroy();
-        } catch {
-          /* ignore */
-        }
-        reject(
-          new Error(
-            `TLS client: exit ответил «${head.split('\r\n')[0] || '?'}» — bearer не принят / не VPN-сервер`,
-          ),
-        );
+      const headers = responseHeaders(head);
+      if (!vpnResponseAccepted(status?.[1], headers['content-type'])) {
+        const message = `TLS client: exit ответил «${head.split('\r\n')[0] || '?'}» — bearer не принят / не VPN-сервер`;
+        const error = opts.rejectedResponse ? opts.rejectedResponse(headers, message) : new Error(message);
+        finish(error);
         return;
       }
       const ipv6Headers = head.split('\r\n').filter(line => line.toLowerCase().startsWith(`${IPV6_HEADER}:`));
       sock.cleanVpnIpv6 = ipv6Headers.length === 1 ? ipv6Headers[0].slice(IPV6_HEADER.length + 1).trim() : undefined;
       const rest = respBuf.subarray(idx + 4);
       if (rest.length) setImmediate(() => sock.emit('data', rest));
-      resolve(undefined);
+      finish();
     };
+    sock.once('error', onError);
+    sock.once('end', onClose);
+    sock.once('close', onClose);
     sock.on('data', onResp);
     sock.write(req);
   });
@@ -1973,6 +1983,7 @@ async function connectCleanVpnTlsClient(opts) {
               checkHost,
               vpnSecret,
               tlsHttpVers: tlsHttpVers ?? null,
+              rejectedResponse: tlsHttpDateRecovery.begin(sock),
             });
             finish(() => resolve(wrapped));
           } catch (e) {
@@ -2021,6 +2032,11 @@ async function connectCleanVpnTlsClient(opts) {
       }
       finish(() => reject(err));
     });
+  }).catch(error => {
+    // Fresh handshake (no session reuse) after the one permitted correction.
+    if (error.code === CLOCK_UPDATED && !opts.clockRetried)
+      return connectCleanVpnTlsClient({ ...opts, clockRetried: true });
+    throw error;
   });
 }
 
@@ -7194,6 +7210,7 @@ function wireExitTlsSocket(tlsSock, ctx) {
         const body = TLS_HTTP_WORKS_BODY;
         const res =
           `HTTP/1.1 200 OK\r\n` +
+          `Date: ${new Date().toUTCString()}\r\n` +
           `Content-Type: text/plain; charset=utf-8\r\n` +
           `Content-Length: ${Buffer.byteLength(body)}\r\n` +
           `Connection: close\r\n\r\n${body}`;
@@ -7244,7 +7261,7 @@ function wireExitTlsSocket(tlsSock, ctx) {
         }
         st.windowOffset = windowOffset;
         setOutcomeOnce('vpn');
-        const ack = `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Type: application/octet-stream\r\n${ctx.ipv6Capability ? `${IPV6_HEADER}: ${ctx.ipv6Capability}\r\n` : ''}\r\n`;
+        const ack = `HTTP/1.1 200 OK\r\nDate: ${new Date().toUTCString()}\r\nConnection: keep-alive\r\nContent-Type: application/octet-stream\r\n${ctx.ipv6Capability ? `${IPV6_HEADER}: ${ctx.ipv6Capability}\r\n` : ''}\r\n`;
         tlsSock.write(ack);
         const rest = httpBuf.subarray(idx + 4);
         const bearerLabel = legacy ? ' bearer_legacy=1' : '';
@@ -7471,6 +7488,7 @@ function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
       try {
         stream.respond({
           ':status': '200',
+          date: new Date().toUTCString(),
           'content-type': 'text/plain; charset=utf-8',
           'content-length': Buffer.byteLength(body),
         });
@@ -7493,6 +7511,7 @@ function wireExitHttp2VpnInjected(tcpSocket, prefixBuf, ctx) {
         {
           ':status': '200',
           'content-type': 'application/octet-stream',
+          date: new Date().toUTCString(),
           ...(ctx.ipv6Capability ? { [IPV6_HEADER]: ctx.ipv6Capability } : {}),
         },
         { endStream: false },
