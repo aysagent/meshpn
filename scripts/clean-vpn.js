@@ -11415,6 +11415,10 @@ async function runClientImpl({
       { ...BRIDGE_OPTS_CLIENT, networkReady, ipv6Role: ipv6Runtime ? 'client' : null },
       async () => {
         if (routeCtx.stopping) throw new Error('client stopping');
+        if (routeCtx.hostRoutes && splitDefault && routeCtx.serverIp) {
+          const repaired = routeCtx.hostRoutes.repairUplink(routeCtx.dev, routeCtx.gw ?? null, routeCtx.serverIp);
+          if (repaired) console.log(`[clean-vpn] uplink-repair: restored ${repaired} owned routes before TLS reconnect`);
+        }
         const sock = await connectTlsVpn(tlsConnectOpts);
         try {
           if (routeCtx.stopping) throw new Error('client stopping');

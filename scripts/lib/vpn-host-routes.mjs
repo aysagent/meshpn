@@ -110,6 +110,40 @@ export function openHostRoutes({ directory = hostRouteStateDirectory(), run: inj
       state.routes.push(r); save(); run('ip', ['-4', 'route', 'add', ...routeArgs(r)]);
       checkpoint('applied', structuredClone(state)); assert.ok(audit().some(v => owned(v, r)), 'route add read-back failed');
     },
+    repairUplink(dev, gateway, serverIp) {
+      // DHCP/networkd may remove our uplink routes on carrier loss while TUN
+      // split defaults survive. Reconnect must not route the exit into TUN.
+      // Only re-add durable, same-boot ownership on the SAME interface/gateway.
+      // Never replace/adopt foreign routes or choose a new network silently.
+      deadline = performance.now() + 15000;
+      assert.equal(state?.stage, 'active'); iface(dev); assert.notEqual(dev, state.tun);
+      assert.ok(gateway === null || isIPv4(gateway)); assert.ok(isIPv4(serverIp));
+      const table = audit(), current = links();
+      assert.ok(current[state.tun], 'TUN disappeared; recovery required');
+      const defaults = table.filter(r => ['default', '0.0.0.0/0'].includes(r.dst));
+      assert.ok(defaults.length === 1 && defaults[0].dev === dev && (defaults[0].gateway ?? null) === gateway
+        && (!defaults[0].type || defaults[0].type === 'unicast') && !defaults[0].nexthops,
+      'uplink default absent or changed; reconnect postponed');
+      const target = `${serverIp}/32`, intent = state.routes.find(r => r.dst === target);
+      if (intent) assert.ok(intent.dev === dev && intent.gateway === gateway, 'exit route ownership mismatch');
+      else {
+        const borrowed = table.filter(r => normalizeDst(r.dst) === target);
+        assert.ok(borrowed.length === 1 && borrowed[0].dev === dev && (borrowed[0].gateway ?? null) === gateway
+          && Number(borrowed[0].protocol) !== PROTO && (!borrowed[0].type || borrowed[0].type === 'unicast')
+          && !borrowed[0].nexthops, 'unowned exit bypass disappeared or changed; manual review required');
+      }
+      let repaired = 0;
+      for (const r of state.routes.filter(r => r.dev === dev)) {
+        assert.equal(r.gateway, gateway, 'uplink route gateway mismatch');
+        if (table.some(row => owned(row, r))) continue;
+        // audit before every add: a concurrent foreign route is never replaced.
+        if (audit().some(row => owned(row, r))) continue;
+        run('ip', ['-4', 'route', 'add', ...routeArgs(r)]);
+        checkpoint('repaired', structuredClone(state));
+        assert.ok(audit().some(row => owned(row, r)), 'route repair read-back failed'); repaired++;
+      }
+      return repaired;
+    },
     relaxRpFilter() {
       deadline = performance.now() + 120000; assert.equal(state.stage, 'active'); audit();
       assert.equal(state.rp, null); const before = rp(); if (before === 2) return;

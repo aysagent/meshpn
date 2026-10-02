@@ -1,0 +1,76 @@
+#!/usr/bin/env node
+/** Narrow, runtime-only repair for the reviewed Radxa host-client profile.
+ * No service, route, forwarding sysctl, filter, USB or IPv6 changes.
+ */
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+
+export const usbSnatRule = ['-s', '192.168.7.0/24', '-o', 'tun0', '-m', 'comment',
+  '--comment', 'clean-vpn-usb-snat-v1', '-j', 'SNAT', '--to-source', '10.99.0.2'];
+export const usbSnatLine = '-A POSTROUTING ' + usbSnatRule.join(' ');
+const binaries = { ip: '/usr/sbin/ip', iptables: '/usr/sbin/iptables', sysctl: '/usr/sbin/sysctl',
+  systemctl: '/usr/bin/systemctl', guard: '/usr/local/bin/clean-vpn-killswitch.sh' };
+const execute = (name, args) => execFileSync(binaries[name], args, { encoding: 'utf8', timeout: 10000,
+  maxBuffer: 128 * 1024, env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C' } });
+
+export function changeUsbSnat({ apply = false, remove = false, run = execute } = {}) {
+  const nat = (...args) => run('iptables', ['-w', '5', '-t', 'nat', ...args]);
+  const snapshot = () => nat('-S', 'POSTROUTING').trim().split('\n');
+  const before = snapshot();
+  assert.equal(before[0], '-P POSTROUTING ACCEPT', 'unexpected NAT policy');
+  assert.ok(before.every(line => ['-P POSTROUTING ACCEPT', '-A POSTROUTING -o wlan0 -j MASQUERADE',
+    usbSnatLine].includes(line)), 'unknown POSTROUTING rules: manual review required');
+  const matches = before.filter(line => line === usbSnatLine).length;
+  assert.ok(matches <= 1, 'duplicate owned SNAT rules: no changes');
+  if (!remove) {
+    for (const unit of ['clean-vpn.service', 'clean-vpn-killswitch.service',
+      'clean-vpn-usb-rescue.socket', 'clean-vpn-usb-rescue-address.service']) {
+      assert.equal(run('systemctl', ['is-active', unit]).trim(), 'active', `${unit} must be active`);
+    }
+    const guard = run('guard', ['status']).trim().split('\n');
+    for (const family of [4, 6]) assert.ok(guard.includes(
+      `[clean-vpn-killswitch] IPv${family}: cvks2:both:block:tun0:154.62.226.216:22`), 'unexpected guard profile');
+    assert.equal(run('sysctl', ['-n', 'net.ipv4.ip_forward']).trim(), '1', 'IPv4 forwarding must already be enabled');
+    const addresses = JSON.parse(run('ip', ['-j', 'addr', 'show']));
+    const usb = addresses.find(i => i.ifname === 'usb0'), tun = addresses.find(i => i.ifname === 'tun0');
+    assert.ok(usb?.flags.includes('UP') && usb.address === '02:00:00:00:00:02'
+      && usb.addr_info.some(a => a.family === 'inet' && a.local === '192.168.7.1' && a.prefixlen === 24), 'unexpected USB interface');
+    assert.ok(tun?.flags.includes('UP') && tun.addr_info.some(a => a.family === 'inet' && a.local === '10.99.0.2'), 'TUN not ready');
+    const exitRoute = JSON.parse(run('ip', ['-j', '-4', 'route', 'get', '154.62.226.216']))[0];
+    assert.ok(exitRoute?.dev === 'wlan0' && exitRoute.gateway, 'exit bypass not ready; restore host VPN first');
+    for (const destination of ['1.1.1.1', '34.160.111.145']) {
+      const routes = JSON.parse(run('ip', ['-j', '-4', 'route', 'get', destination, 'from', '192.168.7.19', 'iif', 'usb0']));
+      assert.equal(routes[0]?.dev, 'tun0', 'forwarded route must use TUN');
+    }
+    const forward = run('iptables', ['-w', '5', '-t', 'filter', '-S', 'FORWARD']).trim().split('\n');
+    assert.equal(forward[0], '-P FORWARD ACCEPT', 'unexpected FORWARD policy');
+    assert.equal(forward[1], '-A FORWARD -m comment --comment cvks2-hook -j CLEANVPN_KS_FWD', 'guard must precede forwarding');
+    assert.ok(forward.slice(2).every(line => ['-A FORWARD -i usb0 -o wlan0 -j ACCEPT',
+      '-A FORWARD -i wlan0 -o usb0 -j ACCEPT'].includes(line)), 'unknown FORWARD rules');
+  }
+  const needed = remove ? matches === 1 : matches === 0;
+  if (apply && needed) {
+    assert.deepEqual(snapshot(), before, 'NAT changed during preflight');
+    nat(...(remove ? ['-D', 'POSTROUTING'] : ['-I', 'POSTROUTING', '1']), ...usbSnatRule);
+    assert.deepEqual(snapshot(), remove ? before.filter(line => line !== usbSnatLine)
+      : [before[0], usbSnatLine, ...before.slice(1)], 'unexpected NAT after change; inspect rules, no automatic rollback');
+  }
+  return { status: !needed ? (remove ? 'absent' : 'already-present') : !apply ? 'planned' : remove ? 'removed' : 'applied',
+    persistent: false, rule: usbSnatLine, changed: apply && needed,
+    untouched: ['services', 'USB/SSH', 'routes', 'forwarding sysctl', 'filter/kill-switch', 'IPv6'],
+    limitations: ['reviewed-Radxa-profile-only', 'no-concurrent-firewall-administrators',
+      'runtime-only-lost-on-reboot', 'not-forwarded-client-leak-acceptance'] };
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    const args = process.argv.slice(2);
+    assert.ok(args.every(a => ['--apply', '--remove'].includes(a)) && new Set(args).size === args.length, 'use [--remove] [--apply]');
+    assert.equal(process.getuid?.(), 0, 'root required');
+    assert.equal(fs.readFileSync('/proc/1/comm', 'utf8').trim(), 'systemd', 'systemd host required');
+    assert.equal(fs.readlinkSync('/proc/self/ns/net'), fs.readlinkSync('/proc/1/ns/net'), 'host network namespace required');
+    console.log(JSON.stringify(changeUsbSnat({ apply: args.includes('--apply'), remove: args.includes('--remove') }), null, 2));
+  } catch (error) { console.error(JSON.stringify({ status: 'refused-or-incomplete', error: error.message })); process.exitCode = 1; }
+}

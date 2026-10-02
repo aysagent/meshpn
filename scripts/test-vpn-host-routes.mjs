@@ -140,3 +140,68 @@ test('unrecorded protocol-186 route is not adopted or removed', t => {
   assert.throws(() => r.add('198.51.100.2/32', 'eth0'), /incompatible/);
   r.restore(); r.release(); assert.equal(f.routes.length, 1); assert.equal(f.changes, 0);
 });
+
+test('DHCP route loss is repaired before reconnect without replacing routes or changing the journal', t => {
+  const f = fixture(t), r = f.open(); r.begin('tun0');
+  r.add('198.51.100.2/32', 'eth0', '192.0.2.1'); r.add('192.168.0.0/16', 'eth0', '192.0.2.1');
+  r.add('0.0.0.0/1', 'tun0');
+  const defaults = { dst: 'default', dev: 'eth0', gateway: '192.0.2.1', protocol: 'dhcp', prefsrc: '192.0.2.7' };
+  f.routes.push(defaults);
+  const saved = readFileSync(`${f.directory}/journal.json`, 'utf8');
+  f.routes = f.routes.filter(row => row.dev !== 'eth0' || row.dst === 'default');
+  assert.equal(r.repairUplink('eth0', '192.0.2.1', '198.51.100.2'), 2);
+  assert.equal(r.repairUplink('eth0', '192.0.2.1', '198.51.100.2'), 0);
+  assert.equal(readFileSync(`${f.directory}/journal.json`, 'utf8'), saved);
+  r.restore(); r.release(); assert.deepEqual(f.routes, [defaults]);
+});
+for (const fault of ['no-default', 'new-gateway', 'new-interface', 'foreign-exit', 'foreign-private', 'missing-tun', 'multiple-defaults'])
+  test(`uplink repair refuses ${fault} before writes`, t => {
+    const f = fixture(t), r = f.open(); r.begin('tun0');
+    r.add('198.51.100.2/32', 'eth0', '192.0.2.1'); r.add('192.168.0.0/16', 'eth0', '192.0.2.1');
+    f.routes = [{ dst: 'default', dev: 'eth0', gateway: '192.0.2.1' }];
+    if (fault === 'no-default') f.routes = [];
+    if (fault === 'new-gateway') f.routes[0].gateway = '192.0.2.254';
+    if (fault === 'new-interface') f.links[1].ifindex++;
+    if (fault === 'foreign-exit') f.routes.push({ dst: '198.51.100.2', dev: 'tun0', protocol: 'static' });
+    if (fault === 'foreign-private') f.routes.push({ dst: '192.168.0.0/16', dev: 'eth0', gateway: '192.0.2.1', protocol: 'static' });
+    if (fault === 'missing-tun') f.links.shift();
+    if (fault === 'multiple-defaults') f.routes.push({ ...f.routes[0], metric: 10 });
+    const changes = f.changes;
+    try { assert.throws(() => r.repairUplink('eth0', '192.0.2.1', '198.51.100.2')); assert.equal(f.changes, changes); }
+    finally { r.release(); }
+  });
+test('borrowed exit bypass is not recreated after loss', t => {
+  const f = fixture(t), r = f.open();
+  f.routes.push({ dst: '198.51.100.2', dev: 'eth0', gateway: '192.0.2.1', protocol: 'static' });
+  r.begin('tun0'); r.add('198.51.100.2/32', 'eth0', '192.0.2.1');
+  f.routes.push({ dst: 'default', dev: 'eth0', gateway: '192.0.2.1' });
+  assert.equal(r.repairUplink('eth0', '192.0.2.1', '198.51.100.2'), 0);
+  f.routes.shift();
+  try { assert.throws(() => r.repairUplink('eth0', '192.0.2.1', '198.51.100.2'), /unowned exit bypass/); assert.equal(f.changes, 0); }
+  finally { r.release(); }
+});
+test('native TLS connector repairs bypass before opening the replacement socket', () => {
+  const start = clientSource.indexOf('const repaired = routeCtx.hostRoutes.repairUplink(');
+  assert.ok(start > 0);
+  assert.match(clientSource.slice(start, start + 500), /repairUplink[\s\S]*await connectTlsVpn\(tlsConnectOpts\)/);
+});
+test('every TLS reconnect audits routes; failed audit never opens a TLS socket', async () => {
+  const marker = clientSource.indexOf('const repaired = routeCtx.hostRoutes.repairUplink(');
+  const start = clientSource.lastIndexOf('async () => {', marker);
+  const end = clientSource.indexOf('\n      },', marker) + '\n      }'.length;
+  assert.ok(start > 0 && end > start);
+  const events = [], routeCtx = { stopping: false, serverIp: '198.51.100.2', dev: 'eth0', gw: '192.0.2.1',
+    hostRoutes: { repairUplink(...args) { events.push(['repair', ...args]); if (fail) throw Error('no uplink'); return 1; } } };
+  let fail = false;
+  const connect = runInNewContext(`let tlsVpnSocket; (${clientSource.slice(start, end)})`, {
+    routeCtx, splitDefault: true, ipv6Runtime: null, tlsConnectOpts: {}, console: { log() {} },
+    connectTlsVpn: async () => { events.push(['connect']); return {}; },
+  });
+  await connect(); await connect();
+  assert.deepEqual(events.map(e => e[0]), ['repair', 'connect', 'repair', 'connect']);
+  fail = true;
+  await assert.rejects(connect(), /no uplink/);
+  assert.equal(events.at(-1)[0], 'repair');
+  const n = events.length; routeCtx.stopping = true;
+  await assert.rejects(connect(), /client stopping/); assert.equal(events.length, n);
+});
