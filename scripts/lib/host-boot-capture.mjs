@@ -62,8 +62,9 @@ export class PcapHeaders {
 export function classifyPacket(packet, exitIp) {
   if (packet.length < 20) return { category: 'unparsed' };
   const ifindex = packet.readUInt32BE(4), outbound = packet[10] === 4;
-  const result = { ifindex, outbound, category: 'other-link-protocol' };
   const ether = packet.readUInt16BE(0), ip = packet.subarray(20);
+  const result = { ifindex, outbound, etherType: `0x${ether.toString(16).padStart(4, '0')}`,
+    category: 'other-link-protocol' };
   if (ether === 0x0806) return { ...result, category: 'arp' };
   let protocol, offset, dest, privateDestination = false;
   if (ether === 0x0800 && ip.length >= 20 && ip[0] >> 4 === 4) {
@@ -98,6 +99,10 @@ export function classifyPacket(packet, exitIp) {
     const sourcePort = ip.readUInt16BE(offset), port = ip.readUInt16BE(offset + 2);
     result.port = port; result.protocol = protocol === 6 ? 'tcp' : 'udp';
     if ([53, 853].includes(port)) return { ...result, category: 'direct-dns-or-dot' };
+    // Endpoint classification only: no DNS payload parsing or new allowlist entry.
+    if (protocol === 17 && port === 5353
+        && (dest === '224.0.0.251' || dest === 'ff02:0:0:0:0:0:0:fb'))
+      return { ...result, category: 'mdns-local-review' };
     if (ether === 0x0800 && protocol === 17 && sourcePort === 68 && port === 67)
       return { ...result, category: 'dhcp4' };
     if (ether === 0x86dd && protocol === 17 && sourcePort === 546 && port === 547)
@@ -106,6 +111,11 @@ export function classifyPacket(packet, exitIp) {
       return { ...result, category: 'exit-tls' };
   }
   return { ...result, category: privateDestination ? 'local-destination-review' : 'unexpected-egress' };
+}
+
+export function captureTrafficNeedsReview(counts) {
+  return Object.keys(counts).some(k => !['arp', 'icmpv6-link-control', 'mldv2-link-control',
+    'dhcp4', 'dhcp6', 'exit-tls'].includes(k));
 }
 
 const command = (file, args) => execFileSync(file, args, { encoding: 'utf8', timeout: 5000, maxBuffer: 256 * 1024 });
@@ -125,7 +135,7 @@ const writeReport = report => {
 export async function observe() {
   const config = JSON.parse(fs.readFileSync(`${captureDir}/config.json`, 'utf8'));
   assert.equal(config.schema, 1); assert.match(config.exitIp, /^\d+\.\d+\.\d+\.\d+$/);
-  const report = { schema: 1, kind: captureName, bootId: bootId(), startedMonotonic: mono(),
+  const report = { schema: 1, classifierVersion: 2, kind: captureName, bootId: bootId(), startedMonotonic: mono(),
     status: 'starting', interface: 'wlan0', windowSeconds: 90, counts: {}, samples: [],
     limitations: ['local-observation-not-on-wire-proof', 'no-initramfs-coverage',
       'bounded-window-no-active-probes', 'not-a-proof-against-other-network-managers',
@@ -186,7 +196,7 @@ export async function observe() {
       const started = Number(fields[unit.endsWith('.socket') ? 'ActiveEnterTimestampMonotonic' : 'ExecMainStartTimestampMonotonic']);
       if (started) assert.ok(started >= report.readyMonotonic * 1e6, `consumer started before capture ready: ${unit}`);
     }
-    const review = Object.keys(report.counts).some(k => !['arp', 'icmpv6-link-control', 'mldv2-link-control', 'dhcp4', 'dhcp6', 'exit-tls'].includes(k));
+    const review = captureTrafficNeedsReview(report.counts);
     report.status = report.droppedPackets || !report.firstUpObservedMonotonic || !Object.keys(report.counts).length
       ? 'inconclusive' : review ? 'traffic-review-required' : 'no-unexpected-egress-observed';
   } catch (e) {

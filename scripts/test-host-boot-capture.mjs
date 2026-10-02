@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PcapHeaders, classifyPacket, captureUnit, consumers, gateText } from './lib/host-boot-capture.mjs';
+import { PcapHeaders, classifyPacket, captureTrafficNeedsReview, captureUnit, consumers, gateText } from './lib/host-boot-capture.mjs';
 
 function packet({ ip = [1, 1, 1, 1], port = 53, source = 1234, protocol = 17, fragment = 0 } = {}) {
   const b = Buffer.alloc(48); b.writeUInt16BE(0x0800); b.writeUInt32BE(3, 4); b[10] = 4;
@@ -48,4 +48,63 @@ test('only the narrow Linux link-local MLDv2 header form is allowed', () => {
   assert.equal(classifyPacket(p,'').category,'mldv2-link-control');
   p[59] = 0x17; assert.equal(classifyPacket(p,'').category,'ipv6-extension-review');
   p[59] = 0x16; p[64] = 1; assert.equal(classifyPacket(p,'').category,'ipv6-extension-review');
+});
+
+test('SLL2 protocol is retained, including unknown values, without packet bodies', () => {
+  for (const ether of [0x0004, 0x0806, 0x888e, 0x88cc, 0xffff]) {
+    const p = Buffer.alloc(64, 0x61);
+    p.writeUInt16BE(ether); p.writeUInt32BE(3, 4); p[10] = 4;
+    const category = ether === 0x0806 ? 'arp' : 'other-link-protocol';
+    assert.deepEqual(classifyPacket(p, ''), {
+      ifindex: 3, outbound: true, etherType: `0x${ether.toString(16).padStart(4, '0')}`, category,
+    });
+    assert.equal(captureTrafficNeedsReview({ [category]: 1 }), ether !== 0x0806);
+  }
+  assert.equal(classifyPacket(packet(), '').etherType, '0x0800');
+  assert.deepEqual(classifyPacket(Buffer.alloc(19), ''), { category: 'unparsed' });
+});
+
+test('only exact IPv4/IPv6 multicast UDP5353 endpoints get mDNS review category', () => {
+  const v4 = packet({ ip: [224, 0, 0, 251], port: 5353 });
+  const v6 = Buffer.alloc(68); v6.writeUInt16BE(0x86dd); v6.writeUInt32BE(3, 4); v6[10] = 4;
+  v6[20] = 0x60; v6[26] = 17; v6[27] = 255; v6[44] = 0xff; v6[45] = 2;
+  v6[59] = 0xfb; v6.writeUInt16BE(5353, 62);
+  for (const [p, protocolOffset, portOffset, destinationLastByte] of [
+    [v4, 29, 42, 39], [v6, 26, 62, 59],
+  ]) {
+    assert.equal(classifyPacket(p, '').category, 'mdns-local-review');
+    const tcp = Buffer.from(p); tcp[protocolOffset] = 6;
+    assert.equal(classifyPacket(tcp, '').category, 'unexpected-egress');
+    const port = Buffer.from(p); port.writeUInt16BE(5354, portOffset);
+    assert.equal(classifyPacket(port, '').category, 'unexpected-egress');
+    const destination = Buffer.from(p); destination[destinationLastByte] = 0xfc;
+    assert.equal(classifyPacket(destination, '').category, 'unexpected-egress');
+    assert.equal(classifyPacket(p.subarray(0, portOffset + 1), '').category, 'unparsed');
+  }
+  assert.equal(classifyPacket(v6, '').etherType, '0x86dd');
+  assert.equal(classifyPacket(packet({ port: 5353 }), '').category, 'unexpected-egress');
+  v4.writeUInt16BE(1, 26);
+  assert.equal(classifyPacket(v4, '').category, 'fragment-review');
+  v6[26] = 0;
+  assert.equal(classifyPacket(v6, '').category, 'ipv6-extension-review');
+});
+
+test('mDNS and unknown link protocols still require review, including Radxa boot counts', () => {
+  const baseline = { 'mldv2-link-control': 11, 'icmpv6-link-control': 3, dhcp4: 3, dhcp6: 7, arp: 1, 'exit-tls': 55 };
+  assert.equal(captureTrafficNeedsReview(baseline), false);
+  for (const category of ['mdns-local-review', 'other-link-protocol', 'unexpected-egress',
+    'direct-dns-or-dot', 'local-destination-review', 'unparsed', 'future-unknown-category']) {
+    assert.equal(captureTrafficNeedsReview({ ...baseline, [category]: 1 }), true);
+  }
+  assert.equal(captureTrafficNeedsReview({ ...baseline, 'mdns-local-review': 6, 'other-link-protocol': 2 }), true);
+});
+
+test('big-endian pcap retains the network-order SLL2 protocol', () => {
+  const header = Buffer.alloc(24); header.writeUInt32BE(0xa1b2c3d4); header.writeUInt32BE(276, 20);
+  const record = Buffer.alloc(16); record.writeUInt32BE(48, 8);
+  const p = packet(); p.writeUInt16BE(0x888e);
+  const seen = []; const parser = new PcapHeaders(p => seen.push(classifyPacket(p, '')));
+  for (const byte of Buffer.concat([header, record, p])) parser.push(Buffer.from([byte]));
+  parser.finish();
+  assert.deepEqual(seen, [{ ifindex: 3, outbound: true, etherType: '0x888e', category: 'other-link-protocol' }]);
 });
