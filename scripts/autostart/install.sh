@@ -34,6 +34,8 @@
 #   NETWORKD_GUARD     1 — opt-in host TLS/H2 candidate: networkd requires guard;
 #                      stop retains rules, explicit uninstall releases them.
 #                      Requires console recovery if boot guard fails.
+#   USB_GATEWAY       1 — fixed reviewed Radxa profile: install USB rescue and
+#                      persistent SNAT. Existing installation: --usb-gateway only.
 #
 set -euo pipefail
 
@@ -75,6 +77,14 @@ if [[ -z "$NODE_BIN" && -n "${SUDO_USER:-}" ]]; then
 fi
 [[ -n "$NODE_BIN" ]] || die "не найден node. Запустите как 'sudo env \"PATH=\$PATH\" ...' или задайте NODE_BIN=/путь/к/node"
 [[ -x "$NODE_BIN" ]] || die "NODE_BIN='$NODE_BIN' не исполняемый"
+
+USB_GATEWAY="${USB_GATEWAY:-0}"
+[[ "$USB_GATEWAY" == 0 || "$USB_GATEWAY" == 1 ]] || die 'USB_GATEWAY must be 0 or 1'
+# Additive upgrade only; never bypass the fresh-install gate for ordinary argv.
+if [[ "$#" == 1 && "$1" == --usb-gateway ]]; then
+  [[ "$SERVICE_NAME" == clean-vpn ]] || die 'USB gateway requires SERVICE_NAME=clean-vpn'
+  exec "$NODE_BIN" "$REPO_ROOT/scripts/clean-vpn-usb-gateway.mjs" --apply
+fi
 
 # Never replace live files or disable an existing guard. A successful stop is
 # not sufficient: stale DNS/IPv6/host journals can still own network state.
@@ -147,6 +157,15 @@ if [[ "$KILLSWITCH" == "1" ]]; then
   # Validate before overwriting installed files; this emits a plan, never rules.
   bash "$KS_SRC" plan "--scope=$KS_SCOPE" "--ipv6=$KS_IPV6" "--tun=tun0" \
     "--server=$KS_SERVER_IPS" "--ssh-port=$KS_SSH_PORT" >/dev/null
+fi
+
+if [[ "$USB_GATEWAY" == 1 ]]; then
+  [[ "$SERVICE_NAME" == clean-vpn && "$NETWORKD_GUARD" == 1 && "$KS_SSH_PORT" == 22 &&
+     "$KS_SERVER_IPS" == 154.62.226.216 && "$SERVER_RAW" == 154.62.226.216:443 ]] ||
+    die 'USB gateway requires the reviewed clean-vpn networkd profile (exit 154.62.226.216:443, SSH 22)'
+  # Rescue must work before publishing dependencies that can block the uplink.
+  # SNAT is prepared but not enabled until the VPN and guard have been published.
+  "$NODE_BIN" "$REPO_ROOT/scripts/clean-vpn-usb-gateway.mjs" --prepare --apply
 fi
 
 # Безопасно сериализуем аргументы для вставки в run.sh (сохраняет кавычки/пробелы).
@@ -282,6 +301,12 @@ fi
 # же транзакции поднимает network-online.target (wait-online может висеть десятки секунд).
 log "systemctl restart --no-block $SERVICE_NAME"
 systemctl restart --no-block "$SERVICE_NAME"
+
+if [[ "$USB_GATEWAY" == 1 ]]; then
+  systemctl enable clean-vpn-usb-snat.service
+  systemctl start --no-block clean-vpn-usb-snat.service
+  log 'USB gateway enabled: SNAT waits for VPN readiness; test rescue login on 192.168.7.1:2222'
+fi
 
 log "Готово. Сервис запускается в фоне (первый старт может подождать network-online.target)."
 if [[ "$KILLSWITCH" == "1" ]]; then

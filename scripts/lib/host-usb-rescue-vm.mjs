@@ -91,12 +91,21 @@ async function test() {
   await until(() => state(socket) === 'active', 'device reappearance did not activate rescue');
   check('USB recreation restores address and authenticated login', await login());
   check('networkd remains stopped throughout rescue test', state('systemd-networkd.service') !== 'active');
+  if (process.env.USB_GATEWAY_LAB === '1') {
+    const { testGateway } = await import('./host-usb-gateway-vm.mjs');
+    await testGateway({ command, ip, ctl, put, check, until, state, login });
+  }
   console.log('USB_RESCUE_PASS');
 }
 if (process.argv[1]?.endsWith('/host-usb-rescue-vm.mjs')) {
   assert.ok(fs.readFileSync('/proc/cmdline', 'utf8').trim().split(/\s+/).includes('meshpn.usb-rescue-lab=1'));
   assert.equal(fs.readFileSync('/sys/class/dmi/id/sys_vendor', 'utf8').trim(), 'QEMU');
-  if (process.argv[2] === 'prepare') prepare();
+  if (process.argv[2] === 'prepare') {
+    prepare();
+    if (process.env.USB_GATEWAY_LAB === '1' && process.env.USB_RESCUE_BOOT === 'installed') {
+      const { prepareGateway } = await import('./host-usb-gateway-vm.mjs'); prepareGateway({ put });
+    }
+  }
   else try { await test(); } catch (e) { console.error('USB_RESCUE_FAIL', e.stack); }
   finally { command('/usr/bin/systemctl', ['poweroff', '--no-block']); }
 }

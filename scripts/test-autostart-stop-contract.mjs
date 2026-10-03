@@ -102,6 +102,21 @@ test('uninstall holds all released/absent journal locks through guard removal an
   assert.equal(f.removed.length, 4); assert.equal(f.held.size, 0);
   assert.ok(f.calls.indexOf('open:2') < f.calls.findIndex(c=>c.includes('stop clean-vpn-killswitch')));
 });
+test('USB removal is audited before VPN stop and runs under released locks before guard removal', () => {
+  const f = uninstallFixture();
+  uninstallHostService({ ...f.options,
+    inspectExtras() { assert.ok(!f.calls.some(c => c.includes('stop clean-vpn.service'))); f.calls.push('usb-preflight'); },
+    removeExtras() { assert.equal(f.held.size, 3); f.calls.push('usb-remove'); },
+  });
+  assert.ok(f.calls.indexOf('usb-preflight') < f.calls.findIndex(c => c.includes('stop clean-vpn.service')));
+  assert.ok(f.calls.indexOf('usb-remove') < f.calls.findIndex(c => c.includes('stop clean-vpn-killswitch')));
+});
+for (const hook of ['inspectExtras', 'removeExtras']) test(`failure in ${hook} retains guard and main files`, () => {
+  const f = uninstallFixture();
+  assert.throws(() => uninstallHostService({ ...f.options, [hook]() { throw Error('USB audit failed'); } }), /USB audit failed/);
+  assert.deepEqual(f.removed, []); assert.equal(f.held.size, 0);
+  assert.ok(!f.calls.some(c => c.includes('stop clean-vpn-killswitch') || c.includes(' down ')));
+});
 for (const stage of ['active', 'installing', 'restoring', 'parked']) for (let index = 0; index < 3; index++)
   test(`uninstall refuses journal ${index}/${stage} even if systemctl stop succeeded`, () => {
     const states = [null,null,null]; states[index] = {stage}; const f = uninstallFixture({states});

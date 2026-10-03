@@ -15,14 +15,17 @@ const properties = ['LoadState', 'ActiveState', 'PartOf', 'BindsTo', 'NetworkNam
   'RootDirectory', 'RootImage', 'BindPaths', 'BindReadOnlyPaths', 'TemporaryFileSystem',
   'Requires', 'Requisite', 'Conflicts', 'PropagatesStopTo', 'StopWhenUnneeded'];
 export function uninstallHostService({ service = 'clean-vpn', io = fs, run = runTunnelDnsCommand,
-  open = [openHostRoutes, openTunnelDnsJournal, openIpv6Runtime], log = console.error } = {}) {
+  open = [openHostRoutes, openTunnelDnsJournal, openIpv6Runtime], log = console.error,
+  inspectExtras = () => {}, removeExtras = () => {} } = {}) {
   let gated = false;
   return withStoppedHostService({ service, io, run, open, log, beforeStop({ installed, paths, ctl }) {
     gated = installed[1] && usesNetworkdGate(io.readFileSync(paths[1], 'utf8'));
     if (gated) assertNetworkdGate({ service, io, ctl, allowDetached: true });
+    inspectExtras(); // read-only refusal before stopping the VPN
   } }, ({ installed, ctl, command, exists, inspect, paths }) => {
     const [unitPath, guardPath, wrapper, guardScript] = paths;
     const unit = `${service}.service`, guard = `${service}-killswitch.service`;
+    removeExtras(); // quiesce SNAT retries and remove only owned NAT before guard removal
     if (gated) detachNetworkdGate({ service, io, ctl });
     if (installed[1]) { ctl('stop', guard); assert.equal(inspect(guard).ActiveState, 'inactive', 'guard stop failed; protection retained'); }
     if (installed[3]) command(guardScript, ['down', '--tun=tun0']);

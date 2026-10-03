@@ -1,5 +1,10 @@
 # USB-клиент за текущим host VPN: точечный SNAT
 
+Для постоянной установки теперь есть [USB-режим общего установщика](clean-vpn-usb-gateway.md).
+Описанный ниже отдельный helper по-прежнему меняет только текущее правило.
+На Radxa `fc8c50d` пользователь подтвердил: после применения SNAT
+`curl --interface en9` на Mac возвращает `154.62.226.216`.
+
 Установленная на Radxa конфигурация — host-client, native TLS, split-default,
 `--ipv6=auto`, persistent guard both/block. В ней **нет** `--client-lan-subnet`.
 Просто добавить этот флаг нельзя: IPv6 runtime и networkd installer пока
