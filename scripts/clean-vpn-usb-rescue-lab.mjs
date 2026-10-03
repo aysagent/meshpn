@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
+import { addUsbMssVmImage } from './lib/usb-mss-vm-image.mjs';
 const base = resolve(process.argv[2] ?? '');
 const gateway = process.argv[4] === '--gateway';
 assert.ok([3, 4].includes(process.argv.length) || process.argv.length === 5 && gateway, 'usage: BASE [TOOLS [--gateway]]');
@@ -24,7 +25,8 @@ const put = (path, value, mode = 0o644) => {
   fs.writeFileSync(dst, value, { mode });
 };
 const sources = ['scripts/clean-vpn-usb-rescue.mjs', 'scripts/lib/host-usb-rescue.mjs', 'scripts/lib/host-usb-rescue-vm.mjs', 'scripts/autostart/killswitch.sh'];
-if (gateway) sources.push('scripts/lib/host-usb-gateway.mjs', 'scripts/lib/host-usb-gateway-vm.mjs', 'scripts/clean-vpn-usb-snat.mjs');
+if (gateway) sources.push('scripts/lib/host-usb-gateway.mjs', 'scripts/lib/host-usb-gateway-vm.mjs', 'scripts/clean-vpn-usb-snat.mjs',
+  'scripts/lib/host-update.mjs', 'scripts/lib/host-uninstall.mjs', 'scripts/fixtures/usb-gateway-pre-mss.txt', 'scripts/lib/usb-mss-vm-image.mjs');
 for (const path of sources) put('/project/' + path, fs.readFileSync(path));
 if (gateway) fs.symlinkSync('/usr/bin/ip', join(guest, 'usr/sbin/ip')); // Debian Radxa executable layout
 // Host OS executables only, never host keys or SSH/PAM configuration.
@@ -40,13 +42,15 @@ put('/etc/systemd/system/usb-rescue-test.service', '[Unit]\nAfter=systemd-udev-t
 put('/etc/systemd/system/clean-vpn-killswitch.service', '[Unit]\nDefaultDependencies=no\n[Service]\nType=oneshot\nExecStart=/bin/false\n');
 for (const unit of ['systemd-networkd.service', 'systemd-networkd.socket']) put(`/etc/systemd/system/${unit}.d/90-rescue-test.conf`, '[Unit]\nRequires=clean-vpn-killswitch.service\nAfter=clean-vpn-killswitch.service\n');
 put('/etc/systemd/system/primary-ssh.service', '[Service]\nExecStart=/usr/sbin/sshd -D -e\nRuntimeDirectory=sshd\nRuntimeDirectoryPreserve=yes\nStandardError=append:/run/primary-ssh.log\n');
-const oldInit = fs.readFileSync(join(guest, 'init'), 'utf8');
+const addon = gateway ? addUsbMssVmImage(fs.readFileSync(join(guest, 'init'), 'utf8'), put) : null;
+const oldInit = addon?.init ?? fs.readFileSync(join(guest, 'init'), 'utf8');
 assert.ok(oldInit.includes('mount -t ext4'));
 const init = oldInit.slice(0, oldInit.indexOf('mount -t ext4'));
 const report = { kind: 'clean-vpn-usb-rescue-lab', status: 'failed', nic: 'none', hostSharedFilesystem: false,
   base, baseReportSha256: hash(fs.readFileSync(join(base, 'report.json'))),
   sourceHashes: Object.fromEntries(sources.map(p => [p, hash(fs.readFileSync(p))])), boots: [] };
 if (gateway) {
+  report.mssImageHashes = addon.hashes;
   report.kind = 'clean-vpn-usb-gateway-lab';
   report.limitations = ['VPN-service-readiness-fixture-not-real-TLS', 'veth-not-physical-USB',
     'second-boot-recreates-installed-files-not-persistent-disk', 'no-full-shell-installer-in-this-VM'];

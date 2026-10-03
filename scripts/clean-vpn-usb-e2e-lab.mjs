@@ -10,6 +10,7 @@ import { usbE2eUnits } from './lib/usb-e2e-vm.mjs';
 import { assertUsbE2eEvidence, assertUsbFaultEvidence } from './lib/usb-e2e-evidence.mjs';
 import { legacyUsbGuardHash, legacyUsbSnatHash } from './lib/host-usb-dns-upgrade.mjs';
 import { assertUsbSoakEvidence } from './lib/usb-soak-evidence.mjs';
+import { addUsbMssVmImage } from './lib/usb-mss-vm-image.mjs';
 
 const [base, tools, option] = process.argv.slice(2);
 const networkOnly = option === '--network-faults';
@@ -58,7 +59,9 @@ try {
     if (!fs.existsSync(join(guest, path))) fs.symlinkSync(target, join(guest, path));
   for (const [name, contents] of Object.entries(usbE2eUnits())) put('/etc/systemd/system/' + name,
     soak && name === 'usb-e2e-driver.service' ? contents.replace('TimeoutStartSec=24min', 'TimeoutStartSec=54min') : contents);
-  const original = fs.readFileSync(join(guest, 'init'), 'utf8'); assert.ok(original.includes('mount -t ext4'));
+  const addon = addUsbMssVmImage(fs.readFileSync(join(guest, 'init'), 'utf8'), put);
+  report.mssImageHashes = addon.hashes;
+  const original = addon.init; assert.ok(original.includes('mount -t ext4'));
   put('/init', original.slice(0, original.indexOf('mount -t ext4')) + 'mount -t ext4 -o rw /dev/vda /state\nnode scripts/lib/usb-e2e-vm.mjs prepare\nmkdir -p /run/dbus\nexec /usr/lib/systemd/systemd --system --log-target=console --log-level=info --show-status=no\n', 0o755);
   const paths = ['.']; const walk = p => { for (const name of fs.readdirSync(join(guest, p))) { const q = p ? p + '/' + name : name; paths.push(q); if (fs.lstatSync(join(guest, q)).isDirectory()) walk(q); } }; walk('');
   fs.writeFileSync(initrd, gzipSync(execFileSync('cpio', ['-o', '-H', 'newc', '--owner=0:0', '--quiet'], { cwd: guest,

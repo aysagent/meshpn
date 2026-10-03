@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { withStoppedHostService } from './host-uninstall.mjs';
 import { publishHostWrapper, switchHostWrapper } from './host-update.mjs';
 import { assertInstalledUsbGatewayProfile } from '../clean-vpn-usb-gateway.mjs';
-import { gatewayFiles, gatewayHelper, gatewayUnit, gatewayUnitPath, gatewayRun, readGatewayFile } from './host-usb-gateway.mjs';
+import { gatewayFiles, gatewayHelper, gatewayUnit, gatewayUnitPath, gatewayRun, readGatewayFile, preMssHelperHash } from './host-usb-gateway.mjs';
 import { rescueFiles, rescueProbeUnit, validateUsbAddress } from './host-usb-rescue.mjs';
 
 export const legacyUsbGuardHash = 'a46ebd191032da2e2205a5babfbad31d3daa274d3e857b8327e1e4ba6078164b';
@@ -69,7 +69,7 @@ export function upgradeUsbDnsGuard({ apply = false, read = p => readGatewayFile(
       const node = /^ExecStart=(\/[^\s]+) /m.exec(snatUnit)?.[1];
       assert.ok(node, 'unknown SNAT unit');
       assert.equal(snatUnit, gatewayFiles(node)[gatewayUnitPath], 'unknown SNAT unit');
-      assert.ok(snat === currentSnat || digest(snat) === legacyUsbSnatHash, 'unknown SNAT helper');
+      assert.ok(snat === currentSnat || [legacyUsbSnatHash, preMssHelperHash].includes(digest(snat)), 'unknown SNAT helper');
       unit(gatewayUnit, gatewayUnitPath);
     } else {
       assert.equal(ctl('show', gatewayUnit, '--property=LoadState', '--value'), 'not-found');

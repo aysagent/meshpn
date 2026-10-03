@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { publishHostWrapper } from './host-update.mjs';
 import { rescueFiles, rescueUnits, rescueProbeUnit, installUsbRescue, validateUsbAddress } from './host-usb-rescue.mjs';
 import { changeUsbSnat } from '../clean-vpn-usb-snat.mjs';
 
@@ -10,6 +12,7 @@ export const gatewayUnit = 'clean-vpn-usb-snat.service';
 export const gatewayUnitPath = `/etc/systemd/system/${gatewayUnit}`;
 export const gatewayHelper = '/usr/local/bin/clean-vpn-usb-snat.mjs';
 const helperSource = fs.readFileSync(new URL('../clean-vpn-usb-snat.mjs', import.meta.url), 'utf8');
+export const preMssHelperHash = '500b3ed1162af018cf8e53823ee690840d0518dd4161265e8f94cd835524d304';
 export const gatewayRun = (file, args) => execFileSync(file, args, { encoding: 'utf8', timeout: 30000,
   maxBuffer: 1024 * 1024, env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C' } });
 
@@ -80,8 +83,11 @@ export function inspectUsbGateway({ io = fs, run = gatewayRun } = {}) {
   const node = /^ExecStart=(\/[^\s]+) /m.exec(unit)?.[1];
   assert.ok(node, 'unrecognized USB gateway unit');
   const files = gatewayFiles(node);
-  assert.ok(inventory(io, files)); inspectUnit(run, gatewayUnit, true);
-  return files;
+  assert.equal(unit, files[gatewayUnitPath], 'unknown USB gateway unit');
+  assert.ok(helper === files[gatewayHelper] || createHash('sha256').update(helper).digest('hex') === preMssHelperHash,
+    'unknown USB gateway helper; no replacement');
+  inspectUnit(run, gatewayUnit, true);
+  return { ...files, [gatewayHelper]: helper };
 }
 
 function publish(io, path, contents) {
@@ -100,12 +106,14 @@ function publish(io, path, contents) {
  * Activation occurs only after the main installer has installed/enabled the guard.
  * Existing deployments use this same code, but never republish the VPN or guard. */
 export function installUsbGateway({ apply = false, prepareOnly = false, node = process.execPath,
-  io = fs, run = gatewayRun, rescue = installUsbRescue, snat = changeUsbSnat } = {}) {
+  io = fs, run = gatewayRun, rescue = installUsbRescue, snat = changeUsbSnat, replace = publishHostWrapper } = {}) {
   parents(io, node); const nodeStat = trusted(io, node);
   assert.ok(nodeStat.mode & 0o111, 'Node must be executable');
   const files = gatewayFiles(node);
-  const installed = inventory(io, files);
-  inspectUnit(run, gatewayUnit, installed);
+  const previous = inspectUsbGateway({ io, run });
+  const installed = previous !== null;
+  if (installed) assert.equal(previous[gatewayUnitPath], files[gatewayUnitPath], 'installed Node path differs');
+  const upgrade = installed && previous[gatewayHelper] !== files[gatewayHelper];
   const rescueInstalled = inventory(io, rescueFiles);
   for (const unit of Object.keys(rescueUnits)) inspectUnit(run, unit, rescueInstalled);
   validateUsbAddress(JSON.parse(run('ip', ['-j', 'address', 'show', 'dev', 'usb0'])));
@@ -113,7 +121,8 @@ export function installUsbGateway({ apply = false, prepareOnly = false, node = p
     'reviewed profile requires existing IPv4 forwarding; this installer does not change sysctl');
   snat({ remove: true }); // audit NAT ownership only; do not require a ready TUN
   if (!rescueInstalled) rescue({ apply: false, run });
-  if (!apply) return { status: 'planned', files: Object.keys(files), rescueInstalled, prepareOnly };
+  if (!apply) return { status: 'planned', files: Object.keys(files), rescueInstalled, prepareOnly, upgrade,
+    tcpMss: 1360, restarts: !prepareOnly && installed ? [gatewayUnit] : [] };
   if (!rescueInstalled) rescue({ apply: true, run });
   else {
     // start is idempotent; never restart an existing rescue connection/socket.
@@ -122,13 +131,19 @@ export function installUsbGateway({ apply = false, prepareOnly = false, node = p
   }
   for (const unit of ['clean-vpn-usb-rescue.socket', 'clean-vpn-usb-rescue-address.service'])
     assert.equal(run('systemctl', ['is-active', unit]).trim(), 'active', 'rescue is not ready');
+  assert.deepEqual(inspectUsbGateway({ io, run }), previous, 'gateway changed before publication');
+  const backups = [];
   if (!installed) for (const [path, text] of Object.entries(files)) publish(io, path, text);
+  else if (upgrade) backups.push(replace(gatewayHelper, previous[gatewayHelper], files[gatewayHelper], undefined, 0o644));
   run('systemctl', ['daemon-reload']);
   if (!prepareOnly) {
     run('systemctl', ['enable', gatewayUnit]);
-    run('systemctl', ['start', '--no-block', gatewayUnit]);
+    // Only this oneshot is restarted; it has no ExecStop or dependency that
+    // restarts VPN/guard/USB. Reapply also repairs an incomplete prior publish.
+    run('systemctl', [installed ? 'restart' : 'start', '--no-block', gatewayUnit]);
   }
   return { status: prepareOnly ? 'prepared' : 'enabled-waiting-for-vpn', persistent: !prepareOnly,
+    tcpMss: 1360, upgrade, backups, restarts: !prepareOnly && installed ? [gatewayUnit] : [],
     rescue: '192.168.7.1:2222; listening is not proof of login',
     untouched: ['VPN process', 'guard', 'networkd', 'gadget', 'existing SSH', 'routes', 'sysctl'],
     limitations: ['fixed-reviewed-Radxa-profile', 'requires-existing-forwarding-at-each-boot',

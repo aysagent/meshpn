@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { changeUsbSnat } from '../clean-vpn-usb-snat.mjs';
+import { changeUsbSnat, usbMssRules, usbMssLines } from '../clean-vpn-usb-snat.mjs';
 import { openHostRoutes } from './vpn-host-routes.mjs';
 assert.ok(fs.readFileSync('/proc/cmdline', 'utf8').split(/\s+/).includes('meshpn.usb-snat-lab=1'));
 assert.equal(fs.readFileSync('/sys/class/dmi/id/sys_vendor', 'utf8').trim(), 'QEMU');
@@ -13,7 +13,12 @@ const check = (name, ok) => { assert.ok(ok, name); console.log('USB_SNAT_CHECK '
 const children = [];
 const serverCode = `
 const http = require('node:http'), dgram = require('node:dgram');
-http.createServer((q,s) => s.end(q.socket.remoteAddress)).listen(8443, '::', () => console.log('READY'));
+http.createServer((q,s) => {
+  if (q.url !== '/bulk') return s.end(q.socket.remoteAddress);
+  let received = 0;
+  q.on('data', b => { received += b.length; });
+  q.on('end', () => { s.setHeader('x-upload-bytes', String(received)); s.end(Buffer.alloc(131072, 97)); });
+}).listen(8443, '::', () => console.log('READY'));
 const udp = dgram.createSocket('udp4');
 udp.on('message', (b,r) => udp.send(Buffer.from(r.address), r.port, r.address)); udp.bind(53, process.env.PROBE_DNS_BIND || '1.1.1.1');
 `;
@@ -34,6 +39,17 @@ function udp() {
   const script = `const s=require('node:dgram').createSocket('udp4');s.on('message',b=>{process.stdout.write(b);process.exit(0)});s.send(Buffer.from('synthetic-DNS-port-probe'),53,'1.1.1.1');setTimeout(()=>process.exit(3),1400);`;
   try { return cmd('ip', ['netns', 'exec', 'mac', 'node', '-e', script]); } catch { return null; }
 }
+function bulk(upload = false) {
+  const script = `const h=require('node:http'),c=require('node:crypto');
+const payload=Buffer.alloc(131072,97);
+const q=h.request({host:'1.1.1.1',port:8443,path:'/bulk',method:'POST',headers:{'content-length':${upload ? 131072 : 1}}},r=>{
+  const chunks=[];r.on('data',b=>chunks.push(b));r.on('end',()=>{
+    const body=Buffer.concat(chunks);if(r.headers['x-upload-bytes']!=='${upload ? 131072 : 1}'||!body.equals(payload))process.exit(2);
+    process.stdout.write('bulk-ok');process.exit(0);
+  });
+});q.on('error',e=>{console.error(e.message);process.exit(2)});q.end(payload.subarray(0,${upload ? 131072 : 1}));setTimeout(()=>{console.error('bulk timeout');process.exit(3)},8000);`;
+  try { return cmd('ip', ['netns', 'exec', 'mac', 'node', '-e', script]); } catch (e) { console.error('BULK_DIAGNOSTIC', e.status, String(e.stderr || '').trim()); return null; }
+}
 const guard = (...args) => cmd('bash', ['/project/scripts/autostart/killswitch.sh', ...args]);
 // Systemd/rescue state is a fixture here; actual kernel addresses/routes/NAT/filter
 // and the production kill-switch are used. tun0 is a veth model, not VPN/TLS.
@@ -52,6 +68,10 @@ try {
     ip('-n', ns, 'link', 'set', 'peer0', 'up');
   }
   ip('-n', 'mac', 'route', 'add', 'default', 'via', '192.168.7.1');
+  ip('link', 'set', 'tun0', 'mtu', '1400');
+  // The size-drop fixture must see wire-sized packets, not a 64 KiB GSO skb.
+  for (const ns of ['mac', 'exit']) ip('netns', 'exec', ns, '/usr/sbin/ethtool', '-K', 'peer0', 'tso', 'off', 'gso', 'off', 'gro', 'off');
+  for (const dev of ['usb0', 'tun0']) cmd('/usr/sbin/ethtool', ['-K', dev, 'tso', 'off', 'gso', 'off', 'gro', 'off']);
   ip('-n', 'exit', 'route', 'add', '192.168.7.0/24', 'via', '10.99.0.2');
   ip('route', 'add', 'default', 'via', '192.168.1.1');
   ip('route', 'add', '154.62.226.216/32', 'via', '192.168.1.1', 'dev', 'wlan0');
@@ -83,6 +103,17 @@ try {
   check('forwarded TCP reaches exit with tunnel source', tcp('1.1.1.1') === '::ffff:10.99.0.2');
   check('forwarded UDP53 roundtrip uses tunnel source', udp() === '10.99.0.2');
   check('repeat application is idempotent', changeUsbSnat({ run, apply: true }).status === 'already-present');
+  check('both canonical MSS rules installed', usbMssLines.every(l => cmd('iptables', ['-t', 'mangle', '-S', 'FORWARD']).includes(l)));
+  // The veth endpoints have asymmetric MTUs, 1500 at origin vs 1400 on
+  // tun0. Oversized responses cannot cross the receiving veth. No host changes.
+  ip('netns', 'exec', 'exit', 'sysctl', '-w', 'net.ipv4.tcp_no_metrics_save=1');
+  check('128 KiB download baseline with MSS', bulk() === 'bulk-ok');
+  for (const rule of usbMssRules) cmd('iptables', ['-t', 'mangle', '-D', 'FORWARD', ...rule]);
+  check('large TCP reproduces MTU black hole without MSS', bulk() === null);
+  changeUsbSnat({ run, apply: true });
+  check('128 KiB download recovers with production MSS', bulk() === 'bulk-ok');
+  check('128 KiB TCP upload and download pass with production MSS', bulk(true) === 'bulk-ok');
+  check('MSS application remains idempotent after bulk TCP', changeUsbSnat({ run, apply: true }).status === 'already-present');
   check('IPv4 filter unchanged', cmd('iptables', ['-S']) === filter4);
   check('IPv6 filter unchanged', cmd('ip6tables', ['-S']) === filter6);
   check('USB management remains reachable', tcp('192.168.7.1') === '::ffff:192.168.7.19');
@@ -116,6 +147,7 @@ try {
     ip('route', 'add', '154.62.226.216/32', 'via', '192.168.1.1', 'dev', 'wlan0');
   } finally { routes.release(); }
   check('remove only own SNAT', changeUsbSnat({ run, apply: true, remove: true }).status === 'removed');
+  check('removal also removes both MSS rules', cmd('iptables', ['-t', 'mangle', '-S', 'FORWARD']).trim() === '-P FORWARD ACCEPT');
   check('removed SNAT reproduces failure again', tcp('1.1.1.1') === null);
   changeUsbSnat({ run, apply: true });
   ip('link', 'del', 'tun0');

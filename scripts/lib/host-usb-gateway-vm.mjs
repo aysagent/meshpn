@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
-import { gatewayFiles, gatewayUnit, installUsbGateway, removeUsbGateway } from './host-usb-gateway.mjs';
-import { usbSnatLine } from '../clean-vpn-usb-snat.mjs';
+import { gatewayFiles, gatewayUnit, gatewayHelper, installUsbGateway, removeUsbGateway } from './host-usb-gateway.mjs';
+import { usbSnatLine, usbMssLines, usbMssRules } from '../clean-vpn-usb-snat.mjs';
 
 function assertLab() {
   assert.ok(fs.readFileSync('/proc/cmdline', 'utf8').split(/\s+/).includes('meshpn.usb-rescue-lab=1'));
@@ -18,6 +18,7 @@ export function prepareGateway({ put }) {
 export async function testGateway({ command, ip, ctl, put, check, until, state, login }) {
   assertLab();
   const nat = () => command('iptables', ['-t', 'nat', '-S', 'POSTROUTING']);
+  const mss = () => command('iptables', ['-t', 'mangle', '-S', 'FORWARD']);
   const filter = () => command('iptables', ['-S']) + command('ip6tables', ['-S']);
   const guardBefore = filter();
   check('SNAT not present with failed guard and absent VPN', !nat().includes(usbSnatLine));
@@ -45,11 +46,24 @@ export async function testGateway({ command, ip, ctl, put, check, until, state, 
   ip('link', 'add', 'wlan0', 'type', 'dummy'); ip('addr', 'add', '192.168.1.7/24', 'dev', 'wlan0'); ip('link', 'set', 'wlan0', 'up');
   ip('route', 'add', 'default', 'via', '192.168.1.1', 'dev', 'wlan0');
   ip('route', 'add', '154.62.226.216/32', 'via', '192.168.1.1', 'dev', 'wlan0');
-  ip('link', 'add', 'tun0', 'type', 'dummy'); ip('addr', 'add', '10.99.0.2/24', 'dev', 'tun0'); ip('link', 'set', 'tun0', 'up');
+  ip('link', 'add', 'tun0', 'type', 'dummy'); ip('addr', 'add', '10.99.0.2/24', 'dev', 'tun0'); ip('link', 'set', 'tun0', 'mtu', '1400', 'up');
   ip('route', 'add', '0.0.0.0/1', 'dev', 'tun0'); ip('route', 'add', '128.0.0.0/1', 'dev', 'tun0');
   try { await until(() => state(gatewayUnit) === 'active', 'SNAT did not recover automatically'); }
   catch (e) { console.error(command('journalctl', ['-u', gatewayUnit, '--no-pager', '-n', '15'])); throw e; }
   check('SNAT automatically installed after delayed TUN readiness', nat().split('\n').filter(l => l === usbSnatLine).length === 1);
+  check('both MSS rules installed after delayed TUN readiness', usbMssLines.every(line => mss().split('\n').filter(l => l === line).length === 1));
+  // Upgrade the exact previously deployed helper without stopping VPN/rescue.
+  ctl('stop', gatewayUnit);
+  for (const rule of usbMssRules) command('iptables', ['-t', 'mangle', '-D', 'FORWARD', ...rule]);
+  put(gatewayHelper, fs.readFileSync('/project/scripts/fixtures/usb-gateway-pre-mss.txt'), 0o644);
+  ctl('start', gatewayUnit);
+  const upgraded = installUsbGateway({ apply: true, node: '/usr/bin/node' });
+  check('approved legacy gateway upgrade keeps backup', upgraded.upgrade && upgraded.backups.length === 1
+    && fs.readFileSync(upgraded.backups[0].backupDirectory + '/previous-wrapper', 'utf8') === fs.readFileSync('/project/scripts/fixtures/usb-gateway-pre-mss.txt', 'utf8'));
+  await until(() => usbMssLines.every(line => mss().includes(line)), 'MSS upgrade failed');
+  check('read-only installed helper status verifies full bundle', JSON.parse(command('node', [gatewayHelper, '--status'])).status === 'ready');
+  check('primary SSH PID survives MSS upgrade', ctl('show', 'primary-ssh.service', '--property=MainPID', '--value') === beforePid);
+  check('authenticated rescue survives MSS upgrade', await login());
   check('guard unchanged after SNAT activation', filter() === guardBefore);
   const pid = ctl('show', 'clean-vpn-usb-rescue.socket', '--property=ActiveEnterTimestampMonotonic', '--value');
   ctl('restart', 'clean-vpn.service');
@@ -60,5 +74,6 @@ export async function testGateway({ command, ip, ctl, put, check, until, state, 
   removeUsbGateway({ apply: true });
   await delay(5500);
   check('removal stops retries and removes own NAT while retaining guard', !nat().includes(usbSnatLine) && filter() === guardBefore);
+  check('gateway removal deletes only owned MSS rules', mss().trim() === '-P FORWARD ACCEPT');
   check('rescue SSH survives gateway removal', await login());
 }

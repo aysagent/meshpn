@@ -60,6 +60,42 @@ Wi-Fi/networkd, guard, gadget и существующий SSH не переза�
 Уже установленные rescue-файлы принимаются только при точном совпадении
 и безопасном владельце/правах, без переопределений systemd.
 
+## Обновление уже установленного cvks4: TCP MSS
+
+Повторный `install.sh --usb-gateway` теперь добавляет постоянный MSS 1360
+для IPv4 TCP в обе стороны `usb0 ↔ tun0`, для всей USB-подсети и всех портов.
+MTU `tun0` должен быть ровно 1400. Правила меняют только MSS в SYN/SYN-ACK,
+не разрешения filter/kill-switch. UDP/ICMP PMTU этим не исправляются.
+
+Для уже установленного профиля cvks4 **не нужно** повторять DNS-миграцию или
+останавливать VPN. После доставки этой версии исходников:
+
+```bash
+sudo env "PATH=$PATH" node scripts/clean-vpn-usb-gateway.mjs
+sudo env "PATH=$PATH" bash scripts/autostart/install.sh --usb-gateway
+sudo env "PATH=$PATH" node /usr/local/bin/clean-vpn-usb-snat.mjs --status
+```
+
+Принимается текущий helper или точная предыдущая версия (SHA-256
+`500b3ed1162af018cf8e53823ee690840d0518dd4161265e8f94cd835524d304`).
+Старая версия атомарно заменяется с резервной копией; чужие файлы/переопределения
+не перезаписываются. Перезапускается **только** `clean-vpn-usb-snat.service`,
+без ExecStop и без остановки VPN, guard, networkd, SSH/rescue или gadget.
+Запуск асинхронный: дождаться `active (exited)`; `--status` вернёт `ready`
+только при готовом профиле и наличии SNAT и обоих MSS-правил, иначе код ошибки.
+Проверка не изменяет правила. Временное `clean-vpn-mss-test` нужно предварительно
+удалить точной командой из контрольного теста: неизвестные mangle/FORWARD правила
+вызывают отказ, а не автоматическую очистку.
+
+Повторный запуск завершает частичную установку своих правил без дубликатов.
+Это не транзакция сразу двух таблиц: после ошибки сохранить вывод, guard остаётся;
+автоматического rollback с ослаблением фильтра нет.
+
+Проверить с Mac HTTPS к `https://1.1.1.1/cdn-cgi/trace` (ожидается
+`ip=154.62.226.216`) и `https://ifconfig.me/ip`, затем повторить после reboot
+при доступном USB rescue. Успешный временный MSS-тест на физической Radxa
+не заменяет приёмку постоянного обновления/его загрузки.
+
 ## Новая установка
 
 К прежней команде установки добавить `USB_GATEWAY=1`:
@@ -85,6 +121,9 @@ sudo env "PATH=$PATH" SERVICE_NAME=clean-vpn \
 - Rescue: прежние socket/address/template units и helper, автозапуск на 2222.
 - SNAT: `/usr/local/bin/clean-vpn-usb-snat.mjs` и
   `/etc/systemd/system/clean-vpn-usb-snat.service`, enabled.
+- Та же служба устанавливает два именованных `clean-vpn-usb-mss-v1` правила
+  в mangle/FORWARD до добавления SNAT. Они также сохраняются при stop/start VPN
+  и восстанавливаются после загрузки. Готовность службы не заменяет `--status`.
 - Служба SNAT проверяет guard, адреса, маршруты и существующий firewall.
   Если VPN/USB ещё не готов, повторяет попытку через 5 секунд. После успеха
   остаётся `active (exited)`, без постоянного polling и без перезапуска VPN.
@@ -101,6 +140,7 @@ sudo env "PATH=$PATH" SERVICE_NAME=clean-vpn \
 systemctl --no-pager show clean-vpn-usb-snat.service \
   clean-vpn-usb-rescue.socket --property=Id,ActiveState,SubState,Result,NRestarts
 sudo /usr/local/bin/clean-vpn-killswitch.sh status
+sudo env "PATH=$PATH" node /usr/local/bin/clean-vpn-usb-snat.mjs --status
 ```
 
 С Mac — rescue SSH и `curl -q -4 --noproxy '*' --interface en9 https://ifconfig.me/ip`.
@@ -139,7 +179,7 @@ SOCKS/HTTP-прокси или SSH-forwarding создаёт новое соед
 
 ## Удаление и частичная установка
 
-Только постоянный SNAT, с сохранением VPN и rescue:
+Только постоянный SNAT и оба MSS-правила, с сохранением VPN и rescue:
 
 ```bash
 sudo env "PATH=$PATH" node scripts/clean-vpn-usb-gateway.mjs --remove --apply

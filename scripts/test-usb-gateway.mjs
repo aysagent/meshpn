@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { gatewayFiles, gatewayUnit, gatewayUnitPath, gatewayHelper, installUsbGateway,
-  inspectUsbGateway, removeUsbGateway } from './lib/host-usb-gateway.mjs';
+  inspectUsbGateway, removeUsbGateway, preMssHelperHash } from './lib/host-usb-gateway.mjs';
 import { rescueFiles } from './lib/host-usb-rescue.mjs';
 import { assertInstalledUsbGatewayProfile } from './clean-vpn-usb-gateway.mjs';
 
@@ -47,6 +48,10 @@ function fixture({ installed = false, rescueInstalled = true } = {}) {
   };
   f.rescue = ({ apply }) => { calls.push(['rescue', apply]); if (apply) { for (const [p, s] of Object.entries(rescueFiles)) files.set(p, s); refresh(); } };
   f.snat = opts => { calls.push(['snat', opts]); assert.ok(!f.natFail, 'foreign NAT'); return {}; };
+  f.replace = (path, before, after) => {
+    assert.equal(files.get(path), before); files.set(path, after); writes.push(path);
+    return { backupDirectory: '/test/backup' };
+  };
   return f;
 }
 
@@ -72,7 +77,25 @@ test('additive install and repeated install preserve existing rescue and only en
   const written = f.writes.length;
   installUsbGateway({ ...f, apply: true }); assert.equal(f.writes.length, written);
   assert.deepEqual(Object.entries(rescueFiles).map(([p]) => f.files.get(p)), rescueBefore);
-  assert.ok(!f.calls.some(c => c.includes('restart') || c.includes('stop')));
+  assert.deepEqual(f.calls.filter(c => c.includes('restart')), [['systemctl', 'restart', '--no-block', gatewayUnit]]);
+  assert.ok(!f.calls.some(c => c.includes('stop')));
+});
+test('approved pre-MSS helper is upgraded with backup; only the SNAT/MSS oneshot restarts', () => {
+  const f = fixture({ installed: true });
+  const old = fs.readFileSync(new URL('./fixtures/usb-gateway-pre-mss.txt', import.meta.url), 'utf8');
+  assert.equal(createHash('sha256').update(old).digest('hex'), preMssHelperHash);
+  f.files.set(gatewayHelper, old);
+  assert.equal(installUsbGateway(f).upgrade, true); assert.equal(f.writes.length, 0);
+  const r = installUsbGateway({ ...f, apply: true });
+  assert.equal(r.upgrade, true); assert.equal(r.backups.length, 1);
+  assert.equal(f.files.get(gatewayHelper), gatewayFiles(f.node)[gatewayHelper]);
+  assert.deepEqual(f.calls.filter(c => c.includes('restart')), [['systemctl', 'restart', '--no-block', gatewayUnit]]);
+  assert.ok(!f.calls.some(c => c.includes('stop')));
+});
+test('legacy helper can be removed without publishing an upgrade', () => {
+  const f = fixture({ installed: true });
+  f.files.set(gatewayHelper, fs.readFileSync(new URL('./fixtures/usb-gateway-pre-mss.txt', import.meta.url), 'utf8'));
+  assert.equal(removeUsbGateway({ ...f, apply: true }).status, 'removed');
 });
 for (const [name, mutate] of Object.entries({
   foreignHelper: f => f.files.set(gatewayHelper, 'foreign'),
