@@ -9,11 +9,13 @@ import { gzipSync } from 'node:zlib';
 import { usbE2eUnits } from './lib/usb-e2e-vm.mjs';
 import { assertUsbE2eEvidence, assertUsbFaultEvidence } from './lib/usb-e2e-evidence.mjs';
 import { legacyUsbGuardHash, legacyUsbSnatHash } from './lib/host-usb-dns-upgrade.mjs';
+import { assertUsbSoakEvidence } from './lib/usb-soak-evidence.mjs';
 
 const [base, tools, option] = process.argv.slice(2);
 const networkOnly = option === '--network-faults';
-const faults = option === '--faults' || networkOnly;
-assert.ok(process.argv.length === 4 || process.argv.length === 5 && faults, 'usage: absolute verified HOST_BOOT_BASE QEMU_TOOLS_ROOT [--faults|--network-faults]');
+const soak = option === '--soak';
+const faults = option === '--faults' || networkOnly || soak;
+assert.ok(process.argv.length === 4 || process.argv.length === 5 && faults, 'usage: absolute verified HOST_BOOT_BASE QEMU_TOOLS_ROOT [--faults|--network-faults|--soak]');
 for (const path of [base, tools]) assert.ok(path?.startsWith('/') && resolve(path) === path && !/[\r\n,]/.test(path));
 const hash = b => createHash('sha256').update(b).digest('hex');
 const previous = JSON.parse(fs.readFileSync(join(base, 'report.json')));
@@ -24,7 +26,7 @@ const root = fs.mkdtempSync('/var/tmp/meshpn-usb-e2e-'), guest = join(root, 'gue
 const disk = join(root, 'state.raw'), initrd = join(root, 'initrd.gz');
 console.error('USB E2E artifacts: ' + root);
 const report = { kind: 'clean-vpn-usb-e2e', status: 'failed', nic: 'none', hostSharedFilesystem: false,
-  scenario: networkOnly ? 'usb-network-faults' : faults ? 'usb-faults' : 'two-boot-installation',
+  scenario: soak ? 'usb-soak' : networkOnly ? 'usb-network-faults' : faults ? 'usb-faults' : 'two-boot-installation',
   realTls: true, realTun: true, persistentInstalledFiles: true, boots: [], sourceHashes: {},
   limitations: ['Linux-peer-not-macOS', 'veth-not-WiFi-or-physical-USB', 'initramfs-restores-owned-installation-from-ext4',
     'fixture-PKI-and-origins', 'no-power-cut', 'IPv6-static-neighbours-not-NDP-RA-acceptance',
@@ -54,7 +56,8 @@ try {
   }
   for (const [path, target] of [['usr/sbin/ip', '/usr/bin/ip'], ['usr/bin/awk', '/bin/busybox']])
     if (!fs.existsSync(join(guest, path))) fs.symlinkSync(target, join(guest, path));
-  for (const [name, contents] of Object.entries(usbE2eUnits())) put('/etc/systemd/system/' + name, contents);
+  for (const [name, contents] of Object.entries(usbE2eUnits())) put('/etc/systemd/system/' + name,
+    soak && name === 'usb-e2e-driver.service' ? contents.replace('TimeoutStartSec=24min', 'TimeoutStartSec=54min') : contents);
   const original = fs.readFileSync(join(guest, 'init'), 'utf8'); assert.ok(original.includes('mount -t ext4'));
   put('/init', original.slice(0, original.indexOf('mount -t ext4')) + 'mount -t ext4 -o rw /dev/vda /state\nnode scripts/lib/usb-e2e-vm.mjs prepare\nmkdir -p /run/dbus\nexec /usr/lib/systemd/systemd --system --log-target=console --log-level=info --show-status=no\n', 0o755);
   const paths = ['.']; const walk = p => { for (const name of fs.readdirSync(join(guest, p))) { const q = p ? p + '/' + name : name; paths.push(q); if (fs.lstatSync(join(guest, q)).isDirectory()) walk(q); } }; walk('');
@@ -66,12 +69,12 @@ try {
     const boot = { phase, events: [] }; report.boots.push(boot);
     const env = { ...process.env, LD_LIBRARY_PATH: `${tools}/usr/lib/x86_64-linux-gnu:${tools}/lib/x86_64-linux-gnu`, QEMU_MODULE_DIR: `${tools}/usr/lib/x86_64-linux-gnu/qemu` };
     delete env.LD_PRELOAD; delete env.LD_AUDIT;
-    const kernelArgs = 'console=ttyS0 loglevel=4 panic=-1 reboot=t random.trust_cpu=on meshpn.usb-e2e=1' + (faults ? ' meshpn.usb-faults=1' : '') + (networkOnly ? ' meshpn.usb-network-faults=1' : '');
+    const kernelArgs = 'console=ttyS0 loglevel=4 panic=-1 reboot=t random.trust_cpu=on meshpn.usb-e2e=1' + (faults ? ' meshpn.usb-faults=1' : '') + (networkOnly ? ' meshpn.usb-network-faults=1' : '') + (soak ? ' meshpn.usb-soak=1' : '');
     const child = spawn(join(tools, 'usr/bin/qemu-system-x86_64'), ['-nodefaults', '-no-user-config', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-no-reboot', '-serial', 'stdio', '-accel', 'tcg', '-cpu', 'max', '-m', '1536', '-smp', '1', '-bios', `${tools}/usr/share/seabios/bios-256k.bin`, '-L', `${tools}/usr/share/qemu`, '-kernel', join(base, 'guest-kernel'), '-initrd', initrd, '-append', kernelArgs, '-drive', `file=${disk},format=raw,if=virtio,cache=writeback`], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '', pending = '', failure;
     const log = fs.openSync(join(root, `boot-${phase}.log`), 'wx', 0o600);
     const abort = reason => { failure ??= reason; child.kill('SIGKILL'); };
-    const timer = setTimeout(() => abort('boot deadline'), 25 * 60 * 1000);
+    const timer = setTimeout(() => abort('boot deadline'), (soak ? 55 : 25) * 60 * 1000);
     const interrupt = () => abort('interrupted'); process.on('SIGINT', interrupt); process.on('SIGTERM', interrupt);
     for (const stream of [child.stdout, child.stderr]) stream.on('data', b => {
       fs.writeSync(log, b); output += b; pending += b;
@@ -94,8 +97,8 @@ try {
     boot.kernelRestart = output.includes('reboot: Restarting system'); boot.powerDown = output.includes('reboot: Power down');
     const end = boot.events.filter(e => e.event === 'completed'); assert.equal(end.length, 1); boot.bootId = end[0].bootId;
   }
-  if (faults) assertUsbFaultEvidence(report); else assertUsbE2eEvidence(report);
-  report.status = 'passed'; report.acceptance = networkOnly ? 'lab-only-USB-network-faults; SIGKILL-not-tested-in-this-run; physical-WiFi-pending' : faults ? 'lab-only-USB-SIGKILL-exit-blackhole-carrier-DHCP-recovery; physical-WiFi-pending' : 'lab-only-USB-tunnel-only-and-DNS-interception; real-Radxa-and-Mac-pending';
+  if (soak) assertUsbSoakEvidence(report); else if (faults) assertUsbFaultEvidence(report); else assertUsbE2eEvidence(report);
+  report.status = 'passed'; report.acceptance = soak ? 'lab-only-three-repeated-exit-carrier-DHCP-cycles-and-long-TCP; bounded-resource-observation; physical-WiFi-pending' : networkOnly ? 'lab-only-USB-network-faults; SIGKILL-not-tested-in-this-run; physical-WiFi-pending' : faults ? 'lab-only-USB-SIGKILL-exit-blackhole-carrier-DHCP-recovery; physical-WiFi-pending' : 'lab-only-USB-tunnel-only-and-DNS-interception; real-Radxa-and-Mac-pending';
 } catch (e) { report.error = e.message; process.exitCode = 1; console.error(e.stack); }
 finally {
   fs.writeFileSync(join(root, 'report.json'), JSON.stringify(report, null, 2));

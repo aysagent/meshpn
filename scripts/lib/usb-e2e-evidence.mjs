@@ -74,6 +74,9 @@ export function assertUsbE2eEvidence(report) {
 
 const preserved = label => ['guard retained', 'guard not restarted', 'networkd not restarted', 'rescue not restarted', 'SSH 22 authenticated', 'SSH 2222 authenticated'].map(s => label + ' ' + s);
 const noBypass = label => ['http', 'raw', 'dns'].map(k => `${label} ${k} no direct or LAN receiver hits`);
+export const usbSoakInitialChecks = () => ['systemd PID1', ...baseline('pre-install'), ...ready,
+  'fresh v4 installer rescue authenticated', ...matrix(true)];
+export { matrix as usbTrafficChecks, ready as usbReadyChecks };
 export const usbFaultChecks = (networkOnly = false) => ['systemd PID1', ...baseline('pre-install'), ...ready,
   'fresh v4 installer rescue authenticated', ...matrix(true), 'continuous traffic positive baseline',
   ...(networkOnly ? [] : ['SIGKILL automatically changes VPN PID', 'SIGKILL increments restart counter', ...ready,

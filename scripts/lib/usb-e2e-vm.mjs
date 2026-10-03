@@ -20,6 +20,7 @@ import { makeDnsQuery, validateDnsResponse, parseDnsQuery } from './lab-dns-wire
 import { tunnelDnsFixtureAnswer } from './dns-tunnel-cli-lab.mjs';
 import { exchangePlainDns } from './dns-tunnel-forwarder.mjs';
 import { runUsbFaultScenarios } from './usb-fault-vm.mjs';
+import { runUsbSoak, runLongTcpPeer, startLongTcpOrigin } from './usb-soak-vm.mjs';
 
 const script = '/project/scripts/lib/usb-e2e-vm.mjs', exitIp = '154.62.226.216';
 const snapshotFiles = [...BOOT_FILES.map(p => '/' + p), ...Object.keys(rescueFiles), ...Object.keys(gatewayFiles('/usr/bin/node'))];
@@ -40,7 +41,7 @@ export function usbE2eUnits() {
   return base;
 }
 export function assertUsbE2eVm(mode) {
-  assert.ok(['prepare', 'fixture', 'probe', 'probe-worker', 'fault-monitor', 'run'].includes(mode));
+  assert.ok(['prepare', 'fixture', 'probe', 'probe-worker', 'fault-monitor', 'long-tcp', 'run'].includes(mode));
   assert.match(fs.readFileSync('/proc/cmdline', 'utf8'), /(?:^|\s)meshpn.usb-e2e=1(?:\s|$)/);
   assert.equal(fs.readFileSync('/sys/class/dmi/id/sys_vendor', 'utf8').trim(), 'QEMU');
   assert.equal(process.getuid(), 0);
@@ -127,6 +128,7 @@ function prepare() {
 }
 
 async function fixture() {
+  if (fs.readFileSync('/proc/cmdline', 'utf8').includes('meshpn.usb-soak=1')) await startLongTcpOrigin();
   for (const host of ['1.0.0.1', '2606:4700:4700::1111', '192.168.1.1', 'fd00:1::1']) {
     const server = https.createServer({ key: fs.readFileSync('/state/cert/privkey.pem'), cert: fs.readFileSync('/state/cert/fullchain.pem') }, (q, r) => {
       fs.appendFileSync('/run/e2e-http-hits', JSON.stringify({ host, peer: q.socket.remoteAddress }) + '\n'); r.end(q.socket.remoteAddress);
@@ -158,8 +160,26 @@ async function fixture() {
   put('/run/e2e-origin-ready', 'yes');
   // Real late DHCP, released by the boot driver after it has verified rescue.
   if (phase()) await until(() => fs.existsSync('/run/e2e-release-dhcp'), 'release late DHCP');
-  const dhcp = spawn('/usr/sbin/dnsmasq', ['--keep-in-foreground', '--conf-file=/dev/null', '--port=0', '--interface=client0', '--bind-interfaces', '--user=root', '--group=root', '--dhcp-range=192.168.1.10,192.168.1.10,255.255.255.0,10m', '--dhcp-option=3,192.168.1.1', '--dhcp-option=6,192.168.1.1', '--dhcp-leasefile=/run/e2e.leases', '--pid-file=/run/e2e-dhcp.pid'], { stdio: 'inherit' });
-  dhcp.on('exit', code => { if (code) process.exit(code); });
+  let address = '192.168.1.10';
+  const startDhcp = () => {
+    const child = spawn('/usr/sbin/dnsmasq', ['--keep-in-foreground', '--conf-file=/dev/null', '--port=0', '--interface=client0', '--bind-interfaces', '--user=root', '--group=root', '--dhcp-authoritative',
+      `--dhcp-range=${address},${address},255.255.255.0,10m`, `--dhcp-host=02:00:00:00:01:02,${address}`,
+      '--dhcp-option=3,192.168.1.1', '--dhcp-option=6,192.168.1.1', `--dhcp-leasefile=/run/e2e-${address}.leases`, '--pid-file=/run/e2e-dhcp.pid'], { stdio: 'inherit' });
+    child.on('exit', code => { if (code) process.exit(code); }); return child;
+  };
+  let dhcp = startDhcp();
+  if (fs.readFileSync('/proc/cmdline', 'utf8').includes('meshpn.usb-soak=1')) {
+    for (;;) {
+      await delay(300);
+      if (!fs.existsSync('/run/e2e-dhcp-next')) continue;
+      const next = fs.readFileSync('/run/e2e-dhcp-next', 'utf8');
+      assert.match(next, /^192\.168\.1\.1[123]$/);
+      if (next === address) continue;
+      const ended = once(dhcp, 'close'); dhcp.kill('SIGTERM'); await ended;
+      address = next; dhcp = startDhcp();
+      await delay(300); assert.equal(dhcp.exitCode, null); put('/run/e2e-dhcp-ack', address);
+    }
+  }
 }
 
 async function exchangeV6Dns(server, query, tcp) {
@@ -383,8 +403,9 @@ async function run() {
   };
   if (faults) {
     await matrix(true);
-    await runUsbFaultScenarios({ check, event, ctl, property, sync, ip, at, link, until, ready, matrix, login, hits });
-    sync('/bin/sync'); event({ event: 'completed', phase: p, bootId, usbDnsPolicy: 'cvks4-usb-tunnel-only', faultScenarios: true });
+    const soak = fs.readFileSync('/proc/cmdline', 'utf8').includes('meshpn.usb-soak=1');
+    await (soak ? runUsbSoak : runUsbFaultScenarios)({ check, event, ctl, property, sync, ip, at, link, until, ready, matrix, login, hits, peerProbe, dnsProbe });
+    sync('/bin/sync'); event({ event: 'completed', phase: p, bootId, usbDnsPolicy: 'cvks4-usb-tunnel-only', faultScenarios: true, ...(soak ? { soak: true } : {}) });
     await ctl('poweroff', '--no-block'); return;
   }
   await matrix(true);
@@ -421,6 +442,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const mode = process.argv[2]; assertUsbE2eVm(mode);
   try { if (mode === 'prepare') prepare(); else if (mode === 'fixture') await fixture();
     else if (mode === 'probe') console.log(JSON.stringify(await probe(JSON.parse(process.argv[3]))));
+    else if (mode === 'long-tcp') await runLongTcpPeer();
     else if (mode === 'fault-monitor') {
       let round = 0;
       while (!fs.existsSync('/run/e2e-monitor-stop')) {
