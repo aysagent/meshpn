@@ -28,6 +28,8 @@ function fixture(t, { manager = 'active', otherManager = false, tun = false } = 
 test('networkd gate has strict scope and duplicate argument refusal', () => {
   const good = ['--role=client', '--type=tls', '--server=198.51.100.2:443', '--split-default', '--ipv6=auto'];
   assertNetworkdClientArgs(good);
+  assertNetworkdClientArgs([...good, '--dns-usb=1']);
+  assert.throws(() => assertNetworkdClientArgs([...good, '--dns-usb=0']));
   for (const extra of ['--type=udp', '--dns-mode=off', '--client-lan-subnet=192.168.7.0/24', '--http-vers=1.1', '--config=/tmp/a']) assert.throws(() => assertNetworkdClientArgs([...good, extra]));
   for (const bad of ['', '../bad', '-option', 'x'.repeat(201)]) assert.throws(() => networkdGatePath(bad));
 });

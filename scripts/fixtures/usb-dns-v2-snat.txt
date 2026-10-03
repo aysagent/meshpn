@@ -31,7 +31,7 @@ export function changeUsbSnat({ apply = false, remove = false, run = execute } =
     }
     const guard = run('guard', ['status']).trim().split('\n');
     for (const family of [4, 6]) assert.ok(guard.includes(
-      `[clean-vpn-killswitch] IPv${family}: cvks4:both:block:tun0:154.62.226.216:22`), 'unexpected guard profile');
+      `[clean-vpn-killswitch] IPv${family}: cvks2:both:block:tun0:154.62.226.216:22`), 'unexpected guard profile');
     assert.equal(run('sysctl', ['-n', 'net.ipv4.ip_forward']).trim(), '1', 'IPv4 forwarding must already be enabled');
     const addresses = JSON.parse(run('ip', ['-j', 'addr', 'show']));
     const usb = addresses.find(i => i.ifname === 'usb0'), tun = addresses.find(i => i.ifname === 'tun0');
@@ -46,11 +46,8 @@ export function changeUsbSnat({ apply = false, remove = false, run = execute } =
     }
     const forward = run('iptables', ['-w', '5', '-t', 'filter', '-S', 'FORWARD']).trim().split('\n');
     assert.equal(forward[0], '-P FORWARD ACCEPT', 'unexpected FORWARD policy');
-    // status above already audits canonical guard chains and their prefixes.
-    // USB tunnel-DNS installs only scoped REJECTs ahead of the guard hook.
-    const hook = forward.indexOf('-A FORWARD -m comment --comment cvks2-hook -j CLEANVPN_KS_FWD');
-    assert.ok(hook >= 1 && forward.slice(1, hook).every(line => /^-A FORWARD -s 192\.168\.7\.0\/24 (?:-d 10\.99\.0\.2\/32 )?-i usb0 -p (tcp|udp) -m comment --comment clean-vpn-dns-tunnel(?:-[a-f0-9]{24})? -m \1 --dport (53|1053) -j REJECT --reject-with icmp-port-unreachable$/.test(line)), 'guard must precede forwarding');
-    assert.ok(forward.slice(hook + 1).every(line => ['-A FORWARD -i usb0 -o wlan0 -j ACCEPT',
+    assert.equal(forward[1], '-A FORWARD -m comment --comment cvks2-hook -j CLEANVPN_KS_FWD', 'guard must precede forwarding');
+    assert.ok(forward.slice(2).every(line => ['-A FORWARD -i usb0 -o wlan0 -j ACCEPT',
       '-A FORWARD -i wlan0 -o usb0 -j ACCEPT'].includes(line)), 'unknown FORWARD rules');
   }
   const needed = remove ? matches === 1 : matches === 0;

@@ -84,15 +84,16 @@ export function checkHostUpdateUnits(service, main, guard) {
     'KillMode=mixed', 'TimeoutStopSec=420', '[Install]', 'WantedBy=multi-user.target'], 'main unit template requires review');
   const g = assignments(guard);
   const up = g.find(l => l.startsWith('ExecStart='));
-  const m = new RegExp(`^ExecStart=${gs.replaceAll('.', '\\.')} up --scope=both --ipv6=block --tun=tun0 --ssh-port=(\\d+) --server=([0-9.,]+)$`).exec(up || '');
+  const m = new RegExp(`^ExecStart=${gs.replaceAll('.', '\\.')} up --scope=both --ipv6=block --tun=tun0 --ssh-port=(\\d+) --server=([0-9.,]+)( --usb-dns=1( --usb-strict=1)?)?$`).exec(up || '');
   assert.ok(m, 'persist both/block guard required');
   assert.deepEqual(g, ['[Unit]', `Description=clean-vpn kill-switch (${service}, persist)`, 'DefaultDependencies=no',
     'Before=network-pre.target', 'Wants=network-pre.target', 'Conflicts=shutdown.target', 'Before=shutdown.target',
     '[Service]', 'Type=oneshot', 'RemainAfterExit=yes', up, usesNetworkdGate(guard) ? 'ExecStop=/bin/true' : `ExecStop=${gs} down --tun=tun0`, '[Install]', 'WantedBy=multi-user.target']);
-  return `cvks2:both:block:tun0:${m[2]}:${m[1]}`;
+  return `cvks${m[4] ? 4 : m[3] ? 3 : 2}:both:block:tun0:${m[2]}:${m[1]}`;
 }
 
-export function publishHostWrapper(path, before, after, checkpoint = () => {}) {
+export function publishHostWrapper(path, before, after, checkpoint = () => {}, mode = 0o755) {
+  assert.ok(mode === 0o755 || mode === 0o644, 'unsupported publication mode');
   trustedParents(path); trusted(path);
   assert.equal(fs.readFileSync(path, 'utf8'), before, 'wrapper changed before publication');
   const backupDirectory = fs.mkdtempSync(join(dirname(path), '.clean-vpn-update-'));
@@ -103,7 +104,7 @@ export function publishHostWrapper(path, before, after, checkpoint = () => {}) {
   };
   const sync = p => { const fd = fs.openSync(p, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
     try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); } };
-  write('previous-wrapper', before, 0o600); write('next-wrapper', after, 0o755);
+  write('previous-wrapper', before, 0o600); write('next-wrapper', after, mode);
   sync(backupDirectory); sync(dirname(path));
   checkpoint('prepared'); // internal VM fault injection, not a CLI option
   // Only publication mutation. A crash leaves the old OR the complete new

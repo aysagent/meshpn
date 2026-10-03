@@ -5,7 +5,7 @@ import { changeUsbSnat, usbSnatLine, usbSnatRule } from './clean-vpn-usb-snat.mj
 function fixture() {
   const state = { rules: ['-P POSTROUTING ACCEPT', '-A POSTROUTING -o wlan0 -j MASQUERADE'], writes: [],
     forward: ['-P FORWARD ACCEPT', '-A FORWARD -m comment --comment cvks2-hook -j CLEANVPN_KS_FWD'],
-    forwarding: '1', active: 'active', guard: [4, 6].map(f => `[clean-vpn-killswitch] IPv${f}: cvks2:both:block:tun0:154.62.226.216:22`).join('\n'),
+    forwarding: '1', active: 'active', guard: [4, 6].map(f => `[clean-vpn-killswitch] IPv${f}: cvks4:both:block:tun0:154.62.226.216:22`).join('\n'),
     route: 'tun0', exitRoute: 'wlan0', addresses: [{ ifname: 'usb0', flags: ['UP'], address: '02:00:00:00:00:02', addr_info: [{ family: 'inet', local: '192.168.7.1', prefixlen: 24 }] },
       { ifname: 'tun0', flags: ['UP'], addr_info: [{ family: 'inet', local: '10.99.0.2' }] }] };
   state.run = (tool, args) => {
@@ -36,9 +36,17 @@ test('runtime-only SNAT is planned, applied once, and removed without touching o
   assert.deepEqual(f.rules, before);
   assert.equal(changeUsbSnat({ run: f.run, apply: true, remove: true }).status, 'absent');
 });
+test('canonical deny-only USB DNS prefixes coexist with the audited guard', () => {
+  const f = fixture(), prefix = '-A FORWARD -s 192.168.7.0/24 -d 10.99.0.2/32 -i usb0 -p udp -m comment --comment clean-vpn-dns-tunnel-' + 'a'.repeat(24) + ' -m udp --dport 1053 -j REJECT --reject-with icmp-port-unreachable';
+  f.forward.splice(1, 0, prefix);
+  assert.equal(changeUsbSnat({ run: f.run }).status, 'planned');
+  f.forward[1] = prefix.replace('REJECT --reject-with icmp-port-unreachable', 'ACCEPT');
+  assert.throws(() => changeUsbSnat({ run: f.run, apply: true })); assert.equal(f.writes.length, 0);
+});
 for (const [name, mutate] of Object.entries({
   forwarding: f => { f.forwarding = '0'; }, inactive: f => { f.active = 'inactive'; },
   guard: f => { f.guard = ''; }, route: f => { f.route = 'wlan0'; },
+  oldGuardWithoutUsbDnsProtection: f => { f.guard = f.guard.replaceAll('cvks4:', 'cvks2:'); },
   exitLoop: f => { f.exitRoute = 'tun0'; },
   usb: f => { f.addresses[0].address = '00:00:00:00:00:00'; }, tun: f => { f.addresses.pop(); },
   foreignNat: f => { f.rules.push('-A POSTROUTING -o tun0 -j MASQUERADE'); },

@@ -75,7 +75,7 @@ try {
   const local = spawn('node', ['-e', serverCode], { env: { ...process.env, PROBE_DNS_BIND: '192.168.7.1' }, stdio: ['ignore', 'pipe', 'inherit'] }); children.push(local);
   await new Promise(resolve => local.stdout.once('data', resolve));
   check('positive control external IPv6 works before guard', tcp('2001:db8:99::1') === 'fd42:7::19');
-  guard('up', '--scope=both', '--ipv6=block', '--tun=tun0', '--server=154.62.226.216', '--ssh-port=22');
+  guard('up', '--scope=both', '--ipv6=block', '--tun=tun0', '--server=154.62.226.216', '--ssh-port=22', '--usb-dns=1', '--usb-strict=1');
   const filter4 = cmd('iptables', ['-S']), filter6 = cmd('ip6tables', ['-S']);
   check('missing SNAT reproduces forwarded TCP failure', tcp('1.1.1.1') === null);
   check('dry run changes nothing', changeUsbSnat({ run }).status === 'planned');

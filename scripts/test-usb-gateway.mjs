@@ -117,13 +117,18 @@ test('additive CLI validates the actual generated main/guard templates and refus
   const guard = installer.split('cat > "$KS_UNIT_PATH" <<EOF\n')[1].split('\nEOF')[0]
     .replace('$KS_GATE_MARKER', '# clean-vpn-networkd-gate-v1').replace('$KS_STOP', '/bin/true')
     .replaceAll('$SERVICE_NAME', 'clean-vpn').replaceAll('$KS_SH', scriptPath)
-    .replace('$KS_UP_ARGS', 'up --scope=both --ipv6=block --tun=tun0 --ssh-port=22 --server=154.62.226.216');
+    .replace('$KS_UP_ARGS', 'up --scope=both --ipv6=block --tun=tun0 --ssh-port=22 --server=154.62.226.216 --usb-dns=1 --usb-strict=1');
   const wrapper = '#!/usr/bin/env bash\nset -euo pipefail\nexport PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/usr/bin:/bin"\ncd "/repo"\nexec "/usr/bin/node" "/repo/scripts/clean-vpn.js" --role=client --type=tls --split-default --ipv6=auto --server=154.62.226.216:443 \n';
-  const files = new Map([[mainPath, main], [guardPath, guard], [wrapperPath, wrapper], [scriptPath, 'guard-source']]);
+  const protectedWrapper = wrapper.replace(' --server=', ' --dns-usb=1 --server=');
+  const files = new Map([[mainPath, main], [guardPath, guard], [wrapperPath, protectedWrapper], [scriptPath, 'guard-source']]);
   const opts = { readInstalled: p => files.get(p), guardSource: 'guard-source', gate() {},
     ctl: (...a) => a[0] === 'is-active' ? 'active' : a[2].includes('FragmentPath') ? '/etc/systemd/system/' + a[1]
       : a[2].includes('NeedDaemonReload') ? 'no' : '' };
   assert.doesNotThrow(() => assertInstalledUsbGatewayProfile(opts));
+  files.set(guardPath, guard.replace(' --usb-dns=1 --usb-strict=1', ''));
+  assert.throws(() => assertInstalledUsbGatewayProfile(opts), /upgrade-usb-dns/);
+  assert.doesNotThrow(() => assertInstalledUsbGatewayProfile({ ...opts, allowLegacyGuard: true }));
+  files.set(guardPath, guard);
   for (const [p, text] of [[mainPath, main + '\nExecStop=/bin/false'], [guardPath, guard.replace('scope=both', 'scope=fwd')],
     [wrapperPath, wrapper.replace('ipv6=auto', 'ipv6=off')], [wrapperPath, wrapper.replace('type=tls', 'type=combo-tls')],
     [wrapperPath, wrapper.replace('154.62.226.216', '198.51.100.1')], [scriptPath, 'foreign']]) {

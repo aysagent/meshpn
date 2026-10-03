@@ -11,7 +11,7 @@ function fixture(t, options = {}) {
   const root = fs.mkdtempSync(join(tmpdir(), 'meshpn-retire-test-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const map = p => typeof p === 'string' ? root + p : p;
   fs.mkdirSync(map('/var'));
-  for (const path of LEGACY_FILES) { fs.mkdirSync(dirname(map(path)), { recursive: true }); fs.writeFileSync(map(path), path.endsWith('killswitch.sh') ? fs.readFileSync(new URL('./autostart/killswitch.sh', import.meta.url)) : 'PRIVATE-OLD-ARGS\n', { mode: 0o644 }); }
+  for (const path of LEGACY_FILES) { fs.mkdirSync(dirname(map(path)), { recursive: true }); fs.writeFileSync(map(path), path.endsWith('killswitch.sh') ? fs.readFileSync(new URL('./fixtures/usb-dns-v2-guard.txt', import.meta.url)) : 'PRIVATE-OLD-ARGS\n', { mode: 0o644 }); }
   const commands = [], removed = [], released = [];
   const io = { ...fs, lstatSync(p) { const s = fs.lstatSync(map(p)); s.uid = 0; return s; }, fstatSync(fd) { const s = fs.fstatSync(fd); s.uid = 0; return s; },
     readFileSync(p, opts) { return p === '/proc/1/comm' ? 'systemd\n' : fs.readFileSync(map(p), opts); },
@@ -107,9 +107,10 @@ for (const unlinkFailure of [0, 1, 2, 3, undefined]) test('partial unlink/reload
   for (const path of LEGACY_FILES) assert.ok(fs.existsSync(f.map(report.backupDirectory + '/' + basename(path))));
   assert.deepEqual(f.released, [2, 1, 0]);
 });
-test('guard allowlist pins the reported legacy and the real current fixture bytes', () => {
+test('legacy retirement pins historical bytes, not a newer strict USB installation', () => {
   assert.ok(RETIRABLE_GUARD_HASHES.has('5b99335723dcab4a1c3b472307e61bb082496b81ab9e73d9f9ca75139f25172e'));
-  assert.ok(RETIRABLE_GUARD_HASHES.has(createHash('sha256').update(fs.readFileSync(new URL('./autostart/killswitch.sh', import.meta.url))).digest('hex')));
+  assert.ok(RETIRABLE_GUARD_HASHES.has(createHash('sha256').update(fs.readFileSync(new URL('./fixtures/usb-dns-v2-guard.txt', import.meta.url))).digest('hex')));
+  assert.ok(!RETIRABLE_GUARD_HASHES.has(createHash('sha256').update(fs.readFileSync(new URL('./autostart/killswitch.sh', import.meta.url))).digest('hex')));
 });
 test('CLI rejects mutating/unknown args without invoking retirement', () => {
   for (const args of [['--help'], ['--apply', '--apply'], ['--service=other']]) {

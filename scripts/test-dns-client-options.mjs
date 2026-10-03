@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { cleanVpnDnsOptions, tunnelDnsLanInterface } from './lib/dns-client-options.mjs';
+import { cleanVpnDnsOptions, tunnelDnsLanInterface, tunnelDnsUsbScope } from './lib/dns-client-options.mjs';
+import { usbRecoveryProfile, recoverUsbClient } from './lib/usb-client-recovery.mjs';
 import { recoverTunnelDns } from './clean-vpn-dns-recover.mjs';
 import { tunnelDnsFixtureAnswer } from './lib/dns-tunnel-cli-lab.mjs';
 import { makeDnsQuery, validateDnsResponse } from './lib/lab-dns-wire.mjs';
@@ -14,6 +15,19 @@ const slice = (start, end) => {
 };
 const parseArgs = runInNewContext(`${slice('function parseArgs(argv)', '\nfunction parseHostPort')}\nparseArgs`, { cleanVpnDnsOptions });
 const base = ['--role=client', '--type=tls', '--server=192.0.2.1:443'];
+
+test('USB DNS explicitly opts into fixed ingress without legacy LAN gateway mutations', () => {
+  const flags = [...base, '--split-default', '--dns-usb=1'];
+  assert.equal(parseArgs(flags).dnsUsb, true);
+  assert.equal(parseArgs(flags).clientLanSubnet, null);
+  for (const extra of ['--dns-mode=off', '--dns-usb=0', '--dns-usb=1', '--client-lan-subnet=192.168.7.0/24', '--from-tun=wg0'])
+    assert.throws(() => parseArgs([...flags, extra]));
+  assert.throws(() => parseArgs([...base, '--dns-usb=1']));
+  const usb = { ifname: 'usb0', addr_info: [{ family: 'inet', local: '192.168.7.1', prefixlen: 24 }] };
+  assert.deepEqual(tunnelDnsUsbScope([usb]), { fromTun: null, lanSubnet: '192.168.7.0/24', lanInterface: 'usb0' });
+  for (const links of [[], [{ ...usb, ifname: 'wlan0' }], [usb, { ...usb, ifname: 'dup0' }],
+    [{ ...usb, addr_info: [{ family: 'inet', local: '192.168.7.2', prefixlen: 24 }] }]]) assert.throws(() => tunnelDnsUsbScope(links));
+});
 
 test('client cleanup isolates legacy route/sysctl commands without changing startup options', () => {
   const calls = [];
@@ -73,6 +87,7 @@ function clientFixture({ off = false, failure = null, stopping = false } = {}) {
   const runtime = { activate() { events.push('dns-activate'); if (failure === 'activate') throw Error('activate'); },
     async close({ restore }) { events.push(`close:${restore}`); } };
   const runClient = runInNewContext(`${slice('async function runClient(options)', '\nasync function runClientImpl(')}\nrunClient`, {
+    usbRecoveryProfile, recoverUsbClient,
     console: { log() {} }, openTunnelDnsJournal: () => journal, reportTunnelDnsProgress() {},
     async runClientImpl(options) {
       networkReady = options.networkReady;
@@ -115,6 +130,7 @@ test('host stale-route preflight precedes DNS and TUN; early DNS open failure re
   for (const stale of [true, false]) {
     const events = [];
     const run = runInNewContext(`${slice('async function runClient(options)', '\nasync function runClientImpl(')}\nrunClient`, {
+      usbRecoveryProfile, recoverUsbClient,
       openHostRoutes: () => ({
         assertAvailable() { events.push('host-audit'); if (stale) throw Error('stale'); },
         release() { events.push('host-release'); },
@@ -126,6 +142,19 @@ test('host stale-route preflight precedes DNS and TUN; early DNS open failure re
     await assert.rejects(run({ dnsMode: 'tunnel' }), stale ? /stale/ : /dns-open/);
     assert.deepEqual(events, ['host-audit', ...(!stale ? ['dns-open'] : []), 'host-release']);
   }
+});
+test('reviewed USB recovery acquires DNS before recovery and creates TUN only after audit', async () => {
+  const events = [], host = { assertAvailable() { events.push('host-available'); }, release() {} };
+  const dns = { prepareRestart() { events.push('dns-restart'); }, release() {} };
+  const run = runInNewContext(`${slice('async function runClient(options)', '\nasync function runClientImpl(')}\nrunClient`, {
+    usbRecoveryProfile, recoverUsbClient({ host: h, dns: d }) {
+      assert.equal(h, host); assert.equal(d, dns); events.push('recover');
+    }, openHostRoutes: () => host, openTunnelDnsJournal() { events.push('dns-lock'); return dns; },
+    execIpFileSync: () => '[]', tunnelDnsUsbScope: () => ({}), reportTunnelDnsProgress() {},
+    async runClientImpl(o) { events.push('tun'); o.dnsNetworkPrepared({ stopping: true }); },
+  });
+  await run({ dnsUsb: true, role: 'client', type: 'tls', splitDefault: true, ipv6: 'auto', dnsMode: 'tunnel', server: '154.62.226.216:443' });
+  assert.deepEqual(events, ['dns-lock', 'recover', 'host-available', 'dns-restart', 'tun']);
 });
 
 test('actual shutdown waits for DNS startup and parks safe ingress before DNS release', async () => {

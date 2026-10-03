@@ -12,7 +12,7 @@ import { runTunnelDnsCommand } from './dns-tunnel-command.mjs';
 export const NETWORKD_GATE_MARKER = '# clean-vpn-networkd-gate-v1';
 export const NETWORKD_GATED_UNITS = ['systemd-networkd.service', 'systemd-networkd.socket'];
 export function assertNetworkdClientArgs(args) {
-  const accepted = new Set(['role', 'type', 'server', 'split-default', 'ipv6', 'tls-client-sni', 'tls-public-name', 'tls-server-name', 'tls-cert-dir', 'shared-hmac-key', 'keep-alive', 'dns-mode', 'dns-server']);
+  const accepted = new Set(['role', 'type', 'server', 'split-default', 'ipv6', 'tls-client-sni', 'tls-public-name', 'tls-server-name', 'tls-cert-dir', 'shared-hmac-key', 'keep-alive', 'dns-mode', 'dns-server', 'dns-usb']);
   const values = new Map();
   for (const arg of args) {
     const m = /^--([a-z][a-z0-9-]*)(?:=([^\r\n]+))?$/.exec(arg);
@@ -22,6 +22,7 @@ export function assertNetworkdClientArgs(args) {
   for (const [key, value] of [['role', 'client'], ['type', 'tls'], ['split-default', true], ['ipv6', 'auto']]) assert.equal(values.get(key), value, `networkd candidate requires ${key}`);
   assert.match(values.get('server') ?? '', /^\d+\.\d+\.\d+\.\d+:\d+$/);
   assert.equal(values.get('dns-mode') ?? 'tunnel', 'tunnel');
+  if (values.has('dns-usb')) assert.equal(values.get('dns-usb'), '1');
 }
 export function networkdGatePath(service, unit = 'systemd-networkd.service') {
   assert.match(service, /^[A-Za-z0-9_][A-Za-z0-9._-]*$/); assert.ok(service.length <= 200);

@@ -146,6 +146,8 @@ import { openTunnelDnsJournal, reportTunnelDnsProgress } from './lib/dns-tunnel-
 import { IPV6_HEADER, ipv6PacketAllowed, validateIpv6Options } from './lib/vpn-ipv6.mjs';
 import { openIpv6Runtime } from './lib/vpn-ipv6-runtime.mjs';
 import { openHostRoutes } from './lib/vpn-host-routes.mjs';
+import { usbRecoveryProfile, recoverUsbClient } from './lib/usb-client-recovery.mjs';
+import { watchVpnUplink } from './lib/vpn-uplink-watch.mjs';
 import { createHttpDateRecovery, CLOCK_UPDATED, responseHeaders, vpnResponseAccepted } from './lib/vpn-http-date.mjs';
 
 // A repeated terminal Ctrl+C must not kill route/sysctl helpers during cleanup.
@@ -157,7 +159,7 @@ function execFileSync(file, args, options = {}) {
   } : options);
 }
 import { startTunnelDnsRuntime } from './lib/dns-tunnel-runtime.mjs';
-import { cleanVpnDnsOptions, tunnelDnsLanInterface } from './lib/dns-client-options.mjs';
+import { cleanVpnDnsOptions, tunnelDnsLanInterface, tunnelDnsUsbScope } from './lib/dns-client-options.mjs';
 import {
   extractFirstClientHelloBody,
   ja3DebugFromTcpBuf,
@@ -4058,7 +4060,7 @@ function parseArgs(argv) {
     signalingPskRequired: true,
   };
   for (const a of argv) {
-    if (/^--dns-(mode|server|state-dir)=/.test(a)) continue;
+    if (/^--dns-(mode|server|state-dir|usb)=/.test(a)) continue;
     if (a.startsWith('--role=')) out.role = a.slice('--role='.length);
     else if (a.startsWith('--server=')) out.server = a.slice('--server='.length);
     else if (a.startsWith('--type=')) out.type = a.slice('--type='.length);
@@ -10338,13 +10340,17 @@ async function runClient(options) {
   const networkReady = new Promise(resolve => { allowTransport = resolve; });
   const hostRoutes = options.fromTun ? null : openHostRoutes();
   // Refuse stale ownership before creating a new TUN or taking DNS snapshots.
-  try { hostRoutes?.assertAvailable(); } catch (e) { hostRoutes?.release(); throw e; }
+  try { if (!usbRecoveryProfile(options)) hostRoutes?.assertAvailable(); } catch (e) { hostRoutes?.release(); throw e; }
   try {
-    const dnsScope = { fromTun: options.fromTun ?? null, lanSubnet: options.clientLanSubnet ?? null,
+    const dnsScope = options.dnsUsb ? tunnelDnsUsbScope(JSON.parse(execIpFileSync(['-j', '-4', 'addr', 'show'], { encoding: 'utf8' }))) : { fromTun: options.fromTun ?? null, lanSubnet: options.clientLanSubnet ?? null,
       lanInterface: options.dnsMode === 'tunnel' && options.clientLanSubnet
         ? tunnelDnsLanInterface(options.clientLanSubnet, JSON.parse(execIpFileSync(['-j', '-4', 'addr', 'show'], { encoding: 'utf8' }))) : null };
     dnsJournal = options.dnsMode === 'tunnel'
       ? openTunnelDnsJournal(options.dnsStateDir, { onProgress: reportTunnelDnsProgress }) : null;
+    if (usbRecoveryProfile(options)) {
+      recoverUsbClient({ host: hostRoutes, ipv6: options.ipv6Runtime, dns: dnsJournal, scope: dnsScope });
+      hostRoutes?.assertAvailable();
+    }
     dnsJournal?.prepareRestart(dnsScope);
     await runClientImpl({ ...options, hostRoutes, networkReady, ingressPrepared: (transaction) => { activate = () => transaction.activate(); },
       dnsNetworkPrepared: (ctx) => { routeCtx = ctx; ctx.dnsJournal = dnsJournal; } });
@@ -10492,8 +10498,10 @@ async function runClientImpl({
   /** @type {((exitCode?: number, reason?: string) => void) | null} */
   let shutdownFn = null;
   let finishNetworkPromise;
+  let uplinkWatch;
   const finishNetwork = (exitCode, reason) => {
     routeCtx.stopping = true;
+    uplinkWatch?.stop();
     finishNetworkPromise ??= (async () => {
       let code = exitCode;
       try {
@@ -11409,12 +11417,13 @@ async function runClientImpl({
         `[clean-vpn] tls-log-bearer: --keep-alive=${kaBridge} — Bearer/exporter в логах после первого connect (TCP SYN/DNS или eager при ka=0)`,
       );
     }
-    attachOutboundTunBridge(
+    const tlsBridge = attachOutboundTunBridge(
       tun,
       'tcp',
       { ...BRIDGE_OPTS_CLIENT, networkReady, ipv6Role: ipv6Runtime ? 'client' : null },
       async () => {
         if (routeCtx.stopping) throw new Error('client stopping');
+        const generation = uplinkWatch?.generation ?? 0;
         if (routeCtx.hostRoutes && splitDefault && routeCtx.serverIp) {
           const repaired = routeCtx.hostRoutes.repairUplink(routeCtx.dev, routeCtx.gw ?? null, routeCtx.serverIp);
           if (repaired) console.log(`[clean-vpn] uplink-repair: restored ${repaired} owned routes before TLS reconnect`);
@@ -11422,6 +11431,7 @@ async function runClientImpl({
         const sock = await connectTlsVpn(tlsConnectOpts);
         try {
           if (routeCtx.stopping) throw new Error('client stopping');
+          if (generation !== (uplinkWatch?.generation ?? 0)) throw new Error('uplink changed during TLS connect');
           if (ipv6Runtime) console.log(`[clean-vpn] IPv6 client: ${ipv6Runtime.capability(sock.cleanVpnIpv6)} (outer TLS over IPv4)`);
         } catch (error) { sock.destroy(); throw error; }
         tlsVpnSocket = sock;
@@ -11431,6 +11441,16 @@ async function runClientImpl({
       kaCooldown,
       shouldEagerOutboundTunConnect(type, splitDefault, kaBridge),
     );
+    if (routeCtx.hostRoutes && splitDefault && routeCtx.serverIp) {
+      void networkReady.then(ready => {
+        if (!ready || routeCtx.stopping) return;
+        uplinkWatch = watchVpnUplink({
+          repair: () => routeCtx.hostRoutes.repairUplink(routeCtx.dev, routeCtx.gw ?? null, routeCtx.serverIp),
+          disconnect: () => { tlsVpnSocket?.destroy(); tlsVpnSocket = null; },
+          reconnect: () => { void tlsBridge?.ensureWire(); },
+        });
+      });
+    }
     return;
   }
 
@@ -11922,6 +11942,7 @@ async function main() {
 --dns-mode=tunnel|off: client default tunnel — обычный UDP/TCP53 через TUN к 1.1.1.1, backup 8.8.8.8; settings resolved/dnsmasq не меняются. Требует conntrack и --server=IPv4:PORT (TLS-имя отдельно). off отключает DNS-перехват и его guard, не снимает оставшуюся аварийную защиту. managed зарезервирован и пока отклоняется: системный opt-in workflow остаётся отдельным.
 --dns-server=IPv4: публичный основной resolver простого режима; backup остаётся 8.8.8.8. Участок exit → DNS — обычный DNS. Защита client → exit зависит от транспорта.
 --dns-state-dir=DIR: приватный журнал DNS (default /run/clean-vpn-tunnel-dns-NETNS). При следующем запуске восстанавливается только собственное состояние той же загрузки; конфликты требуют проверки.
+--dns-usb=1: reviewed native TLS client: перехват UDP/TCP53 от usb0/192.168.7.0/24 через тот же tunnel DNS, без изменения SNAT/sysctl. Требует отдельного persistent USB kill-switch; IPv6 DNS блокируется.
 --from-tun=IFACE: только client, вместо --split-default — внешний IPv4 с входного интерфейса (например wg0) через VPN; host OUTPUT/default без изменений. Нужен готовый шлюз с ip_forward=1. IPv6 forwarding этого входа блокируется. См. scripts/clean-vpn-from-tun.md (исключения, DNS, остановка/авария).
 --from-tun-state-dir=DIR: закрытый каталог журнала восстановления (0700); default /run/clean-vpn-ingress-NETNS. После аварии: node scripts/clean-vpn-recover.mjs --from-tun=IFACE (проверка), затем --apply (возврат прежнего forwarding).
 --from-tun-restart-safe: с --from-tun сохранять ingress guard и DNS-защиту при штатной остановке; следующий запуск восстанавливает их под блокировкой. Полное отключение: сначала clean-vpn-dns-recover.mjs --apply (если DNS tunnel включён), затем clean-vpn-recover.mjs --from-tun=IFACE --apply. Не reboot kill-switch.
@@ -12150,7 +12171,7 @@ async function main() {
   args.dnsUpstreamDestinationPolicy = await loadExitDnsUpstreamPolicy(args, process.argv.slice(2));
   if (args.ipv6 === 'auto') {
     args.ipv6Runtime = openIpv6Runtime();
-    if (args.ipv6Runtime.state && args.ipv6Runtime.state.stage !== 'released') {
+    if (args.ipv6Runtime.state && args.ipv6Runtime.state.stage !== 'released' && !usbRecoveryProfile(args)) {
       args.ipv6Runtime.release();
       throw new Error('IPv6 recovery required: node scripts/clean-vpn-ipv6-recover.mjs --apply');
     }

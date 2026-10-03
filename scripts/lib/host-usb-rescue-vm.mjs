@@ -82,7 +82,7 @@ async function test() {
   ip('-n', 'uplink', 'route', 'add', '192.168.7.1/32', 'via', '198.18.0.1');
   let blocked = false; try { await login('uplink'); } catch { blocked = true; }
   check('uplink cannot reach rescue address even before guard rules', blocked);
-  command('/bin/bash', ['/project/scripts/autostart/killswitch.sh', 'up', '--scope=both', '--ipv6=block', '--server=154.62.226.216', '--ssh-port=22', '--tun=tun0']);
+  command('/bin/bash', ['/project/scripts/autostart/killswitch.sh', 'up', '--scope=both', '--ipv6=block', '--server=154.62.226.216', '--ssh-port=22', '--tun=tun0', '--usb-dns=1', '--usb-strict=1']);
   check('USB authenticated login with real persistent guard', await login());
   command('/bin/bash', ['/project/scripts/autostart/killswitch.sh', 'status']);
   ip('link', 'delete', 'usb0');

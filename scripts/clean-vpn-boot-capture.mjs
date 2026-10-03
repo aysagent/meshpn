@@ -76,7 +76,7 @@ try {
       assert.equal(ctl('is-active', 'systemd-networkd.service'), 'active');
       assert.equal(ctl('is-active', 'clean-vpn-killswitch.service'), 'active');
       const guard = run('/usr/local/bin/clean-vpn-killswitch.sh', ['status']);
-      for (const family of ['IPv4', 'IPv6']) assert.ok(guard.includes(`${family}: cvks2:both:block:tun0:${exitIp}:22`), 'known persistent guard profile required');
+      for (const family of ['IPv4', 'IPv6']) assert.ok([2, 3, 4].some(v => guard.includes(`${family}: cvks${v}:both:block:tun0:${exitIp}:22`)), 'known persistent guard profile required');
       for (const u of ['NetworkManager.service', 'connman.service', 'wicked.service', 'networking.service'])
         assert.notEqual(ctl('show', u, '--property=ActiveState', '--value'), 'active', `unsupported network manager: ${u}`);
       for (const f of ['tcpdump', 'ip', 'systemd-notify']) run('which', [f]);

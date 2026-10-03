@@ -56,6 +56,12 @@ test('release switch preserves argv/node and changes only cwd/entrypoint',()=>{
   const n=switchHostWrapper(wrapper,'/new'); assert.equal(n.serverIp,'198.51.100.2');
   assert.equal(n.contents,wrapper.replace('cd "/old"','cd "/new"').replace('"/old/scripts/','"/new/scripts/'));
   assert.equal(checkHostUpdateUnits('clean-vpn',main,guard),'cvks2:both:block:tun0:198.51.100.2:22');
+  assert.equal(checkHostUpdateUnits('clean-vpn', main, guard.replace('--server=198.51.100.2', '--server=198.51.100.2 --usb-dns=1')),
+    'cvks3:both:block:tun0:198.51.100.2:22');
+  assert.equal(checkHostUpdateUnits('clean-vpn', main, guard.replace('--server=198.51.100.2', '--server=198.51.100.2 --usb-dns=1 --usb-strict=1')),
+    'cvks4:both:block:tun0:198.51.100.2:22');
+  assert.throws(() => checkHostUpdateUnits('clean-vpn', main, guard.replace('--server=198.51.100.2', '--server=198.51.100.2 --usb-strict=1')));
+  assert.throws(() => checkHostUpdateUnits('clean-vpn', main, guard.replace('--server=198.51.100.2', '--server=198.51.100.2 --usb-dns=0')));
 });
 test('networkd update template requires retain-rules stop only with explicit marker', () => {
   const gated = '# clean-vpn-networkd-gate-v1\n' + guard.replace(`ExecStop=${scriptPath} down --tun=tun0`, 'ExecStop=/bin/true');

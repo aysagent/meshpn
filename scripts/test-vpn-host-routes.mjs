@@ -194,7 +194,7 @@ test('every TLS reconnect audits routes; failed audit never opens a TLS socket',
     hostRoutes: { repairUplink(...args) { events.push(['repair', ...args]); if (fail) throw Error('no uplink'); return 1; } } };
   let fail = false;
   const connect = runInNewContext(`let tlsVpnSocket; (${clientSource.slice(start, end)})`, {
-    routeCtx, splitDefault: true, ipv6Runtime: null, tlsConnectOpts: {}, console: { log() {} },
+    routeCtx, uplinkWatch: undefined, splitDefault: true, ipv6Runtime: null, tlsConnectOpts: {}, console: { log() {} },
     connectTlsVpn: async () => { events.push(['connect']); return {}; },
   });
   await connect(); await connect();
@@ -204,4 +204,17 @@ test('every TLS reconnect audits routes; failed audit never opens a TLS socket',
   assert.equal(events.at(-1)[0], 'repair');
   const n = events.length; routeCtx.stopping = true;
   await assert.rejects(connect(), /client stopping/); assert.equal(events.length, n);
+});
+test('TLS result from an obsolete uplink generation is destroyed before adoption', async () => {
+  const marker = clientSource.indexOf('const repaired = routeCtx.hostRoutes.repairUplink(');
+  const start = clientSource.lastIndexOf('async () => {', marker);
+  const end = clientSource.indexOf('\n      },', marker) + '\n      }'.length;
+  const watch = { generation: 0 }; let destroyed = false;
+  const connect = runInNewContext(`let tlsVpnSocket; (${clientSource.slice(start, end)})`, {
+    routeCtx: { stopping: false }, uplinkWatch: watch, splitDefault: true, ipv6Runtime: null,
+    tlsConnectOpts: {}, console: { log() {} }, connectTlsVpn: async () => {
+      watch.generation++; return { destroy() { destroyed = true; } };
+    },
+  });
+  await assert.rejects(connect(), /uplink changed/); assert.equal(destroyed, true);
 });

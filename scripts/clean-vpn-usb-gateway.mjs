@@ -7,22 +7,27 @@ import { checkHostUpdateUnits, switchHostWrapper } from './lib/host-update.mjs';
 import { assertNetworkdGate, usesNetworkdGate } from './lib/host-networkd-gate.mjs';
 
 export function assertInstalledUsbGatewayProfile({ readInstalled = p => read(fs, p),
-  ctl = (...a) => run('systemctl', a), gate = assertNetworkdGate,
+  ctl = (...a) => run('systemctl', a), gate = assertNetworkdGate, allowLegacyGuard = false, allowPendingReload = false,
   guardSource = fs.readFileSync(new URL('./autostart/killswitch.sh', import.meta.url), 'utf8') } = {}) {
   const base = '/etc/systemd/system/';
   const main = readInstalled(base + 'clean-vpn.service'), guard = readInstalled(base + 'clean-vpn-killswitch.service');
-  assert.equal(checkHostUpdateUnits('clean-vpn', main, guard), 'cvks2:both:block:tun0:154.62.226.216:22');
+  const profile = checkHostUpdateUnits('clean-vpn', main, guard);
+  assert.ok(['cvks4', ...(allowLegacyGuard ? ['cvks2', 'cvks3'] : [])].some(v => profile === `${v}:both:block:tun0:154.62.226.216:22`),
+    'USB DNS-protected guard required; use install.sh --upgrade-usb-dns for the old profile');
   assert.ok(usesNetworkdGate(guard), 'networkd guarded installation required');
   gate({ service: 'clean-vpn', ctl });
   for (const unit of ['clean-vpn.service', 'clean-vpn-killswitch.service']) {
     assert.equal(ctl('show', unit, '--property=FragmentPath', '--value').trim(), base + unit);
     assert.equal(ctl('show', unit, '--property=DropInPaths', '--value').trim(), '');
-    assert.equal(ctl('show', unit, '--property=NeedDaemonReload', '--value').trim(), 'no');
+    const reload = ctl('show', unit, '--property=NeedDaemonReload', '--value').trim();
+    assert.ok(reload === 'no' || (allowPendingReload && unit === 'clean-vpn-killswitch.service' && reload === 'yes'));
   }
   const wrapper = readInstalled('/usr/local/bin/clean-vpn-run.sh');
   switchHostWrapper(wrapper, '/var/lib/clean-vpn-usb-gateway-inspection'); // parsing only, no write
   for (const arg of ['--type=tls', '--split-default', '--ipv6=auto', '--server=154.62.226.216:443'])
     assert.ok(wrapper.trim().split(/\s+/).includes(arg), `required profile option: ${arg}`);
+  if (!allowLegacyGuard) assert.ok(wrapper.trim().split(/\s+/).includes('--dns-usb=1'), 'USB DNS interception missing; use --upgrade-usb-dns');
+  assert.ok(!/--dns-mode=(?!tunnel(?:\s|$))/.test(wrapper), 'USB requires tunnel DNS');
   assert.equal(readInstalled('/usr/local/bin/clean-vpn-killswitch.sh'), guardSource, 'installed guard version differs');
   assert.equal(ctl('is-active', 'clean-vpn-killswitch.service').trim(), 'active');
 }

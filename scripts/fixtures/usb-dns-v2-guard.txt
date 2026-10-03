@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 # Public-egress guard. Exceptions: TUN, LAN, IPv4 exit IPs, DHCP and inbound
-# SSH replies (--ssh-port=22; 0 disables). With --usb-dns=1, USB DNS must use TUN;
-# LAN exceptions never authorize usb0 UDP/TCP destination port 53 outside it.
-# Host DNS must also use TUN/loopback so a local DNS proxy cannot bypass this.
-# Allowed traffic RETURNs to the existing
+# SSH replies (--ssh-port=22; 0 disables). Allowed traffic RETURNs to the existing
 # firewall. Own chains are audited, then rebuilt using restore --noflush.
 # No implicit down/global flush. Legacy or foreign contents are refused.
 # IPv4 and IPv6 commits are separate; first installation is protected only after
@@ -13,7 +10,7 @@ umask 077
 log() { printf '[clean-vpn-killswitch] %s\n' "$*"; }
 die() { printf '[clean-vpn-killswitch] ОШИБКА: %s\n' "$*" >&2; exit 1; }
 ACTION="${1:-}"; shift || true
-SERVERS='' SCOPE=both IPV6=block TUN=tun0 SSH_PORT=22 FAMILY='' USB_DNS=0 USB_STRICT=0
+SERVERS='' SCOPE=both IPV6=block TUN=tun0 SSH_PORT=22 FAMILY=''
 declare -A seen=() IPT=() RESTORE=() SNAP=() OLD=() PLAN=()
 for arg in "$@"; do
   key="${arg%%=*}"
@@ -27,8 +24,6 @@ for arg in "$@"; do
     --tun) TUN="${arg#*=}" ;;
     --ssh-port) SSH_PORT="${arg#*=}" ;;
     --family) FAMILY="${arg#*=}" ;;
-    --usb-dns) USB_DNS="${arg#*=}" ;;
-    --usb-strict) USB_STRICT="${arg#*=}" ;;
     *) die "unknown argument: $key" ;;
   esac
 done
@@ -59,21 +54,14 @@ validate() {
   done
 }
 if [[ "$ACTION" == up || "$ACTION" == plan ]]; then validate "$SCOPE" "$IPV6" "$TUN" "$SERVERS" "$SSH_PORT"; fi
-[[ "$USB_DNS" == 0 || "$USB_DNS" == 1 ]] || die 'invalid USB DNS mode'
-[[ "$USB_STRICT" == 0 || "$USB_STRICT" == 1 ]] || die 'invalid USB strict mode'
-VERSION=cvks2; [[ "$USB_DNS" != 1 ]] || VERSION=cvks3
-if [[ "$USB_STRICT" == 1 ]]; then
-  [[ "$USB_DNS" == 1 && "$SCOPE" == both && "$IPV6" == block && "$TUN" != usb0 ]] || die 'strict USB requires both/block and USB DNS protection'
-  VERSION=cvks4
-fi
-NEW="$VERSION:$SCOPE:$IPV6:$TUN:$SERVERS:$SSH_PORT"
+NEW="cvks2:$SCOPE:$IPV6:$TUN:$SERVERS:$SSH_PORT"
 CHAINS=(CLEANVPN_KS_OUT CLEANVPN_KS_FWD)
 hook() { printf -- '-A %s -m comment --comment cvks2-hook -j %s\n' "$1" "$2"; }
 # Canonical iptables -S form, without comment quotes. Kernel text is never eval'd.
 rules() {
-  local family="$1" config="$2" version scope ipv6 tun servers port chain net addr proto
+  local family="$1" config="$2" version scope ipv6 tun servers port chain net addr
   IFS=: read -r version scope ipv6 tun servers port <<< "$config"
-  [[ "$version" == cvks2 || "$version" == cvks3 || "$version" == cvks4 ]] || die 'unknown guard version'
+  [[ "$version" == cvks2 ]] || die 'unknown guard version'
   validate "$scope" "$ipv6" "$tun" "$servers" "$port"
   [[ "$family" == 4 || "$ipv6" == block ]] || return 0
   for chain in "${CHAINS[@]}"; do
@@ -87,31 +75,7 @@ rules() {
     else
       printf -- '-A %s -i %s -j RETURN\n' "$chain" "$tun"
     fi
-    if [[ "$version" == cvks4 && "$chain" == CLEANVPN_KS_FWD ]]; then
-      if [[ "$family" == 4 ]]; then
-        # Route withdrawal must not send LAN packets into the TUN queue and
-        # later deliver them via exit. DNS DNAT/local SSH use INPUT instead.
-        for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16; do
-          printf -- '-A %s -d %s -i usb0 -j DROP\n' "$chain" "$net"
-        done
-        printf -- '-A %s -s 192.168.7.0/24 -i usb0 -o %s -j RETURN\n' "$chain" "$tun"
-      fi
-      # No LAN/exit/port exceptions for forwarded USB. INPUT (SSH/DNS to
-      # the board) is separate. IPv6 is fail-closed until peer IPv6 is supported.
-      printf -- '-A %s -i usb0 -j DROP\n' "$chain"
-    fi
     printf -- '-A %s -o %s -j RETURN\n' "$chain" "$tun"
-    # USB profile opts into v3; other deployments retain their v2 semantics.
-    # Local USB DNS terminates in INPUT and is not affected.
-    if [[ "$version" == cvks3 || "$version" == cvks4 ]]; then
-      for proto in udp tcp; do
-        if [[ "$chain" == CLEANVPN_KS_FWD ]]; then
-          printf -- '-A %s -i usb0 -p %s -m %s --dport 53 -j DROP\n' "$chain" "$proto" "$proto"
-        else
-          printf -- '-A %s -p %s -m %s --dport 53 -j DROP\n' "$chain" "$proto" "$proto"
-        fi
-      done
-    fi
     if [[ "$family" == 4 ]]; then
       for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16; do printf -- '-A %s -d %s -j RETURN\n' "$chain" "$net"; done
       if [[ "$chain" == CLEANVPN_KS_OUT ]]; then
@@ -181,24 +145,11 @@ safe_ipv6_chain() {
 }
 safe_prefix_rule() {
   local family="$1" base="$2" line="$3" config="$4" version scope ipv6 tun servers port tag protocol id chain
+  [[ "$base" == OUTPUT ]] || return 1 # LAN/forwarded-client plans are not admitted.
   IFS=: read -r version scope ipv6 tun servers port <<< "$config"
   local dns_tag=' --comment (clean-vpn-dns-tunnel(-[a-f0-9]{24})?) '
   if [[ "$line" =~ $dns_tag ]]; then
     tag="${BASH_REMATCH[1]}"
-    if [[ "$base" == FORWARD && "$version" == cvks4 ]]; then
-      for protocol in tcp udp; do
-        if [[ "$family" == 4 ]]; then
-          for port in 53 1053; do
-            local destination=''; [[ "$port" != 1053 ]] || destination='-d 10.99.0.2/32 '
-            [[ "$line" != "-A FORWARD -s 192.168.7.0/24 ${destination}-i usb0 -p $protocol -m comment --comment $tag -m $protocol --dport $port -j REJECT --reject-with icmp-port-unreachable" ]] || return 0
-          done
-        else
-          [[ "$line" != "-A FORWARD -i usb0 -p $protocol -m comment --comment $tag -m $protocol --dport 53 -j REJECT --reject-with icmp6-port-unreachable" ]] || return 0
-        fi
-      done
-      return 1
-    fi
-    [[ "$base" == OUTPUT ]] || return 1
     for protocol in tcp udp; do
       if [[ "$family" == 4 ]]; then
         [[ "$line" != "-A OUTPUT -d 10.99.0.2/32 -p $protocol -m comment --comment $tag -m addrtype ! --dst-type LOCAL -m $protocol --dport 1053 -j REJECT --reject-with icmp-port-unreachable" ]] || return 0
@@ -222,7 +173,7 @@ audit() {
   local family="$1" line chain base config='' expected actual selected want count first prefix
   SNAP[$family]="${SNAP[$family]//\"/}"
   while IFS= read -r line; do
-    if [[ "$line" == '-A CLEANVPN_KS_FWD -m comment --comment cvks2:'* || "$line" == '-A CLEANVPN_KS_FWD -m comment --comment cvks3:'* || "$line" == '-A CLEANVPN_KS_FWD -m comment --comment cvks4:'* ]]; then
+    if [[ "$line" == '-A CLEANVPN_KS_FWD -m comment --comment cvks2:'* ]]; then
       [[ -z "$config" ]] || die 'duplicate ownership marker'
       config="${line#-A CLEANVPN_KS_FWD -m comment --comment }"
     fi
@@ -294,8 +245,6 @@ for family in 4 6; do
   if [[ "$ACTION" == up ]]; then
     if [[ -n "${OLD[$family]}" ]]; then
       IFS=: read -r version old_scope old_ipv6 rest <<< "${OLD[$family]}"
-      [[ "$version" != cvks3 || "$USB_DNS" == 1 ]] || die 'live USB DNS protection downgrade refused; no changes'
-      [[ "$version" != cvks4 || "$USB_STRICT" == 1 ]] || die 'live strict USB protection downgrade refused; no changes'
       [[ "$SCOPE" == "$old_scope" && "$IPV6" == "$old_ipv6" ]] || die 'live scope/IPv6-mode change refused; explicit down required'
     fi
     PLAN[$family]="$(render_up "$family")"
