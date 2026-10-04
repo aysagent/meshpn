@@ -12,13 +12,15 @@ import { legacyUsbGuardHash, legacyUsbSnatHash } from './lib/host-usb-dns-upgrad
 import { assertUsbSoakEvidence } from './lib/usb-soak-evidence.mjs';
 import { addUsbMssVmImage } from './lib/usb-mss-vm-image.mjs';
 import { assertUsbPmtuEvidence } from './lib/usb-pmtu-vm.mjs';
+import { instrumentTunMemory } from './lib/usb-native-diagnostics.mjs';
 
 const [base, tools, option] = process.argv.slice(2);
 const networkOnly = option === '--network-faults';
-const soak = option === '--soak';
+const diagnostics = option === '--soak-diagnostics';
+const soak = option === '--soak' || diagnostics;
 const pmtu = option === '--pmtu';
 const faults = option === '--faults' || networkOnly || soak || pmtu;
-assert.ok(process.argv.length === 4 || process.argv.length === 5 && faults, 'usage: absolute verified HOST_BOOT_BASE QEMU_TOOLS_ROOT [--faults|--network-faults|--soak|--pmtu]');
+assert.ok(process.argv.length === 4 || process.argv.length === 5 && faults, 'usage: absolute verified HOST_BOOT_BASE QEMU_TOOLS_ROOT [--faults|--network-faults|--soak|--soak-diagnostics|--pmtu]');
 for (const path of [base, tools]) assert.ok(path?.startsWith('/') && resolve(path) === path && !/[\r\n,]/.test(path));
 const hash = b => createHash('sha256').update(b).digest('hex');
 const previous = JSON.parse(fs.readFileSync(join(base, 'report.json')));
@@ -48,6 +50,18 @@ try {
       }
     }
   }; walkSource('scripts');
+  if (diagnostics) {
+    const path = 'native/tun_linux/tun_linux.cc', original = fs.readFileSync(path, 'utf8');
+    const instrumented = instrumentTunMemory(original), copy = join(root, 'tun-diagnostics.cc');
+    fs.writeFileSync(copy, instrumented);
+    const headers = process.env.MESHPN_LAB_NODE_HEADERS;
+    assert.ok(headers?.startsWith('/') && fs.existsSync(join(headers, 'node_api.h')), 'MESHPN_LAB_NODE_HEADERS must point to Node headers');
+    const addon = join(guest, 'project/native/tun_linux/build/Release/tun_linux.node');
+    execFileSync('g++', ['-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-DNAPI_VERSION=8', '-DNODE_GYP_MODULE_NAME=tun_linux',
+      '-I', headers, '-static-libstdc++', '-static-libgcc', copy, '-o', addon]);
+    report.nativeDiagnostics = { labOnly: true, trimAfterQuietOnly: true, originalSha256: hash(original),
+      instrumentedSha256: hash(instrumented), addonSha256: hash(fs.readFileSync(addon)) };
+  }
   if (soak) {
     const source = fs.readFileSync('scripts/clean-vpn.js', 'utf8');
     assert.ok(source.startsWith('#!/usr/bin/env node\n'));
@@ -90,7 +104,7 @@ try {
     const env = { ...process.env, LD_LIBRARY_PATH: `${tools}/usr/lib/x86_64-linux-gnu:${tools}/lib/x86_64-linux-gnu`, QEMU_MODULE_DIR: `${tools}/usr/lib/x86_64-linux-gnu/qemu` };
     delete env.LD_PRELOAD; delete env.LD_AUDIT;
     const kernelArgs = 'console=ttyS0 loglevel=4 panic=-1 reboot=t random.trust_cpu=on meshpn.usb-e2e=1' + (faults ? ' meshpn.usb-faults=1' : '') + (networkOnly ? ' meshpn.usb-network-faults=1' : '') + (soak ? ' meshpn.usb-soak=1' : '') + (pmtu ? ' meshpn.usb-pmtu=1' : '');
-    const child = spawn(join(tools, 'usr/bin/qemu-system-x86_64'), ['-nodefaults', '-no-user-config', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-no-reboot', '-serial', 'stdio', '-accel', 'tcg', '-cpu', 'max', '-m', '1536', '-smp', '1', '-bios', `${tools}/usr/share/seabios/bios-256k.bin`, '-L', `${tools}/usr/share/qemu`, '-kernel', join(base, 'guest-kernel'), '-initrd', initrd, '-append', kernelArgs, '-drive', `file=${disk},format=raw,if=virtio,cache=writeback`], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(join(tools, 'usr/bin/qemu-system-x86_64'), ['-nodefaults', '-no-user-config', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-no-reboot', '-serial', 'stdio', '-accel', 'tcg', '-cpu', 'max', '-m', '1536', '-smp', '1', '-bios', `${tools}/usr/share/seabios/bios-256k.bin`, '-L', `${tools}/usr/share/qemu`, '-kernel', join(base, 'guest-kernel'), '-initrd', initrd, '-append', kernelArgs + (diagnostics ? ' meshpn.usb-diagnostics=1' : ''), '-drive', `file=${disk},format=raw,if=virtio,cache=writeback`], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '', pending = '', failure;
     const log = fs.openSync(join(root, `boot-${phase}.log`), 'wx', 0o600);
     const abort = reason => { failure ??= reason; child.kill('SIGKILL'); };

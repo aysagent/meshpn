@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
+import { startSocketObserver } from './usb-socket-observer.mjs';
 
 function guard() {
   assert.match(fs.readFileSync('/proc/cmdline', 'utf8'), /(?:^|\s)meshpn.usb-soak=1(?:\s|$)/);
@@ -67,7 +68,10 @@ export async function runLongTcpPeer() {
 
 export async function runUsbSoak(c) {
   guard();
-  const { check, event, ctl, property, sync, ip, at, link, until, ready, matrix, login, hits } = c;
+  const { check, ctl, property, sync, ip, at, link, until, ready, matrix, login, hits } = c;
+  const diagnostics = /(?:^|\s)meshpn.usb-diagnostics=1(?:\s|$)/.test(fs.readFileSync('/proc/cmdline', 'utf8'));
+  const event = row => c.event(diagnostics ? { ...row, observedMonotonicMs: performance.now() } : row);
+  const stopObserver = diagnostics ? startSocketObserver(c.event) : async () => {};
   const started = performance.now(), unit = 'clean-vpn.service';
   const identity = async () => ({ pid: await property(unit, 'MainPID'), restarts: await property(unit, 'NRestarts'),
     networkd: await property('systemd-networkd.service', 'MainPID'),
@@ -179,7 +183,22 @@ export async function runUsbSoak(c) {
         nodeMemory: JSON.parse(fs.readFileSync(memoryPath, 'utf8')),
         fds: fs.readdirSync(`/proc/${initialIdentity.pid}/fd`).length });
     }
+    if (diagnostics) {
+      // Reclaim only already-free allocator pages, once, after the GC snapshot.
+      // Never run trim in production or during the workload.
+      await delay(1000);
+      fs.writeFileSync(`/run/e2e-memory-trim-${initialIdentity.pid}`, 'trim');
+      let trimmed;
+      await until(() => {
+        const m = JSON.parse(fs.readFileSync(memoryPath, 'utf8'));
+        if (m.nativeMemory.trimmed < 0) return false;
+        trimmed = m; return true;
+      }, 'native trim diagnostic sample');
+      event({ event: 'allocator-trim', phase: 0, nodeMemory: trimmed,
+        fds: fs.readdirSync(`/proc/${initialIdentity.pid}/fd`).length });
+      await stopObserver();
+    }
     event({ event: 'soak-completed', phase: 0, cycles: 3, elapsedMs: performance.now() - started,
       monitorSamples: hits('/run/e2e-monitor-results').length, longSamples: hits('/run/e2e-long-results').length });
-  } finally { for (const child of children) if (child.exitCode === null) child.kill('SIGKILL'); }
+  } finally { await stopObserver(); for (const child of children) if (child.exitCode === null) child.kill('SIGKILL'); }
 }

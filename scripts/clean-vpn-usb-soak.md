@@ -70,6 +70,8 @@ VPN, TLS/TUN, installer и USB Linux-peer настоящие; USB/Wi-Fi заме
 Различия RSS/heap/external и возможность роста RSS из-за фрагментации malloc
 описаны в [документации Node.js](https://nodejs.org/api/process.html#processmemoryusage).
 Это возможное объяснение, а не установленная причина роста в данном VPN.
+Отдельный [диагностический режим](clean-vpn-usb-diagnostics.md) добавляет
+native-счётчики TUN, состояние malloc и TCP-таймеры без изменения production.
 
 ## Ограничения
 
