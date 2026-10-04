@@ -311,16 +311,19 @@ async function run() {
     await rawTraffic(label);
   };
   const ready = async (timeoutMs = 180000) => {
+    const started = performance.now();
     await until(async () => {
       if (faults && fs.existsSync('/run/host-boot-client.log')) {
         assert.ok(!fs.readFileSync('/run/host-boot-client.log', 'utf8').includes('Host IPv4 recovery required'), 'VPN refuses stale IPv4 journal: Host IPv4 recovery required');
       }
       return await property(gatewayUnit, 'ActiveState') === 'active' && (await peerProbe({ host: '1.0.0.1' })).peer === exitIp;
     }, 'real VPN/USB not ready', timeoutMs);
+    const firstResponseMs = performance.now() - started;
     check('real TUN device', JSON.parse(ip('-j', '-d', 'link', 'show', 'tun0'))[0].linkinfo.info_kind, 'tun');
     check('single SNAT rule', nat().split('\n').filter(l => l === usbSnatLine).length, 1);
     const guard = sync('/usr/local/bin/clean-vpn-killswitch.sh', ['status']);
     check('both guard families audited', [4, 6].every(f => guard.includes(`IPv${f}: cvks4:both:block:tun0:${exitIp}:22`)));
+    return firstResponseMs;
   };
   await until(() => fs.existsSync('/run/e2e-origin-ready'), 'origins not ready');
   check('systemd PID1', fs.readFileSync('/proc/1/comm', 'utf8').trim(), 'systemd');

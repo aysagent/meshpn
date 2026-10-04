@@ -148,6 +148,8 @@ import { openIpv6Runtime } from './lib/vpn-ipv6-runtime.mjs';
 import { openHostRoutes } from './lib/vpn-host-routes.mjs';
 import { usbRecoveryProfile, recoverUsbClient } from './lib/usb-client-recovery.mjs';
 import { watchVpnUplink } from './lib/vpn-uplink-watch.mjs';
+import { watchH2Health } from './lib/vpn-h2-health.mjs';
+import { watchConnectDeadline } from './lib/vpn-connect-deadline.mjs';
 import { createHttpDateRecovery, CLOCK_UPDATED, responseHeaders, vpnResponseAccepted } from './lib/vpn-http-date.mjs';
 
 // A repeated terminal Ctrl+C must not kill route/sysctl helpers during cleanup.
@@ -1415,6 +1417,7 @@ function establishCleanVpnOverH2(tlsSock, checkHost, vpnSecret, exporter = null,
       applyCleanVpnHttp2StreamWindow(req);
       const wrapped = http2StreamToSocketLike(req, clientSession, tlsSock);
       wrapped.cleanVpnIpv6 = headers[IPV6_HEADER];
+      watchH2Health(clientSession, wrapped);
       resolve(wrapped);
     });
   });
@@ -1461,7 +1464,18 @@ async function readExactFromReadable(readable, n) {
       have += chunk.length;
       continue;
     }
-    await once(readable, 'readable');
+    if (readable.readableEnded || readable.destroyed) throw new Error('boring-tls: helper stdout closed before response');
+    await new Promise((resolve, reject) => {
+      const clean = () => {
+        readable.off('readable', ready); readable.off('end', ended);
+        readable.off('close', ended); readable.off('error', failed);
+      };
+      const ready = () => { clean(); resolve(); };
+      const failed = error => { clean(); reject(error); };
+      const ended = () => failed(new Error('boring-tls: helper stdout closed before response'));
+      readable.once('readable', ready); readable.once('end', ended);
+      readable.once('close', ended); readable.once('error', failed);
+    });
   }
   const all = Buffer.concat(chunks);
   const head = all.subarray(0, n);
@@ -1710,6 +1724,7 @@ async function completeCleanVpnTlsSession(sock, opts) {
  * }} opts
  */
 async function connectCleanVpnBoringTlsClient(opts) {
+  opts.signal?.throwIfAborted();
   const {
     host,
     port,
@@ -1727,6 +1742,7 @@ async function connectCleanVpnBoringTlsClient(opts) {
   } = opts;
   const checkHost = verifyServername ?? servername;
   const connectHost = await resolveHostToIpv4(host);
+  opts.signal?.throwIfAborted();
   const exe = resolveBoringTlsHelperExecutable(boringTlsHelperPath ?? null);
   if (!fs.existsSync(exe)) {
     throw new Error(
@@ -1746,6 +1762,11 @@ async function connectCleanVpnBoringTlsClient(opts) {
   }
 
   const child = spawn(exe, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const abortAttempt = () => { child.kill('SIGKILL'); };
+  opts.signal?.addEventListener('abort', abortAttempt, { once: true });
+  if (opts.signal?.aborted) abortAttempt();
+  const attemptDeadline = opts.fastRecovery ? setTimeout(abortAttempt, 10000) : null;
+  attemptDeadline?.unref?.();
   /** @type {Buffer[]} */
   const boringTlsStderrChunks = [];
   child.stderr?.on('data', (buf) => {
@@ -1773,6 +1794,7 @@ async function connectCleanVpnBoringTlsClient(opts) {
     }, TLS_CLIENT_HANDSHAKE_MS);
 
     await once(child, 'spawn');
+    opts.signal?.throwIfAborted();
     child.stdout.pause();
     /** @type {Record<string, unknown>} */
     const cfgFrame = {
@@ -1910,6 +1932,9 @@ async function connectCleanVpnBoringTlsClient(opts) {
       /* ignore */
     }
     throw e;
+  } finally {
+    clearTimeout(attemptDeadline);
+    opts.signal?.removeEventListener('abort', abortAttempt);
   }
 }
 
@@ -1927,6 +1952,7 @@ async function connectCleanVpnBoringTlsClient(opts) {
  * }} opts
  */
 async function connectCleanVpnTlsClient(opts) {
+  opts.signal?.throwIfAborted();
   const { host, port, ca, servername, verifyServername, vpnSecret, tlsHttpVers } = opts;
   const alpnList = resolveTlsAlpnProtocols(tlsHttpVers ?? null).client;
   const checkHost = verifyServername ?? servername;
@@ -1935,6 +1961,7 @@ async function connectCleanVpnTlsClient(opts) {
   if (!hostIsIp) {
     connectHost = (await dns.lookup(host, { family: 4 })).address;
   }
+  opts.signal?.throwIfAborted();
   const sniNote =
     checkHost !== servername ? `, проверка сертификата для host=${checkHost}` : '';
   console.log(
@@ -1942,11 +1969,13 @@ async function connectCleanVpnTlsClient(opts) {
   );
   return new Promise((resolve, reject) => {
     let settled = false;
+    let stopAttempt = () => {};
     /** @type {import('tls').TLSSocket} */
     let sock;
     const finish = (fn) => {
       if (settled) return;
       settled = true;
+      stopAttempt();
       try {
         sock.setTimeout(0);
       } catch {
@@ -2034,6 +2063,9 @@ async function connectCleanVpnTlsClient(opts) {
       }
       finish(() => reject(err));
     });
+    if (opts.fastRecovery) stopAttempt = watchConnectDeadline(sock, error => {
+      finish(() => reject(error)); sock.destroy();
+    }, { signal: opts.signal });
   }).catch(error => {
     // Fresh handshake (no session reuse) after the one permitted correction.
     if (error.code === CLOCK_UPDATED && !opts.clockRetried)
@@ -2451,9 +2483,13 @@ function http2StreamToSocketLike(stream, session, tlsSocket) {
   sock.destroyed = Boolean(sock.destroyed);
   const innerDestroy =
     typeof stream.destroy === 'function' ? stream.destroy.bind(stream) : null;
+  let destroying = false;
   sock.destroy = (err) => {
-    if (sock.destroyed) return;
-    sock.destroyed = true;
+    if (destroying) return;
+    destroying = true;
+    // Let Readable/Writable.destroy set its own state and emit 'close'. Setting
+    // stream.destroyed first makes the real destroy() a no-op and strands the
+    // bridge's wireArmed gate after a liveness timeout/uplink change.
     try {
       innerDestroy?.(err);
     } catch {
@@ -10499,9 +10535,11 @@ async function runClientImpl({
   let shutdownFn = null;
   let finishNetworkPromise;
   let uplinkWatch;
+  let tlsAttempt;
   const finishNetwork = (exitCode, reason) => {
     routeCtx.stopping = true;
     uplinkWatch?.stop();
+    tlsAttempt?.abort();
     finishNetworkPromise ??= (async () => {
       let code = exitCode;
       try {
@@ -11423,12 +11461,23 @@ async function runClientImpl({
       { ...BRIDGE_OPTS_CLIENT, networkReady, ipv6Role: ipv6Runtime ? 'client' : null },
       async () => {
         if (routeCtx.stopping) throw new Error('client stopping');
+        // After a known outage the watcher must publish the ready generation
+        // before packet-triggered connects resume. Otherwise a TUN packet can
+        // repair routes and start TLS, then the watcher's ready tick cancels
+        // that already-fresh attempt as if it belonged to the old network.
+        if (uplinkWatch?.available === false) throw new Error('uplink not ready; reconnect postponed');
         const generation = uplinkWatch?.generation ?? 0;
         if (routeCtx.hostRoutes && splitDefault && routeCtx.serverIp) {
           const repaired = routeCtx.hostRoutes.repairUplink(routeCtx.dev, routeCtx.gw ?? null, routeCtx.serverIp);
           if (repaired) console.log(`[clean-vpn] uplink-repair: restored ${repaired} owned routes before TLS reconnect`);
         }
-        const sock = await connectTlsVpn(tlsConnectOpts);
+        const controller = new AbortController();
+        tlsAttempt = controller;
+        let sock;
+        try {
+          sock = await connectTlsVpn({ ...tlsConnectOpts, signal: controller.signal,
+            fastRecovery: Boolean(routeCtx.hostRoutes && splitDefault) });
+        } finally { if (tlsAttempt === controller) tlsAttempt = null; }
         try {
           if (routeCtx.stopping) throw new Error('client stopping');
           if (generation !== (uplinkWatch?.generation ?? 0)) throw new Error('uplink changed during TLS connect');
@@ -11446,8 +11495,9 @@ async function runClientImpl({
         if (!ready || routeCtx.stopping) return;
         uplinkWatch = watchVpnUplink({
           repair: () => routeCtx.hostRoutes.repairUplink(routeCtx.dev, routeCtx.gw ?? null, routeCtx.serverIp),
-          disconnect: () => { tlsVpnSocket?.destroy(); tlsVpnSocket = null; },
-          reconnect: () => { void tlsBridge?.ensureWire(); },
+          disconnect: () => { tlsAttempt?.abort(); tlsVpnSocket?.destroy(); tlsVpnSocket = null; },
+          // Let an aborted attempt release the bridge's single-connect gate.
+          reconnect: () => { setImmediate(() => { if (!routeCtx.stopping) void tlsBridge?.ensureWire(); }); },
         });
       });
     }

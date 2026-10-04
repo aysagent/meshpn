@@ -23,6 +23,23 @@ const valid = () => {
     ] }] };
 };
 test('complete soak evidence accepted', () => assert.doesNotThrow(() => assertUsbSoakEvidence(valid())));
+const withRecoveryTiming = () => {
+  const r = valid();
+  r.recoveryTiming = { version: 1, firstResponseBudgetMs: 10000, excludesFinalAudit: true };
+  for (const e of r.boots[0].events.filter(e => e.action === 'recovered')) e.firstResponseMs = 500;
+  return r;
+};
+test('first USB response is measured separately from final audit', () => assert.doesNotThrow(() => assertUsbSoakEvidence(withRecoveryTiming())));
+for (const [name, change] of Object.entries({
+  absent: e => { delete e.firstResponseMs; },
+  nonFinite: e => { e.firstResponseMs = NaN; },
+  negative: e => { e.firstResponseMs = -1; },
+  slow: e => { e.firstResponseMs = 10001; e.recoveryMs = 11000; },
+  afterAudit: e => { e.firstResponseMs = 1500; },
+})) test('recovery timing rejects ' + name, () => {
+  const r = withRecoveryTiming(); change(r.boots[0].events.find(e => e.action === 'recovered'));
+  assert.throws(() => assertUsbSoakEvidence(r));
+});
 const withMemory = () => {
   const r = valid(); r.memoryInstrumentation = { labOnly: true, forcedGcAfterWorkloadOnly: true, originalSha256: 'a'.repeat(64), instrumentedSha256: 'b'.repeat(64) };
   const memory = (ms, forcedGc = false) => ({ pid: 42, rss: 60000000, heapTotal: 20000000, heapUsed: 12000000,
@@ -61,7 +78,14 @@ test('read-only diagnostic summary retains raw TCP fields and distinguishes defe
   assert.equal(summary.trim.rssDropFromGcSnapshotMiB, 1); assert.equal(summary.socketSamples, 100);
   assert.equal(summary.trim.deferredFinalizersBetweenSnapshots, 1);
   assert.equal(summary.timeline[0].first.host, 'ESTAB');
+  assert.equal(summary.timeline[0].firstResponseSeconds, null);
   assert.equal(summary.memory.at(-1).label, 'allocator-trim');
+});
+test('summary reports measured first response without inventing it for old reports', () => {
+  const r = withNative(); r.status = 'passed';
+  r.recoveryTiming = withRecoveryTiming().recoveryTiming;
+  for (const e of r.boots[0].events.filter(e => e.action === 'recovered')) e.firstResponseMs = 250;
+  assert.equal(summarizeUsbDiagnostics(r).timeline[0].firstResponseSeconds, 0.25);
 });
 test('diagnostic summary refuses incomplete and non-diagnostic reports', () => {
   assert.throws(() => summarizeUsbDiagnostics(withNative()), /completed successful report required/);

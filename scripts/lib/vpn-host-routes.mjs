@@ -70,9 +70,10 @@ export function openHostRoutes({ directory = hostRouteStateDirectory(), run: inj
   const links = () => Object.fromEntries(JSON.parse(run('ip', ['-j', 'link', 'show'])).map(l => [l.ifname, identity(l)]));
   const rows = () => JSON.parse(run('ip', ['-N', '-j', '-4', 'route', 'show', 'table', 'main']));
   const rp = () => { const v = Number(run('sysctl', ['-n', 'net.ipv4.conf.all.rp_filter'])); assert.ok([0, 1, 2].includes(v)); return v; };
-  function audit() {
+  function audit({ requireTun = false } = {}) {
     assert.ok(state && !closed); assert.deepEqual(state.scope, scope(), 'different boot/namespace');
     const now = links(), table = rows();
+    if (requireTun) assert.ok(now[state.tun], 'TUN disappeared; recovery required');
     for (const [name, old] of Object.entries(state.links)) {
       if (!now[name]) assert.equal(name, state.tun, 'uplink disappeared; review required');
       else assert.deepEqual(now[name], old, `interface replaced: ${name}`);
@@ -118,29 +119,35 @@ export function openHostRoutes({ directory = hostRouteStateDirectory(), run: inj
       deadline = performance.now() + 15000;
       assert.equal(state?.stage, 'active'); iface(dev); assert.notEqual(dev, state.tun);
       assert.ok(gateway === null || isIPv4(gateway)); assert.ok(isIPv4(serverIp));
-      const table = audit(), current = links();
-      assert.ok(current[state.tun], 'TUN disappeared; recovery required');
-      const defaults = table.filter(r => ['default', '0.0.0.0/0'].includes(r.dst));
-      assert.ok(defaults.length === 1 && defaults[0].dev === dev && (defaults[0].gateway ?? null) === gateway
-        && (!defaults[0].type || defaults[0].type === 'unicast') && !defaults[0].nexthops,
-      'uplink default absent or changed; reconnect postponed');
       const target = `${serverIp}/32`, intent = state.routes.find(r => r.dst === target);
       if (intent) assert.ok(intent.dev === dev && intent.gateway === gateway, 'exit route ownership mismatch');
-      else {
-        const borrowed = table.filter(r => normalizeDst(r.dst) === target);
-        assert.ok(borrowed.length === 1 && borrowed[0].dev === dev && (borrowed[0].gateway ?? null) === gateway
-          && Number(borrowed[0].protocol) !== PROTO && (!borrowed[0].type || borrowed[0].type === 'unicast')
-          && !borrowed[0].nexthops, 'unowned exit bypass disappeared or changed; manual review required');
-      }
+      const auditUplink = () => {
+        const table = audit({ requireTun: true });
+        const defaults = table.filter(r => ['default', '0.0.0.0/0'].includes(r.dst));
+        assert.ok(defaults.length === 1 && defaults[0].dev === dev && (defaults[0].gateway ?? null) === gateway
+          && (!defaults[0].type || defaults[0].type === 'unicast') && !defaults[0].nexthops,
+        'uplink default absent or changed; reconnect postponed');
+        if (!intent) {
+          const borrowed = table.filter(r => normalizeDst(r.dst) === target);
+          assert.ok(borrowed.length === 1 && borrowed[0].dev === dev && (borrowed[0].gateway ?? null) === gateway
+            && Number(borrowed[0].protocol) !== PROTO && (!borrowed[0].type || borrowed[0].type === 'unicast')
+            && !borrowed[0].nexthops, 'unowned exit bypass disappeared or changed; manual review required');
+        }
+        return table;
+      };
+      let table = auditUplink();
       let repaired = 0;
       for (const r of state.routes.filter(r => r.dev === dev)) {
         assert.equal(r.gateway, gateway, 'uplink route gateway mismatch');
         if (table.some(row => owned(row, r))) continue;
-        // audit before every add: a concurrent foreign route is never replaced.
-        if (audit().some(row => owned(row, r))) continue;
+        // The initial snapshot, then the previous write's full read-back, is
+        // the pre-add audit. No I/O or callback occurs between that snapshot
+        // and the next add; do not fork an identical second audit. Still use
+        // add (never replace), and audit after EVERY write/checkpoint.
         run('ip', ['-4', 'route', 'add', ...routeArgs(r)]);
         checkpoint('repaired', structuredClone(state));
-        assert.ok(audit().some(row => owned(row, r)), 'route repair read-back failed'); repaired++;
+        table = auditUplink();
+        assert.ok(table.some(row => owned(row, r)), 'route repair read-back failed'); repaired++;
       }
       return repaired;
     },

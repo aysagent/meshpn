@@ -32,6 +32,13 @@ export function assertUsbSoakEvidence(r) {
     if (f.action === 'restore') assert.ok(Number.isFinite(f.elapsedMs) && f.elapsedMs >= 120000);
     if (f.action === 'recovered') assert.ok(Number.isFinite(f.recoveryMs) && f.recoveryMs >= 0 && f.recoveryMs <= 210000);
   }
+  if (r.recoveryTiming) {
+    assert.deepEqual(r.recoveryTiming, { version: 1, firstResponseBudgetMs: 10000, excludesFinalAudit: true });
+    for (const f of faults.filter(f => f.action === 'recovered')) {
+      assert.ok(Number.isFinite(f.firstResponseMs) && f.firstResponseMs >= 0 && f.firstResponseMs <= 10000);
+      assert.ok(f.firstResponseMs <= f.recoveryMs);
+    }
+  }
   assert.deepEqual(b.events.filter(e => e.event === 'dhcp').map(e => [e.cycle, e.address]), [1, 2, 3].map(c => [c, `192.168.1.${10 + c}`]));
   const intervals = b.events.filter(e => e.event === 'stable'), resources = b.events.filter(e => e.event === 'resources');
   for (const rows of [intervals, resources]) assert.deepEqual(rows.map(e => e.label), soakLabels());

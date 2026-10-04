@@ -159,9 +159,11 @@ export async function runUsbSoak(c) {
         check(label + ' new DHCP address', link().addr_info.filter(a => a.family === 'inet').map(a => a.local), [address]);
         event({ event: 'dhcp', phase: 0, cycle, address });
       }
-      const recoveryStart = performance.now(); await ready();
+      const recoveryStart = performance.now(); const firstResponseMs = await ready();
       check(label + ' exit bypass repaired', JSON.parse(ip('-j', '-4', 'route', 'get', exitIp))[0].dev, 'wlan0');
-      event({ event: 'soak-fault', phase: 0, cycle, scenario, action: 'recovered', recoveryMs: performance.now() - recoveryStart });
+      event({ event: 'soak-fault', phase: 0, cycle, scenario, action: 'recovered',
+        firstResponseMs, recoveryMs: performance.now() - recoveryStart });
+      assert.ok(firstResponseMs <= 10000, `first USB response took ${firstResponseMs}ms (>10s lab budget)`);
       await stable(label + '-recovered');
     }
     await matrix(true); noBypass('final');

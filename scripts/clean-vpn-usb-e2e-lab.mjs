@@ -63,6 +63,7 @@ try {
       instrumentedSha256: hash(instrumented), addonSha256: hash(fs.readFileSync(addon)) };
   }
   if (soak) {
+    report.recoveryTiming = { version: 1, firstResponseBudgetMs: 10000, excludesFinalAudit: true };
     const source = fs.readFileSync('scripts/clean-vpn.js', 'utf8');
     assert.ok(source.startsWith('#!/usr/bin/env node\n'));
     const instrumented = source.replace('#!/usr/bin/env node\n', '#!/usr/bin/env node\nimport "./lib/usb-memory-vm.mjs";\n');

@@ -23,6 +23,7 @@ export function summarizeUsbDiagnostics(report) {
     const pick = e => e && ({ sequence: e.sequence, secondsAfterRestore: (e.observedMonotonicMs - restore.observedMonotonicMs) / 1000,
       host: e.host, exit: e.exit });
     return { cycle: restore.cycle, scenario: restore.scenario, recoverySeconds: recovered.recoveryMs / 1000,
+      firstResponseSeconds: Number.isFinite(recovered.firstResponseMs) ? recovered.firstResponseMs / 1000 : null,
       restoreToRecoveredSeconds: (recovered.observedMonotonicMs - restore.observedMonotonicMs) / 1000,
       samplesDuringRecovery: during.length, first: pick(during[0]), last: pick(during.at(-1)) };
   });
