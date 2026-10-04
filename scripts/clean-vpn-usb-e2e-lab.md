@@ -81,11 +81,18 @@ reboot между фазами и poweroff после второй. Все 403 �
 (`report.json`, `guest/`, `guest-kernel`) и каталог извлечённых QEMU tools:
 
 ```bash
+MESHPN_LAB_NODE_HEADERS=/absolute/node/include/node \
 node scripts/clean-vpn-usb-e2e-lab.mjs /absolute/HOST_BOOT_BASE /absolute/QEMU_TOOLS_ROOT
 node --test scripts/test-usb-e2e-lab.mjs
 ```
 
 Команды выполняются из корня репозитория на Linux x86_64.
+С 2026-10-04 каждый режим пересобирает **текущий** TUN-addon через host `g++`;
+`MESHPN_LAB_NODE_HEADERS` указывает на каталог с `node_api.h` (например,
+`/home/yurich/.cache/node-gyp/24.13.0/include/node` в текущей лаборатории).
+Исходный/скомпилированный код и бинарник записываются в `nativeBuild` с SHA-256.
+Режим `--soak-diagnostics` дополнительно инструментирует этот же исходник;
+обычные режимы используют production-код без диагностических exports.
 Runner запускается без sudo. QEMU: `-nic none`, без host filesystem shares,
 без TAP/bridge. Сеть, firewall, часы и systemd основной машины не меняются.
 Разрушающие гостевые операции защищены marker в kernel cmdline, проверкой
@@ -174,6 +181,7 @@ installer с `USB_GATEWAY=1`, готовность настоящего VPN, DNS
 Отдельный режим того же NIC-less стенда (одна загрузка, текущий fresh installer):
 
 ```bash
+MESHPN_LAB_NODE_HEADERS=/absolute/node/include/node \
 node scripts/clean-vpn-usb-e2e-lab.mjs VERIFIED_HOST_BOOT_BASE QEMU_TOOLS_ROOT --faults
 ```
 

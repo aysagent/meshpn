@@ -3,6 +3,7 @@
 Запуск из корня репозитория без sudo:
 
 ```bash
+MESHPN_LAB_NODE_HEADERS=/absolute/node/include/node \
 node scripts/clean-vpn-usb-e2e-lab.mjs /absolute/HOST_BOOT_BASE /absolute/QEMU_TOOLS_ROOT --soak
 node --test scripts/test-usb-soak.mjs scripts/test-usb-e2e-lab.mjs
 ```

@@ -67,6 +67,23 @@ const withNative = () => {
   return r;
 };
 test('native allocator and TCP timeline evidence accepted', () => assert.doesNotThrow(() => assertUsbSoakEvidence(withNative())));
+const withCopiedPackets = () => {
+  const r = withNative(); r.nativeDiagnostics.packetStorage = 'v8-owned-exact';
+  for (const e of r.boots[0].events.filter(e => e.nodeMemory)) Object.assign(e.nodeMemory.nativeMemory,
+    { allocations: 32, frees: 0, inUse: 0, peakInUse: 32, pool: 32, backingBytes: 32 * 65535,
+      externalCreated: 0, externalFinalized: 0, copiedPackets: 100, copiedBytes: 6400 });
+  return r;
+};
+test('exact-sized V8 storage has bounded native slabs and real copied-packet evidence', () => assert.doesNotThrow(() => assertUsbSoakEvidence(withCopiedPackets())));
+for (const [name, change] of Object.entries({
+  escapedSlab: n => { n.inUse++; n.allocations++; n.backingBytes += 65535; },
+  externalSlab: n => { n.externalCreated++; },
+  missingPackets: n => { delete n.copiedPackets; },
+  invalidBytes: n => { n.copiedBytes = 99; },
+})) test('exact-sized storage rejects ' + name, () => {
+  const r = withCopiedPackets(); change(r.boots[0].events.find(e => e.nodeMemory).nodeMemory.nativeMemory);
+  assert.throws(() => assertUsbSoakEvidence(r));
+});
 test('read-only diagnostic summary retains raw TCP fields and distinguishes deferred finalizers from trim', () => {
   const r = withNative(); r.status = 'passed';
   const trimmed = r.boots[0].events.find(e => e.event === 'allocator-trim').nodeMemory;
@@ -116,7 +133,7 @@ for (const [name, change] of Object.entries({
 test('native instrumentation requires exact unique anchors and keeps normal addon entry points', () => {
   const s = fs.readFileSync('native/tun_linux/tun_linux.cc', 'utf8'), patched = instrumentTunMemory(s);
   assert.match(patched, /labMemoryStats/); assert.match(patched, /originalDstIpv4FromFd/);
-  assert.match(patched, /lab_external\+\+/); assert.match(patched, /lab_finalized\+\+/);
+  assert.match(patched, /lab_copied\+\+/); assert.match(patched, /lab_copied_bytes \+= lens\[i\]/);
   assert.throws(() => instrumentTunMemory(patched));
   assert.throws(() => instrumentTunMemory(s.replace('return malloc(kMaxPkt);', 'return nullptr;')));
 });

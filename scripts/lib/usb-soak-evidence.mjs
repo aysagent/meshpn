@@ -87,6 +87,15 @@ export function assertUsbSoakEvidence(r) {
       assert.equal(n.allocations - n.frees, n.inUse + n.pool);
       assert.equal(n.backingBytes, (n.inUse + n.pool) * 65535);
       assert.ok(n.pool <= 64 && n.inUse <= n.peakInUse && n.externalFinalized <= n.externalCreated);
+      if (r.nativeDiagnostics.packetStorage === 'v8-owned-exact') {
+        assert.equal(n.inUse, 0, 'no read slabs may escape into JS between callbacks');
+        assert.equal(n.externalCreated, 0); assert.equal(n.externalFinalized, 0);
+        for (const k of ['copiedPackets', 'copiedBytes']) {
+          assert.ok(Number.isSafeInteger(n[k]) && n[k] > 0);
+          if (previous) assert.ok(n[k] >= previous[k]);
+        }
+        assert.ok(n.copiedBytes >= n.copiedPackets && n.copiedBytes <= n.copiedPackets * 65535);
+      }
       assert.equal(e.nodeMemory.pid, resources[0].nodeMemory.pid);
       assert.ok(e === trim[0] ? [0, 1].includes(n.trimmed) : n.trimmed === -1);
       if (previous) for (const k of ['allocations', 'frees', 'peakInUse', 'externalCreated', 'externalFinalized']) assert.ok(n[k] >= previous[k]);

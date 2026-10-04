@@ -47,10 +47,6 @@ static void pkt_pool_release(void* p) {
   }
 }
 
-static void finalize_external_pkt_pool(napi_env /* env */, void* data, void* /* hint */) {
-  pkt_pool_release(data);
-}
-
 struct TunSession {
   int fd = -1;
   uv_poll_t poll {};
@@ -195,21 +191,23 @@ static void on_poll(uv_poll_t* handle, int status, int events) {
 
   for (int i = 0; i < nbatch; i++) {
     napi_value ab;
-    if (napi_create_external_arraybuffer(
-            env,
-            ptrs[i],
-            lens[i],
-            finalize_external_pkt_pool,
-            nullptr,
-            &ab) != napi_ok) {
+    void* payload = nullptr;
+    // A short external ArrayBuffer used to retain a whole 65535-byte slab
+    // until GC, while exposing only the packet length to V8. Copy only the
+    // actual packet into V8-owned storage and recycle the read slab now.
+    // The JS API remains an exact-length ArrayBuffer (not a padded view).
+    if (napi_create_arraybuffer(env, lens[i], &payload, &ab) != napi_ok) {
       for (int j = i; j < nbatch; j++) {
         pkt_pool_release(ptrs[j]);
       }
       napi_close_handle_scope(env, scope);
       return;
     }
+    memcpy(payload, ptrs[i], lens[i]);
+    pkt_pool_release(ptrs[i]);
     if (napi_set_element(env, arr, static_cast<uint32_t>(i), ab) != napi_ok) {
-      for (int j = i; j < nbatch; j++) {
+      // Current slab has already been returned; ArrayBuffer belongs to V8.
+      for (int j = i + 1; j < nbatch; j++) {
         pkt_pool_release(ptrs[j]);
       }
       napi_close_handle_scope(env, scope);

@@ -22,6 +22,8 @@ const pmtu = option === '--pmtu';
 const faults = option === '--faults' || networkOnly || soak || pmtu;
 assert.ok(process.argv.length === 4 || process.argv.length === 5 && faults, 'usage: absolute verified HOST_BOOT_BASE QEMU_TOOLS_ROOT [--faults|--network-faults|--soak|--soak-diagnostics|--pmtu]');
 for (const path of [base, tools]) assert.ok(path?.startsWith('/') && resolve(path) === path && !/[\r\n,]/.test(path));
+const headers = process.env.MESHPN_LAB_NODE_HEADERS;
+assert.ok(headers?.startsWith('/') && fs.existsSync(join(headers, 'node_api.h')), 'MESHPN_LAB_NODE_HEADERS must point to Node headers for the current TUN addon');
 const hash = b => createHash('sha256').update(b).digest('hex');
 const previous = JSON.parse(fs.readFileSync(join(base, 'report.json')));
 assert.equal(previous.status, 'passed'); assert.equal(previous.nic, 'none'); assert.equal(previous.hostSharedFilesystem, false);
@@ -39,8 +41,8 @@ const report = { kind: 'clean-vpn-usb-e2e', status: 'failed', nic: 'none', hostS
 const put = (p, bytes, mode = 0o644) => { const out = join(guest, p); fs.mkdirSync(out.slice(0, out.lastIndexOf('/')), { recursive: true }); fs.writeFileSync(out, bytes, { mode }); fs.chmodSync(out, mode); };
 try {
   fs.cpSync(join(base, 'guest'), guest, { recursive: true, verbatimSymlinks: true });
-  // Current production code, not the historical copy in the base image. Native
-  // addon/dependencies and kernel come from that already verified x86_64 image.
+  // Current production code/addon, not the historical copy in the base image.
+  // Dependencies and kernel come from that already verified x86_64 image.
   const walkSource = dir => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const path = join(dir, entry.name);
@@ -50,17 +52,20 @@ try {
       }
     }
   }; walkSource('scripts');
-  if (diagnostics) {
+  {
     const path = 'native/tun_linux/tun_linux.cc', original = fs.readFileSync(path, 'utf8');
-    const instrumented = instrumentTunMemory(original), copy = join(root, 'tun-diagnostics.cc');
+    const instrumented = diagnostics ? instrumentTunMemory(original) : original;
+    const copy = join(root, diagnostics ? 'tun-diagnostics.cc' : 'tun-current.cc');
     fs.writeFileSync(copy, instrumented);
-    const headers = process.env.MESHPN_LAB_NODE_HEADERS;
-    assert.ok(headers?.startsWith('/') && fs.existsSync(join(headers, 'node_api.h')), 'MESHPN_LAB_NODE_HEADERS must point to Node headers');
+    report.sourceHashes[path] = hash(original);
     const addon = join(guest, 'project/native/tun_linux/build/Release/tun_linux.node');
     execFileSync('g++', ['-shared', '-fPIC', '-O2', '-Wall', '-Wextra', '-DNAPI_VERSION=8', '-DNODE_GYP_MODULE_NAME=tun_linux',
       '-I', headers, '-static-libstdc++', '-static-libgcc', copy, '-o', addon]);
-    report.nativeDiagnostics = { labOnly: true, trimAfterQuietOnly: true, originalSha256: hash(original),
-      instrumentedSha256: hash(instrumented), addonSha256: hash(fs.readFileSync(addon)) };
+    report.nativeBuild = { originalSha256: hash(original), compiledSha256: hash(instrumented),
+      addonSha256: hash(fs.readFileSync(addon)), diagnostics };
+    if (diagnostics) report.nativeDiagnostics = { labOnly: true, trimAfterQuietOnly: true, originalSha256: hash(original),
+      instrumentedSha256: hash(instrumented), addonSha256: hash(fs.readFileSync(addon)),
+      packetStorage: original.includes('memcpy(payload, ptrs[i], lens[i]);') ? 'v8-owned-exact' : 'external-slab' };
   }
   if (soak) {
     report.recoveryTiming = { version: 1, firstResponseBudgetMs: 10000, excludesFinalAudit: true };

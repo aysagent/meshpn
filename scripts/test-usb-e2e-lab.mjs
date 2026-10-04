@@ -86,6 +86,10 @@ test('runner uses no external NIC or host shares and only newly allocated ext4 d
   assert.doesNotMatch(s, /'-virtfs'|'-fsdev'|'-netdev'|'-device'|sudo/);
   assert.match(s, /fs\.openSync\(disk, 'wx', 0o600\)/);
   assert.match(s, /assertUsbE2eEvidence\(report\)/);
+  assert.match(s, /MESHPN_LAB_NODE_HEADERS/);
+  assert.match(s, /diagnostics \? instrumentTunMemory\(original\) : original/);
+  assert.match(s, /report\.sourceHashes\[path\] = hash\(original\)/);
+  assert.match(s, /report\.nativeBuild =/);
 });
 test('raw receiver preserves the actual accepted address after socket teardown, including bypass addresses', () => {
   const source = fs.readFileSync(new URL('./lib/usb-e2e-vm.mjs', import.meta.url), 'utf8');

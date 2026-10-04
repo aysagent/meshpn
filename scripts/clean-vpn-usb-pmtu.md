@@ -6,6 +6,7 @@
 только внутри namespace VM; никакие пакеты не отправляются в настоящий интернет.
 
 ```bash
+MESHPN_LAB_NODE_HEADERS=/absolute/node/include/node \
 node scripts/clean-vpn-usb-e2e-lab.mjs \
   /var/tmp/meshpn-host-boot-rrhsPo \
   /tmp/meshpn-dns-vm-tools.dXb7TM/root --pmtu
