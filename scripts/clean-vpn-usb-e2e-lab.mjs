@@ -11,12 +11,14 @@ import { assertUsbE2eEvidence, assertUsbFaultEvidence } from './lib/usb-e2e-evid
 import { legacyUsbGuardHash, legacyUsbSnatHash } from './lib/host-usb-dns-upgrade.mjs';
 import { assertUsbSoakEvidence } from './lib/usb-soak-evidence.mjs';
 import { addUsbMssVmImage } from './lib/usb-mss-vm-image.mjs';
+import { assertUsbPmtuEvidence } from './lib/usb-pmtu-vm.mjs';
 
 const [base, tools, option] = process.argv.slice(2);
 const networkOnly = option === '--network-faults';
 const soak = option === '--soak';
-const faults = option === '--faults' || networkOnly || soak;
-assert.ok(process.argv.length === 4 || process.argv.length === 5 && faults, 'usage: absolute verified HOST_BOOT_BASE QEMU_TOOLS_ROOT [--faults|--network-faults|--soak]');
+const pmtu = option === '--pmtu';
+const faults = option === '--faults' || networkOnly || soak || pmtu;
+assert.ok(process.argv.length === 4 || process.argv.length === 5 && faults, 'usage: absolute verified HOST_BOOT_BASE QEMU_TOOLS_ROOT [--faults|--network-faults|--soak|--pmtu]');
 for (const path of [base, tools]) assert.ok(path?.startsWith('/') && resolve(path) === path && !/[\r\n,]/.test(path));
 const hash = b => createHash('sha256').update(b).digest('hex');
 const previous = JSON.parse(fs.readFileSync(join(base, 'report.json')));
@@ -27,7 +29,7 @@ const root = fs.mkdtempSync('/var/tmp/meshpn-usb-e2e-'), guest = join(root, 'gue
 const disk = join(root, 'state.raw'), initrd = join(root, 'initrd.gz');
 console.error('USB E2E artifacts: ' + root);
 const report = { kind: 'clean-vpn-usb-e2e', status: 'failed', nic: 'none', hostSharedFilesystem: false,
-  scenario: soak ? 'usb-soak' : networkOnly ? 'usb-network-faults' : faults ? 'usb-faults' : 'two-boot-installation',
+  scenario: pmtu ? 'usb-pmtu' : soak ? 'usb-soak' : networkOnly ? 'usb-network-faults' : faults ? 'usb-faults' : 'two-boot-installation',
   realTls: true, realTun: true, persistentInstalledFiles: true, boots: [], sourceHashes: {},
   limitations: ['Linux-peer-not-macOS', 'veth-not-WiFi-or-physical-USB', 'initramfs-restores-owned-installation-from-ext4',
     'fixture-PKI-and-origins', 'no-power-cut', 'IPv6-static-neighbours-not-NDP-RA-acceptance',
@@ -46,6 +48,20 @@ try {
       }
     }
   }; walkSource('scripts');
+  if (soak) {
+    const source = fs.readFileSync('scripts/clean-vpn.js', 'utf8');
+    assert.ok(source.startsWith('#!/usr/bin/env node\n'));
+    const instrumented = source.replace('#!/usr/bin/env node\n', '#!/usr/bin/env node\nimport "./lib/usb-memory-vm.mjs";\n');
+    put('/project/scripts/clean-vpn.js', instrumented);
+    report.memoryInstrumentation = { labOnly: true, forcedGcAfterWorkloadOnly: true, originalSha256: hash(source), instrumentedSha256: hash(instrumented) };
+  }
+  if (pmtu) {
+    const path = 'scripts/lib/usb-pmtu-probe.c';
+    report.sourceHashes[path] = hash(fs.readFileSync(path));
+    const binary = join(guest, 'usr/bin/usb-pmtu-probe');
+    execFileSync('gcc', ['-static', '-O2', '-Wall', '-Wextra', '-Werror', path, '-o', binary]);
+    report.pmtuProbeSha256 = hash(fs.readFileSync(binary));
+  }
   for (const [name, expected] of [['guard', legacyUsbGuardHash], ['snat', legacyUsbSnatHash], ['installer', '4ac97633449ac56573b87b79e6bccd5faecbc2a4118b22224fd715120c1be592']]) {
     const path = `scripts/fixtures/usb-dns-v2-${name}.txt`, bytes = fs.readFileSync(path);
     assert.equal(hash(bytes), expected); report.sourceHashes[path] = expected;
@@ -58,7 +74,8 @@ try {
   for (const [path, target] of [['usr/sbin/ip', '/usr/bin/ip'], ['usr/bin/awk', '/bin/busybox']])
     if (!fs.existsSync(join(guest, path))) fs.symlinkSync(target, join(guest, path));
   for (const [name, contents] of Object.entries(usbE2eUnits())) put('/etc/systemd/system/' + name,
-    soak && name === 'usb-e2e-driver.service' ? contents.replace('TimeoutStartSec=24min', 'TimeoutStartSec=54min') : contents);
+    soak && name === 'usb-e2e-driver.service' ? contents.replace('TimeoutStartSec=24min', 'TimeoutStartSec=54min') :
+      pmtu && name === 'usb-e2e-exit.service' ? contents.replace(' --ext=eth0', ' --keep-alive=5 --ext=eth0') : contents);
   const addon = addUsbMssVmImage(fs.readFileSync(join(guest, 'init'), 'utf8'), put);
   report.mssImageHashes = addon.hashes;
   const original = addon.init; assert.ok(original.includes('mount -t ext4'));
@@ -72,7 +89,7 @@ try {
     const boot = { phase, events: [] }; report.boots.push(boot);
     const env = { ...process.env, LD_LIBRARY_PATH: `${tools}/usr/lib/x86_64-linux-gnu:${tools}/lib/x86_64-linux-gnu`, QEMU_MODULE_DIR: `${tools}/usr/lib/x86_64-linux-gnu/qemu` };
     delete env.LD_PRELOAD; delete env.LD_AUDIT;
-    const kernelArgs = 'console=ttyS0 loglevel=4 panic=-1 reboot=t random.trust_cpu=on meshpn.usb-e2e=1' + (faults ? ' meshpn.usb-faults=1' : '') + (networkOnly ? ' meshpn.usb-network-faults=1' : '') + (soak ? ' meshpn.usb-soak=1' : '');
+    const kernelArgs = 'console=ttyS0 loglevel=4 panic=-1 reboot=t random.trust_cpu=on meshpn.usb-e2e=1' + (faults ? ' meshpn.usb-faults=1' : '') + (networkOnly ? ' meshpn.usb-network-faults=1' : '') + (soak ? ' meshpn.usb-soak=1' : '') + (pmtu ? ' meshpn.usb-pmtu=1' : '');
     const child = spawn(join(tools, 'usr/bin/qemu-system-x86_64'), ['-nodefaults', '-no-user-config', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-no-reboot', '-serial', 'stdio', '-accel', 'tcg', '-cpu', 'max', '-m', '1536', '-smp', '1', '-bios', `${tools}/usr/share/seabios/bios-256k.bin`, '-L', `${tools}/usr/share/qemu`, '-kernel', join(base, 'guest-kernel'), '-initrd', initrd, '-append', kernelArgs, '-drive', `file=${disk},format=raw,if=virtio,cache=writeback`], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '', pending = '', failure;
     const log = fs.openSync(join(root, `boot-${phase}.log`), 'wx', 0o600);
@@ -100,8 +117,9 @@ try {
     boot.kernelRestart = output.includes('reboot: Restarting system'); boot.powerDown = output.includes('reboot: Power down');
     const end = boot.events.filter(e => e.event === 'completed'); assert.equal(end.length, 1); boot.bootId = end[0].bootId;
   }
-  if (soak) assertUsbSoakEvidence(report); else if (faults) assertUsbFaultEvidence(report); else assertUsbE2eEvidence(report);
+  if (pmtu) assertUsbPmtuEvidence(report); else if (soak) assertUsbSoakEvidence(report); else if (faults) assertUsbFaultEvidence(report); else assertUsbE2eEvidence(report);
   report.status = 'passed'; report.acceptance = soak ? 'lab-only-three-repeated-exit-carrier-DHCP-cycles-and-long-TCP; bounded-resource-observation; physical-WiFi-pending' : networkOnly ? 'lab-only-USB-network-faults; SIGKILL-not-tested-in-this-run; physical-WiFi-pending' : faults ? 'lab-only-USB-SIGKILL-exit-blackhole-carrier-DHCP-recovery; physical-WiFi-pending' : 'lab-only-USB-tunnel-only-and-DNS-interception; real-Radxa-and-Mac-pending';
+  if (pmtu) report.acceptance = 'lab-only-IPv4-UDP-fragments-and-PMTU; Linux-peer-not-macOS; fixed-TLS-profile';
 } catch (e) { report.error = e.message; process.exitCode = 1; console.error(e.stack); }
 finally {
   fs.writeFileSync(join(root, 'report.json'), JSON.stringify(report, null, 2));

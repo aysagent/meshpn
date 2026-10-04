@@ -87,6 +87,8 @@ export async function runUsbSoak(c) {
       rulesHash: createHash('sha256').update(ruleText).digest('hex'), ruleLines: ruleText.split('\n').length,
       ownedRoutes: journal.routes.length, journalStage: journal.stage,
       conntrackCount: Number(fs.readFileSync('/proc/sys/net/netfilter/nf_conntrack_count', 'utf8')) };
+    row.nodeMemory = JSON.parse(fs.readFileSync(`/run/e2e-memory-${pid}.json`, 'utf8'));
+    assert.equal(row.nodeMemory.pid, Number(pid));
     assert.ok(Number.isFinite(row.rssKiB) && row.rssKiB > 0 && Number.isFinite(row.threads));
     event({ event: 'resources', phase: 0, ...row }); return row;
   };
@@ -163,6 +165,20 @@ export async function runUsbSoak(c) {
     const end = await Promise.race([Promise.all(endings), delay(15000).then(() => { throw Error('soak workers stop deadline'); })]);
     check('soak workers exit cleanly', end, [[0, null], [0, null]]);
     check('soak final fresh traffic succeeds', hits('/run/e2e-monitor-results').slice(-5).every(r => r.ok));
+    // No client probes during quiet windows. Do not restart the VPN or change
+    // its production options. RSS need not fall when V8 frees live objects.
+    const memoryPath = `/run/e2e-memory-${initialIdentity.pid}.json`;
+    for (let i = 0; i < 4; i++) {
+      if (i) await delay(60000);
+      if (i === 3) {
+        const old = JSON.parse(fs.readFileSync(memoryPath, 'utf8')).monotonicMs;
+        fs.writeFileSync(`/run/e2e-memory-gc-${initialIdentity.pid}`, 'collect');
+        await until(() => { const m = JSON.parse(fs.readFileSync(memoryPath, 'utf8')); return m.forcedGc && m.monotonicMs > old; }, 'lab GC sample');
+      }
+      event({ event: 'quiescent-memory', phase: 0, sample: i, quietSeconds: i * 60,
+        nodeMemory: JSON.parse(fs.readFileSync(memoryPath, 'utf8')),
+        fds: fs.readdirSync(`/proc/${initialIdentity.pid}/fd`).length });
+    }
     event({ event: 'soak-completed', phase: 0, cycles: 3, elapsedMs: performance.now() - started,
       monitorSamples: hits('/run/e2e-monitor-results').length, longSamples: hits('/run/e2e-long-results').length });
   } finally { for (const child of children) if (child.exitCode === null) child.kill('SIGKILL'); }

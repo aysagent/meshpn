@@ -118,9 +118,14 @@ sudo env "PATH=$PATH" node scripts/clean-vpn-usb-snat.mjs --remove --apply
 
 Дополнительный широкий glob захватил `*-real.mjs`: они отказали в текущем
 окружении из-за отсутствия `/dev/net/tun`/`conntrack`; в 440 PASS не включены.
-Полный TLS E2E/soak на новой версии здесь не повторялся. Проверка постоянного
-MSS на физической Radxa после обновления и reboot остаётся в
-[списке приёмки](clean-vpn-radxa-next-checks.md). Большие UDP/PMTU не закрыты.
+После этого выполнены повторные [полный TLS E2E и faults](clean-vpn-usb-e2e-lab.md)
+на `5a0852c`: 601 и 485 проверок. Добавлен [настоящий UDP/PMTU прогон](clean-vpn-usb-pmtu.md):
+62 сценария + 117 общих проверок, включая фрагментацию и ICMP через NAT.
+Результаты повторного [soak с измерениями памяти](clean-vpn-usb-soak.md) описаны
+отдельно; его функциональный PASS не означает решения роста RSS.
+Проверка постоянного MSS на физической Radxa после обновления и reboot остаётся
+в [списке приёмки](clean-vpn-radxa-next-checks.md). UDP/PMTU на реальном Mac,
+плате и внешнем пути этим лабораторным прогоном не приняты.
 
 `node --test scripts/test-usb-snat.mjs scripts/test-vpn-host-routes.mjs` проверяет
 предусловия, идемпотентность, отказ при чужих правилах/маршрутах, cleanup и вызов

@@ -19,6 +19,23 @@ const valid = () => {
     ] }] };
 };
 test('complete soak evidence accepted', () => assert.doesNotThrow(() => assertUsbSoakEvidence(valid())));
+const withMemory = () => {
+  const r = valid(); r.memoryInstrumentation = { labOnly: true, forcedGcAfterWorkloadOnly: true, originalSha256: 'a'.repeat(64), instrumentedSha256: 'b'.repeat(64) };
+  const memory = (ms, forcedGc = false) => ({ pid: 42, rss: 60000000, heapTotal: 20000000, heapUsed: 12000000,
+    external: 1000000, arrayBuffers: 100000, handles: ['Timeout'], monotonicMs: ms, forcedGc });
+  for (const e of r.boots[0].events.filter(e => e.event === 'resources')) e.nodeMemory = memory(1000);
+  r.boots[0].events.splice(-2, 0, ...[0, 1, 2, 3].map(i => ({ event: 'quiescent-memory', phase: 0, sample: i,
+    quietSeconds: i * 60, nodeMemory: memory(2000 + i * 60000, i === 3), fds: 30 })));
+  return r;
+};
+test('soak includes live V8 and post-workload collection evidence', () => assert.doesNotThrow(() => assertUsbSoakEvidence(withMemory())));
+for (const [name, change] of Object.entries({
+  missingQuiet: r => { r.boots[0].events = r.boots[0].events.filter(e => e.event !== 'quiescent-memory'); },
+  noGc: r => { r.boots[0].events.filter(e => e.event === 'quiescent-memory').at(-1).nodeMemory.forcedGc = false; },
+  differentPid: r => { r.boots[0].events.find(e => e.event === 'resources').nodeMemory.pid++; },
+  invalidHeap: r => { r.boots[0].events.find(e => e.event === 'resources').nodeMemory.heapUsed = NaN; },
+  noQuietDelay: r => { r.boots[0].events.filter(e => e.event === 'quiescent-memory')[1].nodeMemory.monotonicMs = 2001; },
+})) test('memory evidence rejects ' + name, () => { const r = withMemory(); change(r); assert.throws(() => assertUsbSoakEvidence(r)); });
 for (const [name, change] of Object.entries({
   missingCheck: r => r.boots[0].events.splice(2, 1),
   missingCycle: r => { r.boots[0].events = r.boots[0].events.filter(e => e.cycle !== 3); },

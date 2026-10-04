@@ -21,6 +21,7 @@ import { tunnelDnsFixtureAnswer } from './dns-tunnel-cli-lab.mjs';
 import { exchangePlainDns } from './dns-tunnel-forwarder.mjs';
 import { runUsbFaultScenarios } from './usb-fault-vm.mjs';
 import { runUsbSoak, runLongTcpPeer, startLongTcpOrigin } from './usb-soak-vm.mjs';
+import { runUsbPmtu } from './usb-pmtu-vm.mjs';
 
 const script = '/project/scripts/lib/usb-e2e-vm.mjs', exitIp = '154.62.226.216';
 const snapshotFiles = [...BOOT_FILES.map(p => '/' + p), ...Object.keys(rescueFiles), ...Object.keys(gatewayFiles('/usr/bin/node'))];
@@ -128,6 +129,13 @@ function prepare() {
 }
 
 async function fixture() {
+  if (fs.readFileSync('/proc/cmdline', 'utf8').includes('meshpn.usb-pmtu=1')) {
+    const log = fs.openSync('/run/e2e-pmtu-hits', 'a', 0o600);
+    const child = spawn('/usr/bin/usb-pmtu-probe', ['server', '1.0.0.1'], { stdio: ['ignore', log, log] });
+    fs.closeSync(log);
+    child.on('exit', () => process.exit(1));
+    await until(() => hits('/run/e2e-pmtu-hits').some(r => r.event === 'ready'), 'PMTU origin ready');
+  }
   if (fs.readFileSync('/proc/cmdline', 'utf8').includes('meshpn.usb-soak=1')) await startLongTcpOrigin();
   for (const host of ['1.0.0.1', '2606:4700:4700::1111', '192.168.1.1', 'fd00:1::1']) {
     const server = https.createServer({ key: fs.readFileSync('/state/cert/privkey.pem'), cert: fs.readFileSync('/state/cert/fullchain.pem') }, (q, r) => {
@@ -286,6 +294,7 @@ async function run() {
     }
   };
   const install = async () => exec('/bin/bash', ['scripts/autostart/install.sh', '--role=client', '--type=tls', `--server=${exitIp}:443`,
+    ...(fs.readFileSync('/proc/cmdline', 'utf8').includes('meshpn.usb-pmtu=1') ? ['--keep-alive=5'] : []),
     '--split-default', '--ipv6=auto', '--tls-cert-dir=/state/cert', '--shared-hmac-key=/state/cert/secret.key',
     '--tls-server-name=vpn.test', '--tls-public-name=vpn.test'], { env: { ...process.env, NODE_BIN: '/usr/bin/node',
       SERVICE_NAME: 'clean-vpn', KILLSWITCH: '1', KILLSWITCH_PERSIST: '1', NETWORKD_GUARD: '1', USB_GATEWAY: '1' } });
@@ -404,8 +413,9 @@ async function run() {
   if (faults) {
     await matrix(true);
     const soak = fs.readFileSync('/proc/cmdline', 'utf8').includes('meshpn.usb-soak=1');
-    await (soak ? runUsbSoak : runUsbFaultScenarios)({ check, event, ctl, property, sync, ip, at, link, until, ready, matrix, login, hits, peerProbe, dnsProbe });
-    sync('/bin/sync'); event({ event: 'completed', phase: p, bootId, usbDnsPolicy: 'cvks4-usb-tunnel-only', faultScenarios: true, ...(soak ? { soak: true } : {}) });
+    const pmtu = fs.readFileSync('/proc/cmdline', 'utf8').includes('meshpn.usb-pmtu=1');
+    await (pmtu ? runUsbPmtu : soak ? runUsbSoak : runUsbFaultScenarios)({ check, event, ctl, property, sync, ip, at, link, until, ready, matrix, login, hits, peerProbe, dnsProbe });
+    sync('/bin/sync'); event({ event: 'completed', phase: p, bootId, usbDnsPolicy: 'cvks4-usb-tunnel-only', faultScenarios: true, ...(soak ? { soak: true } : {}), ...(pmtu ? { pmtu: true } : {}) });
     await ctl('poweroff', '--no-block'); return;
   }
   await matrix(true);

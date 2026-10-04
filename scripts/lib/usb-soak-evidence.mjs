@@ -21,7 +21,7 @@ export function assertUsbSoakEvidence(r) {
   assert.equal(b.phase, 0); assert.equal(b.code, 0); assert.equal(b.synced, true); assert.equal(b.unmounted, true);
   assert.equal(b.powerDown, true); assert.equal(b.kernelRestart, false);
   assert.deepEqual(b.events[0], { event: 'prepared', phase: 0, restored: false, uplinkDown: true });
-  const types = ['prepared', 'check', 'lifecycle-ready', 'soak-fault', 'stable', 'resources', 'dhcp', 'soak-completed', 'completed'];
+  const types = ['prepared', 'check', 'lifecycle-ready', 'soak-fault', 'stable', 'resources', 'dhcp', 'soak-completed', 'completed', 'quiescent-memory'];
   assert.ok(b.events.every(e => e.phase === 0 && types.includes(e.event)));
   for (const type of ['prepared', 'lifecycle-ready', 'soak-completed', 'completed']) assert.equal(b.events.filter(e => e.event === type).length, 1);
   assert.deepEqual(b.events.filter(e => e.event === 'check').map(e => e.name), usbSoakChecks());
@@ -46,6 +46,21 @@ export function assertUsbSoakEvidence(r) {
   assert.equal(done.cycles, 3); assert.ok(Number.isFinite(done.elapsedMs) && done.elapsedMs >= 1140000);
   assert.ok(Number.isInteger(done.monitorSamples) && done.monitorSamples > 100 && Number.isInteger(done.longSamples) && done.longSamples >= 350);
   const end = b.events.at(-1); assert.equal(end.event, 'completed'); assert.equal(end.soak, true); assert.equal(end.faultScenarios, true);
+  if (r.memoryInstrumentation) {
+    assert.equal(r.memoryInstrumentation.labOnly, true);
+    assert.equal(r.memoryInstrumentation.forcedGcAfterWorkloadOnly, true);
+    for (const k of ['originalSha256', 'instrumentedSha256']) assert.match(r.memoryInstrumentation[k], /^[0-9a-f]{64}$/);
+    const quiet = b.events.filter(e => e.event === 'quiescent-memory');
+    assert.deepEqual(quiet.map(e => e.quietSeconds), [0, 60, 120, 180]);
+    const memories = [...resources, ...quiet].map(e => e.nodeMemory);
+    for (const m of memories) {
+      assert.equal(m.pid, memories[0].pid);
+      for (const k of ['rss', 'heapTotal', 'heapUsed', 'external', 'arrayBuffers', 'monotonicMs']) assert.ok(Number.isFinite(m[k]) && m[k] >= 0);
+      assert.ok(Array.isArray(m.handles));
+    }
+    assert.equal(quiet.at(-1).nodeMemory.forcedGc, true);
+    for (let i = 1; i < quiet.length; i++) assert.ok(quiet[i].nodeMemory.monotonicMs - quiet[i - 1].nodeMemory.monotonicMs >= 59000);
+  }
   assert.equal(end.usbDnsPolicy, 'cvks4-usb-tunnel-only'); assert.equal(end.bootId, b.bootId);
   assert.match(b.bootId, /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
 }
