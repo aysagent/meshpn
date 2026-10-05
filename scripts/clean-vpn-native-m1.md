@@ -164,7 +164,7 @@ lets C++ own TLS/socket I/O; no Node HTTP/2 bridge is involved.
 cmake -S native/clean_vpn -B native/clean_vpn/build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build native/clean_vpn/build --target clean-vpn-engine clean-vpn-engine-fixture protocol-test dns-wire-test dns-relay-test integration-test socket-test -j 4
 ctest --test-dir native/clean_vpn/build --output-on-failure
-node --test scripts/test-native-data-plane.mjs scripts/test-native-dns.mjs scripts/test-native-engine-controller.mjs scripts/test-native-wire-interop.mjs
+node --test scripts/test-native-data-plane.mjs scripts/test-native-dns.mjs scripts/test-native-engine-controller.mjs scripts/test-native-wire-interop.mjs scripts/test-native-tls-identity.mjs
 ```
 
 `clean-vpn-engine-fixture` is a **separate test binary** accepting an inherited
@@ -172,6 +172,13 @@ AF_UNIX datagram fd in place of TUN. Production binary rejects this mode.
 The C++ integration driver creates, sends and verifies packets; Node only
 provisions temporary test PKI/configuration and invokes the driver. This test
 does not prove real kernel routing, NAT, DNS interception or kill-switch safety.
+
+TLS identity regression tests reproduce the old CN-only `clean-vpn` certificate
+against the real legacy TLS/H2 endpoint. Compatibility fallback is restricted to
+that identity; DNS SAN overrides CN, other names require DNS SAN, and wrong CA,
+wrong name, expired and future-dated certificates are rejected with fixed error
+codes. This lab reproduction does not identify the certificate on a physical
+exit that has not been inspected.
 
 Sanitizers: configure a separate `build-asan` with `-DCVPN_SANITIZE=ON` and
 `-DCMAKE_BUILD_TYPE=Debug`; build the same targets, run CTest there, then set

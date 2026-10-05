@@ -299,8 +299,25 @@ struct Session {
     }
   }
 };
+static const char* tls_failure(SSL* ssl){
+  // Fixed codes only: never emit certificates, peer text or the TLS error stack.
+  switch(SSL_get_verify_result(ssl)){
+    case X509_V_OK:return "tls_handshake";
+    case X509_V_ERR_HOSTNAME_MISMATCH:return "tls_verify_name";
+    case X509_V_ERR_CERT_HAS_EXPIRED:return "tls_verify_expired";
+    case X509_V_ERR_CERT_NOT_YET_VALID:return "tls_verify_not_yet_valid";
+    case X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT:
+    case X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT:
+    case X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN:
+    case X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY:
+    case X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE:return "tls_verify_untrusted";
+    default:return "tls_verify_failed";
+  }
+}
 static void handshake(SSL* ssl,int fd,Control& ctl,Clock::time_point deadline,uint64_t generation){
-  while(true){int n=SSL_do_handshake(ssl);if(n==1)break;int e=SSL_get_error(ssl,n);check(e==SSL_ERROR_WANT_READ||e==SSL_ERROR_WANT_WRITE,"tls_handshake");wait_fd(fd,e==SSL_ERROR_WANT_READ?POLLIN:POLLOUT,ctl,deadline,generation);}
+  while(true){int n=SSL_do_handshake(ssl);if(n==1)break;int e=SSL_get_error(ssl,n);
+    if(e!=SSL_ERROR_WANT_READ&&e!=SSL_ERROR_WANT_WRITE)throw std::runtime_error(tls_failure(ssl));
+    wait_fd(fd,e==SSL_ERROR_WANT_READ?POLLIN:POLLOUT,ctl,deadline,generation);}
   const uint8_t* proto=nullptr;unsigned n=0;SSL_get0_alpn_selected(ssl,&proto,&n);check(n==2&&std::memcmp(proto,"h2",2)==0,"h2_required");
 }
 int main(int argc,char** argv){
@@ -358,7 +375,10 @@ int main(int argc,char** argv){
           SSL_set_connect_state(ssl.get());
           check(SSL_set_tlsext_host_name(ssl.get(),c.sni.c_str())==1,"tls_sni");
           auto* verify=SSL_get0_param(ssl.get());
-          X509_VERIFY_PARAM_set_hostflags(verify,X509_CHECK_FLAG_NEVER_CHECK_SUBJECT);
+          // Old clean-vpn provisioning could issue CN=clean-vpn without SAN.
+          // Preserve that one legacy identity; DNS SAN still takes precedence.
+          // All other names retain SAN-only verification. CA/time checks remain.
+          X509_VERIFY_PARAM_set_hostflags(verify,c.name=="clean-vpn"?0:X509_CHECK_FLAG_NEVER_CHECK_SUBJECT);
           check(X509_VERIFY_PARAM_set1_host(verify,c.name.data(),c.name.size())==1,"tls_identity");
         }
         else SSL_set_accept_state(ssl.get());

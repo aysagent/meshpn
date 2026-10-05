@@ -119,6 +119,17 @@ test('success: old/native/restored probes; stop native and audit before removing
     'configureTun', 'launch', 'ready', 'probe2', 'hold', 'stop-native', 'requireOldInactive', 'audit2', 'removeTun',
     'requireNoTun', 'ipv6Audit2', 'startOld', 'waitOld', 'probe3', 'verifyGuard']);
 });
+test('started legacy service is not called verified when readiness times out', async () => {
+  const f = fixture({ fail: 'waitOld' }), r = await runTrial(f.io);
+  assert.equal(r.status, 'failed'); assert.equal(r.rollback, 'service-restored');
+  assert.equal(r.rollbackFailure.stage, 'old-ready'); assert.ok(!f.events.includes('probe3'));
+});
+test('successful readiness metadata is retained before the independent restored smoke', async () => {
+  const f = fixture();
+  f.io.waitOld = async () => ({ status: 'ready', attempts: 4, consecutive: 2, seconds: 3 });
+  const r = await runTrial(f.io);
+  assert.equal(r.restorationReadiness.attempts, 4); assert.equal(r.rollback, 'verified');
+});
 for (const fail of ['preflight', 'probe1', 'beforeStop']) {
   test(`${fail} failure never stops the working service`, async () => {
     const f = fixture({ fail }), r = await runTrial(f.io);

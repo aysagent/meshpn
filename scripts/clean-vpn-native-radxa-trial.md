@@ -56,7 +56,10 @@ cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
    активацию DNS, повторяет проверки.
 5. Останавливает native управляющей JSON-командой, проверяет освобождение
    журналов, удаляет только свой TUN с прежним ifindex, запускает старый сервис
-   и повторяет проверки.
+   и ждёт фактической готовности (до 60 секунд): стабильный PID/TUN, маршруты,
+   SNAT/MSS, исходная blocked IPv6-политика для `auto` и два последовательных
+   HTTPS-запроса через TUN с ожидаемым exit IP. Затем отдельно повторяет полный
+   smoke. `restorationReadiness` содержит число попыток и время ожидания.
 
 Итог успеха: `status: passed`, `rollback: verified`, `guard: verified`.
 `nativeDiagnostics.beforeStop` сохраняет последние 48 состояний движка, счётчики
@@ -65,6 +68,13 @@ cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
 без произвольного stderr, ключей, аргументов запуска и содержимого пакетов.
 Таймаут готовности сам по себе не доказывает ошибку TLS или авторизации;
 смотрим эту историю, а не угадываем по одному `native_ready_timeout`.
+Ошибки проверки сертификата различаются: `tls_verify_name`,
+`tls_verify_expired`, `tls_verify_not_yet_valid`, `tls_verify_untrusted`,
+`tls_verify_failed`. Прочий отказ TLS остаётся `tls_handshake`.
+Поддержан старый сертификат с CN=`clean-vpn` без DNS SAN, выпущенный прежним
+установщиком. DNS SAN имеет приоритет над CN; другие имена требуют DNS SAN.
+Проверки доверенного CA, имени и срока действия остаются включёнными.
+Этот C++ fix требует повторного запуска сборки перед trial.
 Стандартный прогон обычно занимает несколько минут после сборки; при сбоях
 может быть дольше из-за ограниченных таймаутов безопасной очистки.
 
@@ -111,7 +121,9 @@ cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
 - При конфликте владения TUN/журналами возврат **не форсируется**:
   `rollback: manual-review-required`. Сохраняем USB rescue, присылаем отчёт,
   не удаляем журналы/правила вручную. `service-restored` означает, что старый
-  сервис поднят, но его контрольная проверка не прошла — это не полный успех.
+  сервис запущен, но ожидание готовности или контрольная проверка не прошли —
+  это не полный успех. `old_ready_timeout_<проверка>` показывает, где остановилось
+  ожидание; тест не перезапускает сервис повторно и не ослабляет защиту.
 - Неизменность команды проверяется через `busctl --json=short` (systemd),
   только по пути/argv/ignore-failure. PID, время остановки и exit status не
   входят в fingerprint. Дополнительно сравниваются wrapper, JS entry point,
@@ -127,10 +139,12 @@ cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
 ```bash
 node --test scripts/test-native-radxa-trial.mjs \
   scripts/test-native-trial-service.mjs scripts/test-native-trial-diagnostics.mjs \
+  scripts/test-native-trial-readiness.mjs \
   scripts/test-native-trial-ipv6.mjs scripts/test-vpn-ipv6.mjs \
   scripts/test-native-engine-controller.mjs scripts/test-dns-client-options.mjs \
   scripts/test-autostart-stop-contract.mjs scripts/test-host-stop-faults.mjs
 bash scripts/build-clean-vpn-native.sh
+node --test scripts/test-native-tls-identity.mjs scripts/test-native-wire-interop.mjs
 ```
 
 Тесты покрывают разбор действующих параметров/CA/PSK без shell eval, отсутствие

@@ -99,6 +99,13 @@ int main(int argc,char** argv){
       Child client(argv[1],argv[2]);client.await_state("ready");client.stop();
       std::cout<<"legacy exit handshake PASS\n";return 0;
     }
+    if(argc==4&&std::string(argv[3]).rfind("client-reject:",0)==0){
+      Child client(argv[1],argv[2]);
+      auto state=client.await_state(std::string(argv[3]).substr(14));
+      require(state.at("tx_packets")==0&&state.at("rx_packets")==0,"rejected_tls_packets");
+      client.reject_for(400);client.stop();
+      std::cout<<"TLS rejected with expected diagnostic PASS\n";return 0;
+    }
     if(argc==4&&std::string(argv[3])=="exit-denied"){
       Child server(argv[1],argv[2]);server.await_state("listening");std::cout<<"native exit listening\n";
       server.reject_for(1200);pollfd p{server.packet,POLLIN,0};require(poll(&p,1,50)==0,"unauthenticated_h2_injection");server.stop();

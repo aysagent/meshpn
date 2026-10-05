@@ -1,6 +1,7 @@
 /** Fixed-vocabulary metadata only. No raw stderr/argv/headers/packet bodies. */
 const states = new Set(`starting idle listening connecting handshake ready uplink_ready waiting_uplink stopped dns_failed
 cancelled connect_deadline poll connect_socket connect accept tcp_nodelay tls_socket tls_sni tls_identity tls_handshake
+tls_verify_name tls_verify_expired tls_verify_not_yet_valid tls_verify_untrusted tls_verify_failed
 h2_required exporter hmac http2_error unexpected_headers headers_limit duplicate_header request_invalid auth_rejected
 early_end vpn_response_rejected data_before_auth peer_address session_rejected_or_closed auth_deadline h2_ping_timeout
 random tls_write tls_read http2_receive tun_write tun_read invalid_ipv4 invalid_frame_length queue_limit queue_consume`.split(/\s+/));

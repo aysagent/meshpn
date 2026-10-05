@@ -10,6 +10,7 @@ import { deriveTrialConfig, summarizeTrialProbe, hasUsbRescueConnection, require
 import { inspectBlockedTrialIpv6, validateReleasedTrialIpv6 } from './lib/native-trial-ipv6.mjs';
 import { trialServiceFingerprint } from './lib/native-trial-service.mjs';
 import { trialDiagnostics } from './lib/native-trial-diagnostics.mjs';
+import { waitLegacyReady } from './lib/native-trial-readiness.mjs';
 
 const SELF = fileURLToPath(import.meta.url), ROOT = path.dirname(path.dirname(SELF));
 const UNIT = 'clean-vpn-native-trial.service', OLD = 'clean-vpn.service';
@@ -244,11 +245,7 @@ async function adapter() {
       await verifyGuard(); await run('systemctl', ['start', OLD], 90000);
     },
     async waitOld() {
-      const deadline = performance.now() + 60000;
-      while (performance.now() < deadline) {
-        try { await snatReady(); return; } catch { await sleep(); }
-      }
-      throw Error('old_ready_timeout');
+      return waitLegacyReady({ run, inspectIpv6: ipv6Evidence ? inspectBlockedTrialIpv6 : undefined });
     },
     cleanSecrets() {
       if (buildLock !== undefined) { fs.closeSync(buildLock); buildLock = undefined; }

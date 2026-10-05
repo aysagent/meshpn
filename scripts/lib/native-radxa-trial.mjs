@@ -139,8 +139,8 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
         // The IPv6 journal still records the OLD ifindex, not native's TUN.
         await step('rollback-ipv6-audit', () => io.auditIpv6Released(), false);
         await step('start-old', () => io.startOld(), false);
-        await step('old-ready', () => io.waitOld(), false);
         report.rollback = 'service-restored';
+        report.restorationReadiness = await step('old-ready', () => io.waitOld(), false);
         report.checks.restored = await step('restored-client-check', () => io.probe(), false);
         requireTrial(report.checks.restored.status === 'ipv4-smoke-passed', 'restored_smoke_failed');
         report.rollback = 'verified';

@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import { trialDiagnostics } from './lib/native-trial-diagnostics.mjs';
 
 const event = state => ({ version: 1, event: 'state', state, generation: 1, tx_packets: 2, rx_packets: 3, dropped_packets: 4 });
+test('TLS verification reasons survive diagnostic sanitization as fixed codes', () => {
+  const d = trialDiagnostics();
+  for (const code of ['tls_verify_name', 'tls_verify_expired', 'tls_verify_not_yet_valid', 'tls_verify_untrusted', 'tls_verify_failed']) {
+    assert.equal(d.state(event(code)), code);
+  }
+  assert.equal(d.snapshot().events.length, 5);
+});
 test('only fixed vocabulary, counters and monotonic offsets enter diagnostics', () => {
   let now = 100; const d = trialDiagnostics(() => now); now = 125;
   assert.equal(d.state(event('handshake')), 'handshake');
