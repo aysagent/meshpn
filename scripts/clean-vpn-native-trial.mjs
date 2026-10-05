@@ -4,10 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { deriveTrialConfig, summarizeTrialProbe, hasUsbRescueConnection, requireTrial as check, runTrial } from './lib/native-radxa-trial.mjs';
 import { inspectBlockedTrialIpv6, validateReleasedTrialIpv6 } from './lib/native-trial-ipv6.mjs';
+import { trialServiceFingerprint } from './lib/native-trial-service.mjs';
+import { trialDiagnostics } from './lib/native-trial-diagnostics.mjs';
 
 const SELF = fileURLToPath(import.meta.url), ROOT = path.dirname(path.dirname(SELF));
 const UNIT = 'clean-vpn-native-trial.service', OLD = 'clean-vpn.service';
@@ -92,6 +94,8 @@ export function launchTrialNative(config, { spawnChild = spawn, readyMs = 45000,
   const child = spawnChild(process.execPath, [path.join(ROOT, 'scripts/clean-vpn-native.mjs'), '--config', config, '--usb-profile'],
     { cwd: ROOT, env: ENV, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
   let ended = false, code, signal, statusReady = false, dnsReady = false, bytes = 0, stdout = '', stderr = '', broken = false;
+  const diagnostics = trialDiagnostics();
+  let stdoutBytes = 0, stderrBytes = 0;
   child.stdin.on('error', () => { broken = true; });
   child.on('error', () => { broken = true; });
   child.on('close', (c, s) => { ended = true; code = c; signal = s; });
@@ -99,21 +103,29 @@ export function launchTrialNative(config, { spawnChild = spawn, readyMs = 45000,
     stream.setEncoding('utf8');
     stream.on('data', chunk => {
       bytes += Buffer.byteLength(chunk);
+      if (kind === 'out') stdoutBytes += Buffer.byteLength(chunk); else stderrBytes += Buffer.byteLength(chunk);
       if (bytes > 256 * 1024) { broken = true; return; }
       if (kind === 'out') {
         stdout += chunk;
         let at;
         while ((at = stdout.indexOf('\n')) >= 0) {
           const line = stdout.slice(0, at); stdout = stdout.slice(at + 1);
-          try { statusReady = JSON.parse(line).state === 'ready'; } catch { broken = true; }
+          try { statusReady = diagnostics.state(JSON.parse(line)) === 'ready'; } catch { broken = true; }
         }
       } else {
-        stderr = (stderr + chunk).slice(-4096);
-        if (stderr.includes('native-control: DNS active')) dnsReady = true;
+        stderr += chunk;
+        let at;
+        while ((at = stderr.indexOf('\n')) >= 0) {
+          const line = stderr.slice(0, at); stderr = stderr.slice(at + 1);
+          if (diagnostics.stderrLine(line) === 'dns_active') dnsReady = true;
+        }
+        if (stderr.length > 4096) { stderr = ''; broken = true; }
       }
     });
   }
   return {
+    diagnostics: () => ({ ...diagnostics.snapshot(), dnsReady, statusReady, ended, broken,
+      exitCode: Number.isInteger(code) ? code : null, signal: signal ?? null, stdoutBytes, stderrBytes }),
     healthy: () => !ended && !broken,
     async ready(cancelled) {
       const deadline = performance.now() + readyMs;
@@ -139,12 +151,7 @@ export function launchTrialNative(config, { spawnChild = spawn, readyMs = 45000,
 
 async function adapter() {
   let initialPid, config, scratch, fingerprint, buildLock, ipv6Evidence;
-  const legacyFingerprint = async () => {
-    const wrapper = fs.readFileSync('/usr/local/bin/clean-vpn-run.sh');
-    const effective = await system('show', OLD, '--property=ExecStart,FragmentPath,DropInPaths,Environment');
-    const source = fs.readFileSync(path.join(ROOT, 'scripts/clean-vpn.js'));
-    return createHash('sha256').update(wrapper).update(effective).update(source).digest('hex');
-  };
+  const legacyFingerprint = () => trialServiceFingerprint({ run, root: ROOT });
   const requireOldInactive = async () => {
     check(await prop(OLD, 'ActiveState') === 'inactive' && await prop(OLD, 'MainPID') === '0', 'old_service_not_inactive');
   };

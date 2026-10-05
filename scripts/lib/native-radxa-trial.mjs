@@ -86,6 +86,12 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
     limitations: ['host-smoke-not-usb-peer-acceptance', 'not-speedtest-or-throughput-benchmark',
       'not-a-leak-or-crash-test', 'native-client-only-existing-exit', 'no-browser-profile-fidelity'] };
   let stopped = false, tunIndex, session;
+  const snapshotNative = phase => {
+    if (!session?.diagnostics) return;
+    // Diagnostic failure must never prevent shutdown/rollback.
+    try { (report.nativeDiagnostics ??= {})[phase] = session.diagnostics(); }
+    catch { (report.nativeDiagnostics ??= {})[phase] = { unavailable: true }; }
+  };
   const step = async (name, fn, interruptible = true) => {
     report.stage = name; progress(name);
     if (interruptible) requireTrial(!cancelled(), 'cancelled');
@@ -115,6 +121,7 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
     // Only allow fixed diagnostic codes; never echo child stderr, argv or keys.
     report.failure = { stage: report.stage, code: /^[a-z0-9_]{1,100}$/.test(error.message) ? error.message : 'operation_failed' };
   } finally {
+    snapshotNative('beforeStop');
     if (stopped) {
       report.rollback = 'in-progress';
       try {
@@ -145,6 +152,7 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
     }
     try { await io.verifyGuard(); report.guard = 'verified'; }
     catch { report.guard = 'verification-failed'; report.status = 'failed'; }
+    snapshotNative('afterStop');
   }
   report.stage = 'finished';
   return report;

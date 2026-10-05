@@ -176,18 +176,55 @@ test('real child pipe stays open, detached from terminal; stop is JSON, never gr
   const session = launchTrialNative('/private/config.json', { spawnChild(file, args, options) {
     assert.equal(options.detached, true); assert.deepEqual(options.stdio, ['pipe', 'pipe', 'pipe']);
     child = spawn(process.execPath, ['-e', `
-      process.stdout.write('{"state":"ready"}\\n');
+      process.stdout.write('{"version":1,"event":"state","state":"ready","generation":0,"tx_packets":0,"rx_packets":0,"dropped_packets":0}\\n');
       process.stderr.write('native-control: DNS active\\n');
       process.stdin.on('data', b => { if (b.toString() === '{"op":"stop"}\\n') process.exit(0); else process.exit(2); });
     `], options);
     return child;
   }, readyMs: 5000, stopMs: 5000 });
-  try { await session.ready(() => false); assert.equal(session.healthy(), true); assert.equal((await session.stop()).code, 0); }
+  try {
+    await session.ready(() => false); assert.equal(session.healthy(), true);
+    assert.equal(session.diagnostics().lastState, 'ready'); assert.equal(session.diagnostics().dnsReady, true);
+    assert.equal((await session.stop()).code, 0); assert.equal(session.diagnostics().ended, true);
+  }
   finally { child.kill('SIGKILL'); }
 });
 test('native exit before readiness fails promptly instead of reporting success', async () => {
   const s = launchTrialNative('/private/config.json', { spawnChild: (file, args, options) => spawn(process.execPath, ['-e', 'process.exit(1)'], options), readyMs: 5000 });
   await assert.rejects(s.ready(() => false), /native_start_failed/); await s.stop();
+});
+
+test('native timeout retains safe states before graceful stop, even when rollback also fails', async () => {
+  let child;
+  const f = fixture({ fail: 'startOld' });
+  f.io.launch = async () => launchTrialNative('/private/config.json', { readyMs: 600, stopMs: 3000,
+    spawnChild(file, args, options) {
+      child = spawn(process.execPath, ['-e', `
+        const event = state => process.stdout.write(JSON.stringify({version:1,event:'state',state,
+          generation:0,tx_packets:0,rx_packets:0,dropped_packets:0})+'\\n');
+        process.stderr.write('secret=DO_NOT_REPORT\\nnative-control: DNS guard/');
+        setTimeout(() => {process.stderr.write('routes ready\\n');event('handshake');event('tls_handshake');}, 20);
+        process.stdin.on('data', b => {if(b.toString()==='{"op":"stop"}\\n'){event('stopped');process.exit(0);}});
+      `], options); return child;
+    } });
+  try {
+    const r = await runTrial(f.io);
+    assert.equal(r.failure.code, 'native_ready_timeout'); assert.equal(r.rollbackFailure.stage, 'start-old');
+    assert.equal(r.nativeDiagnostics.beforeStop.lastState, 'tls_handshake');
+    assert.equal(r.nativeDiagnostics.beforeStop.dnsReady, false);
+    assert.equal(r.nativeDiagnostics.beforeStop.stages[0].stage, 'dns_guard_ready');
+    assert.equal(r.nativeDiagnostics.afterStop.lastState, 'stopped');
+    assert.equal(r.nativeDiagnostics.afterStop.exitCode, 0);
+    assert.ok(!JSON.stringify(r).includes('DO_NOT_REPORT'));
+  } finally { child?.kill('SIGKILL'); }
+});
+test('diagnostic snapshot errors cannot prevent successful cleanup and restore', async () => {
+  const f = fixture(), launch = f.io.launch;
+  f.io.launch = async () => ({ ...await launch(), diagnostics() { throw Error('PRIVATE'); } });
+  const r = await runTrial(f.io);
+  assert.equal(r.rollback, 'verified'); assert.equal(r.status, 'passed');
+  assert.deepEqual(r.nativeDiagnostics.beforeStop, { unavailable: true });
+  assert.ok(!JSON.stringify(r).includes('PRIVATE'));
 });
 
 test('build failure stops chain; legacy dependency directory and services never touched', () => {

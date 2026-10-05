@@ -59,6 +59,12 @@ cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
    и повторяет проверки.
 
 Итог успеха: `status: passed`, `rollback: verified`, `guard: verified`.
+`nativeDiagnostics.beforeStop` сохраняет последние 48 состояний движка, счётчики
+пакетов и этапы control-plane на момент окончания теста/ошибки. `afterStop`
+добавляет состояние после возврата. Только фиксированные коды и числовые поля:
+без произвольного stderr, ключей, аргументов запуска и содержимого пакетов.
+Таймаут готовности сам по себе не доказывает ошибку TLS или авторизации;
+смотрим эту историю, а не угадываем по одному `native_ready_timeout`.
 Стандартный прогон обычно занимает несколько минут после сборки; при сбоях
 может быть дольше из-за ограниченных таймаутов безопасной очистки.
 
@@ -106,6 +112,11 @@ cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
   `rollback: manual-review-required`. Сохраняем USB rescue, присылаем отчёт,
   не удаляем журналы/правила вручную. `service-restored` означает, что старый
   сервис поднят, но его контрольная проверка не прошла — это не полный успех.
+- Неизменность команды проверяется через `busctl --json=short` (systemd),
+  только по пути/argv/ignore-failure. PID, время остановки и exit status не
+  входят в fingerprint. Дополнительно сравниваются wrapper, JS entry point,
+  unit/drop-in содержимое и выбранные эффективные настройки. Изменения файлов
+  и ожидаемый daemon-reload по-прежнему блокируют переключение/возврат.
 - Тест не выполняет автоматическую перезагрузку. Если штатная очистка стала
   невозможной, перезагрузка через USB rescue остаётся отдельным решением
   оператора: прежняя автозагрузка не изменена, временный TUN/ключи в `/run`
@@ -115,6 +126,7 @@ cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
 
 ```bash
 node --test scripts/test-native-radxa-trial.mjs \
+  scripts/test-native-trial-service.mjs scripts/test-native-trial-diagnostics.mjs \
   scripts/test-native-trial-ipv6.mjs scripts/test-vpn-ipv6.mjs \
   scripts/test-native-engine-controller.mjs scripts/test-dns-client-options.mjs \
   scripts/test-autostart-stop-contract.mjs scripts/test-host-stop-faults.mjs
