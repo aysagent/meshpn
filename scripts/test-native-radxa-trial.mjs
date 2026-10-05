@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { deriveTrialConfig, summarizeTrialProbe, runTrial } from './lib/native-radxa-trial.mjs';
+import { deriveTrialConfig, summarizeTrialProbe, hasUsbRescueConnection, runTrial } from './lib/native-radxa-trial.mjs';
 import { launchTrialNative } from './clean-vpn-native-trial.mjs';
 
 const root = '/root/dev/meshpn';
@@ -12,6 +12,61 @@ const base = ['/usr/bin/node', root + '/scripts/clean-vpn.js', '--role=client', 
   '--server=154.62.226.216:443', '--split-default', '--dns-usb=1'];
 const derive = (args = [], files = ['ca.pem', 'clean-vpn-hmac.key']) => deriveTrialConfig([...base, ...args], {
   cwd: root, root, exists: p => files.some(f => p === root + '/certs/' + f) });
+
+const ssh = ['192.168.7.19', '63208', '192.168.7.1', '2222'];
+test('rescue matcher accepts ss device scope, plain endpoints, and optional ESTAB column', () => {
+  for (const local of ['192.168.7.1:2222', '192.168.7.1%usb0:2222']) {
+    for (const prefix of ['', 'ESTAB ']) {
+      assert.equal(hasUsbRescueConnection(`${prefix}0 0 ${local} 192.168.7.19:63208\n`, ssh), true);
+    }
+  }
+});
+test('rescue matcher requires exact same-row endpoint tuple and rejects foreign scopes/states', () => {
+  const valid = '0 0 192.168.7.1%usb0:2222 192.168.7.19:63208';
+  for (const row of ['', valid.replace('%usb0', '%wlan0'), valid.replace('%usb0', '%usb00'),
+    valid.replace(':2222', ':22220'), valid.replace(':63208', ':63209'), valid.replace(':63208', ':632080'),
+    valid.replace('192.168.7.19:', '192.168.7.119:'), valid.replace('192.168.7.1%', '192.168.7.11%'),
+    'LISTEN ' + valid, 'CLOSE-WAIT ' + valid, valid + ' extra',
+    valid.replace('192.168.7.19', '192.168.7.119') + '\n' + valid.replace(':2222', ':22'),
+    '0 0 192.168.7.19:63208 192.168.7.1%usb0:2222']) {
+    assert.equal(hasUsbRescueConnection(row, ssh), false, row);
+  }
+  assert.equal(hasUsbRescueConnection(valid, ['192.168.7.19', '63208', '192.168.7.1', '22']), false);
+  assert.equal(hasUsbRescueConnection(valid, ['192.168.7.999', '63208', '192.168.7.1', '2222']), false);
+});
+test('real bound-device TCP socket produces %usb0 and matches rescue tuple in isolated netns', t => {
+  if (process.platform !== 'linux') return t.skip('Linux network namespace required');
+  const available = spawnSync('unshare', ['--user', '--map-root-user', '--net', 'true'], { timeout: 5000 });
+  if (available.status !== 0) return t.skip('unprivileged network namespaces unavailable');
+  for (const file of ['ip', 'ss', 'python3']) {
+    if (spawnSync(file, [file === 'ip' ? '-Version' : '--version'], { timeout: 5000 }).status !== 0)
+      return t.skip(`${file} unavailable`);
+  }
+  const r = spawnSync('unshare', ['--user', '--map-root-user', '--net', 'python3', '-c', `
+import json, socket, subprocess
+for args in [['link', 'set', 'lo', 'name', 'usb0'], ['link', 'set', 'usb0', 'up'],
+             ['addr', 'add', '192.168.7.1/24', 'dev', 'usb0'], ['addr', 'add', '192.168.7.19/24', 'dev', 'usb0']]:
+    subprocess.run(['ip'] + args, check=True)
+listener = socket.socket()
+listener.settimeout(3)
+listener.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b'usb0\\0')
+listener.bind(('192.168.7.1', 2222))
+listener.listen()
+client = socket.socket()
+client.settimeout(3)
+client.bind(('192.168.7.19', 0))
+client.connect(('192.168.7.1', 2222))
+accepted, peer = listener.accept()
+rows = subprocess.run(['ss', '-4Htn', 'state', 'established', '( sport = :2222 )'],
+                      check=True, text=True, capture_output=True).stdout
+print(json.dumps({'rows': rows, 'ssh': [peer[0], str(peer[1]), '192.168.7.1', '2222']}))
+`], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(r.status, 0, r.stderr);
+  const actual = JSON.parse(r.stdout);
+  assert.match(actual.rows, /192\.168\.7\.1%usb0:2222/);
+  assert.equal(actual.rows.includes('192.168.7.1:2222'), false, 'old substring check fails');
+  assert.equal(hasUsbRescueConnection(actual.rows, actual.ssh), true);
+});
 
 test('derive effective default CA/key/names from running argv, default tunnel DNS', () => {
   assert.deepEqual(derive(), { version: 1, role: 'client', address: '154.62.226.216', port: 443,

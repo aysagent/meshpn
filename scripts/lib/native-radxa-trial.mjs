@@ -1,7 +1,31 @@
 /** Temporary M1 trial, not an installer. This module never handles packet data. */
 import path from 'node:path';
+import { isIPv4 } from 'node:net';
 
 export function requireTrial(condition, code) { if (!condition) throw Error(code); }
+
+// ss decorates SO_BINDTODEVICE endpoints with %interface (our rescue socket
+// uses BindToDevice=usb0). Match parsed endpoints, not address substrings.
+// Input is IPv4-only, headerless, established TCP output; some versions retain
+// the ESTAB column even with the state filter.
+export function hasUsbRescueConnection(output, ssh) {
+  const port = s => /^\d{1,5}$/.test(s) && Number(s) > 0 && Number(s) <= 65535;
+  if (!Array.isArray(ssh) || ssh.length !== 4 || !isIPv4(ssh[0]) || !ssh[0].startsWith('192.168.7.')
+      || !port(ssh[1]) || ssh[2] !== '192.168.7.1' || ssh[3] !== '2222') return false;
+  const endpoint = token => {
+    const m = /^(\d+\.\d+\.\d+\.\d+)(?:%([a-zA-Z0-9_.-]{1,15}))?:(\d{1,5})$/.exec(token);
+    return m && isIPv4(m[1]) && port(m[3]) && (!m[2] || m[2] === 'usb0')
+      ? { address: m[1], port: Number(m[3]) } : null;
+  };
+  return output.split('\n').some(line => {
+    const fields = line.trim().split(/\s+/);
+    if (fields[0] === 'ESTAB') fields.shift();
+    if (fields.length !== 4 || !/^\d+$/.test(fields[0]) || !/^\d+$/.test(fields[1])) return false;
+    const local = endpoint(fields[2]), peer = endpoint(fields[3]);
+    return local?.address === ssh[2] && local.port === 2222
+      && peer?.address === ssh[0] && peer.port === Number(ssh[1]);
+  });
+}
 
 export function summarizeTrialProbe(data, code) {
   const p = data.probes ?? {}, https = [p.egress, p.repeatHttps];

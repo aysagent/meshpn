@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { deriveTrialConfig, summarizeTrialProbe, requireTrial as check, runTrial } from './lib/native-radxa-trial.mjs';
+import { deriveTrialConfig, summarizeTrialProbe, hasUsbRescueConnection, requireTrial as check, runTrial } from './lib/native-radxa-trial.mjs';
 
 const SELF = fileURLToPath(import.meta.url), ROOT = path.dirname(path.dirname(SELF));
 const UNIT = 'clean-vpn-native-trial.service', OLD = 'clean-vpn.service';
@@ -291,8 +291,8 @@ export async function main(args = process.argv.slice(2)) {
   check(match && Number(match[1]) <= 300, 'hold_seconds_must_be_0_to_300');
   const ssh = (process.env.SSH_CONNECTION || '').trim().split(/\s+/);
   check(ssh.length === 4 && /^192\.168\.7\.\d+$/.test(ssh[0]) && ssh[2] === '192.168.7.1' && ssh[3] === '2222', 'use_authenticated_usb_rescue_ssh_port_2222');
-  const sockets = await run('ss', ['-Htn', 'state', 'established', '( sport = :2222 )']);
-  check(sockets.split('\n').some(l => l.includes('192.168.7.1:2222') && l.includes(`${ssh[0]}:${ssh[1]}`)), 'usb_rescue_connection_not_found');
+  const sockets = await run('ss', ['-4Htn', 'state', 'established', '( sport = :2222 )']);
+  check(hasUsbRescueConnection(sockets, ssh), 'usb_rescue_connection_not_found');
   const state = await prop(UNIT, 'ActiveState');
   check(!['active', 'activating', 'deactivating', 'reloading'].includes(state), 'trial_already_running');
   privateDirectory(REPORTS);
