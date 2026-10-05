@@ -1,0 +1,122 @@
+/** Temporary M1 trial, not an installer. This module never handles packet data. */
+import path from 'node:path';
+
+export function requireTrial(condition, code) { if (!condition) throw Error(code); }
+
+export function summarizeTrialProbe(data, code) {
+  const p = data.probes ?? {}, https = [p.egress, p.repeatHttps];
+  return { status: code === 0 ? data.status : 'incomplete-or-failed',
+    exitIp: p.egress?.observedExitIp ?? null, nss: p.nss?.status ?? 'missing',
+    dnsPassed: (p.dns ?? []).filter(d => d.status === 'passed').length, dnsTotal: (p.dns ?? []).length,
+    httpsPassed: https.filter(h => h?.status === 'passed').length,
+    httpsSeconds: https.map(h => h?.seconds ?? null),
+    download: { status: p.download?.status ?? 'missing', bytes: p.download?.downloadedBytes ?? 0,
+      seconds: p.download?.seconds ?? null },
+    ...(data.status !== 'ipv4-smoke-passed' ? { checks: data.checks } : {}) };
+}
+
+// Read the actual running argv, not shell text: no eval/source, no secret argv
+// copied into a report. Mirror only the reviewed TLS client configuration.
+export function deriveTrialConfig(argv, { cwd, root, exists }) {
+  requireTrial(argv.length >= 3 && path.resolve(cwd, argv[1]) === path.join(root, 'scripts/clean-vpn.js'), 'unsupported_service_command');
+  const flags = new Map();
+  for (const arg of argv.slice(2)) {
+    requireTrial(arg.startsWith('--'), 'unsupported_service_arguments');
+    const at = arg.indexOf('='), key = at < 0 ? arg : arg.slice(0, at);
+    requireTrial(!flags.has(key), 'duplicate_service_option');
+    flags.set(key, at < 0 ? true : arg.slice(at + 1));
+  }
+  requireTrial(flags.get('--role') === 'client', 'client_service_required');
+  requireTrial(['tls', 'boring-tls'].includes(flags.get('--type')), 'trial_requires_tls_or_boring_tls_not_combo');
+  requireTrial(flags.get('--server') === '154.62.226.216:443', 'unsupported_exit');
+  requireTrial(flags.get('--split-default') === true && !flags.has('--from-tun'), 'split_default_required');
+  requireTrial((flags.get('--dns-mode') ?? 'tunnel') === 'tunnel' && flags.get('--dns-usb') === '1', 'usb_tunnel_dns_required');
+  requireTrial(!flags.has('--dns-state-dir') && !flags.has('--dns-server'), 'custom_dns_not_supported');
+  requireTrial(!flags.has('--http-vers') || flags.get('--http-vers') === '2', 'h2_required');
+  requireTrial(!flags.has('--ipv6') || flags.get('--ipv6') === 'off', 'ipv6_tunnel_not_supported');
+  requireTrial(!flags.has('--client-lan-subnet') || flags.get('--client-lan-subnet') === '192.168.7.0/24', 'unsupported_lan');
+  const certs = path.resolve(cwd, flags.get('--tls-cert-dir') || flags.get('--quic-certs-dir') || path.join(root, 'certs'));
+  const fullchain = path.join(certs, 'fullchain.pem');
+  const ca = exists(fullchain) ? fullchain : path.join(certs, 'ca.pem');
+  const explicitKey = flags.get('--shared-hmac-key') || flags.get('--quic-ext-crypto-key');
+  const standardKey = path.join(certs, 'clean-vpn-hmac.key');
+  const secret = explicitKey ? path.resolve(cwd, explicitKey) : exists(standardKey) ? standardKey : path.join(certs, 'quic-ext-hmac.key');
+  const explicitName = flags.get('--tls-server-name');
+  const publicName = String(flags.get('--tls-public-name') || '').split(',')[0].trim().toLowerCase();
+  const name = explicitName ? (String(explicitName).trim().toLowerCase() === 'www.google.com' ? 'clean-vpn' : String(explicitName).trim())
+    : publicName && exists(fullchain) ? publicName : 'clean-vpn';
+  const sni = String(flags.get('--tls-client-sni') || (name === 'clean-vpn' ? 'www.google.com' : name)).trim();
+  for (const host of [name, sni]) requireTrial(/^[a-zA-Z0-9.-]{1,253}$/.test(host), 'invalid_tls_name');
+  requireTrial(exists(ca) && exists(secret), 'existing_credentials_missing');
+  return { version: 1, role: 'client', address: '154.62.226.216', port: 443,
+    tun: 'tun0', secret_path: secret, server_name: name, sni, ca, dns: true };
+}
+
+// Injectable lifecycle: failures after stop never blindly start another client
+// on top of an unaudited native TUN/journal. The guard is NEVER released here.
+export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, progress = () => {} } = {}) {
+  const report = { schema: 1, kind: 'clean-vpn-native-radxa-trial', status: 'running',
+    stage: 'preflight', checks: {}, rollback: 'not-needed', guard: 'not-checked',
+    limitations: ['host-smoke-not-usb-peer-acceptance', 'not-speedtest-or-throughput-benchmark',
+      'not-a-leak-or-crash-test', 'native-client-only-existing-exit', 'no-browser-profile-fidelity'] };
+  let stopped = false, tunIndex, session;
+  const step = async (name, fn, interruptible = true) => {
+    report.stage = name; progress(name);
+    if (interruptible) requireTrial(!cancelled(), 'cancelled');
+    return await fn();
+  };
+  try {
+    await step('preflight', () => io.preflight());
+    report.guard = 'verified';
+    report.checks.old = await step('old-client-check', () => io.probe());
+    requireTrial(report.checks.old.status === 'ipv4-smoke-passed', 'baseline_failed');
+    await step('before-stop', () => io.beforeStop());
+    // Mark BEFORE issuing stop: an interrupted systemctl may leave its job running.
+    await step('stop-old', async () => { stopped = true; await io.stopOld(); });
+    await step('old-cleanup-audit', () => io.auditReleased());
+    await step('require-no-tun', () => io.requireNoTun());
+    tunIndex = await step('create-test-tun', () => io.createTun());
+    await step('configure-test-tun', () => io.configureTun());
+    session = await step('launch-native', () => io.launch());
+    await step('native-ready', () => session.ready(cancelled));
+    report.checks.native = await step('native-client-check', () => io.probe());
+    requireTrial(report.checks.native.status === 'ipv4-smoke-passed', 'native_smoke_failed');
+    await step('native-hold', () => io.hold(holdSeconds, cancelled, session));
+    report.status = 'passed';
+  } catch (error) {
+    report.status = 'failed';
+    // Only allow fixed diagnostic codes; never echo child stderr, argv or keys.
+    report.failure = { stage: report.stage, code: /^[a-z0-9_]{1,100}$/.test(error.message) ? error.message : 'operation_failed' };
+  } finally {
+    if (stopped) {
+      report.rollback = 'in-progress';
+      try {
+        if (session) await step('stop-native', () => session.stop(), false);
+        await step('rollback-service-audit', () => io.requireOldInactive(), false);
+        // If launch never happened, journals still describe the deleted OLD
+        // interface. Remove only our unused test TUN before auditing them.
+        if (!session && tunIndex !== undefined) {
+          await step('remove-unused-test-tun', () => io.removeTun(tunIndex), false);
+          tunIndex = undefined;
+        }
+        await step('rollback-journal-audit', () => io.auditReleased(), false);
+        if (tunIndex !== undefined) await step('remove-test-tun', () => io.removeTun(tunIndex), false);
+        await step('rollback-no-tun', () => io.requireNoTun(), false);
+        await step('start-old', () => io.startOld(), false);
+        await step('old-ready', () => io.waitOld(), false);
+        report.rollback = 'service-restored';
+        report.checks.restored = await step('restored-client-check', () => io.probe(), false);
+        requireTrial(report.checks.restored.status === 'ipv4-smoke-passed', 'restored_smoke_failed');
+        report.rollback = 'verified';
+      } catch (error) {
+        report.status = 'failed';
+        report.rollbackFailure = { stage: report.stage, code: /^[a-z0-9_]{1,100}$/.test(error.message) ? error.message : 'operation_failed' };
+        if (report.rollback !== 'service-restored') report.rollback = 'manual-review-required';
+      }
+    }
+    try { await io.verifyGuard(); report.guard = 'verified'; }
+    catch { report.guard = 'verification-failed'; report.status = 'failed'; }
+  }
+  report.stage = 'finished';
+  return report;
+}

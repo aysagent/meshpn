@@ -12,3 +12,4 @@ device/**/__pycache__/
 
 # boring-tls-helper: CMake build + FetchContent (BoringSSL, nlohmann/json клоны и артефакты)
 native/boring_tls/build/
+native/clean_vpn/build*/
