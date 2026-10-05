@@ -50,7 +50,8 @@ cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
 2. Проверяет DNS/HTTPS/1 MiB через старый клиент. Если baseline не прошёл,
    сервис вообще не останавливается.
 3. Останавливает **только** `clean-vpn.service`, проверяет освобождение журналов
-   маршрутов/DNS и исчезновение старого TUN.
+   маршрутов/DNS/IPv6 и исчезновение старого TUN. IPv6 audit выполняется до
+   создания нового TUN и после его удаления: журнал помнит старый ifindex.
 4. Создаёт свой временный `tun0`, запускает native, ждёт authenticated ready и
    активацию DNS, повторяет проверки.
 5. Останавливает native управляющей JSON-командой, проверяет освобождение
@@ -78,6 +79,15 @@ cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
   `192.168.7.1/24`, `tun0`/MTU 1400, `--dns-usb=1`, cvks4. Старый клиент
   TLS/boring-TLS; combo/transparent, HTTP/1.1, нестандартные DNS-журналы и IPv6
   внутри туннеля не подменяются «похожим» режимом, а отклоняются.
+- `--ipv6=auto` допустим **только в фактически заблокированном состоянии**:
+  журнал active/dynamic=false в текущем boot/namespace, совпадающий TUN,
+  фиксированные IPv6 firewall-правила, правило 10995 и только unreachable в
+  таблице 19997. Проверки повторяются непосредственно перед остановкой клиента.
+  ULA-адрес на TUN сам по себе не означает работающий IPv6-туннель.
+  При действующем IPv6-туннеле тест откажет; native M1 остаётся IPv4-only.
+  После остановки проверяется отсутствие оставшихся IPv6 правил/маршрутов/
+  адресов/цепочек. Старый клиент возвращается с исходными параметрами, без
+  переписывания `auto` в `off`. Независимый cvks4 остаётся включённым весь тест.
 - Native M1 не воспроизводит выбранный браузерный ClientHello и не исправляет
   время по Date. Нужны уже корректные часы и работающий старый baseline.
 - Это host smoke, **не Speedtest, не доказательство отсутствия утечек и не
@@ -105,6 +115,7 @@ cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
 
 ```bash
 node --test scripts/test-native-radxa-trial.mjs \
+  scripts/test-native-trial-ipv6.mjs scripts/test-vpn-ipv6.mjs \
   scripts/test-native-engine-controller.mjs scripts/test-dns-client-options.mjs \
   scripts/test-autostart-stop-contract.mjs scripts/test-host-stop-faults.mjs
 bash scripts/build-clean-vpn-native.sh

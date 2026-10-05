@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { deriveTrialConfig, summarizeTrialProbe, hasUsbRescueConnection, requireTrial as check, runTrial } from './lib/native-radxa-trial.mjs';
+import { inspectBlockedTrialIpv6, validateReleasedTrialIpv6 } from './lib/native-trial-ipv6.mjs';
 
 const SELF = fileURLToPath(import.meta.url), ROOT = path.dirname(path.dirname(SELF));
 const UNIT = 'clean-vpn-native-trial.service', OLD = 'clean-vpn.service';
@@ -137,7 +138,7 @@ export function launchTrialNative(config, { spawnChild = spawn, readyMs = 45000,
 }
 
 async function adapter() {
-  let initialPid, config, scratch, fingerprint, buildLock;
+  let initialPid, config, scratch, fingerprint, buildLock, ipv6Evidence;
   const legacyFingerprint = async () => {
     const wrapper = fs.readFileSync('/usr/local/bin/clean-vpn-run.sh');
     const effective = await system('show', OLD, '--property=ExecStart,FragmentPath,DropInPaths,Environment');
@@ -174,7 +175,8 @@ async function adapter() {
       const argv = fs.readFileSync(`/proc/${initialPid}/cmdline`, 'utf8').split('\0').filter(Boolean);
       const cwd = fs.realpathSync(`/proc/${initialPid}/cwd`);
       check(cwd === fs.realpathSync(ROOT), 'run_trial_in_installed_checkout');
-      config = deriveTrialConfig(argv, { cwd, root: ROOT, exists: fs.existsSync });
+      if (argv.includes('--ipv6=auto')) ipv6Evidence = await inspectBlockedTrialIpv6({ run });
+      config = deriveTrialConfig(argv, { cwd, root: ROOT, exists: fs.existsSync, ipv6Evidence });
       const key = fs.readFileSync(config.secret_path), ca = fs.readFileSync(config.ca);
       check(key.length === 32 && ca.length > 0 && ca.length <= 1024 * 1024, 'invalid_existing_credentials');
       scratch = fs.mkdtempSync('/run/clean-vpn-native-trial-');
@@ -188,9 +190,24 @@ async function adapter() {
     async beforeStop() {
       check(await prop(OLD, 'MainPID') === initialPid && await legacyFingerprint() === fingerprint, 'service_changed_during_trial');
       await verifyGuard();
+      if (ipv6Evidence) {
+        const current = await inspectBlockedTrialIpv6({ run });
+        check(JSON.stringify(current.state) === JSON.stringify(ipv6Evidence.state), 'ipv6_changed_before_trial_stop');
+      }
     },
     async stopOld() { await run('systemctl', ['stop', OLD], 480000); await requireOldInactive(); },
     auditReleased, requireNoTun, requireOldInactive, verifyGuard, probe,
+    async auditIpv6Released() {
+      // Only call after old is stopped and no TUN exists: released journals
+      // retain the old interface identity. Never use recovery --apply here.
+      await requireOldInactive(); await requireNoTun();
+      const report = JSON.parse(await node('clean-vpn-ipv6-recover.mjs', [], 90000));
+      validateReleasedTrialIpv6({ report, links: await links(),
+        rules: JSON.parse(await run('ip', ['-j', '-6', 'rule', 'show'])),
+        routes: JSON.parse(await run('ip', ['-j', '-6', 'route', 'show', 'table', 'all'])),
+        filter: await run('ip6tables', ['-w', '5', '-t', 'filter', '-S']),
+        nat: await run('ip6tables', ['-w', '5', '-t', 'nat', '-S']) }, !!ipv6Evidence);
+    },
     async createTun() {
       await run('ip', ['tuntap', 'add', 'dev', 'tun0', 'mode', 'tun']);
       const tun = (await links()).find(l => l.ifname === 'tun0');

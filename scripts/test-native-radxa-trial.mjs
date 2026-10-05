@@ -99,11 +99,12 @@ test('compact report excludes tool output and arbitrary response bodies', () => 
 });
 
 function fixture({ fail, baseline = 'ipv4-smoke-passed', native = 'ipv4-smoke-passed', restored = 'ipv4-smoke-passed' } = {}) {
-  const events = []; let probe = 0, audit = 0;
+  const events = []; let probe = 0, audit = 0, ipv6Audit = 0;
   const event = async name => { events.push(name); if (fail === name) throw Error('injected_failure'); };
   const io = Object.fromEntries(['preflight', 'beforeStop', 'stopOld', 'requireNoTun', 'configureTun', 'requireOldInactive',
     'startOld', 'waitOld', 'verifyGuard'].map(name => [name, () => event(name)]));
   io.auditReleased = () => event(`audit${++audit}`);
+  io.auditIpv6Released = () => event(`ipv6Audit${++ipv6Audit}`);
   io.createTun = async () => { await event('createTun'); return 17; };
   io.removeTun = async index => { assert.equal(index, 17); await event('removeTun'); };
   io.probe = async () => { await event(`probe${++probe}`); return { status: [baseline, native, restored][probe - 1] }; };
@@ -114,9 +115,9 @@ function fixture({ fail, baseline = 'ipv4-smoke-passed', native = 'ipv4-smoke-pa
 test('success: old/native/restored probes; stop native and audit before removing TUN and starting old', async () => {
   const f = fixture(); const r = await runTrial(f.io);
   assert.equal(r.status, 'passed'); assert.equal(r.rollback, 'verified');
-  assert.deepEqual(f.events, ['preflight', 'probe1', 'beforeStop', 'stopOld', 'audit1', 'requireNoTun', 'createTun',
+  assert.deepEqual(f.events, ['preflight', 'probe1', 'beforeStop', 'stopOld', 'audit1', 'requireNoTun', 'ipv6Audit1', 'createTun',
     'configureTun', 'launch', 'ready', 'probe2', 'hold', 'stop-native', 'requireOldInactive', 'audit2', 'removeTun',
-    'requireNoTun', 'startOld', 'waitOld', 'probe3', 'verifyGuard']);
+    'requireNoTun', 'ipv6Audit2', 'startOld', 'waitOld', 'probe3', 'verifyGuard']);
 });
 for (const fail of ['preflight', 'probe1', 'beforeStop']) {
   test(`${fail} failure never stops the working service`, async () => {
@@ -141,13 +142,20 @@ test('configuration failure removes unused owned TUN before auditing old journal
   assert.ok(f.events.indexOf('removeTun') < f.events.indexOf('audit2'));
   assert.ok(f.events.includes('startOld')); assert.equal(r.status, 'failed');
 });
-for (const fail of ['stop-native', 'requireOldInactive', 'audit2', 'removeTun']) {
+for (const fail of ['stop-native', 'requireOldInactive', 'audit2', 'removeTun', 'ipv6Audit2']) {
   test(`${fail} failure refuses blind legacy restart, retains guard`, async () => {
     const f = fixture({ fail }), r = await runTrial(f.io);
     assert.equal(r.rollback, 'manual-review-required');
     assert.ok(!f.events.includes('startOld')); assert.equal(f.events.at(-1), 'verifyGuard');
   });
 }
+test('unreleased IPv6 aborts before creating native TUN; persistent conflict refuses restart', async () => {
+  const f = fixture(); f.io.auditIpv6Released = async () => { throw Error('ipv6_journal_not_released'); };
+  const r = await runTrial(f.io);
+  assert.equal(r.failure.stage, 'old-ipv6-cleanup-audit');
+  assert.equal(r.rollback, 'manual-review-required');
+  assert.ok(!f.events.includes('createTun')); assert.ok(!f.events.includes('startOld'));
+});
 test('signal during native check cancels test but does not cancel rollback', async () => {
   const f = fixture(); let cancel = false;
   const r = await runTrial(f.io, { cancelled: () => cancel, progress: stage => { if (stage === 'native-client-check') cancel = true; } });

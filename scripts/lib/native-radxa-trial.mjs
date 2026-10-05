@@ -1,6 +1,7 @@
 /** Temporary M1 trial, not an installer. This module never handles packet data. */
 import path from 'node:path';
 import { isIPv4 } from 'node:net';
+import { validateBlockedTrialIpv6 } from './native-trial-ipv6.mjs';
 
 export function requireTrial(condition, code) { if (!condition) throw Error(code); }
 
@@ -41,7 +42,7 @@ export function summarizeTrialProbe(data, code) {
 
 // Read the actual running argv, not shell text: no eval/source, no secret argv
 // copied into a report. Mirror only the reviewed TLS client configuration.
-export function deriveTrialConfig(argv, { cwd, root, exists }) {
+export function deriveTrialConfig(argv, { cwd, root, exists, ipv6Evidence }) {
   requireTrial(argv.length >= 3 && path.resolve(cwd, argv[1]) === path.join(root, 'scripts/clean-vpn.js'), 'unsupported_service_command');
   const flags = new Map();
   for (const arg of argv.slice(2)) {
@@ -57,7 +58,8 @@ export function deriveTrialConfig(argv, { cwd, root, exists }) {
   requireTrial((flags.get('--dns-mode') ?? 'tunnel') === 'tunnel' && flags.get('--dns-usb') === '1', 'usb_tunnel_dns_required');
   requireTrial(!flags.has('--dns-state-dir') && !flags.has('--dns-server'), 'custom_dns_not_supported');
   requireTrial(!flags.has('--http-vers') || flags.get('--http-vers') === '2', 'h2_required');
-  requireTrial(!flags.has('--ipv6') || flags.get('--ipv6') === 'off', 'ipv6_tunnel_not_supported');
+  requireTrial(!flags.has('--ipv6') || ['off', 'auto'].includes(flags.get('--ipv6')), 'ipv6_tunnel_not_supported');
+  if (flags.get('--ipv6') === 'auto') validateBlockedTrialIpv6(ipv6Evidence);
   requireTrial(!flags.has('--client-lan-subnet') || flags.get('--client-lan-subnet') === '192.168.7.0/24', 'unsupported_lan');
   const certs = path.resolve(cwd, flags.get('--tls-cert-dir') || flags.get('--quic-certs-dir') || path.join(root, 'certs'));
   const fullchain = path.join(certs, 'fullchain.pem');
@@ -99,6 +101,7 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
     await step('stop-old', async () => { stopped = true; await io.stopOld(); });
     await step('old-cleanup-audit', () => io.auditReleased());
     await step('require-no-tun', () => io.requireNoTun());
+    await step('old-ipv6-cleanup-audit', () => io.auditIpv6Released());
     tunIndex = await step('create-test-tun', () => io.createTun());
     await step('configure-test-tun', () => io.configureTun());
     session = await step('launch-native', () => io.launch());
@@ -126,6 +129,8 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
         await step('rollback-journal-audit', () => io.auditReleased(), false);
         if (tunIndex !== undefined) await step('remove-test-tun', () => io.removeTun(tunIndex), false);
         await step('rollback-no-tun', () => io.requireNoTun(), false);
+        // The IPv6 journal still records the OLD ifindex, not native's TUN.
+        await step('rollback-ipv6-audit', () => io.auditIpv6Released(), false);
         await step('start-old', () => io.startOld(), false);
         await step('old-ready', () => io.waitOld(), false);
         report.rollback = 'service-restored';
