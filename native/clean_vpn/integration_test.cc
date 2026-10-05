@@ -70,6 +70,21 @@ struct Child {
     }
     require(attempted,"no_handshake_attempt");
   }
+  json healthy_status(){
+    command("{\"op\":\"status\"}\n");
+    auto end=Clock::now()+std::chrono::seconds(2);
+    while(Clock::now()<end){
+      size_t e;
+      while((e=input.find('\n'))!=std::string::npos){
+        auto j=json::parse(input.substr(0,e));input.erase(0,e+1);
+        require(j.size()==7&&j.at("event")=="status"&&j.at("state")=="ready","soak_unexpected_session_event");
+        return j;
+      }
+      char b[4096];auto n=read(events,b,sizeof(b));
+      if(n>0)input.append(b,n);else{require(n!=0,"engine_exited");pollfd p{events,POLLIN,0};poll(&p,1,20);}
+    }
+    throw std::runtime_error("soak_status_timeout");
+  }
   void stop(){
     command("{\"op\":\"stop\"}\n");await_state("stopped",2000);
     auto end=Clock::now()+std::chrono::seconds(2);int status;
@@ -91,10 +106,69 @@ static void transfer(Child& from,Child& to,size_t n,bool reverse,uint8_t seed){
   pollfd p{to.packet,POLLIN,0};require(poll(&p,1,3000)>0,"packet_timeout");
   Bytes got(65536);ssize_t len=recv(to.packet,got.data(),got.size(),0);require(len>0,"packet_receive");got.resize(len);require(got==b,"packet_bytes");
 }
+static void reflect(Child& client,size_t n,uint8_t seed){
+  // The legacy reference echoes framed bytes. Use an inbound-addressed test
+  // packet so the production client's destination isolation remains enabled.
+  auto b=packet(n,true,seed);require(send(client.packet,b.data(),b.size(),0)==ssize_t(b.size()),"echo_send");
+  pollfd p{client.packet,POLLIN,0};require(poll(&p,1,3000)>0,"echo_timeout");
+  Bytes got(65536);auto len=recv(client.packet,got.data(),got.size(),0);require(len>0,"echo_receive");
+  got.resize(len);require(got==b,"echo_bytes");
+}
+static long rss(pid_t pid){
+  std::ifstream stat("/proc/"+std::to_string(pid)+"/status");std::string line;
+  while(std::getline(stat,line))if(line.rfind("VmRSS:",0)==0)return std::stol(line.substr(6));
+  throw std::runtime_error("rss_sample");
+}
+static void soak(Child& client,Child* server,int seconds){
+  const auto start=Clock::now(),end=start+std::chrono::seconds(seconds);
+  auto sample=start;uint64_t rounds=0,bytes=0;long peak=0,growth=0;size_t samples=0;
+  const auto crss=rss(client.pid),srss=server?rss(server->pid):0;
+  const auto cfds=fd_count(client.pid),sfds=server?fd_count(server->pid):0;
+  const size_t sizes[]={64,1400,8192,65535};
+  while(Clock::now()<end){
+    auto size=sizes[rounds%4];
+    if(server){transfer(client,*server,size,false,rounds);transfer(*server,client,size,true,rounds);}
+    else reflect(client,size,rounds);
+    rounds++;bytes+=size*2;
+    if(Clock::now()>=sample){
+      for(auto* child:{&client,server})if(child){
+        auto state=child->healthy_status();
+        require(state.at("tx_packets")==rounds&&state.at("rx_packets")==rounds&&state.at("dropped_packets")==0,"soak_packet_counts");
+        require(fd_count(child->pid)==(child==&client?cfds:sfds),"soak_fd_leak");
+        auto memory=rss(child->pid);peak=std::max(peak,memory);require(memory<128*1024,"soak_rss_limit");
+        growth=std::max(growth,memory-(child==&client?crss:srss));require(growth<32*1024,"soak_rss_growth");
+      }
+      samples++;sample=Clock::now()+std::chrono::seconds(5);
+    }
+  }
+  for(auto* child:{&client,server})if(child){
+    auto state=child->healthy_status();
+    require(state.at("tx_packets")==rounds&&state.at("rx_packets")==rounds&&state.at("dropped_packets")==0,"soak_final_counts");
+  }
+  std::cout<<"soak "<<json({{"seconds",std::chrono::duration<double>(Clock::now()-start).count()},
+    {"packets",rounds*2},{"bytes",bytes},{"resource_samples",samples},{"peak_rss_kib",peak},{"max_rss_growth_kib",growth},
+    {"unexpected_reconnects",0},{"dropped_packets",0},{"payload_verified",true}}).dump()<<" PASS\n";
+}
 int main(int argc,char** argv){
   signal(SIGPIPE,SIG_IGN);
   std::cout<<std::unitbuf;
   try{
+    if(argc==4&&std::string(argv[3]).rfind("client-event:",0)==0){
+      Child client(argv[1],argv[2]);client.await_state(std::string(argv[3]).substr(13));
+      pollfd p{client.packet,POLLIN,0};require(poll(&p,1,50)==0,"fault_injected_packet");
+      client.await_state("ready");reflect(client,1400,7);client.stop();
+      std::cout<<"classified session failure and reconnect PASS\n";return 0;
+    }
+    if(argc==5&&std::string(argv[3])=="client-soak"){
+      int seconds=std::stoi(argv[4]);require(seconds>=10&&seconds<=600,"soak_duration");
+      Child client(argv[1],argv[2]);client.await_state("ready");soak(client,nullptr,seconds);client.stop();return 0;
+    }
+    if(argc==6&&std::string(argv[4])=="soak"){
+      int seconds=std::stoi(argv[5]);require(seconds>=10&&seconds<=600,"soak_duration");
+      Child server(argv[1],argv[3]);server.await_state("listening");
+      Child client(argv[1],argv[2]);client.await_state("ready");server.await_state("ready");
+      soak(client,&server,seconds);client.stop();server.stop();return 0;
+    }
     if(argc==4&&std::string(argv[3])=="client-handshake"){
       Child client(argv[1],argv[2]);client.await_state("ready");client.stop();
       std::cout<<"legacy exit handshake PASS\n";return 0;
@@ -115,7 +189,7 @@ int main(int argc,char** argv){
       Child server(argv[1],argv[2]);server.await_state("listening");
       std::cout<<"native exit listening\n";server.await_state("ready");
       if(std::string(argv[3])=="exit-malformed"){
-        server.await_state("http2_receive");pollfd p{server.packet,POLLIN,0};require(poll(&p,1,50)==0,"malformed_injection");
+        server.await_state("invalid_frame_length");pollfd p{server.packet,POLLIN,0};require(poll(&p,1,50)==0,"malformed_injection");
         std::cout<<"malformed frame rejected before packet injection PASS\n";
       }
       server.stop();

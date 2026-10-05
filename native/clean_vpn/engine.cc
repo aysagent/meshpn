@@ -170,17 +170,30 @@ struct Session {
   const Config& config;Control& ctl;SSL* ssl;const std::string& secret;
   nghttp2_session* h2=nullptr;
   Queue outgoing, network, packets; Decoder decoder;
-  int32_t stream=-1;bool ready=false,failed=false,deferred=false;
+  int32_t stream=-1;bool ready=false,deferred=false;
+  const char* failure=nullptr;
   size_t header_bytes=0;std::map<std::string,std::string> headers;
   Clock::time_point next_ping=Clock::now()+std::chrono::seconds(2),ping_deadline{};
   std::array<uint8_t,8> ping{}; bool ping_pending=false;
   Session(const Config& c,Control& x,SSL* s,const std::string& k):config(c),ctl(x),ssl(s),secret(k){}
   ~Session(){if(h2)nghttp2_session_del(h2);}
-  template<class F> static int safe(void* u,F f){auto& s=*static_cast<Session*>(u);try{f(s);return 0;}catch(...){s.failed=true;return NGHTTP2_ERR_CALLBACK_FAILURE;}}
+  void fail(const char* code){if(!failure)failure=code;}
+  static const char* callback_error(const char* message){
+    // Only our own fixed vocabulary can cross the metadata boundary. Never
+    // surface library exceptions, peer headers, GOAWAY debug data or payloads.
+    for(const char* code:{"unexpected_headers","headers_limit","duplicate_header","request_invalid",
+        "auth_rejected","early_end","vpn_response_rejected","data_before_auth","peer_address",
+        "invalid_ipv4","invalid_frame_length","queue_limit","queue_consume","http2_error","exporter","hmac"})
+      if(std::strcmp(message,code)==0)return code;
+    return "h2_callback_failure";
+  }
+  template<class F> static int safe(void* u,F f){auto& s=*static_cast<Session*>(u);try{f(s);return 0;}
+    catch(const std::exception& e){s.fail(callback_error(e.what()));return NGHTTP2_ERR_CALLBACK_FAILURE;}
+    catch(...){s.fail("h2_callback_failure");return NGHTTP2_ERR_CALLBACK_FAILURE;}}
   static ssize_t send_cb(nghttp2_session*,const uint8_t* b,size_t n,int,void* u){
     auto& s=*static_cast<Session*>(u);
     if(n>queue_limit-s.network.size())return NGHTTP2_ERR_WOULDBLOCK;
-    try{s.network.push(Bytes(b,b+n));return n;}catch(...){s.failed=true;return NGHTTP2_ERR_CALLBACK_FAILURE;}
+    try{s.network.push(Bytes(b,b+n));return n;}catch(...){s.fail("h2_send_callback_failure");return NGHTTP2_ERR_CALLBACK_FAILURE;}
   }
   static ssize_t data_read(nghttp2_session*,int32_t,uint8_t* b,size_t n,uint32_t*,nghttp2_data_source*,void* u){
     auto& s=*static_cast<Session*>(u);if(s.outgoing.empty()){s.deferred=true;return NGHTTP2_ERR_DEFERRED;}
@@ -207,9 +220,29 @@ struct Session {
         if(s.config.client){check(s.headers[":status"]=="200"&&s.headers["content-type"]=="application/octet-stream","vpn_response_rejected");s.ready=true;s.headers.clear();s.ctl.set("ready");}
         else s.respond();
       }
-      if(f->hd.type==NGHTTP2_GOAWAY||f->hd.type==NGHTTP2_RST_STREAM||(f->hd.type==NGHTTP2_DATA&&(f->hd.flags&NGHTTP2_FLAG_END_STREAM)))s.failed=true;
+      if(f->hd.type==NGHTTP2_GOAWAY)s.fail(f->goaway.error_code==NGHTTP2_NO_ERROR?"h2_goaway_no_error":"h2_goaway_error");
+      if(f->hd.type==NGHTTP2_RST_STREAM&&f->hd.stream_id==s.stream)
+        s.fail(f->rst_stream.error_code==NGHTTP2_NO_ERROR?"h2_reset_no_error":"h2_reset_error");
+      if(f->hd.type==NGHTTP2_DATA&&f->hd.stream_id==s.stream&&(f->hd.flags&NGHTTP2_FLAG_END_STREAM))s.fail("h2_peer_end_stream");
       if(f->hd.type==NGHTTP2_PING&&(f->hd.flags&NGHTTP2_FLAG_ACK)&&s.ping_pending&&CRYPTO_memcmp(f->ping.opaque_data,s.ping.data(),8)==0){s.ping_pending=false;s.next_ping=Clock::now()+std::chrono::seconds(2);}
     });
+  }
+  static int invalid_frame_cb(nghttp2_session*,const nghttp2_frame*,int,void* u){
+    static_cast<Session*>(u)->fail("h2_invalid_frame");return 0;
+  }
+  static int sent_frame_cb(nghttp2_session*,const nghttp2_frame* f,void* u){
+    auto& s=*static_cast<Session*>(u);
+    // Some parse errors (e.g. invalid PING size) terminate inside nghttp2
+    // without on_invalid_frame_recv. Do not wait for a misleading PING timeout.
+    if(f->hd.type==NGHTTP2_GOAWAY&&f->goaway.error_code!=NGHTTP2_NO_ERROR)s.fail("h2_local_goaway_error");
+    if(f->hd.type==NGHTTP2_RST_STREAM&&f->hd.stream_id==s.stream&&f->rst_stream.error_code!=NGHTTP2_NO_ERROR)
+      s.fail("h2_local_reset_error");
+    return 0;
+  }
+  static int stream_close_cb(nghttp2_session*,int32_t id,uint32_t error,void* u){
+    auto& s=*static_cast<Session*>(u);
+    if(id==s.stream)s.fail(error==NGHTTP2_NO_ERROR?"h2_stream_closed":"h2_stream_error");
+    return 0;
   }
   static int data_cb(nghttp2_session* h,uint8_t,int32_t id,const uint8_t* b,size_t n,void* u){
     return safe(u,[&](Session& s){
@@ -236,6 +269,9 @@ struct Session {
     nghttp2_session_callbacks_set_send_callback(raw,send_cb);
     nghttp2_session_callbacks_set_on_header_callback(raw,header_cb);
     nghttp2_session_callbacks_set_on_frame_recv_callback(raw,frame_cb);
+    nghttp2_session_callbacks_set_on_invalid_frame_recv_callback(raw,invalid_frame_cb);
+    nghttp2_session_callbacks_set_on_frame_send_callback(raw,sent_frame_cb);
+    nghttp2_session_callbacks_set_on_stream_close_callback(raw,stream_close_cb);
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(raw,data_cb);
     nghttp2_option* option=nullptr;h2check(nghttp2_option_new(&option));
     std::unique_ptr<nghttp2_option,decltype(&nghttp2_option_del)> opt(option,nghttp2_option_del);
@@ -256,13 +292,13 @@ struct Session {
   void run(int socket,int tun,Clock::time_point deadline,uint64_t generation){
     init(); std::array<uint8_t,65536> buffer{};
     while(!ctl.stop&&!interrupted&&ctl.uplink&&ctl.generation==generation){
-      check(!failed,"session_rejected_or_closed");
+      if(failure)throw std::runtime_error(failure);
       if(!ready)check(Clock::now()<deadline,"auth_deadline");
       if(ready){
         if(ping_pending)check(Clock::now()<ping_deadline,"h2_ping_timeout");
         else if(Clock::now()>=next_ping){check(RAND_bytes(ping.data(),ping.size())==1,"random");h2check(nghttp2_submit_ping(h2,NGHTTP2_FLAG_NONE,ping.data()));ping_pending=true;ping_deadline=Clock::now()+std::chrono::seconds(5);}
       }
-      h2check(nghttp2_session_send(h2));
+      int sent=nghttp2_session_send(h2);if(failure)throw std::runtime_error(failure);h2check(sent);
       bool read_wants_write=false;
       if(!network.empty()){
         int n=SSL_write(ssl,network.data(),network.front_size());
@@ -272,8 +308,14 @@ struct Session {
       // Bounded per-tick work: control/health cannot be starved by flood traffic.
       for(int i=0;i<32&&packets.size()<queue_limit-max_packet-16384;i++){
         int n=SSL_read(ssl,buffer.data(),16384);
-        if(n<=0){int e=SSL_get_error(ssl,n);check(e==SSL_ERROR_WANT_READ||e==SSL_ERROR_WANT_WRITE,"tls_read");read_wants_write=e==SSL_ERROR_WANT_WRITE;break;}
-        ssize_t used=nghttp2_session_mem_recv(h2,buffer.data(),n);check(used==n,"http2_receive");
+        if(n<=0){int e=SSL_get_error(ssl,n);check(e!=SSL_ERROR_ZERO_RETURN,"tls_peer_closed");
+          check(e==SSL_ERROR_WANT_READ||e==SSL_ERROR_WANT_WRITE,"tls_read");read_wants_write=e==SSL_ERROR_WANT_WRITE;break;}
+        ssize_t used=nghttp2_session_mem_recv(h2,buffer.data(),n);
+        if(failure)throw std::runtime_error(failure);
+        check(used!=NGHTTP2_ERR_FLOODED,"h2_flooded");
+        check(used!=NGHTTP2_ERR_NOMEM,"h2_no_memory");
+        check(used!=NGHTTP2_ERR_BAD_CLIENT_MAGIC,"h2_bad_client_magic");
+        check(used==n,"http2_receive");
       }
       for(int i=0;i<32&&!packets.empty();i++){
         ssize_t n=write(tun,packets.data(),packets.front_size());
@@ -291,7 +333,7 @@ struct Session {
       ctl.read_commands();
       // Newly read TUN packets must arm writable interest in this tick, not
       // wait for the next polling timeout before serialising HTTP/2 DATA.
-      h2check(nghttp2_session_send(h2));
+      sent=nghttp2_session_send(h2);if(failure)throw std::runtime_error(failure);h2check(sent);
       short netevents=(packets.size()<queue_limit-max_packet-16384?POLLIN:0)|(!network.empty()||read_wants_write?POLLOUT:0);
       short tunevents=(ready&&outgoing.size()<queue_limit-max_packet-4?POLLIN:0)|(!packets.empty()?POLLOUT:0);
       pollfd fds[]={{socket,netevents,0},{tun,tunevents,0},{STDIN_FILENO,POLLIN,0}};

@@ -22,7 +22,11 @@ For the installed Radxa use the [short automated trial](clean-vpn-native-radxa-t
 `node scripts/clean-vpn-native-trial.mjs --apply` from USB rescue SSH :2222.
 It builds dependencies separately without a worktree, derives credentials from
 the running service, runs old/native/old smoke checks and audits rollback.
-This additional runner is not yet physical ARM64/systemd acceptance evidence.
+Physical Radxa/ARM64 host smoke on `0325b9c` passed on 2026-10-05: old/native/
+restored DNS 4/4, HTTPS 2/2, 1 MiB download and expected exit IP; rollback and
+guard verified. Legacy readiness took 16.65 seconds. Native reported generic
+session closures/receive errors, so this is not yet native USB, long-run, leak,
+crash or performance acceptance. The enabled legacy service was restored.
 
 Verified on x86_64 Linux:
 
@@ -165,6 +169,8 @@ cmake -S native/clean_vpn -B native/clean_vpn/build -DCMAKE_BUILD_TYPE=RelWithDe
 cmake --build native/clean_vpn/build --target clean-vpn-engine clean-vpn-engine-fixture protocol-test dns-wire-test dns-relay-test integration-test socket-test -j 4
 ctest --test-dir native/clean_vpn/build --output-on-failure
 node --test scripts/test-native-data-plane.mjs scripts/test-native-dns.mjs scripts/test-native-engine-controller.mjs scripts/test-native-wire-interop.mjs scripts/test-native-tls-identity.mjs
+node --test scripts/test-native-session-events.mjs
+CVPN_SOAK_SECONDS=180 node --test scripts/test-native-soak.mjs
 ```
 
 `clean-vpn-engine-fixture` is a **separate test binary** accepting an inherited
@@ -179,6 +185,40 @@ that identity; DNS SAN overrides CN, other names require DNS SAN, and wrong CA,
 wrong name, expired and future-dated certificates are rejected with fixed error
 codes. This lab reproduction does not identify the certificate on a physical
 exit that has not been inspected.
+
+Session fault tests distinguish VPN frame length, IPv4 validation, peer address,
+peer END_STREAM/GOAWAY/RST, TLS close-notify and local H2 protocol termination.
+The first fixed callback error survives nghttp2's generic callback-failure
+return; debug strings and packet bodies never enter the control protocol.
+An invalid-size PING can cause nghttp2 to queue GOAWAY without its invalid-frame
+callback. The engine now handles that local termination instead of reporting a
+later PING timeout. No relaxing of packet validation or authentication is used.
+
+The endurance test runs native-client/native-exit and native-client/legacy-H2
+reference sessions concurrently (180 seconds each by default, configurable
+10..600). C++ generates/checks 64/1400/8192/65535-byte packets; the reference
+legacy stream only echoes opaque framed bytes. Any unexpected session event,
+packet mismatch/drop, FD growth, RSS >=128 MiB or RSS growth >=32 MiB fails.
+This is loopback fixture-fd evidence, **not real TUN/USB/routing or an Internet
+benchmark**. The reference does not emulate the production exit's idle bridge.
+For sanitizer endurance use `ASAN_OPTIONS=quarantine_size_mb=16` to bound the
+intentional ASan quarantine separately from the engine's memory limits.
+
+2026-10-06 session follow-up (local x86_64, no deployment): all 224 regression
+tests passed with no skips, plus the two concurrent 180-second endurance cases.
+Native/native verified 955,312 directional packets; native/legacy reference
+verified 1,244,834. Both had zero drops/unexpected reconnects and stable engine
+FD counts (36 resource samples each). Peak engine RSS was 6,020/6,092 KiB;
+maximum growth from the first ready snapshot was 1,184/1,160 KiB. These are
+bounded endurance observations, not a leak-freedom or throughput claim.
+ASan/UBSan rerun passed all 21 selected session/data-plane/DNS/interop/endurance
+tests without skips or reported sanitizer errors (`quarantine_size_mb=16`).
+The two 180-second sanitizer sessions verified 355,948/606,378 directional
+packets with zero drops/reconnects; peak engine RSS 49,556/49,504 KiB, maximum
+growth 28,476/28,384 KiB. CTest protocol/DNS-wire passed 2/2 in both builds.
+The real Radxa's earlier generic session error reasons remain unresolved until
+a new physical trial produces the more specific diagnostics; no production
+server policy or idle timer was changed here.
 
 Sanitizers: configure a separate `build-asan` with `-DCVPN_SANITIZE=ON` and
 `-DCMAKE_BUILD_TYPE=Debug`; build the same targets, run CTest there, then set

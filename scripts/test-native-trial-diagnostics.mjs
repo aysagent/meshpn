@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import { trialDiagnostics } from './lib/native-trial-diagnostics.mjs';
 
 const event = state => ({ version: 1, event: 'state', state, generation: 1, tx_packets: 2, rx_packets: 3, dropped_packets: 4 });
+test('session failure/closure reasons remain fixed metadata, not unknown', () => {
+  const d = trialDiagnostics();
+  for (const code of `h2_callback_failure h2_send_callback_failure h2_goaway_no_error h2_goaway_error
+    h2_reset_no_error h2_reset_error h2_peer_end_stream h2_invalid_frame h2_stream_closed h2_stream_error
+    tls_peer_closed h2_flooded h2_no_memory h2_bad_client_magic h2_local_goaway_error h2_local_reset_error
+    invalid_frame_length invalid_ipv4 peer_address`.split(/\s+/)) assert.equal(d.state(event(code)), code);
+});
 test('TLS verification reasons survive diagnostic sanitization as fixed codes', () => {
   const d = trialDiagnostics();
   for (const code of ['tls_verify_name', 'tls_verify_expired', 'tls_verify_not_yet_valid', 'tls_verify_untrusted', 'tls_verify_failed']) {
