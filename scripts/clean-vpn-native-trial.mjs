@@ -12,6 +12,8 @@ import { trialServiceFingerprint } from './lib/native-trial-service.mjs';
 import { trialDiagnostics } from './lib/native-trial-diagnostics.mjs';
 import { waitLegacyReady } from './lib/native-trial-readiness.mjs';
 import { probeNativeHold } from './lib/native-trial-hold.mjs';
+import { createPeerChannel, exerciseNativePeer, peerStatus, submitPeerResult } from './lib/native-usb-trial-peer.mjs';
+import { faultUnit, faultUnitArgs } from './clean-vpn-native-usb-uplink.mjs';
 
 const SELF = fileURLToPath(import.meta.url), ROOT = path.dirname(path.dirname(SELF));
 const UNIT = 'clean-vpn-native-trial.service', OLD = 'clean-vpn.service';
@@ -261,7 +263,52 @@ async function adapter() {
   };
 }
 
-async function worker(directory, holdSeconds) {
+async function authenticatedUsb() {
+  const ssh = (process.env.SSH_CONNECTION || '').trim().split(/\s+/);
+  check(ssh.length === 4 && /^192\.168\.7\.\d+$/.test(ssh[0]) && ssh[2] === '192.168.7.1' && ssh[3] === '2222', 'use_authenticated_usb_rescue_ssh_port_2222');
+  const sockets = await run('ss', ['-4Htn', 'state', 'established', '( sport = :2222 )']);
+  check(hasUsbRescueConnection(sockets, ssh), 'usb_rescue_connection_not_found');
+  return ssh[0];
+}
+
+export function uplinkFault(directory, { exec = run, commandResult = command, getLinks = links,
+  guard = verifyGuard, clock = () => performance.now(), wait = delay } = {}) {
+  const unit = faultUnit(directory);
+  const wlan = async () => (await getLinks()).find(l => l.ifname === 'wlan0');
+  const defaults = async () => JSON.parse(await exec('ip', ['-j', '-4', 'route', 'show', 'default']));
+  let attempted = false;
+  const requireDown = async () => {
+    check(await exec('systemctl', ['show', unit, '--property=ActiveState', '--value']) === 'active', 'uplink_fault_not_active');
+    check(!(await wlan())?.flags?.includes('UP') && (await defaults()).length === 0, 'uplink_not_down');
+  };
+  return {
+    requireDown,
+    async start() {
+      await guard();
+      check(await exec('systemctl', ['is-active', 'systemd-networkd.service']) === 'active', 'networkd_required');
+      const routes = await defaults();
+      check((await wlan())?.flags?.includes('UP') && routes.length === 1 && routes[0].dev === 'wlan0', 'reviewed_wlan_uplink_required');
+      attempted = true;
+      await exec('systemd-run', faultUnitArgs(directory, process.execPath,
+        path.join(ROOT, 'scripts/clean-vpn-native-usb-uplink.mjs')), 15000);
+      const deadline = clock() + 10000;
+      while (clock() < deadline) {
+        try { await requireDown(); return; } catch { await wait(250); }
+      }
+      throw Error('uplink_down_timeout');
+    },
+    async restore() {
+      if (!attempted) return;
+      // Stop runs the helper's finally AND the independent ExecStopPost. No
+      // relationship to the main trial cgroup: its death cannot cancel this.
+      const result = await commandResult('systemctl', ['stop', unit], 25000);
+      check(result.code === 0 && !result.reason, 'uplink_restore_unit_failed');
+      check((await wlan())?.flags?.includes('UP'), 'uplink_restore_not_up');
+    },
+  };
+}
+
+async function worker(directory, holdSeconds, peerIp) {
   await hostRequired();
   check(path.dirname(directory) === REPORTS && /^run-[a-zA-Z0-9]+$/.test(path.basename(directory)), 'invalid_worker_directory');
   privateDirectory(REPORTS); privateDirectory(directory);
@@ -272,6 +319,11 @@ async function worker(directory, holdSeconds) {
   process.on('SIGTERM', () => { cancelled = true; });
   process.on('SIGINT', () => { cancelled = true; });
   const io = await adapter();
+  if (peerIp) {
+    const peer = createPeerChannel(directory, peerIp, { cancelled: () => cancelled });
+    io.peer = { phase: peer.phase,
+      native: (session, report) => exerciseNativePeer(peer, session, report, uplinkFault(directory)) };
+  }
   const started = new Date().toISOString(), began = performance.now();
   const report = await runTrial(io, { holdSeconds, cancelled: () => cancelled, progress: stage => {
     try { writeJson(path.join(directory, 'progress.json'), { stage }); } catch { /* never interrupt rollback */ }
@@ -288,9 +340,29 @@ async function worker(directory, holdSeconds) {
 
 export async function main(args = process.argv.slice(2)) {
   if (args.length === 1 && args[0] === '--help') {
-    console.log('Usage: node scripts/clean-vpn-native-trial.mjs --apply [--hold-seconds=0..300] | --report\nRun from authenticated USB rescue SSH :2222 as root, after build-clean-vpn-native.sh.\nTemporarily stops ONLY clean-vpn.service, tests native, audits cleanup and restores legacy.\nTransient systemd unit survives SSH loss. No install/enable/firewall flush/reboot.\nReal DNS/HTTPS and up to three 1 MiB downloads; not a speed benchmark.'); return;
+    console.log('Usage: node scripts/clean-vpn-native-trial.mjs --apply [--hold-seconds=0..300 | --usb-peer] | --report\nRun from authenticated USB rescue SSH :2222 as root, after build-clean-vpn-native.sh.\nTemporarily stops ONLY clean-vpn.service, tests native, audits cleanup and restores legacy.\n--usb-peer is coordinated by clean-vpn-native-usb-check.mjs on Mac: REAL wlan0 down/up with independent systemd restoration.\nTransient systemd unit survives SSH loss. No install/enable/firewall flush/reboot.\nReal DNS/HTTPS and bounded downloads; not a speed benchmark.'); return;
   }
   await hostRequired();
+  if (args.length === 2 && ['--peer-status', '--peer-result'].includes(args[0])) {
+    const peerIp = await authenticatedUsb();
+    check(/^run-[a-zA-Z0-9]+$/.test(args[1]), 'invalid_peer_run');
+    const directory = path.join(REPORTS, args[1]);
+    check(fs.existsSync(directory), 'peer_run_missing');
+    privateDirectory(REPORTS); privateDirectory(directory);
+    if (args[0] === '--peer-status') {
+      const finished = fs.existsSync(path.join(directory, 'report.json'));
+      console.log(JSON.stringify(finished ? { status: 'finished' } : peerStatus(directory, peerIp)));
+    } else {
+      let input = '';
+      const timer = setTimeout(() => process.exit(1), 5000);
+      try {
+        for await (const chunk of process.stdin) { input += chunk; check(input.length <= 4096, 'peer_result_too_large'); }
+        submitPeerResult(directory, peerIp, JSON.parse(input));
+        console.log('{"status":"accepted"}');
+      } finally { clearTimeout(timer); }
+    }
+    return;
+  }
   if (args.length === 1 && args[0] === '--report') {
     privateDirectory(REPORTS);
     const { directory } = JSON.parse(fs.readFileSync(path.join(REPORTS, 'current.json'), 'utf8'));
@@ -307,15 +379,15 @@ export async function main(args = process.argv.slice(2)) {
     }
     return;
   }
-  if (args[0] === '--worker' && args.length === 3 && /^\d{1,3}$/.test(args[2]) && Number(args[2]) <= 300)
-    return worker(args[1], Number(args[2]));
+  if (args[0] === '--worker' && [3, 4].includes(args.length) && /^\d{1,3}$/.test(args[2]) && Number(args[2]) <= 300) {
+    check(!args[3] || /^192\.168\.7\.(?:[2-9]|[1-9]\d|1\d\d|2[0-4]\d|25[0-4])$/.test(args[3]), 'invalid_usb_peer');
+    return worker(args[1], Number(args[2]), args[3]);
+  }
   check(args[0] === '--apply' && args.length <= 2, 'use_apply_or_report_or_help');
-  const match = args.length === 2 ? /^--hold-seconds=(\d{1,3})$/.exec(args[1]) : ['', '0'];
+  const usb = args[1] === '--usb-peer';
+  const match = args.length === 2 && !usb ? /^--hold-seconds=(\d{1,3})$/.exec(args[1]) : ['', '0'];
   check(match && Number(match[1]) <= 300, 'hold_seconds_must_be_0_to_300');
-  const ssh = (process.env.SSH_CONNECTION || '').trim().split(/\s+/);
-  check(ssh.length === 4 && /^192\.168\.7\.\d+$/.test(ssh[0]) && ssh[2] === '192.168.7.1' && ssh[3] === '2222', 'use_authenticated_usb_rescue_ssh_port_2222');
-  const sockets = await run('ss', ['-4Htn', 'state', 'established', '( sport = :2222 )']);
-  check(hasUsbRescueConnection(sockets, ssh), 'usb_rescue_connection_not_found');
+  const peerIp = await authenticatedUsb();
   const state = await prop(UNIT, 'ActiveState');
   check(!['active', 'activating', 'deactivating', 'reloading'].includes(state), 'trial_already_running');
   privateDirectory(REPORTS);
@@ -323,7 +395,8 @@ export async function main(args = process.argv.slice(2)) {
   await run('systemd-run', ['--quiet', '--collect', '--unit=clean-vpn-native-trial', '--service-type=exec',
     '--property=KillMode=mixed', '--property=TimeoutStopSec=600', '--property=RuntimeMaxSec=1500',
     '--property=StandardOutput=null', '--property=StandardError=null',
-    `--working-directory=${ROOT}`, process.execPath, SELF, '--worker', dir, match[1]], 15000);
+    `--working-directory=${ROOT}`, process.execPath, SELF, '--worker', dir, match[1], ...(usb ? [peerIp] : [])], 15000);
+  if (usb) console.log(`USB_TRIAL_ID=${path.basename(dir)}`);
   console.error('Trial started; survives SSH disconnect. Do not checkout/build/restart services during the trial.');
   console.error('After reconnect: node scripts/clean-vpn-native-trial.mjs --report');
   let previous = '', inactiveCount = 0;

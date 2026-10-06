@@ -6,6 +6,88 @@ Radxa/ARM64 2026-10-05 прошёл old/native/old host smoke с провере�
 (коммит `0325b9c`). Это ещё не USB/leak/crash/длительная приёмка native.
 Ветка должна быть опубликована перед командами ниже.
 
+## Автоматический Mac/USB + настоящий обрыв uplink
+
+Следующий этап после принятого host hold на `252f649` (2026-10-06):
+один запуск с Mac проверяет old/native/old **с USB-клиента**, а между native
+проверками действительно опускает и поднимает `wlan0` на Radxa командой
+`networkctl down/up`. Это не `engine.uplink`-имитация и не перезагрузка роутера.
+Сеть Mac, USB/rescue и конфигурация exit не перенастраиваются. Fault-этап не
+меняет firewall; обычные owned DNS/route setup и cleanup самого trial сохранены.
+Потеря интернет-доступа через Radxa на время переключений/обрыва ожидаема.
+
+После публикации изменений на Radxa через rescue SSH:
+
+```bash
+cd /root/dev/meshpn && git pull --ff-only
+```
+
+Для этого изменения пересборка **не нужна**, если уже собран `252f649`, как в
+последнем успешном отчёте. Для более старого бинарника сначала выполнить
+`bash scripts/build-clean-vpn-native.sh`. Не запускать отдельный `--apply`:
+его вызовет координатор с Mac. На Mac нужен Node.js 18+ и штатные ssh/curl/dig.
+
+На Mac (здесь USB — `en9`):
+
+```bash
+scp -P 2222 root@192.168.7.1:/root/dev/meshpn/scripts/clean-vpn-native-usb-check.mjs /tmp/clean-vpn-native-usb-check.mjs &&
+node /tmp/clean-vpn-native-usb-check.mjs --interface=en9
+```
+
+Скопировать итоговый блок `CLEAN-VPN USB CHECK BEGIN … END`. Обычно несколько
+минут; не делать checkout/build/restart во время теста. Координатор открывает
+собственное SSH multiplex-соединение, сохраняет проверку host key и берёт путь
+к Node из работающего legacy-сервиса — NVM не нужно загружать в удалённом shell.
+
+Фазы в `usb.phases`:
+
+| Фаза | Проверка с Mac |
+| --- | --- |
+| baseline | Старый VPN: DNS A/AAAA UDP/TCP, 3 HTTPS с exit IP, загрузка 1 MiB |
+| native | Те же проверки через native |
+| blocked | `wlan0` административно down, IPv4 default отсутствует; два отказа TCP/таймаута HTTPS |
+| recovered | После включения wlan0: ожидание HTTPS до ~60 с, затем полный набор проверок |
+| restored | Полный набор после проверенного возврата legacy |
+
+DNS запрашивается явно у `192.168.7.1` с USB-адреса Mac. HTTPS привязан к `en9`;
+IP для загрузки получается тем же DNS и передаётся curl через `--resolve`.
+Системный DNS/Wi-Fi Mac не используется для этих проверок. Всего до семи загрузок
+по 1 MiB вместе с host smoke; upload, Speedtest и непрерывный поток не проверяются.
+
+За восстановление wlan0 отвечает **отдельный** transient unit
+`clean-vpn-native-usb-uplink-run-….service`: helper ждёт 20 с после down,
+затем выполняет up; systemd ограничивает работу `RuntimeMaxSec=30` и дополнительно
+запускает `ExecStopPost=/usr/bin/networkctl up wlan0`, в том числе при гибели helper.
+Команды имеют собственные таймауты; `TimeoutStopSec=15` ограничивает остановку unit.
+Основной trial останавливает fault-unit сразу после blocked-проверки. Это команда
+включения интерфейса, а не гарантия доступности точки доступа/DHCP; их ошибки
+попадут в отчёт, роутер здесь не диагностируется. Нельзя гарантировать восстановление
+при отказе systemd/ядра/питания. USB rescue остаётся независимым.
+
+Каждая фаза связана с конкретным run ID, IP SSH-клиента и одноразовым nonce.
+Ожидание Mac ограничено 120 с (blocked — 15 с). При закрытии Mac/SSH trial
+продолжает работу в systemd, завершает ожидание и выполняет штатный audited rollback.
+Обычная отмена не отменяет cleanup; SIGKILL самого trial не считается проверенным
+crash-recovery legacy. Независимый fault-unit всё равно обязан выполнить up.
+Позже через rescue можно получить сохранённый отчёт:
+
+```bash
+cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
+```
+
+Успех: `status=passed`, `usb.status=passed`, все пять фаз passed,
+`rollback=verified`, `guard=verified`. `rollback=verified` относится к host
+восстановлению: если Mac исчез на последней фазе, USB-результат и общий статус
+будут failed, даже при работающем legacy. `recoveryMs` — ожидание первого успешного
+HTTPS **с начала recovered-фазы на Mac**, не точная задержка от DHCP; отдельно
+записано время команды восстановления. `blocked` — проверка недоступности выбранного
+HTTPS endpoint, не доказательство отсутствия всех IPv4/IPv6/DNS-утечек.
+
+Локальная проверка нового сценария: unit/negative-тесты протокола, координатора,
+команд fault-helper и lifecycle/rollback. Реальный запуск networkctl/systemd на
+Radxa и macOS coordinator ещё требуют этого физического прогона; лабораторные
+mock-проверки не подменяют его. C++ data-plane не изменён.
+
 ## Запуск
 
 С Mac зайти именно через уже настроенный и проверенный USB rescue:

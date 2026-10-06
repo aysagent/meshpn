@@ -86,6 +86,8 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
     limitations: ['host-smoke-not-usb-peer-acceptance', 'not-speedtest-or-throughput-benchmark',
       'not-a-leak-or-crash-test', 'native-client-only-existing-exit', 'no-browser-profile-fidelity'] };
   let stopped = false, tunIndex, session;
+  if (io.peer) report.usb = { status: 'running', phases: {},
+    scope: 'authenticated-Mac-USB-observations-not-independent-leak-capture' };
   const snapshotNative = phase => {
     if (!session?.diagnostics) return;
     // Diagnostic failure must never prevent shutdown/rollback.
@@ -102,6 +104,7 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
     report.guard = 'verified';
     report.checks.old = await step('old-client-check', () => io.probe());
     requireTrial(report.checks.old.status === 'ipv4-smoke-passed', 'baseline_failed');
+    if (io.peer) await step('usb-baseline', () => io.peer.phase('baseline', report.usb.phases));
     await step('before-stop', () => io.beforeStop());
     // Mark BEFORE issuing stop: an interrupted systemctl may leave its job running.
     await step('stop-old', async () => { stopped = true; await io.stopOld(); });
@@ -116,6 +119,7 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
     requireTrial(report.checks.native.status === 'ipv4-smoke-passed', 'native_smoke_failed');
     report.hold = {};
     await step('native-hold', () => io.hold(holdSeconds, cancelled, session, report.hold));
+    if (io.peer) await step('native-usb-peer', () => io.peer.native(session, report.usb));
     report.status = 'passed';
   } catch (error) {
     report.status = 'failed';
@@ -145,10 +149,11 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
         report.checks.restored = await step('restored-client-check', () => io.probe(), false);
         requireTrial(report.checks.restored.status === 'ipv4-smoke-passed', 'restored_smoke_failed');
         report.rollback = 'verified';
+        if (io.peer) await step('usb-restored', () => io.peer.phase('restored', report.usb.phases), false);
       } catch (error) {
         report.status = 'failed';
         report.rollbackFailure = { stage: report.stage, code: /^[a-z0-9_]{1,100}$/.test(error.message) ? error.message : 'operation_failed' };
-        if (report.rollback !== 'service-restored') report.rollback = 'manual-review-required';
+        if (!['service-restored', 'verified'].includes(report.rollback)) report.rollback = 'manual-review-required';
       }
     }
     try { await io.verifyGuard(); report.guard = 'verified'; }
@@ -156,5 +161,8 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
     snapshotNative('afterStop');
   }
   report.stage = 'finished';
+  if (io.peer) report.usb.status = ['baseline', 'native', 'blocked', 'recovered', 'restored']
+    .every(p => report.usb.phases[p]?.status === 'passed') ? 'passed' : 'failed';
+  if (report.usb?.status === 'failed') report.status = 'failed';
   return report;
 }

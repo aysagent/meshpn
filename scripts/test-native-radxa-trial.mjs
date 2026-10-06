@@ -119,6 +119,33 @@ test('success: old/native/restored probes; stop native and audit before removing
     'configureTun', 'launch', 'ready', 'probe2', 'hold', 'stop-native', 'requireOldInactive', 'audit2', 'removeTun',
     'requireNoTun', 'ipv6Audit2', 'startOld', 'waitOld', 'probe3', 'verifyGuard']);
 });
+for (const fail of [null, 'baseline', 'native', 'restored']) {
+  test(`USB peer lifecycle and rollback (${fail})`, async () => {
+    const f = fixture();
+    f.io.peer = {
+      async phase(name, phases) {
+        f.events.push(`peer-${name}`);
+        if (fail === name) throw Error('usb_peer_timeout');
+        phases[name] = { status: 'passed' };
+      },
+      async native(session, report) {
+        f.events.push('peer-native');
+        if (fail === 'native') throw Error('usb_peer_timeout');
+        for (const p of ['native', 'blocked', 'recovered']) report.phases[p] = { status: 'passed' };
+      },
+    };
+    const r = await runTrial(f.io);
+    assert.equal(r.status, fail ? 'failed' : 'passed');
+    assert.equal(r.usb.status, fail ? 'failed' : 'passed');
+    if (fail === 'baseline') { assert.equal(r.rollback, 'not-needed'); assert.ok(!f.events.includes('stopOld')); }
+    else {
+      assert.equal(r.rollback, 'verified', 'host restoration remains verified even if Mac vanished');
+      assert.ok(f.events.indexOf('peer-baseline') < f.events.indexOf('stopOld'));
+      assert.ok(f.events.indexOf('peer-native') < f.events.indexOf('stop-native'));
+      assert.ok(f.events.indexOf('peer-restored') > f.events.indexOf('probe3'));
+    }
+  });
+}
 test('started legacy service is not called verified when readiness times out', async () => {
   const f = fixture({ fail: 'waitOld' }), r = await runTrial(f.io);
   assert.equal(r.status, 'failed'); assert.equal(r.rollback, 'service-restored');
