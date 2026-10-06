@@ -66,6 +66,31 @@ with the 16 MiB ASan quarantine. Dependencies are not sanitizer-instrumented.
 CTest protocol/DNS-wire passed 2/2 in each build. These are bounded local
 fixture observations, not internet-speed or physical Radxa acceptance.
 
+Physical USB follow-up `684d2e6`, 2026-10-06 (`run-IV703a`): baseline/native/
+blocked/recovered/restored peer probes all passed, as did all host smokes and
+audited legacy rollback. Actual networkctl wlan0 down was verified; first HTTPS
+in the Mac recovered phase took 2279 ms (not DHCP-to-VPN latency). Overall trial
+failed on six `peer_address` session errors before stop. Their metadata identifies
+IP protocol 2 traffic from `10.99.0.1` to `224.0.0.22`, consistent with IGMPv3
+reports ([RFC 3376, section 4.2.14](https://www.rfc-editor.org/rfc/inline-errata/rfc3376.html)).
+This identifies the packets in this run, not necessarily every older rejection.
+
+The client now discards validated inbound IPv4 multicast (`224.0.0.0/4`) and
+counts it as dropped without terminating the authenticated session. Framing,
+IPv4 size/header/checksum validation precede this decision. No multicast packet
+is injected into TUN; wrong unicast destinations and exit-side spoofed sources
+still fail the session. Trial acceptance still rejects any `peer_address` event.
+This engine change requires rebuilding on Radxa and repeating the physical trial.
+Local validation of the multicast fix: 270 regression tests passed without skips;
+21 session/interop/data-plane tests passed with ASan/UBSan, and CTest passed 2/2
+in each build. The authenticated legacy fixture sent 2054 multicast frames,
+including IGMP with IPv4 options, multicast range endpoints and UDP multicast,
+split framing and a burst exceeding the initial H2 flow-control window. All were
+counted as dropped, none reached the packet device, and two following unicast
+packets arrived in order on the same connection. Corrupt multicast IPv4 checksum,
+wrong client unicast destination and spoofed multicast source at the exit remain
+session failures. No physical rerun of this rebuilt engine is claimed yet.
+
 Verified on x86_64 Linux:
 
 - Native client↔exit: 2026 packets total including 28..65535-byte test

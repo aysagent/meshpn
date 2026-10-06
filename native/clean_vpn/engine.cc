@@ -263,6 +263,12 @@ struct Session {
     return safe(u,[&](Session& s){
       check(s.ready&&id==s.stream,"data_before_auth");
       s.decoder.feed(b,n,[&](Bytes p){
+        // M1 does not deliver multicast to the client TUN. A legacy exit may
+        // send its own IGMP reports (e.g. 10.99.0.1 -> 224.0.0.22). Discard
+        // the validated frame without tearing down the authenticated session.
+        // Decoder has already checked IPv4 size/header/checksum; unicast
+        // destination and exit-side source isolation below remain strict.
+        if(s.config.client&&(p[16]&0xf0)==0xe0){s.ctl.dropped++;return;}
         // Current single-peer address contract, enforced before TUN injection.
         const uint8_t address[]={10,99,0,2};size_t off=s.config.client?16:12;
         if(std::memcmp(p.data()+off,address,4)!=0){s.ctl.rejected_address(p,s.config.client);s.ctl.dropped++;throw std::runtime_error("peer_address");}

@@ -49,7 +49,9 @@ struct Child {
       while((e=input.find('\n'))!=std::string::npos){auto j=json::parse(input.substr(0,e));input.erase(0,e+1);
         std::cout<<"engine "<<pid<<" "<<j.dump()<<"\n";
         if(j.at("event")=="peer_address_rejected"){
-          require(j.size()==6&&j.at("role")=="client"&&j.at("source")=="1.1.1.1"&&j.at("destination")=="10.99.0.3"&&j.at("protocol")==17,"address_metadata");continue;
+          const bool client=j.at("role")=="client"&&j.at("source")=="1.1.1.1"&&j.at("destination")=="10.99.0.3"&&j.at("protocol")==17;
+          const bool exit=j.at("role")=="exit"&&j.at("source")=="10.99.0.3"&&j.at("destination")=="224.0.0.22"&&j.at("protocol")==2;
+          require(j.size()==6&&(client||exit),"address_metadata");continue;
         }
         require(j.size()==7&&!j.contains("packet")&&!j.contains("payload"),"metadata_only");
         if(j.at("state")==wanted)return j;
@@ -167,6 +169,22 @@ int main(int argc,char** argv){
   signal(SIGPIPE,SIG_IGN);
   std::cout<<std::unitbuf;
   try{
+    if(argc==4&&std::string(argv[3])=="client-multicast"){
+      Child client(argv[1],argv[2]);client.await_state("ready");
+      auto deadline=Clock::now()+std::chrono::seconds(5);bool done=false;
+      while(Clock::now()<deadline){
+        auto state=client.healthy_status();
+        require(state.at("rx_packets")==0&&state.at("tx_packets")==0,"multicast_not_forwarded");
+        pollfd p{client.packet,POLLIN,0};require(poll(&p,1,0)==0,"multicast_tun_injection");
+        if(state.at("dropped_packets")==2054){done=true;break;}
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      }
+      require(done,"multicast_drop_count");
+      reflect_pair(client,42);
+      auto state=client.healthy_status();
+      require(state.at("tx_packets")==2&&state.at("rx_packets")==2&&state.at("dropped_packets")==2054,"multicast_following_unicast");
+      client.stop();std::cout<<"multicast discarded, same session unicast and flow control PASS\n";return 0;
+    }
     if(argc==4&&std::string(argv[3])=="client-idle"){
       Child client(argv[1],argv[2]);client.await_state("ready");
       for(int round=0;round<4;round++){
@@ -225,12 +243,16 @@ int main(int argc,char** argv){
       server.reject_for(1200);pollfd p{server.packet,POLLIN,0};require(poll(&p,1,50)==0,"unauthenticated_h2_injection");server.stop();
       std::cout<<"unauthenticated H2 rejected PASS\n";return 0;
     }
-    if(argc==4&&(std::string(argv[3])=="exit-handshake"||std::string(argv[3])=="exit-malformed")){
+    if(argc==4&&(std::string(argv[3])=="exit-handshake"||std::string(argv[3])=="exit-malformed"||std::string(argv[3])=="exit-spoofed-multicast")){
       Child server(argv[1],argv[2]);server.await_state("listening");
       std::cout<<"native exit listening\n";server.await_state("ready");
       if(std::string(argv[3])=="exit-malformed"){
         server.await_state("invalid_frame_length");pollfd p{server.packet,POLLIN,0};require(poll(&p,1,50)==0,"malformed_injection");
         std::cout<<"malformed frame rejected before packet injection PASS\n";
+      }
+      if(std::string(argv[3])=="exit-spoofed-multicast"){
+        server.await_state("peer_address");pollfd p{server.packet,POLLIN,0};require(poll(&p,1,50)==0,"spoofed_multicast_injection");
+        std::cout<<"spoofed multicast source rejected before packet injection PASS\n";
       }
       server.stop();
       std::cout<<"legacy client handshake PASS\n";return 0;

@@ -22,9 +22,10 @@ Radxa/ARM64 2026-10-05 прошёл old/native/old host smoke с провере�
 cd /root/dev/meshpn && git pull --ff-only
 ```
 
-Для этого изменения пересборка **не нужна**, если уже собран `252f649`, как в
-последнем успешном отчёте. Для более старого бинарника сначала выполнить
-`bash scripts/build-clean-vpn-native.sh`. Не запускать отдельный `--apply`:
+После исправления multicast на клиенте требуется **пересборка C++**:
+`bash scripts/build-clean-vpn-native.sh`. Правки macOS `/tmp` и ожидания
+`idle_wait` сами по себе не требовали пересборки, но multicast меняет engine.
+Не запускать отдельный `--apply`:
 его вызовет координатор с Mac. На Mac нужен Node.js 18+ и штатные ssh/curl/dig.
 
 На Mac (здесь USB — `en9`):
@@ -86,7 +87,24 @@ HTTPS endpoint, не доказательство отсутствия всех 
 Локальная проверка нового сценария: unit/negative-тесты протокола, координатора,
 команд fault-helper и lifecycle/rollback. Реальный запуск networkctl/systemd на
 Radxa и macOS coordinator ещё требуют этого физического прогона; лабораторные
-mock-проверки не подменяют его. C++ data-plane не изменён.
+mock-проверки не подменяют его.
+
+Физический прогон `684d2e6`, `run-IV703a` (2026-10-06): все пять USB-фаз
+и три host smoke прошли, реальный down подтверждён, guard/rollback verified.
+От начала recovered-фазы Mac до первого успешного HTTPS — 2279 мс;
+команда восстановления заняла 215 мс. Общий результат корректно failed:
+`native_peer_address_rejected`, до остановки шесть раз приходили пакеты
+`10.99.0.1 → 224.0.0.22`, IP protocol 2, приводившие к перезапуску сессии.
+Их адрес/протокол соответствуют IGMPv3 multicast reports; содержимое пакетов
+не сохранялось. Полной приёмкой этот прогон не считается.
+
+Правка C++: после проверки framing/IPv4-header/checksum клиент отбрасывает
+входящий multicast `224.0.0.0/4`, увеличивая `dropped_packets`, без записи в TUN
+и без завершения TLS/H2. Multicast-forwarding не добавлен. Unicast destination
+isolation и exit source isolation остаются строгими; критерий отсутствия
+`peer_address` в trial не ослаблен. Нужен повторный физический USB-прогон
+с пересобранным engine. Счётчик dropped может содержать корректно отброшенный
+multicast и сам по себе не означает потерю пользовательского unicast.
 
 ## Запуск
 

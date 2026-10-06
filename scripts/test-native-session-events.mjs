@@ -65,9 +65,25 @@ function badAddressPacket() {
   packet.writeUInt16BE((~sum) & 65535, 10);
   return Buffer.concat([Buffer.from([0, 0, 0, 20]), packet]);
 }
+function multicastPacket(destination = [224, 0, 0, 22], protocol = 2, options = false) {
+  const ihl = options ? 24 : 20, packet = Buffer.alloc(ihl + 8);
+  packet[0] = 0x40 | (ihl / 4); packet.writeUInt16BE(packet.length, 2); packet[8] = 1; packet[9] = protocol;
+  packet.set([10, 99, 0, 1], 12); packet.set(destination, 16);
+  if (options) packet.set([0x94, 4, 0, 0], 20); // Router Alert, as in IGMPv3 reports.
+  packet[ihl] = 0x22; // IGMPv3 report with zero group records; content is never injected.
+  const checksum = (start, end, offset) => {
+    let sum = 0; for (let i = start; i < end; i += 2) sum += packet.readUInt16BE(i);
+    while (sum >>> 16) sum = (sum & 65535) + (sum >>> 16);
+    packet.writeUInt16BE((~sum) & 65535, offset);
+  };
+  checksum(ihl, packet.length, ihl + 2); checksum(0, ihl, 10);
+  const length = Buffer.alloc(4); length.writeUInt32BE(packet.length);
+  return Buffer.concat([length, packet]);
+}
 for (const [code, inject] of [
   ['invalid_frame_length', sock => sock.write(Buffer.from([255, 255, 255, 255]))],
   ['invalid_ipv4', sock => sock.write(Buffer.concat([Buffer.from([0, 0, 0, 20]), Buffer.alloc(20)]))],
+  ['invalid_ipv4', sock => { const packet = multicastPacket(); packet[14] ^= 1; sock.write(packet); }],
   ['peer_address', sock => sock.write(badAddressPacket())],
   ['h2_peer_end_stream', sock => sock.end()],
   ['h2_goaway_no_error', sock => sock.session.goaway(0, 1, Buffer.from('PRIVATE DEBUG'))],
@@ -106,4 +122,36 @@ for (const [code, inject] of [
   assert.equal(inject ? connections : server.connections(), code === 'idle_cycles' ? 4 : 2);
   assert.doesNotMatch(output, /PRIVATE|http2_receive|session_rejected_or_closed/);
   if (code === 'peer_address') assert.match(output, /"event":"peer_address_rejected"/);
+});
+test('legacy multicast is discarded without reconnect, TUN delivery or flow-control stall', { timeout: 15000 }, async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cvpn-multicast-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const secret = randomBytes(32), secretPath = path.join(dir, 'psk');
+  fs.writeFileSync(secretPath, secret, { mode: 0o600 });
+  let connections = 0;
+  const server = await startDateExit({ protocol: 'h2', secret, onBridge: sock => {
+    ++connections; sock.on('error', () => {}); sock.pipe(sock);
+    const first = multicastPacket([224, 0, 0, 22], 2, true);
+    // Split the framing header and IPv4 header; then exceed the initial H2
+    // flow-control window with discarded frames, followed by valid echo traffic.
+    sock.write(first.subarray(0, 2)); sock.write(first.subarray(2, 19)); sock.write(first.subarray(19));
+    sock.write(Buffer.concat([
+      multicastPacket([224, 0, 0, 0]), multicastPacket([239, 255, 255, 255]),
+      multicastPacket([224, 0, 0, 251], 17), multicastPacket([239, 1, 2, 3], 17), multicastPacket(),
+      ...Array.from({ length: 2048 }, () => multicastPacket()),
+    ]));
+  } });
+  t.after(() => server.close());
+  const config = path.join(dir, 'client.json');
+  fs.writeFileSync(config, JSON.stringify({ version: 1, role: 'client', address: '127.0.0.1', port: server.port,
+    tun: 'cvtest0', secret_path: secretPath, server_name: 'localhost', ca: path.resolve('scripts/fixtures/boring-tls-local.cert.pem') }));
+  const child = spawn(path.join(build, 'integration-test'), [path.join(build, 'clean-vpn-engine-fixture'), config, 'client-multicast']);
+  let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', b => { output += b; });
+  const timer = setTimeout(() => child.kill('SIGKILL'), 13000);
+  t.after(() => { clearTimeout(timer); child.kill('SIGKILL'); });
+  const [status] = await once(child, 'close'); clearTimeout(timer);
+  assert.equal(status, 0, output);
+  assert.match(output, /multicast discarded, same session unicast and flow control PASS/);
+  assert.equal(connections, 1, output);
+  assert.doesNotMatch(output, /peer_address|http2_receive|session_rejected_or_closed/);
 });

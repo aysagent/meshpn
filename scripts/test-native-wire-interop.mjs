@@ -20,7 +20,7 @@ function driver(config,mode,t){
   const done=once(p,'close').then(([code])=>{clearTimeout(timer);assert.equal(code,0,output);return output;});
   return {p,done,output:()=>output};
 }
-for(const direction of ['native-client','native-exit','malformed-frame','missing-auth','oversized-headers'])test(`TLS/H2/exporter auth interop: ${direction}`,{timeout:20000},async t=>{
+for(const direction of ['native-client','native-exit','malformed-frame','spoofed-multicast','missing-auth','oversized-headers'])test(`TLS/H2/exporter auth interop: ${direction}`,{timeout:20000},async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-interop-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const secret=randomBytes(32),secretPath=path.join(dir,'psk');fs.writeFileSync(secretPath,secret,{mode:0o600});
   const config=path.join(dir,'config.json');const cert=fileURLToPath(new URL('./fixtures/boring-tls-local.cert.pem',import.meta.url));
@@ -34,7 +34,7 @@ for(const direction of ['native-client','native-exit','malformed-frame','missing
     const key=fileURLToPath(new URL('./fixtures/boring-tls-local.key.pem',import.meta.url));
     fs.writeFileSync(config,JSON.stringify({...common,role:'exit',port,cert,key}));
     const denied=['missing-auth','oversized-headers'].includes(direction);
-    const run=driver(config,denied?'exit-denied':direction==='malformed-frame'?'exit-malformed':'exit-handshake',t);
+    const run=driver(config,denied?'exit-denied':direction==='malformed-frame'?'exit-malformed':direction==='spoofed-multicast'?'exit-spoofed-multicast':'exit-handshake',t);
     await new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(Error('native listener deadline')),5000);
       const check=()=>{if(run.output().includes('native exit listening')){clearTimeout(timer);run.p.stdout.off('data',check);resolve();}};
@@ -49,6 +49,13 @@ for(const direction of ['native-client','native-exit','malformed-frame','missing
     const client=loadTlsDateFixture();const wire=await client.connectCleanVpnTlsClient({host:'127.0.0.1',port,ca:fixtureCert,servername:'localhost',vpnSecret:secret});
     wire.on('error',()=>{});t.after(()=>wire.destroy());
     if(direction==='malformed-frame')wire.write(Buffer.from([0xff,0xff,0xff,0xff]));
+    if(direction==='spoofed-multicast'){
+      const packet=Buffer.from('4500001400000000010200000a630003e0000016','hex');
+      let sum=0;for(let i=0;i<packet.length;i+=2)sum+=packet.readUInt16BE(i);
+      while(sum>>>16)sum=(sum&65535)+(sum>>>16);packet.writeUInt16BE((~sum)&65535,10);
+      wire.write(Buffer.concat([Buffer.from([0,0,0,20]),packet]));
+    }
     assert.match(await run.done,direction==='malformed-frame'?/malformed.*PASS/:/legacy client handshake PASS/);
+    if(direction==='spoofed-multicast')assert.match(await run.done,/spoofed multicast source rejected before packet injection PASS/);
   }
 });
