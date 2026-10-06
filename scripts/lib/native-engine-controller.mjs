@@ -7,10 +7,11 @@ import { validAddressDiagnostic } from './native-address-diagnostic.mjs';
 // The caller owns provisioned TUN/routes/guard and must not release protection
 // merely because this child exits. No automatic deployment or firewall changes.
 export class NativeEngineController extends EventEmitter {
-  #child; #pending = ''; #closed = false; #killTimer;
-  constructor({ binary, config, spawnChild = spawn }) {
+  #child; #pending = ''; #closed = false; #killTimer; #allowTrialCrash;
+  constructor({ binary, config, spawnChild = spawn, allowTrialCrash = false }) {
     super();
     if (![binary, config].every(p => typeof p === 'string' && path.isAbsolute(p))) throw Error('absolute engine/config paths required');
+    this.#allowTrialCrash = allowTrialCrash === true;
     this.#child = spawnChild(binary, ['--config', config], { stdio: ['pipe', 'pipe', 'pipe'] });
     this.#child.stdout.setEncoding('utf8');
     this.#child.stdout.on('data', chunk => {
@@ -51,6 +52,11 @@ export class NativeEngineController extends EventEmitter {
     this.#child.stdin.write(JSON.stringify(command) + '\n');
   }
   status() { this.#command({ op: 'status' }); }
+  crashForTrial() {
+    if (!this.#allowTrialCrash || this.#closed || this.#killTimer) throw Error('trial_crash_not_allowed');
+    // Signal the owned ChildProcess, never a PID found by name/pgrep.
+    if (!this.#child.kill('SIGKILL')) throw Error('trial_crash_signal_failed');
+  }
   uplink(ready) {
     if (typeof ready !== 'boolean') throw Error('uplink boolean required');
     this.#command({ op: 'uplink', ready });

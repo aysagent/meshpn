@@ -119,6 +119,34 @@ test('success: old/native/restored probes; stop native and audit before removing
     'configureTun', 'launch', 'ready', 'probe2', 'hold', 'stop-native', 'requireOldInactive', 'audit2', 'removeTun',
     'requireNoTun', 'ipv6Audit2', 'startOld', 'waitOld', 'probe3', 'verifyGuard']);
 });
+for (const failure of [null, 'observation', 'recovery']) test(`crash lifecycle retains audited rollback (${failure})`, async () => {
+  const f = fixture(); let requested = false;
+  const session = { ready: async () => {}, stop: async () => { f.events.push('wrapper-ended'); },
+    crashRequested: () => requested };
+  f.io.launch = async () => session;
+  f.io.recoverCrash = async index => {
+    assert.equal(index, 17); f.events.push('crash-recover');
+    if (failure === 'recovery') throw Error('foreign_journal');
+  };
+  f.io.peer = { requiredPhases: ['baseline', 'native', 'blocked', 'restored'],
+    phase: async (p, phases) => { phases[p] = { status: 'passed' }; },
+    native: async (s, report, release) => {
+      report.phases.native = { status: 'passed' }; requested = true;
+      if (failure === 'observation') throw Error('observer_lost');
+      await release(); report.phases.blocked = { status: 'passed' };
+    } };
+  const report = await runTrial(f.io);
+  assert.equal(report.status, failure ? 'failed' : 'passed');
+  if (failure === 'recovery') {
+    assert.equal(report.rollback, 'manual-review-required'); assert.ok(!f.events.includes('startOld'));
+  } else {
+    assert.equal(report.rollback, 'verified');
+    assert.equal(f.events.filter(e => e === 'crash-recover').length, 1);
+    assert.ok(f.events.indexOf('wrapper-ended') < f.events.indexOf('crash-recover'));
+    assert.ok(f.events.indexOf('crash-recover') < f.events.indexOf('startOld'));
+    assert.ok(!f.events.includes('removeTun'), 'crash recovery already removed only our TUN');
+  }
+});
 for (const fail of [null, 'baseline', 'native', 'restored']) {
   test(`USB peer lifecycle and rollback (${fail})`, async () => {
     const f = fixture();

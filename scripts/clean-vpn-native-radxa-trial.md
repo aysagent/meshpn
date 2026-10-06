@@ -85,9 +85,8 @@ HTTPS **с начала recovered-фазы на Mac**, не точная зад�
 HTTPS endpoint, не доказательство отсутствия всех IPv4/IPv6/DNS-утечек.
 
 Локальная проверка нового сценария: unit/negative-тесты протокола, координатора,
-команд fault-helper и lifecycle/rollback. Реальный запуск networkctl/systemd на
-Radxa и macOS coordinator ещё требуют этого физического прогона; лабораторные
-mock-проверки не подменяют его.
+команд fault-helper и lifecycle/rollback. Лабораторные mock-проверки не подменяют
+физический прогон, результат которого зафиксирован ниже.
 
 Физический прогон `684d2e6`, `run-IV703a` (2026-10-06): все пять USB-фаз
 и три host smoke прошли, реальный down подтверждён, guard/rollback verified.
@@ -102,9 +101,60 @@ mock-проверки не подменяют его.
 входящий multicast `224.0.0.0/4`, увеличивая `dropped_packets`, без записи в TUN
 и без завершения TLS/H2. Multicast-forwarding не добавлен. Unicast destination
 isolation и exit source isolation остаются строгими; критерий отсутствия
-`peer_address` в trial не ослаблен. Нужен повторный физический USB-прогон
-с пересобранным engine. Счётчик dropped может содержать корректно отброшенный
+`peer_address` в trial не ослаблен. Счётчик dropped может содержать корректно отброшенный
 multicast и сам по себе не означает потерю пользовательского unicast.
+
+Повторный физический прогон на `837f081`, **`run-LP00Uf`**, 2026-10-06
+20:33:59 UTC: status/usb passed, guard/rollback verified, все пять фаз прошли.
+Нет `peer_address`, `rejectedAddresses=[]`. Native после `uplink_ready` вернулся
+в `ready` за 252 мс; Mac recovery 2110 мс по часам recovered-фазы, restore command
+198 мс. Старый VPN восстановлен. Предыдущий `run-mAWmut` прекратился до запуска
+native: legacy USB baseline HTTPS 2/3, DNS/1 MiB passed; причина запроса неизвестна.
+
+## Следующий тест: падение engine при работающем uplink
+
+После обновления ветки на Radxa **пересборка C++ для этой правки не нужна**:
+
+```bash
+cd /root/dev/meshpn && git pull --ff-only
+```
+
+На Mac скопировать обновлённый координатор и запустить другой режим:
+
+```bash
+scp -P 2222 root@192.168.7.1:/root/dev/meshpn/scripts/clean-vpn-native-usb-check.mjs /tmp/clean-vpn-native-usb-check.mjs &&
+node /tmp/clean-vpn-native-usb-check.mjs --interface=en9 --crash
+```
+
+Нужен установленный `tcpdump` на Radxa; отсутствие проверяется до остановки
+legacy. Режим не вызывает networkctl и не отключает Wi-Fi. После baseline/native
+проверок управляющий процесс отправляет SIGKILL **своему C++ child process**;
+trial требует подтверждения именно SIGKILL и завершения wrapper. Затем под
+неизменным независимым kill-switch проверяются ifindex собственного TUN и оба
+журнала. Удаляется только этот тестовый TUN, выполняются существующие строгие
+аудиты и восстановление owned DNS/routes (без flush/удаления журналов).
+Проверяется, что forwarded route к `1.1.1.1` теперь ведёт через `wlan0`.
+
+Фазы: baseline → native → blocked → restored. На blocked Mac делает две HTTPS
+попытки. На wlan0 одновременно идёт отдельный outbound capture выбранного IPv4
+TCP/443 endpoint; положительный контроль — видимый трафик к exit во время native.
+Успех требует нуля прямых пакетов к `1.1.1.1:443`, отсутствия потерь capture,
+полного завершения capture и подтверждённого восстановления legacy на Radxa/Mac.
+Сохраняются только счётчики заголовков, не payload или raw capture.
+
+Это **не** доказательство отсутствия всех утечек: IPv6, DNS, другие назначения,
+падение wrapper/worker, ядра или питание не входят в сценарий. `blocked` без
+полного capture не считается достаточным. Любой чужой journal/interface/rule
+останавливает восстановление с `manual-review-required`; не выполнять flush,
+не удалять журналы, оставить USB rescue и прислать итоговый блок.
+Локальные тесты не заменяют ещё не выполненную физическую crash-приёмку.
+
+Регрессия этой правки: 363 теста passed, без skips. В том числе реальные
+tcpdump/IPv4-пакеты и host route journal в изолированном user/net namespace,
+негативные проверки capture, точного SIGKILL, foreign journal и порядка rollback.
+DNS journal проверен отдельными файловыми/command-model тестами; в netns-тесте
+восстановления DNS adapter подменён (trusted-ancestor политика не ослаблялась).
+Физический systemd/Radxa crash-сценарий пока не запускался.
 
 ## Запуск
 

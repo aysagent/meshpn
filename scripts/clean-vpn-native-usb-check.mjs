@@ -81,11 +81,12 @@ export async function probePeer(request, { iface, address, run = execute, now = 
 
 export async function main(args = process.argv.slice(2)) {
   if (args.length === 1 && args[0] === '--help') {
-    console.log('Usage on Mac: node clean-vpn-native-usb-check.mjs --interface=en9\nReal wlan0 down/up on Radxa; USB rescue SSH :2222 remains available.\nRequires Node 18+, ssh, curl, dig and a current built Radxa checkout at /root/dev/meshpn.\nNo Mac settings change. Up to seven 1 MiB downloads. Not a leak test or benchmark.'); return;
+    console.log('Usage on Mac: node clean-vpn-native-usb-check.mjs --interface=en9 [--crash]\nDefault: real wlan0 down/up on Radxa. --crash: SIGKILL native engine, keep uplink up, capture selected IPv4 HTTPS egress; requires tcpdump on Radxa.\nUSB rescue SSH :2222 remains available. Requires Node 18+, ssh, curl, dig and a current built Radxa checkout at /root/dev/meshpn.\nNo Mac settings change. Up to seven 1 MiB downloads. Not comprehensive leak acceptance or a benchmark.'); return;
   }
   console.log('[usb-check] Проверяю окружение Mac и USB-интерфейс');
   check(process.platform === 'darwin', 'run_on_mac');
-  check(args.length === 1 && /^--interface=[a-zA-Z0-9]{1,15}$/.test(args[0]), 'specify_usb_interface');
+  const crash = args.length === 2 && args[1] === '--crash';
+  check((args.length === 1 || crash) && /^--interface=[a-zA-Z0-9]{1,15}$/.test(args[0]), 'specify_usb_interface');
   const iface = args[0].split('=')[1];
   const addresses = (os.networkInterfaces()[iface] ?? []).filter(a => a.family === 'IPv4'
     && /^192\.168\.7\./.test(a.address) && !['0', '1', '255'].includes(a.address.split('.')[3]));
@@ -107,7 +108,9 @@ export async function main(args = process.argv.slice(2)) {
   const interrupt = () => { interrupted = true; };
   process.on('SIGINT', interrupt); process.on('SIGTERM', interrupt);
   try {
-    console.log('USB trial: реальный обрыв wlan0; старый VPN будет восстановлен автоматически после проверок.');
+    console.log(crash
+      ? 'USB crash trial: SIGKILL native-движка, wlan0 остаётся включён. Проверка блокировки IPv4 HTTPS и возврат старого VPN по журналам владения.'
+      : 'USB trial: реальный обрыв wlan0; старый VPN будет восстановлен автоматически после проверок.');
     // Authenticate once; known-host checks remain enabled. Later RPCs use this socket.
     const auth = await new Promise(resolve => {
       const child = spawn('ssh', [...base, '-M', '-N', '-f', '-o', 'ControlPersist=60', target], { stdio: 'inherit' });
@@ -121,7 +124,7 @@ export async function main(args = process.argv.slice(2)) {
     check(ok(nodeResult) && /^\/[a-zA-Z0-9_./-]+\/node$/.test(node), 'running_legacy_node_required');
     const cmd = params => [node, SCRIPT, ...params].map(quote).join(' ');
     let runId, finished;
-    const job = ssh(cmd(['--apply', '--usb-peer']), { timeout: 1600000, onOutput: out => {
+    const job = ssh(cmd(['--apply', crash ? '--usb-crash' : '--usb-peer']), { timeout: 1600000, onOutput: out => {
       const match = /^USB_TRIAL_ID=(run-[a-zA-Z0-9]+)$/m.exec(out); if (match) runId = match[1];
     } }).then(r => { finished = r; return r; });
     const seen = new Set();

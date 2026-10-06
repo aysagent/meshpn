@@ -99,6 +99,14 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
     if (interruptible) requireTrial(!cancelled(), 'cancelled');
     return await fn();
   };
+  const releaseCrash = async () => {
+    requireTrial(session?.crashRequested?.(), 'crash_not_requested');
+    await step('crash-stop-audit', () => session.stop(), false);
+    if (tunIndex !== undefined) {
+      await step('crash-network-recovery', () => io.recoverCrash(tunIndex), false);
+      tunIndex = undefined;
+    }
+  };
   try {
     await step('preflight', () => io.preflight());
     report.guard = 'verified';
@@ -119,7 +127,7 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
     requireTrial(report.checks.native.status === 'ipv4-smoke-passed', 'native_smoke_failed');
     report.hold = {};
     await step('native-hold', () => io.hold(holdSeconds, cancelled, session, report.hold));
-    if (io.peer) await step('native-usb-peer', () => io.peer.native(session, report.usb));
+    if (io.peer) await step('native-usb-peer', () => io.peer.native(session, report.usb, releaseCrash));
     report.status = 'passed';
   } catch (error) {
     report.status = 'failed';
@@ -131,6 +139,7 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
       report.rollback = 'in-progress';
       try {
         if (session) await step('stop-native', () => session.stop(), false);
+        if (session?.crashRequested?.()) await releaseCrash();
         await step('rollback-service-audit', () => io.requireOldInactive(), false);
         // If launch never happened, journals still describe the deleted OLD
         // interface. Remove only our unused test TUN before auditing them.
@@ -161,7 +170,7 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
     snapshotNative('afterStop');
   }
   report.stage = 'finished';
-  if (io.peer) report.usb.status = ['baseline', 'native', 'blocked', 'recovered', 'restored']
+  if (io.peer) report.usb.status = (io.peer.requiredPhases ?? ['baseline', 'native', 'blocked', 'recovered', 'restored'])
     .every(p => report.usb.phases[p]?.status === 'passed') ? 'passed' : 'failed';
   if (report.usb?.status === 'failed') report.status = 'failed';
   return report;

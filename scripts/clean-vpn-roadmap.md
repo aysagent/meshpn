@@ -201,8 +201,23 @@ baseline/native/restored DNS+HTTPS+1 MiB и **реальный** обрыв `wla
 Физический USB-прогон `684d2e6` (2026-10-06) прошёл все пять функциональных
 фаз с настоящим wlan0 down/up и проверенным возвратом legacy, но общий статус
 failed из-за multicast `10.99.0.1 → 224.0.0.22` (protocol 2), обрывающего native
-сессию с `peer_address`. Исправление client-side multicast discard выполняется
-в C++; повторить USB-прогон после пересборки. До чистого результата этап не закрыт.
+сессию с `peer_address`. Исправлено client-side multicast discard в C++ (`837f081`).
+
+Физическая приёмка USB + реального uplink down/up **пройдена** на `837f081`:
+`run-LP00Uf`, 2026-10-06 20:33:59 UTC. Все пять USB-фаз, три host smoke,
+guard и rollback passed/verified; `rejectedAddresses=[]`, `peer_address` нет.
+От `uplink_ready` до native `ready` — 252 мс; Mac `recoveryMs=2110` отсчитывается
+от начала recovered-фазы, не от DHCP. Восстановлен legacy, native не установлен
+по умолчанию. Предыдущая попытка `run-mAWmut` остановилась на legacy USB baseline
+(HTTPS 2/3); native и uplink ещё не трогались, причина отдельного запроса не записана.
+
+Следующий ограниченный этап — `--crash`: реальный SIGKILL только тестового native
+engine при сохранённом wlan0, аудит и снятие принадлежащих тесту TUN/routes/DNS,
+проверка блокировки HTTPS с Mac при доступном маршруте через wlan0 и независимый
+захват выбранного IPv4 endpoint на uplink, затем проверенный возврат legacy.
+Конечная точка — физический отчёт passed + rollback verified. Не перенос exit,
+не M2 и не автозапуск native. IPv6/DNS/все назначения этим захватом не покрываются;
+сравнение скорости — отдельный следующий этап, не вывод из загрузки 1 MiB.
 
 Существующий рабочий путь сохраняется для сравнения и возврата; native engine
 включается явно в лаборатории, не становится production default автоматически.

@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { prepareNativeUsb } from './lib/native-usb-control.mjs';
 const args=process.argv.slice(2);
+const trialCrash=args.at(-1)==='--trial-crash';if(trialCrash)args.pop();
 const usbProfile=args.at(-1)==='--usb-profile';if(usbProfile)args.pop();
 if(args.length!==2||args[0]!=='--config'||!path.isAbsolute(args[1])){
   console.error('usage: clean-vpn-native.mjs --config /absolute/config.json (experimental; provision TUN/guard first)');
@@ -21,7 +22,7 @@ if(usbProfile){
   network=prepareNativeUsb(JSON.parse(bytes));
   console.error('native-control: profile preflight complete');
 }
-const engine=new NativeEngineController({binary,config:args[1]});
+const engine=new NativeEngineController({binary,config:args[1],allowTrialCrash:trialCrash&&usbProfile});
 console.error('native-control: engine spawned');
 network?.attach(engine);
 let pending='',failed=false,stopping=false;
@@ -53,6 +54,7 @@ process.stdin.on('data',chunk=>{
       const c=JSON.parse(line);
       if(c?.op==='status'&&Object.keys(c).length===1)engine.status();
       else if(c?.op==='stop'&&Object.keys(c).length===1)stop();
+      else if(c?.op==='trial_crash'&&Object.keys(c).length===1&&trialCrash&&usbProfile)engine.crashForTrial();
       else if(c?.op==='uplink'&&Object.keys(c).length===2&&typeof c.ready==='boolean')engine.uplink(c.ready);
       else abort();
     }catch{abort();}
