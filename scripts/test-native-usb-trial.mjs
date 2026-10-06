@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createPeerChannel, peerStatus, submitPeerResult, validatePeerResult, exerciseNativePeer } from './lib/native-usb-trial-peer.mjs';
 import { runFault, faultUnitArgs } from './clean-vpn-native-usb-uplink.mjs';
 import { probePeer, dnsAddresses, execute, quote } from './clean-vpn-native-usb-check.mjs';
@@ -14,6 +15,23 @@ const good = p => ({ ...p, dnsPassed: 4, httpsPassed: 3, downloadBytes: 1048576,
   exitIp: '154.62.226.216', blockedAttempts: 0, recoveryMs: 0, elapsedMs: 100 });
 const temp = t => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-peer-test-'));
   t.after(() => fs.rmSync(d, { recursive: true })); return d; };
+test('standalone Mac entry runs through a symlinked directory like /tmp -> /private/tmp', async t => {
+  const dir = temp(t), actual = path.join(dir, 'actual'), alias = path.join(dir, 'alias');
+  fs.mkdirSync(actual);
+  const name = 'clean-vpn-native-usb-check.mjs';
+  fs.copyFileSync(fileURLToPath(new URL('./' + name, import.meta.url)), path.join(actual, name));
+  fs.symlinkSync(actual, alias, 'dir');
+  for (const entry of [path.join(actual, name), path.join(alias, name)]) {
+    const r = await execute(process.execPath, [entry, '--help']);
+    assert.equal(r.code, 0); assert.equal(r.reason, null);
+    assert.match(r.out, /Usage on Mac:/);
+  }
+});
+test('importing the standalone coordinator does not execute its CLI', async () => {
+  const url = new URL('./clean-vpn-native-usb-check.mjs', import.meta.url).href;
+  const r = await execute(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(url)})`]);
+  assert.equal(r.code, 0); assert.equal(r.out, '');
+});
 test('strict peer result rejects foreign fields, nonce, counters and false pass', () => {
   assert.equal(validatePeerResult(good(request), request).status, 'passed');
   for (const patch of [{ token: 'old' }, { phase: 'blocked' }, { dnsPassed: 5 }, { elapsedMs: -1 },

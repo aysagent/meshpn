@@ -136,7 +136,12 @@ export function launchTrialNative(config, { spawnChild = spawn, readyMs = 45000,
       while (performance.now() < deadline) {
         check(!cancelled(), 'cancelled');
         check(!ended && !broken, 'native_start_failed');
-        if (statusReady && dnsReady) return;
+        // ready -> END_STREAM -> idle_wait can arrive in one pipe read, or
+        // during DNS activation. Lazy idle is ready for the active smoke probe
+        // to wake it; waiting for another ready without traffic deadlocks.
+        // Historical ready alone must not accept errors/waiting_uplink/stopped.
+        const state = diagnostics.snapshot();
+        if (dnsReady && (statusReady || (state.readySeen && state.lastState === 'idle_wait'))) return;
         await sleep();
       }
       throw Error('native_ready_timeout');

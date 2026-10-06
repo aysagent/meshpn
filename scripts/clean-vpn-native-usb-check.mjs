@@ -83,6 +83,7 @@ export async function main(args = process.argv.slice(2)) {
   if (args.length === 1 && args[0] === '--help') {
     console.log('Usage on Mac: node clean-vpn-native-usb-check.mjs --interface=en9\nReal wlan0 down/up on Radxa; USB rescue SSH :2222 remains available.\nRequires Node 18+, ssh, curl, dig and a current built Radxa checkout at /root/dev/meshpn.\nNo Mac settings change. Up to seven 1 MiB downloads. Not a leak test or benchmark.'); return;
   }
+  console.log('[usb-check] Проверяю окружение Mac и USB-интерфейс');
   check(process.platform === 'darwin', 'run_on_mac');
   check(args.length === 1 && /^--interface=[a-zA-Z0-9]{1,15}$/.test(args[0]), 'specify_usb_interface');
   const iface = args[0].split('=')[1];
@@ -163,5 +164,8 @@ export async function main(args = process.argv.slice(2)) {
     fs.rmdirSync(dir);
   }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+// Node resolves the entry module's symlinks, but argv retains the supplied
+// path. On macOS /tmp is a symlink to /private/tmp.
+if (process.argv[1] && (import.meta.url === pathToFileURL(process.argv[1]).href
+    || import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href))
   main().catch(e => { console.error(JSON.stringify({ status: 'failed', code: /^[a-z0-9_]+$/.test(e.message) ? e.message : 'usb_check_failed' })); process.exitCode = 1; });

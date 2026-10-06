@@ -155,6 +155,12 @@ cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
 произвольного stderr, ключей и аргументов запуска.
 Таймаут готовности сам по себе не доказывает ошибку TLS или авторизации;
 смотрим эту историю, а не угадываем по одному `native_ready_timeout`.
+Startup gate допускает `idle_wait`, если уже наблюдался authenticated `ready`
+и активирован DNS: следующие активные smoke-запросы будят lazy transport и
+проверяют фактический выход. Иначе переход `ready → END_STREAM → idle_wait`
+между двумя опросами мог приводить к ложному `native_ready_timeout` без трафика.
+Один лишь исторический `ready` не допускает текущие ошибки, `waiting_uplink`
+или `stopped`. Эта правка runner не требует пересборки C++.
 Ошибки проверки сертификата различаются: `tls_verify_name`,
 `tls_verify_expired`, `tls_verify_not_yet_valid`, `tls_verify_untrusted`,
 `tls_verify_failed`. Прочий отказ TLS остаётся `tls_handshake`.

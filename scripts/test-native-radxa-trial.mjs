@@ -244,6 +244,39 @@ test('native exit before readiness fails promptly instead of reporting success',
   await assert.rejects(s.ready(() => false), /native_start_failed/); await s.stop();
 });
 
+for (const scenario of [
+  { name: 'batched ready/end/idle with delayed DNS activation', states: ['ready', 'h2_peer_end_stream', 'idle_wait'], dns: true, passed: true },
+  { name: 'idle without prior authentication', states: ['idle_wait'], dns: true },
+  { name: 'authenticated idle without DNS activation', states: ['ready', 'h2_peer_end_stream', 'idle_wait'], dns: false },
+  { name: 'old ready followed by transport failure', states: ['ready', 'tls_read'], dns: true },
+  { name: 'old ready followed by lost uplink', states: ['ready', 'waiting_uplink'], dns: true },
+  { name: 'old ready followed by stopped', states: ['ready', 'stopped'], dns: true },
+]) {
+  test(`native startup gate: ${scenario.name}`, async () => {
+    let child;
+    const session = launchTrialNative('/private/config.json', { readyMs: 700, stopMs: 3000,
+      spawnChild(file, args, options) {
+        child = spawn(process.execPath, ['-e', `
+          const states = ${JSON.stringify(scenario.states)};
+          process.stdout.write(states.map(state => JSON.stringify({version:1,event:'state',state,
+            generation:0,tx_packets:0,rx_packets:0,dropped_packets:0})+'\\n').join(''));
+          ${scenario.dns ? "setTimeout(() => process.stderr.write('native-control: DNS active\\n'), 50);" : ''}
+          process.stdin.on('data', b => { if (b.toString() === '{"op":"stop"}\\n') process.exit(0); });
+        `], options);
+        return child;
+      } });
+    try {
+      if (scenario.passed) {
+        await session.ready(() => false);
+        assert.equal(session.diagnostics().lastState, 'idle_wait');
+        assert.equal(session.diagnostics().statusReady, false, 'does not invent an active session');
+        assert.equal(session.diagnostics().readySeen, true);
+      } else await assert.rejects(session.ready(() => false), /native_ready_timeout/);
+      assert.equal((await session.stop()).code, 0);
+    } finally { child?.kill('SIGKILL'); }
+  });
+}
+
 test('native timeout retains safe states before graceful stop, even when rollback also fails', async () => {
   let child;
   const f = fixture({ fail: 'startOld' });
