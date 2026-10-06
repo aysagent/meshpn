@@ -48,6 +48,9 @@ struct Child {
       size_t e;
       while((e=input.find('\n'))!=std::string::npos){auto j=json::parse(input.substr(0,e));input.erase(0,e+1);
         std::cout<<"engine "<<pid<<" "<<j.dump()<<"\n";
+        if(j.at("event")=="peer_address_rejected"){
+          require(j.size()==6&&j.at("role")=="client"&&j.at("source")=="1.1.1.1"&&j.at("destination")=="10.99.0.3"&&j.at("protocol")==17,"address_metadata");continue;
+        }
         require(j.size()==7&&!j.contains("packet")&&!j.contains("payload"),"metadata_only");
         if(j.at("state")==wanted)return j;
       }
@@ -119,6 +122,17 @@ static long rss(pid_t pid){
   while(std::getline(stat,line))if(line.rfind("VmRSS:",0)==0)return std::stol(line.substr(6));
   throw std::runtime_error("rss_sample");
 }
+static void reflect_pair(Child& client,uint8_t seed){
+  // Two packets queued before reconnect: the retained wake packet must not
+  // be overtaken by the second packet when the response headers arrive.
+  auto first=packet(1400,true,seed),second=packet(1400,true,seed+1);
+  for(const auto* b:{&first,&second})require(send(client.packet,b->data(),b->size(),0)==ssize_t(b->size()),"idle_pair_send");
+  for(const auto* b:{&first,&second}){
+    pollfd p{client.packet,POLLIN,0};require(poll(&p,1,3000)>0,"idle_pair_timeout");
+    Bytes got(65536);auto n=recv(client.packet,got.data(),got.size(),0);require(n>0,"idle_pair_read");got.resize(n);
+    require(got==*b,"idle_pair_order");
+  }
+}
 static void soak(Child& client,Child* server,int seconds){
   const auto start=Clock::now(),end=start+std::chrono::seconds(seconds);
   auto sample=start;uint64_t rounds=0,bytes=0;long peak=0,growth=0;size_t samples=0;
@@ -153,10 +167,36 @@ int main(int argc,char** argv){
   signal(SIGPIPE,SIG_IGN);
   std::cout<<std::unitbuf;
   try{
+    if(argc==4&&std::string(argv[3])=="client-idle"){
+      Child client(argv[1],argv[2]);client.await_state("ready");
+      for(int round=0;round<4;round++){
+        client.await_state("h2_peer_end_stream");client.await_state("idle_wait");
+        if(round==0){
+          const uint8_t invalid[40]={0x60};send(client.packet,invalid,sizeof(invalid),0);
+          client.command("{\"op\":\"uplink\",\"ready\":false}\n");client.await_state("waiting_uplink");
+          client.command("{\"op\":\"uplink\",\"ready\":true}\n");client.await_state("uplink_ready");client.await_state("idle_wait");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        client.command("{\"op\":\"status\"}\n");
+        auto state=client.await_state("idle_wait",1000);
+        require(state.at("event")=="status"&&state.at("tx_packets")==round*2&&state.at("rx_packets")==round*2,"idle_quiet_counts");
+        if(round<3){reflect_pair(client,round*2);client.await_state("ready");}
+      }
+      client.stop();std::cout<<"idle cycles wake packet, uplink, invalid traffic and stop PASS\n";return 0;
+    }
     if(argc==4&&std::string(argv[3]).rfind("client-event:",0)==0){
-      Child client(argv[1],argv[2]);client.await_state(std::string(argv[3]).substr(13));
+      const auto code=std::string(argv[3]).substr(13);
+      Child client(argv[1],argv[2]);client.await_state(code);
       pollfd p{client.packet,POLLIN,0};require(poll(&p,1,50)==0,"fault_injected_packet");
-      client.await_state("ready");reflect(client,1400,7);client.stop();
+      if(code=="h2_peer_end_stream"||code=="h2_goaway_no_error"){
+        client.await_state("idle_wait");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+        client.command("{\"op\":\"status\"}\n");
+        auto state=client.await_state("idle_wait",1000);require(state.at("event")=="status","idle_no_reconnect");
+        // First packet, with no retransmission, must wake and survive connect.
+        reflect(client,1400,7);client.await_state("ready");
+      }else{client.await_state("ready");reflect(client,1400,7);}
+      client.stop();
       std::cout<<"classified session failure and reconnect PASS\n";return 0;
     }
     if(argc==5&&std::string(argv[3])=="client-soak"){

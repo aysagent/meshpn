@@ -28,6 +28,44 @@ guard verified. Legacy readiness took 16.65 seconds. Native reported generic
 session closures/receive errors, so this is not yet native USB, long-run, leak,
 crash or performance acceptance. The enabled legacy service was restored.
 
+Physical follow-up on `7e9c402` (2026-10-05, 120-second hold): old/native/restored
+smokes and rollback passed. The hold checked process liveness only. It exposed
+repeated authenticated `h2_peer_end_stream` about five seconds after readiness
+without packet activity, plus a `peer_address` rejection. The old exit has an
+application-idle close path; its actual deployed timeout is not independently
+verified here. A valid IPv4 packet failed the fixed peer-address check; its
+actual addresses were not in that report and its origin remains unresolved.
+
+Follow-up implementation (2026-10-06, not yet retested on Radxa):
+
+- Authenticated normal H2 closure now leaves the native client in `idle_wait`.
+  It reconnects on the first valid TUN packet (retained until authenticated
+  readiness), or native DNS demand. Initial connection and failure retries
+  remain eager. Stop/uplink control remains responsive while idle.
+- The DNS relay signals demand and waits at most three seconds for readiness
+  before its normal bounded fixed-upstream logic. Unavailable/non-idle DNS
+  still returns SERVFAIL; there is no direct resolver fallback.
+- Peer isolation is unchanged. At most 16 rejected-address metadata records
+  (source, destination, IP protocol, role; no payload or ports) are emitted.
+  Full state counters survive truncation of the last-48-event history.
+- A requested hold now probes actual TUN HTTPS with ten-second quiet gaps,
+  checks exit IP, records timings/failures, and fails for peer-address rejection.
+  Both failure and success still run the same audited rollback. No claim of
+  USB, leak, long-lived-flow or performance acceptance is added.
+
+Local follow-up validation: 234 regression tests passed without skips. After
+the final wake-packet ordering correction, all 12 session cases passed again,
+including repeated idle cycles, a two-packet burst with exact order, control
+uplink changes, invalid IPv6 not waking the client, and stop while idle.
+The final normal 180-second native/native and native/legacy runs verified
+964,704 / 1,229,712 directional packets, zero drops or unexpected reconnects,
+and stable FDs across 36 samples each. Peak engine RSS: 6,104 / 6,216 KiB.
+The final ASan/UBSan selection passed 22 tests including both 180-second runs:
+357,944 / 602,776 packets, zero drops/reconnects, peak RSS 50,016 / 50,196 KiB
+with the 16 MiB ASan quarantine. Dependencies are not sanitizer-instrumented.
+CTest protocol/DNS-wire passed 2/2 in each build. These are bounded local
+fixture observations, not internet-speed or physical Radxa acceptance.
+
 Verified on x86_64 Linux:
 
 - Native client↔exit: 2026 packets total including 28..65535-byte test
@@ -110,8 +148,9 @@ Exit loads its own cert/key. Caller provisions the persistent TUN before startup
 engine attaches and does not execute iptables/ip/sysctl or change host routing.
 
 stdin: bounded newline JSON commands `status`, `stop`, `uplink` with boolean
-`ready`. stdout: versioned metadata states and packet counters, **no packet
-bytes, frames, headers or TLS exporter**. EOF/malformed control stops the engine.
+`ready`. stdout: versioned metadata states, packet counters and bounded
+rejected-address diagnostics, **no packet bytes, raw headers, frames or TLS
+exporter**. EOF/malformed control stops the engine.
 Backed-up status output also stops it instead of unbounded allocation.
 `NativeEngineController` is an internal Node supervisor, not an HTTP API, and
 has no sendPacket/data-plane interface. Guard must outlive both processes.
@@ -216,9 +255,9 @@ tests without skips or reported sanitizer errors (`quarantine_size_mb=16`).
 The two 180-second sanitizer sessions verified 355,948/606,378 directional
 packets with zero drops/reconnects; peak engine RSS 49,556/49,504 KiB, maximum
 growth 28,476/28,384 KiB. CTest protocol/DNS-wire passed 2/2 in both builds.
-The real Radxa's earlier generic session error reasons remain unresolved until
-a new physical trial produces the more specific diagnostics; no production
-server policy or idle timer was changed here.
+The subsequent physical trial distinguished normal H2 endings and a peer-address
+rejection (see the follow-up above). Earlier generic events cannot be classified
+retroactively. No production server policy or idle timer was changed here.
 
 Sanitizers: configure a separate `build-asan` with `-DCVPN_SANITIZE=ON` and
 `-DCMAKE_BUILD_TYPE=Debug`; build the same targets, run CTest there, then set

@@ -141,6 +141,18 @@ test('bad baseline aborts before disruption', async () => {
   const f = fixture({ baseline: 'incomplete-or-failed' }), r = await runTrial(f.io);
   assert.equal(r.failure.code, 'baseline_failed'); assert.ok(!f.events.includes('stopOld'));
 });
+test('active hold failure retains measurements and still verifies rollback', async () => {
+  const f = fixture();
+  f.io.hold = async (seconds, cancelled, session, report) => {
+    assert.equal(seconds, 120);
+    Object.assign(report, { status: 'failed', passed: 2, failed: 1, sessionStateCounts: { peer_address: 1 } });
+    throw Error('native_hold_https_failed');
+  };
+  const r = await runTrial(f.io, { holdSeconds: 120 });
+  assert.equal(r.status, 'failed'); assert.equal(r.rollback, 'verified');
+  assert.equal(r.hold.passed, 2); assert.equal(r.hold.failed, 1);
+  assert.equal(r.failure.stage, 'native-hold'); assert.equal(r.failure.code, 'native_hold_https_failed');
+});
 for (const fail of ['ready', 'probe2', 'hold']) {
   test(`${fail} failure still attempts ordered rollback`, async () => {
     const f = fixture({ fail }), r = await runTrial(f.io);

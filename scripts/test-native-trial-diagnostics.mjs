@@ -3,6 +3,18 @@ import assert from 'node:assert/strict';
 import { trialDiagnostics } from './lib/native-trial-diagnostics.mjs';
 
 const event = state => ({ version: 1, event: 'state', state, generation: 1, tx_packets: 2, rx_packets: 3, dropped_packets: 4 });
+test('address diagnostics bounded, preserve last state, and forbid payload fields', () => {
+  const d = trialDiagnostics(); d.state(event('ready'));
+  const v = { version: 1, event: 'peer_address_rejected', role: 'client', source: '1.1.1.1', destination: '10.99.0.3', protocol: 17 };
+  for (let i = 0; i < 30; i++) assert.equal(d.state(v), 'ready');
+  assert.equal(d.snapshot().rejectedAddresses.length, 16);
+  for (const bad of [{ ...v, payload: 'SECRET' }, { ...v, source: 'SECRET' }, { ...v, protocol: 256 }])
+    assert.throws(() => d.state(bad), /invalid_native_status/);
+  for (let i = 0; i < 100; i++) d.state(event('h2_peer_end_stream'));
+  assert.equal(d.snapshot().stateCounts.h2_peer_end_stream, 100);
+  d.state({ ...event('h2_peer_end_stream'), event: 'status' });
+  assert.equal(d.snapshot().stateCounts.h2_peer_end_stream, 100);
+});
 test('session failure/closure reasons remain fixed metadata, not unknown', () => {
   const d = trialDiagnostics();
   for (const code of `h2_callback_failure h2_send_callback_failure h2_goaway_no_error h2_goaway_error

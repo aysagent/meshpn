@@ -1,5 +1,6 @@
 /** Fixed-vocabulary metadata only. No raw stderr/argv/headers/packet bodies. */
-const states = new Set(`starting idle listening connecting handshake ready uplink_ready waiting_uplink stopped dns_failed
+import { validAddressDiagnostic } from './native-address-diagnostic.mjs';
+const states = new Set(`starting idle idle_wait listening connecting handshake ready uplink_ready waiting_uplink stopped dns_failed
 cancelled connect_deadline poll connect_socket connect accept tcp_nodelay tls_socket tls_sni tls_identity tls_handshake
 tls_verify_name tls_verify_expired tls_verify_not_yet_valid tls_verify_untrusted tls_verify_failed
 h2_callback_failure h2_send_callback_failure h2_goaway_no_error h2_goaway_error h2_reset_no_error h2_reset_error
@@ -19,16 +20,23 @@ const markers = new Map([
 const fields = ['version', 'event', 'state', 'generation', 'tx_packets', 'rx_packets', 'dropped_packets'];
 export function trialDiagnostics(now = () => performance.now()) {
   const started = now(), events = [], stages = [];
+  const stateCounts = {}, rejectedAddresses = [];
   let omittedEvents = 0, lastState = null, readySeen = false;
   const atMs = () => Math.max(0, Math.round(now() - started));
   return {
     state(value) {
+      if (validAddressDiagnostic(value)) {
+        if (rejectedAddresses.length < 16) rejectedAddresses.push({ atMs: atMs(), role: value.role,
+          source: value.source, destination: value.destination, protocol: value.protocol });
+        return lastState;
+      }
       if (!value || Array.isArray(value) || Object.keys(value).length !== fields.length
         || fields.some(k => !(k in value)) || value.version !== 1 || !['state', 'status'].includes(value.event)
         || typeof value.state !== 'string' || !/^[a-z0-9_]{1,64}$/.test(value.state)
         || fields.slice(3).some(k => !Number.isSafeInteger(value[k]) || value[k] < 0)) throw Error('invalid_native_status');
       lastState = states.has(value.state) ? value.state : 'unknown';
       readySeen ||= lastState === 'ready';
+      if (value.event === 'state') stateCounts[lastState] = (stateCounts[lastState] ?? 0) + 1;
       events.push({ atMs: atMs(), event: value.event, state: lastState, generation: value.generation,
         txPackets: value.tx_packets, rxPackets: value.rx_packets, droppedPackets: value.dropped_packets });
       if (events.length > 48) { events.shift(); omittedEvents++; }
@@ -39,7 +47,8 @@ export function trialDiagnostics(now = () => performance.now()) {
       if (stage && !stages.some(s => s.stage === stage)) stages.push({ atMs: atMs(), stage });
       return stage;
     },
-    snapshot() { return { lastState, readySeen, omittedEvents,
+    snapshot() { return { lastState, readySeen, omittedEvents, stateCounts: { ...stateCounts },
+      rejectedAddresses: rejectedAddresses.map(e => ({ ...e })),
       events: events.map(e => ({ ...e })), stages: stages.map(s => ({ ...s })) }; },
   };
 }

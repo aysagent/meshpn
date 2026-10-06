@@ -66,8 +66,11 @@ cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
 Итог успеха: `status: passed`, `rollback: verified`, `guard: verified`.
 `nativeDiagnostics.beforeStop` сохраняет последние 48 состояний движка, счётчики
 пакетов и этапы control-plane на момент окончания теста/ошибки. `afterStop`
-добавляет состояние после возврата. Только фиксированные коды и числовые поля:
-без произвольного stderr, ключей, аргументов запуска и содержимого пакетов.
+добавляет состояние после возврата. `stateCounts` считает все переходы, даже
+вытесненные из последних 48 событий. `rejectedAddresses` содержит максимум
+16 записей за запуск: роль, IPv4 source/destination и номер IP-протокола
+отклонённого пакета. Это сетевые метаданные, не содержимое: без портов, DNS-имён,
+произвольного stderr, ключей и аргументов запуска.
 Таймаут готовности сам по себе не доказывает ошибку TLS или авторизации;
 смотрим эту историю, а не угадываем по одному `native_ready_timeout`.
 Ошибки проверки сертификата различаются: `tls_verify_name`,
@@ -87,6 +90,22 @@ cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
 `h2_invalid_frame` — отклонённый HTTP/2-кадр; `h2_local_goaway_error` /
 `h2_local_reset_error` — завершение, инициированное локальной HTTP/2-библиотекой.
 Неизвестные причины не печатают peer-текст или содержимое пакета.
+
+После штатного END_STREAM/GOAWAY без ошибки на уже аутентифицированной сессии
+client переходит в `idle_wait`, а не открывает новую сессию без трафика.
+Первый IPv4-пакет сохраняется в C++ до готовности новой сессии. DNS stub умеет
+разбудить движок внутренним сигналом и ограниченно подождать готовности;
+пакеты/DNS не передаются через Node. Первоначальное подключение остаётся
+активным для проверки готовности, ошибки транспорта по-прежнему дают retry.
+
+`--hold-seconds=120` теперь делает HTTPS-проверки через `tun0` с паузой 10 секунд
+после ответа (проверяется и пробуждение после наблюдавшегося 5-секундного idle).
+В `hold` сохраняются результаты, время каждого запроса и полные счётчики
+состояний за native-запуск. Ошибка запроса завершает hold с возвратом legacy.
+`peer_address` в течение native-запуска также не позволяет считать hold успешным,
+даже если все HTTPS прошли. При `hold-seconds=0` остаётся только обычный smoke.
+Предыдущий `passed` для 120-секундного окна проверял только живой процесс,
+а не такую непрерывную работоспособность. Эти изменения требуют пересборки.
 
 Старый отчёт с общими кодами не позволяет задним числом определить причину.
 `atMs` — время получения события runner, **не timestamp движка**: синхронная
@@ -157,6 +176,7 @@ cd /root/dev/meshpn && node scripts/clean-vpn-native-trial.mjs --report
 node --test scripts/test-native-radxa-trial.mjs \
   scripts/test-native-trial-service.mjs scripts/test-native-trial-diagnostics.mjs \
   scripts/test-native-trial-readiness.mjs \
+  scripts/test-native-trial-hold.mjs \
   scripts/test-native-trial-ipv6.mjs scripts/test-vpn-ipv6.mjs \
   scripts/test-native-engine-controller.mjs scripts/test-dns-client-options.mjs \
   scripts/test-autostart-stop-contract.mjs scripts/test-host-stop-faults.mjs

@@ -77,6 +77,8 @@ struct Config {
 struct Control {
   std::atomic<bool> dns_ready{false};
   std::atomic<bool> dns_failed{false};
+  std::atomic<bool> dns_idle{false}, dns_demand{false};
+  unsigned address_reports=0;
   bool stop=false, uplink=true;
   uint64_t generation=0, tx=0, rx=0, dropped=0;
   std::string input, state="starting";
@@ -87,7 +89,20 @@ struct Control {
     ssize_t n=write(STDOUT_FILENO,line.data(),line.size());
     if(n!=ssize_t(line.size())) stop=true;
   }
-  void set(const std::string& s){dns_ready=s=="ready";state=s;emit("state");}
+  void set(const std::string& s){
+    if(s=="ready")dns_demand=false; // Coalesce concurrent DNS wake requests.
+    dns_idle=s=="idle_wait";dns_ready=s=="ready";state=s;emit("state");
+  }
+  void rejected_address(const Bytes& packet,bool client){
+    // Bounded, explicit metadata only. Never expose packet bytes or ports.
+    if(address_reports>=16)return;
+    address_reports++;
+    char src[INET_ADDRSTRLEN],dst[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET,packet.data()+12,src,sizeof(src));inet_ntop(AF_INET,packet.data()+16,dst,sizeof(dst));
+    auto line=json({{"version",1},{"event","peer_address_rejected"},{"role",client?"client":"exit"},
+      {"source",src},{"destination",dst},{"protocol",packet[9]}}).dump()+"\n";
+    if(write(STDOUT_FILENO,line.data(),line.size())!=ssize_t(line.size()))stop=true;
+  }
   void read_commands() {
     char b[1024]; ssize_t n;
     unsigned reads=0;
@@ -250,7 +265,7 @@ struct Session {
       s.decoder.feed(b,n,[&](Bytes p){
         // Current single-peer address contract, enforced before TUN injection.
         const uint8_t address[]={10,99,0,2};size_t off=s.config.client?16:12;
-        check(std::memcmp(p.data()+off,address,4)==0,"peer_address");
+        if(std::memcmp(p.data()+off,address,4)!=0){s.ctl.rejected_address(p,s.config.client);s.ctl.dropped++;throw std::runtime_error("peer_address");}
         s.packets.push(std::move(p));
       });
       h2check(nghttp2_session_consume(h,id,n));
@@ -289,7 +304,7 @@ struct Session {
     if(config.client)submit_headers({{":method","POST"},{":path","/clean-vpn"},{":scheme","https"},{":authority",config.name},
       {"authorization","Bearer "+token(secret,exporter(ssl),int64_t(time(nullptr))/900)},{"accept","*/*"}},true);
   }
-  void run(int socket,int tun,Clock::time_point deadline,uint64_t generation){
+  void run(int socket,int tun,Clock::time_point deadline,uint64_t generation,Bytes& pending){
     init(); std::array<uint8_t,65536> buffer{};
     while(!ctl.stop&&!interrupted&&ctl.uplink&&ctl.generation==generation){
       if(failure)throw std::runtime_error(failure);
@@ -321,6 +336,12 @@ struct Session {
         ssize_t n=write(tun,packets.data(),packets.front_size());
         if(n<0&&(errno==EAGAIN||errno==EWOULDBLOCK))break;
         check(n==ssize_t(packets.front_size()),"tun_write");packets.consume(n);ctl.rx++;
+      }
+      // The wake packet precedes everything still in the kernel TUN queue,
+      // including packets arriving in the same tick as authenticated headers.
+      if(ready&&!pending.empty()){
+        outgoing.push(frame(pending.data(),pending.size()));pending.clear();ctl.tx++;
+        if(deferred){h2check(nghttp2_session_resume_data(h2,stream));deferred=false;}
       }
       if(ready)for(int i=0;i<32&&outgoing.size()<queue_limit-max_packet-4;i++){
         ssize_t n=read(tun,buffer.data(),buffer.size());
@@ -377,7 +398,7 @@ int main(int argc,char** argv){
     nonblock(STDIN_FILENO);nonblock(STDOUT_FILENO);Control ctl;
     Fd tun(packet_fd(c,test));
     std::unique_ptr<DnsRelay> dns;
-    if(c.dns)dns=std::make_unique<DnsRelay>(c.tun,ctl.dns_ready,ctl.dns_failed);
+    if(c.dns)dns=std::make_unique<DnsRelay>(c.tun,ctl.dns_ready,ctl.dns_failed,&ctl.dns_idle,&ctl.dns_demand);
     std::unique_ptr<SSL_CTX,decltype(&SSL_CTX_free)> ctx(SSL_CTX_new(TLS_method()),SSL_CTX_free);check(bool(ctx),"tls_context");
     check(SSL_CTX_set_min_proto_version(ctx.get(),TLS1_3_VERSION)==1&&SSL_CTX_set_max_proto_version(ctx.get(),TLS1_3_VERSION)==1,"tls_version");
     SSL_CTX_set_options(ctx.get(),SSL_OP_NO_TICKET);
@@ -395,10 +416,26 @@ int main(int argc,char** argv){
       auto addr=endpoint(c);check(bind(listener.n,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))==0&&listen(listener.n,8)==0,"listen_bind");
     }
     ctl.set(c.client?"idle":"listening");
+    bool demand_wait=false;Bytes pending;
     while(!ctl.stop&&!interrupted){
       ctl.read_commands();if(ctl.stop)break;
       if(!ctl.uplink){pollfd p{STDIN_FILENO,POLLIN,0};poll(&p,1,100);continue;}
+      if(demand_wait){
+        ctl.set("idle_wait");auto generation=ctl.generation;
+        while(!ctl.stop&&!interrupted&&ctl.uplink&&ctl.generation==generation){
+          ctl.read_commands();if(ctl.stop||!ctl.uplink||ctl.generation!=generation)break;
+          if(ctl.dns_demand.exchange(false)){demand_wait=false;break;}
+          std::array<uint8_t,65536> packet{};ssize_t n=read(tun.n,packet.data(),packet.size());
+          if(n>0){
+            if(ipv4(packet.data(),n)){pending.assign(packet.data(),packet.data()+n);demand_wait=false;break;}
+            ctl.dropped++;
+          }
+          pollfd p[]={{STDIN_FILENO,POLLIN,0},{tun.n,POLLIN,0}};poll(p,2,25);
+        }
+        if(demand_wait||ctl.stop||interrupted)continue;
+      }
       Fd socket_fd;
+      bool authenticated=false;
       try{
         auto deadline=Clock::now()+std::chrono::seconds(10);auto generation=ctl.generation;
         if(c.client){
@@ -425,12 +462,18 @@ int main(int argc,char** argv){
         }
         else SSL_set_accept_state(ssl.get());
         ctl.set("handshake");handshake(ssl.get(),socket_fd.n,ctl,deadline,generation);
-        Session s(c,ctl,ssl.get(),secret);s.run(socket_fd.n,tun.n,deadline,generation);
+        Session s(c,ctl,ssl.get(),secret);
+        try{s.run(socket_fd.n,tun.n,deadline,generation,pending);}
+        catch(...){authenticated=s.ready;throw;}
       }catch(const std::exception& e){
         // Only fixed internal error codes, never input headers, keys or payload.
         ctl.set(e.what());
+        const std::string reason=e.what();
+        demand_wait=c.client&&authenticated&&(reason=="h2_peer_end_stream"||reason=="h2_goaway_no_error"||reason=="h2_stream_closed");
       }
       if(socket_fd.n>=0){close(socket_fd.n);socket_fd.n=-1;}
+      if(!pending.empty()){pending.clear();ctl.dropped++;}
+      if(demand_wait)continue; // Keep kernel backlog: the first valid packet wakes us.
       // Bounded best-effort drain of disconnected kernel backlog. Session
       // queues are always destroyed; a continuous producer cannot stall stop.
       std::array<uint8_t,65536> discard{};

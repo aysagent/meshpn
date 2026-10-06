@@ -41,9 +41,19 @@ int main(){
   try{
     const auto baseline=entries("/proc/self/fd");
     {
-      Origin primary("1.1.1.1"),backup("8.8.8.8");std::atomic<bool> ready{false},failed{false};auto relay=std::make_unique<DnsRelay>("lo",ready,failed);auto q=question();
+      Origin primary("1.1.1.1"),backup("8.8.8.8");std::atomic<bool> ready{false},failed{false},idle{false},demand{false};auto relay=std::make_unique<DnsRelay>("lo",ready,failed,&idle,&demand);auto q=question();
       dns::need(dns::response(query(q),q).rcode==2&&primary.requests==0&&backup.requests==0);ready=true;
       for(bool tcp:{false,true})dns::need(dns::response(query(q,tcp),q).rcode==3);
+      for(bool tcp:{false,true}){
+        ready=false;idle=true;demand=false;
+        std::atomic<bool> woke{false};
+        std::thread wake([&]{
+          auto end=std::chrono::steady_clock::now()+std::chrono::seconds(1);
+          while(!demand&&std::chrono::steady_clock::now()<end)std::this_thread::sleep_for(std::chrono::milliseconds(5));
+          woke=demand.load();idle=false;ready=true;
+        });
+        auto answer=query(q,tcp);wake.join();dns::need(woke&&dns::response(answer,q).rcode==3);
+      }
       for(int mode:{1,2}){primary.mode=mode;for(bool tcp:{false,true})dns::need(dns::response(query(q,tcp),q).rcode==3);}
       dns::need(backup.requests==4);primary.mode=3;
       dns::need(dns::response(query(q),q).flags&0x0200);dns::need(query(q,true).size()>512);

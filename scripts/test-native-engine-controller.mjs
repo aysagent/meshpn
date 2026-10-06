@@ -14,6 +14,14 @@ function fixture() {
   return { ctl, child, killed };
 }
 const status = { version: 1, event: 'state', state: 'ready', generation: 0, tx_packets: 3, rx_packets: 2, dropped_packets: 0 };
+test('address metadata has separate event and cannot carry extra packet fields', () => {
+  const { ctl, child, killed } = fixture(); let got;
+  ctl.on('diagnostic', e => got = e); ctl.on('status', () => assert.fail('not a status')); ctl.on('fault', () => {});
+  const event = { version: 1, event: 'peer_address_rejected', role: 'client', source: '1.1.1.1', destination: '10.99.0.3', protocol: 17 };
+  child.stdout.write(JSON.stringify(event) + '\n'); assert.deepEqual(got, event);
+  child.stdout.write(JSON.stringify({ ...event, payload: 'PRIVATE' }) + '\n');
+  assert.deepEqual(killed, ['SIGKILL']); child.emit('close', null, 'SIGKILL');
+});
 test('controller accepts only bounded metadata and issues only control commands', () => {
   const { ctl, child } = fixture(); let got; ctl.on('status', s => got = s);
   const line = JSON.stringify(status); child.stdout.write(line.slice(0, 9)); assert.equal(got, undefined);

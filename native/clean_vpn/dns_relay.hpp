@@ -17,6 +17,7 @@ class DnsRelay {
   struct Socket {int fd;explicit Socket(int n):fd(n){}~Socket(){if(fd>=0)close(fd);}Socket(const Socket&)=delete;};
   struct Job {std::atomic<bool> done{false};std::thread thread;~Job(){if(thread.joinable())thread.join();}};
   std::atomic<bool> stop_{false};std::atomic<bool>& ready_;std::atomic<bool>& failed_;std::string tun_;
+  std::atomic<bool>* idle_;std::atomic<bool>* demand_;
   Socket udp_{-1},tcp_{-1};std::thread loop_;std::vector<std::unique_ptr<Job>> jobs_;
   static sockaddr_in address(const char* ip,unsigned port){sockaddr_in a{};a.sin_family=AF_INET;a.sin_port=htons(port);dns::need(inet_pton(AF_INET,ip,&a.sin_addr)==1);return a;}
   bool alive()const{return !stop_;}
@@ -51,6 +52,11 @@ class DnsRelay {
   }
   Bytes resolve(const Bytes& original,bool tcp){
     auto q=dns::parse(original,true);if(q.edns_version)return dns::failure(original,16);
+    if(!ready_&&idle_&&*idle_){
+      *demand_=true;
+      const auto end=Time::now()+std::chrono::seconds(3);
+      while(alive()&&!ready_&&Time::now()<end)std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     Bytes wire=original;dns::need(RAND_bytes(wire.data(),2)==1);
     for(const char* server:{"1.1.1.1","8.8.8.8"})try{
       auto answer=exchange(wire,server,tcp);answer[0]=original[0];answer[1]=original[1];
@@ -85,7 +91,9 @@ class DnsRelay {
     jobs_.clear();
   }
 public:
-  DnsRelay(const std::string& tun,std::atomic<bool>& ready,std::atomic<bool>& failed):ready_(ready),failed_(failed),tun_(tun){
+  DnsRelay(const std::string& tun,std::atomic<bool>& ready,std::atomic<bool>& failed,
+      std::atomic<bool>* idle=nullptr,std::atomic<bool>* demand=nullptr):ready_(ready),failed_(failed),tun_(tun),idle_(idle),demand_(demand){
+    dns::need((idle==nullptr)==(demand==nullptr));
     jobs_.reserve(16);
     for(auto* s:{&udp_,&tcp_}){s->fd=socket(AF_INET,(s==&udp_?SOCK_DGRAM:SOCK_STREAM)|SOCK_NONBLOCK|SOCK_CLOEXEC,0);dns::need(s->fd>=0);
       if(s==&tcp_){int one=1;dns::need(setsockopt(s->fd,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one))==0);}

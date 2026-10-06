@@ -11,6 +11,7 @@ import { inspectBlockedTrialIpv6, validateReleasedTrialIpv6 } from './lib/native
 import { trialServiceFingerprint } from './lib/native-trial-service.mjs';
 import { trialDiagnostics } from './lib/native-trial-diagnostics.mjs';
 import { waitLegacyReady } from './lib/native-trial-readiness.mjs';
+import { probeNativeHold } from './lib/native-trial-hold.mjs';
 
 const SELF = fileURLToPath(import.meta.url), ROOT = path.dirname(path.dirname(SELF));
 const UNIT = 'clean-vpn-native-trial.service', OLD = 'clean-vpn.service';
@@ -227,13 +228,14 @@ async function adapter() {
       await run('ip', ['link', 'set', 'dev', 'tun0', 'mtu', '1400', 'up']);
     },
     launch: () => launchTrialNative(path.join(scratch, 'client.json')),
-    async hold(seconds, cancelled, session) {
-      const deadline = performance.now() + seconds * 1000;
-      do {
-        check(!cancelled(), 'cancelled'); check(session.healthy(), 'native_exited_during_trial');
-        if (performance.now() >= deadline) break;
-        await sleep();
-      } while (true);
+    async hold(seconds, cancelled, session, report) {
+      await probeNativeHold({ seconds, cancelled, session, report, probe: async timeout => {
+        const result = await command('curl', ['-q', '-4', '-f', '-sS', '--noproxy', '*', '--interface', 'tun0',
+          '--connect-timeout', '3', '--max-time', '5', '--max-filesize', '4096',
+          'https://1.1.1.1/cdn-cgi/trace'], timeout, 8192);
+        return result.code === 0 && !result.reason
+          && result.out.split(/\r?\n/).filter(l => l.startsWith('ip=')).join('') === 'ip=154.62.226.216';
+      } });
     },
     async removeTun(index) {
       const tun = (await links()).find(l => l.ifname === 'tun0');

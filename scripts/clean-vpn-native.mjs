@@ -34,6 +34,7 @@ const stop=()=>{
   engine.stop();
 };
 engine.on('status',event=>{if(!process.stdout.write(JSON.stringify(event)+'\n'))abort();});
+engine.on('diagnostic',event=>{if(!process.stdout.write(JSON.stringify(event)+'\n'))abort();});
 engine.on('fault',abort);
 engine.on('exit',({code,signal,incompleteStatus})=>{
   console.error(`native-control: engine exited code=${code} signal=${signal}`);

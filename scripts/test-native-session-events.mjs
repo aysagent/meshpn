@@ -74,6 +74,7 @@ for (const [code, inject] of [
   ['h2_goaway_error', sock => sock.session.goaway(11, 1, Buffer.from('PRIVATE DEBUG'))],
   ['h2_reset_no_error', null], ['h2_reset_error', null], ['h2_invalid_frame', null], ['tls_peer_closed', null],
   ['h2_local_goaway_error', null],
+  ['idle_cycles', sock => sock.end()],
 ]) test(`native reports ${code}, blocks bad injection and reconnects`, { timeout: 15000 }, async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cvpn-session-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -83,7 +84,9 @@ for (const [code, inject] of [
   const timers = new Set();
   const server = inject ? await startDateExit({ protocol: 'h2', secret, onBridge: sock => {
     sock.on('error', () => {});
-    if (++connections === 1) {
+    ++connections;
+    if (code === 'idle_cycles') sock.pipe(sock);
+    if (connections === 1 || code === 'idle_cycles') {
       const timer = setTimeout(() => { timers.delete(timer); if (!sock.destroyed) inject(sock); }, 100);
       timers.add(timer);
     } else sock.pipe(sock); // Opaque reference echo; C++ generates/checks bytes.
@@ -92,11 +95,15 @@ for (const [code, inject] of [
   const config = path.join(dir, 'client.json');
   fs.writeFileSync(config, JSON.stringify({ version: 1, role: 'client', address: '127.0.0.1', port: server.port,
     tun: 'cvtest0', secret_path: secretPath, server_name: 'localhost', ca: path.resolve('scripts/fixtures/boring-tls-local.cert.pem') }));
-  const child = spawn(path.join(build, 'integration-test'), [path.join(build, 'clean-vpn-engine-fixture'), config, `client-event:${code}`]);
+  const child = spawn(path.join(build, 'integration-test'), [path.join(build, 'clean-vpn-engine-fixture'), config,
+    code === 'idle_cycles' ? 'client-idle' : `client-event:${code}`]);
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', b => { output += b; });
   const timer = setTimeout(() => child.kill('SIGKILL'), 13000);
   t.after(() => { clearTimeout(timer); child.kill('SIGKILL'); });
   const [status] = await once(child, 'close'); clearTimeout(timer);
-  assert.equal(status, 0, output); assert.match(output, /classified session failure and reconnect PASS/);
-  assert.equal(inject ? connections : server.connections(), 2); assert.doesNotMatch(output, /PRIVATE|http2_receive|session_rejected_or_closed/);
+  assert.equal(status, 0, output);
+  assert.match(output, code === 'idle_cycles' ? /idle cycles wake packet, uplink, invalid traffic and stop PASS/ : /classified session failure and reconnect PASS/);
+  assert.equal(inject ? connections : server.connections(), code === 'idle_cycles' ? 4 : 2);
+  assert.doesNotMatch(output, /PRIVATE|http2_receive|session_rejected_or_closed/);
+  if (code === 'peer_address') assert.match(output, /"event":"peer_address_rejected"/);
 });

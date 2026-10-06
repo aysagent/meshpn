@@ -114,7 +114,8 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
     await step('native-ready', () => session.ready(cancelled));
     report.checks.native = await step('native-client-check', () => io.probe());
     requireTrial(report.checks.native.status === 'ipv4-smoke-passed', 'native_smoke_failed');
-    await step('native-hold', () => io.hold(holdSeconds, cancelled, session));
+    report.hold = {};
+    await step('native-hold', () => io.hold(holdSeconds, cancelled, session, report.hold));
     report.status = 'passed';
   } catch (error) {
     report.status = 'failed';
