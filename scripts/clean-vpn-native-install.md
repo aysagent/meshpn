@@ -7,6 +7,12 @@
 Адреса/DHCP/default остаются внешней обязанностью link owner; это **не**
 готовая миграция существующей Radxa/VPS или произвольного firewall.
 
+Также поддерживаются связанные site installs standalone transparent и
+[native combo с двумя вложенными конфигурациями](clean-vpn-native-combo-boot.md).
+Для них `--site-profile` обязателен; exit replay инициализируется только при
+fresh install, не при каждом запуске сервиса. Результаты ниже относятся к
+историческому boring-tls checkpoint; combo имеет отдельный двухзагрузочный стенд.
+
 ## Контракт установщика
 
 `clean-vpn-native-install.mjs` создаёт только новую именованную установку.
@@ -80,9 +86,10 @@ ext4 и перед systemd восстанавливаются в новый init
 защита от boot leak или проверка physical ARM64. Скорость не измеряется.
 
 Продолжение: [route coordinator с журналами и DHCP/gateway recovery](clean-vpn-native-routes.md).
-Незакрытая упаковочная часть boring-tls — полный native-only сетевой профиль
-TUN/guard/DNS/SNAT и его installer/boot приёмка. Затем native transparent/combo;
-только после полного native перехода — замеры скорости.
+Последующие checkpoints закрыли упаковку [native-only сетевого профиля](clean-vpn-native-network.md)
+TUN/guard/DNS/SNAT, [transparent boot](clean-vpn-native-transparent-boot.md) и
+[combo installer/boot](clean-vpn-native-combo-boot.md). Следующая точка —
+native-only нагрузочная/ресурсная приёмка и воспроизводимые замеры скорости.
 
 ## Зафиксированный результат
 

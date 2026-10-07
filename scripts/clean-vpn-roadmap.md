@@ -29,7 +29,7 @@ bundle client/exit, TUN/guard/DNS/SNAT/MSS, gate поднятия интерфе
 systemd target. Приёмка — изолированная VM с LAN и внешним тестовым origin.
 Финальная site-приёмка: 17/17 gates на двух загрузках, 349/349 native/routes
 регрессий; хеши и ограничения сохранены в `fixtures/clean-vpn-native-site-report.json`.
-Следующий лабораторный шаг — C++ transparent relay, затем native combo.
+Следующими лабораторными шагами стали C++ transparent relay и native combo (ниже).
 Начат [native transparent checkpoint](clean-vpn-native-transparent.md): bounded
 ClientHello/SNI codec и HRR gate, 18 full/resumed TLS-handshake в C++ memory BIO.
 Добавлены native enc-SNI auth, bounded durable replay, явный destination
@@ -47,17 +47,29 @@ LAN HTTPS REDIRECT, default-DROP для остального трафика и �
 прошла **19/19** gates на двух загрузках NIC-less VM: direct C++ client/exit,
 crash/restart, guard-before-uplink, сохранённый replay и отказ при его потере/
 повреждении. Результат: `fixtures/clean-vpn-native-transparent-boot-report.json`.
-Полная приёмка native combo ещё впереди; transparent пока experimental, без product-wide
-ECH/0-RTT/ресурсной и физической приёмки. Следующая точка — native combo:
+Transparent пока experimental, без product-wide ECH/0-RTT/ресурсной и физической
+приёмки. Поверх него реализован native combo:
 HTTPS через transparent, остальной поддержанный трафик через boring-tls,
 с native выбором ветки и без прямого обхода при отказе любого транспорта.
 Начат [native combo engine](clean-vpn-native-combo.md): один exit TCP listener,
 ClientHello dispatch и обе ветки в C++; неправильный relay-token не переходит
 в boring. Одновременный TLS/packet fixture и exit crash/restart проверяются
-отдельно. Следующая ограниченная точка — combo network profile с реальными
-TUN/DNS/LAN, затем installer/systemd VM; текущий engine ещё не combo deployment.
+отдельно. Единый combo network profile с реальными TUN/DNS/LAN уже проверен
+в NIC-less VM: HTTPS не проходит через TUN, остальной IPv4/DNS идёт через boring,
+SIGKILL обеих ролей не открывает прямой обход выбранного трафика, restart работает.
+Добавлен [combo fresh installer и systemd crash/reboot](clean-vpn-native-combo-boot.md):
+связанные nested engine/network configs, раздельные PSK, однократный replay init,
+direct C++ client/exit и installed route coordinator. Две загрузки NIC-less VM
+прошли **23/23** gates, включая autorestart, отдельные crash-окна, guard-before-link,
+сохранение replay и отказ при missing/corrupt state. Общая регрессия **416/416**,
+CTest normal/ASAN **6/6**, ASAN combo/installer/transparent integration **16/16**.
+Результат: `fixtures/clean-vpn-native-combo-boot-report.json`.
+Следующая ограниченная точка — native-only нагрузочная/ресурсная приёмка и
+воспроизводимые измерения обеих combo-веток. WAN Speedtest — отдельно на реальных
+узлах после лабораторной базы; TCG/1 MiB smoke не являются оценкой Internet speed.
 Combo engine checkpoint: 390/390 native/routes regression, CTest 6/6 normal и
 ASAN/UBSAN; результат и границы — `fixtures/clean-vpn-native-combo-report.json`.
+Network checkpoint и его scope — `fixtures/clean-vpn-native-combo-network-report.json`.
 Это dedicated-host контракт: адреса/DHCP/default предоставляет внешний link
 owner. Адаптация к конкретному distro/network manager, обновление существующих
 установок и физический boot остаются отдельной эксплуатационной работой.

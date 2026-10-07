@@ -30,3 +30,10 @@ test('transparent direct service has no TUN privileges and only explicit replay 
     assert.throws(() => nativeServiceUnit({ ...options, transport: 'transparent-tls', replayDirectory }));
   assert.throws(() => nativeServiceUnit({ ...options, replayDirectory: '/opt/replay' }));
 });
+test('combo service combines TUN access and bounded replay writes, never initializes runtime state', () => {
+  const unit = nativeServiceUnit({ ...options, transport: 'combo-tls', replayDirectory: '/opt/native/replay' });
+  assert.match(unit, /DeviceAllow=\/dev\/net\/tun rw/); assert.match(unit, /CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE/);
+  assert.match(unit, /ReadWritePaths=\/opt\/native\/replay\n/); assert.match(unit, /ProtectSystem=strict/);
+  assert.doesNotMatch(unit, /--init-transparent-replay|node|--test-packet-fd/);
+  assert.ok(!nativeServiceUnit({ ...options, transport: 'combo-tls' }).includes('ReadWritePaths='));
+});

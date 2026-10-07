@@ -1,7 +1,9 @@
 # Native combo: общий exit-порт и две C++ ветки
 
-Первый engine checkpoint, 2026-10-07. Это **не готовый combo site deployment**:
-общий network profile/installer и VM с реальными TUN/DNS ещё впереди.
+Native combo checkpoints, 2026-10-07: engine, единый network profile и fresh
+installer/systemd реализованы. [Двухзагрузочная приёмка](clean-vpn-native-combo-boot.md)
+прошла 23/23 gates с реальными TUN/DNS, crash/restart обеих ролей и durable replay.
+Ниже сохранены отдельные engine/network результаты с их собственными границами.
 
 Результат: **390/390** native/routes regression, CTest **6/6** normal и **6/6**
 ASAN/UBSAN, combo/transparent integration **7/7** с ASAN/UBSAN. Hashes и scope:
@@ -41,8 +43,10 @@ FD/payload в Node и дополнительного внешнего listener �
 - Replay journal обязателен для exit; автоматического reset/init нет.
 
 Сетевые guards, маршруты, TUN и REDIRECT остаются обязанностью внешнего control
-plane. Этот checkpoint не даёт разрешения смешивать standalone network profiles:
-у них разная политика FORWARD/OUTPUT. Production installer пока отвергает combo.
+plane. Для combo теперь есть единый профиль, описанный ниже; нельзя смешивать
+standalone network profiles: у них разная политика FORWARD/OUTPUT.
+Fresh installer принимает combo только с привязанным `--site-profile`;
+публикует disabled bundle, без автоматического enable/start.
 
 ## Конфигурация
 
@@ -60,7 +64,8 @@ plane. Этот checkpoint не даёт разрешения смешивать
 - Runtime требует `--config CONFIG --service`; stdin packet/control bridge нет.
 
 Capabilities помечают combo экспериментальным и явно сообщают
-`site_provisioning: false`. Это не поддержка hot-switch/profile UI.
+`site_provisioning: true`. Это поддержка связанного fresh site bundle,
+не hot-switch/profile UI и не обновление существующей установки.
 
 ## Лаборатория
 
@@ -89,11 +94,62 @@ TLS 1.3-HRR echo через настоящий REDIRECT. SIGKILL exit не пр�
 relay fallback; после restart старый token запрещён, свежий TLS и пакеты работают.
 Сохраняются исходные standalone transparent проверки.
 
-Ограничения: scoped loopback origin, fixture packet FD, один boring peer,
+Ограничения этого первого engine-теста: scoped loopback origin, fixture packet FD, один boring peer,
 без реального combo TUN/DNS/SNAT/MSS, независимого leak-capture, systemd combo
 boot, физических устройств и WAN benchmark. ECH/0-RTT, key rotation и браузерные
 профили не объявляются готовыми.
 
-Следующая точка: единый combo network profile и namespace/VM приёмка с LAN,
-реальными TUN, DNS/UDP через boring, HTTPS через transparent, default-DROP при
-отказах. После этого — fresh installer и systemd crash/reboot обеих ролей.
+## Единый network profile и реальный TUN
+
+`nativeNetworkPlan()` принимает строгий flat профиль boring с дополнительными
+`transport: "combo-tls"`, `listen_port` и `deny_ipv4`. Client требует LAN;
+exit требует `lan: null` и `listen_port === port`. На client порты relay, DNS и USB rescue
+не могут конфликтовать. Это профиль выделенного хоста/namespace, не способ
+добавить правила поверх существующего firewall.
+
+- LAN TCP/443 к разрешённым public IPv4 перехватывается через REDIRECT.
+  Запрещённые, private/local/control назначения на TCP/443 не уходят в boring.
+  Non-TLS или неподдержанный ClientHello закрывается, без повторной попытки
+  через другой транспорт и без прямого fallback.
+- Остальной поддержанный IPv4 с LAN идёт через boring TUN, SNAT и MSS.
+  UDP/443 тоже относится к boring, а не к transparent TCP relay.
+- Plain DNS с LAN и самого gateway перехватывается **до** исключений HTTPS,
+  обрабатывается C++ DNS relay и передаётся через TUN. Mark native upstream
+  предотвращает рекурсивный DNS-перехват.
+- HTTPS самого gateway пока идёт через boring: OUTPUT HTTPS REDIRECT не включён.
+  `deny_ipv4` — политика transparent HTTPS, не глобальная geo/ACL для всех IP.
+- Exit принимает обе ветки одним портом. Relay OUTPUT ограничен public HTTPS;
+  packet FORWARD/MASQUERADE ограничен TUN-подсетью. IPv6 остаётся default-DROP.
+- Единый journal владеет filter/NAT/mangle/TUN. Повторный запуск только проверяет
+  состояние; другой профиль, foreign rules и частичная установка не принимаются.
+
+Запуск отдельной лаборатории (проверенный base image и QEMU tools обязательны):
+
+```bash
+cmake --build native/clean_vpn/build --target clean-vpn-engine socket-test transparent-socket-test -j2
+node scripts/clean-vpn-native-lab.mjs "$CVPN_LAB_BASE" "$CVPN_QEMU_TOOLS" --native-combo-network
+```
+
+NIC-less QEMU содержит пять network namespaces: LAN app, gateway, exit, origin
+и соединяющий их виртуальный сегмент. В client и exit используется production
+C++ engine с настоящими TUN. Node не создаёт/не читает пакеты: TLS, TCP/UDP,
+DNS и packet capture выполняют C++ fixtures; наружу выходят только verdicts.
+
+12 gates проверяют положительный прямой контроль до установки guard, создание
+TUN, отсутствие HTTPS в счётчиках TUN, одновременные TLS 1.2/TLS 1.3-HRR и
+TCP/UDP, host/LAN DNS, двойной NAT, policy/no-downgrade, SIGKILL client с удалением
+split routes, SIGKILL exit и восстановление обеих ролей. Origin capture проверяет
+выбранный IPv4-трафик к `1.1.1.1`: он должен приходить от exit, не от gateway/LAN.
+При потерях capture в ядре итог не принимается.
+
+Результат: [fixtures/clean-vpn-native-combo-network-report.json](fixtures/clean-vpn-native-combo-network-report.json).
+VM **12/12**; regression **403/403**; CTest normal/ASAN **6/6** в каждой сборке;
+combo/transparent ASAN integration **7/7**. Capture: 426 пакетов положительного
+контроля, 0 прямых пакетов после guard, 0 потерь capture в ядре.
+Это runtime при статических fixture-маршрутах, один boring peer и выбранный IPv4
+origin; не all-egress/IPv6 capture, не systemd/reboot combo, не физическая приёмка
+и не benchmark. Fresh installer binding, route coordinator и systemd crash/reboot
+обеих combo-ролей теперь проверены [отдельным стендом](clean-vpn-native-combo-boot.md):
+23/23 gates, 416/416 regression, CTest normal/ASAN 6/6, ASAN integration 16/16.
+Далее — полностью native нагрузка/стабильность и воспроизводимые измерения,
+без вывода о WAN-скорости по результатам эмулятора.

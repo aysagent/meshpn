@@ -10,7 +10,7 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <net/if.h>
-#include <netpacket/packet.h>
+#include <linux/if_packet.h>
 #include <net/ethernet.h>
 #include <future>
 
@@ -321,7 +321,7 @@ static void public_lab_guard(const std::string& parent, bool origin) {
     safe &= name=="lo" || (!origin && name=="cvpublic0"); }
   if_freenameindex(names);need(safe && count==(origin?1u:2u));
 }
-static void public_origin(SSL_CTX* sc, const std::string& parent, bool network = false) {
+static void public_origin(SSL_CTX* sc, const std::string& parent, bool network = false, bool combo = false) {
   public_lab_guard(parent,true);
   need(command({"/usr/sbin/ip","link","set","lo","up"})==0);
   need(command({"/usr/sbin/ip","addr","add","1.1.1.1/32","dev","lo"})==0);
@@ -338,21 +338,30 @@ static void public_origin(SSL_CTX* sc, const std::string& parent, bool network =
   }
   Origin origin(sc,0,Destination{{0,0,0,0},443});
   std::cout<<"{\"stage\":\"origin-ready\"}"<<std::endl;
-  unsigned previous=~0u, forbidden=0, previous_forbidden=~0u;
+  unsigned previous=~0u, forbidden=0, previous_forbidden=~0u, capture_dropped=0, previous_dropped=~0u;
   for(;;) {
     if(network) {
       uint8_t b[2048];ssize_t n;
       while((n=recv(capture.fd,b,sizeof(b),0))>0) {
         if(n<20 || b[16]!=1 || b[17]!=1 || b[18]!=1 || b[19]!=1) continue;
         const size_t ihl=(b[0]&15)*4;
-        if(b[9]!=6 || size_t(n)<ihl+4 || b[ihl+2]!=1 || b[ihl+3]!=187) ++forbidden;
+        if(combo) {
+          // Both native branches must arrive from the exit, never the gateway
+          // or LAN. This fixture address exists only in the isolated lab.
+          if(b[12]!=198 || b[13]!=18 || b[14]!=0 || b[15]!=3) ++forbidden;
+        } else if(b[9]!=6 || size_t(n)<ihl+4 || b[ihl+2]!=1 || b[ihl+3]!=187) ++forbidden;
       }
       need(n<0 && (errno==EAGAIN || errno==EWOULDBLOCK));
+      if(combo) {
+        tpacket_stats stats{};socklen_t len=sizeof(stats);
+        need(getsockopt(capture.fd,SOL_PACKET,PACKET_STATISTICS,&stats,&len)==0);
+        capture_dropped+=stats.tp_drops;
+      }
     }
     const unsigned count=origin.connections;
-    if(count!=previous || forbidden!=previous_forbidden) {
-      std::cout<<nlohmann::json({{"connections",count},{"forbiddenPackets",forbidden}}).dump()<<std::endl;
-      previous=count;previous_forbidden=forbidden;
+    if(count!=previous || forbidden!=previous_forbidden || capture_dropped!=previous_dropped) {
+      std::cout<<nlohmann::json({{"connections",count},{"forbiddenPackets",forbidden},{"kernelDropped",capture_dropped}}).dump()<<std::endl;
+      previous=count;previous_forbidden=forbidden;previous_dropped=capture_dropped;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
@@ -401,7 +410,8 @@ static void public_probe(SSL_CTX* cc, SSL_CTX* sc) {
 int main(int argc, char** argv) {
   if (argc != 3 && argc != 5 && !(argc == 6 && std::string(argv[5]) == "--combo")) return 2;
   try {
-    const bool public_mode=argc==5 && std::string(argv[1]).rfind("--public-",0)==0;
+    const bool public_mode=argc==5 && (std::string(argv[1]).rfind("--public-",0)==0 ||
+      std::string(argv[1]).rfind("--combo-network-",0)==0);
     const int offset=public_mode?1:0;
     bssl::UniquePtr<SSL_CTX> cc(SSL_CTX_new(TLS_method())), sc(SSL_CTX_new(TLS_method())); need(cc && sc);
     need(SSL_CTX_use_certificate_chain_file(sc.get(),argv[1+offset]) && SSL_CTX_use_PrivateKey_file(sc.get(),argv[2+offset],SSL_FILETYPE_PEM));
@@ -413,11 +423,20 @@ int main(int argc, char** argv) {
         public_lab_guard(argv[4],true);std::cout<<"{\"stage\":\"namespace-ready\"}"<<std::endl;
         for(;;) pause();
       }
-      else if(mode=="--public-origin" || mode=="--public-network-origin") public_origin(sc.get(),argv[4],mode=="--public-network-origin");
+      else if(mode=="--public-origin" || mode=="--public-network-origin" || mode=="--combo-network-origin")
+        public_origin(sc.get(),argv[4],mode!="--public-origin",mode=="--combo-network-origin");
       else {
         public_lab_guard(argv[4],false);
         if(mode=="--public-network-udp") { network_udp();std::cout<<"UDP sent"<<std::endl; }
         else if(mode=="--public-network-negative" || mode=="--public-network-crash") network_negative(mode=="--public-network-crash");
+        else if(mode=="--combo-network-negative") {
+          for(const Destination d : {Destination{{8,8,8,8},443}, {{192,168,7,1},33002},
+              {{198,18,0,3},33001}, {{198,18,0,2},443}}) network_blocked(d);
+          RelaySocket s(connected(Destination{{1,1,1,1},443}));
+          const std::vector<uint8_t> plaintext={'n','o','t','-','t','l','s'};write_bytes(s.fd,plaintext);
+          uint8_t b;const auto n=recv(s.fd,&b,1,0);need(n==0 || (n<0 && errno==ECONNRESET));
+          std::cout<<"combo policy and non-TLS no fallback PASS"<<std::endl;
+        }
         else if(mode=="--public-client") {
           transfer(cc.get(),Destination{{1,1,1,1},443},TLS1_2_VERSION,true);
           transfer(cc.get(),Destination{{1,1,1,1},443},TLS1_3_VERSION,true);

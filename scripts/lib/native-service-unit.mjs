@@ -1,8 +1,8 @@
 // Pure renderer: no host writes, network mutations, enable/start or secrets.
 import path from 'node:path';
 export function nativeServiceUnit({ binary, config, networkUnit, guardUnit, transport = 'boring-tls', replayDirectory }) {
-  if (!['boring-tls', 'transparent-tls'].includes(transport)) throw Error('native_service_transport');
-  if (replayDirectory !== undefined && transport !== 'transparent-tls') throw Error('native_service_replay_transport');
+  if (!['boring-tls', 'transparent-tls', 'combo-tls'].includes(transport)) throw Error('native_service_transport');
+  if (replayDirectory !== undefined && transport === 'boring-tls') throw Error('native_service_replay_transport');
   for (const p of [binary, config, ...(replayDirectory === undefined ? [] : [replayDirectory])]) {
     if (typeof p !== 'string' || !/^\/[a-zA-Z0-9_./-]+$/.test(p) || path.normalize(p) !== p || p === '/')
       throw Error('native_service_absolute_safe_path_required');

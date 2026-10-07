@@ -11,6 +11,28 @@ const client = { version: 1, role: 'client', tun: 'tun0', tun_address: '10.99.0.
 const exit = { ...client, role: 'exit', tun_address: '10.99.0.1/24', lan: null };
 const transparent = { version: 1, transport: 'transparent-tls', role: 'client', uplink: 'wan0',
   endpoint: '154.62.226.216', port: 443, listen_port: 33002, lan: client.lan, deny_ipv4: ['8.8.8.0/24'] };
+const combo = { ...client, transport: 'combo-tls', listen_port: 33002, deny_ipv4: ['8.8.8.0/24'] };
+test('combo composes DNS/TUN/SNAT with LAN-only HTTPS and no HTTPS fallback', () => {
+  const p = nativeNetworkPlan(combo), boring = nativeNetworkPlan(client);
+  assert.deepEqual(p.tun, boring.tun); assert.equal(p.mangle, boring.mangle); assert.equal(p.ipv6, boring.ipv6);
+  assert.equal(p.forwarding, true);
+  assert.equal((p.nat.match(/--to-destination 10.99.0.2:1053/g) ?? []).length, 4);
+  assert.ok(p.nat.indexOf('--to-destination 10.99.0.2:1053') < p.nat.indexOf('-d 10.0.0.0/8 -j RETURN'));
+  assert.equal((p.nat.match(/REDIRECT/g) ?? []).length, 1);
+  assert.match(p.nat, /-A PREROUTING -i lan0 -s 192.168.7.0\/24 -p tcp -m tcp --dport 443 -j REDIRECT/);
+  assert.match(p.nat, /-o tun0 -j SNAT --to-source 10.99.0.2/);
+  assert.ok(p.ipv4.indexOf('--dport 443 -j DROP') < p.ipv4.indexOf('-o tun0 -j ACCEPT', p.ipv4.indexOf('-A FORWARD')));
+});
+test('combo exit shares listener, preserves packet NAT and restricts relay OUTPUT', () => {
+  const p = nativeNetworkPlan({ ...combo, ...exit, listen_port: 443 });
+  assert.match(p.nat, /-s 10.99.0.0\/24 -o wan0 -j MASQUERADE/);
+  assert.match(p.ipv4, /--sport 443 -m conntrack --ctstate ESTABLISHED --ctdir REPLY -j ACCEPT/);
+  assert.ok(!p.ipv4.includes('-A OUTPUT -o wan0 -m conntrack'));
+  assert.ok(p.ipv4.indexOf('-d 10.0.0.0/8 -j DROP') < p.ipv4.indexOf('-o wan0 -p tcp -m tcp --dport 443 -j ACCEPT'));
+});
+for (const patch of [{ listen_port: 1053 }, { listen_port: 2222 }, { lan: null }, { deny_ipv4: ['8.8.8.1/24'] },
+  { unexpected: true }, { tun: 'wan0' }, { endpoint: '192.168.7.2' }, { deny_ipv4: null }])
+  test(`combo rejects ${JSON.stringify(patch)}`, () => assert.throws(() => nativeNetworkPlan({ ...combo, ...patch })));
 test('transparent gateway intercepts only LAN HTTPS; never enables forwarding or host fallback', () => {
   const p = nativeNetworkPlan(transparent);
   assert.deepEqual(p.tun, []); assert.equal(p.forwarding, false);
@@ -107,6 +129,13 @@ function fixture() {
     } };
   return { io, commands, records, tables, interfaces, state: () => state };
 }
+test('combo guard installs once, refuses drift and never reapplies over live tables', () => {
+  const f = fixture(); assert.equal(applyNativeNetworkProfile(combo, f.io).status, 'installed');
+  assert.equal(applyNativeNetworkProfile(combo, f.io).status, 'verified');
+  assert.throws(() => applyNativeNetworkProfile({ ...combo, listen_port: 33003 }, f.io), /profile_changed/);
+  f.tables.nat += '-A OUTPUT -j ACCEPT\n';
+  assert.throws(() => applyNativeNetworkProfile(combo, f.io), /foreign_firewall_change/);
+});
 test('transparent shares journal lifecycle, without creating TUN or enabling forwarding', () => {
   const f = fixture(); assert.equal(applyNativeNetworkProfile(transparent, f.io).status, 'installed');
   assert.equal(f.state().tun, null); assert.equal(f.state().forwarding, '0');

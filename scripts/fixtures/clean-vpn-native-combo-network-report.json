@@ -1,0 +1,71 @@
+{
+  "status": "passed",
+  "date": "2026-10-07",
+  "artifacts": "/var/tmp/meshpn-native-lab-RNwGEE",
+  "nic": "none",
+  "hostSharedFilesystem": false,
+  "realTun": true,
+  "packetOwner": "C++",
+  "kernelSha256": "7a69aaa48d149d102c572424b588e2bc6f8b7524d5ec0e08fd2a2a06448f01f8",
+  "accelerator": "TCG",
+  "vcpus": 1,
+  "memoryMiB": 1536,
+  "tunMtu": 1400,
+  "guard": "dedicated-native-combo-client-and-exit",
+  "benchmark": "not-requested",
+  "limitations": [
+    "fixture-PKI-and-origins",
+    "runtime-static-routes-not-systemd-installer-reboot",
+    "selected-IPv4-origin-capture-not-all-egress",
+    "not-physical-Radxa-or-arm64",
+    "not-performance-benchmark"
+  ],
+  "nativeOnly": true,
+  "labScriptSha256": "b43bd4936862f58256587a6eaa3fc3762cd32141c8d52b037c08657632e7e3c0",
+  "clean-vpn-engineSha256": "01c7cfb6f6986b342ebf3fd2f1d72dd0b853dd32a31924c3aa7097f89d6c80b3",
+  "socket-testSha256": "5100af3d12c66fbd5e5b4227cc0ede6fdfa869d8f417582ebec1efefa5fa020b",
+  "transparent-socket-testSha256": "c0a75e8e91f6eb2e94fbed75d926af60ee2d7bc5cf4c18d6f82bce8822d18c84",
+  "transport": "combo-tls",
+  "realTunPeers": 1,
+  "networkPlanSha256": "65cf0f5629d02b8ed12f1f2da102be68defd66680954d7b00cfb6139c99de173",
+  "networkApplySha256": "896cff7da956a37c01c1b2bb456eaf80210088c3ccfab32e60351444023e17b9",
+  "code": 0,
+  "evidence": {
+    "status": "passed",
+    "checks": [
+      "DIRECT_POSITIVE_CONTROL",
+      "GUARDS_REAL_TUN",
+      "HTTPS_TRANSPARENT_NOT_TUN",
+      "CONCURRENT_TLS_TCP_UDP",
+      "NATIVE_DNS_HOST_LAN",
+      "DOUBLE_NAT",
+      "POLICY_NO_DOWNGRADE",
+      "CLIENT_CRASH_DIRECT_ROUTE_BLOCKED",
+      "CLIENT_RESTART",
+      "EXIT_CRASH_BLOCKED",
+      "EXIT_RESTART",
+      "SELECTED_ORIGIN_NO_DIRECT_PACKETS"
+    ],
+    "positiveCapturePackets": 426,
+    "directPacketsAfterGuard": 0,
+    "captureKernelDropped": 0,
+    "realTun": true,
+    "roles": ["client", "exit"],
+    "namespaces": 5,
+    "packetOwner": "C++",
+    "scope": "runtime-static-routes-selected-IPv4-origin-not-installer-systemd-reboot-all-egress-or-benchmark"
+  },
+  "benchmarks": [],
+  "verification": {
+    "nativeAndRouteRegression": { "passed": 403, "failed": 0, "skipped": 0 },
+    "ctest": { "normalPassed": 6, "asanUbsanPassed": 6 },
+    "comboTransparentAsanUbsanIntegration": { "passed": 7, "failed": 0 },
+    "boringNativeSoakNotComboBenchmark": {
+      "seconds": 180,
+      "packets": 937080,
+      "droppedPackets": 0,
+      "unexpectedReconnects": 0,
+      "peakRssKiB": 6352
+    }
+  }
+}

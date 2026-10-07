@@ -1,0 +1,109 @@
+{
+  "status": "passed",
+  "nic": "none",
+  "hostSharedFilesystem": false,
+  "realTun": true,
+  "packetOwner": "C++",
+  "kernelSha256": "7a69aaa48d149d102c572424b588e2bc6f8b7524d5ec0e08fd2a2a06448f01f8",
+  "accelerator": "TCG",
+  "vcpus": 1,
+  "memoryMiB": 1536,
+  "tunMtu": 1400,
+  "guard": "native-combo-site-default-DROP",
+  "benchmark": "not-requested",
+  "limitations": [
+    "fixture-PKI-and-origins",
+    "local-capture-not-on-wire-proof",
+    "not-physical-Radxa-or-arm64",
+    "emulator-not-production-performance",
+    "RSS-not-PSS; sampling-may-miss-short-lived-processes",
+    "external-fixture-link-address-default-owner",
+    "not-live-site-upgrade-or-all-egress-capture",
+    "selected-IPv4-probes-not-all-egress-capture",
+    "reboot-journal-bytes-not-cross-boot-live-token-replay",
+    "persistent-artifacts-restored-into-initramfs",
+    "static-managed-links-not-DHCP",
+    "no-independent-early-boot-packet-capture"
+  ],
+  "nativeOnly": true,
+  "labScriptSha256": "7693700e64b584d4329da90b3720f9633da37df21b784a96934ca6acac0da5b3",
+  "serviceUnitRendererSha256": "39c4cefa3d4dc1b410487b4b1413b8dc34eb0e22003d66f0c8b82483dd938e88",
+  "clean-vpn-engineSha256": "7967dafd87bc1152b245f95d08d54598fbe3d3fa3688b6267b4a6f28cf80a2dc",
+  "socket-testSha256": "5100af3d12c66fbd5e5b4227cc0ede6fdfa869d8f417582ebec1efefa5fa020b",
+  "transparent-socket-testSha256": "c0a75e8e91f6eb2e94fbed75d926af60ee2d7bc5cf4c18d6f82bce8822d18c84",
+  "systemdPid1": true,
+  "nativeDirectServices": true,
+  "realTunPeers": 1,
+  "sitePlanSha256": "94fadc16b96ef08ee637547090eb5e9b3ce881acece45d2c489e42e7b17edd09",
+  "siteInstallerSha256": "0222f6a035d29a943aac6982f558b81f8238afd890f355141b174ab1fbf757ee",
+  "routeCoordinatorSha256": "d920ed31970e160eec99ee19512d4caf844b2cc4186660d8a73adc409dbbc3a9",
+  "routeJournalSha256": "36dfcdb035cd34c3a83d1aa5c2a5a6645192197613b90a0fa57fef0a35c2aa67",
+  "routeServiceSha256": "aebdf725591312bc31237e8571fb8daa9f3971d9e55fddc114081e562575df27",
+  "networkPlanSha256": "65cf0f5629d02b8ed12f1f2da102be68defd66680954d7b00cfb6139c99de173",
+  "networkApplySha256": "896cff7da956a37c01c1b2bb456eaf80210088c3ccfab32e60351444023e17b9",
+  "networkCliSha256": "03a4d0514acc7a8d211eb2d7727e1838269b12e419489f699f581b036e8efba5",
+  "networkUnitSha256": "e5157e48a88f580ed1c35219dea9babd8610c330c1a6a4eb136a51421dc2a452",
+  "comboBoot": true,
+  "transport": "combo-tls",
+  "comboImageSha256": "a166a948f07dad149b48e57d32e96367c3e0517131b79b08c2f1c1822286a254",
+  "boots": [
+    {
+      "phase": 0,
+      "bootId": "5ea4025a-13da-45b8-95af-45aca97d2759",
+      "checks": {
+        "NATIVE_COMBO_INSTALLED_DISABLED_PASS": true,
+        "NATIVE_COMBO_GUARD_BEFORE_LINK_PASS": true,
+        "NATIVE_COMBO_DIRECT_CPP_NOTIFY_PASS": true,
+        "NATIVE_COMBO_TLS_PASS": true,
+        "NATIVE_COMBO_TUN_DNS_PASS": true,
+        "NATIVE_COMBO_ROUTE_COORDINATOR_PASS": true,
+        "NATIVE_COMBO_UNSUPPORTED_BLOCKED_PASS": true,
+        "NATIVE_COMBO_CLIENT_AUTORESTART_PASS": true,
+        "NATIVE_COMBO_CLIENT_CRASH_BLOCKED_PASS": true,
+        "NATIVE_COMBO_EXIT_AUTORESTART_PASS": true,
+        "NATIVE_COMBO_EXIT_CRASH_BLOCKED_PASS": true,
+        "NATIVE_COMBO_TARGET_STOP_BLOCKED_PASS": true,
+        "NATIVE_COMBO_REPLAY_PERSISTED_PASS": true
+      }
+    },
+    {
+      "phase": 1,
+      "bootId": "e9a9d206-b630-4cbd-b7e2-355b4b42bda9",
+      "checks": {
+        "NATIVE_COMBO_REBOOT_REPLAY_BYTES_PASS": true,
+        "NATIVE_COMBO_REBOOT_AUTOSTART_ORDER_PASS": true,
+        "NATIVE_COMBO_REBOOT_TLS_PASS": true,
+        "NATIVE_COMBO_REBOOT_TUN_DNS_PASS": true,
+        "NATIVE_COMBO_ROUTE_COORDINATOR_PASS": true,
+        "NATIVE_COMBO_UNSUPPORTED_BLOCKED_PASS": true,
+        "NATIVE_COMBO_MISSING_REPLAY_REFUSED_PASS": true,
+        "NATIVE_COMBO_CORRUPT_REPLAY_REFUSED_PASS": true,
+        "NATIVE_COMBO_REPLAY_RESTORED_TLS_PASS": true,
+        "NATIVE_COMBO_TARGET_STOP_BLOCKED_PASS": true
+      }
+    }
+  ],
+  "installerSha256": "0222f6a035d29a943aac6982f558b81f8238afd890f355141b174ab1fbf757ee",
+  "bootDriverSha256": "7693700e64b584d4329da90b3720f9633da37df21b784a96934ca6acac0da5b3",
+  "code": 0,
+  "benchmarks": [],
+  "schema": 1,
+  "kind": "clean-vpn-native-combo-boot-lab",
+  "date": "2026-10-07",
+  "reportFile": "/var/tmp/meshpn-native-lab-UJMwFH/report.json",
+  "checks": 23,
+  "regressions": {
+    "passed": 416,
+    "failed": 0,
+    "scope": "scripts/test-native-*.mjs and host-routes/uplink regression"
+  },
+  "ctest": {
+    "normalPassed": 6,
+    "asanUbsanPassed": 6
+  },
+  "asanIntegration": {
+    "passed": 16,
+    "failed": 0,
+    "scope": "combo, combo installer, transparent integration"
+  }
+}

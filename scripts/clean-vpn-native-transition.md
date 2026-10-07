@@ -156,9 +156,17 @@ VM выше относится к предыдущей сборке и сохр�
 3. [Native combo engine checkpoint](clean-vpn-native-combo.md): общий exit listener,
    выбор ветки по ClientHello и владение потоками внутри C++ реализованы.
    Проверены одновременный packet/TLS fixture и replay после exit crash.
-   Ещё нужны единый network profile, реальные TUN/DNS/LAN, installer и systemd
-   crash/reboot приёмка combo; нельзя склеивать standalone guards вручную.
-4. Затем измерение скорости полностью native схемы и следующие продуктовые
+   Единый network profile и реальные TUN/DNS/LAN проверены в NIC-less VM:
+   HTTPS через transparent, TCP/UDP/DNS через boring, crash/restart обеих ролей,
+   отказ прямого fallback даже после удаления split routes. Нельзя склеивать
+   standalone guards вручную. [Installer/systemd приёмка](clean-vpn-native-combo-boot.md)
+   дополнительно прошла 23/23 gates на двух загрузках: nested PKI/PSK, replay,
+   direct C++ client/exit, установленный route coordinator, crash/autorestart и
+   отказ при missing/corrupt replay без автоматического reset. Общая регрессия
+   416/416; CTest normal/ASAN 6/6 и ASAN integration 16/16. Это fresh dedicated-host
+   контракт, не distro migration, physical acceptance или live upgrade.
+4. Далее native-only нагрузочная/ресурсная приёмка, воспроизводимые измерения
+   полностью native схемы (не Internet speed из TCG) и следующие продуктовые
    этапы roadmap. Браузерные профили/UI не объявляются реализованными этим шагом.
 
 Это промежуточный этап полного переноса, **не** заявление «весь native готов».
