@@ -13,6 +13,10 @@ capture: 416 direct packets до guard (положительный контро�
 ASAN integration 12/12, targeted benchmark/network/load 18/18.
 Production engine не изменён этим checkpoint.
 
+Для сборки на небольшом VPS есть [режим без debug-информации](clean-vpn-native-build.md)
+`bash scripts/build-clean-vpn-native.sh --low-memory`: сохраняет `-O2` и тесты,
+не создаёт swap и не гарантирует достаточность RAM.
+
 ```bash
 cmake -S native/clean_vpn -B native/clean_vpn/build
 cmake --build native/clean_vpn/build -j2
