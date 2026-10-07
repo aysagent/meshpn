@@ -146,8 +146,10 @@ VM выше относится к предыдущей сборке и сохр�
    Добавлен standalone LAN HTTPS network guard с default-DROP остальных типов
    трафика и общей моделью владения firewall. Пять namespace проверяют оба C++
    engine, PREROUTING REDIRECT, SIGKILL client/exit, restart и отсутствие
-   выбранного прямого обхода. Installer binding и systemd cold boot для
-   transparent ещё впереди; существующий TUN site installer его не принимает.
+   выбранного прямого обхода. Fresh site installer теперь связывает engine и
+   firewall, создаёт replay state до публикации unit и выделяет ему единственный
+   writable каталог. Transparent systemd/cold boot и сохранность replay при
+   reboot ещё требуют отдельной VM приёмки.
 3. Native combo, выбор ветки и владение потоками внутри native engine.
 4. Затем измерение скорости полностью native схемы и следующие продуктовые
    этапы roadmap. Браузерные профили/UI не объявляются реализованными этим шагом.

@@ -35,6 +35,26 @@ test('C++ public destination deny blocks match network guard', () => {
   const source = fs.readFileSync(new URL('../native/clean_vpn/transparent_destination.hpp', import.meta.url), 'utf8');
   for (const block of transparentSpecialIPv4) assert.ok(source.includes('"' + block + '"'), block);
 });
+test('transparent site binds engine policy/listener/exit and has no route coordinator', () => {
+  for (const role of ['client', 'exit']) {
+    const profile = { ...transparent, role, lan: role === 'client' ? transparent.lan : null, listen_port: role === 'client' ? 33002 : 443 };
+    const engine = { transport: 'transparent-tls', role, destination_policy: { mode: 'public-https', deny_ipv4: profile.deny_ipv4 },
+      listen: { ipv4: role === 'client' ? '0.0.0.0' : profile.endpoint, port: profile.listen_port },
+      ...(role === 'client' ? { exit: { ipv4: profile.endpoint, port: profile.port } } : {}) };
+    const args = { name: 'tr', target: '/opt/clean-vpn-native/tr', site: { link_unit: 'links.service', profile }, engine,
+      capability: { experimental_transports: { 'transparent-tls': { durable_replay: true, client_interception: 'SO_ORIGINAL_DST', destination_policies: ['public-https'] } } } };
+    const plan = nativeSitePlan(args);
+    assert.equal(plan.units.size, 4); assert.ok(!plan.files.has('routes.json'));
+    assert.match(plan.units.get('native-tr.service'), /After=native-tr-uplink.service native-tr-network.service/);
+    assert.ok(!plan.units.get('native-tr.service').includes('DeviceAllow='));
+    assert.equal(plan.units.get('native-tr.service').includes('ReadWritePaths='), role === 'exit');
+    for (const patch of [{ transport: 'boring-tls' }, { listen: { ...engine.listen, port: 444 } },
+      { destination_policy: { mode: 'public-https', deny_ipv4: [] } }, { destinations: ['1.1.1.1'] }])
+      assert.throws(() => nativeSitePlan({ ...args, engine: { ...engine, ...patch } }));
+    assert.throws(() => nativeSitePlan({ ...args, capability: {} }));
+    if (role === 'client') assert.throws(() => nativeSitePlan({ ...args, engine: { ...engine, exit: { ipv4: profile.endpoint, port: 444 } } }));
+  }
+});
 test('native client plan confines forwarding and SNAT, intercepts plain DNS, prevents recursive native DNS', () => {
   const p = nativeNetworkPlan(client);
   assert.match(p.ipv4, /:OUTPUT DROP/); assert.match(p.ipv6, /:FORWARD DROP/);

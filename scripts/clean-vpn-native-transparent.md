@@ -287,10 +287,12 @@ Public-policy checkpoint: общий normal regression-прогон **138/138**,
 LAN HTTPS REDIRECT, client/exit default-DROP правила, без TUN/forwarding и без
 direct fallback для остального трафика. Пять namespace проверяют реальный TLS
 через оба native engine, SIGKILL каждого, restart и сохранность правил.
-Это ещё не installer/systemd boot приёмка transparent.
+Добавлен fresh installer binding engine/network и однократная C++ инициализация
+replay до публикации unit; runtime не сбрасывает state. Это ещё не systemd boot
+приёмка transparent.
 
-1. Immutable binding engine/network и fresh installer/systemd lifecycle для
-   transparent с VM cold boot/crash приёмкой; явная политика ключей/ротации.
+1. VM systemd/cold boot/crash приёмка transparent installer с сохранением replay
+   state; явная политика ключей/ротации.
 2. Расширенные crash/restart/boot/ресурсные сценарии, реальный ECH/0-RTT.
 3. Полная эксплуатационная интеграция native-only network profile. Non-HTTPS и неподдержанный TLS —
    только явно защищённый native путь либо блокировка, никакого cleartext/direct

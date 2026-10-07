@@ -62,7 +62,10 @@ function guard(e, profile) {
   return () => assert.equal(applyNativeNetworkProfile(profile, io).status, 'verified');
 }
 async function launch(e, config) {
-  const process = start('nsenter', [...nsargs(e), engine, '--config', config, '--service']);
+  // Same network capability bound as the rendered transparent service, after
+  // entering the fixture namespace. SO_ORIGINAL_DST must work without ADMIN.
+  const process = start('nsenter', [...nsargs(e), 'setpriv', '--bounding-set=-all,+net_bind_service',
+    '--inh-caps=-all', '--no-new-privs', '--', engine, '--config', config, '--service']);
   await wait(process, x => x.lines.some(l => l.state === 'listening')); return process;
 }
 try {
@@ -125,7 +128,7 @@ try {
   auditGateway(); auditExit();
   console.log(JSON.stringify({ status: 'passed', kind: 'native-transparent-network-guard', namespaces: 5,
     originConnections: 6, positiveCapturePackets: before, forbiddenPacketsAfterGuard: 0,
-    checks: ['LAN-REDIRECT-TLS12-TLS13-HRR', 'no-TUN-no-forwarding', 'non-HTTPS-and-direct-listener-blocked',
+    checks: ['LAN-REDIRECT-TLS12-TLS13-HRR', 'engine-without-network-admin-capabilities', 'no-TUN-no-forwarding', 'non-HTTPS-and-direct-listener-blocked',
       'client-SIGKILL-no-fallback', 'exit-SIGKILL-no-fallback', 'restart-both', 'firewall-journal-unchanged'],
     scope: 'namespace-runtime-not-systemd-boot-or-physical-deployment; selected-IPv4-probes' }));
 } finally {

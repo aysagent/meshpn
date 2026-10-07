@@ -53,6 +53,12 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   need(![networkUnit, guardUnit].includes(unitName), 'self_dependency');
   const engine = regular(binary, 64 * 1024 * 1024);
   const input = JSON.parse(regular(config, 16384));
+  const transparent = input.transport === 'transparent-tls';
+  need(!transparent || siteProfile, 'transparent_requires_bound_site_profile');
+  if (transparent && input.role === 'exit') {
+    safePath(input.replay_directory);
+    need(!exists(input.replay_directory), 'fresh_replay_source_must_not_exist');
+  }
   const capability = JSON.parse(execFileSync(binary, ['--capabilities'], { encoding: 'utf8', timeout: 5000, maxBuffer: 16384 }));
   need(capability.engine === 'clean-vpn-native-m1' && capability.packet_ipc === false && capability.service_mode === true, 'not_native_service_engine');
   execFileSync(binary, ['--check-config', config], { timeout: 10000, stdio: 'pipe', maxBuffer: 16384 });
@@ -87,8 +93,12 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     const bytes = regular(source, secret && name.endsWith('.psk') ? 32 : 1024 * 1024, secret);
     files.set(name, { bytes, mode: secret ? 0o600 : 0o644 }); return target + '/' + name;
   };
-  if (input.role === 'client') rewritten.ca = copy(input.ca, 'ca.pem', false);
-  else { rewritten.cert = copy(input.cert, 'cert.pem', false); rewritten.key = copy(input.key, 'private.pem', true); }
+  if (!transparent) {
+    if (input.role === 'client') rewritten.ca = copy(input.ca, 'ca.pem', false);
+    else { rewritten.cert = copy(input.cert, 'cert.pem', false); rewritten.key = copy(input.key, 'private.pem', true); }
+  }
+  const replay = transparent && input.role === 'exit';
+  if (replay) rewritten.replay_directory = target + '/replay';
   if (input.secret_path) rewritten.secret_path = copy(input.secret_path, 'peer.psk', true);
   if (input.peers) rewritten.peers = input.peers.map((peer, i) => ({ ipv4: peer.ipv4, secret_path: copy(peer.secret_path, `peer-${i}.psk`, true) }));
   files.set('config.json', { bytes: Buffer.from(JSON.stringify(rewritten) + '\n'), mode: 0o600 });
@@ -99,6 +109,8 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     for (const [name, body] of units) files.set('units/' + name, { bytes: Buffer.from(body), mode: 0o644 });
   }
   const manifest = { schema: 1, kind: 'clean-vpn-native-install', name, role: input.role, unit: unitName,
+    transport: transparent ? 'transparent-tls' : 'boring-tls',
+    mutableDirectories: replay ? [{ name: 'replay', mode: 0o700, purpose: 'durable-replay-no-automatic-reset' }] : [],
     networkUnit, guardUnit, dependencies, activation: site?.activation ?? unitName,
     units: [...units.keys()], files: [...files].map(([name, f]) => ({ name, mode: f.mode, sha256: hash(f.bytes) })) };
   if (!apply) return { status: 'eligible', unit: unitName, target, fileCount: files.size, activation: 'not-requested' };
@@ -112,6 +124,18 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     exclusive(bundle + '/' + name, f.bytes, f.mode); syncDirectory(path.dirname(bundle + '/' + name));
   }
   syncDirectory(bundle); fault('files');
+  if (replay) {
+    // Fresh bundle only. Runtime NEVER initializes a missing replay journal.
+    fs.mkdirSync(bundle + '/replay', { mode: 0o700 }); syncDirectory(bundle);
+    const initPath = bundle + '/replay-init.json';
+    // Alternate root is a test/install staging root, not a chroot. Use actual
+    // owned paths for initialization; published config keeps deployment paths.
+    exclusive(initPath, JSON.stringify({ ...rewritten, secret_path: at(rewritten.secret_path), replay_directory: bundle + '/replay' }), 0o600);
+    syncDirectory(bundle); fault('replay-prepared');
+    execFileSync(bundle + '/engine', ['--init-transparent-replay', initPath], { timeout: 10000, stdio: 'pipe', maxBuffer: 16384 });
+    fault('replay-initialized');
+    fs.unlinkSync(initPath); syncDirectory(bundle);
+  }
   // Unit publication is a single no-replace link. All files precede it durably.
   // Dependencies publish first and the activation target last. All are disabled.
   // A crash leaves an inspectable partial bundle, never an adoptable install.

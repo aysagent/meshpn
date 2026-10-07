@@ -1,7 +1,9 @@
 // Pure renderer: no host writes, network mutations, enable/start or secrets.
 import path from 'node:path';
-export function nativeServiceUnit({ binary, config, networkUnit, guardUnit }) {
-  for (const p of [binary, config]) {
+export function nativeServiceUnit({ binary, config, networkUnit, guardUnit, transport = 'boring-tls', replayDirectory }) {
+  if (!['boring-tls', 'transparent-tls'].includes(transport)) throw Error('native_service_transport');
+  if (replayDirectory !== undefined && transport !== 'transparent-tls') throw Error('native_service_replay_transport');
+  for (const p of [binary, config, ...(replayDirectory === undefined ? [] : [replayDirectory])]) {
     if (typeof p !== 'string' || !/^\/[a-zA-Z0-9_./-]+$/.test(p) || path.normalize(p) !== p || p === '/')
       throw Error('native_service_absolute_safe_path_required');
   }
@@ -34,7 +36,7 @@ KillMode=control-group
 UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=yes
+${replayDirectory === undefined ? '' : `ReadWritePaths=${replayDirectory}\n`}ProtectHome=yes
 PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
@@ -44,10 +46,9 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=${transport === 'transparent-tls' ? 'CAP_NET_BIND_SERVICE' : 'CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE'}
 DevicePolicy=closed
-DeviceAllow=/dev/net/tun rw
-LimitNOFILE=512
+${transport === 'transparent-tls' ? '' : 'DeviceAllow=/dev/net/tun rw\n'}LimitNOFILE=512
 TasksMax=96
 MemoryMax=256M
 

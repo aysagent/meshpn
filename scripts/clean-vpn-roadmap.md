@@ -42,7 +42,8 @@ allowlist и TCP relay с backpressure/half-close; real-TCP fixture не мен�
 Добавлен [standalone transparent network guard](clean-vpn-native-transparent-network.md):
 LAN HTTPS REDIRECT, default-DROP для остального трафика и общий journal lifecycle.
 Пять namespace проверяют TLS через оба C++ engine, SIGKILL client/exit и restart
-без снятия правил. Immutable installer binding/systemd boot и combo ещё впереди;
+без снятия правил. Fresh installer binding и отдельный writable replay state
+реализованы; transparent systemd/boot приёмка и combo ещё впереди;
 готовым основным транспортом остаётся boring-tls.
 Это dedicated-host контракт: адреса/DHCP/default предоставляет внешний link
 owner. Адаптация к конкретному distro/network manager, обновление существующих

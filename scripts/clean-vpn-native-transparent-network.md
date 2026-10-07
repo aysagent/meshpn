@@ -2,8 +2,9 @@
 
 Сетевые правила и kernel REDIRECT обслуживаются control plane; ClientHello,
 TLS, TCP relay и тестовые payload обрабатываются только C++. Это **не** готовая
-установка на Radxa/VPS: systemd site installer пока намеренно отвергает этот
-профиль. Нельзя применять его к действующему USB/TUN firewall.
+установка на Radxa/VPS: fresh site installer уже собирает transparent bundle,
+но его отдельная systemd/boot приёмка ещё не завершена. Нельзя применять его к
+действующему USB/TUN firewall.
 
 ## Контракт
 
@@ -44,7 +45,8 @@ DHCPv4 uplink и SSH 2222 из выбранной LAN — явные служе�
   C++ дополнительно заново проверяет локальные адреса/подсети перед connect.
   Engine должен использовать `destination_policy.mode=public-https` и тот же
   `deny_ipv4`; локально невидимые management/NAT адреса задаются администратором.
-  Автоматическое связывание engine config с профилем ещё предстоит в installer.
+  Installer требует точного совпадения destination policy, endpoint и listener
+  между engine config и network profile; несовпадение отвергается до записи.
 
 Используется общий `applyNativeNetworkProfile`: только пустые dedicated tables,
 выбранные links DOWN, forwarding=0; pre-test правил, сначала IPv6/IPv4 DROP,
@@ -54,6 +56,41 @@ readback, journal stages и привязка к boot/network/user namespace. У 
 правила, другая конфигурация или namespace требуют review без очистки/перезаписи.
 Stop/SIGKILL engine не снимает firewall и REDIRECT. Concurrent network/firewall
 administrators не поддерживаются. Адреса/default/DHCP — внешний владелец.
+
+## Fresh installer / systemd bundle
+
+`installNative` принимает transparent только с `siteProfile`: произвольные
+external network/guard dependencies без связанного профиля не принимаются.
+Engine должен объявлять поддержку public-https, SO_ORIGINAL_DST и durable replay.
+Исходный engine config проверяется самим C++ engine, затем planner связывает его
+с firewall. Client listen — строго `0.0.0.0:listen_port`, exit listen — endpoint:port.
+Explicit destination allowlist вместо `public-https` для этого site не допускается.
+
+Bundle содержит четыре unit: guard → link gate → direct C++ engine и общий
+activation target. TUN route coordinator, DNS interceptor и сертификаты TLS
+termination в transparent bundle отсутствуют. Payload остаётся opaque для relay.
+Client/exit service использует Type=notify, Restart=on-failure и BindsTo guard/gate.
+У engine нет CAP_NET_ADMIN/CAP_NET_RAW и доступа к `/dev/net/tun`.
+Namespace TLS/crash-прогон также запускает оба engine с capability bounding set
+только CAP_NET_BIND_SERVICE и no-new-privs: SO_ORIGINAL_DST проверен без ADMIN.
+
+Для exit installer переносит PSK и переписывает replay path в приватный каталог
+`/opt/clean-vpn-native/<name>/replay` (0700), затем **до публикации unit** вызывает
+скопированный engine с `--init-transparent-replay`. Временный owner-only config
+инициализации удаляется после успешной записи. Replay journal/lock — 0600.
+Manifest отмечает replay как mutable state; systemd разрешает запись только в
+этот каталог через ReadWritePaths, остальной bundle защищён ProtectSystem=strict.
+Unit не имеет автоматической инициализации или сброса replay при старте.
+
+Это только fresh install, не миграция/ротация: исходный replay path должен ещё
+не существовать. Существующие журналы не копируются и не сбрасываются. Для
+разных exit instances нужен отдельный PSK; повторное использование ключа с
+независимым новым журналом не даёт общей replay-защиты. Безопасная ротация и
+восстановление журнала из backup остаются отдельной задачей.
+
+Dry-run ничего не создаёт. Interrupted install оставляет inspectable bundle,
+повторный запуск отказывает без adoption/cleanup/reinitialization. Installer
+не выполняет daemon-reload, enable/start и не меняет сеть.
 
 ## Проверка
 
@@ -78,10 +115,26 @@ Capture на synthetic origin получает positive-control UDP 53/443 до 
 Лаборатория использует общий apply-код с in-memory journal adapter, не root CLI
 с дисковым journal. Это не проверка systemd boot, fsync journal при потере
 питания, физического uplink, полного IPv6/DNS leak acceptance или скорости.
-Следующий этап — immutable binding engine/network, fresh installer/systemd
-target с gate интерфейсов и отдельная VM cold-boot/crash приёмка transparent.
+Следующий этап — отдельная VM systemd/cold-boot/crash приёмка transparent bundle,
+включая сохранение replay state при reboot и отказ при его повреждении/потере.
 
 Checkpoint 2026-10-07: общий native regression-набор **159/159**, без skip;
 CTest **5/5** normal и ASAN/UBSAN; все четыре transparent-прогона (codec/TCP,
 scoped engine, public-policy и новый network guard) прошли normal и ASAN/UBSAN.
 Повторного VM boot-прогона в этом checkpoint не было. Radxa/VPS/Mac не менялись.
+
+Следующий installer checkpoint добавляет проверки binding, owner-only relocation,
+однократной C++ replay initialization, повторной инициализации без изменения
+state и прерывания установки в шести стадиях. Unit renderer отдельно проверяет
+ограничение privileges и отсутствие runtime-init. Это тесты installer на
+временном filesystem root, не запуск transparent unit в systemd.
+Общий normal regression-набор — **169/169**, без skip; восемь новых installer
+тестов проходят также с ASAN/UBSAN engine. Namespace-прогон с урезанными
+capabilities пройден отдельно после общего набора.
+
+Регрессия **boring-tls** site с обновлённым общим installer/renderer: две загрузки
+NIC-less QEMU, **17/17** gates, `status=passed`. Отчёт:
+`/var/tmp/meshpn-native-lab-abc7C7/report.json` (2026-10-07). Проверены
+client/exit crash-restart, guard drift/refusal, reboot autostart/DNS, inventory и
+порядок guard-before-uplink, stop-target fail-closed. Этот отчёт не подменяет
+ещё не выполненную VM boot-приёмку **transparent**.

@@ -19,3 +19,14 @@ test('native unit rejects systemd specifier, command and dependency injection', 
     for (const field of ['networkUnit', 'guardUnit']) assert.throws(() => nativeServiceUnit({ ...options, [field]: unit }));
   assert.throws(() => nativeServiceUnit({ ...options, networkUnit: options.guardUnit }));
 });
+test('transparent direct service has no TUN privileges and only explicit replay write access', () => {
+  const client = nativeServiceUnit({ ...options, transport: 'transparent-tls' });
+  assert.ok(!client.includes('DeviceAllow=')); assert.ok(!client.includes('CAP_NET_ADMIN'));
+  assert.ok(!client.includes('ReadWritePaths='));
+  const exit = nativeServiceUnit({ ...options, transport: 'transparent-tls', replayDirectory: '/opt/native/exit/replay' });
+  assert.match(exit, /ReadWritePaths=\/opt\/native\/exit\/replay\n/);
+  assert.match(exit, /ProtectSystem=strict/); assert.doesNotMatch(exit, /--init-transparent-replay/);
+  for (const replayDirectory of ['/', '/opt/../etc', '/opt/a b', '/opt/%n', '/opt/a\nExecStart=id'])
+    assert.throws(() => nativeServiceUnit({ ...options, transport: 'transparent-tls', replayDirectory }));
+  assert.throws(() => nativeServiceUnit({ ...options, replayDirectory: '/opt/replay' }));
+});
