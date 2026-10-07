@@ -4,8 +4,10 @@ import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { comboNetworkChecks, assertComboNetworkEvidence } from './lib/native-combo-network-evidence.mjs';
 test('combo real-TUN VM driver refuses development host before network writes', () => {
-  const r = spawnSync(process.execPath, ['scripts/lib/native-combo-network-vm.mjs'], { encoding: 'utf8', timeout: 5000 });
-  assert.notEqual(r.status, 0); assert.match(r.stderr, /QEMU|meshpn.native-combo-network|ENOENT/);
+  for (const args of [[], ['--load'], ['--unexpected']]) {
+    const r = spawnSync(process.execPath, ['scripts/lib/native-combo-network-vm.mjs', ...args], { encoding: 'utf8', timeout: 5000 });
+    assert.notEqual(r.status, 0); assert.match(r.stderr, /QEMU|meshpn.native-combo-network|ENOENT/);
+  }
 });
 test('combo acceptance needs every gate and a nonzero direct capture control', () => {
   assertComboNetworkEvidence(JSON.parse(fs.readFileSync(new URL('./fixtures/clean-vpn-native-combo-network-report.json', import.meta.url))).evidence);

@@ -170,7 +170,11 @@ VM выше относится к предыдущей сборке и сохр�
    FD/threads вернулись к baseline. Отдельно пройден 30-секундный ASAN/UBSAN
    прогон. Регрессия 418/418, CTest normal/ASAN 6/6, ASAN integration 10/10.
    Границы: loopback/fixture packet FD, один peer, не real-TUN или WAN benchmark.
-   Далее real-TUN длительная нагрузка и воспроизводимые измерения
+   Дополнительно реализован [real-TUN sustained load](clean-vpn-native-combo-load.md):
+   production binary обеих ролей, 180 секунд TLS/TCP/UDP/DNS с ресурсами и
+   сопоставлением TX/RX, clean restart и crash/capture после нагрузки.
+   Два прогона — 14/14 gates каждый; регрессия 429/429, CTest normal/ASAN 6/6.
+   Далее воспроизводимые download/upload/latency/CPU измерения
    полностью native схемы (не Internet speed из TCG) и следующие продуктовые
    этапы roadmap. Браузерные профили/UI не объявляются реализованными этим шагом.
 

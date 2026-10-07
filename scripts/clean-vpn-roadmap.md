@@ -68,8 +68,14 @@ CTest normal/ASAN **6/6**, ASAN combo/installer/transparent integration **16/16*
 2 437 092 пакета и 1 907 TLS-сеансов, без packet drops/reconnect, возврат FD/threads
 к baseline у обеих ролей. Это loopback/fixture-FD checkpoint, не real-TUN benchmark.
 Регрессия 418/418, CTest normal/ASAN 6/6, ASAN mixed-load/integration 10/10.
-Следующая ограниченная точка — real-TUN длительная нагрузка и воспроизводимые
-измерения обеих combo-веток. WAN Speedtest — отдельно на реальных
+Добавлена [180-секундная real-TUN нагрузка](clean-vpn-native-combo-load.md): production
+client/exit без packet FD, одновременные TLS и TCP/UDP, DNS, контроль ресурсов,
+нулевые engine drops и совпадение встречных TX/RX, clean restart плюс crash/capture.
+Два NIC-less VM прогона прошли 14/14 gates; регрессия 429/429, CTest normal/ASAN
+6/6. Свидетельство: `fixtures/clean-vpn-native-combo-load-report.json`.
+Следующая ограниченная точка — воспроизводимые native-only измерения download/
+upload/latency и CPU с чётким разделением лабораторных и WAN результатов.
+WAN Speedtest — отдельно на реальных
 узлах после лабораторной базы; TCG/1 MiB smoke не являются оценкой Internet speed.
 Combo engine checkpoint: 390/390 native/routes regression, CTest 6/6 normal и
 ASAN/UBSAN; результат и границы — `fixtures/clean-vpn-native-combo-report.json`.

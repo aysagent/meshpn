@@ -153,5 +153,9 @@ origin; не all-egress/IPv6 capture, не systemd/reboot combo, не физич
 23/23 gates, 416/416 regression, CTest normal/ASAN 6/6, ASAN integration 16/16.
 Дополнительно пройден [180-секундный native mixed-load](clean-vpn-native-combo-soak.md)
 с проверкой пакетов/TLS и ресурсов обоих процессов. Это loopback/fixture-FD
-проверка, не замер пропускной способности. Далее — real-TUN длительная нагрузка
-и воспроизводимые измерения, без вывода о WAN-скорости по результатам эмулятора.
+проверка, не замер пропускной способности.
+Добавлена [длительная real-TUN нагрузка](clean-vpn-native-combo-load.md): production
+engine client/exit, параллельные TLS и TCP/UDP, DNS с LAN/gateway, ресурсы,
+точные встречные TX/RX, штатный перезапуск и прежние crash/capture gates.
+Далее — воспроизводимые native-only измерения, без вывода о WAN-скорости по
+результатам эмулятора.
