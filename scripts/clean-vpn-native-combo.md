@@ -151,5 +151,7 @@ origin; не all-egress/IPv6 capture, не systemd/reboot combo, не физич
 и не benchmark. Fresh installer binding, route coordinator и systemd crash/reboot
 обеих combo-ролей теперь проверены [отдельным стендом](clean-vpn-native-combo-boot.md):
 23/23 gates, 416/416 regression, CTest normal/ASAN 6/6, ASAN integration 16/16.
-Далее — полностью native нагрузка/стабильность и воспроизводимые измерения,
-без вывода о WAN-скорости по результатам эмулятора.
+Дополнительно пройден [180-секундный native mixed-load](clean-vpn-native-combo-soak.md)
+с проверкой пакетов/TLS и ресурсов обоих процессов. Это loopback/fixture-FD
+проверка, не замер пропускной способности. Далее — real-TUN длительная нагрузка
+и воспроизводимые измерения, без вывода о WAN-скорости по результатам эмулятора.

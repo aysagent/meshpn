@@ -64,8 +64,12 @@ direct C++ client/exit и installed route coordinator. Две загрузки N
 сохранение replay и отказ при missing/corrupt state. Общая регрессия **416/416**,
 CTest normal/ASAN **6/6**, ASAN combo/installer/transparent integration **16/16**.
 Результат: `fixtures/clean-vpn-native-combo-boot-report.json`.
-Следующая ограниченная точка — native-only нагрузочная/ресурсная приёмка и
-воспроизводимые измерения обеих combo-веток. WAN Speedtest — отдельно на реальных
+Добавлена [native-only смешанная нагрузка](clean-vpn-native-combo-soak.md): 180 секунд,
+2 437 092 пакета и 1 907 TLS-сеансов, без packet drops/reconnect, возврат FD/threads
+к baseline у обеих ролей. Это loopback/fixture-FD checkpoint, не real-TUN benchmark.
+Регрессия 418/418, CTest normal/ASAN 6/6, ASAN mixed-load/integration 10/10.
+Следующая ограниченная точка — real-TUN длительная нагрузка и воспроизводимые
+измерения обеих combo-веток. WAN Speedtest — отдельно на реальных
 узлах после лабораторной базы; TCG/1 MiB smoke не являются оценкой Internet speed.
 Combo engine checkpoint: 390/390 native/routes regression, CTest 6/6 normal и
 ASAN/UBSAN; результат и границы — `fixtures/clean-vpn-native-combo-report.json`.

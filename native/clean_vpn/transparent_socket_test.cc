@@ -13,6 +13,8 @@
 #include <linux/if_packet.h>
 #include <net/ethernet.h>
 #include <future>
+#include <fstream>
+#include <sstream>
 
 using namespace cvpn;
 using namespace cvpn::transparent;
@@ -235,8 +237,112 @@ static void packet_transfer(Child& from, Child& to, bool reverse, uint8_t seed) 
   pollfd p{to.packets.fd,POLLIN,0};need(poll(&p,1,3000)>0);
   Bytes got(65536);auto n=recv(to.packets.fd,got.data(),got.size(),0);need(n>0);got.resize(n);need(got==packet);
 }
+struct ResourceSample { uint64_t rss = 0, cpu_ticks = 0, fds = 0, threads = 0; };
+static ResourceSample resources(pid_t pid) {
+  ResourceSample r; const auto base = "/proc/" + std::to_string(pid);
+  std::ifstream status(base + "/status"); need(bool(status)); std::string line;
+  while (std::getline(status,line)) {
+    if (line.rfind("VmRSS:",0)==0) r.rss=std::stoull(line.substr(6));
+    if (line.rfind("Threads:",0)==0) r.threads=std::stoull(line.substr(8));
+  }
+  for (const auto& entry : std::filesystem::directory_iterator(base + "/fd")) { (void)entry; ++r.fds; }
+  std::ifstream stat(base + "/stat"); need(bool(std::getline(stat,line)));
+  const auto end=line.rfind(')'); need(end!=std::string::npos);
+  std::istringstream fields(line.substr(end+2)); std::string field;
+  for (int index=3;index<=15;++index) { need(bool(fields>>field)); if(index>=14)r.cpu_ticks+=std::stoull(field); }
+  need(r.rss>0 && r.threads>0 && r.fds>0); return r;
+}
+static nlohmann::json final_packet_state(Child& child, uint64_t rounds) {
+  need(kill(child.pid,SIGTERM)==0 && child.wait()==0);
+  // wait() may reap before the final pipe chunk has been drained.
+  while (child.read()) {}
+  std::istringstream lines(child.text); std::string line; nlohmann::json stopped;
+  unsigned ready=0;
+  while(std::getline(lines,line)) {
+    const auto event=nlohmann::json::parse(line);
+    if(event.value("state","")=="ready") ++ready;
+    if(event.value("state","")=="stopped") stopped=event;
+  }
+  need(ready==1 && !stopped.is_null());
+  need(stopped.at("generation")==0 && stopped.at("tx_packets")==rounds+1 &&
+       stopped.at("rx_packets")==rounds+1 && stopped.at("dropped_packets")==0);
+  return stopped;
+}
+static void combo_soak(SSL_CTX* cc, const Destination& dst, Origin& origin, Child& client, Child& exit, unsigned seconds) {
+  using J=nlohmann::json;
+  const auto start=monotonic_ms(), deadline=start+uint64_t(seconds)*1000;
+  std::atomic<uint64_t> tls12{0},tls13{0};
+  std::atomic<bool> cancel{false};
+  const std::array<Child*,2> children{&client,&exit};
+  std::array<ResourceSample,2> initial{resources(client.pid),resources(exit.pid)};
+  auto tls=std::async(std::launch::async,[&] {
+    try {
+      do {
+        transfer(cc,dst,TLS1_2_VERSION,true); ++tls12;
+        if(cancel || monotonic_ms()>=deadline) break;
+        transfer(cc,dst,TLS1_3_VERSION,true); ++tls13;
+      } while(!cancel && monotonic_ms()<deadline);
+    } catch(...) { cancel=true; throw; }
+  });
+  auto warm=initial, peak=initial, last=initial;
+  std::array<uint64_t,2> growth{}; unsigned samples=0; uint64_t rounds=0,next_sample=start;
+  bool warmed=false;
+  try {
+    do {
+      need(!cancel);
+      packet_transfer(client,exit,false,uint8_t(rounds));
+      packet_transfer(exit,client,true,uint8_t(rounds)); ++rounds;
+      const auto now=monotonic_ms();
+      if(now>=next_sample) {
+        for(size_t i=0;i<children.size();++i) {
+          need(children[i]->read()); last[i]=resources(children[i]->pid);
+          auto& p=peak[i];const auto& r=last[i];
+          p.rss=std::max(p.rss,r.rss);p.fds=std::max(p.fds,r.fds);p.threads=std::max(p.threads,r.threads);
+          if(!warmed)warm[i]=r;
+          growth[i]=std::max(growth[i],r.rss>warm[i].rss?r.rss-warm[i].rss:0);
+          // Conservative bounds also apply to sanitizer builds. Warm growth
+          // includes bounded replay admissions and allocator thread caches.
+          need(r.rss<256*1024 && growth[i]<64*1024 && r.fds<=96 && r.threads<=48);
+        }
+        if(now-start>=5000)warmed=true;
+        ++samples;next_sample=now+1000;
+      }
+    } while(monotonic_ms()<deadline);
+    tls.get();
+  } catch(...) { cancel=true; if(tls.valid())tls.wait(); throw; }
+  until([&]{return origin.completed==tls12+tls13;});
+  need(tls12>0 && tls13>0 && origin.failed==0 && origin.connections==tls12+tls13);
+  need(origin.bytes==(tls12+tls13)*1048576 && rounds>100 && samples>=seconds/2);
+  // All transient TLS connections/workers must be released, not merely stay
+  // below the live-traffic ceiling. Compare against the two ready engines.
+  until([&] {
+    for(size_t i=0;i<children.size();++i) {
+      last[i]=resources(children[i]->pid);
+      if(last[i].fds!=initial[i].fds || last[i].threads!=initial[i].threads) return false;
+    }
+    return true;
+  });
+  J per_role=J::object();const long ticks=sysconf(_SC_CLK_TCK);need(ticks>0);
+  const std::array<std::string,2> roles{"client","exit"};
+  for(size_t i=0;i<children.size();++i) {
+    // Preserve the idle snapshot from before stopping either peer: stopping
+    // client legitimately closes exit's packet-session socket.
+    const auto state=final_packet_state(*children[i],rounds);
+    per_role[roles[i]]={{"peak_rss_kib",peak[i].rss},{"warm_rss_growth_kib",growth[i]},
+      {"peak_fds",peak[i].fds},{"peak_threads",peak[i].threads},
+      {"baseline_fds",initial[i].fds},{"idle_fds",last[i].fds},
+      {"baseline_threads",initial[i].threads},{"idle_threads",last[i].threads},
+      {"cpu_seconds",double(last[i].cpu_ticks-initial[i].cpu_ticks)/ticks},
+      {"tx_packets",state.at("tx_packets")},{"rx_packets",state.at("rx_packets")},{"dropped_packets",0}};
+  }
+  std::cout<<"combo soak "<<J({{"seconds",double(monotonic_ms()-start)/1000},{"requested_seconds",seconds},
+    {"packet_bytes",rounds*2*1400},{"packets",rounds*2},{"tls12_sessions",tls12.load()},
+    {"tls13_hrr_sessions",tls13.load()},{"tls_echo_bytes_one_way",origin.bytes.load()},
+    {"payload_verified",true},{"unexpected_packet_reconnects",0},{"resource_samples",samples},
+    {"roles",per_role}}).dump()<<" PASS\n";
+}
 static void engine_redirect(SSL_CTX* cc, SSL_CTX* sc, const std::string& engine, const std::string& parent_netns,
-                            bool combined = false, const std::string& cert = {}, const std::string& private_key = {}) {
+                            bool combined = false, const std::string& cert = {}, const std::string& private_key = {}, unsigned soak_seconds = 0) {
   char ns[128]; const auto n=readlink("/proc/self/ns/net",ns,sizeof(ns));
   need(n>0 && std::string(ns,n) != parent_netns && parent_netns.rfind("net:[",0)==0);
   // Fail before touching any network state unless in the new, empty namespace.
@@ -289,6 +395,7 @@ static void engine_redirect(SSL_CTX* cc, SSL_CTX* sc, const std::string& engine,
   // connection is never redirected back into the client in this one-netns lab.
   need(command({"/usr/sbin/iptables","-t","nat","-A","OUTPUT","-p","tcp","-d","127.0.0.1",
     "--dport",std::to_string(dst.port),"-m","mark","--mark","66","-j","REDIRECT","--to-ports",std::to_string(caddr.port)})==0);
+  if(soak_seconds) { combo_soak(cc,dst,origin,client,*exit,soak_seconds); return; }
   { RelaySocket direct(connected(caddr));uint8_t b;auto result=recv(direct.fd,&b,1,0);need(result==0||(result<0&&errno==ECONNRESET)); }
   need(origin.connections==0);
   auto tls=std::async(std::launch::async,[&]{transfer(cc,dst,TLS1_2_VERSION,true);transfer(cc,dst,TLS1_3_VERSION,true);});
@@ -408,8 +515,14 @@ static void public_probe(SSL_CTX* cc, SSL_CTX* sc) {
   std::cout<<"native public policy rejection PASS"<<std::endl;
 }
 int main(int argc, char** argv) {
-  if (argc != 3 && argc != 5 && !(argc == 6 && std::string(argv[5]) == "--combo")) return 2;
+  const bool soak_mode=argc==7 && std::string(argv[5])=="--combo-soak";
+  if (argc != 3 && argc != 5 && !(argc == 6 && std::string(argv[5]) == "--combo") && !soak_mode) return 2;
   try {
+    unsigned soak_seconds=0;
+    if(soak_mode) {
+      const std::string value=argv[6]; need(!value.empty() && value.find_first_not_of("0123456789")==std::string::npos);
+      const auto parsed=std::stoul(value); need(parsed>=10 && parsed<=600); soak_seconds=unsigned(parsed);
+    }
     const bool public_mode=argc==5 && (std::string(argv[1]).rfind("--public-",0)==0 ||
       std::string(argv[1]).rfind("--combo-network-",0)==0);
     const int offset=public_mode?1:0;
@@ -456,7 +569,7 @@ int main(int argc, char** argv) {
       }
       return 0;
     }
-    if (argc>=5) { engine_redirect(cc.get(),sc.get(),argv[3],argv[4],argc==6,argv[1],argv[2]); return 0; }
+    if (argc>=5) { engine_redirect(cc.get(),sc.get(),argv[3],argv[4],argc>=6,argv[1],argv[2],soak_seconds); return 0; }
     Origin origin(sc.get()); const auto dst = origin.destination();
     Digest secret{}; secret.fill(0x42); SniAuthorization auth(secret,"relay.example");
     durable_socket_restart(cc.get(),sc.get(),auth);

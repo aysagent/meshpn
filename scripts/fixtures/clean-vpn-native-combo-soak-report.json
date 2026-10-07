@@ -1,0 +1,125 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-combo-soak",
+  "date": "2026-10-07",
+  "status": "passed",
+  "baseRevision": "98a328e",
+  "scope": "isolated-loopback-user-network-namespace; fixture-packet-FDs; native-only-payload; mixed-load-not-speed-benchmark",
+  "normal": {
+    "packet_bytes": 3411928800,
+    "packets": 2437092,
+    "payload_verified": true,
+    "requested_seconds": 180,
+    "resource_samples": 180,
+    "roles": {
+      "client": {
+        "baseline_fds": 6,
+        "baseline_threads": 2,
+        "cpu_seconds": 98.77,
+        "dropped_packets": 0,
+        "idle_fds": 6,
+        "idle_threads": 2,
+        "peak_fds": 8,
+        "peak_rss_kib": 4896,
+        "peak_threads": 3,
+        "rx_packets": 1218547,
+        "tx_packets": 1218547,
+        "warm_rss_growth_kib": 20
+      },
+      "exit": {
+        "baseline_fds": 8,
+        "baseline_threads": 2,
+        "cpu_seconds": 106.72,
+        "dropped_packets": 0,
+        "idle_fds": 8,
+        "idle_threads": 2,
+        "peak_fds": 10,
+        "peak_rss_kib": 5140,
+        "peak_threads": 3,
+        "rx_packets": 1218547,
+        "tx_packets": 1218547,
+        "warm_rss_growth_kib": 136
+      }
+    },
+    "seconds": 180.142,
+    "tls12_sessions": 954,
+    "tls13_hrr_sessions": 953,
+    "tls_echo_bytes_one_way": 1999634432,
+    "unexpected_packet_reconnects": 0
+  },
+  "asanUbsan": {
+    "packet_bytes": 240360400,
+    "packets": 171686,
+    "payload_verified": true,
+    "requested_seconds": 30,
+    "resource_samples": 30,
+    "roles": {
+      "client": {
+        "baseline_fds": 6,
+        "baseline_threads": 2,
+        "cpu_seconds": 16.78,
+        "dropped_packets": 0,
+        "idle_fds": 6,
+        "idle_threads": 2,
+        "peak_fds": 8,
+        "peak_rss_kib": 59448,
+        "peak_threads": 3,
+        "rx_packets": 85844,
+        "tx_packets": 85844,
+        "warm_rss_growth_kib": 2512
+      },
+      "exit": {
+        "baseline_fds": 8,
+        "baseline_threads": 2,
+        "cpu_seconds": 20.3,
+        "dropped_packets": 0,
+        "idle_fds": 8,
+        "idle_threads": 2,
+        "peak_fds": 10,
+        "peak_rss_kib": 61580,
+        "peak_threads": 3,
+        "rx_packets": 85844,
+        "tx_packets": 85844,
+        "warm_rss_growth_kib": 3068
+      }
+    },
+    "seconds": 30.135,
+    "tls12_sessions": 114,
+    "tls13_hrr_sessions": 113,
+    "tls_echo_bytes_one_way": 238026752,
+    "unexpected_packet_reconnects": 0
+  },
+  "asanOptions": "quarantine_size_mb=16:thread_local_quarantine_size_kb=256",
+  "regression": {
+    "passed": 418,
+    "failed": 0,
+    "command": "CVPN_NATIVE_ONLY=1 node --test scripts/test-native-*.mjs scripts/test-vpn-host-routes.mjs scripts/test-vpn-uplink*.mjs",
+    "note": "legacy-exit soak omitted; historical compatibility tests still included"
+  },
+  "ctest": {
+    "normalPassed": 6,
+    "asanUbsanPassed": 6
+  },
+  "asanIntegration": {
+    "passed": 10,
+    "failed": 0,
+    "scope": "combo soak/evidence plus combo and transparent integration"
+  },
+  "sha256": {
+    "source": "b7f0ddc525987978e3f6a29f2a637b2199e5480ed25721b9616da5b1a566da77",
+    "normalEngineFixture": "25e15e1c9e7eda41a74ac31f5f24153eef4f54eaf6515d5db48e1092d1527620",
+    "normalSocketFixture": "e5d47f5d3231bd2d035c33ff0e265ae51484d55cb945f0ba05533eaf4043ea33",
+    "asanEngineFixture": "adcb51263b9a7b6c8c6d5d4d3daed70f9c8a0822ffb929c270ea831b3014169f",
+    "asanSocketFixture": "b6dcf32c30610fdfff71829ca05fb326b735be39d50fc144cb8be38f3ab71401"
+  },
+  "limitations": [
+    "one-boring-peer-and-one-concurrent-TLS-flow",
+    "slow-origin-and-stop-and-wait-packets-not-throughput-capacity",
+    "not-real-TUN-or-DNS-or-systemd-or-crash-acceptance",
+    "no-external-internet-or-physical-ARM64",
+    "RSS-not-PSS-sampling-may-miss-peaks",
+    "bounded-growth-not-proof-of-no-memory-leaks",
+    "runs-overlapped-regression-load-not-comparable-CPU-benchmarks",
+    "sanitizer-quarantine-explicitly-capped"
+  ]
+}

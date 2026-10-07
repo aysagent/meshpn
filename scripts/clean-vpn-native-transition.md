@@ -165,7 +165,12 @@ VM выше относится к предыдущей сборке и сохр�
    отказ при missing/corrupt replay без автоматического reset. Общая регрессия
    416/416; CTest normal/ASAN 6/6 и ASAN integration 16/16. Это fresh dedicated-host
    контракт, не distro migration, physical acceptance или live upgrade.
-4. Далее native-only нагрузочная/ресурсная приёмка, воспроизводимые измерения
+4. [Native-only смешанная нагрузка](clean-vpn-native-combo-soak.md) прошла 180 секунд:
+   2 437 092 проверенных пакета, 1 907 TLS-сеансов, без packet drops/reconnect;
+   FD/threads вернулись к baseline. Отдельно пройден 30-секундный ASAN/UBSAN
+   прогон. Регрессия 418/418, CTest normal/ASAN 6/6, ASAN integration 10/10.
+   Границы: loopback/fixture packet FD, один peer, не real-TUN или WAN benchmark.
+   Далее real-TUN длительная нагрузка и воспроизводимые измерения
    полностью native схемы (не Internet speed из TCG) и следующие продуктовые
    этапы roadmap. Браузерные профили/UI не объявляются реализованными этим шагом.
 
