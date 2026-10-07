@@ -1,5 +1,6 @@
 #pragma once
 #include "transparent_replay.hpp"
+#include "transparent_destination.hpp"
 #include <openssl/aead.h>
 #include <openssl/hmac.h>
 #include <openssl/mem.h>
@@ -9,25 +10,6 @@
 #include <mutex>
 
 namespace cvpn::transparent {
-struct Destination {
-  std::array<uint8_t, 4> ipv4{};
-  uint16_t port = 0;
-  bool operator==(const Destination& other) const { return ipv4 == other.ipv4 && port == other.port; }
-};
-// Explicit endpoint capabilities, not DNS names: no DNS/rebinding, wildcard,
-// default permit or arbitrary authenticated connect. Production Internet
-// policy will be a separate reviewed component; this initial relay is scoped.
-class DestinationPolicy {
-  std::vector<Destination> allowed_;
-public:
-  explicit DestinationPolicy(std::vector<Destination> allowed) : allowed_(std::move(allowed)) {
-    require(!allowed_.empty() && allowed_.size() <= 64, "relay_policy_config");
-    for (const auto& a : allowed_) require(a.port && a.ipv4[0] && a.ipv4[0] < 224, "relay_policy_config");
-  }
-  void check(const Destination& dst) const {
-    require(std::find(allowed_.begin(), allowed_.end(), dst) != allowed_.end(), "relay_destination_denied");
-  }
-};
 inline std::string lowercase(std::string s) {
   for (char& c : s) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
   return s;

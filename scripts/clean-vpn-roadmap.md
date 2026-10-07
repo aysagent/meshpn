@@ -36,7 +36,13 @@ ClientHello/SNI codec и HRR gate, 18 full/resumed TLS-handshake в C++ memory B
 allowlist и TCP relay с backpressure/half-close; real-TCP fixture не меняет сеть
 хоста. Экспериментальный engine client/exit подключён к SO_ORIGINAL_DST;
 изолированный REDIRECT-прогон включает SIGKILL exit и replay после restart.
-Общая Internet policy, lifecycle interception в site profile и combo ещё впереди;
+Добавлен явный `public-https` policy в C++: только 443, исключения специальных
+диапазонов/локальных подсетей/exit, проверка новых интерфейсов без reload.
+Двухnamespace лаборатория использует синтетический public IP без внешней сети.
+Добавлен [standalone transparent network guard](clean-vpn-native-transparent-network.md):
+LAN HTTPS REDIRECT, default-DROP для остального трафика и общий journal lifecycle.
+Пять namespace проверяют TLS через оба C++ engine, SIGKILL client/exit и restart
+без снятия правил. Immutable installer binding/systemd boot и combo ещё впереди;
 готовым основным транспортом остаётся boring-tls.
 Это dedicated-host контракт: адреса/DHCP/default предоставляет внешний link
 owner. Адаптация к конкретному distro/network manager, обновление существующих

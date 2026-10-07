@@ -1,5 +1,6 @@
 #include "transparent_handshake.hpp"
 #include "transparent_auth.hpp"
+#include "transparent_config.hpp"
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
@@ -58,6 +59,43 @@ static Bytes feed(HandshakeGate& gate, Direction direction, const Bytes& b, size
   return out;
 }
 static void authorization_units() {
+  {
+    const auto policy = DestinationPolicy::public_https({});
+    for (const char* text : {"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+         "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.31.196.0/24",
+         "192.52.193.0/24", "192.88.99.0/24", "192.168.0.0/16", "192.175.48.0/24", "198.18.0.0/15",
+         "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4"}) {
+      const auto prefix=IPv4Prefix::parse(text);
+      for(uint32_t number : {prefix.network,prefix.network|~prefix.mask}) {
+        const Destination d{{uint8_t(number>>24),uint8_t(number>>16),uint8_t(number>>8),uint8_t(number)},443};
+        rejected([&]{policy.check(d);});
+      }
+    }
+    for(uint16_t port : {0,22,53,80,444,8443,65535}) rejected([&]{policy.check(Destination{{1,1,1,1},port});});
+    for(const char* invalid : {"1.1.1.1", "1.1.1.1/24", "1.1.1.0/024", "1.1.1.0/33", "1.1.1.0/-1",
+         "1.1.1.0/", "1.1.1.0/24/1", "01.1.1.0/24", "::/0", "1.1.1.0/ 24"})
+      rejected([&]{(void)IPv4Prefix::parse(invalid);});
+    rejected([&]{DestinationPolicy::public_https({"1.1.1.0/24","1.1.1.0/24"});});
+    rejected([&]{DestinationPolicy::public_https(std::vector<std::string>(65,"1.1.1.1/32"));});
+    rejected([&]{DestinationPolicy::public_https({"0.0.0.0/0"}).check(Destination{{1,1,1,1},443});});
+    using J=nlohmann::json;
+    J config={{"version",1},{"transport","transparent-tls"},{"role","client"},
+      {"listen",{{"ipv4","127.0.0.1"},{"port",33002}}},{"exit",{{"ipv4","8.8.8.8"},{"port",33001}}},
+      {"secret_path","/fixture/secret"},{"public_name","relay.example"},
+      {"destination_policy",{{"mode","public-https"},{"deny_ipv4",J::array({"1.1.1.0/24"})}}}};
+    TransparentConfig c(config);need(c.public_https);
+    rejected([&]{c.policy().check(Destination{{8,8,8,8},443});}); // endpoint address, any port
+    rejected([&]{c.policy().check(Destination{{1,1,1,1},443});});
+    for(const J& bad_policy : {J{{"mode","public-https"}}, J{{"mode","all"},{"deny_ipv4",J::array()}},
+         J{{"mode","public-https"},{"deny_ipv4",J::array()},{"allow_private",true}},
+         J{{"mode","public-https"},{"deny_ipv4",J::array({"1.1.1.1/24"})}}}) {
+      auto bad=config;bad["destination_policy"]=bad_policy;
+      bool failed=false;try{TransparentConfig invalid(bad);}catch(const std::exception&){failed=true;}need(failed);
+    }
+    config["destinations"]=J::array({{{"ipv4","1.1.1.1"},{"port",443}}});
+    rejected([&]{TransparentConfig ambiguous(config);});
+    std::cout<<"native public policy units PASS: 18 special ranges and boundaries, ports, canonical prefixes, schema, protected exit\n";
+  }
   Digest secret{}; secret.fill(0x42); SniAuthorization auth(secret, "relay.example");
   const Destination dst{{192,0,2,8},443}; DestinationPolicy policy({dst});
   const auto p = synthetic(), wire = recordize(p, {p.size()}); const auto original = parse(wire);

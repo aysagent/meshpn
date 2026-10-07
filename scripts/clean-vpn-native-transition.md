@@ -141,8 +141,13 @@ VM выше относится к предыдущей сборке и сохр�
    на full/resumed TLS 1.2/1.3 (включая HRR) внутри memory BIO. Добавлены native
    enc-SNI/auth, durable replay и scoped TCP relay с backpressure/half-close.
    Scoped engine client/exit и SO_ORIGINAL_DST/REDIRECT проверяются в отдельном
-   namespace с SIGKILL/restart. Internet policy, site interception lifecycle
-   и защищённая обработка остального трафика ещё впереди.
+   namespace с SIGKILL/restart. Public-HTTPS destination policy добавлен и
+   проверяется через veth/отдельный origin namespace без внешнего Интернета.
+   Добавлен standalone LAN HTTPS network guard с default-DROP остальных типов
+   трафика и общей моделью владения firewall. Пять namespace проверяют оба C++
+   engine, PREROUTING REDIRECT, SIGKILL client/exit, restart и отсутствие
+   выбранного прямого обхода. Installer binding и systemd cold boot для
+   transparent ещё впереди; существующий TUN site installer его не принимает.
 3. Native combo, выбор ветки и владение потоками внутри native engine.
 4. Затем измерение скорости полностью native схемы и следующие продуктовые
    этапы roadmap. Браузерные профили/UI не объявляются реализованными этим шагом.

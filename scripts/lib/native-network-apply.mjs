@@ -27,6 +27,7 @@ export function applyNativeNetworkProfile(config, { run, read, save, scope }) {
     for (const rule of rules) run(bin, ['-w', '5', '-t', table, '-C', ...rule.split(' ').slice(1)]);
   };
   const auditTun = () => {
+    if (plan.tun.length === 0) return null;
     const l = links().find(l => l.ifname === config.tun);
     assert.ok(l && l.linkinfo?.info_kind === 'tun' && l.flags.includes('UP') && l.mtu === config.mtu, 'tun_readback_failed');
     const a = JSON.parse(run('ip', ['-j', '-4', 'addr', 'show', 'dev', config.tun]));
@@ -47,7 +48,8 @@ export function applyNativeNetworkProfile(config, { run, read, save, scope }) {
   }
   const initial = tables(); for (const t of Object.values(initial)) assertEmptyNativeTables(t);
   const other = unmanaged(); for (const t of Object.values(other)) assertEmptyNativeTables(t);
-  const before = links(); assert.ok(!before.some(l => l.ifname === config.tun), 'existing_tun_refused');
+  const before = links();
+  if (plan.tun.length) assert.ok(!before.some(l => l.ifname === config.tun), 'existing_tun_refused');
   const ownedLinks = [config.uplink, ...(config.lan ? [config.lan.interface] : [])].map(name => {
     const l = before.find(l => l.ifname === name);
     assert.ok(l && !l.flags.includes('UP'), 'fresh_profile_requires_links_down'); return identity(l);

@@ -110,6 +110,7 @@ inline void relay_session(int accepted, bool client, const SniAuthorization& aut
   require(setsockopt(right.fd,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(one)) == 0, "relay_socket_option");
   // All exit admission, including replay reservation, precedes this connect.
   // A failed connect still consumes the token. No alternate destination retry.
+  if (!client) policy.check(target); // recheck after durable I/O, immediately before connect
   socket_connect(right.fd, target, monotonic_ms() + limits.connect_ms, stop);
   Queue to_right, to_left;
   auto push = [&](Queue& q, Bytes b) {

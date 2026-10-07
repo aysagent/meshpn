@@ -6,8 +6,35 @@ import { nativeNetworkPlan, assertEmptyNativeTables, canonicalNativeTables } fro
 import { applyNativeNetworkProfile } from './lib/native-network-apply.mjs';
 import { nativeNetworkUnit } from './lib/native-network-unit.mjs';
 import { nativeSitePlan } from './lib/native-site-plan.mjs';
+import { transparentSpecialIPv4 } from './lib/native-transparent-network.mjs';
 const client = { version: 1, role: 'client', tun: 'tun0', tun_address: '10.99.0.2/32', mtu: 1400, uplink: 'wan0', endpoint: '154.62.226.216', port: 443, lan: { interface: 'lan0', subnet: '192.168.7.0/24' } };
 const exit = { ...client, role: 'exit', tun_address: '10.99.0.1/24', lan: null };
+const transparent = { version: 1, transport: 'transparent-tls', role: 'client', uplink: 'wan0',
+  endpoint: '154.62.226.216', port: 443, listen_port: 33002, lan: client.lan, deny_ipv4: ['8.8.8.0/24'] };
+test('transparent gateway intercepts only LAN HTTPS; never enables forwarding or host fallback', () => {
+  const p = nativeNetworkPlan(transparent);
+  assert.deepEqual(p.tun, []); assert.equal(p.forwarding, false);
+  assert.match(p.ipv4, /:FORWARD DROP/); assert.ok(!p.ipv4.includes('-A FORWARD'));
+  assert.match(p.nat, /-A PREROUTING -i lan0 -s 192.168.7.0\/24 -p tcp -m tcp --dport 443 -j REDIRECT --to-ports 33002/);
+  assert.match(p.ipv4, /--dport 33002 -m conntrack --ctstate DNAT -j ACCEPT/);
+  assert.ok(!p.nat.includes('-A OUTPUT')); assert.ok(!p.nat.includes('MASQUERADE'));
+  assert.match(p.ipv4, /-o wan0 -d 154.62.226.216\/32.*--dport 443 -j ACCEPT/);
+  for (const dst of [...transparentSpecialIPv4, '8.8.8.0/24', '154.62.226.216/32']) assert.ok(p.nat.includes(`-d ${dst} -j RETURN`));
+});
+test('transparent exit allows public HTTPS only, distinguishes listener replies, blocks forwarding', () => {
+  const p = nativeNetworkPlan({ ...transparent, role: 'exit', lan: null, listen_port: 443 });
+  assert.ok(!p.ipv4.includes('-A FORWARD')); assert.ok(!p.nat.includes('-A '));
+  assert.match(p.ipv4, /--sport 443 -m conntrack --ctstate ESTABLISHED --ctdir REPLY -j ACCEPT/);
+  assert.ok(p.ipv4.indexOf('-d 10.0.0.0/8 -j DROP') < p.ipv4.indexOf('-o wan0 -p tcp -m tcp --dport 443 -j ACCEPT'));
+});
+for (const [key, value] of [['lan', null], ['transport', 'transparent-tls;bad'], ['listen_port', 2222],
+  ['listen_port', 0], ['uplink', 'lo'], ['endpoint', '127.0.0.1'], ['endpoint', '192.168.7.2'],
+  ['deny_ipv4', ['8.8.8.1/24']], ['deny_ipv4', ['8.8.8.0/24', '8.8.8.0/24']], ['tun', 'tun0']])
+  test(`transparent rejects ${key}=${JSON.stringify(value)}`, () => assert.throws(() => nativeNetworkPlan({ ...transparent, [key]: value })));
+test('C++ public destination deny blocks match network guard', () => {
+  const source = fs.readFileSync(new URL('../native/clean_vpn/transparent_destination.hpp', import.meta.url), 'utf8');
+  for (const block of transparentSpecialIPv4) assert.ok(source.includes('"' + block + '"'), block);
+});
 test('native client plan confines forwarding and SNAT, intercepts plain DNS, prevents recursive native DNS', () => {
   const p = nativeNetworkPlan(client);
   assert.match(p.ipv4, /:OUTPUT DROP/); assert.match(p.ipv6, /:FORWARD DROP/);
@@ -59,6 +86,23 @@ function fixture() {
     } };
   return { io, commands, records, tables, interfaces, state: () => state };
 }
+test('transparent shares journal lifecycle, without creating TUN or enabling forwarding', () => {
+  const f = fixture(); assert.equal(applyNativeNetworkProfile(transparent, f.io).status, 'installed');
+  assert.equal(f.state().tun, null); assert.equal(f.state().forwarding, '0');
+  assert.ok(!f.commands.some(([b, a]) => (b === 'ip' && a[0] === 'tuntap') || (b === 'sysctl' && a[0] === '-w')));
+  assert.equal(applyNativeNetworkProfile(transparent, f.io).status, 'verified');
+  assert.throws(() => applyNativeNetworkProfile({ ...transparent, listen_port: 33003 }, f.io), /profile_changed/);
+  f.tables.nat += '-A OUTPUT -j ACCEPT\n';
+  assert.throws(() => applyNativeNetworkProfile(transparent, f.io), /foreign_firewall_change/);
+});
+for (const stage of ['prepared', 'ipv6', 'ipv4', 'nat', 'mangle', 'tun']) test(`transparent cut at ${stage} refuses partial restart`, () => {
+  const f = fixture(), save = f.io.save;
+  f.io.save = s => { save(s); if (s.stage === stage) throw Error('cut'); };
+  assert.throws(() => applyNativeNetworkProfile(transparent, f.io));
+  const count = f.commands.length;
+  assert.throws(() => applyNativeNetworkProfile(transparent, f.io), /partial_network_install/);
+  assert.equal(f.commands.length, count);
+});
 test('fresh lifecycle closes both families before TUN/forwarding and audits repeated start without writes', () => {
   const f = fixture(); assert.equal(applyNativeNetworkProfile(client, f.io).status, 'installed');
   assert.deepEqual(f.records, ['prepared', 'ipv6', 'ipv4', 'nat', 'mangle', 'tun', 'installed']);

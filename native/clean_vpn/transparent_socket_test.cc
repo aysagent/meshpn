@@ -9,6 +9,8 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <net/if.h>
+#include <netpacket/packet.h>
+#include <net/ethernet.h>
 
 using namespace cvpn;
 using namespace cvpn::transparent;
@@ -18,8 +20,9 @@ static void need(bool ok, int line = __builtin_LINE()) {
 struct Listener {
   RelaySocket socket;
   Destination destination{{127,0,0,1},0};
-  Listener() : socket(::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0)) {
+  explicit Listener(Destination bind_to = {{127,0,0,1},0}) : socket(::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0)), destination(bind_to) {
     need(socket.fd >= 0); auto address = socket_address(destination);
+    int one=1;need(setsockopt(socket.fd,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one))==0);
     need(bind(socket.fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0);
     socklen_t n = sizeof(address); need(getsockname(socket.fd, reinterpret_cast<sockaddr*>(&address), &n) == 0);
     destination.port = ntohs(address.sin_port); need(listen(socket.fd, 32) == 0);
@@ -89,7 +92,8 @@ class Origin {
 public:
   std::atomic<unsigned> connections{0}, completed{0}, failed{0};
   std::atomic<uint64_t> bytes{0};
-  explicit Origin(SSL_CTX* ctx, size_t bulk_size = 0) : ctx_(ctx), bulk_size_(bulk_size) { thread_ = std::thread([this] {run();}); }
+  explicit Origin(SSL_CTX* ctx, size_t bulk_size = 0, Destination bind_to = {{127,0,0,1},0})
+    : listener_(bind_to), ctx_(ctx), bulk_size_(bulk_size) { thread_ = std::thread([this] {run();}); }
   ~Origin() { stop_ = true; thread_.join(); }
   Destination destination() const { return listener_.destination; }
 };
@@ -269,13 +273,130 @@ static void engine_redirect(SSL_CTX* cc, SSL_CTX* sc, const std::string& engine,
   need(kill(exit->pid,SIGTERM)==0 && exit->wait()==0);
   std::cout<<"native transparent engine REDIRECT PASS: C++ client/exit, kernel SO_ORIGINAL_DST, TLS12/TLS13-HRR, SIGKILL replay refusal, no direct fallback, strict config, clean stop\n";
 }
+static void public_lab_guard(const std::string& parent, bool origin) {
+  char ns[128]; const auto n=readlink("/proc/self/ns/net",ns,sizeof(ns));
+  need(n>0 && parent.rfind("net:[",0)==0 && std::string(ns,n)!=parent);
+  auto* names=if_nameindex();need(names);bool safe=true;unsigned count=0;
+  for(auto* a=names;a->if_index;++a) {++count; const std::string name=a->if_name;
+    safe &= name=="lo" || (!origin && name=="cvpublic0"); }
+  if_freenameindex(names);need(safe && count==(origin?1u:2u));
+}
+static void public_origin(SSL_CTX* sc, const std::string& parent, bool network = false) {
+  public_lab_guard(parent,true);
+  need(command({"/usr/sbin/ip","link","set","lo","up"})==0);
+  need(command({"/usr/sbin/ip","addr","add","1.1.1.1/32","dev","lo"})==0);
+  need(command({"/usr/sbin/ip","addr","add","11.0.0.2/32","dev","lo"})==0);
+  std::cout<<"{\"stage\":\"namespace-ready\"}"<<std::endl;
+  until([]{return if_nametoindex("cvpublic1")!=0;});
+  need(command({"/usr/sbin/ip","addr","add",network?"198.18.0.2/24":"198.18.0.2/30","dev","cvpublic1"})==0);
+  need(command({"/usr/sbin/ip","link","set","cvpublic1","up"})==0);
+  RelaySocket capture;
+  if(network) {
+    capture.fd=socket(AF_PACKET,SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC,htons(ETH_P_IP));need(capture.fd>=0);
+    sockaddr_ll a{};a.sll_family=AF_PACKET;a.sll_protocol=htons(ETH_P_IP);a.sll_ifindex=if_nametoindex("cvpublic1");
+    need(bind(capture.fd,reinterpret_cast<sockaddr*>(&a),sizeof(a))==0);
+  }
+  Origin origin(sc,0,Destination{{0,0,0,0},443});
+  std::cout<<"{\"stage\":\"origin-ready\"}"<<std::endl;
+  unsigned previous=~0u, forbidden=0, previous_forbidden=~0u;
+  for(;;) {
+    if(network) {
+      uint8_t b[2048];ssize_t n;
+      while((n=recv(capture.fd,b,sizeof(b),0))>0) {
+        if(n<20 || b[16]!=1 || b[17]!=1 || b[18]!=1 || b[19]!=1) continue;
+        const size_t ihl=(b[0]&15)*4;
+        if(b[9]!=6 || size_t(n)<ihl+4 || b[ihl+2]!=1 || b[ihl+3]!=187) ++forbidden;
+      }
+      need(n<0 && (errno==EAGAIN || errno==EWOULDBLOCK));
+    }
+    const unsigned count=origin.connections;
+    if(count!=previous || forbidden!=previous_forbidden) {
+      std::cout<<nlohmann::json({{"connections",count},{"forbiddenPackets",forbidden}}).dump()<<std::endl;
+      previous=count;previous_forbidden=forbidden;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+}
+static void network_blocked(const Destination& dst) {
+  RelaySocket s(socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0));need(s.fd>=0);
+  auto a=socket_address(dst);
+  int rc=connect(s.fd,reinterpret_cast<sockaddr*>(&a),sizeof(a));need(rc<0);
+  if(errno==ECONNREFUSED || errno==ENETUNREACH || errno==EHOSTUNREACH) return;
+  need(errno==EINPROGRESS);pollfd p{s.fd,POLLOUT,0};rc=poll(&p,1,200);need(rc>=0);
+  if(rc==0) return;
+  int error=0;socklen_t len=sizeof(error);need(getsockopt(s.fd,SOL_SOCKET,SO_ERROR,&error,&len)==0 && error!=0);
+}
+static void network_udp() {
+  for(uint16_t port : {uint16_t(53),uint16_t(443)}) {
+    RelaySocket s(socket(AF_INET,SOCK_DGRAM|SOCK_CLOEXEC,0));need(s.fd>=0);
+    auto a=socket_address(Destination{{1,1,1,1},port});const uint8_t probe=0;
+    need(sendto(s.fd,&probe,1,0,reinterpret_cast<sockaddr*>(&a),sizeof(a))==1);
+  }
+}
+static void network_negative(bool crash) {
+  if(crash) network_blocked(Destination{{1,1,1,1},443});
+  else {
+    for(const Destination d : {Destination{{1,1,1,1},80}, {{1,1,1,1},53}, {{8,8,8,8},443},
+        {{192,168,7,1},33002}, {{198,18,0,3},33001}}) network_blocked(d);
+    // UDP has no connect handshake: send bounded datagrams for the namespace
+    // capture to check, never treat send() success as reachability evidence.
+    network_udp();
+  }
+  std::cout<<"native transparent network blocked PASS"<<std::endl;
+}
+static void public_probe(SSL_CTX* cc, SSL_CTX* sc) {
+  Digest key{};key.fill('B');SniAuthorization auth(key,"relay.example");const auto hello=parse(client_hello(cc));
+  // A real local TLS listener makes a missing local-address guard observable:
+  // refusal cannot pass merely because no server exists at the denied address.
+  Origin local(sc,0,Destination{{0,0,0,0},443});
+  { RelaySocket s(connected(Destination{{127,0,0,1},443}));write_bytes(s.fd,hello.wire);uint8_t b;need(recv(s.fd,&b,1,0)==1); }
+  until([&]{return local.failed==1;});
+  for(const Destination d : {Destination{{127,0,0,1},443}, {{169,254,169,254},443}, {{10,0,0,1},443},
+      {{100,100,100,200},443}, {{192,168,0,1},443}, {{198,18,0,2},443}, {{224,0,0,1},443},
+      {{192,0,0,9},443}, {{8,8,8,8},443}, {{11,0,0,1},443}, {{11,0,0,2},443}, {{1,1,1,1},80}})
+    denied(Destination{{127,0,0,1},33001},auth.seal(hello,d,wall_seconds()));
+  need(local.connections==1);
+  std::cout<<"native public policy rejection PASS"<<std::endl;
+}
 int main(int argc, char** argv) {
   if (argc != 3 && argc != 5) return 2;
   try {
+    const bool public_mode=argc==5 && std::string(argv[1]).rfind("--public-",0)==0;
+    const int offset=public_mode?1:0;
     bssl::UniquePtr<SSL_CTX> cc(SSL_CTX_new(TLS_method())), sc(SSL_CTX_new(TLS_method())); need(cc && sc);
-    need(SSL_CTX_use_certificate_chain_file(sc.get(),argv[1]) && SSL_CTX_use_PrivateKey_file(sc.get(),argv[2],SSL_FILETYPE_PEM));
-    need(SSL_CTX_load_verify_locations(cc.get(),argv[1],nullptr)); SSL_CTX_set_verify(cc.get(),SSL_VERIFY_PEER,nullptr);
+    need(SSL_CTX_use_certificate_chain_file(sc.get(),argv[1+offset]) && SSL_CTX_use_PrivateKey_file(sc.get(),argv[2+offset],SSL_FILETYPE_PEM));
+    need(SSL_CTX_load_verify_locations(cc.get(),argv[1+offset],nullptr)); SSL_CTX_set_verify(cc.get(),SSL_VERIFY_PEER,nullptr);
     need(SSL_CTX_set1_groups_list(cc.get(),"X25519:P-256") && SSL_CTX_set1_groups_list(sc.get(),"P-256"));
+    if(public_mode) {
+      const std::string mode=argv[1];
+      if(mode=="--public-holder") {
+        public_lab_guard(argv[4],true);std::cout<<"{\"stage\":\"namespace-ready\"}"<<std::endl;
+        for(;;) pause();
+      }
+      else if(mode=="--public-origin" || mode=="--public-network-origin") public_origin(sc.get(),argv[4],mode=="--public-network-origin");
+      else {
+        public_lab_guard(argv[4],false);
+        if(mode=="--public-network-udp") { network_udp();std::cout<<"UDP sent"<<std::endl; }
+        else if(mode=="--public-network-negative" || mode=="--public-network-crash") network_negative(mode=="--public-network-crash");
+        else if(mode=="--public-client") {
+          transfer(cc.get(),Destination{{1,1,1,1},443},TLS1_2_VERSION,true);
+          transfer(cc.get(),Destination{{1,1,1,1},443},TLS1_3_VERSION,true);
+          std::cout<<"native public policy TLS12/TLS13-HRR PASS"<<std::endl;
+        } else if(mode=="--public-probe") public_probe(cc.get(),sc.get());
+        else if(mode=="--public-client-blocked" || mode=="--public-client-local") {
+          std::unique_ptr<Listener> decoy;
+          if(mode=="--public-client-local") decoy=std::make_unique<Listener>(Destination{{127,0,0,1},33001});
+          RelaySocket s(connected(Destination{{1,1,1,1},443},true));write_bytes(s.fd,client_hello(cc.get()));
+          uint8_t b;const auto n=recv(s.fd,&b,1,0);need(n==0||(n<0&&errno==ECONNRESET));
+          if(decoy) {
+            RelaySocket attempted(accept4(decoy->socket.fd,nullptr,nullptr,SOCK_CLOEXEC));
+            need(attempted.fd<0 && (errno==EAGAIN || errno==EWOULDBLOCK));
+          }
+          std::cout<<"native public policy no fallback PASS"<<std::endl;
+        } else need(false);
+      }
+      return 0;
+    }
     if (argc==5) { engine_redirect(cc.get(),sc.get(),argv[3],argv[4]); return 0; }
     Origin origin(sc.get()); const auto dst = origin.destination();
     Digest secret{}; secret.fill(0x42); SniAuthorization auth(secret,"relay.example");

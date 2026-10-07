@@ -1,6 +1,7 @@
 // Dedicated native-only IPv4 host/namespace. Pure plan: no sockets or OS writes.
 import assert from 'node:assert/strict';
 import { isIPv4 } from 'node:net';
+import { transparentNetworkPlan } from './native-transparent-network.mjs';
 const keys = (v, list) => assert.deepEqual(Object.keys(v).sort(), list.sort());
 const iface = v => { assert.match(v, /^[a-zA-Z][a-zA-Z0-9_-]{0,14}$/); assert.notEqual(v, 'lo'); };
 const number = ip => ip.split('.').reduce((n, b) => n * 256 + Number(b), 0);
@@ -31,6 +32,7 @@ export function validateNativeNetworkProfile(c) {
 }
 const table = (name, chains, rules) => `*${name}\n${chains.map(([c, p]) => `:${c} ${p} [0:0]`).join('\n')}\n${rules.join('\n')}\nCOMMIT\n`;
 export function nativeNetworkPlan(input) {
+  if (input.transport === 'transparent-tls') return transparentNetworkPlan(input);
   const c = validateNativeNetworkProfile(input), client = c.role === 'client';
   const ip = c.tun_address.split('/')[0], network = ip.split('.').slice(0, 3).join('.') + '.0/24';
   const filter = ['-A INPUT -i lo -j ACCEPT', '-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT',

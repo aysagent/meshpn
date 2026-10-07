@@ -41,3 +41,25 @@ test('native transparent engine with real REDIRECT in isolated network namespace
   assert.match(result.stdout, /native transparent engine REDIRECT PASS/);
   console.log(result.stdout.trim());
 });
+
+for (const lab of ['public', 'network']) test(`native transparent ${lab} isolated namespace lab`, { timeout: 30000 }, t => {
+  const build = path.resolve(process.env.CVPN_BUILD ?? 'native/clean_vpn/build');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cvpn-transparent-public-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cert = path.join(dir, 'cert.pem'), key = path.join(dir, 'key.pem');
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key,
+    '-out', cert, '-days', '2', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost'], { stdio: 'pipe' });
+  const env = { ...process.env }; delete env.NOTIFY_SOCKET;
+  const result = spawnSync('unshare', ['--user', '--map-root-user', '--net', process.execPath,
+    path.resolve(`scripts/lib/native-transparent-${lab}-lab.mjs`), build, cert, key,
+    fs.readlinkSync('/proc/self/ns/net')], { encoding: 'utf8', timeout: 25000, maxBuffer: 65536, env, detached: true });
+  // On timeout Node's synchronous runner kills only its immediate child.
+  // Reap this lab's own process group too; never leave engine/origin orphans.
+  if (Number.isInteger(result.pid) && result.pid > 1) {
+    try { process.kill(-result.pid, 'SIGKILL'); } catch (e) { if (e.code !== 'ESRCH') throw e; }
+  }
+  assert.equal(result.status, 0, `${result.error ?? ''}\n${result.stdout}\n${result.stderr}`);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, 'passed'); assert.equal(report.originConnections, lab === 'public' ? 4 : 6);
+  console.log(JSON.stringify(report));
+});

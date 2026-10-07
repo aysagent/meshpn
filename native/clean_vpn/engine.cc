@@ -557,7 +557,7 @@ static int transparent_engine(const json& j, bool validate, bool initialize, boo
   std::copy(secret.bytes.begin(),secret.bytes.end(),key.begin());
   struct CleanKey { tr::Digest& key; ~CleanKey() { OPENSSL_cleanse(key.data(),key.size()); } } clean{key};
   tr::SniAuthorization auth(key,c.public_name);
-  if(validate){std::cout<<json({{"valid",true},{"transport","transparent-tls"},{"role",c.client?"client":"exit"},{"scope","explicit-destinations"}}).dump()<<"\n";return 0;}
+  if(validate){std::cout<<json({{"valid",true},{"transport","transparent-tls"},{"role",c.client?"client":"exit"},{"scope",c.public_https?"public-https":"explicit-destinations"}}).dump()<<"\n";return 0;}
   if(initialize){
     check(!c.client,"relay_init_exit_only"); tr::ReplayWindow replay(c.replay_directory,auth.replay_scope(),true);
     std::cout<<"{\"replay_initialized\":true}\n";return 0;
@@ -573,7 +573,7 @@ static int transparent_engine(const json& j, bool validate, bool initialize, boo
   int owned=listener.fd;listener.fd=-1;
   bool broken=false;
   {
-    tr::RelayListener relay(owned,c.client,auth,{},c.exit,tr::DestinationPolicy(c.destinations),{},replay,c.client);
+    tr::RelayListener relay(owned,c.client,auth,{},c.exit,c.policy(),{},replay,c.client);
     check(notify.state("listening"),"relay_notify");
     constexpr char ready[]="{\"event\":\"state\",\"state\":\"listening\",\"transport\":\"transparent-tls\"}\n";
     check(write(STDOUT_FILENO,ready,sizeof(ready)-1)==ssize_t(sizeof(ready)-1),"relay_output");
@@ -590,7 +590,7 @@ int main(int argc,char** argv){
         {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2"}},
         {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
         {"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
-        {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"scope","explicit-ipv4-destinations"},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true}}}}}}).dump()<<"\n";return 0;
+        {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"destination_policies",{"explicit-ipv4-destinations","public-https"}},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true}}}}}}).dump()<<"\n";return 0;
     }
     bool validate=argc==3&&std::string(argv[1])=="--check-config";
     bool initialize=argc==3&&std::string(argv[1])=="--init-transparent-replay";

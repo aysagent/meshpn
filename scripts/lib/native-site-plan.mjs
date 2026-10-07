@@ -6,9 +6,10 @@ import { nativeNetworkUnit } from './native-network-unit.mjs';
 import { nativeRouteServiceUnit } from './native-route-unit.mjs';
 import { nativeServiceUnit } from './native-service-unit.mjs';
 export const nativeSiteSources = ['clean-vpn-native-network.mjs', 'clean-vpn-native-routes.mjs',
-  'lib/native-network-apply.mjs', 'lib/native-network-profile.mjs', 'lib/native-route-service.mjs',
+  'lib/native-network-apply.mjs', 'lib/native-network-profile.mjs', 'lib/native-transparent-network.mjs', 'lib/native-route-service.mjs',
   'lib/vpn-host-routes.mjs', 'lib/dns-tunnel-command.mjs', 'lib/vpn-uplink-watch.mjs'];
 export function nativeSitePlan({ name, target, site, engine, capability }) {
+  assert.equal(site.profile?.transport, undefined, 'transparent_site_installer_not_yet_supported');
   assert.match(name, /^[a-z][a-z0-9-]{0,31}$/);
   assert.deepEqual(Object.keys(site).sort(), ['link_unit', 'profile']);
   nativeNetworkPlan(site.profile); const p = site.profile;

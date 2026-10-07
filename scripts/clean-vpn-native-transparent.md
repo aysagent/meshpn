@@ -3,8 +3,8 @@
 2026-10-07. Добавлены C++ socket relay, durable replay journal и отдельный
 экспериментальный режим client/exit в `clean-vpn-engine`. Проверены настоящие
 REDIRECT/SO_ORIGINAL_DST внутри отдельного user/network namespace без uplink.
-Это **не готовый production transparent/combo**: разрешены только явно заданные
-IPv4:port; installer/site profile ещё не включает interception и fallback.
+Добавлен отдельный `public-https` режим назначения. Это **не готовый production
+transparent/combo**: installer/site profile ещё не включает interception и fallback.
 
 ## Реализовано
 
@@ -42,7 +42,7 @@ IPv4:port; installer/site profile ещё не включает interception и f
   port (uint16 BE), длина исходного SNI (1 byte), исходный SNI, SHA-256 исходного
   **полного wire ClientHello prefix** (32 bytes). Exit восстанавливает prefix и
   проверяет digest; перенос токена в другой ClientHello не разрешает connect.
-- До connect: AEAD → восстановление/hash → точный allowlist IPv4:port → время
+- До connect: AEAD → восстановление/hash → destination policy → время
   ±30 секунд → атомарное резервирование токена в общем replay-cache. Неудачный
   connect уже потребляет токен; перебора альтернативных назначений нет.
 - Replay-cache ≤4096 entries, не вытесняет ещё действующие записи при заполнении.
@@ -50,15 +50,48 @@ IPv4:port; installer/site profile ещё не включает interception и f
   Время снимается под mutex, чтобы параллельные workers не давали ложный rollback.
   Настоящий откат часов переводит экземпляр в отказ; durable вариант сохраняет
   этот отказ через перезапуск.
-- Destination policy сейчас — 1..64 явно разрешённых IPv4:port, без DNS,
-  wildcard или default permit. Private/loopback разрешаются только как явно
-  указанные fixture/административные назначения, не как общий Internet policy.
+- Destination policy выбирается явно: либо 1..64 разрешённых IPv4:port, либо
+  `public-https`. Private/loopback допустимы только в явном allowlist, не в
+  публичном режиме. DNS lookup назначения отсутствует в обоих режимах.
 
 Длина DNS hostname ограничена 253 bytes. Для public-name `relay.example`
 этот формат вмещает исходный SNI до 69 bytes. Более длинное имя или невозможный
 record resize **отклоняются**, а не обрезаются и не отправляются напрямую.
 Защищённый fallback через boring-tls ещё должен быть подключён отдельно.
 Формат является новым проектным протоколом, не прошедшим независимый crypto-аудит.
+
+## Публичные HTTPS-направления
+
+`transparent_destination.hpp`, режим `public-https`:
+
+- Только IPv4 TCP destination port 443. Нет расширения на произвольные порты,
+  частные назначения или UDP при ошибке. Нужны валидный ClientHello и прежняя
+  PSK/AEAD/replay авторизация; одного публичного адреса недостаточно.
+- Консервативно запрещено объединение **всех** блоков
+  [IANA IPv4 Special-Purpose Registry](https://www.iana.org/assignments/iana-ipv4-special-registry/)
+  (проверено 2026-10-07, revision 2025-10-09), включая глобально достижимые
+  специальные исключения; дополнительно запрещён multicast 224/4.
+  Это фиксированная политика проекта, а не динамическая загрузка реестра или
+  обещание достижимости оставшегося IPv4 пространства.
+- `deny_ipv4` — до 64 дополнительных канонических CIDR. Host bits, дубликаты,
+  некорректные длины и неизвестные поля отвергаются. `0.0.0.0/0` допустим как
+  явный запрет всего, не как разрешающее исключение.
+- Client автоматически исключает адрес своего exit целиком, независимо от
+  порта. Ненулевой listen address также исключён. Публичный IP узла за NAT,
+  control endpoints и иные административные исключения нужно явно внести в
+  `deny_ipv4`: автоматически определить их по локальным интерфейсам нельзя.
+- Перед каждым admission считываются локальные IPv4 интерфейсы через
+  `getifaddrs`: свои адреса, подключённые подсети и point-to-point peers
+  запрещаются, в том числе на интерфейсах DOWN. Ошибка чтения/маски/лимит
+  snapshot — отказ. Exit повторяет проверку после durable journal I/O прямо
+  перед connect, а не полагается только на startup snapshot.
+
+Нет DNS rebinding внутри relay: используется numeric original destination.
+Однако политика не является firewall, не анализирует произвольные DNAT/policy
+routes и не защищает от привилегированного изменения сети между проверкой и
+connect. Она требует доверенного сетевого lifecycle и дополняющих firewall
+правил — они ещё должны быть подключены в site profile. Приложение, а не relay,
+проверяет сертификат origin; endpoint TLS не терминируется нашим exit.
 
 ## Durable replay и ключи
 
@@ -119,10 +152,11 @@ allowlist. Если original tuple совпадает с локальным list
 `transparent_config.hpp` — отдельная строгая схема. Обязательные поля:
 `version: 1`, `transport: "transparent-tls"`, `role: "client" | "exit"`,
 `listen: {ipv4, port}`, `public_name`, `secret_path` (32-byte PSK),
-`destinations: [{ipv4, port}, ...]` (1..64 без дубликатов).
+ровно один из `destinations: [{ipv4, port}, ...]` (1..64 без дубликатов) или
+`destination_policy: {mode: "public-https", deny_ipv4: ["A.B.C.D/N", ...]}`.
 Для client обязательно `exit: {ipv4, port}`; для exit — `replay_directory`.
-Поля TUN/DNS/сертификатов boring-tls здесь запрещены. Никакого wildcard
-destination, разрешения произвольного Internet connect или implicit fallback.
+Поля TUN/DNS/сертификатов boring-tls здесь запрещены. Никакого default permit,
+разрешения произвольных портов Internet connect или implicit fallback.
 
 Команды **для отдельно подготовленной лабораторной конфигурации**, не Radxa:
 
@@ -203,6 +237,31 @@ connect exit-процесса не попал в тот же OUTPUT REDIRECT. C+
 не уходит напрямую. SIGTERM обоих процессов завершает их с кодом 0.
 Это выбранный IPv4 TCP-путь, не полная leak/IPv6/DNS или site-profile приёмка.
 
+`native-transparent-public-lab.mjs` дополняет его вторым, связанным veth
+namespace для origin. У обоих нет физического uplink/маршрута в Интернет;
+`1.1.1.1:443` назначен только синтетическому C++ origin в соседнем namespace,
+обращений к настоящему 1.1.1.1 нет. На native client и exit включён
+`public-https`, на клиенте настоящий kernel REDIRECT. Проверяются:
+
+- TLS 1.2 и 1.3/HRR через два engine-процесса;
+- специальные и дополнительно запрещённые адреса, неверный порт;
+- добавление публично выглядящей локальной подсети **после** запуска engine:
+  свой адрес и сосед из этой подсети отклоняются без reload. Проверки используют
+  настоящий локальный TLS listener и достижимый TLS endpoint в соседнем
+  namespace: отсутствие сервера не выдаётся за успешную проверку policy;
+- SIGKILL exit, отказ прямого обхода, fresh connections после restart;
+- назначение origin IP локально клиенту после успешного обмена блокирует
+  следующие перехваченные запросы; origin connection counter остаётся прежним.
+  Подменный exit listener дополнительно подтверждает, что клиент не пытается
+  соединиться с exit для такого назначения (независимо от защиты на exit).
+
+Node меняет только лабораторную конфигурацию/namespace links и читает metadata.
+ClientHello, авторизованные негативные probes и application bytes создаёт C++.
+Внешний runner выделяет собственную process group и завершает остатки этой
+группы при timeout/failure; lab не переходит к сетевым операциям хоста.
+Unit проверки дополнительно покрывают границы 18 запрещённых диапазонов,
+канонические CIDR, строгий выбор schema и защиту адреса exit независимо от порта.
+
 Реальный ECH и принятие/отказ 0-RTT ещё не проверены; сохранение opaque bytes не
 доказывает маршрутизацию ECH. TLS 1.2 оставляет сертификат origin видимым на wire;
 enc-SNI не обещает скрыть все метаданные приложения.
@@ -215,18 +274,27 @@ unit/fixture tests не запускались на физической Radxa.
 Дополнительно installer/network-profile/route-service/service-unit/trial-service
 регрессии **55/55** без skip. Повторного VM boot/site прогона новым бинарником
 в этом checkpoint не было; прежние boot-отчёты относятся к предыдущей ревизии.
+Public-policy checkpoint: общий normal regression-прогон **138/138**, CTest
+**5/5** normal и ASAN/UBSAN; три transparent-прогона (codec/TCP, scoped engine,
+двухnamespace public policy) проходят normal и ASAN/UBSAN. Это не Speedtest.
 В final socket-прогонах peak outbound queue на exit — 933888 bytes при лимите
 1048576; чтение действительно приостанавливалось. Число paused polls зависит от
 планировщика и не является latency/throughput метрикой.
 
 ## Следующая точка
 
-1. Общая Internet destination policy вместо scoped allowlist, provisioning и
-   lifecycle interception; явная политика ключей/ротации.
+Добавлен [standalone network guard](clean-vpn-native-transparent-network.md):
+LAN HTTPS REDIRECT, client/exit default-DROP правила, без TUN/forwarding и без
+direct fallback для остального трафика. Пять namespace проверяют реальный TLS
+через оба native engine, SIGKILL каждого, restart и сохранность правил.
+Это ещё не installer/systemd boot приёмка transparent.
+
+1. Immutable binding engine/network и fresh installer/systemd lifecycle для
+   transparent с VM cold boot/crash приёмкой; явная политика ключей/ротации.
 2. Расширенные crash/restart/boot/ресурсные сценарии, реальный ECH/0-RTT.
-3. Включение в native-only network profile. Non-HTTPS и неподдержанный TLS —
+3. Полная эксплуатационная интеграция native-only network profile. Non-HTTPS и неподдержанный TLS —
    только явно защищённый native путь либо блокировка, никакого cleartext/direct
    fallback. Затем единый native combo listener и transport selection.
 
-Native engine уже содержит экспериментальный scoped transparent relay.
+Native engine уже содержит experimental transparent relay с двумя destination policies.
 Готовность этого пути не означает готовность transparent/combo site deployment.
