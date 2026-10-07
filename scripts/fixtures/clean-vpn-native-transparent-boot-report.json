@@ -1,0 +1,106 @@
+{
+  "status": "passed",
+  "nic": "none",
+  "hostSharedFilesystem": false,
+  "realTun": false,
+  "packetOwner": "C++",
+  "kernelSha256": "7a69aaa48d149d102c572424b588e2bc6f8b7524d5ec0e08fd2a2a06448f01f8",
+  "accelerator": "TCG",
+  "vcpus": 1,
+  "memoryMiB": 1536,
+  "guard": "native-transparent-LAN-HTTPS-default-DROP",
+  "benchmark": "not-requested",
+  "limitations": [
+    "fixture-PKI-and-origins",
+    "local-capture-not-on-wire-proof",
+    "not-physical-Radxa-or-arm64",
+    "emulator-not-production-performance",
+    "RSS-not-PSS; sampling-may-miss-short-lived-processes",
+    "external-fixture-link-address-default-owner",
+    "not-live-site-upgrade-or-all-egress-capture",
+    "selected-IPv4-HTTPS-and-UDP-probes-not-all-egress-capture",
+    "reboot-journal-bytes-not-cross-boot-live-token-replay",
+    "persistent-artifacts-restored-into-initramfs",
+    "static-managed-links-not-DHCP",
+    "no-independent-early-boot-packet-capture"
+  ],
+  "nativeOnly": true,
+  "labScriptSha256": "9daedf115fea3d7ccfc79e098b781d8c2de52a9326e62ccc18a627be11293b46",
+  "serviceUnitRendererSha256": "e7ff7566a7d137c7e19b05ec3620542637e222f666594eb810712bffe30c8a33",
+  "clean-vpn-engineSha256": "4d23bbfadb9f8cc4acede4ea9cabbb3a868c176411917e4f501d245f4d699ec8",
+  "transparent-socket-testSha256": "b7a5cfee7c4b21fec3c6c2518b00e3f61a17969b69aed93c1f96513284216596",
+  "systemdPid1": true,
+  "nativeDirectServices": true,
+  "realTunPeers": 0,
+  "sitePlanSha256": "3404b1383c4aad1638af6038ac7bcf0fa6c0b6eb298d6261510dc6b68b6749cd",
+  "siteInstallerSha256": "75977fe3a035ea039ef659acc7bf1a4127363e24bb37d9a287286a799afb52a8",
+  "networkPlanSha256": "d5f16d7b5bdcef43ef72322b755a005124f42e2b0725a8fc949dbd79ec23ee6d",
+  "networkApplySha256": "896cff7da956a37c01c1b2bb456eaf80210088c3ccfab32e60351444023e17b9",
+  "networkCliSha256": "03a4d0514acc7a8d211eb2d7727e1838269b12e419489f699f581b036e8efba5",
+  "networkUnitSha256": "e5157e48a88f580ed1c35219dea9babd8610c330c1a6a4eb136a51421dc2a452",
+  "transparentBoot": true,
+  "transport": "transparent-tls",
+  "transparentDriverSha256": "9daedf115fea3d7ccfc79e098b781d8c2de52a9326e62ccc18a627be11293b46",
+  "transparentImageSha256": "eca7b000694f549d7b1f4d444073f638dfc3801f9c6f73b2150a6f0f1349ce98",
+  "boots": [
+    {
+      "phase": 0,
+      "bootId": "65fcc892-8ebe-452c-aed3-5d7e5cf43f99",
+      "checks": {
+        "NATIVE_TRANSPARENT_INSTALLED_DISABLED_PASS": true,
+        "NATIVE_TRANSPARENT_GUARD_BEFORE_LINK_PASS": true,
+        "NATIVE_TRANSPARENT_DIRECT_CPP_NOTIFY_PASS": true,
+        "NATIVE_TRANSPARENT_TLS_PASS": true,
+        "NATIVE_TRANSPARENT_UNSUPPORTED_BLOCKED_PASS": true,
+        "NATIVE_TRANSPARENT_CLIENT_AUTORESTART_PASS": true,
+        "NATIVE_TRANSPARENT_CLIENT_CRASH_BLOCKED_PASS": true,
+        "NATIVE_TRANSPARENT_EXIT_AUTORESTART_PASS": true,
+        "NATIVE_TRANSPARENT_EXIT_CRASH_BLOCKED_PASS": true,
+        "NATIVE_TRANSPARENT_TARGET_STOP_BLOCKED_PASS": true,
+        "NATIVE_TRANSPARENT_REPLAY_PERSISTED_PASS": true
+      }
+    },
+    {
+      "phase": 1,
+      "bootId": "abfe80c1-e312-4406-b8aa-4e6ed3605deb",
+      "checks": {
+        "NATIVE_TRANSPARENT_REBOOT_REPLAY_BYTES_PASS": true,
+        "NATIVE_TRANSPARENT_REBOOT_AUTOSTART_ORDER_PASS": true,
+        "NATIVE_TRANSPARENT_REBOOT_TLS_PASS": true,
+        "NATIVE_TRANSPARENT_UNSUPPORTED_BLOCKED_PASS": true,
+        "NATIVE_TRANSPARENT_MISSING_REPLAY_REFUSED_PASS": true,
+        "NATIVE_TRANSPARENT_CORRUPT_REPLAY_REFUSED_PASS": true,
+        "NATIVE_TRANSPARENT_REPLAY_RESTORED_TLS_PASS": true,
+        "NATIVE_TRANSPARENT_TARGET_STOP_BLOCKED_PASS": true
+      }
+    }
+  ],
+  "installerSha256": "75977fe3a035ea039ef659acc7bf1a4127363e24bb37d9a287286a799afb52a8",
+  "bootDriverSha256": "9daedf115fea3d7ccfc79e098b781d8c2de52a9326e62ccc18a627be11293b46",
+  "code": 0,
+  "benchmarks": [],
+  "schema": 1,
+  "kind": "clean-vpn-native-transparent-boot-lab",
+  "date": "2026-10-07",
+  "reportFile": "/var/tmp/meshpn-native-lab-XKVUac/report.json",
+  "checks": 19,
+  "boringTlsBootRegression": {
+    "status": "passed",
+    "reportFile": "/var/tmp/meshpn-native-lab-rvHSAf/report.json",
+    "checks": 17,
+    "bootIds": [
+      "371a87d2-a748-444b-85de-b2903892d829",
+      "d5ad43f8-f208-48b2-9823-486a9d2b83f8"
+    ],
+    "scope": "same-engine-and-site-plan-two-boot-native-boring-tls-regression"
+  },
+  "regressions": {
+    "passed": 173,
+    "failed": 0,
+    "scope": "native/transparent/install/site/service/routes/trial selected regression suite"
+  },
+  "ctest": {
+    "normalPassed": 5,
+    "asanUbsanPassed": 5
+  }
+}

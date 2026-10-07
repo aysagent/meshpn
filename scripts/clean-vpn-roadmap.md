@@ -43,8 +43,21 @@ allowlist и TCP relay с backpressure/half-close; real-TCP fixture не мен�
 LAN HTTPS REDIRECT, default-DROP для остального трафика и общий journal lifecycle.
 Пять namespace проверяют TLS через оба C++ engine, SIGKILL client/exit и restart
 без снятия правил. Fresh installer binding и отдельный writable replay state
-реализованы; transparent systemd/boot приёмка и combo ещё впереди;
-готовым основным транспортом остаётся boring-tls.
+реализованы. [Transparent systemd/boot приёмка](clean-vpn-native-transparent-boot.md)
+прошла **19/19** gates на двух загрузках NIC-less VM: direct C++ client/exit,
+crash/restart, guard-before-uplink, сохранённый replay и отказ при его потере/
+повреждении. Результат: `fixtures/clean-vpn-native-transparent-boot-report.json`.
+Полная приёмка native combo ещё впереди; transparent пока experimental, без product-wide
+ECH/0-RTT/ресурсной и физической приёмки. Следующая точка — native combo:
+HTTPS через transparent, остальной поддержанный трафик через boring-tls,
+с native выбором ветки и без прямого обхода при отказе любого транспорта.
+Начат [native combo engine](clean-vpn-native-combo.md): один exit TCP listener,
+ClientHello dispatch и обе ветки в C++; неправильный relay-token не переходит
+в boring. Одновременный TLS/packet fixture и exit crash/restart проверяются
+отдельно. Следующая ограниченная точка — combo network profile с реальными
+TUN/DNS/LAN, затем installer/systemd VM; текущий engine ещё не combo deployment.
+Combo engine checkpoint: 390/390 native/routes regression, CTest 6/6 normal и
+ASAN/UBSAN; результат и границы — `fixtures/clean-vpn-native-combo-report.json`.
 Это dedicated-host контракт: адреса/DHCP/default предоставляет внешний link
 owner. Адаптация к конкретному distro/network manager, обновление существующих
 установок и физический boot остаются отдельной эксплуатационной работой.

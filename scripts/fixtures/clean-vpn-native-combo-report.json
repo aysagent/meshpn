@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "kind": "native-combo-engine-checkpoint",
+  "date": "2026-10-07",
+  "status": "passed",
+  "scope": "engine-composition-and-scoped-REDIRECT-not-combo-site-deployment",
+  "packetOwner": "C++",
+  "packetIpc": false,
+  "singleExitListener": true,
+  "fixturePacketsVerified": 204,
+  "tls": ["TLS1.2", "TLS1.3-HRR"],
+  "checks": [
+    "fragmented-non-consuming-peek-and-coalesced-tail",
+    "reserved-relay-name-never-downgrades-to-boring",
+    "replay-wrong-key-tamper-open-no-origin",
+    "bounded-pending-admission-and-cancelled-stop",
+    "slow-hello-does-not-block-another-hello",
+    "config-role-endpoint-SNI-and-separate-key-binding",
+    "read-only-config-validation",
+    "concurrent-packets-and-TLS-in-two-combo-engines",
+    "real-REDIRECT-in-new-empty-network-namespace",
+    "exit-SIGKILL-no-direct-relay-fallback",
+    "durable-replay-after-exit-restart",
+    "fresh-TLS-and-packets-after-restart",
+    "SIGTERM-clean-stop"
+  ],
+  "regressions": {
+    "passed": 390,
+    "failed": 0,
+    "skipped": 0,
+    "command": "node --test scripts/test-native-*.mjs scripts/test-vpn-host-routes.mjs scripts/test-vpn-uplink*.mjs"
+  },
+  "ctest": { "normalPassed": 6, "asanUbsanPassed": 6 },
+  "asanUbsanIntegration": {
+    "passed": 7,
+    "failed": 0,
+    "command": "CVPN_BUILD=native/clean_vpn/build-asan node --test scripts/test-native-combo.mjs scripts/test-native-transparent.mjs",
+    "scope": "own-C++-code-not-third-party-libraries"
+  },
+  "boringNativeSoakRegression": {
+    "seconds": 180,
+    "packets": 937808,
+    "payloadVerified": true,
+    "droppedPackets": 0,
+    "unexpectedReconnects": 0,
+    "peakRssKiB": 6132,
+    "scope": "existing-boring-native-fixture-not-combo-endurance-or-throughput"
+  },
+  "hashes": {
+    "engine": "01c7cfb6f6986b342ebf3fd2f1d72dd0b853dd32a31924c3aa7097f89d6c80b3",
+    "fixtureEngine": "69ce53266ddabae1b016e737fdcab00d0163f626602eed54c075057a562a3c4e",
+    "socketFixture": "c261f9e47b4217665260fbf62c9d1357bfcbca5f6abcd09c0aa711ff508d2b4d",
+    "comboHeader": "c2b5284bfe2ae37bf6e8b30aeb5937b6be2d7f473ee22d50dd9d1dc65d395b83",
+    "comboUnitSource": "1893234809c990dba7ea8b66dcae05b83ff72596c5ee0eedee87061551a5e8d2",
+    "engineSource": "2f247d54f586ee9492dc0a53466f7e786eddb9d411ea2d49867fd2fb7d48fc22"
+  },
+  "limitations": [
+    "scoped-loopback-origin-not-public-network-combo-policy",
+    "fixture-packet-fd-not-real-TUN",
+    "one-boring-peer-in-combo-test",
+    "no-combo-DNS-SNAT-MSS-network-profile-or-installer",
+    "no-combo-systemd-boot-or-independent-leak-capture",
+    "not-physical-Radxa-VPS-or-WAN-benchmark",
+    "not-ECH-0RTT-browser-profile-fidelity-or-key-rotation"
+  ]
+}

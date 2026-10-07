@@ -45,6 +45,7 @@ test('transparent site binds engine policy/listener/exit and has no route coordi
       capability: { experimental_transports: { 'transparent-tls': { durable_replay: true, client_interception: 'SO_ORIGINAL_DST', destination_policies: ['public-https'] } } } };
     const plan = nativeSitePlan(args);
     assert.equal(plan.units.size, 4); assert.ok(!plan.files.has('routes.json'));
+    assert.match(plan.units.get('native-tr.target'), /After=native-tr-network.service native-tr-uplink.service native-tr.service/);
     assert.match(plan.units.get('native-tr.service'), /After=native-tr-uplink.service native-tr-network.service/);
     assert.ok(!plan.units.get('native-tr.service').includes('DeviceAllow='));
     assert.equal(plan.units.get('native-tr.service').includes('ReadWritePaths='), role === 'exit');
@@ -162,6 +163,8 @@ test('site binds engine/config/mark and gates uplink after profile; both roles',
     const args = { name: 'site', target: '/opt/clean-vpn-native/site', site: { link_unit: 'links.service', profile }, engine: { role: profile.role, tun: 'tun0', address: profile.endpoint, port: 443, dns: true }, capability: { dns_socket_mark: '0x43564e' } };
     const plan = nativeSitePlan(args);
     assert.equal(plan.activation, 'native-site.target');
+    assert.ok(plan.units.get(plan.activation).includes('After=native-site-network.service native-site-uplink.service ' +
+      (profile.role === 'client' ? 'native-site-routes.service' : 'native-site.service') + '\n'));
     assert.match(plan.units.get('native-site-uplink.service'), /Requires=native-site-network.service/);
     assert.match(plan.units.get('native-site-network.service'), /Requires=links.service/);
     assert.ok(!plan.units.get('native-site.service').includes('WantedBy='));

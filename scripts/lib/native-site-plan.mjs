@@ -51,7 +51,7 @@ export function nativeSitePlan({ name, target, site, engine, capability }) {
     files.set('routes.json', JSON.stringify(profile) + '\n');
     units.set(route, nativeRouteServiceUnit({ config: target + '/routes.json', script: target + '/control/clean-vpn-native-routes.mjs', profile, provisionUnit: gate }));
   }
-  units.set(targetUnit, `[Unit]\nDescription=clean-vpn native site\nRequires=${routedClient ? route : unit}\nAfter=${guard} ${gate}\n\n[Install]\nWantedBy=multi-user.target\n`);
+  units.set(targetUnit, `[Unit]\nDescription=clean-vpn native site\nRequires=${routedClient ? route : unit}\nAfter=${guard} ${gate} ${routedClient ? route : unit}\n\n[Install]\nWantedBy=multi-user.target\n`);
   for (const [name, body] of units) if (name !== targetUnit) units.set(name, body.replace('[Unit]\n', `[Unit]\nPartOf=${targetUnit}\n`));
   return { units, files, dependencies: [site.link_unit], activation: targetUnit, engineUnit: unit };
 }

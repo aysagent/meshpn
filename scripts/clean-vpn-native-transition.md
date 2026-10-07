@@ -148,9 +148,16 @@ VM выше относится к предыдущей сборке и сохр�
    engine, PREROUTING REDIRECT, SIGKILL client/exit, restart и отсутствие
    выбранного прямого обхода. Fresh site installer теперь связывает engine и
    firewall, создаёт replay state до публикации unit и выделяет ему единственный
-   writable каталог. Transparent systemd/cold boot и сохранность replay при
-   reboot ещё требуют отдельной VM приёмки.
-3. Native combo, выбор ветки и владение потоками внутри native engine.
+   writable каталог. [Transparent systemd/cold boot](clean-vpn-native-transparent-boot.md)
+   прошёл 19/19 gates на двух загрузках: сохранность байтов/прав replay,
+   автозапуск обеих ролей, crash/restart, отказ при missing/corrupt state и
+   восстановление только явно сохранённых fixture-байтов. Это не power-loss,
+   live-token replay через reboot или physical-host приёмка.
+3. [Native combo engine checkpoint](clean-vpn-native-combo.md): общий exit listener,
+   выбор ветки по ClientHello и владение потоками внутри C++ реализованы.
+   Проверены одновременный packet/TLS fixture и replay после exit crash.
+   Ещё нужны единый network profile, реальные TUN/DNS/LAN, installer и systemd
+   crash/reboot приёмка combo; нельзя склеивать standalone guards вручную.
 4. Затем измерение скорости полностью native схемы и следующие продуктовые
    этапы roadmap. Браузерные профили/UI не объявляются реализованными этим шагом.
 

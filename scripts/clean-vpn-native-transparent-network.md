@@ -115,8 +115,8 @@ Capture на synthetic origin получает positive-control UDP 53/443 до 
 Лаборатория использует общий apply-код с in-memory journal adapter, не root CLI
 с дисковым journal. Это не проверка systemd boot, fsync journal при потере
 питания, физического uplink, полного IPv6/DNS leak acceptance или скорости.
-Следующий этап — отдельная VM systemd/cold-boot/crash приёмка transparent bundle,
-включая сохранение replay state при reboot и отказ при его повреждении/потере.
+Отдельная [VM systemd/cold-boot/crash приёмка](clean-vpn-native-transparent-boot.md)
+добавлена следующим checkpoint ниже; она не расширяет scope этого namespace-теста.
 
 Checkpoint 2026-10-07: общий native regression-набор **159/159**, без skip;
 CTest **5/5** normal и ASAN/UBSAN; все четыре transparent-прогона (codec/TCP,
@@ -137,4 +137,16 @@ NIC-less QEMU, **17/17** gates, `status=passed`. Отчёт:
 `/var/tmp/meshpn-native-lab-abc7C7/report.json` (2026-10-07). Проверены
 client/exit crash-restart, guard drift/refusal, reboot autostart/DNS, inventory и
 порядок guard-before-uplink, stop-target fail-closed. Этот отчёт не подменяет
-ещё не выполненную VM boot-приёмку **transparent**.
+VM boot-приёмку **transparent**.
+
+Transparent boot checkpoint 2026-10-07: **19/19** gates, две загрузки NIC-less
+QEMU с systemd PID 1 и настоящим fresh installer. Проверены direct C++ сервисы,
+обычный autorestart, отдельные crash-окна, stop-target fail-closed, reboot
+autostart, сохранность replay-байтов и приватных прав, отказ missing/corrupt
+state без runtime-init. Отчёт: `fixtures/clean-vpn-native-transparent-boot-report.json`.
+Регрессия **173/173**, CTest **5/5** normal и **5/5** ASAN/UBSAN.
+Повторная boring-tls site VM с этим renderer: **17/17** на двух загрузках,
+`/var/tmp/meshpn-native-lab-rvHSAf/report.json`.
+Production target теперь явно упорядочен после своего engine/coordinator.
+Fixture persistence сохраняет права каталогов, не ослабляя проверки replay.
+Физические устройства, production update, key rotation и скорость не проверялись.

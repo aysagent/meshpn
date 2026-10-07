@@ -5,6 +5,7 @@
 #include "dns_relay.hpp"
 #include "service_notify.hpp"
 #include "transparent_config.hpp"
+#include "combo.hpp"
 #include <nlohmann/json.hpp>
 #include <nghttp2/nghttp2.h>
 #include <openssl/ssl.h>
@@ -105,6 +106,7 @@ struct Control {
   ServiceNotify* notify=nullptr;
   std::atomic<bool> dns_ready{false};
   std::atomic<bool> dns_failed{false};
+  const std::atomic<bool>* branch_failed=nullptr;
   std::atomic<bool> dns_idle{false}, dns_demand{false};
   unsigned address_reports=0;
   bool stop=false, uplink=true;
@@ -133,7 +135,7 @@ struct Control {
     if(write(STDOUT_FILENO,line.data(),line.size())!=ssize_t(line.size()))stop=true;
   }
   void read_commands() {
-    if(interrupted||dns_failed)stop=true;
+    if(interrupted||dns_failed||(branch_failed&&branch_failed->load()))stop=true;
     if(input_fd<0)return;
     char b[1024]; ssize_t n=-1;
     unsigned reads=0;
@@ -447,7 +449,7 @@ static void handshake(SSL* ssl,int fd,Control& ctl,Clock::time_point deadline,ui
 }
 // One bounded reactor owns listener, sessions and TUN. Slow TLS/auth peers do
 // not block established tunnels; no per-packet threads, processes or IPC.
-static void run_exit(const Config& config,SSL_CTX* context,int listener,int tun,Control& ctl){
+static void run_exit(const Config& config,SSL_CTX* context,int listener,int tun,Control& ctl,combo::Exit* dispatch=nullptr){
   struct Connection {
     Fd fd;
     std::unique_ptr<SSL,decltype(&SSL_free)> ssl{nullptr,SSL_free};
@@ -470,7 +472,7 @@ static void run_exit(const Config& config,SSL_CTX* context,int listener,int tun,
     if(now-rate_window>=std::chrono::seconds(1)){rate_window=now;admissions=0;}
     // A fixed admission budget bounds unauthenticated SSL allocations/CPU.
     for(unsigned i=0;i<4;i++){
-      Fd accepted(accept4(listener,nullptr,nullptr,SOCK_NONBLOCK|SOCK_CLOEXEC));
+      Fd accepted(dispatch?dispatch->take_boring():accept4(listener,nullptr,nullptr,SOCK_NONBLOCK|SOCK_CLOEXEC));
       if(accepted.n<0){check(errno==EAGAIN||errno==EWOULDBLOCK||errno==EINTR,"accept");break;}
       size_t unauth=0;for(const auto& c:connections)if(!c->session||!c->session->ready)unauth++;
       if(admissions>=32||unauth>=16||connections.size()>=config.peers.size()+16)continue;
@@ -590,7 +592,8 @@ int main(int argc,char** argv){
         {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2"}},
         {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
         {"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
-        {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"destination_policies",{"explicit-ipv4-destinations","public-https"}},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true}}}}}}).dump()<<"\n";return 0;
+        {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"destination_policies",{"explicit-ipv4-destinations","public-https"}},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true}}},
+          {"combo-tls",{{"roles",{"client","exit"}},{"single_exit_listener",true},{"packet_ipc",false},{"site_provisioning",false}}}}}}).dump()<<"\n";return 0;
     }
     bool validate=argc==3&&std::string(argv[1])=="--check-config";
     bool initialize=argc==3&&std::string(argv[1])=="--init-transparent-replay";
@@ -602,9 +605,25 @@ int main(int argc,char** argv){
     if(config.is_object()&&config.value("transport",std::string{})=="transparent-tls"){
       check(test<0,"relay_no_packet_fd");return transparent_engine(config,validate,initialize,service);
     }
-    check(!initialize,"relay_config_required");
-    Config c(config);std::string secret;
+    std::unique_ptr<combo::Config> combined;
+    if(config.is_object()&&config.value("transport",std::string{})=="combo-tls") {
+      check(service||validate||initialize,"combo_service_mode_required");
+      combined=std::make_unique<combo::Config>(config);
+    }
+    check(!initialize||bool(combined),"relay_config_required");
+    Config c(combined?combined->boring:config);std::string secret;
     if(c.client){secret=file(c.secret_path,32,true);check(secret.size()==32,"secret_length");}
+    std::unique_ptr<transparent::SniAuthorization> combo_auth;
+    if(combined) {
+      auto relay_key=file(combined->relay.secret_path,32,true);
+      struct Clean { std::string& s; ~Clean(){OPENSSL_cleanse(s.data(),s.size());} } clean{relay_key};
+      check(relay_key.size()==32,"secret_length");
+      check(!c.client||relay_key!=secret,"combo_separate_keys");
+      for(const auto& peer:c.peers)check(relay_key!=peer.secret,"combo_separate_keys");
+      transparent::Digest key{};std::copy(relay_key.begin(),relay_key.end(),key.begin());
+      struct CleanDigest { transparent::Digest& b; ~CleanDigest(){OPENSSL_cleanse(b.data(),b.size());} } clean_digest{key};
+      combo_auth=std::make_unique<transparent::SniAuthorization>(key,combined->relay.public_name);
+    }
     std::unique_ptr<SSL_CTX,decltype(&SSL_CTX_free)> ctx(SSL_CTX_new(TLS_method()),SSL_CTX_free);check(bool(ctx),"tls_context");
     check(SSL_CTX_set_min_proto_version(ctx.get(),TLS1_3_VERSION)==1&&SSL_CTX_set_max_proto_version(ctx.get(),TLS1_3_VERSION)==1,"tls_version");
     SSL_CTX_set_options(ctx.get(),SSL_OP_NO_TICKET);
@@ -616,9 +635,16 @@ int main(int argc,char** argv){
       check(SSL_CTX_use_certificate_chain_file(ctx.get(),c.cert.c_str())==1&&SSL_CTX_use_PrivateKey_file(ctx.get(),c.key.c_str(),SSL_FILETYPE_PEM)==1&&SSL_CTX_check_private_key(ctx.get())==1,"server_key");
       SSL_CTX_set_alpn_select_cb(ctx.get(),alpn,nullptr);
     }
+    if(initialize) {
+      check(!c.client,"relay_init_exit_only");
+      transparent::ReplayWindow replay(combined->relay.replay_directory,combo_auth->replay_scope(),true);
+      std::cout<<"{\"replay_initialized\":true}\n";return 0;
+    }
     if(validate){
       OPENSSL_cleanse(secret.data(),secret.size());
-      std::cout<<json({{"valid",true},{"role",c.client?"client":"exit"},{"peers",c.client?1:c.peers.size()}}).dump()<<"\n";return 0;
+      auto result=json({{"valid",true},{"role",c.client?"client":"exit"},{"peers",c.client?1:c.peers.size()}});
+      if(combined)result["transport"]="combo-tls";
+      std::cout<<result.dump()<<"\n";return 0;
     }
     if(!service)nonblock(STDIN_FILENO);
     nonblock(STDOUT_FILENO);Control ctl;ServiceNotify notify(service);
@@ -631,8 +657,29 @@ int main(int argc,char** argv){
       listener.n=socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);check(listener.n>=0,"listen_socket");int one=1;setsockopt(listener.n,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));
       auto addr=endpoint(c);check(bind(listener.n,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))==0&&listen(listener.n,8)==0,"listen_bind");
     }
+    std::unique_ptr<transparent::RelayListener> combo_client;
+    std::unique_ptr<combo::Exit> combo_exit;
+    if(combined) {
+      const auto& relay=combined->relay;
+      if(c.client) {
+        transparent::RelaySocket socket(::socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0));
+        check(socket.fd>=0,"combo_listener");int one=1;
+        check(setsockopt(socket.fd,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one))==0,"combo_listener");
+        const auto address=transparent::socket_address(relay.listen);
+        check(bind(socket.fd,reinterpret_cast<const sockaddr*>(&address),sizeof(address))==0&&listen(socket.fd,16)==0,"combo_bind");
+        const int owned=socket.fd;socket.fd=-1;
+        combo_client=std::make_unique<transparent::RelayListener>(owned,true,*combo_auth,transparent::Destination{},relay.exit,
+          relay.policy(),transparent::RelayLimits{},std::shared_ptr<transparent::ReplayWindow>{},true);
+        ctl.branch_failed=&combo_client->broken;
+      } else {
+        auto replay=std::make_shared<transparent::ReplayWindow>(relay.replay_directory,combo_auth->replay_scope());
+        const int owned=listener.n;listener.n=-1;
+        combo_exit=std::make_unique<combo::Exit>(owned,*combo_auth,relay.public_name,relay.policy(),std::move(replay));
+        ctl.branch_failed=&combo_exit->broken;
+      }
+    }
     ctl.set(c.client?"idle":"listening");
-    if(!c.client){run_exit(c,ctx.get(),listener.n,tun.n,ctl);ctl.set("stopped");return service&&!interrupted?1:0;}
+    if(!c.client){run_exit(c,ctx.get(),listener.n,tun.n,ctl,combo_exit.get());ctl.set("stopped");return service&&!interrupted?1:0;}
     bool demand_wait=false;Bytes pending;
     while(!ctl.stop&&!interrupted){
       ctl.read_commands();if(ctl.stop)break;

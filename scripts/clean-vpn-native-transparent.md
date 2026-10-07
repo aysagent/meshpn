@@ -3,8 +3,10 @@
 2026-10-07. Добавлены C++ socket relay, durable replay journal и отдельный
 экспериментальный режим client/exit в `clean-vpn-engine`. Проверены настоящие
 REDIRECT/SO_ORIGINAL_DST внутри отдельного user/network namespace без uplink.
-Добавлен отдельный `public-https` режим назначения. Это **не готовый production
-transparent/combo**: installer/site profile ещё не включает interception и fallback.
+Добавлен отдельный `public-https` режим назначения и fresh installer/site profile
+для LAN interception с блокировкой остального трафика. Это **не готовый production
+transparent/combo**: [native combo engine](clean-vpn-native-combo.md) добавлен
+отдельным checkpoint, но его network profile/installer ещё не реализованы.
 
 ## Реализовано
 
@@ -288,15 +290,18 @@ LAN HTTPS REDIRECT, client/exit default-DROP правила, без TUN/forwardi
 direct fallback для остального трафика. Пять namespace проверяют реальный TLS
 через оба native engine, SIGKILL каждого, restart и сохранность правил.
 Добавлен fresh installer binding engine/network и однократная C++ инициализация
-replay до публикации unit; runtime не сбрасывает state. Это ещё не systemd boot
-приёмка transparent.
+replay до публикации unit; runtime не сбрасывает state. Отдельная
+[systemd boot приёмка](clean-vpn-native-transparent-boot.md) прошла 19/19 gates
+на двух загрузках NIC-less VM, включая crash/restart обеих ролей и отказ exit
+при missing/corrupt replay state.
 
-1. VM systemd/cold boot/crash приёмка transparent installer с сохранением replay
-   state; явная политика ключей/ротации.
+1. Native combo: engine checkpoint реализует выбор ветки и владение потоками
+   внутри C++; дальше единый network profile/installer и VM с реальными TUN/DNS.
+   Отдельно остаётся безопасная эксплуатационная политика ключей/ротации.
 2. Расширенные crash/restart/boot/ресурсные сценарии, реальный ECH/0-RTT.
 3. Полная эксплуатационная интеграция native-only network profile. Non-HTTPS и неподдержанный TLS —
    только явно защищённый native путь либо блокировка, никакого cleartext/direct
-   fallback. Затем единый native combo listener и transport selection.
+   fallback. Combo должен сохранять это правило при выборе транспорта.
 
 Native engine уже содержит experimental transparent relay с двумя destination policies.
 Готовность этого пути не означает готовность transparent/combo site deployment.

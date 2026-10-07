@@ -1,4 +1,5 @@
 #include "transparent_socket.hpp"
+#include "combo.hpp"
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <fcntl.h>
@@ -11,6 +12,7 @@
 #include <net/if.h>
 #include <netpacket/packet.h>
 #include <net/ethernet.h>
+#include <future>
 
 using namespace cvpn;
 using namespace cvpn::transparent;
@@ -185,12 +187,19 @@ static void durable_socket_restart(SSL_CTX* cc, SSL_CTX* sc, const SniAuthorizat
 struct Child {
   pid_t pid = -1;
   RelaySocket output;
-  explicit Child(std::vector<std::string> args) {
+  RelaySocket packets;
+  explicit Child(std::vector<std::string> args, bool packet_fixture = false) {
+    int pair[2]{-1,-1}; RelaySocket peer;
+    if(packet_fixture) {
+      need(socketpair(AF_UNIX,SOCK_DGRAM|SOCK_CLOEXEC,0,pair)==0);
+      packets.fd=pair[0];peer.fd=pair[1];
+    }
     std::vector<char*> argv; for (auto& a : args) argv.push_back(a.data()); argv.push_back(nullptr);
     int pipefd[2]; need(pipe2(pipefd,O_CLOEXEC) == 0); output.fd = pipefd[0]; RelaySocket writer(pipefd[1]);
     const auto parent = getpid(); pid = fork(); need(pid >= 0);
     if (!pid) {
       if (prctl(PR_SET_PDEATHSIG,SIGKILL) || getppid() != parent || dup2(writer.fd,STDOUT_FILENO) < 0) _exit(126);
+      if(packet_fixture && (dup2(peer.fd,4)<0 || fcntl(4,F_SETFD,0)<0)) _exit(126);
       execv(argv[0],argv.data()); _exit(127);
     }
     need(fcntl(output.fd,F_SETFL,O_NONBLOCK) == 0);
@@ -207,14 +216,27 @@ struct Child {
     until([&] { read(); auto result=waitpid(pid,&status,WNOHANG); need(result >= 0); done=result==pid; return done; });
     pid=-1; return WIFEXITED(status) ? WEXITSTATUS(status) : 128+WTERMSIG(status);
   }
-  void ready() { until([&] { need(read()); return text.find("\"state\":\"listening\"") != std::string::npos; }); }
+  void ready(const std::string& state = "listening") { until([&] { need(read()); return text.find("\"state\":\""+state+"\"") != std::string::npos; }); }
 };
 static int command(std::vector<std::string> args) { Child child(std::move(args)); return child.wait(); }
 static void write_fixture(const std::string& path, const std::string& text) {
   ReplayFd fd(open(path.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0600)); need(fd.get() >= 0);
   need(write(fd.get(),text.data(),text.size()) == ssize_t(text.size()));
 }
-static void engine_redirect(SSL_CTX* cc, SSL_CTX* sc, const std::string& engine, const std::string& parent_netns) {
+static void packet_transfer(Child& from, Child& to, bool reverse, uint8_t seed) {
+  Bytes packet(1400,seed);packet[0]=0x45;packet[1]=0;packet[2]=packet.size()>>8;packet[3]=packet.size();
+  packet[6]=packet[7]=0;packet[8]=64;packet[9]=17;packet[10]=packet[11]=0;
+  const uint8_t local[4]={10,99,0,2},remote[4]={1,1,1,1};
+  std::memcpy(packet.data()+12,reverse?remote:local,4);std::memcpy(packet.data()+16,reverse?local:remote,4);
+  uint32_t sum=0;for(size_t i=0;i<20;i+=2)sum+=(uint16_t(packet[i])<<8)|packet[i+1];
+  while(sum>>16)sum=(sum&65535)+(sum>>16);
+  packet[10]=(~sum)>>8;packet[11]=~sum;
+  need(send(from.packets.fd,packet.data(),packet.size(),0)==ssize_t(packet.size()));
+  pollfd p{to.packets.fd,POLLIN,0};need(poll(&p,1,3000)>0);
+  Bytes got(65536);auto n=recv(to.packets.fd,got.data(),got.size(),0);need(n>0);got.resize(n);need(got==packet);
+}
+static void engine_redirect(SSL_CTX* cc, SSL_CTX* sc, const std::string& engine, const std::string& parent_netns,
+                            bool combined = false, const std::string& cert = {}, const std::string& private_key = {}) {
   char ns[128]; const auto n=readlink("/proc/self/ns/net",ns,sizeof(ns));
   need(n>0 && std::string(ns,n) != parent_netns && parent_netns.rfind("net:[",0)==0);
   // Fail before touching any network state unless in the new, empty namespace.
@@ -235,10 +257,18 @@ static void engine_redirect(SSL_CTX* cc, SSL_CTX* sc, const std::string& engine,
   J common={{"version",1},{"transport","transparent-tls"},{"public_name","relay.example"},{"secret_path",secret},{"destinations",J::array({ep(dst)})}};
   auto ej=common; ej["role"]="exit";ej["listen"]=ep(eaddr);ej["replay_directory"]=state;
   auto cj=common; cj["role"]="client";cj["listen"]=ep(caddr);cj["exit"]=ep(eaddr);
+  if(combined) {
+    const auto psk=dir+"/boring-secret";write_fixture(psk,std::string(32,'A'));
+    J base={{"version",1},{"address","127.0.0.1"},{"port",eaddr.port},{"tun","cvcombo0"},{"secret_path",psk}};
+    auto bclient=base;bclient["role"]="client";bclient["ca"]=cert;bclient["server_name"]="localhost";bclient["sni"]="relay.example";
+    auto bexit=base;bexit["role"]="exit";bexit["cert"]=cert;bexit["key"]=private_key;
+    ej=J{{"version",1},{"transport","combo-tls"},{"role","exit"},{"boring",bexit},{"transparent",ej}};
+    cj=J{{"version",1},{"transport","combo-tls"},{"role","client"},{"boring",bclient},{"transparent",cj}};
+  }
   write_fixture(ecfg,ej.dump());write_fixture(ccfg,cj.dump());
   need(command({engine,"--check-config",ecfg})==0 && command({engine,"--check-config",ccfg})==0);
   need(!std::filesystem::exists(state+"/lock")); // validation is read-only
-  need(command({engine,"--config",ecfg,"--service"})!=0); // no implicit replay reset
+  if(!combined)need(command({engine,"--config",ecfg,"--service"})!=0); // no implicit replay reset
   need(command({engine,"--init-transparent-replay",ecfg})==0);
   need(command({engine,"--init-transparent-replay",ecfg})!=0);
   unsigned invalid=0;
@@ -246,16 +276,24 @@ static void engine_redirect(SSL_CTX* cc, SSL_CTX* sc, const std::string& engine,
     auto bad=cj; bad[mutation]="unexpected"; const auto path=dir+"/invalid"+std::to_string(invalid++)+".json";
     write_fixture(path,bad.dump());need(command({engine,"--check-config",path})!=0);
   }
-  auto exit=std::make_unique<Child>(std::vector<std::string>{engine,"--config",ecfg,"--service"});exit->ready();
-  need(command({engine,"--config",ecfg,"--service"})!=0); // same durable scope has one owner
-  Child client({engine,"--config",ccfg,"--service"});client.ready();
+  auto launch=[&](const std::string& config) {
+    std::vector<std::string> args{engine,"--config",config};
+    if(combined)args.insert(args.end(),{"--test-packet-fd","4"});
+    args.push_back("--service");return std::make_unique<Child>(args,combined);
+  };
+  auto exit=launch(ecfg);exit->ready();
+  if(!combined)need(command({engine,"--config",ecfg,"--service"})!=0); // same durable scope has one owner
+  auto client_owner=launch(ccfg);auto& client=*client_owner;client.ready(combined?"ready":"listening");
+  if(combined){exit->ready("ready");packet_transfer(client,*exit,false,1);packet_transfer(*exit,client,true,2);}
   // Mark only the test application, so the separate exit engine's origin
   // connection is never redirected back into the client in this one-netns lab.
   need(command({"/usr/sbin/iptables","-t","nat","-A","OUTPUT","-p","tcp","-d","127.0.0.1",
     "--dport",std::to_string(dst.port),"-m","mark","--mark","66","-j","REDIRECT","--to-ports",std::to_string(caddr.port)})==0);
   { RelaySocket direct(connected(caddr));uint8_t b;auto result=recv(direct.fd,&b,1,0);need(result==0||(result<0&&errno==ECONNRESET)); }
   need(origin.connections==0);
-  transfer(cc,dst,TLS1_2_VERSION,true); transfer(cc,dst,TLS1_3_VERSION,true);
+  auto tls=std::async(std::launch::async,[&]{transfer(cc,dst,TLS1_2_VERSION,true);transfer(cc,dst,TLS1_3_VERSION,true);});
+  if(combined)for(int i=0;i<100;++i){packet_transfer(client,*exit,false,i);packet_transfer(*exit,client,true,i);}
+  tls.get();
   until([&]{return origin.completed==2;});need(origin.connections==2);
   Digest key{};key.fill('B');SniAuthorization auth(key,"relay.example");
   const auto wire=auth.seal(parse(client_hello(cc)),dst,wall_seconds());
@@ -266,12 +304,14 @@ static void engine_redirect(SSL_CTX* cc, SSL_CTX* sc, const std::string& engine,
   // directly to the origin. No application payload is handed to Node.
   { RelaySocket s(connected(dst,true));write_bytes(s.fd,client_hello(cc));uint8_t b;auto result=recv(s.fd,&b,1,0);need(result==0||(result<0&&errno==ECONNRESET)); }
   need(origin.connections==3);
-  exit=std::make_unique<Child>(std::vector<std::string>{engine,"--config",ecfg,"--service"});exit->ready();
+  exit=launch(ecfg);exit->ready();
   denied(eaddr,wire); need(origin.connections==3);
   transfer(cc,dst,TLS1_3_VERSION,true);until([&]{return origin.completed==3;});need(origin.connections==4);
+  if(combined){exit->ready("ready");packet_transfer(client,*exit,false,3);packet_transfer(*exit,client,true,4);}
   need(kill(client.pid,SIGTERM)==0 && client.wait()==0);
   need(kill(exit->pid,SIGTERM)==0 && exit->wait()==0);
-  std::cout<<"native transparent engine REDIRECT PASS: C++ client/exit, kernel SO_ORIGINAL_DST, TLS12/TLS13-HRR, SIGKILL replay refusal, no direct fallback, strict config, clean stop\n";
+  std::cout<<(combined?"native combo engine REDIRECT PASS: single exit port, concurrent 204 packets and TLS12/TLS13-HRR, C++ only, replay after SIGKILL, no direct fallback, clean stop\n":
+    "native transparent engine REDIRECT PASS: C++ client/exit, kernel SO_ORIGINAL_DST, TLS12/TLS13-HRR, SIGKILL replay refusal, no direct fallback, strict config, clean stop\n");
 }
 static void public_lab_guard(const std::string& parent, bool origin) {
   char ns[128]; const auto n=readlink("/proc/self/ns/net",ns,sizeof(ns));
@@ -359,7 +399,7 @@ static void public_probe(SSL_CTX* cc, SSL_CTX* sc) {
   std::cout<<"native public policy rejection PASS"<<std::endl;
 }
 int main(int argc, char** argv) {
-  if (argc != 3 && argc != 5) return 2;
+  if (argc != 3 && argc != 5 && !(argc == 6 && std::string(argv[5]) == "--combo")) return 2;
   try {
     const bool public_mode=argc==5 && std::string(argv[1]).rfind("--public-",0)==0;
     const int offset=public_mode?1:0;
@@ -397,7 +437,7 @@ int main(int argc, char** argv) {
       }
       return 0;
     }
-    if (argc==5) { engine_redirect(cc.get(),sc.get(),argv[3],argv[4]); return 0; }
+    if (argc>=5) { engine_redirect(cc.get(),sc.get(),argv[3],argv[4],argc==6,argv[1],argv[2]); return 0; }
     Origin origin(sc.get()); const auto dst = origin.destination();
     Digest secret{}; secret.fill(0x42); SniAuthorization auth(secret,"relay.example");
     durable_socket_restart(cc.get(),sc.get(),auth);
