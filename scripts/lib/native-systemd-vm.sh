@@ -5,6 +5,8 @@ export PATH=/usr/bin:/usr/sbin:/bin:/sbin
 test "$(cat /sys/class/dmi/id/sys_vendor)" = QEMU
 grep -qw meshpn.native-systemd=1 /proc/cmdline
 test "$(cat /proc/1/comm)" = systemd
+boot=0
+if grep -qw meshpn.native-boot=1 /proc/cmdline; then boot=1; fi
 ip() { /usr/bin/ip "$@"; }
 ctl() { /usr/bin/systemctl "$@"; }
 property() { ctl show "native-$1.service" -p "$2" --value; }
@@ -38,9 +40,9 @@ network)
     ip link set "from$last" netns nexit
     ip -n "nc$last" addr add "192.0.$last.2/30" dev wlan0
     ip -n nexit addr add "192.0.$last.1/30" dev "from$last"
-    ip -n "nc$last" link set wlan0 up
+    if [ "$boot" = 0 ]; then ip -n "nc$last" link set wlan0 up; fi
     ip -n nexit link set "from$last" up
-    ip -n "nc$last" route add default via "192.0.$last.1"
+    if [ "$boot" = 0 ]; then ip -n "nc$last" route add default via "192.0.$last.1"; fi
     ip netns exec "nc$last" ip tuntap add dev tun0 mode tun
     ip -n "nc$last" addr add "10.99.0.$last/32" dev tun0
     ip -n "nc$last" link set tun0 mtu 1400 up
@@ -63,6 +65,20 @@ guard)
     ip netns exec "nc$last" ip6tables -A OUTPUT -o lo -j ACCEPT
   done
   ip netns exec nexit iptables -P FORWARD DROP
+  ;;
+uplink)
+  test "$boot" = 1
+  ctl is-active --quiet native-lab-guard.service
+  for last in 2 3; do
+    ip -n "nc$last" link set wlan0 up
+    ip -n "nc$last" route add default via "192.0.$last.1"
+    ip -n "nc$last" route add 1.1.1.1/32 dev tun0
+    ip -n "nc$last" route add 8.8.8.8/32 dev tun0
+  done
+  ;;
+uplink-down)
+  test "$boot" = 1
+  for last in 2 3; do ip -n "nc$last" link set wlan0 down; done
   ;;
 driver)
   passed=0

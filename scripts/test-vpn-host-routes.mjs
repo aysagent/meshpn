@@ -39,7 +39,7 @@ function fixture(t) {
     else { assert.equal(action, 'del'); f.routes = f.routes.filter(r => r.dst !== dst.replace('/32', '')); }
     return '';
   };
-  f.open = checkpoint => openHostRoutes({ directory, run: f.run, checkpoint });
+  f.open = (checkpoint, allowTunLinkDown = false) => openHostRoutes({ directory, run: f.run, checkpoint, allowTunLinkDown });
   return f;
 }
 for (const previous of ['absent', 'released']) test(`missing default route preserves ${previous} journal and permits retry`, async t => {
@@ -206,6 +206,72 @@ test('borrowed exit bypass is not recreated after loss', t => {
   f.routes.shift();
   try { assert.throws(() => r.repairUplink('eth0', '192.0.2.1', '198.51.100.2'), /unowned exit bypass/); assert.equal(f.changes, 0); }
   finally { r.release(); }
+});
+for (const cut of ['none', 'intent', 'rebind-removed', 'rebind-added', 'commit']) {
+  for (const recovery of ['resume', 'restore']) test(`native gateway rebind: ${cut}, ${recovery}`, t => {
+    const f = fixture(t); let armed = false;
+    let r = f.open((stage, state) => {
+      if (armed && (stage === cut || stage === 'saved' && (cut === 'intent' && state.transition || cut === 'commit' && !state.transition))) {
+        armed = false; throw Error('cut');
+      }
+    });
+    r.begin('tun0'); r.add('198.51.100.2/32', 'eth0', '192.0.2.1');
+    r.add('192.168.0.0/16', 'eth0', '192.0.2.1'); r.add('0.0.0.0/1', 'tun0');
+    const def = { dst: 'default', dev: 'eth0', gateway: '192.0.2.254', protocol: 'dhcp' }; f.routes.push(def);
+    armed = cut !== 'none';
+    if (armed) assert.throws(() => r.rebindUplink('eth0', def.gateway, '198.51.100.2'), /cut/);
+    else r.rebindUplink('eth0', def.gateway, '198.51.100.2');
+    r.release(); r = f.open();
+    try {
+      if (recovery === 'resume') {
+        r.rebindUplink('eth0', def.gateway, '198.51.100.2');
+        assert.equal(r.state.transition, undefined);
+        assert.ok(f.routes.filter(v => v.dev === 'eth0').every(v => v.gateway === def.gateway));
+      }
+      r.restore(); assert.deepEqual(f.routes, [def]);
+      assert.equal(f.calls.some(args => args.includes('replace')), false);
+    } finally { r.release(); }
+  });
+}
+for (const fault of ['foreign', 'duplicate', 'identity', 'default', 'third-gateway', 'borrowed'])
+test(`native rebind refuses ${fault} without changes`, t => {
+  const f = fixture(t); let armed = false;
+  let r = f.open((stage, state) => { if (armed && stage === 'saved' && state.transition) throw Error('cut'); });
+  r.begin('tun0'); r.add('198.51.100.2/32', 'eth0', '192.0.2.1');
+  f.routes.push({ dst: 'default', dev: 'eth0', gateway: '192.0.2.254' });
+  if (fault === 'third-gateway') {
+    armed = true; assert.throws(() => r.rebindUplink('eth0', '192.0.2.254', '198.51.100.2'));
+    r.release(); r = f.open(); f.routes.at(-1).gateway = '192.0.2.253';
+  }
+  if (fault === 'foreign') f.routes[0].protocol = 'static';
+  if (fault === 'duplicate') f.routes.push({ ...f.routes[0] });
+  if (fault === 'identity') f.links[1].ifindex++;
+  if (fault === 'default') f.routes.at(-1).dev = 'other';
+  const before = f.changes;
+  try { assert.throws(() => r.rebindUplink('eth0', f.routes.find(v => v.dst === 'default').gateway,
+    fault === 'borrowed' ? '198.51.100.3' : '198.51.100.2')); assert.equal(f.changes, before); }
+  finally { r.release(); }
+});
+test('rebind rechecks default after a mutation and preserves replayable intent', t => {
+  const f = fixture(t); const r = f.open(stage => { if (stage === 'rebind-removed') f.routes.at(-1).gateway = '192.0.2.253'; });
+  r.begin('tun0'); r.add('198.51.100.2/32', 'eth0', '192.0.2.1');
+  f.routes.push({ dst: 'default', dev: 'eth0', gateway: '192.0.2.254' }); const before = f.changes;
+  try {
+    assert.throws(() => r.rebindUplink('eth0', '192.0.2.254', '198.51.100.2'), /default absent or changed/);
+    assert.equal(f.changes, before + 1); assert.equal(r.state.transition.to, '192.0.2.254');
+    assert.throws(() => r.repairUplink('eth0', '192.0.2.253', '198.51.100.2'), /unfinished/);
+  } finally { r.release(); }
+});
+test('native quiesced TUN linkdown is opt-in, exact and still identity checked', t => {
+  const f = fixture(t); let r = f.open(); r.begin('tun0'); r.add('0.0.0.0/1', 'tun0');
+  f.routes[0].flags = ['linkdown']; assert.throws(() => r.audit()); r.release();
+  r = f.open(undefined, true);
+  try {
+    r.audit(); assert.equal(r.repairTunRoutes(), 0);
+    f.routes[0].flags.push('onlink'); assert.throws(() => r.audit()); f.routes[0].flags.pop();
+    f.links[0].ifindex++; assert.throws(() => r.audit(), /interface replaced/); f.links[0].ifindex--;
+    r.restore(); assert.deepEqual(f.routes, []);
+  } finally { r.release(); }
 });
 test('native TLS connector repairs bypass before opening the replacement socket', () => {
   const start = clientSource.indexOf('const repaired = routeCtx.hostRoutes.repairUplink(');

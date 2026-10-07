@@ -36,10 +36,11 @@ datagram socket (filesystem/abstract), без libsystemd и без переда�
 
 TUN, адреса, маршруты, DNS interception, SNAT и firewall по-прежнему готовит
 внешний control plane. Persistent TUN/защита не удаляются при crash/restart
-engine. Прямой daemon пока не включает route ownership/DHCP watcher из USB
-контроллера: лаборатория проверяет socket reconnect при возврате статического
-uplink, не смену gateway/IP. Нельзя просто переносить этот unit в действующую
-USB-схему и считать provisioning готовым.
+engine. Сам прямой daemon не владеет маршрутами. Отдельный
+[native route coordinator](clean-vpn-native-routes.md) добавляет ownership и
+DHCP/gateway recovery для service без packet IO в Node. Описанный ниже ранний
+сценарий проверяет только статический uplink; новая DHCP-лаборатория отдельная.
+Нельзя просто переносить этот unit в действующую USB-схему и считать provisioning готовым.
 
 ## Проверки
 
@@ -79,6 +80,9 @@ SHA-256 production engine:
 Первая попытка лаборатории (`XdfwGr`) выявила ошибку fixture: `reset-failed`
 обращался к уже выгруженному unit. Исправлено; этот прогон не считается успешным.
 
-Следующее: безопасный native-only installer/provisioning, boot/reboot и
-route ownership/uplink tracking. После них — transparent/combo. Ничего на
-пользовательских Radxa/VPS не разворачивалось.
+Продолжение: [fresh native-only installer и boot/reboot](clean-vpn-native-install.md)
+проверяются отдельным трёхзагрузочным сценарием. Route ownership/uplink tracking
+добавлены отдельным coordinator; самостоятельный полный network provisioning
+ещё не упакован.
+После них — transparent/combo. Ничего на пользовательских Radxa/VPS
+не разворачивалось.

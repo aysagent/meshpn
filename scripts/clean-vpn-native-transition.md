@@ -123,10 +123,16 @@ Radxa/VPS/Mac не изменялись; развёртывание и WAN bench
 Этот шаг отделяет lifecycle engine от сетевого provisioning. Старый результат
 VM выше относится к предыдущей сборке и сохранён как отдельный checkpoint.
 
-1. Native-only provisioning client и exit, постоянная установка и cold boot/
-   reboot в VM, интеграция route ownership/DHCP recovery. Direct C++ systemd
+1. Эксплуатационная интеграция native-only network provisioning client и exit.
+   [Route ownership/DHCP recovery для direct service](clean-vpn-native-routes.md)
+   реализованы отдельным coordinator без packet IO. Добавлен [единый site profile](clean-vpn-native-network.md)
+   TUN/guard/DNS/SNAT/MSS с fresh-only установкой, activation target и VM
+   crash/reboot сценарием. Network manager/address/default пока — внешний владелец;
+   нельзя применять профиль к существующему firewall или уже поднятому uplink.
+   [Fresh installer и cold boot/reboot в VM](clean-vpn-native-install.md)
+   добавлены отдельным checkpoint на fixture-сети. Direct C++ systemd
    start/stop, crash-restart обеих сторон и два peer через реальные TUN уже
-   проверены отдельной лабораторией; это ещё не production installer.
+   проверены отдельной лабораторией; это ещё не полный production provisioning.
    Нужны также расширенные ресурсные прогоны разных нагрузок. Не расширять
    текущий USB профиль молча.
 2. Перенос transparent relay/обработки потоков в C++, защищённая судьба

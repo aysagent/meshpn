@@ -37,6 +37,11 @@ class DnsRelay {
   Bytes exchange(const Bytes& query,const char* server,bool tcp){
     dns::need(ready_);Socket s(socket(AF_INET,(tcp?SOCK_STREAM:SOCK_DGRAM)|SOCK_NONBLOCK|SOCK_CLOEXEC,0));dns::need(s.fd>=0);
     dns::need(setsockopt(s.fd,SOL_SOCKET,SO_BINDTODEVICE,tun_.c_str(),tun_.size()+1)==0);
+    // Distinguish the native resolver from ordinary host DNS, which can use
+    // the same TUN source address. The dedicated profile exempts only this mark
+    // and the two fixed upstreams from DNS redirection. Never fall back unmarked.
+    const uint32_t mark=0x43564e;
+    dns::need(setsockopt(s.fd,SOL_SOCKET,SO_MARK,&mark,sizeof(mark))==0);
     auto local=address(local_ip_.c_str(),0),remote=address(server,53);dns::need(bind(s.fd,reinterpret_cast<sockaddr*>(&local),sizeof(local))==0);
     auto end=Time::now()+std::chrono::milliseconds(1200);int rc=connect(s.fd,reinterpret_cast<sockaddr*>(&remote),sizeof(remote));dns::need(rc==0||errno==EINPROGRESS);
     wait(s.fd,POLLOUT,end,true);int error=0;socklen_t len=sizeof(error);dns::need(getsockopt(s.fd,SOL_SOCKET,SO_ERROR,&error,&len)==0&&!error);

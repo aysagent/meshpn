@@ -15,7 +15,7 @@ const dst = v => { assert.ok(typeof v === 'string' && (['0.0.0.0/1', '128.0.0.0/
   || v.endsWith('/32') && isIPv4(v.slice(0, -3)))); return v; };
 const normalizeDst = v => isIPv4(v) ? `${v}/32` : v;
 export function validateHostRouteState(s) {
-  keys(s, ['schema', 'scope', 'tun', 'links', 'routes', 'rp', 'stage']); assert.equal(s.schema, 1);
+  keys(s, ['schema', 'scope', 'tun', 'links', 'routes', 'rp', 'stage', ...(Object.hasOwn(s, 'transition') ? ['transition'] : [])]); assert.equal(s.schema, 1);
   keys(s.scope, ['boot', 'net', 'user']); assert.match(s.scope.boot, /^[a-f0-9-]{36}$/);
   for (const k of ['net', 'user']) assert.match(s.scope[k], new RegExp(`^${k}:\\[\\d+\\]$`));
   iface(s.tun); assert.ok(['active', 'restoring', 'released'].includes(s.stage));
@@ -27,19 +27,27 @@ export function validateHostRouteState(s) {
     assert.ok(Number.isSafeInteger(l.ifindex) && l.ifindex > 0);
     assert.ok(typeof l.address === 'string' && l.address.length <= 64 && typeof l.type === 'string' && l.type.length <= 32); }
   assert.ok(Object.hasOwn(s.links, s.tun)); assert.ok(Object.keys(s.links).length <= 16);
+  if (s.transition) {
+    keys(s.transition, ['dev', 'from', 'to']); iface(s.transition.dev);
+    assert.notEqual(s.transition.dev, s.tun); assert.ok(Object.hasOwn(s.links, s.transition.dev));
+    for (const g of [s.transition.from, s.transition.to]) assert.ok(g === null || isIPv4(g));
+    assert.notEqual(s.transition.from, s.transition.to); assert.notEqual(s.stage, 'released');
+    assert.ok(s.routes.filter(r => r.dev === s.transition.dev).every(r => r.gateway === s.transition.from));
+  } else assert.ok(!Object.hasOwn(s, 'transition'));
   assert.ok(s.rp === null || Number.isInteger(s.rp) && s.rp >= 0 && s.rp <= 2);
   if (s.stage === 'released') assert.ok(s.routes.length === 0 && s.rp === null);
   return s;
 }
 const identity = l => ({ ifindex: l.ifindex, address: l.address ?? '', type: l.link_type });
-const owned = (row, r) => normalizeDst(row.dst) === r.dst && row.dev === r.dev && (row.gateway ?? null) === r.gateway
+const strictlyOwned = (row, r) => normalizeDst(row.dst) === r.dst && row.dev === r.dev && (row.gateway ?? null) === r.gateway
   && Number(row.protocol) === PROTO && row.metric === METRIC
   && Object.keys(row).every(k => ['dst', 'dev', 'gateway', 'protocol', 'metric', 'scope', 'flags', 'type', 'table'].includes(k))
   && (!row.type || row.type === 'unicast') && (!row.table || ['main', '254'].includes(String(row.table)))
   && (!row.flags || row.flags.length === 0) && (!row.scope || (r.gateway ? ['global', '0'] : ['link', '253']).includes(String(row.scope)));
 const routeArgs = r => [r.dst, ...(r.gateway ? ['via', r.gateway] : []), 'dev', r.dev, 'proto', String(PROTO), 'metric', String(METRIC)];
 
-export function openHostRoutes({ directory = hostRouteStateDirectory(), run: injected, checkpoint = () => {} } = {}) {
+export function openHostRoutes({ directory = hostRouteStateDirectory(), run: injected, checkpoint = () => {}, allowTunLinkDown = false } = {}) {
+  assert.equal(typeof allowTunLinkDown, 'boolean');
   // Alternate directory and executor are internal test hooks, not CLI flags.
   if (!injected) { const p = fs.lstatSync('/run'); assert.ok(p.isDirectory() && !p.isSymbolicLink() && p.uid === 0 && !(p.mode & 0o022)); }
   try { fs.mkdirSync(directory, { mode: 0o700 }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
@@ -70,6 +78,12 @@ export function openHostRoutes({ directory = hostRouteStateDirectory(), run: inj
   const links = () => Object.fromEntries(JSON.parse(run('ip', ['-j', 'link', 'show'])).map(l => [l.ifname, identity(l)]));
   const rows = () => JSON.parse(run('ip', ['-N', '-j', '-4', 'route', 'show', 'table', 'main']));
   const rp = () => { const v = Number(run('sysctl', ['-n', 'net.ipv4.conf.all.rp_filter'])); assert.ok([0, 1, 2].includes(v)); return v; };
+  const variants = r => state.transition?.dev === r.dev ? [r, { ...r, gateway: state.transition.to }] : [r];
+  // Persistent TUN has no carrier while its direct native service is quiesced.
+  // Only this kernel flag on the same journalled TUN identity is accepted;
+  // legacy callers and uplink routes retain the original strict audit.
+  const owned = (row, r) => strictlyOwned(allowTunLinkDown && r.dev === state?.tun &&
+    Array.isArray(row.flags) && row.flags.length === 1 && row.flags[0] === 'linkdown' ? { ...row, flags: [] } : row, r);
   function audit({ requireTun = false } = {}) {
     assert.ok(state && !closed); assert.deepEqual(state.scope, scope(), 'different boot/namespace');
     const now = links(), table = rows();
@@ -80,7 +94,7 @@ export function openHostRoutes({ directory = hostRouteStateDirectory(), run: inj
     }
     for (const r of state.routes) {
       const matches = table.filter(v => normalizeDst(v.dst) === r.dst);
-      assert.ok(matches.length <= 1 && matches.every(v => owned(v, r)), `foreign route at ${r.dst}; no changes`);
+      assert.ok(matches.length <= 1 && matches.every(v => variants(r).some(candidate => owned(v, candidate))), `foreign route at ${r.dst}; no changes`);
     }
     if (state.rp !== null) assert.ok([state.rp, 2].includes(rp()), 'rp_filter changed by another owner');
     return table;
@@ -95,6 +109,7 @@ export function openHostRoutes({ directory = hostRouteStateDirectory(), run: inj
       state = { schema: 1, scope: scope(), tun, links: { [tun]: current[tun] }, routes: [], rp: null, stage: 'active' }; save(); },
     add(destination, dev, gateway = null) {
       deadline = performance.now() + 120000; assert.equal(state.stage, 'active'); dst(destination); iface(dev);
+      assert.ok(!state.transition, 'unfinished uplink transition');
       assert.ok(gateway === null || isIPv4(gateway));
       const table = audit(), r = { dst: destination, dev, gateway };
       const previous = state.routes.find(v => v.dst === destination);
@@ -117,6 +132,7 @@ export function openHostRoutes({ directory = hostRouteStateDirectory(), run: inj
       // Only re-add durable, same-boot ownership on the SAME interface/gateway.
       // Never replace/adopt foreign routes or choose a new network silently.
       deadline = performance.now() + 15000;
+      assert.ok(!state?.transition, 'unfinished uplink transition');
       assert.equal(state?.stage, 'active'); iface(dev); assert.notEqual(dev, state.tun);
       assert.ok(gateway === null || isIPv4(gateway)); assert.ok(isIPv4(serverIp));
       const target = `${serverIp}/32`, intent = state.routes.find(r => r.dst === target);
@@ -151,6 +167,60 @@ export function openHostRoutes({ directory = hostRouteStateDirectory(), run: inj
       }
       return repaired;
     },
+    repairTunRoutes() {
+      deadline = performance.now() + 15000; assert.equal(state?.stage, 'active');
+      assert.ok(!state.transition, 'unfinished uplink transition');
+      let table = audit({ requireTun: true }), changed = 0;
+      for (const r of state.routes.filter(r => r.dev === state.tun)) {
+        assert.equal(r.gateway, null);
+        if (table.some(v => owned(v, r))) continue;
+        run('ip', ['-4', 'route', 'add', ...routeArgs(r)]); changed++;
+        checkpoint('tun-repaired', structuredClone(state)); table = audit({ requireTun: true });
+        assert.ok(table.some(v => owned(v, r)), 'TUN route repair read-back failed');
+      }
+      return changed;
+    },
+    rebindUplink(dev, gateway, serverIp) {
+      // Caller must quiesce the engine and retain its independent guard FIRST.
+      // Durable old/new intent permits replay after any delete/add/save boundary.
+      deadline = performance.now() + 30000;
+      assert.equal(state?.stage, 'active'); iface(dev); assert.notEqual(dev, state.tun);
+      assert.ok(gateway === null || isIPv4(gateway)); assert.ok(isIPv4(serverIp));
+      const intent = state.routes.find(r => r.dst === `${serverIp}/32`);
+      assert.ok(intent && intent.dev === dev, 'owned exit bypass required for rebind');
+      const from = intent.gateway;
+      assert.ok(state.routes.filter(r => r.dev === dev).every(r => r.gateway === from), 'mixed uplink gateways');
+      if (state.transition) assert.deepEqual(state.transition, { dev, from, to: gateway }, 'unfinished different uplink transition');
+      const read = () => {
+        const table = audit({ requireTun: true });
+        const defaults = table.filter(r => ['default', '0.0.0.0/0'].includes(r.dst));
+        assert.ok(defaults.length === 1 && defaults[0].dev === dev && (defaults[0].gateway ?? null) === gateway &&
+          (!defaults[0].type || defaults[0].type === 'unicast') && !defaults[0].nexthops,
+        'uplink default absent or changed; rebind postponed');
+        return table;
+      };
+      read();
+      if (from === gateway) return this.repairUplink(dev, gateway, serverIp);
+      if (!state.transition) { state.transition = { dev, from, to: gateway }; save(); }
+      let changed = 0;
+      for (const r of state.routes.filter(r => r.dev === dev)) {
+        let table = read(); const next = { ...r, gateway };
+        if (table.some(v => owned(v, r))) {
+          run('ip', ['-4', 'route', 'del', ...routeArgs(r)]); changed++;
+          checkpoint('rebind-removed', structuredClone(state)); table = read();
+          assert.ok(!table.some(v => owned(v, r)), 'old uplink route still present');
+        }
+        if (!table.some(v => owned(v, next))) {
+          run('ip', ['-4', 'route', 'add', ...routeArgs(next)]); changed++;
+          checkpoint('rebind-added', structuredClone(state)); table = read();
+        }
+        assert.ok(table.some(v => owned(v, next)), 'new uplink route read-back failed');
+      }
+      read();
+      for (const r of state.routes) if (r.dev === dev) r.gateway = gateway;
+      delete state.transition; save();
+      return changed;
+    },
     relaxRpFilter() {
       deadline = performance.now() + 120000; assert.equal(state.stage, 'active'); audit();
       assert.equal(state.rp, null); const before = rp(); if (before === 2) return;
@@ -162,13 +232,14 @@ export function openHostRoutes({ directory = hostRouteStateDirectory(), run: inj
       audit(); state.stage = 'restoring'; save();
       while (state.routes.length) {
         const table = audit(), r = state.routes.at(-1);
-        if (table.some(v => owned(v, r))) run('ip', ['-4', 'route', 'del', ...routeArgs(r)]);
-        checkpoint('removed', structuredClone(state)); assert.ok(!audit().some(v => owned(v, r)), 'route removal read-back failed');
+        const actual = variants(r).find(candidate => table.some(v => owned(v, candidate)));
+        if (actual) run('ip', ['-4', 'route', 'del', ...routeArgs(actual)]);
+        checkpoint('removed', structuredClone(state)); assert.ok(!audit().some(v => variants(r).some(candidate => owned(v, candidate))), 'route removal read-back failed');
         state.routes.pop(); save();
       }
       audit(); if (state.rp !== null && rp() !== state.rp) run('sysctl', ['-w', `net.ipv4.conf.all.rp_filter=${state.rp}`]);
       if (state.rp !== null) assert.equal(rp(), state.rp);
-      state.rp = null; state.stage = 'released'; save();
+      state.rp = null; delete state.transition; state.stage = 'released'; save();
     },
   };
 }

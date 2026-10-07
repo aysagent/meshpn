@@ -19,7 +19,20 @@ non-HTTPS путём → native combo. UI, новые профили и посл
 Текущая реализация и незакрытые пункты: [полный native-переход](clean-vpn-native-transition.md).
 Дополнительно проверен [прямой C++ systemd lifecycle](clean-vpn-native-service.md):
 два real-TUN клиента, native exit, restart/crash и сохранение guard.
-Постоянная установка, cold boot и DHCP-aware provisioning ещё не закрыты.
+Добавлен [fresh native installer и трёхзагрузочная VM](clean-vpn-native-install.md):
+отдельные установленные client/exit, reboot и отказ guard до поднятия uplink.
+Дополнительно реализован [route coordinator для native service](clean-vpn-native-routes.md):
+журналируемая смена DHCP-адреса/gateway, отказ при чужих маршрутах, остановка
+клиента при падении coordinator. Data plane остаётся в C++.
+Добавлен [единый native-only site profile](clean-vpn-native-network.md): fresh
+bundle client/exit, TUN/guard/DNS/SNAT/MSS, gate поднятия интерфейсов и общий
+systemd target. Приёмка — изолированная VM с LAN и внешним тестовым origin.
+Финальная site-приёмка: 17/17 gates на двух загрузках, 349/349 native/routes
+регрессий; хеши и ограничения сохранены в `fixtures/clean-vpn-native-site-report.json`.
+Следующий лабораторный шаг — C++ transparent relay, затем native combo.
+Это dedicated-host контракт: адреса/DHCP/default предоставляет внешний link
+owner. Адаптация к конкретному distro/network manager, обновление существующих
+установок и физический boot остаются отдельной эксплуатационной работой.
 Уточнение пользователя: транспортный data plane переносится в C++ **до**
 дальнейшего существенного развития профилей и многотранспортности; Node остаётся
 слоем управления. Прежний M1 с переносом двух Node-адаптеров заменён native M1 ниже.

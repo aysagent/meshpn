@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-site-lab",
+  "status": "passed",
+  "date": "2026-10-07",
+  "reportFile": "/var/tmp/meshpn-native-lab-OMuqm6/report.json",
+  "nativeOnly": true,
+  "packetOwner": "C++",
+  "nic": "none",
+  "hostSharedFilesystem": false,
+  "realTun": true,
+  "benchmark": "not-requested",
+  "boots": [
+    {
+      "phase": 0,
+      "bootId": "ab11017e-6979-4421-8b6d-87e7ad385c65",
+      "checks": {
+        "NATIVE_NETWORK_INSTALLED_DISABLED_PASS": true,
+        "NATIVE_NETWORK_PROFILES_BEFORE_UPLINK_PASS": true,
+        "NATIVE_NETWORK_NATIVE_LAN_DATA_PASS": true,
+        "NATIVE_NETWORK_NATIVE_DNS_INTERCEPTION_PASS": true,
+        "NATIVE_NETWORK_DOUBLE_NAT_PASS": true,
+        "NATIVE_NETWORK_RESTART_AUDIT_PASS": true,
+        "NATIVE_NETWORK_CLIENT_CRASH_BLOCKED_PASS": true,
+        "NATIVE_NETWORK_CLIENT_RESTART_PASS": true,
+        "NATIVE_NETWORK_EXIT_CRASH_BLOCKED_PASS": true,
+        "NATIVE_NETWORK_EXIT_RESTART_PASS": true,
+        "NATIVE_NETWORK_FOREIGN_GUARD_REFUSED_PASS": true,
+        "NATIVE_NETWORK_GUARD_STOP_BLOCKED_PASS": true,
+        "NATIVE_NETWORK_CLEANUP_PASS": true
+      }
+    },
+    {
+      "phase": 1,
+      "bootId": "e4ef67f5-e489-4b07-91e9-64dfeb1dbe37",
+      "checks": {
+        "NATIVE_NETWORK_REBOOT_AUTOSTART_DATA_PASS": true,
+        "NATIVE_NETWORK_REBOOT_NATIVE_DNS_PASS": true,
+        "NATIVE_NETWORK_REBOOT_INVENTORY_AND_ORDER_PASS": true,
+        "NATIVE_NETWORK_REBOOT_TARGET_STOP_BLOCKED_PASS": true
+      }
+    }
+  ],
+  "checks": 17,
+  "regressions": {
+    "passed": 349,
+    "failed": 0,
+    "command": "node --test scripts/test-native-*.mjs scripts/test-vpn-host-routes.mjs scripts/test-vpn-uplink*.mjs"
+  },
+  "ctest": {
+    "passed": 3
+  },
+  "sanitizers": {
+    "kind": "ASAN+UBSAN",
+    "integrationPassed": 17,
+    "ctestPassed": 3
+  },
+  "hashes": {
+    "kernelSha256": "7a69aaa48d149d102c572424b588e2bc6f8b7524d5ec0e08fd2a2a06448f01f8",
+    "labScriptSha256": "53a0049d3d03927c2291b44e8caa128896164952c37b0012d7ac187250653063",
+    "serviceUnitRendererSha256": "d1538bfca894c55bc6a93c96363ff3897c852543bc4b329e073efdb872225d35",
+    "clean-vpn-engineSha256": "746194eee0864c3ef892a8ab3806df82e1fc5b3a7e95bed797bca64d6243cbd1",
+    "socket-testSha256": "5100af3d12c66fbd5e5b4227cc0ede6fdfa869d8f417582ebec1efefa5fa020b",
+    "sitePlanSha256": "4797cc8d5540452ae62c60b0e22f3707d73ae5feb73a7ef6474a3b310659e746",
+    "siteInstallerSha256": "da8f2fbd80748aac4cc2b18a667f0449f9c389403db7adc186e0c32f57d7675f",
+    "siteVmInstallerSha256": "40635d54fdbe662a6d76a7842e6ea8e968c50a08083436b65e2f3a3310859cd8",
+    "siteBootDriverSha256": "e052f9b53f67fc0e80f773aa546194f5aadf1797f852c014b5d9827b9e180b20",
+    "routeCoordinatorSha256": "d920ed31970e160eec99ee19512d4caf844b2cc4186660d8a73adc409dbbc3a9",
+    "routeJournalSha256": "36dfcdb035cd34c3a83d1aa5c2a5a6645192197613b90a0fa57fef0a35c2aa67",
+    "routeServiceSha256": "aebdf725591312bc31237e8571fb8daa9f3971d9e55fddc114081e562575df27",
+    "networkPlanSha256": "d80842a804594329772e09dbd820f8a682be97404b0e024509698950fc28d0cd",
+    "networkApplySha256": "5368451962ba25d5949a8c4391f4af1a68b0efccb276a218219ec36a8903753d",
+    "networkCliSha256": "03a4d0514acc7a8d211eb2d7727e1838269b12e419489f699f581b036e8efba5",
+    "networkDriverSha256": "8ddf71a4e185cac7cc63969d3c652ea221e13f958e9b4939fdec5e025abd64ba",
+    "networkImageSha256": "054ed457ff4e8b5e926a82f68aade50c861139585febe8ba7340d0e31ac8e827",
+    "networkUnitSha256": "e5157e48a88f580ed1c35219dea9babd8610c330c1a6a4eb136a51421dc2a452",
+    "installerSha256": "da8f2fbd80748aac4cc2b18a667f0449f9c389403db7adc186e0c32f57d7675f",
+    "bootDriverSha256": "e052f9b53f67fc0e80f773aa546194f5aadf1797f852c014b5d9827b9e180b20"
+  },
+  "limitations": [
+    "fixture-PKI-and-origins",
+    "not-physical-Radxa-or-arm64",
+    "emulator-not-production-performance",
+    "external-fixture-link-address-default-owner",
+    "not-live-site-upgrade-or-all-egress-capture",
+    "persistent-artifacts-restored-into-initramfs",
+    "static-managed-links-not-DHCP",
+    "no-independent-early-boot-packet-capture"
+  ],
+  "earlierRuns": {
+    "networkOnly": "/var/tmp/meshpn-native-lab-mot7BW/report.json",
+    "note": "Earlier boot attempts stopped the observer through a Requires dependency; observer now Wants defaults and the final two-boot report includes the target-stop gate."
+  }
+}

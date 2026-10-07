@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "kind": "native-install-boot-lab-checkpoint",
+  "date": "2026-10-07",
+  "status": "passed",
+  "report": "/var/tmp/meshpn-native-lab-vQSD2k/report.json",
+  "nativeOnly": true,
+  "systemdPid1": true,
+  "realTunPeers": 2,
+  "nic": "none",
+  "hostSharedFilesystem": false,
+  "engineSha256": "9dd9fc2be86da4d62ffb522042f60c7405ae1f25091f63755835d2b57cf970a5",
+  "installerSha256": "e6ac1f72d1811651a1296fb9a97d354a8d13cc20ff16ab4a1ffb4dad7adde93e",
+  "bootDriverSha256": "e601861245fe4a9aaaf49a6181e80b50f6a2a789c4549cc9117a09b69481a47a",
+  "labScriptSha256": "53a0049d3d03927c2291b44e8caa128896164952c37b0012d7ac187250653063",
+  "boots": [
+    {
+      "boot": 0,
+      "bootId": "1255e554-779e-4c10-b490-a6a761cd8735",
+      "passedGates": [
+        "installed-disabled-c2",
+        "installed-disabled-c3",
+        "installed-disabled-exit",
+        "not-started-by-installer-c2",
+        "not-started-by-installer-c3",
+        "not-started-by-installer-exit",
+        "active-c2",
+        "native-mainpid-c2",
+        "active-c3",
+        "native-mainpid-c3",
+        "active-exit",
+        "native-mainpid-exit",
+        "tun-data-2",
+        "native-dns-2",
+        "tun-data-3",
+        "native-dns-3",
+        "guard-active",
+        "guard-before-uplink"
+      ],
+      "restarted": true,
+      "poweredDown": false
+    },
+    {
+      "boot": 1,
+      "bootId": "561b1709-0c91-49a3-afe2-59ccb2c1c8bd",
+      "passedGates": [
+        "active-c2",
+        "native-mainpid-c2",
+        "active-c3",
+        "native-mainpid-c3",
+        "active-exit",
+        "native-mainpid-exit",
+        "tun-data-2",
+        "native-dns-2",
+        "tun-data-3",
+        "native-dns-3",
+        "guard-active",
+        "guard-before-uplink",
+        "installed-bytes-survived-reboot"
+      ],
+      "restarted": true,
+      "poweredDown": false
+    },
+    {
+      "boot": 2,
+      "bootId": "f243e962-9e16-41e9-ab41-7aba20a1961e",
+      "passedGates": [
+        "guard-failed",
+        "uplink-not-active",
+        "engine-not-started-c2",
+        "engine-not-started-c3",
+        "engine-not-started-exit",
+        "uplink-stays-down-2",
+        "no-default-2",
+        "uplink-stays-down-3",
+        "no-default-3",
+        "installed-bytes-preserved-on-failure"
+      ],
+      "restarted": false,
+      "poweredDown": true
+    }
+  ],
+  "lifecycleReport": "/var/tmp/meshpn-native-lab-A5zxOs/report.json",
+  "tests": {
+    "regressionPassed": 385,
+    "ctestPassed": 3,
+    "asanUbsanIntegrationPassed": 18,
+    "asanUbsanCtestPassed": 3,
+    "lifecycleGates": 12
+  },
+  "benchmark": "not-requested",
+  "limitations": [
+    "fixture-PKI-and-origins",
+    "local-capture-not-on-wire-proof",
+    "not-physical-Radxa-or-arm64",
+    "emulator-not-production-performance",
+    "RSS-not-PSS; sampling-may-miss-short-lived-processes",
+    "fixture-network-provisioning-not-production-installer",
+    "persistent-artifacts-restored-into-initramfs",
+    "static-managed-links-not-DHCP",
+    "no-independent-early-boot-packet-capture"
+  ]
+}

@@ -553,8 +553,8 @@ int main(int argc,char** argv){
     if(argc==2&&std::string(argv[1])=="--capabilities"){
       std::cout<<json({{"version",1},{"engine","clean-vpn-native-m1"},{"transport","boring-tls"},
         {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2"}},
-        {"dns","native-udp-tcp-fixed-upstreams"},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
-        {"packet_ipc",false},{"provisioning","external-control-plane"}}).dump()<<"\n";return 0;
+        {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
+        {"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"}}).dump()<<"\n";return 0;
     }
     bool validate=argc==3&&std::string(argv[1])=="--check-config";
     bool service=(argc==4||argc==6)&&std::string(argv[argc-1])=="--service";

@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "kind": "native-route-service-lab-checkpoint",
+  "date": "2026-10-07",
+  "report": "/var/tmp/meshpn-native-lab-uPqrI5/report.json",
+  "status": "passed",
+  "nativeOnly": true,
+  "packetOwner": "C++",
+  "systemdPid1": true,
+  "realTunPeers": 2,
+  "nic": "none",
+  "hostSharedFilesystem": false,
+  "dhcp": "real-busybox-client-server",
+  "leases": [
+    {
+      "address": "192.0.2.2",
+      "gateway": "192.0.2.1"
+    },
+    {
+      "address": "192.0.2.99",
+      "gateway": "192.0.2.1"
+    },
+    {
+      "address": "192.0.2.100",
+      "gateway": "192.0.2.254"
+    }
+  ],
+  "hashes": {
+    "kernelSha256": "7a69aaa48d149d102c572424b588e2bc6f8b7524d5ec0e08fd2a2a06448f01f8",
+    "labScriptSha256": "53a0049d3d03927c2291b44e8caa128896164952c37b0012d7ac187250653063",
+    "serviceUnitRendererSha256": "d1538bfca894c55bc6a93c96363ff3897c852543bc4b329e073efdb872225d35",
+    "clean-vpn-engineSha256": "9dd9fc2be86da4d62ffb522042f60c7405ae1f25091f63755835d2b57cf970a5",
+    "socket-testSha256": "5100af3d12c66fbd5e5b4227cc0ede6fdfa869d8f417582ebec1efefa5fa020b",
+    "routeCoordinatorSha256": "d920ed31970e160eec99ee19512d4caf844b2cc4186660d8a73adc409dbbc3a9",
+    "routeJournalSha256": "36dfcdb035cd34c3a83d1aa5c2a5a6645192197613b90a0fa57fef0a35c2aa67",
+    "routeServiceSha256": "aebdf725591312bc31237e8571fb8daa9f3971d9e55fddc114081e562575df27",
+    "routeDriverSha256": "0c607b06cebcd575d8941092106056f050741e123102905d8d2e60c46f746cab",
+    "dhcpHookSha256": "a490e75988e45b847e7217851a574e3c7cb4c7ee4b1caa8c9ae167d76bda97a2",
+    "routeUnitSha256": "b22aa2e76381e091458b71f9675bf3577552aff93fb4b3e42ba13f998e15d1c3"
+  },
+  "passedGates": [
+    "INITIAL_DHCP",
+    "TWO_NATIVE_PEERS",
+    "DHCP_ADDRESS_CHANGE",
+    "DHCP_GATEWAY_CHANGE",
+    "DEFAULT_LOSS_BLOCKED",
+    "DEFAULT_RECOVERY",
+    "OWNED_ROUTE_REPAIR",
+    "FOREIGN_ROUTE_REFUSED",
+    "FOREIGN_REMOVED_RECOVERY",
+    "COORDINATOR_CRASH_BLOCKED",
+    "COORDINATOR_RESTART",
+    "GUARD_STOP_BLOCKED",
+    "CLEANUP"
+  ],
+  "tests": {
+    "regressionPassed": 419,
+    "ctestPassed": 3,
+    "asanUbsanIntegrationPassed": 18,
+    "asanUbsanCtestPassed": 3
+  },
+  "benchmark": "not-requested",
+  "limitations": [
+    "fixture-TUN-guard-not-full-site-installer",
+    "IPv4-only-not-IPv6-acceptance",
+    "not-USB-or-WG-forwarding-acceptance",
+    "single-boot-not-integrated-reboot-acceptance",
+    "not-physical-Radxa-or-arm64",
+    "selected-negative-probes-not-independent-leak-capture",
+    "client-restart-not-seamless-migration",
+    "coordinator-owns-client-start",
+    "dependencies-not-sanitizer-instrumented"
+  ]
+}
