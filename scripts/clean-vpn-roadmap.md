@@ -73,10 +73,17 @@ client/exit без packet FD, одновременные TLS и TCP/UDP, DNS, к
 нулевые engine drops и совпадение встречных TX/RX, clean restart плюс crash/capture.
 Два NIC-less VM прогона прошли 14/14 gates; регрессия 429/429, CTest normal/ASAN
 6/6. Свидетельство: `fixtures/clean-vpn-native-combo-load-report.json`.
-Следующая ограниченная точка — воспроизводимые native-only измерения download/
-upload/latency и CPU с чётким разделением лабораторных и WAN результатов.
-WAN Speedtest — отдельно на реальных
-узлах после лабораторной базы; TCG/1 MiB smoke не являются оценкой Internet speed.
+Добавлен [native-only directional benchmark](clean-vpn-native-combo-benchmark.md):
+обе ветки combo, раздельные 8 MiB upload/download и 100 application RTT,
+три повтора, C++ генерация/проверка данных, CPU/RSS отдельно для client и exit.
+NIC-less real-TUN VM проверяет методику, выбор ветки и crash/capture gates;
+сырые TCG результаты не являются скоростью Интернета или пределом ARM64/VPS.
+Два VM-прогона прошли 13/13 gates каждый; регрессия 434/434, CTest normal/ASAN
+7/7. Свидетельство: `fixtures/clean-vpn-native-combo-benchmark-report.json`.
+Следующая отдельная точка измерений — воспроизводимый native-only прогон на
+реальном железе/между VPS; доступ к физическим узлам этим шагом не запрашивался.
+WAN Speedtest — отдельно на реальных узлах после лабораторной базы;
+TCG/1 MiB smoke не являются оценкой Internet speed.
 Combo engine checkpoint: 390/390 native/routes regression, CTest 6/6 normal и
 ASAN/UBSAN; результат и границы — `fixtures/clean-vpn-native-combo-report.json`.
 Network checkpoint и его scope — `fixtures/clean-vpn-native-combo-network-report.json`.

@@ -174,8 +174,14 @@ VM выше относится к предыдущей сборке и сохр�
    production binary обеих ролей, 180 секунд TLS/TCP/UDP/DNS с ресурсами и
    сопоставлением TX/RX, clean restart и crash/capture после нагрузки.
    Два прогона — 14/14 gates каждый; регрессия 429/429, CTest normal/ASAN 6/6.
-   Далее воспроизводимые download/upload/latency/CPU измерения
-   полностью native схемы (не Internet speed из TCG) и следующие продуктовые
-   этапы roadmap. Браузерные профили/UI не объявляются реализованными этим шагом.
+   Добавлен [native-only directional benchmark](clean-vpn-native-combo-benchmark.md):
+   три повтора раздельных upload/download/RTT для boring и transparent внутри combo,
+   CPU/RSS обеих ролей, C++ генерация/проверка payload. Методика проверяется в
+   NIC-less real-TUN VM; TCG не определяет скорость Интернета или hardware capacity.
+   Два прогона прошли 13/13 gates; регрессия 434/434, CTest normal/ASAN 7/7.
+   Сырые результаты и hashes — `fixtures/clean-vpn-native-combo-benchmark-report.json`.
+   Следующий измерительный этап на реальном железе/VPS требует отдельного запуска;
+   физические узлы не менялись. Затем следующие продуктовые этапы roadmap.
+   Браузерные профили/UI не объявляются реализованными этим шагом.
 
 Это промежуточный этап полного переноса, **не** заявление «весь native готов».

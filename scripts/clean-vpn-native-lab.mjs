@@ -23,14 +23,15 @@ const nativeRoutes=mode==='--native-routes';
 const nativeSiteBoot=mode==='--native-site-boot';
 const transparentBoot=mode==='--native-transparent-boot';
 const comboLoad=mode==='--native-combo-load';
-const comboNetwork=mode==='--native-combo-network'||comboLoad;
+const comboBenchmark=mode==='--native-combo-benchmark';
+const comboNetwork=mode==='--native-combo-network'||comboLoad||comboBenchmark;
 const comboBoot=mode==='--native-combo-boot';
 const relayLab=transparentBoot||comboNetwork||comboBoot;
 const nativeNetwork=mode==='--native-network'||nativeSiteBoot||transparentBoot||comboBoot;
 const persistentBoot=nativeBoot||nativeSiteBoot||transparentBoot||comboBoot;
 const systemdNative=mode==='--native-systemd'||nativeBoot||nativeRoutes||nativeNetwork;
 const nativeOnly=mode==='--native-only'||systemdNative||comboNetwork;
-assert.ok(process.argv.length===4||(process.argv.length===5&&nativeOnly),'usage: verified HOST_BOOT_BASE QEMU_TOOLS_ROOT [--native-only|--native-systemd|--native-boot|--native-routes|--native-network|--native-site-boot|--native-transparent-boot|--native-combo-network|--native-combo-boot|--native-combo-load]');
+assert.ok(process.argv.length===4||(process.argv.length===5&&nativeOnly),'usage: verified HOST_BOOT_BASE QEMU_TOOLS_ROOT [--native-only|--native-systemd|--native-boot|--native-routes|--native-network|--native-site-boot|--native-transparent-boot|--native-combo-network|--native-combo-boot|--native-combo-load|--native-combo-benchmark]');
 for(const p of [base,tools])assert.ok(p?.startsWith('/')&&resolve(p)===p&&!/[\r\n,]/.test(p));
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const prior=JSON.parse(fs.readFileSync(join(base,'report.json')));
@@ -56,7 +57,7 @@ try {
   report.labScriptSha256=hash(fs.readFileSync(systemdNative?'scripts/lib/native-systemd-vm.sh':'scripts/lib/native-tun-vm.sh'));
   if(systemdNative)report.serviceUnitRendererSha256=hash(fs.readFileSync('scripts/lib/native-service-unit.mjs'));
   put('/usr/local/bin/clean-vpn-killswitch.sh',fs.readFileSync('scripts/autostart/killswitch.sh'),0o755);
-  for(const name of ['clean-vpn-engine','socket-test',...(relayLab?['transparent-socket-test']:[])]){
+  for(const name of ['clean-vpn-engine','socket-test',...(relayLab?['transparent-socket-test']:[]),...(comboBenchmark?['throughput-test']:[])]){
     const bin=resolve('native/clean_vpn/build',name);put('/native/'+name,fs.readFileSync(bin),0o755);
     if(name==='clean-vpn-engine')put('/project/native/clean_vpn/build/'+name,fs.readFileSync(bin),0o755);
     report[name+'Sha256']=hash(fs.readFileSync(bin));
@@ -96,7 +97,7 @@ try {
   const mod=`/lib/modules/${release}/kernel/net/ipv4/netfilter/iptable_mangle.ko`;put(mod,fs.readFileSync(mod));init=init.replace('cd /project',`insmod ${mod}\ncd /project`);
   put('/init',init.slice(0,init.indexOf('cd /project'))+`\nexport CVPN_NATIVE_ONLY=${nativeOnly?'1':'0'}\nif /bin/sh /native/lab.sh; then echo NATIVE_LAB_OK; else echo NATIVE_LAB_FAILED; fi\nsync\npoweroff -f\n`,0o755);
   if(comboNetwork) {
-    put('/init',init.slice(0,init.indexOf('cd /project'))+`\nif /usr/bin/node /project/scripts/lib/native-combo-network-vm.mjs${comboLoad?' --load':''}; then echo NATIVE_COMBO_OK; else echo NATIVE_COMBO_FAILED; fi\nsync\npoweroff -f\n`,0o755);
+    put('/init',init.slice(0,init.indexOf('cd /project'))+`\nif /usr/bin/node /project/scripts/lib/native-combo-network-vm.mjs${comboLoad?' --load':comboBenchmark?' --benchmark':''}; then echo NATIVE_COMBO_OK; else echo NATIVE_COMBO_FAILED; fi\nsync\npoweroff -f\n`,0o755);
     report.transport='combo-tls';report.realTunPeers=1;report.guard='dedicated-native-combo-client-and-exit';
     report.comboLoad=comboLoad;report.benchmark='not-requested';
     if(comboLoad)report.loadControllerSha256=hash(fs.readFileSync('scripts/lib/native-combo-network-load.mjs'));
@@ -105,6 +106,12 @@ try {
     report.networkApplySha256=hash(fs.readFileSync('scripts/lib/native-network-apply.mjs'));
     delete report.legacyCliSha256;delete report.legacyHelperSha256;
     report.limitations=['fixture-PKI-and-origins','runtime-static-routes-not-systemd-installer-reboot','selected-IPv4-origin-capture-not-all-egress','not-physical-Radxa-or-arm64','not-performance-benchmark'];
+    if(comboBenchmark) {
+      report.benchmark='three repetitions per native branch: directional 8 MiB upload/download, 100 established-stream RTTs, per-role CPU/RSS';
+      report.benchmarkControllerSha256=hash(fs.readFileSync('scripts/lib/native-combo-benchmark.mjs'));
+      report.limitations=report.limitations.filter(x=>x!=='not-performance-benchmark');
+      report.limitations.push('TCG-not-WAN-or-hardware-capacity','single-stream-local-origin','RSS-not-PSS-sampling-can-miss-peaks','CPU-window-includes-connect-TLS-and-close');
+    }
   }
   if(systemdNative){
     addNativeSystemdImage(put,{boot:nativeBoot||nativeNetwork,routes:nativeRoutes});
@@ -158,7 +165,7 @@ try {
   let output='';
   for(let boot=0;boot<(nativeBoot?3:(nativeSiteBoot||transparentBoot||comboBoot)?2:1);boot++){
   console.error(`Native lab boot ${boot}`);
-  const child=spawn(join(tools,'usr/bin/qemu-system-x86_64'),['-nodefaults','-no-user-config','-nic','none','-display','none','-monitor','none','-no-reboot','-serial','stdio','-accel','tcg','-cpu','max','-m','1536','-smp','1','-bios',`${tools}/usr/share/seabios/bios-256k.bin`,'-L',`${tools}/usr/share/qemu`,'-kernel',join(base,'guest-kernel'),'-initrd',initrd,'-append',`console=ttyS0 loglevel=4 panic=-1 reboot=t random.trust_cpu=on meshpn.native-lab=1${systemdNative?' meshpn.native-systemd=1':''}${nativeBoot?' meshpn.native-boot=1':''}${nativeRoutes?' meshpn.native-routes=1':''}${nativeNetwork?' meshpn.native-network=1':''}${nativeSiteBoot?' meshpn.native-site-boot=1':''}${transparentBoot?' meshpn.native-transparent-boot=1':''}${comboNetwork?' meshpn.native-combo-network=1':''}${comboLoad?' meshpn.native-combo-load=1':''}${comboBoot?' meshpn.native-combo-boot=1':''}`,...(persistentBoot?['-drive',`file=${disk},format=raw,if=virtio,cache=writeback`]:[])],{env,stdio:['ignore','pipe','pipe']});
+  const child=spawn(join(tools,'usr/bin/qemu-system-x86_64'),['-nodefaults','-no-user-config','-nic','none','-display','none','-monitor','none','-no-reboot','-serial','stdio','-accel','tcg','-cpu','max','-m','1536','-smp','1','-bios',`${tools}/usr/share/seabios/bios-256k.bin`,'-L',`${tools}/usr/share/qemu`,'-kernel',join(base,'guest-kernel'),'-initrd',initrd,'-append',`console=ttyS0 loglevel=4 panic=-1 reboot=t random.trust_cpu=on meshpn.native-lab=1${systemdNative?' meshpn.native-systemd=1':''}${nativeBoot?' meshpn.native-boot=1':''}${nativeRoutes?' meshpn.native-routes=1':''}${nativeNetwork?' meshpn.native-network=1':''}${nativeSiteBoot?' meshpn.native-site-boot=1':''}${transparentBoot?' meshpn.native-transparent-boot=1':''}${comboNetwork?' meshpn.native-combo-network=1':''}${comboBenchmark?' meshpn.native-combo-benchmark=1':''}${comboLoad?' meshpn.native-combo-load=1':''}${comboBoot?' meshpn.native-combo-boot=1':''}`,...(persistentBoot?['-drive',`file=${disk},format=raw,if=virtio,cache=writeback`]:[])],{env,stdio:['ignore','pipe','pipe']});
   output='';const timer=setTimeout(()=>child.kill('SIGKILL'),1200000);const stop=()=>child.kill('SIGKILL');process.on('SIGINT',stop);process.on('SIGTERM',stop);
   const serial=fs.openSync(join(root,persistentBoot?`boot-${boot}.log`:'serial.log'),'wx',0o600);
   for(const stream of [child.stdout,child.stderr])stream.on('data',b=>{fs.writeSync(serial,b);output+=b;if(output.length>1024*1024)stop();});
@@ -204,7 +211,7 @@ try {
   if(comboNetwork){
     assert.equal(report.code,0);assert.ok(output.includes('NATIVE_COMBO_OK')&&!output.includes('NATIVE_COMBO_FAILED'),output.slice(-12000));
     const evidence=JSON.parse(output.match(/NATIVE_COMBO_REPORT (\{[^\r\n]+\})/)?.[1]??'null');
-    assertComboNetworkEvidence(evidence,{load:comboLoad});
+    assertComboNetworkEvidence(evidence,{load:comboLoad,benchmark:comboBenchmark});
     assert.ok(output.includes('reboot: Power down'));
     report.evidence=evidence;report.status='passed';report.benchmarks=[];
   }else if(comboBoot){

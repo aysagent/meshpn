@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { comboNetworkChecks, assertComboNetworkEvidence } from './lib/native-combo-network-evidence.mjs';
 test('combo real-TUN VM driver refuses development host before network writes', () => {
-  for (const args of [[], ['--load'], ['--unexpected']]) {
+  for (const args of [[], ['--load'], ['--benchmark'], ['--unexpected']]) {
     const r = spawnSync(process.execPath, ['scripts/lib/native-combo-network-vm.mjs', ...args], { encoding: 'utf8', timeout: 5000 });
     assert.notEqual(r.status, 0); assert.match(r.stderr, /QEMU|meshpn.native-combo-network|ENOENT/);
   }

@@ -6,12 +6,15 @@ import { execFileSync, spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { applyNativeNetworkProfile } from './native-network-apply.mjs';
 import { runComboNetworkLoad } from './native-combo-network-load.mjs';
+import { runComboBenchmark } from './native-combo-benchmark.mjs';
 
 assert.equal(fs.readFileSync('/sys/class/dmi/id/sys_vendor', 'utf8').trim(), 'QEMU');
 assert.match(fs.readFileSync('/proc/cmdline', 'utf8'), /\bmeshpn.native-combo-network=1\b/);
 const load = process.argv[2] === '--load';
-assert.ok(process.argv.length === 2 || (process.argv.length === 3 && load));
+const benchmark = process.argv[2] === '--benchmark';
+assert.ok(process.argv.length === 2 || (process.argv.length === 3 && (load || benchmark)));
 if (load) assert.match(fs.readFileSync('/proc/cmdline', 'utf8'), /\bmeshpn.native-combo-load=1\b/);
+if (benchmark) assert.match(fs.readFileSync('/proc/cmdline', 'utf8'), /\bmeshpn.native-combo-benchmark=1\b/);
 const run = (bin, args, input) => execFileSync(bin, args, { input, encoding: 'utf8', timeout: 60000, maxBuffer: 1024 * 1024 });
 const ip = (...args) => run('/usr/bin/ip', args);
 assert.deepEqual(JSON.parse(ip('-j', 'link', 'show')).map(l => l.ifname), ['lo']);
@@ -58,7 +61,7 @@ const tunPackets = () => {
 try {
   for (const ns of ['cogw', 'coexit', 'coapp', 'coorigin']) ip('netns', 'add', ns);
   ip('link', 'add', 'cowire', 'type', 'bridge'); ip('link', 'set', 'cowire', 'up');
-  const origin = start('coorigin', tls, tlsArgs('--combo-network-origin'));
+  const origin = start('coorigin', tls, tlsArgs(benchmark ? '--combo-network-benchmark-origin' : '--combo-network-origin'));
   await until(() => origin.output.includes('namespace-ready'));
   for (const [ns, name, dev] of [['coorigin', 'or', 'cvpublic1'], ['cogw', 'gw', 'wan0'], ['coexit', 'ex', 'wan0']]) {
     ip('link', 'add', 'left' + name, 'type', 'veth', 'peer', 'name', 'right' + name);
@@ -76,6 +79,10 @@ try {
   nip('coorigin', 'route', 'add', '192.168.7.0/24', 'via', '198.18.0.1');
   const dataOrigin = start('coorigin', socket, ['serve']);
   await until(() => dataOrigin.output.includes('origin ready'));
+  if (benchmark) {
+    const benchOrigin = start('coorigin', '/native/throughput-test', ['--server', parent]);
+    await until(() => { assert.ok(!benchOrigin.ended,benchOrigin.error); return benchOrigin.output.includes('benchmark-origin-ready'); });
+  }
   for (const ns of ['cogw', 'coexit']) {
     nip(ns, 'link', 'set', 'wan0', 'up'); nip(ns, 'route', 'add', 'default', 'via', '198.18.0.2');
   }
@@ -126,11 +133,8 @@ try {
     assert.ok(inside(ns, 'iptables', ['-t', 'nat', '-L', 'POSTROUTING', '-v', '-n', '-x']).split('\n').some(l => new RegExp(`^\\s*[1-9]\\d*\\s+\\d+\\s+${target}\\s`).test(l)));
   gate('DOUBLE_NAT');
   assert.match(probe('--combo-network-negative'), /no fallback PASS/); gate('POLICY_NO_DOWNGRADE');
-  let loadReport;
-  if (load) {
-    await delay(500);
-    console.log('NATIVE_COMBO_LOAD_BEGIN');
-    const snapshot = () => Object.fromEntries([['client', cl], ['exit', ex]].map(([name, e]) => {
+  let loadReport, benchmarkReport;
+  const snapshot = () => Object.fromEntries([['client', cl], ['exit', ex]].map(([name, e]) => {
       assert.ok(!e.ended, 'load_engine_exited'); const base = `/proc/${e.p.pid}`;
       assert.equal(fs.readlinkSync(base + '/exe'), engine);
       const stat = fs.readFileSync(base + '/stat', 'utf8'); const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
@@ -141,6 +145,16 @@ try {
       assert.ok(x.start && Number.isInteger(x.ticks) && x.rss > 0 && x.threads > 0 && x.fds > 0);
       return [name, x];
     }));
+  if (benchmark) {
+    await delay(500);
+    benchmarkReport = await runComboBenchmark({ snapshot, tunPackets,
+      start: (branch,phase) => start('coapp','/native/throughput-test',[phase,branch,'/native/cert.pem',parent,'--lab-only']),
+      progress: x => console.log('NATIVE_COMBO_BENCHMARK_PHASE '+JSON.stringify(x)) });
+    gate('DIRECTIONAL_BENCHMARK');
+  }
+  if (load) {
+    await delay(500);
+    console.log('NATIVE_COMBO_LOAD_BEGIN');
     loadReport = await runComboNetworkLoad({ snapshot, tunPackets,
       startData: () => start('coapp', socket, ['probe']), startTls: () => start('coapp', tls, tlsArgs('--public-client')),
       startHostDns: () => start('cogw', socket, ['dns', '203.0.113.53']),
@@ -179,8 +193,9 @@ try {
   assert.equal(capture().kernelDropped, 0); gate('SELECTED_ORIGIN_NO_DIRECT_PACKETS');
   console.log('NATIVE_COMBO_REPORT ' + JSON.stringify({ status: 'passed', checks, positiveCapturePackets: positive,
     ...(loadReport ? { load: loadReport } : {}),
+    ...(benchmarkReport ? { benchmark: benchmarkReport } : {}),
     directPacketsAfterGuard: 0, captureKernelDropped: capture().kernelDropped, realTun: true, roles: ['client', 'exit'], namespaces: 5, packetOwner: 'C++',
-    scope: 'runtime-static-routes-selected-IPv4-origin-not-installer-systemd-reboot-all-egress-or-benchmark' }));
+    scope: benchmark ? 'runtime-static-routes-selected-IPv4-origin-with-emulated-benchmark' : 'runtime-static-routes-selected-IPv4-origin-not-installer-systemd-reboot-all-egress-or-benchmark' }));
 } finally {
   for (const e of children) if (!e.ended) e.p.kill('SIGKILL');
   await Promise.all(children.map(e => e.ended ? null : new Promise(r => e.p.once('close', r))));

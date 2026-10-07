@@ -1,5 +1,7 @@
 #include "transparent_socket.hpp"
 #include "combo.hpp"
+#include "benchmark_wire.hpp"
+#include <netinet/tcp.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <fcntl.h>
@@ -62,13 +64,14 @@ class Origin {
   Listener listener_;
   SSL_CTX* ctx_;
   size_t bulk_size_;
+  bool benchmark_;
   std::atomic<bool> stop_{false};
   std::thread thread_;
   void run() {
     while (!stop_) {
       pollfd p{listener_.socket.fd,POLLIN,0}; if (poll(&p,1,25) <= 0) continue;
       RelaySocket fd(accept4(listener_.socket.fd,nullptr,nullptr,SOCK_CLOEXEC)); if (fd.fd < 0) continue;
-      ++connections; timeval timeout{2,0};
+      ++connections; timeval timeout{benchmark_?15:2,0};
       setsockopt(fd.fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
       setsockopt(fd.fd,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));
       if (bulk_size_) { int size = 262144; setsockopt(fd.fd,SOL_SOCKET,SO_RCVBUF,&size,sizeof(size)); }
@@ -77,6 +80,21 @@ class Origin {
         need(SSL_accept(ssl.get()) == 1);
         const char* name = SSL_get_servername(ssl.get(),TLSEXT_NAMETYPE_host_name);
         need(name && std::string(name) == "localhost");
+        if (benchmark_) {
+          int one=1;need(setsockopt(fd.fd,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(one))==0);
+          benchmark::Header h{};
+          auto read=[&](uint8_t* p,size_t n){return SSL_read(ssl.get(),p,int(n));};
+          auto write=[&](const uint8_t* p,size_t n){return SSL_write(ssl.get(),p,int(n));};
+          benchmark::read_all(read,h.data(),h.size());
+          if (std::equal(h.begin(),h.begin()+7,benchmark::header('U').begin())) {
+            benchmark::serve(h,read,write);
+            uint8_t last;const int n=SSL_read(ssl.get(),&last,1);
+            need(n==0 && SSL_get_error(ssl.get(),n)==SSL_ERROR_ZERO_RETURN);
+            need(SSL_shutdown(ssl.get())>=0);++completed;continue;
+          }
+          // Preserve the existing TLS echo probes and their capture controls.
+          benchmark::write_all(write,h.data(),h.size());bytes+=h.size();
+        }
         uint8_t buffer[16384]; size_t total = 0; SHA256_CTX hash; SHA256_Init(&hash);
         for (;;) {
           int n = SSL_read(ssl.get(),buffer,sizeof(buffer));
@@ -96,8 +114,8 @@ class Origin {
 public:
   std::atomic<unsigned> connections{0}, completed{0}, failed{0};
   std::atomic<uint64_t> bytes{0};
-  explicit Origin(SSL_CTX* ctx, size_t bulk_size = 0, Destination bind_to = {{127,0,0,1},0})
-    : listener_(bind_to), ctx_(ctx), bulk_size_(bulk_size) { thread_ = std::thread([this] {run();}); }
+  explicit Origin(SSL_CTX* ctx, size_t bulk_size = 0, Destination bind_to = {{127,0,0,1},0}, bool benchmark = false)
+    : listener_(bind_to), ctx_(ctx), bulk_size_(bulk_size), benchmark_(benchmark) { thread_ = std::thread([this] {run();}); }
   ~Origin() { stop_ = true; thread_.join(); }
   Destination destination() const { return listener_.destination; }
 };
@@ -428,7 +446,7 @@ static void public_lab_guard(const std::string& parent, bool origin) {
     safe &= name=="lo" || (!origin && name=="cvpublic0"); }
   if_freenameindex(names);need(safe && count==(origin?1u:2u));
 }
-static void public_origin(SSL_CTX* sc, const std::string& parent, bool network = false, bool combo = false) {
+static void public_origin(SSL_CTX* sc, const std::string& parent, bool network = false, bool combo = false, bool benchmark = false) {
   public_lab_guard(parent,true);
   need(command({"/usr/sbin/ip","link","set","lo","up"})==0);
   need(command({"/usr/sbin/ip","addr","add","1.1.1.1/32","dev","lo"})==0);
@@ -443,7 +461,7 @@ static void public_origin(SSL_CTX* sc, const std::string& parent, bool network =
     sockaddr_ll a{};a.sll_family=AF_PACKET;a.sll_protocol=htons(ETH_P_IP);a.sll_ifindex=if_nametoindex("cvpublic1");
     need(bind(capture.fd,reinterpret_cast<sockaddr*>(&a),sizeof(a))==0);
   }
-  Origin origin(sc,0,Destination{{0,0,0,0},443});
+  Origin origin(sc,0,Destination{{0,0,0,0},443},benchmark);
   std::cout<<"{\"stage\":\"origin-ready\"}"<<std::endl;
   unsigned previous=~0u, forbidden=0, previous_forbidden=~0u, capture_dropped=0, previous_dropped=~0u;
   for(;;) {
@@ -536,8 +554,8 @@ int main(int argc, char** argv) {
         public_lab_guard(argv[4],true);std::cout<<"{\"stage\":\"namespace-ready\"}"<<std::endl;
         for(;;) pause();
       }
-      else if(mode=="--public-origin" || mode=="--public-network-origin" || mode=="--combo-network-origin")
-        public_origin(sc.get(),argv[4],mode!="--public-origin",mode=="--combo-network-origin");
+      else if(mode=="--public-origin" || mode=="--public-network-origin" || mode=="--combo-network-origin" || mode=="--combo-network-benchmark-origin")
+        public_origin(sc.get(),argv[4],mode!="--public-origin",mode.rfind("--combo-network-",0)==0,mode=="--combo-network-benchmark-origin");
       else {
         public_lab_guard(argv[4],false);
         if(mode=="--public-network-udp") { network_udp();std::cout<<"UDP sent"<<std::endl; }

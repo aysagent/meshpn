@@ -1,0 +1,1328 @@
+{
+  "status": "passed",
+  "nic": "none",
+  "hostSharedFilesystem": false,
+  "realTun": true,
+  "packetOwner": "C++",
+  "kernelSha256": "7a69aaa48d149d102c572424b588e2bc6f8b7524d5ec0e08fd2a2a06448f01f8",
+  "accelerator": "TCG",
+  "vcpus": 1,
+  "memoryMiB": 1536,
+  "tunMtu": 1400,
+  "guard": "dedicated-native-combo-client-and-exit",
+  "benchmark": "three repetitions per native branch: directional 8 MiB upload/download, 100 established-stream RTTs, per-role CPU/RSS",
+  "limitations": [
+    "fixture-PKI-and-origins",
+    "runtime-static-routes-not-systemd-installer-reboot",
+    "selected-IPv4-origin-capture-not-all-egress",
+    "not-physical-Radxa-or-arm64",
+    "TCG-not-WAN-or-hardware-capacity",
+    "single-stream-local-origin",
+    "RSS-not-PSS-sampling-can-miss-peaks",
+    "CPU-window-includes-connect-TLS-and-close"
+  ],
+  "nativeOnly": true,
+  "labScriptSha256": "e70e1f7df84a6dad747d71ad81983f586bd1c41f29fe44de174bb984e8edbba9",
+  "clean-vpn-engineSha256": "7967dafd87bc1152b245f95d08d54598fbe3d3fa3688b6267b4a6f28cf80a2dc",
+  "socket-testSha256": "5100af3d12c66fbd5e5b4227cc0ede6fdfa869d8f417582ebec1efefa5fa020b",
+  "transparent-socket-testSha256": "b0d5241ddd80f1d5631e738a888af8cd19f49b7cc8c1ca02d1941a1a1e623ad0",
+  "throughput-testSha256": "6448b91476da953d33dc827e5644ab59bd5168689870fa9df4af1a83f99f597a",
+  "transport": "combo-tls",
+  "realTunPeers": 1,
+  "comboLoad": false,
+  "networkPlanSha256": "65cf0f5629d02b8ed12f1f2da102be68defd66680954d7b00cfb6139c99de173",
+  "networkApplySha256": "896cff7da956a37c01c1b2bb456eaf80210088c3ccfab32e60351444023e17b9",
+  "benchmarkControllerSha256": "a68b098ca5492b2cedb0859af5f2c8ec2f5c765add4bfd37c96af6aa5375df6d",
+  "code": 0,
+  "evidence": {
+    "status": "passed",
+    "checks": [
+      "DIRECT_POSITIVE_CONTROL",
+      "GUARDS_REAL_TUN",
+      "HTTPS_TRANSPARENT_NOT_TUN",
+      "CONCURRENT_TLS_TCP_UDP",
+      "NATIVE_DNS_HOST_LAN",
+      "DOUBLE_NAT",
+      "POLICY_NO_DOWNGRADE",
+      "DIRECTIONAL_BENCHMARK",
+      "CLIENT_CRASH_DIRECT_ROUTE_BLOCKED",
+      "CLIENT_RESTART",
+      "EXIT_CRASH_BLOCKED",
+      "EXIT_RESTART",
+      "SELECTED_ORIGIN_NO_DIRECT_PACKETS"
+    ],
+    "positiveCapturePackets": 416,
+    "benchmark": {
+      "status": "passed",
+      "scope": "native-combo-single-stream-local-origin-TCG-not-WAN-or-hardware-capacity",
+      "repetitions": 3,
+      "sampleIntervalMs": 100,
+      "timing": "application-after-connect-and-TLS-includes-start-and-completion-ack",
+      "cpuTiming": "whole-fixture-process-window-including-connect-TLS-and-close",
+      "samples": [
+        {
+          "branch": "boring",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 6.117226461009559,
+          "latencyMedianMs": 0,
+          "latencyP95Ms": 0,
+          "payloadBytes": 8388608,
+          "payloadVerified": true,
+          "phase": "upload",
+          "rounds": 0,
+          "seconds": 10.970472391,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 0,
+          "repetition": 1,
+          "wallSeconds": 11.360573117,
+          "tunPacketDelta": 9584,
+          "roles": {
+            "client": {
+              "cpuTicks": 377,
+              "cpuSeconds": 3.77,
+              "cpuPercentOneCore": 33.18494552320217,
+              "peakRssKiB": 7272
+            },
+            "exit": {
+              "cpuTicks": 482,
+              "cpuSeconds": 4.82,
+              "cpuPercentOneCore": 42.42743698191895,
+              "peakRssKiB": 6268
+            }
+          }
+        },
+        {
+          "branch": "boring",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 6.896240380114256,
+          "latencyMedianMs": 0,
+          "latencyP95Ms": 0,
+          "payloadBytes": 8388608,
+          "payloadVerified": true,
+          "phase": "download",
+          "rounds": 0,
+          "seconds": 9.731224595,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 0,
+          "repetition": 1,
+          "wallSeconds": 10.453335573999997,
+          "tunPacketDelta": 9444,
+          "roles": {
+            "client": {
+              "cpuTicks": 373,
+              "cpuSeconds": 3.73,
+              "cpuPercentOneCore": 35.68239031068153,
+              "peakRssKiB": 7160
+            },
+            "exit": {
+              "cpuTicks": 392,
+              "cpuSeconds": 3.92,
+              "cpuPercentOneCore": 37.499991961895866,
+              "peakRssKiB": 6724
+            }
+          }
+        },
+        {
+          "branch": "boring",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 0,
+          "latencyMedianMs": 5.4540315,
+          "latencyP95Ms": 9.064793,
+          "payloadBytes": 0,
+          "payloadVerified": true,
+          "phase": "latency",
+          "rounds": 100,
+          "seconds": 0.641355361,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 5,
+          "repetition": 1,
+          "wallSeconds": 0.9425915169999934,
+          "tunPacketDelta": 229,
+          "roles": {
+            "client": {
+              "cpuTicks": 30,
+              "cpuSeconds": 0.3,
+              "cpuPercentOneCore": 31.82714830224831,
+              "peakRssKiB": 7160
+            },
+            "exit": {
+              "cpuTicks": 31,
+              "cpuSeconds": 0.31,
+              "cpuPercentOneCore": 32.888053245656586,
+              "peakRssKiB": 6648
+            }
+          }
+        },
+        {
+          "branch": "transparent",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 26.137469667208098,
+          "latencyMedianMs": 0,
+          "latencyP95Ms": 0,
+          "payloadBytes": 8388608,
+          "payloadVerified": true,
+          "phase": "upload",
+          "rounds": 0,
+          "seconds": 2.56753484,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 0,
+          "repetition": 1,
+          "wallSeconds": 3.2162066300000007,
+          "tunPacketDelta": 0,
+          "roles": {
+            "client": {
+              "cpuTicks": 76,
+              "cpuSeconds": 0.76,
+              "cpuPercentOneCore": 23.63032253310167,
+              "peakRssKiB": 7272
+            },
+            "exit": {
+              "cpuTicks": 100,
+              "cpuSeconds": 1,
+              "cpuPercentOneCore": 31.092529648817983,
+              "peakRssKiB": 6652
+            }
+          }
+        },
+        {
+          "branch": "transparent",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 30.432070219966988,
+          "latencyMedianMs": 0,
+          "latencyP95Ms": 0,
+          "payloadBytes": 8388608,
+          "payloadVerified": true,
+          "phase": "download",
+          "rounds": 0,
+          "seconds": 2.205202062,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 0,
+          "repetition": 1,
+          "wallSeconds": 2.752792434999996,
+          "tunPacketDelta": 0,
+          "roles": {
+            "client": {
+              "cpuTicks": 74,
+              "cpuSeconds": 0.74,
+              "cpuPercentOneCore": 26.881794304262574,
+              "peakRssKiB": 7256
+            },
+            "exit": {
+              "cpuTicks": 77,
+              "cpuSeconds": 0.77,
+              "cpuPercentOneCore": 27.971596776057005,
+              "peakRssKiB": 6744
+            }
+          }
+        },
+        {
+          "branch": "transparent",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 0,
+          "latencyMedianMs": 2.686341,
+          "latencyP95Ms": 4.976341,
+          "payloadBytes": 0,
+          "payloadVerified": true,
+          "phase": "latency",
+          "rounds": 100,
+          "seconds": 0.338984814,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 5,
+          "repetition": 1,
+          "wallSeconds": 0.9154342010000109,
+          "tunPacketDelta": 0,
+          "roles": {
+            "client": {
+              "cpuTicks": 17,
+              "cpuSeconds": 0.17,
+              "cpuPercentOneCore": 18.57042262724003,
+              "peakRssKiB": 7256
+            },
+            "exit": {
+              "cpuTicks": 21,
+              "cpuSeconds": 0.21,
+              "cpuPercentOneCore": 22.939933833649448,
+              "peakRssKiB": 6728
+            }
+          }
+        },
+        {
+          "branch": "boring",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 5.988772646179734,
+          "latencyMedianMs": 0,
+          "latencyP95Ms": 0,
+          "payloadBytes": 8388608,
+          "payloadVerified": true,
+          "phase": "upload",
+          "rounds": 0,
+          "seconds": 11.205779208,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 0,
+          "repetition": 2,
+          "wallSeconds": 11.553997118,
+          "tunPacketDelta": 9604,
+          "roles": {
+            "client": {
+              "cpuTicks": 384,
+              "cpuSeconds": 3.84,
+              "cpuPercentOneCore": 33.23525149593169,
+              "peakRssKiB": 7440
+            },
+            "exit": {
+              "cpuTicks": 494,
+              "cpuSeconds": 4.94,
+              "cpuPercentOneCore": 42.75576624737047,
+              "peakRssKiB": 6712
+            }
+          }
+        },
+        {
+          "branch": "boring",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 6.969103843142611,
+          "latencyMedianMs": 0,
+          "latencyP95Ms": 0,
+          "payloadBytes": 8388608,
+          "payloadVerified": true,
+          "phase": "download",
+          "rounds": 0,
+          "seconds": 9.629482572,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 0,
+          "repetition": 2,
+          "wallSeconds": 9.999522329999992,
+          "tunPacketDelta": 9503,
+          "roles": {
+            "client": {
+              "cpuTicks": 367,
+              "cpuSeconds": 3.67,
+              "cpuPercentOneCore": 36.70175313264191,
+              "peakRssKiB": 7428
+            },
+            "exit": {
+              "cpuTicks": 382,
+              "cpuSeconds": 3.82,
+              "cpuPercentOneCore": 38.20182478656461,
+              "peakRssKiB": 6788
+            }
+          }
+        },
+        {
+          "branch": "boring",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 0,
+          "latencyMedianMs": 5.368709,
+          "latencyP95Ms": 8.608103,
+          "payloadBytes": 0,
+          "payloadVerified": true,
+          "phase": "latency",
+          "rounds": 100,
+          "seconds": 0.615247585,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 5,
+          "repetition": 2,
+          "wallSeconds": 0.9112858600000036,
+          "tunPacketDelta": 229,
+          "roles": {
+            "client": {
+              "cpuTicks": 29,
+              "cpuSeconds": 0.29,
+              "cpuPercentOneCore": 31.82316468731325,
+              "peakRssKiB": 7428
+            },
+            "exit": {
+              "cpuTicks": 30,
+              "cpuSeconds": 0.3,
+              "cpuPercentOneCore": 32.920515193772324,
+              "peakRssKiB": 6712
+            }
+          }
+        },
+        {
+          "branch": "transparent",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 23.32692559312017,
+          "latencyMedianMs": 0,
+          "latencyP95Ms": 0,
+          "payloadBytes": 8388608,
+          "payloadVerified": true,
+          "phase": "upload",
+          "rounds": 0,
+          "seconds": 2.876884214,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 0,
+          "repetition": 2,
+          "wallSeconds": 3.5443820629999974,
+          "tunPacketDelta": 0,
+          "roles": {
+            "client": {
+              "cpuTicks": 108,
+              "cpuSeconds": 1.08,
+              "cpuPercentOneCore": 30.4707557143509,
+              "peakRssKiB": 7428
+            },
+            "exit": {
+              "cpuTicks": 104,
+              "cpuSeconds": 1.04,
+              "cpuPercentOneCore": 29.34220920641198,
+              "peakRssKiB": 6712
+            }
+          }
+        },
+        {
+          "branch": "transparent",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 27.08121461832231,
+          "latencyMedianMs": 0,
+          "latencyP95Ms": 0,
+          "payloadBytes": 8388608,
+          "payloadVerified": true,
+          "phase": "download",
+          "rounds": 0,
+          "seconds": 2.478059605,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 0,
+          "repetition": 2,
+          "wallSeconds": 3.0513956679999974,
+          "tunPacketDelta": 0,
+          "roles": {
+            "client": {
+              "cpuTicks": 83,
+              "cpuSeconds": 0.83,
+              "cpuPercentOneCore": 27.200667835515873,
+              "peakRssKiB": 7428
+            },
+            "exit": {
+              "cpuTicks": 85,
+              "cpuSeconds": 0.85,
+              "cpuPercentOneCore": 27.856105614684928,
+              "peakRssKiB": 6768
+            }
+          }
+        },
+        {
+          "branch": "transparent",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 0,
+          "latencyMedianMs": 2.9037870000000003,
+          "latencyP95Ms": 4.736889,
+          "payloadBytes": 0,
+          "payloadVerified": true,
+          "phase": "latency",
+          "rounds": 100,
+          "seconds": 0.345991302,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 5,
+          "repetition": 2,
+          "wallSeconds": 1.5067398089999915,
+          "tunPacketDelta": 0,
+          "roles": {
+            "client": {
+              "cpuTicks": 30,
+              "cpuSeconds": 0.3,
+              "cpuPercentOneCore": 19.910537851860905,
+              "peakRssKiB": 7428
+            },
+            "exit": {
+              "cpuTicks": 37,
+              "cpuSeconds": 0.37,
+              "cpuPercentOneCore": 24.556330017295114,
+              "peakRssKiB": 6712
+            }
+          }
+        },
+        {
+          "branch": "boring",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 6.553325395826746,
+          "latencyMedianMs": 0,
+          "latencyP95Ms": 0,
+          "payloadBytes": 8388608,
+          "payloadVerified": true,
+          "phase": "upload",
+          "rounds": 0,
+          "seconds": 10.240429087,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 0,
+          "repetition": 3,
+          "wallSeconds": 10.565397983000002,
+          "tunPacketDelta": 9542,
+          "roles": {
+            "client": {
+              "cpuTicks": 351,
+              "cpuSeconds": 3.51,
+              "cpuPercentOneCore": 33.22165436311704,
+              "peakRssKiB": 7428
+            },
+            "exit": {
+              "cpuTicks": 450,
+              "cpuSeconds": 4.5,
+              "cpuPercentOneCore": 42.59186456809877,
+              "peakRssKiB": 6712
+            }
+          }
+        },
+        {
+          "branch": "boring",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 7.778416918857301,
+          "latencyMedianMs": 0,
+          "latencyP95Ms": 0,
+          "payloadBytes": 8388608,
+          "payloadVerified": true,
+          "phase": "download",
+          "rounds": 0,
+          "seconds": 8.627573541,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 0,
+          "repetition": 3,
+          "wallSeconds": 8.972250692000001,
+          "tunPacketDelta": 9493,
+          "roles": {
+            "client": {
+              "cpuTicks": 341,
+              "cpuSeconds": 3.41,
+              "cpuPercentOneCore": 38.00607135331702,
+              "peakRssKiB": 7428
+            },
+            "exit": {
+              "cpuTicks": 352,
+              "cpuSeconds": 3.52,
+              "cpuPercentOneCore": 39.23207365503692,
+              "peakRssKiB": 6792
+            }
+          }
+        },
+        {
+          "branch": "boring",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 0,
+          "latencyMedianMs": 4.73676,
+          "latencyP95Ms": 7.298299,
+          "payloadBytes": 0,
+          "payloadVerified": true,
+          "phase": "latency",
+          "rounds": 100,
+          "seconds": 0.524679363,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 5,
+          "repetition": 3,
+          "wallSeconds": 0.7785416439999971,
+          "tunPacketDelta": 229,
+          "roles": {
+            "client": {
+              "cpuTicks": 26,
+              "cpuSeconds": 0.26,
+              "cpuPercentOneCore": 33.39577298192683,
+              "peakRssKiB": 7428
+            },
+            "exit": {
+              "cpuTicks": 27,
+              "cpuSeconds": 0.27,
+              "cpuPercentOneCore": 34.68022578892402,
+              "peakRssKiB": 6712
+            }
+          }
+        },
+        {
+          "branch": "transparent",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 28.428193329862566,
+          "latencyMedianMs": 0,
+          "latencyP95Ms": 0,
+          "payloadBytes": 8388608,
+          "payloadVerified": true,
+          "phase": "upload",
+          "rounds": 0,
+          "seconds": 2.360644703,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 0,
+          "repetition": 3,
+          "wallSeconds": 2.8846009939999933,
+          "tunPacketDelta": 0,
+          "roles": {
+            "client": {
+              "cpuTicks": 72,
+              "cpuSeconds": 0.72,
+              "cpuPercentOneCore": 24.960124519738056,
+              "peakRssKiB": 7672
+            },
+            "exit": {
+              "cpuTicks": 90,
+              "cpuSeconds": 0.9,
+              "cpuPercentOneCore": 31.200155649672574,
+              "peakRssKiB": 6712
+            }
+          }
+        },
+        {
+          "branch": "transparent",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 23.616933822594113,
+          "latencyMedianMs": 0,
+          "latencyP95Ms": 0,
+          "payloadBytes": 8388608,
+          "payloadVerified": true,
+          "phase": "download",
+          "rounds": 0,
+          "seconds": 2.841557016,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 0,
+          "repetition": 3,
+          "wallSeconds": 3.3973076340000117,
+          "tunPacketDelta": 0,
+          "roles": {
+            "client": {
+              "cpuTicks": 86,
+              "cpuSeconds": 0.86,
+              "cpuPercentOneCore": 25.31416323306084,
+              "peakRssKiB": 7428
+            },
+            "exit": {
+              "cpuTicks": 128,
+              "cpuSeconds": 1.28,
+              "cpuPercentOneCore": 37.676894114323105,
+              "peakRssKiB": 6712
+            }
+          }
+        },
+        {
+          "branch": "transparent",
+          "clockTicksPerSecond": 100,
+          "goodputMbps": 0,
+          "latencyMedianMs": 2.3407355,
+          "latencyP95Ms": 4.545748,
+          "payloadBytes": 0,
+          "payloadVerified": true,
+          "phase": "latency",
+          "rounds": 100,
+          "seconds": 0.314817035,
+          "status": "passed",
+          "streams": 1,
+          "warmupRounds": 5,
+          "repetition": 3,
+          "wallSeconds": 0.773336884999997,
+          "tunPacketDelta": 0,
+          "roles": {
+            "client": {
+              "cpuTicks": 15,
+              "cpuSeconds": 0.15,
+              "cpuPercentOneCore": 19.396462642539102,
+              "peakRssKiB": 7428
+            },
+            "exit": {
+              "cpuTicks": 19,
+              "cpuSeconds": 0.19,
+              "cpuPercentOneCore": 24.56885268054953,
+              "peakRssKiB": 6712
+            }
+          }
+        }
+      ]
+    },
+    "directPacketsAfterGuard": 0,
+    "captureKernelDropped": 0,
+    "realTun": true,
+    "roles": [
+      "client",
+      "exit"
+    ],
+    "namespaces": 5,
+    "packetOwner": "C++",
+    "scope": "runtime-static-routes-selected-IPv4-origin-with-emulated-benchmark"
+  },
+  "benchmarks": [],
+  "verifiedOn": "2026-10-07",
+  "artifactDirectory": "/var/tmp/meshpn-native-lab-9vqyxn",
+  "verification": {
+    "regression": {
+      "passed": 434,
+      "total": 434,
+      "nativeOnly": true
+    },
+    "ctest": {
+      "normal": 7,
+      "asanUbsan": 7
+    },
+    "asanIntegration": {
+      "passed": 12,
+      "total": 12
+    },
+    "targeted": {
+      "passed": 18,
+      "total": 18
+    }
+  },
+  "previousRun": {
+    "artifactDirectory": "/var/tmp/meshpn-native-lab-3yPhWN",
+    "status": "passed",
+    "nic": "none",
+    "hostSharedFilesystem": false,
+    "realTun": true,
+    "packetOwner": "C++",
+    "kernelSha256": "7a69aaa48d149d102c572424b588e2bc6f8b7524d5ec0e08fd2a2a06448f01f8",
+    "accelerator": "TCG",
+    "vcpus": 1,
+    "memoryMiB": 1536,
+    "tunMtu": 1400,
+    "guard": "dedicated-native-combo-client-and-exit",
+    "benchmark": "three repetitions per native branch: directional 8 MiB upload/download, 100 established-stream RTTs, per-role CPU/RSS",
+    "limitations": [
+      "fixture-PKI-and-origins",
+      "runtime-static-routes-not-systemd-installer-reboot",
+      "selected-IPv4-origin-capture-not-all-egress",
+      "not-physical-Radxa-or-arm64",
+      "TCG-not-WAN-or-hardware-capacity",
+      "single-stream-local-origin",
+      "RSS-not-PSS-sampling-can-miss-peaks",
+      "CPU-window-includes-connect-TLS-and-close"
+    ],
+    "nativeOnly": true,
+    "labScriptSha256": "e70e1f7df84a6dad747d71ad81983f586bd1c41f29fe44de174bb984e8edbba9",
+    "clean-vpn-engineSha256": "7967dafd87bc1152b245f95d08d54598fbe3d3fa3688b6267b4a6f28cf80a2dc",
+    "socket-testSha256": "5100af3d12c66fbd5e5b4227cc0ede6fdfa869d8f417582ebec1efefa5fa020b",
+    "transparent-socket-testSha256": "b0d5241ddd80f1d5631e738a888af8cd19f49b7cc8c1ca02d1941a1a1e623ad0",
+    "throughput-testSha256": "6448b91476da953d33dc827e5644ab59bd5168689870fa9df4af1a83f99f597a",
+    "transport": "combo-tls",
+    "realTunPeers": 1,
+    "comboLoad": false,
+    "networkPlanSha256": "65cf0f5629d02b8ed12f1f2da102be68defd66680954d7b00cfb6139c99de173",
+    "networkApplySha256": "896cff7da956a37c01c1b2bb456eaf80210088c3ccfab32e60351444023e17b9",
+    "benchmarkControllerSha256": "f5a1deae8c14b8665335d7a3fa0140054aab22a75a262821aa20622c871f1359",
+    "code": 0,
+    "evidence": {
+      "status": "passed",
+      "checks": [
+        "DIRECT_POSITIVE_CONTROL",
+        "GUARDS_REAL_TUN",
+        "HTTPS_TRANSPARENT_NOT_TUN",
+        "CONCURRENT_TLS_TCP_UDP",
+        "NATIVE_DNS_HOST_LAN",
+        "DOUBLE_NAT",
+        "POLICY_NO_DOWNGRADE",
+        "DIRECTIONAL_BENCHMARK",
+        "CLIENT_CRASH_DIRECT_ROUTE_BLOCKED",
+        "CLIENT_RESTART",
+        "EXIT_CRASH_BLOCKED",
+        "EXIT_RESTART",
+        "SELECTED_ORIGIN_NO_DIRECT_PACKETS"
+      ],
+      "positiveCapturePackets": 433,
+      "benchmark": {
+        "status": "passed",
+        "scope": "native-combo-single-stream-local-origin-TCG-not-WAN-or-hardware-capacity",
+        "repetitions": 3,
+        "sampleIntervalMs": 100,
+        "timing": "application-after-connect-and-TLS-includes-start-and-completion-ack",
+        "cpuTiming": "whole-fixture-process-window-including-connect-TLS-and-close",
+        "samples": [
+          {
+            "branch": "boring",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 5.2947968807457,
+            "latencyMedianMs": 0,
+            "latencyP95Ms": 0,
+            "payloadBytes": 8388608,
+            "payloadVerified": true,
+            "phase": "upload",
+            "rounds": 0,
+            "seconds": 12.674492622,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 0,
+            "repetition": 1,
+            "wallSeconds": 13.081552697,
+            "tunPacketDelta": 9669,
+            "roles": {
+              "client": {
+                "cpuTicks": 430,
+                "cpuSeconds": 4.3,
+                "cpuPercentOneCore": 32.870715729227776,
+                "peakRssKiB": 7432
+              },
+              "exit": {
+                "cpuTicks": 546,
+                "cpuSeconds": 5.46,
+                "cpuPercentOneCore": 41.738164623624115,
+                "peakRssKiB": 6316
+              }
+            }
+          },
+          {
+            "branch": "boring",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 6.95095964084305,
+            "latencyMedianMs": 0,
+            "latencyP95Ms": 0,
+            "payloadBytes": 8388608,
+            "payloadVerified": true,
+            "phase": "download",
+            "rounds": 0,
+            "seconds": 9.654618566,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 0,
+            "repetition": 1,
+            "wallSeconds": 9.998405888,
+            "tunPacketDelta": 9508,
+            "roles": {
+              "client": {
+                "cpuTicks": 373,
+                "cpuSeconds": 3.73,
+                "cpuPercentOneCore": 37.30594698577613,
+                "peakRssKiB": 7408
+              },
+              "exit": {
+                "cpuTicks": 382,
+                "cpuSeconds": 3.82,
+                "cpuPercentOneCore": 38.20609047873052,
+                "peakRssKiB": 6780
+              }
+            }
+          },
+          {
+            "branch": "boring",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 0,
+            "latencyMedianMs": 5.578609500000001,
+            "latencyP95Ms": 9.27388,
+            "payloadBytes": 0,
+            "payloadVerified": true,
+            "phase": "latency",
+            "rounds": 100,
+            "seconds": 0.646531139,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 5,
+            "repetition": 1,
+            "wallSeconds": 0.9457718259999965,
+            "tunPacketDelta": 229,
+            "roles": {
+              "client": {
+                "cpuTicks": 30,
+                "cpuSeconds": 0.3,
+                "cpuPercentOneCore": 31.720124426713582,
+                "peakRssKiB": 7408
+              },
+              "exit": {
+                "cpuTicks": 32,
+                "cpuSeconds": 0.32,
+                "cpuPercentOneCore": 33.83479938849449,
+                "peakRssKiB": 6704
+              }
+            }
+          },
+          {
+            "branch": "transparent",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 22.836441417682217,
+            "latencyMedianMs": 0,
+            "latencyP95Ms": 0,
+            "payloadBytes": 8388608,
+            "payloadVerified": true,
+            "phase": "upload",
+            "rounds": 0,
+            "seconds": 2.938674322,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 0,
+            "repetition": 1,
+            "wallSeconds": 3.6104987320000075,
+            "tunPacketDelta": 0,
+            "roles": {
+              "client": {
+                "cpuTicks": 105,
+                "cpuSeconds": 1.05,
+                "cpuPercentOneCore": 29.081854833344888,
+                "peakRssKiB": 7424
+              },
+              "exit": {
+                "cpuTicks": 105,
+                "cpuSeconds": 1.05,
+                "cpuPercentOneCore": 29.081854833344888,
+                "peakRssKiB": 6704
+              }
+            }
+          },
+          {
+            "branch": "transparent",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 25.455703361232445,
+            "latencyMedianMs": 0,
+            "latencyP95Ms": 0,
+            "payloadBytes": 8388608,
+            "payloadVerified": true,
+            "phase": "download",
+            "rounds": 0,
+            "seconds": 2.636299734,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 0,
+            "repetition": 1,
+            "wallSeconds": 4.202179296000002,
+            "tunPacketDelta": 0,
+            "roles": {
+              "client": {
+                "cpuTicks": 87,
+                "cpuSeconds": 0.87,
+                "cpuPercentOneCore": 20.7035430598628,
+                "peakRssKiB": 7424
+              },
+              "exit": {
+                "cpuTicks": 94,
+                "cpuSeconds": 0.94,
+                "cpuPercentOneCore": 22.369345375024174,
+                "peakRssKiB": 6712
+              }
+            }
+          },
+          {
+            "branch": "transparent",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 0,
+            "latencyMedianMs": 3.7155449999999997,
+            "latencyP95Ms": 8.851869,
+            "payloadBytes": 0,
+            "payloadVerified": true,
+            "phase": "latency",
+            "rounds": 100,
+            "seconds": 0.456078585,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 5,
+            "repetition": 1,
+            "wallSeconds": 0.9959454319999932,
+            "tunPacketDelta": 0,
+            "roles": {
+              "client": {
+                "cpuTicks": 20,
+                "cpuSeconds": 0.2,
+                "cpuPercentOneCore": 20.0814214889638,
+                "peakRssKiB": 7424
+              },
+              "exit": {
+                "cpuTicks": 23,
+                "cpuSeconds": 0.23,
+                "cpuPercentOneCore": 23.093634712308372,
+                "peakRssKiB": 6712
+              }
+            }
+          },
+          {
+            "branch": "boring",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 5.821045170175554,
+            "latencyMedianMs": 0,
+            "latencyP95Ms": 0,
+            "payloadBytes": 8388608,
+            "payloadVerified": true,
+            "phase": "upload",
+            "rounds": 0,
+            "seconds": 11.5286623,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 0,
+            "repetition": 2,
+            "wallSeconds": 11.820339508999998,
+            "tunPacketDelta": 9619,
+            "roles": {
+              "client": {
+                "cpuTicks": 395,
+                "cpuSeconds": 3.95,
+                "cpuPercentOneCore": 33.41697585752485,
+                "peakRssKiB": 7424
+              },
+              "exit": {
+                "cpuTicks": 506,
+                "cpuSeconds": 5.06,
+                "cpuPercentOneCore": 42.80756907318372,
+                "peakRssKiB": 6712
+              }
+            }
+          },
+          {
+            "branch": "boring",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 6.717593021176495,
+            "latencyMedianMs": 0,
+            "latencyP95Ms": 0,
+            "payloadBytes": 8388608,
+            "payloadVerified": true,
+            "phase": "download",
+            "rounds": 0,
+            "seconds": 9.990016333,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 0,
+            "repetition": 2,
+            "wallSeconds": 10.39766193799999,
+            "tunPacketDelta": 9522,
+            "roles": {
+              "client": {
+                "cpuTicks": 387,
+                "cpuSeconds": 3.87,
+                "cpuPercentOneCore": 37.2199060046032,
+                "peakRssKiB": 7188
+              },
+              "exit": {
+                "cpuTicks": 390,
+                "cpuSeconds": 3.9,
+                "cpuPercentOneCore": 37.50843240773966,
+                "peakRssKiB": 6804
+              }
+            }
+          },
+          {
+            "branch": "boring",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 0,
+            "latencyMedianMs": 6.4175945,
+            "latencyP95Ms": 11.75147,
+            "payloadBytes": 0,
+            "payloadVerified": true,
+            "phase": "latency",
+            "rounds": 100,
+            "seconds": 0.758225309,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 5,
+            "repetition": 2,
+            "wallSeconds": 1.0783038809999999,
+            "tunPacketDelta": 229,
+            "roles": {
+              "client": {
+                "cpuTicks": 35,
+                "cpuSeconds": 0.35,
+                "cpuPercentOneCore": 32.458382666249534,
+                "peakRssKiB": 7188
+              },
+              "exit": {
+                "cpuTicks": 35,
+                "cpuSeconds": 0.35,
+                "cpuPercentOneCore": 32.458382666249534,
+                "peakRssKiB": 6732
+              }
+            }
+          },
+          {
+            "branch": "transparent",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 25.417247523665228,
+            "latencyMedianMs": 0,
+            "latencyP95Ms": 0,
+            "payloadBytes": 8388608,
+            "payloadVerified": true,
+            "phase": "upload",
+            "rounds": 0,
+            "seconds": 2.640288408,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 0,
+            "repetition": 2,
+            "wallSeconds": 3.2999138950000053,
+            "tunPacketDelta": 0,
+            "roles": {
+              "client": {
+                "cpuTicks": 81,
+                "cpuSeconds": 0.81,
+                "cpuPercentOneCore": 24.54609501257907,
+                "peakRssKiB": 7204
+              },
+              "exit": {
+                "cpuTicks": 99,
+                "cpuSeconds": 0.99,
+                "cpuPercentOneCore": 30.000782793152197,
+                "peakRssKiB": 6732
+              }
+            }
+          },
+          {
+            "branch": "transparent",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 20.861581726479226,
+            "latencyMedianMs": 0,
+            "latencyP95Ms": 0,
+            "payloadBytes": 8388608,
+            "payloadVerified": true,
+            "phase": "download",
+            "rounds": 0,
+            "seconds": 3.216863653,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 0,
+            "repetition": 2,
+            "wallSeconds": 3.7483971410000088,
+            "tunPacketDelta": 0,
+            "roles": {
+              "client": {
+                "cpuTicks": 130,
+                "cpuSeconds": 1.3,
+                "cpuPercentOneCore": 34.68149054380033,
+                "peakRssKiB": 7204
+              },
+              "exit": {
+                "cpuTicks": 99,
+                "cpuSeconds": 0.99,
+                "cpuPercentOneCore": 26.411288952586403,
+                "peakRssKiB": 7504
+              }
+            }
+          },
+          {
+            "branch": "transparent",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 0,
+            "latencyMedianMs": 3.0425389999999997,
+            "latencyP95Ms": 7.364444,
+            "payloadBytes": 0,
+            "payloadVerified": true,
+            "phase": "latency",
+            "rounds": 100,
+            "seconds": 0.381282978,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 5,
+            "repetition": 2,
+            "wallSeconds": 1.5198594000000012,
+            "tunPacketDelta": 0,
+            "roles": {
+              "client": {
+                "cpuTicks": 29,
+                "cpuSeconds": 0.29,
+                "cpuPercentOneCore": 19.08071233431196,
+                "peakRssKiB": 7204
+              },
+              "exit": {
+                "cpuTicks": 40,
+                "cpuSeconds": 0.4,
+                "cpuPercentOneCore": 26.31822390939581,
+                "peakRssKiB": 6788
+              }
+            }
+          },
+          {
+            "branch": "boring",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 5.89694297205787,
+            "latencyMedianMs": 0,
+            "latencyP95Ms": 0,
+            "payloadBytes": 8388608,
+            "payloadVerified": true,
+            "phase": "upload",
+            "rounds": 0,
+            "seconds": 11.380280311,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 0,
+            "repetition": 3,
+            "wallSeconds": 11.714438666999994,
+            "tunPacketDelta": 9597,
+            "roles": {
+              "client": {
+                "cpuTicks": 390,
+                "cpuSeconds": 3.9,
+                "cpuPercentOneCore": 33.292248231974135,
+                "peakRssKiB": 7288
+              },
+              "exit": {
+                "cpuTicks": 496,
+                "cpuSeconds": 4.96,
+                "cpuPercentOneCore": 42.340910571946594,
+                "peakRssKiB": 6788
+              }
+            }
+          },
+          {
+            "branch": "boring",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 7.54276812678933,
+            "latencyMedianMs": 0,
+            "latencyP95Ms": 0,
+            "payloadBytes": 8388608,
+            "payloadVerified": true,
+            "phase": "download",
+            "rounds": 0,
+            "seconds": 8.897113483,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 0,
+            "repetition": 3,
+            "wallSeconds": 9.262369278000012,
+            "tunPacketDelta": 9499,
+            "roles": {
+              "client": {
+                "cpuTicks": 353,
+                "cpuSeconds": 3.53,
+                "cpuPercentOneCore": 38.11119913329799,
+                "peakRssKiB": 7284
+              },
+              "exit": {
+                "cpuTicks": 357,
+                "cpuSeconds": 3.57,
+                "cpuPercentOneCore": 38.543054080984085,
+                "peakRssKiB": 6808
+              }
+            }
+          },
+          {
+            "branch": "boring",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 0,
+            "latencyMedianMs": 5.138206500000001,
+            "latencyP95Ms": 9.486852,
+            "payloadBytes": 0,
+            "payloadVerified": true,
+            "phase": "latency",
+            "rounds": 100,
+            "seconds": 0.600679475,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 5,
+            "repetition": 3,
+            "wallSeconds": 0.8933764720000036,
+            "tunPacketDelta": 229,
+            "roles": {
+              "client": {
+                "cpuTicks": 28,
+                "cpuSeconds": 0.28,
+                "cpuPercentOneCore": 31.34177010204483,
+                "peakRssKiB": 7284
+              },
+              "exit": {
+                "cpuTicks": 29,
+                "cpuSeconds": 0.29,
+                "cpuPercentOneCore": 32.46111903426071,
+                "peakRssKiB": 6808
+              }
+            }
+          },
+          {
+            "branch": "transparent",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 24.229792593735713,
+            "latencyMedianMs": 0,
+            "latencyP95Ms": 0,
+            "payloadBytes": 8388608,
+            "payloadVerified": true,
+            "phase": "upload",
+            "rounds": 0,
+            "seconds": 2.769683799,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 0,
+            "repetition": 3,
+            "wallSeconds": 3.2582852790000034,
+            "tunPacketDelta": 0,
+            "roles": {
+              "client": {
+                "cpuTicks": 82,
+                "cpuSeconds": 0.82,
+                "cpuPercentOneCore": 25.16661156974153,
+                "peakRssKiB": 8056
+              },
+              "exit": {
+                "cpuTicks": 106,
+                "cpuSeconds": 1.06,
+                "cpuPercentOneCore": 32.53244910234881,
+                "peakRssKiB": 6808
+              }
+            }
+          },
+          {
+            "branch": "transparent",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 20.646857857757812,
+            "latencyMedianMs": 0,
+            "latencyP95Ms": 0,
+            "payloadBytes": 8388608,
+            "payloadVerified": true,
+            "phase": "download",
+            "rounds": 0,
+            "seconds": 3.250318497,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 0,
+            "repetition": 3,
+            "wallSeconds": 3.767661002000008,
+            "tunPacketDelta": 0,
+            "roles": {
+              "client": {
+                "cpuTicks": 91,
+                "cpuSeconds": 0.91,
+                "cpuPercentOneCore": 24.152916080213686,
+                "peakRssKiB": 7348
+              },
+              "exit": {
+                "cpuTicks": 128,
+                "cpuSeconds": 1.28,
+                "cpuPercentOneCore": 33.973332508432435,
+                "peakRssKiB": 6808
+              }
+            }
+          },
+          {
+            "branch": "transparent",
+            "clockTicksPerSecond": 100,
+            "goodputMbps": 0,
+            "latencyMedianMs": 2.8422514999999997,
+            "latencyP95Ms": 4.840992,
+            "payloadBytes": 0,
+            "payloadVerified": true,
+            "phase": "latency",
+            "rounds": 100,
+            "seconds": 0.335713196,
+            "status": "passed",
+            "streams": 1,
+            "warmupRounds": 5,
+            "repetition": 3,
+            "wallSeconds": 0.8839145340000104,
+            "tunPacketDelta": 0,
+            "roles": {
+              "client": {
+                "cpuTicks": 16,
+                "cpuSeconds": 0.16,
+                "cpuPercentOneCore": 18.101297562779763,
+                "peakRssKiB": 7348
+              },
+              "exit": {
+                "cpuTicks": 19,
+                "cpuSeconds": 0.19,
+                "cpuPercentOneCore": 21.49529085580097,
+                "peakRssKiB": 6808
+              }
+            }
+          }
+        ]
+      },
+      "directPacketsAfterGuard": 0,
+      "captureKernelDropped": 0,
+      "realTun": true,
+      "roles": [
+        "client",
+        "exit"
+      ],
+      "namespaces": 5,
+      "packetOwner": "C++",
+      "scope": "runtime-static-routes-selected-IPv4-origin-with-emulated-benchmark"
+    },
+    "benchmarks": []
+  }
+}
