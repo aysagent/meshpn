@@ -29,6 +29,9 @@ test('native client/exit data plane: packets, control, reconnect, blackhole', { 
   assert.equal(result.status,0,`${result.error ?? ''}\n${result.stdout}\n${result.stderr}`);
   assert.match(result.stdout,/native integration PASS/);
   console.log(result.stdout);
+  const service=spawnSync(path.join(build,'integration-test'),[path.join(build,'clean-vpn-engine-fixture'),client,server,'service'],{encoding:'utf8',timeout:10000,maxBuffer:65536});
+  assert.equal(service.status,0,service.stdout+'\n'+service.stderr);
+  assert.match(service.stdout,/service mode ignores stdin\/EOF, 100 packets, SIGTERM clean stop PASS/);
   const otherSecret=path.join(dir,'other-psk');fs.writeFileSync(otherSecret,randomBytes(32),{mode:0o600});
   const otherCert=path.join(dir,'other.pem');
   execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',path.join(dir,'other.key'),'-out',otherCert,'-days','2','-subj','/CN=other','-addext','subjectAltName=DNS:localhost'],{stdio:'pipe'});

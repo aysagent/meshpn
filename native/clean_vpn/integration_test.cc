@@ -25,15 +25,18 @@ static size_t fd_count(pid_t pid){
   closedir(dir);return count;
 }
 struct Child {
+  bool service=false;
   int packet=-1,control=-1,events=-1;pid_t pid=-1;std::string input;
-  Child(const char* exe,const char* config){
+  Child(const char* exe,const char* config,bool service_mode=false):service(service_mode){
     int pkt[2],cmd[2],out[2];require(socketpair(AF_UNIX,SOCK_DGRAM,0,pkt)==0&&pipe(cmd)==0&&pipe(out)==0,"pipes");
     const auto parent=getpid();pid=fork();require(pid>=0,"fork");
     if(pid==0){
       if(prctl(PR_SET_PDEATHSIG,SIGKILL)!=0||getppid()!=parent)_exit(126);
       dup2(cmd[0],0);dup2(out[1],1);dup2(pkt[1],4);
       for(int fd=3;fd<1024;fd++)if(fd!=4)close(fd);
-      execl(exe,exe,"--config",config,"--test-packet-fd","4",nullptr);_exit(127);
+      if(service)execl(exe,exe,"--config",config,"--test-packet-fd","4","--service",nullptr);
+      else execl(exe,exe,"--config",config,"--test-packet-fd","4",nullptr);
+      _exit(127);
     }
     close(pkt[1]);close(cmd[0]);close(out[1]);packet=pkt[0];control=cmd[1];events=out[0];
     fcntl(events,F_SETFL,O_NONBLOCK);
@@ -93,7 +96,8 @@ struct Child {
     throw std::runtime_error("soak_status_timeout");
   }
   void stop(){
-    command("{\"op\":\"stop\"}\n");await_state("stopped",2000);
+    if(service)kill(pid,SIGTERM);else command("{\"op\":\"stop\"}\n");
+    await_state("stopped",2000);
     auto end=Clock::now()+std::chrono::seconds(2);int status;
     while(Clock::now()<end){if(waitpid(pid,&status,WNOHANG)==pid){pid=-1;require(WIFEXITED(status)&&WEXITSTATUS(status)==0,"exit_status");return;}std::this_thread::sleep_for(std::chrono::milliseconds(10));}
     throw std::runtime_error("stop_deadline");
@@ -182,6 +186,18 @@ int main(int argc,char** argv){
   signal(SIGPIPE,SIG_IGN);
   std::cout<<std::unitbuf;
   try{
+    if(argc==5&&std::string(argv[4])=="service"){
+      unsetenv("NOTIFY_SOCKET");
+      Child server(argv[1],argv[3],true);server.await_state("listening");
+      Child client(argv[1],argv[2],true);client.await_state("ready");server.await_state("ready");
+      // Stdin is deliberately ignored in explicit service mode, including EOF.
+      for(auto* child:{&client,&server}){
+        child->command("{\"op\":\"stop\"}\n");close(child->control);child->control=-1;
+      }
+      for(int i=0;i<50;i++){transfer(client,server,1400,false,i);transfer(server,client,1400,true,i);}
+      client.stop();server.stop();
+      std::cout<<"service mode ignores stdin/EOF, 100 packets, SIGTERM clean stop PASS\n";return 0;
+    }
     if(argc==5&&std::string(argv[4])=="many"){
       Child server(argv[1],argv[3]);server.await_state("listening");
       std::vector<std::unique_ptr<Child>> peers;

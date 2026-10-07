@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "kind": "native-direct-service-lab-checkpoint",
+  "date": "2026-10-07",
+  "status": "passed",
+  "report": "/var/tmp/meshpn-native-lab-lf6gLk/report.json",
+  "nativeOnly": true,
+  "systemdPid1": true,
+  "nativeDirectServices": true,
+  "realTunPeers": 2,
+  "nic": "none",
+  "hostSharedFilesystem": false,
+  "engineSha256": "e8848c3305779d4e81282281ce409c4033eaa8ad77fdb39f2f57723eea05df51",
+  "labScriptSha256": "dfaf400419c72f4b91af2b74b87842698d666b9c6e53db4b3710372beeb4a2d2",
+  "serviceUnitRendererSha256": "d1538bfca894c55bc6a93c96363ff3897c852543bc4b329e073efdb872225d35",
+  "passedGates": ["DIRECT_CONTROL", "GUARD_REFUSAL", "NOTIFY_WAIT", "TWO_PEERS", "CLIENT_STOP_ISOLATED", "CLIENT_RESTART", "CLIENT_CRASH_RESTART", "EXIT_CRASH_RESTART", "UPLINK_RECOVERY", "GUARD_STOP_BINDS", "STOP_FAIL_CLOSED", "CLEANUP"],
+  "tests": {"regressionPassed": 383, "ctestPassed": 3, "asanUbsanIntegrationPassed": 18, "asanUbsanCtestPassed": 3},
+  "benchmark": "not-requested",
+  "limitations": ["fixture-network-provisioning-not-production-installer", "single-boot-not-reboot-acceptance", "static-uplink-not-DHCP-reconfiguration", "not-early-boot-leak-acceptance", "not-physical-Radxa-or-arm64", "dependencies-not-sanitizer-instrumented"]
+}

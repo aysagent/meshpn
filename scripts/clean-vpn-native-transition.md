@@ -119,9 +119,16 @@ Radxa/VPS/Mac не изменялись; развёртывание и WAN bench
 
 ## Что ещё не закончено
 
-1. Native-only provisioning/lifecycle client и exit, systemd start/stop/reboot/
-   crash-recovery в VM, реальный multi-peer TUN и наблюдение ресурсов при
-   неодинаковой нагрузке клиентов. Не расширять текущий USB профиль молча.
+Продолжение 2026-10-07: добавлены [прямой C++ service и systemd-лаборатория](clean-vpn-native-service.md).
+Этот шаг отделяет lifecycle engine от сетевого provisioning. Старый результат
+VM выше относится к предыдущей сборке и сохранён как отдельный checkpoint.
+
+1. Native-only provisioning client и exit, постоянная установка и cold boot/
+   reboot в VM, интеграция route ownership/DHCP recovery. Direct C++ systemd
+   start/stop, crash-restart обеих сторон и два peer через реальные TUN уже
+   проверены отдельной лабораторией; это ещё не production installer.
+   Нужны также расширенные ресурсные прогоны разных нагрузок. Не расширять
+   текущий USB профиль молча.
 2. Перенос transparent relay/обработки потоков в C++, защищённая судьба
    non-HTTPS трафика, негативные handshake/relay тесты.
 3. Native combo, выбор ветки и владение потоками внутри native engine.

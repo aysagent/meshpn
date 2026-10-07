@@ -2,6 +2,7 @@
 // payload IPC. The supervisor must provision TUN addresses/routes/guard first.
 #include "protocol.hpp"
 #include "dns_relay.hpp"
+#include "service_notify.hpp"
 #include <nlohmann/json.hpp>
 #include <nghttp2/nghttp2.h>
 #include <openssl/ssl.h>
@@ -98,6 +99,8 @@ struct Config {
   ~Config(){for(auto& p:peers)OPENSSL_cleanse(p.secret.data(),p.secret.size());}
 };
 struct Control {
+  int input_fd=STDIN_FILENO;
+  ServiceNotify* notify=nullptr;
   std::atomic<bool> dns_ready{false};
   std::atomic<bool> dns_failed{false};
   std::atomic<bool> dns_idle{false}, dns_demand{false};
@@ -115,6 +118,7 @@ struct Control {
   void set(const std::string& s){
     if(s=="ready")dns_demand=false; // Coalesce concurrent DNS wake requests.
     dns_idle=s=="idle_wait";dns_ready=s=="ready";state=s;emit("state");
+    if(notify&&!notify->state(s))stop=true;
   }
   void rejected_address(const Bytes& packet,bool client){
     // Bounded, explicit metadata only. Never expose packet bytes or ports.
@@ -127,9 +131,11 @@ struct Control {
     if(write(STDOUT_FILENO,line.data(),line.size())!=ssize_t(line.size()))stop=true;
   }
   void read_commands() {
-    char b[1024]; ssize_t n;
+    if(interrupted||dns_failed)stop=true;
+    if(input_fd<0)return;
+    char b[1024]; ssize_t n=-1;
     unsigned reads=0;
-    while(reads++<4 && (n=read(STDIN_FILENO,b,sizeof(b)))>0) {
+    while(reads++<4 && (n=read(input_fd,b,sizeof(b)))>0) {
       input.append(b,n); if(input.size()>4096){stop=true;return;}
       size_t e;
       while((e=input.find('\n'))!=std::string::npos){
@@ -155,7 +161,7 @@ static void wait_fd(int fd, short events, Control& ctl, Clock::time_point deadli
     check(!ctl.stop&&ctl.uplink&&ctl.generation==generation,"cancelled");
     auto left=std::chrono::duration_cast<std::chrono::milliseconds>(deadline-Clock::now()).count();
     check(left>0,"connect_deadline");
-    pollfd p[]={{fd,events,0},{STDIN_FILENO,POLLIN,0}};
+    pollfd p[]={{fd,events,0},{ctl.input_fd,POLLIN,0}};
     int rc=poll(p,2,int(std::min<int64_t>(left,100)));
     if(rc<0){check(errno==EINTR,"poll");continue;}
     if(p[0].revents&(events|POLLERR|POLLHUP)) return;
@@ -411,7 +417,7 @@ struct Session {
       short netevents=step(tun,deadline,pending);
       ctl.read_commands();
       short tunevents=(ready&&outgoing.size()<queue_limit-max_packet-4?POLLIN:0)|(!packets.empty()?POLLOUT:0);
-      pollfd fds[]={{socket,netevents,0},{tun,tunevents,0},{STDIN_FILENO,POLLIN,0}};
+      pollfd fds[]={{socket,netevents,0},{tun,tunevents,0},{ctl.input_fd,POLLIN,0}};
       check(poll(fds,3,10)>=0||errno==EINTR,"poll");
     }
   }
@@ -457,7 +463,7 @@ static void run_exit(const Config& config,SSL_CTX* context,int listener,int tun,
   while(!ctl.stop&&!interrupted){
     ctl.read_commands();if(ctl.stop)break;
     if(!ctl.uplink||generation!=ctl.generation){connections.clear();owners.clear();generation=ctl.generation;}
-    if(!ctl.uplink){pollfd p{STDIN_FILENO,POLLIN,0};poll(&p,1,50);continue;}
+    if(!ctl.uplink){pollfd p{ctl.input_fd,POLLIN,0};poll(&p,1,50);continue;}
     auto now=Clock::now();
     if(now-rate_window>=std::chrono::seconds(1)){rate_window=now;admissions=0;}
     // A fixed admission budget bounds unauthenticated SSL allocations/CPU.
@@ -529,7 +535,7 @@ static void run_exit(const Config& config,SSL_CTX* context,int listener,int tun,
     const auto state=!owners.empty()?"ready":connections.empty()?"listening":"handshake";
     if(ctl.state!=state)ctl.set(state);
     bool tun_write=false;
-    std::vector<pollfd> fds={{listener,POLLIN,0},{STDIN_FILENO,POLLIN,0}};
+    std::vector<pollfd> fds={{listener,POLLIN,0},{ctl.input_fd,POLLIN,0}};
     for(const auto& c:connections){
       short interest=c->interest;
       // TUN dispatch happened after step(): arm output in this tick, otherwise
@@ -551,8 +557,10 @@ int main(int argc,char** argv){
         {"packet_ipc",false},{"provisioning","external-control-plane"}}).dump()<<"\n";return 0;
     }
     bool validate=argc==3&&std::string(argv[1])=="--check-config";
-    check(validate||((argc==3||argc==5)&&std::string(argv[1])=="--config"),"usage_config");int test=-1;
-    if(argc==5){check(std::string(argv[3])=="--test-packet-fd","usage_fixture");test=std::stoi(argv[4]);check(test>2,"fixture_fd");}
+    bool service=(argc==4||argc==6)&&std::string(argv[argc-1])=="--service";
+    int count=argc-(service?1:0);
+    check(validate||((count==3||count==5)&&std::string(argv[1])=="--config"),"usage_config");int test=-1;
+    if(count==5){check(std::string(argv[3])=="--test-packet-fd","usage_fixture");test=std::stoi(argv[4]);check(test>2,"fixture_fd");}
     Config c(json::parse(file(argv[2],16384)));std::string secret;
     if(c.client){secret=file(c.secret_path,32,true);check(secret.size()==32,"secret_length");}
     std::unique_ptr<SSL_CTX,decltype(&SSL_CTX_free)> ctx(SSL_CTX_new(TLS_method()),SSL_CTX_free);check(bool(ctx),"tls_context");
@@ -570,7 +578,9 @@ int main(int argc,char** argv){
       OPENSSL_cleanse(secret.data(),secret.size());
       std::cout<<json({{"valid",true},{"role",c.client?"client":"exit"},{"peers",c.client?1:c.peers.size()}}).dump()<<"\n";return 0;
     }
-    nonblock(STDIN_FILENO);nonblock(STDOUT_FILENO);Control ctl;
+    if(!service)nonblock(STDIN_FILENO);
+    nonblock(STDOUT_FILENO);Control ctl;ServiceNotify notify(service);
+    if(service){ctl.input_fd=-1;ctl.notify=&notify;}
     Fd tun(packet_fd(c,test));
     std::unique_ptr<DnsRelay> dns;
     if(c.dns)dns=std::make_unique<DnsRelay>(c.tun,ctl.dns_ready,ctl.dns_failed,&ctl.dns_idle,&ctl.dns_demand,c.peer_ipv4);
@@ -580,11 +590,11 @@ int main(int argc,char** argv){
       auto addr=endpoint(c);check(bind(listener.n,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))==0&&listen(listener.n,8)==0,"listen_bind");
     }
     ctl.set(c.client?"idle":"listening");
-    if(!c.client){run_exit(c,ctx.get(),listener.n,tun.n,ctl);ctl.set("stopped");return 0;}
+    if(!c.client){run_exit(c,ctx.get(),listener.n,tun.n,ctl);ctl.set("stopped");return service&&!interrupted?1:0;}
     bool demand_wait=false;Bytes pending;
     while(!ctl.stop&&!interrupted){
       ctl.read_commands();if(ctl.stop)break;
-      if(!ctl.uplink){pollfd p{STDIN_FILENO,POLLIN,0};poll(&p,1,100);continue;}
+      if(!ctl.uplink){pollfd p{ctl.input_fd,POLLIN,0};poll(&p,1,100);continue;}
       if(demand_wait){
         ctl.set("idle_wait");auto generation=ctl.generation;
         while(!ctl.stop&&!interrupted&&ctl.uplink&&ctl.generation==generation){
@@ -595,7 +605,7 @@ int main(int argc,char** argv){
             if(ipv4(packet.data(),n)){pending.assign(packet.data(),packet.data()+n);demand_wait=false;break;}
             ctl.dropped++;
           }
-          pollfd p[]={{STDIN_FILENO,POLLIN,0},{tun.n,POLLIN,0}};poll(p,2,25);
+          pollfd p[]={{ctl.input_fd,POLLIN,0},{tun.n,POLLIN,0}};poll(p,2,25);
         }
         if(demand_wait||ctl.stop||interrupted)continue;
       }
@@ -636,8 +646,8 @@ int main(int argc,char** argv){
       std::array<uint8_t,65536> discard{};
       for(int i=0;i<256&&read(tun.n,discard.data(),discard.size())>0;i++)ctl.dropped++;
       auto retry=Clock::now()+std::chrono::milliseconds(250);
-      while(!ctl.stop&&!interrupted&&Clock::now()<retry){ctl.read_commands();pollfd p{STDIN_FILENO,POLLIN,0};poll(&p,1,25);}
+      while(!ctl.stop&&!interrupted&&Clock::now()<retry){ctl.read_commands();pollfd p{ctl.input_fd,POLLIN,0};poll(&p,1,25);}
     }
-    OPENSSL_cleanse(secret.data(),secret.size());ctl.set(ctl.dns_failed?"dns_failed":"stopped");return ctl.dns_failed?1:0;
+    OPENSSL_cleanse(secret.data(),secret.size());ctl.set(ctl.dns_failed?"dns_failed":"stopped");return ctl.dns_failed||(service&&!interrupted)?1:0;
   }catch(...){std::cerr<<"clean-vpn-engine: configuration or startup refused\n";return 1;}
 }
