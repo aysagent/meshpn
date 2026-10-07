@@ -137,6 +137,12 @@ VM выше относится к предыдущей сборке и сохр�
    текущий USB профиль молча.
 2. Перенос transparent relay/обработки потоков в C++, защищённая судьба
    non-HTTPS трафика, негативные handshake/relay тесты.
+   [Первый C++ codec/HRR checkpoint](clean-vpn-native-transparent.md) проверен
+   на full/resumed TLS 1.2/1.3 (включая HRR) внутри memory BIO. Добавлены native
+   enc-SNI/auth, durable replay и scoped TCP relay с backpressure/half-close.
+   Scoped engine client/exit и SO_ORIGINAL_DST/REDIRECT проверяются в отдельном
+   namespace с SIGKILL/restart. Internet policy, site interception lifecycle
+   и защищённая обработка остального трафика ещё впереди.
 3. Native combo, выбор ветки и владение потоками внутри native engine.
 4. Затем измерение скорости полностью native схемы и следующие продуктовые
    этапы roadmap. Браузерные профили/UI не объявляются реализованными этим шагом.

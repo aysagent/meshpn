@@ -30,6 +30,14 @@ systemd target. Приёмка — изолированная VM с LAN и вн�
 Финальная site-приёмка: 17/17 gates на двух загрузках, 349/349 native/routes
 регрессий; хеши и ограничения сохранены в `fixtures/clean-vpn-native-site-report.json`.
 Следующий лабораторный шаг — C++ transparent relay, затем native combo.
+Начат [native transparent checkpoint](clean-vpn-native-transparent.md): bounded
+ClientHello/SNI codec и HRR gate, 18 full/resumed TLS-handshake в C++ memory BIO.
+Добавлены native enc-SNI auth, bounded durable replay, явный destination
+allowlist и TCP relay с backpressure/half-close; real-TCP fixture не меняет сеть
+хоста. Экспериментальный engine client/exit подключён к SO_ORIGINAL_DST;
+изолированный REDIRECT-прогон включает SIGKILL exit и replay после restart.
+Общая Internet policy, lifecycle interception в site profile и combo ещё впереди;
+готовым основным транспортом остаётся boring-tls.
 Это dedicated-host контракт: адреса/DHCP/default предоставляет внешний link
 owner. Адаптация к конкретному distro/network manager, обновление существующих
 установок и физический boot остаются отдельной эксплуатационной работой.

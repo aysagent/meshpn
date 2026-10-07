@@ -1,8 +1,10 @@
 // Experimental M1 engine. No Node/N-API packet callbacks, routing commands or
-// payload IPC. The supervisor must provision TUN addresses/routes/guard first.
+// payload IPC. The supervisor must provision the selected transport's network
+// guard first (TUN/routes for boring-tls; interception for scoped transparent).
 #include "protocol.hpp"
 #include "dns_relay.hpp"
 #include "service_notify.hpp"
+#include "transparent_config.hpp"
 #include <nlohmann/json.hpp>
 #include <nghttp2/nghttp2.h>
 #include <openssl/ssl.h>
@@ -547,6 +549,39 @@ static void run_exit(const Config& config,SSL_CTX* context,int listener,int tun,
     check(poll(fds.data(),fds.size(),10)>=0||errno==EINTR,"poll");
   }
 }
+static int transparent_engine(const json& j, bool validate, bool initialize, bool service) {
+  namespace tr = cvpn::transparent;
+  tr::TransparentConfig c(j);
+  struct Secret { std::string bytes; ~Secret() { OPENSSL_cleanse(bytes.data(),bytes.size()); } } secret{file(c.secret_path,32,true)};
+  check(secret.bytes.size()==32,"secret_length"); tr::Digest key{};
+  std::copy(secret.bytes.begin(),secret.bytes.end(),key.begin());
+  struct CleanKey { tr::Digest& key; ~CleanKey() { OPENSSL_cleanse(key.data(),key.size()); } } clean{key};
+  tr::SniAuthorization auth(key,c.public_name);
+  if(validate){std::cout<<json({{"valid",true},{"transport","transparent-tls"},{"role",c.client?"client":"exit"},{"scope","explicit-destinations"}}).dump()<<"\n";return 0;}
+  if(initialize){
+    check(!c.client,"relay_init_exit_only"); tr::ReplayWindow replay(c.replay_directory,auth.replay_scope(),true);
+    std::cout<<"{\"replay_initialized\":true}\n";return 0;
+  }
+  check(service,"relay_service_mode_required");
+  std::shared_ptr<tr::ReplayWindow> replay;
+  if(!c.client) replay=std::make_shared<tr::ReplayWindow>(c.replay_directory,auth.replay_scope());
+  tr::RelaySocket listener(socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0));check(listener.fd>=0,"relay_listener");
+  int one=1;check(setsockopt(listener.fd,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one))==0,"relay_listener");
+  auto address=tr::socket_address(c.listen);
+  check(bind(listener.fd,reinterpret_cast<sockaddr*>(&address),sizeof(address))==0&&listen(listener.fd,16)==0,"relay_listen_bind");
+  ServiceNotify notify(true);nonblock(STDOUT_FILENO);
+  int owned=listener.fd;listener.fd=-1;
+  bool broken=false;
+  {
+    tr::RelayListener relay(owned,c.client,auth,{},c.exit,tr::DestinationPolicy(c.destinations),{},replay,c.client);
+    check(notify.state("listening"),"relay_notify");
+    constexpr char ready[]="{\"event\":\"state\",\"state\":\"listening\",\"transport\":\"transparent-tls\"}\n";
+    check(write(STDOUT_FILENO,ready,sizeof(ready)-1)==ssize_t(sizeof(ready)-1),"relay_output");
+    while(!interrupted&&!relay.broken) poll(nullptr,0,25);
+    broken=relay.broken;
+  }
+  check(notify.state("stopped"),"relay_notify");return broken?1:0;
+}
 int main(int argc,char** argv){
   signal(SIGPIPE,SIG_IGN);signal(SIGTERM,on_signal);signal(SIGINT,on_signal);
   try{
@@ -554,14 +589,21 @@ int main(int argc,char** argv){
       std::cout<<json({{"version",1},{"engine","clean-vpn-native-m1"},{"transport","boring-tls"},
         {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2"}},
         {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
-        {"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"}}).dump()<<"\n";return 0;
+        {"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
+        {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"scope","explicit-ipv4-destinations"},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true}}}}}}).dump()<<"\n";return 0;
     }
     bool validate=argc==3&&std::string(argv[1])=="--check-config";
+    bool initialize=argc==3&&std::string(argv[1])=="--init-transparent-replay";
     bool service=(argc==4||argc==6)&&std::string(argv[argc-1])=="--service";
     int count=argc-(service?1:0);
-    check(validate||((count==3||count==5)&&std::string(argv[1])=="--config"),"usage_config");int test=-1;
+    check(validate||initialize||((count==3||count==5)&&std::string(argv[1])=="--config"),"usage_config");int test=-1;
     if(count==5){check(std::string(argv[3])=="--test-packet-fd","usage_fixture");test=std::stoi(argv[4]);check(test>2,"fixture_fd");}
-    Config c(json::parse(file(argv[2],16384)));std::string secret;
+    const auto config=json::parse(file(argv[2],16384));
+    if(config.is_object()&&config.value("transport",std::string{})=="transparent-tls"){
+      check(test<0,"relay_no_packet_fd");return transparent_engine(config,validate,initialize,service);
+    }
+    check(!initialize,"relay_config_required");
+    Config c(config);std::string secret;
     if(c.client){secret=file(c.secret_path,32,true);check(secret.size()==32,"secret_length");}
     std::unique_ptr<SSL_CTX,decltype(&SSL_CTX_free)> ctx(SSL_CTX_new(TLS_method()),SSL_CTX_free);check(bool(ctx),"tls_context");
     check(SSL_CTX_set_min_proto_version(ctx.get(),TLS1_3_VERSION)==1&&SSL_CTX_set_max_proto_version(ctx.get(),TLS1_3_VERSION)==1,"tls_version");

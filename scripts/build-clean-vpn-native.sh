@@ -24,7 +24,7 @@ if (
     -DCVPN_SANITIZE=OFF \
     "-DCVPN_BORINGSSL_SOURCE=$PWD/native/clean_vpn/build-deps-helper/_deps/boringssl-src" \
     "-DCVPN_JSON_SOURCE=$PWD/native/clean_vpn/build-deps-helper/_deps/json-src" &&
-  cmake --build native/clean_vpn/build --target clean-vpn-engine protocol-test dns-wire-test --parallel 1 &&
+  cmake --build native/clean_vpn/build --target clean-vpn-engine protocol-test dns-wire-test service-notify-test transparent-test transparent-socket-test transparent-replay-test --parallel 1 &&
   ctest --test-dir native/clean_vpn/build --output-on-failure &&
   native/clean_vpn/build/clean-vpn-engine --capabilities
 ) >"$cv_log" 2>&1; then
