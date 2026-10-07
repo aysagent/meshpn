@@ -16,7 +16,8 @@ const build = path.resolve(process.env.CVPN_BUILD ?? 'native/clean_vpn/build');
 const seconds = Number(process.env.CVPN_SOAK_SECONDS ?? 180);
 assert.ok(Number.isInteger(seconds) && seconds >= 10 && seconds <= 600, 'CVPN_SOAK_SECONDS must be 10..600');
 test('native session endurance', { concurrency: 2, timeout: (seconds + 30) * 1000 }, async t => {
-  await Promise.all(['native-exit', 'legacy-exit'].map(mode => t.test(mode, { timeout: (seconds + 25) * 1000 }, async t => {
+  const modes = process.env.CVPN_NATIVE_ONLY === '1' ? ['native-exit'] : ['native-exit', 'legacy-exit'];
+  await Promise.all(modes.map(mode => t.test(mode, { timeout: (seconds + 25) * 1000 }, async t => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cvpn-soak-'));
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
     const secret = randomBytes(32), secretPath = path.join(dir, 'psk');

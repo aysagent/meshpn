@@ -174,6 +174,35 @@ for (const fail of [null, 'baseline', 'native', 'restored']) {
     }
   });
 }
+for (const failure of [null, 'bench-old', 'bench-native', 'bench-restored']) {
+  test(`benchmark phases use ordinary audited rollback without injecting faults (${failure})`, async () => {
+    const f = fixture();
+    const phases = ['bench-old', 'bench-native', 'bench-restored'];
+    const measure = async (phase, target) => {
+      f.events.push(phase);
+      target[phase] = { status: phase === failure ? 'failed' : 'passed' };
+      if (phase === failure) throw Error('benchmark_failed');
+    };
+    f.io.peer = {
+      requiredPhases: phases,
+      phase: (p, target) => measure(p === 'baseline' ? 'bench-old' : 'bench-restored', target),
+      native: (session, report) => measure('bench-native', report.phases),
+    };
+    const r = await runTrial(f.io);
+    assert.equal(r.status, failure ? 'failed' : 'passed');
+    assert.equal(r.usb.status, failure ? 'failed' : 'passed');
+    if (failure === 'bench-old') {
+      assert.equal(r.rollback, 'not-needed');
+      assert.ok(!f.events.includes('stopOld'));
+    } else {
+      assert.equal(r.rollback, 'verified');
+      assert.ok(f.events.indexOf('bench-old') < f.events.indexOf('stopOld'));
+      assert.ok(f.events.indexOf('bench-native') < f.events.indexOf('stop-native'));
+      assert.ok(f.events.indexOf('bench-restored') > f.events.indexOf('probe3'));
+      assert.deepEqual(Object.keys(r.usb.phases), phases);
+    }
+  });
+}
 test('started legacy service is not called verified when readiness times out', async () => {
   const f = fixture({ fail: 'waitOld' }), r = await runTrial(f.io);
   assert.equal(r.status, 'failed'); assert.equal(r.rollback, 'service-restored');

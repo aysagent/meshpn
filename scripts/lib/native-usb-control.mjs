@@ -8,6 +8,7 @@ const run=(file,args)=>execFileSync(file,args,{encoding:'utf8',timeout:10000,max
 export function prepareNativeUsb(config){
   assert.equal(process.getuid(),0);assert.equal(config.role,'client');assert.equal(config.tun,'tun0');
   assert.equal(config.address,'154.62.226.216');assert.equal(config.dns,true);
+  assert.equal(config.peer_ipv4??'10.99.0.2','10.99.0.2','fixed USB route/DNS profile requires peer 10.99.0.2');
   const guard=run('/usr/local/bin/clean-vpn-killswitch.sh',['status']);
   for(const family of [4,6])assert.ok(guard.includes(`IPv${family}: cvks4:both:block:tun0:154.62.226.216:22`));
   const links=JSON.parse(run('ip',['-j','address','show']));

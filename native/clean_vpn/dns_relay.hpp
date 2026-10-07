@@ -16,7 +16,7 @@ class DnsRelay {
   using Time=std::chrono::steady_clock;
   struct Socket {int fd;explicit Socket(int n):fd(n){}~Socket(){if(fd>=0)close(fd);}Socket(const Socket&)=delete;};
   struct Job {std::atomic<bool> done{false};std::thread thread;~Job(){if(thread.joinable())thread.join();}};
-  std::atomic<bool> stop_{false};std::atomic<bool>& ready_;std::atomic<bool>& failed_;std::string tun_;
+  std::atomic<bool> stop_{false};std::atomic<bool>& ready_;std::atomic<bool>& failed_;std::string tun_,local_ip_;
   std::atomic<bool>* idle_;std::atomic<bool>* demand_;
   Socket udp_{-1},tcp_{-1};std::thread loop_;std::vector<std::unique_ptr<Job>> jobs_;
   static sockaddr_in address(const char* ip,unsigned port){sockaddr_in a{};a.sin_family=AF_INET;a.sin_port=htons(port);dns::need(inet_pton(AF_INET,ip,&a.sin_addr)==1);return a;}
@@ -37,7 +37,7 @@ class DnsRelay {
   Bytes exchange(const Bytes& query,const char* server,bool tcp){
     dns::need(ready_);Socket s(socket(AF_INET,(tcp?SOCK_STREAM:SOCK_DGRAM)|SOCK_NONBLOCK|SOCK_CLOEXEC,0));dns::need(s.fd>=0);
     dns::need(setsockopt(s.fd,SOL_SOCKET,SO_BINDTODEVICE,tun_.c_str(),tun_.size()+1)==0);
-    auto local=address("10.99.0.2",0),remote=address(server,53);dns::need(bind(s.fd,reinterpret_cast<sockaddr*>(&local),sizeof(local))==0);
+    auto local=address(local_ip_.c_str(),0),remote=address(server,53);dns::need(bind(s.fd,reinterpret_cast<sockaddr*>(&local),sizeof(local))==0);
     auto end=Time::now()+std::chrono::milliseconds(1200);int rc=connect(s.fd,reinterpret_cast<sockaddr*>(&remote),sizeof(remote));dns::need(rc==0||errno==EINPROGRESS);
     wait(s.fd,POLLOUT,end,true);int error=0;socklen_t len=sizeof(error);dns::need(getsockopt(s.fd,SOL_SOCKET,SO_ERROR,&error,&len)==0&&!error);
     Bytes answer;
@@ -92,12 +92,13 @@ class DnsRelay {
   }
 public:
   DnsRelay(const std::string& tun,std::atomic<bool>& ready,std::atomic<bool>& failed,
-      std::atomic<bool>* idle=nullptr,std::atomic<bool>* demand=nullptr):ready_(ready),failed_(failed),tun_(tun),idle_(idle),demand_(demand){
+      std::atomic<bool>* idle=nullptr,std::atomic<bool>* demand=nullptr,const std::string& local_ip="10.99.0.2"):
+      ready_(ready),failed_(failed),tun_(tun),local_ip_(local_ip),idle_(idle),demand_(demand){
     dns::need((idle==nullptr)==(demand==nullptr));
     jobs_.reserve(16);
     for(auto* s:{&udp_,&tcp_}){s->fd=socket(AF_INET,(s==&udp_?SOCK_DGRAM:SOCK_STREAM)|SOCK_NONBLOCK|SOCK_CLOEXEC,0);dns::need(s->fd>=0);
       if(s==&tcp_){int one=1;dns::need(setsockopt(s->fd,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one))==0);}
-      auto a=address("10.99.0.2",1053);dns::need(bind(s->fd,reinterpret_cast<sockaddr*>(&a),sizeof(a))==0);
+      auto a=address(local_ip_.c_str(),1053);dns::need(bind(s->fd,reinterpret_cast<sockaddr*>(&a),sizeof(a))==0);
     }
     dns::need(listen(tcp_.fd,16)==0);loop_=std::thread([this]{try{run();}catch(...){failed_=true;stop_=true;jobs_.clear();}});
   }

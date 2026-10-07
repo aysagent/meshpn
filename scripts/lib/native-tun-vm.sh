@@ -123,7 +123,9 @@ grep -q '^0 packets captured' /run/dns-uplink.log
 if ip netns exec peer /native/socket-test data 192.168.1.1; then echo UNEXPECTED_USB_PRIVATE_BYPASS; exit 1; fi
 if ip netns exec peer /native/socket-test ipv6-probe; then echo UNEXPECTED_USB_IPV6_BYPASS; exit 1; fi
 echo NATIVE_USB_PRIVATE_IPV6_AND_DNS_UPLINK_BLOCK_PASS
-for round in 1 2 3; do /usr/bin/node /project/scripts/lib/native-benchmark.mjs "native-$round" "$client_pid" "$exit_pid"; done
+if [ "${CVPN_NATIVE_ONLY:-0}" != 1 ]; then
+  for round in 1 2 3; do /usr/bin/node /project/scripts/lib/native-benchmark.mjs "native-$round" "$client_pid" "$exit_pid"; done
+fi
 ip -n cvclient route del default via 154.62.226.216
 ip -n cvclient route flush proto 186 dev wlan0
 sleep 1
@@ -134,6 +136,19 @@ ip netns exec peer /native/socket-test probe
 echo NATIVE_TUN_RECONNECT_PASS
 printf '{"op":"stop"}\n' >&4
 wait "$exit_pid"
+if [ "${CVPN_NATIVE_ONLY:-0}" = 1 ]; then
+  /usr/bin/ip netns exec cvexit /native/clean-vpn-engine --config /native/exit.json <&4 >/run/exit.log 2>&1 &
+  exit_pid=$!
+  restart_ready=0
+  for attempt in $(seq 1 60); do
+    if grep -q '"state":"ready"' /run/exit.log; then restart_ready=1; break; fi
+    kill -0 "$exit_pid" || break
+    sleep 1
+  done
+  test "$restart_ready" = 1 || { cat /run/client.log /run/exit.log; exit 1; }
+  ip netns exec peer /native/socket-test probe
+  echo NATIVE_EXIT_RESTART_PASS
+else
 # Keep the native client/ownership intact while replacing only its exit.
 /usr/bin/ip netns exec cvexit /usr/bin/node /project/scripts/clean-vpn.js --role=exit --type=tls --server=0.0.0.0:443 --ext=eth0 --ipv6=off --tls-cert-dir=/native/certs --shared-hmac-key=/native/psk --tls-public-name=localhost >/run/old-exit.log 2>&1 &
 old_exit_pid=$!
@@ -148,6 +163,7 @@ done
 if [ "$old_exit_ready" != 1 ]; then cat /run/client.log /run/old-exit.log; exit 1; fi
 if ! ip netns exec peer /native/socket-test probe; then cat /run/client.log /run/old-exit.log; exit 1; fi
 echo NATIVE_CLIENT_OLD_EXIT_PACKETS_PASS
+fi
 printf '{"op":"stop"}\n' >&3
 wait "$client_pid"
 if ip netns exec peer /native/socket-test probe; then echo UNEXPECTED_BYPASS; exit 1; fi
@@ -167,6 +183,7 @@ echo NATIVE_PRODUCTION_GUARD_RETAINED_PASS
 # persistent device. Release the disconnected fixture so it allocates tun0,
 # the exact interface protected by the unchanged guard/SNAT/MSS rules.
 ip netns exec cvclient /usr/bin/ip tuntap del dev tun0 mode tun
+if [ "${CVPN_NATIVE_ONLY:-0}" != 1 ]; then
 kill -TERM "$old_exit_pid"
 wait "$old_exit_pid" || true
 sleep 1
@@ -195,6 +212,10 @@ kill -TERM "$old_client_pid" "$old_exit_pid"
 wait "$old_client_pid" || true
 wait "$old_exit_pid" || true
 # Client engine crash: protection must outlive both engine and controller.
+else
+  printf '{"op":"stop"}\n' >&4
+  wait "$exit_pid"
+fi
 ip netns exec cvclient /usr/bin/ip tuntap add dev tun0 mode tun
 ip -n cvclient link set tun0 mtu 1400 up
 ip -n cvclient addr add 10.99.0.2/30 dev tun0

@@ -9,8 +9,9 @@ import { gzipSync } from 'node:zlib';
 import { compileTunnelDnsPlan } from './lib/dns-tunnel-plan.mjs';
 import { usbSnatRule,usbMssRules } from './clean-vpn-usb-snat.mjs';
 import { addUsbMssVmImage } from './lib/usb-mss-vm-image.mjs';
-const [base,tools]=process.argv.slice(2);
-assert.equal(process.argv.length,4,'usage: verified HOST_BOOT_BASE QEMU_TOOLS_ROOT');
+const [base,tools,mode]=process.argv.slice(2);
+const nativeOnly=mode==='--native-only';
+assert.ok(process.argv.length===4||(process.argv.length===5&&nativeOnly),'usage: verified HOST_BOOT_BASE QEMU_TOOLS_ROOT [--native-only]');
 for(const p of [base,tools])assert.ok(p?.startsWith('/')&&resolve(p)===p&&!/[\r\n,]/.test(p));
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const prior=JSON.parse(fs.readFileSync(join(base,'report.json')));
@@ -22,6 +23,7 @@ const report={status:'failed',nic:'none',hostSharedFilesystem:false,realTun:true
   kernelSha256:prior.image.kernelSha256,accelerator:'TCG',vcpus:1,memoryMiB:1536,tunMtu:1400,
   guard:'existing-cvks4-usb-strict',benchmark:'three sequential 16 MiB-per-direction TCP echo rounds and 100 small echo RTTs; summed process-tree RSS, sampled CPU ticks',
   limitations:['fixture-PKI-and-origins','local-capture-not-on-wire-proof','not-systemd-installer-or-boot-acceptance','not-physical-Radxa-or-arm64','emulator-not-production-performance','RSS-not-PSS; sampling-may-miss-short-lived-processes','DNS-disabled-only-in-legacy-comparison']};
+if(nativeOnly){report.nativeOnly=true;report.benchmark='not-requested';report.limitations=report.limitations.filter(s=>s!=='DNS-disabled-only-in-legacy-comparison');}
 const put=(name,b,mode=0o644)=>{const p=join(guest,name);fs.mkdirSync(p.slice(0,p.lastIndexOf('/')),{recursive:true});fs.writeFileSync(p,b,{mode});fs.chmodSync(p,mode);};
 try {
   fs.cpSync(join(base,'guest'),guest,{recursive:true,verbatimSymlinks:true});
@@ -54,7 +56,8 @@ try {
   put('/native/certs/fullchain.pem',fs.readFileSync(join(root,'cert.pem')));put('/native/certs/privkey.pem',fs.readFileSync(join(root,'key.pem')),0o600);
   const common={version:1,address:'154.62.226.216',port:443,tun:'tun0',secret_path:'/native/psk'};
   put('/native/client.json',JSON.stringify({...common,role:'client',dns:true,server_name:'localhost',ca:'/native/cert.pem'}));
-  put('/native/exit.json',JSON.stringify({...common,role:'exit',cert:'/native/cert.pem',key:'/native/key.pem'}));
+  put('/native/exit.json',JSON.stringify({...common,secret_path:undefined,role:'exit',
+    peers:[{ipv4:'10.99.0.2',secret_path:'/native/psk'}],cert:'/native/cert.pem',key:'/native/key.pem'}));
   put('/native/lab.sh',fs.readFileSync('scripts/lib/native-tun-vm.sh'),0o755);
   const quote=s=>"'"+s.replaceAll("'","'\\''")+"'";
   const plan=compileTunnelDnsPlan({tun:'tun0',lanInterface:'usb0',lanSubnet:'192.168.7.0/24'});
@@ -63,7 +66,7 @@ try {
   let init=addUsbMssVmImage(fs.readFileSync(join(base,'guest/init'),'utf8'),put).init;assert.ok(init.includes('cd /project'));
   const release=init.match(/insmod \/lib\/modules\/([^/]+)\//)[1];
   const mod=`/lib/modules/${release}/kernel/net/ipv4/netfilter/iptable_mangle.ko`;put(mod,fs.readFileSync(mod));init=init.replace('cd /project',`insmod ${mod}\ncd /project`);
-  put('/init',init.slice(0,init.indexOf('cd /project'))+'\nif /bin/sh /native/lab.sh; then echo NATIVE_LAB_OK; else echo NATIVE_LAB_FAILED; fi\nsync\npoweroff -f\n',0o755);
+  put('/init',init.slice(0,init.indexOf('cd /project'))+`\nexport CVPN_NATIVE_ONLY=${nativeOnly?'1':'0'}\nif /bin/sh /native/lab.sh; then echo NATIVE_LAB_OK; else echo NATIVE_LAB_FAILED; fi\nsync\npoweroff -f\n`,0o755);
   const paths=['.'];const walk=p=>{for(const name of fs.readdirSync(join(guest,p))){const q=p?p+'/'+name:name;paths.push(q);if(fs.lstatSync(join(guest,q)).isDirectory())walk(q);}};walk('');
   const initrd=join(root,'initrd.gz');fs.writeFileSync(initrd,gzipSync(execFileSync('cpio',['-o','-H','newc','--owner=0:0','--quiet'],{cwd:guest,input:paths.join('\n')+'\n',maxBuffer:320*1024*1024}),{level:1}));
   const env={...process.env,LD_LIBRARY_PATH:`${tools}/usr/lib/x86_64-linux-gnu:${tools}/lib/x86_64-linux-gnu`,QEMU_MODULE_DIR:`${tools}/usr/lib/x86_64-linux-gnu/qemu`};delete env.LD_PRELOAD;delete env.LD_AUDIT;
@@ -78,10 +81,11 @@ try {
     'NATIVE_USB_PRIVATE_IPV6_AND_DNS_UPLINK_BLOCK_PASS','NATIVE_TUN_RECONNECT_PASS','NATIVE_TUN_STOP_BLOCKS_PASS',
     'NATIVE_PRODUCTION_GUARD_RETAINED_PASS','NATIVE_CLIENT_OLD_EXIT_PACKETS_PASS','OLD_CLIENT_NATIVE_EXIT_PACKETS_PASS',
     'NATIVE_CLIENT_CRASH_GUARD_ADMIN_PASS','NATIVE_PROCESS_CLEANUP_PASS'];
-  report.checks=Object.fromEntries(checks.map(name=>[name,output.includes(name)]));assert.ok(Object.values(report.checks).every(Boolean));
+  const required=nativeOnly?checks.filter(n=>!['NATIVE_CLIENT_OLD_EXIT_PACKETS_PASS','OLD_CLIENT_NATIVE_EXIT_PACKETS_PASS'].includes(n)).concat('NATIVE_EXIT_RESTART_PASS'):checks;
+  report.checks=Object.fromEntries(required.map(name=>[name,output.includes(name)]));assert.ok(Object.values(report.checks).every(Boolean));
   report.benchmarks=[...output.matchAll(/^NATIVE_BENCH (\{[^\r\n]+\})/gm)].map(m=>JSON.parse(m[1]));
-  assert.equal(report.benchmarks.length,6);
-  assert.deepEqual(report.benchmarks.map(b=>b.label),['native-1','native-2','native-3','legacy-1','legacy-2','legacy-3']);
+  assert.equal(report.benchmarks.length,nativeOnly?0:6);
+  assert.deepEqual(report.benchmarks.map(b=>b.label),nativeOnly?[]:['native-1','native-2','native-3','legacy-1','legacy-2','legacy-3']);
   assert.ok(report.benchmarks.every(b=>b.latencyMedianMs>0&&b.latencyP95Ms>0));
   report.status='passed';console.log(output.slice(-8000));
 } catch(e){report.error=e.message;process.exitCode=1;console.error(e.message);}

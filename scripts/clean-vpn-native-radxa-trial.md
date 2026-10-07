@@ -154,7 +154,14 @@ tcpdump/IPv4-пакеты и host route journal в изолированном us
 негативные проверки capture, точного SIGKILL, foreign journal и порядка rollback.
 DNS journal проверен отдельными файловыми/command-model тестами; в netns-тесте
 восстановления DNS adapter подменён (trusted-ancestor политика не ослаблялась).
-Физический systemd/Radxa crash-сценарий пока не запускался.
+Физический systemd/Radxa crash-сценарий затем прошёл: `run-JriyuM` на `a2480a9`,
+2026-10-06 20:56:45 UTC. SIGKILL/fallback route verified; capture complete,
+0 direct / 330 exit packets, kernelDropped=0; обе blocked-попытки и все
+old/native/restored проверки passed, guard/rollback verified. Legacy восстановлен.
+`exitCode=1` wrapper ожидаем после подтверждённого SIGKILL native; `lastState=ready`
+остаётся последним событием до убийства, не текущим состоянием живого engine.
+
+Следующий отдельный режим: [сравнение интернет-скорости `--benchmark`](clean-vpn-native-benchmark.md).
 
 ## Запуск
 

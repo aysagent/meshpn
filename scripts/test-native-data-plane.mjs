@@ -13,7 +13,7 @@ import { once } from 'node:events';
 test('native client/exit data plane: packets, control, reconnect, blackhole', { timeout: 90000 }, async t => {
   const build = path.resolve(process.env.CVPN_BUILD ?? 'native/clean_vpn/build');
   const capabilities=JSON.parse(execFileSync(path.join(build,'clean-vpn-engine'),['--capabilities'],{encoding:'utf8'}));
-  assert.equal(capabilities.packet_ipc,false);assert.equal(capabilities.mode,'ipv4-packets');assert.equal(capabilities.multi_peer,false);
+  assert.equal(capabilities.packet_ipc,false);assert.equal(capabilities.mode,'ipv4-packets');assert.equal(capabilities.multi_peer,true);assert.equal(capabilities.max_peers,32);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cvpn-native-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const cert=path.join(dir,'cert.pem'), key=path.join(dir,'key.pem'), secret=path.join(dir,'psk');

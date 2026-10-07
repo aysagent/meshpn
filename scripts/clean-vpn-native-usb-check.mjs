@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { isIPv4, isIPv6 } from 'node:net';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { randomBytes } from 'node:crypto';
 
 const EXIT = '154.62.226.216', GATEWAY = '192.168.7.1';
 const SCRIPT = '/root/dev/meshpn/scripts/clean-vpn-native-trial.mjs';
@@ -29,6 +30,16 @@ export function execute(file, args, { timeout = 15000, input, onOutput = () => {
   });
 }
 const ok = r => r.code === 0 && !r.reason;
+export function trialUnitFinished(r) {
+  if (r.reason || ![0, 1, 4].includes(r.code)) return false;
+  const lines = r.out.trim().split(/\r?\n/);
+  if (lines.length !== 2 || new Set(lines.map(l => l.split('=')[0])).size !== 2) return false;
+  const props = Object.fromEntries(lines.map(l => l.split('=')));
+  // --collect may unload the unit before the next poll. A missing unit is
+  // acceptable only with explicit systemd properties, never an SSH failure.
+  return (props.LoadState === 'not-found' && props.ActiveState === 'inactive')
+    || (r.code === 0 && props.LoadState === 'loaded' && ['inactive', 'failed'].includes(props.ActiveState));
+}
 export function dnsAddresses(r, type) {
   if (!ok(r) || !/status: NOERROR,/.test(r.out)) return [];
   return r.out.split('\n').flatMap(line => {
@@ -79,14 +90,114 @@ export async function probePeer(request, { iface, address, run = execute, now = 
   return result;
 }
 
+export function benchmarkMetrics(result, upload) {
+  const fields = result.out.trim().split(/\s+/), numbers = fields.slice(0, 5).map(Number);
+  const valid = fields.length === 6 && numbers.every(n => Number.isFinite(n) && n >= 0)
+    && Number.isInteger(numbers[0]) && numbers[0] <= 599 && Number.isInteger(numbers[1]) && numbers[1] <= 1000
+    && numbers[4] <= 32 && isIPv4(fields[5]);
+  const bytes = numbers[upload ? 3 : 2];
+  if (!valid || !Number.isSafeInteger(bytes) || bytes > (upload ? 1048576 : 8388608))
+    return { code: result.code, reason: result.reason ?? 'invalid_metrics', httpStatus: 0,
+      tlsVerify: 0, bytes: 0, seconds: 0, remoteIp: null };
+  return { code: result.code, reason: result.reason, httpStatus: numbers[0], tlsVerify: numbers[1],
+    bytes, seconds: numbers[4], remoteIp: fields[5] };
+}
+
+export async function probeBenchmark(request, options) {
+  const { iface, address, run = execute, now = () => performance.now() } = options;
+  const began = now(), result = { token: request.token, phase: request.phase, exitBefore: null, exitAfter: null,
+    serverIp: options.serverIp ?? null, warmup: false, download: { seconds: 0, streams: [] },
+    upload: { seconds: 0, streams: [] }, elapsedMs: 0 };
+  const base = ['-q', '-4', '-sS', '--noproxy', '*', '--interface', iface, '--http1.1', '--connect-timeout', '5'];
+  const trace = async () => {
+    const r = await run('curl', [...base, '--max-time', '5', '--fail', 'https://1.1.1.1/cdn-cgi/trace'], { timeout: 6500 });
+    return ok(r) && r.out.split(/\r?\n/).includes(`ip=${EXIT}`) ? EXIT : null;
+  };
+  result.exitBefore = await trace();
+  if (result.exitBefore) {
+    if (!result.serverIp) {
+      const r = await run('dig', ['-4', '-b', address, `@${GATEWAY}`, 'speed.cloudflare.com', 'A',
+        '+time=2', '+tries=1', '+noall', '+comments', '+answer'], { timeout: 4000 });
+      result.serverIp = dnsAddresses(r, 'A')[0] ?? null;
+      // One resolved IP for all nine phases. Anycast routing can still vary.
+      options.serverIp = result.serverIp;
+    }
+    if (result.serverIp) {
+      check(isIPv4(result.serverIp), 'invalid_benchmark_server');
+      const args = [...base, '--resolve', `speed.cloudflare.com:443:${result.serverIp}`,
+        '--fail', '--output', '/dev/null', '--header', 'Accept-Encoding: identity',
+        '--header', 'Cache-Control: no-cache', '--write-out',
+        '%{http_code} %{ssl_verify_result} %{size_download} %{size_upload} %{time_total} %{remote_ip}'];
+      const warm = benchmarkMetrics(await run('curl', [...args, '--max-time', '8', '--max-filesize', '262144',
+        'https://speed.cloudflare.com/__down?bytes=262144'], { timeout: 9500 }), false);
+      result.warmup = warm.code === 0 && !warm.reason && warm.httpStatus === 200
+        && warm.tlsVerify === 0 && warm.bytes === 262144 && warm.remoteIp === result.serverIp;
+      if (result.warmup) {
+        for (const upload of [false, true]) {
+          const groupBegan = now(), input = upload ? randomBytes(1048576) : undefined;
+          const streams = await Promise.all(Array.from({ length: 4 }, async () => benchmarkMetrics(await run('curl',
+            [...args, '--max-time', upload ? '30' : '20', '--max-filesize', upload ? '65536' : '8388608',
+              ...(upload ? ['--header', 'Expect:', '--header', 'Content-Type: application/octet-stream', '--data-binary', '@-',
+                'https://speed.cloudflare.com/__up'] : ['https://speed.cloudflare.com/__down?bytes=8388608'])],
+            { timeout: upload ? 32000 : 22000, input }), upload)));
+          result[upload ? 'upload' : 'download'] = { seconds: (now() - groupBegan) / 1000, streams };
+        }
+      }
+      result.exitAfter = await trace();
+    }
+  }
+  result.elapsedMs = Math.min(120000, Math.round(now() - began));
+  return result;
+}
+
+export function summarizeBenchmarks(reports) {
+  const median = values => { const a = [...values].sort((x, y) => x - y), n = a.length;
+    return n ? (a[Math.floor((n - 1) / 2)] + a[Math.floor(n / 2)]) / 2 : null; };
+  const rows = reports.flatMap((r, i) => ['bench-old', 'bench-native', 'bench-restored'].flatMap(phase => {
+    const p = r.usb?.phases?.[phase];
+    return p ? [{ cycle: i + 1, phase, implementation: phase === 'bench-native' ? 'native' : 'legacy',
+      status: p.status, serverIp: p.serverIp, downloadMbps: p.download?.mbps ?? null, uploadMbps: p.upload?.mbps ?? null,
+      cpuStatus: p.cpu?.status ?? 'missing',
+      cpuMeanOneCorePercent: p.cpu?.meanOneCorePercent ?? null, peakRssKiB: p.cpu?.peakRssKiB ?? null,
+      shortSample: !!(p.download?.shortSample || p.upload?.shortSample) }] : [];
+  }));
+  const complete = reports.length === 3 && reports.every(r => r.status === 'passed' && r.usb?.status === 'passed'
+    && r.rollback === 'verified' && r.guard === 'verified')
+    && rows.length === 9 && rows.every(r => r.status === 'passed' && r.cpuStatus === 'sampled' && isIPv4(r.serverIp)
+      && [r.downloadMbps, r.uploadMbps, r.cpuMeanOneCorePercent]
+      .every(n => Number.isFinite(n) && n >= 0)) && new Set(rows.map(r => r.serverIp)).size === 1;
+  const statistics = implementation => Object.fromEntries(['downloadMbps', 'uploadMbps', 'cpuMeanOneCorePercent', 'peakRssKiB'].map(key => {
+    const values = rows.filter(r => r.implementation === implementation && r.status === 'passed').map(r => r[key]).filter(Number.isFinite);
+    return [key, { count: values.length, median: median(values), min: values.length ? Math.min(...values) : null, max: values.length ? Math.max(...values) : null }];
+  }));
+  const paired = complete ? reports.map((r, i) => {
+    const p = r.usb.phases;
+    return { cycle: i + 1, ...Object.fromEntries(['download', 'upload'].map(key => {
+      const a = p['bench-old'][key].mbps, b = p['bench-restored'][key].mbps;
+      return [key, { nativeToLegacyRatio: a + b > 0 ? p['bench-native'][key].mbps / ((a + b) / 2) : null,
+        legacyBeforeAfterRatio: Math.min(a, b) > 0 ? Math.max(a, b) / Math.min(a, b) : null }];
+    })) };
+  }) : [];
+  return { schema: 1, kind: 'clean-vpn-internet-comparison', status: complete ? 'completed' : 'incomplete',
+    endpoint: 'speed.cloudflare.com', parallelStreams: 4, requestedCycles: 3, completedReports: reports.length,
+    rows, statistics: { legacy: statistics('legacy'), native: statistics('native') }, paired,
+    warnings: [...(!complete ? ['incomplete-no-comparison-verdict'] : []),
+      ...(rows.some(r => r.shortSample) ? ['some-transfers-under-3s-startup-overhead-significant'] : []),
+      ...(paired.some(p => ['download', 'upload'].some(k => p[k].legacyBeforeAfterRatio > 1.25)) ? ['legacy-baseline-varies-over-25-percent'] : [])],
+    limitations: ['not-ookla-or-line-rate', 'one-anycast-IP-not-guaranteed-same-POP', 'client-CPU-includes-warmup-and-RPC-not-kernel-or-exit',
+      'network-variation-not-controlled', 'existing-legacy-exit-unchanged'], reports };
+}
+
 export async function main(args = process.argv.slice(2)) {
   if (args.length === 1 && args[0] === '--help') {
-    console.log('Usage on Mac: node clean-vpn-native-usb-check.mjs --interface=en9 [--crash]\nDefault: real wlan0 down/up on Radxa. --crash: SIGKILL native engine, keep uplink up, capture selected IPv4 HTTPS egress; requires tcpdump on Radxa.\nUSB rescue SSH :2222 remains available. Requires Node 18+, ssh, curl, dig and a current built Radxa checkout at /root/dev/meshpn.\nNo Mac settings change. Up to seven 1 MiB downloads. Not comprehensive leak acceptance or a benchmark.'); return;
+    console.log('--benchmark: three legacy/native/legacy cycles, four HTTPS streams, synthetic upload, <=340 MiB total application data. No uplink/crash fault. Not Ookla.');
+    console.log('Usage on Mac: node clean-vpn-native-usb-check.mjs --interface=en9 [--crash | --benchmark]\nDefault: real wlan0 down/up on Radxa. --crash: SIGKILL native engine, keep uplink up, capture selected IPv4 HTTPS egress; requires tcpdump on Radxa.\nUSB rescue SSH :2222 remains available. Requires Node 18+, ssh, curl, dig and a current built Radxa checkout at /root/dev/meshpn.\nNo Mac settings change. Without --benchmark: up to seven 1 MiB downloads; functional checks, not a speed benchmark. No mode is comprehensive leak acceptance.'); return;
   }
   console.log('[usb-check] Проверяю окружение Mac и USB-интерфейс');
   check(process.platform === 'darwin', 'run_on_mac');
   const crash = args.length === 2 && args[1] === '--crash';
-  check((args.length === 1 || crash) && /^--interface=[a-zA-Z0-9]{1,15}$/.test(args[0]), 'specify_usb_interface');
+  const benchmark = args.length === 2 && args[1] === '--benchmark';
+  check((args.length === 1 || crash || benchmark) && /^--interface=[a-zA-Z0-9]{1,15}$/.test(args[0]), 'specify_usb_interface');
   const iface = args[0].split('=')[1];
   const addresses = (os.networkInterfaces()[iface] ?? []).filter(a => a.family === 'IPv4'
     && /^192\.168\.7\./.test(a.address) && !['0', '1', '255'].includes(a.address.split('.')[3]));
@@ -108,7 +219,9 @@ export async function main(args = process.argv.slice(2)) {
   const interrupt = () => { interrupted = true; };
   process.on('SIGINT', interrupt); process.on('SIGTERM', interrupt);
   try {
-    console.log(crash
+    console.log(benchmark
+      ? 'USB benchmark: 3 цикла legacy/native/legacy, download/upload в 4 потока, CPU Radxa. До 340 MiB тестовых данных; обычно 5–10 минут. Не скачивай другое во время замера.'
+      : crash
       ? 'USB crash trial: SIGKILL native-движка, wlan0 остаётся включён. Проверка блокировки IPv4 HTTPS и возврат старого VPN по журналам владения.'
       : 'USB trial: реальный обрыв wlan0; старый VPN будет восстановлен автоматически после проверок.');
     // Authenticate once; known-host checks remain enabled. Later RPCs use this socket.
@@ -123,42 +236,67 @@ export async function main(args = process.argv.slice(2)) {
     const node = nodeResult.out.trim();
     check(ok(nodeResult) && /^\/[a-zA-Z0-9_./-]+\/node$/.test(node), 'running_legacy_node_required');
     const cmd = params => [node, SCRIPT, ...params].map(quote).join(' ');
-    let runId, finished;
-    const job = ssh(cmd(['--apply', crash ? '--usb-crash' : '--usb-peer']), { timeout: 1600000, onOutput: out => {
-      const match = /^USB_TRIAL_ID=(run-[a-zA-Z0-9]+)$/m.exec(out); if (match) runId = match[1];
-    } }).then(r => { finished = r; return r; });
-    const seen = new Set();
-    try {
-      while (!finished) {
-        check(!interrupted, 'observer_interrupted');
-        if (runId) {
-          const r = await ssh(cmd(['--peer-status', runId]));
-          check(ok(r), 'peer_status_failed');
-          const p = JSON.parse(r.out);
-          if (p.status === 'probe' && !seen.has(p.token)) {
-            check(['baseline', 'native', 'blocked', 'recovered', 'restored'].includes(p.phase)
-              && /^[a-f0-9-]{36}$/.test(p.token), 'invalid_peer_request');
-            seen.add(p.token); console.log(`[usb-check] ${p.phase}`);
-            const result = await probePeer(p, { iface, address });
-            check(!interrupted, 'observer_interrupted');
-            const sent = await ssh(cmd(['--peer-result', runId]), { input: JSON.stringify(result) });
-            check(ok(sent), 'peer_result_not_accepted');
-          }
+    const reports = [], benchmarkOptions = { iface, address };
+    for (let cycle = 0; cycle < (benchmark ? 3 : 1); cycle++) {
+      check(!interrupted, 'observer_interrupted');
+      if (cycle > 0) {
+        let idle = false;
+        for (let attempt = 0; attempt < 15 && !interrupted; attempt++) {
+          const r = await ssh('systemctl show clean-vpn-native-trial.service -p ActiveState -p LoadState');
+          if (trialUnitFinished(r)) { idle = true; break; }
+          await delay(1000);
         }
-        await delay(500);
+        check(idle && !interrupted, 'previous_trial_not_finished');
       }
-      const r = await job;
-      const m = /=== CLEAN-VPN NATIVE TRIAL BEGIN ===\s*([\s\S]+?)\s*=== CLEAN-VPN NATIVE TRIAL END ===/.exec(r.out);
-      check(m, 'trial_report_missing');
-      const report = JSON.parse(m[1]);
-      console.log('=== CLEAN-VPN USB CHECK BEGIN ==='); console.log(JSON.stringify(report, null, 2));
-      console.log('=== CLEAN-VPN USB CHECK END ===');
-      process.exitCode = ok(r) && report.status === 'passed' && report.usb?.status === 'passed' ? 0 : 1;
-    } catch (e) {
-      // Closing SSH below ends only the observer. The systemd worker continues
-      // bounded waits and audited rollback; the uplink unit has its own deadline.
-      console.error('Radxa продолжает восстановление. Через USB SSH: node scripts/clean-vpn-native-trial.mjs --report');
-      throw e;
+      if (benchmark) console.log(`[usb-check] цикл ${cycle + 1}/3`);
+      let runId, finished;
+      const job = ssh(cmd(['--apply', benchmark ? '--usb-benchmark' : crash ? '--usb-crash' : '--usb-peer']), { timeout: 1600000, onOutput: out => {
+        const match = /^USB_TRIAL_ID=(run-[a-zA-Z0-9]+)$/m.exec(out); if (match) runId = match[1];
+      } }).then(r => { finished = r; return r; });
+      const seen = new Set();
+      try {
+        while (!finished) {
+          check(!interrupted, 'observer_interrupted');
+          if (runId) {
+            const r = await ssh(cmd(['--peer-status', runId]));
+            check(ok(r), 'peer_status_failed');
+            const p = JSON.parse(r.out);
+            if (p.status === 'probe' && !seen.has(p.token)) {
+              check((benchmark ? ['bench-old', 'bench-native', 'bench-restored'] : ['baseline', 'native', 'blocked', 'recovered', 'restored']).includes(p.phase)
+                && /^[a-f0-9-]{36}$/.test(p.token), 'invalid_peer_request');
+              seen.add(p.token); console.log(`[usb-check] ${p.phase}`);
+              const result = benchmark ? await probeBenchmark(p, benchmarkOptions) : await probePeer(p, { iface, address });
+              check(!interrupted, 'observer_interrupted');
+              const sent = await ssh(cmd(['--peer-result', runId]), { input: JSON.stringify(result) });
+              check(ok(sent), 'peer_result_not_accepted');
+            }
+          }
+          await delay(500);
+        }
+        const r = await job;
+        const m = /=== CLEAN-VPN NATIVE TRIAL BEGIN ===\s*([\s\S]+?)\s*=== CLEAN-VPN NATIVE TRIAL END ===/.exec(r.out);
+        check(m, 'trial_report_missing');
+        const report = JSON.parse(m[1]);
+        reports.push(report);
+        if (benchmark) {
+          if (!ok(r) || report.status !== 'passed' || report.rollback !== 'verified' || report.guard !== 'verified') break;
+        } else {
+          console.log('=== CLEAN-VPN USB CHECK BEGIN ==='); console.log(JSON.stringify(report, null, 2));
+          console.log('=== CLEAN-VPN USB CHECK END ===');
+          process.exitCode = ok(r) && report.status === 'passed' && report.usb?.status === 'passed' ? 0 : 1;
+        }
+      } catch (e) {
+        // Closing SSH below ends only the observer. The systemd worker continues
+        // bounded waits and audited rollback; the uplink unit has its own deadline.
+        console.error('Radxa продолжает восстановление. Через USB SSH: node scripts/clean-vpn-native-trial.mjs --report');
+        throw e;
+      }
+    }
+    if (benchmark) {
+      const result = summarizeBenchmarks(reports);
+      console.log('=== CLEAN-VPN BENCHMARK BEGIN ==='); console.log(JSON.stringify(result, null, 2));
+      console.log('=== CLEAN-VPN BENCHMARK END ===');
+      process.exitCode = result.status === 'completed' ? 0 : 1;
     }
   } finally {
     await execute('ssh', [...base, '-O', 'exit', target], { timeout: 5000 });

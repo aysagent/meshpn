@@ -1,5 +1,10 @@
 # Native M1 — implementation notes (feature branch)
 
+Historical M1 checkpoint. The 2026-10-07 continuation now includes a bounded
+multi-peer native exit; current scope and remaining native migration work are
+tracked in [native transition](clean-vpn-native-transition.md). Single-peer and
+fixed-address descriptions below describe the original M1, not current capabilities.
+
 Branch: `feat/clean-vpn-native-data-plane`, based on roadmap commit `9e64cfc`.
 M1 laboratory acceptance complete; not a production replacement. No deployment or default change.
 

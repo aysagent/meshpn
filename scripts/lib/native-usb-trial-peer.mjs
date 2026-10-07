@@ -4,11 +4,13 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { requireTrial as check } from './native-radxa-trial.mjs';
+import { benchmarkPhases, validateBenchmarkResult } from './native-trial-benchmark.mjs';
 
-export const peerPhases = ['baseline', 'native', 'blocked', 'recovered', 'restored'];
+export const peerPhases = ['baseline', 'native', 'blocked', 'recovered', 'restored', ...benchmarkPhases];
 export const monotonicMs = () => Number(process.hrtime.bigint() / 1000000n);
 const keys = ['token', 'phase', 'dnsPassed', 'httpsPassed', 'downloadBytes', 'exitIp', 'blockedAttempts', 'recoveryMs', 'elapsedMs'];
 export function validatePeerResult(v, request) {
+  if (benchmarkPhases.includes(request.phase)) return validateBenchmarkResult(v, request);
   check(v && !Array.isArray(v) && Object.keys(v).length === keys.length && keys.every(k => k in v), 'invalid_peer_result');
   check(v.token === request.token && v.phase === request.phase && peerPhases.includes(v.phase), 'stale_peer_result');
   for (const k of ['dnsPassed', 'httpsPassed', 'downloadBytes', 'blockedAttempts', 'recoveryMs', 'elapsedMs'])

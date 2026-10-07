@@ -25,6 +25,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <functional>
 
 using json = nlohmann::json;
 using namespace cvpn;
@@ -48,13 +49,17 @@ static std::string file(const std::string& path, size_t limit, bool secret=false
   check(n==0,"file_read"); return b;
 }
 struct Config {
+  struct Peer { uint32_t address; std::string secret; };
+  std::vector<Peer> peers;
+  std::string peer_ipv4="10.99.0.2";
+  uint32_t peer_address=0;
   bool client;
   bool dns=false;
   std::string address, name, sni, ca, cert, key, tun, secret_path;
   uint16_t port;
   explicit Config(const json& j) {
     check(j.is_object(),"config_object");
-    const std::set<std::string> fields={"version","role","address","port","server_name","sni","ca","cert","key","tun","secret_path","dns"};
+    const std::set<std::string> fields={"version","role","address","port","server_name","sni","ca","cert","key","tun","secret_path","dns","peer_ipv4","peers"};
     for(auto it=j.begin();it!=j.end();++it) check(fields.count(it.key()),"unknown_config_field");
     check(j.at("version")==1,"config_version");
     auto role=j.at("role").get<std::string>(); check(role=="client"||role=="exit","role"); client=role=="client";
@@ -64,7 +69,24 @@ struct Config {
     auto p=j.at("port").get<int>(); check(p>0&&p<=65535,"port"); port=p;
     tun=j.at("tun").get<std::string>(); check(!tun.empty()&&tun.size()<IFNAMSIZ,"tun_name");
     for(char c:tun) check(std::isalnum(static_cast<unsigned char>(c))||c=='_'||c=='-',"tun_name");
-    secret_path=j.at("secret_path").get<std::string>();
+    auto peer_ip=[](const std::string& text){in_addr a{};
+      check(inet_pton(AF_INET,text.c_str(),&a)==1,"peer_ipv4");
+      auto n=ntohl(a.s_addr);check((n&0xffffff00)==0x0a630000&&(n&255)>=2&&(n&255)<=254,"peer_ipv4");return a.s_addr;};
+    peer_ipv4=j.value("peer_ipv4",peer_ipv4);peer_address=peer_ip(peer_ipv4);
+    if(j.contains("peers")){
+      check(!client&&!j.contains("secret_path")&&!j.contains("peer_ipv4"),"peer_config_conflict");
+      const auto& list=j.at("peers");check(list.is_array()&&!list.empty()&&list.size()<=32,"peer_limit");
+      for(const auto& p:list){
+        check(p.is_object()&&p.size()==2&&p.contains("ipv4")&&p.contains("secret_path"),"peer_config");
+        Peer next{peer_ip(p.at("ipv4").get<std::string>()),file(p.at("secret_path").get<std::string>(),32,true)};
+        check(next.secret.size()==32,"secret_length");
+        for(const auto& old:peers)check(next.address!=old.address&&next.secret!=old.secret,"duplicate_peer");
+        peers.push_back(std::move(next));
+      }
+    }else{
+      secret_path=j.at("secret_path").get<std::string>();
+      if(!client){auto key_bytes=file(secret_path,32,true);check(key_bytes.size()==32,"secret_length");peers.push_back({peer_address,std::move(key_bytes)});}
+    }
     if(client){
       name=j.at("server_name").get<std::string>(); sni=j.value("sni",name); ca=j.at("ca").get<std::string>();
       for(const auto& host:{name,sni}) {
@@ -73,6 +95,7 @@ struct Config {
       }
     } else {cert=j.at("cert").get<std::string>(); key=j.at("key").get<std::string>();}
   }
+  ~Config(){for(auto& p:peers)OPENSSL_cleanse(p.secret.data(),p.secret.size());}
 };
 struct Control {
   std::atomic<bool> dns_ready{false};
@@ -186,19 +209,25 @@ struct Session {
   nghttp2_session* h2=nullptr;
   Queue outgoing, network, packets; Decoder decoder;
   int32_t stream=-1;bool ready=false,deferred=false;
+  uint32_t peer_address;
+  std::function<bool(uint32_t)> claim;
   const char* failure=nullptr;
   size_t header_bytes=0;std::map<std::string,std::string> headers;
   Clock::time_point next_ping=Clock::now()+std::chrono::seconds(2),ping_deadline{};
   std::array<uint8_t,8> ping{}; bool ping_pending=false;
-  Session(const Config& c,Control& x,SSL* s,const std::string& k):config(c),ctl(x),ssl(s),secret(k){}
+  Session(const Config& c,Control& x,SSL* s,const std::string& k):config(c),ctl(x),ssl(s),secret(k),peer_address(c.peer_address){}
   ~Session(){if(h2)nghttp2_session_del(h2);}
   void fail(const char* code){if(!failure)failure=code;}
   static const char* callback_error(const char* message){
     // Only our own fixed vocabulary can cross the metadata boundary. Never
     // surface library exceptions, peer headers, GOAWAY debug data or payloads.
     for(const char* code:{"unexpected_headers","headers_limit","duplicate_header","request_invalid",
-        "auth_rejected","early_end","vpn_response_rejected","data_before_auth","peer_address",
-        "invalid_ipv4","invalid_frame_length","queue_limit","queue_consume","http2_error","exporter","hmac"})
+        "auth_rejected","peer_busy","early_end","vpn_response_rejected","data_before_auth","peer_address","peer_destination",
+        "invalid_ipv4","invalid_frame_length","queue_limit","queue_consume","http2_error","exporter","hmac",
+        "auth_deadline","h2_ping_timeout","h2_goaway_no_error","h2_goaway_error","h2_reset_no_error","h2_reset_error",
+        "h2_peer_end_stream","h2_stream_closed","h2_stream_error","h2_invalid_frame","h2_local_goaway_error",
+        "h2_local_reset_error","h2_flooded","h2_no_memory","h2_bad_client_magic","http2_receive",
+        "tls_handshake","tls_write","tls_read","tls_peer_closed","h2_required","tun_write"})
       if(std::strcmp(message,code)==0)return code;
     return "h2_callback_failure";
   }
@@ -223,10 +252,15 @@ struct Session {
   }
   void respond(){
     check(headers[":method"]=="POST"&&headers[":path"]=="/clean-vpn"&&headers[":scheme"]=="https","request_invalid");
-    check(authenticate(headers["authorization"],secret,ssl),"auth_rejected");
+    bool authenticated=false;
+    for(const auto& peer:config.peers)if(authenticate(headers["authorization"],peer.secret,ssl)){
+      authenticated=true;peer_address=peer.address;
+    }
+    check(authenticated,"auth_rejected");
+    check(!claim||claim(peer_address),"peer_busy");
     stream=1;
     submit_headers({{":status","200"},{"content-type","application/octet-stream"}},false);
-    ready=true;headers.clear();ctl.set("ready");
+    ready=true;headers.clear(); // Exit reactor claims address before packet I/O.
   }
   static int frame_cb(nghttp2_session*,const nghttp2_frame* f,void* u){
     return safe(u,[&](Session& s){
@@ -270,8 +304,12 @@ struct Session {
         // destination and exit-side source isolation below remain strict.
         if(s.config.client&&(p[16]&0xf0)==0xe0){s.ctl.dropped++;return;}
         // Current single-peer address contract, enforced before TUN injection.
-        const uint8_t address[]={10,99,0,2};size_t off=s.config.client?16:12;
-        if(std::memcmp(p.data()+off,address,4)!=0){s.ctl.rejected_address(p,s.config.client);s.ctl.dropped++;throw std::runtime_error("peer_address");}
+        size_t off=s.config.client?16:12;
+        if(std::memcmp(p.data()+off,&s.peer_address,4)!=0){s.ctl.rejected_address(p,s.config.client);s.ctl.dropped++;throw std::runtime_error("peer_address");}
+        if(!s.config.client){
+          // No implicit client-to-client routing through the shared TUN.
+          for(const auto& peer:s.config.peers)check(std::memcmp(p.data()+16,&peer.address,4)!=0,"peer_destination");
+        }
         s.packets.push(std::move(p));
       });
       h2check(nghttp2_session_consume(h,id,n));
@@ -310,9 +348,8 @@ struct Session {
     if(config.client)submit_headers({{":method","POST"},{":path","/clean-vpn"},{":scheme","https"},{":authority",config.name},
       {"authorization","Bearer "+token(secret,exporter(ssl),int64_t(time(nullptr))/900)},{"accept","*/*"}},true);
   }
-  void run(int socket,int tun,Clock::time_point deadline,uint64_t generation,Bytes& pending){
-    init(); std::array<uint8_t,65536> buffer{};
-    while(!ctl.stop&&!interrupted&&ctl.uplink&&ctl.generation==generation){
+  short step(int tun,Clock::time_point deadline,Bytes& pending,bool shared_tun=false){
+      std::array<uint8_t,65536> buffer{};
       if(failure)throw std::runtime_error(failure);
       if(!ready)check(Clock::now()<deadline,"auth_deadline");
       if(ready){
@@ -338,6 +375,7 @@ struct Session {
         check(used!=NGHTTP2_ERR_BAD_CLIENT_MAGIC,"h2_bad_client_magic");
         check(used==n,"http2_receive");
       }
+      if(!shared_tun){
       for(int i=0;i<32&&!packets.empty();i++){
         ssize_t n=write(tun,packets.data(),packets.front_size());
         if(n<0&&(errno==EAGAIN||errno==EWOULDBLOCK))break;
@@ -357,11 +395,21 @@ struct Session {
         outgoing.push(frame(buffer.data(),n));ctl.tx++;
         if(deferred){h2check(nghttp2_session_resume_data(h2,stream));deferred=false;}
       }
-      ctl.read_commands();
+      }
       // Newly read TUN packets must arm writable interest in this tick, not
       // wait for the next polling timeout before serialising HTTP/2 DATA.
       sent=nghttp2_session_send(h2);if(failure)throw std::runtime_error(failure);h2check(sent);
-      short netevents=(packets.size()<queue_limit-max_packet-16384?POLLIN:0)|(!network.empty()||read_wants_write?POLLOUT:0);
+      return (packets.size()<queue_limit-max_packet-16384?POLLIN:0)|(!network.empty()||read_wants_write?POLLOUT:0);
+  }
+  void enqueue(const uint8_t* data,size_t n){
+    outgoing.push(frame(data,n));ctl.tx++;
+    if(deferred){h2check(nghttp2_session_resume_data(h2,stream));deferred=false;}
+  }
+  void run(int socket,int tun,Clock::time_point deadline,uint64_t generation,Bytes& pending){
+    init();
+    while(!ctl.stop&&!interrupted&&ctl.uplink&&ctl.generation==generation){
+      short netevents=step(tun,deadline,pending);
+      ctl.read_commands();
       short tunevents=(ready&&outgoing.size()<queue_limit-max_packet-4?POLLIN:0)|(!packets.empty()?POLLOUT:0);
       pollfd fds[]={{socket,netevents,0},{tun,tunevents,0},{STDIN_FILENO,POLLIN,0}};
       check(poll(fds,3,10)>=0||errno==EINTR,"poll");
@@ -389,22 +437,124 @@ static void handshake(SSL* ssl,int fd,Control& ctl,Clock::time_point deadline,ui
     wait_fd(fd,e==SSL_ERROR_WANT_READ?POLLIN:POLLOUT,ctl,deadline,generation);}
   const uint8_t* proto=nullptr;unsigned n=0;SSL_get0_alpn_selected(ssl,&proto,&n);check(n==2&&std::memcmp(proto,"h2",2)==0,"h2_required");
 }
+// One bounded reactor owns listener, sessions and TUN. Slow TLS/auth peers do
+// not block established tunnels; no per-packet threads, processes or IPC.
+static void run_exit(const Config& config,SSL_CTX* context,int listener,int tun,Control& ctl){
+  struct Connection {
+    Fd fd;
+    std::unique_ptr<SSL,decltype(&SSL_free)> ssl{nullptr,SSL_free};
+    std::unique_ptr<Session> session;
+    Clock::time_point deadline=Clock::now()+std::chrono::seconds(5);
+    short interest=POLLIN;
+    explicit Connection(int socket):fd(socket){}
+  };
+  std::vector<std::unique_ptr<Connection>> connections;
+  std::map<uint32_t,Session*> owners;
+  const std::string no_secret;Bytes pending;
+  auto rate_window=Clock::now(),last_error=Clock::now()-std::chrono::seconds(1);
+  unsigned admissions=0;
+  uint64_t generation=ctl.generation;
+  while(!ctl.stop&&!interrupted){
+    ctl.read_commands();if(ctl.stop)break;
+    if(!ctl.uplink||generation!=ctl.generation){connections.clear();owners.clear();generation=ctl.generation;}
+    if(!ctl.uplink){pollfd p{STDIN_FILENO,POLLIN,0};poll(&p,1,50);continue;}
+    auto now=Clock::now();
+    if(now-rate_window>=std::chrono::seconds(1)){rate_window=now;admissions=0;}
+    // A fixed admission budget bounds unauthenticated SSL allocations/CPU.
+    for(unsigned i=0;i<4;i++){
+      Fd accepted(accept4(listener,nullptr,nullptr,SOCK_NONBLOCK|SOCK_CLOEXEC));
+      if(accepted.n<0){check(errno==EAGAIN||errno==EWOULDBLOCK||errno==EINTR,"accept");break;}
+      size_t unauth=0;for(const auto& c:connections)if(!c->session||!c->session->ready)unauth++;
+      if(admissions>=32||unauth>=16||connections.size()>=config.peers.size()+16)continue;
+      admissions++;
+      auto c=std::make_unique<Connection>(accepted.n);accepted.n=-1;
+      int one=1;check(setsockopt(c->fd.n,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(one))==0,"tcp_nodelay");
+      c->ssl.reset(SSL_new(context));check(c->ssl&&SSL_set_fd(c->ssl.get(),c->fd.n)==1,"tls_socket");
+      SSL_set_accept_state(c->ssl.get());SSL_set_mode(c->ssl.get(),SSL_MODE_ENABLE_PARTIAL_WRITE);
+      connections.push_back(std::move(c));
+      if(owners.empty()&&ctl.state=="listening")ctl.set("handshake");
+    }
+    for(auto it=connections.begin();it!=connections.end();){
+      auto& c=**it;
+      try{
+        if(!c.session||!c.session->ready)check(Clock::now()<c.deadline,"auth_deadline");
+        if(!c.session){
+          int result=SSL_do_handshake(c.ssl.get());
+          if(result==1){
+            const uint8_t* proto=nullptr;unsigned length=0;SSL_get0_alpn_selected(c.ssl.get(),&proto,&length);
+            check(length==2&&std::memcmp(proto,"h2",2)==0,"h2_required");
+            c.session=std::make_unique<Session>(config,ctl,c.ssl.get(),no_secret);
+            auto* session=c.session.get();
+            session->claim=[&owners,session](uint32_t address){return owners.emplace(address,session).second;};
+            session->init();
+          }else{int error=SSL_get_error(c.ssl.get(),result);
+            check(error==SSL_ERROR_WANT_READ||error==SSL_ERROR_WANT_WRITE,"tls_handshake");
+            c.interest=error==SSL_ERROR_WANT_READ?POLLIN:POLLOUT;
+          }
+        }
+        if(c.session){
+          c.interest=c.session->step(tun,c.deadline,pending,true);
+          // A per-session budget gives other authenticated peers a turn.
+          for(int n=0;n<8&&!c.session->packets.empty();n++){
+            auto& packets=c.session->packets;
+            auto written=write(tun,packets.data(),packets.front_size());
+            if(written<0&&(errno==EAGAIN||errno==EWOULDBLOCK))break;
+            check(written==ssize_t(packets.front_size()),"tun_write");packets.consume(written);ctl.rx++;
+          }
+        }
+        ++it;
+      }catch(const std::exception& error){
+        if(c.session){auto owner=owners.find(c.session->peer_address);
+          if(owner!=owners.end()&&owner->second==c.session.get())owners.erase(owner);}
+        // Untrusted sessions cannot flood the bounded control channel.
+        if(Clock::now()-last_error>=std::chrono::milliseconds(250)){
+          ctl.set(Session::callback_error(error.what()));last_error=Clock::now();
+        }
+        it=connections.erase(it);
+      }
+    }
+    std::array<uint8_t,65536> buffer{};
+    for(unsigned i=0;i<64;i++){
+      auto n=read(tun,buffer.data(),buffer.size());
+      if(n<0&&(errno==EAGAIN||errno==EWOULDBLOCK))break;
+      check(n>0,"tun_read");
+      if(!ipv4(buffer.data(),n)){ctl.dropped++;continue;}
+      uint32_t address;std::memcpy(&address,buffer.data()+16,4);auto found=owners.find(address);
+      if(found==owners.end()||!found->second->ready){ctl.dropped++;continue;}
+      auto* session=found->second;
+      // A slow recipient cannot stop reading the shared TUN for everyone.
+      if(session->outgoing.size()+size_t(n)+4>queue_limit){ctl.dropped++;continue;}
+      session->enqueue(buffer.data(),n);
+    }
+    const auto state=!owners.empty()?"ready":connections.empty()?"listening":"handshake";
+    if(ctl.state!=state)ctl.set(state);
+    bool tun_write=false;
+    std::vector<pollfd> fds={{listener,POLLIN,0},{STDIN_FILENO,POLLIN,0}};
+    for(const auto& c:connections){
+      short interest=c->interest;
+      // TUN dispatch happened after step(): arm output in this tick, otherwise
+      // every reply waits for the polling timeout before H2 serialization.
+      if(c->session&&(!c->session->outgoing.empty()||!c->session->network.empty()))interest|=POLLOUT;
+      fds.push_back({c->fd.n,interest,0});tun_write|=c->session&&!c->session->packets.empty();
+    }
+    fds.push_back({tun,short(POLLIN|(tun_write?POLLOUT:0)),0});
+    check(poll(fds.data(),fds.size(),10)>=0||errno==EINTR,"poll");
+  }
+}
 int main(int argc,char** argv){
   signal(SIGPIPE,SIG_IGN);signal(SIGTERM,on_signal);signal(SIGINT,on_signal);
   try{
     if(argc==2&&std::string(argv[1])=="--capabilities"){
       std::cout<<json({{"version",1},{"engine","clean-vpn-native-m1"},{"transport","boring-tls"},
         {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2"}},
-        {"dns","native-udp-tcp-fixed-upstreams"},{"multi_peer",false},{"browser_profiles",false},
+        {"dns","native-udp-tcp-fixed-upstreams"},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
         {"packet_ipc",false},{"provisioning","external-control-plane"}}).dump()<<"\n";return 0;
     }
-    check((argc==3||argc==5)&&std::string(argv[1])=="--config","usage_config");int test=-1;
+    bool validate=argc==3&&std::string(argv[1])=="--check-config";
+    check(validate||((argc==3||argc==5)&&std::string(argv[1])=="--config"),"usage_config");int test=-1;
     if(argc==5){check(std::string(argv[3])=="--test-packet-fd","usage_fixture");test=std::stoi(argv[4]);check(test>2,"fixture_fd");}
-    Config c(json::parse(file(argv[2],16384)));std::string secret=file(c.secret_path,32,true);check(secret.size()==32,"secret_length");
-    nonblock(STDIN_FILENO);nonblock(STDOUT_FILENO);Control ctl;
-    Fd tun(packet_fd(c,test));
-    std::unique_ptr<DnsRelay> dns;
-    if(c.dns)dns=std::make_unique<DnsRelay>(c.tun,ctl.dns_ready,ctl.dns_failed,&ctl.dns_idle,&ctl.dns_demand);
+    Config c(json::parse(file(argv[2],16384)));std::string secret;
+    if(c.client){secret=file(c.secret_path,32,true);check(secret.size()==32,"secret_length");}
     std::unique_ptr<SSL_CTX,decltype(&SSL_CTX_free)> ctx(SSL_CTX_new(TLS_method()),SSL_CTX_free);check(bool(ctx),"tls_context");
     check(SSL_CTX_set_min_proto_version(ctx.get(),TLS1_3_VERSION)==1&&SSL_CTX_set_max_proto_version(ctx.get(),TLS1_3_VERSION)==1,"tls_version");
     SSL_CTX_set_options(ctx.get(),SSL_OP_NO_TICKET);
@@ -416,12 +566,21 @@ int main(int argc,char** argv){
       check(SSL_CTX_use_certificate_chain_file(ctx.get(),c.cert.c_str())==1&&SSL_CTX_use_PrivateKey_file(ctx.get(),c.key.c_str(),SSL_FILETYPE_PEM)==1&&SSL_CTX_check_private_key(ctx.get())==1,"server_key");
       SSL_CTX_set_alpn_select_cb(ctx.get(),alpn,nullptr);
     }
+    if(validate){
+      OPENSSL_cleanse(secret.data(),secret.size());
+      std::cout<<json({{"valid",true},{"role",c.client?"client":"exit"},{"peers",c.client?1:c.peers.size()}}).dump()<<"\n";return 0;
+    }
+    nonblock(STDIN_FILENO);nonblock(STDOUT_FILENO);Control ctl;
+    Fd tun(packet_fd(c,test));
+    std::unique_ptr<DnsRelay> dns;
+    if(c.dns)dns=std::make_unique<DnsRelay>(c.tun,ctl.dns_ready,ctl.dns_failed,&ctl.dns_idle,&ctl.dns_demand,c.peer_ipv4);
     Fd listener;
     if(!c.client){
       listener.n=socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);check(listener.n>=0,"listen_socket");int one=1;setsockopt(listener.n,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));
       auto addr=endpoint(c);check(bind(listener.n,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))==0&&listen(listener.n,8)==0,"listen_bind");
     }
     ctl.set(c.client?"idle":"listening");
+    if(!c.client){run_exit(c,ctx.get(),listener.n,tun.n,ctl);ctl.set("stopped");return 0;}
     bool demand_wait=false;Bytes pending;
     while(!ctl.stop&&!interrupted){
       ctl.read_commands();if(ctl.stop)break;
@@ -444,19 +603,13 @@ int main(int argc,char** argv){
       bool authenticated=false;
       try{
         auto deadline=Clock::now()+std::chrono::seconds(10);auto generation=ctl.generation;
-        if(c.client){
-          socket_fd.n=socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);check(socket_fd.n>=0,"connect_socket");auto addr=endpoint(c);
-          ctl.set("connecting");int rc=connect(socket_fd.n,reinterpret_cast<sockaddr*>(&addr),sizeof(addr));
-          if(rc<0){check(errno==EINPROGRESS,"connect");wait_fd(socket_fd.n,POLLOUT,ctl,Clock::now()+std::chrono::seconds(3),generation);int err=0;socklen_t size=sizeof(err);check(getsockopt(socket_fd.n,SOL_SOCKET,SO_ERROR,&err,&size)==0&&err==0,"connect");}
-        } else {
-          socket_fd.n=accept4(listener.n,nullptr,nullptr,SOCK_NONBLOCK|SOCK_CLOEXEC);
-          if(socket_fd.n<0){check(errno==EAGAIN||errno==EINTR||errno==EWOULDBLOCK,"accept");pollfd p[]={{listener.n,POLLIN,0},{STDIN_FILENO,POLLIN,0}};poll(p,2,100);continue;}
-        }
+        socket_fd.n=socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);check(socket_fd.n>=0,"connect_socket");auto addr=endpoint(c);
+        ctl.set("connecting");int rc=connect(socket_fd.n,reinterpret_cast<sockaddr*>(&addr),sizeof(addr));
+        if(rc<0){check(errno==EINPROGRESS,"connect");wait_fd(socket_fd.n,POLLOUT,ctl,Clock::now()+std::chrono::seconds(3),generation);int err=0;socklen_t size=sizeof(err);check(getsockopt(socket_fd.n,SOL_SOCKET,SO_ERROR,&err,&size)==0&&err==0,"connect");}
         int no_delay=1;
         check(setsockopt(socket_fd.n,IPPROTO_TCP,TCP_NODELAY,&no_delay,sizeof(no_delay))==0,"tcp_nodelay");
         std::unique_ptr<SSL,decltype(&SSL_free)> ssl(SSL_new(ctx.get()),SSL_free);check(bool(ssl)&&SSL_set_fd(ssl.get(),socket_fd.n)==1,"tls_socket");
         SSL_set_mode(ssl.get(),SSL_MODE_ENABLE_PARTIAL_WRITE);
-        if(c.client){
           SSL_set_connect_state(ssl.get());
           check(SSL_set_tlsext_host_name(ssl.get(),c.sni.c_str())==1,"tls_sni");
           auto* verify=SSL_get0_param(ssl.get());
@@ -465,8 +618,6 @@ int main(int argc,char** argv){
           // All other names retain SAN-only verification. CA/time checks remain.
           X509_VERIFY_PARAM_set_hostflags(verify,c.name=="clean-vpn"?0:X509_CHECK_FLAG_NEVER_CHECK_SUBJECT);
           check(X509_VERIFY_PARAM_set1_host(verify,c.name.data(),c.name.size())==1,"tls_identity");
-        }
-        else SSL_set_accept_state(ssl.get());
         ctl.set("handshake");handshake(ssl.get(),socket_fd.n,ctl,deadline,generation);
         Session s(c,ctl,ssl.get(),secret);
         try{s.run(socket_fd.n,tun.n,deadline,generation,pending);}
@@ -475,7 +626,7 @@ int main(int argc,char** argv){
         // Only fixed internal error codes, never input headers, keys or payload.
         ctl.set(e.what());
         const std::string reason=e.what();
-        demand_wait=c.client&&authenticated&&(reason=="h2_peer_end_stream"||reason=="h2_goaway_no_error"||reason=="h2_stream_closed");
+        demand_wait=authenticated&&(reason=="h2_peer_end_stream"||reason=="h2_goaway_no_error"||reason=="h2_stream_closed");
       }
       if(socket_fd.n>=0){close(socket_fd.n);socket_fd.n=-1;}
       if(!pending.empty()){pending.clear();ctl.dropped++;}

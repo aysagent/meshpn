@@ -17,6 +17,7 @@ import { faultUnit, faultUnitArgs } from './clean-vpn-native-usb-uplink.mjs';
 import { startCrashCapture, exerciseCrashPeer, recoverCrashNetwork } from './lib/native-trial-crash.mjs';
 import { openHostRoutes } from './lib/vpn-host-routes.mjs';
 import { openTunnelDnsJournal } from './lib/dns-tunnel-journal.mjs';
+import { benchmarkPhases, sampleTrialCpu } from './lib/native-trial-benchmark.mjs';
 
 const SELF = fileURLToPath(import.meta.url), ROOT = path.dirname(path.dirname(SELF));
 const UNIT = 'clean-vpn-native-trial.service', OLD = 'clean-vpn.service';
@@ -137,6 +138,7 @@ export function launchTrialNative(config, { spawnChild = spawn, readyMs = 45000,
       exitCode: Number.isInteger(code) ? code : null, signal: signal ?? null, stdoutBytes, stderrBytes,
       ...(trialCrash ? { crashRequested, engineSigkillSeen: killed } : {}) }),
     healthy: () => !ended && !broken,
+    metricsRootPid: () => child.pid,
     crashRequested: () => crashRequested,
     async crash() {
       check(trialCrash && !ended && !broken && !crashRequested, 'trial_crash_not_allowed');
@@ -333,7 +335,7 @@ export function uplinkFault(directory, { exec = run, commandResult = command, ge
   };
 }
 
-async function worker(directory, holdSeconds, peerIp, trialCrash = false) {
+async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchmark = false) {
   await hostRequired();
   check(path.dirname(directory) === REPORTS && /^run-[a-zA-Z0-9]+$/.test(path.basename(directory)), 'invalid_worker_directory');
   privateDirectory(REPORTS); privateDirectory(directory);
@@ -346,7 +348,19 @@ async function worker(directory, holdSeconds, peerIp, trialCrash = false) {
   const io = await adapter(trialCrash);
   if (peerIp) {
     const peer = createPeerChannel(directory, peerIp, { cancelled: () => cancelled });
-    io.peer = trialCrash ? { phase: peer.phase, requiredPhases: ['baseline', 'native', 'blocked', 'restored'],
+    const benchmarkPhase = async (phase, target, session) => {
+      const pid = session ? session.metricsRootPid() : Number(await prop(OLD, 'MainPID'));
+      const stopCpu = sampleTrialCpu(pid, Number(await run('getconf', ['CLK_TCK'])));
+      try { await peer.phase(phase, target, session?.healthy); }
+      finally { (target[phase] ??= { status: 'failed' }).cpu = stopCpu(); }
+      check(target[phase].cpu.status === 'sampled', 'benchmark_cpu_incomplete');
+    };
+    io.peer = benchmark ? { requiredPhases: benchmarkPhases,
+      phase: (p, target) => benchmarkPhase(p === 'baseline' ? 'bench-old' : 'bench-restored', target),
+      native: async (session, report) => {
+        await benchmarkPhase('bench-native', report.phases, session);
+        check(!(session.diagnostics().stateCounts?.peer_address > 0), 'native_peer_address_rejected');
+      } } : trialCrash ? { phase: peer.phase, requiredPhases: ['baseline', 'native', 'blocked', 'restored'],
       native: (session, report, release) => exerciseCrashPeer(peer, session, report, {
         capture: startCrashCapture, release, requireUplink: async () => {
           await verifyGuard();
@@ -369,6 +383,11 @@ async function worker(directory, holdSeconds, peerIp, trialCrash = false) {
   if (trialCrash) report.limitations = report.limitations.filter(s => !['not-a-leak-or-crash-test', 'host-smoke-not-usb-peer-acceptance'].includes(s))
     .concat(['crash-scope-engine-only-not-worker-or-host', 'capture-only-selected-ipv4-https-not-ipv6-or-dns-or-all-egress']);
   if (trialCrash && report.usb) report.usb.scope = 'authenticated-Mac-USB-with-independent-selected-ipv4-uplink-capture';
+  if (benchmark) {
+    report.limitations = report.limitations.filter(s => !['not-speedtest-or-throughput-benchmark', 'host-smoke-not-usb-peer-acceptance'].includes(s))
+      .concat(['bounded-cloudflare-4-stream-goodput-not-ookla-or-line-rate', 'cpu-sampled-client-tree-not-kernel-or-exit']);
+    if (report.usb) report.usb.scope = 'Mac-USB-bounded-download-upload-and-Radxa-client-process-tree-CPU';
+  }
   try { io.cleanSecrets(); } catch { report.secretCleanup = 'failed-private-run-directory-retained'; report.status = 'failed'; }
   Object.assign(report, { started, seconds: Math.round((performance.now() - began) / 1000),
     holdSeconds, reportFile: path.join(directory, 'report.json') });
@@ -381,8 +400,9 @@ async function worker(directory, holdSeconds, peerIp, trialCrash = false) {
 
 export async function main(args = process.argv.slice(2)) {
   if (args.length === 1 && args[0] === '--help') {
+    console.log('Benchmark mode: --apply --usb-benchmark (Mac --benchmark coordinates three old/native/old cycles). Bounded synthetic upload/download, no fault injection.');
     console.log('Crash mode: --apply --usb-crash (coordinate from Mac with --crash). SIGKILL the owned native engine; keep wlan0 up; tcpdump selected IPv4 HTTPS; audited legacy rollback.');
-    console.log('Usage: node scripts/clean-vpn-native-trial.mjs --apply [--hold-seconds=0..300 | --usb-peer] | --report\nRun from authenticated USB rescue SSH :2222 as root, after build-clean-vpn-native.sh.\nTemporarily stops ONLY clean-vpn.service, tests native, audits cleanup and restores legacy.\n--usb-peer is coordinated by clean-vpn-native-usb-check.mjs on Mac: REAL wlan0 down/up with independent systemd restoration.\nTransient systemd unit survives SSH loss. No install/enable/firewall flush/reboot.\nReal DNS/HTTPS and bounded downloads; not a speed benchmark.'); return;
+    console.log('Usage: node scripts/clean-vpn-native-trial.mjs --apply [--hold-seconds=0..300 | --usb-peer | --usb-crash | --usb-benchmark] | --report\nRun from authenticated USB rescue SSH :2222 as root, after build-clean-vpn-native.sh.\nTemporarily stops ONLY clean-vpn.service, tests native, audits cleanup and restores legacy.\nUSB modes are coordinated by clean-vpn-native-usb-check.mjs on Mac. --usb-peer: REAL wlan0 down/up with independent systemd restoration.\nTransient systemd unit survives SSH loss. No install/enable/firewall flush/reboot.\nWithout --usb-benchmark: real DNS/HTTPS and bounded downloads, not a speed benchmark.'); return;
   }
   await hostRequired();
   if (args.length === 2 && ['--peer-status', '--peer-result'].includes(args[0])) {
@@ -423,12 +443,13 @@ export async function main(args = process.argv.slice(2)) {
   }
   if (args[0] === '--worker' && [3, 4, 5].includes(args.length) && /^\d{1,3}$/.test(args[2]) && Number(args[2]) <= 300) {
     check(!args[3] || /^192\.168\.7\.(?:[2-9]|[1-9]\d|1\d\d|2[0-4]\d|25[0-4])$/.test(args[3]), 'invalid_usb_peer');
-    check(args.length !== 5 || (args[3] && args[4] === '--crash'), 'invalid_crash_mode');
-    return worker(args[1], Number(args[2]), args[3], args[4] === '--crash');
+    check(args.length !== 5 || (args[3] && ['--crash', '--benchmark'].includes(args[4])), 'invalid_trial_mode');
+    return worker(args[1], Number(args[2]), args[3], args[4] === '--crash', args[4] === '--benchmark');
   }
   check(args[0] === '--apply' && args.length <= 2, 'use_apply_or_report_or_help');
   const crash = args[1] === '--usb-crash';
-  const usb = args[1] === '--usb-peer' || crash;
+  const benchmark = args[1] === '--usb-benchmark';
+  const usb = args[1] === '--usb-peer' || crash || benchmark;
   const match = args.length === 2 && !usb ? /^--hold-seconds=(\d{1,3})$/.exec(args[1]) : ['', '0'];
   check(match && Number(match[1]) <= 300, 'hold_seconds_must_be_0_to_300');
   const peerIp = await authenticatedUsb();
@@ -439,7 +460,8 @@ export async function main(args = process.argv.slice(2)) {
   await run('systemd-run', ['--quiet', '--collect', '--unit=clean-vpn-native-trial', '--service-type=exec',
     '--property=KillMode=mixed', '--property=TimeoutStopSec=600', '--property=RuntimeMaxSec=1500',
     '--property=StandardOutput=null', '--property=StandardError=null',
-    `--working-directory=${ROOT}`, process.execPath, SELF, '--worker', dir, match[1], ...(usb ? [peerIp] : []), ...(crash ? ['--crash'] : [])], 15000);
+    `--working-directory=${ROOT}`, process.execPath, SELF, '--worker', dir, match[1], ...(usb ? [peerIp] : []),
+    ...(crash ? ['--crash'] : benchmark ? ['--benchmark'] : [])], 15000);
   if (usb) console.log(`USB_TRIAL_ID=${path.basename(dir)}`);
   console.error('Trial started; survives SSH disconnect. Do not checkout/build/restart services during the trial.');
   console.error('After reconnect: node scripts/clean-vpn-native-trial.mjs --report');

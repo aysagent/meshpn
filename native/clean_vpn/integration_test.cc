@@ -13,6 +13,7 @@
 #include <thread>
 #include <fstream>
 #include <dirent.h>
+#include <arpa/inet.h>
 using namespace cvpn;
 using json=nlohmann::json;
 using Clock=std::chrono::steady_clock;
@@ -49,9 +50,10 @@ struct Child {
       while((e=input.find('\n'))!=std::string::npos){auto j=json::parse(input.substr(0,e));input.erase(0,e+1);
         std::cout<<"engine "<<pid<<" "<<j.dump()<<"\n";
         if(j.at("event")=="peer_address_rejected"){
-          const bool client=j.at("role")=="client"&&j.at("source")=="1.1.1.1"&&j.at("destination")=="10.99.0.3"&&j.at("protocol")==17;
-          const bool exit=j.at("role")=="exit"&&j.at("source")=="10.99.0.3"&&j.at("destination")=="224.0.0.22"&&j.at("protocol")==2;
-          require(j.size()==6&&(client||exit),"address_metadata");continue;
+          in_addr src{},dst{};auto protocol=j.at("protocol").get<int>();
+          require(j.size()==6&&(j.at("role")=="client"||j.at("role")=="exit")&&protocol>=0&&protocol<=255
+            &&inet_pton(AF_INET,j.at("source").get<std::string>().c_str(),&src)==1
+            &&inet_pton(AF_INET,j.at("destination").get<std::string>().c_str(),&dst)==1,"address_metadata");continue;
         }
         require(j.size()==7&&!j.contains("packet")&&!j.contains("payload"),"metadata_only");
         if(j.at("state")==wanted)return j;
@@ -111,6 +113,17 @@ static void transfer(Child& from,Child& to,size_t n,bool reverse,uint8_t seed){
   pollfd p{to.packet,POLLIN,0};require(poll(&p,1,3000)>0,"packet_timeout");
   Bytes got(65536);ssize_t len=recv(to.packet,got.data(),got.size(),0);require(len>0,"packet_receive");got.resize(len);require(got==b,"packet_bytes");
 }
+static void peer_transfer(Child& from,Child& to,Child& uninvolved,bool reverse,uint8_t peer){
+  auto b=packet(1400,reverse,peer);b[reverse?19:15]=peer;b[10]=b[11]=0;
+  uint32_t sum=0;for(int i=0;i<20;i+=2)sum+=(uint16_t(b[i])<<8)|b[i+1];
+  while(sum>>16)sum=(sum&65535)+(sum>>16);
+  b[10]=(~sum)>>8;b[11]=~sum;
+  require(send(from.packet,b.data(),b.size(),0)==ssize_t(b.size()),"multi_send");
+  pollfd p{to.packet,POLLIN,0};require(poll(&p,1,2000)>0,"multi_timeout");
+  Bytes got(65536);auto n=recv(to.packet,got.data(),got.size(),0);require(n>0,"multi_read");got.resize(n);
+  require(got==b,"multi_bytes");
+  pollfd isolated{uninvolved.packet,POLLIN,0};require(poll(&isolated,1,0)==0,"cross_peer_injection");
+}
 static void reflect(Child& client,size_t n,uint8_t seed){
   // The legacy reference echoes framed bytes. Use an inbound-addressed test
   // packet so the production client's destination isolation remains enabled.
@@ -169,6 +182,112 @@ int main(int argc,char** argv){
   signal(SIGPIPE,SIG_IGN);
   std::cout<<std::unitbuf;
   try{
+    if(argc==5&&std::string(argv[4])=="many"){
+      Child server(argv[1],argv[3]);server.await_state("listening");
+      std::vector<std::unique_ptr<Child>> peers;
+      for(int i=0;i<32;i++){
+        auto config=std::string(argv[2])+"/client-"+std::to_string(i)+".json";
+        peers.push_back(std::make_unique<Child>(argv[1],config.c_str()));
+      }
+      for(auto& peer:peers)peer->await_state("ready",6000);
+      server.await_state("ready");
+      for(int round=0;round<4;round++)for(size_t i=0;i<peers.size();i++){
+        auto& other=*peers[(i+1)%peers.size()];
+        peer_transfer(*peers[i],server,other,false,uint8_t(i+2));
+        peer_transfer(server,*peers[i],other,true,uint8_t(i+2));
+      }
+      require(fd_count(server.pid)<=42,"many_fd_bound");require(rss(server.pid)<128*1024,"many_rss_bound");
+      for(auto& peer:peers)peer->stop();
+      server.stop();std::cout<<"32 authenticated peers, 256 addressed packets, bounded FD/RSS PASS\n";return 0;
+    }
+    if(argc==7&&std::string(argv[4])=="multi"){
+      Child server(argv[1],argv[3]);server.await_state("listening");
+      json config;std::ifstream input(argv[3]);input>>config;
+      sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_port=htons(config.at("port").get<int>());
+      require(inet_pton(AF_INET,"127.0.0.1",&addr.sin_addr)==1,"loopback");
+      std::vector<int> slow;
+      for(int i=0;i<12;i++){
+        int fd=socket(AF_INET,SOCK_STREAM|SOCK_CLOEXEC,0);require(fd>=0,"slow_socket");
+        require(connect(fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))==0,"slow_connect");slow.push_back(fd);
+        if(i%2){uint8_t partial=0x16;require(send(fd,&partial,1,0)==1,"partial_tls");}
+      }
+      auto began=Clock::now();
+      Child a(argv[1],argv[2]),b(argv[1],argv[5]);a.await_state("ready",3000);b.await_state("ready",3000);
+      require(Clock::now()-began<std::chrono::seconds(3),"slow_tls_blocks_peers");server.await_state("ready");
+      for(int i=0;i<100;i++){
+        peer_transfer(a,server,b,false,2);peer_transfer(server,a,b,true,2);
+        peer_transfer(b,server,a,false,3);peer_transfer(server,b,a,true,3);
+      }
+      std::cout<<"two independent authenticated native peers, 400 isolated packets PASS\n";
+      {
+        Child duplicate(argv[1],argv[2]);std::this_thread::sleep_for(std::chrono::milliseconds(350));
+        auto forbidden=packet(64,false,42);require(send(duplicate.packet,forbidden.data(),forbidden.size(),0)>0,"duplicate_send");
+        for(int i=0;i<10;i++){peer_transfer(a,server,b,false,2);peer_transfer(server,b,a,true,3);}
+        duplicate.stop();
+      }
+      std::cout<<"duplicate credential cannot evict active owner PASS\n";
+      {
+        auto crossed=packet(64,false,1);crossed[16]=10;crossed[17]=99;crossed[18]=0;crossed[19]=3;
+        crossed[10]=crossed[11]=0;uint32_t sum=0;
+        for(int i=0;i<20;i+=2)sum+=(uint16_t(crossed[i])<<8)|crossed[i+1];
+        while(sum>>16)sum=(sum&65535)+(sum>>16);
+        crossed[10]=(~sum)>>8;crossed[11]=~sum;
+        require(send(a.packet,crossed.data(),crossed.size(),0)>0,"cross_send");
+        pollfd p{server.packet,POLLIN,0};require(poll(&p,1,300)==0,"client_to_client_tun_injection");
+        a.await_state("ready",3000);peer_transfer(b,server,a,false,3);
+      }
+      std::cout<<"client-to-client forwarding denied by native exit PASS\n";
+      {
+        Child spoof(argv[1],argv[6]);spoof.await_state("ready",3000);
+        auto forged=packet(64,false,9);forged[15]=3;forged[10]=forged[11]=0;
+        uint32_t sum=0;for(int i=0;i<20;i+=2)sum+=(uint16_t(forged[i])<<8)|forged[i+1];
+        while(sum>>16)sum=(sum&65535)+(sum>>16);
+        forged[10]=(~sum)>>8;forged[11]=~sum;
+        require(send(spoof.packet,forged.data(),forged.size(),0)>0,"spoof_send");
+        pollfd p{server.packet,POLLIN,0};require(poll(&p,1,300)==0,"spoof_injection");
+        peer_transfer(a,server,b,false,2);peer_transfer(server,b,a,true,3);spoof.stop();
+      }
+      std::cout<<"authenticated wrong-source peer isolated without disrupting others PASS\n";
+      for(int i=0;i<40;i++){
+        int fd=socket(AF_INET,SOCK_STREAM|SOCK_CLOEXEC,0);require(fd>=0,"flood_socket");
+        require(connect(fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))==0,"flood_connect");slow.push_back(fd);
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      require(fd_count(server.pid)<=32,"pending_admission_limit");
+      auto until=Clock::now()+std::chrono::seconds(6);
+      while(Clock::now()<until){peer_transfer(a,server,b,false,2);peer_transfer(server,b,a,true,3);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));}
+      for(int fd:slow){pollfd p{fd,POLLIN,0};require(poll(&p,1,100)>0,"slow_tls_not_expired");
+        char byte;require(recv(fd,&byte,1,0)<=0,"slow_tls_unexpected_response");close(fd);}
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      const auto baseline=fd_count(server.pid);
+      for(int i=0;i<5;i++){
+        a.command("{\"op\":\"uplink\",\"ready\":false}\n");a.await_state("waiting_uplink");
+        peer_transfer(b,server,a,false,3);
+        a.command("{\"op\":\"uplink\",\"ready\":true}\n");a.await_state("ready",3000);
+        peer_transfer(a,server,b,false,2);peer_transfer(server,a,b,true,2);
+        require(fd_count(server.pid)==baseline,"multi_fd_leak");
+      }
+      // Freeze only one authenticated recipient and fill its outbound path.
+      // The other client's traffic must still traverse the same shared TUN.
+      require(kill(a.pid,SIGSTOP)==0,"slow_peer_pause");
+      auto pressure=packet(1400,true,7);
+      auto end=Clock::now()+std::chrono::milliseconds(900);
+      while(Clock::now()<end){
+        auto n=send(server.packet,pressure.data(),pressure.size(),MSG_DONTWAIT);
+        require(n==ssize_t(pressure.size())||(n<0&&(errno==EAGAIN||errno==EWOULDBLOCK)),"slow_peer_flood");
+      }
+      peer_transfer(b,server,a,false,3);peer_transfer(server,b,a,true,3);
+      require(kill(a.pid,SIGCONT)==0,"slow_peer_resume");
+      a.command("{\"op\":\"uplink\",\"ready\":false}\n");a.await_state("waiting_uplink");
+      Bytes drain(65536);while(recv(a.packet,drain.data(),drain.size(),MSG_DONTWAIT)>0){}
+      a.command("{\"op\":\"uplink\",\"ready\":true}\n");a.await_state("ready",3000);
+      peer_transfer(a,server,b,false,2);peer_transfer(server,a,b,true,2);
+      std::cout<<"slow authenticated recipient cannot block other peer PASS\n";
+      require(rss(server.pid)<128*1024,"multi_rss_bound");
+      a.stop();b.stop();server.stop();
+      std::cout<<"slow TLS deadline, independent reconnect, bounded RSS/FDs, stop PASS\n";return 0;
+    }
     if(argc==4&&std::string(argv[3])=="client-multicast"){
       Child client(argv[1],argv[2]);client.await_state("ready");
       auto deadline=Clock::now()+std::chrono::seconds(5);bool done=false;
