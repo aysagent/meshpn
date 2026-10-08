@@ -13,6 +13,21 @@ bash scripts/build-clean-vpn-native.sh
 bash scripts/build-clean-vpn-native.sh --low-memory
 ```
 
+На малом узле можно явно включить временный swap для сборки и затем удалить его:
+
+```bash
+sudo bash scripts/clean-vpn-native-swap.sh on
+bash scripts/build-clean-vpn-native.sh --low-memory
+sudo bash scripts/clean-vpn-native-swap.sh off
+```
+
+`on` создаёт отдельный owner-only файл на 2 GiB в
+`/var/lib/clean-vpn-native-build-swap`, повторный вызов только проверяет/включает
+тот же принадлежащий скрипту файл. `off` сначала успешно отключает swap и только
+потом удаляет его. Чужие или изменённые path/marker не перезаписываются и не
+удаляются. `/etc/fstab` не меняется: после reboot файл остаётся выключенным,
+повторный `on` активирует его, а `off` удаляет.
+
 Режим задаёт `CVPN_LOW_MEMORY_BUILD=ON`: для C/C++ добавляется `-g0` после
 build-type flags. Это относится к engine, тестам, BoringSSL и nghttp2. Сохраняются
 `RelWithDebInfo`, оптимизация `-O2`, прежние NDEBUG/assert settings, один job и
@@ -48,9 +63,11 @@ journalctl -k -b --since '30 minutes ago' --no-pager \
   --grep='oom|OOM|Out of memory|Killed process|Memory cgroup'
 ```
 
-На тестируемом VPS с 956 MiB RAM и без swap kernel дважды сообщил
-`Out of memory: Killed process ... (cc1plus)`; anonymous RSS жертвы составлял
-около 344–354 MiB. Это подтверждённая нехватка памяти, не отсутствие OpenSSL
+На тестируемом VPS с 956 MiB RAM и без swap kernel сообщил
+`Out of memory: Killed process ... (cc1plus)`; последний подтверждённый отказ
+произошёл на production `engine.cc.o` при anonymous RSS около 432 MiB после
+успешной сборки BoringSSL. Это подтверждённая нехватка памяти, не тестовый target
+и не отсутствие OpenSSL
 или других optional nghttp2 dependencies. CMake configure при этом завершился.
 
 Для надёжного продолжения нужен дополнительный запас: согласованный swap после
