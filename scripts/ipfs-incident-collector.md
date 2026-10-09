@@ -37,10 +37,13 @@ The final terminal block names three results:
   selected original logs;
 - `ARCHIVE_HASHES`: SHA-256 checksums for both archives.
 
-Send `SUMMARY.txt`, `ssh-ip-summary.txt`, and preferably `REPORT_ARCHIVE` for
-analysis. Do not send `PRIVATE_ARCHIVE`: commands or service scripts may hold
-tokens and the original logs/histories contain sensitive information. Keep the
-private archive and its hash unchanged for later investigation.
+It also prints `PASTE_FOR_REVIEW`, the path to one redacted `REVIEW.txt` that
+combines service users, unit definitions, timestamps, hashes, current pins,
+repository counts, SSH source IPs, authorized-key fingerprints and relevant
+history/log matches. Paste that file and, if possible, send `REPORT_ARCHIVE`
+for analysis. Do not send `PRIVATE_ARCHIVE`: commands or service scripts may
+hold tokens and the original logs/histories contain sensitive information.
+Keep the private archive and its hash unchanged for later investigation.
 
 ## What it does not prove
 

@@ -31,4 +31,5 @@ test('collector retains provenance and separates private evidence', () => {
   assert.match(source, /private-evidence/);
   assert.match(source, /ssh-ip-summary\.txt/);
   assert.match(source, /ipfs-repo-sha256/);
+  assert.match(source, /PASTE_FOR_REVIEW/);
 });

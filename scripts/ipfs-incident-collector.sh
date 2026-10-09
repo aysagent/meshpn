@@ -79,6 +79,7 @@ mkdir -m 0700 -p "$cv_raw" "$cv_meta" "$cv_redacted" "$cv_private/files"
 cv_actions=$cv_report/collector-actions.tsv
 cv_errors=$cv_report/collector-errors.txt
 cv_summary=$cv_report/SUMMARY.txt
+cv_review=$cv_report/REVIEW.txt
 : >"$cv_actions"
 : >"$cv_errors"
 cv_failures=0
@@ -485,7 +486,9 @@ if [ "$cv_local_api" -eq 1 ] && command -v curl >/dev/null 2>&1; then
   cv_capture ipfs-api-mfs-root curl --noproxy '*' --silent --show-error --fail-with-body --max-time 30 -X POST 'http://127.0.0.1:5001/api/v0/files/ls?long=true'
   cv_capture ipfs-api-swarm-peers curl --noproxy '*' --silent --show-error --fail-with-body --max-time 30 -X POST 'http://127.0.0.1:5001/api/v0/swarm/peers?verbose=true'
 else
-  printf 'Skipped (--no-local-api or curl unavailable).\n' >"$cv_raw/ipfs-api-pins.txt"
+  for cv_api_file in id repo-stat pins local-refs mfs-root swarm-peers; do
+    printf 'Skipped (--no-local-api or curl unavailable).\n' >"$cv_raw/ipfs-api-$cv_api_file.txt"
+  done
 fi
 
 # Extract a review-friendly authentication/IP summary from the collected, immutable text copies.
@@ -506,6 +509,57 @@ fi
     | sort | uniq -c | sort -nr || true
 } >"$cv_report/ssh-ip-summary.txt"
 
+# One redacted, paste-friendly review file. Full unabridged evidence stays in the archives.
+{
+  echo '===== COLLECTION CONTEXT ====='
+  cat "$cv_report/collector-context.txt" 2>/dev/null || true
+  echo
+  echo '===== SERVICE USERS AND ACTIVATION ====='
+  echo 'Note: an empty User= or Group= for a system service means root.'
+  cat "$cv_raw/service-principals.txt" 2>/dev/null || true
+  echo
+  echo '===== SERVICE DEFINITIONS (REDACTED) ====='
+  cat "$cv_raw/unit-cat-ipfs-storage_service.txt" "$cv_raw/unit-cat-ipfs-storage-agent_service.txt" 2>/dev/null || true
+  echo
+  echo '===== IPFS ACCOUNT ====='
+  cat "$cv_raw/ipfs-storage-account.txt" "$cv_raw/ipfs-storage-group.txt" 2>/dev/null || true
+  echo
+  echo '===== SUSPECT PATH METADATA AND HASHES ====='
+  for cv_review_file in "$cv_meta"/*ipfs*; do
+    [ -f "$cv_review_file" ] || continue
+    cat "$cv_review_file"
+    echo
+  done
+  echo '===== LIVE IPFS REPOSITORY STATE ====='
+  echo 'repo/stat:'
+  cat "$cv_raw/ipfs-api-repo-stat.txt" 2>/dev/null || true
+  echo
+  echo 'pins:'
+  cat "$cv_raw/ipfs-api-pins.txt" 2>/dev/null || true
+  echo
+  echo 'MFS root:'
+  cat "$cv_raw/ipfs-api-mfs-root.txt" 2>/dev/null || true
+  echo
+  printf 'local refs lines: '
+  wc -l <"$cv_raw/ipfs-api-local-refs.txt" 2>/dev/null || echo unavailable
+  echo 'Full refs and filesystem manifests are retained in the report archive.'
+  echo
+  echo '===== SSH LOGIN SOURCE SUMMARY ====='
+  cat "$cv_report/ssh-ip-summary.txt" 2>/dev/null || true
+  echo
+  echo '===== AUTHORIZED KEY FINGERPRINTS ====='
+  cat "$cv_report/authorized-key-fingerprints.txt" 2>/dev/null || true
+  echo
+  echo '===== SUSPICIOUS SHELL HISTORY MATCHES (REDACTED) ====='
+  cat "$cv_redacted/suspicious-history-matches.txt" 2>/dev/null || true
+  echo
+  echo '===== IPFS/INSTALLATION LOG MATCHES (REDACTED, FIRST 300 LINES) ====='
+  sed -n '1,300p' "$cv_raw/log-ipfs-matches.txt" 2>/dev/null || true
+  echo
+  echo '===== COLLECTOR NONZERO COMMANDS ====='
+  cat "$cv_errors" 2>/dev/null || true
+} >"$cv_review"
+
 cv_finished_utc=$(date -u +%Y%m%dT%H%M%SZ)
 {
   echo 'IPFS INCIDENT LIVE-TRIAGE SUMMARY'
@@ -524,6 +578,7 @@ cv_finished_utc=$(date -u +%Y%m%dT%H%M%SZ)
   echo '- No installed IPFS or agent executable was run by this collector; no external network request was made.'
   echo
   echo 'High-value files:'
+  echo '- REVIEW.txt: one redacted, paste-friendly incident overview'
   echo '- raw/unit-show-*.txt and raw/unit-journal-*.txt: service identity and lifecycle'
   echo '- path-metadata/*ipfs*: timestamps, ownership and hashes'
   echo '- ssh-ip-summary.txt and raw/ssh-*.txt: login IP evidence still retained locally'
@@ -566,5 +621,6 @@ echo "PRIVATE_ARCHIVE=$cv_private_archive"
 echo "ARCHIVE_HASHES=$cv_root/ARCHIVE-SHA256SUMS"
 cat "$cv_root/ARCHIVE-SHA256SUMS"
 echo 'PRIVATE_ARCHIVE contains potentially sensitive evidence; do not send it.'
-echo 'Send SUMMARY.txt, ssh-ip-summary.txt and the report archive for analysis.'
+echo "PASTE_FOR_REVIEW=$cv_review"
+echo 'Send REVIEW.txt and, if possible, the report archive for analysis.'
 echo '=== IPFS INCIDENT COLLECTION END ==='
