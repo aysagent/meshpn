@@ -200,6 +200,9 @@ cv_redact() {
   sed -E \
     -e 's/(Bearer[[:space:]]+)[A-Za-z0-9._~+\/-]+/\1<REDACTED>/Ig' \
     -e 's/("(pass(word|wd)?|secret|token|api[_-]?key|authorization|credential)"[[:space:]]*:[[:space:]]*")[^"]+/\1<REDACTED>/Ig' \
+    -e 's/((--)?(pass(word|wd)?|secret|token|api[_-]?key|authorization|credential)[[:space:]]+")[^"]+/\1<REDACTED>/Ig' \
+    -e 's/((--)?(pass(word|wd)?|secret|token|api[_-]?key|authorization|credential)[[:space:]]+)[^[:space:]"]+/\1<REDACTED>/Ig' \
+    -e 's/((pass(word|wd)?|secret|token|api[_-]?key|authorization|credential)[[:space:]]*[:=][[:space:]]*")[^"]+/\1<REDACTED>/Ig' \
     -e 's/((pass(word|wd)?|secret|token|api[_-]?key|authorization|credential)[[:space:]]*[:=][[:space:]]*)[^[:space:]"]+/\1<REDACTED>/Ig'
 }
 
@@ -323,6 +326,7 @@ cv_suspect_paths=(
   /etc/systemd/system/multi-user.target.wants/ipfs-storage.service
   /usr/local/bin/ipfs
   /usr/local/bin/ipfs-storage-agent
+  /root/ipfs-install.sh
   /var/lib/ipfs-storage
 )
 for cv_path in "${cv_suspect_paths[@]}"; do
@@ -334,7 +338,8 @@ for cv_path in \
   /etc/systemd/system/multi-user.target.wants/ipfs-storage-agent.service \
   /etc/systemd/system/multi-user.target.wants/ipfs-storage.service \
   /usr/local/bin/ipfs \
-  /usr/local/bin/ipfs-storage-agent; do
+  /usr/local/bin/ipfs-storage-agent \
+  /root/ipfs-install.sh; do
   cv_copy_private "$cv_path"
 done
 
@@ -351,6 +356,9 @@ if [ -f /usr/local/bin/ipfs ]; then
 fi
 if [ -f /usr/local/bin/ipfs-storage-agent ]; then
   cv_redact </usr/local/bin/ipfs-storage-agent >"$cv_redacted/ipfs-storage-agent.txt" 2>/dev/null || true
+fi
+if [ -f /root/ipfs-install.sh ]; then
+  cv_redact </root/ipfs-install.sh >"$cv_redacted/ipfs-install.sh.txt" 2>/dev/null || true
 fi
 
 # Runtime provenance for the two services. No signal is sent and no process is started.
@@ -523,6 +531,9 @@ fi
   echo
   echo '===== IPFS ACCOUNT ====='
   cat "$cv_raw/ipfs-storage-account.txt" "$cv_raw/ipfs-storage-group.txt" 2>/dev/null || true
+  echo
+  echo '===== DOWNLOADED INSTALLER (REDACTED, NEVER EXECUTED BY COLLECTOR) ====='
+  cat "$cv_redacted/ipfs-install.sh.txt" 2>/dev/null || true
   echo
   echo '===== SUSPECT PATH METADATA AND HASHES ====='
   for cv_review_file in "$cv_meta"/*ipfs*; do

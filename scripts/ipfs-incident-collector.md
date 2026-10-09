@@ -6,6 +6,7 @@ remaining host evidence permits:
 
 - which Unix users exist and which user each service runs as;
 - when the unit, agent and IPFS binary appeared or changed;
+- metadata, SHA-256 and a redacted copy of `/root/ipfs-install.sh`, when present;
 - how the agent starts IPFS and which persistence mechanism enables it;
 - which SSH accounts and source IP addresses authenticated during the chosen
   time window;
