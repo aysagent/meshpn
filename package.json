@@ -11,6 +11,7 @@
     "test:ingress-restart-real": "node --test scripts/test-ingress-restart-real.mjs",
     "test:ipfs-incident-collector": "node --test scripts/test-ipfs-incident-collector.mjs",
     "test:native-physical-preflight": "node --test scripts/test-native-physical-preflight.mjs",
+    "test:native-physical-pair-plan": "node --test scripts/test-native-physical-pair-plan.mjs",
     "test:ingress-transport-real": "node --test scripts/test-ingress-transport-real.mjs",
     "start": "node src/index.js",
     "server": "node server/signalling-server.js",

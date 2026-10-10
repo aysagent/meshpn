@@ -39,3 +39,21 @@ SSH connections; отдельная console/rescue и management policy обяз
 контрактом. `mutationAllowed` всегда `false`. Для работающей Radxa ожидаемы
 blockers существующего firewall, UP links и legacy VPN: они нужны для проектирования
 отдельной transient-интеграции, а не для автоматического удаления.
+
+## Сопоставление двух хостов
+
+Сохранённые stdout-отчёты (вместе с BEGIN/END либо как raw JSON) можно
+сопоставить локально:
+
+```bash
+node scripts/clean-vpn-native-physical-pair-plan.mjs \
+  --client=/root/native-trial/client-preflight.txt \
+  --exit=/root/native-trial/exit-preflight.txt
+```
+
+Планировщик требует отчёты не старше часа, сверяет endpoint/port/public name,
+TUN subnet, отсутствие пересечения LAN и tunnel, capability contract и hashes
+исходных config/site-profile. Он не выполняет команд и также всегда оставляет
+`mutationAllowed:false`. Совпадение межхостового PSK и цепочки сертификата
+этими отчётами намеренно не доказывается: это отдельный обязательный gate перед
+любой мутацией, без публикации secret bytes.
