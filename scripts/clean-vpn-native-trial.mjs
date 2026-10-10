@@ -6,7 +6,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { deriveTrialConfig, summarizeTrialProbe, hasUsbRescueConnection, requireTrial as check, runTrial } from './lib/native-radxa-trial.mjs';
+import { deriveTrialConfig, deriveComboTrialConfig, parseComboTrialProfile, summarizeTrialProbe,
+  hasUsbRescueConnection, requireTrial as check, runTrial } from './lib/native-radxa-trial.mjs';
 import { inspectBlockedTrialIpv6, validateReleasedTrialIpv6 } from './lib/native-trial-ipv6.mjs';
 import { trialServiceFingerprint } from './lib/native-trial-service.mjs';
 import { trialDiagnostics } from './lib/native-trial-diagnostics.mjs';
@@ -17,6 +18,9 @@ import { faultUnit, faultUnitArgs } from './clean-vpn-native-usb-uplink.mjs';
 import { startCrashCapture, exerciseCrashPeer, recoverCrashNetwork } from './lib/native-trial-crash.mjs';
 import { openHostRoutes } from './lib/vpn-host-routes.mjs';
 import { openTunnelDnsJournal } from './lib/dns-tunnel-journal.mjs';
+import { openNativeComboRedirectJournal } from './lib/native-combo-redirect-journal.mjs';
+import { nativeComboRedirectPlan } from './lib/native-combo-redirect-plan.mjs';
+import { nativeUsbRedirectConfig } from './lib/native-usb-control.mjs';
 import { benchmarkPhases, sampleTrialCpu } from './lib/native-trial-benchmark.mjs';
 
 const SELF = fileURLToPath(import.meta.url), ROOT = path.dirname(path.dirname(SELF));
@@ -81,11 +85,16 @@ async function snatReady() {
   const report = JSON.parse(await run(process.execPath, ['/usr/local/bin/clean-vpn-usb-snat.mjs', '--status'], 90000));
   check(report.status === 'ready' && report.mss?.present === 2, 'snat_mss_not_ready');
 }
-async function auditReleased() {
+async function auditReleased(combo = false) {
   const h = JSON.parse(await node('clean-vpn-host-recover.mjs', [], 90000));
   check(h.stage === 'released' && h.routes === 0 && h.rpFilterPending === false, 'host_journal_not_released');
   const d = JSON.parse(await node('clean-vpn-dns-recover.mjs', [], 90000));
   check(d.stage === 'released' && d.operations === 0 && d.hold === 0, 'dns_journal_not_released');
+  if (combo) {
+    const redirect = openNativeComboRedirectJournal();
+    try { redirect.assertAvailable(); check(!redirect.state || redirect.state.stage === 'released', 'redirect_journal_not_released'); }
+    finally { redirect.release(); }
+  }
 }
 async function probe() {
   const r = await command(process.execPath, [path.join(ROOT, 'scripts/clean-vpn-client-check.mjs'),
@@ -175,13 +184,23 @@ export function launchTrialNative(config, { spawnChild = spawn, readyMs = 45000,
   };
 }
 
-async function adapter(trialCrash = false) {
+function privateInputFile(file, limit) {
+  check(path.isAbsolute(file) && path.normalize(file) === file, 'absolute_private_input_required');
+  const stat = fs.lstatSync(file);
+  check(stat.isFile() && !stat.isSymbolicLink() && fs.realpathSync(file) === file
+    && stat.uid === 0 && (stat.mode & 0o077) === 0 && stat.size > 0 && stat.size <= limit, 'unsafe_private_input');
+  const bytes = fs.readFileSync(file); check(bytes.length === stat.size, 'short_private_input'); return bytes;
+}
+
+async function adapter(trialCrash = false, comboProfilePath = null) {
   let initialPid, config, scratch, fingerprint, buildLock, ipv6Evidence;
+  const combo = comboProfilePath !== null;
   const legacyFingerprint = () => trialServiceFingerprint({ run, root: ROOT });
   const requireOldInactive = async () => {
     check(await prop(OLD, 'ActiveState') === 'inactive' && await prop(OLD, 'MainPID') === '0', 'old_service_not_inactive');
   };
   return {
+    transport: combo ? 'combo-tls' : 'boring-tls',
     async preflight() {
       await hostRequired(); await verifyGuard(); await snatReady();
       if (trialCrash) await run('tcpdump', ['--version']);
@@ -218,7 +237,20 @@ async function adapter(trialCrash = false) {
       fs.writeFileSync(path.join(scratch, 'psk'), key, { mode: 0o600, flag: 'wx' }); key.fill(0);
       fs.writeFileSync(path.join(scratch, 'ca.pem'), ca, { mode: 0o600, flag: 'wx' });
       config = { ...config, secret_path: path.join(scratch, 'psk'), ca: path.join(scratch, 'ca.pem') };
+      if (combo) {
+        const profile = parseComboTrialProfile(JSON.parse(privateInputFile(comboProfilePath, 16384)));
+        const relay = privateInputFile(profile.relay_secret_path, 32);
+        check(relay.length === 32, 'invalid_relay_secret');
+        const packet = fs.readFileSync(path.join(scratch, 'psk'));
+        try { check(!relay.equals(packet), 'relay_secret_must_differ_from_packet_secret'); }
+        finally { packet.fill(0); }
+        fs.writeFileSync(path.join(scratch, 'relay.psk'), relay, { mode: 0o600, flag: 'wx' }); relay.fill(0);
+        config = deriveComboTrialConfig(config, { relaySecretPath: path.join(scratch, 'relay.psk'),
+          publicName: profile.public_name, listenPort: profile.listen_port, denyIpv4: profile.deny_ipv4 });
+        nativeComboRedirectPlan(nativeUsbRedirectConfig(config), 'ab'.repeat(12));
+      }
       fs.writeFileSync(path.join(scratch, 'client.json'), JSON.stringify(config), { mode: 0o600, flag: 'wx' });
+      await run(ENGINE, ['--check-config', path.join(scratch, 'client.json')], 15000);
       fingerprint = await legacyFingerprint();
     },
     async beforeStop() {
@@ -230,7 +262,7 @@ async function adapter(trialCrash = false) {
       }
     },
     async stopOld() { await run('systemctl', ['stop', OLD], 480000); await requireOldInactive(); },
-    auditReleased, requireNoTun, requireOldInactive, verifyGuard, probe,
+    auditReleased: () => auditReleased(combo), requireNoTun, requireOldInactive, verifyGuard, probe,
     async auditIpv6Released() {
       // Only call after old is stopped and no TUN exists: released journals
       // retain the old interface identity. Never use recovery --apply here.
@@ -255,7 +287,8 @@ async function adapter(trialCrash = false) {
     launch: () => launchTrialNative(path.join(scratch, 'client.json'), { trialCrash }),
     async recoverCrash(index) {
       await recoverCrashNetwork(index, { guard: verifyGuard, inactive: requireOldInactive,
-        openHost: openHostRoutes, openDns: openTunnelDnsJournal, removeTun: this.removeTun });
+        openHost: openHostRoutes, openDns: openTunnelDnsJournal,
+        ...(combo ? { openRedirect: openNativeComboRedirectJournal } : {}), removeTun: this.removeTun });
     },
     async hold(seconds, cancelled, session, report) {
       await probeNativeHold({ seconds, cancelled, session, report, probe: async timeout => {
@@ -282,7 +315,7 @@ async function adapter(trialCrash = false) {
       if (buildLock !== undefined) { fs.closeSync(buildLock); buildLock = undefined; }
       if (!scratch) return;
       // Exact files in our mkdtemp directory only; no recursive removal.
-      for (const name of ['client.json', 'psk', 'ca.pem']) {
+      for (const name of ['client.json', 'psk', 'ca.pem', ...(combo ? ['relay.psk'] : [])]) {
         try { fs.unlinkSync(path.join(scratch, name)); } catch (e) { if (e.code !== 'ENOENT') throw e; }
       }
       fs.rmdirSync(scratch);
@@ -335,7 +368,7 @@ export function uplinkFault(directory, { exec = run, commandResult = command, ge
   };
 }
 
-async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchmark = false) {
+async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchmark = false, comboProfile = null) {
   await hostRequired();
   check(path.dirname(directory) === REPORTS && /^run-[a-zA-Z0-9]+$/.test(path.basename(directory)), 'invalid_worker_directory');
   privateDirectory(REPORTS); privateDirectory(directory);
@@ -345,7 +378,7 @@ async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchm
   let cancelled = false;
   process.on('SIGTERM', () => { cancelled = true; });
   process.on('SIGINT', () => { cancelled = true; });
-  const io = await adapter(trialCrash);
+  const io = await adapter(trialCrash, comboProfile);
   if (peerIp) {
     const peer = createPeerChannel(directory, peerIp, { cancelled: () => cancelled });
     const benchmarkPhase = async (phase, target, session) => {
@@ -402,7 +435,7 @@ export async function main(args = process.argv.slice(2)) {
   if (args.length === 1 && args[0] === '--help') {
     console.log('Benchmark mode: --apply --usb-benchmark (Mac --benchmark coordinates three old/native/old cycles). Bounded synthetic upload/download, no fault injection.');
     console.log('Crash mode: --apply --usb-crash (coordinate from Mac with --crash). SIGKILL the owned native engine; keep wlan0 up; tcpdump selected IPv4 HTTPS; audited legacy rollback.');
-    console.log('Usage: node scripts/clean-vpn-native-trial.mjs --apply [--hold-seconds=0..300 | --usb-peer | --usb-crash | --usb-benchmark] | --report\nRun from authenticated USB rescue SSH :2222 as root, after build-clean-vpn-native.sh.\nTemporarily stops ONLY clean-vpn.service, tests native, audits cleanup and restores legacy.\nUSB modes are coordinated by clean-vpn-native-usb-check.mjs on Mac. --usb-peer: REAL wlan0 down/up with independent systemd restoration.\nTransient systemd unit survives SSH loss. No install/enable/firewall flush/reboot.\nWithout --usb-benchmark: real DNS/HTTPS and bounded downloads, not a speed benchmark.'); return;
+    console.log('Usage: node scripts/clean-vpn-native-trial.mjs --apply [--hold-seconds=0..300 | --usb-peer | --usb-crash | --usb-benchmark] [--combo-profile=/absolute/private.json] | --report\nRun from authenticated USB rescue SSH :2222 as root, after build-clean-vpn-native.sh.\nCombo requires a USB mode and a separate private relay key profile.\nTemporarily stops ONLY clean-vpn.service, tests native, audits cleanup and restores legacy.\nUSB modes are coordinated by clean-vpn-native-usb-check.mjs on Mac. --usb-peer: REAL wlan0 down/up with independent systemd restoration.\nTransient systemd unit survives SSH loss. No install/enable/firewall flush/reboot.\nWithout --usb-benchmark: real DNS/HTTPS and bounded downloads, not a speed benchmark.'); return;
   }
   await hostRequired();
   if (args.length === 2 && ['--peer-status', '--peer-result'].includes(args[0])) {
@@ -441,17 +474,26 @@ export async function main(args = process.argv.slice(2)) {
     }
     return;
   }
-  if (args[0] === '--worker' && [3, 4, 5].includes(args.length) && /^\d{1,3}$/.test(args[2]) && Number(args[2]) <= 300) {
-    check(!args[3] || /^192\.168\.7\.(?:[2-9]|[1-9]\d|1\d\d|2[0-4]\d|25[0-4])$/.test(args[3]), 'invalid_usb_peer');
-    check(args.length !== 5 || (args[3] && ['--crash', '--benchmark'].includes(args[4])), 'invalid_trial_mode');
-    return worker(args[1], Number(args[2]), args[3], args[4] === '--crash', args[4] === '--benchmark');
+  if (args[0] === '--worker' && args.length >= 3 && /^\d{1,3}$/.test(args[2]) && Number(args[2]) <= 300) {
+    const tail = args.slice(3); let peerIp, mode, comboProfile;
+    if (tail[0] && /^192\.168\.7\.(?:[2-9]|[1-9]\d|1\d\d|2[0-4]\d|25[0-4])$/.test(tail[0])) peerIp = tail.shift();
+    if (['--crash', '--benchmark'].includes(tail[0])) mode = tail.shift();
+    if (tail[0]?.startsWith('--combo-profile=')) comboProfile = tail.shift().slice('--combo-profile='.length);
+    check(tail.length === 0 && (!mode || peerIp) && (!comboProfile || peerIp), 'invalid_trial_worker_arguments');
+    return worker(args[1], Number(args[2]), peerIp, mode === '--crash', mode === '--benchmark', comboProfile ?? null);
   }
-  check(args[0] === '--apply' && args.length <= 2, 'use_apply_or_report_or_help');
-  const crash = args[1] === '--usb-crash';
-  const benchmark = args[1] === '--usb-benchmark';
-  const usb = args[1] === '--usb-peer' || crash || benchmark;
-  const match = args.length === 2 && !usb ? /^--hold-seconds=(\d{1,3})$/.exec(args[1]) : ['', '0'];
+  check(args[0] === '--apply', 'use_apply_or_report_or_help');
+  const options = args.slice(1), comboOptions = options.filter(value => value.startsWith('--combo-profile='));
+  check(comboOptions.length <= 1, 'duplicate_combo_profile');
+  const comboProfile = comboOptions[0]?.slice('--combo-profile='.length) ?? null;
+  const modes = options.filter(value => !value.startsWith('--combo-profile='));
+  check(modes.length <= 1, 'invalid_trial_options');
+  const crash = modes[0] === '--usb-crash';
+  const benchmark = modes[0] === '--usb-benchmark';
+  const usb = modes[0] === '--usb-peer' || crash || benchmark;
+  const match = modes.length === 1 && !usb ? /^--hold-seconds=(\d{1,3})$/.exec(modes[0]) : ['', '0'];
   check(match && Number(match[1]) <= 300, 'hold_seconds_must_be_0_to_300');
+  check(!comboProfile || usb, 'combo_profile_requires_usb_mode');
   const peerIp = await authenticatedUsb();
   const state = await prop(UNIT, 'ActiveState');
   check(!['active', 'activating', 'deactivating', 'reloading'].includes(state), 'trial_already_running');
@@ -461,7 +503,8 @@ export async function main(args = process.argv.slice(2)) {
     '--property=KillMode=mixed', '--property=TimeoutStopSec=600', '--property=RuntimeMaxSec=1500',
     '--property=StandardOutput=null', '--property=StandardError=null',
     `--working-directory=${ROOT}`, process.execPath, SELF, '--worker', dir, match[1], ...(usb ? [peerIp] : []),
-    ...(crash ? ['--crash'] : benchmark ? ['--benchmark'] : [])], 15000);
+    ...(crash ? ['--crash'] : benchmark ? ['--benchmark'] : []),
+    ...(comboProfile ? [`--combo-profile=${comboProfile}`] : [])], 15000);
   if (usb) console.log(`USB_TRIAL_ID=${path.basename(dir)}`);
   console.error('Trial started; survives SSH disconnect. Do not checkout/build/restart services during the trial.');
   console.error('After reconnect: node scripts/clean-vpn-native-trial.mjs --report');

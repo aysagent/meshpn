@@ -13,6 +13,7 @@ const markers = new Map([
   ['native-control: preparing protected USB profile', 'profile_preparing'],
   ['native-control: profile preflight complete', 'profile_preflight_complete'],
   ['native-control: engine spawned', 'engine_spawned'],
+  ['native-control: HTTPS redirect ready', 'https_redirect_ready'],
   ['native-control: owned routes ready', 'routes_ready'],
   ['native-control: DNS guard/routes ready', 'dns_guard_ready'],
   ['native-control: DNS active', 'dns_active'],

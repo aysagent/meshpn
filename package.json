@@ -12,6 +12,7 @@
     "test:ipfs-incident-collector": "node --test scripts/test-ipfs-incident-collector.mjs",
     "test:native-physical-preflight": "node --test scripts/test-native-physical-preflight.mjs",
     "test:native-physical-pair-plan": "node --test scripts/test-native-physical-pair-plan.mjs",
+    "test:native-combo-redirect": "node --test scripts/test-native-combo-redirect.mjs",
     "test:native-pair-certificates": "node --test scripts/test-native-pair-certificates.mjs",
     "test:native-sandbox-preflight": "node --test scripts/test-native-sandbox-preflight.mjs",
     "test:ingress-transport-real": "node --test scripts/test-ingress-transport-real.mjs",

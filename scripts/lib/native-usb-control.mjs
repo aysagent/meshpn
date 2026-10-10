@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { openHostRoutes } from './vpn-host-routes.mjs';
 import { openTunnelDnsJournal } from './dns-tunnel-journal.mjs';
 import { watchVpnUplink } from './vpn-uplink-watch.mjs';
+import { openNativeComboRedirectJournal } from './native-combo-redirect-journal.mjs';
 const run=(file,args)=>execFileSync(file,args,{encoding:'utf8',timeout:10000,maxBuffer:1024*1024});
 // The USB route/DNS owner is transport-agnostic. In combo mode it must use
 // the nested packet branch; the transparent branch owns only intercepted TLS
@@ -19,8 +20,16 @@ export function nativeUsbPacketConfig(config){
   assert.equal(config.boring?.sni,config.transparent?.public_name);
   return config.boring;
 }
-export function prepareNativeUsb(config){
-  assert.equal(process.getuid(),0);const packet=nativeUsbPacketConfig(config);
+export function nativeUsbRedirectConfig(config){
+  if(config.transport!=='combo-tls')return null;
+  nativeUsbPacketConfig(config);
+  assert.deepEqual(config.transparent.listen,{ipv4:'0.0.0.0',port:config.transparent.listen.port});
+  assert.equal(config.transparent.destination_policy?.mode,'public-https');
+  return {interface:'usb0',subnet:'192.168.7.0/24',endpoint:config.boring.address,
+    listen_port:config.transparent.listen.port,deny_ipv4:[...config.transparent.destination_policy.deny_ipv4]};
+}
+export function prepareNativeUsb(config,{openRedirect=openNativeComboRedirectJournal}={}){
+  assert.equal(process.getuid(),0);const packet=nativeUsbPacketConfig(config),redirectConfig=nativeUsbRedirectConfig(config);
   assert.equal(packet.role,'client');assert.equal(packet.tun,'tun0');
   assert.equal(packet.address,'154.62.226.216');assert.equal(packet.dns,true);
   assert.equal(packet.peer_ipv4??'10.99.0.2','10.99.0.2','fixed USB route/DNS profile requires peer 10.99.0.2');
@@ -32,12 +41,13 @@ export function prepareNativeUsb(config){
   assert.ok(tun?.flags.includes('UP')&&tun.mtu===1400&&tun.addr_info.some(a=>a.local==='10.99.0.2'));
   const defaults=JSON.parse(run('ip',['-j','-4','route','show','default']));
   assert.equal(defaults.length,1);const {dev,gateway}=defaults[0];assert.equal(dev,'wlan0');assert.ok(gateway);
-  const host=openHostRoutes();let dns,watch,active=false,prepared=false,closed=false,faulted=false;
+  const host=openHostRoutes();let dns,redirect,watch,active=false,prepared=false,closed=false,faulted=false;
   try{
     host.assertAvailable();dns=openTunnelDnsJournal();
     dns.prepareRestart({lanSubnet:'192.168.7.0/24',lanInterface:'usb0'});
+    if(redirectConfig){redirect=openRedirect();redirect.assertAvailable();}
     host.begin('tun0');host.relaxRpFilter();
-  }catch(e){dns?.release();host.release();throw e;}
+  }catch(e){redirect?.release();dns?.release();host.release();throw e;}
   return {
     attach(engine){
       engine.on('status',status=>{
@@ -47,6 +57,9 @@ export function prepareNativeUsb(config){
           // Before that, persistent TUN routes carry linkdown and cannot pass
           // the existing strict ownership audit. No audit is weakened here.
           if(!prepared){
+            // The listener exists at this point. The journal installs its
+            // PREROUTING activation last, after all fail-closed guard rules.
+            if(redirectConfig){redirect.install(redirectConfig);console.error('native-control: HTTPS redirect ready');}
             host.add(packet.address+'/32',dev,gateway);
             for(const destination of ['10.0.0.0/8','172.16.0.0/12','192.168.0.0/16'])host.add(destination,dev,gateway);
             for(const destination of ['0.0.0.0/1','128.0.0.0/1'])host.add(destination,'tun0');
@@ -66,7 +79,9 @@ export function prepareNativeUsb(config){
       if(closed)return;closed=true;watch?.stop();
       // Only explicit graceful shutdown restores OWNED routes/DNS, while the
       // independent cvks4 guard and USB admin interface stay in place.
-      try{if(restore){dns.restore();host.restore();}}finally{dns.release();host.release();}
+      // Keep HTTPS fail-closed until packet routes have been removed.
+      try{if(restore){dns.restore();host.restore();redirect?.restore();}}
+      finally{redirect?.release();dns.release();host.release();}
     }
   };
 }

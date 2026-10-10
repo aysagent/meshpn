@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { deriveTrialConfig, deriveComboTrialConfig, summarizeTrialProbe, hasUsbRescueConnection, runTrial } from './lib/native-radxa-trial.mjs';
+import { deriveTrialConfig, deriveComboTrialConfig, parseComboTrialProfile,
+  summarizeTrialProbe, hasUsbRescueConnection, runTrial } from './lib/native-radxa-trial.mjs';
 import { launchTrialNative } from './clean-vpn-native-trial.mjs';
 import { nativeUsbPacketConfig } from './lib/native-usb-control.mjs';
 
@@ -37,7 +38,7 @@ test('rescue matcher requires exact same-row endpoint tuple and rejects foreign 
 });
 test('real bound-device TCP socket produces %usb0 and matches rescue tuple in isolated netns', t => {
   if (process.platform !== 'linux') return t.skip('Linux network namespace required');
-  const available = spawnSync('unshare', ['--user', '--map-root-user', '--net', 'true'], { timeout: 5000 });
+  const available = spawnSync('unshare', ['--user', '--map-root-user', '--net', 'ip', 'link', 'set', 'lo', 'up'], { timeout: 5000 });
   if (available.status !== 0) return t.skip('unprivileged network namespaces unavailable');
   for (const file of ['ip', 'ss', 'python3']) {
     if (spawnSync(file, [file === 'ip' ? '-Version' : '--version'], { timeout: 5000 }).status !== 0)
@@ -102,6 +103,13 @@ test('direct combo trial refuses shared key/path and listener collisions', () =>
     { relaySecretPath: root + '/certs/relay.key', publicName: 'www.google.com', listenPort: 1053 },
     { relaySecretPath: 'relative.key', publicName: 'www.google.com' },
   ]) assert.throws(() => deriveComboTrialConfig(packet, options));
+});
+test('combo trial profile is strict, private-path-ready data only', () => {
+  const profile = { version: 1, public_name: 'www.google.com', relay_secret_path: '/root/native/relay.psk',
+    listen_port: 33002, deny_ipv4: ['203.0.113.0/24'] };
+  assert.deepEqual(parseComboTrialProfile(profile), profile);
+  for (const patch of [{ public_name: 'WWW.Google.com' }, { relay_secret_path: 'relative' }, { extra: true },
+    { listen_port: 1053 }, { deny_ipv4: null }]) assert.throws(() => parseComboTrialProfile({ ...profile, ...patch }));
 });
 for (const args of [['--dns-mode=off'], ['--dns-state-dir=/run/custom'], ['--dns-server=8.8.8.8'],
   ['--http-vers=1.1'], ['--ipv6=auto'], ['--from-tun=wg0'], ['--role=exit'], ['--type=combo-tls'],

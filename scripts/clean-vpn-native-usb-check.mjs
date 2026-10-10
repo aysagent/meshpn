@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { isIPv4, isIPv6 } from 'node:net';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { randomBytes } from 'node:crypto';
 
@@ -191,14 +191,17 @@ export function summarizeBenchmarks(reports) {
 export async function main(args = process.argv.slice(2)) {
   if (args.length === 1 && args[0] === '--help') {
     console.log('--benchmark: three legacy/native/legacy cycles, four HTTPS streams, synthetic upload, <=340 MiB total application data. No uplink/crash fault. Not Ookla.');
-    console.log('Usage on Mac: node clean-vpn-native-usb-check.mjs --interface=en9 [--crash | --benchmark]\nDefault: real wlan0 down/up on Radxa. --crash: SIGKILL native engine, keep uplink up, capture selected IPv4 HTTPS egress; requires tcpdump on Radxa.\nUSB rescue SSH :2222 remains available. Requires Node 18+, ssh, curl, dig and a current built Radxa checkout at /root/dev/meshpn.\nNo Mac settings change. Without --benchmark: up to seven 1 MiB downloads; functional checks, not a speed benchmark. No mode is comprehensive leak acceptance.'); return;
+    console.log('Usage on Mac: node clean-vpn-native-usb-check.mjs --interface=en9 [--crash | --benchmark] [--combo-profile=/absolute/path/on/radxa.json]\nDefault: real wlan0 down/up on Radxa. --crash: SIGKILL native engine, keep uplink up, capture selected IPv4 HTTPS egress; requires tcpdump on Radxa.\nCombo profile path is evaluated on Radxa and must be a root-owned private file.\nUSB rescue SSH :2222 remains available. Requires Node 18+, ssh, curl, dig and a current built Radxa checkout at /root/dev/meshpn.\nNo Mac settings change. Without --benchmark: up to seven 1 MiB downloads; functional checks, not a speed benchmark. No mode is comprehensive leak acceptance.'); return;
   }
   console.log('[usb-check] Проверяю окружение Mac и USB-интерфейс');
   check(process.platform === 'darwin', 'run_on_mac');
-  const crash = args.length === 2 && args[1] === '--crash';
-  const benchmark = args.length === 2 && args[1] === '--benchmark';
-  check((args.length === 1 || crash || benchmark) && /^--interface=[a-zA-Z0-9]{1,15}$/.test(args[0]), 'specify_usb_interface');
-  const iface = args[0].split('=')[1];
+  const interfaceArgs = args.filter(value => /^--interface=[a-zA-Z0-9]{1,15}$/.test(value));
+  const modeArgs = args.filter(value => ['--crash', '--benchmark'].includes(value));
+  const comboArgs = args.filter(value => value.startsWith('--combo-profile='));
+  check(interfaceArgs.length === 1 && modeArgs.length <= 1 && comboArgs.length <= 1
+    && interfaceArgs.length + modeArgs.length + comboArgs.length === args.length, 'invalid_usb_check_options');
+  const crash = modeArgs[0] === '--crash', benchmark = modeArgs[0] === '--benchmark';
+  const comboProfile = comboArgs[0] ?? null, iface = interfaceArgs[0].split('=')[1];
   const addresses = (os.networkInterfaces()[iface] ?? []).filter(a => a.family === 'IPv4'
     && /^192\.168\.7\./.test(a.address) && !['0', '1', '255'].includes(a.address.split('.')[3]));
   check(addresses.length === 1, 'usb_ipv4_required');
@@ -250,7 +253,8 @@ export async function main(args = process.argv.slice(2)) {
       }
       if (benchmark) console.log(`[usb-check] цикл ${cycle + 1}/3`);
       let runId, finished;
-      const job = ssh(cmd(['--apply', benchmark ? '--usb-benchmark' : crash ? '--usb-crash' : '--usb-peer']), { timeout: 1600000, onOutput: out => {
+      const job = ssh(cmd(['--apply', benchmark ? '--usb-benchmark' : crash ? '--usb-crash' : '--usb-peer',
+        ...(comboProfile ? [comboProfile] : [])]), { timeout: 1600000, onOutput: out => {
         const match = /^USB_TRIAL_ID=(run-[a-zA-Z0-9]+)$/m.exec(out); if (match) runId = match[1];
       } }).then(r => { finished = r; return r; });
       const seen = new Set();
@@ -305,8 +309,11 @@ export async function main(args = process.argv.slice(2)) {
     fs.rmdirSync(dir);
   }
 }
-// Node resolves the entry module's symlinks, but argv retains the supplied
-// path. On macOS /tmp is a symlink to /private/tmp.
-if (process.argv[1] && (import.meta.url === pathToFileURL(process.argv[1]).href
-    || import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href))
+// Compare file identity as well as URLs: Node may resolve a path through a
+// platform/container mount alias which realpath does not spell identically.
+const entryFile = process.argv[1] && (() => { try {
+  const entry = fs.statSync(process.argv[1]), self = fs.statSync(fileURLToPath(import.meta.url));
+  return entry.dev === self.dev && entry.ino === self.ino;
+} catch { return false; } })();
+if (entryFile)
   main().catch(e => { console.error(JSON.stringify({ status: 'failed', code: /^[a-z0-9_]+$/.test(e.message) ? e.message : 'usb_check_failed' })); process.exitCode = 1; });

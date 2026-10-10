@@ -88,8 +88,22 @@ for (const failure of [null, 'guard', 'inactive', 'identity', 'remove', 'host-au
   });
 }
 
+test('combo crash recovery retains redirect until packet routes are restored', async () => {
+  const calls = [], event = name => calls.push(name);
+  const host = { state: { tun: 'tun0', links: { tun0: { ifindex: 17 } } }, audit: () => event('host-audit'),
+    restore: () => event('host-restore'), release: () => event('host-release') };
+  const dns = { state: { config: { tun: 'tun0' }, links: { tun0: { ifindex: 17 } } },
+    restore: options => event(options?.apply === false ? 'dns-audit' : 'dns-restore'), release: () => event('dns-release') };
+  const redirect = { state: { stage: 'active', config: { interface: 'usb0' } }, audit: () => event('redirect-audit'),
+    restore: () => event('redirect-restore'), release: () => event('redirect-release') };
+  await recoverCrashNetwork(17, { guard: () => event('guard'), inactive: () => event('inactive'), openHost: () => host,
+    openDns: () => dns, openRedirect: () => redirect, removeTun: () => event('remove-tun') });
+  assert.deepEqual(calls, ['guard', 'inactive', 'redirect-audit', 'remove-tun', 'host-audit', 'dns-audit',
+    'dns-restore', 'host-restore', 'redirect-restore', 'guard', 'redirect-release', 'dns-release', 'host-release']);
+});
+
 test('real tcpdump parses outbound packets in isolated user/net namespace, no host networking', { timeout: 15000 }, t => {
-  if (spawnSync('unshare', ['-Urn', 'true']).status !== 0) return t.skip('unprivileged netns unavailable');
+  if (spawnSync('unshare', ['-Urn', 'ip', 'link', 'set', 'lo', 'up']).status !== 0) return t.skip('unprivileged netns unavailable');
   const url = new URL('./lib/native-trial-crash.mjs', import.meta.url).href;
   const result = spawnSync('unshare', ['-Urn', process.execPath, '--input-type=module', '-e', `
     import { execFileSync, spawn } from 'node:child_process';
@@ -112,7 +126,7 @@ test('real tcpdump parses outbound packets in isolated user/net namespace, no ho
 });
 
 test('real host route journal recovery in netns preserves independent guard (DNS adapter fixture)', { timeout: 60000 }, t => {
-  if (spawnSync('unshare', ['-Urn', 'true']).status !== 0) return t.skip('unprivileged netns unavailable');
+  if (spawnSync('unshare', ['-Urn', 'ip', 'link', 'set', 'lo', 'up']).status !== 0) return t.skip('unprivileged netns unavailable');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-crash-journals-'));
   t.after(() => fs.rmSync(dir, { recursive: true }));
   const result = spawnSync('unshare', ['-Urn', process.execPath, '--input-type=module', '-e', `

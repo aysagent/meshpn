@@ -93,17 +93,22 @@ export async function exerciseCrashPeer(peer, session, report, io) {
 // Both journals must belong to this trial's TUN; no blind generic recovery.
 export async function recoverCrashNetwork(index, io) {
   await io.guard(); await io.inactive();
-  const host = io.openHost(); let dns;
+  const host = io.openHost(); let dns, redirect;
   try {
-    dns = io.openDns();
+    dns = io.openDns(); redirect = io.openRedirect?.();
     check(host.state?.tun === 'tun0' && host.state.links?.tun0?.ifindex === index
       && dns.state?.config?.tun === 'tun0' && dns.state.links?.tun0?.ifindex === index,
     'crash_journal_identity_changed');
+    if (redirect) {
+      check(redirect.state?.stage !== 'released'
+        && redirect.state?.config?.interface === 'usb0', 'crash_redirect_identity_changed');
+      redirect.audit();
+    }
     await io.removeTun(index);
     // Host audit deliberately rejects linkdown routes. Removing only the
     // trial's unused persistent TUN lets the unchanged audit run normally.
     host.audit(); dns.restore({ apply: false });
-    dns.restore(); host.restore();
+    dns.restore(); host.restore(); redirect?.restore();
     await io.guard();
-  } finally { dns?.release(); host.release(); }
+  } finally { redirect?.release(); dns?.release(); host.release(); }
 }

@@ -99,10 +99,30 @@ export function deriveComboTrialConfig(packet, { relaySecretPath, publicName, li
       destination_policy: { mode: 'public-https', deny_ipv4: [...denyIpv4] } } };
 }
 
+export function parseComboTrialProfile(value) {
+  requireTrial(value && typeof value === 'object' && !Array.isArray(value), 'invalid_combo_profile');
+  requireTrial(JSON.stringify(Object.keys(value).sort()) === JSON.stringify(
+    ['deny_ipv4', 'listen_port', 'public_name', 'relay_secret_path', 'version'].sort()), 'invalid_combo_profile_fields');
+  requireTrial(value.version === 1, 'invalid_combo_profile_version');
+  requireTrial(typeof value.relay_secret_path === 'string' && path.isAbsolute(value.relay_secret_path)
+    && path.normalize(value.relay_secret_path) === value.relay_secret_path, 'invalid_relay_secret_path');
+  requireTrial(typeof value.public_name === 'string' && value.public_name === value.public_name.toLowerCase(),
+    'lowercase_public_name_required');
+  requireTrial(Array.isArray(value.deny_ipv4), 'invalid_combo_deny_list');
+  // Reuse the composition contract here; native --check-config and the
+  // redirect compiler perform the full policy validation before service stop.
+  deriveComboTrialConfig({ version: 1, role: 'client', tun: 'tun0', dns: true,
+    address: '154.62.226.216', port: 443, secret_path: '/packet-secret' }, {
+    relaySecretPath: value.relay_secret_path, publicName: value.public_name,
+    listenPort: value.listen_port, denyIpv4: value.deny_ipv4 });
+  return structuredClone(value);
+}
+
 // Injectable lifecycle: failures after stop never blindly start another client
 // on top of an unaudited native TUN/journal. The guard is NEVER released here.
 export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, progress = () => {} } = {}) {
   const report = { schema: 1, kind: 'clean-vpn-native-radxa-trial', status: 'running',
+    transport: io.transport ?? 'boring-tls',
     stage: 'preflight', checks: {}, rollback: 'not-needed', guard: 'not-checked',
     limitations: ['host-smoke-not-usb-peer-acceptance', 'not-speedtest-or-throughput-benchmark',
       'not-a-leak-or-crash-test', 'native-client-only-existing-exit', 'no-browser-profile-fidelity'] };
