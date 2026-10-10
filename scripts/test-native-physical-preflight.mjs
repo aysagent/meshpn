@@ -14,12 +14,13 @@ function fixture(t, role = 'client') {
   const engine = Buffer.alloc(64); engine.set([0x7f, 0x45, 0x4c, 0x46, 2, 1]); engine.writeUInt16LE(process.arch === 'arm64' ? 183 : 62, 18);
   fs.writeFileSync(binary, engine, { mode: 0o700 });
   for (const name of ['boring.psk', 'relay.psk']) fs.writeFileSync(dir + '/' + name, Buffer.alloc(32, name === 'boring.psk' ? 1 : 2), { mode: 0o600 });
-  for (const name of ['cert.pem', 'key.pem']) fs.writeFileSync(dir + '/' + name, name, { mode: 0o600 });
+  fs.copyFileSync(new URL('./fixtures/boring-tls-local.cert.pem', import.meta.url), dir + '/cert.pem'); fs.chmodSync(dir + '/cert.pem', 0o600);
+  fs.writeFileSync(dir + '/key.pem', 'test-private-key-placeholder', { mode: 0o600 });
   const profile = { version: 1, transport: 'combo-tls', role, tun: 'tun9', tun_address: role === 'client' ? '10.99.0.2/32' : '10.99.0.1/24',
     mtu: 1400, uplink: 'wan0', endpoint: '198.51.100.10', port: 443, listen_port: role === 'client' ? 2443 : 443,
     lan: role === 'client' ? { interface: 'lan0', subnet: '192.168.7.0/24' } : null, deny_ipv4: [] };
   const boring = { version: 1, role, tun: 'tun9', address: profile.endpoint, port: 443,
-    ...(role === 'client' ? { secret_path: dir + '/boring.psk', ca: dir + '/cert.pem', server_name: 'vpn.example', sni: 'cover.example', dns: true } :
+    ...(role === 'client' ? { secret_path: dir + '/boring.psk', ca: dir + '/cert.pem', server_name: 'localhost', sni: 'cover.example', dns: true } :
       { cert: dir + '/cert.pem', key: dir + '/key.pem', peers: [{ ipv4: '10.99.0.2', secret_path: dir + '/boring.psk' }] }) };
   const transparent = { version: 1, transport: 'transparent-tls', role, public_name: 'cover.example', secret_path: dir + '/relay.psk',
     destination_policy: { mode: 'public-https', deny_ipv4: [] }, listen: { ipv4: role === 'client' ? '0.0.0.0' : profile.endpoint, port: profile.listen_port },
@@ -67,6 +68,7 @@ for (const role of ['client', 'exit']) test(`valid ${role} fixture produces exac
   assert.equal(report.systemSettingsChanged, false); assert.equal(report.networkProbesSent, 0); assert.equal(report.installationAttempted, false);
   assert.equal(report.engine.architectureMatchesHost, true); assert.equal(report.offlineInstallDryRun.status, 'eligible');
   assert.equal(report.pairProof, null);
+  assert.equal(report.pairCertificates.certificates.length, 1);
   assert.equal(report.plan.units.length, role === 'client' ? 5 : 4); assert.match(report.plan.network.ipv4, /\*filter/);
   assert.ok(!JSON.stringify(report).includes('boring.psk')); assert.ok(!JSON.stringify(report).includes('relay.psk'));
   for (const [file, args] of f.calls) {

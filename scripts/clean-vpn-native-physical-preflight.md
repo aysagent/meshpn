@@ -19,7 +19,8 @@ sudo node scripts/clean-vpn-native-physical-preflight.mjs \
 Отчёт содержит:
 
 - SHA-256, права, timestamps и ELF architecture бинарника;
-- hashes config/site-profile без key/certificate bytes и без raw config;
+- hashes config/site-profile без private-key/PSK bytes и без raw config;
+- публичные сертификаты CA/exit в DER для офлайн-проверки trust chain и имени;
 - capability и offline `installNative(... apply:false)` verdict;
 - точные будущие systemd units и firewall/TUN plan;
 - интерфейсы, адреса, маршруты, listeners, forwarding и hashes текущих tables;
@@ -39,7 +40,7 @@ openssl rand -hex 32
 попадают раздельные HMAC proof для boring packet PSK и transparent relay PSK,
 но не ключи и не их обычные hashes. Challenge должна быть новой для каждого
 сопоставления; ключи обязаны быть случайными 32-байтными значениями. Этот proof
-не проверяет сертификатную цепочку и имя сервера.
+не заменяет отдельную проверку сертификатной цепочки и имени сервера.
 
 Текущий site profile имеет строгий fresh dedicated-host контракт: управляемые
 tables пусты, forwarding выключен, TUN отсутствует, uplink/LAN подготовлены
@@ -67,6 +68,7 @@ node scripts/clean-vpn-native-physical-pair-plan.mjs \
 TUN subnet, отсутствие пересечения LAN и tunnel, capability contract и hashes
 исходных config/site-profile. Он не выполняет команд и также всегда оставляет
 `mutationAllowed:false`. При одинаковой одноразовой challenge сопоставление
-также проверяет оба PSK. Без challenge PSK остаётся открытым gate. Цепочка
-сертификата и имя сервера в обоих случаях остаются отдельным обязательным gate
-перед любой мутацией.
+также проверяет оба PSK. Без challenge PSK остаётся открытым gate. Публичный
+exit certificate chain проверяется по имени/срокам/подписям до CA из клиентского
+config; private key в отчёт не попадает. Успех этих проверок всё равно не
+разрешает мутацию хоста.

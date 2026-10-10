@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { verifyCertificatePair } from './native-pair-certificates.mjs';
 
 const pathPattern = /^\/[A-Za-z0-9_./-]+$/;
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -128,17 +129,29 @@ export function composeNativePhysicalPair(client, exit, { now = Date.now(), maxA
     else pskProof = 'matched-one-use-challenge';
   }
   if (pskProof !== 'matched-one-use-challenge') warnings.add('cross-host-psk-equivalence-not-proven-by-preflight');
-  warnings.add('exit-certificate-chain-and-name-pair-not-proven-by-preflight');
+  let certificateProof = 'not-provided';
+  if (client.pairCertificates || exit.pairCertificates) {
+    if (client.pairCertificates?.role !== 'client' || exit.pairCertificates?.role !== 'exit'
+        || client.pairCertificates.serverName !== client.engine?.serverName) issues.add('cross-host-certificate-evidence-mismatch');
+    else {
+      const verification = verifyCertificatePair({ serverName: client.pairCertificates.serverName,
+        exitChain: exit.pairCertificates.certificates, clientTrust: client.pairCertificates.certificates, now });
+      if (verification.status !== 'verified') issues.add('cross-host-certificate-verification-failed');
+      else certificateProof = 'verified-name-validity-and-trust-chain';
+    }
+  }
+  if (certificateProof !== 'verified-name-validity-and-trust-chain') warnings.add('exit-certificate-chain-and-name-pair-not-proven-by-preflight');
   warnings.add('provider-firewall-console-and-management-reachability-remain-unverified');
   const status = issues.size ? 'blocked' : 'ready-for-human-approved-transient-design';
   return { status, observedIssues: [...issues], warnings: [...warnings], mutationAllowed: false,
     pair: { endpoint: client.site?.endpoint ?? null, port: client.site?.port ?? null,
       publicName: client.engine?.publicName ?? null, clientTun: client.site?.tunAddress ?? null,
       exitTun: exit.site?.tunAddress ?? null, clientLan: client.site?.lan?.subnet ?? null,
-      clientInstance: client.request?.name ?? null, exitInstance: exit.request?.name ?? null, pskProof },
+      clientInstance: client.request?.name ?? null, exitInstance: exit.request?.name ?? null, pskProof, certificateProof },
     requiredProofsBeforeMutation: ['independent-console-or-rescue-on-both-hosts', 'provider-firewall-reviewed',
       'management-reachability-policy-reviewed', ...(pskProof === 'matched-one-use-challenge' ? [] : ['cross-host-psk-equivalence-proved-without-disclosing-secret']),
-      'exit-certificate-chain-and-name-pair-proved', 'bounded-timeout-and-independent-rollback-owner',
+      ...(certificateProof === 'verified-name-validity-and-trust-chain' ? [] : ['exit-certificate-chain-and-name-pair-proved']),
+      'bounded-timeout-and-independent-rollback-owner',
       'fresh-preflight-immediately-before-trial', 'independent-egress-capture-approved'],
     next: issues.size ? 'repair-or-recollect-preflights; do-not-build-or-run-a-trial' : 'design-separate-transient-lifecycle; this-plan-does-not-authorize-mutation' };
 }

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { collectNativePhysicalPairPlan, composeNativePhysicalPair, parseNativePhysicalPairArgs } from './lib/native-physical-pair-plan.mjs';
+import { certificateEvidence } from './lib/native-pair-certificates.mjs';
 
 const NOW = Date.parse('2026-10-11T12:00:00.000Z');
 function report(role) {
@@ -12,7 +13,7 @@ function report(role) {
     status: 'ready-for-reviewed-trial-plan', observedIssues: [], warnings: [], mutationAllowed: false,
     systemSettingsChanged: false, networkProbesSent: 0, installationAttempted: false, aborted: false,
     request: { role, name: `trial-${role}` }, evidence: { config: { sha256: config }, siteProfile: { sha256: siteProfile }, binary: { sha256: `${role}-binary` } },
-    engine: { role, transport: 'combo-tls', publicName: 'cover.example', architectureMatchesHost: true,
+    engine: { role, transport: 'combo-tls', publicName: 'cover.example', serverName: role === 'client' ? 'vpn.example' : null, architectureMatchesHost: true,
       capabilitiesStatus: 'ok', configCheck: 'ok', capability: { engine: 'clean-vpn-native-m1', packet_ipc: false,
         service_mode: true, dns_socket_mark: '0x43564e', combo: { single_exit_listener: true, packet_ipc: false, site_provisioning: true } } },
     offlineInstallDryRun: { status: 'eligible' },
@@ -33,7 +34,7 @@ test('matching fresh pair reaches design gate but never mutation authority', () 
   assert.equal(result.mutationAllowed, false);
   assert.deepEqual(result.pair, { endpoint: '198.51.100.10', port: 443, publicName: 'cover.example',
     clientTun: '10.99.0.2/32', exitTun: '10.99.0.1/24', clientLan: '192.168.7.0/24',
-    clientInstance: 'trial-client', exitInstance: 'trial-exit', pskProof: 'not-provided' });
+    clientInstance: 'trial-client', exitInstance: 'trial-exit', pskProof: 'not-provided', certificateProof: 'not-provided' });
   assert.ok(result.warnings.includes('cross-host-psk-equivalence-not-proven-by-preflight'));
 });
 
@@ -53,6 +54,18 @@ test('partial or mismatched proof blocks the pair', () => {
   exit.pairProof = { version: 1, challenge, boring: [{ peerIpv4: '10.99.0.2', value: 'ef'.repeat(32) }], relay: 'cd'.repeat(32) };
   const result = composeNativePhysicalPair(client, exit, { now: NOW });
   assert.equal(result.status, 'blocked'); assert.ok(result.observedIssues.includes('cross-host-psk-proof-mismatch'));
+});
+
+test('public exit chain verifies against the client trust bundle and configured name', () => {
+  const certificates = certificateEvidence(fs.readFileSync(new URL('./fixtures/boring-tls-local.cert.pem', import.meta.url)));
+  const client = report('client'), exit = report('exit');
+  client.engine.serverName = 'localhost';
+  client.pairCertificates = { role: 'client', serverName: 'localhost', certificates };
+  exit.pairCertificates = { role: 'exit', serverName: null, certificates };
+  const result = composeNativePhysicalPair(client, exit, { now: NOW });
+  assert.equal(result.status, 'ready-for-human-approved-transient-design');
+  assert.equal(result.pair.certificateProof, 'verified-name-validity-and-trust-chain');
+  assert.ok(!result.requiredProofsBeforeMutation.includes('exit-certificate-chain-and-name-pair-proved'));
 });
 
 for (const [name, mutate, issue] of [

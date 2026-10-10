@@ -10,6 +10,7 @@ import { DIAGNOSTIC_ENV } from './dns-diagnostic.mjs';
 import { nativeNetworkPlan, assertEmptyNativeTables } from './native-network-profile.mjs';
 import { nativeSitePlan } from './native-site-plan.mjs';
 import { installNative } from './native-install.mjs';
+import { certificateEvidence } from './native-pair-certificates.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -77,6 +78,12 @@ function pairProof(io, config, profile, challenge) {
     : peers.map(item => ({ peerIpv4: item.ipv4,
       value: secretProof(io, item.secret_path, context(`boring:${item.ipv4}`)) }));
   return { version: 1, challenge, boring, relay: secretProof(io, config.transparent.secret_path, context('relay')) };
+}
+function pairCertificates(io, config) {
+  const source = config.role === 'client' ? config.boring.ca : config.boring.cert;
+  const data = metadata(io, source, { limit: 1024 * 1024 });
+  return { role: config.role, serverName: config.role === 'client' ? config.boring.server_name : null,
+    source: data.evidence, certificates: certificateEvidence(data.bytes) };
 }
 function commandStatus(result) {
   return { status: result?.code === 0 && !result?.reason && !result?.signal ? 'ok' : 'failed',
@@ -223,10 +230,12 @@ export async function collectNativePhysicalPreflight(options, {
     const report = { schema: 1, kind: 'clean-vpn-native-physical-preflight', timestamp: new Date().toISOString(),
       mode: 'read-only-offline-plan', systemSettingsChanged: false, networkProbesSent: 0, installationAttempted: false,
       request: { role: options.role, name: options.name }, runtime, tools, aborted: controller.signal.aborted,
-      privacy: 'Contains IPs, interface names, unit contents and source paths; no key/certificate bytes, environment, packet payload or raw config.',
+      privacy: 'Contains IPs, interface names, unit contents, source paths and public certificate DER; no private-key/PSK bytes, environment, packet payload or raw config.',
       evidence: { binary: binary.evidence, config: configFile.evidence, siteProfile: siteFile.evidence },
       pairProof: pairProof(io, engineConfig, siteInput.profile, options.pairChallenge),
+      pairCertificates: pairCertificates(io, engineConfig),
       engine: { role: engineConfig.role, transport: engineConfig.transport, publicName: engineConfig.transparent?.public_name ?? null,
+        serverName: engineConfig.boring?.server_name ?? null,
         peerCount: engineConfig.boring?.peers?.length ?? (engineConfig.boring?.secret_path ? 1 : 0), elfMachine: machine,
         hostElfMachine: expected, architectureMatchesHost: machine !== null && expected !== null && machine === expected,
         capabilitiesStatus: commandStatus(capabilityResult).status, configCheck: commandStatus(checkResult).status,
