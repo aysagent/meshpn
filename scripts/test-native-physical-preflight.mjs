@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseNativePhysicalPreflightArgs, collectNativePhysicalPreflight, assessNativePhysicalPreflight } from './lib/native-physical-preflight.mjs';
+import { composeNativePhysicalPair } from './lib/native-physical-pair-plan.mjs';
 
 const empty = table => `*${table}\n${table === 'filter' ? ':INPUT ACCEPT [0:0]\n:FORWARD ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n' : ':PREROUTING ACCEPT [0:0]\n:INPUT ACCEPT [0:0]\n:OUTPUT ACCEPT [0:0]\n:POSTROUTING ACCEPT [0:0]\n'}COMMIT\n`;
 function fixture(t, role = 'client') {
@@ -12,7 +13,8 @@ function fixture(t, role = 'client') {
   const binary = dir + '/engine', config = dir + '/config.json', siteProfile = dir + '/site.json';
   const engine = Buffer.alloc(64); engine.set([0x7f, 0x45, 0x4c, 0x46, 2, 1]); engine.writeUInt16LE(process.arch === 'arm64' ? 183 : 62, 18);
   fs.writeFileSync(binary, engine, { mode: 0o700 });
-  for (const name of ['boring.psk', 'relay.psk', 'cert.pem', 'key.pem']) fs.writeFileSync(dir + '/' + name, name, { mode: 0o600 });
+  for (const name of ['boring.psk', 'relay.psk']) fs.writeFileSync(dir + '/' + name, Buffer.alloc(32, name === 'boring.psk' ? 1 : 2), { mode: 0o600 });
+  for (const name of ['cert.pem', 'key.pem']) fs.writeFileSync(dir + '/' + name, name, { mode: 0o600 });
   const profile = { version: 1, transport: 'combo-tls', role, tun: 'tun9', tun_address: role === 'client' ? '10.99.0.2/32' : '10.99.0.1/24',
     mtu: 1400, uplink: 'wan0', endpoint: '198.51.100.10', port: 443, listen_port: role === 'client' ? 2443 : 443,
     lan: role === 'client' ? { interface: 'lan0', subnet: '192.168.7.0/24' } : null, deny_ipv4: [] };
@@ -56,18 +58,37 @@ test('strict parser has no apply, probe or implicit role path', () => {
   const args = ['--role=client', '--name=trial-client', '--binary=/x/engine', '--config=/x/config.json', '--site-profile=/x/site.json'];
   assert.deepEqual(parseNativePhysicalPreflightArgs(args), { role: 'client', name: 'trial-client', binary: '/x/engine', config: '/x/config.json', siteProfile: '/x/site.json' });
   for (const bad of [[], [...args, '--apply'], args.slice(1), args.map(v => v.replace('/x/engine', 'relative'))]) assert.throws(() => parseNativePhysicalPreflightArgs(bad));
+  assert.equal(parseNativePhysicalPreflightArgs([...args, `--pair-challenge=${'ab'.repeat(32)}`]).pairChallenge, 'ab'.repeat(32));
+  assert.throws(() => parseNativePhysicalPreflightArgs([...args, '--pair-challenge=AB']));
 });
 for (const role of ['client', 'exit']) test(`valid ${role} fixture produces exact plan without mutation authority`, async t => {
   const f = fixture(t, role), report = await collectNativePhysicalPreflight(f.options, f.deps);
   assert.equal(report.status, 'ready-for-reviewed-trial-plan'); assert.equal(report.mutationAllowed, false);
   assert.equal(report.systemSettingsChanged, false); assert.equal(report.networkProbesSent, 0); assert.equal(report.installationAttempted, false);
   assert.equal(report.engine.architectureMatchesHost, true); assert.equal(report.offlineInstallDryRun.status, 'eligible');
+  assert.equal(report.pairProof, null);
   assert.equal(report.plan.units.length, role === 'client' ? 5 : 4); assert.match(report.plan.network.ipv4, /\*filter/);
   assert.ok(!JSON.stringify(report).includes('boring.psk')); assert.ok(!JSON.stringify(report).includes('relay.psk'));
   for (const [file, args] of f.calls) {
     assert.ok(!args.some(value => /^(start|stop|restart|enable|disable|add|del|set|flush|apply)$/.test(value)));
     assert.notEqual(file, 'curl');
   }
+});
+test('one-use challenge proves both combo secrets without exposing them', async t => {
+  const f = fixture(t, 'client'), challenge = '12'.repeat(32);
+  const report = await collectNativePhysicalPreflight({ ...f.options, pairChallenge: challenge }, f.deps);
+  assert.equal(report.pairProof.challenge, challenge); assert.match(report.pairProof.boring[0].value, /^[0-9a-f]{64}$/);
+  assert.match(report.pairProof.relay, /^[0-9a-f]{64}$/);
+  const serialized = JSON.stringify(report);
+  assert.equal(serialized.includes('boring.psk'), false); assert.equal(serialized.includes('relay.psk'), false);
+});
+test('real client and exit collectors produce matching one-use proofs', async t => {
+  const challenge = '78'.repeat(32), client = fixture(t, 'client'), exit = fixture(t, 'exit');
+  const clientReport = await collectNativePhysicalPreflight({ ...client.options, pairChallenge: challenge }, client.deps);
+  const exitReport = await collectNativePhysicalPreflight({ ...exit.options, pairChallenge: challenge }, exit.deps);
+  const pair = composeNativePhysicalPair(clientReport, exitReport);
+  assert.equal(pair.status, 'ready-for-human-approved-transient-design');
+  assert.equal(pair.pair.pskProof, 'matched-one-use-challenge');
 });
 test('live-host conflicts are blockers, never cleanup actions', async t => {
   const f = fixture(t), report = await collectNativePhysicalPreflight(f.options, f.deps);

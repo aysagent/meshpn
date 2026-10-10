@@ -33,8 +33,26 @@ test('matching fresh pair reaches design gate but never mutation authority', () 
   assert.equal(result.mutationAllowed, false);
   assert.deepEqual(result.pair, { endpoint: '198.51.100.10', port: 443, publicName: 'cover.example',
     clientTun: '10.99.0.2/32', exitTun: '10.99.0.1/24', clientLan: '192.168.7.0/24',
-    clientInstance: 'trial-client', exitInstance: 'trial-exit' });
-  assert.ok(result.warnings.includes('cross-host-psk-and-certificate-equivalence-not-proven-by-preflight'));
+    clientInstance: 'trial-client', exitInstance: 'trial-exit', pskProof: 'not-provided' });
+  assert.ok(result.warnings.includes('cross-host-psk-equivalence-not-proven-by-preflight'));
+});
+
+test('matching one-use proofs close only the PSK gate', () => {
+  const client = report('client'), exit = report('exit'), challenge = '34'.repeat(32);
+  client.pairProof = { version: 1, challenge, boring: [{ peerIpv4: '10.99.0.2', value: 'ab'.repeat(32) }], relay: 'cd'.repeat(32) };
+  exit.pairProof = { version: 1, challenge, boring: [{ peerIpv4: '10.99.0.2', value: 'ab'.repeat(32) }], relay: 'cd'.repeat(32) };
+  const result = composeNativePhysicalPair(client, exit, { now: NOW });
+  assert.equal(result.status, 'ready-for-human-approved-transient-design'); assert.equal(result.pair.pskProof, 'matched-one-use-challenge');
+  assert.ok(!result.requiredProofsBeforeMutation.includes('cross-host-psk-equivalence-proved-without-disclosing-secret'));
+  assert.ok(result.requiredProofsBeforeMutation.includes('exit-certificate-chain-and-name-pair-proved'));
+});
+
+test('partial or mismatched proof blocks the pair', () => {
+  const client = report('client'), exit = report('exit'), challenge = '56'.repeat(32);
+  client.pairProof = { version: 1, challenge, boring: [{ peerIpv4: '10.99.0.2', value: 'ab'.repeat(32) }], relay: 'cd'.repeat(32) };
+  exit.pairProof = { version: 1, challenge, boring: [{ peerIpv4: '10.99.0.2', value: 'ef'.repeat(32) }], relay: 'cd'.repeat(32) };
+  const result = composeNativePhysicalPair(client, exit, { now: NOW });
+  assert.equal(result.status, 'blocked'); assert.ok(result.observedIssues.includes('cross-host-psk-proof-mismatch'));
 });
 
 for (const [name, mutate, issue] of [

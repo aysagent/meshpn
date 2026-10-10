@@ -116,16 +116,28 @@ export function composeNativePhysicalPair(client, exit, { now = Date.now(), maxA
     if (!Number.isFinite(timestamp) || timestamp > now + 5 * 60 * 1000 || now - timestamp > maxAgeMs) issues.add(`${role}:stale-or-invalid-timestamp`);
     if (report.warnings?.length) warnings.add(`${role}:preflight-warnings-require-review`);
   }
-  warnings.add('cross-host-psk-and-certificate-equivalence-not-proven-by-preflight');
+  const clientProof = client.pairProof, exitProof = exit.pairProof;
+  let pskProof = 'not-provided';
+  if (clientProof || exitProof) {
+    const clientPeer = clientProof?.boring?.find(item => item?.peerIpv4 === clientTun?.address);
+    const exitPeer = exitProof?.boring?.find(item => item?.peerIpv4 === clientTun?.address);
+    if (clientProof?.version !== 1 || exitProof?.version !== 1 || !/^[0-9a-f]{64}$/.test(clientProof?.challenge ?? '')
+        || clientProof.challenge !== exitProof?.challenge || !/^[0-9a-f]{64}$/.test(clientPeer?.value ?? '')
+        || clientPeer.value !== exitPeer?.value || !/^[0-9a-f]{64}$/.test(clientProof?.relay ?? '')
+        || clientProof.relay !== exitProof?.relay) issues.add('cross-host-psk-proof-mismatch');
+    else pskProof = 'matched-one-use-challenge';
+  }
+  if (pskProof !== 'matched-one-use-challenge') warnings.add('cross-host-psk-equivalence-not-proven-by-preflight');
+  warnings.add('exit-certificate-chain-and-name-pair-not-proven-by-preflight');
   warnings.add('provider-firewall-console-and-management-reachability-remain-unverified');
   const status = issues.size ? 'blocked' : 'ready-for-human-approved-transient-design';
   return { status, observedIssues: [...issues], warnings: [...warnings], mutationAllowed: false,
     pair: { endpoint: client.site?.endpoint ?? null, port: client.site?.port ?? null,
       publicName: client.engine?.publicName ?? null, clientTun: client.site?.tunAddress ?? null,
       exitTun: exit.site?.tunAddress ?? null, clientLan: client.site?.lan?.subnet ?? null,
-      clientInstance: client.request?.name ?? null, exitInstance: exit.request?.name ?? null },
+      clientInstance: client.request?.name ?? null, exitInstance: exit.request?.name ?? null, pskProof },
     requiredProofsBeforeMutation: ['independent-console-or-rescue-on-both-hosts', 'provider-firewall-reviewed',
-      'management-reachability-policy-reviewed', 'cross-host-psk-equivalence-proved-without-disclosing-secret',
+      'management-reachability-policy-reviewed', ...(pskProof === 'matched-one-use-challenge' ? [] : ['cross-host-psk-equivalence-proved-without-disclosing-secret']),
       'exit-certificate-chain-and-name-pair-proved', 'bounded-timeout-and-independent-rollback-owner',
       'fresh-preflight-immediately-before-trial', 'independent-egress-capture-approved'],
     next: issues.size ? 'repair-or-recollect-preflights; do-not-build-or-run-a-trial' : 'design-separate-transient-lifecycle; this-plan-does-not-authorize-mutation' };

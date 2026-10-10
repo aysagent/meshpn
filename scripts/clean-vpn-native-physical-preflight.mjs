@@ -4,7 +4,7 @@ import { collectNativePhysicalPreflight, parseNativePhysicalPreflightArgs } from
 try {
   const options = parseNativePhysicalPreflightArgs(process.argv.slice(2));
   if (options.help) {
-    console.log('Usage: sudo node scripts/clean-vpn-native-physical-preflight.mjs --role=client|exit --name=INSTANCE --binary=/absolute/clean-vpn-engine --config=/absolute/combo.json --site-profile=/absolute/site.json\nRead-only physical combo inventory and exact offline plan. No probes, TUN/firewall/systemd changes, install, start, stop or reboot. Output contains IPs, paths and unit contents, but no key bytes or raw config.');
+    console.log('Usage: sudo node scripts/clean-vpn-native-physical-preflight.mjs --role=client|exit --name=INSTANCE --binary=/absolute/clean-vpn-engine --config=/absolute/combo.json --site-profile=/absolute/site.json [--pair-challenge=64_lowercase_hex]\nRead-only physical combo inventory and exact offline plan. Optional one-use challenge proves packet/relay PSK equality across reports without outputting keys. No probes, TUN/firewall/systemd changes, install, start, stop or reboot. Output contains IPs, paths and unit contents, but no key bytes or raw config.');
   } else {
     if (process.platform !== 'linux') throw Error('linux_required');
     const controller = new AbortController(), abort = () => controller.abort();

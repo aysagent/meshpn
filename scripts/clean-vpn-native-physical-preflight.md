@@ -29,6 +29,18 @@ sudo node scripts/clean-vpn-native-physical-preflight.mjs \
 Никаких DNS/HTTPS/WAN probes нет. Не создаются TUN, journal, bundle, unit,
 firewall rules или sysctl writes; службы не запускаются и не останавливаются.
 
+Для одной пары на доверенной машине создаётся одноразовая случайная challenge:
+
+```bash
+openssl rand -hex 32
+```
+
+Её значение передаётся обоим preflight как `--pair-challenge=...`. В отчёт
+попадают раздельные HMAC proof для boring packet PSK и transparent relay PSK,
+но не ключи и не их обычные hashes. Challenge должна быть новой для каждого
+сопоставления; ключи обязаны быть случайными 32-байтными значениями. Этот proof
+не проверяет сертификатную цепочку и имя сервера.
+
 Текущий site profile имеет строгий fresh dedicated-host контракт: управляемые
 tables пусты, forwarding выключен, TUN отсутствует, uplink/LAN подготовлены
 внешним `link_unit`, но административно DOWN. Он не является способом наложить
@@ -54,6 +66,7 @@ node scripts/clean-vpn-native-physical-pair-plan.mjs \
 Планировщик требует отчёты не старше часа, сверяет endpoint/port/public name,
 TUN subnet, отсутствие пересечения LAN и tunnel, capability contract и hashes
 исходных config/site-profile. Он не выполняет команд и также всегда оставляет
-`mutationAllowed:false`. Совпадение межхостового PSK и цепочки сертификата
-этими отчётами намеренно не доказывается: это отдельный обязательный gate перед
-любой мутацией, без публикации secret bytes.
+`mutationAllowed:false`. При одинаковой одноразовой challenge сопоставление
+также проверяет оба PSK. Без challenge PSK остаётся открытым gate. Цепочка
+сертификата и имя сервера в обоих случаях остаются отдельным обязательным gate
+перед любой мутацией.

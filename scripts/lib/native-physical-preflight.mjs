@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { runCommand } from './transparent-acceptance.mjs';
 import { DIAGNOSTIC_ENV } from './dns-diagnostic.mjs';
@@ -26,14 +26,15 @@ export function parseNativePhysicalPreflightArgs(args) {
   if (args.length === 1 && args[0] === '--help') return { help: true };
   const out = {}, seen = new Set();
   for (const arg of args) {
-    const m = /^--(role|name|binary|config|site-profile)=(.+)$/.exec(arg);
+    const m = /^--(role|name|binary|config|site-profile|pair-challenge)=(.+)$/.exec(arg);
     assert.ok(m && !seen.has(m[1]), 'invalid or duplicate argument'); seen.add(m[1]);
-    const key = m[1] === 'site-profile' ? 'siteProfile' : m[1];
-    out[key] = m[1] === 'role' || m[1] === 'name' ? m[2] : absolute(m[2]);
+    const key = m[1] === 'site-profile' ? 'siteProfile' : m[1] === 'pair-challenge' ? 'pairChallenge' : m[1];
+    out[key] = ['role', 'name', 'pair-challenge'].includes(m[1]) ? m[2] : absolute(m[2]);
   }
   assert.ok(['client', 'exit'].includes(out.role), 'explicit client or exit role required');
   assert.match(out.name ?? '', /^[a-z][a-z0-9-]{0,31}$/, 'safe instance name required');
   for (const key of ['binary', 'config', 'siteProfile']) assert.ok(out[key], `${key} required`);
+  if (out.pairChallenge !== undefined) assert.match(out.pairChallenge, /^[0-9a-f]{64}$/, '64 lowercase hex pair challenge required');
   return out;
 }
 
@@ -58,6 +59,24 @@ function elfMachine(bytes) {
   const little = bytes[5] === 1;
   if (![1, 2].includes(bytes[5])) return null;
   return little ? bytes.readUInt16LE(18) : bytes.readUInt16BE(18);
+}
+function secretProof(io, file, message) {
+  const data = metadata(io, file, { secret: true, limit: 32 });
+  assert.equal(data.bytes.length, 32, '32-byte proof secret required');
+  try { return createHmac('sha256', data.bytes).update(message).digest('hex'); }
+  finally { data.bytes.fill(0); }
+}
+function pairProof(io, config, profile, challenge) {
+  if (!challenge) return null;
+  const context = kind => Buffer.from(['clean-vpn-native-pair-proof-v1', kind, challenge,
+    `${profile.endpoint}:${profile.port}`].join('\0'));
+  const peer = config.boring.peer_ipv4 ?? '10.99.0.2';
+  const peers = config.boring.peers ?? [{ ipv4: '10.99.0.2', secret_path: config.boring.secret_path }];
+  const boring = config.role === 'client'
+    ? [{ peerIpv4: peer, value: secretProof(io, config.boring.secret_path, context(`boring:${peer}`)) }]
+    : peers.map(item => ({ peerIpv4: item.ipv4,
+      value: secretProof(io, item.secret_path, context(`boring:${item.ipv4}`)) }));
+  return { version: 1, challenge, boring, relay: secretProof(io, config.transparent.secret_path, context('relay')) };
 }
 function commandStatus(result) {
   return { status: result?.code === 0 && !result?.reason && !result?.signal ? 'ok' : 'failed',
@@ -206,6 +225,7 @@ export async function collectNativePhysicalPreflight(options, {
       request: { role: options.role, name: options.name }, runtime, tools, aborted: controller.signal.aborted,
       privacy: 'Contains IPs, interface names, unit contents and source paths; no key/certificate bytes, environment, packet payload or raw config.',
       evidence: { binary: binary.evidence, config: configFile.evidence, siteProfile: siteFile.evidence },
+      pairProof: pairProof(io, engineConfig, siteInput.profile, options.pairChallenge),
       engine: { role: engineConfig.role, transport: engineConfig.transport, publicName: engineConfig.transparent?.public_name ?? null,
         peerCount: engineConfig.boring?.peers?.length ?? (engineConfig.boring?.secret_path ? 1 : 0), elfMachine: machine,
         hostElfMachine: expected, architectureMatchesHost: machine !== null && expected !== null && machine === expected,
