@@ -183,5 +183,12 @@ VM выше относится к предыдущей сборке и сохр�
    Следующий измерительный этап на реальном железе/VPS требует отдельного запуска;
    физические узлы не менялись. Затем следующие продуктовые этапы roadmap.
    Браузерные профили/UI не объявляются реализованными этим шагом.
+5. Начат physical-acceptance этап с read-only
+   [combo preflight](clean-vpn-native-physical-preflight.md): он проверяет
+   бинарник/config/site-plan, архитектуру, units, links/routes/listeners и строгий
+   dedicated firewall contract, но всегда оставляет `mutationAllowed:false`.
+   Это инвентаризация для проектирования transient trial, не разрешение применить
+   fresh site profile поверх работающей Radxa/VPS. Физический трафик и benchmark
+   этим checkpoint ещё не запускались.
 
 Это промежуточный этап полного переноса, **не** заявление «весь native готов».
