@@ -48,11 +48,29 @@ sudo env "PATH=$PATH" node scripts/clean-vpn-native-sandbox-preflight.mjs \
 - backend/version и SHA-256 текущих iptables/ip6tables/nft firewall snapshots;
 - наличие активного firewalld/ufw/nftables/netfilter-persistent и динамических
   владельцев вроде Docker/Podman/libvirt/fail2ban/kubelet;
+- на client — только allowlist-форма argv работающего legacy service: role/type,
+  совпадение endpoint, port, split-default, IPv6/DNS flags; неизвестные параметры
+  считаются, но их имена/значения не выводятся;
+- состояния `clean-vpn.service`, kill switch и USB rescue, а также только
+  clean-vpn-owned firewall rules/marker;
 - наличие `/dev/net/tun`, systemd PID 1 и необходимых утилит.
 
-В отчёте нет process argv, environment, конфигураций, PSK/private keys,
+В отчёте нет raw process argv, environment, конфигураций, PSK/private keys,
 journal или payload. `ready-for-sandbox-design-review` не разрешает применение;
 `mutationAllowed` всегда `false`.
+
+Для Radxa ожидаемый неизменяемый baseline — активный `--type=tls`, endpoint
+`154.62.226.216:443`, `--split-default`, профиль kill switch
+`cvks4:both:block:tun0:154.62.226.216:22` и активный USB rescue socket. Sandbox
+не является заменой этого baseline. Он должен работать параллельно и после
+cleanup оставить те же PID/units/routes/firewall ownership.
+
+Отсутствующий standalone `nft` CLI при `iptables ... (nf_tables)` теперь
+фиксируется предупреждением: обязательны рабочие `iptables-save/restore`, а
+`nft`-snapshot собирается только когда CLI уже установлен. Устанавливать пакет
+ради read-only preflight не требуется. Широкие existing routes `/0`, `/1` или
+policy bypass `/8` не считаются конфликтом с будущим более специфичным connected
+`/30`; конфликтом остаются link/kernel и specific routes.
 
 ## Планируемая граница будущего runner
 
@@ -70,5 +88,15 @@ Runner ещё не реализован. Его обязательный кон�
    должны совпасть с baseline. Drift означает stop/manual review, не flush.
 7. Provider firewall, host integrity и независимый доступ не выводятся из
    локального preflight и остаются явными operator gates.
+
+Отдельная важная граница Radxa: внешний TCP из client namespace станет
+forwarded-трафиком через host veth, а текущий `CLEANVPN_KS_FWD` по замыслу
+закрывает неизвестный public egress. Простое добавление ACCEPT после cvks4 не
+сработает, а вставка произвольного правила перед первым hook будет отвергнута
+аудитом kill switch. Поэтому runner не должен «обходить» защиту. Нужен отдельный
+точно ограниченный sandbox-prefix contract, распознаваемый существующим audit,
+с endpoint `154.62.226.216`, port `18443`, source `/30` и конкретным veth;
+он устанавливается до подъёма veth и удаляется по identity/read-back. Этот
+контракт сначала проверяется model/VM fault-tests вместе с crash cleanup.
 
 До реализации и VM fault-tests этого контракта никаких `--apply` у sandbox нет.

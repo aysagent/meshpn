@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assessNativeSandboxPreflight, collectNativeSandboxPreflight, parseNativeSandboxPreflightArgs } from './lib/native-sandbox-preflight.mjs';
+import { assessNativeSandboxPreflight, collectNativeSandboxPreflight, parseNativeSandboxPreflightArgs, sanitizeLegacyArgv } from './lib/native-sandbox-preflight.mjs';
 
 const toolNames = ['ip', 'ss', 'systemctl', 'sysctl', 'iptables', 'ip6tables', 'iptables-save', 'ip6tables-save', 'iptables-restore', 'ip6tables-restore', 'nft'];
 function fixture(role = 'client') {
@@ -20,18 +20,24 @@ function fixture(role = 'client') {
     else if (file === 'sysctl') stdout = role === 'client' ? '1\n' : '0\n';
     else if (file === 'iptables') stdout = 'iptables v1.8.9 (nf_tables)\n';
     else if (file === 'nft') stdout = 'nftables v1.0.6\n';
-    else if (file === 'iptables-save' || file === 'ip6tables-save') stdout = '*filter\n:INPUT ACCEPT [0:0]\nCOMMIT\n';
+    else if (file === 'iptables-save' || file === 'ip6tables-save') stdout = role === 'client'
+      ? '*filter\n:INPUT ACCEPT [0:0]\n:CLEANVPN_KS_FWD - [0:0]\n-A CLEANVPN_KS_FWD -m comment --comment cvks4:both:block:tun0:154.62.226.216:22\nCOMMIT\n'
+      : '*filter\n:INPUT ACCEPT [0:0]\nCOMMIT\n';
     else if (file === 'systemctl') {
       const unit = args[2], manager = ['firewalld.service', 'ufw.service', 'nftables.service', 'netfilter-persistent.service',
         'docker.service', 'podman.service', 'libvirtd.service', 'fail2ban.service', 'kubelet.service'].includes(unit);
+      const existing = role === 'client' && ['clean-vpn.service', 'clean-vpn-killswitch.service', 'clean-vpn-usb-rescue.socket'].includes(unit);
       stdout = manager ? `LoadState=${unit === 'nftables.service' ? 'loaded' : 'not-found'}\nActiveState=inactive\nUnitFileState=disabled\nFragmentPath=\n`
-        : 'LoadState=not-found\nActiveState=inactive\nUnitFileState=\nFragmentPath=\n';
+        : existing ? `LoadState=loaded\nActiveState=active\nSubState=running\nUnitFileState=enabled\nFragmentPath=/etc/systemd/system/${unit}\nMainPID=${unit === 'clean-vpn.service' ? 42 : 0}\n`
+          : 'LoadState=not-found\nActiveState=inactive\nSubState=dead\nUnitFileState=\nFragmentPath=\nMainPID=0\n';
     }
     return { code: 0, reason: null, signal: null, stdout, stderr: '', durationMs: 1 };
   };
   return { options, calls, deps: { run, runtime: { node: process.version, platform: 'linux', arch: process.arch, uid: 0 },
     hostFacts: { pid1: 'systemd', sameNetworkNamespace: true, tunDevice: true },
-    tools: Object.fromEntries(toolNames.map(name => [name, `/usr/bin/${name}`])) } };
+    tools: Object.fromEntries(toolNames.map(name => [name, `/usr/bin/${name}`])),
+    legacyProfile: role === 'client' ? { role: 'client', type: 'tls', endpointMatchesRequest: true, port: 443,
+      splitDefault: true, ipv6: 'auto', dnsMode: 'tunnel', dnsUsb: '1', fromTun: false, unknownOptions: 0 } : undefined } };
 }
 
 test('strict parser requires an explicit isolated non-primary port and /30', () => {
@@ -39,6 +45,15 @@ test('strict parser requires an explicit isolated non-primary port and /30', () 
   assert.deepEqual(parseNativeSandboxPreflightArgs(args), { role: 'client', name: 'radxa', endpoint: '154.62.226.216', port: 18443, sandboxCidr: '10.203.0.0/30' });
   for (const bad of [args.slice(1), args.map(v => v === '--port=18443' ? '--port=443' : v), args.map(v => v.endsWith('/30') ? '--sandbox-cidr=10.203.0.0/24' : v), [...args, '--apply']])
     assert.throws(() => parseNativeSandboxPreflightArgs(bad));
+});
+
+test('legacy argv confirms only allowlisted shape and never returns secrets', () => {
+  const profile = sanitizeLegacyArgv(['/usr/bin/node', 'clean-vpn.js', '--role=client', '--type=tls',
+    '--server=154.62.226.216:443', '--split-default', '--ipv6=auto', '--dns-mode=tunnel', '--dns-usb=1',
+    '--shared-hmac-key=DO-NOT-PRINT', '--sni=private.example'], '154.62.226.216');
+  assert.deepEqual(profile, { role: 'client', type: 'tls', endpointMatchesRequest: true, port: 443,
+    splitDefault: true, ipv6: 'auto', dnsMode: 'tunnel', dnsUsb: '1', fromTun: false, unknownOptions: 2 });
+  assert.doesNotMatch(JSON.stringify(profile), /DO-NOT-PRINT|private\.example/);
 });
 
 for (const role of ['client', 'exit']) test(`${role} inventory can reach design review without mutation`, async () => {
@@ -53,11 +68,24 @@ for (const role of ['client', 'exit']) test(`${role} inventory can reach design 
 test('occupied resources, manager ownership and route overlap block without cleanup', async () => {
   const f = fixture('exit'), report = await collectNativeSandboxPreflight(f.options, f.deps);
   report.host.namespaceNames.push(report.plan.namespace); report.host.links.push({ ifname: report.plan.hostVeth });
-  report.host.routes4.push({ dst: '10.203.0.0/16' }); report.host.listeners += 'tcp LISTEN 0 4096 0.0.0.0:18443 0.0.0.0:*\n';
+  report.host.routes4.push({ dst: '10.203.0.0/24' }); report.host.listeners.push({ protocol: 'tcp', state: 'LISTEN', local: '0.0.0.0', port: 18443 });
   report.host.firewallManagers['nftables.service'].ActiveState = 'active';
   const result = assessNativeSandboxPreflight(report);
   assert.equal(result.status, 'blocked'); assert.equal(result.mutationAllowed, false);
   for (const issue of ['sandbox-namespace-already-present', `sandbox-link-already-present:${report.plan.hostVeth}`,
-    'sandbox-cidr-overlaps-host-route', 'trial-port-in-use', 'concurrent-firewall-manager-active:nftables.service'])
+    'sandbox-cidr-conflicts-with-specific-host-route', 'trial-port-in-use', 'concurrent-firewall-manager-active:nftables.service'])
     assert.ok(result.observedIssues.includes(issue));
+});
+
+test('missing optional nft CLI and broad split-default route are warnings, not false blockers', async () => {
+  const f = fixture('client'), original = f.deps.run; f.deps.tools.nft = null;
+  f.deps.run = async (file, args, options) => file === 'nft'
+    ? { code: -2, reason: 'spawn-error', signal: null, stdout: '', stderr: '', durationMs: 1 }
+    : original(file, args, options);
+  const report = await collectNativeSandboxPreflight(f.options, f.deps);
+  report.host.routes4.push({ dst: '10.0.0.0/8', gateway: '192.168.1.1', protocol: 'bgp' });
+  const result = assessNativeSandboxPreflight(report);
+  assert.equal(result.status, 'ready-for-sandbox-design-review');
+  assert.ok(result.warnings.includes('nft-cli-unavailable-using-iptables-nft-snapshots'));
+  assert.ok(result.warnings.includes('sandbox-cidr-covered-by-broad-host-route-more-specific-connected-route-required'));
 });

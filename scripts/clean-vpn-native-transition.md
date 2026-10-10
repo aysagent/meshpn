@@ -198,5 +198,7 @@ VM выше относится к предыдущей сборке и сохр�
    veth/TUN и непривилегированный trial port без остановки штатного VPN/SSH.
    Реализован только read-only eligibility preflight; namespace runner и его
    rollback ещё должны пройти model/VM fault-tests до появления `--apply`.
+   Client preflight отдельно подтверждает неизменяемый legacy `type=tls`, cvks4
+   kill switch и USB rescue; raw argv и secret options в отчёт не попадают.
 
 Это промежуточный этап полного переноса, **не** заявление «весь native готов».
