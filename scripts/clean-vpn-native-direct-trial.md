@@ -1,7 +1,7 @@
 # Прямой physical trial native combo
 
-Статус 2026-10-11: выбран вместо параллельного namespace sandbox для тестовой
-Radxa. Это будущий ограниченный trial, не готовая команда `--apply` и не
+Статус 2026-10-11: локальная реализация и fault-тесты закончены; следующий шаг —
+первый ограниченный физический прогон Radxa ↔ VPS. Это transient trial, не
 production-установка.
 
 ## Почему без namespace
@@ -49,16 +49,81 @@ production-установка.
 - отдельный relay secret обязателен; совпадение путей отклоняется в pure plan,
   совпадение реальных bytes должно проверяться runtime до остановки legacy.
 
-## Ещё требуется до первого запуска
+## Что закончено до первого запуска
 
-- durable owner для временного PREROUTING chain: write-ahead journal, exact
-  read-back, повторяемый cleanup и отказ при foreign drift;
-- model/namespace fault matrix этого overlay, включая SIGKILL на каждом шаге;
-- прямой exit lifecycle/rollback поверх его фактической конфигурации и Docker
-  firewall без flush или присвоения чужих rules;
-- компактный read-only preflight именно direct trial для exit;
-- только затем пользовательский bounded запуск сначала без fault injection,
-  потом crash и короткая нагрузка.
+- `native-combo-redirect-journal.mjs`: write-ahead journal client REDIRECT,
+  активация PREROUTING последней, exact read-back/cleanup, отказ при foreign
+  drift или подмене `usb0`;
+- `clean-vpn-native-combo-redirect-recover.mjs`: read-only по умолчанию,
+  `--apply` только для точного same-boot journal;
+- combo-профиль встроен в прежний Radxa old/native/old runner и Mac USB
+  coordinator; relay PSK сравнивается с packet PSK по байтам до остановки
+  legacy;
+- crash recovery сохраняет HTTPS overlay fail-closed до удаления packet
+  routes/DNS и удаляет его последним;
+- exit использует случайный `cvne<id>` TUN и только три собственных правила:
+  два `FORWARD` и один `MASQUERADE`. Исходный `ip_forward` восстанавливается;
+  Docker/x-ui rules не flush/reload/replace;
+- `clean-vpn-native-exit-trial.mjs` даёт read-only network preflight,
+  bounded transient unit, `RuntimeMaxSec` и независимый `ExecStopPost` recovery,
+  который возвращает `clean-vpn.service` после смерти wrapper;
+- модельные cut-point тесты и реальные user/netns+iptables тесты проходят.
+
+## Подготовка пары (следующий физический шаг)
+
+Сначала обновить ветку и собрать актуальный engine на обеих архитектурах. Затем
+на exit, пока legacy работает, создать **новый** приватный trial-каталог:
+
+```bash
+sudo env "PATH=$PATH" node scripts/clean-vpn-native-direct-config.mjs \
+  --create-exit \
+  --directory=/root/native-combo-trial \
+  --endpoint=154.62.226.216 \
+  --uplink=eth0 \
+  --client-relay-path=/root/native-combo-trial/relay.psk
+```
+
+Команда не трогает сеть и службы. Она создаёт отдельную случайную relay PSK,
+`exit.json`, явным вызовом engine инициализирует durable replay и создаёт
+`client-profile.json`. Packet PSK/cert/key берутся из фактического argv
+работающего legacy exit и не копируются.
+
+`relay.psk` и `client-profile.json` надо безопасно скопировать на Radxa ровно в
+`/root/native-combo-trial/`, затем выполнить там `chmod 600` для обоих файлов и
+`chmod 700` для каталога. Relay PSK не печатать и не передавать в argv.
+
+На exit выполнить только preflight:
+
+```bash
+sudo env "PATH=$PATH" node scripts/clean-vpn-native-exit-trial.mjs \
+  --preflight \
+  --config=/root/native-combo-trial/exit.json \
+  --endpoint=154.62.226.216 \
+  --uplink=eth0
+```
+
+Первый безопасный порядок физического smoke:
+
+1. Запустить exit на 15 минут той же командой с `--apply` вместо `--preflight`.
+   Команда вернётся после появления native listener; unit продолжит работать.
+2. С Mac через USB запустить coordinator с дополнительным
+   `--combo-profile=/root/native-combo-trial/client-profile.json`.
+3. После отчёта Radxa выполнить на exit `node
+   scripts/clean-vpn-native-exit-trial.mjs --stop`; проверить `--status`.
+4. Только после успешного ordinary smoke повторять `--crash`, затем bounded
+   benchmark. Первый запуск не совмещать с fault injection.
+
+Ручной same-boot recovery нужен только если transient unit уже inactive/failed:
+
+```bash
+sudo env "PATH=$PATH" node scripts/clean-vpn-native-exit-trial.mjs --recover
+sudo env "PATH=$PATH" node scripts/clean-vpn-native-combo-redirect-recover.mjs
+# и только после успешного dry-run при незавершённом journal:
+sudo env "PATH=$PATH" node scripts/clean-vpn-native-combo-redirect-recover.mjs --apply
+```
+
+Нельзя flush-ить iptables, удалять неизвестный TUN или journal вручную: при
+foreign drift recovery специально останавливается для разбора.
 
 Kill switch на Radxa можно остановить технически, но в выбранном плане этого не
 делаем: остановка VPN-сервиса безопасно оставляет guard fail-closed, а остановка

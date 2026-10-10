@@ -201,6 +201,9 @@ VM выше относится к предыдущей сборке и сохр�
    сохраняются; останавливать kill switch без необходимости нельзя, поскольку
    это создаёт окно прямого выхода. В combo-конфигурации USB control теперь
    явно выбирает nested boring packet branch; transparent branch не создаёт
-   второй TUN. Сам combo apply и временный REDIRECT ещё не реализованы.
+   второй TUN. Локальная реализация bounded combo apply, временного journalled
+   REDIRECT, scoped exit NAT/FORWARD и same-boot recovery закончена; реальные
+   netns/iptables и fault-тесты проходят. Следующая граница — первый физический
+   smoke Radxa ↔ VPS, без fault injection; физические узлы ещё не менялись.
 
 Это промежуточный этап полного переноса, **не** заявление «весь native готов».

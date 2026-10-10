@@ -309,11 +309,10 @@ export async function main(args = process.argv.slice(2)) {
     fs.rmdirSync(dir);
   }
 }
-// Compare file identity as well as URLs: Node may resolve a path through a
-// platform/container mount alias which realpath does not spell identically.
-const entryFile = process.argv[1] && (() => { try {
-  const entry = fs.statSync(process.argv[1]), self = fs.statSync(fileURLToPath(import.meta.url));
-  return entry.dev === self.dev && entry.ino === self.ino;
-} catch { return false; } })();
+// A copied standalone file may be reached through a platform/container mount
+// alias. The unique entry basename survives that remapping; imports from the
+// test/application entry have a different basename and do not execute main.
+const entryFile = import.meta.main === true
+  || process.argv[1] && path.basename(process.argv[1]) === path.basename(fileURLToPath(import.meta.url));
 if (entryFile)
   main().catch(e => { console.error(JSON.stringify({ status: 'failed', code: /^[a-z0-9_]+$/.test(e.message) ? e.message : 'usb_check_failed' })); process.exitCode = 1; });
