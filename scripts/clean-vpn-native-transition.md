@@ -193,5 +193,10 @@ VM выше относится к предыдущей сборке и сохр�
    два свежих read-only отчёта. Одноразовый HMAC challenge доказывает совпадение
    обоих combo PSK без их публикации; публичная certificate chain проверяется
    по клиентскому CA и имени. Это по-прежнему не разрешение на мутацию.
+6. Для работающей Radxa и существующего exit выбран более узкий
+   [physical sandbox](clean-vpn-native-sandbox.md): отдельные network namespace,
+   veth/TUN и непривилегированный trial port без остановки штатного VPN/SSH.
+   Реализован только read-only eligibility preflight; namespace runner и его
+   rollback ещё должны пройти model/VM fault-tests до появления `--apply`.
 
 Это промежуточный этап полного переноса, **не** заявление «весь native готов».
