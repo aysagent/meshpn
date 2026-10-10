@@ -78,6 +78,27 @@ export function deriveTrialConfig(argv, { cwd, root, exists, ipv6Evidence }) {
     tun: 'tun0', secret_path: secret, server_name: name, sni, ca, dns: true };
 }
 
+// Pure config composition for the direct Radxa combo trial. The caller copies
+// both secrets into its private scratch directory and compares their bytes
+// before any service is stopped. This helper never generates or reads keys.
+export function deriveComboTrialConfig(packet, { relaySecretPath, publicName, listenPort = 33002, denyIpv4 = [] }) {
+  requireTrial(packet?.version === 1 && packet.role === 'client', 'invalid_packet_config');
+  requireTrial(packet.tun === 'tun0' && packet.dns === true, 'unsupported_packet_profile');
+  requireTrial(typeof relaySecretPath === 'string' && path.isAbsolute(relaySecretPath)
+    && relaySecretPath !== packet.secret_path, 'separate_relay_secret_required');
+  requireTrial(typeof publicName === 'string' && /^[a-zA-Z0-9.-]{1,253}$/.test(publicName), 'invalid_public_name');
+  requireTrial(Number.isInteger(listenPort) && listenPort >= 1024 && listenPort <= 65535
+    && ![1053, 2222, packet.port].includes(listenPort), 'invalid_combo_listener');
+  requireTrial(Array.isArray(denyIpv4) && denyIpv4.length <= 64
+    && denyIpv4.every(value => typeof value === 'string'), 'invalid_combo_deny_list');
+  const endpoint = { ipv4: packet.address, port: packet.port };
+  return { version: 1, transport: 'combo-tls', role: 'client',
+    boring: { ...packet, sni: publicName },
+    transparent: { version: 1, transport: 'transparent-tls', role: 'client', public_name: publicName,
+      secret_path: relaySecretPath, listen: { ipv4: '0.0.0.0', port: listenPort }, exit: endpoint,
+      destination_policy: { mode: 'public-https', deny_ipv4: [...denyIpv4] } } };
+}
+
 // Injectable lifecycle: failures after stop never blindly start another client
 // on top of an unaudited native TUN/journal. The guard is NEVER released here.
 export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, progress = () => {} } = {}) {

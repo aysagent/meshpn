@@ -193,12 +193,14 @@ VM выше относится к предыдущей сборке и сохр�
    два свежих read-only отчёта. Одноразовый HMAC challenge доказывает совпадение
    обоих combo PSK без их публикации; публичная certificate chain проверяется
    по клиентскому CA и имени. Это по-прежнему не разрешение на мутацию.
-6. Для работающей Radxa и существующего exit выбран более узкий
-   [physical sandbox](clean-vpn-native-sandbox.md): отдельные network namespace,
-   veth/TUN и непривилегированный trial port без остановки штатного VPN/SSH.
-   Реализован только read-only eligibility preflight; namespace runner и его
-   rollback ещё должны пройти model/VM fault-tests до появления `--apply`.
-   Client preflight отдельно подтверждает неизменяемый legacy `type=tls`, cvks4
-   kill switch и USB rescue; raw argv и secret options в отчёт не попадают.
+6. После уточнения пользователя physical sandbox с отдельными namespace/veth
+   [отложен](clean-vpn-native-sandbox.md): Radxa является тестовым клиентом, и
+   её штатный `clean-vpn.service` можно временно остановить. Текущий путь —
+   [прямой transient trial](clean-vpn-native-direct-trial.md) поверх уже
+   проверенного old/native/old lifecycle. Независимый cvks4 guard и USB rescue
+   сохраняются; останавливать kill switch без необходимости нельзя, поскольку
+   это создаёт окно прямого выхода. В combo-конфигурации USB control теперь
+   явно выбирает nested boring packet branch; transparent branch не создаёт
+   второй TUN. Сам combo apply и временный REDIRECT ещё не реализованы.
 
 Это промежуточный этап полного переноса, **не** заявление «весь native готов».

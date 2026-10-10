@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { deriveTrialConfig, summarizeTrialProbe, hasUsbRescueConnection, runTrial } from './lib/native-radxa-trial.mjs';
+import { deriveTrialConfig, deriveComboTrialConfig, summarizeTrialProbe, hasUsbRescueConnection, runTrial } from './lib/native-radxa-trial.mjs';
 import { launchTrialNative } from './clean-vpn-native-trial.mjs';
+import { nativeUsbPacketConfig } from './lib/native-usb-control.mjs';
 
 const root = '/root/dev/meshpn';
 const base = ['/usr/bin/node', root + '/scripts/clean-vpn.js', '--role=client', '--type=tls',
@@ -81,6 +82,26 @@ test('fullchain, public name, explicit name, legacy key and relative paths match
   assert.equal(derive([], ['ca.pem', 'quic-ext-hmac.key']).secret_path, root + '/certs/quic-ext-hmac.key');
   assert.equal(derive(['--shared-hmac-key=certs/custom'], ['ca.pem', 'custom']).secret_path, root + '/certs/custom');
   assert.equal(derive(['--tls-server-name=other.example', '--tls-client-sni=decoy.example']).server_name, 'other.example');
+});
+test('direct combo trial reuses one packet tunnel and a separate transparent branch', () => {
+  const packet = derive(), relay = root + '/certs/relay.key';
+  const combo = deriveComboTrialConfig(packet, { relaySecretPath: relay, publicName: 'www.google.com' });
+  assert.equal(combo.transport, 'combo-tls');
+  assert.equal(combo.boring.sni, 'www.google.com');
+  assert.deepEqual(combo.transparent.exit, { ipv4: '154.62.226.216', port: 443 });
+  assert.deepEqual(combo.transparent.listen, { ipv4: '0.0.0.0', port: 33002 });
+  assert.deepEqual(combo.transparent.destination_policy, { mode: 'public-https', deny_ipv4: [] });
+  assert.deepEqual(nativeUsbPacketConfig(combo), combo.boring);
+  assert.equal(nativeUsbPacketConfig(packet), packet);
+});
+test('direct combo trial refuses shared key/path and listener collisions', () => {
+  const packet = derive();
+  for (const options of [
+    { relaySecretPath: packet.secret_path, publicName: 'www.google.com' },
+    { relaySecretPath: root + '/certs/relay.key', publicName: 'bad name' },
+    { relaySecretPath: root + '/certs/relay.key', publicName: 'www.google.com', listenPort: 1053 },
+    { relaySecretPath: 'relative.key', publicName: 'www.google.com' },
+  ]) assert.throws(() => deriveComboTrialConfig(packet, options));
 });
 for (const args of [['--dns-mode=off'], ['--dns-state-dir=/run/custom'], ['--dns-server=8.8.8.8'],
   ['--http-vers=1.1'], ['--ipv6=auto'], ['--from-tun=wg0'], ['--role=exit'], ['--type=combo-tls'],

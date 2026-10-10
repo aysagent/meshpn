@@ -5,10 +5,25 @@ import { openHostRoutes } from './vpn-host-routes.mjs';
 import { openTunnelDnsJournal } from './dns-tunnel-journal.mjs';
 import { watchVpnUplink } from './vpn-uplink-watch.mjs';
 const run=(file,args)=>execFileSync(file,args,{encoding:'utf8',timeout:10000,maxBuffer:1024*1024});
+// The USB route/DNS owner is transport-agnostic. In combo mode it must use
+// the nested packet branch; the transparent branch owns only intercepted TLS
+// streams and must never be mistaken for a second packet tunnel.
+export function nativeUsbPacketConfig(config){
+  assert.ok(config&&typeof config==='object'&&!Array.isArray(config));
+  if(config.transport!=='combo-tls')return config;
+  assert.equal(config.version,1);assert.equal(config.role,'client');
+  assert.equal(config.boring?.role,'client');assert.equal(config.transparent?.role,'client');
+  assert.equal(config.transparent?.transport,'transparent-tls');
+  assert.equal(config.boring?.address,config.transparent?.exit?.ipv4);
+  assert.equal(config.boring?.port,config.transparent?.exit?.port);
+  assert.equal(config.boring?.sni,config.transparent?.public_name);
+  return config.boring;
+}
 export function prepareNativeUsb(config){
-  assert.equal(process.getuid(),0);assert.equal(config.role,'client');assert.equal(config.tun,'tun0');
-  assert.equal(config.address,'154.62.226.216');assert.equal(config.dns,true);
-  assert.equal(config.peer_ipv4??'10.99.0.2','10.99.0.2','fixed USB route/DNS profile requires peer 10.99.0.2');
+  assert.equal(process.getuid(),0);const packet=nativeUsbPacketConfig(config);
+  assert.equal(packet.role,'client');assert.equal(packet.tun,'tun0');
+  assert.equal(packet.address,'154.62.226.216');assert.equal(packet.dns,true);
+  assert.equal(packet.peer_ipv4??'10.99.0.2','10.99.0.2','fixed USB route/DNS profile requires peer 10.99.0.2');
   const guard=run('/usr/local/bin/clean-vpn-killswitch.sh',['status']);
   for(const family of [4,6])assert.ok(guard.includes(`IPv${family}: cvks4:both:block:tun0:154.62.226.216:22`));
   const links=JSON.parse(run('ip',['-j','address','show']));
@@ -32,14 +47,14 @@ export function prepareNativeUsb(config){
           // Before that, persistent TUN routes carry linkdown and cannot pass
           // the existing strict ownership audit. No audit is weakened here.
           if(!prepared){
-            host.add(config.address+'/32',dev,gateway);
+            host.add(packet.address+'/32',dev,gateway);
             for(const destination of ['10.0.0.0/8','172.16.0.0/12','192.168.0.0/16'])host.add(destination,dev,gateway);
             for(const destination of ['0.0.0.0/1','128.0.0.0/1'])host.add(destination,'tun0');
             console.error('native-control: owned routes ready');
             dns.begin({tun:'tun0',lanSubnet:'192.168.7.0/24',lanInterface:'usb0'});dns.applyStage('guard');dns.applyStage('route');
             console.error('native-control: DNS guard/routes ready');
             prepared=true;
-            watch=watchVpnUplink({repair:()=>host.repairUplink(dev,gateway,config.address),
+            watch=watchVpnUplink({repair:()=>host.repairUplink(dev,gateway,packet.address),
               disconnect:()=>engine.uplink(false),reconnect:()=>engine.uplink(true),log:()=>{}});
           }
           if(status.state==='ready'&&!active){dns.applyStage('activate');dns.activate();active=true;console.error('native-control: DNS active');}

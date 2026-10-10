@@ -1,5 +1,11 @@
 # Изолированный physical sandbox
 
+> Статус 2026-10-11: этот вариант отложен. Radxa признана тестовым клиентом,
+> её `clean-vpn.service` разрешено временно останавливать, поэтому основной путь
+> теперь — [прямой transient trial](clean-vpn-native-direct-trial.md). Имеющийся
+> preflight оставлен как read-only инструмент и исторический вариант для хоста,
+> где штатный VPN нельзя прерывать; namespace runner не разрабатывается сейчас.
+
 Первый WAN/hardware прогон combo не должен заменять текущий VPN, default route,
 DNS или firewall policy хоста. Проектируем отдельные network namespace для
 client и exit с собственными veth/TUN и отдельным непривилегированным TCP-портом.
