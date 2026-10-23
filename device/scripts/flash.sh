@@ -16,13 +16,19 @@ if [[ ! -f "$TARGET_FILE" ]]; then
 fi
 IDF_TARGET="$(tr -d '[:space:]' < "$TARGET_FILE")"
 case "$IDF_TARGET" in esp32s3|esp32p4) ;; *) echo "Invalid target for $BOARD: $IDF_TARGET" >&2; exit 1;; esac
+unset IDF_PYTHON_ENV_PATH
 if [[ -n "${IDF_PATH:-}" && -f "$IDF_PATH/export.sh" ]]; then
-  source "$IDF_PATH/export.sh"
-elif [[ -f "$HOME/esp/esp-idf/export.sh" ]]; then
-  source "$HOME/esp/esp-idf/export.sh"
+  selected_idf="$IDF_PATH"
+elif [[ -f "$HOME/esp/esp-idf-meshpn-v5.5.5/export.sh" ]]; then
+  selected_idf="$HOME/esp/esp-idf-meshpn-v5.5.5"
 else
-  echo "ESP-IDF not found. Run device/scripts/setup-macos.sh." >&2; exit 1
+  echo "ESP-IDF 5.5.5 not found. Run device/scripts/setup-macos.sh." >&2; exit 1
 fi
+if [[ "$(git -C "$selected_idf" describe --tags --exact-match 2>/dev/null || true)" != v5.5.5 ]]; then
+  echo "MeshPN requires ESP-IDF v5.5.5 at IDF_PATH, got: $selected_idf" >&2
+  exit 1
+fi
+source "$selected_idf/export.sh"
 export BOARD USB_PROFILE="$PROFILE" USB_DIAGNOSTICS="${USB_DIAGNOSTICS:-0}"
 if [[ "$IDF_TARGET" == esp32s3 ]]; then
   export DWC2_TELEMETRY="${DWC2_TELEMETRY:-1}"
@@ -36,6 +42,9 @@ case "$WIREGUARD_PERF" in 0|1) ;; *) echo "WIREGUARD_PERF must be 0 or 1" >&2; e
 # Preserve previous builds and menuconfig files. A changed set of defaults gets
 # a new sdkconfig, so security settings and profile changes cannot stay stale.
 config_files=("$DEVICE_DIR/sdkconfig.defaults" "$DEVICE_DIR/boards/$BOARD/sdkconfig.defaults" "$TARGET_FILE" "$DEVICE_DIR/profiles/usb_$PROFILE.defconfig" "$DEVICE_DIR/main/idf_component.yml")
+if [[ "$IDF_TARGET" == esp32p4 ]]; then
+  config_files+=("$DEVICE_DIR/target_components/esp32p4_bridge_config/Kconfig")
+fi
 if [[ "$USB_DIAGNOSTICS" == 1 ]]; then
   config_files+=("$DEVICE_DIR/profiles/usb_diagnostics.defconfig")
 fi

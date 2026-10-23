@@ -7,10 +7,13 @@ VPN, WireGuard and policy enforcement are **not implemented**. USB compatibility
 ## Build and flash
 
 ```bash
-./device/scripts/setup-macos.sh       # once; ESP-IDF 5.4.1
-source ~/.zshrc
+./device/scripts/setup-macos.sh       # once; ESP-IDF 5.5.5
 ./device/scripts/flash.sh             # existing NCM profile
 ```
+
+The scripts activate ESP-IDF only while running. By default MeshPN uses
+`~/esp/esp-idf-meshpn-v5.5.5`; this checkout is separate from camic's clean
+`~/esp/esp-idf-v5.5.5` because iot_bridge patches lwIP in `IDF_PATH`.
 
 For the Waveshare ESP32-P4-WIFI6:
 

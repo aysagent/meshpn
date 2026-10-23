@@ -174,6 +174,6 @@ if [[ -n "${IDF_PATH:-}" ]]; then
     "$test_dir/mbedtls/library/libmbedx509.a" "$test_dir/mbedtls/library/libmbedcrypto.a" -o "$test_dir/tls-identity"
   "$test_dir/tls-identity" "$test_dir/tls/device.crt" "$test_dir/tls/device.key"
 else
-  echo "TLS identity test skipped: set IDF_PATH to an ESP-IDF 5.4.1 checkout to include it."
+  echo "TLS identity test skipped: set IDF_PATH to an ESP-IDF 5.5.5 checkout to include it."
 fi
 echo "Host test artifacts: $test_dir"

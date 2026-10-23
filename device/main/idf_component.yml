@@ -17,4 +17,4 @@ dependencies:
       - if: "target == esp32s3"
   espressif/mdns: "1.5.3"
   idf:
-    version: ">=5.4.1,<5.5"
+    version: "==5.5.5"

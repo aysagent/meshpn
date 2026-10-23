@@ -1,12 +1,5 @@
-# esp_wifi_remote 0.14.5 keeps its complete 5.4 Kconfig tree in idf_v5.4,
-# while its generic root looks under idf_v5.4.1 for the pinned IDF release.
-# Import the shipped compatible tree explicitly so P4+C6 and its tunables
-# exist. The manifest pins ESP-IDF to 5.4.x and wifi_remote to this series.
-rsource "../../managed_components/espressif__esp_wifi_remote/idf_v5.4/Kconfig.slave_select.in"
-rsource "../../managed_components/espressif__esp_wifi_remote/idf_v5.4/Kconfig.soc_wifi_caps.in"
-rsource "../../managed_components/espressif__esp_wifi_remote/idf_v5.4/Kconfig.wifi.in"
-
 # Compatibility settings for the project-owned ESP32-P4 networking path.
+# ESP-IDF 5.5 loads esp_wifi_remote's matching Kconfig tree itself.
 # ESP-IoT-Bridge 1.1 is limited to S2/S3, while MeshPN only needs its three
 # Ethernet/Wi-Fi netifs and a small set of AP settings on P4.
 config BRIDGE_ENABLE

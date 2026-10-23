@@ -351,7 +351,11 @@ static void add_telemetry(cJSON *root)
     heap_json(memory, "internal", MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     heap_json(memory, "psram", MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     heap_json(memory, "dma", MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+#if CONFIG_SPIRAM
     cJSON_AddNumberToObject(memory, "psram_detected", esp_psram_get_size());
+#else
+    cJSON_AddNumberToObject(memory, "psram_detected", 0);
+#endif
     uint32_t flash = 0; esp_flash_get_size(NULL, &flash);
     cJSON_AddNumberToObject(memory, "flash_detected", flash);
     cJSON_AddNumberToObject(memory, "web_stack_free", uxTaskGetStackHighWaterMark(NULL));

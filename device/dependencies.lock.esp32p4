@@ -114,7 +114,7 @@ dependencies:
   idf:
     source:
       type: idf
-    version: 5.4.1
+    version: 5.5.5
 direct_dependencies:
 - esphome/wireguard
 - espressif/esp_hosted
@@ -123,6 +123,6 @@ direct_dependencies:
 - espressif/mdns
 - espressif/tinyusb
 - idf
-manifest_hash: 913d0cd070da31ca5f3ea8f953c2b232e41e8af37a4029c714bbc02114fb514d
+manifest_hash: 823b838e8177927f3adb96de0368b10964c71825be73e078074a09524a0bde39
 target: esp32p4
 version: 2.0.0
