@@ -19,12 +19,20 @@ if [[ -z "$PORT" ]]; then
 fi
 
 unset IDF_PYTHON_ENV_PATH
-if [[ -n "${IDF_PATH:-}" && -f "$IDF_PATH/export.sh" ]]; then
+default_idf="$HOME/esp/esp-idf-meshpn-v5.5.5"
+if [[ "${IDF_PATH:-}" == "$HOME/esp/esp-idf" &&
+      "$(git -C "$IDF_PATH" describe --tags --exact-match 2>/dev/null || true)" != v5.5.5 ]]; then
+  selected_idf="$default_idf"
+elif [[ -n "${IDF_PATH:-}" && -f "$IDF_PATH/export.sh" ]]; then
   selected_idf="$IDF_PATH"
-elif [[ -f "$HOME/esp/esp-idf-meshpn-v5.5.5/export.sh" ]]; then
-  selected_idf="$HOME/esp/esp-idf-meshpn-v5.5.5"
+elif [[ -f "$default_idf/export.sh" ]]; then
+  selected_idf="$default_idf"
 else
   echo "ESP-IDF 5.5.5 not found. Run device/scripts/setup-macos.sh." >&2
+  exit 1
+fi
+if [[ ! -f "$selected_idf/export.sh" ]]; then
+  echo "ESP-IDF 5.5.5 not found at $selected_idf. Run device/scripts/setup-macos.sh." >&2
   exit 1
 fi
 if [[ "$(git -C "$selected_idf" describe --tags --exact-match 2>/dev/null || true)" != v5.5.5 ]]; then

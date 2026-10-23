@@ -4,7 +4,12 @@ set -euo pipefail
 
 IDF_VERSION="v5.5.5"
 # iot_bridge patches lwIP in IDF_PATH. Keep this checkout separate from camic.
-IDF_PATH="${IDF_PATH:-$HOME/esp/esp-idf-meshpn-v5.5.5}"
+if [[ "${IDF_PATH:-}" == "$HOME/esp/esp-idf" &&
+      "$(git -C "$IDF_PATH" describe --tags --exact-match 2>/dev/null || true)" != "$IDF_VERSION" ]]; then
+  IDF_PATH="$HOME/esp/esp-idf-meshpn-v5.5.5"
+else
+  IDF_PATH="${IDF_PATH:-$HOME/esp/esp-idf-meshpn-v5.5.5}"
+fi
 
 echo "==> Installing Homebrew dependencies (if missing)"
 for pkg in cmake ninja dfu-util python3; do
