@@ -35,7 +35,7 @@ export async function verifyVmPackages(directory) {
   assert.ok(result.some((p) => p.package === 'qemu-system-x86'));
   assert.ok(result.some((p) => p.package === 'busybox-static')); return result;
 }
-export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, systemd = false, ingress = false, ipv6 = false, hostResilience = false, hostJoint = false, hostSystemd = false, hostNetworkd = false, hostColdBoot = false, firewallBackend = 'legacy', bootDnsmasq = null, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
+export async function buildDnsVmImage({ directory, toolsRoot, kernel, kernelRelease = null, resolved, systemd = false, ingress = false, ipv6 = false, hostResilience = false, hostJoint = false, hostSystemd = false, hostNetworkd = false, hostColdBoot = false, firewallBackend = 'legacy', bootDnsmasq = null, dnsConntrack = null, dnsIngressOnly = false, dnsHostOnly = false, dnsmasq = null, coupled = false, radxa = false, deployment = false, publication = false, releasedInspection = false, uninstall = false }) {
   assert.ok(['legacy', 'nft'].includes(firewallBackend));
   assert.ok(firewallBackend === 'legacy' || hostColdBoot, 'nft matrix is limited to host cold boot');
   assert.ok(!hostColdBoot || hostNetworkd && hostSystemd && bootDnsmasq);
@@ -71,6 +71,7 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     units['dbus.socket'] = '[Unit]\nDescription=Private guest system bus socket\nDefaultDependencies=no\n[Socket]\nListenStream=/run/dbus/system_bus_socket\nSocketMode=0666\n';
   }
   const root = join(directory, 'guest'); await mkdir(root, { mode: 0o700 });
+  const project = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
   const copied = new Map(), modules = new Set();
   const destination = (path) => { assert.ok(path.startsWith('/') && !path.split('/').includes('..')); return join(root, path); };
   const copy = async (source, target = source) => {
@@ -128,6 +129,10 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     await elf(bootDnsmasq, '/usr/sbin/dnsmasq');
     for (const path of ['/usr/lib/systemd/systemd-udevd', '/usr/bin/udevadm']) await elf(path);
     for (const unit of ['systemd-networkd.socket', 'systemd-udevd.service', 'systemd-udev-trigger.service', 'systemd-udevd-control.socket', 'systemd-udevd-kernel.socket']) await copy(`/usr/lib/systemd/system/${unit}`);
+    // Retirement deliberately recognizes only byte-pinned historical guards.
+    // The cold-boot fixture must reproduce one of those installations rather
+    // than relabel the current, stricter guard as legacy.
+    await copy(join(project, 'scripts/fixtures/usb-dns-v2-guard.txt'), '/project/scripts/fixtures/usb-dns-v2-guard.txt');
   }
   if (publication) await elf('/usr/bin/mv');
   for (const name of ['libxt_tcp.so', 'libxt_udp.so', 'libipt_REJECT.so', 'libip6t_REJECT.so', 'libxt_standard.so',
@@ -136,19 +141,33 @@ export async function buildDnsVmImage({ directory, toolsRoot, kernel, resolved, 
     ...(ingress ? ['libxt_conntrack.so', 'libxt_comment.so', 'libxt_addrtype.so', 'libxt_SNAT.so', 'libxt_DNAT.so', 'libxt_MASQUERADE.so'] : [])]) {
     await elf(`/usr/lib/x86_64-linux-gnu/xtables/${name}`);
   }
-  const release = (await exec('uname', ['-r'])).stdout.trim();
-  assert.equal(await realpath(kernel), `/boot/vmlinuz-${release}`, 'this builder requires the matching local kernel/modules');
-  for (const name of ['iptable_filter', 'ip6table_filter', 'ipt_REJECT', 'ip6t_REJECT', 'xt_tcpudp', 'dummy',
-    ...(firewallBackend === 'nft' ? ['nft_compat', 'nft_counter', 'nft_ct', 'nft_chain_nat', 'nft_nat', 'nft_masq', 'nft_redir', 'nft_reject_ipv4', 'nft_reject_ipv6'] : []),
+  const runningRelease = (await exec('uname', ['-r'])).stdout.trim();
+  const release = kernelRelease ?? runningRelease;
+  assert.match(release, /^[A-Za-z0-9][A-Za-z0-9._+~-]{0,127}$/, 'invalid explicit kernel release');
+  assert.equal(await realpath(kernel), `/boot/vmlinuz-${release}`,
+    kernelRelease ? 'explicit kernel release does not match /boot kernel' : 'this builder requires the matching local kernel/modules');
+  if (!kernelRelease) assert.equal(release, runningRelease, 'implicit kernel must match the running host');
+  const requiredModules = ['iptable_filter', 'ip6table_filter', 'ipt_REJECT', 'ip6t_REJECT', 'xt_tcpudp', 'dummy',
+    ...(firewallBackend === 'nft' ? ['nf_tables', 'nft_compat', 'nft_ct', 'nft_chain_nat', 'nft_nat', 'nft_masq', 'nft_redir', 'nft_reject_ipv4', 'nft_reject_ipv6'] : []),
     ...(ipv6 ? ['ip6table_nat'] : []),
     ...(systemd ? ['xt_comment'] : []),
     ...(dnsConntrack ? ['xt_multiport', 'nf_conntrack_netlink'] : []),
     ...(dnsmasq ? ['veth'] : []),
-    ...(ingress ? ['tun', 'veth', 'iptable_nat', 'xt_conntrack', 'xt_comment', 'xt_addrtype', 'xt_nat', 'xt_MASQUERADE'] : [])]) {
-    const dependencies = (await exec('modprobe', ['--show-depends', name])).stdout;
+    ...(ingress ? ['tun', 'veth', 'iptable_nat', 'xt_conntrack', 'xt_comment', 'xt_addrtype', 'xt_nat', 'xt_MASQUERADE'] : [])];
+  // nft_counter was a separate module in older kernels, but its functionality
+  // is built into nf_tables in Ubuntu's 6.8 kernel. Import it when present
+  // without weakening the required nf_tables/nft compatibility closure.
+  const optionalModules = firewallBackend === 'nft' ? ['nft_counter'] : [];
+  for (const name of [...requiredModules, ...optionalModules]) {
+    let dependencies;
+    try {
+      dependencies = (await exec('modprobe', ['--set-version', release, '--show-depends', name])).stdout;
+    } catch (error) {
+      if (optionalModules.includes(name) && error.code === 1 && /Module .* not found/.test(error.stderr)) continue;
+      throw error;
+    }
     for (const match of dependencies.matchAll(/^insmod (\/[^\s]+\.ko)\b/gm)) { await copy(match[1]); modules.add(match[1]); }
   }
-  const project = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
   async function copyTree(from, to) {
     for (const entry of await readdir(from, { withFileTypes: true })) {
       assert.ok(!entry.isSymbolicLink(), 'do not import source symlinks');

@@ -89,6 +89,11 @@ CVPN_NATIVE_ONLY=1 CVPN_SOAK_SECONDS=180 node --test scripts/test-native-soak.mj
 
 `clean-vpn-native-lab.mjs HOST_BOOT_BASE QEMU_TOOLS_ROOT --native-only` использует
 NIC-less VM и реальные kernel TUN, firewall/DNS/SNAT и USB-подобный peer.
+
+На Apple Silicon Mac тот же runner поднимается одной командой через постоянный
+Podman cache; см. [native lab на macOS](clean-vpn-native-macos-lab.md). Это не
+отдельная упрощённая модель: внутри запускается Linux x86-64 и штатный NIC-less
+QEMU/TCG сценарий.
 В этом режиме нет Node client/exit, mixed-version проверок или benchmark.
 Node запускается только как native control coordinator. Проверяются DNS,
 TCP/UDP/fragmentation, uplink recovery, native exit restart, graceful stop,

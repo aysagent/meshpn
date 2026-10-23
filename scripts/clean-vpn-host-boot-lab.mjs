@@ -12,16 +12,19 @@ import { assertHostBootEvidence } from './lib/vpn-host-boot-evidence.mjs';
 
 const args = new Map();
 for (const arg of process.argv.slice(2)) {
+  if (arg === '--nested-emulation') { assert.ok(!args.has('nested-emulation'), 'duplicate nested emulation'); args.set('nested-emulation', true); continue; }
   const backend = /^--firewall-backend=(legacy|nft)$/.exec(arg);
   if (backend) { assert.ok(!args.has('firewall-backend'), 'duplicate firewall backend'); args.set('firewall-backend', backend[1]); continue; }
-  const m = /^--(tools|kernel|resolved|dns-conntrack|dnsmasq|verified-report)=(\/[^\r\n,]+)$/.exec(arg);
+  const release = /^--kernel-release=([A-Za-z0-9][A-Za-z0-9._+~-]{0,127})$/.exec(arg);
+  if (release) { assert.ok(!args.has('kernel-release'), 'duplicate kernel release'); args.set('kernel-release', release[1]); continue; }
+  const m = /^--(tools|kernel|resolved|dns-conntrack|dnsmasq|verified-report|qemu)=(\/[^\r\n,]+)$/.exec(arg);
   assert.ok(m && !args.has(m[1]), 'six unique absolute tool/report paths required'); args.set(m[1], m[2]);
 }
 for (const key of ['tools', 'kernel', 'resolved', 'dns-conntrack', 'dnsmasq', 'verified-report']) assert.ok(args.has(key), `missing --${key}`);
 process.umask(0o077);
 const directory = await mkdtemp(join(tmpdir(), 'meshpn-host-boot-'));
 console.error(`Host boot VM artifacts: ${directory}`);
-const report = { schema: 1, kind: 'clean-vpn-host-boot-lab', status: 'failed', firewallBackend: args.get('firewall-backend') ?? 'legacy', nic: 'none', hostSharedFilesystem: false, boots: [], acceptance: 'not-ready-for-deployment' };
+const report = { schema: 1, kind: 'clean-vpn-host-boot-lab', status: 'failed', firewallBackend: args.get('firewall-backend') ?? 'legacy', nic: 'none', hostSharedFilesystem: false, nestedEmulation: args.has('nested-emulation'), boots: [], acceptance: 'not-ready-for-deployment' };
 try {
   const previousBytes = await readFile(args.get('verified-report')), previous = JSON.parse(previousBytes);
   assert.equal(previous.status, 'passed'); assert.ok(Array.isArray(previous.packages));
@@ -33,7 +36,8 @@ try {
   assert.equal(packages.length, previous.packages.length); assert.ok(packages.some(p => p.package === 'qemu-system-x86')); assert.ok(packages.some(p => p.package === 'busybox-static'));
   report.packages = packages; report.packageTrust = { previousReport: args.get('verified-report'), sha256: sha256(previousBytes) };
   const root = join(args.get('tools'), 'root');
-  const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: args.get('kernel'), resolved: args.get('resolved'), dnsConntrack: args.get('dns-conntrack'), bootDnsmasq: args.get('dnsmasq'), ingress: true, ipv6: true, hostSystemd: true, hostNetworkd: true, hostColdBoot: true, firewallBackend: report.firewallBackend });
+  const qemu = args.get('qemu') ?? join(root, 'usr/bin/qemu-system-x86_64');
+  const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: args.get('kernel'), kernelRelease: args.get('kernel-release'), resolved: args.get('resolved'), dnsConntrack: args.get('dns-conntrack'), bootDnsmasq: args.get('dnsmasq'), ingress: true, ipv6: true, hostSystemd: true, hostNetworkd: true, hostColdBoot: true, firewallBackend: report.firewallBackend });
   report.image = image.manifest;
   const disk = join(directory, 'state.raw'), fd = await open(disk, 'wx', 0o600);
   try { await fd.truncate(256 * 1024 * 1024); } finally { await fd.close(); }
@@ -42,7 +46,7 @@ try {
     console.error(`Host boot VM: phase ${phase} (${phase === 0 ? 'install' : phase === 1 ? 'cold boot / late DHCP' : 'reboot / guard failure'})`);
     const env = { ...process.env, LD_LIBRARY_PATH: `${root}/usr/lib/x86_64-linux-gnu:${root}/lib/x86_64-linux-gnu`, QEMU_MODULE_DIR: `${root}/usr/lib/x86_64-linux-gnu/qemu` };
     for (const key of ['LD_PRELOAD', 'LD_AUDIT', 'QEMU_AUDIO_DRV']) delete env[key];
-    const proc = spawn(join(root, 'usr/bin/qemu-system-x86_64'), ['-nodefaults', '-no-user-config', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-no-reboot', '-serial', 'stdio', '-accel', 'tcg', '-cpu', 'max', '-m', '1024', '-smp', '1', '-machine', 'pc,dump-guest-core=off', '-bios', `${root}/usr/share/seabios/bios-256k.bin`, '-L', `${root}/usr/share/qemu`, '-kernel', image.kernel, '-initrd', image.initrd, '-append', 'console=ttyS0 loglevel=7 panic=-1 reboot=t random.trust_cpu=on meshpn.host-cold-boot=1', '-drive', `file=${disk},format=raw,if=virtio,cache=writeback`], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(qemu, ['-nodefaults', '-no-user-config', '-nic', 'none', '-display', 'none', '-monitor', 'none', '-no-reboot', '-serial', 'stdio', '-accel', 'tcg', '-cpu', args.has('nested-emulation') ? 'qemu64' : 'max', '-m', '1024', '-smp', '1', '-machine', 'pc,dump-guest-core=off', '-bios', `${root}/usr/share/seabios/bios-256k.bin`, '-L', `${root}/usr/share/qemu`, '-kernel', image.kernel, '-initrd', image.initrd, '-append', 'console=ttyS0 loglevel=7 panic=-1 reboot=t random.trust_cpu=on meshpn.host-cold-boot=1', '-drive', `file=${disk},format=raw,if=virtio,cache=writeback`], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     const output = createWriteStream(join(directory, `boot-${phase}.log`), { flags: 'wx', mode: 0o600 });
     const boot = { phase, events: [], kernelRestart: false, powerDown: false, synced: false, unmounted: false }; report.boots.push(boot);
     let pending = '', bytes = 0, failure;

@@ -122,7 +122,7 @@ async function run() {
     // Reproduce the Radxa starting point, WITHOUT running any old wrapper or
     // guard: disabled main + inactive tied guard, four installed files, no rules.
     put('/usr/local/bin/clean-vpn-run.sh', '#!/bin/bash\nexit 93\n', 0o755);
-    copyFileSync('/project/scripts/autostart/killswitch.sh', '/usr/local/bin/clean-vpn-killswitch.sh'); chmodSync('/usr/local/bin/clean-vpn-killswitch.sh', 0o755);
+    copyFileSync('/project/scripts/fixtures/usb-dns-v2-guard.txt', '/usr/local/bin/clean-vpn-killswitch.sh'); chmodSync('/usr/local/bin/clean-vpn-killswitch.sh', 0o755);
     put('/etc/systemd/system/clean-vpn.service', '[Unit]\nRequires=clean-vpn-killswitch.service\nAfter=network.target\n[Service]\nType=simple\nExecStart=/usr/local/bin/clean-vpn-run.sh\n[Install]\nWantedBy=multi-user.target\n');
     put('/etc/systemd/system/clean-vpn-killswitch.service', '[Unit]\nPartOf=clean-vpn.service\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/local/bin/clean-vpn-killswitch.sh up --server=198.51.100.2\nExecStop=/usr/local/bin/clean-vpn-killswitch.sh down\n');
     // Logging overrides belong to the NEW installation only. Retirement refuses

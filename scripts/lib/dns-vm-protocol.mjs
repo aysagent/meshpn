@@ -247,9 +247,10 @@ export function vmDriverFailureIsFatal(line, terminalRequested = false) {
   if (!/dns-vm-driver\.service: Failed with result/.test(line)) return false;
   return !(terminalRequested && /dns-vm-driver\.service: Failed with result 'signal'\.$/.test(line));
 }
-export function qemuDnsArgs({ root, kernel, initrd, disk, phase, point }) {
+export function qemuDnsArgs({ root, kernel, initrd, disk, phase, point, cpu = 'max', quiet = true }) {
   vmBootOptions(`meshpn_dns_vm=isolated-v1 meshpn_phase=${phase} meshpn_point=${point}`);
   for (const path of [root, kernel, initrd, disk]) assert.ok(path.startsWith('/') && !/[,\n\r\0]/.test(path));
+  assert.ok(['max', 'qemu64'].includes(cpu)); assert.equal(typeof quiet, 'boolean');
   return ['-nodefaults', '-no-user-config', '-nic', 'none', '-display', 'none', '-monitor', 'none',
     // Only the parent may launch another boot; unexpected reboot/panic cannot hide a failed attempt.
     '-no-reboot',
@@ -257,9 +258,9 @@ export function qemuDnsArgs({ root, kernel, initrd, disk, phase, point }) {
     // client and separate exit/origin CPU execution capacity as on two hosts;
     // other historical fault/fixture cases retain their original single vCPU.
     '-serial', 'stdio', '-accel', phase === 'systemd' || /^(coupled|radxa)/.test(phase) ? 'tcg,thread=multi' : 'tcg',
-    '-cpu', 'max', '-m', '1024', '-smp', phase === 'systemd' || /^(coupled|radxa)/.test(phase) ? '2' : '1',
+    '-cpu', cpu, '-m', '1024', '-smp', phase === 'systemd' || /^(coupled|radxa)/.test(phase) ? '2' : '1',
     '-machine', 'pc,dump-guest-core=off', '-bios', `${root}/usr/share/seabios/bios-256k.bin`,
     '-L', `${root}/usr/share/qemu`, '-kernel', kernel, '-initrd', initrd,
-    '-append', `console=ttyS0 quiet panic=-1 reboot=t random.trust_cpu=on meshpn_dns_vm=isolated-v1 meshpn_phase=${phase} meshpn_point=${point}`,
+    '-append', `console=ttyS0${quiet ? ' quiet' : ' loglevel=4'} panic=-1 reboot=t random.trust_cpu=on meshpn_dns_vm=isolated-v1 meshpn_phase=${phase} meshpn_point=${point}`,
     '-drive', `file=${disk},format=raw,if=virtio,cache=writeback`];
 }

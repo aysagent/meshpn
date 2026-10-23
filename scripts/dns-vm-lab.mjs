@@ -15,11 +15,14 @@ const exec = promisify(execFile);
 async function main() {
   const flags = new Map();
   for (const arg of process.argv.slice(2)) {
-    const match = /^--(tools|kernel|resolved|case|dnsmasq)=(.+)$/.exec(arg);
-    assert.ok(match && !flags.has(match[1]), 'expected --tools=DIR --kernel=FILE --resolved=FILE [--case=all|faults|systemd|dnsmasq|radxa|radxa-cuts|coupled|coupled-cuts|installed|installed-units|installed-released|installed-quiescent|installed-uninstall|deployment|publication|cycle|CASE] [--dnsmasq=FILE]');
+    if (arg === '--nested-emulation') { assert.ok(!flags.has('nested-emulation'), 'duplicate --nested-emulation'); flags.set('nested-emulation', true); continue; }
+    const match = /^--(tools|kernel|kernel-release|resolved|case|dnsmasq|qemu)=(.+)$/.exec(arg);
+    assert.ok(match && !flags.has(match[1]), 'expected --tools=DIR --kernel=FILE --resolved=FILE [--kernel-release=RELEASE] [--case=all|faults|systemd|dnsmasq|radxa|radxa-cuts|coupled|coupled-cuts|installed|installed-units|installed-released|installed-quiescent|installed-uninstall|deployment|publication|cycle|CASE] [--dnsmasq=FILE]');
     flags.set(match[1], match[2]);
   }
   for (const key of ['tools', 'kernel', 'resolved']) assert.ok(flags.get(key)?.startsWith('/'), `absolute --${key} required`);
+  if (flags.has('qemu')) assert.ok(flags.get('qemu').startsWith('/'), 'absolute --qemu required');
+  if (flags.has('kernel-release')) assert.match(flags.get('kernel-release'), /^[A-Za-z0-9][A-Za-z0-9._+~-]{0,127}$/, 'invalid --kernel-release');
   const cases = vmCases(flags.get('case'));
   const radxaCut = flags.get('case') === 'radxa-cuts' || Boolean(flags.get('case')?.startsWith('radxa-cut:'));
   const radxa = flags.get('case') === 'radxa' || radxaCut;
@@ -32,12 +35,13 @@ async function main() {
   const releasedInspection = ['installed-released', 'installed-quiescent'].includes(flags.get('case'));
   const coupled = ['coupled', 'installed', 'installed-units'].includes(flags.get('case')) || releasedInspection || deployment || coupledCut;
   const systemd = coupled || dnsmasq || flags.get('case') === 'systemd';
+  const nestedEmulation = flags.has('nested-emulation');
   const tools = resolve(flags.get('tools')), root = join(tools, 'root');
   const packages = await verifyVmPackages(tools);
   const env = { ...process.env, LD_LIBRARY_PATH: `${root}/usr/lib/x86_64-linux-gnu:${root}/lib/x86_64-linux-gnu`,
     QEMU_MODULE_DIR: `${root}/usr/lib/x86_64-linux-gnu/qemu` };
   for (const key of ['LD_PRELOAD', 'LD_AUDIT', 'QEMU_AUDIO_DRV']) delete env[key];
-  const qemu = join(root, 'usr/bin/qemu-system-x86_64');
+  const qemu = flags.has('qemu') ? resolve(flags.get('qemu')) : join(root, 'usr/bin/qemu-system-x86_64');
   const version = (await exec(qemu, ['--version'], { env, timeout: 10000 })).stdout.split('\n')[0];
   const directory = await mkdtemp(join(tmpdir(), 'meshpn-dns-vm-')); process.umask(0o077);
   console.error(`VM artifacts: ${directory}`);
@@ -48,16 +52,17 @@ async function main() {
   })));
   const before = await hostSnapshot();
   const report = { schema: 1, kind: 'clean-vpn-dns-vm-lab', status: 'failed', version, packages,
-    nic: 'none', accelerator: 'tcg', diskCache: 'writeback', hostSharedFilesystem: false,
+    nic: 'none', accelerator: 'tcg', diskCache: 'writeback', hostSharedFilesystem: false, nestedEmulation,
     systemdPid1: systemd, ...(dnsmasq ? { backend: radxa ? 'radxa-paired' : 'dnsmasq' } : {}), physicalPowerLossTested: false, inProcessHotResetTested: false, cases: [] };
   report.vcpus = flags.get('case') === 'systemd' || coupled || radxa ? 2 : 1;
   try {
-    const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), resolved: flags.get('resolved'), systemd,
+    const image = await buildDnsVmImage({ directory, toolsRoot: root, kernel: flags.get('kernel'), kernelRelease: flags.get('kernel-release'), resolved: flags.get('resolved'), systemd,
       dnsmasq: dnsmasq ? flags.get('dnsmasq') : null, coupled, radxa, deployment, publication, releasedInspection, uninstall });
     report.image = { kernelSha256: image.manifest.kernelSha256, initrdSha256: image.manifest.initrdSha256 };
     let launchNumber = 0;
     async function launch(disk, phase, point, expectReboot = false) {
-      const args = qemuDnsArgs({ root, ...image, disk, phase, point });
+      const args = qemuDnsArgs({ root, ...image, disk, phase, point,
+        cpu: nestedEmulation ? 'qemu64' : 'max', quiet: !nestedEmulation });
       const events = []; let pending = '', failure, killedAtCheckpoint = false, logBytes = 0, kernelRestart = false, shutdownSynced = false, shutdownUnmounted = false;
       const log = join(directory, `serial-${++launchNumber}.log`);
       const logFd = openSync(log, 'wx', 0o600);
@@ -70,7 +75,8 @@ async function main() {
       };
       const onSignal = () => abort(new Error('VM lab interrupted'));
       process.on('SIGINT', onSignal); process.on('SIGTERM', onSignal);
-      const deadlineMs = uninstall ? 2100000 : systemd ? 900000 : 240000;
+      const deadlineMs = nestedEmulation ? (uninstall ? 60 * 60 * 1000 : systemd ? 30 * 60 * 1000 : 15 * 60 * 1000)
+        : uninstall ? 2100000 : systemd ? 900000 : 240000;
       const timer = setTimeout(() => abort(new Error(`VM deadline exceeded (${deadlineMs / 1000} seconds)`)), deadlineMs);
       proc.on('error', (error) => { failure ??= error; });
       proc.stderr.on('data', capture);

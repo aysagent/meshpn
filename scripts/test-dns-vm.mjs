@@ -135,6 +135,13 @@ test('VM launcher explicitly disables network, display, monitor and default devi
   assert.equal(args[args.indexOf('-drive') + 1], 'file=/private/state.raw,format=raw,if=virtio,cache=writeback');
   assert.deepEqual(vmBootOptions(args[args.indexOf('-append') + 1]), { phase: 'cycle', point: 'none' });
 });
+test('nested-emulation QEMU profile remains NIC-less and observable', () => {
+  const args = qemuDnsArgs({ ...input, cpu: 'qemu64', quiet: false });
+  assert.equal(args[args.indexOf('-cpu') + 1], 'qemu64');
+  assert.equal(args[args.indexOf('-nic') + 1], 'none');
+  assert.match(args[args.indexOf('-append') + 1], /console=ttyS0 loglevel=4/);
+  assert.throws(() => qemuDnsArgs({ ...input, cpu: 'host' }));
+});
 for (const point of VM_CUT_POINTS) test(`VM cut/inspect protocol permits only known checkpoint ${point}`, () => {
   for (const phase of ['cut', 'inspect']) {
     const args = qemuDnsArgs({ ...input, phase, point });
