@@ -14,6 +14,7 @@ import time
 
 APP = (0x303A, 0x4001)
 ROM = (0x303A, 0x1001)
+P4_ROM = (0x303A, 0x0012)
 UART = {(0x10C4, 0xEA60), (0x1A86, 0x7523), (0x1A86, 0x55D4), (0x0403, 0x6001)}
 
 
@@ -30,20 +31,35 @@ def location(port):
     return (port.location or "").split(":", 1)[0]
 
 
+def is_app(port, target):
+    if usb_id(port) != APP:
+        return False
+    product = getattr(port, "product", None) or ""
+    if target == "esp32p4":
+        return product == "MeshPN ESP32-P4 HS NCM"
+    return product != "MeshPN ESP32-P4 HS NCM"
+
+
+def rom_id(target):
+    return P4_ROM if target == "esp32p4" else ROM
+
+
 def select_port(ports, explicit, target):
     if explicit:
         matches = [p for p in ports if p.device == explicit]
     else:
-        allowed = UART | {ROM} | ({APP} if target == "esp32s3" else set())
-        matches = [p for p in ports if usb_id(p) in allowed]
+        matches = [p for p in ports if usb_id(p) in UART | {rom_id(target)}
+                   or is_app(p, target)]
     if len(matches) != 1:
         found = ", ".join(p.device for p in matches) or "none"
         raise RuntimeError(f"Expected one programming port (found: {found}). "
                            "Connect the board or set PORT=/dev/cu.… (Linux: /dev/ttyACM…). "
                            "Use BUILD_ONLY=1 to build without a board.")
     port = matches[0]
-    if target == "esp32p4" and usb_id(port) == APP:
-        raise RuntimeError("P4 HS NCM is not the programming connector. Select its USB-C/UART port with PORT.")
+    if usb_id(port) == APP and not is_app(port, target):
+        raise RuntimeError("Selected application USB port does not match the target board")
+    if usb_id(port) in {ROM, P4_ROM} and usb_id(port) != rom_id(target):
+        raise RuntimeError("Selected ROM USB port does not match the target chip")
     return port
 
 
@@ -62,7 +78,7 @@ def wait_port(original, expected, enumerate_ports, timeout=30, clock=time.monoto
         sleep(0.2)
     if expected == APP:
         raise ApplicationUSBTimeout("Flash completed, but application USB CDC did not return. "
-                           "Release BOOT and press RESET once; check startup logs if it still fails. "
+                           "Press RESET once without BOOT if it still stays in ROM; check startup logs. "
                            "No other port was selected.")
     raise RuntimeError("Timed out waiting for the selected board to re-enumerate. "
                        "Old firmware needs ONE manual BOOT flash to install auto-flash support. "
@@ -118,22 +134,27 @@ def application_port(args, original, enumerate_ports, run, wait):
 def flash(args, enumerate_ports, serial_factory, run=subprocess.run, wait=wait_port):
     original = select_port(enumerate_ports(), args.port, args.target)
     port = original
-    if usb_id(port) == APP:
+    if is_app(port, args.target):
         if not location(port):
             raise RuntimeError("USB location is unavailable; refusing to reset a board we cannot rediscover.")
         print(f"Entering ROM bootloader through {port.device} (1200-baud touch)…", flush=True)
         touch(port, serial_factory)
-        port = wait(original, ROM, enumerate_ports)
+        port = wait(original, rom_id(args.target), enumerate_ports)
     print(f"Flashing {args.target} on {port.device}", flush=True)
     base = ["idf.py", "-C", args.device_dir, "-B", args.build_dir]
     run(base + ["-p", port.device, "flash"], check=True)
     # A successful esptool exit proves flashing, not a healthy application.
-    # Native S3 USB changes identity again when the application starts.
-    if args.target == "esp32s3" and usb_id(port) == ROM and args.profile == "ncm":
-        port = application_port(args, original, enumerate_ports, run, wait)
+    # Native USB changes identity again when the application starts.
+    if usb_id(port) == rom_id(args.target) and args.profile == "ncm":
+        if args.target == "esp32s3":
+            port = application_port(args, original, enumerate_ports, run, wait)
+        else:
+            port = wait(original, APP, enumerate_ports)
+            if not is_app(port, args.target):
+                raise RuntimeError("Application port at the selected USB location is not MeshPN P4")
         print(f"Application USB CDC returned on {port.device}; network/VPN health not tested.", flush=True)
     if args.monitor:
-        if usb_id(port) == APP:
+        if is_app(port, args.target):
             print("Normal MeshPN CDC is quiet; use device:flash:diag for '?' diagnostic snapshots. "
                   "Close monitor before the next flash.", flush=True)
         run(base + ["-p", port.device, "monitor"], check=True)

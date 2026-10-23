@@ -1,19 +1,25 @@
 #include "sdkconfig.h"
 #include "meshvpn_usb_bootloader.h"
 
-#if CONFIG_IDF_TARGET_ESP32S3 && CONFIG_TINYUSB_CDC_ENABLED
+#if (CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32P4) && CONFIG_TINYUSB_CDC_ENABLED
 #include "esp_log.h"
 #include "esp_efuse.h"
 #include "esp_efuse_table.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#if CONFIG_IDF_TARGET_ESP32S3
 #include "esp_private/periph_ctrl.h"
 #include "esp32s3/rom/efuse.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "hal/usb_serial_jtag_ll.h"
 #include "soc/rtc_cntl_reg.h"
 #include "soc/usb_serial_jtag_reg.h"
+#else
+#include "esp32p4/rom/efuse.h"
+#include "soc/lp_system_reg.h"
+#endif
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "soc/soc.h"
 #include "tusb.h"
 #include "tusb_cdc_acm.h"
 #include "tusb_tasks.h"
@@ -23,6 +29,7 @@ static bool s_touch_armed;
 
 static void enter_download_on_shutdown(void)
 {
+#if CONFIG_IDF_TARGET_ESP32S3
     /* The application owns the shared internal PHY through USB-OTG. ROM
      * downloading uses hardware CDC/JTAG instead. Do not persist TinyUSB's
      * composite NCM descriptors into the ROM console. See Espressif's
@@ -43,6 +50,12 @@ static void enter_download_on_shutdown(void)
     usb_serial_jtag_ll_phy_disable_pull_override();
     usb_serial_jtag_ll_phy_enable_pad(true);
     REG_SET_BIT(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+#else
+    /* P4 ROM can download over the same HS USB-OTG controller used by NCM.
+     * The forced boot bit is read by ROM on the CPU reset from esp_restart().
+     * A later system reset clears it so normal flash boot can resume. */
+    REG_SET_BIT(LP_SYSTEM_REG_SYS_CTRL_REG, LP_SYSTEM_REG_FORCE_DOWNLOAD_BOOT);
+#endif
 }
 
 static void reboot_to_download(void *arg)
@@ -74,8 +87,13 @@ static void line_state(int itf, cdcacm_event_t *event)
 void meshvpn_usb_bootloader_init(void)
 {
     if (ets_efuse_download_modes_disabled() ||
+#if CONFIG_IDF_TARGET_ESP32S3
         esp_efuse_read_field_bit(ESP_EFUSE_DIS_USB_SERIAL_JTAG) ||
-        esp_efuse_read_field_bit(ESP_EFUSE_DIS_USB_SERIAL_JTAG_DOWNLOAD_MODE)) {
+        esp_efuse_read_field_bit(ESP_EFUSE_DIS_USB_SERIAL_JTAG_DOWNLOAD_MODE)
+#else
+        esp_efuse_read_field_bit(ESP_EFUSE_DIS_USB_OTG_DOWNLOAD_MODE)
+#endif
+        ) {
         ESP_LOGW("usb_boot", "ROM USB download is disabled by eFuse; auto-flash unavailable");
         return;
     }
@@ -88,6 +106,5 @@ void meshvpn_usb_bootloader_init(void)
     tinyusb_cdcacm_register_callback(0, CDC_EVENT_LINE_STATE_CHANGED, line_state);
 }
 #else
-/* P4 uses its separate USB-UART programming connector, not the HS NCM port. */
 void meshvpn_usb_bootloader_init(void) {}
 #endif

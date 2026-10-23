@@ -10,8 +10,9 @@ flash = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(flash)
 
 
-def port(name, identity=flash.APP, location="1-2:1.0"):
-    return NS(device=name, vid=identity[0], pid=identity[1], location=location)
+def port(name, identity=flash.APP, location="1-2:1.0", product=None):
+    return NS(device=name, vid=identity[0], pid=identity[1], location=location,
+              product=product)
 
 
 class FlashTests(unittest.TestCase):
@@ -37,10 +38,28 @@ class FlashTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             flash.select_port([self.app], "/dev/missing", "esp32s3")
 
-    def test_p4_hs_is_not_a_programming_port(self):
-        for explicit in [None, self.app.device]:
+    def test_p4_rom_and_app_can_be_selected_on_hs_connector(self):
+        p4_rom = port("/dev/cu.p4rom", flash.P4_ROM)
+        p4_app = port("/dev/cu.p4app", product="MeshPN ESP32-P4 HS NCM")
+        self.assertIs(flash.select_port([p4_rom], None, "esp32p4"), p4_rom)
+        self.assertIs(flash.select_port([p4_app], None, "esp32p4"), p4_app)
+        for wrong in [self.app, self.rom]:
             with self.assertRaises(RuntimeError):
-                flash.select_port([self.app], explicit, "esp32p4")
+                flash.select_port([wrong], wrong.device, "esp32p4")
+
+    def test_p4_app_touches_same_location_and_waits_for_p4_rom(self):
+        self.args.target = "esp32p4"
+        app = port("/dev/cu.p4app", product="MeshPN ESP32-P4 HS NCM")
+        rom = port("/dev/cu.p4rom", flash.P4_ROM)
+        returned = port("/dev/cu.newapp", product="MeshPN ESP32-P4 HS NCM")
+        wait = Mock(side_effect=[rom, returned])
+        run = Mock()
+        with patch.object(flash, "touch") as touch:
+            flash.flash(self.args, lambda: [app], Mock(), run=run, wait=wait)
+        touch.assert_called_once()
+        self.assertEqual(wait.call_args_list[0].args[1], flash.P4_ROM)
+        self.assertEqual(run.call_args_list[0].args[0][-3:], ["-p", rom.device, "flash"])
+        self.assertEqual(wait.call_args_list[1].args[1], flash.APP)
 
     def test_matches_physical_location_not_device_name(self):
         other = port("/dev/wrong", flash.ROM, "2-9:1.0")
