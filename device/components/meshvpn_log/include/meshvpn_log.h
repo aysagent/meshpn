@@ -25,6 +25,9 @@ esp_err_t meshvpn_log_init(void);
  */
 void meshvpn_log_report_boot(uint32_t boot_count);
 
+/** Human-readable reason for the most recent reset, stable until the next boot. */
+const char *meshvpn_log_reset_reason_name(void);
+
 /** Copy the buffered log (oldest first) into out. Returns bytes written. */
 size_t meshvpn_log_copy(char *out, size_t out_len);
 

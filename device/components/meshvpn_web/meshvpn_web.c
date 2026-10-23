@@ -411,6 +411,9 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "must_change_password", password_change_required());
     cJSON_AddStringToObject(root, "board", board->name);
     cJSON_AddNumberToObject(root, "uptime_sec", (double)(esp_timer_get_time() / 1000000));
+    cJSON_AddNumberToObject(root, "boot_count", meshvpn_config_get_boot_count());
+    cJSON_AddNumberToObject(root, "reset_reason", esp_reset_reason());
+    cJSON_AddStringToObject(root, "reset_reason_name", meshvpn_log_reset_reason_name());
 
     cJSON *wifi = cJSON_AddObjectToObject(root, "wifi");
     cJSON_AddStringToObject(wifi, "state", ws.state);

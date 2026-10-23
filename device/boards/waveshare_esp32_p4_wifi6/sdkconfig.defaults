@@ -26,6 +26,9 @@ CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 CONFIG_CACHE_L2_CACHE_256KB=y
 CONFIG_CACHE_L2_CACHE_LINE_128B=y
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+# Keep the panic dump within the existing 64 KiB partition. The crashed task
+# is always included; other tasks are selected by priority.
+CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=8
 
 # USB 2.0 High-Speed device controller on the dedicated four-pin connector.
 CONFIG_TINYUSB_RHPORT_HS=y
@@ -41,6 +44,10 @@ CONFIG_SLAVE_IDF_TARGET_ESP32C6=y
 CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y
 CONFIG_ESP_HOSTED_SDIO_4_BIT_BUS=y
 CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ=40000
+# Bound queued 1536-byte internal DMA packet copies on the host. The upstream
+# default is 20 slots per priority queue in each direction.
+CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=8
+CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=8
 CONFIG_ESP_HOSTED_SDIO_PIN_CMD=19
 CONFIG_ESP_HOSTED_SDIO_PIN_CLK=18
 CONFIG_ESP_HOSTED_SDIO_PIN_D0=14

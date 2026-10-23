@@ -23,7 +23,9 @@ CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
 CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
-CONFIG_ESP_COREDUMP_CAPTURE_DRAM=y
+# The 64 KiB coredump partition cannot hold a full DRAM capture (IDF requires
+# at least 128 KiB). Keep task registers and stacks so panic dumps are usable.
+# CONFIG_ESP_COREDUMP_CAPTURE_DRAM is not set
 
 # LWIP NAT (bridge + meshvpn_net)
 CONFIG_LWIP_IP_FORWARD=y
