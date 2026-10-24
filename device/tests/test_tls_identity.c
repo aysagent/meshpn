@@ -42,7 +42,7 @@ int main(int argc,char **argv)
     mbedtls_x509_crt parsed; mbedtls_x509_crt_init(&parsed);
     assert(mbedtls_x509_crt_parse(&parsed, (const unsigned char *)meshvpn_web_tls_cert(),
         strlen(meshvpn_web_tls_cert()) + 1) == 0);
-    const char *names[] = {"meshpn.local", "meshpn.home.arpa", "192.168.7.1", "192.168.4.1"};
+    const char *names[] = {"meshpn.local", "meshpn.home.arpa", "192.168.10.1", "192.168.11.1"};
     for (unsigned i = 0; i < 4; i++) {
         uint32_t flags = 0;
         mbedtls_x509_crt_verify(&parsed, &parsed, NULL, names[i], &flags, NULL, NULL);

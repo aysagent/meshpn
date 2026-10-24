@@ -116,9 +116,9 @@ static esp_err_t generate(identity_t *id)
         memcpy(san + pos, names[i], n); pos += n;
     }
     san[pos++] = 0x87; san[pos++] = 4;
-    san[pos++] = 192; san[pos++] = 168; san[pos++] = 7; san[pos++] = 1;
+    san[pos++] = 192; san[pos++] = 168; san[pos++] = 10; san[pos++] = 1;
     san[pos++] = 0x87; san[pos++] = 4;
-    san[pos++] = 192; san[pos++] = 168; san[pos++] = 4; san[pos++] = 1;
+    san[pos++] = 192; san[pos++] = 168; san[pos++] = 11; san[pos++] = 1;
     san[1] = pos - 2;
     TRY(mbedtls_x509write_crt_set_extension(&crt, MBEDTLS_OID_SUBJECT_ALT_NAME,
         MBEDTLS_OID_SIZE(MBEDTLS_OID_SUBJECT_ALT_NAME), 0, san, pos));

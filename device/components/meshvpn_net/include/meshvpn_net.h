@@ -35,7 +35,7 @@ esp_err_t meshvpn_net_init(void);
 void meshvpn_net_refresh_lan_dhcp(void);
 
 /**
- * Create USB (192.168.7.1/24), optional AP (192.168.4.1/24) and WiFi STA uplink. Initialises
+ * Create USB (192.168.10.1/24), optional AP (192.168.11.1/24) and DHCP WiFi STA uplink. Initialises
  * the WiFi driver, so this must run before any esp_wifi_* configuration.
  */
 esp_err_t meshvpn_net_start_bridge(void);
@@ -47,6 +47,7 @@ void meshvpn_net_log_state(void);
 void meshvpn_net_get_status(meshvpn_net_status_t *status);
 esp_netif_t *meshvpn_net_usb(void);
 esp_netif_t *meshvpn_net_ap(void);
+esp_netif_t *meshvpn_net_sta(void);
 esp_err_t meshvpn_net_start_mdns(bool https_enabled);
 
 #ifdef __cplusplus

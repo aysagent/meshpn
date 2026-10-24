@@ -24,8 +24,6 @@
 #include "mdns.h"
 #include "meshvpn_dns_proxy.h"
 
-#define MESHVPN_AP_SUBNET_OCTET_2 (CONFIG_MESHVPN_USB_SUBNET_OCTET_2 == 4 ? 3 : 4)
-
 static const char *TAG = "meshvpn_net";
 static bool s_bridge_running;
 static esp_netif_t *s_usb_netif;
@@ -37,6 +35,7 @@ static bool s_mdns;
 
 esp_netif_t *meshvpn_net_usb(void) { return s_usb_netif; }
 esp_netif_t *meshvpn_net_ap(void) { return s_ap_netif; }
+esp_netif_t *meshvpn_net_sta(void) { return s_sta_netif; }
 
 esp_err_t meshvpn_net_start_mdns(bool https_enabled)
 {
@@ -57,6 +56,19 @@ esp_err_t meshvpn_net_start_mdns(bool https_enabled)
         mdns_free();
         s_mdns = false;
         return err;
+    }
+    if (s_sta_netif) {
+        err = mdns_register_netif(s_sta_netif);
+        if (err == ESP_OK) {
+            esp_netif_ip_info_t ip = {0};
+            if (esp_netif_get_ip_info(s_sta_netif, &ip) == ESP_OK && ip.ip.addr)
+                err = mdns_netif_action(s_sta_netif, MDNS_EVENT_ENABLE_IP4);
+        }
+        if (err != ESP_OK) {
+            mdns_free();
+            s_mdns = false;
+            return err;
+        }
     }
     return ESP_OK;
 }
@@ -258,8 +270,11 @@ static void meshvpn_net_on_event(void *arg, esp_event_base_t base, int32_t id, v
             meshvpn_net_resolve_lan_conflict(s_ap_netif, s_usb_netif, &ev->ip_info);
             esp_netif_set_default_netif(s_sta_netif);
             ESP_LOGI(TAG, "STA default route set");
+            if (s_mdns) mdns_netif_action(s_sta_netif, MDNS_EVENT_ENABLE_IP4 | MDNS_EVENT_ANNOUNCE_IP4);
         }
     }
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED && s_mdns && s_sta_netif)
+        mdns_netif_action(s_sta_netif, MDNS_EVENT_DISABLE_IP4);
 
     /* iot_bridge calls esp_netif_napt_enable() on the SoftAP whenever its DNS
      * or address changes. That API disables NAPT on every other interface — USB
@@ -374,6 +389,7 @@ esp_err_t meshvpn_net_start_bridge(void)
     s_sta_netif = esp_bridge_create_station_netif(NULL, NULL, false, false);
     if (!s_sta_netif) return ESP_FAIL;
 #endif
+    meshvpn_net_set_sta_interface(esp_netif_get_netif_impl(s_sta_netif));
 #endif
 
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
@@ -381,13 +397,13 @@ esp_err_t meshvpn_net_start_bridge(void)
      * STA profile manager has not started connecting yet, so stopping the radio
      * here does not interrupt an established uplink. */
 #if CONFIG_IDF_TARGET_ESP32P4
-    meshvpn_net_fill_ip(&ip, MESHVPN_AP_SUBNET_OCTET_2);
+    meshvpn_net_fill_ip(&ip, CONFIG_MESHVPN_AP_SUBNET_OCTET_2);
     (void)esp_netif_dhcps_stop(s_ap_netif);
     err = esp_netif_set_ip_info(s_ap_netif, &ip);
 #else
     esp_err_t err = esp_wifi_stop();
     if (err != ESP_OK) return err;
-    meshvpn_net_fill_ip(&ip, MESHVPN_AP_SUBNET_OCTET_2);
+    meshvpn_net_fill_ip(&ip, CONFIG_MESHVPN_AP_SUBNET_OCTET_2);
     s_ap_netif = esp_bridge_create_softap_netif(&ip, NULL, true, true);
     if (!s_ap_netif) return ESP_FAIL;
 #endif
@@ -416,7 +432,7 @@ esp_err_t meshvpn_net_start_bridge(void)
     if (err != ESP_OK) return err;
     err = esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT40);
     if (err != ESP_OK) return err;
-    ESP_LOGI(TAG, "SoftAP %s: WPA2, max %u clients; management remains USB-only",
+    ESP_LOGI(TAG, "SoftAP %s: WPA2, max %u clients; admin available on USB/AP/STA",
              ssid, (unsigned)CONFIG_BRIDGE_SOFTAP_MAX_CONNECT_NUMBER);
 #endif
 
@@ -438,6 +454,7 @@ esp_err_t meshvpn_net_start_bridge(void)
 
     /* Register after iot_bridge so our handlers run after bridge DNS/NAPT hooks. */
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, meshvpn_net_on_event, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, meshvpn_net_on_event, NULL));
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_START, meshvpn_net_on_event, NULL));
 #endif

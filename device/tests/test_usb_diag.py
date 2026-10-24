@@ -83,7 +83,7 @@ class USBTests(unittest.TestCase):
                 with contextlib.redirect_stdout(output):
                     self.assertEqual(DIAG.main(["--port", os.ttyname(slave)]), 0)
                 args = probe.call_args.args[0]
-                self.assertIn("http://192.168.7.1/login", args)
+                self.assertIn("http://192.168.10.1/login", args)
                 self.assertIn("--noproxy", args)
                 self.assertNotIn("-L", args)
             thread.join(timeout=5)

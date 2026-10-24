@@ -48,9 +48,9 @@ const char *meshvpn_wg_config_error(const meshvpn_vpn_config_t *c)
     mbedtls_platform_zeroize(key, sizeof(key));
     if (error) return error;
     ip4_addr_t address; ip4addr_aton(c->wg_address, &address);
-    unsigned ap_octet = CONFIG_MESHVPN_USB_SUBNET_OCTET_2 == 4 ? 3 : 4;
     if (ip4_addr1(&address) == 192 && ip4_addr2(&address) == 168 &&
-        (ip4_addr3(&address) == CONFIG_MESHVPN_USB_SUBNET_OCTET_2 || ip4_addr3(&address) == ap_octet))
+        (ip4_addr3(&address) == CONFIG_MESHVPN_USB_SUBNET_OCTET_2 ||
+         ip4_addr3(&address) == CONFIG_MESHVPN_AP_SUBNET_OCTET_2))
         return "Address overlaps the device USB/AP subnet. Use a different tunnel subnet.";
     uint8_t peer[4]; uint16_t port;
     if (!meshvpn_vpn_endpoint(c->server, peer, &port)) return "Endpoint: use numeric server IPv4:port, not a hostname or IPv6.";

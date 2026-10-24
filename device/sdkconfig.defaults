@@ -34,11 +34,11 @@ CONFIG_LWIP_L2_TO_L3_COPY=y
 # This firmware routes IPv4 only; the input hook also rejects IPv6 if an older
 # sdkconfig enables it.
 # CONFIG_LWIP_IPV6 is not set
-# Register only the custom USB interface; no service discovery on uplink.
+# Register USB, SoftAP and STA explicitly for meshpn.local.
 # CONFIG_MDNS_PREDEF_NETIF_STA is not set
 # CONFIG_MDNS_PREDEF_NETIF_AP is not set
 # CONFIG_MDNS_PREDEF_NETIF_ETH is not set
-CONFIG_MDNS_MAX_INTERFACES=2
+CONFIG_MDNS_MAX_INTERFACES=3
 CONFIG_LWIP_NETBUF_RECVINFO=y
 CONFIG_LWIP_TCP_MSS=1360
 CONFIG_LWIP_TCP_OVERSIZE_MSS=y
@@ -96,7 +96,7 @@ CONFIG_ESP_TLS_INSECURE=y
 CONFIG_MESHVPN_USB_PROFILE_NCM=y
 
 # ESP-IoT-Bridge: USB NIC and SoftAP share the WiFi STA uplink.
-# Management remains USB-only; AP clients can use gateway DNS and IPv4 NAT.
+# Management is available on USB, SoftAP and STA; AP clients use gateway DNS and IPv4 NAT.
 CONFIG_BRIDGE_ENABLE=y
 CONFIG_BRIDGE_DATA_FORWARDING_NETIF_USB=y
 CONFIG_BRIDGE_EXTERNAL_NETIF_STATION=y
@@ -113,4 +113,5 @@ CONFIG_BRIDGE_STATIC_DNS_SERVER_MAIN="8.8.8.8"
 CONFIG_BRIDGE_STATIC_DNS_SERVER_BACKUP="1.1.1.1"
 
 # USB subnet for host (clean-vpn compatible)
-CONFIG_MESHVPN_USB_SUBNET_OCTET_2=7
+CONFIG_MESHVPN_USB_SUBNET_OCTET_2=10
+CONFIG_MESHVPN_AP_SUBNET_OCTET_2=11

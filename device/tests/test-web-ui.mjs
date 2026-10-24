@@ -34,7 +34,7 @@ for(const part of text.split('static const char ').slice(1)){
           leds:{user:{controllable:true,enabled:true},charge:{present:true,controllable:false,enabled:null}},
           cpu:{cores:[{id:0,load_pct:37},{id:1,load_pct:12}],tasks:[]},
           wifi:{connected:false,state:'setup'},usb:{profile:'ncm',host_ready:true},
-          net:{usb_ip:'192.168.7.1',ap_active:https,ap_ssid:'MeshPN_aabbcc',ap_ip:'192.168.4.1',
+          net:{usb_ip:'192.168.10.1',ap_active:https,ap_ssid:'MeshPN_aabbcc',ap_ip:'192.168.11.1',
             ap_channel:6,ap_clients:2,ap_napt:true},must_change_password:false};
         let accepted=true,failSave=false,saves=0,reboots=0,revoked=0,ledFail=false,ledSaves=0,statusFetches=0;
         const context=vm.createContext({
@@ -173,7 +173,7 @@ for(const part of text.split('static const char ').slice(1)){
         delete status.leds;await vm.runInContext('poll()',context);assert.equal(elements['save-leds'].disabled,true);
         assert.equal(elements['certificate-section'].hidden,!https);
         assert.equal(elements.fingerprint.textContent,https?'AA:BB':'');
-        assert(elements.usb.textContent.includes((https?'https':'http')+'://192.168.7.1/'));
+      assert(elements.usb.textContent.includes((https?'https':'http')+'://192.168.10.1/'));
         assert.equal(elements.cpu.textContent,'CPU0 37.0% · CPU1 12.0%');
         status.cpu.cores[0].load_pct=null;
         status.cpu.cores[1].load_pct=0.14321;
@@ -186,7 +186,7 @@ for(const part of text.split('static const char ').slice(1)){
         await vm.runInContext('poll()',context);
         assert.equal(elements.cpu.textContent,'CPU telemetry unavailable');
         assert.equal(elements.ap.textContent,https?
-          'AP: MeshPN_aabbcc · 192.168.4.1 · channel 6 · clients 2 · NAT on · admin: https://192.168.4.1/':
+          'AP: MeshPN_aabbcc · 192.168.11.1 · channel 6 · clients 2 · NAT on · admin: https://192.168.11.1/':
           'WiFi AP disabled');
         assert.equal(elements['https-enabled'].checked,https);
         assert.equal(elements['https-pending'].hidden,true);

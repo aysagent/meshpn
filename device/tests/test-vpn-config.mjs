@@ -25,7 +25,8 @@ const source=`
 #include "mbedtls/platform_util.h"
 #include "cJSON.h"
 #define ESP_ERR_NOT_SUPPORTED 55
-#define CONFIG_MESHVPN_USB_SUBNET_OCTET_2 7
+#define CONFIG_MESHVPN_USB_SUBNET_OCTET_2 10
+#define CONFIG_MESHVPN_AP_SUBNET_OCTET_2 11
 typedef struct {uint32_t addr;} ip4_addr_t;
 #define ip4addr_aton(s,a) inet_pton(AF_INET,s,&(a)->addr)
 #define ip4_addr1(a) (((uint8_t*)&(a)->addr)[0])
@@ -100,8 +101,8 @@ assert(saved.wg_keepalive==25&&!strcmp(saved.server,"192.0.2.2:8765"));
 cJSON_Delete(request);request=wg_request;
 assert(handler_vpn_config(&r)==ESP_OK&&!strcmp(saved.server,"192.0.2.1:51820"));
 cJSON_AddBoolToObject(request,"wg_clear_psk",true);assert(handler_vpn_config(&r)==ESP_OK&&!saved.wg_preshared_key[0]);
-replace("wg_address","192.168.7.2");assert(handler_vpn_config(&r)==ESP_FAIL);
-replace("wg_address","192.168.4.2");assert(handler_vpn_config(&r)==ESP_FAIL);
+replace("wg_address","192.168.10.2");assert(handler_vpn_config(&r)==ESP_FAIL);
+replace("wg_address","192.168.11.2");assert(handler_vpn_config(&r)==ESP_FAIL);
 replace("wg_address","10.6.0.2");replace("wg_public_key","invalid");assert(handler_vpn_config(&r)==ESP_FAIL);
 assert(strstr(last_error_message,"PublicKey:"));
 replace("wg_public_key",(char*)key);cJSON_AddNumberToObject(request,"wg_keepalive",-1);assert(handler_vpn_config(&r)==ESP_FAIL);
@@ -131,7 +132,7 @@ puts("VPN HTTP/config: auth, validation, key preservation/clear, storage errors 
 `;
 const file=path.join(dir,'test.c'),bin=path.join(dir,'test');fs.writeFileSync(file,source);
 const idf=process.env.IDF_PATH,json=path.join(idf,'components/json/cJSON');
-execFileSync(process.env.CC||'cc',['-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',
+execFileSync(process.env.CC||'cc',['-std=c11','-Wall','-Wextra','-Werror','-Wno-deprecated-declarations','-fsanitize=address,undefined',
   '-I'+new URL('tests/stubs',root).pathname,'-I'+new URL('components/meshvpn_config/include',root).pathname,
   '-I'+new URL('components/meshvpn_vpn/include',root).pathname,'-I'+json,
   '-I'+path.join(idf,'components/mbedtls/mbedtls/include'),file,

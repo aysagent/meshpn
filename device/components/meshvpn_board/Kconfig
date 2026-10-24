@@ -21,10 +21,16 @@ menu "meshvpn USB"
     config MESHVPN_USB_SUBNET_OCTET_2
         int "USB host LAN third octet (192.168.X.0/24)"
         range 1 254
-        default 7
+        default 10
         help
-            USB-side LAN for connected host. Default 7 → 192.168.7.0/24
-            (compatible with clean-vpn --client-lan-subnet).
+            USB-side LAN for connected host. Default 10 → 192.168.10.0/24.
+
+    config MESHVPN_AP_SUBNET_OCTET_2
+        int "SoftAP LAN third octet (192.168.X.0/24)"
+        range 1 254
+        default 11
+        help
+            SoftAP LAN for connected clients. Default 11 → 192.168.11.0/24.
 
     choice MESHVPN_USB_PROFILE
         prompt "USB network class"

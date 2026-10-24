@@ -50,12 +50,13 @@ static void check(struct netif *input,uint32_t dest,int proto,int port,int fragm
 }
 int main(void)
 {
-    struct netif usb={.ip={ip(192,168,7,1)},.name={'u','s'}},
+    struct netif usb={.ip={ip(192,168,10,1)},.name={'u','s'}},
         sta={.ip={ip(192,168,1,80)},.name={'s','t'}},
-        ap={.ip={ip(192,168,4,1)},.name={'a','p'}},
+        ap={.ip={ip(192,168,11,1)},.name={'a','p'}},
         loop={.ip={ip(127,0,0,1)},.name={'l','o'}};
     usb.next=&sta;sta.next=&ap;ap.next=&loop;netif_list=&usb;meshvpn_net_set_usb_interface(&usb);
     meshvpn_net_set_ap_interface(&ap);
+    meshvpn_net_set_sta_interface(&sta);
     /* HTTPD closes LRU sessions via UDP messages to its own loopback socket.
      * Losing these messages can leave TCP connections queued with no HTTP reply. */
     for (int port=32768;port<=32769;port++) {
@@ -71,17 +72,20 @@ int main(void)
     check(&loop,loop.ip.addr,6,80,0,false);
     check(&loop,loop.ip.addr,6,443,0,false);
     check(&usb,usb.ip.addr,6,443,0,false);
-    check(&sta,sta.ip.addr,6,443,0,true);
+    check(&sta,sta.ip.addr,6,80,0,false);
+    check(&sta,sta.ip.addr,6,443,0,false);
     check(&sta,usb.ip.addr,6,80,0,true); /* WiFi routing to USB address */
     check(&sta,sta.ip.addr,17,53,0,true);
     check(&sta,ip(192,168,1,255),17,53,0,true);
-    check(&sta,ip(224,0,0,251),17,5353,0,true);
+    check(&sta,ip(224,0,0,251),17,5353,0,false);
+    check(&sta,sta.ip.addr,17,5353,0,false);
+    check(&sta,usb.ip.addr,17,5353,0,true);
     check(&sta,sta.ip.addr,17,32769,0,true);
     check(&sta,sta.ip.addr,17,53123,0,false); /* upstream DNS response */
     check(&sta,sta.ip.addr,6,53000,0,false); /* NAT response */
     check(&sta,sta.ip.addr,17,53,0x2000,true); /* first fragment denied */
     check(&sta,sta.ip.addr,17,0,1,false); /* noninitial can't complete without first */
-    check(&sta,ip(192,168,7,2),6,443,0,false); /* forwarded host destination */
+    check(&sta,ip(192,168,10,2),6,443,0,false); /* forwarded host destination */
     check(&ap,ap.ip.addr,17,53,0,false);
     check(&ap,ap.ip.addr,6,53,0,false);
     check(&ap,ap.ip.addr,6,80,0,false); /* AP clients may open HTTP admin */
@@ -90,7 +94,7 @@ int main(void)
     check(&ap,usb.ip.addr,17,53,0,true); /* AP DNS exception limited to AP gateway */
     check(&sta,ap.ip.addr,17,53,0,true); /* uplink cannot route to AP DNS */
     check(&sta,ap.ip.addr,6,53,0,true);
-    check(&sta,ap.ip.addr,6,443,0,true); /* STA uplink remains denied */
+    check(&sta,ap.ip.addr,6,443,0,true); /* STA cannot reach AP admin IP */
     check(&ap,usb.ip.addr,6,80,0,true);
     check(&ap,sta.ip.addr,6,443,0,true);
     check(&ap,ip(224,0,0,251),17,5353,0,false);

@@ -13,6 +13,7 @@
 
 static struct netif *s_usb;
 static struct netif *s_ap;
+static struct netif *s_sta;
 static uint32_t s_lan_ip4_rx;
 static uint32_t s_ap_ip4_rx;
 static uint32_t s_denied;
@@ -24,6 +25,7 @@ static void update_vpn_lans(void) {
 }
 void meshvpn_net_set_usb_interface(struct netif *netif) { s_usb = netif; update_vpn_lans(); }
 void meshvpn_net_set_ap_interface(struct netif *netif) { s_ap = netif; update_vpn_lans(); }
+void meshvpn_net_set_sta_interface(struct netif *netif) { s_sta = netif; }
 #if CONFIG_LWIP_IPV4
 struct netif *meshvpn_hook_ip4_route_src(const ip4_addr_t *src, const ip4_addr_t *dst)
 {
@@ -67,7 +69,7 @@ int meshvpn_hook_ip4_input(struct pbuf *p, struct netif *inp)
     unsigned total = ((unsigned)h[2] << 8) | h[3];
     if (ihl < 20 || ihl > 60 || total < ihl || total > p->tot_len) return discard(p);
 
-    /* mDNS must also be blocked for multicast destinations on uplink. */
+    /* mDNS is served on all three interfaces; other local ports stay filtered. */
     int local = h[16] == 224 && h[17] == 0 && h[18] == 0 && h[19] == 251;
     ip4_addr_t dest;
     memcpy(&dest.addr, h + 16, 4);
@@ -85,14 +87,19 @@ int meshvpn_hook_ip4_input(struct pbuf *p, struct netif *inp)
     uint8_t ports[4];
     if (total < ihl + 4 || pbuf_copy_partial(p, ports, 4, ihl) != 4) return discard(p);
     unsigned dst = ((unsigned)ports[2] << 8) | ports[3];
-    /* AP clients may use the gateway DNS and admin HTTP(S). The STA uplink
-     * remains blocked from all local management services. */
+    /* AP clients may use gateway DNS and admin HTTP(S). STA peers may reach
+     * only this board's STA HTTP(S) address and mDNS, not USB/AP gateways. */
     if (inp == s_ap && dst == 53 && dest.addr == netif_ip4_addr(s_ap)->addr) return 0;
     if (inp == s_ap && h[9] == 17 && dst == 5353 &&
         (dest.addr == netif_ip4_addr(s_ap)->addr ||
          (h[16] == 224 && h[17] == 0 && h[18] == 0 && h[19] == 251))) return 0;
     if (inp == s_ap && h[9] == 6 && (dst == 80 || dst == 443) &&
         dest.addr == netif_ip4_addr(s_ap)->addr) return 0;
+    if (inp == s_sta && h[9] == 17 && dst == 5353 &&
+        (dest.addr == netif_ip4_addr(s_sta)->addr ||
+         (h[16] == 224 && h[17] == 0 && h[18] == 0 && h[19] == 251))) return 0;
+    if (inp == s_sta && h[9] == 6 && (dst == 80 || dst == 443) &&
+        dest.addr == netif_ip4_addr(s_sta)->addr) return 0;
     if ((h[9] == 6 && (dst == 80 || dst == 443 || dst == 53)) ||
         (h[9] == 17 && (dst == 53 || dst == 5353 || dst == 32768 || dst == 32769)))
         return discard(p);

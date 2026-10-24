@@ -50,7 +50,7 @@ location. On the tested rev v1.3 board, an initial image was flashed over
 USB-OTG. A one-time BOOT + RESET installed the image with the 1200-baud hook.
 The next `device:flash` completed without touching buttons or cables: the app
 (`303a:4001`) changed to ROM (`303a:0012`), all image hashes verified, and the
-app returned. macOS assigned `en17` the address `192.168.7.2`, and the admin
+app returned. In that earlier run macOS assigned `en17` the address `192.168.7.2`, and the admin
 page answered HTTP 200 after the automated cycle. This proves the USB flash
 workflow, not yet STA/AP traffic or throughput.
 

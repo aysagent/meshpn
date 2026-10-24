@@ -253,10 +253,11 @@ console; use `/api/logs`, diagnostic firmware, or a UART adapter as appropriate.
 
 ## First login
 
-Open **http://meshpn.local/** over USB, or **http://192.168.7.1/**.
-SoftAP provides internet access, not administration; USB administration works without a WiFi uplink.
-HTTPS is disabled by default for testing (`CONFIG_MESHVPN_WEB_HTTPS=n`). Login and WiFi credentials travel unencrypted over USB in this mode;
-authentication and WiFi-side ingress isolation remain enabled.
+Open **http://meshpn.local/** over USB, SoftAP or the Wi-Fi STA LAN, or use
+**http://192.168.10.1/** over USB and **http://192.168.11.1/** over SoftAP.
+SoftAP provides internet and administration; USB administration works without a Wi-Fi uplink.
+HTTPS is disabled by default for testing (`CONFIG_MESHVPN_WEB_HTTPS=n`). Login and Wi-Fi credentials travel unencrypted over USB, SoftAP and STA in this mode;
+authentication and ingress filtering remain enabled.
 
 To enable HTTPS, check **Admin connection → Enable HTTPS**, click **Save connection setting**, then **Reboot to apply**.
 Open the displayed **https://meshpn.local/** address and log in again; HTTP now only redirects and does not accept login/API requests.
@@ -334,7 +335,7 @@ SoftAP is enabled by default alongside STA and USB NCM:
 
 - SSID: **MeshPN_XXXXXX**, with the final six MAC hex digits; exact name is shown in USB admin status.
 - WPA2 password: **meshpn-test** (development default; change before non-test use).
-- Up to four clients. AP gateway/DHCP/DNS: **192.168.4.1/24**, unless a subnet conflict requires reassignment.
+- Up to four clients. AP gateway/DHCP/DNS: **192.168.11.1/24**, unless a subnet conflict requires reassignment.
 - AP stays enabled without uplink; internet resumes when STA connects. Pause disconnects STA, not AP or USB.
 - AP clients have internet and admin/mDNS access. USB and AP are routed LANs, not a fully isolated guest network.
 
@@ -403,7 +404,7 @@ npm run device:diag
 
 The second command (Python 3, standard library only) autodetects a single CDC port, requests
 buffered logs, probes HTTP `/login`, then requests another snapshot. Pass `-- --port /dev/cu.usbmodem...`
-if multiple ports exist; `-- --host 192.168.4.1` changes the HTTP probe destination, not the USB log transport.
+if multiple ports exist; `-- --host 192.168.11.1` changes the HTTP probe destination, not the USB log transport.
 `-- --no-http` only reads one snapshot. A missing reply can mean a normal/non-diagnostic firmware,
 wrong/busy port, USB fault or failure before diagnostics startup; it is not proof of an HTTP fault.
 

@@ -103,9 +103,8 @@ static void headers(httpd_req_t *req)
     httpd_resp_set_hdr(req, "X-Frame-Options", "DENY");
     httpd_resp_set_hdr(req, "Referrer-Policy", "no-referrer");
 }
-/* Defense in depth; the lwIP ingress hook enforces interface identity even
- * when a WiFi peer routes to a LAN destination. USB and our own AP are trusted
- * management interfaces; the upstream STA interface is not. */
+/* Defense in depth; the lwIP ingress hook limits STA peers to this board's
+ * STA address and keeps other local services closed. */
 static bool local_socket(httpd_req_t *req)
 {
     diag_stage("request/getsockname");
@@ -118,6 +117,8 @@ static bool local_socket(httpd_req_t *req)
         local.sin_addr.s_addr == info.ip.addr) return true;
     if (meshvpn_net_ap() && esp_netif_get_ip_info(meshvpn_net_ap(), &info) == ESP_OK &&
         local.sin_addr.s_addr == info.ip.addr) return true;
+    if (meshvpn_net_sta() && esp_netif_get_ip_info(meshvpn_net_sta(), &info) == ESP_OK &&
+        info.ip.addr && local.sin_addr.s_addr == info.ip.addr) return true;
     return false;
 }
 static bool password_change_required(void)
@@ -133,7 +134,7 @@ static bool password_change_required(void)
 static esp_err_t meshvpn_web_require_auth(httpd_req_t *req)
 {
     headers(req);
-    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP management only");
+    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP/STA management only");
     char auth[64];
     int64_t now = esp_timer_get_time();
     if (httpd_req_get_hdr_value_str(req, "Authorization", auth, sizeof(auth)) != ESP_OK ||
@@ -278,7 +279,7 @@ static esp_err_t ok(httpd_req_t *req)
 }
 static esp_err_t handler_index(httpd_req_t *req)
 {
-    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP management only");
+    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP/STA management only");
     headers(req);
     httpd_resp_set_type(req, "text/html");
     diag_stage("index/send");
@@ -288,7 +289,7 @@ static esp_err_t handler_index(httpd_req_t *req)
 }
 static esp_err_t handler_login_page(httpd_req_t *req)
 {
-    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP management only");
+    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP/STA management only");
     headers(req);
     httpd_resp_set_type(req, "text/html");
     diag_stage("login/send");
@@ -299,7 +300,7 @@ static esp_err_t handler_login_page(httpd_req_t *req)
 static esp_err_t handler_api_login(httpd_req_t *req)
 {
     headers(req);
-    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP management only");
+    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP/STA management only");
     int64_t now = esp_timer_get_time();
     if (now < s_login_after) return error(req, "429 Too Many Requests", "Wait before retrying");
     cJSON *in = body(req, 1024);
@@ -1131,11 +1132,11 @@ static esp_err_t handler_ranges_benchmark(httpd_req_t *req)
 }
 static esp_err_t handler_redirect(httpd_req_t *req)
 {
-    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP management only");
+    if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP/STA management only");
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "https://meshpn.local/");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_sendstr(req, "Open https://meshpn.local/ (or HTTPS at the USB/AP gateway IP)");
+    return httpd_resp_sendstr(req, "Open https://meshpn.local/ (or HTTPS at the USB/AP gateway or STA IP)");
 }
 esp_err_t meshvpn_web_start(void)
 {
@@ -1235,7 +1236,7 @@ esp_err_t meshvpn_web_start(void)
     diag_stage("start/cpu-sampler");
     meshvpn_cpu_start();
     diag_stage("ready");
-    ESP_LOGI(TAG, "USB/AP admin: %s://meshpn.local/", s_https ? "https" : "http");
+    ESP_LOGI(TAG, "USB/AP/STA admin: %s://meshpn.local/", s_https ? "https" : "http");
     return ESP_OK;
 #undef ROUTE
 }

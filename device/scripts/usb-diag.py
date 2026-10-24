@@ -66,7 +66,7 @@ def find_port(explicit):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", help="USB CDC port; autodetects when exactly one is present")
-    parser.add_argument("--host", default="192.168.7.1", help="Board gateway IPv4 for the HTTP probe")
+    parser.add_argument("--host", default="192.168.10.1", help="Board gateway IPv4 for the HTTP probe")
     parser.add_argument("--no-http", action="store_true", help="Only one USB snapshot, no network requests")
     args = parser.parse_args(argv)
     ipaddress.IPv4Address(args.host)

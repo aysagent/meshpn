@@ -14,9 +14,9 @@ NCM remains the existing profile for iPhone/macOS. CDC-ACM is included for descr
 but ESP_LOG is not routed to it. Debug via UART or the admin log page.
 USB compatibility expansion and new composite profiles are deferred.
 
-USB LAN initially uses 192.168.7.0/24, gateway 192.168.7.1.
+USB LAN initially uses 192.168.10.0/24, gateway 192.168.10.1.
 WiFi STA receives its address/DNS from the router. SoftAP is enabled alongside USB for internet-sharing experiments:
-`MeshPN_XXXXXX`, WPA2 test password `meshpn-test`, normally 192.168.4.1/24. Admin is available on USB and the device's own AP, but not on the upstream STA network.
+`MeshPN_XXXXXX`, WPA2 test password `meshpn-test`, normally 192.168.11.1/24. Admin is available as `meshpn.local` on USB, the device's own AP and the upstream STA network.
 A subnet conflict causes selection of a different private /24; renew DHCP/reconnect USB and open http://meshpn.local/.
 For AP subnet changes, reconnect/renew the AP client's DHCP. Both LANs avoid overlapping each other and the uplink.
 Use HTTPS instead when enabled in **Admin connection** (save and reboot). `CONFIG_MESHVPN_WEB_HTTPS` sets only the initial default, disabled for testing.

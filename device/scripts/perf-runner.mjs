@@ -36,7 +36,7 @@ Required: local/remote iperf3, remote python3, Apple Command Line Tools. Nothing
   --start-delay N          Observe idle N seconds before preflight (0..600; default 0)
   --iperf-port N           First data port (default 5201; second is N+1)
   --server-ip IPv4         Data destination if different from SSH hostname
-  --admin-url URL          Override discovery, e.g. http://192.168.7.1/
+  --admin-url URL          Override discovery, e.g. http://192.168.10.1/
   --admin-ca cert.pem      Trust the device HTTPS certificate
   --admin-insecure         Explicitly skip HTTPS certificate verification
   --out DIRECTORY         Parent for a unique result directory
