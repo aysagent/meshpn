@@ -32,14 +32,15 @@ The NCM MAC string is populated before the controller starts enumeration.
 ## Build and flash
 
 ```bash
-BOARD=waveshare_esp32_p4_wifi6 \
-PORT=/dev/cu.usbmodemXXXX \
-./device/scripts/flash.sh ncm
+npm run device:bind:p4   # once, with the MeshPN P4 NCM application running
+npm run device:flash:p4
 ```
 
-The example port is the P4 USB-OTG ROM port (`303a:0012`) on the four-pin HS
-connection. On Linux it is normally `/dev/ttyACM*`; the optional CH343P UART
-port is normally `/dev/ttyUSB*`. Use `BUILD_ONLY=1` to build without a board.
+The native P4 USB-OTG ROM port is `303a:0012` on the four-pin HS connection.
+The ignored local binding records the application's serial; before writing,
+the flash script checks the ROM MAC against it. `/dev/cu.usbmodem…` may change
+between runs. The optional CH343P UART is not selected for this guarded path.
+Use `BUILD_ONLY=1` to build without a board.
 `setup-macos.sh` installs both toolchains. Keep any monitor closed while flashing.
 
 The running NCM image includes CDC-ACM on the same HS connector. Opening that
