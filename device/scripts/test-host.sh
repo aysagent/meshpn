@@ -95,7 +95,7 @@ done
   -Idevice/components/meshvpn_usb/include -Idevice/components/meshvpn_vpn/include \
   device/tests/test_usb_tx.c -o "$test_dir/usb-double-fifo"
 "$test_dir/usb-double-fifo"
-for variant in 0:8 1:8 1:64; do
+for variant in 0:8 1:8 1:64 1:128; do
   event_enabled=${variant%:*}; slots=${variant#*:}
   "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_TX_EVENT_WAIT="$event_enabled" -DCONFIG_MESHVPN_USB_TX_QUEUE=1 \
     -DCONFIG_MESHVPN_NCM_TELEMETRY="$event_enabled" -DCONFIG_MESHVPN_USB_TX_QUEUE_SLOTS="$slots" \

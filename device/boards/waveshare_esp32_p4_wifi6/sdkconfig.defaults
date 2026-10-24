@@ -39,7 +39,7 @@ CONFIG_TINYUSB_INIT_IN_DEFAULT_TASK=y
 CONFIG_TINYUSB_TASK_PRIORITY=6
 # A 32KiB SDIO stream can deliver more than twenty Ethernet frames at once.
 # Keep burst buffering in PSRAM; XIAO retains its eight-slot default.
-CONFIG_MESHVPN_USB_TX_QUEUE_SLOTS=64
+CONFIG_MESHVPN_USB_TX_QUEUE_SLOTS=128
 
 # ESP32-C6 radio coprocessor. esp_hosted 1.4.x defaults already match the
 # Waveshare wiring; keep the values explicit so schematic changes fail visibly.
