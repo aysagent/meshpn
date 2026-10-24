@@ -52,7 +52,7 @@ esp_err_t meshvpn_net_start_mdns(bool https_enabled)
     }
     s_mdns = true;
     if (s_ap_netif && ((err = mdns_register_netif(s_ap_netif)) != ESP_OK ||
-        (err = mdns_netif_action(s_ap_netif, MDNS_EVENT_ENABLE_IP4)) != ESP_OK)) {
+        (err = mdns_netif_action(s_ap_netif, MDNS_EVENT_ENABLE_IP4 | MDNS_EVENT_ANNOUNCE_IP4)) != ESP_OK)) {
         mdns_free();
         s_mdns = false;
         return err;
@@ -275,6 +275,17 @@ static void meshvpn_net_on_event(void *arg, esp_event_base_t base, int32_t id, v
     }
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED && s_mdns && s_sta_netif)
         mdns_netif_action(s_sta_netif, MDNS_EVENT_DISABLE_IP4);
+#if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
+    if (s_mdns && s_ap_netif) {
+        if (base == WIFI_EVENT && id == WIFI_EVENT_AP_START)
+            mdns_netif_action(s_ap_netif, MDNS_EVENT_ENABLE_IP4 | MDNS_EVENT_ANNOUNCE_IP4);
+        else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STOP)
+            mdns_netif_action(s_ap_netif, MDNS_EVENT_DISABLE_IP4);
+        /* A client may have cached our USB/STA address before joining AP. */
+        else if (base == IP_EVENT && id == IP_EVENT_AP_STAIPASSIGNED)
+            mdns_netif_action(s_ap_netif, MDNS_EVENT_ANNOUNCE_IP4);
+    }
+#endif
 
     /* iot_bridge calls esp_netif_napt_enable() on the SoftAP whenever its DNS
      * or address changes. That API disables NAPT on every other interface — USB
@@ -457,6 +468,8 @@ esp_err_t meshvpn_net_start_bridge(void)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, meshvpn_net_on_event, NULL));
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_START, meshvpn_net_on_event, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_AP_STOP, meshvpn_net_on_event, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_AP_STAIPASSIGNED, meshvpn_net_on_event, NULL));
 #endif
 #if !CONFIG_IDF_TARGET_ESP32P4
     ESP_ERROR_CHECK(esp_event_handler_register(BRIDGE_EVENT, BRIDGE_EVENT_ID_DNS_UPDATE,
