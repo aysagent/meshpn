@@ -23,19 +23,21 @@ const source = `
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include "meshvpn_vpn.h"
 #define MESHVPN_VPN_MTU 1400
-#define MESHVPN_VPN_UDP_RX_BATCH_FRAMES 32
-#define MESHVPN_VPN_UDP_RX_BATCH_US 4000
 #define LOCK() ((void)0)
 #define UNLOCK() ((void)0)
 #define COUNT(field) (++s.field)
-static struct { unsigned rx_invalid; } s;
+static struct { unsigned rx_invalid; meshvpn_vpn_timing_t transport_read; } s;
+${section('static void record_timing(', 'void meshvpn_vpn_get_status(')}
 static int64_t now, clock_step = 1;
 static int64_t esp_timer_get_time(void) { return now += clock_step; }
 ${section('#define MESHVPN_VPN_SOCKET_RX_BYTES ', 'static packet_t *s_queue;')}
 ${section('static bool receive_packet(', 'int meshvpn_vpn_dns_socket(')}
 int main(void) {
   int fd[2]; assert(socketpair(AF_UNIX, SOCK_DGRAM, 0, fd) == 0);
+  int capacity=65536;assert(setsockopt(fd[0],SOL_SOCKET,SO_SNDBUF,&capacity,sizeof(capacity))==0);
+  assert(setsockopt(fd[1],SOL_SOCKET,SO_RCVBUF,&capacity,sizeof(capacity))==0);
   assert(fcntl(fd[1], F_SETFL, O_NONBLOCK) == 0);
   uint8_t packet[100] = {0}, rx[MESHVPN_VPN_MTU + 1] = {0};
   rx_batch_t batch = {0};
@@ -67,7 +69,7 @@ int main(void) {
     packet[0] = (uint8_t)i;
     assert(send(fd[0], packet, sizeof(packet), 0) == sizeof(packet));
   }
-  clock_step = MESHVPN_VPN_UDP_RX_BATCH_US / 2;
+  clock_step = MESHVPN_VPN_UDP_RX_BATCH_US / 5;
   assert(receive_udp_batch(fd[1], rx, &batch) == 0 && batch.count == 2);
   clock_step = 1;
   batch.count = batch.used = 0;
@@ -81,5 +83,5 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'meshpn-vpn-udp-batch-'));
 const file = path.join(dir, 'test.c'), binary = path.join(dir, 'test');
 fs.writeFileSync(file, source);
 execFileSync(process.env.CC || 'cc', ['-std=c11', '-Wall', '-Wextra', '-Werror',
-  '-fsanitize=address,undefined', file, '-o', binary], {stdio: 'inherit'});
+  '-fsanitize=address,undefined', '-I'+new URL('../tests/stubs',import.meta.url).pathname, '-I'+new URL('../components/meshvpn_config/include',import.meta.url).pathname, '-I'+new URL('../components/meshvpn_vpn/include',import.meta.url).pathname, file, '-o', binary], {stdio: 'inherit'});
 execFileSync(binary, {stdio: 'inherit'});

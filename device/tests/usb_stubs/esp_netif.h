@@ -1,6 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include "esp_err.h"
+#define ESP_ERR_ESP_NETIF_TX_FAILED 0x500e
 typedef struct { int unused; } esp_netif_t;
 typedef struct {
     void *handle;

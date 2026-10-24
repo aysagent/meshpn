@@ -29,9 +29,11 @@ static unsigned s_head, s_count, s_probe_epoch;
 static int64_t now = 10000000;
 static int64_t esp_timer_get_time(void) { return now; }
 static void flush_nat(void) {}
-static size_t strlcpy(char *d, const char *p, size_t n) {
+#define strlcpy test_strlcpy
+static size_t test_strlcpy(char *d, const char *p, size_t n) {
  size_t len=strlen(p); if(n){size_t c=len<n-1?len:n-1;memcpy(d,p,c);d[c]=0;}return len;
 }
+${section('static void record_timing(', 'void meshvpn_vpn_get_status(')}
 ${section('static void state_core(', 'typedef struct { uint32_t g;')}
 ${section('esp_err_t meshvpn_vpn_send_ipv4(', '/* RX is injected')}
 ${section('static void socket_failure(', 'static bool socket_link_current(')}

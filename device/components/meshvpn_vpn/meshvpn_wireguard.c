@@ -66,7 +66,10 @@ bool meshvpn_wg_clock_ready(void)
     static bool started;
     if (!started) {
         esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
-        esp_sntp_setservername(0, "pool.ntp.org");
+        /* Bootstrap without a direct DNS lookup while the VPN is fail-closed.
+         * Cloudflare's published anycast NTP IPv4; UDP/123 is board control
+         * traffic, not forwarded LAN traffic. See VPN.md for the scope. */
+        esp_sntp_setservername(0, "162.159.200.1");
         esp_sntp_init(); started = true;
     }
     return time(NULL) >= 1704067200; /* 2024-01-01 */

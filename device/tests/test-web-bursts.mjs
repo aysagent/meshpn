@@ -68,6 +68,7 @@ int main(void) {
   await writeFile(file,harness);
   execFileSync(process.env.CC||'cc',['-std=c11','-Wall','-Wextra','-Werror',
     '-I'+new URL('tests/usb_stubs/',root).pathname,
+    '-I'+new URL('tests/cpu_stubs/',root).pathname,
     '-I'+new URL('components/meshvpn_usb/include/',root).pathname,file,'-o',bin],{stdio:'pipe'});
   const snapshots=execFileSync(bin,{encoding:'utf8'}).trim().split('\n').map(s=>cleanBursts(JSON.parse(s)));
   assert.equal(snapshots.length,4);assert.equal(snapshots[0].available,false);

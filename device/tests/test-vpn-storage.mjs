@@ -13,7 +13,7 @@ const source=`
 #include <stdio.h>
 #include "meshvpn_config.h"
 static int s_nvs;
-static unsigned char record[1024];
+static unsigned char record[2048];
 static size_t record_size;
 static const char *record_key;
 static bool commit_fail;
@@ -47,19 +47,29 @@ int main(void){
  assert(meshvpn_config_load_vpn(&out)==ESP_OK&&out.allow_direct&&out.enabled&&!out.wg_address_input[0]);
  strcpy(out.wg_address_input,"10.0.0.7/24,fd42:42:42::7/64");
  out.allow_direct=true;assert(meshvpn_config_save_vpn(&out)==ESP_OK);
- assert(!strcmp(record_key,"vpn_cfg4"));
+ assert(!strcmp(record_key,"vpn_cfg5"));
  assert(meshvpn_config_load_vpn(&c)==ESP_OK&&c.allow_direct&&c.enabled);
  assert(!strcmp(c.wg_address_input,"10.0.0.7/24,fd42:42:42::7/64"));
+ // v4 upgrades retain the active endpoint, v5 preserves every transport.
+ nvs_set_blob(0,"vpn_cfg4",&c,offsetof(meshvpn_vpn_config_t,saved_servers));
+ assert(meshvpn_config_load_vpn(&out)==ESP_OK&&!strcmp(out.saved_servers[3],c.server));
+ strcpy(out.saved_servers[0],"192.0.2.2:8765");
+ assert(meshvpn_config_save_vpn(&out)==ESP_OK);
+ assert(meshvpn_config_load_vpn(&c)==ESP_OK&&!strcmp(c.saved_servers[0],"192.0.2.2:8765"));
+ char sni[sizeof(c.tls_server_name)];memcpy(sni,c.tls_server_name,sizeof(sni));
+ memset(c.tls_server_name,'x',sizeof(c.tls_server_name));
+ assert(meshvpn_config_save_vpn(&c)==ESP_OK&&meshvpn_config_load_vpn(&out)==ESP_FAIL);
+ memcpy(c.tls_server_name,sni,sizeof(sni));
  strcpy(c.transport,"socket");assert(meshvpn_config_save_vpn(&c)==ESP_OK);
  assert(meshvpn_config_load_vpn(&out)==ESP_OK&&!strcmp(out.transport,"tcp"));
  c.allow_direct=false;assert(meshvpn_config_save_vpn(&c)==ESP_OK);
  assert(meshvpn_config_load_vpn(&out)==ESP_OK&&!out.allow_direct);
- record_size--;assert(meshvpn_config_load_vpn(&out)==ESP_FAIL); // corrupt v4 must not restore defaults
+ record_size--;assert(meshvpn_config_load_vpn(&out)==ESP_FAIL); // corrupt v5 must not restore defaults
  commit_fail=true;assert(meshvpn_config_save_vpn(&c)==ESP_FAIL);
  struct {char server[129],sni[129],transport[32];bool enabled;} v1={.transport="socket",.enabled=true};
  nvs_set_blob(0,"vpn_cfg1",&v1,sizeof(v1));
  assert(meshvpn_config_load_vpn(&out)==ESP_OK&&out.enabled&&!out.allow_direct&&!strcmp(out.transport,"tcp"));
- puts("VPN NVS: v1/v2/v3 migration, original Address v4 roundtrip and corruption handling passed");
+ puts("VPN NVS: v1-v4 migration, per-transport v5 roundtrip and corruption handling passed");
 }
 `;
 const file=path.join(dir,'test.c'),bin=path.join(dir,'test');fs.writeFileSync(file,source);

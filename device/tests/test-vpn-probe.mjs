@@ -6,7 +6,8 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 const root=new URL('../',import.meta.url);
 const text=fs.readFileSync(new URL('components/meshvpn_vpn/meshvpn_vpn.c',root),'utf8');
-const code=text.slice(text.indexOf('esp_err_t meshvpn_vpn_check_internet('),text.indexOf('static esp_err_t wg_poll('));
+const code=text.slice(text.indexOf('esp_err_t meshvpn_vpn_check_internet('),text.indexOf('static void probe_worker('));
+const asyncCode=text.slice(text.indexOf('static void probe_worker('),text.indexOf('static esp_err_t wg_poll('));
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'meshpn-vpn-probe-'));
 const source=`
 #define _DEFAULT_SOURCE
@@ -64,6 +65,16 @@ static int fake_close(int f){assert(f==3);return 0;}
 #define getsockopt fake_getsockopt
 #define close fake_close
 ${code}
+#define pdPASS 1
+static void(*pending_probe)(void*);
+static bool task_fail;
+static unsigned tasks;
+static void vTaskDelete(void*p){assert(!p);}
+static int xTaskCreate(void(*fn)(void*),const char*name,unsigned stack,void*arg,unsigned priority,void*handle){
+ assert(!strcmp(name,"vpn_probe")&&stack==4096&&!arg&&priority==3&&!handle);tasks++;
+ if(task_fail)return 0;pending_probe=fn;return pdPASS;
+}
+${asyncCode}
 int main(void){
  assert(meshvpn_vpn_check_internet()==ESP_ERR_INVALID_STATE&&!connections);
  s.enabled=true;s.connected=true;strcpy(s.address,"10.0.0.7");
@@ -75,7 +86,12 @@ int main(void){
  assert(meshvpn_vpn_check_internet()==ESP_OK&&!s.probe_ok&&connections==calls);
  binding_fail=false;socket_error=0;change_epoch=true;s.probe_at_us=0;
  assert(meshvpn_vpn_check_internet()==ESP_ERR_INVALID_STATE&&!s.probe_at_us);
- puts("VPN probe: forced interface/source, bounded timeout, failures and stale-result rejection passed");
+ s.connected=false;assert(meshvpn_vpn_request_internet_check()==ESP_ERR_INVALID_STATE&&!tasks);
+ s.connected=true;change_epoch=false;assert(meshvpn_vpn_request_internet_check()==ESP_OK&&tasks==1&&s.probe_running);
+ assert(meshvpn_vpn_request_internet_check()==ESP_OK&&tasks==1); // one bounded worker
+ pending_probe(NULL);assert(!s.probe_running);
+ task_fail=true;assert(meshvpn_vpn_request_internet_check()==ESP_ERR_NO_MEM&&!s.probe_running);
+ puts("VPN probe: forced interface/source, bounded timeout, stale results and nonblocking single-worker API passed");
 }
 `;
 const file=path.join(dir,'test.c'),bin=path.join(dir,'test');fs.writeFileSync(file,source);

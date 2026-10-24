@@ -3,8 +3,14 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
+#include "sdkconfig.h"
 
-#define MESHVPN_USB_TX_SLOTS 8
+#ifndef CONFIG_MESHVPN_USB_TX_QUEUE_SLOTS
+#define CONFIG_MESHVPN_USB_TX_QUEUE_SLOTS 8
+#endif
+#define MESHVPN_USB_TX_SLOTS CONFIG_MESHVPN_USB_TX_QUEUE_SLOTS
+_Static_assert(MESHVPN_USB_TX_SLOTS >= 4 && MESHVPN_USB_TX_SLOTS <= 128,
+               "USB queue must fit its byte-sized slot indexes");
 #define MESHVPN_USB_TX_FRAME_MAX 1536
 #define MESHVPN_USB_TX_MAX_AGE_US 50000
 #define MESHVPN_USB_BURST_RECORDS 32

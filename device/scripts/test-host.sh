@@ -1,10 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export UBSAN_OPTIONS="${UBSAN_OPTIONS:+$UBSAN_OPTIONS:}halt_on_error=1"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
+# Match flash.sh's pinned checkout even in an older terminal exporting 5.4.
+# Host compilation needs the sources, not an activated cross-toolchain.
+default_idf="$HOME/esp/esp-idf-meshpn-v5.5.5"
+if [[ -d "$default_idf" ]] && { [[ -z "${IDF_PATH:-}" ]] ||
+  { [[ "$IDF_PATH" == "$HOME/esp/esp-idf" ]] &&
+    [[ "$(git -C "$IDF_PATH" describe --tags --exact-match 2>/dev/null || true)" != v5.5.5 ]]; }; }; then
+  export IDF_PATH="$default_idf"
+fi
+if [[ -n "${IDF_PATH:-}" ]]; then
+  [[ "$(git -C "$IDF_PATH" describe --tags --exact-match 2>/dev/null || true)" == v5.5.5 ]] || {
+    echo "Host checks require ESP-IDF v5.5.5 sources at IDF_PATH: $IDF_PATH" >&2; exit 1;
+  }
+  echo "Host checks use ESP-IDF v5.5.5 sources: $IDF_PATH"
+fi
 test_dir="$(mktemp -d /tmp/meshpn-host-tests.XXXXXX)"
 cd "$root"
 cc="${CC:-cc}"
-flags=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined)
+flags=(-std=c11 -Wall -Wextra -Werror -Wno-deprecated-declarations -fsanitize=address,undefined)
 "$cc" "${flags[@]}" -Idevice/components/meshvpn_vpn/include device/tests/test_vpn_frame.c \
   device/components/meshvpn_vpn/meshvpn_vpn_frame.c -o "$test_dir/vpn-frame"
 "$test_dir/vpn-frame"
@@ -16,8 +31,10 @@ flags=(-std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined)
 "$test_dir/vpn-profile"
 node device/tests/test-vpn-wire.mjs "$test_dir/vpn-frame"
 node device/tests/test-vpn-routing.mjs
+node device/tests/test-vpn-dns.mjs
 node device/tests/test-vpn-storage.mjs
 node device/tests/test-vpn-probe.mjs
+node device/tests/test-wg-clock.mjs
 node device/tests/test-vpn-ingress.mjs
 node device/tests/test-vpn-queue.mjs
 node device/tests/test-vpn-udp-batch.mjs
@@ -35,10 +52,22 @@ if [[ -f "$wg_src/crypto/refc/chacha20.c" ]]; then
 else
   echo "WireGuard AEAD tests skipped: install device managed dependencies."
 fi
-"$cc" "${flags[@]}" -pthread -Idevice/tests/wifi_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
-  -Idevice/components/meshvpn_wifi/include -Idevice/components/meshvpn_vpn/include \
-  device/tests/test_wifi_diag.c -o "$test_dir/wifi-diag"
-"$test_dir/wifi-diag"
+for hosted in 0 1; do
+  hosted_flags=(-DCONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE="$hosted")
+  "$cc" "${flags[@]}" "${hosted_flags[@]}" -pthread -Idevice/tests/wifi_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
+    -Idevice/components/meshvpn_wifi/include -Idevice/components/meshvpn_vpn/include \
+    device/tests/test_wifi_diag.c -o "$test_dir/wifi-diag-$hosted"
+  "$test_dir/wifi-diag-$hosted"
+done
+for p4_radio in 0 1; do
+  "$cc" "${flags[@]}" -pthread -DCONFIG_IDF_TARGET_ESP32P4="$p4_radio" \
+    -Idevice/tests/radio_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
+    -Idevice/components/meshvpn_wifi/include device/tests/test_wifi_radio.c -o "$test_dir/wifi-radio-$p4_radio"
+  "$test_dir/wifi-radio-$p4_radio"
+done
+if [[ -f device/managed_components/espressif__esp_hosted/host/drivers/transport/sdio/sdio_drv.c ]]; then
+  node device/tests/test-sdio-psram.mjs
+fi
 "$cc" "${flags[@]}" -pthread -Idevice/tests/led_stubs -Idevice/tests/usb_stubs \
   -Idevice/components/meshvpn_board/include device/tests/test_board_led.c \
   device/components/meshvpn_board/meshvpn_board_led.c -o "$test_dir/board-led"
@@ -66,12 +95,13 @@ done
   -Idevice/components/meshvpn_usb/include -Idevice/components/meshvpn_vpn/include \
   device/tests/test_usb_tx.c -o "$test_dir/usb-double-fifo"
 "$test_dir/usb-double-fifo"
-for event_enabled in 0 1; do
+for variant in 0:8 1:8 1:64; do
+  event_enabled=${variant%:*}; slots=${variant#*:}
   "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_USB_TX_EVENT_WAIT="$event_enabled" -DCONFIG_MESHVPN_USB_TX_QUEUE=1 \
-    -DCONFIG_MESHVPN_NCM_TELEMETRY="$event_enabled" \
+    -DCONFIG_MESHVPN_NCM_TELEMETRY="$event_enabled" -DCONFIG_MESHVPN_USB_TX_QUEUE_SLOTS="$slots" \
     -Idevice/tests/queue_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
-    -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx_queue.c -o "$test_dir/usb-tx-queue-$event_enabled"
-  "$test_dir/usb-tx-queue-$event_enabled"
+    -Idevice/components/meshvpn_usb/include device/tests/test_usb_tx_queue.c -o "$test_dir/usb-tx-queue-$event_enabled-$slots"
+  "$test_dir/usb-tx-queue-$event_enabled-$slots"
 done
 "$cc" "${flags[@]}" -pthread -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
   -Idevice/components/meshvpn_usb/include device/tests/test_ncm_diag.c -o "$test_dir/ncm-diag"
@@ -148,6 +178,7 @@ for board_target in \
   [[ -f "device/boards/$board/sdkconfig.defaults" ]] || { echo "$board defaults missing" >&2; exit 1; }
 done
 if [[ -n "${IDF_PATH:-}" ]]; then
+  node device/tests/test-napt-icmp.mjs
   json_dir="$IDF_PATH/components/json/cJSON"
   "$cc" "${flags[@]}" -pthread -Idevice/tests/wg_diag_stubs -Idevice/tests/usb_stubs \
     -Idevice/tests/cpu_stubs -Idevice/components/meshvpn_vpn/include \
@@ -167,6 +198,7 @@ if [[ -n "${IDF_PATH:-}" ]]; then
   source_dir="$IDF_PATH/components/mbedtls/mbedtls"
   cmake -S "$source_dir" -B "$test_dir/mbedtls" -DENABLE_PROGRAMS=OFF -DENABLE_TESTING=OFF > "$test_dir/mbedtls.log" 2>&1
   cmake --build "$test_dir/mbedtls" -j 4 >> "$test_dir/mbedtls.log" 2>&1
+  node device/tests/test-vpn-tls-io.mjs "$test_dir/mbedtls/library"
   node device/tests/test-vpn-config.mjs "$test_dir/mbedtls/library/libmbedcrypto.a"
   bash device/scripts/create-admin-ca.sh "$test_dir/tls" > "$test_dir/certificates.log" 2>&1
   "$cc" "${flags[@]}" -Idevice/tests/stubs -Idevice/components/meshvpn_web/include \

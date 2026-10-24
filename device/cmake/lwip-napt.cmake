@@ -5,6 +5,7 @@ idf_component_get_property(meshvpn_lwip_dir lwip COMPONENT_DIR)
 idf_build_get_property(meshvpn_lwip_python PYTHON)
 set(meshvpn_napt_original "${meshvpn_lwip_dir}/lwip/src/core/ipv4/ip4_napt.c")
 set(meshvpn_napt_generator "${CMAKE_SOURCE_DIR}/scripts/patch-lwip-napt.py")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/scripts/lwip-napt-icmp.inc")
 set(meshvpn_napt_generated "${CMAKE_BINARY_DIR}/meshpn-generated/ip4_napt.c")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${meshvpn_napt_original}" "${meshvpn_napt_generator}")

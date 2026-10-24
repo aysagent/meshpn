@@ -43,6 +43,7 @@ typedef struct {
     uint16_t qlen, rlen;
     int64_t stored_us;
     uint32_t ttl;
+    uint32_t policy_epoch;
     uint8_t query[DNS_UDP_MAX], response[DNS_UDP_MAX];
 } cache_entry_t;
 static cache_entry_t *s_cache;
@@ -58,7 +59,7 @@ void meshvpn_dns_clear_cache(void)
     memset(s_cache, 0, CACHE_SLOTS * sizeof(*s_cache));
     xSemaphoreGive(s_cache_lock);
 }
-static int cache_get(const uint8_t *query, size_t len, uint8_t *response)
+static int cache_get(const uint8_t *query, size_t len, uint8_t *response, uint32_t epoch)
 {
     if (!s_cache || len > DNS_UDP_MAX) return 0;
     int n = 0;
@@ -67,7 +68,7 @@ static int cache_get(const uint8_t *query, size_t len, uint8_t *response)
     for (unsigned i = 0; i < CACHE_SLOTS; i++) {
         cache_entry_t *e = &s_cache[i];
         age = (esp_timer_get_time() - e->stored_us) / 1000000;
-        if (e->qlen != len || age >= e->ttl || memcmp(query + 2, e->query + 2, len - 2)) continue;
+        if (e->policy_epoch != epoch || e->qlen != len || age >= e->ttl || memcmp(query + 2, e->query + 2, len - 2)) continue;
         n = e->rlen; memcpy(response, e->response, n); break;
     }
     xSemaphoreGive(s_cache_lock);
@@ -86,19 +87,21 @@ static uint32_t cache_generation(void)
     xSemaphoreGive(s_cache_lock);
     return generation;
 }
-static void cache_put(const uint8_t *query, size_t qlen, uint8_t *response, size_t rlen, uint32_t generation)
+static void cache_put(const uint8_t *query, size_t qlen, uint8_t *response, size_t rlen,
+                      uint32_t generation, uint32_t epoch)
 {
     if (!s_cache || qlen > DNS_UDP_MAX || rlen > DNS_UDP_MAX) return;
     uint32_t ttl = meshvpn_dns_age_ttls(response, rlen, 0);
     if (!ttl) return;
     xSemaphoreTake(s_cache_lock, portMAX_DELAY);
-    if (generation != s_cache_generation) {
+    if (generation != s_cache_generation || epoch != meshvpn_vpn_dns_epoch()) {
         xSemaphoreGive(s_cache_lock);
         return;
     }
     cache_entry_t *e = &s_cache[s_cache_next++ % CACHE_SLOTS];
     e->qlen = qlen; e->rlen = rlen; e->stored_us = esp_timer_get_time();
     e->ttl = ttl < 300 ? ttl : 300;
+    e->policy_epoch = epoch;
     memcpy(e->query, query, qlen); memcpy(e->response, response, rlen);
     xSemaphoreGive(s_cache_lock);
 }
@@ -139,13 +142,15 @@ static bool upstream_address(struct sockaddr_in *up)
 
 /* Connected UDP socket checks source IP+port; fresh random ID and full
  * question comparison reject unrelated or late replies. One socket per job. */
-static int upstream(uint8_t *query, size_t len, uint8_t *resp, bool tcp)
+static int upstream(uint8_t *query, size_t len, uint8_t *resp, bool tcp, uint32_t epoch)
 {
+    if (epoch != meshvpn_vpn_dns_epoch()) { COUNT(policy_changed); return -1; }
     struct sockaddr_in up;
     if (!upstream_address(&up)) return -1;
     int fd = socket(AF_INET, tcp ? SOCK_STREAM : SOCK_DGRAM, 0);
     if (fd < 0) return -1;
-    if (meshvpn_vpn_dns_socket(fd, &up.sin_addr.s_addr) < 0) { close(fd); return -1; }
+    if (meshvpn_vpn_dns_socket(fd, &up.sin_addr.s_addr) < 0) { COUNT(vpn_blocked); close(fd); return -1; }
+    if (epoch != meshvpn_vpn_dns_epoch()) { COUNT(policy_changed); close(fd); return -1; }
     timeout(fd);
     /* Nonblocking connect with a deadline, including TCP fallback. */
     int flags = fcntl(fd, F_GETFL, 0);
@@ -161,7 +166,7 @@ static int upstream(uint8_t *query, size_t len, uint8_t *resp, bool tcp)
     }
     fcntl(fd, F_SETFL, flags);
     int n = -1;
-    if (rc == 0) {
+    if (rc == 0 && epoch == meshvpn_vpn_dns_epoch()) {
         if (tcp) {
             uint8_t prefix[2] = {len >> 8, len};
             if (transfer(fd, prefix, 2, true) && transfer(fd, query, len, true) &&
@@ -176,11 +181,12 @@ static int upstream(uint8_t *query, size_t len, uint8_t *resp, bool tcp)
         }
     }
     close(fd);
+    if (epoch != meshvpn_vpn_dns_epoch()) { COUNT(policy_changed); return -1; }
     meshvpn_dns_question_t q, a;
     if (n < 12 || !(resp[2] & 0x80) || resp[0] != query[0] || resp[1] != query[1] ||
         !meshvpn_dns_question(query, len, &q) || !meshvpn_dns_question(resp, n, &a) ||
         strcmp(q.name, a.name) || q.type != a.type || q.klass != a.klass) return -1;
-    if (!tcp && (resp[2] & 2)) return upstream(query, len, resp, true);
+    if (!tcp && (resp[2] & 2)) return upstream(query, len, resp, true, epoch);
     return n;
 }
 
@@ -216,16 +222,18 @@ static void worker(void *arg)
             COUNT(errors); goto done;
         }
         COUNT(queries);
+        uint32_t epoch = meshvpn_vpn_dns_epoch();
+        bool local_name = !strcmp(q.name, "meshpn.home.arpa") || !strcmp(q.name, "meshpn.local");
         int n;
-        if (!strcmp(q.name, "meshpn.home.arpa") || !strcmp(q.name, "meshpn.local")) {
+        if (local_name) {
             n = meshvpn_dns_reply(query, len, resp, DNS_MAX,
                                  job->local_ip ? 0 : 2, false, job->local_ip);
-        } else if ((n = cache_get(query, len, resp)) == 0) {
+        } else if ((n = cache_get(query, len, resp, epoch)) == 0) {
             uint32_t generation = cache_generation();
             uint8_t id[2] = {query[0], query[1]};
             uint16_t random_id = esp_random();
             query[0] = random_id >> 8; query[1] = random_id;
-            n = upstream(query, len, resp, job->fd >= 0);
+            n = upstream(query, len, resp, job->fd >= 0, epoch);
             query[0] = id[0]; query[1] = id[1];
             if (n < 0) {
                 COUNT(forward_fail);
@@ -233,8 +241,11 @@ static void worker(void *arg)
             } else {
                 resp[0] = id[0]; resp[1] = id[1];
                 COUNT(forwarded);
-                cache_put(query, len, resp, n, generation);
+                cache_put(query, len, resp, n, generation, epoch);
             }
+        }
+        if (!local_name && epoch != meshvpn_vpn_dns_epoch()) {
+            COUNT(policy_changed); n = meshvpn_dns_reply(query, len, resp, DNS_MAX, 2, false, 0);
         }
         if (job->fd < 0 && n > udp_limit(query, len, &q))
             n = meshvpn_dns_reply(query, len, resp, DNS_MAX, 0, true, 0);

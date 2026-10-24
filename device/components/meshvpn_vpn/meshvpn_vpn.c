@@ -41,6 +41,7 @@ typedef struct { uint16_t len; int64_t time; uint8_t data[MESHVPN_VPN_MTU]; } pa
 #define MESHVPN_VPN_WORKER_PRIORITY 6
 typedef struct {
     uint32_t generation;
+    int64_t queued_us;
     size_t used;
     unsigned count;
     uint16_t offsets[MESHVPN_VPN_RX_BATCH_FRAMES];
@@ -64,6 +65,17 @@ static meshvpn_vpn_tx_batch_t *s_socket_tx_batch;
 #define LOCK() portENTER_CRITICAL(&s_lock)
 #define UNLOCK() portEXIT_CRITICAL(&s_lock)
 #define COUNT(field) do { LOCK(); s.field++; UNLOCK(); } while (0)
+
+/* Caller holds s_lock. Wall time includes preemption, never pure CPU time. */
+static void record_timing(meshvpn_vpn_timing_t *t, uint64_t elapsed)
+{
+    t->calls++; t->total_us += elapsed;
+    if (elapsed > t->max_us) t->max_us = elapsed > UINT32_MAX ? UINT32_MAX : elapsed;
+    if (elapsed <= 100) t->le_100us++;
+    else if (elapsed <= 1000) t->us_100_1000++;
+    else if (elapsed <= 5000) t->ms_1_5++;
+    else t->gt_5ms++;
+}
 
 void meshvpn_vpn_get_status(meshvpn_vpn_status_t *out) { LOCK(); *out = s; UNLOCK(); }
 bool meshvpn_vpn_is_connected(void) { LOCK(); bool v = s.connected; UNLOCK(); return v; }
@@ -108,6 +120,7 @@ esp_err_t meshvpn_vpn_validate_config(const meshvpn_vpn_config_t *c)
 const char *meshvpn_vpn_config_error(const meshvpn_vpn_config_t *c)
 {
     if (!c || strnlen(c->server, sizeof(c->server)) == sizeof(c->server) ||
+        strnlen(c->tls_server_name, sizeof(c->tls_server_name)) == sizeof(c->tls_server_name) ||
         strnlen(c->transport, sizeof(c->transport)) == sizeof(c->transport)) return "VPN config contains an invalid or overlong field.";
     if (!c->enabled) return NULL;
     uint8_t ip[4]; uint16_t port;
@@ -137,6 +150,7 @@ static esp_err_t apply_config(void *arg)
     s.tx_dropped += s_count; s_head = s_count = s.queue_depth = 0;
     strlcpy(s.server, c->server, sizeof(s.server)); strlcpy(s.transport, s_config.transport, sizeof(s.transport));
     strlcpy(s.tls_server_name, c->tls_server_name, sizeof(s.tls_server_name));
+    memcpy(s.saved_servers, c->saved_servers, sizeof(s.saved_servers));
     strlcpy(s.state, c->enabled ? "waiting" : "disabled", sizeof(s.state));
     s.last_error = err;
     strlcpy(s.wg_address, c->wg_address, sizeof(s.wg_address));
@@ -160,6 +174,8 @@ static bool lan(const ip4_addr_t *ip, struct netif *n)
 { return n && ip && ip4_addr_netcmp(ip, netif_ip4_addr(n), netif_ip4_netmask(n)); }
 static bool tunnel_policy(void)
 { LOCK(); bool v = s.enabled && (s.kill_switch || s.connected); UNLOCK(); return v; }
+uint32_t meshvpn_vpn_dns_epoch(void)
+{ LOCK(); uint32_t epoch = s_probe_epoch; UNLOCK(); return epoch; }
 struct netif *meshvpn_vpn_route(const ip4_addr_t *src, const ip4_addr_t *dst)
 {
     if (!s_ready || !src || !dst) return NULL;
@@ -240,6 +256,28 @@ void meshvpn_vpn_lan_egress(void *frame, size_t length, bool usb)
     }
     UNLOCK();
 }
+bool meshvpn_vpn_sta_egress_allowed(const void *frame, size_t length)
+{
+    if (!frame || length < 14 || !tunnel_policy()) return true;
+    const uint8_t *p = frame;
+    unsigned offset = 14, type = ((unsigned)p[12] << 8) | p[13];
+    if ((type == 0x8100 || type == 0x88a8) && length >= 18) {
+        type = ((unsigned)p[16] << 8) | p[17]; offset = 18;
+    }
+    if (type != 0x0800 || length < offset + 20) return true;
+    p += offset; length -= offset;
+    unsigned h = (p[0] & 15) * 4;
+    if ((p[0] >> 4) != 4 || h < 20 || length < h + 4 ||
+        (p[6] & 0x1f) || p[7] || (p[9] != 6 && p[9] != 17) ||
+        p[h + 2] || p[h + 3] != 53) return true;
+    /* Explicit VPN endpoints may themselves listen on port 53. */
+    char server[MESHVPN_VPN_SERVER_MAX + 1]; uint8_t address[4]; uint16_t port;
+    LOCK(); strlcpy(server, s.server, sizeof(server));
+    bool udp = !strcmp(s.transport, "udp") || !strcmp(s.transport, "wireguard"); UNLOCK();
+    if (meshvpn_vpn_endpoint(server, address, &port) && port == 53 &&
+        !memcmp(p + 16, address, 4) && p[9] == (udp ? 17 : 6)) return true;
+    COUNT(direct_dns_blocked); return false;
+}
 static err_t output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst)
 {
     (void)n; (void)dst;
@@ -311,6 +349,26 @@ int meshvpn_vpn_input(struct pbuf *p, struct netif *inp)
         goto drop;
 #endif
     }
+    /* lwIP applies NAPT before its MTU check. Generate PMTUD feedback here,
+     * while the quote still contains the client's original address/port. */
+    if (!from_vpn && len > MESHVPN_VPN_MTU && (h[6] & 0x40) && h[8] > 1 &&
+        tunnel_policy() && !lan(&dst, s_usb) && !lan(&dst, s_ap) &&
+        !ip4_addr_ismulticast(&dst) && dst.addr != IPADDR_BROADCAST) {
+        uint8_t quote[68], reply[96];
+        size_t copied = pbuf_copy_partial(p, quote, ihl + 8, 0);
+        size_t size = meshvpn_vpn_frag_needed(reply, sizeof(reply), quote, copied,
+                                             (const uint8_t *)&netif_ip4_addr(inp)->addr);
+        if (size) {
+            struct pbuf *response = pbuf_alloc(PBUF_LINK, size, PBUF_RAM);
+            if (response) {
+                pbuf_take(response, reply, size);
+                if (inp->output(inp, response, &src) == ERR_OK) COUNT(mtu_feedback);
+                else COUNT(mtu_feedback_failed);
+                pbuf_free(response);
+            } else COUNT(mtu_feedback_failed);
+        }
+        pbuf_free(p); return 1;
+    }
     unsigned need = h[9] == 6 ? 20 : 8;
     if (h[9] != 6 && h[9] != 17 && h[9] != 1) goto drop;
     if (len < ihl + need || p->len < ihl + need) goto drop;
@@ -358,7 +416,9 @@ static esp_err_t inject_batch(void *arg)
 {
     rx_batch_t *batch = arg;
     if (!session(batch->generation)) return ESP_FAIL;
+    int64_t started = esp_timer_get_time();
     LOCK();
+    record_timing(&s.rx_dispatch_wait, started - batch->queued_us);
     s.socket_rx_batches++;
     if (batch->count > s.socket_rx_batch_max) s.socket_rx_batch_max = batch->count;
     UNLOCK();
@@ -366,6 +426,7 @@ static esp_err_t inject_batch(void *arg)
         if (inject_packet(batch->data + batch->offsets[i], batch->lengths[i], batch->generation) != ESP_OK)
             return ESP_FAIL;
     }
+    LOCK(); record_timing(&s.rx_core, esp_timer_get_time() - started); UNLOCK();
     return ESP_OK;
 }
 static bool receive_packet(void *arg, const uint8_t *p, size_t len)
@@ -386,7 +447,11 @@ static int receive_udp_batch(int fd, uint8_t *rx, rx_batch_t *batch)
 {
     int64_t started = esp_timer_get_time();
     for (unsigned i = 0; i < MESHVPN_VPN_UDP_RX_BATCH_FRAMES; i++) {
+        int64_t call_started = esp_timer_get_time();
         int n = recv(fd, rx, MESHVPN_VPN_MTU + 1, 0);
+        int saved_errno = errno;
+        LOCK(); record_timing(&s.transport_read, esp_timer_get_time() - call_started); UNLOCK();
+        errno = saved_errno;
         if (n < 0) {
             if (errno == EINTR) continue;
             if (errno == EAGAIN || errno == EWOULDBLOCK) break;
@@ -414,8 +479,10 @@ int meshvpn_vpn_dns_socket(int fd, uint32_t *resolver)
 }
 esp_err_t meshvpn_vpn_check_internet(void)
 {
-    meshvpn_vpn_status_t before; uint32_t epoch;
-    LOCK(); before = s; epoch = s_probe_epoch; UNLOCK();
+    struct { bool enabled, connected; uint32_t generation; char address[16]; } before;
+    uint32_t epoch;
+    LOCK(); before.enabled = s.enabled; before.connected = s.connected; before.generation = s.generation;
+    memcpy(before.address, s.address, sizeof(before.address)); epoch = s_probe_epoch; UNLOCK();
     if (!before.enabled || !before.connected) return ESP_ERR_INVALID_STATE;
     /* Never use the DNS helper's optional DIRECT fallback for this probe. */
     int fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP), failure = 0;
@@ -446,6 +513,26 @@ esp_err_t meshvpn_vpn_check_internet(void)
     if (current) { s.probe_ok = !failure; s.probe_error = failure; s.probe_at_us = esp_timer_get_time(); }
     UNLOCK();
     return current ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+
+static void probe_worker(void *unused)
+{
+    (void)unused;
+    (void)meshvpn_vpn_check_internet();
+    LOCK(); s.probe_running = false; UNLOCK();
+    vTaskDelete(NULL);
+}
+esp_err_t meshvpn_vpn_request_internet_check(void)
+{
+    LOCK();
+    if (!s.enabled || !s.connected) { UNLOCK(); return ESP_ERR_INVALID_STATE; }
+    if (s.probe_running) { UNLOCK(); return ESP_OK; }
+    s.probe_running = true;
+    UNLOCK();
+    if (xTaskCreate(probe_worker, "vpn_probe", 4096, NULL, 3, NULL) != pdPASS) {
+        LOCK(); s.probe_running = false; UNLOCK(); return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
 }
 static esp_err_t wg_poll(void *arg)
 {
@@ -541,7 +628,10 @@ static void load_tx_batch(meshvpn_vpn_tx_batch_t *b, uint32_t generation)
         if (!s_count || s.generation != generation || !s.enabled) { UNLOCK(); break; }
         packet_t *p = &s_queue[s_head];
         if (esp_timer_get_time() - p->time > 1000000) { s.queue_expired++; s.tx_dropped++; }
-        else if (!meshvpn_vpn_tx_append(b, p->data, p->len)) { UNLOCK(); break; }
+        else {
+            if (!meshvpn_vpn_tx_append(b, p->data, p->len)) { UNLOCK(); break; }
+            record_timing(&s.tx_queue_wait, esp_timer_get_time() - p->time);
+        }
         s_head = (s_head + 1) % MESHVPN_VPN_SLOTS;
         s.queue_depth = --s_count;
         UNLOCK();
@@ -563,6 +653,7 @@ static bool load_udp_packet(uint8_t *out, uint16_t *length, uint32_t generation)
         if (expired) { s.queue_expired++; s.tx_dropped++; }
         else {
             *length = p->len; memcpy(out, p->data, p->len);
+            record_timing(&s.tx_queue_wait, esp_timer_get_time() - p->time);
             s.socket_tx_batches++;
             if (s.socket_tx_batch_max < 1) s.socket_tx_batch_max = 1;
         }
@@ -587,21 +678,37 @@ static void log_tls_failure(esp_tls_t *tls, const char *operation, ssize_t resul
 static ssize_t tunnel_write(esp_tls_t *tls, SemaphoreHandle_t mutex, int fd,
                             const void *data, size_t length)
 {
-    if (!tls) return send(fd, data, length, 0);
-    xSemaphoreTake(mutex, portMAX_DELAY);
-    ssize_t result = esp_tls_conn_write(tls, data, length);
-    if (result < 0 && !tls_would_block(result)) log_tls_failure(tls, "write", result);
-    xSemaphoreGive(mutex);
+    int64_t started = esp_timer_get_time(), acquired = started;
+    if (tls) { xSemaphoreTake(mutex, portMAX_DELAY); acquired = esp_timer_get_time(); }
+    ssize_t result = tls ? esp_tls_conn_write(tls, data, length) : send(fd, data, length, 0);
+    int saved_errno = errno;
+    int64_t ended = esp_timer_get_time();
+    if (tls) {
+        if (result < 0 && !tls_would_block(result)) log_tls_failure(tls, "write", result);
+        xSemaphoreGive(mutex);
+    }
+    LOCK(); record_timing(&s.transport_write, ended - acquired);
+    if (tls) record_timing(&s.tls_lock_wait, acquired - started);
+    UNLOCK();
+    errno = saved_errno;
     return result;
 }
 static ssize_t tunnel_read(esp_tls_t *tls, SemaphoreHandle_t mutex, int fd,
                            void *data, size_t length)
 {
-    if (!tls) return recv(fd, data, length, 0);
-    xSemaphoreTake(mutex, portMAX_DELAY);
-    ssize_t result = esp_tls_conn_read(tls, data, length);
-    if (result < 0 && !tls_would_block(result)) log_tls_failure(tls, "read", result);
-    xSemaphoreGive(mutex);
+    int64_t started = esp_timer_get_time(), acquired = started;
+    if (tls) { xSemaphoreTake(mutex, portMAX_DELAY); acquired = esp_timer_get_time(); }
+    ssize_t result = tls ? esp_tls_conn_read(tls, data, length) : recv(fd, data, length, 0);
+    int saved_errno = errno;
+    int64_t ended = esp_timer_get_time();
+    if (tls) {
+        if (result < 0 && !tls_would_block(result)) log_tls_failure(tls, "read", result);
+        xSemaphoreGive(mutex);
+    }
+    LOCK(); record_timing(&s.transport_read, ended - acquired);
+    if (tls) record_timing(&s.tls_lock_wait, acquired - started);
+    UNLOCK();
+    errno = saved_errno;
     return result;
 }
 static bool tls_has_pending(esp_tls_t *tls, SemaphoreHandle_t mutex)
@@ -822,6 +929,7 @@ static void __attribute__((unused)) worker(void *arg)
                 }
                 if (rx_batch->count) {
                     int64_t started = esp_timer_get_time();
+                    rx_batch->queued_us = started;
                     esp_err_t result = esp_netif_tcpip_exec(inject_batch, rx_batch);
                     uint32_t elapsed = (uint32_t)(esp_timer_get_time() - started);
                     LOCK();

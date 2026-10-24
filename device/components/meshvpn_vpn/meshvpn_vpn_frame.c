@@ -93,7 +93,7 @@ bool meshvpn_vpn_clamp_mss(uint8_t *p, size_t n)
         if (kind == 1) { i++; continue; }
         if (i + 2 > end || p[i + 1] < 2 || i + p[i + 1] > end) return false;
         if (kind == 2 && p[i + 1] == 4) {
-            unsigned old = be16(p + i + 2), mss = MESHVPN_VPN_MTU - 40;
+            unsigned old = be16(p + i + 2), mss = MESHVPN_VPN_MTU - h - 20;
             if (old > mss) {
                 unsigned old_word = old, new_word = mss;
                 /* NOPs can place MSS on an odd checksum byte boundary. */
@@ -173,4 +173,22 @@ bool meshvpn_vpn_repair_ethernet_checksums(uint8_t *frame, size_t n, bool *chang
                    (l4_checksum && (before_l4[0] != frame[l4_checksum] || before_l4[1] != frame[l4_checksum + 1]));
     }
     return true;
+}
+
+size_t meshvpn_vpn_frag_needed(uint8_t *out, size_t capacity, const uint8_t *quote,
+                              size_t quote_length, const uint8_t gateway[4])
+{
+    if (!out || !quote || !gateway || quote_length < 20 || (quote[0] >> 4) != 4) return 0;
+    size_t h = (quote[0] & 15) * 4, n = 28 + h + 8;
+    if (h < 20 || h > 60 || quote_length < h + 8 || capacity < n ||
+        be16(quote + 2) <= MESHVPN_VPN_MTU || !(quote[6] & 0x40) ||
+        (be16(quote + 6) & 0x1fff) || quote[12] == 0 || quote[12] >= 224 ||
+        quote[16] >= 224 || (quote[9] == 1 && quote[h] != 8 && quote[h] != 0)) return 0;
+    memset(out, 0, n);
+    out[0] = 0x45; put16(out + 2, n); out[8] = 64; out[9] = 1;
+    memcpy(out + 12, gateway, 4); memcpy(out + 16, quote + 12, 4);
+    out[20] = 3; out[21] = 4; put16(out + 26, MESHVPN_VPN_MTU);
+    memcpy(out + 28, quote, h + 8);
+    if (!meshvpn_vpn_repair_checksums(out, n)) return 0;
+    return n;
 }

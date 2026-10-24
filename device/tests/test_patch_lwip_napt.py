@@ -15,6 +15,7 @@ class PatchLwipNaptTests(unittest.TestCase):
             "static void x(void) { ip_napt_send_rst(t->dest, 0, 0, 0, 0, 0); }\n"
             + MODULE.ANCHOR
             + "    ip_napt_free(t);\n    ip_napt_insert(t);\n  }\n"
+            + "void\nip_napt_recv(struct pbuf *p, struct ip_hdr *iphdr) {\n  if (ip_napt_max == 0) return;\n}\n"
         )
         result = MODULE.patch(source)
         self.assertIn("t->dest == dest && t->dport == dport", result)

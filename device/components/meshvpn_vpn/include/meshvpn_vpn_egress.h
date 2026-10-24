@@ -5,3 +5,5 @@
 
 /* Normalize a mutable Ethernet frame immediately before a LAN driver. */
 void meshvpn_vpn_lan_egress(void *frame, size_t length, bool usb);
+/* Last STA handoff blocks stale direct DNS after a VPN policy change. */
+bool meshvpn_vpn_sta_egress_allowed(const void *frame, size_t length);

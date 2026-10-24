@@ -60,8 +60,9 @@ for(const part of text.split('static const char ').slice(1)){
               status.leds.user.enabled=payload.user_enabled;
             }else if(path==='/api/vpn/config'){
               assert.equal(options.method,'POST'); assert.equal(options.headers.Authorization,'Bearer test-token');
-              const cfg=JSON.parse(options.body);assert(['tcp','udp','wireguard'].includes(cfg.transport));
-              assert(!cfg.enabled||cfg.transport==='wireguard'||cfg.allow_plaintext);
+              const cfg=JSON.parse(options.body);assert(['tcp','udp','tls','wireguard'].includes(cfg.transport));
+              assert(!cfg.enabled||cfg.transport==='wireguard'||cfg.transport==='tls'||cfg.allow_plaintext);
+              status.vpn.saved_servers??={};status.vpn.saved_servers[cfg.transport]=cfg.server;
               Object.assign(status.vpn,{enabled:cfg.enabled,transport:cfg.transport,server:cfg.server,kill_switch:cfg.kill_switch});
               if(cfg.transport==='wireguard')status.vpn.wireguard={address:cfg.wg_address.split(',')[0].split('/')[0],address_input:cfg.wg_address,dns:cfg.wg_dns,
                 public_key:cfg.wg_public_key,keepalive:cfg.wg_keepalive,private_key_set:true,preshared_key_set:false};
@@ -131,6 +132,20 @@ for(const part of text.split('static const char ').slice(1)){
         assert.equal(status.vpn.wireguard.address,'10.0.0.7','effective IPv4');
         assert.equal(elements['wg-address'].value,'10.0.0.7/24,fd42:42:42::7/64','original Address survives save and poll');
         assert.equal(elements['wg-private-key'].value,'','clear secret field after success');
+        elements['wg-private-key'].value='unsaved-other-profile-key';
+        elements['vpn-transport'].value='tcp';elements['vpn-transport'].oninput();
+        elements['vpn-server'].value='198.51.100.8:8765';elements['vpn-server'].oninput();
+        elements['vpn-plaintext'].checked=true;
+        await elements['vpn-form'].onsubmit();
+        assert.equal(elements['wg-private-key'].value,'unsaved-other-profile-key','saving TCP must preserve an unsubmitted WG key');
+        elements['wg-private-key'].value='';
+        elements['vpn-transport'].value='udp';elements['vpn-transport'].oninput();
+        elements['vpn-server'].value='198.51.100.9:8765';elements['vpn-server'].oninput();
+        elements['vpn-transport'].value='tcp';elements['vpn-transport'].oninput();
+        assert.equal(elements['vpn-server'].value,'198.51.100.8:8765','unsaved TCP endpoint retained when switching');
+        elements['vpn-transport'].value='wireguard';elements['vpn-transport'].oninput();
+        assert.equal(elements['wg-endpoint'].value,'198.51.100.7:51820','WG Endpoint retained after switching');
+        await elements['vpn-form'].onsubmit();
         assert(!elements.status.textContent.includes('test-device-secret'),'status must not contain private key');
         assert(status.vpn.kill_switch);
         status.vpn.connected=false;status.vpn.state='handshake';await vm.runInContext('poll()',context);

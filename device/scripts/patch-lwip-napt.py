@@ -42,7 +42,18 @@ def patch(source: str) -> str:
         )
     if source.count("ip_napt_send_rst(t->dest") != 1:
         raise ValueError("Expected ESP-IDF NAPT eviction RST implementation")
-    return source.replace(ANCHOR, REPLACEMENT, 1)
+    source = source.replace(ANCHOR, REPLACEMENT, 1)
+    recv = "void\nip_napt_recv(struct pbuf *p, struct ip_hdr *iphdr)"
+    if source.count(recv) != 1:
+        raise ValueError("Expected one lwIP NAPT receive implementation")
+    helper = Path(__file__).with_name("lwip-napt-icmp.inc").read_text()
+    source = source.replace(recv, helper + "\n" + recv, 1)
+    anchor = "  if (ip_napt_max == 0) return;"
+    if source.count(anchor) != 1:
+        raise ValueError("Expected one lwIP NAPT receive guard")
+    return source.replace(anchor, anchor + "\n\n#if LWIP_ICMP\n"
+                          "  if (IPH_PROTO(iphdr) == IP_PROTO_ICMP && meshpn_napt_icmp_error(p, iphdr)) return;\n"
+                          "#endif", 1)
 
 
 def main() -> None:

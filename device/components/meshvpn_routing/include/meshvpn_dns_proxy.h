@@ -17,6 +17,7 @@ typedef struct {
     uint32_t errors;
     uint32_t hijacked;
     uint32_t cache_hits;
+    uint32_t policy_changed, vpn_blocked;
 } meshvpn_dns_stats_t;
 
 /** Start bounded UDP/TCP DNS proxy on port 53 with local names and TTL cache. */

@@ -31,14 +31,29 @@ const source=`
 #define UNLOCK() ((void)0)
 #define COUNT(field) (++s.field)
 typedef struct {uint32_t addr;} ip4_addr_t;
-struct netif {ip4_addr_t ip;};
+struct pbuf;
+struct netif {ip4_addr_t ip;int (*output)(struct netif*,struct pbuf*,const ip4_addr_t*);};
 struct pbuf {uint16_t len,tot_len;void *payload;};
 static struct netif s_vpn,wg,usb,ap,*s_usb=&usb,*s_ap=&ap;
-static struct {unsigned packets_in,bytes_in,rx_dropped;} s;
+static struct {unsigned packets_in,bytes_in,rx_dropped,mtu_feedback,mtu_feedback_failed;} s;
 static unsigned freed,delivered,napt_passes,depth;
 static bool enabled(void){return true;}
 static struct netif *meshvpn_wg_netif(void){return &wg;}
-static bool lan(const ip4_addr_t *ip,struct netif *n){(void)ip;(void)n;return true;}
+static bool lan(const ip4_addr_t *ip,struct netif *n){return n&&memcmp(&ip->addr,&n->ip.addr,3)==0;}
+static bool tunnel_policy(void){return true;}
+static bool ip4_addr_ismulticast(const ip4_addr_t *a){return ((const uint8_t*)&a->addr)[0]>=224;}
+#define PBUF_LINK 0
+#define PBUF_RAM 0
+#define ERR_OK 0
+static uint8_t response_bytes[128];
+static struct pbuf response;
+static struct pbuf *pbuf_alloc(int layer,unsigned length,int type){(void)layer;(void)type;assert(length<=sizeof(response_bytes));response=(struct pbuf){length,length,response_bytes};return &response;}
+static void pbuf_take(struct pbuf*p,const void*data,unsigned length){assert(length==p->len);memcpy(p->payload,data,length);}
+static int mtu_output(struct netif*n,struct pbuf*p,const ip4_addr_t*dst){
+ assert(n==&usb&&dst->addr==((uint32_t)192|((uint32_t)168<<8)|(10u<<16)|(2u<<24)));
+ uint8_t *b=p->payload;assert(b[20]==3&&b[21]==4&&b[26]==5&&b[27]==120);
+ assert(b[40]==192&&b[41]==168&&b[42]==10&&b[43]==2);return 0;
+}
 #define netif_ip4_addr(n) (&(n)->ip)
 #define ip4_addr_cmp(a,b) ((a)->addr==(b)->addr)
 #define ip4_addr_isany_val(a) (!(a).addr)
@@ -78,7 +93,16 @@ static void run(unsigned protocol){
  packet[19]=8;unsigned dropped=s.rx_dropped;
  ip4_input(&p,&wg);assert(s.rx_dropped==dropped+1&&delivered==before_delivered+2);
 }
-int main(void){run(6);run(17);puts("VPN ingress: WG replies reach vp-bound TCP/DNS, single NAPT/ownership, invalid destination blocked");}
+int main(void){run(6);run(17);
+ uint8_t ip[1500]={0x45,0,5,220};ip[6]=0x40;ip[8]=64;ip[9]=17;
+ uint8_t client[]={192,168,10,2},gateway[]={192,168,10,1};
+ memcpy(ip+12,client,4);ip[16]=1;ip[17]=1;ip[18]=1;ip[19]=1;
+ ip[20]=0xc0;ip[21]=1;ip[23]=53;ip[24]=5;ip[25]=200;
+ memcpy(&usb.ip.addr,gateway,4);usb.output=mtu_output;
+ struct pbuf p={sizeof(ip),sizeof(ip),ip};
+ assert(meshvpn_vpn_input(&p,&usb)==1&&s.mtu_feedback==1&&!s.mtu_feedback_failed);
+ ip[6]=0;assert(meshvpn_vpn_input(&p,&usb)==0); // DF clear reaches lwIP fragmentation
+ puts("VPN ingress: WG replies reach vp-bound TCP/DNS, single NAPT/ownership, invalid destination blocked");}
 `;
 const file=path.join(dir,'test.c'),bin=path.join(dir,'test');fs.writeFileSync(file,source);
 execFileSync(process.env.CC||'cc',['-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',

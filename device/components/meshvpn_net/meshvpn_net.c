@@ -17,6 +17,7 @@
 #include "lwip/netif.h"
 #include "meshvpn_usb.h"
 #include "meshvpn_wifi.h"
+#include "meshvpn_wifi_radio.h"
 #include "meshvpn_lwip_hooks.h"
 #include "meshvpn_subnet.h"
 #include "esp_wifi.h"
@@ -32,6 +33,7 @@ static esp_netif_t *s_sta_netif;
 static bool s_usb_napt;
 static bool s_ap_napt;
 static bool s_mdns;
+static char s_ap_ssid[33];
 
 esp_netif_t *meshvpn_net_usb(void) { return s_usb_netif; }
 esp_netif_t *meshvpn_net_ap(void) { return s_ap_netif; }
@@ -432,6 +434,7 @@ esp_err_t meshvpn_net_start_bridge(void)
     snprintf(ssid, sizeof(ssid), "%s", CONFIG_BRIDGE_SOFTAP_SSID);
 #endif
     cfg.ap.ssid_len = strlen(ssid);
+    strlcpy(s_ap_ssid, ssid, sizeof(s_ap_ssid));
     memcpy(cfg.ap.ssid, ssid, cfg.ap.ssid_len);
     memcpy(cfg.ap.password, CONFIG_BRIDGE_SOFTAP_PASSWORD, strlen(CONFIG_BRIDGE_SOFTAP_PASSWORD));
     cfg.ap.authmode = WIFI_AUTH_WPA2_PSK;
@@ -534,14 +537,7 @@ void meshvpn_net_get_status(meshvpn_net_status_t *status)
     status->wifi_uplink = ws.sta_connected;
     status->ap_active = ws.ap_active;
 #if CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP
-    wifi_config_t cfg;
-    if (s_ap_netif && esp_wifi_get_config(WIFI_IF_AP, &cfg) == ESP_OK) {
-        memcpy(status->ap_ssid, cfg.ap.ssid, sizeof(cfg.ap.ssid));
-        memset(cfg.ap.password, 0, sizeof(cfg.ap.password));
-    }
-    wifi_sta_list_t clients;
-    if (status->ap_active && esp_wifi_ap_get_sta_list(&clients) == ESP_OK) status->ap_clients = clients.num;
-    wifi_second_chan_t secondary;
-    if (status->ap_active) esp_wifi_get_channel(&status->ap_channel, &secondary);
+    strlcpy(status->ap_ssid, s_ap_ssid, sizeof(status->ap_ssid));
+    if (status->ap_active) meshvpn_wifi_radio_summary(NULL, &status->ap_channel, &status->ap_clients);
 #endif
 }

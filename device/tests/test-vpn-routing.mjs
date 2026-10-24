@@ -18,7 +18,7 @@ typedef struct ip4_addr {uint32_t addr;} ip4_addr_t;
 struct netif {ip4_addr_t ip,mask;};
 static struct netif s_vpn={{0x0a630002},{0xffffffff}},usb={{0xc0a80701},{0xffffff00}},ap={{0xc0a80401},{0xffffff00}};
 static struct netif *s_usb=&usb,*s_ap=&ap;
-static bool s_ready=true;
+static bool s_ready=true;static uint32_t s_probe_epoch;
 static struct { bool enabled,kill_switch,connected; char transport[32];
   uint32_t socket_rx_to_usb,socket_rx_to_ap,socket_last_return_src,socket_last_return_dst;
   int64_t socket_last_return_us; } s={.enabled=true,.kill_switch=true,.transport="tcp"};

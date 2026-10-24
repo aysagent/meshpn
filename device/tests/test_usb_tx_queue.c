@@ -174,7 +174,7 @@ static void test_bursts(void)
     }
     assert(b.latest_seq==37 && b.full==73);
     for(unsigned i=0;i<32;i++)assert(b.records[i].seq>=6 && b.records[i].seq<=37);
-    assert(b.arrival_hist[2]>=35); /* last open window intentionally not finalized */
+    assert(b.arrival_hist[MESHVPN_USB_TX_SLOTS <= 14 ? 2 : 3]>=35); /* last open window intentionally not finalized */
 #if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
     atomic_store(&clock_us,500000);
     for(unsigned i=0;i<MESHVPN_USB_TX_SLOTS;i++)assert(meshvpn_usb_tx_queue_submit("x",1)==ESP_OK);

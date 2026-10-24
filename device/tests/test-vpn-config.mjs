@@ -50,7 +50,7 @@ static esp_err_t send_json(httpd_req_t*r,cJSON*j){(void)r;assert(!j->child);cJSO
 esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t*c){*c=saved;return ESP_OK;}
 esp_err_t meshvpn_config_save_vpn(const meshvpn_vpn_config_t*c){if(save_fail)return ESP_FAIL;saved=*c;saves++;return ESP_OK;}
 esp_err_t meshvpn_vpn_start(const meshvpn_vpn_config_t*c){assert(c->enabled==saved.enabled);applies++;return apply_fail?ESP_FAIL:ESP_OK;}
-esp_err_t meshvpn_vpn_check_internet(void){return ESP_OK;}
+esp_err_t meshvpn_vpn_request_internet_check(void){return ESP_OK;}
 void meshvpn_vpn_get_status(meshvpn_vpn_status_t*s){memset(s,0,sizeof(*s));s->implemented=true;}
 static void meshvpn_dns_clear_cache(void){cache_clears++;}
 ${handler}
@@ -90,7 +90,7 @@ cJSON_DeleteItemFromObject(request,"wg_address");assert(handler_vpn_config(&r)==
 assert(!strcmp(saved.wg_address_input,"10.0.0.7/24,fd42:42:42::7/64")); /* omitted preserves */
 replace("wg_private_key","");replace("wg_preshared_key","");
 assert(handler_vpn_config(&r)==ESP_OK&&!strcmp(saved.wg_private_key,(char*)key)&&saved.wg_preshared_key[0]);
-/* UI socket saves omit all WG fields. Secrets/profile survive, endpoint is shared. */
+/* UI socket saves omit all WG fields. Secrets/profile and per-transport endpoints survive. */
 cJSON *wg_request=request;request=cJSON_CreateObject();
 cJSON_AddBoolToObject(request,"enabled",true);cJSON_AddBoolToObject(request,"allow_plaintext",true);
 cJSON_AddStringToObject(request,"transport","tcp");cJSON_AddStringToObject(request,"server","192.0.2.2:8765");
@@ -98,6 +98,7 @@ assert(handler_vpn_config(&r)==ESP_OK);
 assert(!strcmp(saved.wg_private_key,(char*)key)&&!strcmp(saved.wg_public_key,(char*)key)&&saved.wg_preshared_key[0]);
 assert(!strcmp(saved.wg_address_input,"10.0.0.7/24,fd42:42:42::7/64")&&!strcmp(saved.wg_dns,"1.1.1.1"));
 assert(saved.wg_keepalive==25&&!strcmp(saved.server,"192.0.2.2:8765"));
+assert(!strcmp(saved.saved_servers[0],"192.0.2.2:8765")&&!strcmp(saved.saved_servers[3],"192.0.2.1:51820"));
 cJSON_Delete(request);request=wg_request;
 assert(handler_vpn_config(&r)==ESP_OK&&!strcmp(saved.server,"192.0.2.1:51820"));
 cJSON_AddBoolToObject(request,"wg_clear_psk",true);assert(handler_vpn_config(&r)==ESP_OK&&!saved.wg_preshared_key[0]);

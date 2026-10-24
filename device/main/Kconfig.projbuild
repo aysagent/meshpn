@@ -35,9 +35,19 @@ config MESHVPN_USB_TX_QUEUE
     depends on SPIRAM && !TINYUSB_MSC_ENABLED
     default n
     help
-        Eight owned frame buffers in PSRAM, a 3KiB internal task stack and
+        Owned frame buffers in PSRAM, a 3KiB internal task stack and
         nonblocking lwIP enqueue. Sync fallback on allocation/task failure.
         Disable for comparison with the previous synchronous transport.
+
+config MESHVPN_USB_TX_QUEUE_SLOTS
+    int "Owned USB TX frame buffers"
+    depends on MESHVPN_USB_TX_QUEUE
+    range 4 128
+    default 8
+    help
+        Bounded PSRAM frame pool, approximately 1.6KiB per slot. Increase for
+        SDIO streaming bursts on P4; this does not increase USB bus bandwidth.
+        Pre-send expiry remains 50ms. Native XIAO Wi-Fi keeps eight slots.
 
 config MESHVPN_NCM_TELEMETRY
     bool "Passive NCM pool and transfer telemetry"

@@ -11,6 +11,8 @@ static wifi_interface_t expected_if;
 static unsigned lan_egress_calls;
 void meshvpn_vpn_lan_egress(void *frame, size_t length, bool usb)
 { assert(frame == expected_buffer && length == expected_len && !usb); lan_egress_calls++; }
+bool meshvpn_vpn_sta_egress_allowed(const void *frame,size_t length)
+{ assert(frame==expected_buffer&&length==expected_len);return true; }
 int64_t esp_timer_get_time(void) { return now; }
 int __real_esp_wifi_internal_tx(wifi_interface_t ifx, void *buffer, uint16_t len)
 {
@@ -23,6 +25,15 @@ esp_err_t __real_esp_wifi_internal_tx_by_ref(wifi_interface_t ifx, void *buffer,
     assert(ifx == expected_if && buffer == expected_buffer && len == expected_len);
     calls++; now += duration; return result;
 }
+#if CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE
+#define SDIO_REAL(name) int __real_hosted_sdio_##name(void*ctx,uint32_t reg,uint8_t*data,uint16_t size,bool lock){ \
+ assert(ctx==expected_ref&&reg==123&&data==expected_buffer&&size==1200&&lock);now+=duration;return result;}
+SDIO_REAL(read_block)
+SDIO_REAL(write_block)
+SDIO_REAL(read_reg)
+SDIO_REAL(write_reg)
+#undef SDIO_REAL
+#endif
 int main(void)
 {
     char buffer[1], ref[1];
@@ -51,5 +62,22 @@ int main(void)
     assert(__wrap_esp_wifi_internal_tx(expected_if, buffer, 1200) == result);
     meshvpn_wifi_tx_snapshot(stats);
     assert(stats[0].calls == 24 && stats[1].calls == 24 && calls == 49);
-    puts("Wi-Fi handoff diagnostics: pass-through, timing boundaries, error accounting OK");
+    expected_if = WIFI_IF_STA; result = ESP_ERR_ESP_NETIF_TX_FAILED;
+    assert(__wrap_esp_wifi_internal_tx(expected_if, buffer, 1200) == result);
+    assert(__wrap_esp_wifi_internal_tx_by_ref(expected_if, buffer, 1200, ref) == result);
+    meshvpn_wifi_tx_snapshot(stats);
+    assert(stats[0].netif_tx_failed == 2 && stats[0].other_error == 2);
+    for(unsigned i=0;i<4;i++){meshvpn_hosted_rx_drop(i,100+i);meshvpn_hosted_rx_drop(i,200+i);}
+    meshvpn_hosted_rx_drop(99,999);meshvpn_sdio_drop_t drops[4];meshvpn_wifi_sdio_drop_snapshot(drops);
+    for(unsigned i=0;i<4;i++)assert(drops[i].events==2&&drops[i].bytes==300+2*i);
+#if CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE
+    int(*operations[])(void*,uint32_t,uint8_t*,uint16_t,bool)={__wrap_hosted_sdio_read_block,__wrap_hosted_sdio_write_block,__wrap_hosted_sdio_read_reg,__wrap_hosted_sdio_write_reg};
+    for(unsigned i=0;i<4;i++){
+        duration=100+i;result=0;assert(!operations[i](ref,123,(uint8_t*)buffer,1200,true));
+        result=-987;assert(operations[i](ref,123,(uint8_t*)buffer,1200,true)==-987);
+    }
+    meshvpn_sdio_call_t io[4];meshvpn_wifi_sdio_snapshot(io);
+    for(unsigned i=0;i<4;i++)assert(io[i].calls==2&&io[i].bytes==1200&&io[i].failed==1&&io[i].time_us==200+2*i&&io[i].max_us==100+i&&io[i].last_error==-987);
+#endif
+    puts("Wi-Fi/SDIO diagnostics: pass-through, timing/error/drop accounting OK");
 }

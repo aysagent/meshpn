@@ -1,4 +1,5 @@
 #include "meshvpn_wifi.h"
+#include "meshvpn_wifi_radio.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -141,6 +142,7 @@ static void manager(void *arg)
             }
         }
         if (!ready) continue;
+        if (!connecting && !scanning && !scan_pending) meshvpn_wifi_radio_sample();
 
         bool disconnected, got_ip, scan_done, online;
         portENTER_CRITICAL(&s_lock);
@@ -345,8 +347,7 @@ void meshvpn_wifi_get_status(meshvpn_wifi_status_t *status)
     portENTER_CRITICAL(&s_lock);
     *status = s_status;
     portEXIT_CRITICAL(&s_lock);
-    wifi_ap_record_t ap;
-    if (status->sta_connected && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) status->rssi = ap.rssi;
+    if (status->sta_connected) meshvpn_wifi_radio_summary(&status->rssi, NULL, NULL);
 }
 
 const char *meshvpn_wifi_disconnect_reason_name(uint8_t reason)

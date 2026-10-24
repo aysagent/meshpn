@@ -458,6 +458,8 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(dns, "forward_fail", ds.forward_fail);
     cJSON_AddNumberToObject(dns, "errors", ds.errors);
     cJSON_AddNumberToObject(dns, "hijacked", ds.hijacked);
+    cJSON_AddNumberToObject(dns, "policy_changed", ds.policy_changed);
+    cJSON_AddNumberToObject(dns, "vpn_blocked", ds.vpn_blocked);
 
     meshvpn_usb_stats_t us;
     meshvpn_usb_get_stats(&us);
@@ -567,6 +569,7 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON *probe = cJSON_AddObjectToObject(vpn, "internet_probe");
     cJSON_AddStringToObject(probe, "target", "1.1.1.1:443 (TCP via VPN; not a DNS/HTTPS test)");
     cJSON_AddBoolToObject(probe, "tested", vs.probe_at_us != 0);
+    cJSON_AddBoolToObject(probe, "running", vs.probe_running);
     cJSON_AddBoolToObject(probe, "ok", vs.probe_at_us != 0 && vs.probe_ok);
     cJSON_AddNumberToObject(probe, "error", vs.probe_error);
     if (vs.probe_at_us) cJSON_AddNumberToObject(probe, "age_sec", (esp_timer_get_time() - vs.probe_at_us) / 1000000);
@@ -574,6 +577,9 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddStringToObject(vpn, "server", vs.server);
     cJSON_AddStringToObject(vpn, "tls_server_name", vs.tls_server_name);
     cJSON_AddStringToObject(vpn, "transport", vs.transport);
+    cJSON *endpoints = cJSON_AddObjectToObject(vpn, "saved_servers");
+    const char *transports[] = {"tcp", "udp", "tls", "wireguard"};
+    for (unsigned i = 0; i < 4; i++) cJSON_AddStringToObject(endpoints, transports[i], vs.saved_servers[i]);
     cJSON_AddStringToObject(vpn, "state", vs.state);
     cJSON_AddStringToObject(vpn, "address", vs.address);
     cJSON *wg = cJSON_AddObjectToObject(vpn, "wireguard");
@@ -595,8 +601,28 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     VPN_COUNTER(packets_in); VPN_COUNTER(packets_out); VPN_COUNTER(bytes_in); VPN_COUNTER(bytes_out);
     VPN_COUNTER(queue_full); VPN_COUNTER(queue_expired); VPN_COUNTER(queue_depth); VPN_COUNTER(queue_high_water);
     VPN_COUNTER(rx_invalid); VPN_COUNTER(rx_dropped); VPN_COUNTER(tx_dropped);
+    VPN_COUNTER(mtu_feedback); VPN_COUNTER(mtu_feedback_failed);
+    VPN_COUNTER(direct_dns_blocked);
 #undef VPN_COUNTER
     cJSON *socket_diag = cJSON_AddObjectToObject(vpn, "socket");
+    cJSON *timings = cJSON_AddObjectToObject(socket_diag, "timings");
+    cJSON_AddStringToObject(timings, "scope", "since boot, TCP/UDP/TLS; wall time includes preemption; RX core/dispatch per batch, queue wait per dequeued packet, I/O per call");
+#define VPN_TIMING(name) do { \
+    const meshvpn_vpn_timing_t *t = &vs.name; \
+    cJSON *v = cJSON_AddObjectToObject(timings, #name); \
+    cJSON_AddNumberToObject(v, "calls", (double)t->calls); \
+    cJSON_AddNumberToObject(v, "total_us", (double)t->total_us); \
+    cJSON_AddNumberToObject(v, "max_us", t->max_us); \
+    if (t->calls) cJSON_AddNumberToObject(v, "mean_us", (double)t->total_us / t->calls); \
+    else cJSON_AddNullToObject(v, "mean_us"); \
+    cJSON_AddNumberToObject(v, "le_100us", (double)t->le_100us); \
+    cJSON_AddNumberToObject(v, "us_100_1000", (double)t->us_100_1000); \
+    cJSON_AddNumberToObject(v, "ms_1_5", (double)t->ms_1_5); \
+    cJSON_AddNumberToObject(v, "gt_5ms", (double)t->gt_5ms); \
+} while (0)
+    VPN_TIMING(tx_queue_wait); VPN_TIMING(transport_read); VPN_TIMING(transport_write);
+    VPN_TIMING(rx_core); VPN_TIMING(rx_dispatch_wait); VPN_TIMING(tls_lock_wait);
+#undef VPN_TIMING
     cJSON_AddNumberToObject(socket_diag, "queue_capacity", MESHVPN_VPN_SLOTS);
     cJSON_AddNumberToObject(socket_diag, "batch_max_frames", MESHVPN_VPN_BATCH_FRAMES);
     cJSON_AddNumberToObject(socket_diag, "udp_rx_batch_frames", MESHVPN_VPN_UDP_RX_BATCH_FRAMES);
@@ -1015,6 +1041,16 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     cJSON *kill = cJSON_GetObjectItemCaseSensitive(in, "kill_switch");
     if (kill && !cJSON_IsBool(kill)) { valid = false; validation_error = "Kill switch: expected a checkbox value."; }
     if (cJSON_IsBool(kill)) cfg.allow_direct = !cJSON_IsTrue(kill);
+    cJSON *saved_servers = cJSON_GetObjectItemCaseSensitive(in, "saved_servers");
+    if (saved_servers) {
+        const char *names[] = {"tcp", "udp", "tls", "wireguard"};
+        if (!cJSON_IsObject(saved_servers)) { valid = false; validation_error = "Saved endpoints: expected an object."; }
+        else for (unsigned i = 0; i < 4; i++) {
+            if (!vpn_string(saved_servers, names[i], cfg.saved_servers[i], sizeof(cfg.saved_servers[i]), false)) {
+                valid = false; validation_error = "Saved endpoint is invalid or too long.";
+            }
+        }
+    }
 #define VPN_READ_FIELD(field, keep, message) do { \
     if (!vpn_string(in, #field, cfg.field, sizeof(cfg.field), keep)) { \
         valid = false; if (!validation_error) validation_error = message; \
@@ -1037,7 +1073,7 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     VPN_READ_FIELD(wg_public_key, false, "PublicKey: paste only the 44-character Base64 value, without the PublicKey = label or quotes.");
     VPN_READ_FIELD(wg_private_key, true, "PrivateKey: paste only the 44-character Base64 value, without the PrivateKey = label or quotes.");
     VPN_READ_FIELD(wg_preshared_key, true, "PresharedKey: paste only the 44-character Base64 value, without its label or quotes.");
-    VPN_READ_FIELD(tls_server_name, true, "TLS server name: enter a hostname up to 128 characters.");
+    VPN_READ_FIELD(tls_server_name, false, "TLS server name: enter a hostname up to 128 characters.");
 #undef VPN_READ_FIELD
     cJSON *clear = cJSON_GetObjectItemCaseSensitive(in, "wg_clear_psk");
     if (clear && !cJSON_IsBool(clear)) { valid = false; validation_error = "Remove PresharedKey: expected a checkbox value."; }
@@ -1057,6 +1093,7 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     }
     vpn_delete_body(in);
     if (!valid) return vpn_config_error(req, &cfg, "400 Bad Request", validation_error ? validation_error : "Invalid VPN settings.");
+    meshvpn_vpn_remember_server(&cfg);
     meshvpn_vpn_status_t status; meshvpn_vpn_get_status(&status);
     if (cfg.enabled && !status.implemented) return vpn_config_error(req, &cfg, "501 Not Implemented", "VPN not compiled in this build");
     if (meshvpn_config_save_vpn(&cfg) != ESP_OK) return vpn_config_error(req, &cfg, "500 Internal Server Error", "Cannot persist VPN settings");
@@ -1080,7 +1117,9 @@ static esp_err_t handler_vpn_restart(httpd_req_t *req)
 static esp_err_t handler_vpn_check(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
-    if (meshvpn_vpn_check_internet() != ESP_OK) return error(req, "409 Conflict", "VPN is disconnected or changed during the test. Inspect VPN status.");
+    esp_err_t started = meshvpn_vpn_request_internet_check();
+    if (started == ESP_ERR_NO_MEM) return error(req, "503 Service Unavailable", "Not enough memory to start VPN check. Retry after network load decreases.");
+    if (started != ESP_OK) return error(req, "409 Conflict", "VPN is disconnected. Inspect VPN status.");
     return send_json(req, cJSON_CreateObject());
 }
 static esp_err_t handler_unimplemented(httpd_req_t *req)

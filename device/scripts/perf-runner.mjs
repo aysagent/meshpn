@@ -86,7 +86,18 @@ export async function executeSchedule(o, paths, {batch,idle,now=Date.now,check=(
 export function cleanStatus(s) {
   // Allowlist: never dump login responses, tokens, environment, or future VPN credentials.
   const pick=(v,keys)=>Object.fromEntries(keys.filter(k=>v?.[k]!==undefined).map(k=>[k,v[k]]));
-  return {...pick(s,['board','build','idf','uptime_sec','temperature_c','https_enabled']),
+  const timingKeys=['calls','total_us','max_us','mean_us','le_100us','us_100_1000','ms_1_5','gt_5ms'];
+  const vpn=s.vpn, socket=vpn?.socket;
+  return {...pick(s,['board','build','idf','uptime_sec','boot_count','reset_reason_name','temperature_c','https_enabled']),
+    vpn:{...pick(vpn,['implemented','enabled','connected','kill_switch','direct_fallback','transport','state','mtu',
+      'generation','reconnects','last_error','packets_in','packets_out','bytes_in','bytes_out','queue_full','queue_expired',
+      'queue_depth','queue_high_water','rx_invalid','rx_dropped','tx_dropped','mtu_feedback','mtu_feedback_failed','direct_dns_blocked']),
+      socket:{...pick(socket,['queue_capacity','batch_max_frames','rx_timeouts','tx_timeouts','rx_batches','rx_batch_max',
+        'rx_inject_exec_us','rx_inject_exec_max_us','tx_batches','tx_batch_max','send_calls','send_bytes','send_would_block']),
+        timings:Object.fromEntries(['tx_queue_wait','transport_read','transport_write','rx_core','rx_dispatch_wait','tls_lock_wait']
+          .map(k=>[k,pick(socket?.timings?.[k],timingKeys)])),
+        last_failure:pick(socket?.last_failure,['available','error','reason','generation','age_sec','tls_result','esp_tls_error','tls_code','tls_flags'])}},
+    dns:pick(s.dns,['queries','cache_hits','forwarded','forward_fail','errors','policy_changed','vpn_blocked']),
     wifi:{...pick(s.wifi,['connected','scanning','state','ip','rssi','disconnect_reason']),...cleanWifiDiagnostics(s.wifi)},
     net:pick(s.net,['usb_ip','ap_ip','ap_active','ap_clients','ap_channel','usb_napt','ap_napt','ap_ip4_rx','lan_ip4_rx']),
     usb:{...pick(s.usb,['profile','host_ready','tx_mode','ncm_double_buffer_configured','ncm_in_ep',...usbCounterFields,'tx_attempts_max','tx_wait_max_us']),
@@ -96,7 +107,7 @@ export function cleanStatus(s) {
         'rx_fifo_words','gahbcfg','sampled_us','service_max_us','task_max_us',...dwc2CounterFields]),
       ncm:pick(s.usb?.ncm,['available',...ncmCounterFields,'sampled_us','sample_age_ms','pool','free','ready',
         'glue','active','glue_frames','max_ntb','max_datagrams','free_min','ready_max','completion_max_us','backlog_gap_max_us'])},
-    memory:Object.fromEntries(['internal','dma','psram'].map(k=>[k,pick(s.memory?.[k],['total','free','minimum_free','largest_block'])])),
+    memory:{...Object.fromEntries(['internal','dma','psram'].map(k=>[k,pick(s.memory?.[k],['total','free','minimum_free','largest_block'])])),...pick(s.memory,['web_stack_free'])},
     cpu:{...pick(s.cpu,['available','sampled_us','sample_age_ms','interval_ms','collection_us']),
       cores:(s.cpu?.cores||[]).map(c=>pick(c,['id','load_pct'])),
       tasks:(s.cpu?.tasks||[]).map(t=>pick(t,['id','name','core','priority','stack_free','runtime_us','load_pct']))}};

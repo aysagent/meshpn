@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "esp_err.h"
 
@@ -58,7 +59,23 @@ typedef struct {
     bool allow_direct; /* false (including migrated profiles) = kill switch ON */
     uint8_t reserved_v3_padding; /* preserve the stored v3 struct prefix */
     char wg_address_input[160]; /* original Address value, including CIDR/IPv6 */
+    char saved_servers[4][MESHVPN_VPN_SERVER_MAX + 1]; /* TCP, UDP, TLS, WG */
 } meshvpn_vpn_config_t;
+
+static inline int meshvpn_vpn_transport_index(const char *transport)
+{
+    if (!strcmp(transport, "tcp") || !strcmp(transport, "socket")) return 0;
+    if (!strcmp(transport, "udp")) return 1;
+    if (!strcmp(transport, "tls")) return 2;
+    if (!strcmp(transport, "wireguard")) return 3;
+    return -1;
+}
+
+static inline void meshvpn_vpn_remember_server(meshvpn_vpn_config_t *cfg)
+{
+    int i = meshvpn_vpn_transport_index(cfg->transport);
+    if (i >= 0) memcpy(cfg->saved_servers[i], cfg->server, sizeof(cfg->server));
+}
 
 esp_err_t meshvpn_config_init(void);
 

@@ -5,6 +5,8 @@ The pinned esp_hosted 1.4.7 driver grows two internal DMA buffers while RX is
 active, then asserts if a large aligned allocation fails. Use one reserved
 buffer and process each stream before the next read. This fits the slave's
 20 x 1536-byte send queue without increasing the total 32 KiB DMA reserve.
+CPU-owned RX packet/payload copies use PSRAM; validate stream bounds before
+calling the header/checksum validator.
 """
 
 import argparse
@@ -110,10 +112,10 @@ RX_PACKET_SAFE = """\t\tpacket_size = len + offset;
 \t\t\tESP_LOGE(TAG, "packet size too big for remaining stream data");
 \t\t\treturn ESP_FAIL;
 \t\t}
-\t\t/* A temporary DMA shortage drops this frame, not the whole host. */
+\t\t/* A temporary packet allocation failure drops a frame, not the host. */
 \t\tpkt_rxbuff = sdio_buffer_alloc(MEMSET_REQUIRED);
 \t\tif (!pkt_rxbuff) {
-\t\t\tESP_LOGD(TAG, "SDIO RX packet dropped: no DMA memory");
+\t\t\tESP_LOGD(TAG, "SDIO RX packet dropped: no packet memory");
 \t\t\tbuf_len -= packet_size;
 \t\t\tbuf += packet_size;
 \t\t\tcontinue;
@@ -161,6 +163,39 @@ def patch(source: str) -> str:
     source = replace_once(source, RX_COPY, RX_COPY_SAFE)
     source = replace_once(source, "\t\t\tassert(sendbuf);\n", "")
     source = replace_once(source, RX_COMPLETE, RX_COMPLETE_SYNC)
+    # The upstream validator reads the header and optionally checksums the
+    # declared packet before seeing the remaining stream length. Bound both
+    # accesses first, including a truncated header after a valid packet.
+    source = replace_once(source,
+                          "\tdo {\n\t\tif (!is_valid_sdio_rx_packet(buf, &len, &offset)) {",
+                          "\tdo {\n"
+                          "\t\tif (buf_len < sizeof(struct esp_payload_header)) {\n"
+                          "\t\t\tmeshvpn_hosted_rx_drop(2, buf_len);\n\t\t\treturn ESP_FAIL;\n\t\t}\n"
+                          "\t\tconst struct esp_payload_header *header = (const struct esp_payload_header *)buf;\n"
+                          "\t\tif ((uint32_t)le16toh(header->len) + le16toh(header->offset) > buf_len) {\n"
+                          "\t\t\tmeshvpn_hosted_rx_drop(2, buf_len);\n\t\t\treturn ESP_FAIL;\n\t\t}\n"
+                          "\t\tif (!is_valid_sdio_rx_packet(buf, &len, &offset)) {\n"
+                          "\t\t\tmeshvpn_hosted_rx_drop(2, buf_len);")
+    # Only the stream read buffer needs SDIO DMA. Queue-owned packet copies
+    # and delivered Wi-Fi payloads are CPU data; do not exhaust internal DMA
+    # memory while USB/lwIP retain several packets in parallel.
+    source = replace_once(source, "\t\tpkt_rxbuff = sdio_buffer_alloc(MEMSET_REQUIRED);",
+                          "\t\tpkt_rxbuff = heap_caps_malloc(packet_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);")
+    source = replace_once(source, "\tbuf_handle.free_buf_handle    = sdio_buffer_free;",
+                          "#if H_SDIO_HOST_RX_MODE == H_SDIO_HOST_STREAMING_MODE\n"
+                          "\tbuf_handle.free_buf_handle    = heap_caps_free;\n"
+                          "#else\n\tbuf_handle.free_buf_handle    = sdio_buffer_free;\n#endif")
+    source = replace_once(source, "uint8_t * copy_payload = (uint8_t *)g_h.funcs->_h_malloc(buf_handle->payload_len);",
+                          "uint8_t * copy_payload = heap_caps_malloc(buf_handle->payload_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);")
+    source = replace_once(source, "\t\tif (!rxbuff) {\n",
+                          "\t\tif (!rxbuff) {\n\t\t\tmeshvpn_hosted_rx_drop(1, len_from_slave);\n")
+    source = replace_once(source, "\t\tif (packet_size > buf_len) {\n",
+                          "\t\tif (packet_size > buf_len) {\n\t\t\tmeshvpn_hosted_rx_drop(2, buf_len);\n")
+    source = replace_once(source, "\t\tif (!pkt_rxbuff) {\n",
+                          "\t\tif (!pkt_rxbuff) {\n\t\t\tmeshvpn_hosted_rx_drop(0, packet_size);\n")
+    source = replace_once(source, "\t\t\t\tif (!copy_payload) {\n",
+                          "\t\t\t\tif (!copy_payload) {\n\t\t\t\t\tmeshvpn_hosted_rx_drop(3, buf_handle->payload_len);\n")
+    source = "/* MeshPN bounded SDIO drop accounting; no payload retained. */\n#include \"esp_heap_caps.h\"\nextern void meshvpn_hosted_rx_drop(unsigned reason, unsigned bytes);\n" + source
     return source
 
 

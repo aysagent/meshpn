@@ -80,5 +80,22 @@ int main(int argc, char **argv)
         assert(!meshvpn_vpn_repair_ethernet_checksums(ethernet,sizeof(ethernet),&changed));
         p[off+1]=255; assert(!meshvpn_vpn_clamp_mss(p,sizeof(p)));
     }
-    puts("VPN frame splitting/coalescing, bounds, endpoint and MSS checks passed");
+    for (unsigned h = 20; h <= 60; h += 4) {
+        uint8_t quote[68] = {0}, reply[96], gateway[4] = {192,168,10,1};
+        quote[0] = 0x40 | h / 4; quote[2] = 5; quote[3] = 220;
+        quote[6] = 0x40; quote[8] = 64; quote[9] = 17;
+        memcpy(quote + 12, (uint8_t[]){192,168,10,2,1,1,1,1}, 8);
+        quote[h] = 0xc0; quote[h + 1] = 1; quote[h + 3] = 53;
+        unsigned n = meshvpn_vpn_frag_needed(reply, sizeof(reply), quote, h + 8, gateway);
+        assert(n == 28 + h + 8 && !sum(reply,20) && !sum(reply+20,n-20));
+        assert(reply[20] == 3 && reply[21] == 4 && reply[26] == 5 && reply[27] == 120);
+        assert(!memcmp(reply+12,gateway,4) && !memcmp(reply+16,quote+12,4));
+        assert(!memcmp(reply+28,quote,h+8)); /* original address, ports and IP options */
+        assert(!meshvpn_vpn_frag_needed(reply,n-1,quote,h+8,gateway));
+        assert(!meshvpn_vpn_frag_needed(reply,sizeof(reply),quote,h+7,gateway));
+        quote[6] = 0; assert(!meshvpn_vpn_frag_needed(reply,sizeof(reply),quote,h+8,gateway));
+        quote[6] = 0x40; quote[9] = 1; quote[h] = 3;
+        assert(!meshvpn_vpn_frag_needed(reply,sizeof(reply),quote,h+8,gateway)); /* no ICMP error loop */
+    }
+    puts("VPN framing, bounds, endpoint, MSS checksums and pre-NAT PMTUD with IP options passed");
 }
