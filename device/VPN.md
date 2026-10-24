@@ -39,7 +39,7 @@ The rules are removed on normal shutdown.
 In the device admin VPN section select tcp or udp to match the exit, enter its
 **numeric IPv4:port**,
 acknowledge plaintext, enable and save. Changes apply without reboot and persist.
-Disable VPN to return to DIRECT. TLS transports are not implemented here yet.
+Disable VPN to return to DIRECT. Experimental raw TLS is described below.
 
 All forwarded Internet traffic from both USB and AP goes through a virtual lwIP
 interface and existing NAPT. LAN-local traffic/admin/DHCP remain local. The outer
@@ -62,7 +62,7 @@ are not full-tunnelled.
 - **Reconnect VPN** reapplies the saved enabled profile, flushing old NAT mappings
   and reconnecting without reboot. Save unsaved edits first.
 - **Check internet via VPN** performs a TCP connection to `1.1.1.1:443` with a
-  five-second timeout, bound to the virtual VPN interface and source address. It
+  five-second timeout in a single background worker, bound to the virtual VPN interface and source address. The API returns immediately and status exposes `internet_probe.running`. It
   never uses DIRECT fallback, even with kill switch OFF. This is a manual,
   point-in-time reachability test, not a DNS, TLS, exit-IP or continuous health
   check. Failure does not prove the entire Internet is down. The last result and
@@ -76,9 +76,11 @@ are not full-tunnelled.
   be reported as disconnected. Unsupported/misconfigured profiles are not proof
   of a working VPN; inspect the status/error and perform a reachability test.
 
-These behaviours are host-tested and compile-tested. Basic TCP forwarding has
-also been exercised on XIAO hardware; the split-worker build, UDP transport and
-kill-switch transitions still require the hardware checks below.
+TCP, UDP and WireGuard internet forwarding were exercised by the user on XIAO,
+including throughput runs. This is historical hardware evidence for those builds;
+it does not certify every later change or P4 VPN operation. Current host tests
+execute the route selector, DNS policy, queues, actual API/config handlers and UI.
+The [night report](reports/2026-10-25-night.md) records current build/hardware evidence.
 
 The TX queue holds 256 packets in PSRAM, drops entries older than 1 second, and
 cannot grow with traffic. Dedicated RX and TX tasks share the full-duplex outer
@@ -93,9 +95,13 @@ deadlines are 5 seconds. TCP connect timeout is 5 seconds, reconnect backoff is
 means **outer TCP established**. For UDP it means the local connected UDP socket
 is ready; UDP has no handshake and only the internet probe or actual traffic can
 confirm the exit path. TX counts successful socket writes, not destination delivery.
-MSS options in SYN packets are clamped to 1360; fragmented IPv4 is reassembled
-before NAPT. Native lwIP NAPT limitations (including ICMP error translation)
-still apply. Packet capture is required for the acceptance checks below.
+MSS options in SYN packets are clamped to `1400 - IP header length - 20`
+(1360 without IP options). Fragmented IPv4 is reassembled before NAPT. Oversized
+DF packets receive pre-NAT ICMP fragmentation-needed feedback with MTU 1400 and
+the original LAN tuple. The generated NAPT patch translates ICMP destination
+unreachable/time exceeded/parameter problem quotations for TCP, UDP and echo,
+including short/chained quotations and checksum updates. Other upstream NAPT
+limitations still apply; host tests do not replace end-to-end packet capture.
 
 ## Verification status / hardware acceptance
 
@@ -105,7 +111,7 @@ changes with odd/even option alignment; production routing selector tests; UI
 save/disable/plaintext confirmation/poll edit preservation. These are not a
 substitute for running the worker and NAPT on the board.
 
-**Pending, requires connected hardware and a real exit/TUN:**
+**Regression checklist for the current build, requires a real exit/TUN:**
 
 1. Enable socket; ping `10.99.0.1` from USB client. Observe both directions on exit
    TUN. This, not TCP echo, proves stage 1.
@@ -119,8 +125,11 @@ substitute for running the worker and NAPT on the board.
 5. MTU tests: SYN MSS, large UDP, fragmented replies, DF/ICMP behavior, malformed
    lengths, partial frame timeout, 30-minute memory/load run and DIRECT regression.
 
-At implementation time the Linux workspace has no board/remote configuration and
-no `/dev/net/tun`; stages 1–2 hardware acceptance remains **unverified**.
+Current Mac lab: P4 is connected and local USB stress is available. A synthetic
+TCP/UDP/TLS peer can run on an existing Mac LAN address without changing Wi-Fi or
+host routes. macOS "Block all incoming connections" currently prevents the board
+from reaching that peer. Tests under that condition are recorded as blocked,
+not hardware VPN passes. Real mbedTLS I/O can still be tested over loopback.
 
 Run host checks with `bash device/scripts/test-host.sh`; standard board build/flash
 uses the project's existing device scripts. Use a freshly generated sdkconfig:
@@ -199,8 +208,10 @@ ownership and rejection of unexpected inner destinations. It is not an on-board
 or server forwarding test.
 
 Boot/recovery states: `wait_time`, `wait_uplink`, `handshake`, `up`, `wg_error`.
-SNTP to `pool.ntp.org` (and its bootstrap DNS) intentionally uses STA directly,
-including periodic time updates, so handshake replay timestamps survive reboot.
+SNTP to numeric `162.159.200.1` intentionally uses STA directly, including
+periodic updates, so handshake replay timestamps survive reboot. The numeric
+[Cloudflare anycast NTP address](https://developers.cloudflare.com/time-services/ntp/usage/)
+avoids a direct DNS bootstrap while the kill switch blocks direct DNS.
 If time cannot be synchronised, no new WireGuard tunnel starts. This control
 traffic is an explicit exception to the forwarded-client full-tunnel policy.
 Handshake age and `connected` indicate valid session keys, **not** a continuous
@@ -210,9 +221,90 @@ the socket reconnect/queue counters do not describe WireGuard retries.
 Verification: XIAO and Waveshare P4 compile checks, existing host suite, actual
 HTTP handler/config validators (auth, bad/missing/zero keys, overlap, keepalive,
 preserve/clear, storage failure), UI transport selection and secret clearing.
-**No hardware handshake/throughput claim yet.** Repeat the socket hardware
-acceptance checklist with a real WireGuard server; additionally check reboot
+The user previously confirmed WireGuard connectivity and measured speed on XIAO.
+Those results do not establish P4 support or acceptance of all subsequent fixes.
+Repeat the current-build hardware checklist with a real WireGuard server; additionally check reboot
 without a saved clock, wrong key/PSK, rekey and STA disconnect/reconnect. Measure
 internal RAM and stack minima under concurrent USB/AP traffic before relying on
 this backend for sustained use. Speed/security audit are not inferred from a
 successful build.
+
+## Experimental raw TLS
+
+The `tls` transport uses ESP-IDF esp-tls/mbedTLS TLS 1.2, then the same framed
+IPv4 stream as TCP. The matching test exit command is:
+
+```sh
+sudo env PATH="$PATH" node scripts/clean-vpn.js --role=exit --type=tls --tls-raw --server=0.0.0.0:8765
+```
+
+This is a lab transport: server certificate verification and tunnel authentication
+are not configured. It does not implement the normal clean-vpn HTTP/exporter/Bearer
+handshake or browser JA3/JA4 emulation. `tls_server_name` controls optional SNI;
+an empty value explicitly clears it. RX/TX share a mutex around the mbedTLS
+context, the socket is nonblocking after the handshake, and WANT_READ/WANT_WRITE
+are retry conditions. Host acceptance uses real mbedTLS, simultaneous RX/TX and
+fragmented TLS records over loopback; hardware acceptance remains separate.
+
+## Configuration preservation and diagnostics
+
+NVS `vpn_cfg5` stores the endpoint for TCP, UDP, TLS and WireGuard separately.
+Versions 1–4 migrate with the active endpoint retained; endpoints overwritten by
+older firmware cannot be recovered. Changing transport preserves WireGuard keys,
+Address, DNS and keepalive. Private keys and PSK are never returned by status.
+The API accepts optional `saved_servers` for restoring the nonsecret endpoint
+map; the selected transport's `server` is authoritative. Save/apply still acts on
+one selected transport. Configuration changes invalidate NAT and DNS state.
+
+DNS cache entries and in-flight replies carry a VPN policy epoch, including
+DIRECT fallback transitions. Stale replies are discarded. Final STA transmit
+hooks reject direct UDP/TCP port 53 while tunnel policy is active, including
+requests queued before a configuration change. An explicitly configured outer
+VPN endpoint on port 53 remains allowed. DNS local names continue to resolve to
+the receiving LAN gateway. IPv6 is blocked by the ingress hook; IPv6 addresses
+pasted into a WireGuard profile are retained as input but are not routed.
+
+`vpn.socket.timings` reports cumulative wall time since boot for TCP/UDP/TLS:
+TX queue residence before dequeue, transport read/write calls (including would
+block calls), RX callback execution, scheduler/dispatch wait before that callback,
+and TLS mutex wait. Buckets are disjoint and maxima are lifetime values. These
+are stage timings, not additive CPU utilization. WireGuard crypto has its own
+measurements. `socket.rx_inject_exec_us` remains the total callback round-trip,
+including dispatch wait; do not add it to the new component timings.
+
+Radio status is cached by the Wi-Fi manager at most every five seconds outside
+association/scans; status includes collection time, age and per-getter errors.
+Reading `/api/status` does not issue Wi-Fi RPCs. AP capability flags and the
+configured width do not prove the negotiated PHY mode; the explicit negotiated
+mode is available only when the native/remote API supports it. The installed Waveshare C6 firmware did not answer the newer getter RPC (5-second
+timeouts). P4 therefore reports NOT_SUPPORTED without issuing that request; native
+XIAO still calls the getter. SDIO diagnostics distinguish
+completed read/write block/register calls and driver drops from packet allocation failure,
+oversized/malformed streams and payload allocation failure. Streaming RX packet
+copies and delivered Wi-Fi payloads use PSRAM; the reserved stream read buffer
+and SDIO TX buffers remain DMA-capable internal memory. `wifi.tx.*.netif_tx_failed` separates error 0x500e from unknown errors; in the
+pinned Hosted STA path this is C6-requested TX throttling, not an SDIO I/O failure.
+The existing throttle remains enabled. SDIO byte counts
+include padding and control traffic; they are not internet bytes or RF retries.
+
+Diagnostics can be paused and downloaded as JSON. A visible banner marks paused
+status so a frozen "connected" label is not mistaken for a live check. Opening
+the admin page reads cached scan results; a new radio scan requires the Scan button.
+
+P4's USB TX queue uses 128 PSRAM frame slots to absorb SDIO streaming bursts;
+XIAO retains eight. Both retain 50 ms pre-send expiry. These are separate from
+the 256-slot VPN queue and NCM NTB pool.
+
+Local tools, from the repository root:
+
+```sh
+IDF_PATH=~/esp/esp-idf-meshpn-v5.5.5 bash device/scripts/test-host.sh
+node device/scripts/perf-stability.mjs --minutes 15 --out device/perf-results/stability-NEW
+node device/scripts/vpn-local-lab.mjs --without-peer --host MAC_EXISTING_LAN_IPV4 --out device/perf-results/no-exit-NEW
+node device/scripts/vpn-local-lab.mjs --host MAC_EXISTING_LAN_IPV4 --cert /tmp/lab.crt --key /tmp/lab.key --out device/perf-results/local-vpn-NEW
+```
+
+The local peer is synthetic and forwards no internet traffic. Its successful
+HTTP/DNS responses cannot establish WAN performance or the public exit address.
+The lab restores VPN settings in `finally`; avoid simultaneous manual edits or
+another login during a test (the firmware has one active admin session).

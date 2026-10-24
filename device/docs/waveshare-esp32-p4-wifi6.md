@@ -53,8 +53,7 @@ USB-OTG. A one-time BOOT + RESET installed the image with the 1200-baud hook.
 The next `device:flash` completed without touching buttons or cables: the app
 (`303a:4001`) changed to ROM (`303a:0012`), all image hashes verified, and the
 app returned. In that earlier run macOS assigned `en17` the address `192.168.7.2`, and the admin
-page answered HTTP 200 after the automated cycle. This proves the USB flash
-workflow, not yet STA/AP traffic or throughput.
+page answered HTTP 200 after the automated cycle. This was the initial USB flash evidence. Current hardware checks are recorded below.
 
 The board profile selects the High-Speed root port. NCM telemetry and the
 owned TX queue remain enabled; the ESP32-S3-only 64-byte double-FIFO experiment
@@ -77,6 +76,32 @@ working host connection changes `usb host=0` to `usb host=1`. Persistent
 `host=0` means USB enumeration has not completed; first verify the four-pin
 connector's exact `VBUS`, `D-`, `D+`, `GND` order and inspect the host USB tree.
 The USB-C programming connector carries UART/download traffic, not MeshPN NCM.
+
+## Current hardware evidence (2026-10-25)
+
+The bound lab P4 uses USB `192.168.10.1/24`, AP `192.168.11.1/24`, and DHCP on
+STA. Admin is available at `http://meshpn.local/` on USB/AP/STA (or HTTPS if
+configured). The user confirmed both hostname and AP IP access from a phone.
+Mac Wi-Fi was not switched during the automated checks.
+
+Twenty local 8 MiB downloads had a median of 53.56 Mbit/s. A subsequent 15-minute
+USB/admin stress run completed 324 downloads, approximately 2.53 GiB, with no
+reboot or observed disconnect and median 54.48 Mbit/s. The final 15-minute run
+completed 330 downloads (2.58 GiB), median 54.77 Mbit/s, with zero USB queue
+losses. These measurements bypass Wi-Fi and VPN. See the [night report](../reports/2026-10-25-night.md) for final
+regression results and raw artifact locations.
+
+The installed C6 slave does not answer the newer negotiated-PHY getter RPC.
+That request caused five-second timeouts; P4 now reports it as unsupported.
+Configured 40 MHz and advertised 802.11ax capability do not prove an actual
+HT40/Wi-Fi 6 connection. No C6 firmware was flashed in this work.
+
+Streaming SDIO RX now retains only its 32 KiB read buffer in internal DMA RAM;
+queue-owned packet copies and delivered Wi-Fi payloads use PSRAM with matching
+free callbacks. Diagnostics count allocation drops, malformed/oversized streams,
+and SDIO operation errors. P4 USB TX has 128 owned PSRAM frame slots for SDIO
+bursts, with the existing 50 ms expiry; XIAO keeps eight slots. This buffering
+change does not increase USB bus speed or promise a specific WAN rate.
 
 ## ESP32-C6 firmware compatibility
 

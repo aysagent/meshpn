@@ -2,7 +2,11 @@
 
 ESP-IDF firmware for XIAO ESP32-S3 and Waveshare ESP32-P4-WIFI6. USB Ethernet
 and WiFi SoftAP → IPv4 NAT → WiFi STA.
-VPN, WireGuard and policy enforcement are **not implemented**. USB compatibility expansion is deferred.
+Full IPv4 tunnelling supports clean-vpn TCP/UDP, experimental raw TLS 1.2, and
+WireGuard, with admin settings and a kill switch. Raw TLS currently does not
+verify the server certificate. Selective domain/IP routing and browser TLS
+fingerprint emulation are not implemented. See [VPN status and limitations](VPN.md)
+and the [implementation plan](plan-vpn.md). USB compatibility expansion is deferred.
 
 ## Build and flash
 

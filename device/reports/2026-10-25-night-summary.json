@@ -1,0 +1,804 @@
+{
+  "date": "2026-10-25",
+  "base_commit": "736c670",
+  "board": "waveshare_esp32_p4_wifi6",
+  "wifi_switched": false,
+  "external_exit_started": false,
+  "measurements": {
+    "usb-local-G2q2xp": {
+      "status": "completed",
+      "artifact": "perf-results/night-2026-10-25/usb-local-G2q2xp/result.json",
+      "receiver_mbps": {
+        "count": 20,
+        "min": 49.30004606440388,
+        "median": 53.55631496023408,
+        "p95": 55.71429216179143,
+        "max": 55.90948970331677
+      },
+      "admin_latency_ms": null,
+      "runs": 21
+    },
+    "stability-1": {
+      "status": "completed",
+      "artifact": "perf-results/night-2026-10-25/stability-1/result.json",
+      "receiver_mbps": {
+        "count": 324,
+        "min": 49.02064598364945,
+        "median": 54.48237063288113,
+        "p95": 55.44719643796108,
+        "max": 55.92297951892089
+      },
+      "admin_latency_ms": {
+        "count": 324,
+        "min": 1222.6229169999715,
+        "median": 1265.7746249999982,
+        "p95": 1380.3010374999837,
+        "max": 1437.202375000008
+      },
+      "runs": 324,
+      "boot_before": 54,
+      "boot_after": 54,
+      "usb_queue_capacity": 8,
+      "usb_queue_delta": {
+        "full": 260,
+        "expired": 0,
+        "send_failed": 0,
+        "sent": 2494702
+      },
+      "sdio_rx_drops_after": null,
+      "memory_before": {
+        "internal": {
+          "total": 337287,
+          "free": 96559,
+          "minimum_free": 27356,
+          "largest_block": 31744
+        },
+        "dma": {
+          "total": 297603,
+          "free": 56335,
+          "minimum_free": 44,
+          "largest_block": 22528
+        },
+        "psram": {
+          "total": 32521728,
+          "free": 31961208,
+          "minimum_free": 31944036,
+          "largest_block": 31457280
+        }
+      },
+      "memory_after": {
+        "internal": {
+          "total": 337287,
+          "free": 96567,
+          "minimum_free": 27356,
+          "largest_block": 31744
+        },
+        "dma": {
+          "total": 297603,
+          "free": 56339,
+          "minimum_free": 44,
+          "largest_block": 22528
+        },
+        "psram": {
+          "total": 32521728,
+          "free": 31961208,
+          "minimum_free": 31943524,
+          "largest_block": 31457280
+        }
+      },
+      "radio_collection_us": 80596
+    },
+    "wan-control-1": {
+      "status": "completed",
+      "artifact": "perf-results/night-2026-10-25/wan-control-1/result.json",
+      "receiver_mbps": {
+        "count": 3,
+        "min": 23.51578047361745,
+        "median": 25.672303243578853,
+        "p95": 26.666597096283255,
+        "max": 26.777074191028188
+      },
+      "admin_latency_ms": {
+        "count": 11,
+        "min": 67.81562500000018,
+        "median": 353.52379100000053,
+        "p95": 442.7168750000005,
+        "max": 458.0055000000011
+      },
+      "runs": 3,
+      "boot_before": 55,
+      "boot_after": 55,
+      "usb_queue_capacity": 8,
+      "usb_queue_delta": {
+        "full": 1531,
+        "expired": 30,
+        "send_failed": 20,
+        "sent": 17942
+      },
+      "sdio_rx_drops_after": null,
+      "memory_before": {
+        "internal": {
+          "total": 337111,
+          "free": 95547,
+          "minimum_free": 27844,
+          "largest_block": 31744
+        },
+        "dma": {
+          "total": 297427,
+          "free": 55295,
+          "minimum_free": 532,
+          "largest_block": 22528
+        },
+        "psram": {
+          "total": 32519424,
+          "free": 31958904,
+          "minimum_free": 31941724,
+          "largest_block": 31457280
+        },
+        "web_stack_free": 2448
+      },
+      "memory_after": {
+        "internal": {
+          "total": 337055,
+          "free": 67347,
+          "minimum_free": 880,
+          "largest_block": 31744
+        },
+        "dma": {
+          "total": 297371,
+          "free": 27119,
+          "minimum_free": 12,
+          "largest_block": 14336
+        },
+        "psram": {
+          "total": 32519424,
+          "free": 31958904,
+          "minimum_free": 31918584,
+          "largest_block": 31457280
+        },
+        "web_stack_free": 2320
+      },
+      "radio_collection_us": 5078159
+    },
+    "wan-control-psram": {
+      "status": "completed",
+      "artifact": "perf-results/night-2026-10-25/wan-control-psram/result.json",
+      "receiver_mbps": {
+        "count": 3,
+        "min": 26.28411450683649,
+        "median": 32.30850304290494,
+        "p95": 32.48063956799925,
+        "max": 32.49976584856528
+      },
+      "admin_latency_ms": {
+        "count": 12,
+        "min": 23.183791999999983,
+        "median": 137.49310400000013,
+        "p95": 237.5665652499995,
+        "max": 240.68458399999872
+      },
+      "runs": 3,
+      "boot_before": 56,
+      "boot_after": 56,
+      "usb_queue_capacity": 8,
+      "usb_queue_delta": {
+        "full": 946,
+        "expired": 12,
+        "send_failed": 2,
+        "sent": 17920
+      },
+      "sdio_rx_drops_after": {
+        "packet_no_memory": {
+          "events": 0,
+          "bytes": 0
+        },
+        "dma_no_memory": {},
+        "oversize_stream": {
+          "events": 0,
+          "bytes": 0
+        },
+        "malformed_stream": {
+          "events": 0,
+          "bytes": 0
+        },
+        "payload_no_memory": {
+          "events": 0,
+          "bytes": 0
+        }
+      },
+      "memory_before": {
+        "internal": {
+          "total": 337191,
+          "free": 98279,
+          "minimum_free": 40680,
+          "largest_block": 31744
+        },
+        "dma": {
+          "total": 297507,
+          "free": 58051,
+          "minimum_free": 1076,
+          "largest_block": 23552
+        },
+        "psram": {
+          "total": 32519552,
+          "free": 31959032,
+          "minimum_free": 31941660,
+          "largest_block": 31457280
+        },
+        "web_stack_free": 2456
+      },
+      "memory_after": {
+        "internal": {
+          "total": 337155,
+          "free": 83263,
+          "minimum_free": 704,
+          "largest_block": 31744
+        },
+        "dma": {
+          "total": 297471,
+          "free": 43039,
+          "minimum_free": 12,
+          "largest_block": 20480
+        },
+        "psram": {
+          "total": 32519552,
+          "free": 31959032,
+          "minimum_free": 31894892,
+          "largest_block": 31457280
+        },
+        "web_stack_free": 2328
+      },
+      "radio_collection_us": 78293
+    },
+    "wan-control-queue64": {
+      "status": "completed",
+      "artifact": "perf-results/night-2026-10-25/wan-control-queue64/result.json",
+      "receiver_mbps": {
+        "count": 3,
+        "min": 33.74419246633443,
+        "median": 36.96708546146015,
+        "p95": 38.54308947830638,
+        "max": 38.718201035733735
+      },
+      "admin_latency_ms": {
+        "count": 9,
+        "min": 34.575542000000496,
+        "median": 137.66879199999858,
+        "p95": 251.75076639999997,
+        "max": 310.4624160000001
+      },
+      "runs": 3,
+      "boot_before": 57,
+      "boot_after": 57,
+      "usb_queue_capacity": 64,
+      "usb_queue_delta": {
+        "full": 0,
+        "expired": 0,
+        "send_failed": 0,
+        "sent": 17846
+      },
+      "sdio_rx_drops_after": {
+        "packet_no_memory": {
+          "events": 0,
+          "bytes": 0
+        },
+        "dma_no_memory": {},
+        "oversize_stream": {
+          "events": 0,
+          "bytes": 0
+        },
+        "malformed_stream": {
+          "events": 0,
+          "bytes": 0
+        },
+        "payload_no_memory": {
+          "events": 0,
+          "bytes": 0
+        }
+      },
+      "memory_before": {
+        "internal": {
+          "total": 337227,
+          "free": 98575,
+          "minimum_free": 73624,
+          "largest_block": 32768
+        },
+        "dma": {
+          "total": 297543,
+          "free": 58315,
+          "minimum_free": 34020,
+          "largest_block": 32768
+        },
+        "psram": {
+          "total": 32519424,
+          "free": 31871096,
+          "minimum_free": 31869148,
+          "largest_block": 31457280
+        },
+        "web_stack_free": 4432
+      },
+      "memory_after": {
+        "internal": {
+          "total": 337155,
+          "free": 83147,
+          "minimum_free": 20,
+          "largest_block": 31744
+        },
+        "dma": {
+          "total": 297471,
+          "free": 42907,
+          "minimum_free": 12,
+          "largest_block": 12288
+        },
+        "psram": {
+          "total": 32519424,
+          "free": 31871096,
+          "minimum_free": 31782424,
+          "largest_block": 31457280
+        },
+        "web_stack_free": 2368
+      },
+      "radio_collection_us": 77730
+    },
+    "no-exit-1": {
+      "status": "completed",
+      "artifact": "perf-results/night-2026-10-25/no-exit-1/result.json",
+      "receiver_mbps": null,
+      "admin_latency_ms": null,
+      "settings_restored": true,
+      "tests": [
+        {
+          "name": "DIRECT control before kill-switch checks",
+          "ok": true,
+          "details": {
+            "bytes": 167
+          }
+        },
+        {
+          "name": "kill switch: unreachable endpoint, DNS and local admin",
+          "ok": true,
+          "details": {
+            "blocked": true,
+            "dns_rcode": 2
+          }
+        },
+        {
+          "name": "pre-NAT PMTUD on P4: DF packet at MTU and MTU+1",
+          "ok": true,
+          "details": {
+            "probes": [
+              {
+                "payload_bytes": 1372,
+                "ip_bytes": 1400,
+                "df": true,
+                "reply": false,
+                "error": null,
+                "reason": "TimeoutError"
+              },
+              {
+                "payload_bytes": 1373,
+                "ip_bytes": 1401,
+                "df": true,
+                "reply": false,
+                "error": 40,
+                "reason": "OSError"
+              }
+            ],
+            "feedback_sent": 1
+          }
+        },
+        {
+          "name": "explicit DIRECT fallback and VPN disabled baseline",
+          "ok": true,
+          "details": {
+            "direct_baselines": 2
+          }
+        }
+      ]
+    },
+    "no-exit-final": {
+      "status": "completed",
+      "artifact": "perf-results/night-2026-10-25/no-exit-final/result.json",
+      "receiver_mbps": null,
+      "admin_latency_ms": null,
+      "settings_restored": true,
+      "tests": [
+        {
+          "name": "DIRECT control before kill-switch checks",
+          "ok": true,
+          "details": {
+            "bytes": 167
+          }
+        },
+        {
+          "name": "kill switch: unreachable endpoint, DNS and local admin",
+          "ok": true,
+          "details": {
+            "blocked": true,
+            "dns_rcode": 2
+          }
+        },
+        {
+          "name": "pre-NAT PMTUD on P4: DF packet at MTU and MTU+1",
+          "ok": true,
+          "details": {
+            "probes": [
+              {
+                "payload_bytes": 1372,
+                "ip_bytes": 1400,
+                "df": true,
+                "reply": false,
+                "error": null,
+                "reason": "TimeoutError"
+              },
+              {
+                "payload_bytes": 1373,
+                "ip_bytes": 1401,
+                "df": true,
+                "reply": false,
+                "error": 40,
+                "reason": "OSError"
+              }
+            ],
+            "feedback_sent": 1
+          }
+        },
+        {
+          "name": "explicit DIRECT fallback and VPN disabled baseline",
+          "ok": true,
+          "details": {
+            "direct_baselines": 2
+          }
+        }
+      ]
+    },
+    "stability-final": {
+      "status": "completed",
+      "runs": 330,
+      "receiver_mbps": {
+        "count": 330,
+        "min": 49.33479681642412,
+        "median": 54.77079438941004,
+        "p95": 56.36083961928956,
+        "max": 57.097564930301964
+      },
+      "admin_latency_ms": {
+        "count": 330,
+        "min": 1117.0946670000048,
+        "median": 1248.0383330000332,
+        "p95": 1277.9257334500217,
+        "max": 1333.7497500000754
+      },
+      "usb_queue_delta": {
+        "full": 0,
+        "expired": 0,
+        "send_failed": 0,
+        "sent": 2533804
+      },
+      "boot_before": 57,
+      "boot_after": 57,
+      "memory_before": {
+        "internal": {
+          "total": 337119,
+          "free": 82727,
+          "minimum_free": 20,
+          "largest_block": 31744
+        },
+        "dma": {
+          "total": 297435,
+          "free": 42487,
+          "minimum_free": 12,
+          "largest_block": 12288
+        },
+        "psram": {
+          "total": 32519424,
+          "free": 31871096,
+          "minimum_free": 31782424,
+          "largest_block": 31457280
+        },
+        "web_stack_free": 2320
+      },
+      "memory_after": {
+        "internal": {
+          "total": 337123,
+          "free": 82727,
+          "minimum_free": 20,
+          "largest_block": 31744
+        },
+        "dma": {
+          "total": 297439,
+          "free": 42467,
+          "minimum_free": 12,
+          "largest_block": 12288
+        },
+        "psram": {
+          "total": 32519424,
+          "free": 31871096,
+          "minimum_free": 31782424,
+          "largest_block": 31457280
+        },
+        "web_stack_free": 2320
+      },
+      "artifact": "perf-results/night-2026-10-25/stability-final/result.json"
+    },
+    "no-exit-release": {
+      "status": "completed",
+      "settings_restored": true,
+      "tests": [
+        {
+          "name": "DIRECT control before kill-switch checks",
+          "started": "2026-10-24T23:30:18.337Z",
+          "details": {
+            "bytes": 167
+          },
+          "ok": true,
+          "ended": "2026-10-24T23:30:18.370Z"
+        },
+        {
+          "name": "kill switch: unreachable endpoint, DNS and local admin",
+          "started": "2026-10-24T23:30:18.371Z",
+          "details": {
+            "blocked": true,
+            "dns_rcode": 2
+          },
+          "ok": true,
+          "ended": "2026-10-24T23:30:21.502Z"
+        },
+        {
+          "name": "udp: no-exit HTTP/DNS stays blocked and admin responds",
+          "started": "2026-10-24T23:30:21.502Z",
+          "details": {
+            "blocked": true,
+            "dns_rcode": 2,
+            "state": "up",
+            "connected": true
+          },
+          "ok": true,
+          "ended": "2026-10-24T23:30:26.575Z"
+        },
+        {
+          "name": "tls: no-exit HTTP/DNS stays blocked and admin responds",
+          "started": "2026-10-24T23:30:26.575Z",
+          "details": {
+            "blocked": true,
+            "dns_rcode": 2,
+            "state": "wait_uplink",
+            "connected": false
+          },
+          "ok": true,
+          "ended": "2026-10-24T23:30:29.743Z"
+        },
+        {
+          "name": "pre-NAT PMTUD on P4: DF packet at MTU and MTU+1",
+          "started": "2026-10-24T23:30:29.743Z",
+          "details": {
+            "probes": [
+              {
+                "payload_bytes": 1372,
+                "ip_bytes": 1400,
+                "df": true,
+                "reply": false,
+                "error": null,
+                "reason": "TimeoutError"
+              },
+              {
+                "payload_bytes": 1373,
+                "ip_bytes": 1401,
+                "df": true,
+                "reply": false,
+                "error": 40,
+                "reason": "OSError"
+              }
+            ],
+            "feedback_sent": 1
+          },
+          "ok": true,
+          "ended": "2026-10-24T23:30:32.198Z"
+        },
+        {
+          "name": "explicit DIRECT fallback and VPN disabled baseline",
+          "started": "2026-10-24T23:30:32.198Z",
+          "details": {
+            "direct_baselines": 2
+          },
+          "ok": true,
+          "ended": "2026-10-24T23:30:32.346Z"
+        }
+      ],
+      "build": "97bb8d4-dirty",
+      "boot_count": 58,
+      "artifact": "perf-results/night-2026-10-25/no-exit-release/result.json"
+    },
+    "wan-control-release": {
+      "status": "completed",
+      "receiver_mbps": {
+        "count": 3,
+        "min": 34.34927420510616,
+        "median": 34.379998913919955,
+        "p95": 37.343904263435306,
+        "max": 37.67322708004812
+      },
+      "admin_latency_ms": {
+        "count": 9,
+        "min": 37.47591700000157,
+        "median": 241.5493749999987,
+        "p95": 347.5555084000003,
+        "max": 361.42254200000025
+      },
+      "runs": 3,
+      "usb_queue_delta": {
+        "full": 22,
+        "expired": 0,
+        "send_failed": 0,
+        "sent": 17817
+      },
+      "sdio_io_failed_delta": {
+        "read_block": 0,
+        "write_block": 0,
+        "read_reg": 0,
+        "write_reg": 0
+      },
+      "sdio_rx_drop_delta": {
+        "packet_no_memory": 0,
+        "dma_no_memory": 0,
+        "oversize_stream": 0,
+        "malformed_stream": 0,
+        "payload_no_memory": 0
+      },
+      "sta_tx_delta": {
+        "calls": 9644,
+        "accepted": 9547,
+        "no_mem": 0,
+        "other_error": 0,
+        "netif_tx_failed": 97
+      },
+      "artifact": "perf-results/night-2026-10-25/wan-control-release/result.json",
+      "boot_before": 58,
+      "boot_after": 58
+    },
+    "wan-control-queue128": {
+      "status": "completed",
+      "receiver_mbps": {
+        "count": 3,
+        "min": 33.07703120856676,
+        "median": 37.92247545112461,
+        "p95": 38.22305845206407,
+        "max": 38.25645656327957
+      },
+      "admin_latency_ms": {
+        "count": 10,
+        "min": 34.17304200000035,
+        "median": 144.22783349999952,
+        "p95": 214.7968061000001,
+        "max": 226.0081250000003
+      },
+      "runs": 3,
+      "usb_queue_delta": {
+        "full": 0,
+        "expired": 0,
+        "send_failed": 0,
+        "sent": 17865
+      },
+      "usb_queue_high_water": 85,
+      "sdio_io_failed_delta": {
+        "read_block": 0,
+        "write_block": 0,
+        "read_reg": 0,
+        "write_reg": 0
+      },
+      "sdio_rx_drop_delta": {
+        "packet_no_memory": 0,
+        "dma_no_memory": 0,
+        "oversize_stream": 0,
+        "malformed_stream": 0,
+        "payload_no_memory": 0
+      },
+      "sta_tx_delta": {
+        "calls": 9618,
+        "accepted": 9299,
+        "no_mem": 0,
+        "other_error": 0,
+        "netif_tx_failed": 319
+      },
+      "artifact": "perf-results/night-2026-10-25/wan-control-queue128/result.json"
+    },
+    "stability-queue128": {
+      "status": "completed",
+      "minutes": 2,
+      "runs": 46,
+      "receiver_mbps": {
+        "count": 46,
+        "min": 49.85077033316406,
+        "median": 54.35250904579392,
+        "p95": 55.40769832625341,
+        "max": 55.73143347055803
+      },
+      "admin_latency_ms": {
+        "count": 46,
+        "min": 1140.0084579999966,
+        "median": 1171.2898960000093,
+        "p95": 1275.425958500001,
+        "max": 1302.2438330000004
+      },
+      "usb_queue_delta": {
+        "full": 0,
+        "expired": 0,
+        "send_failed": 0,
+        "sent": 354930
+      },
+      "boot_before": 59,
+      "boot_after": 59,
+      "memory_before": {
+        "internal": {
+          "total": 337139,
+          "free": 82975,
+          "minimum_free": 20,
+          "largest_block": 31744
+        },
+        "dma": {
+          "total": 297455,
+          "free": 42739,
+          "minimum_free": 12,
+          "largest_block": 20480
+        },
+        "psram": {
+          "total": 32519296,
+          "free": 31770616,
+          "minimum_free": 31669752,
+          "largest_block": 31457280
+        },
+        "web_stack_free": 2368
+      },
+      "memory_after": {
+        "internal": {
+          "total": 337131,
+          "free": 82891,
+          "minimum_free": 20,
+          "largest_block": 31744
+        },
+        "dma": {
+          "total": 297447,
+          "free": 42643,
+          "minimum_free": 12,
+          "largest_block": 20480
+        },
+        "psram": {
+          "total": 32519296,
+          "free": 31770616,
+          "minimum_free": 31669752,
+          "largest_block": 31457280
+        },
+        "web_stack_free": 2368
+      },
+      "artifact": "perf-results/night-2026-10-25/stability-queue128/result.json"
+    }
+  },
+  "code_commit": "4fe0f19",
+  "validation": {
+    "idf": "v5.5.5",
+    "host_suite": "passed with ASan/UBSan",
+    "host_log": "/tmp/meshpn-night-host-release.log",
+    "tls_io": {
+      "packets": 128,
+      "read_calls": 1504,
+      "write_calls": 128
+    },
+    "node_perf": {
+      "passed": 56,
+      "failed": 0
+    },
+    "builds": {
+      "waveshare_esp32_p4_wifi6": "passed",
+      "xiao_esp32s3": "passed, compile only"
+    }
+  },
+  "final_installation": {
+    "configuration_preserved": true,
+    "build": "4fe0f19-dirty",
+    "boot": 59,
+    "wifi_connected": true,
+    "usb_ready": true,
+    "queue_capacity": 128,
+    "automatic_flash_log": "/tmp/meshpn-night-p4-flash-queue128.log"
+  }
+}
