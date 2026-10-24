@@ -37,9 +37,11 @@ npm run device:flash:p4
 ```
 
 The native P4 USB-OTG ROM port is `303a:0012` on the four-pin HS connection.
-The ignored local binding records the application's serial; before writing,
-the flash script checks the ROM MAC against it. `/dev/cu.usbmodem…` may change
-between runs. The optional CH343P UART is not selected for this guarded path.
+The ignored local binding records the application's MAC-derived serial. When
+flashing from the running app, the script verifies that serial and follows the
+same physical USB location into ROM; when starting in ROM, it reads and checks
+the ROM MAC. `/dev/cu.usbmodem…` may change between runs. The optional CH343P
+UART is not selected for this guarded path.
 Use `BUILD_ONLY=1` to build without a board.
 `setup-macos.sh` installs both toolchains. Keep any monitor closed while flashing.
 

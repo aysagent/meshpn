@@ -219,11 +219,30 @@ def flash(args, enumerate_ports, serial_factory, run=subprocess.run, wait=wait_p
         port = wait(original, rom_id(args.target), enumerate_ports)
     if usb_id(port) != rom_id(args.target) or location(port) != location(original):
         raise RuntimeError("ROM port identity/location changed; refusing to flash")
-    if rom_mac(port, args.target, run) != binding["serial"]:
+    if args.target == "esp32p4" and is_app(original, args.target):
+        # The checked app serial is derived from this P4's eFuse MAC, and the
+        # ROM appeared at the same physical USB location. Closing the P4 ROM
+        # port after a separate read_mac can make macOS drop the CDC device
+        # before the subsequent flash open. Keep ROM MAC verification when
+        # starting from ROM, where no application identity was available.
+        print(f"Bound P4 application {binding['serial']} became ROM at the same USB location", flush=True)
+    elif rom_mac(port, args.target, run) != binding["serial"]:
         raise RuntimeError("ROM MAC does not match the bound board; refusing to flash")
     print(f"Flashing {args.target} on {port.device}", flush=True)
     base = ["idf.py", "-C", args.device_dir, "-B", args.build_dir]
-    run(base + ["-p", port.device, "flash"], check=True)
+    if args.target == "esp32p4":
+        # The P4 USB-OTG ROM port can disappear while idf.py runs its second
+        # Ninja/CMake pass. flash.sh has already built and checked the image,
+        # so start esptool directly while the verified ROM port is still live.
+        flash_args = Path(args.build_dir) / "flash_args"
+        if not flash_args.is_file():
+            raise RuntimeError(f"Missing generated flash arguments: {flash_args}")
+        run([sys.executable, "-m", "esptool", "--chip", "esp32p4",
+             "--port", port.device, "-b", "460800", "--before", "no_reset",
+             "--after", "hard_reset", "write_flash", "@flash_args"],
+            cwd=args.build_dir, check=True)
+    else:
+        run(base + ["-p", port.device, "flash"], check=True)
     # A successful esptool exit proves flashing, not a healthy application.
     # Native USB changes identity again when the application starts.
     if usb_id(port) == rom_id(args.target) and args.profile == "ncm":

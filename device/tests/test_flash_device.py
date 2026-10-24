@@ -72,16 +72,19 @@ class FlashTests(unittest.TestCase):
     def test_p4_app_touches_same_location_and_waits_for_p4_rom(self):
         self.args.target = "esp32p4"
         Path(self.args.binding_file).write_text('{"target":"esp32p4","serial":"E8F60AE395D0"}')
+        Path(self.args.build_dir, "flash_args").write_text("0x10000 meshvpn_device.bin\n")
         app = port("/dev/cu.p4app", product="MeshPN ESP32-P4 HS NCM")
         rom = port("/dev/cu.p4rom", flash.P4_ROM)
         returned = port("/dev/cu.newapp", product="MeshPN ESP32-P4 HS NCM")
         wait = Mock(side_effect=[rom, returned])
         run = Mock()
-        with patch.object(flash, "touch") as touch, patch.object(flash, "rom_mac", return_value="E8F60AE395D0"):
+        with patch.object(flash, "touch") as touch, patch.object(flash, "rom_mac", return_value="E8F60AE395D0") as read_rom_mac:
             flash.flash(self.args, lambda: [app], Mock(), run=run, wait=wait)
         touch.assert_called_once()
+        read_rom_mac.assert_not_called()
         self.assertEqual(wait.call_args_list[0].args[1], flash.P4_ROM)
-        self.assertEqual(run.call_args_list[0].args[0][-3:], ["-p", rom.device, "flash"])
+        self.assertEqual(run.call_args_list[0].args[0][-2:], ["write_flash", "@flash_args"])
+        self.assertEqual(run.call_args_list[0].kwargs["cwd"], self.args.build_dir)
         self.assertEqual(wait.call_args_list[1].args[1], flash.APP)
 
     def test_matches_physical_location_not_device_name(self):
