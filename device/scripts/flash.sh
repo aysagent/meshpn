@@ -39,6 +39,11 @@ if [[ "$(git -C "$selected_idf" describe --tags --exact-match 2>/dev/null || tru
 fi
 source "$selected_idf/export.sh"
 export BOARD USB_PROFILE="$PROFILE" USB_DIAGNOSTICS="${USB_DIAGNOSTICS:-0}"
+if [[ "${DEVICE_BIND_ONLY:-0}" == 1 ]]; then
+  python "$DEVICE_DIR/scripts/flash-device.py" --device-dir "$DEVICE_DIR" \
+    --build-dir "$DEVICE_DIR" --target "$IDF_TARGET" --profile "$PROFILE" --bind
+  exit 0
+fi
 if [[ "$IDF_TARGET" == esp32s3 ]]; then
   export DWC2_TELEMETRY="${DWC2_TELEMETRY:-1}"
 else

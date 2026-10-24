@@ -18,13 +18,22 @@ The scripts activate ESP-IDF only while running. By default MeshPN uses
 For the Waveshare ESP32-P4-WIFI6:
 
 ```bash
-BOARD=waveshare_esp32_p4_wifi6 PORT=/dev/cu.wchusbserialXXXX \
-  ./device/scripts/flash.sh ncm monitor
+npm run device:bind:p4       # once, while MeshPN P4 NCM application is running
+npm run device:flash:p4
 ```
 
-Flash the P4 through the board's USB-C/USB-UART connector. MeshPN NCM uses the
-separate four-pin USB 2.0 HS connector. See the
+The P4 auto-flash path uses its USB HS application CDC and native ROM USB port.
+The USB-C/USB-UART adapter is refused, even with an explicit `PORT`. See the
 [board-specific wiring and ESP32-C6 compatibility notes](docs/waveshare-esp32-p4-wifi6.md).
+
+For MeshPN on XIAO, run `npm run device:bind:xiao` once with its NCM application
+running, then `npm run device:flash`. Binding briefly enters ROM to record its
+real MAC, then resets back to the application. Camic's XIAO is excluded by its
+USB product/manufacturer; the stored ROM MAC prevents flashing it even if it
+is already in download mode. The ignored files
+`device/.board-binding-esp32p4.json` and `device/.board-binding-esp32s3.json`
+pin each physical board independently. Delete a file only when deliberately
+replacing that project's board.
 
 For XIAO/NCM, `npm run device:flash` builds first, sends a **1200-baud CDC touch**
 to the running firmware, waits for its ROM programming port, flashes, then waits
@@ -32,13 +41,12 @@ for the application USB port to return. No Wi-Fi, admin password or network acce
 is involved. Close monitor/usb-diag before flashing. This is physical-USB access,
 with the same trust boundary as an attached programmer; it is not a network API.
 
-**Install this support once using BOOT with the old firmware** (release BOOT
-after connecting, before running the command). A hung application,
-disabled ROM USB download eFuses, or a profile without CDC still requires manual
-download mode. On P4 the USB-UART connector uses esptool's normal DTR/RTS reset;
-the separate HS connector is not used for flashing. Automatic port selection
-refuses ambiguous devices and follows the selected physical USB location after
-reset. A successful flash/USB reappearance does not certify Wi-Fi or VPN health.
+The auto-flash path needs a running application with CDC. A hung application or
+disabled ROM USB download eFuses may require manual recovery. Automatic port
+selection checks the project's USB identity and follows the same physical USB
+location after reset. Before writing, it reads the ROM MAC and checks the local
+board binding; changing `/dev/cu.usbmodem…` numbers do not affect selection.
+A successful flash/USB reappearance does not certify Wi-Fi or VPN health.
 
 After manual BOOT entry on S3, the default RTS reset can leave GPIO0 latched in
 download mode even after releasing the button. If application USB does not return
@@ -51,7 +59,8 @@ See Espressif's [USB Serial/JTAG download-mode reset explanation](https://docs.e
 
 With no board attached, use `BUILD_ONLY=1 npm run device:flash` explicitly;
 ordinary flash now exits with an error instead of silently building only.
-Set `PORT` explicitly if several serial devices are connected. Each board/profile/defaults combination gets a separate
+`PORT` can narrow a selection but cannot bypass the project identity or ROM
+MAC checks. Multiple matching boards cause a safe refusal. Each board/profile/defaults combination gets a separate
 `device/build-…` directory and sdkconfig; previous builds and settings are preserved. Keep the target-specific
 `dependencies.lock.esp32s3` and `dependencies.lock.esp32p4` files in version control.
 The dependency manager applies the iot_bridge lwIP patches to your ESP-IDF checkout.

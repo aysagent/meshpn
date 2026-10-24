@@ -2,17 +2,24 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace as NS
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location("flash_device", Path(__file__).parents[1] / "scripts/flash-device.py")
 flash = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(flash)
+real_rom_mac = flash.rom_mac
 
 
-def port(name, identity=flash.APP, location="1-2:1.0", product=None):
+def port(name, identity=flash.APP, location="1-2:1.0", product=None,
+         manufacturer=None, serial_number=None):
+    if identity == flash.APP:
+        product = product or flash.S3_PRODUCT
+        manufacturer = manufacturer or ("MeshPN" if product == flash.P4_PRODUCT else "Espressif Systems")
+        serial_number = serial_number or "E8F60AE395D0"
     return NS(device=name, vid=identity[0], pid=identity[1], location=location,
-              product=product)
+              product=product, manufacturer=manufacturer, serial_number=serial_number)
 
 
 class FlashTests(unittest.TestCase):
@@ -21,12 +28,24 @@ class FlashTests(unittest.TestCase):
         self.rom = port("/dev/cu.rom", flash.ROM, "1-2:1.1")
         self.args = NS(port=None, target="esp32s3", device_dir="device", build_dir="build",
                        profile="ncm", monitor=False)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.args.binding_file = str(Path(temporary.name) / "binding.json")
+        self.args.build_dir = temporary.name
+        Path(self.args.binding_file).write_text('{"target":"esp32s3","serial":"E8F60AE395D0"}')
+        rom_mac_patch = patch.object(flash, "rom_mac", return_value="E8F60AE395D0")
+        rom_mac_patch.start()
+        self.addCleanup(rom_mac_patch.stop)
 
     def test_only_supported_usb_ports_are_autoselected(self):
         unrelated = port("/dev/cu.other", (1, 2))
         self.assertIs(flash.select_port([unrelated, self.app], None, "esp32s3"), self.app)
         with self.assertRaises(RuntimeError):
             flash.select_port([unrelated], None, "esp32s3")
+        camic = port("/dev/cu.camic", product="Camic ESP32-S3 NCM", manufacturer="Camic")
+        self.assertIs(flash.select_port([camic, self.app], None, "esp32s3"), self.app)
+        with self.assertRaises(RuntimeError):
+            flash.select_port([camic], camic.device, "esp32s3")
 
     def test_ambiguous_requires_explicit_port(self):
         other = port("/dev/cu.second")
@@ -43,18 +62,22 @@ class FlashTests(unittest.TestCase):
         p4_app = port("/dev/cu.p4app", product="MeshPN ESP32-P4 HS NCM")
         self.assertIs(flash.select_port([p4_rom], None, "esp32p4"), p4_rom)
         self.assertIs(flash.select_port([p4_app], None, "esp32p4"), p4_app)
+        camic = port("/dev/cu.camic", product="Camic ESP32-S3 NCM", manufacturer="Camic")
+        self.assertIs(flash.select_port([camic, p4_app], None, "esp32p4"), p4_app)
+        self.assertIs(flash.select_port([camic, p4_rom], None, "esp32p4"), p4_rom)
         for wrong in [self.app, self.rom]:
             with self.assertRaises(RuntimeError):
                 flash.select_port([wrong], wrong.device, "esp32p4")
 
     def test_p4_app_touches_same_location_and_waits_for_p4_rom(self):
         self.args.target = "esp32p4"
+        Path(self.args.binding_file).write_text('{"target":"esp32p4","serial":"E8F60AE395D0"}')
         app = port("/dev/cu.p4app", product="MeshPN ESP32-P4 HS NCM")
         rom = port("/dev/cu.p4rom", flash.P4_ROM)
         returned = port("/dev/cu.newapp", product="MeshPN ESP32-P4 HS NCM")
         wait = Mock(side_effect=[rom, returned])
         run = Mock()
-        with patch.object(flash, "touch") as touch:
+        with patch.object(flash, "touch") as touch, patch.object(flash, "rom_mac", return_value="E8F60AE395D0"):
             flash.flash(self.args, lambda: [app], Mock(), run=run, wait=wait)
         touch.assert_called_once()
         self.assertEqual(wait.call_args_list[0].args[1], flash.P4_ROM)
@@ -163,9 +186,9 @@ class FlashTests(unittest.TestCase):
         self.args.monitor = True
         run = Mock()
         wait = Mock(side_effect=flash.ApplicationUSBTimeout("absent"))
-        with patch.object(Path, "read_text", return_value='{"extra_esptool_args":{"chip":"esp32s3","after":"hard_reset"}}'):
-            with self.assertRaises(flash.ApplicationUSBTimeout):
-                flash.flash(self.args, lambda: [self.rom], Mock(), run=run, wait=wait)
+        (Path(self.args.build_dir) / "flasher_args.json").write_text('{"extra_esptool_args":{"chip":"esp32s3","after":"hard_reset"}}')
+        with self.assertRaises(flash.ApplicationUSBTimeout):
+            flash.flash(self.args, lambda: [self.rom], Mock(), run=run, wait=wait)
         self.assertEqual(run.call_count, 2)  # flash, reset; no reflash or monitor
         self.assertEqual(wait.call_count, 2)
 
@@ -180,9 +203,9 @@ class FlashTests(unittest.TestCase):
         self.args.monitor = True
         run = Mock(side_effect=[None, subprocess.CalledProcessError(1, "esptool")])
         wait = Mock(side_effect=flash.ApplicationUSBTimeout("absent"))
-        with patch.object(Path, "read_text", return_value='{"extra_esptool_args":{"chip":"esp32s3","after":"hard_reset"}}'):
-            with self.assertRaises(subprocess.CalledProcessError):
-                flash.flash(self.args, lambda: [self.rom], Mock(), run=run, wait=wait)
+        (Path(self.args.build_dir) / "flasher_args.json").write_text('{"extra_esptool_args":{"chip":"esp32s3","after":"hard_reset"}}')
+        with self.assertRaises(subprocess.CalledProcessError):
+            flash.flash(self.args, lambda: [self.rom], Mock(), run=run, wait=wait)
         self.assertEqual(run.call_count, 2)
         self.assertEqual(wait.call_count, 1)
 
@@ -217,14 +240,53 @@ class FlashTests(unittest.TestCase):
         self.assertEqual(run.call_count, 1)
         wait.assert_not_called()
 
-    def test_p4_uart_keeps_standard_reset(self):
+    def test_p4_uart_is_rejected_before_any_reset_or_flash(self):
         self.args.target = "esp32p4"
         uart = port("/dev/cu.wchusbserial", (0x1A86, 0x55D4))
-        wait = Mock()
+        run = Mock()
         with patch.object(flash, "touch") as touch:
-            flash.flash(self.args, lambda: [uart], Mock(), run=Mock(), wait=wait)
+            with self.assertRaises(RuntimeError):
+                flash.flash(self.args, lambda: [uart], Mock(), run=run)
         touch.assert_not_called()
-        wait.assert_not_called()
+        run.assert_not_called()
+
+    def test_p4_binding_rejects_other_app_and_rom_before_flash(self):
+        self.args.target = "esp32p4"
+        Path(self.args.binding_file).write_text('{"target":"esp32p4","serial":"E8F60AE395D0"}')
+        app = port("/dev/cu.p4app", product=flash.P4_PRODUCT, serial_number="ABCDEF123456")
+        run = Mock()
+        with patch.object(flash, "touch") as touch, self.assertRaisesRegex(RuntimeError, "not the bound"):
+            flash.flash(self.args, lambda: [app], Mock(), run=run)
+        touch.assert_not_called()
+        rom = port("/dev/cu.p4rom", flash.P4_ROM)
+        with patch.object(flash, "rom_mac", return_value="ABCDEF123456"), self.assertRaisesRegex(RuntimeError, "ROM MAC"):
+            flash.flash(self.args, lambda: [rom], Mock(), run=run)
+        run.assert_not_called()
+
+    def test_s3_rom_mac_rejects_camic_even_if_already_in_download_mode(self):
+        run = Mock()
+        with patch.object(flash, "rom_mac", return_value="AC276EA857D0"), self.assertRaisesRegex(RuntimeError, "ROM MAC"):
+            flash.flash(self.args, lambda: [self.rom], Mock(), run=run)
+        run.assert_not_called()
+
+    def test_s3_bind_reads_rom_mac_then_restores_app(self):
+        Path(self.args.binding_file).unlink()
+        run = Mock()
+        wait = Mock(side_effect=[self.rom, self.app])
+        with patch.object(flash, "touch") as touch:
+            flash.bind(self.args, lambda: [self.app], Mock(), run=run, wait=wait)
+        touch.assert_called_once()
+        self.assertEqual(flash.load_binding(self.args.binding_file, "esp32s3")["serial"], "E8F60AE395D0")
+        self.assertEqual(run.call_args.args[0][-2:], ["--no-stub", "read_mac"])
+
+    def test_rom_mac_is_read_only_and_must_be_present(self):
+        run = Mock(return_value=NS(stdout="Chip is ESP32-P4\nMAC: e8:f6:0a:e3:95:d0\n"))
+        self.assertEqual(real_rom_mac(self.rom, "esp32p4", run), "E8F60AE395D0")
+        command = run.call_args.args[0]
+        self.assertIn("no_reset", command)
+        self.assertNotIn("write_flash", command)
+        with self.assertRaisesRegex(RuntimeError, "Cannot verify ROM MAC"):
+            real_rom_mac(self.rom, "esp32p4", Mock(return_value=NS(stdout="Chip is ESP32-P4")))
 
 
 if __name__ == "__main__":

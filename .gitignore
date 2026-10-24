@@ -5,6 +5,7 @@ device/perf-results/
 device/perf-managed-results/
 device/perf-remote-results/
 device/.remote-mac.json
+device/.board-binding-*.json
 device/**/__pycache__/
 
 # Локальные секреты / токены
