@@ -10,6 +10,9 @@ spec = importlib.util.spec_from_file_location("flash_device", Path(__file__).par
 flash = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(flash)
 real_rom_mac = flash.rom_mac
+verified_spec = importlib.util.spec_from_file_location("p4_verified", Path(__file__).parents[1] / "scripts/flash-p4-verified.py")
+verified = importlib.util.module_from_spec(verified_spec)
+verified_spec.loader.exec_module(verified)
 
 
 def port(name, identity=flash.APP, location="1-2:1.0", product=None,
@@ -262,9 +265,56 @@ class FlashTests(unittest.TestCase):
             flash.flash(self.args, lambda: [app], Mock(), run=run)
         touch.assert_not_called()
         rom = port("/dev/cu.p4rom", flash.P4_ROM)
-        with patch.object(flash, "rom_mac", return_value="ABCDEF123456"), self.assertRaisesRegex(RuntimeError, "ROM MAC"):
-            flash.flash(self.args, lambda: [rom], Mock(), run=run)
-        run.assert_not_called()
+        Path(self.args.build_dir, "flash_args").write_text("0x10000 meshvpn_device.bin\n")
+        run.side_effect = subprocess.CalledProcessError(1, "verified ROM helper")
+        wait = Mock()
+        with self.assertRaises(subprocess.CalledProcessError):
+            flash.flash(self.args, lambda: [rom], Mock(), run=run, wait=wait)
+        command = run.call_args.args[0]
+        self.assertTrue(command[1].endswith("flash-p4-verified.py"))
+        self.assertEqual(command[command.index("--expected-mac") + 1], "E8F60AE395D0")
+        wait.assert_not_called()
+
+    def test_p4_verified_rom_uses_same_open_connection(self):
+        Path(self.args.build_dir, "flash_args").write_text("0x10000 meshvpn_device.bin\n")
+        chip = Mock()
+        chip.read_mac.return_value = bytes.fromhex("E8F60AE395D0")
+        events = []
+        chip.connect.side_effect = lambda mode: events.append("connect")
+        chip.read_mac.side_effect = lambda: events.append("verify") or bytes.fromhex("E8F60AE395D0")
+        chip._port.close.side_effect = lambda: events.append("close")
+        factory = Mock(return_value=chip)
+        def write(argv, esp):
+            self.assertIs(esp, chip)
+            self.assertEqual(argv[-2:], ["write_flash", "@flash_args"])
+            self.assertEqual(Path.cwd(), Path(self.args.build_dir).resolve())
+            events.append("write")
+        before = Path.cwd()
+        verified.write_verified("/dev/cu.p4rom", "E8F60AE395D0", self.args.build_dir, factory, write)
+        factory.assert_called_once_with("/dev/cu.p4rom", 115200)
+        self.assertEqual(events, ["connect", "verify", "write", "close"])
+        self.assertEqual(Path.cwd(), before)
+
+    def test_p4_wrong_rom_mac_never_writes_and_closes_port(self):
+        Path(self.args.build_dir, "flash_args").write_text("0x10000 meshvpn_device.bin\n")
+        chip = Mock()
+        chip.read_mac.return_value = bytes.fromhex("ABCDEF123456")
+        write = Mock()
+        with self.assertRaisesRegex(RuntimeError, "ROM MAC"):
+            verified.write_verified("/dev/cu.p4rom", "E8F60AE395D0", self.args.build_dir, Mock(return_value=chip), write)
+        write.assert_not_called()
+        chip._port.close.assert_called_once()
+
+    def test_p4_write_failure_closes_verified_connection(self):
+        Path(self.args.build_dir, "flash_args").write_text("0x10000 meshvpn_device.bin\n")
+        chip = Mock()
+        chip.read_mac.return_value = bytes.fromhex("E8F60AE395D0")
+        before = Path.cwd()
+        with self.assertRaisesRegex(RuntimeError, "write interrupted"):
+            verified.write_verified("/dev/cu.p4rom", "E8F60AE395D0", self.args.build_dir,
+                                    Mock(return_value=chip), Mock(side_effect=RuntimeError("write interrupted")))
+        self.assertEqual(Path.cwd(), before)
+        chip._port.close.assert_called_once()
 
     def test_s3_rom_mac_rejects_camic_even_if_already_in_download_mode(self):
         run = Mock()

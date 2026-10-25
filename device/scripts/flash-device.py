@@ -226,7 +226,7 @@ def flash(args, enumerate_ports, serial_factory, run=subprocess.run, wait=wait_p
         # before the subsequent flash open. Keep ROM MAC verification when
         # starting from ROM, where no application identity was available.
         print(f"Bound P4 application {binding['serial']} became ROM at the same USB location", flush=True)
-    elif rom_mac(port, args.target, run) != binding["serial"]:
+    elif args.target != "esp32p4" and rom_mac(port, args.target, run) != binding["serial"]:
         raise RuntimeError("ROM MAC does not match the bound board; refusing to flash")
     print(f"Flashing {args.target} on {port.device}", flush=True)
     base = ["idf.py", "-C", args.device_dir, "-B", args.build_dir]
@@ -237,10 +237,18 @@ def flash(args, enumerate_ports, serial_factory, run=subprocess.run, wait=wait_p
         flash_args = Path(args.build_dir) / "flash_args"
         if not flash_args.is_file():
             raise RuntimeError(f"Missing generated flash arguments: {flash_args}")
-        run([sys.executable, "-m", "esptool", "--chip", "esp32p4",
-             "--port", port.device, "-b", "460800", "--before", "no_reset",
-             "--after", "hard_reset", "write_flash", "@flash_args"],
-            cwd=args.build_dir, check=True)
+        if is_app(original, args.target):
+            run([sys.executable, "-m", "esptool", "--chip", "esp32p4",
+                 "--port", port.device, "-b", "460800", "--before", "no_reset",
+                 "--after", "hard_reset", "write_flash", "@flash_args"],
+                cwd=args.build_dir, check=True)
+        else:
+            # Starting in ROM still requires an eFuse MAC check. Keep its
+            # serial connection open through the write: closing after a
+            # separate read_mac can leave macOS with a stale USB device.
+            run([sys.executable, str(Path(__file__).with_name("flash-p4-verified.py")),
+                 "--port", port.device, "--expected-mac", binding["serial"],
+                 "--build-dir", str(Path(args.build_dir).resolve())], check=True)
     else:
         run(base + ["-p", port.device, "flash"], check=True)
     # A successful esptool exit proves flashing, not a healthy application.
