@@ -8,6 +8,17 @@ packet path не является обязательной. Production-разв�
 
 ## Реализовано в текущем шаге
 
+2026-10-26: начаты физические испытания Radxa ↔ VPS. **Smoke ещё не прошёл**:
+первый запуск выявил и исправил combo stdio lifecycle; второй дошёл до TLS,
+но часы Radxa отстают примерно на 5 суток 13 часов 40 минут. Это несовместимо
+с временными окнами packet HMAC и relay replay. Штатная конфигурация клиента,
+kill switch и USB rescue восстановлены; временные exit/rules/swap остановлены
+и очищены. Часы без отдельного разрешения не менялись. Следующий шаг — исправление
+времени клиента и повтор bounded smoke, затем аварийные проверки и benchmark.
+Хеши, проверки, фактические JA3/JA4 из pcap и границы доказательств:
+[physical checkpoint](../fixtures/clean-vpn-native-physical-smoke-report.json).
+Браузерные профили по-прежнему `browser_profiles:false`.
+
 2026-10-25: добавлена [офлайн-подготовка комплектов нескольких клиентов](clean-vpn-native-clients.md)
 для уже существующего multi-peer engine и проверка 32 combo packet-соединений
 из этих комплектов. Это не расширяет однопарный контракт physical direct trial.
@@ -212,7 +223,7 @@ VM выше относится к предыдущей сборке и сохр�
    явно выбирает nested boring packet branch; transparent branch не создаёт
    второй TUN. Локальная реализация bounded combo apply, временного journalled
    REDIRECT, scoped exit NAT/FORWARD и same-boot recovery закончена; реальные
-   netns/iptables и fault-тесты проходят. Следующая граница — первый физический
-   smoke Radxa ↔ VPS, без fault injection; физические узлы ещё не менялись.
+   netns/iptables и fault-тесты проходят. Физический smoke начат 2026-10-26;
+   текущий блокер и результаты восстановления описаны в начале документа.
 
 Это промежуточный этап полного переноса, **не** заявление «весь native готов».

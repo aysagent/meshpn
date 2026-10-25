@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-physical-smoke-checkpoint",
+  "date": "2026-10-26 Europe/Moscow",
+  "status": "blocked-on-client-clock-correction",
+  "acceptancePassed": false,
+  "sourceRevision": "e22afd0188af278c4bf8298a3e072633ad65378c",
+  "transport": "combo-tls",
+  "client": "Radxa Zero 3W arm64",
+  "exit": "VPS x86_64",
+  "engineSha256": {
+    "client": "905d60400f4887d991e3f25889ae3c7b98526864bef0ea0856635580da6b4a10",
+    "exit": "836c7f1a7a738de43c1a667fd8e8961b00ef2b9ae4044f53bba00f9dae0b659f"
+  },
+  "baseline": {
+    "legacyClient": "active-enabled-but-no-working-internet",
+    "legacyExit": "absent",
+    "killSwitch": "active",
+    "usbRescue": "active"
+  },
+  "trials": [
+    {
+      "id": "run-vQXZSE",
+      "status": "failed",
+      "seconds": 61,
+      "failure": "native_start_failed",
+      "cause": "combo-required-service-mode-but-controller-used-stdin",
+      "automaticRollback": "manual-review-required",
+      "auditedOperatorRecovery": "completed-own-rp-filter-and-unused-TUN-only",
+      "guard": "verified",
+      "fix": "e22afd0"
+    },
+    {
+      "id": "run-HsWpHy",
+      "status": "failed",
+      "seconds": 124,
+      "failure": "native_ready_timeout",
+      "nativeStates": { "idle": 1, "connecting": 107, "handshake": 106, "tls_read": 106, "cancelled": 1, "stopped": 1 },
+      "nativeReadySeen": false,
+      "dnsActivated": false,
+      "usbProbesStarted": false,
+      "automaticRollback": "configuration-verified",
+      "restoration": "two-stable-observations-of-service-TUN-routes-SNAT-MSS-IPv6",
+      "guard": "verified"
+    }
+  ],
+  "clockEvidence": {
+    "macUtc": "2026-10-25T22:45:02Z",
+    "exitUtc": "2026-10-25T22:45:05Z",
+    "clientUtc": "2026-10-20T09:05:19Z",
+    "clientOffsetApproxSeconds": -481185,
+    "exitNtpSynchronized": true,
+    "clientNtpEnabled": true,
+    "clientNtpSynchronized": false,
+    "packetAuthentication": "TLS-exporter-bound-HMAC-current-900-second-window-plus-minus-one",
+    "relayTokenWindowSeconds": 30,
+    "conclusion": "clock-skew-alone-is-sufficient-to-reject-authentication; exact-exit-rejection-not-recorded",
+    "systemClockChanged": false
+  },
+  "independentCapture": {
+    "source": "VPS-eth0-tcpdump-outside-engine",
+    "kernelDropped": 0,
+    "capturedPackets": 1530,
+    "originalPcapSha256": "dd1f807a9871f0802419b7effffbc0811a5869c7a9f9bd97e939ef591eb4ed1f",
+    "analysisScope": "first-800-packets; full-capture-exceeds-observer-128-stream-limit",
+    "analyzedPcapSha256": "717d624781f636823c1f6402a905854a9d508c8c0febfa7b5fb84fd8f925b259",
+    "nativeClientHellos": 45,
+    "nativeJa3": "e29d030d028f5cfe3fb65f4e96924e01",
+    "nativeJa4": "t13d0307h2_55b375c5d22e_678be4e4848e",
+    "nativeAlpn": ["h2"],
+    "browserProfileApplied": false,
+    "algorithm": "existing-project-sniffer-parser; not-independent-tshark-implementation",
+    "rawPacketsCommitted": false
+  },
+  "validation": {
+    "ctestExit": "7/7",
+    "ctestClient": "7/7",
+    "realTunComboStdinStop": "passed-on-both-hosts-in-isolated-namespaces",
+    "exitControlAndRecoveryTests": "107/107-no-skips",
+    "clientPreflightTestsBeforeControlFix": "75/75-no-skips"
+  },
+  "restoredState": {
+    "clientLegacy": "active-enabled-original-config",
+    "clientKillSwitch": "active",
+    "clientUsbRescue": "active",
+    "exitTrial": "completed-engine-exit-0",
+    "exitForwardPolicy": "DROP",
+    "exitForwardRules": ["DOCKER-USER", "DOCKER-FORWARD"],
+    "exitIpForward": 1,
+    "temporaryExitSwap": "disabled-and-removed",
+    "observer": "stopped",
+    "macNetworkSettingsChanged": false
+  },
+  "next": "authorized-client-clock-correction-then-repeat-bounded-smoke-before-crash-or-benchmark",
+  "limitations": ["no-working-native-WAN-smoke-yet", "no-speed-result", "no-leak-acceptance", "no-browser-fidelity", "client-wall-clock-timestamps-unreliable"]
+}

@@ -12,6 +12,16 @@ import { randomBytes } from 'node:crypto';
 const EXIT = '154.62.226.216', GATEWAY = '192.168.7.1';
 const SCRIPT = '/root/dev/meshpn/scripts/clean-vpn-native-trial.mjs';
 const check = (ok, code) => { if (!ok) throw Error(code); };
+export function trialClockCheck(remoteSeconds, beforeMs, afterMs, elapsedMs) {
+  check(/^\d{10}$/.test(remoteSeconds) && [beforeMs, afterMs, elapsedMs].every(Number.isFinite)
+    && elapsedMs >= 0 && elapsedMs <= 10000 && afterMs >= beforeMs
+    && Math.abs(afterMs - beforeMs - elapsedMs) < 2000, 'clock_observation_invalid');
+  const remote = Number(remoteSeconds) * 1000;
+  const distance = Math.max(0, beforeMs - (remote + 999), remote - afterMs);
+  return { status: distance <= 30000 ? 'aligned' : 'skewed',
+    offsetSeconds: Math.round((remote - (beforeMs + afterMs) / 2) / 1000),
+    toleranceSeconds: 30, scope: 'Radxa-vs-Mac-over-authenticated-USB-SSH-not-exit-clock-proof' };
+}
 export const quote = s => "'" + s.replaceAll("'", "'\\''") + "'";
 export function execute(file, args, { timeout = 15000, input, onOutput = () => {} } = {}) {
   return new Promise(resolve => {
@@ -241,6 +251,14 @@ export async function main(args = process.argv.slice(2)) {
     });
     check(auth === 0 && !interrupted, 'ssh_authentication_failed');
     const ssh = (cmd, options) => execute('ssh', [...base, '-o', 'BatchMode=yes', target, cmd], options);
+    // HMAC and relay replay protection require comparable wall clocks. Refuse
+    // before starting any remote trial or stopping the old client. Never set time.
+    const clockBefore = Date.now(), clockStarted = performance.now();
+    const remoteClock = await ssh('date -u +%s', { timeout: 5000 });
+    check(ok(remoteClock), 'client_clock_unavailable');
+    const clock = trialClockCheck(remoteClock.out.trim(), clockBefore, Date.now(), performance.now() - clockStarted);
+    console.log('[usb-check] clock ' + JSON.stringify(clock));
+    check(clock.status === 'aligned', 'client_clock_skew');
     // Discover the running service's Node executable (works with root NVM).
     const nodeResult = await ssh('readlink /proc/"$(systemctl show clean-vpn.service -p MainPID --value)"/exe');
     const node = nodeResult.out.trim();

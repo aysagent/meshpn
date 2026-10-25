@@ -6,10 +6,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPeerChannel, peerStatus, submitPeerResult, validatePeerResult, exerciseNativePeer, exerciseSmokePeer } from './lib/native-usb-trial-peer.mjs';
 import { runFault, faultUnitArgs } from './clean-vpn-native-usb-uplink.mjs';
-import { probePeer, dnsAddresses, execute, quote } from './clean-vpn-native-usb-check.mjs';
+import { probePeer, dnsAddresses, execute, quote, trialClockCheck } from './clean-vpn-native-usb-check.mjs';
 import { uplinkFault } from './clean-vpn-native-trial.mjs';
 
 const ip = '192.168.7.19';
+test('clock gate accounts for SSH latency and rejects past/future drift before trial', () => {
+  const before = 1792968302000;
+  assert.equal(trialClockCheck('1792968302', before, before + 1000, 1000).status, 'aligned');
+  for (const seconds of ['1792487119', '1793468302'])
+    assert.equal(trialClockCheck(seconds, before, before + 500, 500).status, 'skewed');
+  for (const raw of ['error', '1792968302 extra', '1e9'])
+    assert.throws(() => trialClockCheck(raw, before, before + 500, 500), /clock_observation_invalid/);
+  assert.throws(() => trialClockCheck('1792968302', before, before + 100000, 500), /clock_observation_invalid/);
+});
 test('smoke requests only the native probe, propagates failures, and never schedules a fault', async () => {
   const calls = [], report = { phases: {} };
   const session = { healthy: () => true, diagnostics: () => ({ stateCounts: {} }) };
