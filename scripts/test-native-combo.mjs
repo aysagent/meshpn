@@ -32,6 +32,30 @@ test('combo config binds roles, one endpoint, SNI and separate keys; checking ha
       destinations: [{ ipv4: '127.0.0.1', port: 33445 }] } };
   const check = j => { fs.writeFileSync(file, JSON.stringify(j), { mode: 0o600 }); return spawnSync(engine, ['--check-config', file], { encoding: 'utf8', timeout: 3000 }); };
   assert.equal(check(config).status, 0);
+  if (process.platform === 'linux') {
+    // Actual production binary + real TUN, isolated from host routes/firewall.
+    // A queued control stop must reach the engine; --check-config alone missed
+    // the old combo_service_mode_required rejection in the physical wrapper.
+    const worker = `
+      const fs=require('node:fs'),{execFileSync,spawnSync}=require('node:child_process');
+      const [parent,engine,config]=process.argv.slice(1);
+      if(fs.readlinkSync('/proc/self/ns/net')===parent)throw Error('host_namespace');
+      const links=JSON.parse(execFileSync('ip',['-j','link','show']));
+      if(links.length!==1||links[0].ifname!=='lo')throw Error('nonempty_namespace');
+      execFileSync('ip',['link','set','lo','up']);
+      execFileSync('ip',['tuntap','add','dev','cvtest0','mode','tun']);
+      execFileSync('ip',['addr','add','10.99.0.2/30','dev','cvtest0']);
+      execFileSync('ip',['link','set','cvtest0','up']);
+      const r=spawnSync(engine,['--config',config],{input:'{"op":"stop"}\\n',encoding:'utf8',timeout:5000});
+      process.stdout.write(r.stdout||''); process.stderr.write(r.stderr||'');
+      process.exit(r.status===0?0:1);
+    `;
+    const env = { ...process.env }; delete env.NOTIFY_SOCKET;
+    const result = spawnSync('unshare', ['--user', '--map-root-user', '--net', process.execPath,
+      '-e', worker, fs.readlinkSync('/proc/self/ns/net'), engine, file], { encoding: 'utf8', timeout: 10000, env });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /"state":"idle"/); assert.match(result.stdout, /"state":"stopped"/);
+  }
   const server = structuredClone(config); server.role = server.boring.role = server.transparent.role = 'exit';
   server.boring.cert = cert; server.boring.key = key;
   delete server.boring.ca; delete server.boring.server_name; delete server.boring.sni;

@@ -16,7 +16,7 @@ import { waitLegacyReady } from './lib/native-trial-readiness.mjs';
 import { probeNativeHold } from './lib/native-trial-hold.mjs';
 import { createPeerChannel, exerciseNativePeer, exerciseSmokePeer, peerStatus, submitPeerResult } from './lib/native-usb-trial-peer.mjs';
 import { faultUnit, faultUnitArgs } from './clean-vpn-native-usb-uplink.mjs';
-import { startCrashCapture, exerciseCrashPeer, recoverCrashNetwork } from './lib/native-trial-crash.mjs';
+import { startCrashCapture, exerciseCrashPeer, recoverCrashNetwork, recoverStartupNetwork } from './lib/native-trial-crash.mjs';
 import { openHostRoutes } from './lib/vpn-host-routes.mjs';
 import { openTunnelDnsJournal } from './lib/dns-tunnel-journal.mjs';
 import { openNativeComboRedirectJournal } from './lib/native-combo-redirect-journal.mjs';
@@ -223,6 +223,8 @@ async function adapter(trialCrash = false, comboProfilePath = null) {
       const capabilities = JSON.parse(await run(ENGINE, ['--capabilities']));
       check(capabilities?.engine === 'clean-vpn-native-m1' && capabilities.packet_ipc === false
         && capabilities.dns === 'native-udp-tcp-fixed-upstreams', 'invalid_engine_capabilities');
+      if (combo) check(capabilities.experimental_transports?.['combo-tls']?.client_stdio_control === true,
+        'combo_client_control_not_supported_rebuild_engine');
       initialPid = await prop(OLD, 'MainPID');
       check(/^[1-9]\d*$/.test(initialPid), 'old_pid_missing');
       const argv = fs.readFileSync(`/proc/${initialPid}/cmdline`, 'utf8').split('\0').filter(Boolean);
@@ -285,6 +287,11 @@ async function adapter(trialCrash = false, comboProfilePath = null) {
       await run('ip', ['link', 'set', 'dev', 'tun0', 'mtu', '1400', 'up']);
     },
     launch: () => launchTrialNative(path.join(scratch, 'client.json'), { trialCrash }),
+    async recoverStartup(index) {
+      await recoverStartupNetwork(index, { guard: verifyGuard, inactive: requireOldInactive,
+        openHost: openHostRoutes, openDns: openTunnelDnsJournal,
+        ...(combo ? { openRedirect: openNativeComboRedirectJournal } : {}), removeTun: this.removeTun });
+    },
     async recoverCrash(index) {
       await recoverCrashNetwork(index, { guard: verifyGuard, inactive: requireOldInactive,
         openHost: openHostRoutes, openDns: openTunnelDnsJournal,

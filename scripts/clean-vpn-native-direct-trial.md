@@ -212,3 +212,18 @@ HRR и прочие link types не поддержаны; пропуски/ог�
 можно сохранить текущий профиль: `bash scripts/build-clean-vpn-native.sh
 --low-memory --jobs=2`. Четыре одновременных тяжёлых C++ файла пока не проверялись.
 Текущий запущенный build менять или прерывать для этого не нужно.
+
+### Ранний отказ запуска combo
+
+Физический прогон выявил несовместимость stdio-controller с прежним требованием
+combo `--service`. Client теперь поддерживает тот же control/status stdin/stdout,
+что и packet transport; exit остаётся service-only. Preflight проверяет явную
+capability `client_stdio_control`, поэтому старый binary отвергается **до** stop.
+Изолированный Linux-тест открывает настоящий TUN и проверяет queued stdin stop
+производственного combo client, а не только `--check-config`.
+
+Если wrapper завершился до первого status, допустим узкий recovery: host journal
+должен принадлежать созданному TUN и не содержать маршрутов, DNS/REDIRECT должны
+быть released. Восстанавливается journalled rp_filter, удаляется только проверенный
+TUN, затем повторяются обычные audits. Active DNS, чужой ifindex или маршруты
+не принимаются за этот случай. Guard не снимается.

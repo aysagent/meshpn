@@ -183,6 +183,13 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
         if (session) await step('stop-native', () => session.stop(), false);
         if (session?.crashRequested?.()) await releaseCrash();
         await step('rollback-service-audit', () => io.requireOldInactive(), false);
+        let startup;
+        try { startup = session?.diagnostics?.(); } catch { /* not eligible for startup recovery */ }
+        if (tunIndex !== undefined && io.recoverStartup && startup?.ended === true
+          && startup.lastState === null && startup.events?.length === 0) {
+          await step('startup-network-recovery', () => io.recoverStartup(tunIndex), false);
+          tunIndex = undefined;
+        }
         // If launch never happened, journals still describe the deleted OLD
         // interface. Remove only our unused test TUN before auditing them.
         if (!session && tunIndex !== undefined) {

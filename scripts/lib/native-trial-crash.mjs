@@ -91,6 +91,25 @@ export async function exerciseCrashPeer(peer, session, report, io) {
 
 // Call only after the wrapper has exited and our TUN identity is verified.
 // Both journals must belong to this trial's TUN; no blind generic recovery.
+export async function recoverStartupNetwork(index, io) {
+  await io.guard(); await io.inactive();
+  const host = io.openHost(); let dns, redirect;
+  try {
+    dns = io.openDns(); redirect = io.openRedirect?.();
+    check(host.state?.tun === 'tun0' && host.state.links?.tun0?.ifindex === index
+      && host.state.routes.length === 0, 'startup_host_identity_changed');
+    // Before the first native event, DNS still describes the RELEASED old TUN.
+    // Never reinterpret an active/partially-installed journal as that case.
+    check(!dns.state || dns.state.stage === 'released' && dns.state.count === 0 && dns.state.hold === 0,
+      'startup_dns_not_released');
+    check(!redirect?.state || redirect.state.stage === 'released', 'startup_redirect_not_released');
+    host.audit(); host.restore();
+    await io.removeTun(index);
+    if (dns.state) dns.restore({ apply: false });
+    await io.guard();
+  } finally { redirect?.release(); dns?.release(); host.release(); }
+}
+
 export async function recoverCrashNetwork(index, io) {
   await io.guard(); await io.inactive();
   const host = io.openHost(); let dns, redirect;

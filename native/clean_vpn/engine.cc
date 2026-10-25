@@ -593,7 +593,7 @@ int main(int argc,char** argv){
         {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
         {"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
         {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"destination_policies",{"explicit-ipv4-destinations","public-https"}},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true}}},
-          {"combo-tls",{{"roles",{"client","exit"}},{"single_exit_listener",true},{"packet_ipc",false},{"site_provisioning",true}}}}}}).dump()<<"\n";return 0;
+          {"combo-tls",{{"roles",{"client","exit"}},{"single_exit_listener",true},{"client_stdio_control",true},{"packet_ipc",false},{"site_provisioning",true}}}}}}).dump()<<"\n";return 0;
     }
     bool validate=argc==3&&std::string(argv[1])=="--check-config";
     bool initialize=argc==3&&std::string(argv[1])=="--init-transparent-replay";
@@ -607,7 +607,9 @@ int main(int argc,char** argv){
     }
     std::unique_ptr<combo::Config> combined;
     if(config.is_object()&&config.value("transport",std::string{})=="combo-tls") {
-      check(service||validate||initialize,"combo_service_mode_required");
+      // The explicit USB trial controller owns client lifecycle through stdin.
+      // Direct installed services retain --service; exits stay service-only.
+      check(service||validate||initialize||config.value("role",std::string{})=="client","combo_service_mode_required");
       combined=std::make_unique<combo::Config>(config);
     }
     check(!initialize||bool(combined),"relay_config_required");

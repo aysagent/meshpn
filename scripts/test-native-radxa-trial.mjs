@@ -148,6 +148,18 @@ test('success: old/native/restored probes; stop native and audit before removing
     'configureTun', 'launch', 'ready', 'probe2', 'hold', 'stop-native', 'requireOldInactive', 'audit2', 'removeTun',
     'requireNoTun', 'ipv6Audit2', 'startOld', 'waitOld', 'probe3', 'verifyGuard']);
 });
+test('early failed wrapper uses narrow startup recovery before ordinary rollback audits', async () => {
+  const f = fixture(); let ended = false;
+  f.io.launch = async () => ({ ready: async () => { throw Error('native_start_failed'); },
+    stop: async () => { ended = true; f.events.push('wrapper-ended'); },
+    diagnostics: () => ({ ended, lastState: null, events: [] }) });
+  f.io.recoverStartup = async index => { assert.equal(index, 17); assert.ok(ended); f.events.push('startup-recovered'); };
+  const report = await runTrial(f.io);
+  assert.equal(report.status, 'failed'); assert.equal(report.rollback, 'verified');
+  assert.ok(f.events.indexOf('wrapper-ended') < f.events.indexOf('startup-recovered'));
+  assert.ok(f.events.indexOf('startup-recovered') < f.events.indexOf('audit2'));
+  assert.ok(!f.events.includes('removeTun'), 'recovery removed only the owned unused TUN');
+});
 for (const failure of [null, 'observation', 'recovery']) test(`crash lifecycle retains audited rollback (${failure})`, async () => {
   const f = fixture(); let requested = false;
   const session = { ready: async () => {}, stop: async () => { f.events.push('wrapper-ended'); },

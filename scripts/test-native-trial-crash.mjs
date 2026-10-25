@@ -6,12 +6,29 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { startCrashCapture, exerciseCrashPeer, recoverCrashNetwork } from './lib/native-trial-crash.mjs';
+import { startCrashCapture, exerciseCrashPeer, recoverCrashNetwork, recoverStartupNetwork } from './lib/native-trial-crash.mjs';
 import { NativeEngineController } from './lib/native-engine-controller.mjs';
 import { launchTrialNative } from './clean-vpn-native-trial.mjs';
 
 function child() {
   return Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
+}
+for (const problem of [null, 'foreign-tun', 'routes', 'dns-active', 'redirect-active', 'audit']) {
+  test(`early startup recovery requires unused owned TUN and released DNS (${problem})`, async () => {
+    const calls = [];
+    const host = { state: { tun: 'tun0', links: { tun0: { ifindex: problem === 'foreign-tun' ? 9 : 6 } },
+      routes: problem === 'routes' ? [{}] : [] }, audit: () => { if (problem === 'audit') throw Error('foreign'); calls.push('audit'); },
+      restore: () => calls.push('restore-host'), release: () => calls.push('release-host') };
+    const dns = { state: { stage: problem === 'dns-active' ? 'active' : 'released', count: 0, hold: 0 },
+      restore: options => { assert.deepEqual(options, { apply: false }); calls.push('audit-dns'); }, release: () => calls.push('release-dns') };
+    const redirect = { state: problem === 'redirect-active' ? { stage: 'active' } : null, release: () => calls.push('release-redirect') };
+    const io = { guard: async () => calls.push('guard'), inactive: async () => calls.push('inactive'),
+      openHost: () => host, openDns: () => dns, openRedirect: () => redirect,
+      removeTun: async index => { assert.equal(index, 6); calls.push('remove-tun'); } };
+    if (problem) { await assert.rejects(recoverStartupNetwork(6, io)); assert.ok(!calls.includes('restore-host') && !calls.includes('remove-tun')); }
+    else { await recoverStartupNetwork(6, io); assert.deepEqual(calls.slice(0, 7), ['guard', 'inactive', 'audit', 'restore-host', 'remove-tun', 'audit-dns', 'guard']); }
+    assert.deepEqual(calls.slice(-3), ['release-redirect', 'release-dns', 'release-host']);
+  });
 }
 for (const allowed of [false, true]) test(`SIGKILL targets owned native child only; opt-in=${allowed}`, () => {
   const c = child(), signals = []; c.kill = s => { signals.push(s); return true; };
