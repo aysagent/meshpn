@@ -157,3 +157,18 @@ Legacy runtime сравнивается с фиксированным `ad6746a7f
 lockfile и поля package.json кроме npm-команд. Разрешены только отдельные native
 control/lab-модули, не входящие в legacy runtime; изменение production-зависимости
 блокирует trial. Unit/argv fingerprint дополнительно проверяется до stop/restore.
+
+### Cold-start при неработающем исходном legacy
+
+Если legacy клиент активен, но не проходит исходный host smoke, обычный `--smoke`
+не запускает native. Явный `--cold-smoke` у USB coordinator предназначен именно
+для этого случая: работающий baseline он отвергает. Проверки native host и USB
+(DNS UDP/TCP, HTTPS с IP exit, загрузка 1 MiB) сохраняются полностью. Fault injection
+не выполняется. После удаления собственных journal/TUN восстанавливается прежний
+legacy service; два последовательных наблюдения подтверждают стабильный PID/TUN,
+маршруты, SNAT/MSS и IPv6 guard. Интернет legacy не считается восстановленным.
+
+Успех имеет отдельное имя `native-smoke-passed-legacy-unavailable` и
+`rollback=configuration-verified`, а не обычные `passed/verified`. Это не приёмка
+миграции с исправного legacy, не постоянная установка и не разрешение оставить
+работающие тестовые процессы без deadline.

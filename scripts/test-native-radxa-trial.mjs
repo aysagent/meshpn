@@ -396,6 +396,28 @@ test('diagnostic snapshot errors cannot prevent successful cleanup and restore',
   assert.ok(!JSON.stringify(r).includes('PRIVATE'));
 });
 
+test('cold smoke reports native success separately from restored unavailable legacy', async () => {
+  const f = fixture(); let probes = 0;
+  f.io.probe = async () => ({ status: ++probes === 1 ? 'incomplete-or-failed' : 'ipv4-smoke-passed' });
+  f.io.waitOld = async options => { assert.equal(options.structureOnly, true); return { status: 'structure-ready' }; };
+  const r = await runTrial(f.io, { coldSmoke: true });
+  assert.equal(r.status, 'native-smoke-passed-legacy-unavailable');
+  assert.equal(r.rollback, 'configuration-verified'); assert.equal(probes, 2);
+  assert.ok(r.limitations.includes('rollback-verifies-configuration-not-legacy-internet'));
+});
+test('cold smoke cannot replace the ordinary acceptance of a working baseline', async () => {
+  const f = fixture(); const r = await runTrial(f.io, { coldSmoke: true });
+  assert.equal(r.status, 'failed'); assert.equal(r.failure.code, 'cold_smoke_requires_unavailable_baseline');
+  assert.ok(!f.events.includes('stopOld'));
+});
+test('cold smoke still fails native probes and verifies restoration', async () => {
+  const f = fixture(); f.io.probe = async () => ({ status: 'incomplete-or-failed' });
+  f.io.waitOld = async () => ({ status: 'structure-ready' });
+  const r = await runTrial(f.io, { coldSmoke: true });
+  assert.equal(r.status, 'failed'); assert.equal(r.failure.code, 'native_smoke_failed');
+  assert.equal(r.rollback, 'configuration-verified');
+});
+
 test('build failure stops chain; legacy dependency directory and services never touched', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-native-build-test-'));
   try {

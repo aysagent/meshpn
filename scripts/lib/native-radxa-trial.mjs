@@ -120,13 +120,14 @@ export function parseComboTrialProfile(value) {
 
 // Injectable lifecycle: failures after stop never blindly start another client
 // on top of an unaudited native TUN/journal. The guard is NEVER released here.
-export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, progress = () => {} } = {}) {
+export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, progress = () => {}, coldSmoke = false } = {}) {
   const report = { schema: 1, kind: 'clean-vpn-native-radxa-trial', status: 'running',
     transport: io.transport ?? 'boring-tls',
     stage: 'preflight', checks: {}, rollback: 'not-needed', guard: 'not-checked',
     limitations: ['host-smoke-not-usb-peer-acceptance', 'not-speedtest-or-throughput-benchmark',
       'not-a-leak-or-crash-test', 'native-client-only-existing-exit', 'no-browser-profile-fidelity'] };
   let stopped = false, tunIndex, session;
+  if (coldSmoke) report.limitations.push('cold-start-no-working-legacy-baseline', 'rollback-verifies-configuration-not-legacy-internet');
   if (io.peer) report.usb = { status: 'running', phases: {},
     scope: 'authenticated-Mac-USB-observations-not-independent-leak-capture' };
   const snapshotNative = phase => {
@@ -152,8 +153,8 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
     await step('preflight', () => io.preflight());
     report.guard = 'verified';
     report.checks.old = await step('old-client-check', () => io.probe());
-    requireTrial(report.checks.old.status === 'ipv4-smoke-passed', 'baseline_failed');
-    if (io.peer) await step('usb-baseline', () => io.peer.phase('baseline', report.usb.phases));
+    requireTrial(report.checks.old.status === (coldSmoke ? 'incomplete-or-failed' : 'ipv4-smoke-passed'), coldSmoke ? 'cold_smoke_requires_unavailable_baseline' : 'baseline_failed');
+    if (io.peer && !coldSmoke) await step('usb-baseline', () => io.peer.phase('baseline', report.usb.phases));
     await step('before-stop', () => io.beforeStop());
     // Mark BEFORE issuing stop: an interrupted systemctl may leave its job running.
     await step('stop-old', async () => { stopped = true; await io.stopOld(); });
@@ -195,11 +196,16 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
         await step('rollback-ipv6-audit', () => io.auditIpv6Released(), false);
         await step('start-old', () => io.startOld(), false);
         report.rollback = 'service-restored';
-        report.restorationReadiness = await step('old-ready', () => io.waitOld(), false);
-        report.checks.restored = await step('restored-client-check', () => io.probe(), false);
-        requireTrial(report.checks.restored.status === 'ipv4-smoke-passed', 'restored_smoke_failed');
-        report.rollback = 'verified';
-        if (io.peer) await step('usb-restored', () => io.peer.phase('restored', report.usb.phases), false);
+        report.restorationReadiness = await step('old-ready', () => io.waitOld({ structureOnly: coldSmoke }), false);
+        if (coldSmoke) {
+          requireTrial(report.restorationReadiness.status === 'structure-ready', 'cold_restore_structure_required');
+          report.rollback = 'configuration-verified';
+        } else {
+          report.checks.restored = await step('restored-client-check', () => io.probe(), false);
+          requireTrial(report.checks.restored.status === 'ipv4-smoke-passed', 'restored_smoke_failed');
+          report.rollback = 'verified';
+          if (io.peer) await step('usb-restored', () => io.peer.phase('restored', report.usb.phases), false);
+        }
       } catch (error) {
         report.status = 'failed';
         report.rollbackFailure = { stage: report.stage, code: /^[a-z0-9_]{1,100}$/.test(error.message) ? error.message : 'operation_failed' };
@@ -214,5 +220,6 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
   if (io.peer) report.usb.status = (io.peer.requiredPhases ?? ['baseline', 'native', 'blocked', 'recovered', 'restored'])
     .every(p => report.usb.phases[p]?.status === 'passed') ? 'passed' : 'failed';
   if (report.usb?.status === 'failed') report.status = 'failed';
+  if (coldSmoke && report.status === 'passed') report.status = 'native-smoke-passed-legacy-unavailable';
   return report;
 }

@@ -39,6 +39,14 @@ test('waits for two real probes on the same PID/TUN; returns metadata only', asy
   assert.equal(f.calls.filter(c => c.file === 'curl').length, 2);
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE|154\.62|758/);
 });
+test('explicit structural restoration never claims internet readiness and retains route checks', async () => {
+  const f = fixture();
+  const result = await waitLegacyReady({ ...f.io, structureOnly: true });
+  assert.equal(result.status, 'structure-ready');
+  assert.equal(f.calls.filter(c => c.file === 'curl').length, 0);
+  const broken = fixture(({ step }) => { if (step === 'routes') throw Error('wrong route'); });
+  await assert.rejects(waitLegacyReady({ ...broken.io, structureOnly: true, timeoutMs: 800 }), /old_ready_timeout_routes/);
+});
 for (const check of ['service', 'tun', 'routes', 'snat_mss', 'ipv6_policy', 'https', 'identity']) {
   test(`retries ${check} failure; SNAT alone cannot finish readiness`, async () => {
     const f = fixture(({ step, attempt }) => { if (step === check && attempt === 0) throw Error('PRIVATE failure'); });

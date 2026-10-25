@@ -3,7 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const requireReady = (ok, code) => { if (!ok) throw Error(code); };
 export async function waitLegacyReady({ run, inspectIpv6, node = process.execPath,
-  now = () => performance.now(), sleep = delay, timeoutMs = 60000 }) {
+  now = () => performance.now(), sleep = delay, timeoutMs = 60000, structureOnly = false }) {
   const started = now(), deadline = started + timeoutMs;
   let attempts = 0, consecutive = 0, identity = null, lastCheck = 'service';
   const boundedRun = async (file, args) => {
@@ -43,14 +43,16 @@ export async function waitLegacyReady({ run, inspectIpv6, node = process.execPat
       lastCheck = 'https';
       // No DNS, proxy, curlrc, insecure TLS or direct-uplink fallback. Retain
       // only success metadata, never this response body in the trial report.
-      const trace = await boundedRun('curl', ['-q', '-4', '-f', '-sS', '--noproxy', '*', '--interface', 'tun0',
-        '--connect-timeout', '2', '--max-time', '3', '--max-filesize', '4096', 'https://1.1.1.1/cdn-cgi/trace']);
-      requireReady(trace.split(/\r?\n/).filter(l => l.startsWith('ip=')).join('') === 'ip=154.62.226.216', 'https');
+      if (!structureOnly) {
+        const trace = await boundedRun('curl', ['-q', '-4', '-f', '-sS', '--noproxy', '*', '--interface', 'tun0',
+          '--connect-timeout', '2', '--max-time', '3', '--max-filesize', '4096', 'https://1.1.1.1/cdn-cgi/trace']);
+        requireReady(trace.split(/\r?\n/).filter(l => l.startsWith('ip=')).join('') === 'ip=154.62.226.216', 'https');
+      }
       lastCheck = 'identity';
       requireReady(await service() === pid && await tun() === index, 'identity');
       const current = `${pid}:${index}`;
       consecutive = current === identity ? consecutive + 1 : 1; identity = current;
-      if (consecutive >= 2) return { status: 'ready', attempts, consecutive, seconds: (now() - started) / 1000 };
+      if (consecutive >= 2) return { status: structureOnly ? 'structure-ready' : 'ready', attempts, consecutive, seconds: (now() - started) / 1000 };
     } catch {
       // Caller/command errors may contain credentials. Keep only our fixed
       // check label; do not echo arbitrary exception text.

@@ -308,8 +308,8 @@ async function adapter(trialCrash = false, comboProfilePath = null) {
       check(await legacyFingerprint() === fingerprint, 'legacy_source_or_unit_changed');
       await verifyGuard(); await run('systemctl', ['start', OLD], 90000);
     },
-    async waitOld() {
-      return waitLegacyReady({ run, inspectIpv6: ipv6Evidence ? inspectBlockedTrialIpv6 : undefined });
+    async waitOld({ structureOnly = false } = {}) {
+      return waitLegacyReady({ run, inspectIpv6: ipv6Evidence ? inspectBlockedTrialIpv6 : undefined, structureOnly });
     },
     cleanSecrets() {
       if (buildLock !== undefined) { fs.closeSync(buildLock); buildLock = undefined; }
@@ -368,7 +368,7 @@ export function uplinkFault(directory, { exec = run, commandResult = command, ge
   };
 }
 
-async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchmark = false, comboProfile = null, smoke = false) {
+async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchmark = false, comboProfile = null, smoke = false, coldSmoke = false) {
   await hostRequired();
   check(path.dirname(directory) === REPORTS && /^run-[a-zA-Z0-9]+$/.test(path.basename(directory)), 'invalid_worker_directory');
   privateDirectory(REPORTS); privateDirectory(directory);
@@ -388,7 +388,7 @@ async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchm
       finally { (target[phase] ??= { status: 'failed' }).cpu = stopCpu(); }
       check(target[phase].cpu.status === 'sampled', 'benchmark_cpu_incomplete');
     };
-    io.peer = smoke ? { requiredPhases: ['baseline', 'native', 'restored'], phase: peer.phase,
+    io.peer = smoke || coldSmoke ? { requiredPhases: coldSmoke ? ['native'] : ['baseline', 'native', 'restored'], phase: peer.phase,
       native: (session, report) => exerciseSmokePeer(peer, session, report) } : benchmark ? { requiredPhases: benchmarkPhases,
       phase: (p, target) => benchmarkPhase(p === 'baseline' ? 'bench-old' : 'bench-restored', target),
       native: async (session, report) => {
@@ -411,7 +411,7 @@ async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchm
         native: (session, report) => exerciseNativePeer(peer, session, report, uplinkFault(directory)) };
   }
   const started = new Date().toISOString(), began = performance.now();
-  const report = await runTrial(io, { holdSeconds, cancelled: () => cancelled, progress: stage => {
+  const report = await runTrial(io, { holdSeconds, coldSmoke, cancelled: () => cancelled, progress: stage => {
     try { writeJson(path.join(directory, 'progress.json'), { stage }); } catch { /* never interrupt rollback */ }
   } });
   if (trialCrash) report.limitations = report.limitations.filter(s => !['not-a-leak-or-crash-test', 'host-smoke-not-usb-peer-acceptance'].includes(s))
@@ -429,12 +429,13 @@ async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchm
   writeJson(path.join(directory, 'report.json'), report); writeJson(path.join(REPORTS, 'last.json'), report);
   // In a failed stop, systemd owns any remaining processes and kills them when
   // the unit ends. No attempt to restart old on top of these processes is made.
-  process.exit(report.status === 'passed' ? 0 : 1);
+  process.exit(['passed', 'native-smoke-passed-legacy-unavailable'].includes(report.status) ? 0 : 1);
 }
 
 export async function main(args = process.argv.slice(2)) {
   if (args.length === 1 && args[0] === '--help') {
     console.log('Smoke mode: --apply --usb-smoke (Mac --smoke); baseline/native/restored without fault injection.');
+    console.log('Cold smoke: --apply --usb-cold-smoke (Mac --cold-smoke); requires unavailable legacy baseline; distinct native-only acceptance and structural rollback.');
     console.log('Benchmark mode: --apply --usb-benchmark (Mac --benchmark coordinates three old/native/old cycles). Bounded synthetic upload/download, no fault injection.');
     console.log('Crash mode: --apply --usb-crash (coordinate from Mac with --crash). SIGKILL the owned native engine; keep wlan0 up; tcpdump selected IPv4 HTTPS; audited legacy rollback.');
     console.log('Usage: node scripts/clean-vpn-native-trial.mjs --apply [--hold-seconds=0..300 | --usb-peer | --usb-crash | --usb-benchmark] [--combo-profile=/absolute/private.json] | --report\nRun from authenticated USB rescue SSH :2222 as root, after build-clean-vpn-native.sh.\nCombo requires a USB mode and a separate private relay key profile.\nTemporarily stops ONLY clean-vpn.service, tests native, audits cleanup and restores legacy.\nUSB modes are coordinated by clean-vpn-native-usb-check.mjs on Mac. --usb-peer: REAL wlan0 down/up with independent systemd restoration.\nTransient systemd unit survives SSH loss. No install/enable/firewall flush/reboot.\nWithout --usb-benchmark: real DNS/HTTPS and bounded downloads, not a speed benchmark.'); return;
@@ -479,10 +480,10 @@ export async function main(args = process.argv.slice(2)) {
   if (args[0] === '--worker' && args.length >= 3 && /^\d{1,3}$/.test(args[2]) && Number(args[2]) <= 300) {
     const tail = args.slice(3); let peerIp, mode, comboProfile;
     if (tail[0] && /^192\.168\.7\.(?:[2-9]|[1-9]\d|1\d\d|2[0-4]\d|25[0-4])$/.test(tail[0])) peerIp = tail.shift();
-    if (['--crash', '--benchmark', '--smoke'].includes(tail[0])) mode = tail.shift();
+    if (['--crash', '--benchmark', '--smoke', '--cold-smoke'].includes(tail[0])) mode = tail.shift();
     if (tail[0]?.startsWith('--combo-profile=')) comboProfile = tail.shift().slice('--combo-profile='.length);
     check(tail.length === 0 && (!mode || peerIp) && (!comboProfile || peerIp), 'invalid_trial_worker_arguments');
-    return worker(args[1], Number(args[2]), peerIp, mode === '--crash', mode === '--benchmark', comboProfile ?? null, mode === '--smoke');
+    return worker(args[1], Number(args[2]), peerIp, mode === '--crash', mode === '--benchmark', comboProfile ?? null, mode === '--smoke', mode === '--cold-smoke');
   }
   check(args[0] === '--apply', 'use_apply_or_report_or_help');
   const options = args.slice(1), comboOptions = options.filter(value => value.startsWith('--combo-profile='));
@@ -493,7 +494,8 @@ export async function main(args = process.argv.slice(2)) {
   const crash = modes[0] === '--usb-crash';
   const benchmark = modes[0] === '--usb-benchmark';
   const smoke = modes[0] === '--usb-smoke';
-  const usb = modes[0] === '--usb-peer' || crash || benchmark || smoke;
+  const coldSmoke = modes[0] === '--usb-cold-smoke';
+  const usb = modes[0] === '--usb-peer' || crash || benchmark || smoke || coldSmoke;
   const match = modes.length === 1 && !usb ? /^--hold-seconds=(\d{1,3})$/.exec(modes[0]) : ['', '0'];
   check(match && Number(match[1]) <= 300, 'hold_seconds_must_be_0_to_300');
   check(!comboProfile || usb, 'combo_profile_requires_usb_mode');
@@ -506,7 +508,7 @@ export async function main(args = process.argv.slice(2)) {
     '--property=KillMode=mixed', '--property=TimeoutStopSec=600', '--property=RuntimeMaxSec=1500',
     '--property=StandardOutput=null', '--property=StandardError=null',
     `--working-directory=${ROOT}`, process.execPath, SELF, '--worker', dir, match[1], ...(usb ? [peerIp] : []),
-    ...(crash ? ['--crash'] : benchmark ? ['--benchmark'] : smoke ? ['--smoke'] : []),
+    ...(crash ? ['--crash'] : benchmark ? ['--benchmark'] : smoke ? ['--smoke'] : coldSmoke ? ['--cold-smoke'] : []),
     ...(comboProfile ? [`--combo-profile=${comboProfile}`] : [])], 15000);
   if (usb) console.log(`USB_TRIAL_ID=${path.basename(dir)}`);
   console.error('Trial started; survives SSH disconnect. Do not checkout/build/restart services during the trial.');
@@ -517,7 +519,7 @@ export async function main(args = process.argv.slice(2)) {
     if (fs.existsSync(reportFile)) {
       const r = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
       console.log('=== CLEAN-VPN NATIVE TRIAL BEGIN ==='); console.log(JSON.stringify(r, null, 2));
-      console.log('=== CLEAN-VPN NATIVE TRIAL END ==='); process.exitCode = r.status === 'passed' ? 0 : 1; return;
+      console.log('=== CLEAN-VPN NATIVE TRIAL END ==='); process.exitCode = ['passed', 'native-smoke-passed-legacy-unavailable'].includes(r.status) ? 0 : 1; return;
     }
     try {
       const { stage } = JSON.parse(fs.readFileSync(path.join(dir, 'progress.json'), 'utf8'));
