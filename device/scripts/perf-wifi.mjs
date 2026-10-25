@@ -11,13 +11,16 @@ export function cleanWifiDiagnostics(wifi) {
       'extra_iram_opt_enabled','rx_iram_opt_enabled','lwip_iram_opt_enabled']),...Object.fromEntries(['sta','ap'].map(k=>
       [k,pick(wifi?.tx?.[k],[...wifiTxCounterFields,'call_max_us','last_error'])]))},
     hosted:{...pick(wifi?.hosted,['transport','configured_clock_khz','configured_bus_width','configured_tx_queue','configured_rx_queue']),
+      coprocessor_firmware:pick(wifi?.hosted?.coprocessor_firmware,['attempted','available','error','major','minor','patch']),
       io:Object.fromEntries(['read_block','write_block','read_reg','write_reg'].map(k=>[k,pick(wifi?.hosted?.io?.[k],
         ['calls','bytes','failed','time_us','max_us','last_error'])])),
       rx_drops:Object.fromEntries(['packet_no_memory','dma_no_memory','oversize_stream','malformed_stream','payload_no_memory']
         .map(k=>[k,pick(wifi?.hosted?.rx_drops?.[k],['events','bytes'])]))},
     radio:{...pick(r,['available','sampled_us','age_ms','collection_us','primary_channel','secondary_channel','power_save',
       'sta_bandwidth_mhz','ap_bandwidth_mhz','clients_available']),
-      errors:pick(r?.errors,['channel','power_save','sta_bandwidth','ap_bandwidth','uplink','clients','negotiated_phymode']),
+      errors:pick(r?.errors,['channel','power_save','sta_bandwidth','ap_bandwidth','uplink','clients','negotiated_phymode','sta_protocol','ap_protocol']),
+      ...Object.fromEntries(['sta_protocol','ap_protocol'].map(k=>[k,pick(r?.[k],
+        ['available','bitmap','802_11b','802_11g','802_11n','802_11ax'])])),
       uplink:pick(r?.uplink,['available','rssi','primary_channel','secondary_channel','phy_11n','phy_11ax','channel_width_mhz',
         'advertised_bandwidth_mhz','negotiated_phymode_available','negotiated_phymode','negotiated_phymode_name']),
       clients:(Array.isArray(r?.clients)?r.clients:[]).slice(0,10).map(c=>

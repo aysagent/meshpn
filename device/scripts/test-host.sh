@@ -59,11 +59,18 @@ for hosted in 0 1; do
     device/tests/test_wifi_diag.c -o "$test_dir/wifi-diag-$hosted"
   "$test_dir/wifi-diag-$hosted"
 done
-for p4_radio in 0 1; do
-  "$cc" "${flags[@]}" -pthread -DCONFIG_IDF_TARGET_ESP32P4="$p4_radio" \
+for variant in 0:0 1:0 1:1; do
+  p4_radio=${variant%:*}; firmware_ok=${variant#*:}
+  "$cc" "${flags[@]}" -pthread -DCONFIG_IDF_TARGET_ESP32P4="$p4_radio" -DTEST_FW_OK="$firmware_ok" \
     -Idevice/tests/radio_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
-    -Idevice/components/meshvpn_wifi/include device/tests/test_wifi_radio.c -o "$test_dir/wifi-radio-$p4_radio"
-  "$test_dir/wifi-radio-$p4_radio"
+    -Idevice/components/meshvpn_wifi/include device/tests/test_wifi_radio.c -o "$test_dir/wifi-radio-$variant"
+  "$test_dir/wifi-radio-$variant"
+done
+for p4_radio in 0 1; do
+  "$cc" "${flags[@]}" -DCONFIG_IDF_TARGET_ESP32P4="$p4_radio" \
+    -Idevice/tests/radio_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
+    -Idevice/components/meshvpn_wifi/include device/tests/test_wifi_radio_config.c -o "$test_dir/radio-config-$p4_radio"
+  "$test_dir/radio-config-$p4_radio"
 done
 if [[ -f device/managed_components/espressif__esp_hosted/host/drivers/transport/sdio/sdio_drv.c ]]; then
   node device/tests/test-sdio-psram.mjs

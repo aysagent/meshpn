@@ -444,7 +444,7 @@ esp_err_t meshvpn_net_start_bridge(void)
     err = esp_wifi_set_config(WIFI_IF_AP, &cfg);
     memset(cfg.ap.password, 0, sizeof(cfg.ap.password));
     if (err != ESP_OK) return err;
-    err = esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT40);
+    err = meshvpn_wifi_radio_configure(WIFI_IF_AP);
     if (err != ESP_OK) return err;
     ESP_LOGI(TAG, "SoftAP %s: WPA2, max %u clients; admin available on USB/AP/STA",
              ssid, (unsigned)CONFIG_BRIDGE_SOFTAP_MAX_CONNECT_NUMBER);

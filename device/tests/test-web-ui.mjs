@@ -75,6 +75,10 @@ for(const part of text.split('static const char ').slice(1)){
           }
         });
         vm.runInContext(code,context);
+        assert.equal(vm.runInContext("wifiRadioLabel({connected:false})",context),'');
+        assert.match(vm.runInContext("wifiRadioLabel({connected:true,radio:{sta_protocol:{available:true,'802_11ax':true},uplink:{available:true,phy_11ax:false}}})",context),/Wi-Fi 6 allowed.*no 802.11ax/);
+        assert.match(vm.runInContext("wifiRadioLabel({connected:true,radio:{sta_protocol:{available:true,'802_11ax':true},uplink:{available:true,phy_11ax:true}}})",context),/link mode unavailable/);
+        assert.match(vm.runInContext("wifiRadioLabel({connected:true,radio:{uplink:{negotiated_phymode_available:true,negotiated_phymode_name:'802.11ax HE20'}}})",context),/802.11ax HE20/);
         await vm.runInContext('poll()',context);
         status.wifi={connected:false,state:'waiting_for_network',ssid:'iPhone hotspot',
           disconnect_reason:39,disconnect_reason_name:'association_timeout'};

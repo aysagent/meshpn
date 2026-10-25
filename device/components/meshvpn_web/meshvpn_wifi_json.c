@@ -109,6 +109,19 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
         sample.phymode == WIFI_PHY_MODE_11G ? "802.11g" :
         sample.phymode == WIFI_PHY_MODE_11B ? "802.11b" : "other";
     cJSON_AddStringToObject(sta, "negotiated_phymode_name", mode);
+    for (unsigned i = 0; i < 2; i++) {
+        cJSON *protocol = cJSON_AddObjectToObject(radio, i ? "ap_protocol" : "sta_protocol");
+        cJSON_AddBoolToObject(protocol, "available", sample.protocol_error[i] == ESP_OK);
+        number_or_null(protocol, "bitmap", sample.protocol_error[i], sample.protocol[i]);
+        const char *names[] = {"802_11b", "802_11g", "802_11n", "802_11ax"};
+        const unsigned bits[] = {WIFI_PROTOCOL_11B, WIFI_PROTOCOL_11G, WIFI_PROTOCOL_11N, WIFI_PROTOCOL_11AX};
+        for (unsigned j = 0; j < 4; j++) {
+            if (sample.protocol_error[i] == ESP_OK)
+                cJSON_AddBoolToObject(protocol, names[j], (sample.protocol[i] & bits[j]) != 0);
+            else cJSON_AddNullToObject(protocol, names[j]);
+        }
+        cJSON_AddStringToObject(protocol, "scope", "allowed interface protocols, not negotiated connection mode");
+    }
     cJSON_AddBoolToObject(sta, "available", err == ESP_OK);
     if (err == ESP_OK) {
         cJSON_AddNumberToObject(sta, "rssi", uplink.rssi);
@@ -153,9 +166,17 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
     cJSON_AddNumberToObject(errors, "uplink", sample.uplink_error);
     cJSON_AddNumberToObject(errors, "clients", sample.peers_error);
     cJSON_AddNumberToObject(errors, "negotiated_phymode", sample.phymode_error);
+    cJSON_AddNumberToObject(errors, "sta_protocol", sample.protocol_error[0]);
+    cJSON_AddNumberToObject(errors, "ap_protocol", sample.protocol_error[1]);
 #ifdef CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE
     cJSON *hosted = cJSON_AddObjectToObject(wifi, "hosted");
     cJSON_AddStringToObject(hosted, "transport", "sdio");
+    cJSON *firmware = cJSON_AddObjectToObject(hosted, "coprocessor_firmware");
+    cJSON_AddBoolToObject(firmware, "attempted", sample.firmware_attempted);
+    cJSON_AddBoolToObject(firmware, "available", sample.firmware_error == ESP_OK);
+    cJSON_AddNumberToObject(firmware, "error", sample.firmware_error);
+    const char *version_fields[] = {"major", "minor", "patch"};
+    for (unsigned i = 0; i < 3; i++) number_or_null(firmware, version_fields[i], sample.firmware_error, sample.firmware[i]);
     cJSON_AddNumberToObject(hosted, "configured_clock_khz", CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ);
     cJSON_AddNumberToObject(hosted, "configured_bus_width", CONFIG_ESP_HOSTED_SDIO_BUS_WIDTH);
     cJSON_AddNumberToObject(hosted, "configured_tx_queue", CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE);

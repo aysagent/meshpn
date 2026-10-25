@@ -56,3 +56,13 @@ test('Wi-Fi diagnostics preserve separate counter deltas, unknown/reset and sani
   assert.match(validateWifiTxExperiment({...after.wifi.tx,extra_iram_opt_enabled:true}),/IRAM=true\/true\/true\/true/);
   assert.match(validateWifiTxExperiment({}),/telemetry/);
 });
+
+test('Wi-Fi6 protocol and C6 version diagnostics survive sanitized exports',()=>{
+ const s=cleanStatus({wifi:{radio:{sta_protocol:{available:true,bitmap:71,'802_11ax':true,secret:'private'},
+  ap_protocol:{available:true,bitmap:7,'802_11ax':false},errors:{sta_protocol:0,ap_protocol:0}},
+  hosted:{coprocessor_firmware:{attempted:true,available:false,error:-1,secret:'private'}}}});
+ assert.equal(s.wifi.radio.sta_protocol.bitmap,71);
+ assert.equal(s.wifi.radio.ap_protocol['802_11ax'],false);
+ assert.equal(s.wifi.hosted.coprocessor_firmware.error,-1);
+ assert(!JSON.stringify(s).includes('private'));
+});

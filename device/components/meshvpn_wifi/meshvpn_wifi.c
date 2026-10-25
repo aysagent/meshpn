@@ -276,7 +276,12 @@ static void manager(void *arg)
         cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
         cfg.sta.failure_retry_cnt = WIFI_CONNECT_DRIVER_RETRIES;
         esp_wifi_set_ps(WIFI_PS_NONE);
-        esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT40);
+        esp_err_t radio_err = meshvpn_wifi_radio_configure(WIFI_IF_STA);
+        if (radio_err != ESP_OK) {
+            ESP_LOGW(TAG, "STA radio config: %s", esp_err_to_name(radio_err));
+            next_attempt = now + 1000000;
+            continue;
+        }
         esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
         if (err == ESP_OK) err = esp_wifi_connect();
         if (err != ESP_OK) {

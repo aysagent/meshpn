@@ -781,6 +781,9 @@ static esp_err_t handler_scan(httpd_req_t *req)
         cJSON_AddStringToObject(p, "ssid", (char *)ap.ssid);
         cJSON_AddNumberToObject(p, "rssi", ap.rssi);
         cJSON_AddNumberToObject(p, "authmode", ap.authmode);
+        cJSON_AddNumberToObject(p, "channel", ap.primary);
+        cJSON_AddBoolToObject(p, "phy_11n", ap.phy_11n);
+        cJSON_AddBoolToObject(p, "phy_11ax", ap.phy_11ax);
         cJSON_AddItemToArray(arr, p);
     }
     return send_json(req, out);

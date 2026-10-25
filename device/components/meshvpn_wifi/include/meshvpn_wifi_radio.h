@@ -8,6 +8,10 @@ typedef struct {
     uint32_t collection_us;
     esp_err_t channel_error, ps_error, bandwidth_error[2], uplink_error, peers_error;
     esp_err_t phymode_error;
+    esp_err_t protocol_error[2], firmware_error;
+    uint8_t protocol[2];
+    bool firmware_attempted;
+    uint32_t firmware[3];
     wifi_phy_mode_t phymode;
     uint8_t primary;
     wifi_second_chan_t secondary;
@@ -22,3 +26,5 @@ typedef struct {
 void meshvpn_wifi_radio_sample(void);
 void meshvpn_wifi_radio_snapshot(meshvpn_wifi_radio_t *out);
 void meshvpn_wifi_radio_summary(int8_t *rssi, uint8_t *channel, uint8_t *clients);
+/* Before association: HE20 + b/g/n/ax on C6, existing HT40 on native S3. */
+esp_err_t meshvpn_wifi_radio_configure(wifi_interface_t ifx);

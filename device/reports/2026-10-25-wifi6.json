@@ -1,0 +1,78 @@
+{
+  "board": "waveshare_esp32_p4_wifi6",
+  "build": "d463600-dirty",
+  "boot": 64,
+  "wifi_connected": true,
+  "radio": {
+    "primary_channel": 4,
+    "secondary_channel": 0,
+    "power_save": 0,
+    "sta_bandwidth_mhz": 20,
+    "ap_bandwidth_mhz": 20,
+    "uplink": {
+      "negotiated_phymode_available": false,
+      "negotiated_phymode": null,
+      "negotiated_phymode_name": "unavailable",
+      "available": true,
+      "rssi": -68,
+      "primary_channel": 4,
+      "secondary_channel": 0,
+      "phy_11n": true,
+      "phy_11ax": false,
+      "advertised_bandwidth_mhz": null,
+      "phy_scope": "AP record capabilities, not measured PHY rate or confirmed per-frame mode",
+      "channel_width_mhz": 20
+    },
+    "sta_protocol": {
+      "available": true,
+      "bitmap": 71,
+      "802_11b": true,
+      "802_11g": true,
+      "802_11n": true,
+      "802_11ax": true,
+      "scope": "allowed interface protocols, not negotiated connection mode"
+    },
+    "ap_protocol": {
+      "available": true,
+      "bitmap": 71,
+      "802_11b": true,
+      "802_11g": true,
+      "802_11n": true,
+      "802_11ax": true,
+      "scope": "allowed interface protocols, not negotiated connection mode"
+    },
+    "clients_available": true,
+    "clients": [],
+    "available": true,
+    "sampled_us": 23397389,
+    "collection_us": 97155,
+    "age_ms": 277.476,
+    "errors": {
+      "channel": 0,
+      "power_save": 0,
+      "sta_bandwidth": 0,
+      "ap_bandwidth": 0,
+      "uplink": 0,
+      "clients": 0,
+      "negotiated_phymode": 262,
+      "sta_protocol": 0,
+      "ap_protocol": 0
+    }
+  },
+  "coprocessor_firmware": {
+    "attempted": true,
+    "available": false,
+    "error": -1,
+    "major": null,
+    "minor": null,
+    "patch": null
+  },
+  "router": {
+    "model_page_title": "F680",
+    "manufacturer": "ZTE",
+    "specification": "https://www.zte.com.cn/z/h5KJQT.html"
+  },
+  "mac_wifi_switched": false,
+  "slave_flashed": false,
+  "direct_http_status": 301
+}

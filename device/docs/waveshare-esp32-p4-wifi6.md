@@ -103,6 +103,14 @@ and SDIO operation errors. P4 USB TX has 128 owned PSRAM frame slots for SDIO
 bursts, with the existing 50 ms expiry; XIAO keeps eight slots. This buffering
 change does not increase USB bus speed or promise a specific WAN rate.
 
+## Wi-Fi 6 configuration
+
+P4 now explicitly permits b/g/n/ax with 20 MHz on STA/AP; native S3 retains HT40.
+Actual protocol bitmaps, optional slave firmware version and negotiated mode
+availability are exposed in Diagnostics. On the tested P4 both bitmaps read back
+as `0x47`. The current ZTE F680 uplink supports b/g/n at 2.4 GHz, so this does
+not establish a Wi-Fi 6 connection. See [Wi-Fi 6 findings](wifi6-diagnostics.md).
+
 ## ESP32-C6 firmware compatibility
 
 The host build pins `esp_wifi_remote` to `0.14.*` and `esp_hosted` to `1.4.*`,
