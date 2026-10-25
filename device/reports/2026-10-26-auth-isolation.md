@@ -283,3 +283,44 @@ Follow-up artifacts are in the same ignored regression directory:
 `/tmp/meshpn-c6-fullcal-build.log`. The existing binding remains
 `E8F60AE395D0`. Further on-board experiments require restoring its USB access;
 the new Wi-Fi hypotheses have not been marked as resolved or exhausted.
+
+### Further RPC transaction isolation
+
+Continued the investigation while P4 USB was unavailable. A deterministic harness
+compiled from the pinned **unmodified** `get_response()` demonstrates that two
+synchronous callers can receive each other's responses: after both semaphores
+are posted, scheduling caller B first returns the FIFO's response for A. The
+per-UID semaphore did not establish ownership of the shared receive queue.
+
+The generated P4 RPC core now retains each synchronous response in its own
+transaction slot, checks both UID and response ID, and removes that slot under
+the same mutex used to publish responses. Semaphore destruction happens after
+removal, preventing an RX task from giving an already deleted semaphore.
+Duplicate, orphaned and late replies are freed instead of occupying the next
+caller's queue. UID allocation and transaction registration/removal are protected;
+allocation failure, table exhaustion and failed TX submission clean up the slot.
+This does not serialize entire round trips or hold the mutex while waiting.
+
+The local TX-failure response also lacked its request UID; it now carries that
+UID and is published after TX cleanup. The slave-interface macro's failed-send
+log read a request already freed by `rpc_send_req()`; it now logs the constant
+message ID. These changes are limited to generated copies of pinned 1.4.7
+sources. Existing asynchronous RPC handling and active-call shutdown semantics
+are not redesigned by this patch.
+
+Tests compile the real patched transaction functions and failed-send macro.
+They cover reverse caller scheduling, wrong response ID, duplicate/late replies,
+timeout/delivery races, semaphore allocation failure, TX queue rejection, full
+transaction table, UID rollover, immediate wakeups, and 4 concurrent callers
+with 4000 transactions. ASan/UBSan and a separate ThreadSanitizer run pass;
+the complete host suite and P4 build pass. The original FIFO reproduction and
+the concurrency harness are retained in `followup/`; console evidence is
+`/tmp/meshpn-rpc-core-{host-tests,build,tsan}.log`.
+
+These are additional confirmed communication/stability defects, **not a proven
+fix for authentication**. The updated production image has not been flashed:
+P4 still does not enumerate. Attempts to reach its saved STA addresses `.8`
+and `.10` on the existing home LAN timed out, and the mDNS observation returned
+no address. Mac Wi-Fi was unchanged. The standalone association/DHCP and C6
+full-calibration candidates remain untested; they are not counted as failures
+or successful fixes.
