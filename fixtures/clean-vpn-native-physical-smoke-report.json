@@ -55,7 +55,14 @@
     "packetAuthentication": "TLS-exporter-bound-HMAC-current-900-second-window-plus-minus-one",
     "relayTokenWindowSeconds": 30,
     "conclusion": "clock-skew-alone-is-sufficient-to-reject-authentication; exact-exit-rejection-not-recorded",
-    "systemClockChanged": false
+    "systemClockChanged": false,
+    "livePreflightGate": {
+      "result": "client_clock_skew",
+      "observedOffsetSeconds": -481184,
+      "remoteTrialStarted": false,
+      "legacyPidUnchanged": true,
+      "killSwitchAndUsbRescueActive": true
+    }
   },
   "independentCapture": {
     "source": "VPS-eth0-tcpdump-outside-engine",

@@ -13,6 +13,9 @@ const ip = '192.168.7.19';
 test('clock gate accounts for SSH latency and rejects past/future drift before trial', () => {
   const before = 1792968302000;
   assert.equal(trialClockCheck('1792968302', before, before + 1000, 1000).status, 'aligned');
+  assert.equal(trialClockCheck('1792968310', before, before + 15000, 15000).status, 'aligned');
+  assert.equal(trialClockCheck('1792487119', before, before + 15000, 15000).status, 'skewed');
+  assert.throws(() => trialClockCheck('1792968302', before, before + 20001, 20001), /clock_observation_invalid/);
   for (const seconds of ['1792487119', '1793468302'])
     assert.equal(trialClockCheck(seconds, before, before + 500, 500).status, 'skewed');
   for (const raw of ['error', '1792968302 extra', '1e9'])

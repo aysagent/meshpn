@@ -14,7 +14,7 @@ const SCRIPT = '/root/dev/meshpn/scripts/clean-vpn-native-trial.mjs';
 const check = (ok, code) => { if (!ok) throw Error(code); };
 export function trialClockCheck(remoteSeconds, beforeMs, afterMs, elapsedMs) {
   check(/^\d{10}$/.test(remoteSeconds) && [beforeMs, afterMs, elapsedMs].every(Number.isFinite)
-    && elapsedMs >= 0 && elapsedMs <= 10000 && afterMs >= beforeMs
+    && elapsedMs >= 0 && elapsedMs <= 20000 && afterMs >= beforeMs
     && Math.abs(afterMs - beforeMs - elapsedMs) < 2000, 'clock_observation_invalid');
   const remote = Number(remoteSeconds) * 1000;
   const distance = Math.max(0, beforeMs - (remote + 999), remote - afterMs);
@@ -254,7 +254,9 @@ export async function main(args = process.argv.slice(2)) {
     // HMAC and relay replay protection require comparable wall clocks. Refuse
     // before starting any remote trial or stopping the old client. Never set time.
     const clockBefore = Date.now(), clockStarted = performance.now();
-    const remoteClock = await ssh('date -u +%s', { timeout: 5000 });
+    const remoteClock = await ssh('date -u +%s', { timeout: 15000 });
+    if (!ok(remoteClock)) console.log('[usb-check] clock ' + JSON.stringify({ status: 'unavailable',
+      code: remoteClock.code, reason: remoteClock.reason }));
     check(ok(remoteClock), 'client_clock_unavailable');
     const clock = trialClockCheck(remoteClock.out.trim(), clockBefore, Date.now(), performance.now() - clockStarted);
     console.log('[usb-check] clock ' + JSON.stringify(clock));
