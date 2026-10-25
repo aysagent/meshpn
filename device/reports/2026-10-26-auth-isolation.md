@@ -53,6 +53,37 @@ Local evidence: `perf-results/auth-isolation-2026-10-26-o21gwf7e/` contains
 sanitized status, experiment markers and restored status. Flash/build consoles
 are `/tmp/meshpn-auth-isolation-*.log` and `/tmp/meshpn-auth-stock-*.log`.
 
-Next: obtain consent before the station-MAC comparison; if it does not separate
-the failure, test the board against a second AP without switching Mac Wi-Fi.
+## Approved station-MAC comparison
+
+The user explicitly approved the temporary C6 STA MAC change and restoration.
+A second diagnostic image (`268cc3c-dirty`, boot 4) made two single STA-only
+b/g/n HT20 attempts, each observed for 45 seconds:
+
+| Phase | C6 STA MAC readback | Result |
+|---|---|---|
+| Temporary locally administered address | `12:bd:a3:9e:07:c0` | No IP; reason 2 |
+| Restored original address | `10:bd:a3:9e:07:c0` | No IP; reason 2 |
+
+The driver readback matched the requested MAC in both phases; the second also
+matched the original address captured before the experiment. SSID/password
+readback matched in both phases. Configured maximum TX power readback was 80
+quarter-dBm (20 dBm); this is not a measurement of actual RF output.
+No HTTP probe was attempted because neither phase obtained a DHCP address.
+
+The changed address did not restore authentication. This does not support an
+explanation limited to router state for the original MAC; it does not establish
+the underlying cause. The host polling session was interrupted by a separate
+admin login; log markers retained on the device recovered the missing interval.
+
+Evidence: `mac-status.ndjson` and `mac-isolation.log` in the same ignored artifact
+directory. Production source contains no diagnostic changes. Mac Wi-Fi and the
+USB Ethernet identity were unchanged throughout.
+After the experiment, the clean production implementation was flashed back:
+boot 5, build label `268cc3c-dirty` (cached at diagnostic configuration time),
+USB admin/host ready, AP active, saved profile 1 retained, VPN OFF, normal
+manager scanning and still reporting reason 2. The restored binary contains
+no `AUTH_ISOLATION` markers. Evidence: `mac-restored-stock.json` and
+`/tmp/meshpn-auth-mac-restore-flash.log`.
+
+Next: test the board against a second AP without switching Mac Wi-Fi.
 Keep TLS load testing pending until DIRECT connectivity is restored.
