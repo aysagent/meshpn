@@ -53,7 +53,14 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP &&
         ((ip_event_got_ip_t *)data)->esp_netif != esp_netif_get_handle_from_ifkey("WIFI_STA_DEF")) return;
     portENTER_CRITICAL(&s_lock);
-    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
+        s_status.sta_associated = true;
+        s_status.association_events++;
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        s_status.sta_associated = false;
+        s_status.disconnect_events++;
+        s_status.last_disconnect_rssi = ((wifi_event_sta_disconnected_t *)data)->rssi;
+        s_status.last_disconnect_us = esp_timer_get_time();
         s_status.disconnect_reason = ((wifi_event_sta_disconnected_t *)data)->reason;
         s_status.sta_connected = false;
         s_status.ip[0] = 0;
@@ -78,6 +85,16 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         s_disconnected = true;
     }
     portEXIT_CRITICAL(&s_lock);
+    /* Event-only logs distinguish radio association from DHCP and VPN errors.
+     * Do not call the remote driver from this handler or log credentials. */
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
+        const wifi_event_sta_connected_t *ev = data;
+        ESP_LOGI(TAG, "STA associated: channel=%u auth=%u; waiting for IPv4", ev->channel, ev->authmode);
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        const wifi_event_sta_disconnected_t *ev = data;
+        ESP_LOGW(TAG, "STA disconnected: reason=%u (%s) last_rssi=%d",
+                 ev->reason, meshvpn_wifi_disconnect_reason_name(ev->reason), ev->rssi);
+    }
 }
 
 /* One task owns all connect/disconnect/scan operations. iot_bridge reconnect

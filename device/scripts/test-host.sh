@@ -116,6 +116,9 @@ done
 python3 -B device/tests/test_instrument_ncm.py
 python3 -B device/tests/test_instrument_dwc2.py
 python3 -B device/tests/test_flash_device.py
+if [[ -f device/managed_components/espressif__esp_hosted/host/drivers/rpc/wrap/rpc_wrap.c ]]; then
+  python3 -B device/tests/test_patch_esp_hosted_rpc.py
+fi
 "$cc" "${flags[@]}" -pthread -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
   -Idevice/components/meshvpn_usb/include device/tests/test_dwc2_diag.c -o "$test_dir/dwc2-diag"
 "$test_dir/dwc2-diag"

@@ -85,5 +85,98 @@ manager scanning and still reporting reason 2. The restored binary contains
 no `AUTH_ISOLATION` markers. Evidence: `mac-restored-stock.json` and
 `/tmp/meshpn-auth-mac-restore-flash.log`.
 
-Next: test the board against a second AP without switching Mac Wi-Fi.
-Keep TLS load testing pending until DIRECT connectivity is restored.
+## Overnight regression investigation
+
+The user requested investigation of our regression without changing the router
+or switching Mac Wi-Fi. Only bound P4 was flashed; C6 firmware was not replaced.
+All following attempts had VPN disabled and retained the saved Wi-Fi profile.
+
+| Experiment | Verified condition | Result |
+|---|---|---|
+| Actual saved working-night image `97bb8d4-dirty` | Original binary, not a rebuild; previously measured 34.35–37.67 Mbit/s | 150 s observation, repeated reason 2, no IPv4 |
+| C6 Wi-Fi init with `nvs_enable=0` | Host init setting changed; PHY calibration storage is separate | 120 s, reason 2 |
+| STA only from initial startup | AP never started, normal connection manager disabled; power save disabled before connect | No association/IP |
+| Legacy b/g and b-only | Protocol readbacks 3 and 1 respectively | Both reason 2 |
+| Lower configured TX power | Readbacks 32 then 80 quarter-dBm | Neither restored association |
+| Conservative C6 buffers | Static RX 10, dynamic RX/TX 32, RX BA window 6 | Reason 2 |
+| Post-start b/g/n HT40 | Protocol 7 and bandwidth HT40 confirmed | Reason 2 |
+| SDIO 20 MHz | Driver startup confirms 20000 KHz, original buffers | Reason 2 |
+| APSTA with differing protocol masks | STA 7 / AP 3 independently read back after RPC fix | Reason 2 |
+
+The saved working-night application SHA-256 is
+`76649752acdd098944ce9fc3cd6a76f634afb37b6e67f1a20d7249e4f6a52950`.
+Its failure now means reverting recent P4 application changes alone did not
+restore connectivity. It does **not** prove that prior software changes had no
+persistent effect, nor identify the router or hardware as the cause.
+
+Important limitations of attempted settings:
+
+- Requesting b/g/n before start sometimes returned protocol `0x47` or retained
+  the previous protocol. ESP_OK alone did not establish the requested mode.
+  Only confirmed readbacks above are treated as valid comparisons.
+- Requesting PMF incapable read back as capable. This was **not** a successful
+  PMF-disabled test.
+- Setting a manual RU country returned ESP_ERR_INVALID_ARG. The initial country
+  was `01`, channels 1–11, automatic policy. No regional A/B conclusion follows.
+- Configured power is not a measurement of RF output. A Mac network-list snapshot
+  did not show MeshPN, but a cached scan cannot establish absence of beacons.
+
+### Diagnostic restart failure
+
+A temporary stop/deinit/init experiment caused a separate P4 panic. The saved
+core, decoded against its exact diagnostic ELF, reports
+`assert failed: netif_add ... (netif already added)` in task `tiT`, through
+`esp_netif_start_api`. It is a duplicate network-interface registration during
+the experiment, not evidence of the original authentication cause or the older
+TLS heap-corruption crash. This recovery approach was removed; it is not part
+of the production code. The diagnostic image restarted repeatedly before its
+replacement. Core and matching ELF are retained locally.
+
+### Confirmed code defect and retained changes
+
+ESP-Hosted 1.4.7 `rpc_wifi_get_protocol()` omitted the interface argument, so
+AP protocol queries actually requested STA. The build now patches a generated
+copy, leaving managed sources intact. A test compiles the real getter against
+different STA/AP responses, checks errors/null output, and rejects an unknown
+dependency shape. Hardware confirmed STA 7 and AP 3 after the fix. This corrects
+diagnostics; it did **not** fix authentication. Previous independent AP AX
+readback claims must be qualified accordingly.
+
+Status now distinguishes 802.11 association from IPv4 acquisition and records
+association/disconnect counts, disconnect RSSI and age. Event logs include the
+reason and channel without credentials or additional remote RPCs. Restored
+production boot 16 reports zero association events while disconnect events
+increase with reason 2, around 99 KB internal and 59 KB DMA free. USB admin and
+AP configuration remain available, VPN is OFF, SDIO is back at 40 MHz, and the
+original C6 MAC/profile are retained. All temporary experiment branches were
+removed. P4 and XIAO builds and the complete host suite passed; XIAO was not
+flashed.
+
+### Internet research and remaining boundary
+
+Espressif documents a separate PHY calibration namespace and the C6-side
+`esp_phy_erase_cal_data_in_nvs()` API before Wi-Fi initialization:
+[C6 RF calibration](https://docs.espressif.com/projects/esp-idf/en/v5.5.5/esp32c6/api-guides/RF_calibration.html).
+The P4 erase and Wi-Fi restore performed earlier are not proof that C6 PHY
+calibration was erased. The installed remote RPC interface exposes no equivalent
+calibration-erasure or raw C6 flash-backup operation.
+
+An upstream fix addresses an RF power-state flag preventing station connection
+under enhanced light sleep:
+[Espressif commit 74dc204](https://github.com/espressif/esp-idf/commit/74dc204).
+It affects radio-side code, not merely the P4 host SDK. Installed factory C6
+firmware version is unknown, so applicability is unproven; disabling power save
+in our comparison did not restore connection. This is a lead, not a diagnosis.
+
+Further useful evidence needs C6-side logs/firmware identification or an
+independent capture of authentication management frames. A C6 firmware/calibration
+experiment needs a verified recovery path and factory backup first. The current
+two USB connections do not expose C6 UART; blindly replacing its only reachable
+firmware over SDIO would risk losing that access. No such update was attempted.
+The cause remains unresolved. DIRECT and TLS load tests remain blocked.
+
+Local evidence: `perf-results/p4-regression-2026-10-26-ibiahps3/` contains per-test
+status/logs, saved images and the diagnostic core. These ignored files may contain
+sensitive memory/network data and are not committed. Build/test/flash consoles:
+`/tmp/meshpn-regression-*.log`, `/tmp/meshpn-restored-flash.log` and
+`/tmp/meshpn-country-core-decoded.log`.

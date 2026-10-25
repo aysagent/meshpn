@@ -12,7 +12,12 @@ extern "C" {
 #endif
 
 typedef struct {
-    bool sta_connected;
+    bool sta_connected; /* IPv4 obtained, not merely 802.11 association. */
+    bool sta_associated;
+    uint32_t association_events;
+    uint32_t disconnect_events;
+    int8_t last_disconnect_rssi;
+    int64_t last_disconnect_us;
     bool setup_mode;
     bool ap_active;
     int8_t rssi;

@@ -419,6 +419,17 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON *wifi = cJSON_AddObjectToObject(root, "wifi");
     cJSON_AddStringToObject(wifi, "state", ws.state);
     cJSON_AddNumberToObject(wifi, "profile_id", ws.profile_id);
+    cJSON_AddBoolToObject(wifi, "associated", ws.sta_associated);
+    cJSON_AddNumberToObject(wifi, "association_events", ws.association_events);
+    cJSON_AddNumberToObject(wifi, "disconnect_events", ws.disconnect_events);
+    if (ws.disconnect_events) {
+        cJSON_AddNumberToObject(wifi, "last_disconnect_rssi", ws.last_disconnect_rssi);
+        cJSON_AddNumberToObject(wifi, "last_disconnect_age_ms",
+                               (double)(esp_timer_get_time() - ws.last_disconnect_us) / 1000.0);
+    } else {
+        cJSON_AddNullToObject(wifi, "last_disconnect_rssi");
+        cJSON_AddNullToObject(wifi, "last_disconnect_age_ms");
+    }
     cJSON_AddBoolToObject(wifi, "scanning", ws.scanning);
     cJSON_AddBoolToObject(wifi, "paused", ws.paused);
     cJSON_AddBoolToObject(wifi, "connected", ws.sta_connected);
