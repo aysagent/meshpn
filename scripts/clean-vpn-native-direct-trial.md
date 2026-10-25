@@ -172,3 +172,26 @@ legacy service; два последовательных наблюдения п�
 `rollback=configuration-verified`, а не обычные `passed/verified`. Это не приёмка
 миграции с исправного legacy, не постоянная установка и не разрешение оставить
 работающие тестовые процессы без deadline.
+
+### Отпечатки из внешнего захвата
+
+`clean-vpn-pcap-fingerprints.mjs` читает classic pcap от tcpdump вне процесса engine:
+
+```bash
+node scripts/clean-vpn-pcap-fingerprints.mjs \
+  --pcap=/private/path/exit.pcap --destination=154.62.226.216
+```
+
+Захват на Ethernet uplink должен начинаться **до** соединения, включать SYN и
+полные пакеты (`tcpdump -s 0`). Ограничить время/размер отдельным timeout и хранить
+pcap в приватном каталоге. Observer не меняет сеть, не читает engine diagnostics
+и не выводит raw ClientHello, tickets или relay token. Он собирает первый
+ClientHello IPv4/TCP: учитывает перестановку сегментов, retransmission и wrap
+sequence number; неоднозначный overlap не получает отпечаток. Лимиты: 64 MiB
+pcap, 128 соединений, первые 64 KiB потока. IPv6, IP fragmentation, pcapng,
+HRR и прочие link types не поддержаны; пропуски/ограничения указаны в отчёте.
+
+Вычисления JA3/JA4 используют существующие библиотеки отдельного project-sniffer:
+источник байтов независим от engine, алгоритм не является второй независимой
+реализацией. Для такой сверки остаётся tshark. Успешный разбор не доказывает
+отсутствие потерь захвата, соответствие браузеру или отсутствие утечек.
