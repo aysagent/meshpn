@@ -147,6 +147,12 @@ run_lab() {
 }
 
 case "${1:-}" in
+  multi-clients)
+    sync_source
+    build_current
+    cd "$WORK"
+    node --test --test-concurrency=1 scripts/test-native-clients.mjs scripts/test-native-multi-peer.mjs scripts/test-native-clients-real.mjs
+    ;;
   status) status ;;
   prepare)
     sync_source

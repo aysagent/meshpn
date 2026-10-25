@@ -198,12 +198,13 @@ int main(int argc,char** argv){
       client.stop();server.stop();
       std::cout<<"service mode ignores stdin/EOF, 100 packets, SIGTERM clean stop PASS\n";return 0;
     }
-    if(argc==5&&std::string(argv[4])=="many"){
-      Child server(argv[1],argv[3]);server.await_state("listening");
+    if(argc==5&&(std::string(argv[4])=="many"||std::string(argv[4])=="many-service")){
+      const bool service=std::string(argv[4])=="many-service";
+      Child server(argv[1],argv[3],service);server.await_state("listening");
       std::vector<std::unique_ptr<Child>> peers;
       for(int i=0;i<32;i++){
         auto config=std::string(argv[2])+"/client-"+std::to_string(i)+".json";
-        peers.push_back(std::make_unique<Child>(argv[1],config.c_str()));
+        peers.push_back(std::make_unique<Child>(argv[1],config.c_str(),service));
       }
       for(auto& peer:peers)peer->await_state("ready",6000);
       server.await_state("ready");

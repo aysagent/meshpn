@@ -14,6 +14,9 @@ test('macOS lab parser has a read-only default and explicit VM modes', () => {
     action: '--native-combo-boot', machine: 'lab-1', rebuildImage: false, refreshBase: true,
   });
   assert.deepEqual(nativeMacLabContainerAction('--native-combo-boot'), ['run', '--native-combo-boot']);
+  assert.equal(parseNativeMacLabArgs(['--multi-clients'], {}).action, '--multi-clients');
+  assert.deepEqual(nativeMacLabContainerAction('--multi-clients'), ['multi-clients']);
+  assert.throws(() => parseNativeMacLabArgs(['--multi-clients', '--refresh-base'], {}));
 });
 
 test('macOS lab parser rejects ambiguous or unsafe options', () => {

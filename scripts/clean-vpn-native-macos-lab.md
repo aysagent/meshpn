@@ -47,6 +47,9 @@ npm run lab:native:mac -- --native-combo-boot
 ## Команды
 
 ```bash
+# Быстрый multi-client прогон: cached build, CTest, 32 клиента; без QEMU boot-base
+npm run lab:native:mac -- --multi-clients
+
 # Только подготовить toolchain/build/base, без native VM-матрицы
 npm run lab:native:mac -- --prepare
 

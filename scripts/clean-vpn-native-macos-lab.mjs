@@ -75,6 +75,7 @@ function ensureMachine(name) {
 function usage() {
   console.log(`Usage:
   npm run lab:native:mac -- --prepare
+  npm run lab:native:mac -- --multi-clients
   npm run lab:native:mac -- --native-combo-boot
   npm run lab:native:mac -- --native-combo-network
   npm run lab:native:mac -- --native-combo-load

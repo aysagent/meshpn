@@ -6,6 +6,11 @@
 
 Навигация: [транспорты](#clean-vpn-transports) · [запуск](#clean-vpn-start) · [опции](#clean-vpn-options) · [профили и transparent](#clean-vpn-profiles) · [DNS](#clean-vpn-dns) · [проверки и дальнейшая работа](#clean-vpn-next).
 
+Для **native `clean-vpn-engine`** есть отдельная [подготовка нескольких клиентов
+на один exit](scripts/clean-vpn-native-clients.md): до 32 независимых packet
+PSK/IP, приватный комплект каждому клиенту, `boring-tls` и экспериментальный
+`combo-tls`. Это отдельный native-контур; ограничения Node CLI ниже сохраняются.
+
 ### Какие транспорты считаем пригодными для эксплуатации
 
 <a id="clean-vpn-transports"></a>
