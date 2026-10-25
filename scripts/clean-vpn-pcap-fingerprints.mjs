@@ -16,6 +16,7 @@ export function inspectPcap(bytes, { destination, port = 443 }) {
   const magic = bytes.subarray(0, 4).toString('hex');
   check(['d4c3b2a1', 'a1b2c3d4', '4d3cb2a1', 'a1b23c4d'].includes(magic), 'classic_pcap_required');
   const le = ['d4c3b2a1', '4d3cb2a1'].includes(magic);
+  const precision = ['4d3cb2a1', 'a1b23c4d'].includes(magic) ? 9 : 6;
   const u32 = (b, o) => le ? b.readUInt32LE(o) : b.readUInt32BE(o);
   const u16 = (b, o) => le ? b.readUInt16LE(o) : b.readUInt16BE(o);
   check(u16(bytes, 4) === 2 && u16(bytes, 6) === 4 && u32(bytes, 20) === 1, 'ethernet_pcap_v24_required');
@@ -24,6 +25,9 @@ export function inspectPcap(bytes, { destination, port = 443 }) {
   const address = (b, o) => [...b.subarray(o, o + 4)].join('.');
   for (let o = 24; o < bytes.length;) {
     check(o + 16 <= bytes.length, 'incomplete_pcap_header');
+    const seconds = u32(bytes, o), fraction = u32(bytes, o + 4);
+    check(fraction < 10 ** precision, 'invalid_pcap_timestamp');
+    const timestamp = `${seconds}.${String(fraction).padStart(precision, '0')}`;
     const n = u32(bytes, o + 8), original = u32(bytes, o + 12);
     check(n <= original && o + 16 + n <= bytes.length, 'incomplete_pcap_packet');
     const b = bytes.subarray(o + 16, o + 16 + n); o += 16 + n; counts.packets++;
@@ -52,7 +56,7 @@ export function inspectPcap(bytes, { destination, port = 443 }) {
     if ((flags & 0x12) === 2) {
       if (!stream || stream.syn !== seq || stream.closed) {
         check(streams.length < MAX_STREAMS, 'stream_limit');
-        stream = { source, sourcePort, syn: seq, firstPacket: counts.packets,
+        stream = { source, sourcePort, syn: seq, firstPacket: counts.packets, timestamp,
           data: Buffer.alloc(PREFIX), seen: Buffer.alloc(PREFIX), conflict: false, closed: false };
         streams.push(stream); current.set(key, stream);
       }
@@ -69,7 +73,8 @@ export function inspectPcap(bytes, { destination, port = 443 }) {
     }
   }
   const connections = streams.map(stream => {
-    const result = { source: stream.source, sourcePort: stream.sourcePort, firstPacket: stream.firstPacket };
+    const result = { source: stream.source, sourcePort: stream.sourcePort, firstPacket: stream.firstPacket,
+      synUnixSeconds: stream.timestamp };
     if (stream.conflict) return { ...result, status: 'conflicting_tcp_overlap' };
     let n = 0; while (n < PREFIX && stream.seen[n]) n++;
     try {

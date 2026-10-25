@@ -30,6 +30,7 @@ for (const le of [true, false]) test(`observed JA4 from classic pcap endian=${le
   assert.equal(r.connections[0].status, 'observed');
   assert.equal(r.connections[0].ja4, 't13i010100_0f2cb44170f4_b9a491fefe05');
   assert.equal(r.connections[0].ja3String, '771,4865,43,,');
+  assert.equal(r.connections[0].synUnixSeconds, '0.000000');
 });
 test('reassembles reordered segments, duplicate SYN, overlap and sequence wrap', () => {
   const syn = 0xfffffff0, base = (syn + 1) >>> 0;
