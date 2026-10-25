@@ -129,10 +129,29 @@ async function waitListener(endpoint, port, engine) {
   }
   throw Error('native_exit_listener_timeout');
 }
-async function preflight(configFile, endpoint, uplink) {
+export function exitEndpointRouteMatches(routes, endpoint) {
+  // An address owned by this host is reached through table local / lo, not
+  // through its physical uplink. Ownership of that uplink is checked separately.
+  return routes.length === 1 && routes[0].type === 'local' && routes[0].dev === 'lo'
+    && routes[0].dst === endpoint;
+}
+export function assertStandaloneExitState(state, listeners, links, routes) {
+  check(['inactive', 'failed'].includes(state.ActiveState) && state.MainPID === '0', 'standalone_legacy_must_be_inactive');
+  check(!listeners.trim(), 'standalone_exit_port_busy');
+  check(!links.some(link => link.ifname === 'tun0'), 'standalone_existing_tun');
+  check(!routes.some(route => /^10\.99\.0\./.test(route.dst ?? '')), 'standalone_existing_vpn_route');
+}
+async function standaloneContext(config) {
+  assertStandaloneExitState(await unitState(OLD), await run('ss', ['-H', '-ltn', 'sport = :443']),
+    JSON.parse(await run('ip', ['-j', 'link', 'show'])), JSON.parse(await run('ip', ['-j', '-4', 'route', 'show', 'table', 'all'])));
+  return { legacy: { cert: config.boring?.cert, key: config.boring?.key,
+    secret: config.boring?.peers?.[0]?.secret_path, publicName: config.transparent?.public_name }, fingerprint: null };
+}
+async function preflight(configFile, endpoint, uplink, standalone = false) {
   check(process.getuid?.() === 0 && fs.readFileSync('/proc/1/comm', 'utf8').trim() === 'systemd', 'root_systemd_required');
-  const context = await directExitLegacyContext(endpoint, uplink);
-  const config = validateDirectExitConfig(privateJson(configFile), { endpoint, uplink, legacy: context.legacy }), bytes = fs.readFileSync(configFile);
+  const original = privateJson(configFile);
+  const context = standalone ? await standaloneContext(original) : await directExitLegacyContext(endpoint, uplink);
+  const config = validateDirectExitConfig(original, { endpoint, uplink, legacy: context.legacy }), bytes = fs.readFileSync(configFile);
   const packet = fs.readFileSync(config.boring.peers[0].secret_path), relay = fs.readFileSync(config.transparent.secret_path);
   let distinct = false; try { distinct = packet.length === 32 && relay.length === 32 && !packet.equals(relay); }
   finally { packet.fill(0); relay.fill(0); }
@@ -149,12 +168,12 @@ async function preflight(configFile, endpoint, uplink) {
   try { privateOwnedDirectory(config.transparent.replay_directory); } catch { issues.push('replay-directory-missing-or-unsafe'); }
   if (!links.find(item => item.ifname === uplink)?.addr_info?.some(a => a.family === 'inet' && a.local === endpoint))
     issues.push('endpoint-not-owned-by-uplink');
-  if (routes.length !== 1 || routes[0].dev !== uplink) issues.push('endpoint-route-uplink-mismatch');
-  if (!listeners) issues.push('legacy-listener-not-observed');
+  if (!exitEndpointRouteMatches(routes, endpoint)) issues.push('endpoint-local-route-mismatch');
+  if (!standalone && !listeners) issues.push('legacy-listener-not-observed');
   if (capabilities?.experimental_transports?.['combo-tls']?.single_exit_listener !== true) issues.push('combo-capability-mismatch');
   const report = { schema: 1, kind: 'clean-vpn-native-exit-direct-preflight', timestamp: new Date().toISOString(),
     status: issues.length ? 'blocked' : 'ready-for-bounded-transient-trial', systemSettingsChanged: false, networkProbesSent: 0,
-    endpoint, port: 443, uplink, configSha256: createHash('sha256').update(bytes).digest('hex'),
+    endpoint, port: 443, uplink, mode: standalone ? 'standalone-no-legacy' : 'legacy-replacement', configSha256: createHash('sha256').update(bytes).digest('hex'),
     engineSha256: createHash('sha256').update(fs.readFileSync(ENGINE)).digest('hex'), legacyFingerprint: context.fingerprint,
     relaySecret: distinct ? 'distinct-32-byte' : 'invalid', replayDirectory: issues.includes('replay-directory-missing-or-unsafe') ? 'missing-or-unsafe' : 'private',
     endpointOwned: !issues.includes('endpoint-not-owned-by-uplink'), endpointRoute: routes[0]?.dev ?? null,
@@ -162,10 +181,11 @@ async function preflight(configFile, endpoint, uplink) {
     limitations: ['point-in-time-state', 'no-WAN-probe', 'no-provider-firewall-or-console-proof', 'no-mutation-simulation'] };
   return report;
 }
-async function worker(configFile, endpoint, uplink, holdSeconds) {
+async function worker(configFile, endpoint, uplink, holdSeconds, standalone = false) {
   check(process.getuid?.() === 0 && fs.readFileSync('/proc/1/comm', 'utf8').trim() === 'systemd', 'root_systemd_required');
   check(await property(UNIT, 'MainPID') === String(process.pid), 'exit_worker_requires_transient_unit');
-  const context = await directExitLegacyContext(endpoint, uplink), original = privateJson(configFile);
+  const original = privateJson(configFile);
+  const context = standalone ? await standaloneContext(original) : await directExitLegacyContext(endpoint, uplink);
   const config = validateDirectExitConfig(original, { endpoint, uplink, legacy: context.legacy });
   const packetSecret = fs.readFileSync(config.boring.peers[0].secret_path), relaySecret = fs.readFileSync(config.transparent.secret_path);
   try { check(packetSecret.length === 32 && relaySecret.length === 32 && !packetSecret.equals(relaySecret), 'separate_exit_relay_secret_required'); }
@@ -178,14 +198,18 @@ async function worker(configFile, endpoint, uplink, holdSeconds) {
     config.boring.tun = prepared.tun; privateDirectory(SCRATCH);
     fs.writeFileSync(path.join(SCRATCH, 'exit.json'), JSON.stringify(config), { mode: 0o600, flag: 'wx' });
     await run(ENGINE, ['--check-config', path.join(SCRATCH, 'exit.json')]);
-    check(await trialServiceFingerprint({ run, root: ROOT }) === context.fingerprint, 'legacy_exit_changed_before_stop');
-    await run('systemctl', ['stop', OLD], 480000); stopped = true;
-    check(await property(OLD, 'ActiveState') === 'inactive' && await property(OLD, 'MainPID') === '0', 'legacy_exit_stop_failed');
+    if (standalone) await standaloneContext(original);
+    else {
+      check(await trialServiceFingerprint({ run, root: ROOT }) === context.fingerprint, 'legacy_exit_changed_before_stop');
+      await run('systemctl', ['stop', OLD], 480000); stopped = true;
+      check(await property(OLD, 'ActiveState') === 'inactive' && await property(OLD, 'MainPID') === '0', 'legacy_exit_stop_failed');
+    }
     check(!JSON.parse(await run('ip', ['-j', 'link', 'show'])).some(link => link.ifname === 'tun0'), 'legacy_exit_tun_remains');
     check(!(await run('ss', ['-H', '-ltn', 'sport = :443'])).trim(), 'exit_port_still_busy');
     owner.install(); engine = engineProcess(path.join(SCRATCH, 'exit.json')); await waitListener(endpoint, 443, engine);
     result = { ...result, status: 'ready', endpoint, port: 443, uplink, tun: prepared.tun,
-      deadline: new Date(Date.now() + holdSeconds * 1000).toISOString(), legacyStopped: true, foreignFirewallPreserved: true };
+      deadline: new Date(Date.now() + holdSeconds * 1000).toISOString(), legacyStopped: stopped,
+      mode: standalone ? 'standalone-no-legacy' : 'legacy-replacement', foreignFirewallPreserved: true };
     writeStatus(result);
     const deadline = performance.now() + holdSeconds * 1000;
     while (!stop.requested && performance.now() < deadline) { check(engine.healthy(), 'native_exit_failed'); await delay(250); }
@@ -205,7 +229,7 @@ async function worker(configFile, endpoint, uplink, holdSeconds) {
   }
   process.exitCode = result.status === 'completed' ? 0 : 1;
 }
-async function recover() {
+async function recover(standalone = false) {
   check(process.getuid?.() === 0, 'root_required');
   const state = await unitState(UNIT);
   check(exitRecoveryAllowed(state, process.env.INVOCATION_ID), 'exit_trial_still_active');
@@ -213,8 +237,10 @@ async function recover() {
   try { if (owner.state && owner.state.stage !== 'released') owner.restore(); else owner.assertAvailable(); }
   finally { owner.release(); }
   try { fs.unlinkSync(path.join(SCRATCH, 'exit.json')); fs.rmdirSync(SCRATCH); } catch (error) { if (error.code !== 'ENOENT' && error.code !== 'ENOTEMPTY') throw error; }
-  if (await property(OLD, 'ActiveState') !== 'active') await run('systemctl', ['start', OLD], 90000);
-  check(await property(OLD, 'ActiveState') === 'active', 'legacy_exit_recovery_failed');
+  if (!standalone) {
+    if (await property(OLD, 'ActiveState') !== 'active') await run('systemctl', ['start', OLD], 90000);
+    check(await property(OLD, 'ActiveState') === 'active', 'legacy_exit_recovery_failed');
+  }
 }
 export function exitRecoveryAllowed(state, invocationId = '') {
   // During ExecStopPost, systemd versions differ in whether ActiveState is
@@ -224,20 +250,28 @@ export function exitRecoveryAllowed(state, invocationId = '') {
     && !!invocationId && invocationId === state.InvocationID;
   return stopPost || state.MainPID === '0' && ['inactive', 'failed'].includes(state.ActiveState);
 }
-export function exitTrialUnitArgs({ node, script, config, endpoint, uplink, holdSeconds }) {
+export function exitTrialUnitArgs({ node, script, config, endpoint, uplink, holdSeconds, standalone = false }) {
   for (const value of [node, script, config]) check(path.isAbsolute(value) && !/\s/.test(value), 'safe_absolute_unit_path_required');
   return ['--quiet', '--collect', '--unit=clean-vpn-native-exit-trial', '--service-type=exec', '--property=KillMode=control-group',
     '--property=TimeoutStopSec=120', `--property=RuntimeMaxSec=${holdSeconds + 180}`,
-    `--property=ExecStopPost=${node} ${script} --recover`, '--property=StandardOutput=null', '--property=StandardError=null',
-    `--working-directory=${ROOT}`, node, script, '--worker', `--config=${config}`, `--endpoint=${endpoint}`, `--uplink=${uplink}`, `--hold-seconds=${holdSeconds}`];
+    `--property=ExecStopPost=${node} ${script} --recover${standalone ? ' --standalone' : ''}`, '--property=StandardOutput=null', '--property=StandardError=null',
+    `--working-directory=${ROOT}`, node, script, '--worker', `--config=${config}`, `--endpoint=${endpoint}`, `--uplink=${uplink}`, `--hold-seconds=${holdSeconds}`,
+    ...(standalone ? ['--standalone'] : [])];
 }
 async function main(args = process.argv.slice(2)) {
+  const standalone = args.includes('--standalone');
+  check(args.filter(arg => arg === '--standalone').length <= 1, 'duplicate_standalone');
+  if (standalone) {
+    check(['--preflight', '--apply', '--worker', '--recover'].includes(args[0]), 'invalid_standalone_mode');
+    args = args.filter(arg => arg !== '--standalone');
+  }
   if (args.length === 1 && args[0] === '--help') {
+    console.log('--standalone: explicit mode for an idle exit with no legacy listener/TUN; never starts/stops legacy. Also pass --standalone to manual --recover.');
     console.log('Usage: sudo node scripts/clean-vpn-native-exit-trial.mjs --preflight|--apply --config=/absolute/private-combo-exit.json --endpoint=154.62.226.216 --uplink=eth0 [--hold-seconds=60..1800]\n       sudo node scripts/clean-vpn-native-exit-trial.mjs --status | --stop | --recover\nTransient only: stops/restores clean-vpn.service, owns a random TUN and exact scoped firewall rules; independent ExecStopPost recovery.'); return;
   }
   if (args.length === 1 && args[0] === '--status') { privateDirectory(REPORT_DIR); console.log(fs.readFileSync(path.join(REPORT_DIR, 'status.json'), 'utf8')); return; }
   if (args.length === 1 && args[0] === '--stop') { await run('systemctl', ['stop', UNIT], 150000); return; }
-  if (args.length === 1 && args[0] === '--recover') return recover();
+  if (args.length === 1 && args[0] === '--recover') return recover(standalone);
   const values = new Map(); for (const arg of args.slice(1)) { const match = /^--(config|endpoint|uplink|hold-seconds)=(.+)$/.exec(arg);
     check(match && !values.has(match[1]), 'invalid_exit_trial_option'); values.set(match[1], match[2]); }
   check(['--preflight', '--apply', '--worker'].includes(args[0]), 'invalid_exit_trial_mode');
@@ -245,14 +279,14 @@ async function main(args = process.argv.slice(2)) {
   const holdSeconds = Number(values.get('hold-seconds') ?? '900');
   check(path.isAbsolute(config ?? '') && isIPv4(endpoint ?? '') && /^[a-zA-Z][a-zA-Z0-9_.-]{0,14}$/.test(uplink ?? '')
     && Number.isInteger(holdSeconds) && holdSeconds >= 60 && holdSeconds <= 1800, 'invalid_exit_trial_arguments');
-  if (args[0] === '--preflight') { console.log(JSON.stringify(await preflight(config, endpoint, uplink), null, 2)); return; }
-  if (args[0] === '--worker') return worker(config, endpoint, uplink, holdSeconds);
+  if (args[0] === '--preflight') { console.log(JSON.stringify(await preflight(config, endpoint, uplink, standalone), null, 2)); return; }
+  if (args[0] === '--worker') return worker(config, endpoint, uplink, holdSeconds, standalone);
   check(process.getuid?.() === 0, 'root_required');
   check(!['active', 'activating', 'deactivating', 'reloading'].includes((await unitState(UNIT)).ActiveState), 'exit_trial_already_running');
-  const readiness = await preflight(config, endpoint, uplink);
+  const readiness = await preflight(config, endpoint, uplink, standalone);
   check(readiness.status === 'ready-for-bounded-transient-trial', 'exit_preflight_blocked');
   privateDirectory(REPORT_DIR); writeStatus({ schema: 1, kind: 'clean-vpn-native-exit-trial', status: 'launching' });
-  await run('systemd-run', exitTrialUnitArgs({ node: process.execPath, script: SELF, config, endpoint, uplink, holdSeconds }));
+  await run('systemd-run', exitTrialUnitArgs({ node: process.execPath, script: SELF, config, endpoint, uplink, holdSeconds, standalone }));
   const deadline = performance.now() + 30000;
   while (performance.now() < deadline) {
     const status = JSON.parse(fs.readFileSync(path.join(REPORT_DIR, 'status.json'), 'utf8'));

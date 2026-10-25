@@ -31,21 +31,29 @@ function safeCreationParent(directory, owner) {
 export function parseDirectConfigArgs(args) {
   if (args.length === 1 && args[0] === '--help') return { help: true };
   assert.equal(args[0], '--create-exit'); const values = new Map();
-  for (const arg of args.slice(1)) { const match = /^--(directory|endpoint|uplink|client-relay-path|deny-ipv4)=(.*)$/.exec(arg);
+  for (const arg of args.slice(1)) { const match = /^--(directory|endpoint|uplink|client-relay-path|deny-ipv4|standalone-cert|standalone-key|standalone-packet-secret|standalone-public-name)=(.*)$/.exec(arg);
     assert.ok(match && !values.has(match[1]), 'invalid or duplicate option'); values.set(match[1], match[2]); }
   const directory = values.get('directory'), endpoint = values.get('endpoint'), uplink = values.get('uplink') ?? 'eth0';
   const clientRelayPath = values.get('client-relay-path'), denyIpv4 = values.get('deny-ipv4') ? values.get('deny-ipv4').split(',') : [];
   assert.ok(safePath(directory) && safePath(clientRelayPath), 'absolute safe directories required');
   assert.ok(isIPv4(endpoint) && /^[a-zA-Z][a-zA-Z0-9_.-]{0,14}$/.test(uplink), 'invalid endpoint or uplink');
   assert.ok(denyIpv4.length <= 64 && denyIpv4.every(canonicalIpv4Cidr), 'invalid deny list');
-  return { directory, endpoint, uplink, clientRelayPath, denyIpv4 };
+  const keys = ['standalone-cert', 'standalone-key', 'standalone-packet-secret', 'standalone-public-name'];
+  let material;
+  if (keys.some(key => values.has(key))) {
+    assert.ok(keys.every(key => values.has(key)), 'all standalone material fields required');
+    const [cert, key, secret, publicName] = keys.map(key => values.get(key));
+    assert.ok([cert, key, secret].every(safePath) && /^[a-z0-9.-]{1,253}$/.test(publicName), 'invalid standalone material');
+    material = { cert, key, secret, publicName };
+  }
+  return { directory, endpoint, uplink, clientRelayPath, denyIpv4, ...(material ? { material } : {}) };
 }
 function privateWrite(file, value) { fs.writeFileSync(file, value, { mode: 0o600, flag: 'wx' }); }
 export async function prepareDirectExit(options, { context = directExitLegacyContext,
   execute = (file, args) => execFileSync(file, args, { encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] }),
   uid = () => process.getuid?.(), requireRoot = true } = {}) {
   const owner = uid(); if (requireRoot) assert.equal(owner, 0, 'root required');
-  const legacy = await context(options.endpoint, options.uplink);
+  const legacy = options.material ? { legacy: options.material } : await context(options.endpoint, options.uplink);
   safeCreationParent(options.directory, owner);
   fs.mkdirSync(options.directory, { mode: 0o700 });
   const stat = fs.lstatSync(options.directory); assert.ok(stat.isDirectory() && !stat.isSymbolicLink() && stat.uid === owner && (stat.mode & 0o777) === 0o700);
@@ -71,6 +79,7 @@ export async function prepareDirectExit(options, { context = directExitLegacyCon
 }
 async function main(args = process.argv.slice(2)) {
   const options = parseDirectConfigArgs(args);
+  if (options.help) console.log('Without a running legacy exit, supply all four: --standalone-cert=PATH --standalone-key=PATH --standalone-packet-secret=PATH --standalone-public-name=NAME. Preparation only; use exit trial --standalone for activation.');
   if (options.help) { console.log('Usage on exit: sudo node scripts/clean-vpn-native-direct-config.mjs --create-exit --directory=/root/native-combo-trial --endpoint=154.62.226.216 --uplink=eth0 --client-relay-path=/root/native-combo-trial/relay.psk [--deny-ipv4=CIDR,...]\nCreates a new owner-only directory, random relay PSK, initialized replay journal, exit config and Radxa profile template. Never stops services or changes network/firewall.'); return; }
   console.log(JSON.stringify(await prepareDirectExit(options), null, 2));
 }

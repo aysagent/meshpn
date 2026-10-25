@@ -50,3 +50,16 @@ test('preparation refuses a symlinked or foreign writable creation ancestor', as
     clientRelayPath: '/root/native-combo-trial/relay.psk', denyIpv4: [] }, { requireRoot: false,
     uid: () => process.getuid(), context: async () => ({ legacy }), execute() {} }), /unsafe creation ancestor/);
 });
+
+test('standalone preparation requires explicit complete material and never inspects a legacy service', async t => {
+  const base = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'standalone-config-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const baseArgs = ['--create-exit', `--directory=${base}/new`, '--endpoint=154.62.226.216', '--client-relay-path=/root/trial/relay.psk'];
+  const material = ['--standalone-cert=/root/cert.pem', '--standalone-key=/root/key.pem', '--standalone-packet-secret=/root/packet.psk', '--standalone-public-name=cover.example'];
+  for (let i = 0; i < material.length; i++) assert.throws(() => parseDirectConfigArgs([...baseArgs, ...material.filter((_, n) => n !== i)]));
+  const result = await prepareDirectExit(parseDirectConfigArgs([...baseArgs, ...material]), {
+    requireRoot: false, uid: () => process.getuid(), context: () => assert.fail('legacy lookup'), execute() {},
+  });
+  assert.equal(result.status, 'prepared');
+  assert.equal(JSON.parse(fs.readFileSync(result.exitConfig)).boring.peers[0].secret_path, '/root/packet.psk');
+});

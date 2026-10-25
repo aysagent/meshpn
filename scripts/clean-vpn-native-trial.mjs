@@ -13,7 +13,7 @@ import { trialServiceFingerprint } from './lib/native-trial-service.mjs';
 import { trialDiagnostics } from './lib/native-trial-diagnostics.mjs';
 import { waitLegacyReady } from './lib/native-trial-readiness.mjs';
 import { probeNativeHold } from './lib/native-trial-hold.mjs';
-import { createPeerChannel, exerciseNativePeer, peerStatus, submitPeerResult } from './lib/native-usb-trial-peer.mjs';
+import { createPeerChannel, exerciseNativePeer, exerciseSmokePeer, peerStatus, submitPeerResult } from './lib/native-usb-trial-peer.mjs';
 import { faultUnit, faultUnitArgs } from './clean-vpn-native-usb-uplink.mjs';
 import { startCrashCapture, exerciseCrashPeer, recoverCrashNetwork } from './lib/native-trial-crash.mjs';
 import { openHostRoutes } from './lib/vpn-host-routes.mjs';
@@ -368,7 +368,7 @@ export function uplinkFault(directory, { exec = run, commandResult = command, ge
   };
 }
 
-async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchmark = false, comboProfile = null) {
+async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchmark = false, comboProfile = null, smoke = false) {
   await hostRequired();
   check(path.dirname(directory) === REPORTS && /^run-[a-zA-Z0-9]+$/.test(path.basename(directory)), 'invalid_worker_directory');
   privateDirectory(REPORTS); privateDirectory(directory);
@@ -388,7 +388,8 @@ async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchm
       finally { (target[phase] ??= { status: 'failed' }).cpu = stopCpu(); }
       check(target[phase].cpu.status === 'sampled', 'benchmark_cpu_incomplete');
     };
-    io.peer = benchmark ? { requiredPhases: benchmarkPhases,
+    io.peer = smoke ? { requiredPhases: ['baseline', 'native', 'restored'], phase: peer.phase,
+      native: (session, report) => exerciseSmokePeer(peer, session, report) } : benchmark ? { requiredPhases: benchmarkPhases,
       phase: (p, target) => benchmarkPhase(p === 'baseline' ? 'bench-old' : 'bench-restored', target),
       native: async (session, report) => {
         await benchmarkPhase('bench-native', report.phases, session);
@@ -433,6 +434,7 @@ async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchm
 
 export async function main(args = process.argv.slice(2)) {
   if (args.length === 1 && args[0] === '--help') {
+    console.log('Smoke mode: --apply --usb-smoke (Mac --smoke); baseline/native/restored without fault injection.');
     console.log('Benchmark mode: --apply --usb-benchmark (Mac --benchmark coordinates three old/native/old cycles). Bounded synthetic upload/download, no fault injection.');
     console.log('Crash mode: --apply --usb-crash (coordinate from Mac with --crash). SIGKILL the owned native engine; keep wlan0 up; tcpdump selected IPv4 HTTPS; audited legacy rollback.');
     console.log('Usage: node scripts/clean-vpn-native-trial.mjs --apply [--hold-seconds=0..300 | --usb-peer | --usb-crash | --usb-benchmark] [--combo-profile=/absolute/private.json] | --report\nRun from authenticated USB rescue SSH :2222 as root, after build-clean-vpn-native.sh.\nCombo requires a USB mode and a separate private relay key profile.\nTemporarily stops ONLY clean-vpn.service, tests native, audits cleanup and restores legacy.\nUSB modes are coordinated by clean-vpn-native-usb-check.mjs on Mac. --usb-peer: REAL wlan0 down/up with independent systemd restoration.\nTransient systemd unit survives SSH loss. No install/enable/firewall flush/reboot.\nWithout --usb-benchmark: real DNS/HTTPS and bounded downloads, not a speed benchmark.'); return;
@@ -477,10 +479,10 @@ export async function main(args = process.argv.slice(2)) {
   if (args[0] === '--worker' && args.length >= 3 && /^\d{1,3}$/.test(args[2]) && Number(args[2]) <= 300) {
     const tail = args.slice(3); let peerIp, mode, comboProfile;
     if (tail[0] && /^192\.168\.7\.(?:[2-9]|[1-9]\d|1\d\d|2[0-4]\d|25[0-4])$/.test(tail[0])) peerIp = tail.shift();
-    if (['--crash', '--benchmark'].includes(tail[0])) mode = tail.shift();
+    if (['--crash', '--benchmark', '--smoke'].includes(tail[0])) mode = tail.shift();
     if (tail[0]?.startsWith('--combo-profile=')) comboProfile = tail.shift().slice('--combo-profile='.length);
     check(tail.length === 0 && (!mode || peerIp) && (!comboProfile || peerIp), 'invalid_trial_worker_arguments');
-    return worker(args[1], Number(args[2]), peerIp, mode === '--crash', mode === '--benchmark', comboProfile ?? null);
+    return worker(args[1], Number(args[2]), peerIp, mode === '--crash', mode === '--benchmark', comboProfile ?? null, mode === '--smoke');
   }
   check(args[0] === '--apply', 'use_apply_or_report_or_help');
   const options = args.slice(1), comboOptions = options.filter(value => value.startsWith('--combo-profile='));
@@ -490,7 +492,8 @@ export async function main(args = process.argv.slice(2)) {
   check(modes.length <= 1, 'invalid_trial_options');
   const crash = modes[0] === '--usb-crash';
   const benchmark = modes[0] === '--usb-benchmark';
-  const usb = modes[0] === '--usb-peer' || crash || benchmark;
+  const smoke = modes[0] === '--usb-smoke';
+  const usb = modes[0] === '--usb-peer' || crash || benchmark || smoke;
   const match = modes.length === 1 && !usb ? /^--hold-seconds=(\d{1,3})$/.exec(modes[0]) : ['', '0'];
   check(match && Number(match[1]) <= 300, 'hold_seconds_must_be_0_to_300');
   check(!comboProfile || usb, 'combo_profile_requires_usb_mode');
@@ -503,7 +506,7 @@ export async function main(args = process.argv.slice(2)) {
     '--property=KillMode=mixed', '--property=TimeoutStopSec=600', '--property=RuntimeMaxSec=1500',
     '--property=StandardOutput=null', '--property=StandardError=null',
     `--working-directory=${ROOT}`, process.execPath, SELF, '--worker', dir, match[1], ...(usb ? [peerIp] : []),
-    ...(crash ? ['--crash'] : benchmark ? ['--benchmark'] : []),
+    ...(crash ? ['--crash'] : benchmark ? ['--benchmark'] : smoke ? ['--smoke'] : []),
     ...(comboProfile ? [`--combo-profile=${comboProfile}`] : [])], 15000);
   if (usb) console.log(`USB_TRIAL_ID=${path.basename(dir)}`);
   console.error('Trial started; survives SSH disconnect. Do not checkout/build/restart services during the trial.');

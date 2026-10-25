@@ -106,8 +106,9 @@ sudo env "PATH=$PATH" node scripts/clean-vpn-native-exit-trial.mjs \
 
 1. Запустить exit на 15 минут той же командой с `--apply` вместо `--preflight`.
    Команда вернётся после появления native listener; unit продолжит работать.
-2. С Mac через USB запустить coordinator с дополнительным
-   `--combo-profile=/root/native-combo-trial/client-profile.json`.
+2. С Mac через USB запустить coordinator с **`--smoke`** и дополнительным
+   `--combo-profile=/root/native-combo-trial/client-profile.json`. Без `--smoke`
+   исторический default проверяет настоящий down/up wlan0; это не первый smoke.
 3. После отчёта Radxa выполнить на exit `node
    scripts/clean-vpn-native-exit-trial.mjs --stop`; проверить `--status`.
 4. Только после успешного ordinary smoke повторять `--crash`, затем bounded
@@ -129,3 +130,23 @@ Kill switch на Radxa можно остановить технически, н�
 делаем: остановка VPN-сервиса безопасно оставляет guard fail-closed, а остановка
 guard создаёт ненужное окно прямого IPv4/IPv6 выхода. Если обнаружится конкретный
 несовместимый rule, сначала меняется и тестируется точный overlay-контракт.
+
+## Если на exit нет запущенного legacy (2026-10-26)
+
+Это отдельный opt-in режим, не автоматический fallback. В подготовке вместо
+чтения работающего legacy указать все четыре параметра существующего PKI:
+`--standalone-cert=PATH --standalone-key=PATH --standalone-packet-secret=PATH
+--standalone-public-name=NAME`. PSK/certificate должны соответствовать клиенту;
+секреты не печатаются. Fresh private directory/replay создаются как выше.
+
+К exit `--preflight` и `--apply` добавить `--standalone`. Он требует отсутствия
+активного clean-vpn service, listener 443, tun0 и маршрутов 10.99.0.*. Запуск
+создаёт только journalled transient TUN/NAT/FORWARD. Независимый ExecStopPost
+восстанавливает сетевые изменения, **не запускает несуществующий legacy**.
+Ручное восстановление в этом режиме: `--recover --standalone`, после остановки
+unit. По deadline exit выключается; это не постоянное исправление отсутствующего
+сервера. Клиентский baseline должен реально заработать до переключения клиента.
+
+Preflight принимает kernel `type=local dev=lo` для собственного адреса exit;
+принадлежность адреса выбранному uplink проверяется отдельно. Маршрут к собственному
+адресу через lo нормален и не должен ошибочно блокировать trial.

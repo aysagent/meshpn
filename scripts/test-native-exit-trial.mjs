@@ -2,7 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import { validateDirectExitConfig, exitRecoveryAllowed, exitTrialUnitArgs } from './clean-vpn-native-exit-trial.mjs';
+import { validateDirectExitConfig, exitRecoveryAllowed, exitTrialUnitArgs, exitEndpointRouteMatches, assertStandaloneExitState } from './clean-vpn-native-exit-trial.mjs';
+
+test('owned exit endpoint uses the kernel local route, not a remote uplink route', () => {
+  const row = { type: 'local', dst: '154.62.226.216', dev: 'lo', prefsrc: '154.62.226.216' };
+  assert.equal(exitEndpointRouteMatches([row], row.dst), true);
+  for (const routes of [[], [row, row], [{ ...row, type: 'unicast' }], [{ ...row, dev: 'eth0' }], [{ ...row, dst: '1.1.1.1' }]])
+    assert.equal(exitEndpointRouteMatches(routes, row.dst), false);
+});
+test('standalone trial refuses active services, occupied listener and existing VPN state', () => {
+  const state = { ActiveState: 'inactive', MainPID: '0' };
+  assert.doesNotThrow(() => assertStandaloneExitState(state, '', [{ ifname: 'eth0' }], [{ dst: 'default', dev: 'eth0' }]));
+  for (const args of [[{ ...state, ActiveState: 'active' }, '', [], []], [{ ...state, MainPID: '23' }, '', [], []],
+    [state, 'LISTEN', [], []], [state, '', [{ ifname: 'tun0' }], []], [state, '', [], [{ dst: '10.99.0.0/24' }]]])
+    assert.throws(() => assertStandaloneExitState(...args));
+  const args = exitTrialUnitArgs({ node: '/usr/bin/node', script: '/trial.mjs', config: '/config.json', endpoint: '154.62.226.216', uplink: 'eth0', holdSeconds: 60, standalone: true });
+  assert.ok(args.includes('--standalone'));
+  assert.ok(args.includes('--property=ExecStopPost=/usr/bin/node /trial.mjs --recover --standalone'));
+});
 
 const legacy = { cert: '/root/certs/fullchain.pem', key: '/root/certs/privkey.pem',
   secret: '/root/certs/clean-vpn-hmac.key', publicName: 'cover.example' };

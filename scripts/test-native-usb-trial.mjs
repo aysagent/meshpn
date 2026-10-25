@@ -4,12 +4,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPeerChannel, peerStatus, submitPeerResult, validatePeerResult, exerciseNativePeer } from './lib/native-usb-trial-peer.mjs';
+import { createPeerChannel, peerStatus, submitPeerResult, validatePeerResult, exerciseNativePeer, exerciseSmokePeer } from './lib/native-usb-trial-peer.mjs';
 import { runFault, faultUnitArgs } from './clean-vpn-native-usb-uplink.mjs';
 import { probePeer, dnsAddresses, execute, quote } from './clean-vpn-native-usb-check.mjs';
 import { uplinkFault } from './clean-vpn-native-trial.mjs';
 
 const ip = '192.168.7.19';
+test('smoke requests only the native probe, propagates failures, and never schedules a fault', async () => {
+  const calls = [], report = { phases: {} };
+  const session = { healthy: () => true, diagnostics: () => ({ stateCounts: {} }) };
+  await exerciseSmokePeer({ phase: async p => calls.push(p) }, session, report);
+  assert.deepEqual(calls, ['native']);
+  assert.deepEqual(report.fault, { kind: 'none', requestedPhysicalUplinkChange: false });
+  await assert.rejects(exerciseSmokePeer({ phase: async () => { throw Error('probe_failed'); } }, session, { phases: {} }), /probe_failed/);
+  await assert.rejects(exerciseSmokePeer({ phase: async () => {} }, { ...session, diagnostics: () => ({ stateCounts: { peer_address: 1 } }) }, { phases: {} }), /peer_address/);
+});
 const request = { token: '12345678-1234-1234-1234-123456789abc', phase: 'native' };
 const good = p => ({ ...p, dnsPassed: 4, httpsPassed: 3, downloadBytes: 1048576,
   exitIp: '154.62.226.216', blockedAttempts: 0, recoveryMs: 0, elapsedMs: 100 });

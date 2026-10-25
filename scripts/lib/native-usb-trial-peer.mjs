@@ -87,6 +87,12 @@ export function createPeerChannel(directory, peerIp, { now = monotonicMs, sleep 
   };
 }
 
+export async function exerciseSmokePeer(peer, session, report) {
+  await peer.phase('native', report.phases, session.healthy);
+  check(!(session.diagnostics().stateCounts?.peer_address > 0), 'native_peer_address_rejected');
+  report.fault = { kind: 'none', requestedPhysicalUplinkChange: false };
+}
+
 export async function exerciseNativePeer(peer, session, report, fault, now = monotonicMs) {
   await peer.phase('native', report.phases, session.healthy);
   report.fault = { kind: 'networkctl-wlan0-down-up', requestedPhysicalUplinkChange: true, downVerified: false,

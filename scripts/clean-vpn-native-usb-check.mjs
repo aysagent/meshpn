@@ -190,17 +190,18 @@ export function summarizeBenchmarks(reports) {
 
 export async function main(args = process.argv.slice(2)) {
   if (args.length === 1 && args[0] === '--help') {
+    console.log('--smoke: baseline/native/restored only; no wlan0 down/up, SIGKILL or benchmark. Use this for the first physical combo run.');
     console.log('--benchmark: three legacy/native/legacy cycles, four HTTPS streams, synthetic upload, <=340 MiB total application data. No uplink/crash fault. Not Ookla.');
     console.log('Usage on Mac: node clean-vpn-native-usb-check.mjs --interface=en9 [--crash | --benchmark] [--combo-profile=/absolute/path/on/radxa.json]\nDefault: real wlan0 down/up on Radxa. --crash: SIGKILL native engine, keep uplink up, capture selected IPv4 HTTPS egress; requires tcpdump on Radxa.\nCombo profile path is evaluated on Radxa and must be a root-owned private file.\nUSB rescue SSH :2222 remains available. Requires Node 18+, ssh, curl, dig and a current built Radxa checkout at /root/dev/meshpn.\nNo Mac settings change. Without --benchmark: up to seven 1 MiB downloads; functional checks, not a speed benchmark. No mode is comprehensive leak acceptance.'); return;
   }
   console.log('[usb-check] Проверяю окружение Mac и USB-интерфейс');
   check(process.platform === 'darwin', 'run_on_mac');
   const interfaceArgs = args.filter(value => /^--interface=[a-zA-Z0-9]{1,15}$/.test(value));
-  const modeArgs = args.filter(value => ['--crash', '--benchmark'].includes(value));
+  const modeArgs = args.filter(value => ['--crash', '--benchmark', '--smoke'].includes(value));
   const comboArgs = args.filter(value => value.startsWith('--combo-profile='));
   check(interfaceArgs.length === 1 && modeArgs.length <= 1 && comboArgs.length <= 1
     && interfaceArgs.length + modeArgs.length + comboArgs.length === args.length, 'invalid_usb_check_options');
-  const crash = modeArgs[0] === '--crash', benchmark = modeArgs[0] === '--benchmark';
+  const crash = modeArgs[0] === '--crash', benchmark = modeArgs[0] === '--benchmark', smoke = modeArgs[0] === '--smoke';
   const comboProfile = comboArgs[0] ?? null, iface = interfaceArgs[0].split('=')[1];
   const addresses = (os.networkInterfaces()[iface] ?? []).filter(a => a.family === 'IPv4'
     && /^192\.168\.7\./.test(a.address) && !['0', '1', '255'].includes(a.address.split('.')[3]));
@@ -222,7 +223,7 @@ export async function main(args = process.argv.slice(2)) {
   const interrupt = () => { interrupted = true; };
   process.on('SIGINT', interrupt); process.on('SIGTERM', interrupt);
   try {
-    console.log(benchmark
+    console.log(smoke ? 'USB smoke: baseline/native/restored, без отключения wlan0 и fault injection.' : benchmark
       ? 'USB benchmark: 3 цикла legacy/native/legacy, download/upload в 4 потока, CPU Radxa. До 340 MiB тестовых данных; обычно 5–10 минут. Не скачивай другое во время замера.'
       : crash
       ? 'USB crash trial: SIGKILL native-движка, wlan0 остаётся включён. Проверка блокировки IPv4 HTTPS и возврат старого VPN по журналам владения.'
@@ -253,7 +254,7 @@ export async function main(args = process.argv.slice(2)) {
       }
       if (benchmark) console.log(`[usb-check] цикл ${cycle + 1}/3`);
       let runId, finished;
-      const job = ssh(cmd(['--apply', benchmark ? '--usb-benchmark' : crash ? '--usb-crash' : '--usb-peer',
+      const job = ssh(cmd(['--apply', benchmark ? '--usb-benchmark' : crash ? '--usb-crash' : smoke ? '--usb-smoke' : '--usb-peer',
         ...(comboProfile ? [comboProfile] : [])]), { timeout: 1600000, onOutput: out => {
         const match = /^USB_TRIAL_ID=(run-[a-zA-Z0-9]+)$/m.exec(out); if (match) runId = match[1];
       } }).then(r => { finished = r; return r; });
