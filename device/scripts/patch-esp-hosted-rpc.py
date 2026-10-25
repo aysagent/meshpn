@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
-"""Fix interface selection in the pinned ESP-Hosted 1.4.7 protocol getter."""
+"""Fix interface selection and failed-response reads in ESP-Hosted 1.4.7."""
 import argparse
 from pathlib import Path
 
 
 def patch(source: str) -> str:
-    old = "\tresp = wifi_get_protocol(req);"
-    if source.count(old) != 1:
-        raise ValueError("ESP-Hosted protocol getter changed; re-audit the interface patch")
-    return source.replace(old, "\treq->u.wifi_protocol.ifx = ifx;\n" + old, 1)
+    changes = [
+        ("\tresp = wifi_get_protocol(req);",
+         "\treq->u.wifi_protocol.ifx = ifx;\n\tresp = wifi_get_protocol(req);"),
+        ("\tg_h.funcs->_h_memcpy(conf, &resp->u.wifi_config.u, sizeof(wifi_config_t));",
+         "\tif (resp && resp->resp_event_status == SUCCESS) {\n"
+         "\t\tg_h.funcs->_h_memcpy(conf, &resp->u.wifi_config.u, sizeof(wifi_config_t));\n\t}"),
+        ("\t}\n\tsta->num = resp->u.wifi_ap_sta_list.num;",
+         "\t\tsta->num = resp->u.wifi_ap_sta_list.num;\n\t}"),
+    ]
+    for old, new in changes:
+        if source.count(old) != 1:
+            raise ValueError("ESP-Hosted RPC getters changed; re-audit the response/interface patches")
+        source = source.replace(old, new, 1)
+    return source
 
 
 if __name__ == "__main__":

@@ -180,3 +180,106 @@ status/logs, saved images and the diagnostic core. These ignored files may conta
 sensitive memory/network data and are not committed. Build/test/flash consoles:
 `/tmp/meshpn-regression-*.log`, `/tmp/meshpn-restored-flash.log` and
 `/tmp/meshpn-country-core-decoded.log`.
+
+## Continued investigation after the initial report
+
+The user requested continued investigation rather than stopping at the missing
+C6 diagnostics. New findings below do not establish an authentication fix.
+
+### Unsafe protocol query on an unverified C6
+
+The installed ESP-IDF 5.4 C6 archive's `wifi_get_protocol_process` was inspected
+with the RISC-V disassembler. It uses `sh` (a 16-bit store) for the output of the
+public `uint8_t *` getter. ESP-Hosted 1.4.7's slave handler instead allocates a
+single `uint8_t protocol_bitmap`. The installed 5.5.5 C6 archive uses `sb`
+(an 8-bit store). This is a concrete compatibility hazard, though the SDK in
+the board's factory C6 firmware remains unknown.
+
+Espressif tracks the output-width bug as
+[IDFGH-16362 / issue 17502](https://github.com/espressif/esp-idf/issues/17502),
+and lists a slave-side workaround in
+[ESP-Hosted 2.6.6](https://github.com/espressif/esp-hosted-mcu/blob/main/docs/changelog.md).
+An enlarged output buffer on **P4** cannot protect the **C6** stack, where
+the native getter executes.
+
+Production radio sampling now skips protocol queries on unverified factory/old
+C6 firmware. It enables them only after identifying a release at or beyond the
+documented 2.6.6 workaround. Unknown/older firmware returns an unavailable
+diagnostic, rather than executing the unsafe RPC. Native callers use a padded
+16-bit scratch buffer and copy only the successful low byte. Host tests inject
+a two-byte write, cover unavailable firmware, known old 1.4.7, fixed 2.6.6,
+and verify no pre-association protocol RPC.
+
+The actual saved working-night ELF was also disassembled: its radio sampler
+does **not** call the new protocol getter. Its failure in the earlier rollback
+test means this unsafe query alone does not explain every observation. A
+persistent C6 state/calibration issue remains a separate hypothesis.
+
+### Missing RPC responses could crash P4
+
+Two other pinned wrapper getters dereferenced absent responses:
+`rpc_wifi_get_config()` copied from `resp` unconditionally, and
+`rpc_wifi_ap_get_sta_list()` read `resp->...num` outside its success guard.
+Both now preserve the caller's output and return the existing RPC error when
+the response is absent/failed. These changes use the same generated-source
+patch mechanism and do not modify managed sources.
+
+A host harness compiled from the **unmodified real getter** reproduces a null
+read at address `0x68` under ASan/UBSan. The patched real getters pass success,
+failure, missing response, null output, interface selection, and response
+cleanup tests. The full host suite and P4/XIAO builds pass. These are confirmed
+stability defects, not a proven explanation of the latest board failure.
+
+### Additional experiments prepared
+
+1. A temporary P4 image for passive scan, BSSID/channel selection, minimal
+   settings, precomputed WPA2 PSK and a no-PSK control was written. No status
+   could be collected afterward: application USB did not return. The specific
+   crash/startup reason is unknown because no new dump/UART output was obtained.
+   Do not count its planned phases as completed tests.
+2. A separate small P4 project was built with stock ESP-Hosted 1.4.7, only STA
+   and USB CDC, no MeshPN, NAPT, VPN or PSRAM. The stricter association-only
+   variant avoids default STA netif handlers, DHCP and config/protocol getters;
+   a netif variant is retained separately. Prepared phases include BSSID
+   selection, precomputed PSK, modem power-save cycle, clearing fast-connect,
+   explicit channel selection and temporary country readback/restoration.
+3. A C6 diagnostic app was compiled from pinned 1.4.7 with full RF calibration
+   and calibration storage disabled. Its NVS error path preserves NVS rather
+   than erasing it. Before radio initialization it uses IDF's
+   `esp_ota_mark_app_invalid_rollback()` (without reboot), which verifies that
+   another bootable app exists. A 180-second timer then returns to that image.
+   This is a **candidate**, not a hardware-verified recovery guarantee: it
+   requires the new app to reach its prearm code, and a P4/SDIO restart could
+   trigger return before measurements. No C6 image was written. The private
+   copy also fixes two 5.5.5 slave-source build incompatibilities and widens
+   the native protocol getter buffer.
+
+The diagnostic P4 images add an early RTC boot counter: a second startup goes
+to ROM instead of repeatedly running a failing experiment. That guard was
+prepared **after** the USB failure and has not been flashed or hardware-tested.
+Production sources have no temporary experiment task/guard.
+
+### Current hardware blocker
+
+After the additional P4 flash, the selected board remains physically connected
+on USB hub path `2-1.4`, but neither its application nor ROM serial device
+enumerates. The exact agreed **20 attempts at 30-second intervals** were
+completed. An addressed PORT_RESET and an individual PORT_POWER off/on on
+that path also did not restore enumeration; the hub and other ports were not
+reset. The latest production image is built and available for restoration,
+but it has **not** been written after this failure.
+
+BOOT+RESET was requested only after the 20 attempts. A CH343 UART
+`5B91063477` is also present, but its ownership is unconfirmed. Automatic
+approval review rejected opening/reconfiguring that UART because it might
+belong to another device. Ownership/permission was requested separately; the
+rejection was not bypassed and the UART was not opened. Mac Wi-Fi and the
+connected Camic S3 were unchanged.
+
+Follow-up artifacts are in the same ignored regression directory:
+`followup/` (source/image backups and sanitizer evidence), `isolated/`
+(independent P4 test), and `c6-fullcal/` (unflashed C6 candidate). Console files:
+`/tmp/meshpn-followup-*.log`, `/tmp/meshpn-isolated-build55.log`,
+`/tmp/meshpn-c6-fullcal-build.log`. The existing binding remains
+`E8F60AE395D0`. Further on-board experiments require restoring its USB access;
+the new Wi-Fi hypotheses have not been marked as resolved or exhausted.

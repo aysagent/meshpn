@@ -9,6 +9,16 @@
 static portMUX_TYPE s_radio_lock = portMUX_INITIALIZER_UNLOCKED;
 static meshvpn_wifi_radio_t s_radio;
 
+static esp_err_t read_protocol(wifi_interface_t ifx, uint8_t *out)
+{
+    /* Some native IDF libraries write uint16_t through the uint8_t API.
+     * This protects the local caller. Remote C6 needs its own slave fix. */
+    uint16_t storage = 0;
+    esp_err_t err = esp_wifi_get_protocol(ifx, (uint8_t *)&storage);
+    if (err == ESP_OK) *out = (uint8_t)storage;
+    return err;
+}
+
 void meshvpn_wifi_radio_sample(void)
 {
     static int64_t next;
@@ -20,8 +30,6 @@ void meshvpn_wifi_radio_sample(void)
     sample.ps_error = esp_wifi_get_ps(&sample.ps);
     for (unsigned i = 0; i < 2; i++)
         sample.bandwidth_error[i] = esp_wifi_get_bandwidth(i ? WIFI_IF_AP : WIFI_IF_STA, &sample.bandwidth[i]);
-    for (unsigned i = 0; i < 2; i++)
-        sample.protocol_error[i] = esp_wifi_get_protocol(i ? WIFI_IF_AP : WIFI_IF_STA, &sample.protocol[i]);
     sample.uplink_error = esp_wifi_sta_get_ap_info(&sample.uplink);
     sample.peers_error = esp_wifi_ap_get_sta_list(&sample.peers);
 #if CONFIG_IDF_TARGET_ESP32P4
@@ -40,12 +48,24 @@ void meshvpn_wifi_radio_sample(void)
     sample.firmware[0] = firmware.major1;
     sample.firmware[1] = firmware.minor1;
     sample.firmware[2] = firmware.patch1;
+    /* Hosted 2.6.6 added the slave-side workaround for IDFGH-16362. A
+     * factory image with unknown SDK/version may overwrite its own stack
+     * in this getter; a wider buffer on P4 cannot protect that remote stack.
+     * Do not probe this diagnostic until a fixed slave is identified. */
+    bool protocol_safe = firmware_error == ESP_OK &&
+        (firmware.major1 > 2 || (firmware.major1 == 2 &&
+         (firmware.minor1 > 6 || (firmware.minor1 == 6 && firmware.patch1 >= 6))));
+    for (unsigned i = 0; i < 2; i++)
+        sample.protocol_error[i] = protocol_safe ?
+            read_protocol(i ? WIFI_IF_AP : WIFI_IF_STA, &sample.protocol[i]) : ESP_ERR_NOT_SUPPORTED;
     if (firmware_error == ESP_OK && !phy_failed && sample.uplink_error == ESP_OK) {
         phy_error = esp_wifi_sta_get_negotiated_phymode(&sample.phymode);
         if (phy_error != ESP_OK) phy_failed = true;
     }
     sample.phymode_error = sample.uplink_error != ESP_OK ? sample.uplink_error : phy_error;
 #else
+    for (unsigned i = 0; i < 2; i++)
+        sample.protocol_error[i] = read_protocol(i ? WIFI_IF_AP : WIFI_IF_STA, &sample.protocol[i]);
     sample.firmware_error = ESP_ERR_NOT_SUPPORTED;
     static bool phymode_unsupported;
     sample.phymode_error = phymode_unsupported ? ESP_ERR_NOT_SUPPORTED :

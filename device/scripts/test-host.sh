@@ -59,7 +59,7 @@ for hosted in 0 1; do
     device/tests/test_wifi_diag.c -o "$test_dir/wifi-diag-$hosted"
   "$test_dir/wifi-diag-$hosted"
 done
-for variant in 0:0 1:0 1:1; do
+for variant in 0:0 1:0 1:1 1:2 1:3; do
   p4_radio=${variant%:*}; firmware_ok=${variant#*:}
   "$cc" "${flags[@]}" -pthread -DCONFIG_IDF_TARGET_ESP32P4="$p4_radio" -DTEST_FW_OK="$firmware_ok" \
     -Idevice/tests/radio_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \

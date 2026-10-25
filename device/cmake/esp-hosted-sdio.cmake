@@ -59,7 +59,8 @@ if(CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE)
     set_property(TARGET ${meshpn_hosted_lib} PROPERTY SOURCES "${meshpn_transport_replaced}")
     message(STATUS "MeshPN: ESP-Hosted Wi-Fi TX handles DMA allocation failure")
 
-    # 1.4.7 drops the get_protocol() interface argument, reading STA for AP.
+    # 1.4.7 drops get_protocol()'s interface argument and two getters read
+    # missing/failed RPC responses. Patch a copy; keep managed sources intact.
     set(meshpn_rpc_original "${meshpn_hosted_dir}/host/drivers/rpc/wrap/rpc_wrap.c")
     set(meshpn_rpc_generator "${CMAKE_SOURCE_DIR}/scripts/patch-esp-hosted-rpc.py")
     set(meshpn_rpc_generated "${CMAKE_BINARY_DIR}/meshpn-generated/rpc_wrap.c")
