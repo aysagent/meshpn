@@ -173,6 +173,12 @@ legacy service; два последовательных наблюдения п�
 миграции с исправного legacy, не постоянная установка и не разрешение оставить
 работающие тестовые процессы без deadline.
 
+USB trace использует `https://one.one.one.one/cdn-cgi/trace` с закреплённым
+`--resolve one.one.one.one:443:1.1.1.1`, привязкой к USB и обычной проверкой
+сертификата. Так запрос не зависит от DNS Mac и содержит SNI. IP-literal HTTPS
+без SNI не поддерживается текущим transparent codec и закрывается; этот smoke
+не является заявлением поддержки таких приложений. Прямой fallback не включается.
+
 ### Отпечатки из внешнего захвата
 
 `clean-vpn-pcap-fingerprints.mjs` читает classic pcap от tcpdump вне процесса engine:

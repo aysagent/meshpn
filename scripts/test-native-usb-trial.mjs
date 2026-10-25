@@ -137,7 +137,9 @@ function probes({ traceCode = 0, download = '200 1048576 0' } = {}) {
       const type = args[5];
       return response(`;; status: NOERROR,\nexample.com. 60 IN ${type} ${type === 'A' ? '1.1.1.1' : '2606:4700::1111'}\n`);
     }
-    if (args.includes('--resolve')) return response(download);
+    if (args.at(-1).includes('/__down?')) return response(download);
+    assert.equal(new URL(args.at(-1)).hostname, 'one.one.one.one', 'transparent smoke needs SNI');
+    assert.ok(args.includes('one.one.one.one:443:1.1.1.1'), 'trace does not depend on host DNS');
     return response('ip=154.62.226.216\n', traceCode);
   } };
 }

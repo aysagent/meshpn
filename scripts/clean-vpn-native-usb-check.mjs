@@ -53,7 +53,10 @@ export async function probePeer(request, { iface, address, run = execute, now = 
     downloadBytes: 0, exitIp: null, blockedAttempts: 0, recoveryMs: 0, elapsedMs: 0 };
   const curl = ['-q', '-4', '-sS', '--noproxy', '*', '--interface', iface,
     '--connect-timeout', '3', '--max-time', '5'];
-  const trace = () => run('curl', [...curl, '--fail', 'https://1.1.1.1/cdn-cgi/trace'], { timeout: 6500 });
+  // Transparent TLS requires SNI. Pin the address without relying on host DNS,
+  // but retain a real hostname and normal certificate verification.
+  const trace = () => run('curl', [...curl, '--resolve', 'one.one.one.one:443:1.1.1.1',
+    '--fail', 'https://one.one.one.one/cdn-cgi/trace'], { timeout: 6500 });
   const traceOk = r => ok(r) && r.out.split(/\r?\n/).includes(`ip=${EXIT}`);
   const dns = (name, type, tcp) => run('dig', ['-4', '-b', address, `@${GATEWAY}`, name, type,
     '+time=2', '+tries=1', '+noall', '+comments', '+answer', ...(tcp ? ['+tcp'] : [])], { timeout: 4000 });
@@ -110,7 +113,8 @@ export async function probeBenchmark(request, options) {
     upload: { seconds: 0, streams: [] }, elapsedMs: 0 };
   const base = ['-q', '-4', '-sS', '--noproxy', '*', '--interface', iface, '--http1.1', '--connect-timeout', '5'];
   const trace = async () => {
-    const r = await run('curl', [...base, '--max-time', '5', '--fail', 'https://1.1.1.1/cdn-cgi/trace'], { timeout: 6500 });
+    const r = await run('curl', [...base, '--max-time', '5', '--resolve', 'one.one.one.one:443:1.1.1.1',
+      '--fail', 'https://one.one.one.one/cdn-cgi/trace'], { timeout: 6500 });
     return ok(r) && r.out.split(/\r?\n/).includes(`ip=${EXIT}`) ? EXIT : null;
   };
   result.exitBefore = await trace();

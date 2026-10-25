@@ -65,7 +65,11 @@ test('Mac measures four concurrent pinned streams with bounded synthetic upload 
     if (file === 'dig') return { code: 0, reason: null, out: `;; status: NOERROR,\nspeed.cloudflare.com. 60 IN A ${serverIp}` };
     assert.equal(args[0], '-q'); assert.ok(args.includes('en9') && args.includes('--noproxy') && args.includes('--http1.1'));
     assert.ok(!args.includes('-k') && !args.includes('--location'));
-    if (args.at(-1).includes('cdn-cgi/trace')) return { code: 0, reason: null, out: `ip=${exit}\n` };
+    if (args.at(-1).includes('cdn-cgi/trace')) {
+      assert.equal(new URL(args.at(-1)).hostname, 'one.one.one.one');
+      assert.ok(args.includes('one.one.one.one:443:1.1.1.1'));
+      return { code: 0, reason: null, out: `ip=${exit}\n` };
+    }
     assert.ok(args.includes(`speed.cloudflare.com:443:${serverIp}`));
     const upload = args.includes('--data-binary'), warm = args.at(-1).includes('262144');
     if (upload) { assert.ok(Buffer.isBuffer(opts.input)); assert.equal(opts.input.length, 1048576); assert.ok(args.includes('@-')); }
