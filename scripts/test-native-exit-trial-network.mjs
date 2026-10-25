@@ -87,7 +87,7 @@ test('recovery CLI defaults to audit only', () => {
   assert.throws(() => recoverNativeExit(['--force'], open));
 });
 
-test('real netns applies and removes only scoped exit state', { timeout: 20000 }, t => {
+for (const forwarding of ['0', '1']) test(`real netns restores original forwarding=${forwarding} and only scoped exit state`, { timeout: 20000 }, t => {
   if (process.platform !== 'linux' || spawnSync('unshare', ['-Urn', 'ip', 'link', 'set', 'lo', 'up']).status !== 0)
     return t.skip('unprivileged user/network namespaces unavailable');
   const module = new URL('./lib/native-exit-trial-network.mjs', import.meta.url).href;
@@ -95,13 +95,14 @@ test('real netns applies and removes only scoped exit state', { timeout: 20000 }
     import assert from 'node:assert/strict'; import fs from 'node:fs'; import {execFileSync} from 'node:child_process';
     import {openNativeExitTrialNetwork} from ${JSON.stringify(module)};
     const run=(f,a)=>execFileSync(f,a,{encoding:'utf8',timeout:5000}).trim();
+    run('sysctl',['-w','net.ipv4.ip_forward=${forwarding}']);
     run('ip',['link','add','eth0','type','dummy']); run('ip',['link','set','eth0','up']);
     run('iptables',['-A','INPUT','-m','comment','--comment','independent-exit-rule','-j','ACCEPT']);
     const dir='/tmp/cvpn-exit-real-'+process.pid, o=openNativeExitTrialNetwork(dir,{run});
     const p=o.prepare(${JSON.stringify(config)}); assert.match(p.tun,/^cvne/); o.install(); assert.equal(o.audit().stage,'active');
     o.restore(); o.assertAvailable(); o.release();
     assert.match(run('iptables',['-S','INPUT']),/independent-exit-rule/); assert.doesNotMatch(run('iptables',['-S']),/clean-vpn-native-exit-/);
-    assert.doesNotMatch(run('iptables',['-t','nat','-S']),/clean-vpn-native-exit-/); assert.equal(run('sysctl',['-n','net.ipv4.ip_forward']),'0');
+    assert.doesNotMatch(run('iptables',['-t','nat','-S']),/clean-vpn-native-exit-/); assert.equal(run('sysctl',['-n','net.ipv4.ip_forward']),'${forwarding}');
     fs.rmSync(dir,{recursive:true}); console.log('real-exit-owner-pass');
   `], { encoding: 'utf8', timeout: 18000 });
   assert.equal(result.status, 0, result.stderr + result.stdout); assert.match(result.stdout, /real-exit-owner-pass/);

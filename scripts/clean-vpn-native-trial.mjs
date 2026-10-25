@@ -10,6 +10,7 @@ import { deriveTrialConfig, deriveComboTrialConfig, parseComboTrialProfile, summ
   hasUsbRescueConnection, requireTrial as check, runTrial } from './lib/native-radxa-trial.mjs';
 import { inspectBlockedTrialIpv6, validateReleasedTrialIpv6 } from './lib/native-trial-ipv6.mjs';
 import { trialServiceFingerprint } from './lib/native-trial-service.mjs';
+import { legacyTrialBaseline, legacyTrialPaths, validateLegacyTrialDiff } from './lib/native-trial-legacy-baseline.mjs';
 import { trialDiagnostics } from './lib/native-trial-diagnostics.mjs';
 import { waitLegacyReady } from './lib/native-trial-readiness.mjs';
 import { probeNativeHold } from './lib/native-trial-hold.mjs';
@@ -215,11 +216,10 @@ async function adapter(trialCrash = false, comboProfilePath = null) {
       check(locked, 'native_build_or_trial_in_progress');
       check(await system('is-enabled', OLD) === 'enabled', 'old_autostart_required');
       check(await system('is-active', OLD) === 'active', 'old_service_not_active');
-      // A same-checkout trial is allowed only while legacy runtime files are
-      // unchanged from main. New native files do not alter the old entry point.
-      const changed = await run('git', ['diff', '--name-only', '--diff-filter=DMRT', 'origin/main', '--',
-        'scripts', 'native/boring_tls', 'native/tun_linux', 'package.json', 'package-lock.json']);
-      check(changed.split('\n').filter(Boolean).every(f => f.endsWith('.md')), 'legacy_runtime_differs_from_main');
+      const changed = await run('git', ['diff', '--name-only', legacyTrialBaseline, '--', ...legacyTrialPaths]);
+      validateLegacyTrialDiff(changed.split('\n').filter(Boolean),
+        JSON.parse(await run('git', ['show', `${legacyTrialBaseline}:package.json`])),
+        JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')));
       const capabilities = JSON.parse(await run(ENGINE, ['--capabilities']));
       check(capabilities?.engine === 'clean-vpn-native-m1' && capabilities.packet_ipc === false
         && capabilities.dns === 'native-udp-tcp-fixed-upstreams', 'invalid_engine_capabilities');

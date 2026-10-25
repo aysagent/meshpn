@@ -150,3 +150,10 @@ unit. По deadline exit выключается; это не постоянно�
 Preflight принимает kernel `type=local dev=lo` для собственного адреса exit;
 принадлежность адреса выбранному uplink проверяется отдельно. Маршрут к собственному
 адресу через lo нормален и не должен ошибочно блокировать trial.
+
+Legacy runtime сравнивается с фиксированным `ad6746a7fb3b1c58d7d137f20689035bd4ea1f1c`,
+фактически наблюдавшимся на обеих машинах до обновления, а не с движущимся
+`origin/main`. Проверяются legacy entry, библиотеки, native helper/addon sources,
+lockfile и поля package.json кроме npm-команд. Разрешены только отдельные native
+control/lab-модули, не входящие в legacy runtime; изменение production-зависимости
+блокирует trial. Unit/argv fingerprint дополнительно проверяется до stop/restore.
