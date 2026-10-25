@@ -22,15 +22,15 @@ static const char *TAG = "meshvpn_vpn_tls";
 esp_err_t meshvpn_vpn_tls_connect(const char *server, const char *tls_server_name,
                                   const char *ifname, esp_tls_t **out_tls, int *out_fd)
 {
-    if (!server || !ifname || !out_tls || !out_fd) return ESP_ERR_INVALID_ARG;
+    if (!server || !ifname || !out_tls || !out_fd) { errno = EINVAL; return ESP_ERR_INVALID_ARG; }
     uint8_t address[4]; uint16_t port;
-    if (!meshvpn_vpn_endpoint(server, address, &port)) return ESP_ERR_INVALID_ARG;
+    if (!meshvpn_vpn_endpoint(server, address, &port)) { errno = EINVAL; return ESP_ERR_INVALID_ARG; }
     char host[16];
     snprintf(host, sizeof(host), "%u.%u.%u.%u", address[0], address[1], address[2], address[3]);
     struct ifreq iface = {0};
     strlcpy(iface.ifr_name, ifname, sizeof(iface.ifr_name));
     esp_tls_t *tls = esp_tls_init();
-    if (!tls) return ESP_ERR_NO_MEM;
+    if (!tls) { errno = ENOMEM; return ESP_ERR_NO_MEM; }
     esp_tls_cfg_t cfg = {0};
     cfg.if_name = &iface;
     cfg.timeout_ms = 5000;
@@ -53,8 +53,19 @@ esp_err_t meshvpn_vpn_tls_connect(const char *server, const char *tls_server_nam
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
              (unsigned)uxTaskGetStackHighWaterMark(NULL));
     if (result != 1 || esp_tls_get_conn_sockfd(tls, out_fd) != ESP_OK) {
-        ESP_LOGW(TAG, "TLS connect to %s failed (%d)", server, result);
+        esp_tls_error_handle_t handle = NULL;
+        int system_error = 0, tls_error = 0, flags = 0;
+        esp_err_t sdk_error = ESP_FAIL;
+        if (esp_tls_get_error_handle(tls, &handle) == ESP_OK) {
+            esp_tls_get_and_clear_error_type(handle, ESP_TLS_ERR_TYPE_SYSTEM, &system_error);
+            sdk_error = esp_tls_get_and_clear_last_error(handle, &tls_error, &flags);
+        }
+        int connect_error = sdk_error == ESP_ERR_ESP_TLS_CONNECTION_TIMEOUT ? ETIMEDOUT :
+                            system_error ? system_error : EPROTO;
+        ESP_LOGW(TAG, "TLS connect to %s failed (%d): errno=%d sdk=0x%x tls=%d flags=0x%x",
+                 server, result, connect_error, (unsigned)sdk_error, tls_error, (unsigned)flags);
         esp_tls_conn_destroy(tls);
+        errno = connect_error;
         return ESP_FAIL;
     }
     /* esp_tls_conn_new_sync() restores blocking mode after the handshake.
@@ -62,8 +73,10 @@ esp_err_t meshvpn_vpn_tls_connect(const char *server, const char *tls_server_nam
      * record must return WANT_READ instead of blocking up to timeout_ms. */
     int flags = fcntl(*out_fd, F_GETFL, 0);
     if (flags < 0 || fcntl(*out_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-        ESP_LOGW(TAG, "TLS socket non-blocking setup failed: errno=%d", errno);
+        int setup_error = errno;
+        ESP_LOGW(TAG, "TLS socket non-blocking setup failed: errno=%d", setup_error);
         esp_tls_conn_destroy(tls);
+        errno = setup_error;
         return ESP_FAIL;
     }
     *out_tls = tls;

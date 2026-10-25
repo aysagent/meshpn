@@ -564,8 +564,9 @@ static int connect_exit(const meshvpn_vpn_status_t *cfg, esp_tls_t **tls_out)
         struct ifreq iface = {0};
         if (esp_netif_get_netif_impl_name(sta, iface.ifr_name) != ESP_OK) { errno = ENODEV; return -1; }
         esp_tls_t *tls = NULL; int fd = -1;
+        errno = 0;
         esp_err_t err = meshvpn_vpn_tls_connect(cfg->server, cfg->tls_server_name, iface.ifr_name, &tls, &fd);
-        if (err != ESP_OK) { errno = ECONNREFUSED; return -1; }
+        if (err != ESP_OK) { if (!errno) errno = EIO; return -1; }
         if (tls_out) *tls_out = tls;
         state(cfg->generation, "connecting", false, 0);
         return fd;

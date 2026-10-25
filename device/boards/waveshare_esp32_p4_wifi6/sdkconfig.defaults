@@ -26,6 +26,10 @@ CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 CONFIG_CACHE_L2_CACHE_256KB=y
 CONFIG_CACHE_L2_CACHE_LINE_128B=y
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+# Long-lived nonblocking TLS RX/TX uses stable record buffers in PSRAM.
+# P4 has enough PSRAM for the configured 16KiB RX + 4KiB TX records.
+# Avoid the IDF dynamic record-buffer allocation/free path under load.
+# CONFIG_MBEDTLS_DYNAMIC_BUFFER is not set
 # Keep the panic dump within the existing 64 KiB partition. The crashed task
 # is always included; other tasks are selected by priority.
 CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=8
