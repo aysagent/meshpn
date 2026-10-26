@@ -6,6 +6,9 @@
 #include "lwip/pbuf.h"
 #include "lwip/prot/ip4.h"
 #include "sdkconfig.h"
+#if CONFIG_IDF_TARGET_ESP32P4
+#include "meshvpn_ap_probe.h"
+#endif
 #if CONFIG_LWIP_IPV4
 #include "meshvpn_vpn.h"
 #include "lwip_default_hooks.h"
@@ -24,7 +27,12 @@ static void update_vpn_lans(void) {
 #endif
 }
 void meshvpn_net_set_usb_interface(struct netif *netif) { s_usb = netif; update_vpn_lans(); }
-void meshvpn_net_set_ap_interface(struct netif *netif) { s_ap = netif; update_vpn_lans(); }
+void meshvpn_net_set_ap_interface(struct netif *netif) {
+    s_ap = netif; update_vpn_lans();
+#if CONFIG_IDF_TARGET_ESP32P4
+    meshvpn_ap_probe_attach(s_ap, s_sta);
+#endif
+}
 void meshvpn_net_set_sta_interface(struct netif *netif) { s_sta = netif; }
 #if CONFIG_LWIP_IPV4
 struct netif *meshvpn_hook_ip4_route_src(const ip4_addr_t *src, const ip4_addr_t *dst)
@@ -50,6 +58,9 @@ static int discard(struct pbuf *p)
 int meshvpn_hook_ip4_input(struct pbuf *p, struct netif *inp)
 {
     if (!p || !inp) return 0;
+#if CONFIG_IDF_TARGET_ESP32P4
+    meshvpn_ap_probe_input(p, inp);
+#endif
 #if CONFIG_LWIP_IPV4
     if (meshvpn_vpn_input(p, inp)) return 1;
 #endif

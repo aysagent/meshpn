@@ -176,6 +176,7 @@ static bool tunnel_policy(void)
 { LOCK(); bool v = s.enabled && (s.kill_switch || s.connected); UNLOCK(); return v; }
 uint32_t meshvpn_vpn_dns_epoch(void)
 { LOCK(); uint32_t epoch = s_probe_epoch; UNLOCK(); return epoch; }
+bool meshvpn_vpn_is_enabled(void) { return enabled(); }
 struct netif *meshvpn_vpn_route(const ip4_addr_t *src, const ip4_addr_t *dst)
 {
     if (!s_ready || !src || !dst) return NULL;

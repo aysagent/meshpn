@@ -81,6 +81,7 @@ fi
   -Idevice/components/meshvpn_wifi/include -Idevice/components/meshvpn_vpn/include \
   device/tests/test_hosted_tx.c -o "$test_dir/hosted-tx"
 "$test_dir/hosted-tx"
+node device/tests/test-ap-probe.mjs
 "$cc" "${flags[@]}" -pthread -Idevice/tests/led_stubs -Idevice/tests/usb_stubs \
   -Idevice/components/meshvpn_board/include device/tests/test_board_led.c \
   device/components/meshvpn_board/meshvpn_board_led.c -o "$test_dir/board-led"

@@ -42,6 +42,9 @@
 #include "meshvpn_wifi.h"
 #include "web_ui.h"
 #include "sdkconfig.h"
+#if CONFIG_IDF_TARGET_ESP32P4
+#include "meshvpn_ap_probe.h"
+#endif
 
 static const char *TAG = "meshvpn_web";
 static httpd_handle_t s_server, s_redirect;
@@ -250,12 +253,55 @@ static esp_err_t handler_link_download(httpd_req_t *req)
     }
     if (!link) return error(req, "403 Forbidden", "Same-subnet local peer required");
     if (req->content_len) return error(req, "400 Bad Request", "Empty POST required");
+    /* Chunk headers/tails must not turn this into a Nagle/delayed-ACK test.
+     * Explicit nodelay=0 is retained for a per-socket comparison, no reboot. */
+    int nodelay = 1;
+    char query[32], value[4];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+        httpd_query_key_value(query, "nodelay", value, sizeof(value)) == ESP_OK) {
+        if (strcmp(value, "0") && strcmp(value, "1")) return error(req, "400 Bad Request", "nodelay must be 0 or 1");
+        nodelay = value[0] == '1';
+    }
+    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay)))
+        return error(req, "500 Internal Server Error", "Cannot configure test socket");
     httpd_resp_set_type(req, "application/octet-stream");
     httpd_resp_set_hdr(req, "X-MeshPN-Link", link);
     httpd_resp_set_hdr(req, "X-MeshPN-Download-Bytes", "8388608");
     httpd_resp_set_hdr(req, "Connection", "close");
+    httpd_resp_set_hdr(req, "X-MeshPN-TCP-NoDelay", nodelay ? "1" : "0");
     if (!meshvpn_local_download(req, local_download_send, local_download_now)) return ESP_FAIL;
     return httpd_resp_send_chunk(req, NULL, 0);
+}
+static esp_err_t handler_ap_forward_probe(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    if (req->content_len) return error(req, "400 Bad Request", "Empty POST required");
+#if CONFIG_IDF_TARGET_ESP32P4
+    meshvpn_ap_probe_result_t result[2];
+    esp_err_t err = meshvpn_ap_probe_run(result);
+    if (err != ESP_OK) return error(req, "503 Service Unavailable", esp_err_to_name(err));
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddStringToObject(out, "scope", "synthetic AP client .254 -> AP input -> NAPT -> STA -> 1.1.1.1; reply captured before AP ARP; not phone RF delivery or a full TCP session; VPN must be off");
+    const char *names[] = {"udp_dns", "tcp_syn"};
+    for (unsigned i = 0; i < 2; i++) {
+        cJSON *r = cJSON_AddObjectToObject(out, names[i]);
+        cJSON_AddBoolToObject(r, "received", result[i].received);
+        cJSON_AddBoolToObject(r, "checksums_ok", result[i].checksums_ok);
+        cJSON_AddBoolToObject(r, "ok", !result[i].error && result[i].received && result[i].checksums_ok &&
+            (i ? (result[i].flags & 0x12) == 0x12 : !result[i].rcode));
+        cJSON_AddNumberToObject(r, "elapsed_ms", result[i].elapsed_ms);
+        cJSON_AddNumberToObject(r, "error", result[i].error);
+        cJSON_AddNumberToObject(r, "interface_flags", result[i].interface_flags);
+        cJSON_AddNumberToObject(r, "tcp_flags", result[i].flags);
+        cJSON_AddNumberToObject(r, "dns_rcode", result[i].rcode);
+    }
+    char *text = cJSON_PrintUnformatted(out); cJSON_Delete(out);
+    if (!text) return error(req, "503 Service Unavailable", "Diagnostic memory unavailable");
+    httpd_resp_set_type(req, "application/json");
+    err = httpd_resp_sendstr(req, text); free(text); return err;
+#else
+    return error(req, "501 Not Implemented", "AP forwarding probe is available on P4");
+#endif
 }
 static cJSON *body(httpd_req_t *req, size_t limit)
 {
@@ -483,6 +529,23 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(net, "ap_channel", ns.ap_channel);
     cJSON_AddStringToObject(net, "ap_dhcps_dns", ns.ap_dhcps_dns);
     cJSON_AddNumberToObject(net, "ap_ip4_rx", ns.ap_ip4_rx);
+#if CONFIG_IDF_TARGET_ESP32P4
+    meshvpn_ap_flow_t flows[8]; meshvpn_ap_probe_flows(flows);
+    cJSON_AddStringToObject(net, "ap_tcp_flow_scope", "last 8 handshake tuples; stages 1=AP input,2=STA SDIO accepted,4=STA reply input,8=AP IPv4 output,16=AP SDIO accepted; no RF delivery proof; STA stages apply to DIRECT mode");
+    cJSON *flow_list = cJSON_AddArrayToObject(net, "ap_tcp_flows");
+    for (unsigned i = 0; i < 8; i++) if (flows[i].stages) {
+        meshvpn_ap_flow_t *f = &flows[i]; cJSON *v = cJSON_CreateObject(); cJSON_AddItemToArray(flow_list, v);
+        char address[16]; const uint8_t *b = (const uint8_t *)&f->src;
+        snprintf(address, sizeof(address), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+        cJSON_AddStringToObject(v, "source", address); b = (const uint8_t *)&f->dst;
+        snprintf(address, sizeof(address), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+        cJSON_AddStringToObject(v, "destination", address);
+        cJSON_AddNumberToObject(v, "source_port", f->sport); cJSON_AddNumberToObject(v, "destination_port", f->dport);
+        cJSON_AddNumberToObject(v, "mapped_port", f->mapped_port); cJSON_AddNumberToObject(v, "sequence", f->seq);
+        cJSON_AddNumberToObject(v, "stages", f->stages); cJSON_AddNumberToObject(v, "reply_flags", f->reply_flags);
+        cJSON_AddNumberToObject(v, "age_ms", f->age_ms); cJSON_AddBoolToObject(v, "synthetic", f->synthetic);
+    }
+#endif
     cJSON_AddStringToObject(net, "default_ifkey", ns.default_ifkey);
     cJSON_AddStringToObject(net, "usb_dhcps_dns", ns.usb_dhcps_dns);
     cJSON_AddNumberToObject(net, "lan_ip4_rx", ns.lan_ip4_rx);
@@ -1293,6 +1356,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/routing/benchmark", HTTP_POST, handler_ranges_benchmark),
         ROUTE("/api/diag/usb-download", HTTP_POST, handler_usb_download),
         ROUTE("/api/diag/link-download", HTTP_POST, handler_link_download),
+        ROUTE("/api/diag/ap-forward", HTTP_POST, handler_ap_forward_probe),
         ROUTE("/api/diag/usb-bursts", HTTP_GET, handler_usb_bursts),
     };
     for (unsigned i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {

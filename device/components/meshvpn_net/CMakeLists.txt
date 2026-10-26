@@ -3,10 +3,12 @@ set(meshvpn_net_requires
 )
 if(NOT IDF_TARGET STREQUAL "esp32p4")
     list(APPEND meshvpn_net_requires iot_bridge)
+else()
+    set(meshvpn_ap_probe_source "meshvpn_ap_probe.c")
 endif()
 
 idf_component_register(
-    SRCS "meshvpn_net.c" "meshvpn_net_hooks.c" "meshvpn_net_dhcp.c"
+    SRCS "meshvpn_net.c" "meshvpn_net_hooks.c" "meshvpn_net_dhcp.c" ${meshvpn_ap_probe_source}
     INCLUDE_DIRS "include"
     REQUIRES ${meshvpn_net_requires}
 )

@@ -1,0 +1,26 @@
+#pragma once
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include "esp_err.h"
+struct netif;
+struct pbuf;
+typedef struct {
+    uint32_t src, dst, seq;
+    uint16_t sport, dport, mapped_port;
+    uint8_t stages, reply_flags;
+    bool synthetic;
+    uint64_t age_ms;
+} meshvpn_ap_flow_t;
+typedef struct {
+    bool received, checksums_ok;
+    uint8_t flags, rcode;
+    uint32_t elapsed_ms;
+    uint8_t interface_flags; /* AP up/link/NAPT:1/2/4; STA up/link/NAPT:8/16/32 */
+    int error;
+} meshvpn_ap_probe_result_t;
+void meshvpn_ap_probe_attach(struct netif *ap, struct netif *sta);
+void meshvpn_ap_probe_input(const struct pbuf *p, const struct netif *inp);
+void meshvpn_ap_probe_tx(unsigned ifx, const void *frame, size_t len);
+void meshvpn_ap_probe_flows(meshvpn_ap_flow_t out[8]);
+esp_err_t meshvpn_ap_probe_run(meshvpn_ap_probe_result_t out[2]); /* UDP DNS, TCP SYN */

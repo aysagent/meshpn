@@ -87,6 +87,7 @@ const char *meshvpn_vpn_config_error(const meshvpn_vpn_config_t *cfg);
 esp_err_t meshvpn_vpn_start(const meshvpn_vpn_config_t *cfg);
 esp_err_t meshvpn_vpn_stop(void);
 bool meshvpn_vpn_is_connected(void);
+bool meshvpn_vpn_is_enabled(void);
 /* Worker/HTTP task only. Bounded TCP reachability test bound to the VPN netif. */
 esp_err_t meshvpn_vpn_check_internet(void);
 esp_err_t meshvpn_vpn_request_internet_check(void);

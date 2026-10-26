@@ -12,6 +12,12 @@
 
 /* Includes every policy/endpoint transition, not individual probe requests. */
 extern uint32_t meshvpn_vpn_dns_epoch(void);
+#if CONFIG_IDF_TARGET_ESP32P4
+extern void meshvpn_ap_probe_tx(unsigned ifx, const void *frame, size_t len);
+#define TRACE_TX(ifx, frame, len, err) do { if ((err) == ESP_OK) meshvpn_ap_probe_tx(ifx, frame, len); } while (0)
+#else
+#define TRACE_TX(ifx, frame, len, err) ((void)0)
+#endif
 _Static_assert(MESHVPN_HOSTED_TX_SLOTS > 0 && MESHVPN_HOSTED_TX_SLOTS < 256, "slot indices must fit uint8_t");
 typedef struct {
     uint64_t queued_us;
@@ -158,6 +164,7 @@ esp_err_t meshvpn_hosted_tx_submit(unsigned ifx, void *channel, const void *fram
         esp_err_t err = !ifx && !meshvpn_vpn_sta_egress_allowed(frame, len) ? ESP_ERR_INVALID_STATE :
                         send(channel, (void *)frame, len);
         uint64_t elapsed = esp_timer_get_time() - start;
+        TRACE_TX(ifx, frame, len, err);
         portENTER_CRITICAL(&s_lock);
         q->send_us += elapsed;
         if (elapsed > q->send_max_us) q->send_max_us = elapsed;
@@ -232,6 +239,7 @@ static bool service(unsigned ifx)
             portEXIT_CRITICAL(&s_lock);
             err = p->send(p->channel, p->frame, p->len);
             uint64_t us = esp_timer_get_time() - now;
+            TRACE_TX(ifx, p->frame, p->len, err);
             portENTER_CRITICAL(&s_lock);
             s_stats.worker_active = false; q->send_us += us;
             if (us > q->send_max_us) q->send_max_us = us;
