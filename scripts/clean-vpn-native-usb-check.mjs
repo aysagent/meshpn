@@ -103,17 +103,31 @@ export async function probePeer(request, { iface, address, run = execute, now = 
   return result;
 }
 
-export function benchmarkMetrics(result, upload) {
-  const fields = result.out.trim().split(/\s+/), numbers = fields.slice(0, 5).map(Number);
-  const valid = fields.length === 6 && numbers.every(n => Number.isFinite(n) && n >= 0)
+export function benchmarkMetrics(result, upload, startedUnixMs = Date.now()) {
+  const detailed = result.out.includes('|');
+  const fields = detailed ? result.out.trim().split('|') : result.out.trim().split(/\s+/);
+  const numbers = fields.slice(0, 5).map(Number);
+  const valid = result.out.length < 1024 && fields.length === (detailed ? 12 : 6)
+    && fields.slice(0, 5).every(s => /^\d+(?:\.\d+)?$/.test(s))
+    && numbers.every(n => Number.isFinite(n) && n >= 0)
     && Number.isInteger(numbers[0]) && numbers[0] <= 599 && Number.isInteger(numbers[1]) && numbers[1] <= 1000
-    && numbers[4] <= 32 && isIPv4(fields[5]);
+    && numbers[4] <= 32 && (isIPv4(fields[5]) || detailed && fields[5] === '');
+  let timing;
+  if (detailed) {
+    const values = fields.slice(6).map(Number);
+    const good = fields.slice(6).every(s => /^\d+(?:\.\d+)?$/.test(s)) && values.length === 6
+      && values.slice(0, 4).every(n => Number.isFinite(n) && n >= 0 && n <= numbers[4] + 0.1)
+      && values.slice(4).every(n => Number.isInteger(n) && n >= 0 && n <= 65535)
+      && Number.isSafeInteger(startedUnixMs) && startedUnixMs > 0;
+    if (good) timing = { startedUnixMs, connectSeconds: values[0], tlsSeconds: values[1],
+      readySeconds: values[2], firstByteSeconds: values[3], localPort: values[4], remotePort: values[5] };
+  }
   const bytes = numbers[upload ? 3 : 2];
-  if (!valid || !Number.isSafeInteger(bytes) || bytes > (upload ? 1048576 : 8388608))
+  if (!valid || detailed && !timing || !Number.isSafeInteger(bytes) || bytes > (upload ? 1048576 : 8388608))
     return { code: result.code, reason: result.reason ?? 'invalid_metrics', httpStatus: 0,
       tlsVerify: 0, bytes: 0, seconds: 0, remoteIp: null };
   return { code: result.code, reason: result.reason, httpStatus: numbers[0], tlsVerify: numbers[1],
-    bytes, seconds: numbers[4], remoteIp: fields[5] };
+    bytes, seconds: numbers[4], remoteIp: fields[5] || null, ...(timing ? { timing } : {}) };
 }
 
 export async function probeBenchmark(request, options) {
@@ -141,7 +155,7 @@ export async function probeBenchmark(request, options) {
       const args = [...base, '--resolve', `speed.cloudflare.com:443:${result.serverIp}`,
         '--fail', '--output', '/dev/null', '--header', 'Accept-Encoding: identity',
         '--header', 'Cache-Control: no-cache', '--write-out',
-        '%{http_code} %{ssl_verify_result} %{size_download} %{size_upload} %{time_total} %{remote_ip}'];
+        '%{http_code}|%{ssl_verify_result}|%{size_download}|%{size_upload}|%{time_total}|%{remote_ip}|%{time_connect}|%{time_appconnect}|%{time_pretransfer}|%{time_starttransfer}|%{local_port}|%{remote_port}'];
       const warm = benchmarkMetrics(await run('curl', [...args, '--max-time', '8', '--max-filesize', '262144',
         'https://speed.cloudflare.com/__down?bytes=262144'], { timeout: 9500 }), false);
       result.warmup = warm.code === 0 && !warm.reason && warm.httpStatus === 200
@@ -149,11 +163,14 @@ export async function probeBenchmark(request, options) {
       if (result.warmup) {
         for (const upload of [false, true]) {
           const groupBegan = now(), input = upload ? randomBytes(1048576) : undefined;
-          const streams = await Promise.all(Array.from({ length: 4 }, async () => benchmarkMetrics(await run('curl',
+          const streams = await Promise.all(Array.from({ length: 4 }, async () => {
+            const startedUnixMs = Date.now();
+            return benchmarkMetrics(await run('curl',
             [...args, '--max-time', upload ? '30' : '20', '--max-filesize', upload ? '65536' : '8388608',
               ...(upload ? ['--header', 'Expect:', '--header', 'Content-Type: application/octet-stream', '--data-binary', '@-',
                 'https://speed.cloudflare.com/__up'] : ['https://speed.cloudflare.com/__down?bytes=8388608'])],
-            { timeout: upload ? 32000 : 22000, input }), upload)));
+            { timeout: upload ? 32000 : 22000, input }), upload, startedUnixMs);
+          }));
           result[upload ? 'upload' : 'download'] = { seconds: (now() - groupBegan) / 1000, streams };
         }
       }

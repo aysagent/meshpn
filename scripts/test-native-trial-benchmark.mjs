@@ -58,6 +58,24 @@ test('curl metrics are bounded and never include stderr/body', () => {
     assert.equal(r.reason, 'invalid_metrics'); assert.doesNotMatch(JSON.stringify(r), /PRIVATE|body|NaN/);
   }
 });
+test('detailed curl timing preserves early failure and separates TLS from response timeout', () => {
+  const start = 1792994500000;
+  const early = benchmarkMetrics({ code: 28, reason: null, out: '000|0|0|0|5.001||0|0|0|0|0|0' }, true, start);
+  assert.equal(early.reason, null); assert.equal(early.remoteIp, null);
+  assert.equal(early.timing.connectSeconds, 0); assert.equal(early.seconds, 5.001);
+  const waiting = benchmarkMetrics({ code: 28, reason: null,
+    out: `000|0|0|1048576|30.001|${serverIp}|0.01|0.2|0.21|0|49152|443` }, true, start);
+  assert.equal(waiting.timing.tlsSeconds, 0.2); assert.equal(waiting.timing.firstByteSeconds, 0);
+  assert.equal(waiting.timing.localPort, 49152); assert.equal(waiting.bytes, 1048576);
+  const v = good(request); v.upload.seconds = 30.1; v.upload.streams[0] = waiting;
+  assert.equal(validateBenchmarkResult(v, request).status, 'failed');
+  const bad = structuredClone(v); bad.upload.streams[0].timing.secret = 'PRIVATE';
+  assert.throws(() => validateBenchmarkResult(bad, request), /invalid_benchmark_timing/);
+  for (const out of [`200|0|0|1048576|1|${serverIp}|2|0|0|0|42|443`,
+    `200|0|0|1048576|1|${serverIp}|0|0|0|0|65536|443`,
+    `200|0|0|1048576|1|${serverIp}|PRIVATE|0|0|0|42|443`])
+    assert.equal(benchmarkMetrics({ code: 0, reason: null, out }, true, start).reason, 'invalid_metrics');
+});
 test('Mac measures four concurrent pinned streams with bounded synthetic upload and verified exit', async () => {
   let clock = 0, concurrent = 0, peak = 0;
   const calls = [], options = { iface: 'en9', address: '192.168.7.19', now: () => clock, run: async (file, args, opts) => {
@@ -123,6 +141,8 @@ test('real curl HTTPS download/upload uses exact bounded bytes (local TLS fixtur
     } });
   const measured = validateBenchmarkResult(r, request);
   assert.equal(measured.status, 'passed', JSON.stringify(measured));
+  assert.ok(JSON.stringify(r).length < 4096, 'bounded peer file with real detailed metrics');
+  assert.ok(r.upload.streams.every(s => s.timing.tlsSeconds > 0 && s.timing.localPort > 0));
   assert.equal(uploadRequests, 4); assert.equal(uploadBytes, 4194304); assert.equal(downloadBytes, 33816576);
 });
 test('benchmark channel keeps nonce/deadline checks and accepts bounded samples', async t => {

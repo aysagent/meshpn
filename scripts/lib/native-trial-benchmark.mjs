@@ -18,13 +18,21 @@ export function validateBenchmarkResult(v, request) {
       && Array.isArray(group.streams) && [0, 4].includes(group.streams.length), 'invalid_benchmark_group');
     const cap = upload ? 1048576 : 8388608, limit = upload ? 30 : 20;
     const streams = group.streams.map(s => {
-      check(exact(s, ['code', 'reason', 'httpStatus', 'tlsVerify', 'bytes', 'seconds', 'remoteIp'])
+      check(exact(s, ['code', 'reason', 'httpStatus', 'tlsVerify', 'bytes', 'seconds', 'remoteIp',
+        ...(Object.hasOwn(s, 'timing') ? ['timing'] : [])])
         && (s.code === null || Number.isInteger(s.code) && number(s.code, 255))
         && [null, 'timeout', 'spawn_failed', 'output_limit', 'invalid_metrics'].includes(s.reason)
         && Number.isInteger(s.httpStatus) && number(s.httpStatus, 599)
         && Number.isInteger(s.tlsVerify) && number(s.tlsVerify, 1000)
         && Number.isSafeInteger(s.bytes) && number(s.bytes, cap)
         && number(s.seconds, limit + 2) && (s.remoteIp === null || isIPv4(s.remoteIp)), 'invalid_benchmark_stream');
+      if (Object.hasOwn(s, 'timing')) {
+        const t = s.timing;
+        check(exact(t, ['startedUnixMs', 'connectSeconds', 'tlsSeconds', 'readySeconds', 'firstByteSeconds', 'localPort', 'remotePort'])
+          && Number.isSafeInteger(t.startedUnixMs) && t.startedUnixMs > 0
+          && ['connectSeconds', 'tlsSeconds', 'readySeconds', 'firstByteSeconds'].every(k => number(t[k], s.seconds + 0.1))
+          && ['localPort', 'remotePort'].every(k => Number.isInteger(t[k]) && number(t[k], 65535)), 'invalid_benchmark_timing');
+      }
       // Downloads cut at the time limit still measure bytes delivered. Upload
       // requires a successful final response, not merely bytes queued by curl.
       const passed = !s.reason && s.httpStatus === 200 && s.tlsVerify === 0 && s.remoteIp === v.serverIp
