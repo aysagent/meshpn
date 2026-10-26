@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "kind": "clean-vpn-native-runtime-validation",
-  "updatedAt": "2026-10-26T22:28:50.866Z",
+  "updatedAt": "2026-10-26T22:34:53.387Z",
   "scope": "Temporary standalone and rootful container boring-tls runtime. No permanent physical-node installation.",
   "binarySourceFix": "a725ee3",
   "builds": {
@@ -21,8 +21,8 @@
     "dockerArm64": {
       "status": "passed",
       "scope": "Nested real Docker 28.5.2 in dedicated Podman VM; launcher, LAN, resource limits, faults",
-      "artifact": "docker-launcher-auto.json",
-      "artifactSha256": "ecb6afebc7be9bed1621c59dcc2f2014c6389bcb844999c9aeed3328815bf609",
+      "artifact": "docker-ownership-final.json",
+      "artifactSha256": "577fbbb04d5a0c31a6941b1143e262b1d9349414125b293276308bb98d4e03d4",
       "checks": [
         "profiled-tunnel-and-dns-udp-tcp",
         "public-launcher-start-status",
@@ -51,15 +51,18 @@
         "exit-sigterm-clean",
         "public-launcher-owned-remove"
       ],
+      "cleanup": {
+        "status": "passed"
+      },
       "imageId": "sha256:e1942dd095830c121155d9133d63d5a86ef565bf7eb1248ea52dac6f25c43e38",
       "architecture": "arm64",
       "engineSha256": "f0eb2a326e6c67491da4e1d895745b3e3c125c5208fc38446e396cb8e8490d72",
       "capture": {
-        "pcapSha256": "96aa66eb9e2984ab2d693ebe768dd90c2714457048f03388511f5132c51c1da6",
+        "pcapSha256": "ba93fe4e1e17ec6dfaac267fc36bdf7335fb808abaa5175482929f2b997cd1d8",
         "rawPcapRetained": true,
         "counts": {
-          "packets": 336,
-          "selected": 336,
+          "packets": 334,
+          "selected": 334,
           "withoutSyn": 0,
           "fragmented": 0,
           "truncated": 0
@@ -71,7 +74,7 @@
         "ja4": [
           "t13d0915h2_f91f431d341e_54d72502093d"
         ],
-        "sampleJa3": "80a144f0c40598874be3a3d95a1753b2"
+        "sampleJa3": "7ba57486bafb73d2b693777bfe635de6"
       }
     },
     "podmanArm64": {
@@ -102,6 +105,9 @@
         "independent-clienthello-profile-matched",
         "exit-sigterm-clean"
       ],
+      "cleanup": {
+        "status": "passed"
+      },
       "capture": {
         "pcapSha256": "6c309eb24bb16bb78789897b3bf6e7ecaf714fe44a24701886b62cd5111be4c9",
         "rawPcapRetained": false,
@@ -185,7 +191,7 @@
   },
   "compose": {
     "syntax": "passed with Docker Compose v2.40.3",
-    "actualComposePair": "not-run; equivalent launcher pair exercised"
+    "actualComposePair": "passed: template up, both healthy, DNS UDP/TCP, HTTPS, down and owned-network removal; isolated nested Docker ARM64 with fixture upstreams"
   },
   "systemdBootRegression": {
     "status": "passed",

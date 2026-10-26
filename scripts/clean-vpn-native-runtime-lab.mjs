@@ -9,6 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { inspectPcap } from './clean-vpn-pcap-fingerprints.mjs';
+import { cleanupLab } from './clean-vpn-native-runtime-cleanup.mjs';
 
 const cli = JSON.parse(process.env.CVPN_CONTAINER_COMMAND ?? '["podman"]');
 assert.ok(Array.isArray(cli) && cli.length && cli.every(x => typeof x === 'string'));
@@ -241,8 +242,10 @@ try {
   completed = true;
 } catch (caught) { error = caught; report.error = String(caught.message).slice(0, 3000); }
 finally {
-  for (const name of containers.reverse()) try { p(['rm', '-f', name]); } catch (e) { cleanupErrors.push(name); }
-  for (const [type, name, created] of [['volume', volume, volumeCreated], ['network', lanNetwork, lanCreated], ['network', network, networkCreated]]) if (created) try { p([type, 'rm', name]); } catch { cleanupErrors.push(name); }
+  // Use the same name+label ownership check on normal completion as on an
+  // independent recovery. A failed create must never remove a foreign object.
+  try { cleanupLab({ schema: 1, kind: 'native-runtime-lab-ownership', prefix }, p); }
+  catch (caught) { cleanupErrors.push(String(caught.message).slice(0, 500)); }
   fs.rmSync(root, { recursive: true, force: true });
   report.cleanup = cleanupErrors.length ? { status: 'failed', resources: cleanupErrors } : { status: 'passed' };
   report.status = completed && !cleanupErrors.length ? 'passed' : 'failed';
