@@ -92,6 +92,8 @@ node device/tests/test-ap-probe.mjs
 "$test_dir/led-config"
 "$cc" "${flags[@]}" -Idevice/components/meshvpn_web/include device/tests/test_local_download.c -o "$test_dir/local-download"
 "$test_dir/local-download"
+"$cc" "${flags[@]}" -Idevice/components/meshvpn_web/include device/tests/test_local_upload.c -o "$test_dir/local-upload"
+"$test_dir/local-upload"
 "$cc" "${flags[@]}" -Idevice/tests/dhcp_stubs -Idevice/tests/stubs \
   -Idevice/components/meshvpn_net/include device/tests/test_lan_dhcp.c \
   device/components/meshvpn_net/meshvpn_net_dhcp.c -o "$test_dir/lan-dhcp"

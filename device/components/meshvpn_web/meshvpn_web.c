@@ -5,6 +5,7 @@
 #include "meshvpn_wg_json.h"
 #include "meshvpn_vpn_stream.h"
 #include "meshvpn_local_download.h"
+#include "meshvpn_local_upload.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -232,16 +233,15 @@ static esp_err_t handler_usb_download(httpd_req_t *req)
     if (!meshvpn_local_download(req, local_download_send, local_download_now)) return ESP_FAIL;
     return httpd_resp_send_chunk(req, NULL, 0);
 }
-static esp_err_t handler_link_download(httpd_req_t *req)
+static const char *local_link(httpd_req_t *req)
 {
-    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
     struct sockaddr_in local = {0}, peer = {0};
     socklen_t local_len = sizeof(local), peer_len = sizeof(peer);
     int fd = httpd_req_to_sockfd(req);
     if (getsockname(fd, (struct sockaddr *)&local, &local_len) ||
         getpeername(fd, (struct sockaddr *)&peer, &peer_len) ||
         local.sin_family != AF_INET || peer.sin_family != AF_INET)
-        return error(req, "403 Forbidden", "Local IPv4 connection required");
+        return NULL;
     esp_netif_t *interfaces[] = {meshvpn_net_usb(), meshvpn_net_ap(), meshvpn_net_sta()};
     const char *names[] = {"usb", "ap", "sta"};
     const char *link = NULL;
@@ -251,6 +251,33 @@ static esp_err_t handler_link_download(httpd_req_t *req)
             info.ip.addr && local.sin_addr.s_addr == info.ip.addr &&
             (peer.sin_addr.s_addr & info.netmask.addr) == (info.ip.addr & info.netmask.addr)) link = names[i];
     }
+    return link;
+}
+static int local_upload_receive(void *ctx, char *data, size_t len)
+{
+    return httpd_req_recv(ctx, data, len);
+}
+static esp_err_t handler_link_upload(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    const char *link = local_link(req);
+    if (!link) return error(req, "403 Forbidden", "Same-subnet local peer required");
+    if (!req->content_len || req->content_len > MESHVPN_LOCAL_UPLOAD_MAX)
+        return error(req, "400 Bad Request", "Content-Length must be 1..8388608 bytes");
+    size_t received; int64_t start = esp_timer_get_time();
+    if (!meshvpn_local_upload(req, req->content_len, local_upload_receive, local_download_now, &received)) return ESP_FAIL;
+    char result[160];
+    snprintf(result, sizeof(result), "{\"link\":\"%s\",\"bytes\":%u,\"receive_us\":%llu}",
+             link, (unsigned)received, (unsigned long long)(esp_timer_get_time() - start));
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Connection", "close");
+    return httpd_resp_sendstr(req, result);
+}
+static esp_err_t handler_link_download(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    const char *link = local_link(req);
+    int fd = httpd_req_to_sockfd(req);
     if (!link) return error(req, "403 Forbidden", "Same-subnet local peer required");
     if (req->content_len) return error(req, "400 Bad Request", "Empty POST required");
     /* Chunk headers/tails must not turn this into a Nagle/delayed-ACK test.
@@ -1290,7 +1317,7 @@ esp_err_t meshvpn_web_start(void)
     if (err != ESP_OK) return err;
     s_https = s_https_configured;
     httpd_config_t server = HTTPD_DEFAULT_CONFIG();
-    server.max_uri_handlers = 28;
+    server.max_uri_handlers = 32;
     /* HTTP's observed high-water mark leaves >3 KiB spare at 9 KiB.
      * Keep the larger stack for HTTPS handshakes. */
     server.stack_size = s_https ? 12288 : 9216;
@@ -1356,6 +1383,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/routing/benchmark", HTTP_POST, handler_ranges_benchmark),
         ROUTE("/api/diag/usb-download", HTTP_POST, handler_usb_download),
         ROUTE("/api/diag/link-download", HTTP_POST, handler_link_download),
+        ROUTE("/api/diag/link-upload", HTTP_POST, handler_link_upload),
         ROUTE("/api/diag/ap-forward", HTTP_POST, handler_ap_forward_probe),
         ROUTE("/api/diag/usb-bursts", HTTP_GET, handler_usb_bursts),
     };
