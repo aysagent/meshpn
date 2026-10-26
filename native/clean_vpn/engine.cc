@@ -270,7 +270,11 @@ struct Session {
   static ssize_t send_cb(nghttp2_session*,const uint8_t* b,size_t n,int,void* u){
     auto& s=*static_cast<Session*>(u);
     if(n>queue_limit-s.network.size())return NGHTTP2_ERR_WOULDBLOCK;
-    try{s.network.push(Bytes(b,b+n));return n;}catch(...){s.fail("h2_send_callback_failure");return NGHTTP2_ERR_CALLBACK_FAILURE;}
+    // The length is bounded above before allocation. Avoid pointer-range
+    // construction here: GCC 13/aarch64 at -O3 misdiagnoses the inlined moved
+    // vector's destructor as free-nonheap-object. Keep -Werror enabled.
+    try{Bytes frame(n);if(n)std::memcpy(frame.data(),b,n);s.network.push(std::move(frame));return n;}
+    catch(...){s.fail("h2_send_callback_failure");return NGHTTP2_ERR_CALLBACK_FAILURE;}
   }
   static ssize_t data_read(nghttp2_session*,int32_t,uint8_t* b,size_t n,uint32_t*,nghttp2_data_source*,void* u){
     auto& s=*static_cast<Session*>(u);if(s.outgoing.empty()){s.deferred=true;return NGHTTP2_ERR_DEFERRED;}
