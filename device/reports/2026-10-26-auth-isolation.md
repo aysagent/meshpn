@@ -1,5 +1,10 @@
 # P4 Wi-Fi authentication investigation — 26 October 2026
 
+Evening follow-up: the same firmware regained STA/AP connectivity after an
+extended unpowered pause. Phone AP, HTTPS load and reconnect checks now pass;
+root cause is still unknown. See [the recovery report](2026-10-26-wifi-recovered.md).
+The following findings describe the overnight failing state.
+
 Status: **unresolved**. The confirmed defects below have been fixed; none is
 claimed as the cause or a fix for the remaining `authentication_expired (2)`.
 Final checkpoint: production restored and observed at 04:57 MSK. Native C6
