@@ -333,7 +333,7 @@ async function adapter(trialCrash = false, comboProfilePath = null, tlsProfilePa
       if (buildLock !== undefined) { fs.closeSync(buildLock); buildLock = undefined; }
       if (!scratch) return;
       // Exact files in our mkdtemp directory only; no recursive removal.
-      for (const name of ['client.json', 'psk', 'ca.pem', ...(combo ? ['relay.psk'] : [])]) {
+      for (const name of ['client.json', 'psk', 'ca.pem', ...(combo ? ['relay.psk'] : []), ...(tlsProfilePath ? ['tls-profile.json'] : [])]) {
         try { fs.unlinkSync(path.join(scratch, name)); } catch (e) { if (e.code !== 'ENOENT') throw e; }
       }
       fs.rmdirSync(scratch);
