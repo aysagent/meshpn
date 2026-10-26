@@ -1,5 +1,12 @@
 # clean-vpn: цели и порядок дальнейшей работы
 
+Уточнение scope 2026-10-27: постоянную установку/enable на Radxa и VPS пользователь
+отложил. На узлах — только временные проверки с rollback. Новый приоритет:
+[standalone и Docker/Podman runtime, лабораторная приёмка](clean-vpn-native-night-plan.md).
+Ниже сохранён предыдущий план; его пункты постоянной физической миграции пока
+не выполнять.
+
+
 Текущий приоритет 2026-10-26: [повседневный boring-tls с частичным браузерным
 профилем](clean-vpn-native-daily-pilot.md). Профиль Chromium-derived subset
 проверен реальным Radxa↔VPS smoke, engine SIGKILL и отдельным VPS pcap;
