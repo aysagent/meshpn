@@ -42,7 +42,8 @@ static void release_direct(unsigned ifx)
 void meshvpn_hosted_tx_capacity(void)
 {
     portENTER_CRITICAL(&s_lock);
-    TaskHandle_t task = s_task;
+    /* Fast-path SDIO completions need no worker/TCP-IP round trip. */
+    TaskHandle_t task = (s_stats.queue[0].in_use || s_stats.queue[1].in_use) ? s_task : NULL;
     portEXIT_CRITICAL(&s_lock);
     if (task) xTaskNotifyGive(task);
 }
@@ -230,12 +231,26 @@ static bool service(unsigned ifx)
     BaseType_t returned = xQueueSend(s_free[ifx], &slot, 0); assert(returned == pdTRUE);
     return true;
 }
+static esp_err_t drain(void *arg)
+{
+    bool *progress = arg;
+    /* Config/kill-switch changes are applied by this same TCP/IP thread.
+     * Serialize the final epoch check and zero-wait handoff with them. There
+     * is no capacity wait here; only the worker sleeps/retries outside lwIP. */
+    for (unsigned n = 0; n < 16; n++) {
+        bool a = service(0), b = service(1);
+        if (!a && !b) break;
+        *progress = true;
+    }
+    return ESP_OK;
+}
 static void worker(void *arg)
 {
     (void)arg;
     for (;;) {
-        bool a = service(0), b = service(1);
-        if (a || b) continue;
+        bool progress = false;
+        esp_netif_tcpip_exec(drain, &progress);
+        if (progress) continue;
         uint32_t stack_free = uxTaskGetStackHighWaterMark(NULL);
         portENTER_CRITICAL(&s_lock);
         s_stats.worker_stack_free = stack_free;

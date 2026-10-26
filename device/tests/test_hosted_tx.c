@@ -17,6 +17,8 @@ static esp_err_t submit(unsigned ifx, unsigned sequence);
 
 int64_t esp_timer_get_time(void) { return clock_us; }
 uint32_t meshvpn_vpn_dns_epoch(void) { return policy_epoch; }
+esp_err_t esp_netif_tcpip_exec(esp_err_t (*fn)(void *), void *arg)
+{ return fn(arg); }
 bool meshvpn_vpn_sta_egress_allowed(const void *p, size_t n)
 { assert(p && n); return allow_policy; }
 void *heap_caps_calloc(size_t n, size_t size, uint32_t caps)
@@ -144,6 +146,12 @@ int main(void)
     assert(submit(0, 66) == ESP_OK && s_stats.queue[0].in_use == 2);
     result[0] = ESP_OK;
     assert(service(0) && service(0)); assert_empty(); /* 66 must precede 67. */
+    for (unsigned i = 68; i < 88; i++) assert(stage(0, i) == ESP_OK);
+    bool progress = false;
+    assert(esp_netif_tcpip_exec(drain, &progress) == ESP_OK && progress);
+    assert(s_stats.queue[0].in_use == 4); /* Bounded 16-frame TCP/IP callback. */
+    progress = false;assert(esp_netif_tcpip_exec(drain, &progress) == ESP_OK && progress);
+    assert_empty();
     meshvpn_hosted_tx_snapshot(&snapshot);
     assert(snapshot.queue[0].high_water == 64 && snapshot.throttle_starts == 2 && snapshot.throttle_stops == 2);
     for (unsigned i = 0; i < 2; i++) {
