@@ -1,326 +1,241 @@
-# P4 authentication failure: application isolation, 26 October 2026
+# P4 Wi-Fi authentication investigation — 26 October 2026
 
-Status: unresolved; no root-cause fix claimed.
+Status: **unresolved**. The confirmed defects below have been fixed; none is
+claimed as the cause or a fix for the remaining `authentication_expired (2)`.
+Final checkpoint: production restored and observed at 04:57 MSK. Native C6
+SDK/rate/power comparisons remain unsuccessful. The physical-bus/USB-off
+combination did not reach validated native association and is not counted.
+This report supersedes earlier checkpoint statements about unavailable USB,
+unflashed candidates and incomplete C6 backups.
 
-After the complete P4 erase and C6 Wi-Fi settings restore, the user re-entered
-the Wi-Fi profile and still received reason 2. Baseline: `c8b4c8c`, boot 1,
-VPN disabled, about 99 KB internal free memory, no recorded SDIO I/O errors
-or RX drops. C6 firmware itself has not been replaced.
+## Scope and hardware
 
-## On-device experiment
+Only project P4 `E8F60AE395D0` and its on-board C6 `10BDA39E07C0` were programmed.
+The Camic S3 was not touched. Mac Wi-Fi association and router settings were
+not changed. Read-only Mac scans did not call association/disconnect APIs.
+VPN was disabled for production Wi-Fi comparisons.
 
-Only bound P4 `E8F60AE395D0` was programmed. Mac Wi-Fi was unchanged.
-Temporary firmware `47d8764-dirty`, boot 2, replaced the profile manager loop
-with two sequential single connection attempts:
+The Waveshare USB-C includes a **CH343P** UART bridge, serial `5B91063477`.
+It is not a third external adapter. Manufacturer wiring establishes its P4
+UART/reset connection; an esptool read verified the attached P4 eFuse MAC.
+A targeted USB reset of this bridge recovered it from control-transfer timeouts
+and enabled recovery without BOOT/RESET buttons. Before that recovery,
+20 serial recovery attempts at 30-second intervals had already been made.
+The earlier automatic-review ownership rejection was resolved with the
+schematic and actual chip identity, rather than by opening an unidentified port.
+[Waveshare schematic](https://files.waveshare.com/wiki/ESP32-P4-WIFI6/ESP32-P4-WIFI6-datasheet.pdf).
 
-1. Stop Wi-Fi, select STA only, explicitly allow b/g/n with HT20, apply the
-   existing saved credentials, start and connect once. Observe for 45 seconds.
-2. Stop Wi-Fi, select APSTA, set both interfaces to b/g/n HT20, apply the same
-   credentials, start and connect once. Observe for 45 seconds.
+P4 GPIO6 is connected to C6 GPIO2. A temporary UART over this existing wire
+provided native C6 logs and a verified flash-backup channel without soldering.
+The P4 native USB and the CH343 bridge were kept distinct from the other board.
 
-Both returned ESP_OK from the connect request, but neither obtained an IP;
-reason 2 appeared within five seconds and persisted. AP was off in the first
-phase and on in the second. No profile-manager rescans/reconnects or radio
-sampling ran during these attempts. Initial normal bridge setup still ran
-before the experiment; this is not a standalone replacement C6 firmware.
+Two temporary diagnostic mistakes were also identified: a stop/deinit/init
+sequence caused duplicate lwIP `netif_add`; a fatal `ESP_ERROR_CHECK` on an
+unsupported HT40 request caused a boot loop in `auth_followup`. The latest
+saved core confirms the latter. Neither experiment is in production firmware.
+These failures do not establish a hardware fault.
 
-In each phase `esp_wifi_get_config()` returned ESP_OK and exact byte matches
-for the configured SSID and password. Only comparison booleans were logged,
-not credentials. This verifies transfer/readback, not that the AP accepts
-those credentials. Reason 2 can indicate initial authentication timeout or
-an AP-supplied reason, rather than proving a password mismatch:
-[Espressif Wi-Fi driver documentation](https://docs.espressif.com/projects/esp-idf/en/v5.4.4/esp32c6/api-guides/wifi.html).
+## Confirmed code defects and retained fixes
 
-## Interpretation and restoration
+### ESP-Hosted protocol queries
 
-The failure reproduces without the application's connection-management loop,
-without concurrent AP operation and with legacy protocols selected for the
-attempt. This narrows the investigation but does not exonerate all host code,
-the installed C6 firmware, or identify the router as the cause.
+Pinned ESP-Hosted 1.4.7 dropped the AP interface selector in its generated
+`get_protocol` request. The patch preserves it; independent STA/AP settings
+were read back as 7/3 on hardware.
 
-A further temporary C6 station-MAC comparison image was prepared, but automated
-approval review rejected flashing it without explicit consent to that side
-effect. It was **not flashed**; the user was asked separately. No MAC change
-was applied. The candidate is kept only in ignored local artifacts.
+The installed IDF 5.4 C6 Wi-Fi archive also contains a protocol getter that
+writes **two bytes through a `uint8_t *`**, while the pinned Hosted slave
+allocates a one-byte temporary. Disassembly of the installed 5.5.5 archive
+shows a byte write instead. Enlarging a P4 receive buffer cannot protect a
+remote C6 stack. P4 skips these diagnostic RPCs on unverified/old C6 firmware;
+the version gate permits an identified release with the documented workaround.
+Native S3 queries use padded storage. Tests exercise a two-byte mock write and
+the version boundary. See
+[Espressif issue 17502](https://github.com/espressif/esp-idf/issues/17502) and
+[Hosted changelog](https://github.com/espressif/esp-hosted-mcu/blob/main/docs/changelog.md).
 
-Temporary source changes were removed, production firmware rebuilt and
-reflashed. USB admin returned; boot 3 has AP active, saved profile 1, VPN OFF,
-and STA still reporting reason 2. The build string retained `47d8764-dirty`
-from the diagnostic CMake configuration; the restored source and application
-manager are the production implementation. No further erase was performed.
+The preserved working-night P4 ELF has no `esp_wifi_get_protocol` symbol, yet
+that exact binary also failed when rolled back during this investigation.
+The unsafe query is a real defect, but it does not explain all reproductions.
 
-Local evidence: `perf-results/auth-isolation-2026-10-26-o21gwf7e/` contains
-sanitized status, experiment markers and restored status. Flash/build consoles
-are `/tmp/meshpn-auth-isolation-*.log` and `/tmp/meshpn-auth-stock-*.log`.
+### Missing RPC responses
 
-## Approved station-MAC comparison
+The generated `rpc_wifi_get_config` copied a missing response unconditionally;
+`rpc_wifi_ap_get_sta_list` dereferenced one outside its guard. A harness compiled
+from the real unmodified getter reproduced the null read under ASan. The patched
+real functions handle missing replies and pass the corresponding tests.
 
-The user explicitly approved the temporary C6 STA MAC change and restoration.
-A second diagnostic image (`268cc3c-dirty`, boot 4) made two single STA-only
-b/g/n HT20 attempts, each observed for 45 seconds:
+### Concurrent synchronous RPC ownership and lifetime
 
-| Phase | C6 STA MAC readback | Result |
-|---|---|---|
-| Temporary locally administered address | `12:bd:a3:9e:07:c0` | No IP; reason 2 |
-| Restored original address | `10:bd:a3:9e:07:c0` | No IP; reason 2 |
+A deterministic harness of the unmodified `get_response()` reproduced swapped
+responses: caller B (UID 102) received UID 101 and caller A received UID 102.
+Per-UID semaphores did not give ownership of entries in the shared FIFO.
 
-The driver readback matched the requested MAC in both phases; the second also
-matched the original address captured before the experiment. SSID/password
-readback matched in both phases. Configured maximum TX power readback was 80
-quarter-dBm (20 dBm); this is not a measurement of actual RF output.
-No HTTP probe was attempted because neither phase obtained a DHCP address.
+The generated core now stores each synchronous reply in its transaction slot,
+checks UID and response ID, and protects registration/publication/removal with
+one mutex. Semaphore deletion follows slot removal, so a publisher cannot give
+a deleted semaphore. Late, duplicate, orphaned and wrong-ID replies are freed.
+UID allocation, table exhaustion, allocation failures and TX rejection are
+covered. Round trips are not serialized behind a mutex held during waiting.
 
-The changed address did not restore authentication. This does not support an
-explanation limited to router state for the original MAC; it does not establish
-the underlying cause. The host polling session was interrupted by a separate
-admin login; log markers retained on the device recovered the missing interval.
+A local TX-failure reply now carries its request UID and is published after
+TX cleanup. A failed-send log also used an already freed request; it now uses
+the constant message ID. Existing asynchronous RPC and shutdown semantics were
+not redesigned, so this is not a claim that the entire library is memory-safe.
 
-Evidence: `mac-status.ndjson` and `mac-isolation.log` in the same ignored artifact
-directory. Production source contains no diagnostic changes. Mac Wi-Fi and the
-USB Ethernet identity were unchanged throughout.
-After the experiment, the clean production implementation was flashed back:
-boot 5, build label `268cc3c-dirty` (cached at diagnostic configuration time),
-USB admin/host ready, AP active, saved profile 1 retained, VPN OFF, normal
-manager scanning and still reporting reason 2. The restored binary contains
-no `AUTH_ISOLATION` markers. Evidence: `mac-restored-stock.json` and
-`/tmp/meshpn-auth-mac-restore-flash.log`.
+Real-function tests include reverse caller scheduling, wrong/late/duplicate
+replies, timeout/publication races, immediate wakeups, failed allocation/TX,
+full tables, UID rollover and four callers with 4000 transactions. ASan/UBSan,
+a separate TSan run, the complete host suite and the P4 build passed.
 
-## Overnight regression investigation
+Retained fixes: `baee01c`, `b94dc39`, `d82220a`. The latter two include the
+protocol safety gate, missing-reply handling and correlated RPC core. These
+production changes were flashed and observed for 120 seconds: reason 2 remained.
 
-The user requested investigation of our regression without changing the router
-or switching Mac Wi-Fi. Only bound P4 was flashed; C6 firmware was not replaced.
-All following attempts had VPN disabled and retained the saved Wi-Fi profile.
+## Completed Wi-Fi comparisons
 
-| Experiment | Verified condition | Result |
-|---|---|---|
-| Actual saved working-night image `97bb8d4-dirty` | Original binary, not a rebuild; previously measured 34.35–37.67 Mbit/s | 150 s observation, repeated reason 2, no IPv4 |
-| C6 Wi-Fi init with `nvs_enable=0` | Host init setting changed; PHY calibration storage is separate | 120 s, reason 2 |
-| STA only from initial startup | AP never started, normal connection manager disabled; power save disabled before connect | No association/IP |
-| Legacy b/g and b-only | Protocol readbacks 3 and 1 respectively | Both reason 2 |
-| Lower configured TX power | Readbacks 32 then 80 quarter-dBm | Neither restored association |
-| Conservative C6 buffers | Static RX 10, dynamic RX/TX 32, RX BA window 6 | Reason 2 |
-| Post-start b/g/n HT40 | Protocol 7 and bandwidth HT40 confirmed | Reason 2 |
-| SDIO 20 MHz | Driver startup confirms 20000 KHz, original buffers | Reason 2 |
-| APSTA with differing protocol masks | STA 7 / AP 3 independently read back after RPC fix | Reason 2 |
+Reason 2 is not proof of a wrong password. Native C6 logs now show an initial
+`init -> auth (0xb0)`, followed about one second later by
+`auth -> init (0x200)`, before association or DHCP. Espressif describes the
+initial authentication timeout separately from the WPA key handshake.
+[Wi-Fi driver reference](https://docs.espressif.com/projects/esp-idf/en/v5.4.4/esp32c6/api-guides/wifi.html).
 
-The saved working-night application SHA-256 is
-`76649752acdd098944ce9fc3cd6a76f634afb37b6e67f1a20d7249e4f6a52950`.
-Its failure now means reverting recent P4 application changes alone did not
-restore connectivity. It does **not** prove that prior software changes had no
-persistent effect, nor identify the router or hardware as the cause.
+| Comparison | Observed result / limit |
+|---|---|
+| Full P4 flash erase, stock firmware, user-entered profile | Still reason 2 |
+| C6 Wi-Fi settings restore; EN reset; complete USB power removal | Still reason 2 |
+| Rollback to saved working-night `97bb8d4-dirty` image | Still reason 2; no protocol-query symbol in its ELF |
+| Production VPN disabled, healthy internal/DMA memory | Still reason 2; no matching SDIO I/O-error/drop evidence |
+| P4 STA-only, APSTA, no profile-manager retry/scan loop | No association/IP |
+| BGN HT20; supported BG/B requests; runtime power comparisons | No association/IP; accepted/read-back parameters distinguished from requests |
+| Smaller buffers and SDIO 20 MHz versus 40 MHz | No association/IP |
+| C6 station MAC changed to approved temporary LAA and restored | No association/IP; readbacks verified |
+| Pinned BSSID/channel, derived hexadecimal PSK, power-save cycle, fast-connect clear, country US and restoration | Independent P4 STA-only no-DHCP test finished six phases with zero associations |
+| Production with corrected synchronous RPC ownership | No association in 120-second observation |
+| C6 PHY-calibration namespace erase via official API | Returned ESP_OK; original C6 still failed afterward |
+| Temporary Hosted 1.4.7 app built with IDF 5.5.5, full calibration without cache | Native C6 still failed before association |
+| P4 USB HS never initialized during first 30 seconds of association attempt | Still reason 2; native C6 logs captured after USB initialization |
+| Native C6 management/control receive counters | Hundreds of target beacons, around −45 to −49 dBm; no own auth response/ACK observed |
+| Ordinary raw probe requests | API accepted them; completion callbacks reported failure; other stations' ACK/probe traffic was received |
+| Native IDF 5.5.5 C6 program, no Hosted/SDIO/NVS/AP/VPN | Three 35-second phases: original MAC reapplied, own P4 MAC, original restored; zero associations, reason 2 |
+| Native IDF 5.4.1 C6 program, no Hosted/SDIO/NVS | Five 25-second phases also failed; original/own-P4 MAC and accepted runtime power request included |
+| Native 5.5.5 radio-only variant, BT/802.15.4/software coexistence off, PHY limit 10 dBm | Three 20-second phases failed; documented pre-start b-rate disable returned ESP_OK; BGN/BG readbacks 7/3 verified |
 
-Important limitations of attempted settings:
+The native C6 images received the saved profile over a CRC-checked private UART
+packet **only into RAM**. No credentials were embedded in their firmware or
+printed. The successful standalone run explicitly logged a valid 104-byte
+packet and original-image selection at `0x10000`. Earlier standalone attempts
+that failed the diagnostic UART handshake are **not** counted as Wi-Fi tests.
+Initial NUL/noise broke the first readiness parser; framing was repaired before
+collecting the native association results.
 
-- Requesting b/g/n before start sometimes returned protocol `0x47` or retained
-  the previous protocol. ESP_OK alone did not establish the requested mode.
-  Only confirmed readbacks above are treated as valid comparisons.
-- Requesting PMF incapable read back as capable. This was **not** a successful
-  PMF-disabled test.
-- Setting a manual RU country returned ESP_ERR_INVALID_ARG. The initial country
-  was `01`, channels 1–11, automatic policy. No regional A/B conclusion follows.
-- Configured power is not a measurement of RF output. A Mac network-list snapshot
-  did not show MeshPN, but a cached scan cannot establish absence of beacons.
+The attempted protocol bitmaps 6 (GN) and 2 (G) were accepted but read back as 7
+(BGN); those attempts do not prove g-only operation. Espressif documents a
+separate **pre-start** `esp_wifi_config_11b_rate()` call for disabling b rates.
+That documented API is used in the subsequent radio-only/RF comparisons.
+[Espressif protocol-mode guide](https://docs.espressif.com/projects/esp-idf/en/v5.3.1/esp32c6/api-guides/wifi.html).
 
-### Diagnostic restart failure
+The subsequent Hosted C6 RF sequence also reported failed raw-transmit
+completions in AP mode on **channel 1**, after a successful AP start. The API
+accepted the AP-frame send; a following sample showed its callback as failed.
+This is not proof of an over-the-air failure mechanism. The attempted fixed
+6 Mbit/s setting was made after start, outside the documented precondition;
+that rate comparison is **not counted**. Tested sources/binaries and this limit
+are frozen in `c6-fullcal/radio-v251-tested/`; the private source call order has
+been corrected for any future trial, but the corrected rate test was not run.
 
-A temporary stop/deinit/init experiment caused a separate P4 panic. The saved
-core, decoded against its exact diagnostic ELF, reports
-`assert failed: netif_add ... (netif already added)` in task `tiT`, through
-`esp_netif_start_api`. It is a duplicate network-interface registration during
-the experiment, not evidence of the original authentication cause or the older
-TLS heap-corruption crash. This recovery approach was removed; it is not part
-of the production code. The diagnostic image restarted repeatedly before its
-replacement. Core and matching ELF are retained locally.
+The native 5.4 test also started a diagnostic AP. A read-only Mac scan returned
+zero target results but **all 18 cached network names were redacted**, including
+the current association identity. This negative scan cannot establish that C6
+failed to transmit its AP. Mac channel remained 48 / 5 GHz; no association API
+was called.
 
-### Confirmed code defect and retained changes
+The previous saved TLS-crash and later diagnostic-crash stack segments each
+contained one matching Wi-Fi credential candidate. Their SSID/password bytes
+were identical. This is retained-stack evidence, not an old NVS backup or proof
+of acceptance by the AP. Only comparison booleans are in the sanitized summary.
 
-ESP-Hosted 1.4.7 `rpc_wifi_get_protocol()` omitted the interface argument, so
-AP protocol queries actually requested STA. The build now patches a generated
-copy, leaving managed sources intact. A test compiles the real getter against
-different STA/AP responses, checks errors/null output, and rejects an unknown
-dependency shape. Hardware confirmed STA 7 and AP 3 after the fix. This corrects
-diagnostics; it did **not** fix authentication. Previous independent AP AX
-readback claims must be qualified accordingly.
+## C6 preservation, calibration and recovery
 
-Status now distinguishes 802.11 association from IPv4 acquisition and records
-association/disconnect counts, disconnect RSSI and age. Event logs include the
-reason and channel without credentials or additional remote RPCs. Restored
-production boot 16 reports zero association events while disconnect events
-increase with reason 2, around 99 KB internal and 59 KB DMA free. USB admin and
-AP configuration remain available, VPN is OFF, SDIO is back at 40 MHz, and the
-original C6 MAC/profile are retained. All temporary experiment branches were
-removed. P4 and XIAO builds and the complete host suite passed; XIAO was not
-flashed.
+Three full **4 MiB** C6 flash backups were received with per-chunk/global CRC and
+SHA-256 validation. Files were created with mode 0600, flushed and fsynced before
+sending the physical acknowledgment. The first was backup-only; the second was
+taken before the official PHY-namespace erase; the third was backup-only after
+all radio trials. All three operations reported success,
+and return to the original Hosted app was observed afterward.
 
-### Internet research and remaining boundary
+Actual partition names/offsets: NVS `0x9000`, OTA data `0xd000`, PHY init
+`0xf000`, original **`ota_0` at `0x10000`**, experimental `ota_1` at `0x190000`.
+The original is a vendor app, not a partition named `factory`. Its description
+is `network_adapter`, `release/ng-v1.0.2-330-g83efce6`, built with
+`v5.4-dev-3602-ga97a7b0962` in October 2024. Temporary apps were written only
+to the inactive slot. C6 bootloader, partition table and original app matched
+between the first and final backups, including the complete 1.5 MiB original
+application slot. The final comparison JSON records each region separately;
+OTA data, experimental app and NVS are not claimed unchanged.
 
-Espressif documents a separate PHY calibration namespace and the C6-side
-`esp_phy_erase_cal_data_in_nvs()` API before Wi-Fi initialization:
-[C6 RF calibration](https://docs.espressif.com/projects/esp-idf/en/v5.5.5/esp32c6/api-guides/RF_calibration.html).
-The P4 erase and Wi-Fi restore performed earlier are not proof that C6 PHY
-calibration was erased. The installed remote RPC interface exposes no equivalent
-calibration-erasure or raw C6 flash-backup operation.
+The backup-only helper does not initialize or erase NVS. The PHY-clear helper
+waits for the verified backup acknowledgment, calls
+`esp_phy_erase_cal_data_in_nvs()`, reports its result and returns. This is a
+PHY-namespace reset, not a blanket C6 flash/NVS erase.
+[Espressif RF calibration API](https://docs.espressif.com/projects/esp-idf/en/v5.5.5/esp32c6/api-guides/RF_calibration.html).
 
-An upstream fix addresses an RF power-state flag preventing station connection
-under enhanced light sleep:
-[Espressif commit 74dc204](https://github.com/espressif/esp-idf/commit/74dc204).
-It affects radio-side code, not merely the P4 host SDK. Installed factory C6
-firmware version is unknown, so applicability is unproven; disabling power save
-in our comparison did not restore connection. This is a lead, not a diagnosis.
+Temporary 5.5 apps prearm rollback by invalidating their own OTA entry after
+verifying another bootable image. The 5.4 native helper uses its available OTA
+API to verify/select the exact vendor original before Wi-Fi work. Diagnostic
+timers also return to the original. No replacement C6 bootloader was flashed.
 
-Further useful evidence needs C6-side logs/firmware identification or an
-independent capture of authentication management frames. A C6 firmware/calibration
-experiment needs a verified recovery path and factory backup first. The current
-two USB connections do not expose C6 UART; blindly replacing its only reachable
-firmware over SDIO would risk losing that access. No such update was attempted.
-The cause remains unresolved. DIRECT and TLS load tests remain blocked.
+The six-byte stored PHY `cal_mac` prefix must not be compared directly with
+the six-byte station MAC: the C6 default-MAC API exposes an EUI-64 form. The
+observed cache prefix matches that form. It is not evidence of corrupt NVS.
+The SDK cache caller's six-byte output allocation versus the EUI-64 API remains
+a separate potential bounds defect; it is not claimed as this root cause.
 
-Local evidence: `perf-results/p4-regression-2026-10-26-ibiahps3/` contains per-test
-status/logs, saved images and the diagnostic core. These ignored files may contain
-sensitive memory/network data and are not committed. Build/test/flash consoles:
-`/tmp/meshpn-regression-*.log`, `/tmp/meshpn-restored-flash.log` and
-`/tmp/meshpn-country-core-decoded.log`.
+## Evidence and remaining limits
 
-## Continued investigation after the initial report
+Private artifacts are in ignored
+`perf-results/p4-regression-2026-10-26-ibiahps3/`. They include flash images,
+cores and profile-bearing memory, so raw files must not be committed or pasted.
+Selected evidence:
 
-The user requested continued investigation rather than stopping at the missing
-C6 diagnostics. New findings below do not establish an authentication fix.
+- `c6-backup-before-phy{,-clear}.bin` and JSON/checksum/event sidecars;
+- `c6-radio-{uart2,mgmt,usb-never-started,probe-tx}-trial.log`;
+- `c6-standalone-native-mac-trial5.log` (valid native 5.5 comparison);
+- `c6-standalone-sdk54-protocol-trial.log`, `c6-native54-ap-scan.txt`;
+- `c6-native-radioonly-rate-trial.log`, `c6-final-rf-phase-trial.log`;
+- `c6-native-quiet-bus-trial*.log` (count only a validated native run, not a failed UART setup);
+- `followup/` for real RPC harnesses, cores and sanitized credential comparison;
+- `isolated/` for the independent P4 test; `c6-standalone*`, `c6-fullcal/`,
+  `p4-radio-trial/` and `p4-maintenance/` for isolated experimental sources.
 
-### Unsafe protocol query on an unverified C6
+The reproductions narrow the problem beyond the P4 VPN/admin/forwarding path,
+but do not identify the radio hardware, AP, driver or RF environment as the
+cause. Own-frame receive counters are not an independent air capture, and a
+raw TX callback failure does not reveal its internal hardware failure reason.
+The combined physical SDIO-pin/USB-off trial returned to Hosted before a
+validated native profile exchange; both failed setup attempts are retained but
+not counted as successful isolation or failed Wi-Fi association.
 
-The installed ESP-IDF 5.4 C6 archive's `wifi_get_protocol_process` was inspected
-with the RISC-V disassembler. It uses `sh` (a 16-bit store) for the output of the
-public `uint8_t *` getter. ESP-Hosted 1.4.7's slave handler instead allocates a
-single `uint8_t protocol_bitmap`. The installed 5.5.5 C6 archive uses `sb`
-(an 8-bit store). This is a concrete compatibility hazard, though the SDK in
-the board's factory C6 firmware remains unknown.
+No router change, alternate network/computer requirement, Mac reassociation or
+unproven permanent C6 replacement was used as a substitute for diagnosis.
 
-Espressif tracks the output-width bug as
-[IDFGH-16362 / issue 17502](https://github.com/espressif/esp-idf/issues/17502),
-and lists a slave-side workaround in
-[ESP-Hosted 2.6.6](https://github.com/espressif/esp-hosted-mcu/blob/main/docs/changelog.md).
-An enlarged output buffer on **P4** cannot protect the **C6** stack, where
-the native getter executes.
+## Final restoration checkpoint
 
-Production radio sampling now skips protocol queries on unverified factory/old
-C6 firmware. It enables them only after identifying a release at or beyond the
-documented 2.6.6 workaround. Unknown/older firmware returns an unavailable
-diagnostic, rather than executing the unsafe RPC. Native callers use a padded
-16-bit scratch buffer and copy only the successful low byte. Host tests inject
-a two-byte write, cover unavailable firmware, known old 1.4.7, fixed 2.6.6,
-and verify no pre-association protocol RPC.
+Final C6 backup: `c6-backup-after-radio-trials.bin`, mode 0, CRC/SHA verified,
+0600, acknowledgment after fsync, final result `mode=0 err=0`. The selected
+original image offset is `0x10000`. The final comparison against the first backup
+confirms identical bootloader, partition table, PHY-init and original OTA0 app.
+See `c6-final-original-comparison.json`. The production P4 image was rebuilt and restored through the MAC-verified
+flasher without buttons. USB product is again `MeshPN ESP32-P4 HS NCM`, build
+`d82220a-dirty`, boot 1092. A 60-second observer recorded 29 samples, no reboot,
+no successful Wi-Fi association, final reason 2, USB host ready and healthy
+internal/DMA memory (approximately 99/59 KB free). VPN remains disabled for this
+baseline. This is restoration of production software/admin access, **not**
+restoration of internet connectivity. Final snapshots and logs are
+`final-restored-{status.ndjson,logs.txt,summary.json}`.
 
-The actual saved working-night ELF was also disassembled: its radio sampler
-does **not** call the new protocol getter. Its failure in the earlier rollback
-test means this unsafe query alone does not explain every observation. A
-persistent C6 state/calibration issue remains a separate hypothesis.
-
-### Missing RPC responses could crash P4
-
-Two other pinned wrapper getters dereferenced absent responses:
-`rpc_wifi_get_config()` copied from `resp` unconditionally, and
-`rpc_wifi_ap_get_sta_list()` read `resp->...num` outside its success guard.
-Both now preserve the caller's output and return the existing RPC error when
-the response is absent/failed. These changes use the same generated-source
-patch mechanism and do not modify managed sources.
-
-A host harness compiled from the **unmodified real getter** reproduces a null
-read at address `0x68` under ASan/UBSan. The patched real getters pass success,
-failure, missing response, null output, interface selection, and response
-cleanup tests. The full host suite and P4/XIAO builds pass. These are confirmed
-stability defects, not a proven explanation of the latest board failure.
-
-### Additional experiments prepared
-
-1. A temporary P4 image for passive scan, BSSID/channel selection, minimal
-   settings, precomputed WPA2 PSK and a no-PSK control was written. No status
-   could be collected afterward: application USB did not return. The specific
-   crash/startup reason is unknown because no new dump/UART output was obtained.
-   Do not count its planned phases as completed tests.
-2. A separate small P4 project was built with stock ESP-Hosted 1.4.7, only STA
-   and USB CDC, no MeshPN, NAPT, VPN or PSRAM. The stricter association-only
-   variant avoids default STA netif handlers, DHCP and config/protocol getters;
-   a netif variant is retained separately. Prepared phases include BSSID
-   selection, precomputed PSK, modem power-save cycle, clearing fast-connect,
-   explicit channel selection and temporary country readback/restoration.
-3. A C6 diagnostic app was compiled from pinned 1.4.7 with full RF calibration
-   and calibration storage disabled. Its NVS error path preserves NVS rather
-   than erasing it. Before radio initialization it uses IDF's
-   `esp_ota_mark_app_invalid_rollback()` (without reboot), which verifies that
-   another bootable app exists. A 180-second timer then returns to that image.
-   This is a **candidate**, not a hardware-verified recovery guarantee: it
-   requires the new app to reach its prearm code, and a P4/SDIO restart could
-   trigger return before measurements. No C6 image was written. The private
-   copy also fixes two 5.5.5 slave-source build incompatibilities and widens
-   the native protocol getter buffer.
-
-The diagnostic P4 images add an early RTC boot counter: a second startup goes
-to ROM instead of repeatedly running a failing experiment. That guard was
-prepared **after** the USB failure and has not been flashed or hardware-tested.
-Production sources have no temporary experiment task/guard.
-
-### Current hardware blocker
-
-After the additional P4 flash, the selected board remains physically connected
-on USB hub path `2-1.4`, but neither its application nor ROM serial device
-enumerates. The exact agreed **20 attempts at 30-second intervals** were
-completed. An addressed PORT_RESET and an individual PORT_POWER off/on on
-that path also did not restore enumeration; the hub and other ports were not
-reset. The latest production image is built and available for restoration,
-but it has **not** been written after this failure.
-
-BOOT+RESET was requested only after the 20 attempts. A CH343 UART
-`5B91063477` is also present, but its ownership is unconfirmed. Automatic
-approval review rejected opening/reconfiguring that UART because it might
-belong to another device. Ownership/permission was requested separately; the
-rejection was not bypassed and the UART was not opened. Mac Wi-Fi and the
-connected Camic S3 were unchanged.
-
-Follow-up artifacts are in the same ignored regression directory:
-`followup/` (source/image backups and sanitizer evidence), `isolated/`
-(independent P4 test), and `c6-fullcal/` (unflashed C6 candidate). Console files:
-`/tmp/meshpn-followup-*.log`, `/tmp/meshpn-isolated-build55.log`,
-`/tmp/meshpn-c6-fullcal-build.log`. The existing binding remains
-`E8F60AE395D0`. Further on-board experiments require restoring its USB access;
-the new Wi-Fi hypotheses have not been marked as resolved or exhausted.
-
-### Further RPC transaction isolation
-
-Continued the investigation while P4 USB was unavailable. A deterministic harness
-compiled from the pinned **unmodified** `get_response()` demonstrates that two
-synchronous callers can receive each other's responses: after both semaphores
-are posted, scheduling caller B first returns the FIFO's response for A. The
-per-UID semaphore did not establish ownership of the shared receive queue.
-
-The generated P4 RPC core now retains each synchronous response in its own
-transaction slot, checks both UID and response ID, and removes that slot under
-the same mutex used to publish responses. Semaphore destruction happens after
-removal, preventing an RX task from giving an already deleted semaphore.
-Duplicate, orphaned and late replies are freed instead of occupying the next
-caller's queue. UID allocation and transaction registration/removal are protected;
-allocation failure, table exhaustion and failed TX submission clean up the slot.
-This does not serialize entire round trips or hold the mutex while waiting.
-
-The local TX-failure response also lacked its request UID; it now carries that
-UID and is published after TX cleanup. The slave-interface macro's failed-send
-log read a request already freed by `rpc_send_req()`; it now logs the constant
-message ID. These changes are limited to generated copies of pinned 1.4.7
-sources. Existing asynchronous RPC handling and active-call shutdown semantics
-are not redesigned by this patch.
-
-Tests compile the real patched transaction functions and failed-send macro.
-They cover reverse caller scheduling, wrong response ID, duplicate/late replies,
-timeout/delivery races, semaphore allocation failure, TX queue rejection, full
-transaction table, UID rollover, immediate wakeups, and 4 concurrent callers
-with 4000 transactions. ASan/UBSan and a separate ThreadSanitizer run pass;
-the complete host suite and P4 build pass. The original FIFO reproduction and
-the concurrency harness are retained in `followup/`; console evidence is
-`/tmp/meshpn-rpc-core-{host-tests,build,tsan}.log`.
-
-These are additional confirmed communication/stability defects, **not a proven
-fix for authentication**. The updated production image has not been flashed:
-P4 still does not enumerate. Attempts to reach its saved STA addresses `.8`
-and `.10` on the existing home LAN timed out, and the mDNS observation returned
-no address. Mac Wi-Fi was unchanged. The standalone association/DHCP and C6
-full-calibration candidates remain untested; they are not counted as failures
-or successful fixes.
+Restored USB smoke test completed: warm-up plus one measured **8 MiB** local
+HTTP response, measured 56.40 Mbit/s, queue-full delta
+0. No restart was detected. This
+is a short local USB recovery check, not a WAN/Wi-Fi throughput result. Files:
+`final-usb-smoke/usb-local-NHiIlo/result.json` and its report.
