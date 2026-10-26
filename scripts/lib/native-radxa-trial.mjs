@@ -125,7 +125,7 @@ export async function runTrial(io, { holdSeconds = 0, cancelled = () => false, p
     transport: io.transport ?? 'boring-tls',
     stage: 'preflight', checks: {}, rollback: 'not-needed', guard: 'not-checked',
     limitations: ['host-smoke-not-usb-peer-acceptance', 'not-speedtest-or-throughput-benchmark',
-      'not-a-leak-or-crash-test', 'native-client-only-existing-exit', 'no-browser-profile-fidelity'] };
+      'not-a-leak-or-crash-test', 'exit-lifecycle-managed-separately-not-verified-by-client-report', 'no-browser-profile-fidelity'] };
   let stopped = false, tunIndex, session;
   if (coldSmoke) report.limitations.push('cold-start-no-working-legacy-baseline', 'rollback-verifies-configuration-not-legacy-internet');
   if (io.peer) report.usb = { status: 'running', phases: {},

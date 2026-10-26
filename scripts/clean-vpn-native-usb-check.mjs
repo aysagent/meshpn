@@ -199,7 +199,7 @@ export function summarizeBenchmarks(reports) {
       ...(rows.some(r => r.shortSample) ? ['some-transfers-under-3s-startup-overhead-significant'] : []),
       ...(paired.some(p => ['download', 'upload'].some(k => p[k].legacyBeforeAfterRatio > 1.25)) ? ['legacy-baseline-varies-over-25-percent'] : [])],
     limitations: ['not-ookla-or-line-rate', 'one-anycast-IP-not-guaranteed-same-POP', 'client-CPU-includes-warmup-and-RPC-not-kernel-or-exit',
-      'network-variation-not-controlled', 'existing-legacy-exit-unchanged'], reports };
+      'network-variation-not-controlled', 'exit-lifecycle-and-implementation-recorded-separately'], reports };
 }
 
 export async function main(args = process.argv.slice(2)) {

@@ -421,6 +421,8 @@ async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchm
   const report = await runTrial(io, { holdSeconds, coldSmoke, cancelled: () => cancelled, progress: stage => {
     try { writeJson(path.join(directory, 'progress.json'), { stage }); } catch { /* never interrupt rollback */ }
   } });
+  if ((smoke || coldSmoke) && report.usb)
+    report.limitations = report.limitations.filter(s => s !== 'host-smoke-not-usb-peer-acceptance');
   if (trialCrash) report.limitations = report.limitations.filter(s => !['not-a-leak-or-crash-test', 'host-smoke-not-usb-peer-acceptance'].includes(s))
     .concat(['crash-scope-engine-only-not-worker-or-host', 'capture-only-selected-ipv4-https-not-ipv6-or-dns-or-all-egress']);
   if (trialCrash && report.usb) report.usb.scope = 'authenticated-Mac-USB-with-independent-selected-ipv4-uplink-capture';
