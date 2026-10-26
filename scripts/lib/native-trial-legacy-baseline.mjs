@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict';
 export const legacyTrialBaseline = 'ad6746a7fb3b1c58d7d137f20689035bd4ea1f1c';
 export const legacyTrialPaths = ['scripts/clean-vpn.js', 'scripts/lib', 'native/boring_tls', 'native/tun_linux', 'package-lock.json'];
-const tooling = new Set(['scripts/lib/dns-vm-image.mjs', 'scripts/lib/dns-vm-protocol.mjs', 'scripts/lib/vpn-host-boot-vm.mjs']);
+const tooling = new Set(['scripts/lib/dns-vm-image.mjs', 'scripts/lib/dns-vm-protocol.mjs', 'scripts/lib/vpn-host-boot-vm.mjs',
+  'scripts/lib/http2-capture-compare.mjs', 'scripts/lib/http2-prefix-observer.mjs']);
 export function validateLegacyTrialDiff(paths, beforePackage, afterPackage) {
   // None of these control/lab modules is imported by the reviewed legacy entry
   // or its dependencies. Changes to that entry/dependencies still fail closed.
