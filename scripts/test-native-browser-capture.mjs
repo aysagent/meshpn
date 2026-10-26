@@ -19,7 +19,7 @@ const metadata = { schema: 1, id: 'unit-capture', identity: { browser: 'test-fix
 const negotiated = { alpn: 'h2', tlsVersion: 'TLSv1.3', sessionReused: false };
 const u16 = n => { const b = Buffer.alloc(2); b.writeUInt16BE(n); return b; };
 const vector = b => Buffer.concat([u16(b.length), b]);
-function wire({ reverse = false, cipher = 4865, signature = 1027, unsupported = false, compression = null, padding = false, fragmented = false } = {}) {
+function wire({ reverse = false, cipher = 4865, signature = 1027, unsupported = false, compression = null, alps = null, padding = false, fragmented = false } = {}) {
   const ext = (id, bytes) => Buffer.concat([u16(id), vector(bytes)]);
   const name = Buffer.from('secret.capture.invalid');
   let extensions = [ext(0, vector(Buffer.concat([Buffer.from([0]), vector(name)]))),
@@ -29,6 +29,7 @@ function wire({ reverse = false, cipher = 4865, signature = 1027, unsupported = 
   if (reverse) extensions.reverse();
   if (unsupported || compression !== null) extensions.push(ext(27, Buffer.concat([Buffer.from([2]), u16(compression ?? 2)])));
   if (unsupported) extensions.push(ext(50, Buffer.from([0, 2, 4, 3])));
+  if (alps !== null) extensions.push(ext(17613, vector(Buffer.from(alps))));
   if (padding) extensions.push(ext(21, Buffer.alloc(7)));
   const body = Buffer.concat([u16(771), Buffer.alloc(32, 0x33), Buffer.from([0]),
     vector(Buffer.concat([u16(0x2a2a), u16(cipher)])), Buffer.from([1, 0]), vector(Buffer.concat(extensions))]);
@@ -95,6 +96,16 @@ test('capture carries supported Brotli algorithms and refuses unsupported compre
   assert.deepEqual(good.snapshot().assessment.candidateProfile.tls.certificate_compression, [2]);
   assert.equal(bad.snapshot().assessment.status, 'unsupported');
   assert.deepEqual(bad.snapshot().assessment.unsupported, ['certificate-compression-algorithms']);
+});
+
+test('ALPS capture preserves protocols but refuses to invent HTTP2 settings', () => {
+  const capture=new BrowserCapture(metadata);
+  for(let i=0;i<3;i++)capture.add(wire({alps:[2,104,50]}),negotiated);
+  const bundle=capture.snapshot();assert.equal(bundle.assessment.status,'unsupported');
+  assert.deepEqual(bundle.assessment.unsupported,['alps-requires-explicit-http2-settings']);
+  assert.deepEqual(bundle.samples[0].measurement.actual.application_settings,['h2']);
+  assert.equal(bundle.assessment.candidateProfile,null);
+  for(const alps of [[0],[3,104,50],[]])assert.throws(()=>new BrowserCapture(metadata).add(wire({alps}),negotiated));
 });
 
 test('bounded parser and file reader refuse truncation, symlinks and oversized inputs', async t => {

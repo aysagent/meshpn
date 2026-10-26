@@ -7,8 +7,10 @@
 #include "transparent_config.hpp"
 #include "combo.hpp"
 #include "tls_profile.hpp"
+#include "http2_alps.hpp"
 #ifdef CVPN_TEST_PACKET_FD
 #include "certificate_compression_fixture.hpp"
+#include "http2_alps_fixture.hpp"
 #endif
 #include <nlohmann/json.hpp>
 #include <nghttp2/nghttp2.h>
@@ -63,15 +65,16 @@ struct Config {
   std::string peer_ipv4="10.99.0.2";
   uint32_t peer_address=0;
   bool client;
-  bool dns=false;
+  bool dns=false, alps=false;
   std::string address, name, sni, ca, cert, key, tun, secret_path;
   uint16_t port;
   explicit Config(const json& j) {
     check(j.is_object(),"config_object");
-    const std::set<std::string> fields={"version","role","address","port","server_name","sni","ca","cert","key","tun","secret_path","dns","peer_ipv4","peers","tls_profile_path"};
+    const std::set<std::string> fields={"version","role","address","port","server_name","sni","ca","cert","key","tun","secret_path","dns","peer_ipv4","peers","tls_profile_path","alps"};
     for(auto it=j.begin();it!=j.end();++it) check(fields.count(it.key()),"unknown_config_field");
     check(j.at("version")==1,"config_version");
     auto role=j.at("role").get<std::string>(); check(role=="client"||role=="exit","role"); client=role=="client";
+    if(j.contains("alps")) {check(!client && j.at("alps").is_boolean(),"alps_exit_only");alps=j.at("alps");}
     if(j.contains("tls_profile_path")) {
       check(client,"profile_client_only");
       auto path=j.at("tls_profile_path").get<std::string>();check(!path.empty()&&path[0]=='/',"profile_absolute_path");
@@ -228,6 +231,9 @@ struct Session {
   const Config& config;Control& ctl;SSL* ssl;const std::string& secret;
   nghttp2_session* h2=nullptr;
   Queue outgoing, network, packets; Decoder decoder;
+#ifdef CVPN_TEST_PACKET_FD
+  http2_alps_fixture::Observer wire_observer{config.client};
+#endif
   int32_t stream=-1;bool ready=false,deferred=false;
   uint32_t peer_address;
   std::function<bool(uint32_t)> claim;
@@ -247,7 +253,7 @@ struct Session {
         "auth_deadline","h2_ping_timeout","h2_goaway_no_error","h2_goaway_error","h2_reset_no_error","h2_reset_error",
         "h2_peer_end_stream","h2_stream_closed","h2_stream_error","h2_invalid_frame","h2_local_goaway_error",
         "h2_local_reset_error","h2_flooded","h2_no_memory","h2_bad_client_magic","http2_receive",
-        "tls_handshake","tls_write","tls_read","tls_peer_closed","h2_required","tun_write"})
+        "tls_handshake","tls_write","tls_read","tls_peer_closed","h2_required","h2_alps_invalid","tun_write"})
       if(std::strcmp(message,code)==0)return code;
     return "h2_callback_failure";
   }
@@ -367,10 +373,35 @@ struct Session {
     // Internet RTTs. Keep credit bounded by the existing 1 MiB queue limit;
     // step() still stops TLS reads when the packet queue lacks headroom.
     constexpr int32_t receive_window=static_cast<int32_t>(queue_limit);
-    nghttp2_settings_entry settings[]={{NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS,1},{NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE,receive_window},{NGHTTP2_SETTINGS_MAX_HEADER_LIST_SIZE,8192}};
-    h2check(nghttp2_submit_settings(h2,NGHTTP2_FLAG_NONE,settings,3));
-    h2check(nghttp2_session_set_local_window_size(h2,NGHTTP2_FLAG_NONE,0,receive_window));
-    if(config.client){nghttp2_settings_entry no_push{NGHTTP2_SETTINGS_ENABLE_PUSH,0};h2check(nghttp2_submit_settings(h2,NGHTTP2_FLAG_NONE,&no_push,1));}
+    static_assert(queue_limit==1048576,"Audit ALPS/settings policy when the queue limit changes");
+    auto settings=http2_alps::server_settings();
+    const bool negotiated=SSL_has_application_settings(ssl);
+    if(negotiated) {
+      const uint8_t* peer=nullptr;size_t length=0;SSL_get0_peer_application_settings(ssl,&peer,&length);
+#ifdef CVPN_TEST_PACKET_FD
+      http2_alps_fixture::record("alps",config.client,peer,length);
+#endif
+      if(config.client) {
+        check(config.tls_profile && config.tls_profile->alps,"h2_alps_invalid");
+        auto remote=http2_alps::parse(peer,length);
+        if(length)h2check(cvpn_h2_remote_alps(h2,remote.data(),remote.size()));
+      }else {
+        // This version advertises only empty client ALPS. Do not ignore peer settings.
+        check(config.alps && length==0,"h2_alps_invalid");
+        h2check(cvpn_h2_local_alps(h2,settings.data(),settings.size()));
+      }
+    }
+    const auto* profile=config.tls_profile.get();
+    if(config.client && profile && profile->alps) {
+      std::vector<nghttp2_settings_entry> entries;
+      for(const auto& pair:profile->h2_settings)entries.push_back({pair.first,pair.second});
+      h2check(nghttp2_submit_settings(h2,NGHTTP2_FLAG_NONE,entries.data(),entries.size()));
+      h2check(nghttp2_session_set_local_window_size(h2,NGHTTP2_FLAG_NONE,0,profile->h2_window));
+    }else {
+      if(config.client || !negotiated)h2check(nghttp2_submit_settings(h2,NGHTTP2_FLAG_NONE,settings.data(),settings.size()));
+      h2check(nghttp2_session_set_local_window_size(h2,NGHTTP2_FLAG_NONE,0,receive_window));
+      if(config.client){nghttp2_settings_entry no_push{NGHTTP2_SETTINGS_ENABLE_PUSH,0};h2check(nghttp2_submit_settings(h2,NGHTTP2_FLAG_NONE,&no_push,1));}
+    }
     if(config.client)submit_headers({{":method","POST"},{":path","/clean-vpn"},{":scheme","https"},{":authority",config.name},
       {"authorization","Bearer "+token(secret,exporter(ssl),int64_t(time(nullptr))/900)},{"accept","*/*"}},true);
   }
@@ -394,6 +425,9 @@ struct Session {
         int n=SSL_read(ssl,buffer.data(),16384);
         if(n<=0){int e=SSL_get_error(ssl,n);check(e!=SSL_ERROR_ZERO_RETURN,"tls_peer_closed");
           check(e==SSL_ERROR_WANT_READ||e==SSL_ERROR_WANT_WRITE,"tls_read");read_wants_write=e==SSL_ERROR_WANT_WRITE;break;}
+#ifdef CVPN_TEST_PACKET_FD
+        wire_observer.feed(buffer.data(),n);
+#endif
         ssize_t used=nghttp2_session_mem_recv(h2,buffer.data(),n);
         if(failure)throw std::runtime_error(failure);
         check(used!=NGHTTP2_ERR_FLOODED,"h2_flooded");
@@ -496,6 +530,13 @@ static void run_exit(const Config& config,SSL_CTX* context,int listener,int tun,
       auto c=std::make_unique<Connection>(accepted.n);accepted.n=-1;
       int one=1;check(setsockopt(c->fd.n,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(one))==0,"tcp_nodelay");
       c->ssl.reset(SSL_new(context));check(c->ssl&&SSL_set_fd(c->ssl.get(),c->fd.n)==1,"tls_socket");
+      if(config.alps) {
+#ifdef CVPN_TEST_PACKET_FD
+        http2_alps_fixture::server_connection(c->ssl.get());
+#else
+        http2_alps::server_connection(c->ssl.get());
+#endif
+      }
       SSL_set_accept_state(c->ssl.get());SSL_set_mode(c->ssl.get(),SSL_MODE_ENABLE_PARTIAL_WRITE);
       connections.push_back(std::move(c));
       if(owners.empty()&&ctl.state=="listening")ctl.set("handshake");
@@ -607,7 +648,7 @@ int main(int argc,char** argv){
       std::cout<<json({{"version",1},{"engine","clean-vpn-native-m1"},{"transport","boring-tls"},
         {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2"}},
         {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
-        {"experimental_tls_profiles",{{"schema",1},{"scenario","cold"},{"prewire_check",true},{"certificate_compression",{2}},{"transports",{"boring-tls","combo-tls-boring"}}}},
+        {"experimental_tls_profiles",{{"schema",1},{"scenario","cold"},{"prewire_check",true},{"certificate_compression",{2}},{"alps",{{"codepoint",17613},{"http2_settings",true},{"experimental",true}}},{"transports",{"boring-tls","combo-tls-boring"}}}},
         {"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
         {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"destination_policies",{"explicit-ipv4-destinations","public-https"}},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true}}},
           {"combo-tls",{{"roles",{"client","exit"}},{"single_exit_listener",true},{"client_stdio_control",true},{"packet_ipc",false},{"site_provisioning",true}}}}}}).dump()<<"\n";return 0;

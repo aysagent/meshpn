@@ -50,7 +50,7 @@ if (
     "-DCVPN_LOW_MEMORY_BUILD=$cv_low_memory" \
     "-DCVPN_BORINGSSL_SOURCE=$PWD/native/clean_vpn/build-deps-helper/_deps/boringssl-src" \
     "-DCVPN_JSON_SOURCE=$PWD/native/clean_vpn/build-deps-helper/_deps/json-src" &&
-  cmake --build native/clean_vpn/build --target clean-vpn-engine protocol-test dns-wire-test service-notify-test transparent-test transparent-socket-test transparent-replay-test combo-test throughput-test tls-profile-test certificate-compression-test --parallel "$cv_jobs" &&
+  cmake --build native/clean_vpn/build --target clean-vpn-engine protocol-test dns-wire-test service-notify-test transparent-test transparent-socket-test transparent-replay-test combo-test throughput-test tls-profile-test certificate-compression-test http2-alps-test --parallel "$cv_jobs" &&
   ctest --test-dir native/clean_vpn/build --output-on-failure &&
   native/clean_vpn/build/clean-vpn-engine --capabilities
 ) >"$cv_log" 2>&1; then

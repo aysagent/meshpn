@@ -1,0 +1,364 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-alps-checkpoint",
+  "date": "2026-10-26 Europe/Moscow",
+  "status": "bounded-alps-and-profiled-http2-passed",
+  "baseRevision": "fbbfd8390bdccb404636bfc4fcc9e1d90fa25d1e",
+  "sourceSha256": {
+    "native/clean_vpn/http2_alps.hpp": "82e6b587873a99cb0fec60847c850a1daf64382c38334ea1fb2c41dd6d7c420e",
+    "native/clean_vpn/http2_alps_adapter.c": "2a713ed4acacb83a259b5e73119368b923e5578b68040919365cabe2613f1e1c",
+    "native/clean_vpn/http2_alps_adapter.h": "f68f0427c865934b7de3576f31417558f8e92e9e74de0d6aafa26b3cd540ad4c",
+    "native/clean_vpn/tls_profile.hpp": "9e3a220f57885fd7b07713abdc652f5a6415b886e825264bb8c618afe1255bef",
+    "native/clean_vpn/engine.cc": "0ffc647ff760b3eb4b7b942673bf4bcadafbf0afe3ab93c5552692dffc550164",
+    "native/clean_vpn/CMakeLists.txt": "e7bd83fa3b5dbc81de09a64893ab60305af259dfb3ba47aae5cda8b90894c486",
+    "fixtures/native-tls-profiles/cold-alps.json": "15630c0934fc6abfafa73ddf810326185cb7b1048e8ee3dab9c0a52ed5410271"
+  },
+  "linuxAmd64EngineSha256": "cfd1905e80340ff38c21cd12ad43a11765db4fd9273af7d2930bc5b6ea1ca83d",
+  "nghttp2Revision": "534b74b72524e962c18c7146470914632ca7eb2d",
+  "adapter": "private fresh-session settings handlers; revision-guarded; no synthetic ACK or stream-1 reservation",
+  "contract": {
+    "codepoint": 17613,
+    "alpn": "h2",
+    "scenario": "cold",
+    "exitOptIn": "alps:true",
+    "clientOptIn": "tls.application_settings plus explicit http2.settings and connection_window",
+    "clientAlpsPayload": "empty",
+    "serverAlpsSettings": [
+      [
+        3,
+        1
+      ],
+      [
+        4,
+        1048576
+      ],
+      [
+        6,
+        8192
+      ]
+    ],
+    "profileSettingsOrderPreserved": true,
+    "negotiatedSettingsAppliedBeforeStream1": true,
+    "noRedundantAlpsAck": true,
+    "oldClientAndExitFallback": true,
+    "caHostnameAndPskChecksRetained": true
+  },
+  "limits": {
+    "peerAlpsBytes": 45,
+    "peerAlpsFrames": 1,
+    "peerAlpsSettingIds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "localMaxHpackTableBytes": 65536,
+    "localWindowRange": [
+      65535,
+      1048576
+    ],
+    "localHeaderLimitRange": [
+      1024,
+      8192
+    ],
+    "localMaxFrameSize": 16384,
+    "localMaxConcurrentStreams": 1
+  },
+  "validation": {
+    "ctest": {
+      "passed": 10,
+      "failed": 0
+    },
+    "finalNativeProfileSuite": {
+      "passed": 13,
+      "failed": 0,
+      "skipped": 0,
+      "containerNetwork": "none"
+    },
+    "captureBuildAndJaSuite": {
+      "passed": 21,
+      "failed": 0,
+      "containerNetwork": "none"
+    },
+    "sanitizers": {
+      "status": "passed",
+      "platform": "macOS arm64",
+      "instrumented": [
+        "ALPS parser",
+        "C adapter",
+        "pinned nghttp2 static library"
+      ],
+      "limitation": "Unit integration only, not the full TLS engine"
+    },
+    "productionBinary": {
+      "CVPN_TEST_ALPS": false,
+      "CVPN_TEST_H2_OBSERVER": false,
+      "fixture_h2": false,
+      "fixture_compressed_certificate_sent": false
+    },
+    "handshakes": [
+      "negotiated ALPS",
+      "non-ALPS server fallback",
+      "legacy client to ALPS exit",
+      "Brotli",
+      "HRR",
+      "combo Boring branch"
+    ],
+    "negativeTests": [
+      "ACK in ALPS",
+      "nonzero stream",
+      "truncation",
+      "extra frame",
+      "invalid initial window",
+      "unsupported setting",
+      "duplicate setting",
+      "nonempty client ALPS",
+      "wrong CA",
+      "wrong hostname",
+      "wrong exporter-bound PSK"
+    ],
+    "lifecycle": [
+      "reconnect",
+      "blackhole",
+      "packet backpressure",
+      "bounded descriptors"
+    ],
+    "observations": [
+      {
+        "alps": false,
+        "h2": [
+          {
+            "kind": "wire",
+            "receiver": "client",
+            "hex": "000012040000000000000300000001000400100000000600002000"
+          },
+          {
+            "kind": "wire",
+            "receiver": "client",
+            "hex": "000004080000000000000f0001"
+          },
+          {
+            "kind": "wire",
+            "receiver": "exit",
+            "hex": "00001e040000000000000100002000000200000000000300000001000400080000000600001000"
+          },
+          {
+            "kind": "wire",
+            "receiver": "exit",
+            "hex": "000004080000000000000b0001"
+          },
+          {
+            "kind": "wire",
+            "receiver": "client",
+            "hex": "000000040100000000"
+          }
+        ],
+        "tls": {
+          "schema": 1,
+          "kind": "clean-vpn-native-tls-observation",
+          "status": "matched",
+          "profileId": "synthetic-cold-alps",
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4867,
+              4866
+            ],
+            "supported_groups": [
+              29,
+              23
+            ],
+            "key_share_groups": [
+              29
+            ],
+            "signature_algorithms": [
+              1027,
+              2052,
+              2053,
+              2054
+            ],
+            "alpn": [
+              "h2"
+            ],
+            "supported_versions": [
+              772
+            ],
+            "extension_types": [
+              43,
+              16,
+              0,
+              45,
+              10,
+              13,
+              51,
+              27,
+              17613
+            ],
+            "grease": true,
+            "certificate_compression": [
+              2
+            ],
+            "application_settings": [
+              "h2"
+            ]
+          },
+          "keyShares": [
+            {
+              "group": 64250,
+              "length": 1
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "7d957c2d2f57c69441b00f052e8eb174",
+          "ja3String": "771,4865-4867-4866,43-16-0-45-10-13-51-27-17613,29-23,",
+          "ja3Sorted": "9f08faf90d88226b5d0b4f8c665622a7",
+          "ja4": {
+            "fingerprint": "t13d0309h2_55b375c5d22e_2e04b06d57a7",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d0309h2_55b375c5d22e_26399eb93582",
+            "ja4_a": "t13d0309h2",
+            "ja4_b": "55b375c5d22e",
+            "ja4_c": "2e04b06d57a7",
+            "ja4_c_alt_sni_alpn_in_hash": "26399eb93582",
+            "raw_r": "t13d0309h2_1301,1302,1303_000a,000d,001b,002b,002d,0033,44cd_0403,0804,0805,0806",
+            "raw_r_alt_sni_alpn_in_segment": "t13d0309h2_1301,1302,1303_0000,000a,000d,001b,002b,002d,0033,44cd_0403,0804,0805,0806",
+            "raw_o": "t13d0309h2_1301,1303,1302_002b,0010,0000,002d,000a,000d,0033,001b,44cd_0403,0804,0805,0806"
+          },
+          "differences": [],
+          "scope": "first-cold-ClientHello-fields-only-not-browser-or-HTTP2-equivalence"
+        }
+      },
+      {
+        "alps": true,
+        "h2": [
+          {
+            "kind": "alps",
+            "receiver": "client",
+            "hex": "000012040000000000000300000001000400100000000600002000"
+          },
+          {
+            "kind": "alps",
+            "receiver": "exit",
+            "hex": ""
+          },
+          {
+            "kind": "wire",
+            "receiver": "client",
+            "hex": "000004080000000000000f0001"
+          },
+          {
+            "kind": "wire",
+            "receiver": "exit",
+            "hex": "00001e040000000000000100002000000200000000000300000001000400080000000600001000"
+          },
+          {
+            "kind": "wire",
+            "receiver": "exit",
+            "hex": "000004080000000000000b0001"
+          },
+          {
+            "kind": "wire",
+            "receiver": "client",
+            "hex": "000000040100000000"
+          }
+        ],
+        "tls": {
+          "schema": 1,
+          "kind": "clean-vpn-native-tls-observation",
+          "status": "matched",
+          "profileId": "synthetic-cold-alps",
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4867,
+              4866
+            ],
+            "supported_groups": [
+              29,
+              23
+            ],
+            "key_share_groups": [
+              29
+            ],
+            "signature_algorithms": [
+              1027,
+              2052,
+              2053,
+              2054
+            ],
+            "alpn": [
+              "h2"
+            ],
+            "supported_versions": [
+              772
+            ],
+            "extension_types": [
+              17613,
+              27,
+              16,
+              51,
+              10,
+              13,
+              45,
+              0,
+              43
+            ],
+            "grease": true,
+            "certificate_compression": [
+              2
+            ],
+            "application_settings": [
+              "h2"
+            ]
+          },
+          "keyShares": [
+            {
+              "group": 10794,
+              "length": 1
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "c332e1cabd5c807693264d5bc1863cf3",
+          "ja3String": "771,4865-4867-4866,17613-27-16-51-10-13-45-0-43,29-23,",
+          "ja3Sorted": "9f08faf90d88226b5d0b4f8c665622a7",
+          "ja4": {
+            "fingerprint": "t13d0309h2_55b375c5d22e_2e04b06d57a7",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d0309h2_55b375c5d22e_26399eb93582",
+            "ja4_a": "t13d0309h2",
+            "ja4_b": "55b375c5d22e",
+            "ja4_c": "2e04b06d57a7",
+            "ja4_c_alt_sni_alpn_in_hash": "26399eb93582",
+            "raw_r": "t13d0309h2_1301,1302,1303_000a,000d,001b,002b,002d,0033,44cd_0403,0804,0805,0806",
+            "raw_r_alt_sni_alpn_in_segment": "t13d0309h2_1301,1302,1303_0000,000a,000d,001b,002b,002d,0033,44cd_0403,0804,0805,0806",
+            "raw_o": "t13d0309h2_1301,1303,1302_44cd,001b,0010,0033,000a,000d,002d,0000,002b_0403,0804,0805,0806"
+          },
+          "differences": [],
+          "scope": "first-cold-ClientHello-fields-only-not-browser-or-HTTP2-equivalence"
+        }
+      }
+    ],
+    "observationScope": "TCP observer measures only first ClientHello; separate test-only SSL_read observer captures H2 SETTINGS/WINDOW_UPDATE before nghttp2, never headers or packet payload"
+  },
+  "physicalHostsTouched": false,
+  "macNetworkSettingsChanged": false,
+  "limitations": [
+    "synthetic profile, not exact Chrome",
+    "HTTP2 capture not inferred from ClientHello",
+    "17513 and ACCEPT_CH unsupported",
+    "no arbitrary peer ALPS frames/settings",
+    "no headers/HPACK strategy or priority mimicry",
+    "no resumption or 0-RTT",
+    "browser_profiles remains false",
+    "other captured Chromium TLS gaps remain"
+  ],
+  "next": "Measure browser H2 SETTINGS/windows/headers at the capture endpoint, compare to native, then select a supported browser build and explicit compatibility policy"
+}

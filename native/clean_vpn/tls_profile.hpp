@@ -3,6 +3,9 @@
 // opaque extension replay, trust overrides or browser-wide fidelity claims.
 #include "transparent_hello.hpp"
 #include "certificate_compression.hpp"
+#ifdef CVPN_TEST_PACKET_FD
+#include "http2_alps_fixture.hpp"
+#endif
 #include <nlohmann/json.hpp>
 #include <openssl/ssl.h>
 #include <openssl/sha.h>
@@ -40,12 +43,16 @@ struct Profile {
   std::string id, sha256;
   std::vector<uint16_t> ciphers, groups, shares, signatures, extensions;
   bool optional_padding=false;
-  bool brotli=false;
+  bool brotli=false, alps=false;
+  std::vector<std::pair<int32_t,uint32_t>> h2_settings;
+  int32_t h2_window=1048576;
   Bytes alpn;
   bool grease_enabled, permute, ech, ocsp, sct;
   uint16_t minimum;
   explicit Profile(const json& j) : document(j) {
-    fields(j,{"schema","kind","id","scenario","tls"});
+    std::set<std::string> root_fields={"schema","kind","id","scenario","tls"};
+    if(j.contains("http2"))root_fields.insert("http2");
+    fields(j,root_fields);
     require(j.at("schema").is_number_integer() && j.at("schema")==1 &&
       j.at("kind")=="clean-vpn-native-tls-profile" && j.at("scenario")=="cold", "profile_schema");
     id=j.at("id").get<std::string>(); require(!id.empty() && id.size()<=64,"profile_id");
@@ -54,7 +61,37 @@ struct Profile {
     std::set<std::string> tls_fields={"min_version","max_version","cipher_suites","supported_groups","key_share_groups",
       "signature_algorithms","alpn","grease","permute_extensions","ech_grease","ocsp","sct","extension_types","optional_extension_types"};
     if(t.contains("certificate_compression"))tls_fields.insert("certificate_compression");
+    if(t.contains("application_settings"))tls_fields.insert("application_settings");
     fields(t,tls_fields);
+    if(t.contains("application_settings")) {
+      require(t.at("application_settings")==json::array() || t.at("application_settings")==json::array({"h2"}),"profile_alps_protocol");
+      alps=!t.at("application_settings").empty();
+    }
+    require(alps==j.contains("http2"),"profile_alps_http2_required");
+    if(alps) {
+      const auto& h=j.at("http2");fields(h,{"settings","connection_window"});
+      const auto& w=h.at("connection_window");
+      require(w.is_number_integer() && w>=65535 && w<=1048576,"profile_h2_window");h2_window=w.get<int32_t>();
+      const auto& settings=h.at("settings");
+      require(settings.is_array() && settings.size()>=4 && settings.size()<=6,"profile_h2_settings");
+      std::set<int> seen;
+      for(const auto& pair:settings) {
+        require(pair.is_array() && pair.size()==2 && pair[0].is_number_integer() && pair[0]>=1 && pair[0]<=6 &&
+          pair[1].is_number_integer() && pair[1]>=0 && pair[1]<=UINT32_MAX,"profile_h2_setting");
+        int id=pair[0].get<int>();auto value=pair[1].get<uint32_t>();
+        require(seen.insert(id).second,"profile_h2_duplicate");
+        switch(id) {
+          case 1: require(value<=65536,"profile_h2_hpack");break;
+          case 2: require(value==0,"profile_h2_push");break;
+          case 3: require(value==1,"profile_h2_streams");break;
+          case 4: require(value>=65535 && value<=1048576,"profile_h2_window");break;
+          case 5: require(value==16384,"profile_h2_frame");break;
+          case 6: require(value>=1024 && value<=8192,"profile_h2_headers");break;
+        }
+        h2_settings.push_back({id,value});
+      }
+      for(int id:{2,3,4,6})require(seen.count(id),"profile_h2_required");
+    }
     if(t.contains("certificate_compression")) {
       auto algorithms=ids(t.at("certificate_compression"),1,true);
       require(algorithms.empty() || algorithms==std::vector<uint16_t>{2},"profile_compression_unsupported");
@@ -67,13 +104,14 @@ struct Profile {
     shares=ids(t.at("key_share_groups"),4,true); signatures=ids(t.at("signature_algorithms"),32);
     extensions=ids(t.at("extension_types"),32);
     require(brotli==(std::find(extensions.begin(),extensions.end(),27)!=extensions.end()),"profile_compression_extension");
+    require(alps==(std::find(extensions.begin(),extensions.end(),17613)!=extensions.end()),"profile_alps_extension");
     auto optional=ids(t.at("optional_extension_types"),1,true);
     require(optional.empty() || optional==std::vector<uint16_t>{21},"profile_optional_extensions");
     optional_padding=!optional.empty();
     require(!optional_padding || std::find(extensions.begin(),extensions.end(),21)==extensions.end(),"profile_optional_overlap");
     require(std::find(extensions.begin(),extensions.end(),0)!=extensions.end(),"profile_sni_required");
     // No PSK/early_data/raw extras. The stack must implement every advertised extension.
-    for (auto n:extensions) require(n!=41 && n!=42 && n!=50 && n!=17513 && n!=17613,"profile_extension_unsupported");
+    for (auto n:extensions) require(n!=41 && n!=42 && n!=50 && n!=17513,"profile_extension_unsupported");
     for (auto key:{"grease","permute_extensions","ech_grease","ocsp","sct"}) require(t.at(key).is_boolean(),"profile_boolean");
     grease_enabled=t.at("grease"); permute=t.at("permute_extensions"); ech=t.at("ech_grease"); ocsp=t.at("ocsp"); sct=t.at("sct");
     require(t.at("alpn")==json::array({"h2"}) || t.at("alpn")==json::array({"h2","http/1.1"}),"profile_alpn");
@@ -109,6 +147,13 @@ struct Profile {
   void connection(SSL* ssl) const {
     require(SSL_set1_client_key_shares(ssl,shares.data(),shares.size())==1,"profile_key_shares");
     SSL_set_enable_ech_grease(ssl,ech);
+    if(alps) {
+      SSL_set_alps_use_new_codepoint(ssl,1);
+#ifdef CVPN_TEST_PACKET_FD
+      if(!http2_alps_fixture::client_connection(ssl))
+#endif
+      require(SSL_add_application_settings(ssl,reinterpret_cast<const uint8_t*>("h2"),2,nullptr,0)==1,"profile_alps_register");
+    }
   }
   // Check the SAME generated ClientHello that will be sent, before any TLS byte
   // reaches the socket. Full native extension semantics remain in BoringSSL.
@@ -133,6 +178,10 @@ struct Profile {
     if(permute){std::sort(wanted.begin(),wanted.end());std::sort(actual.begin(),actual.end());}
     require(wanted==actual,"profile_wire_extensions");
     auto ext=[&](uint16_t type) { require(ex.count(type),"profile_wire_missing_extension");return ex.at(type); };
+    if(alps) {
+      auto [o,len]=ext(17613);
+      require(len==5 && u16(p,o)==3 && p[o+2]==2 && p[o+3]=='h' && p[o+4]=='2',"profile_wire_alps");
+    }
     if(brotli) {
       auto [o,len]=ext(27);
       require(len==3 && p[o]==2 && u16(p,o+1)==2,"profile_wire_compression");
@@ -165,7 +214,9 @@ struct Profile {
       {"verification","generated-first-ClientHello-before-wire"},
       {"certificate_compression",{{"algorithms",brotli?json::array({2}):json::array()},
         {"max_certificate_bytes",certificate_compression::certificate_limit},{"decoder_memory_bytes",certificate_compression::memory_limit}}},
-      {"limitations",{"not-full-browser-profile","no-HTTP2-or-HTTP-mimicry","no-resumption-or-0RTT","HRR-layout-not-profile-verified","no-ALPS"}}};
+      {"http2",alps?document.at("http2"):json(nullptr)},
+      {"alps",{{"enabled",alps},{"codepoint",17613},{"client_payload","empty"}}},
+      {"limitations",{"not-full-browser-profile","no-HTTP-header-or-priority-mimicry","no-resumption-or-0RTT","HRR-layout-not-profile-verified"}}};
   }
 };
 } // namespace cvpn::profile

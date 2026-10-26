@@ -54,7 +54,7 @@ test('profile validation is strict, offline and reports effective immutable sett
   assert.equal(checkConfig(f,baseline,combo).status,0);
 });
 
-async function exchange(f,p,{mode='service',changes={},combo=false,compression=null}={}) {
+async function exchange(f,p,{mode='service',changes={},combo=false,compression=null,alps=false,alpsFault=null,clientAlps=false,h2Observe=false}={}) {
   const reserve=net.createServer();reserve.listen(0,'127.0.0.1');await once(reserve,'listening');const backend=reserve.address().port;await new Promise(r=>reserve.close(r));
   const captures=[],sockets=new Set(); captures.hrr=false;
   const proxy=net.createServer(client=>{
@@ -73,7 +73,7 @@ async function exchange(f,p,{mode='service',changes={},combo=false,compression=n
   try {
   fs.writeFileSync(f.dir+'/profile.json',JSON.stringify(p));
   let clientConfig={...config(f,proxy.address().port),...changes};
-  let exitConfig={version:1,role:'exit',address:'127.0.0.1',port:backend,tun:'cvtest0',secret_path:f.secret,cert:f.cert,key:f.key};
+  let exitConfig={version:1,role:'exit',address:'127.0.0.1',port:backend,tun:'cvtest0',secret_path:f.secret,cert:f.cert,key:f.key,...(alps?{alps:true}:{})};
   if(combo) {
     const relay=f.dir+'/relay.psk';fs.writeFileSync(relay,randomBytes(32),{mode:0o600});
     fs.mkdirSync(f.dir+'/replay',{mode:0o700});
@@ -89,12 +89,13 @@ async function exchange(f,p,{mode='service',changes={},combo=false,compression=n
   fs.writeFileSync(f.dir+'/exit.json',JSON.stringify(exitConfig));
   if(combo)execFileSync(build+'/clean-vpn-engine',['--init-transparent-replay',f.dir+'/exit.json'],{stdio:'pipe'});
     const child=spawn(build+'/integration-test',[build+'/clean-vpn-engine-fixture',f.dir+'/client.json',f.dir+'/exit.json',...(mode==='full'?[]:[mode])],{stdio:['ignore','pipe','pipe'],
-      env:{...process.env,...(compression?{CVPN_TEST_CERT_COMPRESSION:compression}:{})}});
+      env:{...process.env,...(compression?{CVPN_TEST_CERT_COMPRESSION:compression}:{}),...(alpsFault?{CVPN_TEST_ALPS:alpsFault}:{}),...(clientAlps?{CVPN_TEST_ALPS_CLIENT:'nonempty'}:{}),...(h2Observe?{CVPN_TEST_H2_OBSERVER:'1'}:{})}});
     let output='';for(const s of [child.stdout,child.stderr])s.on('data',b=>{output+=b;if(output.length>262144)child.kill('SIGKILL');});
     const timeout=setTimeout(()=>child.kill('SIGKILL'),mode==='full'?80000:15000);
     let code;try{[code]=await once(child,'exit');}finally{clearTimeout(timeout);}
     assert.equal(code,0,output);assert.ok(captures.length>0&&captures.length<=16);
     if(compression)assert.match(output,/fixture_compressed_certificate_sent/,'server did not send CompressedCertificate');
+    captures.h2=[...output.matchAll(/fixture_h2 (\{[^\n]+\})/g)].map(m=>JSON.parse(m[1]));
     return captures;
   } finally {for(const s of sockets)s.destroy();await new Promise(r=>proxy.close(r));}
 }
@@ -224,4 +225,80 @@ test('compressed certificates do not bypass CA hostname PSK checks or malformed-
     await exchange(f,p,{compression,mode:'reject'});
   for(const changes of [{ca:other.cert},{server_name:'wrong.localhost'},{secret_path:other.secret}])
     await exchange(f,p,{compression:'valid',mode:'reject',changes});
+});
+
+const alpsProfile=JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/cold-alps.json'));
+function h2Frame(hex) {
+  const bytes=Buffer.from(hex,'hex');assert.ok(bytes.length>=9);
+  assert.equal(bytes.readUIntBE(0,3),bytes.length-9);assert.equal(bytes.readUInt32BE(5),0);
+  const frame={type:bytes[3],flags:bytes[4]};
+  if(frame.type===4) {
+    assert.equal((bytes.length-9)%6,0);frame.settings=[];
+    for(let i=9;i<bytes.length;i+=6)frame.settings.push([bytes.readUInt16BE(i),bytes.readUInt32BE(i+2)]);
+  }
+  if(frame.type===8){assert.equal(bytes.length,13);frame.increment=bytes.readUInt32BE(9);}
+  return frame;
+}
+test('ALPS requires explicit bounded H2 settings and strict new-codepoint semantics',t=>{
+  const f=fixture(t);assert.equal(checkConfig(f,alpsProfile).status,0);
+  for(const mutate of [
+    p=>{delete p.http2;},p=>{p.http2.extra=true;},p=>{p.tls.application_settings=['http/1.1'];},
+    p=>{p.tls.extension_types=p.tls.extension_types.filter(n=>n!==17613);},
+    p=>{p.tls.extension_types=p.tls.extension_types.map(n=>n===17613?17513:n);},
+    p=>{p.http2.connection_window=1048577;},p=>{p.http2.connection_window=65534;},
+    p=>{p.http2.settings.push([5,32768]);},p=>{p.http2.settings[0]=[1,65537];},
+    p=>{p.http2.settings[1]=[2,1];},p=>{p.http2.settings[2]=[3,2];},
+    p=>{p.http2.settings[3]=[4,1048577];},p=>{p.http2.settings[4]=[6,8193];},
+    p=>{p.http2.settings.push([3,1]);},p=>{p.http2.settings.splice(1,1);},
+    p=>{p.http2.settings.push([8,1]);},p=>{p.http2.settings[0]=[1,-1];},
+  ]) {const p=structuredClone(alpsProfile);mutate(p);assert.equal(checkConfig(f,p).status,1,JSON.stringify(p));}
+  assert.equal(checkConfig(f,alpsProfile,{...config(f),alps:true}).status,1);
+});
+
+test('negotiated ALPS and fallback match independently decoded real H2 settings, window and ACKs', {timeout:60000},async t=>{
+  for(const alps of [false,true]) {
+    const f=fixture(t),captures=await exchange(f,alpsProfile,{alps,h2Observe:true,compression:'valid'});
+    for(const wire of captures) {
+      const report=observeTlsProfile(wire,alpsProfile);assert.equal(report.status,'matched',JSON.stringify(report.differences));
+      assert.deepEqual(report.actual.application_settings,['h2']);
+      const candidate=compileTlsProfileCandidate(wire,{id:'alps-capture',extensionOrder:'permuted',padding:'exact',echMode:'disabled'});
+      assert.equal(candidate.status,'unsupported');assert.ok(candidate.unsupported.includes('alps-requires-explicit-http2-settings'));
+    }
+    const seen=captures.h2;
+    assert.equal(seen.some(x=>x.kind==='alps'),alps);
+    const clientWire=seen.filter(x=>x.kind==='wire'&&x.receiver==='exit').map(x=>h2Frame(x.hex));
+    assert.deepEqual(clientWire.filter(x=>x.type===4&&x.flags===0).map(x=>x.settings),[alpsProfile.http2.settings]);
+    assert.deepEqual(clientWire.filter(x=>x.type===8).map(x=>x.increment),[alpsProfile.http2.connection_window-65535]);
+    const serverWire=seen.filter(x=>x.kind==='wire'&&x.receiver==='client').map(x=>h2Frame(x.hex));
+    if(alps) {
+      assert.deepEqual(seen.filter(x=>x.kind==='alps'&&x.receiver==='client').map(x=>h2Frame(x.hex).settings),[[[3,1],[4,1048576],[6,8192]]]);
+      assert.ok(seen.some(x=>x.kind==='alps'&&x.receiver==='exit'&&x.hex===''));
+      assert.equal(serverWire.filter(x=>x.type===4&&x.flags===0).length,0);
+      assert.equal(clientWire.filter(x=>x.type===4&&x.flags===1).length,0);
+      assert.equal(serverWire.filter(x=>x.type===4&&x.flags===1).length,1);
+    } else assert.deepEqual(serverWire.filter(x=>x.type===4&&x.flags===0).map(x=>x.settings),[[[3,1],[4,1048576],[6,8192]]]);
+    console.log(JSON.stringify({alps,h2:seen,tls:observeTlsProfile(captures[0],alpsProfile)}));
+  }
+  // A legacy client can still use an opt-in ALPS exit.
+  await exchange(fixture(t),baseline,{alps:true});
+});
+
+test('ALPS works with combo and HRR; rejects malformed negotiated settings before packet injection', {timeout:120000},async t=>{
+  await exchange(fixture(t),alpsProfile,{alps:true,combo:true,compression:'valid'});
+  const hrr=structuredClone(alpsProfile);hrr.tls.key_share_groups=[];
+  assert.equal((await exchange(fixture(t),hrr,{alps:true,compression:'valid'})).hrr,true);
+  for(const alpsFault of ['ack','stream','truncated','extra-frame','window','unknown','duplicate']) {
+    const captures=await exchange(fixture(t),alpsProfile,{alps:true,alpsFault,h2Observe:true,mode:'reject'});
+    assert.ok(captures.h2.some(x=>x.kind==='alps'&&x.receiver==='client'),'malformed ALPS was not actually negotiated');
+    assert.equal(captures.h2.filter(x=>x.kind==='wire'&&x.receiver==='exit').length,0,'client sent H2 before rejecting ALPS');
+  }
+  const nonempty=await exchange(fixture(t),alpsProfile,{alps:true,clientAlps:true,h2Observe:true,mode:'reject'});
+  assert.ok(nonempty.h2.some(x=>x.kind==='alps'&&x.receiver==='exit'&&x.hex!==''));
+  const f=fixture(t),other=fixture(t);
+  for(const changes of [{ca:other.cert},{server_name:'wrong.localhost'},{secret_path:other.secret}])
+    await exchange(f,alpsProfile,{alps:true,mode:'reject',changes});
+});
+
+test('ALPS profile preserves reconnect blackhole and bounded packet flow under sustained exchange', {timeout:90000},async t=>{
+  await exchange(fixture(t),alpsProfile,{alps:true,mode:'full'});
 });

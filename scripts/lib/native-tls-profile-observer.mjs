@@ -7,13 +7,18 @@ import { ja4FromClientHelloBody } from './tls-clienthello-ja4.mjs';
 
 export function observeTlsProfile(wire, profile) {
   const exact=(o,keys)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).length===keys.length&&keys.every(k=>Object.hasOwn(o,k));
-  assert.ok(exact(profile,['schema','kind','id','scenario','tls']));
+  assert.ok(exact(profile,['schema','kind','id','scenario','tls',...(Object.hasOwn(profile,'http2')?['http2']:[])]));
   assert.equal(profile.schema,1);assert.equal(profile.kind,'clean-vpn-native-tls-profile');assert.equal(profile.scenario,'cold');
   assert.match(profile.id,/^[A-Za-z0-9_.-]{1,64}$/);
   const t=profile.tls;
   assert.ok(exact(t,['min_version','max_version','cipher_suites','supported_groups','key_share_groups','signature_algorithms',
     'alpn','grease','permute_extensions','ech_grease','ocsp','sct','extension_types','optional_extension_types',
-    ...(Object.hasOwn(t,'certificate_compression')?['certificate_compression']:[])]));
+    ...(Object.hasOwn(t,'certificate_compression')?['certificate_compression']:[]),
+    ...(Object.hasOwn(t,'application_settings')?['application_settings']:[])]));
+  const applicationSettings=Object.hasOwn(t,'application_settings')?t.application_settings:[];
+  assert.ok(['[]','["h2"]'].includes(JSON.stringify(applicationSettings)));
+  assert.equal(applicationSettings.length>0,t.extension_types.includes(17613));
+  assert.equal(applicationSettings.length>0,Object.hasOwn(profile,'http2'));
   const compression=Object.hasOwn(t,'certificate_compression')?t.certificate_compression:[];
   assert.ok(['[]','[2]'].includes(JSON.stringify(compression)));
   assert.equal(compression.length>0,t.extension_types.includes(27));
@@ -33,7 +38,7 @@ export function observeTlsProfile(wire, profile) {
     cipher_suites:t.cipher_suites,supported_groups:t.supported_groups,key_share_groups:t.key_share_groups,
     signature_algorithms:t.signature_algorithms,alpn:t.alpn,
     supported_versions:t.min_version===771?[772,771]:[772],extension_types:t.extension_types,grease:t.grease,
-    certificate_compression:compression,
+    certificate_compression:compression,application_settings:applicationSettings,
   };
   const differences=[];
   for(const key of Object.keys(expected)) {
@@ -59,10 +64,17 @@ export function measureTlsClientHello(wire) {
   let o = 35 + body[34], n = body.readUInt16BE(o); o += 2;
   const ciphers = []; for (let end=o+n;o<end;o+=2)ciphers.push(body.readUInt16BE(o));
   o += 1 + body[o]; const end = o + 2 + body.readUInt16BE(o); o += 2;
-  const extensions=[], shares=[], compression=[];
+  const extensions=[], shares=[], compression=[], applicationSettings=[];
   for (;o<end;) {
     const type=body.readUInt16BE(o), size=body.readUInt16BE(o+2);o+=4;
     assert.ok(o+size<=end);extensions.push(type);
+    if(type===17613 || type===17513) {
+      assert.ok(size>=3&&body.readUInt16BE(o)===size-2,'alps_protocols');
+      for(let p=o+2;p<o+size;) {
+        const length=body[p++];assert.ok(length>0&&p+length<=o+size,'alps_protocol');
+        applicationSettings.push(body.subarray(p,p+length).toString('latin1'));p+=length;
+      }
+    }
     if(type===27) {
       assert.ok(size>=3&&body[o]===size-1&&(size-1)%2===0,'compression_vector');
       for(let p=o+1;p<o+size;p+=2)compression.push(body.readUInt16BE(p));
@@ -84,7 +96,7 @@ export function measureTlsClientHello(wire) {
     key_share_groups:shares.filter(x=>!TLS_GREASE_VALUES.has(x.group)).map(x=>x.group),
     signature_algorithms:sig.signature_algorithms, alpn:hello.alpn,
     supported_versions:clean(hello.supportedVersions), extension_types:clean(extensions),
-    grease:ciphers.some(n=>TLS_GREASE_VALUES.has(n)),certificate_compression:compression,
+    grease:ciphers.some(n=>TLS_GREASE_VALUES.has(n)),certificate_compression:compression,application_settings:applicationSettings,
   };
   return {actual,keyShares:shares,sessionIdBytes:body[34],
     ja3:ja3.ja3Digest,ja3String:ja3.ja3String,ja3Sorted:ja3.ja3SortedDigest,
@@ -99,8 +111,9 @@ export function compileTlsProfileCandidate(wire, {id,extensionOrder,padding,echM
   assert.ok(['exact','optional'].includes(padding));
   assert.ok(['disabled','grease'].includes(echMode));
   const measurement=measureTlsClientHello(wire), a=measurement.actual, unsupported=[];
-  const allowedExtensions=new Set([0,5,10,11,13,16,18,21,23,27,43,45,51,65281,65037]);
+  const allowedExtensions=new Set([0,5,10,11,13,16,18,21,23,27,43,45,51,65281,65037,17613]);
   for(const type of a.extension_types)if(!allowedExtensions.has(type))unsupported.push(`extension:${type}`);
+  if(a.extension_types.includes(17613))unsupported.push('alps-requires-explicit-http2-settings');
   const allowedCiphers=new Set([4865,4866,4867,49195,49196,49199,49200,52392,52393]);
   for(const cipher of a.cipher_suites)if(!allowedCiphers.has(cipher))unsupported.push(`cipher:${cipher}`);
   // Mirror the current native contract's explicit signature policy. Availability

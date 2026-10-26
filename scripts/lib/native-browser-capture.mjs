@@ -82,7 +82,7 @@ export class BrowserCapture {
     const c = this.#metadata.context, samples = this.#samples.map(x => x.sample);
     const unsupported = [...new Set(samples.flatMap(s => s.unsupported))].sort();
     const variations = [];
-    for (const field of ['cipher_suites', 'supported_groups', 'key_share_groups', 'signature_algorithms', 'alpn', 'supported_versions', 'extension_types', 'grease', 'certificate_compression']) {
+    for (const field of ['cipher_suites', 'supported_groups', 'key_share_groups', 'signature_algorithms', 'alpn', 'supported_versions', 'extension_types', 'grease', 'certificate_compression', 'application_settings']) {
       const values = samples.map(s => {
         let value = s.measurement.actual[field];
         if (field === 'extension_types') {
