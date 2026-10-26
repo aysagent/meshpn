@@ -17,10 +17,26 @@ export function cleanupLab(journal, invoke) {
     const format = type === 'container' ? '{{.Names}}' : '{{.Name}}';
     const names = invoke([...list, '--filter', 'label=' + label, '--format', format]).trim().split('\n').filter(Boolean);
     assert.ok(names.length <= 32, 'unexpected_resource_count');
-    for (const name of names) {
+    const resources = names.map(name => {
       assert.ok(name.startsWith(journal.prefix + '-') && /^[a-z0-9-]+$/.test(name), 'foreign_name_refused');
       const item = JSON.parse(invoke(type === 'container' ? ['inspect', name] : [type, 'inspect', name]))[0];
-      assert.equal((type === 'container' ? item.Config.Labels : item.Labels)?.['org.meshpn.native-runtime-lab'], journal.prefix, 'foreign_label_refused');
+      const labels = type === 'container' ? item.Config.Labels : item.Labels ?? (type === 'network' ? item.labels : undefined);
+      assert.equal(labels?.['org.meshpn.native-runtime-lab'], journal.prefix, 'foreign_label_refused');
+      const network = item.HostConfig?.NetworkMode;
+      return { name, id: item.Id, dependencies: [...(item.Dependencies ?? []),
+        ...(network?.startsWith('container:') ? [network.slice(10)] : [])] };
+    });
+    // Podman refuses removal of a namespace donor even when its dependents
+    // are stopped. Order only owned resources; never use --depend to sweep
+    // unknown applications into a removal.
+    const ordered = [], pending = [...resources];
+    while (pending.length) {
+      const index = pending.findIndex(r => !pending.some(other => other !== r &&
+        other.dependencies.some(d => d === r.name || d === r.id)));
+      assert.ok(index >= 0, 'container_dependency_cycle');
+      ordered.push(pending.splice(index, 1)[0]);
+    }
+    for (const { name } of ordered) {
       invoke(type === 'container' ? ['rm', '-f', name] : [type, 'rm', name]); removed.push({ type, name });
     }
   }

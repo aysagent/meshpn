@@ -64,3 +64,25 @@ test('independent cleanup requires both an owned name and an owned label', () =>
   assert.throws(() => cleanupLab(journal, args => args.includes('--filter') ? prefix + '-client\n' : JSON.stringify([{ Config: { Labels: {} } }])), /foreign_label_refused/);
   assert.deepEqual(cleanupLab(journal, () => '').removed, []);
 });
+test('cleanup removes shared namespace dependents before donors regardless of list order', () => {
+  const prefix = 'cvpnrt-0123456789abcdef', donor = prefix + '-client', app = prefix + '-app', removed = [];
+  const invoke = args => {
+    if (args.includes('--filter')) return args[0] === 'ps' ? donor + '\n' + app : '';
+    if (args[0] === 'inspect') return JSON.stringify([{ Id: args[1] === donor ? 'donor-id' : 'app-id',
+      Config: { Labels: { 'org.meshpn.native-runtime-lab': prefix } },
+      HostConfig: { NetworkMode: args[1] === app ? 'container:donor-id' : 'bridge' } }]);
+    removed.push(args.at(-1)); return '';
+  };
+  cleanupLab({ schema: 1, kind: 'native-runtime-lab-ownership', prefix }, invoke);
+  assert.deepEqual(removed, [app, donor]);
+});
+test('cleanup verifies Podman lowercase network labels without weakening ownership', () => {
+  const prefix = 'cvpnrt-0123456789abcdef', name = prefix + '-net', removed = [];
+  const invoke = args => {
+    if (args.includes('--filter')) return args[0] === 'network' ? name : '';
+    if (args[1] === 'inspect') return JSON.stringify([{ labels: { 'org.meshpn.native-runtime-lab': prefix } }]);
+    removed.push(args); return '';
+  };
+  cleanupLab({ schema: 1, kind: 'native-runtime-lab-ownership', prefix }, invoke);
+  assert.deepEqual(removed, [['network', 'rm', name]]);
+});

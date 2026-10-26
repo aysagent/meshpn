@@ -238,7 +238,12 @@ try {
   }
   p(['stop', '--time=5', exit]); assert.equal(JSON.parse(p(['inspect', exit]))[0].State.ExitCode, 0); progress('exit-sigterm-clean');
   report.clientLogs = p(['logs', clientName]).trim().split('\n').slice(-12);
-  if (testLauncher) { launch('remove'); containers.splice(containers.indexOf(clientName), 1); progress('public-launcher-owned-remove'); }
+  if (testLauncher) {
+    // Podman requires removing the application before its namespace donor.
+    assert.equal(JSON.parse(p(['inspect', app]))[0].Config.Labels['org.meshpn.native-runtime-lab'], prefix);
+    p(['rm', '-f', app]); containers.splice(containers.indexOf(app), 1);
+    launch('remove'); containers.splice(containers.indexOf(clientName), 1); progress('public-launcher-owned-remove');
+  }
   completed = true;
 } catch (caught) { error = caught; report.error = String(caught.message).slice(0, 3000); }
 finally {
