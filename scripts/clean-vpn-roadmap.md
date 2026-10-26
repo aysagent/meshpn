@@ -1,5 +1,11 @@
 # clean-vpn: цели и порядок дальнейшей работы
 
+Checkpoint 2026-10-27: [native standalone/Docker/Podman приёмка](clean-vpn-native-night-report.md)
+пройдена для boring-tls с partial Chromium profile, включая часовой soak и
+временный Docker smoke на VPS. Следующее: физический LAN ingress/wiring с
+recovery, затем container lifecycle combo/transparent. Постоянная установка
+на Radxa/VPS остаётся отложена; прежний план ниже читать с этой границей.
+
 Уточнение scope 2026-10-27: постоянную установку/enable на Radxa и VPS пользователь
 отложил. На узлах — только временные проверки с rollback. Новый приоритет:
 [standalone и Docker/Podman runtime, лабораторная приёмка](clean-vpn-native-night-plan.md).

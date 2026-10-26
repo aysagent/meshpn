@@ -1,7 +1,14 @@
 {
   "schema": 1,
   "kind": "clean-vpn-native-runtime-validation",
-  "updatedAt": "2026-10-26T22:34:53.387Z",
+  "updatedAt": "2026-10-26T22:59:54.789Z",
+  "labFinalState": {
+    "temporaryContainers": 0,
+    "temporaryNetworks": 0,
+    "nestedDockerVolumes": "removed",
+    "dedicatedPodmanMachine": "stopped",
+    "buildCaches": "retained"
+  },
   "scope": "Temporary standalone and rootful container boring-tls runtime. No permanent physical-node installation.",
   "binarySourceFix": "a725ee3",
   "builds": {
@@ -16,7 +23,33 @@
       "method": "cached Linux amd64 CMake build; artifact stage packages the tested binary"
     }
   },
-  "unitTests": "7/7",
+  "unitTests": "9/9",
+  "sourceProvenance": {
+    "arm64": "56/56 current source hashes matched",
+    "amd64": "56/56 current source hashes matched"
+  },
+  "physicalRestoration": {
+    "status": "passed",
+    "routes": "same including order, excluding positive RA lifetime countdown only",
+    "rules": "exact",
+    "firewall": "same order and rules, excluding counters and generated timestamp comments",
+    "services": "same ActiveState and UnitFileState",
+    "foreignContainers": "same IDs",
+    "dockerNetworks": "same IDs and names",
+    "ipForward": "same",
+    "permanentInstall": false,
+    "kernelOomDuringTrial": "none observed in journal",
+    "transientUnitAfterTrial": "not-found/inactive",
+    "temporaryImagesAndArchives": "removed"
+  },
+  "radxa": {
+    "mode": "read-only",
+    "clock": "correct at 2026-10-26T22:32:54Z",
+    "legacyVpn": "active",
+    "killSwitch": "active",
+    "dockerInstalled": false,
+    "changes": false
+  },
   "runs": {
     "dockerArm64": {
       "status": "passed",
@@ -79,12 +112,14 @@
     },
     "podmanArm64": {
       "status": "passed",
-      "scope": "Rootful ARM64 Podman; single-uplink artifact image before LAN addition",
-      "artifact": "podman-arm64-expanded-v2.json",
-      "artifactSha256": "f5c154829f6c2f0b38b89610493ba793b1e5f74f78e4b74cb097873399377feb",
+      "scope": "Rootful ARM64 Podman; final source image, LAN, public launcher and ownership cleanup",
+      "artifact": "podman-final-v3.json",
+      "artifactSha256": "3012d2940e8fb6951f4fc1883490dbea7986e034416dfd1dd9ff1ffd6e72ae88",
       "checks": [
         "profiled-tunnel-and-dns-udp-tcp",
+        "public-launcher-start-status",
         "loopback-dns-https-tcp-udp",
+        "isolated-lan-gateway-dns-https-tcp-udp",
         "foreign-rules-preserved",
         "same-namespace-reentry-audited",
         "unreachable-upstreams-unhealthy",
@@ -96,24 +131,30 @@
         "without-net-admin-refused",
         "without-tun-refused",
         "host-network-refused-before-mutation",
+        "public-launcher-stop-and-restart",
         "unprivileged-shared-namespace-application",
         "pid1-sigkill-shared-namespace-no-direct-fallback",
+        "lan-gateway-crash-no-direct-fallback",
         "dead-engine-app-dns-blocked",
         "replacement-works-old-namespace-stays-blocked",
         "client-sigterm-clean",
         "container-restart-healthy",
         "independent-clienthello-profile-matched",
-        "exit-sigterm-clean"
+        "exit-sigterm-clean",
+        "public-launcher-owned-remove"
       ],
       "cleanup": {
         "status": "passed"
       },
+      "imageId": "e1942dd095830c121155d9133d63d5a86ef565bf7eb1248ea52dac6f25c43e38",
+      "architecture": "arm64",
+      "engineSha256": "f0eb2a326e6c67491da4e1d895745b3e3c125c5208fc38446e396cb8e8490d72",
       "capture": {
-        "pcapSha256": "6c309eb24bb16bb78789897b3bf6e7ecaf714fe44a24701886b62cd5111be4c9",
-        "rawPcapRetained": false,
+        "pcapSha256": "2c67066a10ebc4ea603c0b0b2bfc91860c0361634a16849fb90d82864cbf55a5",
+        "rawPcapRetained": true,
         "counts": {
-          "packets": 303,
-          "selected": 303,
+          "packets": 365,
+          "selected": 365,
           "withoutSyn": 0,
           "fragmented": 0,
           "truncated": 0
@@ -125,7 +166,7 @@
         "ja4": [
           "t13d0915h2_f91f431d341e_54d72502093d"
         ],
-        "sampleJa3": "3767bca9130fc1d59860398e726ab0d7"
+        "sampleJa3": "5c404aae49b8ac08a56dcba5a7c41668"
       }
     },
     "standaloneAmd64": {
@@ -173,13 +214,190 @@
       }
     },
     "podmanSoak": {
-      "status": "pending",
-      "scope": "3600-second small-transfer single-uplink run; pre-LAN control revision, same native engine; fixture-only init holder restarted to extend its original sleep timer"
+      "status": "passed",
+      "scope": "3600-second small-transfer single-uplink run; pre-LAN control revision, same native engine; fixture-only init holder restarted to extend its original sleep timer",
+      "artifact": "podman-arm64-soak.json",
+      "artifactSha256": "db6d76adb0744b68ea70f6c06b9ff0aa5b0e7b041e37a4d86133f6aea2762578",
+      "checks": [
+        "profiled-tunnel-and-dns-udp-tcp",
+        "loopback-dns-https-tcp-udp",
+        "bounded-soak-with-restarts-passed",
+        "foreign-rules-preserved",
+        "same-namespace-reentry-audited",
+        "unreachable-upstreams-unhealthy",
+        "dns-restores-with-upstream",
+        "wrong-name-unhealthy",
+        "wrong-psk-unhealthy",
+        "wrong-ca-unhealthy",
+        "unreachable-exit-unhealthy",
+        "without-net-admin-refused",
+        "without-tun-refused",
+        "host-network-refused-before-mutation",
+        "unprivileged-shared-namespace-application",
+        "pid1-sigkill-shared-namespace-no-direct-fallback",
+        "dead-engine-app-dns-blocked",
+        "replacement-works-old-namespace-stays-blocked",
+        "client-sigterm-clean",
+        "container-restart-healthy",
+        "independent-clienthello-profile-matched",
+        "exit-sigterm-clean"
+      ],
+      "cleanup": {
+        "status": "passed"
+      },
+      "soak": {
+        "requestedSeconds": 3600,
+        "elapsedSeconds": 3600,
+        "restarts": 11,
+        "samples": 336,
+        "resources": {
+          "client": {
+            "peakRssKiB": 6232,
+            "peakFds": 7,
+            "warm": {
+              "rssKiB": 6228,
+              "fds": 7
+            },
+            "last": {
+              "rssKiB": 6216,
+              "fds": 7
+            }
+          },
+          "exit": {
+            "peakRssKiB": 6180,
+            "peakFds": 6,
+            "warm": {
+              "rssKiB": 5748,
+              "fds": 6
+            },
+            "last": {
+              "rssKiB": 6164,
+              "fds": 6
+            }
+          }
+        }
+      },
+      "capture": {
+        "pcapSha256": "e9aa93e90cd7da9d69b9309a378e623e9c15442f039b833c2ae7006a20dad885",
+        "rawPcapRetained": true,
+        "counts": {
+          "packets": 19608,
+          "selected": 19608,
+          "withoutSyn": 0,
+          "fragmented": 0,
+          "truncated": 0
+        },
+        "observed": 32,
+        "profileStatuses": [
+          "matched"
+        ],
+        "ja4": [
+          "t13d0915h2_f91f431d341e_54d72502093d"
+        ],
+        "sampleJa3": "3c1ae2381de60c8d0b829ae97bdae4ad"
+      }
     },
     "vpsDockerAmd64": {
-      "status": "pending",
-      "scope": "Temporary isolated bridge pair on existing VPS Docker; no physical-host VPN routing"
+      "status": "passed",
+      "scope": "Temporary isolated bridge pair on existing VPS Docker; no physical-host VPN routing",
+      "artifact": "vps-docker-amd64.json",
+      "artifactSha256": "5df7154937f9cea0e2a88745e7fba311d272f195e91acb66f63b15ce8d8b123e",
+      "checks": [
+        "profiled-tunnel-and-dns-udp-tcp",
+        "public-launcher-start-status",
+        "loopback-dns-https-tcp-udp",
+        "isolated-lan-gateway-dns-https-tcp-udp",
+        "foreign-rules-preserved",
+        "same-namespace-reentry-audited",
+        "unreachable-upstreams-unhealthy",
+        "dns-restores-with-upstream",
+        "wrong-name-unhealthy",
+        "wrong-psk-unhealthy",
+        "wrong-ca-unhealthy",
+        "unreachable-exit-unhealthy",
+        "without-net-admin-refused",
+        "without-tun-refused",
+        "host-network-refused-before-mutation",
+        "public-launcher-stop-and-restart",
+        "unprivileged-shared-namespace-application",
+        "pid1-sigkill-shared-namespace-no-direct-fallback",
+        "lan-gateway-crash-no-direct-fallback",
+        "dead-engine-app-dns-blocked",
+        "replacement-works-old-namespace-stays-blocked",
+        "client-sigterm-clean",
+        "container-restart-healthy",
+        "independent-clienthello-profile-matched",
+        "exit-sigterm-clean",
+        "public-launcher-owned-remove"
+      ],
+      "cleanup": {
+        "status": "passed"
+      },
+      "imageId": "sha256:c86c6be59f14c3e52e922cc28061b33c25a211cbd33811a57d89a44f778fd212",
+      "architecture": "amd64",
+      "engineSha256": "91df03fcd06ff16858ff7b813bc0ab5f19f58ff104b439c4cfe10cb7a06d5628",
+      "capture": {
+        "pcapSha256": "f3e91b304c1bdaa4a570370605d09f730e1e4745ab2c4df4353af7d0f626903a",
+        "rawPcapRetained": true,
+        "counts": {
+          "packets": 360,
+          "selected": 360,
+          "withoutSyn": 0,
+          "fragmented": 0,
+          "truncated": 0
+        },
+        "observed": 19,
+        "profileStatuses": [
+          "matched"
+        ],
+        "ja4": [
+          "t13d0915h2_f91f431d341e_54d72502093d"
+        ],
+        "sampleJa3": "597f6e576a5c732dd5ace82f3bfa1f20"
+      }
     }
+  },
+  "podmanControllerRecovery": {
+    "status": "passed",
+    "signal": "SIGKILL",
+    "cleanup": {
+      "status": "cleaned",
+      "removed": [
+        {
+          "type": "container",
+          "name": "cvpnrt-3f8a6c74b12b8798-init"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-3f8a6c74b12b8798-origin"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-3f8a6c74b12b8798-capture"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-3f8a6c74b12b8798-exit"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-3f8a6c74b12b8798-client"
+        },
+        {
+          "type": "volume",
+          "name": "cvpnrt-3f8a6c74b12b8798-config"
+        },
+        {
+          "type": "network",
+          "name": "cvpnrt-3f8a6c74b12b8798-lan"
+        },
+        {
+          "type": "network",
+          "name": "cvpnrt-3f8a6c74b12b8798-net"
+        }
+      ]
+    },
+    "foreignSentinelRetained": true
   },
   "controllerRecovery": {
     "status": "passed",
@@ -209,6 +427,13 @@
     "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
     "scope": "cold ClientHello field subset; extension permutation changes ordered JA3",
     "observer": "separate tcpdump pcap, same repository JA3/JA4 parser, not engine self-report",
+    "rawArtifactsReparsedOnMac": [
+      "docker-ownership-final.json",
+      "standalone-amd64-final.json",
+      "vps-docker-amd64.json",
+      "podman-final-v3.json",
+      "podman-arm64-soak.json"
+    ],
     "browserEquivalence": false
   },
   "limitations": [
@@ -220,10 +445,12 @@
     "No permanent Radxa/VPS install or physical reboot; RTC power-loss retention unproven",
     "APT signed current repositories, not a byte-reproducible APT snapshot",
     "amd64 netfilter under Rosetta failed; use native x86 kernel evidence, not emulation claim",
-    "Small traffic soak is not a throughput benchmark or 32-client load acceptance"
+    "Small traffic soak is not a throughput benchmark or 32-client load acceptance",
+    "Soak records RSS/FD and bounded probe success, not kernel socket/process inventories or latency quantiles"
   ],
   "remaining": [
-    "Complete bounded soak and real amd64 Docker smoke before final report",
+    "Physical wg0/usb0 LAN wiring and rollback are separate next work",
+    "Container lifecycle for combo/transparent and replay state remains separate",
     "Permanent install and physical reboot/power-loss are outside this authorized night scope"
   ]
 }

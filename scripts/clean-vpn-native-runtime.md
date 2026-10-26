@@ -58,6 +58,9 @@ podman build --format=docker --platform=linux/arm64 --build-arg JOBS=2 \
 
 Для Docker заменить `podman build --format=docker` на `docker build`.
 Для amd64 выбрать `--platform=linux/amd64`. Требуется новая директория контекста.
+На Mac все команды Podman выполнять с
+`--connection=meshpn-clean-vpn-lab-root`, включая build: image должен попасть
+в тот же rootful engine, в котором запускается launcher.
 Платформа сборки не доказывает работу TUN/netfilter под userspace-эмулятором:
 amd64 netfilter не заработал через Rosetta на ARM Podman VM; amd64 standalone
 проверен в QEMU с настоящим x86 ядром. Смотрите матрицу отчёта.
@@ -133,7 +136,9 @@ node scripts/clean-vpn-native-container.mjs remove --engine=docker --name=cvpn-c
 ```
 
 Для удаления проверяется ownership label; чужой контейнер с похожим именем
-не удаляется. Сначала остановите приложения, затем удалите VPN-контейнер.
+не удаляется. Сначала удалите контейнеры приложений, использующие его network
+namespace, затем удалите VPN-контейнер. Podman требует этого даже для остановленных
+приложений; launcher не удаляет их автоматически.
 Если приложение удерживает старый namespace после аварии, оно остаётся
 заблокированным. Новый client не переподключает такое приложение автоматически:
 его нужно пересоздать в сети нового client. PSK/CA/profile приложениям не нужны.
@@ -176,6 +181,10 @@ Readonly anchor probe не меняет сеть. Compose-файл не уста
 на постоянку и не публикует порты. Проверку syntax и фактический Compose run
 следует различать — см. отчёт.
 
+В изолированном Docker ARM64 проверен и сам шаблон: `up`, healthy обоих ролей,
+DNS UDP/TCP и HTTPS через fixture upstream, затем `down` и удаление сети.
+Это не проверка маршрутизации физических LAN устройств.
+
 Standalone использует тот же скрипт подготовки и тот же binary, в уже
 подготовленном отдельном Linux netns. Снаружи сохранить
 `CVPN_PARENT_NETNS=$(readlink /proc/self/ns/net)`, внутри задать
@@ -196,6 +205,24 @@ container/volume/network, всегда выполняет cleanup. `CVPN_CONTAIN
 `CVPN_SOAK_SECONDS=3600` — ограниченный часовой прогон с малым трафиком,
 RSS/FD и restart каждые пять минут. Не запускайте несколько таких прогонов
 параллельно в одном daemon: используются фиксированные изолированные подсети.
+
+Пример повторения короткого полного smoke в **выделенной** Podman VM:
+
+```bash
+podman --connection=meshpn-clean-vpn-lab-root build --format=docker \
+  --build-arg RUNTIME=localhost/clean-vpn-native:local \
+  -f scripts/containers/native-runtime-observer.Containerfile \
+  -t localhost/clean-vpn-observer:local scripts/containers
+mkdir -m 700 /tmp/cvpn-runtime-results
+CVPN_CONTAINER_COMMAND='["podman","--connection","meshpn-clean-vpn-lab-root"]' \
+CVPN_RUNTIME_IMAGE=localhost/clean-vpn-native:local \
+CVPN_OBSERVER_IMAGE=localhost/clean-vpn-observer:local \
+CVPN_GATEWAY=1 CVPN_TEST_LAUNCHER=1 \
+  node scripts/clean-vpn-native-runtime-lab.mjs /tmp/cvpn-runtime-results/run.json
+```
+
+Для Docker на отдельном Linux test host: `CVPN_CONTAINER_COMMAND='["docker"]'`.
+Нужен новый путь отчёта. Для soak добавить `CVPN_SOAK_SECONDS=3600`.
 
 `clean-vpn-native-runtime-vm.mjs NEW_REPORT.json` работает из существующего
 Linux toolchain image и создаёт NIC-less QEMU guest. Проверяет standalone на
