@@ -79,7 +79,7 @@ NODE
   cmake --build native/clean_vpn/build --parallel 2 --target \
     clean-vpn-engine clean-vpn-engine-fixture protocol-test dns-wire-test dns-relay-test \
     integration-test service-notify-test socket-test transparent-test \
-    transparent-socket-test transparent-replay-test combo-test throughput-test
+    transparent-socket-test transparent-replay-test combo-test throughput-test tls-profile-test
   ctest --test-dir native/clean_vpn/build --output-on-failure
 }
 
@@ -147,6 +147,12 @@ run_lab() {
 }
 
 case "${1:-}" in
+  tls-profiles)
+    sync_source
+    build_current
+    cd "$WORK"
+    node --test --test-concurrency=1 scripts/test-native-tls-profile.mjs scripts/test-native-data-plane.mjs scripts/test-native-session-events.mjs
+    ;;
   multi-clients)
     sync_source
     build_current

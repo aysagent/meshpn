@@ -8,6 +8,19 @@ packet path не является обязательной. Production-разв�
 
 ## Реализовано в текущем шаге
 
+2026-10-26, следующий лабораторный checkpoint: добавлен
+[опциональный cold TLS профиль](clean-vpn-native-tls-profiles.md) в C++ boring и
+Boring-ветку combo. Настройки применяются API pinned BoringSSL; первый ClientHello
+проверяется в memory BIO до wire. Независимый TCP observer проверяет поля и
+JA3/JA4; capture → candidate → config check → повторный native обмен проверены.
+GREASE/ECH GREASE, permutation, optional padding и HRR имеют явные ограничения.
+Это синтетические fixtures, не приёмка конкретного browser build:
+`browser_profiles:false` сохранён, добавлена `experimental_tls_profiles`.
+Radxa/VPS не менялись. Отчёт: [TLS profile lab](../fixtures/clean-vpn-native-tls-profile-report.json).
+Следующий шаг — реальные browser capture bundles, совместимость недостающих
+extensions и страница/реестр профилей; H2/HTTP и resumption отдельно не завершены.
+
+
 2026-10-26: физический **combo smoke и SIGKILL engine прошли** на Radxa ↔ VPS.
 После разрешённой коррекции часов Radxa (отставание 5 суток 13 часов 40 минут)
 восстановилась NTP-синхронизация. Подключение legacy к native exit тоже работает:

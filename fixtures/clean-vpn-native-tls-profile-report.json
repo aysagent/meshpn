@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-tls-profile-lab-checkpoint",
+  "date": "2026-10-26 Europe/Moscow",
+  "status": "experimental-cold-profile-foundation-passed",
+  "baseRevision": "1d5280357dc52dda8681070b00590609f2540d5f",
+  "testedChanges": "native cold TLS profiles and independent wire observer in the commit containing this report",
+  "environment": {
+    "host": "macOS arm64",
+    "lab": "Podman Linux amd64 via Rosetta, loopback TCP, container --network=none",
+    "image": "localhost/meshpn-clean-vpn-lab:1f35b200e5e912e7",
+    "node": "v24.22.1",
+    "macNetworkSettingsChanged": false,
+    "physicalHostsTouched": false,
+    "rawCapturesCommitted": false
+  },
+  "sha256": {
+    "native/clean_vpn/engine.cc": "a895399d3c9f5d2acfceb500137c6ca24d6f3157b980919f9cd1085216c0c59f",
+    "native/clean_vpn/tls_profile.hpp": "a4a685f08dddb4805ac6ab69900ac02c4ec69f52568a0da111ee99ec4f2f02ad",
+    "linuxAmd64Engine": "0aa79964b3a3a01a741a9b89673a741e1c17885e3767b44b0eb64093c2bb4175"
+  },
+  "boringsslRevision": "a7481f34712bc056a47ab91015536166b3a6cebb",
+  "tests": {
+    "ctest": { "passed": 8, "failed": 0, "skipped": 0 },
+    "finalTlsProfileSuite": {
+      "command": "node --test --test-concurrency=1 scripts/test-native-tls-profile.mjs",
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 37829.780283,
+      "coverage": [
+        "strict schema, unsupported settings and paths refused before startup",
+        "effective profile ID and canonical JSON digest",
+        "real native packet exchange with externally observed TLS bytes",
+        "fresh client random and X25519 public key shares across new connections",
+        "fixed synthetic JA3/JA4 golden vector",
+        "capture to candidate to native config validation to another packet exchange",
+        "observer CLI and unsupported-extension candidate refusal",
+        "CA, hostname and exporter-bound PSK rejection",
+        "native extension permutation and ECH GREASE, actual padding retained in fingerprints",
+        "empty initial key shares cause real HelloRetryRequest and successful packet exchange",
+        "real combo Boring branch and single exit listener dispatch",
+        "profiled reconnect, uplink blackhole, backpressure, stable descriptor counts and fresh hellos"
+      ]
+    },
+    "coreAndSessionRegressions": {
+      "files": ["scripts/test-native-data-plane.mjs", "scripts/test-native-session-events.mjs"],
+      "passed": 15,
+      "failed": 0,
+      "note": "Ran with the final C++ sources, in an earlier 20/20 run that also included five profile tests; overlapping profile tests are not an additional acceptance count."
+    },
+    "buildAndMacLabTests": { "passed": 7, "failed": 0, "skipped": 0 },
+    "profileDecoderSanitizers": {
+      "result": "passed for both synthetic fixtures",
+      "instrumentation": "macOS C++ profile test with ASAN and UBSAN; prebuilt BoringSSL libraries not instrumented",
+      "coverage": "four fresh generated hellos per fixture, prewire mismatch rejection and single-byte XOR mutations",
+      "limitation": "not whole-engine sanitizer validation or exhaustive fuzzing"
+    }
+  },
+  "fixedSyntheticObservation": {
+    "profile": "native-tls-profiles/cold-h2.json",
+    "samples": 3,
+    "differences": [],
+    "ja3String": "771,4865-4867-4866,0-10-16-13-51-45-43,29-23,",
+    "ja3": "1486e97570653f52b603bf93abaffe92",
+    "ja4": "t13d0307h2_55b375c5d22e_70c6d19c6451"
+  },
+  "modernSyntheticObservation": {
+    "profile": "native-tls-profiles/cold-modern.json",
+    "samples": 4,
+    "differences": [],
+    "extensionPermutationObserved": true,
+    "echGreaseObserved": true,
+    "paddingPolicy": "extension 21 explicitly optional and last when present; actual JA fingerprints retain it",
+    "fingerprintPolicy": "JA3 varies with permutation; compare JA3Sorted and JA4 only within the actually observed extension set"
+  },
+  "limits": [
+    "synthetic fixtures only; zero real browser-build capture bundles accepted",
+    "browser_profiles remains false; experimental_tls_profiles is advertised separately",
+    "first cold ClientHello selected fields only, not full browser or wire equivalence",
+    "independent JavaScript wire observer, not engine logs; not external third-party attestation",
+    "no arbitrary extension ordering or opaque raw extension bodies",
+    "no certificate compression, ALPS, resumption or 0-RTT support in this contract",
+    "HRR functionality tested; second ClientHello browser fidelity not verified",
+    "TLS 1.2 advertisement tested; native exit still requires TLS 1.3",
+    "no HTTP/2 SETTINGS, HTTP headers or User-Agent mimicry",
+    "no profile-specific throughput benchmark or physical-host acceptance"
+  ],
+  "next": [
+    "real browser-build capture bundles with multiple samples and explicit capture policy",
+    "semantic implementation and testing of missing browser extensions",
+    "browser capture page and profile registry",
+    "HTTP/2 and session lifecycle fidelity as separate acceptance stages"
+  ]
+}

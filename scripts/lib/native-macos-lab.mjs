@@ -18,7 +18,7 @@ export function parseNativeMacLabArgs(argv, env = process.env) {
     refreshBase: false,
   };
   for (const arg of argv) {
-    if (arg === '--prepare' || arg === '--multi-clients' || arg === '--status' || arg === '--stop' || arg === '--help' || nativeMacLabModes.includes(arg)) {
+    if (arg === '--prepare' || arg === '--multi-clients' || arg === '--tls-profiles' || arg === '--status' || arg === '--stop' || arg === '--help' || nativeMacLabModes.includes(arg)) {
       assert.equal(value.action, null, 'choose exactly one lab action');
       value.action = arg;
       continue;
@@ -42,6 +42,7 @@ export function nativeMacLabImageTag(containerfile) {
 }
 
 export function nativeMacLabContainerAction(action) {
+  if (action === '--tls-profiles') return ['tls-profiles'];
   if (action === '--multi-clients') return ['multi-clients'];
   if (action === '--prepare') return ['prepare'];
   if (action === '--status') return ['status'];

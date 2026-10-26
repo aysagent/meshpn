@@ -1,5 +1,12 @@
 # clean-vpn: цели и порядок дальнейшей работы
 
+Новый лабораторный шаг 2026-10-26: [native cold TLS profiles](clean-vpn-native-tls-profiles.md).
+Реализованы сохранённый строгий контракт, prewire gate, независимый field/JA3/JA4
+observer и capture→candidate roundtrip для boring/combo. Синтетические профили
+не означают готовую мимикрию конкретного браузера; реальный capture UI/реестр,
+недостающие extensions, H2/HTTP и resumption остаются в плане. Физические узлы
+этим шагом не менялись.
+
 Текущий checkpoint 2026-10-26: [физический Radxa ↔ VPS trial](../fixtures/clean-vpn-native-physical-smoke-report.json)
 прошёл обычный combo smoke и отдельный SIGKILL native engine с автоматическим
 возвратом legacy. DNS/HTTPS проверены на Radxa и USB-клиенте; selected IPv4 HTTPS

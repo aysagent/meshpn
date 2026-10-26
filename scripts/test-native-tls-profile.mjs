@@ -1,0 +1,193 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import net from 'node:net';
+import { randomBytes, createHash } from 'node:crypto';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
+import { once } from 'node:events';
+import { observeTlsProfile, compileTlsProfileCandidate } from './lib/native-tls-profile-observer.mjs';
+import { parseFirstTlsClientHelloFromTcpBuf } from './lib/tls-clienthello-ja3.mjs';
+const build=path.resolve(process.env.CVPN_BUILD??'native/clean_vpn/build');
+const baseline=JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/cold-h2.json'));
+function fixture(t) {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-profile-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const cert=dir+'/cert.pem',key=dir+'/key.pem',secret=dir+'/psk';
+  execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',key,'-out',cert,'-days','2','-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost'],{stdio:'pipe'});
+  fs.writeFileSync(secret,randomBytes(32),{mode:0o600});
+  return {dir,cert,key,secret};
+}
+function config(f,port=34443) {return {version:1,role:'client',address:'127.0.0.1',port,tun:'cvtest0',server_name:'localhost',ca:f.cert,secret_path:f.secret,tls_profile_path:f.dir+'/profile.json'};}
+function checkConfig(f,p,c=config(f)) {
+  fs.writeFileSync(f.dir+'/profile.json',JSON.stringify(p));fs.writeFileSync(f.dir+'/client.json',JSON.stringify(c));
+  return spawnSync(build+'/clean-vpn-engine',['--check-config',f.dir+'/client.json'],{encoding:'utf8',timeout:5000});
+}
+test('profile validation is strict, offline and reports effective immutable settings',t=>{
+  const f=fixture(t),r=checkConfig(f,baseline);assert.equal(r.status,0,r.stderr);
+  const report=JSON.parse(r.stdout).tls_profile;assert.equal(report.id,baseline.id);assert.match(report.sha256,/^[a-f0-9]{64}$/);assert.deepEqual(report.tls,baseline.tls);
+  const same=JSON.parse(checkConfig(f,JSON.parse(JSON.stringify(baseline,null,2))).stdout);assert.equal(same.tls_profile.sha256,report.sha256);
+  const cap=JSON.parse(execFileSync(build+'/clean-vpn-engine',['--capabilities']));assert.equal(cap.browser_profiles,false);assert.equal(cap.experimental_tls_profiles.prewire_check,true);
+  for(const change of [
+    p=>{p.tls.cipher_suites.reverse();},p=>{p.tls.cipher_suites=[65535];},p=>{p.tls.cipher_suites.push(4865);},
+    p=>{p.tls.supported_groups=[65535];},p=>{p.tls.key_share_groups=[24];},p=>{p.tls.key_share_groups=[23,29];},
+    p=>{p.tls.optional_extension_types=[27];},p=>{p.tls.optional_extension_types=[0];},p=>{p.tls.signature_algorithms=[513];},p=>{p.tls.signature_algorithms=[65535];},p=>{p.tls.alpn=['http/1.1'];},p=>{p.tls.min_version=770;},
+    p=>{p.tls.max_version=771;},p=>{p.tls.grease='true';},p=>{p.tls.extension_types.push(27);},
+    p=>{p.tls.extension_types.reverse();},p=>{p.tls.extension_types.push(1234);},p=>{p.tls.client_hello_extra_extensions=[];},
+    p=>{p.tls.random='secret';},p=>{p.scenario='resumed';},p=>{p.schema=2;},p=>{p.unknown=true;},
+  ]) {
+    const p=structuredClone(baseline);change(p);
+    // Reordered supported ciphers are valid and must change the effective digest.
+    if(p.tls.cipher_suites[0]===4866&&p.tls.cipher_suites.length===3) {
+      const good=checkConfig(f,p);assert.equal(good.status,0);assert.notEqual(JSON.parse(good.stdout).tls_profile.sha256,report.sha256);continue;
+    }
+    const bad=checkConfig(f,p);assert.equal(bad.status,1,JSON.stringify(p));assert.equal(bad.stdout,'');assert.doesNotMatch(bad.stderr,/secret/);
+  }
+  const exit={...config(f),role:'exit',cert:f.cert,key:f.key};assert.equal(checkConfig(f,baseline,exit).status,1);
+  assert.equal(checkConfig(f,baseline,{...config(f),tls_profile_path:'relative.json'}).status,1);
+  fs.symlinkSync(f.dir+'/profile.json',f.dir+'/link.json');
+  assert.equal(checkConfig(f,baseline,{...config(f),tls_profile_path:f.dir+'/link.json'}).status,1);
+  const relay=f.dir+'/relay.psk';fs.writeFileSync(relay,randomBytes(32),{mode:0o600});
+  const combo={version:1,role:'client',transport:'combo-tls',boring:{...config(f),sni:'localhost'},
+    transparent:{version:1,role:'client',transport:'transparent-tls',public_name:'localhost',secret_path:relay,
+      listen:{ipv4:'127.0.0.1',port:34444},exit:{ipv4:'127.0.0.1',port:34443},destinations:[{ipv4:'127.0.0.1',port:34445}]}};
+  assert.equal(checkConfig(f,baseline,combo).status,0);
+});
+
+async function exchange(f,p,{mode='service',changes={},combo=false}={}) {
+  const reserve=net.createServer();reserve.listen(0,'127.0.0.1');await once(reserve,'listening');const backend=reserve.address().port;await new Promise(r=>reserve.close(r));
+  const captures=[],sockets=new Set(); captures.hrr=false;
+  const proxy=net.createServer(client=>{
+    const upstream=net.connect(backend,'127.0.0.1');sockets.add(client);sockets.add(upstream);
+    for(const s of [client,upstream]){s.on('error',()=>{client.destroy();upstream.destroy();});s.on('close',()=>sockets.delete(s));}
+    let bytes=Buffer.alloc(0),done=false;
+    client.on('data',chunk=>{if(done)return;bytes=Buffer.concat([bytes,chunk]);if(bytes.length>65536){done=true;client.destroy();return;}
+      const h=parseFirstTlsClientHelloFromTcpBuf(bytes);if(h.ok){captures.push(Buffer.from(bytes.subarray(0,h.bytesConsumed)));done=true;}});
+    let reply=Buffer.alloc(0),serverHelloSeen=false;
+    upstream.on('data',chunk=>{if(serverHelloSeen)return;reply=Buffer.concat([reply,chunk]);
+      if(reply.length>=43){serverHelloSeen=true;captures.hrr ||= reply[0]===22 && reply[5]===2 &&
+        reply.subarray(11,43).toString('hex')==='cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c';}});
+    client.pipe(upstream);upstream.pipe(client);
+  });
+  proxy.listen(0,'127.0.0.1');await once(proxy,'listening');
+  try {
+  fs.writeFileSync(f.dir+'/profile.json',JSON.stringify(p));
+  let clientConfig={...config(f,proxy.address().port),...changes};
+  let exitConfig={version:1,role:'exit',address:'127.0.0.1',port:backend,tun:'cvtest0',secret_path:f.secret,cert:f.cert,key:f.key};
+  if(combo) {
+    const relay=f.dir+'/relay.psk';fs.writeFileSync(relay,randomBytes(32),{mode:0o600});
+    fs.mkdirSync(f.dir+'/replay',{mode:0o700});
+    const portProbe=net.createServer();portProbe.listen(0,'127.0.0.1');await once(portProbe,'listening');
+    const relayPort=portProbe.address().port;await new Promise(r=>portProbe.close(r));
+    const common={version:1,transport:'transparent-tls',public_name:'localhost',secret_path:relay,destinations:[{ipv4:'127.0.0.1',port:34445}]};
+    clientConfig={version:1,role:'client',transport:'combo-tls',boring:clientConfig,
+      transparent:{...common,role:'client',listen:{ipv4:'127.0.0.1',port:relayPort},exit:{ipv4:'127.0.0.1',port:proxy.address().port}}};
+    exitConfig={version:1,role:'exit',transport:'combo-tls',boring:exitConfig,
+      transparent:{...common,role:'exit',listen:{ipv4:'127.0.0.1',port:backend},replay_directory:f.dir+'/replay'}};
+  }
+  fs.writeFileSync(f.dir+'/client.json',JSON.stringify(clientConfig));
+  fs.writeFileSync(f.dir+'/exit.json',JSON.stringify(exitConfig));
+  if(combo)execFileSync(build+'/clean-vpn-engine',['--init-transparent-replay',f.dir+'/exit.json'],{stdio:'pipe'});
+    const child=spawn(build+'/integration-test',[build+'/clean-vpn-engine-fixture',f.dir+'/client.json',f.dir+'/exit.json',...(mode==='full'?[]:[mode])],{stdio:['ignore','pipe','pipe']});
+    let output='';for(const s of [child.stdout,child.stderr])s.on('data',b=>{output+=b;if(output.length>262144)child.kill('SIGKILL');});
+    const timeout=setTimeout(()=>child.kill('SIGKILL'),mode==='full'?80000:15000);
+    let code;try{[code]=await once(child,'exit');}finally{clearTimeout(timeout);}
+    assert.equal(code,0,output);assert.ok(captures.length>0&&captures.length<=16);
+    return captures;
+  } finally {for(const s of sockets)s.destroy();await new Promise(r=>proxy.close(r));}
+}
+
+test('real native TCP ClientHello matches saved profile; keys/random fresh; fingerprints independently observed', {timeout:45000},async t=>{
+  const f=fixture(t),captures=[];
+  for(let i=0;i<3;i++)captures.push(...await exchange(f,baseline));
+  const reports=captures.map(w=>observeTlsProfile(w,baseline));
+  for(const r of reports){assert.equal(r.status,'matched',JSON.stringify(r.differences));assert.deepEqual(r.keyShares.filter(x=>x.group===29),[{group:29,length:32}]);}
+  const expectedJa3='771,4865-4867-4866,0-10-16-13-51-45-43,29-23,';
+  assert.equal(reports[0].ja3String,expectedJa3);assert.equal(reports[0].ja3,createHash('md5').update(expectedJa3).digest('hex'));
+  assert.equal(new Set(reports.map(r=>r.ja3)).size,1);assert.equal(new Set(reports.map(r=>JSON.stringify(r.ja4))).size,1);
+  const randoms=captures.map(w=>parseFirstTlsClientHelloFromTcpBuf(w).clientHelloBody.subarray(2,34).toString('hex'));
+  assert.equal(new Set(randoms).size,captures.length);
+  const shareHashes=captures.map(w=>{
+    const b=parseFirstTlsClientHelloFromTcpBuf(w).clientHelloBody;
+    let o=35+b[34];o+=2+b.readUInt16BE(o);o+=1+b[o];o+=2;
+    while(o<b.length) {
+      const type=b.readUInt16BE(o),size=b.readUInt16BE(o+2);o+=4;
+      if(type===51)for(let k=o+2;k<o+size;) {
+        const group=b.readUInt16BE(k),length=b.readUInt16BE(k+2);k+=4;
+        if(group===29)return createHash('sha256').update(b.subarray(k,k+length)).digest('hex');k+=length;
+      }
+      o+=size;
+    }
+    assert.fail('missing X25519 share');
+  });
+  assert.equal(new Set(shareHashes).size,captures.length,'X25519 key reused');
+  // Golden synthetic vector: t13/d/3 ciphers/7 extensions/h2; SHA256 of
+  // 1301,1302,1303 and 000a,000d,002b,002d,0033_0403,0804,0805,0806.
+  assert.equal(reports[0].ja4.fingerprint,'t13d0307h2_55b375c5d22e_70c6d19c6451');
+  const compiled=compileTlsProfileCandidate(captures[0],{id:'measured-roundtrip',extensionOrder:'fixed',padding:'exact',echMode:'disabled'});
+  assert.equal(compiled.status,'candidate');assert.deepEqual(compiled.profile.tls,baseline.tls);
+  assert.equal(checkConfig(f,compiled.profile).status,0);
+  for(const wire of await exchange(f,compiled.profile))assert.equal(observeTlsProfile(wire,compiled.profile).status,'matched');
+  assert.equal(compiled.measurement.sessionIdBytes,reports[0].sessionIdBytes);
+  assert.doesNotMatch(JSON.stringify(compiled),/random|private_key|ticket_hex/);
+  const capturedPath=f.dir+'/hello.bin';fs.writeFileSync(capturedPath,captures[0],{mode:0o600});
+  const offline=spawnSync(process.execPath,['scripts/clean-vpn-native-profile-observe.mjs',f.dir+'/profile.json',capturedPath],{encoding:'utf8'});
+  assert.equal(offline.status,0,offline.stderr);assert.equal(JSON.parse(offline.stdout).ja3,reports[0].ja3);
+  const cliCandidate=spawnSync(process.execPath,['scripts/clean-vpn-native-profile-observe.mjs','--candidate','cli-capture','fixed','exact','disabled',capturedPath],{encoding:'utf8'});
+  assert.equal(cliCandidate.status,0,cliCandidate.stderr);assert.deepEqual(JSON.parse(cliCandidate.stdout).profile.tls,baseline.tls);
+  const unsupportedWire=Buffer.from(captures[0]),body=parseFirstTlsClientHelloFromTcpBuf(unsupportedWire).clientHelloBody;
+  let off=35+body[34];off+=2+body.readUInt16BE(off);off+=1+body[off];off+=2;
+  while(body.readUInt16BE(off)!==13)off+=4+body.readUInt16BE(off+2);
+  // This fixture is one TLS record. Replace ext13 by an unsupported ext27;
+  // the candidate must refuse the extension rather than discard its body.
+  unsupportedWire.writeUInt16BE(27,off+9);
+  const unsupported=compileTlsProfileCandidate(unsupportedWire,{id:'unsupported',extensionOrder:'fixed',padding:'exact',echMode:'disabled'});
+  assert.equal(unsupported.status,'unsupported');assert.equal(unsupported.profile,null);assert.ok(unsupported.unsupported.includes('extension:27'));
+
+  const wrong=structuredClone(baseline);wrong.tls.cipher_suites.reverse();
+  assert.ok(observeTlsProfile(captures[0],wrong).differences.some(d=>d.field==='cipher_suites'));
+  console.log(JSON.stringify({observation:reports[0],samples:captures.length}));
+});
+
+test('profile keeps CA hostname and exporter-bound PSK verification', {timeout:45000},async t=>{
+  const f=fixture(t),other=fixture(t);
+  for(const changes of [{ca:other.cert},{server_name:'wrong.localhost'},{secret_path:other.secret}]) {
+    const captured=await exchange(f,baseline,{mode:'reject',changes});
+    for(const wire of captured)assert.equal(observeTlsProfile(wire,baseline).status,'matched');
+  }
+});
+
+test('permuted modern profile uses real ECH GREASE and TLS12 advertisement without raw extension replay', {timeout:45000},async t=>{
+  const f=fixture(t),p=JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/cold-modern.json')),reports=[];
+  assert.equal(checkConfig(f,p).status,0);
+  for(let i=0;i<4;i++)for(const wire of await exchange(f,p)) {
+    const r=observeTlsProfile(wire,p);assert.equal(r.status,'matched',JSON.stringify(r.differences));reports.push(r);
+  }
+  assert.ok(new Set(reports.map(r=>r.actual.extension_types.join(','))).size>1,'extension permutation absent');
+  // Optional BoringSSL padding changes the extension set and thus JA hashes.
+  // Compare within each actually observed set; never erase it from the report.
+  for(const padding of [true,false]) {
+    const group=reports.filter(r=>r.actual.extension_types.includes(21)===padding);
+    if(group.length){assert.equal(new Set(group.map(r=>r.ja3Sorted)).size,1);assert.equal(new Set(group.map(r=>r.ja4.fingerprint)).size,1);}
+  }
+  assert.ok(reports.every(r=>r.actual.extension_types.includes(65037)));
+  console.log(JSON.stringify({modernObservation:reports[0],samples:reports.length}));
+});
+
+test('empty initial key shares negotiate real HRR and native packet exchange', {timeout:15000},async t=>{
+  const f=fixture(t),p=structuredClone(baseline);p.tls.key_share_groups=[];
+  const captures=await exchange(f,p);assert.equal(captures.hrr,true,'server did not request HRR');
+  for(const wire of captures)assert.equal(observeTlsProfile(wire,p).status,'matched');
+});
+
+test('saved TLS profile applies to the real combo boring branch with native exit dispatch', {timeout:15000},async t=>{
+  const f=fixture(t),captures=await exchange(f,baseline,{combo:true});
+  for(const wire of captures)assert.equal(observeTlsProfile(wire,baseline).status,'matched');
+});
+
+test('profile reconnect, blackhole and backpressure keep descriptors bounded and generate fresh hellos', {timeout:90000},async t=>{
+  const f=fixture(t),captures=await exchange(f,baseline,{mode:'full'});
+  assert.ok(captures.length>=6);
+  for(const wire of captures)assert.equal(observeTlsProfile(wire,baseline).status,'matched');
+  assert.equal(new Set(captures.map(w=>parseFirstTlsClientHelloFromTcpBuf(w).clientHelloBody.subarray(2,34).toString('hex'))).size,captures.length);
+});
