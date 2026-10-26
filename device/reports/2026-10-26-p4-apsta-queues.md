@@ -124,11 +124,12 @@ Final XIAO and P4 builds both passed. After the tests, an unauthenticated USB
 login-page request returned HTTP 200 in 16.5 ms, and an en17-bound external
 HTTPS request returned HTTP 200 in 516 ms, without changing the admin session.
 
-The phone was asked to run the new local AP test, followed if possible by its
-usual internet test. **That AP result is pending.** Avoid agent re-login while
-the phone uses the admin: the current single session would be invalidated.
-After it completes, correlate AP/STA counters and compare the local AP path
-with the slow STA path. Do not call the original phone stall fixed yet.
+The phone subsequently reported **2.18 Mbit/s** locally, then no internet
+through AP, including numeric 1.1.1.1. USB access still worked. That failure is
+not accepted as fixed. The follow-up installs AP flow tracing and a synthetic
+NAPT/STA probe; see [27 October investigation](2026-10-27-p4-ap-forwarding.md).
+Avoid agent re-login while the phone uses admin: the single session invalidates
+its token.
 
 A separate C6 rate-control degradation report is a hypothesis reference only
 ([IDFGH-18378](https://github.com/espressif/esp-idf/issues/19164)); no actual C6
