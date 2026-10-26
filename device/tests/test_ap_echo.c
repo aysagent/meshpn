@@ -75,7 +75,7 @@ int main(void)
  struct netif sta={.ip={addr(192,168,1,11)},.mask={addr(255,255,255,0)},.up=true,.link=true};
  meshvpn_ap_echo_config_t c={.target=addr(192,168,1,4),.port=55000,.packets=100,.payload=1200,.rate_kbps=5000};
  meshvpn_ap_echo_result_t r;assert(meshvpn_ap_echo_run(&ap,&sta,&c,&r)==ESP_OK);
- assert(!r.error&&r.injected==100&&r.accepted==100&&r.received==100&&!r.bad_checksum&&r.rtt_sum_us==10000);
+ assert(!r.error&&r.injected==100&&r.accepted==100&&r.received==100&&!r.bad_checksum&&r.rtt_sum_us==10000&&r.mapped_source_port==s_echo.source_port);
  assert(!allocations&&!pbufs&&!s_echo.active);
  struct pbuf p={late,late_size};assert(meshvpn_ap_echo_output(&p,s_echo.client));
  late[32]^=1;assert(!meshvpn_ap_echo_output(&p,s_echo.client));late[32]^=1;
@@ -91,10 +91,13 @@ int main(void)
  bad=c;bad.payload=1201;assert(meshvpn_ap_echo_run(&ap,&sta,&bad,&r)==ESP_ERR_INVALID_ARG);
  bad=c;bad.packets=4097;assert(meshvpn_ap_echo_run(&ap,&sta,&bad,&r)==ESP_ERR_INVALID_ARG);
  bad=c;bad.port=53;assert(meshvpn_ap_echo_run(&ap,&sta,&bad,&r)==ESP_ERR_INVALID_ARG);
+ bad=c;bad.source_port=53;assert(meshvpn_ap_echo_run(&ap,&sta,&bad,&r)==ESP_ERR_INVALID_ARG);
  bad=c;bad.rate_kbps=64;assert(meshvpn_ap_echo_run(&ap,&sta,&bad,&r)==ESP_ERR_INVALID_ARG);
  flip_vpn=true;assert(meshvpn_ap_echo_run(&ap,&sta,&c,&r)==ESP_OK&&r.error==ESP_ERR_INVALID_STATE);flip_vpn=false;vpn=false;
  assert(!allocations&&!pbufs&&!s_echo.active);
  c.packets=4096;c.payload=32;c.rate_kbps=30000;
+ c.source_port=55000;
  assert(meshvpn_ap_echo_run(&ap,&sta,&c,&r)==ESP_OK&&r.received==4096&&!allocations&&!pbufs);
+ assert(r.mapped_source_port==55000);
  puts("AP echo: actual packet/checksum construction, pacing, loss/duplicate/corruption accounting, late reply filter, target/range/policy guards and cleanup passed");
 }

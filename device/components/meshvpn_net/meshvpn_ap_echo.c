@@ -40,7 +40,9 @@ static bool echo_tuple(const uint8_t *h,size_t n,bool reply)
 void meshvpn_ap_echo_tx(unsigned ifx,const void *frame,size_t length)
 {
     const uint8_t *p=frame;
-    if(s_echo.active&&!ifx&&p&&length>=58&&p[12]==8&&!p[13]&&echo_tuple(p+14,length-14,false))s_echo.r.accepted++;
+    if(s_echo.active&&!ifx&&p&&length>=58&&p[12]==8&&!p[13]&&echo_tuple(p+14,length-14,false)){
+        s_echo.r.accepted++;s_echo.r.mapped_source_port=rd16(p+14+20);
+    }
 }
 bool meshvpn_ap_echo_output(struct pbuf *p,uint32_t destination)
 {
@@ -72,7 +74,7 @@ static esp_err_t begin(void *arg)
     ip4_addr_t target={.addr=c->target};
     if(!netif_ip4_addr(b->sta)->addr||!netif_ip4_netmask(b->sta)->addr)return ESP_ERR_INVALID_STATE;
     if(!c->packets||c->packets>4096||c->payload<32||c->payload>1200||c->port<1024||
-        c->rate_kbps<64||c->rate_kbps>30000||
+        c->rate_kbps<64||c->rate_kbps>30000||(c->source_port&&c->source_port<1024)||
         (uint64_t)c->packets*(c->payload+28)*8>UINT64_C(10000)*c->rate_kbps||
         !ip4_addr_netcmp(&target,netif_ip4_addr(b->sta),netif_ip4_netmask(b->sta))||
         ip4_addr_cmp(&target,netif_ip4_addr(b->sta))||
@@ -86,7 +88,8 @@ static esp_err_t begin(void *arg)
     if(!packet||!times){heap_caps_free(packet);heap_caps_free(times);return ESP_ERR_NO_MEM;}
     memset(&s_echo,0,sizeof(s_echo));s_echo.ap=b->ap;s_echo.sta=b->sta;s_echo.c=*c;
     s_echo.packet=packet;s_echo.sent_at=times;s_echo.client=client;s_echo.nonce=esp_random();
-    s_echo.source_port=49152+(esp_random()&16383);s_echo.start=esp_timer_get_time();s_echo.active=true;
+    s_echo.source_port=c->source_port?c->source_port:49152+(esp_random()&16383);
+    s_echo.start=esp_timer_get_time();s_echo.active=true;
     return ESP_OK;
 }
 static esp_err_t pump(void *arg)

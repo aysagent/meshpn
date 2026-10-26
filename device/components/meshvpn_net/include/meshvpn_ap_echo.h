@@ -6,10 +6,11 @@
 struct netif; struct pbuf;
 typedef struct {
     uint32_t target; /* network byte order, same STA subnet */
-    uint16_t port, packets, payload, rate_kbps;
+    uint16_t port, packets, payload, rate_kbps, source_port;
 } meshvpn_ap_echo_config_t;
 typedef struct {
     uint32_t injected, accepted, received, duplicates, bad_checksum;
+    uint16_t mapped_source_port;
     uint64_t send_us, total_us, rtt_sum_us, rtt_max_us;
     int error;
 } meshvpn_ap_echo_result_t;

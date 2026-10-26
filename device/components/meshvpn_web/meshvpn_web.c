@@ -351,6 +351,8 @@ static esp_err_t handler_ap_echo(httpd_req_t *req)
     bool valid = cJSON_IsString(target) && ip4addr_aton(target->valuestring, &address) &&
         echo_number(in, "port", 1024, 65535, &c.port) && echo_number(in, "packets", 1, 4096, &c.packets) &&
         echo_number(in, "payload", 32, 1200, &c.payload) && echo_number(in, "rate_kbps", 64, 30000, &c.rate_kbps);
+    if (cJSON_GetObjectItemCaseSensitive(in, "source_port")) valid = valid &&
+        echo_number(in, "source_port", 1024, 65535, &c.source_port);
     if (valid) c.target = address.addr;
     cJSON_Delete(in);
     if (!valid) return error(req, "400 Bad Request", "Invalid echo target/port/packets/payload/rate_kbps");
@@ -361,6 +363,7 @@ static esp_err_t handler_ap_echo(httpd_req_t *req)
     cJSON_AddStringToObject(out, "scope", "synthetic AP client -> real NAPT/STA -> same-STA-subnet UDP echo server -> capture before AP ARP; no AP client RF measurement; VPN must be off");
     cJSON_AddNumberToObject(out, "injected", result.injected);
     cJSON_AddNumberToObject(out, "sta_sdio_accepted", result.accepted);
+    cJSON_AddNumberToObject(out, "mapped_source_port", result.mapped_source_port);
     cJSON_AddNumberToObject(out, "received", result.received);
     cJSON_AddNumberToObject(out, "duplicates", result.duplicates);
     cJSON_AddNumberToObject(out, "bad_checksum", result.bad_checksum);
