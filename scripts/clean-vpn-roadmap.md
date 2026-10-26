@@ -1,5 +1,15 @@
 # clean-vpn: цели и порядок дальнейшей работы
 
+Текущий приоритет 2026-10-26: [повседневный boring-tls с частичным браузерным
+профилем](clean-vpn-native-daily-pilot.md). Профиль Chromium-derived subset
+проверен реальным Radxa↔VPS smoke, engine SIGKILL и отдельным VPS pcap;
+CA/hostname/PSK и caps сохранены. RTC Radxa исправлен с 2017 года после NTP sync.
+**Постоянная установка пока не выполнена.** Следующий этап — миграция existing-host
+units с сохранением guard/USB/foreign firewall, worker crash recovery и reboot;
+H2 tuning, tickets/trust anchors и полная мимикрия отложены за этот приоритет.
+Временный exit остановлен, legacy/guard/USB восстановлены.
+
+
 Актуальный checkpoint 2026-10-26: [H2 goodput](clean-vpn-native-h2-goodput.md),
 24 передачи через настоящий TUN; production caps прежние. Следующий ограниченный
 H2 шаг — причины drops и bounded TUN backpressure. Общий актуальный статус —

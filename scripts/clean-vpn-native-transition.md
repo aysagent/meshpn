@@ -1,5 +1,15 @@
 # Полный native-переход: рабочий статус
 
+Текущий приоритет 2026-10-26: [повседневный boring-tls с частичным браузерным
+профилем](clean-vpn-native-daily-pilot.md). Профиль Chromium-derived subset
+проверен реальным Radxa↔VPS smoke, engine SIGKILL и отдельным VPS pcap;
+CA/hostname/PSK и caps сохранены. RTC Radxa исправлен с 2017 года после NTP sync.
+**Постоянная установка пока не выполнена.** Следующий этап — миграция existing-host
+units с сохранением guard/USB/foreign firewall, worker crash recovery и reboot;
+H2 tuning, tickets/trust anchors и полная мимикрия отложены за этот приоритет.
+Временный exit остановлен, legacy/guard/USB восстановлены.
+
+
 2026-10-07. Цель — C++ data plane на client **и** exit, затем native
 transparent/combo. Node остаётся control plane; совместимость с прежним Node
 packet path не является обязательной. Production-развёртывания нет.

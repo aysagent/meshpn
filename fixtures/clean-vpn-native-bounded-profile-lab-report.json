@@ -1,0 +1,332 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-bounded-profile-lab",
+  "status": "passed",
+  "date": "2026-10-26",
+  "ctest": {
+    "passed": 10,
+    "failed": 0
+  },
+  "profileProtocolTests": {
+    "passed": 43,
+    "failed": 0
+  },
+  "reports": [
+    {
+      "schema": 1,
+      "kind": "clean-vpn-native-tls-observation",
+      "status": "matched",
+      "profileId": "chromium-156-bounded-cold-v1",
+      "actual": {
+        "cipher_suites": [
+          4865,
+          4866,
+          4867,
+          49195,
+          49199,
+          49196,
+          49200,
+          52393,
+          52392
+        ],
+        "supported_groups": [
+          4588,
+          29,
+          23,
+          24
+        ],
+        "key_share_groups": [
+          4588,
+          29
+        ],
+        "signature_algorithms": [
+          2308,
+          2309,
+          2310,
+          1027,
+          2052,
+          1025,
+          1283,
+          2053,
+          1281,
+          2054,
+          1537
+        ],
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "supported_versions": [
+          772,
+          771
+        ],
+        "extension_types": [
+          13,
+          65281,
+          45,
+          18,
+          16,
+          65037,
+          27,
+          5,
+          23,
+          43,
+          51,
+          10,
+          17613,
+          0,
+          11
+        ],
+        "grease": true,
+        "certificate_compression": [
+          2
+        ],
+        "application_settings": [
+          "h2"
+        ]
+      },
+      "keyShares": [
+        {
+          "group": 2570,
+          "length": 1
+        },
+        {
+          "group": 4588,
+          "length": 1216
+        },
+        {
+          "group": 29,
+          "length": 32
+        }
+      ],
+      "sessionIdBytes": 32,
+      "ja3": "06ff237b4f63960113aceb65e2b6f1b7",
+      "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392,13-65281-45-18-16-65037-27-5-23-43-51-10-17613-0-11,4588-29-23-24,0",
+      "ja3Sorted": "9fc752c58190630c49e1812906b40077",
+      "ja4": {
+        "fingerprint": "t13d0915h2_f91f431d341e_54d72502093d",
+        "fingerprint_alt_sni_alpn_in_j4c": "t13d0915h2_f91f431d341e_f77074818dd4",
+        "ja4_a": "t13d0915h2",
+        "ja4_b": "f91f431d341e",
+        "ja4_c": "54d72502093d",
+        "ja4_c_alt_sni_alpn_in_hash": "f77074818dd4",
+        "raw_r": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+        "raw_r_alt_sni_alpn_in_segment": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+        "raw_o": "t13d0915h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8_000d,ff01,002d,0012,0010,fe0d,001b,0005,0017,002b,0033,000a,44cd,0000,000b_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+      },
+      "differences": [],
+      "scope": "first-cold-ClientHello-fields-only-not-browser-or-HTTP2-equivalence"
+    },
+    {
+      "schema": 1,
+      "kind": "clean-vpn-native-tls-observation",
+      "status": "matched",
+      "profileId": "chromium-156-bounded-cold-v1",
+      "actual": {
+        "cipher_suites": [
+          4865,
+          4866,
+          4867,
+          49195,
+          49199,
+          49196,
+          49200,
+          52393,
+          52392
+        ],
+        "supported_groups": [
+          4588,
+          29,
+          23,
+          24
+        ],
+        "key_share_groups": [
+          4588,
+          29
+        ],
+        "signature_algorithms": [
+          2308,
+          2309,
+          2310,
+          1027,
+          2052,
+          1025,
+          1283,
+          2053,
+          1281,
+          2054,
+          1537
+        ],
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "supported_versions": [
+          772,
+          771
+        ],
+        "extension_types": [
+          43,
+          16,
+          11,
+          18,
+          27,
+          51,
+          0,
+          17613,
+          65037,
+          5,
+          13,
+          10,
+          45,
+          65281,
+          23
+        ],
+        "grease": true,
+        "certificate_compression": [
+          2
+        ],
+        "application_settings": [
+          "h2"
+        ]
+      },
+      "keyShares": [
+        {
+          "group": 10794,
+          "length": 1
+        },
+        {
+          "group": 4588,
+          "length": 1216
+        },
+        {
+          "group": 29,
+          "length": 32
+        }
+      ],
+      "sessionIdBytes": 32,
+      "ja3": "994b5c92735f4edbc8d6f595565d59a6",
+      "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392,43-16-11-18-27-51-0-17613-65037-5-13-10-45-65281-23,4588-29-23-24,0",
+      "ja3Sorted": "9fc752c58190630c49e1812906b40077",
+      "ja4": {
+        "fingerprint": "t13d0915h2_f91f431d341e_54d72502093d",
+        "fingerprint_alt_sni_alpn_in_j4c": "t13d0915h2_f91f431d341e_f77074818dd4",
+        "ja4_a": "t13d0915h2",
+        "ja4_b": "f91f431d341e",
+        "ja4_c": "54d72502093d",
+        "ja4_c_alt_sni_alpn_in_hash": "f77074818dd4",
+        "raw_r": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+        "raw_r_alt_sni_alpn_in_segment": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+        "raw_o": "t13d0915h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8_002b,0010,000b,0012,001b,0033,0000,44cd,fe0d,0005,000d,000a,002d,ff01,0017_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+      },
+      "differences": [],
+      "scope": "first-cold-ClientHello-fields-only-not-browser-or-HTTP2-equivalence"
+    },
+    {
+      "schema": 1,
+      "kind": "clean-vpn-native-tls-observation",
+      "status": "matched",
+      "profileId": "chromium-156-bounded-cold-v1",
+      "actual": {
+        "cipher_suites": [
+          4865,
+          4866,
+          4867,
+          49195,
+          49199,
+          49196,
+          49200,
+          52393,
+          52392
+        ],
+        "supported_groups": [
+          4588,
+          29,
+          23,
+          24
+        ],
+        "key_share_groups": [
+          4588,
+          29
+        ],
+        "signature_algorithms": [
+          2308,
+          2309,
+          2310,
+          1027,
+          2052,
+          1025,
+          1283,
+          2053,
+          1281,
+          2054,
+          1537
+        ],
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "supported_versions": [
+          772,
+          771
+        ],
+        "extension_types": [
+          18,
+          65037,
+          17613,
+          51,
+          43,
+          45,
+          65281,
+          0,
+          5,
+          23,
+          10,
+          16,
+          13,
+          11,
+          27
+        ],
+        "grease": true,
+        "certificate_compression": [
+          2
+        ],
+        "application_settings": [
+          "h2"
+        ]
+      },
+      "keyShares": [
+        {
+          "group": 6682,
+          "length": 1
+        },
+        {
+          "group": 4588,
+          "length": 1216
+        },
+        {
+          "group": 29,
+          "length": 32
+        }
+      ],
+      "sessionIdBytes": 32,
+      "ja3": "56c83bb44bf6f0758077ec09c36845c4",
+      "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392,18-65037-17613-51-43-45-65281-0-5-23-10-16-13-11-27,4588-29-23-24,0",
+      "ja3Sorted": "9fc752c58190630c49e1812906b40077",
+      "ja4": {
+        "fingerprint": "t13d0915h2_f91f431d341e_54d72502093d",
+        "fingerprint_alt_sni_alpn_in_j4c": "t13d0915h2_f91f431d341e_f77074818dd4",
+        "ja4_a": "t13d0915h2",
+        "ja4_b": "f91f431d341e",
+        "ja4_c": "54d72502093d",
+        "ja4_c_alt_sni_alpn_in_hash": "f77074818dd4",
+        "raw_r": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+        "raw_r_alt_sni_alpn_in_segment": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+        "raw_o": "t13d0915h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8_0012,fe0d,44cd,0033,002b,002d,ff01,0000,0005,0017,000a,0010,000d,000b,001b_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+      },
+      "differences": [],
+      "scope": "first-cold-ClientHello-fields-only-not-browser-or-HTTP2-equivalence"
+    }
+  ],
+  "browserEquivalent": false
+}

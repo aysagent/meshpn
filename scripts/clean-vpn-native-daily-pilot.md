@@ -52,3 +52,67 @@ X25519MLKEM768), signature algorithms/ML-DSA, ALPN h2/H1, GREASE/ECH GREASE,
 До пункта 7 это пилот, не завершённая повседневная установка. Полная мимикрия,
 H2 queue tuning, tickets и trust anchors могут дорабатываться позже; контроль
 утечек/восстановления/часов и проверка фактического применённого профиля обязательны.
+
+## Физический checkpoint 2026-10-26
+
+[Отчёт](../fixtures/clean-vpn-native-daily-pilot-report.json): два ordinary smoke
+и отдельный native engine SIGKILL прошли, каждый с возвратом legacy.
+В каждом native этапе: host NSS, DNS A/AAAA по UDP/TCP, HTTPS и загрузка 1 MiB;
+USB peer отдельно DNS/HTTPS/1 MiB с IP exit. Это функциональные IPv4 проверки,
+не benchmark или комплексная приёмка всех утечек. При SIGKILL два контрольных
+HTTPS запроса блокировались; wlan0 capture: 548 encrypted exit packets,
+0 direct packets к 1.1.1.1:443, 0 kernel drops. Обычный stop дал четыре aggregate
+engine drops, причина в этом счётчике не разделяется и не объявляется исправленной.
+
+Внешний VPS pcap последнего ordinary smoke: 2214 пакетов, 0 capture drops,
+первый native ClientHello matched по всем полям subset-профиля. JA4:
+`t13d0915h2_f91f431d341e_54d72502093d`, совпадает с тремя лабораторными образцами.
+JA3 конкретного физического соединения: `7b4778109c8248c68ad4a09bd287002f`;
+порядок extensions переставляется, поэтому постоянство JA3 не обещается.
+Legacy после rollback в том же pcap отмечен mismatch, а 505 пакетов соединения,
+начавшегося до capture, проигнорированы без попытки угадать ClientHello.
+
+Для capture на данном VPS рабочий вариант: обычный privilege drop tcpdump,
+`-w -`, приватный файл открывает systemd через `StandardOutput=file:...`,
+**обязательно** `StandardError=journal`. Запись stderr в тот же файл портит pcap.
+Попытки `-Z root` завершались SIGSEGV; первопричина системного tcpdump не исследована.
+Ранние повреждённые/пустые captures не использованы для выводов.
+Raw pcap остаётся приватным на VPS, в git только структурированный отчёт.
+
+Лаборатория: CTest 10/10, profiles/protocols 43/43; Linux control 95/95,
+installer relocation 1/1; final local baseline/USB/pcap tests 39/39.
+Старые VPS fixture-бинарники не пересобирались: их провалившийся полный прогон
+не выдан за регрессию production engine; профиль проверен актуальными lab fixtures
+и двумя физическими production binaries. Изменений C++ engine в этом шаге нет.
+
+После старта временного exit NTP Radxa синхронизировался. RTC действительно
+показывал 2017 год; после проверки NTPSynchronized=yes записано верное время,
+повторное чтение спустя 12 минут корректно. Системные часы вручную не переводились.
+Это ещё не проверка RTC после reboot или потери питания.
+
+Временный exit и capture остановлены, собственный TUN/rules удалены; forwarding=1,
+Docker/x-ui остались. Radxa legacy/guard/USB/SNAT активны. Постоянный native ещё
+не установлен; после остановки exit интернет через него снова недоступен,
+как до теста. Mac network settings не менялись, Podman lab остановлена.
+
+## Следующая реализация: миграция существующего хоста
+
+Это следующий приоритет вместо H2 throughput tuning. Нужен отдельный контракт,
+а не снятие ограничений fresh-site installer:
+
+1. Сохранить контрольные fingerprints текущих project units/config и enabled-state.
+   Публиковать новый комплект и units выключенными; исходный legacy не удалять.
+2. Exit: отдельный journal owner только TUN и трёх scoped forwarding/NAT rules;
+   никакого takeover INPUT/OUTPUT, Docker/x-ui или resolved. SSH сохраняется.
+3. Client: использовать существующие cvks4 и USB rescue; один владелец TUN,
+   routes и DNS. Исключить одновременный legacy/native. SNAT service должен
+   ждать новый защищённый tunnel lifecycle, без циклических systemd зависимостей.
+4. Независимый ExecStopPost и startup recovery с проверкой boot/netns/ifindex;
+   никаких blind flush или восстановления чужого snapshot целой таблицы.
+   Проверить worker SIGKILL, а не только engine SIGKILL, в изолированной VM.
+5. VM с непустыми foreign rules и настоящим systemd: start/stop/restart,
+   отказ DNS/exit, crash cut-points, reboot, cold clock. Затем staged physical
+   activation с bounded rollback, и только после проверок — постоянный enable.
+
+Живые transient smoke не подменяют эти требования. HTTP Date bootstrap для C++
+отдельно не реализован; RTC/NTP boot acceptance остаётся открытой.
