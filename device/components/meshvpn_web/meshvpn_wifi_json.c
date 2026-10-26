@@ -21,7 +21,7 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
     cJSON *tx = cJSON_AddObjectToObject(wifi, "tx");
     cJSON_AddBoolToObject(tx, "available", true);
 #if CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE
-    cJSON_AddStringToObject(tx, "scope", "Wi-Fi API handoffs; accepted = staged copy, not SDIO/RF completion; remote by-ref delegation may also count an inner copy call; use hosted.tx_queue for unique frame counts");
+    cJSON_AddStringToObject(tx, "scope", "Wi-Fi API handoffs; accepted = direct SDIO handoff or staged copy, not RF completion; remote by-ref delegation may also count an inner copy call; use hosted.tx_queue for unique frame counts");
 #endif
 #ifdef CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM
     cJSON_AddNumberToObject(tx, "static_rx_buffer_count", CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM);
@@ -191,7 +191,7 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
     meshvpn_hosted_tx_stats_t staged; meshvpn_hosted_tx_snapshot(&staged);
     cJSON *queues = cJSON_AddObjectToObject(hosted, "tx_queue");
     cJSON_AddBoolToObject(queues, "enabled", staged.enabled);
-    cJSON_AddStringToObject(queues, "scope", "since boot; owned PSRAM copies; sent = accepted into SDIO queue, not RF delivery; queue losses = full + invalid + not_ready + expired + stale + policy_changed + failed");
+    cJSON_AddStringToObject(queues, "scope", "since boot; uncontended direct SDIO handoff, congestion staged in owned PSRAM copies; sent includes direct_sent, not RF delivery; residence_us covers released staged copies; losses = full + invalid + not_ready + expired + stale + policy_changed + failed");
     cJSON_AddNumberToObject(queues, "capacity_per_interface", MESHVPN_HOSTED_TX_SLOTS);
     cJSON_AddNumberToObject(queues, "max_age_ms", MESHVPN_HOSTED_TX_MAX_AGE_US / 1000);
     cJSON_AddBoolToObject(queues, "worker_active", staged.worker_active);
@@ -218,6 +218,7 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
         FIELD(failed); FIELD(retries); FIELD(bytes_sent); FIELD(residence_us);
         FIELD(residence_max_us); FIELD(send_us); FIELD(send_max_us);
         FIELD(in_use); FIELD(high_water); FIELD(last_error);
+        FIELD(direct_sent);
 #undef FIELD
         cJSON_AddBoolToObject(q, "link_up", staged.link_up[i]);
         if (v->last_send_us) cJSON_AddNumberToObject(q, "last_send_age_ms", (esp_timer_get_time() - v->last_send_us) / 1000.0);

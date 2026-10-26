@@ -229,6 +229,34 @@ static esp_err_t handler_usb_download(httpd_req_t *req)
     if (!meshvpn_local_download(req, local_download_send, local_download_now)) return ESP_FAIL;
     return httpd_resp_send_chunk(req, NULL, 0);
 }
+static esp_err_t handler_link_download(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    struct sockaddr_in local = {0}, peer = {0};
+    socklen_t local_len = sizeof(local), peer_len = sizeof(peer);
+    int fd = httpd_req_to_sockfd(req);
+    if (getsockname(fd, (struct sockaddr *)&local, &local_len) ||
+        getpeername(fd, (struct sockaddr *)&peer, &peer_len) ||
+        local.sin_family != AF_INET || peer.sin_family != AF_INET)
+        return error(req, "403 Forbidden", "Local IPv4 connection required");
+    esp_netif_t *interfaces[] = {meshvpn_net_usb(), meshvpn_net_ap(), meshvpn_net_sta()};
+    const char *names[] = {"usb", "ap", "sta"};
+    const char *link = NULL;
+    for (unsigned i = 0; i < 3; i++) {
+        esp_netif_ip_info_t info;
+        if (interfaces[i] && esp_netif_get_ip_info(interfaces[i], &info) == ESP_OK &&
+            info.ip.addr && local.sin_addr.s_addr == info.ip.addr &&
+            (peer.sin_addr.s_addr & info.netmask.addr) == (info.ip.addr & info.netmask.addr)) link = names[i];
+    }
+    if (!link) return error(req, "403 Forbidden", "Same-subnet local peer required");
+    if (req->content_len) return error(req, "400 Bad Request", "Empty POST required");
+    httpd_resp_set_type(req, "application/octet-stream");
+    httpd_resp_set_hdr(req, "X-MeshPN-Link", link);
+    httpd_resp_set_hdr(req, "X-MeshPN-Download-Bytes", "8388608");
+    httpd_resp_set_hdr(req, "Connection", "close");
+    if (!meshvpn_local_download(req, local_download_send, local_download_now)) return ESP_FAIL;
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
 static cJSON *body(httpd_req_t *req, size_t limit)
 {
     char type[48];
@@ -1264,6 +1292,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/routing/default", HTTP_POST, handler_unimplemented),
         ROUTE("/api/routing/benchmark", HTTP_POST, handler_ranges_benchmark),
         ROUTE("/api/diag/usb-download", HTTP_POST, handler_usb_download),
+        ROUTE("/api/diag/link-download", HTTP_POST, handler_link_download),
         ROUTE("/api/diag/usb-bursts", HTTP_GET, handler_usb_bursts),
     };
     for (unsigned i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {

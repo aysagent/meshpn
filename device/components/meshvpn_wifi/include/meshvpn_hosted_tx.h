@@ -13,6 +13,7 @@ typedef struct {
     uint64_t submitted, enqueued, sent, full, invalid, not_ready, expired, stale;
     uint64_t policy_changed, failed, retries, bytes_sent, residence_us, residence_max_us;
     uint64_t send_us, send_max_us, last_send_us;
+    uint64_t direct_sent;
     uint32_t in_use, high_water;
     int32_t last_error;
 } meshvpn_hosted_queue_stats_t;

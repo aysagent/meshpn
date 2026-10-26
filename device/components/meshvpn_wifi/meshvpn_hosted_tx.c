@@ -29,6 +29,15 @@ static meshvpn_hosted_tx_stats_t s_stats;
 static uint32_t s_generation[2];
 static uint64_t s_throttle_since, s_worker_since;
 static int s_head[2] = {-1, -1}; /* worker-owned; one FIFO head per interface */
+static bool s_direct[2]; /* reserves per-interface order for a nonblocking fast call */
+
+static bool retryable(esp_err_t err)
+{ return err == ESP_ERR_ESP_NETIF_TX_FAILED || err == ESP_ERR_ESP_NETIF_NO_MEM || err == ESP_ERR_NO_MEM; }
+static void release_direct(unsigned ifx)
+{
+    portENTER_CRITICAL(&s_lock); s_direct[ifx] = false; portEXIT_CRITICAL(&s_lock);
+    meshvpn_hosted_tx_capacity();
+}
 
 void meshvpn_hosted_tx_capacity(void)
 {
@@ -112,10 +121,30 @@ esp_err_t meshvpn_hosted_tx_submit(unsigned ifx, void *channel, const void *fram
         q->not_ready++; portEXIT_CRITICAL(&s_lock); return ESP_ERR_INVALID_STATE;
     }
     generation = s_generation[ifx];
+    bool direct = !q->in_use && !s_direct[ifx] && (ifx || !s_stats.throttled);
+    if (direct) s_direct[ifx] = true;
     portEXIT_CRITICAL(&s_lock);
     uint32_t policy = meshvpn_vpn_dns_epoch();
+    if (direct) {
+        /* The patched SDIO handoff has zero queue wait. Keep the uncontended
+         * path in the original caller context: no PSRAM copy or worker hop.
+         * Later submissions may stage, but the worker cannot overtake us. */
+        int64_t start = esp_timer_get_time();
+        esp_err_t err = !ifx && !meshvpn_vpn_sta_egress_allowed(frame, len) ? ESP_ERR_INVALID_STATE :
+                        send(channel, (void *)frame, len);
+        uint64_t elapsed = esp_timer_get_time() - start;
+        portENTER_CRITICAL(&s_lock);
+        q->send_us += elapsed;
+        if (elapsed > q->send_max_us) q->send_max_us = elapsed;
+        if (err == ESP_OK) { q->sent++; q->direct_sent++; q->bytes_sent += len; q->last_send_us = esp_timer_get_time(); }
+        else if (retryable(err)) { q->retries++; q->last_error = err; }
+        else { q->failed++; q->last_error = err; }
+        portEXIT_CRITICAL(&s_lock);
+        if (!retryable(err)) { release_direct(ifx); return err; }
+    }
     if (xQueueReceive(s_free[ifx], &slot, 0) != pdTRUE) {
         portENTER_CRITICAL(&s_lock); q->full++; portEXIT_CRITICAL(&s_lock);
+        if (direct) release_direct(ifx);
         return ESP_ERR_ESP_NETIF_NO_MEM;
     }
     tx_slot_t *p = &s_pool[ifx * MESHVPN_HOSTED_TX_SLOTS + slot];
@@ -127,11 +156,15 @@ esp_err_t meshvpn_hosted_tx_submit(unsigned ifx, void *channel, const void *fram
     if (q->in_use > q->high_water) q->high_water = q->in_use;
     q->enqueued++;
     portEXIT_CRITICAL(&s_lock);
-    if (xQueueSend(s_pending[ifx], &slot, 0) != pdTRUE) {
+    /* A fast call that failed must precede frames staged while it ran. */
+    BaseType_t queued = direct ? xQueueSendToFront(s_pending[ifx], &slot, 0) : xQueueSend(s_pending[ifx], &slot, 0);
+    if (queued != pdTRUE) {
         portENTER_CRITICAL(&s_lock); q->in_use--; q->enqueued--; q->failed++; portEXIT_CRITICAL(&s_lock);
         BaseType_t returned = xQueueSend(s_free[ifx], &slot, 0); assert(returned == pdTRUE);
+        if (direct) release_direct(ifx);
         return ESP_ERR_ESP_NETIF_NO_MEM;
     }
+    if (direct) release_direct(ifx);
     meshvpn_hosted_tx_capacity();
     return ESP_OK;
 }
@@ -142,6 +175,10 @@ esp_err_t meshvpn_hosted_tx_submit(unsigned ifx, void *channel, const void *fram
 static bool service(unsigned ifx)
 {
     uint8_t slot;
+    portENTER_CRITICAL(&s_lock);
+    bool direct = s_direct[ifx];
+    portEXIT_CRITICAL(&s_lock);
+    if (direct) return false;
     if (s_head[ifx] < 0) {
         if (xQueueReceive(s_pending[ifx], &slot, 0) != pdTRUE) return false;
         s_head[ifx] = slot;
@@ -177,7 +214,7 @@ static bool service(unsigned ifx)
         }
         portENTER_CRITICAL(&s_lock);
         if (err == ESP_OK) { q->sent++; q->bytes_sent += p->len; q->last_send_us = esp_timer_get_time(); }
-        else if (err == ESP_ERR_ESP_NETIF_TX_FAILED || err == ESP_ERR_ESP_NETIF_NO_MEM || err == ESP_ERR_NO_MEM) {
+        else if (retryable(err)) {
             q->retries++; q->last_error = err;
             portEXIT_CRITICAL(&s_lock); return false;
         } else { q->failed++; q->last_error = err; }
