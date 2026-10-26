@@ -24,6 +24,25 @@ test('native fresh installer: dry run, secret relocation, collision and crash pu
       tun: 'tun0', ca: cert, server_name: 'localhost', secret_path: psk }), { mode: 0o600 });
     return { root, name, config, binary, networkUnit: 'network.service', guardUnit: 'guard.service' };
   };
+  const profiled = make('profiled');
+  const profileSource = profiled.root + '/profile.json';
+  const profileBytes = fs.readFileSync('fixtures/native-tls-profiles/chromium-156-bounded-cold.json');
+  fs.writeFileSync(profileSource, profileBytes, { mode: 0o600 });
+  const profileConfig = JSON.parse(fs.readFileSync(profiled.config));
+  profileConfig.tls_profile_path = profileSource;
+  fs.writeFileSync(profiled.config, JSON.stringify(profileConfig));
+  assert.equal(installNative({ ...profiled, apply: true }).status, 'installed-disabled');
+  const profileTarget = profiled.root + '/opt/clean-vpn-native/profiled';
+  const relocated = JSON.parse(fs.readFileSync(profileTarget + '/config.json'));
+  assert.equal(relocated.tls_profile_path, '/opt/clean-vpn-native/profiled/tls-profile.json');
+  fs.unlinkSync(profileSource);
+  assert.deepEqual(fs.readFileSync(profileTarget + '/tls-profile.json'), profileBytes);
+  const profileManifest = JSON.parse(fs.readFileSync(profileTarget + '/installed.json'));
+  assert.equal(profileManifest.files.find(f => f.name === 'tls-profile.json').mode, 0o600);
+  const relocatedCheck = { ...relocated, ca: profileTarget + '/ca.pem', secret_path: profileTarget + '/peer.psk',
+    tls_profile_path: profileTarget + '/tls-profile.json' };
+  fs.writeFileSync(profiled.config, JSON.stringify(relocatedCheck));
+  execFileSync(binary, ['--check-config', profiled.config], { stdio: 'pipe' });
   const options = make('a'), target = options.root + '/opt/clean-vpn-native/a';
   assert.throws(() => installNative({ ...options, apply: 'false' }), /invalid_apply/);
   assert.equal(installNative(options).status, 'eligible'); assert.equal(fs.existsSync(target), false);

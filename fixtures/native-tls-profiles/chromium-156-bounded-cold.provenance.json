@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-partial-browser-profile-provenance",
+  "source": "fixtures/native-browser-captures/chromium-linux-arm64-156.0.8078.47-h2.json",
+  "sourceSha256": "c49bcf9a9ea453aceba7960cf260d24c19a53d18c341e10bc49f53d52c5af3df",
+  "profile": "chromium-156-bounded-cold.json",
+  "profileSha256": "e2cf0e9e2fb68ce5a2af43d56c0be989cd525217ac73e6037ad65098d5e0be79",
+  "browserEquivalent": false,
+  "exactJa3Ja4MatchExpected": false,
+  "derivation": "explicit-reviewed-subset-not-automatic-capture-import",
+  "deviations": {
+    "removedCipherSuites": [
+      49171,
+      49172,
+      156,
+      157,
+      47,
+      53
+    ],
+    "removedExtensions": [
+      35,
+      51764
+    ],
+    "optionalPadding": [
+      21
+    ],
+    "http2": "native bounded settings: concurrent streams 1, stream/connection 1 MiB, max header list 8 KiB",
+    "http": "authenticated native POST, no navigation UA/header mimicry",
+    "sessions": "cold-only, no tickets/resumption/0-RTT",
+    "captureConditions": "Private test CA and automation flags are capture conditions, not a stock public-Web browser baseline."
+  }
+}

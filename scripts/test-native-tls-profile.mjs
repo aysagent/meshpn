@@ -382,3 +382,26 @@ test('ML-DSA composes with combo, HRR and ALPS without changing native packet au
   const a=structuredClone(alpsProfile);a.tls.signature_algorithms=p.tls.signature_algorithms;
   assert.ok((await exchange(mldsaFixture(t,44),a,{signature:'observe',alps:true})).signaturesVerified.includes(2308));
 });
+
+test('bounded Chromium-derived pilot profile preserves supported fields and verifies real wire', {timeout:60000}, async t => {
+  const f=fixture(t),file='fixtures/native-tls-profiles/chromium-156-bounded-cold.json';
+  const p=JSON.parse(fs.readFileSync(file));
+  const provenance=JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/chromium-156-bounded-cold.provenance.json'));
+  assert.equal(createHash('sha256').update(fs.readFileSync(file)).digest('hex'),provenance.profileSha256);
+  assert.equal(createHash('sha256').update(fs.readFileSync(provenance.source)).digest('hex'),provenance.sourceSha256);
+  const browser=JSON.parse(fs.readFileSync(provenance.source)).bundle.samples[0].measurement.actual;
+  for(const key of ['supported_groups','key_share_groups','signature_algorithms','alpn','certificate_compression','application_settings'])
+    assert.deepEqual(p.tls[key],browser[key]);
+  assert.deepEqual(browser.cipher_suites.filter(x=>!p.tls.cipher_suites.includes(x)),provenance.deviations.removedCipherSuites);
+  assert.deepEqual(browser.extension_types.filter(x=>!p.tls.extension_types.includes(x)),provenance.deviations.removedExtensions);
+  const c=checkConfig(f,p);assert.equal(c.status,0,c.stderr);
+  const reports=[];
+  for(let i=0;i<3;i++)for(const wire of await exchange(f,p)) {
+    const r=observeTlsProfile(wire,p);assert.equal(r.status,'matched',JSON.stringify(r.differences));reports.push(r);
+    assert.equal(r.keyShares.find(k=>k.group===4588)?.length,1216);
+  }
+  const other=fixture(t);
+  for(const changes of [{ca:other.cert},{server_name:'wrong.localhost'},{secret_path:other.secret}])
+    await exchange(f,p,{mode:'reject',changes});
+  console.log(JSON.stringify({boundedChromiumPilot:{reports,browserEquivalent:false}}));
+});

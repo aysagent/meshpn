@@ -12,6 +12,15 @@ import { randomBytes } from 'node:crypto';
 const EXIT = '154.62.226.216', GATEWAY = '192.168.7.1';
 const SCRIPT = '/root/dev/meshpn/scripts/clean-vpn-native-trial.mjs';
 const check = (ok, code) => { if (!ok) throw Error(code); };
+// Shared with the remote runner; only validates an explicit profile path.
+export function takeTrialTlsProfile(args) {
+  const selected = args.filter(s => s.startsWith('--tls-profile='));
+  check(selected.length <= 1, 'duplicate_tls_profile');
+  const profile = selected.length ? selected[0].slice('--tls-profile='.length) : null;
+  check(profile === null || (/^\/[a-zA-Z0-9_./-]+$/.test(profile)
+    && path.posix.normalize(profile) === profile && profile !== '/'), 'invalid_tls_profile_path');
+  return { profile, args: args.filter(s => !s.startsWith('--tls-profile=')) };
+}
 export function trialClockCheck(remoteSeconds, beforeMs, afterMs, elapsedMs) {
   check(/^\d{10}$/.test(remoteSeconds) && [beforeMs, afterMs, elapsedMs].every(Number.isFinite)
     && elapsedMs >= 0 && elapsedMs <= 20000 && afterMs >= beforeMs
@@ -224,8 +233,10 @@ export async function main(args = process.argv.slice(2)) {
     console.log('--smoke: baseline/native/restored only; no wlan0 down/up, SIGKILL or benchmark. Use this for the first physical combo run.');
     console.log('--cold-smoke: only when the initial legacy baseline is unavailable. Requires full native host/USB probes; restores legacy configuration without claiming legacy internet health.');
     console.log('--benchmark: three legacy/native/legacy cycles, four HTTPS streams, synthetic upload, <=340 MiB total application data. No uplink/crash fault. Not Ookla.');
-    console.log('Usage on Mac: node clean-vpn-native-usb-check.mjs --interface=en9 [--crash | --benchmark] [--combo-profile=/absolute/path/on/radxa.json]\nDefault: real wlan0 down/up on Radxa. --crash: SIGKILL native engine, keep uplink up, capture selected IPv4 HTTPS egress; requires tcpdump on Radxa.\nCombo profile path is evaluated on Radxa and must be a root-owned private file.\nUSB rescue SSH :2222 remains available. Requires Node 18+, ssh, curl, dig and a current built Radxa checkout at /root/dev/meshpn.\nNo Mac settings change. Without --benchmark: up to seven 1 MiB downloads; functional checks, not a speed benchmark. No mode is comprehensive leak acceptance.'); return;
+    console.log('Usage on Mac: node clean-vpn-native-usb-check.mjs --interface=en9 [--crash | --benchmark] [--combo-profile=/absolute/path/on/radxa.json] [--tls-profile=/absolute/private-profile.json]\nDefault: real wlan0 down/up on Radxa. --crash: SIGKILL native engine, keep uplink up, capture selected IPv4 HTTPS egress; requires tcpdump on Radxa.\nCombo profile path is evaluated on Radxa and must be a root-owned private file.\nUSB rescue SSH :2222 remains available. Requires Node 18+, ssh, curl, dig and a current built Radxa checkout at /root/dev/meshpn.\nNo Mac settings change. Without --benchmark: up to seven 1 MiB downloads; functional checks, not a speed benchmark. No mode is comprehensive leak acceptance.'); return;
   }
+  const tlsOption = takeTrialTlsProfile(args); args = tlsOption.args;
+  const tlsProfile = tlsOption.profile;
   console.log('[usb-check] Проверяю окружение Mac и USB-интерфейс');
   check(process.platform === 'darwin', 'run_on_mac');
   const interfaceArgs = args.filter(value => /^--interface=[a-zA-Z0-9]{1,15}$/.test(value));
@@ -298,7 +309,7 @@ export async function main(args = process.argv.slice(2)) {
       if (benchmark) console.log(`[usb-check] цикл ${cycle + 1}/3`);
       let runId, finished;
       const job = ssh(cmd(['--apply', benchmark ? '--usb-benchmark' : crash ? '--usb-crash' : smoke ? '--usb-smoke' : coldSmoke ? '--usb-cold-smoke' : '--usb-peer',
-        ...(comboProfile ? [comboProfile] : [])]), { timeout: 1600000, onOutput: out => {
+        ...(comboProfile ? [comboProfile] : []), ...(tlsProfile ? ['--tls-profile=' + tlsProfile] : [])]), { timeout: 1600000, onOutput: out => {
         const match = /^USB_TRIAL_ID=(run-[a-zA-Z0-9]+)$/m.exec(out); if (match) runId = match[1];
       } }).then(r => { finished = r; return r; });
       const seen = new Set();

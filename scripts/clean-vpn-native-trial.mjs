@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { deriveTrialConfig, deriveComboTrialConfig, parseComboTrialProfile, summarizeTrialProbe,
   hasUsbRescueConnection, requireTrial as check, runTrial } from './lib/native-radxa-trial.mjs';
@@ -22,6 +22,7 @@ import { openTunnelDnsJournal } from './lib/dns-tunnel-journal.mjs';
 import { openNativeComboRedirectJournal } from './lib/native-combo-redirect-journal.mjs';
 import { nativeComboRedirectPlan } from './lib/native-combo-redirect-plan.mjs';
 import { nativeUsbRedirectConfig } from './lib/native-usb-control.mjs';
+import { takeTrialTlsProfile } from './clean-vpn-native-usb-check.mjs';
 import { benchmarkPhases, sampleTrialCpu } from './lib/native-trial-benchmark.mjs';
 
 const SELF = fileURLToPath(import.meta.url), ROOT = path.dirname(path.dirname(SELF));
@@ -193,7 +194,7 @@ function privateInputFile(file, limit) {
   const bytes = fs.readFileSync(file); check(bytes.length === stat.size, 'short_private_input'); return bytes;
 }
 
-async function adapter(trialCrash = false, comboProfilePath = null) {
+async function adapter(trialCrash = false, comboProfilePath = null, tlsProfilePath = null) {
   let initialPid, config, scratch, fingerprint, buildLock, ipv6Evidence;
   const combo = comboProfilePath !== null;
   const legacyFingerprint = () => trialServiceFingerprint({ run, root: ROOT });
@@ -202,6 +203,7 @@ async function adapter(trialCrash = false, comboProfilePath = null) {
   };
   return {
     transport: combo ? 'combo-tls' : 'boring-tls',
+    tlsProfile: null,
     async preflight() {
       await hostRequired(); await verifyGuard(); await snatReady();
       if (trialCrash) await run('tcpdump', ['--version']);
@@ -239,6 +241,15 @@ async function adapter(trialCrash = false, comboProfilePath = null) {
       fs.writeFileSync(path.join(scratch, 'psk'), key, { mode: 0o600, flag: 'wx' }); key.fill(0);
       fs.writeFileSync(path.join(scratch, 'ca.pem'), ca, { mode: 0o600, flag: 'wx' });
       config = { ...config, secret_path: path.join(scratch, 'psk'), ca: path.join(scratch, 'ca.pem') };
+      if (tlsProfilePath !== null) {
+        const bytes = privateInputFile(tlsProfilePath, 16384);
+        const saved = JSON.parse(bytes);
+        const destination = path.join(scratch, 'tls-profile.json');
+        fs.writeFileSync(destination, bytes, { mode: 0o600, flag: 'wx' });
+        config.tls_profile_path = destination;
+        this.tlsProfile = { id: saved.id, fileSha256: createHash('sha256').update(bytes).digest('hex'),
+          browserEquivalent: false, independentWireCheck: 'required-separately' };
+      }
       if (combo) {
         const profile = parseComboTrialProfile(JSON.parse(privateInputFile(comboProfilePath, 16384)));
         const relay = privateInputFile(profile.relay_secret_path, 32);
@@ -375,7 +386,7 @@ export function uplinkFault(directory, { exec = run, commandResult = command, ge
   };
 }
 
-async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchmark = false, comboProfile = null, smoke = false, coldSmoke = false) {
+async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchmark = false, comboProfile = null, smoke = false, coldSmoke = false, tlsProfile = null) {
   await hostRequired();
   check(path.dirname(directory) === REPORTS && /^run-[a-zA-Z0-9]+$/.test(path.basename(directory)), 'invalid_worker_directory');
   privateDirectory(REPORTS); privateDirectory(directory);
@@ -385,7 +396,7 @@ async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchm
   let cancelled = false;
   process.on('SIGTERM', () => { cancelled = true; });
   process.on('SIGINT', () => { cancelled = true; });
-  const io = await adapter(trialCrash, comboProfile);
+  const io = await adapter(trialCrash, comboProfile, tlsProfile);
   if (peerIp) {
     const peer = createPeerChannel(directory, peerIp, { cancelled: () => cancelled });
     const benchmarkPhase = async (phase, target, session) => {
@@ -432,7 +443,7 @@ async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchm
     if (report.usb) report.usb.scope = 'Mac-USB-bounded-download-upload-and-Radxa-client-process-tree-CPU';
   }
   try { io.cleanSecrets(); } catch { report.secretCleanup = 'failed-private-run-directory-retained'; report.status = 'failed'; }
-  Object.assign(report, { started, seconds: Math.round((performance.now() - began) / 1000),
+  Object.assign(report, { tlsProfile: io.tlsProfile, started, seconds: Math.round((performance.now() - began) / 1000),
     holdSeconds, reportFile: path.join(directory, 'report.json') });
   if (report.rollback === 'manual-review-required') report.next = 'Keep USB rescue. Do not flush rules or delete journals. Review report; reboot restores the enabled legacy service if ordinary recovery is unsafe.';
   writeJson(path.join(directory, 'report.json'), report); writeJson(path.join(REPORTS, 'last.json'), report);
@@ -447,7 +458,7 @@ export async function main(args = process.argv.slice(2)) {
     console.log('Cold smoke: --apply --usb-cold-smoke (Mac --cold-smoke); requires unavailable legacy baseline; distinct native-only acceptance and structural rollback.');
     console.log('Benchmark mode: --apply --usb-benchmark (Mac --benchmark coordinates three old/native/old cycles). Bounded synthetic upload/download, no fault injection.');
     console.log('Crash mode: --apply --usb-crash (coordinate from Mac with --crash). SIGKILL the owned native engine; keep wlan0 up; tcpdump selected IPv4 HTTPS; audited legacy rollback.');
-    console.log('Usage: node scripts/clean-vpn-native-trial.mjs --apply [--hold-seconds=0..300 | --usb-peer | --usb-crash | --usb-benchmark] [--combo-profile=/absolute/private.json] | --report\nRun from authenticated USB rescue SSH :2222 as root, after build-clean-vpn-native.sh.\nCombo requires a USB mode and a separate private relay key profile.\nTemporarily stops ONLY clean-vpn.service, tests native, audits cleanup and restores legacy.\nUSB modes are coordinated by clean-vpn-native-usb-check.mjs on Mac. --usb-peer: REAL wlan0 down/up with independent systemd restoration.\nTransient systemd unit survives SSH loss. No install/enable/firewall flush/reboot.\nWithout --usb-benchmark: real DNS/HTTPS and bounded downloads, not a speed benchmark.'); return;
+    console.log('Usage: node scripts/clean-vpn-native-trial.mjs --apply [--hold-seconds=0..300 | --usb-peer | --usb-crash | --usb-benchmark] [--combo-profile=/absolute/private.json] [--tls-profile=/absolute/private-profile.json] | --report\nRun from authenticated USB rescue SSH :2222 as root, after build-clean-vpn-native.sh.\nCombo requires a USB mode and a separate private relay key profile.\nTemporarily stops ONLY clean-vpn.service, tests native, audits cleanup and restores legacy.\nUSB modes are coordinated by clean-vpn-native-usb-check.mjs on Mac. --usb-peer: REAL wlan0 down/up with independent systemd restoration.\nTransient systemd unit survives SSH loss. No install/enable/firewall flush/reboot.\nWithout --usb-benchmark: real DNS/HTTPS and bounded downloads, not a speed benchmark.'); return;
   }
   await hostRequired();
   if (args.length === 2 && ['--peer-status', '--peer-result'].includes(args[0])) {
@@ -487,15 +498,17 @@ export async function main(args = process.argv.slice(2)) {
     return;
   }
   if (args[0] === '--worker' && args.length >= 3 && /^\d{1,3}$/.test(args[2]) && Number(args[2]) <= 300) {
-    const tail = args.slice(3); let peerIp, mode, comboProfile;
+    const tlsOption = takeTrialTlsProfile(args.slice(3));
+    const tail = tlsOption.args; let peerIp, mode, comboProfile;
     if (tail[0] && /^192\.168\.7\.(?:[2-9]|[1-9]\d|1\d\d|2[0-4]\d|25[0-4])$/.test(tail[0])) peerIp = tail.shift();
     if (['--crash', '--benchmark', '--smoke', '--cold-smoke'].includes(tail[0])) mode = tail.shift();
     if (tail[0]?.startsWith('--combo-profile=')) comboProfile = tail.shift().slice('--combo-profile='.length);
     check(tail.length === 0 && (!mode || peerIp) && (!comboProfile || peerIp), 'invalid_trial_worker_arguments');
-    return worker(args[1], Number(args[2]), peerIp, mode === '--crash', mode === '--benchmark', comboProfile ?? null, mode === '--smoke', mode === '--cold-smoke');
+    return worker(args[1], Number(args[2]), peerIp, mode === '--crash', mode === '--benchmark', comboProfile ?? null, mode === '--smoke', mode === '--cold-smoke', tlsOption.profile);
   }
   check(args[0] === '--apply', 'use_apply_or_report_or_help');
-  const options = args.slice(1), comboOptions = options.filter(value => value.startsWith('--combo-profile='));
+  const tlsOption = takeTrialTlsProfile(args.slice(1));
+  const options = tlsOption.args, comboOptions = options.filter(value => value.startsWith('--combo-profile='));
   check(comboOptions.length <= 1, 'duplicate_combo_profile');
   const comboProfile = comboOptions[0]?.slice('--combo-profile='.length) ?? null;
   const modes = options.filter(value => !value.startsWith('--combo-profile='));
@@ -518,7 +531,8 @@ export async function main(args = process.argv.slice(2)) {
     '--property=StandardOutput=null', '--property=StandardError=null',
     `--working-directory=${ROOT}`, process.execPath, SELF, '--worker', dir, match[1], ...(usb ? [peerIp] : []),
     ...(crash ? ['--crash'] : benchmark ? ['--benchmark'] : smoke ? ['--smoke'] : coldSmoke ? ['--cold-smoke'] : []),
-    ...(comboProfile ? [`--combo-profile=${comboProfile}`] : [])], 15000);
+    ...(comboProfile ? [`--combo-profile=${comboProfile}`] : []),
+    ...(tlsOption.profile ? [`--tls-profile=${tlsOption.profile}`] : [])], 15000);
   if (usb) console.log(`USB_TRIAL_ID=${path.basename(dir)}`);
   console.error('Trial started; survives SSH disconnect. Do not checkout/build/restart services during the trial.');
   console.error('After reconnect: node scripts/clean-vpn-native-trial.mjs --report');

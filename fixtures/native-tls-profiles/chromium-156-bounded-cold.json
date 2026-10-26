@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-tls-profile",
+  "id": "chromium-156-bounded-cold-v1",
+  "scenario": "cold",
+  "tls": {
+    "min_version": 771,
+    "max_version": 772,
+    "cipher_suites": [
+      4865,
+      4866,
+      4867,
+      49195,
+      49199,
+      49196,
+      49200,
+      52393,
+      52392
+    ],
+    "supported_groups": [
+      4588,
+      29,
+      23,
+      24
+    ],
+    "key_share_groups": [
+      4588,
+      29
+    ],
+    "signature_algorithms": [
+      2308,
+      2309,
+      2310,
+      1027,
+      2052,
+      1025,
+      1283,
+      2053,
+      1281,
+      2054,
+      1537
+    ],
+    "alpn": [
+      "h2",
+      "http/1.1"
+    ],
+    "grease": true,
+    "permute_extensions": true,
+    "ech_grease": true,
+    "ocsp": true,
+    "sct": true,
+    "extension_types": [
+      5,
+      23,
+      43,
+      65281,
+      17613,
+      13,
+      0,
+      11,
+      45,
+      27,
+      16,
+      65037,
+      10,
+      18,
+      51
+    ],
+    "optional_extension_types": [
+      21
+    ],
+    "certificate_compression": [
+      2
+    ],
+    "application_settings": [
+      "h2"
+    ]
+  },
+  "http2": {
+    "settings": [
+      [
+        1,
+        65536
+      ],
+      [
+        2,
+        0
+      ],
+      [
+        3,
+        1
+      ],
+      [
+        4,
+        1048576
+      ],
+      [
+        6,
+        8192
+      ]
+    ],
+    "connection_window": 1048576
+  }
+}

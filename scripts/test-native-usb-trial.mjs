@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPeerChannel, peerStatus, submitPeerResult, validatePeerResult, exerciseNativePeer, exerciseSmokePeer } from './lib/native-usb-trial-peer.mjs';
 import { runFault, faultUnitArgs } from './clean-vpn-native-usb-uplink.mjs';
-import { probePeer, dnsAddresses, execute, quote, trialClockCheck } from './clean-vpn-native-usb-check.mjs';
+import { probePeer, dnsAddresses, execute, quote, trialClockCheck, takeTrialTlsProfile } from './clean-vpn-native-usb-check.mjs';
 import { uplinkFault } from './clean-vpn-native-trial.mjs';
 
 const ip = '192.168.7.19';
@@ -192,4 +192,13 @@ test('bounded command runner reports spawn and timeout failures without raw stde
   const r = await execute(process.execPath, ['-e', 'console.error("PRIVATE"); setTimeout(()=>{}, 10000)'], { timeout: 100 });
   assert.equal(r.reason, 'timeout'); assert.ok(!JSON.stringify(r).includes('PRIVATE'));
   assert.equal(quote("a'b"), "'a'\\''b'");
+});
+
+test('explicit TLS profile survives trial argument forwarding and rejects ambiguous paths', () => {
+  assert.deepEqual(takeTrialTlsProfile(['--smoke', '--tls-profile=/root/profile.json']),
+    { args: ['--smoke'], profile: '/root/profile.json' });
+  assert.deepEqual(takeTrialTlsProfile(['--crash']), { args: ['--crash'], profile: null });
+  for (const value of ['', 'relative.json', '/', '/root/../profile.json', '/root/a b', '/root/a\n'])
+    assert.throws(() => takeTrialTlsProfile(['--tls-profile=' + value]), /invalid_tls_profile_path/);
+  assert.throws(() => takeTrialTlsProfile(['--tls-profile=/a', '--tls-profile=/b']), /duplicate_tls_profile/);
 });

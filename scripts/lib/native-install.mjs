@@ -102,6 +102,11 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   }
   const replay = (transparent || combo) && input.role === 'exit';
   if (replay) relayOutput.replay_directory = target + '/replay';
+  if (!transparent && packetInput.tls_profile_path) {
+    const bytes = regular(packetInput.tls_profile_path, 16384);
+    files.set('tls-profile.json', { bytes, mode: 0o600 });
+    packetOutput.tls_profile_path = target + '/tls-profile.json';
+  }
   if (packetInput.secret_path) packetOutput.secret_path = copy(packetInput.secret_path, 'peer.psk', true);
   if (packetInput.peers) packetOutput.peers = packetInput.peers.map((peer, i) => ({ ipv4: peer.ipv4, secret_path: copy(peer.secret_path, `peer-${i}.psk`, true) }));
   if (combo) relayOutput.secret_path = copy(relay.secret_path, 'relay.psk', true);
