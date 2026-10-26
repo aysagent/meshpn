@@ -199,6 +199,7 @@ for board_target in \
   [[ -f "device/boards/$board/sdkconfig.defaults" ]] || { echo "$board defaults missing" >&2; exit 1; }
 done
 if [[ -n "${IDF_PATH:-}" ]]; then
+  python3 -B device/tests/test_instrument_wifi_rx.py
   node device/tests/test-napt-icmp.mjs
   json_dir="$IDF_PATH/components/json/cJSON"
   "$cc" "${flags[@]}" -pthread -Idevice/tests/wg_diag_stubs -Idevice/tests/usb_stubs \

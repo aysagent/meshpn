@@ -200,6 +200,14 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
 #undef RX_FIELD
     if (staged.rx_last_read_us) cJSON_AddNumberToObject(rx_progress, "last_read_age_ms", (esp_timer_get_time() - staged.rx_last_read_us) / 1000.0);
     else cJSON_AddNullToObject(rx_progress, "last_read_age_ms");
+    cJSON *rx_netif = cJSON_AddObjectToObject(hosted, "rx_netif");
+    cJSON_AddStringToObject(rx_netif, "scope", "since boot; wlanif handoff from Hosted; queued = accepted by lwIP input, not application delivery; drops are down + no_memory + input_rejected; public RX callback return may hide drops");
+    const char *rx_names[] = {"calls", "down", "no_memory", "input_rejected", "queued"};
+    for (unsigned i = 0; i < 2; i++) {
+        cJSON *entry = cJSON_AddObjectToObject(rx_netif, i ? "ap" : "sta");
+        for (unsigned j = 0; j < 5; j++) cJSON_AddNumberToObject(entry, rx_names[j], staged.rx_netif[i][j]);
+        cJSON_AddNumberToObject(entry, "bytes", staged.rx_netif_bytes[i]);
+    }
     cJSON *queues = cJSON_AddObjectToObject(hosted, "tx_queue");
     cJSON_AddBoolToObject(queues, "enabled", staged.enabled);
     cJSON_AddStringToObject(queues, "scope", "since boot; uncontended direct SDIO handoff, congestion staged in owned PSRAM copies; sent includes direct_sent, not RF delivery; residence_us covers released staged copies; losses = full + invalid + not_ready + expired + stale + policy_changed + failed");

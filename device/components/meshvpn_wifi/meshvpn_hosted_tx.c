@@ -132,6 +132,14 @@ void meshvpn_hosted_rx_complete(unsigned bytes, bool failed)
     else { s_stats.rx_reads++; s_stats.rx_bytes += bytes; s_stats.rx_last_read_us = now; }
     portEXIT_CRITICAL(&s_lock);
 }
+void meshvpn_hosted_rx_netif(unsigned ifx, unsigned stage, unsigned bytes)
+{
+    if (ifx > 1 || stage > 4) return;
+    portENTER_CRITICAL(&s_lock);
+    s_stats.rx_netif[ifx][stage]++;
+    if (!stage) s_stats.rx_netif_bytes[ifx] += bytes;
+    portEXIT_CRITICAL(&s_lock);
+}
 
 /* All calls, including retry and queue publication, have zero queue wait.
  * The owned copy survives a failed direct call, which frees only its own DMA

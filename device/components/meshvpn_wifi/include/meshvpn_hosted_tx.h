@@ -27,6 +27,7 @@ typedef struct {
     uint64_t rx_interrupts, rx_wait_timeouts, rx_wait_errors, rx_poll_data, rx_without_new_packet;
     uint64_t rx_reads, rx_bytes, rx_read_errors, rx_last_read_us;
     uint32_t rx_pending_max;
+    uint64_t rx_netif[2][5], rx_netif_bytes[2];
     meshvpn_hosted_queue_stats_t queue[2]; /* STA, AP; acceptance != RF delivery */
 } meshvpn_hosted_tx_stats_t;
 
@@ -41,4 +42,5 @@ void meshvpn_hosted_tx_buffers(uint64_t elapsed_us, bool unavailable);
 void meshvpn_hosted_rx_wait(unsigned result); /* 0 IRQ, 1 expected poll timeout, 2 error */
 void meshvpn_hosted_rx_pending(unsigned bytes, bool new_packet_irq, bool poll_timeout);
 void meshvpn_hosted_rx_complete(unsigned bytes, bool failed);
+void meshvpn_hosted_rx_netif(unsigned ifx, unsigned stage, unsigned bytes);
 void meshvpn_hosted_tx_snapshot(meshvpn_hosted_tx_stats_t *out);
