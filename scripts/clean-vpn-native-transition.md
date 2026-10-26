@@ -8,6 +8,18 @@ packet path не является обязательной. Production-разв�
 
 ## Реализовано в текущем шаге
 
+2026-10-26: [goodput через настоящий TUN](clean-vpn-native-h2-goodput.md):
+24/24 передачи по 8 MiB, четыре клиента, три повтора, два RTT/bandwidth режима.
+На 100 Мбит/с / 120 мс download median 24.62 → 35.60 Мбит/с при 1/1 → 6/15 MiB;
+upload 25.13 → 22.45. Netem drops=0, но baseline exit drops=51/69/200:
+следующий H2 шаг — отдельные причины drops и bounded TUN backpressure.
+Production caps прежние; большие окна пока не одобрены. CTest 10/10, parser 4/4.
+Для boring-tls пилота исследования Chromium не барьер: нужны live smoke,
+постоянный service lifecycle/DNS/recovery/reboot и корректные часы.
+HTTP Date recovery есть только в Node TLS, не в native C++; NTP/RTC Radxa не закрыт.
+Mac network/VPS/Radxa этим этапом не изменялись.
+
+
 2026-10-26: [H2 в полноценном Linux guest](clean-vpn-native-h2-kernel.md) прошёл:
 kernel accounting, контролируемый RTT и 30 циклов каждого размера окна.
 10 случаев / 168 фаз / 84 восстановления / 384 соединения; SO_MEMINFO доступен.

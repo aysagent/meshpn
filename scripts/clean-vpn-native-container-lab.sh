@@ -78,7 +78,7 @@ NODE
     "-DCVPN_JSON_SOURCE=$WORK/native/boring_tls/build/_deps/json-src"
   cmake --build native/clean_vpn/build --parallel 2 --target \
     clean-vpn-engine clean-vpn-engine-fixture protocol-test dns-wire-test dns-relay-test \
-    integration-test service-notify-test socket-test transparent-test \
+    integration-test h2-goodput-test service-notify-test socket-test transparent-test \
     transparent-socket-test transparent-replay-test combo-test throughput-test tls-profile-test profile-credentials-fixture certificate-compression-test http2-alps-test
   ctest --test-dir native/clean_vpn/build --output-on-failure
 }
@@ -147,6 +147,13 @@ run_lab() {
 }
 
 case "${1:-}" in
+  h2-goodput)
+    sync_source
+    build_current
+    cd "$WORK"
+    report="/export/clean-vpn-h2-goodput-$(date -u +%Y%m%dT%H%M%SZ).json"
+    node scripts/clean-vpn-native-h2-kernel-lab.mjs "$report" --goodput
+    ;;
   h2-kernel)
     sync_source
     build_current

@@ -1,5 +1,12 @@
 # clean-vpn: цели и порядок дальнейшей работы
 
+Актуальный checkpoint 2026-10-26: [H2 goodput](clean-vpn-native-h2-goodput.md),
+24 передачи через настоящий TUN; production caps прежние. Следующий ограниченный
+H2 шаг — причины drops и bounded TUN backpressure. Общий актуальный статус —
+[полный native-переход](clean-vpn-native-transition.md); записи ниже исторические.
+Для постоянного boring-tls нужны live smoke, service/DNS/recovery/reboot и
+решение по часам Radxa. Node HTTP Date recovery пока не перенесён в C++.
+
 Следующий реализованный этап: [native Brotli certificate compression](clean-vpn-native-certificate-compression.md).
 Поддержка opt-in ext27/algorithm 2 с ограниченным decoder и проверкой настоящего
 CompressedCertificate. Дальше — ALPS с фактическими H2 settings; trust anchors,

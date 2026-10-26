@@ -1,7 +1,8 @@
 # Восстановление часов из HTTP Date проверенного exit
 
-Для native Node TLS (`--type=tls`, также native TLS-путь `combo-tls`),
-HTTP/1.1 и HTTP/2. Включено автоматически; новых флагов, UDP-портов,
+Для Node.js TLS (`--type=tls`, также native TLS-путь `combo-tls`),
+HTTP/1.1 и HTTP/2. C++ `clean-vpn-engine` этот механизм пока не реализует.
+Включено автоматически в указанном Node.js пути; новых флагов, UDP-портов,
 ключей, systemd units и firewall-исключений нет.
 
 ## Обмен

@@ -80,6 +80,7 @@ function usage() {
   npm run lab:native:mac -- --tls-profiles
   npm run lab:native:mac -- --h2-budget
   npm run lab:native:mac -- --h2-kernel
+  npm run lab:native:mac -- --h2-goodput
   npm run lab:native:mac -- --browser-capture
   npm run lab:native:mac -- --http2-capture
   npm run lab:native:mac -- --multi-clients
@@ -171,7 +172,7 @@ function main() {
   fs.mkdirSync(exportRoot, { recursive: true, mode: 0o700 });
   const volume = 'meshpn-clean-vpn-lab-cache';
   const args = ['--connection', connection, 'run', '--rm', '--platform=linux/amd64',
-    ...(['--h2-budget','--h2-kernel'].includes(options.action) ? ['--network=none', '--cap-drop=all'] : []),
+    ...(['--h2-budget','--h2-kernel','--h2-goodput'].includes(options.action) ? ['--network=none', '--cap-drop=all'] : []),
     '--volume', `${root}:/source:ro`, '--volume', `${volume}:/lab`, '--volume', `${exportRoot}:/export`,
     '--env', `CVPN_REFRESH_BASE=${options.refreshBase ? '1' : '0'}`, image,
     'bash', '/source/scripts/clean-vpn-native-container-lab.sh', ...nativeMacLabContainerAction(options.action)];

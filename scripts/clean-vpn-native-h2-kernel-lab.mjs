@@ -11,7 +11,8 @@ import {once} from 'node:events';
 import {gzipSync} from 'node:zlib';
 assert.equal(process.platform,'linux');
 assert.equal(process.arch,'x64');
-assert.equal(process.argv.length,3,'Usage: node scripts/clean-vpn-native-h2-kernel-lab.mjs NEW_REPORT.json');
+const goodput=process.argv[3]==='--goodput';
+assert.ok(process.argv.length===3||(process.argv.length===4&&goodput),'Usage: node scripts/clean-vpn-native-h2-kernel-lab.mjs NEW_REPORT.json [--goodput]');
 const output=path.resolve(process.argv[2]);assert.equal(fs.existsSync(output),false,'output exists');
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-h2-kernel-')),guest=path.join(root,'guest');
 const build=path.resolve(process.env.CVPN_BUILD??'native/clean_vpn/build');
@@ -27,15 +28,16 @@ process.on('SIGINT',cancel);process.on('SIGTERM',cancel);
 try{
   const release=fs.readFileSync('/opt/meshpn-kernel-release','utf8').trim();assert.match(release,/^[a-zA-Z0-9._-]+$/);
   const kernel='/boot/vmlinuz-'+release;
-  const modules=execFileSync('modprobe',['--set-version',release,'--show-depends','sch_netem'],{encoding:'utf8'})
-    .trim().split('\n').map(line=>{assert.match(line,/^insmod \/lib\/modules\/[a-zA-Z0-9_./-]+\.ko\s*$/);return line.split(/\s+/)[1];});
+  const modules=[...new Set(['sch_netem',...(goodput?['tun','veth']:[])].flatMap(name=>execFileSync('modprobe',['--set-version',release,'--show-depends',name],{encoding:'utf8'})
+    .trim().split('\n').filter(line=>!/^builtin [a-zA-Z0-9_]+$/.test(line)).map(line=>{assert.match(line,/^insmod \/lib\/modules\/[a-zA-Z0-9_./-]+\.ko\s*$/);return line.split(/\s+/)[1];})))];
   for(const m of modules)put(m,fs.readFileSync(m));
   put('/bin/busybox',fs.readFileSync('/bin/busybox'),0o755);
   fs.symlinkSync('busybox',path.join(guest,'bin/sh'));
   for(const file of ['/usr/local/bin/node','/usr/bin/openssl','/usr/sbin/ip','/usr/sbin/tc'])binary(file);
-  for(const name of ['clean-vpn-engine','clean-vpn-engine-fixture','integration-test'])binary(path.join(build,name),'/project/native/clean_vpn/build/'+name);
+  for(const name of ['clean-vpn-engine','clean-vpn-engine-fixture',goodput?'h2-goodput-test':'integration-test'])binary(path.join(build,name),'/project/native/clean_vpn/build/'+name);
   put('/etc/ssl/openssl.cnf',fs.readFileSync('/etc/ssl/openssl.cnf'));
-  for(const file of ['scripts/clean-vpn-native-h2-budget.mjs','scripts/lib/native-h2-kernel-worker.mjs','fixtures/native-tls-profiles/cold-alps.json'])put('/project/'+file,fs.readFileSync(file));
+  const worker=goodput?'scripts/lib/native-h2-goodput-worker.mjs':'scripts/lib/native-h2-kernel-worker.mjs';
+  for(const file of ['scripts/clean-vpn-native-h2-budget.mjs',worker,'fixtures/native-tls-profiles/cold-alps.json'])put('/project/'+file,fs.readFileSync(file));
   put('/init',`#!/bin/sh
 export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/bin
 export OPENSSL_CONF=/etc/ssl/openssl.cnf
@@ -49,7 +51,7 @@ chmod 1777 /tmp
 ${modules.map(m=>'insmod '+m+' || poweroff -f').join('\n')}
 ip link set lo up
 cd /project
-if node scripts/lib/native-h2-kernel-worker.mjs; then echo H2_KERNEL_OK; else echo H2_KERNEL_FAILED; fi
+if node ${worker}; then echo H2_KERNEL_OK; else echo H2_KERNEL_FAILED; fi
 sync
 poweroff -f
 `,0o755);
@@ -60,7 +62,7 @@ poweroff -f
   const child=spawn('/opt/meshpn-native-qemu/qemu-system-x86_64',['-nodefaults','-no-user-config','-nic','none',
     '-display','none','-monitor','none','-serial','stdio','-no-reboot','-accel','tcg','-cpu','qemu64','-smp','2','-m','1536',
     '-bios',tools+'/usr/share/seabios/bios-256k.bin','-L',tools+'/usr/share/qemu','-kernel',kernel,'-initrd',initrd,
-    '-append','console=ttyS0 loglevel=4 panic=-1 random.trust_cpu=on meshpn.h2-kernel=1'],{stdio:['ignore','pipe','pipe']});
+    '-append','console=ttyS0 loglevel=4 panic=-1 random.trust_cpu=on meshpn.h2-kernel=1'+(goodput?' meshpn.h2-goodput=1':'')],{stdio:['ignore','pipe','pipe']});
   active=child;let serial='',progress='';const log=fs.openSync(output+'.serial.log','wx',0o600);
   const timer=setTimeout(cancel,20*60*1000);
   for(const stream of [child.stdout,child.stderr])stream.on('data',b=>{
@@ -68,14 +70,16 @@ poweroff -f
     progress+=b.toString();let end;
     while((end=progress.indexOf('\n'))>=0){
       const line=progress.slice(0,end);progress=progress.slice(end+1);
-      if(line.startsWith('H2_KERNEL_STEP=')||line.startsWith('H2 budget '))console.error(line.trim());
+      if(line.startsWith('H2_KERNEL_STEP=')||line.startsWith('H2 budget ')||line.startsWith('H2_GOODPUT_CASE='))console.error(line.trim());
     }
   });
   let code;try{[code]=await once(child,'close');}finally{active=null;clearTimeout(timer);fs.closeSync(log);}
   assert.equal(code,0,serial.slice(-4000));
   assert.ok(serial.includes('H2_KERNEL_OK')&&!serial.includes('H2_KERNEL_FAILED'),serial.slice(-6000));
   const matches=[...serial.matchAll(/H2_KERNEL_REPORT=(\{[^\r\n]+\})/g)];assert.equal(matches.length,1);
-  const report=JSON.parse(matches[0][1]);assert.equal(report.status,'passed');assert.equal(report.reports.length,3);
+  const report=JSON.parse(matches[0][1]);assert.equal(report.status,'passed');
+  if(goodput){assert.equal(report.kind,'clean-vpn-native-h2-goodput-report');assert.equal(report.cases.length,24);}
+  else assert.equal(report.reports.length,3);
   report.vm={kernel:release,kernelSha256:hash(fs.readFileSync(kernel)),accelerator:'TCG',vcpus:2,memoryMiB:1536};
   fs.writeFileSync(output,JSON.stringify(report,null,2)+'\n',{flag:'wx',mode:0o600});
   console.log('H2_KERNEL=passed REPORT='+output);

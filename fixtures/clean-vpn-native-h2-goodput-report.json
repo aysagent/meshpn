@@ -1,0 +1,3027 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-h2-goodput-report",
+  "status": "passed",
+  "realTun": true,
+  "clients": 4,
+  "bulkClients": 1,
+  "repetitions": 3,
+  "nic": "none",
+  "hostSharedFilesystem": false,
+  "productionWindowIncreaseApproved": false,
+  "productionCapsChanged": false,
+  "physicalHostsTouched": false,
+  "calibration": [
+    {
+      "link": "unshaped",
+      "applicationCpuSeconds": 0.072892,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 9832.887602,
+      "goodputMbps": 3526.078976888937,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 9813.855452,
+      "verified": true
+    },
+    {
+      "link": "unshaped",
+      "applicationCpuSeconds": 0.060117,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 9937.915342,
+      "goodputMbps": 3969.541137883337,
+      "kind": "upload",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 9921.009392,
+      "verified": true
+    },
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "applicationCpuSeconds": 0.21699400000000002,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 18506.599812,
+      "goodputMbps": 18.447382672735742,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 14868.746942,
+      "verified": true
+    },
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "applicationCpuSeconds": 0.061125,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 22342.983482,
+      "goodputMbps": 18.425639842272652,
+      "kind": "upload",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 18700.837832,
+      "verified": true
+    },
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "qdiscBefore": [
+        {
+          "ns": null,
+          "dev": "wan1",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8001:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 66,
+              "packets": 1,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp1",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8002:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 66,
+              "packets": 1,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": null,
+          "dev": "wan2",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8003:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 0,
+              "packets": 0,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp2",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8004:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 0,
+              "packets": 0,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": null,
+          "dev": "wan3",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8005:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 0,
+              "packets": 0,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp3",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8006:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 0,
+              "packets": 0,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": null,
+          "dev": "wan4",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8007:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 0,
+              "packets": 0,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp4",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8008:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 0,
+              "packets": 0,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        }
+      ],
+      "qdiscAfter": [
+        {
+          "ns": null,
+          "dev": "wan1",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8001:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 66524457,
+              "packets": 71939,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp1",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8002:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 66029710,
+              "packets": 65741,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": null,
+          "dev": "wan2",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8003:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 201407,
+              "packets": 1822,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp2",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8004:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 216199,
+              "packets": 1368,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": null,
+          "dev": "wan3",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8005:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 200433,
+              "packets": 1816,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp3",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8006:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 214657,
+              "packets": 1355,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": null,
+          "dev": "wan4",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8007:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 200279,
+              "packets": 1815,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp4",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8008:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 2500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 215202,
+              "packets": 1365,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "applicationCpuSeconds": 0.095154,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 88722.472362,
+      "goodputMbps": 44.01310766768882,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 87197.725132,
+      "verified": true
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "applicationCpuSeconds": 0.060122999999999996,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 90673.004202,
+      "goodputMbps": 44.016661916753016,
+      "kind": "upload",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 89148.380092,
+      "verified": true
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "qdiscBefore": [
+        {
+          "ns": null,
+          "dev": "wan1",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8001:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 66524457,
+              "packets": 71939,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp1",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8002:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 66029710,
+              "packets": 65741,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": null,
+          "dev": "wan2",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8003:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 201407,
+              "packets": 1822,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp2",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8004:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 216199,
+              "packets": 1368,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": null,
+          "dev": "wan3",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8005:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 200433,
+              "packets": 1816,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp3",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8006:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 214657,
+              "packets": 1355,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": null,
+          "dev": "wan4",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8007:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 200279,
+              "packets": 1815,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp4",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8008:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 215202,
+              "packets": 1365,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        }
+      ],
+      "qdiscAfter": [
+        {
+          "ns": null,
+          "dev": "wan1",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8001:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 132306470,
+              "packets": 129516,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp1",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8002:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 131532982,
+              "packets": 122294,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": null,
+          "dev": "wan2",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8003:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 295416,
+              "packets": 2612,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp2",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8004:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 320640,
+              "packets": 2083,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": null,
+          "dev": "wan3",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8005:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 293972,
+              "packets": 2598,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp3",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8006:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 318838,
+              "packets": 2066,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": null,
+          "dev": "wan4",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8007:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 296264,
+              "packets": 2635,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        {
+          "ns": "gp4",
+          "dev": "wan0",
+          "qdisc": [
+            {
+              "kind": "netem",
+              "handle": "8008:",
+              "root": true,
+              "refcnt": 3,
+              "options": {
+                "limit": 10000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "rate": {
+                  "rate": 12500000,
+                  "packetoverhead": 0,
+                  "cellsize": 0,
+                  "celloverhead": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 319739,
+              "packets": 2081,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "repetition": 1,
+      "mode": "baseline",
+      "applicationCpuSeconds": 0.25117,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 27812.475692,
+      "goodputMbps": 15.378153464795695,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 23448.566582,
+      "verified": true,
+      "health": [
+        {
+          "samples": 45,
+          "medianMs": 44.69178999999713,
+          "p95Ms": 51.74276999999711,
+          "maxMs": 57.66367000000173
+        },
+        {
+          "samples": 44,
+          "medianMs": 45.460660000000644,
+          "p95Ms": 56.031920000001264,
+          "maxMs": 71.1137499999968
+        },
+        {
+          "samples": 44,
+          "medianMs": 45.13087000000087,
+          "p95Ms": 58.2505799999999,
+          "maxMs": 68.14760000000024
+        }
+      ],
+      "metrics": {
+        "sampleCount": 37,
+        "wallSeconds": 4.607072280000001,
+        "exitTunBytes": 8825729,
+        "engineCpuTicks": [
+          197,
+          135,
+          22,
+          23,
+          22
+        ],
+        "peakRssKiB": [
+          6472,
+          6344,
+          6132,
+          6252,
+          6152
+        ],
+        "peakTcpSendQueuedBytes": 664332,
+        "peakTcpReceiveAllocBytes": 11779,
+        "droppedPackets": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "repetition": 1,
+      "mode": "baseline",
+      "applicationCpuSeconds": 0.063818,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 32329.253232,
+      "goodputMbps": 17.120584429652435,
+      "kind": "upload",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 28409.476762,
+      "verified": true,
+      "health": [
+        {
+          "samples": 41,
+          "medianMs": 43.60174999999799,
+          "p95Ms": 46.47094999999899,
+          "maxMs": 50.79322999999931
+        },
+        {
+          "samples": 40,
+          "medianMs": 43.65419999999722,
+          "p95Ms": 46.40778000000137,
+          "maxMs": 50.22063999999955
+        },
+        {
+          "samples": 41,
+          "medianMs": 43.35120999999708,
+          "p95Ms": 48.623899999998685,
+          "maxMs": 49.43493999999919
+        }
+      ],
+      "metrics": {
+        "sampleCount": 35,
+        "wallSeconds": 4.15722308,
+        "exitTunBytes": 8820829,
+        "engineCpuTicks": [
+          231,
+          85,
+          16,
+          16,
+          15
+        ],
+        "peakRssKiB": [
+          6472,
+          6372,
+          6132,
+          6252,
+          6152
+        ],
+        "peakTcpSendQueuedBytes": 705676,
+        "peakTcpReceiveAllocBytes": 11568,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "repetition": 1,
+      "mode": "browser-credit",
+      "applicationCpuSeconds": 0.24643199999999998,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 37540.763352,
+      "goodputMbps": 16.3864428041603,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 33445.373962,
+      "verified": true,
+      "health": [
+        {
+          "samples": 42,
+          "medianMs": 44.68582000000606,
+          "p95Ms": 55.19634000000224,
+          "maxMs": 76.89006999999401
+        },
+        {
+          "samples": 42,
+          "medianMs": 44.63096000000223,
+          "p95Ms": 54.32241999999678,
+          "maxMs": 80.71822000000247
+        },
+        {
+          "samples": 42,
+          "medianMs": 44.864199999996345,
+          "p95Ms": 53.578929999996035,
+          "maxMs": 70.33176000000094
+        }
+      ],
+      "metrics": {
+        "sampleCount": 36,
+        "wallSeconds": 4.381670389999999,
+        "exitTunBytes": 8817253,
+        "engineCpuTicks": [
+          193,
+          133,
+          19,
+          22,
+          19
+        ],
+        "peakRssKiB": [
+          6380,
+          6264,
+          6224,
+          6328,
+          6232
+        ],
+        "peakTcpSendQueuedBytes": 703517,
+        "peakTcpReceiveAllocBytes": 50623,
+        "droppedPackets": [
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "repetition": 1,
+      "mode": "browser-credit",
+      "applicationCpuSeconds": 0.059665,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 41996.472442,
+      "goodputMbps": 17.19120316545847,
+      "kind": "upload",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 38092.797792,
+      "verified": true,
+      "health": [
+        {
+          "samples": 41,
+          "medianMs": 43.79121000000305,
+          "p95Ms": 45.60773999999947,
+          "maxMs": 46.320950000001176
+        },
+        {
+          "samples": 41,
+          "medianMs": 43.4901600000012,
+          "p95Ms": 45.253459999999905,
+          "maxMs": 45.83445000000211
+        },
+        {
+          "samples": 41,
+          "medianMs": 43.94895999999426,
+          "p95Ms": 45.798399999999674,
+          "maxMs": 47.24786999999924
+        }
+      ],
+      "metrics": {
+        "sampleCount": 35,
+        "wallSeconds": 4.104759190000005,
+        "exitTunBytes": 8819557,
+        "engineCpuTicks": [
+          237,
+          81,
+          16,
+          19,
+          16
+        ],
+        "peakRssKiB": [
+          6380,
+          6276,
+          6224,
+          6328,
+          6232
+        ],
+        "peakTcpSendQueuedBytes": 706734,
+        "peakTcpReceiveAllocBytes": 10120,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "repetition": 2,
+      "mode": "browser-credit",
+      "applicationCpuSeconds": 0.252546,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 47011.166272,
+      "goodputMbps": 17.149923628265,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 43098.095552,
+      "verified": true,
+      "health": [
+        {
+          "samples": 40,
+          "medianMs": 44.95161999999982,
+          "p95Ms": 55.90671000000293,
+          "maxMs": 71.90035999999964
+        },
+        {
+          "samples": 40,
+          "medianMs": 44.940419999998994,
+          "p95Ms": 56.932450000000244,
+          "maxMs": 76.95130000000063
+        },
+        {
+          "samples": 40,
+          "medianMs": 44.22013000000152,
+          "p95Ms": 62.976720000006026,
+          "maxMs": 84.87888999999996
+        }
+      ],
+      "metrics": {
+        "sampleCount": 34,
+        "wallSeconds": 4.186061990000002,
+        "exitTunBytes": 8815697,
+        "engineCpuTicks": [
+          192,
+          136,
+          19,
+          20,
+          21
+        ],
+        "peakRssKiB": [
+          6632,
+          6272,
+          6316,
+          6228,
+          6184
+        ],
+        "peakTcpSendQueuedBytes": 782226,
+        "peakTcpReceiveAllocBytes": 13525,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "repetition": 2,
+      "mode": "browser-credit",
+      "applicationCpuSeconds": 0.064872,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 51514.703602,
+      "goodputMbps": 17.08184769311228,
+      "kind": "upload",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 47586.038202,
+      "verified": true,
+      "health": [
+        {
+          "samples": 41,
+          "medianMs": 44.24062000000413,
+          "p95Ms": 46.41487999999663,
+          "maxMs": 47.46795000000566
+        },
+        {
+          "samples": 41,
+          "medianMs": 44.04905000000144,
+          "p95Ms": 46.056750000003376,
+          "maxMs": 47.27982999999949
+        },
+        {
+          "samples": 42,
+          "medianMs": 43.422129999999015,
+          "p95Ms": 46.68278999999893,
+          "maxMs": 47.94369999999617
+        }
+      ],
+      "metrics": {
+        "sampleCount": 36,
+        "wallSeconds": 4.189693399999997,
+        "exitTunBytes": 8829717,
+        "engineCpuTicks": [
+          228,
+          88,
+          16,
+          17,
+          16
+        ],
+        "peakRssKiB": [
+          6568,
+          6284,
+          6316,
+          6228,
+          6184
+        ],
+        "peakTcpSendQueuedBytes": 704931,
+        "peakTcpReceiveAllocBytes": 7712,
+        "droppedPackets": [
+          1,
+          1,
+          0,
+          1,
+          1
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "repetition": 2,
+      "mode": "baseline",
+      "applicationCpuSeconds": 0.25144,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 56632.404922,
+      "goodputMbps": 16.591249618918305,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 52587.570112,
+      "verified": true,
+      "health": [
+        {
+          "samples": 40,
+          "medianMs": 44.14391999999498,
+          "p95Ms": 59.27070000000094,
+          "maxMs": 98.5060599999997
+        },
+        {
+          "samples": 40,
+          "medianMs": 44.95987000000605,
+          "p95Ms": 76.90471999999863,
+          "maxMs": 127.52440999999817
+        },
+        {
+          "samples": 41,
+          "medianMs": 44.485749999999825,
+          "p95Ms": 60.766279999996186,
+          "maxMs": 158.08387999999832
+        }
+      ],
+      "metrics": {
+        "sampleCount": 34,
+        "wallSeconds": 4.272854999999996,
+        "exitTunBytes": 8814345,
+        "engineCpuTicks": [
+          195,
+          129,
+          25,
+          20,
+          20
+        ],
+        "peakRssKiB": [
+          6648,
+          6204,
+          6124,
+          6348,
+          6264
+        ],
+        "peakTcpSendQueuedBytes": 693409,
+        "peakTcpReceiveAllocBytes": 21356,
+        "droppedPackets": [
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "repetition": 2,
+      "mode": "baseline",
+      "applicationCpuSeconds": 0.063198,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 61096.548802,
+      "goodputMbps": 17.189091205688747,
+      "kind": "upload",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 57192.394522,
+      "verified": true,
+      "health": [
+        {
+          "samples": 42,
+          "medianMs": 43.01017000000138,
+          "p95Ms": 45.21050000000105,
+          "maxMs": 47.01212000000669
+        },
+        {
+          "samples": 40,
+          "medianMs": 44.063790000000154,
+          "p95Ms": 46.69974999999977,
+          "maxMs": 48.35877999999502
+        },
+        {
+          "samples": 41,
+          "medianMs": 43.97371000000567,
+          "p95Ms": 45.852249999996275,
+          "maxMs": 48.96918999999616
+        }
+      ],
+      "metrics": {
+        "sampleCount": 35,
+        "wallSeconds": 4.0966325299999955,
+        "exitTunBytes": 8825889,
+        "engineCpuTicks": [
+          227,
+          81,
+          16,
+          15,
+          16
+        ],
+        "peakRssKiB": [
+          6616,
+          6216,
+          6124,
+          6348,
+          6264
+        ],
+        "peakTcpSendQueuedBytes": 728391,
+        "peakTcpReceiveAllocBytes": 7712,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "repetition": 3,
+      "mode": "baseline",
+      "applicationCpuSeconds": 0.21688000000000002,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 66706.070232,
+      "goodputMbps": 15.424755860492253,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 62355.345682,
+      "verified": true,
+      "health": [
+        {
+          "samples": 45,
+          "medianMs": 43.62322000000859,
+          "p95Ms": 52.567589999998745,
+          "maxMs": 63.295930000000226
+        },
+        {
+          "samples": 45,
+          "medianMs": 43.70433999999659,
+          "p95Ms": 53.95145999999659,
+          "maxMs": 75.61071999999695
+        },
+        {
+          "samples": 45,
+          "medianMs": 44.073420000000624,
+          "p95Ms": 51.36468999999488,
+          "maxMs": 94.82194999999774
+        }
+      ],
+      "metrics": {
+        "sampleCount": 39,
+        "wallSeconds": 4.638183660000003,
+        "exitTunBytes": 8822597,
+        "engineCpuTicks": [
+          181,
+          117,
+          19,
+          19,
+          22
+        ],
+        "peakRssKiB": [
+          6400,
+          6152,
+          5984,
+          6148,
+          6136
+        ],
+        "peakTcpSendQueuedBytes": 657586,
+        "peakTcpReceiveAllocBytes": 14230,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "repetition": 3,
+      "mode": "baseline",
+      "applicationCpuSeconds": 0.058289999999999995,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 71487.165042,
+      "goodputMbps": 15.953358446213143,
+      "kind": "upload",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 67280.598492,
+      "verified": true,
+      "health": [
+        {
+          "samples": 45,
+          "medianMs": 42.732010000006994,
+          "p95Ms": 44.59970999999496,
+          "maxMs": 46.23308000000543
+        },
+        {
+          "samples": 45,
+          "medianMs": 43.07034000000567,
+          "p95Ms": 44.74929000000702,
+          "maxMs": 46.69453999999678
+        },
+        {
+          "samples": 44,
+          "medianMs": 43.28875999999582,
+          "p95Ms": 44.660250000000815,
+          "maxMs": 45.779329999990296
+        }
+      ],
+      "metrics": {
+        "sampleCount": 39,
+        "wallSeconds": 4.39534072,
+        "exitTunBytes": 8830141,
+        "engineCpuTicks": [
+          226,
+          82,
+          15,
+          16,
+          16
+        ],
+        "peakRssKiB": [
+          6400,
+          6164,
+          5984,
+          6148,
+          6136
+        ],
+        "peakTcpSendQueuedBytes": 656586,
+        "peakTcpReceiveAllocBytes": 10858,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "repetition": 3,
+      "mode": "browser-credit",
+      "applicationCpuSeconds": 0.22704999999999997,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 76560.806392,
+      "goodputMbps": 16.8135562319653,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 72569.451852,
+      "verified": true,
+      "health": [
+        {
+          "samples": 40,
+          "medianMs": 43.722669999988284,
+          "p95Ms": 54.86392000000342,
+          "maxMs": 200.07418999999936
+        },
+        {
+          "samples": 41,
+          "medianMs": 44.37829999999667,
+          "p95Ms": 53.14588999999978,
+          "maxMs": 131.07360000000335
+        },
+        {
+          "samples": 40,
+          "medianMs": 44.06158999999752,
+          "p95Ms": 61.074399999997695,
+          "maxMs": 149.23394999999437
+        }
+      ],
+      "metrics": {
+        "sampleCount": 34,
+        "wallSeconds": 4.1939070000000065,
+        "exitTunBytes": 8818897,
+        "engineCpuTicks": [
+          183,
+          130,
+          18,
+          22,
+          18
+        ],
+        "peakRssKiB": [
+          6504,
+          6248,
+          6068,
+          6164,
+          6368
+        ],
+        "peakTcpSendQueuedBytes": 715599,
+        "peakTcpReceiveAllocBytes": 24555,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 1
+      }
+    },
+    {
+      "link": {
+        "mbps": 20,
+        "rttMs": 40
+      },
+      "rttMs": {
+        "min": 43.985,
+        "avg": 45.712,
+        "max": 47.533
+      },
+      "repetition": 3,
+      "mode": "browser-credit",
+      "applicationCpuSeconds": 0.063347,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 81484.507382,
+      "goodputMbps": 15.234729532945964,
+      "kind": "upload",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 77079.515232,
+      "verified": true,
+      "health": [
+        {
+          "samples": 46,
+          "medianMs": 43.20962999999756,
+          "p95Ms": 44.587839999992866,
+          "maxMs": 45.26095999999961
+        },
+        {
+          "samples": 47,
+          "medianMs": 43.315419999998994,
+          "p95Ms": 44.39236999998684,
+          "maxMs": 46.53192000000854
+        },
+        {
+          "samples": 47,
+          "medianMs": 43.05075999999826,
+          "p95Ms": 45.20107999999891,
+          "maxMs": 47.191909999994095
+        }
+      ],
+      "metrics": {
+        "sampleCount": 40,
+        "wallSeconds": 4.602244419999988,
+        "exitTunBytes": 8832757,
+        "engineCpuTicks": [
+          238,
+          78,
+          17,
+          17,
+          16
+        ],
+        "peakRssKiB": [
+          6504,
+          6260,
+          6068,
+          6164,
+          6368
+        ],
+        "peakTcpSendQueuedBytes": 526568,
+        "peakTcpReceiveAllocBytes": 6264,
+        "droppedPackets": [
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "repetition": 1,
+      "mode": "baseline",
+      "applicationCpuSeconds": 0.143438,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 94986.940682,
+      "goodputMbps": 23.517249220097078,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 51,
+      "startMs": 92133.338912,
+      "verified": true,
+      "health": [
+        {
+          "samples": 15,
+          "medianMs": 123.48167000000831,
+          "p95Ms": 195.93860999999742,
+          "maxMs": 195.93860999999742
+        },
+        {
+          "samples": 16,
+          "medianMs": 123.80396000000474,
+          "p95Ms": 182.8831599999976,
+          "maxMs": 182.8831599999976
+        },
+        {
+          "samples": 16,
+          "medianMs": 123.44951000000583,
+          "p95Ms": 190.26346000000194,
+          "maxMs": 190.26346000000194
+        }
+      ],
+      "metrics": {
+        "sampleCount": 27,
+        "wallSeconds": 3.3134668700000036,
+        "exitTunBytes": 8904253,
+        "engineCpuTicks": [
+          197,
+          73,
+          12,
+          12,
+          12
+        ],
+        "peakRssKiB": [
+          7692,
+          6836,
+          6340,
+          6152,
+          6260
+        ],
+        "peakTcpSendQueuedBytes": 884614,
+        "peakTcpReceiveAllocBytes": 73428,
+        "droppedPackets": [
+          51,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 51
+      }
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "repetition": 1,
+      "mode": "baseline",
+      "applicationCpuSeconds": 0.064394,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 98576.021452,
+      "goodputMbps": 25.133844481714146,
+      "kind": "upload",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 95905.961802,
+      "verified": true,
+      "health": [
+        {
+          "samples": 15,
+          "medianMs": 123.58599999999569,
+          "p95Ms": 127.08040999999503,
+          "maxMs": 127.08040999999503
+        },
+        {
+          "samples": 14,
+          "medianMs": 123.81788000000233,
+          "p95Ms": 126.90662000000884,
+          "maxMs": 126.90662000000884
+        },
+        {
+          "samples": 15,
+          "medianMs": 123.50492000000668,
+          "p95Ms": 125.19237999999314,
+          "maxMs": 125.19237999999314
+        }
+      ],
+      "metrics": {
+        "sampleCount": 27,
+        "wallSeconds": 3.1241074799999913,
+        "exitTunBytes": 8853693,
+        "engineCpuTicks": [
+          102,
+          57,
+          11,
+          10,
+          11
+        ],
+        "peakRssKiB": [
+          7692,
+          7832,
+          6340,
+          6152,
+          6260
+        ],
+        "peakTcpSendQueuedBytes": 860302,
+        "peakTcpReceiveAllocBytes": 18357,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "repetition": 1,
+      "mode": "browser-credit",
+      "applicationCpuSeconds": 0.210432,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 102259.148332,
+      "goodputMbps": 35.60486112043998,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 100374.325252,
+      "verified": true,
+      "health": [
+        {
+          "samples": 10,
+          "medianMs": 125.95958000000974,
+          "p95Ms": 134.21975999999268,
+          "maxMs": 134.21975999999268
+        },
+        {
+          "samples": 10,
+          "medianMs": 125.50792000000365,
+          "p95Ms": 136.10291000000143,
+          "maxMs": 136.10291000000143
+        },
+        {
+          "samples": 10,
+          "medianMs": 125.30238000000827,
+          "p95Ms": 137.2385399999912,
+          "maxMs": 137.2385399999912
+        }
+      ],
+      "metrics": {
+        "sampleCount": 20,
+        "wallSeconds": 2.317459109999996,
+        "exitTunBytes": 8836273,
+        "engineCpuTicks": [
+          115,
+          66,
+          9,
+          10,
+          10
+        ],
+        "peakRssKiB": [
+          7296,
+          6272,
+          6136,
+          6220,
+          5984
+        ],
+        "peakTcpSendQueuedBytes": 1409904,
+        "peakTcpReceiveAllocBytes": 26832,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 3
+      }
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "repetition": 1,
+      "mode": "browser-credit",
+      "applicationCpuSeconds": 0.06875,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 106208.633312,
+      "goodputMbps": 22.451180785494532,
+      "kind": "upload",
+      "localRetransmits": 20,
+      "peerRetransmits": 0,
+      "startMs": 103219.531552,
+      "verified": true,
+      "health": [
+        {
+          "samples": 14,
+          "medianMs": 128.44756999998935,
+          "p95Ms": 278.73376999999164,
+          "maxMs": 278.73376999999164
+        },
+        {
+          "samples": 15,
+          "medianMs": 125.78699999999662,
+          "p95Ms": 241.18374000000767,
+          "maxMs": 241.18374000000767
+        },
+        {
+          "samples": 15,
+          "medianMs": 126.07206999999471,
+          "p95Ms": 222.8150500000047,
+          "maxMs": 222.8150500000047
+        }
+      ],
+      "metrics": {
+        "sampleCount": 27,
+        "wallSeconds": 3.426067250000007,
+        "exitTunBytes": 8838105,
+        "engineCpuTicks": [
+          148,
+          98,
+          21,
+          16,
+          18
+        ],
+        "peakRssKiB": [
+          7324,
+          7648,
+          6136,
+          6220,
+          5984
+        ],
+        "peakTcpSendQueuedBytes": 771904,
+        "peakTcpReceiveAllocBytes": 57951,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 20
+      }
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "repetition": 2,
+      "mode": "browser-credit",
+      "applicationCpuSeconds": 0.185812,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 109740.238792,
+      "goodputMbps": 39.723270617902664,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 108050.829462,
+      "verified": true,
+      "health": [
+        {
+          "samples": 9,
+          "medianMs": 124.14500000000407,
+          "p95Ms": 128.43018999999913,
+          "maxMs": 128.43018999999913
+        },
+        {
+          "samples": 9,
+          "medianMs": 124.21558999999252,
+          "p95Ms": 128.93914999999106,
+          "maxMs": 128.93914999999106
+        },
+        {
+          "samples": 9,
+          "medianMs": 123.21503000000666,
+          "p95Ms": 126.69797999999719,
+          "maxMs": 126.69797999999719
+        }
+      ],
+      "metrics": {
+        "sampleCount": 19,
+        "wallSeconds": 2.2092049400000104,
+        "exitTunBytes": 8842333,
+        "engineCpuTicks": [
+          91,
+          56,
+          8,
+          7,
+          8
+        ],
+        "peakRssKiB": [
+          7460,
+          6472,
+          6084,
+          6324,
+          6232
+        ],
+        "peakTcpSendQueuedBytes": 1705750,
+        "peakTcpReceiveAllocBytes": 23084,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 6
+      }
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "repetition": 2,
+      "mode": "browser-credit",
+      "applicationCpuSeconds": 0.061121,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 114493.969042,
+      "goodputMbps": 17.607662102683065,
+      "kind": "upload",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 110682.624662,
+      "verified": true,
+      "health": [
+        {
+          "samples": 21,
+          "medianMs": 123.90081999999529,
+          "p95Ms": 133.6403500000015,
+          "maxMs": 135.86826000000292
+        },
+        {
+          "samples": 21,
+          "medianMs": 123.902740000005,
+          "p95Ms": 138.65882999998576,
+          "maxMs": 139.218789999999
+        },
+        {
+          "samples": 21,
+          "medianMs": 123.69264999999723,
+          "p95Ms": 142.24245999999403,
+          "maxMs": 151.2653500000015
+        }
+      ],
+      "metrics": {
+        "sampleCount": 36,
+        "wallSeconds": 4.338684199999989,
+        "exitTunBytes": 8849265,
+        "engineCpuTicks": [
+          137,
+          80,
+          16,
+          18,
+          17
+        ],
+        "peakRssKiB": [
+          7120,
+          7108,
+          6084,
+          6324,
+          6232
+        ],
+        "peakTcpSendQueuedBytes": 1183000,
+        "peakTcpReceiveAllocBytes": 15424,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "repetition": 2,
+      "mode": "baseline",
+      "applicationCpuSeconds": 0.150572,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 119063.114402,
+      "goodputMbps": 24.620369560534105,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 69,
+      "startMs": 116337.368802,
+      "verified": true,
+      "health": [
+        {
+          "samples": 14,
+          "medianMs": 124.7280299999984,
+          "p95Ms": 126.42231000000902,
+          "maxMs": 126.42231000000902
+        },
+        {
+          "samples": 14,
+          "medianMs": 123.99844999999914,
+          "p95Ms": 129.46143999999913,
+          "maxMs": 129.46143999999913
+        },
+        {
+          "samples": 15,
+          "medianMs": 123.95707000000402,
+          "p95Ms": 125.92356999999902,
+          "maxMs": 125.92356999999902
+        }
+      ],
+      "metrics": {
+        "sampleCount": 28,
+        "wallSeconds": 3.2532687900000017,
+        "exitTunBytes": 8904269,
+        "engineCpuTicks": [
+          183,
+          55,
+          11,
+          12,
+          10
+        ],
+        "peakRssKiB": [
+          7580,
+          6020,
+          6292,
+          6224,
+          6440
+        ],
+        "peakTcpSendQueuedBytes": 814946,
+        "peakTcpReceiveAllocBytes": 18357,
+        "droppedPackets": [
+          69,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 72
+      }
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "repetition": 2,
+      "mode": "baseline",
+      "applicationCpuSeconds": 0.062828,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 122669.607692,
+      "goodputMbps": 25.180462095078532,
+      "kind": "upload",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 120004.491232,
+      "verified": true,
+      "health": [
+        {
+          "samples": 15,
+          "medianMs": 122.82310999999754,
+          "p95Ms": 125.41535999999905,
+          "maxMs": 125.41535999999905
+        },
+        {
+          "samples": 15,
+          "medianMs": 123.5431099999987,
+          "p95Ms": 126.04089999999269,
+          "maxMs": 126.04089999999269
+        },
+        {
+          "samples": 15,
+          "medianMs": 123.34962000000814,
+          "p95Ms": 124.6512800000055,
+          "maxMs": 124.6512800000055
+        }
+      ],
+      "metrics": {
+        "sampleCount": 27,
+        "wallSeconds": 3.109304999999993,
+        "exitTunBytes": 8851093,
+        "engineCpuTicks": [
+          99,
+          58,
+          10,
+          12,
+          10
+        ],
+        "peakRssKiB": [
+          7308,
+          7392,
+          6292,
+          6224,
+          6440
+        ],
+        "peakTcpSendQueuedBytes": 954092,
+        "peakTcpReceiveAllocBytes": 36714,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "repetition": 3,
+      "mode": "baseline",
+      "applicationCpuSeconds": 0.221483,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 127352.973772,
+      "goodputMbps": 24.84078254668261,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 200,
+      "startMs": 124651.413792,
+      "verified": true,
+      "health": [
+        {
+          "samples": 15,
+          "medianMs": 124.11235999999917,
+          "p95Ms": 129.48655999999028,
+          "maxMs": 129.48655999999028
+        },
+        {
+          "samples": 15,
+          "medianMs": 124.34532000000763,
+          "p95Ms": 127.77939999999944,
+          "maxMs": 127.77939999999944
+        },
+        {
+          "samples": 14,
+          "medianMs": 124.1296100000036,
+          "p95Ms": 129.42776999999478,
+          "maxMs": 129.42776999999478
+        }
+      ],
+      "metrics": {
+        "sampleCount": 27,
+        "wallSeconds": 3.23904853,
+        "exitTunBytes": 9113257,
+        "engineCpuTicks": [
+          194,
+          60,
+          14,
+          15,
+          12
+        ],
+        "peakRssKiB": [
+          7716,
+          6152,
+          6240,
+          6240,
+          6168
+        ],
+        "peakTcpSendQueuedBytes": 898030,
+        "peakTcpReceiveAllocBytes": 36714,
+        "droppedPackets": [
+          200,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 201
+      }
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "repetition": 3,
+      "mode": "baseline",
+      "applicationCpuSeconds": 0.060266,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 130943.356252,
+      "goodputMbps": 25.050673693486516,
+      "kind": "upload",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 128264.431732,
+      "verified": true,
+      "health": [
+        {
+          "samples": 15,
+          "medianMs": 123.6698999999935,
+          "p95Ms": 126.54806000000099,
+          "maxMs": 126.54806000000099
+        },
+        {
+          "samples": 15,
+          "medianMs": 123.50789999999688,
+          "p95Ms": 124.57995000001392,
+          "maxMs": 124.57995000001392
+        },
+        {
+          "samples": 15,
+          "medianMs": 123.1993599999987,
+          "p95Ms": 124.97006999999576,
+          "maxMs": 124.97006999999576
+        }
+      ],
+      "metrics": {
+        "sampleCount": 27,
+        "wallSeconds": 3.108669179999997,
+        "exitTunBytes": 8855981,
+        "engineCpuTicks": [
+          101,
+          59,
+          11,
+          9,
+          10
+        ],
+        "peakRssKiB": [
+          7436,
+          7376,
+          6240,
+          6240,
+          6168
+        ],
+        "peakTcpSendQueuedBytes": 922146,
+        "peakTcpReceiveAllocBytes": 18357,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "repetition": 3,
+      "mode": "browser-credit",
+      "applicationCpuSeconds": 0.257264,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 135702.182162,
+      "goodputMbps": 24.551194662111744,
+      "kind": "download",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 132968.756562,
+      "verified": true,
+      "health": [
+        {
+          "samples": 14,
+          "medianMs": 126.71140000000014,
+          "p95Ms": 143.36540999999852,
+          "maxMs": 143.36540999999852
+        },
+        {
+          "samples": 15,
+          "medianMs": 125.707150000002,
+          "p95Ms": 140.77971000000252,
+          "maxMs": 140.77971000000252
+        },
+        {
+          "samples": 15,
+          "medianMs": 124.76610999999684,
+          "p95Ms": 141.89050000000861,
+          "maxMs": 141.89050000000861
+        }
+      ],
+      "metrics": {
+        "sampleCount": 26,
+        "wallSeconds": 3.214588860000018,
+        "exitTunBytes": 8824209,
+        "engineCpuTicks": [
+          142,
+          85,
+          15,
+          14,
+          14
+        ],
+        "peakRssKiB": [
+          6860,
+          6352,
+          6256,
+          6164,
+          6268
+        ],
+        "peakTcpSendQueuedBytes": 969651,
+        "peakTcpReceiveAllocBytes": 54728,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 3
+      }
+    },
+    {
+      "link": {
+        "mbps": 100,
+        "rttMs": 120
+      },
+      "rttMs": {
+        "min": 124.228,
+        "avg": 128.069,
+        "max": 130.956
+      },
+      "repetition": 3,
+      "mode": "browser-credit",
+      "applicationCpuSeconds": 0.07134,
+      "bytes": 8388608,
+      "clockTicksPerSecond": 100,
+      "endMs": 139397.757412,
+      "goodputMbps": 25.06283357992693,
+      "kind": "upload",
+      "localRetransmits": 0,
+      "peerRetransmits": 0,
+      "startMs": 136720.132642,
+      "verified": true,
+      "health": [
+        {
+          "samples": 14,
+          "medianMs": 123.34381999998004,
+          "p95Ms": 125.12673000001814,
+          "maxMs": 125.12673000001814
+        },
+        {
+          "samples": 15,
+          "medianMs": 122.98699000000488,
+          "p95Ms": 125.03956999999355,
+          "maxMs": 125.03956999999355
+        },
+        {
+          "samples": 15,
+          "medianMs": 123.6391500000027,
+          "p95Ms": 125.18760999999358,
+          "maxMs": 125.18760999999358
+        }
+      ],
+      "metrics": {
+        "sampleCount": 27,
+        "wallSeconds": 3.121932689999987,
+        "exitTunBytes": 8856449,
+        "engineCpuTicks": [
+          101,
+          56,
+          11,
+          11,
+          11
+        ],
+        "peakRssKiB": [
+          6844,
+          7616,
+          6256,
+          6164,
+          6268
+        ],
+        "peakTcpSendQueuedBytes": 919625,
+        "peakTcpReceiveAllocBytes": 18357,
+        "droppedPackets": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "tcpRetransSegmentsAllNamespaces": 0
+      }
+    }
+  ],
+  "binaries": {
+    "clean-vpn-engine": "729f63a1cfde9fd55fb9ef6bcfcf94149ebaa344a299c5798161ecc7b947ee57",
+    "clean-vpn-engine-fixture": "47de336ea0aed41cd83fa8496c227ea4d6a34d86b90f69b9a32317b3a4c98b41",
+    "h2-goodput-test": "3334a396467c35b168ea5cf47cd6a950351333e389b663b651799e9adbd87e1a"
+  },
+  "limitations": [
+    "TCG-not-hardware-ceiling",
+    "per-client-full-duplex-link-not-shared-access-bottleneck",
+    "8MiB-completion-not-steady-state",
+    "no-random-loss-model",
+    "DNS-disabled-in-lab",
+    "sampled-RSS-and-TCP-counters-not-total-kernel-memory",
+    "upload-is-control-client-receive-credit-only"
+  ],
+  "vm": {
+    "kernel": "6.8.0-147-generic",
+    "kernelSha256": "41ba36d860aa0b0cd995f4ca8856d80249b244577e704929b55be13fbd1ebd2f",
+    "accelerator": "TCG",
+    "vcpus": 2,
+    "memoryMiB": 1536
+  }
+}
