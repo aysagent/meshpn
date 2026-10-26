@@ -16,11 +16,21 @@ try {
   const write = source.indexOf('static void sdio_write_task(', credits);
   if (credits < 0 || write < credits) throw Error('Pinned SDIO credit function not found');
   fs.writeFileSync(path.join(dir, 'sdio-credit.inc'), source.slice(credits, write));
+  const rx = source.lastIndexOf('static void sdio_read_task(');
+  const rxLoop = source.indexOf('\tfor (;;) {', rx);
+  const rxEnd = source.indexOf('\n}', rxLoop);
+  if (rx < 0 || rxLoop < rx || rxEnd < rxLoop) throw Error('Pinned SDIO RX loop not found');
+  fs.writeFileSync(path.join(dir, 'sdio-rx-loop.inc'), source.slice(rxLoop, rxEnd));
   const binary = path.join(dir, 'test');
   execFileSync(process.env.CC || 'cc', ['-std=gnu11', '-Wall', '-Wextra', '-Werror',
     '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined', '-I' + dir,
     new URL('tests/test_hosted_sdio_tx.c', root).pathname, '-o', binary], {stdio: 'inherit'});
   execFileSync(binary, {stdio: 'inherit'});
+  const rxBinary = path.join(dir, 'rx-test');
+  execFileSync(process.env.CC || 'cc', ['-std=gnu11', '-Wall', '-Wextra', '-Werror',
+    '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined', '-I' + dir,
+    new URL('tests/test_hosted_sdio_rx_poll.c', root).pathname, '-o', rxBinary], {stdio: 'inherit'});
+  execFileSync(rxBinary, {stdio: 'inherit'});
 } finally {
   fs.rmSync(dir, {recursive: true, force: true});
 }

@@ -189,6 +189,15 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
     cJSON_AddNumberToObject(hosted, "configured_rx_queue", CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE);
     cJSON_AddStringToObject(hosted, "scope", "host configuration; not a throughput measurement");
     meshvpn_hosted_tx_stats_t staged; meshvpn_hosted_tx_snapshot(&staged);
+    cJSON *rx_progress = cJSON_AddObjectToObject(hosted, "rx_progress");
+    cJSON_AddStringToObject(rx_progress, "scope", "since boot; 10ms IRQ timeout is normal idle polling; poll_data means pending bytes found after timeout, not proof of a lost edge");
+#define RX_FIELD(name) cJSON_AddNumberToObject(rx_progress, #name, (double)staged.rx_##name)
+    RX_FIELD(interrupts); RX_FIELD(wait_timeouts); RX_FIELD(wait_errors);
+    RX_FIELD(poll_data); RX_FIELD(without_new_packet); RX_FIELD(reads); RX_FIELD(bytes);
+    RX_FIELD(read_errors); RX_FIELD(pending_max);
+#undef RX_FIELD
+    if (staged.rx_last_read_us) cJSON_AddNumberToObject(rx_progress, "last_read_age_ms", (esp_timer_get_time() - staged.rx_last_read_us) / 1000.0);
+    else cJSON_AddNullToObject(rx_progress, "last_read_age_ms");
     cJSON *queues = cJSON_AddObjectToObject(hosted, "tx_queue");
     cJSON_AddBoolToObject(queues, "enabled", staged.enabled);
     cJSON_AddStringToObject(queues, "scope", "since boot; uncontended direct SDIO handoff, congestion staged in owned PSRAM copies; sent includes direct_sent, not RF delivery; residence_us covers released staged copies; losses = full + invalid + not_ready + expired + stale + policy_changed + failed");

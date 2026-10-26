@@ -24,6 +24,9 @@ typedef struct {
     uint64_t throttle_max_us, throttle_age_us;
     uint64_t sdio_full[2], sdio_calls[2], sdio_enqueue_us[2], sdio_enqueue_max_us[2];
     uint64_t slave_buffer_calls, slave_buffer_unavailable, slave_buffer_us, slave_buffer_max_us;
+    uint64_t rx_interrupts, rx_wait_timeouts, rx_wait_errors, rx_poll_data, rx_without_new_packet;
+    uint64_t rx_reads, rx_bytes, rx_read_errors, rx_last_read_us;
+    uint32_t rx_pending_max;
     meshvpn_hosted_queue_stats_t queue[2]; /* STA, AP; acceptance != RF delivery */
 } meshvpn_hosted_tx_stats_t;
 
@@ -35,4 +38,7 @@ void meshvpn_hosted_tx_throttle(bool active);
 void meshvpn_hosted_tx_capacity(void);
 void meshvpn_hosted_tx_sdio(unsigned ifx, uint64_t elapsed_us, bool full);
 void meshvpn_hosted_tx_buffers(uint64_t elapsed_us, bool unavailable);
+void meshvpn_hosted_rx_wait(unsigned result); /* 0 IRQ, 1 expected poll timeout, 2 error */
+void meshvpn_hosted_rx_pending(unsigned bytes, bool new_packet_irq, bool poll_timeout);
+void meshvpn_hosted_rx_complete(unsigned bytes, bool failed);
 void meshvpn_hosted_tx_snapshot(meshvpn_hosted_tx_stats_t *out);

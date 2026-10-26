@@ -163,6 +163,31 @@ def patch(source: str) -> str:
     source = replace_once(source, RX_COPY, RX_COPY_SAFE)
     source = replace_once(source, "\t\t\tassert(sendbuf);\n", "")
     source = replace_once(source, RX_COMPLETE, RX_COMPLETE_SYNC)
+    # Poll the authoritative byte counter after a bounded IRQ wait. A lost
+    # NEW_PACKET notification must not leave C6's to-host ring full forever.
+    # See Espressif issue EHM-253; idle poll timeouts are expected, not I/O errors.
+    source = replace_once(source,
+        "\t\tres = g_h.funcs->_h_sdio_wait_slave_intr(sdio_handle, HOSTED_BLOCK_MAX);\n\n"
+        "\t\tif (res != ESP_OK) {",
+        "\t\tres = g_h.funcs->_h_sdio_wait_slave_intr(sdio_handle, pdMS_TO_TICKS(10));\n"
+        "\t\tbool poll_timeout = res == ESP_ERR_TIMEOUT;\n"
+        "\t\tmeshvpn_hosted_rx_wait(res == ESP_OK ? 0 : poll_timeout ? 1 : 2);\n\n"
+        "\t\tif (res != ESP_OK && !poll_timeout) {")
+    source = replace_once(source,
+        "\t\tif (!(BIT(SDIO_INT_NEW_PACKET) & interrupts)) {\n\n"
+        "\t\t\tSDIO_DRV_UNLOCK();\n\t\t\tcontinue;\n\t\t}\n",
+        "#if H_SDIO_HOST_RX_MODE == H_SDIO_ALWAYS_HOST_RX_MAX_TRANSPORT_SIZE\n"
+        "\t\tif (!(BIT(SDIO_INT_NEW_PACKET) & interrupts)) {\n"
+        "\t\t\tSDIO_DRV_UNLOCK();\n\t\t\tcontinue;\n\t\t}\n"
+        "#endif\n")
+    source = replace_once(source,
+        "\t\trxbuff = sdio_rx_get_buffer(len_from_slave);",
+        "\t\tmeshvpn_hosted_rx_pending(len_from_slave, (BIT(SDIO_INT_NEW_PACKET) & interrupts) != 0, poll_timeout);\n"
+        "\t\trxbuff = sdio_rx_get_buffer(len_from_slave);")
+    source = replace_once(source,
+        "\t\tsdio_rx_byte_count += len_from_slave;",
+        "\t\tmeshvpn_hosted_rx_complete(len_from_slave - data_left, ret != ESP_OK);\n"
+        "\t\tsdio_rx_byte_count += len_from_slave - data_left;")
     # The write task owns the driver mutex on entry. Waiting for C6 credits
     # while holding it also prevents RX/throttle interrupts from being read.
     # Only this task owns TX credits; let RX use the bus during each sleep,

@@ -102,6 +102,30 @@ void meshvpn_hosted_tx_buffers(uint64_t us, bool unavailable)
     if (unavailable) s_stats.slave_buffer_unavailable++;
     portEXIT_CRITICAL(&s_lock);
 }
+void meshvpn_hosted_rx_wait(unsigned result)
+{
+    portENTER_CRITICAL(&s_lock);
+    if (result == 0) s_stats.rx_interrupts++;
+    else if (result == 1) s_stats.rx_wait_timeouts++;
+    else s_stats.rx_wait_errors++;
+    portEXIT_CRITICAL(&s_lock);
+}
+void meshvpn_hosted_rx_pending(unsigned bytes, bool irq, bool timeout)
+{
+    portENTER_CRITICAL(&s_lock);
+    if (bytes > s_stats.rx_pending_max) s_stats.rx_pending_max = bytes;
+    if (bytes && !irq) s_stats.rx_without_new_packet++;
+    if (bytes && timeout) s_stats.rx_poll_data++;
+    portEXIT_CRITICAL(&s_lock);
+}
+void meshvpn_hosted_rx_complete(unsigned bytes, bool failed)
+{
+    uint64_t now = esp_timer_get_time();
+    portENTER_CRITICAL(&s_lock);
+    if (failed) s_stats.rx_read_errors++;
+    else { s_stats.rx_reads++; s_stats.rx_bytes += bytes; s_stats.rx_last_read_us = now; }
+    portEXIT_CRITICAL(&s_lock);
+}
 
 /* All calls, including retry and queue publication, have zero queue wait.
  * The owned copy survives a failed direct call, which frees only its own DMA
