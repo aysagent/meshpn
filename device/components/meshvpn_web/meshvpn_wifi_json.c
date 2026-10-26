@@ -8,7 +8,7 @@
 #include "meshvpn_hosted_tx.h"
 #endif
 
-static void number_or_null(cJSON *obj, const char *name, esp_err_t err, int value)
+static void number_or_null(cJSON *obj, const char *name, esp_err_t err, double value)
 {
     if (err == ESP_OK) cJSON_AddNumberToObject(obj, name, value);
     else cJSON_AddNullToObject(obj, name);
