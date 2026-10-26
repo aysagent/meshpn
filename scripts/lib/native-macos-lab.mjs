@@ -18,7 +18,7 @@ export function parseNativeMacLabArgs(argv, env = process.env) {
     refreshBase: false,
   };
   for (const arg of argv) {
-    if (arg === '--prepare' || arg === '--multi-clients' || arg === '--tls-profiles' || arg === '--status' || arg === '--stop' || arg === '--help' || nativeMacLabModes.includes(arg)) {
+    if (arg === '--prepare' || arg === '--multi-clients' || arg === '--tls-profiles' || arg === '--browser-capture' || arg === '--status' || arg === '--stop' || arg === '--help' || nativeMacLabModes.includes(arg)) {
       assert.equal(value.action, null, 'choose exactly one lab action');
       value.action = arg;
       continue;
@@ -39,6 +39,11 @@ export function parseNativeMacLabArgs(argv, env = process.env) {
 export function nativeMacLabImageTag(containerfile) {
   const digest = createHash('sha256').update(containerfile).digest('hex').slice(0, 16);
   return `localhost/meshpn-clean-vpn-lab:${digest}`;
+}
+
+export function nativeMacBrowserImageTag(containerfile) {
+  const digest = createHash('sha256').update(containerfile).digest('hex').slice(0, 16);
+  return `localhost/meshpn-browser-capture:${digest}`;
 }
 
 export function nativeMacLabContainerAction(action) {

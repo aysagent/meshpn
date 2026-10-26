@@ -6,8 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import {
-  nativeMacLabContainerAction, nativeMacLabImageTag, nativeMacLabMachineInitArgs,
+  nativeMacLabContainerAction, nativeMacLabImageTag, nativeMacBrowserImageTag, nativeMacLabMachineInitArgs,
   parseNativeMacLabArgs,
 } from './lib/native-macos-lab.mjs';
 
@@ -76,6 +77,7 @@ function usage() {
   console.log(`Usage:
   npm run lab:native:mac -- --prepare
   npm run lab:native:mac -- --tls-profiles
+  npm run lab:native:mac -- --browser-capture
   npm run lab:native:mac -- --multi-clients
   npm run lab:native:mac -- --native-combo-boot
   npm run lab:native:mac -- --native-combo-network
@@ -104,6 +106,29 @@ function main() {
   }
 
   const connection = ensureMachine(options.machine);
+  if (options.action === '--browser-capture') {
+    const browserRecipe = path.join(root, 'scripts/containers/clean-vpn-browser-capture.Containerfile');
+    const browserImage = nativeMacBrowserImageTag(fs.readFileSync(browserRecipe));
+    if (options.rebuildImage || invoke(['--connection', connection, 'image', 'exists', browserImage], { allowFailure: true }).status !== 0)
+      invoke(['--connection', connection, 'build', '--platform=linux/arm64', '--file', browserRecipe,
+        '--tag', browserImage, path.dirname(browserRecipe)]);
+    const name = `cvpn-browser-capture-${randomBytes(8).toString('hex')}`;
+    const exportRoot = path.join(os.homedir(), 'Library/Caches/meshpn-clean-vpn-lab/results');
+    fs.mkdirSync(exportRoot, { recursive: true, mode: 0o700 });
+    const output = path.join(exportRoot, `${name}.json`);
+    try {
+      invoke(['--connection', connection, 'run', '--name', name, '--network=none', '--platform=linux/arm64',
+        '--cap-drop=ALL', '--security-opt=no-new-privileges', '--pids-limit=256', '--memory=2g', '--shm-size=256m',
+        '--volume', `${root}:/source:ro`, '--env', 'CVPN_DISPOSABLE_BROWSER_LAB=1', browserImage,
+        'node', 'scripts/clean-vpn-native-browser-capture-lab.mjs', '/tmp/browser-capture.json', '20']);
+      invoke(['--connection', connection, 'cp', `${name}:/tmp/browser-capture.json`, output]);
+      fs.chmodSync(output, 0o600);
+      console.log(JSON.stringify({ status: 'captured', output, image: browserImage, profileActivated: false }));
+    } finally {
+      invoke(['--connection', connection, 'rm', '--force', name], { allowFailure: true });
+    }
+    return;
+  }
   const recipe = fs.readFileSync(containerfile);
   const image = nativeMacLabImageTag(recipe);
   if (options.rebuildImage || invoke(['--connection', connection, 'image', 'exists', image], { allowFailure: true }).status !== 0) {

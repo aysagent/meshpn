@@ -1,5 +1,13 @@
 # clean-vpn: цели и порядок дальнейшей работы
 
+Последний лабораторный checkpoint 2026-10-26:
+[реальная серия Chromium и страница захвата](clean-vpn-native-browser-capture.md).
+20 cold TLS 1.3/H2 samples сохранены отдельно от исполняемых профилей. Найдены
+конкретные несовместимости; native profile остаётся unsupported, автоматического
+ослабления cipher/signature policy нет. Дальше — семантика certificate compression,
+затем ALPS/H2, trust anchors/ML-DSA, session lifecycle и явное решение по cipher policy.
+Реестр применяемых профилей и полноценное browser fidelity ещё не завершены.
+
 Новый лабораторный шаг 2026-10-26: [native cold TLS profiles](clean-vpn-native-tls-profiles.md).
 Реализованы сохранённый строгий контракт, prewire gate, независимый field/JA3/JA4
 observer и capture→candidate roundtrip для boring/combo. Синтетические профили

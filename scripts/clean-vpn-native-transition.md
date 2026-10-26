@@ -8,6 +8,17 @@ packet path не является обязательной. Production-разв�
 
 ## Реализовано в текущем шаге
 
+2026-10-26, browser capture checkpoint: добавлены bounded loopback TLS 1.3/H2
+страница, серия измерений и отдельный Chromium/Podman стенд с одной командой
+`npm run lab:native:mac -- --browser-capture`. Сняты 20 fresh-process cold samples
+Chromium 156.0.8078.47 на Linux ARM64: 20 JA3, один JA4. Недоверенный CA отвергается;
+доверие устанавливается только внутри одноразового контейнера.
+[Baseline и разбор пробелов](clean-vpn-native-browser-capture.md): ext27/35/17613/51764,
+ML-DSA sigalgs и запрещённые текущей политикой cipher suites. Bundle имеет статус
+unsupported; native-профиль браузера не применяется, `browser_profiles:false`
+остаётся. Следующий шаг — семантическая certificate compression с серверной
+проверкой, затем ALPS/H2 и остальные явно отмеченные ограничения.
+
 2026-10-26, следующий лабораторный checkpoint: добавлен
 [опциональный cold TLS профиль](clean-vpn-native-tls-profiles.md) в C++ boring и
 Boring-ветку combo. Настройки применяются API pinned BoringSSL; первый ClientHello

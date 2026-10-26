@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  nativeMacLabContainerAction, nativeMacLabImageTag, nativeMacLabMachineInitArgs,
+  nativeMacLabContainerAction, nativeMacLabImageTag, nativeMacBrowserImageTag, nativeMacLabMachineInitArgs,
   parseNativeMacLabArgs,
 } from './lib/native-macos-lab.mjs';
 
@@ -15,6 +15,8 @@ test('macOS lab parser has a read-only default and explicit VM modes', () => {
   });
   assert.deepEqual(nativeMacLabContainerAction('--native-combo-boot'), ['run', '--native-combo-boot']);
   assert.equal(parseNativeMacLabArgs(['--tls-profiles'], {}).action, '--tls-profiles');
+  assert.equal(parseNativeMacLabArgs(['--browser-capture'], {}).action, '--browser-capture');
+  assert.throws(() => parseNativeMacLabArgs(['--browser-capture', '--refresh-base'], {}));
   assert.deepEqual(nativeMacLabContainerAction('--tls-profiles'), ['tls-profiles']);
   assert.equal(parseNativeMacLabArgs(['--multi-clients'], {}).action, '--multi-clients');
   assert.deepEqual(nativeMacLabContainerAction('--multi-clients'), ['multi-clients']);
@@ -29,6 +31,8 @@ test('macOS lab parser rejects ambiguous or unsafe options', () => {
 test('image tag is content-addressed and machine resources are bounded', () => {
   assert.equal(nativeMacLabImageTag(Buffer.from('same')), nativeMacLabImageTag(Buffer.from('same')));
   assert.notEqual(nativeMacLabImageTag(Buffer.from('same')), nativeMacLabImageTag(Buffer.from('different')));
+  assert.notEqual(nativeMacBrowserImageTag(Buffer.from('same')), nativeMacLabImageTag(Buffer.from('same')));
+  assert.notEqual(nativeMacBrowserImageTag(Buffer.from('same')), nativeMacBrowserImageTag(Buffer.from('different')));
   assert.deepEqual(nativeMacLabMachineInitArgs('lab'), ['machine', 'init', '--provider=applehv', '--cpus=6', '--memory=6144', '--disk-size=100', '--rootful', 'lab']);
 });
 

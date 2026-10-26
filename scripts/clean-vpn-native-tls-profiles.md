@@ -126,7 +126,9 @@ ClientHello2 браузерному эталону. Resumption остаётся 
 Результат этого этапа и границы проверок:
 [лабораторный отчёт](../fixtures/clean-vpn-native-tls-profile-report.json).
 
-Следующие части: реальные browser-build capture bundles и серия samples;
-семантическая поддержка недостающих browser extensions; browser-profile registry
-и страница захвата; H2/HTTP согласованность и session lifecycle. Старые настройки
+Следующий реализованный checkpoint: [страница и серия браузерных захватов](clean-vpn-native-browser-capture.md).
+20 реальных Chromium cold-сеансов сохранены как unsupported bundle с конкретными
+пробелами; исполняемый профиль этого браузера пока не создан.
+Остаются семантическая поддержка недостающих browser extensions, browser-profile
+registry, H2/HTTP согласованность и session lifecycle. Старые настройки
 helper не переносятся как opaque extras для достижения красивого JA-хеша.

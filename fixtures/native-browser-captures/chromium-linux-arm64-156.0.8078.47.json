@@ -1,0 +1,4916 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-browser-capture-lab-report",
+  "captureEndpoint": {
+    "implementation": "Node.js http2",
+    "node": "v24.22.1",
+    "openssl": "3.5.9",
+    "name": "localhost",
+    "tls": "TLSv1.3-only",
+    "alpn": [
+      "h2"
+    ],
+    "sessionTickets": "disabled",
+    "certificate": "ephemeral RSA-2048 leaf and private CA",
+    "clientCaValidation": "enabled-no-bypass",
+    "note": "Private test CA and automation flags are capture conditions, not a stock public-Web browser baseline."
+  },
+  "validation": {
+    "untrustedCertificateRejected": true,
+    "trustedH2Navigations": 20,
+    "sameConnectionReloadDeduplicated": true,
+    "downloadMatchesMemory": true,
+    "network": "container-loopback-only",
+    "browserSandbox": "disabled-inside-disposable-unprivileged-container",
+    "hostTrustStoreChanged": false,
+    "physicalHostsTouched": false
+  },
+  "browserLaunchArguments": [
+    "--allow-pre-commit-input",
+    "--disable-background-networking",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-breakpad",
+    "--disable-client-side-phishing-detection",
+    "--disable-component-extensions-with-background-pages",
+    "--disable-crash-reporter",
+    "--disable-default-apps",
+    "--disable-dev-shm-usage",
+    "--disable-hang-monitor",
+    "--disable-infobars",
+    "--disable-ipc-flooding-protection",
+    "--disable-popup-blocking",
+    "--disable-prompt-on-repost",
+    "--disable-renderer-backgrounding",
+    "--disable-search-engine-choice-screen",
+    "--disable-sync",
+    "--enable-automation",
+    "--export-tagged-pdf",
+    "--force-color-profile=srgb",
+    "--generate-pdf-document-outline",
+    "--metrics-recording-only",
+    "--no-first-run",
+    "--password-store=basic",
+    "--use-mock-keychain",
+    "--disable-features=Translate,AcceptCHFrame,MediaRouter,OptimizationHints,PartitionAllocSchedulerLoopQuarantineTaskControlledPurge,ProcessPerSiteUpToMainFrameThreshold,IsolateSandboxedIframes",
+    "--enable-features=PdfOopif",
+    "--user-data-dir=<fresh-temporary-profile>",
+    "--headless=new",
+    "--hide-scrollbars",
+    "--mute-audio",
+    "--disable-extensions",
+    "about:blank",
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-background-networking",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--no-proxy-server",
+    "--remote-debugging-pipe"
+  ],
+  "packages": [
+    "chromium=156.0.8078.47-1~deb12u1",
+    "libnss3=2:3.87.1-1+deb12u4",
+    "libnss3-tools=2:3.87.1-1+deb12u4"
+  ],
+  "bundle": {
+    "schema": 1,
+    "kind": "clean-vpn-browser-capture-bundle",
+    "metadata": {
+      "schema": 1,
+      "id": "chromium-linux-cold",
+      "identity": {
+        "browser": "Chromium",
+        "version": "Chrome/156.0.8078.47",
+        "versionSource": "browser-protocol",
+        "platform": "linux",
+        "architecture": "arm64"
+      },
+      "context": {
+        "scenario": "cold",
+        "isolation": "fresh-process-per-sample",
+        "certificateValidation": "enabled",
+        "http": "h2",
+        "proxy": "none",
+        "echMode": "grease",
+        "extensionOrder": "permuted",
+        "padding": "optional"
+      }
+    },
+    "samples": [
+      {
+        "index": 1,
+        "observedAt": "2026-10-26T09:38:16.878Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              16,
+              5,
+              43,
+              35,
+              11,
+              45,
+              18,
+              27,
+              65037,
+              23,
+              17613,
+              0,
+              51764,
+              10,
+              65281,
+              51,
+              13
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 39578,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "6200e7cd6883e272fa083622fe2f52df",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,16-5-43-35-11-45-18-27-65037-23-17613-0-51764-10-65281-51-13,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_0010,0005,002b,0023,000b,002d,0012,001b,fe0d,0017,44cd,0000,ca34,000a,ff01,0033,000d_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 2008
+            }
+          ],
+          "clientHelloBytes": 2008,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 282
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:35",
+          "extension:27",
+          "extension:17613",
+          "extension:51764",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 2,
+        "observedAt": "2026-10-26T09:38:17.133Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              0,
+              43,
+              65037,
+              23,
+              16,
+              18,
+              17613,
+              65281,
+              51764,
+              27,
+              13,
+              11,
+              35,
+              10,
+              51,
+              45,
+              5
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 19018,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "6e3bd60b94976f6441cadf490f4b84ed",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-43-65037-23-16-18-17613-65281-51764-27-13-11-35-10-51-45-5,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_0000,002b,fe0d,0017,0010,0012,44cd,ff01,ca34,001b,000d,000b,0023,000a,0033,002d,0005_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1944
+            }
+          ],
+          "clientHelloBytes": 1944,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 218
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:17613",
+          "extension:51764",
+          "extension:27",
+          "extension:35",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 3,
+        "observedAt": "2026-10-26T09:38:17.386Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              35,
+              65037,
+              23,
+              16,
+              5,
+              43,
+              45,
+              65281,
+              11,
+              51,
+              27,
+              0,
+              51764,
+              18,
+              13,
+              17613,
+              10
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 27242,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "b7d01556631eba604bcfc66b78ac0f03",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,35-65037-23-16-5-43-45-65281-11-51-27-0-51764-18-13-17613-10,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_0023,fe0d,0017,0010,0005,002b,002d,ff01,000b,0033,001b,0000,ca34,0012,000d,44cd,000a_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 2008
+            }
+          ],
+          "clientHelloBytes": 2008,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 282
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:35",
+          "extension:27",
+          "extension:51764",
+          "extension:17613",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 4,
+        "observedAt": "2026-10-26T09:38:17.651Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              11,
+              13,
+              51764,
+              45,
+              23,
+              5,
+              0,
+              17613,
+              51,
+              65281,
+              16,
+              65037,
+              10,
+              18,
+              43,
+              35,
+              27
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 27242,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "dcdacb2d6a7e181bb6db1d152217b78a",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,11-13-51764-45-23-5-0-17613-51-65281-16-65037-10-18-43-35-27,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_000b,000d,ca34,002d,0017,0005,0000,44cd,0033,ff01,0010,fe0d,000a,0012,002b,0023,001b_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1944
+            }
+          ],
+          "clientHelloBytes": 1944,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 218
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:51764",
+          "extension:17613",
+          "extension:35",
+          "extension:27",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 5,
+        "observedAt": "2026-10-26T09:38:17.900Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              43,
+              27,
+              16,
+              10,
+              13,
+              65281,
+              65037,
+              51764,
+              17613,
+              0,
+              23,
+              35,
+              18,
+              5,
+              45,
+              11,
+              51
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 56026,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "181aad991c54370e7ac5bd4fb03fbedb",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,43-27-16-10-13-65281-65037-51764-17613-0-23-35-18-5-45-11-51,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_002b,001b,0010,000a,000d,ff01,fe0d,ca34,44cd,0000,0017,0023,0012,0005,002d,000b,0033_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1912
+            }
+          ],
+          "clientHelloBytes": 1912,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:27",
+          "extension:51764",
+          "extension:17613",
+          "extension:35",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 6,
+        "observedAt": "2026-10-26T09:38:18.161Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              35,
+              51,
+              43,
+              65037,
+              51764,
+              16,
+              23,
+              0,
+              11,
+              5,
+              10,
+              17613,
+              27,
+              13,
+              45,
+              18,
+              65281
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 56026,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "a9d307a386400cf1356d07bb255733ca",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,35-51-43-65037-51764-16-23-0-11-5-10-17613-27-13-45-18-65281,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_0023,0033,002b,fe0d,ca34,0010,0017,0000,000b,0005,000a,44cd,001b,000d,002d,0012,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1912
+            }
+          ],
+          "clientHelloBytes": 1912,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:35",
+          "extension:51764",
+          "extension:17613",
+          "extension:27",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 7,
+        "observedAt": "2026-10-26T09:38:18.421Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              17613,
+              23,
+              5,
+              51,
+              0,
+              10,
+              18,
+              27,
+              13,
+              65281,
+              65037,
+              51764,
+              11,
+              16,
+              35,
+              45,
+              43
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 23130,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "8306a513e502ba15d3464b7d57bffc9a",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,17613-23-5-51-0-10-18-27-13-65281-65037-51764-11-16-35-45-43,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_44cd,0017,0005,0033,0000,000a,0012,001b,000d,ff01,fe0d,ca34,000b,0010,0023,002d,002b_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 2008
+            }
+          ],
+          "clientHelloBytes": 2008,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 282
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:17613",
+          "extension:27",
+          "extension:51764",
+          "extension:35",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 8,
+        "observedAt": "2026-10-26T09:38:18.639Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              11,
+              65037,
+              35,
+              27,
+              51764,
+              65281,
+              51,
+              0,
+              43,
+              17613,
+              10,
+              45,
+              16,
+              5,
+              13,
+              18,
+              23
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 64250,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "05d08f15f352e4d858eb1499744250c1",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,11-65037-35-27-51764-65281-51-0-43-17613-10-45-16-5-13-18-23,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_000b,fe0d,0023,001b,ca34,ff01,0033,0000,002b,44cd,000a,002d,0010,0005,000d,0012,0017_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1944
+            }
+          ],
+          "clientHelloBytes": 1944,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 218
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:35",
+          "extension:27",
+          "extension:51764",
+          "extension:17613",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 9,
+        "observedAt": "2026-10-26T09:38:18.890Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              23,
+              51,
+              5,
+              65281,
+              43,
+              11,
+              65037,
+              18,
+              13,
+              51764,
+              27,
+              16,
+              45,
+              17613,
+              35,
+              10,
+              0
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 19018,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "2ff85f35be3acdae270668d28878ed76",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,23-51-5-65281-43-11-65037-18-13-51764-27-16-45-17613-35-10-0,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_0017,0033,0005,ff01,002b,000b,fe0d,0012,000d,ca34,001b,0010,002d,44cd,0023,000a,0000_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1976
+            }
+          ],
+          "clientHelloBytes": 1976,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 250
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:51764",
+          "extension:27",
+          "extension:17613",
+          "extension:35",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 10,
+        "observedAt": "2026-10-26T09:38:19.183Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              0,
+              18,
+              17613,
+              51,
+              23,
+              43,
+              16,
+              27,
+              13,
+              45,
+              35,
+              65037,
+              51764,
+              5,
+              65281,
+              10,
+              11
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 10794,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "569de0cc3a4007cb07e983e2f31c176d",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-18-17613-51-23-43-16-27-13-45-35-65037-51764-5-65281-10-11,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_0000,0012,44cd,0033,0017,002b,0010,001b,000d,002d,0023,fe0d,ca34,0005,ff01,000a,000b_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1912
+            }
+          ],
+          "clientHelloBytes": 1912,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:17613",
+          "extension:27",
+          "extension:35",
+          "extension:51764",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 11,
+        "observedAt": "2026-10-26T09:38:19.617Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              65037,
+              27,
+              18,
+              5,
+              65281,
+              11,
+              35,
+              10,
+              43,
+              23,
+              16,
+              51764,
+              13,
+              17613,
+              45,
+              51,
+              0
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 6682,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "45cb4cf016b1620609170260d266f0b9",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,65037-27-18-5-65281-11-35-10-43-23-16-51764-13-17613-45-51-0,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_fe0d,001b,0012,0005,ff01,000b,0023,000a,002b,0017,0010,ca34,000d,44cd,002d,0033,0000_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1912
+            }
+          ],
+          "clientHelloBytes": 1912,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:27",
+          "extension:35",
+          "extension:51764",
+          "extension:17613",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 12,
+        "observedAt": "2026-10-26T09:38:19.903Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              18,
+              0,
+              5,
+              45,
+              65037,
+              51764,
+              23,
+              16,
+              43,
+              17613,
+              35,
+              11,
+              51,
+              13,
+              65281,
+              10,
+              27
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 23130,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "b97b46e6a5cb2dd9ef1c17a16e9e39cc",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,18-0-5-45-65037-51764-23-16-43-17613-35-11-51-13-65281-10-27,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_0012,0000,0005,002d,fe0d,ca34,0017,0010,002b,44cd,0023,000b,0033,000d,ff01,000a,001b_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 2008
+            }
+          ],
+          "clientHelloBytes": 2008,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 282
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:51764",
+          "extension:17613",
+          "extension:35",
+          "extension:27",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 13,
+        "observedAt": "2026-10-26T09:38:20.175Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              43,
+              16,
+              51,
+              35,
+              17613,
+              51764,
+              23,
+              10,
+              65281,
+              45,
+              27,
+              13,
+              65037,
+              11,
+              5,
+              0,
+              18
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 6682,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "88e09328e5fc972c733ac403eb4efbb3",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,43-16-51-35-17613-51764-23-10-65281-45-27-13-65037-11-5-0-18,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_002b,0010,0033,0023,44cd,ca34,0017,000a,ff01,002d,001b,000d,fe0d,000b,0005,0000,0012_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1912
+            }
+          ],
+          "clientHelloBytes": 1912,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:35",
+          "extension:17613",
+          "extension:51764",
+          "extension:27",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 14,
+        "observedAt": "2026-10-26T09:38:20.443Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              18,
+              65281,
+              35,
+              11,
+              51,
+              13,
+              45,
+              23,
+              17613,
+              10,
+              43,
+              16,
+              5,
+              27,
+              0,
+              51764,
+              65037
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 31354,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "984a851c2fdf6c4b1a1e388e8c67cc27",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,18-65281-35-11-51-13-45-23-17613-10-43-16-5-27-0-51764-65037,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_0012,ff01,0023,000b,0033,000d,002d,0017,44cd,000a,002b,0010,0005,001b,0000,ca34,fe0d_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 2008
+            }
+          ],
+          "clientHelloBytes": 2008,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 282
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:35",
+          "extension:17613",
+          "extension:27",
+          "extension:51764",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 15,
+        "observedAt": "2026-10-26T09:38:20.711Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              10,
+              51,
+              18,
+              17613,
+              35,
+              51764,
+              65281,
+              43,
+              13,
+              45,
+              5,
+              11,
+              23,
+              27,
+              16,
+              65037,
+              0
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 31354,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "7fbc010ec1307efa1a9e5174df1cdc6b",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,10-51-18-17613-35-51764-65281-43-13-45-5-11-23-27-16-65037-0,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_000a,0033,0012,44cd,0023,ca34,ff01,002b,000d,002d,0005,000b,0017,001b,0010,fe0d,0000_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1944
+            }
+          ],
+          "clientHelloBytes": 1944,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 218
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:17613",
+          "extension:35",
+          "extension:51764",
+          "extension:27",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 16,
+        "observedAt": "2026-10-26T09:38:20.983Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              11,
+              51764,
+              23,
+              43,
+              17613,
+              45,
+              35,
+              13,
+              0,
+              65281,
+              51,
+              27,
+              10,
+              5,
+              18,
+              65037,
+              16
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 51914,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "576b3407b8588d327d60d57f84e19692",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,11-51764-23-43-17613-45-35-13-0-65281-51-27-10-5-18-65037-16,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_000b,ca34,0017,002b,44cd,002d,0023,000d,0000,ff01,0033,001b,000a,0005,0012,fe0d,0010_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1944
+            }
+          ],
+          "clientHelloBytes": 1944,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 218
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:51764",
+          "extension:17613",
+          "extension:35",
+          "extension:27",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 17,
+        "observedAt": "2026-10-26T09:38:21.262Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              13,
+              51,
+              5,
+              17613,
+              65281,
+              45,
+              0,
+              11,
+              23,
+              18,
+              35,
+              51764,
+              16,
+              10,
+              27,
+              65037,
+              43
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 2570,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "464a2412612a1cea919832e29d72f466",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,13-51-5-17613-65281-45-0-11-23-18-35-51764-16-10-27-65037-43,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_000d,0033,0005,44cd,ff01,002d,0000,000b,0017,0012,0023,ca34,0010,000a,001b,fe0d,002b_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1912
+            }
+          ],
+          "clientHelloBytes": 1912,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:17613",
+          "extension:35",
+          "extension:51764",
+          "extension:27",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 18,
+        "observedAt": "2026-10-26T09:38:21.540Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              18,
+              51764,
+              16,
+              0,
+              27,
+              65037,
+              23,
+              51,
+              11,
+              17613,
+              13,
+              35,
+              10,
+              45,
+              5,
+              65281,
+              43
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 47802,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "5bd83a4e9d1db1c62d9fc2a167d0df54",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,18-51764-16-0-27-65037-23-51-11-17613-13-35-10-45-5-65281-43,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_0012,ca34,0010,0000,001b,fe0d,0017,0033,000b,44cd,000d,0023,000a,002d,0005,ff01,002b_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1912
+            }
+          ],
+          "clientHelloBytes": 1912,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:51764",
+          "extension:27",
+          "extension:17613",
+          "extension:35",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 19,
+        "observedAt": "2026-10-26T09:38:21.812Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              0,
+              10,
+              65281,
+              65037,
+              51,
+              17613,
+              43,
+              11,
+              13,
+              18,
+              27,
+              45,
+              5,
+              23,
+              16,
+              51764,
+              35
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 14906,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "1631d440b5ef4cb7c502aaa0cc21220b",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-10-65281-65037-51-17613-43-11-13-18-27-45-5-23-16-51764-35,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_0000,000a,ff01,fe0d,0033,44cd,002b,000b,000d,0012,001b,002d,0005,0017,0010,ca34,0023_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1944
+            }
+          ],
+          "clientHelloBytes": 1944,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 218
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:17613",
+          "extension:27",
+          "extension:51764",
+          "extension:35",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      },
+      {
+        "index": 20,
+        "observedAt": "2026-10-26T09:38:22.093Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392,
+              49171,
+              49172,
+              156,
+              157,
+              47,
+              53
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              13,
+              0,
+              23,
+              35,
+              65037,
+              65281,
+              16,
+              51,
+              17613,
+              27,
+              45,
+              18,
+              51764,
+              11,
+              5,
+              43,
+              10
+            ],
+            "grease": true
+          },
+          "keyShares": [
+            {
+              "group": 27242,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "8a488f1ffc1d7da1c0f314ae92979bf9",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,13-0-23-35-65037-65281-16-51-17613-27-45-18-51764-11-5-43-10,4588-29-23-24,0",
+          "ja3Sorted": "be1cee954a5daa6163efd1f97be763a1",
+          "ja4": {
+            "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d1517h2_8daaf6152771_526c4a62ce2d",
+            "ja4_a": "t13d1517h2",
+            "ja4_b": "8daaf6152771",
+            "ja4_c": "cb7bf5808d99",
+            "ja4_c_alt_sni_alpn_in_hash": "526c4a62ce2d",
+            "raw_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,ca34,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d1517h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_000d,0000,0017,0023,fe0d,ff01,0010,0033,44cd,001b,002d,0012,ca34,000b,0005,002b,000a_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 2008
+            }
+          ],
+          "clientHelloBytes": 2008,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 26
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 35,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 282
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 51764,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "extension:35",
+          "extension:17613",
+          "extension:27",
+          "extension:51764",
+          "cipher:49171",
+          "cipher:49172",
+          "cipher:156",
+          "cipher:157",
+          "cipher:47",
+          "cipher:53",
+          "signature:2308",
+          "signature:2309",
+          "signature:2310"
+        ]
+      }
+    ],
+    "assessment": {
+      "status": "unsupported",
+      "sampleCount": 20,
+      "unsupported": [
+        "cipher:156",
+        "cipher:157",
+        "cipher:47",
+        "cipher:49171",
+        "cipher:49172",
+        "cipher:53",
+        "extension:17613",
+        "extension:27",
+        "extension:35",
+        "extension:51764",
+        "signature:2308",
+        "signature:2309",
+        "signature:2310"
+      ],
+      "variations": [],
+      "distinctJa3": 20,
+      "distinctJa4": 1,
+      "candidateProfile": null,
+      "nativeValidated": false,
+      "browserEquivalent": false
+    },
+    "limitations": [
+      "metadata-is-declared-not-attested",
+      "cold-first-ClientHello-only",
+      "no-HTTP2-frame-or-HTTP-header-fidelity",
+      "three-samples-is-only-a-minimum-not-statistical-proof",
+      "candidate-requires-native-check-config-and-independent-wire-comparison"
+    ],
+    "contentSha256": "ceb2140fe2e4ee1e924e361df37b62de662a5e95a70ceb6882287c1e9398b714"
+  }
+}

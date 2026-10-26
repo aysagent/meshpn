@@ -16,6 +16,10 @@ routes или firewall rules на macOS и не обращается к физи
 
 ## Одна команда
 
+Для отдельного Chromium capture-стенда без пересборки native engine:
+`npm run lab:native:mac -- --browser-capture`.
+Условия изоляции и формат результата: [браузерные захваты](clean-vpn-native-browser-capture.md).
+
 Нужен установленный Podman. Остальное создаётся автоматически:
 
 ```bash

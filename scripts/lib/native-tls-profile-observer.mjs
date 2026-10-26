@@ -94,6 +94,10 @@ export function compileTlsProfileCandidate(wire, {id,extensionOrder,padding,echM
   for(const type of a.extension_types)if(!allowedExtensions.has(type))unsupported.push(`extension:${type}`);
   const allowedCiphers=new Set([4865,4866,4867,49195,49196,49199,49200,52392,52393]);
   for(const cipher of a.cipher_suites)if(!allowedCiphers.has(cipher))unsupported.push(`cipher:${cipher}`);
+  // Mirror the current native contract's explicit signature policy. Availability
+  // in a newer browser or BoringSSL alone does not enable it in our engine.
+  const allowedSignatures=new Set([0x0401,0x0501,0x0601,0x0403,0x0503,0x0603,0x0804,0x0805,0x0806,0x0807]);
+  for(const signature of a.signature_algorithms)if(!allowedSignatures.has(signature))unsupported.push(`signature:${signature}`);
   if(!['[772]','[772,771]'].includes(JSON.stringify(a.supported_versions)))unsupported.push('versions');
   if(!['["h2"]','["h2","http/1.1"]'].includes(JSON.stringify(a.alpn)))unsupported.push('alpn');
   if(!a.extension_types.includes(0))unsupported.push('missing-sni');
