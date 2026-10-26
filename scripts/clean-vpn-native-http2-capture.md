@@ -110,7 +110,8 @@ bundle сравнивается как incomplete. Даже matched-prefix не 
 
 ## Следующий шаг
 
-Зафиксировать поддерживаемую цель и политику совместимости. Измеренный Chrome
+[Политика совместимости зафиксирована](clean-vpn-native-profile-policy.md):
+engine capabilities + read-only assessor, без автоматического исполнения. Измеренный Chrome
 просит окна и header limit выше текущих native caps; их нельзя молча обрезать и
 называть точной мимикрией. Нужно отдельно решить бюджет памяти/flow control,
 контракт HTTP-запроса и оставшиеся TLS gaps (ML-DSA, trust anchors, tickets,

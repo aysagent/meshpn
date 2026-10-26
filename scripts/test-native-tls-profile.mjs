@@ -302,3 +302,26 @@ test('ALPS works with combo and HRR; rejects malformed negotiated settings befor
 test('ALPS profile preserves reconnect blackhole and bounded packet flow under sustained exchange', {timeout:90000},async t=>{
   await exchange(fixture(t),alpsProfile,{alps:true,mode:'full'});
 });
+
+test('engine capability limits are the limits enforced by its profile loader',t=>{
+  const f=fixture(t),caps=JSON.parse(execFileSync(build+'/clean-vpn-engine',['--capabilities']));
+  const policy=caps.profile_policy;assert.equal(policy.id,'bounded-cold-v1');assert.equal(policy.schema,1);
+  assert.deepEqual(policy,JSON.parse(fs.readFileSync('fixtures/clean-vpn-native-profile-policy-capabilities.json')).profile_policy);
+  assert.equal(policy.activation.automatic,false);
+  const profile=JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/cold-alps.json'));
+  for(const rule of policy.http2.settings) {
+    const withValue=value=>{const p=structuredClone(profile);p.http2.settings=p.http2.settings.filter(([id])=>id!==rule.id);p.http2.settings.push([rule.id,value]);return p;};
+    for(const value of new Set([rule.min,rule.max]))assert.equal(checkConfig(f,withValue(value)).status,0,JSON.stringify(rule));
+    if(rule.min>0)assert.equal(checkConfig(f,withValue(rule.min-1)).status,1);
+    assert.equal(checkConfig(f,withValue(rule.max+1)).status,1);
+    const omitted=structuredClone(profile);omitted.http2.settings=omitted.http2.settings.filter(([id])=>id!==rule.id);
+    assert.equal(checkConfig(f,omitted).status,rule.required?1:0);
+  }
+  for(const [value,status] of [[policy.http2.connection_window.min,0],[policy.http2.connection_window.max,0],
+    [policy.http2.connection_window.min-1,1],[policy.http2.connection_window.max+1,1]]) {
+    const p=structuredClone(profile);p.http2.connection_window=value;assert.equal(checkConfig(f,p).status,status);
+  }
+  for(const id of [47,156]) {const p=structuredClone(profile);p.tls.cipher_suites.push(id);assert.equal(checkConfig(f,p).status,1);}
+  for(const id of [2308,2309,2310]) {const p=structuredClone(profile);p.tls.signature_algorithms.push(id);assert.equal(checkConfig(f,p).status,1);}
+  for(const id of [35,41,42,50,17513,51764,65534]) {const p=structuredClone(profile);p.tls.extension_types.push(id);assert.equal(checkConfig(f,p).status,1);}
+});

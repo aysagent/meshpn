@@ -151,7 +151,7 @@ case "${1:-}" in
     sync_source
     build_current
     cd "$WORK"
-    node --test --test-concurrency=1 scripts/test-native-tls-profile.mjs scripts/test-native-data-plane.mjs scripts/test-native-session-events.mjs
+    node --test --test-concurrency=1 scripts/test-native-tls-profile.mjs scripts/test-native-profile-policy.mjs scripts/test-native-data-plane.mjs scripts/test-native-session-events.mjs
     ;;
   multi-clients)
     sync_source

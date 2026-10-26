@@ -8,13 +8,23 @@ packet path не является обязательной. Production-разв�
 
 ## Реализовано в текущем шаге
 
+2026-10-26: [политика совместимости bounded-cold-v1](clean-vpn-native-profile-policy.md)
+экспортируется самим native engine; общие константы используются загрузчиком
+профиля и capabilities. Отдельный read-only assessor сопоставляет TLS/H2 evidence
+с политикой и фактическим native reference, не создаёт исполняемый профиль.
+Chromium 156: blocked по TLS allowlists и H2 caps; HTTP deviations перечислены.
+CTest 10/10, native profile tests 14/14, policy tests 10/10. Следующий шаг —
+проверка семантической поддержки ML-DSA/trust anchors в закреплённом BoringSSL;
+затем ticket lifecycle и отдельный H2 memory/backpressure эксперимент. Cipher
+policy не ослаблять, точный Chrome profile пока не обещать.
+
 2026-10-26: [реальный HTTP/2 capture и сравнение](clean-vpn-native-http2-capture.md)
 готовы: 20 fresh-process Chromium samples и 6 native соединений, SETTINGS/windows,
 порядок и разрешённые значения заголовков, HEADERS priority и HPACK block size.
 Общая команда: `npm run lab:native:mac -- --http2-capture`. Результат — different,
-а не совместимый browser profile. Следующий шаг — явная политика TLS/H2
-совместимости и бюджета памяти для выбранного browser build; не повышать caps
-или копировать navigation headers автоматически ради совпадения.
+а не совместимый browser profile. Политика TLS/H2 зафиксирована следующим
+checkpoint выше; повышение caps и копирование navigation headers автоматически
+ради совпадения не выполняются.
 
 2026-10-26: реализован экспериментальный [ALPS/H2](clean-vpn-native-alps.md):
 new codepoint 17613, реальные negotiated server SETTINGS без лишнего ACK,

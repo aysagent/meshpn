@@ -3,6 +3,7 @@
 // opaque extension replay, trust overrides or browser-wide fidelity claims.
 #include "transparent_hello.hpp"
 #include "certificate_compression.hpp"
+#include "profile_policy.hpp"
 #ifdef CVPN_TEST_PACKET_FD
 #include "http2_alps_fixture.hpp"
 #endif
@@ -71,7 +72,7 @@ struct Profile {
     if(alps) {
       const auto& h=j.at("http2");fields(h,{"settings","connection_window"});
       const auto& w=h.at("connection_window");
-      require(w.is_number_integer() && w>=65535 && w<=1048576,"profile_h2_window");h2_window=w.get<int32_t>();
+      require(w.is_number_integer() && w>=profile_policy::window_min && w<=profile_policy::window_max,"profile_h2_window");h2_window=w.get<int32_t>();
       const auto& settings=h.at("settings");
       require(settings.is_array() && settings.size()>=4 && settings.size()<=6,"profile_h2_settings");
       std::set<int> seen;
@@ -80,17 +81,11 @@ struct Profile {
           pair[1].is_number_integer() && pair[1]>=0 && pair[1]<=UINT32_MAX,"profile_h2_setting");
         int id=pair[0].get<int>();auto value=pair[1].get<uint32_t>();
         require(seen.insert(id).second,"profile_h2_duplicate");
-        switch(id) {
-          case 1: require(value<=65536,"profile_h2_hpack");break;
-          case 2: require(value==0,"profile_h2_push");break;
-          case 3: require(value==1,"profile_h2_streams");break;
-          case 4: require(value>=65535 && value<=1048576,"profile_h2_window");break;
-          case 5: require(value==16384,"profile_h2_frame");break;
-          case 6: require(value>=1024 && value<=8192,"profile_h2_headers");break;
-        }
+        const auto& rule=profile_policy::settings.at(size_t(id-1));
+        require(value>=rule.min && value<=rule.max,rule.error);
         h2_settings.push_back({id,value});
       }
-      for(int id:{2,3,4,6})require(seen.count(id),"profile_h2_required");
+      for(const auto& rule:profile_policy::settings)if(rule.required)require(seen.count(rule.id),"profile_h2_required");
     }
     if(t.contains("certificate_compression")) {
       auto algorithms=ids(t.at("certificate_compression"),1,true);
@@ -111,7 +106,7 @@ struct Profile {
     require(!optional_padding || std::find(extensions.begin(),extensions.end(),21)==extensions.end(),"profile_optional_overlap");
     require(std::find(extensions.begin(),extensions.end(),0)!=extensions.end(),"profile_sni_required");
     // No PSK/early_data/raw extras. The stack must implement every advertised extension.
-    for (auto n:extensions) require(n!=41 && n!=42 && n!=50 && n!=17513,"profile_extension_unsupported");
+    for (auto n:extensions) require(profile_policy::extensions.count(n),"profile_extension_unsupported");
     for (auto key:{"grease","permute_extensions","ech_grease","ocsp","sct"}) require(t.at(key).is_boolean(),"profile_boolean");
     grease_enabled=t.at("grease"); permute=t.at("permute_extensions"); ech=t.at("ech_grease"); ocsp=t.at("ocsp"); sct=t.at("sct");
     require(t.at("alpn")==json::array({"h2"}) || t.at("alpn")==json::array({"h2","http/1.1"}),"profile_alpn");
@@ -128,7 +123,7 @@ struct Profile {
       } else {
         require(minimum==TLS1_2_VERSION && SSL_CIPHER_get_max_version(c)>=TLS1_2_VERSION,"profile_cipher_unsupported");
         // Profiles cannot enable static-RSA, CBC or obsolete bulk ciphers.
-        require(std::set<uint16_t>{49195,49196,49199,49200,52392,52393}.count(id),"profile_cipher_policy");
+        require(profile_policy::tls12_ciphers.count(id),"profile_cipher_policy");
         old=true; if (!tls12.empty()) tls12+=':'; tls12+=SSL_CIPHER_get_name(c);
       }
     }
@@ -136,7 +131,7 @@ struct Profile {
     require(SSL_CTX_set_tls13_client_cipher_order(ctx,tls13.data(),tls13.size())==1,"profile_ciphers");
     if (!tls12.empty()) require(SSL_CTX_set_strict_cipher_list(ctx,tls12.c_str())==1,"profile_ciphers");
     require(SSL_CTX_set1_group_ids(ctx,groups.data(),groups.size())==1,"profile_groups");
-    for(auto s:signatures)require(std::set<uint16_t>{0x0401,0x0501,0x0601,0x0403,0x0503,0x0603,0x0804,0x0805,0x0806,0x0807}.count(s),"profile_signature_policy");
+    for(auto s:signatures)require(profile_policy::signatures.count(s),"profile_signature_policy");
     require(SSL_CTX_set_verify_algorithm_prefs(ctx,signatures.data(),signatures.size())==1,"profile_signatures");
     require(SSL_CTX_set_alpn_protos(ctx,alpn.data(),alpn.size())==0,"profile_alpn");
     SSL_CTX_set_grease_enabled(ctx,grease_enabled); SSL_CTX_set_permute_extensions(ctx,permute);

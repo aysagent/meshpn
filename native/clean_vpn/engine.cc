@@ -649,7 +649,7 @@ int main(int argc,char** argv){
         {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2"}},
         {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
         {"experimental_tls_profiles",{{"schema",1},{"scenario","cold"},{"prewire_check",true},{"certificate_compression",{2}},{"alps",{{"codepoint",17613},{"http2_settings",true},{"experimental",true}}},{"transports",{"boring-tls","combo-tls-boring"}}}},
-        {"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
+        {"profile_policy",profile_policy::describe()},{"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
         {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"destination_policies",{"explicit-ipv4-destinations","public-https"}},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true}}},
           {"combo-tls",{{"roles",{"client","exit"}},{"single_exit_listener",true},{"client_stdio_control",true},{"packet_ipc",false},{"site_provisioning",true}}}}}}).dump()<<"\n";return 0;
     }
