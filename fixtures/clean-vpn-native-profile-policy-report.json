@@ -5,7 +5,7 @@
   "inputs": {
     "browserContentSha256": "52db7a11958cd27dcbfbab73561101602eaeba9b8924d612d168bbbb5426db5c",
     "nativeContentSha256": "eb7a9fb9c27efc631e10c1aa91ae9b0481ca6fa30fa13854ba47d04ef833873e",
-    "capabilitiesSha256": "ee916e7061018c6aaeb7d241830c62dbfa4be94433b38a3e0d6dd63da7fa8a99"
+    "capabilitiesSha256": "07e3397554269f8be34499157444b5584e6298bd8853a0b49bd1270f7cf9012c"
   },
   "status": "blocked",
   "checks": [
@@ -612,8 +612,8 @@
     {
       "layer": "tls",
       "field": "signature_algorithms",
-      "status": "blocked",
-      "reason": "feature-not-enabled",
+      "status": "within-envelope",
+      "reason": "id-enabled",
       "observed": 2308,
       "expected": [
         1025,
@@ -625,7 +625,10 @@
         2052,
         2053,
         2054,
-        2055
+        2055,
+        2308,
+        2309,
+        2310
       ],
       "samples": [
         1,
@@ -653,8 +656,8 @@
     {
       "layer": "tls",
       "field": "signature_algorithms",
-      "status": "blocked",
-      "reason": "feature-not-enabled",
+      "status": "within-envelope",
+      "reason": "id-enabled",
       "observed": 2309,
       "expected": [
         1025,
@@ -666,7 +669,10 @@
         2052,
         2053,
         2054,
-        2055
+        2055,
+        2308,
+        2309,
+        2310
       ],
       "samples": [
         1,
@@ -694,8 +700,8 @@
     {
       "layer": "tls",
       "field": "signature_algorithms",
-      "status": "blocked",
-      "reason": "feature-not-enabled",
+      "status": "within-envelope",
+      "reason": "id-enabled",
       "observed": 2310,
       "expected": [
         1025,
@@ -707,7 +713,10 @@
         2052,
         2053,
         2054,
-        2055
+        2055,
+        2308,
+        2309,
+        2310
       ],
       "samples": [
         1,
@@ -748,7 +757,10 @@
         2052,
         2053,
         2054,
-        2055
+        2055,
+        2308,
+        2309,
+        2310
       ],
       "samples": [
         1,
@@ -789,7 +801,10 @@
         2052,
         2053,
         2054,
-        2055
+        2055,
+        2308,
+        2309,
+        2310
       ],
       "samples": [
         1,
@@ -830,7 +845,10 @@
         2052,
         2053,
         2054,
-        2055
+        2055,
+        2308,
+        2309,
+        2310
       ],
       "samples": [
         1,
@@ -871,7 +889,10 @@
         2052,
         2053,
         2054,
-        2055
+        2055,
+        2308,
+        2309,
+        2310
       ],
       "samples": [
         1,
@@ -912,7 +933,10 @@
         2052,
         2053,
         2054,
-        2055
+        2055,
+        2308,
+        2309,
+        2310
       ],
       "samples": [
         1,
@@ -953,7 +977,10 @@
         2052,
         2053,
         2054,
-        2055
+        2055,
+        2308,
+        2309,
+        2310
       ],
       "samples": [
         1,
@@ -994,7 +1021,10 @@
         2052,
         2053,
         2054,
-        2055
+        2055,
+        2308,
+        2309,
+        2310
       ],
       "samples": [
         1,
@@ -1035,7 +1065,10 @@
         2052,
         2053,
         2054,
-        2055
+        2055,
+        2308,
+        2309,
+        2310
       ],
       "samples": [
         1,
@@ -1346,7 +1379,7 @@
       "layer": "tls",
       "field": "extension_types",
       "status": "blocked",
-      "reason": "feature-not-enabled",
+      "reason": "trust-anchor-selection-and-retry-not-implemented",
       "observed": 51764,
       "expected": [
         0,

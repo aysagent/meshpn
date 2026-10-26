@@ -54,7 +54,7 @@ test('profile validation is strict, offline and reports effective immutable sett
   assert.equal(checkConfig(f,baseline,combo).status,0);
 });
 
-async function exchange(f,p,{mode='service',changes={},combo=false,compression=null,alps=false,alpsFault=null,clientAlps=false,h2Observe=false}={}) {
+async function exchange(f,p,{mode='service',changes={},combo=false,compression=null,signature=null,alps=false,alpsFault=null,clientAlps=false,h2Observe=false}={}) {
   const reserve=net.createServer();reserve.listen(0,'127.0.0.1');await once(reserve,'listening');const backend=reserve.address().port;await new Promise(r=>reserve.close(r));
   const captures=[],sockets=new Set(); captures.hrr=false;
   const proxy=net.createServer(client=>{
@@ -73,7 +73,7 @@ async function exchange(f,p,{mode='service',changes={},combo=false,compression=n
   try {
   fs.writeFileSync(f.dir+'/profile.json',JSON.stringify(p));
   let clientConfig={...config(f,proxy.address().port),...changes};
-  let exitConfig={version:1,role:'exit',address:'127.0.0.1',port:backend,tun:'cvtest0',secret_path:f.secret,cert:f.cert,key:f.key,...(alps?{alps:true}:{})};
+  let exitConfig={version:1,role:'exit',address:'127.0.0.1',port:backend,tun:'cvtest0',secret_path:f.secret,cert:f.serverCert??f.cert,key:f.serverKey??f.key,...(alps?{alps:true}:{})};
   if(combo) {
     const relay=f.dir+'/relay.psk';fs.writeFileSync(relay,randomBytes(32),{mode:0o600});
     fs.mkdirSync(f.dir+'/replay',{mode:0o700});
@@ -89,13 +89,15 @@ async function exchange(f,p,{mode='service',changes={},combo=false,compression=n
   fs.writeFileSync(f.dir+'/exit.json',JSON.stringify(exitConfig));
   if(combo)execFileSync(build+'/clean-vpn-engine',['--init-transparent-replay',f.dir+'/exit.json'],{stdio:'pipe'});
     const child=spawn(build+'/integration-test',[build+'/clean-vpn-engine-fixture',f.dir+'/client.json',f.dir+'/exit.json',...(mode==='full'?[]:[mode])],{stdio:['ignore','pipe','pipe'],
-      env:{...process.env,...(compression?{CVPN_TEST_CERT_COMPRESSION:compression}:{}),...(alpsFault?{CVPN_TEST_ALPS:alpsFault}:{}),...(clientAlps?{CVPN_TEST_ALPS_CLIENT:'nonempty'}:{}),...(h2Observe?{CVPN_TEST_H2_OBSERVER:'1'}:{})}});
+      env:{...process.env,...(compression?{CVPN_TEST_CERT_COMPRESSION:compression}:{}),...(signature?{CVPN_TEST_SIGNATURE:signature}:{}),...(alpsFault?{CVPN_TEST_ALPS:alpsFault}:{}),...(clientAlps?{CVPN_TEST_ALPS_CLIENT:'nonempty'}:{}),...(h2Observe?{CVPN_TEST_H2_OBSERVER:'1'}:{})}});
     let output='';for(const s of [child.stdout,child.stderr])s.on('data',b=>{output+=b;if(output.length>262144)child.kill('SIGKILL');});
     const timeout=setTimeout(()=>child.kill('SIGKILL'),mode==='full'?80000:15000);
     let code;try{[code]=await once(child,'exit');}finally{clearTimeout(timeout);}
     assert.equal(code,0,output);assert.ok(captures.length>0&&captures.length<=16);
     if(compression)assert.match(output,/fixture_compressed_certificate_sent/,'server did not send CompressedCertificate');
     captures.h2=[...output.matchAll(/fixture_h2 (\{[^\n]+\})/g)].map(m=>JSON.parse(m[1]));
+    captures.signaturesSent=[...output.matchAll(/fixture_certificate_verify_sent=(\d+)/g)].map(m=>Number(m[1]));
+    captures.signaturesVerified=[...output.matchAll(/fixture_peer_signature_verified=(\d+)/g)].map(m=>Number(m[1]));
     return captures;
   } finally {for(const s of sockets)s.destroy();await new Promise(r=>proxy.close(r));}
 }
@@ -322,6 +324,61 @@ test('engine capability limits are the limits enforced by its profile loader',t=
     const p=structuredClone(profile);p.http2.connection_window=value;assert.equal(checkConfig(f,p).status,status);
   }
   for(const id of [47,156]) {const p=structuredClone(profile);p.tls.cipher_suites.push(id);assert.equal(checkConfig(f,p).status,1);}
-  for(const id of [2308,2309,2310]) {const p=structuredClone(profile);p.tls.signature_algorithms.push(id);assert.equal(checkConfig(f,p).status,1);}
+  for(const id of [2308,2309,2310]) {const p=structuredClone(profile);p.tls.signature_algorithms.push(id);assert.equal(checkConfig(f,p).status,0);}
   for(const id of [35,41,42,50,17513,51764,65534]) {const p=structuredClone(profile);p.tls.extension_types.push(id);assert.equal(checkConfig(f,p).status,1);}
+});
+
+function signatureProfile() {
+  return JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/cold-mldsa.json'));
+}
+function mldsaFixture(t,algorithm) {
+  const f=fixture(t);f.serverCert=f.dir+'/leaf.pem';f.serverKey=f.dir+'/leaf-key.pem';
+  execFileSync(build+'/profile-credentials-fixture',[f.cert,f.key,String(algorithm),f.serverCert,f.serverKey],{stdio:'pipe'});
+  assert.equal(fs.statSync(f.serverKey).mode&0o777,0o600);return f;
+}
+test('ML-DSA 44/65/87 are negotiated and verified with real certificates and independently observed ClientHello', {timeout:60000},async t=>{
+  const p=signatureProfile(),reports=[];
+  assert.equal(fs.readFileSync(build+'/clean-vpn-engine').includes(Buffer.from('CVPN_TEST_SIGNATURE')),false);
+  for(const [algorithm,id] of [[44,2308],[65,2309],[87,2310]]) {
+    const f=mldsaFixture(t,algorithm);assert.equal(checkConfig(f,p).status,0);
+    const captures=await exchange(f,p,{signature:'observe'});
+    assert.ok(captures.signaturesSent.length>0);assert.ok(captures.signaturesVerified.length>0);
+    assert.ok(captures.signaturesSent.every(x=>x===id));assert.ok(captures.signaturesVerified.every(x=>x===id));
+    for(const wire of captures) {
+      const r=observeTlsProfile(wire,p);assert.equal(r.status,'matched');reports.push(r);
+      const candidate=compileTlsProfileCandidate(wire,{id:'mldsa-roundtrip',extensionOrder:'fixed',padding:'exact',echMode:'disabled'});
+      assert.equal(candidate.status,'candidate');assert.equal(checkConfig(f,candidate.profile).status,0);
+    }
+    // A client without this algorithm cannot silently accept the ML-DSA leaf.
+    const rejected=await exchange(f,baseline,{signature:'observe',mode:'reject'});
+    assert.equal(rejected.signaturesVerified.length,0);
+  }
+  assert.equal(new Set(reports.map(r=>r.ja4.fingerprint)).size,1);
+  console.log(JSON.stringify({mldsaClientHello:reports[0],negotiatedAlgorithms:[2308,2309,2310]}));
+});
+
+test('ML-DSA rejects invalid CertificateVerify signatures and preserves CA, hostname and exporter PSK checks', {timeout:90000},async t=>{
+  const p=signatureProfile(),other=fixture(t);
+  for(const [algorithm,id] of [[44,2308],[65,2309],[87,2310]]) {
+    const f=mldsaFixture(t,algorithm);
+    const rejected=await exchange(f,p,{signature:'corrupt',mode:'reject'});
+    assert.ok(rejected.signaturesSent.includes(id),'invalid signature was not actually sent');
+    assert.equal(rejected.signaturesVerified.length,0);
+    for(const changes of [{ca:other.cert},{server_name:'wrong.localhost'},{secret_path:other.secret}]) {
+      const captures=await exchange(f,p,{signature:'observe',mode:'reject',changes});
+      assert.ok(captures.signaturesSent.includes(id));
+      if(!changes.secret_path)assert.equal(captures.signaturesVerified.length,0);
+      else assert.ok(captures.signaturesVerified.includes(id),'PSK rejection must follow a valid ML-DSA handshake');
+    }
+  }
+});
+
+test('ML-DSA composes with combo, HRR and ALPS without changing native packet authentication', {timeout:30000},async t=>{
+  const p=signatureProfile(),f=mldsaFixture(t,65);
+  assert.ok((await exchange(f,p,{signature:'observe',combo:true})).signaturesVerified.includes(2309));
+  const hrr=structuredClone(p);hrr.tls.key_share_groups=[];
+  const capture=await exchange(mldsaFixture(t,87),hrr,{signature:'observe'});
+  assert.equal(capture.hrr,true);assert.ok(capture.signaturesVerified.includes(2310));
+  const a=structuredClone(alpsProfile);a.tls.signature_algorithms=p.tls.signature_algorithms;
+  assert.ok((await exchange(mldsaFixture(t,44),a,{signature:'observe',alps:true})).signaturesVerified.includes(2308));
 });

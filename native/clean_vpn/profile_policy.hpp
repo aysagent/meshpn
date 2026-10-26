@@ -5,7 +5,7 @@
 #include <set>
 namespace cvpn::profile_policy {
 inline const std::set<uint16_t> tls12_ciphers={49195,49196,49199,49200,52392,52393};
-inline const std::set<uint16_t> signatures={0x0401,0x0501,0x0601,0x0403,0x0503,0x0603,0x0804,0x0805,0x0806,0x0807};
+inline const std::set<uint16_t> signatures={0x0401,0x0501,0x0601,0x0403,0x0503,0x0603,0x0804,0x0805,0x0806,0x0807,0x0904,0x0905,0x0906};
 // Policy envelope only. Version-dependent presence/order and group/key-share
 // combinations still require Profile::first_flight's exact prewire check.
 inline const std::set<uint16_t> extensions={0,5,10,11,13,16,18,21,23,27,43,45,51,17613,65037,65281};

@@ -39,9 +39,10 @@ transcript. CA/hostname, exporter-bound PSK и обязательный negotiat
 
 ## Схема
 
-Примеры — [cold-h2](../fixtures/native-tls-profiles/cold-h2.json) и
-[cold-modern](../fixtures/native-tls-profiles/cold-modern.json).
-Оба **синтетические**, не захваты Chrome/Firefox и не эталоны конкретного browser build.
+Примеры — [cold-h2](../fixtures/native-tls-profiles/cold-h2.json),
+[cold-modern](../fixtures/native-tls-profiles/cold-modern.json) и
+[cold-mldsa](../fixtures/native-tls-profiles/cold-mldsa.json).
+Все **синтетические**, не захваты Chrome/Firefox и не эталоны конкретного browser build.
 
 - `schema:1`, `kind:clean-vpn-native-tls-profile`, ID и `scenario:cold` обязательны.
 - TLS 1.3 обязателен; допускается явное предложение TLS 1.2. TLS 1.0/1.1 запрещены.
@@ -49,6 +50,8 @@ transcript. CA/hostname, exporter-bound PSK и обязательный negotiat
   разрешены только реализованные ECDHE AES-GCM/ChaCha20; static-RSA/CBC запрещены.
 - Groups, initial key-share groups и signature algorithms применяются штатными
   API стека. Unsupported IDs, дубли и неверный порядок shares отклоняются.
+  [ML-DSA 44/65/87](clean-vpn-native-mldsa.md) включаются явно в signature algorithms;
+  trust-anchor extension пока запрещено до реализации выбора цепочки/retry.
 - ALPN: `h2` либо `h2,http/1.1`; exit обязан выбрать h2. Это объявление ALPN,
   не реализация H1 VPN fallback.
 - GREASE, permutation, ECH GREASE, запросы OCSP/SCT включаются API BoringSSL.

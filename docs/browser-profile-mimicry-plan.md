@@ -1,9 +1,15 @@
 # План улучшения мимикрии под сохранённый браузерный профиль
 
-Текущий native checkpoint (2026-10-26): [явная политика совместимости и read-only assessor](../scripts/clean-vpn-native-profile-policy.md).
+Текущий native checkpoint (2026-10-26): [ML-DSA и граница trust anchors](../scripts/clean-vpn-native-mldsa.md).
+Три ML-DSA signature algorithms включены в opt-in профиль; trust-anchor extension
+остаётся запрещённым до реализации выбора цепочки и bounded retry. Следующий
+ограниченный лабораторный этап — H2 memory/backpressure нескольких клиентов,
+без повышения caps. Ticket/resumption lifecycle остаётся отдельной задачей.
+
+Предыдущий checkpoint: [явная политика совместимости и read-only assessor](../scripts/clean-vpn-native-profile-policy.md).
 Измеренный Chromium 156 остаётся blocked по TLS policy и H2 caps; исполнительный
-профиль автоматически не создаётся. Следующий шаг — семантическая проверка
-ML-DSA/trust anchors в лаборатории, без ослабления cipher policy.
+профиль автоматически не создаётся. ML-DSA/trust anchors рассмотрены следующим
+checkpoint выше, без ослабления cipher policy.
 
 Предыдущие шаги: [ALPS + профильные HTTP/2 SETTINGS/window](../scripts/clean-vpn-native-alps.md).
 Семантика реализована для bounded subset и синтетического профиля. [Захват H2 SETTINGS/windows, заголовков и HPACK block size](../scripts/clean-vpn-native-http2-capture.md)

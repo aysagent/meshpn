@@ -65,9 +65,22 @@ export function measureTlsClientHello(wire) {
   const ciphers = []; for (let end=o+n;o<end;o+=2)ciphers.push(body.readUInt16BE(o));
   o += 1 + body[o]; const end = o + 2 + body.readUInt16BE(o); o += 2;
   const extensions=[], shares=[], compression=[], applicationSettings=[];
+  let trustAnchors=null;
   for (;o<end;) {
     const type=body.readUInt16BE(o), size=body.readUInt16BE(o+2);o+=4;
     assert.ok(o+size<=end);extensions.push(type);
+    if(type===51764) {
+      assert.equal(trustAnchors,null,'duplicate_trust_anchors');
+      assert.ok(size>=2&&size<=1026&&body.readUInt16BE(o)===size-2,'trust_anchor_vector');
+      const lengths=[];
+      for(let p=o+2;p<o+size;) {
+        const length=body[p++];assert.ok(length>0&&p+length<=o+size&&lengths.length<32,'trust_anchor_id');
+        lengths.push(length);p+=length;
+      }
+      // IDs can reveal a private PKI. Preserve shape only, never bytes or an
+      // executable trust configuration. Empty list does not mean no extension.
+      trustAnchors={empty:lengths.length===0,count:lengths.length,idLengths:lengths};
+    }
     if(type===17613 || type===17513) {
       assert.ok(size>=3&&body.readUInt16BE(o)===size-2,'alps_protocols');
       for(let p=o+2;p<o+size;) {
@@ -97,6 +110,7 @@ export function measureTlsClientHello(wire) {
     signature_algorithms:sig.signature_algorithms, alpn:hello.alpn,
     supported_versions:clean(hello.supportedVersions), extension_types:clean(extensions),
     grease:ciphers.some(n=>TLS_GREASE_VALUES.has(n)),certificate_compression:compression,application_settings:applicationSettings,
+    ...(trustAnchors?{trust_anchors:trustAnchors}:{}),
   };
   return {actual,keyShares:shares,sessionIdBytes:body[34],
     ja3:ja3.ja3Digest,ja3String:ja3.ja3String,ja3Sorted:ja3.ja3SortedDigest,
@@ -118,7 +132,7 @@ export function compileTlsProfileCandidate(wire, {id,extensionOrder,padding,echM
   for(const cipher of a.cipher_suites)if(!allowedCiphers.has(cipher))unsupported.push(`cipher:${cipher}`);
   // Mirror the current native contract's explicit signature policy. Availability
   // in a newer browser or BoringSSL alone does not enable it in our engine.
-  const allowedSignatures=new Set([0x0401,0x0501,0x0601,0x0403,0x0503,0x0603,0x0804,0x0805,0x0806,0x0807]);
+  const allowedSignatures=new Set([0x0401,0x0501,0x0601,0x0403,0x0503,0x0603,0x0804,0x0805,0x0806,0x0807,0x0904,0x0905,0x0906]);
   for(const signature of a.signature_algorithms)if(!allowedSignatures.has(signature))unsupported.push(`signature:${signature}`);
   if(a.certificate_compression.length && JSON.stringify(a.certificate_compression)!=='[2]')unsupported.push('certificate-compression-algorithms');
   if(!['[772]','[772,771]'].includes(JSON.stringify(a.supported_versions)))unsupported.push('versions');

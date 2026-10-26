@@ -1,0 +1,168 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-mldsa-report",
+  "status": "passed",
+  "date": "2026-10-26",
+  "environment": {
+    "os": "linux",
+    "arch": "x64",
+    "runtime": "Podman macOS lab",
+    "network": "container-loopback-only",
+    "tun": "socketpair-fixture",
+    "physicalHostsTouched": false,
+    "hostNetworkSettingsChanged": false
+  },
+  "boringsslRevision": "a7481f34712bc056a47ab91015536166b3a6cebb",
+  "binaries": {
+    "clean-vpn-engine": "a3f5630d786507189606f1904ac2731613bc79188cdc6be05b232f55fbc1e0f6",
+    "clean-vpn-engine-fixture": "bfe66234699956f3b3410a63c8f331a8ccccee48b9699538dd3062d51126511a"
+  },
+  "profileSha256": "16a65de2fe5c01c72669bd783fcf8b6a3f445b0cd732e4457ac42fa581253565",
+  "validation": {
+    "ctest": {
+      "passed": 10,
+      "failed": 0
+    },
+    "nativeTlsProfile": {
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0
+    },
+    "jsCapturePolicyLab": {
+      "passed": 42,
+      "failed": 0,
+      "skipped": 0
+    },
+    "signatures": [
+      {
+        "algorithm": "ML-DSA-44",
+        "id": 2308,
+        "certificateVerifyNegotiated": true,
+        "validSignatureVerified": true,
+        "missingAlgorithmRejected": true,
+        "invalidSignatureSentAndRejected": true,
+        "wrongCaRejected": true,
+        "wrongHostnameRejected": true,
+        "wrongPskRejectedAfterTls": true
+      },
+      {
+        "algorithm": "ML-DSA-65",
+        "id": 2309,
+        "certificateVerifyNegotiated": true,
+        "validSignatureVerified": true,
+        "missingAlgorithmRejected": true,
+        "invalidSignatureSentAndRejected": true,
+        "wrongCaRejected": true,
+        "wrongHostnameRejected": true,
+        "wrongPskRejectedAfterTls": true
+      },
+      {
+        "algorithm": "ML-DSA-87",
+        "id": 2310,
+        "certificateVerifyNegotiated": true,
+        "validSignatureVerified": true,
+        "missingAlgorithmRejected": true,
+        "invalidSignatureSentAndRejected": true,
+        "wrongCaRejected": true,
+        "wrongHostnameRejected": true,
+        "wrongPskRejectedAfterTls": true
+      }
+    ],
+    "combo": true,
+    "hrr": true,
+    "alps": true,
+    "productionFaultHookAbsent": true
+  },
+  "independentClientHelloObservation": {
+    "schema": 1,
+    "kind": "clean-vpn-native-tls-observation",
+    "status": "matched",
+    "profileId": "synthetic-cold-mldsa",
+    "actual": {
+      "cipher_suites": [
+        4865,
+        4867,
+        4866
+      ],
+      "supported_groups": [
+        29,
+        23
+      ],
+      "key_share_groups": [
+        29
+      ],
+      "signature_algorithms": [
+        1027,
+        2052,
+        2053,
+        2054,
+        2308,
+        2309,
+        2310
+      ],
+      "alpn": [
+        "h2"
+      ],
+      "supported_versions": [
+        772
+      ],
+      "extension_types": [
+        0,
+        10,
+        16,
+        13,
+        51,
+        45,
+        43
+      ],
+      "grease": true,
+      "certificate_compression": [],
+      "application_settings": []
+    },
+    "keyShares": [
+      {
+        "group": 10794,
+        "length": 1
+      },
+      {
+        "group": 29,
+        "length": 32
+      }
+    ],
+    "sessionIdBytes": 32,
+    "ja3": "1486e97570653f52b603bf93abaffe92",
+    "ja3String": "771,4865-4867-4866,0-10-16-13-51-45-43,29-23,",
+    "ja3Sorted": "1202e226eca4ad2e74e676c4db25ac50",
+    "ja4": {
+      "fingerprint": "t13d0307h2_55b375c5d22e_bdde3d443f84",
+      "fingerprint_alt_sni_alpn_in_j4c": "t13d0307h2_55b375c5d22e_36d54f542c11",
+      "ja4_a": "t13d0307h2",
+      "ja4_b": "55b375c5d22e",
+      "ja4_c": "bdde3d443f84",
+      "ja4_c_alt_sni_alpn_in_hash": "36d54f542c11",
+      "raw_r": "t13d0307h2_1301,1302,1303_000a,000d,002b,002d,0033_0403,0804,0805,0806,0904,0905,0906",
+      "raw_r_alt_sni_alpn_in_segment": "t13d0307h2_1301,1302,1303_0000,000a,000d,002b,002d,0033_0403,0804,0805,0806,0904,0905,0906",
+      "raw_o": "t13d0307h2_1301,1303,1302_0000,000a,0010,000d,0033,002d,002b_0403,0804,0805,0806,0904,0905,0906"
+    },
+    "differences": [],
+    "scope": "first-cold-ClientHello-fields-only-not-browser-or-HTTP2-equivalence"
+  },
+  "trustAnchors": {
+    "extension": 51764,
+    "enabled": false,
+    "reason": "trust-anchor-selection-and-retry-not-implemented",
+    "capture": "shape-only-no-IDs",
+    "limits": {
+      "listBytes": 1024,
+      "ids": 32,
+      "idBytes": 255
+    }
+  },
+  "limitations": [
+    "synthetic-profile-not-browser-clone",
+    "classical-RSA-CA-signs-ML-DSA-leaves-not-fully-PQ-PKI",
+    "no-new-physical-host-trial",
+    "trust-anchors-and-tickets-unimplemented",
+    "H2-caps-and-cipher-policy-unchanged"
+  ]
+}

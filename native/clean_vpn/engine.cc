@@ -10,6 +10,7 @@
 #include "http2_alps.hpp"
 #ifdef CVPN_TEST_PACKET_FD
 #include "certificate_compression_fixture.hpp"
+#include "signature_fixture.hpp"
 #include "http2_alps_fixture.hpp"
 #endif
 #include <nlohmann/json.hpp>
@@ -496,6 +497,9 @@ static void handshake(SSL* ssl,int fd,Control& ctl,Clock::time_point deadline,ui
     if(e!=SSL_ERROR_WANT_READ&&e!=SSL_ERROR_WANT_WRITE)throw std::runtime_error(tls_failure(ssl));
     wait_fd(fd,e==SSL_ERROR_WANT_READ?POLLIN:POLLOUT,ctl,deadline,generation);}
   const uint8_t* proto=nullptr;unsigned n=0;SSL_get0_alpn_selected(ssl,&proto,&n);check(n==2&&std::memcmp(proto,"h2",2)==0,"h2_required");
+#ifdef CVPN_TEST_PACKET_FD
+  signature_fixture::accepted(ssl);
+#endif
 }
 // One bounded reactor owns listener, sessions and TUN. Slow TLS/auth peers do
 // not block established tunnels; no per-packet threads, processes or IPC.
@@ -704,6 +708,7 @@ int main(int argc,char** argv){
       SSL_CTX_set_alpn_select_cb(ctx.get(),alpn,nullptr);
 #ifdef CVPN_TEST_PACKET_FD
       check(certificate_compression_fixture::enable(ctx.get()),"fixture_compression");
+      check(signature_fixture::enable(ctx.get()),"fixture_signature");
 #endif
     }
     if(initialize) {

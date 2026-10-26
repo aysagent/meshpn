@@ -8,6 +8,18 @@ packet path не является обязательной. Production-разв�
 
 ## Реализовано в текущем шаге
 
+2026-10-26: [ML-DSA 44/65/87](clean-vpn-native-mldsa.md) разрешены в opt-in
+cold профиле через штатный BoringSSL API. Отдельные временные серверные
+сертификаты позволяют проверить actual CertificateVerify, независимый CH/JA3/JA4,
+отказ без алгоритма, неверную подпись, CA/hostname/PSK, combo/HRR/ALPS.
+Trust-anchor API исследовано: 51764 остаётся запрещённым до выбора цепочки и
+bounded retry. Observer измеряет только форму списка, без экспорта IDs.
+CTest 10/10, native profile integration 17/17, JS capture/policy/lab 42/42,
+без пропусков; [отчёт](../fixtures/clean-vpn-native-mldsa-report.json).
+Следующий ограниченный лабораторный этап — H2 memory/backpressure при нескольких
+клиентах и медленном получателе, без повышения caps. Ticket lifecycle и trust-anchor
+retry остаются отдельными задачами. Точный профиль Chromium пока недоступен.
+
 2026-10-26: [политика совместимости bounded-cold-v1](clean-vpn-native-profile-policy.md)
 экспортируется самим native engine; общие константы используются загрузчиком
 профиля и capabilities. Отдельный read-only assessor сопоставляет TLS/H2 evidence

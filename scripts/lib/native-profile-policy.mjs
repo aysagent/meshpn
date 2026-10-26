@@ -73,7 +73,8 @@ export function assessNativeProfilePolicy(browserDocument,capabilities,nativeDoc
     }
     for(const [field,allowed] of Object.entries(tlsRules))for(const id of a[field])
       add('tls',field,allowed.includes(id)?'within-envelope':'blocked',allowed.includes(id)?'id-enabled':
-        field==='cipher_suites'?'cipher-security-policy':'feature-not-enabled',id,allowed,n);
+        field==='cipher_suites'?'cipher-security-policy':field==='extension_types'&&id===51764?
+          'trust-anchor-selection-and-retry-not-implemented':'feature-not-enabled',id,allowed,n);
     for(const [field,ok] of [['supported_versions',['[772]','[772,771]'].includes(JSON.stringify(a.supported_versions))],
       ['alpn',['["h2"]','["h2","http/1.1"]'].includes(JSON.stringify(a.alpn))]])
       add('tls',field,ok?'within-envelope':'blocked',ok?'supported-shape':'unsupported-shape',a[field],null,n);

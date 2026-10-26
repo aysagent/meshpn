@@ -13,6 +13,7 @@ PSK/IP, приватный комплект каждому клиенту, `bori
 Для native также есть экспериментальные [cold TLS профили](scripts/clean-vpn-native-tls-profiles.md),
 [Brotli certificate compression](scripts/clean-vpn-native-certificate-compression.md) и
 [ALPS с профильными H2 SETTINGS/window](scripts/clean-vpn-native-alps.md).
+В cold TLS профиле доступны [ML-DSA 44/65/87 с проверкой настоящей подписи сервера](scripts/clean-vpn-native-mldsa.md).
 Это пока не полная мимикрия конкретного браузера.
 [Измерить TLS/H2 браузера и сравнить с native](scripts/clean-vpn-native-http2-capture.md):
 `npm run lab:native:mac -- --http2-capture`.

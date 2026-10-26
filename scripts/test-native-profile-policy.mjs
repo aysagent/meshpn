@@ -21,7 +21,8 @@ test('measured Chromium is blocked by explicit TLS and H2 policy without alterin
   const before=JSON.stringify([browser,caps,native]),r=assess(browser,caps,native);
   assert.equal(r.status,'blocked');assert.equal(JSON.stringify([browser,caps,native]),before);
   assert.deepEqual(r.checks.filter(c=>c.reason==='cipher-security-policy').map(c=>c.observed).sort((a,b)=>a-b),[47,53,156,157,49171,49172]);
-  for(const id of [2308,2309,2310,35,51764])assert.ok(r.checks.some(c=>c.status==='blocked'&&c.observed===id));
+  for(const id of [35,51764])assert.ok(r.checks.some(c=>c.status==='blocked'&&c.observed===id));
+  for(const id of [2308,2309,2310])assert.ok(r.checks.some(c=>c.status==='within-envelope'&&c.field==='signature_algorithms'&&c.observed===id));
   for(const [field,observed] of [['setting:4',6291456],['setting:6',262144],['setting:3',null],['connection_window',15728640]])
     assert.ok(r.checks.some(c=>c.field===field&&c.observed===observed&&c.status==='blocked'&&c.samples.length===20));
   assert.equal(r.checks.filter(c=>c.status==='deviation').length,4);

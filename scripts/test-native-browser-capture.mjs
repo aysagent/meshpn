@@ -20,7 +20,7 @@ const metadata = { schema: 1, id: 'unit-capture', identity: { browser: 'test-fix
 const negotiated = { alpn: 'h2', tlsVersion: 'TLSv1.3', sessionReused: false };
 const u16 = n => { const b = Buffer.alloc(2); b.writeUInt16BE(n); return b; };
 const vector = b => Buffer.concat([u16(b.length), b]);
-function wire({ reverse = false, cipher = 4865, signature = 1027, unsupported = false, compression = null, alps = null, padding = false, fragmented = false } = {}) {
+function wire({ reverse = false, cipher = 4865, signature = 1027, unsupported = false, compression = null, alps = null, trustAnchors = null, padding = false, fragmented = false } = {}) {
   const ext = (id, bytes) => Buffer.concat([u16(id), vector(bytes)]);
   const name = Buffer.from('secret.capture.invalid');
   let extensions = [ext(0, vector(Buffer.concat([Buffer.from([0]), vector(name)]))),
@@ -31,6 +31,7 @@ function wire({ reverse = false, cipher = 4865, signature = 1027, unsupported = 
   if (unsupported || compression !== null) extensions.push(ext(27, Buffer.concat([Buffer.from([2]), u16(compression ?? 2)])));
   if (unsupported) extensions.push(ext(50, Buffer.from([0, 2, 4, 3])));
   if (alps !== null) extensions.push(ext(17613, vector(Buffer.from(alps))));
+  if (trustAnchors !== null) extensions.push(ext(51764,Buffer.from(trustAnchors)));
   if (padding) extensions.push(ext(21, Buffer.alloc(7)));
   const body = Buffer.concat([u16(771), Buffer.alloc(32, 0x33), Buffer.from([0]),
     vector(Buffer.concat([u16(0x2a2a), u16(cipher)])), Buffer.from([1, 0]), vector(Buffer.concat(extensions))]);
@@ -78,13 +79,33 @@ test('unsupported extensions and inconsistent fields cannot become a candidate',
   const b = unsupported.snapshot(); assert.equal(b.assessment.status, 'unsupported');
   assert.deepEqual(b.assessment.unsupported, ['extension:50']); assert.equal(b.assessment.candidateProfile, null);
   assert.deepEqual(b.samples[0].layout.certificateCompression, [2]);
-  const signatures = new BrowserCapture(metadata); signatures.add(wire({ signature: 0x0904 }), negotiated);
-  assert.deepEqual(signatures.snapshot().assessment.unsupported, ['signature:2308']);
+  const signatures = new BrowserCapture(metadata); signatures.add(wire({ signature: 0x0907 }), negotiated);
+  assert.deepEqual(signatures.snapshot().assessment.unsupported, ['signature:2311']);
+  for(const signature of [0x0904,0x0905,0x0906]) {
+    const c=new BrowserCapture(metadata);for(let i=0;i<3;i++)c.add(wire({signature}),negotiated);
+    assert.equal(c.snapshot().assessment.status,'candidate');assert.equal(c.snapshot().assessment.nativeValidated,false);
+  }
   assert.equal(inconsistent.snapshot().assessment.status, 'inconsistent');
   assert.deepEqual(inconsistent.snapshot().assessment.variations, ['cipher_suites']);
   const fixed = structuredClone(metadata); fixed.context.extensionOrder = 'fixed';
   const c = new BrowserCapture(fixed); c.add(wire(), negotiated); c.add(wire({ reverse: true }), negotiated);
   assert.ok(c.snapshot().assessment.variations.includes('extension_types'));
+});
+
+test('trust-anchor evidence distinguishes empty and nonempty lists but cannot activate unsupported retry semantics',()=>{
+  for(const [trustAnchors,expected] of [
+    [[0,0],{empty:true,count:0,idLengths:[]}],
+    [[0,6,2,0xab,0xcd,2,0xef,0x12],{empty:false,count:2,idLengths:[2,2]}]
+  ]) {
+    const c=new BrowserCapture(metadata);for(let i=0;i<3;i++)c.add(wire({trustAnchors}),negotiated);
+    const b=c.snapshot();assert.equal(b.assessment.status,'unsupported');
+    assert.ok(b.assessment.unsupported.includes('extension:51764'));
+    assert.equal(b.assessment.candidateProfile,null);
+    assert.deepEqual(b.samples[0].measurement.actual.trust_anchors,expected);
+    assert.doesNotMatch(JSON.stringify(b),/"(?:abcd|ef12)"/);
+  }
+  for(const trustAnchors of [[0],[0,1,0],[0,2,2,1],[0,0,1],Array(1027).fill(0)])
+    assert.throws(()=>new BrowserCapture(metadata).add(wire({trustAnchors}),negotiated),/trust_anchor/);
 });
 
 test('capture carries supported Brotli algorithms and refuses unsupported compression', () => {
