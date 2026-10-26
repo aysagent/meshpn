@@ -1,0 +1,223 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-runtime-validation",
+  "updatedAt": "2026-10-26T22:28:50.866Z",
+  "scope": "Temporary standalone and rootful container boring-tls runtime. No permanent physical-node installation.",
+  "binarySourceFix": "a725ee3",
+  "builds": {
+    "arm64": {
+      "sourceBuild": "passed",
+      "ctest": "10/10",
+      "method": "native ARM64 CMake and full multistage source image"
+    },
+    "amd64": {
+      "sourceBuild": "passed",
+      "ctest": "10/10",
+      "method": "cached Linux amd64 CMake build; artifact stage packages the tested binary"
+    }
+  },
+  "unitTests": "7/7",
+  "runs": {
+    "dockerArm64": {
+      "status": "passed",
+      "scope": "Nested real Docker 28.5.2 in dedicated Podman VM; launcher, LAN, resource limits, faults",
+      "artifact": "docker-launcher-auto.json",
+      "artifactSha256": "ecb6afebc7be9bed1621c59dcc2f2014c6389bcb844999c9aeed3328815bf609",
+      "checks": [
+        "profiled-tunnel-and-dns-udp-tcp",
+        "public-launcher-start-status",
+        "loopback-dns-https-tcp-udp",
+        "isolated-lan-gateway-dns-https-tcp-udp",
+        "foreign-rules-preserved",
+        "same-namespace-reentry-audited",
+        "unreachable-upstreams-unhealthy",
+        "dns-restores-with-upstream",
+        "wrong-name-unhealthy",
+        "wrong-psk-unhealthy",
+        "wrong-ca-unhealthy",
+        "unreachable-exit-unhealthy",
+        "without-net-admin-refused",
+        "without-tun-refused",
+        "host-network-refused-before-mutation",
+        "public-launcher-stop-and-restart",
+        "unprivileged-shared-namespace-application",
+        "pid1-sigkill-shared-namespace-no-direct-fallback",
+        "lan-gateway-crash-no-direct-fallback",
+        "dead-engine-app-dns-blocked",
+        "replacement-works-old-namespace-stays-blocked",
+        "client-sigterm-clean",
+        "container-restart-healthy",
+        "independent-clienthello-profile-matched",
+        "exit-sigterm-clean",
+        "public-launcher-owned-remove"
+      ],
+      "imageId": "sha256:e1942dd095830c121155d9133d63d5a86ef565bf7eb1248ea52dac6f25c43e38",
+      "architecture": "arm64",
+      "engineSha256": "f0eb2a326e6c67491da4e1d895745b3e3c125c5208fc38446e396cb8e8490d72",
+      "capture": {
+        "pcapSha256": "96aa66eb9e2984ab2d693ebe768dd90c2714457048f03388511f5132c51c1da6",
+        "rawPcapRetained": true,
+        "counts": {
+          "packets": 336,
+          "selected": 336,
+          "withoutSyn": 0,
+          "fragmented": 0,
+          "truncated": 0
+        },
+        "observed": 16,
+        "profileStatuses": [
+          "matched"
+        ],
+        "ja4": [
+          "t13d0915h2_f91f431d341e_54d72502093d"
+        ],
+        "sampleJa3": "80a144f0c40598874be3a3d95a1753b2"
+      }
+    },
+    "podmanArm64": {
+      "status": "passed",
+      "scope": "Rootful ARM64 Podman; single-uplink artifact image before LAN addition",
+      "artifact": "podman-arm64-expanded-v2.json",
+      "artifactSha256": "f5c154829f6c2f0b38b89610493ba793b1e5f74f78e4b74cb097873399377feb",
+      "checks": [
+        "profiled-tunnel-and-dns-udp-tcp",
+        "loopback-dns-https-tcp-udp",
+        "foreign-rules-preserved",
+        "same-namespace-reentry-audited",
+        "unreachable-upstreams-unhealthy",
+        "dns-restores-with-upstream",
+        "wrong-name-unhealthy",
+        "wrong-psk-unhealthy",
+        "wrong-ca-unhealthy",
+        "unreachable-exit-unhealthy",
+        "without-net-admin-refused",
+        "without-tun-refused",
+        "host-network-refused-before-mutation",
+        "unprivileged-shared-namespace-application",
+        "pid1-sigkill-shared-namespace-no-direct-fallback",
+        "dead-engine-app-dns-blocked",
+        "replacement-works-old-namespace-stays-blocked",
+        "client-sigterm-clean",
+        "container-restart-healthy",
+        "independent-clienthello-profile-matched",
+        "exit-sigterm-clean"
+      ],
+      "capture": {
+        "pcapSha256": "6c309eb24bb16bb78789897b3bf6e7ecaf714fe44a24701886b62cd5111be4c9",
+        "rawPcapRetained": false,
+        "counts": {
+          "packets": 303,
+          "selected": 303,
+          "withoutSyn": 0,
+          "fragmented": 0,
+          "truncated": 0
+        },
+        "observed": 21,
+        "profileStatuses": [
+          "matched"
+        ],
+        "ja4": [
+          "t13d0915h2_f91f431d341e_54d72502093d"
+        ],
+        "sampleJa3": "3767bca9130fc1d59860398e726ab0d7"
+      }
+    },
+    "standaloneAmd64": {
+      "status": "passed",
+      "scope": "Real x86 Linux kernel in NIC-less QEMU; runtime entrypoint and certificate clock faults",
+      "artifact": "standalone-amd64-final.json",
+      "artifactSha256": "fb0abf8e2846825490c4c985ceb53cfbf550c43a0399fec3397a332935e4b38b",
+      "checks": [
+        "standalone-authenticated-tunnel-dns-udp-tcp",
+        "standalone-https",
+        "standalone-crash-guard-persists",
+        "same-namespace-crash-restart",
+        "standalone-graceful-stop",
+        "clock-past-certificate-fails-closed",
+        "clock-past-restored-with-verification",
+        "clock-expired-certificate-fails-closed",
+        "clock-expired-restored-with-verification",
+        "standalone-independent-profile-match"
+      ],
+      "vm": {
+        "kernel": "6.8.0-147-generic",
+        "kernelSha256": "41ba36d860aa0b0cd995f4ca8856d80249b244577e704929b55be13fbd1ebd2f",
+        "accelerator": "TCG",
+        "vcpus": 2,
+        "memoryMiB": 1536
+      },
+      "capture": {
+        "pcapSha256": "f137a03683280a352f9185d661c74a71b145bed34068789947bc6c7841085cb9",
+        "rawPcapRetained": true,
+        "counts": {
+          "packets": 193,
+          "selected": 193,
+          "withoutSyn": 0,
+          "fragmented": 0,
+          "truncated": 0
+        },
+        "observed": 19,
+        "profileStatuses": [
+          "matched"
+        ],
+        "ja4": [
+          "t13d0915h2_f91f431d341e_54d72502093d"
+        ],
+        "sampleJa3": "fb465d8e989a15d4dcd902f6a573fc74"
+      }
+    },
+    "podmanSoak": {
+      "status": "pending",
+      "scope": "3600-second small-transfer single-uplink run; pre-LAN control revision, same native engine; fixture-only init holder restarted to extend its original sleep timer"
+    },
+    "vpsDockerAmd64": {
+      "status": "pending",
+      "scope": "Temporary isolated bridge pair on existing VPS Docker; no physical-host VPN routing"
+    }
+  },
+  "controllerRecovery": {
+    "status": "passed",
+    "method": "SIGKILL controller after ready, invoke independent ownership-journal cleanup",
+    "removedContainers": 4,
+    "removedVolumes": 1,
+    "removedNetworks": 1,
+    "foreignSentinelRetained": true
+  },
+  "compose": {
+    "syntax": "passed with Docker Compose v2.40.3",
+    "actualComposePair": "not-run; equivalent launcher pair exercised"
+  },
+  "systemdBootRegression": {
+    "status": "passed",
+    "boots": 3,
+    "checksPerBoot": [
+      18,
+      13,
+      10
+    ],
+    "scope": "Existing native systemd installer/guard fixture with current engine, not new runtime container boot deployment",
+    "kernelSha256": "41ba36d860aa0b0cd995f4ca8856d80249b244577e704929b55be13fbd1ebd2f"
+  },
+  "mimicry": {
+    "profile": "chromium-156-bounded-cold-v1",
+    "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+    "scope": "cold ClientHello field subset; extension permutation changes ordered JA3",
+    "observer": "separate tcpdump pcap, same repository JA3/JA4 parser, not engine self-report",
+    "browserEquivalence": false
+  },
+  "limitations": [
+    "boring-tls only in this runtime; combo-tls and transparent-tls refused",
+    "IPv4 tunnel only; non-loopback IPv6 blocked",
+    "Rootless unsupported; explicit rootful NET_ADMIN/NET_RAW/NET_BIND_SERVICE and TUN required",
+    "Physical wg0/usb0 ingress wiring not automated; isolated second-bridge LAN ingress tested",
+    "No authenticated native time bootstrap; wrong certificates/dates fail closed",
+    "No permanent Radxa/VPS install or physical reboot; RTC power-loss retention unproven",
+    "APT signed current repositories, not a byte-reproducible APT snapshot",
+    "amd64 netfilter under Rosetta failed; use native x86 kernel evidence, not emulation claim",
+    "Small traffic soak is not a throughput benchmark or 32-client load acceptance"
+  ],
+  "remaining": [
+    "Complete bounded soak and real amd64 Docker smoke before final report",
+    "Permanent install and physical reboot/power-loss are outside this authorized night scope"
+  ]
+}

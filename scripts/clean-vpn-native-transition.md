@@ -1,5 +1,12 @@
 # Полный native-переход: рабочий статус
 
+2026-10-27: реализуется [изолированный native runtime](clean-vpn-native-runtime.md)
+для standalone Linux, Docker и Podman. Отдельный runtime image, native DNS,
+опциональный LAN ingress, independent ClientHello capture, crash/restart и
+clock-fault VM проверки. Текущие результаты —
+`fixtures/clean-vpn-native-runtime-report.json`; soak и временная физическая
+приёмка завершаются отдельно. Permanent install по-прежнему исключён.
+
 Уточнение scope 2026-10-27: постоянную установку/enable на Radxa и VPS пользователь
 отложил. На узлах — только временные проверки с rollback. Новый приоритет:
 [standalone и Docker/Podman runtime, лабораторная приёмка](clean-vpn-native-night-plan.md).

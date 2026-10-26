@@ -1,0 +1,37 @@
+# Optional pair on ONE Linux container host. Runtime v1, boring-tls only.
+# Set CVPN_PARENT_NETNS using the read-only host-netns probe in runtime.md.
+# Config folders must contain role-specific engine.json and referenced files.
+services:
+  exit:
+    image: ${CVPN_IMAGE:?set CVPN_IMAGE}
+    read_only: true
+    restart: "no"
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, NET_RAW, NET_BIND_SERVICE]
+    devices: [/dev/net/tun:/dev/net/tun]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/run:mode=755, /tmp:mode=1777]
+    sysctls: {net.ipv4.ip_forward: "1"}
+    environment: {CVPN_PARENT_NETNS: "${CVPN_PARENT_NETNS:?set namespace anchor}"}
+    volumes: ["${CVPN_EXIT_CONFIG:?set exit config directory}:/config:ro"]
+    networks:
+      uplink: {ipv4_address: 172.30.77.2}
+  client:
+    image: ${CVPN_IMAGE:?set CVPN_IMAGE}
+    read_only: true
+    restart: "no"
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, NET_RAW, NET_BIND_SERVICE]
+    devices: [/dev/net/tun:/dev/net/tun]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/run:mode=755, /tmp:mode=1777]
+    environment: {CVPN_PARENT_NETNS: "${CVPN_PARENT_NETNS:?set namespace anchor}"}
+    volumes: ["${CVPN_CLIENT_CONFIG:?set client config directory}:/config:ro"]
+    depends_on:
+      exit: {condition: service_healthy}
+    networks:
+      uplink: {ipv4_address: 172.30.77.3}
+networks:
+  uplink:
+    ipam:
+      config: [{subnet: 172.30.77.0/24}]

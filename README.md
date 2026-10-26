@@ -10,6 +10,10 @@
 на один exit](scripts/clean-vpn-native-clients.md): до 32 независимых packet
 PSK/IP, приватный комплект каждому клиенту, `boring-tls` и экспериментальный
 `combo-tls`. Это отдельный native-контур; ограничения Node CLI ниже сохраняются.
+Новый opt-in [standalone / Docker / Podman runtime](scripts/clean-vpn-native-runtime.md)
+запускает `boring-tls` с native DNS и сохранённым TLS-профилем в отдельном Linux
+namespace, с проверкой readiness и защитой после аварии. Постоянная установка
+на физических узлах не выполняется; матрица приёмки приведена в его документации.
 Для native также есть экспериментальные [cold TLS профили](scripts/clean-vpn-native-tls-profiles.md),
 [Brotli certificate compression](scripts/clean-vpn-native-certificate-compression.md) и
 [ALPS с профильными H2 SETTINGS/window](scripts/clean-vpn-native-alps.md).
