@@ -14,6 +14,7 @@ typedef struct { unsigned num; } wifi_sta_list_t;
 enum { WIFI_IF_STA, WIFI_IF_AP };
 esp_err_t esp_wifi_get_channel(uint8_t *, wifi_second_chan_t *);
 esp_err_t esp_wifi_get_ps(wifi_ps_type_t *);
+esp_err_t esp_wifi_get_max_tx_power(int8_t *);
 esp_err_t esp_wifi_get_bandwidth(int, wifi_bandwidth_t *);
 esp_err_t esp_wifi_get_protocol(int, uint8_t *);
 esp_err_t esp_wifi_set_bandwidth(wifi_interface_t, wifi_bandwidth_t);

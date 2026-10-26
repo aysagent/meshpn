@@ -96,6 +96,7 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
     wifi_ps_type_t ps = sample.ps;
     err = sample.ps_error;
     number_or_null(radio, "power_save", err, ps);
+    number_or_null(radio, "max_tx_power_dbm", sample.tx_power_error, sample.max_tx_power / 4.0);
     for (int i = 0; i < 2; i++) {
         wifi_bandwidth_t bw = sample.bandwidth[i];
         err = sample.bandwidth_error[i];
@@ -167,6 +168,7 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
     cJSON *errors = cJSON_AddObjectToObject(radio, "errors");
     cJSON_AddNumberToObject(errors, "channel", sample.channel_error);
     cJSON_AddNumberToObject(errors, "power_save", sample.ps_error);
+    cJSON_AddNumberToObject(errors, "max_tx_power", sample.tx_power_error);
     cJSON_AddNumberToObject(errors, "sta_bandwidth", sample.bandwidth_error[0]);
     cJSON_AddNumberToObject(errors, "ap_bandwidth", sample.bandwidth_error[1]);
     cJSON_AddNumberToObject(errors, "uplink", sample.uplink_error);

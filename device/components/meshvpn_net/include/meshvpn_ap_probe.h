@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "meshvpn_ap_echo.h"
 struct netif;
 struct pbuf;
 typedef struct {
@@ -24,3 +25,4 @@ void meshvpn_ap_probe_input(const struct pbuf *p, const struct netif *inp);
 void meshvpn_ap_probe_tx(unsigned ifx, const void *frame, size_t len);
 void meshvpn_ap_probe_flows(meshvpn_ap_flow_t out[8]);
 esp_err_t meshvpn_ap_probe_run(meshvpn_ap_probe_result_t out[2]); /* UDP DNS, TCP SYN */
+esp_err_t meshvpn_ap_probe_echo(const meshvpn_ap_echo_config_t *, meshvpn_ap_echo_result_t *);

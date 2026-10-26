@@ -330,6 +330,52 @@ static esp_err_t handler_ap_forward_probe(httpd_req_t *req)
     return error(req, "501 Not Implemented", "AP forwarding probe is available on P4");
 #endif
 }
+static cJSON *body(httpd_req_t *req, size_t limit);
+#if CONFIG_IDF_TARGET_ESP32P4
+static bool echo_number(cJSON *in, const char *name, unsigned minimum, unsigned maximum, uint16_t *out)
+{
+    cJSON *v = cJSON_GetObjectItemCaseSensitive(in, name);
+    if (!cJSON_IsNumber(v) || !(v->valuedouble >= minimum && v->valuedouble <= maximum) ||
+        v->valuedouble != (unsigned)v->valuedouble) return false;
+    *out = (uint16_t)v->valuedouble; return true;
+}
+#endif
+static esp_err_t handler_ap_echo(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+#if CONFIG_IDF_TARGET_ESP32P4
+    cJSON *in = body(req, 256);
+    if (!in) return error(req, "400 Bad Request", "Small JSON body required");
+    cJSON *target = cJSON_GetObjectItemCaseSensitive(in, "target");
+    meshvpn_ap_echo_config_t c = {0}; ip4_addr_t address;
+    bool valid = cJSON_IsString(target) && ip4addr_aton(target->valuestring, &address) &&
+        echo_number(in, "port", 1024, 65535, &c.port) && echo_number(in, "packets", 1, 4096, &c.packets) &&
+        echo_number(in, "payload", 32, 1200, &c.payload) && echo_number(in, "rate_kbps", 64, 30000, &c.rate_kbps);
+    if (valid) c.target = address.addr;
+    cJSON_Delete(in);
+    if (!valid) return error(req, "400 Bad Request", "Invalid echo target/port/packets/payload/rate_kbps");
+    meshvpn_ap_echo_result_t result;
+    esp_err_t err = meshvpn_ap_probe_echo(&c, &result);
+    if (err != ESP_OK) return error(req, "409 Conflict", esp_err_to_name(err));
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddStringToObject(out, "scope", "synthetic AP client -> real NAPT/STA -> same-STA-subnet UDP echo server -> capture before AP ARP; no AP client RF measurement; VPN must be off");
+    cJSON_AddNumberToObject(out, "injected", result.injected);
+    cJSON_AddNumberToObject(out, "sta_sdio_accepted", result.accepted);
+    cJSON_AddNumberToObject(out, "received", result.received);
+    cJSON_AddNumberToObject(out, "duplicates", result.duplicates);
+    cJSON_AddNumberToObject(out, "bad_checksum", result.bad_checksum);
+    cJSON_AddNumberToObject(out, "send_us", result.send_us);
+    cJSON_AddNumberToObject(out, "total_us", result.total_us);
+    cJSON_AddNumberToObject(out, "rtt_sum_us", result.rtt_sum_us);
+    cJSON_AddNumberToObject(out, "rtt_max_us", result.rtt_max_us);
+    cJSON_AddNumberToObject(out, "error", result.error);
+    char *text = cJSON_PrintUnformatted(out); cJSON_Delete(out);
+    if (!text) return error(req, "503 Service Unavailable", "Diagnostic memory unavailable");
+    httpd_resp_set_type(req, "application/json"); err = httpd_resp_sendstr(req, text); free(text); return err;
+#else
+    return error(req, "501 Not Implemented", "AP echo probe is available on P4");
+#endif
+}
 static cJSON *body(httpd_req_t *req, size_t limit)
 {
     char type[48];
@@ -1385,6 +1431,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/diag/link-download", HTTP_POST, handler_link_download),
         ROUTE("/api/diag/link-upload", HTTP_POST, handler_link_upload),
         ROUTE("/api/diag/ap-forward", HTTP_POST, handler_ap_forward_probe),
+        ROUTE("/api/diag/ap-echo", HTTP_POST, handler_ap_echo),
         ROUTE("/api/diag/usb-bursts", HTTP_GET, handler_usb_bursts),
     };
     for (unsigned i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {

@@ -14,4 +14,13 @@ try {
     new URL('tests/test_ap_probe.c', root).pathname,
     new URL('components/meshvpn_vpn/meshvpn_vpn_frame.c', root).pathname, '-o', binary], {stdio: 'inherit'});
   execFileSync(binary, {stdio: 'inherit'});
+  const echo = fs.readFileSync(new URL('components/meshvpn_net/meshvpn_ap_echo.c', root), 'utf8');
+  fs.writeFileSync(path.join(dir, 'ap-echo.inc'), echo.split('\n').filter(s => !s.startsWith('#include')).join('\n'));
+  execFileSync(process.env.CC || 'cc', ['-std=gnu11', '-Wall', '-Wextra', '-Werror', '-pthread',
+    '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined', '-I' + dir,
+    '-I' + new URL('tests/usb_stubs', root).pathname, '-I' + new URL('components/meshvpn_net/include', root).pathname,
+    '-I' + new URL('components/meshvpn_vpn/include', root).pathname,
+    new URL('tests/test_ap_echo.c', root).pathname,
+    new URL('components/meshvpn_vpn/meshvpn_vpn_frame.c', root).pathname, '-o', binary], {stdio: 'inherit'});
+  execFileSync(binary, {stdio: 'inherit'});
 } finally { fs.rmSync(dir, {recursive: true, force: true}); }

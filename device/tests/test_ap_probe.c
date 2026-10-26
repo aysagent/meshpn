@@ -45,6 +45,11 @@ static void pbuf_take(struct pbuf *p,const void *src,unsigned n)
 static size_t pbuf_copy_partial(const struct pbuf *p,void *dst,size_t n,size_t off)
 { if(off>p->tot_len)return 0;if(n>p->tot_len-off)n=p->tot_len-off;memcpy(dst,p->payload+off,n);return n; }
 static err_t ip4_input(struct pbuf *,struct netif *);
+void meshvpn_ap_echo_tx(unsigned i,const void *p,size_t n) { (void)i;(void)p;(void)n; }
+bool meshvpn_ap_echo_output(struct pbuf *p,uint32_t d) { (void)p;(void)d;return false; }
+esp_err_t meshvpn_ap_echo_run(struct netif *ap,struct netif *sta,
+    const meshvpn_ap_echo_config_t *c,meshvpn_ap_echo_result_t *r)
+{ (void)ap;(void)sta;(void)c;(void)r;return ESP_FAIL; }
 #include "ap-probe.inc"
 static err_t ordinary(struct netif *n,struct pbuf *p,const ip4_addr_t *dst)
 {

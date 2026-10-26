@@ -8,6 +8,8 @@ typedef struct {
     uint32_t collection_us;
     esp_err_t channel_error, ps_error, bandwidth_error[2], uplink_error, peers_error;
     esp_err_t phymode_error;
+    esp_err_t tx_power_error;
+    int8_t max_tx_power;
     esp_err_t protocol_error[2], firmware_error;
     uint8_t protocol[2];
     bool firmware_attempted;

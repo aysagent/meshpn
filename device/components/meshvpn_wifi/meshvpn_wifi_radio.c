@@ -32,6 +32,12 @@ void meshvpn_wifi_radio_sample(void)
         sample.bandwidth_error[i] = esp_wifi_get_bandwidth(i ? WIFI_IF_AP : WIFI_IF_STA, &sample.bandwidth[i]);
     sample.uplink_error = esp_wifi_sta_get_ap_info(&sample.uplink);
     sample.peers_error = esp_wifi_ap_get_sta_list(&sample.peers);
+    /* Read only. Stop retrying an unsupported factory RPC; never change power
+     * while collecting diagnostics or issue RPCs from the HTTP reader. */
+    static bool power_failed;
+    sample.tx_power_error = sample.uplink_error != ESP_OK ? sample.uplink_error :
+        power_failed ? ESP_ERR_NOT_SUPPORTED : esp_wifi_get_max_tx_power(&sample.max_tx_power);
+    if (sample.uplink_error == ESP_OK && sample.tx_power_error != ESP_OK) power_failed = true;
 #if CONFIG_IDF_TARGET_ESP32P4
     /* Newer RPCs may be absent from a factory C6 image. Probe version once
      * after association, outside HTTP. Attempt PHY only if version worked;
@@ -85,6 +91,7 @@ void meshvpn_wifi_radio_snapshot(meshvpn_wifi_radio_t *out)
         out->channel_error = out->ps_error = out->uplink_error = out->peers_error = ESP_ERR_INVALID_STATE;
         out->bandwidth_error[0] = out->bandwidth_error[1] = ESP_ERR_INVALID_STATE;
         out->phymode_error = ESP_ERR_INVALID_STATE;
+        out->tx_power_error = ESP_ERR_INVALID_STATE;
         out->protocol_error[0] = out->protocol_error[1] = ESP_ERR_INVALID_STATE;
         out->firmware_error = ESP_ERR_INVALID_STATE;
     }

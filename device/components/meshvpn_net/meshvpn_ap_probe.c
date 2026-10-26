@@ -1,4 +1,5 @@
 #include "meshvpn_ap_probe.h"
+#include "meshvpn_ap_echo.h"
 #include <string.h>
 #include "esp_netif.h"
 #include "esp_random.h"
@@ -97,12 +98,14 @@ void meshvpn_ap_probe_input(const struct pbuf *p, const struct netif *inp)
 }
 void meshvpn_ap_probe_tx(unsigned ifx, const void *frame, size_t len)
 {
+    meshvpn_ap_echo_tx(ifx, frame, len);
     const uint8_t *p = frame;
     if (!p || len < 14 || p[12] != 8 || p[13]) return;
     flow(ifx ? 16 : 2, p + 14, len - 14);
 }
 static err_t output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst)
 {
+    if (meshvpn_ap_echo_output(p, dst->addr)) return ERR_OK;
     uint8_t h[80]; size_t size = pbuf_copy_partial(p, h, sizeof(h), 0);
     flow(8, h, size);
     if (s_probe.active && dst->addr == s_probe.client && size >= 40 &&
@@ -132,6 +135,10 @@ static err_t output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst)
         }
     }
     return s_output(n, p, dst);
+}
+esp_err_t meshvpn_ap_probe_echo(const meshvpn_ap_echo_config_t *c, meshvpn_ap_echo_result_t *r)
+{
+    return meshvpn_ap_echo_run(s_ap, s_sta, c, r);
 }
 void meshvpn_ap_probe_attach(struct netif *ap, struct netif *sta)
 {
