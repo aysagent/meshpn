@@ -10,6 +10,7 @@
 #include "meshvpn_vpn_frame.h"
 #include "lwip/etharp.h"
 #include "lwip/ip4.h"
+#include "lwip/inet_chksum.h"
 #include "lwip/netif.h"
 #include "lwip/pbuf.h"
 
@@ -27,6 +28,7 @@ static meshvpn_ap_flow_t s_flows[8];
 static uint64_t s_seen[8];
 static unsigned s_next;
 static portMUX_TYPE s_flow_lock = portMUX_INITIALIZER_UNLOCKED;
+static meshvpn_rx_checksum_t s_checksums[2];
 static err_t output(struct netif *, struct pbuf *, const ip4_addr_t *);
 /* Default Wi-Fi netifs acquire output during start, after LAN registration. */
 static void attach_output(void)
@@ -40,6 +42,43 @@ static uint16_t r16(const uint8_t *p) { return ((uint16_t)p[0] << 8) | p[1]; }
 static uint32_t r32(const uint8_t *p) { return ((uint32_t)r16(p) << 16) | r16(p + 2); }
 static void w16(uint8_t *p, uint16_t n) { p[0] = n >> 8; p[1] = n; }
 static void w32(uint8_t *p, uint32_t n) { w16(p, n >> 16); w16(p + 2, n); }
+static void checksum_sample(const struct pbuf *p, unsigned ifx)
+{
+    portENTER_CRITICAL(&s_flow_lock);
+    uint64_t number = ++s_checksums[ifx].seen;
+    portEXIT_CRITICAL(&s_flow_lock);
+    if ((number & 31) != 1) return;
+    bool skip = p->len < 20, bad_ip = false, bad_tcp = false, bad_udp = false;
+    if (!skip) {
+        const uint8_t *h = p->payload; unsigned ihl = (h[0] & 15) * 4, total = r16(h + 2);
+        skip = h[0] >> 4 != 4 || ihl < 20 || total < ihl || total > p->len ||
+            (h[6] & 0x3f) || h[7] || (h[9] == 6 && total < ihl + 20) ||
+            (h[9] == 17 && total < ihl + 8);
+        if (!skip) {
+            bad_ip = inet_chksum(h, ihl) != 0;
+            if (h[9] == 6 || (h[9] == 17 && r16(h + ihl + 6))) {
+                unsigned length = h[9] == 17 ? r16(h + ihl + 4) : total - ihl;
+                if (length < (h[9] == 17 ? 8 : 20) || length > total - ihl) {
+                    portENTER_CRITICAL(&s_flow_lock); s_checksums[ifx].skipped++; portEXIT_CRITICAL(&s_flow_lock);
+                    return;
+                }
+                struct pbuf l4 = {.payload=(uint8_t *)p->payload+ihl, .len=length, .tot_len=length};
+                ip4_addr_t src, dst; memcpy(&src.addr, h + 12, 4); memcpy(&dst.addr, h + 16, 4);
+                bool bad = inet_chksum_pseudo(&l4, h[9], length, &src, &dst) != 0;
+                bad_tcp = bad && h[9] == 6; bad_udp = bad && h[9] == 17;
+            }
+        }
+    }
+    portENTER_CRITICAL(&s_flow_lock);
+    meshvpn_rx_checksum_t *s = &s_checksums[ifx];
+    s->skipped += skip; s->checked += !skip;
+    s->bad_ip += bad_ip; s->bad_tcp += bad_tcp; s->bad_udp += bad_udp;
+    portEXIT_CRITICAL(&s_flow_lock);
+}
+void meshvpn_ap_probe_checksums(meshvpn_rx_checksum_t out[2])
+{
+    portENTER_CRITICAL(&s_flow_lock); memcpy(out, s_checksums, sizeof(s_checksums)); portEXIT_CRITICAL(&s_flow_lock);
+}
 
 /* Only bounded TCP handshake metadata, never TLS/application payload or names.
  * Stages: 1 AP input SYN, 2 STA SDIO accepted SYN, 4 STA input SYN-ACK/RST,
@@ -92,6 +131,7 @@ void meshvpn_ap_probe_input(const struct pbuf *p, const struct netif *inp)
     if (!p || !inp) return;
     attach_output(); /* TCP/IP thread; also handles a restarted netif. */
     if (inp != s_ap && inp != s_sta) return;
+    checksum_sample(p, inp == s_ap ? 1 : 0);
     uint8_t h[80]; size_t n = pbuf_copy_partial(p, h, sizeof(h), 0);
     if (inp == s_ap && n >= 20 && !memcmp(h + 16, &netif_ip4_addr(s_ap)->addr, 4)) return;
     flow(inp == s_ap ? 1 : 4, h, n);

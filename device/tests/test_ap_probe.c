@@ -11,7 +11,7 @@ typedef int err_t;
 #define PBUF_LINK 1
 #define PBUF_RAM 2
 #define pdTRUE 1
-struct pbuf { uint8_t *payload; unsigned tot_len; };
+struct pbuf { uint8_t *payload; unsigned tot_len, len; };
 typedef err_t (*netif_output_fn)(struct netif *, struct pbuf *, const ip4_addr_t *);
 struct netif { ip4_addr_t ip; bool napt, up, link; netif_output_fn output; };
 #define netif_is_up(n) ((n)->up)
@@ -38,13 +38,19 @@ static int etharp_find_addr(struct netif *n,const ip4_addr_t *a,struct eth_addr 
 static struct pbuf *pbuf_alloc(int layer,unsigned n,int type)
 {
  assert(layer==PBUF_LINK&&type==PBUF_RAM);if(fail_alloc)return NULL;
- struct pbuf *p=calloc(1,sizeof(*p));assert(p);p->payload=malloc(n);assert(p->payload);p->tot_len=n;live_pbuf++;return p;
+ struct pbuf *p=calloc(1,sizeof(*p));assert(p);p->payload=malloc(n);assert(p->payload);p->len=p->tot_len=n;live_pbuf++;return p;
 }
 static void pbuf_take(struct pbuf *p,const void *src,unsigned n)
 { assert(n==p->tot_len);memcpy(p->payload,src,n); }
 static size_t pbuf_copy_partial(const struct pbuf *p,void *dst,size_t n,size_t off)
 { if(off>p->tot_len)return 0;if(n>p->tot_len-off)n=p->tot_len-off;memcpy(dst,p->payload+off,n);return n; }
 static err_t ip4_input(struct pbuf *,struct netif *);
+static unsigned csum_sum(unsigned sum,const uint8_t *p,size_t n)
+{for(size_t i=0;i<n;i+=2)sum+=(unsigned)p[i]*256+(i+1<n?p[i+1]:0);return sum;}
+static unsigned csum_finish(unsigned sum){while(sum>>16)sum=(sum&65535)+(sum>>16);return (~sum)&65535;}
+static unsigned inet_chksum(const void *p,unsigned n){return csum_finish(csum_sum(0,p,n));}
+static unsigned inet_chksum_pseudo(struct pbuf *p,unsigned proto,unsigned n,const ip4_addr_t *src,const ip4_addr_t *dst)
+{return csum_finish(csum_sum(csum_sum(csum_sum(proto+n,(const uint8_t*)&src->addr,4),(const uint8_t*)&dst->addr,4),p->payload,p->len));}
 void meshvpn_ap_echo_tx(unsigned i,const void *p,size_t n) { (void)i;(void)p;(void)n; }
 bool meshvpn_ap_echo_output(struct pbuf *p,uint32_t d) { (void)p;(void)d;return false; }
 esp_err_t meshvpn_ap_echo_run(struct netif *ap,struct netif *sta,
@@ -81,7 +87,7 @@ static err_t ip4_input(struct pbuf *p,struct netif *n)
  w16(reply+20,proto==17?53:80);w16(reply+22,40000);
  if(proto==6){w32(reply+24,0x77665544);w32(reply+28,r32(q+24)+1);reply[33]=0x12;}
  else{reply[30]=0x81;reply[31]=0x80;}
- struct pbuf response={reply,p->tot_len};meshvpn_ap_probe_input(&response,s_sta);
+ struct pbuf response={.payload=reply,.tot_len=p->tot_len,.len=p->tot_len};meshvpn_ap_probe_input(&response,s_sta);
  memcpy(reply+16,q+12,4);w16(reply+22,r16(q+20));assert(meshvpn_vpn_repair_checksums(reply,p->tot_len));
  if(corrupt)reply[proto==17?26:36]^=1;
  ip4_addr_t dst;memcpy(&dst.addr,reply+16,4);clock_us+=5000;
@@ -117,5 +123,16 @@ int main(void)
  meshvpn_ap_probe_flows(flows);bool found=false;
  for(unsigned i=0;i<8;i++)if(flows[i].seq==12345){assert(flows[i].stages==31&&!flows[i].synthetic);found=true;}
  assert(found&&!live_pbuf&&!live_sem);
+ /* Independent checksum observation never repairs or mutates incoming bytes. */
+ memset(s_checksums,0,sizeof(s_checksums));assert(meshvpn_vpn_repair_checksums(packet,sizeof(packet)));
+ struct pbuf observed={.payload=packet,.tot_len=40,.len=40};
+ meshvpn_ap_probe_input(&observed,&sta);assert(s_checksums[0].checked==1&&!s_checksums[0].bad_ip&&!s_checksums[0].bad_tcp);
+ packet[8]++;for(unsigned i=0;i<32;i++)meshvpn_ap_probe_input(&observed,&sta);
+ assert(s_checksums[0].bad_ip==1&&!s_checksums[0].bad_tcp);
+ assert(meshvpn_vpn_repair_checksums(packet,40));packet[33]^=0x40;
+ for(unsigned i=0;i<32;i++)meshvpn_ap_probe_input(&observed,&sta);
+ assert(s_checksums[0].bad_tcp==1&&s_checksums[0].checked==3);
+ observed.len=10;for(unsigned i=0;i<32;i++)meshvpn_ap_probe_input(&observed,&sta);
+ assert(s_checksums[0].skipped==1);
  puts("AP probe: production packet/checksum construction, synthetic-only interception, timeout, VPN/ARP/role guards, cleanup and handshake stage correlation passed");
 }

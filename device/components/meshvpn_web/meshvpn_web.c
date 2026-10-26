@@ -607,6 +607,15 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(net, "ap_ip4_rx", ns.ap_ip4_rx);
 #if CONFIG_IDF_TARGET_ESP32P4
     meshvpn_ap_flow_t flows[8]; meshvpn_ap_probe_flows(flows);
+    meshvpn_rx_checksum_t checksums[2]; meshvpn_ap_probe_checksums(checksums);
+    cJSON *cs = cJSON_AddObjectToObject(net, "wifi_rx_checksums");
+    cJSON_AddStringToObject(cs, "scope", "sample first and every 32nd STA/AP IPv4 input before NAPT; read-only, no repair; skip fragmented, invalid or noncontiguous packets; includes synthetic probes");
+    for (unsigned i = 0; i < 2; i++) {
+        cJSON *v = cJSON_AddObjectToObject(cs, i ? "ap" : "sta");
+#define CS_FIELD(name) cJSON_AddNumberToObject(v, #name, checksums[i].name)
+        CS_FIELD(seen); CS_FIELD(checked); CS_FIELD(skipped); CS_FIELD(bad_ip); CS_FIELD(bad_tcp); CS_FIELD(bad_udp);
+#undef CS_FIELD
+    }
     cJSON_AddStringToObject(net, "ap_tcp_flow_scope", "last 8 handshake tuples; stages 1=AP input,2=STA SDIO accepted,4=STA reply input,8=AP IPv4 output,16=AP SDIO accepted; no RF delivery proof; STA stages apply to DIRECT mode");
     cJSON *flow_list = cJSON_AddArrayToObject(net, "ap_tcp_flows");
     for (unsigned i = 0; i < 8; i++) if (flows[i].stages) {
