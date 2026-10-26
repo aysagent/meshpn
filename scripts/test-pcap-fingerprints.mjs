@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { inspectPcap } from './clean-vpn-pcap-fingerprints.mjs';
 
 const destination = '154.62.226.216', options = { destination };
@@ -73,4 +74,15 @@ test('truncated captured frame is counted and never accepted', () => {
 test('bounded stream admission', () => {
   const packets = Array.from({ length: 129 }, (_, i) => packet(i, undefined, 2));
   assert.throws(() => inspectPcap(pcap(packets), options), /stream_limit/);
+});
+
+test('optional saved-profile comparison uses reassembled wire and exposes mismatches', () => {
+  const profile=JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/cold-h2.json'));
+  const r=inspectPcap(pcap([packet(100,undefined,2),packet(101,hello)]),{...options,profile});
+  assert.equal(r.connections[0].status,'observed');
+  assert.equal(r.connections[0].profile.status,'mismatch');
+  assert.equal(r.connections[0].profile.ja3,r.connections[0].ja3);
+  assert.equal(r.connections[0].profile.ja4.fingerprint,r.connections[0].ja4);
+  assert.ok(r.connections[0].profile.differences.some(d=>d.field==='cipher_suites'));
+  assert.doesNotMatch(JSON.stringify(r),/private_key|client_random/);
 });
