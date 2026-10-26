@@ -7,6 +7,8 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
+from urllib.error import HTTPError
 
 spec = importlib.util.spec_from_file_location('p4paths', Path(__file__).parents[1] / 'scripts/perf-p4-paths.py')
 m = importlib.util.module_from_spec(spec)
@@ -65,6 +67,19 @@ class Tests(unittest.TestCase):
         text = json.dumps(m.clean({'private_key': 'SECRET', 'wifi': {'password': 'SECRET'},
                                   'vpn': {'enabled': False, 'private_key': 'SECRET'}}))
         self.assertNotIn('SECRET', text)
+
+    def test_login_one_bounded_rate_retry_and_no_password_retries(self):
+        b = m.Board('192.168.10.1')
+        with patch.object(b, 'api', side_effect=[HTTPError('', 429, '', {}, None), {'token': 'ok'}]) as api, patch.object(m.time, 'sleep') as wait:
+            b.login()
+            self.assertEqual(b.token, 'ok')
+            self.assertEqual(api.call_count, 2)
+            wait.assert_called_once_with(1.1)
+        with patch.object(b, 'api', side_effect=HTTPError('', 401, '', {}, None)) as api, patch.object(m.time, 'sleep') as wait:
+            with self.assertRaises(HTTPError):
+                b.login()
+            self.assertEqual(api.call_count, 1)
+            wait.assert_not_called()
 
     def test_schedule_artifacts_and_reboot_detection(self):
         r, root, f = self.execute()

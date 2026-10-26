@@ -78,7 +78,17 @@ class Board:
             raise
 
     def login(self):
-        self.token = self.api('/api/login', {'password': os.environ.get('MESHPN_ADMIN_PASSWORD', 'admin')}, retry=False)['token']
+        for attempt in range(2):
+            try:
+                self.token = self.api('/api/login', {'password': os.environ.get('MESHPN_ADMIN_PASSWORD', 'admin')}, retry=False)['token']
+                return
+            except urllib.error.HTTPError as e:
+                # Firmware also limits successful logins to one per second.
+                # One bounded retry handles a preceding operator/preflight login;
+                # a wrong password is never retried or used to bypass lockout.
+                if e.code != 429 or attempt:
+                    raise
+                time.sleep(1.1)
 
     def transfer(self, address, direction, deadline):
         """Count only consumed response bytes; upload requires board receipt JSON."""
