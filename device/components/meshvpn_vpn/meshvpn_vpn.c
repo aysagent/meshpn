@@ -80,6 +80,7 @@ static void record_timing(meshvpn_vpn_timing_t *t, uint64_t elapsed)
 void meshvpn_vpn_get_status(meshvpn_vpn_status_t *out) { LOCK(); *out = s; UNLOCK(); }
 bool meshvpn_vpn_is_connected(void) { LOCK(); bool v = s.connected; UNLOCK(); return v; }
 static bool enabled(void) { LOCK(); bool v = s.enabled; UNLOCK(); return v; }
+bool meshvpn_vpn_is_enabled(void) { return enabled(); }
 static bool session(uint32_t g) { LOCK(); bool v = s.enabled && s.generation == g; UNLOCK(); return v; }
 static bool plain_transport(const char *name)
 { return name && (!strcmp(name, "tcp") || !strcmp(name, "socket") || !strcmp(name, "udp") || !strcmp(name, "tls")); }
@@ -176,7 +177,6 @@ static bool tunnel_policy(void)
 { LOCK(); bool v = s.enabled && (s.kill_switch || s.connected); UNLOCK(); return v; }
 uint32_t meshvpn_vpn_dns_epoch(void)
 { LOCK(); uint32_t epoch = s_probe_epoch; UNLOCK(); return epoch; }
-bool meshvpn_vpn_is_enabled(void) { return enabled(); }
 struct netif *meshvpn_vpn_route(const ip4_addr_t *src, const ip4_addr_t *dst)
 {
     if (!s_ready || !src || !dst) return NULL;
