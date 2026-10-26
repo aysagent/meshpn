@@ -1,0 +1,390 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-physical-benchmark-checkpoint",
+  "date": "2026-10-26",
+  "client": "Radxa Zero 3W arm64",
+  "exit": "native combo exit on VPS x86_64",
+  "mode": "USB curl HTTPS; native uses transparent branch; legacy uses packet TLS",
+  "engineSourceRevision": "e22afd0188af278c4bf8298a3e072633ad65378c",
+  "attempts": [
+    {
+      "status": "incomplete",
+      "requestedCycles": 3,
+      "completedReports": 1,
+      "rawReportSha256": "eed45e0bb7070fb50f4954c2e6c39192d4a891797161375a12d49f8d384d38f1",
+      "rows": [
+        {
+          "cycle": 1,
+          "phase": "bench-old",
+          "implementation": "legacy",
+          "status": "passed",
+          "serverIp": "172.66.0.218",
+          "downloadMbps": 35.315047505870275,
+          "uploadMbps": 3.3369315442281686,
+          "cpuStatus": "sampled",
+          "cpuMeanOneCorePercent": 45.029873134453695,
+          "peakRssKiB": 88460,
+          "shortSample": false
+        },
+        {
+          "cycle": 1,
+          "phase": "bench-native",
+          "implementation": "native",
+          "status": "passed",
+          "serverIp": "172.66.0.218",
+          "downloadMbps": 41.69800692666881,
+          "uploadMbps": 30.164956713934078,
+          "cpuStatus": "sampled",
+          "cpuMeanOneCorePercent": 19.60463086918292,
+          "peakRssKiB": 74012,
+          "shortSample": true
+        },
+        {
+          "cycle": 1,
+          "phase": "bench-restored",
+          "implementation": "legacy",
+          "status": "failed",
+          "serverIp": "172.66.0.218",
+          "downloadMbps": 34.058419621338246,
+          "uploadMbps": null,
+          "cpuStatus": "sampled",
+          "cpuMeanOneCorePercent": 48.90151257059913,
+          "peakRssKiB": 86896,
+          "shortSample": false
+        }
+      ],
+      "warnings": [
+        "incomplete-no-comparison-verdict",
+        "some-transfers-under-3s-startup-overhead-significant"
+      ],
+      "failedStage": {
+        "stage": "usb-restored",
+        "code": "usb_peer_probe_failed"
+      },
+      "rollback": "verified",
+      "guard": "verified",
+      "failedUploadStreams": [
+        {
+          "code": 0,
+          "reason": null,
+          "httpStatus": 200,
+          "tlsVerify": 0,
+          "bytes": 1048576,
+          "seconds": 7.538036,
+          "remoteIp": "172.66.0.218",
+          "passed": true,
+          "timeLimited": false
+        },
+        {
+          "code": 28,
+          "reason": "invalid_metrics",
+          "httpStatus": 0,
+          "tlsVerify": 0,
+          "bytes": 0,
+          "seconds": 0,
+          "remoteIp": null,
+          "passed": false,
+          "timeLimited": true
+        },
+        {
+          "code": 0,
+          "reason": null,
+          "httpStatus": 200,
+          "tlsVerify": 0,
+          "bytes": 1048576,
+          "seconds": 7.254311,
+          "remoteIp": "172.66.0.218",
+          "passed": true,
+          "timeLimited": false
+        },
+        {
+          "code": 0,
+          "reason": null,
+          "httpStatus": 200,
+          "tlsVerify": 0,
+          "bytes": 1048576,
+          "seconds": 6.245434,
+          "remoteIp": "172.66.0.218",
+          "passed": true,
+          "timeLimited": false
+        }
+      ],
+      "id": "run-8Nn8dM"
+    },
+    {
+      "status": "incomplete",
+      "requestedCycles": 3,
+      "completedReports": 2,
+      "rawReportSha256": "1f7f379e1c2b7488765e54150eedfe0644c23d95cd2bdcb7b84c1159c0cdb4a3",
+      "rows": [
+        {
+          "cycle": 1,
+          "phase": "bench-old",
+          "implementation": "legacy",
+          "status": "passed",
+          "serverIp": "162.159.140.220",
+          "downloadMbps": 36.494233535813436,
+          "uploadMbps": 3.3315409207389015,
+          "cpuStatus": "sampled",
+          "cpuMeanOneCorePercent": 42.65704756693614,
+          "peakRssKiB": 90368,
+          "shortSample": false
+        },
+        {
+          "cycle": 1,
+          "phase": "bench-native",
+          "implementation": "native",
+          "status": "passed",
+          "serverIp": "162.159.140.220",
+          "downloadMbps": 54.88828705706444,
+          "uploadMbps": 30.486982959557864,
+          "cpuStatus": "sampled",
+          "cpuMeanOneCorePercent": 20.101326366328212,
+          "peakRssKiB": 74524,
+          "shortSample": true
+        },
+        {
+          "cycle": 1,
+          "phase": "bench-restored",
+          "implementation": "legacy",
+          "status": "passed",
+          "serverIp": "162.159.140.220",
+          "downloadMbps": 34.53777109308402,
+          "uploadMbps": 2.595304799122141,
+          "cpuStatus": "sampled",
+          "cpuMeanOneCorePercent": 39.70782886824312,
+          "peakRssKiB": 92636,
+          "shortSample": false
+        },
+        {
+          "cycle": 2,
+          "phase": "bench-old",
+          "implementation": "legacy",
+          "status": "passed",
+          "serverIp": "162.159.140.220",
+          "downloadMbps": 10.747700377650505,
+          "uploadMbps": 2.5682122790515183,
+          "cpuStatus": "sampled",
+          "cpuMeanOneCorePercent": 20.405226152381672,
+          "peakRssKiB": 92208,
+          "shortSample": false
+        },
+        {
+          "cycle": 2,
+          "phase": "bench-native",
+          "implementation": "native",
+          "status": "failed",
+          "serverIp": "162.159.140.220",
+          "downloadMbps": 44.06539465165352,
+          "uploadMbps": null,
+          "cpuStatus": "sampled",
+          "cpuMeanOneCorePercent": 6.888882258809743,
+          "peakRssKiB": 73236,
+          "shortSample": false
+        },
+        {
+          "cycle": 2,
+          "phase": "bench-restored",
+          "implementation": "legacy",
+          "status": "passed",
+          "serverIp": "162.159.140.220",
+          "downloadMbps": 33.927248105282125,
+          "uploadMbps": 3.476688585864313,
+          "cpuStatus": "sampled",
+          "cpuMeanOneCorePercent": 46.97725316357461,
+          "peakRssKiB": 88528,
+          "shortSample": false
+        }
+      ],
+      "warnings": [
+        "incomplete-no-comparison-verdict",
+        "some-transfers-under-3s-startup-overhead-significant"
+      ],
+      "cycles": [
+        {
+          "id": "run-depaUX",
+          "status": "passed",
+          "rollback": "verified",
+          "guard": "verified",
+          "failure": null,
+          "rollbackFailure": null,
+          "restorationReadiness": {
+            "status": "ready",
+            "attempts": 11,
+            "consecutive": 2,
+            "seconds": 20.191923307000003
+          },
+          "failedPhases": {}
+        },
+        {
+          "id": "run-F4m3nH",
+          "status": "failed",
+          "rollback": "verified",
+          "guard": "verified",
+          "failure": {
+            "stage": "native-usb-peer",
+            "code": "usb_peer_probe_failed"
+          },
+          "rollbackFailure": null,
+          "restorationReadiness": {
+            "status": "ready",
+            "attempts": 11,
+            "consecutive": 2,
+            "seconds": 19.898066621000005
+          },
+          "failedPhases": {
+            "bench-native": {
+              "phase": "bench-native",
+              "status": "failed",
+              "serverIp": "162.159.140.220",
+              "exitBefore": "154.62.226.216",
+              "exitAfter": "154.62.226.216",
+              "warmup": true,
+              "download": {
+                "status": "passed",
+                "seconds": 6.091752000000008,
+                "bytes": 33554432,
+                "mbps": 44.06539465165352,
+                "shortSample": false,
+                "streams": [
+                  {
+                    "code": 0,
+                    "reason": null,
+                    "httpStatus": 200,
+                    "tlsVerify": 0,
+                    "bytes": 8388608,
+                    "seconds": 5.131336,
+                    "remoteIp": "162.159.140.220",
+                    "passed": true,
+                    "timeLimited": false
+                  },
+                  {
+                    "code": 0,
+                    "reason": null,
+                    "httpStatus": 200,
+                    "tlsVerify": 0,
+                    "bytes": 8388608,
+                    "seconds": 3.928664,
+                    "remoteIp": "162.159.140.220",
+                    "passed": true,
+                    "timeLimited": false
+                  },
+                  {
+                    "code": 0,
+                    "reason": null,
+                    "httpStatus": 200,
+                    "tlsVerify": 0,
+                    "bytes": 8388608,
+                    "seconds": 3.774362,
+                    "remoteIp": "162.159.140.220",
+                    "passed": true,
+                    "timeLimited": false
+                  },
+                  {
+                    "code": 0,
+                    "reason": null,
+                    "httpStatus": 200,
+                    "tlsVerify": 0,
+                    "bytes": 8388608,
+                    "seconds": 6.078743,
+                    "remoteIp": "162.159.140.220",
+                    "passed": true,
+                    "timeLimited": false
+                  }
+                ]
+              },
+              "upload": {
+                "status": "failed",
+                "seconds": 30.022718000000022,
+                "bytes": 4194304,
+                "mbps": null,
+                "shortSample": false,
+                "streams": [
+                  {
+                    "code": 28,
+                    "reason": null,
+                    "httpStatus": 0,
+                    "tlsVerify": 0,
+                    "bytes": 1048576,
+                    "seconds": 30.011085,
+                    "remoteIp": "162.159.140.220",
+                    "passed": false,
+                    "timeLimited": true
+                  },
+                  {
+                    "code": 0,
+                    "reason": null,
+                    "httpStatus": 200,
+                    "tlsVerify": 0,
+                    "bytes": 1048576,
+                    "seconds": 0.957984,
+                    "remoteIp": "162.159.140.220",
+                    "passed": true,
+                    "timeLimited": false
+                  },
+                  {
+                    "code": 0,
+                    "reason": null,
+                    "httpStatus": 200,
+                    "tlsVerify": 0,
+                    "bytes": 1048576,
+                    "seconds": 0.877042,
+                    "remoteIp": "162.159.140.220",
+                    "passed": true,
+                    "timeLimited": false
+                  },
+                  {
+                    "code": 0,
+                    "reason": null,
+                    "httpStatus": 200,
+                    "tlsVerify": 0,
+                    "bytes": 1048576,
+                    "seconds": 0.911194,
+                    "remoteIp": "162.159.140.220",
+                    "passed": true,
+                    "timeLimited": false
+                  }
+                ]
+              },
+              "elapsedMs": 37325,
+              "observedAfterMs": 38167,
+              "cpu": {
+                "status": "sampled",
+                "seconds": 38.17745609799999,
+                "cpuSeconds": 2.63,
+                "meanOneCorePercent": 6.888882258809743,
+                "peakRssKiB": 73236,
+                "processPeak": 4,
+                "samples": 154,
+                "missedProcesses": 0,
+                "intervalMs": 250,
+                "clockTicksPerSecond": 100,
+                "scope": "client-process-tree-whole-phase-including-warmup-and-rpc; short-lived-helpers-may-be-missed; not-kernel-or-exit-cpu"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "status": "incomplete-no-comparison-verdict",
+  "limitations": [
+    "one-physical-client",
+    "not-native-packet-throughput",
+    "not-browser-fidelity",
+    "public-internet-variation-not-controlled",
+    "native-vs-legacy-comparison-changes-transport-branch-as-well-as-implementation",
+    "client-process-tree-CPU-excludes-kernel-and-exit",
+    "short-upload-includes-connection-startup-cost",
+    "one-repeat-with-unchanged-limits-after-failed-control-upload"
+  ],
+  "conclusion": "one-complete-cycle-on-repeat; both-attempts-stopped-on-upload-timeout; cause-not-established; no-winner-or-reliability-claim",
+  "next": "bounded-timing-and-paired-capture-diagnostics-for-upload-timeouts-before-further-throughput-comparisons",
+  "finalState": {
+    "clientLegacy": "active-enabled",
+    "clientGuardAndUsbRescue": "active",
+    "exitTrial": "completed-engine-exit-0",
+    "exitTunAndOwnedRulesRemoved": true,
+    "macNetworkSettingsChanged": false
+  }
+}

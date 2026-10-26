@@ -2,8 +2,8 @@
   "schema": 1,
   "kind": "clean-vpn-native-physical-smoke-checkpoint",
   "date": "2026-10-26 Europe/Moscow",
-  "status": "blocked-on-client-clock-correction",
-  "acceptancePassed": false,
+  "status": "smoke-and-engine-crash-passed-benchmark-incomplete",
+  "acceptancePassed": true,
   "sourceRevision": "e22afd0188af278c4bf8298a3e072633ad65378c",
   "transport": "combo-tls",
   "client": "Radxa Zero 3W arm64",
@@ -13,7 +13,7 @@
     "exit": "836c7f1a7a738de43c1a667fd8e8961b00ef2b9ae4044f53bba00f9dae0b659f"
   },
   "baseline": {
-    "legacyClient": "active-enabled-but-no-working-internet",
+    "legacyClient": "working-after-clock-correction-and-bounded-native-exit-start",
     "legacyExit": "absent",
     "killSwitch": "active",
     "usbRescue": "active"
@@ -35,13 +35,272 @@
       "status": "failed",
       "seconds": 124,
       "failure": "native_ready_timeout",
-      "nativeStates": { "idle": 1, "connecting": 107, "handshake": 106, "tls_read": 106, "cancelled": 1, "stopped": 1 },
+      "nativeStates": {
+        "idle": 1,
+        "connecting": 107,
+        "handshake": 106,
+        "tls_read": 106,
+        "cancelled": 1,
+        "stopped": 1
+      },
       "nativeReadySeen": false,
       "dnsActivated": false,
       "usbProbesStarted": false,
       "automaticRollback": "configuration-verified",
       "restoration": "two-stable-observations-of-service-TUN-routes-SNAT-MSS-IPv6",
       "guard": "verified"
+    },
+    {
+      "id": "run-yPauzA",
+      "kind": "ordinary-smoke",
+      "status": "passed",
+      "started": "2026-10-26T05:19:24.427Z",
+      "seconds": 99,
+      "hostChecks": {
+        "old": {
+          "status": "ipv4-smoke-passed",
+          "exitIp": "154.62.226.216",
+          "nss": "passed",
+          "dnsPassed": 4,
+          "dnsTotal": 4,
+          "httpsPassed": 2,
+          "httpsSeconds": [
+            0.377784,
+            0.478355
+          ],
+          "download": {
+            "status": "passed",
+            "bytes": 1048576,
+            "seconds": 1.486184
+          }
+        },
+        "native": {
+          "status": "ipv4-smoke-passed",
+          "exitIp": "154.62.226.216",
+          "nss": "passed",
+          "dnsPassed": 4,
+          "dnsTotal": 4,
+          "httpsPassed": 2,
+          "httpsSeconds": [
+            0.435526,
+            0.467232
+          ],
+          "download": {
+            "status": "passed",
+            "bytes": 1048576,
+            "seconds": 3.563331
+          }
+        },
+        "restored": {
+          "status": "ipv4-smoke-passed",
+          "exitIp": "154.62.226.216",
+          "nss": "passed",
+          "dnsPassed": 4,
+          "dnsTotal": 4,
+          "httpsPassed": 2,
+          "httpsSeconds": [
+            0.462966,
+            0.419433
+          ],
+          "download": {
+            "status": "passed",
+            "bytes": 1048576,
+            "seconds": 1.68458
+          }
+        }
+      },
+      "usb": {
+        "status": "passed",
+        "phases": {
+          "baseline": {
+            "phase": "baseline",
+            "status": "passed",
+            "dnsPassed": 4,
+            "httpsPassed": 3,
+            "downloadBytes": 1048576,
+            "exitIp": "154.62.226.216",
+            "blockedAttempts": 0,
+            "recoveryMs": 0,
+            "elapsedMs": 2533,
+            "observedAfterMs": 3276
+          },
+          "native": {
+            "phase": "native",
+            "status": "passed",
+            "dnsPassed": 4,
+            "httpsPassed": 3,
+            "downloadBytes": 1048576,
+            "exitIp": "154.62.226.216",
+            "blockedAttempts": 0,
+            "recoveryMs": 0,
+            "elapsedMs": 2596,
+            "observedAfterMs": 3528
+          },
+          "restored": {
+            "phase": "restored",
+            "status": "passed",
+            "dnsPassed": 4,
+            "httpsPassed": 3,
+            "downloadBytes": 1048576,
+            "exitIp": "154.62.226.216",
+            "blockedAttempts": 0,
+            "recoveryMs": 0,
+            "elapsedMs": 2710,
+            "observedAfterMs": 4276
+          }
+        },
+        "scope": "authenticated-Mac-USB-observations-not-independent-leak-capture",
+        "fault": {
+          "kind": "none",
+          "requestedPhysicalUplinkChange": false
+        }
+      },
+      "automaticRollback": "verified",
+      "guard": "verified",
+      "restorationReadiness": {
+        "status": "ready",
+        "attempts": 10,
+        "consecutive": 2,
+        "seconds": 17.747497920999987
+      }
+    },
+    {
+      "id": "run-Onvp66",
+      "kind": "engine-crash",
+      "status": "passed",
+      "started": "2026-10-26T05:21:30.095Z",
+      "seconds": 105,
+      "hostChecks": {
+        "old": {
+          "status": "ipv4-smoke-passed",
+          "exitIp": "154.62.226.216",
+          "nss": "passed",
+          "dnsPassed": 4,
+          "dnsTotal": 4,
+          "httpsPassed": 2,
+          "httpsSeconds": [
+            0.500429,
+            0.428115
+          ],
+          "download": {
+            "status": "passed",
+            "bytes": 1048576,
+            "seconds": 1.292452
+          }
+        },
+        "native": {
+          "status": "ipv4-smoke-passed",
+          "exitIp": "154.62.226.216",
+          "nss": "passed",
+          "dnsPassed": 4,
+          "dnsTotal": 4,
+          "httpsPassed": 2,
+          "httpsSeconds": [
+            0.40853,
+            0.472301
+          ],
+          "download": {
+            "status": "passed",
+            "bytes": 1048576,
+            "seconds": 5.060025
+          }
+        },
+        "restored": {
+          "status": "ipv4-smoke-passed",
+          "exitIp": "154.62.226.216",
+          "nss": "passed",
+          "dnsPassed": 4,
+          "dnsTotal": 4,
+          "httpsPassed": 2,
+          "httpsSeconds": [
+            0.490873,
+            0.428282
+          ],
+          "download": {
+            "status": "passed",
+            "bytes": 1048576,
+            "seconds": 2.435628
+          }
+        }
+      },
+      "usb": {
+        "status": "passed",
+        "phases": {
+          "baseline": {
+            "phase": "baseline",
+            "status": "passed",
+            "dnsPassed": 4,
+            "httpsPassed": 3,
+            "downloadBytes": 1048576,
+            "exitIp": "154.62.226.216",
+            "blockedAttempts": 0,
+            "recoveryMs": 0,
+            "elapsedMs": 2461,
+            "observedAfterMs": 3023
+          },
+          "native": {
+            "phase": "native",
+            "status": "passed",
+            "dnsPassed": 4,
+            "httpsPassed": 3,
+            "downloadBytes": 1048576,
+            "exitIp": "154.62.226.216",
+            "blockedAttempts": 0,
+            "recoveryMs": 0,
+            "elapsedMs": 2808,
+            "observedAfterMs": 4281
+          },
+          "blocked": {
+            "phase": "blocked",
+            "status": "passed",
+            "dnsPassed": 0,
+            "httpsPassed": 0,
+            "downloadBytes": 0,
+            "exitIp": null,
+            "blockedAttempts": 2,
+            "recoveryMs": 0,
+            "elapsedMs": 6049,
+            "observedAfterMs": 6787
+          },
+          "restored": {
+            "phase": "restored",
+            "status": "passed",
+            "dnsPassed": 4,
+            "httpsPassed": 3,
+            "downloadBytes": 1048576,
+            "exitIp": "154.62.226.216",
+            "blockedAttempts": 0,
+            "recoveryMs": 0,
+            "elapsedMs": 2809,
+            "observedAfterMs": 3525
+          }
+        },
+        "scope": "authenticated-Mac-USB-with-independent-selected-ipv4-uplink-capture",
+        "fault": {
+          "kind": "native-engine-sigkill",
+          "requestedPhysicalUplinkChange": false,
+          "crashVerified": true,
+          "fallbackRouteVerified": true
+        },
+        "capture": {
+          "status": "passed",
+          "scope": "wlan0-outbound-ipv4-tcp-443-to-1.1.1.1-only",
+          "directPackets": 0,
+          "encryptedExitPackets": 443,
+          "capturedPackets": 443,
+          "kernelDropped": 0,
+          "complete": true,
+          "payloadStored": false
+        }
+      },
+      "automaticRollback": "verified",
+      "guard": "verified",
+      "restorationReadiness": {
+        "status": "ready",
+        "attempts": 10,
+        "consecutive": 2,
+        "seconds": 18.009819710999988
+      }
     }
   ],
   "clockEvidence": {
@@ -55,29 +314,23 @@
     "packetAuthentication": "TLS-exporter-bound-HMAC-current-900-second-window-plus-minus-one",
     "relayTokenWindowSeconds": 30,
     "conclusion": "clock-skew-alone-is-sufficient-to-reject-authentication; exact-exit-rejection-not-recorded",
-    "systemClockChanged": false,
+    "systemClockChanged": true,
     "livePreflightGate": {
       "result": "client_clock_skew",
       "observedOffsetSeconds": -481184,
       "remoteTrialStarted": false,
       "legacyPidUnchanged": true,
       "killSwitchAndUsbRescueActive": true
+    },
+    "correction": {
+      "authorized": true,
+      "scope": "Radxa-only",
+      "source": "fresh-VPS-UTC-over-SSH-cross-checked-with-Mac",
+      "utc": "2026-10-26T05:18:36Z",
+      "ntpKeptEnabled": true,
+      "subsequentlyNtpSynchronized": true,
+      "trialOffsetSeconds": 1
     }
-  },
-  "independentCapture": {
-    "source": "VPS-eth0-tcpdump-outside-engine",
-    "kernelDropped": 0,
-    "capturedPackets": 1530,
-    "originalPcapSha256": "dd1f807a9871f0802419b7effffbc0811a5869c7a9f9bd97e939ef591eb4ed1f",
-    "analysisScope": "first-800-packets; full-capture-exceeds-observer-128-stream-limit",
-    "analyzedPcapSha256": "717d624781f636823c1f6402a905854a9d508c8c0febfa7b5fb84fd8f925b259",
-    "nativeClientHellos": 45,
-    "nativeJa3": "e29d030d028f5cfe3fb65f4e96924e01",
-    "nativeJa4": "t13d0307h2_55b375c5d22e_678be4e4848e",
-    "nativeAlpn": ["h2"],
-    "browserProfileApplied": false,
-    "algorithm": "existing-project-sniffer-parser; not-independent-tshark-implementation",
-    "rawPacketsCommitted": false
   },
   "validation": {
     "ctestExit": "7/7",
@@ -87,17 +340,91 @@
     "clientPreflightTestsBeforeControlFix": "75/75-no-skips"
   },
   "restoredState": {
-    "clientLegacy": "active-enabled-original-config",
+    "clientLegacy": "active-enabled-original-config; host-and-USB-verified-before-bounded-exit-stop",
     "clientKillSwitch": "active",
     "clientUsbRescue": "active",
     "exitTrial": "completed-engine-exit-0",
     "exitForwardPolicy": "DROP",
-    "exitForwardRules": ["DOCKER-USER", "DOCKER-FORWARD"],
+    "exitForwardRules": [
+      "DOCKER-USER",
+      "DOCKER-FORWARD"
+    ],
     "exitIpForward": 1,
     "temporaryExitSwap": "disabled-and-removed",
     "observer": "stopped",
-    "macNetworkSettingsChanged": false
+    "macNetworkSettingsChanged": false,
+    "internetAfterExitStop": "unavailable-until-exit-is-started; same-absent-exit-baseline"
   },
-  "next": "authorized-client-clock-correction-then-repeat-bounded-smoke-before-crash-or-benchmark",
-  "limitations": ["no-working-native-WAN-smoke-yet", "no-speed-result", "no-leak-acceptance", "no-browser-fidelity", "client-wall-clock-timestamps-unreliable"]
+  "next": "investigate-upload-timeouts-with-bounded-timings-and-paired-captures; then-saved-browser-profiles",
+  "limitations": [
+    "one-physical-client",
+    "selected-IPv4-HTTPS-crash-capture-not-all-egress",
+    "no-browser-profile-fidelity",
+    "no-physical-host-reboot-or-worker-crash-test",
+    "early-client-wall-clock-timestamps-unreliable",
+    "benchmark-incomplete-on-legacy-and-native-upload-timeouts"
+  ],
+  "acceptanceScope": "one-client-combo-IPv4-host-and-USB-smoke-and-engine-SIGKILL; not-production-or-browser-fidelity",
+  "earlierFailedAttemptCapture": {
+    "source": "VPS-eth0-tcpdump-outside-engine",
+    "kernelDropped": 0,
+    "capturedPackets": 1530,
+    "originalPcapSha256": "dd1f807a9871f0802419b7effffbc0811a5869c7a9f9bd97e939ef591eb4ed1f",
+    "analysisScope": "first-800-packets; full-capture-exceeds-observer-128-stream-limit",
+    "analyzedPcapSha256": "717d624781f636823c1f6402a905854a9d508c8c0febfa7b5fb84fd8f925b259",
+    "nativeClientHellos": 45,
+    "nativeJa3": "e29d030d028f5cfe3fb65f4e96924e01",
+    "nativeJa4": "t13d0307h2_55b375c5d22e_678be4e4848e",
+    "nativeAlpn": [
+      "h2"
+    ],
+    "browserProfileApplied": false,
+    "algorithm": "existing-project-sniffer-parser; not-independent-tshark-implementation",
+    "rawPacketsCommitted": false
+  },
+  "independentCapture": {
+    "source": "VPS-eth0-tcpdump-outside-engine",
+    "pcapSha256": "5c76862328d37a9191e17151101d84dabf0680a9899b138f9d2712f333ef99ee",
+    "capturedPackets": 2720,
+    "kernelDropped": 0,
+    "withoutSynPackets": 824,
+    "observedClientHellos": 6,
+    "fingerprints": [
+      {
+        "branch": "native-packet",
+        "count": 1,
+        "ja3": "e29d030d028f5cfe3fb65f4e96924e01",
+        "ja4": "t13d0307h2_55b375c5d22e_678be4e4848e",
+        "alpn": [
+          "h2"
+        ]
+      },
+      {
+        "branch": "transparent-USB-curl",
+        "count": 4,
+        "ja3": "375c6162a492dfbf2795909110ce8424",
+        "ja4": "t13d4907h2_0d8feac7bc37_7395dae3b2f3",
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ]
+      },
+      {
+        "branch": "restored-legacy",
+        "count": 1,
+        "ja3": "7454b04083aac52cd457959618cc037e",
+        "ja4": "t13d0311h2_55b375c5d22e_3217d83565aa",
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ]
+      }
+    ],
+    "browserProfileApplied": false,
+    "transparentOriginalFingerprintCompared": false,
+    "encryptedRoutingLabelsVisibleInSni": true,
+    "rawPacketsAndRoutingTokensCommitted": false,
+    "algorithm": "shared-project-JA3-JA4-parser-not-independent-algorithm"
+  },
+  "benchmarkReport": "clean-vpn-native-physical-benchmark-report.json"
 }

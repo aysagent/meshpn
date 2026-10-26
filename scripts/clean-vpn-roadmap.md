@@ -1,11 +1,16 @@
 # clean-vpn: цели и порядок дальнейшей работы
 
-Текущий checkpoint 2026-10-26: [физический Radxa ↔ VPS smoke](../fixtures/clean-vpn-native-physical-smoke-report.json)
-начат, но не прошёл. Combo stdin lifecycle исправлен; теперь препятствие — часы
-Radxa, отстающие примерно на 5,5 суток, при time-bound аутентификации. Клиент/guard/
-USB восстановлены, временный exit выключен. Ближайший шаг: согласованная коррекция
-часов, повтор bounded smoke; только затем crash/benchmark и профили. Исторические
-этапы ниже не означают успешную физическую приёмку.
+Текущий checkpoint 2026-10-26: [физический Radxa ↔ VPS trial](../fixtures/clean-vpn-native-physical-smoke-report.json)
+прошёл обычный combo smoke и отдельный SIGKILL native engine с автоматическим
+возвратом legacy. DNS/HTTPS проверены на Radxa и USB-клиенте; selected IPv4 HTTPS
+capture не выявил прямого fallback. Часы Radxa исправлены с разрешения пользователя,
+NTP снова синхронизирован. Benchmark остался incomplete из-за отдельных upload
+timeout и на legacy, и на native; в повторе один полный цикл прошёл. Временный
+exit убран, клиент/guard/USB восстановлены. Следующий шаг — установить причину
+upload timeout через bounded timings/capture, затем сохранённые браузерные
+профили (capture → нормализация → native применение → независимая проверка).
+Это ещё не постоянная native-установка и не обещание браузерной неотличимости.
+Исторические этапы ниже не заменяют фактический physical checkpoint.
 
 Зафиксировано 2026-10-04 по целям пользователя. База кода: `b50209f`.
 Это план, не заявление о готовности перечисленных возможностей.

@@ -1,8 +1,9 @@
 # Прямой physical trial native combo
 
-Статус 2026-10-11: локальная реализация и fault-тесты закончены; следующий шаг —
-первый ограниченный физический прогон Radxa ↔ VPS. Это transient trial, не
-production-установка.
+Статус 2026-10-26: физические combo smoke и SIGKILL engine на Radxa ↔ VPS
+прошли с автоматическим восстановлением и проверками host/USB. Результаты и
+ограничения — в [checkpoint](../fixtures/clean-vpn-native-physical-smoke-report.json).
+Это transient trial, не production-установка.
 
 ## Почему без namespace
 
@@ -191,7 +192,10 @@ node scripts/clean-vpn-pcap-fingerprints.mjs \
 Захват на Ethernet uplink должен начинаться **до** соединения, включать SYN и
 полные пакеты (`tcpdump -s 0`). Ограничить время/размер отдельным timeout и хранить
 pcap в приватном каталоге. Observer не меняет сеть, не читает engine diagnostics
-и не выводит raw ClientHello, tickets или relay token. Он собирает первый
+и не выводит raw ClientHello или tickets. JSON содержит полный SNI, включая
+зашифрованные routing labels transparent relay, поэтому его, как и pcap, следует
+хранить приватно; для Git-отчёта достаточно hashes и агрегированных отпечатков.
+Он собирает первый
 ClientHello IPv4/TCP: учитывает перестановку сегментов, retransmission и wrap
 sequence number; неоднозначный overlap не получает отпечаток. Лимиты: 64 MiB
 pcap, 128 соединений, первые 64 KiB потока. IPv6, IP fragmentation, pcapng,
@@ -240,4 +244,37 @@ coordinator не вызывает. Packet HMAC использует 900-секу
 если NTP и сам туннель заблокированы неверными часами.
 
 Физические отчёты 2026-10-26: [checkpoint](../fixtures/clean-vpn-native-physical-smoke-report.json).
-Успешного WAN smoke пока нет; восстановление после второго запуска подтверждено.
+После разрешённой коррекции времени прошли обычный WAN smoke `run-yPauzA`
+и engine crash `run-Onvp66`; восстановление проверено и структурно, и через
+реальные host/USB DNS/HTTPS. Clock setter в coordinator не добавлен: разовая
+коррекция выполнена отдельно, штатный NTP затем синхронизировался сам.
+
+### Следующий этап после physical checkpoint
+
+Перед профилями нужно разобрать upload timeout: обе попытки трёхциклового
+benchmark остались incomplete, хотя один полный повторный цикл прошёл.
+Первая ошибка — legacy curl timeout до получения валидных connection metrics;
+вторая — native upload 1 MiB без HTTP-ответа за 30 секунд, при трёх успешных
+соседних потоках и успешном exit trace после них. Curl uploaded bytes не доказывают
+получение тела сервером. Нужны bounded connect/TLS/first-byte timings и сопоставимый
+capture на client/exit; заранее списывать это на внешний сервис или relay нельзя.
+Лимиты не увеличивались, неуспешные результаты сохранены в
+[benchmark report](../fixtures/clean-vpn-native-physical-benchmark-report.json).
+После этого:
+
+1. Сохранённые профили: сверить существующие browser capture/JSON и BoringSSL
+   helper с новым native engine; зафиксировать версионированный контракт
+   измеренного, нормализованного и фактически применённого профиля.
+2. Подключить профиль к native boring и Boring-ветке combo. Не переносить
+   captured random, session tickets или key shares как готовые байты; свежие
+   ключи генерирует TLS stack. Неподдержанные возможности явно отклонять.
+3. Проверять реальные исходящие ClientHello внешним capture: поля, порядок,
+   GREASE/key-share policy и JA3/JA4. Отдельно подтвердить поддержанные cold,
+   resumed и HRR-сценарии. Совпадение хешей не является полной мимикрией.
+4. Связать это со страницей захвата конкретного browser build и реестром
+   профилей. Transparent-ветка сохраняет TLS приложения; динамическое per-flow
+   клонирование в новое BoringSSL-соединение не возвращается.
+
+Физический USB HTTPS benchmark сравнивает legacy packet TLS с native transparent
+внутри combo. Он не изолирует эффект языка реализации и не измеряет native packet
+throughput. Для такого вывода нужен отдельный одинаковый packet workload.

@@ -8,16 +8,29 @@ packet path не является обязательной. Production-разв�
 
 ## Реализовано в текущем шаге
 
-2026-10-26: начаты физические испытания Radxa ↔ VPS. **Smoke ещё не прошёл**:
-первый запуск выявил и исправил combo stdio lifecycle; второй дошёл до TLS,
-но часы Radxa отстают примерно на 5 суток 13 часов 40 минут. Это несовместимо
-с временными окнами packet HMAC и relay replay. Штатная конфигурация клиента,
-kill switch и USB rescue восстановлены; временные exit/rules/swap остановлены
-и очищены. Часы без отдельного разрешения не менялись. Следующий шаг — исправление
-времени клиента и повтор bounded smoke, затем аварийные проверки и benchmark.
-Хеши, проверки, фактические JA3/JA4 из pcap и границы доказательств:
-[physical checkpoint](../fixtures/clean-vpn-native-physical-smoke-report.json).
+2026-10-26: физический **combo smoke и SIGKILL engine прошли** на Radxa ↔ VPS.
+После разрешённой коррекции часов Radxa (отставание 5 суток 13 часов 40 минут)
+восстановилась NTP-синхронизация. Подключение legacy к native exit тоже работает:
+прежние отказы не доказывали несовместимость wire protocol.
+
+Обычный цикл old → native combo → old прошёл host и USB DNS UDP/TCP, HTTPS,
+проверку IP exit и загрузку. Отдельный SIGKILL прошёл блокировку контрольного
+HTTPS после удаления TUN/routes и автоматическое восстановление; внешний
+capture на wlan0: 0 direct packets, 443 packets к exit, 0 kernel drops.
+Это ограниченный IPv4 HTTPS crash test, не полная приёмка отсутствия утечек.
+Внешний VPS pcap наблюдал packet BoringSSL и transparent curl ClientHello.
 Браузерные профили по-прежнему `browser_profiles:false`.
+
+Интернет-benchmark **не завершён**: первая попытка остановилась на legacy upload
+timeout после восстановления, повтор прошёл один полный цикл, но во втором
+возник native upload timeout без HTTP-ответа. Rollback/guard подтверждены во всех
+запусках. Причина не установлена; вывод о победителе/надёжности не делается.
+Сырые метрики всех попыток и границы измерения —
+[benchmark checkpoint](../fixtures/clean-vpn-native-physical-benchmark-report.json).
+Временный exit остановлен, его TUN/правила удалены; клиент/guard/USB восстановлены.
+Следующий шаг — ограниченная диагностика upload с timings и capture на обеих
+сторонах; затем сохранённые профили.
+[Полный physical checkpoint](../fixtures/clean-vpn-native-physical-smoke-report.json).
 
 2026-10-25: добавлена [офлайн-подготовка комплектов нескольких клиентов](clean-vpn-native-clients.md)
 для уже существующего multi-peer engine и проверка 32 combo packet-соединений
@@ -200,8 +213,8 @@ VM выше относится к предыдущей сборке и сохр�
    NIC-less real-TUN VM; TCG не определяет скорость Интернета или hardware capacity.
    Два прогона прошли 13/13 gates; регрессия 434/434, CTest normal/ASAN 7/7.
    Сырые результаты и hashes — `fixtures/clean-vpn-native-combo-benchmark-report.json`.
-   Следующий измерительный этап на реальном железе/VPS требует отдельного запуска;
-   физические узлы не менялись. Затем следующие продуктовые этапы roadmap.
+   На момент лабораторной приёмки физические узлы не менялись. Последующий
+   физический этап и его ограничения описаны в checkpoint в начале документа.
    Браузерные профили/UI не объявляются реализованными этим шагом.
 5. Начат physical-acceptance этап с read-only
    [combo preflight](clean-vpn-native-physical-preflight.md): он проверяет
