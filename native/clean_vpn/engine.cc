@@ -6,6 +6,7 @@
 #include "service_notify.hpp"
 #include "transparent_config.hpp"
 #include "combo.hpp"
+#include "tls_profile.hpp"
 #include <nlohmann/json.hpp>
 #include <nghttp2/nghttp2.h>
 #include <openssl/ssl.h>
@@ -55,6 +56,7 @@ static std::string file(const std::string& path, size_t limit, bool secret=false
 struct Config {
   struct Peer { uint32_t address; std::string secret; };
   std::vector<Peer> peers;
+  std::unique_ptr<profile::Profile> tls_profile;
   std::string peer_ipv4="10.99.0.2";
   uint32_t peer_address=0;
   bool client;
@@ -63,10 +65,15 @@ struct Config {
   uint16_t port;
   explicit Config(const json& j) {
     check(j.is_object(),"config_object");
-    const std::set<std::string> fields={"version","role","address","port","server_name","sni","ca","cert","key","tun","secret_path","dns","peer_ipv4","peers"};
+    const std::set<std::string> fields={"version","role","address","port","server_name","sni","ca","cert","key","tun","secret_path","dns","peer_ipv4","peers","tls_profile_path"};
     for(auto it=j.begin();it!=j.end();++it) check(fields.count(it.key()),"unknown_config_field");
     check(j.at("version")==1,"config_version");
     auto role=j.at("role").get<std::string>(); check(role=="client"||role=="exit","role"); client=role=="client";
+    if(j.contains("tls_profile_path")) {
+      check(client,"profile_client_only");
+      auto path=j.at("tls_profile_path").get<std::string>();check(!path.empty()&&path[0]=='/',"profile_absolute_path");
+      tls_profile=std::make_unique<profile::Profile>(json::parse(file(path,16384)));
+    }
     dns=j.value("dns",false);check(!dns||client,"dns_client_only");
     address=j.at("address").get<std::string>(); in_addr ip{};
     check(inet_pton(AF_INET,address.c_str(),&ip)==1,"numeric_ipv4_required");
@@ -597,6 +604,7 @@ int main(int argc,char** argv){
       std::cout<<json({{"version",1},{"engine","clean-vpn-native-m1"},{"transport","boring-tls"},
         {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2"}},
         {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
+        {"experimental_tls_profiles",{{"schema",1},{"scenario","cold"},{"prewire_check",true},{"transports",{"boring-tls","combo-tls-boring"}}}},
         {"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
         {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"destination_policies",{"explicit-ipv4-destinations","public-https"}},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true}}},
           {"combo-tls",{{"roles",{"client","exit"}},{"single_exit_listener",true},{"client_stdio_control",true},{"packet_ipc",false},{"site_provisioning",true}}}}}}).dump()<<"\n";return 0;
@@ -639,6 +647,14 @@ int main(int argc,char** argv){
     if(c.client){
       SSL_CTX_set_verify(ctx.get(),SSL_VERIFY_PEER,nullptr);check(SSL_CTX_load_verify_locations(ctx.get(),c.ca.c_str(),nullptr)==1,"ca_load");
       const uint8_t ap[]={2,'h','2'};check(SSL_CTX_set_alpn_protos(ctx.get(),ap,sizeof(ap))==0,"alpn");
+      if(c.tls_profile) {
+        c.tls_profile->context(ctx.get());
+        // Compile/verify compatibility before TUN, listeners or routes. This
+        // throwaway flight is never sent; each real connection gets fresh keys.
+        std::unique_ptr<SSL,decltype(&SSL_free)> probe(SSL_new(ctx.get()),SSL_free);check(bool(probe),"profile_ssl");
+        SSL_set_connect_state(probe.get());check(SSL_set_tlsext_host_name(probe.get(),c.sni.c_str())==1,"tls_sni");
+        c.tls_profile->first_flight(probe.get());
+      }
     } else {
       check(SSL_CTX_use_certificate_chain_file(ctx.get(),c.cert.c_str())==1&&SSL_CTX_use_PrivateKey_file(ctx.get(),c.key.c_str(),SSL_FILETYPE_PEM)==1&&SSL_CTX_check_private_key(ctx.get())==1,"server_key");
       SSL_CTX_set_alpn_select_cb(ctx.get(),alpn,nullptr);
@@ -651,6 +667,7 @@ int main(int argc,char** argv){
     if(validate){
       OPENSSL_cleanse(secret.data(),secret.size());
       auto result=json({{"valid",true},{"role",c.client?"client":"exit"},{"peers",c.client?1:c.peers.size()}});
+      if(c.tls_profile)result["tls_profile"]=c.tls_profile->report();
       if(combined)result["transport"]="combo-tls";
       std::cout<<result.dump()<<"\n";return 0;
     }
@@ -725,6 +742,18 @@ int main(int argc,char** argv){
           // All other names retain SAN-only verification. CA/time checks remain.
           X509_VERIFY_PARAM_set_hostflags(verify,c.name=="clean-vpn"?0:X509_CHECK_FLAG_NEVER_CHECK_SUBJECT);
           check(X509_VERIFY_PARAM_set1_host(verify,c.name.data(),c.name.size())==1,"tls_identity");
+        if(c.tls_profile) {
+          const auto flight=c.tls_profile->first_flight(ssl.get());
+          check(SSL_set_fd(ssl.get(),socket_fd.n)==1,"tls_socket");
+          for(size_t sent=0;sent<flight.size();) {
+            ctl.read_commands();check(!ctl.stop&&ctl.uplink&&ctl.generation==generation,"cancelled");
+            check(Clock::now()<deadline,"connect_deadline");
+            auto n=send(socket_fd.n,flight.data()+sent,flight.size()-sent,MSG_NOSIGNAL);
+            if(n>0)sent+=size_t(n);
+            else {check(n<0&&(errno==EAGAIN||errno==EWOULDBLOCK||errno==EINTR),"profile_hello_write");
+              wait_fd(socket_fd.n,POLLOUT,ctl,deadline,generation);}
+          }
+        }
         ctl.set("handshake");handshake(ssl.get(),socket_fd.n,ctl,deadline,generation);
         Session s(c,ctl,ssl.get(),secret);
         try{s.run(socket_fd.n,tun.n,deadline,generation,pending);}

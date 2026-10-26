@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-tls-profile",
+  "id": "synthetic-cold-modern",
+  "scenario": "cold",
+  "tls": {
+    "min_version": 771,
+    "max_version": 772,
+    "cipher_suites": [
+      4865,
+      4867,
+      4866,
+      49195,
+      49199,
+      49200,
+      49196,
+      52393,
+      52392
+    ],
+    "supported_groups": [
+      29,
+      23
+    ],
+    "key_share_groups": [
+      29
+    ],
+    "signature_algorithms": [
+      1027,
+      2052,
+      2053,
+      2054
+    ],
+    "alpn": [
+      "h2",
+      "http/1.1"
+    ],
+    "grease": true,
+    "permute_extensions": true,
+    "ech_grease": true,
+    "ocsp": true,
+    "sct": true,
+    "extension_types": [
+      0,
+      65037,
+      23,
+      65281,
+      10,
+      11,
+      16,
+      5,
+      13,
+      18,
+      51,
+      45,
+      43
+    ],
+    "optional_extension_types": [
+      21
+    ]
+  }
+}
