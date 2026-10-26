@@ -251,15 +251,19 @@ coordinator не вызывает. Packet HMAC использует 900-секу
 
 ### Следующий этап после physical checkpoint
 
-Перед профилями нужно разобрать upload timeout: обе попытки трёхциклового
-benchmark остались incomplete, хотя один полный повторный цикл прошёл.
-Первая ошибка — legacy curl timeout до получения валидных connection metrics;
-вторая — native upload 1 MiB без HTTP-ответа за 30 секунд, при трёх успешных
-соседних потоках и успешном exit trace после них. Curl uploaded bytes не доказывают
-получение тела сервером. Нужны bounded connect/TLS/first-byte timings и сопоставимый
-capture на client/exit; заранее списывать это на внешний сервис или relay нельзя.
-Лимиты не увеличивались, неуспешные результаты сохранены в
-[benchmark report](../fixtures/clean-vpn-native-physical-benchmark-report.json).
+Ранние две попытки benchmark остались incomplete: legacy timeout и отдельный
+native upload 1 MiB без HTTP-ответа за 30 секунд. Они сохранены в
+[раннем отчёте](../fixtures/clean-vpn-native-physical-benchmark-report.json).
+Следующие трёхцикловые диагностические combo и packet прогоны завершились;
+исходный upload timeout не повторился. Timings и capture теперь доступны,
+но списывать прежний отказ на внешний сервис или объявлять его исправленным нельзя.
+
+В packet-пути обнаружено отдельное ограничение окна HTTP/2: 64 KiB на stream
+и connection. Исправление `5f99f43` задаёт 1 MiB, сохраняя прежние bounded queues.
+[Новый диагностический checkpoint](../fixtures/clean-vpn-native-upload-diagnostic-report.json)
+содержит результаты физических замеров до/после и отдельной проверки crash.
+При следующем upload отказе нужен разбор именно неуспешного потока по timings
+и capture обеих сторон; повышение timeout не является исправлением.
 После этого:
 
 1. Сохранённые профили: сверить существующие browser capture/JSON и BoringSSL
@@ -278,3 +282,31 @@ capture на client/exit; заранее списывать это на внеш
 Физический USB HTTPS benchmark сравнивает legacy packet TLS с native transparent
 внутри combo. Он не изолирует эффект языка реализации и не измеряет native packet
 throughput. Для такого вывода нужен отдельный одинаковый packet workload.
+
+Диагностика benchmark сохраняет для каждого потока `timing`: время запуска UTC,
+локальный/удалённый TCP-порт и накопленные от старта curl `connectSeconds`
+(`time_connect`), `tlsSeconds` (`time_appconnect`), `readySeconds`
+(`time_pretransfer`), `firstByteSeconds` (`time_starttransfer`). Это не длительности
+отдельных этапов; ноль означает, что curl не зафиксировал достижение этапа.
+Пустой remote IP при раннем timeout допустим в диагностике и не превращает
+неуспешный запрос в успешный. Совместимость старых шестипольных samples сохранена;
+новые peer-файлы всё ещё ограничены 4096 байтами. `size_upload` показывает учёт curl,
+а не подтверждение приёма HTTP-тела сервером. HTTP 200 и успешное завершение upload
+остаются обязательными критериями benchmark.
+
+Для ограниченного офлайн-разбора header capture:
+
+```bash
+umask 077
+python3 scripts/clean-vpn-tcp-capture.py /private/path/capture.pcap > /private/path/tcp.json
+```
+
+Анализатор читает classic microsecond Ethernet pcap до 96 MiB/600000 пакетов,
+только IPv4 TCP/443, без VLAN/фрагментов. Вывод содержит адреса/порты и хеш
+ClientHello.random для сопоставления известного тестового трафика, без raw payload,
+SNI или ключей. Нужен захваченный SYN; повторное использование NAT tuple разделяется
+по client SYN sequence. Поздние пакеты старого соединения могут быть неоднозначны.
+Перекрытие sequence ranges не доказывает retransmission в сети (возможны offload
+и переупорядочивание), а одинаковое число байтов не доказывает целостность payload.
+Kernel drops проверяются отдельно по статистике tcpdump. Сырые pcap и вывод с
+адресами следует хранить приватно; это не leak-test и не проверка JA3/JA4.

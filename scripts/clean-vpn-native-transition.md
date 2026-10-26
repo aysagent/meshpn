@@ -21,15 +21,37 @@ capture на wlan0: 0 direct packets, 443 packets к exit, 0 kernel drops.
 Внешний VPS pcap наблюдал packet BoringSSL и transparent curl ClientHello.
 Браузерные профили по-прежнему `browser_profiles:false`.
 
-Интернет-benchmark **не завершён**: первая попытка остановилась на legacy upload
-timeout после восстановления, повтор прошёл один полный цикл, но во втором
-возник native upload timeout без HTTP-ответа. Rollback/guard подтверждены во всех
-запусках. Причина не установлена; вывод о победителе/надёжности не делается.
-Сырые метрики всех попыток и границы измерения —
-[benchmark checkpoint](../fixtures/clean-vpn-native-physical-benchmark-report.json).
-Временный exit остановлен, его TUN/правила удалены; клиент/guard/USB восстановлены.
-Следующий шаг — ограниченная диагностика upload с timings и capture на обеих
-сторонах; затем сохранённые профили.
+Ранние попытки интернет-benchmark были incomplete: legacy upload timeout после
+восстановления и отдельный native upload timeout без HTTP-ответа. Эти ошибки
+сохранены в [раннем benchmark checkpoint](../fixtures/clean-vpn-native-physical-benchmark-report.json).
+Следующие диагностические прогоны — три цикла combo и три packet — завершились
+без upload ошибок. Все 12 native combo uploads сопоставлены по TCP/ClientHello
+на USB, uplink и exit→origin; объёмы ciphertext на USB и origin совпали. Это
+свидетельство успешных потоков, не объяснение прежнего timeout.
+
+Выявлено отдельное ограничение packet throughput: stream и connection credit H2
+равнялись 65535 байтам. В `5f99f43` оба окна увеличены до 1 MiB при прежнем лимите
+очередей 1 MiB. Реальное объявление окон проверено интеграционным тестом;
+CTest 7/7 на x86_64/arm64, session/multi-peer/combo integration 18/18 на VPS.
+[Диагностический отчёт](../fixtures/clean-vpn-native-upload-diagnostic-report.json)
+содержит timings, показатели до/после, hashes и ограничения capture.
+Контрольный packet benchmark после исправления завершил 3/3 цикла:
+медиана download/upload **33,7/17,7 Мбит/с** против **3,6/3,5** до исправления.
+Combo до изменения дал **53,1/28,8 Мбит/с** на transparent HTTPS.
+Это последовательные WAN-замеры, не контролируемый A/B: origin IP между packet
+прогонами изменился, короткие upload samples и legacy variation >25% сохранены
+как ограничения. В каждом цикле подтверждены rollback и guard. Итоговые engine
+drop counters ненулевые и сохранены отдельно от нулевых kernel drops tcpdump;
+причина каждого engine drop в этой телеметрии не разделяется.
+Исходный upload timeout остаётся открытым до воспроизведения с этой диагностикой.
+Повторный post-fix combo SIGKILL `run-61FBxz` тоже прошёл: 2 blocked HTTPS,
+0 direct packets к контрольному адресу, 473 encrypted exit packets, 0 kernel
+capture drops; host/USB DNS/HTTPS и legacy восстановлены. Это выбранный IPv4
+HTTPS crash test, не проверка всех протоколов. Временный exit затем остановлен,
+его TUN/правила удалены, исходный `ip_forward=1` сохранён; Docker/x-ui работают.
+На Radxa активны legacy/guard/USB/dnsmasq. Постоянный exit не установлен:
+после его остановки восстановленная legacy-конфигурация сама по себе не даёт
+интернет через этот VPS. Сетевые настройки Mac не менялись.
 [Полный physical checkpoint](../fixtures/clean-vpn-native-physical-smoke-report.json).
 
 2026-10-25: добавлена [офлайн-подготовка комплектов нескольких клиентов](clean-vpn-native-clients.md)

@@ -1,0 +1,3327 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-upload-diagnostics",
+  "date": "2026-10-26",
+  "diagnosticRevision": "2427273",
+  "status": "diagnostic-runs-complete-packet-window-validated-original-upload-cause-open",
+  "earlierFailures": "clean-vpn-native-physical-benchmark-report.json",
+  "limitsUnchanged": {
+    "curlConnectSeconds": 5,
+    "uploadSeconds": 30,
+    "uploadBytesPerStream": 1048576,
+    "parallelStreams": 4,
+    "requestedCycles": 3
+  },
+  "combo": {
+    "status": "completed",
+    "rows": [
+      {
+        "cycle": 1,
+        "phase": "bench-old",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 15.247973580344373,
+        "uploadMbps": 3.475811538627664,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 35.126650550651725,
+        "peakRssKiB": 91596,
+        "shortSample": false
+      },
+      {
+        "cycle": 1,
+        "phase": "bench-native",
+        "implementation": "native",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 54.591842715549355,
+        "uploadMbps": 30.293684206130983,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 21.626599388041427,
+        "peakRssKiB": 69928,
+        "shortSample": true
+      },
+      {
+        "cycle": 1,
+        "phase": "bench-restored",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 23.526553918582213,
+        "uploadMbps": 3.50138790463304,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 45.918228473201346,
+        "peakRssKiB": 89784,
+        "shortSample": false
+      },
+      {
+        "cycle": 2,
+        "phase": "bench-old",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 10.583830378286315,
+        "uploadMbps": 3.455597680144502,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 31.055095913416263,
+        "peakRssKiB": 93004,
+        "shortSample": false
+      },
+      {
+        "cycle": 2,
+        "phase": "bench-native",
+        "implementation": "native",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 50.53445342753285,
+        "uploadMbps": 28.769186149279157,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 21.471543021617943,
+        "peakRssKiB": 74444,
+        "shortSample": true
+      },
+      {
+        "cycle": 2,
+        "phase": "bench-restored",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 32.218512680232884,
+        "uploadMbps": 3.3865821455115412,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 47.08950604179426,
+        "peakRssKiB": 94096,
+        "shortSample": false
+      },
+      {
+        "cycle": 3,
+        "phase": "bench-old",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 36.65947085137623,
+        "uploadMbps": 3.359181927495523,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 41.130614861772905,
+        "peakRssKiB": 97760,
+        "shortSample": false
+      },
+      {
+        "cycle": 3,
+        "phase": "bench-native",
+        "implementation": "native",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 53.11527648144385,
+        "uploadMbps": 23.071490036869267,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 20.411904725785412,
+        "peakRssKiB": 74376,
+        "shortSample": true
+      },
+      {
+        "cycle": 3,
+        "phase": "bench-restored",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 32.113771577272885,
+        "uploadMbps": 2.5832229983648825,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 39.56995269302945,
+        "peakRssKiB": 91548,
+        "shortSample": false
+      }
+    ],
+    "statistics": {
+      "legacy": {
+        "downloadMbps": {
+          "count": 6,
+          "median": 27.820162747927547,
+          "min": 10.583830378286315,
+          "max": 36.65947085137623
+        },
+        "uploadMbps": {
+          "count": 6,
+          "median": 3.4210899128280214,
+          "min": 2.5832229983648825,
+          "max": 3.50138790463304
+        },
+        "cpuMeanOneCorePercent": {
+          "count": 6,
+          "median": 40.350283777401174,
+          "min": 31.055095913416263,
+          "max": 47.08950604179426
+        },
+        "peakRssKiB": {
+          "count": 6,
+          "median": 92300,
+          "min": 89784,
+          "max": 97760
+        }
+      },
+      "native": {
+        "downloadMbps": {
+          "count": 3,
+          "median": 53.11527648144385,
+          "min": 50.53445342753285,
+          "max": 54.591842715549355
+        },
+        "uploadMbps": {
+          "count": 3,
+          "median": 28.769186149279157,
+          "min": 23.071490036869267,
+          "max": 30.293684206130983
+        },
+        "cpuMeanOneCorePercent": {
+          "count": 3,
+          "median": 21.471543021617943,
+          "min": 20.411904725785412,
+          "max": 21.626599388041427
+        },
+        "peakRssKiB": {
+          "count": 3,
+          "median": 74376,
+          "min": 69928,
+          "max": 74444
+        }
+      }
+    },
+    "warnings": [
+      "some-transfers-under-3s-startup-overhead-significant",
+      "legacy-baseline-varies-over-25-percent"
+    ],
+    "reportSha256": "81304fc906d991d5446a1699409afd5e4f547509c83cdac392c18511693d8c0b",
+    "cycles": [
+      {
+        "id": "run-bzQraF",
+        "status": "passed",
+        "rollback": "verified",
+        "guard": "verified",
+        "uploads": {
+          "bench-old": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.639268,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994762087,
+                "connectSeconds": 0.084677,
+                "tlsSeconds": 0.260158,
+                "readySeconds": 0.260764,
+                "firstByteSeconds": 9.639194,
+                "localPort": 54568,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 7.929976,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994762089,
+                "connectSeconds": 0.084206,
+                "tlsSeconds": 0.179241,
+                "readySeconds": 0.17966,
+                "firstByteSeconds": 7.929913,
+                "localPort": 54569,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.494443,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994762090,
+                "connectSeconds": 0.083798,
+                "tlsSeconds": 0.179351,
+                "readySeconds": 0.179706,
+                "firstByteSeconds": 8.494428,
+                "localPort": 54570,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.197422,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994762091,
+                "connectSeconds": 0.084067,
+                "tlsSeconds": 0.259097,
+                "readySeconds": 0.259719,
+                "firstByteSeconds": 9.197331,
+                "localPort": 54571,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-native": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 0.993874,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994818878,
+                "connectSeconds": 0.007051,
+                "tlsSeconds": 0.193538,
+                "readySeconds": 0.194058,
+                "firstByteSeconds": 0.993799,
+                "localPort": 56146,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 0.983038,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994818880,
+                "connectSeconds": 0.012239,
+                "tlsSeconds": 0.285874,
+                "readySeconds": 0.286346,
+                "firstByteSeconds": 0.982958,
+                "localPort": 56147,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.094938,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994818880,
+                "connectSeconds": 0.015737,
+                "tlsSeconds": 0.285848,
+                "readySeconds": 0.286355,
+                "firstByteSeconds": 1.09485,
+                "localPort": 56148,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 0.931137,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994818882,
+                "connectSeconds": 0.018685,
+                "tlsSeconds": 0.19499,
+                "readySeconds": 0.195489,
+                "firstByteSeconds": 0.931029,
+                "localPort": 56149,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-restored": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.136627,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994873635,
+                "connectSeconds": 0.080799,
+                "tlsSeconds": 0.176223,
+                "readySeconds": 0.177325,
+                "firstByteSeconds": 9.136557,
+                "localPort": 57586,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.555836,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994873642,
+                "connectSeconds": 0.080394,
+                "tlsSeconds": 0.176116,
+                "readySeconds": 0.177256,
+                "firstByteSeconds": 9.555775,
+                "localPort": 57587,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.294043,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994873647,
+                "connectSeconds": 0.081546,
+                "tlsSeconds": 0.174542,
+                "readySeconds": 0.175475,
+                "firstByteSeconds": 8.294004,
+                "localPort": 57588,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 7.474652,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994873649,
+                "connectSeconds": 0.079751,
+                "tlsSeconds": 0.173361,
+                "readySeconds": 0.174529,
+                "firstByteSeconds": 7.474595,
+                "localPort": 57589,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ]
+        },
+        "nativeFinalCounters": {
+          "atMs": 43182,
+          "event": "state",
+          "state": "stopped",
+          "generation": 0,
+          "txPackets": 367,
+          "rxPackets": 812,
+          "droppedPackets": 4
+        },
+        "nativeStateCounts": {
+          "idle": 1,
+          "connecting": 1,
+          "handshake": 1,
+          "ready": 1,
+          "stopped": 1
+        },
+        "timeLimitedDownloads": {
+          "bench-old": 0,
+          "bench-native": 0,
+          "bench-restored": 0
+        }
+      },
+      {
+        "id": "run-k1ICr1",
+        "status": "passed",
+        "rollback": "verified",
+        "guard": "verified",
+        "uploads": {
+          "bench-old": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.084021,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994914274,
+                "connectSeconds": 0.083801,
+                "tlsSeconds": 0.181512,
+                "readySeconds": 0.182348,
+                "firstByteSeconds": 8.083999,
+                "localPort": 58765,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.827493,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994914282,
+                "connectSeconds": 0.083687,
+                "tlsSeconds": 0.182199,
+                "readySeconds": 0.182803,
+                "firstByteSeconds": 8.82741,
+                "localPort": 58766,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.291994,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994914286,
+                "connectSeconds": 0.083134,
+                "tlsSeconds": 0.182113,
+                "readySeconds": 0.182733,
+                "firstByteSeconds": 9.29197,
+                "localPort": 58767,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.680389,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994914289,
+                "connectSeconds": 0.083389,
+                "tlsSeconds": 0.193885,
+                "readySeconds": 0.194347,
+                "firstByteSeconds": 9.680356,
+                "localPort": 58768,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-native": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 0.906961,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994973208,
+                "connectSeconds": 0.00531,
+                "tlsSeconds": 0.19383,
+                "readySeconds": 0.19454,
+                "firstByteSeconds": 0.906892,
+                "localPort": 60193,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 0.863735,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994973211,
+                "connectSeconds": 0.009818,
+                "tlsSeconds": 0.193769,
+                "readySeconds": 0.194496,
+                "firstByteSeconds": 0.863691,
+                "localPort": 60194,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.131804,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994973213,
+                "connectSeconds": 0.01342,
+                "tlsSeconds": 0.293746,
+                "readySeconds": 0.294086,
+                "firstByteSeconds": 1.131708,
+                "localPort": 60195,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.144001,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792994973216,
+                "connectSeconds": 0.018422,
+                "tlsSeconds": 0.292468,
+                "readySeconds": 0.292796,
+                "firstByteSeconds": 1.143925,
+                "localPort": 60196,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-restored": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.362967,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995025835,
+                "connectSeconds": 0.085471,
+                "tlsSeconds": 0.181574,
+                "readySeconds": 0.182361,
+                "firstByteSeconds": 8.36292,
+                "localPort": 60801,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.955765,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995025840,
+                "connectSeconds": 0.083858,
+                "tlsSeconds": 0.180497,
+                "readySeconds": 0.181123,
+                "firstByteSeconds": 8.955735,
+                "localPort": 60802,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.436233,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995025846,
+                "connectSeconds": 0.084007,
+                "tlsSeconds": 0.179798,
+                "readySeconds": 0.1805,
+                "firstByteSeconds": 9.436135,
+                "localPort": 60803,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.8767,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995025848,
+                "connectSeconds": 0.084412,
+                "tlsSeconds": 0.176482,
+                "readySeconds": 0.177076,
+                "firstByteSeconds": 9.876635,
+                "localPort": 60804,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ]
+        },
+        "nativeFinalCounters": {
+          "atMs": 45798,
+          "event": "state",
+          "state": "stopped",
+          "generation": 0,
+          "txPackets": 505,
+          "rxPackets": 812,
+          "droppedPackets": 4
+        },
+        "nativeStateCounts": {
+          "idle": 1,
+          "connecting": 1,
+          "handshake": 1,
+          "ready": 1,
+          "stopped": 1
+        },
+        "timeLimitedDownloads": {
+          "bench-old": 1,
+          "bench-native": 0,
+          "bench-restored": 0
+        }
+      },
+      {
+        "id": "run-gAErDR",
+        "status": "passed",
+        "rollback": "verified",
+        "guard": "verified",
+        "uploads": {
+          "bench-old": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.524379,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995053130,
+                "connectSeconds": 0.085255,
+                "tlsSeconds": 0.182142,
+                "readySeconds": 0.182885,
+                "firstByteSeconds": 9.52428,
+                "localPort": 61160,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 7.906423,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995053139,
+                "connectSeconds": 0.084371,
+                "tlsSeconds": 0.180131,
+                "readySeconds": 0.180861,
+                "firstByteSeconds": 7.906356,
+                "localPort": 61161,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.61097,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995053142,
+                "connectSeconds": 0.083429,
+                "tlsSeconds": 0.179683,
+                "readySeconds": 0.180334,
+                "firstByteSeconds": 8.610889,
+                "localPort": 61162,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.957598,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995053145,
+                "connectSeconds": 0.083846,
+                "tlsSeconds": 0.176992,
+                "readySeconds": 0.177727,
+                "firstByteSeconds": 9.957549,
+                "localPort": 61163,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-native": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 0.849366,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995115004,
+                "connectSeconds": 0.005047,
+                "tlsSeconds": 0.194602,
+                "readySeconds": 0.19561,
+                "firstByteSeconds": 0.849294,
+                "localPort": 62014,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.168098,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995115009,
+                "connectSeconds": 0.012074,
+                "tlsSeconds": 0.316746,
+                "readySeconds": 0.317017,
+                "firstByteSeconds": 1.168085,
+                "localPort": 62015,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.434377,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995115011,
+                "connectSeconds": 0.019865,
+                "tlsSeconds": 0.236397,
+                "readySeconds": 0.236889,
+                "firstByteSeconds": 1.434361,
+                "localPort": 62016,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.299857,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995115013,
+                "connectSeconds": 0.026528,
+                "tlsSeconds": 0.235313,
+                "readySeconds": 0.235815,
+                "firstByteSeconds": 1.299837,
+                "localPort": 62017,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-restored": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 11.61911,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995173244,
+                "connectSeconds": 0.11367,
+                "tlsSeconds": 0.243005,
+                "readySeconds": 0.243326,
+                "firstByteSeconds": 11.61903,
+                "localPort": 62747,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 12.969929,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995173246,
+                "connectSeconds": 0.114038,
+                "tlsSeconds": 0.246203,
+                "readySeconds": 0.246533,
+                "firstByteSeconds": 12.969897,
+                "localPort": 62746,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 10.53867,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995173248,
+                "connectSeconds": 0.113637,
+                "tlsSeconds": 0.242588,
+                "readySeconds": 0.24294,
+                "firstByteSeconds": 10.538597,
+                "localPort": 62749,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 12.34546,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792995173250,
+                "connectSeconds": 0.113534,
+                "tlsSeconds": 0.244981,
+                "readySeconds": 0.245313,
+                "firstByteSeconds": 12.3454,
+                "localPort": 62748,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ]
+        },
+        "nativeFinalCounters": {
+          "atMs": 48357,
+          "event": "state",
+          "state": "stopped",
+          "generation": 0,
+          "txPackets": 400,
+          "rxPackets": 812,
+          "droppedPackets": 4
+        },
+        "nativeStateCounts": {
+          "idle": 1,
+          "connecting": 1,
+          "handshake": 1,
+          "ready": 1,
+          "stopped": 1
+        },
+        "timeLimitedDownloads": {
+          "bench-old": 0,
+          "bench-native": 0,
+          "bench-restored": 0
+        }
+      }
+    ]
+  },
+  "capture": {
+    "snaplen": 128,
+    "scope": "selected-IPv4-TCP-header-prefixes-on-Radxa-usb0-wlan0-and-VPS-eth0",
+    "packets": {
+      "usb": 396414,
+      "uplink": 315692,
+      "exit": 367914
+    },
+    "kernelDropped": {
+      "usb": 0,
+      "uplink": 0,
+      "exit": 0
+    },
+    "sha256": {
+      "usb": "17b2329929244fd7fdf65cc46eeaf8233150b8737247420444e26dea1428f0ed",
+      "uplink": "f7a975c9e53e7b72884bdcbfa8298968594cd34ac440af8f9a855ec1b6d7f076",
+      "exit": "2173a74d9e35a5790367f482656008b7e7d88a30bceef18fa78bcf733c948b74"
+    },
+    "nativeUploadsCorrelated": 12,
+    "correlation": "curl-local-port-and-start-time-to-USB; same-first-ClientHello-random-hash-across-relay-legs; TCP-SYN-separated-4-tuple-generations",
+    "byteCountMatchUsbAndOrigin": true,
+    "requestCiphertextBytesPerUpload": 1050626,
+    "responseCiphertextBytesRange": [
+      3956,
+      3969
+    ],
+    "allFourLegsObserved": true,
+    "rawPacketsCommitted": false,
+    "limits": [
+      "successful-flows-only-no-failing-native-upload-in-this-capture",
+      "header-prefix-not-payload-integrity-proof",
+      "host-offload-can-affect-segmentation-and-overlap",
+      "not-a-browser-fidelity-or-leak-verdict"
+    ]
+  },
+  "next": "saved-browser-profile-contract-and-native-integration; original-upload-timeout-remains-open-with-timings-and-capture-on-next-failure",
+  "packetBeforeFix": {
+    "status": "completed",
+    "rows": [
+      {
+        "cycle": 1,
+        "phase": "bench-old",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "172.66.0.218",
+        "downloadMbps": 15.990260492706792,
+        "uploadMbps": 2.5700827277616587,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 42.626986713175405,
+        "peakRssKiB": 85220,
+        "shortSample": false
+      },
+      {
+        "cycle": 1,
+        "phase": "bench-native",
+        "implementation": "native",
+        "status": "passed",
+        "serverIp": "172.66.0.218",
+        "downloadMbps": 3.485388916926243,
+        "uploadMbps": 3.4254388455032365,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 7.499223212868842,
+        "peakRssKiB": 71268,
+        "shortSample": false
+      },
+      {
+        "cycle": 1,
+        "phase": "bench-restored",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "172.66.0.218",
+        "downloadMbps": 30.856986258357576,
+        "uploadMbps": 3.3808437042523196,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 46.7179449840122,
+        "peakRssKiB": 89420,
+        "shortSample": false
+      },
+      {
+        "cycle": 2,
+        "phase": "bench-old",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "172.66.0.218",
+        "downloadMbps": 46.2028975192566,
+        "uploadMbps": 2.162505111996792,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 29.31931977452806,
+        "peakRssKiB": 91632,
+        "shortSample": false
+      },
+      {
+        "cycle": 2,
+        "phase": "bench-native",
+        "implementation": "native",
+        "status": "passed",
+        "serverIp": "172.66.0.218",
+        "downloadMbps": 3.6420583755885345,
+        "uploadMbps": 3.475011497061228,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 7.708147352788592,
+        "peakRssKiB": 71384,
+        "shortSample": false
+      },
+      {
+        "cycle": 2,
+        "phase": "bench-restored",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "172.66.0.218",
+        "downloadMbps": 28.248452489213808,
+        "uploadMbps": 3.457222297379763,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 48.041069483506064,
+        "peakRssKiB": 88608,
+        "shortSample": false
+      },
+      {
+        "cycle": 3,
+        "phase": "bench-old",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "172.66.0.218",
+        "downloadMbps": 39.56132074516389,
+        "uploadMbps": 3.413672024228552,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 41.170353465874456,
+        "peakRssKiB": 91844,
+        "shortSample": false
+      },
+      {
+        "cycle": 3,
+        "phase": "bench-native",
+        "implementation": "native",
+        "status": "passed",
+        "serverIp": "172.66.0.218",
+        "downloadMbps": 3.596057605126405,
+        "uploadMbps": 3.500251400645833,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 7.928547696336103,
+        "peakRssKiB": 67716,
+        "shortSample": false
+      },
+      {
+        "cycle": 3,
+        "phase": "bench-restored",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "172.66.0.218",
+        "downloadMbps": 32.16943061055044,
+        "uploadMbps": 3.007462922980708,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 44.8307783488512,
+        "peakRssKiB": 90388,
+        "shortSample": false
+      }
+    ],
+    "statistics": {
+      "legacy": {
+        "downloadMbps": {
+          "count": 6,
+          "median": 31.513208434454008,
+          "min": 15.990260492706792,
+          "max": 46.2028975192566
+        },
+        "uploadMbps": {
+          "count": 6,
+          "median": 3.194153313616514,
+          "min": 2.162505111996792,
+          "max": 3.457222297379763
+        },
+        "cpuMeanOneCorePercent": {
+          "count": 6,
+          "median": 43.7288825310133,
+          "min": 29.31931977452806,
+          "max": 48.041069483506064
+        },
+        "peakRssKiB": {
+          "count": 6,
+          "median": 89904,
+          "min": 85220,
+          "max": 91844
+        }
+      },
+      "native": {
+        "downloadMbps": {
+          "count": 3,
+          "median": 3.596057605126405,
+          "min": 3.485388916926243,
+          "max": 3.6420583755885345
+        },
+        "uploadMbps": {
+          "count": 3,
+          "median": 3.475011497061228,
+          "min": 3.4254388455032365,
+          "max": 3.500251400645833
+        },
+        "cpuMeanOneCorePercent": {
+          "count": 3,
+          "median": 7.708147352788592,
+          "min": 7.499223212868842,
+          "max": 7.928547696336103
+        },
+        "peakRssKiB": {
+          "count": 3,
+          "median": 71268,
+          "min": 67716,
+          "max": 71384
+        }
+      }
+    },
+    "warnings": [
+      "legacy-baseline-varies-over-25-percent"
+    ],
+    "reportSha256": "799c76d3496086b6ea43ba7296fc4116749c7005910cca05b6c76d063fdeb672",
+    "cycles": [
+      {
+        "id": "run-7qAT1I",
+        "status": "passed",
+        "rollback": "verified",
+        "guard": "verified",
+        "uploads": {
+          "bench-old": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 12.434218,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995311280,
+                "connectSeconds": 0.114883,
+                "tlsSeconds": 0.242789,
+                "readySeconds": 0.243848,
+                "firstByteSeconds": 12.434168,
+                "localPort": 64416,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 11.849929,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995311284,
+                "connectSeconds": 0.114527,
+                "tlsSeconds": 0.241594,
+                "readySeconds": 0.242603,
+                "firstByteSeconds": 11.849862,
+                "localPort": 64415,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 11.022971,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995311286,
+                "connectSeconds": 0.114287,
+                "tlsSeconds": 0.240721,
+                "readySeconds": 0.241548,
+                "firstByteSeconds": 11.022932,
+                "localPort": 64417,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 13.032379,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995311289,
+                "connectSeconds": 0.114163,
+                "tlsSeconds": 0.241161,
+                "readySeconds": 0.242594,
+                "firstByteSeconds": 13.032347,
+                "localPort": 64418,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-native": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.624267,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995384421,
+                "connectSeconds": 0.275778,
+                "tlsSeconds": 0.364753,
+                "readySeconds": 0.364995,
+                "firstByteSeconds": 8.624188,
+                "localPort": 65376,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.773959,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995384424,
+                "connectSeconds": 0.275643,
+                "tlsSeconds": 0.364474,
+                "readySeconds": 0.364735,
+                "firstByteSeconds": 9.773904,
+                "localPort": 65377,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.515598,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995384426,
+                "connectSeconds": 0.275562,
+                "tlsSeconds": 0.366303,
+                "readySeconds": 0.366543,
+                "firstByteSeconds": 9.515534,
+                "localPort": 65378,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.255607,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995384428,
+                "connectSeconds": 0.273436,
+                "tlsSeconds": 0.363019,
+                "readySeconds": 0.363262,
+                "firstByteSeconds": 9.255538,
+                "localPort": 65379,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-restored": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.530868,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995444670,
+                "connectSeconds": 0.087062,
+                "tlsSeconds": 0.181671,
+                "readySeconds": 0.182481,
+                "firstByteSeconds": 8.530827,
+                "localPort": 50132,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.886486,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995444695,
+                "connectSeconds": 0.08708,
+                "tlsSeconds": 0.182837,
+                "readySeconds": 0.183485,
+                "firstByteSeconds": 9.886447,
+                "localPort": 50134,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.809304,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995444696,
+                "connectSeconds": 0.086713,
+                "tlsSeconds": 0.182461,
+                "readySeconds": 0.183146,
+                "firstByteSeconds": 8.809219,
+                "localPort": 50133,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.708153,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995444699,
+                "connectSeconds": 0.085374,
+                "tlsSeconds": 0.17704,
+                "readySeconds": 0.177562,
+                "firstByteSeconds": 9.708114,
+                "localPort": 50135,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ]
+        },
+        "nativeFinalCounters": {
+          "atMs": 63279,
+          "event": "state",
+          "state": "stopped",
+          "generation": 0,
+          "txPackets": 6715,
+          "rxPackets": 9096,
+          "droppedPackets": 5
+        },
+        "nativeStateCounts": {
+          "idle": 1,
+          "connecting": 1,
+          "handshake": 1,
+          "ready": 1,
+          "stopped": 1
+        },
+        "timeLimitedDownloads": {
+          "bench-old": 0,
+          "bench-native": 4,
+          "bench-restored": 0
+        }
+      },
+      {
+        "id": "run-pvx35f",
+        "status": "passed",
+        "rollback": "verified",
+        "guard": "verified",
+        "uploads": {
+          "bench-old": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 15.495529,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995471307,
+                "connectSeconds": 0.086116,
+                "tlsSeconds": 0.198938,
+                "readySeconds": 0.199644,
+                "firstByteSeconds": 15.495517,
+                "localPort": 50470,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 6.892897,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995471312,
+                "connectSeconds": 0.085739,
+                "tlsSeconds": 0.193186,
+                "readySeconds": 0.194255,
+                "firstByteSeconds": 6.892886,
+                "localPort": 50471,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 7.438817,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995471317,
+                "connectSeconds": 0.084418,
+                "tlsSeconds": 0.191673,
+                "readySeconds": 0.192633,
+                "firstByteSeconds": 7.438804,
+                "localPort": 50472,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 7.887666,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995471319,
+                "connectSeconds": 0.085433,
+                "tlsSeconds": 0.192399,
+                "readySeconds": 0.193099,
+                "firstByteSeconds": 7.887619,
+                "localPort": 50473,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-native": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.633603,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995545866,
+                "connectSeconds": 0.28363,
+                "tlsSeconds": 0.369521,
+                "readySeconds": 0.369729,
+                "firstByteSeconds": 9.633571,
+                "localPort": 51274,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.67033,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995545873,
+                "connectSeconds": 0.282829,
+                "tlsSeconds": 0.368371,
+                "readySeconds": 0.368595,
+                "firstByteSeconds": 8.670287,
+                "localPort": 51275,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.450396,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995545876,
+                "connectSeconds": 0.280902,
+                "tlsSeconds": 0.36638,
+                "readySeconds": 0.366605,
+                "firstByteSeconds": 9.450349,
+                "localPort": 51276,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.609864,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995545878,
+                "connectSeconds": 0.277618,
+                "tlsSeconds": 0.363072,
+                "readySeconds": 0.363296,
+                "firstByteSeconds": 9.609761,
+                "localPort": 51277,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-restored": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.007301,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995605596,
+                "connectSeconds": 0.083014,
+                "tlsSeconds": 0.17459,
+                "readySeconds": 0.175521,
+                "firstByteSeconds": 9.007254,
+                "localPort": 51944,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.072252,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995605605,
+                "connectSeconds": 0.082386,
+                "tlsSeconds": 0.173139,
+                "readySeconds": 0.173994,
+                "firstByteSeconds": 8.072146,
+                "localPort": 51945,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.921695,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995605608,
+                "connectSeconds": 0.08098,
+                "tlsSeconds": 0.17134,
+                "readySeconds": 0.172105,
+                "firstByteSeconds": 8.921631,
+                "localPort": 51946,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.675214,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995605611,
+                "connectSeconds": 0.081503,
+                "tlsSeconds": 0.172189,
+                "readySeconds": 0.172837,
+                "firstByteSeconds": 9.675166,
+                "localPort": 51947,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ]
+        },
+        "nativeFinalCounters": {
+          "atMs": 61792,
+          "event": "state",
+          "state": "stopped",
+          "generation": 0,
+          "txPackets": 6752,
+          "rxPackets": 9518,
+          "droppedPackets": 5
+        },
+        "nativeStateCounts": {
+          "idle": 1,
+          "connecting": 1,
+          "handshake": 1,
+          "ready": 1,
+          "stopped": 1
+        },
+        "timeLimitedDownloads": {
+          "bench-old": 0,
+          "bench-native": 4,
+          "bench-restored": 0
+        }
+      },
+      {
+        "id": "run-apVyiv",
+        "status": "passed",
+        "rollback": "verified",
+        "guard": "verified",
+        "uploads": {
+          "bench-old": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.413492,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995631928,
+                "connectSeconds": 0.083296,
+                "tlsSeconds": 0.170695,
+                "readySeconds": 0.170974,
+                "firstByteSeconds": 8.413481,
+                "localPort": 52301,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.807247,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995631933,
+                "connectSeconds": 0.083686,
+                "tlsSeconds": 0.18052,
+                "readySeconds": 0.18077,
+                "firstByteSeconds": 9.807177,
+                "localPort": 52302,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.851376,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995631936,
+                "connectSeconds": 0.082023,
+                "tlsSeconds": 0.170535,
+                "readySeconds": 0.170812,
+                "firstByteSeconds": 8.851298,
+                "localPort": 52303,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.276425,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995631938,
+                "connectSeconds": 0.080283,
+                "tlsSeconds": 0.176354,
+                "readySeconds": 0.176633,
+                "firstByteSeconds": 9.276402,
+                "localPort": 52304,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-native": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.566648,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995701875,
+                "connectSeconds": 0.310148,
+                "tlsSeconds": 0.40283,
+                "readySeconds": 0.403547,
+                "firstByteSeconds": 9.566595,
+                "localPort": 53202,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.563719,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995701878,
+                "connectSeconds": 0.311081,
+                "tlsSeconds": 0.402659,
+                "readySeconds": 0.403423,
+                "firstByteSeconds": 8.563692,
+                "localPort": 53203,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 8.814489,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995701880,
+                "connectSeconds": 0.309179,
+                "tlsSeconds": 0.401495,
+                "readySeconds": 0.402192,
+                "firstByteSeconds": 8.814461,
+                "localPort": 53204,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 9.498701,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995701882,
+                "connectSeconds": 0.308744,
+                "tlsSeconds": 0.400775,
+                "readySeconds": 0.40149,
+                "firstByteSeconds": 9.498673,
+                "localPort": 53205,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-restored": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 11.130015,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995761011,
+                "connectSeconds": 0.082461,
+                "tlsSeconds": 0.188422,
+                "readySeconds": 0.188894,
+                "firstByteSeconds": 11.129932,
+                "localPort": 53995,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 7.414324,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995761018,
+                "connectSeconds": 0.082378,
+                "tlsSeconds": 0.174137,
+                "readySeconds": 0.174872,
+                "firstByteSeconds": 7.414312,
+                "localPort": 53994,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 6.832815,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995761021,
+                "connectSeconds": 0.081562,
+                "tlsSeconds": 0.172464,
+                "readySeconds": 0.173164,
+                "firstByteSeconds": 6.832804,
+                "localPort": 53996,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 6.400708,
+              "remoteIp": "172.66.0.218",
+              "timing": {
+                "startedUnixMs": 1792995761023,
+                "connectSeconds": 0.081045,
+                "tlsSeconds": 0.171033,
+                "readySeconds": 0.171742,
+                "firstByteSeconds": 6.400695,
+                "localPort": 53997,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ]
+        },
+        "nativeFinalCounters": {
+          "atMs": 62653,
+          "event": "state",
+          "state": "stopped",
+          "generation": 0,
+          "txPackets": 6839,
+          "rxPackets": 9220,
+          "droppedPackets": 5
+        },
+        "nativeStateCounts": {
+          "idle": 1,
+          "connecting": 1,
+          "handshake": 1,
+          "ready": 1,
+          "stopped": 1
+        },
+        "timeLimitedDownloads": {
+          "bench-old": 0,
+          "bench-native": 4,
+          "bench-restored": 0
+        }
+      }
+    ]
+  },
+  "packetCapture": {
+    "snaplen": 128,
+    "packets": {
+      "usb": 300085,
+      "uplink": 265025,
+      "exit": 376117
+    },
+    "kernelDropped": {
+      "usb": 0,
+      "uplink": 0,
+      "exit": 0
+    },
+    "sha256": {
+      "usb": "4ad71fe5748a6e3efd57e2c160ab0bdcbd83602653a38814201f34943a9cbf06",
+      "uplink": "0983bcc44cef650679f295f81e3bdcd06bd8fd38ba0b0c48e60705c69b4b0314",
+      "exit": "309f255ad5504d65f1d04978e5e3116c546434948a31124f745df00be9e9394c"
+    },
+    "rawPacketsCommitted": false
+  },
+  "packetWindowFinding": {
+    "observedBeforeFixMbps": {
+      "downloadMedian": 3.596057605126405,
+      "uploadMedian": 3.475011497061228
+    },
+    "oldStreamAndConnectionCredit": 65535,
+    "newStreamAndConnectionCredit": 1048576,
+    "queueLimitsChanged": false,
+    "fixRevision": "5f99f43",
+    "relatedToOriginalUploadTimeout": "not-established",
+    "physicalAfterFix": "completed",
+    "binaries": {
+      "clientArm64": "56f7f56e64cb61ec65aac0abd0cdc52c7caccac7b5b39212e5bd94b2ef87ff67",
+      "exitX86_64": "e714ebf56e06d7cbf151064c15904cbcdcb50e8834b646ee57d8eb93a6fcf4e8"
+    },
+    "validation": {
+      "clientCTest": "7/7",
+      "exitCTest": "7/7",
+      "exitIntegration": "18/18-session-events-multi-peer-combo",
+      "windowAdvertisement": "stream-and-connection-regression"
+    },
+    "comparisonLimits": [
+      "sequential-WAN-runs-not-controlled-A-B",
+      "different-origin-IP-before-and-after",
+      "short-upload-samples",
+      "CPU-process-tree-whole-phase-not-kernel-or-exit"
+    ]
+  },
+  "packetAfterFix": {
+    "status": "completed",
+    "rows": [
+      {
+        "cycle": 1,
+        "phase": "bench-old",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 10.40820447367464,
+        "uploadMbps": 26.48138965301891,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 29.97856402792233,
+        "peakRssKiB": 93032,
+        "shortSample": true
+      },
+      {
+        "cycle": 1,
+        "phase": "bench-native",
+        "implementation": "native",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 33.6624247403949,
+        "uploadMbps": 17.823475157098475,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 30.06120003446462,
+        "peakRssKiB": 71872,
+        "shortSample": true
+      },
+      {
+        "cycle": 1,
+        "phase": "bench-restored",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 17.98295059230412,
+        "uploadMbps": 17.06228411179768,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 65.83235727974424,
+        "peakRssKiB": 90692,
+        "shortSample": true
+      },
+      {
+        "cycle": 2,
+        "phase": "bench-old",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 39.60633142505917,
+        "uploadMbps": 26.85089022066553,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 68.71780482029881,
+        "peakRssKiB": 94212,
+        "shortSample": true
+      },
+      {
+        "cycle": 2,
+        "phase": "bench-native",
+        "implementation": "native",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 36.05569439178999,
+        "uploadMbps": 16.753771191439085,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 27.744526462888906,
+        "peakRssKiB": 71620,
+        "shortSample": true
+      },
+      {
+        "cycle": 2,
+        "phase": "bench-restored",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 17.95587988864528,
+        "uploadMbps": 6.056909741401422,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 56.65041233370625,
+        "peakRssKiB": 94392,
+        "shortSample": false
+      },
+      {
+        "cycle": 3,
+        "phase": "bench-old",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 40.3675605965503,
+        "uploadMbps": 26.342544646138695,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 65.0099526696157,
+        "peakRssKiB": 96964,
+        "shortSample": true
+      },
+      {
+        "cycle": 3,
+        "phase": "bench-native",
+        "implementation": "native",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 27.66108676674442,
+        "uploadMbps": 17.708352145422253,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 30.328060155893965,
+        "peakRssKiB": 71556,
+        "shortSample": true
+      },
+      {
+        "cycle": 3,
+        "phase": "bench-restored",
+        "implementation": "legacy",
+        "status": "passed",
+        "serverIp": "162.159.140.220",
+        "downloadMbps": 32.79185435278936,
+        "uploadMbps": 27.647246453913706,
+        "cpuStatus": "sampled",
+        "cpuMeanOneCorePercent": 73.82127632971563,
+        "peakRssKiB": 85116,
+        "shortSample": true
+      }
+    ],
+    "statistics": {
+      "legacy": {
+        "downloadMbps": {
+          "count": 6,
+          "median": 25.38740247254674,
+          "min": 10.40820447367464,
+          "max": 40.3675605965503
+        },
+        "uploadMbps": {
+          "count": 6,
+          "median": 26.4119671495788,
+          "min": 6.056909741401422,
+          "max": 27.647246453913706
+        },
+        "cpuMeanOneCorePercent": {
+          "count": 6,
+          "median": 65.42115497467998,
+          "min": 29.97856402792233,
+          "max": 73.82127632971563
+        },
+        "peakRssKiB": {
+          "count": 6,
+          "median": 93622,
+          "min": 85116,
+          "max": 96964
+        }
+      },
+      "native": {
+        "downloadMbps": {
+          "count": 3,
+          "median": 33.6624247403949,
+          "min": 27.66108676674442,
+          "max": 36.05569439178999
+        },
+        "uploadMbps": {
+          "count": 3,
+          "median": 17.708352145422253,
+          "min": 16.753771191439085,
+          "max": 17.823475157098475
+        },
+        "cpuMeanOneCorePercent": {
+          "count": 3,
+          "median": 30.06120003446462,
+          "min": 27.744526462888906,
+          "max": 30.328060155893965
+        },
+        "peakRssKiB": {
+          "count": 3,
+          "median": 71620,
+          "min": 71556,
+          "max": 71872
+        }
+      }
+    },
+    "warnings": [
+      "some-transfers-under-3s-startup-overhead-significant",
+      "legacy-baseline-varies-over-25-percent"
+    ],
+    "reportSha256": "46bc843d325ed41f0752d89049523956862ecdfebe0f51ea28d70f3ec248ab4d",
+    "cycles": [
+      {
+        "id": "run-VH5Khb",
+        "status": "passed",
+        "rollback": "verified",
+        "guard": "verified",
+        "uploads": {
+          "bench-old": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.204268,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996575155,
+                "connectSeconds": 0.081915,
+                "tlsSeconds": 0.173594,
+                "readySeconds": 0.174349,
+                "firstByteSeconds": 1.204213,
+                "localPort": 64260,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.141158,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996575163,
+                "connectSeconds": 0.084399,
+                "tlsSeconds": 0.1799,
+                "readySeconds": 0.180388,
+                "firstByteSeconds": 1.140918,
+                "localPort": 64261,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.170113,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996575166,
+                "connectSeconds": 0.084892,
+                "tlsSeconds": 0.1806,
+                "readySeconds": 0.181084,
+                "firstByteSeconds": 1.170018,
+                "localPort": 64262,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.236478,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996575168,
+                "connectSeconds": 0.085252,
+                "tlsSeconds": 0.180966,
+                "readySeconds": 0.181456,
+                "firstByteSeconds": 1.23639,
+                "localPort": 64263,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-native": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.869399,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996627919,
+                "connectSeconds": 0.081379,
+                "tlsSeconds": 0.168763,
+                "readySeconds": 0.168934,
+                "firstByteSeconds": 1.869332,
+                "localPort": 64891,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.821814,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996627920,
+                "connectSeconds": 0.081249,
+                "tlsSeconds": 0.167445,
+                "readySeconds": 0.167632,
+                "firstByteSeconds": 1.821748,
+                "localPort": 64892,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.827252,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996627921,
+                "connectSeconds": 0.080918,
+                "tlsSeconds": 0.166672,
+                "readySeconds": 0.166867,
+                "firstByteSeconds": 1.827195,
+                "localPort": 64893,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.712451,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996627922,
+                "connectSeconds": 0.08142,
+                "tlsSeconds": 0.166225,
+                "readySeconds": 0.166417,
+                "firstByteSeconds": 1.712395,
+                "localPort": 64894,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-restored": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.954471,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996688095,
+                "connectSeconds": 0.081824,
+                "tlsSeconds": 0.169772,
+                "readySeconds": 0.169961,
+                "firstByteSeconds": 1.954398,
+                "localPort": 49167,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.887861,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996688097,
+                "connectSeconds": 0.081819,
+                "tlsSeconds": 0.168367,
+                "readySeconds": 0.168601,
+                "firstByteSeconds": 1.887792,
+                "localPort": 49168,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.829347,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996688098,
+                "connectSeconds": 0.082107,
+                "tlsSeconds": 0.167342,
+                "readySeconds": 0.167541,
+                "firstByteSeconds": 1.829253,
+                "localPort": 49170,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.89619,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996688099,
+                "connectSeconds": 0.081554,
+                "tlsSeconds": 0.167649,
+                "readySeconds": 0.167832,
+                "firstByteSeconds": 1.896115,
+                "localPort": 49169,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ]
+        },
+        "timeLimitedDownloads": {
+          "bench-old": 1,
+          "bench-native": 0,
+          "bench-restored": 0
+        },
+        "nativeFinalCounters": {
+          "atMs": 46734,
+          "event": "state",
+          "state": "stopped",
+          "generation": 0,
+          "txPackets": 20433,
+          "rxPackets": 27226,
+          "droppedPackets": 4
+        },
+        "nativeStateCounts": {
+          "idle": 1,
+          "connecting": 1,
+          "handshake": 1,
+          "ready": 1,
+          "stopped": 1
+        }
+      },
+      {
+        "id": "run-om7wk2",
+        "status": "passed",
+        "rollback": "verified",
+        "guard": "verified",
+        "uploads": {
+          "bench-old": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.105624,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996713210,
+                "connectSeconds": 0.08193,
+                "tlsSeconds": 0.177593,
+                "readySeconds": 0.17829,
+                "firstByteSeconds": 1.105576,
+                "localPort": 49416,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.134595,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996713218,
+                "connectSeconds": 0.081795,
+                "tlsSeconds": 0.186753,
+                "readySeconds": 0.187407,
+                "firstByteSeconds": 1.134559,
+                "localPort": 49417,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.222542,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996713221,
+                "connectSeconds": 0.079976,
+                "tlsSeconds": 0.186337,
+                "readySeconds": 0.186915,
+                "firstByteSeconds": 1.222489,
+                "localPort": 49418,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.128448,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996713223,
+                "connectSeconds": 0.079181,
+                "tlsSeconds": 0.182918,
+                "readySeconds": 0.183678,
+                "firstByteSeconds": 1.128409,
+                "localPort": 49419,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-native": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.977287,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996760915,
+                "connectSeconds": 0.081749,
+                "tlsSeconds": 0.172667,
+                "readySeconds": 0.173287,
+                "firstByteSeconds": 1.977247,
+                "localPort": 49962,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.764666,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996760924,
+                "connectSeconds": 0.081191,
+                "tlsSeconds": 0.172013,
+                "readySeconds": 0.172623,
+                "firstByteSeconds": 1.764592,
+                "localPort": 49963,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.705615,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996760927,
+                "connectSeconds": 0.079909,
+                "tlsSeconds": 0.169497,
+                "readySeconds": 0.170351,
+                "firstByteSeconds": 1.705561,
+                "localPort": 49964,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.870137,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996760929,
+                "connectSeconds": 0.080236,
+                "tlsSeconds": 0.170685,
+                "readySeconds": 0.171406,
+                "firstByteSeconds": 1.870041,
+                "localPort": 49965,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-restored": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.095383,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996824904,
+                "connectSeconds": 0.083374,
+                "tlsSeconds": 0.17508,
+                "readySeconds": 0.175856,
+                "firstByteSeconds": 1.095352,
+                "localPort": 50775,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.159326,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996824910,
+                "connectSeconds": 0.082698,
+                "tlsSeconds": 0.175489,
+                "readySeconds": 0.17626,
+                "firstByteSeconds": 1.159315,
+                "localPort": 50776,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.176548,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996824913,
+                "connectSeconds": 0.081257,
+                "tlsSeconds": 0.174672,
+                "readySeconds": 0.175313,
+                "firstByteSeconds": 1.176537,
+                "localPort": 50777,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 5.514025,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996824915,
+                "connectSeconds": 0.085816,
+                "tlsSeconds": 0.178595,
+                "readySeconds": 0.179174,
+                "firstByteSeconds": 5.51393,
+                "localPort": 50778,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ]
+        },
+        "timeLimitedDownloads": {
+          "bench-old": 0,
+          "bench-native": 0,
+          "bench-restored": 0
+        },
+        "nativeFinalCounters": {
+          "atMs": 41929,
+          "event": "state",
+          "state": "stopped",
+          "generation": 0,
+          "txPackets": 21347,
+          "rxPackets": 27488,
+          "droppedPackets": 4
+        },
+        "nativeStateCounts": {
+          "idle": 1,
+          "connecting": 1,
+          "handshake": 1,
+          "ready": 1,
+          "stopped": 1
+        }
+      },
+      {
+        "id": "run-r6H0z7",
+        "status": "passed",
+        "rollback": "verified",
+        "guard": "verified",
+        "uploads": {
+          "bench-old": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.215282,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996848234,
+                "connectSeconds": 0.082877,
+                "tlsSeconds": 0.172405,
+                "readySeconds": 0.172609,
+                "firstByteSeconds": 1.21526,
+                "localPort": 51143,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.185039,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996848235,
+                "connectSeconds": 0.082706,
+                "tlsSeconds": 0.172003,
+                "readySeconds": 0.172189,
+                "firstByteSeconds": 1.185017,
+                "localPort": 51144,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.262486,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996848237,
+                "connectSeconds": 0.082068,
+                "tlsSeconds": 0.169735,
+                "readySeconds": 0.169925,
+                "firstByteSeconds": 1.262461,
+                "localPort": 51145,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.043999,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996848238,
+                "connectSeconds": 0.081617,
+                "tlsSeconds": 0.168447,
+                "readySeconds": 0.168647,
+                "firstByteSeconds": 1.043989,
+                "localPort": 51146,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-native": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.881435,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996898897,
+                "connectSeconds": 0.084246,
+                "tlsSeconds": 0.172811,
+                "readySeconds": 0.17299,
+                "firstByteSeconds": 1.881372,
+                "localPort": 51786,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.73472,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996898898,
+                "connectSeconds": 0.084121,
+                "tlsSeconds": 0.171145,
+                "readySeconds": 0.171349,
+                "firstByteSeconds": 1.734696,
+                "localPort": 51787,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.691974,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996898899,
+                "connectSeconds": 0.083698,
+                "tlsSeconds": 0.170588,
+                "readySeconds": 0.170789,
+                "firstByteSeconds": 1.691955,
+                "localPort": 51788,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.826815,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996898900,
+                "connectSeconds": 0.083153,
+                "tlsSeconds": 0.170102,
+                "readySeconds": 0.170308,
+                "firstByteSeconds": 1.826728,
+                "localPort": 51789,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ],
+          "bench-restored": [
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.193332,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996948273,
+                "connectSeconds": 0.090001,
+                "tlsSeconds": 0.183623,
+                "readySeconds": 0.183824,
+                "firstByteSeconds": 1.193312,
+                "localPort": 52360,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.113596,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996948275,
+                "connectSeconds": 0.089651,
+                "tlsSeconds": 0.183239,
+                "readySeconds": 0.183454,
+                "firstByteSeconds": 1.113564,
+                "localPort": 52359,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.193723,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996948276,
+                "connectSeconds": 0.090326,
+                "tlsSeconds": 0.184787,
+                "readySeconds": 0.184977,
+                "firstByteSeconds": 1.193706,
+                "localPort": 52361,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            },
+            {
+              "code": 0,
+              "reason": null,
+              "httpStatus": 200,
+              "tlsVerify": 0,
+              "bytes": 1048576,
+              "seconds": 1.201784,
+              "remoteIp": "162.159.140.220",
+              "timing": {
+                "startedUnixMs": 1792996948277,
+                "connectSeconds": 0.090056,
+                "tlsSeconds": 0.185153,
+                "readySeconds": 0.185327,
+                "firstByteSeconds": 1.201762,
+                "localPort": 52362,
+                "remotePort": 443
+              },
+              "passed": true,
+              "timeLimited": false
+            }
+          ]
+        },
+        "timeLimitedDownloads": {
+          "bench-old": 0,
+          "bench-native": 0,
+          "bench-restored": 0
+        },
+        "nativeFinalCounters": {
+          "atMs": 44545,
+          "event": "state",
+          "state": "stopped",
+          "generation": 0,
+          "txPackets": 20559,
+          "rxPackets": 27298,
+          "droppedPackets": 4
+        },
+        "nativeStateCounts": {
+          "idle": 1,
+          "connecting": 1,
+          "handshake": 1,
+          "ready": 1,
+          "stopped": 1
+        }
+      }
+    ]
+  },
+  "engineDropCounterScope": "Final aggregate includes all TUN traffic and lifecycle; no per-reason evidence in these runs. Nonzero counts preserved; not a zero-engine-drop claim.",
+  "packetAfterFixCapture": {
+    "snaplen": 128,
+    "packets": {
+      "usb": 385470,
+      "uplink": 328682,
+      "exit": 445199
+    },
+    "kernelDropped": {
+      "usb": 0,
+      "uplink": 0,
+      "exit": 0
+    },
+    "rawPacketsCommitted": false,
+    "sha256": {
+      "usb": "3f4a307218f9b050898adf68e915a422daaf25612b30f5dc088bad346e4f8f94",
+      "uplink": "9173cb222e8a8dbd86c815c9adc3a24d139e8f9185a5fa4f7982f3c1f58531a3",
+      "exit": "10e0b8c4af82b01215d62c49366db4b5e864b4a66cef358d2867e0991dd93a02"
+    },
+    "nativeUploadsCorrelatedUsbOrigin": 12,
+    "byteCountMatchUsbOrigin": true,
+    "correlationLimit": "inner TLS correlated on USB and exit-to-origin only; packet tunnel uplink encrypted; byte counts not integrity proof"
+  },
+  "summary": {
+    "completedBenchmarkCycles": 9,
+    "nativeSuccessfulUploads": 36,
+    "legacySuccessfulUploads": 72,
+    "originalUploadTimeoutReproduced": false,
+    "originalUploadTimeoutFixed": false,
+    "windowFixAccepted": "physical-throughput-and-integration-regression",
+    "nativePacketMedianMbpsBefore": {
+      "download": 3.596057605126405,
+      "upload": 3.475011497061228
+    },
+    "nativePacketMedianMbpsAfter": {
+      "download": 33.6624247403949,
+      "upload": 17.708352145422253
+    },
+    "downloadPolicy": "Timed 20-second HTTP200 downloads can pass throughput criteria with partial bodies; not all downloads are full-file transfers."
+  },
+  "postFixComboCrash": {
+    "status": "passed",
+    "transport": "combo-tls",
+    "checks": {
+      "old": {
+        "status": "ipv4-smoke-passed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 2,
+        "httpsSeconds": [
+          0.469073,
+          0.434578
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 1.773894
+        }
+      },
+      "native": {
+        "status": "ipv4-smoke-passed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 2,
+        "httpsSeconds": [
+          0.45257,
+          0.457666
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 3.186772
+        }
+      },
+      "restored": {
+        "status": "ipv4-smoke-passed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 2,
+        "httpsSeconds": [
+          0.483907,
+          0.430215
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 3.937577
+        }
+      }
+    },
+    "rollback": "verified",
+    "guard": "verified",
+    "limitations": [
+      "not-speedtest-or-throughput-benchmark",
+      "exit-lifecycle-managed-separately-not-verified-by-client-report",
+      "no-browser-profile-fidelity",
+      "crash-scope-engine-only-not-worker-or-host",
+      "capture-only-selected-ipv4-https-not-ipv6-or-dns-or-all-egress"
+    ],
+    "usb": {
+      "status": "passed",
+      "phases": {
+        "baseline": {
+          "phase": "baseline",
+          "status": "passed",
+          "dnsPassed": 4,
+          "httpsPassed": 3,
+          "downloadBytes": 1048576,
+          "exitIp": "154.62.226.216",
+          "blockedAttempts": 0,
+          "recoveryMs": 0,
+          "elapsedMs": 3091,
+          "observedAfterMs": 4530
+        },
+        "native": {
+          "phase": "native",
+          "status": "passed",
+          "dnsPassed": 4,
+          "httpsPassed": 3,
+          "downloadBytes": 1048576,
+          "exitIp": "154.62.226.216",
+          "blockedAttempts": 0,
+          "recoveryMs": 0,
+          "elapsedMs": 2844,
+          "observedAfterMs": 3777
+        },
+        "blocked": {
+          "phase": "blocked",
+          "status": "passed",
+          "dnsPassed": 0,
+          "httpsPassed": 0,
+          "downloadBytes": 0,
+          "exitIp": null,
+          "blockedAttempts": 2,
+          "recoveryMs": 0,
+          "elapsedMs": 6049,
+          "observedAfterMs": 6790
+        },
+        "restored": {
+          "phase": "restored",
+          "status": "passed",
+          "dnsPassed": 4,
+          "httpsPassed": 3,
+          "downloadBytes": 1048576,
+          "exitIp": "154.62.226.216",
+          "blockedAttempts": 0,
+          "recoveryMs": 0,
+          "elapsedMs": 2701,
+          "observedAfterMs": 3776
+        }
+      },
+      "scope": "authenticated-Mac-USB-with-independent-selected-ipv4-uplink-capture",
+      "fault": {
+        "kind": "native-engine-sigkill",
+        "requestedPhysicalUplinkChange": false,
+        "crashVerified": true,
+        "fallbackRouteVerified": true
+      },
+      "capture": {
+        "status": "passed",
+        "scope": "wlan0-outbound-ipv4-tcp-443-to-1.1.1.1-only",
+        "directPackets": 0,
+        "encryptedExitPackets": 473,
+        "capturedPackets": 473,
+        "kernelDropped": 0,
+        "complete": true,
+        "payloadStored": false
+      }
+    },
+    "started": "2026-10-26T06:43:54.359Z",
+    "seconds": 109,
+    "runId": "run-61FBxz",
+    "reportSha256": "9b26989db8c0867da66c2fe743befeb7f66f0144907e5f3c20de64a9f4011c11",
+    "engineSigkillSeen": true
+  },
+  "beforeFixEngineSourceRevision": "e22afd0188af278c4bf8298a3e072633ad65378c",
+  "afterFixEngineSourceRevision": "5f99f430aba198479ab6af00b4d126aa723e4aa4",
+  "cleanup": {
+    "exitTrial": "completed-requested-engine-exit-0",
+    "exitTemporaryTunAbsent": true,
+    "exitForwardPolicy": "DROP",
+    "exitForwardJumps": [
+      "DOCKER-USER",
+      "DOCKER-FORWARD"
+    ],
+    "exitPostrouting": "original-docker-masquerade-only",
+    "exitIpForward": 1,
+    "exitDockerAndXui": "active",
+    "exitTemporaryBuildSwap": "removed",
+    "radxaLegacy": "active",
+    "radxaKillSwitch": "active",
+    "radxaUsbRescue": "active",
+    "radxaDnsmasq": "active",
+    "radxaTrial": "inactive-dead",
+    "radxaNtpSynchronized": true,
+    "diagnosticCaptures": "stopped",
+    "macNetworkSettingsChanged": false,
+    "permanentExitInstalled": false,
+    "postCleanupInternet": "temporary-exit-stopped; legacy-config-restored-but-no-exit-service-remains; USB-rescue-preserved"
+  }
+}
