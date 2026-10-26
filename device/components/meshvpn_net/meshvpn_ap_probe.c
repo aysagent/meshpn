@@ -26,6 +26,14 @@ static meshvpn_ap_flow_t s_flows[8];
 static uint64_t s_seen[8];
 static unsigned s_next;
 static portMUX_TYPE s_flow_lock = portMUX_INITIALIZER_UNLOCKED;
+static err_t output(struct netif *, struct pbuf *, const ip4_addr_t *);
+/* Default Wi-Fi netifs acquire output during start, after LAN registration. */
+static void attach_output(void)
+{
+    if (s_ap && s_ap->output && s_ap->output != output) {
+        s_output = s_ap->output; s_ap->output = output;
+    }
+}
 
 static uint16_t r16(const uint8_t *p) { return ((uint16_t)p[0] << 8) | p[1]; }
 static uint32_t r32(const uint8_t *p) { return ((uint32_t)r16(p) << 16) | r16(p + 2); }
@@ -81,6 +89,7 @@ void meshvpn_ap_probe_flows(meshvpn_ap_flow_t out[8])
 void meshvpn_ap_probe_input(const struct pbuf *p, const struct netif *inp)
 {
     if (!p || !inp) return;
+    attach_output(); /* TCP/IP thread; also handles a restarted netif. */
     if (inp != s_ap && inp != s_sta) return;
     uint8_t h[80]; size_t n = pbuf_copy_partial(p, h, sizeof(h), 0);
     if (inp == s_ap && n >= 20 && !memcmp(h + 16, &netif_ip4_addr(s_ap)->addr, 4)) return;
@@ -126,9 +135,7 @@ static err_t output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst)
 }
 void meshvpn_ap_probe_attach(struct netif *ap, struct netif *sta)
 {
-    s_sta = sta;
-    if (!ap || ap == s_ap || !ap->output) return;
-    s_ap = ap; s_output = ap->output; ap->output = output;
+    s_sta = sta; s_ap = ap;
 }
 static esp_err_t emit(void *arg)
 {
@@ -158,6 +165,7 @@ static esp_err_t emit(void *arg)
 typedef struct { unsigned proto; SemaphoreHandle_t done; bool started; uint8_t flags; } start_t;
 static esp_err_t begin(void *arg)
 {
+    attach_output();
     start_t *start = arg;
     start->flags = (s_ap && netif_is_up(s_ap) ? 1 : 0) | (s_ap && netif_is_link_up(s_ap) ? 2 : 0) |
         (s_ap && s_ap->napt ? 4 : 0) | (s_sta && netif_is_up(s_sta) ? 8 : 0) |

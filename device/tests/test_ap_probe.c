@@ -86,7 +86,9 @@ int main(void)
 {
  struct netif ap={.up=true,.link=true,.napt=true,.output=ordinary},sta={.up=true,.link=true};
  uint8_t a[]={192,168,11,1},b[]={192,168,1,11};memcpy(&ap.ip.addr,a,4);memcpy(&sta.ip.addr,b,4);
- meshvpn_ap_probe_attach(&ap,&sta);assert(ap.output==output);
+ /* Registration precedes default Wi-Fi netif start/output initialization. */
+ ap.output=NULL;meshvpn_ap_probe_attach(&ap,&sta);assert(s_ap==&ap&&!s_output);
+ ap.output=ordinary;
  meshvpn_ap_probe_result_t r[2];assert(meshvpn_ap_probe_run(r)==ESP_OK);
  for(unsigned i=0;i<2;i++)assert(r[i].received&&r[i].checksums_ok&&!r[i].error&&r[i].interface_flags==31);
  assert(r[1].flags==0x12&&resets==1&&sends==3&&!ordinary_output&&!live_sem&&!live_pbuf&&!s_probe.active);
