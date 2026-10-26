@@ -19,7 +19,7 @@ const metadata = { schema: 1, id: 'unit-capture', identity: { browser: 'test-fix
 const negotiated = { alpn: 'h2', tlsVersion: 'TLSv1.3', sessionReused: false };
 const u16 = n => { const b = Buffer.alloc(2); b.writeUInt16BE(n); return b; };
 const vector = b => Buffer.concat([u16(b.length), b]);
-function wire({ reverse = false, cipher = 4865, signature = 1027, unsupported = false, padding = false, fragmented = false } = {}) {
+function wire({ reverse = false, cipher = 4865, signature = 1027, unsupported = false, compression = null, padding = false, fragmented = false } = {}) {
   const ext = (id, bytes) => Buffer.concat([u16(id), vector(bytes)]);
   const name = Buffer.from('secret.capture.invalid');
   let extensions = [ext(0, vector(Buffer.concat([Buffer.from([0]), vector(name)]))),
@@ -27,7 +27,8 @@ function wire({ reverse = false, cipher = 4865, signature = 1027, unsupported = 
     ext(51, vector(Buffer.concat([u16(29), vector(Buffer.alloc(32, 0x77))]))),
     ext(45, Buffer.from([1, 1])), ext(43, Buffer.from([2, 3, 4])), ext(0x1a1a, Buffer.from([0]))];
   if (reverse) extensions.reverse();
-  if (unsupported) extensions.push(ext(27, Buffer.from([2, 0, 2])));
+  if (unsupported || compression !== null) extensions.push(ext(27, Buffer.concat([Buffer.from([2]), u16(compression ?? 2)])));
+  if (unsupported) extensions.push(ext(50, Buffer.from([0, 2, 4, 3])));
   if (padding) extensions.push(ext(21, Buffer.alloc(7)));
   const body = Buffer.concat([u16(771), Buffer.alloc(32, 0x33), Buffer.from([0]),
     vector(Buffer.concat([u16(0x2a2a), u16(cipher)])), Buffer.from([1, 0]), vector(Buffer.concat(extensions))]);
@@ -73,7 +74,7 @@ test('unsupported extensions and inconsistent fields cannot become a candidate',
     inconsistent.add(wire({ cipher: i === 1 ? 4866 : 4865 }), negotiated);
   }
   const b = unsupported.snapshot(); assert.equal(b.assessment.status, 'unsupported');
-  assert.deepEqual(b.assessment.unsupported, ['extension:27']); assert.equal(b.assessment.candidateProfile, null);
+  assert.deepEqual(b.assessment.unsupported, ['extension:50']); assert.equal(b.assessment.candidateProfile, null);
   assert.deepEqual(b.samples[0].layout.certificateCompression, [2]);
   const signatures = new BrowserCapture(metadata); signatures.add(wire({ signature: 0x0904 }), negotiated);
   assert.deepEqual(signatures.snapshot().assessment.unsupported, ['signature:2308']);
@@ -82,6 +83,18 @@ test('unsupported extensions and inconsistent fields cannot become a candidate',
   const fixed = structuredClone(metadata); fixed.context.extensionOrder = 'fixed';
   const c = new BrowserCapture(fixed); c.add(wire(), negotiated); c.add(wire({ reverse: true }), negotiated);
   assert.ok(c.snapshot().assessment.variations.includes('extension_types'));
+});
+
+test('capture carries supported Brotli algorithms and refuses unsupported compression', () => {
+  const good = new BrowserCapture(metadata), bad = new BrowserCapture(metadata);
+  for (let i = 0; i < 3; i++) {
+    good.add(wire({ compression: 2 }), negotiated);
+    bad.add(wire({ compression: 1 }), negotiated);
+  }
+  assert.equal(good.snapshot().assessment.status, 'candidate');
+  assert.deepEqual(good.snapshot().assessment.candidateProfile.tls.certificate_compression, [2]);
+  assert.equal(bad.snapshot().assessment.status, 'unsupported');
+  assert.deepEqual(bad.snapshot().assessment.unsupported, ['certificate-compression-algorithms']);
 });
 
 test('bounded parser and file reader refuse truncation, symlinks and oversized inputs', async t => {

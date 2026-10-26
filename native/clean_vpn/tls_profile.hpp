@@ -2,6 +2,7 @@
 // Opt-in, immutable cold ClientHello configuration. No captured key material,
 // opaque extension replay, trust overrides or browser-wide fidelity claims.
 #include "transparent_hello.hpp"
+#include "certificate_compression.hpp"
 #include <nlohmann/json.hpp>
 #include <openssl/ssl.h>
 #include <openssl/sha.h>
@@ -39,6 +40,7 @@ struct Profile {
   std::string id, sha256;
   std::vector<uint16_t> ciphers, groups, shares, signatures, extensions;
   bool optional_padding=false;
+  bool brotli=false;
   Bytes alpn;
   bool grease_enabled, permute, ech, ocsp, sct;
   uint16_t minimum;
@@ -49,21 +51,29 @@ struct Profile {
     id=j.at("id").get<std::string>(); require(!id.empty() && id.size()<=64,"profile_id");
     for (unsigned char c : id) require(std::isalnum(c)||c=='-'||c=='_'||c=='.',"profile_id");
     const auto& t=j.at("tls");
-    fields(t,{"min_version","max_version","cipher_suites","supported_groups","key_share_groups",
-      "signature_algorithms","alpn","grease","permute_extensions","ech_grease","ocsp","sct","extension_types","optional_extension_types"});
+    std::set<std::string> tls_fields={"min_version","max_version","cipher_suites","supported_groups","key_share_groups",
+      "signature_algorithms","alpn","grease","permute_extensions","ech_grease","ocsp","sct","extension_types","optional_extension_types"};
+    if(t.contains("certificate_compression"))tls_fields.insert("certificate_compression");
+    fields(t,tls_fields);
+    if(t.contains("certificate_compression")) {
+      auto algorithms=ids(t.at("certificate_compression"),1,true);
+      require(algorithms.empty() || algorithms==std::vector<uint16_t>{2},"profile_compression_unsupported");
+      brotli=!algorithms.empty();
+    }
     require(t.at("min_version").is_number_integer() && t.at("max_version").is_number_integer() &&
       (t.at("min_version")==771 || t.at("min_version")==772) && t.at("max_version")==772,"profile_versions");
     minimum=t.at("min_version").get<uint16_t>();
     ciphers=ids(t.at("cipher_suites"),32); groups=ids(t.at("supported_groups"),16);
     shares=ids(t.at("key_share_groups"),4,true); signatures=ids(t.at("signature_algorithms"),32);
     extensions=ids(t.at("extension_types"),32);
+    require(brotli==(std::find(extensions.begin(),extensions.end(),27)!=extensions.end()),"profile_compression_extension");
     auto optional=ids(t.at("optional_extension_types"),1,true);
     require(optional.empty() || optional==std::vector<uint16_t>{21},"profile_optional_extensions");
     optional_padding=!optional.empty();
     require(!optional_padding || std::find(extensions.begin(),extensions.end(),21)==extensions.end(),"profile_optional_overlap");
     require(std::find(extensions.begin(),extensions.end(),0)!=extensions.end(),"profile_sni_required");
     // No PSK/early_data/raw extras. The stack must implement every advertised extension.
-    for (auto n:extensions) require(n!=41 && n!=42 && n!=50 && n!=27 && n!=17513 && n!=17613,"profile_extension_unsupported");
+    for (auto n:extensions) require(n!=41 && n!=42 && n!=50 && n!=17513 && n!=17613,"profile_extension_unsupported");
     for (auto key:{"grease","permute_extensions","ech_grease","ocsp","sct"}) require(t.at(key).is_boolean(),"profile_boolean");
     grease_enabled=t.at("grease"); permute=t.at("permute_extensions"); ech=t.at("ech_grease"); ocsp=t.at("ocsp"); sct=t.at("sct");
     require(t.at("alpn")==json::array({"h2"}) || t.at("alpn")==json::array({"h2","http/1.1"}),"profile_alpn");
@@ -94,6 +104,7 @@ struct Profile {
     SSL_CTX_set_grease_enabled(ctx,grease_enabled); SSL_CTX_set_permute_extensions(ctx,permute);
     if(ocsp) SSL_CTX_enable_ocsp_stapling(ctx);
     if(sct) SSL_CTX_enable_signed_cert_timestamps(ctx);
+    if(brotli)require(certificate_compression::enable(ctx),"profile_compression_register");
   }
   void connection(SSL* ssl) const {
     require(SSL_set1_client_key_shares(ssl,shares.data(),shares.size())==1,"profile_key_shares");
@@ -122,6 +133,10 @@ struct Profile {
     if(permute){std::sort(wanted.begin(),wanted.end());std::sort(actual.begin(),actual.end());}
     require(wanted==actual,"profile_wire_extensions");
     auto ext=[&](uint16_t type) { require(ex.count(type),"profile_wire_missing_extension");return ex.at(type); };
+    if(brotli) {
+      auto [o,len]=ext(27);
+      require(len==3 && p[o]==2 && u16(p,o+1)==2,"profile_wire_compression");
+    }
     for(const auto& pair:std::vector<std::pair<uint16_t,std::vector<uint16_t>>>{{10,groups},{13,signatures}}) {
       auto [o,len]=ext(pair.first);require(len>=2 && u16(p,o)==len-2 && vector(o+2,len-2)==pair.second,"profile_wire_vector");
     }
@@ -148,7 +163,9 @@ struct Profile {
     return {{"id",id},{"sha256",sha256},{"scenario","cold"},{"tls",document.at("tls")},
       {"boringssl_revision","a7481f34712bc056a47ab91015536166b3a6cebb"},
       {"verification","generated-first-ClientHello-before-wire"},
-      {"limitations",{"not-full-browser-profile","no-HTTP2-or-HTTP-mimicry","no-resumption-or-0RTT","HRR-layout-not-profile-verified","no-certificate-compression-or-ALPS"}}};
+      {"certificate_compression",{{"algorithms",brotli?json::array({2}):json::array()},
+        {"max_certificate_bytes",certificate_compression::certificate_limit},{"decoder_memory_bytes",certificate_compression::memory_limit}}},
+      {"limitations",{"not-full-browser-profile","no-HTTP2-or-HTTP-mimicry","no-resumption-or-0RTT","HRR-layout-not-profile-verified","no-ALPS"}}};
   }
 };
 } // namespace cvpn::profile

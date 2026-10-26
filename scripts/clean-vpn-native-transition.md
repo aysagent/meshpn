@@ -8,6 +8,12 @@ packet path не является обязательной. Production-разв�
 
 ## Реализовано в текущем шаге
 
+2026-10-26: добавлен [native Brotli certificate decoder](clean-vpn-native-certificate-compression.md)
+с явными лимитами и opt-in полем TLS профиля. Production client обрабатывает
+CompressedCertificate через BoringSSL, сохраняя CA/hostname/PSK проверки;
+encoder и некорректные ответы существуют только в тестовом engine-fixture.
+Полная browser fidelity по-прежнему не заявляется; следующий шаг — ALPS/H2.
+
 2026-10-26, browser capture checkpoint: добавлены bounded loopback TLS 1.3/H2
 страница, серия измерений и отдельный Chromium/Podman стенд с одной командой
 `npm run lab:native:mac -- --browser-capture`. Сняты 20 fresh-process cold samples

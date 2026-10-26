@@ -1,5 +1,10 @@
 # clean-vpn: цели и порядок дальнейшей работы
 
+Следующий реализованный этап: [native Brotli certificate compression](clean-vpn-native-certificate-compression.md).
+Поддержка opt-in ext27/algorithm 2 с ограниченным decoder и проверкой настоящего
+CompressedCertificate. Дальше — ALPS с фактическими H2 settings; trust anchors,
+ML-DSA, session lifecycle и cipher policy остаются отдельными пробелами.
+
 Последний лабораторный checkpoint 2026-10-26:
 [реальная серия Chromium и страница захвата](clean-vpn-native-browser-capture.md).
 20 cold TLS 1.3/H2 samples сохранены отдельно от исполняемых профилей. Найдены

@@ -63,7 +63,9 @@ transcript. CA/hostname, exporter-bound PSK и обязательный negotiat
   Наблюдатель сохраняет фактический тип 21 и фактические JA3/JA4, не прячет отличие.
 - Raw extension bodies, random, captured public/private key bytes, tickets,
   PSK/binders, ранние данные, UA и HTTP settings в исполняемой схеме отсутствуют.
-  Certificate compression, ALPS, ext50 и resumption пока не поддержаны.
+  Brotli certificate compression включается отдельным `certificate_compression:[2]`
+  вместе с ext27; [реализация и лимиты](clean-vpn-native-certificate-compression.md).
+  Отсутствие поля/`[]` сохраняет прежнее поведение. ALPS, ext50 и resumption пока не поддержаны.
 
 Длина SNI и условия захвата могут менять padding; пример для localhost нельзя
 без проверки считать подходящим для любого имени exit.

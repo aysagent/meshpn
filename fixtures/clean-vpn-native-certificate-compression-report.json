@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-certificate-compression-checkpoint",
+  "date": "2026-10-26 Europe/Moscow",
+  "status": "bounded-brotli-client-decode-passed",
+  "baseRevision": "3c00ec841005f526d5cd3b498fcf1091be96f85a",
+  "sourceSha256": {
+    "native/clean_vpn/certificate_compression.hpp": "7c0a635e75b6035decef5a01066becc0ecdace631f019226d8c432851fc91d11",
+    "native/clean_vpn/tls_profile.hpp": "f66cdaf65a267c0e5f1ec0f681d705f01c4c00dbedd5956ff6ad592831f9efa0",
+    "native/clean_vpn/engine.cc": "296927a9639f7716815030b11e09d1df0d75e8cf9640eed16a857ccd53f463fd"
+  },
+  "linuxAmd64EngineSha256": "89f6c7817d58d3d99bd0c6a4704d18682148c1a3d084179b96686a5c34e7ab7b",
+  "brotli": {
+    "version": "1.2.0",
+    "revision": "028fb5a23661f123017c060daa546b55cf4bde29",
+    "linkage": "static-decoder-and-common-only-in-production"
+  },
+  "contract": {
+    "profileSchema": 1,
+    "optionalField": "tls.certificate_compression",
+    "enabledAlgorithms": [
+      2
+    ],
+    "missingOrEmpty": "disabled",
+    "extension": 27,
+    "prewireAlgorithmValidation": true,
+    "caHostnameAndPskChecksRetained": true,
+    "oldProfilesCompatible": true
+  },
+  "limits": {
+    "compressedInputBytes": 131072,
+    "uncompressedOutputBytes": 131072,
+    "decoderLiveAllocationBytes": 4194304,
+    "decoderCumulativeAllocationBytes": 16777216,
+    "outputBufferSeparateFromDecoderBudget": true,
+    "inheritedBoringSslChainLimitsStillApply": true,
+    "notTotalEngineRssLimit": true
+  },
+  "validation": {
+    "ctest": {
+      "passed": 9,
+      "failed": 0
+    },
+    "nativeCoreSessionAndProfileSuite": {
+      "passed": 24,
+      "failed": 0
+    },
+    "finalProfileSuiteNetworkNone": {
+      "passed": 9,
+      "failed": 0,
+      "note": "Overlaps profile tests in the 24-test native run."
+    },
+    "captureObserverBuildAndJaTests": {
+      "passed": 24,
+      "failed": 0
+    },
+    "sanitizers": {
+      "status": "passed",
+      "platform": "macOS arm64",
+      "instrumented": [
+        "callback",
+        "profile decoder",
+        "Brotli decoder/common"
+      ],
+      "limitation": "prebuilt BoringSSL not instrumented; not whole-engine ASAN"
+    },
+    "productionBinary": {
+      "decoderSymbolPresent": true,
+      "encoderSymbolPresent": false,
+      "testFixtureMarkerPresent": false
+    },
+    "handshakes": [
+      "uncompressed fallback",
+      "actual CompressedCertificate message 25",
+      "HRR with compression",
+      "combo Boring branch"
+    ],
+    "rejectedWithoutPacketInjection": [
+      "truncated Brotli",
+      "trailing bytes",
+      "wrong decompressed size",
+      "garbage stream",
+      "untrusted CA",
+      "wrong hostname",
+      "wrong exporter-bound PSK"
+    ],
+    "decoderChecks": [
+      "exact output sizes through 128 KiB",
+      "all truncations of test streams",
+      "oversized declared length",
+      "oversized input",
+      "trailing and concatenated streams",
+      "allocator budget refusal",
+      "byte mutations"
+    ]
+  },
+  "physicalHostsTouched": false,
+  "macNetworkSettingsChanged": false,
+  "limitations": [
+    "production exit encoder not enabled",
+    "synthetic profile; not full Chrome fidelity",
+    "ALPS/H2 pending",
+    "trust anchors and ML-DSA pending",
+    "session lifecycle pending",
+    "cipher policy incompatibility remains"
+  ],
+  "next": "ALPS with consistent actual HTTP/2 settings and server negotiation tests"
+}

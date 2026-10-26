@@ -79,7 +79,7 @@ NODE
   cmake --build native/clean_vpn/build --parallel 2 --target \
     clean-vpn-engine clean-vpn-engine-fixture protocol-test dns-wire-test dns-relay-test \
     integration-test service-notify-test socket-test transparent-test \
-    transparent-socket-test transparent-replay-test combo-test throughput-test tls-profile-test
+    transparent-socket-test transparent-replay-test combo-test throughput-test tls-profile-test certificate-compression-test
   ctest --test-dir native/clean_vpn/build --output-on-failure
 }
 

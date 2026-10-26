@@ -54,7 +54,7 @@ test('profile validation is strict, offline and reports effective immutable sett
   assert.equal(checkConfig(f,baseline,combo).status,0);
 });
 
-async function exchange(f,p,{mode='service',changes={},combo=false}={}) {
+async function exchange(f,p,{mode='service',changes={},combo=false,compression=null}={}) {
   const reserve=net.createServer();reserve.listen(0,'127.0.0.1');await once(reserve,'listening');const backend=reserve.address().port;await new Promise(r=>reserve.close(r));
   const captures=[],sockets=new Set(); captures.hrr=false;
   const proxy=net.createServer(client=>{
@@ -88,11 +88,13 @@ async function exchange(f,p,{mode='service',changes={},combo=false}={}) {
   fs.writeFileSync(f.dir+'/client.json',JSON.stringify(clientConfig));
   fs.writeFileSync(f.dir+'/exit.json',JSON.stringify(exitConfig));
   if(combo)execFileSync(build+'/clean-vpn-engine',['--init-transparent-replay',f.dir+'/exit.json'],{stdio:'pipe'});
-    const child=spawn(build+'/integration-test',[build+'/clean-vpn-engine-fixture',f.dir+'/client.json',f.dir+'/exit.json',...(mode==='full'?[]:[mode])],{stdio:['ignore','pipe','pipe']});
+    const child=spawn(build+'/integration-test',[build+'/clean-vpn-engine-fixture',f.dir+'/client.json',f.dir+'/exit.json',...(mode==='full'?[]:[mode])],{stdio:['ignore','pipe','pipe'],
+      env:{...process.env,...(compression?{CVPN_TEST_CERT_COMPRESSION:compression}:{})}});
     let output='';for(const s of [child.stdout,child.stderr])s.on('data',b=>{output+=b;if(output.length>262144)child.kill('SIGKILL');});
     const timeout=setTimeout(()=>child.kill('SIGKILL'),mode==='full'?80000:15000);
     let code;try{[code]=await once(child,'exit');}finally{clearTimeout(timeout);}
     assert.equal(code,0,output);assert.ok(captures.length>0&&captures.length<=16);
+    if(compression)assert.match(output,/fixture_compressed_certificate_sent/,'server did not send CompressedCertificate');
     return captures;
   } finally {for(const s of sockets)s.destroy();await new Promise(r=>proxy.close(r));}
 }
@@ -138,11 +140,11 @@ test('real native TCP ClientHello matches saved profile; keys/random fresh; fing
   const unsupportedWire=Buffer.from(captures[0]),body=parseFirstTlsClientHelloFromTcpBuf(unsupportedWire).clientHelloBody;
   let off=35+body[34];off+=2+body.readUInt16BE(off);off+=1+body[off];off+=2;
   while(body.readUInt16BE(off)!==13)off+=4+body.readUInt16BE(off+2);
-  // This fixture is one TLS record. Replace ext13 by an unsupported ext27;
+  // This fixture is one TLS record. Replace ext13 by an unsupported ext50;
   // the candidate must refuse the extension rather than discard its body.
-  unsupportedWire.writeUInt16BE(27,off+9);
+  unsupportedWire.writeUInt16BE(50,off+9);
   const unsupported=compileTlsProfileCandidate(unsupportedWire,{id:'unsupported',extensionOrder:'fixed',padding:'exact',echMode:'disabled'});
-  assert.equal(unsupported.status,'unsupported');assert.equal(unsupported.profile,null);assert.ok(unsupported.unsupported.includes('extension:27'));
+  assert.equal(unsupported.status,'unsupported');assert.equal(unsupported.profile,null);assert.ok(unsupported.unsupported.includes('extension:50'));
 
   const wrong=structuredClone(baseline);wrong.tls.cipher_suites.reverse();
   assert.ok(observeTlsProfile(captures[0],wrong).differences.some(d=>d.field==='cipher_suites'));
@@ -190,4 +192,36 @@ test('profile reconnect, blackhole and backpressure keep descriptors bounded and
   assert.ok(captures.length>=6);
   for(const wire of captures)assert.equal(observeTlsProfile(wire,baseline).status,'matched');
   assert.equal(new Set(captures.map(w=>parseFirstTlsClientHelloFromTcpBuf(w).clientHelloBody.subarray(2,34).toString('hex'))).size,captures.length);
+});
+
+function compressedProfile() {
+  const p=structuredClone(baseline);p.id='synthetic-brotli';
+  p.tls.certificate_compression=[2];p.tls.extension_types.push(27);p.tls.permute_extensions=true;return p;
+}
+test('Brotli profile checks algorithms before wire and negotiates actual compressed certificates', {timeout:45000},async t=>{
+  const f=fixture(t),p=compressedProfile();assert.equal(checkConfig(f,p).status,0);
+  assert.equal(fs.readFileSync(build+'/clean-vpn-engine').includes(Buffer.from('fixture_compressed_certificate_sent')),false);
+  for(const algorithms of [[1],[2,2],[2,3],'brotli',null,[]]) {
+    const bad=structuredClone(p);bad.tls.certificate_compression=algorithms;assert.equal(checkConfig(f,bad).status,1);
+  }
+  const missing=structuredClone(p);missing.tls.extension_types=missing.tls.extension_types.filter(n=>n!==27);
+  assert.equal(checkConfig(f,missing).status,1);
+  for(const options of [{},{compression:'valid'},{compression:'valid',combo:true}]) {
+    const fresh=fixture(t);
+    for(const wire of await exchange(fresh,p,options)) {
+      const r=observeTlsProfile(wire,p);assert.equal(r.status,'matched');assert.deepEqual(r.actual.certificate_compression,[2]);
+      const candidate=compileTlsProfileCandidate(wire,{id:'brotli-roundtrip',extensionOrder:'permuted',padding:'exact',echMode:'disabled'});
+      assert.equal(candidate.status,'candidate');assert.deepEqual(candidate.profile.tls.certificate_compression,[2]);
+      assert.equal(checkConfig(f,candidate.profile).status,0);
+    }
+  }
+  const hrr=structuredClone(p);hrr.tls.key_share_groups=[];
+  const captures=await exchange(f,hrr,{compression:'valid'});assert.equal(captures.hrr,true);
+});
+test('compressed certificates do not bypass CA hostname PSK checks or malformed-stream rejection', {timeout:120000},async t=>{
+  const f=fixture(t),other=fixture(t),p=compressedProfile();
+  for(const compression of ['truncated','trailing','wrong-size','garbage'])
+    await exchange(f,p,{compression,mode:'reject'});
+  for(const changes of [{ca:other.cert},{server_name:'wrong.localhost'},{secret_path:other.secret}])
+    await exchange(f,p,{compression:'valid',mode:'reject',changes});
 });

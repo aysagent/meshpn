@@ -144,6 +144,10 @@ HRR browser fidelity и семантическая поддержка недос
 
 Обнаруженные пробелы задают следующий порядок работ:
 
+Обновление: [Brotli certificate compression](clean-vpn-native-certificate-compression.md)
+реализована следующим этапом. Исторический bundle ниже не переоценивается и не
+изменяется; полная совместимость этого браузера ещё отсутствует.
+
 1. Certificate compression (ext 27, Brotli/algorithm 2): настоящая bounded
    декомпрессия и проверка handshake при выборе сервером, не raw body replay.
 2. ALPS (ext 17613): реализация согласованных H2 settings вместе с фактическим

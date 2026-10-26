@@ -7,6 +7,9 @@
 #include "transparent_config.hpp"
 #include "combo.hpp"
 #include "tls_profile.hpp"
+#ifdef CVPN_TEST_PACKET_FD
+#include "certificate_compression_fixture.hpp"
+#endif
 #include <nlohmann/json.hpp>
 #include <nghttp2/nghttp2.h>
 #include <openssl/ssl.h>
@@ -604,7 +607,7 @@ int main(int argc,char** argv){
       std::cout<<json({{"version",1},{"engine","clean-vpn-native-m1"},{"transport","boring-tls"},
         {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2"}},
         {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
-        {"experimental_tls_profiles",{{"schema",1},{"scenario","cold"},{"prewire_check",true},{"transports",{"boring-tls","combo-tls-boring"}}}},
+        {"experimental_tls_profiles",{{"schema",1},{"scenario","cold"},{"prewire_check",true},{"certificate_compression",{2}},{"transports",{"boring-tls","combo-tls-boring"}}}},
         {"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
         {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"destination_policies",{"explicit-ipv4-destinations","public-https"}},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true}}},
           {"combo-tls",{{"roles",{"client","exit"}},{"single_exit_listener",true},{"client_stdio_control",true},{"packet_ipc",false},{"site_provisioning",true}}}}}}).dump()<<"\n";return 0;
@@ -658,6 +661,9 @@ int main(int argc,char** argv){
     } else {
       check(SSL_CTX_use_certificate_chain_file(ctx.get(),c.cert.c_str())==1&&SSL_CTX_use_PrivateKey_file(ctx.get(),c.key.c_str(),SSL_FILETYPE_PEM)==1&&SSL_CTX_check_private_key(ctx.get())==1,"server_key");
       SSL_CTX_set_alpn_select_cb(ctx.get(),alpn,nullptr);
+#ifdef CVPN_TEST_PACKET_FD
+      check(certificate_compression_fixture::enable(ctx.get()),"fixture_compression");
+#endif
     }
     if(initialize) {
       check(!c.client,"relay_init_exit_only");

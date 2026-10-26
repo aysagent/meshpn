@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-tls-profile",
+  "id": "synthetic-cold-brotli",
+  "scenario": "cold",
+  "tls": {
+    "min_version": 772,
+    "max_version": 772,
+    "cipher_suites": [
+      4865,
+      4867,
+      4866
+    ],
+    "supported_groups": [
+      29,
+      23
+    ],
+    "key_share_groups": [
+      29
+    ],
+    "signature_algorithms": [
+      1027,
+      2052,
+      2053,
+      2054
+    ],
+    "alpn": [
+      "h2"
+    ],
+    "grease": true,
+    "permute_extensions": true,
+    "ech_grease": false,
+    "ocsp": false,
+    "sct": false,
+    "extension_types": [
+      0,
+      10,
+      16,
+      13,
+      51,
+      45,
+      43,
+      27
+    ],
+    "optional_extension_types": [],
+    "certificate_compression": [
+      2
+    ]
+  }
+}
