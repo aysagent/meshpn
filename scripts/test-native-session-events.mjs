@@ -131,6 +131,11 @@ test('legacy multicast is discarded without reconnect, TUN delivery or flow-cont
   let connections = 0;
   const server = await startDateExit({ protocol: 'h2', secret, onBridge: sock => {
     ++connections; sock.on('error', () => {}); sock.pipe(sock);
+    // Observe the real engine's wire credit, not a copied settings helper.
+    // Both levels need more than the 64 KiB default; memory remains bounded.
+    for (const credit of [sock.session.remoteSettings.initialWindowSize, sock.session.state.remoteWindowSize]) {
+      assert.ok(credit >= 256 * 1024 && credit <= 1024 * 1024, `bounded WAN receive credit: ${credit}`);
+    }
     const first = multicastPacket([224, 0, 0, 22], 2, true);
     // Split the framing header and IPv4 header; then exceed the initial H2
     // flow-control window with discarded frames, followed by valid echo traffic.

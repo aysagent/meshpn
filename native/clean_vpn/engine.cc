@@ -352,8 +352,14 @@ struct Session {
     nghttp2_option_set_max_settings(option,16);
     nghttp2_option_set_max_reserved_remote_streams(option,0);
     h2check(config.client?nghttp2_session_client_new2(&h2,raw,this,option):nghttp2_session_server_new2(&h2,raw,this,option));
-    nghttp2_settings_entry settings[]={{NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS,1},{NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE,65535},{NGHTTP2_SETTINGS_MAX_HEADER_LIST_SIZE,8192}};
+    // Both H2 flow-control levels must cover a WAN bandwidth-delay product.
+    // A default 64 KiB window throttles packet traffic to a few Mbit/s at
+    // Internet RTTs. Keep credit bounded by the existing 1 MiB queue limit;
+    // step() still stops TLS reads when the packet queue lacks headroom.
+    constexpr int32_t receive_window=static_cast<int32_t>(queue_limit);
+    nghttp2_settings_entry settings[]={{NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS,1},{NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE,receive_window},{NGHTTP2_SETTINGS_MAX_HEADER_LIST_SIZE,8192}};
     h2check(nghttp2_submit_settings(h2,NGHTTP2_FLAG_NONE,settings,3));
+    h2check(nghttp2_session_set_local_window_size(h2,NGHTTP2_FLAG_NONE,0,receive_window));
     if(config.client){nghttp2_settings_entry no_push{NGHTTP2_SETTINGS_ENABLE_PUSH,0};h2check(nghttp2_submit_settings(h2,NGHTTP2_FLAG_NONE,&no_push,1));}
     if(config.client)submit_headers({{":method","POST"},{":path","/clean-vpn"},{":scheme","https"},{":authority",config.name},
       {"authorization","Bearer "+token(secret,exporter(ssl),int64_t(time(nullptr))/900)},{"accept","*/*"}},true);
