@@ -13,6 +13,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#if CONFIG_IDF_TARGET_ESP32P4
+#include "meshvpn_hosted_tx.h"
+#endif
 
 static const char *TAG = "meshvpn_wifi";
 enum { CMD_START, CMD_RELOAD, CMD_SELECT, CMD_PAUSE, CMD_SCAN };
@@ -50,6 +53,14 @@ static esp_err_t command(int kind, uint32_t id)
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
+#if CONFIG_IDF_TARGET_ESP32P4
+    if (base == WIFI_EVENT) {
+        if (id == WIFI_EVENT_STA_CONNECTED) meshvpn_hosted_tx_link(0, true);
+        else if (id == WIFI_EVENT_STA_DISCONNECTED || id == WIFI_EVENT_STA_STOP) meshvpn_hosted_tx_link(0, false);
+        else if (id == WIFI_EVENT_AP_START) meshvpn_hosted_tx_link(1, true);
+        else if (id == WIFI_EVENT_AP_STOP) meshvpn_hosted_tx_link(1, false);
+    }
+#endif
     if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP &&
         ((ip_event_got_ip_t *)data)->esp_netif != esp_netif_get_handle_from_ifkey("WIFI_STA_DEF")) return;
     portENTER_CRITICAL(&s_lock);
@@ -318,6 +329,10 @@ static void manager(void *arg)
 
 esp_err_t meshvpn_wifi_init(void)
 {
+#if CONFIG_IDF_TARGET_ESP32P4
+    esp_err_t tx_err = meshvpn_hosted_tx_init();
+    if (tx_err != ESP_OK) return tx_err;
+#endif
     s_commands = xQueueCreate(8, sizeof(command_t));
     if (!s_commands) return ESP_ERR_NO_MEM;
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_event, NULL));

@@ -1,9 +1,10 @@
 set(meshvpn_wifi_requires esp_wifi esp_netif esp_event esp_timer meshvpn_config meshvpn_vpn)
 if(IDF_TARGET STREQUAL "esp32p4")
     list(APPEND meshvpn_wifi_requires esp_hosted esp_driver_sdmmc)
+    set(meshvpn_hosted_tx_source "meshvpn_hosted_tx.c")
 endif()
 idf_component_register(
-    SRCS "meshvpn_wifi.c" "meshvpn_wifi_diag.c" "meshvpn_wifi_radio.c" "meshvpn_wifi_radio_config.c"
+    SRCS "meshvpn_wifi.c" "meshvpn_wifi_diag.c" "meshvpn_wifi_radio.c" "meshvpn_wifi_radio_config.c" ${meshvpn_hosted_tx_source}
     INCLUDE_DIRS "include"
     REQUIRES ${meshvpn_wifi_requires}
 )

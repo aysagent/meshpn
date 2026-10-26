@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Return a Wi-Fi TX memory error instead of asserting in ESP-Hosted 1.4.7."""
+"""Stage Wi-Fi TX in bounded PSRAM queues, outside lwIP (ESP-Hosted 1.4.7)."""
 
 import argparse
 from pathlib import Path
@@ -13,6 +13,22 @@ def patch(source: str) -> str:
         if source.count(old) != 1:
             raise ValueError(f"ESP-Hosted {interface} TX source changed; re-audit the memory patch")
         source = source.replace(old, new, 1)
+    for ifx, interface, following in ((0, "sta", "ap"), (1, "ap", "serial")):
+        name = f"transport_drv_{interface}_tx"
+        declaration = f"static esp_err_t {name}(void *h, void *buffer, size_t len)"
+        if source.count(declaration) != 1:
+            raise ValueError("ESP-Hosted TX callback changed; re-audit ownership")
+        source = source.replace(declaration, declaration.replace(name, name + "_direct"), 1)
+        next_decl = ("static esp_err_t transport_drv_ap_tx(" if following == "ap"
+                     else "esp_err_t transport_drv_serial_tx(")
+        if source.count(next_decl) != 1:
+            raise ValueError("ESP-Hosted TX callback order changed")
+        wrapper = (f"static esp_err_t {name}(void *h, void *buffer, size_t len)\n"
+                   "{\n"
+                   f"\treturn meshvpn_hosted_tx_submit({ifx}, h, buffer, len, {name}_direct);\n"
+                   "}\n\n")
+        source = source.replace(next_decl, wrapper + next_decl, 1)
+    source = '#include "meshvpn_hosted_tx.h"\n' + source
     return source
 
 

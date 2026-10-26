@@ -2,6 +2,8 @@
 if(CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE)
     idf_component_get_property(meshpn_hosted_lib espressif__esp_hosted COMPONENT_LIB)
     idf_component_get_property(meshpn_hosted_dir espressif__esp_hosted COMPONENT_DIR)
+    target_include_directories(${meshpn_hosted_lib} PRIVATE
+        "${CMAKE_SOURCE_DIR}/components/meshvpn_wifi/include")
     idf_build_get_property(meshpn_hosted_python PYTHON)
     set(meshpn_sdio_original "${meshpn_hosted_dir}/host/drivers/transport/sdio/sdio_drv.c")
     set(meshpn_sdio_generator "${CMAKE_SOURCE_DIR}/scripts/patch-esp-hosted-sdio.py")
@@ -57,7 +59,7 @@ if(CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE)
         message(FATAL_ERROR "Expected one ESP-Hosted transport source, found ${meshpn_transport_matches}")
     endif()
     set_property(TARGET ${meshpn_hosted_lib} PROPERTY SOURCES "${meshpn_transport_replaced}")
-    message(STATUS "MeshPN: ESP-Hosted Wi-Fi TX handles DMA allocation failure")
+    message(STATUS "MeshPN: ESP-Hosted Wi-Fi TX staged in PSRAM, bounded SDIO enqueue")
 
     # 1.4.7 drops get_protocol()'s interface argument and two getters read
     # missing/failed RPC responses. Patch a copy; keep managed sources intact.

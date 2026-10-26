@@ -163,6 +163,41 @@ def patch(source: str) -> str:
     source = replace_once(source, RX_COPY, RX_COPY_SAFE)
     source = replace_once(source, "\t\t\tassert(sendbuf);\n", "")
     source = replace_once(source, RX_COMPLETE, RX_COMPLETE_SYNC)
+    # The write task owns the driver mutex on entry. Waiting for C6 credits
+    # while holding it also prevents RX/throttle interrupts from being read.
+    # Only this task owns TX credits; let RX use the bus during each sleep,
+    # and reacquire before inspecting/reserving credits or doing any I/O.
+    source = replace_once(source,
+        "\t\t\t\tif (retry < MAX_WRITE_BUF_RETRIES/2)\n\t\t\t\t\tg_h.funcs->_h_msleep(1);",
+        "\t\t\t\tif (retry < MAX_WRITE_BUF_RETRIES/2) {\n"
+        "\t\t\t\t\tSDIO_DRV_UNLOCK();\n"
+        "\t\t\t\t\tg_h.funcs->_h_msleep(1);\n"
+        "\t\t\t\t\tSDIO_DRV_LOCK();\n\t\t\t\t}")
+    source = replace_once(source,
+        "\t\tret = sdio_is_write_buffer_available(buf_needed);",
+        "\t\tint64_t credit_start = esp_timer_get_time();\n"
+        "\t\tret = sdio_is_write_buffer_available(buf_needed);\n"
+        "\t\tmeshvpn_hosted_tx_buffers(esp_timer_get_time() - credit_start, ret != BUFFER_AVAILABLE);")
+    # Never block the lwIP caller (or our fair Wi-Fi worker) behind an SDIO
+    # descriptor queue. A rejected call frees its DMA copy and returns failure;
+    # no semaphore is posted, and the staging queue can retry its owned copy.
+    source = replace_once(source,
+        "\tg_h.funcs->_h_queue_item(to_slave_queue[pkt_prio], &buf_handle, HOSTED_BLOCK_MAX);\n"
+        "\tg_h.funcs->_h_post_semaphore(sem_to_slave_queue);",
+        "\tbool wifi = iface_type == ESP_STA_IF || iface_type == ESP_AP_IF;\n"
+        "\tint64_t enqueue_start = esp_timer_get_time();\n"
+        "\tint queued = g_h.funcs->_h_queue_item(to_slave_queue[pkt_prio], &buf_handle, wifi ? 0 : HOSTED_BLOCK_MAX);\n"
+        "\tif (wifi) meshvpn_hosted_tx_sdio(iface_type == ESP_AP_IF, esp_timer_get_time() - enqueue_start, queued != 0);\n"
+        "\tif (queued) {\n"
+        "\t\tH_FREE_PTR_WITH_FUNC(free_func, wbuffer);\n"
+        "\t\treturn ESP_ERR_ESP_NETIF_TX_FAILED;\n"
+        "\t}\n"
+        "\tg_h.funcs->_h_post_semaphore(sem_to_slave_queue);")
+    for value in (0, 1):
+        source = replace_once(source, f"\t\t\twifi_tx_throttling = {value};",
+            f"\t\t{{ wifi_tx_throttling = {value}; meshvpn_hosted_tx_throttle({value}); }}")
+    source = replace_once(source, "\t\tH_FREE_PTR_WITH_FUNC(free_func, sendbuf);\n",
+                          "\t\tH_FREE_PTR_WITH_FUNC(free_func, sendbuf);\n\t\tmeshvpn_hosted_tx_capacity();\n")
     # The upstream validator reads the header and optionally checksums the
     # declared packet before seeing the remaining stream length. Bound both
     # accesses first, including a truncated header after a valid packet.
@@ -195,7 +230,10 @@ def patch(source: str) -> str:
                           "\t\tif (!pkt_rxbuff) {\n\t\t\tmeshvpn_hosted_rx_drop(0, packet_size);\n")
     source = replace_once(source, "\t\t\t\tif (!copy_payload) {\n",
                           "\t\t\t\tif (!copy_payload) {\n\t\t\t\t\tmeshvpn_hosted_rx_drop(3, buf_handle->payload_len);\n")
-    source = "/* MeshPN bounded SDIO drop accounting; no payload retained. */\n#include \"esp_heap_caps.h\"\nextern void meshvpn_hosted_rx_drop(unsigned reason, unsigned bytes);\n" + source
+    source = ('/* MeshPN bounded SDIO queues and diagnostics. */\n'
+              '#include "esp_heap_caps.h"\n#include "esp_timer.h"\n'
+              '#include "meshvpn_hosted_tx.h"\n'
+              'extern void meshvpn_hosted_rx_drop(unsigned reason, unsigned bytes);\n' + source)
     return source
 
 

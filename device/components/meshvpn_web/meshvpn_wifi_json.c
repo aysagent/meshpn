@@ -4,6 +4,9 @@
 #include "meshvpn_wifi_diag.h"
 #include "meshvpn_wifi_radio.h"
 #include "sdkconfig.h"
+#if CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE
+#include "meshvpn_hosted_tx.h"
+#endif
 
 static void number_or_null(cJSON *obj, const char *name, esp_err_t err, int value)
 {
@@ -17,6 +20,9 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
     meshvpn_wifi_tx_snapshot(stats);
     cJSON *tx = cJSON_AddObjectToObject(wifi, "tx");
     cJSON_AddBoolToObject(tx, "available", true);
+#if CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE
+    cJSON_AddStringToObject(tx, "scope", "Wi-Fi API handoffs; accepted = staged copy, not SDIO/RF completion; remote by-ref delegation may also count an inner copy call; use hosted.tx_queue for unique frame counts");
+#endif
 #ifdef CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM
     cJSON_AddNumberToObject(tx, "static_rx_buffer_count", CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM);
 #endif
@@ -182,6 +188,45 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
     cJSON_AddNumberToObject(hosted, "configured_tx_queue", CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE);
     cJSON_AddNumberToObject(hosted, "configured_rx_queue", CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE);
     cJSON_AddStringToObject(hosted, "scope", "host configuration; not a throughput measurement");
+    meshvpn_hosted_tx_stats_t staged; meshvpn_hosted_tx_snapshot(&staged);
+    cJSON *queues = cJSON_AddObjectToObject(hosted, "tx_queue");
+    cJSON_AddBoolToObject(queues, "enabled", staged.enabled);
+    cJSON_AddStringToObject(queues, "scope", "since boot; owned PSRAM copies; sent = accepted into SDIO queue, not RF delivery; queue losses = full + invalid + not_ready + expired + stale + policy_changed + failed");
+    cJSON_AddNumberToObject(queues, "capacity_per_interface", MESHVPN_HOSTED_TX_SLOTS);
+    cJSON_AddNumberToObject(queues, "max_age_ms", MESHVPN_HOSTED_TX_MAX_AGE_US / 1000);
+    cJSON_AddBoolToObject(queues, "worker_active", staged.worker_active);
+    cJSON_AddNumberToObject(queues, "worker_interface", staged.worker_interface);
+    cJSON_AddNumberToObject(queues, "worker_age_us", staged.worker_age_us);
+    cJSON_AddNumberToObject(queues, "worker_stack_free", staged.worker_stack_free);
+    cJSON_AddNumberToObject(queues, "slave_buffer_calls", staged.slave_buffer_calls);
+    cJSON_AddNumberToObject(queues, "slave_buffer_unavailable", staged.slave_buffer_unavailable);
+    cJSON_AddNumberToObject(queues, "slave_buffer_us", staged.slave_buffer_us);
+    cJSON_AddNumberToObject(queues, "slave_buffer_max_us", staged.slave_buffer_max_us);
+    cJSON *throttle = cJSON_AddObjectToObject(queues, "throttle");
+    cJSON_AddBoolToObject(throttle, "active", staged.throttled);
+    cJSON_AddNumberToObject(throttle, "starts", staged.throttle_starts);
+    cJSON_AddNumberToObject(throttle, "stops", staged.throttle_stops);
+    cJSON_AddNumberToObject(throttle, "total_us", staged.throttle_us);
+    cJSON_AddNumberToObject(throttle, "max_us", staged.throttle_max_us);
+    cJSON_AddNumberToObject(throttle, "age_us", staged.throttle_age_us);
+    for (unsigned i = 0; i < 2; i++) {
+        cJSON *q = cJSON_AddObjectToObject(queues, i ? "ap" : "sta");
+        meshvpn_hosted_queue_stats_t *v = &staged.queue[i];
+#define FIELD(name) cJSON_AddNumberToObject(q, #name, (double)v->name)
+        FIELD(submitted); FIELD(enqueued); FIELD(sent); FIELD(full); FIELD(invalid);
+        FIELD(not_ready); FIELD(expired); FIELD(stale); FIELD(policy_changed);
+        FIELD(failed); FIELD(retries); FIELD(bytes_sent); FIELD(residence_us);
+        FIELD(residence_max_us); FIELD(send_us); FIELD(send_max_us);
+        FIELD(in_use); FIELD(high_water); FIELD(last_error);
+#undef FIELD
+        cJSON_AddBoolToObject(q, "link_up", staged.link_up[i]);
+        if (v->last_send_us) cJSON_AddNumberToObject(q, "last_send_age_ms", (esp_timer_get_time() - v->last_send_us) / 1000.0);
+        else cJSON_AddNullToObject(q, "last_send_age_ms");
+        cJSON_AddNumberToObject(q, "sdio_enqueue_calls", staged.sdio_calls[i]);
+        cJSON_AddNumberToObject(q, "sdio_enqueue_full", staged.sdio_full[i]);
+        cJSON_AddNumberToObject(q, "sdio_enqueue_us", staged.sdio_enqueue_us[i]);
+        cJSON_AddNumberToObject(q, "sdio_enqueue_max_us", staged.sdio_enqueue_max_us[i]);
+    }
     meshvpn_sdio_call_t io[4]; meshvpn_wifi_sdio_snapshot(io);
     cJSON *calls = cJSON_AddObjectToObject(hosted, "io");
     cJSON_AddStringToObject(calls, "scope", "since boot; completed host SDIO calls, padded transfer bytes; time includes lock wait and preemption; not RF statistics");
