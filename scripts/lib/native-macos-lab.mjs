@@ -18,7 +18,7 @@ export function parseNativeMacLabArgs(argv, env = process.env) {
     refreshBase: false,
   };
   for (const arg of argv) {
-    if (arg === '--prepare' || arg === '--multi-clients' || arg === '--tls-profiles' || arg === '--browser-capture' || arg === '--status' || arg === '--stop' || arg === '--help' || nativeMacLabModes.includes(arg)) {
+    if (arg === '--prepare' || arg === '--multi-clients' || arg === '--tls-profiles' || arg === '--browser-capture' || arg === '--http2-capture' || arg === '--status' || arg === '--stop' || arg === '--help' || nativeMacLabModes.includes(arg)) {
       assert.equal(value.action, null, 'choose exactly one lab action');
       value.action = arg;
       continue;

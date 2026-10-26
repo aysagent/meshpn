@@ -8,11 +8,19 @@ packet path не является обязательной. Production-разв�
 
 ## Реализовано в текущем шаге
 
+2026-10-26: [реальный HTTP/2 capture и сравнение](clean-vpn-native-http2-capture.md)
+готовы: 20 fresh-process Chromium samples и 6 native соединений, SETTINGS/windows,
+порядок и разрешённые значения заголовков, HEADERS priority и HPACK block size.
+Общая команда: `npm run lab:native:mac -- --http2-capture`. Результат — different,
+а не совместимый browser profile. Следующий шаг — явная политика TLS/H2
+совместимости и бюджета памяти для выбранного browser build; не повышать caps
+или копировать navigation headers автоматически ради совпадения.
+
 2026-10-26: реализован экспериментальный [ALPS/H2](clean-vpn-native-alps.md):
 new codepoint 17613, реальные negotiated server SETTINGS без лишнего ACK,
 профильные client SETTINGS/window, совместимость с exit без ALPS. Узкий adapter
-закреплён на nghttp2 revision. Следующий шаг — измерение реального браузерного H2
-и сравнение browser/native; профиль из одного ClientHello остаётся недостаточным.
+закреплён на nghttp2 revision. Измерение браузерного H2 выполнено следующим
+checkpoint выше; профиль из одного ClientHello остаётся недостаточным.
 
 2026-10-26: добавлен [native Brotli certificate decoder](clean-vpn-native-certificate-compression.md)
 с явными лимитами и opt-in полем TLS профиля. Production client обрабатывает

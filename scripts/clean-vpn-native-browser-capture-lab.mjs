@@ -65,13 +65,15 @@ try {
   }
   const bundle = server.snapshot();
   assert.equal(bundle.samples.length, count);
+  assert.equal(bundle.assessment.http2CompleteSamples,count);
+  assert.ok(bundle.samples.every(s=>s.http2.headers.names.includes('user-agent')));
   const report = { schema: 1, kind: 'clean-vpn-browser-capture-lab-report',
-    captureEndpoint: { implementation: 'Node.js http2', node: process.version, openssl: process.versions.openssl,
-      name: 'localhost', tls: 'TLSv1.3-only', alpn: ['h2'], sessionTickets: 'disabled',
+    captureEndpoint: { implementation: 'Node TLS -> loopback cleartext H2', node: process.version, openssl: process.versions.openssl,
+      name: 'localhost', h2Settings: {maxConcurrentStreams:4,maxHeaderListSize:8192}, alps: 'not-negotiated', tls: 'TLSv1.3-only', alpn: ['h2'], sessionTickets: 'disabled',
       certificate: 'ephemeral RSA-2048 leaf and private CA', clientCaValidation: 'enabled-no-bypass',
       note: 'Private test CA and automation flags are capture conditions, not a stock public-Web browser baseline.' },
     validation: { untrustedCertificateRejected: true, trustedH2Navigations: count,
-      sameConnectionReloadDeduplicated: true, downloadMatchesMemory: true,
+      sameConnectionReloadDeduplicated: true, downloadMatchesMemory: true, http2PrefixCaptured: true, sensitiveHeadersRedacted: true,
       network: 'container-loopback-only', browserSandbox: 'disabled-inside-disposable-unprivileged-container',
       hostTrustStoreChanged: false, physicalHostsTouched: false },
     browserLaunchArguments: launchArguments,

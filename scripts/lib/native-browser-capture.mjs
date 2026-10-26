@@ -67,7 +67,7 @@ export class BrowserCapture {
     this.maxSamples = maxSamples;
   }
   get size() { return this.#samples.length; }
-  add(wire, { alpn, tlsVersion, sessionReused }) {
+  add(wire, { alpn, tlsVersion, sessionReused }, http2 = null) {
     assert.ok(this.size < this.maxSamples, 'sample_limit');
     assert.equal(alpn, 'h2'); assert.equal(tlsVersion, 'TLSv1.3'); assert.equal(sessionReused, false);
     const c = this.#metadata.context;
@@ -75,6 +75,7 @@ export class BrowserCapture {
     const sample = { index: this.size + 1, observedAt: new Date().toISOString(),
       negotiated: { alpn, tlsVersion, sessionReused }, measurement: candidate.measurement,
       layout: helloLayout(wire), candidateStatus: candidate.status, unsupported: candidate.unsupported };
+    if(http2) sample.http2=structuredClone(http2);
     this.#samples.push({ sample, profile: candidate.profile });
     return structuredClone(sample);
   }
@@ -100,9 +101,10 @@ export class BrowserCapture {
       samples, assessment: { status, sampleCount: samples.length, unsupported, variations,
         distinctJa3: new Set(samples.map(s => s.measurement.ja3)).size,
         distinctJa4: new Set(samples.map(s => s.measurement.ja4.fingerprint)).size,
+        http2CompleteSamples: samples.filter(s=>s.http2?.status==='complete').length,
         candidateProfile, nativeValidated: false, browserEquivalent: false },
-      limitations: ['metadata-is-declared-not-attested', 'cold-first-ClientHello-only',
-        'no-HTTP2-frame-or-HTTP-header-fidelity', 'three-samples-is-only-a-minimum-not-statistical-proof',
+      limitations: ['metadata-is-declared-not-attested', 'cold-first-ClientHello-and-optional-first-request-H2',
+        'H2-prefix-not-full-HTTP-fidelity', 'three-samples-is-only-a-minimum-not-statistical-proof',
         'candidate-requires-native-check-config-and-independent-wire-comparison'] };
     // Integrity checksum of this JSON serialization, not publisher authentication.
     return structuredClone({ ...content, contentSha256: createHash('sha256').update(JSON.stringify(content)).digest('hex') });

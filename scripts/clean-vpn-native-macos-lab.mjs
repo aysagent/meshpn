@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Reproducible Linux x86-64 native lab entry point for Apple Silicon macOS. */
 import assert from 'node:assert/strict';
+import { compareHttp2Captures } from './lib/http2-capture-compare.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -78,6 +79,7 @@ function usage() {
   npm run lab:native:mac -- --prepare
   npm run lab:native:mac -- --tls-profiles
   npm run lab:native:mac -- --browser-capture
+  npm run lab:native:mac -- --http2-capture
   npm run lab:native:mac -- --multi-clients
   npm run lab:native:mac -- --native-combo-boot
   npm run lab:native:mac -- --native-combo-network
@@ -106,13 +108,25 @@ function main() {
   }
 
   const connection = ensureMachine(options.machine);
-  if (options.action === '--browser-capture') {
+  if (options.action === '--browser-capture' || options.action === '--http2-capture') {
     const browserRecipe = path.join(root, 'scripts/containers/clean-vpn-browser-capture.Containerfile');
     const browserImage = nativeMacBrowserImageTag(fs.readFileSync(browserRecipe));
     if (options.rebuildImage || invoke(['--connection', connection, 'image', 'exists', browserImage], { allowFailure: true }).status !== 0)
       invoke(['--connection', connection, 'build', '--platform=linux/arm64', '--file', browserRecipe,
         '--tag', browserImage, path.dirname(browserRecipe)]);
+    const combined = options.action === '--http2-capture';
+    const nativeImage = nativeMacLabImageTag(fs.readFileSync(containerfile));
+    const cache = `${options.machine}-cache`;
+    if(combined) {
+      assert.equal(invoke(['--connection',connection,'image','exists',nativeImage],{allowFailure:true}).status,0,
+        'Run --tls-profiles first to build the native fixture');
+      assert.equal(invoke(['--connection',connection,'run','--rm','--network=none','--platform=linux/amd64',
+        '--volume',`${cache}:/lab:ro`,nativeImage,'/bin/sh','-c',
+        'test -x /lab/worktree/native/clean_vpn/build/clean-vpn-engine-fixture && test -x /lab/worktree/native/clean_vpn/build/integration-test'],
+        {allowFailure:true}).status,0,'Run --tls-profiles first to build the native fixture');
+    }
     const name = `cvpn-browser-capture-${randomBytes(8).toString('hex')}`;
+    const nativeName = `${name}-native`;
     const exportRoot = path.join(os.homedir(), 'Library/Caches/meshpn-clean-vpn-lab/results');
     fs.mkdirSync(exportRoot, { recursive: true, mode: 0o700 });
     const output = path.join(exportRoot, `${name}.json`);
@@ -123,8 +137,22 @@ function main() {
         'node', 'scripts/clean-vpn-native-browser-capture-lab.mjs', '/tmp/browser-capture.json', '20']);
       invoke(['--connection', connection, 'cp', `${name}:/tmp/browser-capture.json`, output]);
       fs.chmodSync(output, 0o600);
-      console.log(JSON.stringify({ status: 'captured', output, image: browserImage, profileActivated: false }));
+      if(combined) {
+        const nativeOutput=path.join(exportRoot,`${nativeName}.json`);
+        const comparisonOutput=path.join(exportRoot,`${name}-comparison.json`);
+        invoke(['--connection',connection,'run','--name',nativeName,'--network=none','--platform=linux/amd64',
+          '--cap-drop=ALL','--security-opt=no-new-privileges','--pids-limit=128','--memory=1g',
+          '--volume',`${root}:/source:ro`,'--volume',`${cache}:/lab:ro`,'--workdir','/source',
+          '--env','CVPN_BUILD=/lab/worktree/native/clean_vpn/build',nativeImage,
+          'node','scripts/clean-vpn-native-h2-probe.mjs','/tmp/native-h2.json','fixtures/native-tls-profiles/cold-alps.json']);
+        invoke(['--connection',connection,'cp',`${nativeName}:/tmp/native-h2.json`,nativeOutput]);
+        fs.chmodSync(nativeOutput,0o600);
+        const comparison=compareHttp2Captures(JSON.parse(fs.readFileSync(output,'utf8')),JSON.parse(fs.readFileSync(nativeOutput,'utf8')));
+        fs.writeFileSync(comparisonOutput,JSON.stringify(comparison,null,2)+'\n',{mode:0o600,flag:'wx'});
+        console.log(JSON.stringify({status:comparison.status,browser:output,native:nativeOutput,comparison:comparisonOutput,profileActivated:false}));
+      }else console.log(JSON.stringify({ status: 'captured', output, image: browserImage, profileActivated: false }));
     } finally {
+      if(combined)invoke(['--connection',connection,'rm','--force',nativeName],{allowFailure:true});
       invoke(['--connection', connection, 'rm', '--force', name], { allowFailure: true });
     }
     return;

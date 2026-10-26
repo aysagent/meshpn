@@ -1,5 +1,8 @@
 # Серия браузерных захватов для native TLS профиля
 
+Новый [TLS + H2 checkpoint и сравнение с native](clean-vpn-native-http2-capture.md)
+добавляет измерение первых SETTINGS, окон и заголовков.
+
 Этот этап собирает **измерения**, а не включает мимикрию автоматически. Он
 отделён от старого `ja3-snif-server.mjs` и его helper-профилей. Native engine
 получает только свой строгий [cold TLS контракт](clean-vpn-native-tls-profiles.md).
@@ -87,7 +90,8 @@ ClientHello. Для другого браузера их нужно провер
 себе не доказывает, что это GREASE. `versionSource` — происхождение заявленного
 значения, не криптографическая аттестация клиента.
 
-Сервер слушает только `127.0.0.1` на случайном порту. В stdout — адрес с временным
+Внешняя точка захвата и два внутренних relay-слушателя используют только
+`127.0.0.1` и случайные порты. В stdout — адрес с временным
 случайным token. Откройте его, затем скачайте bundle по ссылке на странице.
 Измерения хранятся только в памяти: 180 секунд, максимум 32 образца и 8 соединений;
 до 64 KiB на первый ClientHello. Неправильные token/authority/method/Origin не
@@ -105,11 +109,16 @@ ClientHello. Для другого браузера их нужно провер
   groups, key-share groups/длины, sigalgs, versions, extension types.
 - Размеры TLS records, длина ClientHello, позиции GREASE ciphers, порядок и
   длины расширений до удаления GREASE, certificate compression algorithms.
-- Изменения стабильных полей между образцами и конкретные unsupported IDs.
+- Начальный H2 prefix до первого END_HEADERS: SETTINGS в wire-порядке, WINDOW_UPDATE,
+  frame order, размер HPACK block и priority в HEADERS. Порядок декодированных
+  заголовков и значения из явного публичного allowlist.
+- Изменения стабильных TLS-полей между образцами и конкретные unsupported IDs.
 - Контрольная сумма JSON-содержимого. Она не является подписью издателя.
 
 Нет raw ClientHello, key-share bytes, random, session-ID bytes, SNI текста,
-PSK binders, cookies, HTTP-заголовков, токена страницы или TLS secrets.
+PSK binders, значений Cookie/Authorization/URL/authority, токена страницы или TLS
+secrets. Сохраняются User-Agent, Accept/Accept-Language/Accept-Encoding, client hints
+и некоторые другие публичные значения; bundle теперь содержит и эти метаданные.
 Raw bytes нужны только кратковременно внутри observer и не экспортируются.
 
 `assessment.status`:
@@ -128,7 +137,11 @@ Raw bytes нужны только кратковременно внутри obse
 ради получения совпадающего JA-хеша. Необязательный padding остаётся в измерении
 и фактическом отпечатке.
 
-Сервер не измеряет H2 SETTINGS/frame order/HPACK или поведение HTTP-запросов.
+`assessment.status` по-прежнему оценивает TLS candidate. H2 evidence идёт отдельно
+в `samples[].http2`; наличие измерений не превращает их в исполняемый native профиль.
+Если авторизованный запрос не был первым в соединении, H2 отмечается unavailable:
+чужой initial prefix не сопоставляется с заголовками более позднего запроса.
+HPACK strategy, повторные потоки, resumption и timing не измеряются.
 Регистрация профиля для постоянного использования, его выбор в UI, resumption,
 HRR browser fidelity и семантическая поддержка недостающих расширений — следующие
 этапы. Эта страница даёт наблюдаемую исходную точку для этих доработок.
@@ -144,7 +157,8 @@ HRR browser fidelity и семантическая поддержка недос
 
 Обнаруженные пробелы задают следующий порядок работ:
 
-Обновление: [Brotli certificate compression](clean-vpn-native-certificate-compression.md)
+Обновление: [ALPS/H2](clean-vpn-native-alps.md) и [захват H2](clean-vpn-native-http2-capture.md)
+реализованы следующими checkpoint. [Brotli certificate compression](clean-vpn-native-certificate-compression.md)
 реализована следующим этапом. Исторический bundle ниже не переоценивается и не
 изменяется; полная совместимость этого браузера ещё отсутствует.
 

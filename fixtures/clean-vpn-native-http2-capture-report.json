@@ -1,0 +1,358 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-http2-capture-checkpoint",
+  "date": "2026-10-26 Europe/Moscow",
+  "baseRevision": "4599c5b",
+  "status": "measured-differences-not-browser-equivalence",
+  "artifacts": {
+    "browser": {
+      "path": "fixtures/native-browser-captures/chromium-linux-arm64-156.0.8078.47-h2.json",
+      "sha256": "c49bcf9a9ea453aceba7960cf260d24c19a53d18c341e10bc49f53d52c5af3df"
+    },
+    "native": {
+      "path": "fixtures/native-browser-captures/native-cold-alps-h2.json",
+      "sha256": "bc77147c66500d242498ecc5fcac2c09cf2a6abe63db0b04f05b7c2da5a407bd"
+    }
+  },
+  "validatedSourceSha256": {
+    "scripts/lib/http2-prefix-observer.mjs": "8926d917aa04677ff14d66e7b495aab223b7710fe0b2c356e14341ce63e8e3b5",
+    "scripts/lib/http2-capture-compare.mjs": "ce7147275d9581db5b6cd76eb4a33f3e020012c6fe47b3a90d3cafccc4f81d6b",
+    "scripts/lib/native-browser-capture-server.mjs": "f2ba69abc4c255cfbe5f4282fd6a3d15be1c6ab68e6cdfb3ede3f1382d1b5828",
+    "scripts/lib/native-browser-capture.mjs": "f3c8420b4aab0e12dade2f123907ac316d53f60c0deec858b403fba917483d0c",
+    "scripts/clean-vpn-native-browser-capture-lab.mjs": "66dcfb063037d87f4f7c4b0acf3f1521f8f5f3f77b37065f85a5a5c9414af772",
+    "scripts/clean-vpn-native-h2-probe.mjs": "82137b2479e93302134f7a78980b0d7adbbcbf0d9076bec952e446d852e20470",
+    "scripts/clean-vpn-native-macos-lab.mjs": "4d584830e40577ec4c27abe8b3e9c75177c9eaa2058d6b7badabdea1e98ae60c"
+  },
+  "nativeFixtureSha256": "fb0d10f6e06f2066e5163a97ade4533d4add031be79d347fef3cd57af21a8d75",
+  "nativeProfileSha256": "15630c0934fc6abfafa73ddf810326185cb7b1048e8ee3dab9c0a52ed5410271",
+  "captureConditions": {
+    "browser": {
+      "implementation": "Node TLS -> loopback cleartext H2",
+      "node": "v24.22.1",
+      "openssl": "3.5.9",
+      "name": "localhost",
+      "h2Settings": {
+        "maxConcurrentStreams": 4,
+        "maxHeaderListSize": 8192
+      },
+      "alps": "not-negotiated",
+      "tls": "TLSv1.3-only",
+      "alpn": [
+        "h2"
+      ],
+      "sessionTickets": "disabled",
+      "certificate": "ephemeral RSA-2048 leaf and private CA",
+      "clientCaValidation": "enabled-no-bypass",
+      "note": "Private test CA and automation flags are capture conditions, not a stock public-Web browser baseline."
+    },
+    "native": {
+      "implementation": "Node TLS -> loopback cleartext H2",
+      "node": "v24.22.1",
+      "openssl": "3.5.9",
+      "settings": {
+        "maxConcurrentStreams": 4,
+        "maxHeaderListSize": 8192
+      },
+      "alps": "not-negotiated",
+      "tls": "TLSv1.3-only"
+    }
+  },
+  "validation": {
+    "unitCaptureAndLabRegression": {
+      "passed": 31,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "network": "container-loopback-only"
+    },
+    "realBrowser": {
+      "samples": 20,
+      "freshProcesses": true,
+      "untrustedCaRejected": true,
+      "sameConnectionReloadDeduplicated": true,
+      "downloadMatchesMemory": true
+    },
+    "realNative": {
+      "samples": 6,
+      "expectedHttp403": true,
+      "packetInjection": false,
+      "usesTestSocketpairInsteadOfTun": true
+    },
+    "macWrapper": {
+      "command": "npm run lab:native:mac -- --http2-capture",
+      "completed": true,
+      "threeExportsMode": "0600",
+      "containerCleanup": true,
+      "note": "Additional full wrapper run; its samples are not added to the saved 20/6 baseline counts."
+    },
+    "parser": [
+      "byte fragmentation",
+      "CONTINUATION",
+      "padding and priority",
+      "truncation",
+      "frame size/count and prefix budget",
+      "malformed SETTINGS/WINDOW_UPDATE",
+      "suffix ignored after first headers"
+    ],
+    "privacy": [
+      "Cookie/Authorization/URL/authority values absent",
+      "unknown header names redacted",
+      "no raw HPACK or DATA or TLS key log"
+    ],
+    "lifecycle": [
+      "raw partial TLS expiry",
+      "TLS with partial H2 preface expiry",
+      "shared close promise",
+      "connection/stream correlation",
+      "immutable first-request evidence"
+    ],
+    "checksum": "existing bundle checksums verified; modified bundle rejected; not publisher authentication"
+  },
+  "comparison": {
+    "schema": 1,
+    "kind": "clean-vpn-http2-capture-comparison",
+    "status": "different",
+    "sampleCounts": {
+      "browser": 20,
+      "native": 6,
+      "browserComplete": 20,
+      "nativeComplete": 6
+    },
+    "fields": [
+      {
+        "field": "settingsFrames",
+        "browser": [
+          [
+            [
+              [
+                1,
+                65536
+              ],
+              [
+                2,
+                0
+              ],
+              [
+                4,
+                6291456
+              ],
+              [
+                6,
+                262144
+              ]
+            ]
+          ]
+        ],
+        "native": [
+          [
+            [
+              [
+                1,
+                8192
+              ],
+              [
+                2,
+                0
+              ],
+              [
+                3,
+                1
+              ],
+              [
+                4,
+                524288
+              ],
+              [
+                6,
+                4096
+              ]
+            ]
+          ]
+        ],
+        "status": "different"
+      },
+      {
+        "field": "windowUpdates",
+        "browser": [
+          [
+            {
+              "streamId": 0,
+              "increment": 15663105
+            }
+          ]
+        ],
+        "native": [
+          [
+            {
+              "streamId": 0,
+              "increment": 720897
+            }
+          ]
+        ],
+        "status": "different"
+      },
+      {
+        "field": "headerOrder",
+        "browser": [
+          [
+            ":method",
+            ":authority",
+            ":scheme",
+            ":path",
+            "sec-ch-ua",
+            "sec-ch-ua-mobile",
+            "sec-ch-ua-platform",
+            "upgrade-insecure-requests",
+            "user-agent",
+            "accept",
+            "sec-fetch-site",
+            "sec-fetch-mode",
+            "sec-fetch-user",
+            "sec-fetch-dest",
+            "accept-encoding",
+            "accept-language",
+            "priority"
+          ]
+        ],
+        "native": [
+          [
+            ":method",
+            ":path",
+            ":scheme",
+            ":authority",
+            "authorization",
+            "accept"
+          ]
+        ],
+        "status": "different"
+      },
+      {
+        "field": "publicHeaderValues",
+        "browser": [
+          [
+            [
+              ":method",
+              "GET"
+            ],
+            [
+              ":scheme",
+              "https"
+            ],
+            [
+              "sec-ch-ua",
+              "\"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"156\""
+            ],
+            [
+              "sec-ch-ua-mobile",
+              "?0"
+            ],
+            [
+              "sec-ch-ua-platform",
+              "\"Linux\""
+            ],
+            [
+              "upgrade-insecure-requests",
+              "1"
+            ],
+            [
+              "user-agent",
+              "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+            ],
+            [
+              "accept",
+              "text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+            ],
+            [
+              "sec-fetch-site",
+              "none"
+            ],
+            [
+              "sec-fetch-mode",
+              "navigate"
+            ],
+            [
+              "sec-fetch-user",
+              "?1"
+            ],
+            [
+              "sec-fetch-dest",
+              "document"
+            ],
+            [
+              "accept-encoding",
+              "gzip, deflate, br, zstd"
+            ],
+            [
+              "accept-language",
+              "en-US,en;q=0.9"
+            ],
+            [
+              "priority",
+              "u=0, i"
+            ]
+          ]
+        ],
+        "native": [
+          [
+            [
+              ":method",
+              "POST"
+            ],
+            [
+              ":scheme",
+              "https"
+            ],
+            [
+              "accept",
+              "*/*"
+            ]
+          ]
+        ],
+        "status": "different"
+      },
+      {
+        "field": "headersPriority",
+        "browser": [
+          {
+            "dependency": 0,
+            "exclusive": true,
+            "weight": 256
+          }
+        ],
+        "native": [
+          null
+        ],
+        "status": "different"
+      },
+      {
+        "field": "hpackBlockBytes",
+        "browser": [
+          473
+        ],
+        "native": [
+          56
+        ],
+        "status": "different"
+      }
+    ],
+    "inputIntegrity": {
+      "browser": true,
+      "native": true
+    },
+    "profileActivated": false,
+    "browserEquivalent": false,
+    "limitations": [
+      "controlled-endpoint-first-request-only",
+      "ALPS-not-negotiated-at-this-endpoint",
+      "HPACK-size-not-encoder-strategy",
+      "GET-navigation-vs-native-POST-are-different-application-contracts",
+      "header-values-redacted-except-explicit-public-allowlist",
+      "no-resumption-or-later-stream-or-timing-claim"
+    ]
+  },
+  "physicalHostsTouched": false,
+  "macNetworkSettingsChanged": false,
+  "hostTrustStoreChanged": false,
+  "nativeEngineChanged": false,
+  "next": "Choose explicit browser/native compatibility and memory policy using measured H2 and remaining TLS gaps; no silent limit clamping or navigation-header copying"
+}

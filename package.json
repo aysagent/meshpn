@@ -14,6 +14,7 @@
     "test:native-physical-pair-plan": "node --test scripts/test-native-physical-pair-plan.mjs",
     "test:native-combo-redirect": "node --test scripts/test-native-combo-redirect.mjs",
     "test:native-exit-trial": "node --test scripts/test-native-exit-trial-network.mjs scripts/test-native-exit-trial.mjs scripts/test-native-direct-config.mjs",
+    "test:native-h2-capture": "node --test scripts/test-http2-prefix-observer.mjs scripts/test-native-browser-capture.mjs",
     "test:native-macos-lab": "node --test scripts/test-native-macos-lab.mjs",
     "native:clients": "node scripts/clean-vpn-native-clients.mjs",
     "test:native-clients": "node --test scripts/test-native-clients.mjs",

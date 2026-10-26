@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import http2 from 'node:http2';
+import tls from 'node:tls';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
 import { BrowserCapture, helloLayout, validateCaptureMetadata } from './lib/native-browser-capture.mjs';
@@ -178,6 +179,7 @@ test('real TLS/H2 capture binds token and authority, deduplicates connections an
   }
   assert.equal((await request(session, server.url)).status, 200);
   assert.equal((await request(session, server.url)).status, 200); assert.equal(server.snapshot().samples.length, 1);
+  assert.equal(server.snapshot().samples[0].http2.reason,'accepted-request-is-not-first');
   const download = await request(session, server.bundleUrl);
   assert.equal(download.headers['cache-control'], 'no-store');
   assert.deepEqual(JSON.parse(download.body), server.snapshot());
@@ -192,4 +194,31 @@ test('capture expiry closes pending partial TLS connections and releases listene
   t.after(() => socket.destroy()); await once(socket, 'connect'); socket.write(Buffer.from([22, 3]));
   await once(socket, 'close'); await server.close();
   assert.equal(server.snapshot().samples.length, 0);
+});
+
+test('authorized first request captures real H2 frames and ordered headers without credentials', {timeout:15000},async t=>{
+  const {server,ca}=await setup(t);
+  const session=await connect(t,server,ca);
+  const response=await request(session,server.url,{'user-agent':'CaptureTest/1','accept':'text/html',
+    cookie:'PRIVATE_COOKIE',authorization:'Bearer PRIVATE_AUTH','x-PRIVATE_NAME':'PRIVATE_VALUE'});
+  assert.equal(response.status,200);
+  const bundle=server.snapshot(),h=bundle.samples[0].http2;
+  assert.equal(h.status,'complete');assert.deepEqual(h.settingsFrames,[[]]);
+  assert.equal(h.frames[0].type,4);assert.equal(h.frames.at(-1).type,1);
+  assert.ok(h.firstHeaders.blockBytes>0);assert.ok(h.headers.names.indexOf('user-agent')<h.headers.names.indexOf('accept'));
+  assert.ok(h.headers.names.includes('authorization'));assert.ok(h.headers.names.includes('<other>'));
+  assert.ok(h.headers.publicValues.some(([n,v])=>n==='user-agent'&&v==='CaptureTest/1'));
+  assert.equal(bundle.assessment.http2CompleteSamples,1);
+  assert.doesNotMatch(JSON.stringify(bundle),/PRIVATE|Bearer /);
+  assert.ok(!JSON.stringify(bundle).includes(new URL(server.url).pathname));
+  await request(session,server.url,{'user-agent':'Changed'});
+  assert.deepEqual(server.snapshot(),bundle);
+});
+
+test('capture expiry also closes TLS and plaintext bridge with incomplete H2 preface', {timeout:8000},async t=>{
+  const {server,ca}=await setup(t,{lifetimeMs:1000});
+  const socket=tls.connect({host:'127.0.0.1',port:Number(new URL(server.url).port),servername:'localhost',ca,ALPNProtocols:['h2']});
+  t.after(()=>socket.destroy());await once(socket,'secureConnect');
+  const closed=once(socket,'close');socket.resume();socket.write('PRI');
+  await closed;await server.close();assert.equal(server.snapshot().samples.length,0);
 });

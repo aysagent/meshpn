@@ -1,9 +1,9 @@
 # План улучшения мимикрии под сохранённый браузерный профиль
 
 Текущий native checkpoint (2026-10-26): [ALPS + профильные HTTP/2 SETTINGS/window](../scripts/clean-vpn-native-alps.md).
-Семантика реализована для bounded subset и синтетического профиля. Автоматическое
-снятие браузерных H2-настроек, headers/HPACK и полная совместимость конкретного
-browser build ещё не закрыты.
+Семантика реализована для bounded subset и синтетического профиля. [Захват H2 SETTINGS/windows, заголовков и HPACK block size](../scripts/clean-vpn-native-http2-capture.md)
+теперь выполнен отдельным endpoint. Полная совместимость конкретного browser
+build, HPACK strategy и дальнейший HTTP lifecycle ещё не закрыты.
 
 
 Дата: 2026-09-22. Основание: код на HEAD `4bfec57` и [собранный контекст](clean-vpn-context.md). Ниже предложения, а не уже реализованные возможности. Изменений транспортного кода при подготовке этого плана нет.

@@ -100,7 +100,7 @@ TCP видит только ClientHello и JA3/JA4. Fixture hooks отсутст
 проверил parser, adapter и pinned nghttp2 на macOS ARM64. Это не whole-engine TLS
 sanitizer certification. [Отчёт checkpoint](../fixtures/clean-vpn-native-alps-report.json)
 содержит SHA-256 production binary, измеренные ClientHello/JA3/JA4 и H2 frames.
-Следующий этап — добавить реальный H2 capture к браузерной странице и показывать
-разницу browser/native по SETTINGS, окнам и заголовкам. Затем выбирать поддержанный
+[Реальный H2 capture и сравнение](clean-vpn-native-http2-capture.md) добавлены
+следующим checkpoint. Теперь нужно выбирать поддержанный
 browser build и закрывать его оставшиеся TLS gaps; не включать запрещённые cipher
 suites ради одного совпадающего fingerprint.
