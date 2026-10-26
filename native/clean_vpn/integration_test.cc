@@ -14,6 +14,7 @@
 #include <fstream>
 #include <dirent.h>
 #include <arpa/inet.h>
+#include <memory>
 using namespace cvpn;
 using json=nlohmann::json;
 using Clock=std::chrono::steady_clock;
@@ -94,6 +95,24 @@ struct Child {
       if(n>0)input.append(b,n);else{require(n!=0,"engine_exited");pollfd p{events,POLLIN,0};poll(&p,1,20);}
     }
     throw std::runtime_error("soak_status_timeout");
+  }
+  json budget_status(bool healthy=true){
+    command("{\"op\":\"status\"}\n");
+    const auto end=Clock::now()+std::chrono::seconds(2);
+    while(Clock::now()<end){
+      size_t e;
+      while((e=input.find('\n'))!=std::string::npos){
+        auto j=json::parse(input.substr(0,e));input.erase(0,e+1);
+        if(healthy)require(j.at("state")=="ready","budget_unexpected_session_event");
+        if(j.at("event")=="status"){
+          require(j.size()==8&&j.contains("fixture_h2_budget"),"budget_fixture_required");return j;
+        }
+      }
+      char b[4096];const auto n=read(events,b,sizeof(b));
+      if(n>0){input.append(b,n);require(input.size()<16384,"budget_event_bound");}
+      else{require(n!=0,"engine_exited");pollfd p{events,POLLIN,0};poll(&p,1,10);}
+    }
+    throw std::runtime_error("budget_status_timeout");
   }
   void stop(){
     if(service)kill(pid,SIGTERM);else command("{\"op\":\"stop\"}\n");
@@ -182,10 +201,15 @@ static void soak(Child& client,Child* server,int seconds){
     {"packets",rounds*2},{"bytes",bytes},{"resource_samples",samples},{"peak_rss_kib",peak},{"max_rss_growth_kib",growth},
     {"unexpected_reconnects",0},{"dropped_packets",0},{"payload_verified",true}}).dump()<<" PASS\n";
 }
+#include "h2_budget_test.hpp"
 int main(int argc,char** argv){
   signal(SIGPIPE,SIG_IGN);
   std::cout<<std::unitbuf;
   try{
+    if(argc==6&&std::string(argv[4])=="h2-budget"){
+      const int count=std::stoi(argv[5]);require(count==1||count==4||count==8,"budget_peer_count");
+      h2_budget(argv[1],argv[2],argv[3],count);return 0;
+    }
     if(argc==5&&std::string(argv[4])=="service"){
       unsetenv("NOTIFY_SOCKET");
       Child server(argv[1],argv[3],true);server.await_state("listening");

@@ -11,6 +11,7 @@
 #ifdef CVPN_TEST_PACKET_FD
 #include "certificate_compression_fixture.hpp"
 #include "signature_fixture.hpp"
+#include "h2_budget_fixture.hpp"
 #include "http2_alps_fixture.hpp"
 #endif
 #include <nlohmann/json.hpp>
@@ -127,8 +128,12 @@ struct Control {
   uint64_t generation=0, tx=0, rx=0, dropped=0;
   std::string input, state="starting";
   void emit(const std::string& event) {
-    std::string line=json({{"version",1},{"event",event},{"state",state},{"generation",generation},
-      {"tx_packets",tx},{"rx_packets",rx},{"dropped_packets",dropped}}).dump()+"\n";
+    auto record=json({{"version",1},{"event",event},{"state",state},{"generation",generation},
+      {"tx_packets",tx},{"rx_packets",rx},{"dropped_packets",dropped}});
+#ifdef CVPN_TEST_PACKET_FD
+    if(event=="status"&&h2_budget_fixture::enabled())record["fixture_h2_budget"]=h2_budget_fixture::status();
+#endif
+    std::string line=record.dump()+"\n";
     // Events are smaller than PIPE_BUF; a blocked supervisor cannot retain data.
     ssize_t n=write(STDOUT_FILENO,line.data(),line.size());
     if(n!=ssize_t(line.size())) stop=true;
@@ -234,6 +239,7 @@ struct Session {
   Queue outgoing, network, packets; Decoder decoder;
 #ifdef CVPN_TEST_PACKET_FD
   http2_alps_fixture::Observer wire_observer{config.client};
+  h2_budget_fixture::Queues budget_queues{outgoing,network,packets,ssl};
 #endif
   int32_t stream=-1;bool ready=false,deferred=false;
   uint32_t peer_address;
@@ -396,8 +402,15 @@ struct Session {
     if(config.client && profile && profile->alps) {
       std::vector<nghttp2_settings_entry> entries;
       for(const auto& pair:profile->h2_settings)entries.push_back({pair.first,pair.second});
+      int32_t connection_window=profile->h2_window;
+#ifdef CVPN_TEST_PACKET_FD
+      if(h2_budget_fixture::browser_credit()){
+        for(auto& entry:entries)if(entry.settings_id==NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE)entry.value=6*1024*1024;
+        connection_window=15*1024*1024;
+      }
+#endif
       h2check(nghttp2_submit_settings(h2,NGHTTP2_FLAG_NONE,entries.data(),entries.size()));
-      h2check(nghttp2_session_set_local_window_size(h2,NGHTTP2_FLAG_NONE,0,profile->h2_window));
+      h2check(nghttp2_session_set_local_window_size(h2,NGHTTP2_FLAG_NONE,0,connection_window));
     }else {
       if(config.client || !negotiated)h2check(nghttp2_submit_settings(h2,NGHTTP2_FLAG_NONE,settings.data(),settings.size()));
       h2check(nghttp2_session_set_local_window_size(h2,NGHTTP2_FLAG_NONE,0,receive_window));

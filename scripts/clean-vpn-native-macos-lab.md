@@ -54,6 +54,9 @@ npm run lab:native:mac -- --native-combo-boot
 # Профили: cached build, CTest, real-TCP capture/verify и negative auth; без boot-base
 npm run lab:native:mac -- --tls-profiles
 
+# H2 memory/backpressure: 1/4/8 клиентов, два размера окон, без сети контейнера
+npm run lab:native:mac -- --h2-budget
+
 # Быстрый multi-client прогон: cached build, CTest, 32 клиента; без QEMU boot-base
 npm run lab:native:mac -- --multi-clients
 

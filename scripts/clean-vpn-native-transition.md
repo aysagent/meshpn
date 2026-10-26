@@ -8,6 +8,24 @@ packet path не является обязательной. Production-разв�
 
 ## Реализовано в текущем шаге
 
+2026-10-26: закрыта короткая [H2 memory/backpressure матрица](clean-vpn-native-h2-budget.md)
+для одного native exit и 1/4/8 клиентов: baseline 1/1 MiB и fixture-only
+browser credit 6/15 MiB. Все 6 случаев, 36 фаз slow/no-drain и 18 циклов
+отключения/восстановления прошли; есть SIGKILL, индивидуальная нагрузка каждого
+медленного клиента, проверка байтов и прогресса здоровых peers, возврат FD/сессий.
+Начальные SETTINGS/WINDOW_UPDATE проверены для всех 104 соединений.
+Исправлена запись тестового H2 observer: одна атомарная запись в общий pipe,
+чтобы сообщения нескольких процессов не перемешивались.
+[Измеренный отчёт](../fixtures/clean-vpn-native-h2-budget-report.json) сохранён.
+Регрессии: CTest 10/10, TLS profiles + multi-peer 18/18 (включая 32 клиента),
+macOS lab parser 4/4; пропусков нет.
+Production caps не изменены, browser profile не активирован, Radxa/VPS не трогали.
+SO_MEMINFO под эмуляцией усечён: kernel socket memory отмечена unavailable/null.
+Следующий H2 этап — тот же эксперимент в Linux с доступным учётом памяти ядра,
+затем заданный RTT и более длинный soak. Только после этого можно обсуждать
+повышение caps. Ticket lifecycle и trust-anchor chain selection/retry — отдельные
+незавершённые задачи; точная мимикрия Chromium пока недоступна.
+
 2026-10-26: [ML-DSA 44/65/87](clean-vpn-native-mldsa.md) разрешены в opt-in
 cold профиле через штатный BoringSSL API. Отдельные временные серверные
 сертификаты позволяют проверить actual CertificateVerify, независимый CH/JA3/JA4,
@@ -16,9 +34,8 @@ Trust-anchor API исследовано: 51764 остаётся запрещён
 bounded retry. Observer измеряет только форму списка, без экспорта IDs.
 CTest 10/10, native profile integration 17/17, JS capture/policy/lab 42/42,
 без пропусков; [отчёт](../fixtures/clean-vpn-native-mldsa-report.json).
-Следующий ограниченный лабораторный этап — H2 memory/backpressure при нескольких
-клиентах и медленном получателе, без повышения caps. Ticket lifecycle и trust-anchor
-retry остаются отдельными задачами. Точный профиль Chromium пока недоступен.
+Короткий H2 memory/backpressure этап выполнен следующим checkpoint выше.
+Ticket lifecycle и trust-anchor retry остаются отдельными задачами.
 
 2026-10-26: [политика совместимости bounded-cold-v1](clean-vpn-native-profile-policy.md)
 экспортируется самим native engine; общие константы используются загрузчиком

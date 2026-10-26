@@ -8,6 +8,8 @@
 #include <cstring>
 #include <string>
 #include <array>
+#include <unistd.h>
+#include <cerrno>
 namespace cvpn::http2_alps_fixture {
 inline void record(const char* kind,bool client,const uint8_t* p,size_t n) {
   if(!std::getenv("CVPN_TEST_H2_OBSERVER"))return;
@@ -15,7 +17,12 @@ inline void record(const char* kind,bool client,const uint8_t* p,size_t n) {
   // exporter tokens, application payload, key material or arbitrary debug data.
   if(n>96)return;
   std::string hex;for(size_t i=0;i<n;i++){hex+="0123456789abcdef"[p[i]>>4];hex+="0123456789abcdef"[p[i]&15];}
-  std::fprintf(stderr,"fixture_h2 {\"kind\":\"%s\",\"receiver\":\"%s\",\"hex\":\"%s\"}\n",kind,client?"client":"exit",hex.c_str());
+  // Several fixture processes share the observer pipe. Emit one bounded write
+  // so stdio fragments cannot interleave across clients.
+  const auto line=std::string("fixture_h2 {\"kind\":\"")+kind+"\",\"receiver\":\""+
+    (client?"client":"exit")+"\",\"hex\":\""+hex+"\"}\n";
+  ssize_t sent;do{sent=write(STDERR_FILENO,line.data(),line.size());}while(sent<0&&errno==EINTR);
+  http2_alps::require(sent==ssize_t(line.size()));
 }
 inline void server_connection(SSL* ssl) {
   auto bytes=http2_alps::encode(http2_alps::server_settings());

@@ -147,6 +147,13 @@ run_lab() {
 }
 
 case "${1:-}" in
+  h2-budget)
+    sync_source
+    build_current
+    cd "$WORK"
+    report="/export/clean-vpn-h2-budget-$(date -u +%Y%m%dT%H%M%SZ).json"
+    node scripts/clean-vpn-native-h2-budget.mjs "$report"
+    ;;
   tls-profiles)
     sync_source
     build_current
