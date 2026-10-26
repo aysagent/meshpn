@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-device-update-report",
+  "date": "2026-10-26",
+  "productionSourceRevision": "0ca74c28dd15d3b1dbdc74a2da9432bc06f334e4",
+  "branch": "feat/clean-vpn-native-data-plane",
+  "liveTunnelTrialPerformed": false,
+  "networkSettingsChanged": false,
+  "vpnServicesRestarted": false,
+  "macNetworkSettingsChanged": false,
+  "devices": {
+    "vps": {
+      "architecture": "x86_64",
+      "gitUpdate": "origin-fast-forward",
+      "build": "passed",
+      "profile": "RelWithDebInfo; low_memory=ON; jobs=1",
+      "memoryMaxMiB": 650,
+      "temporaryProjectSwapMiB": 2048,
+      "temporaryProjectSwapRemoved": true,
+      "ctest": { "passed": 10, "failed": 0 },
+      "binarySha256": "576a6ee0831bd123dab0c9f7036dd4e3e5af744bcd5c9c2f16913f64fc8bcc04",
+      "cleanVpnServiceBefore": "inactive",
+      "cleanVpnServiceAfter": "inactive",
+      "exitListener443BeforeUpdate": false,
+      "newKernelOomEntries": false
+    },
+    "radxa": {
+      "architecture": "aarch64",
+      "gitUpdate": "verified-git-bundle-fast-forward-over-USB",
+      "build": "passed",
+      "profile": "RelWithDebInfo; low_memory=ON; jobs=2",
+      "memoryMaxMiB": 1200,
+      "cpuQuotaPercent": 200,
+      "ctest": { "passed": 10, "failed": 0 },
+      "binarySha256": "4e77ae1a51c0f678e28b4e19c5d25518c87261425ea980f5e87efbea1ca60830",
+      "cleanVpnServiceBefore": "active",
+      "cleanVpnServiceAfter": "active",
+      "cleanVpnPidBefore": 802,
+      "cleanVpnPidAfter": 802,
+      "killSwitchBefore": "active",
+      "killSwitchAfter": "active",
+      "clockCorrection": "forward approximately 12h40m using current Mac UTC; NTP was unsynchronized",
+      "newKernelOomEntries": false,
+      "offlineBrotli": {
+        "revision": "028fb5a23661f123017c060daa546b55cf4bde29",
+        "archiveSha256": "5b26b92a809e5763782000461e6dcb1fd055a82818a09e4dd3cfe7edfbdc0b33",
+        "source": "verified local lab git archive, checked again on Radxa",
+        "cmakeSourceOverride": "native/clean_vpn/build/brotli-offline-028fb5a"
+      }
+    }
+  },
+  "limitations": [
+    "build-and-unit-tests-not-live-client-exit-acceptance",
+    "VPS-exit-was-already-stopped-before-this-update",
+    "Radxa-GitHub-DNS-unavailable-through-existing-tunnel",
+    "manual-clock-correction-does-not-fix-NTP-or-RTC-persistence",
+    "binaries-in-repository-build-directories-not-installed-into-new-services"
+  ]
+}

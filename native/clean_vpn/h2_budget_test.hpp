@@ -38,6 +38,7 @@ static void budget_validate(const json& s){
   const auto live=s.at("live_sessions").get<size_t>();
   require(s.at("created").get<size_t>()-s.at("destroyed").get<size_t>()==live,"budget_session_accounting");
   require(s.at("socket_memory_samples").get<size_t>()<=live,"budget_kernel_socket_sample_count");
+  require(s.at("tcp_receive_alloc_bytes").get<uint64_t>()+s.at("tcp_send_queued_bytes").get<uint64_t>()<=live*32ULL*1024*1024,"budget_kernel_socket_bound");
   require(s.at("largest_queue_bytes").get<size_t>()<=queue_limit&&budget_queued(s)<=live*queue_limit*3,"budget_queue_bound");
 }
 static void budget_wait_sessions(Child& process,size_t wanted){
@@ -51,6 +52,9 @@ static void budget_wait_sessions(Child& process,size_t wanted){
 }
 static void h2_budget(const char* exe,const char* directory,const char* exit_config,int count){
   require(std::getenv("CVPN_TEST_H2_BUDGET")!=nullptr,"budget_mode_required");
+  const char* requested_cycles=std::getenv("CVPN_TEST_H2_CYCLES");
+  const int cycles=requested_cycles?std::stoi(requested_cycles):3;
+  require(cycles>=3&&cycles<=30&&(!requested_cycles||std::to_string(cycles)==requested_cycles),"budget_cycle_count");
   Child server(exe,exit_config);server.await_state("listening");
   const auto idle_fds=fd_count(server.pid);
   std::vector<std::string> configs;std::vector<std::unique_ptr<Child>> peers;
@@ -61,8 +65,8 @@ static void h2_budget(const char* exe,const char* directory,const char* exit_con
   budget_wait_sessions(server,count);
   for(int i=0;i<count;i++)budget_probe(server,*peers[i],i);
   const auto baseline_rss=rss(server.pid);json phases=json::array(),recoveries=json::array();
-  long previous_recovered=0;const auto began=Clock::now();
-  for(int cycle=0;cycle<3;cycle++){
+  long warm_recovered=0;const auto began=Clock::now();
+  for(int cycle=0;cycle<cycles;cycle++){
     for(int stage=0;stage<2;stage++){
       const int slow=stage==0?1:std::max(1,count-1);
       uint64_t accepted=0,drained=0,probes=0,samples=0,tick=0;size_t largest=0,exit_queue_peak=0,client_queue_peak=0,exit_fd_peak=0;
@@ -152,7 +156,7 @@ static void h2_budget(const char* exe,const char* directory,const char* exit_con
       for(int i=0;i<count;i++)budget_probe(server,*peers[i],i);
     }
     // Repeated orderly disconnections, and an actual process death in cycle 2.
-    const bool crash=cycle==1;
+    const bool crash=cycle%3==1;
     for(auto& peer:peers){
       if(crash){require(kill(peer->pid,SIGKILL)==0,"budget_kill");peer.reset();}
       else{peer->command("{\"op\":\"uplink\",\"ready\":false}\n");peer->await_state("waiting_uplink");budget_wait_sessions(*peer,0);}
@@ -161,8 +165,8 @@ static void h2_budget(const char* exe,const char* directory,const char* exit_con
     require(fd_count(server.pid)==idle_fds,"budget_fd_cleanup");
     const auto recovered_rss=rss(server.pid);const auto cleared=server.budget_status(false).at("fixture_h2_budget");
     require(cleared.at("created")==cleared.at("destroyed")&&budget_queued(cleared)==0,"budget_cleanup");
-    if(cycle==2)require(recovered_rss-previous_recovered<8*1024,"budget_post_warmup_growth");
-    previous_recovered=recovered_rss;
+    if(cycle>=2)require(recovered_rss-warm_recovered<8*1024,"budget_post_warmup_growth");
+    if(cycle==1)warm_recovered=recovered_rss;
     recoveries.push_back({{"cycle",cycle},{"fault",crash?"SIGKILL":"uplink-off"},{"exit_rss_kib",recovered_rss},
       {"exit_fds",fd_count(server.pid)},{"sessions",cleared}});
     for(int i=0;i<count;i++){
@@ -177,7 +181,7 @@ static void h2_budget(const char* exe,const char* directory,const char* exit_con
   require(fd_count(server.pid)==idle_fds,"budget_final_fds");
   auto final=server.budget_status(false).at("fixture_h2_budget");server.stop();
   std::cout<<"H2_BUDGET_RESULT="<<json({{"schema",1},{"clients",count},{"mode",std::getenv("CVPN_TEST_H2_BUDGET")},
-    {"duration_seconds",std::chrono::duration<double>(Clock::now()-began).count()},{"baseline_exit_rss_kib",baseline_rss},
+    {"cycles",cycles},{"duration_seconds",std::chrono::duration<double>(Clock::now()-began).count()},{"baseline_exit_rss_kib",baseline_rss},
     {"baseline_exit_fds",idle_fds},{"phases",phases},{"recoveries",recoveries},{"final_sessions",final},
     {"children_stopped",true},{"payload_verified",true}}).dump()<<"\n";
 }

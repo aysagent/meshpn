@@ -17,6 +17,9 @@ test('macOS lab parser has a read-only default and explicit VM modes', () => {
   assert.equal(parseNativeMacLabArgs(['--tls-profiles'], {}).action, '--tls-profiles');
   assert.equal(parseNativeMacLabArgs(['--h2-budget'], {}).action, '--h2-budget');
   assert.deepEqual(nativeMacLabContainerAction('--h2-budget'), ['h2-budget']);
+  assert.equal(parseNativeMacLabArgs(['--h2-kernel'], {}).action, '--h2-kernel');
+  assert.deepEqual(nativeMacLabContainerAction('--h2-kernel'), ['h2-kernel']);
+  assert.throws(()=>parseNativeMacLabArgs(['--h2-kernel','--refresh-base'],{}));
   assert.throws(()=>parseNativeMacLabArgs(['--h2-budget','--refresh-base'],{}));
   assert.equal(parseNativeMacLabArgs(['--browser-capture'], {}).action, '--browser-capture');
   assert.equal(parseNativeMacLabArgs(['--http2-capture'], {}).action, '--http2-capture');

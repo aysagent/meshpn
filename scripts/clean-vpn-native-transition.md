@@ -8,6 +8,29 @@ packet path не является обязательной. Production-разв�
 
 ## Реализовано в текущем шаге
 
+2026-10-26: [H2 в полноценном Linux guest](clean-vpn-native-h2-kernel.md) прошёл:
+kernel accounting, контролируемый RTT и 30 циклов каждого размера окна.
+10 случаев / 168 фаз / 84 восстановления / 384 соединения; SO_MEMINFO доступен.
+Guest без NIC и host shares, Mac network settings не менялись. Qdisc drops=0;
+при заданных 40 ms измерено в среднем 48 ms. Серии по 30 циклов заняли 144/150 s.
+На 8 клиентах большие окна подняли суммарный sampled TCP send queued с 5.7 до
+20.6 MiB; RSS exit — с 19.3 до 21.7 MiB. Production caps оставлены прежними.
+Следующий ограниченный H2 этап — goodput при фиксированных RTT/bandwidth и
+совместном учёте памяти/потерь; ticket lifecycle и trust-anchor retry остаются
+отдельными задачами. Полная мимикрия Chromium всё ещё не заявляется.
+
+Параллельно [VPS/Radxa обновлены и пересобраны](../fixtures/clean-vpn-native-device-update-report.json):
+CTest 10/10 на каждом, VPS low-memory/jobs=1, Radxa low-memory/jobs=2.
+Production source — 0ca74c2; следующие изменения этого checkpoint относятся к
+лаборатории/harness/docs и не меняют production engine. Службы не перезапускались.
+На VPS exit уже был остановлен (443 не слушал); Radxa legacy/kill-switch остались
+активны, PID legacy 802 сохранился. Из-за недоступного GitHub DNS Radxa получила
+проверенный git bundle по USB и архив закреплённого Brotli с проверкой SHA-256.
+На Radxa разово исправлены часы (+примерно 12h40m); проблема NTP/RTC этим не закрыта.
+Временный проектный swap VPS удалён после сборки. Живой client↔exit trial в этом
+этапе не выполнялся; новые бинарники лежат в build directories, не установлены
+в новые systemd services.
+
 2026-10-26: закрыта короткая [H2 memory/backpressure матрица](clean-vpn-native-h2-budget.md)
 для одного native exit и 1/4/8 клиентов: baseline 1/1 MiB и fixture-only
 browser credit 6/15 MiB. Все 6 случаев, 36 фаз slow/no-drain и 18 циклов
@@ -21,9 +44,9 @@ browser credit 6/15 MiB. Все 6 случаев, 36 фаз slow/no-drain и 18 
 macOS lab parser 4/4; пропусков нет.
 Production caps не изменены, browser profile не активирован, Radxa/VPS не трогали.
 SO_MEMINFO под эмуляцией усечён: kernel socket memory отмечена unavailable/null.
-Следующий H2 этап — тот же эксперимент в Linux с доступным учётом памяти ядра,
-затем заданный RTT и более длинный soak. Только после этого можно обсуждать
-повышение caps. Ticket lifecycle и trust-anchor chain selection/retry — отдельные
+Следующий H2 этап с Linux kernel accounting/RTT/soak выполнен checkpoint выше.
+Для обсуждения caps остаётся измерить пользу при фиксированном канале.
+Ticket lifecycle и trust-anchor chain selection/retry — отдельные
 незавершённые задачи; точная мимикрия Chromium пока недоступна.
 
 2026-10-26: [ML-DSA 44/65/87](clean-vpn-native-mldsa.md) разрешены в opt-in

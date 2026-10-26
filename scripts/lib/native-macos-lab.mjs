@@ -18,7 +18,7 @@ export function parseNativeMacLabArgs(argv, env = process.env) {
     refreshBase: false,
   };
   for (const arg of argv) {
-    if (arg === '--prepare' || arg === '--multi-clients' || arg === '--h2-budget' || arg === '--tls-profiles' || arg === '--browser-capture' || arg === '--http2-capture' || arg === '--status' || arg === '--stop' || arg === '--help' || nativeMacLabModes.includes(arg)) {
+    if (arg === '--prepare' || arg === '--multi-clients' || arg === '--h2-budget' || arg === '--h2-kernel' || arg === '--tls-profiles' || arg === '--browser-capture' || arg === '--http2-capture' || arg === '--status' || arg === '--stop' || arg === '--help' || nativeMacLabModes.includes(arg)) {
       assert.equal(value.action, null, 'choose exactly one lab action');
       value.action = arg;
       continue;
@@ -47,6 +47,7 @@ export function nativeMacBrowserImageTag(containerfile) {
 }
 
 export function nativeMacLabContainerAction(action) {
+  if (action === '--h2-kernel') return ['h2-kernel'];
   if (action === '--h2-budget') return ['h2-budget'];
   if (action === '--tls-profiles') return ['tls-profiles'];
   if (action === '--multi-clients') return ['multi-clients'];

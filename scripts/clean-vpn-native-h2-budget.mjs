@@ -10,10 +10,11 @@ import {randomBytes,createHash} from 'node:crypto';
 import {spawn,spawnSync,execFileSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-export async function runH2Budget({counts=[1,4,8],modes=['baseline','browser-credit']}={}) {
+export async function runH2Budget({counts=[1,4,8],modes=['baseline','browser-credit'],cycles=3}={}) {
   assert.equal(process.platform,'linux','Linux laboratory required');
   assert.ok(counts.length&&counts.every(n=>[1,4,8].includes(n))&&new Set(counts).size===counts.length);
   assert.ok(modes.length&&modes.every(m=>['baseline','browser-credit'].includes(m))&&new Set(modes).size===modes.length);
+  assert.ok(Number.isInteger(cycles)&&cycles>=3&&cycles<=30,'cycles must be 3..30');
   const build=path.resolve(process.env.CVPN_BUILD??'native/clean_vpn/build'),root=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-h2-budget-'));
   let active=null,cancelled=false;
   const cancel=()=>{cancelled=true;active?.kill('SIGTERM');};
@@ -52,19 +53,20 @@ export async function runH2Budget({counts=[1,4,8],modes=['baseline','browser-cre
       const bad=JSON.parse(fs.readFileSync(root+'/client-0.json'));bad.tls_profile_path=root+'/oversized.json';
       fs.writeFileSync(root+'/oversized-config.json',JSON.stringify(bad),{mode:0o600});
       assert.equal(spawnSync(production,['--check-config',root+'/oversized-config.json'],{timeout:5000,encoding:'utf8'}).status,1,'production accepted oversized profile');
-      const env={...process.env,CVPN_TEST_H2_BUDGET:mode,CVPN_TEST_H2_OBSERVER:'1'};
+      const env={...process.env,CVPN_TEST_H2_BUDGET:mode,CVPN_TEST_H2_OBSERVER:'1',CVPN_TEST_H2_CYCLES:String(cycles)};
       for(const key of ['NOTIFY_SOCKET','CVPN_TEST_ALPS','CVPN_TEST_ALPS_CLIENT','CVPN_TEST_CERT_COMPRESSION','CVPN_TEST_SIGNATURE'])delete env[key];
       const child=spawn(build+'/integration-test',[fixture,root,root+'/exit.json','h2-budget',String(count)],{env,stdio:['ignore','pipe','pipe']});
       active=child;
       let output='',stderr='';
       const collect=(stream,save)=>stream.on('data',b=>{save(b.toString());if(output.length+stderr.length>2*1024*1024)child.kill('SIGKILL');});
       collect(child.stdout,s=>output+=s);collect(child.stderr,s=>stderr+=s);
-      const timer=setTimeout(()=>child.kill('SIGKILL'),90000);
+      const timer=setTimeout(()=>child.kill('SIGKILL'),Math.max(90,cycles*12+30)*1000);
       let code;try{[code]=await once(child,'close');}finally{clearTimeout(timer);active=null;}
       assert.equal(code,0,`${mode}/${count}: ${output.slice(-5000)} ${stderr.slice(-2000)}`);
       const lines=output.split('\n').filter(l=>l.startsWith('H2_BUDGET_RESULT='));assert.equal(lines.length,1);
       const result=JSON.parse(lines[0].slice('H2_BUDGET_RESULT='.length));
-      assert.equal(result.clients,count);assert.equal(result.mode,mode);assert.equal(result.phases.length,6);assert.equal(result.recoveries.length,3);
+      assert.equal(result.clients,count);assert.equal(result.mode,mode);assert.equal(result.cycles,cycles);
+      assert.equal(result.phases.length,cycles*2);assert.equal(result.recoveries.length,cycles);
       const windows={stream:mode==='baseline'?1048576:6291456,connection:mode==='baseline'?1048576:15728640};
       const frames=stderr.split('\n').filter(line=>line.includes('fixture_h2 ')).map(line=>{
         assert.ok(line.startsWith('fixture_h2 '),'interleaved H2 observer prefix');
@@ -72,21 +74,21 @@ export async function runH2Budget({counts=[1,4,8],modes=['baseline','browser-cre
       })
         .filter(f=>f.kind==='wire'&&f.receiver==='exit').map(f=>Buffer.from(f.hex,'hex'));
       const settings=frames.filter(b=>b[3]===4&&!(b[4]&1));
-      assert.equal(settings.length,count*4,'expected initial settings for every connection and reconnect');
+      assert.equal(settings.length,count*(cycles+1),'expected initial settings for every connection and reconnect');
       for(const b of settings){
         assert.equal(b.readUIntBE(0,3),b.length-9);let found=false;
         for(let offset=9;offset<b.length;offset+=6)if(b.readUInt16BE(offset)===4){assert.equal(b.readUInt32BE(offset+2),windows.stream);found=true;}
         assert.ok(found,'initial stream window missing');
       }
       const updates=frames.filter(b=>b[3]===8&&b.readUInt32BE(5)===0);
-      assert.equal(updates.length,count*4,'expected initial connection credit for every connection and reconnect');
+      assert.equal(updates.length,count*(cycles+1),'expected initial connection credit for every connection and reconnect');
       for(const b of updates)assert.equal(b.readUInt32BE(9),windows.connection-65535);
       result.observedClientCredit=windows;result.settingsSamples=settings.length;cases.push(result);
       console.error(`H2 budget ${mode}/${count} PASS (${result.duration_seconds.toFixed(1)}s)`);
     }
     return {schema:1,kind:'clean-vpn-native-h2-budget-report',status:'passed',timestamp:new Date().toISOString(),
       environment:{platform:process.platform,processArch:process.arch,kernel:os.release(),node:process.version},
-      coverage:counts.length===3&&modes.length===2?'full-matrix':'subset',
+      coverage:counts.length===3&&modes.length===2?'full-matrix':'subset',cycles,
       binaries:{engine:hash(production),fixture:hash(fixture),harness:hash(build+'/integration-test')},
       productionCapsChanged:false,productionOversizedProfileRejected:true,productionFixtureHookAbsent:true,physicalHostsTouched:false,hostNetworkSettingsChanged:false,
       kernelSocketMemoryComplete:cases.every(c=>c.phases.every(p=>p.kernel_socket_memory_available)),

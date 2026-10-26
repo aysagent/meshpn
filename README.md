@@ -23,6 +23,8 @@ engine публикует TLS/H2 policy, отдельный read-only отчёт
 [H2: память, медленные получатели и 1/4/8 клиентов](scripts/clean-vpn-native-h2-budget.md):
 `npm run lab:native:mac -- --h2-budget`. Большие окна проверяются только в fixture;
 рабочие лимиты не повышаются.
+[Полное Linux-ядро, RTT 40 ms и серия из 30 циклов](scripts/clean-vpn-native-h2-kernel.md):
+`npm run lab:native:mac -- --h2-kernel`.
 
 ### Какие транспорты считаем пригодными для эксплуатации
 
