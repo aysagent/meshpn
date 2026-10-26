@@ -28,7 +28,7 @@ static meshvpn_ap_flow_t s_flows[8];
 static uint64_t s_seen[8];
 static unsigned s_next;
 static portMUX_TYPE s_flow_lock = portMUX_INITIALIZER_UNLOCKED;
-static meshvpn_rx_checksum_t s_checksums[2];
+static meshvpn_rx_checksum_t s_checksums[4];
 static err_t output(struct netif *, struct pbuf *, const ip4_addr_t *);
 /* Default Wi-Fi netifs acquire output during start, after LAN registration. */
 static void attach_output(void)
@@ -75,7 +75,7 @@ static void checksum_sample(const struct pbuf *p, unsigned ifx)
     s->bad_ip += bad_ip; s->bad_tcp += bad_tcp; s->bad_udp += bad_udp;
     portEXIT_CRITICAL(&s_flow_lock);
 }
-void meshvpn_ap_probe_checksums(meshvpn_rx_checksum_t out[2])
+void meshvpn_ap_probe_checksums(meshvpn_rx_checksum_t out[4])
 {
     portENTER_CRITICAL(&s_flow_lock); memcpy(out, s_checksums, sizeof(s_checksums)); portEXIT_CRITICAL(&s_flow_lock);
 }
@@ -141,6 +141,10 @@ void meshvpn_ap_probe_tx(unsigned ifx, const void *frame, size_t len)
     meshvpn_ap_echo_tx(ifx, frame, len);
     const uint8_t *p = frame;
     if (!p || len < 14 || p[12] != 8 || p[13]) return;
+    if (ifx < 2 && len - 14 <= UINT16_MAX) {
+        struct pbuf packet = {.payload=(uint8_t *)p+14, .len=len-14, .tot_len=len-14};
+        checksum_sample(&packet, ifx + 2);
+    }
     flow(ifx ? 16 : 2, p + 14, len - 14);
 }
 static err_t output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst)

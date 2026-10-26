@@ -134,5 +134,11 @@ int main(void)
  assert(s_checksums[0].bad_tcp==1&&s_checksums[0].checked==3);
  observed.len=10;for(unsigned i=0;i<32;i++)meshvpn_ap_probe_input(&observed,&sta);
  assert(s_checksums[0].skipped==1);
+ memset(s_checksums,0,sizeof(s_checksums));assert(meshvpn_vpn_repair_checksums(packet,40));
+ uint8_t ethernet[54]={0};ethernet[12]=8;memcpy(ethernet+14,packet,40);
+ meshvpn_ap_probe_tx(0,ethernet,sizeof(ethernet));assert(s_checksums[2].checked==1&&!s_checksums[2].bad_tcp);
+ ethernet[14+33]^=0x40;
+ for(unsigned i=0;i<32;i++)meshvpn_ap_probe_tx(0,ethernet,sizeof(ethernet));
+ assert(s_checksums[2].bad_tcp==1&&s_checksums[2].checked==2);
  puts("AP probe: production packet/checksum construction, synthetic-only interception, timeout, VPN/ARP/role guards, cleanup and handshake stage correlation passed");
 }

@@ -25,6 +25,6 @@ void meshvpn_ap_probe_attach(struct netif *ap, struct netif *sta);
 void meshvpn_ap_probe_input(const struct pbuf *p, const struct netif *inp);
 void meshvpn_ap_probe_tx(unsigned ifx, const void *frame, size_t len);
 void meshvpn_ap_probe_flows(meshvpn_ap_flow_t out[8]);
-void meshvpn_ap_probe_checksums(meshvpn_rx_checksum_t out[2]);
+void meshvpn_ap_probe_checksums(meshvpn_rx_checksum_t out[4]); /* RX STA/AP, TX STA/AP */
 esp_err_t meshvpn_ap_probe_run(meshvpn_ap_probe_result_t out[2]); /* UDP DNS, TCP SYN */
 esp_err_t meshvpn_ap_probe_echo(const meshvpn_ap_echo_config_t *, meshvpn_ap_echo_result_t *);
