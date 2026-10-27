@@ -29,6 +29,8 @@ static uint64_t s_seen[8];
 static unsigned s_next;
 static portMUX_TYPE s_flow_lock = portMUX_INITIALIZER_UNLOCKED;
 static meshvpn_rx_checksum_t s_checksums[4];
+static meshvpn_sta_tcp_trace_t s_tcp;
+static uint64_t s_tcp_started;
 static err_t output(struct netif *, struct pbuf *, const ip4_addr_t *);
 /* Default Wi-Fi netifs acquire output during start, after LAN registration. */
 static void attach_output(void)
@@ -42,6 +44,58 @@ static uint16_t r16(const uint8_t *p) { return ((uint16_t)p[0] << 8) | p[1]; }
 static uint32_t r32(const uint8_t *p) { return ((uint32_t)r16(p) << 16) | r16(p + 2); }
 static void w16(uint8_t *p, uint16_t n) { p[0] = n >> 8; p[1] = n; }
 static void w32(uint8_t *p, uint32_t n) { w16(p, n >> 16); w16(p + 2, n); }
+/* Local HTTP diagnostic flows only. Retain header metadata, never body bytes,
+ * HTTP headers, credentials, or forwarded client traffic. RX precedes lwIP;
+ * TX means accepted by host SDIO, not confirmed RF delivery. */
+static void sta_tcp(bool tx, const uint8_t *h, size_t n, size_t wire_len)
+{
+    if (!s_sta || n < 40 || h[0] >> 4 != 4 || h[9] != 6 || (h[6] & 0x3f) || h[7]) return;
+    unsigned ihl = (h[0] & 15) * 4, total = r16(h + 2);
+    if (ihl < 20 || n < ihl + 20 || total < ihl + 20 || total > wire_len) return;
+    const uint8_t *t = h + ihl; unsigned thl = (t[12] >> 4) * 4;
+    if (thl < 20 || n < ihl + thl || total < ihl + thl) return;
+    uint32_t local, peer;
+    memcpy(&local, h + (tx ? 12 : 16), 4); memcpy(&peer, h + (tx ? 16 : 12), 4);
+    if (local != netif_ip4_addr(s_sta)->addr || r16(t + (tx ? 0 : 2)) != 80) return;
+    meshvpn_sta_tcp_event_t e = {.seq=r32(t+4), .ack=r32(t+8), .flags=t[13],
+        .window=r16(t+14), .payload=total-ihl-thl, .tx=tx};
+    for (unsigned off = 20; off < thl;) {
+        unsigned kind = t[off];
+        if (!kind) break;
+        if (kind == 1) { off++; continue; }
+        if (off + 1 >= thl || t[off+1] < 2 || off + t[off+1] > thl) return;
+        unsigned size = t[off+1];
+        if (kind == 5) {
+            if (size < 10 || (size-2) % 8) return;
+            e.sack_blocks = (size-2)/8; e.sack_left = r32(t+off+2); e.sack_right = r32(t+off+6);
+        }
+        off += size;
+    }
+    uint16_t port = r16(t + (tx ? 2 : 0)); uint64_t now = esp_timer_get_time();
+    portENTER_CRITICAL(&s_flow_lock);
+    if (!tx && (e.flags & 0x12) == 2 && (!s_tcp.total_events || s_tcp.peer != peer ||
+        s_tcp.local != local || s_tcp.peer_port != port || s_tcp.initial_seq != e.seq)) {
+        memset(&s_tcp, 0, sizeof(s_tcp)); s_tcp_started = now;
+        s_tcp.peer=peer; s_tcp.local=local; s_tcp.peer_port=port; s_tcp.initial_seq=e.seq;
+    }
+    if (s_tcp_started && s_tcp.peer == peer && s_tcp.local == local && s_tcp.peer_port == port) {
+        e.elapsed_ms = (now-s_tcp_started)/1000;
+        s_tcp.events[s_tcp.total_events++ % MESHPN_STA_TCP_EVENTS] = e;
+        s_tcp.packets[tx]++; s_tcp.data_bytes[tx] += e.payload;
+    }
+    portEXIT_CRITICAL(&s_flow_lock);
+}
+void meshvpn_ap_probe_sta_tcp(meshvpn_sta_tcp_trace_t *out)
+{
+    uint64_t now = esp_timer_get_time();
+    portENTER_CRITICAL(&s_flow_lock);
+    *out = s_tcp;
+    out->age_ms = s_tcp_started ? (now-s_tcp_started)/1000 : 0;
+    out->count = s_tcp.total_events < MESHPN_STA_TCP_EVENTS ? s_tcp.total_events : MESHPN_STA_TCP_EVENTS;
+    unsigned first = s_tcp.total_events-out->count;
+    for (unsigned i=0; i<out->count; i++) out->events[i] = s_tcp.events[(first+i)%MESHPN_STA_TCP_EVENTS];
+    portEXIT_CRITICAL(&s_flow_lock);
+}
 static void checksum_sample(const struct pbuf *p, unsigned ifx)
 {
     portENTER_CRITICAL(&s_flow_lock);
@@ -132,7 +186,8 @@ void meshvpn_ap_probe_input(const struct pbuf *p, const struct netif *inp)
     attach_output(); /* TCP/IP thread; also handles a restarted netif. */
     if (inp != s_ap && inp != s_sta) return;
     checksum_sample(p, inp == s_ap ? 1 : 0);
-    uint8_t h[80]; size_t n = pbuf_copy_partial(p, h, sizeof(h), 0);
+    uint8_t h[120]; size_t n = pbuf_copy_partial(p, h, sizeof(h), 0);
+    if (inp == s_sta) sta_tcp(false, h, n, p->tot_len);
     if (inp == s_ap && n >= 20 && !memcmp(h + 16, &netif_ip4_addr(s_ap)->addr, 4)) return;
     flow(inp == s_ap ? 1 : 4, h, n);
 }
@@ -145,6 +200,7 @@ void meshvpn_ap_probe_tx(unsigned ifx, const void *frame, size_t len)
         struct pbuf packet = {.payload=(uint8_t *)p+14, .len=len-14, .tot_len=len-14};
         checksum_sample(&packet, ifx + 2);
     }
+    if (!ifx) sta_tcp(true, p+14, len-14, len-14);
     flow(ifx ? 16 : 2, p + 14, len - 14);
 }
 static err_t output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst)

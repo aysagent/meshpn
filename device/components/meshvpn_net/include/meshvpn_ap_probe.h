@@ -21,6 +21,20 @@ typedef struct {
     int error;
 } meshvpn_ap_probe_result_t;
 typedef struct { uint64_t seen, checked, skipped, bad_ip, bad_tcp, bad_udp; } meshvpn_rx_checksum_t;
+#define MESHPN_STA_TCP_EVENTS 64
+typedef struct {
+    uint32_t elapsed_ms, seq, ack, sack_left, sack_right;
+    uint16_t payload, window;
+    uint8_t flags, tx, sack_blocks;
+} meshvpn_sta_tcp_event_t;
+typedef struct {
+    uint32_t peer, local, initial_seq, packets[2], data_bytes[2], total_events;
+    uint16_t peer_port;
+    uint64_t age_ms;
+    unsigned count;
+    meshvpn_sta_tcp_event_t events[MESHPN_STA_TCP_EVENTS];
+} meshvpn_sta_tcp_trace_t;
+void meshvpn_ap_probe_sta_tcp(meshvpn_sta_tcp_trace_t *out);
 void meshvpn_ap_probe_attach(struct netif *ap, struct netif *sta);
 void meshvpn_ap_probe_input(const struct pbuf *p, const struct netif *inp);
 void meshvpn_ap_probe_tx(unsigned ifx, const void *frame, size_t len);

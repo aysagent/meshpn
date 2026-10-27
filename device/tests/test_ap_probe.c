@@ -93,6 +93,37 @@ static err_t ip4_input(struct pbuf *p,struct netif *n)
  ip4_addr_t dst;memcpy(&dst.addr,reply+16,4);clock_us+=5000;
  assert(n->output(n,&response,&dst)==ERR_OK);release(p);return ERR_OK;
 }
+static void test_sta_tcp(void)
+{
+ uint8_t h[120]={0},saved[120];h[0]=0x45;h[9]=6;w16(h+2,40);
+ uint8_t peer[]={192,168,1,4};memcpy(h+12,peer,4);memcpy(h+16,&s_sta->ip.addr,4);
+ w16(h+20,58000);w16(h+22,80);w32(h+24,0xfffffff0u);h[32]=0x50;h[33]=2;
+ meshvpn_sta_tcp_trace_t v;meshvpn_ap_probe_sta_tcp(&v);assert(!v.total_events);
+ for(unsigned n=0;n<40;n++)sta_tcp(false,h,n,40);
+ meshvpn_ap_probe_sta_tcp(&v);assert(!v.total_events);
+ memcpy(saved,h,sizeof(h));sta_tcp(false,h,40,40);assert(!memcmp(h,saved,sizeof(h)));
+ sta_tcp(false,h,40,40);meshvpn_ap_probe_sta_tcp(&v);
+ assert(v.total_events==2&&v.packets[0]==2&&v.peer_port==58000&&v.initial_seq==0xfffffff0u);
+ /* New ISN on a reused tuple starts a new flow; sequence values stay unsigned. */
+ w32(h+24,10);sta_tcp(false,h,40,40);meshvpn_ap_probe_sta_tcp(&v);assert(v.total_events==1);
+ h[33]=0x10;h[32]=0x80;w16(h+2,52);h[40]=5;h[41]=10;w32(h+42,100);w32(h+46,200);h[50]=0;
+ sta_tcp(false,h,52,52);meshvpn_ap_probe_sta_tcp(&v);
+ assert(v.count==2&&v.events[1].sack_blocks==1&&v.events[1].sack_left==100&&v.events[1].sack_right==200);
+ h[41]=11;sta_tcp(false,h,52,52);meshvpn_ap_probe_sta_tcp(&v);assert(v.total_events==2);
+ h[41]=10;h[6]=0x20;sta_tcp(false,h,52,52);h[6]=0;
+ w16(h+2,20);sta_tcp(false,h,52,52);w16(h+2,52);
+ sta_tcp(false,h,51,52);sta_tcp(false,h,52,51);meshvpn_ap_probe_sta_tcp(&v);assert(v.total_events==2);
+ /* TX retains only TCP metadata even for a large body; ring wraps in order. */
+ memcpy(h+12,&s_sta->ip.addr,4);memcpy(h+16,peer,4);w16(h+20,80);w16(h+22,58000);
+ h[32]=0x50;w16(h+2,1040);w16(h+34,12345);
+ for(unsigned i=0;i<100;i++){clock_us+=1000;w32(h+24,4000+i*1000);sta_tcp(true,h,40,1040);}
+ meshvpn_ap_probe_sta_tcp(&v);assert(v.count==64&&v.total_events==102);
+ assert(v.packets[1]==100&&v.data_bytes[1]==100000);
+ assert(v.events[0].seq==40000&&v.events[63].seq==103000);
+ assert(v.events[63].window==12345&&v.events[63].payload==1000&&v.events[63].tx);
+ assert(v.events[0].elapsed_ms<v.events[63].elapsed_ms);
+ w16(h+20,443);sta_tcp(true,h,40,1040);meshvpn_ap_probe_sta_tcp(&v);assert(v.total_events==102);
+}
 int main(void)
 {
  struct netif ap={.up=true,.link=true,.napt=true,.output=ordinary},sta={.up=true,.link=true};
@@ -140,5 +171,6 @@ int main(void)
  ethernet[14+33]^=0x40;
  for(unsigned i=0;i<32;i++)meshvpn_ap_probe_tx(0,ethernet,sizeof(ethernet));
  assert(s_checksums[2].bad_tcp==1&&s_checksums[2].checked==2);
- puts("AP probe: production packet/checksum construction, synthetic-only interception, timeout, VPN/ARP/role guards, cleanup and handshake stage correlation passed");
+ test_sta_tcp();
+ puts("AP probe: packet/checksums, ownership, guards, handshake stages and bounded STA TCP/SACK trace passed");
 }

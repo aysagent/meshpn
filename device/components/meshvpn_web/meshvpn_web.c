@@ -299,6 +299,41 @@ static esp_err_t handler_link_download(httpd_req_t *req)
     if (!meshvpn_local_download(req, local_download_send, local_download_now)) return ESP_FAIL;
     return httpd_resp_send_chunk(req, NULL, 0);
 }
+static esp_err_t send_json(httpd_req_t *req, cJSON *root);
+static esp_err_t handler_sta_tcp_trace(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+#if CONFIG_IDF_TARGET_ESP32P4
+    meshvpn_sta_tcp_trace_t trace; meshvpn_ap_probe_sta_tcp(&trace);
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddStringToObject(out, "scope", "last STA-local HTTP TCP flow, RX before lwIP / TX accepted by SDIO, not RF delivery; last 64 headers only; bytes include repeats; SACK records first block; no payload");
+    char address[16]; const uint8_t *b = (const uint8_t *)&trace.peer;
+    snprintf(address, sizeof(address), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+    cJSON_AddStringToObject(out, "peer", address); b = (const uint8_t *)&trace.local;
+    snprintf(address, sizeof(address), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+    cJSON_AddStringToObject(out, "local", address);
+    cJSON_AddNumberToObject(out, "peer_port", trace.peer_port);
+    cJSON_AddNumberToObject(out, "age_ms", trace.age_ms);
+    cJSON_AddNumberToObject(out, "total_events", trace.total_events);
+    cJSON_AddNumberToObject(out, "omitted_events", trace.total_events-trace.count);
+    for (unsigned i=0; i<2; i++) {
+        cJSON *v = cJSON_AddObjectToObject(out, i ? "tx" : "rx");
+        cJSON_AddNumberToObject(v, "packets", trace.packets[i]);
+        cJSON_AddNumberToObject(v, "data_bytes_including_repeats", trace.data_bytes[i]);
+    }
+    cJSON *events = cJSON_AddArrayToObject(out, "events");
+    for (unsigned i=0; i<trace.count; i++) {
+        meshvpn_sta_tcp_event_t *e = &trace.events[i]; cJSON *v=cJSON_CreateObject(); cJSON_AddItemToArray(events,v);
+#define TCP_FIELD(name) cJSON_AddNumberToObject(v, #name, e->name)
+        TCP_FIELD(elapsed_ms); TCP_FIELD(seq); TCP_FIELD(ack); TCP_FIELD(flags); TCP_FIELD(tx);
+        TCP_FIELD(payload); TCP_FIELD(window); TCP_FIELD(sack_blocks); TCP_FIELD(sack_left); TCP_FIELD(sack_right);
+#undef TCP_FIELD
+    }
+    return send_json(req,out);
+#else
+    return error(req, "501 Not Implemented", "STA TCP trace requires P4");
+#endif
+}
 static esp_err_t handler_ap_forward_probe(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -1448,6 +1483,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/diag/link-upload", HTTP_POST, handler_link_upload),
         ROUTE("/api/diag/ap-forward", HTTP_POST, handler_ap_forward_probe),
         ROUTE("/api/diag/ap-echo", HTTP_POST, handler_ap_echo),
+        ROUTE("/api/diag/sta-tcp", HTTP_GET, handler_sta_tcp_trace),
         ROUTE("/api/diag/usb-bursts", HTTP_GET, handler_usb_bursts),
     };
     for (unsigned i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
