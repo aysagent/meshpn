@@ -19,8 +19,11 @@ export class NativeSystemdTrialController extends EventEmitter{
   require(run('show','clean-vpn-native-trial.service','-p','ActiveState','--value')==='active','clock_trial_owner_inactive');
   this.dir=fs.mkdtempSync('/run/clean-vpn-systemd-trial-');fs.chmodSync(this.dir,0o700);this.log=this.dir+'/events';fs.writeFileSync(this.log,'',{mode:0o600});
   const root=path.dirname(path.dirname(binary));const script=path.resolve(root,'../../scripts/clean-vpn-native-clock.py');require(fs.existsSync(script),'clock_helper_missing');
+  // Validate separately: ExecStartPre shares StandardOutput with the engine,
+  // but its config report is not a runtime status event.
+  execFileSync(binary,['--check-config',config],{timeout:15000,stdio:['ignore','pipe','pipe'],maxBuffer:65536});
   const marker='# clean-vpn-owned-clock-trial\n';
-  const consumer=marker+nativeServiceUnit({binary,config,networkUnit:'clean-vpn-native-trial.service',guardUnit:'clean-vpn-killswitch.service',role:'client',clockRecoveryUnit:RECOVERY}).replace('StandardOutput=journal','StandardOutput=append:'+this.log).replace('StandardError=journal','StandardError=null').replace('ProtectHome=yes','ProtectHome=read-only');
+  const consumer=marker+nativeServiceUnit({binary,config,networkUnit:'clean-vpn-native-trial.service',guardUnit:'clean-vpn-killswitch.service',role:'client',clockRecoveryUnit:RECOVERY}).replace(`ExecStartPre=${binary} --check-config ${config}\n`,'').replace('StandardOutput=journal','StandardOutput=append:'+this.log).replace('StandardError=journal','StandardError=null').replace('ProtectHome=yes','ProtectHome=read-only');
   const recovery=marker+nativeClockRecoveryUnit({consumerUnit:UNIT,script,config:clockConfig,stateDirectory:c.state_dir}).replace('[Unit]\n','[Unit]\nPartOf=clean-vpn-native-trial.service\nAfter=clean-vpn-native-trial.service\n').replace('ProtectHome=yes','ProtectHome=read-only');
   this.files=new Map([['/run/systemd/system/'+UNIT,consumer],['/run/systemd/system/'+RECOVERY,recovery]]);
   for(const p of this.files.keys())require(!fs.existsSync(p),'clock_trial_unit_collision');
