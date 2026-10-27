@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "kind": "clean-vpn-native-runtime-validation",
-  "updatedAt": "2026-10-26T22:59:54.789Z",
+  "updatedAt": "2026-10-27T06:41:53.264Z",
   "labFinalState": {
     "temporaryContainers": 0,
     "temporaryNetworks": 0,
@@ -23,7 +23,7 @@
       "method": "cached Linux amd64 CMake build; artifact stage packages the tested binary"
     }
   },
-  "unitTests": "9/9",
+  "unitTests": "11/11",
   "sourceProvenance": {
     "arm64": "56/56 current source hashes matched",
     "amd64": "56/56 current source hashes matched"
@@ -440,17 +440,1000 @@
     "boring-tls only in this runtime; combo-tls and transparent-tls refused",
     "IPv4 tunnel only; non-loopback IPv6 blocked",
     "Rootless unsupported; explicit rootful NET_ADMIN/NET_RAW/NET_BIND_SERVICE and TUN required",
-    "Physical wg0/usb0 ingress wiring not automated; isolated second-bridge LAN ingress tested",
+    "Physical wg0/usb0 installer absent; selected-ingress host-side wiring and rollback now tested in disposable VM",
     "No authenticated native time bootstrap; wrong certificates/dates fail closed",
     "No permanent Radxa/VPS install or physical reboot; RTC power-loss retention unproven",
     "APT signed current repositories, not a byte-reproducible APT snapshot",
     "amd64 netfilter under Rosetta failed; use native x86 kernel evidence, not emulation claim",
     "Small traffic soak is not a throughput benchmark or 32-client load acceptance",
-    "Soak records RSS/FD and bounded probe success, not kernel socket/process inventories or latency quantiles"
+    "Experimental relay container replay persistence verified; public runtime launcher remains boring-tls only",
+    "Host-wiring journal fixture is boot-bound /run state, not physical power-loss recovery proof"
   ],
   "remaining": [
-    "Physical wg0/usb0 LAN wiring and rollback are separate next work",
-    "Container lifecycle for combo/transparent and replay state remains separate",
-    "Permanent install and physical reboot/power-loss are outside this authorized night scope"
-  ]
+    "Physical ingress installer, DHCP/local DNS integration and its persistent recovery are separate from the tested VM recipe",
+    "Production combo/transparent runtime launcher, packet/gateway provisioning and health contract remain separate; replay volume compatibility is now verified",
+    "Permanent install and physical reboot/RTC power-loss remain outside this authorized night scope"
+  ],
+  "followup": {
+    "currentImageProvenance": {
+      "artifact": "current-image-provenance.json",
+      "artifactSha256": "f2e40a1f70ab4a98fbc66cf072adc97574b094b2df2692734d3f7828f4fe1cd4",
+      "results": {
+        "arm64": {
+          "matchedFiles": 56,
+          "status": "passed"
+        },
+        "amd64": {
+          "matchedFiles": 56,
+          "status": "passed"
+        }
+      }
+    },
+    "reason": "The first report stopped before the complete night plan: host-side wiring model, socket/process/latency counters and experimental replay packaging still needed proof.",
+    "hostWiring": {
+      "artifact": "host-wiring-v7.json",
+      "artifactSha256": "35a1dc9194d736ec831cd8061e69d3091bd6b2bdbaf71fddeb326e89e9e25661",
+      "status": "passed",
+      "checks": [
+        "standalone-authenticated-tunnel-dns-udp-tcp",
+        "standalone-https",
+        "host-wiring-direct-positive-controls",
+        "host-iif-policy-selected-exit-other-and-host-direct",
+        "host-selected-ipv6-blocked-other-interface-preserved",
+        "host-ingress-dns-udp-tcp-through-client",
+        "host-wiring-live-owner-recovery-refused",
+        "host-wiring-controller-sigkill-retains-route",
+        "host-wiring-tunnel-failure-no-selected-fallback-rescue-retained",
+        "host-wiring-independent-rollback-exact-baseline",
+        "host-wiring-intent-before-mutation-recovery",
+        "host-wiring-journal-temp-orphan-recovery",
+        "host-wiring-mutation-before-verification-recovery",
+        "host-bridge-loss-unreachable-default-no-fallback",
+        "standalone-crash-guard-persists",
+        "same-namespace-crash-restart",
+        "standalone-graceful-stop",
+        "clock-past-certificate-fails-closed",
+        "clock-past-restored-with-verification",
+        "clock-expired-certificate-fails-closed",
+        "clock-expired-restored-with-verification",
+        "standalone-independent-profile-match"
+      ],
+      "scope": "NIC-less VM; veth USB-like ingress, IPv4+IPv6 exact route/rule restoration including order, local rescue, selected DNS, controller/engine SIGKILL, three journal/mutation boundaries, bridge loss",
+      "physicalInterfaceInstaller": false,
+      "powerLossJournalAcceptance": false,
+      "pcapSha256": "741073f955468e0fefcdd3f72590ce11b0b70bc4733bb1cf9d12f7049016e92d",
+      "vm": {
+        "kernel": "6.8.0-147-generic",
+        "kernelSha256": "41ba36d860aa0b0cd995f4ca8856d80249b244577e704929b55be13fbd1ebd2f",
+        "accelerator": "TCG",
+        "vcpus": 2,
+        "memoryMiB": 1536
+      }
+    },
+    "replay": {
+      "podmanArm64": {
+        "artifact": "replay-v5.json",
+        "artifactSha256": "22af47dc6f832245b0bcd1155be5af2e41305cf7338011be00e7fafbfaaf866b",
+        "status": "passed",
+        "imageId": "e1942dd095830c121155d9133d63d5a86ef565bf7eb1248ea52dac6f25c43e38",
+        "engineSha256": "f0eb2a326e6c67491da4e1d895745b3e3c125c5208fc38446e396cb8e8490d72",
+        "architecture": "arm64",
+        "checks": 26,
+        "phases": [
+          {
+            "schema": 1,
+            "kind": "native-runtime-replay-phase",
+            "transport": "transparent-tls",
+            "phase": "first",
+            "checks": [
+              "production-engine-config-valid",
+              "explicit-init-only-and-repeat-init-refused",
+              "durable-scope-second-owner-free-port-and-tun-refused",
+              "native-so-original-dst-tls-relay-fresh-request"
+            ],
+            "status": "passed",
+            "replayStateSha256": "e60fa865d0e9806d2a6d4f859318fcbe394b784ed14e6241a534c285f92a4410"
+          },
+          {
+            "schema": 1,
+            "kind": "native-runtime-replay-phase",
+            "transport": "transparent-tls",
+            "phase": "readonly",
+            "checks": [
+              "production-engine-config-valid",
+              "readonly-state-refused-without-reset"
+            ],
+            "status": "passed",
+            "replayStateSha256": "e60fa865d0e9806d2a6d4f859318fcbe394b784ed14e6241a534c285f92a4410"
+          },
+          {
+            "schema": 1,
+            "kind": "native-runtime-replay-phase",
+            "transport": "transparent-tls",
+            "phase": "recreated",
+            "checks": [
+              "production-engine-config-valid",
+              "durable-scope-second-owner-free-port-and-tun-refused",
+              "captured-token-rejected-after-container-sigkill-recreation",
+              "native-so-original-dst-tls-relay-fresh-request",
+              "same-captured-token-valid-in-independent-fresh-fixture-scope",
+              "second-owner-starts-after-original-owner-released-lock"
+            ],
+            "status": "passed",
+            "replayStateSha256": "cb8f81e80953b5c5306cc7d7a3475553c36140f15cdf9a430fe3adf7bcf3f118"
+          },
+          {
+            "schema": 1,
+            "kind": "native-runtime-replay-phase",
+            "transport": "combo-tls",
+            "phase": "first",
+            "checks": [
+              "production-engine-config-valid",
+              "explicit-init-only-and-repeat-init-refused",
+              "durable-scope-second-owner-free-port-and-tun-refused",
+              "combo-boring-authenticated-on-shared-exit-listener",
+              "native-so-original-dst-tls-relay-fresh-request"
+            ],
+            "status": "passed",
+            "replayStateSha256": "caf8727bfb041023d3d4afe31a6b61f8e23fb3e196a2f8b70222f3903c1add13"
+          },
+          {
+            "schema": 1,
+            "kind": "native-runtime-replay-phase",
+            "transport": "combo-tls",
+            "phase": "readonly",
+            "checks": [
+              "production-engine-config-valid",
+              "readonly-state-refused-without-reset"
+            ],
+            "status": "passed",
+            "replayStateSha256": "caf8727bfb041023d3d4afe31a6b61f8e23fb3e196a2f8b70222f3903c1add13"
+          },
+          {
+            "schema": 1,
+            "kind": "native-runtime-replay-phase",
+            "transport": "combo-tls",
+            "phase": "recreated",
+            "checks": [
+              "production-engine-config-valid",
+              "durable-scope-second-owner-free-port-and-tun-refused",
+              "captured-token-rejected-after-container-sigkill-recreation",
+              "combo-boring-authenticated-on-shared-exit-listener",
+              "native-so-original-dst-tls-relay-fresh-request",
+              "same-captured-token-valid-in-independent-fresh-fixture-scope",
+              "second-owner-starts-after-original-owner-released-lock"
+            ],
+            "status": "passed",
+            "replayStateSha256": "d7c3956644ff2d8efe66bf561101e77dd0364cd159cca1fdadcac4f686eabaee"
+          }
+        ],
+        "cleanup": {
+          "status": "cleaned",
+          "removed": [
+            {
+              "type": "volume",
+              "name": "cvpnrt-ea46dfbf98e69211-replay"
+            }
+          ]
+        }
+      },
+      "dockerArm64": {
+        "artifact": "docker-replay-v3.json",
+        "artifactSha256": "fb0280cfbe4f85958c1564846ec03d7969322ebfd0c2b1bfe4e5f6a3cfba2e08",
+        "status": "passed",
+        "imageId": "sha256:e1942dd095830c121155d9133d63d5a86ef565bf7eb1248ea52dac6f25c43e38",
+        "engineSha256": "f0eb2a326e6c67491da4e1d895745b3e3c125c5208fc38446e396cb8e8490d72",
+        "architecture": "arm64",
+        "checks": 26,
+        "phases": [
+          {
+            "schema": 1,
+            "kind": "native-runtime-replay-phase",
+            "transport": "transparent-tls",
+            "phase": "first",
+            "checks": [
+              "production-engine-config-valid",
+              "explicit-init-only-and-repeat-init-refused",
+              "durable-scope-second-owner-free-port-and-tun-refused",
+              "native-so-original-dst-tls-relay-fresh-request"
+            ],
+            "status": "passed",
+            "replayStateSha256": "cc1970df0f61e98d629ee2b78401f61f67dba7304e98cac6ad406ca3625078da"
+          },
+          {
+            "schema": 1,
+            "kind": "native-runtime-replay-phase",
+            "transport": "transparent-tls",
+            "phase": "readonly",
+            "checks": [
+              "production-engine-config-valid",
+              "readonly-state-refused-without-reset"
+            ],
+            "status": "passed",
+            "replayStateSha256": "cc1970df0f61e98d629ee2b78401f61f67dba7304e98cac6ad406ca3625078da"
+          },
+          {
+            "schema": 1,
+            "kind": "native-runtime-replay-phase",
+            "transport": "transparent-tls",
+            "phase": "recreated",
+            "checks": [
+              "production-engine-config-valid",
+              "durable-scope-second-owner-free-port-and-tun-refused",
+              "captured-token-rejected-after-container-sigkill-recreation",
+              "native-so-original-dst-tls-relay-fresh-request",
+              "same-captured-token-valid-in-independent-fresh-fixture-scope",
+              "second-owner-starts-after-original-owner-released-lock"
+            ],
+            "status": "passed",
+            "replayStateSha256": "ee7cb7cd495915d93df92fa9c714abe512ac3ce29f1dd116df2eaf0f2e48b7a4"
+          },
+          {
+            "schema": 1,
+            "kind": "native-runtime-replay-phase",
+            "transport": "combo-tls",
+            "phase": "first",
+            "checks": [
+              "production-engine-config-valid",
+              "explicit-init-only-and-repeat-init-refused",
+              "durable-scope-second-owner-free-port-and-tun-refused",
+              "combo-boring-authenticated-on-shared-exit-listener",
+              "native-so-original-dst-tls-relay-fresh-request"
+            ],
+            "status": "passed",
+            "replayStateSha256": "973ab26d20a1b1af6b8a0b4b9ef7565480ced0a3b76cce9f6fa00cb0da81715c"
+          },
+          {
+            "schema": 1,
+            "kind": "native-runtime-replay-phase",
+            "transport": "combo-tls",
+            "phase": "readonly",
+            "checks": [
+              "production-engine-config-valid",
+              "readonly-state-refused-without-reset"
+            ],
+            "status": "passed",
+            "replayStateSha256": "973ab26d20a1b1af6b8a0b4b9ef7565480ced0a3b76cce9f6fa00cb0da81715c"
+          },
+          {
+            "schema": 1,
+            "kind": "native-runtime-replay-phase",
+            "transport": "combo-tls",
+            "phase": "recreated",
+            "checks": [
+              "production-engine-config-valid",
+              "durable-scope-second-owner-free-port-and-tun-refused",
+              "captured-token-rejected-after-container-sigkill-recreation",
+              "combo-boring-authenticated-on-shared-exit-listener",
+              "native-so-original-dst-tls-relay-fresh-request",
+              "same-captured-token-valid-in-independent-fresh-fixture-scope",
+              "second-owner-starts-after-original-owner-released-lock"
+            ],
+            "status": "passed",
+            "replayStateSha256": "eac38fc34eff3f03587396754f858601786a2ed93a993786bf0284c1e7a2d5d2"
+          }
+        ],
+        "cleanup": {
+          "status": "cleaned",
+          "removed": [
+            {
+              "type": "volume",
+              "name": "cvpnrt-cde089cb3c4db099-replay"
+            }
+          ]
+        }
+      },
+      "scope": "Production engine in runtime image, separate test controller/observer; transparent TLS relay and combo shared listener plus boring authentication; not combo packet payload or production launcher acceptance"
+    },
+    "namespaceRestartRegression": {
+      "docker": {
+        "artifact": "docker-restart-final.json",
+        "artifactSha256": "2fb4fdfbd84369a98594ea7d982a9b93ceb48e815c188c6c76716845e494b0ca",
+        "status": "passed",
+        "checks": [
+          "profiled-tunnel-and-dns-udp-tcp",
+          "public-launcher-start-status",
+          "loopback-dns-https-tcp-udp",
+          "isolated-lan-gateway-dns-https-tcp-udp",
+          "bounded-soak-with-restarts-passed",
+          "foreign-rules-preserved",
+          "same-namespace-reentry-audited",
+          "unreachable-upstreams-unhealthy",
+          "dns-restores-with-upstream",
+          "wrong-name-unhealthy",
+          "wrong-psk-unhealthy",
+          "wrong-ca-unhealthy",
+          "unreachable-exit-unhealthy",
+          "without-net-admin-refused",
+          "without-tun-refused",
+          "host-network-refused-before-mutation",
+          "public-launcher-stop-and-restart",
+          "unprivileged-shared-namespace-application",
+          "pid1-sigkill-shared-namespace-no-direct-fallback",
+          "lan-gateway-crash-no-direct-fallback",
+          "dead-engine-app-dns-blocked",
+          "replacement-works-old-namespace-stays-blocked",
+          "client-sigterm-clean",
+          "container-restart-healthy",
+          "independent-clienthello-profile-matched",
+          "exit-sigterm-clean",
+          "public-launcher-owned-remove"
+        ],
+        "soak": {
+          "requestedSeconds": 135,
+          "elapsedSeconds": 135,
+          "restarts": 10,
+          "restartEvents": [
+            {
+              "elapsed": 11,
+              "signal": "SIGTERM",
+              "beforeNamespace": "net:[4026533494]",
+              "readyElapsed": 13,
+              "afterNamespace": "net:[4026533571]",
+              "oldNamespaceForeignRulePreserved": true,
+              "namespaceChanged": true,
+              "fixtureSentinelReinstalledInNewNamespace": true
+            },
+            {
+              "elapsed": 23,
+              "signal": "SIGKILL",
+              "beforeNamespace": "net:[4026533571]",
+              "readyElapsed": 25,
+              "afterNamespace": "net:[4026532821]",
+              "oldNamespaceForeignRulePreserved": true,
+              "namespaceChanged": true,
+              "fixtureSentinelReinstalledInNewNamespace": true
+            },
+            {
+              "elapsed": 36,
+              "signal": "SIGTERM",
+              "beforeNamespace": "net:[4026532821]",
+              "readyElapsed": 38,
+              "afterNamespace": "net:[4026533498]",
+              "oldNamespaceForeignRulePreserved": true,
+              "namespaceChanged": true,
+              "fixtureSentinelReinstalledInNewNamespace": true
+            },
+            {
+              "elapsed": 48,
+              "signal": "SIGKILL",
+              "beforeNamespace": "net:[4026533498]",
+              "readyElapsed": 50,
+              "afterNamespace": "net:[4026533497]",
+              "oldNamespaceForeignRulePreserved": true,
+              "namespaceChanged": true,
+              "fixtureSentinelReinstalledInNewNamespace": true
+            },
+            {
+              "elapsed": 61,
+              "signal": "SIGTERM",
+              "beforeNamespace": "net:[4026533497]",
+              "readyElapsed": 63,
+              "afterNamespace": "net:[4026532726]",
+              "oldNamespaceForeignRulePreserved": true,
+              "namespaceChanged": true,
+              "fixtureSentinelReinstalledInNewNamespace": true
+            },
+            {
+              "elapsed": 73,
+              "signal": "SIGKILL",
+              "beforeNamespace": "net:[4026532726]",
+              "readyElapsed": 75,
+              "afterNamespace": "net:[4026532803]",
+              "oldNamespaceForeignRulePreserved": true,
+              "namespaceChanged": true,
+              "fixtureSentinelReinstalledInNewNamespace": true
+            },
+            {
+              "elapsed": 86,
+              "signal": "SIGTERM",
+              "beforeNamespace": "net:[4026532803]",
+              "readyElapsed": 88,
+              "afterNamespace": "net:[4026532559]",
+              "oldNamespaceForeignRulePreserved": true,
+              "namespaceChanged": true,
+              "fixtureSentinelReinstalledInNewNamespace": true
+            },
+            {
+              "elapsed": 99,
+              "signal": "SIGKILL",
+              "beforeNamespace": "net:[4026532559]",
+              "readyElapsed": 101,
+              "afterNamespace": "net:[4026532631]",
+              "oldNamespaceForeignRulePreserved": true,
+              "namespaceChanged": true,
+              "fixtureSentinelReinstalledInNewNamespace": true
+            },
+            {
+              "elapsed": 111,
+              "signal": "SIGTERM",
+              "beforeNamespace": "net:[4026532631]",
+              "readyElapsed": 113,
+              "afterNamespace": "net:[4026532559]",
+              "oldNamespaceForeignRulePreserved": true,
+              "namespaceChanged": true,
+              "fixtureSentinelReinstalledInNewNamespace": true
+            },
+            {
+              "elapsed": 124,
+              "signal": "SIGKILL",
+              "beforeNamespace": "net:[4026532559]",
+              "readyElapsed": 126,
+              "afterNamespace": "net:[4026532631]",
+              "oldNamespaceForeignRulePreserved": true,
+              "namespaceChanged": true,
+              "fixtureSentinelReinstalledInNewNamespace": true
+            }
+          ]
+        },
+        "cleanup": {
+          "status": "passed"
+        }
+      },
+      "podman": {
+        "artifact": "podman-final-metrics-v2.json",
+        "artifactSha256": "2751004e2d6bc1a701a4fa436cad3fdcd158429b624d56afe85e0f19dc3ad294",
+        "status": "passed",
+        "restarts": [
+          {
+            "elapsed": 11,
+            "signal": "SIGTERM",
+            "beforeNamespace": "net:[4026532806]",
+            "readyElapsed": 13,
+            "afterNamespace": "net:[4026532892]",
+            "oldNamespaceForeignRulePreserved": true,
+            "namespaceChanged": true,
+            "fixtureSentinelReinstalledInNewNamespace": true
+          },
+          {
+            "elapsed": 34,
+            "signal": "SIGKILL",
+            "beforeNamespace": "net:[4026532892]",
+            "readyElapsed": 35,
+            "afterNamespace": "net:[4026532811]",
+            "oldNamespaceForeignRulePreserved": true,
+            "namespaceChanged": true,
+            "fixtureSentinelReinstalledInNewNamespace": true
+          },
+          {
+            "elapsed": 57,
+            "signal": "SIGTERM",
+            "beforeNamespace": "net:[4026532811]",
+            "readyElapsed": 58,
+            "afterNamespace": "net:[4026532892]",
+            "oldNamespaceForeignRulePreserved": true,
+            "namespaceChanged": true,
+            "fixtureSentinelReinstalledInNewNamespace": true
+          },
+          {
+            "elapsed": 80,
+            "signal": "SIGKILL",
+            "beforeNamespace": "net:[4026532892]",
+            "readyElapsed": 81,
+            "afterNamespace": "net:[4026532811]",
+            "oldNamespaceForeignRulePreserved": true,
+            "namespaceChanged": true,
+            "fixtureSentinelReinstalledInNewNamespace": true
+          },
+          {
+            "elapsed": 102,
+            "signal": "SIGTERM",
+            "beforeNamespace": "net:[4026532811]",
+            "readyElapsed": 104,
+            "afterNamespace": "net:[4026533138]",
+            "oldNamespaceForeignRulePreserved": true,
+            "namespaceChanged": true,
+            "fixtureSentinelReinstalledInNewNamespace": true
+          },
+          {
+            "elapsed": 125,
+            "signal": "SIGKILL",
+            "beforeNamespace": "net:[4026533138]",
+            "readyElapsed": 126,
+            "afterNamespace": "net:[4026533503]",
+            "oldNamespaceForeignRulePreserved": true,
+            "namespaceChanged": true,
+            "fixtureSentinelReinstalledInNewNamespace": true
+          }
+        ]
+      },
+      "scope": "Old namespace pinned by a witness; foreign rule verified after every restart; new namespace receives a new fixture sentinel. Unpinned namespace inode strings can be reused."
+    },
+    "finalPodmanSmoke": {
+      "artifact": "podman-final-metrics-v2.json",
+      "artifactSha256": "2751004e2d6bc1a701a4fa436cad3fdcd158429b624d56afe85e0f19dc3ad294",
+      "status": "passed",
+      "checks": [
+        "profiled-tunnel-and-dns-udp-tcp",
+        "public-launcher-start-status",
+        "loopback-dns-https-tcp-udp",
+        "isolated-lan-gateway-dns-https-tcp-udp",
+        "bounded-soak-with-restarts-passed",
+        "foreign-rules-preserved",
+        "same-namespace-reentry-audited",
+        "unreachable-upstreams-unhealthy",
+        "dns-restores-with-upstream",
+        "wrong-name-unhealthy",
+        "wrong-psk-unhealthy",
+        "wrong-ca-unhealthy",
+        "unreachable-exit-unhealthy",
+        "without-net-admin-refused",
+        "without-tun-refused",
+        "host-network-refused-before-mutation",
+        "public-launcher-stop-and-restart",
+        "unprivileged-shared-namespace-application",
+        "pid1-sigkill-shared-namespace-no-direct-fallback",
+        "lan-gateway-crash-no-direct-fallback",
+        "dead-engine-app-dns-blocked",
+        "replacement-works-old-namespace-stays-blocked",
+        "client-sigterm-clean",
+        "container-restart-healthy",
+        "independent-clienthello-profile-matched",
+        "exit-sigterm-clean",
+        "public-launcher-owned-remove"
+      ],
+      "cleanup": {
+        "status": "passed"
+      },
+      "transactionTimingFields": {
+        "applicationTimings": [
+          "dnsUdpMs",
+          "dnsTcpMs",
+          "httpsRequestMs",
+          "tcpEchoMs",
+          "udpEchoMs"
+        ],
+        "lanTimings": [
+          "dnsUdpMs",
+          "dnsTcpMs",
+          "httpsRequestMs",
+          "tcpEchoMs",
+          "udpEchoMs"
+        ]
+      }
+    },
+    "finalDockerSmoke": {
+      "artifact": "docker-metrics-final.json",
+      "artifactSha256": "60ae37ef0f24ecd8bcbe3e9b69dacaf763cce349f3246dbc6ccc9d2ac404b14f",
+      "status": "passed",
+      "checks": [
+        "profiled-tunnel-and-dns-udp-tcp",
+        "public-launcher-start-status",
+        "loopback-dns-https-tcp-udp",
+        "isolated-lan-gateway-dns-https-tcp-udp",
+        "bounded-soak-with-restarts-passed",
+        "foreign-rules-preserved",
+        "same-namespace-reentry-audited",
+        "unreachable-upstreams-unhealthy",
+        "dns-restores-with-upstream",
+        "wrong-name-unhealthy",
+        "wrong-psk-unhealthy",
+        "wrong-ca-unhealthy",
+        "unreachable-exit-unhealthy",
+        "without-net-admin-refused",
+        "without-tun-refused",
+        "host-network-refused-before-mutation",
+        "public-launcher-stop-and-restart",
+        "unprivileged-shared-namespace-application",
+        "pid1-sigkill-shared-namespace-no-direct-fallback",
+        "lan-gateway-crash-no-direct-fallback",
+        "dead-engine-app-dns-blocked",
+        "replacement-works-old-namespace-stays-blocked",
+        "client-sigterm-clean",
+        "container-restart-healthy",
+        "independent-clienthello-profile-matched",
+        "exit-sigterm-clean",
+        "public-launcher-owned-remove"
+      ],
+      "cleanup": {
+        "status": "passed"
+      },
+      "scope": "Final measurement harness, 30 second soak plus full LAN/launcher/fault/capture suite",
+      "transactionTimingFields": {
+        "applicationTimings": [
+          "dnsUdpMs",
+          "dnsTcpMs",
+          "httpsRequestMs",
+          "tcpEchoMs",
+          "udpEchoMs"
+        ],
+        "lanTimings": [
+          "dnsUdpMs",
+          "dnsTcpMs",
+          "httpsRequestMs",
+          "tcpEchoMs",
+          "udpEchoMs"
+        ]
+      }
+    },
+    "fullMetricsSoak": {
+      "artifact": "full-metrics-soak.json",
+      "artifactSha256": "5d5770074d521bf84d02a9db034c40afd2efca6015043015d9f159d98c62f751",
+      "status": "metrics-phase-passed",
+      "overallRunStatus": "failed",
+      "postcheckFailure": "FOREIGN_SENTINEL was expected in a replacement namespace. Original report remains failed; corrected ownership assumption is checked by the pinned-namespace restart regressions, without changing the engine.",
+      "elapsedSeconds": 3600,
+      "requestedSeconds": 3600,
+      "samples": 331,
+      "restarts": 11,
+      "gateway": true,
+      "publicLauncher": true,
+      "resources": {
+        "client": {
+          "first": {
+            "rssKiB": 6224,
+            "fds": 7,
+            "sockets": 3,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 12,
+            "udpSockets": 1
+          },
+          "warm": {
+            "rssKiB": 6224,
+            "fds": 7,
+            "sockets": 3,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 32,
+            "udpSockets": 1
+          },
+          "last": {
+            "rssKiB": 6224,
+            "fds": 7,
+            "sockets": 3,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 22,
+            "udpSockets": 1
+          },
+          "range": {
+            "rssKiB": {
+              "min": 6220,
+              "max": 6276
+            },
+            "fds": {
+              "min": 7,
+              "max": 7
+            },
+            "sockets": {
+              "min": 3,
+              "max": 3
+            },
+            "threads": {
+              "min": 2,
+              "max": 2
+            },
+            "nativeProcesses": {
+              "min": 1,
+              "max": 1
+            },
+            "namespaceProcesses": {
+              "min": 2,
+              "max": 3
+            },
+            "zombies": {
+              "min": 0,
+              "max": 0
+            },
+            "tcpEstablished": {
+              "min": 1,
+              "max": 1
+            },
+            "tcpTimeWait": {
+              "min": 5,
+              "max": 58
+            },
+            "udpSockets": {
+              "min": 1,
+              "max": 1
+            }
+          },
+          "warmToLastRssKiB": 0
+        },
+        "exit": {
+          "first": {
+            "rssKiB": 5748,
+            "fds": 6,
+            "sockets": 2,
+            "threads": 1,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 0,
+            "udpSockets": 0
+          },
+          "warm": {
+            "rssKiB": 5748,
+            "fds": 6,
+            "sockets": 2,
+            "threads": 1,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 0,
+            "udpSockets": 0
+          },
+          "last": {
+            "rssKiB": 6180,
+            "fds": 6,
+            "sockets": 2,
+            "threads": 1,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 0,
+            "udpSockets": 0
+          },
+          "range": {
+            "rssKiB": {
+              "min": 5748,
+              "max": 6180
+            },
+            "fds": {
+              "min": 6,
+              "max": 6
+            },
+            "sockets": {
+              "min": 2,
+              "max": 2
+            },
+            "threads": {
+              "min": 1,
+              "max": 1
+            },
+            "nativeProcesses": {
+              "min": 1,
+              "max": 1
+            },
+            "namespaceProcesses": {
+              "min": 2,
+              "max": 2
+            },
+            "zombies": {
+              "min": 0,
+              "max": 0
+            },
+            "tcpEstablished": {
+              "min": 1,
+              "max": 1
+            },
+            "tcpTimeWait": {
+              "min": 0,
+              "max": 0
+            },
+            "udpSockets": {
+              "min": 0,
+              "max": 0
+            }
+          },
+          "warmToLastRssKiB": 432
+        }
+      },
+      "wallLatency": {
+        "healthWallMs": {
+          "samples": 331,
+          "minMs": 146.93791700014845,
+          "p50Ms": 189.38395800022408,
+          "p95Ms": 271.3489169999957,
+          "maxMs": 700.1101250000065,
+          "scope": "probe-plus-container-exec-wall-time-not-network-RTT"
+        },
+        "applicationWallMs": {
+          "samples": 331,
+          "minMs": 157.70258399983868,
+          "p50Ms": 178.94449999998324,
+          "p95Ms": 221.18820900004357,
+          "maxMs": 607.885334000006,
+          "scope": "probe-plus-container-exec-wall-time-not-network-RTT"
+        },
+        "lanWallMs": {
+          "samples": 331,
+          "minMs": 162.98600000003353,
+          "p50Ms": 178.5865839999169,
+          "p95Ms": 245.5683750002645,
+          "maxMs": 653.1625409999979,
+          "scope": "probe-plus-container-exec-wall-time-not-network-RTT"
+        }
+      },
+      "checks": [
+        "profiled-tunnel-and-dns-udp-tcp",
+        "public-launcher-start-status",
+        "loopback-dns-https-tcp-udp",
+        "isolated-lan-gateway-dns-https-tcp-udp",
+        "bounded-soak-with-restarts-passed"
+      ],
+      "cleanup": {
+        "status": "passed"
+      },
+      "scope": "Second real hour on final runtime image; RSS/FD/socket/thread/process/zombie/TCP/UDP counters. Concurrent separate transaction sampler adds bounded traffic during part of the run."
+    },
+    "transactionLatency": {
+      "artifact": "transaction-latency.json",
+      "artifactSha256": "9fd6e4ace19463567e6b709aac83d8dd58eaecbdc38813ab4384fe2c7cacfb1a",
+      "status": "completed",
+      "elapsedSeconds": 1801,
+      "requestedSeconds": 1800,
+      "samples": 650,
+      "failures": [],
+      "latency": {
+        "client": {
+          "dnsUdpMs": {
+            "samples": 325,
+            "minMs": 4.424794000107795,
+            "p50Ms": 5.167992000002414,
+            "p95Ms": 6.322753000073135,
+            "maxMs": 26.021388999652117,
+            "scope": "application-namespace-transaction-no-container-exec"
+          },
+          "dnsTcpMs": {
+            "samples": 325,
+            "minMs": 3.683835000032559,
+            "p50Ms": 4.260617999825627,
+            "p95Ms": 5.490125000011176,
+            "maxMs": 16.077676000073552,
+            "scope": "application-namespace-transaction-no-container-exec"
+          },
+          "httpsRequestMs": {
+            "samples": 325,
+            "minMs": 16.151014000177383,
+            "p50Ms": 17.658375999890268,
+            "p95Ms": 20.567592999897897,
+            "maxMs": 65.77253600023687,
+            "scope": "application-namespace-transaction-no-container-exec"
+          },
+          "tcpEchoMs": {
+            "samples": 325,
+            "minMs": 0.7810399997979403,
+            "p50Ms": 0.9097899999469519,
+            "p95Ms": 1.309331000316888,
+            "maxMs": 4.005874999798834,
+            "scope": "application-namespace-transaction-no-container-exec"
+          },
+          "udpEchoMs": {
+            "samples": 325,
+            "minMs": 0.2880419995635748,
+            "p50Ms": 0.4152089999988675,
+            "p95Ms": 0.5673329997807741,
+            "maxMs": 1.8437089999206364,
+            "scope": "application-namespace-transaction-no-container-exec"
+          }
+        },
+        "lan-app": {
+          "dnsUdpMs": {
+            "samples": 325,
+            "minMs": 4.486959999892861,
+            "p50Ms": 5.24453300004825,
+            "p95Ms": 6.2389059998095036,
+            "maxMs": 11.665661999955773,
+            "scope": "application-namespace-transaction-no-container-exec"
+          },
+          "dnsTcpMs": {
+            "samples": 325,
+            "minMs": 3.6550020000431687,
+            "p50Ms": 4.30883099976927,
+            "p95Ms": 5.297212000004947,
+            "maxMs": 12.797577999997884,
+            "scope": "application-namespace-transaction-no-container-exec"
+          },
+          "httpsRequestMs": {
+            "samples": 325,
+            "minMs": 16.138298999983817,
+            "p50Ms": 17.559681000187993,
+            "p95Ms": 20.04071900015697,
+            "maxMs": 39.43235899996944,
+            "scope": "application-namespace-transaction-no-container-exec"
+          },
+          "tcpEchoMs": {
+            "samples": 325,
+            "minMs": 0.7884589997120202,
+            "p50Ms": 0.9167900001630187,
+            "p95Ms": 1.2398759999778122,
+            "maxMs": 4.6234979999717325,
+            "scope": "application-namespace-transaction-no-container-exec"
+          },
+          "udpEchoMs": {
+            "samples": 325,
+            "minMs": 0.28612499963492155,
+            "p50Ms": 0.42333299992606044,
+            "p95Ms": 0.5781660000793636,
+            "maxMs": 1.6500000001396984,
+            "scope": "application-namespace-transaction-no-container-exec"
+          }
+        }
+      },
+      "scope": "30-minute concurrent subset of full soak, client and LAN. Application transaction timers exclude container CLI startup; local fixture traffic, not Internet RTT or throughput."
+    },
+    "nestedDockerCleanup": [
+      {
+        "status": "cleaned",
+        "removed": [
+          {
+            "type": "container",
+            "name": "cvpnrt-1c2111c214dd126e-daemon"
+          },
+          {
+            "type": "volume",
+            "name": "cvpnrt-1c2111c214dd126e-data"
+          },
+          {
+            "type": "volume",
+            "name": "cvpnrt-1c2111c214dd126e-socket"
+          },
+          {
+            "type": "volume",
+            "name": "cvpnrt-1c2111c214dd126e-cli"
+          }
+        ]
+      },
+      {
+        "status": "cleaned",
+        "removed": [
+          {
+            "type": "container",
+            "name": "cvpnrt-99311f5ad979487f-daemon"
+          },
+          {
+            "type": "volume",
+            "name": "cvpnrt-99311f5ad979487f-data"
+          },
+          {
+            "type": "volume",
+            "name": "cvpnrt-99311f5ad979487f-socket"
+          },
+          {
+            "type": "volume",
+            "name": "cvpnrt-99311f5ad979487f-cli"
+          }
+        ]
+      },
+      {
+        "status": "cleaned",
+        "removed": [
+          {
+            "type": "container",
+            "name": "cvpnrt-0cd4dc070ba914f3-daemon"
+          },
+          {
+            "type": "volume",
+            "name": "cvpnrt-0cd4dc070ba914f3-data"
+          },
+          {
+            "type": "volume",
+            "name": "cvpnrt-0cd4dc070ba914f3-socket"
+          },
+          {
+            "type": "volume",
+            "name": "cvpnrt-0cd4dc070ba914f3-cli"
+          }
+        ]
+      }
+    ],
+    "fixedFailures": [
+      "iptables absent jump-target chain returns status 2: inspect chain inventory before -C without suppressing arbitrary errors",
+      "Unique atomic journal temp names allow recovery after killed writer leaves orphan",
+      "Fixture bridge/port recreated in original order with stable MAC and DAD completion; strict IPv6 route comparison retained",
+      "Nested Docker uses official dind initialization in private cgroup namespace; direct dockerd lacked delegation",
+      "Complete stderr diagnostics retained; production generic startup refusal validated by positive controls",
+      "Second replay owner uses a free port and separate TUN; read-only combo phase provisions TUN before startup, excluding unrelated bind/TUN failures",
+      "Soak postcheck incorrectly expected foreign rules in a replacement container namespace; keep a witness in the old namespace to prevent inode reuse and prove its policy survives"
+    ],
+    "nightPlan": {
+      "status": "complete-as-scoped",
+      "originalFailedReportsRetained": true,
+      "permanentInstallation": false
+    }
+  }
 }
