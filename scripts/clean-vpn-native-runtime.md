@@ -161,6 +161,11 @@ network**. Launcher явно выбирает `CVPN_UPLINK=auto` и `CVPN_LAN_IN
 правила DHCP и маршруты реальных LAN устройств — отдельная операция;
 данный launcher её не выполняет. DNS-прокси хоста не превращается в ingress.
 
+Host-side policy routing, ingress DNS, IPv6 guard и аварийный rollback
+проверены отдельно в [модели Linux-шлюза](clean-vpn-native-runtime-host-wiring.md).
+Это не установка на физический интерфейс: в NIC-less VM моделируется `usb0`
+и проверяется сохранение второго LAN, локального rescue и сети самого шлюза.
+
 ## Compose и standalone
 
 `scripts/containers/native-runtime.compose.yml` — opt-in pair на одном container
@@ -203,7 +208,10 @@ container/volume/network, всегда выполняет cleanup. `CVPN_CONTAIN
 — JSON argv выбранного **лабораторного** engine, `CVPN_RUNTIME_IMAGE` — image,
 `CVPN_OBSERVER_IMAGE` — отдельный tcpdump image. `CVPN_GATEWAY=1` добавляет LAN,
 `CVPN_SOAK_SECONDS=3600` — ограниченный часовой прогон с малым трафиком,
-RSS/FD и restart каждые пять минут. Не запускайте несколько таких прогонов
+RSS/FD/socket/thread/process counters и restart каждые пять минут. Считаются
+также zombie processes и TCP ESTABLISHED/TIME_WAIT. Задержки `*WallMs` включают
+container exec и измеряют длительность всей проверки, **не сетевой RTT**.
+Не запускайте несколько таких прогонов
 параллельно в одном daemon: используются фиксированные изолированные подсети.
 
 Пример повторения короткого полного smoke в **выделенной** Podman VM:
@@ -232,6 +240,49 @@ Linux toolchain image и создаёт NIC-less QEMU guest. Проверяет 
 попадают в git. Capture сохраняется рядом с приватным отчётом как `.json.pcap`,
 mode 0600, и может быть независимо разобран тем же sniffer ещё раз.
 Остановка контейнера не является reboot физического клиента.
+
+## Экспериментальные транспорты и replay volume
+
+| Режим | Проверка runtime-упаковки | Публичный launcher |
+|---|---|---|
+| `boring-tls` | TUN, DNS, profile, приложение и LAN, lifecycle/soak | Поддерживается в описанном isolated-netns контракте |
+| `transparent-tls` | Production engine, SO_ORIGINAL_DST, настоящий TLS relay, durable replay после пересоздания | Пока отклоняет конфиг |
+| `combo-tls` | Production engine, аутентификация boring-ветки и TLS relay через один exit listener, durable replay | Пока отклоняет конфиг |
+| `tls` из Node реализации | Не отдельный C++ transport | Нет |
+
+Новый совместимый с runtime-образом тест:
+
+```bash
+CVPN_CONTAINER_COMMAND='["podman","--connection","meshpn-clean-vpn-lab-root"]' \
+CVPN_RUNTIME_IMAGE=localhost/clean-vpn-native:local \
+  node scripts/clean-vpn-native-runtime-replay-lab.mjs /tmp/cvpn-runtime-results/replay.json
+```
+
+Проверен ARM64 Podman. Скрипт принимает Docker argv, но этот новый replay
+сценарий в Docker отдельно ещё не проверялся. Это `--network=none` контейнеры
+без опубликованных портов, с отдельным временным state volume и read-only rootfs.
+Поверх production engine работает **тестовый** controller/origin/byte observer;
+они не включены в runtime image и не заменяют runtime launcher.
+
+Каждый transport проходит явную инициализацию replay, отказ без инициализации,
+отказ повторной инициализации и второго владельца, настоящий TLS-запрос,
+SIGKILL всего контейнера, read-only mount отказ и пересоздание с тем же volume.
+Перехваченный ClientHello не открывает origin повторно; свежий запрос работает.
+Для исключения ложного успеха из-за expiry/corruption тот же перехваченный
+токен принимается в **другом, явно инициализированном тестовом состоянии**.
+Рабочее replay state при этом не сбрасывается. Config/PSK/capture и volume
+удаляются ownership cleanup; в отчёте остаются hashes и названия проверок.
+
+Дополнительные `SETUID/SETGID` нужны только fixture: тестовое приложение
+работает от UID 65534, а REDIRECT выбирается по owner, чтобы exit не перехватил
+свой origin socket. Production boring launcher этих capability не получает.
+
+Для combo в этом тесте подтверждены аутентификация packet-ветки и relay,
+но не передача IP payload через TUN или маршрутизация gateway. Такая
+проверка совместимости не закрывает production container lifecycle для
+combo/transparent: ещё нужны их provisioning/guard/recovery и health contract.
+Наличие durable volume само по себе не разрешает автоматически делать
+`--init-transparent-replay` при каждом запуске или потере состояния.
 
 Lab записывает приватный `.ownership.json` до создания ресурсов. При аварии
 управляющего процесса `clean-vpn-native-runtime-cleanup.mjs OWNERSHIP.json`
