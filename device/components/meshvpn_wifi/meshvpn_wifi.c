@@ -387,6 +387,14 @@ void meshvpn_wifi_get_status(meshvpn_wifi_status_t *status)
     if (status->sta_connected) meshvpn_wifi_radio_summary(&status->rssi, NULL, NULL);
 }
 
+bool meshvpn_wifi_needs_setup(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    bool needed = !s_status.sta_connected;
+    portEXIT_CRITICAL(&s_lock);
+    return needed;
+}
+
 const char *meshvpn_wifi_disconnect_reason_name(uint8_t reason)
 {
     switch (reason) {

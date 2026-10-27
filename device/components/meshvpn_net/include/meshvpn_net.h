@@ -49,6 +49,7 @@ esp_netif_t *meshvpn_net_usb(void);
 esp_netif_t *meshvpn_net_ap(void);
 esp_netif_t *meshvpn_net_sta(void);
 esp_err_t meshvpn_net_start_mdns(bool https_enabled);
+esp_err_t meshvpn_net_set_hostname(const char *name);
 
 #ifdef __cplusplus
 }

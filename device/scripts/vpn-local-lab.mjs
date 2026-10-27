@@ -37,7 +37,7 @@ export async function localLab({gateway = '192.168.10.1', address, iface,
       const body = data === undefined ? null : JSON.stringify(data);
       const req = http.request({host: gateway, localAddress: address, path: resource,
         method: body ? 'POST' : 'GET', agent: false,
-        headers: {Host: 'meshpn.local', ...(token ? {Authorization: `Bearer ${token}`} : {}),
+        headers: {Host: 'dongle.local', ...(token ? {Authorization: `Bearer ${token}`} : {}),
           ...(body ? {'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body)} : {})}}, res => {
         let text = ''; res.setEncoding('utf8');
         res.on('data', b => { text += b; if (text.length > 256 * 1024) req.destroy(Error('Oversize API response')); });
@@ -131,7 +131,7 @@ export async function localLab({gateway = '192.168.10.1', address, iface,
         await config(type, `${host}:${peer.port}`); await waitState(true);
         for (let i = 0; i < 3; i++) await curl(`http://${testAddress}/`);
         const answer = await dns(); assert.equal(answer.rcode, 0); assert.equal(answer.last4, testAddress);
-        const local = await dns('meshpn.local'); assert.equal(local.last4, gateway);
+        const local = await dns(initial.hostname || 'dongle.local'); assert.equal(local.last4, gateway);
         assert(peer.stats.mss.length && peer.stats.mss.every(m => m <= 1360));
         return {peer: structuredClone(peer.stats), dns: answer};
       });

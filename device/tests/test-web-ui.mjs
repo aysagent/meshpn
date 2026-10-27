@@ -11,7 +11,7 @@ for(const part of text.split('static const char ').slice(1)){
     for(const use of script[1].matchAll(/\$\(['"]([^'"]+)['"]\)/g))
       assert(ids.includes(use[1]),'missing DOM id: '+use[1]);
     if(part.startsWith('MESHVPN_WEB_INDEX_HTML')){
-      assert(html.includes('href="//meshpn.local/"'),'admin link must preserve HTTP/HTTPS');
+      assert(html.includes('href="//dongle.local/"'),'admin link must preserve HTTP/HTTPS');
       assert(html.includes('id="certificate-section" hidden'),'certificate controls hidden before status');
       const wgForm=html.slice(html.indexOf("<div id='vpn-wg-fields'"),html.indexOf("<button id='vpn-save'"));
       const ordered=['<h3>[Interface]</h3>','<label>PrivateKey','<label>Address','<label>DNS',
@@ -27,8 +27,8 @@ for(const part of text.split('static const char ').slice(1)){
       const code=script[1].replace(startup,'');
       for(const https of [false,true]){
         const elements=Object.fromEntries(ids.map(id=>[id,{}]));
-        const status={https_enabled:https,certificate_sha256:https?'AA:BB':null,
-          https_configured:https,https_restart_required:false,admin_next_url:(https?'https':'http')+'://meshpn.local/',
+        const status={device_name:'dongle',hostname:'dongle.local',captive_portal:false,https_enabled:https,certificate_sha256:https?'AA:BB':null,
+          https_configured:https,https_restart_required:false,admin_next_url:(https?'https':'http')+'://dongle.local/',
           temperature_c:42,memory:{internal:{free:1024},psram:{free:2048}},
           vpn:{implemented:true,enabled:false,server:'',transport:'tcp',state:'disabled'},
           leds:{user:{controllable:true,enabled:true},charge:{present:true,controllable:false,enabled:null}},
@@ -61,7 +61,13 @@ for(const part of text.split('static const char ').slice(1)){
               const {enabled}=JSON.parse(options.body);
               assert.equal(typeof enabled,'boolean');
               status.https_configured=enabled;status.https_restart_required=enabled!==https;
-              status.admin_next_url=(enabled?'https':'http')+'://meshpn.local/';
+              status.admin_next_url=(enabled?'https':'http')+'://dongle.local/';
+            }else if(path==='/api/admin/hostname'){
+              assert.equal(options.method,'POST');assert.equal(options.headers.Authorization,'Bearer test-token');
+              const {name}=JSON.parse(options.body);
+              if(name==='bad name')return {ok:false,status:400,text:async()=> 'Invalid device name'};
+              status.device_name=name.toLowerCase().replace(/\.local$/,'');status.hostname=status.device_name+'.local';
+              status.admin_next_url=(https?'https':'http')+'://'+status.hostname+'/';
             }else if(path==='/api/admin/leds'){
               assert.equal(options.method,'POST');assert.equal(options.headers.Authorization,'Bearer test-token');
               ledSaves++;
@@ -91,6 +97,16 @@ for(const part of text.split('static const char ').slice(1)){
         assert.match(vm.runInContext("wifiRadioLabel({connected:true,radio:{sta_protocol:{available:true,'802_11ax':true},uplink:{available:true,phy_11ax:true}}})",context),/link mode unavailable/);
         assert.match(vm.runInContext("wifiRadioLabel({connected:true,radio:{uplink:{negotiated_phymode_available:true,negotiated_phymode_name:'802.11ax HE20'}}})",context),/802.11ax HE20/);
         await vm.runInContext('poll()',context);
+        assert.equal(elements['device-name'].value,'dongle');
+        status.captive_portal=true;await vm.runInContext('poll()',context);assert.equal(elements['setup-note'].hidden,false);
+        elements['device-name'].value='Desk-2.local';elements['device-name'].oninput();
+        await vm.runInContext('poll()',context);assert.equal(elements['device-name'].value,'Desk-2.local');
+        await elements['device-name-form'].onsubmit();assert.equal(status.hostname,'desk-2.local');
+        assert.equal(elements['admin-host-link'].href,'//desk-2.local/');assert.equal(elements['device-name'].value,'desk-2');
+        elements['device-name'].value='bad name';elements['device-name'].oninput();
+        await elements['device-name-form'].onsubmit();assert.equal(status.hostname,'desk-2.local');assert.match(elements.message.textContent,/Invalid device name/);
+        elements['device-name'].value='dongle';elements['device-name'].oninput();await elements['device-name-form'].onsubmit();
+        status.captive_portal=false;
         status.wifi={connected:false,state:'waiting_for_network',ssid:'iPhone hotspot',
           disconnect_reason:39,disconnect_reason_name:'association_timeout'};
         await vm.runInContext('poll()',context);
@@ -245,7 +261,7 @@ for(const part of text.split('static const char ').slice(1)){
         assert.equal(status.https_enabled,https,'save must not change active transport');
         assert.equal(status.https_configured,!https);
         assert.equal(elements['https-pending'].hidden,false);
-        assert.equal(elements['https-next-url'].href,(!https?'https':'http')+'://meshpn.local/');
+        assert.equal(elements['https-next-url'].href,(!https?'https':'http')+'://dongle.local/');
         accepted=false;await elements['apply-https'].onclick();assert.equal(reboots,0);
         accepted=true;await elements['apply-https'].onclick();
         assert.equal(reboots,1);assert.equal(revoked,1);

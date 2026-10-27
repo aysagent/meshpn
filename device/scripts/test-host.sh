@@ -179,6 +179,10 @@ done
 "$test_dir/ingress-session"
 node device/tests/test-ip-ranges.mjs
 node device/tests/test-web-ui.mjs
+node device/tests/test-captive.mjs
+"$cc" "${flags[@]}" -Idevice/tests/stubs -Idevice/components/meshvpn_config/include \
+  device/tests/test_hostname.c device/components/meshvpn_config/meshvpn_config_hostname.c -o "$test_dir/hostname"
+"$test_dir/hostname"
 node device/tests/test-web-bursts.mjs
 for default_https in 0 1; do
   "$cc" "${flags[@]}" -DCONFIG_MESHVPN_WEB_HTTPS="$default_https" \
@@ -223,7 +227,7 @@ if [[ -n "${IDF_PATH:-}" ]]; then
   node device/tests/test-vpn-tls-io.mjs "$test_dir/mbedtls/library"
   node device/tests/test-vpn-config.mjs "$test_dir/mbedtls/library/libmbedcrypto.a"
   bash device/scripts/create-admin-ca.sh "$test_dir/tls" > "$test_dir/certificates.log" 2>&1
-  "$cc" "${flags[@]}" -Idevice/tests/stubs -Idevice/components/meshvpn_web/include \
+  "$cc" "${flags[@]}" -Idevice/tests/stubs -Idevice/components/meshvpn_web/include -Idevice/components/meshvpn_config/include \
     -I"$source_dir/include" device/tests/test_tls_identity.c \
     "$test_dir/mbedtls/library/libmbedx509.a" "$test_dir/mbedtls/library/libmbedcrypto.a" -o "$test_dir/tls-identity"
   "$test_dir/tls-identity" "$test_dir/tls/device.crt" "$test_dir/tls/device.key"

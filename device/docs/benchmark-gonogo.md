@@ -8,7 +8,7 @@ to ensure the measured client actually routes through the intended interface.
 ## Setup
 
 1. Connect XIAO ESP32-S3 to host via USB-C.
-2. Open `http://meshpn.local/` (fallback `http://192.168.7.1/`) over USB, password `admin`. If HTTPS was enabled in the admin checkbox, use HTTPS and follow [certificate setup](admin-https.md). SoftAP shares internet; it does not expose the admin.
+2. Open `http://dongle.local/` (fallback `http://192.168.7.1/`) over USB, password `admin`. If HTTPS was enabled in the admin checkbox, use HTTPS and follow [certificate setup](admin-https.md). SoftAP shares internet; it does not expose the admin.
 3. Scan WiFi, save home router credentials.
 4. Verify host gets IP on USB Ethernet (`192.168.7.x`).
 
@@ -179,7 +179,7 @@ Decision: **REVERT** — user reported poor behavior vs baseline; restored `CONF
 - [ ] iPhone resume from sleep recovers IP (NCM)
 - [ ] WiFi reconnect after router reboot
 - [ ] No watchdog resets / Ethernet flap
-- [ ] Admin at `http://meshpn.local/` (HTTPS if enabled) still works, without a WiFi uplink too
+- [ ] Admin at `http://dongle.local/` (HTTPS if enabled) still works, without a WiFi uplink too
 
 ## Go / no-go for VPN phase 2
 

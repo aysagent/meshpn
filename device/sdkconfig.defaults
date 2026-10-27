@@ -34,7 +34,7 @@ CONFIG_LWIP_L2_TO_L3_COPY=y
 # This firmware routes IPv4 only; the input hook also rejects IPv6 if an older
 # sdkconfig enables it.
 # CONFIG_LWIP_IPV6 is not set
-# Register USB, SoftAP and STA explicitly for meshpn.local.
+# Register USB, SoftAP and STA explicitly for the configured mDNS name.
 # CONFIG_MDNS_PREDEF_NETIF_STA is not set
 # CONFIG_MDNS_PREDEF_NETIF_AP is not set
 # CONFIG_MDNS_PREDEF_NETIF_ETH is not set

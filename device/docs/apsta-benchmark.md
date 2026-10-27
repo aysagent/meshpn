@@ -8,7 +8,7 @@ No VPN or policy routing is active yet. Throughput has not been measured on hard
 
 1. Flash with `./device/scripts/flash.sh`. Its defaults hash creates a new build/sdkconfig with AP enabled.
    Existing custom build directories may still have AP disabled: inspect `CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP`.
-2. Over USB, open `http://meshpn.local/` (HTTPS if enabled), configure/connect the upstream WiFi.
+2. Over USB, open `http://dongle.local/` (HTTPS if enabled), configure/connect the upstream WiFi.
 3. Join **MeshPN_XXXXXX**, password **meshpn-test**. The suffix is the AP MAC's last three bytes in hexadecimal.
    These are development credentials, configurable in ESP-IoT-Bridge / SoftAP Config.
 4. Confirm DHCP: normally `192.168.11.x`, gateway and DNS `192.168.11.1`. USB uses `192.168.10.x`/gateway `192.168.10.1`.
@@ -16,7 +16,7 @@ No VPN or policy routing is active yet. Throughput has not been measured on hard
 5. USB admin status shows `net.ap_active`, `ap_ssid`, `ap_channel`, `ap_clients`, `ap_napt`, `ap_dhcps_dns`, `ap_ip4_rx`.
    Both `ap_napt` and `usb_napt` should be true once the interfaces are up. Passwords are not returned in status/logs.
 
-The admin is available as `meshpn.local` on USB, the dongle's SoftAP gateway and the upstream STA/home Wi-Fi. mDNS publishes on all three interfaces. From AP, the gateway DNS service, mDNS and HTTP(S) admin are allowed alongside DHCP and routed internet.
+The admin is available as `dongle.local` on USB, the dongle's SoftAP gateway and the upstream STA/home Wi-Fi. mDNS publishes on all three interfaces. From AP, the gateway DNS service, mDNS and HTTP(S) admin are allowed alongside DHCP and routed internet.
 This does not provide full guest/client isolation: routed access to the home LAN or USB hosts is not blocked by a general guest firewall.
 Keep the known test password confined to testing or change it in the build configuration.
 

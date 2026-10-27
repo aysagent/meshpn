@@ -24,6 +24,7 @@
 #include "sdkconfig.h"
 #include "mdns.h"
 #include "meshvpn_dns_proxy.h"
+#include "meshvpn_config.h"
 
 static const char *TAG = "meshvpn_net";
 static bool s_bridge_running;
@@ -45,7 +46,9 @@ esp_err_t meshvpn_net_start_mdns(bool https_enabled)
     const uint16_t port = https_enabled ? 443 : 80;
     esp_err_t err = mdns_init();
     if (err != ESP_OK) return err;
-    if ((err = mdns_hostname_set("meshpn")) != ESP_OK ||
+    char name[MESHVPN_HOSTNAME_MAX + 1];
+    if ((err = meshvpn_config_load_hostname(name)) != ESP_OK) { mdns_free(); return err; }
+    if ((err = mdns_hostname_set(name)) != ESP_OK ||
         (err = mdns_register_netif(s_usb_netif)) != ESP_OK ||
         (err = mdns_netif_action(s_usb_netif, MDNS_EVENT_ENABLE_IP4)) != ESP_OK ||
         (err = mdns_service_add(NULL, service, "_tcp", port, NULL, 0)) != ESP_OK) {
@@ -72,6 +75,25 @@ esp_err_t meshvpn_net_start_mdns(bool https_enabled)
             return err;
         }
     }
+    return ESP_OK;
+}
+
+/* Called by the single admin worker; retain the active name on save failure. */
+esp_err_t meshvpn_net_set_hostname(const char *input)
+{
+    char next[MESHVPN_HOSTNAME_MAX + 1], previous[MESHVPN_HOSTNAME_MAX + 1];
+    if (!meshvpn_hostname_normalize(input, next)) return ESP_ERR_INVALID_ARG;
+    esp_err_t err = meshvpn_config_load_hostname(previous);
+    if (err != ESP_OK) return err;
+    if (!strcmp(next, previous)) return ESP_OK;
+    if (s_mdns && (err = mdns_hostname_set(next)) != ESP_OK) return err;
+    err = meshvpn_config_save_hostname(next);
+    if (err != ESP_OK) {
+        if (s_mdns) mdns_hostname_set(previous);
+        return err;
+    }
+    esp_netif_t *interfaces[] = {s_usb_netif, s_ap_netif, s_sta_netif};
+    for (unsigned i = 0; i < 3; i++) if (interfaces[i]) esp_netif_set_hostname(interfaces[i], next);
     return ESP_OK;
 }
 
@@ -463,6 +485,11 @@ esp_err_t meshvpn_net_start_bridge(void)
     }
 
     s_bridge_running = true;
+    char hostname[MESHVPN_HOSTNAME_MAX + 1];
+    if (meshvpn_config_load_hostname(hostname) == ESP_OK) {
+        esp_netif_t *interfaces[] = {s_usb_netif, s_ap_netif, s_sta_netif};
+        for (unsigned i = 0; i < 3; i++) if (interfaces[i]) esp_netif_set_hostname(interfaces[i], hostname);
+    }
     meshvpn_net_ensure_napt();
     meshvpn_net_log_state();
 

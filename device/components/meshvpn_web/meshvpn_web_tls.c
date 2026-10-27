@@ -1,4 +1,5 @@
 #include "meshvpn_web_tls.h"
+#include "meshvpn_config.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -14,6 +15,14 @@
 typedef struct { uint32_t version; char cert[4096]; char key[2048]; } identity_t;
 static identity_t *s_identity;
 static char s_fingerprint[96];
+static char s_checked_name[MESHVPN_HOSTNAME_MAX + 7];
+static bool s_name_matches;
+static void current_name(char out[MESHVPN_HOSTNAME_MAX + 7])
+{
+    char label[MESHVPN_HOSTNAME_MAX + 1];
+    if (meshvpn_config_load_hostname(label) != ESP_OK) strcpy(label, MESHVPN_HOSTNAME_DEFAULT);
+    snprintf(out, MESHVPN_HOSTNAME_MAX + 7, "%s.local", label);
+}
 
 /* WiFi radio is initialized before generating the per-device key. */
 static int random_bytes(void *ctx, unsigned char *buf, size_t len)
@@ -22,7 +31,7 @@ static int random_bytes(void *ctx, unsigned char *buf, size_t len)
     esp_fill_random(buf, len);
     return 0;
 }
-static esp_err_t validate(const identity_t *id)
+static esp_err_t validate(const identity_t *id, bool check_name)
 {
     if (id->version != 1 || !memchr(id->cert, 0, sizeof(id->cert)) ||
         !memchr(id->key, 0, sizeof(id->key))) return ESP_ERR_INVALID_ARG;
@@ -32,11 +41,12 @@ static esp_err_t validate(const identity_t *id)
     if (!ret) ret = mbedtls_pk_parse_key(&key, (const unsigned char *)id->key,
                                         strlen(id->key) + 1, NULL, 0, random_bytes, NULL);
     if (!ret) ret = mbedtls_pk_check_pair(&crt.pk, &key, random_bytes, NULL);
-    if (!ret) {
+    if (!ret && check_name) {
         uint32_t flags = 0;
         /* Trust establishment is performed by the host. Here verify the name
          * without relying on the dongle having a wall clock during setup. */
-        mbedtls_x509_crt_verify(&crt, &crt, NULL, "meshpn.local", &flags, NULL, NULL);
+        char name[MESHVPN_HOSTNAME_MAX + 7]; current_name(name);
+        mbedtls_x509_crt_verify(&crt, &crt, NULL, name, &flags, NULL, NULL);
         if (flags & MBEDTLS_X509_BADCERT_CN_MISMATCH) ret = -1;
     }
     mbedtls_pk_free(&key); mbedtls_x509_crt_free(&crt);
@@ -88,6 +98,11 @@ static esp_err_t load(identity_t *id, nvs_handle_t nvs)
 }
 static esp_err_t generate(identity_t *id)
 {
+    char label[MESHVPN_HOSTNAME_MAX + 1], name[MESHVPN_HOSTNAME_MAX + 7], arpa[MESHVPN_HOSTNAME_MAX + 11], subject[112];
+    if (meshvpn_config_load_hostname(label) != ESP_OK) strcpy(label, MESHVPN_HOSTNAME_DEFAULT);
+    snprintf(name, sizeof(name), "%s.local", label);
+    snprintf(arpa, sizeof(arpa), "%s.home.arpa", label);
+    snprintf(subject, sizeof(subject), "CN=%s,O=MeshPN device", label);
     mbedtls_pk_context key; mbedtls_pk_init(&key);
     mbedtls_x509write_cert crt; mbedtls_x509write_crt_init(&crt);
     unsigned char random[16]; random_bytes(NULL, random, sizeof(random)); random[0] &= 0x7f;
@@ -100,16 +115,16 @@ static esp_err_t generate(identity_t *id)
     mbedtls_x509write_crt_set_subject_key(&crt, &key);
     mbedtls_x509write_crt_set_issuer_key(&crt, &key);
     TRY(mbedtls_x509write_crt_set_serial_raw(&crt, random, sizeof(random)));
-    TRY(mbedtls_x509write_crt_set_subject_name(&crt, "CN=meshpn.local,O=MeshPN device"));
-    TRY(mbedtls_x509write_crt_set_issuer_name(&crt, "CN=meshpn.local,O=MeshPN device"));
+    TRY(mbedtls_x509write_crt_set_subject_name(&crt, subject));
+    TRY(mbedtls_x509write_crt_set_issuer_name(&crt, subject));
     TRY(mbedtls_x509write_crt_set_validity(&crt, "20250101000000", "20450101000000"));
     TRY(mbedtls_x509write_crt_set_basic_constraints(&crt, 0, -1));
     TRY(mbedtls_x509write_crt_set_key_usage(&crt, MBEDTLS_X509_KU_DIGITAL_SIGNATURE));
     /* DNS names survive subnet changes; IP SANs cover factory LAN defaults.
      * Existing/imported identities are deliberately preserved. */
-    unsigned char san[96] = {0x30, 0};
-    size_t pos = 2;
-    const char *names[] = {"meshpn.local", "meshpn.home.arpa"};
+    unsigned char san[192] = {0x30, 0x81, 0};
+    size_t pos = 3;
+    const char *names[] = {name, arpa};
     for (unsigned i = 0; i < 2; i++) {
         size_t n = strlen(names[i]);
         san[pos++] = 0x82; san[pos++] = n;
@@ -119,7 +134,9 @@ static esp_err_t generate(identity_t *id)
     san[pos++] = 192; san[pos++] = 168; san[pos++] = 10; san[pos++] = 1;
     san[pos++] = 0x87; san[pos++] = 4;
     san[pos++] = 192; san[pos++] = 168; san[pos++] = 11; san[pos++] = 1;
-    san[1] = pos - 2;
+    if (pos - 3 < 128) {
+        memmove(san + 2, san + 3, pos - 3); san[1] = pos - 3; pos--;
+    } else san[2] = pos - 3;
     TRY(mbedtls_x509write_crt_set_extension(&crt, MBEDTLS_OID_SUBJECT_ALT_NAME,
         MBEDTLS_OID_SIZE(MBEDTLS_OID_SUBJECT_ALT_NAME), 0, san, pos));
     TRY(mbedtls_pk_write_key_pem(&key, (unsigned char *)id->key, sizeof(id->key)));
@@ -145,7 +162,9 @@ esp_err_t meshvpn_web_tls_init(void)
         err = generate(s_identity);
         if (err == ESP_OK) err = save(s_identity);
     }
-    if (err != ESP_OK || validate(s_identity) != ESP_OK) {
+    /* Renaming must not destroy a trusted/imported identity or stop HTTPS.
+     * Preserve it, and surface a name mismatch until a new pair is imported. */
+    if (err != ESP_OK || validate(s_identity, false) != ESP_OK) {
         mbedtls_platform_zeroize(s_identity, sizeof(*s_identity));
         free(s_identity); s_identity = NULL;
         return ESP_FAIL;
@@ -156,12 +175,26 @@ esp_err_t meshvpn_web_tls_init(void)
     mbedtls_sha256(crt.raw.p, crt.raw.len, hash, 0);
     for (unsigned i = 0; i < 32; i++) snprintf(s_fingerprint + i * 3, 4, i == 31 ? "%02X" : "%02X:", hash[i]);
     mbedtls_x509_crt_free(&crt);
+    s_checked_name[0] = 0;
     ESP_LOGI("meshvpn_tls", "Certificate SHA256 %s", s_fingerprint);
     return ESP_OK;
 }
 const char *meshvpn_web_tls_cert(void) { return s_identity->cert; }
 const char *meshvpn_web_tls_key(void) { return s_identity->key; }
 const char *meshvpn_web_tls_fingerprint(void) { return s_fingerprint; }
+bool meshvpn_web_tls_name_matches(void)
+{
+    if (!s_identity) return false;
+    char name[MESHVPN_HOSTNAME_MAX + 7]; current_name(name);
+    if (!strcmp(name, s_checked_name)) return s_name_matches;
+    mbedtls_x509_crt crt; mbedtls_x509_crt_init(&crt);
+    uint32_t flags = 0;
+    int ret = mbedtls_x509_crt_parse(&crt, (const unsigned char *)s_identity->cert, strlen(s_identity->cert) + 1);
+    if (!ret) mbedtls_x509_crt_verify(&crt, &crt, NULL, name, &flags, NULL, NULL);
+    s_name_matches = !ret && !(flags & MBEDTLS_X509_BADCERT_CN_MISMATCH);
+    strcpy(s_checked_name, name); mbedtls_x509_crt_free(&crt);
+    return s_name_matches;
+}
 esp_err_t meshvpn_web_tls_import(const char *cert, const char *key)
 {
     if (!cert || !key || strlen(cert) >= sizeof(s_identity->cert) ||
@@ -170,7 +203,7 @@ esp_err_t meshvpn_web_tls_import(const char *cert, const char *key)
     if (!next) return ESP_ERR_NO_MEM;
     next->version = 1;
     strcpy(next->cert, cert); strcpy(next->key, key);
-    esp_err_t err = validate(next);
+    esp_err_t err = validate(next, true);
     if (err == ESP_OK) err = save(next);
     mbedtls_platform_zeroize(next, sizeof(*next)); free(next);
     return err;

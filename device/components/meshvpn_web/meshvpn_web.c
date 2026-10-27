@@ -527,10 +527,19 @@ static void heap_json(cJSON *parent, const char *name, uint32_t caps)
 }
 static void add_https_status(cJSON *root)
 {
+    char name[MESHVPN_HOSTNAME_MAX + 1], hostname[MESHVPN_HOSTNAME_MAX + 7], url[MESHVPN_HOSTNAME_MAX + 16];
+    if (meshvpn_config_load_hostname(name) != ESP_OK) strcpy(name, MESHVPN_HOSTNAME_DEFAULT);
+    snprintf(hostname, sizeof(hostname), "%s.local", name);
+    snprintf(url, sizeof(url), "%s://%s/", s_https_configured ? "https" : "http", hostname);
+    cJSON_AddStringToObject(root, "device_name", name);
+    cJSON_AddStringToObject(root, "hostname", hostname);
+    cJSON_AddBoolToObject(root, "captive_portal", meshvpn_wifi_needs_setup());
     cJSON_AddBoolToObject(root, "https_enabled", s_https);
     cJSON_AddBoolToObject(root, "https_configured", s_https_configured);
     cJSON_AddBoolToObject(root, "https_restart_required", s_https != s_https_configured);
-    cJSON_AddStringToObject(root, "admin_next_url", s_https_configured ? "https://meshpn.local/" : "http://meshpn.local/");
+    cJSON_AddStringToObject(root, "admin_next_url", url);
+    if (s_https) cJSON_AddBoolToObject(root, "certificate_name_matches", meshvpn_web_tls_name_matches());
+    else cJSON_AddNullToObject(root, "certificate_name_matches");
 }
 static void add_telemetry(cJSON *root)
 {
@@ -554,7 +563,6 @@ static void add_telemetry(cJSON *root)
 
     cJSON_AddStringToObject(root, "build", meshvpn_web_build_id());
     cJSON_AddStringToObject(root, "idf", esp_get_idf_version());
-    cJSON_AddStringToObject(root, "hostname", "meshpn.local");
     add_https_status(root);
     if (s_https) cJSON_AddStringToObject(root, "certificate_sha256", meshvpn_web_tls_fingerprint());
     else cJSON_AddNullToObject(root, "certificate_sha256");
@@ -1181,6 +1189,21 @@ static esp_err_t handler_leds(httpd_req_t *req)
     add_led_status(out);
     return send_json(req, out);
 }
+static esp_err_t handler_hostname(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    cJSON *in = body(req, 256);
+    if (!in) return ESP_FAIL;
+    cJSON *name = cJSON_GetObjectItemCaseSensitive(in, "name");
+    char normalized[MESHVPN_HOSTNAME_MAX + 1];
+    bool valid = cJSON_IsString(name) && meshvpn_hostname_normalize(name->valuestring, normalized);
+    cJSON_Delete(in);
+    if (!valid) return error(req, "400 Bad Request", "Name must contain 1-63 ASCII letters, digits or hyphens, with a letter/digit at each end. Optional .local suffix is accepted.");
+    if (meshvpn_net_set_hostname(normalized) != ESP_OK)
+        return error(req, "500 Internal Server Error", "Cannot apply/save device name");
+    cJSON *out = cJSON_CreateObject(); add_https_status(out);
+    return send_json(req, out);
+}
 static esp_err_t handler_https(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -1406,9 +1429,29 @@ static esp_err_t handler_redirect(httpd_req_t *req)
 {
     if (!local_socket(req)) return error(req, "403 Forbidden", "USB/AP/STA management only");
     httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "https://meshpn.local/");
+    char name[MESHVPN_HOSTNAME_MAX + 1], url[MESHVPN_HOSTNAME_MAX + 16];
+    if (meshvpn_config_load_hostname(name) != ESP_OK) strcpy(name, MESHVPN_HOSTNAME_DEFAULT);
+    snprintf(url, sizeof(url), "https://%s.local/", name);
+    httpd_resp_set_hdr(req, "Location", url);
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_sendstr(req, "Open https://meshpn.local/ (or HTTPS at the USB/AP gateway or STA IP)");
+    return httpd_resp_sendstr(req, url);
+}
+
+/* Legacy OS HTTP probes (Apple, Android, Windows) arrive at the LAN gateway
+ * through setup-only DNS. Never intercept TLS or report fake Internet success. */
+static esp_err_t handler_captive(httpd_req_t *req)
+{
+    if (!local_socket(req)) return error(req, "403 Forbidden", "Local management only");
+    if (!meshvpn_wifi_needs_setup()) return error(req, "404 Not Found", "Not found");
+    struct sockaddr_in local; socklen_t len = sizeof(local);
+    if (getsockname(httpd_req_to_sockfd(req), (struct sockaddr *)&local, &len) || local.sin_family != AF_INET)
+        return ESP_FAIL;
+    char address[16], url[64];
+    if (!inet_ntop(AF_INET, &local.sin_addr, address, sizeof(address))) return ESP_FAIL;
+    snprintf(url, sizeof(url), "%s://%s/login", s_https ? "https" : "http", address);
+    headers(req); httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", url);
+    return httpd_resp_sendstr(req, "Connect this device to WiFi in the admin page.");
 }
 esp_err_t meshvpn_web_start(void)
 {
@@ -1418,7 +1461,8 @@ esp_err_t meshvpn_web_start(void)
     if (err != ESP_OK) return err;
     s_https = s_https_configured;
     httpd_config_t server = HTTPD_DEFAULT_CONFIG();
-    server.max_uri_handlers = 32;
+    server.max_uri_handlers = 36;
+    server.uri_match_fn = httpd_uri_match_wildcard;
     /* HTTP's observed high-water mark leaves >3 KiB spare at 9 KiB.
      * Keep the larger stack for HTTPS handshakes. */
     server.stack_size = s_https ? 12288 : 9216;
@@ -1472,6 +1516,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/wifi/select", HTTP_POST, handler_select),
         ROUTE("/api/admin/password", HTTP_POST, handler_password),
         ROUTE("/api/admin/https", HTTP_POST, handler_https),
+        ROUTE("/api/admin/hostname", HTTP_POST, handler_hostname),
         ROUTE("/api/admin/leds", HTTP_POST, handler_leds),
         ROUTE("/api/system/reboot", HTTP_POST, handler_system),
         ROUTE("/api/system/factory-reset", HTTP_POST, handler_system),
@@ -1489,6 +1534,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/diag/ap-echo", HTTP_POST, handler_ap_echo),
         ROUTE("/api/diag/sta-tcp", HTTP_GET, handler_sta_tcp_trace),
         ROUTE("/api/diag/usb-bursts", HTTP_GET, handler_usb_bursts),
+        ROUTE("/*", HTTP_GET, handler_captive),
     };
     for (unsigned i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         err = httpd_register_uri_handler(s_server, &routes[i]);
@@ -1513,7 +1559,9 @@ esp_err_t meshvpn_web_start(void)
     diag_stage("start/cpu-sampler");
     meshvpn_cpu_start();
     diag_stage("ready");
-    ESP_LOGI(TAG, "USB/AP/STA admin: %s://meshpn.local/", s_https ? "https" : "http");
+    char name[MESHVPN_HOSTNAME_MAX + 1];
+    if (meshvpn_config_load_hostname(name) != ESP_OK) strcpy(name, MESHVPN_HOSTNAME_DEFAULT);
+    ESP_LOGI(TAG, "USB/AP/STA admin: %s://%s.local/", s_https ? "https" : "http", name);
     return ESP_OK;
 #undef ROUTE
 }

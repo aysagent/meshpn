@@ -85,7 +85,7 @@ The USB-C programming connector carries UART/download traffic, not MeshPN NCM.
 ## Current hardware evidence (2026-10-25)
 
 The bound lab P4 uses USB `192.168.10.1/24`, AP `192.168.11.1/24`, and DHCP on
-STA. Admin is available at `http://meshpn.local/` on USB/AP/STA (or HTTPS if
+STA. Admin is available at `http://dongle.local/` on USB/AP/STA (or HTTPS if
 configured). The user confirmed both hostname and AP IP access from a phone.
 Mac Wi-Fi was not switched during the automated checks.
 

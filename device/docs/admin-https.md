@@ -1,6 +1,6 @@
 # Local HTTPS administration
 
-HTTPS is **disabled by default** for testing. Open `http://meshpn.local/` over USB, SoftAP or STA, or `http://192.168.10.1/` over USB in this mode.
+HTTPS is **disabled by default** for testing. Open `http://dongle.local/` over USB, SoftAP or STA, or `http://192.168.10.1/` over USB in this mode.
 In **Admin connection**, check **Enable HTTPS**, choose **Save connection setting**, then **Reboot to apply**.
 Open the displayed HTTPS address after reboot and log in again. The checkbox can also disable HTTPS using the same save/reboot sequence.
 The choice is stored in NVS and overrides `CONFIG_MESHVPN_WEB_HTTPS`, which now only specifies the initial/factory-reset default.
@@ -11,15 +11,15 @@ Enabling HTTPS prepares/validates the identity before saving the mode, so prepar
 Any existing NVS identity is preserved when HTTPS is disabled.
 
 The firmware generates an individual EC P-256 key and self-signed certificate when HTTPS is first enabled (or on first boot with HTTPS as the default), stored together in NVS.
-New certificates include meshpn.local, meshpn.home.arpa and the initial USB/AP addresses 192.168.10.1 and 192.168.11.1. Existing and imported identities are not replaced: use meshpn.local with an older certificate, or import a new identity if direct IP access without a name warning is required. The STA address is assigned by DHCP, so use meshpn.local for HTTPS over STA.
+New certificates include the configured .local and .home.arpa names (default dongle.local), plus initial USB/AP addresses 192.168.10.1 and 192.168.11.1. Existing and imported identities are preserved. An older meshpn.local certificate remains loadable after upgrading, but its name may not match dongle.local; the admin reports this. Import a certificate for the configured name when needed. The STA address is assigned by DHCP, so prefer the configured name over its IP. See [device names and setup](admin-name-and-setup.md).
 It remains the same after ordinary reboots and flashing an app without erasing NVS. Factory reset generates a new identity.
 
-Open https://meshpn.local/ over USB, the device's own AP or the upstream STA LAN. A self-signed certificate initially produces a browser warning.
+Open https://dongle.local/ over USB, the device's own AP or the upstream STA LAN. A self-signed certificate initially produces a browser warning.
 Establish trust on a direct, trusted USB connection; compare the browser certificate fingerprint with the device's UART/boot log.
 The authenticated status page also shows the fingerprint for later comparison, but a page alone is not independent proof of its own identity.
 
 HTTP on port 80 redirects only; passwords, bearer tokens, logs and APIs are served on HTTPS.
-If mDNS is unavailable, try https://meshpn.home.arpa/ using the USB/AP gateway DNS, or the USB/AP gateway or DHCP-assigned STA address as an HTTPS IP address.
+If mDNS is unavailable, try https://dongle.home.arpa/ using the USB/AP gateway DNS, or the USB/AP gateway or DHCP-assigned STA address as an HTTPS IP address.
 When subnet conflict recovery changes that IP, the certificate still covers the canonical name; an IP literal may produce a name warning.
 
 ## Personal CA (no browser warning after setup)
@@ -41,7 +41,7 @@ Settings → General → About → Certificate Trust Settings, as described by [
 On macOS, use Keychain Access to install the CA and explicitly trust it for SSL.
 
 In the dongle's HTTPS admin page, open **HTTPS certificate → Import** and select **device.crt** and **device.key**.
-The key pair and meshpn.local name are validated before saving. Reboot to apply.
+The key pair and currently configured device name are validated before saving. Reboot to apply.
 Never upload ca.key to the dongle. A failed import leaves the active identity in use.
 For renewal, issue another server certificate under the same CA and import its matching key; host CA trust remains valid.
 

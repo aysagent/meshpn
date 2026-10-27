@@ -6,6 +6,8 @@
 #include "../components/meshvpn_web/meshvpn_web_tls.c"
 static unsigned char saved[8192];
 static size_t saved_size;
+static char hostname[64]="dongle";
+esp_err_t meshvpn_config_load_hostname(char out[64]) { strcpy(out,hostname); return ESP_OK; }
 esp_err_t nvs_open(const char *ns,int mode,nvs_handle_t *out)
 {(void)ns;(void)mode;*out=1;return ESP_OK;}
 esp_err_t nvs_get_blob(nvs_handle_t nvs,const char *key,void *out,size_t *size)
@@ -42,7 +44,7 @@ int main(int argc,char **argv)
     mbedtls_x509_crt parsed; mbedtls_x509_crt_init(&parsed);
     assert(mbedtls_x509_crt_parse(&parsed, (const unsigned char *)meshvpn_web_tls_cert(),
         strlen(meshvpn_web_tls_cert()) + 1) == 0);
-    const char *names[] = {"meshpn.local", "meshpn.home.arpa", "192.168.10.1", "192.168.11.1"};
+    const char *names[] = {"dongle.local", "dongle.home.arpa", "192.168.10.1", "192.168.11.1"};
     for (unsigned i = 0; i < 4; i++) {
         uint32_t flags = 0;
         mbedtls_x509_crt_verify(&parsed, &parsed, NULL, names[i], &flags, NULL, NULL);
@@ -50,6 +52,10 @@ int main(int argc,char **argv)
     }
     mbedtls_x509_crt_free(&parsed);
     reboot_identity();assert(!strcmp(fingerprint,meshvpn_web_tls_fingerprint()));
+    assert(meshvpn_web_tls_name_matches());
+    strcpy(hostname,"renamed"); assert(!meshvpn_web_tls_name_matches());
+    reboot_identity(); assert(!meshvpn_web_tls_name_matches()); /* preserve identity on rename */
+    strcpy(hostname,"dongle"); assert(meshvpn_web_tls_name_matches());
     assert(meshvpn_web_tls_import("not a certificate","bad key")==ESP_ERR_INVALID_ARG);
     char *crt=read_pem(argv[1]),*key=read_pem(argv[2]);
     assert(meshvpn_web_tls_import(crt,meshvpn_web_tls_key())==ESP_ERR_INVALID_ARG);
@@ -58,5 +64,8 @@ int main(int argc,char **argv)
     reboot_identity();assert(strcmp(fingerprint,meshvpn_web_tls_fingerprint()));
     assert(!strcmp(crt,meshvpn_web_tls_cert()));
     free(crt);free(key);free(s_identity);s_identity=NULL;
+    saved_size=0; memset(hostname,'a',63);hostname[63]=0;
+    assert(meshvpn_web_tls_init()==ESP_OK&&meshvpn_web_tls_name_matches()); /* long DER SAN */
+    free(s_identity);s_identity=NULL;
     puts("TLS identity generation, persistence, key validation and import passed");
 }

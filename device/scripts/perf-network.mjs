@@ -15,8 +15,8 @@ export function downloadBoard(endpoint, {token,signal,ca,insecure=false,timeout=
     let bytes=0,firstByteMs=null;
     const req=(secure?https:http).request({hostname:endpoint.gateway,port:endpoint.port||(secure?443:80),
       path:'/api/diag/usb-download',method:'POST',localAddress:endpoint.address,agent:false,
-      servername:'meshpn.local',rejectUnauthorized:!insecure,ca,signal,
-      headers:{Host:'meshpn.local',Authorization:`Bearer ${token}`,'Content-Length':0,'Accept-Encoding':'identity'}},res=>{
+      servername:endpoint.adminHostname||'dongle.local',rejectUnauthorized:!insecure,ca,signal,
+      headers:{Host:endpoint.adminHostname||'dongle.local',Authorization:`Bearer ${token}`,'Content-Length':0,'Accept-Encoding':'identity'}},res=>{
       res.on('error',reject);
       if(res.statusCode!==200 || res.headers['x-meshpn-download-bytes']!==String(localDownloadBytes) ||
           res.headers['content-type']!=='application/octet-stream' ||
@@ -47,8 +47,8 @@ export function requestBoard(endpoint, resource, {token,password,signal,ca,insec
     const secure=endpoint.protocol==='https:';
     const req=(secure?https:http).request({hostname:endpoint.gateway,port:endpoint.port||(secure?443:80),
       path:resource,method:body?'POST':'GET',localAddress:endpoint.address,agent:false,
-      servername:'meshpn.local',rejectUnauthorized:!insecure,ca,signal,
-      headers:{Host:'meshpn.local',...(token?{Authorization:`Bearer ${token}`} : {}),
+      servername:endpoint.adminHostname||'dongle.local',rejectUnauthorized:!insecure,ca,signal,
+      headers:{Host:endpoint.adminHostname||'dongle.local',...(token?{Authorization:`Bearer ${token}`} : {}),
         ...(body?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(body)}:{})}},res=>{
       let text='';res.setEncoding('utf8');
       res.on('data',b=>{text+=b;if(text.length>512*1024)req.destroy(Error('Oversized board response'));});
@@ -92,7 +92,9 @@ export async function discoverBoard(o, signal, log, {networkInterfaces=os.networ
       if([301,302,307,308].includes(r.code)&&r.location?.startsWith('https://')) {
         // Never follow a redirect to an arbitrary host with credentials.
         const redirect=new URL(r.location);
-        if(!['meshpn.local',c.gateway].includes(redirect.hostname))throw Error('Unexpected HTTPS redirect');
+        if(redirect.hostname!==c.gateway&&!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.local$/i.test(redirect.hostname))throw Error('Unexpected HTTPS redirect');
+        if(redirect.username||redirect.password||redirect.pathname!=='/'||redirect.search||redirect.hash)throw Error('Unexpected HTTPS redirect');
+        if(redirect.hostname!==c.gateway)c.adminHostname=redirect.hostname;
         c.protocol='https:';c.port=redirect.port||443;
         r=await request(c,'/login',auth);
       }
@@ -121,6 +123,7 @@ export async function discoverBoard(o, signal, log, {networkInterfaces=os.networ
     return s;
   }
   const initial=await status(),paths=[];
+  if(typeof initial.hostname==='string'&&/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.local$/i.test(initial.hostname))for(const c of found)c.adminHostname=initial.hostname;
   for(const c of found) {
     const kind=c.gateway===initial.net.usb_ip?'usb':c.gateway===initial.net.ap_ip?'ap':null;
     if(!kind)continue;

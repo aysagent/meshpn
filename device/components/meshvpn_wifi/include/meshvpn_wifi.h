@@ -45,6 +45,7 @@ int meshvpn_wifi_scan_get_count(void);
 esp_err_t meshvpn_wifi_scan_get_entry(int index, wifi_ap_record_t *rec);
 
 void meshvpn_wifi_get_status(meshvpn_wifi_status_t *status);
+bool meshvpn_wifi_needs_setup(void);
 const char *meshvpn_wifi_disconnect_reason_name(uint8_t reason);
 
 #ifdef __cplusplus

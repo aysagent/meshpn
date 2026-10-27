@@ -1,5 +1,9 @@
 # MeshPN USB WiFi dongle
 
+Default admin: **http://dongle.local/**. Change it in **Admin → Device name**.
+Without a Wi-Fi uplink, USB/AP clients can use the automatic setup portal.
+See [names, setup portal and HTTPS](docs/admin-name-and-setup.md).
+
 ESP-IDF firmware for XIAO ESP32-S3 and Waveshare ESP32-P4-WIFI6. USB Ethernet
 and WiFi SoftAP → IPv4 NAT → WiFi STA.
 Full IPv4 tunnelling supports clean-vpn TCP/UDP, experimental raw TLS 1.2, and
@@ -257,14 +261,14 @@ console; use `/api/logs`, diagnostic firmware, or a UART adapter as appropriate.
 
 ## First login
 
-Open **http://meshpn.local/** over USB, SoftAP or the Wi-Fi STA LAN, or use
+Open **http://dongle.local/** over USB, SoftAP or the Wi-Fi STA LAN, or use
 **http://192.168.10.1/** over USB and **http://192.168.11.1/** over SoftAP.
 SoftAP provides internet and administration; USB administration works without a Wi-Fi uplink.
 HTTPS is disabled by default for testing (`CONFIG_MESHVPN_WEB_HTTPS=n`). Login and Wi-Fi credentials travel unencrypted over USB, SoftAP and STA in this mode;
 authentication and ingress filtering remain enabled.
 
 To enable HTTPS, check **Admin connection → Enable HTTPS**, click **Save connection setting**, then **Reboot to apply**.
-Open the displayed **https://meshpn.local/** address and log in again; HTTP now only redirects and does not accept login/API requests.
+Open the displayed **https://dongle.local/** address and log in again; HTTP now only redirects and does not accept login/API requests.
 Uncheck and save/reboot to return to HTTP. No reflashing is required after installing this firmware.
 The preference persists in NVS; `CONFIG_MESHVPN_WEB_HTTPS` only sets the initial/factory-reset default, not a compile-time restriction.
 Before enabling from HTTP, the device prepares/validates its unique certificate; if that fails the saved mode is unchanged.
@@ -293,11 +297,11 @@ A password change revokes the current session. Sessions expire after 30 minutes 
 - Status polls every 2 seconds while visible: chip temperature, internal RAM and PSRAM free/minimum/largest block,
   USB/AP counters, AP SSID/channel/client count/NAT, DNS cache statistics, build/IDF version and certificate fingerprint.
 - If the router subnet overlaps USB or AP, the device chooses another private /24, also avoiding the other LAN. Renew DHCP/reconnect the affected client;
-  use `meshpn.local` to find the new address. An imported certificate may not cover the new IP literal.
+  use `dongle.local` to find the new address. An imported certificate may not cover the new IP literal.
 
 DHCP advertises each LAN's own gateway as DNS. The proxy accepts USB requests and AP-gateway requests, forwards UDP/TCP to the uplink resolver,
 validates responses, has three bounded workers and a small TTL cache.
-`meshpn.home.arpa` is an ordinary-DNS alternative to mDNS.
+`dongle.home.arpa` is an ordinary-DNS alternative to mDNS.
 Apple/Google/Windows connectivity names are no longer redirected to the dongle.
 
 Administration and mDNS are available from USB and the board's own AP. The ingress hook blocks management and DNS from upstream STA,

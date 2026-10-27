@@ -1,6 +1,8 @@
 #include "meshvpn_dns_proxy.h"
 #include "meshvpn_vpn.h"
 #include "meshvpn_dns_wire.h"
+#include "meshvpn_config.h"
+#include "meshvpn_wifi.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -223,11 +225,19 @@ static void worker(void *arg)
         }
         COUNT(queries);
         uint32_t epoch = meshvpn_vpn_dns_epoch();
-        bool local_name = !strcmp(q.name, "meshpn.home.arpa") || !strcmp(q.name, "meshpn.local");
+        char hostname[MESHVPN_HOSTNAME_MAX + 1];
+        if (meshvpn_config_load_hostname(hostname) != ESP_OK) strcpy(hostname, MESHVPN_HOSTNAME_DEFAULT);
+        bool local_name = meshvpn_hostname_local_query(q.name, hostname);
+        bool captive = job->local_ip && meshvpn_wifi_needs_setup();
         int n;
-        if (local_name) {
+        if (local_name || captive) {
             n = meshvpn_dns_reply(query, len, resp, DNS_MAX,
                                  job->local_ip ? 0 : 2, false, job->local_ip);
+            if (captive) {
+                /* Never cache setup redirects across restoration of the uplink. */
+                if (n > 0) meshvpn_dns_age_ttls(resp, n, UINT32_MAX);
+                if (!local_name) COUNT(captive);
+            }
         } else if ((n = cache_get(query, len, resp, epoch)) == 0) {
             uint32_t generation = cache_generation();
             uint8_t id[2] = {query[0], query[1]};
@@ -244,7 +254,7 @@ static void worker(void *arg)
                 cache_put(query, len, resp, n, generation, epoch);
             }
         }
-        if (!local_name && epoch != meshvpn_vpn_dns_epoch()) {
+        if (!local_name && !captive && epoch != meshvpn_vpn_dns_epoch()) {
             COUNT(policy_changed); n = meshvpn_dns_reply(query, len, resp, DNS_MAX, 2, false, 0);
         }
         if (job->fd < 0 && n > udp_limit(query, len, &q))

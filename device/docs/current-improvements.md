@@ -78,7 +78,7 @@ The previously flashed board's resolved dependency versions are unknown; preserv
 
 First run the [AP/STA/USB acceptance and comparison](apsta-benchmark.md). These checks supplement, not replace, USB regression tests.
 
-Check the default HTTP mode at `http://meshpn.local/`: login, profiles, status and mDNS `_http._tcp:80`, no HTTPS listener or certificate API.
+Check the default HTTP mode at `http://dongle.local/`: login, profiles, status and mDNS `_http._tcp:80`, no HTTPS listener or certificate API.
 After the loopback fix, verify repeated/concurrent HTTP connections from USB and AP
 (including more than three client connections) do not leave new requests waiting
 without a response. Recheck internet access separately; host tests do not prove that
@@ -102,13 +102,13 @@ Check the checkbox is not overwritten by status polling. Simulate identity/stora
 6. **Network isolation:** from a separate WiFi client probe the dongle's STA IP on TCP 80/443/53 and UDP 53/5353/32768/32769;
    management must not answer. Repeat with explicit routes to USB/AP IPs through STA. On USB and AP, HTTPS/DNS/mDNS must work.
    Capture uplink multicast: no dongle mDNS announcements on STA. Repeat after reconnect and address changes.
-7. **Names and trust:** test `meshpn.local` on iPhone/macOS and `meshpn.home.arpa` via the supplied DNS.
+7. **Names and trust:** test `dongle.local` on iPhone/macOS and `dongle.home.arpa` via the supplied DNS.
    Import a personal-CA leaf/key, reboot, verify browser trust and fingerprint. With multiple dongles, check mDNS name conflicts;
    hostname/certificate collision handling beyond a single dongle is not implemented.
 8. **Subnet collision:** place uplink in 192.168.7.0/24. Check reassignment, renew host DHCP/replug, resolve the name and verify NAT.
    The new IP is not necessarily covered by the certificate; use the DNS name. Subnet selection is recalculated after reboot.
 9. **DNS:** test UDP/TCP queries, repeated cache hits with decreasing TTL, large EDNS responses, upstream failure and recovery.
-   Query meshpn.home.arpa at each LAN gateway: A answers must match that gateway,
+   Query dongle.home.arpa at each LAN gateway: A answers must match that gateway,
    including after subnet conflict recovery. Local responses must not leak through the cache between LANs.
    Confirm normal connectivity checks; this is not an uplink captive-portal login implementation.
 10. **Memory and speed:** run UI benchmark at 10k/100k/500k, verify memory returns after completion.
