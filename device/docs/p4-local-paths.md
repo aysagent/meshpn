@@ -27,6 +27,11 @@ can override it, the parent artifact directory, and the normal recovery gap.
 `MESHPN_ADMIN_PASSWORD` supplies the admin password (default `admin`).
 Duration accepts 0.1–240 minutes. Each request has a timeout; local transfers
 have a 35 s client budget, plus a blocking socket operation's timeout. The
+upload sends 16 KiB pieces with an explicit Content-Length: the 3 s socket
+timeout applies to each piece, rather than prematurely aborting one progressing
+1 MB `sendall`. Upload success still requires the complete board receipt.
+Historical runs made before this correction retain their failed attempts;
+do not relabel them as completed from packet traces alone. The
 firmware upload/download generators have a separate 30 s budget between calls
 and a 3 s socket timeout. A deadline-limited body is not a completed transfer.
 

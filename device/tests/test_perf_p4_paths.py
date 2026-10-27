@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
 
 spec = importlib.util.spec_from_file_location('p4paths', Path(__file__).parents[1] / 'scripts/perf-p4-paths.py')
@@ -146,6 +146,41 @@ class Tests(unittest.TestCase):
     def test_trace_does_not_copy_text_into_numeric_fields(self):
         trace = m.clean_sta_trace({'peer': 'SECRET', 'peer_port': 'SECRET', 'events': [{'seq': 'SECRET'}]})
         self.assertNotIn('SECRET', json.dumps(trace))
+
+    def test_upload_progress_past_socket_timeout_and_total_deadline(self):
+        for remaining, complete in [(35, True), (.2, False)]:
+            with self.subTest(remaining=remaining):
+                c = Clock()
+                b = m.Board('192.168.10.1'); b.token = 'private-token'
+                route, conn = MagicMock(), MagicMock()
+                route.getsockname.return_value = ('192.168.1.4', 1234)
+                conn.sock.getsockname.return_value = ('192.168.1.4', 4321)
+                consumed = []
+                def send(_method, _path, *, body, headers):
+                    self.assertEqual(headers['Content-Length'], '1000000')
+                    self.assertNotIn('Transfer-Encoding', headers)
+                    for block in body:
+                        self.assertLessEqual(len(block), 16384)
+                        consumed.append(bytes(block)); c.wait(.1)
+                conn.request.side_effect = send
+                response = conn.getresponse.return_value
+                response.status = 200
+                response.read.return_value = b'{"bytes":1000000}'
+                with patch.object(m.time, 'monotonic', c.now), \
+                     patch.object(m.socket, 'socket', return_value=route), \
+                     patch.object(m.http.client, 'HTTPConnection', return_value=conn):
+                    row = b.transfer('192.168.1.11', 'up', c.now() + remaining)
+                self.assertEqual(row['complete'], complete)
+                route.close.assert_called_once(); conn.close.assert_called_once()
+                if complete:
+                    self.assertGreater(row['seconds'], 3)
+                    self.assertEqual(b''.join(consumed), bytes(1000000))
+                    self.assertEqual(row['bytes'], 1000000)
+                else:
+                    self.assertIn('transfer_deadline', row['error'])
+                    self.assertLess(sum(map(len, consumed)), 1000000)
+                    self.assertIsNone(row['mbps'])
+                    conn.getresponse.assert_not_called()
 
 
 if __name__ == '__main__':

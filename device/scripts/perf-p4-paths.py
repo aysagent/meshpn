@@ -80,6 +80,15 @@ def clean_sta_trace(trace):
     return out
 
 
+def upload_blocks(body, deadline):
+    """Keep sendall's operation timeout local to a bounded block, not 1 MB."""
+    view = memoryview(body)
+    for offset in range(0, len(view), 16384):
+        if time.monotonic() >= deadline:
+            raise TimeoutError('transfer_deadline')
+        yield view[offset:offset + 16384]
+
+
 class Board:
     def __init__(self, address):
         self.address = address
@@ -135,8 +144,14 @@ class Board:
             row['source_port'] = conn.sock.getsockname()[1]
             conn.sock.settimeout(min(3, duration))
             body = bytes(1000000) if direction == 'up' else b''
+            # socket.sendall times out across its whole argument even while
+            # making progress. One 1 MB argument falsely aborts a healthy slow
+            # upload after 3 s. Stream bounded pieces under the total budget;
+            # explicit length keeps the firmware request unchunked.
+            payload = upload_blocks(body, min(started + duration, deadline)) if direction == 'up' else body
             conn.request('POST', '/api/diag/link-' + ('upload' if direction == 'up' else 'download'),
-                         body=body, headers={'Authorization': 'Bearer ' + self.token, 'Connection': 'close'})
+                         body=payload, headers={'Authorization': 'Bearer ' + self.token,
+                                                'Connection': 'close', 'Content-Length': str(len(body))})
             response = conn.getresponse()
             row['http'] = response.status
             row['first_byte_s'] = time.monotonic() - started
