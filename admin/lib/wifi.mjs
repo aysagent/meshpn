@@ -2,8 +2,8 @@ import {pbkdf2Sync,randomBytes} from 'node:crypto';
 import {atomic,readJson,need,exact,id} from './common.mjs';
 import {command} from './command.mjs';
 export class Wifi{
- constructor({file,interface:iface,run=command}){need(/^[a-zA-Z0-9_-]{1,15}$/.test(iface),'wifi_interface');this.file=file;this.iface=iface;this.run=run;this.profiles=readJson(file,[]);need(Array.isArray(this.profiles)&&this.profiles.length<=256,'wifi_state');}
- async cli(args,options={}){return(await this.run('/usr/sbin/wpa_cli',['-i',this.iface,...args],options)).out.trim();}
+ constructor({file,interface:iface,clientDirectory,run=command}){need(/^[a-zA-Z0-9_-]{1,15}$/.test(iface),'wifi_interface');this.file=file;this.iface=iface;this.clientDirectory=clientDirectory;this.run=run;this.profiles=readJson(file,[]);need(Array.isArray(this.profiles)&&this.profiles.length<=256,'wifi_state');}
+ async cli(args,options={}){return(await this.run('/usr/sbin/wpa_cli',['-i',this.iface,...(this.clientDirectory?['-s',this.clientDirectory]:[]),...args],options)).out.trim();}
  list(){return this.profiles.map(({psk,...p})=>({...p,hasPassword:!!psk}));}
  async status(){const values=Object.fromEntries((await this.cli(['status'])).split('\n').filter(l=>l.includes('=')).map(l=>{const i=l.indexOf('=');return[l.slice(0,i),l.slice(i+1)];}));return Object.fromEntries(['wpa_state','ssid','bssid','ip_address','id'].filter(k=>k in values).map(k=>[k,values[k]]));}
  async scan(){need(await this.cli(['scan'])==='OK','wifi_scan_failed');await new Promise(r=>setTimeout(r,1800));return(await this.cli(['scan_results'])).split('\n').slice(1,129).map(l=>{const[bssid,frequency,signal,security,...ssid]=l.split('\t');return{bssid,frequency:Number(frequency),signal:Number(signal),security,ssid:ssid.join('\t')};});}

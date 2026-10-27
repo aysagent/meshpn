@@ -182,6 +182,9 @@ safe_ipv6_chain() {
 safe_prefix_rule() {
   local family="$1" base="$2" line="$3" config="$4" version scope ipv6 tun servers port tag protocol id chain
   IFS=: read -r version scope ipv6 tun servers port <<< "$config"
+  # USB administration may publish one IPv4 mDNS alias. Match the entire
+  # rule, never trust a comment, wildcard interface or broad multicast range.
+  if [[ "$family" == 4 && "$base" == OUTPUT && "$line" == '-A OUTPUT -s 192.168.7.1/32 -d 224.0.0.251/32 -o usb0 -p udp -m udp --sport 5353 --dport 5353 -m comment --comment meshpn-admin-usb-mdns-v1 -j ACCEPT' ]]; then return 0; fi
   local dns_tag=' --comment (clean-vpn-dns-tunnel(-[a-f0-9]{24})?) '
   if [[ "$line" =~ $dns_tag ]]; then
     tag="${BASH_REMATCH[1]}"

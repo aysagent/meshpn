@@ -167,3 +167,10 @@ test('offline audit has explicit scope and bounded input', () => {
   assert.notEqual(audit(4, '-P OUTPUT ACCEPT\n' + 'x'.repeat(1048577)).status, 0);
   assert.notEqual(plan('--server=1.1.1.1', '--family=4').status, 0);
 });
+
+test('USB mDNS admin prefix admits only the exact local publication rule',()=>{
+ const prefix='-A OUTPUT -s 192.168.7.1/32 -d 224.0.0.251/32 -o usb0 -p udp -m udp --sport 5353 --dport 5353 -m comment --comment meshpn-admin-usb-mdns-v1 -j ACCEPT';
+ const base=activeSnapshot(4,true),withRule=p=>base.replace('-A OUTPUT ',p+'\n-A OUTPUT ');
+ assert.equal(audit(4,withRule(prefix)).status,0);
+ for(const altered of[prefix.replace('usb0','wlan0'),prefix.replace('5353','53'),prefix.replace('192.168.7.1/32','0.0.0.0/0'),prefix.replace('224.0.0.251/32','224.0.0.0/4')])assert.notEqual(audit(4,withRule(altered)).status,0);
+});

@@ -1,14 +1,33 @@
 #!/usr/bin/env node
 // Fresh, explicit USB-only install. Existing deployments require a reviewed
 // update rather than silently replacing files or importing foreign ownership.
-import fs from 'node:fs';import path from 'node:path';import {fileURLToPath} from 'node:url';import {execFileSync} from 'node:child_process';
+import fs from 'node:fs';import {createHash} from 'node:crypto';import path from 'node:path';import {fileURLToPath} from 'node:url';import {execFileSync} from 'node:child_process';
 import {need,atomic,readJson} from './lib/common.mjs';
 import {deriveTrialConfig} from '../scripts/lib/native-radxa-trial.mjs';
 import {inspectBlockedTrialIpv6} from '../scripts/lib/native-trial-ipv6.mjs';
 const root=path.dirname(path.dirname(fileURLToPath(import.meta.url))),base='/opt/meshpn-admin',etc='/etc/meshpn-admin';
 const run=(file,args)=>execFileSync(file,args,{encoding:'utf8',timeout:30000,stdio:['ignore','pipe','pipe']}).trim();
-need(process.platform==='linux'&&process.getuid()===0,'linux_root_required');need(process.argv.length===3&&['--plan','--apply','--remove','--container','--standalone'].includes(process.argv[2]),'use_plan_apply_remove');
-if(['--container','--standalone'].includes(process.argv[2])){
+need(process.platform==='linux'&&process.getuid()===0,'linux_root_required');need(process.argv.length===3&&['--plan','--apply','--remove','--container','--standalone','--update'].includes(process.argv[2]),'use_plan_apply_remove');
+const guardPath='/usr/local/bin/clean-vpn-killswitch.sh';
+const digest=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+function updateGuard(){
+ const wanted=root+'/scripts/autostart/killswitch.sh',before=etc+'/guard.before';
+ if(digest(guardPath)===digest(wanted))return;
+ // Only the exact audited Radxa baseline is accepted on first install.
+ const owned=readJson(etc+'/guard-installed.json',null);
+ need(digest(guardPath)===(owned?.sha256??'287357800e81d115020ec91cd13e87ba615748daea8489b61b4c5e6bfbbc089b'),'guard_script_changed');
+ if(!fs.existsSync(before))fs.copyFileSync(guardPath,before,fs.constants.COPYFILE_EXCL);
+ atomic(guardPath,fs.readFileSync(wanted,'utf8'),0o755);atomic(etc+'/guard-installed.json',{sha256:digest(wanted)});
+}
+if(process.argv[2]==='--update'){
+ need(readJson(etc+'/manifest.json').kind==='meshpn-admin-owned-install','install_manifest');
+ for(const u of['meshpn-admin.socket','meshpn-admin-web.service','meshpn-admin-broker.service'])run('/usr/bin/systemctl',['stop',u]);
+ updateGuard();
+ for(const dir of['admin','scripts/lib'])fs.cpSync(path.join(root,dir),path.join(base,dir),{recursive:true,filter:p=>!p.includes('/test/')&&!p.endsWith('/WORK.md')});
+ fs.copyFileSync(root+'/scripts/clean-vpn-pcap-fingerprints.mjs',base+'/scripts/clean-vpn-pcap-fingerprints.mjs');
+ run('/usr/bin/systemctl',['start','meshpn-admin-broker.service','meshpn-admin.socket']);console.log('ADMIN_UPDATED');process.exit(0);
+}
+if(['--container','--standalone','--update'].includes(process.argv[2])){
  const manifest=readJson(etc+'/manifest.json');need(manifest.kind==='meshpn-admin-owned-install','install_manifest');
  const dir='/etc/systemd/system/meshpn-admin-web.service.d',file=dir+'/container.conf';
  run('/usr/bin/systemctl',['stop','meshpn-admin-web.service']);
@@ -22,9 +41,10 @@ if(process.argv[2]==='--remove'){
  for(const u of ['meshpn-admin.socket','meshpn-admin-web.service','meshpn-admin-broker.service'])run('/usr/bin/systemctl',['stop',u]);
  run('/usr/bin/systemctl',['disable','meshpn-admin.socket','meshpn-admin-broker.service']);
  for(const u of units){const p='/etc/systemd/system/'+u;need(fs.readFileSync(p,'utf8').startsWith('# meshpn-admin-owned-v1\n'),'unit_changed');fs.unlinkSync(p);}
+ if(fs.existsSync(etc+'/guard-installed.json')){need(digest(guardPath)===readJson(etc+'/guard-installed.json').sha256,'guard_script_changed');atomic(guardPath,fs.readFileSync(etc+'/guard.before','utf8'),0o755);}
  run('/usr/bin/systemctl',['daemon-reload']);console.log('ADMIN_REMOVED_SERVICES; settings/account/source retained for inspection');process.exit(0);
 }
-const node=process.execPath;const plan={kind:'meshpn-admin-install',bind:'192.168.7.1:80',capture:'192.168.7.1:8443',interface:'usb0',name:'mpn.local',vpnUnit:'clean-vpn.service',nativeManaged:false,units,defaultPassword:'admin',changedHostNetworking:false,dnsMigration:false,rootWeb:false};
+const node=process.execPath;const plan={kind:'meshpn-admin-install',bind:'192.168.7.1:80',capture:'192.168.7.1:8443',interface:'usb0',name:'mpn.local',vpnUnit:'clean-vpn.service',nativeManaged:false,units,defaultPassword:'admin',changedHostNetworking:true,networkChangeScope:'one USB-only mDNS OUTPUT rule',dnsMigration:false,rootWeb:false};
 if(process.argv[2]==='--plan'){console.log(JSON.stringify(plan,null,2));process.exit(0);}
 for(const p of [base,etc,...units.map(u=>'/etc/systemd/system/'+u)])need(!fs.existsSync(p),'installation_collision');
 need(fs.readFileSync('/proc/1/comm','utf8').trim()==='systemd','systemd_required');
@@ -39,7 +59,7 @@ const vpn=deriveTrialConfig(argv,{cwd:root,root,exists:fs.existsSync,ipv6Evidenc
 // Account collision must be detected before touching any install destination.
 try{run('/usr/bin/id',['meshpn-admin']);throw Error('account_collision');}catch(e){if(e.message==='account_collision')throw e;}
 run('/usr/sbin/useradd',['--system','--user-group','--home-dir','/var/lib/meshpn-admin-web','--shell','/usr/sbin/nologin','meshpn-admin']);
-fs.mkdirSync(base,{mode:0o755});fs.mkdirSync(etc,{mode:0o755});
+fs.mkdirSync(base,{mode:0o755});fs.mkdirSync(etc,{mode:0o755});updateGuard();
 for(const dir of ['admin','scripts/lib'])fs.cpSync(path.join(root,dir),path.join(base,dir),{recursive:true,filter:p=>!p.includes('/test/')&&!p.endsWith('/WORK.md')});
 for(const file of ['scripts/clean-vpn-pcap-fingerprints.mjs'])fs.copyFileSync(path.join(root,file),path.join(base,file));
 fs.copyFileSync(node,base+'/node');fs.chmodSync(base+'/node',0o755);

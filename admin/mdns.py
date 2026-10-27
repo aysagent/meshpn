@@ -11,7 +11,8 @@ socket.inet_pton(socket.AF_INET,address)
 bus=dbus.SystemBus()
 server=dbus.Interface(bus.get_object('org.freedesktop.Avahi','/'),'org.freedesktop.Avahi.Server')
 group=dbus.Interface(bus.get_object('org.freedesktop.Avahi',server.EntryGroupNew()),'org.freedesktop.Avahi.EntryGroup')
-group.AddAddress(dbus.Int32(socket.if_nametoindex(interface)),dbus.Int32(0),dbus.UInt32(0),name+'.local',address)
+# AVAHI_PUBLISH_NO_REVERSE: preserve the existing board PTR record.
+group.AddAddress(dbus.Int32(socket.if_nametoindex(interface)),dbus.Int32(0),dbus.UInt32(16),name+'.local',address)
 group.Commit()
 while True:
  state=int(group.GetState())
