@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-conditional-clock-foundation",
+  "date": "2026-10-27",
+  "nativeCommit": "40c3137e2e830f236f8dc310f699d663bbda2e39",
+  "scope": "helper-and-auth-diagnosis; not-installed-or-wired-to-autostart",
+  "policy": {
+    "normalConnectionFirst": true,
+    "eligibleFailures": [
+      "tls_verify_expired",
+      "tls_verify_not_yet_valid",
+      "auth_clock_skew"
+    ],
+    "automaticAttemptsPerBoot": 1,
+    "persistBeforeQuery": true,
+    "certificateChecksWeakened": false
+  },
+  "checks": {
+    "ctest": {
+      "passed": 10
+    },
+    "nativeProfiles": {
+      "passed": 18
+    },
+    "nativeDataPlane": {
+      "passed": 1
+    },
+    "clockAuthAndLegacyInteropFinal": {
+      "passed": 21,
+      "failed": 0,
+      "skipped": 0
+    },
+    "pythonPolicy": {
+      "passed": 11
+    },
+    "realSshInDisposableContainer": {
+      "passed": 4
+    },
+    "controllerAndDiagnostics": {
+      "passed": 12
+    },
+    "runtimePlan": {
+      "passed": 11
+    }
+  },
+  "initialRun": {
+    "passed": 37,
+    "failed": 3,
+    "reason": "positive exit-handshake fixture stopped before queued HTTP 200 reached peer; two new tests and existing native-exit interop",
+    "resolution": "new exit-confirmed fixture waits for a packet after peer observes HTTP 200; rerun all 21 auth/interop tests passed"
+  },
+  "sourceSha256": {
+    "native/clean_vpn/engine.cc": "1163895c2b60770141bcc4b2def0e9c855deb60b28e619dd06e554568775b647",
+    "native/clean_vpn/integration_test.cc": "db76f9b4fe3b2125331870a441fe4b1cc0e5a142251ff88c11ed49c856950cad",
+    "scripts/clean-vpn-native-clock.py": "0f75a4995c7fb52169d304c25268448ee59489310b6db873473f1998a566a800",
+    "scripts/test-native-clock.py": "6b9037538020bd7bbc9a84f5d0eeae55043734ace9b1bc171036d2e4ced923ee",
+    "scripts/test-native-clock-ssh.py": "7475366cbac537abd0a29676d93899792e934bdf17558613c40dd983b8cd6e48",
+    "scripts/test-native-clock-auth.mjs": "b52f8231fc507c0615bf78fa2c11050189ec7804dcaf72a11d6d9997dd9fb5b4",
+    "scripts/test-native-wire-interop.mjs": "eec7048724746077f04ecf6c8eb18a9bb4b9fee2a0b1f60fc2d807826e858415"
+  },
+  "privateArtifactDirectory": "/Users/yurich/Library/Caches/meshpn-clean-vpn-lab/results/clock-20261027",
+  "artifactSha256": {
+    "auth-final.log": "49125c3277afebdd4b2cebdd30f1f896b3353d647b0a5c08de4e0509253b0747",
+    "initial-checks.log": "c6900721a1d36d3b859996c680dcbff023ae8888c034d822d357b7dd44c6b7a3",
+    "python-ssh.log": "65e6079315a4a6ca20b287a37bb8d1ed61384d0be93cd5a64c5894a05b3a6594"
+  },
+  "physical": {
+    "vpsReadOnlySystemdAndTimeInspection": true,
+    "remoteInstalled": false,
+    "remoteSettingsChanged": false,
+    "macNetworkChanged": false,
+    "systemClocksChanged": false
+  },
+  "remaining": [
+    "existing-host lifecycle integration",
+    "dedicated restricted server account/key provisioning",
+    "real clock-setting and failure/reboot tests in NIC-less VM",
+    "bounded physical cold-boot check"
+  ],
+  "limitations": [
+    "SSH proves source identity, not correctness of source time",
+    "NTPSynchronized is not authenticated NTP evidence",
+    "real SSH test uses forced-command protocol fixture; production NTP gate tested with mocks",
+    "clock-setting command tested with mocks only",
+    "native time skew tested with signed out-of-window tokens, not changes to host clock"
+  ]
+}
