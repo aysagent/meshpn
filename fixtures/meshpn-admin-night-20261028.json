@@ -194,7 +194,8 @@
     "apiAndGuardRadxa": 62,
     "containerFrontend": "passed-as-uid1000-readonly-no-capabilities-loopback-only-mock-broker",
     "containerSocketProxy": "passed-two-inherited-listeners",
-    "linuxIptables": "passed-isolated-arm64-network-namespace"
+    "linuxIptables": "passed-isolated-arm64-network-namespace",
+    "finalApiGuardCaptureRadxa": 75
   },
   "limitations": [
     "no-permanent-native-vpn-migration",
@@ -287,5 +288,22 @@
       "independentWireCheck": "required-separately"
     },
     "failure": "one of two external HTTPS probes failed; not counted as a pass"
+  },
+  "finalState": {
+    "adminAutostart": true,
+    "adminUsbSockets": [
+      "192.168.7.1%usb0:80",
+      "192.168.7.1%usb0:8443"
+    ],
+    "defaultPasswordRestored": true,
+    "legacyVpnActive": true,
+    "guardActive": true,
+    "usbSnatActive": true,
+    "dnsmasqActive": true,
+    "resolvedActive": false,
+    "networkdActive": true,
+    "temporaryClockCredentialsRemoved": true,
+    "vpsTrialStopped": true,
+    "macNetworkChanged": false
   }
 }

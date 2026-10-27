@@ -26,6 +26,7 @@ if(process.argv[2]==='--update'){
  const unitPath='/etc/systemd/system/meshpn-admin-broker.service',unitText=fs.readFileSync(unitPath,'utf8');need(unitText.startsWith('# meshpn-admin-owned-v1\n'),'unit_changed');atomic(unitPath,unitText.replace('After=network.target avahi-daemon.service\n','After=network.target avahi-daemon.service clean-vpn-killswitch.service\n'),0o644);run('/usr/bin/systemctl',['daemon-reload']);
  for(const dir of['admin','scripts/lib'])fs.cpSync(path.join(root,dir),path.join(base,dir),{recursive:true,filter:p=>!p.includes('/test/')&&!p.endsWith('/WORK.md')});
  fs.copyFileSync(root+'/scripts/clean-vpn-pcap-fingerprints.mjs',base+'/scripts/clean-vpn-pcap-fingerprints.mjs');
+ const manifest=readJson(etc+'/manifest.json');atomic(etc+'/manifest.json',{...manifest,sourceCommit:run('git',['-C',root,'rev-parse','HEAD']),updatedAt:new Date().toISOString()});
  run('/usr/bin/systemctl',['start','meshpn-admin-broker.service','meshpn-admin.socket']);console.log('ADMIN_UPDATED');process.exit(0);
 }
 if(['--container','--standalone','--update'].includes(process.argv[2])){
