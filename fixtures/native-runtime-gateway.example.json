@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "ingress": { "interface": "usb0", "subnet": "192.168.7.0/24" },
+  "bridge": {
+    "interface": "cvlbr0",
+    "subnet": "192.168.88.0/24",
+    "host": "192.168.88.1",
+    "client": "192.168.88.2"
+  },
+  "table": 19998,
+  "priority": 10998,
+  "bypass": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+  "dnsUid": null
+}

@@ -4,14 +4,19 @@ import dgram from 'node:dgram';
 import https from 'node:https';
 import fs from 'node:fs';
 const response = q => {
-  const b = Buffer.from(q); b.writeUInt16BE(0x8180, 2); b.writeUInt16BE(1, 6);
+  // dnsmasq adds EDNS. Do not copy its OPT before our answer: OPT belongs
+  // in the additional section, and native DNS correctly rejects that layout.
+  let end=12;while(end<q.length&&q[end]>0){if(q[end]>63||end+q[end]+1>=q.length)throw Error('fixture_dns_name');end+=1+q[end];}
+  if(end+5>q.length)throw Error('fixture_dns_question');
+  const b = Buffer.from(q.subarray(0,end+5)); b.writeUInt16BE(0x8180, 2); b.writeUInt16BE(1, 6);b.writeUInt16BE(0,8);b.writeUInt16BE(0,10);
   return Buffer.concat([b, Buffer.from('c00c00010001000000010004c6120050', 'hex')]); // 198.18.0.80
 };
 const udp = dgram.createSocket('udp4');
-udp.on('message', (b, r) => udp.send(response(b), r.port, r.address)); udp.bind(5353, '0.0.0.0');
+const trace = address => { if(process.env.CVPN_DNS_TRACE==='1')console.log('DNS_QUERY_PEER='+address.replace(/^::ffff:/,'')); };
+udp.on('message', (b, r) => { trace(r.address); udp.send(response(b), r.port, r.address); }); udp.bind(5353, '0.0.0.0');
 net.createServer(s => { let b = Buffer.alloc(0); s.on('data', chunk => {
   b = Buffer.concat([b, chunk]); if (b.length < 2 || b.length < 2 + b.readUInt16BE(0)) return;
-  const r = response(b.subarray(2, 2 + b.readUInt16BE(0))), n = Buffer.alloc(2); n.writeUInt16BE(r.length); s.end(Buffer.concat([n, r]));
+  trace(s.remoteAddress);const r = response(b.subarray(2, 2 + b.readUInt16BE(0))), n = Buffer.alloc(2); n.writeUInt16BE(r.length); s.end(Buffer.concat([n, r]));
 }); }).listen(5353, '0.0.0.0');
 net.createServer(s => s.pipe(s)).listen(8080, '0.0.0.0');
 const echo = dgram.createSocket('udp4'); echo.on('message', (b, r) => echo.send(b, r.port, r.address)); echo.bind(8081, '198.18.0.80');
