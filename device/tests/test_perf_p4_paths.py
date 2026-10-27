@@ -22,9 +22,11 @@ class Clock:
 
 
 class Fake:
-    def __init__(self, clock, failure=False, vpn=False, wrong=False):
+    def __init__(self, clock, failure=False, vpn=False, wrong=False, trace_error=False, trace_mismatch=False):
         self.clock, self.failure = clock, failure
         self.calls = self.transfers = 0
+        self.trace_calls = 0
+        self.trace_error, self.trace_mismatch = trace_error, trace_mismatch
         self.s = {'board': 'wrong' if wrong else 'waveshare_esp32_p4_wifi6', 'boot_count': 1,
                   'wifi': {'connected': True, 'ip': '192.168.1.11', 'password': 'SECRET'},
                   'vpn': {'enabled': vpn, 'private_key': 'SECRET'}}
@@ -34,6 +36,13 @@ class Fake:
         if path == '/api/diag/ap-forward':
             assert data == b''
             return {k: {'ok': not self.failure} for k in ['udp_dns', 'tcp_syn']}
+        if path == '/api/diag/sta-tcp':
+            self.trace_calls += 1
+            if self.trace_error:
+                raise HTTPError('', 404, 'unavailable', {}, None)
+            return {'peer': '192.168.1.4', 'local': self.s['wifi']['ip'],
+                    'peer_port': 1235 if self.trace_mismatch else 1234,
+                    'private_key': 'SECRET', 'events': [{'seq': 42, 'payload': 100, 'password': 'SECRET'}] * 100}
         assert path == '/api/status'
         self.calls += 1
         # Model one spontaneous reboot; the runner must record, never reset it.
@@ -43,16 +52,17 @@ class Fake:
     def transfer(self, address, direction, deadline):
         self.transfers += 1
         self.clock.wait(1)
-        return {'address': address, 'direction': direction, 'complete': not self.failure}
+        return {'address': address, 'direction': direction, 'complete': not self.failure,
+                'source': '192.168.1.4', 'source_port': 1234}
 
 
 class Tests(unittest.TestCase):
-    def execute(self, **kw):
+    def execute(self, trace=False, **kw):
         c = Clock()
         f = Fake(c, **kw)
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        a = SimpleNamespace(out=Path(directory.name), minutes=.4, admin_ip='192.168.10.1', cycle_gap=1)
+        a = SimpleNamespace(out=Path(directory.name), minutes=.4, admin_ip='192.168.10.1', cycle_gap=1, sta_tcp_trace=trace)
         with contextlib.redirect_stdout(io.StringIO()):
             result, root = m.run(a, f, c.now, c.wait)
         return result, root, f
@@ -106,6 +116,36 @@ class Tests(unittest.TestCase):
             r, _, f = self.execute(**args)
             self.assertEqual(r['status'], 'failed')
             self.assertEqual(f.transfers, 0)
+
+    def test_trace_capture_private_bounded_and_tuple_correlated(self):
+        r, root, f = self.execute(trace=True)
+        files = list(root.glob('sta-tcp-*.json'))
+        self.assertTrue(files)
+        self.assertEqual(r['sta_tcp_traces'], len(files))
+        self.assertEqual(r['sta_tcp_trace_errors'], 0)
+        for p in files:
+            data = p.read_text()
+            self.assertNotIn('SECRET', data)
+            row = json.loads(data)
+            self.assertTrue(row['tuple_matches'])
+            self.assertLessEqual(len(row['trace']['events']), 64)
+            self.assertEqual(p.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(f.trace_calls, len(files))
+
+    def test_trace_unavailable_once_and_mismatch_explicit(self):
+        r, root, f = self.execute(trace=True, trace_error=True)
+        self.assertEqual(f.trace_calls, 1)
+        self.assertEqual(r['sta_tcp_trace_errors'], 1)
+        self.assertIn('sta_tcp_trace_issues', r['warnings'])
+        self.assertIn('sta_tcp_trace_error', (root/'events.ndjson').read_text())
+        r, root, f = self.execute(trace=True, trace_mismatch=True)
+        self.assertGreater(r['sta_tcp_trace_errors'], 0)
+        self.assertIn('sta_tcp_trace_tuple_mismatch', (root/'events.ndjson').read_text())
+        self.assertTrue(all(json.loads(p.read_text())['tuple_matches'] is False for p in root.glob('sta-tcp-*.json')))
+
+    def test_trace_does_not_copy_text_into_numeric_fields(self):
+        trace = m.clean_sta_trace({'peer': 'SECRET', 'peer_port': 'SECRET', 'events': [{'seq': 'SECRET'}]})
+        self.assertNotIn('SECRET', json.dumps(trace))
 
 
 if __name__ == '__main__':

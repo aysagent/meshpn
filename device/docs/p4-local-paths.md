@@ -11,6 +11,17 @@ the firmware has one HTTP worker and one admin session.
 python3 device/scripts/perf-p4-paths.py --minutes 180
 ```
 
+Add `--sta-tcp-trace` to save `sta-tcp-000001.json` header snapshots via USB
+immediately after each STA transfer, before another local STA SYN replaces the
+observed flow. Files include transfer index/direction and `tuple_matches`:
+`true` confirms source IP/port and destination, `false` means another flow,
+`null` means the client did not obtain a complete tuple (for example connect
+failure). Trace data is allowlisted, numeric header fields only, capped at 64
+events; no payload bytes, HTTP headers or tokens are saved. Missing capability
+or auth is recorded once and disables later trace requests; network errors and
+tuple mismatches remain explicit warnings. These counters are separate from
+transfer success and ordinary status API errors. Default runs do not fetch it.
+
 Default USB admin IP is 192.168.10.1. `--admin-ip`, `--out`, and `--cycle-gap`
 can override it, the parent artifact directory, and the normal recovery gap.
 `MESHPN_ADMIN_PASSWORD` supplies the admin password (default `admin`).

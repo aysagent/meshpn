@@ -25,6 +25,8 @@ def options(argv=None):
     p.add_argument('--admin-ip', default='192.168.10.1')
     p.add_argument('--out', type=Path, default=Path(__file__).resolve().parents[1] / 'perf-results')
     p.add_argument('--cycle-gap', type=float, default=20)
+    p.add_argument('--sta-tcp-trace', action='store_true',
+                   help='save bounded STA TCP header snapshots via USB after each STA transfer')
     a = p.parse_args(argv)
     if not .1 <= a.minutes <= 240 or not 1 <= a.cycle_gap <= 300:
         p.error('minutes must be 0.1..240, cycle-gap 1..300')
@@ -52,6 +54,30 @@ def clean(s):
 def private_json(path, data):
     with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as f:
         json.dump(data, f, indent=2)
+
+
+def clean_sta_trace(trace):
+    """Retain header metadata only, even if a future API adds other fields."""
+    if not isinstance(trace, dict):
+        raise ValueError('invalid_STA_trace_response')
+    def numbers(value, fields):
+        if not isinstance(value, dict):
+            return {}
+        return {k: value[k] for k in fields if type(value.get(k)) is int and 0 <= value[k] < 2**64}
+    out = numbers(trace, ['peer_port', 'age_ms', 'total_events', 'omitted_events'])
+    for key in ['peer', 'local']:
+        try:
+            out[key] = str(ipaddress.IPv4Address(trace.get(key)))
+        except (ValueError, TypeError):
+            pass
+    for key in ['rx', 'tx']:
+        out[key] = numbers(trace.get(key), ['packets', 'data_bytes_including_repeats',
+                                          'checksum_checked', 'bad_ip', 'bad_tcp'])
+    events = trace.get('events')
+    out['events'] = [numbers(e, ['elapsed_ms', 'seq', 'ack', 'flags', 'tx', 'payload', 'window',
+                                'sack_blocks', 'sack_left', 'sack_right', 'checksum_checked',
+                                'bad_ip', 'bad_tcp']) for e in events[-64:]] if isinstance(events, list) else []
+    return out
 
 
 class Board:
@@ -106,6 +132,7 @@ class Board:
             conn = http.client.HTTPConnection(address, 80, timeout=min(5, duration), source_address=(source, 0))
             conn.connect()
             row['connect_s'] = time.monotonic() - started
+            row['source_port'] = conn.sock.getsockname()[1]
             conn.sock.settimeout(min(3, duration))
             body = bytes(1000000) if direction == 'up' else b''
             conn.request('POST', '/api/diag/link-' + ('upload' if direction == 'up' else 'download'),
@@ -159,11 +186,36 @@ def run(a, board=None, clock=time.monotonic, wait=time.sleep):
               'minutes': a.minutes, 'scope': 'USB and STA plus synthetic AP NAT; no real AP RF benchmark; no automatic resets/settings changes',
               'transfers': 0, 'complete': 0, 'probe_pairs': 0, 'probe_pairs_ok': 0,
               'api_errors': 0, 'boot_changes': 0, 'offline_samples': 0}
+    result.update(sta_tcp_traces=0, sta_tcp_trace_errors=0)
+    trace_enabled = getattr(a, 'sta_tcp_trace', False)
+    result['sta_tcp_trace_requested'] = trace_enabled
     fds = {n: os.fdopen(os.open(root / (n + '.ndjson'), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), 'w', buffering=1)
            for n in ['status', 'measurements', 'events']}
     first = None
     last = None
     failures = 0
+    def capture_sta_trace(row):
+        nonlocal trace_enabled
+        if not trace_enabled or row['kind'] != 'sta' or end - clock() < .5:
+            return
+        try:
+            trace = clean_sta_trace(board.api('/api/diag/sta-tcp', timeout=min(5, end-clock())))
+            expected = {'peer': row.get('source'), 'peer_port': row.get('source_port'), 'local': row.get('address')}
+            matches = all(trace.get(k) == v for k, v in expected.items()) if all(v is not None for v in expected.values()) else None
+            private_json(root / ('sta-tcp-%06d.json' % result['transfers']),
+                         {'transfer_index': result['transfers'], 'direction': row['direction'],
+                          'tuple_matches': matches, 'trace': trace})
+            result['sta_tcp_traces'] += 1
+            if matches is False:
+                result['sta_tcp_trace_errors'] += 1
+                record('events', {'event': 'sta_tcp_trace_tuple_mismatch', 'transfer_index': result['transfers']})
+        except Exception as e:
+            result['sta_tcp_trace_errors'] += 1
+            record('events', {'event': 'sta_tcp_trace_error', 'transfer_index': result['transfers'], 'error': str(e)})
+            if isinstance(e, urllib.error.HTTPError) and e.code in [401, 403, 404, 501]:
+                trace_enabled = False  # Missing capability/auth is explicit; never hammer it.
+            if isinstance(e, urllib.error.HTTPError):
+                e.close()
     def record(name, row):
         fds[name].write(json.dumps({'elapsed_s': clock() - start, **row}) + '\n')
     def snapshot(phase):
@@ -221,9 +273,11 @@ def run(a, board=None, clock=time.monotonic, wait=time.sleep):
                     snapshot('before-' + kind + '-' + direction)
                     row = board.transfer(s['wifi']['ip'] if kind == 'sta' else a.admin_ip, direction, min(end, clock() + 35))
                     row['kind'] = kind
+                    row['transfer_index'] = result['transfers'] + 1
                     record('measurements', row)
                     result['transfers'] += 1
                     result['complete'] += bool(row['complete'])
+                    capture_sta_trace(row)  # Before any later STA SYN can replace this flow.
                     if kind == 'sta':
                         failures = 0 if row['complete'] else failures + 1
                     snapshot('after-' + kind + '-' + direction)
@@ -250,6 +304,8 @@ def run(a, board=None, clock=time.monotonic, wait=time.sleep):
             warnings.append('failed_ap_forward_probes')
         if result['api_errors'] or result['boot_changes'] or result['offline_samples']:
             warnings.append('api_or_link_events')
+        if result['sta_tcp_trace_errors']:
+            warnings.append('sta_tcp_trace_issues')
         result['warnings'] = warnings
         result['status'] = 'interrupted' if stopped else 'completed-with-warnings' if warnings else 'completed'
     except Exception as e:
