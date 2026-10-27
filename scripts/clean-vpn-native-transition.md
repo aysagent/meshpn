@@ -1,5 +1,14 @@
 # Полный native-переход: рабочий статус
 
+Актуальный checkpoint 2026-10-28: [условный clock recovery](clean-vpn-native-clock.md)
+для boring-tls client подключён к systemd и прошёл три cold boot в двух VM.
+[Отчёт](../fixtures/clean-vpn-native-clock-lifecycle-20261028.json). Никакого
+безусловного SSH при включении; полный TLS остаётся первым шагом. Физические
+узлы не менялись. Текущий приоритет — [повседневный пилот](clean-vpn-native-daily-pilot.md):
+интеграция с существующими DNS/route owners, временная физическая приёмка clock
+bootstrap, затем постоянный lifecycle и boot. Ниже — исторические checkpoints;
+старые ограничения scope не отменяют последующее поручение довести autostart.
+
 2026-10-27: [изолированный native runtime](clean-vpn-native-runtime.md) прошёл
 standalone Linux, Docker и Podman приёмку: LAN ingress, native DNS,
 ClientHello capture, crash/restart, clock-fault VM, часовой soak и временный

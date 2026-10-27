@@ -3,6 +3,11 @@
 2026-10-07. Следующий шаг после multi-peer exit. Это **не** готовый установщик
 на Radxa/VPS и не повод заменять работающие units вручную.
 
+Дополнение 2026-10-28: opt-in `--service --clock-recovery` для boring-tls client
+добавляет завершение с кодами 75/76/77 и отдельный systemd OnFailure helper.
+Прежний режим по умолчанию сохранён; у engine нет CAP_SYS_TIME.
+[Схема, renderer и cold-boot VM проверка](clean-vpn-native-clock.md).
+
 ## Процесс и границы ответственности
 
 `clean-vpn-engine --config /absolute/config.json --service` запускает C++ engine

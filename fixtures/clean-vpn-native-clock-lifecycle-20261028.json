@@ -1,0 +1,316 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-clock-lifecycle-checkpoint",
+  "date": "2026-10-28",
+  "status": "passed-local-lab",
+  "implementationCommit": "175c2b2e81d78aef14c96c40ec1f5b2e85c6f871",
+  "scope": "opt-in pure boring-tls client service; separate pinned SSH recovery; no physical deployment",
+  "vm": {
+    "schema": 1,
+    "kind": "native-conditional-clock-vm",
+    "status": "passed",
+    "boots": [
+      {
+        "schema": 1,
+        "status": "passed",
+        "kind": "native-clock-lifecycle-vm",
+        "phase": 0,
+        "bootId": "c7f48d41-15f3-4144-bc8b-124077a35df9",
+        "steps": [
+          "bad-cold-boot-real-ssh-time-set-native-restart",
+          "healthy-service-restart-no-clock-query",
+          "wrongkey-does-not-trigger-clock",
+          "wrongname-does-not-trigger-clock",
+          "untrusted-does-not-trigger-clock",
+          "timeout-does-not-trigger-clock",
+          "truly-expired-cert-not-repaired-by-time-rollback",
+          "failed-service-restart-does-not-reset-attempt-budget",
+          "wrong-ssh-host-key-blocks-time-set-and-restart",
+          "real-independent-exit-rejects-hmac-skew-then-recovers",
+          "normal-vpn-after-all-faults",
+          "guard-survives-service-stop"
+        ],
+        "mainAttempt": {
+          "version": 1,
+          "boot_id": "c7f48d41-15f3-4144-bc8b-124077a35df9",
+          "failure": "tls_verify_not_yet_valid"
+        },
+        "nativeMainPid": true,
+        "engineCanSetTime": false,
+        "sshRequests": 3,
+        "serialSha256": "427ed5ea8da4b10e0f11b8e04792989f948f8274bd543bf352ae7eec4e1983ed"
+      },
+      {
+        "schema": 1,
+        "status": "passed",
+        "kind": "native-clock-lifecycle-vm",
+        "phase": 1,
+        "bootId": "3e0fd61b-328d-42d9-92cb-8628794aa044",
+        "steps": [
+          "correct-cold-boot-no-recovery",
+          "guard-survives-service-stop"
+        ],
+        "mainAttempt": {
+          "version": 1,
+          "boot_id": "c7f48d41-15f3-4144-bc8b-124077a35df9",
+          "failure": "tls_verify_not_yet_valid"
+        },
+        "nativeMainPid": true,
+        "engineCanSetTime": false,
+        "sshRequests": 0,
+        "serialSha256": "484d729e66b4b2e7e88f80e3cb8930c0c41c506269accbfaeaacd3c6b400b40b"
+      },
+      {
+        "schema": 1,
+        "status": "passed",
+        "kind": "native-clock-lifecycle-vm",
+        "phase": 2,
+        "bootId": "14aa7c0c-92cb-4c2c-b266-4d5b7c653f9a",
+        "steps": [
+          "bad-cold-boot-real-ssh-time-set-native-restart",
+          "guard-survives-service-stop"
+        ],
+        "mainAttempt": {
+          "version": 1,
+          "boot_id": "14aa7c0c-92cb-4c2c-b266-4d5b7c653f9a",
+          "failure": "tls_verify_not_yet_valid"
+        },
+        "nativeMainPid": true,
+        "engineCanSetTime": false,
+        "sshRequests": 1,
+        "serialSha256": "a08e701743b087ce0969c37dc370dd8ba9ed986e92ea115ef5d314fa8b4654dd"
+      }
+    ],
+    "sshRequests": 4,
+    "sourceHashes": {
+      "scripts/clean-vpn-native-clock-vm.mjs": "fc56a8f853c4ce211a1c3fc06c0f8904411ad5d3cea3c88bf928c791591f4363",
+      "scripts/lib/native-service-unit.mjs": "8a6295dcb756949166124a02990443d82b351b0b6eeb3efb4b4fecc5f53d80bc",
+      "scripts/lib/native-clock-unit.mjs": "9e8f85dc848700bf3a8d2a3233168ae0507c521bbb26a06ff0ab2697bb519e10",
+      "engine": "cf89597bec9b749f94784974a3b4b5ddea06b4c7b77847a12b03e918e9b5ec0a",
+      "scripts/clean-vpn-native-clock.py": "a06d9386d56c010e2ba1d394f8a6e4ac570678093e7e95e3ce106ed4c3e84ce2",
+      "scripts/lib/native-clock-vm-worker.mjs": "7e5259d1998f6365aca9834e64ed5ef7f31093941a2601c2040835ae276f0b52",
+      "fixtures/native-tls-profiles/chromium-156-bounded-cold.json": "e2cf0e9e2fb68ce5a2af43d56c0be989cd525217ac73e6037ad65098d5e0be79"
+    },
+    "vm": {
+      "kernel": "6.8.0-147-generic",
+      "accelerator": "TCG",
+      "isolatedKernels": 2,
+      "clientBoots": 3,
+      "connection": "private-unix-stream-only",
+      "hostClockChanged": false,
+      "externalNetwork": false
+    },
+    "referenceClock": "exit QEMU default RTC; synchronization flag explicitly set in exit guest only; not an NTP accuracy test",
+    "serverSerialSha256": "4e6570a9768f66664d9dd7e360a8defca012a003196b6d276e96bdf8a74a2bee"
+  },
+  "regressions": [
+    {
+      "suite": "C++ CTest",
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "real native clock-auth, TLS-profile and data-plane",
+      "passed": 34,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "Python clock policy",
+      "passed": 13,
+      "failed": 0
+    },
+    {
+      "suite": "JS clock/service units and controller/diagnostics",
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "Linux fresh installer",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "sourceHashes": {
+    "native/clean_vpn/engine.cc": "f2c27a7c8e1c70c31d8de7f900f9a387a0f85cd9ab625dc69efb61f875ec8fb3",
+    "scripts/clean-vpn-native-clock.py": "a06d9386d56c010e2ba1d394f8a6e4ac570678093e7e95e3ce106ed4c3e84ce2",
+    "scripts/clean-vpn-native-clock-unit.mjs": "d1c5f7b318436beaf6a61144fe30df3dcb80aaf5ba504becd77293aa71502d0c",
+    "scripts/lib/native-clock-unit.mjs": "9e8f85dc848700bf3a8d2a3233168ae0507c521bbb26a06ff0ab2697bb519e10",
+    "scripts/lib/native-service-unit.mjs": "8a6295dcb756949166124a02990443d82b351b0b6eeb3efb4b4fecc5f53d80bc",
+    "scripts/test-native-clock.py": "8f7df214bc025e1004b1164e187d59eec1f3b5d594a1d5c17426bb1d57c9bae1",
+    "scripts/test-native-clock-unit.mjs": "ec4fb2e85afb0ceb6551bf562144a821b1be97e62f147559dad9970807b029ab"
+  },
+  "earlierAttempts": [
+    {
+      "attempts": [
+        "01",
+        "02"
+      ],
+      "result": "failed/interrupted fixture bring-up",
+      "cause": "BusyBox ash ip builtin ignored PATH; use explicit /usr/sbin/ip in guest"
+    },
+    {
+      "attempts": [
+        "03"
+      ],
+      "result": "failed fixture bring-up",
+      "cause": "missing dbus.socket / system bus activation in minimal guest"
+    },
+    {
+      "attempts": [
+        "04",
+        "05"
+      ],
+      "result": "failed fixture bring-up",
+      "cause": "sshd missing /run/sshd after systemd remounted /run; added RuntimeDirectory; completed timedated activation and synchronization flag fixture"
+    },
+    {
+      "attempts": [
+        "06"
+      ],
+      "result": "failed negative-test expectation after successful cold-clock recovery",
+      "cause": "wrong PSK closes TLS with fixed tls_read diagnostic; test expected only other close codes; accept actual denial while still asserting no ready or clock recovery"
+    }
+  ],
+  "environmentMismatches": [
+    "installer test invoked on macOS refused symlink /tmp path; intended Linux strict-path test passed in cached Linux worktree",
+    "installer test run in read-only /source lacked its hardcoded relative native build path; rerun in prepared Linux worktree passed"
+  ],
+  "artifacts": {
+    "clock-lifecycle-build.log": {
+      "bytes": 796,
+      "sha256": "93e62924e06e741667dfc258ce16292257a687c96bad5072f46c43272e434440"
+    },
+    "clock-lifecycle-ctest.log": {
+      "bytes": 1228,
+      "sha256": "907df4eebd5f17c26ad51d63fb37e72263460c6a9479545f1c951e15eca7826d"
+    },
+    "clock-lifecycle-installer.log": {
+      "bytes": 220,
+      "sha256": "99e9ad0e344fcec99d63adef3a258661d542e56c0ae074ed6675fb429e7588a1"
+    },
+    "clock-lifecycle-native-regression.log": {
+      "bytes": 26593,
+      "sha256": "38fcfc1ea6fb84af6ddeaedafe08be267554e0b9059d614fab603032aca7468d"
+    },
+    "clock-lifecycle-vm-01.exit": {
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    "clock-lifecycle-vm-01.json.exit-0.serial.log": {
+      "bytes": 135,
+      "sha256": "8c659be61f6f1a38d552c41b59372cdc882878a3a34b97c59fc8f3415d4c273c"
+    },
+    "clock-lifecycle-vm-01.log": {
+      "bytes": 604,
+      "sha256": "ad3db6af669b722c084eff83f64fccf4e03eedf661b629057e393df87ed84fde"
+    },
+    "clock-lifecycle-vm-02.exit": {
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    "clock-lifecycle-vm-02.json.exit-0.serial.log": {
+      "bytes": 816,
+      "sha256": "4702e55bf3f1f160e4e2fe7d495194abfe2f2d599a3c099b94028e3fd171ea86"
+    },
+    "clock-lifecycle-vm-02.log": {
+      "bytes": 1416,
+      "sha256": "5b29e43289e87aa38a571c9c45153e3a6de16ff71e4a19382f9a1401d0c34ac4"
+    },
+    "clock-lifecycle-vm-03.exit": {
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    "clock-lifecycle-vm-03.json.exit-0.serial.log": {
+      "bytes": 1109,
+      "sha256": "c60aadc4b35c5dfa093d96672a4d2ce2b533ed5c573c4674fb59a98413f5933c"
+    },
+    "clock-lifecycle-vm-03.log": {
+      "bytes": 1896,
+      "sha256": "9390970317cc17bf742968287c77f228c523ab2873b036faa6646a40684dac9c"
+    },
+    "clock-lifecycle-vm-04.exit": {
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    "clock-lifecycle-vm-04.json.exit-0.serial.log": {
+      "bytes": 133,
+      "sha256": "b195c4a109a304d1b119d9336f7af6a09eb38a388f401c44bf5c8fb6466d0dc6"
+    },
+    "clock-lifecycle-vm-04.log": {
+      "bytes": 1064,
+      "sha256": "10bdf3363d3b8681c95ac03cf858c044b9c86a7624cbb0af29479add2a772067"
+    },
+    "clock-lifecycle-vm-05.exit": {
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    "clock-lifecycle-vm-05.json.exit-0.serial.log": {
+      "bytes": 3174,
+      "sha256": "7b4a7b2d2ee99baff22360714ec59370b04765398b62fa7ee949f81f038a284b"
+    },
+    "clock-lifecycle-vm-05.log": {
+      "bytes": 3934,
+      "sha256": "879432d2a1899bf4d9109d2044e5682a47c70e34c465ce5ebab4c3ad0ef92637"
+    },
+    "clock-lifecycle-vm-06.exit": {
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    "clock-lifecycle-vm-06.json.client-0.serial.log": {
+      "bytes": 83792,
+      "sha256": "0346432e783627b394fc152159062129b0dba7fce18bcb619a1c6e2a1c361fb2"
+    },
+    "clock-lifecycle-vm-06.json.exit-0.serial.log": {
+      "bytes": 465,
+      "sha256": "74dc080a75d2022f9a69700c3a5f6980e9b55355e78f20090a64a1c16d3bfb5c"
+    },
+    "clock-lifecycle-vm-06.log": {
+      "bytes": 14849,
+      "sha256": "45d21110b5ebdbfe0696097912fa00eeac7662cb0f22ed6c653c766a86c14a38"
+    },
+    "clock-lifecycle-vm-07.exit": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "clock-lifecycle-vm-07.json": {
+      "bytes": 3749,
+      "sha256": "968f34c7a92e7d221919a42e37cb6658f1b31d049f098ac8e1d273c6b2eeb43b"
+    },
+    "clock-lifecycle-vm-07.json.client-0.serial.log": {
+      "bytes": 2094,
+      "sha256": "427ed5ea8da4b10e0f11b8e04792989f948f8274bd543bf352ae7eec4e1983ed"
+    },
+    "clock-lifecycle-vm-07.json.client-1.serial.log": {
+      "bytes": 569,
+      "sha256": "484d729e66b4b2e7e88f80e3cb8930c0c41c506269accbfaeaacd3c6b400b40b"
+    },
+    "clock-lifecycle-vm-07.json.client-2.serial.log": {
+      "bytes": 675,
+      "sha256": "a08e701743b087ce0969c37dc370dd8ba9ed986e92ea115ef5d314fa8b4654dd"
+    },
+    "clock-lifecycle-vm-07.json.exit-0.serial.log": {
+      "bytes": 699,
+      "sha256": "4e6570a9768f66664d9dd7e360a8defca012a003196b6d276e96bdf8a74a2bee"
+    },
+    "clock-lifecycle-vm-07.log": {
+      "bytes": 2862,
+      "sha256": "24971cfc7348b0cab1ea23e94475fd033c9ef3113cd4d7a2d1bbaa207b2005bf"
+    }
+  },
+  "privateArtifactDirectory": "~/Library/Caches/meshpn-clean-vpn-lab/results/clock-lifecycle-20261028",
+  "limitations": [
+    "No Radxa/VPS time, service, network or credential changes in this checkpoint",
+    "No Mac host clock, Wi-Fi, route or firewall changes",
+    "Two disposable kernels; exit reference is QEMU RTC with guest-only synchronized flag, not an external NTP accuracy test",
+    "Minimal systemd guests use fixture-owned network/guard; not acceptance of existing physical DNS/route owners",
+    "Clean shutdown and new boots with RTC reset; no abrupt power-loss experiment in this checkpoint",
+    "First boot uses separate consumer/state directories for independent fault cases; one attempt per consumer per boot",
+    "Physical key provisioning, SSH exception in independent guard, owner integration and cold boot acceptance remain",
+    "TLS profile validation demonstrates the supported saved subset, not full browser indistinguishability"
+  ],
+  "next": "Existing-host owner integration and bounded physical clock bootstrap check with rollback; then permanent lifecycle/boot acceptance"
+}
