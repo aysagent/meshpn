@@ -80,3 +80,9 @@ with returned counts, and report host staging losses separately.
 Radio diagnostics now include cached `wifi.radio.max_tx_power_dbm` and its
 error. This is a read of the configured limit, not measured RF power or PHY
 rate. Unsupported getter failures are latched; HTTP readers never issue RPCs.
+
+The pinned Hosted power-save getter is patched in the generated build copy to
+handle missing/failed RPC responses before copying output. This prevents the
+`wifi_profiles` null-response panic captured after the October 27 soak. The
+original callback still reports/releases the response; no synthetic success is
+returned. The response regression test includes repeated timeouts and recovery.
