@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Build a minimal initramfs from the cached Linux toolchain; QEMU has no NIC,
-// disks, host filesystem shares or listeners. Never creates a host TUN/netem.
+// host filesystem shares or listeners. --reboot adds a private disposable ext4
+// disk. Never creates a host TUN/netem.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';

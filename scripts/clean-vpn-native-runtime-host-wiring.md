@@ -1,81 +1,136 @@
-# Native runtime: выбранный ingress на Linux-шлюзе
+# Native runtime: выбранный ingress и DNS шлюза
 
-Пункт ночного плана о host-side wiring проверяется **в NIC-less QEMU VM**.
-Это воспроизводимая модель шлюза, не установщик для настоящего `wg0`/`usb0`.
-Скрипт `lib/native-runtime-host-wiring-fixture.mjs` отказывает без специального
-параметра командной строки ядра гостя. На Mac и физических узлах он не запускался.
+Теперь вместо зашитой VM-рецептуры есть `clean-vpn-native-gateway.mjs`:
+`plan`, `preflight`, ограниченный по времени `apply`, `status`, независимый
+`recover`. Параметры — JSON, пример в
+[`fixtures/native-runtime-gateway.example.json`](../fixtures/native-runtime-gateway.example.json).
 
-## Проверяемый путь
+**Исполняемый контракт пока только для выделенного Linux network namespace.**
+Нужен `CVPN_PARENT_NETNS`, отличный от текущего namespace. Скрипт не подключает
+физический интерфейс к контейнеру и не разрешает запуск непосредственно в сети
+хоста. На Mac работает только offline `plan`; Linux испытания идут внутри
+выделенной Podman/QEMU лаборатории. Постоянная физическая установка отложена.
+
+## Путь и настройки
 
 ```text
-USB-like app 192.168.7.2 → gateway usb0 192.168.7.1
-  → policy rule iif usb0 → table 19998
-  → cvlbr0 192.168.88.1 → native client LAN 192.168.88.2
-  → authenticated boring-tls → exit → HTTPS origin
+USB/WG-like app → ingress interface → собственная policy table
+  → private bridge → native client LAN → boring-tls → exit → origin
 
-other app → gateway lan1 → прежний прямой маршрут
-gateway process → прежний прямой маршрут
-USB-like app → gateway 192.168.7.1:2222 → локальный rescue
+other LAN → прежний маршрут
+gateway process → прежний маршрут
+USB app → локальный rescue
+local dnsmasq с выделенным UID → явно заданный native upstream → exit
 ```
 
-`usb0` здесь — veth в госте. Проверяются Linux routing/netfilter и native
-runtime; USB gadget hardware и WireGuard driver этим не проверяются.
-Origin возвращает адрес реально подключившегося peer: при включённой policy
-это exit, до запуска/после recovery — прямой источник. Простого успешного
-HTTP-ответа недостаточно для положительного результата.
+Указываются ingress interface/subnet, private bridge interface/subnet,
+адрес шлюза и next hop client, свободные table/priority, список private IPv4
+исключений. Проверяются каноничность подсетей, отсутствие перекрытий, локальная
+достижимость next hop, UP интерфейсов и свободная policy table. Конфиг —
+root-owned regular file 0600. Preflight требует уже настроенного
+`ip_forward=1`, `rp_filter=2` на ingress/bridge; сам sysctl не меняет.
 
-Модель требует уже настроенного шлюза: `ip_forward=1`, loose `rp_filter=2`
-на ingress и private bridge. Это явные предусловия fixture, не скрытая смена
-sysctl установщиком. Адреса, table/priority/chain фиксированы только для лаборатории.
+Сначала ставятся собственные DROP-правила, затем policy routing, SNAT и
+перехват ingress DNS. Запасной `unreachable default` предотвращает возврат
+выбранного интернет-трафика в main при исчезновении bridge. `bypass` содержит
+только явно указанные private IPv4 сети: это намеренные прямые исключения.
+IPv6 FORWARD выбранного интерфейса блокируется. INPUT и маршруты самого
+шлюза не перенастраиваются; локальный rescue остаётся доступен.
 
-Правила для выбранного ingress:
+Имена `usb0`/`wg0` не зашиты в контроллер. В VM оба варианта моделируются veth:
+проверяется Linux routing/netfilter, а не USB gadget или WireGuard handshake.
+Runtime client пока принимает LAN в 192.168.0.0/16; ingress может быть другой
+неперекрывающейся RFC1918 подсетью. Неподходящий конфиг отклоняется.
 
-- Собственная цепочка с DROP устанавливается до policy routing.
-- Отдельная таблица содержит next hop на client и запасной `unreachable
-  default`: исчезновение bridge не должно вернуть выбранный трафик в main.
-- Private IPv4 prefixes обходятся через `throw` и исходную main table;
-  локальный rescue обрабатывается INPUT и сохраняется.
-- UDP/TCP DNS ingress, в том числе запрос к IP самого шлюза, DNAT к native
-  listener клиента. Host OUTPUT и `/etc/resolv.conf` не переписываются.
-- Выбранный IPv6 FORWARD блокируется; IPv6 других источников сохраняется.
-- SNAT к private bridge не требует маршрута в контейнере обратно в USB LAN.
+## DNS локального прокси
 
-Такая схема перехватывает **запросы LAN-клиента**. Она не отправляет через
-VPN новые запросы, которые самостоятельно создаёт `dnsmasq` на шлюзе.
-DHCP-конфигурация и приватные DNS исключения реального узла требуют отдельного
-решения перед физическим подключением.
+`dnsUid: null` в примере означает только перехват DNS **входящего LAN-трафика**.
+Чтобы контролировать DNS самого шлюза, нужен отдельный не-root UID прокси и
+явный upstream в конфигурации, которой владеет этот прокси, например:
 
-## Аварии и восстановление
+```ini
+no-resolv
+server=192.168.88.2@192.168.88.1
+```
 
-Приватный журнал содержит boot/netns identity, PID/start time владельца и
-курсор операций. Команды восстановления берутся из кода, не из журнала.
-Intent сохраняется до изменения ядра; recovery умеет обработать незавершённую
-операцию. Живой владелец исключает конкурентный recovery.
-Для атомарной записи используются уникальные временные файлы: оставшийся
-после SIGKILL файл не блокирует следующую запись recovery. Синхронизируются
-файл и родительская директория; это не меняет привязку журнала к одному boot.
+Все старые `server=1.1.1.1`/`server=8.8.8.8` в этом режиме нужно исключить из
+эффективной конфигурации. Это не инструкция сейчас переписывать Radxa:
+сначала проверяются владелец конфигурации, UID и процедура возврата. Нельзя
+использовать UID другого сервиса или общий UID `nobody` без проверки.
 
-SIGKILL контроллера оставляет защиту включённой. После SIGKILL native client
-новые выбранные HTTPS/DNS запросы не проходят; другие источники и rescue
-остаются работоспособны. Явный recovery удаляет только свои правила/маршруты.
-После него сравниваются IPv4/IPv6 policy rules и routes, firewall rules,
-forwarding/rp_filter и resolver baseline. Чужая sentinel-цепочка сохраняется.
+В gateway JSON `dnsUid` выбирает только UDP/TCP OUTPUT на порт 53 этого UID:
+допускается native upstream через private bridge, остальные IPv4/IPv6 пути
+блокируются. Остальные процессы хоста не затрагиваются. DNSmasq настраивается
+**явно**, без прозрачной подмены его уже привязанных upstream-сокетов.
+Неверный старый upstream в тесте блокируется; владелец fixture переключает
+свой dnsmasq и при завершении восстанавливает исходные аргументы.
 
-Отдельно проверяются kill до rename журнала, между intent и mutation, после
-mutation до проверки результата и исчезновение private bridge. После bridge
-fault сама fixture восстанавливает свой bridge с прежним MAC, заново поднимает
-собственный backend-port в исходном порядке и ждёт IPv6 DAD. Сравнение маршрутов
-остаётся строгим, включая порядок; это не действие production recovery.
+Контроллер не редактирует dnsmasq/resolv.conf, не включает resolved, не меняет
+DHCP option 6. Если host NSS сейчас не использует этот прокси, одного gateway
+JSON недостаточно для смены DNS хоста. DoH/DoT сторонних приложений и
+произвольные демоны вне выбранного UID не входят в этот контракт.
 
-Журнал fixture расположен в `/run` и привязан к одному boot. Это проверка
-process-crash recovery, **не доказательство power-loss восстановления
-host-side wiring**. Existing native boot tests имеют отдельную отсечку.
+В VM работает настоящий dnsmasq с loopback и USB listener, отключённым кешем.
+DNS origin фиксирует peer: для запросов через native это exit, а не gateway.
+Проверяются UDP/TCP, старые direct upstream, обрыв engine, отсутствие direct
+fallback в наблюдаемом сценарии, сохранность DNS остальных процессов и возврат.
+Отдельный DORA probe получает настоящие DHCP OFFER/ACK с router и единственным
+DNS option 6, указывающим на gateway. Probe не устанавливает lease на свой
+интерфейс. Для реальной Radxa конфликтующие DHCP option 6 нужно разбирать в её
+эффективной конфигурации; текущий инструмент её не переписывает.
 
-## Повторение в подготовленной лаборатории
+## Журнал и завершение
 
-На Mac нужен уже подготовленный rootful Podman lab и его x86 toolchain/cache.
-Ниже image, использованный при проверке; при пересборке lab выбрать его
-актуальный tag. Новый путь отчёта обязателен.
+Журнал `/run/clean-vpn-gateway-NETNS/journal.json` содержит boot/netns/userns,
+проверенный конфиг, случайный tag, identities интерфейсов и курсор операций.
+Команды восстанавливаются кодом. Stable-inode `flock` держит единственного
+владельца; дочерняя сетевая команда также удерживает lock при гибели controller.
+Intent fsync предшествует мутации, rename и directory fsync атомарно публикуют
+новую запись. Уникальные временные файлы не мешают recovery после SIGKILL.
+
+Rollback удаляет только собственные точные правила/маршруты, не делает flush
+или restore всей таблицы. Чужая запись в owned chain/table, подменённый интерфейс
+или чужой boot/namespace приводят к отказу. Исчезнувший bridge обрабатывается
+отдельно. Совпавшие table/route/ifindex не разрешают удаление маршрутов, если
+не сохранилось ни одного собственного случайного firewall tag. Повторный
+recovery после завершения сообщает `no-active-journal`.
+
+`apply --seconds=10..900` по таймеру или SIGTERM возвращает исходное состояние.
+SIGKILL голого controller оставляет guard и журнал до явного recovery.
+Отказ native engine **сам по себе** не снимает guard. `status` различает живого
+владельца и незавершённую запись; это не DNS/туннельный health probe.
+
+Offline renderer `clean-vpn-native-runtime-unit.mjs --kind=gateway` создаёт
+unit для **ограниченного trial**: `ExecStopPost` выполняет recovery после гибели
+controller. Это намеренное окончание trial и возврат baseline, который может
+разрешать прямой интернет. Такая unit не является постоянным VPN kill switch.
+Unit engine использует `Type=notify`, restart on failure и сохраняет guard
+своего namespace при stop. Ни одна unit автоматически не устанавливается и
+не включается; жизненным циклом namespace владеет отдельный setup.
+
+## Команды в подготовленном Linux namespace
+
+Сохранить namespace родителя до `ip netns exec`, конфиг подготовить отдельно:
+
+```bash
+# Offline plan допустим и на Mac.
+node scripts/clean-vpn-native-gateway.mjs plan --config=/absolute/gateway.json
+
+# Linux lab; cvpn-gateway уже создан владельцем лаборатории.
+export CVPN_PARENT_NETNS="$(readlink /proc/self/ns/net)"
+ip netns exec cvpn-gateway node scripts/clean-vpn-native-gateway.mjs preflight --config=/absolute/gateway.json
+ip netns exec cvpn-gateway node scripts/clean-vpn-native-gateway.mjs apply --config=/absolute/gateway.json --seconds=300
+# Во второй консоли с тем же parent anchor:
+ip netns exec cvpn-gateway node scripts/clean-vpn-native-gateway.mjs status
+# После аварии владельца:
+ip netns exec cvpn-gateway node scripts/clean-vpn-native-gateway.mjs recover
+```
+
+Preflight не создаёт журнал и не делает DNS-запросов. Apply дополнительно
+проверяет DNS UDP/TCP непосредственно через выбранный client, затем включает
+wiring. Невозможно запустить второй apply поверх незавершённого первого.
+
+## Лабораторное повторение
 
 ```bash
 CVPN_REPORTS=$(mktemp -d /tmp/cvpn-host-wiring.XXXXXX)
@@ -86,15 +141,20 @@ podman --connection=meshpn-clean-vpn-lab-root run --rm \
   -e CVPN_BUILD=/lab/worktree/native/clean_vpn/build \
   --workdir=/source --entrypoint=node \
   localhost/meshpn-clean-vpn-lab:1f35b200e5e912e7 \
-  scripts/clean-vpn-native-runtime-vm.mjs /reports/run.json --host-wiring
+  scripts/clean-vpn-native-runtime-vm.mjs /reports/run.json --reboot
 ```
 
-Гость не получает NIC, host shares, порты или физические устройства. В него
-копируются только необходимые файлы initramfs. Проверки standalone, неправильных
-часов и независимого ClientHello capture выполняются после wiring-сценария.
-Приватные JSON, serial log и pcap сохраняются в `CVPN_REPORTS`.
+`--host-wiring` — без systemd; `--systemd` — один boot с настоящим PID1;
+`--reboot` — два boot того же гостя с private ext4 диском. Гость не получает
+NIC, host shares, published ports или физические устройства. Raw report,
+serial logs и pcap сохраняются приватно. В варианте reboot pcap отдельный
+для каждого boot. Используются production engine и независимый ClientHello
+observer, не mock TLS.
 
-Перенос этой модели на физический шлюз остаётся отдельной задачей: выбор
-существующих интерфейсов и свободной policy table, проверка менеджера сети,
-DHCP/DNS политики, устойчивый журнал и независимый rollback на конкретном узле.
-Ночной scope не разрешает постоянную установку и этот перенос не выполняет.
+Проверяются точный baseline, прерывания setup/recovery, foreign drift,
+настраиваемые интерфейсы/table, systemd stop/SIGKILL/ExecStopPost/restart,
+неверные часы и профиль. Reboot сохраняет credentials и отвергает старый
+scope журнала до сетевых изменений; topology создаётся заново владельцем VM.
+Это **не power-loss тест** и не доказательство отсутствия раннего boot gap на
+постоянном физическом шлюзе: постоянная установка и её порядок старта ещё
+не выполнялись. Итоговые результаты — в local readiness report/плане.

@@ -104,6 +104,20 @@ CA не устанавливается в системное хранилище:
 исполняется по этим же путям в выделенном Linux netns. Генератор не поднимает
 интерфейсы, не меняет сеть и не устанавливает службы.
 
+Один отчёт перед будущим ограниченным запуском на Linux:
+
+```bash
+sudo node scripts/clean-vpn-native-runtime-preflight.mjs \
+  --binary=/absolute/clean-vpn-engine --config=/absolute/engine.json
+```
+
+Весь вывод между BEGIN/END можно прислать для проверки. Скрипт проверяет native
+конфиг offline, показывает fingerprint/сроки локального сертификата и SHA профиля,
+собирает интерфейсы/маршруты, не делает DNS-запросов и не меняет настройки.
+`offline-checks-passed` не означает работающий туннель. Для container-конфига
+пути `/config/*` должны существовать в том namespace, где выполняется проверка;
+на голом хосте такой конфиг не будет автоматически переписан.
+
 Пример client config (IP и имена заменить своими):
 
 ```json
@@ -191,6 +205,9 @@ Host-side policy routing, ingress DNS, IPv6 guard и аварийный rollback
 проверены отдельно в [модели Linux-шлюза](clean-vpn-native-runtime-host-wiring.md).
 Это не установка на физический интерфейс: в NIC-less VM моделируется `usb0`
 и проверяется сохранение второго LAN, локального rescue и сети самого шлюза.
+Теперь там же описан настраиваемый `clean-vpn-native-gateway.mjs` для выделенного
+Linux netns, отдельный DNS guard для выделенного UID dnsmasq и bounded systemd
+unit с независимым recovery. Физические интерфейсы автоматически не подключаются.
 
 ## Compose и standalone
 
@@ -226,6 +243,26 @@ Network namespace и state directory должны принадлежать им�
 При выходе guard сохраняется; уничтожение принадлежащего запуску namespace
 освобождает его TUN/routes/firewall. Не запускайте это непосредственно в netns
 реального хоста. Создание physical host-side wiring этот скрипт не берёт на себя.
+
+Unit можно сформировать offline без установки:
+
+```bash
+node scripts/clean-vpn-native-runtime-unit.mjs --kind=engine \
+  --namespace=cvpn-client '--parent-netns=net:[LINUX_PARENT_INODE]' \
+  --scripts=/opt/meshpn/scripts --node=/usr/bin/node \
+  --config=/opt/cvpn/client-1/engine.json \
+  --engine=/opt/meshpn/native/clean_vpn/build/clean-vpn-engine --instance=client
+```
+
+`LINUX_PARENT_INODE` заменить фактическим числом из `readlink /proc/self/ns/net`
+родителя Linux namespace. Это не namespace Mac. Namespace должен уже существовать;
+renderer его не создаёт. Для client LAN добавить `--lan-subnet=192.168.88.0/24`.
+Node-путь относится к целевому Linux. `ProtectHome=yes` unit требует расположить
+исполняемые файлы/credentials вне `/root`, `/home`, `/run/user`, например в `/opt`.
+Стандартные `systemctl start/status/stop` применяются только после отдельной
+установки unit владельцем Linux lab; autostart не включается. Engine stop сохраняет
+guard namespace. Gateway unit имеет другой контракт: ограниченный trial с возвратом
+baseline по stop/таймеру/ExecStopPost, описанный в gateway-документе.
 
 ## Проверки и отсечка
 

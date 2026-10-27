@@ -1,0 +1,322 @@
+{
+  "schema": 1,
+  "kind": "native-local-readiness",
+  "date": "2026-10-27",
+  "status": "passed-with-explicit-scope",
+  "implementationRevision": "0b5ba1736700b472343d59c58c4f8410641a4a2d",
+  "physicalHostsAccessed": false,
+  "macNetworkSettingsChanged": false,
+  "permanentInstallationPerformed": false,
+  "scope": [
+    "offline CA and distinct per-client PSK bundles; saved Chromium subset",
+    "configurable ingress in an existing isolated Linux namespace",
+    "explicit dnsmasq upstream owner and UID-scoped DNS guard",
+    "real dnsmasq DHCP OFFER/ACK and UDP/TCP DNS",
+    "bounded apply/rollback and independent systemd ExecStopPost",
+    "read-only pilot preflight and offline unit renderer"
+  ],
+  "validation": {
+    "unit": {
+      "status": "passed",
+      "tests": 16,
+      "raw": "unit-final.txt"
+    },
+    "systemdReboot": {
+      "status": "passed",
+      "raw": "reboot-final-v3.json",
+      "checksPerBoot": [
+        39,
+        41
+      ],
+      "kernel": {
+        "kernel": "6.8.0-147-generic",
+        "kernelSha256": "41ba36d860aa0b0cd995f4ca8856d80249b244577e704929b55be13fbd1ebd2f",
+        "accelerator": "TCG",
+        "vcpus": 2,
+        "memoryMiB": 1536,
+        "reboots": 1
+      },
+      "distinctBootIds": true,
+      "samePersistentCredentialsFingerprint": true,
+      "staleJournalRefused": true,
+      "checks": [
+        [
+          "single-readonly-runtime-report-client-and-exit",
+          "generated-standalone-bundle-two-distinct-peers-native-validation",
+          "standalone-authenticated-tunnel-dns-udp-tcp",
+          "standalone-https",
+          "dnsmasq-uid-direct-positive-control-cache-disabled",
+          "host-wiring-direct-positive-controls",
+          "dnsmasq-old-upstream-blocked-explicit-owned-switch",
+          "dnsmasq-usb-dhcp-offer-ack-router-and-single-dns-option",
+          "host-iif-policy-selected-exit-other-and-host-direct",
+          "host-selected-ipv6-blocked-other-interface-preserved",
+          "host-ingress-dns-udp-tcp-through-client",
+          "dnsmasq-local-udp-tcp-via-exit-other-host-dns-unchanged",
+          "host-wiring-live-owner-recovery-refused",
+          "host-wiring-controller-sigkill-retains-route",
+          "dnsmasq-tunnel-loss-no-direct-upstream-fallback",
+          "host-wiring-tunnel-failure-no-selected-fallback-rescue-retained",
+          "host-wiring-independent-rollback-exact-baseline",
+          "dnsmasq-fixture-owner-restores-original-upstreams",
+          "host-wiring-intent-before-mutation-recovery",
+          "host-wiring-journal-temp-orphan-recovery",
+          "host-wiring-mutation-before-verification-recovery",
+          "gateway-foreign-drift-refused-and-interrupted-recovery-resumed",
+          "gateway-configurable-interface-table-and-normal-stop",
+          "gateway-bounded-expiry-restores-baseline",
+          "host-bridge-loss-unreachable-default-no-fallback",
+          "gateway-systemd-normal-stop-exact-rollback",
+          "gateway-systemd-independent-exec-stop-post-after-sigkill",
+          "gateway-systemd-restart-after-crash-recovery",
+          "standalone-crash-guard-persists",
+          "same-namespace-crash-restart",
+          "standalone-graceful-stop",
+          "clock-past-certificate-fails-closed",
+          "clock-past-restored-with-verification",
+          "clock-expired-certificate-fails-closed",
+          "clock-expired-restored-with-verification",
+          "standalone-rendered-systemd-unit-notify-and-dns",
+          "standalone-systemd-engine-sigkill-restart",
+          "standalone-systemd-stop-retains-namespace-guard",
+          "standalone-independent-profile-match"
+        ],
+        [
+          "reboot-persistent-credentials-new-kernel-boot",
+          "single-readonly-runtime-report-client-and-exit",
+          "generated-standalone-bundle-two-distinct-peers-native-validation",
+          "standalone-authenticated-tunnel-dns-udp-tcp",
+          "standalone-https",
+          "gateway-reboot-stale-journal-refused-without-network-writes",
+          "dnsmasq-uid-direct-positive-control-cache-disabled",
+          "host-wiring-direct-positive-controls",
+          "dnsmasq-old-upstream-blocked-explicit-owned-switch",
+          "dnsmasq-usb-dhcp-offer-ack-router-and-single-dns-option",
+          "host-iif-policy-selected-exit-other-and-host-direct",
+          "host-selected-ipv6-blocked-other-interface-preserved",
+          "host-ingress-dns-udp-tcp-through-client",
+          "dnsmasq-local-udp-tcp-via-exit-other-host-dns-unchanged",
+          "host-wiring-live-owner-recovery-refused",
+          "host-wiring-controller-sigkill-retains-route",
+          "dnsmasq-tunnel-loss-no-direct-upstream-fallback",
+          "host-wiring-tunnel-failure-no-selected-fallback-rescue-retained",
+          "host-wiring-independent-rollback-exact-baseline",
+          "dnsmasq-fixture-owner-restores-original-upstreams",
+          "host-wiring-intent-before-mutation-recovery",
+          "host-wiring-journal-temp-orphan-recovery",
+          "host-wiring-mutation-before-verification-recovery",
+          "gateway-foreign-drift-refused-and-interrupted-recovery-resumed",
+          "gateway-configurable-interface-table-and-normal-stop",
+          "gateway-bounded-expiry-restores-baseline",
+          "host-bridge-loss-unreachable-default-no-fallback",
+          "gateway-systemd-normal-stop-exact-rollback",
+          "gateway-systemd-independent-exec-stop-post-after-sigkill",
+          "gateway-systemd-restart-after-crash-recovery",
+          "standalone-crash-guard-persists",
+          "same-namespace-crash-restart",
+          "standalone-graceful-stop",
+          "clock-past-certificate-fails-closed",
+          "clock-past-restored-with-verification",
+          "clock-expired-certificate-fails-closed",
+          "clock-expired-restored-with-verification",
+          "standalone-rendered-systemd-unit-notify-and-dns",
+          "standalone-systemd-engine-sigkill-restart",
+          "standalone-systemd-stop-retains-namespace-guard",
+          "standalone-independent-profile-match"
+        ]
+      ]
+    },
+    "finalOwnershipRegression": {
+      "status": "passed",
+      "raw": "ownership-final.json",
+      "tests": 40,
+      "checks": [
+        "single-readonly-runtime-report-client-and-exit",
+        "generated-standalone-bundle-two-distinct-peers-native-validation",
+        "standalone-authenticated-tunnel-dns-udp-tcp",
+        "standalone-https",
+        "dnsmasq-uid-direct-positive-control-cache-disabled",
+        "host-wiring-direct-positive-controls",
+        "dnsmasq-old-upstream-blocked-explicit-owned-switch",
+        "dnsmasq-usb-dhcp-offer-ack-router-and-single-dns-option",
+        "host-iif-policy-selected-exit-other-and-host-direct",
+        "host-selected-ipv6-blocked-other-interface-preserved",
+        "host-ingress-dns-udp-tcp-through-client",
+        "dnsmasq-local-udp-tcp-via-exit-other-host-dns-unchanged",
+        "host-wiring-live-owner-recovery-refused",
+        "host-wiring-controller-sigkill-retains-route",
+        "dnsmasq-tunnel-loss-no-direct-upstream-fallback",
+        "host-wiring-tunnel-failure-no-selected-fallback-rescue-retained",
+        "host-wiring-independent-rollback-exact-baseline",
+        "dnsmasq-fixture-owner-restores-original-upstreams",
+        "host-wiring-intent-before-mutation-recovery",
+        "host-wiring-journal-temp-orphan-recovery",
+        "host-wiring-mutation-before-verification-recovery",
+        "gateway-foreign-drift-refused-and-interrupted-recovery-resumed",
+        "gateway-matching-routes-without-random-ownership-tag-refused",
+        "gateway-configurable-interface-table-and-normal-stop",
+        "gateway-bounded-expiry-restores-baseline",
+        "host-bridge-loss-unreachable-default-no-fallback",
+        "gateway-systemd-normal-stop-exact-rollback",
+        "gateway-systemd-independent-exec-stop-post-after-sigkill",
+        "gateway-systemd-restart-after-crash-recovery",
+        "standalone-crash-guard-persists",
+        "same-namespace-crash-restart",
+        "standalone-graceful-stop",
+        "clock-past-certificate-fails-closed",
+        "clock-past-restored-with-verification",
+        "clock-expired-certificate-fails-closed",
+        "clock-expired-restored-with-verification",
+        "standalone-rendered-systemd-unit-notify-and-dns",
+        "standalone-systemd-engine-sigkill-restart",
+        "standalone-systemd-stop-retains-namespace-guard",
+        "standalone-independent-profile-match"
+      ],
+      "scope": "Full final single-boot run after requiring random firewall ownership evidence for route recovery. Reboot evidence precedes this additional predicate; it is not relabeled as a final-code two-boot run.",
+      "changedSinceReboot": [
+        "/project/scripts/lib/native-runtime-host-wiring-vm.mjs",
+        "/project/scripts/clean-vpn-native-gateway.mjs"
+      ],
+      "sourceHashes": {
+        "runner": "30d13e0c257f04d8e4612f58be172fff7ec6adb3367b4e0331003ad3915f2dea",
+        "/usr/local/bin/clean-vpn-engine": "04b9c32517ce02369657441636bc3f7691e094c685d9406bf9e8034e74a840c4",
+        "/project/scripts/lib/native-runtime-vm-worker.mjs": "13045c585bbdb021f0f2e139baefdc3dd23d98561d3e1117999abd26cd2b354d",
+        "/project/scripts/lib/native-runtime-host-wiring-vm.mjs": "2c421de969f123a792007b58166e7700127daddf6bc143958a2780454e9de0c2",
+        "/project/scripts/lib/native-runtime-host-wiring-fixture.mjs": "ca0940bf1d8060792995c64f2e1cd503b709220fa0ce61687dd31064aa83f701",
+        "/project/scripts/lib/native-runtime-lab-origin.mjs": "303b602350da954aacf03acbba39419cbde96ae4945dc0ddaed1a0c34e3ecdae",
+        "/project/scripts/clean-vpn-pcap-fingerprints.mjs": "5e475dd267290da4c04e1cc09bfb00b7822ad1ace2e5842f7eca120555a353be",
+        "/project/scripts/lib/tls-clienthello-ja3.mjs": "956dcbecc96146164a3eb24865e523cef466d3c877fd2a0ca28227c245ee02e9",
+        "/project/scripts/lib/tls-clienthello-ja4.mjs": "abe9b1d67c781cb44836561f3d69cdb26e8606f0018e8ee2d88f09e0d2dfc494",
+        "/project/scripts/lib/native-tls-profile-observer.mjs": "a1d786270517aac112ac363d64d86bba653442693c0da3a91ef2ff0aaa4dfc26",
+        "/project/fixtures/native-tls-profiles/chromium-156-bounded-cold.json": "e2cf0e9e2fb68ce5a2af43d56c0be989cd525217ac73e6037ad65098d5e0be79",
+        "/project/scripts/clean-vpn-native-runtime-config.mjs": "63e3f06215ab3dadced86b307f0b30f0d3bf233a2b0a88e70feeca18e801cf31",
+        "/project/scripts/clean-vpn-native-gateway.mjs": "0b86754b46c1e4f5d7e49b7c5ae6920ad2f805fdbe22cab3b0e44296df975aff",
+        "/project/scripts/clean-vpn-native-runtime-health.mjs": "ed80feeac91d5c231f8e042e61bd95c69f70fd40d6ee49e0f8c49d18cff5fb0c",
+        "/project/scripts/clean-vpn-native-runtime-preflight.mjs": "a16d9cde9f1e87ce5dc8d7c1844221e0d1075c85a138ddfbc36b3a51df7ae3c1",
+        "/project/scripts/lib/native-runtime-gateway-plan.mjs": "2a3c1e3fd8169519a3766830f9ed41e702aabb417a6fe9ef7619cc9453b8bc95",
+        "/project/scripts/lib/native-runtime-plan.mjs": "87b8dcaa8988a47be9a84ec6adf114c5cbefa5d439a9cc0bd2599956316bc6e4",
+        "/project/scripts/lib/native-runtime-units.mjs": "ad64ed4e70d50c79c471808555fed63b09756a5b3a855b9decdc0a4e42185f7f",
+        "/project/scripts/lib/native-runtime-dhcp-probe.mjs": "4b3c8808b9c90cbf8489477c46aaedc31be0ddac37bf614b33bf44d8409bea77",
+        "/opt/clean-vpn/clean-vpn-native-runtime.mjs": "40c42c7a5e0004afd95e33a1fd440146ed13bb392e0d4e2d08c7a6a924e3f3ac",
+        "/opt/clean-vpn/clean-vpn-native-runtime-health.mjs": "ed80feeac91d5c231f8e042e61bd95c69f70fd40d6ee49e0f8c49d18cff5fb0c",
+        "/opt/clean-vpn/lib/native-runtime-plan.mjs": "87b8dcaa8988a47be9a84ec6adf114c5cbefa5d439a9cc0bd2599956316bc6e4",
+        "/opt/clean-vpn/containers/native-runtime-entrypoint.sh": "bb0fc6cd6d1faffaefc0950857c5b3444f23ca815270e6069ba9b766d11e58e9"
+      }
+    },
+    "podmanArm64": {
+      "status": "passed",
+      "raw": "podman-regression.json",
+      "functionalChecks": 26,
+      "cleanup": {
+        "status": "passed"
+      },
+      "imageId": "e1942dd095830c121155d9133d63d5a86ef565bf7eb1248ea52dac6f25c43e38",
+      "engineSha256": "f0eb2a326e6c67491da4e1d895745b3e3c125c5208fc38446e396cb8e8490d72"
+    },
+    "wire": {
+      "status": "matched",
+      "profile": "chromium-156-bounded-cold-v1",
+      "connections": 23,
+      "ja4": [
+        "t13d0915h2_f91f431d341e_54d72502093d"
+      ],
+      "pcapSha256": "fc1fd51471af09e6694bd856b8213e54bb7adc83f724aa44973b56053dba37c2",
+      "scope": "Independent packet capture and ClientHello parser; partial cold profile, not full browser/HTTP2 equivalence"
+    }
+  },
+  "failureHistory": [
+    {
+      "runs": [
+        "gateway-v1",
+        "gateway-v2",
+        "gateway-v3"
+      ],
+      "finding": "Transparent NAT of existing dnsmasq upstream sockets failed; replaced with explicit upstream selection by its owner plus UID guard. Also corrected malformed fixture EDNS response layout; native DNS parser unchanged."
+    },
+    {
+      "runs": [
+        "gateway-v4"
+      ],
+      "finding": "VM recovery invocation omitted required parent netns anchor; controller correctly refused. Fixed fixture propagation."
+    },
+    {
+      "runs": [
+        "systemd-v1",
+        "systemd-v2"
+      ],
+      "finding": "Minimal systemd guest lacked default OpenSSL config path and BusyBox PATH. Fixed guest only."
+    },
+    {
+      "runs": [
+        "reboot-final",
+        "reboot-final-v2"
+      ],
+      "finding": "Exact rollback check found ordering races among IPv6 anycast routes from initial/recreated fixture DAD. Made owned bridge/port link-local addresses deterministic and completed initial DAD before enabling router anycast. No sorting-away of differences."
+    },
+    {
+      "runs": [
+        "preflight-client.txt"
+      ],
+      "finding": "Rosetta amd64 container could not inspect some netlink/nft APIs. Preflight reported review-required. Same script passed for both roles under the real x86 VM kernel."
+    }
+  ],
+  "limitations": [
+    "no physical Radxa/VPS or USB/WireGuard-driver acceptance",
+    "no automatic physical host bridge or namespace creation",
+    "no persistent physical installation or early-boot fail-closed guarantee",
+    "VM reboot is not power-loss testing",
+    "gateway journal is same-boot and bound to existing namespace lifetime",
+    "bounded gateway unit intentionally restores pre-trial baseline on controller stop/crash; not a permanent kill switch",
+    "dnsmasq config/service ownership and real host NSS policy still require review; no automatic resolver/DHCP file edits",
+    "DHCP probe validates OFFER/ACK options but does not apply the lease to the test interface",
+    "clock correction/RTC persistence not implemented; certificate time checks remain enforced",
+    "not a throughput/load benchmark; no native C++ changes or new native compile in this step",
+    "Docker lifecycle was not rerun in this step; prior scoped Docker evidence is unchanged"
+  ],
+  "rawEvidenceDirectory": "/private/tmp/cvpn-local-readiness-20261027",
+  "rawEvidenceSha256": {
+    "reboot-final-v3.json.boot-0.serial.log": "bc0e58a03d3b90bc773cfefa89e9e6e0d5c37d5e97b61b829160000c689fdc44",
+    "podman-regression.json.pcap": "744fa98c1f2fb46fa3bcbfedef809a37d0b0dedbaa9e5723a3141bfa78044b35",
+    "systemd-v3.json": "548f8b6a42be6f855d140eaabed287c674afb8eee779fba59b443e5f0dc0f986",
+    "systemd-v2.json.serial.log": "24c10536daae9259ec005d4fc553bea21d7e3dbe4ad27ea2a7fdeaff331126d0",
+    "reboot-final-v3.json": "97036f3ab1c08ca7774a59144d9c384a07611a375454f679d475090d340b62de",
+    "podman-regression.json": "ba9a69b18f5982f2545636346a7a606c07a03c5b337ac4310b9cdb7fa7350721",
+    "ownership-final.json.serial.log": "7580ec6262b78c8668f30c73929ad0f71f193ac6b0618da813e6df4cdd9bb3ca",
+    "systemd-v3.json.serial.log": "bd08aa12787f1b005f43e1f53d6341b93204524c358ac5f912c3cdbddc82d23b",
+    "systemd-v3.json.pcap": "6b7aca7731feda8ae5c08ac0f0329d86cbe0b6dcda029a4bc74cd442ce15e3b1",
+    "gateway-plan.json": "6ac07111c77b4bf58e6884eafd1af82c6439707644fb586c794abda2d1e80b81",
+    "podman-regression.json.ownership.json": "ad8e80f73b5b18eb15208d3d0b3b44bc8998011bbcb15c4f68e02c00bed1e0c9",
+    "reboot-final-v3.json.boot-0.pcap": "746f50d0927aceb773bf9f67fad76d10944c7cab966171ddedff101624429b45",
+    "ownership-final.json.pcap": "fc1fd51471af09e6694bd856b8213e54bb7adc83f724aa44973b56053dba37c2",
+    "reboot-final-v3.json.boot-1.pcap": "9f0673051887de6e932daa03c19343c8de7e818f6f5ef0c8ee8efa96e1822f9c",
+    "reboot-final-v2.json.boot-0.serial.log": "f8b368ee5223f303ace66013eb67c74c42f8c8b7373f9f1974b4a294d4f56bfc",
+    "preflight-bundle-manifest.json": "a638f9ff0e444cd7dc7cc4a99a19d8ba819c94dace733bb65db8ddd462659419",
+    "gateway-v1.json.serial.log": "793a3e35c3c198e2e017106637de667755be02fb995fc4d47d262bf4e190be49",
+    "reboot-v1.json.boot-1.serial.log": "c3fcc21ab86b904e18bce1c3761ac238c9a8654787b0df2a4a576d77306d9710",
+    "gateway-v4.json.serial.log": "35a7902608d367e508b5069e626f11e064d755b159f0c80aba6d3c5c5d83f996",
+    "unit-final.txt": "86b1b44d8dabec8e87d48c510cbb515ba0f8e19f5855f7e31f04be704d84afac",
+    "systemd-v1.json.serial.log": "314b388449aa0c099c41998bac487be3054b29ee01a75f2f180c849146752816",
+    "reboot-final-v3.json.boot-1.serial.log": "ba3130e525588ac260b915343371ca3f0671d4a0aa1b83cb2cae5d8a6bf35721",
+    "gateway-v3.json.serial.log": "7b04c03fccfda03ed34b4fd9f696d957b1d12e503d1d57cca889a9f2986e0c75",
+    "reboot-v1.json.boot-0.pcap": "55cbbe7fd7c62b11516e6d277713d1fd71f236a2806fab617e97f48efa35a21b",
+    "reboot-v1.json": "b35d4598d323ce0dbaeccc525d5ba52c34c042bcd22d9a1e9fea43b363c197be",
+    "gateway-v2.json.serial.log": "5880b9ee2128aa42f1cb8c5a40b993455de9475baf213b4f5c0ac4019572cc22",
+    "reboot-final.json.boot-0.serial.log": "9a64a03f73b8be48b49f6aa916853eb0b87080330267cd569fba45015f78f559",
+    "reboot-v1.json.boot-0.serial.log": "f0f5afb90737dab24ada5d87156750c5707480514203cd201ff996633fdf7391",
+    "ownership-final.json": "e685ae65b24c7ef93f13597361df35c9e007ba6b4414f351b8ac5ab5dd6d6b6c",
+    "reboot-v1.json.boot-1.pcap": "c98471cc1a2ba8833b588fef9b9a5d283f95e7b9613d96d93269998f02f0e6f5"
+  },
+  "next": "Review effective DNS/network owners and actual topology before any bounded physical pilot. Permanent installation remains deferred.",
+  "labCleanup": {
+    "containersRemaining": 0,
+    "networksRemaining": [
+      "podman"
+    ],
+    "retainedBuildCaches": [
+      "meshpn-clean-vpn-lab-cache",
+      "cvpn-runtime-arm-cache"
+    ],
+    "machine": "meshpn-clean-vpn-lab",
+    "finalState": "stopped"
+  }
+}

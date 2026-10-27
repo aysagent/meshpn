@@ -1,5 +1,15 @@
 # clean-vpn: цели и порядок дальнейшей работы
 
+Текущий checkpoint 2026-10-27: [локальная подготовка boring-tls](clean-vpn-native-local-readiness.md).
+Готовы offline bundles с разными PSK, настраиваемый gateway в выделенном Linux
+netns, dnsmasq/DHCP модель, bounded systemd recovery, единый read-only preflight.
+Приёмка: 16 unit checks, VM reboot 39+41 checks, финальный ownership regression
+40 checks, Podman 26 functional checks + cleanup. Различия проверенных ревизий
+и ранние ошибки стенда сохранены в отчёте. Radxa/VPS и сеть Mac не менялись.
+Следующее — review фактических DNS/network owners и ограниченный физический
+пилот; постоянная установка остаётся отложена. Новый gateway не является
+physical-host installer или постоянным kill switch.
+
 Checkpoint 2026-10-27: [native standalone/Docker/Podman приёмка](clean-vpn-native-night-report.md)
 пройдена для boring-tls с partial Chromium profile, включая часовой soak и
 временный Docker smoke на VPS. Следующее: физический LAN ingress/wiring с
