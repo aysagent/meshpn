@@ -48,6 +48,20 @@ and the peer to be in that interface's subnet.
   fixed 1024 B blocks, returns `link`, confirmed `bytes`, and `receive_us`.
 * `POST /api/diag/ap-forward`: empty body; the synthetic .254 AP client tests
   DNS UDP and TCP SYN through production NAPT/STA. Reply captured before AP ARP.
+* `GET /api/diag/sta-tcp`: P4 only, latest TCP flow to the board's STA HTTP
+  port 80. Read via USB **after** the local STA test, since the HTTP worker is
+  occupied during a stream. Retains the last 64 packet-header records in order:
+  RX before lwIP / TX accepted by host SDIO, sequence/ACK, raw advertised window,
+  flags, payload length, and the first SACK block plus block count. Per-direction
+  totals include repeated packets/bytes, not unique delivery. A new incoming
+  SYN tuple/ISN replaces the trace; retransmitted SYN keeps it. Metadata only,
+  no HTTP headers or body. It does not confirm RF delivery or trace transit LAN
+  traffic. `omitted_events` counts overwritten header records. No radio setting
+  or packet is changed by this observer.
+  Checksums are validated for every captured packet whose full IPv4 body is
+  available contiguously (all normal TX frames; RX headers can be truncated).
+  Per-direction `checksum_checked`, `bad_ip`, and `bad_tcp` totals survive ring
+  overwrite; unvalidated packets are not counted as good.
 * `POST /api/diag/ap-echo`: P4 only, small JSON body, for a local UDP echo
   listener on the **same STA subnet**:
 
