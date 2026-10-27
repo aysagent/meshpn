@@ -142,5 +142,20 @@ class ClockTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,reason):clock.apply_locked(self.c,'auth_clock_skew',boot)
                 run.assert_not_called()
 
+    def test_recovery_accepts_only_completed_native_time_exit(self):
+        state=dict(MainPID='0',ActiveState='failed',SubState='failed',Job='',Result='exit-code',ExecMainCode='1',ExecMainStatus='75',InvocationID='a'*32)
+        for status,reason in clock.EXIT_FAILURES.items():
+            with patch.object(clock,'unit_state',return_value={**state,'ExecMainStatus':status}):
+                self.assertEqual(clock.failed_invocation(self.c),(reason,'a'*32))
+        for change in [dict(ExecMainStatus='1'),dict(ExecMainCode='2'),dict(Result='timeout'),dict(MainPID='15'),dict(ActiveState='active'),dict(SubState='auto-restart'),dict(Job='1 /job')]:
+            with patch.object(clock,'unit_state',return_value={**state,**change}):
+                self.assertIsNone(clock.failed_invocation(self.c))
+
+    def test_changed_failed_invocation_refuses_probe_or_clock_write(self):
+        with patch.object(clock,'consumer_stopped'),patch.object(clock,'probe') as probe:
+            with self.assertRaisesRegex(ValueError,'consumer_failure_changed'):
+                clock.apply_locked(self.c,'auth_clock_skew',self.boot,lambda:clock.require(False,'consumer_failure_changed'))
+            probe.assert_not_called()
+
 if __name__ == '__main__':
     unittest.main()

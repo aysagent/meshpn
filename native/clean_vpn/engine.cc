@@ -704,12 +704,16 @@ int main(int argc,char** argv){
     }
     bool validate=argc==3&&std::string(argv[1])=="--check-config";
     bool initialize=argc==3&&std::string(argv[1])=="--init-transparent-replay";
-    bool service=(argc==4||argc==6)&&std::string(argv[argc-1])=="--service";
-    int count=argc-(service?1:0);
+    const bool clock_recovery=argc>3&&std::string(argv[argc-1])=="--clock-recovery";
+    const int effective_argc=argc-(clock_recovery?1:0);
+    bool service=(effective_argc==4||effective_argc==6)&&std::string(argv[effective_argc-1])=="--service";
+    check(!clock_recovery||service,"clock_recovery_requires_service");
+    int count=effective_argc-(service?1:0);
     check(validate||initialize||((count==3||count==5)&&std::string(argv[1])=="--config"),"usage_config");int test=-1;
     if(count==5){check(std::string(argv[3])=="--test-packet-fd","usage_fixture");test=std::stoi(argv[4]);check(test>2,"fixture_fd");}
     const auto config=json::parse(file(argv[2],16384));
     if(config.is_object()&&config.value("transport",std::string{})=="transparent-tls"){
+      check(!clock_recovery,"clock_recovery_boring_client_only");
       check(test<0,"relay_no_packet_fd");return transparent_engine(config,validate,initialize,service);
     }
     std::unique_ptr<combo::Config> combined;
@@ -721,6 +725,7 @@ int main(int argc,char** argv){
     }
     check(!initialize||bool(combined),"relay_config_required");
     Config c(combined?combined->boring:config);std::string secret;
+    check(!clock_recovery||(c.client&&!combined),"clock_recovery_boring_client_only");
     if(c.client){secret=file(c.secret_path,32,true);check(secret.size()==32,"secret_length");}
     std::unique_ptr<transparent::SniAuthorization> combo_auth;
     if(combined) {
@@ -859,6 +864,13 @@ int main(int argc,char** argv){
         // Only fixed internal error codes, never input headers, keys or payload.
         ctl.set(e.what());
         const std::string reason=e.what();
+        // Opt-in systemd failure handoff. No time authority or clock-setting
+        // capability in the data plane. All FDs/threads unwind before the
+        // separate recovery unit can run; ordinary failures keep retrying.
+        if(clock_recovery&&!interrupted){
+          const int status=reason=="tls_verify_not_yet_valid"?75:reason=="tls_verify_expired"?76:reason=="auth_clock_skew"?77:0;
+          if(status){OPENSSL_cleanse(secret.data(),secret.size());return status;}
+        }
         demand_wait=authenticated&&(reason=="h2_peer_end_stream"||reason=="h2_goaway_no_error"||reason=="h2_stream_closed");
       }
       if(socket_fd.n>=0){close(socket_fd.n);socket_fd.n=-1;}

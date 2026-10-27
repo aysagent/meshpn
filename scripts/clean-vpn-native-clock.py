@@ -25,6 +25,7 @@ MAX_EPOCH = 4102444800  # 2100-01-01; explicit protocol bound.
 MAX_RTT = 5.0
 COMMAND = 'clean-vpn-clock-v1'
 ELIGIBLE_FAILURES = frozenset(('tls_verify_expired', 'tls_verify_not_yet_valid', 'auth_clock_skew'))
+EXIT_FAILURES = {'75': 'tls_verify_not_yet_valid', '76': 'tls_verify_expired', '77': 'auth_clock_skew'}
 
 
 def require(condition, reason):
@@ -246,27 +247,47 @@ def probe(c):
     return {**report, 'hostPinSha256': pin, 'trustedFloor': floor}
 
 
-def consumer_stopped(c):
-    output = subprocess.check_output(['/usr/bin/systemctl', 'show', c['consumer_unit'],
-                                      '-p', 'MainPID', '-p', 'ActiveState', '-p', 'SubState', '-p', 'Job'], timeout=3)
+def unit_state(c, extra=()):
+    names = ('MainPID', 'ActiveState', 'SubState', 'Job') + tuple(extra)
+    output = subprocess.check_output(['/usr/bin/systemctl', 'show', c['consumer_unit']]
+                                     + [arg for name in names for arg in ('-p', name)], timeout=3)
     fields = {}
     for line in output.decode('ascii').splitlines():
         key, value = line.split('=', 1)
         require(key not in fields, 'invalid_consumer_state')
         fields[key] = value
-    require(set(fields) == {'MainPID', 'ActiveState', 'SubState', 'Job'}, 'invalid_consumer_state')
+    require(set(fields) == set(names), 'invalid_consumer_state')
+    return fields
+
+
+def consumer_stopped(c):
+    fields = unit_state(c)
     require(fields['MainPID'] == '0' and fields['ActiveState'] in ('inactive', 'failed')
             and fields['SubState'] in ('dead', 'failed') and fields['Job'] == '', 'consumer_still_running')
 
 
-def apply_locked(c, failure, boot_id):
+def failed_invocation(c):
+    fields = unit_state(c, ('Result', 'ExecMainCode', 'ExecMainStatus', 'InvocationID'))
+    if (fields['MainPID'] != '0' or fields['ActiveState'] != 'failed' or fields['SubState'] != 'failed'
+            or fields['Job'] != '' or fields['Result'] != 'exit-code' or fields['ExecMainCode'] != '1'
+            or fields['ExecMainStatus'] not in EXIT_FAILURES):
+        return None
+    require(re.fullmatch(r'[0-9a-f]{32}', fields['InvocationID']) is not None, 'invalid_invocation_id')
+    return (EXIT_FAILURES[fields['ExecMainStatus']], fields['InvocationID'])
+
+
+def apply_locked(c, failure, boot_id, check_failure=None):
     require_failure(failure)
     consumer_stopped(c)
+    if check_failure:
+        check_failure()
     claim_attempt(c, failure, boot_id)
     r = probe(c)
     received = time.monotonic()
     wall = time.time()
     consumer_stopped(c)
+    if check_failure:
+        check_failure()
     delay = time.monotonic() - received
     require(0 <= delay <= 4, 'clock_response_stale')
     require(abs(time.time() - wall - delay) <= 1.5, 'local_clock_changed_before_apply')
@@ -281,7 +302,7 @@ def apply_locked(c, failure, boot_id):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['serve', 'probe', 'apply'])
+    parser.add_argument('mode', choices=['serve', 'probe', 'apply', 'recover'])
     parser.add_argument('--config')
     parser.add_argument('--failure')
     args = parser.parse_args()
@@ -292,11 +313,18 @@ def main():
     if args.mode == 'apply':
         require_failure(args.failure)  # Fail before reading config or sending SSH.
     else:
-        require(args.failure is None, 'probe_has_no_failure')
+        require(args.failure is None, 'unexpected_failure_argument')
     c = validate_config(strict_json(read_private(args.config)))
-    if args.mode == 'apply':
+    if args.mode in ('apply', 'recover'):
         require(sys.platform == 'linux' and os.geteuid() == 0, 'linux_root_required')
         require(Path('/proc/1/comm').read_text().strip() == 'systemd', 'systemd_required')
+        invocation = failed_invocation(c) if args.mode == 'recover' else None
+        if args.mode == 'recover' and invocation is None:
+            print(json.dumps({'kind': 'clean-vpn-authenticated-clock', 'status': 'skipped',
+                              'mode': 'recover', 'code': 'not_a_native_time_failure', 'systemClockChanged': False}))
+            return
+        def check_failure():
+            require(failed_invocation(c) == invocation, 'consumer_failure_changed')
         # Lock held across the probe/set/save sequence, inherited config is not
         # enough to authorize changing time beneath a running VPN consumer.
         import fcntl
@@ -307,7 +335,17 @@ def main():
             require(stat.S_ISREG(s.st_mode) and s.st_uid == 0 and s.st_nlink == 1 and stat.S_IMODE(s.st_mode) == 0o600, 'unsafe_lock')
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             boot_id = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
-            r = apply_locked(c, args.failure, boot_id)
+            r = apply_locked(c, invocation[0] if invocation else args.failure, boot_id,
+                             check_failure if invocation else None)
+            if invocation:
+                check_failure()
+                r['restartQueued'] = False
+                if r['systemClockChanged']:
+                    # Before=consumer in the recovery unit defers this start
+                    # until we finish. Do not block waiting on our own job.
+                    subprocess.run(['/usr/bin/systemctl', '--no-block', 'start', c['consumer_unit']],
+                                   check=True, timeout=3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    r['restartQueued'] = True
     else:
         r = {**probe(c), 'systemClockChanged': False}
     print(json.dumps({'kind': 'clean-vpn-authenticated-clock', 'status': 'passed', 'mode': args.mode, **r}))

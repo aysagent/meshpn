@@ -1,6 +1,11 @@
 // Pure renderer: no host writes, network mutations, enable/start or secrets.
 import path from 'node:path';
-export function nativeServiceUnit({ binary, config, networkUnit, guardUnit, transport = 'boring-tls', replayDirectory }) {
+import { clockUnitName } from './native-clock-unit.mjs';
+export function nativeServiceUnit({ binary, config, networkUnit, guardUnit, transport = 'boring-tls', replayDirectory, clockRecoveryUnit, role }) {
+  if (clockRecoveryUnit !== undefined) {
+    clockUnitName(clockRecoveryUnit);
+    if (role !== 'client' || transport !== 'boring-tls' || [networkUnit,guardUnit].includes(clockRecoveryUnit)) throw Error('clock_recovery_boring_client_only');
+  }
   if (!['boring-tls', 'transparent-tls', 'combo-tls'].includes(transport)) throw Error('native_service_transport');
   if (replayDirectory !== undefined && transport === 'boring-tls') throw Error('native_service_replay_transport');
   for (const p of [binary, config, ...(replayDirectory === undefined ? [] : [replayDirectory])]) {
@@ -14,7 +19,7 @@ export function nativeServiceUnit({ binary, config, networkUnit, guardUnit, tran
   if (networkUnit === guardUnit) throw Error('native_service_distinct_dependencies_required');
   return `[Unit]
 Description=clean-vpn native data plane
-Requires=${networkUnit} ${guardUnit}
+${clockRecoveryUnit ? `OnFailure=${clockRecoveryUnit}\n` : ''}Requires=${networkUnit} ${guardUnit}
 After=${networkUnit} ${guardUnit}
 BindsTo=${networkUnit} ${guardUnit}
 StartLimitIntervalSec=60
@@ -24,13 +29,13 @@ StartLimitBurst=10
 Type=notify
 NotifyAccess=main
 ExecStartPre=${binary} --check-config ${config}
-ExecStart=${binary} --config ${config} --service
+ExecStart=${binary} --config ${config} --service${clockRecoveryUnit ? ' --clock-recovery' : ''}
 StandardInput=null
 StandardOutput=journal
 StandardError=journal
 Restart=on-failure
 RestartSec=2
-TimeoutStartSec=45
+${clockRecoveryUnit ? 'RestartPreventExitStatus=75 76 77\n' : ''}TimeoutStartSec=45
 TimeoutStopSec=10
 KillMode=control-group
 UMask=0077
