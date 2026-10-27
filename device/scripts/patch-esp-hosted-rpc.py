@@ -13,6 +13,9 @@ def patch(source: str) -> str:
          "\t\tg_h.funcs->_h_memcpy(conf, &resp->u.wifi_config.u, sizeof(wifi_config_t));\n\t}"),
         ("\t}\n\tsta->num = resp->u.wifi_ap_sta_list.num;",
          "\t\tsta->num = resp->u.wifi_ap_sta_list.num;\n\t}"),
+        ("\t*type = resp->u.wifi_ps.ps_mode;",
+         "\tif (resp && resp->resp_event_status == SUCCESS) {\n"
+         "\t\t*type = resp->u.wifi_ps.ps_mode;\n\t}"),
     ]
     for old, new in changes:
         if source.count(old) != 1:

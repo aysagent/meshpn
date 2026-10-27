@@ -114,8 +114,64 @@ int main(void) {
 }
 '''
 
+PS_HARNESS = r'''
+#include <assert.h>
+#include <string.h>
+#define SUCCESS 0
+#define FAILURE -1
+typedef int wifi_ps_type_t;
+typedef struct {
+    int resp_event_status;
+    union { struct { wifi_ps_type_t ps_mode; } wifi_ps; } u;
+} ctrl_cmd_t;
+static ctrl_cmd_t request,response;
+static int scenario,requests,callbacks;
+#define RPC_DEFAULT_REQ() (&request)
+static ctrl_cmd_t *wifi_get_ps(ctrl_cmd_t *req) {
+    assert(req==&request); requests++;
+    if(scenario==2)return 0;
+    response.resp_event_status=scenario?123:SUCCESS;
+    response.u.wifi_ps.ps_mode=2;
+    return &response;
+}
+static int rpc_rsp_callback(ctrl_cmd_t *r) {
+    callbacks++;
+    int result=r?r->resp_event_status:FAILURE;
+    if(r)memset(r,0xdd,sizeof(*r));
+    return result;
+}
+%s
+int main(void) {
+    /* Repeated timeouts and driver failures must preserve caller storage and
+     * still release each response exactly once; then recovery must work. */
+    for(int cycle=0;cycle<100;cycle++) {
+        for(scenario=0;scenario<3;scenario++) {
+            wifi_ps_type_t mode=99;
+            int expected=scenario==0?SUCCESS:scenario==1?123:FAILURE;
+            assert(rpc_wifi_get_ps(&mode)==expected);
+            assert(mode==(scenario==0?2:99));
+        }
+    }
+    assert(requests==300 && callbacks==300);
+    assert(rpc_wifi_get_ps(0)==FAILURE);
+    assert(requests==300 && callbacks==300);
+    return 0;
+}
+'''
+
 
 class HostedProtocolTests(unittest.TestCase):
+    def test_power_save_timeout_failure_and_recovery(self):
+        source=module.patch(SOURCE.read_text())
+        start=source.index("int rpc_wifi_get_ps(")
+        end=source.index("\n}",start)+2
+        with tempfile.TemporaryDirectory() as directory:
+            c=Path(directory)/"power-save.c";binary=Path(directory)/"power-save"
+            c.write_text(PS_HARNESS % source[start:end])
+            subprocess.run(["cc","-std=c11","-Wall","-Wextra","-Werror",
+                            "-fsanitize=address,undefined",str(c),"-o",str(binary)],check=True)
+            subprocess.run([str(binary)],check=True)
+
     def test_missing_and_failed_responses(self):
         source=module.patch(SOURCE.read_text())
         functions=[]
