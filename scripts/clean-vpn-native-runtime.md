@@ -77,7 +77,33 @@ amd64 netfilter не заработал через Rosetta на ARM Podman VM; a
 ## Запуск контейнера
 
 Сначала создайте отдельную bridge network средствами выбранного container
-engine. Подготовьте **свои** credentials/config. Никаких ключей в образе нет.
+engine. Никаких ключей в образе нет. Для нового boring-tls exit и 1–32 клиентов
+есть offline-генератор (Node + OpenSSL, работает также на Mac):
+
+```bash
+node scripts/clean-vpn-native-runtime-config.mjs create \
+  --directory=/absolute/new/private-bundle --mode=container \
+  --endpoint=192.0.2.10 --exit-address=172.30.77.2 \
+  --server-name=vpn.example.net --clients=2
+```
+
+`endpoint` — адрес exit, доступный клиентам; `exit-address` — адрес самого exit
+в namespace/контейнерной сети (он может отличаться при публикации порта).
+Скрипт создаёт `exit/`, `client-1/`, `client-2/`, offline `authority/` и manifest.
+У каждого клиента свой PSK и адрес. Передавать клиенту только его каталог,
+exit — только `exit/`; **не монтировать весь bundle** и не передавать `authority/`.
+CA не устанавливается в системное хранилище: она используется только engine.
+Каталоги 0700, файлы 0600; на Linux владелец credentials должен быть root.
+Существующий каталог не перезаписывается, частичный после ошибки сохраняется
+для разбора. Сертификат по умолчанию на 90 дней (`--days=1..365`), автоматического
+продления нет. Проверка часов и native `--check-config` перед стартом обязательна.
+
+По умолчанию копируется Chromium subset-профиль, описанный ниже; `--profile=PATH`
+позволяет выбрать другой. Native engine проверяет поддержку профиля перед wire.
+`--mode=standalone` записывает абсолютные пути нового каталога: такой комплект
+исполняется по этим же путям в выделенном Linux netns. Генератор не поднимает
+интерфейсы, не меняет сеть и не устанавливает службы.
+
 Пример client config (IP и имена заменить своими):
 
 ```json
