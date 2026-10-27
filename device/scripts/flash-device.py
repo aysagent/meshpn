@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -205,7 +206,49 @@ def application_port(args, original, enumerate_ports, run, wait):
         return wait(original, APP, enumerate_ports)
 
 
+def preflight_p4_build(build_dir):
+    """Reject an incomplete/wrong build before touching a working USB device."""
+    build = Path(build_dir)
+    try:
+        manifest = json.loads((build / "flasher_args.json").read_text())
+        tokens = shlex.split((build / "flash_args").read_text())
+        if not isinstance(manifest, dict):
+            raise ValueError("invalid manifest")
+        options = manifest.get("extra_esptool_args")
+        files = manifest.get("flash_files")
+        if not isinstance(options, dict) or options.get("chip") != "esp32p4":
+            raise ValueError("build target is not esp32p4")
+        if not isinstance(files, dict) or not files:
+            raise ValueError("empty flash file list")
+        expected = {}
+        for offset, name in files.items():
+            if not isinstance(name, str) or not name:
+                raise ValueError("invalid flash filename")
+            address = int(offset, 0)
+            if address in expected:
+                raise ValueError("duplicate flash offset")
+            expected[address] = name
+            path = build / name
+            if not path.is_file() or path.stat().st_size == 0:
+                raise ValueError(f"missing or empty flash file: {name}")
+        actual = {}
+        for index, token in enumerate(tokens):
+            if token.startswith("@"):
+                raise ValueError("nested flash argument files are unsupported")
+            if re.fullmatch(r"0[xX][0-9a-fA-F]+", token):
+                address = int(token, 0)
+                if index + 1 >= len(tokens) or address in actual:
+                    raise ValueError("invalid flash offset/file pair")
+                actual[address] = tokens[index + 1]
+        if actual != expected:
+            raise ValueError("flash_args and flasher_args.json disagree")
+    except (OSError, ValueError, TypeError) as error:
+        raise RuntimeError(f"P4 build preflight failed; USB was not reset: {error}") from error
+
+
 def flash(args, enumerate_ports, serial_factory, run=subprocess.run, wait=wait_port):
+    if args.target == "esp32p4":
+        preflight_p4_build(args.build_dir)
     original = select_port(enumerate_ports(), args.port, args.target)
     binding = load_binding(args.binding_file, args.target)
     if is_app(original, args.target):

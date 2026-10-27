@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace as NS
 import subprocess
@@ -35,6 +36,12 @@ class FlashTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.args.binding_file = str(Path(temporary.name) / "binding.json")
         self.args.build_dir = temporary.name
+        Path(temporary.name, "flash_args").write_text("0x10000 meshvpn_device.bin\n")
+        Path(temporary.name, "meshvpn_device.bin").write_bytes(b"test image")
+        Path(temporary.name, "flasher_args.json").write_text(json.dumps({
+            "extra_esptool_args": {"chip": "esp32p4", "after": "hard_reset"},
+            "flash_files": {"0x10000": "meshvpn_device.bin"},
+        }))
         Path(self.args.binding_file).write_text('{"target":"esp32s3","serial":"E8F60AE395D0"}')
         rom_mac_patch = patch.object(flash, "rom_mac", return_value="E8F60AE395D0")
         rom_mac_patch.start()
@@ -49,6 +56,41 @@ class FlashTests(unittest.TestCase):
         self.assertIs(flash.select_port([camic, self.app], None, "esp32s3"), self.app)
         with self.assertRaises(RuntimeError):
             flash.select_port([camic], camic.device, "esp32s3")
+
+    def test_p4_incomplete_build_never_enumerates_or_resets_usb(self):
+        self.args.target = "esp32p4"
+        root = Path(self.args.build_dir)
+        manifest = (root / "flasher_args.json").read_text()
+        cases = [
+            ("missing app", lambda: (root / "meshvpn_device.bin").unlink()),
+            ("empty app", lambda: (root / "meshvpn_device.bin").write_bytes(b"")),
+            ("missing args", lambda: (root / "flash_args").unlink()),
+            ("wrong target", lambda: (root / "flasher_args.json").write_text(manifest.replace("esp32p4", "esp32c6"))),
+            ("mismatched file", lambda: (root / "flash_args").write_text("0x10000 other.bin\n")),
+            ("extra offset", lambda: (root / "flash_args").write_text("0x10000 meshvpn_device.bin 0x20000 other.bin\n")),
+            ("broken manifest", lambda: (root / "flasher_args.json").write_text("null")),
+        ]
+        for name, break_build in cases:
+            with self.subTest(name=name):
+                (root / "meshvpn_device.bin").write_bytes(b"test image")
+                (root / "flash_args").write_text("0x10000 meshvpn_device.bin\n")
+                (root / "flasher_args.json").write_text(manifest)
+                break_build()
+                enumerate_ports, factory, run, wait = Mock(), Mock(), Mock(), Mock()
+                with patch.object(flash, "touch") as touch, self.assertRaisesRegex(RuntimeError, "USB was not reset"):
+                    flash.flash(self.args, enumerate_ports, factory, run=run, wait=wait)
+                for operation in [enumerate_ports, factory, run, wait, touch]:
+                    operation.assert_not_called()
+
+    def test_p4_preflight_accepts_quoted_filenames(self):
+        root = Path(self.args.build_dir)
+        (root / "app image.bin").write_bytes(b"image")
+        (root / "flash_args").write_text('0x10000 "app image.bin"\n')
+        (root / "flasher_args.json").write_text(json.dumps({
+            "extra_esptool_args": {"chip": "esp32p4"},
+            "flash_files": {"0x10000": "app image.bin"},
+        }))
+        flash.preflight_p4_build(root)
 
     def test_ambiguous_requires_explicit_port(self):
         other = port("/dev/cu.second")
