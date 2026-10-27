@@ -2,7 +2,22 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runtimePlan, restoreTable, auditRuntimeTables } from './native-runtime-plan.mjs';
 import { cleanupLab } from '../clean-vpn-native-runtime-cleanup.mjs';
+import { applicationProbe, parseApplicationTimings } from './native-runtime-application-probe.mjs';
+import vm from 'node:vm';
 const client = { version: 1, role: 'client', address: '192.0.2.10', port: 443, tun: 'cvpn0', dns: true };
+test('application timings require one successful complete numeric transaction record', () => {
+  const data = { dnsUdpMs: 1, dnsTcpMs: 2, httpsRequestMs: 3, tcpEchoMs: 4, udpEchoMs: 5 };
+  const line = v => 'APPLICATION_TIMINGS=' + JSON.stringify(v) + '\n';
+  assert.deepEqual(parseApplicationTimings(line(data) + 'APPLICATION_PROBES_OK\n'), data);
+  for (const value of [line(data), line(data).repeat(2) + 'APPLICATION_PROBES_OK\n',
+    line({ ...data, dnsUdpMs: -1 }) + 'APPLICATION_PROBES_OK\n',
+    line({ ...data, dnsUdpMs: '1' }) + 'APPLICATION_PROBES_OK\n',
+    line({ dnsUdpMs: 1 }) + 'APPLICATION_PROBES_OK\n']) assert.throws(() => parseApplicationTimings(value));
+});
+test('generated application probe parses for both DNS paths and rejects injected addresses', () => {
+  for (const address of ['127.0.0.11','192.168.88.2']) new vm.Script('(async()=>{' + applicationProbe(address) + '})()');
+  for (const address of ['example.com', "127.0.0.1';process.exit(0);//", '::1']) assert.throws(() => applicationProbe(address));
+});
 test('DNS catches Docker loopback resolver; only marked native upstreams bypass DNAT', () => {
   const p = runtimePlan(client), nat = restoreTable(p.tables[2]);
   assert.ok(nat.indexOf('--mark 0x43564e') < nat.indexOf('--to-destination'));

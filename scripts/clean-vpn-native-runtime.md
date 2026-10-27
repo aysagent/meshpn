@@ -211,6 +211,11 @@ container/volume/network, всегда выполняет cleanup. `CVPN_CONTAIN
 RSS/FD/socket/thread/process counters и restart каждые пять минут. Считаются
 также zombie processes и TCP ESTABLISHED/TIME_WAIT. Задержки `*WallMs` включают
 container exec и измеряют длительность всей проверки, **не сетевой RTT**.
+`transactionLatency` измеряется уже внутри приложения: DNS UDP/TCP отдельно,
+HTTPS request с новой TLS-сессией, TCP echo и UDP echo. Это небольшие запросы
+к fixture origin в той же лаборатории, не задержки реального Интернета и
+не throughput benchmark. Завершённые samples сохраняются и при позднем отказе;
+`restartEvents` отмечают намеренные остановки и возвращение readiness.
 Не запускайте несколько таких прогонов
 параллельно в одном daemon: используются фиксированные изолированные подсети.
 
@@ -258,8 +263,9 @@ CVPN_RUNTIME_IMAGE=localhost/clean-vpn-native:local \
   node scripts/clean-vpn-native-runtime-replay-lab.mjs /tmp/cvpn-runtime-results/replay.json
 ```
 
-Проверен ARM64 Podman. Скрипт принимает Docker argv, но этот новый replay
-сценарий в Docker отдельно ещё не проверялся. Это `--network=none` контейнеры
+Проверены ARM64 Podman и настоящий Docker в выделенной Linux VM.
+Для Docker задать `CVPN_CONTAINER_COMMAND='["docker"]'`.
+Это `--network=none` контейнеры
 без опубликованных портов, с отдельным временным state volume и read-only rootfs.
 Поверх production engine работает **тестовый** controller/origin/byte observer;
 они не включены в runtime image и не заменяют runtime launcher.
