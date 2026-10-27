@@ -59,6 +59,12 @@ static void sta_tcp(bool tx, const uint8_t *h, size_t n, size_t wire_len)
     if (local != netif_ip4_addr(s_sta)->addr || r16(t + (tx ? 0 : 2)) != 80) return;
     meshvpn_sta_tcp_event_t e = {.seq=r32(t+4), .ack=r32(t+8), .flags=t[13],
         .window=r16(t+14), .payload=total-ihl-thl, .tx=tx};
+    if (total <= n) {
+        struct pbuf l4 = {.payload=(uint8_t *)t, .len=total-ihl, .tot_len=total-ihl};
+        ip4_addr_t src, dst; memcpy(&src.addr,h+12,4); memcpy(&dst.addr,h+16,4);
+        e.checksum_checked=1; e.bad_ip=inet_chksum(h,ihl)!=0;
+        e.bad_tcp=inet_chksum_pseudo(&l4,6,total-ihl,&src,&dst)!=0;
+    }
     for (unsigned off = 20; off < thl;) {
         unsigned kind = t[off];
         if (!kind) break;
@@ -82,6 +88,7 @@ static void sta_tcp(bool tx, const uint8_t *h, size_t n, size_t wire_len)
         e.elapsed_ms = (now-s_tcp_started)/1000;
         s_tcp.events[s_tcp.total_events++ % MESHPN_STA_TCP_EVENTS] = e;
         s_tcp.packets[tx]++; s_tcp.data_bytes[tx] += e.payload;
+        s_tcp.checked[tx] += e.checksum_checked; s_tcp.bad_ip[tx] += e.bad_ip; s_tcp.bad_tcp[tx] += e.bad_tcp;
     }
     portEXIT_CRITICAL(&s_flow_lock);
 }

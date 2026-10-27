@@ -123,6 +123,12 @@ static void test_sta_tcp(void)
  assert(v.events[63].window==12345&&v.events[63].payload==1000&&v.events[63].tx);
  assert(v.events[0].elapsed_ms<v.events[63].elapsed_ms);
  w16(h+20,443);sta_tcp(true,h,40,1040);meshvpn_ap_probe_sta_tcp(&v);assert(v.total_events==102);
+ w16(h+20,80);w16(h+2,40);assert(meshvpn_vpn_repair_checksums(h,40));
+ sta_tcp(true,h,40,40);meshvpn_ap_probe_sta_tcp(&v);
+ assert(v.events[63].checksum_checked&&!v.events[63].bad_ip&&!v.events[63].bad_tcp);
+ h[34]^=1;sta_tcp(true,h,40,40);meshvpn_ap_probe_sta_tcp(&v);
+ assert(v.events[63].checksum_checked&&!v.events[63].bad_ip&&v.events[63].bad_tcp);
+ assert(v.checked[1]==2&&!v.bad_ip[1]&&v.bad_tcp[1]==1);
 }
 int main(void)
 {

@@ -320,6 +320,9 @@ static esp_err_t handler_sta_tcp_trace(httpd_req_t *req)
         cJSON *v = cJSON_AddObjectToObject(out, i ? "tx" : "rx");
         cJSON_AddNumberToObject(v, "packets", trace.packets[i]);
         cJSON_AddNumberToObject(v, "data_bytes_including_repeats", trace.data_bytes[i]);
+        cJSON_AddNumberToObject(v, "checksum_checked", trace.checked[i]);
+        cJSON_AddNumberToObject(v, "bad_ip", trace.bad_ip[i]);
+        cJSON_AddNumberToObject(v, "bad_tcp", trace.bad_tcp[i]);
     }
     cJSON *events = cJSON_AddArrayToObject(out, "events");
     for (unsigned i=0; i<trace.count; i++) {
@@ -327,6 +330,7 @@ static esp_err_t handler_sta_tcp_trace(httpd_req_t *req)
 #define TCP_FIELD(name) cJSON_AddNumberToObject(v, #name, e->name)
         TCP_FIELD(elapsed_ms); TCP_FIELD(seq); TCP_FIELD(ack); TCP_FIELD(flags); TCP_FIELD(tx);
         TCP_FIELD(payload); TCP_FIELD(window); TCP_FIELD(sack_blocks); TCP_FIELD(sack_left); TCP_FIELD(sack_right);
+        TCP_FIELD(checksum_checked); TCP_FIELD(bad_ip); TCP_FIELD(bad_tcp);
 #undef TCP_FIELD
     }
     return send_json(req,out);
