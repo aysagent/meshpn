@@ -7,8 +7,10 @@ import { legacyTrialBaseline, legacyTrialPaths, validateLegacyTrialDiff } from '
 test('legacy baseline permits control scripts but rejects entry/dependency/runtime changes', () => {
   const p = { type: 'module', dependencies: { ws: '1' }, scripts: { old: 'x' } };
   validateLegacyTrialDiff(['scripts/lib/native-usb-trial-peer.mjs'], p, { ...p, scripts: { new: 'y' } });
+  validateLegacyTrialDiff(['scripts/lib/native-runtime-plan.test.mjs'], p, p);
   for (const file of ['scripts/clean-vpn.js', 'scripts/lib/vpn-host-routes.mjs', 'scripts/lib/dns-tunnel-runtime.mjs',
-    'native/boring_tls/helper.cc', 'package-lock.json', 'scripts/lib/unknown.mjs'])
+    'native/boring_tls/helper.cc', 'package-lock.json', 'scripts/lib/unknown.mjs',
+    'scripts/lib/native-other.test.mjs'])
     assert.throws(() => validateLegacyTrialDiff([file], p, p), /legacy_runtime_changed/);
   assert.throws(() => validateLegacyTrialDiff([], p, { ...p, dependencies: { ws: '2' } }), /legacy_package_runtime_changed/);
 });
