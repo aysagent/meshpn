@@ -11,7 +11,9 @@ import {once} from 'node:events';
 import {gzipSync} from 'node:zlib';
 assert.equal(process.platform,'linux');
 assert.equal(process.arch,'x64');
-assert.equal(process.argv.length,3,'Usage: node scripts/clean-vpn-native-runtime-vm.mjs NEW_REPORT.json');
+assert.ok(process.argv.length===3||(process.argv.length===4&&process.argv[3]==='--host-wiring'),
+  'Usage: node scripts/clean-vpn-native-runtime-vm.mjs NEW_REPORT.json [--host-wiring]');
+const hostWiring=process.argv[3]==='--host-wiring';
 const output=path.resolve(process.argv[2]);assert.equal(fs.existsSync(output),false,'output exists');
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-runtime-vm-')),guest=path.join(root,'guest');
 const build=path.resolve(process.env.CVPN_BUILD??'native/clean_vpn/build');
@@ -27,7 +29,7 @@ process.on('SIGINT',cancel);process.on('SIGTERM',cancel);
 try{
   const release=fs.readFileSync('/opt/meshpn-kernel-release','utf8').trim();assert.match(release,/^[a-zA-Z0-9._-]+$/);
   const kernel='/boot/vmlinuz-'+release;
-  const modules=[...new Set(['tun','veth','bridge','nf_tables','nft_compat','nft_chain_nat','nft_nat','nft_masq','xt_conntrack','xt_tcpudp','xt_nat','xt_MASQUERADE','iptable_filter','ip6table_filter','iptable_nat','xt_mark'].flatMap(name=>execFileSync('modprobe',['--set-version',release,'--show-depends',name],{encoding:'utf8'})
+  const modules=[...new Set(['tun','veth','bridge','nf_tables','nft_compat','nft_chain_nat','nft_nat','nft_masq','xt_conntrack','xt_tcpudp','xt_nat','xt_MASQUERADE','iptable_filter','ip6table_filter','iptable_nat','xt_mark',...(hostWiring?['xt_comment','xt_TCPMSS','iptable_mangle']:[])].flatMap(name=>execFileSync('modprobe',['--set-version',release,'--show-depends',name],{encoding:'utf8'})
     .trim().split('\n').filter(line=>!/^builtin [a-zA-Z0-9_]+$/.test(line)).map(line=>{assert.match(line,/^insmod \/lib\/modules\/[a-zA-Z0-9_./-]+\.ko\s*$/);return line.split(/\s+/)[1];})))];
   for(const m of modules)put(m,fs.readFileSync(m));
   put('/bin/busybox',fs.readFileSync('/bin/busybox'),0o755);
@@ -39,7 +41,7 @@ try{
   put('/etc/group','root:x:0:\ntcpdump:x:112:\n');
   put('/etc/ssl/openssl.cnf',fs.readFileSync('/etc/ssl/openssl.cnf'));
   const worker='scripts/lib/native-runtime-vm-worker.mjs';
-  for(const file of [worker,'scripts/lib/native-runtime-lab-origin.mjs','scripts/clean-vpn-pcap-fingerprints.mjs','scripts/lib/tls-clienthello-ja3.mjs','scripts/lib/tls-clienthello-ja4.mjs','scripts/lib/native-tls-profile-observer.mjs','fixtures/native-tls-profiles/chromium-156-bounded-cold.json'])put('/project/'+file,fs.readFileSync(file));
+  for(const file of [worker,'scripts/lib/native-runtime-host-wiring-vm.mjs','scripts/lib/native-runtime-host-wiring-fixture.mjs','scripts/lib/native-runtime-lab-origin.mjs','scripts/clean-vpn-pcap-fingerprints.mjs','scripts/lib/tls-clienthello-ja3.mjs','scripts/lib/tls-clienthello-ja4.mjs','scripts/lib/native-tls-profile-observer.mjs','fixtures/native-tls-profiles/chromium-156-bounded-cold.json'])put('/project/'+file,fs.readFileSync(file));
   for(const file of ['clean-vpn-native-runtime.mjs','clean-vpn-native-runtime-health.mjs','lib/native-runtime-plan.mjs'])put('/opt/clean-vpn/'+file,fs.readFileSync('scripts/'+file));
   put('/usr/local/bin/native-runtime',fs.readFileSync('scripts/containers/native-runtime-entrypoint.sh'),0o755);
   put('/init',`#!/bin/sh
@@ -66,7 +68,7 @@ poweroff -f
   const child=spawn('/opt/meshpn-native-qemu/qemu-system-x86_64',['-nodefaults','-no-user-config','-nic','none',
     '-display','none','-monitor','none','-serial','stdio','-no-reboot','-accel','tcg','-cpu','qemu64','-smp','2','-m','1536',
     '-bios',tools+'/usr/share/seabios/bios-256k.bin','-L',tools+'/usr/share/qemu','-kernel',kernel,'-initrd',initrd,
-    '-append','console=ttyS0 loglevel=4 panic=-1 random.trust_cpu=on meshpn.runtime-vm=1'],{stdio:['ignore','pipe','pipe']});
+    '-append','console=ttyS0 loglevel=4 panic=-1 random.trust_cpu=on meshpn.runtime-vm=1'+(hostWiring?' meshpn.runtime-host-wiring=1':'')],{stdio:['ignore','pipe','pipe']});
   active=child;let serial='',progress='';const log=fs.openSync(output+'.serial.log','wx',0o600);
   const timer=setTimeout(cancel,20*60*1000);
   for(const stream of [child.stdout,child.stderr])stream.on('data',b=>{

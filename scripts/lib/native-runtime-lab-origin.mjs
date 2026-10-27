@@ -16,5 +16,5 @@ net.createServer(s => { let b = Buffer.alloc(0); s.on('data', chunk => {
 net.createServer(s => s.pipe(s)).listen(8080, '0.0.0.0');
 const echo = dgram.createSocket('udp4'); echo.on('message', (b, r) => echo.send(b, r.port, r.address)); echo.bind(8081, '198.18.0.80');
 https.createServer({ key: fs.readFileSync('/config/key.pem'), cert: fs.readFileSync('/config/cert.pem') },
-  (req, res) => { res.end('native-runtime-https-ok\n'); }).listen(8443, '0.0.0.0');
+  (req, res) => { res.setHeader('x-native-runtime-peer', req.socket.remoteAddress); res.end('native-runtime-https-ok\n'); }).listen(8443, '0.0.0.0');
 console.log('ORIGIN_READY');

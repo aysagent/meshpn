@@ -5,12 +5,15 @@ import { spawn, execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { inspectPcap } from '../clean-vpn-pcap-fingerprints.mjs';
+import { prepareHostWiring, checkHostWiring } from './native-runtime-host-wiring-vm.mjs';
 assert.ok(fs.readFileSync('/proc/cmdline', 'utf8').split(/\s+/).includes('meshpn.runtime-vm=1'));
+const hostWiring=fs.readFileSync('/proc/cmdline','utf8').split(/\s+/).includes('meshpn.runtime-host-wiring=1');
 assert.equal(process.arch, 'x64');
 const run = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8', timeout: 20000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
 const ip = (...args) => run('ip', args), ns = (name, ...args) => ip('netns', 'exec', name, ...args);
 const parent = fs.readlinkSync('/proc/self/ns/net'), children = [], namespaces = [], checks = [];
-const env = name => ['env', `CVPN_PARENT_NETNS=${parent}`, `CVPN_STATE_DIRECTORY=/run/clean-vpn-${name}`];
+const env = name => ['env', `CVPN_PARENT_NETNS=${parent}`, `CVPN_STATE_DIRECTORY=/run/clean-vpn-${name}`,
+  ...(hostWiring&&name==='client'?['CVPN_UPLINK=auto','CVPN_LAN_INTERFACE=auto','CVPN_LAN_SUBNET=192.168.88.0/24']:[])];
 const child = (name, command, args, tag, binaryOutput = false) => {
   const stdout = '/run/' + tag + (binaryOutput ? '.pcap' : '.log'), stderr = '/run/' + tag + '.stderr';
   const out = fs.openSync(stdout, 'w', 0o600), err = fs.openSync(stderr, 'w', 0o600);
@@ -48,6 +51,7 @@ try {
     ns(name, 'ip', 'route', 'add', 'default', 'via', '10.77.0.1');
   }
   ns('origin', 'ip', 'addr', 'add', '198.18.0.80/32', 'dev', 'lo');
+  if(hostWiring)prepareHostWiring({ip,ns,namespaces});
   ns('exit', 'sysctl', '-w', 'net.ipv4.ip_forward=1'); ns('exit', 'ip', 'route', 'add', '198.18.0.80/32', 'via', '10.77.0.4');
   const origin = child('origin', 'node', ['/project/scripts/lib/native-runtime-lab-origin.mjs'], 'origin');
   await wait(() => assert.match(fs.readFileSync(origin.stdout, 'utf8'), /ORIGIN_READY/));
@@ -60,6 +64,8 @@ try {
   step('standalone-authenticated-tunnel-dns-udp-tcp');
   const httpsProbe = `const https=require('https'),fs=require('fs');https.get({host:'198.18.0.80',port:8443,servername:'runtime.test',ca:fs.readFileSync('/config/cert.pem'),timeout:5000},r=>{let b='';r.on('data',x=>b+=x);r.on('end',()=>{if(b!=='native-runtime-https-ok\\n')process.exitCode=1;else console.log('HTTPS_OK')})}).on('error',()=>process.exitCode=1).on('timeout',function(){this.destroy()});`;
   assert.match(ns('client', 'node', '-e', httpsProbe), /HTTPS_OK/); step('standalone-https');
+  if(hostWiring)client=await checkHostWiring({ns,child,wait,health,step,client,
+    restartClient:()=>child('client','/usr/local/bin/native-runtime',['/config/client.json'],'client-host-restart')});
   client.p.kill('SIGKILL'); await wait(() => assert.ok(client.p.signalCode));
   const blocked = `const s=require('net').connect(5353,'10.77.0.4',()=>process.exit(2));s.setTimeout(1200,()=>{s.destroy();console.log('BLOCKED')});s.on('error',()=>console.log('BLOCKED'));`;
   assert.match(ns('client', 'node', '-e', blocked), /BLOCKED/); step('standalone-crash-guard-persists');
