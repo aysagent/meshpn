@@ -131,7 +131,7 @@ try {
   let lanApp;
   if (gateway) {
     lanApp = prefix + '-lan-app'; containers.push(lanApp);
-    p(['run', '-d', '--name', lanApp, '--label', label, '--memory=96m', '--pids-limit=96', '--network', lanNetwork, '--ip=192.168.88.3', '--cap-drop=ALL', '--cap-add=NET_ADMIN',
+    p(['run', '-d', '--name', lanApp, '--label', label, '--no-healthcheck', '--memory=96m', '--pids-limit=96', '--network', lanNetwork, '--ip=192.168.88.3', '--cap-drop=ALL', '--cap-add=NET_ADMIN',
       '--read-only', '-v', `${volume}:/config:ro`, '--entrypoint=sh', image, '-ec',
       `ip route replace default via 192.168.88.2 dev eth0; exec sleep ${soakSeconds + 1800}`]);
     assert.match(e(lanApp, 'node', '--input-type=module', '-e', applicationProbe('192.168.88.2')), /APPLICATION_PROBES_OK/);

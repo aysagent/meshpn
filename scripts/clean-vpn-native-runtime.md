@@ -279,6 +279,11 @@ SIGKILL всего контейнера, read-only mount отказ и пере�
 Рабочее replay state при этом не сбрасывается. Config/PSK/capture и volume
 удаляются ownership cleanup; в отчёте остаются hashes и названия проверок.
 
+Второй владелец проверяется со свободным портом и отдельным TUN, чтобы отказ
+не оказался обычным bind/EBUSY. После освобождения replay lock этот же конфиг
+успешно запускается. Для read-only combo-проверки TUN также заранее создан:
+отсутствующий интерфейс не может подменить проверку недоступной записи state.
+
 Дополнительные `SETUID/SETGID` нужны только fixture: тестовое приложение
 работает от UID 65534, а REDIRECT выбирается по owner, чтобы exit не перехватил
 свой origin socket. Production boring launcher этих capability не получает.

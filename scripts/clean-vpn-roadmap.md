@@ -6,6 +6,14 @@ Checkpoint 2026-10-27: [native standalone/Docker/Podman приёмка](clean-vp
 recovery, затем container lifecycle combo/transparent. Постоянная установка
 на Radxa/VPS остаётся отложена; прежний план ниже читать с этой границей.
 
+Дополнение: host-side wiring и строгий rollback теперь проверены в
+[NIC-less VM-модели шлюза](clean-vpn-native-runtime-host-wiring.md), **22/22**.
+Совместимость replay volume после SIGKILL/recreate проверена production engine
+в Podman и Docker ARM64, по **26/26**. Это не physical installer и не готовый
+combo/transparent launcher: для них ещё нужны packet/gateway provisioning,
+guard/recovery и health contract. Новые измерения различают CLI wall time и
+DNS/HTTPS/TCP/UDP transaction time внутри приложения.
+
 Уточнение scope 2026-10-27: постоянную установку/enable на Radxa и VPS пользователь
 отложил. На узлах — только временные проверки с rollback. Новый приоритет:
 [standalone и Docker/Podman runtime, лабораторная приёмка](clean-vpn-native-night-plan.md).

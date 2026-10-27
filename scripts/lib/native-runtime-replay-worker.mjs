@@ -64,17 +64,24 @@ try {
       write(role + '.json', JSON.stringify(transport === 'combo-tls'
         ? { version: 1, transport, role, boring, transparent: relay } : relay));
     }
+    const second = JSON.parse(fs.readFileSync(file('exit.json')));
+    (transport === 'combo-tls' ? second.transparent : second).listen.port = 8543;
+    if (transport === 'combo-tls') { second.boring.port = 8543; second.boring.tun = 'cvowner0'; }
+    write('second-owner.json', JSON.stringify(second));
   }
-  for (const role of ['client', 'exit']) assert.equal(JSON.parse(run(engine, ['--check-config', file(role + '.json')])).valid, true);
+  for (const role of ['client', 'exit', 'second-owner']) assert.equal(JSON.parse(run(engine, ['--check-config', file(role + '.json')])).valid, true);
   step('production-engine-config-valid');
+  // Provision even in the read-only-state phase: otherwise combo would fail
+  // on absent TUN before ever reaching replay storage. A second owner also
+  // needs its OWN TUN and free port, so refusal cannot be an EBUSY/bind error.
+  if (transport === 'combo-tls') {
+    for (const tun of ['cvc0', 'cve0', 'cvowner0']) { run('ip', ['tuntap', 'add', 'dev', tun, 'mode', 'tun']); run('ip', ['link', 'set', tun, 'up']); }
+  }
   if (phase === 'readonly') {
     const before = digest();
     assert.match(await deny(['--config', file('exit.json'), '--service']), /configuration or startup refused/);
     assert.equal(digest(), before); step('readonly-state-refused-without-reset');
   } else {
-    if (transport === 'combo-tls') {
-      for (const tun of ['cvc0', 'cve0']) { run('ip', ['tuntap', 'add', 'dev', tun, 'mode', 'tun']); run('ip', ['link', 'set', tun, 'up']); }
-    }
     if (phase === 'first') {
       assert.match(await deny(['--config', file('exit.json'), '--service']), /configuration or startup refused/);
       assert.equal(JSON.parse(run(engine, ['--init-transparent-replay', file('exit.json')])).replay_initialized, true);
@@ -103,7 +110,7 @@ try {
     });
     observer.listen(8445, '127.0.0.1'); servers.push(observer); await once(observer, 'listening');
     const exit = start(['--config', file('exit.json'), '--service']); await ready(exit);
-    assert.match(await deny(['--config', file('exit.json'), '--service']), /configuration or startup refused/); step('durable-scope-second-owner-refused');
+    assert.match(await deny(['--config', file('second-owner.json'), '--service']), /configuration or startup refused/); step('durable-scope-second-owner-free-port-and-tun-refused');
     if (phase === 'recreated') {
       const before = originConnections;
       await new Promise((resolve, reject) => {
@@ -151,6 +158,8 @@ let b='';r.on('data',x=>b+=x);r.on('end',()=>{if(b!=='RELAY_ORIGIN_OK')process.e
       });
       assert.equal(originConnections, 2); assert.equal(digest(), preserved);
       await stop(positive); step('same-captured-token-valid-in-independent-fresh-fixture-scope');
+      const released = start(['--config', file('second-owner.json'), '--service']); await ready(released);
+      await stop(released); step('second-owner-starts-after-original-owner-released-lock');
     }
     const report = { schema: 1, kind: 'native-runtime-replay-phase', transport, phase, checks, status: 'passed', replayStateSha256: digest() };
     if (phase === 'first') {

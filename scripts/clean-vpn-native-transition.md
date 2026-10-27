@@ -8,6 +8,13 @@ Docker amd64 smoke на VPS. [Итог и следующий шаг](clean-vpn-n
 Следующий этап — physical LAN wiring и расширение transport lifecycle;
 permanent install по-прежнему исключён.
 
+Дополнение 2026-10-27: **22/22** проверок модели host-side ingress/recovery в
+NIC-less VM; **26/26** проверок replay packaging в каждом из Docker/Podman
+ARM64. Для replay используется production binary, а не test-packet engine.
+Физический installer из этого не следует; public runtime launcher всё ещё
+принимает только boring-tls. Задержки транзакций теперь измеряются внутри
+приложения отдельно от container exec overhead.
+
 Уточнение scope 2026-10-27: постоянную установку/enable на Radxa и VPS пользователь
 отложил. На узлах — только временные проверки с rollback. Новый приоритет:
 [standalone и Docker/Podman runtime, лабораторная приёмка](clean-vpn-native-night-plan.md).
@@ -34,7 +41,7 @@ packet path не является обязательной. Production-разв�
 ## Реализовано в текущем шаге
 
 2026-10-26: [goodput через настоящий TUN](clean-vpn-native-h2-goodput.md):
-24/24 передачи по 8 MiB, четыре клиента, три повтора, два RTT/bandwidth режима.
+26/26 передачи по 8 MiB, четыре клиента, три повтора, два RTT/bandwidth режима.
 На 100 Мбит/с / 120 мс download median 24.62 → 35.60 Мбит/с при 1/1 → 6/15 MiB;
 upload 25.13 → 22.45. Netem drops=0, но baseline exit drops=51/69/200:
 следующий H2 шаг — отдельные причины drops и bounded TUN backpressure.
