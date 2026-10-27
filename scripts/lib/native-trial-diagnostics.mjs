@@ -6,7 +6,7 @@ tls_verify_name tls_verify_expired tls_verify_not_yet_valid tls_verify_untrusted
 h2_callback_failure h2_send_callback_failure h2_goaway_no_error h2_goaway_error h2_reset_no_error h2_reset_error
 h2_peer_end_stream h2_invalid_frame h2_stream_closed h2_stream_error tls_peer_closed h2_flooded h2_no_memory h2_bad_client_magic
 h2_local_goaway_error h2_local_reset_error
-h2_required exporter hmac http2_error unexpected_headers headers_limit duplicate_header request_invalid auth_rejected
+h2_required exporter hmac http2_error unexpected_headers headers_limit duplicate_header request_invalid auth_rejected auth_clock_skew
 early_end vpn_response_rejected data_before_auth peer_address session_rejected_or_closed auth_deadline h2_ping_timeout
 random tls_write tls_read http2_receive tun_write tun_read invalid_ipv4 invalid_frame_length queue_limit queue_consume`.split(/\s+/));
 const markers = new Map([

@@ -18,6 +18,7 @@ function driver(config,mode,t){
   let output='';for(const s of [p.stdout,p.stderr])s.on('data',b=>{output+=b;});
   const timer=setTimeout(()=>p.kill('SIGKILL'),15000);t.after(()=>{clearTimeout(timer);p.kill('SIGKILL');});
   const done=once(p,'close').then(([code])=>{clearTimeout(timer);assert.equal(code,0,output);return output;});
+  done.catch(()=>{}); // An earlier TLS assertion may abort before awaiting it.
   return {p,done,output:()=>output};
 }
 for(const direction of ['native-client','native-exit','malformed-frame','spoofed-multicast','missing-auth','oversized-headers'])test(`TLS/H2/exporter auth interop: ${direction}`,{timeout:20000},async t=>{
@@ -34,7 +35,7 @@ for(const direction of ['native-client','native-exit','malformed-frame','spoofed
     const key=fileURLToPath(new URL('./fixtures/boring-tls-local.key.pem',import.meta.url));
     fs.writeFileSync(config,JSON.stringify({...common,role:'exit',port,cert,key}));
     const denied=['missing-auth','oversized-headers'].includes(direction);
-    const run=driver(config,denied?'exit-denied':direction==='malformed-frame'?'exit-malformed':direction==='spoofed-multicast'?'exit-spoofed-multicast':'exit-handshake',t);
+    const run=driver(config,denied?'exit-denied':direction==='malformed-frame'?'exit-malformed':direction==='spoofed-multicast'?'exit-spoofed-multicast':'exit-confirmed',t);
     await new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(Error('native listener deadline')),5000);
       const check=()=>{if(run.output().includes('native exit listening')){clearTimeout(timer);run.p.stdout.off('data',check);resolve();}};
@@ -48,6 +49,14 @@ for(const direction of ['native-client','native-exit','malformed-frame','spoofed
     }
     const client=loadTlsDateFixture();const wire=await client.connectCleanVpnTlsClient({host:'127.0.0.1',port,ca:fixtureCert,servername:'localhost',vpnSecret:secret});
     wire.on('error',()=>{});t.after(()=>wire.destroy());
+    if(direction==='native-exit'){
+      const packet=Buffer.alloc(64);for(let i=20;i<64;i++)packet[i]=(i*17+7)%251;
+      packet[0]=0x45;packet.writeUInt16BE(64,2);packet[8]=64;packet[9]=17;
+      Buffer.from([10,99,0,2,1,1,1,1]).copy(packet,12);
+      let sum=0;for(let i=0;i<20;i+=2)sum+=packet.readUInt16BE(i);
+      while(sum>>>16)sum=(sum&65535)+(sum>>>16);packet.writeUInt16BE((~sum)&65535,10);
+      wire.write(Buffer.concat([Buffer.from([0,0,0,64]),packet]));
+    }
     if(direction==='malformed-frame')wire.write(Buffer.from([0xff,0xff,0xff,0xff]));
     if(direction==='spoofed-multicast'){
       const packet=Buffer.from('4500001400000000010200000a630003e0000016','hex');

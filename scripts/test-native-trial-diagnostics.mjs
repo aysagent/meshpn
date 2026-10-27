@@ -20,7 +20,7 @@ test('session failure/closure reasons remain fixed metadata, not unknown', () =>
   for (const code of `h2_callback_failure h2_send_callback_failure h2_goaway_no_error h2_goaway_error
     h2_reset_no_error h2_reset_error h2_peer_end_stream h2_invalid_frame h2_stream_closed h2_stream_error
     tls_peer_closed h2_flooded h2_no_memory h2_bad_client_magic h2_local_goaway_error h2_local_reset_error
-    invalid_frame_length invalid_ipv4 peer_address`.split(/\s+/)) assert.equal(d.state(event(code)), code);
+    invalid_frame_length invalid_ipv4 peer_address auth_clock_skew`.split(/\s+/)) assert.equal(d.state(event(code)), code);
 });
 test('TLS verification reasons survive diagnostic sanitization as fixed codes', () => {
   const d = trialDiagnostics();

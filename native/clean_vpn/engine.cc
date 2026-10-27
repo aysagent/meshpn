@@ -232,6 +232,19 @@ static bool authenticate(const std::string& provided,const std::string& secret,S
   for(int offset:{0,-1,1}){auto expected=token(secret,exp,window+offset);ok|=CRYPTO_memcmp(expected.data(),provided.data()+7,32)==0;}
   return ok; // No legacy unbound-token fallback.
 }
+// A claimed timestamp alone proves nothing. Classify clock skew only after
+// verifying the same exporter-bound MAC with a configured peer's PSK. This
+// never authenticates the stream or extends the normal acceptance window.
+static bool authenticated_clock_skew(const std::string& provided,const std::string& claimed,const std::string& secret,SSL* ssl) {
+  if(provided.size()!=39||provided.substr(0,7)!="Bearer "||claimed.empty()||claimed.size()>10)return false;
+  if(claimed.size()>1&&claimed[0]=='0')return false;
+  int64_t window=0;
+  for(char c:claimed){if(c<'0'||c>'9')return false;window=window*10+(c-'0');}
+  const auto current=int64_t(time(nullptr))/900;
+  if(window>=current-1&&window<=current+1)return false;
+  const auto expected=token(secret,exporter(ssl),window);
+  return CRYPTO_memcmp(expected.data(),provided.data()+7,32)==0;
+}
 static void h2check(int rc){check(rc>=0,"http2_error");}
 struct Session {
   const Config& config;Control& ctl;SSL* ssl;const std::string& secret;
@@ -241,7 +254,7 @@ struct Session {
   http2_alps_fixture::Observer wire_observer{config.client};
   h2_budget_fixture::Queues budget_queues{outgoing,network,packets,ssl};
 #endif
-  int32_t stream=-1;bool ready=false,deferred=false;
+  int32_t stream=-1;bool ready=false,deferred=false,clock_rejected=false;
   uint32_t peer_address;
   std::function<bool(uint32_t)> claim;
   const char* failure=nullptr;
@@ -255,7 +268,7 @@ struct Session {
     // Only our own fixed vocabulary can cross the metadata boundary. Never
     // surface library exceptions, peer headers, GOAWAY debug data or payloads.
     for(const char* code:{"unexpected_headers","headers_limit","duplicate_header","request_invalid",
-        "auth_rejected","peer_busy","early_end","vpn_response_rejected","data_before_auth","peer_address","peer_destination",
+        "auth_rejected","auth_clock_skew","peer_busy","early_end","vpn_response_rejected","data_before_auth","peer_address","peer_destination",
         "invalid_ipv4","invalid_frame_length","queue_limit","queue_consume","http2_error","exporter","hmac",
         "auth_deadline","h2_ping_timeout","h2_goaway_no_error","h2_goaway_error","h2_reset_no_error","h2_reset_error",
         "h2_peer_end_stream","h2_stream_closed","h2_stream_error","h2_invalid_frame","h2_local_goaway_error",
@@ -282,7 +295,7 @@ struct Session {
   }
   static int header_cb(nghttp2_session*,const nghttp2_frame* f,const uint8_t* name,size_t nl,const uint8_t* value,size_t vl,uint8_t,void* u){
     return safe(u,[&](Session& s){
-      check(!s.ready&&f->hd.stream_id==1,"unexpected_headers");
+      check(!s.ready&&!s.clock_rejected&&f->hd.stream_id==1,"unexpected_headers");
       s.header_bytes+=nl+vl;check(s.header_bytes<=8192&&s.headers.size()<32,"headers_limit");
       check(s.headers.emplace(std::string(reinterpret_cast<const char*>(name),nl),std::string(reinterpret_cast<const char*>(value),vl)).second,"duplicate_header");
     });
@@ -293,6 +306,15 @@ struct Session {
     for(const auto& peer:config.peers)if(authenticate(headers["authorization"],peer.secret,ssl)){
       authenticated=true;peer_address=peer.address;
     }
+    if(!authenticated){
+      bool skew=false;
+      for(const auto& peer:config.peers)skew|=authenticated_clock_skew(headers["authorization"],headers["x-clean-vpn-window"],peer.secret,ssl);
+      if(skew){
+        stream=1;clock_rejected=true;
+        submit_headers({{":status","409"},{"x-clean-vpn-error","clock-skew"}},false);
+        headers.clear();return; // No peer claim, ready state, or packet I/O.
+      }
+    }
     check(authenticated,"auth_rejected");
     check(!claim||claim(peer_address),"peer_busy");
     stream=1;
@@ -302,6 +324,8 @@ struct Session {
   static int frame_cb(nghttp2_session*,const nghttp2_frame* f,void* u){
     return safe(u,[&](Session& s){
       if(f->hd.type==NGHTTP2_HEADERS){
+        if(s.config.client&&s.headers[":status"]=="409"&&s.headers["x-clean-vpn-error"]=="clock-skew")
+          throw std::runtime_error("auth_clock_skew");
         check(!(f->hd.flags&NGHTTP2_FLAG_END_STREAM),"early_end");
         if(s.config.client){check(s.headers[":status"]=="200"&&s.headers["content-type"]=="application/octet-stream","vpn_response_rejected");s.ready=true;s.headers.clear();s.ctl.set("ready");}
         else s.respond();
@@ -420,8 +444,12 @@ struct Session {
       h2check(nghttp2_session_set_local_window_size(h2,NGHTTP2_FLAG_NONE,0,receive_window));
       if(config.client){nghttp2_settings_entry no_push{NGHTTP2_SETTINGS_ENABLE_PUSH,0};h2check(nghttp2_submit_settings(h2,NGHTTP2_FLAG_NONE,&no_push,1));}
     }
-    if(config.client)submit_headers({{":method","POST"},{":path","/clean-vpn"},{":scheme","https"},{":authority",config.name},
-      {"authorization","Bearer "+token(secret,exporter(ssl),int64_t(time(nullptr))/900)},{"accept","*/*"}},true);
+    if(config.client){
+      const auto window=int64_t(time(nullptr))/900;
+      submit_headers({{":method","POST"},{":path","/clean-vpn"},{":scheme","https"},{":authority",config.name},
+        {"authorization","Bearer "+token(secret,exporter(ssl),window)},
+        {"x-clean-vpn-window",std::to_string(window)},{"accept","*/*"}},true);
+    }
   }
   short step(int tun,Clock::time_point deadline,Bytes& pending,bool shared_tun=false){
       std::array<uint8_t,65536> buffer{};

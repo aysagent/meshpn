@@ -403,9 +403,17 @@ int main(int argc,char** argv){
       server.reject_for(1200);pollfd p{server.packet,POLLIN,0};require(poll(&p,1,50)==0,"unauthenticated_h2_injection");server.stop();
       std::cout<<"unauthenticated H2 rejected PASS\n";return 0;
     }
-    if(argc==4&&(std::string(argv[3])=="exit-handshake"||std::string(argv[3])=="exit-malformed"||std::string(argv[3])=="exit-spoofed-multicast")){
+    if(argc==4&&(std::string(argv[3])=="exit-handshake"||std::string(argv[3])=="exit-confirmed"||std::string(argv[3])=="exit-malformed"||std::string(argv[3])=="exit-spoofed-multicast")){
       Child server(argv[1],argv[2]);server.await_state("listening");
       std::cout<<"native exit listening\n";server.await_state("ready");
+      if(std::string(argv[3])=="exit-confirmed"){
+        // Do not stop as soon as local auth completes: the 200 response may
+        // still be queued. Wait for the test client to observe it and send.
+        pollfd p{server.packet,POLLIN,0};require(poll(&p,1,3000)>0,"confirmed_packet_timeout");
+        Bytes got(65536);auto n=recv(server.packet,got.data(),got.size(),0);require(n>0,"confirmed_packet_read");
+        got.resize(n);require(got==packet(64,false,7),"confirmed_packet_bytes");
+        std::cout<<"client observed success and native packet injection PASS\n";
+      }
       if(std::string(argv[3])=="exit-malformed"){
         server.await_state("invalid_frame_length");pollfd p{server.packet,POLLIN,0};require(poll(&p,1,50)==0,"malformed_injection");
         std::cout<<"malformed frame rejected before packet injection PASS\n";
