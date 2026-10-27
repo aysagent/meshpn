@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { randomBytes } from 'node:crypto';
 const table = '19998', priority = '10998', chain = 'CVPN_HW', tag = 'cvpn-host-wiring-fixture';
 const run = (bin,args) => execFileSync(bin,args,{encoding:'utf8',timeout:10000,stdio:['ignore','pipe','pipe']}).trim();
 const json = args => JSON.parse(run('ip',args));
@@ -54,7 +55,18 @@ function main() {
   const file='/run/cvpn-host-wiring.json',ops=hostWiringOperations();
   const scope={boot:fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim(),net:fs.readlinkSync('/proc/self/ns/net')};
   const startTick=pid=>fs.readFileSync('/proc/'+pid+'/stat','utf8').split(') ').at(-1).split(' ')[19];
-  const save=s=>{const fd=fs.openSync(file+'.tmp','wx',0o600);try{fs.writeFileSync(fd,JSON.stringify(s));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(file+'.tmp',file);};
+  const save=s=>{
+    // A killed writer may leave its temporary file. A unique name keeps that
+    // harmless orphan from preventing the next independent recovery write.
+    const temporary=file+'.tmp-'+randomBytes(8).toString('hex');
+    const fd=fs.openSync(temporary,'wx',0o600);
+    try {
+      fs.writeFileSync(fd,JSON.stringify(s));fs.fsyncSync(fd);
+      if(process.argv[2]==='apply'&&Number(process.env.CVPN_WIRING_KILL_BEFORE_RENAME)===s.next)process.kill(process.pid,'SIGKILL');
+      fs.renameSync(temporary,file);
+      const directory=fs.openSync('/run','r');try{fs.fsyncSync(directory);}finally{fs.closeSync(directory);}
+    } finally {fs.closeSync(fd);fs.rmSync(temporary,{force:true});}
+  };
   if(process.argv[2]==='apply') {
     assert.equal(fs.existsSync(file),false,'recover_previous_run_first');
     assert.equal(run('sysctl',['-n','net.ipv4.ip_forward']),'1','already_configured_gateway_required');
@@ -67,7 +79,9 @@ function main() {
     for(const [i,op]of ops.entries()) {
       state.next=i+1;save(state); // intent before mutation
       if(Number(process.env.CVPN_WIRING_KILL_AT)===i+1)process.kill(process.pid,'SIGKILL');
-      run(...op.add);assert.ok(op.present());
+      run(...op.add);
+      if(Number(process.env.CVPN_WIRING_KILL_AFTER_MUTATION)===i+1)process.kill(process.pid,'SIGKILL');
+      assert.ok(op.present());
     }
     console.log('HOST_WIRING_READY');setInterval(()=>{},1000);
   } else {

@@ -80,6 +80,11 @@ let b='';r.on('data',x=>b+=x);r.on('end',()=>{if(b!=='native-runtime-https-ok\n'
   owner=child('gateway','env',['CVPN_WIRING_KILL_AT=9','node',helper,'apply'],'host-wiring-partial');
   await wait(()=>assert.equal(owner.p.signalCode,'SIGKILL'));
   assert.match(ns('gateway','node',helper,'recover'),/HOST_WIRING_RESTORED/);assert.equal(snapshot(),before);step('host-wiring-intent-before-mutation-recovery');
+  for(const [fault,label]of [['CVPN_WIRING_KILL_BEFORE_RENAME','journal-temp-orphan'],['CVPN_WIRING_KILL_AFTER_MUTATION','mutation-before-verification']]){
+    owner=child('gateway','env',[fault+'=9','node',helper,'apply'],'host-wiring-'+label);
+    await wait(()=>assert.equal(owner.p.signalCode,'SIGKILL'));
+    assert.match(ns('gateway','node',helper,'recover'),/HOST_WIRING_RESTORED/);assert.equal(snapshot(),before);step('host-wiring-'+label+'-recovery');
+  }
   client=restartClient();await wait(()=>health('client'));
   owner=child('gateway','node',[helper,'apply'],'host-wiring-link-loss');await ready(owner);
   // The host's main default remains usable; the selected ingress must still
@@ -89,6 +94,10 @@ let b='';r.on('data',x=>b+=x);r.on('end',()=>{if(b!=='native-runtime-https-ok\n'
   assert.equal(ns('gateway','ip','-j','-4','rule','show'),JSON.parse(before)[0]);step('host-bridge-loss-unreachable-default-no-fallback');
   // Recreate only the fixture-owned bridge so the existing namespace remains
   // usable for the subsequent standalone clock/restart checks.
+  // Rebuild its fixture-owned port in the original order as well: otherwise
+  // equal-prefix kernel IPv6 link routes retain a different insertion order.
+  // Keep the strict baseline comparison rather than sorting differences away.
+  ns('gateway','ip','link','set','backend-host','down');
   ns('gateway','ip','link','add','cvlbr0','type','bridge');ns('gateway','ip','link','set','cvlbr0','address','02:00:00:88:00:01');ns('gateway','ip','addr','add','192.168.88.1/24','dev','cvlbr0');ns('gateway','ip','link','set','cvlbr0','up');
   ns('gateway','ip','link','set','backend-host','master','cvlbr0');ns('gateway','ip','link','set','backend-host','up');
   ns('gateway','sysctl','-w','net.ipv4.conf.cvlbr0.rp_filter=2');await wait(()=>assert.equal(snapshot(),before));
