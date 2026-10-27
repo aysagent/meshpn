@@ -1,5 +1,59 @@
 # Повседневный native boring-tls: ограниченный пилот
 
+## Физический checkpoint 2026-10-27
+
+По новому разрешению пользователя выполнены временные проверки на подключённой
+Radxa и VPS. [Отчёт с хешами приватных артефактов](../fixtures/clean-vpn-native-physical-pilot-20261027.json).
+Постоянная установка/enable по-прежнему не выполнялись; сеть Mac не менялась.
+
+- Radxa обновлена через git (сначала bundle по USB при выключенном exit, затем
+  pull) и пересобрана `--low-memory --jobs=2`; 10/10 CTest. На VPS использован
+  существующий бинарник с SHA из отчёта: native source в checkout не менялся
+  с предыдущего VPS checkpoint, повторная сборка в этом шаге не выполнялась.
+- Ordinary host/USB smoke, engine SIGKILL, настоящий down/up wlan0 и hold прошли
+  с `rollback=verified`, `guard=verified`. Hold: 12/12 HTTPS за 120 секунд с
+  десятисекундными паузами; это короткая проверка, не длительный soak/benchmark.
+  После uplink первый HTTPS успешен через 2149 мс от начала recovered-фазы.
+- Клиент — native boring-tls; на VPS использован проверенный transient combo
+  listener с его boring packet branch. Transparent branch в этом шаге не
+  проверялась; отдельный physical pure-boring exit lifecycle этим не подменяется.
+- Внешний VPS pcap: 36611 packets, 0 kernel drops; пять native ClientHello
+  совпали с Chromium subset, JA4 `t13d0915h2_f91f431d341e_54d72502093d`.
+  JA3 меняется с permutation. Три legacy mismatch, один наблюдаемый ClientHello
+  другого источника и два неполных ClientHello сохранены в результатах.
+  Глобальный exit code observer — 2, а не выдуманный полный match захвата.
+- Отдельный capture wlan0 во время uplink/hold: 3667 исходящих exit packets,
+  0 наблюдаемых DNS/53 и TCP/853, 0 kernel drops. Фильтр/окно ограничены;
+  это не универсальная проверка утечек. Crash capture отдельно подтвердил
+  0 direct HTTPS packets к 1.1.1.1 при 377 encrypted exit packets.
+- Exit завершён штатно, собственный TUN/правила убраны. VPS firewall, forwarding,
+  policy rules и выбранные unit states совпали с исходными. На Radxa восстановлен
+  legacy: отличаются только свежие ID его DNS/IPv6 journals и kernel link-local
+  адрес пересозданного tun0; остальные сравниваемые правила/маршруты сохранены.
+
+Два ранних отказа не скрыты: runtime-only preflight требовал `cvpn0`, а legacy
+audit отклонил новый colocated `.test.mjs`. Исправлены явным read-only
+`--scope=existing-host` и точечным исключением одного тестового файла. Проверки
+production legacy и pinned baseline не ослаблены. Linux tests: VPS 84/84,
+Radxa 15/15; отдельные preflight/control — VPS 22/22, local 14/14.
+
+**До повседневного unattended запуска осталось:**
+
+1. Доверенный bootstrap часов до TLS. После выключения RTC снова показал 2017,
+   системные часы отстали примерно на 13 часов. В этом пилоте время исправлено
+   через authenticated SSH с VPS, сверено с Mac; после старта exit NTP и RTC
+   синхронизировались. Это не автоматическое решение cold boot.
+2. Согласованная настройка DNS/DHCP существующего хоста: в `usb0.conf` два DNS
+   option 6, а cached DHCP ACK Mac содержит `1.1.1.1`. Конфиг и аренда не менялись.
+   `/etc/resolv.conf` всё ещё ENOENT; реальные NSS/DNS probes прошли через текущую
+   защитную схему, но исправность resolver object этим не подтверждается.
+3. Постоянный native lifecycle под существующими owners и физическая boot
+   приёмка с ранним guard. Это отдельный следующий этап; ничего не установлено
+   в автозагрузку и Radxa не перезагружалась.
+
+После остановки временного exit доступ через него снова отсутствует, как до
+пилота. Успешный отчёт не означает, что VPN оставлен работать на каждый день.
+
 Уточнение scope 2026-10-27: постоянную установку/enable на Radxa и VPS пользователь
 отложил. На узлах — только временные проверки с rollback. Новый приоритет:
 [standalone и Docker/Podman runtime, лабораторная приёмка](clean-vpn-native-night-plan.md).

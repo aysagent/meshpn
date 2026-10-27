@@ -1,6 +1,17 @@
 # clean-vpn: цели и порядок дальнейшей работы
 
-Текущий checkpoint 2026-10-27: [локальная подготовка boring-tls](clean-vpn-native-local-readiness.md).
+Текущий checkpoint 2026-10-27: [физический boring-tls пилот](clean-vpn-native-daily-pilot.md#физический-checkpoint-2026-10-27)
+Radxa ↔ VPS прошёл: ordinary smoke, engine SIGKILL, wlan0 down/up и 120-секундный
+hold 12/12. Пять native ClientHello matched внешним pcap. В ограниченном capture
+wlan0 не наблюдались прямые DNS/53 или TCP/853. Legacy/guard/rescue возвращены,
+временный exit остановлен; постоянная установка не выполнялась.
+Следующее: authenticated cold-clock bootstrap (RTC теряет время без питания),
+review/нормализация реального DHCP DNS и существующего resolver object, затем
+постоянный native lifecycle с existing-host ownership и физическая boot приёмка.
+Сеть Mac не менялась. Не считать эту приёмку универсальным закрытием DNS,
+full-browser mimicry или уже работающей повседневной установкой.
+
+Предыдущий checkpoint 2026-10-27: [локальная подготовка boring-tls](clean-vpn-native-local-readiness.md).
 Готовы offline bundles с разными PSK, настраиваемый gateway в выделенном Linux
 netns, dnsmasq/DHCP модель, bounded systemd recovery, единый read-only preflight.
 Приёмка: 16 unit checks, VM reboot 39+41 checks, финальный ownership regression
