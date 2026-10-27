@@ -21,6 +21,8 @@ const gateway = process.env.CVPN_GATEWAY === '1';
 const testLauncher = process.env.CVPN_TEST_LAUNCHER === '1';
 const soakSeconds = Number(process.env.CVPN_SOAK_SECONDS ?? 0);
 assert.ok(Number.isInteger(soakSeconds) && soakSeconds >= 0 && soakSeconds <= 7200, 'soak_limit_0_to_7200_seconds');
+const restartSeconds = Number(process.env.CVPN_SOAK_RESTART_SECONDS ?? 300);
+assert.ok(Number.isInteger(restartSeconds) && restartSeconds >= 5 && restartSeconds <= 600, 'restart_interval_5_to_600_seconds');
 const holdAfterReady = Number(process.env.CVPN_LAB_HOLD_AFTER_READY_SECONDS ?? 0);
 assert.ok(Number.isInteger(holdAfterReady) && holdAfterReady >= 0 && holdAfterReady <= 60);
 const backend = process.env.CVPN_IPTABLES_BACKEND ?? 'nft'; assert.ok(['nft', 'legacy'].includes(backend));
@@ -138,10 +140,10 @@ try {
     progress('isolated-lan-gateway-dns-https-tcp-udp');
   }
   if (soakSeconds) {
-    const samples = [], began = performance.now(); let nextRestart = 300, restarts = 0;
+    const samples = [], began = performance.now(); let nextRestart = restartSeconds, restarts = 0;
     // Keep completed observations even when a later probe fails. The final
     // report must not discard the measurements that led up to a failure.
-    report.soak = { requestedSeconds: soakSeconds, samples, restarts: 0, elapsedSeconds: 0, restartEvents: [] };
+    report.soak = { requestedSeconds: soakSeconds, restartSeconds, samples, restarts: 0, elapsedSeconds: 0, restartEvents: [] };
     while ((performance.now() - began) / 1000 < soakSeconds) {
       const probeStart = performance.now(); health(); const healthEnd = performance.now();
       const applicationTimings = parseApplicationTimings(e(clientName, 'node', '--input-type=module', '-e', probe));
@@ -160,11 +162,36 @@ try {
       report.soak.elapsedSeconds = elapsed;
       if (samples.length % 6 === 0) console.log('RUNTIME_SOAK_SECONDS=' + elapsed);
       if (elapsed >= nextRestart) {
-        const event = { elapsed, signal: restarts % 2 ? 'SIGKILL' : 'SIGTERM' };
+        // A stopped container may lose its network namespace entirely. Rules
+        // must survive while that namespace exists, not be copied into a new
+        // namespace as if the engine owned arbitrary third-party policy.
+        const beforeNamespace = e(clientName, 'readlink', '/proc/1/ns/net').trim();
+        assert.match(e(clientName, iptables + '-save'), /-A OUTPUT -j FOREIGN_SENTINEL/);
+        // Pin the OLD namespace: inode numbers may be recycled immediately
+        // after destruction, so comparing unpinned readlink strings is not
+        // an identity test. The witness also checks old policy after restart.
+        const witness = prefix + '-restart-witness';
+        p(['run', '-d', '--name', witness, '--label', label, '--network=container:' + clientName,
+          '--no-healthcheck', '--memory=32m', '--pids-limit=16', '--cap-drop=ALL', '--cap-add=NET_ADMIN',
+          '--read-only', '--entrypoint=sleep', image, '90']);
+        assert.equal(e(witness, 'readlink', '/proc/1/ns/net').trim(), beforeNamespace);
+        const event = { elapsed, signal: restarts % 2 ? 'SIGKILL' : 'SIGTERM', beforeNamespace };
         report.soak.restartEvents.push(event);
         if (restarts % 2) p(['kill', '--signal=KILL', clientName]); else p(['stop', '--time=5', clientName]);
-        p(['start', clientName]); await wait(clientName, health); restarts++; nextRestart += 300;
+        p(['start', clientName]); await wait(clientName, health); restarts++; nextRestart += restartSeconds;
         event.readyElapsed = Math.round((performance.now() - began) / 1000); report.soak.restarts = restarts;
+        event.afterNamespace = e(clientName, 'readlink', '/proc/1/ns/net').trim();
+        assert.equal(e(witness, 'readlink', '/proc/1/ns/net').trim(), beforeNamespace);
+        assert.match(e(witness, iptables + '-save'), /-A OUTPUT -j FOREIGN_SENTINEL/);
+        event.oldNamespaceForeignRulePreserved = true;
+        const currentRules = e(clientName, iptables + '-save');
+        event.namespaceChanged = event.beforeNamespace !== event.afterNamespace;
+        if (event.namespaceChanged && !currentRules.includes('-A OUTPUT -j FOREIGN_SENTINEL')) {
+          e(clientName, iptables, '-N', 'FOREIGN_SENTINEL'); e(clientName, iptables, '-A', 'OUTPUT', '-j', 'FOREIGN_SENTINEL');
+          event.fixtureSentinelReinstalledInNewNamespace = true;
+        }
+        assert.match(e(clientName, iptables + '-save'), /-A OUTPUT -j FOREIGN_SENTINEL/);
+        p(['rm', '-f', witness]);
       }
       await delay(Math.min(10000, Math.max(0, soakSeconds * 1000 - (performance.now() - began))));
     }
