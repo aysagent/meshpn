@@ -1,0 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+const text=p=>{try{return fs.readFileSync(p,'utf8');}catch{return'';}};
+export class Metrics{
+ constructor(){this.previous=null;}
+ sample(){const now=performance.now();const cores=text('/proc/stat').split('\n').filter(l=>/^cpu\d+ /.test(l)).map(l=>{const[k,...s]=l.trim().split(/\s+/),v=s.map(Number);return{name:k,idle:v[3]+v[4],total:v.slice(0,8).reduce((a,b)=>a+b,0)};});const prev=this.previous;this.previous={now,cores};const cpu=cores.map((c,i)=>{const old=prev?.cores[i],delta=old?c.total-old.total:0;return{core:c.name,percent:delta>0?Math.round(1000*(1-(c.idle-old.idle)/delta))/10:null};});const temperatures=[];for(let i=0;i<16;i++){const p='/sys/class/thermal/thermal_zone'+i,t=Number(text(p+'/temp').trim());if(t>0&&t<150000)temperatures.push({name:text(p+'/type').trim(),celsius:t/1000});}const memory=Object.fromEntries(text('/proc/meminfo').split('\n').flatMap(l=>{const m=/^(MemTotal|MemAvailable|SwapTotal|SwapFree):\s+(\d+)/.exec(l);return m?[[m[1],Number(m[2])*1024]]:[];}));const network=text('/proc/net/dev').split('\n').filter(l=>l.includes(':')).map(l=>{const[name,s]=l.split(':'),v=s.trim().split(/\s+/).map(Number);return{interface:name.trim(),rxBytes:v[0],txBytes:v[8],rxDropped:v[3],txDropped:v[11]};});return{time:new Date().toISOString(),timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,uptimeSeconds:os.uptime(),cpu,temperatures,memory,loadAverage:os.loadavg(),network};}
+}

@@ -1,0 +1,10 @@
+# The web/UI container never receives the Docker/Podman socket, host /etc,
+# systemd bus, raw-packet or network-admin capabilities. Use the host broker.
+FROM node:24-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY admin ./admin
+COPY scripts/lib ./scripts/lib
+COPY scripts/clean-vpn-pcap-fingerprints.mjs ./scripts/clean-vpn-pcap-fingerprints.mjs
+USER node
+CMD ["node","admin/server.mjs","/config/web.json"]

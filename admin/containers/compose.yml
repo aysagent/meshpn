@@ -1,0 +1,22 @@
+services:
+  admin:
+    build:
+      context: ../..
+      dockerfile: admin/containers/Containerfile
+    restart: unless-stopped
+    # Host networking preserves real USB addresses. Application checks the USB
+    # address AND peer subnet. Host INPUT device guard is additionally required
+    # for the container mode (see README); no published 0.0.0.0 ports.
+    network_mode: host
+    user: "${MPN_ADMIN_UID:?Set UID of meshpn-admin}:${MPN_ADMIN_GID:?Set GID of meshpn-admin}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    mem_limit: 192m
+    volumes:
+      - /etc/meshpn-admin/web-container.json:/config/web.json:ro
+      - /var/lib/meshpn-admin-web:/var/lib/meshpn-admin-web:rw
+      - /run/meshpn-admin:/run/meshpn-admin:ro
+    tmpfs:
+      - /tmp:size=8m,mode=1777

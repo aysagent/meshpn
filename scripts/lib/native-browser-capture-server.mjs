@@ -8,12 +8,13 @@ import { once } from 'node:events';
 import { BrowserCapture } from './native-browser-capture.mjs';
 import { parseFirstTlsClientHelloFromTcpBuf } from './tls-clienthello-ja3.mjs';
 
-export async function startBrowserCapture({ cert, key, metadata, maxSamples = 32, lifetimeMs = 180000, nativeProbe = false }) {
+export async function startBrowserCapture({ cert, key, metadata, maxSamples = 32, lifetimeMs = 180000, nativeProbe = false, publicAuthority = null }) {
   if (!Number.isInteger(lifetimeMs) || lifetimeMs < 1000 || lifetimeMs > 600000) throw Error('capture_lifetime');
   const capture = new BrowserCapture(metadata, { maxSamples });
   const token = randomBytes(24).toString('hex');
   const sockets = new Set(), sessions = new Set(), connections = new Map();
   if(typeof nativeProbe!=='boolean')throw Error('capture_probe_mode');
+  if(publicAuthority!==null&&!/^[a-zA-Z0-9.-]{1,253}:[0-9]{1,5}$/.test(publicAuthority))throw Error('capture_authority');
   const requests = new Map();
   let front, terminator, timer, closing;
   // Explicit loopback TLS -> H2 bridge keeps an independent view of plaintext
@@ -35,7 +36,7 @@ export async function startBrowserCapture({ cert, key, metadata, maxSamples = 32
     'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" };
   backend.on('request', (req, res) => {
     req.on('error', () => {}); res.on('error', () => {});
-    const authority = `localhost:${front.address()?.port}`;
+    const authority = publicAuthority ?? `localhost:${front.address()?.port}`;
     const connection = requests.get(req.socket.remotePort);
     const probeRequest = nativeProbe && req.method === 'POST' && req.url === '/clean-vpn' && req.headers[':authority'] === 'localhost';
     if (!probeRequest && (req.method !== 'GET' || req.headers[':authority'] !== authority || req.headers.origin
