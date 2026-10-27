@@ -2,12 +2,17 @@
 // Experimental explicit launcher. --usb-profile opts into owned routes/DNS.
 // Never installs/releases the independent guard, USB interface or SNAT service.
 // Stdio is control/status ONLY. Native child opens the pre-provisioned TUN.
+import { NativeSystemdTrialController } from './lib/native-systemd-trial-controller.mjs';
 import { NativeEngineController } from './lib/native-engine-controller.mjs';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { prepareNativeUsb } from './lib/native-usb-control.mjs';
 const args=process.argv.slice(2);
+const clockArgs=args.filter(a=>a.startsWith('--clock-config='));
+if(clockArgs.length>1)throw Error('duplicate_clock_config');
+const clockConfig=clockArgs[0]?.slice('--clock-config='.length);
+if(clockConfig)args.splice(args.indexOf(clockArgs[0]),1);
 const trialCrash=args.at(-1)==='--trial-crash';if(trialCrash)args.pop();
 const usbProfile=args.at(-1)==='--usb-profile';if(usbProfile)args.pop();
 if(args.length!==2||args[0]!=='--config'||!path.isAbsolute(args[1])){
@@ -22,7 +27,8 @@ if(usbProfile){
   network=prepareNativeUsb(JSON.parse(bytes));
   console.error('native-control: profile preflight complete');
 }
-const engine=new NativeEngineController({binary,config:args[1],allowTrialCrash:trialCrash&&usbProfile});
+if(clockConfig&&(!usbProfile||trialCrash))throw Error('clock_trial_requires_plain_usb_profile');
+const engine=clockConfig?new NativeSystemdTrialController({binary,config:args[1],clockConfig}):new NativeEngineController({binary,config:args[1],allowTrialCrash:trialCrash&&usbProfile});
 console.error('native-control: engine spawned');
 network?.attach(engine);
 let pending='',failed=false,stopping=false;
