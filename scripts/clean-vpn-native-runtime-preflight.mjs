@@ -6,10 +6,10 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { createHash, X509Certificate } from 'node:crypto';
-import { runtimePlan } from './lib/native-runtime-plan.mjs';
+import { validatePreflightConfig } from './lib/native-runtime-preflight-config.mjs';
 import { validateGatewayConfig } from './lib/native-runtime-gateway-plan.mjs';
-const {values:v}=parseArgs({options:{help:{type:'boolean'},...Object.fromEntries(['binary','config','gateway-config','unit'].map(k=>[k,{type:'string'}]))}});
-if(v.help){console.log('Usage: sudo node scripts/clean-vpn-native-runtime-preflight.mjs --binary=/absolute/clean-vpn-engine --config=/absolute/engine.json [--gateway-config=/absolute/gateway.json] [--unit=cvpn-client.service]\nRead-only Linux inventory + offline native config check. No DNS/network probes, no service/route/firewall changes. Output includes IPs, paths and DNS domains; never secret bytes, process argv or journals. Config paths must be valid in the namespace where this runs.');process.exit(0);}
+const {values:v}=parseArgs({options:{help:{type:'boolean'},...Object.fromEntries(['binary','config','gateway-config','unit','scope'].map(k=>[k,{type:'string'}]))}});
+if(v.help){console.log('Usage: sudo node scripts/clean-vpn-native-runtime-preflight.mjs --binary=/absolute/clean-vpn-engine --config=/absolute/engine.json [--gateway-config=/absolute/gateway.json] [--unit=cvpn-client.service] [--scope=isolated-runtime|existing-host]\nDefault isolated-runtime requires its own cvpn0 configuration. existing-host inventories a native boring-tls config without claiming ownership of host routes/DNS.\nRead-only Linux inventory + offline native config check. No DNS/network probes, no service/route/firewall changes. Output includes IPs, paths and DNS domains; never secret bytes, process argv or journals. Config paths must be valid in the namespace where this runs.');process.exit(0);}
 const report={schema:1,kind:'native-runtime-preflight',timestamp:new Date().toISOString(),systemSettingsChanged:false,dnsQueriesSent:0,
   runtime:{platform:process.platform,arch:process.arch,node:process.version,uid:process.getuid?.()},checks:{},issues:[],
   limitations:['inventory-not-authorization-to-activate','no-network-or-tunnel-health-probes','no-effective-dnsmasq-or-network-manager-config','no-early-boot-leak-proof','no-physical-power-loss-test']};
@@ -21,7 +21,9 @@ const file=(p,limit)=>{assert.ok(path.isAbsolute(p));const s=fs.lstatSync(p);ass
 try{
   const flags=process.argv.slice(2).filter(a=>a.startsWith('--')).map(a=>a.split('=')[0]);assert.equal(flags.length,new Set(flags).size);
   assert.equal(process.platform,'linux','linux_required');
-  const source=file(v.config,32768),c=JSON.parse(source.bytes);runtimePlan(c);
+  const source=file(v.config,32768),c=JSON.parse(source.bytes);
+  report.scope=v.scope??'isolated-runtime';validatePreflightConfig(c,report.scope);
+  if(report.scope==='existing-host')report.limitations.push('existing-host-routing-dns-ownership-not-validated');
   const binary=file(v.binary,128*1024*1024);
   report.engine={role:c.role,transport:'boring-tls',endpoint:c.address,port:c.port,tun:c.tun,peer:c.peer_ipv4??null,
     binarySha256:createHash('sha256').update(binary.bytes).digest('hex'),configMode:source.mode,configUid:source.uid};
