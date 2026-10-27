@@ -10,6 +10,7 @@ import { randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { inspectPcap } from './clean-vpn-pcap-fingerprints.mjs';
 import { cleanupLab } from './clean-vpn-native-runtime-cleanup.mjs';
+import { nativeProcessProbe, latencySummary } from './lib/native-runtime-metrics.mjs';
 
 const cli = JSON.parse(process.env.CVPN_CONTAINER_COMMAND ?? '["podman"]');
 assert.ok(Array.isArray(cli) && cli.length && cli.every(x => typeof x === 'string'));
@@ -139,19 +140,25 @@ try {
     lanApp = prefix + '-lan-app'; containers.push(lanApp);
     p(['run', '-d', '--name', lanApp, '--label', label, '--memory=96m', '--pids-limit=96', '--network', lanNetwork, '--ip=192.168.88.3', '--cap-drop=ALL', '--cap-add=NET_ADMIN',
       '--read-only', '-v', `${volume}:/config:ro`, '--entrypoint=sh', image, '-ec',
-      'ip route replace default via 192.168.88.2 dev eth0; exec sleep 1800']);
+      `ip route replace default via 192.168.88.2 dev eth0; exec sleep ${soakSeconds + 1800}`]);
     assert.match(e(lanApp, 'node', '--input-type=module', '-e', probe.replaceAll("'127.0.0.11'", "'192.168.88.2'")), /APPLICATION_PROBES_OK/);
     progress('isolated-lan-gateway-dns-https-tcp-udp');
   }
   if (soakSeconds) {
     const samples = [], began = performance.now(); let nextRestart = 300, restarts = 0;
     while ((performance.now() - began) / 1000 < soakSeconds) {
-      health(); assert.match(e(clientName, 'node', '--input-type=module', '-e', probe), /APPLICATION_PROBES_OK/);
+      const probeStart = performance.now(); health(); const healthEnd = performance.now();
+      assert.match(e(clientName, 'node', '--input-type=module', '-e', probe), /APPLICATION_PROBES_OK/);
+      const applicationEnd = performance.now();
+      if (lanApp) assert.match(e(lanApp, 'node', '--input-type=module', '-e', probe.replaceAll("'127.0.0.11'", "'192.168.88.2'")), /APPLICATION_PROBES_OK/);
       const elapsed = Math.round((performance.now() - began) / 1000);
-      const sample = { elapsed };
+      const sample = { elapsed, healthWallMs: healthEnd - probeStart, applicationWallMs: applicationEnd - healthEnd,
+        ...(lanApp ? { lanWallMs: performance.now() - applicationEnd } : {}) };
       for (const [role, name] of [['client', clientName], ['exit', exit]]) {
-        sample[role] = JSON.parse(e(name, 'node', '-e', `const f=require('fs');const s=f.readFileSync('/proc/1/status','utf8');console.log(JSON.stringify({rssKiB:Number(s.match(/^VmRSS:\\s+(\\d+)/m)[1]),fds:f.readdirSync('/proc/1/fd').length}));`));
+        sample[role] = JSON.parse(e(name, 'node', '-e', nativeProcessProbe));
         assert.ok(sample[role].rssKiB < 262144 && sample[role].fds < 128, 'soak_resource_ceiling');
+        assert.equal(sample[role].nativeProcesses, 1, 'one_native_process_per_role');
+        assert.equal(sample[role].zombies, 0, 'no_zombie_processes');
       }
       samples.push(sample);
       if (samples.length % 6 === 0) console.log('RUNTIME_SOAK_SECONDS=' + elapsed);
@@ -161,11 +168,13 @@ try {
       }
       await delay(Math.min(10000, Math.max(0, soakSeconds * 1000 - (performance.now() - began))));
     }
-    report.soak = { requestedSeconds: soakSeconds, elapsedSeconds: Math.round((performance.now() - began) / 1000), restarts, samples };
+    report.soak = { requestedSeconds: soakSeconds, elapsedSeconds: Math.round((performance.now() - began) / 1000), restarts, samples,
+      latency: Object.fromEntries(['healthWallMs','applicationWallMs',...(lanApp ? ['lanWallMs'] : [])].map(k=>[k,latencySummary(samples.map(s=>s[k]))])) };
     for (const role of ['client', 'exit']) {
       const warm = samples[Math.min(5, samples.length - 1)][role];
       assert.ok(samples.at(-1)[role].rssKiB - warm.rssKiB < 32768, 'soak_retained_memory_growth');
       assert.ok(samples.at(-1)[role].fds <= warm.fds + 8, 'soak_retained_fd_growth');
+      assert.ok(samples.at(-1)[role].sockets <= warm.sockets + 4, 'soak_retained_socket_growth');
     }
     progress('bounded-soak-with-restarts-passed');
   }
