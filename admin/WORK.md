@@ -7,12 +7,14 @@ Baseline: Radxa 192.168.7.1 rescue SSH 2222, root, existing native trial/legacy/
 Implementation direction: separate unprivileged HTTP UI/API and restricted local broker for system actions. Explicit USB address/interface, host/origin validation, password hashes, revocable sessions/CSRF, bounded operations, no shell commands or arbitrary paths in API. Reuse native profile/observer parsers. Systemd socket can bind to USB device; container uses host broker, no Docker socket or privileged container. Preserve unsupported features as explicit capabilities. Keep UI distinct from ESP firmware.
 
 Outstanding:
-- [ ] physical existing-owner clock integration + smoke/rollback
-- [ ] DNS/DHCP migration assessment only
-- [ ] backend and authentication
-- [ ] bounded host actions/Wi-Fi owner integration
-- [ ] UI metrics/settings/profiles/capture/observer
-- [ ] systemd and container packaging
-- [ ] API/security/integration/browser/lab checks
-- [ ] temporary Radxa admin smoke, rollback, report
-- [ ] commits/push and final report
+- [x] physical existing-owner clock integration + smoke/rollback
+- [x] DNS/DHCP migration assessment only
+- [x] backend and authentication
+- [x] bounded host actions/Wi-Fi owner integration
+- [x] UI metrics/settings/profiles/capture/observer
+- [x] systemd and container packaging
+- [x] API/security/integration/browser/lab checks
+- [x] temporary Radxa admin smoke, rollback, report
+- [x] commits/push and final report
+
+Final evidence and explicit remaining scope are in NIGHT-REPORT.md and ../fixtures/meshpn-admin-night-20261028.json. Permanent native install, physical reboot and DNS migration are not part of this completed temporary trial. Admin autostart is separately authorized and enabled.

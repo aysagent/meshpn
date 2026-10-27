@@ -1,6 +1,15 @@
 # Полный native-переход: рабочий статус
 
-Актуальный checkpoint 2026-10-28: [условный clock recovery](clean-vpn-native-clock.md)
+Новый checkpoint 2026-10-28: [USB-админка и физическая приёмка](../admin/NIGHT-REPORT.md).
+Systemd native + условный clock recovery временно проверены с существующими
+DNS/route owners Radxa; финальный smoke/rollback passed. На исправных часах
+helper не запускался. Админка установлена с автозапуском только через USB;
+постоянный native VPN и DNS migration не устанавливались. Независимый tcpdump
+увидел native profile `matched`, legacy `mismatch`. Промежуточный failed HTTPS
+smoke сохранён в отчёте. Следующий шаг — пользовательская приёмка админки и
+отдельный постоянный native/boot pilot, не объявление универсальной DNS готовности.
+
+Предыдущий checkpoint 2026-10-28: [условный clock recovery](clean-vpn-native-clock.md)
 для boring-tls client подключён к systemd и прошёл три cold boot в двух VM.
 [Отчёт](../fixtures/clean-vpn-native-clock-lifecycle-20261028.json). Никакого
 безусловного SSH при включении; полный TLS остаётся первым шагом. Физические

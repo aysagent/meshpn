@@ -1,0 +1,291 @@
+{
+  "schema": 1,
+  "kind": "meshpn-admin-night-report",
+  "date": "2026-10-28",
+  "clockOwnerTrial": {
+    "status": "passed",
+    "started": "2026-10-27T22:59:37.424Z",
+    "seconds": 109,
+    "holdSeconds": 30,
+    "rollback": "verified",
+    "guard": "verified",
+    "checks": {
+      "old": {
+        "status": "ipv4-smoke-passed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 2,
+        "httpsSeconds": [
+          0.456028,
+          0.411503
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 1.937016
+        }
+      },
+      "native": {
+        "status": "ipv4-smoke-passed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 2,
+        "httpsSeconds": [
+          0.418022,
+          0.433802
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 1.227974
+        }
+      },
+      "restored": {
+        "status": "ipv4-smoke-passed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 2,
+        "httpsSeconds": [
+          0.439881,
+          0.41748
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 2.686859
+        }
+      }
+    },
+    "limitations": [
+      "host-smoke-not-usb-peer-acceptance",
+      "not-speedtest-or-throughput-benchmark",
+      "not-a-leak-or-crash-test",
+      "exit-lifecycle-managed-separately-not-verified-by-client-report",
+      "no-browser-profile-fidelity"
+    ],
+    "tlsProfile": {
+      "id": "chromium-156-bounded-cold-v1",
+      "fileSha256": "e2cf0e9e2fb68ce5a2af43d56c0be989cd525217ac73e6037ad65098d5e0be79",
+      "browserEquivalent": false,
+      "independentWireCheck": "required-separately"
+    }
+  },
+  "observerTrial": {
+    "status": "passed",
+    "started": "2026-10-27T22:51:34.361Z",
+    "seconds": 106,
+    "holdSeconds": 30,
+    "rollback": "verified",
+    "guard": "verified",
+    "checks": {
+      "old": {
+        "status": "ipv4-smoke-passed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 2,
+        "httpsSeconds": [
+          0.468021,
+          0.407107
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 1.679209
+        }
+      },
+      "native": {
+        "status": "ipv4-smoke-passed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 2,
+        "httpsSeconds": [
+          0.425637,
+          0.418282
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 1.294275
+        }
+      },
+      "restored": {
+        "status": "ipv4-smoke-passed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 2,
+        "httpsSeconds": [
+          0.438498,
+          0.415884
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 1.260239
+        }
+      }
+    },
+    "limitations": [
+      "host-smoke-not-usb-peer-acceptance",
+      "not-speedtest-or-throughput-benchmark",
+      "not-a-leak-or-crash-test",
+      "exit-lifecycle-managed-separately-not-verified-by-client-report",
+      "no-browser-profile-fidelity"
+    ],
+    "tlsProfile": {
+      "id": "chromium-156-bounded-cold-v1",
+      "fileSha256": "e2cf0e9e2fb68ce5a2af43d56c0be989cd525217ac73e6037ad65098d5e0be79",
+      "browserEquivalent": false,
+      "independentWireCheck": "required-separately"
+    }
+  },
+  "observer": {
+    "status": "complete",
+    "bytes": 2543340,
+    "kernelDrops": 0,
+    "pcapSha256": "401e5d16b905f5a04cb2887661d5ef8b19d05c956aef929ce001aa1159075cc6",
+    "counts": {
+      "packets": 2752,
+      "selected": 948,
+      "withoutSyn": 0,
+      "fragmented": 0,
+      "truncated": 0
+    },
+    "connections": [
+      {
+        "ja3": "7454b04083aac52cd457959618cc037e",
+        "ja4": "t13d0311h2_55b375c5d22e_3217d83565aa",
+        "clientHelloBytes": 257,
+        "profileStatus": "mismatch"
+      },
+      {
+        "ja3": "b15ee19af8176e067e272708bdf642c3",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "clientHelloBytes": 1741,
+        "profileStatus": "matched"
+      }
+    ]
+  },
+  "adminPhysicalChecks": [
+    "usb-http-browser-no-js-errors",
+    "four-cpu-cores-temperature-memory-network",
+    "password-change-session-and-original-auth-restored",
+    "wifi-scan",
+    "disabled-profile-save-delete-without-switching-current-ssid",
+    "hostname-rename-and-mpn-restored",
+    "native-candidate-check-config-without-legacy-activation",
+    "bounded-journal",
+    "tls-h2-capture-with-per-connection-verified-device-ca",
+    "bounded-unprivileged-tcpdump-unit-and-no-surviving-unit"
+  ],
+  "tests": {
+    "apiAndCaptureLocal": 19,
+    "apiAndGuardRadxa": 62,
+    "containerFrontend": "passed-as-uid1000-readonly-no-capabilities-loopback-only-mock-broker",
+    "containerSocketProxy": "passed-two-inherited-listeners",
+    "linuxIptables": "passed-isolated-arm64-network-namespace"
+  },
+  "limitations": [
+    "no-permanent-native-vpn-migration",
+    "no-physical-clock-corruption-or-cold-reboot-this-step",
+    "dns-migration-research-only",
+    "container-frontend-tested-with-mock-host-broker-not-installed-on-radxa",
+    "physical-wifi-roaming-and-guard-disable-not-exercised",
+    "one-observed-native-clienthello-is-not-statistical-browser-equivalence",
+    "native-settings-candidate-only-while-legacy-is-active"
+  ],
+  "earlierClockTrial": {
+    "status": "failed",
+    "started": "2026-10-27T22:36:14.055Z",
+    "seconds": 90,
+    "holdSeconds": 30,
+    "rollback": "verified",
+    "guard": "verified",
+    "checks": {
+      "old": {
+        "status": "ipv4-smoke-passed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 2,
+        "httpsSeconds": [
+          0.450837,
+          0.379172
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 1.486153
+        }
+      },
+      "native": {
+        "status": "incomplete-or-failed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 1,
+        "httpsSeconds": [
+          2.002021,
+          null
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 9.419759
+        },
+        "checks": {
+          "tun": "passed",
+          "internetRoute": "passed",
+          "traceRoute": "passed",
+          "ipv6": "direct-route-present-review-required",
+          "egress": "passed",
+          "ipv4Smoke": "incomplete-or-failed"
+        }
+      },
+      "restored": {
+        "status": "ipv4-smoke-passed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 2,
+        "httpsSeconds": [
+          0.438606,
+          0.421517
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 1.648038
+        }
+      }
+    },
+    "limitations": [
+      "host-smoke-not-usb-peer-acceptance",
+      "not-speedtest-or-throughput-benchmark",
+      "not-a-leak-or-crash-test",
+      "exit-lifecycle-managed-separately-not-verified-by-client-report",
+      "no-browser-profile-fidelity"
+    ],
+    "tlsProfile": {
+      "id": "chromium-156-bounded-cold-v1",
+      "fileSha256": "e2cf0e9e2fb68ce5a2af43d56c0be989cd525217ac73e6037ad65098d5e0be79",
+      "browserEquivalent": false,
+      "independentWireCheck": "required-separately"
+    },
+    "failure": "one of two external HTTPS probes failed; not counted as a pass"
+  }
+}

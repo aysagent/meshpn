@@ -4,9 +4,9 @@ services:
       context: ../..
       dockerfile: admin/containers/Containerfile
     restart: unless-stopped
-    # Host networking preserves real USB addresses. Application checks the USB
-    # address AND peer subnet. Host INPUT device guard is additionally required
-    # for the container mode (see README); no published 0.0.0.0 ports.
+    # The container binds only 127.0.0.1:8080/18443. Host systemd sockets
+    # bind 192.168.7.1 ports 80/8443 to usb0 and proxy into these listeners.
+    # No public port publishing and no device/firewall capability in container.
     network_mode: host
     user: "${MPN_ADMIN_UID:?Set UID of meshpn-admin}:${MPN_ADMIN_GID:?Set GID of meshpn-admin}"
     read_only: true

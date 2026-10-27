@@ -4,6 +4,10 @@
 
 [`scripts/clean-vpn.js`](scripts/clean-vpn.js) — самостоятельный **Linux client ↔ exit VPN**: IPv4 через TUN, выход в интернет через NAT на exit, несколько транспортов и инструменты исследования TLS. Это отдельный контур: mesh, onion и multipath из `src/index.js` в нём **не используются**. Документация mesh сохранена [ниже](#mesh-vpn).
 
+Для Radxa есть [USB-админка](admin/README.md): `http://mpn.local/`, Node API,
+Wi-Fi-профили, управление VPN/защитой, диагностика, ClientHello capture и
+независимый pcap-наблюдатель. [Проверки и границы](admin/NIGHT-REPORT.md).
+
 Навигация: [транспорты](#clean-vpn-transports) · [запуск](#clean-vpn-start) · [опции](#clean-vpn-options) · [профили и transparent](#clean-vpn-profiles) · [DNS](#clean-vpn-dns) · [проверки и дальнейшая работа](#clean-vpn-next).
 
 Для **native `clean-vpn-engine`** есть отдельная [подготовка нескольких клиентов

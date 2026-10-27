@@ -1,0 +1,9 @@
+// Runs as the unprivileged image user, with no network except loopback and no
+// capabilities. Mock host broker has only /settings; real frontend is a child.
+import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import http from 'node:http';import {spawn} from 'node:child_process';import {once} from 'node:events';import assert from 'node:assert/strict';
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'admin-container-')),socket=dir+'/broker.sock';
+const broker=http.createServer((req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({hostname:'mpn',mock:true}));});broker.listen(socket);await once(broker,'listening');
+const config={version:1,address:'127.0.0.1',subnet:'127.0.0.0/8',publicAddress:'192.168.7.1',publicPort:80,publicCapturePort:8443,port:8080,capturePort:18443,container:true,loopbackProxy:true,state:dir+'/state',brokerSocket:socket};fs.writeFileSync(dir+'/web.json',JSON.stringify(config));
+const child=spawn(process.execPath,['admin/server.mjs',dir+'/web.json'],{stdio:['ignore','ignore','inherit']});
+const request=(target='mpn.local')=>new Promise((resolve,reject)=>{const r=http.get('http://127.0.0.1:8080/',{headers:{host:target}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});r.on('error',reject);});
+try{let ready=false;for(let i=0;i<50;i++){try{if(await request()===200){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}assert(ready);assert.equal(await request('evil.example'),403);assert.equal(await request('192.168.7.1'),200);console.log(JSON.stringify({status:'passed',uid:process.getuid(),mode:'unprivileged-readonly-container',realFrontend:true,hostBroker:'mock',publicAuthority:'mpn.local',network:'loopback-only'}));}finally{child.kill('SIGTERM');await once(child,'close');broker.close();await once(broker,'close');fs.rmSync(dir,{recursive:true,force:true});}

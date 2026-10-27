@@ -243,3 +243,12 @@ test('capture expiry also closes TLS and plaintext bridge with incomplete H2 pre
   const closed=once(socket,'close');socket.resume();socket.write('PRI');
   await closed;await server.close();assert.equal(server.snapshot().samples.length,0);
 });
+
+test('USB capture proxy requires its public authority without opening a non-loopback listener',async t=>{
+ const{server,ca}=await setup(t,{publicAuthority:'mpn.local:8443'});
+ const session=await connect(t,server,ca);
+ assert.equal((await request(session,server.url)).status,404);
+ assert.equal((await request(session,server.url,{':authority':'mpn.local:8443'})).status,200);
+ assert.equal(server.snapshot().samples.length,1);
+ assert.equal(new URL(server.url).hostname,'localhost');
+});

@@ -1,0 +1,161 @@
+# MeshPN: админка Radxa через USB
+
+На проверенной Radxa: **http://mpn.local/**, запасной адрес
+**http://192.168.7.1/**. Первый пароль **`admin`**. Перед изменением настроек
+его нужно сменить в разделе «Устройство». После смены требуется новый вход.
+Админка использует HTTP на доверенном USB-кабеле; пароль/сессия не шифруются
+HTTP. Не публикуйте этот порт в LAN или интернете.
+
+## Что доступно
+
+- Node API + отдельная веб-страница, без npm-зависимостей на плате.
+- Время именно в timezone платы, температура, нагрузка по ядрам, RAM/swap,
+  счётчики интерфейсов, состояние Wi-Fi, служб VPN и kill switch.
+- Включение/остановка/restart установленной VPN-службы. Остановка VPN не
+  отключает защиту. Отключение kill switch требует явного подтверждения и
+  останавливает VPN, чтобы штатный владелец сначала убрал свои DNS/route rules.
+  Защита OFF — разрешение прямого выхода. После reboot штатная guard-служба
+  снова включается; это **временное**, не постоянное отключение автозащиты.
+- До 256 отдельных Wi-Fi-профилей: SSID, WPA2 Personal/open, пароль,
+  приоритет, hidden, enabled, scan, connect, delete. Старые сети Netplan
+  не импортируются и не переписываются. Новые профили хранятся отдельно;
+  broker восстанавливает их после старта/перезапуска wpa_supplicant.
+- Имя `name.local` только на usb0 через Avahi; Linux hostname не меняется.
+  Если имя занято или mDNS недоступен, USB-IP остаётся запасным входом.
+- Native boring-tls: SNI, имя сертификата, выбор/import сохранённого профиля.
+  Перед сохранением — настоящий `engine --check-config`. На этой Radxa
+  сохранение пока готовит **candidate**, поскольку постоянная native-миграция
+  отложена. Текущая legacy-служба от этого не меняет профиль.
+- DNS/HTTPS/ICMP-пробы, последние 120 строк журнала, выгрузка диагностики.
+- `/capture`: отдельный TLS/H2 сервер на USB:8443, 3 минуты, до 32 образцов,
+  token/authority validation, bundle с JA3/JA4, структурой Hello, H2 и
+  несовместимостями. Совместимый кандидат можно отправить на native-проверку
+  и сохранить. Он не активируется автоматически.
+- Независимый наблюдатель: настоящий tcpdump на Wi-Fi к текущему exit,
+  5–60 секунд, до 5000 пакетов/16 MiB. JA3/JA4 и поля берутся из pcap,
+  сравниваются с выбранным candidate-профилем. Исходный pcap можно скачать.
+
+Смена endpoint пока отклоняется: сначала требуется согласованная миграция
+маршрута к exit и разрешений guard. DNS upstream в данном native engine
+фиксированы, поэтому редактирование не имитируется. Правила IP/domain/GeoIP,
+WPA3/Enterprise, AP и управление другими транспортами ещё не реализованы.
+`active` у systemd не доказывает рабочий интернет — используйте отдельную пробу.
+Совпадение профиля не означает полную неотличимость от браузера.
+
+## Установка и systemd
+
+Installer сейчас предназначен **для проверенного existing-host профиля Radxa**,
+с legacy `clean-vpn.service`, cvks4 guard и USB 192.168.7.1/24. Он не подходит
+для произвольной Linux-машины. Сначала читается plan:
+
+```sh
+node admin/install.mjs --plan
+sudo /absolute/path/to/node admin/install.mjs --apply
+```
+
+`--apply` проверяет владельцев/порты/USB, копирует текущий Node и исходники в
+`/opt/meshpn-admin`, создаёт системного пользователя `meshpn-admin`, приватные
+state-каталоги и три unit. VPN/DNS/Netplan не мигрируются. Автозапуск:
+`meshpn-admin-broker.service` и `meshpn-admin.socket`; web активируется сокетом.
+
+**Граница доступа:** systemd слушает 192.168.7.1:80/8443 с
+`BindToDevice=usb0`. Node дополнительно проверяет локальный IP, USB subnet,
+Host/Origin, сессию и CSRF. Web работает непривилегированно. Root broker имеет
+только UNIX socket и фиксированный набор операций, без произвольных команд,
+путей, systemd unit names или Docker socket из API.
+
+mDNS нужен UDP 5353 к 224.0.0.251 на usb0. Installer сохраняет исходный guard
+script и добавляет в его **read-only аудит** распознавание ровно этого правила;
+сами guard chains и политика не расширяются. Broker добавляет/убирает одну
+помеченную OUTPUT-запись, ограниченную source 192.168.7.1, usb0 и UDP5353.
+Изменения guard по-прежнему требуют первого hook и отказываются при чужих
+правилах. При остановке broker mDNS-запись удаляется через ExecStopPost.
+
+Наблюдатель запускается отдельным transient systemd unit с UID `meshpn-admin`,
+единственной capability `CAP_NET_RAW`, без promiscuous mode. systemd ограничивает
+время и завершает процесс независимо от браузера/broker; `CAP_KILL` broker
+не выдаётся. Сервер захвата browser TLS не получает root-доступ.
+
+```sh
+# После git pull. Сохраняет пароль, сети и настройки; остановит только админку.
+sudo /absolute/path/to/node admin/install.mjs --update
+# Остановить/отключить собственные службы, убрать mDNS-rule и вернуть guard script:
+sudo /absolute/path/to/node admin/install.mjs --remove
+```
+
+Удаление сохраняет state, исходники и аккаунт для проверки; свежая установка
+на те же пути намеренно откажется. Нельзя одновременно менять эти файлы другим
+администратором. Для потерянного пароля: остановить только web, сохранить
+`/var/lib/meshpn-admin-web/auth.json` под root, убрать этот файл, снова запустить
+web — будет создан `admin`. Это локальная root-операция, не HTTP endpoint.
+
+## Docker / Podman
+
+Контейнеризуется **web/API**, а broker и USB socket activation остаются на
+Linux-хосте. Контейнеру не выдаются root, privileged mode, системная D-Bus,
+`/etc` целиком, raw sockets, network-admin или Docker/Podman socket.
+
+```sh
+# На Linux Radxa после обычной установки, из корня репозитория:
+export MPN_ADMIN_UID=$(id -u meshpn-admin)
+export MPN_ADMIN_GID=$(id -g meshpn-admin)
+docker compose -f admin/containers/compose.yml build
+docker compose -f admin/containers/compose.yml up -d
+sudo /absolute/path/to/node admin/install.mjs --container
+```
+
+Для Podman применим тот же compose-файл через установленный compose provider
+(`podman compose ...`), либо эквивалентный `podman run` с теми же mount/UID,
+read-only root, cap-drop ALL, no-new-privileges и host network. Для указанного
+UID и host broker требуется rootful runtime. Автозапуск runtime/compose должен
+быть включён средствами его Linux-хоста; `restart: unless-stopped` задан.
+
+Контейнер слушает **только loopback** 8080/18443. Снаружи работают прежние
+USB-bound systemd sockets 80/8443 и непривилегированный двухпортовый proxy.
+Таким образом контейнерная упаковка не ослабляет ограничение по интерфейсу.
+Не добавляйте `ports: 0.0.0.0...`. Если контейнер остановлен, админка недоступна,
+но VPN/guard продолжают работать. Пароль/state общие с standalone.
+
+```sh
+# Вернуться к standalone web, затем остановить контейнер:
+sudo /absolute/path/to/node admin/install.mjs --standalone
+docker compose -f admin/containers/compose.yml down
+```
+
+Mac используется только как браузер и хозяин изолированной Podman-лаборатории.
+Ни installer, ни broker не работают на macOS; сеть Mac не перенастраивается.
+
+## Захват браузера
+
+1. Войти, сменить `admin`, открыть `/capture`, указать реальную версию/платформу.
+2. Запустить, скачать сертификат, установить доверие **в тестовом окружении
+   браузера**. Админка не устанавливает CA на компьютер. Защиту сертификатов
+   native VPN не отключать.
+3. Открыть ссылку захвата из трёх независимых cold browser processes. Простая
+   перезагрузка вкладки часто использует то же TLS-соединение.
+4. Скачать bundle и изучить `assessment`. При `unsupported` или `inconsistent`
+   нельзя выдавать его за воспроизводимый профиль. Совместимый кандидат сначала
+   проверяется engine, затем отдельно выбирается в VPN.
+5. Наблюдатель включается **до** нового соединения client-exit. Его pcap можно
+   независимо разобрать `scripts/clean-vpn-pcap-fingerprints.mjs`. При legacy
+   активном клиенте сравнение с native candidate закономерно может дать mismatch.
+
+Identity/trust context в bundle заявляется оператором, а не аттестуется.
+Сырой pcap содержит реальные сетевые метаданные и TLS-пакеты; держите его
+приватным. Никакие ключи VPN и пароли Wi-Fi API не возвращает.
+
+## Проверки
+
+```sh
+node --test admin/test/admin.test.mjs scripts/test-native-browser-capture.mjs
+# Linux / Bash 4+:
+node --test scripts/test-killswitch-plan.mjs
+podman build -t meshpn-admin-test -f admin/containers/Containerfile .
+podman run --rm --network=none --read-only --cap-drop=ALL \
+  --security-opt=no-new-privileges --tmpfs /tmp:rw,size=64m \
+  meshpn-admin-test node admin/test/container-smoke.mjs
+# Аналогично: node admin/test/socket-proxy-smoke.mjs
+```
+
+Фактические результаты и ограничения: [отчёт ночного этапа](NIGHT-REPORT.md).
+DNS migration — [только исследование](../scripts/clean-vpn-radxa-dns-migration.md).
