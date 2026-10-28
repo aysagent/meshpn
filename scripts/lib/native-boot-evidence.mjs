@@ -3,9 +3,9 @@ const peers = ['c2', 'c3', 'exit'];
 const working = [...peers.flatMap(n => ['active-' + n, 'native-mainpid-' + n]),
   ...[2, 3].flatMap(n => ['tun-data-' + n, 'native-dns-' + n]), 'guard-active', 'guard-before-uplink'];
 export const nativeBootChecks = [
-  [...peers.map(n => 'installed-disabled-' + n), ...peers.map(n => 'not-started-by-installer-' + n), ...working,
-    'binary-update-ready','binary-update-data','binary-failure-rollback','binary-interrupted-journal'],
-  [...working, 'installed-bytes-survived-reboot','binary-recovered-before-start'],
+  [...peers.map(n => 'installed-disabled-' + n), ...peers.map(n => 'not-started-by-installer-' + n), ...working,'clock-installed-no-query',
+    'binary-update-ready','binary-update-data','binary-failure-rollback','update-clock-exclusion','binary-interrupted-journal'],
+  [...working,'clock-installed-no-query', 'installed-bytes-survived-reboot','binary-recovered-before-start'],
   ['guard-failed', 'uplink-not-active', ...peers.map(n => 'engine-not-started-' + n),
     ...[2, 3].flatMap(n => ['uplink-stays-down-' + n, 'no-default-' + n]), 'installed-bytes-preserved-on-failure'],
 ];

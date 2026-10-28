@@ -63,6 +63,14 @@ try {
   if(relayLab) { const p='/usr/lib/x86_64-linux-gnu/xtables/libxt_REDIRECT.so';put(p,fs.readFileSync(p),0o755); }
   if(relayLab) put('/usr/sbin/ip',fs.readFileSync('/usr/bin/ip'),0o755);
   const copyScripts=dir=>{for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const p=join(dir,entry.name);if(entry.isDirectory())copyScripts(p);else if(/\.(m?js|sh)$/.test(p))put('/project/'+p,fs.readFileSync(p),p.endsWith('.sh')?0o755:0o644);}};copyScripts('scripts');
+  if(nativeBoot){
+    put('/project/scripts/clean-vpn-native-clock.py',fs.readFileSync('scripts/clean-vpn-native-clock.py'));
+    const pythonBase=execFileSync('/usr/bin/python3',['-c','import sys;print("/usr/lib/python%d.%d"%sys.version_info[:2])'],{encoding:'utf8'}).trim();
+    fs.mkdirSync(join(guest,'usr/lib'),{recursive:true});fs.cpSync(pythonBase,join(guest,pythonBase),{recursive:true,dereference:true,filter:p=>!p.includes('__pycache__')});
+    for(const bin of ['/usr/bin/python3',...fs.readdirSync(pythonBase+'/lib-dynload').filter(f=>f.endsWith('.so')).map(f=>pythonBase+'/lib-dynload/'+f)]){
+      put(bin,fs.readFileSync(bin),0o755);for(const lib of execFileSync('ldd',[bin],{encoding:'utf8'}).match(/\/[^\s()]+/g)??[])put(lib,fs.readFileSync(lib),0o755);
+    }
+  }
   report.legacyCliSha256=hash(fs.readFileSync('scripts/clean-vpn.js'));
   report.legacyHelperSha256=hash(fs.readFileSync(join(guest,'project/native/boring_tls/build/boring-tls-helper')));
   report.labScriptSha256=hash(fs.readFileSync(systemdNative?'scripts/lib/native-systemd-vm.sh':'scripts/lib/native-tun-vm.sh'));

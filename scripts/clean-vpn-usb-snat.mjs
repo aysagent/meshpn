@@ -24,7 +24,8 @@ const binaries = { ip: '/usr/sbin/ip', iptables: '/usr/sbin/iptables', sysctl: '
 const execute = (name, args) => execFileSync(binaries[name], args, { encoding: 'utf8', timeout: 10000,
   maxBuffer: 128 * 1024, env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C' } });
 
-export function changeUsbSnat({ apply = false, remove = false, run = execute } = {}) {
+export function changeUsbSnat({ apply = false, remove = false, nativeUnit = null, run = execute } = {}) {
+  assert.ok(nativeUnit === null || /^native-[a-z][a-z0-9-]{0,31}\.service$/.test(nativeUnit), 'invalid native unit');
   const nat = (...args) => run('iptables', ['-w', '5', '-t', 'nat', ...args]);
   const snapshot = () => nat('-S', 'POSTROUTING').trim().split('\n');
   const before = snapshot();
@@ -43,9 +44,19 @@ export function changeUsbSnat({ apply = false, remove = false, run = execute } =
   const matches = before.filter(line => line === usbSnatLine).length;
   assert.ok(matches <= 1, 'duplicate owned SNAT rules: no changes');
   if (!remove) {
-    for (const unit of ['clean-vpn.service', 'clean-vpn-killswitch.service',
+    for (const unit of [nativeUnit ?? 'clean-vpn.service', 'clean-vpn-killswitch.service',
       'clean-vpn-usb-rescue.socket', 'clean-vpn-usb-rescue-address.service']) {
       assert.equal(run('systemctl', ['is-active', unit]).trim(), 'active', `${unit} must be active`);
+    }
+    if (nativeUnit) {
+      const prop=(u,k)=>run('systemctl',['show',u,'-p',k,'--value']).trim();
+      assert.ok(['inactive','failed'].includes(prop('clean-vpn.service','ActiveState')) && prop('clean-vpn.service','MainPID')==='0','legacy must be quiesced');
+      assert.equal(prop(nativeUnit,'Type'),'notify','native notify service required');
+      assert.match(prop(nativeUnit,'MainPID'),/^[1-9][0-9]*$/,'native process required');
+      assert.ok(['ready','idle_wait'].includes(prop(nativeUnit,'StatusText')),'native tunnel not authenticated');
+      const bound=prop(nativeUnit,'BindsTo').split(/\s+/);
+      assert.ok(bound.includes('clean-vpn-killswitch.service')&&bound.some(u=>u!== 'clean-vpn-killswitch.service'),'native lifecycle dependencies required');
+      for(const u of bound)assert.equal(prop(u,'ActiveState'),'active','native dependency inactive');
     }
     const guard = run('guard', ['status']).trim().split('\n');
     for (const family of [4, 6]) assert.ok(guard.includes(
@@ -107,13 +118,16 @@ export function changeUsbSnat({ apply = false, remove = false, run = execute } =
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const args = process.argv.slice(2);
+    let args = process.argv.slice(2);
+    const selected=args.filter(a=>a.startsWith('--native-unit='));assert.ok(selected.length<=1,'duplicate native unit');
+    const nativeUnit=selected[0]?.slice('--native-unit='.length)??null;
+    args=args.filter(a=>!a.startsWith('--native-unit='));
     assert.ok(args.every(a => ['--apply', '--remove', '--status'].includes(a)) && new Set(args).size === args.length, 'use [--remove] [--apply] or --status');
     assert.ok(!args.includes('--status') || args.length === 1, '--status is read-only');
     assert.equal(process.getuid?.(), 0, 'root required');
     assert.equal(fs.readFileSync('/proc/1/comm', 'utf8').trim(), 'systemd', 'systemd host required');
     assert.equal(fs.readlinkSync('/proc/self/ns/net'), fs.readlinkSync('/proc/1/ns/net'), 'host network namespace required');
-    const result = changeUsbSnat({ apply: args.includes('--apply'), remove: args.includes('--remove') });
+    const result = changeUsbSnat({ apply: args.includes('--apply'), remove: args.includes('--remove'), nativeUnit });
     if (args.includes('--status')) {
       result.status = result.status === 'already-present' ? 'ready' : 'incomplete';
       if (result.status !== 'ready') process.exitCode = 1;

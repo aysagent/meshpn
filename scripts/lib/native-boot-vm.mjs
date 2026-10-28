@@ -36,6 +36,7 @@ const inventory = () => {
     walk(`/etc/systemd/system/native-${n}.service.d`);
     walk(`/etc/systemd/system/multi-user.target.wants/native-${n}.service`);
   }
+  if(fs.existsSync('/etc/systemd/system/native-c2-clock.service'))walk('/etc/systemd/system/native-c2-clock.service');
   return files;
 };
 // Mutable binary transaction state is checked separately by digest/recovery
@@ -60,10 +61,12 @@ if (mode === 'prepare') {
   try {
     if (!phase) {
       ctl('start', 'native-lab-network.service');
+      put('/native/clock-pin','clean-vpn-clock '+fs.readFileSync('/native/known_hosts','utf8').trim().split(/\s+/).slice(1).join(' ')+'\n');
+      put('/native/clock-profile.json',JSON.stringify({version:1,host:'154.62.226.216',port:22,user:'clock-fixture',identity:'/native/admin',known_hosts:'/native/clock-pin'}));
       for (const n of names) {
         const result = JSON.parse(exec('/usr/bin/node', ['/project/scripts/clean-vpn-native-install.mjs', '--apply',
           `--name=${n}`, '--binary=/native/clean-vpn-engine', `--config=/native/${n}.json`,
-          '--network-unit=native-lab-uplink.service', '--guard-unit=native-lab-guard.service']));
+          '--network-unit=native-lab-uplink.service', '--guard-unit=native-lab-guard.service',...(n==='c2'?['--clock-profile=/native/clock-profile.json']:[])]));
         check('installed-disabled-' + n, result.status === 'installed-disabled');
         put(`/etc/systemd/system/native-${n}.service.d/lab.conf`, `[Unit]\nDefaultDependencies=no\n[Service]\nNetworkNamespacePath=/run/netns/${n === 'exit' ? 'nexit' : 'n' + n}\n`);
       }
@@ -87,6 +90,7 @@ if (mode === 'prepare') {
       check('guard-active', prop('native-lab-guard', 'ActiveState') === 'active');
       const guardAt = Number(prop('native-lab-guard', 'ActiveEnterTimestampMonotonic'));
       check('guard-before-uplink', guardAt > 0 && guardAt <= Number(prop('native-lab-uplink', 'ActiveEnterTimestampMonotonic')));
+      check('clock-installed-no-query',!fs.existsSync(updateBundle+'/clock-state/attempt.json')&&fs.readFileSync(updateBundle+'/service.unit','utf8').includes('--clock-recovery'));
       if (!phase) {
         // A different ELF digest with identical protocol behavior; no production
         // build/version change is claimed by this appended fixture marker.
@@ -97,9 +101,10 @@ if (mode === 'prepare') {
         check('binary-update-ready',update.status==='updated'&&sha(fs.readFileSync('/proc/'+prop('native-c2','MainPID')+'/exe'))===wanted);
         check('binary-update-data',exec('/usr/bin/ip',['netns','exec','nc2','/native/socket-test','probe']).includes('NATIVE_TUN_PROBE_PASS'));
         const bad='/native/update-fails';
-        fs.writeFileSync(bad,`#!/bin/sh\ncase "$1" in --capabilities|--check-config) exec ${candidate} "$@";; *) exit 1;; esac\n`,{mode:0o755});
+        fs.writeFileSync(bad,`#!/bin/sh\ncase "$1" in --capabilities|--check-config) exec ${candidate} "$@";; *) exit 77;; esac\n`,{mode:0o755});
         let rejected=false;try{exec('/usr/bin/node',[updater,'--apply','c2',bad,sha(fs.readFileSync(bad))]);}catch{rejected=true;}
         check('binary-failure-rollback',rejected&&sha(fs.readFileSync(updateBundle+'/engine'))===wanted&&prop('native-c2','ActiveState')==='active');
+        check('update-clock-exclusion',!fs.existsSync(updateBundle+'/clock-state/attempt.json'));
         put('/state/update-wanted',wanted);
         put('/state/stable-inventory.json',JSON.stringify(stableInventory()));
         // Kill a genuine updater process after publishing a different binary,
@@ -117,6 +122,7 @@ if (mode === 'prepare') {
         fs.cpSync('/opt/clean-vpn-native', '/state/installed/opt/clean-vpn-native', { recursive: true });
         for (const n of names) for (const p of [`native-${n}.service`, `native-${n}.service.d`, `multi-user.target.wants/native-${n}.service`])
           fs.cpSync('/etc/systemd/system/' + p, '/state/installed/etc/systemd/system/' + p, { recursive: true, verbatimSymlinks: true });
+        fs.copyFileSync('/etc/systemd/system/native-c2-clock.service','/state/installed/etc/systemd/system/native-c2-clock.service');
         fs.copyFileSync('/etc/systemd/system/native-c2-binary-recovery.service','/state/installed/etc/systemd/system/native-c2-binary-recovery.service');
         put('/state/inventory.json', JSON.stringify(inventory()));
       } else {

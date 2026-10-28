@@ -120,3 +120,14 @@ test('MSS race refuses before any writes; foreign rules are never removed', () =
   assert.throws(() => changeUsbSnat({ run: f.run, apply: true, remove: true }), /unknown mangle/);
   assert.equal(f.writes.length, 0);
 });
+test('explicit native owner requires authenticated notify, quiesced legacy and live dependencies',()=>{
+ const f=fixture(),nativeUnit='native-radxa.service';
+ const values={'clean-vpn.service':{ActiveState:'inactive',MainPID:'0'},[nativeUnit]:{Type:'notify',MainPID:'123',StatusText:'ready',BindsTo:'clean-vpn-killswitch.service native-radxa-network.service'}};
+ const run=(tool,args)=>tool==='systemctl'&&args[0]==='show'?(values[args[1]]?.[args[3]]??'active'):f.run(tool,args);
+ assert.equal(changeUsbSnat({nativeUnit,run}).status,'planned');
+ for(const [unit,key,bad]of [['clean-vpn.service','MainPID','2'],['clean-vpn.service','ActiveState','active'],[nativeUnit,'Type','simple'],[nativeUnit,'StatusText','handshake'],[nativeUnit,'BindsTo','native-radxa-network.service']]){
+  const old=values[unit][key];values[unit][key]=bad;assert.throws(()=>changeUsbSnat({nativeUnit,apply:true,run}));assert.equal(f.writes.length,0);values[unit][key]=old;
+ }
+ assert.throws(()=>changeUsbSnat({nativeUnit:'foreign.service',run}));
+ assert.throws(()=>changeUsbSnat({nativeUnit,run:(tool,args)=>tool==='systemctl'&&args[0]==='show'&&args[1]==='native-radxa-network.service'?'inactive':run(tool,args)}));
+});

@@ -10,6 +10,8 @@ export async function checkInstalledTrial({run,probe,scratch,engine}) {
   const prop=(u,k)=>run('systemctl',['show',u,'-p',k,'--value']);
   const unit='native-'+name+'.service',checks=[];
   const networkPid=await prop('clean-vpn-native-trial.service','MainPID');
+  const snat=JSON.parse(await run(process.execPath,[root+'scripts/clean-vpn-usb-snat.mjs','--status','--native-unit='+unit],90000));
+  need(snat.status==='ready','native_usb_snat_not_ready');checks.push('native-snat-owner-readiness');
   const attempt=bundle+'/clock-state/attempt.json';need(!fs.existsSync(attempt),'unexpected_clock_query');
   const next=scratch+'/engine-next',bad=scratch+'/engine-bad';
   const before=hash(fs.readFileSync(bundle+'/engine'));
