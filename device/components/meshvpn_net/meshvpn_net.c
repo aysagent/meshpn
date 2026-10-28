@@ -381,9 +381,15 @@ esp_err_t meshvpn_net_start_bridge(void)
     if (err != ESP_OK) return err;
     if ((err = esp_wifi_set_storage(WIFI_STORAGE_RAM)) != ESP_OK) return err;
     s_sta_netif = esp_netif_create_default_wifi_sta();
+    if (!s_sta_netif) return ESP_ERR_NO_MEM;
+#if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
     s_ap_netif = esp_netif_create_default_wifi_ap();
-    if (!s_sta_netif || !s_ap_netif) return ESP_ERR_NO_MEM;
+    if (!s_ap_netif) return ESP_ERR_NO_MEM;
     if ((err = esp_wifi_set_mode(WIFI_MODE_APSTA)) != ESP_OK) return err;
+#else
+    /* AP-disabled control builds must not start an unconfigured AP. */
+    if ((err = esp_wifi_set_mode(WIFI_MODE_STA)) != ESP_OK) return err;
+#endif
 #endif
 
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_USB)

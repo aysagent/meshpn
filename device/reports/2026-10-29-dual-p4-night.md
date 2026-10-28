@@ -121,3 +121,8 @@ AP b/g/n HT20 на Waveshare не дал здорового соединения
   недошедшие пакеты по sequence-gap не определяются. Host worker/peer тесты
   покрывают повтор, перестановку, закрытие дырки поздним пакетом, `UINT32_MAX`,
   отмену, VPN transition и OOM. Сборки Waveshare, Stamp и XIAO прошли.
+- При подготовке STA-only контроля обнаружено, что P4 startup всегда включал
+  APSTA, даже с отключённым `BRIDGE_DATA_FORWARDING_NETIF_SOFTAP`. Теперь без
+  этого флага создаётся только STA и выбирается WIFI_MODE_STA; обычные профили
+  остаются APSTA. Host тест проверяет production init с флагом/без и отказ AP
+  allocation; STA-only Waveshare и штатные Waveshare/Stamp сборки прошли.
