@@ -1,5 +1,10 @@
 # Native-only установка и boot/reboot: лабораторный checkpoint
 
+2026-10-29: добавлен отдельный [`--host-profile`](clean-vpn-native-host-network.md)
+для самостоятельного boring-tls client на проверенном Radxa профиле. Не требует
+старого Node.js VPN, не использует dedicated-host takeover таблиц. На этом шаге
+проверен в kernel/systemd лаборатории, физическая/boot приёмка ещё не выполнена.
+
 Обновление 2026-10-28: `--clock-profile` для именованного boring-tls client
 с внешними network/guard units, [приёмка связки clock/updater](clean-vpn-native-installed-lifecycle.md).
 Последняя расширенная boot-матрица — 49 gates; результаты ниже исторические.

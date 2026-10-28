@@ -1,9 +1,37 @@
 # Полный native-переход: рабочий статус
 
+## Актуальный scope 2026-10-29
+
+Первый самостоятельный client checkpoint: [host network owner](clean-vpn-native-host-network.md).
+18 реальных kernel checks, 10 systemd/native/USB checks, 23 installer regressions.
+Boot/clock/updater в этой новой связке и физическая приёмка пока впереди.
+
+По уточнению пользователя старый Node.js VPN не является поддерживаемым продуктом.
+Бесшовная миграция, совместимость с legacy, переключатель legacy/native и
+автоматический возврат старого VPN **не являются требованиями или блокерами**.
+Ниже сохранены исторические checkpoints; их migration-требования заменены этим scope.
+
+Приоритет — самостоятельный native boring-tls с браузерным профилем:
+
+1. Постоянный native lifecycle TUN/маршрутов/DNS и USB SNAT, без зависимости от
+   старого Node.js VPN или временного trial owner; независимый kill switch.
+2. В VM проверить start/stop/restart, crash recovery, отказ exit/DNS, обновление
+   и rollback native-бинарника, условное восстановление часов и boot.
+3. Проверить native на Radxa/VPS, затем автозагрузку; reboot и отключение питания
+   учитывать раздельно. Старый VPN достаточно явно остановить/отключить перед
+   native-запуском, исключив конкуренцию за TUN/маршруты/DNS.
+
+Сохраняются требования не ломать USB rescue/SSH, чужие службы/firewall и сеть Mac.
+Восстановление собственных сетевых изменений после аварии остаётся обязательным;
+это не означает восстановление работы старого VPN. Node.js control plane/админка
+сами по себе не legacy и этим решением не исключаются.
+
+## История проверок
+
 Последний checkpoint: [installed lifecycle с clock/update и native SNAT](clean-vpn-native-installed-lifecycle.md).
 Два физических smoke passed, по 10 изолированных checks на Radxa/VPS,
-49 gates в трёх VM boot. Постоянный Radxa network owner и журналируемое
-переключение автозагрузки legacy/native ещё не реализованы.
+49 gates в трёх VM boot. Постоянный Radxa network owner ещё не реализован;
+журналируемое переключение автозагрузки legacy/native больше не требуется.
 
 Новый checkpoint 2026-10-28: [binary update и Radxa/VPS приёмка](clean-vpn-native-update-report.md).
 Новая именованная boring-tls установка поддерживает journalled binary rollback

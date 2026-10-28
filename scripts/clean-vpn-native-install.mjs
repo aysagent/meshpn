@@ -4,9 +4,9 @@ const options = {};
 try {
   for (const arg of process.argv.slice(2)) {
     if (arg === '--apply' && !options.apply) { options.apply = true; continue; }
-    const m = /^--(root|name|binary|config|network-unit|guard-unit|site-profile|clock-profile)=(.+)$/.exec(arg);
+    const m = /^--(root|name|binary|config|network-unit|guard-unit|site-profile|host-profile|clock-profile)=(.+)$/.exec(arg);
     if (!m) throw Error('usage');
-    const key = ({ 'network-unit': 'networkUnit', 'guard-unit': 'guardUnit', 'site-profile': 'siteProfile', 'clock-profile':'clockProfile' })[m[1]] ?? m[1];
+    const key = ({ 'network-unit': 'networkUnit', 'guard-unit': 'guardUnit', 'site-profile': 'siteProfile', 'host-profile':'hostProfile', 'clock-profile':'clockProfile' })[m[1]] ?? m[1];
     if (key in options) throw Error('duplicate_option'); options[key] = m[2];
   }
   if (options.apply && (options.root ?? '/') === '/' && process.getuid() !== 0) throw Error('root_required');

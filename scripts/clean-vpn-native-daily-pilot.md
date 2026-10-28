@@ -1,5 +1,14 @@
 # Повседневный native boring-tls: ограниченный пилот
 
+## Текущий приоритет 2026-10-29
+
+Самостоятельная native-установка; бесшовная миграция и возврат старого Node.js VPN
+не требуются. Актуальные шаги и границы — в начале
+[рабочего плана](clean-vpn-native-transition.md#актуальный-scope-2026-10-29).
+Ниже — история пилотов, включая отменённые требования legacy/native migration.
+Безопасность USB/SSH, независимый guard, native crash recovery и rollback
+обновления native-бинарника остаются в scope.
+
 ## Clock lifecycle checkpoint 2026-10-28
 
 [Условное восстановление часов](clean-vpn-native-clock.md) подключено к opt-in

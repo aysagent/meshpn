@@ -8,6 +8,7 @@ import { nativeServiceUnit } from './native-service-unit.mjs';
 import { nativeClockRecoveryUnit } from './native-clock-unit.mjs';
 import { isIPv4 } from 'node:net';
 import { nativeSitePlan, nativeSiteSources } from './native-site-plan.mjs';
+import { nativeHostPlan, nativeHostSources } from './native-host-plan.mjs';
 import { fileURLToPath } from 'node:url';
 const hash = b => createHash('sha256').update(b).digest('hex');
 const need = (v, code) => { if (!v) throw Error(code); };
@@ -45,7 +46,7 @@ function exclusive(p, data, mode) {
   const fd = fs.openSync(p, 'wx', mode);
   try { fs.fchmodSync(fd, mode); fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
-export function installNative({ root = '/', name, binary, config, networkUnit, guardUnit, siteProfile, clockProfile, apply = false }, { fault = () => {} } = {}) {
+export function installNative({ root = '/', name, binary, config, networkUnit, guardUnit, siteProfile, hostProfile, clockProfile, apply = false }, { fault = () => {} } = {}) {
   need(typeof apply === 'boolean', 'invalid_apply');
   safePath(root);
   need(/^[a-z][a-z0-9-]{0,31}$/.test(name ?? ''), 'invalid_instance');
@@ -65,6 +66,9 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   const capability = JSON.parse(execFileSync(binary, ['--capabilities'], { encoding: 'utf8', timeout: 5000, maxBuffer: 16384 }));
   need(capability.engine === 'clean-vpn-native-m1' && capability.packet_ipc === false && capability.service_mode === true, 'not_native_service_engine');
   execFileSync(binary, ['--check-config', config], { timeout: 10000, stdio: 'pipe', maxBuffer: 16384 });
+  need(!hostProfile || (!siteProfile && networkUnit === undefined && guardUnit === undefined), 'conflicting_host_dependencies');
+  const host = hostProfile ? nativeHostPlan({name,target,profile:JSON.parse(regular(hostProfile,8192,true)),engine:input,capability}) : null;
+  if(host){networkUnit=host.network;guardUnit=host.guard;}
   need(!siteProfile || (networkUnit === undefined && guardUnit === undefined), 'conflicting_site_dependencies');
   const site = siteProfile ? nativeSitePlan({ name, target, site: JSON.parse(regular(siteProfile, 16384, true)), engine: input, capability }) : null;
   const clock = clockProfile ? JSON.parse(regular(clockProfile, 8192, true)) : null;
@@ -76,6 +80,12 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     need(![networkUnit,guardUnit].includes(clockUnit), 'clock_dependency_cycle');
   }
   const units = site?.units ?? new Map([[unitName, nativeServiceUnit({ binary: target + '/engine', config: target + '/config.json', networkUnit, guardUnit, role: input.role, ...(clock ? {clockRecoveryUnit: clockUnit} : {}) })]]);
+  if(host){
+    // Network owner starts the engine only after preparation. It alone is
+    // enabled at boot; direct engine enable is deliberately not offered.
+    units.set(unitName,units.get(unitName).replace('\n[Install]\nWantedBy=multi-user.target\n','\n'));
+    for(const [n,b] of host.units)units.set(n,b);
+  }
   if (clock) units.set(clockUnit, nativeClockRecoveryUnit({consumerUnit:unitName,script:target+'/clock.py',config:target+'/clock.json',stateDirectory:target+'/clock-state'}));
   const unit = units.get(unitName);
   const at = p => path.join(root, p);
@@ -97,7 +107,7 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     for (const suffix of ['', '.d']) need(!exists(at(dir + '/' + unitName + suffix)), 'instance_already_present');
   }
   for (const p of ['/etc/systemd/system', '/opt']) directory(at(p), false, root);
-  const dependencies = Object.fromEntries((site?.dependencies ?? [networkUnit, guardUnit]).map(dep =>
+  const dependencies = Object.fromEntries((site?.dependencies ?? host?.dependencies ?? [networkUnit, guardUnit]).map(dep =>
     [dep, hash(regular(at('/etc/systemd/system/' + dep), 65536))]));
   const files = new Map([['engine', { bytes: engine, mode: 0o755 }]]);
   const rewritten = structuredClone(input);
@@ -137,11 +147,16 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     for (const name of nativeSiteSources) files.set('control/' + name, { bytes: regular(fileURLToPath(new URL('../' + name, import.meta.url)), 128 * 1024), mode: 0o644 });
     for (const [name, body] of units) files.set('units/' + name, { bytes: Buffer.from(body), mode: 0o644 });
   }
+  if(host){
+    for(const [n,body] of host.files)files.set(n,{bytes:Buffer.from(body),mode:0o600});
+    for(const n of nativeHostSources)files.set('control/'+n,{bytes:regular(fileURLToPath(new URL('../'+n,import.meta.url)),128*1024),mode:0o644});
+    for(const [n,body] of units)files.set('units/'+n,{bytes:Buffer.from(body),mode:0o644});
+  }
   const manifest = { schema: 1, kind: 'clean-vpn-native-install', name, role: input.role, unit: unitName,
     transport: combo ? 'combo-tls' : transparent ? 'transparent-tls' : 'boring-tls',
     mutableDirectories: replay ? [{ name: 'replay', mode: 0o700, purpose: 'durable-replay-no-automatic-reset' }] : clock ? [{name:'clock-state',mode:0o700,purpose:'clock-budget-and-floor-no-reset'}] : [],
     ...(clock ? {clockUnit} : {}),
-    networkUnit, guardUnit, dependencies, activation: site?.activation ?? unitName,
+    networkUnit, guardUnit, dependencies, activation: site?.activation ?? host?.activation ?? unitName,
     units: [...units.keys()], files: [...files].map(([name, f]) => ({ name, mode: f.mode, sha256: hash(f.bytes) })) };
   if (!apply) return { status: 'eligible', unit: unitName, target, fileCount: files.size, activation: 'not-requested' };
   directory(at('/opt/clean-vpn-native'), true, root);
@@ -185,7 +200,7 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   }
   fault('published');
   exclusive(bundle + '/installed.json', JSON.stringify(manifest) + '\n', 0o600); syncDirectory(bundle);
-  return { status: 'installed-disabled', unit: unitName, target, activation: 'not-requested',
-    activation: site?.activation ?? unitName,
+  return { status: 'installed-disabled', unit: unitName, target,
+    activation: site?.activation ?? host?.activation ?? unitName,
     next: 'Review external network dependencies before explicit daemon-reload and enable/start of activation unit.' };
 }
