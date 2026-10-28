@@ -8,6 +8,8 @@
 контроллера, сохранённый Chromium-derived профиль и независимый pcap. Старый
 Node VPN для него не требуется. [Текущий план и границы](scripts/clean-vpn-native-night-20261029.md).
 Постоянный native autostart на физических узлах пока не включён.
+Для existing VPS готов [scoped exit owner](scripts/clean-vpn-native-exit-host.md),
+сохраняющий чужие firewall rules и службы. [Итог ночной приёмки и следующий этап](scripts/clean-vpn-native-night-20261029-report.md).
 
 | Native transport | Проверенный путь и ограничения |
 | --- | --- |

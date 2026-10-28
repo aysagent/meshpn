@@ -291,7 +291,9 @@
     "usbRescue": "active",
     "temporaryMacTransitBlock": "removed",
     "macNetworking": "unchanged",
-    "trialInstallation": "three disabled bundles archived privately; owned installed units and temporary window units removed"
+    "trialInstallation": "four client bundles and one standalone exit bundle archived privately; owned unit/prepared/window files removed",
+    "oldClientAutostart": "unchanged; old client and SNAT units remain enabled but stopped, so may start after reboot",
+    "foreignVpsServices": "Docker and x-ui active, same MainPID"
   },
   "limitations": [
     "short physical smoke, not physical cold/power-loss acceptance",
@@ -321,5 +323,41 @@
       "exit-bounded-trial-cleanup-completed"
     ],
     "timingScope": "wall clock on physical Radxa; recovery includes 10-second systemd restart backoff; not throughput or capacity"
+  },
+  "standaloneExitFollowup": {
+    "status": "passed",
+    "implementationCommit": "047801354dc546af6a89a5bae963c0b95ce9ea4b",
+    "nodes": {
+      "client": {
+        "sourceCommit": "1678f4c2b3fa7351014ed8d151e0b5d008f34650",
+        "engineSha256": "15283110f602af83c90f97a9351181bb50cd4b1b111afbd1d8c9aeddd9d5e620"
+      },
+      "exit": {
+        "sourceCommit": "047801354dc546af6a89a5bae963c0b95ce9ea4b",
+        "engineSha256": "3b82309244ae074fe764d9661e44ea43aa16d59e9317003ab73184d5d7dcf574"
+      }
+    },
+    "clientStartupMs": 13954,
+    "exitStartupMs": 1063,
+    "exitOwnerSigkillRecoveryMs": 11143,
+    "checks": [
+      "both-installed-host-owners-ready",
+      "native-DNS-UDP-and-TCP",
+      "system-NSS-resolution",
+      "HTTPS-observed-exit-address",
+      "domain-HTTPS-200",
+      "direct-wlan0-HTTPS-blocked",
+      "exit-owner-SIGKILL-automatic-recovery",
+      "post-recovery-DNS-and-HTTPS-without-client-restart",
+      "client-and-exit-network-and-engine-stop-Result-success",
+      "owned-TUN-rules-and-window-units-removed",
+      "VPS-foreign-firewall-rules-identical-excluding-counters",
+      "VPS-IPv4-routes-identical",
+      "VPS-Docker-and-x-ui-active-with-same-MainPID",
+      "VPS-forwarding-unchanged",
+      "Radxa-guard-and-USB-rescue-active",
+      "post-stop-direct-HTTPS-blocked"
+    ],
+    "capture": "No additional pcap in this final exit-only lifecycle smoke; prior physical and runtime wire evidence is recorded separately."
   }
 }

@@ -96,7 +96,7 @@ engine. Guard не снимается. SIGKILL engine допускает его 
   тот же тест пройден на Linux. Kernel netns-тест через amd64 эмуляцию не получил
   поддержку iptables; успешная матрица выполнена на native ARM64.
 
-Дополнительно прошли три настоящие загрузки QEMU с ext4 state disk, 22 checks:
+Дополнительно прошли три настоящие загрузки QEMU с ext4 state disk, 30 checks:
 установка, autostart, native update/rollback, crash recovery owner, guard failure.
 [Отчёт](../fixtures/clean-vpn-native-host-boot-report.json). Сохранены ограничения:
 fixture-сеть, восстановление артефактов в initramfs, без time fault и физического

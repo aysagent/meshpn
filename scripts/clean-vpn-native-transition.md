@@ -4,12 +4,13 @@
 
 Самостоятельный client checkpoint: [host network owner](clean-vpn-native-host-network.md).
 21 реальная kernel-проверка, 14 systemd/native/USB сценариев, 23 installer
-regressions; 22 проверки в трёх загрузках VM с update/rollback. Два временных
-физических smoke Radxa↔VPS прошли, включая engine и owner SIGKILL. Свежая админка
+regressions; 30 проверок в трёх загрузках VM с update/rollback. Временные
+физические smoke Radxa↔VPS прошли, включая engine и owner SIGKILL. Свежая админка
 управляет native network owner без старого Node VPN (23 unit + 9 integration).
 Сводка: [план 29 октября](clean-vpn-native-night-20261029.md). Совместная приёмка
-нового host-profile с ошибочными часами, scoped постоянный exit owner и
-физический boot/power-loss остаются отдельными задачами.
+нового host-profile с ошибочными часами и физический boot/power-loss остаются
+отдельными задачами. Scoped exit owner уже реализован и прошёл отдельный
+физический smoke без постоянной активации.
 
 По уточнению пользователя старый Node.js VPN не является поддерживаемым продуктом.
 Бесшовная миграция, совместимость с legacy, переключатель legacy/native и

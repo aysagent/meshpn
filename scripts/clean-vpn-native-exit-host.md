@@ -112,5 +112,15 @@ rollback плохого кандидата проверены. Параллел�
 только в пустом netns с отдельным `/run`; systemd fixture —
 `CVPN_DISPOSABLE_EXIT_SYSTEMD=1 node scripts/lib/native-exit-host-systemd-lab.mjs`
 только в одноразовом NIC-less окружении с `/project` и native engine.
-Boot-матрица новой пары выполняется отдельно; контейнер не доказывает cold boot
-или физический power loss VPS.
+[Boot-матрица новой пары](../fixtures/clean-vpn-native-host-boot-report.json)
+прошла: 30 проверок на трёх загрузках QEMU, включая автозапуск и SIGKILL exit
+owner. Это не физический power loss VPS.
+
+Затем прошёл временный [Radxa↔VPS smoke](../fixtures/clean-vpn-native-host-physical-report.json)
+на `0478013`: standalone exit готов за 1.063 с, recovery его owner после
+SIGKILL за 11.143 с. DNS/HTTPS до и после аварии прошли. После stop совпали
+исходные IPv4 routes и foreign firewall rules (без counters); Docker/x-ui
+сохранили MainPID, forwarding остался 1. Оба native instance остановлены,
+собственные unit/prepared/window файлы удалены, bundles архивированы приватно.
+Новый постоянный autostart не включён; дополнительный pcap в этом последнем
+exit-only lifecycle smoke не снимался.

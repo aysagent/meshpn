@@ -27,7 +27,7 @@
   ],
   "nativeOnly": true,
   "labScriptSha256": "53a0049d3d03927c2291b44e8caa128896164952c37b0012d7ac187250653063",
-  "serviceUnitRendererSha256": "8a6295dcb756949166124a02990443d82b351b0b6eeb3efb4b4fecc5f53d80bc",
+  "serviceUnitRendererSha256": "e752abbfa45b7391b76013543aea2fdf9c5e36bf1ee7062bc9ada20f85561f85",
   "clean-vpn-engineSha256": "cf89597bec9b749f94784974a3b4b5ddea06b4c7b77847a12b03e918e9b5ec0a",
   "socket-testSha256": "8f32f95e9bd9e11fa2a9115cdfbbab99bb6279c5887c8eaaf972739fac265665",
   "realTunPeers": 1,
@@ -38,10 +38,12 @@
   "boots": [
     {
       "phase": 0,
-      "bootId": "f998b61d-032c-4264-a03c-8e624280faab",
+      "bootId": "58ada3d4-519c-4f7a-b7fc-0320604d38e2",
       "checks": [
         "installed-disabled",
+        "exit-installed-disabled",
         "installed-data-dns",
+        "exit-owner-and-engine-active",
         "clock-not-needed",
         "native-update",
         "updated-data-dns",
@@ -50,29 +52,36 @@
         "clean-stop-status",
         "stop-blocks-egress",
         "stop-removes-owned-tun",
-        "foreign-state-preserved"
+        "foreign-state-preserved",
+        "exit-stop-clean",
+        "exit-foreign-state-preserved"
       ],
       "timings": {}
     },
     {
       "phase": 1,
-      "bootId": "2e0c9bdc-3abf-40b2-ad17-315ca33f8996",
+      "bootId": "63e565bd-aa2e-4d25-a2cb-529e0ecf1446",
       "checks": [
         "boot-autostart-data-dns",
+        "exit-owner-and-engine-active",
         "clock-not-needed",
         "boot-owner-crash-recovery",
+        "boot-exit-owner-crash-recovery",
         "clean-stop-status",
         "stop-blocks-egress",
         "stop-removes-owned-tun",
-        "foreign-state-preserved"
+        "foreign-state-preserved",
+        "exit-stop-clean",
+        "exit-foreign-state-preserved"
       ],
       "timings": {
-        "ownerRecoveryMs": 112624
+        "ownerRecoveryMs": 113654,
+        "exitOwnerRecoveryMs": 22566
       }
     },
     {
       "phase": 2,
-      "bootId": "7839ff39-1d30-41cf-8637-02c8f9cc3a2b",
+      "bootId": "ce2ba21a-e54c-4f26-945f-e3f797f288d5",
       "checks": [
         "failed-guard-stops-engine",
         "failed-guard-no-tun",
@@ -82,12 +91,14 @@
       "timings": {}
     }
   ],
-  "installerSha256": "f75881ef512be8402c525efc4f3521570f73ea2837b7a79019a01e3d9f671a25",
-  "bootDriverSha256": "2459969c4edbfa13e8fab821f8f42b2c4e7cc650d465e644b7801e96c0c838c1",
+  "installerSha256": "19b5ac2f48b302e9f0019894491c9b0b8f1ffad3beec23bf8164a4f1b959ca55",
+  "bootDriverSha256": "14116aef8b4760344de5e21420537a7d15d95df89ddfa92710da51f103d7e115",
   "code": 0,
   "benchmarks": [],
+  "scopedExistingExit": true,
   "observations": [
-    "Earlier 90-second owner-recovery deadline expired under nested TCG; this 240-second bounded matrix passed.",
-    "Both graceful stops now explicitly assert Result=success after the KillMode=mixed fix."
+    "Standalone client and scoped exit use installed network owners on every boot.",
+    "Owner recovery budget remains bounded at 240 seconds for nested TCG.",
+    "Boot topology uses local fixture origins; actual NAT to separate origin is covered by the exit systemd matrix."
   ]
 }
