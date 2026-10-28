@@ -753,8 +753,17 @@ static void socket_tx_worker(void *arg)
         SemaphoreHandle_t tls_mutex = s_socket.tls_io_mutex;
         uint32_t epoch = s_socket.epoch, generation = s_socket.generation;
         int fd = s_socket.fd;
+        if (!active || fd < 0) {
+            /* RX may cancel a just-published link before TX receives its
+             * first notification. It still needs an acknowledgement before
+             * destroying the TLS context/socket. No TX I/O has started. */
+            s_socket.tx_stopped = true;
+            TaskHandle_t rx_task = s_socket_rx_task;
+            UNLOCK();
+            if (rx_task) xTaskNotifyGive(rx_task);
+            continue;
+        }
         UNLOCK();
-        if (!active || fd < 0) continue;
 
         tx->length = tx->used = tx->count = tx->completed = 0;
         int error = 0;
@@ -839,6 +848,9 @@ static void socket_tx_worker(void *arg)
                 error = ETIMEDOUT; failure_reason = "tx_frame_timeout"; break;
             }
         }
+        /* This is the final descriptor access. Once tx_stopped is visible,
+         * RX may close fd and another task may reuse the descriptor number. */
+        if (error) shutdown(fd, SHUT_RDWR);
         LOCK();
         s.tx_dropped += datagram ? udp_loaded : tx->count - tx->completed;
         if (s_socket.epoch == epoch) {
@@ -850,7 +862,6 @@ static void socket_tx_worker(void *arg)
         }
         TaskHandle_t rx_task = s_socket_rx_task;
         UNLOCK();
-        if (error) shutdown(fd, SHUT_RDWR);
         if (rx_task) xTaskNotifyGive(rx_task);
     }
 }
