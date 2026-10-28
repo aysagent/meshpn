@@ -66,12 +66,16 @@ engine. Guard не снимается. SIGKILL engine допускает его 
 [Отчёт](../fixtures/clean-vpn-native-host-boot-report.json). Сохранены ограничения:
 fixture-сеть, восстановление артефактов в initramfs, без time fault и физического
 power loss. В nested TCG на cleanup+повторный запуск требуется больше 90 секунд;
-для VM использован конечный бюджет 240 секунд. При остановке во время синхронного
-аудита owner может получить failed status; ExecStopPost восстанавливает сеть.
+для VM использован конечный бюджет 240 секунд. Найденная гонка stop с синхронным аудитом исправлена через `KillMode=mixed`: SIGTERM
+получает основной процесс, остаточные дети уничтожаются после его выхода или
+таймаута. Отдельная ARM64 systemd-матрица теперь содержит 11 проверок, включая
+принудительную остановку во время задержанного дочернего audit command.
 
 На ядрах Radxa и VPS прошла предыдущая матрица 18 checks в отдельных net/mount
-namespace с tmpfs `/run`, без изменения их рабочей сети. Физическая активация,
-полный leak/soak/performance и ежедневная установка этим не подтверждаются.
+namespace с tmpfs `/run`, без изменения их рабочей сети. Вслед за этим прошёл короткий [физический smoke](../fixtures/clean-vpn-native-host-physical-report.json):
+boring-tls client → packet branch combo exit, DNS/HTTPS, engine SIGKILL, cleanup
+и два независимо снятых ClientHello, совпавших с профилем. Полный leak/soak,
+physical power loss и ежедневная установка этим не подтверждаются.
 
 Воспроизведение kernel matrix: `CVPN_DISPOSABLE_HOST_NET=1 node
 scripts/test-native-host-network-linux.mjs` только в отдельном пустом netns.
@@ -89,3 +93,11 @@ node scripts/clean-vpn-native-macos-lab.mjs --native-host-boot
 Установщик использует фактический путь Node (в том числе NVM). Не удаляйте эту
 версию Node, пока на неё ссылается network unit. При отсутствии uplink guard/DNS
 остаются закрытыми; service restart не исчерпывает фиксированный start-limit.
+
+
+Контроллер ждёт собственный `wlan0` через preflight/retry. Общий
+`network-online.target` не запрашивается: на Radxa он ожидал неиспользуемые
+интерфейсы и задержал первый физический запуск. Guard остаётся обязательным.
+Остановка старого `clean-vpn-usb-snat.service` сама по себе не удаляет его три
+правила; перед первым native запуском их убирают штатным
+`clean-vpn-usb-snat.mjs --remove --apply`. Чужой uplink MASQUERADE сохраняется.

@@ -38,7 +38,8 @@ try{
   const common={version:1,address:'154.62.226.216',port:443,tun:'tun0',secret_path:'/config/psk'};
   put('/config/client.json',JSON.stringify({...common,role:'client',dns:true,server_name:'runtime.test',sni:'runtime.test',ca:'/config/cert.pem'}));
   put('/config/exit.json',JSON.stringify({...common,role:'exit',cert:'/config/cert.pem',key:'/config/key.pem'}));
-  const executable=fs.readFileSync('/project/scripts/autostart/killswitch.sh');put('/usr/local/bin/clean-vpn-killswitch.sh',executable,0o755);
+  const executable=fs.readFileSync('/project/scripts/autostart/killswitch.sh');put('/usr/local/bin/fixture-killswitch.sh',executable,0o755);
+  put('/usr/local/bin/clean-vpn-killswitch.sh','#!/bin/sh\nif [ "$1" = status ] && [ -e /run/hold-native-audit ]; then touch /run/native-audit-entered; sleep 2; fi\nexec /usr/local/bin/fixture-killswitch.sh "$@"\n',0o755);
   unit('host-lab-guard.service',`[Unit]\nDescription=Disposable native guard\n[Service]\nType=oneshot\nRemainAfterExit=yes\nNetworkNamespacePath=/run/netns/client\nExecStart=/usr/local/bin/clean-vpn-killswitch.sh up --scope=both --ipv6=block --tun=tun0 --server=154.62.226.216 --ssh-port=22 --usb-dns=1 --usb-strict=1\n`);
   unit('host-lab-exit.service',`[Service]\nType=notify\nNetworkNamespacePath=/run/netns/exit\nExecStart=${binary} --config /config/exit.json --service\nRestart=on-failure\nRestartSec=1\n`);
   unit('host-lab-origin.service',`[Service]\nNetworkNamespacePath=/run/netns/exit\nExecStart=/usr/bin/node /project/scripts/lib/native-runtime-lab-origin.mjs\n`);
@@ -51,7 +52,8 @@ try{
   const dnsCode=`import {dnsProbe} from '/project/scripts/clean-vpn-native-runtime-health.mjs';await dnsProbe('10.99.0.2',1053,false);await dnsProbe('10.99.0.2',1053,true);console.log('DNS_OK');`;
   assert.equal(ns('client','node',['--input-type=module','-e',dnsCode]),'DNS_OK');check('native UDP and TCP DNS');
   const oldPid=prop(engine,'MainPID');ctl('kill','--signal=SIGKILL',engine);await wait(()=>{assert.notEqual(prop(engine,'MainPID'),oldPid);assert.equal(prop(engine,'ActiveState'),'active');https('usb');});check('engine SIGKILL restarts with network owner retained');
-  ctl('stop',network);await wait(()=>assert.equal(prop(network,'ActiveState'),'inactive'));
+  put('/run/hold-native-audit','hold');await wait(()=>assert.ok(fs.existsSync('/run/native-audit-entered')));fs.unlinkSync('/run/hold-native-audit');
+  ctl('stop',network);await wait(()=>assert.equal(prop(network,'ActiveState'),'inactive'));assert.equal(prop(network,'Result'),'success');check('graceful stop during synchronous audit succeeds');
   assert.equal(prop(engine,'MainPID'),'0');assert.ok(!JSON.parse(ip('-n','client','-j','link')).some(l=>l.ifname==='tun0'));
   assert.throws(()=>https('usb'));assert.match(ns('client','/usr/local/bin/clean-vpn-killswitch.sh',['status']),/IPv6: cvks4/);check('network stop cleans owned state and keeps guard closed');
   ctl('start',network);await wait(()=>{assert.equal(prop(engine,'ActiveState'),'active');https('usb');});check('network restart recreates TUN without legacy');

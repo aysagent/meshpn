@@ -7,9 +7,8 @@ export function nativeHostUnit({script,config,profile,node='/usr/bin/node'}){
   return `[Unit]
 Description=clean-vpn native Radxa network owner
 Requires=${c.guard_unit}
-After=${c.guard_unit} network-online.target
+After=${c.guard_unit} network.target
 BindsTo=${c.guard_unit}
-Wants=network-online.target
 StartLimitIntervalSec=0
 
 [Service]
@@ -19,7 +18,9 @@ ExecStopPost=${node} ${script} recover --config=${config}
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=180
-KillMode=control-group
+# Let a synchronous journal command finish before the main process handles
+# SIGTERM. Remaining children are still killed after main exit or stop timeout.
+KillMode=mixed
 UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=strict

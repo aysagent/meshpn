@@ -12,7 +12,7 @@ test('fixed host profile rejects ambiguous dependencies and executable injection
 test('network owner has independent cleanup and no legacy activation',()=>{
   const unit=nativeHostUnit({script:'/opt/clean-vpn-native/daily/control/clean-vpn-native-host-network.mjs',config:'/opt/clean-vpn-native/daily/network.json',profile});
   assert.match(unit,/ExecStopPost=.* recover --config=/);assert.match(unit,/BindsTo=clean-vpn-killswitch.service/);
-  assert.match(unit,/KillMode=control-group/);assert.doesNotMatch(unit,/clean-vpn\.service|flush|CAP_SYS_TIME/);
+  assert.match(unit,/KillMode=mixed/);assert.doesNotMatch(unit,/clean-vpn\.service|flush|CAP_SYS_TIME|network-online/);
   assert.throws(()=>nativeHostUnit({script:'/x/../y',config:'/config',profile}));
   const nvm=nativeHostUnit({script:'/opt/owner.mjs',config:'/opt/config.json',profile,node:'/root/.nvm/versions/node/v24.13.0/bin/node'});
   assert.match(nvm,/ExecStopPost=\/root\/\.nvm\/versions\/node\/v24.13.0\/bin\/node /);

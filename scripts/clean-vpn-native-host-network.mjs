@@ -43,5 +43,5 @@ try{
     });
     // Independent ExecStopPost owns cleanup on both graceful and abrupt exit.
   }
-}catch(e){console.error('native-host-network: '+(e.code??e.message?.split('\n')[0]??'failed'));process.exitCode=1;}
+}catch(e){const reason=e.message?.split('\n')[0];console.error('native-host-network: '+(/^native_[a-z0-9_]+$/.test(reason)?reason:e.code??'failed'));process.exitCode=1;}
 finally{clearInterval(timer);dns?.release();host?.release();store?.close();}

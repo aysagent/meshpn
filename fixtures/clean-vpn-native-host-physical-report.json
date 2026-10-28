@@ -1,0 +1,301 @@
+{
+  "schema": 1,
+  "kind": "native-host-physical-smoke",
+  "timestamp": "2026-10-28T22:43:30.934535+00:00",
+  "status": "passed",
+  "sourceCommit": "2d198f4a7c22238c5f573f50df6edf5157ea21ab",
+  "client": "Radxa Zero 3W arm64; standalone host-profile",
+  "exit": "VPS x86_64; bounded combo exit, boring-tls packet branch",
+  "permanentActivation": false,
+  "checks": [
+    "native-client-and-network-ready",
+    "native-DNS-UDP-NOERROR",
+    "native-DNS-TCP-NOERROR",
+    "system-NSS-resolution",
+    "HTTPS-observed-exit-address",
+    "domain-HTTPS-200",
+    "direct-wlan0-HTTPS-blocked",
+    "engine-SIGKILL-recovered",
+    "post-recovery-HTTPS",
+    "network-stop-success",
+    "owned-TUN-and-rules-removed",
+    "foreign-wlan0-MASQUERADE-retained",
+    "guard-and-USB-rescue-active",
+    "post-stop-direct-HTTPS-blocked",
+    "exit-bounded-trial-cleanup-completed"
+  ],
+  "resourcesAfterEngineRestart": {
+    "rssKiB": 4584,
+    "threads": 2,
+    "fileDescriptors": 8,
+    "scope": "one sample, not a soak or throughput measurement"
+  },
+  "wire": {
+    "pcapSha256": "7ac480da2dd98042b00e3744097017fc437ae4b4e0f7abe9c5d534b6bc7c534a",
+    "counts": {
+      "packets": 555,
+      "selected": 275,
+      "withoutSyn": 0,
+      "fragmented": 0,
+      "truncated": 0
+    },
+    "connections": [
+      {
+        "status": "observed",
+        "sni": [
+          "www.trustpilot.com"
+        ],
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "ja3": "3d0a98053bab46c3346f37554acba5df",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profile": {
+          "schema": 1,
+          "kind": "clean-vpn-native-tls-observation",
+          "status": "matched",
+          "profileId": "chromium-156-bounded-cold-v1",
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              10,
+              65037,
+              51,
+              27,
+              43,
+              17613,
+              11,
+              0,
+              5,
+              23,
+              13,
+              45,
+              18,
+              16,
+              65281
+            ],
+            "grease": true,
+            "certificate_compression": [
+              2
+            ],
+            "application_settings": [
+              "h2"
+            ]
+          },
+          "keyShares": [
+            {
+              "group": 56026,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "3d0a98053bab46c3346f37554acba5df",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392,10-65037-51-27-43-17613-11-0-5-23-13-45-18-16-65281,4588-29-23-24,0",
+          "ja3Sorted": "9fc752c58190630c49e1812906b40077",
+          "ja4": {
+            "fingerprint": "t13d0915h2_f91f431d341e_54d72502093d",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d0915h2_f91f431d341e_f77074818dd4",
+            "ja4_a": "t13d0915h2",
+            "ja4_b": "f91f431d341e",
+            "ja4_c": "54d72502093d",
+            "ja4_c_alt_sni_alpn_in_hash": "f77074818dd4",
+            "raw_r": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d0915h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8_000a,fe0d,0033,001b,002b,44cd,000b,0000,0005,0017,000d,002d,0012,0010,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          },
+          "differences": [],
+          "scope": "first-cold-ClientHello-fields-only-not-browser-or-HTTP2-equivalence"
+        }
+      },
+      {
+        "status": "observed",
+        "sni": [
+          "www.trustpilot.com"
+        ],
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "ja3": "72d8eaa59b6bc9dddf23aedf6daae10a",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profile": {
+          "schema": 1,
+          "kind": "clean-vpn-native-tls-observation",
+          "status": "matched",
+          "profileId": "chromium-156-bounded-cold-v1",
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              43,
+              13,
+              65281,
+              27,
+              0,
+              23,
+              18,
+              11,
+              17613,
+              45,
+              10,
+              5,
+              16,
+              65037,
+              51
+            ],
+            "grease": true,
+            "certificate_compression": [
+              2
+            ],
+            "application_settings": [
+              "h2"
+            ]
+          },
+          "keyShares": [
+            {
+              "group": 43690,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "72d8eaa59b6bc9dddf23aedf6daae10a",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392,43-13-65281-27-0-23-18-11-17613-45-10-5-16-65037-51,4588-29-23-24,0",
+          "ja3Sorted": "9fc752c58190630c49e1812906b40077",
+          "ja4": {
+            "fingerprint": "t13d0915h2_f91f431d341e_54d72502093d",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d0915h2_f91f431d341e_f77074818dd4",
+            "ja4_a": "t13d0915h2",
+            "ja4_b": "f91f431d341e",
+            "ja4_c": "54d72502093d",
+            "ja4_c_alt_sni_alpn_in_hash": "f77074818dd4",
+            "raw_r": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d0915h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8_002b,000d,ff01,001b,0000,0017,0012,000b,44cd,002d,000a,0005,0010,fe0d,0033_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          },
+          "differences": [],
+          "scope": "first-cold-ClientHello-fields-only-not-browser-or-HTTP2-equivalence"
+        }
+      }
+    ],
+    "capture": "independent tcpdump on VPS eth0; source address/port omitted from committed report"
+  },
+  "observations": [
+    "Initial preflight refused three retained old USB SNAT/MSS rules; removed with existing scoped project helper after stopping its service.",
+    "Global network-online wait delayed startup; follow-up controller fix removes this dependency."
+  ],
+  "endState": {
+    "nativeClient": "stopped",
+    "nativeExit": "stopped",
+    "oldClientAndSnat": "stopped; not automatically restarted",
+    "guard": "active",
+    "usbRescue": "active",
+    "temporaryMacTransitBlock": "removed",
+    "macNetworking": "unchanged"
+  },
+  "limitations": [
+    "short physical smoke, not physical cold/power-loss acceptance",
+    "no time fault or clock bootstrap during this run",
+    "USB forwarding tested in lab; physical Mac transit was intentionally blocked",
+    "selected HTTPS direct-egress negative probe is not an all-protocol leak proof",
+    "first ClientHello profile match is not complete browser/HTTP2 equivalence",
+    "native instance files retained disabled pending follow-up checks"
+  ]
+}
