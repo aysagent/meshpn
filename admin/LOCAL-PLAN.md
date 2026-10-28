@@ -1,8 +1,10 @@
-# Local-only continuation, 2026-10-28
+# Native continuation, 2026-10-28
 
-No SSH to Radxa/VPS, no Mac network/clock/trust changes. Linux tests run only
-in the dedicated Podman/QEMU lab. dnsmasq migration remains research-only.
-Physical deployment is a separate acceptance step.
+The user subsequently made Radxa available and authorized physical checks.
+Temporary checks on Radxa/VPS are recorded in the
+[binary-update acceptance report](../scripts/clean-vpn-native-update-report.md).
+No Mac network/clock/trust changes. dnsmasq migration remains research-only.
+Permanent native deployment and physical boot are separate acceptance steps.
 
 OpenWrt research is recorded in [the OpenWrt integration plan](../scripts/clean-vpn-openwrt.md).
 Scope: locally installed native client/exit packages and LuCI feature parity,
@@ -24,6 +26,8 @@ This is an additional platform track, not completion of the checkpoints below.
 3. Native installation/update and legacy-owner migration: review ownership,
    immutable releases, durable activation/rollback, secrets/replay retention;
    interrupted update and cold-boot checks in VM before physical instructions.
+   Binary-only updates for a fresh named boring-tls installation are now checked;
+   existing-host legacy-owner migration is still outstanding.
 4. Configurable native DNS upstreams, validation and no direct fallback.
 5. Wi-Fi profile recovery/failure matrix, followed by capture/profile/independent
    observer workflow. Radio/real WAN acceptance remains physical.
@@ -43,5 +47,9 @@ of new changes. No claim of production migration until its own gates pass.
 - NIC-less QEMU standalone API/broker/native acceptance: 8/8, including SIGKILL,
   native recovery and renewed login after frontend restart. See
   [QEMU evidence](test/last-qemu-report.json). Native binary CTest: 10/10.
-- Installer/release updates and legacy migration are still separate work;
-  config rollback must not be described as binary-update rollback.
+- Existing-host legacy migration remains outstanding; config rollback must not
+  be described as binary-update rollback. The separate
+  binary-update checkpoint passed 21 local tests, 18 regressions and 8 real
+  isolated checks per device, plus 46 gates across three QEMU boots. Full
+  Radxa/VPS profile smoke and legacy restoration passed on repeat; the first
+  restored-legacy download timeout remains recorded. See the linked report.

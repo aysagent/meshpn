@@ -1,5 +1,7 @@
 # Native binary update: отдельная транзакция
 
+Приёмка: [46 VM gates и физические Radxa/VPS проверки](clean-vpn-native-update-report.md).
+
 2026-10-28. Опциональное обновление **только engine** у новой именованной
 boring-tls установки, созданной `clean-vpn-native-install.mjs` с внешними
 network/guard units. Это не миграция legacy clean-vpn и не обновление DNS,
@@ -21,6 +23,12 @@ unit-файлов, Node runtime, библиотек ОС или конфигур
   фиксируется commit. Остановленный экземпляр сохраняет stopped state.
 - Ошибка запуска возвращает предыдущий executable и состояние службы. Чужие
   изменения защищённых файлов вызывают отказ с сохранением журнала, не overwrite.
+- Привязанные unit/drop-in/controller файлы дополнительно сверяются с enrollment
+  до операции. Обновление не принимает молча изменённого владельца сети/guard.
+- До записи нужен запас диска для staging и rollback; частичный временный файл
+  удаляется при ошибке записи. Артефакты ограничены 64 MiB. Лимит RAM worker:
+  128 MiB + 8 × округлённый размер большего ELF в MiB, включая учёт tmpfs copies.
+  Это верхняя граница cgroup, не обещание наличия такого объёма RAM на хосте.
 - `--apply` работает в bounded transient systemd unit. Его независимый
   `ExecStopPost` выполняет recovery после обрыва worker/SSH. Runtime deadline
   ограничен; длительная недоступность exit может привести к failed rollback,
@@ -68,6 +76,14 @@ node /opt/clean-vpn-native/pilot/update-control/clean-vpn-native-update.mjs --re
 `node --test scripts/test-native-binary-update.mjs` проверяет реальные файловые
 записи и SIGKILL дочернего updater в шести durable boundaries. Service adapter
 в этих unit-тестах моделируется; это не systemd-приёмка.
+
+`sudo node scripts/clean-vpn-native-update-check.mjs --apply` — отдельный bounded
+physical architecture/systemd check. Создаёт случайную именованную пару client/
+exit в namespace без veth/WAN; проверяет TLS с профилем, обновление обеих ролей,
+отказ после чужой правки unit, rollback, stopped state и SIGKILL worker.
+Временные units/bundles удаляются, host firewall сравнивается без счётчиков.
+Независимый ExecStopPost убирает fixture после обрыва SSH/worker. Это не WAN,
+DNS throughput или физический reboot; действующий VPN хоста не останавливается.
 
 `npm run lab:native:mac -- --native-boot` расширен реальным обновлением ELF,
 отказом candidate, передачей данных после обновления и незавершённой транзакцией

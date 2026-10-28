@@ -1,5 +1,12 @@
 # Полный native-переход: рабочий статус
 
+Новый checkpoint 2026-10-28: [binary update и Radxa/VPS приёмка](clean-vpn-native-update-report.md).
+Новая именованная boring-tls установка поддерживает journalled binary rollback
+и recovery до старта после boot. Проверены 46 gates в трёх QEMU boot и по 8
+изолированных проверок на физических ARM64/x64. Полный native profile WAN/USB
+smoke и возврат legacy прошли на повторе; первый download timeout сохранён.
+Постоянная existing-host миграция и физический reboot ещё не выполнялись.
+
 Новый checkpoint 2026-10-28: [USB-админка и физическая приёмка](../admin/NIGHT-REPORT.md).
 Systemd native + условный clock recovery временно проверены с существующими
 DNS/route owners Radxa; финальный smoke/rollback passed. На исправных часах

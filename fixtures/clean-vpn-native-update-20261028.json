@@ -1,0 +1,263 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-update-acceptance",
+  "date": "2026-10-28",
+  "implementationRevision": "6b9ed948cd8c456a97b891e4b966680c582f2cde",
+  "sourceSha256": {
+    "scripts/clean-vpn-native-update.mjs": "f8d4cacefc56ed354c9412d50a8b585f5243d745ae28a0ec29b8748991a59f6a",
+    "scripts/lib/native-binary-update.mjs": "719be78fbc2e820ff2d1b24bd8d4fb99f63ae3c97394fd260ee357b15b5f5a21",
+    "scripts/clean-vpn-native-update-check.mjs": "65ccbec8120ff3d8bb0c31e56be534037ff94e76c2c5e976de686890b47d5f61",
+    "scripts/lib/native-boot-vm.mjs": "8624bff841d726e92b3107ecc4f03f9c95456be26e8623acec661ad057b42757"
+  },
+  "localTests": {
+    "passed": 21,
+    "failed": 0
+  },
+  "deviceRegressions": {
+    "radxa": 18,
+    "vps": 18
+  },
+  "nativeCTest": {
+    "radxa": 10,
+    "vps": 10
+  },
+  "boot": {
+    "report": "clean-vpn-native-update-boot-20261028.json",
+    "passed": 46,
+    "boots": 3,
+    "coldPhysicalBoot": false
+  },
+  "devices": {
+    "radxa": {
+      "status": "passed",
+      "kind": "native-update-isolated-physical-check",
+      "arch": "arm64",
+      "checks": [
+        "profiled-client-ready",
+        "exit-update",
+        "client-update",
+        "bound-unit-change-refused",
+        "failed-candidate-rollback",
+        "stopped-preserved",
+        "worker-sigkill-recovery",
+        "host-firewall-unchanged"
+      ],
+      "limitations": [
+        "unconnected-netns-not-WAN",
+        "TLS-readiness-not-IP-throughput",
+        "appended-ELF-fixture-not-new-production-build",
+        "no-physical-reboot"
+      ]
+    },
+    "vps": {
+      "status": "passed",
+      "kind": "native-update-isolated-physical-check",
+      "arch": "x64",
+      "checks": [
+        "profiled-client-ready",
+        "exit-update",
+        "client-update",
+        "bound-unit-change-refused",
+        "failed-candidate-rollback",
+        "stopped-preserved",
+        "worker-sigkill-recovery",
+        "host-firewall-unchanged"
+      ],
+      "limitations": [
+        "unconnected-netns-not-WAN",
+        "TLS-readiness-not-IP-throughput",
+        "appended-ELF-fixture-not-new-production-build",
+        "no-physical-reboot"
+      ]
+    }
+  },
+  "physicalSmoke": {
+    "status": "passed",
+    "transport": "boring-tls",
+    "checks": {
+      "old": {
+        "status": "ipv4-smoke-passed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 2,
+        "httpsSeconds": [
+          0.489726,
+          0.413773
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 3.685303
+        }
+      },
+      "native": {
+        "status": "ipv4-smoke-passed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 2,
+        "httpsSeconds": [
+          0.486864,
+          0.399654
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 7.682506
+        }
+      },
+      "restored": {
+        "status": "ipv4-smoke-passed",
+        "exitIp": "154.62.226.216",
+        "nss": "passed",
+        "dnsPassed": 4,
+        "dnsTotal": 4,
+        "httpsPassed": 2,
+        "httpsSeconds": [
+          0.434516,
+          0.460087
+        ],
+        "download": {
+          "status": "passed",
+          "bytes": 1048576,
+          "seconds": 2.809598
+        }
+      }
+    },
+    "rollback": "verified",
+    "guard": "verified",
+    "usb": {
+      "status": "passed",
+      "phases": {
+        "baseline": {
+          "phase": "baseline",
+          "status": "passed",
+          "dnsPassed": 4,
+          "httpsPassed": 3,
+          "downloadBytes": 1048576,
+          "exitIp": "154.62.226.216",
+          "blockedAttempts": 0,
+          "recoveryMs": 0,
+          "elapsedMs": 2549,
+          "observedAfterMs": 3778
+        },
+        "native": {
+          "phase": "native",
+          "status": "passed",
+          "dnsPassed": 4,
+          "httpsPassed": 3,
+          "downloadBytes": 1048576,
+          "exitIp": "154.62.226.216",
+          "blockedAttempts": 0,
+          "recoveryMs": 0,
+          "elapsedMs": 2506,
+          "observedAfterMs": 3778
+        },
+        "restored": {
+          "phase": "restored",
+          "status": "passed",
+          "dnsPassed": 4,
+          "httpsPassed": 3,
+          "downloadBytes": 1048576,
+          "exitIp": "154.62.226.216",
+          "blockedAttempts": 0,
+          "recoveryMs": 0,
+          "elapsedMs": 3677,
+          "observedAfterMs": 5281
+        }
+      },
+      "scope": "authenticated-Mac-USB-observations-not-independent-leak-capture",
+      "fault": {
+        "kind": "none",
+        "requestedPhysicalUplinkChange": false
+      }
+    },
+    "tlsProfile": {
+      "id": "chromium-156-bounded-cold-v1",
+      "fileSha256": "e2cf0e9e2fb68ce5a2af43d56c0be989cd525217ac73e6037ad65098d5e0be79",
+      "browserEquivalent": false,
+      "independentWireCheck": "required-separately"
+    },
+    "started": "2026-10-28T19:58:14.839Z",
+    "seconds": 101
+  },
+  "independentWire": {
+    "source": "VPS eth0 tcpdump, parsed separately on Mac",
+    "pcapSha256": "aeb3481815a00600edfbcff736d94f43994f2801f33099b18225d900c90048f5",
+    "pcapCommitted": false,
+    "connections": [
+      {
+        "status": "observed",
+        "ja3": "a44bf561179108e5d415d80dceda3b32",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profile": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "7454b04083aac52cd457959618cc037e",
+        "ja4": "t13d0311h2_55b375c5d22e_3217d83565aa",
+        "profile": "mismatch"
+      },
+      {
+        "status": "observed",
+        "ja3": "7454b04083aac52cd457959618cc037e",
+        "ja4": "t13d0311h2_55b375c5d22e_3217d83565aa",
+        "profile": "mismatch"
+      }
+    ]
+  },
+  "restoration": {
+    "equalAfterNormalization": {
+      "radxa-network": true,
+      "vps-network": true,
+      "mac-default": true
+    },
+    "normalization": [
+      "iptables counters/timestamp comments",
+      "Radxa DNS and IPv6 lifecycle owner IDs"
+    ]
+  },
+  "finalState": {
+    "radxaLegacy": "active",
+    "radxaGuard": "active",
+    "radxaUsbRescue": "active",
+    "radxaAdmin": "active",
+    "testNamespacesRemaining": 0,
+    "temporaryExitStopped": true,
+    "newDeviceKernelOOM": false,
+    "permanentNativeMigration": false,
+    "macNetworkChanged": false
+  },
+  "clock": {
+    "radxaManualForwardCorrectionSecondsApprox": 43500,
+    "source": "authenticated VPS SSH, independently compared to Mac UTC",
+    "macClockChanged": false,
+    "persistentBootstrapInstalled": false
+  },
+  "binaries": {
+    "sourceChangedSinceDeviceBuild": false,
+    "rebuiltThisRun": false,
+    "radxa": "15283110f602af83c90f97a9351181bb50cd4b1b111afbd1d8c9aeddd9d5e620",
+    "vps": "3b82309244ae074fe764d9661e44ea43aa16d59e9317003ab73184d5d7dcf574",
+    "updateCandidates": "same trusted ELF with appended fixture marker; not new production C++ version"
+  },
+  "earlierFailures": [
+    "First WAN smoke: native passed; restored legacy 1 MiB download timed out at 20s after 302319 bytes. Cause unresolved; later complete smoke passed.",
+    "VPS first isolated crash gate: systemctl --kill-whom=all returned auxiliary-process EINVAL; cleanup verified, changed to main worker and repeated.",
+    "VM initially lacked systemd-run; added executable/libraries.",
+    "VM debug ELF/tmpfs exceeded fixed worker memory budget; recovery restored old engine. Budget now scales with binary size.",
+    "VM original 128 MiB disk exhausted retaining multiple debug releases; native boot disk now 512 MiB. Added production free-space preflight and partial-write cleanup tests."
+  ],
+  "limitations": [
+    "named fresh boring-tls installation only",
+    "no legacy-owner migration",
+    "no physical reboot or power removal",
+    "physical updater checks use unconnected netns; WAN smoke is separate",
+    "readiness does not prove every destination reachable",
+    "profile match is bounded subset, not full browser equivalence",
+    "DNS/DHCP configuration and persistent clock bootstrap not migrated"
+  ]
+}
