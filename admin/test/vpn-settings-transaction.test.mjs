@@ -15,7 +15,7 @@ function fixture(t, {managed = true, running = true, fault, fail = ''} = {}) {
   const before = {role: 'client', address: '192.0.2.1', port: 443, server_name: 'old.example', sni: 'old.example'};
   const after = {...before, server_name: 'new.example', sni: 'new.example'};
   atomic(options.config, before); atomic(options.settings, {hostname: 'mpn', profile: null});
-  const calls = [], service = {running: async () => running};
+  const calls = [], service = {running: async () => running, validate: async () => {}};
   for (const op of ['guard', 'stop', 'start', 'restart', 'ready']) service[op] = async () => {
     calls.push(op); if (op === fail) throw Error('injected_failure');
   };
@@ -75,9 +75,23 @@ test('external edits block recovery before any service action or overwrite', asy
   await assert.rejects(f.tx.recover(), /vpn_transaction_external_change/);
   assert.deepEqual(f.calls, []); assert.deepEqual(readJson(f.options.config), {manual: true});
 });
+test('recovery cancels an in-progress activation instead of waiting for stable state', async t => {
+  const f=fixture(t);
+  const config=fs.readFileSync(f.options.config,'utf8'),settings=fs.readFileSync(f.options.settings,'utf8');
+  atomic(f.tx.file,{version:1,phase:'prepared',binding:f.tx.binding,running:true,
+    entries:[{before:config,after:JSON.stringify(f.after)},{before:settings,after:'{}'}]});
+  f.service.running=async()=>{throw Error('activation_in_progress');};
+  assert.equal((await f.tx.recover()).status,'rolled-back');
+  assert.deepEqual(f.calls,['stop','guard','start','ready']);
+});
 test('journal cannot redirect recovery to a different config or unit', async t => {
   const f = fixture(t); atomic(f.tx.file, {version: 1, phase: 'prepared', binding: {...f.tx.binding, unit: 'sshd.service'}, running: true, entries: []});
   await assert.rejects(f.tx.recover(), /vpn_transaction_invalid/); assert.deepEqual(f.calls, []);
+});
+test('rollback restores absence of initial UI settings file', async t => {
+  const f=fixture(t,{fail:'restart'});fs.unlinkSync(f.options.settings);
+  await assert.rejects(f.tx.apply(f.after,{hostname:'mpn'}),/vpn_apply_failed_rolled_back/);
+  assert.equal(fs.existsSync(f.options.settings),false);assert.deepEqual(readJson(f.options.config),f.before);
 });
 test('broker settings require notify and guard, and preserve stopped service', async t => {
   const f = fixture(t); fs.mkdirSync(f.options.state + '/profiles');

@@ -85,6 +85,7 @@ function usage() {
   npm run lab:native:mac -- --http2-capture
   npm run lab:native:mac -- --multi-clients
   npm run lab:native:mac -- --native-combo-boot
+  npm run lab:native:mac -- --native-admin
   npm run lab:native:mac -- --native-combo-network
   npm run lab:native:mac -- --native-combo-load
   npm run lab:native:mac -- --native-combo-benchmark

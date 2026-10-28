@@ -63,7 +63,7 @@ export class VpnSettingsTransaction {
     // Durably select rollback before stopping or replacing anything. A second
     // interruption repeats the same recovery, never activates the candidate.
     j.phase = 'rollback'; atomic(this.file, j);
-    if (this.binding.managed) await this.service.stop();
+    if (this.binding.managed) {await this.service.validate(); await this.service.stop();}
     this.verify(j);
     this.paths().forEach((file, i) => {
       const before = j.entries[i].before;

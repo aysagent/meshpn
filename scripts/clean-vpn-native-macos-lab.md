@@ -69,6 +69,9 @@ npm run lab:native:mac -- --multi-clients
 # Только подготовить toolchain/build/base, без native VM-матрицы
 npm run lab:native:mac -- --prepare
 
+# Админка: реальный systemd broker, unprivileged API, native TLS, откат и SIGKILL
+npm run lab:native:mac -- --native-admin
+
 # Основные актуальные combo-сценарии
 npm run lab:native:mac -- --native-combo-network
 npm run lab:native:mac -- --native-combo-boot
@@ -109,3 +112,8 @@ Container image адресуется хешем Containerfile. Host-boot base а
 
 Успешный macOS прогон подтверждает ту же изолированную x86-64 VM-логику, но не
 заменяет ARM64/Radxa, WAN и физическую Radxa ↔ VPS приёмку.
+
+`--native-admin` проверяет настоящий frontend/API и broker с native client/exit,
+TUN и firewall внутри NIC-less VM. Пока frontend слушает loopback в госте;
+это не проверка OCI-контейнера, USB socket binding или mDNS. Guard adapter
+проверяет реальные DROP-политики fixture namespace; Wi-Fi радио не моделируется.

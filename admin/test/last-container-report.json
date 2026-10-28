@@ -1,0 +1,35 @@
+{
+  "status": "passed",
+  "kind": "meshpn-admin-real-container-lab",
+  "realFrontend": true,
+  "realBroker": true,
+  "systemdPid1": true,
+  "realNativeTls": true,
+  "realTun": true,
+  "hostNetwork": false,
+  "publishedPorts": false,
+  "frontendUid": 65534,
+  "frontendCapabilities": [],
+  "engineSha256": "f0eb2a326e6c67491da4e1d895745b3e3c125c5208fc38446e396cb8e8490d72",
+  "brokerSha256": "b0d3a4caa7b90309c8ad5e9982b3db38e6a381898daa38356841c7250b109807",
+  "checks": [
+    "USB_PROXY",
+    "AUTH",
+    "REAL_NATIVE_DATA",
+    "SETTINGS_APPLY",
+    "TLS_FAILURE_ROLLBACK",
+    "STOPPED_STAYS_STOPPED",
+    "BROKER_CRASH_ROLLBACK",
+    "GUARD_REMAINS",
+    "CLEANUP"
+  ],
+  "limitations": [
+    "fixture-firewall-adapter",
+    "fixture-native-units-disable-ProtectControlGroups-and-PSI",
+    "fixture-shared-container_init_t-SELinux-domain-not-host-policy-validation",
+    "veth-not-physical-USB",
+    "no-reboot",
+    "cached-arm64-engine-not-rebuilt",
+    "not-physical-Radxa-WAN"
+  ]
+}

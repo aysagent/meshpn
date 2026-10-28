@@ -190,7 +190,7 @@ case "${1:-}" in
   run)
     test "$#" = 2 || fail run_mode_required
     case "$2" in
-      --native-only|--native-systemd|--native-boot|--native-routes|--native-network|--native-site-boot|--native-transparent-boot|--native-combo-network|--native-combo-boot|--native-combo-load|--native-combo-benchmark) ;;
+      --native-only|--native-systemd|--native-admin|--native-boot|--native-routes|--native-network|--native-site-boot|--native-transparent-boot|--native-combo-network|--native-combo-boot|--native-combo-load|--native-combo-benchmark) ;;
       *) fail invalid_run_mode ;;
     esac
     sync_source

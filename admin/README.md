@@ -175,3 +175,30 @@ podman run --rm --network=none --read-only --cap-drop=ALL \
 
 Фактические результаты и ограничения: [отчёт ночного этапа](NIGHT-REPORT.md).
 DNS migration — [только исследование](../scripts/clean-vpn-radxa-dns-migration.md).
+
+Дополнительные локальные проверки без Radxa/VPS:
+
+```sh
+node --test admin/test/vpn-settings-transaction.test.mjs admin/test/admin.test.mjs
+npm run lab:native:mac -- --native-admin
+node admin/test/systemd-container-lab.mjs
+```
+
+Последняя команда требует запущенную выделенную Podman machine
+`meshpn-clean-vpn-lab` и кешированный ARM64 runtime image
+`localhost/clean-vpn-native-runtime:final-arm64`. Она собирает два временных
+контейнера из Git-tracked исходников: systemd/broker/native fixture и обычный
+frontend. Сеть fixture — `none`, frontend разделяет только его namespace;
+порты на Mac не публикуются. Временные контейнеры и volumes удаляются в `finally`.
+Отчёт последнего успешного запуска сохраняется в `admin/test/last-container-report.json`.
+
+Проверяются реальное TLS-соединение и TUN/DNS, применение профиля, откат неверного
+TLS-имени, остановленный VPN, SIGKILL broker во время запуска candidate, сохранение
+guard и systemd `BindToDevice` на veth с именем usb0. Только systemd fixture имеет
+SYS_ADMIN/NET_ADMIN/NET_RAW; frontend — UID 65534, read-only rootfs, без capabilities.
+В этом fixture отключены PSI и `ProtectControlGroups` у вложенных native units;
+полный host unit проверяется отдельно в QEMU. На SELinux обе части fixture имеют
+общие `container_init_t`/MCS, чтобы Unix RPC был разрешён без отключения SELinux.
+Это проверка интеграции, **не** готовая SELinux-политика установки на произвольный
+хост. Физический USB/Wi-Fi, WAN, перезагрузка и обновление бинарника этим прогоном
+не подтверждаются.

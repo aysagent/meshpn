@@ -24,6 +24,7 @@ export async function createBroker(c,{run=command}={}){
  const guard=async()=>{const r=await run(c.guardScript,['status']);return{active:/IPv4: cvks/.test(r.out)&&/IPv6: cvks/.test(r.out),summary:r.out.slice(0,1024)};};
  const nativeState=async()=>Object.fromEntries((await run('/usr/bin/systemctl',['show',c.vpnUnit,'-p','Type','-p','ActiveState','-p','SubState','-p','MainPID','-p','StatusText'])).out.trim().split('\n').map(l=>l.split('=')));
  const service={
+  validate:async()=>need((await nativeState()).Type==='notify','native_notify_service_required',409),
   running:async()=>{const s=await nativeState();need(s.Type==='notify','native_notify_service_required',409);need(['active','inactive','failed'].includes(s.ActiveState),'vpn_service_transition',409);return s.ActiveState==='active';},
   guard:async()=>need((await guard()).active,'enable_guard_first',409),
   stop:()=>run('/usr/bin/systemctl',['stop',c.vpnUnit],{timeout:60000}),
