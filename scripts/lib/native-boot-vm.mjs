@@ -19,6 +19,9 @@ const event = data => console.log('NATIVE_BOOT_EVENT ' + JSON.stringify({ phase,
 const check = (name, value) => { assert.ok(value, name); event({ event: 'check', name }); };
 const put = (p, text) => { fs.mkdirSync(p.slice(0, p.lastIndexOf('/')), { recursive: true }); fs.writeFileSync(p, text, { mode: p.endsWith('.conf') ? 0o644 : 0o600 }); };
 const names = ['c2', 'c3', 'exit'];
+const updater='/project/scripts/clean-vpn-native-update.mjs';
+const updateBundle='/opt/clean-vpn-native/c2';
+const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const inventory = () => {
   const files = {};
   const walk = p => {
@@ -35,6 +38,10 @@ const inventory = () => {
   }
   return files;
 };
+// Mutable binary transaction state is checked separately by digest/recovery
+// gates; all original keys, config, units and controller bytes remain exact.
+const stableInventory=()=>Object.fromEntries(Object.entries(inventory()).filter(([p])=>
+  !p.startsWith(updateBundle+'/binary-updates/')&&p!==updateBundle+'/engine'));
 if (mode === 'prepare') {
   // Pre-PID1 restore of the saved installed artifacts into disposable initramfs.
   assert.deepEqual(fs.readdirSync('/sys/class/net'), ['lo']);
@@ -62,6 +69,7 @@ if (mode === 'prepare') {
       }
       ctl('daemon-reload');
       for (const n of names) check('not-started-by-installer-' + n, prop('native-' + n, 'MainPID') === '0');
+      exec('/usr/bin/node',[updater,'--enroll','c2']);
       ctl('enable', ...names.map(n => 'native-' + n + '.service'));
       ctl('start', ...names.map(n => 'native-' + n + '.service'));
     }
@@ -80,13 +88,48 @@ if (mode === 'prepare') {
       const guardAt = Number(prop('native-lab-guard', 'ActiveEnterTimestampMonotonic'));
       check('guard-before-uplink', guardAt > 0 && guardAt <= Number(prop('native-lab-uplink', 'ActiveEnterTimestampMonotonic')));
       if (!phase) {
+        // A different ELF digest with identical protocol behavior; no production
+        // build/version change is claimed by this appended fixture marker.
+        const candidate='/native/update-engine';
+        fs.writeFileSync(candidate,Buffer.concat([fs.readFileSync('/native/clean-vpn-engine'),Buffer.from('\ncvpn-update-fixture\n')]),{mode:0o755});
+        const wanted=sha(fs.readFileSync(candidate));
+        const update=JSON.parse(exec('/usr/bin/node',[updater,'--apply','c2',candidate,wanted]));
+        check('binary-update-ready',update.status==='updated'&&sha(fs.readFileSync('/proc/'+prop('native-c2','MainPID')+'/exe'))===wanted);
+        check('binary-update-data',exec('/usr/bin/ip',['netns','exec','nc2','/native/socket-test','probe']).includes('NATIVE_TUN_PROBE_PASS'));
+        const bad='/native/update-fails';
+        fs.writeFileSync(bad,`#!/bin/sh\ncase "$1" in --capabilities|--check-config) exec ${candidate} "$@";; *) exit 1;; esac\n`,{mode:0o755});
+        let rejected=false;try{exec('/usr/bin/node',[updater,'--apply','c2',bad,sha(fs.readFileSync(bad))]);}catch{rejected=true;}
+        check('binary-failure-rollback',rejected&&sha(fs.readFileSync(updateBundle+'/engine'))===wanted&&prop('native-c2','ActiveState')==='active');
+        put('/state/update-wanted',wanted);
+        put('/state/stable-inventory.json',JSON.stringify(stableInventory()));
+        // Kill a genuine updater process after publishing a different binary,
+        // without its normal systemd guardian, to model loss of the machine.
+        // Recovery must run in the NEXT kernel boot before native-c2 starts.
+        const dirty='/native/update-uncommitted';fs.writeFileSync(dirty,Buffer.concat([fs.readFileSync(candidate),Buffer.from('pending\n')]),{mode:0o755});
+        const fault=`import {NativeBinaryUpdate} from '/project/scripts/lib/native-binary-update.mjs';
+          import {execFileSync as x} from 'node:child_process';
+          const u=new NativeBinaryUpdate('${updateBundle}',{validate:async()=>{},running:async()=>true,guard:async()=>{},stop:async()=>x('/usr/bin/systemctl',['stop','native-c2.service']),start:async()=>{},ready:async()=>{}},{fault:p=>{if(p==='binary-written')process.kill(process.pid,'SIGKILL');}});
+          await u.apply('${dirty}','${sha(fs.readFileSync(dirty))}');`;
+        let killed=false;try{exec('/usr/bin/node',['--input-type=module','-e',fault]);}catch(e){killed=e.signal==='SIGKILL';}
+        check('binary-interrupted-journal',killed&&fs.existsSync(updateBundle+'/binary-updates/transaction.json')&&sha(fs.readFileSync(updateBundle+'/engine'))!==wanted);
         fs.mkdirSync('/state/installed/opt', { recursive: true });
         fs.mkdirSync('/state/installed/etc/systemd/system/multi-user.target.wants', { recursive: true });
         fs.cpSync('/opt/clean-vpn-native', '/state/installed/opt/clean-vpn-native', { recursive: true });
         for (const n of names) for (const p of [`native-${n}.service`, `native-${n}.service.d`, `multi-user.target.wants/native-${n}.service`])
           fs.cpSync('/etc/systemd/system/' + p, '/state/installed/etc/systemd/system/' + p, { recursive: true, verbatimSymlinks: true });
+        fs.copyFileSync('/etc/systemd/system/native-c2-binary-recovery.service','/state/installed/etc/systemd/system/native-c2-binary-recovery.service');
         put('/state/inventory.json', JSON.stringify(inventory()));
-      } else check('installed-bytes-survived-reboot', JSON.stringify(inventory()) === fs.readFileSync('/state/inventory.json', 'utf8'));
+      } else {
+        check('installed-bytes-survived-reboot',JSON.stringify(stableInventory())===fs.readFileSync('/state/stable-inventory.json','utf8'));
+        check('binary-recovered-before-start',!fs.existsSync(updateBundle+'/binary-updates/transaction.json')&&
+          sha(fs.readFileSync('/proc/'+prop('native-c2','MainPID')+'/exe'))===fs.readFileSync('/state/update-wanted','utf8')&&
+          Number(prop('native-c2-binary-recovery','ActiveEnterTimestampMonotonic'))<=Number(prop('native-c2','ActiveEnterTimestampMonotonic')));
+        fs.cpSync('/opt/clean-vpn-native','/state/installed/opt/clean-vpn-native',{recursive:true});
+        // cp does not remove deleted entries. Remove only the owned transaction
+        // copied from the interrupted first boot, then persist the new inventory.
+        fs.rmSync('/state/installed'+updateBundle+'/binary-updates/transaction.json',{force:true});
+        put('/state/inventory.json',JSON.stringify(inventory()));
+      }
       ctl('stop', ...names.map(n => 'native-' + n + '.service'), 'native-lab-uplink.service');
       origin.kill('SIGTERM');
       put('/state/phase', String(phase + 1));
