@@ -38,3 +38,6 @@ do not assume the original VPN policy was restored without checking the report.
 Host tests `test-vpn-trust.mjs`, `test-vpn-tls-io.mjs`, `test-vpn-config.mjs` run
 production C code with mbedTLS and sanitizers. These are useful without hardware,
 but do not establish firmware performance or a real WireGuard/server connection.
+`VPN_TLS_IO_PACKETS=8192` extends the TLS I/O case from its normal 128 packets
+to a bounded concurrent-read/write stress run (maximum 32768). The peer fragments
+the framed stream into 17-byte writes; packet totals and contents are checked.

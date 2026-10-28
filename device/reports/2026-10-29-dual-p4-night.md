@@ -23,7 +23,15 @@ AP+STA или завершении длительных испытаний. Mac 
   трассы, RX ownership, Wi-Fi/VPN restoration, benchmark worker и TLS trust.
   TLS проверяет правильный сертификат, имя, CA, прошлые/будущие даты — по три
   свежих соединения. Сборки P4 и XIAO прошли; XIAO только build-only.
-- Запущен часовой Stamp USB/STA soak; итог будет добавлен после завершения.
+- Часовой Stamp USB/STA soak: 303/304 transfers, 126/126 synthetic AP-forward
+  pairs, 0 API errors/reboot/offline samples. Единственный STA upload timeout
+  (#199, 38-я минута) восстановился на следующей передаче. Без перезагрузки.
+  Медианы успешных локальных передач: USB up/down 57.98/39.95 (26+26),
+  STA up/down 8.98/11.34 Мбит/с (125/126 + 126/126).
+  Это endpoints HTTP платы, не WAN и не реальная AP RF скорость.
+  Максимальная длительность status API 228 ms. Internal free 86155→61095 B,
+  lowest historical 36 B: отдельный idle recovery ещё проверяется, отсутствие
+  утечки/давления памяти из успешных передач не следует.
 
 ## Что пока не удалось
 
@@ -111,6 +119,11 @@ AP b/g/n HT20 на Waveshare не дал здорового соединения
   Seed `0x7352a1b9`; это не coverage-guided fuzzer и не тест радиопроизводительности.
   В стандартном host suite оставлены 20000 случаев; полный объём задаётся
   `VPN_PACKET_PROPERTY_CASES=2000000`.
+- Расширенный real-mbedTLS loopback IO прошёл с `VPN_TLS_IO_PACKETS=8192`:
+  8192 входящих/исходящих ICMP test frames, 96256 read calls, concurrent TX/RX,
+  TLS stream раздроблен peer на 17-байтные части. CA/name verification включены.
+  Это production I/O wrappers/framer с host адаптером и санитайзерами,
+  не измерение скорости P4 или аппаратного ESP-TLS handshake.
 - USB DNS Stamp: собственное dongle-stamp.local отвечает 192.168.12.1;
   чужое имя не подменяется адресом Stamp. Это unicast DNS, не отдельная проверка
   multicast mDNS или окна captive portal на телефоне.

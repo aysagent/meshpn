@@ -41,7 +41,9 @@ static esp_err_t esp_tls_get_and_clear_last_error(void*h,int*c,int*f){(void)h;*c
 static esp_tls_t connection;
 static pthread_mutex_t io_lock=PTHREAD_MUTEX_INITIALIZER;
 static int socket_fd;
-enum { PACKETS=128 };
+#ifndef PACKETS
+#define PACKETS 128
+#endif
 static void pause_ms(void){struct timespec t={.tv_nsec=1000000};nanosleep(&t,NULL);}
 static void*writer(void*unused){
  (void)unused;uint8_t frame[1404];
@@ -61,7 +63,7 @@ static void*writer(void*unused){
 }
 static unsigned received;
 static bool packet_received(void*ctx,const uint8_t*p,size_t n){
- (void)ctx;assert(n==(received%16==0?1400:100)&&p[9]==1&&p[20]==0&&p[27]==received);
+ (void)ctx;assert(n==(received%16==0?1400:100)&&p[9]==1&&p[20]==0&&p[27]==(uint8_t)received);
  assert(!memcmp(p+12,(uint8_t[]){198,18,0,1,10,99,0,2},8));received++;return true;
 }
 int main(int argc,char**argv){
@@ -85,7 +87,7 @@ int main(int argc,char**argv){
  assert(!mbedtls_ssl_handshake(&connection.ssl));assert(!mbedtls_net_set_nonblock(&socket));
  pthread_t thread;assert(!pthread_create(&thread,NULL,writer,NULL));
  meshvpn_vpn_rx_stream_t decoder={0};uint8_t buffer[8192];
- int64_t deadline=esp_timer_get_time()+20000000;
+ int64_t deadline=esp_timer_get_time()+20000000+(int64_t)PACKETS*30000;
  while(received<PACKETS){
   assert(esp_timer_get_time()<deadline);
   fd_set rd;FD_ZERO(&rd);FD_SET(socket_fd,&rd);struct timeval tv={.tv_usec=10000};
