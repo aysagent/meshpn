@@ -5,6 +5,7 @@ Uses pyserial from the ESP-IDF Python environment. Never guesses among boards
 or redirects a flash to an unrelated port after USB re-enumeration.
 """
 import argparse
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 
 APP = (0x303A, 0x4001)
@@ -154,26 +156,52 @@ def bind(args, enumerate_ports, serial_factory, run=subprocess.run, wait=None):
         returned = wait(port, APP, enumerate_ports)
         if not is_app(returned, args.target):
             raise RuntimeError("MeshPN S3 application did not return after binding")
-    path = Path(args.binding_file)
-    if path.exists():
-        old = load_binding(path, args.target, board)
-        if old["serial"] != serial:
-            raise RuntimeError(f"{path} already binds a different board; remove it explicitly to rebind")
-        print(f"Board already bound: {serial}", flush=True)
-        return
-    # Do not accidentally claim the other model already bound in this checkout.
-    for other_board in BOARDS:
-        other_path = Path(binding_path(args.device_dir, other_board))
-        if other_path == path or not other_path.exists():
-            continue
-        other = json.loads(other_path.read_text())
-        if other.get("serial") == serial:
-            raise RuntimeError(f"Physical board already bound in {other_path}; refusing to reassign")
-    record = {"target": args.target, "serial": serial}
+    created = save_binding(args.device_dir, args.binding_file, args.target, board, serial)
+    print(f"{'Bound' if created else 'Already bound'} {args.target} serial {serial} "
+          f"in {args.binding_file}", flush=True)
+
+
+def save_binding(device_dir, binding_file, target, board, serial):
+    """Serialize all model claims and publish a complete file without overwrite."""
+    path = Path(binding_file).resolve()
+    record = {"target": target, "serial": serial}
     if board:
         record["board"] = board
-    path.write_text(json.dumps(record, indent=2) + "\n")
-    print(f"Bound {args.target} serial {serial} in {path}", flush=True)
+    # Cross-model checks must share a lock, not just per-model files: two ROM
+    # binds could otherwise assign the same physical P4 to both board models.
+    with (Path(device_dir).resolve() / ".board-binding.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        for other_board, other_target in BOARDS.items():
+            other_path = Path(binding_path(device_dir, other_board)).resolve()
+            if other_path == path or not other_path.exists():
+                continue
+            other = load_binding(other_path, other_target, other_board)
+            if other["serial"] == serial:
+                raise RuntimeError(f"Physical board already bound in {other_path}; refusing to reassign")
+        if path.exists():
+            old = load_binding(path, target, board)
+            if old["serial"] != serial:
+                raise RuntimeError(f"{path} already binds a different board; remove it explicitly to rebind")
+            return False
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=path.parent,
+                                             prefix=".board-binding-", suffix=".tmp",
+                                             delete=False) as output:
+                temporary = Path(output.name)
+                output.write(json.dumps(record, indent=2) + "\n")
+                output.flush()
+                os.fsync(output.fileno())
+            # Unlike replace()/write_text(), link() never overwrites a competing
+            # writer's claim. Readers see either no file or the complete JSON.
+            try:
+                os.link(temporary, path)
+            except FileExistsError as error:
+                raise RuntimeError(f"Binding appeared concurrently at {path}; refusing to overwrite") from error
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+    return True
 
 
 def wait_port(original, expected, enumerate_ports, timeout=30, clock=time.monotonic, sleep=time.sleep):

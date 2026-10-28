@@ -191,6 +191,7 @@ for default_https in 0 1; do
     -o "$test_dir/https-config-$default_https"
   "$test_dir/https-config-$default_https"
 done
+python3 -B device/tests/test_board_identity.py
 bash -n device/scripts/flash.sh device/scripts/setup-macos.sh device/scripts/create-admin-ca.sh
 for board_target in \
   xiao_esp32s3:esp32s3 \

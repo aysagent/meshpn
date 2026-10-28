@@ -1,4 +1,6 @@
 import importlib.util
+from concurrent.futures import ThreadPoolExecutor
+import threading
 import json
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -145,6 +147,68 @@ class FlashTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "already bound"):
             flash.bind(self.args, lambda: [stamp], Mock())
         self.assertFalse(Path(self.args.binding_file).exists())
+
+    def test_concurrent_bindings_cannot_replace_a_physical_board(self):
+        self.stamp_setup()
+        Path(self.args.binding_file).unlink()
+        start = threading.Barrier(2)
+        def claim(mac):
+            start.wait(timeout=5)
+            try:
+                flash.save_binding(self.args.device_dir, self.args.binding_file,
+                                   "esp32p4", self.args.board, mac)
+                return mac
+            except RuntimeError:
+                return None
+        with ThreadPoolExecutor(2) as pool:
+            results = list(pool.map(claim, ["112233445566", "AABBCCDDEEFF"]))
+        winners = [v for v in results if v]
+        self.assertEqual(len(winners), 1)
+        self.assertEqual(json.loads(Path(self.args.binding_file).read_text())["serial"], winners[0])
+
+    def test_concurrent_models_cannot_claim_the_same_p4(self):
+        self.stamp_setup()
+        Path(self.args.binding_file).unlink()
+        start = threading.Barrier(2)
+        def claim(board):
+            start.wait(timeout=5)
+            try:
+                flash.save_binding(self.args.device_dir, flash.binding_path(self.args.device_dir, board),
+                                   "esp32p4", board, "112233445566")
+                return board
+            except RuntimeError:
+                return None
+        with ThreadPoolExecutor(2) as pool:
+            results = list(pool.map(claim, [self.args.board, "waveshare_esp32_p4_wifi6"]))
+        self.assertEqual(len([v for v in results if v]), 1)
+        self.assertEqual(sum(Path(flash.binding_path(self.args.device_dir, b)).exists()
+                             for b in [self.args.board, "waveshare_esp32_p4_wifi6"]), 1)
+
+    def test_binding_never_overwrites_uncooperative_writer(self):
+        self.stamp_setup()
+        path = Path(self.args.binding_file)
+        path.unlink()
+        competing = dict(self.binding, serial="AABBCCDDEEFF")
+        def competing_link(source, destination):
+            # The complete record must exist before it becomes visible.
+            self.assertEqual(json.loads(Path(source).read_text()), self.binding)
+            Path(destination).write_text(json.dumps(competing))
+            raise FileExistsError()
+        with patch.object(flash.os, "link", side_effect=competing_link):
+            with self.assertRaisesRegex(RuntimeError, "refusing to overwrite"):
+                flash.save_binding(self.args.device_dir, path, "esp32p4", self.args.board, "112233445566")
+        self.assertEqual(json.loads(path.read_text()), competing)
+        self.assertFalse(list(path.parent.glob(".board-binding-*.tmp")))
+
+    def test_binding_repeat_is_idempotent_and_bad_sibling_fails_closed(self):
+        self.stamp_setup()
+        self.assertFalse(flash.save_binding(self.args.device_dir, self.args.binding_file,
+                                            "esp32p4", self.args.board, "112233445566"))
+        sibling = Path(flash.binding_path(self.args.device_dir, "waveshare_esp32_p4_wifi6"))
+        sibling.write_text('null')
+        with self.assertRaisesRegex(RuntimeError, "Invalid board binding"):
+            flash.save_binding(self.args.device_dir, self.args.binding_file,
+                               "esp32p4", self.args.board, "112233445566")
 
     def test_only_supported_usb_ports_are_autoselected(self):
         unrelated = port("/dev/cu.other", (1, 2))
