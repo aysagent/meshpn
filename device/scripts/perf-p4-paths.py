@@ -22,12 +22,19 @@ import urllib.request
 def options(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--minutes', type=float, default=180)
-    p.add_argument('--admin-ip', default='192.168.10.1')
+    p.add_argument('--admin-ip')
+    p.add_argument('--board', default=os.environ.get('BOARD', 'waveshare'))
     p.add_argument('--out', type=Path, default=Path(__file__).resolve().parents[1] / 'perf-results')
     p.add_argument('--cycle-gap', type=float, default=20)
     p.add_argument('--sta-tcp-trace', action='store_true',
                    help='save bounded STA TCP header snapshots via USB after each STA transfer')
     a = p.parse_args(argv)
+    catalog = json.loads((Path(__file__).resolve().parents[1] / 'boards/development.json').read_text())
+    selected = [(name, v) for name, v in catalog.items() if a.board == name or a.board in v['aliases']]
+    if len(selected) != 1:
+        p.error('unknown board; use waveshare or stamp')
+    a.board, profile = selected[0]
+    a.admin_ip = a.admin_ip or profile['usb']
     if not .1 <= a.minutes <= 240 or not 1 <= a.cycle_gap <= 300:
         p.error('minutes must be 0.1..240, cycle-gap 1..300')
     try:
@@ -238,7 +245,7 @@ def run(a, board=None, clock=time.monotonic, wait=time.sleep):
         t = clock()
         try:
             s = board.api('/api/status')
-            if s.get('board') != 'waveshare_esp32_p4_wifi6':
+            if s.get('board') != getattr(a, 'board', 'waveshare_esp32_p4_wifi6'):
                 raise RuntimeError('wrong_board')
             if s.get('vpn', {}).get('enabled'):
                 raise RuntimeError('VPN_enabled_stop_without_changing_it')

@@ -1,6 +1,7 @@
 # MeshPN USB WiFi dongle
 
-Default admin: **http://dongle.local/**. Change it in **Admin → Device name**.
+Default admin: **http://dongle.local/** (Waveshare/XIAO), **http://dongle-stamp.local/** (Stamp-P4). Change it in **Admin → Device name**.
+[Simultaneous Waveshare/Stamp development: addresses, flashing and tests](docs/multi-board.md).
 Without a Wi-Fi uplink, USB/AP clients can use the automatic setup portal.
 See [names, setup portal and HTTPS](docs/admin-name-and-setup.md).
 
@@ -264,12 +265,13 @@ console; use `/api/logs`, diagnostic firmware, or a UART adapter as appropriate.
 
 Open **http://dongle.local/** over USB, SoftAP or the Wi-Fi STA LAN, or use
 **http://192.168.10.1/** over USB and **http://192.168.11.1/** over SoftAP.
+Stamp-P4 defaults: **http://dongle-stamp.local/**, USB **192.168.12.1**, AP **192.168.13.1**.
 SoftAP provides internet and administration; USB administration works without a Wi-Fi uplink.
 HTTPS is disabled by default for testing (`CONFIG_MESHVPN_WEB_HTTPS=n`). Login and Wi-Fi credentials travel unencrypted over USB, SoftAP and STA in this mode;
 authentication and ingress filtering remain enabled.
 
 To enable HTTPS, check **Admin connection → Enable HTTPS**, click **Save connection setting**, then **Reboot to apply**.
-Open the displayed **https://dongle.local/** address and log in again; HTTP now only redirects and does not accept login/API requests.
+Open the displayed HTTPS address (dongle.local or dongle-stamp.local by default) and log in again; HTTP now only redirects and does not accept login/API requests.
 Uncheck and save/reboot to return to HTTP. No reflashing is required after installing this firmware.
 The preference persists in NVS; `CONFIG_MESHVPN_WEB_HTTPS` only sets the initial/factory-reset default, not a compile-time restriction.
 Before enabling from HTTP, the device prepares/validates its unique certificate; if that fails the saved mode is unchanged.

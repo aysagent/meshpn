@@ -20,7 +20,7 @@ esp_err_t nvs_commit(nvs_handle_t n) { (void)n;commits++;return commit_error; }
 int main(void)
 {
     char out[64];
-    assert(meshvpn_config_load_hostname(out)==ESP_OK&&!strcmp(out,"dongle"));
+    assert(meshvpn_config_load_hostname(out)==ESP_OK&&!strcmp(out,MESHVPN_HOSTNAME_DEFAULT));
     assert(meshvpn_config_load_hostname(NULL)==ESP_ERR_INVALID_ARG);
     assert(meshvpn_config_save_hostname("Desk-2.LOCAL")==ESP_OK);
     assert(meshvpn_config_load_hostname(out)==ESP_OK&&!strcmp(out,"desk-2"));
@@ -39,7 +39,7 @@ int main(void)
     memset(longest,'a',64);longest[64]=0;
     assert(meshvpn_config_save_hostname(longest)==ESP_ERR_INVALID_ARG);
     open_error=ESP_FAIL;assert(meshvpn_config_load_hostname(out)==ESP_FAIL);assert(meshvpn_config_save_hostname("test")==ESP_FAIL);
-    open_error=ESP_ERR_NVS_NOT_FOUND;assert(meshvpn_config_load_hostname(out)==ESP_OK&&!strcmp(out,"dongle"));
+    open_error=ESP_ERR_NVS_NOT_FOUND;assert(meshvpn_config_load_hostname(out)==ESP_OK&&!strcmp(out,MESHVPN_HOSTNAME_DEFAULT));
     open_error=ESP_OK;write_error=ESP_FAIL;before=commits;
     assert(meshvpn_config_save_hostname("test")==ESP_FAIL&&commits==before);
     write_error=ESP_OK;commit_error=ESP_FAIL;assert(meshvpn_config_save_hostname("test")==ESP_FAIL);

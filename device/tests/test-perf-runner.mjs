@@ -514,7 +514,7 @@ test('route parser and validator fail closed on bypass, missing gateway and vani
 
 test('discover DHCP paths once, reuse a single login and do not invoke Wi-Fi scan',async()=>{
   let logins=0,expired=false,unsupported=false,active=0,maxActive=0;const requests=[];
-  const board=await discoverBoard({paths:'both'},new AbortController().signal,()=>{},
+  const board=await discoverBoard({paths:'both',adminURL:'http://192.168.7.1/'},new AbortController().signal,()=>{},
     {networkInterfaces:interfaces,run:async(bin,args)=>({code:0,stdout:paths.find(p=>p.iface===args[1]).gateway}),
       request:async(c,url,auth)=>{
         requests.push(url);
@@ -838,4 +838,60 @@ test('runner integration: full quick suite, files, two ports, cleanup and failur
 
 test('partial report tolerates missing telemetry',()=>{
   assert.match(reportMarkdown({outcome:'failed',target:'test',warnings:[],error:'preflight'}),/preflight/);
+});
+
+test('two attached P4 boards: explicit target wins, no fallback, no cross-board session',async()=>{
+  const nic={en17:[{family:'IPv4',address:'192.168.10.2',netmask:'255.255.255.0'}],
+    en18:[{family:'IPv4',address:'192.168.12.2',netmask:'255.255.255.0'}]};
+  const calls=[];
+  let missingStamp=false,wrongModel=false;
+  const deps={networkInterfaces:()=>nic,
+    run:async(bin,args)=>({stdout:args[1]==='en17'?'192.168.10.1':'192.168.12.1'}),
+    request:async(c,url,auth)=>{
+      calls.push({gateway:c.gateway,url});
+      const stamp=c.gateway==='192.168.12.1';
+      if(stamp&&missingStamp)throw Error('offline');
+      if(url==='/login')return {code:200,text:'<title>MeshPN Login</title>'};
+      if(url==='/api/login')return {code:200,text:JSON.stringify({token:stamp?'stamp-session':'wave-session'})};
+      assert.equal(auth.token,stamp?'stamp-session':'wave-session');
+      const s=fixture();s.board=stamp&&!wrongModel?'m5_stamp_p4_c6':'waveshare_esp32_p4_wifi6';
+      s.net.usb_ip=c.gateway;s.net.ap_ip=stamp?'192.168.13.1':'192.168.11.1';
+      s.hostname=stamp?'my-stamp.local':'dongle.local';
+      return {code:200,text:JSON.stringify(s)};
+    }};
+  const discover=o=>discoverBoard({paths:'usb',...o},undefined,()=>{},deps);
+  const selected=await discover({board:'stamp'});
+  assert.equal(selected.endpoint.gateway,'192.168.12.1');
+  assert.equal(selected.endpoint.adminHostname,'my-stamp.local');
+  await selected.status();
+  assert(!calls.some(c=>c.gateway==='192.168.10.1'&&c.url.startsWith('/api/')));
+  calls.length=0;
+  const byURL=await discover({adminURL:'http://192.168.12.1/'});
+  assert.equal(byURL.initial.board,'m5_stamp_p4_c6');
+  calls.length=0;
+  await assert.rejects(discover({}),/Ambiguous/);
+  assert(!calls.some(c=>c.url==='/api/login'));
+  missingStamp=true;
+  await assert.rejects(discover({board:'stamp'}),/refusing fallback/);
+  assert(!calls.some(c=>c.url==='/api/login'));
+  missingStamp=false;wrongModel=true;
+  await assert.rejects(discover({board:'stamp'}),/Wrong board/);
+  await assert.rejects(selected.status(),/Wrong board/);
+});
+
+test('board catalog matches firmware P4 network defaults and accepts aliases',async()=>{
+  const {boardProfile,boardSelection}=await import('../scripts/board-profile.mjs');
+  const wave=boardProfile('waveshare'),stamp=boardProfile('stamp');
+  assert.notEqual(wave.hostname,stamp.hostname);
+  assert.equal(new Set([wave.usb,wave.ap,stamp.usb,stamp.ap]).size,4);
+  for(const p of [wave,stamp]){
+    const defaults=await readFile(new URL(`../boards/${p.name}/sdkconfig.defaults`,import.meta.url),'utf8');
+    assert(defaults.includes(`CONFIG_MESHVPN_USB_SUBNET_OCTET_2=${p.usb.split('.')[2]}\n`));
+    assert(defaults.includes(`CONFIG_MESHVPN_AP_SUBNET_OCTET_2=${p.ap.split('.')[2]}\n`));
+    assert(defaults.includes(`CONFIG_MESHVPN_HOSTNAME_DEFAULT="${p.hostname.replace(/\.local$/,'')}"`));
+  }
+  assert.equal(boardSelection({board:'stamp',paths:'ap'}).adminURL,'http://192.168.13.1/');
+  assert.equal(boardSelection({board:'stamp',adminURL:'http://192.168.20.1/'}).adminURL,'http://192.168.20.1/');
+  assert.throws(()=>boardProfile('typo'),/Unknown/);
+  assert.equal(parseArgs(['host','--board','stamp']).board,'stamp');
 });

@@ -6,11 +6,16 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PORT="${PORT:-}"
 
 if [[ -z "$PORT" ]]; then
+  ports=()
   for p in /dev/cu.usbmodem* /dev/cu.SLAB_USBtoUART /dev/cu.wchusbserial*; do
     [[ -e "$p" ]] || continue
-    PORT="$p"
-    break
+    ports+=("$p")
   done
+  if [[ "${#ports[@]}" -gt 1 ]]; then
+    echo "Multiple serial ports; set PORT explicitly. Refusing to monitor/reset an arbitrary board." >&2
+    exit 1
+  fi
+  [[ "${#ports[@]}" -eq 0 ]] || PORT="${ports[0]}"
 fi
 
 if [[ -z "$PORT" ]]; then
@@ -42,4 +47,4 @@ fi
 source "$selected_idf/export.sh"
 
 cd "$ROOT/device"
-idf.py monitor -p "$PORT" -b 115200
+idf.py -B "${BUILD_DIR:-build}" monitor -p "$PORT" -b 115200

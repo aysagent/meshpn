@@ -14,6 +14,14 @@ menu "meshvpn Board"
             bool "Waveshare ESP32-P4-WIFI6"
     endchoice
 
+    config MESHVPN_HOSTNAME_DEFAULT
+        string "Default local hostname (one DNS label)"
+        default "dongle-stamp" if MESHVPN_BOARD_M5_STAMP_P4_C6
+        default "dongle"
+        help
+            Used only when no hostname has been saved in the admin UI.
+            Choose different names for boards sharing a LAN.
+
 endmenu
 
 menu "meshvpn USB"
@@ -21,6 +29,7 @@ menu "meshvpn USB"
     config MESHVPN_USB_SUBNET_OCTET_2
         int "USB host LAN third octet (192.168.X.0/24)"
         range 1 254
+        default 12 if MESHVPN_BOARD_M5_STAMP_P4_C6
         default 10
         help
             USB-side LAN for connected host. Default 10 → 192.168.10.0/24.
@@ -28,6 +37,7 @@ menu "meshvpn USB"
     config MESHVPN_AP_SUBNET_OCTET_2
         int "SoftAP LAN third octet (192.168.X.0/24)"
         range 1 254
+        default 13 if MESHVPN_BOARD_M5_STAMP_P4_C6
         default 11
         help
             SoftAP LAN for connected clients. Default 11 → 192.168.11.0/24.

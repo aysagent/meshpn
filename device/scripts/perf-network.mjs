@@ -1,4 +1,5 @@
 import os from 'node:os';
+import {boardSelection, boardProfile} from './board-profile.mjs';
 import http from 'node:http';
 import https from 'node:https';
 import { readFile } from 'node:fs/promises';
@@ -62,6 +63,7 @@ export function requestBoard(endpoint, resource, {token,password,signal,ca,insec
 }
 
 export async function discoverBoard(o, signal, log, {networkInterfaces=os.networkInterfaces,run=command,request=requestBoard}={}) {
+  o=boardSelection(o);
   const ca=o.adminCA?await readFile(o.adminCA):undefined;
   const auth={ca,insecure:o.adminInsecure,signal};
   let explicit;
@@ -81,7 +83,8 @@ export async function discoverBoard(o, signal, log, {networkInterfaces=os.networ
       if(!sameSubnet(a.address,gateway,a.netmask)||gateway===a.address)continue;
       if(candidates.some(c=>c.iface===iface&&c.gateway===gateway))continue;
       const c={iface,address:a.address,gateway,protocol:explicit?.hostname===gateway?explicit.protocol:'http:',
-        port:explicit?.hostname===gateway?(explicit.port||undefined):undefined};
+        port:explicit?.hostname===gateway?(explicit.port||undefined):undefined,
+        ...(o.board ? {adminHostname:boardProfile(o.board).hostname} : {})};
       candidates.push(c);
     }
   }
@@ -103,8 +106,13 @@ export async function discoverBoard(o, signal, log, {networkInterfaces=os.networ
     } catch(e) {errors.push(`${c.iface}/${c.gateway}: ${e.message}`);}
   }
   if(!found.length)throw Error(`MeshPN admin not found on DHCP gateways. Check USB/AP and macOS Local Network permission. For static IP use --admin-url http://BOARD-IP/. For HTTPS use --admin-ca cert.pem (or explicitly --admin-insecure). ${errors.join('; ')}`);
+  const matches=explicit?found.filter(c=>c.gateway===explicit.hostname):found;
+  if(matches.length!==1)throw Error(matches.length
+    ? 'Ambiguous MeshPN interfaces; select --board and/or --admin-url explicitly. No login attempted.'
+    : 'Requested --admin-url is unavailable; refusing fallback to another board.');
   const password=process.env.MESHPN_ADMIN_PASSWORD??'admin';
-  let endpoint=found[0],token;
+  let endpoint=matches[0],token;
+  let expectedBoard=o.board;
   async function login() {
     const r=await request(endpoint,'/api/login',{...auth,password});
     if(r.code!==200)throw Error(`Admin login HTTP ${r.code}; set MESHPN_ADMIN_PASSWORD. Close the admin browser tab.`);
@@ -120,10 +128,12 @@ export async function discoverBoard(o, signal, log, {networkInterfaces=os.networ
     if(r.code!==200)throw Error(`Admin status HTTP ${r.code} via ${c.iface}`);
     const s=JSON.parse(r.text);
     if(!s.net||!s.wifi||!Number.isFinite(s.uptime_sec))throw Error('Unexpected status schema');
+    if(expectedBoard&&s.board!==expectedBoard)throw Error(`Wrong board: expected ${expectedBoard}, got ${s.board}`);
+    expectedBoard??=s.board;
     return s;
   }
   const initial=await status(),paths=[];
-  if(typeof initial.hostname==='string'&&/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.local$/i.test(initial.hostname))for(const c of found)c.adminHostname=initial.hostname;
+  if(typeof initial.hostname==='string'&&/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.local$/i.test(initial.hostname))for(const c of found.filter(c=>[initial.net.usb_ip,initial.net.ap_ip].includes(c.gateway)))c.adminHostname=initial.hostname;
   for(const c of found) {
     const kind=c.gateway===initial.net.usb_ip?'usb':c.gateway===initial.net.ap_ip?'ap':null;
     if(!kind)continue;

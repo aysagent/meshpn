@@ -1,10 +1,16 @@
 #pragma once
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 
 #define MESHVPN_HOSTNAME_MAX 63
-#define MESHVPN_HOSTNAME_DEFAULT "dongle"
+#ifndef CONFIG_MESHVPN_HOSTNAME_DEFAULT
+#define CONFIG_MESHVPN_HOSTNAME_DEFAULT "dongle"
+#endif
+#define MESHVPN_HOSTNAME_DEFAULT CONFIG_MESHVPN_HOSTNAME_DEFAULT
 
 /* One DNS label; accept a pasted .local name and store lowercase ASCII. */
 static inline bool meshvpn_hostname_normalize(const char *input, char out[MESHVPN_HOSTNAME_MAX + 1])

@@ -4,7 +4,7 @@
 esp_err_t meshvpn_config_load_hostname(char out[MESHVPN_HOSTNAME_MAX + 1])
 {
     if (!out) return ESP_ERR_INVALID_ARG;
-    strcpy(out, MESHVPN_HOSTNAME_DEFAULT);
+    if (!meshvpn_hostname_normalize(MESHVPN_HOSTNAME_DEFAULT, out)) return ESP_ERR_INVALID_ARG;
     nvs_handle_t nvs;
     esp_err_t err = nvs_open("meshvpn", NVS_READONLY, &nvs);
     if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;

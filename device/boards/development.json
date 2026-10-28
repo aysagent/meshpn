@@ -1,0 +1,5 @@
+{
+  "waveshare_esp32_p4_wifi6": {"aliases": ["waveshare", "p4"], "usb": "192.168.10.1", "ap": "192.168.11.1", "hostname": "dongle.local"},
+  "m5_stamp_p4_c6": {"aliases": ["stamp"], "usb": "192.168.12.1", "ap": "192.168.13.1", "hostname": "dongle-stamp.local"},
+  "xiao_esp32s3": {"aliases": ["xiao"], "usb": "192.168.10.1", "ap": "192.168.11.1", "hostname": "dongle.local"}
+}

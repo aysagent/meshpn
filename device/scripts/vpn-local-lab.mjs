@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import {boardProfile} from './board-profile.mjs';
 import path from 'node:path';
 import http from 'node:http';
 import dgram from 'node:dgram';
@@ -14,8 +15,11 @@ import {cleanStatus} from './perf-runner.mjs';
 import {sameSubnet} from './perf-lib.mjs';
 
 const execute = promisify(execFile);
-export async function localLab({gateway = '192.168.10.1', address, iface,
+export async function localLab({gateway, board = process.env.BOARD || 'waveshare', address, iface,
   host, out, certificate, privateKey, soakSeconds = 120, withoutPeer = false} = {}) {
+  const profile = boardProfile(board);
+  gateway ??= profile.usb;
+  let adminHostname = profile.hostname;
   if (isIP(host ?? '') !== 4 || !out || !Number.isInteger(soakSeconds) || soakSeconds < 1 || soakSeconds > 7200)
     throw Error('Require --host EXISTING_MAC_LAN_IPV4, --out NEW_DIRECTORY and --soak-seconds 1..7200');
   const candidates = Object.entries(os.networkInterfaces()).flatMap(([name, addresses]) =>
@@ -37,7 +41,7 @@ export async function localLab({gateway = '192.168.10.1', address, iface,
       const body = data === undefined ? null : JSON.stringify(data);
       const req = http.request({host: gateway, localAddress: address, path: resource,
         method: body ? 'POST' : 'GET', agent: false,
-        headers: {Host: 'dongle.local', ...(token ? {Authorization: `Bearer ${token}`} : {}),
+        headers: {Host: adminHostname, ...(token ? {Authorization: `Bearer ${token}`} : {}),
           ...(body ? {'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body)} : {})}}, res => {
         let text = ''; res.setEncoding('utf8');
         res.on('data', b => { text += b; if (text.length > 256 * 1024) req.destroy(Error('Oversize API response')); });
@@ -49,7 +53,12 @@ export async function localLab({gateway = '192.168.10.1', address, iface,
     if (response.code !== 200) throw Error(`${resource}: HTTP ${response.code} ${response.text.slice(0, 160)}`);
     return {data: JSON.parse(response.text), ms: performance.now() - started};
   }
-  const status = async () => (await api('/api/status')).data;
+  const status = async () => {
+    const s = (await api('/api/status')).data;
+    assert.equal(s.board, profile.name, 'Wrong board');
+    assert.equal(s.net.usb_ip, gateway, 'Board USB address changed');
+    return s;
+  };
   async function snapshot(label) {
     const s = await status();
     await fs.appendFile(path.join(out, 'status.ndjson'), JSON.stringify({at: new Date().toISOString(), label, status: cleanStatus(s)}) + '\n');
@@ -115,7 +124,8 @@ export async function localLab({gateway = '192.168.10.1', address, iface,
     token = (await api('/api/login', {password: process.env.MESHPN_ADMIN_PASSWORD ?? 'admin'})).data.token;
     if (!token) throw Error('Login returned no token');
     const initial = await snapshot('initial');
-    assert.equal(initial.board, 'waveshare_esp32_p4_wifi6', 'Expected the project P4');
+    assert.equal(initial.board, profile.name, 'Wrong board; refusing to change VPN settings');
+    adminHostname = initial.hostname || profile.hostname;
     assert.equal(initial.net.usb_ip, gateway); assert(initial.wifi.connected, 'Board STA uplink required');
     original = {enabled: initial.vpn.enabled, transport: initial.vpn.transport, server: initial.vpn.server,
       kill_switch: initial.vpn.kill_switch, tls_server_name: initial.vpn.tls_server_name ?? '',
@@ -131,7 +141,7 @@ export async function localLab({gateway = '192.168.10.1', address, iface,
         await config(type, `${host}:${peer.port}`); await waitState(true);
         for (let i = 0; i < 3; i++) await curl(`http://${testAddress}/`);
         const answer = await dns(); assert.equal(answer.rcode, 0); assert.equal(answer.last4, testAddress);
-        const local = await dns(initial.hostname || 'dongle.local'); assert.equal(local.last4, gateway);
+        const local = await dns(initial.hostname || profile.hostname); assert.equal(local.last4, gateway);
         assert(peer.stats.mss.length && peer.stats.mss.every(m => m <= 1360));
         return {peer: structuredClone(peer.stats), dns: answer};
       });
@@ -233,7 +243,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const options = {};
   for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === '--without-peer') { options.withoutPeer = true; continue; }
-    const key = {'--host': 'host', '--out': 'out', '--cert': 'certificate', '--key': 'privateKey', '--soak-seconds': 'soakSeconds'}[process.argv[i]];
+    const key = {'--board': 'board', '--gateway': 'gateway', '--host': 'host', '--out': 'out', '--cert': 'certificate', '--key': 'privateKey', '--soak-seconds': 'soakSeconds'}[process.argv[i]];
     if (!key || !process.argv[i + 1]) throw Error('Unknown option or missing value');
     options[key] = key === 'soakSeconds' ? Number(process.argv[++i]) : process.argv[++i];
   }

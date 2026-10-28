@@ -77,3 +77,8 @@ CONFIG_WIFI_RMT_RX_BA_WIN=32
 # Built-in USB-C uses USB Serial/JTAG; HS NCM uses the separate solder pads.
 # CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Distinct LANs and mDNS identity for simultaneous P4 development.
+CONFIG_MESHVPN_USB_SUBNET_OCTET_2=12
+CONFIG_MESHVPN_AP_SUBNET_OCTET_2=13
+CONFIG_MESHVPN_HOSTNAME_DEFAULT="dongle-stamp"

@@ -8,7 +8,7 @@ import { counterDelta,stats,command } from './perf-lib.mjs';
 
 export function parseLocalArgs(args) {
   const o={paths:'usb',localOnly:true,runs:3,startDelay:60};
-  const names={'--runs':'runs','--start-delay':'startDelay','--admin-url':'adminURL','--admin-ca':'adminCA','--out':'out'};
+  const names={'--board':'board','--runs':'runs','--start-delay':'startDelay','--admin-url':'adminURL','--admin-ca':'adminCA','--out':'out'};
   for(let i=0;i<args.length;i++) {
     const a=args[i];
     if(a==='--help'||a==='-h')o.help=true;
@@ -46,7 +46,7 @@ export function localReport(r) {
 
 export async function main(args=process.argv.slice(2),deps={}) {
   const o=parseLocalArgs(args);
-  if(o.help){console.log('Usage: npm run device:perf:usb-local -- [--start-delay 60] [--runs 3] [--admin-url http(s)://BOARD-IP/] [--admin-ca cert.pem | --admin-insecure] [--out DIRECTORY]\nMac only. Uses MESHPN_ADMIN_PASSWORD. No server argument.');return 0;}
+  if(o.help){console.log('Usage: npm run device:perf:usb-local -- [--board waveshare|stamp|xiao] [--start-delay 60] [--runs 3] [--admin-url http(s)://BOARD-IP/] [--admin-ca cert.pem | --admin-insecure] [--out DIRECTORY]\nMac only. Uses MESHPN_ADMIN_PASSWORD. No server argument.');return 0;}
   const log=deps.log??console.log,wait=deps.wait??((ms,signal)=>delay(ms,undefined,{signal}));
   const controller=new AbortController(),signal=controller.signal,stop=()=>controller.abort();
   process.once('SIGINT',stop);process.once('SIGTERM',stop);

@@ -8,15 +8,14 @@ import {discoverBoard,checkLocalRoute} from './perf-network.mjs';
 import {cleanStatus} from './perf-runner.mjs';
 import {stats} from './perf-lib.mjs';
 
-export async function stability({minutes = 15, out, adminURL = 'http://192.168.10.1/'} = {}) {
+export async function stability({minutes = 15, out, adminURL, board: target = process.env.BOARD || 'waveshare'} = {}) {
   if (!out || !Number.isFinite(minutes) || minutes < 0.1 || minutes > 120) throw Error('Require --out and --minutes 0.1..120');
   await fs.mkdir(path.dirname(path.resolve(out)), {recursive: true}); await fs.mkdir(out);
   const r = {started: new Date().toISOString(), status: 'running', minutes, measurements: []};
   const controller = new AbortController(), stop = () => controller.abort();
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
   try {
-    const board = await discoverBoard({paths: 'usb', localOnly: true, adminURL}, controller.signal, console.log);
-    assert.equal(board.initial.board, 'waveshare_esp32_p4_wifi6');
+    const board = await discoverBoard({paths: 'usb', localOnly: true, adminURL, board: target}, controller.signal, console.log);
     assert.equal(board.initial.vpn.enabled, false, 'Restore VPN settings before baseline stress');
     await checkLocalRoute(board.paths[0], controller.signal);
     r.before = cleanStatus(board.initial); const boot = board.initial.boot_count;
@@ -57,7 +56,7 @@ export async function stability({minutes = 15, out, adminURL = 'http://192.168.1
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const o = {};
   for (let i = 2; i < process.argv.length; i += 2) {
-    const key = {'--minutes': 'minutes', '--out': 'out', '--admin-url': 'adminURL'}[process.argv[i]];
+    const key = {'--board': 'board', '--minutes': 'minutes', '--out': 'out', '--admin-url': 'adminURL'}[process.argv[i]];
     if (!key || !process.argv[i + 1]) throw Error('Unknown option or missing value');
     o[key] = key === 'minutes' ? Number(process.argv[i + 1]) : process.argv[i + 1];
   }

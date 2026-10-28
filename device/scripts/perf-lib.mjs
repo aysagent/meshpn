@@ -10,7 +10,7 @@ export function parseArgs(args) {
   if(args.includes('--ap-tcp-up'))Object.assign(o,{apTcpUp:true,seconds:30,runs:3,soakMinutes:0,idleSeconds:10,paths:'ap'});
   if(args.includes('--ap-tcp-paced'))Object.assign(o,{apTcpPaced:true,seconds:30,runs:3,soakMinutes:0,idleSeconds:10,paths:'ap'});
   const names = {'seconds':'seconds','runs':'runs','soak-minutes':'soakMinutes','idle-seconds':'idleSeconds',
-    'start-delay':'startDelay','iperf-port':'iperfPort','server-ip':'serverIP','paths':'paths','admin-url':'adminURL','admin-ca':'adminCA','out':'out'};
+    'start-delay':'startDelay','iperf-port':'iperfPort','server-ip':'serverIP','paths':'paths','board':'board','admin-url':'adminURL','admin-ca':'adminCA','out':'out'};
   for(let i=0;i<args.length;i++) {
     const a=args[i];
     if(a==='--help'||a==='-h') o.help=true;

@@ -183,6 +183,10 @@ node device/tests/test-captive.mjs
 "$cc" "${flags[@]}" -Idevice/tests/stubs -Idevice/components/meshvpn_config/include \
   device/tests/test_hostname.c device/components/meshvpn_config/meshvpn_config_hostname.c -o "$test_dir/hostname"
 "$test_dir/hostname"
+"$cc" "${flags[@]}" -DCONFIG_MESHVPN_HOSTNAME_DEFAULT='"dongle-stamp"' \
+  -Idevice/tests/stubs -Idevice/components/meshvpn_config/include \
+  device/tests/test_hostname.c device/components/meshvpn_config/meshvpn_config_hostname.c -o "$test_dir/hostname-stamp"
+"$test_dir/hostname-stamp"
 node device/tests/test-web-bursts.mjs
 for default_https in 0 1; do
   "$cc" "${flags[@]}" -DCONFIG_MESHVPN_WEB_HTTPS="$default_https" \

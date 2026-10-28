@@ -57,6 +57,14 @@ class Fake:
 
 
 class Tests(unittest.TestCase):
+    def test_board_selection(self):
+        stamp = m.options(['--board', 'stamp'])
+        self.assertEqual(stamp.board, 'm5_stamp_p4_c6')
+        self.assertEqual(stamp.admin_ip, '192.168.12.1')
+        wave = m.options(['--board', 'waveshare'])
+        self.assertEqual(wave.admin_ip, '192.168.10.1')
+        self.assertEqual(m.options(['--board', 'stamp', '--admin-ip', '192.168.22.1']).admin_ip, '192.168.22.1')
+
     def execute(self, trace=False, **kw):
         c = Clock()
         f = Fake(c, **kw)
