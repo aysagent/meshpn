@@ -16,6 +16,12 @@ if [[ ! -f "$TARGET_FILE" ]]; then
 fi
 IDF_TARGET="$(tr -d '[:space:]' < "$TARGET_FILE")"
 case "$IDF_TARGET" in esp32s3|esp32p4) ;; *) echo "Invalid target for $BOARD: $IDF_TARGET" >&2; exit 1;; esac
+P4_REVISION="${P4_REVISION:-1}"
+case "$P4_REVISION" in 1|3) ;; *) echo "P4_REVISION must be 1 or 3" >&2; exit 1;; esac
+if [[ "$IDF_TARGET" != esp32p4 && "$P4_REVISION" != 1 ]]; then
+  echo "P4_REVISION=3 requires a P4 board" >&2; exit 1
+fi
+export P4_REVISION
 unset IDF_PYTHON_ENV_PATH
 default_idf="$HOME/esp/esp-idf-meshpn-v5.5.5"
 if [[ "${IDF_PATH:-}" == "$HOME/esp/esp-idf" &&
@@ -41,7 +47,7 @@ source "$selected_idf/export.sh"
 export BOARD USB_PROFILE="$PROFILE" USB_DIAGNOSTICS="${USB_DIAGNOSTICS:-0}"
 if [[ "${DEVICE_BIND_ONLY:-0}" == 1 ]]; then
   python "$DEVICE_DIR/scripts/flash-device.py" --device-dir "$DEVICE_DIR" \
-    --build-dir "$DEVICE_DIR" --target "$IDF_TARGET" --profile "$PROFILE" --bind
+    --board "$BOARD" --build-dir "$DEVICE_DIR" --target "$IDF_TARGET" --profile "$PROFILE" --bind
   exit 0
 fi
 if [[ "$IDF_TARGET" == esp32s3 ]]; then
@@ -58,6 +64,9 @@ case "$WIREGUARD_PERF" in 0|1) ;; *) echo "WIREGUARD_PERF must be 0 or 1" >&2; e
 config_files=("$DEVICE_DIR/sdkconfig.defaults" "$DEVICE_DIR/boards/$BOARD/sdkconfig.defaults" "$TARGET_FILE" "$DEVICE_DIR/profiles/usb_$PROFILE.defconfig" "$DEVICE_DIR/main/idf_component.yml")
 if [[ "$IDF_TARGET" == esp32p4 ]]; then
   config_files+=("$DEVICE_DIR/target_components/esp32p4_bridge_config/Kconfig")
+  if [[ "$P4_REVISION" == 3 ]]; then
+    config_files+=("$DEVICE_DIR/profiles/p4_rev3.defconfig")
+  fi
 fi
 if [[ "$USB_DIAGNOSTICS" == 1 ]]; then
   config_files+=("$DEVICE_DIR/profiles/usb_diagnostics.defconfig")
@@ -78,7 +87,7 @@ case "${BUILD_ONLY:-0}" in
   0) ;;
   *) echo "BUILD_ONLY must be 0 or 1" >&2; exit 1;;
 esac
-flash_args=(--device-dir "$DEVICE_DIR" --build-dir "$BUILD_DIR" --target "$IDF_TARGET" --profile "$PROFILE")
+flash_args=(--board "$BOARD" --device-dir "$DEVICE_DIR" --build-dir "$BUILD_DIR" --target "$IDF_TARGET" --profile "$PROFILE")
 [[ -z "${PORT:-}" ]] || flash_args+=(--port "$PORT")
 [[ "$MONITOR" != monitor ]] || flash_args+=(--monitor)
 python "$DEVICE_DIR/scripts/flash-device.py" "${flash_args[@]}"

@@ -39,10 +39,9 @@ npm run device:flash:p4
 The native P4 USB-OTG ROM port is `303a:0012` on the four-pin HS connection.
 The ignored local binding records the application's MAC-derived serial. When
 flashing from the running app, the script verifies that serial and follows the
-same physical USB location into ROM; when starting in ROM, it reads and checks
-the ROM MAC. `/dev/cu.usbmodem…` may change between runs. The optional CH343P
+same physical USB location into ROM; every P4 flash also checks the ROM MAC. `/dev/cu.usbmodem…` may change between runs. The optional CH343P
 UART is not selected for this guarded path.
-When starting in P4 ROM, the helper reads and verifies the eFuse MAC and writes
+The helper reads and verifies the eFuse MAC and writes
 the image through the same open esptool connection. This avoids a macOS USB
 reopen failure between a separate `read_mac` and `write_flash`; a mismatched
 MAC aborts before any write. Application-to-ROM flashing still verifies the

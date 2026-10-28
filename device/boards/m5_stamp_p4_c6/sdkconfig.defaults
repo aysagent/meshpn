@@ -1,4 +1,79 @@
-# M5Stack Stamp-P4 + Stamp-AddOn C6 (future — scaffold only)
+# M5Stack Stamp-P4 + Stamp-AddOn C6 For P4 (BTB SDIO)
 
 CONFIG_IDF_TARGET="esp32p4"
+# CONFIG_MESHVPN_BOARD_WAVESHARE_ESP32_P4_WIFI6 is not set
+# CONFIG_MESHVPN_BOARD_XIAO_ESP32S3 is not set
+CONFIG_MESHVPN_BOARD_M5_STAMP_P4_C6=y
+
+# Initial pre-v3 P4 image. Confirm the physical chip revision on first binding.
+# Do not force flashing a v3 chip: pre-v3 and v3 images are incompatible.
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y
+
+# Stamp-P4: 16 MiB external flash and 32 MiB in-package PSRAM.
+# CONFIG_ESPTOOLPY_FLASHSIZE_8MB is not set
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# Keep the 5.5.5 bootloader within the existing 0x8000 partition-table offset.
 CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_SPIRAM=y
+# ESP-IDF 5.4 still gates the P4's supported 200 MHz PSRAM mode behind this
+# feature switch. Without it Kconfig silently falls back to 20 MHz.
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+CONFIG_SPIRAM_SPEED_200M=y
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+CONFIG_CACHE_L2_CACHE_256KB=y
+CONFIG_CACHE_L2_CACHE_LINE_128B=y
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+# Long-lived nonblocking TLS RX/TX uses stable record buffers in PSRAM.
+# P4 has enough PSRAM for the configured 16KiB RX + 4KiB TX records.
+# Avoid the IDF dynamic record-buffer allocation/free path under load.
+# CONFIG_MBEDTLS_DYNAMIC_BUFFER is not set
+# Keep the panic dump within the existing 64 KiB partition. The crashed task
+# is always included; other tasks are selected by priority.
+CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=8
+
+# USB HS Device on dedicated USB2_HOST_DP/DM pads, not GPIO26/27 FS.
+CONFIG_TINYUSB_RHPORT_HS=y
+# CONFIG_TINYUSB_RHPORT_FS is not set
+CONFIG_TINYUSB_MODE_DMA=y
+CONFIG_TINYUSB_TASK_AFFINITY_CPU1=y
+CONFIG_TINYUSB_INIT_IN_DEFAULT_TASK=y
+CONFIG_TINYUSB_TASK_PRIORITY=6
+# A 32KiB SDIO stream can deliver more than twenty Ethernet frames at once.
+# Keep burst buffering in PSRAM; XIAO retains its eight-slot default.
+CONFIG_MESHVPN_USB_TX_QUEUE_SLOTS=128
+
+# Official Stamp-P4 Wi-Fi example: CLK43 CMD44 D0..D3=45..48 RESET42.
+CONFIG_SLAVE_IDF_TARGET_ESP32C6=y
+CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y
+CONFIG_ESP_HOSTED_SDIO_4_BIT_BUS=y
+CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ=40000
+# Bound queued 1536-byte internal DMA packet copies on the host. The upstream
+# default is 20 slots per priority queue in each direction.
+CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=8
+CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=8
+CONFIG_ESP_HOSTED_SDIO_PIN_CMD=44
+CONFIG_ESP_HOSTED_SDIO_PIN_CLK=43
+CONFIG_ESP_HOSTED_SDIO_PIN_D0=45
+CONFIG_ESP_HOSTED_SDIO_PRIV_PIN_D1_4BIT_BUS=46
+CONFIG_ESP_HOSTED_SDIO_PIN_D2=47
+CONFIG_ESP_HOSTED_SDIO_PIN_D3=48
+CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=42
+# RST drives the AddOn power-enable: high = running, low = reset/off.
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
+
+# Remote Wi-Fi buffers mirror the vendor P4 profile. Both STA and SoftAP are
+# required by MeshPN, so ESP_WIFI_SOFTAP_SUPPORT remains enabled.
+CONFIG_WIFI_RMT_STATIC_RX_BUFFER_NUM=16
+CONFIG_WIFI_RMT_DYNAMIC_RX_BUFFER_NUM=64
+CONFIG_WIFI_RMT_DYNAMIC_TX_BUFFER_NUM=64
+CONFIG_WIFI_RMT_AMPDU_TX_ENABLED=y
+CONFIG_WIFI_RMT_TX_BA_WIN=32
+CONFIG_WIFI_RMT_AMPDU_RX_ENABLED=y
+CONFIG_WIFI_RMT_RX_BA_WIN=32
+
+# Built-in USB-C uses USB Serial/JTAG; HS NCM uses the separate solder pads.
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

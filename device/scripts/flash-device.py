@@ -18,6 +18,17 @@ APP = (0x303A, 0x4001)
 ROM = (0x303A, 0x1001)
 P4_ROM = (0x303A, 0x0012)
 P4_PRODUCT = "MeshPN ESP32-P4 HS NCM"
+STAMP_PRODUCT = "MeshPN Stamp-P4 HS NCM"
+BOARDS = {"xiao_esp32s3": "esp32s3", "waveshare_esp32_p4_wifi6": "esp32p4",
+          "m5_stamp_p4_c6": "esp32p4"}
+
+
+def binding_path(device_dir, board):
+    # Preserve existing bindings; never reuse the Waveshare binding for Stamp.
+    suffix = {"xiao_esp32s3": "esp32s3", "waveshare_esp32_p4_wifi6": "esp32p4"}.get(board, board)
+    return str(Path(device_dir) / f".board-binding-{suffix}.json")
+
+
 S3_PRODUCT = "Espressif Device"
 
 
@@ -34,12 +45,12 @@ def location(port):
     return (port.location or "").split(":", 1)[0]
 
 
-def is_app(port, target):
+def is_app(port, target, board=None):
     if usb_id(port) != APP:
         return False
     product = getattr(port, "product", None) or ""
     if target == "esp32p4":
-        return product == P4_PRODUCT and getattr(port, "manufacturer", None) == "MeshPN"
+        return product == (STAMP_PRODUCT if board == "m5_stamp_p4_c6" else P4_PRODUCT) and getattr(port, "manufacturer", None) == "MeshPN"
     return product == S3_PRODUCT and getattr(port, "manufacturer", None) == "Espressif Systems"
 
 
@@ -47,19 +58,28 @@ def rom_id(target):
     return P4_ROM if target == "esp32p4" else ROM
 
 
-def select_port(ports, explicit, target):
+def select_port(ports, explicit, target, board=None, binding=None):
     if explicit:
         matches = [p for p in ports if p.device == explicit]
     else:
         matches = [p for p in ports if usb_id(p) == rom_id(target)
-                   or is_app(p, target)]
+                   or is_app(p, target, board)]
+        if binding and target == "esp32p4":
+            # Prefer exactly the bound application; unidentifiable ROM ports
+            # require explicit PORT when other candidates remain.
+            bound = [p for p in matches if is_app(p, target, board)
+                     and serial_number(p) == binding["serial"]]
+            if bound:
+                matches = bound
+            else:
+                matches = [p for p in matches if not is_app(p, target, board)]
     if len(matches) != 1:
         found = ", ".join(p.device for p in matches) or "none"
         raise RuntimeError(f"Expected one programming port (found: {found}). "
                            "Connect the board or set PORT=/dev/cu.… (Linux: /dev/ttyACM…). "
                            "Use BUILD_ONLY=1 to build without a board.")
     port = matches[0]
-    if not (is_app(port, target) or usb_id(port) == rom_id(target)):
+    if not (is_app(port, target, board) or usb_id(port) == rom_id(target)):
         raise RuntimeError("Selected USB port does not match this project's board and target chip")
     return port
 
@@ -71,11 +91,11 @@ def serial_number(port):
     return serial
 
 
-def load_binding(path, target):
+def load_binding(path, target, board=None):
     try:
         binding = json.loads(Path(path).read_text())
     except FileNotFoundError as error:
-        name = "p4" if target == "esp32p4" else "xiao"
+        name = "stamp" if board == "m5_stamp_p4_c6" else ("p4" if target == "esp32p4" else "xiao")
         raise RuntimeError(f"Board is not bound. Run npm run device:bind:{name} once before flashing") from error
     except (OSError, ValueError) as error:
         raise RuntimeError(f"Cannot read board binding {path}: {error}") from error
@@ -83,11 +103,14 @@ def load_binding(path, target):
             not isinstance(binding.get("serial"), str) or
             not re.fullmatch(r"[0-9A-F]{12}", binding["serial"])):
         raise RuntimeError(f"Invalid board binding for {target}: {path}")
+    if board and (binding.get("board") not in (None, board) or
+                  (board == "m5_stamp_p4_c6" and binding.get("board") != board)):
+        raise RuntimeError(f"Board binding belongs to another model: {path}")
     return binding
 
 
 def check_app_binding(port, binding):
-    if (not is_app(port, binding["target"]) or
+    if (not is_app(port, binding["target"], binding.get("board")) or
             (binding["target"] == "esp32p4" and serial_number(port) != binding["serial"])):
         raise RuntimeError(f"{port.device} is not the bound {binding['target']} board")
 
@@ -107,12 +130,16 @@ def rom_mac(port, target, run):
 def bind(args, enumerate_ports, serial_factory, run=subprocess.run, wait=None):
     if wait is None:
         wait = wait_port
-    candidates = [p for p in enumerate_ports() if is_app(p, args.target)]
-    port = select_port(candidates, args.port, args.target)
-    if not is_app(port, args.target) or not location(port):
-        raise RuntimeError("Bind requires the running MeshPN application with a USB location")
+    board = getattr(args, "board", None)
+    candidates = [p for p in enumerate_ports() if is_app(p, args.target, board)
+                  or (args.port and args.target == "esp32p4" and usb_id(p) == P4_ROM)]
+    port = select_port(candidates, args.port, args.target, board)
+    if not location(port):
+        raise RuntimeError("Bind requires a USB location")
     if args.target == "esp32p4":
-        serial = serial_number(port)
+        # A blank module has no model descriptor. Explicit PORT is required;
+        # esptool verifies P4 and reads its eFuse MAC without writing flash.
+        serial = serial_number(port) if is_app(port, args.target, board) else rom_mac(port, args.target, run)
     else:
         # S3 firmware uses the generic TinyUSB serial "123456". Read its
         # actual eFuse MAC in ROM once, then return it to the application.
@@ -129,12 +156,23 @@ def bind(args, enumerate_ports, serial_factory, run=subprocess.run, wait=None):
             raise RuntimeError("MeshPN S3 application did not return after binding")
     path = Path(args.binding_file)
     if path.exists():
-        old = load_binding(path, args.target)
+        old = load_binding(path, args.target, board)
         if old["serial"] != serial:
             raise RuntimeError(f"{path} already binds a different board; remove it explicitly to rebind")
         print(f"Board already bound: {serial}", flush=True)
         return
-    path.write_text(json.dumps({"target": args.target, "serial": serial}, indent=2) + "\n")
+    # Do not accidentally claim the other model already bound in this checkout.
+    for other_board in BOARDS:
+        other_path = Path(binding_path(args.device_dir, other_board))
+        if other_path == path or not other_path.exists():
+            continue
+        other = json.loads(other_path.read_text())
+        if other.get("serial") == serial:
+            raise RuntimeError(f"Physical board already bound in {other_path}; refusing to reassign")
+    record = {"target": args.target, "serial": serial}
+    if board:
+        record["board"] = board
+    path.write_text(json.dumps(record, indent=2) + "\n")
     print(f"Bound {args.target} serial {serial} in {path}", flush=True)
 
 
@@ -246,15 +284,32 @@ def preflight_p4_build(build_dir):
         raise RuntimeError(f"P4 build preflight failed; USB was not reset: {error}") from error
 
 
+def preflight_board(args):
+    board = getattr(args, "board", None)
+    if not board:  # Legacy Python callers; CLI always resolves a board.
+        return
+    try:
+        identity = json.loads((Path(args.build_dir) / "meshvpn-board.json").read_text())
+    except (OSError, ValueError) as error:
+        raise RuntimeError("Missing board build identity; rebuild before flashing. USB was not reset") from error
+    if (BOARDS.get(board) != args.target or
+            identity != {"board": board, "target": args.target, "profile": args.profile}):
+        raise RuntimeError("Build board/target/profile mismatch; USB was not reset")
+
+
 def flash(args, enumerate_ports, serial_factory, run=subprocess.run, wait=wait_port):
+    preflight_board(args)
+    board = getattr(args, "board", None)
     if args.target == "esp32p4":
         preflight_p4_build(args.build_dir)
-    original = select_port(enumerate_ports(), args.port, args.target)
-    binding = load_binding(args.binding_file, args.target)
-    if is_app(original, args.target):
+    binding = load_binding(args.binding_file, args.target, board)
+    if board:
+        binding = dict(binding, board=board)
+    original = select_port(enumerate_ports(), args.port, args.target, board, binding)
+    if is_app(original, args.target, board):
         check_app_binding(original, binding)
     port = original
-    if is_app(port, args.target):
+    if is_app(port, args.target, board):
         if not location(port):
             raise RuntimeError("USB location is unavailable; refusing to reset a board we cannot rediscover.")
         print(f"Entering ROM bootloader through {port.device} (1200-baud touch)…", flush=True)
@@ -262,14 +317,7 @@ def flash(args, enumerate_ports, serial_factory, run=subprocess.run, wait=wait_p
         port = wait(original, rom_id(args.target), enumerate_ports)
     if usb_id(port) != rom_id(args.target) or location(port) != location(original):
         raise RuntimeError("ROM port identity/location changed; refusing to flash")
-    if args.target == "esp32p4" and is_app(original, args.target):
-        # The checked app serial is derived from this P4's eFuse MAC, and the
-        # ROM appeared at the same physical USB location. Closing the P4 ROM
-        # port after a separate read_mac can make macOS drop the CDC device
-        # before the subsequent flash open. Keep ROM MAC verification when
-        # starting from ROM, where no application identity was available.
-        print(f"Bound P4 application {binding['serial']} became ROM at the same USB location", flush=True)
-    elif args.target != "esp32p4" and rom_mac(port, args.target, run) != binding["serial"]:
+    if args.target != "esp32p4" and rom_mac(port, args.target, run) != binding["serial"]:
         raise RuntimeError("ROM MAC does not match the bound board; refusing to flash")
     print(f"Flashing {args.target} on {port.device}", flush=True)
     base = ["idf.py", "-C", args.device_dir, "-B", args.build_dir]
@@ -280,18 +328,11 @@ def flash(args, enumerate_ports, serial_factory, run=subprocess.run, wait=wait_p
         flash_args = Path(args.build_dir) / "flash_args"
         if not flash_args.is_file():
             raise RuntimeError(f"Missing generated flash arguments: {flash_args}")
-        if is_app(original, args.target):
-            run([sys.executable, "-m", "esptool", "--chip", "esp32p4",
-                 "--port", port.device, "-b", "460800", "--before", "no_reset",
-                 "--after", "hard_reset", "write_flash", "@flash_args"],
-                cwd=args.build_dir, check=True)
-        else:
-            # Starting in ROM still requires an eFuse MAC check. Keep its
-            # serial connection open through the write: closing after a
-            # separate read_mac can leave macOS with a stale USB device.
-            run([sys.executable, str(Path(__file__).with_name("flash-p4-verified.py")),
-                 "--port", port.device, "--expected-mac", binding["serial"],
-                 "--build-dir", str(Path(args.build_dir).resolve())], check=True)
+        # Verify the eFuse MAC in the SAME open connection that writes flash,
+        # including after an app touch. No port-name or model-only trust.
+        run([sys.executable, str(Path(__file__).with_name("flash-p4-verified.py")),
+             "--port", port.device, "--expected-mac", binding["serial"],
+             "--build-dir", str(Path(args.build_dir).resolve())], check=True)
     else:
         run(base + ["-p", port.device, "flash"], check=True)
     # A successful esptool exit proves flashing, not a healthy application.
@@ -305,7 +346,7 @@ def flash(args, enumerate_ports, serial_factory, run=subprocess.run, wait=wait_p
             check_app_binding(port, binding)
         print(f"Application USB CDC returned on {port.device}; network/VPN health not tested.", flush=True)
     if args.monitor:
-        if is_app(port, args.target):
+        if is_app(port, args.target, board):
             print("Normal MeshPN CDC is quiet; use device:flash:diag for '?' diagnostic snapshots. "
                   "Close monitor before the next flash.", flush=True)
         run(base + ["-p", port.device, "monitor"], check=True)
@@ -318,12 +359,17 @@ def main():
     parser.add_argument("--target", choices=["esp32s3", "esp32p4"], required=True)
     parser.add_argument("--profile", choices=["ncm", "ecm", "rndis"], required=True)
     parser.add_argument("--port", default=os.environ.get("PORT"))
+    parser.add_argument("--board", choices=BOARDS)
     parser.add_argument("--binding-file")
     parser.add_argument("--bind", action="store_true")
     parser.add_argument("--monitor", action="store_true")
     args = parser.parse_args()
+    if not args.board:
+        args.board = "waveshare_esp32_p4_wifi6" if args.target == "esp32p4" else "xiao_esp32s3"
+    if BOARDS[args.board] != args.target:
+        parser.error("board and target do not match")
     if not args.binding_file:
-        args.binding_file = str(Path(__file__).parents[1] / f".board-binding-{args.target}.json")
+        args.binding_file = binding_path(args.device_dir, args.board)
     try:
         import serial
         from serial.tools.list_ports import comports

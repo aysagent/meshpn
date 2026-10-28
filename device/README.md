@@ -4,7 +4,8 @@ Default admin: **http://dongle.local/**. Change it in **Admin → Device name**.
 Without a Wi-Fi uplink, USB/AP clients can use the automatic setup portal.
 See [names, setup portal and HTTPS](docs/admin-name-and-setup.md).
 
-ESP-IDF firmware for XIAO ESP32-S3 and Waveshare ESP32-P4-WIFI6. USB Ethernet
+ESP-IDF firmware for XIAO ESP32-S3, Waveshare ESP32-P4-WIFI6 and
+[M5Stack Stamp-P4 + C6 AddOn](docs/m5-stamp-p4-c6.md) (hardware validation pending). USB Ethernet
 and WiFi SoftAP → IPv4 NAT → WiFi STA.
 Full IPv4 tunnelling supports clean-vpn TCP/UDP, experimental raw TLS 1.2, and
 WireGuard, with admin settings and a kill switch. Raw TLS requires an imported CA, certificate name and synchronized time;
@@ -68,7 +69,7 @@ See Espressif's [USB Serial/JTAG download-mode reset explanation](https://docs.e
 With no board attached, use `BUILD_ONLY=1 npm run device:flash` explicitly;
 ordinary flash now exits with an error instead of silently building only.
 `PORT` can narrow a selection but cannot bypass the project identity or ROM
-MAC checks. Multiple matching boards cause a safe refusal. Each board/profile/defaults combination gets a separate
+MAC checks. For P4, the bound unique MAC selects the application even with multiple boards attached; ambiguous ROM ports cause a safe refusal. Each board/profile/defaults combination gets a separate
 `device/build-…` directory and sdkconfig; previous builds and settings are preserved. Keep the target-specific
 `dependencies.lock.esp32s3` and `dependencies.lock.esp32p4` files in version control.
 The dependency manager applies the iot_bridge lwIP patches to your ESP-IDF checkout.

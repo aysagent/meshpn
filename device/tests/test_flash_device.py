@@ -36,6 +36,7 @@ class FlashTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.args.binding_file = str(Path(temporary.name) / "binding.json")
         self.args.build_dir = temporary.name
+        self.args.device_dir = temporary.name
         Path(temporary.name, "flash_args").write_text("0x10000 meshvpn_device.bin\n")
         Path(temporary.name, "meshvpn_device.bin").write_bytes(b"test image")
         Path(temporary.name, "flasher_args.json").write_text(json.dumps({
@@ -46,6 +47,104 @@ class FlashTests(unittest.TestCase):
         rom_mac_patch = patch.object(flash, "rom_mac", return_value="E8F60AE395D0")
         rom_mac_patch.start()
         self.addCleanup(rom_mac_patch.stop)
+
+    def stamp_setup(self):
+        self.args.board = "m5_stamp_p4_c6"
+        self.args.target = "esp32p4"
+        self.args.device_dir = self.args.build_dir
+        self.args.binding_file = flash.binding_path(self.args.device_dir, self.args.board)
+        self.binding = {"board": self.args.board, "target": "esp32p4", "serial": "112233445566"}
+        Path(self.args.binding_file).write_text(json.dumps(self.binding))
+        Path(self.args.build_dir, "meshvpn-board.json").write_text(json.dumps({
+            "board": self.args.board, "target": self.args.target, "profile": self.args.profile}))
+        return port("/dev/cu.stamp", product=flash.STAMP_PRODUCT,
+                    manufacturer="MeshPN", serial_number=self.binding["serial"])
+
+    def test_stamp_flash_ignores_waveshare_xiao_and_other_stamp(self):
+        stamp = self.stamp_setup()
+        other = port("/dev/cu.otherstamp", product=flash.STAMP_PRODUCT,
+                     manufacturer="MeshPN", serial_number="AABBCCDDEEFF", location="9-9")
+        wave = port("/dev/cu.wave", product=flash.P4_PRODUCT, location="9-8")
+        rom = port("/dev/cu.renumbered", flash.P4_ROM)
+        returned = port("/dev/cu.newstamp", product=flash.STAMP_PRODUCT,
+                        manufacturer="MeshPN", serial_number=self.binding["serial"])
+        run, wait = Mock(), Mock(side_effect=[rom, returned])
+        with patch.object(flash, "touch") as touch:
+            flash.flash(self.args, lambda: [wave, self.app, other, stamp], Mock(), run=run, wait=wait)
+        self.assertIs(touch.call_args.args[0], stamp)
+        self.assertIn("112233445566", run.call_args.args[0])
+        self.assertIn(rom.device, run.call_args.args[0])
+        self.assertEqual(run.call_count, 1)
+
+    def test_stamp_ambiguous_rom_never_opens_ports(self):
+        self.stamp_setup()
+        ports = [port("/dev/cu.rom1", flash.P4_ROM),
+                 port("/dev/cu.rom2", flash.P4_ROM, location="9-9")]
+        run = Mock()
+        with patch.object(flash, "touch") as touch, self.assertRaises(RuntimeError):
+            flash.flash(self.args, lambda: ports, Mock(), run=run)
+        touch.assert_not_called()
+        run.assert_not_called()
+
+    def test_stamp_rejects_missing_build_identity_before_usb(self):
+        self.stamp_setup()
+        Path(self.args.build_dir, "meshvpn-board.json").unlink()
+        enumerate_ports = Mock()
+        with self.assertRaisesRegex(RuntimeError, "Missing board build identity"):
+            flash.flash(self.args, enumerate_ports, Mock())
+        enumerate_ports.assert_not_called()
+
+    def test_stamp_wrong_explicit_port_never_resets_other_model(self):
+        stamp = self.stamp_setup()
+        wave = port("/dev/cu.wave", product=flash.P4_PRODUCT)
+        self.args.port = wave.device
+        run = Mock()
+        with patch.object(flash, "touch") as touch, self.assertRaises(RuntimeError):
+            flash.flash(self.args, lambda: [wave, stamp], Mock(), run=run)
+        touch.assert_not_called()
+        run.assert_not_called()
+
+    def test_stamp_wrong_build_or_binding_never_enumerates(self):
+        self.stamp_setup()
+        enumerate_ports = Mock()
+        path = Path(self.args.build_dir, "meshvpn-board.json")
+        original = path.read_text()
+        path.write_text(original.replace("m5_stamp_p4_c6", "waveshare_esp32_p4_wifi6"))
+        with self.assertRaisesRegex(RuntimeError, "mismatch"):
+            flash.flash(self.args, enumerate_ports, Mock())
+        path.write_text(original)
+        Path(self.args.binding_file).write_text(json.dumps(dict(self.binding, board="waveshare_esp32_p4_wifi6")))
+        with self.assertRaisesRegex(RuntimeError, "another model"):
+            flash.flash(self.args, enumerate_ports, Mock())
+        enumerate_ports.assert_not_called()
+
+    def test_stamp_does_not_inherit_legacy_p4_binding(self):
+        self.stamp_setup()
+        self.assertNotEqual(flash.binding_path(self.args.device_dir, "waveshare_esp32_p4_wifi6"), self.args.binding_file)
+        Path(self.args.binding_file).write_text('{"target":"esp32p4","serial":"112233445566"}')
+        with self.assertRaisesRegex(RuntimeError, "another model"):
+            flash.load_binding(self.args.binding_file, "esp32p4", self.args.board)
+
+    def test_stamp_initial_bind_requires_explicit_rom_port(self):
+        self.stamp_setup()
+        Path(self.args.binding_file).unlink()
+        rom = port("/dev/cu.blankstamp", flash.P4_ROM)
+        with self.assertRaises(RuntimeError):
+            flash.bind(self.args, lambda: [rom], Mock())
+        self.args.port = rom.device
+        with patch.object(flash, "rom_mac", return_value="112233445566") as read:
+            flash.bind(self.args, lambda: [rom], Mock())
+        read.assert_called_once()
+        self.assertEqual(json.loads(Path(self.args.binding_file).read_text()), self.binding)
+
+    def test_stamp_cannot_claim_bound_waveshare_mac(self):
+        stamp = self.stamp_setup()
+        Path(self.args.binding_file).unlink()
+        Path(flash.binding_path(self.args.device_dir, "waveshare_esp32_p4_wifi6")).write_text(
+            json.dumps({"target": "esp32p4", "serial": "112233445566"}))
+        with self.assertRaisesRegex(RuntimeError, "already bound"):
+            flash.bind(self.args, lambda: [stamp], Mock())
+        self.assertFalse(Path(self.args.binding_file).exists())
 
     def test_only_supported_usb_ports_are_autoselected(self):
         unrelated = port("/dev/cu.other", (1, 2))
@@ -128,8 +227,8 @@ class FlashTests(unittest.TestCase):
         touch.assert_called_once()
         read_rom_mac.assert_not_called()
         self.assertEqual(wait.call_args_list[0].args[1], flash.P4_ROM)
-        self.assertEqual(run.call_args_list[0].args[0][-2:], ["write_flash", "@flash_args"])
-        self.assertEqual(run.call_args_list[0].kwargs["cwd"], self.args.build_dir)
+        self.assertTrue(run.call_args.args[0][1].endswith("flash-p4-verified.py"))
+        self.assertIn("E8F60AE395D0", run.call_args.args[0])
         self.assertEqual(wait.call_args_list[1].args[1], flash.APP)
 
     def test_matches_physical_location_not_device_name(self):
@@ -303,7 +402,7 @@ class FlashTests(unittest.TestCase):
         Path(self.args.binding_file).write_text('{"target":"esp32p4","serial":"E8F60AE395D0"}')
         app = port("/dev/cu.p4app", product=flash.P4_PRODUCT, serial_number="ABCDEF123456")
         run = Mock()
-        with patch.object(flash, "touch") as touch, self.assertRaisesRegex(RuntimeError, "not the bound"):
+        with patch.object(flash, "touch") as touch, self.assertRaisesRegex(RuntimeError, "not the bound|Expected one"):
             flash.flash(self.args, lambda: [app], Mock(), run=run)
         touch.assert_not_called()
         rom = port("/dev/cu.p4rom", flash.P4_ROM)

@@ -2,6 +2,9 @@
 name: ESP32 VPN Dongle
 overview: "XIAO ESP32-S3: USB Ethernet и WiFi AP → NAT → WiFi STA. Текущие улучшения реализованы в коде, ожидают проверки на плате. Расширение USB-совместимости отложено. TCP/UDP, raw TLS и WireGuard реализованы; профилированный TLS и selective routing остаются в плане."
 todos:
+  - id: stamp-p4-hs-acceptance
+    content: "Stamp-P4 + AddOn C6: HS/SDIO профиль, отдельная привязка и offline проверки готовы; проверить ревизию P4, C6 firmware, HS 480, NCM на телефоне и 3 автопрошивки при второй подключённой плате. См. docs/m5-stamp-p4-c6.md"
+    status: pending
   - id: scaffold-device
     content: "ESP-IDF project, XIAO ESP32-S3, сборка и прошивка"
     status: completed

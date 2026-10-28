@@ -36,6 +36,12 @@ set(SDKCONFIG_DEFAULTS
     "${CMAKE_SOURCE_DIR}/boards/${MESHVPN_BOARD}/sdkconfig.defaults"
     "${CMAKE_SOURCE_DIR}/profiles/usb_${MESHVPN_USB_PROFILE}.defconfig"
 )
+if("$ENV{P4_REVISION}" STREQUAL "3")
+    if(NOT "${MESHVPN_BOARD_TARGET}" STREQUAL "esp32p4")
+        message(FATAL_ERROR "P4_REVISION=3 requires an ESP32-P4 board")
+    endif()
+    list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_SOURCE_DIR}/profiles/p4_rev3.defconfig")
+endif()
 if("$ENV{USB_DIAGNOSTICS}" STREQUAL "1")
     list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_SOURCE_DIR}/profiles/usb_diagnostics.defconfig")
 endif()
@@ -47,6 +53,13 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 idf_build_set_property(DEPENDENCIES_LOCK
     "${CMAKE_SOURCE_DIR}/dependencies.lock.${IDF_TARGET}")
 project(meshvpn_device)
+# Fail before USB reset if a stale sdkconfig selects another P4 model.
+string(TOUPPER "${MESHVPN_BOARD}" MESHVPN_BOARD_SYMBOL)
+if(NOT CONFIG_MESHVPN_BOARD_${MESHVPN_BOARD_SYMBOL})
+    message(FATAL_ERROR "sdkconfig board does not match BOARD=${MESHVPN_BOARD}")
+endif()
+file(WRITE "${CMAKE_BINARY_DIR}/meshvpn-board.json"
+    "{\"board\":\"${MESHVPN_BOARD}\",\"target\":\"${IDF_TARGET}\",\"profile\":\"${MESHVPN_USB_PROFILE}\"}\n")
 include("${CMAKE_SOURCE_DIR}/cmake/lwip-napt.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/wireguard-performance.cmake")
 if(CONFIG_MESHVPN_VPN_ENABLE AND NOT CONFIG_LWIP_IP4_REASSEMBLY)

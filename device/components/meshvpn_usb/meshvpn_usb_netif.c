@@ -39,7 +39,11 @@ static char s_usb_mac[13];
 static const char *s_usb_strings[] = {
     s_usb_lang,
     "MeshPN",
+#if CONFIG_MESHVPN_BOARD_M5_STAMP_P4_C6
+    "MeshPN Stamp-P4 HS NCM",
+#else
     "MeshPN ESP32-P4 HS NCM",
+#endif
     s_usb_serial,
     "MeshPN CDC",
     "MeshPN NCM",
