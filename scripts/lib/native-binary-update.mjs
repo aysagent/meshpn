@@ -49,6 +49,7 @@ export class NativeBinaryUpdate {
     const engine=readOwned(bundle+'/engine',64*1024*1024), sha=binaryDigest(engine);
     const dir=bundle+'/binary-updates';fs.mkdirSync(dir,{mode:0o700});syncDir(bundle);
     fs.mkdirSync(dir+'/releases',{mode:0o700});syncDir(dir);
+    writeDurable(dir+'/operation.lock','');
     writeDurable(dir+'/binding.json',json({schema:1,bundle,protectedFiles}));
     writeDurable(dir+'/releases/'+sha,engine,0o555);
     writeDurable(dir+'/active.json',json({schema:1,sha256:sha}));

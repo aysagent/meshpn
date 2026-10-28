@@ -74,7 +74,7 @@ def read_private(value, limit=4096, private=True):
 
 
 def validate_config(c):
-    require(type(c) is dict and set(c) == {'version', 'host', 'port', 'user', 'identity',
+    require(type(c) is dict and set(c) - {'update_directory'} == {'version', 'host', 'port', 'user', 'identity',
                                           'known_hosts', 'state_dir', 'consumer_unit'}, 'invalid_config_fields')
     require(c['version'] == 1 and type(c['version']) is int, 'invalid_version')
     address = ipaddress.IPv4Address(c['host'])
@@ -84,7 +84,33 @@ def validate_config(c):
     require(re.fullmatch(r'[a-z][a-z0-9-]{0,63}\.service', c['consumer_unit']) is not None, 'invalid_consumer')
     for name in ('identity', 'known_hosts', 'state_dir'):
         trusted_path(c[name])
+    if 'update_directory' in c:
+        trusted_path(c['update_directory'])
     return c
+
+
+def update_lock(c):
+    # Share the updater's flock for the entire query/set/restart sequence.
+    # Missing directory means the fresh installation is not enrolled yet.
+    from contextlib import contextmanager
+    @contextmanager
+    def locked():
+        if 'update_directory' not in c:
+            yield; return
+        directory = trusted_path(c['update_directory'])
+        if not directory.exists():
+            yield; return
+        import fcntl
+        st = directory.lstat()
+        require(stat.S_ISDIR(st.st_mode) and st.st_uid == os.geteuid() and stat.S_IMODE(st.st_mode) == 0o700, 'unsafe_update_directory')
+        fd = os.open(directory / 'operation.lock', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as lock:
+            st = os.fstat(lock.fileno())
+            require(stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid() and st.st_nlink == 1 and stat.S_IMODE(st.st_mode) == 0o600, 'unsafe_update_lock')
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            require(not os.path.lexists(directory / 'transaction.json'), 'binary_update_recovery_required')
+            yield
+    return locked()
 
 
 def host_pin(data):
@@ -318,34 +344,35 @@ def main():
     if args.mode in ('apply', 'recover'):
         require(sys.platform == 'linux' and os.geteuid() == 0, 'linux_root_required')
         require(Path('/proc/1/comm').read_text().strip() == 'systemd', 'systemd_required')
-        invocation = failed_invocation(c) if args.mode == 'recover' else None
-        if args.mode == 'recover' and invocation is None:
-            print(json.dumps({'kind': 'clean-vpn-authenticated-clock', 'status': 'skipped',
-                              'mode': 'recover', 'code': 'not_a_native_time_failure', 'systemClockChanged': False}))
-            return
-        def check_failure():
-            require(failed_invocation(c) == invocation, 'consumer_failure_changed')
-        # Lock held across the probe/set/save sequence, inherited config is not
-        # enough to authorize changing time beneath a running VPN consumer.
-        import fcntl
-        state = trusted_path(c['state_dir']); state.mkdir(mode=0o700, exist_ok=True); floor_read(c)
-        fd = os.open(state / 'lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
-        with os.fdopen(fd, 'rb') as lock:
-            s = os.fstat(lock.fileno())
-            require(stat.S_ISREG(s.st_mode) and s.st_uid == 0 and s.st_nlink == 1 and stat.S_IMODE(s.st_mode) == 0o600, 'unsafe_lock')
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            boot_id = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
-            r = apply_locked(c, invocation[0] if invocation else args.failure, boot_id,
-                             check_failure if invocation else None)
-            if invocation:
-                check_failure()
-                r['restartQueued'] = False
-                if r['systemClockChanged']:
-                    # Before=consumer in the recovery unit defers this start
-                    # until we finish. Do not block waiting on our own job.
-                    subprocess.run(['/usr/bin/systemctl', '--no-block', 'start', c['consumer_unit']],
-                                   check=True, timeout=3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    r['restartQueued'] = True
+        with update_lock(c):
+            invocation = failed_invocation(c) if args.mode == 'recover' else None
+            if args.mode == 'recover' and invocation is None:
+                print(json.dumps({'kind': 'clean-vpn-authenticated-clock', 'status': 'skipped',
+                                  'mode': 'recover', 'code': 'not_a_native_time_failure', 'systemClockChanged': False}))
+                return
+            def check_failure():
+                require(failed_invocation(c) == invocation, 'consumer_failure_changed')
+            # Lock held across the probe/set/save sequence, inherited config is not
+            # enough to authorize changing time beneath a running VPN consumer.
+            import fcntl
+            state = trusted_path(c['state_dir']); state.mkdir(mode=0o700, exist_ok=True); floor_read(c)
+            fd = os.open(state / 'lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+            with os.fdopen(fd, 'rb') as lock:
+                s = os.fstat(lock.fileno())
+                require(stat.S_ISREG(s.st_mode) and s.st_uid == 0 and s.st_nlink == 1 and stat.S_IMODE(s.st_mode) == 0o600, 'unsafe_lock')
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                boot_id = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+                r = apply_locked(c, invocation[0] if invocation else args.failure, boot_id,
+                                 check_failure if invocation else None)
+                if invocation:
+                    check_failure()
+                    r['restartQueued'] = False
+                    if r['systemClockChanged']:
+                        # Before=consumer in the recovery unit defers this start
+                        # until we finish. Do not block waiting on our own job.
+                        subprocess.run(['/usr/bin/systemctl', '--no-block', 'start', c['consumer_unit']],
+                                       check=True, timeout=3, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        r['restartQueued'] = True
     else:
         r = {**probe(c), 'systemClockChanged': False}
     print(json.dumps({'kind': 'clean-vpn-authenticated-clock', 'status': 'passed', 'mode': args.mode, **r}))

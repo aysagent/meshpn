@@ -26,14 +26,14 @@ function paths(id){need(/^cvup-[a-f0-9]{8}$/.test(id),'fixture_id');return{dir:'
 function cleanup(id){const p=paths(id);if(!fs.existsSync(p.dir+'/owned.json'))return;
   const owned=JSON.parse(fs.readFileSync(p.dir+'/owned.json'));need(owned.id===id&&owned.kind==='native-update-isolated-check','fixture_ownership');
   for(const name of [...p.names].reverse()){
-    for(const unit of ['native-'+name+'-binary-update.service','native-'+name+'.service','native-'+name+'-binary-recovery.service'])try{ctl('stop',unit);}catch{}
+    for(const unit of ['native-'+name+'-binary-update.service','native-'+name+'.service','native-'+name+'-binary-recovery.service','native-'+name+'-clock.service'])try{ctl('stop',unit);}catch{}
   }
   for(const unit of [p.guard,p.network])try{ctl('stop',unit);}catch{}
   // Do not remove units/data or namespace while an owned process is alive.
   for(const name of p.names)for(const unit of ['native-'+name+'.service','native-'+name+'-binary-update.service'])
     need(['','0'].includes(prop(unit,'MainPID')),'fixture_process_still_alive');
   for(const name of p.names){
-    for(const file of ['native-'+name+'.service','.native-'+name+'.service.prepared','native-'+name+'-binary-recovery.service'])fs.rmSync('/etc/systemd/system/'+file,{force:true});
+    for(const file of ['native-'+name+'.service','.native-'+name+'.service.prepared','native-'+name+'-binary-recovery.service','native-'+name+'-clock.service','.native-'+name+'-clock.service.prepared'])fs.rmSync('/etc/systemd/system/'+file,{force:true});
     fs.rmSync('/etc/systemd/system/native-'+name+'.service.d',{recursive:true,force:true});
     fs.rmSync('/opt/clean-vpn-native/'+name,{recursive:true,force:true});
   }
@@ -48,7 +48,7 @@ async function worker(id){
   need(!fs.existsSync(p.dir)&&!fs.existsSync('/run/netns/'+p.ns),'fixture_collision');
   for(const name of p.names){
     need(!fs.existsSync('/opt/clean-vpn-native/'+name),'fixture_instance_collision');
-    for(const unit of ['native-'+name+'.service','native-'+name+'-binary-update.service','native-'+name+'-binary-recovery.service'])
+    for(const unit of ['native-'+name+'.service','native-'+name+'-binary-update.service','native-'+name+'-binary-recovery.service','native-'+name+'-clock.service'])
       need(prop(unit,'LoadState')==='not-found'&&!fs.existsSync('/etc/systemd/system/'+unit+'.d'),'fixture_unit_collision');
     need(!fs.existsSync('/etc/systemd/system/.native-'+name+'.service.prepared'),'fixture_prepared_collision');
   }
@@ -69,13 +69,17 @@ async function worker(id){
       [p.guard,`/usr/sbin/ip netns exec ${p.ns} iptables -C OUTPUT -o lo -j ACCEPT`]])
       put('/etc/systemd/system/'+unit,`[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=${command}\n`,0o644);
     ctl('daemon-reload');
+    run('/usr/bin/ssh-keygen',['-q','-t','ed25519','-N','','-f',p.dir+'/identity']);
+    const pub=fs.readFileSync(p.dir+'/identity.pub','utf8').trim().split(/\s+/);
+    put(p.dir+'/known-hosts',`clean-vpn-clock ${pub[0]} ${pub[1]}\n`);
+    put(p.dir+'/clock-profile.json',JSON.stringify({version:1,host:'127.0.0.1',port:2222,user:'clock-fixture',identity:p.dir+'/identity',known_hosts:p.dir+'/known-hosts'}));
     const shared={version:1,address:'127.0.0.1',port:4443};
     for(const [index,name]of p.names.entries()){
       const config=index===0?{...shared,role:'exit',tun:'upce0',peers:[{ipv4:'10.99.0.2',secret_path:p.dir+'/psk'}],cert:p.dir+'/cert.pem',key:p.dir+'/key.pem'}:
         {...shared,role:'client',tun:'upcc0',peer_ipv4:'10.99.0.2',dns:true,ca:p.dir+'/cert.pem',server_name:'localhost',secret_path:p.dir+'/psk',tls_profile_path:root+'/fixtures/native-tls-profiles/chromium-156-bounded-cold.json'};
       put(p.dir+'/'+name+'.json',JSON.stringify(config));
       run(node,[root+'/scripts/clean-vpn-native-install.mjs','--apply','--name='+name,'--binary='+root+'/native/clean_vpn/build/clean-vpn-engine',
-        '--config='+p.dir+'/'+name+'.json','--network-unit='+p.network,'--guard-unit='+p.guard]);
+        '--config='+p.dir+'/'+name+'.json','--network-unit='+p.network,'--guard-unit='+p.guard,...(index===1?['--clock-profile='+p.dir+'/clock-profile.json']:[])]);
       fs.mkdirSync('/etc/systemd/system/native-'+name+'.service.d',{mode:0o755});
       put('/etc/systemd/system/native-'+name+'.service.d/fixture.conf',`[Service]\nNetworkNamespacePath=/run/netns/${p.ns}\nTimeoutStartSec=15\nRestart=no\n`,0o644);
       ctl('daemon-reload');update('--enroll',name);
@@ -93,9 +97,14 @@ async function worker(id){
     try{fs.appendFileSync(netFile,'# deliberate ownership-change fixture\n');try{update('--apply',client,candidate,wanted);}catch{changedRefused=true;}}
     finally{fs.writeFileSync(netFile,netBytes);}
     check('bound-unit-change-refused',changedRefused&&prop(cunit,'MainPID')===pid);
-    const bad=p.dir+'/bad-engine';put(bad,`#!/bin/sh\ncase "$1" in --capabilities|--check-config) exec ${current}/binary-updates/releases/${wanted} "$@";; *) exit 1;; esac\n`,0o755);
+    const clockDir=current+'/clock-state';
+    check('healthy-no-clock-query',!fs.existsSync(clockDir+'/attempt.json'));
+    put(clockDir+'/last-good.json',JSON.stringify({version:1,unix_seconds:1700000000}));
+    const clockFloor=fs.readFileSync(clockDir+'/last-good.json');
+    const bad=p.dir+'/bad-engine';put(bad,`#!/bin/sh\ncase "$1" in --capabilities|--check-config) exec ${current}/binary-updates/releases/${wanted} "$@";; *) exit 77;; esac\n`,0o755);
     let refused=false;try{update('--apply',client,bad,hash(fs.readFileSync(bad)));}catch{refused=true;}
     check('failed-candidate-rollback',refused&&hash(fs.readFileSync(current+'/engine'))===wanted&&prop(cunit,'ActiveState')==='active');
+    check('update-clock-exclusion-and-floor',!fs.existsSync(clockDir+'/attempt.json')&&fs.readFileSync(clockDir+'/last-good.json').equals(clockFloor));
     ctl('stop',cunit);update('--apply',client,root+'/native/clean_vpn/build/clean-vpn-engine',hash(original));
     check('stopped-preserved',prop(cunit,'MainPID')==='0');ctl('start',cunit);
     const hanging=p.dir+'/hang-engine';put(hanging,`#!/bin/sh\ncase "$1" in --capabilities|--check-config) exec ${current}/binary-updates/releases/${wanted} "$@";; *) exec /bin/sleep 120;; esac\n`,0o755);

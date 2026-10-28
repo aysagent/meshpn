@@ -5,6 +5,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { nativeServiceUnit } from './native-service-unit.mjs';
+import { nativeClockRecoveryUnit } from './native-clock-unit.mjs';
+import { isIPv4 } from 'node:net';
 import { nativeSitePlan, nativeSiteSources } from './native-site-plan.mjs';
 import { fileURLToPath } from 'node:url';
 const hash = b => createHash('sha256').update(b).digest('hex');
@@ -43,7 +45,7 @@ function exclusive(p, data, mode) {
   const fd = fs.openSync(p, 'wx', mode);
   try { fs.fchmodSync(fd, mode); fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
-export function installNative({ root = '/', name, binary, config, networkUnit, guardUnit, siteProfile, apply = false }, { fault = () => {} } = {}) {
+export function installNative({ root = '/', name, binary, config, networkUnit, guardUnit, siteProfile, clockProfile, apply = false }, { fault = () => {} } = {}) {
   need(typeof apply === 'boolean', 'invalid_apply');
   safePath(root);
   need(/^[a-z][a-z0-9-]{0,31}$/.test(name ?? ''), 'invalid_instance');
@@ -65,7 +67,16 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   execFileSync(binary, ['--check-config', config], { timeout: 10000, stdio: 'pipe', maxBuffer: 16384 });
   need(!siteProfile || (networkUnit === undefined && guardUnit === undefined), 'conflicting_site_dependencies');
   const site = siteProfile ? nativeSitePlan({ name, target, site: JSON.parse(regular(siteProfile, 16384, true)), engine: input, capability }) : null;
-  const units = site?.units ?? new Map([[unitName, nativeServiceUnit({ binary: target + '/engine', config: target + '/config.json', networkUnit, guardUnit })]]);
+  const clock = clockProfile ? JSON.parse(regular(clockProfile, 8192, true)) : null;
+  const clockUnit = `native-${name}-clock.service`;
+  if (clock) {
+    need(!site && !transparent && !combo && input.role === 'client', 'clock_external_boring_client_only');
+    need(JSON.stringify(Object.keys(clock).sort()) === JSON.stringify(['host','identity','known_hosts','port','user','version']), 'clock_profile_fields');
+    need(clock.version === 1 && isIPv4(clock.host) && clock.host === input.address && Number.isInteger(clock.port) && clock.port > 0 && clock.port < 65536 && /^[a-z][a-z0-9_-]{0,31}$/.test(clock.user), 'clock_profile_invalid');
+    need(![networkUnit,guardUnit].includes(clockUnit), 'clock_dependency_cycle');
+  }
+  const units = site?.units ?? new Map([[unitName, nativeServiceUnit({ binary: target + '/engine', config: target + '/config.json', networkUnit, guardUnit, role: input.role, ...(clock ? {clockRecoveryUnit: clockUnit} : {}) })]]);
+  if (clock) units.set(clockUnit, nativeClockRecoveryUnit({consumerUnit:unitName,script:target+'/clock.py',config:target+'/clock.json',stateDirectory:target+'/clock-state'}));
   const unit = units.get(unitName);
   const at = p => path.join(root, p);
   const unitPath = at('/etc/systemd/system/' + unitName), bundle = at(target);
@@ -110,6 +121,15 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   if (packetInput.secret_path) packetOutput.secret_path = copy(packetInput.secret_path, 'peer.psk', true);
   if (packetInput.peers) packetOutput.peers = packetInput.peers.map((peer, i) => ({ ipv4: peer.ipv4, secret_path: copy(peer.secret_path, `peer-${i}.psk`, true) }));
   if (combo) relayOutput.secret_path = copy(relay.secret_path, 'relay.psk', true);
+  if (clock) {
+    const pin = regular(clock.known_hosts, 4096).toString('ascii').trim().split(/\s+/);
+    const raw = Buffer.from(pin[2] ?? '', 'base64');
+    need(pin.length === 3 && pin[0] === 'clean-vpn-clock' && pin[1] === 'ssh-ed25519' && raw.length === 51 && raw.subarray(0,19).equals(Buffer.from('0000000b7373682d6564323535313900000020','hex')), 'clock_single_raw_ed25519_pin');
+    const c = {...clock, identity:copy(clock.identity,'clock-identity',true),known_hosts:copy(clock.known_hosts,'clock-known-hosts',false),state_dir:target+'/clock-state',consumer_unit:unitName,update_directory:target+'/binary-updates'};
+    files.set('clock.json',{bytes:Buffer.from(JSON.stringify(c)+'\n'),mode:0o600});
+    files.set('clock.py',{bytes:regular(fileURLToPath(new URL('../clean-vpn-native-clock.py',import.meta.url)),65536),mode:0o644});
+    files.set('clock.unit',{bytes:Buffer.from(units.get(clockUnit)),mode:0o644});
+  }
   files.set('config.json', { bytes: Buffer.from(JSON.stringify(rewritten) + '\n'), mode: 0o600 });
   files.set('service.unit', { bytes: Buffer.from(unit), mode: 0o644 });
   if (site) {
@@ -119,7 +139,8 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   }
   const manifest = { schema: 1, kind: 'clean-vpn-native-install', name, role: input.role, unit: unitName,
     transport: combo ? 'combo-tls' : transparent ? 'transparent-tls' : 'boring-tls',
-    mutableDirectories: replay ? [{ name: 'replay', mode: 0o700, purpose: 'durable-replay-no-automatic-reset' }] : [],
+    mutableDirectories: replay ? [{ name: 'replay', mode: 0o700, purpose: 'durable-replay-no-automatic-reset' }] : clock ? [{name:'clock-state',mode:0o700,purpose:'clock-budget-and-floor-no-reset'}] : [],
+    ...(clock ? {clockUnit} : {}),
     networkUnit, guardUnit, dependencies, activation: site?.activation ?? unitName,
     units: [...units.keys()], files: [...files].map(([name, f]) => ({ name, mode: f.mode, sha256: hash(f.bytes) })) };
   if (!apply) return { status: 'eligible', unit: unitName, target, fileCount: files.size, activation: 'not-requested' };
@@ -132,6 +153,7 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     fs.mkdirSync(path.dirname(bundle + '/' + name), { recursive: true, mode: 0o700 });
     exclusive(bundle + '/' + name, f.bytes, f.mode); syncDirectory(path.dirname(bundle + '/' + name));
   }
+  if(clock){fs.mkdirSync(bundle+'/clock-state',{mode:0o700});syncDirectory(bundle);}
   syncDirectory(bundle); fault('files');
   if (replay) {
     // Fresh bundle only. Runtime NEVER initializes a missing replay journal.

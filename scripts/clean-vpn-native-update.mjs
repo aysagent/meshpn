@@ -27,13 +27,19 @@ async function main(args) {
   const bundle='/opt/clean-vpn-native/'+name, unit='native-'+name+'.service';
   const manifest=JSON.parse(readOwned(bundle+'/installed.json'));
   need(manifest.schema===1&&manifest.name===name&&manifest.unit===unit&&manifest.transport==='boring-tls'&&
-    manifest.mutableDirectories.length===0&&manifest.networkUnit&&manifest.guardUnit,'update_named_external_boring_install');
+    (manifest.mutableDirectories.length===0 || (manifest.clockUnit && JSON.stringify(manifest.mutableDirectories)===JSON.stringify([{name:'clock-state',mode:448,purpose:'clock-budget-and-floor-no-reset'}])))&&manifest.networkUnit&&manifest.guardUnit,'update_named_external_boring_install');
   const json=x=>JSON.stringify(x,null,2)+'\n';
   if(action==='--enroll') {
     const state=props(unit);need(['inactive','failed'].includes(state.ActiveState)&&state.MainPID==='0','update_enroll_stopped');
     need(state.FragmentPath==='/etc/systemd/system/'+unit,'update_unit_path');
     for(const f of manifest.files){need(/^[a-zA-Z0-9_.-]+$/.test(f.name),'update_manifest_path');
       const p=bundle+'/'+f.name;need(binaryDigest(readOwned(p,64*1024*1024))===f.sha256&&(fs.lstatSync(p).mode&0o777)===f.mode,'update_install_changed');}
+    if(manifest.clockUnit) {
+      need(manifest.clockUnit===`native-${name}-clock.service`,'update_clock_unit_name');
+      const clockState=props(manifest.clockUnit);
+      need(['inactive','failed'].includes(clockState.ActiveState)&&clockState.MainPID==='0'&&clockState.DropInPaths===''&&clockState.FragmentPath==='/etc/systemd/system/'+manifest.clockUnit,'update_clock_enroll_stopped');
+      need(binaryDigest(readOwned(clockState.FragmentPath))===manifest.files.find(f=>f.name==='clock.unit')?.sha256,'update_clock_unit_changed');
+    }
     need(binaryDigest(readOwned(state.FragmentPath))===manifest.files.find(f=>f.name==='service.unit')?.sha256,'update_unit_changed');
     const recUnit='native-'+name+'-binary-recovery.service', recPath='/etc/systemd/system/'+recUnit;
     const dropDir='/etc/systemd/system/'+unit+'.d', drop=dropDir+'/80-binary-recovery.conf';
@@ -52,7 +58,7 @@ async function main(args) {
     const installed=props(unit);
     const files=[bundle+'/installed.json',...manifest.files.filter(f=>f.name!=='engine').map(f=>bundle+'/'+f.name),
       ...Object.keys(manifest.dependencies).map(n=>'/etc/systemd/system/'+n),state.FragmentPath,
-      ...installed.DropInPaths.split(' ').filter(Boolean),recPath,control+'/clean-vpn-native-update.mjs',control+'/lib/native-binary-update.mjs'];
+      ...installed.DropInPaths.split(' ').filter(Boolean),...(manifest.clockUnit?['/etc/systemd/system/'+manifest.clockUnit]:[]),recPath,control+'/clean-vpn-native-update.mjs',control+'/lib/native-binary-update.mjs'];
     for(const [dep,sha]of Object.entries(manifest.dependencies))need(binaryDigest(readOwned('/etc/systemd/system/'+dep))===sha,'update_dependency_changed');
     const sha=NativeBinaryUpdate.initialize(bundle,[...new Set(files)]);
     const staticFiles=files.filter(file=>!manifest.files.some(f=>file===bundle+'/'+f.name)&&file!==bundle+'/installed.json')
@@ -66,11 +72,13 @@ async function main(args) {
   const serviceIdentity=JSON.parse(readOwned(bundle+'/binary-updates/service.json'));
   need(Array.isArray(serviceIdentity.staticFiles)&&serviceIdentity.staticFiles.length>0,'update_static_binding');
   for(const file of serviceIdentity.staticFiles)need(binaryDigest(readOwned(file.file))===file.sha256,'update_bound_unit_or_controller_changed');
+  if(manifest.clockUnit){const c=props(manifest.clockUnit);need(c.DropInPaths===''&&c.FragmentPath==='/etc/systemd/system/'+manifest.clockUnit,'update_clock_service_changed');
+    if(['--apply','--worker','--recover-boot'].includes(action))need(['inactive','failed'].includes(c.ActiveState)&&c.MainPID==='0','update_clock_recovery_busy');}
   const state=props(unit);need(state.FragmentPath===serviceIdentity.fragment&&state.DropInPaths===serviceIdentity.dropins&&state.Type==='notify','update_service_changed');
   const service={
     running:async()=>{const s=props(unit);if(action==='--recover-boot')return s.MainPID!=='0';
       need(['active','inactive','failed'].includes(s.ActiveState),'update_service_transition');return s.ActiveState==='active';},
-    stop:async()=>{ctl('stop',unit);need(props(unit).MainPID==='0','update_stop_failed');},
+    stop:async()=>{if(manifest.clockUnit)ctl('stop',manifest.clockUnit);ctl('stop',unit);need(props(unit).MainPID==='0','update_stop_failed');},
     start:async()=>{ctl('reset-failed',unit);ctl('start',unit);},
     guard:async()=>{for(const dep of [manifest.guardUnit,manifest.networkUnit])need(props(dep).ActiveState==='active','update_dependency_inactive');},
     validate:async candidate=>{const c=JSON.parse(run(candidate,['--capabilities']));need(c.engine==='clean-vpn-native-m1'&&c.packet_ipc===false&&c.service_mode===true,'update_capabilities');run(candidate,['--check-config',bundle+'/config.json']);},

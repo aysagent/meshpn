@@ -22,6 +22,29 @@ class ClockTests(unittest.TestCase):
         self.c = {'state_dir': str(Path(self.tmp.name).resolve()), 'consumer_unit': 'clean-vpn.service'}
         os.chmod(self.c['state_dir'], 0o700)
 
+    def test_update_lock_blocks_competing_update_and_pending_journal(self):
+        import fcntl
+        directory = Path(self.c['state_dir']) / 'binary-updates'
+        directory.mkdir(mode=0o700)
+        lock = directory / 'operation.lock'
+        lock.touch(mode=0o600)
+        self.c['update_directory'] = str(directory)
+        with lock.open('rb') as updater:
+            fcntl.flock(updater, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaises(BlockingIOError):
+                with clock.update_lock(self.c): pass
+        with clock.update_lock(self.c):
+            with lock.open('rb') as updater:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(updater, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        (directory / 'transaction.json').write_text('{}')
+        with self.assertRaisesRegex(ValueError, 'binary_update_recovery_required'):
+            with clock.update_lock(self.c): pass
+        (directory / 'transaction.json').unlink()
+        lock.unlink(); lock.symlink_to('/dev/null')
+        with self.assertRaises(OSError):
+            with clock.update_lock(self.c): pass
+
     def response(self, **overrides):
         return json.dumps(dict(version=1, nonce=self.nonce, unix_seconds=self.epoch, synchronized=True, **overrides)).encode()
 
