@@ -1481,6 +1481,22 @@ static esp_err_t handler_redirect(httpd_req_t *req)
 
 /* Legacy OS HTTP probes (Apple, Android, Windows) arrive at the LAN gateway
  * through setup-only DNS. Never intercept TLS or report fake Internet success. */
+static void *web_json_alloc(size_t size)
+{
+    /* Status creates many small nodes. The SDK malloc threshold otherwise
+     * puts them in internal RAM, starving Wi-Fi and lazy libc mutexes. */
+    return heap_caps_malloc_prefer(size, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT,
+                                  MALLOC_CAP_8BIT);
+}
+
+void meshvpn_web_init_allocators(void)
+{
+    cJSON_Hooks hooks = {.malloc_fn = web_json_alloc, .free_fn = free};
+    cJSON_InitHooks(&hooks);
+    /* Allocate the libc time lock while startup memory is still available. */
+    (void)time(NULL);
+}
+
 static esp_err_t handler_captive(httpd_req_t *req)
 {
     if (!local_socket(req)) return error(req, "403 Forbidden", "Local management only");

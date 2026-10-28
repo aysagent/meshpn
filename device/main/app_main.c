@@ -50,6 +50,7 @@ static void factory_reset_watch_task(void *arg)
 
 void app_main(void)
 {
+    meshvpn_web_init_allocators();
     esp_log_level_set("*", ESP_LOG_INFO);
     if (meshvpn_log_init() != ESP_OK) {
         ESP_LOGW(TAG, "Buffered logs unavailable; keeping default log output and continuing boot");

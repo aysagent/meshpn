@@ -126,6 +126,8 @@ python3 -B device/tests/test_instrument_ncm.py
 python3 -B device/tests/test_instrument_dwc2.py
 python3 -B device/tests/test_flash_device.py
 python3 -B device/tests/test_perf_p4_paths.py
+python3 -B device/tests/test_netif_start.py
+python3 -B device/tests/test_web_json_alloc.py
 if [[ -f device/managed_components/espressif__esp_hosted/host/drivers/rpc/wrap/rpc_wrap.c ]]; then
   python3 -B device/tests/test_patch_esp_hosted_rpc.py
   python3 -B device/tests/test_patch_esp_hosted_rpc_core.py
