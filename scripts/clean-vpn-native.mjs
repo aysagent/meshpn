@@ -13,6 +13,11 @@ const clockArgs=args.filter(a=>a.startsWith('--clock-config='));
 if(clockArgs.length>1)throw Error('duplicate_clock_config');
 const clockConfig=clockArgs[0]?.slice('--clock-config='.length);
 if(clockConfig)args.splice(args.indexOf(clockArgs[0]),1);
+const installedArgs=args.filter(a=>a.startsWith('--installed-profile='));
+if(installedArgs.length>1)throw Error('duplicate_installed_profile');
+const installedProfile=installedArgs[0]?.slice('--installed-profile='.length);
+if(installedProfile)args.splice(args.indexOf(installedArgs[0]),1);
+if(installedProfile&&clockConfig)throw Error('conflicting_clock_profile');
 const trialCrash=args.at(-1)==='--trial-crash';if(trialCrash)args.pop();
 const usbProfile=args.at(-1)==='--usb-profile';if(usbProfile)args.pop();
 if(args.length!==2||args[0]!=='--config'||!path.isAbsolute(args[1])){
@@ -24,11 +29,11 @@ let network;
 if(usbProfile){
   console.error('native-control: preparing protected USB profile');
   const bytes=fs.readFileSync(args[1]);if(bytes.length>16384)throw Error('configuration too large');
-  network=prepareNativeUsb(JSON.parse(bytes));
+  network=prepareNativeUsb(JSON.parse(bytes),{managedService:!!installedProfile});
   console.error('native-control: profile preflight complete');
 }
-if(clockConfig&&(!usbProfile||trialCrash))throw Error('clock_trial_requires_plain_usb_profile');
-const engine=clockConfig?new NativeSystemdTrialController({binary,config:args[1],clockConfig}):new NativeEngineController({binary,config:args[1],allowTrialCrash:trialCrash&&usbProfile});
+if((clockConfig||installedProfile)&&(!usbProfile||trialCrash))throw Error('clock_trial_requires_plain_usb_profile');
+const engine=(clockConfig||installedProfile)?new NativeSystemdTrialController({binary,config:args[1],clockConfig,installedProfile}):new NativeEngineController({binary,config:args[1],allowTrialCrash:trialCrash&&usbProfile});
 console.error('native-control: engine spawned');
 network?.attach(engine);
 let pending='',failed=false,stopping=false;

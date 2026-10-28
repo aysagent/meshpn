@@ -28,7 +28,7 @@ export function nativeUsbRedirectConfig(config){
   return {interface:'usb0',subnet:'192.168.7.0/24',endpoint:config.boring.address,
     listen_port:config.transparent.listen.port,deny_ipv4:[...config.transparent.destination_policy.deny_ipv4]};
 }
-export function prepareNativeUsb(config,{openRedirect=openNativeComboRedirectJournal}={}){
+export function prepareNativeUsb(config,{openRedirect=openNativeComboRedirectJournal,managedService=false}={}){
   assert.equal(process.getuid(),0);const packet=nativeUsbPacketConfig(config),redirectConfig=nativeUsbRedirectConfig(config);
   assert.equal(packet.role,'client');assert.equal(packet.tun,'tun0');
   assert.equal(packet.address,'154.62.226.216');assert.equal(packet.dns,true);
@@ -41,7 +41,8 @@ export function prepareNativeUsb(config,{openRedirect=openNativeComboRedirectJou
   assert.ok(tun?.flags.includes('UP')&&tun.mtu===1400&&tun.addr_info.some(a=>a.local==='10.99.0.2'));
   const defaults=JSON.parse(run('ip',['-j','-4','route','show','default']));
   assert.equal(defaults.length,1);const {dev,gateway}=defaults[0];assert.equal(dev,'wlan0');assert.ok(gateway);
-  const host=openHostRoutes();let dns,redirect,watch,active=false,prepared=false,closed=false,faulted=false;
+  assert.equal(typeof managedService,'boolean');
+  const host=openHostRoutes({allowTunLinkDown:managedService});let dns,redirect,watch,active=false,prepared=false,closed=false,faulted=false;
   try{
     host.assertAvailable();dns=openTunnelDnsJournal();
     dns.prepareRestart({lanSubnet:'192.168.7.0/24',lanInterface:'usb0'});

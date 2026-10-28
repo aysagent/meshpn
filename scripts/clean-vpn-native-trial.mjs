@@ -109,8 +109,8 @@ async function probe() {
   return summarizeTrialProbe(data, r.code);
 }
 
-export function launchTrialNative(config, { spawnChild = spawn, readyMs = 45000, stopMs = 240000, trialCrash = false, clockConfig = null } = {}) {
-  const child = spawnChild(process.execPath, [path.join(ROOT, 'scripts/clean-vpn-native.mjs'), '--config', config, '--usb-profile', ...(trialCrash ? ['--trial-crash'] : []), ...(clockConfig ? ['--clock-config='+clockConfig] : [])],
+export function launchTrialNative(config, { spawnChild = spawn, readyMs = 45000, stopMs = 240000, trialCrash = false, clockConfig = null, installedProfile = null } = {}) {
+  const child = spawnChild(process.execPath, [path.join(ROOT, 'scripts/clean-vpn-native.mjs'), '--config', config, '--usb-profile', ...(trialCrash ? ['--trial-crash'] : []), ...(clockConfig ? ['--clock-config='+clockConfig] : []), ...(installedProfile ? ['--installed-profile='+installedProfile] : [])],
     { cwd: ROOT, env: ENV, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
   let ended = false, code, signal, statusReady = false, dnsReady = false, bytes = 0, stdout = '', stderr = '', broken = false;
   const diagnostics = trialDiagnostics();
@@ -194,7 +194,7 @@ function privateInputFile(file, limit) {
   const bytes = fs.readFileSync(file); check(bytes.length === stat.size, 'short_private_input'); return bytes;
 }
 
-async function adapter(trialCrash = false, comboProfilePath = null, tlsProfilePath = null, clockConfig = null) {
+async function adapter(trialCrash = false, comboProfilePath = null, tlsProfilePath = null, clockConfig = null, installedProfile = null) {
   let initialPid, config, scratch, fingerprint, buildLock, ipv6Evidence;
   const combo = comboProfilePath !== null;
   const legacyFingerprint = () => trialServiceFingerprint({ run, root: ROOT });
@@ -208,6 +208,8 @@ async function adapter(trialCrash = false, comboProfilePath = null, tlsProfilePa
       await hostRequired(); await verifyGuard(); await snatReady();
       check(!clockConfig || (!combo && !trialCrash), 'clock_trial_boring_only');
       if(clockConfig) privateInputFile(clockConfig,8192);
+      check(!installedProfile || (!clockConfig && !combo && !trialCrash),'installed_trial_boring_only');
+      if(installedProfile) privateInputFile(installedProfile,8192);
       if (trialCrash) await run('tcpdump', ['--version']);
       buildLock = fs.openSync(path.join(ROOT, 'native/clean_vpn/build/radxa-operation.lock'),
         fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW, 0o600);
@@ -299,7 +301,7 @@ async function adapter(trialCrash = false, comboProfilePath = null, tlsProfilePa
       await run('ip', ['addr', 'add', '10.99.0.2/30', 'dev', 'tun0']);
       await run('ip', ['link', 'set', 'dev', 'tun0', 'mtu', '1400', 'up']);
     },
-    launch: () => launchTrialNative(path.join(scratch, 'client.json'), { trialCrash, clockConfig }),
+    launch: () => launchTrialNative(path.join(scratch, 'client.json'), { trialCrash, clockConfig, installedProfile }),
     async recoverStartup(index) {
       await recoverStartupNetwork(index, { guard: verifyGuard, inactive: requireOldInactive,
         openHost: openHostRoutes, openDns: openTunnelDnsJournal,
@@ -311,6 +313,10 @@ async function adapter(trialCrash = false, comboProfilePath = null, tlsProfilePa
         ...(combo ? { openRedirect: openNativeComboRedirectJournal } : {}), removeTun: this.removeTun });
     },
     async hold(seconds, cancelled, session, report) {
+      if(installedProfile){
+        const {checkInstalledTrial}=await import('./lib/native-installed-trial-check.mjs');
+        report.installed=await checkInstalledTrial({run,probe,scratch,engine:ENGINE});
+      }
       await probeNativeHold({ seconds, cancelled, session, report, probe: async timeout => {
         const result = await command('curl', ['-q', '-4', '-f', '-sS', '--noproxy', '*', '--interface', 'tun0',
           '--connect-timeout', '3', '--max-time', '5', '--max-filesize', '4096',
@@ -388,7 +394,7 @@ export function uplinkFault(directory, { exec = run, commandResult = command, ge
   };
 }
 
-async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchmark = false, comboProfile = null, smoke = false, coldSmoke = false, tlsProfile = null, clockConfig = null) {
+async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchmark = false, comboProfile = null, smoke = false, coldSmoke = false, tlsProfile = null, clockConfig = null, installedProfile = null) {
   await hostRequired();
   check(path.dirname(directory) === REPORTS && /^run-[a-zA-Z0-9]+$/.test(path.basename(directory)), 'invalid_worker_directory');
   privateDirectory(REPORTS); privateDirectory(directory);
@@ -398,7 +404,8 @@ async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchm
   let cancelled = false;
   process.on('SIGTERM', () => { cancelled = true; });
   process.on('SIGINT', () => { cancelled = true; });
-  const io = await adapter(trialCrash, comboProfile, tlsProfile, clockConfig);
+  check(!installedProfile || (!trialCrash && !benchmark && !comboProfile && (!peerIp || smoke || coldSmoke)),'installed_trial_smoke_only');
+  const io = await adapter(trialCrash, comboProfile, tlsProfile, clockConfig, installedProfile);
   if (peerIp) {
     const peer = createPeerChannel(directory, peerIp, { cancelled: () => cancelled });
     const benchmarkPhase = async (phase, target, session) => {
@@ -456,6 +463,7 @@ async function worker(directory, holdSeconds, peerIp, trialCrash = false, benchm
 
 export async function main(args = process.argv.slice(2)) {
   if (args.length === 1 && args[0] === '--help') {
+    console.log('Installed lifecycle pilot: --installed-profile=/absolute/private-clock-profile.json; temporary fresh installation, binary update/rollback checks, no enable or reboot.');
     console.log('Smoke mode: --apply --usb-smoke (Mac --smoke); baseline/native/restored without fault injection.');
     console.log('Cold smoke: --apply --usb-cold-smoke (Mac --cold-smoke); requires unavailable legacy baseline; distinct native-only acceptance and structural rollback.');
     console.log('Benchmark mode: --apply --usb-benchmark (Mac --benchmark coordinates three old/native/old cycles). Bounded synthetic upload/download, no fault injection.');
@@ -467,6 +475,11 @@ export async function main(args = process.argv.slice(2)) {
   const clockConfig=clockOptions[0]?.slice('--clock-config='.length)??null;
   if(clockConfig)check(/^\/[a-zA-Z0-9_./-]+$/.test(clockConfig)&&path.normalize(clockConfig)===clockConfig,'invalid_clock_config');
   args=args.filter(a=>!a.startsWith('--clock-config='));
+  const installedOptions=args.filter(a=>a.startsWith('--installed-profile='));
+  check(installedOptions.length<=1,'duplicate_installed_profile');
+  const installedProfile=installedOptions[0]?.slice('--installed-profile='.length)??null;
+  if(installedProfile)check(/^\/[a-zA-Z0-9_./-]+$/.test(installedProfile)&&path.normalize(installedProfile)===installedProfile&&!clockConfig,'invalid_installed_profile');
+  args=args.filter(a=>!a.startsWith('--installed-profile='));
   await hostRequired();
   if (args.length === 2 && ['--peer-status', '--peer-result'].includes(args[0])) {
     const peerIp = await authenticatedUsb();
@@ -511,7 +524,7 @@ export async function main(args = process.argv.slice(2)) {
     if (['--crash', '--benchmark', '--smoke', '--cold-smoke'].includes(tail[0])) mode = tail.shift();
     if (tail[0]?.startsWith('--combo-profile=')) comboProfile = tail.shift().slice('--combo-profile='.length);
     check(tail.length === 0 && (!mode || peerIp) && (!comboProfile || peerIp), 'invalid_trial_worker_arguments');
-    return worker(args[1], Number(args[2]), peerIp, mode === '--crash', mode === '--benchmark', comboProfile ?? null, mode === '--smoke', mode === '--cold-smoke', tlsOption.profile, clockConfig);
+    return worker(args[1], Number(args[2]), peerIp, mode === '--crash', mode === '--benchmark', comboProfile ?? null, mode === '--smoke', mode === '--cold-smoke', tlsOption.profile, clockConfig, installedProfile);
   }
   check(args[0] === '--apply', 'use_apply_or_report_or_help');
   const tlsOption = takeTrialTlsProfile(args.slice(1));
@@ -540,7 +553,7 @@ export async function main(args = process.argv.slice(2)) {
     ...(crash ? ['--crash'] : benchmark ? ['--benchmark'] : smoke ? ['--smoke'] : coldSmoke ? ['--cold-smoke'] : []),
     ...(comboProfile ? [`--combo-profile=${comboProfile}`] : []),
     ...(tlsOption.profile ? [`--tls-profile=${tlsOption.profile}`] : []),
-    ...(clockConfig ? ['--clock-config='+clockConfig] : [])], 15000);
+    ...(clockConfig ? ['--clock-config='+clockConfig] : []), ...(installedProfile ? ['--installed-profile='+installedProfile] : [])], 15000);
   if (usb) console.log(`USB_TRIAL_ID=${path.basename(dir)}`);
   console.error('Trial started; survives SSH disconnect. Do not checkout/build/restart services during the trial.');
   console.error('After reconnect: node scripts/clean-vpn-native-trial.mjs --report');

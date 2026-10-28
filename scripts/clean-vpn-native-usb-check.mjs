@@ -235,6 +235,11 @@ export async function main(args = process.argv.slice(2)) {
     console.log('--benchmark: three legacy/native/legacy cycles, four HTTPS streams, synthetic upload, <=340 MiB total application data. No uplink/crash fault. Not Ookla.');
     console.log('Usage on Mac: node clean-vpn-native-usb-check.mjs --interface=en9 [--crash | --benchmark] [--combo-profile=/absolute/path/on/radxa.json] [--tls-profile=/absolute/private-profile.json]\nDefault: real wlan0 down/up on Radxa. --crash: SIGKILL native engine, keep uplink up, capture selected IPv4 HTTPS egress; requires tcpdump on Radxa.\nCombo profile path is evaluated on Radxa and must be a root-owned private file.\nUSB rescue SSH :2222 remains available. Requires Node 18+, ssh, curl, dig and a current built Radxa checkout at /root/dev/meshpn.\nNo Mac settings change. Without --benchmark: up to seven 1 MiB downloads; functional checks, not a speed benchmark. No mode is comprehensive leak acceptance.'); return;
   }
+  const installedOptions=args.filter(a=>a.startsWith('--installed-profile='));
+  check(installedOptions.length<=1,'duplicate_installed_profile');
+  const installedProfile=installedOptions[0]?.slice('--installed-profile='.length);
+  if(installedProfile)check(/^\/[a-zA-Z0-9_./-]+$/.test(installedProfile)&&path.posix.normalize(installedProfile)===installedProfile,'invalid_installed_profile');
+  args=args.filter(a=>!a.startsWith('--installed-profile='));
   const tlsOption = takeTrialTlsProfile(args); args = tlsOption.args;
   const tlsProfile = tlsOption.profile;
   console.log('[usb-check] Проверяю окружение Mac и USB-интерфейс');
@@ -309,7 +314,7 @@ export async function main(args = process.argv.slice(2)) {
       if (benchmark) console.log(`[usb-check] цикл ${cycle + 1}/3`);
       let runId, finished;
       const job = ssh(cmd(['--apply', benchmark ? '--usb-benchmark' : crash ? '--usb-crash' : smoke ? '--usb-smoke' : coldSmoke ? '--usb-cold-smoke' : '--usb-peer',
-        ...(comboProfile ? [comboProfile] : []), ...(tlsProfile ? ['--tls-profile=' + tlsProfile] : [])]), { timeout: 1600000, onOutput: out => {
+        ...(comboProfile ? [comboProfile] : []), ...(tlsProfile ? ['--tls-profile=' + tlsProfile] : []), ...(installedProfile ? ['--installed-profile='+installedProfile] : [])]), { timeout: 1600000, onOutput: out => {
         const match = /^USB_TRIAL_ID=(run-[a-zA-Z0-9]+)$/m.exec(out); if (match) runId = match[1];
       } }).then(r => { finished = r; return r; });
       const seen = new Set();
