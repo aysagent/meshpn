@@ -1,4 +1,14 @@
 menu "MeshPN diagnostic firmware"
+config MESHVPN_P4_AP_DISABLE_11AX
+    bool "Use b/g/n HT20 for P4 SoftAP compatibility"
+    depends on IDF_TARGET_ESP32P4
+    default n
+    help
+        Disable 802.11ax only on the C6 SoftAP. STA still permits b/g/n/ax.
+        Both interfaces retain HT20. Enabled by the Stamp profile after
+        APSTA backpressure with factory Hosted 2.12.1 and a Wi-Fi 6 client.
+        Leave disabled on boards where AP b/g/n/ax is already working.
+
 config MESHVPN_DWC2_TELEMETRY
     bool "Experimental NCM DWC2 ISR and FIFO telemetry"
     depends on IDF_TARGET_ESP32S3 && MESHVPN_NCM_TELEMETRY

@@ -16,7 +16,8 @@ esp_err_t esp_wifi_set_protocol(wifi_interface_t i,uint8_t p){
 int main(void){
  for(unsigned i=0;i<2;i++){
   assert(meshvpn_wifi_radio_configure(i)==ESP_OK);
-  if(CONFIG_IDF_TARGET_ESP32P4)assert(protocol==71);
+  if(CONFIG_IDF_TARGET_ESP32P4)assert(protocol==
+    ((CONFIG_MESHVPN_P4_AP_DISABLE_11AX && i==WIFI_IF_AP)?7:71));
  }
  assert(bandwidth_calls==2&&protocol_calls==(CONFIG_IDF_TARGET_ESP32P4?2:0));
  bandwidth_error=ESP_FAIL;assert(meshvpn_wifi_radio_configure(WIFI_IF_STA)==ESP_FAIL);

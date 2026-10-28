@@ -9,6 +9,12 @@ esp_err_t meshvpn_wifi_radio_configure(wifi_interface_t ifx)
     esp_err_t err = esp_wifi_set_bandwidth(ifx, WIFI_BW_HT20);
     if (err != ESP_OK) return err;
     const uint8_t legacy = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N;
+#if CONFIG_MESHVPN_P4_AP_DISABLE_11AX
+    if (ifx == WIFI_IF_AP) {
+        ESP_LOGW("meshvpn_wifi", "SoftAP compatibility: b/g/n HT20, 11ax disabled");
+        return esp_wifi_set_protocol(ifx, legacy);
+    }
+#endif
     err = esp_wifi_set_protocol(ifx, legacy | WIFI_PROTOCOL_11AX);
     if (err == ESP_ERR_NOT_SUPPORTED || err == ESP_ERR_INVALID_ARG) {
         ESP_LOGW("meshvpn_wifi", "if=%d C6 rejected b/g/n/ax (%s); using b/g/n HT20",

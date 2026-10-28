@@ -72,6 +72,10 @@ CONFIG_WIFI_RMT_DYNAMIC_TX_BUFFER_NUM=64
 CONFIG_WIFI_RMT_AMPDU_TX_ENABLED=y
 CONFIG_WIFI_RMT_TX_BA_WIN=32
 CONFIG_WIFI_RMT_AMPDU_RX_ENABLED=y
+# Factory Hosted 2.12.1: AP b/g/n/ax caused long C6 backpressure with a phone
+# in APSTA. b/g/n HT20 restored immediate connectivity and 12/11 Mbit/s.
+# Keep STA 11ax enabled; see reports/2026-10-29-stamp-ap.md.
+CONFIG_MESHVPN_P4_AP_DISABLE_11AX=y
 CONFIG_WIFI_RMT_RX_BA_WIN=32
 
 # Built-in USB-C uses USB Serial/JTAG; HS NCM uses the separate solder pads.
