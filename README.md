@@ -2,6 +2,25 @@
 
 ## clean-vpn: эксплуатация, транспорты и быстрый старт
 
+**Актуальный приоритет — native C++ `clean-vpn-engine`, `boring-tls`.**
+[Самостоятельный lifecycle Radxa](scripts/clean-vpn-native-host-network.md) уже
+проверен временным Radxa↔VPS запуском: DNS/HTTPS, перезапуск engine и сетевого
+контроллера, сохранённый Chromium-derived профиль и независимый pcap. Старый
+Node VPN для него не требуется. [Текущий план и границы](scripts/clean-vpn-native-night-20261029.md).
+Постоянный native autostart на физических узлах пока не включён.
+
+| Native transport | Проверенный путь и ограничения |
+| --- | --- |
+| `boring-tls` | Основной путь к личной эксплуатации: standalone, Docker/Podman, отдельный host-profile Radxa; частичная мимикрия ClientHello/H2. |
+| `combo-tls` | Экспериментальный packet + HTTPS relay; отдельные trial/site-profile. Новый host-profile Radxa его пока не поддерживает. |
+| `transparent-tls` | Экспериментальный HTTPS relay; не универсальный IP VPN. Ограничение сырого TUN из Node-таблицы ниже не является описанием native relay. |
+| `tls` | Отдельного native транспорта под этим именем нет; TLS реализован через BoringSSL в `boring-tls`. |
+
+Далее описан исторический **Node CLI**; его команды и оценки транспортов не
+следует переносить на C++ engine. Для нового native запуска используйте
+[runtime-инструкцию](scripts/clean-vpn-native-runtime.md), для нескольких
+клиентов — [отдельные PSK/IP](scripts/clean-vpn-native-clients.md).
+
 [`scripts/clean-vpn.js`](scripts/clean-vpn.js) — самостоятельный **Linux client ↔ exit VPN**: IPv4 через TUN, выход в интернет через NAT на exit, несколько транспортов и инструменты исследования TLS. Это отдельный контур: mesh, onion и multipath из `src/index.js` в нём **не используются**. Документация mesh сохранена [ниже](#mesh-vpn).
 
 Для Radxa есть [USB-админка](admin/README.md): `http://mpn.local/`, Node API,
@@ -34,7 +53,7 @@ engine публикует TLS/H2 policy, отдельный read-only отчёт
 [Полное Linux-ядро, RTT 40 ms и серия из 30 циклов](scripts/clean-vpn-native-h2-kernel.md):
 `npm run lab:native:mac -- --h2-kernel`.
 
-### Какие транспорты считаем пригодными для эксплуатации
+### Исторический Node CLI: оценка транспортов
 
 <a id="clean-vpn-transports"></a>
 

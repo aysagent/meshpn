@@ -11,6 +11,7 @@ const run=(f,a)=>execFileSync(f,a,{encoding:'utf8',timeout:30000,maxBuffer:1024*
 const ip=(...a)=>run('ip',a),ctl=(...a)=>run('systemctl',a);
 assert.deepEqual(JSON.parse(ip('-j','link')).map(l=>l.ifname),['lo']);
 assert.equal(ip('netns','list'),'');
+const soakSeconds=Number(process.env.CVPN_HOST_SOAK_SECONDS??0);assert.ok(Number.isInteger(soakSeconds)&&soakSeconds>=0&&soakSeconds<=3600);let soak;
 const checks=[];const check=(name)=>{checks.push(name);console.log('HOST_SYSTEMD_CHECK '+name);};
 const put=(p,s,mode=0o600)=>{fs.mkdirSync(p.slice(0,p.lastIndexOf('/')),{recursive:true});fs.writeFileSync(p,s,{mode});};
 const unit=(name,body)=>put('/etc/systemd/system/'+name,body,0o644);
@@ -61,8 +62,44 @@ try{
   await wait(()=>{assert.notEqual(prop(network,'MainPID'),oldOwner);assert.equal(prop(network,'ActiveState'),'active');assert.equal(prop(engine,'ActiveState'),'active');https('usb');},60000);check('network SIGKILL ExecStopPost recovers then restarts');
   ctl('stop','host-lab-exit.service');assert.throws(()=>https('usb'));check('exit outage has no direct fallback');
   ctl('start','host-lab-exit.service');await wait(()=>https('usb'));check('exit recovery needs no client manual restart');
+  ctl('stop',network);ip('-n','client','route','del','default','via','192.168.1.1');
+  const restarts=Number(prop(network,'NRestarts'));ctl('start',network);
+  await wait(()=>assert.ok(Number(prop(network,'NRestarts'))>=restarts+3),60000);
+  assert.equal(prop(engine,'MainPID'),'0');assert.ok(!JSON.parse(ip('-n','client','-j','link')).some(l=>l.ifname==='tun0'));
+  assert.equal(prop('host-lab-guard.service','ActiveState'),'active');assert.throws(()=>https('usb'));
+  ip('-n','client','route','add','default','via','192.168.1.1');
+  await wait(()=>{assert.equal(prop(engine,'ActiveState'),'active');https('usb');},60000);check('late uplink recovers after repeated startup failures');
+  const waitingOwner=prop(network,'MainPID');ip('-n','client','link','set','wlan0','down');
+  await delay(15000);assert.equal(prop(network,'MainPID'),waitingOwner);assert.equal(prop('host-lab-guard.service','ActiveState'),'active');assert.throws(()=>https('usb'));
+  ip('-n','client','link','set','wlan0','up');ip('-n','client','route','replace','default','via','192.168.1.1');
+  await wait(()=>https('usb'),60000);assert.equal(prop(network,'MainPID'),waitingOwner);check('live uplink loss retains owner and recovers without manual restart');
+  ip('-n','exit','address','add','192.168.1.2/24','dev','uplink');
+  ip('-n','client','route','replace','default','via','192.168.1.2');
+  await wait(()=>{assert.notEqual(prop(network,'MainPID'),waitingOwner);assert.equal(prop(engine,'ActiveState'),'active');
+    const route=JSON.parse(ip('-n','client','-j','route','show','154.62.226.216/32'));
+    assert.equal(route[0]?.gateway,'192.168.1.2');https('usb');},60000);
+  assert.equal(ns('client','node',['--input-type=module','-e',dnsCode]),'DNS_OK');check('changed gateway restarts owner and rebinds owned exit route');
+  if(soakSeconds){
+    const began=performance.now(),samples=[],faults=[],baselines=new Map();let nextFault=180;
+    const sample=u=>{const pid=Number(prop(u,'MainPID'));assert.ok(pid>0);const status=fs.readFileSync('/proc/'+pid+'/status','utf8');
+      const rssKiB=Number(status.match(/^VmRSS:\s+(\d+)/m)?.[1]),fds=fs.readdirSync('/proc/'+pid+'/fd').length;
+      assert.ok(rssKiB>0&&rssKiB<196608&&fds<128,'host_soak_resource_ceiling');
+      const first=baselines.get(pid);if(first){assert.ok(rssKiB-first.rssKiB<32768,'host_soak_rss_growth');assert.ok(fds<=first.fds+8,'host_soak_fd_growth');}else baselines.set(pid,{rssKiB,fds});
+      return{pid,rssKiB,fds};};
+    while((performance.now()-began)/1000<soakSeconds){
+      https('usb');assert.equal(ns('client','node',['--input-type=module','-e',dnsCode]),'DNS_OK');
+      const elapsed=Math.round((performance.now()-began)/1000);samples.push({elapsed,owner:sample(network),engine:sample(engine)});
+      if(samples.length%6===0)console.log('HOST_SOAK_SECONDS='+elapsed);
+      if(elapsed>=nextFault){const target=faults.length%2?network:engine,old=prop(target,'MainPID'),start=performance.now();ctl('kill','--kill-whom=main','--signal=SIGKILL',target);
+        await wait(()=>{assert.notEqual(prop(target,'MainPID'),old);assert.equal(prop(engine,'ActiveState'),'active');https('usb');},60000);
+        faults.push({target,recoveryMs:Math.round(performance.now()-start)});nextFault=elapsed+180;}
+      await delay(Math.min(10000,Math.max(0,soakSeconds*1000-(performance.now()-began))));
+    }
+    soak={requestedSeconds:soakSeconds,elapsedSeconds:Math.round((performance.now()-began)/1000),samples,faults,scope:'parent process RSS and FD samples; not whole-cgroup peaks or performance capacity'};
+    check('bounded network-owner soak with DNS HTTPS and process faults');
+  }
   ctl('stop',network);check('final cleanup');
-  console.log(JSON.stringify({status:'passed',checks,scope:'disposable systemd container, real native TLS and USB topology, no physical boot'}));
+  console.log(JSON.stringify({status:'passed',checks,...(soak?{soak}:{}),scope:'disposable systemd container, real native TLS and USB topology, no physical boot'}));
 }catch(e){
   for(const u of [network,engine,'host-lab-exit.service'])try{console.error(run('journalctl',['--no-pager','-u',u,'-n','45']));}catch{}
   throw e;

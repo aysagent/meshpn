@@ -29,6 +29,41 @@ CA/PSK и опциональный clock-profile передаются обычн
 После проверки активируется `native-NAME-network.service`, а не engine напрямую.
 Сам C++ остаётся отдельным systemd MainPID `native-NAME.service`.
 
+Минимальный **план установки**, без запуска и без публикации файлов:
+
+```sh
+node scripts/clean-vpn-native-install.mjs \
+  --name=daily \
+  --binary=/absolute/clean-vpn-engine \
+  --config=/absolute/private/client.json \
+  --host-profile=/absolute/private/host.json
+```
+
+`client.json` содержит абсолютные пути CA/PSK/profile; `host.json` — объект
+выше. Файлы private root-owned 0600, каталоги без небезопасных writable parents.
+Для работы owner нужны Node по сохранённому абсолютному пути, Python 3,
+iproute2, iptables, util-linux/flock и systemd. Сам installer проверяет native
+config/capabilities, но его успешный plan не заменяет live network preflight.
+
+После отдельной публикации с `--apply` и `systemctl daemon-reload` проверка
+установленного instance:
+
+```sh
+node /opt/clean-vpn-native/daily/control/clean-vpn-native-host-network.mjs \
+  preflight --config=/opt/clean-vpn-native/daily/network.json
+systemctl show native-daily-network.service native-daily.service \
+  -p Id -p ActiveState -p MainPID -p Result -p StatusText
+```
+
+Штатные команды для уже выбранной установки: `systemctl start
+native-daily-network.service`, `systemctl stop native-daily-network.service`,
+`journalctl -u native-daily-network.service -u native-daily.service -n 80 --no-pager`.
+`active` сетевого owner не означает готовый туннель: проверяются также notify
+engine и отдельные DNS/HTTPS пробы. `enable` не является частью проверки;
+физическая постоянная активация в текущем поручении отложена. Для временного
+удалённого испытания требуется отдельный ограниченный по времени stop/recovery,
+как в выполненном physical trial; простой `start` такого ограничения не создаёт.
+
 ## Владение и восстановление
 
 Сетевой owner удерживает namespace lock и журнал в `/run`. TUN создаётся
@@ -53,7 +88,7 @@ engine. Guard не снимается. SIGKILL engine допускает его 
 - 21 проверка в настоящем ARM64 Linux netns (потеря default route и смена instance): TUN/DNS/routes/NAT, повторный запуск,
   intent cut-points, чужой alias, active engine, guard failure, точный возврат
   исходных настроек и сохранение sentinel. Systemd-состояние в этой матрице injected.
-- 11 сценариев в отдельном systemd-контейнере без внешней сети: настоящие native
+- 14 сценариев в отдельном systemd-контейнере без внешней сети: настоящие native
   client/exit, USB HTTPS, UDP/TCP DNS, engine SIGKILL, owner SIGKILL/ExecStopPost,
   stop/restart, отказ/возврат exit, отсутствие direct fallback.
 - 23 Linux-регрессии установщика boring/transparent/combo/clock/host — PASS.
@@ -114,3 +149,26 @@ HTTPS повторены. Обе службы штатно остановили�
 unit-файлы удалены, bundles архивированы приватно. Guard/USB rescue сохранены,
 постоянный native autostart не включён. Это измерения короткого физического
 сценария, а не обещание такой задержки на любом устройстве.
+
+Дополнительная [systemd-матрица](../fixtures/clean-vpn-native-host-systemd-report.json)
+проверяет отсутствие default route при старте: после как минимум трёх неудачных
+попыток службы engine/TUN не запущены, guard активен. Появление uplink запускает
+VPN автоматически. Отдельный live link down/up сохраняет PID owner и
+восстанавливает HTTPS без ручного restart. Это veth-модель, не тест DHCP/Wi-Fi
+драйвера физической платы.
+
+Смена gateway в той же veth-модели также проверена: owner автоматически
+перезапускается, собственный exit route получает новый gateway, DNS/HTTPS
+восстанавливаются. Это не проверка переезда между произвольными Wi-Fi сетями.
+
+[15-минутный soak](../fixtures/clean-vpn-native-host-soak-report.json) дал 87
+замеров и четыре SIGKILL (engine/owner попеременно). RSS engine 6588–6656 KiB,
+FD всегда 8; owner 66520–67144 KiB, обычно 27 FD с двумя краткими замерами 35.
+В конце жизни каждого PID число FD вернулось к исходному. Recovery engine
+2.154–2.334 с, owner 12.236–12.627 с в этой ARM64 VM. Измеряются parent RSS/FD,
+не whole-cgroup peaks; 900 секунд не доказывают отсутствие долгосрочных утечек.
+
+Для повторения добавить `CVPN_HOST_SOAK_SECONDS=900` к systemd fixture; допустимо
+0–3600 секунд. Запуск только в новом одноразовом NIC-less контейнере, не на
+физической системе. Сохранённый soak выполнен до добавления uplink-сценариев;
+они отдельно прошли в итоговой 14-case матрице с теми же production-модулями.

@@ -1,0 +1,31 @@
+{
+  "status": "passed",
+  "checks": [
+    "installer leaves network and engine stopped",
+    "installed native host and USB HTTPS",
+    "native UDP and TCP DNS",
+    "engine SIGKILL restarts with network owner retained",
+    "graceful stop during synchronous audit succeeds",
+    "network stop cleans owned state and keeps guard closed",
+    "network restart recreates TUN without legacy",
+    "network SIGKILL ExecStopPost recovers then restarts",
+    "exit outage has no direct fallback",
+    "exit recovery needs no client manual restart",
+    "late uplink recovers after repeated startup failures",
+    "live uplink loss retains owner and recovers without manual restart",
+    "changed gateway restarts owner and rebinds owned exit route",
+    "final cleanup"
+  ],
+  "scope": "disposable systemd container, real native TLS and USB topology, no physical boot",
+  "schema": 1,
+  "kind": "native-host-systemd-lab",
+  "driverSha256": "59b1a05965f66457f12de3be6e7e7072051de28eff32b98706fb5d7903db4963",
+  "imageId": "c395b5c14d2fecd125e91c785e02277395eef97ce3eb78c59a9d904b0d7ad6fa",
+  "limitations": [
+    "fixture TLS certificates and origins",
+    "no physical Wi-Fi or DHCP manager",
+    "uplink modeled as veth and explicit route changes",
+    "no time fault or real reboot",
+    "uplink scenarios run without optional soak"
+  ]
+}

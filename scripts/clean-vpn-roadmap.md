@@ -1,5 +1,12 @@
 # clean-vpn: цели и порядок дальнейшей работы
 
+Актуальный checkpoint **2026-10-29**: [самостоятельный native host lifecycle](clean-vpn-native-host-network.md)
+и [очередь ночной работы](clean-vpn-native-night-20261029.md). Бесшовная миграция
+и возврат старого Node VPN отменены пользователем. Новый host-profile Radxa,
+привязка свежей админки, 22 проверки в трёх загрузках VM и повторный временный
+Radxa↔VPS smoke пройдены. Guard/USB и чужие службы сохранены; новая постоянная
+установка не активирована. Записи ниже — история предыдущих приоритетов.
+
 Текущий checkpoint 2026-10-27: [физический boring-tls пилот](clean-vpn-native-daily-pilot.md#физический-checkpoint-2026-10-27)
 Radxa ↔ VPS прошёл: ordinary smoke, engine SIGKILL, wlan0 down/up и 120-секундный
 hold 12/12. Пять native ClientHello matched внешним pcap. В ограниченном capture

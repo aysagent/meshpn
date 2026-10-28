@@ -1,0 +1,1184 @@
+{
+  "status": "passed",
+  "checks": [
+    "installer leaves network and engine stopped",
+    "installed native host and USB HTTPS",
+    "native UDP and TCP DNS",
+    "engine SIGKILL restarts with network owner retained",
+    "graceful stop during synchronous audit succeeds",
+    "network stop cleans owned state and keeps guard closed",
+    "network restart recreates TUN without legacy",
+    "network SIGKILL ExecStopPost recovers then restarts",
+    "exit outage has no direct fallback",
+    "exit recovery needs no client manual restart",
+    "bounded network-owner soak with DNS HTTPS and process faults",
+    "final cleanup"
+  ],
+  "soak": {
+    "requestedSeconds": 900,
+    "elapsedSeconds": 900,
+    "samples": [
+      {
+        "elapsed": 0,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 66832,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6652,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 10,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 66856,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 20,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 66892,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 30,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 66908,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 40,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 66940,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 50,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 66944,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 60,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 66944,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 71,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67060,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 81,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67064,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 91,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67064,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 101,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67096,
+          "fds": 35
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 111,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67072,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 121,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67072,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 131,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67076,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 141,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67080,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 151,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67080,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 161,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67088,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 171,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67088,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 181,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67088,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 4640,
+          "rssKiB": 6656,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 194,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67088,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6588,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 204,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67100,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 214,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67100,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 224,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67100,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 234,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67100,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 244,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67100,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 254,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67100,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 264,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67100,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 274,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67132,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 284,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67136,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 294,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67136,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 304,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67144,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 315,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67144,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 325,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67144,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 335,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67144,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 345,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67144,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 355,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67144,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 365,
+        "owner": {
+          "pid": 3745,
+          "rssKiB": 67144,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 6355,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 388,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66660,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6588,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 398,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66708,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 408,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66712,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 418,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66740,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 428,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66752,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 438,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66752,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 448,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66776,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 458,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66776,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 468,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66776,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 478,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66784,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 488,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66788,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 498,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66788,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 509,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66792,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 519,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66792,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 529,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66796,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 539,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66804,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 549,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66804,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 9739,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 561,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66804,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 571,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66804,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 582,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66808,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 592,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66808,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 602,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66808,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 612,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66808,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 622,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66808,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 632,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66808,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 642,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66808,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 652,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66816,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 662,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66816,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 672,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66824,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 682,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66824,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 692,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66828,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 702,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66832,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 713,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66860,
+          "fds": 35
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 723,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66832,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 733,
+        "owner": {
+          "pid": 8854,
+          "rssKiB": 66832,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 11294,
+          "rssKiB": 6596,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 755,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66520,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6588,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 765,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66564,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 775,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66568,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 785,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66600,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 795,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66612,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 805,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66612,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 815,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66688,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 825,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66688,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 836,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66688,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 846,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66692,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 856,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66696,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 866,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66696,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 876,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66700,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 886,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66700,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      },
+      {
+        "elapsed": 896,
+        "owner": {
+          "pid": 13825,
+          "rssKiB": 66708,
+          "fds": 27
+        },
+        "engine": {
+          "pid": 14711,
+          "rssKiB": 6592,
+          "fds": 8
+        }
+      }
+    ],
+    "faults": [
+      {
+        "target": "native-host-lab.service",
+        "recoveryMs": 2154
+      },
+      {
+        "target": "native-host-lab-network.service",
+        "recoveryMs": 12627
+      },
+      {
+        "target": "native-host-lab.service",
+        "recoveryMs": 2334
+      },
+      {
+        "target": "native-host-lab-network.service",
+        "recoveryMs": 12236
+      }
+    ],
+    "scope": "parent process RSS and FD samples; not whole-cgroup peaks or performance capacity"
+  },
+  "scope": "disposable systemd container, real native TLS and USB topology, no physical boot",
+  "driverSha256": "adc02c98dd768ca94c4eaa2d385863994a39832572032030a2680c32a8c2740a",
+  "schema": 1,
+  "kind": "native-host-systemd-soak",
+  "imageId": "c395b5c14d2fecd125e91c785e02277395eef97ce3eb78c59a9d904b0d7ad6fa",
+  "limitations": [
+    "900-second bounded workload, not long-term leak proof",
+    "sampled parent RSS and FD only, no whole-cgroup peak",
+    "soak driver predates subsequent uplink/gateway scenarios; same production controller sources",
+    "no physical boot, clock fault or throughput test"
+  ]
+}
