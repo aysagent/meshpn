@@ -4,6 +4,12 @@ No SSH to Radxa/VPS, no Mac network/clock/trust changes. Linux tests run only
 in the dedicated Podman/QEMU lab. dnsmasq migration remains research-only.
 Physical deployment is a separate acceptance step.
 
+OpenWrt research is recorded in [the OpenWrt integration plan](../scripts/clean-vpn-openwrt.md).
+Scope: locally installed native client/exit packages and LuCI feature parity,
+including browser capture, profile selection and independent pcap observation.
+No public feed submission; no OpenWrt implementation or acceptance claimed yet.
+This is an additional platform track, not completion of the checkpoints below.
+
 ## Order and acceptance
 
 1. Durable native settings apply: validate before changing live files; journal
