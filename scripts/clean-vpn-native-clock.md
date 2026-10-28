@@ -1,5 +1,8 @@
 # Native clock recovery: только после отказа по времени
 
+Продолжение 2026-10-28: [установочный bundle, блокировка с updater и физический pilot](clean-vpn-native-installed-lifecycle.md).
+Постоянная интеграция на физических машинах по-прежнему не включена.
+
 Checkpoint 2026-10-28. Есть opt-in интеграция с systemd: native engine →
 OnFailure → отдельная служба восстановления → повторный запуск engine.
 На физических Radxa/VPS эта интеграция пока не установлена.

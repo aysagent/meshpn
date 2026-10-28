@@ -1,0 +1,340 @@
+{
+  "status": "passed",
+  "nic": "none",
+  "hostSharedFilesystem": false,
+  "realTun": true,
+  "packetOwner": "C++",
+  "kernelSha256": "41ba36d860aa0b0cd995f4ca8856d80249b244577e704929b55be13fbd1ebd2f",
+  "firewallBackend": "nft",
+  "accelerator": "TCG",
+  "nestedEmulation": true,
+  "vcpus": 1,
+  "memoryMiB": 1536,
+  "tunMtu": 1400,
+  "guard": "fixture-persistent-per-namespace-IPv4-IPv6",
+  "benchmark": "not-requested",
+  "limitations": [
+    "fixture-PKI-and-origins",
+    "local-capture-not-on-wire-proof",
+    "not-physical-Radxa-or-arm64",
+    "emulator-not-production-performance",
+    "RSS-not-PSS; sampling-may-miss-short-lived-processes",
+    "fixture-network-provisioning-not-production-installer",
+    "persistent-artifacts-restored-into-initramfs",
+    "static-managed-links-not-DHCP",
+    "no-independent-early-boot-packet-capture"
+  ],
+  "nativeOnly": true,
+  "legacyCliSha256": "0602ad24d228e89ef6393dbfd6e6049bd6fc502049cb914ead9911e57a4670b7",
+  "legacyHelperSha256": "81ba1c31e4b924cd540d124f99c943f0c3a69b7e0c4f9e2d0fdeafbf578a4912",
+  "labScriptSha256": "53a0049d3d03927c2291b44e8caa128896164952c37b0012d7ac187250653063",
+  "serviceUnitRendererSha256": "8a6295dcb756949166124a02990443d82b351b0b6eeb3efb4b4fecc5f53d80bc",
+  "clean-vpn-engineSha256": "cf89597bec9b749f94784974a3b4b5ddea06b4c7b77847a12b03e918e9b5ec0a",
+  "socket-testSha256": "8f32f95e9bd9e11fa2a9115cdfbbab99bb6279c5887c8eaaf972739fac265665",
+  "systemdPid1": true,
+  "nativeDirectServices": true,
+  "realTunPeers": 2,
+  "stateDiskMiB": 512,
+  "boots": [
+    {
+      "boot": 0,
+      "code": 0,
+      "events": [
+        {
+          "phase": 0,
+          "event": "prepared",
+          "bootId": "0d843614-fef2-474d-8535-381583e0e26b"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "installed-disabled-c2"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "installed-disabled-c3"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "installed-disabled-exit"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "not-started-by-installer-c2"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "not-started-by-installer-c3"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "not-started-by-installer-exit"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "active-c2"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "native-mainpid-c2"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "active-c3"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "native-mainpid-c3"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "active-exit"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "native-mainpid-exit"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "tun-data-2"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "native-dns-2"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "tun-data-3"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "native-dns-3"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "guard-active"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "guard-before-uplink"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "clock-installed-no-query"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "binary-update-ready"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "binary-update-data"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "binary-failure-rollback"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "update-clock-exclusion"
+        },
+        {
+          "phase": 0,
+          "event": "check",
+          "name": "binary-interrupted-journal"
+        },
+        {
+          "phase": 0,
+          "event": "reboot-ready"
+        }
+      ],
+      "restarted": true,
+      "poweredDown": false
+    },
+    {
+      "boot": 1,
+      "code": 0,
+      "events": [
+        {
+          "phase": 1,
+          "event": "prepared",
+          "bootId": "17516ebe-9358-4137-bdfa-b4a7b20c2780"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "active-c2"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "native-mainpid-c2"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "active-c3"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "native-mainpid-c3"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "active-exit"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "native-mainpid-exit"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "tun-data-2"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "native-dns-2"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "tun-data-3"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "native-dns-3"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "guard-active"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "guard-before-uplink"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "clock-installed-no-query"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "installed-bytes-survived-reboot"
+        },
+        {
+          "phase": 1,
+          "event": "check",
+          "name": "binary-recovered-before-start"
+        },
+        {
+          "phase": 1,
+          "event": "reboot-ready"
+        }
+      ],
+      "restarted": true,
+      "poweredDown": false
+    },
+    {
+      "boot": 2,
+      "code": 0,
+      "events": [
+        {
+          "phase": 2,
+          "event": "prepared",
+          "bootId": "7b11a672-ded3-45c7-b9d4-41093a3088c5"
+        },
+        {
+          "phase": 2,
+          "event": "check",
+          "name": "guard-failed"
+        },
+        {
+          "phase": 2,
+          "event": "check",
+          "name": "uplink-not-active"
+        },
+        {
+          "phase": 2,
+          "event": "check",
+          "name": "engine-not-started-c2"
+        },
+        {
+          "phase": 2,
+          "event": "check",
+          "name": "engine-not-started-c3"
+        },
+        {
+          "phase": 2,
+          "event": "check",
+          "name": "engine-not-started-exit"
+        },
+        {
+          "phase": 2,
+          "event": "check",
+          "name": "uplink-stays-down-2"
+        },
+        {
+          "phase": 2,
+          "event": "check",
+          "name": "no-default-2"
+        },
+        {
+          "phase": 2,
+          "event": "check",
+          "name": "uplink-stays-down-3"
+        },
+        {
+          "phase": 2,
+          "event": "check",
+          "name": "no-default-3"
+        },
+        {
+          "phase": 2,
+          "event": "check",
+          "name": "installed-bytes-preserved-on-failure"
+        },
+        {
+          "phase": 2,
+          "event": "passed"
+        }
+      ],
+      "restarted": false,
+      "poweredDown": true
+    }
+  ],
+  "installerSha256": "e34748a4d72885d11595ed7b70f1f94cde066cea5f9f97713316dff4b54d896e",
+  "bootDriverSha256": "d81eb4b3620776ee424d8a29e7a707235bc20d2f77edfc93b226e9a4611d694c",
+  "code": 0,
+  "benchmarks": []
+}

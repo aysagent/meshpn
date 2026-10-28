@@ -6,6 +6,14 @@ Temporary checks on Radxa/VPS are recorded in the
 No Mac network/clock/trust changes. dnsmasq migration remains research-only.
 Permanent native deployment and physical boot are separate acceptance steps.
 
+Latest checkpoint: [installed clock/update with existing Radxa owners](../scripts/clean-vpn-native-installed-lifecycle.md).
+Both physical smoke runs passed, including binary updates and rollback with
+DNS/HTTPS; native SNAT readiness is explicit. The combined installed clock/update
+boot matrix passed 49 gates across three kernels. The network owner used in the
+physical pilot is still temporary. Next: package its persistent lifecycle,
+journal the legacy/native activation and SNAT switch, then test migration and
+physical boot. Do not describe this checkpoint as completed native autostart.
+
 OpenWrt research is recorded in [the OpenWrt integration plan](../scripts/clean-vpn-openwrt.md).
 Scope: locally installed native client/exit packages and LuCI feature parity,
 including browser capture, profile selection and independent pcap observation.

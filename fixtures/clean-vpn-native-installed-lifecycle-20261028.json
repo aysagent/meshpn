@@ -1,0 +1,232 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-installed-lifecycle-acceptance",
+  "date": "2026-10-28",
+  "implementationRevision": "7268cd7",
+  "sourceSha256": {
+    "scripts/lib/native-install.mjs": "e34748a4d72885d11595ed7b70f1f94cde066cea5f9f97713316dff4b54d896e",
+    "scripts/clean-vpn-native-clock.py": "5b04db3bec003aa36a2912da4657193b0c031a38d11d7c3b25d94f8c96128894",
+    "scripts/clean-vpn-native-update.mjs": "0f44adbf27de5d245bb130a466b681e2dc5756206a68248bc6ee53c9b61c3645",
+    "scripts/lib/native-binary-update.mjs": "87507a4de1fd3490cb7dd5bab47074c5a81fe821cec717b21fbc4124b65d9ec0",
+    "scripts/clean-vpn-usb-snat.mjs": "14657cd0e49ede6611529bff3d65868b89382d5007c49525a30299716e52cde6"
+  },
+  "localTests": {
+    "node": 69,
+    "python": 14
+  },
+  "linuxRegressions": {
+    "passed": 86,
+    "failed": 0,
+    "skipped": 1
+  },
+  "radxaRegressions": {
+    "passed": 41,
+    "failed": 0
+  },
+  "snatAndBootEvidenceTests": {
+    "passed": 25,
+    "failed": 0
+  },
+  "isolatedPhysicalChecks": {
+    "radxa": 10,
+    "vps": 10
+  },
+  "boot": {
+    "report": "clean-vpn-native-installed-boot-20261028.json",
+    "gates": 49,
+    "boots": 3,
+    "physical": false
+  },
+  "physical": {
+    "first": {
+      "status": "passed",
+      "rollback": "verified",
+      "reportFile": "/var/lib/clean-vpn-native-trial/run-qsonZO/report.json",
+      "installed": {
+        "status": "passed",
+        "checks": [
+          "pinned-clock-probe",
+          "update-dns-https",
+          "rollback-dns-https",
+          "no-clock-query-during-update",
+          "network-owner-preserved",
+          "original-binary-restored",
+          "healthy-no-clock-query"
+        ],
+        "scope": "temporary-installed-client-existing-DNS-routes-guard",
+        "clockChanged": false
+      }
+    },
+    "last": {
+      "status": "passed",
+      "rollback": "verified",
+      "guard": "verified",
+      "reportFile": "/var/lib/clean-vpn-native-trial/run-iAVQEI/report.json",
+      "checks": {
+        "old": {
+          "status": "ipv4-smoke-passed",
+          "exitIp": "154.62.226.216",
+          "nss": "passed",
+          "dnsPassed": 4,
+          "dnsTotal": 4,
+          "httpsPassed": 2,
+          "httpsSeconds": [
+            0.496166,
+            0.423365
+          ],
+          "download": {
+            "status": "passed",
+            "bytes": 1048576,
+            "seconds": 4.19148
+          }
+        },
+        "native": {
+          "status": "ipv4-smoke-passed",
+          "exitIp": "154.62.226.216",
+          "nss": "passed",
+          "dnsPassed": 4,
+          "dnsTotal": 4,
+          "httpsPassed": 2,
+          "httpsSeconds": [
+            0.478214,
+            0.563725
+          ],
+          "download": {
+            "status": "passed",
+            "bytes": 1048576,
+            "seconds": 1.363439
+          }
+        },
+        "restored": {
+          "status": "ipv4-smoke-passed",
+          "exitIp": "154.62.226.216",
+          "nss": "passed",
+          "dnsPassed": 4,
+          "dnsTotal": 4,
+          "httpsPassed": 2,
+          "httpsSeconds": [
+            0.566365,
+            0.47487
+          ],
+          "download": {
+            "status": "passed",
+            "bytes": 1048576,
+            "seconds": 1.832888
+          }
+        }
+      },
+      "usb": {
+        "status": "passed",
+        "phases": {
+          "baseline": {
+            "phase": "baseline",
+            "status": "passed",
+            "dnsPassed": 4,
+            "httpsPassed": 3,
+            "downloadBytes": 1048576,
+            "exitIp": "154.62.226.216",
+            "blockedAttempts": 0,
+            "recoveryMs": 0,
+            "elapsedMs": 3672,
+            "observedAfterMs": 4534
+          },
+          "native": {
+            "phase": "native",
+            "status": "passed",
+            "dnsPassed": 4,
+            "httpsPassed": 3,
+            "downloadBytes": 1048576,
+            "exitIp": "154.62.226.216",
+            "blockedAttempts": 0,
+            "recoveryMs": 0,
+            "elapsedMs": 3965,
+            "observedAfterMs": 5540
+          },
+          "restored": {
+            "phase": "restored",
+            "status": "passed",
+            "dnsPassed": 4,
+            "httpsPassed": 3,
+            "downloadBytes": 1048576,
+            "exitIp": "154.62.226.216",
+            "blockedAttempts": 0,
+            "recoveryMs": 0,
+            "elapsedMs": 3251,
+            "observedAfterMs": 4277
+          }
+        },
+        "scope": "authenticated-Mac-USB-observations-not-independent-leak-capture",
+        "fault": {
+          "kind": "none",
+          "requestedPhysicalUplinkChange": false
+        }
+      },
+      "installed": {
+        "status": "passed",
+        "checks": [
+          "native-snat-owner-readiness",
+          "pinned-clock-probe",
+          "update-dns-https",
+          "rollback-dns-https",
+          "no-clock-query-during-update",
+          "network-owner-preserved",
+          "original-binary-restored",
+          "healthy-no-clock-query"
+        ],
+        "scope": "temporary-installed-client-existing-DNS-routes-guard",
+        "clockChanged": false
+      },
+      "tlsProfile": {
+        "id": "chromium-156-bounded-cold-v1",
+        "fileSha256": "e2cf0e9e2fb68ce5a2af43d56c0be989cd525217ac73e6037ad65098d5e0be79",
+        "browserEquivalent": false,
+        "independentWireCheck": "required-separately"
+      }
+    }
+  },
+  "restoration": {
+    "legacy": true,
+    "guard": true,
+    "usbRescue": true,
+    "usbSnat": true,
+    "adminBroker": true,
+    "temporaryExitStopped": true,
+    "temporaryClockAccountRemoved": true,
+    "temporaryKeysRemoved": true,
+    "testInstancesRemoved": true,
+    "ownedFailedUnitMarkersReset": true,
+    "newKernelOOM": false,
+    "macSettingsChanged": false,
+    "physicalReboot": false,
+    "physicalClocksChanged": false
+  },
+  "networkComparison": {
+    "vps": true,
+    "macDefault": true,
+    "radxaPolicy": true,
+    "normalization": [
+      "firewall-counters-and-timestamps",
+      "generated-DNS-and-IPv6-owner-ids",
+      "IPv6-route-expiry",
+      "single-kernel-generated-tun0-link-local-address"
+    ]
+  },
+  "limitations": [
+    "named-install-attached-to-temporary-existing-host-owner",
+    "no-permanent-native-migration-or-autostart",
+    "no-physical-reboot-or-power-cycle",
+    "no-new-independent-pcap-this-checkpoint",
+    "identical-trusted-ELF-plus-marker-not-new-production-build",
+    "healthy-physical-clocks-only-read-only-explicit-SSH-probe"
+  ],
+  "earlierFailures": [
+    {
+      "kind": "VM packaging",
+      "result": "clock unit omitted from persisted unit inventory; fixed and all three boots repeated"
+    },
+    {
+      "kind": "macOS broader regression",
+      "result": "Linux build prerequisite test fails on missing flock; Linux matrix passed with one existing skip"
+    }
+  ]
+}

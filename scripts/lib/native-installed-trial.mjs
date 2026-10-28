@@ -26,6 +26,7 @@ export function prepareInstalledTrial({binary,config,clockProfile,log}) {
     for(const p of files.keys())fs.unlinkSync(p);
     if(fs.existsSync('/etc/systemd/system/'+unit+'.d'))fs.rmdirSync('/etc/systemd/system/'+unit+'.d');
     fs.rmSync(bundle,{recursive:true,force:true});ctl('daemon-reload');
+    for(const u of names)try{ctl('reset-failed',u);}catch{}
   };
   try {
     put('/etc/systemd/system/'+network,`# clean-vpn-owned-installed-trial\n[Unit]\nRequires=clean-vpn-native-trial.service\nAfter=clean-vpn-native-trial.service\nBindsTo=clean-vpn-native-trial.service\nPartOf=clean-vpn-native-trial.service\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/systemctl is-active clean-vpn-native-trial.service\n`);

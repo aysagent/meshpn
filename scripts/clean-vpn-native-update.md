@@ -1,6 +1,8 @@
 # Native binary update: отдельная транзакция
 
 Приёмка: [46 VM gates и физические Radxa/VPS проверки](clean-vpn-native-update-report.md).
+Продолжение: [49 VM gates, installed clock recovery и реальные DNS/HTTPS после update/rollback](clean-vpn-native-installed-lifecycle.md).
+Updater сохраняет `clock-state/` и сериализуется с clock helper общим flock.
 
 2026-10-28. Опциональное обновление **только engine** у новой именованной
 boring-tls установки, созданной `clean-vpn-native-install.mjs` с внешними

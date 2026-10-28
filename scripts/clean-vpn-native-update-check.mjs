@@ -39,6 +39,7 @@ function cleanup(id){const p=paths(id);if(!fs.existsSync(p.dir+'/owned.json'))re
   }
   for(const unit of [p.network,p.guard])fs.rmSync('/etc/systemd/system/'+unit,{force:true});
   ctl('daemon-reload');
+  for(const name of p.names)for(const suffix of ['.service','-clock.service','-binary-recovery.service','-binary-update.service'])try{ctl('reset-failed','native-'+name+suffix);}catch{}
   if(fs.existsSync('/run/netns/'+p.ns)){need(ip('netns','pids',p.ns)==='','fixture_namespace_busy');ip('netns','delete',p.ns);}
   fs.rmSync(p.dir,{recursive:true,force:true});
 }

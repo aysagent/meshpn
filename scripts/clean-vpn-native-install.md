@@ -1,5 +1,9 @@
 # Native-only установка и boot/reboot: лабораторный checkpoint
 
+Обновление 2026-10-28: `--clock-profile` для именованного boring-tls client
+с внешними network/guard units, [приёмка связки clock/updater](clean-vpn-native-installed-lifecycle.md).
+Последняя расширенная boot-матрица — 49 gates; результаты ниже исторические.
+
 2026-10-07. Установка boring-tls client и multi-peer exit без Node data plane.
 Исходный режим принимает внешние network/guard units. Добавлен
 [`--site-profile` для dedicated native-only сети](clean-vpn-native-network.md):
