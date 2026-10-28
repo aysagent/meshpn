@@ -1,0 +1,86 @@
+{
+  "status": "passed",
+  "nic": "none",
+  "hostSharedFilesystem": false,
+  "realTun": true,
+  "packetOwner": "C++",
+  "kernelSha256": "41ba36d860aa0b0cd995f4ca8856d80249b244577e704929b55be13fbd1ebd2f",
+  "firewallBackend": "nft",
+  "accelerator": "TCG",
+  "nestedEmulation": true,
+  "vcpus": 1,
+  "memoryMiB": 1536,
+  "tunMtu": 1400,
+  "guard": "independent-cvks4-both-block",
+  "benchmark": "not-requested",
+  "limitations": [
+    "fixture-PKI-and-origins",
+    "local-capture-not-on-wire-proof",
+    "not-physical-Radxa-or-arm64",
+    "emulator-not-production-performance",
+    "RSS-not-PSS; sampling-may-miss-short-lived-processes",
+    "fixture-uplink-and-USB-links; actual-host-profile-installer",
+    "clock-profile-present-but-no-time-fault-in-this-matrix",
+    "persistent-artifacts-restored-into-initramfs",
+    "static-managed-links-not-DHCP",
+    "no-independent-early-boot-packet-capture"
+  ],
+  "nativeOnly": true,
+  "labScriptSha256": "53a0049d3d03927c2291b44e8caa128896164952c37b0012d7ac187250653063",
+  "serviceUnitRendererSha256": "8a6295dcb756949166124a02990443d82b351b0b6eeb3efb4b4fecc5f53d80bc",
+  "clean-vpn-engineSha256": "cf89597bec9b749f94784974a3b4b5ddea06b4c7b77847a12b03e918e9b5ec0a",
+  "socket-testSha256": "8f32f95e9bd9e11fa2a9115cdfbbab99bb6279c5887c8eaaf972739fac265665",
+  "realTunPeers": 1,
+  "hostBoot": true,
+  "systemdPid1": true,
+  "nativeDirectServices": true,
+  "stateDiskMiB": 512,
+  "boots": [
+    {
+      "phase": 0,
+      "bootId": "956e5da7-94bf-4fc9-a926-8c148cd5782d",
+      "checks": [
+        "installed-disabled",
+        "installed-data-dns",
+        "clock-not-needed",
+        "native-update",
+        "updated-data-dns",
+        "native-update-rollback",
+        "clock-budget-unchanged",
+        "stop-blocks-egress",
+        "stop-removes-owned-tun",
+        "foreign-state-preserved"
+      ]
+    },
+    {
+      "phase": 1,
+      "bootId": "d9c8ded4-819b-496a-8e49-5fb0ced54151",
+      "checks": [
+        "boot-autostart-data-dns",
+        "clock-not-needed",
+        "boot-owner-crash-recovery",
+        "stop-blocks-egress",
+        "stop-removes-owned-tun",
+        "foreign-state-preserved"
+      ]
+    },
+    {
+      "phase": 2,
+      "bootId": "38d07fb3-17f8-4e59-935c-732dcb695742",
+      "checks": [
+        "failed-guard-stops-engine",
+        "failed-guard-no-tun",
+        "failed-guard-closed",
+        "failed-guard-no-clock-query"
+      ]
+    }
+  ],
+  "installerSha256": "f75881ef512be8402c525efc4f3521570f73ea2837b7a79019a01e3d9f671a25",
+  "bootDriverSha256": "93f239f82b4d386f16446131a0eef4859a11d5700e7817f45f99a4ddf4e69cd4",
+  "code": 0,
+  "benchmarks": [],
+  "observations": [
+    "Earlier 90-second owner-recovery deadline expired under nested TCG; 240-second bounded retry passed.",
+    "One stop raced a synchronous audit and marked owner failed; independent ExecStopPost restored owned network state."
+  ]
+}

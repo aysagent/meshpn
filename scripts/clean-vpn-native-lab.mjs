@@ -22,6 +22,7 @@ import { addNativeAdminImage, nativeAdminChecks } from './lib/native-admin-vm-im
 const argv=process.argv.slice(2);
 const [base,tools,mode,...options]=argv;
 const nativeBoot=mode==='--native-boot';
+const nativeHostBoot=mode==='--native-host-boot';
 const nativeAdmin=mode==='--native-admin';
 const nativeRoutes=mode==='--native-routes';
 const nativeSiteBoot=mode==='--native-site-boot';
@@ -32,8 +33,8 @@ const comboNetwork=mode==='--native-combo-network'||comboLoad||comboBenchmark;
 const comboBoot=mode==='--native-combo-boot';
 const relayLab=transparentBoot||comboNetwork||comboBoot;
 const nativeNetwork=mode==='--native-network'||nativeSiteBoot||transparentBoot||comboBoot;
-const persistentBoot=nativeBoot||nativeSiteBoot||transparentBoot||comboBoot;
-const systemdNative=mode==='--native-systemd'||nativeAdmin||nativeBoot||nativeRoutes||nativeNetwork;
+const persistentBoot=nativeHostBoot||nativeBoot||nativeSiteBoot||transparentBoot||comboBoot;
+const systemdNative=nativeHostBoot||mode==='--native-systemd'||nativeAdmin||nativeBoot||nativeRoutes||nativeNetwork;
 const nativeOnly=mode==='--native-only'||systemdNative||comboNetwork;
 assert.ok(argv.length===2||(argv.length>=3&&nativeOnly),'usage: verified HOST_BOOT_BASE QEMU_TOOLS_ROOT [--native-only|--native-systemd|--native-admin|--native-boot|--native-routes|--native-network|--native-site-boot|--native-transparent-boot|--native-combo-network|--native-combo-boot|--native-combo-load|--native-combo-benchmark] [--qemu=ABSOLUTE_PATH] [--nested-emulation]');
 for(const p of [base,tools])assert.ok(p?.startsWith('/')&&resolve(p)===p&&!/[\r\n,]/.test(p));
@@ -60,10 +61,10 @@ try {
   fs.cpSync(join(base,'guest'),guest,{recursive:true,verbatimSymlinks:true});
   if(nativeNetwork||comboNetwork) for(const name of ['iptables-save','ip6tables-save']) put('/usr/sbin/'+name,fs.readFileSync(`/usr/sbin/xtables-${prior.firewallBackend}-multi`),0o755);
   if(nativeNetwork||comboNetwork){const p='/usr/lib/x86_64-linux-gnu/xtables/libxt_mark.so';put(p,fs.readFileSync(p),0o755);}
-  if(relayLab) { const p='/usr/lib/x86_64-linux-gnu/xtables/libxt_REDIRECT.so';put(p,fs.readFileSync(p),0o755); }
+  if(relayLab||nativeHostBoot) { const p='/usr/lib/x86_64-linux-gnu/xtables/libxt_REDIRECT.so';put(p,fs.readFileSync(p),0o755); }
   if(relayLab) put('/usr/sbin/ip',fs.readFileSync('/usr/bin/ip'),0o755);
-  const copyScripts=dir=>{for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const p=join(dir,entry.name);if(entry.isDirectory())copyScripts(p);else if(/\.(m?js|sh)$/.test(p))put('/project/'+p,fs.readFileSync(p),p.endsWith('.sh')?0o755:0o644);}};copyScripts('scripts');
-  if(nativeBoot){
+  const copyScripts=dir=>{for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const p=join(dir,entry.name);if(entry.isDirectory())copyScripts(p);else if(/\.(m?js|sh|py)$/.test(p))put('/project/'+p,fs.readFileSync(p),p.endsWith('.sh')?0o755:0o644);}};copyScripts('scripts');
+  if(nativeBoot||nativeHostBoot){
     put('/project/scripts/clean-vpn-native-clock.py',fs.readFileSync('scripts/clean-vpn-native-clock.py'));
     const pythonBase=execFileSync('/usr/bin/python3',['-c','import sys;print("/usr/lib/python%d.%d"%sys.version_info[:2])'],{encoding:'utf8'}).trim();
     fs.mkdirSync(join(guest,'usr/lib'),{recursive:true});fs.cpSync(pythonBase,join(guest,pythonBase),{recursive:true,dereference:true,filter:p=>!p.includes('__pycache__')});
@@ -109,7 +110,7 @@ try {
   put('/native/snat.sh','#!/bin/sh\nset -eu\n'+[['iptables','-w','5','-t','nat','-A','POSTROUTING',...usbSnatRule],...usbMssRules.map(r=>['iptables','-w','5','-t','mangle','-A','FORWARD',...r])].map(a=>a.map(quote).join(' ')).join('\n')+'\n',0o755);
   let init=addUsbMssVmImage(fs.readFileSync(join(base,'guest/init'),'utf8'),put).init;assert.ok(init.includes('cd /project'));
   const release=init.match(/insmod \/lib\/modules\/([^/]+)\//)[1];
-  if(relayLab) for(const relative of ['net/llc/llc.ko','net/802/stp.ko','net/bridge/bridge.ko','net/netfilter/xt_REDIRECT.ko']) {
+  if(relayLab||nativeHostBoot) for(const relative of ['net/llc/llc.ko','net/802/stp.ko','net/bridge/bridge.ko','net/netfilter/xt_REDIRECT.ko']) {
     const mod=`/lib/modules/${release}/kernel/${relative}`;put(mod,fs.readFileSync(mod));init=init.replace('cd /project',`insmod ${mod}\ncd /project`);
   }
   if(nativeNetwork||comboNetwork){const mark=`/lib/modules/${release}/kernel/net/netfilter/xt_mark.ko`;put(mark,fs.readFileSync(mark));init=init.replace('cd /project',`insmod ${mark}\ncd /project`);}
@@ -133,7 +134,7 @@ try {
     }
   }
   if(systemdNative){
-    addNativeSystemdImage(put,{boot:nativeBoot||nativeNetwork,routes:nativeRoutes});
+    addNativeSystemdImage(put,{boot:nativeHostBoot||nativeBoot||nativeNetwork,routes:nativeRoutes});
     if(nativeAdmin) {
       addNativeAdminImage(put);
       // cpio worker uses umask 077; allow the unprivileged frontend to traverse
@@ -146,13 +147,23 @@ try {
       report.adminTransactionSha256=hash(fs.readFileSync('admin/lib/vpn-settings-transaction.mjs'));
       report.adminBrokerSha256=hash(fs.readFileSync('admin/broker.mjs'));
     }
+    if(nativeHostBoot) {
+      put('/etc/systemd/system/native-lab-driver.service','[Unit]\nDefaultDependencies=no\nRequires=dbus.service\nAfter=dbus.service\n[Service]\nType=exec\nExecStart=/usr/bin/node /project/scripts/lib/native-host-boot-vm.mjs run\nRuntimeMaxSec=15min\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/console\n');
+      report.realTunPeers=1;report.hostBoot=true;
+    }
     if(nativeNetwork&&!transparentBoot&&!comboBoot) addNativeNetworkImage(put);
     if(transparentBoot) addTransparentBootImage(put);
     if(comboBoot) addComboBootImage(put);
-    put('/init',init.slice(0,init.indexOf('cd /project'))+(persistentBoot?`\nmount -t ext4 -o rw /dev/vda /state\n/usr/bin/node /project/scripts/lib/${comboBoot?'native-combo-boot-vm.mjs':transparentBoot?'native-transparent-boot-vm.mjs':nativeSiteBoot?'native-site-boot-vm.mjs':'native-boot-vm.mjs'} prepare\n`:'')+'\nmkdir -p /run/dbus\nexec /usr/lib/systemd/systemd --system --log-target=console --log-level=info --show-status=no\n',0o755);
+    put('/init',init.slice(0,init.indexOf('cd /project'))+(persistentBoot?`\nmount -t ext4 -o rw /dev/vda /state\n/usr/bin/node /project/scripts/lib/${nativeHostBoot?'native-host-boot-vm.mjs':comboBoot?'native-combo-boot-vm.mjs':transparentBoot?'native-transparent-boot-vm.mjs':nativeSiteBoot?'native-site-boot-vm.mjs':'native-boot-vm.mjs'} prepare\n`:'')+'\nmkdir -p /run/dbus\nexec /usr/lib/systemd/systemd --system --log-target=console --log-level=info --show-status=no\n',0o755);
     report.systemdPid1=true;report.nativeDirectServices=true;report.realTunPeers=2;
     report.guard='fixture-persistent-per-namespace-IPv4-IPv6';
     report.limitations=report.limitations.filter(s=>s!=='not-systemd-installer-or-boot-acceptance').concat('fixture-network-provisioning-not-production-installer','single-boot-not-reboot-acceptance');
+    if(nativeHostBoot){
+      report.realTunPeers=1;report.guard='independent-cvks4-both-block';
+      delete report.legacyCliSha256;delete report.legacyHelperSha256;
+      report.limitations=report.limitations.filter(s=>s!=='fixture-network-provisioning-not-production-installer')
+        .concat('fixture-uplink-and-USB-links; actual-host-profile-installer','clock-profile-present-but-no-time-fault-in-this-matrix');
+    }
     if(nativeRoutes){
       report.dhcp='real-busybox-client-server';
       for(const [key,file] of Object.entries({routeCoordinator:'scripts/lib/native-route-service.mjs',routeJournal:'scripts/lib/vpn-host-routes.mjs',routeService:'scripts/clean-vpn-native-routes.mjs',routeDriver:'scripts/lib/native-route-vm.sh',dhcpHook:'scripts/lib/native-route-dhcp-vm.sh',routeUnit:'scripts/lib/native-route-unit.mjs'}))report[key+'Sha256']=hash(fs.readFileSync(file));
@@ -188,18 +199,18 @@ try {
   if(persistentBoot){
     // Binary-update gates retain several debug ELF releases, not just one
     // executable per peer as the original 128 MiB boot fixture did.
-    report.stateDiskMiB=nativeBoot?512:128;
+    report.stateDiskMiB=(nativeBoot||nativeHostBoot)?512:128;
     const fd=fs.openSync(disk,'wx',0o600);try{fs.ftruncateSync(fd,report.stateDiskMiB*1024*1024);}finally{fs.closeSync(fd);}
     execFileSync('/usr/sbin/mkfs.ext4',['-q','-F',disk],{stdio:'pipe'});
     report.boots=[];report.installerSha256=hash(fs.readFileSync('scripts/lib/native-install.mjs'));
-    report.bootDriverSha256=hash(fs.readFileSync(comboBoot?'scripts/lib/native-combo-boot-vm.mjs':transparentBoot?'scripts/lib/native-transparent-boot-vm.mjs':nativeSiteBoot?'scripts/lib/native-site-boot-vm.mjs':'scripts/lib/native-boot-vm.mjs'));
+    report.bootDriverSha256=hash(fs.readFileSync(nativeHostBoot?'scripts/lib/native-host-boot-vm.mjs':comboBoot?'scripts/lib/native-combo-boot-vm.mjs':transparentBoot?'scripts/lib/native-transparent-boot-vm.mjs':nativeSiteBoot?'scripts/lib/native-site-boot-vm.mjs':'scripts/lib/native-boot-vm.mjs'));
     report.limitations=report.limitations.filter(s=>s!=='single-boot-not-reboot-acceptance');
     report.limitations.push('persistent-artifacts-restored-into-initramfs','static-managed-links-not-DHCP','no-independent-early-boot-packet-capture');
   }
   let output='';
-  for(let boot=0;boot<(nativeBoot?3:(nativeSiteBoot||transparentBoot||comboBoot)?2:1);boot++){
+  for(let boot=0;boot<((nativeBoot||nativeHostBoot)?3:(nativeSiteBoot||transparentBoot||comboBoot)?2:1);boot++){
   console.error(`Native lab boot ${boot}`);
-  const child=spawn(qemu,['-nodefaults','-no-user-config','-nic','none','-display','none','-monitor','none','-no-reboot','-serial','stdio','-accel','tcg','-cpu',nestedEmulation?'qemu64':'max','-m','1536','-smp','1','-bios',`${tools}/usr/share/seabios/bios-256k.bin`,'-L',`${tools}/usr/share/qemu`,'-kernel',join(base,'guest-kernel'),'-initrd',initrd,'-append',`console=ttyS0 loglevel=4 panic=-1 reboot=t random.trust_cpu=on meshpn.native-lab=1${systemdNative?' meshpn.native-systemd=1':''}${nativeAdmin?' meshpn.native-admin=1':''}${nativeBoot?' meshpn.native-boot=1':''}${nativeRoutes?' meshpn.native-routes=1':''}${nativeNetwork?' meshpn.native-network=1':''}${nativeSiteBoot?' meshpn.native-site-boot=1':''}${transparentBoot?' meshpn.native-transparent-boot=1':''}${comboNetwork?' meshpn.native-combo-network=1':''}${comboBenchmark?' meshpn.native-combo-benchmark=1':''}${comboLoad?' meshpn.native-combo-load=1':''}${comboBoot?' meshpn.native-combo-boot=1':''}`,...(persistentBoot?['-drive',`file=${disk},format=raw,if=virtio,cache=writeback`]:[])],{env,stdio:['ignore','pipe','pipe']});
+  const child=spawn(qemu,['-nodefaults','-no-user-config','-nic','none','-display','none','-monitor','none','-no-reboot','-serial','stdio','-accel','tcg','-cpu',nestedEmulation?'qemu64':'max','-m','1536','-smp','1','-bios',`${tools}/usr/share/seabios/bios-256k.bin`,'-L',`${tools}/usr/share/qemu`,'-kernel',join(base,'guest-kernel'),'-initrd',initrd,'-append',`console=ttyS0 loglevel=4 panic=-1 reboot=t random.trust_cpu=on meshpn.native-lab=1${systemdNative?' meshpn.native-systemd=1':''}${nativeAdmin?' meshpn.native-admin=1':''}${nativeHostBoot?' meshpn.native-host-boot=1':''}${nativeBoot?' meshpn.native-boot=1':''}${nativeRoutes?' meshpn.native-routes=1':''}${nativeNetwork?' meshpn.native-network=1':''}${nativeSiteBoot?' meshpn.native-site-boot=1':''}${transparentBoot?' meshpn.native-transparent-boot=1':''}${comboNetwork?' meshpn.native-combo-network=1':''}${comboBenchmark?' meshpn.native-combo-benchmark=1':''}${comboLoad?' meshpn.native-combo-load=1':''}${comboBoot?' meshpn.native-combo-boot=1':''}`,...(persistentBoot?['-drive',`file=${disk},format=raw,if=virtio,cache=writeback`]:[])],{env,stdio:['ignore','pipe','pipe']});
   output='';const timer=setTimeout(()=>child.kill('SIGKILL'),1200000);const stop=()=>child.kill('SIGKILL');process.on('SIGINT',stop);process.on('SIGTERM',stop);
   const serial=fs.openSync(join(root,persistentBoot?`boot-${boot}.log`:'serial.log'),'wx',0o600);
   for(const stream of [child.stdout,child.stderr])stream.on('data',b=>{fs.writeSync(serial,b);output+=b;if(output.length>1024*1024)stop();});
@@ -233,6 +244,14 @@ try {
     assert.ok(output.includes(boot===0?'reboot: Restarting system':'reboot: Power down'),output.slice(-12000));
     console.error('Native site boot '+boot+' passed');
   }
+  if(nativeHostBoot){
+    const event=JSON.parse(output.match(/NATIVE_HOST_BOOT (\{[^\r\n]+\})/)?.[1]??'null');
+    assert.ok(event&&event.phase===boot,output.slice(-14000));assert.equal(report.code,0);
+    assert.ok(output.includes('NATIVE_HOST_BOOT_OK')&&!output.includes('NATIVE_HOST_BOOT_FAILED'),output.slice(-14000));
+    assert.ok(event.checks.includes(boot===0?'native-update-rollback':boot===1?'boot-owner-crash-recovery':'failed-guard-closed'));
+    assert.ok(output.includes(boot<2?'reboot: Restarting system':'reboot: Power down'),output.slice(-10000));
+    report.boots.push(event);console.error('Native host boot '+boot+' passed');
+  }
   if(nativeBoot){
     const events=[...output.matchAll(/NATIVE_BOOT_EVENT (\{[^\r\n]+\})/g)].map(m=>JSON.parse(m[1]));
     const evidence={boot,code:report.code,events,restarted:output.includes('reboot: Restarting system'),poweredDown:output.includes('reboot: Power down')};report.boots.push(evidence);
@@ -255,6 +274,8 @@ try {
   }else if(nativeSiteBoot){
     assert.equal(new Set(report.boots.map(b=>b.bootId)).size,2);
     report.status='passed';report.benchmarks=[];report.siteBoot=true;
+  }else if(nativeHostBoot){
+    assert.equal(new Set(report.boots.map(b=>b.bootId)).size,3);report.status='passed';report.benchmarks=[];
   }else if(nativeBoot){
     assertNativeBootEvidence(report);
     report.status='passed';report.benchmarks=[];

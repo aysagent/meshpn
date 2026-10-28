@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 export const nativeMacLabModes = Object.freeze([
-  '--native-only', '--native-systemd', '--native-admin', '--native-boot', '--native-routes',
+  '--native-only', '--native-systemd', '--native-admin', '--native-boot', '--native-host-boot', '--native-routes',
   '--native-network', '--native-site-boot', '--native-transparent-boot',
   '--native-combo-network', '--native-combo-boot', '--native-combo-load',
   '--native-combo-benchmark',

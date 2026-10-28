@@ -39,7 +39,7 @@ source_key() {
   local entry
   while IFS= read -r -d '' entry; do
     case "$entry" in
-      package.json|package-lock.json|scripts/*.mjs|scripts/*.js|scripts/*.sh|scripts/lib/*.mjs|scripts/autostart/*.sh|scripts/fixtures/usb-dns-v2-guard.txt|native/boring_tls/*.txt|native/boring_tls/*.cc|native/boring_tls/*.h|native/boring_tls/patches/*|native/tun_linux/*)
+      package.json|package-lock.json|scripts/*.mjs|scripts/*.js|scripts/*.sh|scripts/*.py|scripts/lib/*.mjs|scripts/autostart/*.sh|scripts/fixtures/usb-dns-v2-guard.txt|native/boring_tls/*.txt|native/boring_tls/*.cc|native/boring_tls/*.h|native/boring_tls/patches/*|native/tun_linux/*)
         test -f "$WORK/$entry" && sha256sum "$WORK/$entry"
         ;;
     esac
@@ -190,7 +190,7 @@ case "${1:-}" in
   run)
     test "$#" = 2 || fail run_mode_required
     case "$2" in
-      --native-only|--native-systemd|--native-admin|--native-boot|--native-routes|--native-network|--native-site-boot|--native-transparent-boot|--native-combo-network|--native-combo-boot|--native-combo-load|--native-combo-benchmark) ;;
+      --native-only|--native-systemd|--native-admin|--native-boot|--native-host-boot|--native-routes|--native-network|--native-site-boot|--native-transparent-boot|--native-combo-network|--native-combo-boot|--native-combo-load|--native-combo-benchmark) ;;
       *) fail invalid_run_mode ;;
     esac
     sync_source

@@ -50,7 +50,7 @@ engine. Guard не снимается. SIGKILL engine допускает его 
 
 ## Проверки на этом checkpoint
 
-- 18 проверок в настоящем ARM64 Linux netns: TUN/DNS/routes/NAT, повторный запуск,
+- 19 проверок в настоящем ARM64 Linux netns (включая потерю default route): TUN/DNS/routes/NAT, повторный запуск,
   intent cut-points, чужой alias, active engine, guard failure, точный возврат
   исходных настроек и сохранение sentinel. Systemd-состояние в этой матрице injected.
 - 10 сценариев в отдельном systemd-контейнере без внешней сети: настоящие native
@@ -61,12 +61,31 @@ engine. Guard не снимается. SIGKILL engine допускает его 
   тот же тест пройден на Linux. Kernel netns-тест через amd64 эмуляцию не получил
   поддержку iptables; успешная матрица выполнена на native ARM64.
 
-Физические узлы этой реализацией пока не изменены. Это не boot/power-loss
-приёмка, не полный leak/soak/performance тест и не заявленная ежедневная установка.
-Следующий gate — интеграция boot/clock/updater, затем ограниченная физическая проверка.
+Дополнительно прошли три настоящие загрузки QEMU с ext4 state disk, 20 checks:
+установка, autostart, native update/rollback, crash recovery owner, guard failure.
+[Отчёт](../fixtures/clean-vpn-native-host-boot-report.json). Сохранены ограничения:
+fixture-сеть, восстановление артефактов в initramfs, без time fault и физического
+power loss. В nested TCG на cleanup+повторный запуск требуется больше 90 секунд;
+для VM использован конечный бюджет 240 секунд. При остановке во время синхронного
+аудита owner может получить failed status; ExecStopPost восстанавливает сеть.
+
+На ядрах Radxa и VPS прошла предыдущая матрица 18 checks в отдельных net/mount
+namespace с tmpfs `/run`, без изменения их рабочей сети. Физическая активация,
+полный leak/soak/performance и ежедневная установка этим не подтверждаются.
 
 Воспроизведение kernel matrix: `CVPN_DISPOSABLE_HOST_NET=1 node
 scripts/test-native-host-network-linux.mjs` только в отдельном пустом netns.
 Systemd fixture: `CVPN_DISPOSABLE_HOST_SYSTEMD=1 node
 scripts/lib/native-host-systemd-lab.mjs` только в одноразовом NIC-less Linux
 systemd окружении, с кодом в `/project` и engine в `/usr/local/bin`.
+
+
+Для boot-матрицы на Mac используется существующая выделенная Podman-лаборатория:
+
+```sh
+node scripts/clean-vpn-native-macos-lab.mjs --native-host-boot
+```
+
+Установщик использует фактический путь Node (в том числе NVM). Не удаляйте эту
+версию Node, пока на неё ссылается network unit. При отсутствии uplink guard/DNS
+остаются закрытыми; service restart не исчерпывает фиксированный start-limit.
