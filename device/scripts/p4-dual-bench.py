@@ -30,11 +30,12 @@ CATALOG = json.loads((BASE / 'boards/development.json').read_text())
 NAMES = dict(stamp='m5_stamp_p4_c6', waveshare='waveshare_esp32_p4_wifi6')
 
 
-def wait(board, predicate, seconds=65):
+def wait(board, predicate, seconds=65, observe=None):
     deadline = time.monotonic() + seconds
     last = None
     while time.monotonic() < deadline:
         last = board.api('/api/status')
+        if observe: observe(last)
         if predicate(last): return last
         time.sleep(1)
     raise TimeoutError('Wi-Fi state deadline: ' + last['wifi']['state'])
@@ -43,6 +44,27 @@ def wait(board, predicate, seconds=65):
 def save(path, value):
     tmp = path.with_suffix('.tmp')
     perf.private_json(tmp, value); os.replace(tmp, path)
+
+
+def wan_transfer(interface):
+    """Keep partial bytes/time on failure; only a complete body gets a rate."""
+    command = ['/usr/bin/curl', '--noproxy', '*', '-4', '--interface', interface,
+               '--connect-timeout', '10', '--max-time', '60', '--max-filesize', '8388608',
+               '-fsS', '-o', '/dev/null', '-w', '%{http_code}|%{size_download}|%{time_total}',
+               'https://speed.cloudflare.com/__down?bytes=8388608']
+    row = dict(complete=False, bytes=0, mbps=None,
+               scope='Public CDN; includes home ISP/CDN and client USB limits')
+    try:
+        result = subprocess.run(command, timeout=65, text=True, capture_output=True)
+        row['curl_exit'] = result.returncode
+        row['error'] = result.stderr.strip()[:1024] or None
+        code, size, seconds = result.stdout.strip().split('|')
+        row.update(http_code=int(code), bytes=int(size), seconds=float(seconds))
+        row['complete'] = result.returncode == 0 and row['http_code'] == 200 and row['bytes'] == 8388608 and row['seconds'] > 0
+        if row['complete']: row['mbps'] = row['bytes'] * 8 / row['seconds'] / 1e6
+    except (subprocess.TimeoutExpired, ValueError) as error:
+        row['error'] = str(error)[:1024]
+    return row
 
 
 def restore(path, journal):
@@ -77,8 +99,8 @@ def run(args):
     out = Path(args.out); out.mkdir(mode=0o700, parents=False, exist_ok=False)
     path = out / 'restore.json'
     before, dut_before = board.api('/api/status'), dut.api('/api/status')
-    for s, name in [(before, profile), (dut_before, dut_profile)]:
-        if s['board'] not in NAMES.values() or s['net']['usb_ip'] != name['usb']:
+    for s, expected, name in [(before, NAMES[args.client], profile), (dut_before, NAMES[other], dut_profile)]:
+        if s['board'] != expected or s['net']['usb_ip'] != name['usb']:
             raise RuntimeError('Board identity mismatch')
         if s['vpn']['enabled'] or not s['wifi']['connected']:
             raise RuntimeError('Both boards must be connected with VPN off')
@@ -100,7 +122,13 @@ def run(args):
                 password = os.environ.get('MESHPN_BENCH_AP_PASSWORD', 'meshpn-test')
                 board.api('/api/wifi/profiles', dict(ssid=ssid, password=password, security=1,
                           priority=-999, enabled=True, hidden=False, connect=True))
-            connected = wait(board, lambda s: s['wifi']['connected'] and s['wifi']['ssid'] == ssid)
+            def connection_sample(s):
+                with open(out/'association.ndjson','a') as f:
+                    f.write(json.dumps(dict(at=time.time(),wifi={k:s['wifi'].get(k) for k in
+                        ['state','profile_id','ssid','ip','connected','associated','disconnect_reason_name',
+                         'association_events','disconnect_events']}))+'\n')
+            connected = wait(board, lambda s: s['wifi']['connected'] and s['wifi']['ssid'] == ssid,
+                             observe=connection_sample)
             if connected['wifi']['ip'].rsplit('.',1)[0] != dut_before['net']['ap_ip'].rsplit('.',1)[0]:
                 raise RuntimeError('Client did not obtain DUT AP subnet')
             time.sleep(5)
@@ -119,14 +147,9 @@ def run(args):
                         if not row['complete']:raise RuntimeError('RF link transfer failed: '+json.dumps(row))
                         if direction=='up' and row['receipt']['link']!='ap':raise RuntimeError('Not AP ingress')
                     else:
-                        output=subprocess.check_output(['/usr/bin/curl','--noproxy','*','-4','--interface',interface['name'],
-                            '--connect-timeout','10','--max-time','60','--max-filesize','8388608','-fsS','-o','/dev/null',
-                            '-w','%{http_code}|%{size_download}|%{time_total}',
-                            'https://speed.cloudflare.com/__down?bytes=8388608'],timeout=65,text=True)
-                        code,size,seconds=map(float,output.split('|'))
-                        if code!=200 or size!=8388608:raise RuntimeError('Incomplete WAN response')
-                        row=dict(bytes=int(size),seconds=seconds,mbps=size*8/seconds/1e6,
-                                 scope='Public CDN; includes home ISP/CDN and client USB limits')
+                        row = wan_transfer(interface['name'])
+                        save(out/('wan-'+str(repeat)+'.json'), row)
+                        if not row['complete']: raise RuntimeError('Incomplete WAN response: '+json.dumps(row))
                     save(out/('ap-trace-'+str(repeat)+'-'+direction+'.json'),dut.api('/api/diag/sta-tcp?interface=ap'))
                     finish=dut.api('/api/status')
                     if finish['net']['ap_ip4_rx']<=start['net']['ap_ip4_rx']:raise RuntimeError('No AP ingress')

@@ -40,7 +40,7 @@ accepts only allowlisted source IPs, bounded requests, and one active job.
 
 Profile changes have a private `restore.json` journal written **before** mutation.
 Existing profiles/passwords are preserved. The temporary peer profile is removed
-and the original selected/automatic mode restored on normal completion, failure
+and the originally connected profile restored on normal completion, failure
 or SIGTERM. After power/process loss, recover explicitly before another run:
 
 ```sh

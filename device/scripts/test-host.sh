@@ -23,6 +23,9 @@ flags=(-std=c11 -Wall -Wextra -Werror -Wno-deprecated-declarations -fsanitize=ad
 "$cc" "${flags[@]}" -Idevice/components/meshvpn_vpn/include device/tests/test_vpn_frame.c \
   device/components/meshvpn_vpn/meshvpn_vpn_frame.c -o "$test_dir/vpn-frame"
 "$test_dir/vpn-frame"
+"$cc" "${flags[@]}" -Idevice/components/meshvpn_vpn/include device/tests/test_vpn_packet_properties.c \
+  device/components/meshvpn_vpn/meshvpn_vpn_frame.c -o "$test_dir/vpn-packet-properties"
+"$test_dir/vpn-packet-properties" "${VPN_PACKET_PROPERTY_CASES:-20000}"
 "$cc" "${flags[@]}" -Idevice/components/meshvpn_vpn/include device/tests/test_vpn_stream.c \
   device/components/meshvpn_vpn/meshvpn_vpn_stream.c device/components/meshvpn_vpn/meshvpn_vpn_frame.c -o "$test_dir/vpn-stream"
 "$test_dir/vpn-stream"

@@ -16,6 +16,24 @@ import {sameSubnet} from './perf-lib.mjs';
 import {restoreVPN} from './vpn-local-restore.mjs';
 
 const execute = promisify(execFile);
+// curl setup failures (missing interface, executable, DNS, etc.) do not prove
+// the board blocked a connection. These checks use a numeric HTTP target.
+export function blockedNetworkError(error) {
+  return !error.killed && !error.signal && (error.code === 7 || error.code === 28);
+}
+// Observe rejection immediately: an early transfer failure must reach the lab's
+// finally/restore path, not Node's unhandled-rejection process termination.
+export async function monitorTransfer(operation, sample, pause = () => delay(100)) {
+  let done = false, failure;
+  const pending = Promise.resolve().then(operation).catch(error => { failure = error; })
+    .finally(() => { done = true; });
+  const samples = [];
+  try {
+    while (!done) { samples.push(await sample()); if (!done) await pause(); }
+  } finally { await pending; }
+  if (failure) throw failure;
+  return samples;
+}
 export async function localLab({gateway, board = process.env.BOARD || 'waveshare', address, iface,
   host, out, certificate, privateKey, ca, serverName, pki, soakSeconds = 120, withoutPeer = false} = {}) {
   const profile = boardProfile(board);
@@ -89,14 +107,18 @@ export async function localLab({gateway, board = process.env.BOARD || 'waveshare
       if (body !== null) assert.equal(r.stdout, body);
       return {bytes: Buffer.byteLength(r.stdout)};
     } catch (e) {
-      if (ok || e.code === 'ERR_ASSERTION') throw e;
+      if (ok || !blockedNetworkError(e)) throw e;
       return {blocked: true, code: e.code};
     }
   }
   async function dns(name = 'meshpn-night.invalid') {
     const socket = dgram.createSocket('udp4');
     try {
-      await new Promise(resolve => socket.bind(0, address, resolve));
+      await new Promise((resolve, reject) => {
+        const fail = error => reject(error);
+        socket.once('error', fail);
+        socket.bind(0, address, () => { socket.removeListener('error', fail); resolve(); });
+      });
       const labels = name.split('.').map(s => Buffer.concat([Buffer.from([s.length]), Buffer.from(s)]));
       const header = Buffer.alloc(12); header.writeUInt16BE(0x7352); header[2] = 1; header[5] = 1;
       const q = Buffer.concat([header, ...labels, Buffer.from([0, 0, 1, 0, 1])]);
@@ -104,8 +126,12 @@ export async function localLab({gateway, board = process.env.BOARD || 'waveshare
         const timer = setTimeout(() => reject(Error('DNS timeout')), 7000);
         socket.once('error', e => { clearTimeout(timer); reject(e); });
         socket.once('message', b => {
-          clearTimeout(timer); assert.equal(b.readUInt16BE(0), 0x7352);
-          resolve({rcode: b[3] & 15, answers: b.readUInt16BE(6), last4: [...b.subarray(-4)].join('.')});
+          clearTimeout(timer);
+          try {
+            assert(b.length >= 12, 'Truncated DNS response');
+            assert.equal(b.readUInt16BE(0), 0x7352);
+            resolve({rcode: b[3] & 15, answers: b.readUInt16BE(6), last4: [...b.subarray(-4)].join('.')});
+          } catch (error) { reject(error); }
         });
         socket.send(q, 53, gateway);
       });
@@ -153,11 +179,10 @@ export async function localLab({gateway, board = process.env.BOARD || 'waveshare
         return {peer: structuredClone(peer.stats), dns: answer};
       });
       await test(`${type}: bulk transfer with concurrent admin status`, async () => {
-        const latencies = [], length = type === 'tls' ? 16384 : 262144;
-        let done = false;
-        const transfer = curl(`http://${testAddress}/bytes/${length}`, {body: 'Z'.repeat(length), timeout: 20}).finally(() => { done = true; });
-        while (!done) { latencies.push((await api('/api/status')).ms); await delay(100); }
-        await transfer;
+        const length = type === 'tls' ? 16384 : 262144;
+        const latencies = await monitorTransfer(
+          () => curl(`http://${testAddress}/bytes/${length}`, {body: 'Z'.repeat(length), timeout: 20}),
+          async () => (await api('/api/status')).ms);
         const s = await snapshot(`${type}-bulk`); assert.equal(s.boot_count, initial.boot_count);
         return {bytes: length, status_requests: latencies.length, status_max_ms: Math.max(...latencies)};
       });
