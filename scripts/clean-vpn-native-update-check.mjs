@@ -88,6 +88,11 @@ async function worker(id){
     const wanted=hash(fs.readFileSync(candidate));
     for(const name of p.names){const r=update('--apply',name,candidate,wanted);check(name===exit?'exit-update':'client-update',r.status==='updated');}
     const current='/opt/clean-vpn-native/'+client;
+    const netFile='/etc/systemd/system/'+p.network,netBytes=fs.readFileSync(netFile),pid=prop(cunit,'MainPID');
+    let changedRefused=false;
+    try{fs.appendFileSync(netFile,'# deliberate ownership-change fixture\n');try{update('--apply',client,candidate,wanted);}catch{changedRefused=true;}}
+    finally{fs.writeFileSync(netFile,netBytes);}
+    check('bound-unit-change-refused',changedRefused&&prop(cunit,'MainPID')===pid);
     const bad=p.dir+'/bad-engine';put(bad,`#!/bin/sh\ncase "$1" in --capabilities|--check-config) exec ${current}/binary-updates/releases/${wanted} "$@";; *) exit 1;; esac\n`,0o755);
     let refused=false;try{update('--apply',client,bad,hash(fs.readFileSync(bad)));}catch{refused=true;}
     check('failed-candidate-rollback',refused&&hash(fs.readFileSync(current+'/engine'))===wanted&&prop(cunit,'ActiveState')==='active');

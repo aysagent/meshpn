@@ -27,8 +27,10 @@ export function readOwned(file, limit=65536, optional=false) {
 export function writeDurable(file, value, mode=0o600) {
   ownedDirectory(path.dirname(file));
   const temp=file+'.'+randomUUID()+'.new', fd=fs.openSync(temp,'wx',mode);
-  try{fs.fchmodSync(fd,mode);fs.writeFileSync(fd,value);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
-  try{fs.renameSync(temp,file);syncDir(path.dirname(file));}finally{if(fs.existsSync(temp))fs.unlinkSync(temp);}
+  try {
+    try{fs.fchmodSync(fd,mode);fs.writeFileSync(fd,value);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+    fs.renameSync(temp,file);syncDir(path.dirname(file));
+  } finally {if(fs.existsSync(temp)){fs.unlinkSync(temp);syncDir(path.dirname(file));}}
 }
 function remove(file){fs.unlinkSync(file);syncDir(path.dirname(file));}
 const json=value=>JSON.stringify(value,null,2)+'\n';
@@ -83,6 +85,8 @@ export class NativeBinaryUpdate {
     const bytes=readOwned(binary,64*1024*1024);need(binaryDigest(bytes)===expected,'release_candidate_digest');
     const before=this.current();need(binaryDigest(readOwned(this.bundle+'/engine',64*1024*1024))===before,'release_external_binary_change');
     this.artifact(before);
+    if(before!==expected){const disk=fs.statfsSync(this.dir),largest=Math.max(bytes.length,fs.statSync(this.bundle+'/engine').size);
+      need(disk.bavail*disk.bsize>=3*largest+1024*1024,'release_insufficient_disk');}
     const dest=this.dir+'/releases/'+expected;
     if(fs.existsSync(dest))this.artifact(expected);else writeDurable(dest,bytes,0o555);
     // Execute only the exact verified, immutable candidate, not its source path.

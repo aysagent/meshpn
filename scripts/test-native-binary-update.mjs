@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {NativeBinaryUpdate,binaryDigest} from './lib/native-binary-update.mjs';
+import {NativeBinaryUpdate,binaryDigest,writeDurable} from './lib/native-binary-update.mjs';
 import {recoveryUnit} from './clean-vpn-native-update.mjs';
 const old=Buffer.from('trusted old binary'),next=Buffer.from('trusted new binary');
 function fixture(t,{running=true,fail=false}={}){
@@ -72,4 +72,15 @@ test('symlink candidate is refused and corrupted retained artifact is refused',a
 test('boot recovery ordered before engine and retained active through runtime update',()=>{
   const text=recoveryUnit({name:'test',bundle:'/opt/clean-vpn-native/test',node:'/usr/bin/node'});
   assert.match(text,/Before=native-test.service/);assert.match(text,/RemainAfterExit=yes/);assert.match(text,/--recover-boot test/);
+});
+test('short disk write removes only its partial temporary file and preserves target',t=>{
+  const f=fixture(t),target=f.bundle+'/config.json',write=fs.writeFileSync;
+  fs.writeFileSync=(fd,data,...rest)=>{if(typeof fd==='number'){write(fd,Buffer.from('partial'));throw Object.assign(Error('full'),{code:'ENOSPC'});}return write(fd,data,...rest);};
+  try{assert.throws(()=>writeDurable(target,'new config'),{code:'ENOSPC'});}finally{fs.writeFileSync=write;}
+  assert.equal(fs.readFileSync(target,'utf8'),'private config');assert.equal(fs.readdirSync(f.bundle).some(n=>n.endsWith('.new')),false);
+});
+test('insufficient disk refuses before service mutation or journal publication',async t=>{
+  const f=fixture(t),stat=fs.statfsSync;fs.statfsSync=()=>({bavail:0,bsize:4096});
+  try{await assert.rejects(f.update.apply(f.dir+'/candidate',binaryDigest(next)),/insufficient_disk/);}finally{fs.statfsSync=stat;}
+  assert.deepEqual(f.calls,[]);assert.equal(f.update.pending(),null);assert.deepEqual(fs.readFileSync(f.bundle+'/engine'),old);
 });

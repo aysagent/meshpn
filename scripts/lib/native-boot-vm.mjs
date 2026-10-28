@@ -150,6 +150,7 @@ if (mode === 'prepare') {
   } catch (e) {
     event({ event: 'failed', message: e.message });
     try { console.log(ctl('status', ...names.map(n => 'native-' + n + '.service'))); } catch {}
+    try {console.log(exec('/usr/bin/journalctl',['--no-pager','-u','native-c2-binary-update.service','-u','native-c2-binary-recovery.service','-n','80']));}catch{}
     origin?.kill('SIGTERM'); exec('/bin/busybox', ['poweroff', '-f']);
   }
 }

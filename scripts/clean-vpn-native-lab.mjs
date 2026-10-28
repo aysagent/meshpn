@@ -178,7 +178,10 @@ try {
   const env={...process.env,LD_LIBRARY_PATH:`${tools}/usr/lib/x86_64-linux-gnu:${tools}/lib/x86_64-linux-gnu`,QEMU_MODULE_DIR:`${tools}/usr/lib/x86_64-linux-gnu/qemu`};delete env.LD_PRELOAD;delete env.LD_AUDIT;
   const disk=join(root,'native-state.ext4');
   if(persistentBoot){
-    const fd=fs.openSync(disk,'wx',0o600);try{fs.ftruncateSync(fd,128*1024*1024);}finally{fs.closeSync(fd);}
+    // Binary-update gates retain several debug ELF releases, not just one
+    // executable per peer as the original 128 MiB boot fixture did.
+    report.stateDiskMiB=nativeBoot?512:128;
+    const fd=fs.openSync(disk,'wx',0o600);try{fs.ftruncateSync(fd,report.stateDiskMiB*1024*1024);}finally{fs.closeSync(fd);}
     execFileSync('/usr/sbin/mkfs.ext4',['-q','-F',disk],{stdio:'pipe'});
     report.boots=[];report.installerSha256=hash(fs.readFileSync('scripts/lib/native-install.mjs'));
     report.bootDriverSha256=hash(fs.readFileSync(comboBoot?'scripts/lib/native-combo-boot-vm.mjs':transparentBoot?'scripts/lib/native-transparent-boot-vm.mjs':nativeSiteBoot?'scripts/lib/native-site-boot-vm.mjs':'scripts/lib/native-boot-vm.mjs'));

@@ -55,13 +55,17 @@ async function main(args) {
       ...installed.DropInPaths.split(' ').filter(Boolean),recPath,control+'/clean-vpn-native-update.mjs',control+'/lib/native-binary-update.mjs'];
     for(const [dep,sha]of Object.entries(manifest.dependencies))need(binaryDigest(readOwned('/etc/systemd/system/'+dep))===sha,'update_dependency_changed');
     const sha=NativeBinaryUpdate.initialize(bundle,[...new Set(files)]);
-    writeDurable(bundle+'/binary-updates/service.json',json({fragment:installed.FragmentPath,dropins:installed.DropInPaths,node}));
+    const staticFiles=files.filter(file=>!manifest.files.some(f=>file===bundle+'/'+f.name)&&file!==bundle+'/installed.json')
+      .map(file=>({file,sha256:binaryDigest(readOwned(file))}));
+    writeDurable(bundle+'/binary-updates/service.json',json({fragment:installed.FragmentPath,dropins:installed.DropInPaths,node,staticFiles}));
     const binding=JSON.parse(readOwned(bundle+'/binary-updates/binding.json'));
     binding.protectedFiles.push(bundle+'/binary-updates/service.json');
     writeDurable(bundle+'/binary-updates/binding.json',json(binding));
     console.log(json({status:'enrolled-stopped',sha256:sha,unit}));return;
   }
   const serviceIdentity=JSON.parse(readOwned(bundle+'/binary-updates/service.json'));
+  need(Array.isArray(serviceIdentity.staticFiles)&&serviceIdentity.staticFiles.length>0,'update_static_binding');
+  for(const file of serviceIdentity.staticFiles)need(binaryDigest(readOwned(file.file))===file.sha256,'update_bound_unit_or_controller_changed');
   const state=props(unit);need(state.FragmentPath===serviceIdentity.fragment&&state.DropInPaths===serviceIdentity.dropins&&state.Type==='notify','update_service_changed');
   const service={
     running:async()=>{const s=props(unit);if(action==='--recover-boot')return s.MainPID!=='0';
@@ -78,9 +82,15 @@ async function main(args) {
     // path is never executed before its bytes match the administrator's hash.
     need(binaryDigest(readOwned(binary,64*1024*1024))===expected,'release_candidate_digest');
     const script=bundle+'/update-control/clean-vpn-native-update.mjs', node=serviceIdentity.node;
+    // Binary buffers and tmpfs page cache are both charged to the worker cgroup.
+    // Size the bounded budget for retained/staged copies; production stripped
+    // engines need far less than a debug ELF in the initramfs boot laboratory.
+    const largest=Math.max(fs.statSync(binary).size,fs.statSync(bundle+'/engine').size);
+    need(largest<=64*1024*1024,'update_binary_size');
+    const memoryMiB=128+8*Math.ceil(largest/(1024*1024));
     run('/usr/bin/systemd-run',['--quiet','--wait','--collect','--unit=native-'+name+'-binary-update',
       '--property=Type=exec','--property=RuntimeMaxSec=180','--property=TimeoutStopSec=15',
-      '--property=UMask=0077','--property=KillMode=control-group','--property=MemoryMax=256M','--property=TasksMax=32',
+      '--property=UMask=0077','--property=KillMode=control-group','--property=MemoryMax='+memoryMiB+'M','--property=TasksMax=32',
       '--property=ExecStopPost='+node+' '+script+' --recover '+name,
       node,script,'--worker',name,binary,expected]);
     console.log(json({status:'worker-finished',...JSON.parse(readOwned(bundle+'/binary-updates/last-result.json'))}));return;
