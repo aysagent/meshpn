@@ -14,7 +14,7 @@ const cmd=(f,a)=>execFileSync(f,a,{encoding:'utf8',timeout:20000,maxBuffer:1024*
 const ip=(...a)=>cmd('ip',a);
 assert.deepEqual(JSON.parse(ip('-j','link')).map(l=>l.ifname),['lo']);
 let checks=0;const check=(name,fn)=>{fn();console.log('HOST_NETWORK_CHECK '+name);checks++;};
-const c={version:1,exit_ip:'154.62.226.216',engine_unit:'native-daily.service',network_unit:'native-daily-network.service',guard_unit:'clean-vpn-killswitch.service',guard_script:'/usr/local/bin/clean-vpn-killswitch.sh'};
+let c={version:1,exit_ip:'154.62.226.216',engine_unit:'native-daily.service',network_unit:'native-daily-network.service',guard_unit:'clean-vpn-killswitch.service',guard_script:'/usr/local/bin/clean-vpn-killswitch.sh'};
 ip('link','set','lo','up');
 for(const [dev,address] of [['usb0','192.168.7.1/24'],['wlan0','192.168.1.8/24']]){
   ip('link','add',dev,'type','dummy');ip('addr','add',address,'dev',dev);ip('link','set',dev,'up');
@@ -64,7 +64,13 @@ try{
   check('cleanup restores baseline and is repeatable',()=>{owner.recover();owner.recover();baseline();});
   close();open();
   check('new owner starts after released journal',()=>{owner.prepare();owner.tick();});
+  const previous=c;c={...c,engine_unit:'native-next.service',network_unit:'native-next-network.service'};close();open();
+  check('different instance cannot adopt active journal',()=>{assert.throws(()=>owner.recover(),/native_config_owner_mismatch/);assert.equal(store.read().stage,'active');});
+  close();c=previous;open();
   close();open();check('process boundary recovery restores only owned state',()=>{owner.recover();baseline();});
+  close();c={...previous,engine_unit:'native-next.service',network_unit:'native-next-network.service'};open();
+  check('fresh instance follows released journal without adopting old state',()=>{owner.recover();owner.prepare();owner.tick();owner.recover();baseline();});
+  close();c=previous;open();
   // Journal intent persisted before each NAT mutation, and TUN helper completion
   // before parent identity commit: neither boundary permits foreign adoption.
   for(const point of ['tun-intent','tun-identity','nat-1','nat-2','nat-3']){

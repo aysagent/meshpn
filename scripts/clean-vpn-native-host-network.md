@@ -50,7 +50,7 @@ engine. Guard не снимается. SIGKILL engine допускает его 
 
 ## Проверки на этом checkpoint
 
-- 19 проверок в настоящем ARM64 Linux netns (включая потерю default route): TUN/DNS/routes/NAT, повторный запуск,
+- 21 проверка в настоящем ARM64 Linux netns (потеря default route и смена instance): TUN/DNS/routes/NAT, повторный запуск,
   intent cut-points, чужой alias, active engine, guard failure, точный возврат
   исходных настроек и сохранение sentinel. Systemd-состояние в этой матрице injected.
 - 10 сценариев в отдельном systemd-контейнере без внешней сети: настоящие native
@@ -101,3 +101,8 @@ node scripts/clean-vpn-native-macos-lab.mjs --native-host-boot
 Остановка старого `clean-vpn-usb-snat.service` сама по себе не удаляет его три
 правила; перед первым native запуском их убирают штатным
 `clean-vpn-usb-snat.mjs --remove --apply`. Чужой uplink MASQUERADE сохраняется.
+
+Свежий instance может запускаться после журнала со стадией `released` другого
+instance в том же namespace. Журнал с незавершёнными операциями остаётся привязан
+к исходной конфигурации и не принимается новым владельцем. Перед новой установкой
+по-прежнему проверяется отсутствие чужого TUN, правил и активных child journals.

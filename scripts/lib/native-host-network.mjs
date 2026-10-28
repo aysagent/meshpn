@@ -50,7 +50,10 @@ export function nativeHostNetwork(c, io) {
   };
   const validate = s => {
     assert.deepEqual(Object.keys(s).sort(),['schema','scope','config','id','tun','count','stage'].sort());
-    assert.equal(s.schema,1); assert.deepEqual(s.scope,scope()); assert.deepEqual(s.config,c);
+    assert.equal(s.schema,1); assert.deepEqual(s.scope,scope());validateNativeHostConfig(s.config);
+    // A completed release can be followed by a fresh named installation in
+    // this namespace. An unfinished owner's journal can never be adopted.
+    if(s.stage!=='released')assert.deepEqual(s.config,c,'native_config_owner_mismatch');
     assert.match(s.id,/^[a-f0-9]{24}$/);
     assert.ok(['prepared','active','restoring','released'].includes(s.stage));
     assert.ok(Number.isInteger(s.count)&&s.count>=0&&s.count<=3);
