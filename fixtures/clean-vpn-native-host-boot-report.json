@@ -38,7 +38,7 @@
   "boots": [
     {
       "phase": 0,
-      "bootId": "956e5da7-94bf-4fc9-a926-8c148cd5782d",
+      "bootId": "f998b61d-032c-4264-a03c-8e624280faab",
       "checks": [
         "installed-disabled",
         "installed-data-dns",
@@ -47,40 +47,47 @@
         "updated-data-dns",
         "native-update-rollback",
         "clock-budget-unchanged",
+        "clean-stop-status",
         "stop-blocks-egress",
         "stop-removes-owned-tun",
         "foreign-state-preserved"
-      ]
+      ],
+      "timings": {}
     },
     {
       "phase": 1,
-      "bootId": "d9c8ded4-819b-496a-8e49-5fb0ced54151",
+      "bootId": "2e0c9bdc-3abf-40b2-ad17-315ca33f8996",
       "checks": [
         "boot-autostart-data-dns",
         "clock-not-needed",
         "boot-owner-crash-recovery",
+        "clean-stop-status",
         "stop-blocks-egress",
         "stop-removes-owned-tun",
         "foreign-state-preserved"
-      ]
+      ],
+      "timings": {
+        "ownerRecoveryMs": 112624
+      }
     },
     {
       "phase": 2,
-      "bootId": "38d07fb3-17f8-4e59-935c-732dcb695742",
+      "bootId": "7839ff39-1d30-41cf-8637-02c8f9cc3a2b",
       "checks": [
         "failed-guard-stops-engine",
         "failed-guard-no-tun",
         "failed-guard-closed",
         "failed-guard-no-clock-query"
-      ]
+      ],
+      "timings": {}
     }
   ],
   "installerSha256": "f75881ef512be8402c525efc4f3521570f73ea2837b7a79019a01e3d9f671a25",
-  "bootDriverSha256": "93f239f82b4d386f16446131a0eef4859a11d5700e7817f45f99a4ddf4e69cd4",
+  "bootDriverSha256": "2459969c4edbfa13e8fab821f8f42b2c4e7cc650d465e644b7801e96c0c838c1",
   "code": 0,
   "benchmarks": [],
   "observations": [
-    "Earlier 90-second owner-recovery deadline expired under nested TCG; 240-second bounded retry passed.",
-    "One stop raced a synchronous audit and marked owner failed; independent ExecStopPost restored owned network state."
+    "Earlier 90-second owner-recovery deadline expired under nested TCG; this 240-second bounded matrix passed.",
+    "Both graceful stops now explicitly assert Result=success after the KillMode=mixed fix."
   ]
 }

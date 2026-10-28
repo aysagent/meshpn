@@ -53,7 +53,7 @@ engine. Guard не снимается. SIGKILL engine допускает его 
 - 21 проверка в настоящем ARM64 Linux netns (потеря default route и смена instance): TUN/DNS/routes/NAT, повторный запуск,
   intent cut-points, чужой alias, active engine, guard failure, точный возврат
   исходных настроек и сохранение sentinel. Systemd-состояние в этой матрице injected.
-- 10 сценариев в отдельном systemd-контейнере без внешней сети: настоящие native
+- 11 сценариев в отдельном systemd-контейнере без внешней сети: настоящие native
   client/exit, USB HTTPS, UDP/TCP DNS, engine SIGKILL, owner SIGKILL/ExecStopPost,
   stop/restart, отказ/возврат exit, отсутствие direct fallback.
 - 23 Linux-регрессии установщика boring/transparent/combo/clock/host — PASS.
@@ -61,7 +61,7 @@ engine. Guard не снимается. SIGKILL engine допускает его 
   тот же тест пройден на Linux. Kernel netns-тест через amd64 эмуляцию не получил
   поддержку iptables; успешная матрица выполнена на native ARM64.
 
-Дополнительно прошли три настоящие загрузки QEMU с ext4 state disk, 20 checks:
+Дополнительно прошли три настоящие загрузки QEMU с ext4 state disk, 22 checks:
 установка, autostart, native update/rollback, crash recovery owner, guard failure.
 [Отчёт](../fixtures/clean-vpn-native-host-boot-report.json). Сохранены ограничения:
 fixture-сеть, восстановление артефактов в initramfs, без time fault и физического
@@ -106,3 +106,11 @@ node scripts/clean-vpn-native-macos-lab.mjs --native-host-boot
 instance в том же namespace. Журнал с незавершёнными операциями остаётся привязан
 к исходной конфигурации и не принимается новым владельцем. Перед новой установкой
 по-прежнему проверяется отсутствие чужого TUN, правил и активных child journals.
+
+Повторный физический запуск на `7ef3bb4` прошёл после смены имени instance:
+готовность за 13.979 с, восстановление после SIGKILL сетевого owner за 37.886 с
+(включая RestartSec=10). DNS UDP/TCP, NSS, HTTPS и отрицательная проверка прямого
+HTTPS повторены. Обе службы штатно остановились с Result=success; временные
+unit-файлы удалены, bundles архивированы приватно. Guard/USB rescue сохранены,
+постоянный native autostart не включён. Это измерения короткого физического
+сценария, а не обещание такой задержки на любом устройстве.

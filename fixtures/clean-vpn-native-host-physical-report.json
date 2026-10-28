@@ -279,7 +279,9 @@
   },
   "observations": [
     "Initial preflight refused three retained old USB SNAT/MSS rules; removed with existing scoped project helper after stopping its service.",
-    "Global network-online wait delayed startup; follow-up controller fix removes this dependency."
+    "Global network-online wait delayed startup; follow-up controller fix removes this dependency.",
+    "A second named installation refused the fully released previous journal before creating TUN. Fixed in 7ef3bb4; third named installation passed.",
+    "Follow-up startup no longer waits for global network-online."
   ],
   "endState": {
     "nativeClient": "stopped",
@@ -288,14 +290,36 @@
     "guard": "active",
     "usbRescue": "active",
     "temporaryMacTransitBlock": "removed",
-    "macNetworking": "unchanged"
+    "macNetworking": "unchanged",
+    "trialInstallation": "three disabled bundles archived privately; owned installed units and temporary window units removed"
   },
   "limitations": [
     "short physical smoke, not physical cold/power-loss acceptance",
     "no time fault or clock bootstrap during this run",
     "USB forwarding tested in lab; physical Mac transit was intentionally blocked",
     "selected HTTPS direct-egress negative probe is not an all-protocol leak proof",
-    "first ClientHello profile match is not complete browser/HTTP2 equivalence",
-    "native instance files retained disabled pending follow-up checks"
-  ]
+    "first ClientHello profile match is not complete browser/HTTP2 equivalence"
+  ],
+  "followup": {
+    "sourceCommit": "7ef3bb4",
+    "status": "passed",
+    "startupMs": 13979,
+    "networkOwnerSigkillRecoveryMs": 37886,
+    "checks": [
+      "fresh-instance-after-released-journal",
+      "native-DNS-UDP-and-TCP",
+      "system-NSS-resolution",
+      "HTTPS-observed-exit-address",
+      "domain-HTTPS-200",
+      "direct-wlan0-HTTPS-blocked",
+      "network-owner-SIGKILL-recovered",
+      "post-recovery-HTTPS",
+      "network-and-engine-stop-Result-success",
+      "owned-TUN-and-rules-removed",
+      "guard-and-USB-rescue-active",
+      "post-stop-direct-HTTPS-blocked",
+      "exit-bounded-trial-cleanup-completed"
+    ],
+    "timingScope": "wall clock on physical Radxa; recovery includes 10-second systemd restart backoff; not throughput or capacity"
+  }
 }

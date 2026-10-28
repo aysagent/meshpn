@@ -11,7 +11,7 @@ assert.equal(fs.readFileSync('/sys/class/dmi/id/sys_vendor','utf8').trim(),'QEMU
 assert.match(fs.readFileSync('/proc/mounts','utf8'),/^\/dev\/vda \/state ext4 /m);
 const phase=fs.existsSync('/state/phase')?Number(fs.readFileSync('/state/phase')):0;
 assert.ok([0,1,2].includes(phase));
-const mode=process.argv[2],checks=[],bundle='/opt/clean-vpn-native/host-boot',engine='native-host-boot.service',network='native-host-boot-network.service';
+const mode=process.argv[2],checks=[],timings={},bundle='/opt/clean-vpn-native/host-boot',engine='native-host-boot.service',network='native-host-boot-network.service';
 const run=(f,a)=>execFileSync(f,a,{encoding:'utf8',timeout:180000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']}).trim();
 const ip=(...a)=>run('ip',a),ctl=(...a)=>run('/usr/bin/systemctl',a),ns=(name,f,a)=>run('ip',['netns','exec',name,f,...a]);
 const prop=(u,k)=>ctl('show',u,'-p',k,'--value');
@@ -83,10 +83,10 @@ if(mode==='prepare'){
         check('native-update-rollback',rejected&&sha(fs.readFileSync(bundle+'/engine'))===sha(fs.readFileSync(candidate))&&prop(engine,'ActiveState')==='active');https();dns();
         check('clock-budget-unchanged',!fs.existsSync(bundle+'/clock-state/attempt.json'));
       }else{
-        const pid=prop(network,'MainPID');ctl('kill','--kill-whom=main','--signal=SIGKILL',network);
-        await wait(()=>{assert.notEqual(prop(network,'MainPID'),pid);assert.equal(prop(engine,'ActiveState'),'active');https();});check('boot-owner-crash-recovery');dns();
+        const began=performance.now(),pid=prop(network,'MainPID');ctl('kill','--kill-whom=main','--signal=SIGKILL',network);
+        await wait(()=>{assert.notEqual(prop(network,'MainPID'),pid);assert.equal(prop(engine,'ActiveState'),'active');https();});timings.ownerRecoveryMs=Math.round(performance.now()-began);check('boot-owner-crash-recovery');dns();
       }
-      ctl('stop',network);assert.equal(prop(engine,'MainPID'),'0');assert.throws(()=>https());check('stop-blocks-egress');
+      ctl('stop',network);assert.equal(prop(network,'Result'),'success');check('clean-stop-status');assert.equal(prop(engine,'MainPID'),'0');assert.throws(()=>https());check('stop-blocks-egress');
       assert.ok(!JSON.parse(ip('-n','client','-j','link')).some(l=>l.ifname==='tun0'));check('stop-removes-owned-tun');
       check('foreign-state-preserved',ns('client','iptables',['-t','nat','-S']).includes('foreign-sentinel'));
       ctl('enable',network,'host-boot-exit.service','host-boot-origin.service');
@@ -100,7 +100,7 @@ if(mode==='prepare'){
       assert.throws(()=>https());check('failed-guard-closed');
       check('failed-guard-no-clock-query',!fs.existsSync(bundle+'/clock-state/attempt.json'));
     }
-    console.log('NATIVE_HOST_BOOT '+JSON.stringify({phase,bootId:fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim(),checks}));passed=true;
+    console.log('NATIVE_HOST_BOOT '+JSON.stringify({phase,bootId:fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim(),checks,timings}));passed=true;
   }catch(e){console.error(e);try{console.error(ctl('list-jobs','--no-pager'));for(const u of [network,engine]){console.error(ctl('show',u,'-p','ActiveState,SubState,MainPID,Result'));if(fs.existsSync('/run/'+u+'.log'))console.error(fs.readFileSync('/run/'+u+'.log','utf8').slice(-12000));}}catch{}for(const u of [network,engine,'host-boot-exit.service','host-boot-guard.service'])try{console.error(run('journalctl',['--no-pager','-u',u,'-n','45']));}catch{}}
   finally{console.log(passed?'NATIVE_HOST_BOOT_OK':'NATIVE_HOST_BOOT_FAILED');run('sync',[]);run('/bin/busybox',[passed&&phase<2?'reboot':'poweroff','-f']);}
 }
