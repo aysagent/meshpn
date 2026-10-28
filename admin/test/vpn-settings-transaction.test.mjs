@@ -113,3 +113,26 @@ test('broker settings require notify and guard, and preserve stopped service', a
   assert.equal(result.result.requiresStart, true); assert.equal(result.result.applied, false);
   assert(!calls.some(c => c[0] === '/usr/bin/systemctl' && ['start','stop','restart'].includes(c[1])));
 });
+
+test('standalone admin controls network owner and keeps engine identity for readiness',async t=>{
+  const f=fixture(t);fs.mkdirSync(f.options.state+'/profiles');const calls=[];
+  let bindings='native-network.service guard.service',active='active';
+  const broker=await createBroker({version:1,usbAddress:'192.168.7.1',usbInterface:'usb0',wifiInterface:'wlan0',
+    vpnUnit:f.options.unit,networkUnit:'native-network.service',guardUnit:'guard.service',guardScript:'/guard',
+    state:f.options.state,profiles:f.options.state+'/profiles',engine:'/engine',vpnConfig:f.options.config,
+    socket:f.options.state+'/socket',nativeManaged:true,publishMdns:false},{run:async(file,args)=>{
+      calls.push([file,...args]);if(file==='/guard')return{out:'IPv4: cvks4\nIPv6: cvks4'};
+      if(file==='/usr/bin/systemctl'){
+        if(args.includes('BindsTo'))return{out:bindings};
+        if(['start','stop','restart'].includes(args[0])){active=args[0]==='stop'?'inactive':'active';return{out:''};}
+        return{out:`Type=notify\nActiveState=${active}\nSubState=running\nMainPID=123\nStatusText=ready\n`};
+      }return{out:''};
+    }});
+  t.after(()=>broker.close());
+  const action=async a=>{await broker.dispatch('/vpn/action',{action:a});for(let i=0;i<100;i++){await new Promise(r=>setImmediate(r));const s=await broker.dispatch('/status');if(s.jobs[0].status!=='running')return s.jobs[0];}throw Error('job_timeout');};
+  for(const a of ['stop','start','restart'])assert.equal((await action(a)).status,'passed');
+  assert.deepEqual(calls.filter(c=>c[0]==='/usr/bin/systemctl'&&['start','stop','restart'].includes(c[1])).map(c=>c.slice(1)),[['stop','native-network.service'],['start','native-network.service'],['restart','native-network.service']]);
+  const status=await broker.dispatch('/status');assert.equal(status.network.ActiveState,'active');assert.equal(status.capabilities.networkOwner,true);
+  bindings='guard.service';const before=calls.filter(c=>c[1]==='restart').length;
+  assert.equal((await action('restart')).error,'network_owner_binding_required');assert.equal(calls.filter(c=>c[1]==='restart').length,before);
+});

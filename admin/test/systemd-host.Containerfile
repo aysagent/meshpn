@@ -17,4 +17,5 @@ RUN g++ -O2 /tmp/socket_test.cc -o /native/socket-test \
     && rm /tmp/socket_test.cc \
     && printf 'isolated-admin-lab-v1\n' >/etc/meshpn-admin-disposable-lab
 STOPSIGNAL SIGRTMIN+3
+RUN ln -sf /dev/null /etc/systemd/system/systemd-binfmt.service
 ENTRYPOINT ["/bin/sh", "-c", "node admin/test/systemd-host-setup.mjs && exec /sbin/init"]

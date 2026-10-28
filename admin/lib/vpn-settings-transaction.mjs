@@ -24,9 +24,9 @@ function remove(file) {
 const bytes = value => JSON.stringify(value, null, 2) + '\n';
 
 export class VpnSettingsTransaction {
-  constructor({state, config, settings, unit, managed}, service, {fault = () => {}} = {}) {
+  constructor({state, config, settings, unit, managed, networkUnit}, service, {fault = () => {}} = {}) {
     this.file = path.join(state, 'vpn-settings-transaction.json');
-    this.binding = {config, settings, unit, managed: managed === true};
+    this.binding = {config, settings, unit, managed: managed === true,...(networkUnit?{networkUnit}:{})};
     this.service = service;
     this.fault = fault;
   }

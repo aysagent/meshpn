@@ -1,0 +1,33 @@
+{
+  "status": "passed",
+  "checks": [
+    "fresh-admin-install-does-not-start-vpn",
+    "broker-native-binding",
+    "USB-web-login",
+    "admin-starts-network-and-engine",
+    "USB-native-HTTPS",
+    "admin-profile-apply-and-native-restart",
+    "admin-stop-cleans-network-keeps-guard",
+    "admin-restart-recreates-network",
+    "remove-admin-keeps-native-stopped"
+  ],
+  "scope": "real native host-profile + fresh address-bound admin installer in isolated systemd container",
+  "limitations": [
+    "container socket BindToDevice cleared: no udev device units; not physical USB socket acceptance"
+  ],
+  "timestamp": "2026-10-28T22:30:18.074475+00:00",
+  "platform": "linux/arm64",
+  "runtime": "rootful Podman dedicated Linux VM on macOS",
+  "unitTests": {
+    "passed": 23,
+    "failed": 0
+  },
+  "sourceSha256": {
+    "admin/install.mjs": "cc620e8592f25a682c41aa17d357c1ed1b869ad0231dd049d3a2798050de0b2f",
+    "admin/broker.mjs": "4a742dc697b43b59e0849042d1f7903982c6df78093df406522ccfb8881c9a66",
+    "admin/lib/native-binding.mjs": "299bd949d49fb28468fcad5677066900a05affb0c79bb8af6f23d19b5f04785f",
+    "admin/lib/vpn-settings-transaction.mjs": "809b8dd1bb9bc05571ef5957462632bf02daa3f8a5dfc78b5f47206a4866401f",
+    "admin/test/native-host.Containerfile": "c5f33378049a17588e15fc4966a96524f7be2aac5bef6397bacaebea76f99a18",
+    "scripts/lib/native-host-admin-lab.mjs": "727ee8f8ad9e1b549a15bac91385a875aeb644c98e3cbbeea556a3e1553c91a4"
+  }
+}

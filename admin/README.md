@@ -58,24 +58,26 @@ WPA3/Enterprise, AP и управление другими транспорта�
 Для работающего native-клиента требуются активный guard, `Type=notify` и
 подтверждение `ready` от движка после рестарта. Это проверка TLS/VPN handshake,
 не проверка доступности всех сайтов. Если VPN остановлен, настройки сохраняются
-с `requiresStart=true`, без автоматического включения. Legacy-режим по-прежнему
-сохраняет только candidate. Это ещё не установщик миграции и не гарантия порядка
-восстановления при холодной загрузке: такой порядок требует отдельных units.
+с `requiresStart=true`, без автоматического включения. Без `nativeManaged` конфигурация сохраняется без активации. Порядок восстановления
+при холодной загрузке задают native network/engine/clock units, не веб-сервер.
 
 ## Установка и systemd
 
 Installer сейчас предназначен **для проверенного existing-host профиля Radxa**,
-с legacy `clean-vpn.service`, cvks4 guard и USB 192.168.7.1/24. Он не подходит
+с установленным native `--host-profile`, cvks4 guard и USB 192.168.7.1/24. Старый
+Node VPN не требуется. Он не подходит
 для произвольной Linux-машины. Сначала читается plan:
 
 ```sh
-node admin/install.mjs --plan
-sudo /absolute/path/to/node admin/install.mjs --apply
+sudo /absolute/path/to/node admin/install.mjs --plan --native-name=daily
+sudo /absolute/path/to/node admin/install.mjs --apply --native-name=daily
 ```
 
 `--apply` проверяет владельцев/порты/USB, копирует текущий Node и исходники в
 `/opt/meshpn-admin`, создаёт системного пользователя `meshpn-admin`, приватные
-state-каталоги и три unit. VPN/DNS/Netplan не мигрируются. Автозапуск:
+state-каталоги и три unit. Используется config уже выбранной native-установки;
+её профиль не подменяется. VPN не включается установщиком админки. Netplan и
+конфигурация системного resolver не меняются. Автозапуск:
 `meshpn-admin-broker.service` и `meshpn-admin.socket`; web активируется сокетом.
 
 **Граница доступа:** systemd слушает 192.168.7.1:80/8443 с
@@ -84,9 +86,9 @@ Host/Origin, сессию и CSRF. Web работает непривилегир
 только UNIX socket и фиксированный набор операций, без произвольных команд,
 путей, systemd unit names или Docker socket из API.
 
-mDNS нужен UDP 5353 к 224.0.0.251 на usb0. Installer сохраняет исходный guard
-script и добавляет в его **read-only аудит** распознавание ровно этого правила;
-сами guard chains и политика не расширяются. Broker добавляет/убирает одну
+mDNS нужен UDP 5353 к 224.0.0.251 на usb0. Свежая native-установка требует
+актуальный guard с поддержкой аудита этого правила; installer админки не
+заменяет guard script. Broker добавляет/убирает одну
 помеченную OUTPUT-запись, ограниченную source 192.168.7.1, usb0 и UDP5353.
 Изменения guard по-прежнему требуют первого hook и отказываются при чужих
 правилах. При остановке broker mDNS-запись удаляется через ExecStopPost.
@@ -157,8 +159,8 @@ Mac используется только как браузер и хозяин 
    нельзя выдавать его за воспроизводимый профиль. Совместимый кандидат сначала
    проверяется engine, затем отдельно выбирается в VPN.
 5. Наблюдатель включается **до** нового соединения client-exit. Его pcap можно
-   независимо разобрать `scripts/clean-vpn-pcap-fingerprints.mjs`. При legacy
-   активном клиенте сравнение с native candidate закономерно может дать mismatch.
+   независимо разобрать `scripts/clean-vpn-pcap-fingerprints.mjs`. Профиль сравнивается с фактическим клиентским соединением, а не только с
+   конфигурацией engine.
 
 Identity/trust context в bundle заявляется оператором, а не аттестуется.
 Сырой pcap содержит реальные сетевые метаданные и TLS-пакеты; держите его
@@ -206,3 +208,35 @@ SYS_ADMIN/NET_ADMIN/NET_RAW; frontend — UID 65534, read-only rootfs, без ca
 Это проверка интеграции, **не** готовая SELinux-политика установки на произвольный
 хост. Физический USB/Wi-Fi, WAN, перезагрузка и обновление бинарника этим прогоном
 не подтверждаются.
+
+### Standalone network owner
+
+`broker.json` содержит `vpnUnit` для C++ engine и `networkUnit` для владельца
+TUN/routes/DNS/NAT. Кнопки VPN управляют `networkUnit`; зависимый engine
+останавливается через BindsTo. После включения broker ждёт готовность engine.
+Параметры браузерного профиля перезапускают только engine, сохраняя сеть.
+Смена IP/порта exit пока требует отдельного согласованного изменения guard и
+network config. Статус и журнал сетевой службы доступны отдельно.
+
+Существующая админка не перепривязывается командой `--update`: сначала нужно
+выбрать и проверить native instance и его разрешения записи. Свежая установка
+отказывает при коллизии файлов/пользователя, ничего не перезаписывая.
+
+Локальная проверка 29 октября: 23 unit tests и 9 сценариев настоящего systemd
+с C++ client/exit, свежим installer, входом в web, profile apply и stop/restart.
+[Отчёт](../fixtures/clean-vpn-native-host-admin-report.json) содержит хеши исходников.
+Контейнерный стенд очищает только `BindToDevice` в собственном socket drop-in,
+поскольку у его PID1 нет udev device units. Привязка к адресу/subnet остаётся;
+этот прогон не доказывает аппаратную USB socket activation.
+
+```sh
+# Только выделенная Linux-лаборатория; без host mounts и опубликованных портов.
+podman build -t meshpn-admin-systemd-lab:local -f admin/test/systemd-host.Containerfile .
+podman build -t clean-vpn-host-admin-lab:local -f admin/test/native-host.Containerfile .
+podman run -d --name cvpn-host-admin-lab --privileged --network=none \
+  --systemd=always --memory=1g --pids-limit=512 clean-vpn-host-admin-lab:local
+podman exec -e CVPN_DISPOSABLE_HOST_ADMIN=1 cvpn-host-admin-lab \
+  node /project/scripts/lib/native-host-admin-lab.mjs
+podman stop cvpn-host-admin-lab
+podman rm cvpn-host-admin-lab
+```
