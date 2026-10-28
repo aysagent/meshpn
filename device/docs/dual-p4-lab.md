@@ -29,8 +29,13 @@ Roles and limits:
 `--repeats 1..100`, `--gap 0..60`. TCP is unpaced. UDP is paced; compare achieved
 sender and receiver counts, not only the requested rate. Throughput uses the
 requested duration, including startup gaps, rather than an optimistic first/last
-packet interval. The current downlink counter includes duplicates: it is not a
-UDP unique-delivery/loss estimate. Client CPU/socket costs remain in the result.
+packet interval. UDP receiver counters exclude duplicates in both directions;
+`duplicates` and `reordered` are separate. `sequence_missing` counts gaps only
+inside the observed sequence span, including a missing initial sequence zero.
+It cannot detect an unobserved trailing receive blackout. Do not subtract total
+sender/receiver counts as loss when their time windows differ. Older firmware
+without `udp_sequence_available` has no unique downlink count. Client CPU/socket
+costs remain in the result.
 
 The firmware `/api/diag/net-bench` worker is authenticated, P4-only, IPv4 RFC1918,
 port ≥1024, ≤60 seconds plus a five-second connect/hello deadline, one job at a

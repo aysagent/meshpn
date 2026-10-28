@@ -449,6 +449,13 @@ static esp_err_t handler_net_bench(httpd_req_t *req)
     cJSON_AddNumberToObject(out,"packets",r.packets);
     cJSON_AddNumberToObject(out,"invalid",r.invalid);
     cJSON_AddNumberToObject(out,"stalls",r.stalls);
+    cJSON_AddBoolToObject(out,"udp_sequence_available",r.udp_sequence_available);
+    cJSON_AddNumberToObject(out,"duplicates",r.duplicates);
+    cJSON_AddNumberToObject(out,"reordered",r.reordered);
+    cJSON_AddNumberToObject(out,"sequence_span",r.sequence_span);
+    /* Missing only inside the observed [0,last sequence] span, not a trailing
+     * blackout/loss estimate across differently timed sender/receiver windows. */
+    cJSON_AddNumberToObject(out,"sequence_missing",r.udp_sequence_available?r.sequence_span-r.packets:0);
     cJSON_AddNumberToObject(out,"elapsed_us",r.elapsed_us);
     cJSON_AddNumberToObject(out,"error",r.error);
     return send_json(req,out);

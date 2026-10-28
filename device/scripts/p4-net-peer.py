@@ -62,6 +62,7 @@ class Peer:
             row = dict(nonce=nonce, source=source, protocol=protocol, down=bool(down),
                        seconds=seconds, target_kbps=rate, bytes=0, packets=0,
                        duplicates=0, invalid=0, started=time.monotonic(), elapsed=0,
+                       sequence_span=0, reordered=0,
                        done=False, error=None)
             self.rows[nonce] = row
             while len(self.rows) > 256:
@@ -73,7 +74,11 @@ class Peer:
 
     def snapshot(self, nonce):
         with self.lock:
-            return dict(self.rows.get(nonce, {}))
+            row = dict(self.rows.get(nonce, {}))
+            if row:
+                row['udp_sequence_available'] = row['protocol'] == 'udp' and not row['down']
+                row['sequence_missing'] = row['sequence_span'] - row['packets'] if row['udp_sequence_available'] else None
+            return row
 
     def accept(self):
         while not self.stop.is_set():
@@ -153,6 +158,8 @@ class Peer:
                     current['invalid'] += 1; continue
                 if seq in seen:
                     current['duplicates'] += 1; continue
+                if seq < current['sequence_span']: current['reordered'] += 1
+                else: current['sequence_span'] = seq + 1
                 seen.add(seq); current['bytes'] += len(data); current['packets'] += 1
                 # Duration from acknowledged start, without the final drain wait.
                 current['receive_elapsed'] = time.monotonic() - current['started']

@@ -11,6 +11,8 @@ typedef struct {
 typedef struct {
     bool running;
     uint32_t nonce, source, packets, invalid, stalls;
+    bool udp_sequence_available;
+    uint32_t duplicates, reordered, sequence_span;
     uint64_t bytes, elapsed_us;
     int error;
 } meshvpn_net_bench_result_t;

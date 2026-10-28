@@ -32,10 +32,14 @@ class PeerTests(unittest.TestCase):
         s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.settimeout(2)
         s.connect(('127.0.0.1',self.peer.port));h=self.header(11,size=1200)
         s.send(h);self.assertEqual(s.recv(32),h)
-        for nonce,seq in [(11,0),(11,0),(11,1),(12,2)]:
+        for nonce,seq in [(11,0),(11,0),(11,3),(11,1),(12,2),(11,250000),(11,0xffffffff)]:
             s.send(p.DATA.pack(b'MND1',nonce,seq)+b'x'*1188)
         time.sleep(.1);r=self.peer.snapshot(11)
-        self.assertEqual(r['bytes'],2400);self.assertEqual(r['duplicates'],1);self.assertEqual(r['invalid'],1)
+        self.assertEqual(r['bytes'],3600);self.assertEqual(r['duplicates'],1);self.assertEqual(r['invalid'],3)
+        self.assertTrue(r['udp_sequence_available']);self.assertEqual(r['reordered'],1)
+        self.assertEqual(r['sequence_span'],4);self.assertEqual(r['sequence_missing'],1)
+        s.send(p.DATA.pack(b'MND1',11,2)+b'x'*1188);time.sleep(.1)
+        self.assertEqual(self.peer.snapshot(11)['sequence_missing'],0)
         s.close()
     def test_udp_download_has_requested_nonce_and_bound(self):
         s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.settimeout(2)

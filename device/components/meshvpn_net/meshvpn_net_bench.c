@@ -22,6 +22,24 @@ static bool cancelled;
 static uint64_t now(void) { return esp_timer_get_time(); }
 static void put(uint8_t *p, uint32_t n) { n=htonl(n); memcpy(p,&n,4); }
 static uint32_t get(const uint8_t *p) { uint32_t n;memcpy(&n,p,4);return ntohl(n); }
+/* 32 Mbit/s * 60 s / 1200 bytes is at most 200000 packets. Keep a
+ * bounded bitmap in PSRAM only while receiving a UDP test. Never turn an
+ * untrusted sequence number into an unbounded allocation or array index. */
+#define UDP_SEQUENCE_LIMIT 250000u
+#define UDP_SEEN_BYTES ((UDP_SEQUENCE_LIMIT + 7u) / 8u)
+static bool accept_udp(const uint8_t *data, size_t n, uint8_t *seen,
+                       meshvpn_net_bench_result_t *r)
+{
+    if(n!=1200||memcmp(data,"MND1",4)||get(data+4)!=r->nonce) {r->invalid++;return false;}
+    uint32_t seq=get(data+8);
+    if(seq>=UDP_SEQUENCE_LIMIT){r->invalid++;return false;}
+    uint8_t bit=(uint8_t)(1u<<(seq%8));
+    if(seen[seq/8]&bit){r->duplicates++;return false;}
+    seen[seq/8]|=bit;
+    if(seq<r->sequence_span)r->reordered++;
+    else r->sequence_span=seq+1;
+    return true;
+}
 static bool stopping(void)
 {
     portENTER_CRITICAL(&lock); bool stop=cancelled; portEXIT_CRITICAL(&lock);
@@ -61,11 +79,12 @@ static void worker(void *unused)
 {
     (void)unused;
     meshvpn_net_bench_config_t c=config;
-    meshvpn_net_bench_result_t r={.running=true,.nonce=c.nonce};
+    meshvpn_net_bench_result_t r={.running=true,.nonce=c.nonce,.udp_sequence_available=c.udp&&c.download};
     int fd=-1;uint8_t *buffer=heap_caps_malloc(8192,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    uint8_t *seen=r.udp_sequence_available?heap_caps_calloc(1,UDP_SEEN_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT):NULL;
     esp_netif_t *sta=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     esp_netif_ip_info_t info;
-    if(!buffer){r.error=ENOMEM;goto done;}
+    if(!buffer||(r.udp_sequence_available&&!seen)){r.error=ENOMEM;goto done;}
     if(!sta||!esp_netif_is_netif_up(sta)||esp_netif_get_ip_info(sta,&info)!=ESP_OK||!info.ip.addr){r.error=ENETDOWN;goto done;}
     r.source=info.ip.addr;publish(&r);
     fd=socket(AF_INET,c.udp?SOCK_DGRAM:SOCK_STREAM,0);
@@ -99,7 +118,7 @@ static void worker(void *unused)
         int n=c.download?recv(fd,buffer,8192,0):send(fd,buffer,length,0);
         if(n<0 && (errno==EAGAIN||errno==EWOULDBLOCK||errno==EINTR)){r.stalls++;continue;}
         if(n<=0){if(n<0)r.error=errno;break;}
-        if(c.udp && c.download && (n!=1200||memcmp(buffer,"MND1",4)||get(buffer+4)!=c.nonce)){r.invalid++;continue;}
+        if(c.udp && c.download && !accept_udp(buffer,(size_t)n,seen,&r))continue;
         if(c.udp && !c.download && n!=1200){r.error=EPROTO;break;}
         r.bytes+=n;r.packets++;
         if(c.udp && !c.download)next=start+r.bytes*8000/c.rate_kbps;
@@ -110,7 +129,7 @@ static void worker(void *unused)
     if(stopping())r.error=ECANCELED;
  done:
     if(fd>=0)close(fd);
-    free(buffer);r.running=false;publish(&r);vTaskDelete(NULL);
+    free(seen);free(buffer);r.running=false;publish(&r);vTaskDelete(NULL);
 }
 esp_err_t meshvpn_net_bench_start(const meshvpn_net_bench_config_t *c)
 {
