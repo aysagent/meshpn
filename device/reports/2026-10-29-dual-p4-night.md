@@ -125,4 +125,8 @@ AP b/g/n HT20 на Waveshare не дал здорового соединения
   APSTA, даже с отключённым `BRIDGE_DATA_FORWARDING_NETIF_SOFTAP`. Теперь без
   этого флага создаётся только STA и выбирается WIFI_MODE_STA; обычные профили
   остаются APSTA. Host тест проверяет production init с флагом/без и отказ AP
-  allocation; STA-only Waveshare и штатные Waveshare/Stamp сборки прошли.
+  allocation; штатные Waveshare/Stamp сборки прошли. Проверка resolved sdkconfig
+  до прошивки обнаружила, что скрытый Kconfig bool с default y игнорировал n;
+  переключатель сделан доступным в конфигурации. STA-only пересобран успешно,
+  фактическое значение n проверено; первый образ с APSTA не использовался
+  в качестве STA-only эксперимента.

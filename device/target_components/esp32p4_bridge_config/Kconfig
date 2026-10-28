@@ -19,7 +19,7 @@ config BRIDGE_STATION_CANCEL_AUTO_CONNECT_WHEN_DISCONNECTED
     default y
 
 config BRIDGE_DATA_FORWARDING_NETIF_SOFTAP
-    bool
+    bool "Enable SoftAP interface"
     default y
 
 config BRIDGE_SOFTAP_SSID
