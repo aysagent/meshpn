@@ -1,0 +1,501 @@
+{
+  "schema": 1,
+  "kind": "native-runtime-container-lab",
+  "status": "passed",
+  "image": "localhost/clean-vpn-native-runtime:final-arm64",
+  "imageId": "e1942dd095830c121155d9133d63d5a86ef565bf7eb1248ea52dac6f25c43e38",
+  "architecture": "arm64",
+  "engineSha256": "f0eb2a326e6c67491da4e1d895745b3e3c125c5208fc38446e396cb8e8490d72",
+  "backend": [
+    "podman",
+    "--connection",
+    "meshpn-clean-vpn-lab-root"
+  ],
+  "firewallBackend": "nft",
+  "checks": [
+    "profiled-tunnel-and-dns-udp-tcp",
+    "public-launcher-start-status",
+    "loopback-dns-https-tcp-udp",
+    "isolated-lan-gateway-dns-https-tcp-udp",
+    "bounded-soak-with-restarts-passed",
+    "foreign-rules-preserved",
+    "same-namespace-reentry-audited",
+    "unreachable-upstreams-unhealthy",
+    "dns-restores-with-upstream",
+    "wrong-name-unhealthy",
+    "wrong-psk-unhealthy",
+    "wrong-ca-unhealthy",
+    "unreachable-exit-unhealthy",
+    "without-net-admin-refused",
+    "without-tun-refused",
+    "host-network-refused-before-mutation",
+    "public-launcher-stop-and-restart",
+    "unprivileged-shared-namespace-application",
+    "pid1-sigkill-shared-namespace-no-direct-fallback",
+    "lan-gateway-crash-no-direct-fallback",
+    "dead-engine-app-dns-blocked",
+    "replacement-works-old-namespace-stays-blocked",
+    "client-sigterm-clean",
+    "container-restart-healthy",
+    "independent-clienthello-profile-matched",
+    "exit-sigterm-clean",
+    "public-launcher-owned-remove"
+  ],
+  "cleanup": {
+    "status": "passed"
+  },
+  "rawReportSha256": "9ec1e0df2c7230e86c8dec177913d446fd31143e2d31e1fdf4b0b34aa17bbcfa",
+  "pcapSha256": "fd09b5cc6aaee27bfddf4c76ff5f2f31815e4a85ac790888a7d443d3345fa1e9",
+  "soak": {
+    "requestedSeconds": 3600,
+    "elapsedSeconds": 3612,
+    "restartSeconds": 300,
+    "restarts": 12,
+    "restartEvents": [
+      {
+        "elapsed": 306,
+        "signal": "SIGTERM",
+        "beforeNamespace": "net:[4026532976]",
+        "readyElapsed": 307,
+        "afterNamespace": "net:[4026533053]",
+        "oldNamespaceForeignRulePreserved": true,
+        "namespaceChanged": true,
+        "fixtureSentinelReinstalledInNewNamespace": true
+      },
+      {
+        "elapsed": 601,
+        "signal": "SIGKILL",
+        "beforeNamespace": "net:[4026533053]",
+        "readyElapsed": 603,
+        "afterNamespace": "net:[4026533221]",
+        "oldNamespaceForeignRulePreserved": true,
+        "namespaceChanged": true,
+        "fixtureSentinelReinstalledInNewNamespace": true
+      },
+      {
+        "elapsed": 909,
+        "signal": "SIGTERM",
+        "beforeNamespace": "net:[4026533221]",
+        "readyElapsed": 911,
+        "afterNamespace": "net:[4026532529]",
+        "oldNamespaceForeignRulePreserved": true,
+        "namespaceChanged": true,
+        "fixtureSentinelReinstalledInNewNamespace": true
+      },
+      {
+        "elapsed": 1206,
+        "signal": "SIGKILL",
+        "beforeNamespace": "net:[4026532529]",
+        "readyElapsed": 1207,
+        "afterNamespace": "net:[4026532976]",
+        "oldNamespaceForeignRulePreserved": true,
+        "namespaceChanged": true,
+        "fixtureSentinelReinstalledInNewNamespace": true
+      },
+      {
+        "elapsed": 1500,
+        "signal": "SIGTERM",
+        "beforeNamespace": "net:[4026532976]",
+        "readyElapsed": 1502,
+        "afterNamespace": "net:[4026532529]",
+        "oldNamespaceForeignRulePreserved": true,
+        "namespaceChanged": true,
+        "fixtureSentinelReinstalledInNewNamespace": true
+      },
+      {
+        "elapsed": 1801,
+        "signal": "SIGKILL",
+        "beforeNamespace": "net:[4026532529]",
+        "readyElapsed": 1802,
+        "afterNamespace": "net:[4026532985]",
+        "oldNamespaceForeignRulePreserved": true,
+        "namespaceChanged": true,
+        "fixtureSentinelReinstalledInNewNamespace": true
+      },
+      {
+        "elapsed": 2110,
+        "signal": "SIGTERM",
+        "beforeNamespace": "net:[4026532985]",
+        "readyElapsed": 2111,
+        "afterNamespace": "net:[4026532536]",
+        "oldNamespaceForeignRulePreserved": true,
+        "namespaceChanged": true,
+        "fixtureSentinelReinstalledInNewNamespace": true
+      },
+      {
+        "elapsed": 2405,
+        "signal": "SIGKILL",
+        "beforeNamespace": "net:[4026532536]",
+        "readyElapsed": 2406,
+        "afterNamespace": "net:[4026532534]",
+        "oldNamespaceForeignRulePreserved": true,
+        "namespaceChanged": true,
+        "fixtureSentinelReinstalledInNewNamespace": true
+      },
+      {
+        "elapsed": 2701,
+        "signal": "SIGTERM",
+        "beforeNamespace": "net:[4026532534]",
+        "readyElapsed": 2702,
+        "afterNamespace": "net:[4026532538]",
+        "oldNamespaceForeignRulePreserved": true,
+        "namespaceChanged": true,
+        "fixtureSentinelReinstalledInNewNamespace": true
+      },
+      {
+        "elapsed": 3008,
+        "signal": "SIGKILL",
+        "beforeNamespace": "net:[4026532538]",
+        "readyElapsed": 3009,
+        "afterNamespace": "net:[4026532537]",
+        "oldNamespaceForeignRulePreserved": true,
+        "namespaceChanged": true,
+        "fixtureSentinelReinstalledInNewNamespace": true
+      },
+      {
+        "elapsed": 3303,
+        "signal": "SIGTERM",
+        "beforeNamespace": "net:[4026532537]",
+        "readyElapsed": 3305,
+        "afterNamespace": "net:[4026532530]",
+        "oldNamespaceForeignRulePreserved": true,
+        "namespaceChanged": true,
+        "fixtureSentinelReinstalledInNewNamespace": true
+      },
+      {
+        "elapsed": 3600,
+        "signal": "SIGKILL",
+        "beforeNamespace": "net:[4026532530]",
+        "readyElapsed": 3601,
+        "afterNamespace": "net:[4026532974]",
+        "oldNamespaceForeignRulePreserved": true,
+        "namespaceChanged": true,
+        "fixtureSentinelReinstalledInNewNamespace": true
+      }
+    ],
+    "latency": {
+      "healthWallMs": {
+        "samples": 317,
+        "minMs": 151.71545799996238,
+        "p50Ms": 187.63366600009613,
+        "p95Ms": 366.8582919999026,
+        "maxMs": 1261.6382500000764,
+        "scope": "probe-plus-container-exec-wall-time-not-network-RTT"
+      },
+      "applicationWallMs": {
+        "samples": 317,
+        "minMs": 174.89837499998976,
+        "p50Ms": 195.13045899989083,
+        "p95Ms": 315.99554100004025,
+        "maxMs": 1028.2687079999596,
+        "scope": "probe-plus-container-exec-wall-time-not-network-RTT"
+      },
+      "lanWallMs": {
+        "samples": 317,
+        "minMs": 176.27483300000313,
+        "p50Ms": 193.76033300021663,
+        "p95Ms": 272.2598330001347,
+        "maxMs": 580.718499999959,
+        "scope": "probe-plus-container-exec-wall-time-not-network-RTT"
+      }
+    },
+    "transactionLatency": {
+      "applicationTimings": {
+        "dnsUdpMs": {
+          "samples": 317,
+          "minMs": 4.719294995069504,
+          "p50Ms": 5.789669007062912,
+          "p95Ms": 9.354669004678726,
+          "maxMs": 73.36898699402809,
+          "scope": "application-namespace-transaction-no-container-exec"
+        },
+        "dnsTcpMs": {
+          "samples": 317,
+          "minMs": 3.89996100962162,
+          "p50Ms": 4.797416001558304,
+          "p95Ms": 7.64766500890255,
+          "maxMs": 34.15478500723839,
+          "scope": "application-namespace-transaction-no-container-exec"
+        },
+        "httpsRequestMs": {
+          "samples": 317,
+          "minMs": 17.28126099705696,
+          "p50Ms": 19.326131001114845,
+          "p95Ms": 27.269424006342888,
+          "maxMs": 123.16210299730301,
+          "scope": "application-namespace-transaction-no-container-exec"
+        },
+        "tcpEchoMs": {
+          "samples": 317,
+          "minMs": 0.8504589945077896,
+          "p50Ms": 1.0465839952230453,
+          "p95Ms": 1.9147080034017563,
+          "maxMs": 90.20129500329494,
+          "scope": "application-namespace-transaction-no-container-exec"
+        },
+        "udpEchoMs": {
+          "samples": 317,
+          "minMs": 0.303957998752594,
+          "p50Ms": 0.49208399653434753,
+          "p95Ms": 0.8902910053730011,
+          "maxMs": 2.1930830031633377,
+          "scope": "application-namespace-transaction-no-container-exec"
+        }
+      },
+      "lanTimings": {
+        "dnsUdpMs": {
+          "samples": 317,
+          "minMs": 4.752128005027771,
+          "p50Ms": 5.839460998773575,
+          "p95Ms": 8.433622986078262,
+          "maxMs": 42.41268798708916,
+          "scope": "application-namespace-transaction-no-container-exec"
+        },
+        "dnsTcpMs": {
+          "samples": 317,
+          "minMs": 3.911420002579689,
+          "p50Ms": 4.803211003541946,
+          "p95Ms": 7.345335006713867,
+          "maxMs": 14.798246994614601,
+          "scope": "application-namespace-transaction-no-container-exec"
+        },
+        "httpsRequestMs": {
+          "samples": 317,
+          "minMs": 17.265217006206512,
+          "p50Ms": 19.018204987049103,
+          "p95Ms": 27.86753599345684,
+          "maxMs": 116.90722499787807,
+          "scope": "application-namespace-transaction-no-container-exec"
+        },
+        "tcpEchoMs": {
+          "samples": 317,
+          "minMs": 0.8200419992208481,
+          "p50Ms": 1.0605000108480453,
+          "p95Ms": 1.8886249959468842,
+          "maxMs": 5.268873989582062,
+          "scope": "application-namespace-transaction-no-container-exec"
+        },
+        "udpEchoMs": {
+          "samples": 317,
+          "minMs": 0.3339170068502426,
+          "p50Ms": 0.4978340119123459,
+          "p95Ms": 0.9356659948825836,
+          "maxMs": 5.9524990022182465,
+          "scope": "application-namespace-transaction-no-container-exec"
+        }
+      }
+    },
+    "samples": 317,
+    "resources": {
+      "client": {
+        "rssKiB": {
+          "min": 6212,
+          "max": 6440,
+          "first": 6416,
+          "last": 6432
+        },
+        "fds": {
+          "min": 7,
+          "max": 7,
+          "first": 7,
+          "last": 7
+        },
+        "sockets": {
+          "min": 3,
+          "max": 3,
+          "first": 3,
+          "last": 3
+        },
+        "threads": {
+          "min": 2,
+          "max": 2,
+          "first": 2,
+          "last": 2
+        },
+        "nativeProcesses": {
+          "min": 1,
+          "max": 1,
+          "first": 1,
+          "last": 1
+        },
+        "namespaceProcesses": {
+          "min": 2,
+          "max": 3,
+          "first": 2,
+          "last": 2
+        },
+        "zombies": {
+          "min": 0,
+          "max": 0,
+          "first": 0,
+          "last": 0
+        },
+        "tcpEstablished": {
+          "min": 1,
+          "max": 1,
+          "first": 1,
+          "last": 1
+        },
+        "tcpTimeWait": {
+          "min": 5,
+          "max": 33,
+          "first": 12,
+          "last": 21
+        },
+        "udpSockets": {
+          "min": 1,
+          "max": 1,
+          "first": 1,
+          "last": 1
+        }
+      },
+      "exit": {
+        "rssKiB": {
+          "min": 5736,
+          "max": 6360,
+          "first": 5736,
+          "last": 6296
+        },
+        "fds": {
+          "min": 6,
+          "max": 6,
+          "first": 6,
+          "last": 6
+        },
+        "sockets": {
+          "min": 2,
+          "max": 2,
+          "first": 2,
+          "last": 2
+        },
+        "threads": {
+          "min": 1,
+          "max": 1,
+          "first": 1,
+          "last": 1
+        },
+        "nativeProcesses": {
+          "min": 1,
+          "max": 1,
+          "first": 1,
+          "last": 1
+        },
+        "namespaceProcesses": {
+          "min": 2,
+          "max": 2,
+          "first": 2,
+          "last": 2
+        },
+        "zombies": {
+          "min": 0,
+          "max": 0,
+          "first": 0,
+          "last": 0
+        },
+        "tcpEstablished": {
+          "min": 1,
+          "max": 1,
+          "first": 1,
+          "last": 1
+        },
+        "tcpTimeWait": {
+          "min": 0,
+          "max": 0,
+          "first": 0,
+          "last": 0
+        },
+        "udpSockets": {
+          "min": 0,
+          "max": 0,
+          "first": 0,
+          "last": 0
+        }
+      }
+    }
+  },
+  "wire": {
+    "counts": {
+      "packets": 20000,
+      "selected": 20000,
+      "withoutSyn": 0,
+      "fragmented": 0,
+      "truncated": 0
+    },
+    "connections": [
+      {
+        "status": "observed",
+        "ja3": "9f5b4b151b2fe02d297148d72f05351c",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched",
+        "differences": []
+      },
+      {
+        "status": "observed",
+        "ja3": "148148b4154047cf410f4d287eb879ec",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched",
+        "differences": []
+      },
+      {
+        "status": "observed",
+        "ja3": "30e4e41b2859dba1914b2023eef8558d",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched",
+        "differences": []
+      },
+      {
+        "status": "observed",
+        "ja3": "ef22590d11b272648d06351511a30db0",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched",
+        "differences": []
+      },
+      {
+        "status": "observed",
+        "ja3": "17ee29e2f1e3284a039f545393b6dadb",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched",
+        "differences": []
+      },
+      {
+        "status": "observed",
+        "ja3": "a151feb80fead987a30a54dfd7d46819",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched",
+        "differences": []
+      },
+      {
+        "status": "observed",
+        "ja3": "d2ed48ce5c9b092f18d8937e75479353",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched",
+        "differences": []
+      },
+      {
+        "status": "observed",
+        "ja3": "409fd45dc754b4843470e41ac3760d8f",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched",
+        "differences": []
+      },
+      {
+        "status": "observed",
+        "ja3": "3f82c6986ce3b0c6333f2d2511b2706e",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched",
+        "differences": []
+      }
+    ],
+    "capture": "tcpdump: listening on eth0, link-type EN10MB (Ethernet), snapshot length 262144 bytes\n20000 packets captured\n20001 packets received by filter\n0 packets dropped by kernel"
+  },
+  "limitations": [
+    "Podman ARM64 internal fixture, no physical path or throughput capacity",
+    "reuses previously built runtime and native engine; this run does not rebuild them",
+    "host-profile owner is tested separately; runtime image uses its own namespace contract",
+    "bounded one-hour test, not long-term leak proof",
+    "sampled RSS/FD/counters, no whole-machine peak accounting",
+    "bounded capture sees only recorded handshakes, not every connection during soak",
+    "first cold ClientHello fields only, not complete browser equivalence",
+    "raw private report and pcap kept outside repository; hashes provided"
+  ]
+}
