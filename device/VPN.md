@@ -238,13 +238,67 @@ IPv4 stream as TCP. The matching test exit command is:
 sudo env PATH="$PATH" node scripts/clean-vpn.js --role=exit --type=tls --tls-raw --server=0.0.0.0:8765
 ```
 
-This is a lab transport: server certificate verification and tunnel authentication
-are not configured. It does not implement the normal clean-vpn HTTP/exporter/Bearer
-handshake or browser JA3/JA4 emulation. `tls_server_name` controls optional SNI;
-an empty value explicitly clears it. RX/TX share a mutex around the mbedTLS
-context, the socket is nonblocking after the handshake, and WANT_READ/WANT_WRITE
-are retry conditions. Host acceptance uses real mbedTLS, simultaneous RX/TX and
-fragmented TLS records over loopback; hardware acceptance remains separate.
+The board now requires verification of the exit certificate chain, DNS name and
+validity dates. There is no insecure switch. An existing TLS profile without a
+CA/name stops connecting after this update until those fields are provisioned.
+The wire protocol remains raw TLS 1.2: no normal clean-vpn HTTP/exporter/Bearer
+handshake, client authentication or browser JA3/JA4 emulation. Restrict access to
+the raw exit on the server; certificate validation authenticates the exit, not its
+clients.
+
+In **VPN → TLS**:
+
+1. Keep **Server IPv4:port** as the actual server address.
+2. Paste the exit's trusted `ca.pem` into **Trusted exit CA**, then click **Save CA
+   and reconnect TLS**. The default JS exit uses `certs/ca.pem`; with
+   `--tls-cert-dir`, use that directory. Copy only the public CA certificate over
+   a trusted channel, never `key.pem` or a CA private key. For a publicly issued
+   server certificate, import its issuing root CA, not the server fullchain.
+3. Set **TLS server name** to the DNS identity in the actual server certificate.
+   It is also sent as SNI. Inspect the certificate on the exit:
+
+   ```sh
+   openssl x509 -in certs/cert.pem -noout -subject -ext subjectAltName
+   ```
+
+   A legacy generated certificate without DNS SAN uses CN `clean-vpn`; if DNS SAN
+   is present, select a matching DNS SAN instead. `--tls-public-name` does not
+   regenerate an existing certificate. Use the actual certificate identity, not
+   an unrelated browser/public website name.
+4. Enable VPN, keep the kill switch enabled, **Save and apply**, and check status.
+
+The CA accepts certificate-only PEM bundles up to 8192 bytes, with CA basic
+constraints. Invalid or partially parsed bundles, private keys and server leaf
+certificates are rejected. `POST /api/vpn/tls-ca` accepts `{ "ca_pem": "..." }`
+under the normal admin authentication; an empty string explicitly removes trust.
+CA replacement/removal restarts an enabled TLS session. The CA is stored as one
+NVS blob (`meshvpn/vpn_tls_ca`, separate from `vpn_cfg5`); using a blob avoids
+NVS's 4000-byte string limit. It survives transport changes and reboots, and is
+removed by factory reset. The periodic status never contains the PEM.
+
+`vpn.tls` reports `ca_configured`, `clock_ready`, `last_handshake`, `sdk_error`,
+`mbedtls_error` and `verify_flags`. `last_handshake` is the last attempt, not a
+live internet test; use `vpn.connected` for the current connection. Reasons
+include `certificate_name_mismatch`, `certificate_untrusted`,
+`certificate_expired`, `certificate_not_yet_valid`, `handshake_failed`, and
+`ca_missing_or_unreadable`. A failed validation prevents tunnel establishment;
+the existing kill switch/fallback policy still applies.
+
+TLS uses the existing board SNTP bootstrap (`162.159.200.1:123`, also used by
+WireGuard). With no initialized clock, VPN stays in `wait_time`; certificate
+validation is not bypassed. SDK certificate time checks are enabled explicitly
+(`CONFIG_MBEDTLS_HAVE_TIME_DATE=y`) and insecure verification fallback is disabled.
+This is ordinary SNTP, not an authenticated time source.
+
+RX/TX share a mutex around the mbedTLS context, the socket is nonblocking after
+the handshake, and WANT_READ/WANT_WRITE are retry conditions. Host acceptance
+uses the production trust-store/connection code with a real host-mbedTLS adapter
+at the ESP-TLS boundary: three fresh handshakes each for trusted CA/name,
+wrong name, wrong CA, expired and future certificates. No-CA and unset-clock
+preflight, CA persistence/errors, API authentication/restart, and UI edits are
+covered. The real-mbedTLS duplex/framing test verifies its peer and exchanges
+128 packets with fragmented TLS records. Board TLS memory peaks, throughput,
+and compatibility with a running exit still require hardware acceptance.
 
 ## Configuration preservation and diagnostics
 

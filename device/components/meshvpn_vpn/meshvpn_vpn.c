@@ -5,6 +5,7 @@
 #include "meshvpn_vpn_frame.h"
 #include "meshvpn_vpn_stream.h"
 #include "meshvpn_vpn_tls.h"
+#include "meshvpn_vpn_trust.h"
 #include "meshvpn_wireguard.h"
 #include "sdkconfig.h"
 #include <errno.h>
@@ -129,6 +130,8 @@ const char *meshvpn_vpn_config_error(const meshvpn_vpn_config_t *c)
     if (!wg && !plain_transport(c->transport)) return "Transport: select TCP, UDP, TLS or WireGuard.";
     if (!meshvpn_vpn_endpoint(c->server, ip, &port)) return "Endpoint/server: enter numeric IPv4:port (port 1-65535); hostnames and IPv6 are not supported.";
     if (wg) return meshvpn_wg_config_error(c);
+    if (!strcmp(c->transport, "tls") && !meshvpn_vpn_tls_name_valid(c->tls_server_name))
+        return "TLS server name: enter the DNS name from the exit certificate (required).";
     if (ip[0] == 10 && ip[1] == 99 && ip[2] == 0) return "Server overlaps the plain tunnel subnet 10.99.0.0/24.";
     return NULL;
 }
@@ -870,6 +873,10 @@ static void __attribute__((unused)) worker(void *arg)
         if (!strcmp(cfg.transport, "wireguard")) {
             if (!meshvpn_wg_clock_ready()) state(cfg.generation, "wait_time", false, 0);
             else esp_netif_tcpip_exec(wg_poll, &cfg.generation);
+            vTaskDelay(pdMS_TO_TICKS(1000)); continue;
+        }
+        if (!strcmp(cfg.transport, "tls") && !meshvpn_wg_clock_ready()) {
+            state(cfg.generation, "wait_time", false, 0);
             vTaskDelay(pdMS_TO_TICKS(1000)); continue;
         }
         state(cfg.generation, "wait_uplink", false, 0);

@@ -4,6 +4,9 @@
 #include "meshvpn_cpu.h"
 #include "meshvpn_wg_json.h"
 #include "meshvpn_vpn_stream.h"
+#include "meshvpn_vpn_tls.h"
+#include "meshvpn_vpn_trust.h"
+#include <time.h>
 #include "meshvpn_local_download.h"
 #include "meshvpn_local_upload.h"
 
@@ -814,6 +817,15 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     else cJSON_AddNullToObject(probe, "age_sec");
     cJSON_AddStringToObject(vpn, "server", vs.server);
     cJSON_AddStringToObject(vpn, "tls_server_name", vs.tls_server_name);
+    cJSON *tls_status = cJSON_AddObjectToObject(vpn, "tls");
+    meshvpn_vpn_tls_diag_t td; meshvpn_vpn_tls_get_diag(&td);
+    cJSON_AddBoolToObject(tls_status, "verification_required", true);
+    cJSON_AddBoolToObject(tls_status, "ca_configured", meshvpn_vpn_ca_configured());
+    cJSON_AddBoolToObject(tls_status, "clock_ready", time(NULL) >= 1704067200);
+    cJSON_AddStringToObject(tls_status, "last_handshake", td.reason);
+    cJSON_AddNumberToObject(tls_status, "sdk_error", td.sdk_error);
+    cJSON_AddNumberToObject(tls_status, "mbedtls_error", td.mbedtls_error);
+    cJSON_AddNumberToObject(tls_status, "verify_flags", td.verify_flags);
     cJSON_AddStringToObject(vpn, "transport", vs.transport);
     cJSON *endpoints = cJSON_AddObjectToObject(vpn, "saved_servers");
     const char *transports[] = {"tcp", "udp", "tls", "wireguard"};
@@ -1246,6 +1258,34 @@ static esp_err_t handler_certificate(httpd_req_t *req)
     cJSON_Delete(in);
     return err == ESP_OK ? ok(req) : error(req, "400 Bad Request", "Invalid certificate/key or storage error");
 }
+static void vpn_wipe(void *p, size_t len);
+static esp_err_t handler_vpn_ca(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    cJSON *in = body(req, MESHVPN_VPN_CA_MAX * 2 + 128);
+    if (!in) return ESP_FAIL;
+    meshvpn_vpn_config_t cfg = {0};
+    if (meshvpn_config_load_vpn(&cfg) != ESP_OK) {
+        cJSON_Delete(in); vpn_wipe(&cfg, sizeof(cfg));
+        return error(req, "500 Internal Server Error", "Cannot load VPN settings; CA unchanged.");
+    }
+    cJSON *ca = cJSON_GetObjectItemCaseSensitive(in, "ca_pem");
+    esp_err_t err = cJSON_IsString(ca) ? meshvpn_vpn_ca_save(ca->valuestring) : ESP_ERR_INVALID_ARG;
+    cJSON_Delete(in);
+    if (err != ESP_OK) {
+        vpn_wipe(&cfg, sizeof(cfg));
+        if (err == ESP_ERR_INVALID_ARG)
+            return error(req, "400 Bad Request", "CA: supply PEM CA certificates only (max 8192 bytes), or empty text to remove trust. No private key or server leaf certificate.");
+        return error(req, "500 Internal Server Error", "Cannot persist TLS CA.");
+    }
+    if (cfg.enabled && !strcmp(cfg.transport, "tls")) {
+        err = meshvpn_vpn_start(&cfg); /* Tear down the old session when trust changes. */
+        meshvpn_dns_clear_cache();
+    }
+    vpn_wipe(&cfg, sizeof(cfg));
+    if (err != ESP_OK) return error(req, "500 Internal Server Error", "CA saved, but restarting TLS failed. Inspect VPN status.");
+    return ok(req);
+}
 static void vpn_wipe(void *p, size_t len)
 { volatile unsigned char *b = p; while (len--) *b++ = 0; }
 static void vpn_delete_body(cJSON *in)
@@ -1349,6 +1389,8 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     }
     vpn_delete_body(in);
     if (!valid) return vpn_config_error(req, &cfg, "400 Bad Request", validation_error ? validation_error : "Invalid VPN settings.");
+    if (cfg.enabled && !strcmp(cfg.transport, "tls") && !meshvpn_vpn_ca_configured())
+        return vpn_config_error(req, &cfg, "400 Bad Request", "TLS CA: import the exit trusted CA before enabling TLS.");
     meshvpn_vpn_remember_server(&cfg);
     meshvpn_vpn_status_t status; meshvpn_vpn_get_status(&status);
     if (cfg.enabled && !status.implemented) return vpn_config_error(req, &cfg, "501 Not Implemented", "VPN not compiled in this build");
@@ -1522,6 +1564,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/system/factory-reset", HTTP_POST, handler_system),
         ROUTE("/api/certificate", HTTP_GET, handler_certificate), ROUTE("/api/certificate", HTTP_POST, handler_certificate),
         ROUTE("/api/vpn/config", HTTP_POST, handler_vpn_config),
+        ROUTE("/api/vpn/tls-ca", HTTP_POST, handler_vpn_ca),
         ROUTE("/api/vpn/restart", HTTP_POST, handler_vpn_restart),
         ROUTE("/api/vpn/check", HTTP_POST, handler_vpn_check),
         ROUTE("/api/routing/rules", HTTP_POST, handler_unimplemented),

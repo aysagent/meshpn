@@ -7,8 +7,8 @@ See [names, setup portal and HTTPS](docs/admin-name-and-setup.md).
 ESP-IDF firmware for XIAO ESP32-S3 and Waveshare ESP32-P4-WIFI6. USB Ethernet
 and WiFi SoftAP → IPv4 NAT → WiFi STA.
 Full IPv4 tunnelling supports clean-vpn TCP/UDP, experimental raw TLS 1.2, and
-WireGuard, with admin settings and a kill switch. Raw TLS currently does not
-verify the server certificate. Selective domain/IP routing and browser TLS
+WireGuard, with admin settings and a kill switch. Raw TLS requires an imported CA, certificate name and synchronized time;
+configure these in the VPN section before enabling TLS (see [VPN.md](VPN.md#experimental-raw-tls)). Selective domain/IP routing and browser TLS
 fingerprint emulation are not implemented. See [VPN status and limitations](VPN.md)
 and the [implementation plan](plan-vpn.md). USB compatibility expansion is deferred.
 

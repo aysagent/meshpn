@@ -24,7 +24,7 @@ execFileSync(process.env.CC||'cc',['-std=c11','-Wall','-Wextra','-Werror','-fsan
 const peer=await startPeer({type:'tls',key:fs.readFileSync(path.join(dir,'key.pem')),cert:fs.readFileSync(path.join(dir,'cert.pem')),fragmentFrames:true});
 try {
   await new Promise((resolve,reject)=>{
-    const p=spawn(binary,[String(peer.port)],{stdio:['ignore','pipe','pipe']});let output='',errors='';
+    const p=spawn(binary,[String(peer.port),path.join(dir,'cert.pem')],{stdio:['ignore','pipe','pipe']});let output='',errors='';
     const timer=setTimeout(()=>{p.kill();reject(Error('TLS I/O test deadline exceeded'));},30000);
     p.stdout.on('data',b=>output+=b);p.stderr.on('data',b=>errors+=b);
     p.on('error',reject);p.on('close',code=>{clearTimeout(timer);if(code!==0)reject(Error(`TLS I/O exit ${code}: ${errors}`));else{assert.match(output,/TLS_IO_OK/);console.log(output.trim());resolve();}});

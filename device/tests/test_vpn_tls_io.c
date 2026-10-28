@@ -65,7 +65,7 @@ static bool packet_received(void*ctx,const uint8_t*p,size_t n){
  assert(!memcmp(p+12,(uint8_t[]){198,18,0,1,10,99,0,2},8));received++;return true;
 }
 int main(int argc,char**argv){
- (void)TAG;assert(argc==2);
+ (void)TAG;assert(argc==3);
  mbedtls_net_context socket;mbedtls_net_init(&socket);
  assert(!mbedtls_net_connect(&socket,"127.0.0.1",argv[1],MBEDTLS_NET_PROTO_TCP));socket_fd=socket.fd;
  mbedtls_ssl_config config;mbedtls_ssl_config_init(&config);mbedtls_ssl_init(&connection.ssl);
@@ -73,10 +73,14 @@ int main(int argc,char**argv){
  mbedtls_ctr_drbg_context rng;mbedtls_ctr_drbg_init(&rng);
  assert(!mbedtls_ctr_drbg_seed(&rng,mbedtls_entropy_func,&entropy,(const unsigned char*)"local-io-test",13));
  assert(!mbedtls_ssl_config_defaults(&config,MBEDTLS_SSL_IS_CLIENT,MBEDTLS_SSL_TRANSPORT_STREAM,MBEDTLS_SSL_PRESET_DEFAULT));
- mbedtls_ssl_conf_authmode(&config,MBEDTLS_SSL_VERIFY_NONE);mbedtls_ssl_conf_rng(&config,mbedtls_ctr_drbg_random,&rng);
+ mbedtls_x509_crt ca;mbedtls_x509_crt_init(&ca);
+ assert(!mbedtls_x509_crt_parse_file(&ca,argv[2]));
+ mbedtls_ssl_conf_ca_chain(&config,&ca,NULL);
+ mbedtls_ssl_conf_authmode(&config,MBEDTLS_SSL_VERIFY_REQUIRED);mbedtls_ssl_conf_rng(&config,mbedtls_ctr_drbg_random,&rng);
  mbedtls_ssl_conf_min_tls_version(&config,MBEDTLS_SSL_VERSION_TLS1_2);
  mbedtls_ssl_conf_max_tls_version(&config,MBEDTLS_SSL_VERSION_TLS1_2);
  assert(!mbedtls_ssl_setup(&connection.ssl,&config));
+ assert(!mbedtls_ssl_set_hostname(&connection.ssl,"loopback-test"));
  mbedtls_ssl_set_bio(&connection.ssl,&socket,mbedtls_net_send,mbedtls_net_recv,NULL);
  assert(!mbedtls_ssl_handshake(&connection.ssl));assert(!mbedtls_net_set_nonblock(&socket));
  pthread_t thread;assert(!pthread_create(&thread,NULL,writer,NULL));
@@ -97,5 +101,5 @@ int main(int argc,char**argv){
  printf("TLS_IO_OK packets=%u read_calls=%llu write_calls=%llu\n",received,
   (unsigned long long)s.transport_read.calls,(unsigned long long)s.transport_write.calls);
  mbedtls_net_free(&socket);mbedtls_ssl_free(&connection.ssl);mbedtls_ssl_config_free(&config);
- mbedtls_ctr_drbg_free(&rng);mbedtls_entropy_free(&entropy);return 0;
+ mbedtls_x509_crt_free(&ca);mbedtls_ctr_drbg_free(&rng);mbedtls_entropy_free(&entropy);return 0;
 }

@@ -75,6 +75,11 @@ for(const part of text.split('static const char ').slice(1)){
               const payload=JSON.parse(options.body);
               assert.deepEqual(Object.keys(payload),['user_enabled']);assert.equal(typeof payload.user_enabled,'boolean');
               status.leds.user.enabled=payload.user_enabled;
+            }else if(path==='/api/vpn/tls-ca'){
+              assert.equal(options.method,'POST');assert.equal(options.headers.Authorization,'Bearer test-token');
+              const {ca_pem}=JSON.parse(options.body);
+              if(ca_pem==='bad')return {ok:false,status:400,text:async()=> 'Invalid CA'};
+              status.vpn.tls={ca_configured:!!ca_pem,clock_ready:true,last_handshake:'verified'};
             }else if(path==='/api/vpn/config'){
               assert.equal(options.method,'POST'); assert.equal(options.headers.Authorization,'Bearer test-token');
               const cfg=JSON.parse(options.body);assert(['tcp','udp','tls','wireguard'].includes(cfg.transport));
@@ -190,6 +195,16 @@ for(const part of text.split('static const char ').slice(1)){
         assert.equal(elements['wg-endpoint'].value,'198.51.100.7:51820','WG Endpoint retained after switching');
         await elements['vpn-form'].onsubmit();
         assert(!elements.status.textContent.includes('test-device-secret'),'status must not contain private key');
+        elements['vpn-tls-ca'].value='pending CA';await vm.runInContext('poll()',context);
+        assert.equal(elements['vpn-tls-ca'].value,'pending CA','poll must not clobber pasted certificate');
+        elements['vpn-tls-ca'].value='bad';await elements['vpn-tls-ca-save'].onclick();
+        assert.equal(elements['vpn-tls-ca'].value,'bad','failure preserves edit');assert.match(elements.message.textContent,/Invalid CA/);
+        elements['vpn-tls-ca'].value='trusted CA';await elements['vpn-tls-ca-save'].onclick();
+        assert(status.vpn.tls.ca_configured);assert.equal(elements['vpn-tls-ca'].value,'');
+        assert.match(elements['vpn-tls-status'].textContent,/CA: saved/);
+        accepted=false;await elements['vpn-tls-ca-clear'].onclick();assert(status.vpn.tls.ca_configured);
+        accepted=true;await elements['vpn-tls-ca-clear'].onclick();assert(!status.vpn.tls.ca_configured);
+
         assert(status.vpn.kill_switch);
         status.vpn.connected=false;status.vpn.state='handshake';await vm.runInContext('poll()',context);
         assert(elements['vpn-summary'].textContent.includes('BLOCKED'));
