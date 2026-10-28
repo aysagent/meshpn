@@ -35,12 +35,14 @@
 static void *heap_caps_malloc(size_t n,int caps){assert(caps==(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));return malloc(n);}
 static char stored[MESHVPN_VPN_CA_MAX+1];
 static bool storage_error;
+static bool corrupt_empty, read_error;
 static unsigned writes;
 esp_err_t nvs_open(const char*n,int mode,nvs_handle_t*out){assert(!strcmp(n,"meshvpn"));(void)mode;*out=1;return ESP_OK;}
 void nvs_close(nvs_handle_t n){assert(n==1);}
 esp_err_t nvs_get_blob(nvs_handle_t n,const char*k,void*out,size_t*len){
  assert(n==1&&!strcmp(k,"vpn_tls_ca"));if(storage_error)return ESP_FAIL;
- size_t size=strlen(stored)+1;if(!out){*len=size;return ESP_OK;}if(*len<size)return ESP_ERR_INVALID_SIZE;
+ size_t size=strlen(stored)+1;if(!out){*len=size;return ESP_OK;}if(read_error)return ESP_FAIL;if(*len<size)return ESP_ERR_INVALID_SIZE;
+ if(corrupt_empty && size==1){*(char*)out='x';*len=1;return ESP_OK;}
  memcpy(out,stored,size);*len=size;return ESP_OK;
 }
 esp_err_t nvs_set_blob(nvs_handle_t n,const char*k,const void*value,size_t length){
@@ -122,6 +124,9 @@ int main(int argc,char**argv){
   else {assert(err!=ESP_OK&&!t&&errno==EACCES&&d.verify_flags);}
  }
  assert(handshakes==3);assert(meshvpn_vpn_ca_save("")==ESP_OK&&!meshvpn_vpn_ca_configured());
+ assert(meshvpn_vpn_ca_load(&loaded)==ESP_ERR_NVS_NOT_FOUND&&!loaded);
+ corrupt_empty=true;assert(meshvpn_vpn_ca_load(&loaded)==ESP_ERR_INVALID_SIZE&&!loaded);corrupt_empty=false;
+ read_error=true;assert(meshvpn_vpn_ca_load(&loaded)==ESP_FAIL&&!loaded);read_error=false;
  esp_tls_t*t=NULL;int fd=-1;assert(meshvpn_vpn_tls_connect(server,"exit.example","lo0",&t,&fd)!=ESP_OK&&!t&&handshakes==3);
  meshvpn_vpn_tls_diag_t d;meshvpn_vpn_tls_get_diag(&d);assert(!strcmp(d.reason,"ca_missing_or_unreadable"));
  free(ca);free(leaf);puts("TLS_TRUST_OK");return 0;

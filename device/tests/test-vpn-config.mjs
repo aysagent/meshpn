@@ -39,7 +39,8 @@ static bool plain_transport(const char*n){return n&&(!strcmp(n,"tcp")||!strcmp(n
 ${wg}
 ${section(read('components/meshvpn_vpn/meshvpn_vpn_trust.c'),'bool meshvpn_vpn_tls_name_valid(', 'bool meshvpn_vpn_ca_valid(')}
 ${validate}
-typedef int httpd_req_t;
+enum { HTTP_POST, HTTP_GET };
+typedef struct { int method; } httpd_req_t;
 static meshvpn_vpn_config_t saved;
 static bool ca_configured=false;
 bool meshvpn_vpn_ca_configured(void){return ca_configured;}
@@ -49,11 +50,15 @@ static unsigned saves,applies,cache_clears;
 static const char *last_error_message;
 static cJSON *request;
 static unsigned ca_saves;
+static bool ca_load_fail;
+static char exported_ca[32];
+esp_err_t meshvpn_vpn_ca_load(char **pem){*pem=NULL;if(ca_load_fail)return ESP_FAIL;if(!ca_configured)return ESP_ERR_NVS_NOT_FOUND;*pem=malloc(3);memcpy(*pem,"ca",3);return ESP_OK;}
+
 esp_err_t meshvpn_vpn_ca_save(const char *p){if(!strcmp(p,"bad"))return ESP_ERR_INVALID_ARG;if(save_fail)return ESP_FAIL;ca_configured=*p!=0;ca_saves++;return ESP_OK;}
 static esp_err_t meshvpn_web_require_auth(httpd_req_t*r){(void)r;return auth?ESP_OK:ESP_FAIL;}
 static cJSON *body(httpd_req_t*r,int max){(void)r;assert(max==1024||max==MESHVPN_VPN_CA_MAX*2+128);return cJSON_Duplicate(request,true);}
 static esp_err_t error(httpd_req_t*r,const char*s,const char*m){(void)r;(void)s;last_error_message=m;return ESP_FAIL;}
-static esp_err_t send_json(httpd_req_t*r,cJSON*j){(void)r;assert(!j->child);cJSON_Delete(j);return ESP_OK;}
+static esp_err_t send_json(httpd_req_t*r,cJSON*j){(void)r;if(j->child){cJSON *p=cJSON_GetObjectItem(j,"ca_pem");assert(cJSON_IsString(p));strcpy(exported_ca,p->valuestring);}cJSON_Delete(j);return ESP_OK;}
 esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t*c){*c=saved;return load_fail?ESP_FAIL:ESP_OK;}
 esp_err_t meshvpn_config_save_vpn(const meshvpn_vpn_config_t*c){if(save_fail)return ESP_FAIL;saved=*c;saves++;return ESP_OK;}
 esp_err_t meshvpn_vpn_start(const meshvpn_vpn_config_t*c){assert(c->enabled==saved.enabled);applies++;return apply_fail?ESP_FAIL:ESP_OK;}
@@ -65,7 +70,7 @@ static esp_err_t ok(httpd_req_t*r){return send_json(r,cJSON_CreateObject());}
 ${handler}
 static void replace(const char*k,const char*v){cJSON_DeleteItemFromObject(request,k);cJSON_AddStringToObject(request,k,v);}
 int main(void){
-httpd_req_t r=0;strcpy(saved.wg_dns,"1.1.1.1");saved.wg_keepalive=25;
+httpd_req_t r={.method=HTTP_POST};strcpy(saved.wg_dns,"1.1.1.1");saved.wg_keepalive=25;
 request=cJSON_Parse("{\\"enabled\\":true,\\"transport\\":\\"tcp\\",\\"server\\":\\"192.0.2.1:8765\\"}");assert(request);
 auth=false;assert(handler_vpn_config(&r)==ESP_FAIL&&!saves);auth=true;
 assert(handler_vpn_config(&r)==ESP_FAIL&&!saves);cJSON_AddBoolToObject(request,"allow_plaintext",true);
@@ -152,6 +157,12 @@ replace("ca_pem","");assert(handler_vpn_ca(&r)==ESP_OK&&!ca_configured&&applies=
 strcpy(saved.transport,"wireguard");previous_applies=applies;
 replace("ca_pem","ca");assert(handler_vpn_ca(&r)==ESP_OK&&applies==previous_applies);
 cJSON_Delete(request);
+r.method=HTTP_GET;previous_applies=applies;unsigned previous_ca_saves=ca_saves;
+auth=false;assert(handler_vpn_ca(&r)==ESP_FAIL);auth=true;
+assert(handler_vpn_ca(&r)==ESP_OK&&!strcmp(exported_ca,"ca"));
+ca_load_fail=true;assert(handler_vpn_ca(&r)==ESP_FAIL);ca_load_fail=false;
+ca_configured=false;assert(handler_vpn_ca(&r)==ESP_OK&&!exported_ca[0]);
+assert(ca_saves==previous_ca_saves&&applies==previous_applies);
 puts("VPN HTTP/config: auth, validation, key preservation/clear, storage errors and no reboot passed");
 }
 `;

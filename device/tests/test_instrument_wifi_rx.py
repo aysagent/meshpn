@@ -53,6 +53,8 @@ typedef struct {int unused;} esp_netif_t;
 struct pbuf {void *payload,*eb;};
 struct netif {char name[2];void *state;bool up;int(*input)(struct pbuf*,struct netif*);};
 static unsigned counts[2][5],frees,live;
+static void meshvpn_ap_probe_arp(unsigned ifx,unsigned tx,const void *buffer,unsigned len)
+{assert(ifx<2&&!tx&&len==32);(void)buffer;}
 static bool oom,reject;
 static struct pbuf *held;
 static bool netif_is_up(struct netif *n){return n->up;}

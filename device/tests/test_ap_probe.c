@@ -129,6 +129,14 @@ static void test_sta_tcp(void)
  h[34]^=1;sta_tcp(true,h,40,40);meshvpn_ap_probe_sta_tcp(&v);
  assert(v.events[63].checksum_checked&&!v.events[63].bad_ip&&v.events[63].bad_tcp);
  assert(v.checked[1]==2&&!v.bad_ip[1]&&v.bad_tcp[1]==1);
+ /* AP tracing has independent tuples/storage and never changes packet bytes. */
+ meshvpn_sta_tcp_trace_t old=v,ap;meshvpn_ap_probe_ap_tcp(&ap);assert(!ap.total_events);
+ memset(h,0,sizeof(h));h[0]=0x45;h[9]=6;w16(h+2,40);h[32]=0x50;h[33]=2;
+ memcpy(h+12,peer,4);memcpy(h+16,&s_ap->ip.addr,4);w16(h+20,58001);w16(h+22,80);w32(h+24,123);
+ assert(meshvpn_vpn_repair_checksums(h,40));memcpy(saved,h,sizeof(h));
+ wifi_tcp(true,false,h,40,40);assert(!memcmp(h,saved,sizeof(h)));
+ meshvpn_ap_probe_ap_tcp(&ap);assert(ap.total_events==1&&ap.peer_port==58001&&!ap.bad_tcp[0]);
+ meshvpn_ap_probe_sta_tcp(&v);assert(v.total_events==old.total_events&&v.peer_port==old.peer_port);
 }
 int main(void)
 {
@@ -178,5 +186,26 @@ int main(void)
  for(unsigned i=0;i<32;i++)meshvpn_ap_probe_tx(0,ethernet,sizeof(ethernet));
  assert(s_checksums[2].bad_tcp==1&&s_checksums[2].checked==2);
  test_sta_tcp();
- puts("AP probe: packet/checksums, ownership, guards, handshake stages and bounded STA TCP/SACK trace passed");
+ /* Forwarded USB SYNs get their own ingress stage; USB admin is excluded. */
+ uint8_t uh[40]={0};uh[0]=0x45;uh[9]=6;w16(uh+2,40);uh[32]=0x50;uh[33]=2;
+ uint8_t usrc[]={192,168,10,2},udst[]={192,168,13,1};memcpy(uh+12,usrc,4);memcpy(uh+16,udst,4);
+ w16(uh+20,58002);w16(uh+22,80);w32(uh+24,76543);
+ struct netif usb={.ip={.addr=0x010aa8c0}};struct pbuf up={.payload=uh,.len=40,.tot_len=40};
+ meshvpn_ap_probe_usb_input(&up,&usb);bool saw_usb=false;
+ for(unsigned i=0;i<8;i++)if(s_flows[i].seq==76543){assert(s_flows[i].stages==32);saw_usb=true;}
+ assert(saw_usb);unsigned previous_next=s_next;memcpy(uh+16,&usb.ip.addr,4);w32(uh+24,76544);
+ meshvpn_ap_probe_usb_input(&up,&usb);assert(s_next==previous_next);
+
+ /* ARP observer is bounded, accepts only Ethernet IPv4 ARP, and never mutates. */
+ uint8_t arp[42]={0};w16(arp+12,0x0806);w16(arp+14,1);w16(arp+16,0x0800);
+ arp[18]=6;arp[19]=4;w16(arp+20,1);memcpy(arp+28,usrc,4);memcpy(arp+38,udst,4);
+ uint8_t saved_arp[42];memcpy(saved_arp,arp,42);meshvpn_arp_event_t arps[8];
+ meshvpn_ap_probe_arp(0,0,NULL,42);meshvpn_ap_probe_arp(0,0,arp,41);meshvpn_ap_probe_arp(2,0,arp,42);
+ assert(meshvpn_ap_probe_arp_snapshot(arps)==0);
+ for(unsigned i=0;i<10;i++){arp[27]=i;meshvpn_ap_probe_arp(0,i&1,arp,42);}
+ assert(meshvpn_ap_probe_arp_snapshot(arps)==8&&arps[0].sender_mac[5]==2&&arps[7].sender_mac[5]==9);
+ assert(arps[7].tx&&arps[7].operation==1&&!memcmp(&arps[7].sender,usrc,4));
+ arp[27]=0;assert(!memcmp(saved_arp,arp,42));arp[19]=16;meshvpn_ap_probe_arp(0,0,arp,42);
+ assert(meshvpn_ap_probe_arp_snapshot(arps)==8&&arps[7].sender_mac[5]==9);
+ puts("AP probe: packet/checksums, ownership, guards, handshake stages, bounded TCP/SACK and ARP traces passed");
 }

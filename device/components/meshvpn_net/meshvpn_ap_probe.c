@@ -29,8 +29,8 @@ static uint64_t s_seen[8];
 static unsigned s_next;
 static portMUX_TYPE s_flow_lock = portMUX_INITIALIZER_UNLOCKED;
 static meshvpn_rx_checksum_t s_checksums[4];
-static meshvpn_sta_tcp_trace_t s_tcp;
-static uint64_t s_tcp_started;
+static meshvpn_sta_tcp_trace_t s_tcp, s_ap_tcp;
+static uint64_t s_tcp_started, s_ap_tcp_started;
 static err_t output(struct netif *, struct pbuf *, const ip4_addr_t *);
 /* Default Wi-Fi netifs acquire output during start, after LAN registration. */
 static void attach_output(void)
@@ -47,16 +47,19 @@ static void w32(uint8_t *p, uint32_t n) { w16(p, n >> 16); w16(p + 2, n); }
 /* Local HTTP diagnostic flows only. Retain header metadata, never body bytes,
  * HTTP headers, credentials, or forwarded client traffic. RX precedes lwIP;
  * TX means accepted by host SDIO, not confirmed RF delivery. */
-static void sta_tcp(bool tx, const uint8_t *h, size_t n, size_t wire_len)
+static void wifi_tcp(bool ap, bool tx, const uint8_t *h, size_t n, size_t wire_len)
 {
-    if (!s_sta || n < 40 || h[0] >> 4 != 4 || h[9] != 6 || (h[6] & 0x3f) || h[7]) return;
+    struct netif *local_netif=ap?s_ap:s_sta;
+    meshvpn_sta_tcp_trace_t *trace=ap?&s_ap_tcp:&s_tcp;
+    uint64_t *started=ap?&s_ap_tcp_started:&s_tcp_started;
+    if (!local_netif || n < 40 || h[0] >> 4 != 4 || h[9] != 6 || (h[6] & 0x3f) || h[7]) return;
     unsigned ihl = (h[0] & 15) * 4, total = r16(h + 2);
     if (ihl < 20 || n < ihl + 20 || total < ihl + 20 || total > wire_len) return;
     const uint8_t *t = h + ihl; unsigned thl = (t[12] >> 4) * 4;
     if (thl < 20 || n < ihl + thl || total < ihl + thl) return;
     uint32_t local, peer;
     memcpy(&local, h + (tx ? 12 : 16), 4); memcpy(&peer, h + (tx ? 16 : 12), 4);
-    if (local != netif_ip4_addr(s_sta)->addr || r16(t + (tx ? 0 : 2)) != 80) return;
+    if (local != netif_ip4_addr(local_netif)->addr || r16(t + (tx ? 0 : 2)) != 80) return;
     meshvpn_sta_tcp_event_t e = {.seq=r32(t+4), .ack=r32(t+8), .flags=t[13],
         .window=r16(t+14), .payload=total-ihl-thl, .tx=tx};
     if (total <= n) {
@@ -79,30 +82,36 @@ static void sta_tcp(bool tx, const uint8_t *h, size_t n, size_t wire_len)
     }
     uint16_t port = r16(t + (tx ? 2 : 0)); uint64_t now = esp_timer_get_time();
     portENTER_CRITICAL(&s_flow_lock);
-    if (!tx && (e.flags & 0x12) == 2 && (!s_tcp.total_events || s_tcp.peer != peer ||
-        s_tcp.local != local || s_tcp.peer_port != port || s_tcp.initial_seq != e.seq)) {
-        memset(&s_tcp, 0, sizeof(s_tcp)); s_tcp_started = now;
-        s_tcp.peer=peer; s_tcp.local=local; s_tcp.peer_port=port; s_tcp.initial_seq=e.seq;
+    if (!tx && (e.flags & 0x12) == 2 && (!trace->total_events || trace->peer != peer ||
+        trace->local != local || trace->peer_port != port || trace->initial_seq != e.seq)) {
+        memset(trace, 0, sizeof(*trace)); (*started) = now;
+        trace->peer=peer; trace->local=local; trace->peer_port=port; trace->initial_seq=e.seq;
     }
-    if (s_tcp_started && s_tcp.peer == peer && s_tcp.local == local && s_tcp.peer_port == port) {
-        e.elapsed_ms = (now-s_tcp_started)/1000;
-        s_tcp.events[s_tcp.total_events++ % MESHPN_STA_TCP_EVENTS] = e;
-        s_tcp.packets[tx]++; s_tcp.data_bytes[tx] += e.payload;
-        s_tcp.checked[tx] += e.checksum_checked; s_tcp.bad_ip[tx] += e.bad_ip; s_tcp.bad_tcp[tx] += e.bad_tcp;
+    if ((*started) && trace->peer == peer && trace->local == local && trace->peer_port == port) {
+        e.elapsed_ms = (now-(*started))/1000;
+        trace->events[trace->total_events++ % MESHPN_STA_TCP_EVENTS] = e;
+        trace->packets[tx]++; trace->data_bytes[tx] += e.payload;
+        trace->checked[tx] += e.checksum_checked; trace->bad_ip[tx] += e.bad_ip; trace->bad_tcp[tx] += e.bad_tcp;
     }
     portEXIT_CRITICAL(&s_flow_lock);
 }
-void meshvpn_ap_probe_sta_tcp(meshvpn_sta_tcp_trace_t *out)
+static void tcp_snapshot(bool ap, meshvpn_sta_tcp_trace_t *out)
 {
+    meshvpn_sta_tcp_trace_t *trace=ap?&s_ap_tcp:&s_tcp;
+    uint64_t *started=ap?&s_ap_tcp_started:&s_tcp_started;
     uint64_t now = esp_timer_get_time();
     portENTER_CRITICAL(&s_flow_lock);
-    *out = s_tcp;
-    out->age_ms = s_tcp_started ? (now-s_tcp_started)/1000 : 0;
-    out->count = s_tcp.total_events < MESHPN_STA_TCP_EVENTS ? s_tcp.total_events : MESHPN_STA_TCP_EVENTS;
-    unsigned first = s_tcp.total_events-out->count;
-    for (unsigned i=0; i<out->count; i++) out->events[i] = s_tcp.events[(first+i)%MESHPN_STA_TCP_EVENTS];
+    *out = *trace;
+    out->age_ms = (*started) ? (now-(*started))/1000 : 0;
+    out->count = trace->total_events < MESHPN_STA_TCP_EVENTS ? trace->total_events : MESHPN_STA_TCP_EVENTS;
+    unsigned first = trace->total_events-out->count;
+    for (unsigned i=0; i<out->count; i++) out->events[i] = trace->events[(first+i)%MESHPN_STA_TCP_EVENTS];
     portEXIT_CRITICAL(&s_flow_lock);
 }
+static void sta_tcp(bool tx,const uint8_t *h,size_t n,size_t wire_len)
+{wifi_tcp(false,tx,h,n,wire_len);}
+void meshvpn_ap_probe_sta_tcp(meshvpn_sta_tcp_trace_t *out){tcp_snapshot(false,out);}
+void meshvpn_ap_probe_ap_tcp(meshvpn_sta_tcp_trace_t *out){tcp_snapshot(true,out);}
 static void checksum_sample(const struct pbuf *p, unsigned ifx)
 {
     portENTER_CRITICAL(&s_flow_lock);
@@ -162,11 +171,11 @@ static void flow(unsigned stage, const uint8_t *h, size_t n)
         meshvpn_ap_flow_t *f = &s_flows[i];
         if (!f->stages) continue;
         if (syn && f->dst == dst && f->dport == dport && f->seq == seq &&
-            (stage != 1 || (f->src == src && f->sport == sport))) match = i;
+            ((stage != 1 && stage != 32) || (f->src == src && f->sport == sport))) match = i;
         if (reply && f->dst == src && f->dport == sport && ack == f->seq + 1 &&
             (stage == 4 ? f->mapped_port == dport : f->sport == dport && f->src == dst)) match = i;
     }
-    if (stage == 1 && syn && match < 0) {
+    if ((stage == 1 || stage == 32) && syn && match < 0) {
         match = s_next++ % 8;
         s_flows[match] = (meshvpn_ap_flow_t){.src=src, .dst=dst, .seq=seq, .sport=sport, .dport=dport};
         s_flows[match].synthetic = s_probe.active && src == s_probe.client;
@@ -179,6 +188,38 @@ static void flow(unsigned stage, const uint8_t *h, size_t n)
     }
     portEXIT_CRITICAL(&s_flow_lock);
 }
+/* Bounded ARP headers only. Called before lwIP input / after SDIO acceptance;
+ * no packet mutation, payload retention, or access to mutable netif state. */
+static meshvpn_arp_event_t s_arp[8];
+static uint64_t s_arp_seen[8];
+static unsigned s_arp_next, s_arp_count;
+void meshvpn_ap_probe_arp(unsigned ifx, unsigned tx, const void *frame, unsigned len)
+{
+    const uint8_t *p=frame;
+    if(ifx>1 || !p || len<42 || r16(p+12)!=0x0806 || r16(p+14)!=1 ||
+       r16(p+16)!=0x0800 || p[18]!=6 || p[19]!=4 || (r16(p+20)!=1 && r16(p+20)!=2))return;
+    meshvpn_arp_event_t e={.ifx=ifx,.tx=!!tx,.operation=r16(p+20)};
+    memcpy(&e.sender,p+28,4);memcpy(&e.target,p+38,4);
+    memcpy(e.sender_mac,p+22,6);memcpy(e.target_mac,p+32,6);
+    memcpy(e.ethernet_source,p+6,6);memcpy(e.ethernet_target,p,6);
+    uint64_t now=esp_timer_get_time();
+    portENTER_CRITICAL(&s_flow_lock);
+    unsigned i=s_arp_next++%8;s_arp[i]=e;s_arp_seen[i]=now;
+    if(s_arp_count<8)s_arp_count++;
+    portEXIT_CRITICAL(&s_flow_lock);
+}
+unsigned meshvpn_ap_probe_arp_snapshot(meshvpn_arp_event_t out[8])
+{
+    uint64_t now=esp_timer_get_time();
+    portENTER_CRITICAL(&s_flow_lock);
+    unsigned count=s_arp_count;
+    for(unsigned i=0;i<count;i++) {
+        unsigned index=(s_arp_next-count+i)%8;
+        out[i]=s_arp[index];out[i].age_ms=(now-s_arp_seen[index])/1000;
+    }
+    portEXIT_CRITICAL(&s_flow_lock);
+    return count;
+}
 void meshvpn_ap_probe_flows(meshvpn_ap_flow_t out[8])
 {
     uint64_t now = esp_timer_get_time();
@@ -186,6 +227,11 @@ void meshvpn_ap_probe_flows(meshvpn_ap_flow_t out[8])
     memcpy(out, s_flows, sizeof(s_flows));
     for (unsigned i = 0; i < 8; i++) out[i].age_ms = (now - s_seen[i]) / 1000;
     portEXIT_CRITICAL(&s_flow_lock);
+}
+void meshvpn_ap_probe_usb_input(const struct pbuf *p, const struct netif *inp)
+{
+    uint8_t h[120];size_t n=pbuf_copy_partial(p,h,sizeof(h),0);
+    if(n>=20 && memcmp(h+16,&netif_ip4_addr(inp)->addr,4)) flow(32,h,n);
 }
 void meshvpn_ap_probe_input(const struct pbuf *p, const struct netif *inp)
 {
@@ -195,11 +241,13 @@ void meshvpn_ap_probe_input(const struct pbuf *p, const struct netif *inp)
     checksum_sample(p, inp == s_ap ? 1 : 0);
     uint8_t h[120]; size_t n = pbuf_copy_partial(p, h, sizeof(h), 0);
     if (inp == s_sta) sta_tcp(false, h, n, p->tot_len);
+    if (inp == s_ap) wifi_tcp(true, false, h, n, p->tot_len);
     if (inp == s_ap && n >= 20 && !memcmp(h + 16, &netif_ip4_addr(s_ap)->addr, 4)) return;
     flow(inp == s_ap ? 1 : 4, h, n);
 }
 void meshvpn_ap_probe_tx(unsigned ifx, const void *frame, size_t len)
 {
+    meshvpn_ap_probe_arp(ifx,1,frame,len);
     meshvpn_ap_echo_tx(ifx, frame, len);
     const uint8_t *p = frame;
     if (!p || len < 14 || p[12] != 8 || p[13]) return;
@@ -208,6 +256,7 @@ void meshvpn_ap_probe_tx(unsigned ifx, const void *frame, size_t len)
         checksum_sample(&packet, ifx + 2);
     }
     if (!ifx) sta_tcp(true, p+14, len-14, len-14);
+    if (ifx == 1) wifi_tcp(true, true, p+14, len-14, len-14);
     flow(ifx ? 16 : 2, p + 14, len - 14);
 }
 static err_t output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst)

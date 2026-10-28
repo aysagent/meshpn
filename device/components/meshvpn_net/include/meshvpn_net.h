@@ -11,6 +11,16 @@ extern "C" {
 #endif
 
 typedef struct {
+    char name[8];
+    uint32_t ip, netmask, gateway;
+    bool up, link, napt, is_default;
+    bool gateway_arp_known;
+    uint8_t mac[6];
+    uint8_t gateway_mac[6];
+} meshvpn_net_interface_t;
+typedef struct {
+    meshvpn_net_interface_t interfaces[8];
+    unsigned interface_count;
     bool bridge_running;
     bool wifi_uplink;
     uint32_t usb_subnet_octet2;

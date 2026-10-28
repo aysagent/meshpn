@@ -14,7 +14,8 @@ def patch(source):
         '    struct netif * netif = h;\n'
         "    unsigned meshpn_ifx = netif->name[0] == 's' && netif->name[1] == 't' ? 0 :\n"
         "                          netif->name[0] == 'a' && netif->name[1] == 'p' ? 1 : 2;\n"
-        '    meshvpn_hosted_rx_netif(meshpn_ifx, 0, len);\n')
+        '    meshvpn_hosted_rx_netif(meshpn_ifx, 0, len);\n'
+        '    meshvpn_ap_probe_arp(meshpn_ifx, 0, buffer, len);\n')
     one('    if(unlikely(!buffer || !netif_is_up(netif))) {\n',
         '    if(unlikely(!buffer || !netif_is_up(netif))) {\n'
         '        meshvpn_hosted_rx_netif(meshpn_ifx, 1, len);\n')
@@ -26,7 +27,8 @@ def patch(source):
     one('    return ESP_NETIF_OPTIONAL_RETURN_CODE(ESP_OK);',
         '    meshvpn_hosted_rx_netif(meshpn_ifx, 4, len);\n'
         '    return ESP_NETIF_OPTIONAL_RETURN_CODE(ESP_OK);')
-    return 'extern void meshvpn_hosted_rx_netif(unsigned, unsigned, unsigned);\n' + source
+    return ('extern void meshvpn_hosted_rx_netif(unsigned, unsigned, unsigned);\n'
+            'extern void meshvpn_ap_probe_arp(unsigned, unsigned, const void *, unsigned);\n' + source)
 
 
 if __name__ == '__main__':

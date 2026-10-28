@@ -13,10 +13,11 @@ import assert from 'node:assert/strict';
 import {startPeer, testAddress, testBody} from './vpn-local-peer.mjs';
 import {cleanStatus} from './perf-runner.mjs';
 import {sameSubnet} from './perf-lib.mjs';
+import {restoreVPN} from './vpn-local-restore.mjs';
 
 const execute = promisify(execFile);
 export async function localLab({gateway, board = process.env.BOARD || 'waveshare', address, iface,
-  host, out, certificate, privateKey, soakSeconds = 120, withoutPeer = false} = {}) {
+  host, out, certificate, privateKey, ca, serverName, pki, soakSeconds = 120, withoutPeer = false} = {}) {
   const profile = boardProfile(board);
   gateway ??= profile.usb;
   let adminHostname = profile.hostname;
@@ -27,11 +28,11 @@ export async function localLab({gateway, board = process.env.BOARD || 'waveshare
       (!iface || iface === name) && (!address || address === a.address)).map(a => ({iface: name, address: a.address})));
   if (candidates.length !== 1) throw Error('Expected one directly connected USB IPv4 interface');
   ({iface, address} = candidates[0]);
-  await fs.mkdir(path.dirname(path.resolve(out)), {recursive: true}); await fs.mkdir(out);
+  await fs.mkdir(path.dirname(path.resolve(out)), {recursive: true}); await fs.mkdir(out, {mode: 0o700});
   const result = {started: new Date().toISOString(), status: 'running',
     scope: withoutPeer ? 'P4 no-exit checks: public DIRECT control and negative tunnel/MTU tests' :
       'Synthetic local IPv4 peer; no internet exit or host network changes', tests: []};
-  let token, original, peer, direct, restored = false;
+  let token, original, originalCA, peer, direct, restored = false;
   const peers = [], controller = new AbortController();
   const stop = () => controller.abort();
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
@@ -127,10 +128,15 @@ export async function localLab({gateway, board = process.env.BOARD || 'waveshare
     assert.equal(initial.board, profile.name, 'Wrong board; refusing to change VPN settings');
     adminHostname = initial.hostname || profile.hostname;
     assert.equal(initial.net.usb_ip, gateway); assert(initial.wifi.connected, 'Board STA uplink required');
+    originalCA = (await api('/api/vpn/tls-ca')).data.ca_pem;
+    assert.equal(typeof originalCA, 'string');
     original = {enabled: initial.vpn.enabled, transport: initial.vpn.transport, server: initial.vpn.server,
       kill_switch: initial.vpn.kill_switch, tls_server_name: initial.vpn.tls_server_name ?? '',
       saved_servers: initial.vpn.saved_servers ?? {}, allow_plaintext: true};
+    await fs.writeFile(path.join(out,'restore.json'),JSON.stringify({board:profile.name,gateway,original,ca_pem:originalCA,restored:false},null,2),{mode:0o600});
     result.build = initial.build; result.boot_count = initial.boot_count;
+    if (!withoutPeer && (!certificate || !privateKey || !ca || !serverName))
+      throw Error('Require --cert, --key, --ca and --server-name for verified TLS');
     for (const type of withoutPeer ? [] : ['tcp', 'udp', 'tls']) {
       if (type === 'tls' && (!certificate || !privateKey)) throw Error('Local TLS certificate/key required');
       peer = await startPeer({host, type, cert: certificate && await fs.readFile(certificate),
@@ -138,7 +144,8 @@ export async function localLab({gateway, board = process.env.BOARD || 'waveshare
       peers.push(peer);
       console.log(`${type} peer ${host}:${peer.port}`);
       await test(`${type}: connect, HTTP, DNS and MSS`, async () => {
-        await config(type, `${host}:${peer.port}`); await waitState(true);
+        if (type === 'tls') await api('/api/vpn/tls-ca',{ca_pem:await fs.readFile(ca,'utf8')});
+        await config(type, `${host}:${peer.port}`, type === 'tls' ? {tls_server_name:serverName} : {}); await waitState(true);
         for (let i = 0; i < 3; i++) await curl(`http://${testAddress}/`);
         const answer = await dns(); assert.equal(answer.rcode, 0); assert.equal(answer.last4, testAddress);
         const local = await dns(initial.hostname || profile.hostname); assert.equal(local.last4, gateway);
@@ -161,12 +168,41 @@ export async function localLab({gateway, board = process.env.BOARD || 'waveshare
         return {connections: peer.stats.connections};
       });
       await snapshot(`${type}-finished`);
-      await config(type, `${host}:1`, {enabled: false}); await waitState(false);
+      await config(type, `${host}:1`, {enabled: false, tls_server_name:type === 'tls' ? serverName : ''}); await waitState(false);
       await peer.close(); peers.pop(); peer = null;
+    }
+    if (!withoutPeer && pki) for (const [variant, trust, name, reason] of [
+      ['valid','ca','wrong.meshpn.test','certificate_name_mismatch'],
+      ['valid','other',serverName,'certificate_untrusted'],
+      ['expired','ca',serverName,'certificate_expired'],
+      ['future','ca',serverName,'certificate_not_yet_valid']]) {
+      peer = await startPeer({host,type:'tls',key:await fs.readFile(privateKey),cert:await fs.readFile(path.join(pki,variant+'.pem'))});peers.push(peer);
+      await test('TLS rejection: '+reason, async()=>{
+        await api('/api/vpn/tls-ca',{ca_pem:await fs.readFile(path.join(pki,trust+'.pem'),'utf8')});
+        await config('tls',`${host}:${peer.port}`,{tls_server_name:name});
+        let checked=false;
+        for(let i=0;i<80;i++) {
+          if(controller.signal.aborted)throw Error('Interrupted');
+          await delay(250);const s=await status();
+          assert(!s.vpn.connected,'Invalid TLS identity accepted');
+          if(s.vpn.tls.last_handshake===reason){checked=true;break;}
+        }
+        assert(checked,'Expected TLS rejection reason not observed');
+        assert.equal(peer.stats.connections,0,'Rejected certificate reached application peer');
+        await curl(`http://${testAddress}/`,{ok:false,timeout:2});
+        return {reason,peer:structuredClone(peer.stats)};
+      });
+      await config('tls',`${host}:1`,{enabled:false,tls_server_name:serverName});
+      await peer.close();peers.pop();peer=null;
     }
     let url = 'http://1.1.1.1/', directBody = null;
     if (!withoutPeer) {
-      direct = http.createServer((req, res) => res.end('MeshPN direct baseline\n'));
+      direct = http.createServer((req, res) => {
+        // A request routed directly to this Mac would otherwise give a false
+        // DIRECT/kill-switch baseline. Require the board's translated STA IP.
+        if(req.socket.remoteAddress !== initial.wifi.ip){res.writeHead(409);res.end('wrong path');return;}
+        res.end('MeshPN direct baseline\n');
+      });
       await new Promise((resolve, reject) => { direct.once('error', reject); direct.listen(0, host, resolve); });
       url = `http://${host}:${direct.address().port}/`; directBody = 'MeshPN direct baseline\n';
     }
@@ -182,7 +218,8 @@ export async function localLab({gateway, board = process.env.BOARD || 'waveshare
     });
     if (withoutPeer) for (const type of ['udp', 'tls']) {
       await test(`${type}: no-exit HTTP/DNS stays blocked and admin responds`, async () => {
-        await config(type, `${host}:1`);
+        if(type==='tls' && ca) await api('/api/vpn/tls-ca',{ca_pem:await fs.readFile(ca,'utf8')});
+        await config(type, `${host}:1`,type==='tls'?{tls_server_name:serverName||original.tls_server_name}:{});
         await curl(url, {ok: false, timeout: 3});
         const answer = await dns(`blocked-${type}-night.invalid`); assert.equal(answer.rcode, 2);
         const s = await snapshot(`${type}-kill-switch`);
@@ -228,8 +265,13 @@ export async function localLab({gateway, board = process.env.BOARD || 'waveshare
   } catch (e) { result.status = 'failed'; result.error = e.message; }
   finally {
     if (original) {
-      try { await api('/api/vpn/config', original); restored = true; await snapshot('restored'); }
-      catch (e) { result.restore_error = e.message; }
+      try {
+        await restoreVPN({board:profile.name,gateway,original,ca_pem:originalCA},async (p,v)=>(await api(p,v)).data);
+        await snapshot('restored');
+        restored = true;
+        await fs.writeFile(path.join(out,'restore.json'),JSON.stringify({board:profile.name,gateway,original,ca_pem:originalCA,restored:true},null,2),{mode:0o600});
+      }
+      catch (e) { result.restore_error = e.message; result.status = 'failed'; }
     }
     for (const p of peers) await p.close().catch(() => {});
     if (direct) await new Promise(resolve => direct.close(resolve));
@@ -243,7 +285,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const options = {};
   for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === '--without-peer') { options.withoutPeer = true; continue; }
-    const key = {'--board': 'board', '--gateway': 'gateway', '--host': 'host', '--out': 'out', '--cert': 'certificate', '--key': 'privateKey', '--soak-seconds': 'soakSeconds'}[process.argv[i]];
+    const key = {'--board': 'board', '--gateway': 'gateway', '--host': 'host', '--out': 'out', '--cert': 'certificate', '--key': 'privateKey', '--ca': 'ca', '--server-name': 'serverName', '--pki': 'pki', '--soak-seconds': 'soakSeconds'}[process.argv[i]];
     if (!key || !process.argv[i + 1]) throw Error('Unknown option or missing value');
     options[key] = key === 'soakSeconds' ? Number(process.argv[++i]) : process.argv[++i];
   }

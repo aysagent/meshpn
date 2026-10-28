@@ -16,6 +16,7 @@
 #include <string.h>
 #include <math.h>
 #include "cJSON.h"
+#include "nvs.h"
 #include "esp_https_server.h"
 #include "esp_log.h"
 #include "esp_random.h"
@@ -48,6 +49,7 @@
 #include "sdkconfig.h"
 #if CONFIG_IDF_TARGET_ESP32P4
 #include "meshvpn_ap_probe.h"
+#include "meshvpn_net_bench.h"
 #endif
 
 static const char *TAG = "meshvpn_web";
@@ -303,13 +305,41 @@ static esp_err_t handler_link_download(httpd_req_t *req)
     return httpd_resp_send_chunk(req, NULL, 0);
 }
 static esp_err_t send_json(httpd_req_t *req, cJSON *root);
+static esp_err_t handler_arp_trace(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+#if CONFIG_IDF_TARGET_ESP32P4
+    meshvpn_arp_event_t events[8];unsigned count=meshvpn_ap_probe_arp_snapshot(events);
+    cJSON *out=cJSON_CreateObject(),*array=cJSON_AddArrayToObject(out,"events");
+    cJSON_AddStringToObject(out,"scope","last 8 ARP headers; RX before lwIP, TX accepted by SDIO, not RF delivery; no payload");
+    for(unsigned i=0;i<count;i++) {
+        const meshvpn_arp_event_t *e=&events[i];cJSON *v=cJSON_CreateObject();cJSON_AddItemToArray(array,v);
+        cJSON_AddStringToObject(v,"interface",e->ifx?"ap":"sta");cJSON_AddBoolToObject(v,"tx",e->tx);
+        cJSON_AddNumberToObject(v,"operation",e->operation);cJSON_AddNumberToObject(v,"age_ms",e->age_ms);
+        uint32_t ips[]={e->sender,e->target};const char *ip_names[]={"sender","target"};
+        for(unsigned j=0;j<2;j++){ip4_addr_t a={.addr=ips[j]};char text[16];ip4addr_ntoa_r(&a,text,sizeof(text));cJSON_AddStringToObject(v,ip_names[j],text);}
+        const uint8_t *macs[]={e->sender_mac,e->target_mac,e->ethernet_source,e->ethernet_target};
+        const char *names[]={"sender_mac","target_mac","ethernet_source","ethernet_target"};
+        for(unsigned j=0;j<4;j++){const uint8_t *m=macs[j];char text[18];snprintf(text,sizeof(text),"%02x:%02x:%02x:%02x:%02x:%02x",m[0],m[1],m[2],m[3],m[4],m[5]);cJSON_AddStringToObject(v,names[j],text);}
+    }
+    return send_json(req,out);
+#else
+    return error(req,"501 Not Implemented","ARP trace requires P4");
+#endif
+}
+
 static esp_err_t handler_sta_tcp_trace(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
 #if CONFIG_IDF_TARGET_ESP32P4
-    meshvpn_sta_tcp_trace_t trace; meshvpn_ap_probe_sta_tcp(&trace);
+    char query[32], iface[8];
+    bool ap=httpd_req_get_url_query_str(req,query,sizeof(query))==ESP_OK &&
+        httpd_query_key_value(query,"interface",iface,sizeof(iface))==ESP_OK && !strcmp(iface,"ap");
+    meshvpn_sta_tcp_trace_t trace;
+    if(ap) meshvpn_ap_probe_ap_tcp(&trace); else meshvpn_ap_probe_sta_tcp(&trace);
     cJSON *out = cJSON_CreateObject();
-    cJSON_AddStringToObject(out, "scope", "last STA-local HTTP TCP flow, RX before lwIP / TX accepted by SDIO, not RF delivery; last 64 headers only; bytes include repeats; SACK records first block; no payload");
+    cJSON_AddStringToObject(out, "scope", "last interface-local HTTP TCP flow, RX before lwIP / TX accepted by SDIO, not RF delivery; last 64 headers only; bytes include repeats; SACK records first block; no payload");
+    cJSON_AddStringToObject(out,"interface",ap?"ap":"sta");
     char address[16]; const uint8_t *b = (const uint8_t *)&trace.peer;
     snprintf(address, sizeof(address), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
     cJSON_AddStringToObject(out, "peer", address); b = (const uint8_t *)&trace.local;
@@ -382,6 +412,50 @@ static bool echo_number(cJSON *in, const char *name, unsigned minimum, unsigned 
     *out = (uint16_t)v->valuedouble; return true;
 }
 #endif
+static esp_err_t handler_net_bench(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+#if CONFIG_IDF_TARGET_ESP32P4
+    if (req->method == HTTP_POST) {
+        cJSON *in = body(req, 384);
+        if (!in) return ESP_FAIL;
+        if (cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(in, "cancel"))) {
+            meshvpn_net_bench_cancel(); cJSON_Delete(in);
+        } else {
+            meshvpn_net_bench_config_t c = {0}; ip4_addr_t ip;
+            cJSON *target = cJSON_GetObjectItemCaseSensitive(in, "target");
+            cJSON *protocol = cJSON_GetObjectItemCaseSensitive(in, "protocol");
+            cJSON *direction = cJSON_GetObjectItemCaseSensitive(in, "direction");
+            bool valid = cJSON_IsString(target) && ip4addr_aton(target->valuestring, &ip) &&
+                cJSON_IsString(protocol) && (!strcmp(protocol->valuestring,"tcp") || !strcmp(protocol->valuestring,"udp")) &&
+                cJSON_IsString(direction) && (!strcmp(direction->valuestring,"up") || !strcmp(direction->valuestring,"down")) &&
+                echo_number(in,"port",1024,65535,&c.port) && echo_number(in,"seconds",1,60,&c.seconds) &&
+                echo_number(in,"rate_kbps",64,32000,&c.rate_kbps);
+            if (valid) {c.target=ip.addr;c.udp=!strcmp(protocol->valuestring,"udp");c.download=!strcmp(direction->valuestring,"down");}
+            c.nonce=esp_random(); if (!c.nonce) c.nonce=1;
+            cJSON_Delete(in);
+            if (!valid) return error(req,"400 Bad Request","Invalid bounded network test configuration");
+            esp_err_t err=meshvpn_net_bench_start(&c);
+            if(err!=ESP_OK) return error(req,"409 Conflict",esp_err_to_name(err));
+        }
+    }
+    meshvpn_net_bench_result_t r;meshvpn_net_bench_status(&r);
+    cJSON *out=cJSON_CreateObject();
+    cJSON_AddBoolToObject(out,"running",r.running);
+    cJSON_AddNumberToObject(out,"nonce",r.nonce);
+    ip4_addr_t ip={.addr=r.source};char source[16];ip4addr_ntoa_r(&ip,source,sizeof(source));
+    cJSON_AddStringToObject(out,"source",source);
+    cJSON_AddNumberToObject(out,"bytes",r.bytes);
+    cJSON_AddNumberToObject(out,"packets",r.packets);
+    cJSON_AddNumberToObject(out,"invalid",r.invalid);
+    cJSON_AddNumberToObject(out,"stalls",r.stalls);
+    cJSON_AddNumberToObject(out,"elapsed_us",r.elapsed_us);
+    cJSON_AddNumberToObject(out,"error",r.error);
+    return send_json(req,out);
+#else
+    return error(req,"501 Not Implemented","Network benchmark requires P4");
+#endif
+}
 static esp_err_t handler_ap_echo(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -645,6 +719,21 @@ static esp_err_t handler_api_status(httpd_req_t *req)
 
     cJSON *net = cJSON_AddObjectToObject(root, "net");
     cJSON_AddBoolToObject(net, "bridge", ns.bridge_running);
+    cJSON *interfaces=cJSON_AddArrayToObject(net,"interfaces");
+    for(unsigned i=0;i<ns.interface_count;i++) {
+        const meshvpn_net_interface_t *v=&ns.interfaces[i];cJSON *entry=cJSON_CreateObject();cJSON_AddItemToArray(interfaces,entry);
+        cJSON_AddStringToObject(entry,"name",v->name);
+        char own_mac[18];snprintf(own_mac,sizeof(own_mac),"%02x:%02x:%02x:%02x:%02x:%02x",v->mac[0],v->mac[1],v->mac[2],v->mac[3],v->mac[4],v->mac[5]);
+        cJSON_AddStringToObject(entry,"mac",own_mac);
+        const uint32_t values[]={v->ip,v->netmask,v->gateway};const char *names[]={"ip","netmask","gateway"};
+        for(unsigned j=0;j<3;j++){ip4_addr_t a={.addr=values[j]};char text[16];ip4addr_ntoa_r(&a,text,sizeof(text));cJSON_AddStringToObject(entry,names[j],text);}
+        cJSON_AddBoolToObject(entry,"up",v->up);cJSON_AddBoolToObject(entry,"link",v->link);
+        cJSON_AddBoolToObject(entry,"napt",v->napt);cJSON_AddBoolToObject(entry,"default",v->is_default);
+        if(v->gateway_arp_known) {
+            char mac[18];snprintf(mac,sizeof(mac),"%02x:%02x:%02x:%02x:%02x:%02x",v->gateway_mac[0],v->gateway_mac[1],v->gateway_mac[2],v->gateway_mac[3],v->gateway_mac[4],v->gateway_mac[5]);
+            cJSON_AddStringToObject(entry,"gateway_arp_mac",mac);
+        } else cJSON_AddNullToObject(entry,"gateway_arp_mac");
+    }
     cJSON_AddStringToObject(net, "usb_ip", ns.usb_ip);
     cJSON_AddStringToObject(net, "ap_ip", ns.ap_ip);
     cJSON_AddBoolToObject(net, "usb_napt", ns.usb_napt);
@@ -670,7 +759,7 @@ static esp_err_t handler_api_status(httpd_req_t *req)
 #undef CS_FIELD
         }
     }
-    cJSON_AddStringToObject(net, "ap_tcp_flow_scope", "last 8 handshake tuples; stages 1=AP input,2=STA SDIO accepted,4=STA reply input,8=AP IPv4 output,16=AP SDIO accepted; no RF delivery proof; STA stages apply to DIRECT mode");
+    cJSON_AddStringToObject(net, "ap_tcp_flow_scope", "last 8 handshake tuples; stages 1=AP input,2=STA SDIO accepted,4=STA reply input,8=AP IPv4 output,16=AP SDIO accepted,32=USB input; no RF delivery proof; STA stages apply to DIRECT mode");
     cJSON *flow_list = cJSON_AddArrayToObject(net, "ap_tcp_flows");
     for (unsigned i = 0; i < 8; i++) if (flows[i].stages) {
         meshvpn_ap_flow_t *f = &flows[i]; cJSON *v = cJSON_CreateObject(); cJSON_AddItemToArray(flow_list, v);
@@ -1262,6 +1351,16 @@ static void vpn_wipe(void *p, size_t len);
 static esp_err_t handler_vpn_ca(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    if (req->method == HTTP_GET) {
+        char *pem=NULL;
+        esp_err_t loaded=meshvpn_vpn_ca_load(&pem);
+        if (loaded!=ESP_OK && loaded!=ESP_ERR_NVS_NOT_FOUND)
+            return error(req,"503 Service Unavailable","Cannot read saved TLS CA");
+        cJSON *out=cJSON_CreateObject();
+        cJSON_AddStringToObject(out,"ca_pem",pem?pem:"");
+        free(pem);
+        return send_json(req,out);
+    }
     cJSON *in = body(req, MESHVPN_VPN_CA_MAX * 2 + 128);
     if (!in) return ESP_FAIL;
     meshvpn_vpn_config_t cfg = {0};
@@ -1519,7 +1618,7 @@ esp_err_t meshvpn_web_start(void)
     if (err != ESP_OK) return err;
     s_https = s_https_configured;
     httpd_config_t server = HTTPD_DEFAULT_CONFIG();
-    server.max_uri_handlers = 36;
+    server.max_uri_handlers = 40;
     server.uri_match_fn = httpd_uri_match_wildcard;
     /* HTTP's observed high-water mark leaves >3 KiB spare at 9 KiB.
      * Keep the larger stack for HTTPS handshakes. */
@@ -1581,6 +1680,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/certificate", HTTP_GET, handler_certificate), ROUTE("/api/certificate", HTTP_POST, handler_certificate),
         ROUTE("/api/vpn/config", HTTP_POST, handler_vpn_config),
         ROUTE("/api/vpn/tls-ca", HTTP_POST, handler_vpn_ca),
+        ROUTE("/api/vpn/tls-ca", HTTP_GET, handler_vpn_ca),
         ROUTE("/api/vpn/restart", HTTP_POST, handler_vpn_restart),
         ROUTE("/api/vpn/check", HTTP_POST, handler_vpn_check),
         ROUTE("/api/routing/rules", HTTP_POST, handler_unimplemented),
@@ -1591,7 +1691,10 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/diag/link-upload", HTTP_POST, handler_link_upload),
         ROUTE("/api/diag/ap-forward", HTTP_POST, handler_ap_forward_probe),
         ROUTE("/api/diag/ap-echo", HTTP_POST, handler_ap_echo),
+        ROUTE("/api/diag/net-bench", HTTP_GET, handler_net_bench),
+        ROUTE("/api/diag/net-bench", HTTP_POST, handler_net_bench),
         ROUTE("/api/diag/sta-tcp", HTTP_GET, handler_sta_tcp_trace),
+        ROUTE("/api/diag/arp", HTTP_GET, handler_arp_trace),
         ROUTE("/api/diag/usb-bursts", HTTP_GET, handler_usb_bursts),
         ROUTE("/*", HTTP_GET, handler_captive),
     };

@@ -132,7 +132,7 @@ class Board:
                     raise
                 time.sleep(1.1)
 
-    def transfer(self, address, direction, deadline):
+    def transfer(self, address, direction, deadline, source=None, iface=None):
         """Count only consumed response bytes; upload requires board receipt JSON."""
         row = {'address': address, 'direction': direction, 'complete': False, 'bytes': 0}
         started = time.monotonic()
@@ -143,10 +143,18 @@ class Board:
         conn = None
         try:
             route.connect((address, 80))
-            source = route.getsockname()[0]
+            source = source or route.getsockname()[0]
             row['source'] = source
             conn = http.client.HTTPConnection(address, 80, timeout=min(5, duration), source_address=(source, 0))
-            conn.connect()
+            if iface:
+                # macOS IP_BOUND_IF forces the test through the selected USB NIC.
+                conn.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                conn.sock.settimeout(min(5, duration))
+                conn.sock.setsockopt(socket.IPPROTO_IP, 25, socket.if_nametoindex(iface))
+                conn.sock.bind((source, 0))
+                conn.sock.connect((address, 80))
+            else:
+                conn.connect()
             row['connect_s'] = time.monotonic() - started
             row['source_port'] = conn.sock.getsockname()[1]
             conn.sock.settimeout(min(3, duration))

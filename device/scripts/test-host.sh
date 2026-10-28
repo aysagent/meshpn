@@ -34,6 +34,7 @@ node device/tests/test-vpn-routing.mjs
 node device/tests/test-vpn-dns.mjs
 node device/tests/test-vpn-storage.mjs
 node device/tests/test-vpn-probe.mjs
+node device/tests/test-vpn-local-restore.mjs
 node device/tests/test-wg-clock.mjs
 node device/tests/test-vpn-ingress.mjs
 node device/tests/test-vpn-queue.mjs
@@ -83,6 +84,9 @@ fi
   device/tests/test_hosted_tx.c -o "$test_dir/hosted-tx"
 "$test_dir/hosted-tx"
 node device/tests/test-ap-probe.mjs
+python3 -m unittest discover -s device/tests -p test_p4_net_peer.py
+python3 device/tests/test-net-bench.py
+python3 -m unittest discover -s device/tests -p test_dual_restore.py
 "$cc" "${flags[@]}" -pthread -Idevice/tests/led_stubs -Idevice/tests/usb_stubs \
   -Idevice/components/meshvpn_board/include device/tests/test_board_led.c \
   device/components/meshvpn_board/meshvpn_board_led.c -o "$test_dir/board-led"

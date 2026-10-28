@@ -53,6 +53,14 @@ esp_err_t meshvpn_vpn_ca_load(char **pem)
     if (err != ESP_OK) return err;
     size_t n = 0;
     err = nvs_get_blob(h, "vpn_tls_ca", NULL, &n);
+    if (err == ESP_OK && n == 1) {
+        /* ca_save("") stores a NUL tombstone. Distinguish an intentional
+         * removal from corrupt/truncated storage without accepting either
+         * as TLS trust or hiding a storage read failure. */
+        char empty = 1;
+        err = nvs_get_blob(h, "vpn_tls_ca", &empty, &n);
+        if (err == ESP_OK) err = n == 1 && empty == 0 ? ESP_ERR_NVS_NOT_FOUND : ESP_ERR_INVALID_SIZE;
+    }
     if (err == ESP_OK && (n <= 1 || n > MESHVPN_VPN_CA_MAX + 1)) err = ESP_ERR_INVALID_SIZE;
     char *p = NULL;
     if (err == ESP_OK) {

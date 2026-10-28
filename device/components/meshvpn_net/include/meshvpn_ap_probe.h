@@ -7,6 +7,14 @@
 struct netif;
 struct pbuf;
 typedef struct {
+    uint32_t sender, target;
+    uint8_t sender_mac[6], target_mac[6], ethernet_source[6], ethernet_target[6];
+    uint8_t ifx, tx, operation;
+    uint64_t age_ms;
+} meshvpn_arp_event_t;
+void meshvpn_ap_probe_arp(unsigned ifx, unsigned tx, const void *frame, unsigned len);
+unsigned meshvpn_ap_probe_arp_snapshot(meshvpn_arp_event_t out[8]);
+typedef struct {
     uint32_t src, dst, seq;
     uint16_t sport, dport, mapped_port;
     uint8_t stages, reply_flags;
@@ -36,7 +44,9 @@ typedef struct {
     meshvpn_sta_tcp_event_t events[MESHPN_STA_TCP_EVENTS];
 } meshvpn_sta_tcp_trace_t;
 void meshvpn_ap_probe_sta_tcp(meshvpn_sta_tcp_trace_t *out);
+void meshvpn_ap_probe_ap_tcp(meshvpn_sta_tcp_trace_t *out);
 void meshvpn_ap_probe_attach(struct netif *ap, struct netif *sta);
+void meshvpn_ap_probe_usb_input(const struct pbuf *p, const struct netif *inp);
 void meshvpn_ap_probe_input(const struct pbuf *p, const struct netif *inp);
 void meshvpn_ap_probe_tx(unsigned ifx, const void *frame, size_t len);
 void meshvpn_ap_probe_flows(meshvpn_ap_flow_t out[8]);

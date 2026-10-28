@@ -15,6 +15,7 @@
 #include "esp_netif_net_stack.h"
 #include "lwip/lwip_napt.h"
 #include "lwip/netif.h"
+#include "lwip/etharp.h"
 #include "meshvpn_usb.h"
 #include "meshvpn_wifi.h"
 #include "meshvpn_wifi_radio.h"
@@ -535,10 +536,31 @@ void meshvpn_net_log_state(void)
 #endif
 }
 
+static esp_err_t interface_snapshot(void *arg)
+{
+    meshvpn_net_status_t *s=arg;struct netif *n;
+    NETIF_FOREACH(n) {
+        if(s->interface_count>=8)break;
+        meshvpn_net_interface_t *v=&s->interfaces[s->interface_count++];
+        snprintf(v->name,sizeof(v->name),"%c%c%u",n->name[0],n->name[1],n->num);
+        v->ip=netif_ip4_addr(n)->addr;v->netmask=netif_ip4_netmask(n)->addr;v->gateway=netif_ip4_gw(n)->addr;
+        v->up=netif_is_up(n);v->link=netif_is_link_up(n);v->napt=n->napt;v->is_default=n==netif_default;
+        if(n->hwaddr_len==sizeof(v->mac))memcpy(v->mac,n->hwaddr,sizeof(v->mac));
+        struct eth_addr *mac; const ip4_addr_t *address;
+        if (!ip4_addr_isany_val(*netif_ip4_gw(n)) &&
+            etharp_find_addr(n,netif_ip4_gw(n),&mac,&address)>=0) {
+            v->gateway_arp_known=true;
+            memcpy(v->gateway_mac,mac->addr,sizeof(v->gateway_mac));
+        }
+    }
+    return ESP_OK;
+}
+
 void meshvpn_net_get_status(meshvpn_net_status_t *status)
 {
     memset(status, 0, sizeof(*status));
     status->bridge_running = s_bridge_running;
+    esp_netif_tcpip_exec(interface_snapshot,status);
     esp_netif_ip_info_t ip = {0};
     esp_netif_get_ip_info(s_usb_netif, &ip);
     status->usb_subnet_octet2 = esp_ip4_addr3(&ip.ip);

@@ -4,7 +4,7 @@ set(meshvpn_net_requires
 if(NOT IDF_TARGET STREQUAL "esp32p4")
     list(APPEND meshvpn_net_requires iot_bridge)
 else()
-    set(meshvpn_ap_probe_source "meshvpn_ap_probe.c" "meshvpn_ap_echo.c")
+    set(meshvpn_ap_probe_source "meshvpn_ap_probe.c" "meshvpn_ap_echo.c" "meshvpn_net_bench.c")
 endif()
 
 idf_component_register(

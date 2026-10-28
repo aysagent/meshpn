@@ -65,6 +65,9 @@ int meshvpn_hook_ip4_input(struct pbuf *p, struct netif *inp)
     if (meshvpn_vpn_input(p, inp)) return 1;
 #endif
     if (inp == s_usb) {
+#if CONFIG_IDF_TARGET_ESP32P4
+        meshvpn_ap_probe_usb_input(p,inp);
+#endif
         s_lan_ip4_rx++;
         return 0;
     }
