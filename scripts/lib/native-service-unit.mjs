@@ -1,7 +1,8 @@
 // Pure renderer: no host writes, network mutations, enable/start or secrets.
 import path from 'node:path';
 import { clockUnitName } from './native-clock-unit.mjs';
-export function nativeServiceUnit({ binary, config, networkUnit, guardUnit, transport = 'boring-tls', replayDirectory, clockRecoveryUnit, role }) {
+export function nativeServiceUnit({ binary, config, networkUnit, guardUnit, transport = 'boring-tls', replayDirectory, clockRecoveryUnit, role, scopedExit = false }) {
+  if (scopedExit && (role !== 'exit' || transport !== 'boring-tls' || networkUnit !== guardUnit)) throw Error('native_service_scoped_exit_only');
   if (clockRecoveryUnit !== undefined) {
     clockUnitName(clockRecoveryUnit);
     if (role !== 'client' || transport !== 'boring-tls' || [networkUnit,guardUnit].includes(clockRecoveryUnit)) throw Error('clock_recovery_boring_client_only');
@@ -16,12 +17,13 @@ export function nativeServiceUnit({ binary, config, networkUnit, guardUnit, tran
     if (typeof name !== 'string' || !/^[a-zA-Z0-9_-]+\.service$/.test(name))
       throw Error('native_service_protection_dependency_required');
   }
-  if (networkUnit === guardUnit) throw Error('native_service_distinct_dependencies_required');
+  if (networkUnit === guardUnit && !scopedExit) throw Error('native_service_distinct_dependencies_required');
+  const protections = [...new Set([networkUnit,guardUnit])].join(' ');
   return `[Unit]
 Description=clean-vpn native data plane
-${clockRecoveryUnit ? `OnFailure=${clockRecoveryUnit}\n` : ''}Requires=${networkUnit} ${guardUnit}
-After=${networkUnit} ${guardUnit}
-BindsTo=${networkUnit} ${guardUnit}
+${clockRecoveryUnit ? `OnFailure=${clockRecoveryUnit}\n` : ''}Requires=${protections}
+After=${protections}
+BindsTo=${protections}
 StartLimitIntervalSec=60
 StartLimitBurst=10
 

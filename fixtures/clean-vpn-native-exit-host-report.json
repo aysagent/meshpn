@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "kind": "native-existing-exit-lab",
+  "status": "passed",
+  "kernel": {
+    "status": "passed",
+    "checks": 23,
+    "scope": "real netns TUN/routes/iptables; systemd state injected; no payload or physical host"
+  },
+  "systemd": {
+    "status": "passed",
+    "checks": [
+      "fresh exit installation remains stopped",
+      "binary updater binds owned exit units",
+      "actual forwarding NAT HTTPS and UDP TCP DNS",
+      "exit engine crash recovers with owner retained",
+      "exit owner crash cleans then recreates scoped network",
+      "exit binary update retains forwarding",
+      "bad exit binary rolls back and restores traffic",
+      "stop restores foreign firewall routes and forwarding exactly",
+      "stopped exit has no client direct fallback",
+      "exit restarts without client intervention",
+      "final scoped cleanup"
+    ],
+    "scope": "disposable NIC-less systemd container; real native TUN forwarding and NAT; separate origin; not physical boot"
+  },
+  "clientKernelRegression": {
+    "status": "passed",
+    "checks": 21,
+    "scope": "real-netns-TUN-DNS-routes-NAT; systemd state injected; no VPN payload or reboot"
+  },
+  "unitAndInstallerTests": {
+    "passed": 32,
+    "failed": 0,
+    "skipped": 0
+  },
+  "sources": {
+    "scripts/lib/native-exit-host-network.mjs": "512cd2d9778a3e6089e3ddf08d0e03fdfc3c2f01b850a4ff41a7bb5b903897d9",
+    "scripts/lib/native-exit-host-plan.mjs": "29906416dbd2f6d33bbd1aeae97ad16ab055e10f4c78c7a229ae34f724355869",
+    "scripts/clean-vpn-native-exit-host.mjs": "8bb88a99f3c086a4cf0e6eaef3fc5eeaddd808bf98f1e8bfc2965dffacd3c6f0",
+    "scripts/lib/native-install.mjs": "19b5ac2f48b302e9f0019894491c9b0b8f1ffad3beec23bf8164a4f1b959ca55",
+    "scripts/lib/native-service-unit.mjs": "e752abbfa45b7391b76013543aea2fdf9c5e36bf1ee7062bc9ada20f85561f85",
+    "scripts/lib/native-host-store.mjs": "94af535e37c0767c81418272dce328511c96e1077a325787e76e86b609162140",
+    "scripts/clean-vpn-native-tun.py": "e0523deb762058a9b37f4fa7ece09b474f54f8e3fd621ba7a932f97a6da49b8f",
+    "scripts/lib/native-exit-host-systemd-lab.mjs": "7f593161bac9a5c36c4c2ed3670ec6ed24ef9b45a276725e17e89bd159e240a0",
+    "scripts/test-native-exit-host-linux.mjs": "d1cdc5edf4cc4e978e31be6994128a89ea6f4fe24e83ef1f08b2fe0f6fa8d476",
+    "scripts/test-native-exit-host-plan.mjs": "d09c99d098f49bb337f809b1e11f578a819392e40d3237aebbface266817b139",
+    "scripts/test-native-install.mjs": "4a93497b0730c85ebcca283a6656a78729a413ad54a86995844c908ee325b91f"
+  },
+  "limitations": [
+    "isolated ARM64 Linux kernel and systemd container, no physical VPS",
+    "single live native client in this matrix; separate engine multi-peer coverage is not this test",
+    "requires forwarding=1, no host global-forwarding mutation",
+    "no arbitrary routing policy, no IPv6 payload or transparent/combo host profile",
+    "no concurrent external administrator of owned TUN/rules/subnet",
+    "boot matrix recorded separately after completion"
+  ],
+  "observations": [
+    "Initial tmpfs fixture had unsafe /run mode; fixed fixture to 0755, retained strict production permission check.",
+    "Initial plan/journal validators had incorrect expected key ordering; corrected before successful kernel/systemd runs.",
+    "One cached image test expected old KillMode; current repository tests passed 32/32."
+  ]
+}

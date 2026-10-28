@@ -14,9 +14,10 @@ export function readNativePrivate(file,limit=16384){
   const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
   try{const s=fs.fstatSync(fd);assert.ok(s.isFile()&&s.uid===0&&s.nlink===1&&(s.mode&0o777)===0o600&&s.size>0&&s.size<=limit,'native_private_file');return JSON.parse(fs.readFileSync(fd,'utf8'));}finally{fs.closeSync(fd);}
 }
-export function openNativeHostStore(){
+export function openNativeHostStore({kind='client'}={}){
   assert.equal(process.platform,'linux');assert.equal(process.getuid(),0);
-  const dir='/run/clean-vpn-native-host-'+nativeHostScope().net.match(/\d+/)[0];
+  assert.ok(['client','exit'].includes(kind));
+  const dir=(kind==='exit'?'/run/clean-vpn-native-exit-host-':'/run/clean-vpn-native-host-')+nativeHostScope().net.match(/\d+/)[0];
   const parent=fs.lstatSync('/run');assert.ok(parent.isDirectory()&&!parent.isSymbolicLink()&&parent.uid===0&&!(parent.mode&0o022));
   try{fs.mkdirSync(dir,{mode:0o700});}catch(e){if(e.code!=='EEXIST')throw e;}
   const d=fs.openSync(dir,fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);

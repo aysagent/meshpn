@@ -94,6 +94,22 @@ test('native fresh installer: dry run, secret relocation, collision and crash pu
   assert.equal(installNative({ ...exit, apply: true }).status, 'installed-disabled');
   assert.equal(JSON.parse(fs.readFileSync(exit.root + '/opt/clean-vpn-native/exit/config.json')).peers[0].secret_path,
     '/opt/clean-vpn-native/exit/peer-0.psk');
+  const scoped = make('scopedexit');
+  fs.writeFileSync(scoped.config, JSON.stringify({version:1,role:'exit',address:'192.0.2.1',port:443,
+    tun:'cvexit0',cert,key,peers:[{ipv4:'10.99.0.2',secret_path:psk}]}));
+  scoped.exitProfile=scoped.root+'/exit-host.json';fs.writeFileSync(scoped.exitProfile,JSON.stringify({version:1,uplink:'eth0'}),{mode:0o600});
+  assert.throws(()=>installNative(scoped),/conflicting_host_dependencies/);
+  delete scoped.networkUnit;delete scoped.guardUnit;
+  assert.equal(installNative(scoped).status,'eligible');
+  assert.ok(!fs.existsSync(scoped.root+'/opt/clean-vpn-native'));
+  assert.equal(installNative({...scoped,apply:true}).activation,'native-scopedexit-network.service');
+  const scopedBundle=scoped.root+'/opt/clean-vpn-native/scopedexit';
+  const scopedManifest=JSON.parse(fs.readFileSync(scopedBundle+'/installed.json'));
+  assert.deepEqual(scopedManifest.dependencies,{});assert.equal(scopedManifest.networkUnit,scopedManifest.guardUnit);
+  assert.ok(fs.existsSync(scopedBundle+'/control/clean-vpn-native-exit-host.mjs'));
+  const scopedUnit=fs.readFileSync(scoped.root+'/etc/systemd/system/native-scopedexit.service','utf8');
+  assert.match(scopedUnit,/BindsTo=native-scopedexit-network.service\n/);assert.ok(!scopedUnit.includes('WantedBy='));
+  assert.throws(()=>installNative({...scoped,apply:true}),/instance_already_present/);
   for (const cut of [null, 'unit:native-sitecut-network.service', 'unit:native-sitecut.service']) {
     const name = cut ? 'sitecut' + (cut.endsWith('-network.service') ? '' : 'two') : 'site';
     const o = make(name); delete o.networkUnit; delete o.guardUnit;

@@ -9,6 +9,7 @@ import { nativeClockRecoveryUnit } from './native-clock-unit.mjs';
 import { isIPv4 } from 'node:net';
 import { nativeSitePlan, nativeSiteSources } from './native-site-plan.mjs';
 import { nativeHostPlan, nativeHostSources } from './native-host-plan.mjs';
+import { nativeExitHostPlan } from './native-exit-host-plan.mjs';
 import { fileURLToPath } from 'node:url';
 const hash = b => createHash('sha256').update(b).digest('hex');
 const need = (v, code) => { if (!v) throw Error(code); };
@@ -46,7 +47,7 @@ function exclusive(p, data, mode) {
   const fd = fs.openSync(p, 'wx', mode);
   try { fs.fchmodSync(fd, mode); fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
-export function installNative({ root = '/', name, binary, config, networkUnit, guardUnit, siteProfile, hostProfile, clockProfile, apply = false }, { fault = () => {} } = {}) {
+export function installNative({ root = '/', name, binary, config, networkUnit, guardUnit, siteProfile, hostProfile, exitProfile, clockProfile, apply = false }, { fault = () => {} } = {}) {
   need(typeof apply === 'boolean', 'invalid_apply');
   safePath(root);
   need(/^[a-z][a-z0-9-]{0,31}$/.test(name ?? ''), 'invalid_instance');
@@ -66,8 +67,9 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   const capability = JSON.parse(execFileSync(binary, ['--capabilities'], { encoding: 'utf8', timeout: 5000, maxBuffer: 16384 }));
   need(capability.engine === 'clean-vpn-native-m1' && capability.packet_ipc === false && capability.service_mode === true, 'not_native_service_engine');
   execFileSync(binary, ['--check-config', config], { timeout: 10000, stdio: 'pipe', maxBuffer: 16384 });
-  need(!hostProfile || (!siteProfile && networkUnit === undefined && guardUnit === undefined), 'conflicting_host_dependencies');
-  const host = hostProfile ? nativeHostPlan({name,target,profile:JSON.parse(regular(hostProfile,8192,true)),engine:input,capability,node:fs.realpathSync(process.execPath)}) : null;
+  need(!(hostProfile||exitProfile) || (!siteProfile && !(hostProfile&&exitProfile) && networkUnit === undefined && guardUnit === undefined), 'conflicting_host_dependencies');
+  const host = hostProfile ? nativeHostPlan({name,target,profile:JSON.parse(regular(hostProfile,8192,true)),engine:input,capability,node:fs.realpathSync(process.execPath)})
+    : exitProfile ? nativeExitHostPlan({name,target,profile:JSON.parse(regular(exitProfile,8192,true)),engine:input,node:fs.realpathSync(process.execPath)}) : null;
   if(host){networkUnit=host.network;guardUnit=host.guard;}
   need(!siteProfile || (networkUnit === undefined && guardUnit === undefined), 'conflicting_site_dependencies');
   const site = siteProfile ? nativeSitePlan({ name, target, site: JSON.parse(regular(siteProfile, 16384, true)), engine: input, capability }) : null;
@@ -79,7 +81,7 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     need(clock.version === 1 && isIPv4(clock.host) && clock.host === input.address && Number.isInteger(clock.port) && clock.port > 0 && clock.port < 65536 && /^[a-z][a-z0-9_-]{0,31}$/.test(clock.user), 'clock_profile_invalid');
     need(![networkUnit,guardUnit].includes(clockUnit), 'clock_dependency_cycle');
   }
-  const units = site?.units ?? new Map([[unitName, nativeServiceUnit({ binary: target + '/engine', config: target + '/config.json', networkUnit, guardUnit, role: input.role, ...(clock ? {clockRecoveryUnit: clockUnit} : {}) })]]);
+  const units = site?.units ?? new Map([[unitName, nativeServiceUnit({ binary: target + '/engine', config: target + '/config.json', networkUnit, guardUnit, role: input.role, scopedExit:host?.scopedExit??false, ...(clock ? {clockRecoveryUnit: clockUnit} : {}) })]]);
   if(host){
     // Network owner starts the engine only after preparation. It alone is
     // enabled at boot; direct engine enable is deliberately not offered.
@@ -149,7 +151,7 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   }
   if(host){
     for(const [n,body] of host.files)files.set(n,{bytes:Buffer.from(body),mode:0o600});
-    for(const n of nativeHostSources)files.set('control/'+n,{bytes:regular(fileURLToPath(new URL('../'+n,import.meta.url)),128*1024),mode:0o644});
+    for(const n of host.sources??nativeHostSources)files.set('control/'+n,{bytes:regular(fileURLToPath(new URL('../'+n,import.meta.url)),128*1024),mode:0o644});
     for(const [n,body] of units)files.set('units/'+n,{bytes:Buffer.from(body),mode:0o644});
   }
   const manifest = { schema: 1, kind: 'clean-vpn-native-install', name, role: input.role, unit: unitName,
