@@ -75,7 +75,7 @@ try {
     for(const lib of execFileSync('ldd',[bin],{encoding:'utf8'}).match(/\/[^\s()]+/g)??[])put(lib,fs.readFileSync(lib),0o755);
   }
   for(const name of ['scripts/clean-vpn-native.mjs','scripts/lib/native-engine-controller.mjs'])put('/project/'+name,fs.readFileSync(name));
-  for(const bin of ['/usr/sbin/sshd','/usr/bin/ssh','/usr/bin/ssh-keygen','/usr/bin/tcpdump',...(systemdNative?['/usr/bin/journalctl']:[])]){
+  for(const bin of ['/usr/sbin/sshd','/usr/bin/ssh','/usr/bin/ssh-keygen','/usr/bin/tcpdump',...(systemdNative?['/usr/bin/journalctl','/usr/bin/systemd-run']:[])]){
     put(bin,fs.readFileSync(bin),0o755);for(const lib of execFileSync('ldd',[bin],{encoding:'utf8'}).match(/\/[^\s()]+/g)??[])put(lib,fs.readFileSync(lib),0o755);
   }
   for(const name of ['admin','host'])execFileSync('ssh-keygen',['-q','-t','ed25519','-N','','-f',join(root,name)]);

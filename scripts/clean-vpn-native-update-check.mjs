@@ -97,7 +97,10 @@ async function worker(id){
     const child=spawn(node,[root+'/scripts/clean-vpn-native-update.mjs','--apply',client,hanging,hash(fs.readFileSync(hanging))],{stdio:'ignore'});
     const finished=new Promise(resolve=>{child.once('error',()=>resolve(-1));child.once('close',resolve);});
     await wait(()=>fs.existsSync(current+'/binary-updates/transaction.json')&&hash(fs.readFileSync(current+'/engine'))===hash(fs.readFileSync(hanging)));
-    ctl('kill','--kill-whom=all','--signal=SIGKILL','native-'+client+'-binary-update.service');
+    // Killing the main worker exercises systemd's KillMode=control-group and
+    // ExecStopPost. --kill-whom=all may fail on auxiliary process signaling on
+    // some host systemd/kernel combinations even after signaling the main PID.
+    ctl('kill','--kill-whom=main','--signal=SIGKILL','native-'+client+'-binary-update.service');
     await finished;
     await wait(()=>!fs.existsSync(current+'/binary-updates/transaction.json')&&prop(cunit,'ActiveState')==='active');
     check('worker-sigkill-recovery',hash(fs.readFileSync(current+'/engine'))===hash(original)&&prop(cunit,'StatusText')==='ready');
