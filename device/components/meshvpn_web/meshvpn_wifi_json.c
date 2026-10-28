@@ -208,6 +208,12 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
         for (unsigned j = 0; j < 5; j++) cJSON_AddNumberToObject(entry, rx_names[j], staged.rx_netif[i][j]);
         cJSON_AddNumberToObject(entry, "bytes", staged.rx_netif_bytes[i]);
     }
+    cJSON *cache = cJSON_AddObjectToObject(hosted, "dma_cache");
+    cJSON_AddBoolToObject(cache, "available", staged.dma_cache_available);
+    cJSON_AddNumberToObject(cache, "cached_blocks", staged.dma_cache_blocks);
+    cJSON_AddNumberToObject(cache, "block_bytes", staged.dma_cache_block_bytes);
+    cJSON_AddNumberToObject(cache, "cached_bytes", (double)staged.dma_cache_blocks * staged.dma_cache_block_bytes);
+    cJSON_AddStringToObject(cache, "scope", "free buffers retained by Hosted for reuse; excludes in-flight buffers, allocator overhead and reserved SDIO RX stream; separate snapshot from queues");
     cJSON *queues = cJSON_AddObjectToObject(hosted, "tx_queue");
     cJSON_AddBoolToObject(queues, "enabled", staged.enabled);
     cJSON_AddStringToObject(queues, "scope", "since boot; uncontended direct SDIO handoff, congestion staged in owned PSRAM copies; sent includes direct_sent, not RF delivery; residence_us covers released staged copies; losses = full + invalid + not_ready + expired + stale + policy_changed + failed");

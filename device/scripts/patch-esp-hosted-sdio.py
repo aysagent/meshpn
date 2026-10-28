@@ -156,6 +156,32 @@ RX_COMPLETE_SYNC = """\t\t// Process before reusing the only DMA buffer. The SDI
 
 
 def patch(source: str) -> str:
+    # os_wrapper.h otherwise includes mempool.h before defining H_USE_MEMPOOL,
+    # leaving its layout opaque in this translation unit.
+    source = replace_once(source, '#include "sdio_drv.h"',
+                          '#include "esp_hosted_config.h"\n#include "sdio_drv.h"')
+    # Observe the reusable DMA cache without adding per-packet bookkeeping or
+    # changing allocation policy. Driver lifetime is the lifetime of the app.
+    anchor = "static inline void sdio_buffer_free(void *buf)\n{\n\tmempool_free(buf_mp_g, buf);\n}\n"
+    source = replace_once(source, anchor, anchor + '''
+bool meshvpn_hosted_dma_cache_snapshot(uint32_t *cached, uint32_t *block_bytes)
+{
+    *cached = 0; *block_bytes = 0;
+#ifdef H_USE_MEMPOOL
+    struct mempool *mp = buf_mp_g;
+    if (!mp) return false;
+    g_h.funcs->_h_lock_mempool(mp->spinlock);
+    struct mempool_entry *entry;
+    SLIST_FOREACH(entry, &(mp->head), entries) { (*cached)++; }
+    /* mempool_alloc rounds block_size a second time, including aligned sizes. */
+    *block_bytes = MEMPOOL_ALIGNED(mp->block_size);
+    g_h.funcs->_h_unlock_mempool(mp->spinlock);
+    return true;
+#else
+    return false;
+#endif
+}
+''')
     source = replace_once(source, GET_BUFFER, GET_BUFFER_FIXED)
     source = replace_once(source, INIT, INIT_FIXED)
     source = replace_once(source, READ, READ_FIXED)

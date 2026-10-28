@@ -9,6 +9,15 @@ try {
   const generated = path.join(dir, 'sdio.c');
   execFileSync('python3', [new URL('scripts/patch-esp-hosted-sdio.py', root).pathname, original.pathname, generated], {stdio: 'inherit'});
   const source = fs.readFileSync(generated, 'utf8');
+  const cache = source.indexOf('bool meshvpn_hosted_dma_cache_snapshot(');
+  const cacheEnd = source.indexOf('\n}', cache);
+  if (cache < 0 || cacheEnd < cache) throw Error('DMA cache snapshot missing');
+  fs.writeFileSync(path.join(dir, 'sdio-cache.inc'), source.slice(cache, cacheEnd + 2));
+  const cacheBinary = path.join(dir, 'cache-test');
+  execFileSync(process.env.CC || 'cc', ['-std=gnu11', '-Wall', '-Wextra', '-Werror', '-DH_USE_MEMPOOL=1',
+    '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined', '-I' + dir,
+    new URL('tests/test_hosted_dma_cache.c', root).pathname, '-o', cacheBinary], {stdio: 'inherit'});
+  execFileSync(cacheBinary, {stdio: 'inherit'});
   const offset = source.indexOf('\nint esp_hosted_tx(');
   if (offset < 0) throw Error('Pinned SDIO TX function not found');
   fs.writeFileSync(path.join(dir, 'sdio-tx.inc'), source.slice(offset));

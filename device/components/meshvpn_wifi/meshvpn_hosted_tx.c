@@ -14,6 +14,7 @@
 extern uint32_t meshvpn_vpn_dns_epoch(void);
 #if CONFIG_IDF_TARGET_ESP32P4
 extern void meshvpn_ap_probe_tx(unsigned ifx, const void *frame, size_t len);
+extern bool meshvpn_hosted_dma_cache_snapshot(uint32_t *cached, uint32_t *block_bytes);
 #define TRACE_TX(ifx, frame, len, err) do { if ((err) == ESP_OK) meshvpn_ap_probe_tx(ifx, frame, len); } while (0)
 #else
 #define TRACE_TX(ifx, frame, len, err) ((void)0)
@@ -99,6 +100,12 @@ void meshvpn_hosted_tx_snapshot(meshvpn_hosted_tx_stats_t *out)
     }
     if (out->worker_active) out->worker_age_us = now - s_worker_since;
     portEXIT_CRITICAL(&s_lock);
+#if CONFIG_IDF_TARGET_ESP32P4
+    /* Never take the driver mutex while holding our critical section. This
+     * cache gauge is sampled separately from queue/counter statistics. */
+    out->dma_cache_available = meshvpn_hosted_dma_cache_snapshot(
+        &out->dma_cache_blocks, &out->dma_cache_block_bytes);
+#endif
 }
 void meshvpn_hosted_tx_buffers(uint64_t us, bool unavailable)
 {

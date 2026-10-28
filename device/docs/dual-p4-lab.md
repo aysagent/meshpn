@@ -59,3 +59,11 @@ invalidate them. The default development AP password is read from
 
 Artifacts are private files under `perf-results`, not committed or pasted into
 agent context. Failed attempts remain failures even if restoration succeeds.
+
+`wifi.hosted.dma_cache` exposes free DMA buffers retained by the Hosted pool
+for reuse. `cached_bytes` is the sum of requested allocation sizes, including
+the pinned pool's alignment rounding, but excluding allocator overhead and
+in-flight buffers. The reserved SDIO RX stream is separate. It is sampled
+under the pool lock, separately from TX/RX counters; no allocation policy is
+changed. A fall in heap free space followed by a rise in this cache is not
+by itself a leak. Compare idle snapshots, not historical minimum-free alone.
