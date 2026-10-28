@@ -80,7 +80,7 @@ async function main(args) {
     const script=bundle+'/update-control/clean-vpn-native-update.mjs', node=serviceIdentity.node;
     run('/usr/bin/systemd-run',['--quiet','--wait','--collect','--unit=native-'+name+'-binary-update',
       '--property=Type=exec','--property=RuntimeMaxSec=180','--property=TimeoutStopSec=15',
-      '--property=UMask=0077','--property=KillMode=control-group',
+      '--property=UMask=0077','--property=KillMode=control-group','--property=MemoryMax=256M','--property=TasksMax=32',
       '--property=ExecStopPost='+node+' '+script+' --recover '+name,
       node,script,'--worker',name,binary,expected]);
     console.log(json({status:'worker-finished',...JSON.parse(readOwned(bundle+'/binary-updates/last-result.json'))}));return;

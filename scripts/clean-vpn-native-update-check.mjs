@@ -13,6 +13,8 @@ const run=(file,args)=>execFileSync(file,args,{encoding:'utf8',timeout:180000,ma
 const ctl=(...a)=>run('/usr/bin/systemctl',a),ip=(...a)=>run('/usr/sbin/ip',a);
 const need=(v,c)=>{if(!v)throw Error(c);};
 const hash=b=>createHash('sha256').update(b).digest('hex');
+const hostFirewall=()=>hash((run('/usr/sbin/iptables-save',[])+run('/usr/sbin/ip6tables-save',[]))
+  .split('\n').filter(line=>!line.startsWith('#')).join('\n').replace(/\[\d+:\d+\]/g,'[counters]'));
 const prop=(u,p)=>ctl('show',u,'-p',p,'--value');
 const put=(p,b,mode=0o600)=>{fs.writeFileSync(p,b,{mode,flag:'wx'});fs.chmodSync(p,mode);};
 const [action,id]=process.argv.slice(2);
@@ -51,7 +53,7 @@ async function worker(id){
     need(!fs.existsSync('/etc/systemd/system/.native-'+name+'.service.prepared'),'fixture_prepared_collision');
   }
   for(const unit of [p.network,p.guard])need(prop(unit,'LoadState')==='not-found'&&!fs.existsSync('/etc/systemd/system/'+unit+'.d'),'fixture_dependency_collision');
-  const before=hash(run('/usr/sbin/iptables-save',[])+run('/usr/sbin/ip6tables-save',[]));
+  const before=hostFirewall();
   fs.mkdirSync(p.dir,{mode:0o700});put(p.dir+'/owned.json',JSON.stringify({id,kind:'native-update-isolated-check'}));
   try {
     ip('netns','add',p.ns);ip('-n',p.ns,'link','set','lo','up');
@@ -99,7 +101,7 @@ async function worker(id){
     await finished;
     await wait(()=>!fs.existsSync(current+'/binary-updates/transaction.json')&&prop(cunit,'ActiveState')==='active');
     check('worker-sigkill-recovery',hash(fs.readFileSync(current+'/engine'))===hash(original)&&prop(cunit,'StatusText')==='ready');
-    check('host-firewall-unchanged',hash(run('/usr/sbin/iptables-save',[])+run('/usr/sbin/ip6tables-save',[]))===before);
+    check('host-firewall-unchanged',hostFirewall()===before);
     return{status:'passed',kind:'native-update-isolated-physical-check',arch:process.arch,checks,
       limitations:['unconnected-netns-not-WAN','TLS-readiness-not-IP-throughput','appended-ELF-fixture-not-new-production-build','no-physical-reboot']};
   } finally {cleanup(id);}
@@ -107,7 +109,7 @@ async function worker(id){
 if(action==='--apply'&&id===undefined){
   const id='cvup-'+randomBytes(4).toString('hex');
   run('/usr/bin/systemd-run',['--quiet','--wait','--pipe','--collect','--unit='+id,'--property=RuntimeMaxSec=240','--property=TimeoutStopSec=20',
-    '--property=UMask=0077','--property=ExecStopPost='+node+' '+self+' --cleanup '+id,node,self,'--worker',id]);
+    '--property=UMask=0077','--property=MemoryMax=192M','--property=TasksMax=32','--property=ExecStopPost='+node+' '+self+' --cleanup '+id,node,self,'--worker',id]);
   // Report is deliberately outside the scratch tree removed by recovery.
   process.stdout.write(fs.readFileSync('/run/'+id+'.result.json'));fs.unlinkSync('/run/'+id+'.result.json');
 }else if(action==='--worker'){
