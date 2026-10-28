@@ -1,22 +1,21 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {validateNativeHostConfig} from './native-host-network.mjs';
-export function nativeHostUnit({script,config,profile}){
+export function nativeHostUnit({script,config,profile,node='/usr/bin/node'}){
   const c=validateNativeHostConfig(profile);
-  for(const p of [script,config]){assert.match(p,/^\/[\w./-]+$/);assert.equal(path.normalize(p),p);}
+  for(const p of [script,config,node]){assert.match(p,/^\/[\w./-]+$/);assert.equal(path.normalize(p),p);}
   return `[Unit]
 Description=clean-vpn native Radxa network owner
 Requires=${c.guard_unit}
 After=${c.guard_unit} network-online.target
 BindsTo=${c.guard_unit}
 Wants=network-online.target
-StartLimitIntervalSec=120
-StartLimitBurst=6
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/node ${script} run --config=${config}
-ExecStopPost=/usr/bin/node ${script} recover --config=${config}
+ExecStart=${node} ${script} run --config=${config}
+ExecStopPost=${node} ${script} recover --config=${config}
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=180
@@ -25,7 +24,7 @@ UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/run /proc/sys/net/ipv4/conf/all/rp_filter
-ProtectHome=yes
+ProtectHome=read-only
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6

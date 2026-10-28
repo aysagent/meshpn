@@ -140,9 +140,16 @@ export function nativeHostNetwork(c, io) {
     tick() {
       const s=store.read();validate(s);assert.equal(s.stage,'active');
       guard();assert.ok(ownedTun(s),'native_tun_missing');journalScope(s);natAudit(s,true);
+      const link=ip('-j','link','show').find(l=>l.ifname==='wlan0');
+      const defaults=ip('-j','-4','route','show','default');
+      // An ordinary Wi-Fi outage is not a failed installation. Retain the
+      // guard/DNS/TUN and let the native engine's reconnect remain bounded.
+      if(!link?.flags.includes('UP')||!link.flags.includes('LOWER_UP')||defaults.length===0)
+        return {state:'waiting-uplink'};
       // Repair only the same interface/gateway. A changed lease triggers a
       // stopped-engine recovery/restart instead of mutating a live route set.
       host.repairUplink('wlan0',uplink(),c.exit_ip);host.repairTunRoutes();
+      return {state:'network-ready'};
     },
   };
 }

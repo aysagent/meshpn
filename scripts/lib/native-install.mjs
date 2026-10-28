@@ -67,7 +67,7 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   need(capability.engine === 'clean-vpn-native-m1' && capability.packet_ipc === false && capability.service_mode === true, 'not_native_service_engine');
   execFileSync(binary, ['--check-config', config], { timeout: 10000, stdio: 'pipe', maxBuffer: 16384 });
   need(!hostProfile || (!siteProfile && networkUnit === undefined && guardUnit === undefined), 'conflicting_host_dependencies');
-  const host = hostProfile ? nativeHostPlan({name,target,profile:JSON.parse(regular(hostProfile,8192,true)),engine:input,capability}) : null;
+  const host = hostProfile ? nativeHostPlan({name,target,profile:JSON.parse(regular(hostProfile,8192,true)),engine:input,capability,node:fs.realpathSync(process.execPath)}) : null;
   if(host){networkUnit=host.network;guardUnit=host.guard;}
   need(!siteProfile || (networkUnit === undefined && guardUnit === undefined), 'conflicting_site_dependencies');
   const site = siteProfile ? nativeSitePlan({ name, target, site: JSON.parse(regular(siteProfile, 16384, true)), engine: input, capability }) : null;

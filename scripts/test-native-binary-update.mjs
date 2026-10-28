@@ -5,7 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {NativeBinaryUpdate,binaryDigest,writeDurable} from './lib/native-binary-update.mjs';
-import {recoveryUnit} from './clean-vpn-native-update.mjs';
+import {recoveryUnit,installFilePath} from './clean-vpn-native-update.mjs';
+test('nested install manifest paths stay inside the bundle',()=>{
+  for(const name of ['engine','control/lib/native-host-network.mjs','units/native-host-network.service'])assert.equal(installFilePath('/opt/test',name),'/opt/test/'+name);
+  for(const name of ['../engine','control/../../engine','/etc/passwd','control//a','control/./a','control/','control\\a',''])assert.throws(()=>installFilePath('/opt/test',name),/update_manifest_path/);
+});
 const old=Buffer.from('trusted old binary'),next=Buffer.from('trusted new binary');
 function fixture(t,{running=true,fail=false}={}){
   const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-binary-')));fs.chmodSync(dir,0o700);

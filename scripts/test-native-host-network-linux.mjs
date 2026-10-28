@@ -53,6 +53,11 @@ const baseline=()=>{
 try{
   open();check('preflight leaves routes/firewall untouched',()=>{owner.preflight();baseline();});
   check('prepare creates real persistent TUN, routes, DNS and NAT',()=>{owner.prepare();assert.equal(store.read().stage,'active');owner.tick();assert.equal(JSON.parse(ip('-j','route','get','1.1.1.1'))[0].dev,'tun0');});
+  check('default loss waits without tearing down or exhausting restart budget',()=>{
+    ip('route','del','default','via','192.168.1.1','dev','wlan0');
+    for(let i=0;i<8;i++)assert.equal(owner.tick().state,'waiting-uplink');
+    assert.equal(store.read().stage,'active');ip('route','add','default','via','192.168.1.1','dev','wlan0');assert.equal(owner.tick().state,'network-ready');
+  });
   check('live engine prevents cleanup',()=>{engineAlive=true;assert.throws(()=>owner.recover(),/still_running/);engineAlive=false;});
   check('replaced alias refuses deletion',()=>{ip('link','set','tun0','alias','foreign');assert.throws(()=>owner.recover(),/owner_changed/);ip('link','set','tun0','alias','cvpn-native-host-'+store.read().id);});
   check('guard failure retains owned network',()=>{active=false;assert.throws(()=>owner.recover(),/guard_inactive/);assert.equal(store.read().stage,'active');active=true;});

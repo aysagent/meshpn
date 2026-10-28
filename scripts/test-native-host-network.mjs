@@ -14,6 +14,9 @@ test('network owner has independent cleanup and no legacy activation',()=>{
   assert.match(unit,/ExecStopPost=.* recover --config=/);assert.match(unit,/BindsTo=clean-vpn-killswitch.service/);
   assert.match(unit,/KillMode=control-group/);assert.doesNotMatch(unit,/clean-vpn\.service|flush|CAP_SYS_TIME/);
   assert.throws(()=>nativeHostUnit({script:'/x/../y',config:'/config',profile}));
+  const nvm=nativeHostUnit({script:'/opt/owner.mjs',config:'/opt/config.json',profile,node:'/root/.nvm/versions/node/v24.13.0/bin/node'});
+  assert.match(nvm,/ExecStopPost=\/root\/\.nvm\/versions\/node\/v24.13.0\/bin\/node /);
+  assert.match(nvm,/ProtectHome=read-only/);
 });
 test('translation is restricted to USB peer IPv4 and TUN, with bounded MSS',()=>{
   const plan=nativeHostNatPlan('a'.repeat(24));assert.equal(plan.length,3);

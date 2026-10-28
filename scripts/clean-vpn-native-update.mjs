@@ -11,6 +11,10 @@ const run=(file,args)=>execFileSync(file,args,{encoding:'utf8',timeout:file==='/
 const ctl=(...args)=>run('/usr/bin/systemctl',args);
 const props=unit=>Object.fromEntries(ctl('show',unit,'-p','ActiveState,MainPID,Type,StatusText,FragmentPath,DropInPaths').split('\n').map(l=>{const i=l.indexOf('=');return[l.slice(0,i),l.slice(i+1)];}));
 const safePath=p=>typeof p==='string'&&/^\/[a-zA-Z0-9_./-]+$/.test(p)&&path.normalize(p)===p;
+export function installFilePath(bundle,name) {
+  need(typeof name==='string'&&name.split('/').every(part=>/^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$/.test(part)),'update_manifest_path');
+  return bundle+'/'+name;
+}
 export function recoveryUnit({name,bundle,node}) {
   return `[Unit]\nDescription=clean-vpn binary recovery ${name}\nBefore=native-${name}.service\nAfter=local-fs.target\nRequiresMountsFor=${bundle}\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=${node} ${bundle}/update-control/clean-vpn-native-update.mjs --recover-boot ${name}\nTimeoutStartSec=30\nUMask=0077\n`;
 }
@@ -32,8 +36,17 @@ async function main(args) {
   if(action==='--enroll') {
     const state=props(unit);need(['inactive','failed'].includes(state.ActiveState)&&state.MainPID==='0','update_enroll_stopped');
     need(state.FragmentPath==='/etc/systemd/system/'+unit,'update_unit_path');
-    for(const f of manifest.files){need(/^[a-zA-Z0-9_.-]+$/.test(f.name),'update_manifest_path');
-      const p=bundle+'/'+f.name;need(binaryDigest(readOwned(p,64*1024*1024))===f.sha256&&(fs.lstatSync(p).mode&0o777)===f.mode,'update_install_changed');}
+    for(const f of manifest.files){
+      const p=installFilePath(bundle,f.name);need(binaryDigest(readOwned(p,64*1024*1024))===f.sha256&&(fs.lstatSync(p).mode&0o777)===f.mode,'update_install_changed');}
+    const ownedUnits=[];
+    for(const name of manifest.units??[]) {
+      need(/^[a-zA-Z0-9_-]+\.service$/.test(name),'update_owned_unit_name');
+      const expected=manifest.files.find(f=>f.name==='units/'+name);
+      if(!expected)continue; // External-network installations have no owned network unit.
+      const state=props(name),file='/etc/systemd/system/'+name;
+      need(state.FragmentPath===file&&binaryDigest(readOwned(file))===expected.sha256,'update_owned_unit_changed');
+      ownedUnits.push(file,...state.DropInPaths.split(' ').filter(Boolean));
+    }
     if(manifest.clockUnit) {
       need(manifest.clockUnit===`native-${name}-clock.service`,'update_clock_unit_name');
       const clockState=props(manifest.clockUnit);
@@ -58,7 +71,7 @@ async function main(args) {
     const installed=props(unit);
     const files=[bundle+'/installed.json',...manifest.files.filter(f=>f.name!=='engine').map(f=>bundle+'/'+f.name),
       ...Object.keys(manifest.dependencies).map(n=>'/etc/systemd/system/'+n),state.FragmentPath,
-      ...installed.DropInPaths.split(' ').filter(Boolean),...(manifest.clockUnit?['/etc/systemd/system/'+manifest.clockUnit]:[]),recPath,control+'/clean-vpn-native-update.mjs',control+'/lib/native-binary-update.mjs'];
+      ...installed.DropInPaths.split(' ').filter(Boolean),...ownedUnits,...(manifest.clockUnit?['/etc/systemd/system/'+manifest.clockUnit]:[]),recPath,control+'/clean-vpn-native-update.mjs',control+'/lib/native-binary-update.mjs'];
     for(const [dep,sha]of Object.entries(manifest.dependencies))need(binaryDigest(readOwned('/etc/systemd/system/'+dep))===sha,'update_dependency_changed');
     const sha=NativeBinaryUpdate.initialize(bundle,[...new Set(files)]);
     const staticFiles=files.filter(file=>!manifest.files.some(f=>file===bundle+'/'+f.name)&&file!==bundle+'/installed.json')
