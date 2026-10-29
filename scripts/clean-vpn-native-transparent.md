@@ -1,5 +1,18 @@
 # Native transparent-tls: codec, durable admission и engine relay
 
+Дополнительная локальная приёмка **2026-10-29**:
+`transparent-fault-test` теперь входит в CTest и штатные build wrappers.
+Реальные TCP workers проверяются на 9 сочетаниях TCP/TLS-record fragmentation
+через оба relay, включая SNI между records и побайтовое восстановление prefix;
+128 EOF/reset, slowloris и заполнение 16 слотов; idle/drain/lifetime deadlines и
+непродлеваемые 10 секунд handshake при поступающих CCS. FD/threads возвращаются
+к baseline после churn и удаления owners; peak RSS ограничен. Raw origin здесь
+нужен для точного управления обрывами, TLS-приёмка с сертификатами остаётся
+отдельным тестом. CTest **11/11**, новый probe normal и ASAN/UBSAN прошли:
+[отчёт и границы](../fixtures/clean-vpn-native-relay-faults-20261029.json).
+Production engine/лимиты этим шагом не менялись, Radxa/VPS не подключались.
+Описания ниже относятся к исходному checkpoint и последующим ссылкам.
+
 2026-10-07. Добавлены C++ socket relay, durable replay journal и отдельный
 экспериментальный режим client/exit в `clean-vpn-engine`. Проверены настоящие
 REDIRECT/SO_ORIGINAL_DST внутри отдельного user/network namespace без uplink.

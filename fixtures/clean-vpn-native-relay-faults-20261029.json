@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "kind": "native-transparent-fault-acceptance",
+  "date": "2026-10-29",
+  "status": "passed",
+  "architecture": "linux-arm64",
+  "ctest": {
+    "passed": 11,
+    "failed": 0
+  },
+  "faultTest": {
+    "sourceSha256": "0aaa4063e15329f63f0bc22f9e37445e93419385fc2c2cb6617154de5470e2e1",
+    "normal": "passed",
+    "asanUbsan": "passed",
+    "leakSanitizer": true,
+    "sanitizedResults": [
+      "FAULT_PASS=two_hop_record_and_tcp_fragmentation_restores_wire rounds=9",
+      "FAULT_PASS=eof_reset_churn_slowloris_and_16_slot_reclamation rounds=128 baseline_fds=6 baseline_threads=2 peak_rss_kib=20824",
+      "FAULT_PASS=absolute_idle_deadline elapsed_ms=205",
+      "FAULT_PASS=absolute_drain_deadline elapsed_ms=213",
+      "FAULT_PASS=absolute_lifetime_deadline elapsed_ms=297",
+      "FAULT_PASS=absolute_handshake_deadline elapsed_ms=10005",
+      "FAULT_PASS=all_owners_released"
+    ]
+  },
+  "scope": [
+    "real TCP sockets, production RelayListener/session/HelloReader/auth headers",
+    "synthetic raw origin controls pre/post-handshake failure; does not replace certificate-verified TLS integration tests",
+    "reused pinned BoringSSL static libraries; new fault-test TU instrumented with ASAN/UBSAN",
+    "loopback inside network-none Podman container; no physical hosts or Mac network changes"
+  ],
+  "limitations": [
+    "bounded run, not proof of absence of all resource leaks",
+    "timeouts shortened only via existing RelayLimits for fixture; production defaults unchanged",
+    "production fixed 10s handshake deadline exercised with continuing CCS traffic"
+  ]
+}
