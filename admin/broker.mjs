@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Root-only local broker. No TCP listener, shell execution, supplied commands,
 // supplied filesystem paths, Docker socket or generic systemctl endpoint.
+import {readPortalState} from './lib/captive.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
@@ -68,7 +69,7 @@ export async function createBroker(c,{run=command}={}){
   need(!transaction.load(),'vpn_transaction_recovery_required',409);
  }
  switch(route){
- case '/status':{const [v,g,w]=await Promise.all([unit(c.vpnUnit).catch(()=>({ActiveState:'unknown'})),guard().catch(()=>({active:null})),wifi.status().catch(()=>({wpa_state:'unavailable'}))]);return{metrics:metrics.sample(),vpn:v,network:c.networkUnit?await unit(c.networkUnit).catch(()=>({ActiveState:'unknown'})):null,guard:g,wifi:w,mdns:mdnsState,jobs:jobs.history,vpnSettingsRecovery:{...recovery,pending:!!transaction.load()},capabilities:{nativeManaged:!!c.nativeManaged,networkOwner:!!c.networkUnit,wifi:'wpa_supplicant-owned-profiles',routingRules:false,dnsUpstreamConfig:false,transports:['boring-tls']}};}
+ case '/status':{const [v,g,w]=await Promise.all([unit(c.vpnUnit).catch(()=>({ActiveState:'unknown'})),guard().catch(()=>({active:null})),wifi.status().catch(()=>({wpa_state:'unavailable'}))]);return{metrics:metrics.sample(),vpn:v,network:c.networkUnit?await unit(c.networkUnit).catch(()=>({ActiveState:'unknown'})):null,guard:g,wifi:w,captive:readPortalState(path.dirname(c.socket)+'/captive.json'),mdns:mdnsState,jobs:jobs.history,vpnSettingsRecovery:{...recovery,pending:!!transaction.load()},capabilities:{nativeManaged:!!c.nativeManaged,networkOwner:!!c.networkUnit,wifi:'wpa_supplicant-owned-profiles',routingRules:false,dnsUpstreamConfig:false,transports:['boring-tls']}};}
  case '/settings':{const v=vpn();return{hostname:settings.hostname,adminUrl:'http://'+settings.hostname+'.local/',vpn:{address:v.address,port:v.port,serverName:v.server_name,sni:v.sni,profile:settings.profile??(v.tls_profile_path?path.basename(v.tls_profile_path):null),dns:v.dns===true,transport:'boring-tls',nativeManaged:!!c.nativeManaged},dns:{mode:'tunnel',upstreams:'native fixed upstreams; editing not supported by engine',integrationManaged:!!c.networkUnit},profiles:profiles(),wifi:wifi.list()};}
  case '/hostname':exact(p,['hostname']);settings.hostname=hostname(p.hostname);atomic(settingsFile,settings);if(c.publishMdns!==false)publish();return{hostname:settings.hostname,adminUrl:'http://'+settings.hostname+'.local/',fallbackUrl:'http://'+c.usbAddress+'/'};
  case '/vpn/settings':return jobs.start('vpn-settings',()=>applyVpn(p));

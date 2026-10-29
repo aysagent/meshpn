@@ -1,0 +1,48 @@
+{
+  "kind": "meshpn-usb-captive-netns-lab",
+  "passed": 19,
+  "checks": [
+    "offline: two observations activate USB portal",
+    "fresh status readable by unprivileged frontend",
+    "USB DNS UDP/TCP redirected; zero-TTL synthetic answer",
+    "HTTP external IP receives fixed redirect; original Host not reflected",
+    "DNS-to-board-IP probe redirects through real admin; canonical page works",
+    "direct dedicated ports and non-USB access rejected",
+    "HTTPS remains unintercepted; kill switch stays installed",
+    "native DNS reinsert reconciled without removing native rules",
+    "healthy Wi-Fi disables portal even with VPN absent",
+    "same UDP source tuple returns to native DNS (conntrack cleared)",
+    "online admin again rejects foreign Host",
+    "association without default route activates portal and clears old native DNS tuple",
+    "unknown Wi-Fi status removes interception",
+    "automatic restart after SIGKILL reacquires portal without duplicate rules",
+    "SIGKILL: actual ExecStopPost removes only owned rules",
+    "broker stop also stops portal before runtime directory removal",
+    "broker start pulls portal back; normal stop cleans up",
+    "real installer update adds portal to previous installation and preserves Wi-Fi settings",
+    "real installer removal cleans portal and retains unrelated guard/DNS rules"
+  ],
+  "radio": "simulated wpa_cli; real Linux links/routes",
+  "scope": "disposable systemd/netns; real iptables/conntrack; no physical boards or client OS popup test; installer socket fixture clears BindToDevice (container has no udev device units)",
+  "unitTests": {
+    "passed": 33,
+    "failed": 0,
+    "skipped": 0,
+    "command": "node --test admin/test/*.test.mjs",
+    "environment": "Linux ARM64 Podman"
+  },
+  "physicalDeployment": false,
+  "generatedAt": "2026-10-29T15:53:05.255404+00:00",
+  "sourceSha256": {
+    "admin/usb-captive.mjs": "cba24515d7dd279b9c69d75557a42b4f63e4568a492df8513d0ddb8913e7ba36",
+    "admin/lib/captive.mjs": "0fb57dad1b15b5b1f38e4aa443dcd7b994a227069c789d56d28af899ba9de46d",
+    "admin/lib/captive-network.mjs": "fb3417181ea4ccfd8768287cab80c92ea2ef99aac17311abaa26c702f1a7808d",
+    "admin/lib/captive-unit.mjs": "6f1dfd9cf5225e9f0463482bf9d48712aca132a862acec80abeb60742480b7c5",
+    "admin/lib/command.mjs": "3864b28f543c62105b0f2841a8cb755ab3bf621d9f703355d46dbe6b895eb563",
+    "admin/server.mjs": "1d5163ab3b0e5383191ddcd2b14dce3bdcba43fc965ad059cc1c22bd3532b42f",
+    "admin/broker.mjs": "558c3c39bbc5bdffe7ce04295bf0abd717bdaff3446ac5303687c2725288ee70",
+    "admin/install.mjs": "ba8f8863dac164592efb52a8d4f1f5a60b667439f6baa260b10b312188b7ada7",
+    "admin/test/captive.test.mjs": "7efd5fc80698ed4adceb9ec94e4e9fdcb8298c089e21d435d48d0bb0277e95e2",
+    "admin/test/captive-netns-lab.mjs": "5ce3ce838304e692916438e8cee4c223d5eff07976eecff86736e8d03839703a"
+  }
+}

@@ -6,6 +6,7 @@ import http from 'node:http';
 import net from 'node:net';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {once} from 'node:events';
+import {readPortalState,portalUrl} from './lib/captive.mjs';
 import {Auth} from './lib/auth.mjs';
 import {need,exact,hostname,readJson,atomic,body,send,safeError,ipv4Subnet} from './lib/common.mjs';
 import {command} from './lib/command.mjs';
@@ -24,7 +25,9 @@ export async function createAdmin(c,{rpc=(route,data)=>brokerRequest(c.brokerSoc
  const routes=new Map([['/api/status','/status'],['/api/settings','/settings'],['/api/hostname','/hostname'],['/api/vpn/settings','/vpn/settings'],['/api/vpn/action','/vpn/action'],['/api/guard','/guard'],['/api/wifi/scan','/wifi/scan'],['/api/wifi/save','/wifi/save'],['/api/wifi/connect','/wifi/connect'],['/api/wifi/delete','/wifi/delete'],['/api/logs','/logs'],['/api/probe','/probe'],['/api/observer','/observer'],['/api/observer/start','/observer/start'],['/api/observer/stop','/observer/stop'],['/api/profile/import','/profile/import']]);
  const readonly=new Set(['/api/status','/api/settings','/api/observer']);
  const server=http.createServer(async(req,res)=>{let locked=false;for(const[k,v]of Object.entries(security))res.setHeader(k,v);try{
- need(allowed(req),'usb_only',403);need(acceptedHosts().includes(req.headers.host),'invalid_host',403);
+ need(allowed(req),'usb_only',403);
+ if(!acceptedHosts().includes(req.headers.host)&&['GET','HEAD'].includes(req.method)&&!req.url.startsWith('/api/')&&c.brokerSocket&&readPortalState(path.dirname(c.brokerSocket)+'/captive.json').active){res.writeHead(302,{location:portalUrl,connection:'close'});res.end();return;}
+ need(acceptedHosts().includes(req.headers.host),'invalid_host',403);
  const mutation=req.method!=='GET';if(mutation){need(req.method==='POST','method',405);need(req.headers.origin==='http://'+req.headers.host,'origin',403);}
  if(req.url==='/api/login'){need(req.method==='POST','method',405);const p=await body(req,1024);exact(p,['password']);const s=await auth.login(p.password,req.socket.remoteAddress);send(res,200,{csrf:s.csrf,defaultPassword:s.defaultPassword},{'set-cookie':cookie(s.sid)});return;}
  if(req.url.startsWith('/api/')){
