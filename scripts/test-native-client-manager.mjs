@@ -66,3 +66,9 @@ test('recovery refuses unrelated edits without overwriting administrator changes
 test('external edit during candidate validation is preserved before journal commit',async t=>{
  const f=await fixture(t),changed=Buffer.from('{}\n');f.manager.validateConfig=async()=>put(f.dir+'/config.json',changed);await assert.rejects(f.manager.add('laptop'),/client_config_changed_externally/);assert.deepEqual(fs.readFileSync(f.dir+'/config.json'),changed);assert.ok(!fs.existsSync(f.manager.journalPath));assert.equal(JSON.parse(fs.readFileSync(f.manager.registryPath)).clients.length,1);
 });
+test('dangling recovery journal blocks listing and mutations and cannot be silently discarded',async t=>{
+ const f=await fixture(t),before=fs.readFileSync(f.dir+'/config.json');fs.symlinkSync(f.dir+'/missing-journal',f.manager.journalPath);
+ await assert.rejects(f.manager.list(),/client_recovery_required/);await assert.rejects(f.manager.add('laptop'),/client_recovery_required/);await assert.rejects(f.manager.recover());
+ assert.ok(fs.lstatSync(f.manager.journalPath).isSymbolicLink());assert.deepEqual(fs.readFileSync(f.dir+'/config.json'),before);
+ fs.unlinkSync(f.manager.journalPath);assert.equal((await f.manager.list()).clients.length,1);
+});

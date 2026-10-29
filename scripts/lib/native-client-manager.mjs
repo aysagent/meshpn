@@ -11,6 +11,8 @@ export const clientName=n=>typeof n==='string'&&/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z
 const ip=n=>typeof n==='string'&&/^10\.99\.0\.(?:[2-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-4])$/.test(n);
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const encode=v=>Buffer.from(JSON.stringify(v,null,2)+'\n');
+const exists=p=>{try{fs.lstatSync(p);return true;}catch(e){if(e.code==='ENOENT')return false;throw e;}};
+function boundedRead(fd,limit){const b=Buffer.alloc(limit+1);let n=0,k;while(n<b.length&&(k=fs.readSync(fd,b,n,b.length-n,null))>0)n+=k;fail(n<=limit,'client_file_limit');return b.subarray(0,n);}
 function trustedPath(p,{directory=false}={}){
  fail(path.isAbsolute(p)&&path.normalize(p)===p,'client_path_absolute');
  for(let q=directory?p:path.dirname(p);;q=path.dirname(q)){
@@ -20,9 +22,9 @@ function trustedPath(p,{directory=false}={}){
 }
 export function readClientPrivate(p,limit=262144){
  trustedPath(p);const fd=fs.openSync(p,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
- try{const s=fs.fstatSync(fd);fail(s.isFile()&&s.uid===uid()&&s.nlink===1&&!(s.mode&0o077)&&s.size<=limit,'client_private_file');return fs.readFileSync(fd);}finally{fs.closeSync(fd);}
+ try{const s=fs.fstatSync(fd);fail(s.isFile()&&s.uid===uid()&&s.nlink===1&&!(s.mode&0o077)&&s.size<=limit,'client_private_file');return boundedRead(fd,limit);}finally{fs.closeSync(fd);}
 }
-function readPublic(p,limit=32768){trustedPath(p);const fd=fs.openSync(p,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);try{const s=fs.fstatSync(fd);fail(s.isFile()&&s.size<=limit&&[0,uid()].includes(s.uid)&&!(s.mode&0o022),'client_public_file');return fs.readFileSync(fd);}finally{fs.closeSync(fd);}}
+function readPublic(p,limit=32768){trustedPath(p);const fd=fs.openSync(p,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);try{const s=fs.fstatSync(fd);fail(s.isFile()&&s.size<=limit&&[0,uid()].includes(s.uid)&&!(s.mode&0o022),'client_public_file');return boundedRead(fd,limit);}finally{fs.closeSync(fd);}}
 function syncDir(dir){const fd=fs.openSync(dir,'r');try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}}
 function fresh(p,b){trustedPath(p);const fd=fs.openSync(p,'wx',0o600);try{fs.writeFileSync(fd,b);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}syncDir(path.dirname(p));}
 function atomic(p,b){const tmp=p+'.'+randomBytes(12).toString('hex');fresh(tmp,b);try{fs.renameSync(tmp,p);syncDir(path.dirname(p));}finally{if(fs.existsSync(tmp))fs.unlinkSync(tmp);}}
@@ -44,7 +46,7 @@ export class NativeClientManager {
    try{if(process.platform==='linux')execFileSync('flock',['-n','3'],{stdio:['ignore','pipe','pipe',lock],timeout:5000});
     else execFileSync('python3',['-c','import fcntl; fcntl.flock(3,fcntl.LOCK_EX|fcntl.LOCK_NB)'],{stdio:['ignore','pipe','pipe',lock],timeout:5000});
    }catch{throw Error('client_manager_locked');}
-   if(!pending)fail(!fs.existsSync(this.journalPath),'client_recovery_required');return await fn();
+   if(!pending)fail(!exists(this.journalPath),'client_recovery_required');return await fn();
   }finally{fs.closeSync(lock);}
  }
  load(){return validateRegistry(JSON.parse(readClientPrivate(this.registryPath)));}
@@ -93,7 +95,7 @@ export class NativeClientManager {
   const now=readClientPrivate(j.configPath,16384),registry=readClientPrivate(this.registryPath);fail([sha(before),sha(after)].includes(sha(now))&&[sha(br),sha(ar)].includes(sha(registry)),'client_recovery_conflict');
   atomic(j.configPath,before);atomic(this.registryPath,br);if(this.applyConfig)await this.applyConfig({configPath:j.configPath,sha256:sha(before),revision:previous.revision,rollback:true});fs.unlinkSync(this.journalPath);syncDir(this.directory);
  }
- async recover(){return this.locked(async()=>{if(!fs.existsSync(this.journalPath))return{recovered:false};await this.rollback(JSON.parse(readClientPrivate(this.journalPath,1048576)));return{recovered:true};},{pending:true});}
+ async recover(){return this.locked(async()=>{if(!exists(this.journalPath))return{recovered:false};await this.rollback(JSON.parse(readClientPrivate(this.journalPath,1048576)));return{recovered:true};},{pending:true});}
  async add(name){fail(clientName(name),'client_name');return this.mutate(async(r,c)=>{
   fail(!r.clients.some(x=>x.name===name),'client_name_exists');fail(r.clients.filter(x=>!x.revoked).length<32,'client_active_limit');const used=new Set(r.clients.map(x=>x.ipv4));let address;for(let i=2;i<=254;i++)if(!used.has('10.99.0.'+i)){address='10.99.0.'+i;break;}fail(address,'client_pool_exhausted');
   const peer={name,ipv4:address,secret_path:this.newKey(),revoked:false};if(c.transport==='combo-tls'){fail(this.initializeRelay,'client_replay_initializer_required');peer.relay={id:'peer-'+randomBytes(12).toString('hex'),secret_path:this.newKey()};await this.initializeRelay({...c.transparent,peers:[peer.relay]});}r.clients.push(peer);
