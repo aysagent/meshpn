@@ -403,6 +403,25 @@ int main(int argc,char** argv){
       Child client(argv[1],argv[2]);client.await_state("ready");server.await_state("ready");
       soak(client,&server,seconds);client.stop();server.stop();return 0;
     }
+    // Bounded two-host probe. The fixture owns a datagram socketpair, never a
+    // TUN or host route. Each endpoint runs separately with fresh trial keys.
+    if(argc==4&&(std::string(argv[3])=="wan-client"||std::string(argv[3])=="wan-exit")){
+      const bool client=std::string(argv[3])=="wan-client";
+      Child peer(argv[1],argv[2]);peer.await_state(client?"ready":"listening");
+      if(!client){std::cout<<"WAN_LISTENING"<<std::endl;peer.await_state("ready",60000);}
+      auto receive=[&](const Bytes& expected){pollfd p{peer.packet,POLLIN,0};require(poll(&p,1,10000)>0,"wan_packet_timeout");Bytes got(65536);const auto n=recv(peer.packet,got.data(),got.size(),0);require(n>0,"wan_packet_read");got.resize(n);require(got==expected,"wan_packet_bytes");};
+      auto send_packet=[&](const Bytes& b){require(send(peer.packet,b.data(),b.size(),0)==ssize_t(b.size()),"wan_packet_send");};
+      unsigned count=0;size_t bytes=0;
+      for(unsigned round=0;round<8;round++)for(size_t size:{64,1400,16384,65535}){
+        if(client){send_packet(packet(size,false,count));receive(packet(size,true,count));}
+        else{receive(packet(size,false,count));send_packet(packet(size,true,count));}
+        count++;bytes+=size;
+      }
+      // Exit must not stop before its final downlink has actually arrived.
+      if(client)send_packet(packet(64,false,250));else receive(packet(64,false,250));
+      if(client)std::this_thread::sleep_for(std::chrono::milliseconds(300));
+      peer.stop();std::cout<<json({{"kind","native-wan-fixture"},{"role",client?"client":"exit"},{"packets_each_direction",count},{"bytes_each_direction",bytes},{"status","passed"},{"real_tun",false}}).dump()<<std::endl;return 0;
+    }
     if(argc==4&&std::string(argv[3])=="client-handshake"){
       Child client(argv[1],argv[2]);client.await_state("ready");client.stop();
       std::cout<<"legacy exit handshake PASS\n";return 0;
