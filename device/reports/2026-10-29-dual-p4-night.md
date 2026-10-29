@@ -5,6 +5,143 @@
 и успешный аппаратный VPN peer не пройдены. Mac Wi-Fi, firewall, роутер и
 прошивки C6 не менялись; Camic/XIAO не прошивалась.
 
+## Продолжение: парные трассы и воспроизводимое падение при смене STA protocol
+
+После просьбы продолжать добавлен явно включаемый STA HTTP trace для частного
+соседа в той же подсети. Он использует существующий ring, хранит 64 TCP-заголовка,
+отключается через 120 s и сбрасывается при восстановлении стенда. Парные записи
+сохраняются и при неуспешной передаче. Часы плат независимы: сравниваются sequence,
+ACK и интервалы, а не абсолютное время между устройствами.
+
+`paired-stamp-to-wave-02`: Stamp STA → AP Waveshare согласовал **HE20**;
+download получил только 5432 B и завершился таймаутом. 24 совпавших ACK прошли
+Stamp SDIO acceptance за 657 ms, а на входе Waveshare растянулись на 2533 ms;
+медианы последовательных интервалов 0 и 108 ms. Это локализует задержку после
+передачи ACK в Hosted на Stamp, до lwIP input Waveshare. Не разделяет радио,
+C6 и доставку SDIO и не доказывает конкретную неисправность одного из них.
+Исходный домашний профиль восстановлен. Первая попытка `...-01` остановилась
+на preflight готовности USB сразу после flash, без изменения профилей.
+
+Для A/B добавлен выключенный по умолчанию `MESHVPN_P4_STA_DISABLE_11AX`,
+не меняющий AP или HT20. Первые два запуска выявили воспроизводимый **PANIC**:
+`igmp_lookup_group: first group must be allsystems` в задаче `tiT`, при
+`mDNS _udp_join_group`. Консоль показывает STOP после установки STA config,
+затем CONNECTED и DHCP без нового START. STOP удаляет netif и IGMP membership;
+UP без регистрации оставляет неинициализированный multicast список.
+
+Проектный patch ESP-NETIF теперь восстанавливает штатный START перед UP только
+для отсутствующего в `netif_list` `WIFI_STA_DEF`. Уже зарегистрированный STA
+не переинициализируется. Изменяется копия SDK-файла в P4 build, общий SDK
+не редактируется. Host-тест исполняет извлечённые production callbacks и
+проверяет START/duplicate/STOP/CONNECTED без START, повторный UP и отсутствие
+лишних регистраций. Исправленный B-образ получил DHCP и вернул USB API;
+ограничение STA до bitmap 7 подтверждено чтением C6. Та же регрессия с прежним
+callback падает на отсутствии IGMP-инициализации перед UP.
+
+С исправлением `paired-stamp-bgn-fixed-to-wave-01` подтвердил реальный **HT20**,
+без reboot, но download остался неуспешным: 942080 B / 31.75 s и IncompleteRead.
+В этом запуске нет throttle, full, expired или failed на STA Stamp/AP Waveshare.
+Контроль `paired-bgn-wave-ap-without-uplink` временно отключил только STA
+Waveshare; Stamp оставалась подключена к её AP. TCP подключился, но HTTP body
+не пришёл до таймаута. Оба журнала восстановлены. Следовательно, одна лишь
+конкуренция AP с домашним STA uplink недостаточна для объяснения этого сбоя.
+Ускорение или исправление RF-пути не подтверждено; дальнейшие контроли идут.
+
+Отдельно исправлен `usb-diag.py`: сохранённые после flash 1200 baud больше
+не применяются через `setraw`/cleanup (1200 + DTR drop — команда ROM boot).
+Ошибка `termios` при отключении больше не маскирует исходную ошибку чтения.
+PTY-регрессия проверяет отсутствие 1200 во всех применениях и cleanup failure.
+Это реальный дефект инструмента, но не установленная причина IGMP panic.
+
+Артефакты: `perf-results/night-20261029/paired-stamp-to-wave-02/`,
+`stamp-bgn-panic-console.log`, `stamp-bgn-panic.elf`,
+`stamp-lifecycle-ready.json`. USB и netif targeted tests прошли; полный host
+suite до lifecycle fix также прошёл (`/tmp/meshpn-host-tests.kmsRmi`).
+
+## Следующие контроли: RF без улучшения, восстановление сервисов подтверждено
+
+- Обратный путь `paired-wave-to-stamp-01`: 278280 B за 15.76 s до таймаута.
+  Исходный Stamp STA b/g/n/ax возвращён; A2 `paired-stamp-A2-to-wave` получил
+  4080 B за 4.22 s и также не завершился. A/B/A не подтвердил исправления RF.
+- Временный предел мощности Stamp 11 dBm подтверждён getter C6. Оба направления
+  (`paired-stamp-power11-to-wave`, `paired-wave-to-stamp-power11`) не получили
+  HTTP body до таймаута. Экспериментальный код удалён, нормальный образ прошит;
+  getter снова показывает 20 dBm, STA bitmap 71 / AP bitmap 7. C6 не прошивался.
+- `lifecycle-services-v2`: **8/8 циклов на каждой P4** — пауза STA, повторное
+  подключение домашнего профиля, проверка регистрации/up/default STA netif,
+  сохранности USB/AP netif, обычного DNS, системного mDNS macOS и USB HTTP.
+  Stamp reconnect 7.59–7.90 s, Waveshare 7.69–11.94 s. Boot count не изменился;
+  все 16 USB transfers завершились, все 16 mDNS-проверок увидели USB адрес
+  соответствующей платы. Оба журнала `restored=true`.
+  Это проверка lifecycle/service recovery, не скорость AP RF или iOS popup.
+- Первый service runner ошибочно отбрасывал DNS с TTL=0 при паузе uplink.
+  Сырой ответ подтвердил корректный IP и TTL=0 для captive режима; исправлен
+  только тест. Прямой UDP mDNS helper не получил ответ, но системный `dns-sd`
+  разрешает оба имени на правильных USB интерфейсах. Ошибка платы не доказана.
+- После netif/USB fixes полный host suite прошёл (`/tmp/meshpn-host-tests.BcaPO7`).
+  Установлены P4 builds с этими исправлениями; XIAO build-only также прошёл.
+- Дополнен real mbedTLS host-тест: production I/O wrappers + framer отправляют
+  пачки до 32 IPv4 кадров, с ограниченными BIO write/read (509/113 B) и
+  принудительными WANT_WRITE/WANT_READ. 128/128 кадров по 1400 B возвращены
+  без порчи и с точным TX accounting; 179 forced write waits, 10623 read waits.
+  Обычный fragmented сценарий 128/128 тоже прошёл. Это не аппаратный TLS peer.
+
+Исправления `e5af66a`, `8142a86`, `eedfd35` закоммичены и отправлены после
+ff-only pull. Контроль host-requested A-MPDU off на Stamp также не восстановил
+TCP: 31224 B / 12.12 s вперёд, 397008 B / 17.48 s обратно, затем таймауты.
+Это значения host init config, не независимое чтение aggregation state C6.
+Обычные AMPDU TX/RX настройки возвращены и подтверждены в текущем host status.
+
+### Локальный TCP/UDP peer прямо на P4
+
+Добавлен `--role radio`: вторая P4 принимает TCP/UDP на выбранном AP/STA
+интерфейсе, только от заданного on-link IPv4 и с тем же nonce/config hello.
+Один job, handshake ≤5 s, передача ≤60 s, остановка при VPN/cancel/ошибке;
+настройки не сохраняются. Mac listener/firewall/VPS больше не нужны для
+измерения одной радиолинии. Это **не** AP+STA интернет и не скорость телефона.
+Host tests с реальными TCP/UDP socket покрыли оба направления, неверный nonce,
+чужую подсеть, busy, cancel, idle timeout, VPN transition, OOM. Полный suite
+прошёл (`/tmp/meshpn-host-tests.pHZYEC`), сборки обеих P4 и XIAO прошли.
+Код зафиксирован в `51ec404`, расширенный TLS test — `d8473f9`.
+
+Первые UDP-контроли: 5 s, один повтор, receiver Mbit/s; up = STA client → AP.
+
+| Client → AP | Target | Up | Down |
+|---|---:|---:|---:|
+| Stamp → Waveshare | 1 | 0.0864 | 0.41088 |
+| Stamp → Waveshare | 4 | 0.0864 | 1.37088 |
+| Waveshare → Stamp | 1 | 0.58176 | 1.00032 |
+| Waveshare → Stamp | 4 | 0.912 | 4.00128 |
+
+Stamp→AP Waveshare: за всю серию host STA принял 2695 submissions, передал 332,
+2361 expired; C6 throttle суммарно около 10 s. UDP receiver видит пробелы
+sequence, но разницу всех sent/received bytes не выдаём за точный loss из-за
+разных окон и хвоста очередей. У Waveshare→AP Stamp на 1 Mbit/s нет новых
+host queue ошибок, но uplink уже недобирает; на 4 Mbit/s — 296 expiry на STA
+Waveshare. Downlink AP Stamp→STA Waveshare в обоих режимах передан полностью
+по счётчику приёмника. SDIO acceptance не является подтверждением RF-доставки.
+
+Артефакты `radio-stamp-wave-udp-01`, `radio-wave-stamp-udp-01`; оба журнала
+восстановлены. Исправлен запуск STA-only (коммит `8aaca65`): финальный
+`esp_wifi_start()` ошибочно зависел от наличия AP. Регрессия на старом коде
+падает, после исправления APSTA/STA-only и отказ запуска проходят.
+Waveshare STA-only boot 1149 получила домашний IP, затем выполнила
+`radio-wave-staonly-fixed`: на 1 Mbit/s up/down 0.599/1.000, на 4 — 0.672/4.001.
+Свой AP клиента не объясняет плохой uplink. Домашний профиль восстановлен,
+обычный APSTA образ возвращён (boot 1150, STA online, AP active).
+Отдельно регрессия неполного TCP hello обнаружила подмену отмены на EPROTO;
+теперь benchmark сохраняет исходный ECANCELED/timeout/socket error.
+Stamp STA-only boot 89 также получила домашний IP. UDP-контроль
+`radio-stamp-staonly-fixed`: 1 Mbit/s up/down 0.081/0.553, 4 — 0.086/0.563.
+Профиль восстановлен. Отключение AP клиента не восстановило обмен ни на
+одной плате. Нельзя объяснять результаты просто удвоением airtime APSTA.
+
+В [upstream issue #184](https://github.com/espressif/esp-hosted-mcu/issues/184)
+есть отчёт о прекращении обмена при 11ax на P4/C6 и восстановлении с b/g/n.
+Это чужое наблюдение, не доказательство нашей причины. Прежний локальный
+b/g/n TCP-контроль не прошёл; проводится отдельный UDP-контроль для отделения
+влияния TCP. Host/C6 версии и прошивки при этом не обновляются.
+
 ## Подтверждённые проверки
 
 - Начальный локальный USB HTTP download 8 MiB: Stamp 38.78, Waveshare
@@ -169,6 +306,11 @@ Stamp A/B/A проверял только `CONFIG_LWIP_TCP_SACK_OUT`, без д�
 Результат B лежит между контрольными: убедительного выигрыша SACK не показал,
 обычный default сохранён. После серии восстановление образа подтверждено.
 
+**Поправка после ревью startup:** этот старый STA-only контроль невалиден:
+при отключённом AP код пропускал `esp_wifi_start()`. Отсутствие подключения
+не является результатом проверки радио/C6. Исправленный образ получил
+домашний IP с `ap_active=false` (boot 1149). Ниже сохранена история наблюдения.
+
 Waveshare STA-only: `ap_active=false` подтверждено, но за 180 s соединение
 с домашней сетью не восстановилось. Передачи не запускались без IP. Возврат
 APSTA подтверждён; за следующие 120 s STA также не подключилась. Нельзя
@@ -229,3 +371,56 @@ tests), `1678f4c` (UDP unique accounting), `786e4b5`/`98d26e0` (STA-only switch)
 `restore.json` отмечены `restored=true`. Незавершённые задачи остаются явно
 открытыми в `plan.md`: RF путь Waveshare/C6, длительный реальный AP+STA,
 успешный hardware TLS/WireGuard и согласованный локальный peer/VPS.
+
+## Дополнение: точность локального VPN peer
+
+Ревью выявило две ошибки самого тестового стенда: ответ на испорченные L4
+checksums и общий TCP flow state между разными внешними соединениями.
+Вторая ошибка воспроизводилась повторным SYN с тем же внутренним tuple:
+новое соединение получало ACK от старого. Теперь peer проверяет ICMP/TCP/UDP
+checksum/длины (zero UDP checksum для IPv4 допустима), а TCP state разделён
+по внешнему соединению/UDP endpoint и удаляется при закрытии stream.
+Обе регрессии падают на прежнем коде и проходят после исправления.
+Полный host suite после STA-only/cancel/checksum fixes прошёл
+(`/tmp/meshpn-host-tests.DHKcXU`); после изоляции flow оба real TLS I/O сценария 128/128 также прошли.
+Это улучшение достоверности тестов, не ускорение прошивки и не подтверждение
+успешного аппаратного VPN.
+
+## UDP A/B/A: 11ax влияет на uplink, downlink ещё не исправлен
+
+При прежнем AP Waveshare и STA Stamp bitmap 71 uplink был около 0.086 Mbit/s.
+В B (только STA Stamp bitmap 7, APSTA сохранён) получены 0.996/3.999 Mbit/s
+при target 1/4. Отдельный запуск дал up 3.930/7.914/11.441/15.537 при target
+4/8/12/16. Down остался 0.916/1.037/0.956; на 16 Mbit/s send() Waveshare
+завершился ENOMEM после 136 пакетов. Второй запланированный повтор этой серии
+не состоялся. Heap до/после одинаков, USB API доступен, профиль восстановлен.
+Это не доказательство утечки памяти и не успешное прохождение 16 Mbit/s down.
+
+Возврат A2 к bitmap 71 (boot 91) снова дал up 0.084–0.088 на 1/4 Mbit/s,
+в двух повторах. Последний down A2 также остановился с ENOMEM после двух
+пакетов. Улучшение uplink обратимо и подтверждено; полный двусторонний путь
+не восстановлен. Артефакты: `radio-stamp-bgn-udp`,
+`radio-stamp-bgn-udp-repeat`, `radio-stamp-ax-A2`.
+
+Отдельный B для AP Waveshare: только AP b/g/n, Stamp STA bitmap 71 оставлен.
+Клиент согласовал HT20; up при 4/8 — 3.988/7.818, down 1.016/1.044 Mbit/s.
+Артефакт `radio-wave-ap-bgn`; домашний профиль восстановлен. AP override
+не переносится в default на основании одной частично успешной серии.
+Дальше STA↔STA контроль через неизменную домашнюю сеть; это два радиоперехода,
+не SoftAP forwarding и не интернет. Полная сводка счётчиков сохраняется
+в `radio-summary.json`, генератор рядом с ней.
+
+STA↔STA LAN-контроль на обычных прошивках: Stamp client→Wave server up/down
+0.962/0.804 при target 1; 2.797/0.478 при 4. На 8 down sender завершился
+ошибкой -1 после 354000 B, этот тест не считается успешным. Обратные роли:
+Wave client→Stamp server up/down 0.641/1.000 при 1, up 1.117 при 4; следующий
+down не прошёл hello (оба endpoint ETIMEDOUT). Оба журнала восстановлены.
+Артефакты `radio-sta-lan-stamp-wave`, `radio-sta-lan-wave-stamp`.
+Тестовый hello UDP однократный: его таймаут не доказывает постоянный отказ
+связи. Низкая скорость передачи Wave воспроизводится и при STA→LAN, поэтому
+одного исправления AP configuration недостаточно. Следующий ограниченный
+контроль — host-requested TX A-MPDU off на Wave, без смены C6 firmware.
+
+Регрессионная сборка XIAO после startup fix также прошла (без прошивки).
+Стенд STA-listener и поиск незавершённых nested journals покрыты 13 host tests.
+Коммиты продолжения: `8aaca65`, `b709447`, `b7f7aab` отправлены после pull.
