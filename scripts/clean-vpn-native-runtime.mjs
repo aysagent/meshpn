@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import {prepareRuntimeAddress} from './lib/native-runtime-address.mjs';
 import {readRelayHealth} from './lib/native-relay-health.mjs';
 import { runtimePlan, runtimePacketConfig, runtimeAnnouncements, restoreTable, auditRuntimeTables } from './lib/native-runtime-plan.mjs';
 
@@ -22,7 +23,7 @@ function main() {
   const namespace = fs.readlinkSync('/proc/self/ns/net');
   assert.notEqual(namespace, parent, 'host_network_refused');
   const source = process.argv[2]; assert.ok(source.startsWith('/'));
-  const configText = privateFile(source), config = JSON.parse(configText), c = runtimePacketConfig(config);
+  let configText = privateFile(source), config = JSON.parse(configText);const c = runtimePacketConfig(config);
   let relayHealth=null;
   if(process.env.CVPN_RELAY_HEALTH_CONFIG){
     assert.equal(config.transport,'combo-tls');assert.equal(c.role,'client');
@@ -53,7 +54,7 @@ function main() {
       }
     }
   }
-  const plan = runtimePlan(config, { uplink, mtu, lan, relayHealth });
+  let plan = runtimePlan(config, { uplink, mtu, lan, relayHealth });
   assert.ok(process.env.CVPN_ANNOUNCE_IPV4 === undefined || process.env.CVPN_ANNOUNCE_IPV4 === '1', 'invalid_announcement_mode');
   const announce = process.env.CVPN_ANNOUNCE_IPV4 === '1'
     ? runtimeAnnouncements(plan, JSON.parse(run('ip', ['-j', '-4', 'addr', 'show']))) : [];
@@ -84,6 +85,9 @@ function main() {
   assert.match(state, /^\/run\/clean-vpn(?:-[a-zA-Z0-9_-]{1,48})?$/, 'private_runtime_state_path_required');
   fs.mkdirSync(state, { mode: 0o700, recursive: true });
   const st = fs.lstatSync(state); assert.ok(st.isDirectory() && st.uid === 0 && !(st.mode & 0o077), 'private_state_required');
+  assert.ok(process.env.CVPN_ADDRESS_DISCOVERY===undefined||process.env.CVPN_ADDRESS_DISCOVERY==='1','assignment_runtime_option');
+  const assignment=prepareRuntimeAddress({config,sourceText:configText,source,state,namespace,engine,plan,backend,enabled:process.env.CVPN_ADDRESS_DISCOVERY==='1'},{run});
+  config=assignment.config;configText=assignment.sourceText;plan=runtimePlan(config,{uplink,mtu,lan,relayHealth});plan.firewallBackend=backend;
   const journal = state + '/network.json';
   const fingerprint = createHash('sha256').update(JSON.stringify(plan)).digest('hex');
   const saved = () => Object.fromEntries(plan.tables.map(t => [`${t.family}/${t.name}`, run(firewall(t.family, 'save'), ['-t', t.name])]));
@@ -130,6 +134,7 @@ function main() {
     auditRuntimeTables(plan, saved());
     persist({ version: 1, namespace, fingerprint, phase: 'ready', plan });
   }
+  assignment.complete();
   // Private snapshot: engine receives exactly the configuration just validated.
   fs.writeFileSync(state + '/engine.json', configText, { mode: 0o600 });
   for (const args of announce) run('arping', args);
