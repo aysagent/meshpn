@@ -1,153 +1,122 @@
-# Несколько native-клиентов на одном exit
+# Клиенты exit: имя, автоматический адрес и готовый комплект
 
-Один `clean-vpn-engine` принимает до **32 клиентов** с отдельными IPv4 и
-32-байтными packet PSK. Это относится к native `boring-tls` и packet-части
-native `combo-tls`. Старый `scripts/clean-vpn.js` не получает эту возможность.
+`clean-vpn-native-clients.mjs` управляет существующим exit, не создавая новый CA
+и не меняя ключи уже подключённых устройств. Это control plane; пакеты остаются
+в native engine. Поддержаны boring и combo, максимум 32 активные идентичности.
 
-`clean-vpn-native-clients.mjs` готовит приватные комплекты конфигураций и ключей
-для новой установки. Он не меняет сеть, DNS или службы и не подключается к VPS.
-Нативный multi-peer обработчик уже существовал; здесь добавлены генератор
-согласованных конфигураций и проверка его результата реальными соединениями.
+## Однократное подключение
 
-## Подготовка двух клиентов
+На Linux сначала установите engine с capability `peer_reload`. Действующие
+daily-бинарники на физических устройствах этой ночной работой не заменяются.
+Старый engine без capability отклоняется до изменения конфигурации.
 
-Пример для Radxa и VPS 2 через `boring-tls`; все пути абсолютные, значения
-endpoint/имени/интерфейсов нужно заменить на свои. `198.51.100.2` — пример,
-не рабочий exit. Endpoint в этом профиле должен быть IPv4, доступным клиентам
-и пригодным для bind на exit.
+Пример для собственной установки (пути CA/profile указать фактические):
 
-```json
-{
-  "version": 1,
-  "transport": "boring-tls",
-  "endpoint": "198.51.100.2",
-  "port": 443,
-  "server_name": "vpn.example.com",
-  "cert": "/root/vpn-pki/cert.pem",
-  "key": "/root/vpn-pki/key.pem",
-  "ca": "/root/vpn-pki/ca.pem",
-  "deploy_root": "/etc/clean-vpn-clients",
-  "exit": { "uplink": "eth0", "link_unit": "links.service" },
-  "clients": [
-    {
-      "name": "radxa", "ipv4": "10.99.0.2",
-      "uplink": "wlan0", "link_unit": "links.service",
-      "lan": { "interface": "usb0", "subnet": "192.168.7.0/24" }
-    },
-    {
-      "name": "vps2", "ipv4": "10.99.0.3",
-      "uplink": "eth0", "link_unit": "links.service", "lan": null
-    }
-  ]
-}
+```sh
+sudo install -d -m 700 /var/lib/clean-vpn
+sudo node scripts/clean-vpn-native-clients.mjs init \
+  --engine=/opt/clean-vpn-native/daily-exit/engine \
+  --unit=native-daily-exit.service \
+  --config=/opt/clean-vpn-native/daily-exit/config.json \
+  --endpoint=154.62.226.216 --server-name=vpn.example.net \
+  --ca=/private/ca.pem --profile=/private/profile.json
 ```
 
-`links.service` — пример имени **существующего внешнего владельца сети**,
-соответствующего [site-контракту](clean-vpn-native-network.md). Генератор не
-создаёт его и не превращает произвольную работающую сеть в dedicated site.
-Выбор systemd-networkd вместо этого имени сам по себе контракт не выполняет.
+Registry по умолчанию `/var/lib/clean-vpn/clients/registry.json`; каталог должен
+быть новым. Для другой установки задайте `--directory=/private/clients` во всех
+командах. Engine/unit запоминаются при init. Сертификаты и профиль не берутся
+наугад из соседних каталогов: CA должен соответствовать действующему exit.
+`--profile` необязателен, но нужен для выбранной браузерной мимикрии.
 
-Сохранить как `/root/clients.json`. Сертификат должен соответствовать
-`server_name`, ключ — сертификату; CA должен доверять цепочке exit. Для файлов
-использовать обычные пути без symlink, для private key — права `0600` и своего
-владельца. Генератор проверяет leaf/key/hostname и формат CA; проверка цепочки
-доверия происходит при TLS handshake.
+Существующие адреса получают временные имена `client-2`, `client-3` и т. д.
+Для combo при init необходим `--relay-map=/private/map.json`: JSON-объект
+`{"10.99.0.2":"client-1"}` явно связывает packet IP с существующим relay id.
+Нельзя угадывать соответствие по порядку массивов: отзыв мог бы отключить
+чужую relay-идентичность. Файл map должен иметь права 0600.
 
-```bash
-node scripts/clean-vpn-native-clients.mjs \
-  --manifest=/root/clients.json \
-  --directory=/root/native-clients-bundle
+## Повседневные команды
+
+```sh
+sudo node scripts/clean-vpn-native-clients.mjs rename client-2 radxa
+sudo node scripts/clean-vpn-native-clients.mjs add laptop
+sudo node scripts/clean-vpn-native-clients.mjs list
+sudo node scripts/clean-vpn-native-clients.mjs export laptop --output=/root/laptop.bundle
+sudo node scripts/clean-vpn-native-clients.mjs rotate laptop
+sudo node scripts/clean-vpn-native-clients.mjs revoke laptop
 ```
 
-Выходной каталог должен отсутствовать. Повторный запуск не перезаписывает ключи.
-Результат (каталоги `0700`, файлы `0600`):
+`add` назначает первый свободный адрес `10.99.0.2..254`. Он остаётся за
+идентичностью после переподключения и отзыва: автоматического повторного
+использования адреса отозванного клиента нет. Это стабильное автоматическое
+назначение при регистрации, **не выдача адреса в TLS handshake**.
+Имя — одна строчная DNS-метка, например `laptop`; DNS-имя — `laptop.mpn`.
+[Resolver зоны](clean-vpn-native-peer-dns.md) включается отдельно.
 
-```text
-native-clients-bundle/
-  manifest.json
-  exit/          config.json, site.json, cert.pem, key.pem, peers/*.psk
-  clients/radxa/ config.json, site.json, ca.pem, packet.psk
-  clients/vps2/  config.json, site.json, ca.pem, packet.psk
+`list` не раскрывает ключи; connectionState пока `unknown`, это реестр, не
+счётчик активных сессий. `export` создаёт новый файл 0600, ничего не печатает
+из ключевого материала в stdout и не перезаписывает существующий файл.
+Комплект содержит секреты: передавать только нужному клиенту. После ротации
+нужно экспортировать новый комплект. Имя можно менять без ротации.
+
+Для заведомо остановленной/офлайн установки вместо unit используйте `--offline`.
+Результат прямо сообщает `requiresReload:true`; это не применение в работающий
+процесс. Сам скрипт не останавливает службу и не меняет маршруты или firewall.
+
+## Импорт на клиенте
+
+```sh
+sudo node scripts/clean-vpn-native-clients.mjs import \
+  --bundle=/root/laptop.bundle --directory=/root/laptop-config \
+  --engine=/absolute/path/clean-vpn-engine
 ```
 
-На каждую машину переносится **только содержимое её комплекта**, с сохранением
-закрытых прав, в `/etc/clean-vpn-clients`. Клиентам не передаются private key
-exit и packet PSK других клиентов. `manifest.json` не содержит секретов.
-Пример проверки уже перенесённого комплекта на каждой машине:
+Создаются только новый каталог и role-specific config/credentials. `--check-config`
+обязателен; активировать сеть этим скриптом нельзя. Engine config остаётся
+совместимым с существующими network/runtime installers. Для переноса в `/config`
+контейнера импорт выполняйте с конечными путями внутри контейнерного окружения.
+При неуспешной native-валидации новый каталог сохраняется для диагностики,
+но не активируется. Повторный импорт поверх существующего каталога запрещён.
 
-```bash
-native/clean_vpn/build/clean-vpn-engine \
-  --check-config /etc/clean-vpn-clients/config.json
+## Применение и восстановление
+
+До mutation проверяется capability и identity работающего unit: actual process
+должен исполнять указанный engine с этим config path. Затем готовится candidate,
+проверяется engine, сохраняется журнал точных предыдущих/новых config и registry.
+После atomic replace посылается SIGHUP только главному процессу unit.
+Успех требует события `peer_reload` с SHA256 точных байтов конфигурации из journal.
+Неизменённые сессии продолжают работу; отозванные/rotated закрываются.
+
+Ошибки применения вызывают возврат предыдущих файлов и reload. При аварии:
+
+```sh
+sudo node scripts/clean-vpn-native-clients.mjs recover
 ```
 
-Далее — dry-run существующего установщика на новом выделенном site:
+Kernel flock не остаётся захваченным после SIGKILL. Pending journal запрещает
+другие операции до recovery. Внешние изменения config/registry вызывают конфликт:
+не затираем настройки администратора восстановлением вслепую.
+Для Linux нужен `flock` (util-linux); macOS unit tests используют Python fcntl,
+но systemd activation предназначена только для Linux.
 
-```bash
-node scripts/clean-vpn-native-install.mjs \
-  --name=multi \
-  --binary=/absolute/clean-vpn-engine \
-  --config=/etc/clean-vpn-clients/config.json \
-  --site-profile=/etc/clean-vpn-clients/site.json
+Combo создаёт новый replay id при добавлении/ротации, инициализирует только его
+журнал и сохраняет старые журналы. Ключи и replay-каталоги не удаляются
+автоматически после отзыва/неуспешной транзакции; это приватные остатки для
+проверяемого восстановления, не разрешение доступа.
+
+## Проверки
+
+```sh
+node --test scripts/test-native-clients.mjs scripts/test-native-client-manager.mjs
+CVPN_BUILD=/absolute/linux/build node --test scripts/test-native-client-enrollment.mjs
 ```
 
-Без `--apply` эта команда проверяет конфигурацию и формирует план. Установка и
-активация описаны в [native-install](clean-vpn-native-install.md). Не запускать
-её как автоматическую миграцию существующего Radxa/VPS: текущие legacy guards,
-DNS и USB rescue требуют отдельного согласования. Старый bounded direct trial
-пока намеренно проверяет одну пару с адресом клиента `.2`; этот генератор его
-ограничения не меняет.
+Проверены отдельные ключи, стабильные адреса, лимиты, import path validation,
+конкуренция, rollback, SIGKILL и сохранение посторонней правки. Linux enrollment
+соединяет экспортированного клиента .3 с настоящим native exit: boring/combo,
+H1/H2, пакеты генерирует C++ socketpair fixture. Это не системная DNS-интеграция,
+не обновление физической daily-установки и не выдача адресов при подключении.
 
-## Combo и изоляция
-
-Для `combo-tls` выбрать `"transport": "combo-tls"`, добавить
-`"public_name": "relay.example.com"` и при необходимости `"deny_ipv4": []`.
-Текущий combo site-профиль требует LAN у каждого клиента: HTTPS REDIRECT
-применяется к входящему LAN-трафику. Пример VPS 2 с `lan: null` подходит для
-`boring-tls`; генератор отвергнет его для combo. Имена server_name и public_name
-имеют разные назначения: проверка сертификата exit и SNI разделения транспорта.
-
-Combo-комплекты дополнительно содержат **общий relay.psk**. У каждого клиента
-свой packet PSK, но независимого отзыва HTTPS relay-доступа пока нет: для него
-нужна ротация группового ключа у всех клиентов. Replay-state общий на exit,
-создаётся установщиком один раз при fresh install; генератор его не создаёт.
-Удалять или заново инициализировать существующий replay-state нельзя.
-
-Остальные свойства:
-
-- Exit: `10.99.0.1/24`; клиенты: разные адреса `10.99.0.2…254/32`, максимум 32.
-- Source IP привязан к аутентифицированному ключу; ответы идут только владельцу
-  destination IP. Прямая пересылка между настроенными клиентами запрещена.
-- Одна активная сессия на identity; повторный вход не вытесняет действующую.
-- LAN-клиенты SNAT-ятся в адрес своего VPN-клиента. Одинаковые LAN-подсети на
-  разных шлюзах допустимы; маршрутизация LAN-to-LAN этим не добавляется.
-- Добавление/отзыв клиента пока выполняется через изменение конфигурации exit
-  и перезапуск; hot reload, API пользователей и обновление существующей
-  установки этим генератором не реализованы. Повторная генерация в новый каталог
-  выпускает новые ключи **всех** клиентов, это не операция добавления одного.
-- Лимит 32 — число настроенных packet identities, не гарантия пропускной
-  способности. Relay очереди/лимиты остаются общими для всех клиентов.
-
-## Проверка в лаборатории
-
-```bash
-# Только генератор и согласованность профилей
-npm run test:native-clients
-
-# Linux с собранными engine и fixtures
-npm run test:native-clients-real
-
-# macOS: кэшированная Linux-сборка, CTest и multi-client проверки
-npm run lab:native:mac -- --multi-clients
-```
-
-Новый тест использует сгенерированные комплекты: 32 настоящих combo TLS/H2
-соединения к одному exit, 256 адресованных пакетов в обе стороны, проверка
-изоляции получателей и ограничений FD/RSS. Отдельный существующий multi-peer
-тест проверяет подмену source IP, duplicate identity, stalled TLS и reconnect.
-В этом быстром прогоне вместо TUN используется fixture FD; DNS выключен только
-в runtime fixture, HTTPS relay payload не генерируется. Он не заменяет
-реальную проверку двух клиентов с TUN/NAT/DNS на Radxa ↔ VPS.
-
-Проверено 2026-10-25 в macOS/Podman Linux amd64: CTest 7/7, multi-client suite
-6/6 без пропусков. Локальные проверки генератора, lab CLI, network profile и
-service unit — 67/67. Физический multi-client прогон пока не выполнен.
+Старый offline `--manifest=... --directory=...` интерфейс и экспортируемые
+`planNativeClients`/`prepareNativeClients` сохранены для существующих site labs.
+[Его отдельная документация](clean-vpn-native-client-bundles.md); он создаёт новый
+комплект и не добавляет пользователей в действующий exit.
