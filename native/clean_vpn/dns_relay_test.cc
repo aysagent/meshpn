@@ -46,7 +46,10 @@ int main(int argc,char** argv){
   try{
     dns::need(argc==1||(argc==2&&std::string(argv[1])=="10.99.0.3"));
     if(argc==2)client_ip=argv[1];
-    const auto baseline=entries("/proc/self/fd");
+    // Initialize runtime thread bookkeeping before measuring application
+    // workers (TSan starts its own persistent helper on the first thread).
+    std::thread([]{}).join();
+    const auto baseline=entries("/proc/self/fd"),baseline_tasks=entries("/proc/self/task");
     {
       Origin primary("1.1.1.1"),backup("8.8.8.8"),private_origin("10.99.0.1",1055);std::atomic<bool> ready{false},failed{false},idle{false},demand{false};auto relay=std::make_unique<DnsRelay>("lo",ready,failed,&idle,&demand,client_ip);auto q=question();
       dns::need(dns::response(query(q),q).rcode==2&&primary.requests==0&&backup.requests==0);ready=true;
@@ -78,7 +81,7 @@ int main(int argc,char** argv){
       for(int i=0;i<100;i++)dns::need(dns::response(query(q,i%2),q).rcode==3);
       std::vector<int> slow;
       for(int i=0;i<24;i++){int fd=socket(AF_INET,SOCK_STREAM,0);auto a=addr(client_ip,1053);dns::need(connect(fd,reinterpret_cast<sockaddr*>(&a),sizeof(a))==0);slow.push_back(fd);}
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));dns::need(entries("/proc/self/task")<=23);
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));dns::need(entries("/proc/self/task")<=baseline_tasks+20);
       auto start=std::chrono::steady_clock::now();relay.reset();dns::need(std::chrono::steady_clock::now()-start<std::chrono::seconds(1));
       for(int fd:slow)close(fd);
       dns::need(!failed);
@@ -100,6 +103,6 @@ int main(int argc,char** argv){
       dns::need(dns::response(query(private_q,true,"10.99.0.1",1055,client_ip),private_q).rcode==3);
       denied=false;try{query(private_q,true,"10.99.0.1",1055,"127.0.0.1");}catch(...){denied=true;}dns::need(denied&&!failed);
     }
-    dns::need(entries("/proc/self/fd")==baseline);std::cout<<"native DNS UDP/TCP, identity, fallback, EDNS, truncation, 100 queries, saturation, cancellation, FD cleanup PASS\n";
+    dns::need(entries("/proc/self/fd")==baseline&&entries("/proc/self/task")<=baseline_tasks);std::cout<<"native DNS UDP/TCP, identity, fallback, EDNS, truncation, 100 queries, saturation, cancellation, FD cleanup PASS\n";
   }catch(const std::exception& e){std::cerr<<e.what()<<" errno="<<errno<<"\n";return 1;}
 }
