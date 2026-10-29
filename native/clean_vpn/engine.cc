@@ -36,6 +36,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <chrono>
+#include <atomic>
 #include <array>
 #include <iostream>
 #include <map>
@@ -46,10 +47,15 @@
 using json = nlohmann::json;
 using namespace cvpn;
 using Clock = std::chrono::steady_clock;
-static volatile sig_atomic_t interrupted = 0;
-static volatile sig_atomic_t reload_requested = 0;
-static void on_reload(int) { reload_requested = 1; }
-static void on_signal(int) { interrupted = 1; }
+// A process-directed signal may run in a DNS/classifier worker. sig_atomic_t
+// alone only protects interrupted access within one thread; it is not a
+// cross-thread atomic. Handlers must never fall back to a library mutex.
+static_assert(std::atomic<sig_atomic_t>::is_always_lock_free,
+              "signal flags require lock-free atomics");
+static std::atomic<sig_atomic_t> interrupted{0};
+static std::atomic<sig_atomic_t> reload_requested{0};
+static void on_reload(int) { reload_requested.store(1,std::memory_order_relaxed); }
+static void on_signal(int) { interrupted.store(1,std::memory_order_relaxed); }
 static void check(bool ok, const char* msg) { if (!ok) throw std::runtime_error(msg); }
 struct Fd {
   int n = -1;
@@ -165,8 +171,8 @@ public:
     check(write(STDOUT_FILENO,record.data(),record.size())==ssize_t(record.size()),"reload_ready_output");
   }
   template<class Apply> void poll(Apply apply) {
-    if(!reload_requested)return;
-    reload_requested=0;std::string requested;bool success=false;
+    if(!reload_requested.exchange(0,std::memory_order_relaxed))return;
+    std::string requested;bool success=false;
     try {
       const auto raw=file(path_,16384);requested=digest(raw);const auto next=json::parse(raw);
       check(next.at("role")=="exit"&&immutable(next)==immutable_,"reload_immutable_config");
