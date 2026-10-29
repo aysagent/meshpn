@@ -41,33 +41,64 @@ static esp_err_t esp_tls_get_and_clear_last_error(void*h,int*c,int*f){(void)h;*c
 static esp_tls_t connection;
 static pthread_mutex_t io_lock=PTHREAD_MUTEX_INITIALIZER;
 static int socket_fd;
+static bool backpressure, fault_io;
+static unsigned send_steps, recv_steps, forced_write_waits, forced_read_waits;
+static unsigned target_packets;
+/* Deterministic nonblocking BIO stalls after the real TLS handshake. These
+ * exercise mbedTLS record buffering, not a mock of the production wrappers. */
+static int bounded_send(void *ctx,const unsigned char *buf,size_t len){
+ if(fault_io){
+  if(++send_steps%3==0){forced_write_waits++;return MBEDTLS_ERR_SSL_WANT_WRITE;}
+  if(len>509)len=509;
+ }
+ return mbedtls_net_send(ctx,buf,len);
+}
+static int bounded_recv(void *ctx,unsigned char *buf,size_t len){
+ if(fault_io){
+  if(++recv_steps%3==0){forced_read_waits++;return MBEDTLS_ERR_SSL_WANT_READ;}
+  if(len>113)len=113;
+ }
+ return mbedtls_net_recv(ctx,buf,len);
+}
 #ifndef PACKETS
 #define PACKETS 128
 #endif
 static void pause_ms(void){struct timespec t={.tv_nsec=1000000};nanosleep(&t,NULL);}
 static void*writer(void*unused){
- (void)unused;uint8_t frame[1404];
- for(unsigned i=0;i<PACKETS;i++){
-  unsigned length=i%16==0?1400:100;memset(frame,0,4+length);uint8_t*p=frame+4;
-  meshvpn_vpn_frame_header(frame,length);p[0]=0x45;p[2]=length>>8;p[3]=length;p[8]=64;p[9]=1;
-  memcpy(p+12,(uint8_t[]){10,99,0,2,198,18,0,1},8);p[20]=8;p[27]=i;
-  assert(meshvpn_vpn_repair_checksums(p,length));
-  size_t used=0;int64_t deadline=esp_timer_get_time()+10000000;
-  while(used<4+length){
-   assert(esp_timer_get_time()<deadline);
-   ssize_t n=tunnel_write(&connection,&io_lock,socket_fd,frame+used,4+length-used);
-   if(n>0)used+=n;else{assert(tls_would_block(n));pause_ms();}
+ (void)unused;uint8_t p[1400];unsigned i=0,accepted=0;size_t accepted_bytes=0,expected_bytes=0;
+ meshvpn_vpn_tx_batch_t batch={0};
+ while(i<target_packets){
+  memset(&batch,0,sizeof(batch));
+  unsigned limit=backpressure?MESHVPN_VPN_BATCH_FRAMES:1;
+  for(unsigned count=0;count<limit&&i<target_packets;count++,i++){
+   unsigned length=backpressure||i%16==0?1400:100;memset(p,0,length);
+   p[0]=0x45;p[2]=length>>8;p[3]=length;p[8]=64;p[9]=1;
+   memcpy(p+12,(uint8_t[]){10,99,0,2,198,18,0,1},8);p[20]=8;p[27]=i;
+   memset(p+28,(uint8_t)(i^0xa5),length-28);
+   assert(meshvpn_vpn_repair_checksums(p,length));
+   assert(meshvpn_vpn_tx_append(&batch,p,length));expected_bytes+=length;
   }
+  int64_t deadline=esp_timer_get_time()+10000000;
+  while(batch.used<batch.length){
+   assert(esp_timer_get_time()<deadline);
+   ssize_t n=tunnel_write(&connection,&io_lock,socket_fd,batch.data+batch.used,batch.length-batch.used);
+   if(n>0){unsigned packets;size_t bytes;assert(meshvpn_vpn_tx_advance(&batch,n,&packets,&bytes));accepted+=packets;accepted_bytes+=bytes;}
+   else{assert(tls_would_block(n));pause_ms();}
+  }
+  assert(batch.completed==batch.count);
  }
+ assert(accepted==target_packets&&accepted_bytes==expected_bytes);
  return NULL;
 }
 static unsigned received;
 static bool packet_received(void*ctx,const uint8_t*p,size_t n){
- (void)ctx;assert(n==(received%16==0?1400:100)&&p[9]==1&&p[20]==0&&p[27]==(uint8_t)received);
+ (void)ctx;assert(n==(backpressure||received%16==0?1400:100)&&p[9]==1&&p[20]==0&&p[27]==(uint8_t)received);
+ for(size_t j=28;j<n;j++)assert(p[j]==(uint8_t)(received^0xa5));
  assert(!memcmp(p+12,(uint8_t[]){198,18,0,1,10,99,0,2},8));received++;return true;
 }
 int main(int argc,char**argv){
- (void)TAG;assert(argc==3);
+ (void)TAG;assert(argc==4);backpressure=!strcmp(argv[3],"backpressure");
+ target_packets=backpressure&&PACKETS>256?256:PACKETS;
  mbedtls_net_context socket;mbedtls_net_init(&socket);
  assert(!mbedtls_net_connect(&socket,"127.0.0.1",argv[1],MBEDTLS_NET_PROTO_TCP));socket_fd=socket.fd;
  mbedtls_ssl_config config;mbedtls_ssl_config_init(&config);mbedtls_ssl_init(&connection.ssl);
@@ -83,12 +114,13 @@ int main(int argc,char**argv){
  mbedtls_ssl_conf_max_tls_version(&config,MBEDTLS_SSL_VERSION_TLS1_2);
  assert(!mbedtls_ssl_setup(&connection.ssl,&config));
  assert(!mbedtls_ssl_set_hostname(&connection.ssl,"loopback-test"));
- mbedtls_ssl_set_bio(&connection.ssl,&socket,mbedtls_net_send,mbedtls_net_recv,NULL);
+ mbedtls_ssl_set_bio(&connection.ssl,&socket,bounded_send,bounded_recv,NULL);
  assert(!mbedtls_ssl_handshake(&connection.ssl));assert(!mbedtls_net_set_nonblock(&socket));
+ fault_io=backpressure;
  pthread_t thread;assert(!pthread_create(&thread,NULL,writer,NULL));
  meshvpn_vpn_rx_stream_t decoder={0};uint8_t buffer[8192];
- int64_t deadline=esp_timer_get_time()+20000000+(int64_t)PACKETS*30000;
- while(received<PACKETS){
+ int64_t deadline=esp_timer_get_time()+20000000+(int64_t)target_packets*(backpressure?150000:30000);
+ while(received<target_packets){
   assert(esp_timer_get_time()<deadline);
   fd_set rd;FD_ZERO(&rd);FD_SET(socket_fd,&rd);struct timeval tv={.tv_usec=10000};
   int ready=select(socket_fd+1,&rd,NULL,NULL,&tv);assert(ready>=0);
@@ -99,9 +131,10 @@ int main(int argc,char**argv){
   }
  }
  assert(!pthread_join(thread,NULL));
+ if(backpressure)assert(forced_write_waits&&forced_read_waits);
  assert(s.transport_read.calls&&s.transport_write.calls&&s.tls_lock_wait.calls);
- printf("TLS_IO_OK packets=%u read_calls=%llu write_calls=%llu\n",received,
-  (unsigned long long)s.transport_read.calls,(unsigned long long)s.transport_write.calls);
+ printf("TLS_IO_OK packets=%u read_calls=%llu write_calls=%llu forced_write_waits=%u forced_read_waits=%u\n",received,
+  (unsigned long long)s.transport_read.calls,(unsigned long long)s.transport_write.calls,forced_write_waits,forced_read_waits);
  mbedtls_net_free(&socket);mbedtls_ssl_free(&connection.ssl);mbedtls_ssl_config_free(&config);
  mbedtls_x509_crt_free(&ca);mbedtls_ctr_drbg_free(&rng);mbedtls_entropy_free(&entropy);return 0;
 }
