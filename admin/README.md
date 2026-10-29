@@ -257,3 +257,19 @@ podman exec -e CVPN_DISPOSABLE_HOST_ADMIN=1 cvpn-host-admin-lab \
 podman stop cvpn-host-admin-lab
 podman rm cvpn-host-admin-lab
 ```
+
+### Certificate status and diagnostic download
+
+The dashboard reports the dates of local exit-chain certificates or local client
+trust anchors, with a 30-day expiry warning. It uses the device clock and does
+not infer the remote leaf certificate, validate its chain or renew certificates.
+A client CA expiry warning is not a remote-exit expiry measurement.
+
+`GET /api/diagnostics` requires an authenticated session and downloads a fresh,
+explicitly projected report. It contains endpoint addresses, interface/profile
+names, service states, metrics and public certificate fingerprints. Credentials,
+SSID lists, raw configuration, captures, journals and arbitrary job results are
+excluded. It does not send probes or certify absence of DNS leaks.
+
+Validation: 46/46 Linux admin tests, including export authentication and injected
+secret-field omission; Chromium DOM role/client workflow also passed.

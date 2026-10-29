@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import {diagnosticExport} from './lib/diagnostics.mjs';
 import {X509Certificate} from 'node:crypto';
 import path from 'node:path';
 import http from 'node:http';
@@ -37,6 +38,7 @@ export async function createAdmin(c,{rpc=(route,data)=>brokerRequest(c.brokerSoc
  if(req.url==='/api/logout'){need(mutation,'method',405);auth.sessions.delete(s.sid);send(res,200,{loggedOut:true},{'set-cookie':'mpn_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'});return;}
  if(req.url==='/api/password'){need(mutation,'method',405);exact(p,['oldPassword','newPassword']);await auth.change(p.oldPassword,p.newPassword);send(res,200,{changed:true,loginRequired:true},{'set-cookie':'mpn_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'});return;}
  if(mutation)need(!auth.record.defaultPassword,'change_default_password_first',403);
+ if(req.url==='/api/diagnostics'){need(!mutation,'method',405);const [status,settings]=await Promise.all([rpc('/status',{}),rpc('/settings',{})]);send(res,200,diagnosticExport(status,settings),{'content-disposition':'attachment; filename=meshpn-diagnostics.json'});return;}
  if(req.url==='/api/clients/export'){need(mutation,'method',405);exact(p,['name']);need(typeof p.name==='string'&&/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(p.name),'client_name');const result=await rpc('/clients/export',p);send(res,200,result,{'content-disposition':'attachment; filename='+p.name+'.meshpn.json'});return;}
  if(req.url==='/api/observer/pcap'){need(!mutation,'method',405);need(!downloadBusy,'download_in_progress',429);downloadBusy=true;res.once('close',()=>{downloadBusy=false;});const result=await rpc('/observer/pcap',{});res.writeHead(200,{'content-type':'application/vnd.tcpdump.pcap','content-disposition':'attachment; filename=observer.pcap'});res.end(Buffer.from(result.base64,'base64'));return;}
  if(req.url==='/api/capture'){need(!mutation,'method',405);send(res,200,{active:!!capture,bundle:capture?.snapshot()??captureView});return;}

@@ -1,0 +1,40 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {X509Certificate} from 'node:crypto';
+import {once} from 'node:events';
+import http from 'node:http';
+import {certificateStatus} from '../lib/certificates.mjs';
+import {diagnosticExport} from '../lib/diagnostics.mjs';
+import {createAdmin} from '../server.mjs';
+const request=(url,opts={})=>new Promise((resolve,reject)=>{const r=http.request(url,opts,res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>resolve({status:res.statusCode,headers:{get:k=>Array.isArray(res.headers[k])?res.headers[k][0]:res.headers[k]},text:async()=>text}));});r.on('error',reject);r.end(opts.body);});
+const temp=t=>{const p=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-diag-'));t.after(()=>fs.rmSync(p,{recursive:true,force:true}));return p;};
+test('passive certificate dates cover expiry, future clock, combo and client CA without remote claim',t=>{
+ const d=temp(t);execFileSync('openssl',['req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:P-256','-nodes','-keyout',d+'/key','-out',d+'/cert','-days','60','-subj','/CN=fixture'],{stdio:'ignore'});
+ const cert=new X509Certificate(fs.readFileSync(d+'/cert')),start=Date.parse(cert.validFrom),end=Date.parse(cert.validTo),config={role:'exit',cert:d+'/cert'};
+ assert.equal(certificateStatus(config,{now:start+86400000}).status,'valid');
+ assert.equal(certificateStatus(config,{now:end-86400000}).status,'expiring');
+ assert.equal(certificateStatus(config,{now:end+1}).certificates[0].state,'expired');
+ assert.equal(certificateStatus(config,{now:start-1}).certificates[0].state,'not-yet-valid');
+ assert.equal(certificateStatus({transport:'combo-tls',boring:config},{now:start+86400000}).scope,'local-exit-chain');
+ const ca=certificateStatus({role:'client',ca:d+'/cert'});assert.equal(ca.scope,'local-client-trust');assert.equal(ca.remoteLeafObserved,false);
+ assert.equal(certificateStatus({transport:'transparent-tls'}).status,'not-applicable');
+ fs.symlinkSync(d+'/cert',d+'/link');assert.equal(certificateStatus({role:'exit',cert:d+'/link'}).status,'unavailable');
+ assert.equal(certificateStatus(config,{read:()=>Buffer.alloc(262145)}).status,'unavailable');
+ assert.equal(certificateStatus(config,{read:()=>fs.readFileSync(d+'/key')}).status,'unavailable');
+});
+test('diagnostics projects allowed fields and omits secrets even inside otherwise public objects',()=>{
+ const secret='SECRET-MUST-NOT-EXPORT';const status={metrics:{time:'2026-10-30',cpu:[{core:'cpu0',percent:3,secret}],network:[{interface:'eth0',rxBytes:42,secret}]},vpn:{ActiveState:'active',secret},wifi:{ssid:secret,wpa_state:'COMPLETED',password:secret},jobs:[{id:'1',kind:'client-export',status:'passed',result:{psk:secret},error:secret}],certificates:{status:'valid',secret,certificates:[{ca:true,der:secret}]},unknown:secret};
+ const settings={vpn:{address:'192.0.2.1',secret_path:secret,key:secret},wifi:[{ssid:secret,password:secret}],credentials:secret};const result=diagnosticExport(status,settings);
+ assert.equal(result.vpn.settings.address,'192.0.2.1');assert.equal(result.metrics.network[0].rxBytes,42);assert.ok(!JSON.stringify(result).includes(secret));assert.equal(result.jobs[0].status,'passed');assert.ok(!('result'in result.jobs[0]));
+});
+test('diagnostic HTTP export requires authentication and exports fresh projected state',async t=>{
+ const secret='HIDDEN-PSK';let statusCalls=0;const config={state:temp(t),address:'127.0.0.1',subnet:'127.0.0.0/8',port:80,lab:true};const app=await createAdmin(config,{rpc:async route=>route==='/settings'?{hostname:'mpn',vpn:{address:'192.0.2.1',key:secret}}:{vpn:{ActiveState:'active',secret},sequence:++statusCalls}});
+ app.server.listen(0,'127.0.0.1');await once(app.server,'listening');t.after(()=>app.close());const url='http://127.0.0.1:'+app.server.address().port,headers={host:'mpn.local'};
+ assert.equal((await request(url+'/api/diagnostics',{headers})).status,401);assert.equal(statusCalls,0);
+ const login=await request(url+'/api/login',{method:'POST',headers:{...headers,origin:'http://mpn.local','content-type':'application/json'},body:JSON.stringify({password:'admin'})});assert.equal(login.status,200);headers.cookie=login.headers.get('set-cookie').split(';')[0];
+ const r=await request(url+'/api/diagnostics',{headers});assert.equal(r.status,200);assert.match(r.headers.get('content-disposition'),/attachment/);const data=await r.text();assert.ok(!data.includes(secret));assert.equal(JSON.parse(data).vpn.ActiveState,'active');assert.equal(statusCalls,1);
+});
