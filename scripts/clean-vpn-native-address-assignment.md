@@ -225,3 +225,13 @@ JA3 was `1486e97570653f52b603bf93abaffe92`; JA4 was
 `t13d0307h2_55b375c5d22e_70c6d19c6451`, with distinct handshake randoms.
 The earlier full-engine sanitizer run predates the five-error-code diagnostic
 patch; no new sanitizer coverage is claimed for that rebuild.
+
+The observer matrix additionally covers the saved
+`chromium-156-bounded-cold-v1` profile on boring and combo. Its explicit reviewed
+subset and deviations remain documented in the profile provenance; this does
+not make it equivalent to stock Chromium. Discovery and full-session captures
+match that saved subset. Extension permutation intentionally changes raw JA3,
+so these cases compare sorted JA3 `9fc752c58190630c49e1812906b40077` and
+JA4 `t13d0915h2_f91f431d341e_54d72502093d`, while checking each complete capture
+against the profile. The boundary suite now has 16 passing cases, including
+four observer cases/eight captured ClientHellos.

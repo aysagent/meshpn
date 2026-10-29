@@ -15,7 +15,6 @@ import {parseFirstTlsClientHelloFromTcpBuf} from './lib/tls-clienthello-ja3.mjs'
 import {observeTlsProfile} from './lib/native-tls-profile-observer.mjs';
 const build=path.resolve(process.env.CVPN_BUILD??'native/clean_vpn/build');
 const profilePath=path.resolve('fixtures/native-tls-profiles/cold-h2.json');
-const profile=JSON.parse(fs.readFileSync(profilePath));
 function fixture(t,dates){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-discovery-boundary-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  const openssl=(...args)=>execFileSync('openssl',args,{cwd:dir,stdio:'pipe',timeout:10000});
@@ -66,16 +65,17 @@ for(const combo of [false,true])for(const httpVersion of ['2','1.1'])for(const s
  const r=await run(t,[build+'/clean-vpn-engine','--discover-address',file]);assert.equal(r.code,1,r.stderr);assert.equal(r.stdout,'');assert.match(r.stderr,new RegExp(scenario==='expired'?'tls_verify_expired':scenario==='not-yet-valid'?'tls_verify_not_yet_valid':'auth_clock_skew'));
  assert.equal(s.connections(),1,'discovery must not retry or run clock bootstrap');assert.equal(s.requests(),scenario==='clock-skew'?1:0);assert.deepEqual(fs.readFileSync(file),before);assert.equal(fs.existsSync('/sys/class/net/absenttun0'),false);
 });
-for(const combo of [false,true])test(`independent saved-profile observation: discovery versus full ${combo?'combo':'boring'} H2 session`,{timeout:30000},async t=>{
+for(const profileName of ['cold-h2','chromium-156-bounded-cold'])for(const combo of [false,true])test(`independent saved-profile observation: ${profileName} discovery versus full ${combo?'combo':'boring'} H2 session`,{timeout:30000},async t=>{
+ const observedProfilePath=path.resolve('fixtures/native-tls-profiles/'+profileName+'.json'),observedProfile=JSON.parse(fs.readFileSync(observedProfilePath));
  const f=fixture(t),s=await issuer(t,f,'2'),captures=[],sockets=new Set();
  const proxy=net.createServer(client=>{const upstream=net.connect(s.port,'127.0.0.1');for(const socket of [client,upstream]){sockets.add(socket);socket.on('error',()=>{client.destroy();upstream.destroy();});socket.on('close',()=>sockets.delete(socket));}let bytes=Buffer.alloc(0),done=false;client.on('data',b=>{if(done)return;bytes=Buffer.concat([bytes,b]);assert.ok(bytes.length<=65536);const hello=parseFirstTlsClientHelloFromTcpBuf(bytes);if(hello.ok){captures.push(bytes.subarray(0,hello.bytesConsumed));done=true;}});client.pipe(upstream);upstream.pipe(client);});
  proxy.listen(0,'127.0.0.1');await once(proxy,'listening');t.after(async()=>{for(const socket of sockets)socket.destroy();await new Promise(r=>proxy.close(r));});
- const c=await config(f,proxy.address().port,'2',combo),file=f.dir+'/client.json';fs.writeFileSync(file,JSON.stringify(c),{mode:0o600});
+ const c=await config(f,proxy.address().port,'2',combo),file=f.dir+'/client.json';(combo?c.boring:c).tls_profile_path=observedProfilePath;fs.writeFileSync(file,JSON.stringify(c),{mode:0o600});
  const discover=await run(t,[build+'/clean-vpn-engine','--discover-address',file]);assert.equal(discover.code,0,discover.stderr);assert.equal(JSON.parse(discover.stdout).ipv4,'10.99.0.17');
  const full=combo?c.boring:c;full.peer_ipv4='10.99.0.17';full.dns=false;fs.writeFileSync(file,JSON.stringify(c),{mode:0o600});
  const session=await run(t,[build+'/integration-test',build+'/clean-vpn-engine-fixture',file,'client-handshake']);assert.equal(session.code,0,session.stdout+session.stderr);assert.equal(captures.length,2);assert.equal(s.requests(),2);
- const reports=captures.map(w=>observeTlsProfile(w,profile));for(const report of reports)assert.equal(report.status,'matched',JSON.stringify(report.differences));assert.equal(reports[0].ja3,reports[1].ja3);assert.equal(reports[0].ja4.fingerprint,reports[1].ja4.fingerprint);
+ const reports=captures.map(w=>observeTlsProfile(w,observedProfile));for(const report of reports)assert.equal(report.status,'matched',JSON.stringify(report.differences));assert.equal(reports[0][observedProfile.tls.permute_extensions?'ja3Sorted':'ja3'],reports[1][observedProfile.tls.permute_extensions?'ja3Sorted':'ja3']);assert.equal(reports[0].ja4.fingerprint,reports[1].ja4.fingerprint);
  const randoms=captures.map(w=>parseFirstTlsClientHelloFromTcpBuf(w).clientHelloBody.subarray(2,34).toString('hex'));assert.notEqual(randoms[0],randoms[1]);
- for(let i=0;i<captures.length;i++){fs.writeFileSync(f.dir+'/hello.bin',captures[i],{mode:0o600});const offline=JSON.parse(execFileSync(process.execPath,['scripts/clean-vpn-native-profile-observe.mjs',profilePath,f.dir+'/hello.bin'],{encoding:'utf8'}));assert.equal(offline.status,'matched');assert.equal(offline.ja3,reports[i].ja3);}
- t.diagnostic(JSON.stringify({samples:2,ja3:reports[0].ja3,ja4:reports[0].ja4.fingerprint,profile:profile.id,freshRandoms:true,scope:'external TCP byte proxy plus offline observer; no native self-report; synthetic saved H2 profile'}));
+ for(let i=0;i<captures.length;i++){fs.writeFileSync(f.dir+'/hello.bin',captures[i],{mode:0o600});const offline=JSON.parse(execFileSync(process.execPath,['scripts/clean-vpn-native-profile-observe.mjs',observedProfilePath,f.dir+'/hello.bin'],{encoding:'utf8'}));assert.equal(offline.status,'matched');assert.equal(offline.ja3,reports[i].ja3);}
+ t.diagnostic(JSON.stringify({samples:2,ja3:reports.map(r=>r.ja3),ja3Sorted:reports[0].ja3Sorted,ja4:reports[0].ja4.fingerprint,profile:observedProfile.id,freshRandoms:true,scope:'external TCP byte proxy plus offline observer; no native self-report; saved synthetic or explicitly partial Chromium profile, not stock browser equivalence'}));
 });

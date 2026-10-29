@@ -10,7 +10,7 @@
     "independentIssuer": 26,
     "legacyHttp1MultiPeerReloadWanFixture": 23,
     "completeH1H2DataPlane": 2,
-    "uniqueJsCases": 73,
+    "uniqueJsCases": 75,
     "skipped": 0,
     "codecIndependentHmacVectorsAndMutations": "passed",
     "codecAddressUndefinedLeakSanitizers": "passed-dependencies-not-instrumented",
@@ -22,7 +22,7 @@
       "dependencyLibrariesInstrumented": false,
       "productionEngineSha256": "17d3cf82ee41c65925424719f768c9f2b8a7bd74aeaad0bc36b45798acc26182"
     },
-    "clockAndIndependentProfileBoundaries": 14
+    "clockAndIndependentProfileBoundaries": 16
   },
   "scope": [
     "production-no-TUN-no-DNS-discovery-with-dns-enabled-and-absent-interface",
@@ -78,5 +78,19 @@
     "discoveryFullSessionMatch": true,
     "freshRandoms": true,
     "sanitizerNote": "34-case full-engine sanitizer run above predates this diagnostics-only patch"
+  },
+  "partialChromiumObserverFollowup": {
+    "cases": 2,
+    "passed": 2,
+    "boundarySuitePassed": 16,
+    "profile": "chromium-156-bounded-cold-v1",
+    "provenance": "fixtures/native-tls-profiles/chromium-156-bounded-cold.provenance.json",
+    "stockBrowserEquivalent": false,
+    "captures": 4,
+    "rawJa3MayDifferDueToExtensionPermutation": true,
+    "ja3Sorted": "9fc752c58190630c49e1812906b40077",
+    "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+    "freshRandoms": true,
+    "nativeSourceChanged": false
   }
 }
