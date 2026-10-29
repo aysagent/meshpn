@@ -69,3 +69,35 @@ port release and byte-identical host network/iptables snapshots.
 The observer shares the project's JA3/JA4 parser; it is independent of engine
 telemetry, not an independent fingerprint algorithm. Local loopback results are
 not evidence of a completed Radxa↔VPS WAN run.
+
+## Physical bounded smoke, 2026-10-30
+
+Ran Radxa → VPS on TCP **3443**, separate namespaces and byte bridges, using
+existing installed native binaries read-only. Both Git checkouts fast-forwarded
+to 922f25f for the fixture; daily services were not rebuilt or restarted.
+
+Final trial completed **8/8** verified TLS requests (four TLS 1.2, four TLS 1.3),
+163840 checked bytes each. External tcpdump on **Radxa physical wlan0**, outside
+the native namespaces, captured 571 packets with zero kernel drops. Offline
+observer matched **8/8 original/wire JA3+JA4 pairs** and ALPN, with original
+`wan-relay.test` replaced by encrypted `n1.*.relay.example` SNI.
+
+Host link/address/routes/rules/firewall/resolver snapshots and daily process
+identities were identical before/after. Daily client/owner PIDs stayed 2199/710;
+exit/owner stayed 340197/168319. Trial units stopped, TCP3443 released, temporary
+credentials/directories removed. No Mac network changes.
+
+This is a successful bounded smoke with an unresolved earlier failure: one
+preceding trial timed out while reading TLS application data. Two following
+trials completed all eight requests without changing native code or increasing
+timeouts. The failed trial lacked retained pcaps, so its cause is unknown and
+this result is **not WAN stability acceptance**. Future runs must retain bounded
+failure evidence as well as success evidence.
+
+VPS tcpdump 4.99.4/libpcap 1.10.4 crashed with SIGSEGV in the requested file/
+immediate capture mode, including outside systemd. Its installation was left
+unchanged. The final independent observer therefore ran on Radxa's physical
+outgoing interface. No claim is made about a successful VPS-side capture.
+
+[Sanitized result and hashes](../fixtures/clean-vpn-native-transparent-wan-20261030.json).
+Raw pcaps stay in the local private trial artifact directory, outside Git.

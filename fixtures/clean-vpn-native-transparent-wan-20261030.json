@@ -1,0 +1,208 @@
+{
+  "schema": 1,
+  "kind": "native-transparent-physical-wan-acceptance",
+  "date": "2026-10-30",
+  "status": "passed-bounded-smoke-with-unresolved-prior-timeout",
+  "scope": "isolated-netns-host-TCP-Unix-byte-bridges-not-throughput",
+  "testPort": 3443,
+  "engineSha256": {
+    "exit": "34cbdb14d6eb87ee57e3720674759d4325b14e2171401be26f5ef9606e6a56d1",
+    "client": "7c991f48de5b5d25eecf0a9b65810dd98b0f2ba6c06122140663fff752015a62"
+  },
+  "checkoutCommit": {
+    "exit": "922f25f02d013936191d1318f0d04256366cabaf",
+    "client": "922f25f02d013936191d1318f0d04256366cabaf"
+  },
+  "requests": [
+    {
+      "bytes": 163840,
+      "sha256": "0820d92d729e3d7102ab0d71718f5bccd008b3986fcb341e9a0529de9d52ced6",
+      "tls": "TLSv1.2"
+    },
+    {
+      "bytes": 163840,
+      "sha256": "0820d92d729e3d7102ab0d71718f5bccd008b3986fcb341e9a0529de9d52ced6",
+      "tls": "TLSv1.3"
+    },
+    {
+      "bytes": 163840,
+      "sha256": "0820d92d729e3d7102ab0d71718f5bccd008b3986fcb341e9a0529de9d52ced6",
+      "tls": "TLSv1.2"
+    },
+    {
+      "bytes": 163840,
+      "sha256": "0820d92d729e3d7102ab0d71718f5bccd008b3986fcb341e9a0529de9d52ced6",
+      "tls": "TLSv1.3"
+    },
+    {
+      "bytes": 163840,
+      "sha256": "0820d92d729e3d7102ab0d71718f5bccd008b3986fcb341e9a0529de9d52ced6",
+      "tls": "TLSv1.2"
+    },
+    {
+      "bytes": 163840,
+      "sha256": "0820d92d729e3d7102ab0d71718f5bccd008b3986fcb341e9a0529de9d52ced6",
+      "tls": "TLSv1.3"
+    },
+    {
+      "bytes": 163840,
+      "sha256": "0820d92d729e3d7102ab0d71718f5bccd008b3986fcb341e9a0529de9d52ced6",
+      "tls": "TLSv1.2"
+    },
+    {
+      "bytes": 163840,
+      "sha256": "0820d92d729e3d7102ab0d71718f5bccd008b3986fcb341e9a0529de9d52ced6",
+      "tls": "TLSv1.3"
+    }
+  ],
+  "observer": {
+    "status": "passed",
+    "clientPcapSha256": "67d0ce7f6f490f496c5d70e9a4f9593769426d5a2116ec096d74787904797768",
+    "wanPcapSha256": "0f1ae976c4519af76bc6ce4452d2b1a47d98ecdcc8bbb13605d6c90959f9e217",
+    "clientCounts": {
+      "packets": 210,
+      "selected": 210,
+      "withoutSyn": 0,
+      "fragmented": 0,
+      "truncated": 0
+    },
+    "wanCounts": {
+      "packets": 571,
+      "selected": 571,
+      "withoutSyn": 0,
+      "fragmented": 0,
+      "truncated": 0
+    },
+    "comparisons": [
+      {
+        "ja3": "22558766122974704364c9c75c5cce0a",
+        "ja4": "t12d2808h1_d943125447b4_e7e480e5a997",
+        "alpn": [
+          "http/1.1"
+        ],
+        "originalSni": "wan-relay.test",
+        "wireSniEncrypted": true
+      },
+      {
+        "ja3": "a4e852ed87d60903caddb37da85ae9a9",
+        "ja4": "t13d0412h1_16476d049b0b_7f28efdaea70",
+        "alpn": [
+          "http/1.1"
+        ],
+        "originalSni": "wan-relay.test",
+        "wireSniEncrypted": true
+      },
+      {
+        "ja3": "22558766122974704364c9c75c5cce0a",
+        "ja4": "t12d2808h1_d943125447b4_e7e480e5a997",
+        "alpn": [
+          "http/1.1"
+        ],
+        "originalSni": "wan-relay.test",
+        "wireSniEncrypted": true
+      },
+      {
+        "ja3": "a4e852ed87d60903caddb37da85ae9a9",
+        "ja4": "t13d0412h1_16476d049b0b_7f28efdaea70",
+        "alpn": [
+          "http/1.1"
+        ],
+        "originalSni": "wan-relay.test",
+        "wireSniEncrypted": true
+      },
+      {
+        "ja3": "22558766122974704364c9c75c5cce0a",
+        "ja4": "t12d2808h1_d943125447b4_e7e480e5a997",
+        "alpn": [
+          "http/1.1"
+        ],
+        "originalSni": "wan-relay.test",
+        "wireSniEncrypted": true
+      },
+      {
+        "ja3": "a4e852ed87d60903caddb37da85ae9a9",
+        "ja4": "t13d0412h1_16476d049b0b_7f28efdaea70",
+        "alpn": [
+          "http/1.1"
+        ],
+        "originalSni": "wan-relay.test",
+        "wireSniEncrypted": true
+      },
+      {
+        "ja3": "22558766122974704364c9c75c5cce0a",
+        "ja4": "t12d2808h1_d943125447b4_e7e480e5a997",
+        "alpn": [
+          "http/1.1"
+        ],
+        "originalSni": "wan-relay.test",
+        "wireSniEncrypted": true
+      },
+      {
+        "ja3": "a4e852ed87d60903caddb37da85ae9a9",
+        "ja4": "t13d0412h1_16476d049b0b_7f28efdaea70",
+        "alpn": [
+          "http/1.1"
+        ],
+        "originalSni": "wan-relay.test",
+        "wireSniEncrypted": true
+      }
+    ],
+    "limitations": [
+      "ethernet-ipv4-tcp-only",
+      "first-clienthello-only-no-HRR",
+      "requires-captured-SYN",
+      "prefix-limit-64KiB",
+      "no-checksum-verification",
+      "no-capture-drop-proof",
+      "shared-JA3-JA4-parser-with-project-sniffer-not-independent-algorithm",
+      "no-browser-equivalence-or-leak-verdict"
+    ]
+  },
+  "capture": {
+    "interface": "Radxa wlan0",
+    "outsideEngineNamespace": true,
+    "packets": 571,
+    "kernelDrops": 0
+  },
+  "safety": {
+    "dailyEnginePids": {
+      "client": 2199,
+      "exit": 340197
+    },
+    "dailyOwnerPids": {
+      "client": 710,
+      "exit": 168319
+    },
+    "hostNetworkAndOwnersUnchanged": {
+      "exit": true,
+      "client": true
+    },
+    "testPortFree": {
+      "exit": true,
+      "client": true
+    },
+    "beforeAfterSnapshotSha256": {
+      "client": {
+        "before": "16c75db47b300d623e158357b5f83c20c466cca406db08762961a358c559895d",
+        "after": "16c75db47b300d623e158357b5f83c20c466cca406db08762961a358c559895d"
+      },
+      "exit": {
+        "before": "0750a991a66f8c0edf982306859e0015a814e7d3fa6fda166f6c100a5e296fa7",
+        "after": "0750a991a66f8c0edf982306859e0015a814e7d3fa6fda166f6c100a5e296fa7"
+      }
+    },
+    "temporaryUnitsStopped": true,
+    "temporaryCredentialsRemoved": true,
+    "macNetworkChanges": false,
+    "productionRestarts": false
+  },
+  "limitations": [
+    "Existing installed native binaries tested read-only; new peer-reload implementation not deployed.",
+    "Eight requests are a bounded smoke, not long WAN soak or throughput measurement.",
+    "TCP/Unix fixture bridges alter timing/buffering; kernel TCP fingerprint not benchmarked.",
+    "One preceding trial had an 8-second TLS read timeout; cause not identified, no timeout increased or data-path changes made. Two subsequent trials completed all eight requests.",
+    "VPS tcpdump 4.99.4/libpcap 1.10.4 crashed with SIGSEGV in write/immediate capture mode; no package/config changes made. Final external capture ran successfully on Radxa physical wlan0.",
+    "Setup rejected dangling resolv.conf snapshot and tar-preserved Mac UID; coordinator corrected handling/ownership only. Host DNS was not changed.",
+    "Original application is Python/OpenSSL TLS1.2/1.3, not a browser profile capture."
+  ]
+}
