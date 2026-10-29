@@ -80,7 +80,8 @@ sudo node scripts/clean-vpn-native-clients.mjs import \
 ## Применение и восстановление
 
 До mutation проверяется capability и identity работающего unit: actual process
-должен исполнять указанный engine с этим config path. Затем готовится candidate,
+должен исполнять указанный engine с этим config path и иметь стартовый
+`peer_reload_ready` в journal текущего PID/InvocationID. Затем готовится candidate,
 проверяется engine, сохраняется журнал точных предыдущих/новых config и registry.
 После atomic replace посылается SIGHUP только главному процессу unit.
 Успех требует события `peer_reload` с SHA256 точных байтов конфигурации из journal.
