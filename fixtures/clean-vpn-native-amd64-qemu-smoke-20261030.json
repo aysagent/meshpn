@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "kind": "native-amd64-qemu-smoke",
+  "status": "passed",
+  "scope": "amd64 Alpine userspace boot only; no native engine build/test",
+  "globalBinfmtChanged": false,
+  "hostNetworkChanged": false,
+  "log": "AMD64_QEMU_ARCH=x86_64\r\nNAME=\"Alpine Linux\"\r\nID=alpine\r\nVERSION_ID=3.22.7\r\nPRETTY_NAME=\"Alpine Linux v3.22\"\r\nHOME_URL=\"https://alpinelinux.org/\"\r\nBUG_REPORT_URL=\"https://gitlab.alpinelinux.org/alpine/aports/-/issues\"\r\n\t/lib/ld-musl-x86_64.so.1 (0x74b707b3b000)\r\n\tlibc.musl-x86_64.so.1 => /lib/ld-musl-x86_64.so.1 (0x74b707b3b000)\r\nAMD64_ALPINE_QEMU_SMOKE=passed\r\n[    2.046484] reboot: Power down\r\n",
+  "image": "fe1f0a4ecacd161717dc718d9f9b203dffed776b90e20e23a60b383bbb1fe546",
+  "sourceImages": {
+    "lab-image": {
+      "id": "9cb62386247f65a52746c891ea42b25a4e5f27070afb929539d30a6886cb7c2a",
+      "architecture": "amd64"
+    },
+    "alpine-image": {
+      "id": "24ab38714e948bd49d24d566e97c1c104b63f85c2e642685e72393b37cfb9862",
+      "architecture": "amd64"
+    },
+    "toolchain-image": {
+      "id": "de1718a0f6229c2c1ff02f2d60ecd11bfbb074caaf49900cdb4b586c3cdc393d",
+      "architecture": "arm64"
+    }
+  },
+  "hashes": {
+    "kernel": "41ba36d860aa0b0cd995f4ca8856d80249b244577e704929b55be13fbd1ebd2f",
+    "initrd": "c10429e425661486cf15f74cdb661ae765e2c48b6939c8f0031254bd83249848",
+    "busybox": "6dcd5f0190e8f4b055c2823b3d97660704b97d70c60cd3d3cf9805922fde1302",
+    "musl": "6600020aec4ea506e4310a4f48ce8a998e85885d90863bade0e7344dcb067552",
+    "qemu": "cfac2d1293e7cc362fd9a5b0ee7b8a8ce6b4d3abc9711cdcbbd2efb435c9a923"
+  }
+}
