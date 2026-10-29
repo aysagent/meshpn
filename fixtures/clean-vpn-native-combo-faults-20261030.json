@@ -1,0 +1,3725 @@
+{
+  "schema": 1,
+  "kind": "native-combo-container-lifecycle",
+  "status": "passed",
+  "image": "localhost/clean-vpn-native-runtime:reload-20261030",
+  "port": 3443,
+  "checks": [
+    "uninitialized-replay-start-refused-without-reset",
+    "explicit-init-and-repeat-init-refusal",
+    "public-launcher-real-TUN-DNS-and-LAN-HTTPS-relay",
+    "direct-uplink-HTTPS-blocked-LAN-relay-works",
+    "second-owner-free-port-and-netns-refused-existing-pair-healthy",
+    "independent-pcap-packet-profile-and-original-relay-JA3-JA4-match",
+    "same-namespace-reentry-preserves-foreign-rules",
+    "parallel-packet-and-four-relay-users-bounded-load-resources-reclaimed",
+    "overload-rejects-excess-relays-packet-branch-and-fresh-requests-survive",
+    "netem-delay-both-paths-recover-resources-reclaimed",
+    "netem-loss-both-paths-recover-resources-reclaimed",
+    "netem-reorder-both-paths-recover-resources-reclaimed",
+    "netem-blackout-both-paths-recover-resources-reclaimed",
+    "relay-failure-does-not-downgrade-to-packet-branch",
+    "relay-health-rejects-wrong-CA-hostname-and-body",
+    "active-relay-health-refuses-missing-redirect-and-blocked-origin-with-packet-healthy",
+    "recreated-exit-listens-with-original-replay-state",
+    "exit-SIGKILL-recreate-preserves-replay-and-recovers-both-paths",
+    "client-SIGKILL-held-namespace-remains-closed",
+    "fresh-client-namespace-recovers-both-paths",
+    "native-PID1-SIGTERM-clean"
+  ],
+  "scope": "internal-Linux-container-lab-only",
+  "imageId": "cd844576415690d0995cedcd72db0c71efbf7b0e7e23270169c203be3a39f480",
+  "architecture": "arm64",
+  "engineSha256": "3ee2d7c510d78bc8c0c3081efdc3572652d3765d9a441136926be2241268e837",
+  "observer": {
+    "wireSha256": "a7e1c8d4147d5854b5588c3a85770012a98f8bf69c7dba28ba5e4a34e1c84926",
+    "applicationSha256": "949a14e8d32c8b5d153311b1deaf59ebd68a2eb8a2c5ea29749787548d001eb3",
+    "packetProfileMatches": 1,
+    "relayFingerprintMatches": 4,
+    "scope": "ClientHello-only-not-full-browser-equivalence"
+  },
+  "load": {
+    "rounds": 57,
+    "relayRequests": 228,
+    "packetBatches": 57,
+    "elapsedMs": 30395.09253001213,
+    "seconds": 30,
+    "samples": 59,
+    "initial": {
+      "client": {
+        "rssKiB": 6428,
+        "fds": 8,
+        "sockets": 4,
+        "threads": 3,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 1,
+        "tcpTimeWait": 9,
+        "udpSockets": 1
+      },
+      "exit": {
+        "rssKiB": 6408,
+        "fds": 8,
+        "sockets": 2,
+        "threads": 2,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 1,
+        "tcpTimeWait": 5,
+        "udpSockets": 0
+      }
+    },
+    "peak": {
+      "client": {
+        "rssKiB": 6592,
+        "fds": 16,
+        "threads": 7
+      },
+      "exit": {
+        "rssKiB": 6820,
+        "fds": 13,
+        "threads": 6
+      }
+    },
+    "windows": {
+      "client": {
+        "firstThirdMedianRssKiB": 6504,
+        "lastThirdMedianRssKiB": 6540,
+        "growthKiB": 36
+      },
+      "exit": {
+        "firstThirdMedianRssKiB": 6728,
+        "lastThirdMedianRssKiB": 6820,
+        "growthKiB": 92
+      }
+    },
+    "settled": {
+      "client": {
+        "rssKiB": 6540,
+        "fds": 8,
+        "sockets": 4,
+        "threads": 3,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 1,
+        "tcpTimeWait": 233,
+        "udpSockets": 1
+      },
+      "exit": {
+        "rssKiB": 6820,
+        "fds": 8,
+        "sockets": 2,
+        "threads": 2,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 1,
+        "tcpTimeWait": 217,
+        "udpSockets": 0
+      }
+    }
+  },
+  "burst": {
+    "total": 64,
+    "rejected": 48,
+    "completed": 16
+  },
+  "netem": [
+    {
+      "name": "delay",
+      "seconds": 30,
+      "args": [
+        "delay",
+        "60ms",
+        "10ms",
+        "distribution",
+        "normal"
+      ],
+      "before": {
+        "client": {
+          "outOfOrder": 0,
+          "retransmits": 13
+        },
+        "exit": {
+          "outOfOrder": 0,
+          "retransmits": 5
+        }
+      },
+      "samples": [
+        {
+          "client": {
+            "rssKiB": 6780,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 250,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7616,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 234,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6856,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 253,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7768,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 236,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6856,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 255,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7768,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 238,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6868,
+            "fds": 14,
+            "sockets": 10,
+            "threads": 6,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 3,
+            "zombies": 0,
+            "tcpEstablished": 8,
+            "tcpTimeWait": 255,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7804,
+            "fds": 14,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 236,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6896,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 259,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7848,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 237,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6896,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 261,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7892,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 237,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6896,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 263,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7848,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 239,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6896,
+            "fds": 14,
+            "sockets": 10,
+            "threads": 6,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 7,
+            "tcpTimeWait": 265,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7788,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 240,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6904,
+            "fds": 14,
+            "sockets": 10,
+            "threads": 6,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 7,
+            "tcpTimeWait": 262,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7792,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 240,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6904,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 264,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7792,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 240,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6904,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 266,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7792,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 241,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6904,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 262,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7804,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 240,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6904,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 264,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7792,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 243,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6932,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 264,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7816,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 241,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6932,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 265,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 242,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6932,
+            "fds": 14,
+            "sockets": 10,
+            "threads": 6,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 7,
+            "tcpTimeWait": 267,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7864,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 243,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6932,
+            "fds": 14,
+            "sockets": 10,
+            "threads": 6,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 7,
+            "tcpTimeWait": 269,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7792,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 244,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6932,
+            "fds": 14,
+            "sockets": 10,
+            "threads": 6,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 7,
+            "tcpTimeWait": 271,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7792,
+            "fds": 9,
+            "sockets": 3,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 245,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6936,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 273,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7792,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 247,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6936,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 275,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7792,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 248,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6936,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 277,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7792,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 249,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6936,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 260,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7792,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 236,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6936,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 262,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7816,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 236,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6936,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 262,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7820,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 238,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 6940,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 240,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7876,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 216,
+            "udpSockets": 0
+          }
+        }
+      ],
+      "load": {
+        "packet": {
+          "attempts": 22,
+          "success": 22,
+          "errors": {}
+        },
+        "relay": {
+          "attempts": 44,
+          "success": 44,
+          "errors": {}
+        },
+        "integrityErrors": 0,
+        "elapsedMs": 30663.77588197589
+      },
+      "qdisc": {
+        "client": [
+          {
+            "kind": "prio",
+            "handle": "1:",
+            "root": true,
+            "refcnt": 7,
+            "options": {
+              "bands": 3,
+              "priomap": [
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2
+              ],
+              "multiqueue": false
+            },
+            "bytes": 520191,
+            "packets": 5277,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          },
+          {
+            "kind": "netem",
+            "handle": "20:",
+            "parent": "1:2",
+            "options": {
+              "limit": 1000,
+              "delay": {
+                "delay": 0.06,
+                "jitter": 0.01,
+                "correlation": 0
+              },
+              "ecn": false,
+              "gap": 0
+            },
+            "bytes": 520191,
+            "packets": 5277,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ],
+        "exit": [
+          {
+            "kind": "prio",
+            "handle": "1:",
+            "root": true,
+            "refcnt": 7,
+            "options": {
+              "bands": 3,
+              "priomap": [
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2
+              ],
+              "multiqueue": false
+            },
+            "bytes": 12761565,
+            "packets": 10798,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          },
+          {
+            "kind": "netem",
+            "handle": "20:",
+            "parent": "1:2",
+            "options": {
+              "limit": 1000,
+              "delay": {
+                "delay": 0.06,
+                "jitter": 0.01,
+                "correlation": 0
+              },
+              "ecn": false,
+              "gap": 0
+            },
+            "bytes": 12637864,
+            "packets": 9517,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ]
+      },
+      "after": {
+        "client": {
+          "outOfOrder": 2857,
+          "retransmits": 82
+        },
+        "exit": {
+          "outOfOrder": 153,
+          "retransmits": 232
+        }
+      },
+      "observed": {
+        "drops": 0,
+        "outOfOrder": 3010
+      },
+      "removed": {
+        "client": [
+          {
+            "kind": "noqueue",
+            "handle": "0:",
+            "root": true,
+            "refcnt": 2,
+            "options": {},
+            "bytes": 0,
+            "packets": 0,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ],
+        "exit": [
+          {
+            "kind": "noqueue",
+            "handle": "0:",
+            "root": true,
+            "refcnt": 2,
+            "options": {},
+            "bytes": 0,
+            "packets": 0,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ]
+      },
+      "recoveryMs": 584.2784580000007,
+      "settled": {
+        "client": {
+          "rssKiB": 7032,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 245,
+          "udpSockets": 1
+        },
+        "exit": {
+          "rssKiB": 7792,
+          "fds": 8,
+          "sockets": 2,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 219,
+          "udpSockets": 0
+        }
+      },
+      "status": "passed"
+    },
+    {
+      "name": "loss",
+      "seconds": 45,
+      "args": [
+        "delay",
+        "20ms",
+        "loss",
+        "1%"
+      ],
+      "before": {
+        "client": {
+          "outOfOrder": 2857,
+          "retransmits": 82
+        },
+        "exit": {
+          "outOfOrder": 153,
+          "retransmits": 232
+        }
+      },
+      "samples": [
+        {
+          "client": {
+            "rssKiB": 7032,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 212,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7792,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 189,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7032,
+            "fds": 10,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 213,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7804,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 190,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7032,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 184,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7816,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 163,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7032,
+            "fds": 10,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 189,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7804,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 168,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7032,
+            "fds": 10,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 193,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7804,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 172,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7032,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 170,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7792,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 149,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7032,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 174,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7792,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 153,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7032,
+            "fds": 14,
+            "sockets": 10,
+            "threads": 6,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 7,
+            "tcpTimeWait": 176,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7792,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 155,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7032,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 180,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7804,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 158,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7032,
+            "fds": 10,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 150,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7868,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 128,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7048,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 153,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7880,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 131,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7048,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 157,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7852,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 135,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7048,
+            "fds": 10,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 130,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7864,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 108,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7048,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 134,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7908,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 111,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7048,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 138,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7852,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 115,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7036,
+            "fds": 10,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 141,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7892,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 118,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7036,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 117,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7900,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 92,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7036,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 121,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7856,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 96,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7036,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 125,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7856,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 100,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7036,
+            "fds": 10,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 111,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7856,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 86,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7036,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 114,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7856,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 89,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7036,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 118,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7856,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 93,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7036,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 120,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7884,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 95,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7036,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 4,
+            "tcpTimeWait": 121,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7884,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 97,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7036,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 3,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 125,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7856,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 101,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7064,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 129,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7884,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 104,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7064,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 125,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7912,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 107,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7064,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 129,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7856,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 111,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7064,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 133,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7856,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 115,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7064,
+            "fds": 10,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 136,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7896,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 118,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7064,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 133,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7872,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 116,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7064,
+            "fds": 14,
+            "sockets": 10,
+            "threads": 6,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 7,
+            "tcpTimeWait": 135,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 118,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7064,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 139,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 122,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7064,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 137,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7916,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 121,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7064,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 139,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7924,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 123,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7064,
+            "fds": 10,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 142,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7896,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 126,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7064,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 145,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 129,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7064,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 143,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 130,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7064,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 147,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 134,
+            "udpSockets": 0
+          }
+        }
+      ],
+      "load": {
+        "packet": {
+          "attempts": 60,
+          "success": 60,
+          "errors": {}
+        },
+        "relay": {
+          "attempts": 120,
+          "success": 120,
+          "errors": {}
+        },
+        "integrityErrors": 0,
+        "elapsedMs": 45375.3626640141
+      },
+      "qdisc": {
+        "client": [
+          {
+            "kind": "prio",
+            "handle": "1:",
+            "root": true,
+            "refcnt": 7,
+            "options": {
+              "bands": 3,
+              "priomap": [
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2
+              ],
+              "multiqueue": false
+            },
+            "bytes": 681027,
+            "packets": 6541,
+            "drops": 73,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          },
+          {
+            "kind": "netem",
+            "handle": "20:",
+            "parent": "1:2",
+            "options": {
+              "limit": 1000,
+              "delay": {
+                "delay": 0.02,
+                "jitter": 0,
+                "correlation": 0
+              },
+              "loss-random": {
+                "loss": 0.01,
+                "correlation": 0
+              },
+              "ecn": false,
+              "gap": 0
+            },
+            "bytes": 681027,
+            "packets": 6541,
+            "drops": 73,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ],
+        "exit": [
+          {
+            "kind": "prio",
+            "handle": "1:",
+            "root": true,
+            "refcnt": 7,
+            "options": {
+              "bands": 3,
+              "priomap": [
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2
+              ],
+              "multiqueue": false
+            },
+            "bytes": 33947858,
+            "packets": 28007,
+            "drops": 120,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          },
+          {
+            "kind": "netem",
+            "handle": "20:",
+            "parent": "1:2",
+            "options": {
+              "limit": 1000,
+              "delay": {
+                "delay": 0.02,
+                "jitter": 0,
+                "correlation": 0
+              },
+              "loss-random": {
+                "loss": 0.01,
+                "correlation": 0
+              },
+              "ecn": false,
+              "gap": 0
+            },
+            "bytes": 33611813,
+            "packets": 24526,
+            "drops": 120,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ]
+      },
+      "after": {
+        "client": {
+          "outOfOrder": 4180,
+          "retransmits": 105
+        },
+        "exit": {
+          "outOfOrder": 172,
+          "retransmits": 475
+        }
+      },
+      "observed": {
+        "drops": 193,
+        "outOfOrder": 1342
+      },
+      "removed": {
+        "client": [
+          {
+            "kind": "noqueue",
+            "handle": "0:",
+            "root": true,
+            "refcnt": 2,
+            "options": {},
+            "bytes": 0,
+            "packets": 0,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ],
+        "exit": [
+          {
+            "kind": "noqueue",
+            "handle": "0:",
+            "root": true,
+            "refcnt": 2,
+            "options": {},
+            "bytes": 0,
+            "packets": 0,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ]
+      },
+      "recoveryMs": 548.7979170000181,
+      "settled": {
+        "client": {
+          "rssKiB": 7160,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 144,
+          "udpSockets": 1
+        },
+        "exit": {
+          "rssKiB": 7860,
+          "fds": 8,
+          "sockets": 2,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 132,
+          "udpSockets": 0
+        }
+      },
+      "status": "passed"
+    },
+    {
+      "name": "reorder",
+      "seconds": 30,
+      "args": [
+        "delay",
+        "40ms",
+        "reorder",
+        "25%",
+        "50%"
+      ],
+      "before": {
+        "client": {
+          "outOfOrder": 4180,
+          "retransmits": 106
+        },
+        "exit": {
+          "outOfOrder": 172,
+          "retransmits": 475
+        }
+      },
+      "samples": [
+        {
+          "client": {
+            "rssKiB": 7160,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 140,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 130,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7160,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 140,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7916,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 131,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7160,
+            "fds": 10,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 143,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7896,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 134,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7144,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 144,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7920,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 134,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7144,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 142,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 134,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7144,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 144,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 136,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7180,
+            "fds": 14,
+            "sockets": 10,
+            "threads": 6,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 7,
+            "tcpTimeWait": 146,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 137,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7180,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 3,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 143,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7920,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 136,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 15,
+            "sockets": 11,
+            "threads": 7,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 4,
+            "tcpTimeWait": 148,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 139,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 10,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 149,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7876,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 140,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 15,
+            "sockets": 11,
+            "threads": 7,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 4,
+            "tcpTimeWait": 152,
+            "udpSockets": 2
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 143,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 146,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7936,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 137,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 14,
+            "sockets": 10,
+            "threads": 6,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 7,
+            "tcpTimeWait": 148,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 139,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 150,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7888,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 141,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 142,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 133,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 144,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 135,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 14,
+            "sockets": 10,
+            "threads": 6,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 7,
+            "tcpTimeWait": 146,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 137,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 148,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7944,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 139,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 143,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 137,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 10,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 144,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7872,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 138,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 147,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 141,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 136,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7860,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 131,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 10,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 3,
+            "tcpTimeWait": 137,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7900,
+            "fds": 10,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 132,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 138,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7888,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 133,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 142,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7864,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 137,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 14,
+            "sockets": 10,
+            "threads": 6,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 7,
+            "tcpTimeWait": 135,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7864,
+            "fds": 12,
+            "sockets": 6,
+            "threads": 4,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 5,
+            "tcpTimeWait": 130,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7176,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 137,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7864,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 132,
+            "udpSockets": 0
+          }
+        }
+      ],
+      "load": {
+        "packet": {
+          "attempts": 29,
+          "success": 29,
+          "errors": {}
+        },
+        "relay": {
+          "attempts": 58,
+          "success": 58,
+          "errors": {}
+        },
+        "integrityErrors": 0,
+        "elapsedMs": 30464.93029898405
+      },
+      "qdisc": {
+        "client": [
+          {
+            "kind": "prio",
+            "handle": "1:",
+            "root": true,
+            "refcnt": 7,
+            "options": {
+              "bands": 3,
+              "priomap": [
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2
+              ],
+              "multiqueue": false
+            },
+            "bytes": 440677,
+            "packets": 4557,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          },
+          {
+            "kind": "netem",
+            "handle": "20:",
+            "parent": "1:2",
+            "options": {
+              "limit": 1000,
+              "delay": {
+                "delay": 0.04,
+                "jitter": 0,
+                "correlation": 0
+              },
+              "reorder": {
+                "reorder": 0.25,
+                "correlation": 0.5
+              },
+              "ecn": false,
+              "gap": 1
+            },
+            "bytes": 440677,
+            "packets": 4557,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 310,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ],
+        "exit": [
+          {
+            "kind": "prio",
+            "handle": "1:",
+            "root": true,
+            "refcnt": 7,
+            "options": {
+              "bands": 3,
+              "priomap": [
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2
+              ],
+              "multiqueue": false
+            },
+            "bytes": 16938837,
+            "packets": 14039,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          },
+          {
+            "kind": "netem",
+            "handle": "20:",
+            "parent": "1:2",
+            "options": {
+              "limit": 1000,
+              "delay": {
+                "delay": 0.04,
+                "jitter": 0,
+                "correlation": 0
+              },
+              "reorder": {
+                "reorder": 0.25,
+                "correlation": 0.5
+              },
+              "ecn": false,
+              "gap": 1
+            },
+            "bytes": 16774867,
+            "packets": 12339,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 401,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ]
+      },
+      "after": {
+        "client": {
+          "outOfOrder": 4429,
+          "retransmits": 132
+        },
+        "exit": {
+          "outOfOrder": 201,
+          "retransmits": 831
+        }
+      },
+      "observed": {
+        "drops": 0,
+        "outOfOrder": 278
+      },
+      "removed": {
+        "client": [
+          {
+            "kind": "noqueue",
+            "handle": "0:",
+            "root": true,
+            "refcnt": 2,
+            "options": {},
+            "bytes": 0,
+            "packets": 0,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ],
+        "exit": [
+          {
+            "kind": "noqueue",
+            "handle": "0:",
+            "root": true,
+            "refcnt": 2,
+            "options": {},
+            "bytes": 0,
+            "packets": 0,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ]
+      },
+      "recoveryMs": 601.8535410000186,
+      "settled": {
+        "client": {
+          "rssKiB": 7224,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 129,
+          "udpSockets": 1
+        },
+        "exit": {
+          "rssKiB": 7864,
+          "fds": 8,
+          "sockets": 2,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 122,
+          "udpSockets": 0
+        }
+      },
+      "status": "passed"
+    },
+    {
+      "name": "blackout",
+      "seconds": 8,
+      "args": [
+        "loss",
+        "100%"
+      ],
+      "before": {
+        "client": {
+          "outOfOrder": 4429,
+          "retransmits": 132
+        },
+        "exit": {
+          "outOfOrder": 201,
+          "retransmits": 831
+        }
+      },
+      "samples": [
+        {
+          "client": {
+            "rssKiB": 7224,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 129,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7864,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 122,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7224,
+            "fds": 15,
+            "sockets": 11,
+            "threads": 7,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 4,
+            "tcpTimeWait": 116,
+            "udpSockets": 2
+          },
+          "exit": {
+            "rssKiB": 7864,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 109,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7264,
+            "fds": 20,
+            "sockets": 16,
+            "threads": 10,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 3,
+            "zombies": 0,
+            "tcpEstablished": 8,
+            "tcpTimeWait": 116,
+            "udpSockets": 4
+          },
+          "exit": {
+            "rssKiB": 7864,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 109,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7280,
+            "fds": 20,
+            "sockets": 16,
+            "threads": 10,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 3,
+            "zombies": 0,
+            "tcpEstablished": 8,
+            "tcpTimeWait": 118,
+            "udpSockets": 4
+          },
+          "exit": {
+            "rssKiB": 7864,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 109,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7280,
+            "fds": 20,
+            "sockets": 16,
+            "threads": 10,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 3,
+            "zombies": 0,
+            "tcpEstablished": 8,
+            "tcpTimeWait": 106,
+            "udpSockets": 4
+          },
+          "exit": {
+            "rssKiB": 7864,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 98,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7324,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 108,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7864,
+            "fds": 7,
+            "sockets": 1,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 0,
+            "tcpTimeWait": 98,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7288,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 110,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7864,
+            "fds": 7,
+            "sockets": 1,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 0,
+            "tcpTimeWait": 98,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7288,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 110,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7864,
+            "fds": 7,
+            "sockets": 1,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 0,
+            "tcpTimeWait": 98,
+            "udpSockets": 0
+          }
+        },
+        {
+          "client": {
+            "rssKiB": 7288,
+            "fds": 12,
+            "sockets": 8,
+            "threads": 5,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 2,
+            "tcpTimeWait": 98,
+            "udpSockets": 1
+          },
+          "exit": {
+            "rssKiB": 7864,
+            "fds": 7,
+            "sockets": 1,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 0,
+            "tcpTimeWait": 86,
+            "udpSockets": 0
+          }
+        }
+      ],
+      "load": {
+        "packet": {
+          "attempts": 3,
+          "success": 0,
+          "errors": {
+            "dns_health_response": 3
+          }
+        },
+        "relay": {
+          "attempts": 6,
+          "success": 0,
+          "errors": {
+            "ECONNRESET": 6
+          }
+        },
+        "integrityErrors": 0,
+        "elapsedMs": 9691.438295006752
+      },
+      "qdisc": {
+        "client": [
+          {
+            "kind": "prio",
+            "handle": "1:",
+            "root": true,
+            "refcnt": 7,
+            "options": {
+              "bands": 3,
+              "priomap": [
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2
+              ],
+              "multiqueue": false
+            },
+            "bytes": 0,
+            "packets": 0,
+            "drops": 35,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          },
+          {
+            "kind": "netem",
+            "handle": "20:",
+            "parent": "1:2",
+            "options": {
+              "limit": 1000,
+              "loss-random": {
+                "loss": 1,
+                "correlation": 0
+              },
+              "ecn": false,
+              "gap": 0
+            },
+            "bytes": 0,
+            "packets": 0,
+            "drops": 35,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ],
+        "exit": [
+          {
+            "kind": "prio",
+            "handle": "1:",
+            "root": true,
+            "refcnt": 7,
+            "options": {
+              "bands": 3,
+              "priomap": [
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                2
+              ],
+              "multiqueue": false
+            },
+            "bytes": 0,
+            "packets": 0,
+            "drops": 7,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          },
+          {
+            "kind": "netem",
+            "handle": "20:",
+            "parent": "1:2",
+            "options": {
+              "limit": 1000,
+              "loss-random": {
+                "loss": 1,
+                "correlation": 0
+              },
+              "ecn": false,
+              "gap": 0
+            },
+            "bytes": 0,
+            "packets": 0,
+            "drops": 7,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ]
+      },
+      "after": {
+        "client": {
+          "outOfOrder": 4429,
+          "retransmits": 160
+        },
+        "exit": {
+          "outOfOrder": 201,
+          "retransmits": 837
+        }
+      },
+      "observed": {
+        "drops": 42,
+        "outOfOrder": 0
+      },
+      "removed": {
+        "client": [
+          {
+            "kind": "noqueue",
+            "handle": "0:",
+            "root": true,
+            "refcnt": 2,
+            "options": {},
+            "bytes": 0,
+            "packets": 0,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ],
+        "exit": [
+          {
+            "kind": "noqueue",
+            "handle": "0:",
+            "root": true,
+            "refcnt": 2,
+            "options": {},
+            "bytes": 0,
+            "packets": 0,
+            "drops": 0,
+            "overlimits": 0,
+            "requeues": 0,
+            "backlog": 0,
+            "qlen": 0
+          }
+        ]
+      },
+      "recoveryMs": 1460.2318749999977,
+      "settled": {
+        "client": {
+          "rssKiB": 7296,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 97,
+          "udpSockets": 1
+        },
+        "exit": {
+          "rssKiB": 7880,
+          "fds": 8,
+          "sockets": 2,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 80,
+          "udpSockets": 0
+        }
+      },
+      "status": "passed"
+    }
+  ],
+  "healthFaultStage": "origin-restored",
+  "redirectHealthRecoveryMs": 254.7992920000106,
+  "originHealthRecoveryMs": 192.98749999998836,
+  "recoveryPackets": "22:34:18.968993 IP 10.77.0.3.42330 > 10.77.0.2.3443: Flags [S], seq 3367076765, win 64240, options [mss 1460,sackOK,TS val 3401249701 ecr 0,nop,wscale 10], length 0\n22:34:19.686657 ARP, Request who-has 10.77.0.2 tell 10.77.0.2, length 28\n22:34:19.813327 ARP, Request who-has 10.77.0.2 (ff:ff:ff:ff:ff:ff) tell 10.77.0.2, length 28\n22:34:20.016156 IP 10.77.0.3.42330 > 10.77.0.2.3443: Flags [S], seq 3367076765, win 64240, options [mss 1460,sackOK,TS val 3401250748 ecr 0,nop,wscale 10], length 0\n22:34:20.016216 ARP, Request who-has 10.77.0.3 tell 10.77.0.2, length 28\n22:34:20.016220 ARP, Reply 10.77.0.3 is-at 52:f9:17:66:5d:8e, length 28\n22:34:20.016234 IP 10.77.0.2.3443 > 10.77.0.3.42330: Flags [R.], seq 0, ack 3367076766, win 0, length 0\n22:34:20.283393 IP 10.77.0.3.42346 > 10.77.0.2.3443: Flags [S], seq 817296290, win 64240, options [mss 1460,sackOK,TS val 177168013 ecr 0,nop,wscale 10], length 0\n22:34:20.283422 IP 10.77.0.2.3443 > 10.77.0.3.42346: Flags [R.], seq 0, ack 817296291, win 0, length 0\n22:34:20.548052 IP 10.77.0.3.42350 > 10.77.0.2.3443: Flags [S], seq 1842612741, win 64240, options [mss 1460,sackOK,TS val 556950349 ecr 0,nop,wscale 10], length 0\n22:34:20.548086 IP 10.77.0.2.3443 > 10.77.0.3.42350: Flags [R.], seq 0, ack 1842612742, win 0, length 0\n22:34:20.801204 IP 10.77.0.3.42352 > 10.77.0.2.3443: Flags [S], seq 318257213, win 64240, options [mss 1460,sackOK,TS val 2117517354 ecr 0,nop,wscale 10], length 0\n22:34:20.801239 IP 10.77.0.2.3443 > 10.77.0.3.42352: Flags [R.], seq 0, ack 318257214, win 0, length 0\n22:34:20.813424 ARP, Request who-has 10.77.0.2 (ff:ff:ff:ff:ff:ff) tell 10.77.0.2, length 28\n22:34:21.057975 IP 10.77.0.3.42354 > 10.77.0.2.3443: Flags [S], seq 2128729013, win 64240, options [mss 1460,sackOK,TS val 1394656084 ecr 0,nop,wscale 10], length 0\n22:34:21.058008 IP 10.77.0.2.3443 > 10.77.0.3.42354: Flags [R.], seq 0, ack 2128729014, win 0, length 0\n22:34:21.310191 IP 10.77.0.3.42366 > 10.77.0.2.3443: Flags [S], seq 2717671947, win 64240, options [mss 1460,sackOK,TS val 3374992847 ecr 0,nop,wscale 10], length 0\n22:34:21.310224 IP 10.77.0.2.3443 > 10.77.0.3.42366: Flags [R.], seq 0, ack 2717671948, win 0, length 0\n22:34:21.576597 IP 10.77.0.3.42382 > 10.77.0.2.3443: Flags [S], seq 2447889512, win 64240, options [mss 1460,sackOK,TS val 565061501 ecr 0,nop,wscale 10], length 0\n22:34:21.576628 IP 10.77.0.2.3443 > 10.77.0.3.42382: Flags [R.], seq 0, ack 2447889513, win 0, length 0\n22:34:21.838303 IP 10.77.0.3.42388 > 10.77.0.2.3443: Flags [S], seq 428015490, win 64240, options [mss 1460,sackOK,TS val 834683922 ecr 0,nop,wscale 10], length 0\n22:34:21.838348 IP 10.77.0.2.3443 > 10.77.0.3.42388: Flags [S.], seq 2359594225, ack 428015491, win 65160, options [mss 1460,sackOK,TS val 3504998790 ecr 834683922,nop,wscale 10], length 0\n22:34:21.838361 IP 10.77.0.3.42388 > 10.77.0.2.3443: Flags [.], ack 1, win 63, options [nop,nop,TS val 834683922 ecr 3504998790], length 0\n22:34:21.838513 IP 10.77.0.3.42388 > 10.77.0.2.3443: Flags [P.], seq 1:1810, ack 1, win 63, options [nop,nop,TS val 834683922 ecr 3504998790], length 1809\n22:34:21.838520 IP 10.77.0.2.3443 > 10.77.0.3.42388: Flags [.], ack 1810, win 67, options [nop,nop,TS val 3504998790 ecr 834683922], length 0\n22:34:21.856790 IP 10.77.0.2.3443 > 10.77.0.3.42388: Flags [P.], seq 1:1327, ack 1810, win 67, options [nop,nop,TS val 3504998808 ecr 834683922], length 1326\n22:34:21.856817 IP 10.77.0.3.42388 > 10.77.0.2.3443: Flags [.], ack 1327, win 66, options [nop,nop,TS val 834683940 ecr 3504998808], length 0\n22:34:21.856965 IP 10.77.0.3.42388 > 10.77.0.2.3443: Flags [P.], seq 1810:1884, ack 1327, win 66, options [nop,nop,TS val 834683941 ecr 3504998808], length 74\n22:34:21.857016 IP 10.77.0.3.42388 > 10.77.0.2.3443: Flags [P.], seq 1884:1930, ack 1327, win 66, options [nop,nop,TS val 834683941 ecr 3504998808], length 46\n22:34:21.857027 IP 10.77.0.3.42388 > 10.77.0.2.3443: Flags [P.], seq 1930:1991, ack 1327, win 66, options [nop,nop,TS val 834683941 ecr 3504998808], length 61\n22:34:21.857031 IP 10.77.0.2.3443 > 10.77.0.3.42388: Flags [P.], seq 1327:1362, ack 1930, win 67, options [nop,nop,TS val 3504998809 ecr 834683941], length 35\n22:34:21.857033 IP 10.77.0.3.42388 > 10.77.0.2.3443: Flags [P.], seq 1991:2026, ack 1327, win 66, options [nop,nop,TS val 834683941 ecr 3504998808], length 35\n22:34:21.857041 IP 10.77.0.3.42388 > 10.77.0.2.3443: Flags [P.], seq 2026:2138, ack 1362, win 66, options [nop,nop,TS val 834683941 ecr 3504998809], length 112\n22:34:21.857041 IP 10.77.0.2.3443 > 10.77.0.3.42388: Flags [.], ack 2026, win 67, options [nop,nop,TS val 3504998809 ecr 834683941], length 0\n22:34:21.857081 IP 10.77.0.2.3443 > 10.77.0.3.42388: Flags [P.], seq 1362:1393, ack 2138, win 67, options [nop,nop,TS val 3504998809 ecr 834683941], length 31\n22:34:21.857102 IP 10.77.0.2.3443 > 10.77.0.3.42388: Flags [P.], seq 1393:1446, ack 2138, win 67, options [nop,nop,TS val 3504998809 ecr 834683941], length 53\n22:34:21.857116 IP 10.77.0.3.42388 > 10.77.0.2.3443: Flags [.], ack 1446, win 66, options [nop,nop,TS val 834683941 ecr 3504998809], length 0",
+  "exitRecreateMs": 5131.5037909999955,
+  "clientRecreateMs": 5459.720417000004,
+  "cleanup": {
+    "status": "cleaned",
+    "removed": [
+      {
+        "type": "container",
+        "name": "cvpnrt-f8c9563af402a215-init"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-f8c9563af402a215-origin"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-f8c9563af402a215-app"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-f8c9563af402a215-exit"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-f8c9563af402a215-client"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-f8c9563af402a215-config"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-f8c9563af402a215-replay"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-f8c9563af402a215-lan"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-f8c9563af402a215-net"
+      }
+    ]
+  }
+}

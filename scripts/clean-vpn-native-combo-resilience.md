@@ -110,3 +110,40 @@ Admission/timeouts/ключи/production engine в этом этапе не ос
 независимых клиентов](clean-vpn-native-combo-provisioning.md). Обнаруженное
 отсутствие relay fairness требует отдельной native-доработки identities/квот.
 Переход к физическим узлам требует отдельного разрешения.
+
+## Повтор после peer reload, 2026-10-30
+
+На engine c552787 (hash в отчёте), отдельно от четырёхклиентского 15-минутного
+soak, прошёл одно-клиентский container lifecycle с netem и active relay health:
+**21 проверка**, без пропусков. Обе ветки работают одновременно; при fault
+каждый relay body проверяется целиком по длине и SHA256.
+
+| Fault на tunnel TCP/3443 | Packet success/attempts | Relay success/attempts | Наблюдение |
+|---|---:|---:|---|
+| delay 60 ±10 ms, 30 s | 22/22 | 44/44 | qdisc принял трафик |
+| loss 1%, 45 s | 60/60 | 120/120 | 193 drops |
+| reorder 25%, 30 s | 29/29 | 58/58 | 278 out-of-order |
+| blackout 100%, 8 s | 0/3 | 0/6 | 42 drops; обхода нет |
+
+После снятия каждого fault обе ветки восстановились за 0.55–1.47 s, ресурсы
+освободились без смены PID. Нарушений integrity не было. Затем отдельно
+проверены отказ relay без downgrade, неправильные CA/hostname/body, удаление
+REDIRECT, недоступный origin, SIGKILL/recreate exit с сохранённым replay и
+SIGKILL client при удержанном namespace (он остаётся закрытым). Пересоздание
+exit/client и восстановление обеих веток заняло около 5.1/5.5 s.
+
+Offline pcap подтвердил один packet profile match и четыре relay JA3/JA4
+matches. Это ClientHello-проверка, не полная имитация браузера. Все ресурсы
+стенда удалены штатным ownership cleanup; Radxa/VPS в этом прогоне не участвовали.
+
+[Машиночитаемый отчёт](../fixtures/clean-vpn-native-combo-faults-20261030.json).
+Startup marker c6db792 не входит в эту runtime-сборку; его отдельная проверка
+описана в [peer reload](clean-vpn-native-peer-reload.md).
+
+```sh
+CVPN_CONTAINER_COMMAND='["podman","--connection","meshpn-clean-vpn-lab-root"]' \
+CVPN_RUNTIME_IMAGE=localhost/clean-vpn-native-runtime:reload-20261030 \
+CVPN_OBSERVER_IMAGE=localhost/clean-vpn-native-observer:night-arm64 \
+CVPN_COMBO_LOAD_SECONDS=30 CVPN_COMBO_NETEM=1 CVPN_COMBO_HEALTH=1 \
+node scripts/clean-vpn-native-combo-runtime-lab.mjs /tmp/new-combo-fault-report.json
+```
