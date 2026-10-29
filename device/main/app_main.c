@@ -1,5 +1,6 @@
 #include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "esp_event.h"
 #include "esp_log.h"
@@ -48,6 +49,17 @@ static void factory_reset_watch_task(void *arg)
     }
 }
 
+/* Do not retain the configuration frame throughout startup and the main loop.
+ * In particular, P4 entropy initialization and logging need startup headroom. */
+static void __attribute__((noinline)) start_saved_vpn(void)
+{
+    meshvpn_vpn_config_t vpn_cfg;
+    ESP_ERROR_CHECK(meshvpn_config_load_vpn(&vpn_cfg));
+    if (meshvpn_vpn_start(&vpn_cfg) != ESP_OK)
+        ESP_LOGW(TAG, "Saved VPN profile unsupported/invalid; enabled VPN remains blocked");
+    memset(&vpn_cfg, 0, sizeof(vpn_cfg));
+}
+
 void app_main(void)
 {
     meshvpn_web_init_allocators();
@@ -75,10 +87,7 @@ void app_main(void)
     ESP_ERROR_CHECK(meshvpn_routing_init());
     ESP_ERROR_CHECK(meshvpn_vpn_init());
     /* Apply fail-closed policy before either LAN can start forwarding. */
-    meshvpn_vpn_config_t vpn_cfg;
-    ESP_ERROR_CHECK(meshvpn_config_load_vpn(&vpn_cfg));
-    if (meshvpn_vpn_start(&vpn_cfg) != ESP_OK)
-        ESP_LOGW(TAG, "Saved VPN profile unsupported/invalid; enabled VPN remains blocked");
+    start_saved_vpn();
 
     /* Handlers must be in place before the bridge starts the WiFi driver. */
     ESP_ERROR_CHECK(meshvpn_wifi_init());
@@ -107,9 +116,8 @@ void app_main(void)
 
         /* Use live applied state, including Save/apply and reconnections.
          * DIRECT fallback must not make an enabled, disconnected VPN look up. */
-        meshvpn_vpn_status_t vpn_status;
-        meshvpn_vpn_get_status(&vpn_status);
-        meshvpn_board_led_status_tick(ws.sta_connected, vpn_status.enabled, vpn_status.connected);
+        meshvpn_board_led_status_tick(ws.sta_connected, meshvpn_vpn_is_enabled(),
+                                     meshvpn_vpn_is_connected());
 
         meshvpn_usb_stats_t us;
         meshvpn_usb_get_stats(&us);

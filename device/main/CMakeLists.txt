@@ -6,6 +6,11 @@ idf_component_register(
              nvs_flash esp_netif esp_event esp_wifi esp_tinyusb tinyusb esp_app_format esp_timer
 )
 
+# Startup and periodic diagnostics share a 6 KiB stack. Keep room for nested
+# SDK/logging calls; catch large status/config frames before flashing hardware.
+set_source_files_properties(app_main.c PROPERTIES
+    COMPILE_OPTIONS "-fstack-usage;-Werror=frame-larger-than=2048")
+
 # iot_bridge generates the hook file on S3. P4 uses project-owned netifs, so
 # create the same lwIP hook integration without pulling the S2/S3-only bridge.
 if(IDF_TARGET STREQUAL "esp32p4")
