@@ -34,9 +34,12 @@ Mac не переключаются; новые экземпляры — тол�
    только после DNAT и только к уже локальному адресу, до TUN выход закрыт.
    Финальный discovery + private DNS stack — по 12/12 в Podman и Docker:
    реальный адрес `.3`, неизменённый source config, повторный запуск и SIGKILL.
-7. Alpine: arm64 musl build/CTest 13/13, native 48/48, nft/legacy runtime
-   по 20/20. Эти результаты до private DNS delta; новый delta прогон в работе.
-   amd64 build пока блокируется отсутствием исполняемого x86 runtime в этой VM.
+7. Alpine: начальная arm64 musl приёмка — CTest 13/13, native 48/48,
+   nft/legacy runtime по 20/20. После DNS/discovery — CTest 14/14,
+   managed Compose по 12/12. Исправленная signal-safe сборка отдельно прошла
+   [Docker 12/12](../fixtures/clean-vpn-native-docker-signal-fixed-20261030.json).
+   Для amd64 поднята отдельная offline QEMU VM без NIC/binfmt: Alpine/GCC
+   уже работают, полная сборка из проверенных APK и pinned sources идёт.
 8. Резерв: authenticated address discovery/session proof готов; native 75
    уникальных JS-сценариев, включая конкурентный reload; ASAN/UBSAN/LSan 34/34.
    Изолированный Linux owner — по 8/8 nft и legacy: TUN/NSS, повторный запуск, отказ при смене
@@ -48,6 +51,12 @@ Mac не переключаются; новые экземпляры — тол�
    Discovery/full ClientHello сверены независимым observer с сохранённым
    частичным Chromium-профилем. Отказ по сроку сертификата/clock-skew проверен
    без изменения часов; автоматического SSH-time recovery у isolated owner нет.
+
+Дополнительный [ThreadSanitizer](clean-vpn-native-tsan.md) обнаружил межпоточную
+гонку флагов сигналов. Исправление `400e7d8` (lock-free atomic reload/stop)
+прошло воспроизводимый before/after test, 14 native сценариев, quota/DNS units
+и настоящий DNS churn 12/12. Финальный native snapshot включает это исправление;
+предыдущие отчёты сохраняют собственные source/binary SHA.
 
 Состояние обновляется по мере приёмки; эта запись не заменяет итоговый отчёт.
 Изменения в `device/` ведёт отдельная работа пользователя — не включать в наши

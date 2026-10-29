@@ -51,6 +51,14 @@ DHCP leases и не позволяет двум устройствам с одн
   сверяются нормализованный JA3, JA4 и поля профиля. Это не доказательство полной
   неотличимости от браузера.
 - Финальный ARM64 musl CTest — 14/14; native renewal/review — 12/12, без skips.
+- Дополнительный [ThreadSanitizer](clean-vpn-native-tsan.md) нашёл реальную гонку
+  signal flags между worker и reactor. `400e7d8` исправляет reload/stop через
+  lock-free atomics. Прежняя сборка воспроизводимо падает, исправленная проходит
+  14 native сценариев, worker-directed сигналы, quota/DNS units и настоящий
+  DNS churn 12/12. Исправленный musl image отдельно прошёл
+  [Docker Compose 12/12](../fixtures/clean-vpn-native-docker-signal-fixed-20261030.json).
+  Для дальнейшего использования нужна сборка с этим исправлением; прежние
+  успешные отчёты не подменяются результатами нового binary snapshot.
 
 ## Границы, которые остаются
 
