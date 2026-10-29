@@ -31,6 +31,33 @@ static portMUX_TYPE s_flow_lock = portMUX_INITIALIZER_UNLOCKED;
 static meshvpn_rx_checksum_t s_checksums[4];
 static meshvpn_sta_tcp_trace_t s_tcp, s_ap_tcp;
 static uint64_t s_tcp_started, s_ap_tcp_started;
+static uint32_t s_tcp_target, s_tcp_generation;
+static uint64_t s_tcp_until;
+static esp_err_t tcp_client_arm(void *arg)
+{
+    uint32_t peer = *(uint32_t *)arg;
+    if (peer) {
+        const uint8_t *b = (const uint8_t *)&peer;
+        bool private = b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
+            (b[0] == 192 && b[1] == 168);
+        if (!s_sta || !netif_is_up(s_sta) || !netif_is_link_up(s_sta) ||
+            meshvpn_vpn_is_enabled() || !private || peer == netif_ip4_addr(s_sta)->addr ||
+            !netif_ip4_netmask(s_sta)->addr ||
+            ((peer ^ netif_ip4_addr(s_sta)->addr) & netif_ip4_netmask(s_sta)->addr) ||
+            !(peer & ~netif_ip4_netmask(s_sta)->addr) ||
+            (peer | netif_ip4_netmask(s_sta)->addr) == UINT32_MAX)
+            return ESP_ERR_INVALID_STATE;
+    }
+    uint64_t now = esp_timer_get_time();
+    portENTER_CRITICAL(&s_flow_lock);
+    s_tcp_target = peer; s_tcp_until = peer ? now + 120000000 : 0; s_tcp_generation++;
+    memset(&s_tcp, 0, sizeof(s_tcp)); s_tcp_started = 0;
+    s_tcp.client = peer != 0;
+    portEXIT_CRITICAL(&s_flow_lock);
+    return ESP_OK;
+}
+esp_err_t meshvpn_ap_probe_tcp_client(uint32_t peer)
+{ return esp_netif_tcpip_exec(tcp_client_arm, &peer); }
 static err_t output(struct netif *, struct pbuf *, const ip4_addr_t *);
 /* Default Wi-Fi netifs acquire output during start, after LAN registration. */
 static void attach_output(void)
@@ -45,13 +72,21 @@ static uint32_t r32(const uint8_t *p) { return ((uint32_t)r16(p) << 16) | r16(p 
 static void w16(uint8_t *p, uint16_t n) { p[0] = n >> 8; p[1] = n; }
 static void w32(uint8_t *p, uint32_t n) { w16(p, n >> 16); w16(p + 2, n); }
 /* Local HTTP diagnostic flows only. Retain header metadata, never body bytes,
- * HTTP headers, credentials, or forwarded client traffic. RX precedes lwIP;
+ * HTTP headers or credentials. Explicitly armed STA client mode also observes
+ * forwarded HTTP to one private on-link peer for at most 120 s. RX precedes lwIP;
  * TX means accepted by host SDIO, not confirmed RF delivery. */
 static void wifi_tcp(bool ap, bool tx, const uint8_t *h, size_t n, size_t wire_len)
 {
     struct netif *local_netif=ap?s_ap:s_sta;
     meshvpn_sta_tcp_trace_t *trace=ap?&s_ap_tcp:&s_tcp;
     uint64_t *started=ap?&s_ap_tcp_started:&s_tcp_started;
+    uint32_t target = 0, generation = 0; uint64_t until = 0;
+    if (!ap) {
+        portENTER_CRITICAL(&s_flow_lock);
+        target=s_tcp_target; generation=s_tcp_generation; until=s_tcp_until;
+        portEXIT_CRITICAL(&s_flow_lock);
+        if (target && (uint64_t)esp_timer_get_time() >= until) return;
+    }
     if (!local_netif || n < 40 || h[0] >> 4 != 4 || h[9] != 6 || (h[6] & 0x3f) || h[7]) return;
     unsigned ihl = (h[0] & 15) * 4, total = r16(h + 2);
     if (ihl < 20 || n < ihl + 20 || total < ihl + 20 || total > wire_len) return;
@@ -59,7 +94,9 @@ static void wifi_tcp(bool ap, bool tx, const uint8_t *h, size_t n, size_t wire_l
     if (thl < 20 || n < ihl + thl || total < ihl + thl) return;
     uint32_t local, peer;
     memcpy(&local, h + (tx ? 12 : 16), 4); memcpy(&peer, h + (tx ? 16 : 12), 4);
-    if (local != netif_ip4_addr(local_netif)->addr || r16(t + (tx ? 0 : 2)) != 80) return;
+    uint16_t local_port=r16(t+(tx?0:2)), port=r16(t+(tx?2:0));
+    if (local != netif_ip4_addr(local_netif)->addr ||
+        (target ? peer != target || port != 80 : local_port != 80)) return;
     meshvpn_sta_tcp_event_t e = {.seq=r32(t+4), .ack=r32(t+8), .flags=t[13],
         .window=r16(t+14), .payload=total-ihl-thl, .tx=tx};
     if (total <= n) {
@@ -80,14 +117,18 @@ static void wifi_tcp(bool ap, bool tx, const uint8_t *h, size_t n, size_t wire_l
         }
         off += size;
     }
-    uint16_t port = r16(t + (tx ? 2 : 0)); uint64_t now = esp_timer_get_time();
+    uint64_t now = esp_timer_get_time();
     portENTER_CRITICAL(&s_flow_lock);
-    if (!tx && (e.flags & 0x12) == 2 && (!trace->total_events || trace->peer != peer ||
-        trace->local != local || trace->peer_port != port || trace->initial_seq != e.seq)) {
+    if (!ap && (generation != s_tcp_generation || (target && now >= s_tcp_until))) {
+        portEXIT_CRITICAL(&s_flow_lock); return;
+    }
+    if (tx == (target != 0) && (e.flags & 0x12) == 2 && (!trace->total_events || trace->peer != peer ||
+        trace->local != local || trace->peer_port != port || trace->local_port != local_port || trace->initial_seq != e.seq)) {
         memset(trace, 0, sizeof(*trace)); (*started) = now;
         trace->peer=peer; trace->local=local; trace->peer_port=port; trace->initial_seq=e.seq;
+        trace->local_port=local_port; trace->client=target!=0;
     }
-    if ((*started) && trace->peer == peer && trace->local == local && trace->peer_port == port) {
+    if ((*started) && trace->peer == peer && trace->local == local && trace->peer_port == port && trace->local_port == local_port) {
         e.elapsed_ms = (now-(*started))/1000;
         trace->events[trace->total_events++ % MESHPN_STA_TCP_EVENTS] = e;
         trace->packets[tx]++; trace->data_bytes[tx] += e.payload;
@@ -102,6 +143,7 @@ static void tcp_snapshot(bool ap, meshvpn_sta_tcp_trace_t *out)
     uint64_t now = esp_timer_get_time();
     portENTER_CRITICAL(&s_flow_lock);
     *out = *trace;
+    out->armed = !ap && s_tcp_target && now < s_tcp_until;
     out->age_ms = (*started) ? (now-(*started))/1000 : 0;
     out->count = trace->total_events < MESHPN_STA_TCP_EVENTS ? trace->total_events : MESHPN_STA_TCP_EVENTS;
     unsigned first = trace->total_events-out->count;

@@ -17,7 +17,8 @@ int main(void){
  for(unsigned i=0;i<2;i++){
   assert(meshvpn_wifi_radio_configure(i)==ESP_OK);
   if(CONFIG_IDF_TARGET_ESP32P4)assert(protocol==
-    ((CONFIG_MESHVPN_P4_AP_DISABLE_11AX && i==WIFI_IF_AP)?7:71));
+    (((CONFIG_MESHVPN_P4_AP_DISABLE_11AX && i==WIFI_IF_AP) ||
+      (CONFIG_MESHVPN_P4_STA_DISABLE_11AX && i==WIFI_IF_STA))?7:71));
  }
  assert(bandwidth_calls==2&&protocol_calls==(CONFIG_IDF_TARGET_ESP32P4?2:0));
  bandwidth_error=ESP_FAIL;assert(meshvpn_wifi_radio_configure(WIFI_IF_STA)==ESP_FAIL);
@@ -25,7 +26,8 @@ int main(void){
  if(CONFIG_IDF_TARGET_ESP32P4){
   protocol_error=ESP_ERR_NOT_SUPPORTED;assert(meshvpn_wifi_radio_configure(WIFI_IF_AP)==ESP_OK&&protocol==7);
   protocol_error=ESP_ERR_INVALID_ARG;assert(meshvpn_wifi_radio_configure(WIFI_IF_STA)==ESP_OK&&protocol==7);
-  protocol_error=ESP_FAIL;assert(meshvpn_wifi_radio_configure(WIFI_IF_STA)==ESP_FAIL);
+  protocol_error=ESP_FAIL;assert(meshvpn_wifi_radio_configure(WIFI_IF_STA)==
+    (CONFIG_MESHVPN_P4_STA_DISABLE_11AX?ESP_OK:ESP_FAIL));
  }
  puts("Radio configure: C6 HE20/bgnax, explicit legacy fallback, error propagation and native HT40 passed");
 }

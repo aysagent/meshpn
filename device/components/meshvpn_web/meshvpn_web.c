@@ -332,20 +332,31 @@ static esp_err_t handler_sta_tcp_trace(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
 #if CONFIG_IDF_TARGET_ESP32P4
-    char query[32], iface[8];
+    char query[64], iface[8];
     bool ap=httpd_req_get_url_query_str(req,query,sizeof(query))==ESP_OK &&
         httpd_query_key_value(query,"interface",iface,sizeof(iface))==ESP_OK && !strcmp(iface,"ap");
+    if (req->method == HTTP_POST) {
+        char target[16]; ip4_addr_t ip;
+        if (req->content_len || ap || httpd_req_get_url_query_str(req,query,sizeof(query))!=ESP_OK ||
+            httpd_query_key_value(query,"target",target,sizeof(target))!=ESP_OK || !ip4addr_aton(target,&ip))
+            return error(req,"400 Bad Request","Empty POST with target=private STA peer IPv4 (0.0.0.0 cancels)");
+        esp_err_t err=meshvpn_ap_probe_tcp_client(ip.addr);
+        if (err!=ESP_OK) return error(req,"409 Conflict","Requires VPN off and private unicast peer on connected STA subnet");
+    }
     meshvpn_sta_tcp_trace_t trace;
     if(ap) meshvpn_ap_probe_ap_tcp(&trace); else meshvpn_ap_probe_sta_tcp(&trace);
     cJSON *out = cJSON_CreateObject();
-    cJSON_AddStringToObject(out, "scope", "last interface-local HTTP TCP flow, RX before lwIP / TX accepted by SDIO, not RF delivery; last 64 headers only; bytes include repeats; SACK records first block; no payload");
+    cJSON_AddStringToObject(out, "scope", "HTTP TCP flow; default local server or explicitly armed STA client to private peer (120s); RX before lwIP / TX accepted by SDIO, not RF delivery; last 64 headers only; bytes include repeats; SACK records first block; no payload");
     cJSON_AddStringToObject(out,"interface",ap?"ap":"sta");
+    cJSON_AddBoolToObject(out,"client",trace.client);
+    cJSON_AddBoolToObject(out,"armed",trace.armed);
     char address[16]; const uint8_t *b = (const uint8_t *)&trace.peer;
     snprintf(address, sizeof(address), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
     cJSON_AddStringToObject(out, "peer", address); b = (const uint8_t *)&trace.local;
     snprintf(address, sizeof(address), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
     cJSON_AddStringToObject(out, "local", address);
     cJSON_AddNumberToObject(out, "peer_port", trace.peer_port);
+    cJSON_AddNumberToObject(out, "local_port", trace.local_port);
     cJSON_AddNumberToObject(out, "age_ms", trace.age_ms);
     cJSON_AddNumberToObject(out, "total_events", trace.total_events);
     cJSON_AddNumberToObject(out, "omitted_events", trace.total_events-trace.count);
@@ -1701,6 +1712,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/diag/net-bench", HTTP_GET, handler_net_bench),
         ROUTE("/api/diag/net-bench", HTTP_POST, handler_net_bench),
         ROUTE("/api/diag/sta-tcp", HTTP_GET, handler_sta_tcp_trace),
+        ROUTE("/api/diag/sta-tcp", HTTP_POST, handler_sta_tcp_trace),
         ROUTE("/api/diag/arp", HTTP_GET, handler_arp_trace),
         ROUTE("/api/diag/usb-bursts", HTTP_GET, handler_usb_bursts),
         ROUTE("/*", HTTP_GET, handler_captive),

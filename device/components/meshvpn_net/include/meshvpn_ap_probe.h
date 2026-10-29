@@ -38,13 +38,16 @@ typedef struct {
 typedef struct {
     uint32_t peer, local, initial_seq, packets[2], data_bytes[2], total_events;
     uint32_t checked[2], bad_ip[2], bad_tcp[2];
-    uint16_t peer_port;
+    uint16_t peer_port, local_port;
+    bool client, armed;
     uint64_t age_ms;
     unsigned count;
     meshvpn_sta_tcp_event_t events[MESHPN_STA_TCP_EVENTS];
 } meshvpn_sta_tcp_trace_t;
 void meshvpn_ap_probe_sta_tcp(meshvpn_sta_tcp_trace_t *out);
 void meshvpn_ap_probe_ap_tcp(meshvpn_sta_tcp_trace_t *out);
+/* Temporarily reuse STA ring for HTTP to one private on-link peer. Zero cancels. */
+esp_err_t meshvpn_ap_probe_tcp_client(uint32_t peer);
 void meshvpn_ap_probe_attach(struct netif *ap, struct netif *sta);
 void meshvpn_ap_probe_usb_input(const struct pbuf *p, const struct netif *inp);
 void meshvpn_ap_probe_input(const struct pbuf *p, const struct netif *inp);

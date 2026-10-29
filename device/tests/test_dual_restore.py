@@ -22,6 +22,16 @@ class RestoreTests(unittest.TestCase):
             self.assertFalse(trace['available'])
             self.assertIn('TimeoutError', trace['error'])
 
+    def test_failed_link_keeps_both_sides_before_restoration(self):
+        class Board:
+            def api(self, path): return {'events': [{'seq': 123}], 'client': path.endswith('sta-tcp')}
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            with self.assertRaises(RuntimeError):
+                m.save_link_attempt(p, 0, 'down', {'complete': False}, Board(), Board())
+            self.assertTrue(json.loads((p/'client-trace-0-down.json').read_text())['client'])
+            self.assertFalse(json.loads((p/'ap-trace-0-down.json').read_text())['client'])
+
     def test_swapped_board_at_expected_ip_never_mutates(self):
         class Board:
             def __init__(self, address): self.address = address

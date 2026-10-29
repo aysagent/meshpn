@@ -13,10 +13,11 @@ typedef int err_t;
 #define pdTRUE 1
 struct pbuf { uint8_t *payload; unsigned tot_len, len; };
 typedef err_t (*netif_output_fn)(struct netif *, struct pbuf *, const ip4_addr_t *);
-struct netif { ip4_addr_t ip; bool napt, up, link; netif_output_fn output; };
+struct netif { ip4_addr_t ip, mask; bool napt, up, link; netif_output_fn output; };
 #define netif_is_up(n) ((n)->up)
 #define netif_is_link_up(n) ((n)->link)
 #define netif_ip4_addr(n) (&(n)->ip)
+#define netif_ip4_netmask(n) (&(n)->mask)
 struct eth_addr { uint8_t mac[6]; };
 typedef struct { bool ready; } *SemaphoreHandle_t;
 static int64_t clock_us = 1000000;
@@ -138,6 +139,32 @@ static void test_sta_tcp(void)
  meshvpn_ap_probe_ap_tcp(&ap);assert(ap.total_events==1&&ap.peer_port==58001&&!ap.bad_tcp[0]);
  meshvpn_ap_probe_sta_tcp(&v);assert(v.total_events==old.total_events&&v.peer_port==old.peer_port);
 }
+static void test_tcp_client(void)
+{
+ uint8_t target[]={192,168,1,1},mask[]={255,255,255,0};uint32_t peer;
+ memcpy(&peer,target,4);memcpy(&s_sta->mask.addr,mask,4);
+ vpn_enabled=true;assert(meshvpn_ap_probe_tcp_client(peer)==ESP_ERR_INVALID_STATE);vpn_enabled=false;
+ uint32_t external=0x01010101;assert(meshvpn_ap_probe_tcp_client(external)==ESP_ERR_INVALID_STATE);
+ assert(meshvpn_ap_probe_tcp_client(s_sta->ip.addr)==ESP_ERR_INVALID_STATE);
+ uint8_t other[]={192,168,2,1};memcpy(&external,other,4);
+ assert(meshvpn_ap_probe_tcp_client(external)==ESP_ERR_INVALID_STATE);
+ target[3]=255;memcpy(&external,target,4);assert(meshvpn_ap_probe_tcp_client(external)==ESP_ERR_INVALID_STATE);
+ assert(meshvpn_ap_probe_tcp_client(peer)==ESP_OK);
+ uint8_t h[40]={0},saved[40];h[0]=0x45;h[9]=6;w16(h+2,40);h[32]=0x50;h[33]=2;
+ memcpy(h+12,&s_sta->ip.addr,4);memcpy(h+16,&peer,4);w16(h+20,58003);w16(h+22,80);w32(h+24,1234);
+ assert(meshvpn_vpn_repair_checksums(h,40));memcpy(saved,h,40);
+ sta_tcp(true,h,40,40);assert(!memcmp(h,saved,40));
+ meshvpn_sta_tcp_trace_t v;meshvpn_ap_probe_sta_tcp(&v);
+ assert(v.client&&v.armed&&v.total_events==1&&v.local_port==58003&&v.peer_port==80);
+ memcpy(h+12,&peer,4);memcpy(h+16,&s_sta->ip.addr,4);w16(h+20,80);w16(h+22,58003);h[33]=0x12;
+ assert(meshvpn_vpn_repair_checksums(h,40));sta_tcp(false,h,40,40);
+ meshvpn_ap_probe_sta_tcp(&v);assert(v.total_events==2&&!v.bad_tcp[0]&&!v.bad_tcp[1]);
+ w16(h+22,58004);sta_tcp(false,h,40,40);meshvpn_ap_probe_sta_tcp(&v);assert(v.total_events==2);
+ w16(h+22,58003);clock_us+=120000000;sta_tcp(false,h,40,40);
+ meshvpn_ap_probe_sta_tcp(&v);assert(!v.armed&&v.client&&v.total_events==2);
+ assert(meshvpn_ap_probe_tcp_client(0)==ESP_OK);meshvpn_ap_probe_sta_tcp(&v);
+ assert(!v.armed&&!v.client&&!v.total_events);
+}
 int main(void)
 {
  struct netif ap={.up=true,.link=true,.napt=true,.output=ordinary},sta={.up=true,.link=true};
@@ -185,7 +212,7 @@ int main(void)
  ethernet[14+33]^=0x40;
  for(unsigned i=0;i<32;i++)meshvpn_ap_probe_tx(0,ethernet,sizeof(ethernet));
  assert(s_checksums[2].bad_tcp==1&&s_checksums[2].checked==2);
- test_sta_tcp();
+ test_sta_tcp();test_tcp_client();
  /* Forwarded USB SYNs get their own ingress stage; USB admin is excluded. */
  uint8_t uh[40]={0};uh[0]=0x45;uh[9]=6;w16(uh+2,40);uh[32]=0x50;uh[33]=2;
  uint8_t usrc[]={192,168,10,2},udst[]={192,168,13,1};memcpy(uh+12,usrc,4);memcpy(uh+16,udst,4);

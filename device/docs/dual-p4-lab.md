@@ -48,6 +48,18 @@ HTTP download socket; the default is `1`. This isolates overhead from many
 small HTTP header/chunk writes. It changes neither Wi-Fi settings nor forwarded
 client sockets. Each attempt records `server_tcp_nodelay`, partial received
 bytes and a bounded AP TCP trace, including failed attempts before restoration.
+The client now arms its existing STA trace ring for the same HTTP peer before
+each link transfer. `client-trace-N-DIRECTION.json` and `ap-trace-N-DIRECTION.json`
+can be matched by IP/ports and TCP sequence numbers. Their clocks are independent;
+do not subtract absolute timestamps across boards. `local_port` is the NAT-side
+client port in a client trace, matching `peer_port` on the AP server trace.
+
+Authenticated empty `POST /api/diag/sta-tcp?target=IP` arms this client mode
+for 120 seconds, only with VPN off and a private unicast peer on the connected
+STA subnet. `target=0.0.0.0` cancels and clears the ring. It reuses the STA ring,
+does not allocate packet buffers, and retains no payload. Expiry freezes the
+trace until explicit cancellation/rearming. Restoration cancels it. Ordinary
+GET diagnostics never enable tracing of forwarded traffic.
 
 Profile changes have a private `restore.json` journal written **before** mutation.
 Existing profiles/passwords are preserved. The temporary peer profile is removed

@@ -73,6 +73,8 @@ def restore(path, journal):
     if s['board'] != journal['board']: raise RuntimeError('Restoration identity mismatch')
     try: board.api('/api/diag/net-bench', {'cancel': True})
     except Exception: pass
+    try: board.api('/api/diag/sta-tcp?target=0.0.0.0', b'')
+    except Exception: pass
     original = journal['original']
     # After a crash during profile creation, infer ownership only from the new
     # id and exact intended SSID. Never delete any pre-existing profile.
@@ -91,7 +93,7 @@ def restore(path, journal):
     journal['restored'] = True; journal['restored_at'] = time.time(); save(path, journal)
 
 
-def save_link_attempt(out, repeat, direction, row, dut):
+def save_link_attempt(out, repeat, direction, row, dut, client=None):
     """Keep failed/partial transfers and trace errors before raising/restore."""
     save(out / ('link-' + str(repeat) + '-' + direction + '.json'), row)
     try:
@@ -99,6 +101,12 @@ def save_link_attempt(out, repeat, direction, row, dut):
     except Exception as e:
         trace = {'available': False, 'error': type(e).__name__ + ': ' + str(e)}
     save(out / ('ap-trace-' + str(repeat) + '-' + direction + '.json'), trace)
+    if client is not None:
+        try:
+            trace = client.api('/api/diag/sta-tcp')
+        except Exception as e:
+            trace = {'available': False, 'error': type(e).__name__ + ': ' + str(e)}
+        save(out / ('client-trace-' + str(repeat) + '-' + direction + '.json'), trace)
     if not row['complete']:
         raise RuntimeError('RF link transfer failed: ' + json.dumps(row))
 
@@ -154,9 +162,10 @@ def run(args):
                 for direction in (['down','up'] if args.role=='link' else ['down']):
                     start=dut.api('/api/status')
                     if args.role=='link':
+                        board.api('/api/diag/sta-tcp?target='+dut_before['net']['ap_ip'], b'')
                         row=dut.transfer(dut_before['net']['ap_ip'],direction,time.monotonic()+60,
                                          source=interface['address'],iface=interface['name'],nodelay=bool(args.nodelay))
-                        save_link_attempt(out, repeat, direction, row, dut)
+                        save_link_attempt(out, repeat, direction, row, dut, board)
                         if direction=='up' and row['receipt']['link']!='ap':raise RuntimeError('Not AP ingress')
                     else:
                         row = wan_transfer(interface['name'])

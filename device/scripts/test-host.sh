@@ -72,9 +72,10 @@ for variant in 0:0 1:0 1:1 1:2 1:3; do
     -Idevice/components/meshvpn_wifi/include device/tests/test_wifi_radio.c -o "$test_dir/wifi-radio-$variant"
   "$test_dir/wifi-radio-$variant"
 done
-for variant in 0:0 1:0 1:1; do
-  p4_radio=${variant%:*}; ap_legacy=${variant#*:}
+for variant in 0:0:0 1:0:0 1:1:0 1:0:1 1:1:1; do
+  p4_radio=${variant%%:*}; legacy=${variant#*:}; ap_legacy=${legacy%:*}; sta_legacy=${legacy#*:}
   "$cc" "${flags[@]}" -DCONFIG_IDF_TARGET_ESP32P4="$p4_radio" -DCONFIG_MESHVPN_P4_AP_DISABLE_11AX="$ap_legacy" \
+    -DCONFIG_MESHVPN_P4_STA_DISABLE_11AX="$sta_legacy" \
     -Idevice/tests/radio_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
     -Idevice/components/meshvpn_wifi/include device/tests/test_wifi_radio_config.c -o "$test_dir/radio-config-$variant"
   "$test_dir/radio-config-$variant"
@@ -135,6 +136,7 @@ done
 python3 -B device/tests/test_instrument_ncm.py
 python3 -B device/tests/test_instrument_dwc2.py
 python3 -B device/tests/test_flash_device.py
+python3 -B -m unittest discover -s device/tests -p test_usb_diag.py
 python3 -B device/tests/test_perf_p4_paths.py
 python3 -B device/tests/test_netif_start.py
 python3 -B device/tests/test_web_json_alloc.py

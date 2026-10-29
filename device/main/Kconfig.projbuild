@@ -1,4 +1,13 @@
 menu "MeshPN diagnostic firmware"
+config MESHVPN_P4_STA_DISABLE_11AX
+    bool "Use b/g/n HT20 for P4 STA compatibility testing"
+    depends on IDF_TARGET_ESP32P4
+    default n
+    help
+        Restrict only the C6 station to b/g/n for controlled comparisons
+        against an 802.11ax AP. Does not change AP protocol or channel width.
+        Verify negotiated mode in diagnostics; leave off unless measured.
+
 config MESHVPN_P4_AP_DISABLE_11AX
     bool "Use b/g/n HT20 for P4 SoftAP compatibility"
     depends on IDF_TARGET_ESP32P4
