@@ -65,3 +65,11 @@ amd64. Его воспроизводимый smoke описан [отдельн�
 прошла managed private-DNS gate 11/11 на ARM64. Rootless mode, физические
 Radxa/VPS, cold boot и host Wi-Fi/USB/DNS этими прогонами не подтверждены. Для ежедневного включения нового image на реальной
 машине остаётся отдельный bounded smoke с восстановлением состояния.
+
+После TSan обнаружена и исправлена межпоточная гонка signal flags
+(`400e7d8`): [подробности](clean-vpn-native-tsan.md). Исправленный musl engine
+и fixture пересобраны; 14/14 address/reload/worker-signal integration и 12/12
+Podman managed gates прошли на новом engine SHA `613b7f07…`.
+[Отдельный итоговый receipt](../fixtures/clean-vpn-native-managed-signal-fixed-20261030.json)
+сохраняет предыдущие CTest/soak результаты привязанными к их исходным snapshot,
+не переносит старые измерения на новую сборку.
