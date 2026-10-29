@@ -235,3 +235,26 @@ so these cases compare sorted JA3 `9fc752c58190630c49e1812906b40077` and
 JA4 `t13d0915h2_f91f431d341e_54d72502093d`, while checking each complete capture
 against the profile. The boundary suite now has 16 passing cases, including
 four observer cases/eight captured ClientHellos.
+
+### Final interaction review and operational boundaries
+
+Discovery returns an authenticated snapshot, not a reserved lease: a completed
+offer can precede an immediately following key/address change. Full-session
+proof and the owner transaction must therefore remain mandatory. Pending
+authentications are closed on every successful peer reload; only sessions with
+exactly unchanged key and address survive. A rejected reload preserves the
+previous packet/relay mapping. Private DNS admission receives the same committed
+peer address set, and unchanged relay identities retain their replay windows.
+
+New packet handshakes/discoveries share the existing global limits (16 pending,
+32 admitted per second). These bound resources but do not guarantee new-client
+availability under an unauthenticated connection flood. Established sessions
+have separate per-tick processing budgets. Reload revocation prevents further
+use of the removed key; it cannot retract traffic already forwarded to a
+destination or a completed discovery result delivered before publication.
+
+The reload ACK hashes the JSON document, not referenced key-file contents.
+Manager verification must retain its process/invocation and revision/event
+checks; do not treat an unchanged document hash as proof that key bytes stayed
+unchanged. These are boundaries of the current contract, not a promise of
+zero-packet rollback or distributed lease consensus.
