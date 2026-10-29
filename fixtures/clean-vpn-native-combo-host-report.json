@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "transport": "combo-tls",
+  "clients": 2,
+  "exit": 1,
+  "checks": [
+    "three installs remain disabled and stopped",
+    "two clients and overlapping USB subnets share one native exit with HTTPS UDP TCP DNS",
+    "distinct native peer addresses and USB SNAT",
+    "combo relay serves public HTTPS; excluded HTTPS cannot downgrade to boring packet branch",
+    "stopping first client preserves second and blocks first USB egress",
+    "first client rejoins without restarting second",
+    "client owner crash recovery is isolated",
+    "exit owner crash reconnects both clients with unchanged identities",
+    "a key for peer one cannot authenticate peer two",
+    "all owners release TUN DNS NAT routes; both guards survive",
+    "exit replay state retained after all owner and engine stops"
+  ],
+  "peerAddresses": [
+    "10.99.0.2",
+    "10.99.0.37"
+  ],
+  "scope": "real-systemd-netns-installed-host-profiles; no physical reboot or capacity claim",
+  "kind": "native-combo-host-multiple-clients-lab",
+  "sourceHashes": {
+    "scripts/lib/native-host-multi-lab.mjs": "9e6ede8c16fd6fb6f40fe5b47a0fe5418a1250b0607ec1c8ec992c5e433a9f0b",
+    "scripts/lib/native-host-network.mjs": "8e2f35453fd5e79ae66d0aacaa35fad93c8a07a4c09cb91627b8a215a512b33d",
+    "scripts/lib/native-host-plan.mjs": "d197553deb21725772bbb97e9a5adb3cb94a17cf11a52a23114b3b652cb5a8de",
+    "scripts/lib/native-install.mjs": "375d877db2ae6d82dbcad47c9fd5262abe6291ec129052e3551dc8a8bb7623e2",
+    "scripts/lib/native-service-unit.mjs": "d9d82bc16b2be7f881ecc4977c8a863764d350bb540dc84436aebcdec6665085",
+    "scripts/clean-vpn-native-host-network.mjs": "d6fe30fc4bd3a82044ac35b517ba76c2ece42db2832d18d96fa3702e5af7b56d",
+    "scripts/lib/native-exit-host-plan.mjs": "040792852d2b314ac5d1520dbe773f4ece1fa1dfb8aff59866f483786f2a98c5",
+    "scripts/autostart/killswitch.sh": "350b9aae0e2c81ee99d750f7d7d700e305d30b9aadaf261ce68f75b98da7c94b",
+    "engine": "f0eb2a326e6c67491da4e1d895745b3e3c125c5208fc38446e396cb8e8490d72"
+  },
+  "kernelChecks": 27,
+  "regressionTests": 116,
+  "additionalPreflightTests": 5,
+  "boringRegression": {
+    "schema": 1,
+    "status": "passed",
+    "transport": "boring-tls",
+    "clients": 2,
+    "exit": 1,
+    "checks": [
+      "three installs remain disabled and stopped",
+      "two clients and overlapping USB subnets share one native exit with HTTPS UDP TCP DNS",
+      "distinct native peer addresses and USB SNAT",
+      "stopping first client preserves second and blocks first USB egress",
+      "first client rejoins without restarting second",
+      "client owner crash recovery is isolated",
+      "exit owner crash reconnects both clients with unchanged identities",
+      "a key for peer one cannot authenticate peer two",
+      "all owners release TUN DNS NAT routes; both guards survive"
+    ],
+    "peerAddresses": [
+      "10.99.0.2",
+      "10.99.0.37"
+    ],
+    "scope": "real-systemd-netns-installed-host-profiles; no physical reboot or capacity claim"
+  },
+  "logs": {
+    "combo-host-systemd2.log": "b932fb7b354d4759a1bdb6613af0f9f57d0c226fd648fc9ae9cb3856ebbd48fb",
+    "combo-host-regression.log": "b4d2cf5042475acb73b60cd2dfd816ff0f80f316ac6a6b3ea1c9920f6944fa3f",
+    "combo-host-kernel-final.log": "14708253a73f676845ce3e690e3928d864e16287c5b57072767bb864f4847cf4",
+    "boring-host-final.log": "75fa419693a4dc339232be6cb3f3047afb5b778f490f1e4efb8a38cd9d8eb65a"
+  },
+  "limitations": [
+    "isolated real systemd and Linux kernel; no physical reboot or physical installation",
+    "two peers, not a capacity benchmark",
+    "USB HTTPS interception only; localhost traffic uses boring packet branch",
+    "no fingerprint capture in this matrix",
+    "conditional SSH clock bootstrap remains boring-tls only"
+  ]
+}

@@ -4,7 +4,15 @@ import {validateNativeExitHost} from './native-exit-host-network.mjs';
 export const nativeExitHostSources=['clean-vpn-native-exit-host.mjs','clean-vpn-native-tun.py','lib/native-exit-host-network.mjs','lib/native-host-store.mjs'];
 export function nativeExitHostPlan({name,target,profile,engine,node='/usr/bin/node'}){
   assert.deepEqual(Object.keys(profile).sort(),['uplink','version']);assert.equal(profile.version,1);
-  assert.equal(engine.role,'exit');assert.ok(engine.transport===undefined||engine.transport==='boring-tls');
+  assert.equal(engine.role,'exit');
+  if(engine.transport==='combo-tls'){
+    const relay=engine.transparent,packet=engine.boring;
+    assert.equal(packet.role,'exit');assert.equal(relay.role,'exit');assert.equal(relay.transport,'transparent-tls');
+    assert.deepEqual(relay.listen,{ipv4:packet.address,port:packet.port});
+    assert.equal(relay.destinations,undefined);assert.equal(relay.destination_policy.mode,'public-https');
+    engine=packet;
+  }
+  assert.ok(engine.transport===undefined||engine.transport==='boring-tls');
   for(const p of [target,node]){assert.match(p,/^\/[\w./-]+$/);assert.equal(path.normalize(p),p);}
   const network=`native-${name}-network.service`,unit=`native-${name}.service`;
   const config=validateNativeExitHost({version:1,endpoint:engine.address,port:engine.port,uplink:profile.uplink,tun:engine.tun,engine_unit:unit,network_unit:network});

@@ -183,3 +183,9 @@ test('DNS audit accepts one non-default native peer but refuses mixed or reserve
     assert.notEqual(audit(4,sample.replaceAll('10.99.0.2/32',ip+'/32')).status,0);
   assert.notEqual(audit(4,replace(sample).replace('-s 10.99.0.37/32 -d 8.8.8.8','-s 10.99.0.38/32 -d 8.8.8.8')).status,0);
 });
+
+test('guard declares native peer DNS support without inspecting host state',()=>{
+  const r=spawnSync('bash',[file,'capabilities'],{encoding:'utf8'});
+  assert.equal(r.status,0);assert.deepEqual(JSON.parse(r.stdout),{schema:1,native_peer_dns:true});
+  assert.notEqual(spawnSync('bash',[file,'capabilities','--scope=both'],{encoding:'utf8'}).status,0);
+});

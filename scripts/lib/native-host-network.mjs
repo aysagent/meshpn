@@ -1,11 +1,13 @@
 // Reviewed Radxa IPv4 profile. Control plane only; all payload IO stays native.
 import assert from 'node:assert/strict';
 import { isIPv4 } from 'node:net';
+import {validateNativeComboRedirectConfig} from './native-combo-redirect-plan.mjs';
 import {validateTunnelDnsAddress} from './dns-tunnel-plan.mjs';
 
 export function validateNativeHostConfig(c) {
-  assert.deepEqual(Object.keys(c).sort(), ['version','exit_ip','engine_unit','network_unit','guard_unit','guard_script', ...('peer_ipv4' in c ? ['peer_ipv4'] : [])].sort());
+  assert.deepEqual(Object.keys(c).sort(), ['version','exit_ip','engine_unit','network_unit','guard_unit','guard_script', ...('peer_ipv4' in c ? ['peer_ipv4'] : []),...('combo_redirect' in c ? ['combo_redirect'] : [])].sort());
   validateTunnelDnsAddress('peer_ipv4' in c ? c.peer_ipv4 : '10.99.0.2');
+  if('combo_redirect' in c){const r=validateNativeComboRedirectConfig(c.combo_redirect);assert.equal(r.interface,'usb0');assert.equal(r.subnet,'192.168.7.0/24');assert.equal(r.endpoint,c.exit_ip);}
   assert.equal(c.version, 1); assert.ok(isIPv4(c.exit_ip));
   assert.ok(!/^(0|127|169\.254)\./.test(c.exit_ip));
   for (const key of ['engine_unit','network_unit','guard_unit']) assert.match(c[key], /^[a-z][a-z0-9-]{0,63}\.service$/);
@@ -28,7 +30,7 @@ export function nativeHostNatPlan(id, peerAddress = '10.99.0.2') {
 export function nativeHostNetwork(c, io) {
   validateNativeHostConfig(c);
   const peerAddress = c.peer_ipv4 ?? '10.99.0.2';
-  const {run, host, dns, store, scope, createTun, randomId} = io;
+  const {run, host, dns, redirect, store, scope, createTun, randomId} = io;
   const cmd = (f,a) => run(f,a).trim();
   const ip = (...a) => JSON.parse(cmd('ip',a));
   const prop = (u,k) => cmd('systemctl',['show',u,'-p',k,'--value']);
@@ -82,6 +84,9 @@ export function nativeHostNetwork(c, io) {
   };
   const present = o => natLines(o.table).some(l=>canonical(l)===expected(o));
   const journalScope = s => {
+    if(redirect?.state&&redirect.state.stage!=='released'){
+      assert.ok(c.combo_redirect,'native_unconfigured_redirect');assert.deepEqual(redirect.state.scope,s.scope);assert.deepEqual(redirect.state.config,c.combo_redirect);redirect.audit();
+    }
     for(const j of [host.state,dns.state]) if(j&&j.stage!=='released') {
       assert.ok(s.tun,'native_unowned_child_journal');
       assert.equal(j.links?.tun0?.ifindex,s.tun.ifindex,'native_child_tun_mismatch');
@@ -89,6 +94,7 @@ export function nativeHostNetwork(c, io) {
     }
   };
   const preflight = () => {
+    if(peerAddress!=='10.99.0.2')assert.equal(JSON.parse(cmd(c.guard_script,['capabilities'])).native_peer_dns,true,'native_guard_peer_support_required');
     guard();inactive();
     assert.ok(!tun(),'native_existing_tun_refused');
     assert.equal(cmd('sysctl',['-n','net.ipv4.ip_forward']),'1','native_configured_gateway_required');
@@ -98,6 +104,7 @@ export function nativeHostNetwork(c, io) {
     assert.deepEqual(ip('-N','-j','-4','rule','show'),[{priority:0,src:'all',table:'255'},{priority:32766,src:'all',table:'254'},{priority:32767,src:'all',table:'253'}],'native_foreign_policy');
     const binds=prop(c.engine_unit,'BindsTo').split(/\s+/);
     assert.ok(binds.includes(c.network_unit)&&binds.includes(c.guard_unit),'native_engine_dependencies');
+    redirect?.assertAvailable();
     host.assertAvailable(); assert.ok(!dns.state||dns.state.stage==='released','native_dns_recovery_required');
     for(const table of ['nat','mangle']) {
       assert.equal(natLines(table).length,0,'native_unowned_nat');
@@ -119,6 +126,7 @@ export function nativeHostNetwork(c, io) {
       if(host.state&&host.state.stage!=='released')host.audit();
       if(dns.state&&dns.state.stage!=='released')dns.restore({apply:false});
       s.stage='restoring';persist(s);
+      if(redirect?.state&&redirect.state.stage!=='released')redirect.restore();
       // Remove forwarding translation first; guard remains throughout cleanup.
       const plan=nativeHostNatPlan(s.id, peerAddress);
       while(s.count){const o=plan[s.count-1];if(present(o))cmd('iptables',['-w','5','-t',o.table,'-D',o.chain,...o.spec]);assert.ok(!present(o));s.count--;persist(s);}
@@ -141,11 +149,13 @@ export function nativeHostNetwork(c, io) {
       for(const stage of ['guard','route','activate'])dns.applyStage(stage);
       dns.activate();
       for(const o of nativeHostNatPlan(s.id, peerAddress)){s.count++;persist(s);cmd('iptables',['-w','5','-t',o.table,'-I',o.chain,'1',...o.spec]);assert.ok(present(o));}
+      if(c.combo_redirect){assert.ok(redirect);redirect.install(c.combo_redirect);}
       guard();natAudit(s,true);host.audit();s.stage='active';persist(s);
       return {state:'network-ready',readinessProbed:false};
     },
     tick() {
       const s=store.read();validate(s);assert.equal(s.stage,'active');
+      if(c.combo_redirect)assert.equal(redirect.audit().stage,'active','native_redirect_inactive');
       guard();assert.ok(ownedTun(s),'native_tun_missing');journalScope(s);natAudit(s,true);
       const link=ip('-j','link','show').find(l=>l.ifname==='wlan0');
       const defaults=ip('-j','-4','route','show','default');

@@ -59,7 +59,7 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   const input = JSON.parse(regular(config, 16384));
   const transparent = input.transport === 'transparent-tls';
   const combo = input.transport === 'combo-tls', relay = combo ? input.transparent : input;
-  need(!(transparent || combo) || siteProfile, combo ? 'combo_requires_bound_site_profile' : 'transparent_requires_bound_site_profile');
+  need(!(transparent || combo) || siteProfile || (combo && (hostProfile || exitProfile)), combo ? 'combo_requires_bound_site_profile' : 'transparent_requires_bound_site_profile');
   if ((transparent || combo) && input.role === 'exit') {
     safePath(relay?.replay_directory);
     need(!exists(relay.replay_directory), 'fresh_replay_source_must_not_exist');
@@ -81,7 +81,7 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     need(clock.version === 1 && isIPv4(clock.host) && clock.host === input.address && Number.isInteger(clock.port) && clock.port > 0 && clock.port < 65536 && /^[a-z][a-z0-9_-]{0,31}$/.test(clock.user), 'clock_profile_invalid');
     need(![networkUnit,guardUnit].includes(clockUnit), 'clock_dependency_cycle');
   }
-  const units = site?.units ?? new Map([[unitName, nativeServiceUnit({ binary: target + '/engine', config: target + '/config.json', networkUnit, guardUnit, role: input.role, scopedExit:host?.scopedExit??false, ...(clock ? {clockRecoveryUnit: clockUnit} : {}) })]]);
+  const units = site?.units ?? new Map([[unitName, nativeServiceUnit({ binary: target + '/engine', config: target + '/config.json', networkUnit, guardUnit, role: input.role, transport:input.transport??'boring-tls', ...(combo&&input.role==='exit'?{replayDirectory:target+'/replay'}:{}), scopedExit:host?.scopedExit??false, ...(clock ? {clockRecoveryUnit: clockUnit} : {}) })]]);
   if(host){
     // Network owner starts the engine only after preparation. It alone is
     // enabled at boot; direct engine enable is deliberately not offered.

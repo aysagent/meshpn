@@ -6,12 +6,13 @@ import {execFileSync} from 'node:child_process';
 import {randomBytes} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
+import {openNativeComboRedirectJournal} from './lib/native-combo-redirect-journal.mjs';
 import {openHostRoutes} from './lib/vpn-host-routes.mjs';
 import {openTunnelDnsJournal} from './lib/dns-tunnel-journal.mjs';
 import {nativeHostNetwork,validateNativeHostConfig} from './lib/native-host-network.mjs';
 import {openNativeHostStore,nativeHostScope,readNativePrivate} from './lib/native-host-store.mjs';
 
-let store,host,dns,timer;
+let store,host,dns,redirect,timer;
 try{
   const [action,flag,...extra]=process.argv.slice(2);
   assert.ok(['run','recover','preflight'].includes(action)&&!extra.length&&/^--config=\/[\w./-]+$/.test(flag));
@@ -23,8 +24,8 @@ try{
     env:{PATH:'/usr/sbin:/usr/bin:/sbin:/bin',LC_ALL:'C'},stdio:['ignore','pipe','pipe',store.lock]}).trim();
   const prop=(u,k)=>run('systemctl',['show',u,'-p',k,'--value']);
   if(action==='run')assert.equal(prop(config.network_unit,'MainPID'),String(process.pid),'native_named_owner_required');
-  host=openHostRoutes({allowTunLinkDown:true});dns=openTunnelDnsJournal();
-  const owner=nativeHostNetwork(config,{run,host,dns,store,scope:nativeHostScope,randomId:()=>randomBytes(12).toString('hex'),
+  host=openHostRoutes({allowTunLinkDown:true});dns=openTunnelDnsJournal();redirect=openNativeComboRedirectJournal();
+  const owner=nativeHostNetwork(config,{run,host,dns,redirect,store,scope:nativeHostScope,randomId:()=>randomBytes(12).toString('hex'),
     createTun:(name,alias,peer)=>run('python3',[fileURLToPath(new URL('./clean-vpn-native-tun.py',import.meta.url)),name,alias,peer])});
   if(action==='preflight'){owner.preflight();console.log(JSON.stringify({status:'eligible',networkChanged:false,profile:'radxa-ipv4'}));}
   else if(action==='recover'){
@@ -44,4 +45,4 @@ try{
     // Independent ExecStopPost owns cleanup on both graceful and abrupt exit.
   }
 }catch(e){const reason=e.message?.split('\n')[0];console.error('native-host-network: '+(/^native_[a-z0-9_]+$/.test(reason)?reason:e.code??'failed'));process.exitCode=1;}
-finally{clearInterval(timer);dns?.release();host?.release();store?.close();}
+finally{clearInterval(timer);redirect?.release();dns?.release();host?.release();store?.close();}

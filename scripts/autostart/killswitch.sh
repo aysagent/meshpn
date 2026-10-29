@@ -32,6 +32,11 @@ for arg in "$@"; do
     *) die "unknown argument: $key" ;;
   esac
 done
+if [[ "$ACTION" == capabilities ]]; then
+  [[ ${#seen[@]} == 0 ]] || die 'capabilities takes no arguments'
+  printf '%s\n' '{"schema":1,"native_peer_dns":true}'
+  exit 0
+fi
 case "$ACTION" in up|down|status|plan|audit-snapshot) ;; *) die 'usage: killswitch.sh up|down|status|plan [options]; audit-snapshot --family=4|6 < filter-S.txt' ;; esac
 if [[ "$ACTION" == audit-snapshot ]]; then
   [[ ${#seen[@]} == 1 && ( "$FAMILY" == 4 || "$FAMILY" == 6 ) ]] || die 'audit-snapshot requires only --family=4|6'
@@ -294,7 +299,9 @@ done
 # Private directory/persistent inode. Children inherit fd 9, including restore.
 LOCK_DIR=/run/clean-vpn-killswitch
 [[ ! -L "$LOCK_DIR" ]] || die 'unsafe lock directory'
-if [[ ! -e "$LOCK_DIR" ]]; then mkdir -m 0700 "$LOCK_DIR"; fi
+if [[ ! -e "$LOCK_DIR" ]]; then
+  mkdir -m 0700 "$LOCK_DIR" 2>/dev/null || [[ -d "$LOCK_DIR" && ! -L "$LOCK_DIR" ]] || die 'cannot create guard lock directory'
+fi
 [[ -d "$LOCK_DIR" && "$(stat -c '%u:%a' "$LOCK_DIR")" == 0:700 ]] || die 'unsafe lock directory'
 if [[ -e "$LOCK_DIR/lock" || -L "$LOCK_DIR/lock" ]]; then
   [[ ! -L "$LOCK_DIR/lock" && -f "$LOCK_DIR/lock" && "$(stat -c '%u:%a:%h' "$LOCK_DIR/lock")" == 0:600:1 ]] || die 'unsafe lock file'

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {validateNativeHostConfig,nativeHostNatPlan} from './lib/native-host-network.mjs';
+import {validateNativeHostConfig,nativeHostNatPlan,nativeHostNetwork} from './lib/native-host-network.mjs';
 import {nativeHostUnit} from './lib/native-host-unit.mjs';
 const profile={version:1,exit_ip:'154.62.226.216',engine_unit:'native-daily.service',network_unit:'native-daily-network.service',guard_unit:'clean-vpn-killswitch.service',guard_script:'/usr/local/bin/clean-vpn-killswitch.sh'};
 test('fixed host profile rejects ambiguous dependencies and executable injection',()=>{
@@ -33,5 +33,14 @@ test('host peer identity is bounded to the native pool and controls USB SNAT',()
   for(const peer_ipv4 of ['10.99.0.0','10.99.0.1','10.99.0.255','10.100.0.2','::1','10.99.0.02',null]){
     assert.throws(()=>validateNativeHostConfig({...profile,peer_ipv4}));
     assert.throws(()=>nativeHostNatPlan('a'.repeat(24),peer_ipv4));
+  }
+});
+
+test('non-default peer refuses a stale guard before any network operation',()=>{
+  for(const answer of ['{}','{"native_peer_dns":false}','old helper usage']){
+    const calls=[];
+    const owner=nativeHostNetwork({...profile,peer_ipv4:'10.99.0.37'},{run:(file,args)=>{calls.push([file,args]);return answer;}});
+    assert.throws(()=>owner.preflight());
+    assert.deepEqual(calls,[[profile.guard_script,['capabilities']]]);
   }
 });

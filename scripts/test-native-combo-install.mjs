@@ -90,3 +90,30 @@ test('combo refuses unbound installation, mixed profile, DNS off, shared keys an
     assert.throws(() => installNative({ ...o, apply: true })); assert.ok(!fs.existsSync(o.root + '/opt/clean-vpn-native'));
   }
 });
+
+test('scoped combo host profiles bind USB redirect and preserve exit replay ownership', t => {
+  const make=fixture(t);
+  for(const role of ['client','exit']){
+    const o=make('host-'+role,role),c=JSON.parse(fs.readFileSync(o.config));delete o.siteProfile;
+    const profile=o.root+'/host.json';
+    if(role==='client'){
+      fs.writeFileSync(profile,JSON.stringify({version:1,guard_unit:'links.service',guard_script:'/usr/local/bin/guard.sh'}),{mode:0o600});o.hostProfile=profile;
+      c.boring.peer_ipv4='10.99.0.37';
+    }else{
+      fs.writeFileSync(profile,JSON.stringify({version:1,uplink:'eth0'}),{mode:0o600});o.exitProfile=profile;c.boring.tun='cvexit0';
+    }
+    fs.writeFileSync(o.config,JSON.stringify(c));
+    const result=installNative({...o,apply:true}),bundle=o.root+'/opt/clean-vpn-native/'+o.name;
+    assert.equal(result.activation,`native-${o.name}-network.service`);
+    const network=JSON.parse(fs.readFileSync(bundle+'/network.json'));
+    if(role==='client'){
+      assert.deepEqual(network.combo_redirect,{interface:'usb0',subnet:'192.168.7.0/24',endpoint:c.boring.address,listen_port:c.transparent.listen.port,deny_ipv4:[]});
+      assert.equal(network.peer_ipv4,'10.99.0.37');
+      assert.ok(fs.existsSync(bundle+'/control/lib/native-combo-redirect-journal.mjs'));
+    }else{
+      assert.equal(network.tun,'cvexit0');assert.ok(fs.statSync(bundle+'/replay/state').size>0);
+      assert.match(fs.readFileSync(bundle+'/service.unit','utf8'),/ReadWritePaths=\/opt\/clean-vpn-native\/host-exit\/replay/);
+    }
+    assert.equal(fs.existsSync(o.root+'/etc/systemd/system/multi-user.target.wants'),false);
+  }
+});

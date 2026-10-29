@@ -2,7 +2,7 @@
 import path from 'node:path';
 import { clockUnitName } from './native-clock-unit.mjs';
 export function nativeServiceUnit({ binary, config, networkUnit, guardUnit, transport = 'boring-tls', replayDirectory, clockRecoveryUnit, role, scopedExit = false }) {
-  if (scopedExit && (role !== 'exit' || transport !== 'boring-tls' || networkUnit !== guardUnit)) throw Error('native_service_scoped_exit_only');
+  if (scopedExit && (role !== 'exit' || !['boring-tls','combo-tls'].includes(transport) || networkUnit !== guardUnit || (transport === 'combo-tls' && replayDirectory === undefined))) throw Error('native_service_scoped_exit_only');
   if (clockRecoveryUnit !== undefined) {
     clockUnitName(clockRecoveryUnit);
     if (role !== 'client' || transport !== 'boring-tls' || [networkUnit,guardUnit].includes(clockRecoveryUnit)) throw Error('clock_recovery_boring_client_only');

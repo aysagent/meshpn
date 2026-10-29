@@ -205,3 +205,34 @@ HTTPS, UDP/TCP DNS, разные peer IP, остановку и crash recovery �
 9 real-systemd сценариев, 23 kernel checks и 100 regression tests прошли.
 Окончательная проверка installer/journal/exit-plan — ещё 27 tests (частично
 пересекаются с общей регрессией). Физические узлы этим расширением не обновлялись.
+
+Для peer, отличного от `.2`, требуется актуальный guard с ответом
+`native_peer_dns: true` на `capabilities`. Installer/control plane не подменяет
+уже установленный guard: старый helper отклоняется до изменения сети.
+
+## Combo на существующем хосте
+
+`--host-profile` теперь принимает client `combo-tls`, а `--exit-profile` — его
+exit. Отдельный `--site-profile` для этой схемы не требуется. Ограничения Radxa
+профиля сохраняются: `usb0`, `192.168.7.0/24`, `wlan0`, `tun0`, независимый guard.
+Combo config должен использовать единый exit endpoint, native DNS, relay listener
+`0.0.0.0` и policy `public-https`. Профиль выбирается по структуре engine config.
+
+Owner после подготовки маршрутов/DNS устанавливает журналируемый USB HTTPS
+REDIRECT. HTTPS с USB идёт через transparent relay; исключённые адреса блокируются
+без перехода на boring packet branch. Прочий USB-трафик и локальный трафик платы
+используют boring-tls. Это не перехват HTTPS приложений самой платы.
+При остановке engine сначала quiesced, затем снимаются interception, NAT/DNS,
+маршруты и TUN; guard сохраняется. Exit replay state переживает остановки owner
+и engine. Условный SSH clock bootstrap по-прежнему поддержан только для boring-tls.
+
+[Combo-отчёт](../fixtures/clean-vpn-native-combo-host-report.json): 11 сценариев
+с двумя установленными клиентами и exit, 27 real-kernel checks, 116 regression
+tests и отдельная проверка отказа старого guard. Повторная boring-tls матрица
+на том же control plane прошла все 9 сценариев. В ней используются разные packet
+PSK/IP и общий relay PSK группы; relay PSK сам по себе не является идентификатором
+отдельного клиента. Физические узлы не менялись.
+
+Повторение combo: добавить `CVPN_HOST_MULTI_COMBO=1` к приведённому выше
+одноразовому systemd-стенду. Этот результат не заменяет физический reboot,
+нагрузочный тест или независимый захват отпечатков.
