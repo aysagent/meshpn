@@ -1,3 +1,4 @@
+#include "meshvpn_web_capture.h"
 #include "meshvpn_vpn_profiles.h"
 #include "meshvpn_web.h"
 #include "meshvpn_web_tls.h"
@@ -1409,6 +1410,36 @@ static esp_err_t handler_certificate(httpd_req_t *req)
     cJSON_Delete(in);
     return err == ESP_OK ? ok(req) : error(req, "400 Bad Request", "Invalid certificate/key or storage error");
 }
+static esp_err_t handler_browser_capture(httpd_req_t *req){
+ if(meshvpn_web_require_auth(req)!=ESP_OK)return ESP_FAIL;
+#if CONFIG_MESHVPN_PROFILED_TLS_ENABLE
+ cJSON *in=body(req,256);if(!in)return ESP_FAIL;
+ cJSON *action=cJSON_GetObjectItemCaseSensitive(in,"action"),*ticket=cJSON_GetObjectItemCaseSensitive(in,"ticket");
+ meshvpn_capture_status_t status={0};esp_err_t e=ESP_ERR_INVALID_ARG;
+ if(cJSON_IsString(action)&&!strcmp(action->valuestring,"start")){
+  struct sockaddr_in local={0},peer={0};socklen_t ln=sizeof(local),pn=sizeof(peer);
+  int fd=httpd_req_to_sockfd(req);cJSON *name=cJSON_GetObjectItemCaseSensitive(in,"name");
+  char hostname[MESHVPN_HOSTNAME_MAX+1],host[MESHVPN_HOSTNAME_MAX+7];
+  if(meshvpn_config_load_hostname(hostname)!=ESP_OK)strcpy(hostname,MESHVPN_HOSTNAME_DEFAULT);
+  snprintf(host,sizeof(host),"%s.local",hostname);
+  if(cJSON_IsString(name)&&!getsockname(fd,(struct sockaddr*)&local,&ln)&&!getpeername(fd,(struct sockaddr*)&peer,&pn)&&local.sin_family==AF_INET&&peer.sin_family==AF_INET)
+   e=meshvpn_web_capture_start(local.sin_addr.s_addr,peer.sin_addr.s_addr,host,name->valuestring,&status);
+ }else if(cJSON_IsString(action)&&cJSON_IsNumber(ticket)&&ticket->valuedouble>=1&&ticket->valuedouble<=UINT32_MAX&&ticket->valuedouble==(uint32_t)ticket->valuedouble){
+  if(!strcmp(action->valuestring,"poll"))e=meshvpn_web_capture_poll((uint32_t)ticket->valuedouble,&status);
+  else if(!strcmp(action->valuestring,"cancel")){e=meshvpn_web_capture_cancel((uint32_t)ticket->valuedouble);if(e==ESP_OK)e=meshvpn_web_capture_poll((uint32_t)ticket->valuedouble,&status);}
+ }
+ cJSON_Delete(in);
+ if(e!=ESP_OK)return error(req,e==ESP_ERR_INVALID_STATE?"409 Conflict":"400 Bad Request","Cannot start/control capture: another capture is active, invalid request, or capture resources unavailable.");
+ cJSON *out=cJSON_CreateObject();cJSON_AddNumberToObject(out,"ticket",status.ticket);cJSON_AddBoolToObject(out,"active",status.active);
+ cJSON_AddBoolToObject(out,"saved",status.saved);cJSON_AddBoolToObject(out,"reused",status.reused);
+ cJSON_AddStringToObject(out,"state",status.state);cJSON_AddStringToObject(out,"detail",status.detail);cJSON_AddStringToObject(out,"profile_id",status.profile_id);
+ if(status.port){char url[128];snprintf(url,sizeof(url),"https://%s:%u/capture",status.host,status.port);cJSON_AddStringToObject(out,"url",url);}
+ return send_json(req,out);
+#else
+ return error(req,"501 Not Implemented","On-device browser capture requires a PROFILED_TLS=1 build");
+#endif
+}
+
 static void profile_metadata(cJSON *arr,const meshpn_tls_profile_t *p,bool builtin){
  cJSON *o=cJSON_CreateObject();
  cJSON_AddStringToObject(o,"id",p->id);cJSON_AddStringToObject(o,"name",p->name);
@@ -1820,6 +1851,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/system/reboot", HTTP_POST, handler_system),
         ROUTE("/api/system/factory-reset", HTTP_POST, handler_system),
         ROUTE("/api/certificate", HTTP_GET, handler_certificate), ROUTE("/api/certificate", HTTP_POST, handler_certificate),
+        ROUTE("/api/vpn/capture", HTTP_POST, handler_browser_capture),
         ROUTE("/api/vpn/profiles", HTTP_GET, handler_browser_profiles),
         ROUTE("/api/vpn/profiles", HTTP_POST, handler_browser_profiles),
         ROUTE("/api/vpn/profiles/delete", HTTP_POST, handler_browser_profiles),

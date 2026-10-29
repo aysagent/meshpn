@@ -1,5 +1,5 @@
 if(NOT CONFIG_MESHVPN_PROFILED_TLS_ENABLE)
-    idf_component_register(SRCS "profile_model.c" INCLUDE_DIRS "include" REQUIRES pthread esp_hw_support lwip esp_psram json)
+    idf_component_register(SRCS "profile_capture_wire.c" "profile_model.c" INCLUDE_DIRS "include" REQUIRES pthread esp_hw_support lwip esp_psram json)
     return()
 endif()
 set(bssl "$ENV{MESHPN_PROBE_BSSL_SOURCE}")
@@ -14,7 +14,7 @@ list(TRANSFORM sources PREPEND "${bssl}/")
 file(GLOB brotli_sources "${brotli}/c/common/*.c" "${brotli}/c/dec/*.c")
 set(nghttp2 "$ENV{MESHPN_PROBE_NGHTTP2_SOURCE}")
 include("${CMAKE_CURRENT_LIST_DIR}/nghttp2.cmake")
-idf_component_register(SRCS "profile_model.c" "profile_client.cc" "profile_gate.cc" "profile_worker.c"
+idf_component_register(SRCS "profile_capture_wire.c" "profile_model.c" "profile_capture.cc" "profile_client.cc" "profile_gate.cc" "profile_worker.c"
     "profile_entropy.cc" "profile_allocator.cc" "profile_tunnel.cc" ${sources} ${brotli_sources} ${nghttp2_sources}
     INCLUDE_DIRS "include" "${bssl}/include" PRIV_INCLUDE_DIRS "${brotli}/c/include" "${nghttp2}/lib/includes"
     REQUIRES pthread esp_hw_support lwip esp_psram json)

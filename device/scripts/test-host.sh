@@ -228,6 +228,7 @@ for board_target in \
   [[ "$actual" == "$expected" ]] || { echo "$board target: expected $expected, got $actual" >&2; exit 1; }
   [[ -f "device/boards/$board/sdkconfig.defaults" ]] || { echo "$board defaults missing" >&2; exit 1; }
 done
+node device/tests/test-local-capture-service.mjs
 if [[ -n "${IDF_PATH:-}" ]]; then
   python3 -B device/tests/test_instrument_wifi_rx.py
   node device/tests/test-napt-icmp.mjs
