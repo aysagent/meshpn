@@ -73,12 +73,12 @@ struct Config {
   std::string peer_ipv4="10.99.0.2";
   uint32_t peer_address=0;
   bool client;
-  bool dns=false, alps=false, persistent=false;
+  bool dns=false, private_peer_dns=false, alps=false, persistent=false;
   std::string address, name, sni, ca, cert, key, tun, secret_path;
   uint16_t port;
   explicit Config(const json& j) {
     check(j.is_object(),"config_object");
-    const std::set<std::string> fields={"version","role","address","port","server_name","sni","ca","cert","key","tun","secret_path","dns","peer_ipv4","peers","tls_profile_path","alps","connection_mode","http_version"};
+    const std::set<std::string> fields={"version","role","address","port","server_name","sni","ca","cert","key","tun","secret_path","dns","peer_ipv4","peers","tls_profile_path","alps","connection_mode","http_version","private_peer_dns"};
     for(auto it=j.begin();it!=j.end();++it) check(fields.count(it.key()),"unknown_config_field");
     check(j.at("version")==1,"config_version");
     auto role=j.at("role").get<std::string>(); check(role=="client"||role=="exit","role"); client=role=="client";
@@ -99,6 +99,7 @@ struct Config {
       check(http_version!="2"||std::find(offered.begin(),offered.end(),"h2")!=offered.end(),"profile_http_version_conflict");
     }
     dns=j.value("dns",false);check(!dns||client,"dns_client_only");
+    if(j.contains("private_peer_dns")){check(!client&&j.at("private_peer_dns").is_boolean(),"private_peer_dns_exit_only");private_peer_dns=j.at("private_peer_dns");}
     address=j.at("address").get<std::string>(); in_addr ip{};
     check(inet_pton(AF_INET,address.c_str(),&ip)==1,"numeric_ipv4_required");
     auto p=j.at("port").get<int>(); check(p>0&&p<=65535,"port"); port=p;
@@ -659,7 +660,7 @@ static void handshake(SSL* ssl,int fd,Control& ctl,Clock::time_point deadline,ui
 // One bounded reactor owns listener, sessions and TUN. Slow TLS/auth peers do
 // not block established tunnels; no per-packet threads, processes or IPC.
 static void run_exit(Config& config,SSL_CTX* context,int listener,int tun,Control& ctl,PeerReload& reload,
-                     combo::Exit* dispatch=nullptr,std::shared_ptr<transparent::ExitAdmission> relay_admission={}){
+                     combo::Exit* dispatch=nullptr,std::shared_ptr<transparent::ExitAdmission> relay_admission={},DnsRelay* private_dns=nullptr){
   struct Connection {
     Fd fd;
     std::unique_ptr<SSL,decltype(&SSL_free)> ssl{nullptr,SSL_free};
@@ -674,7 +675,7 @@ static void run_exit(Config& config,SSL_CTX* context,int listener,int tun,Contro
   auto rate_window=Clock::now(),last_error=Clock::now()-std::chrono::seconds(1);
   unsigned admissions=0;
   uint64_t generation=ctl.generation;
-  while(!ctl.stop&&!interrupted){
+  while(!ctl.stop&&!interrupted&&!ctl.dns_failed){
     ctl.read_commands();if(ctl.stop)break;
     reload.poll([&](const json& next) {
       std::unique_ptr<combo::Config> combined;
@@ -693,6 +694,7 @@ static void run_exit(Config& config,SSL_CTX* context,int listener,int tun,Contro
       }
       // Determine deletions before the allocation-free publication phase. A
       // pending authentication is discarded too: it must use one generation.
+      DnsRelay::Peers dns_peers; if(private_dns)for(const auto& peer:candidate.peers)dns_peers.insert(peer.address);
       std::set<Connection*> remove;
       for(const auto& entry:connections) {
         const auto& session=entry->session;bool keep=false;
@@ -709,6 +711,7 @@ static void run_exit(Config& config,SSL_CTX* context,int listener,int tun,Contro
           it=connections.erase(it);
         }
         config.peers.swap(candidate.peers);
+        if(private_dns)private_dns->replace_peers(std::move(dns_peers));
       };
       if(relay_admission)relay_admission->replace(std::move(relay_peers),commit);else commit();
     });
@@ -847,7 +850,7 @@ int main(int argc,char** argv){
     if(argc==2&&std::string(argv[1])=="--capabilities"){
       std::cout<<json({{"version",1},{"engine","clean-vpn-native-m1"},{"transport","boring-tls"},
         {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2","http/1.1"}},{"http_versions",{"2","1.1","auto"}},
-        {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"connection_modes",{"on-demand","persistent"}},{"multi_peer",true},{"peer_reload",{{"signal","SIGHUP"},{"exit_only",true},{"event","peer_reload"},{"empty_peers",true}}},{"max_peers",32},{"browser_profiles",false},
+        {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"private_peer_dns",{{"client_zone_guard",true},{"exit_opt_in",true},{"endpoint","10.99.0.1:1055"},{"upstream","127.0.0.1:1055"}}},{"connection_modes",{"on-demand","persistent"}},{"multi_peer",true},{"peer_reload",{{"signal","SIGHUP"},{"exit_only",true},{"event","peer_reload"},{"empty_peers",true}}},{"max_peers",32},{"browser_profiles",false},
         {"experimental_tls_profiles",{{"schema",1},{"scenario","cold"},{"prewire_check",true},{"certificate_compression",{2}},{"alps",{{"codepoint",17613},{"http2_settings",true},{"experimental",true}}},{"transports",{"boring-tls","combo-tls-boring"}}}},
         {"profile_policy",profile_policy::describe()},{"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
         {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"destination_policies",{"explicit-ipv4-destinations","public-https"}},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true},{"relay_client_keys",true},{"relay_limits",{{"default_sessions",128},{"default_per_client",64},{"max_sessions",256},{"pending",16},{"queue_bytes_per_direction",262144}}}}},
@@ -930,8 +933,9 @@ int main(int argc,char** argv){
     nonblock(STDOUT_FILENO);Control ctl;ServiceNotify notify(service);
     if(service){ctl.input_fd=-1;ctl.notify=&notify;}
     Fd tun(packet_fd(c,test));
-    std::unique_ptr<DnsRelay> dns;
+    std::atomic<bool> private_dns_ready{true};std::unique_ptr<DnsRelay> dns,private_dns;
     if(c.dns)dns=std::make_unique<DnsRelay>(c.tun,ctl.dns_ready,ctl.dns_failed,&ctl.dns_idle,&ctl.dns_demand,c.peer_ipv4);
+    if(c.private_peer_dns){DnsRelay::Peers allowed;for(const auto& peer:c.peers)allowed.insert(peer.address);private_dns=std::make_unique<DnsRelay>(c.tun,private_dns_ready,ctl.dns_failed,nullptr,nullptr,"10.99.0.1",true,std::move(allowed));}
     Fd listener;
     if(!c.client){
       listener.n=socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);check(listener.n>=0,"listen_socket");int one=1;setsockopt(listener.n,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));
@@ -961,7 +965,7 @@ int main(int argc,char** argv){
     }
     if(!c.client)reload.ready();
     ctl.set(c.client?"idle":"listening");
-    if(!c.client){run_exit(c,ctx.get(),listener.n,tun.n,ctl,reload,combo_exit.get(),relay_admission);ctl.set("stopped");return service&&!interrupted?1:0;}
+    if(!c.client){run_exit(c,ctx.get(),listener.n,tun.n,ctl,reload,combo_exit.get(),relay_admission,private_dns.get());ctl.set(ctl.dns_failed?"dns_failed":"stopped");return ctl.dns_failed||(service&&!interrupted)?1:0;}
     bool demand_wait=false;Bytes pending;
     while(!ctl.stop&&!interrupted){
       ctl.read_commands();if(ctl.stop)break;

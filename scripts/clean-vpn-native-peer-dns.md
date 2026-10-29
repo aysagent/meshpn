@@ -93,7 +93,8 @@ read-only host filesystem, отдельным `/tmp`, ограничениями
 может уйти наружу. На физическом VPS ничего не устанавливалось.
 
 Для systemd-resolved имеется явный владелец scope, описанный ниже.
-Интеграция с DNS клиентов остаётся отдельным этапом. Существующий native DNS relay пока не менялся.
+Native DNS клиентов также поддерживает приватную зону через opt-in exit bridge,
+описанный ниже. Для имён на самом exit scope resolved нужен отдельно.
 `mpn.local` для USB-админки остаётся отдельным mDNS-именем.
 
 ## Приёмка
@@ -209,3 +210,66 @@ notify READY, точная неизменность чужого DNS после 
 public DNS при отказавшем private daemon. Дополнительный public upstream
 считает все запросы и имеет успешный positive control; сеть контейнера
 изолирована от WAN. `/etc/resolv.conf` и NSS сравниваются побайтно.
+
+## Native client → tunnel → exit registry
+
+При `dns:true` native client всегда распознаёт полные DNS labels зоны `mpn`
+и `0.99.10.in-addr.arpa` и отправляет эти запросы только к `10.99.0.1:1055`
+через свой TUN. UDP/TCP sockets сохраняют `SO_BINDTODEVICE` и `SO_MARK`.
+Публичные `1.1.1.1/8.8.8.8:53` используются только для остальных зон.
+Если приватный exit resolver отсутствует, недоступен или возвращает SERVFAIL,
+клиент возвращает SERVFAIL; приватные запросы не переходят к public upstream.
+Malformed/compressed query envelopes отбрасываются; binary labels, точки и
+escape-последовательности внутри одного label дают FORMERR без forwarding.
+`Laptop.MPN` распознаётся как приватное имя; `mpn.example` не является зоной.
+
+На exit включите **явно** `private_peer_dns: true` в packet config; для combo
+это `boring.private_peer_dns`. На client поле запрещено. Соответствующая опция
+сетевого профиля должна совпадать: [scoped network rules](clean-vpn-native-private-dns-network.md).
+Включение/выключение bridge требует restart, список peers обновляется SIGHUP.
+
+Bridge слушает только `10.99.0.1:1055` и закреплён `SO_BINDTODEVICE` к exit TUN.
+Принимаются только текущие IP из аутентифицированного peer registry engine;
+входные IP-пакеты дополнительно проходят обычную проверку привязки source к
+ключу сессии. Он отправляет только приватные DNS-зоны к `127.0.0.1:1055`, где
+работает Node registry resolver. Остальные зоны получают REFUSED. Listener
+не публикуется на WAN; profile допускает только TUN→1055 и ответы established
+обратно в TUN. Loopback resolver, engine и registry должны быть в одном
+network namespace. Scope systemd-resolved для этого пути не требуется.
+
+Ограничения bridge: 16 concurrent jobs суммарно, максимум 4 на один peer,
+256 admissions/сек суммарно и 64/сек на peer; TCP — максимум 32 запроса на
+соединение и 10 секунд lifetime, query ≤4096 bytes, upstream deadline 1.2s.
+SIGHUP заменяет allowlist вместе с peers; удалённые IP теряют право на новые
+запросы, pending TCP/UDP jobs проверяют отзыв при ожидании/отправке и закрываются.
+Backend registry дополнительно блокирует ответы при незавершённой транзакции.
+
+Обычный `getent ahostsv4 laptop.mpn` на client работает, если DNS клиента уже
+подключён к native stub через существующий owner/guard. DNS-пакеты приложений
+напрямую к внешним DNS перехватываются текущим DNS DNAT; DoH приложений этот
+механизм не охватывает. Client-to-client forwarding по-прежнему запрещён:
+разрешить имя другого peer не означает разрешить подключение к нему.
+
+Для контейнера возможен trusted control-plane resolver sidecar с
+`network_mode: service:vpn`, без published ports и capabilities, с read-only
+manager directory. Mount одного `registry.json` использовать нельзя: atomic
+rename оставит bind-mount на старом inode. Resolver должен видеть также sibling
+`transaction.json`. Полный directory может содержать ключи: resolver не читает
+их, но такой sidecar входит в доверенную control-plane область. Отдельная
+sanitized publication view потребует согласованного transaction lifecycle.
+
+Проверки:
+
+```sh
+CVPN_BUILD=/path/to/linux/build node --test scripts/test-native-dns.mjs
+CVPN_DISPOSABLE_HOST_NET=1 node scripts/test-native-peer-dns-tunnel.mjs
+```
+
+Последний тест допускается только в описанной выше NIC-less лаборатории.
+Выполнены 11/11 реальных проверок на новом production engine: native TLS/TUN,
+клиентский NSS и PTR, оба public positive controls, REFUSED для попытки recursion,
+NXDOMAIN/SERVFAIL без public fallback, hot registry revoke, остановка registry,
+WAN и поддельный разрешённый source IP, native SIGHUP revoke и полная очистка.
+Применяются сгенерированные production `nativeNetworkPlan` firewall rules,
+а не разрешение всего трафика. Unit relay отдельно проверяет pending TCP revoke,
+per-peer saturation и освобождение FD. Никакие физические узлы не обновлялись.

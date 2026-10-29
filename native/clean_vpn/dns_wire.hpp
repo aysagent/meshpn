@@ -43,6 +43,20 @@ inline Message parse(const Bytes& b,bool query=false){
   if(query)need(!(m.flags&~0x0130)&&!m.answers&&!m.authority&&m.only_opt&&!m.question.compressed&&(!m.edns||!m.extended));
   return m;
 }
+// Match complete wire labels, not a textual suffix. Non-host binary labels
+// never escape to a public resolver through this host DNS relay.
+inline bool private_peer_name(const Name& name){
+  std::vector<std::string> labels;
+  for(size_t at=0;at<name.key.size();){
+    const auto n=static_cast<unsigned char>(name.key[at++]);need(n&&n<=63&&at+n<=name.key.size());
+    auto label=name.key.substr(at,n);at+=n;
+    for(unsigned char c:label)need((c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='-'||c=='_');
+    labels.push_back(std::move(label));
+  }
+  if(!labels.empty()&&labels.back()=="mpn")return true;
+  const std::vector<std::string> reverse={"0","99","10","in-addr","arpa"};
+  return labels.size()>=reverse.size()&&std::equal(reverse.rbegin(),reverse.rend(),labels.rbegin());
+}
 inline Message response(const Bytes& answer,const Bytes& query){
   auto q=parse(query,true),r=parse(answer);need((r.flags&0x8000)&&r.id==q.id&&r.question.key==q.question.key&&r.type==q.type&&r.klass==q.klass&&(!r.edns||(q.edns&&!r.edns_version)));return r;
 }

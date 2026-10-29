@@ -13,6 +13,10 @@ int main(){
   dns::need(dns::parse(opt,true).udp_size==4096);auto badvers=opt;badvers[badvers.size()-5]=1;
   dns::need(dns::parse(badvers,true).edns_version==1);dns::need(dns::parse(dns::failure(badvers,16)).rcode==16);
   auto tc=dns::failure(opt,0,true);dns::need(dns::response(tc,opt).flags&0x0200);
+  auto named=[](std::initializer_list<std::string> labels){Bytes b(12);dns::put16(b,2,0x100);dns::put16(b,4,1);for(const auto& l:labels){b.push_back(l.size());b.insert(b.end(),l.begin(),l.end());}b.insert(b.end(),{0,0,1,0,1});return b;};
+  for(const auto& b:{named({"Laptop","MPN"}),named({"mpn"}),named({"deep","laptop","mpn"}),named({"3","0","99","10","in-addr","arpa"})})dns::need(dns::private_peer_name(dns::parse(b,true).question));
+  for(const auto& b:{named({"notmpn"}),named({"mpn","example"}),named({"3","1","99","10","in-addr","arpa"})})dns::need(!dns::private_peer_name(dns::parse(b,true).question));
+  for(const auto& b:{named({"laptop.mpn"}),named({std::string("x\0mpn",5)}),named({"laptop\\046mpn"})})rejected([&]{dns::private_peer_name(dns::parse(b,true).question);});
   uint32_t rng=7;
   for(int i=0;i<30000;i++){
     auto b=opt;for(int k=0;k<3;k++){rng=rng*1664525+1013904223;b[rng%b.size()]=rng>>24;}
