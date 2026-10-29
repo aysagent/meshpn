@@ -24,3 +24,14 @@ test('translation is restricted to USB peer IPv4 and TUN, with bounded MSS',()=>
   assert.equal(plan[2].table,'nat');assert.deepEqual(plan[2].spec.slice(-4),['-j','SNAT','--to-source','10.99.0.2']);
   assert.ok(plan.slice(0,2).every(o=>o.spec.at(-1)==='1360'));assert.throws(()=>nativeHostNatPlan('bad'));
 });
+
+test('host peer identity is bounded to the native pool and controls USB SNAT',()=>{
+  for(const peer_ipv4 of ['10.99.0.2','10.99.0.37','10.99.0.254']){
+    assert.equal(validateNativeHostConfig({...profile,peer_ipv4}).peer_ipv4,peer_ipv4);
+    assert.equal(nativeHostNatPlan('a'.repeat(24),peer_ipv4)[2].spec.at(-1),peer_ipv4);
+  }
+  for(const peer_ipv4 of ['10.99.0.0','10.99.0.1','10.99.0.255','10.100.0.2','::1','10.99.0.02',null]){
+    assert.throws(()=>validateNativeHostConfig({...profile,peer_ipv4}));
+    assert.throws(()=>nativeHostNatPlan('a'.repeat(24),peer_ipv4));
+  }
+});

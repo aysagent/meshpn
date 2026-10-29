@@ -32,4 +32,7 @@ test('host installer bundles standalone owner, publishes disabled network activa
   }
   assert.ok(fs.existsSync(control+'/clean-vpn-native-tun.py'));
   assert.throws(()=>installNative({...options,apply:true}),/instance_already_present/);
+  const alternate=JSON.parse(fs.readFileSync(root+'/config'));alternate.peer_ipv4='10.99.0.37';put('/config',JSON.stringify(alternate));
+  installNative({...options,name:'second',apply:true});
+  assert.equal(JSON.parse(fs.readFileSync(root+'/opt/clean-vpn-native/second/network.json')).peer_ipv4,'10.99.0.37');
 });

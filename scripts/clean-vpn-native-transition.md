@@ -1,5 +1,12 @@
 # Полный native-переход: рабочий статус
 
+Дополнение 29 октября: host-profile поддерживает отдельные `peer_ipv4` и PSK
+для нескольких клиентов одного exit. [Два клиента в systemd-лаборатории](../fixtures/clean-vpn-native-host-multi-report.json)
+прошли DNS/HTTPS, независимый restart/crash, общий crash exit и cleanup.
+Исправлен DNS-перехват запросов приложений с source=TUN: исключение теперь по
+native SO_MARK. Совместный wrong-clock + host-profile VM gate ещё выполняется.
+
+
 ## Актуальный scope 2026-10-29
 
 Самостоятельный client checkpoint: [host network owner](clean-vpn-native-host-network.md).

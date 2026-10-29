@@ -40,7 +40,7 @@ const open=()=>{
   store=openNativeHostStore();host=openHostRoutes({allowTunLinkDown:true});dns=openTunnelDnsJournal();
   const write=store.write;store.write=s=>{write(s);if(crashAt&&crashAt(s))throw Error('simulated_process_boundary');};
   owner=nativeHostNetwork(c,{run,host,dns,store,scope:nativeHostScope,randomId:()=>crypto.randomUUID().replaceAll('-','').slice(0,24),
-    createTun:(name,alias)=>cmd('python3',[root+'scripts/clean-vpn-native-tun.py',name,alias])});
+    createTun:(name,alias,peer)=>cmd('python3',[root+'scripts/clean-vpn-native-tun.py',name,alias,peer])});
 };
 const close=()=>{dns?.release();host?.release();store?.close();};
 const baseline=()=>{
@@ -70,6 +70,16 @@ try{
   close();open();check('process boundary recovery restores only owned state',()=>{owner.recover();baseline();});
   close();c={...previous,engine_unit:'native-next.service',network_unit:'native-next-network.service'};open();
   check('fresh instance follows released journal without adopting old state',()=>{owner.recover();owner.prepare();owner.tick();owner.recover();baseline();});
+  close();c=previous;open();
+  close();c={...previous,peer_ipv4:'10.99.0.37'};open();
+  check('non-default peer binds real TUN DNS routing and USB SNAT to one identity',()=>{
+    owner.prepare();owner.tick();
+    assert.equal(JSON.parse(ip('-j','-4','addr','show','dev','tun0'))[0].addr_info[0].local,'10.99.0.37');
+    assert.match(cmd('iptables',['-t','nat','-S']),/--to-source 10\.99\.0\.37/);
+    assert.match(cmd('iptables',['-t','nat','-S']),/--to-destination 10\.99\.0\.37:1053/);
+    assert.equal(dns.state.config.listenerAddress,'10.99.0.37');
+  });
+  close();open();check('non-default peer recovery restores baseline after process boundary',()=>{owner.recover();baseline();});
   close();c=previous;open();
   // Journal intent persisted before each NAT mutation, and TUN helper completion
   // before parent identity commit: neither boundary permits foreign adoption.

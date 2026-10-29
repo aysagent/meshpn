@@ -3,7 +3,15 @@
 import assert from 'node:assert/strict';
 import { isIPv4 } from 'node:net';
 import { tunnelDnsServers } from './dns-tunnel-forwarder.mjs';
-import { TUNNEL_DNS_ADDRESS as ADDRESS, TUNNEL_DNS_PORT as PORT } from './dns-tunnel-stub.mjs';
+import { TUNNEL_DNS_ADDRESS as DEFAULT_ADDRESS, TUNNEL_DNS_PORT as PORT } from './dns-tunnel-stub.mjs';
+
+/** Native peer pool: exit owns .1, client identities are .2 through .254. */
+export function validateTunnelDnsAddress(address) {
+  assert.ok(typeof address === 'string' && isIPv4(address) && /^10\.99\.0\./.test(address));
+  const last = Number(address.split('.').at(-1));
+  assert.ok(last >= 2 && last <= 254, 'invalid native client DNS address');
+  return address;
+}
 
 export const TUNNEL_DNS_TABLE = 19998;
 export const TUNNEL_DNS_PRIORITIES = Object.freeze([10996, 10997]);
@@ -16,7 +24,9 @@ function cidr(v) {
   const mask = (0xffffffff << (32 - Number(prefix))) >>> 0;
   assert.equal((n & mask) >>> 0, n, 'LAN network address required'); return v;
 }
-export function compileTunnelDnsPlan({ tun, primary, fromTun = null, lanSubnet = null, lanInterface = null, tag = 'clean-vpn-dns-tunnel' }) {
+export function compileTunnelDnsPlan({ tun, primary, fromTun = null, lanSubnet = null, lanInterface = null, tag = 'clean-vpn-dns-tunnel', listenerAddress = DEFAULT_ADDRESS, nativeMark = false }) {
+  assert.equal(typeof nativeMark,'boolean');
+  const ADDRESS = validateTunnelDnsAddress(listenerAddress);
   assert.match(tag, /^clean-vpn-dns-tunnel(?:-[a-f0-9]{24})?$/);
   iface(tun);
   if (fromTun !== null) { iface(fromTun); assert.notEqual(tun, fromTun); assert.equal(lanSubnet, null); }
@@ -75,17 +85,17 @@ export function compileTunnelDnsPlan({ tun, primary, fromTun = null, lanSubnet =
     const dns = ['-p', protocol, '--dport', '53'];
     rule('activate', 'iptables', 'nat', natChain, ['-p', protocol, '-j', 'DNAT', '--to-destination', `${ADDRESS}:${PORT}`]);
     if (!fromTun) rule('activate', 'iptables', 'nat', 'OUTPUT',
-      ['!', '-s', ADDRESS, '!', '-d', '127.0.0.0/8', ...dns, '-j', natChain], true);
+      [...(nativeMark ? ['-m','mark','!','--mark','0x43564e'] : ['!', '-s', ADDRESS]), '!', '-d', '127.0.0.0/8', ...dns, '-j', natChain], true);
     if (selected) rule('activate', 'iptables', 'nat', 'PREROUTING', [...selected, ...dns, '-j', natChain], true);
   }
   return { schema: 1, kind: 'clean-vpn-tunnel-dns-plan', tun, servers, fromTun, lanSubnet, lanInterface,
-    listener: { address: ADDRESS, port: PORT }, operations };
+    listener: { address: ADDRESS, port: PORT }, ...(nativeMark ? {nativeMark:true} : {}), operations };
 }
 
 /** Temporary closed gate during restart/rollback. It remains while the old
  * TUN/rules are removed and is released only after the replacement is ready. */
 export function compileTunnelDnsHold(config, id) {
-  const plan = compileTunnelDnsPlan(config); assert.match(id, /^[a-f0-9]{24}$/);
+  const plan = compileTunnelDnsPlan(config), ADDRESS = plan.listener.address; assert.match(id, /^[a-f0-9]{24}$/);
   const operations = [], selected = plan.fromTun ? ['-i', plan.fromTun]
     : plan.lanSubnet ? ['-i', plan.lanInterface, '-s', plan.lanSubnet] : null;
   const add = (file, chain, args) => {

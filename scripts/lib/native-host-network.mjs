@@ -1,9 +1,11 @@
 // Reviewed Radxa IPv4 profile. Control plane only; all payload IO stays native.
 import assert from 'node:assert/strict';
 import { isIPv4 } from 'node:net';
+import {validateTunnelDnsAddress} from './dns-tunnel-plan.mjs';
 
 export function validateNativeHostConfig(c) {
-  assert.deepEqual(Object.keys(c).sort(), ['version','exit_ip','engine_unit','network_unit','guard_unit','guard_script'].sort());
+  assert.deepEqual(Object.keys(c).sort(), ['version','exit_ip','engine_unit','network_unit','guard_unit','guard_script', ...('peer_ipv4' in c ? ['peer_ipv4'] : [])].sort());
+  validateTunnelDnsAddress('peer_ipv4' in c ? c.peer_ipv4 : '10.99.0.2');
   assert.equal(c.version, 1); assert.ok(isIPv4(c.exit_ip));
   assert.ok(!/^(0|127|169\.254)\./.test(c.exit_ip));
   for (const key of ['engine_unit','network_unit','guard_unit']) assert.match(c[key], /^[a-z][a-z0-9-]{0,63}\.service$/);
@@ -12,18 +14,20 @@ export function validateNativeHostConfig(c) {
   return c;
 }
 
-export function nativeHostNatPlan(id) {
+export function nativeHostNatPlan(id, peerAddress = '10.99.0.2') {
+  validateTunnelDnsAddress(peerAddress);
   assert.match(id, /^[a-f0-9]{24}$/);
   const tag = ['-m','comment','--comment','cvpn-native-host-'+id];
   return [
     ...[['-i','usb0','-o','tun0','-s','192.168.7.0/24'], ['-i','tun0','-o','usb0','-d','192.168.7.0/24']].map(spec => ({
       table:'mangle',chain:'FORWARD',spec:[...spec,'-p','tcp','-m','tcp','--tcp-flags','SYN,RST','SYN',...tag,'-j','TCPMSS','--set-mss','1360']})),
-    {table:'nat',chain:'POSTROUTING',spec:['-s','192.168.7.0/24','-o','tun0',...tag,'-j','SNAT','--to-source','10.99.0.2']},
+    {table:'nat',chain:'POSTROUTING',spec:['-s','192.168.7.0/24','-o','tun0',...tag,'-j','SNAT','--to-source',peerAddress]},
   ];
 }
 
 export function nativeHostNetwork(c, io) {
   validateNativeHostConfig(c);
+  const peerAddress = c.peer_ipv4 ?? '10.99.0.2';
   const {run, host, dns, store, scope, createTun, randomId} = io;
   const cmd = (f,a) => run(f,a).trim();
   const ip = (...a) => JSON.parse(cmd('ip',a));
@@ -68,7 +72,7 @@ export function nativeHostNetwork(c, io) {
     .split(/\s+/).reduce((a,v,i,all)=>i%2?a:[...a,all.slice(i,i+2).join(' ')],[]).sort().join(' ');
   const expected = o => canonical(['-A',o.chain,...o.spec].join(' '));
   const natAudit = (s, requireAll=false) => {
-    const plan=nativeHostNatPlan(s.id).slice(0,s.count);
+    const plan=nativeHostNatPlan(s.id, peerAddress).slice(0,s.count);
     for(const table of ['nat','mangle']) {
       const lines=natLines(table).map(canonical), allowed=plan.filter(o=>o.table===table).map(expected);
       assert.equal(new Set(lines).size,lines.length,'native_duplicate_nat');
@@ -116,7 +120,7 @@ export function nativeHostNetwork(c, io) {
       if(dns.state&&dns.state.stage!=='released')dns.restore({apply:false});
       s.stage='restoring';persist(s);
       // Remove forwarding translation first; guard remains throughout cleanup.
-      const plan=nativeHostNatPlan(s.id);
+      const plan=nativeHostNatPlan(s.id, peerAddress);
       while(s.count){const o=plan[s.count-1];if(present(o))cmd('iptables',['-w','5','-t',o.table,'-D',o.chain,...o.spec]);assert.ok(!present(o));s.count--;persist(s);}
       if(dns.state&&dns.state.stage!=='released')dns.restore();
       if(host.state&&host.state.stage!=='released')host.restore();
@@ -127,16 +131,16 @@ export function nativeHostNetwork(c, io) {
       const old=store.read();if(old){validate(old);assert.equal(old.stage,'released','native_recovery_required');}
       preflight();const gateway=uplink();
       const s={schema:1,scope:scope(),config:structuredClone(c),id:randomId(),tun:null,count:0,stage:'prepared'};
-      persist(s);createTun('tun0','cvpn-native-host-'+s.id);
+      persist(s);createTun('tun0','cvpn-native-host-'+s.id,peerAddress);
       s.tun=ident(ownedTun(s));persist(s);
       host.begin('tun0');host.relaxRpFilter();
       host.add(c.exit_ip+'/32','wlan0',gateway);
       for(const d of ['10.0.0.0/8','172.16.0.0/12','192.168.0.0/16'])host.add(d,'wlan0',gateway);
       for(const d of ['0.0.0.0/1','128.0.0.0/1'])host.add(d,'tun0');
-      dns.begin({tun:'tun0',lanSubnet:'192.168.7.0/24',lanInterface:'usb0'});
+      dns.begin({tun:'tun0',listenerAddress:peerAddress,nativeMark:true,lanSubnet:'192.168.7.0/24',lanInterface:'usb0'});
       for(const stage of ['guard','route','activate'])dns.applyStage(stage);
       dns.activate();
-      for(const o of nativeHostNatPlan(s.id)){s.count++;persist(s);cmd('iptables',['-w','5','-t',o.table,'-I',o.chain,'1',...o.spec]);assert.ok(present(o));}
+      for(const o of nativeHostNatPlan(s.id, peerAddress)){s.count++;persist(s);cmd('iptables',['-w','5','-t',o.table,'-I',o.chain,'1',...o.spec]);assert.ok(present(o));}
       guard();natAudit(s,true);host.audit();s.stage='active';persist(s);
       return {state:'network-ready',readinessProbed:false};
     },

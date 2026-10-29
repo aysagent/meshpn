@@ -55,3 +55,24 @@ test('malformed scopes and server overrides are refused before producing a comma
     { tun: 'tun7', primary: 'dns.example.com' }, { tun: 'tun7', lanSubnet: '192.168.7.1/24', lanInterface: 'usb0' },
     { tun: 'tun7', lanSubnet: '0.0.0.0/0', lanInterface: 'usb0' }]) assert.throws(() => compileTunnelDnsPlan(options));
 });
+
+test('native peer address consistently scopes DNS DNAT, policy routes and recovery holds', async () => {
+  const {compileTunnelDnsHold}=await import('./lib/dns-tunnel-plan.mjs');
+  const config={tun:'tun0',fromTun:'wg0',listenerAddress:'10.99.0.37'};
+  const plan=compileTunnelDnsPlan(config),lines=text(plan);
+  assert.equal(plan.listener.address,'10.99.0.37');
+  assert.ok(lines.some(l=>l.includes('--to-destination 10.99.0.37:1053')));
+  assert.ok(lines.some(l=>l.includes('from 10.99.0.37/32')));
+  assert.ok(lines.some(l=>l.includes('src 10.99.0.37 table')));
+  assert.doesNotMatch(JSON.stringify([plan,compileTunnelDnsHold(config,'a'.repeat(24))]),/10\.99\.0\.2(?:[/:" ]|$)/);
+  for(const listenerAddress of ['10.99.0.1','10.99.0.0','10.99.0.255','10.99.1.2','127.0.0.1','10.99.0.02',null])
+    assert.throws(()=>compileTunnelDnsPlan({...config,listenerAddress}));
+});
+
+test('native DNS bypasses only marked upstream sockets; ordinary host packets using the peer IP are captured',()=>{
+  const lines=text(compileTunnelDnsPlan({tun:'tun0',listenerAddress:'10.99.0.37',nativeMark:true}));
+  const capture=lines.filter(l=>l.startsWith('iptables')&&l.includes('-t nat -I OUTPUT'));
+  assert.equal(capture.length,2);
+  assert.ok(capture.every(l=>l.includes('-m mark ! --mark 0x43564e')&&!l.includes('! -s')));
+  assert.throws(()=>compileTunnelDnsPlan({tun:'tun0',nativeMark:'yes'}));
+});

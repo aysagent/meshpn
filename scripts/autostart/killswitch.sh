@@ -152,10 +152,21 @@ chain_text() {
     [[ "$line" != "-N $chain" && "$line" != "-A $chain "* ]] || printf '%s\n' "$line"
   done <<< "${SNAP[$family]}"
 }
+native_peer_address() {
+  [[ "$1" =~ ^10\.99\.0\.([1-9][0-9]{0,2})$ ]] && (( BASH_REMATCH[1] >= 2 && BASH_REMATCH[1] <= 254 ))
+}
 safe_dns_chain() {
   local family="$1" tag="$2" tun="$3" actual line addr expected='-N CVPN-DNS-OUT' count=0 previous=''
-  local head='-A CVPN-DNS-OUT -s 10.99.0.2/32 -d ' tail="/32 -o $tun -m comment --comment $tag -j RETURN"
+  local peer='' source_pattern='^-A CVPN-DNS-OUT -s (10\.99\.0\.[0-9]+)/32 -d '
+  local head='' tail="/32 -o $tun -m comment --comment $tag -j RETURN"
   actual="$(chain_text "$family" CVPN-DNS-OUT)"
+  while IFS= read -r line; do
+    if [[ "$line" =~ $source_pattern ]]; then
+      peer="${BASH_REMATCH[1]}"; native_peer_address "$peer" || return 1; break
+    fi
+  done <<< "$actual"
+  [[ -n "$peer" ]] || return 1
+  head="-A CVPN-DNS-OUT -s $peer/32 -d "
   while IFS= read -r line; do
     if [[ "$line" == "$head"*"$tail" ]]; then
       addr="${line#"$head"}"; addr="${addr%"$tail"}"
@@ -188,11 +199,13 @@ safe_prefix_rule() {
   local dns_tag=' --comment (clean-vpn-dns-tunnel(-[a-f0-9]{24})?) '
   if [[ "$line" =~ $dns_tag ]]; then
     tag="${BASH_REMATCH[1]}"
+    local peer=10.99.0.2 peer_pattern=" -d (10\.99\.0\.[0-9]+)/32 "
+    if [[ "$line" =~ $peer_pattern ]]; then peer="${BASH_REMATCH[1]}"; native_peer_address "$peer" || return 1; fi
     if [[ "$base" == FORWARD && "$version" == cvks4 ]]; then
       for protocol in tcp udp; do
         if [[ "$family" == 4 ]]; then
           for port in 53 1053; do
-            local destination=''; [[ "$port" != 1053 ]] || destination='-d 10.99.0.2/32 '
+            local destination=''; [[ "$port" != 1053 ]] || destination="-d $peer/32 "
             [[ "$line" != "-A FORWARD -s 192.168.7.0/24 ${destination}-i usb0 -p $protocol -m comment --comment $tag -m $protocol --dport $port -j REJECT --reject-with icmp-port-unreachable" ]] || return 0
           done
         else
@@ -204,7 +217,7 @@ safe_prefix_rule() {
     [[ "$base" == OUTPUT ]] || return 1
     for protocol in tcp udp; do
       if [[ "$family" == 4 ]]; then
-        [[ "$line" != "-A OUTPUT -d 10.99.0.2/32 -p $protocol -m comment --comment $tag -m addrtype ! --dst-type LOCAL -m $protocol --dport 1053 -j REJECT --reject-with icmp-port-unreachable" ]] || return 0
+        [[ "$line" != "-A OUTPUT -d $peer/32 -p $protocol -m comment --comment $tag -m addrtype ! --dst-type LOCAL -m $protocol --dport 1053 -j REJECT --reject-with icmp-port-unreachable" ]] || return 0
         if [[ "$line" == "-A OUTPUT -p $protocol -m comment --comment $tag -m $protocol --dport 53 -j CVPN-DNS-OUT" ]]; then
           safe_dns_chain "$family" "$tag" "$tun"; return $?
         fi

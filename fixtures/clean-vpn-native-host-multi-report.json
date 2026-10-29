@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "status": "passed",
+  "clients": 2,
+  "exit": 1,
+  "checks": [
+    "three installs remain disabled and stopped",
+    "two clients and overlapping USB subnets share one native exit with HTTPS UDP TCP DNS",
+    "distinct native peer addresses and USB SNAT",
+    "stopping first client preserves second and blocks first USB egress",
+    "first client rejoins without restarting second",
+    "client owner crash recovery is isolated",
+    "exit owner crash reconnects both clients with unchanged identities",
+    "a key for peer one cannot authenticate peer two",
+    "all owners release TUN DNS NAT routes; both guards survive"
+  ],
+  "peerAddresses": [
+    "10.99.0.2",
+    "10.99.0.37"
+  ],
+  "scope": "real-systemd-netns-installed-host-profiles; no physical reboot or capacity claim",
+  "kind": "native-host-multiple-clients-lab",
+  "sourceHashes": {
+    "scripts/lib/native-host-multi-lab.mjs": "661d12d3688560ebd03cf5b9f5aaeaf45acc0e3d77f6aeb439fe69fe9626c256",
+    "scripts/lib/native-host-network.mjs": "d844ac765120992f35ebed24cde1da5d5630abaf1847d2fac83f95af3e1a00bf",
+    "scripts/lib/native-host-plan.mjs": "475e1c6af8d64036c92aececbf12a411386614f0aaec71d214d87ba8de400f0e",
+    "scripts/lib/dns-tunnel-plan.mjs": "c3dc7481745191d54180940b144a16ccdd3ca7e8d96c0756ba919cd674d786df",
+    "scripts/lib/dns-tunnel-journal.mjs": "ff4e9247ca9b2b82e6fd2e5fe181d3c3552362b046c31d64154e0fb8a95a2e3a",
+    "scripts/autostart/killswitch.sh": "bc553b281e09c0d080017b1d4055308f3a98bbdcb135e8faea06b8c6b85d9b31",
+    "scripts/clean-vpn-native-tun.py": "6333f83851a1eddabefd12207ba9af3a45abc74e7df152e7ec391ff4a10a4b76",
+    "engine": "f0eb2a326e6c67491da4e1d895745b3e3c125c5208fc38446e396cb8e8490d72"
+  },
+  "kernelChecks": 23,
+  "regressionTests": 100,
+  "logs": {
+    "multi-systemd2.log": "e2cea09fe9ec91dff5e790fa832c8dc5f68222c02ce717a8c505a9960bef7f0b",
+    "multi-kernel2.log": "0f2695be43b6c5073797bc1be4189389f1d93498bd3b8b774bf4283b92406d0d",
+    "multi-unit2.log": "858bfdb4c9ac365a457afe4b02309601c6f0992d38f0c78b1fde9c76f60f0bfa",
+    "multi-final-unit.log": "d01b5f8d2d919d9ffdf87f6af6a4ce3d7f1d014b89d10cb3926dccc58d926a52"
+  },
+  "limitations": [
+    "two-client functional and recovery test, not 32-peer load test",
+    "no physical Radxa/VPS changes",
+    "no on-wire fingerprint capture in this matrix",
+    "final explicit peer-field validation additionally covered by installer unit test"
+  ]
+}

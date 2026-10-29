@@ -174,3 +174,12 @@ test('USB mDNS admin prefix admits only the exact local publication rule',()=>{
  assert.equal(audit(4,withRule(prefix)).status,0);
  for(const altered of[prefix.replace('usb0','wlan0'),prefix.replace('5353','53'),prefix.replace('192.168.7.1/32','0.0.0.0/0'),prefix.replace('224.0.0.251/32','224.0.0.0/4')])assert.notEqual(audit(4,withRule(altered)).status,0);
 });
+
+test('DNS audit accepts one non-default native peer but refuses mixed or reserved sources',()=>{
+  const sample=activeSnapshot(4);
+  const replace=s=>s.replaceAll('10.99.0.2/32','10.99.0.37/32');
+  assert.equal(audit(4,replace(sample)).status,0);
+  for(const ip of ['10.99.0.1','10.99.0.255','10.99.1.37','10.99.0.037'])
+    assert.notEqual(audit(4,sample.replaceAll('10.99.0.2/32',ip+'/32')).status,0);
+  assert.notEqual(audit(4,replace(sample).replace('-s 10.99.0.37/32 -d 8.8.8.8','-s 10.99.0.38/32 -d 8.8.8.8')).status,0);
+});

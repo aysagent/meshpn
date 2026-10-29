@@ -184,3 +184,17 @@ test('second process cannot own same journal; SIGKILL releases the owner lock', 
   const killed = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', timeout: 5000 });
   assert.equal(killed.signal, 'SIGKILL'); f.open().release();
 });
+
+test('non-default peer survives journal reopen and cannot change behind a parked DNS gate', t => {
+  const f=fixture(t);let j=f.open();t.after(()=>j.release());
+  j.begin({...config,listenerAddress:'10.99.0.37',nativeMark:true});install(j);j.release();j=f.open();
+  assert.equal(j.state.config.listenerAddress,'10.99.0.37');
+  j.prepareRestart({fromTun:'wg0'});
+  const n=f.mutations.length;
+  assert.throws(()=>j.begin({...config,listenerAddress:'10.99.0.38'}),/parked scope changed/);
+  assert.throws(()=>j.begin({...config,listenerAddress:'10.99.0.37'}),/parked scope changed/);
+  assert.equal(f.mutations.length,n);
+  j.begin({...config,listenerAddress:'10.99.0.37',nativeMark:true});install(j);j.restore();
+  assert.deepEqual(f.routes,[]);assert.deepEqual(f.policies,[]);
+  assert.ok([...f.tables.values()].every(lines=>!lines.length));
+});

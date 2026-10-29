@@ -19,7 +19,9 @@ const scope = () => ({ boot: fs.readFileSync('/proc/sys/kernel/random/boot_id', 
 export const tunnelDnsStateDirectory = () => `/run/clean-vpn-tunnel-dns-${scope().net.match(/\d+/)[0]}`;
 const configOf = (c) => {
   const p = compileTunnelDnsPlan(c);
-  return { tun: p.tun, primary: p.servers[0], fromTun: p.fromTun, lanSubnet: p.lanSubnet, lanInterface: p.lanInterface };
+  return { tun: p.tun, primary: p.servers[0], fromTun: p.fromTun, lanSubnet: p.lanSubnet, lanInterface: p.lanInterface,
+    ...(p.nativeMark ? {nativeMark:true} : {}),
+    ...(p.listener.address !== '10.99.0.2' ? {listenerAddress:p.listener.address} : {}) };
 };
 const operations = (v) => compileTunnelDnsPlan({ ...v.config, tag: `clean-vpn-dns-tunnel-${v.id}` }).operations;
 const holds = (v) => compileTunnelDnsHold(v.config, v.id);
@@ -29,7 +31,7 @@ export function validateTunnelDnsJournal(v) {
   assert.equal(v.schema, 1); assert.match(v.id, /^[a-f0-9]{24}$/);
   keys(v.scope, ['boot', 'net', 'user']); assert.match(v.scope.boot, /^[a-f0-9-]{36}$/);
   for (const k of ['net', 'user']) assert.match(v.scope[k], new RegExp(`^${k}:\\[\\d+\\]$`));
-  keys(v.config, ['tun', 'primary', 'fromTun', 'lanSubnet', 'lanInterface']);
+  keys(v.config, ['tun', 'primary', 'fromTun', 'lanSubnet', 'lanInterface', ...('listenerAddress' in v.config ? ['listenerAddress'] : []), ...('nativeMark' in v.config ? ['nativeMark'] : [])]);
   assert.deepEqual(v.config, configOf(v.config));
   keys(v.links, linkNames(v.config));
   for (const l of Object.values(v.links)) {
@@ -203,7 +205,7 @@ function openLocal(directory, { run: customRun, checkpoint = () => {}, onProgres
       assert.ok(!value || ['released', 'parked'].includes(value.stage), 'unfinished tunnel DNS journal; recover first');
       if (value?.stage === 'parked') {
         observe();
-        for (const key of ['fromTun', 'lanSubnet', 'lanInterface']) assert.equal(config[key], value.config[key], 'DNS parked scope changed');
+        for (const key of ['fromTun', 'lanSubnet', 'lanInterface','listenerAddress','nativeMark']) assert.equal(config[key], value.config[key], 'DNS parked scope changed');
       }
       const snapshot = readNetwork(run);
       audit(snapshot, value?.stage === 'parked' ? holds(value) : []);
