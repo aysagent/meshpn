@@ -1,8 +1,8 @@
 # Полный native-переход: рабочий статус
 
 Отложенная упаковка: [единый compose и Alpine runtime](clean-vpn-native-container-next.md).
-Сейчас приоритет — физическая проверка текущих изменений на Radxa/VPS, с
-сохранением работающей пары и изоляцией новых тестовых экземпляров.
+Физическая проверка завершена: [Radxa/VPS, WAN H1/H2, профили и captive controller](clean-vpn-native-physical-20261029-evening.md).
+Daily engine не заменялся; после испытаний по запросу добавлены два клиента exit.
 
 29 октября: [HTTP/1.1 внешнего native-туннеля](clean-vpn-native-http1.md)
 реализован рядом с H2: `http_version`, mixed-peer exit, exporter auth, bounded

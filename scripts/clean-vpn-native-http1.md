@@ -124,5 +124,7 @@ node --test scripts/test-native-clock-auth.mjs scripts/test-native-profile-polic
 HTTP peer, смешанные H1/H2 клиенты (включая 32), изоляция адресов, профили и combo.
 Новый parser также прогнан с ASan/UBSan.
 Сводка: [HTTP/1.1 lab report](../fixtures/clean-vpn-native-http1-20261029.json).
-Физический smoke и сравнение скорости H1/H2 через настоящий TUN остаются
-отдельными проверками; работающая пара не переключалась.
+[Физический WAN smoke](clean-vpn-native-physical-20261029-evening.md) прошёл
+на Radxa/VPS: boring и packet-ветка combo, H1/H2, внешние pcap/profile checks.
+Он использует fixture packet-fd; сравнение скорости через настоящий TUN
+остаётся отдельной проверкой. Daily engine пока не заменялся.

@@ -1,0 +1,177 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-physical-verification",
+  "date": "2026-10-29",
+  "sourceCommits": [
+    "864b98d",
+    "992d985",
+    "fe89847",
+    "e40ed2f",
+    "b1b507f"
+  ],
+  "dailyEngineReplaced": false,
+  "macNetworkChanged": false,
+  "hosts": {
+    "vps": {
+      "arch": "x86_64",
+      "builtEngineSha256": "84782e7e413419205007ccc0a944b616f2f05153ecb3b66cd4b48a1c9a8376da",
+      "ctestPassed": 13,
+      "regressionCasesCovered": 68,
+      "kernelNamespaceChecksPassed": 37,
+      "finalWanFixtureTestsPassed": 2,
+      "installedConfigValidation": "passed",
+      "foreignFirewallRulesUnchanged": true,
+      "ipv4RoutesUnchanged": true,
+      "ipForward": 1,
+      "trialPortsFree": true,
+      "initialRegressionResult": "67/68; inherited namespace forwarding corrected in lab; transparent suite rerun 4/4"
+    },
+    "radxa": {
+      "arch": "aarch64",
+      "builtEngineSha256": "2f7eca725d977a7326b365e95d05d030bb6934d05ac5bc89d7be7beaf8cc079a",
+      "ctestPassed": 13,
+      "regressionCasesCovered": 68,
+      "kernelNamespaceChecksPassed": 37,
+      "finalWanFixtureTestsPassed": 2,
+      "installedConfigValidation": "passed",
+      "foreignFirewallRulesUnchanged": true,
+      "ipv4RoutesUnchanged": true,
+      "ipForward": 1,
+      "trialPortsFree": true,
+      "initialRegressionResult": "68/68, zero skips",
+      "kernelRetry": "300-second run timed out after 28 checks under concurrent load; bounded 900-second rerun passed all 37",
+      "admin": {
+        "regressionTestsPassed": 33,
+        "updated": true,
+        "captiveController": "active; portal inactive, wifi_ready",
+        "sigkillAutoRestart": "passed",
+        "normalStopRuleCleanupAndStart": "passed",
+        "usbHttpAfterUpdate": 200,
+        "dailyHttpsExitIpConfirmed": true
+      }
+    }
+  },
+  "wan": [
+    {
+      "mode": "boring-h2",
+      "status": "passed",
+      "real_tun": false,
+      "packets_each_direction": 32,
+      "exitPort": 3443,
+      "packetSizes": [
+        64,
+        1400,
+        16384,
+        65535
+      ],
+      "pcapSha256": "d1854f33a5cefffed989fdda122a862a171884055532a56ed87bebf4dbc965ba",
+      "observedClientHellos": 1,
+      "profile": "chromium-156-bounded-cold-v1",
+      "profileStatus": "matched",
+      "offeredAlpn": [
+        "h2",
+        "http/1.1"
+      ],
+      "ja3": "37020d4558c54cb4cd1b8b02d0d2ee0f",
+      "ja4": "t13d0915h2_f91f431d341e_54d72502093d"
+    },
+    {
+      "mode": "boring-h1",
+      "status": "passed",
+      "real_tun": false,
+      "packets_each_direction": 32,
+      "exitPort": 3443,
+      "packetSizes": [
+        64,
+        1400,
+        16384,
+        65535
+      ],
+      "pcapSha256": "51c97f6a7b2ee7faa0e466b0333e305920f9c8379ba232a70809784d9da76fee",
+      "observedClientHellos": 1,
+      "profile": "chromium-156-bounded-cold-v1",
+      "profileStatus": "matched",
+      "offeredAlpn": [
+        "h2",
+        "http/1.1"
+      ],
+      "ja3": "0be7783dd0e33c96dce8eaebcea16ed3",
+      "ja4": "t13d0915h2_f91f431d341e_54d72502093d"
+    },
+    {
+      "mode": "combo-h2",
+      "status": "passed",
+      "real_tun": false,
+      "packets_each_direction": 32,
+      "exitPort": 3443,
+      "packetSizes": [
+        64,
+        1400,
+        16384,
+        65535
+      ],
+      "pcapSha256": "b28fe8e0d820167d9a08c7c137fa0c1eae4390e69af203c75fcad79d7dcd971a",
+      "observedClientHellos": 1,
+      "profile": "chromium-156-bounded-cold-v1",
+      "profileStatus": "matched",
+      "offeredAlpn": [
+        "h2",
+        "http/1.1"
+      ],
+      "ja3": "9cf4a0945a756f8e52eaf104751c1776",
+      "ja4": "t13d0915h2_f91f431d341e_54d72502093d"
+    },
+    {
+      "mode": "combo-h1",
+      "status": "passed",
+      "real_tun": false,
+      "packets_each_direction": 32,
+      "exitPort": 3443,
+      "packetSizes": [
+        64,
+        1400,
+        16384,
+        65535
+      ],
+      "pcapSha256": "b9ad625cf8eb662f4bd6bd09ba172dce178116fd3d274f2dcf47e543ab00890c",
+      "observedClientHellos": 1,
+      "profile": "chromium-156-bounded-cold-v1",
+      "profileStatus": "matched",
+      "offeredAlpn": [
+        "h2",
+        "http/1.1"
+      ],
+      "ja3": "665d3faf395e7bed795c03e76e9704ed",
+      "ja4": "t13d0915h2_f91f431d341e_54d72502093d"
+    }
+  ],
+  "cleanup": {
+    "temporaryVpsSwap": "disabled-and-removed",
+    "freshWanCredentialDirectories": "removed-on-both-hosts",
+    "adminRollbackArchive": "retained-private-on-radxa"
+  },
+  "limitations": [
+    "WAN uses fixture socketpair packet boundary, not real TUN or throughput benchmark",
+    "Combo WAN exercises packet branch; transparent branch tested in real isolated network namespaces on both hosts",
+    "No physical Wi-Fi disconnect, phone captive popup or cold boot in this session",
+    "No replacement of daily engine: HTTP1 remains tested candidate",
+    "PCAP capture external to engine; JA3/JA4 parser shared with project observer; no browser-equivalence or capture-drop claim",
+    "Kernel matrix uses real netns/TUN/routes/firewall but injected systemd state; no reboot"
+  ],
+  "verificationDailyEngineOrNetworkOwnerRestarted": false,
+  "subsequentPeerAddition": {
+    "addresses": [
+      "10.99.0.3",
+      "10.99.0.4"
+    ],
+    "distinctRandomPskBytes": 32,
+    "fileMode": "0600",
+    "existingPeerPreserved": true,
+    "installedEngineValidation": "valid, peers=3",
+    "exitEngineRestarted": true,
+    "networkOwnerRestarted": false,
+    "radxaProcessRestarted": false,
+    "radxaDnsAndHttpsAfterReconnect": "passed",
+    "newClientDevicesConnected": false
+  }
+}
