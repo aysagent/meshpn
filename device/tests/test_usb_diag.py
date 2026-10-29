@@ -8,6 +8,7 @@ import select
 import subprocess
 import sys
 import threading
+import termios
 import tty
 import unittest
 from unittest.mock import patch
@@ -19,6 +20,28 @@ SPEC.loader.exec_module(DIAG)
 
 
 class USBTests(unittest.TestCase):
+    def test_old_touch_speed_is_never_reapplied_and_disconnect_keeps_original_error(self):
+        master, slave = pty.openpty()
+        attrs = termios.tcgetattr(slave); attrs[4] = attrs[5] = termios.B1200
+        termios.tcsetattr(slave, termios.TCSANOW, attrs)
+        real_set = DIAG.termios.tcsetattr
+        applied = []
+        def set_attrs(fd, when, value):
+            applied.append(value[4:6])
+            if len(applied) == 3: raise termios.error(6, 'Device not configured')
+            return real_set(fd, when, value)
+        try:
+            with patch.object(DIAG.termios, 'tcsetattr', side_effect=set_attrs), \
+                 patch.object(DIAG.tty, 'tcsetattr', side_effect=set_attrs), \
+                 patch.object(DIAG, 'snapshot', side_effect=OSError(6, 'original disconnect')), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(OSError, 'original disconnect'):
+                    DIAG.main(['--port', os.ttyname(slave), '--no-http'])
+            self.assertEqual(len(applied), 3)
+            self.assertTrue(all(termios.B1200 not in speeds for speeds in applied))
+        finally:
+            os.close(master); os.close(slave)
+
     def test_frames(self):
         packet = DIAG.BEGIN + b"build=test\n" + DIAG.END
         self.assertIsNone(DIAG.frame(packet[:-1]))

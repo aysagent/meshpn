@@ -77,11 +77,16 @@ def main(argv=None):
         original = termios.tcgetattr(fd)
         # Avoid competing with a monitor/flasher. Native CDC has no UART reset wiring.
         fcntl.ioctl(fd, termios.TIOCEXCL)
-        tty.setraw(fd, termios.TCSANOW)
+        # A prior flash can leave 1200 baud in the host's saved termios. Never
+        # apply that speed, even briefly via setraw or cleanup: dropping DTR
+        # after 1200 baud is the application's intentional ROM-entry trigger.
+        if original[4] == termios.B1200 or original[5] == termios.B1200:
+            original[4] = original[5] = termios.B115200
         attrs = termios.tcgetattr(fd)
         attrs[4] = attrs[5] = termios.B115200
         attrs[2] |= termios.CLOCAL | termios.CREAD
         termios.tcsetattr(fd, termios.TCSANOW, attrs)
+        tty.setraw(fd, termios.TCSANOW)
         try:
             fcntl.ioctl(fd, termios.TIOCMBIS, struct.pack("i", termios.TIOCM_DTR))
         except OSError as e:
@@ -108,7 +113,7 @@ def main(argv=None):
         if original is not None:
             try:
                 termios.tcsetattr(fd, termios.TCSANOW, original)
-            except OSError:
+            except (OSError, termios.error):
                 pass
         os.close(fd)
     return 0
@@ -119,6 +124,6 @@ if __name__ == "__main__":
         sys.exit(main())
     except KeyboardInterrupt:
         sys.exit(130)
-    except (OSError, ValueError, RuntimeError) as error:
+    except (OSError, termios.error, ValueError, RuntimeError) as error:
         print("USB diagnostics:", error, file=sys.stderr)
         sys.exit(1)
