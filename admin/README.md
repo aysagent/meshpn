@@ -273,3 +273,9 @@ excluded. It does not send probes or certify absence of DNS leaks.
 
 Validation: 46/46 Linux admin tests, including export authentication and injected
 secret-field omission; Chromium DOM role/client workflow also passed.
+
+Host broker advertises editable profile/settings, probes and profile observer
+only for the implemented boring-tls client path. Combo client service start/stop
+and Wi-Fi controls remain available, but packet-only editors and observer are
+hidden and rejected by API until combo-aware adapters are implemented. Exit
+client enrollment works independently of those client controls.

@@ -12,9 +12,9 @@ import { adminControls } from '../public/capabilities.js';
 
 const temporary = t => { const p = fs.mkdtempSync(path.join(os.tmpdir(), 'mpn-clients-admin-')); t.after(() => fs.rmSync(p, { recursive: true, force: true })); return p; };
 const publicList = () => ({ version: 1, revision: 2, clients: [{ name: 'laptop', ipv4: '10.99.0.3', revoked: false, secret_path: '/do-not-display', secret: 'test-key', connectionState: 'unknown' }] });
-async function broker(t, role = 'exit', enabled = true) {
+async function broker(t, role = 'exit', enabled = true, transport) {
   const state = temporary(t), config = state + '/engine.json', calls = [], operations = [];
-  fs.writeFileSync(config, JSON.stringify({ version: 1, role, address: '192.0.2.1', port: 443 }), { mode: 0o600 });
+  fs.writeFileSync(config, JSON.stringify({ version: 1, role, address: '192.0.2.1', port: 443,...(transport?{transport,boring:{role,address:'192.0.2.1',port:443}}:{}) }), { mode: 0o600 });
   fs.mkdirSync(state + '/profiles');
   const fake = Object.fromEntries(['list', 'add', 'rename', 'rotate', 'revoke'].map(action => [action, async (...args) => { operations.push([action, ...args]); return publicList(); }]));
   fake.export = async name => { operations.push(['export', name]); return { kind: 'clean-vpn-client-enrollment', name, files: { 'packet.psk': 'test-secret-export' } }; };
@@ -81,4 +81,10 @@ test('HTTP enrollment download requires changed password, POST and CSRF and is a
   const result = await request('/api/clients/export', { method: 'POST', cookie, csrf, data: { name: 'laptop' } });
   assert.equal(result.status, 200); assert.equal(result.headers['content-disposition'], 'attachment; filename=laptop.meshpn.json'); assert.equal(result.headers['cache-control'], 'no-store'); assert.equal(result.body.files.key, 'only-in-download');
   assert.equal(calls.filter(([route]) => route === '/clients/export').length, 1);
+});
+
+test('host combo client does not advertise packet-only profile settings or observer operations',async t=>{
+ const {b,calls}=await broker(t,'client',false,'combo-tls');const s=await b.dispatch('/status');
+ for(const key of ['observer','profileImport','vpnSettings'])assert.equal(s.capabilities[key],false);assert.deepEqual(s.capabilities.probes,[]);assert.deepEqual(s.capabilities.transports,['combo-tls']);
+ calls.length=0;for(const route of ['/vpn/settings','/profile/import','/probe','/observer/start'])await assert.rejects(b.dispatch(route,{}),/transport_control_not_supported/);assert.equal(calls.length,0);
 });
