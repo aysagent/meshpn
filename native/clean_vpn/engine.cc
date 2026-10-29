@@ -156,6 +156,10 @@ class PeerReload {
 public:
   PeerReload(std::string path,const std::string& raw)
     :path_(std::move(path)),active_digest_(digest(raw)),immutable_(immutable(json::parse(raw))){}
+  void ready() const {
+    const auto record=json({{"version",1},{"event","peer_reload_ready"},{"config_sha256",active_digest_}}).dump()+"\n";
+    check(write(STDOUT_FILENO,record.data(),record.size())==ssize_t(record.size()),"reload_ready_output");
+  }
   template<class Apply> void poll(Apply apply) {
     if(!reload_requested)return;
     reload_requested=0;std::string requested;bool success=false;
@@ -821,6 +825,7 @@ static int transparent_engine(const json& j, bool validate, bool initialize, boo
   bool broken=false;
   {
     tr::RelayListener relay(owned,c.client,auth,{},c.exit,c.policy(),c.limits,replay,c.client,admission);
+    if(!c.client)reload.ready();
     check(notify.state("listening"),"relay_notify");
     constexpr char ready[]="{\"event\":\"state\",\"state\":\"listening\",\"transport\":\"transparent-tls\"}\n";
     check(write(STDOUT_FILENO,ready,sizeof(ready)-1)==ssize_t(sizeof(ready)-1),"relay_output");
@@ -954,6 +959,7 @@ int main(int argc,char** argv){
         ctl.branch_failed=&combo_exit->broken;
       }
     }
+    if(!c.client)reload.ready();
     ctl.set(c.client?"idle":"listening");
     if(!c.client){run_exit(c,ctx.get(),listener.n,tun.n,ctl,reload,combo_exit.get(),relay_admission);ctl.set("stopped");return service&&!interrupted?1:0;}
     bool demand_wait=false;Bytes pending;

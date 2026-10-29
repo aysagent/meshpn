@@ -12,7 +12,12 @@ systemctl kill --kill-whom=main --signal=HUP native-daily-exit.service
 
 Это команда для engine с capability `peer_reload`, не инструкция сигналить
 старому установленному бинарнику: его обычная реакция на HUP может отличаться.
-Перед применением проверяется `/path/to/engine --capabilities`.
+Проверки `/path/to/engine --capabilities` недостаточно: файл мог быть заменён
+после старта процесса. Exit при запуске, перед `listening`, пишет
+`{"version":1,"event":"peer_reload_ready","config_sha256":"…"}` с digest
+исходного документа. Управляющий systemd backend проверяет это событие в journal
+для текущих `MainPID` и `InvocationID`, вместе с ожидаемыми argv процесса.
+Так поддержка reload подтверждается работающим экземпляром без `CAP_SYS_PTRACE`.
 
 ## Контракт
 

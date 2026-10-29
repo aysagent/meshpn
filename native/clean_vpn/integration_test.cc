@@ -53,6 +53,11 @@ struct Child {
       size_t e;
       while((e=input.find('\n'))!=std::string::npos){auto j=json::parse(input.substr(0,e));input.erase(0,e+1);
         std::cout<<"engine "<<pid<<" "<<j.dump()<<"\n";
+        if(j.at("event")=="peer_reload_ready"){
+          const auto digest=j.at("config_sha256").get<std::string>();
+          require(j.size()==3&&j.at("version")==1&&digest.size()==64
+            &&digest.find_first_not_of("0123456789abcdef")==std::string::npos,"reload_ready_metadata");continue;
+        }
         if(j.at("event")=="peer_address_rejected"){
           in_addr src{},dst{};auto protocol=j.at("protocol").get<int>();
           require(j.size()==6&&(j.at("role")=="client"||j.at("role")=="exit")&&protocol>=0&&protocol<=255
