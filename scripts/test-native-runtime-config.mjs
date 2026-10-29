@@ -93,3 +93,15 @@ test('invalid addresses, modes, counts and duplicate options are rejected before
   }
   assert.throws(() => parseRuntimeConfig([...args('/nonexistent/new'), '--mode=standalone']), /duplicate_option/);
 });
+test('opt-in discovery provisions independent keys and exit reservations without cached client addresses',()=>{
+ const root=fs.mkdtempSync(path.join(base,'native-discovery-config-'));
+ try{for(const transport of ['boring-tls','combo-tls']){
+  const dir=root+'/'+transport,manifest=createRuntimeConfig(parseRuntimeConfig([...args(dir),'--address-discovery','--private-peer-dns','--transport='+transport,...(transport==='combo-tls'?['--public-name=relay.example']:[])]));
+  assert.equal(manifest.addressAssignment,'runtime-discovery-v1');
+  const exit=JSON.parse(fs.readFileSync(dir+'/exit/engine.json')),p=exit.boring??exit;assert.equal(p.address_assignment,undefined);assert.equal(p.private_peer_dns,true);
+  assert.deepEqual(p.peers.map(x=>x.ipv4),['10.99.0.2','10.99.0.3']);
+  for(const n of [1,2]){const c=JSON.parse(fs.readFileSync(`${dir}/client-${n}/engine.json`)),packet=c.boring??c;assert.equal(packet.address_assignment,'v1');assert.equal(packet.peer_ipv4,undefined);assert.equal(packet.private_peer_dns,undefined);assert.deepEqual(fs.readFileSync(`${dir}/client-${n}/psk`),fs.readFileSync(`${dir}/exit/peer-${n}.psk`));}
+ }}finally{fs.rmSync(root,{recursive:true,force:true});}
+ assert.throws(()=>parseRuntimeConfig([...args('/new/unused'),'--address-discovery','--address-discovery']),/duplicate_option/);
+ assert.throws(()=>parseRuntimeConfig([...args('/new/unused'),'--address-discovery=false']));
+});

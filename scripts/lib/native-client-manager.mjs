@@ -107,13 +107,14 @@ export class NativeClientManager {
  async revoke(name){return this.mutate(r=>{const p=r.clients.find(x=>x.name===name);fail(p,'client_not_found');p.revoked=true;});}
  async rename(name,newName){fail(clientName(newName),'client_name');return this.mutate(r=>{const p=r.clients.find(x=>x.name===name);fail(p,'client_not_found');fail(!r.clients.some(x=>x.name===newName&&x!==p),'client_name_exists');p.name=newName;});}
  async rotate(name){return this.mutate(async(r,c)=>{const p=r.clients.find(x=>x.name===name&&!x.revoked);fail(p,'client_not_found');p.secret_path=this.newKey();if(p.relay){fail(this.initializeRelay,'client_replay_initializer_required');p.relay={id:'peer-'+randomBytes(12).toString('hex'),secret_path:this.newKey()};await this.initializeRelay({...c.transparent,peers:[p.relay]});}});}
- async export(name){return this.locked(async()=>{
+ async export(name,{addressDiscovery=false}={}){fail(typeof addressDiscovery==='boolean','client_address_discovery_option');return this.locked(async()=>{
   const r=this.load(),c=this.config(r),p=r.clients.find(x=>x.name===name&&!x.revoked);fail(p,'client_not_found');const server=packet(c);
   const files={'psk':readClientPrivate(p.secret_path,32).toString('base64'),'ca.pem':readPublic(r.caPath).toString('base64')};
   const client={version:1,role:'client',tun:'cvpn0',address:r.endpoint,port:server.port,server_name:r.serverName,ca:'@bundle/ca.pem',secret_path:'@bundle/psk',peer_ipv4:p.ipv4,dns:true,http_version:'auto'};
   if(r.profilePath){files['profile.json']=readPublic(r.profilePath,16384).toString('base64');client.tls_profile_path='@bundle/profile.json';}
+  if(addressDiscovery){client.address_assignment='v1';delete client.peer_ipv4;}
   let config=client;if(p.relay){files['relay.psk']=readClientPrivate(p.relay.secret_path,32).toString('base64');client.sni=c.transparent.public_name;config={version:1,role:'client',transport:'combo-tls',boring:client,transparent:{version:1,role:'client',transport:'transparent-tls',public_name:c.transparent.public_name,secret_path:'@bundle/relay.psk',listen:{ipv4:'0.0.0.0',port:10443},exit:{ipv4:r.endpoint,port:server.port},limits:c.transparent.limits,destination_policy:c.transparent.destination_policy}};}
-  return{version:1,kind:'clean-vpn-client-enrollment',name:p.name,hostname:p.name+'.mpn',ipv4:p.ipv4,config,files};
+  return{version:1,kind:'clean-vpn-client-enrollment',name:p.name,hostname:p.name+'.mpn',ipv4:p.ipv4,...(addressDiscovery?{addressAssignment:'v1'}:{}),config,files};
  });}
 }
 export async function importClientBundle(bundle,directory,{validateConfig}={}){
@@ -121,7 +122,10 @@ export async function importClientBundle(bundle,directory,{validateConfig}={}){
  fail(typeof validateConfig==='function','client_validator_required');trustedPath(directory);fail(bundle.files&&Object.keys(bundle.files).length<=4&&Object.keys(bundle.files).every(n=>['psk','relay.psk','ca.pem','profile.json'].includes(n)),'client_bundle_files');
  const files={};for(const[n,b]of Object.entries(bundle.files)){fail(typeof b==='string'&&b.length<=65536&&/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(b),'client_bundle_encoding');files[n]=Buffer.from(b,'base64');if(n.endsWith('psk'))fail(files[n].length===32,'client_key_length');}
  fail(files.psk&&files['ca.pem'],'client_bundle_required');
- const c=structuredClone(bundle.config),p=packet(c);fail(p.role==='client'&&p.peer_ipv4===bundle.ipv4,'client_bundle_role');if(c.transport)fail(c.transport==='combo-tls'&&c.role==='client'&&c.transparent?.role==='client','client_bundle_transport');
+ const c=structuredClone(bundle.config),p=packet(c);fail(p.role==='client','client_bundle_role');
+ if(bundle.addressAssignment!==undefined)fail(bundle.addressAssignment==='v1'&&p.address_assignment==='v1'&&p.peer_ipv4===undefined,'client_bundle_assignment');
+ else fail(p.address_assignment===undefined&&p.peer_ipv4===bundle.ipv4,'client_bundle_role');
+ if(c.transport)fail(c.transport==='combo-tls'&&c.role==='client'&&c.transparent?.role==='client','client_bundle_transport');
  // Only known credential fields may reference bundle paths. Never accept a host path.
  const rewrite=(o,k,n)=>{fail(o[k]==='@bundle/'+n&&files[n],'client_bundle_path');o[k]=directory+'/'+n;};rewrite(p,'secret_path','psk');rewrite(p,'ca','ca.pem');if(p.tls_profile_path)rewrite(p,'tls_profile_path','profile.json');if(c.transport==='combo-tls')rewrite(c.transparent,'secret_path','relay.psk');
  fs.mkdirSync(directory,{mode:0o700});for(const[n,b]of Object.entries(files))fresh(directory+'/'+n,b);fresh(directory+'/engine.json',encode(c));await validateConfig(directory+'/engine.json');return{directory,configPath:directory+'/engine.json',name:bundle.name,ipv4:bundle.ipv4,activated:false};

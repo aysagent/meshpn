@@ -9,9 +9,9 @@ import { parseArgs } from 'node:util';
 import { isIPv4 } from 'node:net';
 import { publishedExitPort } from './lib/native-port.mjs';
 import { runtimePacketConfig } from './lib/native-runtime-plan.mjs';
-const { values: v, positionals } = parseArgs({ allowPositionals: true, options: Object.fromEntries([
+const { values: v, positionals } = parseArgs({ allowPositionals: true, options: {'address-discovery':{type:'boolean'},...Object.fromEntries([
   'engine', 'connection', 'name', 'image', 'role', 'network', 'ip', 'publish', 'config-dir', 'config-volume', 'config-file', 'lan-network', 'lan-ip', 'lan-subnet', 'lab-owner', 'replay-volume', 'relay-health'
-].map(k => [k, { type: 'string' }])) });
+].map(k => [k, { type: 'string' }]))} });
 const action = positionals[0];
 assert.ok(positionals.length === 1 && ['start', 'status', 'stop', 'remove'].includes(action), 'start|status|stop|remove required');
 assert.ok(['docker', 'podman'].includes(v.engine ?? 'podman'));
@@ -45,6 +45,8 @@ if (action === 'start') {
   assert.equal(config.role, v.role, 'config_role_mismatch');
   const packet = runtimePacketConfig(config);
   const combo = config.transport === 'combo-tls';
+  assert.equal(v['address-discovery']===true,packet.address_assignment==='v1','explicit_address_discovery_flag_required');
+  if(v['address-discovery'])assert.ok(v.role==='client'&&packet.peer_ipv4===undefined,'address_discovery_client_only');
   if (combo && v.role === 'exit') {
     assert.match(v['replay-volume'] ?? '', /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/, 'explicit_replay_volume_required');
     assert.notEqual(v['replay-volume'], v['config-volume'], 'separate_replay_volume_required');
@@ -68,6 +70,7 @@ if (action === 'start') {
     '--cap-drop=ALL', '--cap-add=NET_ADMIN', '--cap-add=NET_RAW', '--cap-add=NET_BIND_SERVICE', '--device=/dev/net/tun',
     '--security-opt=no-new-privileges', '--read-only', '--tmpfs=/run:rw,nosuid,nodev,mode=755', '--tmpfs=/tmp:rw,nosuid,nodev,mode=1777',
     '--mount', mount, '-e', `CVPN_PARENT_NETNS=${parent}`];
+  if(v['address-discovery'])args.push('-e','CVPN_ADDRESS_DISCOVERY=1');
   if(v['relay-health'])args.push('-e','CVPN_RELAY_HEALTH_CONFIG=/config/relay-health.json');
   if (v.ip) args.push('--ip', v.ip);
   if (v.ip || lan) args.push('-e', 'CVPN_ANNOUNCE_IPV4=1');

@@ -13,7 +13,7 @@ import { tcpPort } from './lib/native-port.mjs';
 const defaultProfile = fileURLToPath(new URL('../fixtures/native-tls-profiles/chromium-156-bounded-cold.json', import.meta.url));
 export function parseRuntimeConfig(args) {
   const { values: v, positionals } = parseArgs({ args, allowPositionals: true, options: {
-    help: { type: 'boolean' }, 'private-peer-dns': { type: 'boolean' }, ...Object.fromEntries(['directory', 'mode', 'endpoint', 'exit-address', 'port', 'exit-port', 'server-name', 'clients', 'days', 'profile', 'transport', 'public-name', 'relay-port', 'relay-sessions', 'relay-per-client'].map(k => [k, { type: 'string' }])) } });
+    help: { type: 'boolean' }, 'private-peer-dns': { type: 'boolean' }, 'address-discovery': { type: 'boolean' }, ...Object.fromEntries(['directory', 'mode', 'endpoint', 'exit-address', 'port', 'exit-port', 'server-name', 'clients', 'days', 'profile', 'transport', 'public-name', 'relay-port', 'relay-sessions', 'relay-per-client'].map(k => [k, { type: 'string' }])) } });
   if (v.help) return { help: true };
   assert.deepEqual(positionals, ['create'], 'create required');
   // parseArgs accepts duplicate options; credentials must never depend on the
@@ -44,10 +44,11 @@ export function parseRuntimeConfig(args) {
   runtimePlan({ ...common, port: exitPort, role: 'exit', address: v['exit-address'] });
   const profile = fs.readFileSync(v.profile ?? defaultProfile);
   assert.ok(profile.length <= 16384); JSON.parse(profile);
-  return { privatePeerDns: v['private-peer-dns']??false, transport, publicName, relayPort, relaySessions, relayPerClient, directory: v.directory, mode: v.mode, endpoint: v.endpoint, port, exitPort, exitAddress: v['exit-address'], serverName: v['server-name'], clients, days, profile };
+  return { addressDiscovery:v['address-discovery']??false, privatePeerDns: v['private-peer-dns']??false, transport, publicName, relayPort, relaySessions, relayPerClient, directory: v.directory, mode: v.mode, endpoint: v.endpoint, port, exitPort, exitAddress: v['exit-address'], serverName: v['server-name'], clients, days, profile };
 }
 
 export function createRuntimeConfig(o) {
+  if(o.addressDiscovery!==undefined)assert.equal(typeof o.addressDiscovery,'boolean');
   if(o.privatePeerDns!==undefined)assert.equal(typeof o.privatePeerDns,'boolean');
   const port = tcpPort(o.port ?? 443), exitPort = tcpPort(o.exitPort ?? port);
   // Parent must already exist; never follow an unexpected symlink when
@@ -89,7 +90,7 @@ export function createRuntimeConfig(o) {
       write(`${role}/profile.json`, o.profile);
       if(combo){const relaySecret=randomBytes(32);write(`${role}/relay.psk`,relaySecret);write(`exit/relay-${i}.psk`,relaySecret);relayPeers.push({id:`client-${i}`,secret_path:at('exit',`relay-${i}.psk`)});}
       const packet={ version: 1, role: 'client', tun: 'cvpn0', address: o.endpoint, port,
-        dns: true, peer_ipv4: peer, server_name: o.serverName, ca: at(role, 'ca.pem'), secret_path: at(role, 'psk'), tls_profile_path: at(role, 'profile.json'),...(combo?{sni:o.publicName}:{}) };
+        dns: true, ...(o.addressDiscovery?{address_assignment:'v1'}:{peer_ipv4:peer}), server_name: o.serverName, ca: at(role, 'ca.pem'), secret_path: at(role, 'psk'), tls_profile_path: at(role, 'profile.json'),...(combo?{sni:o.publicName}:{}) };
       const config=wrap('client',packet,role);
       json(`${role}/engine.json`,config);
       peers.push({ ipv4: peer, secret_path: at('exit', `peer-${i}.psk`) }); clients.push({ directory: role, ipv4: peer });
@@ -98,6 +99,7 @@ export function createRuntimeConfig(o) {
       cert: at('exit', 'cert.pem'), key: at('exit', 'key.pem'), peers, ...(o.privatePeerDns?{private_peer_dns:true}:{}) }));
     const manifest = { schema: 1, kind: 'native-runtime-config', transport:o.transport??'boring-tls', ...(combo?{publicName:o.publicName,relayPort:o.relayPort,relayIdentity:'unique-relay-and-packet-PSKs-per-client',relayLimits,replay:'explicit-init-on-target; never reset on restart'}:{}), mode: o.mode, endpoint: o.endpoint, port, exitPort, exitAddress: o.exitAddress,
       serverName: o.serverName, clients, certificateDays: o.days, profileSha256: createHash('sha256').update(o.profile).digest('hex'),
+      addressAssignment:o.addressDiscovery?'runtime-discovery-v1':'fixed-enrollment',
       privatePeerDns:o.privatePeerDns===true, privatePeerDnsResolver:'separate registry resolver on exit loopback:1055 required; never public DNS fallback for .mpn',
       networkChanged: false, nativeValidation: 'required-on-target-before-start',
       distribution: 'Each client gets only its client-N directory. Exit gets only exit/. Keep authority/ offline; never mount the whole bundle.' };
@@ -107,7 +109,7 @@ export function createRuntimeConfig(o) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const o = parseRuntimeConfig(process.argv.slice(2));
-    if (o.help) console.log('Usage: node scripts/clean-vpn-native-runtime-config.mjs create --directory=/NEW/private/bundle --mode=container|standalone --endpoint=EXIT_IPV4 --exit-address=EXIT_NAMESPACE_IPV4 --server-name=vpn.example.net [--port=443] [--exit-port=PORT] [--clients=1..32] [--private-peer-dns] [--days=1..365] [--profile=/profile.json] [--transport=boring-tls|combo-tls] [--public-name=relay.example --relay-port=10443 --relay-sessions=128 --relay-per-client=64]\nCombo requires --public-name, explicit LAN at launch and a separately initialized exit replay volume. Offline only; creates private CA, unique per-client PSKs and Chromium subset profiles. --port is the client destination port; --exit-port defaults to it and sets the exit listener (use a different value only with explicit port mapping). Existing directory is never overwritten. Container files use /config paths; standalone files use the new absolute directory. Copy only the intended role directory; Linux runtime requires root-owned credentials.');
+    if (o.help) console.log('Usage: node scripts/clean-vpn-native-runtime-config.mjs create --directory=/NEW/private/bundle --mode=container|standalone --endpoint=EXIT_IPV4 --exit-address=EXIT_NAMESPACE_IPV4 --server-name=vpn.example.net [--port=443] [--exit-port=PORT] [--clients=1..32] [--private-peer-dns] [--address-discovery] [--days=1..365] [--profile=/profile.json] [--transport=boring-tls|combo-tls] [--public-name=relay.example --relay-port=10443 --relay-sessions=128 --relay-per-client=64]\nCombo requires --public-name, explicit LAN at launch and a separately initialized exit replay volume. Offline only; creates private CA, unique per-client PSKs and Chromium subset profiles. --port is the client destination port; --exit-port defaults to it and sets the exit listener (use a different value only with explicit port mapping). Existing directory is never overwritten. Container files use /config paths; standalone files use the new absolute directory. Copy only the intended role directory; Linux runtime requires root-owned credentials.');
     else console.log(JSON.stringify(createRuntimeConfig(o), null, 2));
   } catch (error) { console.error('NATIVE_CONFIG=failed: ' + (error.code ?? error.message) + '\nNo network or service settings changed. Any incomplete new directory is retained for inspection.'); process.exitCode = 1; }
 }

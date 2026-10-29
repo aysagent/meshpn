@@ -8,6 +8,7 @@ import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {setTimeout as delay} from 'node:timers/promises';
 import {NativeClientManager,importClientBundle,readClientPrivate} from './lib/native-client-manager.mjs';
+import {main as clientCli} from './clean-vpn-native-clients.mjs';
 const put=(p,b)=>fs.writeFileSync(p,typeof b==='string'||Buffer.isBuffer(b)?b:JSON.stringify(b),{mode:0o600});
 async function fixture(t,{combo=false,applyConfig}={}){
  const dir=fs.mkdtempSync(fs.realpathSync(os.tmpdir())+'/cvpn-clients-');t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
@@ -78,4 +79,23 @@ test('directory sync failure after publishing commit never rolls back without a 
  try{await assert.rejects(f.manager.add('committed'),/client_commit_durability_uncertain/);}finally{fs.fsyncSync=original;}
  assert.equal(injected,true);assert.equal(applied,1);assert.equal(fs.existsSync(f.manager.journalPath),false);
  assert.ok((await f.manager.list()).clients.some(c=>c.name==='committed'));assert.equal((await f.manager.recover()).recovered,false);
+});
+for(const combo of [false,true])test(`explicit discovery enrollment has no cached address (${combo?'combo':'boring'})`,async t=>{
+ const f=await fixture(t,{combo});await f.manager.add('laptop');
+ const fixed=await f.manager.export('laptop'),dynamic=await f.manager.export('laptop',{addressDiscovery:true});
+ assert.equal(fixed.addressAssignment,undefined);assert.equal((fixed.config.boring??fixed.config).peer_ipv4,'10.99.0.3');
+ assert.equal(dynamic.addressAssignment,'v1');assert.equal(dynamic.ipv4,'10.99.0.3');assert.deepEqual(dynamic.files,fixed.files);
+ const packet=dynamic.config.boring??dynamic.config;assert.equal(packet.address_assignment,'v1');assert.equal(packet.peer_ipv4,undefined);
+ // Advisory enrollment metadata may become stale: it must never become an effective address.
+ dynamic.ipv4='10.99.0.47';
+ await importClientBundle(dynamic,f.dir+'/dynamic',{validateConfig:async file=>{
+  const c=JSON.parse(readClientPrivate(file)),p=c.boring??c;assert.equal(p.address_assignment,'v1');assert.equal(p.peer_ipv4,undefined);assert.equal(readClientPrivate(p.secret_path).length,32);
+ }});
+ for(const [i,mutate]of [b=>delete b.addressAssignment,b=>b.addressAssignment='v2',b=>(b.config.boring??b.config).peer_ipv4='10.99.0.47',b=>delete(b.config.boring??b.config).address_assignment].entries()){
+  const bad=structuredClone(dynamic);mutate(bad);await assert.rejects(importClientBundle(bad,f.dir+'/bad-'+i,{validateConfig:async()=>{throw Error('must not validate malformed bundle');}}),/client_bundle_(assignment|role)/);assert.equal(fs.existsSync(f.dir+'/bad-'+i),false);
+ }
+ await assert.rejects(f.manager.export('laptop',{addressDiscovery:'false'}),/client_address_discovery_option/);
+});
+test('discovery CLI refuses ambiguous booleans and non-export actions before reading state',async()=>{
+ for(const args of [['list','--address-discovery'],['export','laptop','--address-discovery=false'],['export','laptop','--address-discovery','--address-discovery'],['add','laptop','--offline=false']])await assert.rejects(clientCli(args),/client_(address_discovery_export_only|boolean_option|option)/);
 });
