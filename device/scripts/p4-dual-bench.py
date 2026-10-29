@@ -111,6 +111,71 @@ def save_link_attempt(out, repeat, direction, row, dut, client=None):
         raise RuntimeError('RF link transfer failed: ' + json.dumps(row))
 
 
+def radio_tests(args, out, board, dut, client_ip, ap_ip, other):
+    """Direct STA-to-AP RF, with the second P4 as peer. No Mac listener/NAT."""
+    records = []
+    for repeat in range(args.repeats):
+        cases=[('tcp',8000)]+[('udp',r*1000) for r in args.rates]
+        for protocol, rate in cases:
+            if protocol not in getattr(args,'protocols',['tcp','udp']):continue
+            for direction in ['up', 'down']:
+                nonce = None
+                row = dict(role='radio',client=args.client,dut=other,repeat=repeat,
+                    protocol=protocol,direction=direction,target_mbps=rate/1000,
+                    scope='STA client to AP listener on second P4; local RF, not AP+STA internet',
+                    complete=False,receiver_mbps=None)
+                try:
+                    row['before']={'client':perf.clean(board.api('/api/status')),
+                                   'dut':perf.clean(dut.api('/api/status'))}
+                    common = dict(port=18765,seconds=args.seconds,rate_kbps=rate,
+                                  protocol=protocol,direction=direction)
+                    server = dut.api('/api/diag/net-bench',dict(common,role='server',interface='ap',target=client_ip))
+                    nonce = server['nonce']; ready_deadline = time.monotonic()+3
+                    while server['running'] and not server.get('listening') and time.monotonic()<ready_deadline:
+                        time.sleep(.05); server=dut.api('/api/diag/net-bench')
+                    if server['nonce']!=nonce or not server.get('listening'):
+                        raise RuntimeError('P4 listener did not start: '+json.dumps(server))
+                    client = board.api('/api/diag/net-bench',dict(common,target=ap_ip,nonce=nonce))
+                    if client['nonce']!=nonce: raise RuntimeError('Client nonce mismatch; firmware update required')
+                    deadline=time.monotonic()+args.seconds+12
+                    while time.monotonic()<deadline:
+                        time.sleep(.5)
+                        client=board.api('/api/diag/net-bench');server=dut.api('/api/diag/net-bench')
+                        if client['nonce']!=nonce or server['nonce']!=nonce: raise RuntimeError('RF test superseded')
+                        with open(out/'radio-status.ndjson','a') as f:
+                            f.write(json.dumps(dict(at=time.time(),client=client,server=server))+'\n')
+                        if not client['running'] and not server['running']: break
+                    row.update(device=client,server=server)
+                    if client['running'] or server['running'] or client['error'] or server['error'] or not client.get('connected') or not server.get('connected'):
+                        raise RuntimeError('P4 RF exchange did not complete')
+                    receiver=client if direction=='down' else server
+                    if not receiver['bytes']:raise RuntimeError('No RF receiver bytes')
+                    # Requested window is deliberately conservative. Keep both
+                    # endpoint intervals/counters; never call byte difference loss.
+                    row.update(complete=True,receiver_mbps=receiver['bytes']*8/args.seconds/1e6)
+                except Exception as error:
+                    row['error']=str(error)
+                    raise
+                finally:
+                    records.append(row);save(out/'result.json',records)
+                    for api in (board,dut):
+                        if nonce is not None:
+                            try:
+                                status=api.api('/api/diag/net-bench')
+                                if status['nonce']==nonce and status['running']:
+                                    api.api('/api/diag/net-bench',{'cancel':True})
+                            except Exception as error:
+                                row.setdefault('cleanup_errors',[]).append(str(error))
+                    for label,api in [('client',board),('dut',dut)]:
+                        try:row.setdefault('after',{})[label]=perf.clean(api.api('/api/status'))
+                        except Exception as error:row.setdefault('telemetry_errors',[]).append(label+': '+str(error))
+                    if row.get('cleanup_errors'):row['complete']=False;row['receiver_mbps']=None
+                    save(out/'result.json',records)
+                if row.get('cleanup_errors'):raise RuntimeError('RF cleanup incomplete; listener has a bounded expiry')
+                print(json.dumps({k:v for k,v in row.items() if k not in ['device','server','scope','before','after']}),flush=True)
+                time.sleep(args.gap)
+
+
 def run(args):
     profile = CATALOG[NAMES[args.client]]
     other = 'stamp' if args.client == 'waveshare' else 'waveshare'
@@ -128,12 +193,12 @@ def run(args):
     profiles = board.api('/api/wifi/profiles')['profiles']
     journal = dict(board=before['board'], address=profile['usb'], original=original,
                    previous_ids=[p['id'] for p in profiles], restored=False,
-                   temporary_ssid=dut_before['net']['ap_ssid'] if args.role in ('peer','link','wan') else None)
+                   temporary_ssid=dut_before['net']['ap_ssid'] if args.role in ('peer','link','wan','radio') else None)
     save(path, journal)
     perf.private_json(out/'before-client.json', before); perf.private_json(out/'before-dut.json', dut_before)
     peer = None
     try:
-        if args.role in ('peer','link','wan'):
+        if args.role in ('peer','link','wan','radio'):
             ssid = journal['temporary_ssid']
             existing = [p for p in profiles if p['ssid'] == ssid and p['enabled']]
             if existing:
@@ -152,6 +217,9 @@ def run(args):
             if connected['wifi']['ip'].rsplit('.',1)[0] != dut_before['net']['ap_ip'].rsplit('.',1)[0]:
                 raise RuntimeError('Client did not obtain DUT AP subnet')
             time.sleep(5)
+        if args.role == 'radio':
+            radio_tests(args,out,board,dut,connected['wifi']['ip'],dut_before['net']['ap_ip'],other)
+            return
         if args.role in ('link','wan'):
             interfaces=json.loads(subprocess.check_output(['node','-e',
                 "console.log(JSON.stringify(Object.entries(require('os').networkInterfaces()).flatMap(([name,a])=>a.filter(x=>x.family==='IPv4'&&!x.internal).map(x=>({name,address:x.address})))))"],text=True))
@@ -235,12 +303,14 @@ def run(args):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--client',choices=list(NAMES),default='waveshare')
-    p.add_argument('--role',choices=['direct','peer','link','wan'],default='peer')
+    p.add_argument('--role',choices=['direct','peer','link','wan','radio'],default='peer')
     p.add_argument('--nodelay',type=int,choices=[0,1],default=1,
                    help='link HTTP download socket TCP_NODELAY; 0 allows coalescing; not a radio setting')
     p.add_argument('--host');p.add_argument('--out')
     p.add_argument('--seconds',type=int,default=10);p.add_argument('--repeats',type=int,default=3)
     p.add_argument('--rates',type=int,nargs='*',default=[4,8,12,16,20,24,32])
+    p.add_argument('--protocols',choices=['tcp','udp'],nargs='+',default=['tcp','udp'],
+                   help='radio mode protocols; isolate UDP when TCP cannot complete')
     p.add_argument('--gap',type=float,default=2)
     p.add_argument('--restore',type=Path)
     a=p.parse_args()

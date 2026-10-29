@@ -9,6 +9,44 @@ s=importlib.util.spec_from_file_location('dual',Path(__file__).resolve().parents
 m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
 
 class RestoreTests(unittest.TestCase):
+    def test_radio_uses_board_listener_and_receiver_bytes(self):
+        class Board:
+            def __init__(self,server): self.server=server;self.calls=[]
+            def api(self,path,body=None):
+                self.calls.append((path,body))
+                return dict(nonce=41,running=bool(body),listening=self.server and bool(body),
+                            connected=True,error=0,bytes=800 if self.server else 1000)
+        client,server=Board(False),Board(True)
+        args=SimpleNamespace(repeats=1,rates=[],seconds=1,gap=0,client='stamp')
+        with tempfile.TemporaryDirectory() as d,patch.object(m.time,'sleep'):
+            m.radio_tests(args,Path(d),client,server,'192.168.11.2','192.168.11.1','waveshare')
+            rows=json.loads((Path(d)/'result.json').read_text())
+        self.assertEqual([r['receiver_mbps'] for r in rows],[.0064,.008])
+        self.assertTrue(all(r['complete'] and r['client']=='stamp' for r in rows))
+        for _,body in server.calls:
+            if body:self.assertEqual((body['role'],body['interface'],body['target']),('server','ap','192.168.11.2'))
+        for _,body in client.calls:
+            if body:self.assertEqual((body['target'],body['nonce']),('192.168.11.1',41))
+
+    def test_radio_client_loss_still_cancels_server_and_keeps_failure(self):
+        class LostClient:
+            def api(self,path,body=None):
+                if path=='/api/status':return {}
+                raise TimeoutError('USB client unavailable')
+        class Server:
+            cancelled=False
+            def api(self,path,body=None):
+                if body and body.get('cancel'):self.cancelled=True
+                return dict(nonce=42,running=True,listening=True)
+        server=Server();args=SimpleNamespace(repeats=1,rates=[],seconds=1,gap=0,client='stamp')
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(TimeoutError,'USB client'):
+                m.radio_tests(args,Path(d),LostClient(),server,'192.168.11.2','192.168.11.1','waveshare')
+            row=json.loads((Path(d)/'result.json').read_text())[0]
+        self.assertTrue(server.cancelled);self.assertFalse(row['complete'])
+        self.assertIsNone(row['receiver_mbps']);self.assertIn('USB client',row['error'])
+        self.assertTrue(row['cleanup_errors'])
+
     def test_failed_link_preserves_partial_body_and_trace_failure(self):
         row = dict(complete=False, bytes=482552, mbps=None, error='timeout')
         class Board:

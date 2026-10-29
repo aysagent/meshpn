@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import re
+import socket
 import subprocess
 import tempfile
 base=Path(__file__).resolve().parents[1]
@@ -15,5 +16,19 @@ with tempfile.TemporaryDirectory(prefix='meshpn-bench-') as tmp:
         '-I'+tmp,'-I'+str(base/'tests/stubs'),'-I'+str(base/'components/meshvpn_net/include'),
         str(base/'tests/test_net_bench.c'),'-o',binary],check=True)
     peer=m.Peer('127.0.0.1',['127.0.0.1'])
-    try:subprocess.run([binary,str(peer.port)],check=True,timeout=20)
+    # Listener cases use distinct ephemeral ports. Reserve the range first.
+    held=[]
+    for attempt in range(100):
+        for s in held:s.close()
+        held=[]
+        probe=socket.socket();probe.bind(('127.0.0.1',0));port=probe.getsockname()[1];probe.close()
+        if port>65527:continue
+        try:
+            for offset in range(1,9):
+                s=socket.socket();held.append(s);s.bind(('127.0.0.1',port+offset))
+            break
+        except OSError:continue
+    else:raise RuntimeError('No free local port range for bounded listener tests')
+    for s in held:s.close()
+    try:subprocess.run([binary,str(peer.port),str(port)],check=True,timeout=40)
     finally:peer.close()

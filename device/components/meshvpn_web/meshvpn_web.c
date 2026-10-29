@@ -437,13 +437,22 @@ static esp_err_t handler_net_bench(httpd_req_t *req)
             cJSON *target = cJSON_GetObjectItemCaseSensitive(in, "target");
             cJSON *protocol = cJSON_GetObjectItemCaseSensitive(in, "protocol");
             cJSON *direction = cJSON_GetObjectItemCaseSensitive(in, "direction");
+            cJSON *role = cJSON_GetObjectItemCaseSensitive(in, "role");
+            cJSON *interface = cJSON_GetObjectItemCaseSensitive(in, "interface");
+            cJSON *nonce = cJSON_GetObjectItemCaseSensitive(in, "nonce");
+            c.server = cJSON_IsString(role) && !strcmp(role->valuestring,"server");
+            c.ap = cJSON_IsString(interface) && !strcmp(interface->valuestring,"ap");
             bool valid = cJSON_IsString(target) && ip4addr_aton(target->valuestring, &ip) &&
+                (!role || (cJSON_IsString(role) && (!strcmp(role->valuestring,"client") || c.server))) &&
+                (!interface || (cJSON_IsString(interface) && (!strcmp(interface->valuestring,"sta") || (c.server&&c.ap)))) &&
+                (!nonce || (cJSON_IsNumber(nonce) && nonce->valuedouble>=1 && nonce->valuedouble<=UINT32_MAX &&
+                            nonce->valuedouble==(uint32_t)nonce->valuedouble)) &&
                 cJSON_IsString(protocol) && (!strcmp(protocol->valuestring,"tcp") || !strcmp(protocol->valuestring,"udp")) &&
                 cJSON_IsString(direction) && (!strcmp(direction->valuestring,"up") || !strcmp(direction->valuestring,"down")) &&
                 echo_number(in,"port",1024,65535,&c.port) && echo_number(in,"seconds",1,60,&c.seconds) &&
                 echo_number(in,"rate_kbps",64,32000,&c.rate_kbps);
             if (valid) {c.target=ip.addr;c.udp=!strcmp(protocol->valuestring,"udp");c.download=!strcmp(direction->valuestring,"down");}
-            c.nonce=esp_random(); if (!c.nonce) c.nonce=1;
+            c.nonce=valid&&nonce?(uint32_t)nonce->valuedouble:esp_random(); if (!c.nonce) c.nonce=1;
             cJSON_Delete(in);
             if (!valid) return error(req,"400 Bad Request","Invalid bounded network test configuration");
             esp_err_t err=meshvpn_net_bench_start(&c);
@@ -453,6 +462,9 @@ static esp_err_t handler_net_bench(httpd_req_t *req)
     meshvpn_net_bench_result_t r;meshvpn_net_bench_status(&r);
     cJSON *out=cJSON_CreateObject();
     cJSON_AddBoolToObject(out,"running",r.running);
+    cJSON_AddStringToObject(out,"role",r.server?"server":"client");
+    cJSON_AddBoolToObject(out,"listening",r.listening);
+    cJSON_AddBoolToObject(out,"connected",r.connected);
     cJSON_AddNumberToObject(out,"nonce",r.nonce);
     ip4_addr_t ip={.addr=r.source};char source[16];ip4addr_ntoa_r(&ip,source,sizeof(source));
     cJSON_AddStringToObject(out,"source",source);

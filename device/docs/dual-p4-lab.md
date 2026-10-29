@@ -24,6 +24,21 @@ Roles and limits:
   firewall. The receiver checks the source is DUT's translated STA address.
 - `direct`: board-generated TCP/UDP → home router → local Mac receiver, control
   for the peer path. Both radios remain on the home network.
+- `radio`: board-generated TCP/UDP → second P4's AP listener. No server on the
+  Mac, USB data forwarding, WAN or routing changes. Measures a local RF hop;
+  the DUT's home STA stays connected, but test data does not traverse it.
+
+```sh
+python3 device/scripts/p4-dual-bench.py --client stamp --role radio \
+  --protocols udp --rates 1 4 8 --seconds 5 --repeats 1 \
+  --out device/perf-results/waveshare-radio-control
+```
+
+Both boards need the listener-capable firmware. `--protocols tcp udp` is the
+default for `radio`; isolate UDP when TCP cannot finish. Results retain both
+endpoints' intervals/counters and partial failures. The receiver is the client
+for `down` and the AP board for `up`. A valid connection with zero received
+bytes is not marked as a successful transfer.
 
 `peer`/`direct`: `--seconds 1..60`, `--rates 4 8 12 16 20 24 32`,
 `--repeats 1..100`, `--gap 0..60`. TCP is unpaced. UDP is paced; compare achieved
@@ -42,6 +57,18 @@ port ≥1024, ≤60 seconds plus a five-second connect/hello deadline, one job a
 time. It binds the STA interface and source. A VPN transition or explicit
 `{"cancel":true}` stops it. It does not persist benchmark settings. The peer
 accepts only allowlisted source IPs, bounded requests, and one active job.
+
+For a firmware listener, POST the same fields with `role:"server"`,
+`interface:"ap"` (or `"sta"`), and `target` equal to the expected client's
+on-link private IPv4. The response supplies a fresh `nonce`; pass it in the
+client POST with the same protocol, direction, rate, seconds and port. The
+listener binds only its selected interface/address, checks the peer IP and
+exact 32-byte hello, and cannot redirect packets to another target. All ports
+close on cancellation, VPN enable, error or expiry. `listening` means ready for
+the initial hello; `connected` records that it matched. The orchestrator uses
+port 18765, cancels owned sessions on both boards even if one API fails, and
+retains cleanup errors. A crashed orchestrator leaves at most the bounded test
+duration, not a permanently open listener.
 
 For `--role link`, `--nodelay 0` allows TCP coalescing on the board's local
 HTTP download socket; the default is `1`. This isolates overhead from many
