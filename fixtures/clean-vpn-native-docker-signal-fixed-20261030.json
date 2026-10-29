@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "kind": "native-managed-compose-lab",
+  "status": "passed",
+  "checks": [
+    "compose-pair-supervised-engines-active",
+    "authenticated-address-discovery-actual-assignment-and-immutable-source",
+    "real-tun-authenticated-packet-roundtrip",
+    "compose-private-dns-udp-tcp-nss-and-public-positive-control",
+    "compose-private-dns-transaction-servfail-without-public-fallback",
+    "client-add-revoke-reload-without-existing-client-interruption",
+    "compose-private-dns-revoke-outage-and-recovery-no-public-fallback",
+    "both-roles-http-admin-auth-diagnostics-and-verified-TLS-browser-capture",
+    "stop-retains-guard-no-packet-forwarding",
+    "stopped-engine-cannot-bypass-DNS-through-direct-port53",
+    "start-restores-packet-path",
+    "engine-sigkill-auto-recovery"
+  ],
+  "scope": "internal bridge; real namespace runtime and HTTP admin; no physical hosts or reboot",
+  "images": [
+    {
+      "name": "localhost/cvpn-managed-alpine:signal-fixed-20261030",
+      "id": "sha256:38bee9f2f35ee2df6d75cbcd5a206d3e32143f8324ad1aa7487472c117f49367",
+      "architecture": "arm64",
+      "size": 108274890
+    },
+    {
+      "name": "localhost/cvpn-managed-web-alpine:status-20261030",
+      "id": "sha256:860d7fba27f836e3b49409368f56b64950eb8480f65e089559933153fa9a782c",
+      "architecture": "arm64",
+      "size": 77235276
+    }
+  ],
+  "cleanupErrors": [],
+  "date": "2026-10-30",
+  "engineSourceCommit": "400e7d8",
+  "engineSha256": "613b7f07faca86bba4953581f9f43b81f633e036fa7e7a515c97ad64bbea1c14",
+  "dockerVersion": "28.5.2",
+  "composeVersion": "2.40.3",
+  "dockerBinaryImage": "docker.io/library/docker@sha256:145184796e8717376e73eaf29e16ede8ede2fd75e947a3fae7c05298e5e20d28",
+  "managedPrivateDns": true,
+  "managedAddressDiscovery": true,
+  "testSourceSha256": "80ee1990536b9f124266d36aeaaab8e7c1b7cea7edd623f5c846ed11f8676dbe",
+  "testWorktreeRevision": "974f64555484b3c1f54874393d162c96af873385",
+  "logSha256": "a873e0435fef45972445fc64eb19cdf6cf45211f18474ac8acd67e7f5330af07",
+  "isolation": {
+    "outer": "fresh privileged Linux systemd Podman container, network=none",
+    "dockerDaemon": "separate nested daemon, vfs, own state directory, no host socket",
+    "outerMemoryMiB": 1536,
+    "outerCpuLimit": 2,
+    "outerPidLimit": 768,
+    "macNetworkChanged": false,
+    "physicalHostsChanged": false
+  },
+  "verifiedCleanup": {
+    "nestedContainers": 0,
+    "nestedVolumes": 0,
+    "remainingNestedNetworks": [
+      "host",
+      "none"
+    ],
+    "outerInterfaces": [
+      "lo"
+    ],
+    "outerRoutes": [],
+    "nestedDaemonStopped": true,
+    "outerContainerRemoved": true,
+    "binaryExtractionContainerRemoved": true
+  }
+}
