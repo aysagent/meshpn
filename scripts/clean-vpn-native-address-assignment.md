@@ -2,8 +2,9 @@
 
 Status: the native offer codec, no-TUN discovery CLI and full-session address
 proof are implemented behind explicit opt-in. Existing fixed-address clients
-continue unchanged. Runtime owner integration is a separate gate; this document
-does not claim automatic assignment on daily physical installations.
+continue unchanged. The isolated runtime owner passed its separate real TUN/DNS
+gate; see [runtime owner](clean-vpn-native-runtime-address.md). Daily physical
+installations are not automatically migrated.
 
 ## Authority and compatibility
 
@@ -106,9 +107,10 @@ reuse the native offer encoder.
 
 ## Required owner transaction
 
-Today the owner configures TUN, routes and DNS before engine handshake; native
-DNS also binds the configured client address. Therefore a response header alone
-cannot implement working dynamic assignment.
+The fixed-address owner configures TUN, routes and DNS before engine handshake;
+native DNS also binds the configured client address. Therefore a response header
+alone cannot implement working dynamic assignment. The opt-in isolated owner
+implements the transaction below; host owners remain a separate gate.
 
 The owner must first keep the guard closed, perform the no-TUN discovery and
 journal the proposed runtime address. It then installs only owned TUN/address/
@@ -126,8 +128,8 @@ There is no independent DHCP allocator inside the native reactor.
 ## Acceptance gates before enabling
 
 - Keep native H1/H2 discovery/full-session and legacy-client regressions green;
-  add explicit time-skew/profile and concurrent discovery/reassignment coverage
-  before enabling broadly.
+  broaden time-skew/profile and discovery/reassignment fault coverage before
+  enabling broadly (saved H2 profile and concurrent reload cases now pass).
 - Wrong/missing/mutated/replayed offers, wrong-purpose proofs, explicit requested
   IP, pre-auth DATA, reused key collision, concurrent discoveries and revoke/
   rotation/reassignment races, bounded CPU/memory/connection lifetime.
@@ -159,3 +161,30 @@ reconnect, blackhole, backpressure and wrong CA/name/PSK. Offer codec tests pass
 normally and under ASAN/UBSAN with leak detection; dependency libraries in that
 codec sanitizer run were not instrumented. No physical deployment was performed
 for address assignment. Runtime owner validation is tracked separately.
+
+### Concurrent reload and full engine sanitizer follow-up
+
+Four additional real native tests cover boring/combo × H2/H1 with four parallel
+discoveries during each of seven exit reloads. Six rounds reassign the second
+identity between .3 and .4; the final round revokes it. Completed pre-publication
+offers may contain the previous valid mapping, while pending requests may be
+refused. After publication a fresh discovery must return the current assignment;
+after revoke it must fail. The unrelated .2 session and bidirectional packet
+traffic survive with unchanged process IDs. Exit descriptor counts return to
+baseline and production RSS growth stays below the 8-MiB test budget. These are
+bounded race regressions, not a long-running assignment soak.
+
+The assignment suite now has 34 cases (59 unique JS cases including the existing
+23 interoperability and two data-plane cases). All 34 also passed with the full
+engine and packet fixture compiled using ASAN/UBSAN, leak detection enabled, and
+explicit rejection of sanitizer diagnostics even in expected-failure tests.
+Static dependency libraries were not instrumented. The instrumented resource
+check uses a separate 32-MiB RSS budget: the original production 8-MiB assertion
+failed on roughly 10 MiB of instrumented growth without a sanitizer finding.
+The production budget and descriptor checks were not relaxed.
+
+The independent isolated Linux owner gate separately passed eight checks:
+verified .17 assignment through TUN/DNS/NSS/ping, same-interface restart, refusal
+of reassignment in an existing namespace, wrong-PSK guard containment, and .23
+adoption in a fresh namespace. Details and limitations are in the linked runtime
+owner document. No address-assignment deployment to Radxa/VPS was performed.

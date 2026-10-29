@@ -2,7 +2,7 @@
   "schema": 1,
   "kind": "native-address-assignment-validation",
   "date": "2026-10-30",
-  "status": "native-protocol-passed-owner-gate-separate",
+  "status": "native-protocol-and-isolated-owner-passed-host-owner-separate",
   "environment": "isolated-Linux-Podman-laboratory",
   "productionEngineSha256": "537fdb8b2b321091f4c8122dcacac927438dd2f0a379c9d98975c1c69018d0bf",
   "tests": {
@@ -10,10 +10,18 @@
     "independentIssuer": 26,
     "legacyHttp1MultiPeerReloadWanFixture": 23,
     "completeH1H2DataPlane": 2,
-    "uniqueJsCases": 55,
+    "uniqueJsCases": 59,
     "skipped": 0,
     "codecIndependentHmacVectorsAndMutations": "passed",
-    "codecAddressUndefinedLeakSanitizers": "passed-dependencies-not-instrumented"
+    "codecAddressUndefinedLeakSanitizers": "passed-dependencies-not-instrumented",
+    "nativeConcurrentDiscoveryReload": 4,
+    "fullEngineAddressUndefinedLeakSanitizers": {
+      "cases": 34,
+      "passed": 34,
+      "skipped": 0,
+      "dependencyLibrariesInstrumented": false,
+      "productionEngineSha256": "17d3cf82ee41c65925424719f768c9f2b8a7bd74aeaad0bc36b45798acc26182"
+    }
   },
   "scope": [
     "production-no-TUN-no-DNS-discovery-with-dns-enabled-and-absent-interface",
@@ -28,8 +36,26 @@
   ],
   "physicalDeployments": false,
   "remainingGates": [
-    "fresh-runtime-owner-transaction-and-real-TUN-DNS-integration",
     "host-daily-owner-autoconfiguration-not-supported-by-this-native-change",
-    "broader-concurrent-discovery-and-reassignment-fault-load"
-  ]
+    "broader-time-skew-and-profile-matrix",
+    "longer-concurrent-discovery-and-reassignment-fault-load",
+    "explicit-bounded-physical-address-assignment-trial"
+  ],
+  "concurrentReload": {
+    "parallelDiscoveriesPerRound": 4,
+    "reloadsPerCase": 7,
+    "cases": 4,
+    "unrelatedSessionPreserved": true,
+    "descriptorBaselineRestored": true,
+    "productionRssGrowthBudgetKiB": 8192,
+    "sanitizedRssGrowthBudgetKiB": 32768,
+    "sanitizedBudgetReason": "instrumented process exceeded production RSS assertion by approximately 2 MiB without sanitizer diagnostic; separate instrumentation budget, production unchanged",
+    "longAssignmentSoak": false
+  },
+  "isolatedRuntimeOwner": {
+    "passed": 8,
+    "commit": "ff34069",
+    "test": "scripts/test-native-runtime-address-linux.mjs",
+    "dailyPhysicalMigration": false
+  }
 }

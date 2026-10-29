@@ -222,7 +222,7 @@ static void soak(Child& client,Child* server,int seconds){
     {"packets",rounds*2},{"bytes",bytes},{"resource_samples",samples},{"peak_rss_kib",peak},{"max_rss_growth_kib",growth},
     {"unexpected_reconnects",0},{"dropped_packets",0},{"payload_verified",true}}).dump()<<" PASS\n";
 }
-static json discover_address(const char* engine,const std::string& config,bool success){
+static json discover_address(const char* engine,const std::string& config,int success){
   int output[2];require(pipe(output)==0,"discovery_pipe");const auto parent=getpid();const auto child=fork();require(child>=0,"discovery_fork");
   if(child==0){
     if(prctl(PR_SET_PDEATHSIG,SIGKILL)!=0||getppid()!=parent)_exit(126);
@@ -238,8 +238,9 @@ static json discover_address(const char* engine,const std::string& config,bool s
     pollfd fd{output[0],POLLIN,0};poll(&fd,1,10);
   }
   close(output[0]);if(!ended){kill(child,SIGKILL);waitpid(child,&status,0);throw std::runtime_error("discovery_deadline");}
-  require(WIFEXITED(status)&&(WEXITSTATUS(status)==0)==success,"discovery_exit_status");
-  if(!success){require(text.empty(),"unverified_discovery_output");return {};}
+  require(WIFEXITED(status)&&(WEXITSTATUS(status)==0||WEXITSTATUS(status)==1),"discovery_exit_status");
+  if(success>=0)require((WEXITSTATUS(status)==0)==bool(success),"discovery_expected_status");
+  if(WEXITSTATUS(status)!=0){require(text.empty(),"unverified_discovery_output");return {};}
   auto result=json::parse(text);require(result.size()==5&&result.at("version")==1&&result.at("event")=="address_discovery"&&result.at("status")=="verified"&&result.at("assignment")=="v1","discovery_metadata");return result;
 }
 #include "h2_budget_test.hpp"
@@ -247,6 +248,44 @@ int main(int argc,char** argv){
   signal(SIGPIPE,SIG_IGN);
   std::cout<<std::unitbuf;
   try{
+    if(argc==6&&std::string(argv[4])=="address-concurrency"){
+      const std::string directory=argv[2],config=argv[3],a_config=directory+"/a.json",probe_config=directory+"/discover.json";
+      Child server(argv[1],config.c_str(),true);server.await_state("listening");
+      Child a(argv[1],a_config.c_str());a.await_state("ready");server.await_state("ready");
+      const auto server_pid=server.pid,client_pid=a.pid;const auto baseline_fd=fd_count(server.pid);const auto baseline_rss=rss(server.pid);
+      uint64_t revision=0;unsigned verified=0,refused=0;
+      const auto reload=[&](const char* stage){
+        std::ifstream source(directory+"/"+stage+".json");const std::string bytes((std::istreambuf_iterator<char>(source)),std::istreambuf_iterator<char>());
+        {std::ofstream output(config+".next");output<<bytes;require(bool(output),"discovery_reload_write");}
+        require(rename((config+".next").c_str(),config.c_str())==0&&kill(server.pid,SIGHUP)==0,"discovery_reload");server.await_reload("applied",++revision);
+      };
+      const auto concurrent=[&](const char* stage){
+        std::array<json,4> results;std::array<std::exception_ptr,4> errors;std::array<std::thread,4> workers;
+        for(size_t i=0;i<workers.size();++i)workers[i]=std::thread([&,i]{try{results[i]=discover_address(argv[5],probe_config,-1);}catch(...){errors[i]=std::current_exception();}});
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        try{reload(stage);transfer(a,server,1400,false,3);transfer(server,a,1400,true,4);}
+        catch(...){for(auto& worker:workers)worker.join();throw;}
+        for(auto& worker:workers)worker.join();
+        for(size_t i=0;i<results.size();++i){if(errors[i])std::rethrow_exception(errors[i]);if(results[i].is_null()){++refused;continue;}
+          const auto address=results[i].at("ipv4");require(address=="10.99.0.3"||address=="10.99.0.4","discovery_non_registry_address");++verified;}
+        a.healthy_status();require(server.pid==server_pid&&a.pid==client_pid,"discovery_churn_restarted_session");
+      };
+      for(int round=0;round<6;++round)concurrent(round%2?"move3":"move4");
+      require(discover_address(argv[5],probe_config,true).at("ipv4")=="10.99.0.3","discovery_final_mapping");
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      std::ifstream maps("/proc/"+std::to_string(server.pid)+"/maps");
+      const std::string mapping((std::istreambuf_iterator<char>(maps)),std::istreambuf_iterator<char>());
+      // ASAN allocator/redzones/thread metadata change RSS accounting. Keep
+      // the production 8-MiB drift budget unchanged; instrumented processes
+      // get a separate bounded budget and must also pass leak detection.
+      const bool sanitized=mapping.find("libasan.so")!=std::string::npos;
+      const long rss_limit=sanitized?32768:8192;
+      std::cout<<"ADDRESS_RESOURCES "<<json({{"baselineFds",baseline_fd},{"fds",fd_count(server.pid)},{"baselineRssKiB",baseline_rss},{"rssKiB",rss(server.pid)},{"sanitized",sanitized},{"growthLimitKiB",rss_limit}}).dump()<<"\n";
+      require(fd_count(server.pid)<=baseline_fd&&rss(server.pid)-baseline_rss<rss_limit,"discovery_churn_resources");
+      concurrent("revoke");discover_address(argv[5],probe_config,false);
+      transfer(a,server,65535,false,5);transfer(server,a,65535,true,6);a.healthy_status();
+      a.stop();server.stop();std::cout<<"ADDRESS_CONCURRENCY_PASS "<<json({{"verified",verified},{"refusedDuringReload",refused},{"reloads",revision},{"existingSessionPreserved",true},{"resourcesReclaimed",true}}).dump()<<"\n";return 0;
+    }
     if(argc==6&&std::string(argv[4])=="address-assignment"){
       const std::string directory=argv[2],config=argv[3],a_config=directory+"/a.json",b_config=directory+"/b.json";
       Child server(argv[1],config.c_str(),true);server.await_state("listening");

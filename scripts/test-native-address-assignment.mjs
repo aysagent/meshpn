@@ -8,7 +8,7 @@ import {once} from 'node:events';
 import {randomBytes} from 'node:crypto';
 import {execFileSync,spawn} from 'node:child_process';
 const build=path.resolve(process.env.CVPN_BUILD??'native/clean_vpn/build');
-for(const combo of [false,true])for(const http_version of ['2','1.1'])test(`native authenticated address discovery and session binding: ${combo?'combo':'boring'} H${http_version}`,{timeout:45000},async t=>{
+for(const mode of ['address-assignment','address-concurrency'])for(const combo of [false,true])for(const http_version of ['2','1.1'])test(`native authenticated address discovery and session binding: ${combo?'combo':'boring'} H${http_version} ${mode}`,{timeout:90000},async t=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-address-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  const write=(name,data)=>{const f=dir+'/'+name;fs.writeFileSync(f,Buffer.isBuffer(data)?data:JSON.stringify(data),{mode:0o600});return f;};
  execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',dir+'/key','-out',dir+'/cert','-days','2','-subj','/CN=relay.example','-addext','subjectAltName=DNS:relay.example'],{stdio:'pipe'});
@@ -26,11 +26,11 @@ for(const combo of [false,true])for(const http_version of ['2','1.1'])test(`nati
  const store=(name,c)=>{const value=wrap(c);if(combo&&c.role==='client')value.transparent.listen.port=ports.shift();return write(name,value);};
  store('exit.json',exit);store('a.json',{...client,secret_path:a,peer_ipv4:'10.99.0.2'});store('b.json',{...client,peer_ipv4:'10.99.0.3'});
  store('discover.json',{...client,dns:true});store('mismatch.json',{...client,peer_ipv4:'10.99.0.4'});store('wrong-key.json',{...client,secret_path:wrong});store('wrong-name.json',{...client,server_name:'wrong.example'});
- store('revoke.json',{...exit,peers:[exit.peers[0]]});
+ store('revoke.json',{...exit,peers:[exit.peers[0]]});store('move3.json',exit);store('move4.json',{...exit,peers:[exit.peers[0],{ipv4:'10.99.0.4',secret_path:b}]});
  if(combo){fs.mkdirSync(dir+'/replay',{mode:0o700});execFileSync(build+'/clean-vpn-engine',['--init-transparent-replay',dir+'/exit.json'],{stdio:'pipe'});}
  const cap=JSON.parse(execFileSync(build+'/clean-vpn-engine',['--capabilities'],{encoding:'utf8'}));assert.equal(cap.address_assignment.discovery_cli,true);assert.equal(cap.address_assignment.session_proof,true);
- const child=spawn(build+'/integration-test',[build+'/clean-vpn-engine-fixture',dir,dir+'/exit.json','address-assignment',build+'/clean-vpn-engine']);let output='';for(const stream of [child.stdout,child.stderr])stream.on('data',b=>output+=b);
- const timeout=setTimeout(()=>child.kill('SIGKILL'),40000);t.after(()=>{clearTimeout(timeout);child.kill('SIGKILL');});const [code]=await once(child,'close');clearTimeout(timeout);assert.equal(code,0,output);assert.match(output,/ADDRESS_ASSIGNMENT_PASS/);
+ const child=spawn(build+'/integration-test',[build+'/clean-vpn-engine-fixture',dir,dir+'/exit.json',mode,build+'/clean-vpn-engine']);let output='';for(const stream of [child.stdout,child.stderr])stream.on('data',b=>output+=b);
+ const timeout=setTimeout(()=>child.kill('SIGKILL'),80000);t.after(()=>{clearTimeout(timeout);child.kill('SIGKILL');});const [code]=await once(child,'close');clearTimeout(timeout);assert.equal(code,0,output);assert.doesNotMatch(output,/ERROR: (?:AddressSanitizer|LeakSanitizer)|runtime error:/);assert.match(output,mode==='address-assignment'?/ADDRESS_ASSIGNMENT_PASS/:/ADDRESS_CONCURRENCY_PASS/);
 });
 
 // Independent TLS/HTTP issuer: never use the native offer encoder in these
@@ -80,6 +80,6 @@ for(const httpVersion of ['2','1.1'])for(const scenario of ['valid','old-exit','
  const config={version:1,role:'client',address:'127.0.0.1',port:server.address().port,tun:'absenttun0',dns:true,ca:dir+'/cert',server_name:'relay.example',secret_path:dir+'/psk',http_version:httpVersion};
  fs.writeFileSync(dir+'/client.json',JSON.stringify(config),{mode:0o600});
  const child=spawn(build+'/clean-vpn-engine',['--discover-address',dir+'/client.json']);let stdout='',stderr='';child.stdout.on('data',b=>stdout+=b);child.stderr.on('data',b=>stderr+=b);const timer=setTimeout(()=>child.kill('SIGKILL'),12000);t.after(()=>{clearTimeout(timer);child.kill('SIGKILL');});
- const [code]=await once(child,'close');clearTimeout(timer);assert.equal(requestSeen,true);
+ const [code]=await once(child,'close');clearTimeout(timer);assert.equal(requestSeen,true);assert.doesNotMatch(stderr,/ERROR: (?:AddressSanitizer|LeakSanitizer)|runtime error:/);
  if(scenario==='valid'){assert.equal(code,0,stderr);assert.deepEqual(JSON.parse(stdout),{version:1,event:'address_discovery',status:'verified',assignment:'v1',ipv4:'10.99.0.3'});}else{assert.equal(code,1,stderr);assert.equal(stdout,'');assert.match(stderr,/address discovery refused/);}
 });
