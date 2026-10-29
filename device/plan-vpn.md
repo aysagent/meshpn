@@ -23,7 +23,12 @@ Bearer v2, повторные соединения, bulk и отказ на по
 Сохраняемый каталог содержит четыре пользовательских профиля; импорт JSON опционален. Проверка воспроизводимости выполняется до сохранения и на каждом
 соединении. [Описание](docs/browser-profile-capture.md),
 [локальный захват: отчёт](reports/2026-10-29-onboard-browser-capture.md).
-Аппаратные измерения и расширение поддержанного TLS subset остаются.
+Обе P4 обновлены до bfa0756: захват из Mac Chrome, catalog persistence,
+cancel/timeout и отказ при неверном JA3 проверены на настоящей прошивке.
+Исправлено переполнение main startup stack; USB DIRECT HTTPS проходит.
+[Аппаратный отчёт](reports/2026-10-29-onboard-capture-hardware.md).
+Телефон/Safari, активный boring-tls с native exit, reconnect/нагрузка и расширение
+поддержанного TLS subset остаются.
 [Native + ALPS: отчёт](reports/2026-10-29-native-profiled-tls-alps.md).
 [HTTP/2: результаты](reports/2026-10-29-profiled-tls-http2.md).
 [Настройка](docs/profiled-tls.md), [отчёт](reports/2026-10-29-profiled-tls-transport.md).

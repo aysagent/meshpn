@@ -20,7 +20,12 @@
 Профиль проверяется до записи в каталог; JA3/JA4 — на каждом VPN-соединении.
 Проверены реальный Chromium, production C/C++ parser и lifecycle, собраны три платы.
 [Инструкция](docs/browser-profile-capture.md), [отчёт](reports/2026-10-29-onboard-browser-capture.md).
-Следом нужны аппаратные проверки захвата с телефона, reconnect/памяти и throughput.
+Аппаратная проверка 29 октября: обе P4 обновлены до `bfa0756`; локальный захват
+с настоящего Mac Chrome, отмена/timeout, отказ неверному JA3, сохранность после
+прошивки/reboot и HTTPS через USB прошли. Исправлен startup stack overflow.
+[Аппаратный отчёт](reports/2026-10-29-onboard-capture-hardware.md).
+Следом: телефон/Safari и AP-путь захвата, аппаратный boring-tls с native exit,
+проверка JA3/JA4 при reconnect, память и throughput под VPN.
 
 Предыдущий offline-блок: `boring-tls` интегрирован как отдельный VPN-транспорт
 с фиксированным JA3/JA4-профилем, TLS 1.3, HTTP/2 и HTTP/1.1 Bearer v2 и PSRAM worker.
