@@ -73,13 +73,27 @@ export async function startPeer({host = '127.0.0.1', port = 0, type = 'tcp', key
   if (!['tcp', 'udp', 'tls'].includes(type)) throw Error('Unknown local peer transport');
   const stats = {connections: 0, packets_in: 0, packets_out: 0, invalid: 0, dns: 0, http: 0, mss: [], errors: []};
   const sockets = new Set(), flows = new Map();
-  let server, nextSequence = 10000, closing = false;
-  function answer(p, emit) {
+  let server, nextSequence = 10000, nextConnection = 0, closing = false;
+  function answer(p, emit, scope) {
     if (p.length < 20 || p[0] !== 0x45 || p.readUInt16BE(2) !== p.length || checksum(p.subarray(0, 20))) {
       stats.invalid++; return;
     }
     stats.packets_in++;
     if (p.readUInt16BE(6) & 0x3fff) return; // Fragment handling is tested independently.
+    const body = p.subarray(20);
+    let valid = true;
+    if (p[9] === 1) valid = body.length >= 8 && checksum(body) === 0;
+    else if (p[9] === 6 || p[9] === 17) {
+      const udpPacket = p[9] === 17;
+      valid = udpPacket ? body.length >= 8 && body.readUInt16BE(4) === body.length :
+        body.length >= 20 && (body[12] >>> 4) * 4 >= 20 && (body[12] >>> 4) * 4 <= body.length;
+      if (valid && !(udpPacket && body.readUInt16BE(6) === 0)) {
+        const pseudo = Buffer.alloc(12);
+        p.copy(pseudo, 0, 12, 20); pseudo[9] = p[9]; pseudo.writeUInt16BE(body.length, 10);
+        valid = checksum(Buffer.concat([pseudo, body])) === 0;
+      }
+    }
+    if (!valid) { stats.invalid++; return; }
     const src = address(p.subarray(12, 16)), dst = address(p.subarray(16, 20));
     if (dst !== testAddress && dst !== '1.1.1.1') return;
     const send = b => { stats.packets_out++; emit(b); };
@@ -103,7 +117,7 @@ export async function startPeer({host = '127.0.0.1', port = 0, type = 'tcp', key
     const sport = p.readUInt16BE(20), dport = p.readUInt16BE(22);
     const seq = p.readUInt32BE(24), ack = p.readUInt32BE(28), flags = p[33], h = (p[32] >>> 4) * 4;
     if (h < 20 || 20 + h > p.length) return;
-    const id = `${src}:${sport}/${dst}:${dport}`;
+    const id = `${scope}${src}:${sport}/${dst}:${dport}`;
     let f = flows.get(id);
     if (flags & 4) { flows.delete(id); return; }
     if (flags & 2) {
@@ -151,6 +165,7 @@ export async function startPeer({host = '127.0.0.1', port = 0, type = 'tcp', key
   }
   function stream(socket) {
     stats.connections++; sockets.add(socket); socket.setNoDelay(true);
+    const scope = `stream:${++nextConnection}/`;
     let input = Buffer.alloc(0), pending = Promise.resolve();
     const emit = p => {
       const header = Buffer.alloc(4); header.writeUInt32BE(p.length);
@@ -168,16 +183,19 @@ export async function startPeer({host = '127.0.0.1', port = 0, type = 'tcp', key
         const length = input.readUInt32BE(0);
         if (length < 20 || length > 1400) { stats.invalid++; socket.destroy(); return; }
         if (input.length < length + 4) break;
-        const p = input.subarray(4, length + 4); input = input.subarray(length + 4); answer(p, emit);
+        const p = input.subarray(4, length + 4); input = input.subarray(length + 4); answer(p, emit, scope);
       }
       if (input.length > 1404) socket.destroy();
     });
     socket.on('error', e => { if (!closing && stats.errors.length < 32) stats.errors.push(e.code ?? e.message); });
-    socket.on('close', () => sockets.delete(socket));
+    socket.on('close', () => {
+      sockets.delete(socket);
+      for (const id of flows.keys()) if (id.startsWith(scope)) flows.delete(id);
+    });
   }
   if (type === 'udp') {
     server = dgram.createSocket('udp4');
-    server.on('message', (p, r) => answer(p, b => server.send(b, r.port, r.address)));
+    server.on('message', (p, r) => answer(p, b => server.send(b, r.port, r.address), `udp:${r.address}:${r.port}/`));
     await new Promise((resolve, reject) => { server.once('error', reject); server.bind(port, host, resolve); });
   } else {
     server = type === 'tls' ? tls.createServer({key, cert, minVersion: 'TLSv1.2', maxVersion: 'TLSv1.2', handshakeTimeout: 5000}, stream) : net.createServer(stream);

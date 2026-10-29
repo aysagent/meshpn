@@ -38,6 +38,7 @@ node device/tests/test-vpn-dns.mjs
 node device/tests/test-vpn-storage.mjs
 node device/tests/test-vpn-probe.mjs
 node device/tests/test-vpn-local-restore.mjs
+node device/tests/test-vpn-local-peer.mjs
 node device/tests/test-p4-radio-mode.mjs
 node device/tests/test-wg-clock.mjs
 node device/tests/test-vpn-ingress.mjs

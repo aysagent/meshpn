@@ -41,3 +41,9 @@ but do not establish firmware performance or a real WireGuard/server connection.
 `VPN_TLS_IO_PACKETS=8192` extends the TLS I/O case from its normal 128 packets
 to a bounded concurrent-read/write stress run (maximum 32768). The peer fragments
 the framed stream into 17-byte writes; packet totals and contents are checked.
+
+The synthetic peer validates IPv4 and ICMP/TCP/UDP checksums before replying
+(IPv4 zero UDP checksum remains permitted). TCP state is isolated per outer
+TCP/TLS connection or UDP endpoint, so a reconnect cannot inherit a previous
+connection's SYN/ACK state. These safeguards are tested on loopback; they do
+not replace a successful hardware tunnel test.
