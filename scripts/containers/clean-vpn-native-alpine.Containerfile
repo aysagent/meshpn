@@ -5,7 +5,7 @@ FROM ${BASE} AS build
 RUN apk add --no-cache build-base cmake git go perl patch ca-certificates pkgconf
 WORKDIR /src
 ENV GIT_TERMINAL_PROMPT=0
-ARG JOBS=2
+ARG JOBS=1
 COPY native/boring_tls/ /src/native/boring_tls/
 RUN cmake -S native/boring_tls -B native/boring_tls/build -DCMAKE_BUILD_TYPE=Release
 COPY native/clean_vpn/ /src/native/clean_vpn/

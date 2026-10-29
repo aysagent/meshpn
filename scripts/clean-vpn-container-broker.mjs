@@ -12,6 +12,7 @@ import {need,exact,readJson,atomic,body,send,safeError} from '../admin/lib/commo
 import {Jobs} from '../admin/lib/command.mjs';
 import {Metrics} from '../admin/lib/metrics.mjs';
 import {VpnSettingsTransaction} from '../admin/lib/vpn-settings-transaction.mjs';
+import {certificateStatus} from '../admin/lib/certificates.mjs';
 import {publicClientList} from '../admin/lib/clients.mjs';
 import {NativeClientManager,clientName} from './lib/native-client-manager.mjs';
 
@@ -67,7 +68,7 @@ export async function createContainerBroker(c,{engine=new ContainerEngine(c),run
  async function dispatch(route,p={}) {
   if(!['/status','/settings','/logs','/observer'].includes(route)){need(!jobs.current,'operation_in_progress',409);need(!transaction.load(),'vpn_transaction_recovery_required',409);}
   switch(route){
-   case '/status':return{metrics:metrics.sample(),vpn:engine.status(),network:{ActiveState:fs.existsSync(engine.state+'/network.json')?'active':'unknown'},guard:{active:fs.existsSync(engine.state+'/network.json')?true:null,summary:'Namespace guard retained while engine stopped; no host guard control'},wifi:{wpa_state:'unsupported'},captive:{active:false},mdns:{status:'unsupported'},jobs:jobs.history,vpnSettingsRecovery:{...recovery,pending:!!transaction.load()},capabilities};
+   case '/status':return{metrics:metrics.sample(),certificates:certificateStatus(vpn()),vpn:engine.status(),network:{ActiveState:fs.existsSync(engine.state+'/network.json')?'active':'unknown'},guard:{active:fs.existsSync(engine.state+'/network.json')?true:null,summary:'Namespace guard retained while engine stopped; no host guard control'},wifi:{wpa_state:'unsupported'},captive:{active:false},mdns:{status:'unsupported'},jobs:jobs.history,vpnSettingsRecovery:{...recovery,pending:!!transaction.load()},capabilities};
    case '/settings':{const v=vpn(),p=packet(v);return{hostname:settings.hostname,adminUrl:'http://127.0.0.1:'+(c.webPort??8080)+'/',vpn:{role,address:p.address,port:p.port,serverName:p.server_name,sni:p.sni,profile:settings.profile??(p.tls_profile_path?path.basename(p.tls_profile_path):null),dns:p.dns===true,transport:v.transport??'boring-tls',nativeManaged:true,containerManaged:true},dns:{mode:role==='client'?'tunnel':'exit',upstreams:'native fixed upstreams; host DNS unchanged',integrationManaged:false},profiles:profiles(),wifi:[],capabilities};}
    case '/vpn/action':exact(p,['action']);need(['start','stop','restart'].includes(p.action),'vpn_action');return jobs.start('vpn-'+p.action,async()=>{settings={...settings,desired:p.action!=='stop'};atomic(settingsFile,settings);if(p.action==='start'&&engine.child)return engine.status();await engine[p.action]();return engine.status();});
    case '/logs':exact(p,['service']);need(['vpn','admin','network'].includes(p.service),'log_service');return{lines:engine.lines.slice()};
