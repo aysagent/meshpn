@@ -61,7 +61,17 @@ export function readPeerDnsRegistry(filename) {
       used += count; requireValue(used <= MAX_REGISTRY, 'peer_dns_registry_size');
     }
     const snapshot = peerDnsSnapshot(JSON.parse(bytes.subarray(0, used).toString('utf8')));
-    noPending(); return snapshot;
+    // The second journal check alone has an ABA race: a reader can open the
+    // tentative inode while a concurrent writer rolls it back and removes the
+    // journal before this check. Only publish the inode still named AFTER the
+    // final no-pending observation. A successful commit retains that inode;
+    // rollback or another atomic replacement makes this answer SERVFAIL.
+    noPending();
+    const current = fs.lstatSync(filename);
+    requireValue(current.isFile() && !current.isSymbolicLink() && current.nlink === 1
+      && current.dev === st.dev && current.ino === st.ino && current.size === st.size
+      && current.mtimeMs === st.mtimeMs && current.ctimeMs === st.ctimeMs, 'peer_dns_registry_replaced');
+    return snapshot;
   } finally { fs.closeSync(fd); }
 }
 

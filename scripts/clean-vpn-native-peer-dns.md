@@ -38,7 +38,11 @@ DNS labels длиной 1–63 символа, начиная с буквы ил
 
 Пока рядом есть `transaction.json` незавершённой операции менеджера, resolver
 отвечает SERVFAIL для приватных зон. Это не позволяет публиковать ещё не
-применённые или ожидающие rollback назначения.
+применённые или ожидающие rollback назначения. После последней проверки
+маркера resolver сверяет inode текущего пути с прочитанным FD: завершившийся
+между чтением и ответом rollback не может опубликовать временный snapshot.
+Atomic replacement во время чтения даёт SERVFAIL, успешный commit сохраняет
+прочитанный inode и разрешает ответ.
 
 Registry перечитывается перед каждым допущенным запросом. Atomic rename
 менеджера виден без restart. Если внешняя программа пишет файл неатомарно,
@@ -100,7 +104,7 @@ Native DNS клиентов также поддерживает приватну
 ## Приёмка
 
 ```sh
-node --test scripts/test-native-peer-dns.mjs
+node --test scripts/test-native-peer-dns.mjs scripts/test-native-peer-dns-transactions.mjs
 ```
 
 Тесты проверяют UDP/TCP, фрагментацию/pipelining, A/PTR/NODATA/NXDOMAIN,
