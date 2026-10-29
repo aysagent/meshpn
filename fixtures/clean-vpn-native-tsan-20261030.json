@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "kind": "native-thread-sanitizer-acceptance",
+  "date": "2026-10-30",
+  "status": "passed-after-signal-race-fix",
+  "signalFixCommit": "400e7d8",
+  "dnsTestAccountingCommit": "974f645",
+  "platform": {
+    "architecture": "aarch64",
+    "kernel": "7.2.5-200.fc44.aarch64",
+    "compiler": "GCC 13.3.0 Ubuntu",
+    "image": "de1718a0f6229c2c1ff02f2d60ecd11bfbb074caaf49900cdb4b586c3cdc393d",
+    "cpus": 1,
+    "buildMemoryMiB": 1500
+  },
+  "flags": "-O1 -g1 -fsanitize=thread -fno-omit-frame-pointer -std=c++17",
+  "options": "halt_on_error=1:exitcode=66:log_path=<separate-prefix>",
+  "coverage": {
+    "projectCppEngineAndHeaders": true,
+    "productionAndPacketFixture": true,
+    "thirdPartyLibraries": false,
+    "smallProjectAlpsCAdapter": false,
+    "integrationTrafficGenerator": false
+  },
+  "supportProbe": {
+    "synchronizedExit": 0,
+    "knownRaceExit": 66,
+    "knownRaceReported": true
+  },
+  "before": {
+    "sourceCommit": "1f57b89",
+    "sourceEngineSha256": "e0060e47a88f733db58f7f3b23cdfc5da0c10765133322913f46a50ab3fcce3a",
+    "targetedEngineSha256": "404ab3718e2a2b1d1c12bda6e7405bc6c50f7be3a0153b3daa9b08ba52bf0399",
+    "originalFailure": "combo H2 address-concurrency: worker on_reload write vs main PeerReload::poll read",
+    "targetedWorkerSignalRegression": {
+      "status": "failed-as-expected",
+      "nativeExit": 66,
+      "reportedRace": "reload_requested cross-thread data race"
+    }
+  },
+  "after": {
+    "sourceEngineSha256": "4fdd69e13e1b67037ed75160ea29e811bf1285941f18071e7deb890e69e7ff43",
+    "engineSha256": "56d15d8ef5e0e046478303a0fac2667fc19f52c5e952bda66a7ef7cef0fdb69c",
+    "fixtureSha256": "2390abbe3ff246ce3e361753854838bef125843018166f6a745129a28ba1beb3",
+    "integration": {
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 20789.207012,
+      "groups": {
+        "addressAndConcurrencyH1H2BoringCombo": 8,
+        "peerReloadH1H2BoringComboAndStandalone": 5,
+        "targetedWorkerHupAndTerm": 1
+      }
+    },
+    "quota": {
+      "status": "passed",
+      "concurrentAuthenticationWorkers": 24,
+      "binarySha256": "94806c062535552d7e057838446274c100a65332589997151725a5ffb3cae5c3"
+    },
+    "dnsUnit": {
+      "normal": "passed",
+      "tsan": "passed",
+      "binarySha256": "c8c147cfd436f8f17f97659b2584db17c7fc75dc2eb6f9c65bd1daa4c0169697",
+      "accounting": "initialize runtime thread bookkeeping, baseline +20 application threads, return to baseline",
+      "originalObservedProcTaskEntries": {
+        "beforeFirstThread": 3,
+        "atSaturationWithTsan": 24,
+        "oldAbsoluteLimit": 23
+      },
+      "productionThreadBudgetIncreased": false
+    },
+    "independentSanitizerReportFiles": 0,
+    "fullNativeDnsChurnReceipt": "clean-vpn-native-dns-reload-churn-20261030.json",
+    "fullNativeDnsChurnChecks": 12
+  },
+  "logsSha256": {
+    "race-before.txt": "26a8f48eab91e71c5cbe80c42637c49acb1adb54afbb89500af029c80e9302af",
+    "signal-before.log": "e5cd1d9fe3f5cfc7b80e6cdd25738ee02fd9b6ab93715a61dcc1dd71e77e755c",
+    "signal-fixed.log": "ad2c576d2a33fed2208639f35ad58712fff5001d5c964314746cbee0c17108e5",
+    "final14.log": "ffe301f5c4f5ecefae8610d53c0cf9d4dfa19f1cca7b4805747f4c260fd71988",
+    "quota.log": "7d6ef161a3debcd876f46a61f65a91d51718470d8d42c0d2be7eaf22cd16d04a",
+    "dns-normal-final.log": "39153160f79d2a007e20f56ca93dd757ace666c4a1560020f6f41ddedbb0f66f",
+    "dns-tsan-final.log": "39153160f79d2a007e20f56ca93dd757ace666c4a1560020f6f41ddedbb0f66f"
+  },
+  "hostAslrOrSysctlChanged": false,
+  "macNetworkChanged": false,
+  "physicalHostsChanged": false,
+  "limitations": [
+    "Bounded exercised schedules; absence of reports is not proof of all-race freedom",
+    "Dependency libraries and ALPS C adapter not instrumented",
+    "Real-host reboot or physical network not tested"
+  ]
+}
