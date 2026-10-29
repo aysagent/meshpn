@@ -19,6 +19,13 @@ typedef struct {
     long verify_error;
     bool authenticated;
     uint64_t tls_bytes_sent;
+    char cipher[64];
+    /* Per connection; SSL_read/write elapsed includes preemption, not pure
+     * crypto time. I/O includes HTTP framing; handshake is excluded. */
+    uint64_t read_calls, read_bytes, read_us, read_max_us;
+    uint64_t write_calls, write_bytes, write_us, write_max_us;
+    uint64_t idle_wait_calls, idle_wait_us;
+    int64_t sampled_us;
 } meshvpn_profile_tunnel_diag_t;
 typedef struct {
     /* fd is connected, nonblocking and caller-owned. All callbacks are executed

@@ -975,6 +975,27 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(profile, "alps_bytes", vs.profiled.alps_bytes);
     cJSON_AddNumberToObject(profile, "verify_error", vs.profiled.verify_error);
     cJSON_AddNumberToObject(profile, "tls_bytes_sent", vs.profiled.tls_bytes_sent);
+    cJSON_AddStringToObject(profile, "cipher", vs.profiled.cipher);
+    cJSON *profile_io = cJSON_AddObjectToObject(profile, "io");
+    cJSON_AddStringToObject(profile_io, "scope", "per connection, post-handshake; bytes include HTTP framing; SSL call time includes socket I/O and preemption, not isolated crypto; published once per second");
+#define PROFILE_IO(name) cJSON_AddNumberToObject(profile_io, #name, vs.profiled.name)
+    PROFILE_IO(read_calls); PROFILE_IO(read_bytes); PROFILE_IO(read_us); PROFILE_IO(read_max_us);
+    PROFILE_IO(write_calls); PROFILE_IO(write_bytes); PROFILE_IO(write_us); PROFILE_IO(write_max_us);
+    PROFILE_IO(idle_wait_calls); PROFILE_IO(idle_wait_us); PROFILE_IO(sampled_us);
+#undef PROFILE_IO
+    cJSON *profile_tcp = cJSON_AddObjectToObject(profile, "tcp");
+    cJSON_AddBoolToObject(profile_tcp, "available", vs.profiled_tcp.available);
+    cJSON_AddBoolToObject(profile_tcp, "queues_truncated", vs.profiled_tcp.queues_truncated);
+    cJSON_AddStringToObject(profile_tcp, "scope", "outer socket snapshot; bytes are current gauges; retransmits is current retry count, not lifetime loss; RTT uses lwIP coarse timer");
+    if (vs.profiled_tcp.available) {
+#define PROFILE_TCP(name) cJSON_AddNumberToObject(profile_tcp, #name, vs.profiled_tcp.name)
+        PROFILE_TCP(sampled_us); PROFILE_TCP(local_port); PROFILE_TCP(mss);
+        PROFILE_TCP(cwnd); PROFILE_TCP(snd_wnd); PROFILE_TCP(rcv_wnd); PROFILE_TCP(snd_buf);
+        PROFILE_TCP(unacked_bytes); PROFILE_TCP(unsent_bytes); PROFILE_TCP(ooseq_bytes);
+        PROFILE_TCP(srtt_ms); PROFILE_TCP(rto_ms); PROFILE_TCP(retransmits); PROFILE_TCP(dupacks);
+        PROFILE_TCP(snd_scale); PROFILE_TCP(rcv_scale);
+#undef PROFILE_TCP
+    }
     if (vs.profiled_stack_spare) cJSON_AddNumberToObject(profile, "last_worker_stack_spare_bytes", vs.profiled_stack_spare);
     else cJSON_AddNullToObject(profile, "last_worker_stack_spare_bytes");
     cJSON_AddStringToObject(vpn, "transport", vs.transport);
@@ -1795,7 +1816,13 @@ esp_err_t meshvpn_web_start(void)
     server.uri_match_fn = httpd_uri_match_wildcard;
     /* HTTP's observed high-water mark leaves >3 KiB spare at 9 KiB.
      * Keep the larger stack for HTTPS handshakes. */
+#if CONFIG_IDF_TARGET_ESP32P4
+    /* Expanded TLS/TCP diagnostics left <1 KiB HTTP stack spare on P4.
+     * Keep headroom for error/logging paths without changing XIAO's RAM budget. */
+    server.stack_size = s_https ? 16384 : 12288;
+#else
     server.stack_size = s_https ? 12288 : 9216;
+#endif
     server.max_open_sockets = 3;
     server.lru_purge_enable = true;
     server.recv_wait_timeout = 3;

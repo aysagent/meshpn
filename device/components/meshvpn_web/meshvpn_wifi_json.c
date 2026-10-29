@@ -46,16 +46,19 @@ void meshvpn_wifi_diagnostics_json(cJSON *wifi)
     cJSON_AddBoolToObject(tx, "available", true);
 #if CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE
     cJSON_AddStringToObject(tx, "scope", "Wi-Fi API handoffs; accepted = direct SDIO handoff or staged copy, not RF completion; remote by-ref delegation may also count an inner copy call; use hosted.tx_queue for unique frame counts");
+    cJSON_AddStringToObject(tx, "buffer_config_scope", "host build defaults; C6 runtime buffer counts are not queried");
 #endif
 #ifdef CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM
     cJSON_AddNumberToObject(tx, "static_rx_buffer_count", CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM);
 #endif
-#ifdef CONFIG_ESP_WIFI_STATIC_TX_BUFFER
+#if defined(CONFIG_ESP_WIFI_STATIC_TX_BUFFER) || (defined(CONFIG_ESP_WIFI_TX_BUFFER_TYPE) && CONFIG_ESP_WIFI_TX_BUFFER_TYPE == 0)
     cJSON_AddStringToObject(tx, "buffer_type", "static");
     cJSON_AddNumberToObject(tx, "static_buffer_count", CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM);
-#else
+#elif defined(CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM)
     cJSON_AddStringToObject(tx, "buffer_type", "dynamic");
     cJSON_AddNumberToObject(tx, "dynamic_buffer_count", CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM);
+#else
+    cJSON_AddStringToObject(tx, "buffer_type", "unknown");
 #endif
 #ifdef CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM
     cJSON_AddNumberToObject(tx, "cache_buffer_count", CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM);

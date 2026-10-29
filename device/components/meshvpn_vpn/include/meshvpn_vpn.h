@@ -28,6 +28,15 @@ typedef struct {
 } meshvpn_vpn_timing_t;
 
 typedef struct {
+    bool available, queues_truncated;
+    int64_t sampled_us;
+    uint32_t cwnd, snd_wnd, rcv_wnd, snd_buf, unacked_bytes, unsent_bytes, ooseq_bytes;
+    uint32_t srtt_ms, rto_ms;
+    uint16_t local_port, mss;
+    uint8_t retransmits, dupacks, snd_scale, rcv_scale;
+} meshvpn_vpn_tcp_diag_t;
+
+typedef struct {
     bool implemented;
     bool connected;
     bool enabled;
@@ -45,6 +54,7 @@ typedef struct {
     bool profiled_available, tls_psk_set;
     uint32_t profiled_stack_spare, profiled_attempt;
     meshvpn_profile_tunnel_diag_t profiled;
+    meshvpn_vpn_tcp_diag_t profiled_tcp;
     char state[24];
     char address[16];
     uint32_t wg_handshake_age;

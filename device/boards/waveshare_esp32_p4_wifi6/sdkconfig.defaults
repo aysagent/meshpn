@@ -19,6 +19,21 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # Keep the 5.5.5 bootloader within the existing 0x8000 partition-table offset.
 CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
 CONFIG_SPIRAM=y
+
+# WAN tunnels need a receive window larger than the XIAO/USB-FS default:
+# 32 KiB at 90 ms RTT limits a TCP tunnel to about 2.9 Mbit/s.
+# Prefer PSRAM for lwIP payloads to reduce pressure on internal/SDIO DMA RAM.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_LWIP_WND_SCALE=y
+CONFIG_LWIP_TCP_RCV_SCALE=2
+CONFIG_LWIP_TCP_WND_DEFAULT=131072
+# Keep queued TX payload bounded independently of the larger receive window.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
+CONFIG_LWIP_TCP_SACK_OUT=y
+# Reduce delayed ACK and RTT-estimator granularity for the outer WAN TCP socket.
+CONFIG_LWIP_TCP_TMR_INTERVAL=100
+# 131072 / MSS 1360 + 2, rounded up.
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=100
 # ESP-IDF 5.4 still gates the P4's supported 200 MHz PSRAM mode behind this
 # feature switch. Without it Kconfig silently falls back to 20 MHz.
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y

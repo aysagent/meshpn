@@ -30,7 +30,14 @@ struct Test {
     std::chrono::steady_clock::time_point end=std::chrono::steady_clock::now()+std::chrono::seconds(14);
 };
 static bool current(void *p) { auto &t=*static_cast<Test*>(p);return !(t.cancel_ready&&t.ready)&&!t.failed&&t.received<t.total&&std::chrono::steady_clock::now()<t.end; }
-static void diagnostic(void *p,const meshvpn_profile_tunnel_diag_t*d) { static_cast<Test*>(p)->diag=*d; }
+static void diagnostic(void *p,const meshvpn_profile_tunnel_diag_t*d) {
+    auto &t=*static_cast<Test*>(p);
+    assert(d->read_calls>=t.diag.read_calls && d->write_calls>=t.diag.write_calls);
+    assert(d->read_bytes>=t.diag.read_bytes && d->write_bytes>=t.diag.write_bytes);
+    assert(d->read_us>=d->read_max_us && d->write_us>=d->write_max_us);
+    assert(d->sampled_us>=t.diag.sampled_us);
+    t.diag=*d;
+}
 static void ready(void *p) { static_cast<Test*>(p)->ready++; }
 static size_t peek(void *p,const uint8_t **out) {
     auto&t=*static_cast<Test*>(p);assert(t.ready==1);t.peeks++;
@@ -80,6 +87,11 @@ int run_once(int argc,char**argv) {
     if(mode=="cancel_auth"||mode=="cancel_handshake")test.end=std::chrono::steady_clock::now()+std::chrono::milliseconds(100);
     int rc=meshvpn_profile_tunnel_run(&o);close(fd);
     printf("{\"rc\":%d,\"ready\":%u,\"packets\":%u,\"sent\":%u,\"peeks\":%u,\"phase\":\"%s\",\"alpn\":\"%s\",\"ja3\":\"%s\",\"ja4\":\"%s\",\"alps\":%s,\"alps_bytes\":%zu,\"hellos\":%u,\"tls_bytes\":%llu}\n",rc,test.ready,test.received,test.sent,test.peeks,test.diag.phase,test.diag.alpn,test.diag.actual.ja3,test.diag.actual.ja4,test.diag.alps?"true":"false",test.diag.alps_bytes,test.diag.hellos,static_cast<unsigned long long>(test.diag.tls_bytes_sent));
+    if(mode=="success"||mode=="bulk") {
+        assert(test.diag.cipher[0]);
+        assert(test.diag.read_bytes>=test.received*test.frame_length);
+        assert(test.diag.write_bytes>=test.sent*test.frame_length);
+    }
     if(mode=="success"||mode=="bulk")return !(rc==ECANCELED&&test.received==test.total&&test.ready==1&&test.diag.actual.match);
     if(mode=="cancel")return !(rc==ECANCELED&&test.ready==1&&test.peeks==0);
     if(mode=="disconnect"||mode=="invalid"||mode=="backpressure")return !(rc!=0&&test.ready==1&&test.received<test.total);

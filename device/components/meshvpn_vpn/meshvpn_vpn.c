@@ -30,6 +30,7 @@
 #include "lwip/ip4_frag.h"
 #include "lwip/inet_chksum.h"
 #include "lwip/lwip_napt.h"
+#include "lwip/priv/tcp_priv.h"
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static const char *TAG = "meshvpn_vpn";
@@ -190,7 +191,7 @@ static esp_err_t apply_config(void *arg)
     memcpy(s.profiled_server, c->profiled_server, sizeof(s.profiled_server));
     memcpy(s.tls_profile, c->tls_profile, sizeof(s.tls_profile));
     s.tls_psk_set = c->tls_psk_hex[0] != 0;
-    memset(&s.profiled, 0, sizeof(s.profiled)); s.profiled_stack_spare = 0;
+    memset(&s.profiled, 0, sizeof(s.profiled)); memset(&s.profiled_tcp, 0, sizeof(s.profiled_tcp)); s.profiled_stack_spare = 0;
     #if CONFIG_MESHVPN_PROFILED_TLS_ENABLE
     s.profiled_available = true;
 #endif
@@ -927,10 +928,59 @@ typedef struct {
     bool was_up;
 } profiled_job_t;
 static bool profiled_current(void *arg) { return session(((profiled_job_t *)arg)->generation); }
+typedef struct {
+    struct sockaddr_in local, peer;
+    meshvpn_vpn_tcp_diag_t result;
+} profiled_tcp_query_t;
+
+static uint32_t profiled_tcp_queue_bytes(const struct tcp_seg *seg, bool *truncated)
+{
+    uint32_t bytes = 0;
+    for (unsigned n = 0; seg && n < 512; n++, seg = seg->next) bytes += seg->len;
+    if (seg) *truncated = true;
+    return bytes;
+}
+
+/* Diagnostic only. Copy the owned socket's exact four-tuple on the lwIP core;
+ * never keep PCB pointers or change congestion/flow-control state. */
+static esp_err_t profiled_tcp_snapshot(void *arg)
+{
+    profiled_tcp_query_t *q = arg;
+    for (const struct tcp_pcb *p = tcp_active_pcbs; p; p = p->next) {
+        if (!IP_IS_V4(&p->local_ip) || !IP_IS_V4(&p->remote_ip) ||
+            p->local_port != ntohs(q->local.sin_port) || p->remote_port != ntohs(q->peer.sin_port) ||
+            ip4_addr_get_u32(ip_2_ip4(&p->local_ip)) != q->local.sin_addr.s_addr ||
+            ip4_addr_get_u32(ip_2_ip4(&p->remote_ip)) != q->peer.sin_addr.s_addr) continue;
+        meshvpn_vpn_tcp_diag_t *d = &q->result;
+        d->available = true; d->sampled_us = esp_timer_get_time();
+        d->local_port = p->local_port; d->mss = p->mss;
+        d->cwnd = p->cwnd; d->snd_wnd = p->snd_wnd; d->rcv_wnd = p->rcv_wnd; d->snd_buf = p->snd_buf;
+        d->srtt_ms = p->sa > 0 ? (uint32_t)p->sa * TCP_SLOW_INTERVAL / 8 : 0;
+        d->rto_ms = p->rto > 0 ? (uint32_t)p->rto * TCP_SLOW_INTERVAL : 0;
+        d->retransmits = p->nrtx; d->dupacks = p->dupacks;
+#if LWIP_WND_SCALE
+        d->snd_scale = p->snd_scale; d->rcv_scale = p->rcv_scale;
+#endif
+        d->unacked_bytes = profiled_tcp_queue_bytes(p->unacked, &d->queues_truncated);
+        d->unsent_bytes = profiled_tcp_queue_bytes(p->unsent, &d->queues_truncated);
+#if TCP_QUEUE_OOSEQ
+        d->ooseq_bytes = profiled_tcp_queue_bytes(p->ooseq, &d->queues_truncated);
+#endif
+        break;
+    }
+    return ESP_OK;
+}
 static void profiled_diag(void *arg, const meshvpn_profile_tunnel_diag_t *diag)
 {
     profiled_job_t *job = arg; job->diagnostic = *diag;
-    LOCK(); if (s.generation == job->generation) s.profiled = *diag; UNLOCK();
+    profiled_tcp_query_t q = {0}; socklen_t length = sizeof(q.local);
+    if (getsockname(job->options.fd, (struct sockaddr *)&q.local, &length) == 0 &&
+        q.local.sin_family == AF_INET) {
+        length = sizeof(q.peer);
+        if (getpeername(job->options.fd, (struct sockaddr *)&q.peer, &length) == 0 && q.peer.sin_family == AF_INET)
+            esp_netif_tcpip_exec(profiled_tcp_snapshot, &q);
+    }
+    LOCK(); if (s.generation == job->generation) { s.profiled = *diag; s.profiled_tcp = q.result; } UNLOCK();
 }
 static void profiled_ready(void *arg)
 {
@@ -996,7 +1046,7 @@ static void __attribute__((unused)) worker(void *arg)
         }
         if (!strcmp(cfg.transport, "boring-tls")) {
             LOCK();
-            if (s.generation == cfg.generation) { memset(&s.profiled, 0, sizeof(s.profiled)); s.profiled_attempt++; }
+            if (s.generation == cfg.generation) { memset(&s.profiled, 0, sizeof(s.profiled)); memset(&s.profiled_tcp, 0, sizeof(s.profiled_tcp)); s.profiled_attempt++; }
             UNLOCK();
         }
         state(cfg.generation, "wait_uplink", false, 0);

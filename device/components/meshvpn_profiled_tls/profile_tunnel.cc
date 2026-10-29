@@ -63,12 +63,40 @@ struct Connection {
     bssl::UniquePtr<SSL> ssl;
     meshvpn_profile_gate_state gate;
     meshvpn_profile_tunnel_diag_t diag{};
-    void report(const char *phase,int error=0) {
-        snprintf(diag.phase,sizeof(diag.phase),"%s",phase);
-        diag.error=error; diag.actual=gate.check; diag.hellos=gate.hellos;
+    int64_t published_us=0, active_us=0;
+    void publish() {
+        diag.actual=gate.check; diag.hellos=gate.hellos;
         diag.tls_bytes_sent=gate.sent_bytes;
         if(ssl)diag.verify_error=SSL_get_verify_result(ssl.get());
+        diag.sampled_us=published_us=now_us();
         if(o.diagnostic)o.diagnostic(o.arg,&diag);
+    }
+    void report(const char *phase,int error=0) {
+        snprintf(diag.phase,sizeof(diag.phase),"%s",phase);
+        diag.error=error; publish();
+    }
+    void periodic() { if(now_us()-published_us>=1000000)publish(); }
+    int read(void *data,int size) {
+        int64_t started=now_us(); int n=SSL_read(ssl.get(),data,size); int saved_errno=errno;
+        uint64_t elapsed=now_us()-started;diag.read_calls++;diag.read_us+=elapsed;
+        diag.read_max_us=std::max(diag.read_max_us,elapsed);if(n>0){diag.read_bytes+=n;active_us=now_us();}
+        errno=saved_errno; return n;
+    }
+    int write(const void *data,int size) {
+        int64_t started=now_us(); int n=SSL_write(ssl.get(),data,size); int saved_errno=errno;
+        uint64_t elapsed=now_us()-started;diag.write_calls++;diag.write_us+=elapsed;
+        diag.write_max_us=std::max(diag.write_max_us,elapsed);if(n>0){diag.write_bytes+=n;active_us=now_us();}
+        errno=saved_errno; return n;
+    }
+    int idle(fd_set *rd,fd_set *wr) {
+        // TX is produced by lwIP/USB/AP, not the outer TLS socket. select does
+        // not wake for that queue: bound polling latency for inner TCP ACKs.
+        int64_t started=now_us();
+        // Keep the original low idle polling rate after traffic subsides.
+        timeval tv{0, started-active_us<100000 ? 1000 : 10000};
+        int rc=select(o.fd+1,rd,wr,nullptr,&tv); int saved_errno=errno;
+        diag.idle_wait_calls++;diag.idle_wait_us+=now_us()-started;
+        errno=saved_errno; return rc;
     }
     bool current() { return o.current(o.arg); }
     int wait(int want,int64_t deadline) {
@@ -266,6 +294,7 @@ struct Http2 {
         int64_t auth_deadline=now_us()+5000000,write_deadline=0,flow_deadline=0;
         c.report("h2_authenticating");
         while(c.current()) {
+            c.periodic();
             if(!c.o.healthy(c.o.arg))return c.failure("packet_path",EIO);
             if(error)return c.failure(phase,error);
             if(!c.diag.authenticated && now_us()>=auth_deadline)return c.failure("auth_timeout",ETIMEDOUT);
@@ -290,7 +319,7 @@ struct Http2 {
             }
             if(left) {
                 if(!c.current())break;
-                int n=SSL_write(c.ssl.get(),out,left);
+                int n=c.write(out,left);
                 if(n>0) {
                     out+=n;left-=n;progress=true;write_want=SSL_ERROR_WANT_WRITE;
                     if(!left && staged) {c.o.sent(c.o.arg,staged);staged=0;flow_deadline=0;}
@@ -299,7 +328,7 @@ struct Http2 {
             }
             if(flow_deadline && now_us()>=flow_deadline)return c.failure("h2_flow_timeout",ETIMEDOUT);
             if(!c.current())break;
-            int n=SSL_read(c.ssl.get(),buffer.get(),MESHPN_PROFILE_READ_BYTES);
+            int n=c.read(buffer.get(),MESHPN_PROFILE_READ_BYTES);
             if(n>0) {
                 nghttp2_ssize used=nghttp2_session_mem_recv2(session,buffer.get(),n);
                 if(error)return c.failure(phase,error);
@@ -309,7 +338,7 @@ struct Http2 {
             if(!progress) {
                 fd_set rd,wr;FD_ZERO(&rd);FD_ZERO(&wr);FD_SET(c.o.fd,&rd);
                 if((left&&write_want==SSL_ERROR_WANT_WRITE)||read_want==SSL_ERROR_WANT_WRITE)FD_SET(c.o.fd,&wr);
-                timeval tv{0,10000};int rc=select(c.o.fd+1,&rd,&wr,nullptr,&tv);
+                int rc=c.idle(&rd,&wr);
                 if(rc<0&&errno!=EINTR)return c.failure("io_wait",errno);
             }
         }
@@ -352,6 +381,7 @@ int meshvpn_profile_tunnel_run(const meshvpn_profile_tunnel_options_t *options) 
     c.diag.ssl_error=0;
     if(!c.gate.accepted||!c.gate.hellos)return c.failure("profile_unverified",EPROTO);
     if(SSL_get_verify_result(c.ssl.get())!=X509_V_OK)return c.failure("certificate",EACCES);
+    snprintf(c.diag.cipher,sizeof(c.diag.cipher),"%s",SSL_get_cipher_name(c.ssl.get()));
     if(SSL_version(c.ssl.get())!=TLS1_3_VERSION)return c.failure("tls_version",EPROTO);
     const uint8_t *alpn=nullptr;unsigned alpn_len=0;SSL_get0_alpn_selected(c.ssl.get(),&alpn,&alpn_len);
     snprintf(c.diag.alpn,sizeof(c.diag.alpn),"%.*s",static_cast<int>(alpn_len),alpn_len?reinterpret_cast<const char*>(alpn):"");
@@ -371,7 +401,7 @@ int meshvpn_profile_tunnel_run(const meshvpn_profile_tunnel_options_t *options) 
     size_t used=0;int auth_error=0;
     while(used<static_cast<size_t>(request_len)) {
         if(!c.current()){auth_error=ECANCELED;break;}
-        int rc=SSL_write(c.ssl.get(),request+used,request_len-used);
+        int rc=c.write(request+used,request_len-used);
         if(rc>0){used+=rc;continue;}
         int e=c.tls_error(rc);if(!wants(e)){auth_error=EPROTO;break;}
         if((auth_error=c.wait(e,deadline)))break;
@@ -384,7 +414,7 @@ int meshvpn_profile_tunnel_run(const meshvpn_profile_tunnel_options_t *options) 
     // Read only headers. Bytes coalesced after the ACK remain in SSL's buffer.
     while(used<4096) {
         if(!c.current())return c.failure("cancelled",ECANCELED);
-        int rc=SSL_read(c.ssl.get(),buffer.get()+used,1);
+        int rc=c.read(buffer.get()+used,1);
         if(rc>0){used++;if(used>=4&&!memcmp(buffer.get()+used-4,"\r\n\r\n",4))break;}
         else {int e=c.tls_error(rc);if(!wants(e))return c.failure("auth_read",EACCES);if((e=c.wait(e,deadline)))return c.failure("auth_wait",e);}
         if(now_us()>=deadline)return c.failure("auth_timeout",ETIMEDOUT);
@@ -395,24 +425,25 @@ int meshvpn_profile_tunnel_run(const meshvpn_profile_tunnel_options_t *options) 
     const uint8_t *tx=nullptr;size_t tx_len=0;int64_t tx_deadline=0;
     int write_want=SSL_ERROR_WANT_WRITE,read_want=SSL_ERROR_WANT_READ;
     while(c.current()) {
+        c.periodic();
         if(!o.healthy(o.arg))return c.failure("packet_path",EIO);
         bool progressed=false;
         if(!tx_len){tx_len=o.peek(o.arg,&tx);if(tx_len){if(!tx)return c.failure("tx_buffer",EINVAL);if(tx_len>16384)tx_len=16384;tx_deadline=now_us()+5000000;}}
         if(tx_len) {
             if(!c.current())break;
-            int rc=SSL_write(c.ssl.get(),tx,tx_len);
+            int rc=c.write(tx,tx_len);
             if(rc>0){o.sent(o.arg,rc);tx_len=0;progressed=true;write_want=SSL_ERROR_WANT_WRITE;}
             else {write_want=c.tls_error(rc);if(!wants(write_want))return c.failure("tls_write",EPIPE);}
             if(tx_len&&now_us()>=tx_deadline)return c.failure("tx_timeout",ETIMEDOUT);
         }
         if(!c.current())break;
-        int rc=SSL_read(c.ssl.get(),buffer.get(),MESHPN_PROFILE_READ_BYTES);
+        int rc=c.read(buffer.get(),MESHPN_PROFILE_READ_BYTES);
         if(rc>0){if(!o.receive(o.arg,buffer.get(),rc))return c.failure("invalid_frame",EPROTO);progressed=true;read_want=SSL_ERROR_WANT_READ;}
         else {read_want=c.tls_error(rc);if(!wants(read_want))return c.failure("tls_read",ECONNRESET);}
         if(!progressed){
             fd_set rd,wr;FD_ZERO(&rd);FD_ZERO(&wr);FD_SET(o.fd,&rd);
             if((tx_len&&write_want==SSL_ERROR_WANT_WRITE)||read_want==SSL_ERROR_WANT_WRITE)FD_SET(o.fd,&wr);
-            timeval tv{0,10000};int e=select(o.fd+1,&rd,&wr,nullptr,&tv);
+            int e=c.idle(&rd,&wr);
             if(e<0&&errno!=EINTR)return c.failure("io_wait",errno);
         }
     }
