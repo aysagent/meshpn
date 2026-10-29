@@ -62,5 +62,16 @@ foreign rules, replaced namespace and explicit opt-in. The real kernel gate
 `test-native-runtime-address-linux.mjs` covers discovery to `.17`, TUN packet
 traffic and NSS/private DNS, same-address restart, exit reassignment rejection,
 wrong-key failure with no TUN, IPv4/IPv6 bootstrap blocking and fresh namespace
-adoption of `.23`. All eight passed; parent DNS/firewall were unchanged.
+adoption of `.23`. All eight passed with each of nft and legacy backends;
+parent DNS/firewall were unchanged. Select the test backend using
+`CVPN_IPTABLES_BACKEND=nft|legacy` in the explicitly marked disposable lab.
 Container packaging has its own separate acceptance gate.
+
+The guard confines IP traffic in its own network namespace. It does not isolate
+host IPC: an application using NSS `resolve` can ask a host `systemd-resolved`
+through a shared Unix socket/system bus, and that host process can query DNS
+outside the namespace. Use a container with no host resolver/system-bus socket
+mounts, or an explicitly configured namespace-local DNS/NSS owner. Merely
+entering a network namespace while sharing the host `/run` is not proof of
+DNS confinement. The native address bootstrap itself uses a numeric endpoint
+and does not perform DNS resolution.

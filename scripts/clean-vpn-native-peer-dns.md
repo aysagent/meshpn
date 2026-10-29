@@ -309,3 +309,24 @@ upstream не должен увеличиваться. В конце сравн�
 исправлен inode/rollback race (`09dc688`); новый resolver отдельно прошёл
 23/23 Linux unit/cross-process проверки и повтор коротких реальных TLS/TUN и
 systemd-resolved матриц. Этот тест не заменяет длительную эксплуатацию.
+
+Граница изоляции: network namespace ограничивает IP-сокеты, но не доступ к
+общим Unix sockets. NSS `resolve` или приложение, обращающееся к host
+systemd-resolved через общий `/run`/system bus, может поручить DNS процессу
+вне namespace. Для контейнера не монтируйте host resolver/D-Bus sockets;
+для standalone netns нужен явный владелец локального DNS/NSS. Один `ip netns
+exec` при общем host `/run` не доказывает отсутствие DNS-обхода. В лаборатории
+клиентский NSS явно направлен в `dns` через отдельный `/etc/netns/<name>`
+mount, а системные файлы родительского namespace не меняются.
+
+Отдельная проверка `test-native-runtime-dns-dnat-linux.mjs` проверяет узкое
+OUTPUT-разрешение DNS DNAT: оно требует `--dst-type LOCAL`, поскольку до
+создания TUN его будущий IP ещё не принадлежит клиенту. Иначе переведённый
+пакет мог бы уйти через WAN default route. В NIC-less disposable лаборатории
+тест запускается с `CVPN_DNS_DNAT_WAN_TEST=1`; raw AF_PACKET observer находится
+только в синтетическом WAN namespace. На nft и legacy прошли UDP/TCP до
+создания TUN, рабочий локальный stub после создания TUN и повтор после удаления
+TUN: **0 DNS-пакетов на WAN** во всех этих фазах. Положительный контроль до
+guard доказывает достижимость WAN-получателя; обращения к on-link resolver
+при работающем TUN успешно попадают в локальный stub. Это проверка runtime
+owner, не универсальный аудит произвольной host firewall/NSS-конфигурации.

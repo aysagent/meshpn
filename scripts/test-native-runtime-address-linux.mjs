@@ -12,7 +12,9 @@ const ip=(...a)=>run('ip',a),ns=(n,...a)=>{if(a[0]==='ping'){a.shift();const six
 assert.equal(process.platform,'linux');assert.equal(process.getuid(),0);assert.equal(process.env.CVPN_DISPOSABLE_ADDRESS_OWNER,'1');
 assert.equal(fs.readFileSync('/etc/meshpn-admin-disposable-lab','utf8').trim(),'isolated-admin-lab-v1');assert.equal(fs.readFileSync('/proc/1/comm','utf8').trim(),'systemd');
 assert.deepEqual(JSON.parse(ip('-j','link')).map(x=>x.ifname),['lo']);assert.equal(ip('netns','list'),'');
-const beforeResolv=fs.readFileSync('/etc/resolv.conf'),beforeRules=run('iptables-save',[]),beforeRules6=run('ip6tables-save',[]);
+const backend=process.env.CVPN_IPTABLES_BACKEND??'nft';assert.ok(['nft','legacy'].includes(backend));
+const firewall=(family)=>`${family===6?'ip6tables':'iptables'}-${backend}-save`;
+const beforeResolv=fs.readFileSync('/etc/resolv.conf'),beforeRules=run(firewall(4),[]),beforeRules6=run(firewall(6),[]);
 const root=fs.mkdtempSync('/var/lib/address-owner-'),parent=fs.readlinkSync('/proc/self/ns/net'),engine='/native/clean-vpn-engine';
 const runtime=fileURLToPath(new URL('./clean-vpn-native-runtime.mjs',import.meta.url)),resolver=fileURLToPath(new URL('./clean-vpn-native-peer-dns.mjs',import.meta.url));
 const children=[],namespaces=[],states=[],checks=[];let client,exit,passed=false;
@@ -22,7 +24,7 @@ const child=(n,cmd,args,tag)=>{const fd=fs.openSync(root+'/'+tag+'.log','w',0o60
 const stop=async p=>{if(!p||p.exitCode!==null||p.signalCode!==null)return;p.kill('SIGTERM');for(let i=0;i<80&&p.exitCode===null&&p.signalCode===null;i++)await delay(25);if(p.exitCode===null&&p.signalCode===null){p.kill('SIGKILL');await delay(100);throw Error('engine_stop_deadline');}};
 const wait=async fn=>{let error;for(let i=0;i<80;i++){try{return fn();}catch(e){error=e;await delay(100);}}throw error;};
 const state=n=>'/run/clean-vpn-'+n;
-const owner=(n,file,discovery=false)=>{if(!states.includes(state(n)))states.push(state(n));return ns(n,'env','CVPN_PARENT_NETNS='+parent,'CVPN_ENGINE='+engine,'CVPN_STATE_DIRECTORY='+state(n),'CVPN_UPLINK=wan0',...(discovery?['CVPN_ADDRESS_DISCOVERY=1']:[]),'node',runtime,root+'/'+file);};
+const owner=(n,file,discovery=false)=>{if(!states.includes(state(n)))states.push(state(n));return ns(n,'env','CVPN_PARENT_NETNS='+parent,'CVPN_ENGINE='+engine,'CVPN_STATE_DIRECTORY='+state(n),'CVPN_UPLINK=wan0','CVPN_IPTABLES_BACKEND='+backend,...(discovery?['CVPN_ADDRESS_DISCOVERY=1']:[]),'node',runtime,root+'/'+file);};
 const link=(name,last)=>{ip('netns','add',name);namespaces.push(name);ip('-n',name,'link','set','lo','up');ip('link','add',name+'h','type','veth','peer','name',name+'p');ip('link','set',name+'h','master','cvaobr');ip('link','set',name+'h','up');ip('link','set',name+'p','netns',name);ip('-n',name,'link','set',name+'p','name','wan0');ip('-n',name,'addr','add','192.0.2.'+last+'/24','dev','wan0');ip('-n',name,'-6','addr','add','fd42:99::'+last+'/64','dev','wan0','nodad');ip('-n',name,'link','set','wan0','up');ip('-n',name,'route','add','default','via',last===3?'192.0.2.1':'192.0.2.3');};
 const tun=n=>JSON.parse(ns(n,'ip','-j','addr','show','cvpn0'))[0];
 // TUN carrier drops when its engine FD closes; that transient flag is not a route mutation.
@@ -55,7 +57,7 @@ try{
  put('registry-next.json',{version:1,revision:1,clients:[{name:'laptop',ipv4:'10.99.0.23',revoked:false}]});fs.renameSync(root+'/registry-next.json',root+'/registry.json');
  assert.throws(()=>owner('aoclient','client.json',true),e=>e.stderr.includes('assignment_changed_recreate_required'));for(const key of ['assignment','network','engine'])assert.equal(digest(state('aoclient')+'/'+key+'.json'),before[key]);assert.equal(tun('aoclient').ifindex,firstTun.ifindex);assert.equal(tun('aoclient').addr_info.find(x=>x.family==='inet').local,'10.99.0.17');mark('reassignment .23 refuses existing namespace without stale rewrite');
  const badStarted=performance.now();assert.throws(()=>owner('aobad','bad.json',true),e=>e.stderr.includes('assignment_discovery_failed'));assert.ok(performance.now()-badStarted<15000);assert.ok(!JSON.parse(ns('aobad','ip','-j','link')).some(l=>l.ifname==='cvpn0'));assert.equal(fs.existsSync(state('aobad')+'/engine.json'),false);assert.equal(fs.existsSync(state('aobad')+'/network.json'),false);
- for(const command of [['ping','-c','1','-W','1','192.0.2.3'],['ping','-6','-c','1','-W','1','fd42:99::3']])assert.throws(()=>ns('aobad',...command));for(const command of ['iptables-save','ip6tables-save']){const rules=ns('aobad',command);assert.match(rules,/-A OUTPUT -j CVPN_A_OUTPUT/);assert.match(rules,/-A CVPN_A_OUTPUT -j DROP/);assert.doesNotMatch(rules,/CVPN_R_/);}mark('wrong PSK leaves no TUN or effective config and blocks IPv4 IPv6 direct egress');
+ for(const command of [['ping','-c','1','-W','1','192.0.2.3'],['ping','-6','-c','1','-W','1','fd42:99::3']])assert.throws(()=>ns('aobad',...command));for(const command of [firewall(4),firewall(6)]){const rules=ns('aobad',command);assert.match(rules,/-A OUTPUT -j CVPN_A_OUTPUT/);assert.match(rules,/-A CVPN_A_OUTPUT -j DROP/);assert.doesNotMatch(rules,/CVPN_R_/);}mark('wrong PSK leaves no TUN or effective config and blocks IPv4 IPv6 direct egress');
  link('aofresh',5);owner('aofresh','client.json',true);assert.equal(tun('aofresh').addr_info.find(x=>x.family==='inet').local,'10.99.0.23');child('aofresh',engine,['--config',state('aofresh')+'/engine.json','--service'],'fresh');await online('aofresh','10.99.0.23');mark('fresh namespace safely adopts reassigned .23 and repeats full session proof');
  passed=true;
 }finally{
@@ -64,5 +66,5 @@ try{
  for(const n of namespaces.reverse()){fs.rmSync('/etc/netns/'+n,{recursive:true,force:true});ip('netns','delete',n);}try{ip('link','delete','cvaobr');}catch{}for(const s of states)fs.rmSync(s,{recursive:true,force:true});fs.rmSync(root,{recursive:true,force:true});
 }
 await wait(()=>assert.deepEqual(JSON.parse(ip('-j','link')).map(x=>x.ifname),['lo']));assert.equal(ip('netns','list'),'');assert.deepEqual(fs.readFileSync('/etc/resolv.conf'),beforeResolv);
-const canonical=s=>s.split('\n').filter(l=>!l.startsWith('#')).join('\n');assert.equal(canonical(run('iptables-save',[])),canonical(beforeRules));assert.equal(canonical(run('ip6tables-save',[])),canonical(beforeRules6));mark('owned namespaces TUN processes and state removed with parent DNS firewall unchanged');
-console.log(JSON.stringify({status:'passed',checks:checks.length,labels:checks,engineSha256:digest(engine),scope:'NIC-less disposable Linux; no physical hosts or host network changes'}));
+const canonical=s=>s.split('\n').filter(l=>!l.startsWith('#')).join('\n');assert.equal(canonical(run(firewall(4),[])),canonical(beforeRules));assert.equal(canonical(run(firewall(6),[])),canonical(beforeRules6));mark('owned namespaces TUN processes and state removed with parent DNS firewall unchanged');
+console.log(JSON.stringify({status:'passed',checks:checks.length,labels:checks,engineSha256:digest(engine),firewallBackend:backend,scope:'NIC-less disposable Linux; no physical hosts or host network changes'}));
