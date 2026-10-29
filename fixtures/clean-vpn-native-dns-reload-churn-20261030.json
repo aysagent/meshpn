@@ -30,6 +30,7 @@
     "rawLogSha256": "a989db11a182794eff6185f063088411f43fc9ea0783245b6f530b3a5c684851",
     "dependencyLibrariesInstrumented": false,
     "applicationThreadBudgetRelaxed": false,
-    "cleanup": "lo-only; zero named netns; no native or fixture processes remaining"
+    "cleanup": "lo-only; zero named netns; no native or fixture processes remaining",
+    "signalFixCommit": "400e7d8"
   }
 }
