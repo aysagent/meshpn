@@ -1,5 +1,17 @@
 # Две P4: ночной стенд и VPN, 29 октября
 
+Работа остановлена по просьбе пользователя 29 октября утром. Главные результаты:
+- Исправлены IGMP/mDNS panic после STOP→CONNECTED без START, запуск P4 STA-only,
+  ошибочное восстановление 1200 baud инструментом USB и диагностика отмены peer.
+- На каждой P4 прошли 8 циклов STA/DNS/mDNS/USB восстановления.
+- UDP A/B/A подтвердил плохой uplink Stamp→AP Wave при 11ax (~0.086 Mbit/s)
+  и улучшение с HT20 (до 15.54 при target 16). Обратная передача не исправлена;
+  эти числа не являются скоростью интернета/AP+STA с телефоном.
+- VPN synthetic peer теперь проверяет L4 checksum и разделяет TCP state между
+  соединениями. Host suite и real mbedTLS fragmented/batch tests прошли;
+  успешный аппаратный VPN peer без VPS остаётся непроверенным.
+- Новых прошивок C6, изменений Mac Wi-Fi/firewall или роутера не было.
+
 Ночная программа и утренние ограниченные контроли зафиксированы ниже.
 Причина нестабильного Waveshare/AP пути не устранена; реальная RF матрица
 и успешный аппаратный VPN peer не пройдены. Mac Wi-Fi, firewall, роутер и
@@ -424,3 +436,33 @@ down не прошёл hello (оба endpoint ETIMEDOUT). Оба журнала 
 Регрессионная сборка XIAO после startup fix также прошла (без прошивки).
 Стенд STA-listener и поиск незавершённых nested journals покрыты 13 host tests.
 Коммиты продолжения: `8aaca65`, `b709447`, `b7f7aab` отправлены после pull.
+
+Контроль TX A-MPDU off только на Waveshare (`radio-wave-noampdu-tx-lan`)
+ухудшил её STA upload: 0.119/0.134 Mbit/s при target 1/4. Обратное направление
+1.000/3.978. Host status подтверждает запрошенный ampdu_enabled=false;
+независимого readback внутренних Wi-Fi init параметров factory C6 нет.
+Журнал восстановлен; этот override отбрасывается. Далее отдельный SDIO 20 MHz
+контроль со штатным TX A-MPDU.
+
+SDIO 20 MHz (`radio-wave-sdio20-lan`, configured_clock_khz=20000) существенного
+восстановления не дал: Wave→Stamp через LAN 0.726/1.192 при target 1/4,
+обратно 0.998/3.988. Оба направления завершились, профиль восстановлен.
+Возвращаются SDIO 40 MHz и штатная агрегация; отдельный следующий контроль —
+STA b/g/n именно на Wave (раньше этот override проверялся на Stamp).
+
+## Остановка по просьбе пользователя
+
+Последняя временная прошивка Wave STA b/g/n завершила запись, но её измерение
+не запускалось: поступила просьба закончить. При завершении возвращён
+штатный образ (APSTA, SDIO 40 MHz, AMPDU TX/RX enabled, без STA/AP overrides).
+На Stamp штатный STA bitmap 71 / AP bitmap 7 возвращён ранее. Все 60 записанных
+radio cases сохранены, включая неуспешные; незавершённых dual-bench restore
+journals нет. Этот итог не означает, что вся ночная программа выполнена.
+
+Финальная проверка завершения: Waveshare boot 1156/build `7258227-dirty`,
+Stamp boot 91/build `8aaca65-dirty`; обе STA online на домашнем profile 1,
+AP active, VPN disabled, bench_running=false, SDIO 40000 kHz, host TX A-MPDU
+enabled. Снимки `waveshare-stop-final.json`, `stamp-stop-final.json`.
+Тестовых процессов p4-dual-bench/perf-p4-paths/vpn-local-lab не осталось.
+Дополнительные проверки после просьбы остановиться не запускались;
+выполнены только возврат прошивки и проверка доступности.
