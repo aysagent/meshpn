@@ -3,9 +3,10 @@ import { isIPv4 } from 'node:net';
 
 // Timing happens INSIDE the application namespace. These are individual
 // DNS / TLS+HTTP / echo transactions, not CLI startup or throughput samples.
-export function applicationProbe(dnsAddress = '127.0.0.11') {
+export function applicationProbe(dnsAddress = '127.0.0.11', caPath = '/config/cert.pem') {
   assert.ok(isIPv4(dnsAddress));
-  return `const dnsAddress=${JSON.stringify(dnsAddress)};` + String.raw`
+  assert.match(caPath,/^\/config\/[a-zA-Z0-9_-]+\.pem$/);
+  return `const dnsAddress=${JSON.stringify(dnsAddress)},caPath=${JSON.stringify(caPath)};` + String.raw`
 const {dnsProbe}=await import('/opt/clean-vpn/clean-vpn-native-runtime-health.mjs');
 const https=await import('node:https'),fs=await import('node:fs');
 const net=await import('node:net'),dgram=await import('node:dgram');
@@ -13,7 +14,7 @@ const timings={};
 const timed=async(name,fn)=>{const began=performance.now();await fn();timings[name]=performance.now()-began;};
 await Promise.all([false,true].map(t=>timed(t?'dnsTcpMs':'dnsUdpMs',()=>dnsProbe(dnsAddress,53,t))));
 await timed('httpsRequestMs',()=>new Promise((resolve,reject)=>{
- https.get({host:'198.18.0.80',port:8443,servername:'runtime.test',ca:fs.readFileSync('/config/cert.pem'),agent:false,timeout:4000},r=>{
+ https.get({host:'198.18.0.80',port:8443,servername:'runtime.test',ca:fs.readFileSync(caPath),agent:false,timeout:4000},r=>{
  let b='';r.on('data',x=>b+=x);r.on('end',()=>b==='native-runtime-https-ok\n'?resolve():reject(Error('https_body')));
  }).on('error',reject).on('timeout',function(){this.destroy(Error('timeout'));});
 }));

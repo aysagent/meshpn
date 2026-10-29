@@ -1,6 +1,7 @@
 // Network control only. All tunnel/TLS/DNS payload processing remains native.
 import assert from 'node:assert/strict';
 import { isIPv4 } from 'node:net';
+import {validateRelayHealth} from './native-relay-health.mjs';
 import { validateTransparentNetworkProfile, transparentSpecialIPv4 } from './native-transparent-network.mjs';
 
 // Shared by provisioning and health. Full credential/schema validation remains
@@ -28,7 +29,8 @@ export function runtimePacketConfig(c) {
 
 function comboRuntimePlan(c, options) {
   const packet = runtimePacketConfig(c), r = c.transparent;
-  const plan = runtimePlan(packet, options), client = c.role === 'client';
+  const {relayHealth=null,...packetOptions}=options;
+  const plan = runtimePlan(packet, packetOptions), client = c.role === 'client';
   if (client) {
     assert.ok(plan.lan, 'combo_runtime_requires_explicit_lan');
     assert.equal(r.listen.ipv4, '0.0.0.0', 'combo_runtime_lan_listener_required');
@@ -48,18 +50,28 @@ function comboRuntimePlan(c, options) {
     chain('INPUT').splice(-1, 0, `${from} -p tcp --dport ${r.listen.port} -m conntrack --ctstate DNAT -j ACCEPT`);
     // An ineligible HTTPS destination must never fall through to the TUN.
     chain('FORWARD').unshift(`${from} -p tcp --dport 443 -j DROP`);
+    if(relayHealth){
+      validateRelayHealth(relayHealth,r);
+      const relayHealthSource=plan.address;
+      const output=chain('OUTPUT');
+      output.unshift(`-s ${relayHealthSource}/32 -d 127.0.0.1/32 -p tcp --dport ${r.listen.port} -m conntrack --ctstate DNAT -j ACCEPT`,`-s ${relayHealthSource}/32 -d ${relayHealth.ipv4}/32 -p tcp --dport 443 -j DROP`);
+      plan.tables.find(t=>t.family===4&&t.name==='nat').entries.find(e=>e.hook==='OUTPUT').rules.unshift(
+        `-s ${relayHealthSource}/32 -d ${relayHealth.ipv4}/32 -p tcp --dport 443 -j REDIRECT --to-ports ${r.listen.port}`);
+    }
   } else {
+    assert.equal(relayHealth,null,'relay_health_client_only');
     const output = chain('OUTPUT');
     output.splice(0, output.length, '-o lo -j ACCEPT',
       `-s ${packet.address}/32 -o ${plan.uplink} -p tcp --sport ${packet.port} -m conntrack --ctstate ESTABLISHED --ctdir REPLY -j ACCEPT`,
       ...denied.map(dst => `-d ${dst} -o ${plan.uplink} -j DROP`),
       `-o ${plan.uplink} -p tcp --dport 443 -j ACCEPT`, '-j DROP');
   }
-  return { ...plan, transport: 'combo-tls', relayPort: r.listen.port };
+  return { ...plan, transport: 'combo-tls', relayPort: r.listen.port, relayHealth };
 }
 
-export function runtimePlan(c, { uplink = 'eth0', mtu = 1400, lan = null } = {}) {
-  if (c.transport === 'combo-tls') return comboRuntimePlan(c, { uplink, mtu, lan });
+export function runtimePlan(c, { uplink = 'eth0', mtu = 1400, lan = null, relayHealth = null } = {}) {
+  if (c.transport === 'combo-tls') return comboRuntimePlan(c, { uplink, mtu, lan, relayHealth });
+  assert.equal(relayHealth,null,'relay_health_combo_only');
   assert.equal(c.version, 1);
   assert.ok(['client', 'exit'].includes(c.role));
   assert.equal(c.transport, undefined, 'runtime_v1_requires_boring_tls');

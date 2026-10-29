@@ -89,6 +89,10 @@ node scripts/clean-vpn-native-runtime-config.mjs create \
   --server-name=vpn.example.net --clients=2
 ```
 
+Для экспериментального combo добавьте `--transport=combo-tls --public-name=relay.example`;
+отдельные relay key/replay и LAN-условия описаны в
+[combo provisioning](clean-vpn-native-combo-provisioning.md).
+
 `endpoint` — адрес exit, доступный клиентам; `exit-address` — адрес самого exit
 в namespace/контейнерной сети (он может отличаться при публикации порта).
 `--port=3443` задаёт порт назначения клиента и, по умолчанию, listener exit.

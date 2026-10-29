@@ -15,7 +15,8 @@ Docker/Podman launcher: packet/TUN/DNS обслуживает native boring-ве
   transparent:{...}}`. Вложенный `boring` — обычный native packet config,
   `tun:"cvpn0"`; у клиента `dns:true`. Полная схема проверяется native engine
   до изменения сети. Примеры создаёт [исполняемый стенд](clean-vpn-native-combo-runtime-lab.mjs).
-  Offline `clean-vpn-native-runtime-config.mjs` пока генерирует **только boring**.
+  Offline `clean-vpn-native-runtime-config.mjs` теперь поддерживает
+  [combo bundles с несколькими клиентами](clean-vpn-native-combo-provisioning.md).
 - Клиентские `boring.address/port` и `transparent.exit.ipv4/port` должны совпадать.
   На exit совпадают `boring.address/port` и `transparent.listen.ipv4/port`:
   обе ветки принимаются одним listener, например `3443`.
@@ -67,8 +68,8 @@ podman run --rm --network=none --cap-drop=ALL \
 Exit запускается обычным `clean-vpn-native-container.mjs start --role=exit`
 с `--replay-volume`, отдельными `--name`, `--network`, `--ip`, config и image.
 Client — тем же launcher с `--role=client` и тремя LAN-опциями выше.
-`--publish=3443` публикует только exit listener; при другой внутренней нумерации
-нужно явное `--publish=3443:4443/tcp` и соответствующий конфиг listener.
+`--publish=3443` публикует только exit listener; при внутреннем listener `4443`
+launcher сам строит mapping `3443:4443/tcp` из конфигурации. Значение CLI — число.
 В локальной приёмке публикации на Mac нет: всё замкнуто на внутренних bridges.
 
 При статическом `--ip` или LAN launcher включает `CVPN_ANNOUNCE_IPV4=1`.
@@ -83,6 +84,10 @@ Client health проверяет реальные UDP/TCP DNS через authent
 и наличие локального relay listener. **Это не проверка end-to-end HTTPS relay**:
 для неё нужен запрос из LAN к проверяемому HTTPS origin. Exit health означает
 только listener. Стенд отдельно выполняет настоящие packet и relay запросы.
+
+Теперь есть opt-in [active relay HTTPS health](clean-vpn-native-combo-provisioning.md):
+`--relay-health=relay-health.json`. Он проверяет relay до заданного origin,
+но LAN interception по-прежнему требует отдельной LAN-пробы.
 
 SIGKILL оставляет guard в живом namespace; при его удержании другим контейнером
 LAN не получает прямой выход. Для нового namespace launcher создаёт правила

@@ -134,7 +134,9 @@ Linux-стенду; для Mac использовать вложенный Docke
 1. Завершён bounded checkpoint: [transparent faults](clean-vpn-native-transparent.md)
    и [combo нагрузка/lifecycle](clean-vpn-native-combo-runtime.md). Продолжение:
    [15-минутный mixed soak и delay/loss/reorder/blackout](clean-vpn-native-combo-resilience.md).
-2. Расширять готовность launcher отдельно от native engine: автоматический
-   combo bundle, end-to-end relay health и standalone transparent provisioning.
+2. [Combo bundle и active relay health](clean-vpn-native-combo-provisioning.md)
+   добавлены; следующий шаг — relay identities/квоты после обнаруженного
+   вытеснения клиентов при заполнении общего лимита. Standalone transparent
+   provisioning остаётся отдельным расширением.
 3. Когда узлы доступны — ограниченный тест на отдельном порту и в отдельных
    namespace, сохраняя повседневную пару; затем независимый capture и benchmark.

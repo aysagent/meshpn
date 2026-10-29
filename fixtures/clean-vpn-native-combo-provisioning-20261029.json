@@ -1,0 +1,467 @@
+{
+  "schema": 1,
+  "kind": "native-combo-provisioning-acceptance",
+  "date": "2026-10-29",
+  "status": "passed-with-known-relay-fairness-limitation",
+  "scope": {
+    "physicalNodesAccessed": false,
+    "macNetworkChanged": false,
+    "linux": "dedicated rootful Podman VM; nested Docker daemon without external NIC",
+    "engine": "reused existing ARM64 binary; no C++ source changes or fresh native compilation",
+    "temporaryLab": "owned containers/networks/volumes cleaned; nested Docker daemon removed"
+  },
+  "unit": {
+    "passed": 26,
+    "failed": 0,
+    "skipped": 0,
+    "logSha256": "471db673a1d49aecfbf386592b545a2d6f6fa4584de778be28043d19700de7ee"
+  },
+  "comboHealth": {
+    "schema": 1,
+    "kind": "native-combo-container-lifecycle",
+    "status": "passed",
+    "image": "localhost/clean-vpn-native-runtime:provision-20261029",
+    "port": 3443,
+    "checks": [
+      "uninitialized-replay-start-refused-without-reset",
+      "explicit-init-and-repeat-init-refusal",
+      "public-launcher-real-TUN-DNS-and-LAN-HTTPS-relay",
+      "direct-uplink-HTTPS-blocked-LAN-relay-works",
+      "second-owner-free-port-and-netns-refused-existing-pair-healthy",
+      "independent-pcap-packet-profile-and-original-relay-JA3-JA4-match",
+      "same-namespace-reentry-preserves-foreign-rules",
+      "parallel-packet-and-four-relay-users-bounded-load-resources-reclaimed",
+      "overload-rejects-excess-relays-packet-branch-and-fresh-requests-survive",
+      "relay-failure-does-not-downgrade-to-packet-branch",
+      "relay-health-rejects-wrong-CA-hostname-and-body",
+      "active-relay-health-refuses-missing-redirect-and-blocked-origin-with-packet-healthy",
+      "recreated-exit-listens-with-original-replay-state",
+      "exit-SIGKILL-recreate-preserves-replay-and-recovers-both-paths",
+      "client-SIGKILL-held-namespace-remains-closed",
+      "fresh-client-namespace-recovers-both-paths",
+      "native-PID1-SIGTERM-clean"
+    ],
+    "scope": "internal-Linux-container-lab-only",
+    "imageId": "796fa592e7203fb26fc48bea7a7da640b933442ef8f856ad6ce1eb467aea4d9f",
+    "architecture": "arm64",
+    "engineSha256": "f087b391f148359fc81b7d70cc9d5c1f1830b0fad532321820d8a1938ccced56",
+    "observer": {
+      "wireSha256": "f975db545fe48b32315308791439c4bc367ccb23ed49f3de0301d066dbb8e5c9",
+      "applicationSha256": "a46074f7f962f73d02c46b12828854ebde04216672f968939a1db857b802421b",
+      "packetProfileMatches": 1,
+      "relayFingerprintMatches": 4,
+      "scope": "ClientHello-only-not-full-browser-equivalence"
+    },
+    "load": {
+      "rounds": 59,
+      "relayRequests": 236,
+      "packetBatches": 59,
+      "elapsedMs": 30304.821877002716,
+      "seconds": 30,
+      "samples": 74,
+      "initial": {
+        "client": {
+          "rssKiB": 6328,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 8,
+          "udpSockets": 1
+        },
+        "exit": {
+          "rssKiB": 6392,
+          "fds": 8,
+          "sockets": 2,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 5,
+          "udpSockets": 0
+        }
+      },
+      "peak": {
+        "client": {
+          "rssKiB": 6540,
+          "fds": 14,
+          "threads": 7
+        },
+        "exit": {
+          "rssKiB": 6720,
+          "fds": 14,
+          "threads": 5
+        }
+      },
+      "windows": {
+        "client": {
+          "firstThirdMedianRssKiB": 6468,
+          "lastThirdMedianRssKiB": 6480,
+          "growthKiB": 12
+        },
+        "exit": {
+          "firstThirdMedianRssKiB": 6700,
+          "lastThirdMedianRssKiB": 6720,
+          "growthKiB": 20
+        }
+      },
+      "settled": {
+        "client": {
+          "rssKiB": 6480,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 259,
+          "udpSockets": 1
+        },
+        "exit": {
+          "rssKiB": 6720,
+          "fds": 8,
+          "sockets": 2,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 233,
+          "udpSockets": 0
+        }
+      }
+    },
+    "burst": {
+      "total": 64,
+      "rejected": 48,
+      "completed": 16
+    },
+    "healthFaultStage": "origin-restored",
+    "redirectHealthRecoveryMs": 187.79291699999885,
+    "originHealthRecoveryMs": 191.1381670000119,
+    "exitRecreateMs": 4965.543833000003,
+    "clientRecreateMs": 5697.313750000001,
+    "cleanup": {
+      "status": "cleaned",
+      "removed": [
+        {
+          "type": "container",
+          "name": "cvpnrt-fffda0849712dfc4-init"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-fffda0849712dfc4-origin"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-fffda0849712dfc4-app"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-fffda0849712dfc4-exit"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-fffda0849712dfc4-client"
+        },
+        {
+          "type": "volume",
+          "name": "cvpnrt-fffda0849712dfc4-config"
+        },
+        {
+          "type": "volume",
+          "name": "cvpnrt-fffda0849712dfc4-replay"
+        },
+        {
+          "type": "network",
+          "name": "cvpnrt-fffda0849712dfc4-lan"
+        },
+        {
+          "type": "network",
+          "name": "cvpnrt-fffda0849712dfc4-net"
+        }
+      ]
+    }
+  },
+  "multiClient": {
+    "schema": 1,
+    "kind": "native-combo-multi-client",
+    "status": "passed",
+    "image": "localhost/clean-vpn-native-runtime:provision-20261029",
+    "clients": 3,
+    "checks": [
+      "generated-role-bundles-three-independent-clients-and-LANs",
+      "all-clients-progress-under-concurrent-packet-and-relay-load",
+      "saturated-relay-cap-measured-packet-clients-continue",
+      "all-clients-recover-without-engine-restart-and-resources-reclaimed",
+      "all-native-PID1-SIGTERM-clean"
+    ],
+    "imageId": "sha256:796fa592e7203fb26fc48bea7a7da640b933442ef8f856ad6ce1eb467aea4d9f",
+    "engineSha256": "f087b391f148359fc81b7d70cc9d5c1f1830b0fad532321820d8a1938ccced56",
+    "normal": [
+      {
+        "client": 0,
+        "rounds": 116,
+        "elapsedMs": 60103.602356001735
+      },
+      {
+        "client": 1,
+        "rounds": 116,
+        "elapsedMs": 60118.829910993576
+      },
+      {
+        "client": 2,
+        "rounds": 116,
+        "elapsedMs": 60121.53428900242
+      }
+    ],
+    "peak": {
+      "exit": {
+        "rssKiB": 6700,
+        "fds": 14,
+        "threads": 4
+      },
+      "client-0": {
+        "rssKiB": 6420,
+        "fds": 10,
+        "threads": 4
+      },
+      "client-1": {
+        "rssKiB": 6412,
+        "fds": 8,
+        "threads": 3
+      },
+      "client-2": {
+        "rssKiB": 6428,
+        "fds": 8,
+        "threads": 3
+      }
+    },
+    "pressure": [
+      {
+        "client": 1,
+        "packet": 8,
+        "relay": 0,
+        "relayRefused": 8
+      },
+      {
+        "client": 2,
+        "packet": 8,
+        "relay": 0,
+        "relayRefused": 8
+      }
+    ],
+    "relayFairness": "no-per-client-guarantee-global-16-slot-cap",
+    "starvationObserved": true,
+    "settled": {
+      "cvpnrt-eaef3f109c912c67-exit": {
+        "rssKiB": 7932,
+        "fds": 10,
+        "sockets": 4,
+        "threads": 2,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 3,
+        "tcpTimeWait": 310,
+        "udpSockets": 1
+      },
+      "cvpnrt-eaef3f109c912c67-c0": {
+        "rssKiB": 6764,
+        "fds": 8,
+        "sockets": 4,
+        "threads": 3,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 1,
+        "tcpTimeWait": 149,
+        "udpSockets": 2
+      },
+      "cvpnrt-eaef3f109c912c67-c1": {
+        "rssKiB": 6412,
+        "fds": 8,
+        "sockets": 4,
+        "threads": 3,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 1,
+        "tcpTimeWait": 138,
+        "udpSockets": 2
+      },
+      "cvpnrt-eaef3f109c912c67-c2": {
+        "rssKiB": 6428,
+        "fds": 8,
+        "sockets": 4,
+        "threads": 3,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 1,
+        "tcpTimeWait": 134,
+        "udpSockets": 2
+      }
+    },
+    "cleanup": {
+      "status": "cleaned",
+      "removed": [
+        {
+          "type": "container",
+          "name": "cvpnrt-eaef3f109c912c67-a2"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-eaef3f109c912c67-c2"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-eaef3f109c912c67-a1"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-eaef3f109c912c67-c1"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-eaef3f109c912c67-a0"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-eaef3f109c912c67-c0"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-eaef3f109c912c67-exit"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-eaef3f109c912c67-origin"
+        },
+        {
+          "type": "container",
+          "name": "cvpnrt-eaef3f109c912c67-init"
+        },
+        {
+          "type": "volume",
+          "name": "cvpnrt-eaef3f109c912c67-config0"
+        },
+        {
+          "type": "volume",
+          "name": "cvpnrt-eaef3f109c912c67-config1"
+        },
+        {
+          "type": "volume",
+          "name": "cvpnrt-eaef3f109c912c67-config2"
+        },
+        {
+          "type": "volume",
+          "name": "cvpnrt-eaef3f109c912c67-exit-config"
+        },
+        {
+          "type": "volume",
+          "name": "cvpnrt-eaef3f109c912c67-origin-config"
+        },
+        {
+          "type": "volume",
+          "name": "cvpnrt-eaef3f109c912c67-replay"
+        },
+        {
+          "type": "network",
+          "name": "cvpnrt-eaef3f109c912c67-lan0"
+        },
+        {
+          "type": "network",
+          "name": "cvpnrt-eaef3f109c912c67-lan1"
+        },
+        {
+          "type": "network",
+          "name": "cvpnrt-eaef3f109c912c67-lan2"
+        },
+        {
+          "type": "network",
+          "name": "cvpnrt-eaef3f109c912c67-net"
+        }
+      ]
+    }
+  },
+  "boringRegression": {
+    "schema": 1,
+    "kind": "native-runtime-container-lab",
+    "image": "localhost/clean-vpn-native-runtime:provision-20261029",
+    "port": 3443,
+    "publishedPort": null,
+    "firewallBackend": "nft",
+    "checks": [
+      "profiled-tunnel-and-dns-udp-tcp",
+      "public-launcher-start-status",
+      "loopback-dns-https-tcp-udp",
+      "foreign-rules-preserved",
+      "same-namespace-reentry-audited",
+      "unreachable-upstreams-unhealthy",
+      "dns-restores-with-upstream",
+      "wrong-name-unhealthy",
+      "wrong-psk-unhealthy",
+      "wrong-ca-unhealthy",
+      "unreachable-exit-unhealthy",
+      "without-net-admin-refused",
+      "without-tun-refused",
+      "host-network-refused-before-mutation",
+      "public-launcher-stop-and-restart",
+      "unprivileged-shared-namespace-application",
+      "pid1-sigkill-shared-namespace-no-direct-fallback",
+      "dead-engine-app-dns-blocked",
+      "replacement-works-old-namespace-stays-blocked",
+      "client-sigterm-clean",
+      "container-restart-healthy",
+      "exit-sigterm-clean",
+      "public-launcher-owned-remove"
+    ],
+    "status": "passed",
+    "scope": "internal-lab-only",
+    "imageId": "sha256:92fb0dacfc0c4648118bc32102f10b8f604fb76da55d5918a555029ee018d1d8",
+    "architecture": "arm64",
+    "engineSha256": "f087b391f148359fc81b7d70cc9d5c1f1830b0fad532321820d8a1938ccced56",
+    "cleanup": {
+      "status": "passed"
+    }
+  },
+  "boringRegressionNote": "23 checks used preceding image 92fb0d; later change only adjusts combo active-health DNAT allow. No new boring pcap acceptance in this run.",
+  "fairness": {
+    "accepted": false,
+    "starvationObserved": true,
+    "globalRelaySlots": 16,
+    "next": "authenticated relay client identities/keys and per-client quotas alongside global cap"
+  },
+  "developmentFindings": [
+    "Loopback source 127.0.0.2 failed public-address connect before NAT; probe now binds assigned native peer IP.",
+    "OUTPUT allow matching -o lo failed after direct uplink route was added; final rule matches post-DNAT destination and conntrack DNAT. Positive controls precede and follow negative TLS checks.",
+    "Temporary nested-Docker CLI file-copy adapter and multi-client fixture CA path corrected before final runs."
+  ],
+  "limitations": [
+    "Minute multi-client load is not a long production soak.",
+    "Multi-client peak resources sampled during normal load, not relay saturation.",
+    "Active HTTPS health uses Node ClientHello, not the saved browser profile; opt-in generates additional traffic.",
+    "Health does not prove LAN PREROUTING behavior or restart an unhealthy engine.",
+    "Shared relay PSK cannot individually revoke relay clients."
+  ],
+  "rawReportSha256": {
+    "health-r5": "cf97311b27ef06495ba3aeac735ab6feb5b4cc0bba2cce884269b20214524f53",
+    "multi-final": "772bab9c02b78830f4bbdd5ed8b53da8d55a4bb655be1166a8305a70bc439e50",
+    "boring": "55565edfead42aaa32421c811e73d934bd853519492f8e5cf62764584325e548"
+  },
+  "sourceSha256": {
+    "scripts/clean-vpn-native-runtime-config.mjs": "e5f22c03406eea29e693aa418a29308297e9f5ec050acbb5511ffea55d79705e",
+    "scripts/lib/native-relay-health.mjs": "f5db814a15e380cc1b21767807151ae4effeb5af53716a4c11676e465fde6b12",
+    "scripts/lib/native-runtime-plan.mjs": "274130f8d29d2fc44089ef7a77b82dfc4f43aa6a5166127a06ca7f62f777749a",
+    "scripts/clean-vpn-native-runtime.mjs": "7bd4111bffeaa1fffdc5468699e6ee587074c369ec44d9ec67d083b8c8f12c74",
+    "scripts/clean-vpn-native-runtime-health.mjs": "cf9208d8e35b8367a196283087fc1689e7d81839045f14cc0bd0201d8beacb9a",
+    "scripts/clean-vpn-native-combo-runtime-lab.mjs": "164617bf5f8899e9ba7aba32166a174e1f0cbb56f53a1c3934ca5ad4fa87cca9",
+    "scripts/clean-vpn-native-multi-client-lab.mjs": "560cf739c2f45783532bf27a6f7cf883335e3245082ffb00e35a99d68863067a"
+  }
+}

@@ -5,6 +5,7 @@ import dgram from 'node:dgram';
 import net from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
+import {relayHttpsProbe,validateRelayHealth} from './lib/native-relay-health.mjs';
 import { runtimePacketConfig } from './lib/native-runtime-plan.mjs';
 
 // Bounded live DNS exchange, never a cached ready-file or a PID-only assertion.
@@ -56,9 +57,11 @@ async function main() {
     assert.ok(fs.readFileSync('/proc/net/tcp', 'utf8').split('\n').some(l => l.trim().split(/\s+/)[1]?.endsWith(':' + port) && l.trim().split(/\s+/)[3] === '0A'));
   };
   if (c.role === 'client') {
-    await Promise.all([false, true].map(tcp => dnsProbe(c.peer_ipv4 ?? '10.99.0.2', 1053, tcp)));
+    const checks=[false,true].map(tcp=>dnsProbe(c.peer_ipv4??'10.99.0.2',1053,tcp));
+    if(state.plan.relayHealth)checks.push(relayHttpsProbe(validateRelayHealth(state.plan.relayHealth,config.transparent),state.plan.address));
+    await Promise.all(checks);
     if (config.transport === 'combo-tls') listening(config.transparent.listen.port);
-    console.log(config.transport === 'combo-tls' ? 'NATIVE_HEALTH=authenticated-packet-dns-and-local-relay-listener' : 'NATIVE_HEALTH=authenticated-tunnel-and-dns');
+    console.log(state.plan.relayHealth?'NATIVE_HEALTH=authenticated-packet-dns-and-relay-https':config.transport === 'combo-tls' ? 'NATIVE_HEALTH=authenticated-packet-dns-and-local-relay-listener' : 'NATIVE_HEALTH=authenticated-tunnel-and-dns');
   } else {
     listening(c.port);
     console.log('NATIVE_HEALTH=exit-listening-only');

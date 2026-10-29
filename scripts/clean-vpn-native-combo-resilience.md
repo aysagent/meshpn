@@ -106,6 +106,7 @@ Admission/timeouts/ключи/production engine в этом этапе не ос
 15 минут — ограниченная лабораторная приёмка, не многочасовая эксплуатация,
 не multi-client capacity test и не физическая Radxa↔VPS проверка.
 
-Следующие локальные задачи: удобный offline combo bundle и отдельный
-end-to-end relay health; затем несколько независимых клиентов и fairness
-при перегрузке. Переход к физическим узлам требует отдельного разрешения.
+Продолжение: [offline combo bundle, active relay health и проверка трёх
+независимых клиентов](clean-vpn-native-combo-provisioning.md). Обнаруженное
+отсутствие relay fairness требует отдельной native-доработки identities/квот.
+Переход к физическим узлам требует отдельного разрешения.

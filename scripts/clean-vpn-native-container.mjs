@@ -10,7 +10,7 @@ import { isIPv4 } from 'node:net';
 import { publishedExitPort } from './lib/native-port.mjs';
 import { runtimePacketConfig } from './lib/native-runtime-plan.mjs';
 const { values: v, positionals } = parseArgs({ allowPositionals: true, options: Object.fromEntries([
-  'engine', 'connection', 'name', 'image', 'role', 'network', 'ip', 'publish', 'config-dir', 'config-volume', 'config-file', 'lan-network', 'lan-ip', 'lan-subnet', 'lab-owner', 'replay-volume'
+  'engine', 'connection', 'name', 'image', 'role', 'network', 'ip', 'publish', 'config-dir', 'config-volume', 'config-file', 'lan-network', 'lan-ip', 'lan-subnet', 'lab-owner', 'replay-volume', 'relay-health'
 ].map(k => [k, { type: 'string' }])) });
 const action = positionals[0];
 assert.ok(positionals.length === 1 && ['start', 'status', 'stop', 'remove'].includes(action), 'start|status|stop|remove required');
@@ -51,6 +51,7 @@ if (action === 'start') {
     assert.equal(config.transparent.replay_directory, '/replay/state', 'container_replay_path');
     p(['volume', 'inspect', v['replay-volume']]);
   } else assert.equal(v['replay-volume'], undefined, 'replay_volume_exit_combo_only');
+  if(v['relay-health']!==undefined){assert.equal(v['relay-health'],'relay-health.json');assert.ok(combo&&v.role==='client','relay_health_combo_client_only');}
   const published = v.publish ? publishedExitPort(packet, v.publish) : null;
   const parent = p(['run', '--rm', '--network=host', '--cap-drop=ALL', '--entrypoint=readlink', v.image, '/proc/self/ns/net']).trim();
   assert.match(parent, /^net:\[\d+\]$/);
@@ -66,6 +67,7 @@ if (action === 'start') {
     '--cap-drop=ALL', '--cap-add=NET_ADMIN', '--cap-add=NET_RAW', '--cap-add=NET_BIND_SERVICE', '--device=/dev/net/tun',
     '--security-opt=no-new-privileges', '--read-only', '--tmpfs=/run:rw,nosuid,nodev,mode=755', '--tmpfs=/tmp:rw,nosuid,nodev,mode=1777',
     '--mount', mount, '-e', `CVPN_PARENT_NETNS=${parent}`];
+  if(v['relay-health'])args.push('-e','CVPN_RELAY_HEALTH_CONFIG=/config/relay-health.json');
   if (v.ip) args.push('--ip', v.ip);
   if (v.ip || lan) args.push('-e', 'CVPN_ANNOUNCE_IPV4=1');
   if (v['lab-owner']) {

@@ -10,9 +10,12 @@
 таймауты/обрывы/ресурсы, replay, совместная нагрузка обеих веток, namespace
 guard и crash/recreate контейнеров. Продолжение:
 [15-минутный mixed soak и netem delay/loss/reorder/blackout](clean-vpn-native-combo-resilience.md).
-Следующие локальные расширения — offline combo bundle, end-to-end relay health
-(нынешний health не доказывает доступность HTTPS origin), затем независимые
-клиенты и fairness при перегрузке.
+Продолжение — [offline combo bundles, active relay health и три независимых
+клиента](clean-vpn-native-combo-provisioning.md). В тесте перегрузки выявлено:
+один клиент может занять все общие 16 relay slots, вытеснив остальные relay
+запросы; packet/DNS продолжают работать. Следующий native этап — отдельная
+аутентифицированная relay identity и квоты по клиенту (не только source IP),
+затем повторная проверка fairness, включая клиентов за общим NAT.
 Физическое сосуществование проверять позднее на отдельном порту **и в отдельном
 netns**, с отдельными ключами, конфигурацией и replay state.
 

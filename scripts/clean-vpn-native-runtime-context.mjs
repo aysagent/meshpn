@@ -10,7 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 assert.equal(process.argv.length, 3, 'Usage: node scripts/clean-vpn-native-runtime-context.mjs NEW_DIRECTORY');
 const output = path.resolve(process.argv[2]); assert.equal(fs.existsSync(output), false, 'new_context_required');
 const files = ['scripts/clean-vpn-native-runtime.mjs', 'scripts/clean-vpn-native-runtime-health.mjs',
-  'scripts/lib/native-runtime-plan.mjs', 'scripts/lib/native-transparent-network.mjs', 'scripts/containers/native-runtime-entrypoint.sh',
+  'scripts/lib/native-runtime-plan.mjs', 'scripts/lib/native-relay-health.mjs', 'scripts/lib/native-transparent-network.mjs', 'scripts/containers/native-runtime-entrypoint.sh',
   'scripts/containers/clean-vpn-native-runtime.Containerfile', 'fixtures/native-tls-profiles/cold-h2.json'];
 for (const dir of ['native/clean_vpn', 'native/boring_tls', 'native/boring_tls/patches']) {
   for (const f of fs.readdirSync(path.join(root, dir))) if (f === 'CMakeLists.txt' || /\.(cc|c|h|hpp|patch)$/.test(f)) files.push(`${dir}/${f}`);

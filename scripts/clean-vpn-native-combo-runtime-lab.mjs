@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync, execFile, spawnSync} from 'node:child_process';
 import {promisify} from 'node:util';
-import {randomBytes} from 'node:crypto';
+import {randomBytes,createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {cleanupLab} from './clean-vpn-native-runtime-cleanup.mjs';
 import {applicationProbe} from './lib/native-runtime-application-probe.mjs';
@@ -18,6 +18,8 @@ const cli=JSON.parse(process.env.CVPN_CONTAINER_COMMAND??'["podman"]');
 assert.ok(Array.isArray(cli)&&cli.length&&cli.every(v=>typeof v==='string'));
 const image=process.env.CVPN_RUNTIME_IMAGE;assert.ok(image);
 const observerImage=process.env.CVPN_OBSERVER_IMAGE;
+const activeHealth=process.env.CVPN_COMBO_HEALTH==='1';
+assert.ok(process.env.CVPN_COMBO_HEALTH===undefined||activeHealth);
 const netem=process.env.CVPN_COMBO_NETEM==='1';
 assert.ok(process.env.CVPN_COMBO_NETEM===undefined||netem,'CVPN_COMBO_NETEM_must_be_1');
 const seconds=Number(process.env.CVPN_COMBO_LOAD_SECONDS??60);assert.ok(Number.isInteger(seconds)&&seconds>=30&&seconds<=1800);
@@ -50,6 +52,7 @@ const launch=(role,name=names[role],file=role+'.json')=>{
   const args=['scripts/clean-vpn-native-container.mjs','start','--engine='+engine,'--name='+name,'--role='+role,'--image='+image,
     '--network='+net,'--ip='+ (name===names.second?'10.77.0.6':role==='exit'?'10.77.0.2':'10.77.0.3'),
     '--config-volume='+config,'--config-file='+file,'--lab-owner='+prefix,
+    ...(activeHealth&&role==='client'?['--relay-health=relay-health.json']:[]),
     ...(role==='exit'?['--replay-volume='+replay]:['--lan-network='+lan,'--lan-ip=192.168.88.2','--lan-subnet=192.168.88.0/24'])];
   if(cli.length>1){assert.deepEqual(cli.slice(1,2),['--connection']);assert.equal(cli.length,3);args.push('--connection='+cli[2]);}
   execFileSync(process.execPath,args,{...options,timeout:60000,env:{...process.env,PATH:path.dirname(cli[0])+':'+process.env.PATH}});
@@ -58,10 +61,10 @@ const exitRoutes=()=>{for(const dst of ['198.18.0.80','11.22.33.44'])e(names.exi
   for(const server of ['1.1.1.1','8.8.8.8'])for(const proto of ['udp','tcp'])e(names.exit,'iptables-nft','-t','nat','-A','PREROUTING','-i','cvpn0','-d',server,'-p',proto,'--dport','53','-j','DNAT','--to-destination','10.77.0.4:5353');};
 const snapshot=async()=>Object.fromEntries(await Promise.all(['client','exit'].map(async role=>[role,JSON.parse(await pa(['exec',names[role],'node','-e',nativeProcessProbe]))])));
 const replayHash=()=>e(names.init,'sha256sum','/replay/state/state').split(/\s/)[0];
-const capture=(name,namespace,filter)=>{
+const capture=(name,namespace,filter,iface='eth0')=>{
   p(['run','-d','--name',prefix+'-'+name,'--label',label,'--network=container:'+namespace,
     '--cap-drop=ALL','--cap-add=NET_RAW','--cap-add=SETUID','--cap-add=SETGID','-v',config+':/capture',
-    '--entrypoint=sh',observerImage,'-c',`exec tcpdump -p -n -U -i eth0 -s 0 -w - "${filter}" > /capture/${name}.pcap 2>/capture/${name}.log`]);
+    '--entrypoint=sh',observerImage,'-c',`exec tcpdump -p -n -U -i ${iface} -s 0 -w - "${filter}" > /capture/${name}.pcap 2>/capture/${name}.log`]);
 };
 const recoveryCapture=()=>{
   if(!observerImage)return;
@@ -78,6 +81,7 @@ try{
   for(const volume of [config,replay])p(['volume','create','--label',label,volume]);
   p(['run','-d','--name',names.init,'--label',label,'--network=none','--no-healthcheck','-v',config+':/config','-v',replay+':/replay','--entrypoint=sleep',image,lifetime]);
   e(names.init,'openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','2','-subj','/CN=runtime.test','-addext','subjectAltName=DNS:runtime.test','-keyout','/config/key.pem','-out','/config/cert.pem');
+  if(activeHealth)put('relay-health.json',JSON.stringify({version:1,ipv4:'11.22.33.44',server_name:'runtime.test',path:'/',ca:'/config/cert.pem',sha256:createHash('sha256').update('relay-ok\n').digest('hex')}));
   put('packet.psk',randomBytes(32));put('relay.psk',randomBytes(32));
   put('profile.json',fs.readFileSync('fixtures/native-tls-profiles/chromium-156-bounded-cold.json'));
   const configs={};for(const role of ['client','exit']){
@@ -112,7 +116,7 @@ try{
   probe(packetProbe);probe(relayProbe);step('public-launcher-real-TUN-DNS-and-LAN-HTTPS-relay');
   // A direct route is deliberately reachable; the guard must still block it.
   e(names.client,'ip','route','add','11.22.33.44/32','via','10.77.0.4','dev','eth0');
-  assert.throws(()=>probe(relayProbe,names.client));probe(relayProbe);step('direct-uplink-HTTPS-blocked-LAN-relay-works');
+  assert.throws(()=>probe(relayProbe,names.client));probe(relayProbe);if(activeHealth)assert.match(health(names.client),/relay-https/);step('direct-uplink-HTTPS-blocked-LAN-relay-works');
   const hash=replayHash();launch('exit',names.second,'second.json');
   await wait(()=>assert.equal(JSON.parse(p(['inspect',names.second]))[0].State.Running,false));
   assert.match(logs(names.second),/configuration or startup refused/);assert.equal(replayHash(),hash);p(['rm',names.second]);
@@ -211,9 +215,30 @@ try{
   }
   // Block relay admission without interrupting the authenticated packet branch.
   e(names.client,'iptables-nft','-I','CVPN_R_INPUT','1','-p','tcp','--dport','10443','-j','REJECT');
-  assert.throws(()=>probe(relayProbe));probe(packetProbe);health(names.client);
+  assert.throws(()=>probe(relayProbe));probe(packetProbe);if(activeHealth)assert.throws(()=>health(names.client));else health(names.client);
   e(names.client,'iptables-nft','-D','CVPN_R_INPUT','-p','tcp','--dport','10443','-j','REJECT');probe(relayProbe);
   step('relay-failure-does-not-downgrade-to-packet-branch');
+  if(activeHealth){
+    health(names.client);
+    for(const patch of [{server_name:'wrong.test'},{ca:null},{sha256:'0'.repeat(64)}]){
+      assert.throws(()=>e(names.client,'node','--input-type=module','-e',`import fs from 'node:fs';import {relayHttpsProbe} from '/opt/clean-vpn/lib/native-relay-health.mjs';const s=JSON.parse(fs.readFileSync('/run/clean-vpn/network.json'));await relayHttpsProbe({...s.plan.relayHealth,...${JSON.stringify(patch)}},s.plan.address);`));
+    }
+    health(names.client);step('relay-health-rejects-wrong-CA-hostname-and-body');
+    const rule=['-s','10.99.0.2/32','-d','11.22.33.44/32','-p','tcp','--dport','443','-j','REDIRECT','--to-ports','10443'];
+    if(observerImage){capture('health',names.client,'tcp port 10443 or tcp port 443','lo');await wait(()=>assert.match(e(names.init,'cat','/config/health.log'),/listening/));}
+    report.healthFaultStage='redirect-removed';
+    e(names.client,'iptables-nft','-t','nat','-D','CVPN_R_DNS',...rule);
+    assert.throws(()=>health(names.client));probe(packetProbe);
+    e(names.client,'iptables-nft','-t','nat','-I','CVPN_R_DNS','1',...rule);
+    report.healthFaultStage='redirect-restored';const redirectRestored=performance.now();
+    await wait(()=>assert.match(health(names.client),/packet-dns-and-relay-https/));report.redirectHealthRecoveryMs=performance.now()-redirectRestored;
+    if(observerImage){p(['stop','--time=5',prefix+'-health']);p(['rm',prefix+'-health']);}
+    report.healthFaultStage='origin-blocked';
+    e(names.exit,'iptables-nft','-I','CVPN_R_OUTPUT','1','-d','11.22.33.44','-p','tcp','--dport','443','-j','REJECT');
+    assert.throws(()=>health(names.client));probe(packetProbe);
+    e(names.exit,'iptables-nft','-D','CVPN_R_OUTPUT','-d','11.22.33.44','-p','tcp','--dport','443','-j','REJECT');
+    report.healthFaultStage='origin-restored';const originRestored=performance.now();await wait(()=>health(names.client));report.originHealthRecoveryMs=performance.now()-originRestored;step('active-relay-health-refuses-missing-redirect-and-blocked-origin-with-packet-healthy');
+  }
   const beforeCrash=replayHash();p(['kill','--signal=KILL',names.exit]);
   assert.throws(()=>probe(relayProbe));assert.throws(()=>health(names.client));
   if(observerImage)capture('recovery',names.client,'arp or tcp port 3443');
@@ -231,9 +256,11 @@ try{
   step('native-PID1-SIGTERM-clean');finished=true;
 }catch(error){report.error=String(error.message).slice(0,4000);console.error(report.error);
   try{recoveryCapture();}catch{}
+  if(activeHealth)try{report.relayHealthError=e(names.client,'node','--input-type=module','-e',"import fs from 'node:fs';import {relayHttpsProbe} from '/opt/clean-vpn/lib/native-relay-health.mjs';const s=JSON.parse(fs.readFileSync('/run/clean-vpn/network.json'));try{await relayHttpsProbe(s.plan.relayHealth,s.plan.address);console.log('ok');}catch(e){console.log(e.code,e.message);}");}catch{}
   for(const n of [names.client,names.exit])try{report[n.endsWith('client')?'clientLog':'exitLog']=logs(n).slice(-4000);}catch{}
+  if(activeHealth&&observerImage)try{p(['stop','--time=5',prefix+'-health']);report.healthPackets=p(['run','--rm','--network=none','-v',config+':/capture:ro','--entrypoint=tcpdump',observerImage,'-nn','-r','/capture/health.pcap','-c','80']);p(['rm',prefix+'-health']);}catch{}
   report.networkFailure={};for(const n of [names.client,names.exit])try{report.networkFailure[n.endsWith('client')?'client':'exit']={
-    addresses:e(n,'ip','-j','-4','addr'),routes:e(n,'ip','-j','-4','route'),neighbors:e(n,'ip','-j','neigh'),firewall:e(n,'iptables-nft-save'),sockets:e(n,'ss','-nt')};}catch{}
+    addresses:e(n,'ip','-j','-4','addr'),routes:e(n,'ip','-j','-4','route'),neighbors:e(n,'ip','-j','neigh'),firewall:e(n,'iptables-nft-save','-c'),sockets:e(n,'ss','-nt')};}catch{}
 }finally{
   try{report.cleanup=cleanupLab(ownership,p);}catch(e){report.cleanup={status:'failed',error:e.message};finished=false;}
   fs.rmSync(root,{recursive:true,force:true});report.status=finished?'passed':'failed';fs.writeFileSync(reportPath,JSON.stringify(report,null,2)+'\n',{flag:'wx',mode:0o600});

@@ -16,6 +16,8 @@ test('application timings require one successful complete numeric transaction re
 });
 test('generated application probe parses for both DNS paths and rejects injected addresses', () => {
   for (const address of ['127.0.0.11','192.168.88.2']) new vm.Script('(async()=>{' + applicationProbe(address) + '})()');
+  new vm.Script('(async()=>{'+applicationProbe('192.168.88.2','/config/ca.pem')+'})()');
+  for(const ca of ['/etc/passwd',"/config/x';bad.pem",'/config/../ca.pem'])assert.throws(()=>applicationProbe('192.168.88.2',ca));
   for (const address of ['example.com', "127.0.0.1';process.exit(0);//", '::1']) assert.throws(() => applicationProbe(address));
 });
 test('DNS catches Docker loopback resolver; only marked native upstreams bypass DNAT', () => {
