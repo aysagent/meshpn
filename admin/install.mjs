@@ -4,6 +4,7 @@
 import fs from 'node:fs';import {createHash} from 'node:crypto';import path from 'node:path';import {fileURLToPath} from 'node:url';import {execFileSync} from 'node:child_process';
 import {need,atomic,readJson} from './lib/common.mjs';
 import {nativeAdminBinding} from './lib/native-binding.mjs';
+import {usbAdminSocketUnit,upgradeUsbAdminSocket} from './lib/socket-unit.mjs';
 const root=path.dirname(path.dirname(fileURLToPath(import.meta.url))),base='/opt/meshpn-admin',etc='/etc/meshpn-admin';
 const run=(file,args)=>execFileSync(file,args,{encoding:'utf8',timeout:30000,stdio:['ignore','pipe','pipe']}).trim();
 need(process.platform==='linux'&&process.getuid()===0,'linux_root_required');
@@ -24,12 +25,18 @@ function updateGuard(){
 }
 if(process.argv[2]==='--update'){
  need(readJson(etc+'/manifest.json').kind==='meshpn-admin-owned-install','install_manifest');
+ const socketPath='/etc/systemd/system/meshpn-admin.socket';
+ const socketText=upgradeUsbAdminSocket(fs.readFileSync(socketPath,'utf8'));
+ const socketEnabled=run('/usr/bin/systemctl',['show','meshpn-admin.socket','-p','UnitFileState','--value']);
  for(const u of['meshpn-admin.socket','meshpn-admin-web.service','meshpn-admin-broker.service'])run('/usr/bin/systemctl',['stop',u]);
+ if(['enabled','enabled-runtime'].includes(socketEnabled))run('/usr/bin/systemctl',['disable','meshpn-admin.socket']);
+ atomic(socketPath,socketText,0o644);
  updateGuard();
  const unitPath='/etc/systemd/system/meshpn-admin-broker.service',unitText=fs.readFileSync(unitPath,'utf8');need(unitText.startsWith('# meshpn-admin-owned-v1\n'),'unit_changed');atomic(unitPath,unitText.replace('After=network.target avahi-daemon.service\n','After=network.target avahi-daemon.service clean-vpn-killswitch.service\n'),0o644);run('/usr/bin/systemctl',['daemon-reload']);
  for(const dir of['admin','scripts/lib'])fs.cpSync(path.join(root,dir),path.join(base,dir),{recursive:true,filter:p=>!p.includes('/test/')&&!p.endsWith('/WORK.md')});
  fs.copyFileSync(root+'/scripts/clean-vpn-pcap-fingerprints.mjs',base+'/scripts/clean-vpn-pcap-fingerprints.mjs');
  const manifest=readJson(etc+'/manifest.json');atomic(etc+'/manifest.json',{...manifest,sourceCommit:run('git',['-C',root,'rev-parse','HEAD']),updatedAt:new Date().toISOString()});
+ if(['enabled','enabled-runtime'].includes(socketEnabled))run('/usr/bin/systemctl',['enable',...(socketEnabled==='enabled-runtime'?['--runtime']:[]),'meshpn-admin.socket']);
  run('/usr/bin/systemctl',['start','meshpn-admin-broker.service','meshpn-admin.socket']);console.log('ADMIN_UPDATED');process.exit(0);
 }
 if(['--container','--standalone','--update'].includes(process.argv[2])){
@@ -78,7 +85,7 @@ const common='NoNewPrivileges=yes\nProtectSystem=strict\nProtectKernelTunables=y
 const bodies={
  'meshpn-admin-broker.service':`[Unit]\nDescription=MeshPN restricted system broker\nAfter=network.target avahi-daemon.service clean-vpn-killswitch.service\nWants=avahi-daemon.service\n[Service]\nType=simple\nUser=root\nGroup=meshpn-admin\nRuntimeDirectory=meshpn-admin\nRuntimeDirectoryMode=0750\nStateDirectory=meshpn-admin-broker\nStateDirectoryMode=0700\nExecStartPre=${base}/node ${base}/admin/usb-mdns.mjs up\nExecStopPost=${base}/node ${base}/admin/usb-mdns.mjs down\nExecStart=${base}/node ${base}/admin/broker.mjs ${etc}/broker.json\nRestart=on-failure\nRestartSec=3\n${common}ProtectHome=read-only\nReadWritePaths=${state} ${native.bundle} /run/meshpn-admin -/run/clean-vpn-killswitch -/run/xtables.lock\nCapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SETUID CAP_SETGID CAP_DAC_READ_SEARCH\nTasksMax=48\nMemoryMax=192M\n[Install]\nWantedBy=multi-user.target\n`,
  'meshpn-admin-web.service':`[Unit]\nDescription=MeshPN USB administration\nRequires=meshpn-admin-broker.service\nAfter=meshpn-admin-broker.service\n[Service]\nType=simple\nUser=meshpn-admin\nGroup=meshpn-admin\nStateDirectory=meshpn-admin-web\nStateDirectoryMode=0700\nExecStart=${base}/node ${base}/admin/server.mjs ${etc}/web.json\nRestart=on-failure\nRestartSec=2\n${common}ProtectHome=yes\nReadWritePaths=/var/lib/meshpn-admin-web\nCapabilityBoundingSet=\nRestrictAddressFamilies=AF_UNIX AF_INET\nTasksMax=32\nMemoryMax=192M\n`,
- 'meshpn-admin.socket':`[Unit]\nDescription=MeshPN administration bound to USB device\nAfter=clean-vpn-usb-rescue-address.service\nWants=clean-vpn-usb-rescue-address.service\n[Socket]\nListenStream=192.168.7.1:80\nListenStream=192.168.7.1:8443\nBindToDevice=usb0\nFreeBind=yes\nService=meshpn-admin-web.service\n[Install]\nWantedBy=sockets.target\n`};
+ 'meshpn-admin.socket':usbAdminSocketUnit()};
 for(const[u,s]of Object.entries(bodies))atomic('/etc/systemd/system/'+u,'# meshpn-admin-owned-v1\n'+s,0o644);
 run('/usr/bin/systemctl',['daemon-reload']);
 try{run('/usr/bin/systemctl',['enable','--now','meshpn-admin-broker.service','meshpn-admin.socket']);}catch(e){for(const u of units)try{run('/usr/bin/systemctl',['stop',u]);}catch{}throw Error('admin_start_failed_services_stopped');}
