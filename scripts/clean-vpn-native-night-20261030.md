@@ -32,6 +32,8 @@ Mac не переключаются; новые экземпляры — тол�
    28.5.2 / Compose 2.40.3, ARM64 Linux. [Docker evidence](clean-vpn-native-docker-compat.md).
    Исправлен перехват контейнерного DNS с uplink-маршрутом; разрешение действует
    только после DNAT и только к уже локальному адресу, до TUN выход закрыт.
+   Финальный discovery + private DNS stack — по 12/12 в Podman и Docker:
+   реальный адрес `.3`, неизменённый source config, повторный запуск и SIGKILL.
 7. Alpine: arm64 musl build/CTest 13/13, native 48/48, nft/legacy runtime
    по 20/20. Эти результаты до private DNS delta; новый delta прогон в работе.
    amd64 build пока блокируется отсутствием исполняемого x86 runtime в этой VM.
@@ -39,8 +41,9 @@ Mac не переключаются; новые экземпляры — тол�
    уникальных JS-сценариев, включая конкурентный reload; ASAN/UBSAN/LSan 34/34.
    Изолированный Linux owner — по 8/8 nft и legacy: TUN/NSS, повторный запуск, отказ при смене
    адреса, неверный ключ, IPv4/IPv6 bootstrap guard и новая namespace.
-   Контейнерная упаковка discovery ещё проверяется. Offline leaf renewal под прежним CA — 10/10 с настоящим
-   native H1/H2. Admin certificate dates и allowlisted diagnostic export готовы,
+   Контейнерная упаковка discovery принята. Offline leaf renewal под прежним CA
+   и review — 12/12 с настоящим native H1/H2; исправлена гонка изменения `--trust`.
+   Admin certificate dates и allowlisted diagnostic export готовы,
    admin regression 47/47 и Chromium DOM. Продолжаются docs и долгие проверки.
    Discovery/full ClientHello сверены независимым observer с сохранённым
    частичным Chromium-профилем. Отказ по сроку сертификата/clock-skew проверен
