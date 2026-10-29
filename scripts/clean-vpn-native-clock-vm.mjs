@@ -10,9 +10,11 @@ import {once} from 'node:events';
 import {setTimeout as delay} from 'node:timers/promises';
 import {gzipSync} from 'node:zlib';
 import {createHash,randomBytes} from 'node:crypto';
+import {installNative} from './lib/native-install.mjs';
+import {nativeHostSources} from './lib/native-host-plan.mjs';
 import {nativeServiceUnit} from './lib/native-service-unit.mjs';
 import {nativeClockRecoveryUnit} from './lib/native-clock-unit.mjs';
-assert.equal(process.platform,'linux');assert.equal(process.arch,'x64');assert.equal(process.argv.length,3);
+assert.equal(process.platform,'linux');assert.equal(process.arch,'x64');const hostProfile=process.argv[3]==='--host-profile';assert.equal(process.argv.length,hostProfile?4:3);
 const output=path.resolve(process.argv[2]);assert.ok(!fs.existsSync(output));
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-clock-vm-'));
 const build=path.resolve(process.env.CVPN_BUILD??'native/clean_vpn/build');
@@ -32,25 +34,31 @@ try{
   for(const name of ['server','expired'])run('openssl',['ca','-batch','-config',pki+'/ca.cnf','-extensions','server','-cert',pki+'/ca.pem','-keyfile',pki+'/ca.key','-in',`${pki}/${name}.csr`,'-out',`${pki}/${name}.pem`,'-startdate',start,'-enddate',name==='expired'?stamp(now-86400000):end]);
   run('openssl',['req','-x509','-key',pki+'/other.key','-in',pki+'/other.csr','-out',pki+'/other.pem','-days','5']);
   for(const name of ['host','identity','wrong'])run('ssh-keygen',['-q','-t','ed25519','-N','','-f',pki+'/'+name]);
-  fs.writeFileSync(pki+'/psk',randomBytes(32));fs.writeFileSync(pki+'/wrong-psk',randomBytes(32));
+  fs.writeFileSync(pki+'/psk',randomBytes(32),{mode:0o600});fs.writeFileSync(pki+'/wrong-psk',randomBytes(32),{mode:0o600});
   const disk=root+'/client.ext4';const fd=fs.openSync(disk,'wx',0o600);fs.ftruncateSync(fd,64*1024*1024);fs.closeSync(fd);run('mkfs.ext4',['-F','-q',disk]);
   // Only the exit guest sets its NTP synchronized flag for this offline test.
   // QEMU's normal RTC supplies reference time; this is not an NTP accuracy test.
   fs.writeFileSync(root+'/sync.c','#include <sys/timex.h>\nint main(){struct timex t={0};if(adjtimex(&t)<0)return 1;t.modes=ADJ_STATUS|ADJ_MAXERROR|ADJ_ESTERROR;t.maxerror=1000;t.esterror=1000;t.status&=~STA_UNSYNC;return adjtimex(&t)<0;}\n');
   run('cc',[root+'/sync.c','-o',root+'/sync']);
-  const modnames=['tun','virtio_pci','virtio_net','virtio_blk','ext4','nf_tables','nft_compat','xt_conntrack','xt_tcpudp','iptable_filter','ip6table_filter'];
-  const modules=[...new Set(modnames.flatMap(name=>run('modprobe',['--set-version',release,'--show-depends',name]).trim().split('\n').filter(x=>!x.startsWith('builtin ')).map(x=>{assert.match(x,/^insmod \/lib\/modules\/[a-zA-Z0-9_./-]+\.ko\s*$/);return x.trim().split(/\s+/)[1];})))];
+  const modnames=['tun','virtio_pci','virtio_net','virtio_blk','ext4','nf_tables','nft_compat','xt_conntrack','xt_tcpudp','iptable_filter','ip6table_filter',...(hostProfile?['dummy','nft_chain_nat','nft_nat','nft_masq','xt_comment','xt_addrtype','xt_mark','xt_TCPMSS','xt_nat','xt_MASQUERADE','ipt_REJECT','ip6t_REJECT','xt_multiport','iptable_nat','iptable_mangle','nf_conntrack_netlink']:[])];
+  const modules=[...new Set(modnames.flatMap(name=>run('modprobe',['--set-version',release,'--show-depends',name]).trim().split('\n').filter(x=>!x.startsWith('builtin ')).map(x=>{x=x.replace(/(\/dummy\.ko) numdummies=0$/, '$1');assert.match(x,/^insmod \/lib\/modules\/[a-zA-Z0-9_./-]+\.ko\s*$/);return x.trim().split(/\s+/)[1];})))];
   const pythonBase=run('/usr/bin/python3',['-c','import sys;print("/usr/lib/python%d.%d"%sys.version_info[:2])']).trim();
   const cases=['main','expired','wrongpin','skew','wrongkey','wrongname','untrusted','timeout'];
   function image(role,phase){
-    const guest=root+'/'+role+'-'+phase;fs.mkdirSync(guest);
-    const put=(p,b,mode=0o644)=>{const dest=guest+p;fs.mkdirSync(path.dirname(dest),{recursive:true});fs.writeFileSync(dest,b,{mode});};
+    const guest=root+'/'+role+'-'+phase;fs.mkdirSync(guest);fs.chmodSync(guest,0o755);
+    const put=(p,b,mode=0o644)=>{const dest=guest+p;const missing=[];for(let d=path.dirname(dest);!fs.existsSync(d);d=path.dirname(d))missing.push(d);for(const d of missing.reverse()){fs.mkdirSync(d);fs.chmodSync(d,0o755);}fs.writeFileSync(dest,b,{mode});fs.chmodSync(dest,mode);};
     const copied=new Set();
     const binary=(src,dest=src)=>{if(copied.has(dest))return;copied.add(dest);put(dest,fs.readFileSync(src),0o755);
       for(const lib of run('ldd',[src]).match(/\/[^\s()]+/g)??[])if(!copied.has(lib)){copied.add(lib);put(lib,fs.readFileSync(lib),0o755);}};
     const source=(src,dest)=>{const b=fs.readFileSync(src);sourceHashes[src]=hash(b);put(dest,b);};
     put('/bin/busybox',fs.readFileSync('/bin/busybox'),0o755);fs.symlinkSync('busybox',guest+'/bin/sh');
     for(const src of ['/usr/local/bin/node','/usr/bin/openssl','/usr/sbin/ip','/usr/bin/date','/usr/bin/timeout','/usr/bin/python3','/usr/bin/ssh','/usr/bin/ssh-keygen','/usr/sbin/sshd','/usr/lib/systemd/systemd','/usr/lib/systemd/systemd-executor','/usr/bin/systemctl','/usr/bin/timedatectl','/usr/lib/systemd/systemd-timedated','/usr/bin/dbus-daemon','/usr/sbin/iptables-nft','/usr/sbin/ip6tables-nft'])binary(src);
+    if(hostProfile){
+      for(const p of ['/bin/bash','/usr/bin/env','/usr/bin/flock','/usr/bin/stat','/usr/sbin/sysctl','/usr/sbin/conntrack'])binary(p);
+      for(const p of ['iptables','ip6tables','iptables-save','ip6tables-save','iptables-restore','ip6tables-restore'])binary('/usr/sbin/xtables-nft-multi','/usr/sbin/'+p);
+      source('scripts/clean-vpn-native-runtime-health.mjs','/opt/cvpn/health.mjs');
+      source('scripts/autostart/killswitch.sh','/usr/local/bin/clean-vpn-killswitch.sh');fs.chmodSync(guest+'/usr/local/bin/clean-vpn-killswitch.sh',0o755);
+    }
     binary(build+'/clean-vpn-engine','/opt/cvpn/engine');sourceHashes.engine=hash(fs.readFileSync(build+'/clean-vpn-engine'));
     binary(root+'/sync','/opt/clock-lab-sync');
     fs.mkdirSync(guest+path.dirname(pythonBase),{recursive:true});fs.cpSync(pythonBase,guest+pythonBase,{recursive:true,dereference:true,filter:p=>!p.includes('__pycache__')});
@@ -66,8 +74,27 @@ try{
     const unit=(name,body)=>put('/etc/systemd/system/'+name,body.replace('[Unit]\n','[Unit]\nDefaultDependencies=no\n').replace('[Service]\n','[Service]\nEnvironment=PATH=/usr/local/bin:/usr/sbin:/usr/bin:/bin\n'));
     unit('cvpn-network.service',`[Unit]\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh /opt/network.sh\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/console\n`);
     put('/opt/network.sh',`#!/bin/sh\nset -eu\n/usr/sbin/ip link set lo up\n/usr/sbin/ip addr add 192.0.2.${role==='client'?'3':'2'}/24 dev eth0\n/usr/sbin/ip link set eth0 up\n/usr/sbin/ip tuntap add cvpn0 mode tun\n/usr/sbin/ip addr add 10.99.0.${role==='client'?'2':'1'}/24 dev cvpn0\n/usr/sbin/ip link set cvpn0 mtu 1400 up\n${role==='exit'?'/usr/sbin/ip tuntap add cvexp0 mode tun\n/usr/sbin/ip addr add 10.100.0.1/24 dev cvexp0\n/usr/sbin/ip link set cvexp0 up':'mkdir -p /state\n'+cases.map(c=>`mkdir -p /state/clock-${c}\nchmod 700 /state/clock-${c}`).join('\n')}\n`,0o755);
+    if(hostProfile){
+      if(role==='client')put('/opt/network.sh',`#!/bin/sh
+set -eu
+ip link set lo up
+ip link set eth0 name wlan0
+ip addr add 192.0.2.3/24 dev wlan0
+ip link set wlan0 up
+ip route add default via 192.0.2.2 dev wlan0
+ip link add usb0 type dummy
+ip addr add 192.168.7.1/24 dev usb0
+ip link set usb0 up
+sysctl -w net.ipv4.ip_forward=1
+${cases.map(c=>`mkdir -p /state/clock-${c}
+chmod 700 /state/clock-${c}
+mount --bind /state/clock-${c} /opt/clean-vpn-native/${c}/clock-state`).join('\n')}
+`,0o755);
+      else fs.appendFileSync(guest+'/opt/network.sh','ip addr add 192.0.2.4/24 dev eth0\nip addr add 1.1.1.1/32 dev lo\nip addr add 8.8.8.8/32 dev lo\n');
+    }
     unit('cvpn-guard.service','[Unit]\nRequires=cvpn-network.service\nAfter=cvpn-network.service\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh /opt/guard.sh\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/console\n');
     put('/opt/guard.sh',role==='exit'?'#!/bin/sh\nexit 0\n':`#!/bin/sh\nset -eu\niptables-nft -P OUTPUT DROP\niptables-nft -P FORWARD DROP\nip6tables-nft -P OUTPUT DROP\nip6tables-nft -P FORWARD DROP\niptables-nft -A OUTPUT -o lo -j ACCEPT\niptables-nft -A OUTPUT -o cvpn0 -j ACCEPT\niptables-nft -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n${[22,443,444].map(p=>`iptables-nft -A OUTPUT -o eth0 -d 192.0.2.2 -p tcp --dport ${p} -j ACCEPT`).join('\n')}\n`,0o755);
+    if(hostProfile&&role==='client')put('/opt/guard.sh','#!/bin/sh\nexec /usr/local/bin/clean-vpn-killswitch.sh up --scope=both --ipv6=block --tun=tun0 --server=192.0.2.2 --ssh-port=22 --usb-dns=1 --usb-strict=1\n',0o755);
     const creds=role==='client'?['identity','ca.pem','other.pem','psk','wrong-psk']:['host','server.pem','server.key','expired.pem','expired.key','psk'];
     for(const f of creds)put('/etc/cvpn/'+f,fs.readFileSync(pki+'/'+f),0o600);
     if(role==='client'){
@@ -77,6 +104,19 @@ try{
         put(`/etc/cvpn/${c}.json`,JSON.stringify(config),0o600);
         put(`/etc/cvpn/pin-${c}`,'clean-vpn-clock '+fs.readFileSync(pki+'/'+(c==='wrongpin'?'wrong':'host')+'.pub','utf8').split(' ').slice(0,2).join(' ')+'\n',0o600);
         put(`/etc/cvpn/clock-${c}.json`,JSON.stringify({version:1,host:'192.0.2.2',port:22,user:'cvpn-clock',identity:'/etc/cvpn/identity',known_hosts:`/etc/cvpn/pin-${c}`,state_dir:`/state/clock-${c}`,consumer_unit:`cvpn-${c}.service`}),0o600);
+        if(hostProfile){
+          const input=pki+'/'+c+'.json',clock=pki+'/clock-'+c+'.json',host=pki+'/host-'+c+'.json',pin=pki+'/pin-'+c;
+          fs.writeFileSync(input,JSON.stringify({...config,tun:'tun0',dns:true,ca:pki+'/'+(c==='untrusted'?'other.pem':'ca.pem'),secret_path:pki+'/'+(c==='wrongkey'?'wrong-psk':'psk'),tls_profile_path:path.resolve('fixtures/native-tls-profiles/chromium-156-bounded-cold.json')}),{mode:0o600});
+          fs.copyFileSync(guest+`/etc/cvpn/pin-${c}`,pin);
+          fs.writeFileSync(clock,JSON.stringify({version:1,host:'192.0.2.2',port:22,user:'cvpn-clock',identity:pki+'/identity',known_hosts:pin}),{mode:0o600});
+          fs.writeFileSync(host,JSON.stringify({version:1,guard_unit:'cvpn-guard.service',guard_script:'/usr/local/bin/clean-vpn-killswitch.sh'}),{mode:0o600});
+          installNative({root:guest,name:c,binary:build+'/clean-vpn-engine',config:input,hostProfile:host,clockProfile:clock,apply:true});
+          for(const [name,log] of [[`native-${c}.service`,`engine-${c}`],[`native-${c}-clock.service`,`recovery-${c}`],[`native-${c}-network.service`,`owner-${c}`]])
+            put('/etc/systemd/system/'+name+'.d/clock-vm.conf',`[Unit]\nDefaultDependencies=no\n[Service]\nEnvironment=PATH=/usr/local/bin:/usr/sbin:/usr/bin:/bin\nStandardOutput=append:/run/${log}.log\nStandardError=append:/run/${log}.log\n`);
+          // Keep a single inode for identical engine copies in the initramfs.
+          fs.unlinkSync(guest+`/opt/clean-vpn-native/${c}/engine`);fs.linkSync(guest+'/opt/cvpn/engine',guest+`/opt/clean-vpn-native/${c}/engine`);
+          continue;
+        }
         unit(`cvpn-${c}.service`,nativeServiceUnit({binary:'/opt/cvpn/engine',config:`/etc/cvpn/${c}.json`,networkUnit:'cvpn-network.service',guardUnit:'cvpn-guard.service',role:'client',clockRecoveryUnit:`clock-${c}.service`}).replace('StandardOutput=journal',`StandardOutput=append:/run/engine-${c}.log`).replace('StandardError=journal',`StandardError=append:/run/engine-${c}.log`));
         unit(`clock-${c}.service`,nativeClockRecoveryUnit({consumerUnit:`cvpn-${c}.service`,script:'/opt/cvpn/clock.py',config:`/etc/cvpn/clock-${c}.json`,stateDirectory:`/state/clock-${c}`}).replace('StandardOutput=journal',`StandardOutput=append:/run/recovery-${c}.log`).replace('StandardError=journal',`StandardError=append:/run/recovery-${c}.log`));
       }
@@ -96,9 +136,9 @@ try{
       fs.symlinkSync('systemd-timedated.service',guest+'/etc/systemd/system/dbus-org.freedesktop.timedate1.service');
       unit('clock-reference.service','[Unit]\nRequires=dbus.service\nAfter=dbus.service\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/opt/clock-lab-sync\n');
     }
-    unit('default.target','[Unit]\nWants=clock-driver.service '+(role==='client'?'cvpn-main.service':'cvpn-exit.service cvpn-expired.service clock-sshd.service')+'\n');
+    unit('default.target','[Unit]\nWants=clock-driver.service '+(role==='client'?(hostProfile?'native-main-network.service':'cvpn-main.service'):'cvpn-exit.service cvpn-expired.service clock-sshd.service')+'\n');
     unit('clock-driver.service','[Unit]\nRequires=cvpn-network.service\nAfter=cvpn-network.service\n[Service]\nType=simple\nExecStart=/bin/sh /driver.sh\nStandardOutput=tty\nStandardError=tty\nTTYPath=/dev/console\nTimeoutStartSec=15min\n');
-    put('/driver.sh',`#!/bin/sh\nif /usr/local/bin/node /opt/cvpn/worker.mjs ${role}; then echo CLOCK_VM_OK; else echo CLOCK_VM_FAILED; fi\nsync\npoweroff -f\n`,0o755);
+    put('/driver.sh',`#!/bin/sh\nif /usr/local/bin/node /opt/cvpn/worker.mjs ${role} ${hostProfile?'--host-profile':''}; then echo CLOCK_VM_OK; else echo CLOCK_VM_FAILED; fi\nsync\npoweroff -f\n`,0o755);
     put('/init',`#!/bin/sh\nexport PATH=/usr/local/bin:/usr/sbin:/usr/bin:/bin\nexport LANG=C LC_ALL=C\n/bin/busybox --install -s /bin\nmkdir -p /proc /sys /dev /run /tmp\nmount -t proc proc /proc\nmount -t sysfs sysfs /sys\nmount -t devtmpfs devtmpfs /dev\nchmod 1777 /tmp\nmkdir -p /run/sshd /run/dbus /root\n${modules.map(m=>'insmod '+m+' || poweroff -f').join('\n')}\n${role==='client'?'mkdir -p /state\nmount -t ext4 /dev/vda /state || poweroff -f':''}\nmkdir -p /sys/fs/cgroup\nmount -t cgroup2 none /sys/fs/cgroup\nexec /usr/lib/systemd/systemd --system --log-target=console --log-level=warning --show-status=no\n`,0o755);
     const paths=['.'];const walk=p=>{for(const e of fs.readdirSync(guest+'/'+p,{withFileTypes:true})){const q=path.join(p,e.name);paths.push(q);if(e.isDirectory())walk(q);}};walk('');
     const initrd=root+'/'+role+'-'+phase+'.gz';fs.writeFileSync(initrd,gzipSync(run('cpio',['-o','-H','newc','--owner=0:0','--quiet'],{cwd:guest,input:paths.join('\n')+'\n',encoding:null,maxBuffer:512*1024*1024}),{level:1}));return initrd;
@@ -116,6 +156,7 @@ try{
     for(const s of [p.stdout,p.stderr])s.on('data',b=>{fs.writeSync(log,b);result.text+=b;if(result.text.length>4*1024*1024)p.kill('SIGKILL');pending+=b;let n;while((n=pending.indexOf('\n'))>=0){const line=pending.slice(0,n).trim();pending=pending.slice(n+1);if(line.startsWith('CLOCK_')){console.error(role+': '+line);if(role==='exit'&&/^CLOCK_EXIT_SSH_COUNT=\d+$/.test(line))sshCount=Number(line.split('=')[1]);}}});
     result.done=once(p,'close').then(([code])=>{fs.closeSync(log);return code;});return result;
   };
+  if(hostProfile)for(const p of ['scripts/lib/native-install.mjs','scripts/lib/native-host-plan.mjs','scripts/lib/native-host-unit.mjs',...nativeHostSources.map(p=>'scripts/'+p)])sourceHashes[p]=hash(fs.readFileSync(p));
   console.error('CLOCK_LAB=building-images');
   const serverImage=image('exit',0),clientImage=image('client',0),clientImages=[clientImage,clientImage,clientImage];
   const server=launch('exit',0,serverImage);
@@ -124,7 +165,7 @@ try{
   const reports=[];
   for(let phase=0;phase<3;phase++){
     const before=sshCount,client=launch('client',phase,clientImages[phase]);
-    const timer=setTimeout(()=>client.p.kill('SIGKILL'),10*60*1000);
+    const timer=setTimeout(()=>client.p.kill('SIGKILL'),(hostProfile?35:10)*60*1000);
     let code;try{code=await client.done;}finally{clearTimeout(timer);}
     assert.equal(code,0,client.text.slice(-7000));assert.ok(client.text.includes('CLOCK_VM_OK')&&!client.text.includes('CLOCK_VM_FAILED'),client.text.slice(-14000));
     const rows=[...client.text.matchAll(/CLOCK_VM_REPORT=(\{[^\r\n]+\})/g)];assert.equal(rows.length,1);const r=JSON.parse(rows[0][1]);assert.equal(r.status,'passed');
@@ -134,7 +175,7 @@ try{
   }
   assert.equal(new Set(reports.map(r=>r.bootId)).size,3);assert.equal(sshCount,4);
   server.p.kill('SIGTERM');await server.done;
-  const report={schema:1,kind:'native-conditional-clock-vm',status:'passed',boots:reports,sshRequests:4,sourceHashes,
+  const report={schema:1,kind:'native-conditional-clock-vm',status:'passed',hostProfile,boots:reports,sshRequests:4,sourceHashes,
     vm:{kernel:release,accelerator:'TCG',isolatedKernels:2,clientBoots:3,connection:'private-unix-stream-only',hostClockChanged:false,externalNetwork:false},
     referenceClock:'exit QEMU default RTC; synchronization flag explicitly set in exit guest only; not an NTP accuracy test',
     serverSerialSha256:hash(fs.readFileSync(server.serialPath))};

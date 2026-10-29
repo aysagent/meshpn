@@ -205,3 +205,32 @@ rollback; затем отдельная приёмка постоянного з
 автозагрузки, USB rescue и DHCP на конкретной Radxa.
 
 Предыдущий checkpoint: [conditional-clock 2026-10-27](../fixtures/clean-vpn-native-conditional-clock-20261027.json).
+
+### Совместная приёмка host-profile, 29 октября
+
+Режим `scripts/clean-vpn-native-clock-vm.mjs REPORT.json --host-profile`
+использует настоящий `installNative`, network owner, cvks4 guard, native DNS,
+журналы и независимый ExecStopPost. TUN создаёт установленный owner. После
+готовности проверяются обычные UDP/TCP DNS-запросы через DNAT и пакетный путь,
+а после stop — отсутствие собственных TUN/NAT/DNS/policy rules и живой guard.
+
+[Успешный отчёт](../fixtures/clean-vpn-native-host-clock-20261029.json): три
+разные загрузки, 19 шагов, четыре реально исполненных SSH forced commands
+на независимом exit (3/0/1). Правильная дата не вызывает recovery; неверные
+CA/hostname/PSK, молчаливый timeout и неправильный SSH pin не разрешают
+необоснованную коррекцию. Настоящий expired certificate при верной дате не
+исправляется откатом. Повторный restart не сбрасывает бюджет попыток.
+
+RTC задан как 2017, но systemd может сначала поднять часы до своей build-time
+границы; проверяется фактический TLS not-yet-valid и коррекция, а не утверждение,
+что TLS обязательно видел 2017. HMAC skew отдельно воспроизведён на 13 часов.
+Engine не имеет CAP_SYS_TIME. State сохраняется на отдельном ext4 диске между
+загрузками, обе VM используют отдельные ядра и private QEMU connection.
+
+В ранних попытках исправлены только ошибки сборки стенда: недостающие guest
+утилиты/modules, права каталогов initramfs при umask 077 и некорректная инъекция
+timeout (закрытый порт давал RST). Для timeout теперь exit guest явно отбрасывает
+TCP/445. Production TLS/clock checks и лимиты SSH не ослаблялись.
+Хэши в отчёте фиксируют проверенный snapshot и engine. Позднейшее opt-in ingress
+расширение имеет отдельную приёмку и не включено в эту VM-матрицу. Физическая
+Radxa, её RTC/DHCP/USB rescue и power-loss остаются отдельной проверкой.

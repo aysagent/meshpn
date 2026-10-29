@@ -1,0 +1,131 @@
+{
+  "schema": 1,
+  "kind": "native-conditional-clock-vm",
+  "status": "passed",
+  "hostProfile": true,
+  "boots": [
+    {
+      "schema": 1,
+      "status": "passed",
+      "kind": "native-clock-lifecycle-vm",
+      "hostProfile": true,
+      "dnsUdpTcp": true,
+      "phase": 0,
+      "bootId": "4e5ba8be-506a-4765-a5da-f44893ee6bfa",
+      "steps": [
+        "bad-cold-boot-real-ssh-time-set-native-restart",
+        "healthy-service-restart-no-clock-query",
+        "wrongkey-does-not-trigger-clock",
+        "wrongname-does-not-trigger-clock",
+        "untrusted-does-not-trigger-clock",
+        "timeout-does-not-trigger-clock",
+        "truly-expired-cert-not-repaired-by-time-rollback",
+        "failed-service-restart-does-not-reset-attempt-budget",
+        "wrong-ssh-host-key-blocks-time-set-and-restart",
+        "real-independent-exit-rejects-hmac-skew-then-recovers",
+        "normal-vpn-after-all-faults",
+        "guard-survives-service-stop",
+        "host-owner-cleanup-tun-dns-routes-nat"
+      ],
+      "mainAttempt": {
+        "version": 1,
+        "boot_id": "4e5ba8be-506a-4765-a5da-f44893ee6bfa",
+        "failure": "tls_verify_not_yet_valid"
+      },
+      "nativeMainPid": true,
+      "engineCanSetTime": false,
+      "sshRequests": 3,
+      "serialSha256": "75623051174f2efa6034fc27633963c13f63b3395277c88d60bd667c1c0facc7"
+    },
+    {
+      "schema": 1,
+      "status": "passed",
+      "kind": "native-clock-lifecycle-vm",
+      "hostProfile": true,
+      "dnsUdpTcp": true,
+      "phase": 1,
+      "bootId": "076a6c8a-cbe9-408a-b171-5db96873772f",
+      "steps": [
+        "correct-cold-boot-no-recovery",
+        "guard-survives-service-stop",
+        "host-owner-cleanup-tun-dns-routes-nat"
+      ],
+      "mainAttempt": {
+        "version": 1,
+        "boot_id": "4e5ba8be-506a-4765-a5da-f44893ee6bfa",
+        "failure": "tls_verify_not_yet_valid"
+      },
+      "nativeMainPid": true,
+      "engineCanSetTime": false,
+      "sshRequests": 0,
+      "serialSha256": "bb04b1b24d7b669e9ef3ff8ca6f8960fbbe39ccadc765124e1e23123ea7246ee"
+    },
+    {
+      "schema": 1,
+      "status": "passed",
+      "kind": "native-clock-lifecycle-vm",
+      "hostProfile": true,
+      "dnsUdpTcp": true,
+      "phase": 2,
+      "bootId": "885a0759-5bd0-4277-b841-dd731dc061f1",
+      "steps": [
+        "bad-cold-boot-real-ssh-time-set-native-restart",
+        "guard-survives-service-stop",
+        "host-owner-cleanup-tun-dns-routes-nat"
+      ],
+      "mainAttempt": {
+        "version": 1,
+        "boot_id": "885a0759-5bd0-4277-b841-dd731dc061f1",
+        "failure": "tls_verify_not_yet_valid"
+      },
+      "nativeMainPid": true,
+      "engineCanSetTime": false,
+      "sshRequests": 1,
+      "serialSha256": "da5575dbdc2cccf7dc715c465fc938763ab891752dc86a40ecf0b786e227b4ef"
+    }
+  ],
+  "sshRequests": 4,
+  "sourceHashes": {
+    "scripts/clean-vpn-native-clock-vm.mjs": "52a87f5e4945269f1f5f49e46b66aabbf742242c97d530f2efbe2676b763af39",
+    "scripts/lib/native-service-unit.mjs": "d9d82bc16b2be7f881ecc4977c8a863764d350bb540dc84436aebcdec6665085",
+    "scripts/lib/native-clock-unit.mjs": "9e8f85dc848700bf3a8d2a3233168ae0507c521bbb26a06ff0ab2697bb519e10",
+    "scripts/lib/native-install.mjs": "375d877db2ae6d82dbcad47c9fd5262abe6291ec129052e3551dc8a8bb7623e2",
+    "scripts/lib/native-host-plan.mjs": "d197553deb21725772bbb97e9a5adb3cb94a17cf11a52a23114b3b652cb5a8de",
+    "scripts/lib/native-host-unit.mjs": "ca59427eddfc658a26cd7c0b8e480b12570310fd8ba0218ef6d0b7d1f2bf14ed",
+    "scripts/clean-vpn-native-host-network.mjs": "d6fe30fc4bd3a82044ac35b517ba76c2ece42db2832d18d96fa3702e5af7b56d",
+    "scripts/clean-vpn-native-tun.py": "6333f83851a1eddabefd12207ba9af3a45abc74e7df152e7ec391ff4a10a4b76",
+    "scripts/lib/native-host-network.mjs": "8e2f35453fd5e79ae66d0aacaa35fad93c8a07a4c09cb91627b8a215a512b33d",
+    "scripts/lib/native-host-store.mjs": "94af535e37c0767c81418272dce328511c96e1077a325787e76e86b609162140",
+    "scripts/lib/vpn-host-routes.mjs": "36dfcdb035cd34c3a83d1aa5c2a5a6645192197613b90a0fa57fef0a35c2aa67",
+    "scripts/lib/dns-tunnel-journal.mjs": "ff4e9247ca9b2b82e6fd2e5fe181d3c3552362b046c31d64154e0fb8a95a2e3a",
+    "scripts/lib/dns-tunnel-plan.mjs": "c3dc7481745191d54180940b144a16ccdd3ca7e8d96c0756ba919cd674d786df",
+    "scripts/lib/dns-tunnel-command.mjs": "254d58349eb18f3b4cb03940918177d8f5f501a11f82ef8041375f23685c2aef",
+    "scripts/lib/dns-tunnel-conntrack.mjs": "e0273f07e472afc7173eb7d6494cd62f0c07fe510bb215ac8ce70b5e6af5d251",
+    "scripts/lib/dns-tunnel-forwarder.mjs": "87d7577f0feba7d084873e527bd7ed6a97050bca9a9afd962c416d915f63795f",
+    "scripts/lib/dns-tunnel-stub.mjs": "4e30d42797eb4ff74320d57d0634c5a83bd9d4d63c29f4f39e1950c68f5609ec",
+    "scripts/lib/lab-dns-wire.mjs": "ccfab4d14edbd04c873da21c227e9048a0dfdc7e6b60058e229ce22f2307dd65",
+    "scripts/lib/transparent-tls-destination.mjs": "897ae080b99576b22f12e3c3309b73b9ff817b0376302900c9d04ad28829d64e",
+    "scripts/lib/transparent-tls-io.mjs": "0d4110bcf75daf4fc84220fa1b2e7a81b8c0c13ffeb01fac06f2935868385bbd",
+    "scripts/lib/tls-clienthello-ja3.mjs": "956dcbecc96146164a3eb24865e523cef466d3c877fd2a0ca28227c245ee02e9",
+    "scripts/lib/native-combo-redirect-journal.mjs": "e69992ea5618223f0009e6e96ff41f1f8855d9632ff5c048eebcab5ddc8dd50c",
+    "scripts/lib/native-combo-redirect-plan.mjs": "f7d99036ea9435e63cf9fdcdf11d2e277e937cc7781ea6636981e45c5d5cb73f",
+    "scripts/lib/native-transparent-network.mjs": "a5549d9c0c7d650b859e9a15ef45d4d39673a9d769e0d60bb071e82f3fb21ac1",
+    "scripts/clean-vpn-native-runtime-health.mjs": "ed80feeac91d5c231f8e042e61bd95c69f70fd40d6ee49e0f8c49d18cff5fb0c",
+    "scripts/autostart/killswitch.sh": "350b9aae0e2c81ee99d750f7d7d700e305d30b9aadaf261ce68f75b98da7c94b",
+    "engine": "cf89597bec9b749f94784974a3b4b5ddea06b4c7b77847a12b03e918e9b5ec0a",
+    "scripts/clean-vpn-native-clock.py": "5b04db3bec003aa36a2912da4657193b0c031a38d11d7c3b25d94f8c96128894",
+    "scripts/lib/native-clock-vm-worker.mjs": "18b4b54e68ad3101b892275198bf027709d8c116f294d8c587634405812dea36",
+    "fixtures/native-tls-profiles/chromium-156-bounded-cold.json": "e2cf0e9e2fb68ce5a2af43d56c0be989cd525217ac73e6037ad65098d5e0be79"
+  },
+  "vm": {
+    "kernel": "6.8.0-147-generic",
+    "accelerator": "TCG",
+    "isolatedKernels": 2,
+    "clientBoots": 3,
+    "connection": "private-unix-stream-only",
+    "hostClockChanged": false,
+    "externalNetwork": false
+  },
+  "referenceClock": "exit QEMU default RTC; synchronization flag explicitly set in exit guest only; not an NTP accuracy test",
+  "serverSerialSha256": "dc0b512e50091a1988e1357da3f9bb57ce769a7c8fff645ab3d949fa2efd0a42"
+}
