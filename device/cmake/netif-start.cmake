@@ -1,4 +1,4 @@
-# P4 Hosted peers can repeat START while the disconnected STA is already added.
+# P4 Hosted peers can repeat START or emit CONNECTED after STOP without START.
 # Build a guarded copy; leave the shared ESP-IDF checkout unchanged.
 idf_component_get_property(meshpn_netif_lib esp_netif COMPONENT_LIB)
 idf_component_get_property(meshpn_netif_dir esp_netif COMPONENT_DIR)

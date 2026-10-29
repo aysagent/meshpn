@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make repeated start notifications harmless in pinned ESP-IDF 5.5.5 (P4)."""
+"""Guard repeated/missing Hosted STA starts in pinned ESP-IDF 5.5.5 (P4)."""
 from pathlib import Path
 import argparse
 
@@ -20,7 +20,33 @@ def patch(source):
         }
     }
 '''
-    return source.replace(anchor, anchor.replace('    ESP_ERROR_CHECK(esp_netif_lwip_add(esp_netif));', guard + '\n    ESP_ERROR_CHECK(esp_netif_lwip_add(esp_netif));'))
+    source = source.replace(anchor, anchor.replace('    ESP_ERROR_CHECK(esp_netif_lwip_add(esp_netif));', guard + '\n    ESP_ERROR_CHECK(esp_netif_lwip_add(esp_netif));'))
+    up_anchor = '''    struct netif *lwip_netif = esp_netif->lwip_netif;
+
+#if CONFIG_LWIP_IPV4
+    /* use last obtained ip, or static ip */'''
+    if source.count(up_anchor) != 1:
+        raise ValueError('esp_netif_up_api changed; re-audit missing-start recovery')
+    recovery = '''    /* MeshPN P4: Hosted can emit STA_STOP while applying station config,
+     * then CONNECTED without another START. STOP removes the netif and its
+     * IGMP allsystems group. UP alone would leave it outside netif_list and
+     * mDNS would assert on joining 224.0.0.251. Re-run normal initialization
+     * before addresses/DHCP only for our STA, and only if actually absent.
+     * Both membership and initialization execute on this same lwIP thread. */
+    if (esp_netif->if_key && !strcmp(esp_netif->if_key, "WIFI_STA_DEF")) {
+        bool registered = false;
+        for (struct netif *n = netif_list; n; n = n->next) {
+            if (n == lwip_netif) { registered = true; break; }
+        }
+        if (!registered) {
+            ESP_LOGW(TAG, "Restoring missing START before CONNECTED for %s", esp_netif->if_key);
+            esp_err_t err = esp_netif_start_api(msg);
+            if (err != ESP_OK) return err;
+        }
+    }
+
+'''
+    return source.replace(up_anchor, up_anchor.replace('#if CONFIG_LWIP_IPV4', recovery + '#if CONFIG_LWIP_IPV4'))
 
 
 if __name__ == '__main__':
