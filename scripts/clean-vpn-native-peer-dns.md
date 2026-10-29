@@ -92,8 +92,8 @@ read-only host filesystem, отдельным `/tmp`, ограничениями
 используйте явный `dig @127.0.0.1 -p 1055`; обычный запрос к прежнему DNS ещё
 может уйти наружу. На физическом VPS ничего не устанавливалось.
 
-Следующий шаг — opt-in интеграция именно этой зоны с выбранным backend на exit,
-затем с DNS клиентов. Существующий native DNS relay пока не менялся.
+Для systemd-resolved имеется явный владелец scope, описанный ниже.
+Интеграция с DNS клиентов остаётся отдельным этапом. Существующий native DNS relay пока не менялся.
 `mpn.local` для USB-админки остаётся отдельным mDNS-именем.
 
 ## Приёмка
@@ -105,4 +105,107 @@ node --test scripts/test-native-peer-dns.mjs
 Тесты проверяют UDP/TCP, фрагментацию/pipelining, A/PTR/NODATA/NXDOMAIN,
 EDNS/BADVERS, binary-label boundary, atomic rename/revoke/corruption,
 ошибки разрешений, symlink, лимиты соединений/запросов и освобождение портов.
-Это не проверка системной DNS-интеграции или межклиентской маршрутизации.
+Системная интеграция проверяется отдельным изолированным тестом ниже;
+межклиентская маршрутизация не открывается.
+
+## Opt-in scope для systemd-resolved на exit
+
+`clean-vpn-native-peer-dns-zone.mjs` предназначен для Linux root с уже работающим
+systemd-resolved. Он создаёт отдельный dummy-интерфейс со случайным именем,
+MAC и ownership alias, назначает свободный `169.254.255.53/32`, устанавливает
+только для этого интерфейса DNS `127.0.0.1:1055`, route-only domains `~mpn` и
+`~0.99.10.in-addr.arpa`, `DefaultRoute=false`. Обычные домены продолжают
+использовать исходный DNS. Loopback-интерфейс не подходит для такого scope;
+UP dummy с собственным /32 проверен на настоящем resolved.
+
+Не редактируются `/etc/resolv.conf`, NSS, существующие интерфейсы, их DNS,
+маршрут по умолчанию, forwarding и firewall. Ядро добавляет только маршруты
+собственного /32. Занятый адрес/покрывающий маршрут или чужая такая же/вложенная
+DNS-зона приводят к отказу. Другой свободный link-local /32 задаётся через
+`--address`; port должен совпадать с private resolver.
+
+Сначала просмотр без изменений:
+
+```sh
+node scripts/clean-vpn-native-peer-dns-zone.mjs plan \
+  --directory=/var/lib/clean-vpn-mpn-zone
+node scripts/clean-vpn-native-peer-dns-zone.mjs unit \
+  --directory=/var/lib/clean-vpn-mpn-zone
+```
+
+Перед явным apply убедитесь, что private resolver отвечает, обычный системный
+DNS действительно обслуживается resolved и приложение пользуется системным
+DNS. Затем на выбранном **exit**, не на MacBook:
+
+```sh
+sudo node scripts/clean-vpn-native-peer-dns-zone.mjs apply \
+  --directory=/var/lib/clean-vpn-mpn-zone
+getent ahostsv4 laptop.mpn
+getent hosts 10.99.0.3
+sudo node scripts/clean-vpn-native-peer-dns-zone.mjs status \
+  --directory=/var/lib/clean-vpn-mpn-zone
+```
+
+Private state directory создаётся 0700, journal 0600 записывается с fsync
+до первой сетевой операции; flock предотвращает параллельное изменение.
+После сбоя повторный apply продолжает только интерфейс с совпавшими
+boot/net namespace, именем, MAC, ifindex, alias, адресом и DNS-настройками.
+Чужие изменения не перезаписываются. Ошибка ownership требует разбора,
+не принудительного удаления.
+
+Команда `unit` печатает сервис `watch`: нужны полное дерево `scripts/lib`,
+доверенные абсолютные пути и заранее созданный private state directory.
+Вывод можно установить в отдельный unit после review. Watch каждые 5 секунд
+проверяет scope, восстанавливает пустые настройки после смены процесса
+resolved, прекращает работу при конфликте. Unit получает только
+CAP_NET_ADMIN; READY отправляется после проверки DNS readback. Повторные
+проверки не переписывают journal. Unit не включает/перезапускает VPN.
+
+**Остановка watch или DNS-daemon сохраняет scope.** При отказе private DNS
+запросы `.mpn` завершаются ошибкой, не переключаются на публичный upstream.
+SIGKILL watch допускает автоматический restart с тем же интерфейсом.
+Для явного удаления сначала остановите установленный watch-unit, затем:
+
+```sh
+sudo node scripts/clean-vpn-native-peer-dns-zone.mjs remove \
+  --directory=/var/lib/clean-vpn-mpn-zone
+```
+
+Remove удаляет только проверенный собственный интерфейс и journal. Остальной
+DNS остаётся исходным. После remove приватный routing scope отсутствует:
+обычные `.mpn` запросы снова могут попасть в исходный DNS; это сознательное
+отключение интеграции, не режим аварийного fallback.
+
+После reboot сетевой scope исчезает; watch создаёт новый по прежнему journal.
+Защита действует после READY и пока scope существует. Для потребителя, который
+не должен отправлять `.mpn` до READY, нужна явная systemd ordering/dependency;
+универсальный boot leak guard здесь не объявляется. DoH приложений обходит
+системный DNS. Чужой процесс с root/CAP_NET_ADMIN может удалить scope; монитор
+это обнаружит, но не является firewall. Имена не предоставляют доступ к
+клиенту и не доказывают, что клиент сейчас подключён.
+
+Механика routing domains и приоритет наиболее специфичной зоны описаны в
+[systemd RESOLVED-VPNS](https://github.com/systemd/systemd/blob/main/docs/RESOLVED-VPNS.md)
+и [resolvectl](https://www.freedesktop.org/software/systemd/man/255/resolvectl.html).
+
+### Изолированная приёмка scope
+
+```sh
+node --test scripts/test-native-peer-dns-zone.mjs
+CVPN_DISPOSABLE_HOST_NET=1 node scripts/test-native-peer-dns-resolved.mjs
+```
+
+Второй тест отказывается работать вне специально помеченного disposable
+Linux systemd-стенда без NIC/default route; это не команда для VPS/Radxa.
+В образе нужны systemd-resolved, libnss-resolve, dnsutils, iproute2, util-linux,
+Node. Marker `/etc/meshpn-admin-disposable-lab` имеет значение
+`isolated-admin-lab-v1`; не создавайте его на рабочей системе.
+
+Результат systemd 255: 15/15 unit-тестов scope без пропусков, 23/23 реальных
+проверок. Проверены `getent`, UDP/TCP через stub, A/PTR, hot rename/revoke,
+NXDOMAIN и SERVFAIL без публичного fallback, SIGKILL обоих процессов,
+restart resolved, recover после создания интерфейса, ownership collision,
+notify READY, точная неизменность чужого DNS после apply/remove и обычный
+public DNS при отказавшем private daemon. Дополнительный public upstream
+считает все запросы и имеет успешный positive control; сеть контейнера
+изолирована от WAN. `/etc/resolv.conf` и NSS сравниваются побайтно.
