@@ -29,6 +29,8 @@ typedef struct {
     uint32_t rx_pending_max;
     bool dma_cache_available;
     uint32_t dma_cache_blocks, dma_cache_block_bytes;
+    bool transport_dma_cache_available[2];
+    uint32_t transport_dma_cache_blocks[2], transport_dma_cache_block_bytes[2];
     uint64_t rx_netif[2][5], rx_netif_bytes[2];
     meshvpn_hosted_queue_stats_t queue[2]; /* STA, AP; acceptance != RF delivery */
 } meshvpn_hosted_tx_stats_t;

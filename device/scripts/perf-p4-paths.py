@@ -132,9 +132,10 @@ class Board:
                     raise
                 time.sleep(1.1)
 
-    def transfer(self, address, direction, deadline, source=None, iface=None):
+    def transfer(self, address, direction, deadline, source=None, iface=None, nodelay=True):
         """Count only consumed response bytes; upload requires board receipt JSON."""
         row = {'address': address, 'direction': direction, 'complete': False, 'bytes': 0}
+        if direction == 'down': row['server_tcp_nodelay'] = bool(nodelay)
         started = time.monotonic()
         duration = min(35, deadline - started)
         if duration <= 0:
@@ -164,7 +165,8 @@ class Board:
             # upload after 3 s. Stream bounded pieces under the total budget;
             # explicit length keeps the firmware request unchunked.
             payload = upload_blocks(body, min(started + duration, deadline)) if direction == 'up' else body
-            conn.request('POST', '/api/diag/link-' + ('upload' if direction == 'up' else 'download'),
+            endpoint = '/api/diag/link-upload' if direction == 'up' else '/api/diag/link-download?nodelay=' + str(int(bool(nodelay)))
+            conn.request('POST', endpoint,
                          body=payload, headers={'Authorization': 'Bearer ' + self.token,
                                                 'Connection': 'close', 'Content-Length': str(len(body))})
             response = conn.getresponse()

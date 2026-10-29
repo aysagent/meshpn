@@ -43,6 +43,12 @@ time. It binds the STA interface and source. A VPN transition or explicit
 `{"cancel":true}` stops it. It does not persist benchmark settings. The peer
 accepts only allowlisted source IPs, bounded requests, and one active job.
 
+For `--role link`, `--nodelay 0` allows TCP coalescing on the board's local
+HTTP download socket; the default is `1`. This isolates overhead from many
+small HTTP header/chunk writes. It changes neither Wi-Fi settings nor forwarded
+client sockets. Each attempt records `server_tcp_nodelay`, partial received
+bytes and a bounded AP TCP trace, including failed attempts before restoration.
+
 Profile changes have a private `restore.json` journal written **before** mutation.
 Existing profiles/passwords are preserved. The temporary peer profile is removed
 and the originally connected profile restored on normal completion, failure
@@ -60,8 +66,10 @@ invalidate them. The default development AP password is read from
 Artifacts are private files under `perf-results`, not committed or pasted into
 agent context. Failed attempts remain failures even if restoration succeeds.
 
-`wifi.hosted.dma_cache` exposes free DMA buffers retained by the Hosted pool
-for reuse. `cached_bytes` is the sum of requested allocation sizes, including
+`wifi.hosted.dma_cache` exposes free DMA buffers retained by the SDIO pool
+for reuse. Its `sta` and `ap` children report the separate transport pools;
+do not interpret the parent as their total. `cached_bytes` in each pool is
+the sum of requested allocation sizes, including
 the pinned pool's alignment rounding, but excluding allocator overhead and
 in-flight buffers. The reserved SDIO RX stream is separate. It is sampled
 under the pool lock, separately from TX/RX counters; no allocation policy is

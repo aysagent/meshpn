@@ -15,6 +15,7 @@ extern uint32_t meshvpn_vpn_dns_epoch(void);
 #if CONFIG_IDF_TARGET_ESP32P4
 extern void meshvpn_ap_probe_tx(unsigned ifx, const void *frame, size_t len);
 extern bool meshvpn_hosted_dma_cache_snapshot(uint32_t *cached, uint32_t *block_bytes);
+extern bool meshvpn_hosted_transport_dma_cache_snapshot(unsigned ifx, uint32_t *cached, uint32_t *block_bytes);
 #define TRACE_TX(ifx, frame, len, err) do { if ((err) == ESP_OK) meshvpn_ap_probe_tx(ifx, frame, len); } while (0)
 #else
 #define TRACE_TX(ifx, frame, len, err) ((void)0)
@@ -105,6 +106,9 @@ void meshvpn_hosted_tx_snapshot(meshvpn_hosted_tx_stats_t *out)
      * cache gauge is sampled separately from queue/counter statistics. */
     out->dma_cache_available = meshvpn_hosted_dma_cache_snapshot(
         &out->dma_cache_blocks, &out->dma_cache_block_bytes);
+    for (unsigned i = 0; i < 2; i++)
+        out->transport_dma_cache_available[i] = meshvpn_hosted_transport_dma_cache_snapshot(
+            i, &out->transport_dma_cache_blocks[i], &out->transport_dma_cache_block_bytes[i]);
 #endif
 }
 void meshvpn_hosted_tx_buffers(uint64_t us, bool unavailable)

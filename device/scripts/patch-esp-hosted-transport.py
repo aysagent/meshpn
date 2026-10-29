@@ -6,6 +6,30 @@ from pathlib import Path
 
 
 def patch(source: str) -> str:
+    anchor = 'transport_channel_t *chan_arr[ESP_MAX_IF];'
+    if source.count(anchor) != 1:
+        raise ValueError('ESP-Hosted channel table changed; re-audit DMA cache snapshot')
+    source = source.replace(anchor, anchor + '''
+bool meshvpn_hosted_transport_dma_cache_snapshot(unsigned ifx, uint32_t *cached, uint32_t *bytes)
+{
+    *cached = 0; *bytes = 0;
+#ifdef H_USE_MEMPOOL
+    if (ifx > 1) return false;
+    transport_channel_t *channel = chan_arr[ifx ? ESP_AP_IF : ESP_STA_IF];
+    if (!channel || !channel->memp) return false;
+    struct mempool *mp = channel->memp;
+    g_h.funcs->_h_lock_mempool(mp->spinlock);
+    struct mempool_entry *entry;
+    SLIST_FOREACH(entry, &(mp->head), entries) { (*cached)++; }
+    *bytes = MEMPOOL_ALIGNED(mp->block_size);
+    g_h.funcs->_h_unlock_mempool(mp->spinlock);
+    return true;
+#else
+    (void)ifx;
+    return false;
+#endif
+}
+''', 1)
     for interface in ("STA", "AP"):
         old = (f"copy_buff = mempool_alloc(((struct mempool*)chan_arr[ESP_{interface}_IF]->memp), "
                "MAX_TRANSPORT_BUFFER_SIZE, true);\n\tassert(copy_buff);")
@@ -28,7 +52,7 @@ def patch(source: str) -> str:
                    f"\treturn meshvpn_hosted_tx_submit({ifx}, h, buffer, len, {name}_direct);\n"
                    "}\n\n")
         source = source.replace(next_decl, wrapper + next_decl, 1)
-    source = '#include "meshvpn_hosted_tx.h"\n' + source
+    source = '#include "esp_hosted_config.h"\n#include "meshvpn_hosted_tx.h"\n' + source
     return source
 
 

@@ -91,6 +91,18 @@ def restore(path, journal):
     journal['restored'] = True; journal['restored_at'] = time.time(); save(path, journal)
 
 
+def save_link_attempt(out, repeat, direction, row, dut):
+    """Keep failed/partial transfers and trace errors before raising/restore."""
+    save(out / ('link-' + str(repeat) + '-' + direction + '.json'), row)
+    try:
+        trace = dut.api('/api/diag/sta-tcp?interface=ap')
+    except Exception as e:
+        trace = {'available': False, 'error': type(e).__name__ + ': ' + str(e)}
+    save(out / ('ap-trace-' + str(repeat) + '-' + direction + '.json'), trace)
+    if not row['complete']:
+        raise RuntimeError('RF link transfer failed: ' + json.dumps(row))
+
+
 def run(args):
     profile = CATALOG[NAMES[args.client]]
     other = 'stamp' if args.client == 'waveshare' else 'waveshare'
@@ -143,14 +155,15 @@ def run(args):
                     start=dut.api('/api/status')
                     if args.role=='link':
                         row=dut.transfer(dut_before['net']['ap_ip'],direction,time.monotonic()+60,
-                                         source=interface['address'],iface=interface['name'])
-                        if not row['complete']:raise RuntimeError('RF link transfer failed: '+json.dumps(row))
+                                         source=interface['address'],iface=interface['name'],nodelay=bool(args.nodelay))
+                        save_link_attempt(out, repeat, direction, row, dut)
                         if direction=='up' and row['receipt']['link']!='ap':raise RuntimeError('Not AP ingress')
                     else:
                         row = wan_transfer(interface['name'])
                         save(out/('wan-'+str(repeat)+'.json'), row)
                         if not row['complete']: raise RuntimeError('Incomplete WAN response: '+json.dumps(row))
-                    save(out/('ap-trace-'+str(repeat)+'-'+direction+'.json'),dut.api('/api/diag/sta-tcp?interface=ap'))
+                    if args.role != 'link':
+                        save(out/('ap-trace-'+str(repeat)+'-'+direction+'.json'),dut.api('/api/diag/sta-tcp?interface=ap'))
                     finish=dut.api('/api/status')
                     if finish['net']['ap_ip4_rx']<=start['net']['ap_ip4_rx']:raise RuntimeError('No AP ingress')
                     records.append(dict(repeat=repeat,direction=direction,transfer=row,
@@ -214,6 +227,8 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--client',choices=list(NAMES),default='waveshare')
     p.add_argument('--role',choices=['direct','peer','link','wan'],default='peer')
+    p.add_argument('--nodelay',type=int,choices=[0,1],default=1,
+                   help='link HTTP download socket TCP_NODELAY; 0 allows coalescing; not a radio setting')
     p.add_argument('--host');p.add_argument('--out')
     p.add_argument('--seconds',type=int,default=10);p.add_argument('--repeats',type=int,default=3)
     p.add_argument('--rates',type=int,nargs='*',default=[4,8,12,16,20,24,32])

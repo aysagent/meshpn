@@ -13,6 +13,15 @@ try {
   const cacheEnd = source.indexOf('\n}', cache);
   if (cache < 0 || cacheEnd < cache) throw Error('DMA cache snapshot missing');
   fs.writeFileSync(path.join(dir, 'sdio-cache.inc'), source.slice(cache, cacheEnd + 2));
+  const transportGenerated = path.join(dir, 'transport.c');
+  execFileSync('python3', [new URL('scripts/patch-esp-hosted-transport.py', root).pathname,
+    new URL('managed_components/espressif__esp_hosted/host/drivers/transport/transport_drv.c', root).pathname,
+    transportGenerated], {stdio: 'inherit'});
+  const transport = fs.readFileSync(transportGenerated, 'utf8');
+  const channelCache = transport.indexOf('bool meshvpn_hosted_transport_dma_cache_snapshot(');
+  const channelEnd = transport.indexOf('\n}', channelCache);
+  if (channelCache < 0 || channelEnd < channelCache) throw Error('Channel cache snapshot missing');
+  fs.writeFileSync(path.join(dir, 'transport-cache.inc'), transport.slice(channelCache, channelEnd + 2));
   const cacheBinary = path.join(dir, 'cache-test');
   execFileSync(process.env.CC || 'cc', ['-std=gnu11', '-Wall', '-Wextra', '-Werror', '-DH_USE_MEMPOOL=1',
     '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined', '-I' + dir,

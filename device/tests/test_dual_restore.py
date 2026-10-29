@@ -9,6 +9,19 @@ s=importlib.util.spec_from_file_location('dual',Path(__file__).resolve().parents
 m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
 
 class RestoreTests(unittest.TestCase):
+    def test_failed_link_preserves_partial_body_and_trace_failure(self):
+        row = dict(complete=False, bytes=482552, mbps=None, error='timeout')
+        class Board:
+            def api(self, path): raise TimeoutError('diagnostics unavailable')
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            with self.assertRaisesRegex(RuntimeError, 'RF link transfer failed'):
+                m.save_link_attempt(p, 0, 'down', row, Board())
+            self.assertEqual(json.loads((p/'link-0-down.json').read_text()), row)
+            trace = json.loads((p/'ap-trace-0-down.json').read_text())
+            self.assertFalse(trace['available'])
+            self.assertIn('TimeoutError', trace['error'])
+
     def test_swapped_board_at_expected_ip_never_mutates(self):
         class Board:
             def __init__(self, address): self.address = address
