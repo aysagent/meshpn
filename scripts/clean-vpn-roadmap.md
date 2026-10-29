@@ -5,7 +5,10 @@
 и возврат старого Node VPN отменены пользователем. Новый host-profile Radxa,
 привязка свежей админки, 30 проверок в трёх загрузках VM и повторный временный
 Radxa↔VPS smoke пройдены. Guard/USB и чужие службы сохранены; новая постоянная
-установка не активирована. Записи ниже — история предыдущих приоритетов.
+установка после этого **активирована по разрешению пользователя**:
+[boring-tls Radxa↔VPS, физические reboot, clock recovery, native-админка](clean-vpn-native-daily-20261029.md).
+Остался отдельный power-loss Radxa; combo/incoming/OpenWrt — следующие расширения.
+Записи ниже — история предыдущих приоритетов.
 
 Текущий checkpoint 2026-10-27: [физический boring-tls пилот](clean-vpn-native-daily-pilot.md#физический-checkpoint-2026-10-27)
 Radxa ↔ VPS прошёл: ordinary smoke, engine SIGKILL, wlan0 down/up и 120-секундный

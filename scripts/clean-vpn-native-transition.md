@@ -12,6 +12,9 @@ native SO_MARK. Совместный [wrong-clock + host-profile gate](clean-vpn
 
 ## Актуальный scope 2026-10-29
 
+Последующее выполнение: [постоянная native пара активна, физические reboot и админка проверены](clean-vpn-native-daily-20261029.md).
+Power-loss остаётся отдельной физической проверкой; старый Node VPN отключён.
+
 Самостоятельный client checkpoint: [host network owner](clean-vpn-native-host-network.md).
 21 реальная kernel-проверка, 14 systemd/native/USB сценариев, 23 installer
 regressions; 30 проверок в трёх загрузках VM с update/rollback. Временные
