@@ -99,5 +99,14 @@ try{
     check('interrupted '+point,()=>assert.throws(()=>owner.prepare(),/simulated_process_boundary/));
     crashAt=null;close();open();check('recover '+point,()=>{owner.recover();baseline();});
   }
+  close();c={...previous,incoming_tcp:{source_ipv4:'10.99.0.1',port:9443}};open();
+  check('scoped incoming audit and process-boundary recovery preserve guard and foreign rules',()=>{owner.prepare();owner.tick();close();open();owner.recover();baseline();});
+  for(const point of [4,5,6,7]){
+    crashAt=s=>s.count===point;
+    check('interrupted incoming rule '+point,()=>assert.throws(()=>owner.prepare(),/simulated_process_boundary/));
+    crashAt=null;close();open();check('recover incoming rule '+point,()=>{owner.recover();baseline();});
+  }
+  close();c={...c,combo_redirect:{interface:'usb0',subnet:'192.168.7.0/24',endpoint:c.exit_ip,listen_port:10443,deny_ipv4:[]}};open();
+  check('incoming INPUT precedence composes with combo hooks and cleanup',()=>{owner.prepare();owner.tick();close();open();owner.recover();baseline();});
   console.log(JSON.stringify({status:'passed',checks,scope:'real-netns-TUN-DNS-routes-NAT; systemd state injected; no VPN payload or reboot'}));
 }finally{close();}

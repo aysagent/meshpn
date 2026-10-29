@@ -345,6 +345,22 @@ int main(int argc,char** argv){
       require(state.at("tx_packets")==2&&state.at("rx_packets")==2&&state.at("dropped_packets")==2054,"multicast_following_unicast");
       client.stop();std::cout<<"multicast discarded, same session unicast and flow control PASS\n";return 0;
     }
+    if(argc==4&&std::string(argv[3]).rfind("client-incoming:",0)==0){
+      const auto close_code=std::string(argv[3]).substr(16);
+      Child client(argv[1],argv[2]);
+      for(int round=0;round<3;round++){
+        client.await_state("ready");
+        pollfd p{client.packet,POLLIN,0};require(poll(&p,1,4000)>0,"incoming_without_outbound_timeout");
+        Bytes got(65536);const auto n=recv(client.packet,got.data(),got.size(),0);
+        require(n>0,"incoming_read");got.resize(n);
+        require(got==packet(20,true,0),"incoming_bytes");
+        if(round<2)client.await_state(close_code);
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+      const auto state=client.healthy_status();
+      require(state.at("tx_packets")==0&&state.at("rx_packets")==3,"incoming_no_synthetic_uplink");
+      client.stop();std::cout<<"persistent incoming after graceful reconnect without outbound wake PASS\n";return 0;
+    }
     if(argc==4&&std::string(argv[3])=="client-idle"){
       Child client(argv[1],argv[2]);client.await_state("ready");
       for(int round=0;round<4;round++){

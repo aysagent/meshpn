@@ -35,4 +35,12 @@ test('host installer bundles standalone owner, publishes disabled network activa
   const alternate=JSON.parse(fs.readFileSync(root+'/config'));alternate.peer_ipv4='10.99.0.37';put('/config',JSON.stringify(alternate));
   installNative({...options,name:'second',apply:true});
   assert.equal(JSON.parse(fs.readFileSync(root+'/opt/clean-vpn-native/second/network.json')).peer_ipv4,'10.99.0.37');
+  const incoming_tcp={source_ipv4:'10.99.0.1',port:9443};
+  put('/host',JSON.stringify({version:1,guard_unit:'guard.service',guard_script:'/usr/local/bin/guard.sh',incoming_tcp}));
+  assert.throws(()=>installNative({...options,name:'incoming'}),/native_incoming_requires_persistent/);
+  alternate.connection_mode='persistent';put('/config',JSON.stringify(alternate));
+  assert.throws(()=>installNative({...options,name:'incoming'}));
+  put('/engine',fs.readFileSync(root+'/engine','utf8').replace('"dns_socket_mark":"0x43564e"','"dns_socket_mark":"0x43564e","connection_modes":["on-demand","persistent"]'),0o755);
+  installNative({...options,name:'incoming',apply:true});
+  assert.deepEqual(JSON.parse(fs.readFileSync(root+'/opt/clean-vpn-native/incoming/network.json')).incoming_tcp,incoming_tcp);
 });

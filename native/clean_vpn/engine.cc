@@ -67,15 +67,21 @@ struct Config {
   std::string peer_ipv4="10.99.0.2";
   uint32_t peer_address=0;
   bool client;
-  bool dns=false, alps=false;
+  bool dns=false, alps=false, persistent=false;
   std::string address, name, sni, ca, cert, key, tun, secret_path;
   uint16_t port;
   explicit Config(const json& j) {
     check(j.is_object(),"config_object");
-    const std::set<std::string> fields={"version","role","address","port","server_name","sni","ca","cert","key","tun","secret_path","dns","peer_ipv4","peers","tls_profile_path","alps"};
+    const std::set<std::string> fields={"version","role","address","port","server_name","sni","ca","cert","key","tun","secret_path","dns","peer_ipv4","peers","tls_profile_path","alps","connection_mode"};
     for(auto it=j.begin();it!=j.end();++it) check(fields.count(it.key()),"unknown_config_field");
     check(j.at("version")==1,"config_version");
     auto role=j.at("role").get<std::string>(); check(role=="client"||role=="exit","role"); client=role=="client";
+    if(j.contains("connection_mode")) {
+      check(client&&j.at("connection_mode").is_string(),"connection_mode_client_only");
+      const auto mode=j.at("connection_mode").get<std::string>();
+      check(mode=="on-demand"||mode=="persistent","connection_mode");
+      persistent=mode=="persistent";
+    }
     if(j.contains("alps")) {check(!client && j.at("alps").is_boolean(),"alps_exit_only");alps=j.at("alps");}
     if(j.contains("tls_profile_path")) {
       check(client,"profile_client_only");
@@ -696,7 +702,7 @@ int main(int argc,char** argv){
     if(argc==2&&std::string(argv[1])=="--capabilities"){
       std::cout<<json({{"version",1},{"engine","clean-vpn-native-m1"},{"transport","boring-tls"},
         {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2"}},
-        {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
+        {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"connection_modes",{"on-demand","persistent"}},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
         {"experimental_tls_profiles",{{"schema",1},{"scenario","cold"},{"prewire_check",true},{"certificate_compression",{2}},{"alps",{{"codepoint",17613},{"http2_settings",true},{"experimental",true}}},{"transports",{"boring-tls","combo-tls-boring"}}}},
         {"profile_policy",profile_policy::describe()},{"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
         {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"destination_policies",{"explicit-ipv4-destinations","public-https"}},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true}}},
@@ -871,7 +877,10 @@ int main(int argc,char** argv){
           const int status=reason=="tls_verify_not_yet_valid"?75:reason=="tls_verify_expired"?76:reason=="auth_clock_skew"?77:0;
           if(status){OPENSSL_cleanse(secret.data(),secret.size());return status;}
         }
-        demand_wait=authenticated&&(reason=="h2_peer_end_stream"||reason=="h2_goaway_no_error"||reason=="h2_stream_closed");
+        // Incoming services cannot wake a disconnected client through its TUN.
+        // Opt-in persistence uses the ordinary bounded reconnect path, including
+        // all TLS/auth checks, without synthesizing application/DNS traffic.
+        demand_wait=!c.persistent&&authenticated&&(reason=="h2_peer_end_stream"||reason=="h2_goaway_no_error"||reason=="h2_stream_closed");
       }
       if(socket_fd.n>=0){close(socket_fd.n);socket_fd.n=-1;}
       if(!pending.empty()){pending.clear();ctl.dropped++;}

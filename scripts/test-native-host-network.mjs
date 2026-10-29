@@ -44,3 +44,15 @@ test('non-default peer refuses a stale guard before any network operation',()=>{
     assert.deepEqual(calls,[[profile.guard_script,['capabilities']]]);
   }
 });
+
+test('incoming grant is one exit source and TCP port; peer interface and replies stay constrained',()=>{
+  const incoming_tcp={source_ipv4:'10.99.0.1',port:9443};
+  validateNativeHostConfig({...profile,incoming_tcp});
+  for(const patch of [{source_ipv4:'0.0.0.0/0'},{source_ipv4:'10.99.0.37'},{port:22},{port:1053},{port:65536},{port:'9443'},{extra:true}])
+    assert.throws(()=>validateNativeHostConfig({...profile,incoming_tcp:{...incoming_tcp,...patch}}));
+  const plan=nativeHostNatPlan('a'.repeat(24),'10.99.0.37',incoming_tcp);
+  assert.equal(plan.length,7);assert.ok(plan.slice(3).every(o=>o.table==='filter'&&o.chain==='INPUT'));
+  assert.ok(plan[5].spec.includes('10.99.0.37/32'));assert.ok(plan[5].spec.includes('10.99.0.1/32'));
+  assert.equal(plan[3].spec.at(-1),'DROP');assert.equal(plan[4].spec.at(-1),'DROP');
+  assert.throws(()=>validateNativeHostConfig({...profile,incoming_tcp,combo_redirect:{interface:'usb0',subnet:'192.168.7.0/24',endpoint:profile.exit_ip,listen_port:9443,deny_ipv4:[]}}),/native_incoming_relay_port_conflict/);
+});

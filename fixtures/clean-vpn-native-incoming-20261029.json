@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "kind": "native-incoming-network-prerequisites",
+  "status": "passed",
+  "boring": {
+    "schema": 1,
+    "status": "passed",
+    "transport": "boring-tls",
+    "incoming": true,
+    "clients": 2,
+    "exit": 1,
+    "checks": [
+      "three installs remain disabled and stopped",
+      "two clients and overlapping USB subnets share one native exit with HTTPS UDP TCP DNS",
+      "distinct native peer addresses and USB SNAT",
+      "stopping first client preserves second and blocks first USB egress",
+      "first client rejoins without restarting second",
+      "client owner crash recovery is isolated",
+      "exit owner crash reconnects both clients with unchanged identities",
+      "exit opens new mTLS after idle without client application wake",
+      "other source port LAN and untrusted mTLS client refused",
+      "incoming resumes after exit outage without client probe",
+      "incoming resumes after client TUN removal and recreation without client probe",
+      "a key for peer one cannot authenticate peer two",
+      "all owners release TUN DNS NAT routes; both guards survive"
+    ],
+    "peerAddresses": [
+      "10.99.0.2",
+      "10.99.0.37"
+    ],
+    "scope": "real-systemd-netns-installed-host-profiles; no physical reboot or capacity claim"
+  },
+  "combo": {
+    "schema": 1,
+    "status": "passed",
+    "transport": "combo-tls",
+    "incoming": true,
+    "clients": 2,
+    "exit": 1,
+    "checks": [
+      "three installs remain disabled and stopped",
+      "two clients and overlapping USB subnets share one native exit with HTTPS UDP TCP DNS",
+      "distinct native peer addresses and USB SNAT",
+      "combo relay serves public HTTPS; excluded HTTPS cannot downgrade to boring packet branch",
+      "stopping first client preserves second and blocks first USB egress",
+      "first client rejoins without restarting second",
+      "client owner crash recovery is isolated",
+      "exit owner crash reconnects both clients with unchanged identities",
+      "exit opens new mTLS after idle without client application wake",
+      "other source port LAN and untrusted mTLS client refused",
+      "incoming resumes after exit outage without client probe",
+      "incoming resumes after client TUN removal and recreation without client probe",
+      "a key for peer one cannot authenticate peer two",
+      "all owners release TUN DNS NAT routes; both guards survive",
+      "exit replay state retained after all owner and engine stops"
+    ],
+    "peerAddresses": [
+      "10.99.0.2",
+      "10.99.0.37"
+    ],
+    "scope": "real-systemd-netns-installed-host-profiles; no physical reboot or capacity claim"
+  },
+  "sourceHashes": {
+    "boring": {
+      "scripts/lib/native-host-multi-lab.mjs": "eb5759c5fc163224c83006443926bb6408357625f26f030959f49525cc27d435",
+      "scripts/lib/native-host-network.mjs": "6faeff63d6bd1347ba9b5612bd5481e1926dd5a59210891ddd7120315e6a2b62",
+      "scripts/lib/native-host-plan.mjs": "8c53851d9fc15a78a88567878e9fe395805aee7c5a1c302924611a9dc57b274a",
+      "engine": "f087b391f148359fc81b7d70cc9d5c1f1830b0fad532321820d8a1938ccced56"
+    },
+    "combo": {
+      "scripts/lib/native-host-multi-lab.mjs": "eb5759c5fc163224c83006443926bb6408357625f26f030959f49525cc27d435",
+      "scripts/lib/native-host-network.mjs": "65868f2255a7055b7a5e756f9aa4e8eeb660144bb8ef66d27db86ece4048c72b",
+      "scripts/lib/native-host-plan.mjs": "8c53851d9fc15a78a88567878e9fe395805aee7c5a1c302924611a9dc57b274a",
+      "engine": "f087b391f148359fc81b7d70cc9d5c1f1830b0fad532321820d8a1938ccced56"
+    }
+  },
+  "ctest": 10,
+  "sessionAndConfigRegression": 31,
+  "kernelChecks": 37,
+  "installerAndPlanChecks": 7,
+  "tlsProfileTests": {
+    "passed": 18,
+    "initial": {
+      "passed": 15,
+      "failed": 3,
+      "reason": "test-only profile-credentials-fixture missing from cache"
+    },
+    "afterBuildingMissingHelper": {
+      "passed": 3,
+      "failed": 0
+    }
+  },
+  "logs": {
+    "incoming-host3.log": "aacec08d495ded73716e19005665b4e1421ada82a22c816d1acde92df898ae18",
+    "incoming-combo3.log": "236a34a2098bd80f179beab9adeb48c956ab662d3fe45a0281cf942b37828077",
+    "incoming-build2.log": "7e819bb895d879db5479d706ae317163b0019bab3ee73ca99e1e8062fecd34d1",
+    "incoming-unit2.log": "9a478fe084ee1e4f4e1720cffee552c2d4b03fc28f842fe181b2eb9f36ecf6b8",
+    "incoming-kernel3.log": "f27fca82c93f989b740e282790a4d5de10f13cb23e9105e05585cb5d6eaed338",
+    "incoming-session.log": "cbceca56c8963bdeedc8239f17cf0786a42bb43fd13df533eaecee95bb7606e5",
+    "incoming-tls-profile.log": "469d78fbed4023a61f365adc76900f09b510c480f5649dfd401a324a61142511",
+    "incoming-mldsa.log": "3904ea2fc148cfc69da14c700a6801761fbc3cac10cb4b1620b3b872addf7735"
+  },
+  "limitations": [
+    "fixture mTLS service, not public-proxy/Caddy application acceptance",
+    "20 seconds of idle without application/DNS probes; existing H2 PING retained",
+    "physical Radxa/VPS not changed",
+    "same endpoint TCP connections recovered; application sessions are not replayed",
+    "boring tested before combo INPUT insertion-order adjustment; final joint order covered by combo/systemd and kernel tests",
+    "final duplicate-port config validation additionally covered by unit tests"
+  ]
+}

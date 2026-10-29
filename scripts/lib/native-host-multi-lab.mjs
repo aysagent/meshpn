@@ -18,11 +18,14 @@ const engine=n=>`native-${n}.service`,owner=n=>`native-${n}-network.service`;
 const wait=async fn=>{const end=performance.now()+60000;let error;while(performance.now()<end){try{return fn();}catch(e){error=e;await delay(200);}}throw error;};
 const checks=[],check=s=>{checks.push(s);console.log('HOST_MULTI_CHECK='+s);};
 const combo=process.env.CVPN_HOST_MULTI_COMBO==='1';
+const incomingMode=process.env.CVPN_HOST_MULTI_INCOMING==='1';
 const peers=[['one','10.99.0.2',11],['two','10.99.0.37',12]],binary='/usr/local/bin/clean-vpn-engine';
 const probe=`const https=require('node:https'),fs=require('node:fs');const q=https.get({host:'198.18.0.80',port:8443,servername:'runtime.test',ca:fs.readFileSync('/config/cert.pem'),timeout:4000},r=>{let b='';r.on('data',c=>b+=c);r.on('end',()=>{if(b!=='native-runtime-https-ok\\n'||r.headers['x-native-runtime-peer']!=='192.168.13.1')process.exit(2);console.log('HTTPS_OK')});});q.on('error',()=>process.exit(3));q.on('timeout',()=>q.destroy());setTimeout(()=>process.exit(4),5000).unref();`;
 const https=n=>assert.equal(ns(n,'node',['-e',probe]),'HTTPS_OK');
 const dns=n=>assert.equal(ns(n,'node',['--input-type=module','-e',`import {dnsProbe} from '/project/scripts/clean-vpn-native-runtime-health.mjs';await dnsProbe('9.9.9.9',53,false);await dnsProbe('9.9.9.9',53,true);console.log('DNS_OK');`]),'DNS_OK');
 const relayHttps=(n,denied=false)=>assert.equal(ns(n,'node',['-e',probe.replace("host:'198.18.0.80',port:8443",`host:'${denied?'198.18.0.80':'11.22.33.44'}',port:443`)]),'HTTPS_OK');
+const incoming=(address='10.99.0.2',port=9443,source='10.99.0.1',credential='incoming-client')=>assert.equal(ns('exit','node',['-e',`const https=require('node:https'),fs=require('node:fs');const r=https.get({host:'${address}',port:${port},localAddress:'${source}',servername:'runtime.test',ca:fs.readFileSync('/config/incoming-agent.pem'),cert:fs.readFileSync('/config/${credential}.pem'),key:fs.readFileSync('/config/${credential}.key'),timeout:1800},s=>{let b='';s.on('data',c=>b+=c);s.on('end',()=>process.exit(b==='incoming-ok'&&s.statusCode===200?0:2));});r.on('error',()=>process.exit(3));r.on('timeout',()=>r.destroy());setTimeout(()=>process.exit(4),2200);`]),'');
+const incomingReady=async()=>wait(()=>{assert.equal(prop(engine('one'),'ActiveState'),'active');incoming();});
 const healthy=n=>{assert.equal(prop(engine(n),'ActiveState'),'active');https(n);https(n+'usb');dns(n);dns(n+'usb');if(combo)relayHttps(n+'usb');};
 const logs=()=>{for(const n of ['one','two','exit'])try{console.log(run('journalctl',['-u',owner(n),'-u',engine(n),'--no-pager','-n','40']));}catch{}};
 let success=false;
@@ -45,6 +48,7 @@ try{
   for(const p of ['udp','tcp'])ns('origin','iptables',['-t','nat','-A','PREROUTING','-p',p,'--dport','53','-j','REDIRECT','--to-ports','5353']);
   fs.mkdirSync('/config',{mode:0o700});
   run('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','2','-subj','/CN=runtime.test','-addext','subjectAltName=DNS:runtime.test','-keyout','/config/key.pem','-out','/config/cert.pem']);
+  if(incomingMode)for(const name of ['incoming-agent','incoming-client','incoming-rogue'])run('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','2','-subj','/CN=runtime.test','-addext','subjectAltName=DNS:runtime.test','-keyout',`/config/${name}.key`,'-out',`/config/${name}.pem`]);
   put('/usr/local/bin/clean-vpn-killswitch.sh',fs.readFileSync('/project/scripts/autostart/killswitch.sh'),0o755);
   put('/config/profile.json',fs.readFileSync('/project/fixtures/native-tls-profiles/chromium-156-bounded-cold.json'));
   const config={version:1,address:'154.62.226.216',port:443};
@@ -55,9 +59,9 @@ try{
       ...(packet.role==='client'?{exit:{ipv4:packet.address,port:packet.port}}:{replay_directory:'/config/never-created-replay'})}}:packet;
   for(const [n,peer_ipv4] of peers){
     put('/config/'+n+'.psk',randomBytes(32));
-    put('/config/'+n+'.json',JSON.stringify(wrap({...config,role:'client',tun:'tun0',peer_ipv4,dns:true,secret_path:'/config/'+n+'.psk',server_name:'runtime.test',ca:'/config/cert.pem',tls_profile_path:'/config/profile.json'})));
+    put('/config/'+n+'.json',JSON.stringify(wrap({...config,role:'client',tun:'tun0',peer_ipv4,dns:true,secret_path:'/config/'+n+'.psk',server_name:'runtime.test',ca:'/config/cert.pem',tls_profile_path:'/config/profile.json',...(incomingMode?{connection_mode:'persistent'}:{})})));
     unit(n+'-guard.service',`[Service]\nType=oneshot\nRemainAfterExit=yes\nNetworkNamespacePath=/run/netns/${n}\nExecStart=/usr/local/bin/clean-vpn-killswitch.sh up --scope=both --ipv6=block --tun=tun0 --server=154.62.226.216 --ssh-port=22 --usb-dns=1 --usb-strict=1\n`);
-    put('/config/'+n+'-host.json',JSON.stringify({version:1,guard_unit:n+'-guard.service',guard_script:'/usr/local/bin/clean-vpn-killswitch.sh'}));
+    put('/config/'+n+'-host.json',JSON.stringify({version:1,guard_unit:n+'-guard.service',guard_script:'/usr/local/bin/clean-vpn-killswitch.sh',...(incomingMode?{incoming_tcp:{source_ipv4:'10.99.0.1',port:9443}}:{})}));
     installNative({name:n,binary,config:'/config/'+n+'.json',hostProfile:'/config/'+n+'-host.json',apply:true});
   }
   put('/config/exit.json',JSON.stringify(wrap({...config,role:'exit',tun:'cvexit0',cert:'/config/cert.pem',key:'/config/key.pem',peers:peers.map(([n,ipv4])=>({ipv4,secret_path:'/config/'+n+'.psk'}))})));
@@ -78,6 +82,27 @@ try{
   healthy('two');await wait(()=>{assert.notEqual(prop(owner('one'),'MainPID'),prior);healthy('one');});assert.equal(prop(engine('two'),'MainPID'),unaffected);check('client owner crash recovery is isolated');
   const oldExit=prop(owner('exit'),'MainPID');ctl('kill','--kill-whom=main','--signal=SIGKILL',owner('exit'));
   await wait(()=>{assert.notEqual(prop(owner('exit'),'MainPID'),oldExit);healthy('one');healthy('two');});check('exit owner crash reconnects both clients with unchanged identities');
+  if(incomingMode){
+    // Fixture mTLS credentials are independent of VPN credentials. This is a
+    // network prerequisite test, not a claim about the public-proxy application.
+    put('/config/incoming-agent.cjs',`const https=require('node:https'),fs=require('node:fs');const options={key:fs.readFileSync('/config/incoming-agent.key'),cert:fs.readFileSync('/config/incoming-agent.pem'),ca:fs.readFileSync('/config/incoming-client.pem'),requestCert:true,rejectUnauthorized:true};for(const [address,port] of [['10.99.0.2',9443],['10.99.0.2',9444],['192.168.7.1',9443]])https.createServer(options,(_,r)=>r.end('incoming-ok')).listen(port,address);`);
+    unit('incoming-agent.service','[Service]\nNetworkNamespacePath=/run/netns/one\nExecStart=/usr/bin/node /config/incoming-agent.cjs\n');ctl('daemon-reload');ctl('start','incoming-agent.service');
+    await incomingReady();
+    // No host/USB probe, DNS or heartbeat during this idle interval.
+    await delay(20000);incoming();check('exit opens new mTLS after idle without client application wake');
+    assert.throws(()=>incoming('10.99.0.2',9444));
+    ip('-n','exit','addr','add','10.99.0.99/32','dev','lo');
+    try{assert.throws(()=>incoming('10.99.0.2',9443,'10.99.0.99'));}finally{ip('-n','exit','addr','del','10.99.0.99/32','dev','lo');}
+    assert.throws(()=>incoming('10.99.0.2',9443,'10.99.0.1','incoming-rogue'));
+    ip('-n','exit','route','add','192.168.7.1/32','dev','cvexit0');
+    assert.throws(()=>incoming('192.168.7.1'));ip('-n','exit','route','del','192.168.7.1/32','dev','cvexit0');
+    await incomingReady();check('other source port LAN and untrusted mTLS client refused');
+    ctl('stop',owner('exit'));assert.throws(()=>incoming());
+    ctl('start',owner('exit'));await incomingReady();check('incoming resumes after exit outage without client probe');
+    ctl('stop',owner('one'));assert.throws(()=>incoming());
+    ctl('start',owner('one'));await incomingReady();check('incoming resumes after client TUN removal and recreation without client probe');
+    ctl('stop','incoming-agent.service');
+  }
   // Incorrect key cannot claim the other assigned identity; client one stays online.
   ctl('stop',owner('two'));
   const c=JSON.parse(fs.readFileSync('/opt/clean-vpn-native/two/config.json'));(combo?c.boring:c).secret_path='/config/one.psk';put('/config/wrong-peer.json',JSON.stringify(c));
@@ -94,9 +119,10 @@ try{
   for(const [n] of peers){assert.match(ns(n,'/usr/local/bin/clean-vpn-killswitch.sh',['status']),/IPv6: cvks4/);assert.throws(()=>https(n+'usb'));}
   check('all owners release TUN DNS NAT routes; both guards survive');
   if(combo){assert.ok(fs.statSync('/opt/clean-vpn-native/exit/replay/state').size>0);check('exit replay state retained after all owner and engine stops');}
-  success=true;console.log('HOST_MULTI_REPORT='+JSON.stringify({schema:1,status:'passed',transport:combo?'combo-tls':'boring-tls',clients:2,exit:1,checks,peerAddresses:peers.map(p=>p[1]),scope:'real-systemd-netns-installed-host-profiles; no physical reboot or capacity claim'}));
+  success=true;console.log('HOST_MULTI_REPORT='+JSON.stringify({schema:1,status:'passed',transport:combo?'combo-tls':'boring-tls',incoming:incomingMode,clients:2,exit:1,checks,peerAddresses:peers.map(p=>p[1]),scope:'real-systemd-netns-installed-host-profiles; no physical reboot or capacity claim'}));
 }finally{
   if(!success)logs();
   for(const n of ['one','two','exit'])try{ctl('stop',owner(n));}catch{}
   try{ctl('stop','multi-origin.service');}catch{}
+  if(incomingMode)try{ctl('stop','incoming-agent.service');}catch{}
 }

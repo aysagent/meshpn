@@ -236,3 +236,7 @@ PSK/IP и общий relay PSK группы; relay PSK сам по себе не
 Повторение combo: добавить `CVPN_HOST_MULTI_COMBO=1` к приведённому выше
 одноразовому systemd-стенду. Этот результат не заменяет физический reboot,
 нагрузочный тест или независимый захват отпечатков.
+
+Опциональные входящие соединения с exit: [persistent connection mode и узкий
+TCP grant](clean-vpn-native-incoming.md). Разрешение не включается по умолчанию;
+проверено отдельно для boring-tls и packet-ветки combo.

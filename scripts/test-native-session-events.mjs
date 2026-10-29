@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import tls from 'node:tls';
 import { startDateExit } from './lib/vpn-http-date-fixture.mjs';
@@ -159,4 +159,47 @@ test('legacy multicast is discarded without reconnect, TUN delivery or flow-cont
   assert.match(output, /multicast discarded, same session unicast and flow control PASS/);
   assert.equal(connections, 1, output);
   assert.doesNotMatch(output, /peer_address|http2_receive|session_rejected_or_closed/);
+});
+
+for(const closeCode of ['h2_peer_end_stream','h2_goaway_no_error'])
+test(`persistent incoming survives ${closeCode} without client traffic`, {timeout:20000}, async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-incoming-'));
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const secret=randomBytes(32),secretPath=path.join(dir,'psk');
+  fs.writeFileSync(secretPath,secret,{mode:0o600});
+  let connections=0,uplinkBytes=0;const timers=new Set();
+  const server=await startDateExit({protocol:'h2',secret,onBridge:sock=>{
+    const round=++connections;sock.on('error',()=>{});sock.on('data',b=>{uplinkBytes+=b.length;});
+    const packet=Buffer.from('450000140000000040110000010101010a630002','hex');
+    let sum=0;for(let i=0;i<20;i+=2)sum+=packet.readUInt16BE(i);
+    while(sum>>>16)sum=(sum&65535)+(sum>>>16);packet.writeUInt16BE((~sum)&65535,10);
+    sock.write(Buffer.concat([Buffer.from([0,0,0,20]),packet]));
+    if(round<3){const timer=setTimeout(()=>{
+      timers.delete(timer);if(sock.destroyed)return;
+      if(closeCode==='h2_peer_end_stream')sock.end();else sock.session.goaway(0,1);
+    },300);timers.add(timer);}
+  }});
+  t.after(async()=>{for(const timer of timers)clearTimeout(timer);await server.close();});
+  const config=path.join(dir,'client.json');
+  fs.writeFileSync(config,JSON.stringify({version:1,role:'client',address:'127.0.0.1',port:server.port,
+    tun:'cvtest0',secret_path:secretPath,server_name:'localhost',ca:path.resolve('scripts/fixtures/boring-tls-local.cert.pem'),connection_mode:'persistent'}));
+  const child=spawn(path.join(build,'integration-test'),[path.join(build,'clean-vpn-engine-fixture'),config,'client-incoming:'+closeCode]);
+  let output='';for(const stream of [child.stdout,child.stderr])stream.on('data',b=>{output+=b;});
+  const timer=setTimeout(()=>child.kill('SIGKILL'),17000);t.after(()=>{clearTimeout(timer);child.kill('SIGKILL');});
+  const [status]=await once(child,'close');clearTimeout(timer);
+  assert.equal(status,0,output);assert.match(output,/persistent incoming after graceful reconnect without outbound wake PASS/);
+  assert.equal(connections,3);assert.equal(uplinkBytes,0);assert.doesNotMatch(output,/"state":"idle_wait"/);
+});
+
+test('connection mode is explicit, client-only and rejects invalid types',t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-mode-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const secret_path=path.join(dir,'psk'),config=path.join(dir,'config');fs.writeFileSync(secret_path,randomBytes(32),{mode:0o600});
+  const base={version:1,role:'client',address:'127.0.0.1',port:443,tun:'cvtest0',secret_path,server_name:'localhost',ca:path.resolve('scripts/fixtures/boring-tls-local.cert.pem')};
+  for(const value of ['on-demand','persistent',undefined,true,null,1,'always','']){
+    fs.writeFileSync(config,JSON.stringify({...base,connection_mode:value}));
+    const r=spawnSync(path.join(build,'clean-vpn-engine'),['--check-config',config],{encoding:'utf8',timeout:3000});
+    assert.equal(r.status,['on-demand','persistent',undefined].includes(value)?0:1,r.stdout+r.stderr);
+  }
+  fs.writeFileSync(config,JSON.stringify({...base,role:'exit',cert:base.ca,key:path.resolve('scripts/fixtures/boring-tls-local.key.pem'),connection_mode:'persistent'}));
+  assert.equal(spawnSync(path.join(build,'clean-vpn-engine'),['--check-config',config]).status,1);
 });
