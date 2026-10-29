@@ -8,6 +8,9 @@
 #include "meshvpn_vpn_trust.h"
 #include "meshvpn_wireguard.h"
 #include "sdkconfig.h"
+#if CONFIG_MESHVPN_PROFILED_TLS_ENABLE && CONFIG_IDF_TARGET_ESP32P4
+#include "bootloader_random.h"
+#endif
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,8 +39,15 @@ static bool s_ready;
 static uint32_t s_probe_epoch;
 typedef struct { uint16_t len; int64_t time; uint8_t data[MESHVPN_VPN_MTU]; } packet_t;
 #define MESHVPN_VPN_SOCKET_RX_BYTES 8192
-#define MESHVPN_VPN_RX_BATCH_BYTES (MESHVPN_VPN_UDP_RX_BATCH_FRAMES * MESHVPN_VPN_MTU)
-#define MESHVPN_VPN_RX_BATCH_FRAMES 320
+#define MESHVPN_VPN_UDP_BATCH_BYTES (MESHVPN_VPN_UDP_RX_BATCH_FRAMES * MESHVPN_VPN_MTU)
+/* UDP tuning must not shrink the TCP/TLS collector. A preceding partial frame
+ * can contribute up to one extra MTU of bytes to the current read's batch. */
+#define MESHVPN_VPN_RX_BATCH_BYTES ((MESHVPN_VPN_UDP_BATCH_BYTES > MESHVPN_VPN_SOCKET_RX_BYTES + MESHVPN_VPN_MTU) ? MESHVPN_VPN_UDP_BATCH_BYTES : MESHVPN_VPN_SOCKET_RX_BYTES + MESHVPN_VPN_MTU)
+/* Fragmented IPv4 may be only 20 bytes + 4 framing bytes. Include one
+ * packet completed from the preceding read, rather than assuming UDP size. */
+#define MESHVPN_VPN_RX_BATCH_FRAMES (1 + MESHVPN_VPN_SOCKET_RX_BYTES / 24)
+_Static_assert(MESHPN_PROFILE_READ_BYTES <= MESHVPN_VPN_SOCKET_RX_BYTES,
+               "TLS reads must fit the bounded packet batch");
 #define MESHVPN_VPN_RX_SELECT_WAIT_US 10000
 #define MESHVPN_VPN_WORKER_PRIORITY 6
 typedef struct {
@@ -45,7 +55,7 @@ typedef struct {
     int64_t queued_us;
     size_t used;
     unsigned count;
-    uint16_t offsets[MESHVPN_VPN_RX_BATCH_FRAMES];
+    uint32_t offsets[MESHVPN_VPN_RX_BATCH_FRAMES]; /* 64 UDP MTUs exceed 64 KiB */
     uint16_t lengths[MESHVPN_VPN_RX_BATCH_FRAMES];
     uint8_t data[MESHVPN_VPN_RX_BATCH_BYTES];
 } rx_batch_t;
@@ -89,7 +99,7 @@ static bool enabled(void) { LOCK(); bool v = s.enabled; UNLOCK(); return v; }
 bool meshvpn_vpn_is_enabled(void) { return enabled(); }
 static bool session(uint32_t g) { LOCK(); bool v = s.enabled && s.generation == g; UNLOCK(); return v; }
 static bool plain_transport(const char *name)
-{ return name && (!strcmp(name, "tcp") || !strcmp(name, "socket") || !strcmp(name, "udp") || !strcmp(name, "tls")); }
+{ return name && (!strcmp(name, "tcp") || !strcmp(name, "socket") || !strcmp(name, "udp") || !strcmp(name, "tls") || !strcmp(name, "boring-tls")); }
 static void flush_nat(void)
 {
     bool usb = s_usb && s_usb->napt, ap = s_ap && s_ap->napt;
@@ -128,15 +138,25 @@ const char *meshvpn_vpn_config_error(const meshvpn_vpn_config_t *c)
 {
     if (!c || strnlen(c->server, sizeof(c->server)) == sizeof(c->server) ||
         strnlen(c->tls_server_name, sizeof(c->tls_server_name)) == sizeof(c->tls_server_name) ||
-        strnlen(c->transport, sizeof(c->transport)) == sizeof(c->transport)) return "VPN config contains an invalid or overlong field.";
+        strnlen(c->transport, sizeof(c->transport)) == sizeof(c->transport) ||
+        strnlen(c->tls_profile, sizeof(c->tls_profile)) == sizeof(c->tls_profile) ||
+        strnlen(c->tls_psk_hex, sizeof(c->tls_psk_hex)) == sizeof(c->tls_psk_hex)) return "VPN config contains an invalid or overlong field.";
     if (!c->enabled) return NULL;
     uint8_t ip[4]; uint16_t port;
     bool wg = !strcmp(c->transport, "wireguard");
-    if (!wg && !plain_transport(c->transport)) return "Transport: select TCP, UDP, TLS or WireGuard.";
+    if (!wg && !plain_transport(c->transport)) return "Transport: select TCP, UDP, TLS, boring-tls or WireGuard.";
     if (!meshvpn_vpn_endpoint(c->server, ip, &port)) return "Endpoint/server: enter numeric IPv4:port (port 1-65535); hostnames and IPv6 are not supported.";
     if (wg) return meshvpn_wg_config_error(c);
-    if (!strcmp(c->transport, "tls") && !meshvpn_vpn_tls_name_valid(c->tls_server_name))
+    if ((!strcmp(c->transport, "tls") || !strcmp(c->transport, "boring-tls")) && !meshvpn_vpn_tls_name_valid(c->tls_server_name))
         return "TLS server name: enter the DNS name from the exit certificate (required).";
+    if (!strcmp(c->transport, "boring-tls")) {
+#if !CONFIG_MESHVPN_PROFILED_TLS_ENABLE
+        return "Profiled TLS is not compiled. Build with PROFILED_TLS=1.";
+#endif
+        if (strcmp(c->tls_profile, MESHPN_TLS_PROFILE_ID)) return "Select the supported Chromium 156 capture profile.";
+        if (strlen(c->tls_psk_hex) != 64 || strspn(c->tls_psk_hex, "0123456789abcdefABCDEF") != 64)
+            return "Shared HMAC key: enter 64 hex characters (32 bytes), matching exit --shared-hmac-key.";
+    }
     if (ip[0] == 10 && ip[1] == 99 && ip[2] == 0) return "Server overlaps the plain tunnel subnet 10.99.0.0/24.";
     return NULL;
 }
@@ -160,6 +180,13 @@ static esp_err_t apply_config(void *arg)
     strlcpy(s.server, c->server, sizeof(s.server)); strlcpy(s.transport, s_config.transport, sizeof(s.transport));
     strlcpy(s.tls_server_name, c->tls_server_name, sizeof(s.tls_server_name));
     memcpy(s.saved_servers, c->saved_servers, sizeof(s.saved_servers));
+    memcpy(s.profiled_server, c->profiled_server, sizeof(s.profiled_server));
+    memcpy(s.tls_profile, c->tls_profile, sizeof(s.tls_profile));
+    s.tls_psk_set = c->tls_psk_hex[0] != 0;
+    memset(&s.profiled, 0, sizeof(s.profiled)); s.profiled_stack_spare = 0;
+    #if CONFIG_MESHVPN_PROFILED_TLS_ENABLE
+    s.profiled_available = true;
+#endif
     strlcpy(s.state, c->enabled ? "waiting" : "disabled", sizeof(s.state));
     s.last_error = err;
     strlcpy(s.wg_address, c->wg_address, sizeof(s.wg_address));
@@ -215,7 +242,11 @@ static void notify_socket_tx(void)
 {
     /* The TX task is permanent after init, so this handle remains valid after
      * leaving the critical section. */
-    LOCK(); TaskHandle_t task = s_socket_tx_task; UNLOCK();
+    LOCK(); TaskHandle_t task = s_socket_tx_task;
+    /* Profiled TLS owns both directions; do not wake the idle raw TX worker
+     * for each packet. Still wake it when an older session is stopping. */
+    if (!s_socket.active && s_socket.tx_stopped && !strcmp(s.transport, "boring-tls")) task = NULL;
+    UNLOCK();
     if (task) xTaskNotifyGive(task);
 }
 esp_err_t meshvpn_vpn_send_ipv4(const uint8_t *p, uint16_t len)
@@ -879,6 +910,60 @@ static void socket_tx_worker(void *arg)
         if (rx_task) xTaskNotifyGive(rx_task);
     }
 }
+#if CONFIG_MESHVPN_PROFILED_TLS_ENABLE
+typedef struct {
+    uint32_t generation;
+    rx_worker_buffers_t *rx;
+    meshvpn_vpn_tx_batch_t *tx;
+    meshvpn_profile_tunnel_options_t options;
+    meshvpn_profile_tunnel_diag_t diagnostic;
+    bool was_up;
+} profiled_job_t;
+static bool profiled_current(void *arg) { return session(((profiled_job_t *)arg)->generation); }
+static void profiled_diag(void *arg, const meshvpn_profile_tunnel_diag_t *diag)
+{
+    profiled_job_t *job = arg; job->diagnostic = *diag;
+    LOCK(); if (s.generation == job->generation) s.profiled = *diag; UNLOCK();
+}
+static void profiled_ready(void *arg)
+{
+    profiled_job_t *job = arg; job->was_up = true;
+    state(job->generation, "up", true, 0);
+}
+static size_t profiled_peek(void *arg, const uint8_t **bytes)
+{
+    profiled_job_t *job = arg;
+    if (job->tx->length == job->tx->used) load_tx_batch(job->tx, job->generation);
+    *bytes = job->tx->data + job->tx->used;
+    return job->tx->length - job->tx->used;
+}
+static void profiled_sent(void *arg, size_t n)
+{
+    profiled_job_t *job = arg; unsigned packets = 0; size_t bytes = 0;
+    if (!meshvpn_vpn_tx_advance(job->tx, n, &packets, &bytes)) return;
+    LOCK(); s.packets_out += packets; s.bytes_out += bytes;
+    s.socket_send_calls++; s.socket_send_bytes += n; UNLOCK();
+}
+static bool profiled_receive(void *arg, const uint8_t *bytes, size_t n)
+{
+    profiled_job_t *job = arg; rx_batch_t *b = &job->rx->batch;
+    b->generation = job->generation; b->count = b->used = 0;
+    if (!meshvpn_vpn_rx_feed(&job->rx->stream, bytes, n, esp_timer_get_time(), receive_packet, b)) {
+        COUNT(rx_invalid); return false;
+    }
+    if (!b->count) return true;
+    b->queued_us = esp_timer_get_time();
+    return esp_netif_tcpip_exec(inject_batch, b) == ESP_OK;
+}
+static bool profiled_healthy(void *arg)
+{
+    profiled_job_t *job = arg;
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    return sta && esp_netif_is_netif_up(sta) && !meshvpn_vpn_rx_expired(&job->rx->stream, esp_timer_get_time());
+}
+static esp_err_t profiled_run(void *arg)
+{ return meshvpn_profile_tunnel_run(&((profiled_job_t *)arg)->options); }
+#endif
 static void __attribute__((unused)) worker(void *arg)
 {
     /* Permanent storage is owned by this task, allocated before task creation.
@@ -898,9 +983,14 @@ static void __attribute__((unused)) worker(void *arg)
             else esp_netif_tcpip_exec(wg_poll, &cfg.generation);
             vTaskDelay(pdMS_TO_TICKS(1000)); continue;
         }
-        if (!strcmp(cfg.transport, "tls") && !meshvpn_wg_clock_ready()) {
+        if ((!strcmp(cfg.transport, "tls") || !strcmp(cfg.transport, "boring-tls")) && !meshvpn_wg_clock_ready()) {
             state(cfg.generation, "wait_time", false, 0);
             vTaskDelay(pdMS_TO_TICKS(1000)); continue;
+        }
+        if (!strcmp(cfg.transport, "boring-tls")) {
+            LOCK();
+            if (s.generation == cfg.generation) { memset(&s.profiled, 0, sizeof(s.profiled)); s.profiled_attempt++; }
+            UNLOCK();
         }
         state(cfg.generation, "wait_uplink", false, 0);
         int error = 0;
@@ -909,6 +999,38 @@ static void __attribute__((unused)) worker(void *arg)
         int fd = connect_exit(&cfg, &tls_conn);
         if (fd < 0) { error = errno; goto retry; }
         if (!session(cfg.generation)) { if (tls_conn) esp_tls_conn_destroy(tls_conn); else close(fd); continue; }
+#if CONFIG_MESHVPN_PROFILED_TLS_ENABLE
+        if (!strcmp(cfg.transport, "boring-tls")) {
+            /* Load flash-backed trust/secret on the internal stack, before
+             * invoking BoringSSL on the dedicated PSRAM stack. */
+            char *ca = NULL; char psk[65];
+            LOCK(); memcpy(psk, s_config.tls_psk_hex, sizeof(psk)); UNLOCK();
+            profiled_job_t job = {.generation=cfg.generation, .rx=buffers, .tx=s_socket_tx_batch};
+            memset(d, 0, sizeof(*d)); memset(job.tx, 0, sizeof(*job.tx));
+            esp_err_t loaded = meshvpn_vpn_ca_load(&ca);
+            if (loaded == ESP_OK) {
+                job.options = (meshvpn_profile_tunnel_options_t){.fd=fd, .name=cfg.tls_server_name,
+                    .ca_pem=ca, .psk_hex=psk, .profile=cfg.tls_profile, .arg=&job,
+                    .current=profiled_current, .diagnostic=profiled_diag, .ready=profiled_ready,
+                    .peek=profiled_peek, .sent=profiled_sent, .receive=profiled_receive,
+                    .healthy=profiled_healthy};
+                uint32_t spare=0;
+                error=meshvpn_profiled_tls_run(profiled_run, &job, &spare);
+                LOCK(); if (s.generation==cfg.generation) s.profiled_stack_spare=spare;
+                s.tx_dropped += job.tx->count - job.tx->completed; UNLOCK();
+                if (job.was_up) backoff=1;
+                /* Persist before job leaves scope; retry uses a stable reason. */
+                socket_failure(cfg.generation, error, job.diagnostic.phase[0] ? job.diagnostic.phase : "profile_worker");
+            } else {
+                error=loaded==ESP_ERR_NO_MEM?ENOMEM:EACCES;
+                socket_failure(cfg.generation,error,"profile_ca");
+            }
+            volatile char *secret=psk; for(size_t i=0;i<sizeof(psk);i++) secret[i]=0;
+            free(ca); close(fd);
+            failure_reason="profile_session";
+            goto retry;
+        }
+#endif
         bool datagram = !strcmp(cfg.transport, "udp");
         bool is_tls = tls_conn != NULL;
         SemaphoreHandle_t tls_mutex = is_tls ? xSemaphoreCreateMutex() : NULL;
@@ -1011,7 +1133,7 @@ retry:
             backoff = 1;
             continue;
         }
-        socket_failure(cfg.generation, error, failure_reason);
+        if (strcmp(failure_reason, "profile_session")) socket_failure(cfg.generation, error, failure_reason);
         state(cfg.generation, "backoff", false, error);
         COUNT(reconnects);
         for (unsigned i = 0; i < backoff * 10 && session(cfg.generation); i++) vTaskDelay(pdMS_TO_TICKS(100));
@@ -1021,6 +1143,13 @@ retry:
 esp_err_t meshvpn_vpn_init(void)
 {
     if (s.implemented) return ESP_ERR_INVALID_STATE;
+#if CONFIG_MESHVPN_PROFILED_TLS_ENABLE && CONFIG_IDF_TARGET_ESP32P4
+    /* C6 RF cannot seed the P4 RNG. This application does not use SAR ADC;
+     * reserve its internal noise source for crypto for the application lifetime.
+     * Run once on the internal startup stack, not on the PSRAM TLS worker. */
+    static bool entropy_started;
+    if (!entropy_started) { bootloader_random_enable(); entropy_started = true; }
+#endif
     strlcpy(s.state, "disabled", sizeof(s.state)); strlcpy(s.transport, "tcp", sizeof(s.transport));
     strlcpy(s.address, "10.99.0.2", sizeof(s.address)); s.wg_handshake_age = UINT32_MAX;
     /* Keep a blackhole route even in builds without transport workers, so a

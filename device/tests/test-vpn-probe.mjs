@@ -95,7 +95,7 @@ int main(void){
 }
 `;
 const file=path.join(dir,'test.c'),bin=path.join(dir,'test');fs.writeFileSync(file,source);
-execFileSync(process.env.CC||'cc',['-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',
+execFileSync(process.env.CC||'cc',['-I'+new URL('components/meshvpn_profiled_tls/include',root).pathname,'-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',
  '-I'+new URL('tests/stubs',root).pathname,'-I'+new URL('components/meshvpn_config/include',root).pathname,
  '-I'+new URL('components/meshvpn_vpn/include',root).pathname,file,'-o',bin],{stdio:'inherit'});
 execFileSync(bin,{stdio:'inherit'});

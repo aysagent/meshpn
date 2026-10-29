@@ -5,6 +5,8 @@ includes this directory. The experiment compares real ClientHello bytes and
 TLS 1.3 exporters, and compiles a minimal BoringSSL probe for ESP32-S3/P4.
 It does not flash anything, switch Wi-Fi, configure TUN/NAT or contact a VPS.
 
+[Integrated VPN transport and configuration](../../docs/profiled-tls.md).
+
 [Exact profile, gate and memory integration results](../../reports/2026-10-29-profiled-tls-gate.md).
 [Initial feasibility baseline](../../reports/2026-10-29-profiled-tls-feasibility.md).
 

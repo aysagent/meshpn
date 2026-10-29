@@ -36,6 +36,9 @@ set(SDKCONFIG_DEFAULTS
     "${CMAKE_SOURCE_DIR}/boards/${MESHVPN_BOARD}/sdkconfig.defaults"
     "${CMAKE_SOURCE_DIR}/profiles/usb_${MESHVPN_USB_PROFILE}.defconfig"
 )
+if("$ENV{PROFILED_TLS}" STREQUAL "1")
+    list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_SOURCE_DIR}/profiles/profiled_tls.defconfig")
+endif()
 if("$ENV{P4_REVISION}" STREQUAL "3")
     if(NOT "${MESHVPN_BOARD_TARGET}" STREQUAL "esp32p4")
         message(FATAL_ERROR "P4_REVISION=3 requires an ESP32-P4 board")

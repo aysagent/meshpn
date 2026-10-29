@@ -37,7 +37,30 @@ ${section('static void record_timing(', 'void meshvpn_vpn_get_status(')}
 ${section('static void state_core(', 'typedef struct { uint32_t g;')}
 ${section('esp_err_t meshvpn_vpn_send_ipv4(', '/* RX is injected')}
 ${section('static void socket_failure(', 'static bool socket_link_current(')}
+${section('#define MESHVPN_VPN_SOCKET_RX_BYTES', 'typedef struct {\n    meshvpn_vpn_rx_stream_t stream;')}
+${section('static bool receive_packet(', '/* Drain only already-queued UDP')}
 int main(void) {
+ /* A read may complete a previous IPv4 fragment, then hundreds of small ones.
+  * Exercise the real batch collector rather than a callback with no bound. */
+ uint8_t fragments[24 * 343]={0};
+ for(unsigned i=0;i<343;i++) {
+   uint8_t *f=fragments+i*24;meshvpn_vpn_frame_header(f,20);
+   f[4]=0x45;f[7]=20;f[10]=0x20; /* IPv4 MF, no L4 header required yet */
+ }
+ meshvpn_vpn_rx_stream_t stream={0};rx_batch_t batch={0};
+ assert(meshvpn_vpn_rx_feed(&stream,fragments,23,now,receive_packet,&batch));
+ assert(!batch.count);
+ assert(meshvpn_vpn_rx_feed(&stream,fragments+23,MESHVPN_VPN_SOCKET_RX_BYTES,now,receive_packet,&batch));
+ assert(batch.count==342);
+ batch.count=batch.used=0;
+ uint8_t full[MESHVPN_VPN_MTU]={0};
+ for(unsigned i=0;i<MESHVPN_VPN_UDP_RX_BATCH_FRAMES;i++) {
+   full[0]=i;assert(receive_packet(&batch,full,sizeof(full)));
+ }
+ for(unsigned i=0;i<batch.count;i++) {
+   assert(batch.offsets[i]==i*MESHVPN_VPN_MTU);
+   assert(batch.data[batch.offsets[i]]==(uint8_t)i);
+ }
  s.enabled=s.connected=true;s.kill_switch=true;s.generation=1;
  uint8_t packet[100]={0x45,0,0,100};packet[9]=17;packet[25]=80;
  for(unsigned i=0;i<MESHVPN_VPN_SLOTS;i++) {
@@ -84,10 +107,12 @@ int main(void) {
 `;
 const file = path.join(dir, 'test.c'), bin = path.join(dir, 'test');
 fs.writeFileSync(file, source);
-execFileSync(process.env.CC || 'cc', ['-std=c11', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined',
+for (const udpFrames of [1,32,64]) {
+execFileSync(process.env.CC || 'cc', ['-DCONFIG_MESHVPN_VPN_UDP_RX_BATCH_FRAMES='+udpFrames,'-I'+new URL('components/meshvpn_profiled_tls/include',root).pathname,'-std=c11', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined',
   '-I' + new URL('tests/stubs', root).pathname,
   '-I' + new URL('components/meshvpn_config/include', root).pathname,
   '-I' + new URL('components/meshvpn_vpn/include', root).pathname, file,
   new URL('components/meshvpn_vpn/meshvpn_vpn_frame.c', root).pathname,
   new URL('components/meshvpn_vpn/meshvpn_vpn_stream.c', root).pathname, '-o', bin], {stdio: 'inherit'});
 execFileSync(bin, {stdio: 'inherit'});
+}

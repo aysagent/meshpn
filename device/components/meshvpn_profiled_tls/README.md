@@ -3,7 +3,8 @@
 This component is opt-in (`CONFIG_MESHVPN_PROFILED_TLS_ENABLE=n` by default).
 It supplies the frozen Chromium capture profile, a local ClientHello gate, a
 socket BIO that enforces the gate, bounded PSRAM allocation and a dedicated
-FreeRTOS executor. It is **not yet wired into the VPN transport selector**.
+FreeRTOS executor. It is wired into the separate **boring-tls** VPN transport, with HTTP/1.1 Bearer v2 and single-owner RX/TX.
+[Build, exit flags, admin settings and limitations](../../docs/profiled-tls.md).
 The ordinary `tls` transport remains esp-tls/mbedTLS.
 
 The standalone IDF lab uses this component, rather than a separate copy of the
@@ -40,7 +41,9 @@ PSRAM stacks must not run cache-disabled flash/NVS operations; load/store
 configuration on the caller before/after the TLS job. Do not forcibly delete
 an in-progress TLS job; use bounded nonblocking I/O with cooperative cancellation.
 
-Future VPN integration still needs the clean-vpn HTTP/auth/exporter protocol,
-configuration persistence, cancellation, a clear connected-state gate, and
-real board memory/stack validation. Do not send raw IPv4 framing on a negotiated
+The integrated session verifies CA/name/time, exports the channel binding,
+requires a strict HTTP/1.1 tunnel ACK before marking connected, and checks
+configuration cancellation throughout nonblocking I/O. Credentials/endpoints
+are persisted by the VPN config component. Real board memory/stack validation
+is still required; arbitrary profiles and HTTP/2 are not implemented. Do not send raw IPv4 framing on a negotiated
 HTTP/2 connection. Matching JA3/JA4 does not establish complete browser fidelity.

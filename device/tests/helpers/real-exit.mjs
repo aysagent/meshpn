@@ -39,10 +39,10 @@ dgram.createSocket=function(...args){const s=createUdp.apply(this,args),bind=s.b
  this.once('listening',()=>process.send?.({ready:this.address().port}));return bind.apply(this,args);};return s;};
 process.on('message',m=>{if(m.inject&&readTun)readTun([Buffer.from(m.inject,'base64')]);});
 process.on('disconnect',()=>process.exit(0));
-await runExit({...opts,server:'127.0.0.1:0',keepAliveSec:opts.keepAliveSec??0,tlsRaw:true});
+await runExit({...opts,server:'127.0.0.1:0',keepAliveSec:opts.keepAliveSec??0,tlsRaw:opts.tlsRaw??true});
 `;
  const file=path.join(dir,'exit.mjs');fs.writeFileSync(file,source);
- const child=fork(file,[],{execArgv:[],env:{...process.env,MESHPN_EXIT_FIXTURE:JSON.stringify(options)},stdio:['ignore','pipe','pipe','ipc']});
+ const child=fork(file,[],{execArgv:[],env:{...process.env,CLEAN_VPN_TLS_LOG_BEARER:'0',MESHPN_EXIT_FIXTURE:JSON.stringify(options)},stdio:['ignore','pipe','pipe','ipc']});
  let log='';child.stdout.on('data',b=>log+=b);child.stderr.on('data',b=>log+=b);
  const packets=[];
  child.on('message',m=>{if(m.packet){const p=Buffer.from(m.packet,'base64');packets.push(p);options.onPacket?.(p,child);}});

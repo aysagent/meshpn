@@ -12,6 +12,9 @@ const wg=section(read('components/meshvpn_vpn/meshvpn_wireguard.c'),'static bool
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'meshpn-vpn-config-'));
 const source=`
 #define _DEFAULT_SOURCE
+#ifndef CONFIG_MESHVPN_PROFILED_TLS_ENABLE
+#define CONFIG_MESHVPN_PROFILED_TLS_ENABLE 1
+#endif
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -36,7 +39,7 @@ typedef struct {uint32_t addr;} ip4_addr_t;
 #define ip4_addr3(a) (((uint8_t*)&(a)->addr)[2])
 #define strlcpy test_strlcpy
 static size_t test_strlcpy(char*d,const char*s,size_t n){size_t l=strlen(s);if(n){size_t c=l<n-1?l:n-1;memcpy(d,s,c);d[c]=0;}return l;}
-static bool plain_transport(const char*n){return n&&(!strcmp(n,"tcp")||!strcmp(n,"socket")||!strcmp(n,"udp")||!strcmp(n,"tls"));}
+static bool plain_transport(const char*n){return n&&(!strcmp(n,"tcp")||!strcmp(n,"socket")||!strcmp(n,"udp")||!strcmp(n,"tls")||!strcmp(n,"boring-tls"));}
 ${wg}
 ${section(read('components/meshvpn_vpn/meshvpn_vpn_trust.c'),'bool meshvpn_vpn_tls_name_valid(', 'bool meshvpn_vpn_ca_valid(')}
 ${validate}
@@ -58,7 +61,7 @@ esp_err_t meshvpn_vpn_ca_load(char **pem){*pem=NULL;if(ca_load_fail)return ESP_F
 
 esp_err_t meshvpn_vpn_ca_save(const char *p){if(!strcmp(p,"bad"))return ESP_ERR_INVALID_ARG;if(save_fail)return ESP_FAIL;ca_configured=*p!=0;ca_saves++;return ESP_OK;}
 static esp_err_t meshvpn_web_require_auth(httpd_req_t*r){(void)r;return auth?ESP_OK:ESP_FAIL;}
-static cJSON *body(httpd_req_t*r,int max){(void)r;assert(max==1024||max==MESHVPN_VPN_CA_MAX*2+128||max==(MESHVPN_CLIENT_CERT_MAX+MESHVPN_CLIENT_KEY_MAX)*2+256);return cJSON_Duplicate(request,true);}
+static cJSON *body(httpd_req_t*r,int max){(void)r;assert(max==2048||max==MESHVPN_VPN_CA_MAX*2+128||max==(MESHVPN_CLIENT_CERT_MAX+MESHVPN_CLIENT_KEY_MAX)*2+256);return cJSON_Duplicate(request,true);}
 static esp_err_t error(httpd_req_t*r,const char*s,const char*m){(void)r;(void)s;last_error_message=m;return ESP_FAIL;}
 static esp_err_t send_json(httpd_req_t*r,cJSON*j){(void)r;if(j->child){cJSON *p=cJSON_GetObjectItem(j,"ca_pem");assert(cJSON_IsString(p));strcpy(exported_ca,p->valuestring);}cJSON_Delete(j);return ESP_OK;}
 esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t*c){*c=saved;return load_fail?ESP_FAIL:ESP_OK;}
@@ -178,15 +181,44 @@ assert(handler_vpn_ca(&r)==ESP_OK&&!strcmp(exported_ca,"ca"));
 ca_load_fail=true;assert(handler_vpn_ca(&r)==ESP_FAIL);ca_load_fail=false;
 ca_configured=false;assert(handler_vpn_ca(&r)==ESP_OK&&!exported_ca[0]);
 assert(ca_saves==previous_ca_saves&&applies==previous_applies);
+#if CONFIG_MESHVPN_PROFILED_TLS_ENABLE
+// Profiled transport: auth/settings are isolated from raw TLS and WG.
+r.method=HTTP_POST;request=cJSON_CreateObject();
+cJSON_AddBoolToObject(request,"enabled",true);replace("transport","boring-tls");
+replace("server","192.0.2.9:443");replace("tls_server_name","exit.example");
+replace("tls_profile","unknown");assert(handler_vpn_config(&r)==ESP_FAIL&&strstr(last_error_message,"profile"));
+replace("tls_profile",MESHPN_TLS_PROFILE_ID);replace("tls_psk_hex","bad");
+assert(handler_vpn_config(&r)==ESP_FAIL&&strstr(last_error_message,"HMAC"));
+const char *shared="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+replace("tls_psk_hex",shared);assert(handler_vpn_config(&r)==ESP_FAIL&&strstr(last_error_message,"TLS CA"));
+ca_configured=true;assert(handler_vpn_config(&r)==ESP_OK&&!strcmp(saved.tls_psk_hex,shared));
+assert(!strcmp(saved.profiled_server,"192.0.2.9:443")&&!saved.allow_direct);
+replace("tls_psk_hex","");assert(handler_vpn_config(&r)==ESP_OK&&!strcmp(saved.tls_psk_hex,shared));
+replace("transport","tls");replace("server","192.0.2.10:443");assert(handler_vpn_config(&r)==ESP_OK);
+assert(!strcmp(saved.tls_psk_hex,shared)&&!strcmp(saved.profiled_server,"192.0.2.9:443"));
+replace("transport","boring-tls");replace("server",saved.profiled_server);
+cJSON_AddBoolToObject(request,"tls_clear_psk",true);
+assert(handler_vpn_config(&r)==ESP_FAIL&&!strcmp(saved.tls_psk_hex,shared)); // active config stays intact
+cJSON_ReplaceItemInObject(request,"enabled",cJSON_CreateBool(false));
+assert(handler_vpn_config(&r)==ESP_OK&&!saved.tls_psk_hex[0]);
+cJSON_Delete(request);
+#else
+meshvpn_vpn_config_t disabled={0};disabled.enabled=true;
+strcpy(disabled.transport,"boring-tls");strcpy(disabled.server,"192.0.2.9:443");
+strcpy(disabled.tls_server_name,"exit.example");
+assert(strstr(meshvpn_vpn_config_error(&disabled),"not compiled"));
+#endif
 puts("VPN HTTP/config: auth, validation, key preservation/clear, storage errors and no reboot passed");
 }
 `;
 const file=path.join(dir,'test.c'),bin=path.join(dir,'test');fs.writeFileSync(file,source);
 const idf=process.env.IDF_PATH,json=path.join(idf,'components/json/cJSON');
-execFileSync(process.env.CC||'cc',['-std=c11','-Wall','-Wextra','-Werror','-Wno-deprecated-declarations','-fsanitize=address,undefined',
+for(const profiled of [0,1]) {
+execFileSync(process.env.CC||'cc',['-I'+new URL('components/meshvpn_profiled_tls/include',root).pathname,'-DCONFIG_MESHVPN_PROFILED_TLS_ENABLE='+profiled,'-std=c11','-Wall','-Wextra','-Werror','-Wno-deprecated-declarations','-fsanitize=address,undefined',
   '-I'+new URL('tests/stubs',root).pathname,'-I'+new URL('components/meshvpn_config/include',root).pathname,
   '-I'+new URL('components/meshvpn_vpn/include',root).pathname,'-I'+json,
   '-I'+path.join(idf,'components/mbedtls/mbedtls/include'),file,
   new URL('components/meshvpn_vpn/meshvpn_vpn_frame.c',root).pathname,
   new URL('components/meshvpn_vpn/meshvpn_vpn_profile.c',root).pathname,path.join(json,'cJSON.c'),process.argv[2],'-lm','-o',bin],{stdio:'inherit'});
 execFileSync(bin,{stdio:'inherit'});
+}

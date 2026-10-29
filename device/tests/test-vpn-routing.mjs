@@ -31,7 +31,7 @@ static struct { bool enabled,kill_switch,connected; char transport[32];
 #define ip4_addr_cmp(a,b) ((a)->addr==(b)->addr)
 #define ip4_addr_ismulticast(a) (((a)->addr&0xf0000000)==0xe0000000)
 #define IPADDR_BROADCAST 0xffffffff
-static bool plain_transport(const char*n){return n&&(!strcmp(n,"tcp")||!strcmp(n,"socket")||!strcmp(n,"udp")||!strcmp(n,"tls"));}
+static bool plain_transport(const char*n){return n&&(!strcmp(n,"tcp")||!strcmp(n,"socket")||!strcmp(n,"udp")||!strcmp(n,"tls")||!strcmp(n,"boring-tls"));}
 ${file.slice(start,end)}
 int main(void){
 ip4_addr_t client={0xc0a80702},apclient={0xc0a80402},wan={0x01010101},sta={0xc0a8010a};
@@ -58,6 +58,10 @@ assert(meshvpn_vpn_route(&wan,&client)==NULL);assert(s.socket_rx_to_usb==2);
 s.connected=true;strcpy(s.transport,"tls");
 assert(meshvpn_vpn_route(&client,&wan)==&s_vpn);
 assert(meshvpn_vpn_route(&wan,&client)==NULL);assert(s.socket_rx_to_usb==3);
+strcpy(s.transport,"boring-tls");s.connected=false;
+assert(meshvpn_vpn_route(&client,&wan)==&s_vpn);
+assert(meshvpn_vpn_route(&apclient,&wan)==&s_vpn);
+s.connected=true;assert(meshvpn_vpn_route(&wan,&client)==NULL);assert(s.socket_rx_to_usb==4);
 s_usb=NULL;assert(meshvpn_vpn_route(&apclient,&wan)==&s_vpn);
 return 0;
 }`;

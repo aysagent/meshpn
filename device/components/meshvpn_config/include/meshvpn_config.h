@@ -60,7 +60,10 @@ typedef struct {
     bool allow_direct; /* false (including migrated profiles) = kill switch ON */
     uint8_t reserved_v3_padding; /* preserve the stored v3 struct prefix */
     char wg_address_input[160]; /* original Address value, including CIDR/IPv6 */
-    char saved_servers[4][MESHVPN_VPN_SERVER_MAX + 1]; /* TCP, UDP, TLS, WG */
+    char saved_servers[4][MESHVPN_VPN_SERVER_MAX + 1]; /* v5 prefix: TCP, UDP, TLS, WG */
+    char profiled_server[MESHVPN_VPN_SERVER_MAX + 1];
+    char tls_profile[32];
+    char tls_psk_hex[65]; /* clean-vpn 32-byte HMAC key; never returned */
 } meshvpn_vpn_config_t;
 
 static inline int meshvpn_vpn_transport_index(const char *transport)
@@ -75,6 +78,7 @@ static inline int meshvpn_vpn_transport_index(const char *transport)
 static inline void meshvpn_vpn_remember_server(meshvpn_vpn_config_t *cfg)
 {
     int i = meshvpn_vpn_transport_index(cfg->transport);
+    if (!strcmp(cfg->transport, "boring-tls")) memcpy(cfg->profiled_server, cfg->server, sizeof(cfg->server));
     if (i >= 0) memcpy(cfg->saved_servers[i], cfg->server, sizeof(cfg->server));
 }
 

@@ -92,7 +92,7 @@ int main(void){
 `;
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'meshpn-dns-policy-')),file=path.join(dir,'test.c'),binary=path.join(dir,'test');
 fs.writeFileSync(file,source);
-execFileSync(process.env.CC||'cc',['-std=c11','-D_DEFAULT_SOURCE','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-sanitize-recover=undefined',
+execFileSync(process.env.CC||'cc',['-I'+new URL('components/meshvpn_profiled_tls/include',root).pathname,'-std=c11','-D_DEFAULT_SOURCE','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-sanitize-recover=undefined',
   ...['tests/stubs','components/meshvpn_config/include','components/meshvpn_vpn/include','components/meshvpn_routing/include'].map(p=>'-I'+new URL(p,root).pathname),
   file,new URL('components/meshvpn_vpn/meshvpn_vpn_frame.c',root).pathname,
   new URL('components/meshvpn_routing/meshvpn_dns_wire.c',root).pathname,'-o',binary],{stdio:'inherit'});

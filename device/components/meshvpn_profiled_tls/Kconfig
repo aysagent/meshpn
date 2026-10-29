@@ -6,7 +6,7 @@ menu "Profiled TLS backend (experimental)"
         select FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
         help
             Compile the frozen-profile backend and its dedicated PSRAM executor.
-            This does not add a VPN transport to the admin UI. Requires pinned
+            Enables boring-tls in the VPN selector (TLS 1.3 + HTTP/1.1 Bearer v2). Requires pinned
             prepared BoringSSL/Brotli sources; see experiments/profiled-tls.
     config MESHVPN_PROFILED_TLS_STACK_BYTES
         int "Profiled TLS executor stack bytes"

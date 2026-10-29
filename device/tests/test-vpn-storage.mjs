@@ -47,9 +47,20 @@ int main(void){
  assert(meshvpn_config_load_vpn(&out)==ESP_OK&&out.allow_direct&&out.enabled&&!out.wg_address_input[0]);
  strcpy(out.wg_address_input,"10.0.0.7/24,fd42:42:42::7/64");
  out.allow_direct=true;assert(meshvpn_config_save_vpn(&out)==ESP_OK);
- assert(!strcmp(record_key,"vpn_cfg5"));
+ assert(!strcmp(record_key,"vpn_cfg6"));
  assert(meshvpn_config_load_vpn(&c)==ESP_OK&&c.allow_direct&&c.enabled);
  assert(!strcmp(c.wg_address_input,"10.0.0.7/24,fd42:42:42::7/64"));
+ // Exact v5 prefix/padding migration; new credentials must start empty.
+ struct old_v4 {struct old_v3 v3;char address_input[160];};
+ struct old_v5 {struct old_v4 v4;char endpoints[4][129];};
+ const size_t v5_size=(offsetof(meshvpn_vpn_config_t,profiled_server)+1u)&~(size_t)1u;
+ assert(v5_size==sizeof(struct old_v5));
+ nvs_set_blob(0,"vpn_cfg5",&c,v5_size);
+ assert(meshvpn_config_load_vpn(&out)==ESP_OK && !out.profiled_server[0] && !out.tls_psk_hex[0]);
+ strcpy(out.tls_psk_hex,"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+ strcpy(out.tls_profile,"chromium156-capture1");strcpy(out.profiled_server,"192.0.2.5:443");
+ assert(meshvpn_config_save_vpn(&out)==ESP_OK && meshvpn_config_load_vpn(&c)==ESP_OK);
+ assert(!strcmp(c.tls_psk_hex,out.tls_psk_hex)&&!strcmp(c.profiled_server,out.profiled_server));
  // v4 upgrades retain the active endpoint, v5 preserves every transport.
  nvs_set_blob(0,"vpn_cfg4",&c,offsetof(meshvpn_vpn_config_t,saved_servers));
  assert(meshvpn_config_load_vpn(&out)==ESP_OK&&!strcmp(out.saved_servers[3],c.server));
@@ -69,7 +80,7 @@ int main(void){
  struct {char server[129],sni[129],transport[32];bool enabled;} v1={.transport="socket",.enabled=true};
  nvs_set_blob(0,"vpn_cfg1",&v1,sizeof(v1));
  assert(meshvpn_config_load_vpn(&out)==ESP_OK&&out.enabled&&!out.allow_direct&&!strcmp(out.transport,"tcp"));
- puts("VPN NVS: v1-v4 migration, per-transport v5 roundtrip and corruption handling passed");
+ puts("VPN NVS: v1-v5 migration, per-transport v6 roundtrip and corruption handling passed");
 }
 `;
 const file=path.join(dir,'test.c'),bin=path.join(dir,'test');fs.writeFileSync(file,source);

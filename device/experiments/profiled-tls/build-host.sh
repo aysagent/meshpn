@@ -24,3 +24,5 @@ node "$here/test-compression.mjs" "$out/compression-server" "$out/bssl-probe" "$
 c++ -std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -I"$out/bssl-source/include" -I"$out/brotli-source/c/include" -I"$here/../../components/meshvpn_profiled_tls/include" -I"$here/../../components/meshvpn_profiled_tls" "$here/test_gate.cc" "$here/../../components/meshvpn_profiled_tls/profile_gate.cc" "$here/heap_hooks.cc" "$out/bssl/libssl.a" "$out/bssl/libcrypto.a" "$out/brotli/libbrotlidec.a" "$out/brotli/libbrotlienc.a" "$out/brotli/libbrotlicommon.a" -o "$out/test-gate"
 "$out/test-gate" "$out/run/bssl-prefs-0.bin"
 node "$here/test-worker.mjs"
+
+node "$here/../../tests/test-profiled-tunnel.mjs" "$out"

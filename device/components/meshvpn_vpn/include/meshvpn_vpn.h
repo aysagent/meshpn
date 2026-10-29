@@ -6,6 +6,7 @@
 
 #include "esp_err.h"
 #include "meshvpn_config.h"
+#include "profile_tunnel.h"
 
 #ifndef CONFIG_MESHVPN_VPN_UDP_RX_BATCH_FRAMES
 #define CONFIG_MESHVPN_VPN_UDP_RX_BATCH_FRAMES 32
@@ -39,6 +40,11 @@ typedef struct {
     char tls_server_name[MESHVPN_VPN_SNI_MAX + 1];
     char transport[32];
     char saved_servers[4][MESHVPN_VPN_SERVER_MAX + 1];
+    char profiled_server[MESHVPN_VPN_SERVER_MAX + 1];
+    char tls_profile[32];
+    bool profiled_available, tls_psk_set;
+    uint32_t profiled_stack_spare, profiled_attempt;
+    meshvpn_profile_tunnel_diag_t profiled;
     char state[24];
     char address[16];
     uint32_t wg_handshake_age;

@@ -20,7 +20,7 @@ fs.writeFileSync(path.join(dir,'vpn-tls-io.inc'),production.slice(c,d)+productio
 execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=loopback-test',
   '-keyout',path.join(dir,'key.pem'),'-out',path.join(dir,'cert.pem')],{stdio:'ignore'});
 const binary=path.join(dir,'test');
-execFileSync(process.env.CC||'cc',['-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-sanitize-recover=undefined','-pthread',
+execFileSync(process.env.CC||'cc',['-I'+new URL('components/meshvpn_profiled_tls/include',root).pathname,'-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-fno-sanitize-recover=undefined','-pthread',
   '-DPACKETS='+packets,
   '-I'+dir,...['tests/stubs','components/meshvpn_config/include','components/meshvpn_vpn/include'].map(p=>'-I'+new URL(p,root).pathname),
   '-I'+path.join(idf,'components/mbedtls/mbedtls/include'),new URL('tests/test_vpn_tls_io.c',root).pathname,

@@ -36,6 +36,10 @@ static packet_t *s_queue;
 static meshvpn_vpn_tx_batch_t *s_socket_tx_batch;
 static TaskHandle_t s_socket_tx_task, s_socket_rx_task;
 static unsigned step, fail_step, live_allocs, live_tasks, netif_adds;
+static unsigned entropy_starts;
+#if CONFIG_MESHVPN_PROFILED_TLS_ENABLE && CONFIG_IDF_TARGET_ESP32P4
+static void bootloader_random_enable(void) { assert(!step && !live_tasks); entropy_starts++; }
+#endif
 static void *rx_arg;
 static size_t copy_string(char *d,const char *p,size_t n) {
  size_t len=strlen(p); assert(len<n); memcpy(d,p,len+1); return len;
@@ -77,6 +81,7 @@ int main(void) {
  fail_step=0;step=0;assert(meshvpn_vpn_init()==ESP_OK);
  assert(s.implemented && live_allocs==3 && live_tasks==2 && rx_arg);
  assert(meshvpn_vpn_init()==ESP_ERR_INVALID_STATE && netif_adds==1 && step==5);
+ assert(entropy_starts==CONFIG_MESHVPN_PROFILED_TLS_ENABLE);
  vTaskDelete(s_socket_rx_task);vTaskDelete(s_socket_tx_task);
  release(rx_arg);release(s_queue);release(s_socket_tx_batch);
  assert(!live_allocs && !live_tasks);
@@ -85,6 +90,9 @@ int main(void) {
 `;
 const file = path.join(dir, 'test.c'), binary = path.join(dir, 'test');
 fs.writeFileSync(file, source);
+for (const profiled of [0,1]) {
 execFileSync(process.env.CC || 'cc', ['-std=c11', '-Wall', '-Wextra', '-Werror',
+  '-DCONFIG_IDF_TARGET_ESP32P4=1', '-DCONFIG_MESHVPN_PROFILED_TLS_ENABLE='+profiled,
   '-fsanitize=address,undefined', file, '-o', binary], {stdio:'inherit'});
 execFileSync(binary, [], {stdio:'inherit'});
+}

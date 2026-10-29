@@ -83,6 +83,6 @@ int main(void) {
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'meshpn-vpn-udp-batch-'));
 const file = path.join(dir, 'test.c'), binary = path.join(dir, 'test');
 fs.writeFileSync(file, source);
-execFileSync(process.env.CC || 'cc', ['-std=c11', '-Wall', '-Wextra', '-Werror',
+execFileSync(process.env.CC || 'cc', ['-I'+new URL('../components/meshvpn_profiled_tls/include',import.meta.url).pathname,'-std=c11', '-Wall', '-Wextra', '-Werror',
   '-fsanitize=address,undefined', '-I'+new URL('../tests/stubs',import.meta.url).pathname, '-I'+new URL('../components/meshvpn_config/include',import.meta.url).pathname, '-I'+new URL('../components/meshvpn_vpn/include',import.meta.url).pathname, file, '-o', binary], {stdio: 'inherit'});
 execFileSync(binary, {stdio: 'inherit'});

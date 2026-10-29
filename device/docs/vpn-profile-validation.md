@@ -1,5 +1,9 @@
 # Offline browser fingerprint comparison
 
+The fixed capture is now also enforced by the opt-in `boring-tls` device
+transport on every connection. See [configuration and limits](profiled-tls.md).
+The tool below remains useful for independent comparison of new captures.
+
 `device/scripts/vpn-profile-check.mjs` compares one observed ClientHello with a
 saved clean-vpn profile. It uses the project's production JA3/JA4 parsers.
 

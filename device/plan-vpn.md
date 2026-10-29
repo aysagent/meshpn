@@ -7,13 +7,22 @@
 
 ## Текущее состояние
 
-29 октября, следующий блок: достигнуто точное совпадение JA3/JA4 фиксированного
+29 октября, интеграция: отдельный `boring-tls` подключён к VPN и админке.
+Поддержаны фиксированный профиль, TLS 1.3, HTTP/1.1 Bearer v2 с exporter,
+точный gate до отправки ClientHello, проверка tunnel ACK, RX/TX, отмена и reconnect
+на одном PSRAM worker. Ключ/endpoint сохраняются отдельно; NVS v1–v5 мигрируют
+в v6. Локальный настоящий JS exit проверен без VPS и плат.
+Требуются `PROFILED_TLS=1` и exit `--http-vers=1.1` без `--tls-raw`.
+HTTP/2, произвольный импорт и аппаратные измерения остаются.
+[Настройка](docs/profiled-tls.md), [отчёт](reports/2026-10-29-profiled-tls-transport.md).
+
+29 октября, предыдущий этап: достигнуто точное совпадение JA3/JA4 фиксированного
 профиля. Все 12 профилированных captures совпали; TLS 1.3/exporter, HRR и
 настоящие Brotli/ALPS handshake проходят. Локальный gate блокирует запись при
 несовпадении; тесты JA3-only/JA4-only/ALPN/missing observer отправили 0 TLS bytes.
 Общий opt-in компонент для S3/P4 имеет отдельный 32 KiB PSRAM worker и bounded
-allocator без internal fallback. Он ещё не подключён как VPN-транспорт:
-HTTP/auth/binding, lifecycle и аппаратная приёмка остаются.
+allocator без internal fallback. На этом этапе он ещё не был VPN-транспортом;
+HTTP/auth/binding и lifecycle добавлены следующим этапом выше. Аппаратная приёмка остаётся.
 [Результаты](reports/2026-10-29-profiled-tls-gate.md).
 
 29 октября, feasibility профилированного TLS: минимальный библиотечный BoringSSL
@@ -225,7 +234,7 @@ VPN оставлен выключенным для диагностики.
 | Дополнительный `udp` | Реализован, ручные speed tests XIAO выполнены | Регрессия текущей сборки и измерение потерь на одинаковом пути |
 | WireGuard | Реализован; пользователь проверял соединение и интернет на XIAO | Ресурсы/долгая нагрузка/rekey текущей сборки; производительность отдельно от plain TCP/UDP |
 | Этап 3: обычный `tls` | Реализован raw TLS 1.2 через esp-tls/mbedTLS с exit `--type=tls --tls-raw`, CA/name/date checks, опциональным mTLS и host tests | Аппаратная приёмка; совместимый exporter/Bearer/HTTP handshake отсутствует |
-| Этап 4: профилированный TLS | Точный фиксированный профиль + gate в общем компоненте; TLS 1.3/Brotli/ALPS/HRR host tests; 32 KiB PSRAM worker и bounded allocator; сборки S3/P4 | VPN HTTP/auth/binding и lifecycle, импорт профиля, hardware память/stack/RNG и приёмка |
+| Этап 4: профилированный TLS | Фиксированный профиль + gate; TLS 1.3, H1/Bearer v2, RX/TX/lifecycle, настройки и диагностика; 32 KiB PSRAM worker; host real-exit tests, сборки трёх плат | HTTP/2, произвольный импорт, hardware память/stack/RNG/скорость и приёмка |
 | Этап 5: `transparent-tls` | Не реализован | enc-SNI, восстановление CH, relay и LAN interception |
 | Этап 6: `combo-tls` | Не реализован | Совместить защищённый IP-туннель и transparent flows |
 
@@ -801,7 +810,8 @@ handshake peak memory и sustained throughput, без переноса стар�
 - Точный фиксированный prototype, нативные расширения и gate выполнены:
   [отчёт](reports/2026-10-29-profiled-tls-gate.md). Общий компонент использует
   отдельный 32 KiB PSRAM worker; память/стек на платах ещё не измерены.
-  Следом — совместимый HTTP/auth протокол и lifecycle в VPN, затем UI профиля.
+  HTTP/1.1/auth/exporter и lifecycle подключены к VPN, настройки добавлены в UI:
+  [текущая реализация](docs/profiled-tls.md). Аппаратная приёмка ещё не выполнена.
 - Подключить backend, прошедший feasibility gate; BoringSSL не обязателен.
 - Тот же серверный протокол, что у `tls`, но профиль и строгая проверка JA3/JA4
   обязательны. Это аналог boring-tls по функции, не обязательный порт его helper.

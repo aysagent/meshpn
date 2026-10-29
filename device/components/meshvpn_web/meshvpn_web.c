@@ -947,8 +947,30 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(tls_status, "sdk_error", td.sdk_error);
     cJSON_AddNumberToObject(tls_status, "mbedtls_error", td.mbedtls_error);
     cJSON_AddNumberToObject(tls_status, "verify_flags", td.verify_flags);
+    cJSON *profile = cJSON_AddObjectToObject(vpn, "profiled_tls");
+    cJSON_AddBoolToObject(profile, "available", vs.profiled_available);
+    cJSON_AddStringToObject(profile, "profile", vs.tls_profile);
+    cJSON_AddBoolToObject(profile, "shared_key_set", vs.tls_psk_set);
+    cJSON_AddNumberToObject(profile, "attempt", vs.profiled_attempt);
+    cJSON_AddNumberToObject(profile, "generation", vs.generation);
+    cJSON_AddStringToObject(profile, "phase", vs.profiled.phase);
+    cJSON_AddStringToObject(profile, "expected_ja3", MESHPN_TLS_PROFILE_JA3);
+    cJSON_AddStringToObject(profile, "expected_ja4", MESHPN_TLS_PROFILE_JA4);
+    cJSON_AddStringToObject(profile, "actual_ja3", vs.profiled.actual.ja3);
+    cJSON_AddStringToObject(profile, "actual_ja4", vs.profiled.actual.ja4);
+    cJSON_AddBoolToObject(profile, "match", vs.profiled.actual.match);
+    cJSON_AddBoolToObject(profile, "authenticated", vs.profiled.authenticated);
+    cJSON_AddNumberToObject(profile, "client_hellos", vs.profiled.hellos);
+    cJSON_AddStringToObject(profile, "alpn", vs.profiled.alpn);
+    cJSON_AddNumberToObject(profile, "error", vs.profiled.error);
+    cJSON_AddNumberToObject(profile, "ssl_error", vs.profiled.ssl_error);
+    cJSON_AddNumberToObject(profile, "verify_error", vs.profiled.verify_error);
+    cJSON_AddNumberToObject(profile, "tls_bytes_sent", vs.profiled.tls_bytes_sent);
+    if (vs.profiled_stack_spare) cJSON_AddNumberToObject(profile, "last_worker_stack_spare_bytes", vs.profiled_stack_spare);
+    else cJSON_AddNullToObject(profile, "last_worker_stack_spare_bytes");
     cJSON_AddStringToObject(vpn, "transport", vs.transport);
     cJSON *endpoints = cJSON_AddObjectToObject(vpn, "saved_servers");
+    cJSON_AddStringToObject(endpoints, "boring-tls", vs.profiled_server);
     const char *transports[] = {"tcp", "udp", "tls", "wireguard"};
     for (unsigned i = 0; i < 4; i++) cJSON_AddStringToObject(endpoints, transports[i], vs.saved_servers[i]);
     cJSON_AddStringToObject(vpn, "state", vs.state);
@@ -1436,7 +1458,7 @@ static esp_err_t handler_vpn_ca(httpd_req_t *req)
             return error(req, "400 Bad Request", "CA: supply PEM CA certificates only (max 8192 bytes), or empty text to remove trust. No private key or server leaf certificate.");
         return error(req, "500 Internal Server Error", "Cannot persist TLS CA.");
     }
-    if (cfg.enabled && !strcmp(cfg.transport, "tls")) {
+    if (cfg.enabled && (!strcmp(cfg.transport, "tls") || !strcmp(cfg.transport, "boring-tls"))) {
         err = meshvpn_vpn_start(&cfg); /* Tear down the old session when trust changes. */
         meshvpn_dns_clear_cache();
     }
@@ -1448,8 +1470,8 @@ static void vpn_wipe(void *p, size_t len)
 { volatile unsigned char *b = p; while (len--) *b++ = 0; }
 static void vpn_delete_body(cJSON *in)
 {
-    const char *names[] = {"wg_private_key", "wg_preshared_key"};
-    for (unsigned i=0; i<2; i++) {
+    const char *names[] = {"wg_private_key", "wg_preshared_key", "tls_psk_hex"};
+    for (unsigned i=0; i<3; i++) {
         cJSON *v = cJSON_GetObjectItemCaseSensitive(in, names[i]);
         if (cJSON_IsString(v)) vpn_wipe(v->valuestring, strlen(v->valuestring));
     }
@@ -1468,7 +1490,7 @@ static bool vpn_string(cJSON *in, const char *name, char *out, size_t size, bool
 static esp_err_t handler_vpn_config(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
-    cJSON *in = body(req, 1024);
+    cJSON *in = body(req, 2048);
     if (!in) return ESP_FAIL;
     cJSON *en = cJSON_GetObjectItemCaseSensitive(in, "enabled");
     cJSON *server = cJSON_GetObjectItemCaseSensitive(in, "server");
@@ -1480,16 +1502,16 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     bool valid = cJSON_IsBool(en) && cJSON_IsString(server) && cJSON_IsString(transport) &&
         strlen(server->valuestring) < sizeof(cfg.server) &&
         (!strcmp(transport->valuestring, "tcp") || !strcmp(transport->valuestring, "socket") ||
-         !strcmp(transport->valuestring, "udp") || !strcmp(transport->valuestring, "tls") ||
+         !strcmp(transport->valuestring, "udp") || !strcmp(transport->valuestring, "tls") || !strcmp(transport->valuestring, "boring-tls") ||
          !strcmp(transport->valuestring, "wireguard")) &&
-        (!cJSON_IsTrue(en) || !strcmp(transport->valuestring, "wireguard") || !strcmp(transport->valuestring, "tls") || cJSON_IsTrue(ack));
+        (!cJSON_IsTrue(en) || !strcmp(transport->valuestring, "wireguard") || !strcmp(transport->valuestring, "tls") || !strcmp(transport->valuestring, "boring-tls") || cJSON_IsTrue(ack));
     if (!valid) {
         if (!cJSON_IsBool(en)) validation_error = "Enable VPN: expected a checkbox value.";
         else if (!cJSON_IsString(server) || strlen(server->valuestring) >= sizeof(cfg.server)) validation_error = "Endpoint/server: missing or too long.";
         else if (!cJSON_IsString(transport) || (strcmp(transport->valuestring, "tcp") &&
                  strcmp(transport->valuestring, "socket") &&
-                 strcmp(transport->valuestring, "udp") && strcmp(transport->valuestring, "tls") && strcmp(transport->valuestring, "wireguard")))
-            validation_error = "Transport: select TCP, UDP, TLS or WireGuard.";
+                 strcmp(transport->valuestring, "udp") && strcmp(transport->valuestring, "tls") && strcmp(transport->valuestring, "boring-tls") && strcmp(transport->valuestring, "wireguard")))
+            validation_error = "Transport: select TCP, UDP, TLS, boring-tls or WireGuard.";
         else validation_error = "Plaintext transport: confirm the warning before enabling.";
     }
     cJSON *kill = cJSON_GetObjectItemCaseSensitive(in, "kill_switch");
@@ -1527,8 +1549,13 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     VPN_READ_FIELD(wg_public_key, false, "PublicKey: paste only the 44-character Base64 value, without the PublicKey = label or quotes.");
     VPN_READ_FIELD(wg_private_key, true, "PrivateKey: paste only the 44-character Base64 value, without the PrivateKey = label or quotes.");
     VPN_READ_FIELD(wg_preshared_key, true, "PresharedKey: paste only the 44-character Base64 value, without its label or quotes.");
+    VPN_READ_FIELD(tls_profile, false, "Profile: select Chromium 156 capture #1.");
+    VPN_READ_FIELD(tls_psk_hex, true, "Shared HMAC key: enter 64 hex characters.");
     VPN_READ_FIELD(tls_server_name, false, "TLS server name: enter a hostname up to 128 characters.");
 #undef VPN_READ_FIELD
+    cJSON *clear_tls = cJSON_GetObjectItemCaseSensitive(in, "tls_clear_psk");
+    if (clear_tls && !cJSON_IsBool(clear_tls)) { valid=false; validation_error="Remove shared HMAC key: expected a checkbox value."; }
+    if (cJSON_IsTrue(clear_tls)) memset(cfg.tls_psk_hex, 0, sizeof(cfg.tls_psk_hex));
     cJSON *clear = cJSON_GetObjectItemCaseSensitive(in, "wg_clear_psk");
     if (clear && !cJSON_IsBool(clear)) { valid = false; validation_error = "Remove PresharedKey: expected a checkbox value."; }
     if (cJSON_IsTrue(clear)) memset(cfg.wg_preshared_key, 0, sizeof(cfg.wg_preshared_key));
@@ -1547,7 +1574,7 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     }
     vpn_delete_body(in);
     if (!valid) return vpn_config_error(req, &cfg, "400 Bad Request", validation_error ? validation_error : "Invalid VPN settings.");
-    if (cfg.enabled && !strcmp(cfg.transport, "tls") && !meshvpn_vpn_ca_configured())
+    if (cfg.enabled && (!strcmp(cfg.transport, "tls") || !strcmp(cfg.transport, "boring-tls")) && !meshvpn_vpn_ca_configured())
         return vpn_config_error(req, &cfg, "400 Bad Request", "TLS CA: import the exit trusted CA before enabling TLS.");
     meshvpn_vpn_remember_server(&cfg);
     meshvpn_vpn_status_t status; meshvpn_vpn_get_status(&status);

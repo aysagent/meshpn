@@ -59,6 +59,12 @@ case "$DWC2_TELEMETRY" in 0|1) ;; *) echo "DWC2_TELEMETRY must be 0 or 1" >&2; e
 case "$USB_DIAGNOSTICS" in 0|1) ;; *) echo "USB_DIAGNOSTICS must be 0 or 1" >&2; exit 1;; esac
 WIREGUARD_PERF="${WIREGUARD_PERF:-1}"
 case "$WIREGUARD_PERF" in 0|1) ;; *) echo "WIREGUARD_PERF must be 0 or 1" >&2; exit 1;; esac
+PROFILED_TLS="${PROFILED_TLS:-0}"
+case "$PROFILED_TLS" in 0|1) ;; *) echo "PROFILED_TLS must be 0 or 1" >&2; exit 1;; esac
+export PROFILED_TLS
+if [[ "$PROFILED_TLS" == 1 ]]; then
+  source "$DEVICE_DIR/scripts/prepare-profiled-tls.sh"
+fi
 # Preserve previous builds and menuconfig files. A changed set of defaults gets
 # a new sdkconfig, so security settings and profile changes cannot stay stale.
 config_files=("$DEVICE_DIR/sdkconfig.defaults" "$DEVICE_DIR/boards/$BOARD/sdkconfig.defaults" "$TARGET_FILE" "$DEVICE_DIR/profiles/usb_$PROFILE.defconfig" "$DEVICE_DIR/main/idf_component.yml")
@@ -73,6 +79,9 @@ if [[ "$USB_DIAGNOSTICS" == 1 ]]; then
 fi
 if [[ "$DWC2_TELEMETRY" == 0 ]]; then
   config_files+=("$DEVICE_DIR/profiles/dwc2_telemetry_off.defconfig")
+fi
+if [[ "$PROFILED_TLS" == 1 ]]; then
+  config_files+=("$DEVICE_DIR/profiles/profiled_tls.defconfig" "$DEVICE_DIR/components/meshvpn_profiled_tls/Kconfig" "$MESHPN_PROBE_BSSL_SOURCE/meshpn-probe-manifest.json")
 fi
 config_id="$(cksum "${config_files[@]}" | cksum | awk '{print $1}')"
 BUILD_DIR="$DEVICE_DIR/build-$BOARD-$PROFILE-$config_id-wg$WIREGUARD_PERF"

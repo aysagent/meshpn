@@ -179,7 +179,14 @@ esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
     memset(out, 0, sizeof(*out));
     size_t blob_len = sizeof(*out);
     size_t expected = sizeof(*out);
-    esp_err_t blob_err = nvs_get_blob(s_nvs, "vpn_cfg5", out, &blob_len);
+    esp_err_t blob_err = nvs_get_blob(s_nvs, "vpn_cfg6", out, &blob_len);
+    if (blob_err == ESP_ERR_NVS_NOT_FOUND) {
+        /* v5 includes trailing structure alignment padding. */
+        expected = (offsetof(meshvpn_vpn_config_t, profiled_server) + 1u) & ~(size_t)1u;
+        blob_len = expected;
+        blob_err = nvs_get_blob(s_nvs, "vpn_cfg5", out, &blob_len);
+        out->profiled_server[0] = 0;
+    }
     if (blob_err == ESP_ERR_NVS_NOT_FOUND) {
         expected = offsetof(meshvpn_vpn_config_t, saved_servers);
         blob_len = expected;
@@ -205,7 +212,10 @@ esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
         memchr(out->wg_preshared_key, 0, sizeof(out->wg_preshared_key)) &&
         memchr(out->wg_address, 0, sizeof(out->wg_address)) &&
         memchr(out->wg_dns, 0, sizeof(out->wg_dns)) &&
-        memchr(out->wg_address_input, 0, sizeof(out->wg_address_input))) {
+        memchr(out->wg_address_input, 0, sizeof(out->wg_address_input)) &&
+        memchr(out->profiled_server, 0, sizeof(out->profiled_server)) &&
+        memchr(out->tls_profile, 0, sizeof(out->tls_profile)) &&
+        memchr(out->tls_psk_hex, 0, sizeof(out->tls_psk_hex))) {
         for (unsigned i = 0; i < 4; i++)
             if (!memchr(out->saved_servers[i], 0, sizeof(out->saved_servers[i]))) return ESP_FAIL;
         if (!strcmp(out->transport, "socket")) strcpy(out->transport, "tcp");
@@ -257,7 +267,7 @@ esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t *out)
 esp_err_t meshvpn_config_save_vpn(const meshvpn_vpn_config_t *cfg)
 {
     /* One versioned record: endpoint/mode/enable never mix across power loss. */
-    esp_err_t err = nvs_set_blob(s_nvs, "vpn_cfg5", cfg, sizeof(*cfg));
+    esp_err_t err = nvs_set_blob(s_nvs, "vpn_cfg6", cfg, sizeof(*cfg));
     if (err != ESP_OK) return err;
     return nvs_commit(s_nvs);
 }
