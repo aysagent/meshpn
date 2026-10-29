@@ -85,8 +85,12 @@ export class NativeClientManager {
   fail(sha(readClientPrivate(old.configPath,16384))===sha(beforeConfig)&&sha(readClientPrivate(this.registryPath))===sha(beforeRegistry),'client_config_changed_externally');
   // Write-ahead exact images: recovery never overwrites an unrelated edit.
   const j={version:1,configPath:old.configPath,beforeConfig:beforeConfig.toString('base64'),afterConfig:afterConfig.toString('base64'),beforeRegistry:beforeRegistry.toString('base64'),afterRegistry:afterRegistry.toString('base64')};fresh(this.journalPath,encode(j));
-  try{atomic(old.configPath,afterConfig);atomic(this.registryPath,afterRegistry);if(this.applyConfig)await this.applyConfig({configPath:old.configPath,sha256:next.configSha256,revision:next.revision});fs.unlinkSync(this.journalPath);syncDir(this.directory);return{...this.public(next),applied:!!this.applyConfig,requiresReload:!this.applyConfig};}
+  try{atomic(old.configPath,afterConfig);atomic(this.registryPath,afterRegistry);if(this.applyConfig)await this.applyConfig({configPath:old.configPath,sha256:next.configSha256,revision:next.revision});}
   catch(error){try{await this.rollback(j);}catch{throw Error('client_recovery_required');}throw error;}
+  // Removing the marker publishes the committed registry to DNS readers.
+  // A following directory-fsync error cannot justify an unmarked rollback.
+  try{fs.unlinkSync(this.journalPath);syncDir(this.directory);}catch{throw Error('client_commit_durability_uncertain');}
+  return{...this.public(next),applied:!!this.applyConfig,requiresReload:!this.applyConfig};
  });}
  async rollback(j){
   fail(j.version===1&&typeof j.configPath==='string','client_journal');const before=Buffer.from(j.beforeConfig,'base64'),after=Buffer.from(j.afterConfig,'base64'),br=Buffer.from(j.beforeRegistry,'base64'),ar=Buffer.from(j.afterRegistry,'base64');

@@ -72,3 +72,10 @@ test('dangling recovery journal blocks listing and mutations and cannot be silen
  assert.ok(fs.lstatSync(f.manager.journalPath).isSymbolicLink());assert.deepEqual(fs.readFileSync(f.dir+'/config.json'),before);
  fs.unlinkSync(f.manager.journalPath);assert.equal((await f.manager.list()).clients.length,1);
 });
+test('directory sync failure after publishing commit never rolls back without a DNS marker',async t=>{
+ let applied=0;const f=await fixture(t,{applyConfig:async()=>{applied++;}}),original=fs.fsyncSync;let injected=false;
+ fs.fsyncSync=fd=>{if(applied===1&&!injected&&!fs.existsSync(f.manager.journalPath)){injected=true;throw Object.assign(Error('injected fsync'),{code:'EIO'});}return original(fd);};
+ try{await assert.rejects(f.manager.add('committed'),/client_commit_durability_uncertain/);}finally{fs.fsyncSync=original;}
+ assert.equal(injected,true);assert.equal(applied,1);assert.equal(fs.existsSync(f.manager.journalPath),false);
+ assert.ok((await f.manager.list()).clients.some(c=>c.name==='committed'));assert.equal((await f.manager.recover()).recovered,false);
+});

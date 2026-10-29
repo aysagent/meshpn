@@ -93,6 +93,11 @@ sudo node scripts/clean-vpn-native-clients.mjs import \
 sudo node scripts/clean-vpn-native-clients.mjs recover
 ```
 
+Удаление transaction marker публикует commit для DNS. Ошибка fsync после этого
+возвращает `client_commit_durability_uncertain`, но не запускает откат без маркера.
+Проверьте `list` и `recover`: если маркер уже удалён, изменение остаётся применённым;
+если маркер сохранился, требуется обычное восстановление.
+
 Kernel flock не остаётся захваченным после SIGKILL. Pending journal запрещает
 другие операции до recovery. Внешние изменения config/registry вызывают конфликт:
 не затираем настройки администратора восстановлением вслепую.
