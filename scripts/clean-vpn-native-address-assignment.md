@@ -188,3 +188,40 @@ verified .17 assignment through TUN/DNS/NSS/ping, same-interface restart, refusa
 of reassignment in an existing namespace, wrong-PSK guard containment, and .23
 adoption in a fresh namespace. Details and limitations are in the linked runtime
 owner document. No address-assignment deployment to Radxa/VPS was performed.
+
+### Discovery clocks and independent profile observation
+
+Discovery uses the ordinary TLS certificate validity checks and authenticated
+clock-window rejection. It does not set the system clock, invoke SSH bootstrap,
+retry after clock failure, or emit an address from a failed handshake. Its fixed
+error vocabulary retains `tls_verify_expired`, `tls_verify_not_yet_valid`,
+`tls_verify_name`, `tls_verify_untrusted` and `tls_verify_failed`; arbitrary
+exception text remains suppressed. Certificate date errors alone do not prove
+that the local clock is wrong.
+
+The isolated address owner currently reports discovery failure and leaves the
+bootstrap guard closed. It has no automatic clock-recovery/retry integration.
+The separate physical boring client clock lifecycle must not be inferred to
+apply to this owner. Establish correct time independently before restarting the
+isolated runtime; certificate verification is never disabled.
+
+The boundary suite issues expired/future certificates without changing any
+clock, checks authenticated clock-skew responses, and checks both boring/combo
+and H1/H2 discovery. The source config stays unchanged, there is no TUN, and
+exactly one TLS connection is attempted. Saved-profile comparison uses a separate
+TCP byte proxy and the standalone offline observer to capture discovery and the
+subsequent full session. The profile is the synthetic saved H2 fixture; this is
+not evidence of a complete browser network profile or HTTP-level equivalence.
+
+```sh
+CVPN_BUILD=/absolute/build node --test --test-concurrency=1 \
+  scripts/test-native-address-discovery-boundaries.mjs
+```
+
+All fourteen new boundary cases passed together with the 34 assignment cases
+(48/48, no skips). Twelve cover certificate dates/clock rejection and two cover
+external discovery/full-session profile observation (four captured ClientHellos).
+JA3 was `1486e97570653f52b603bf93abaffe92`; JA4 was
+`t13d0307h2_55b375c5d22e_70c6d19c6451`, with distinct handshake randoms.
+The earlier full-engine sanitizer run predates the five-error-code diagnostic
+patch; no new sanitizer coverage is claimed for that rebuild.

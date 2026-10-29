@@ -10,7 +10,7 @@
     "independentIssuer": 26,
     "legacyHttp1MultiPeerReloadWanFixture": 23,
     "completeH1H2DataPlane": 2,
-    "uniqueJsCases": 59,
+    "uniqueJsCases": 73,
     "skipped": 0,
     "codecIndependentHmacVectorsAndMutations": "passed",
     "codecAddressUndefinedLeakSanitizers": "passed-dependencies-not-instrumented",
@@ -21,7 +21,8 @@
       "skipped": 0,
       "dependencyLibrariesInstrumented": false,
       "productionEngineSha256": "17d3cf82ee41c65925424719f768c9f2b8a7bd74aeaad0bc36b45798acc26182"
-    }
+    },
+    "clockAndIndependentProfileBoundaries": 14
   },
   "scope": [
     "production-no-TUN-no-DNS-discovery-with-dns-enabled-and-absent-interface",
@@ -57,5 +58,25 @@
     "commit": "ff34069",
     "test": "scripts/test-native-runtime-address-linux.mjs",
     "dailyPhysicalMigration": false
+  },
+  "diagnosticFollowup": {
+    "engineSha256": "48df7b82267565fd8ec64103b2f78c35aa5cb5c5421b7b650023b78bf4a40298",
+    "change": "retain five fixed TLS verification error codes in discovery diagnostics; verification and retries unchanged",
+    "newBoundaryCases": 14,
+    "assignmentRegressions": 34,
+    "passed": 48,
+    "skipped": 0,
+    "clockCases": 12,
+    "clockMutation": false,
+    "automaticClockRecovery": false,
+    "profileObserverCases": 2,
+    "profile": "synthetic-cold-h2",
+    "observer": "external TCP byte proxy capture and standalone offline observer",
+    "captures": 4,
+    "ja3": "1486e97570653f52b603bf93abaffe92",
+    "ja4": "t13d0307h2_55b375c5d22e_70c6d19c6451",
+    "discoveryFullSessionMatch": true,
+    "freshRandoms": true,
+    "sanitizerNote": "34-case full-engine sanitizer run above predates this diagnostics-only patch"
   }
 }

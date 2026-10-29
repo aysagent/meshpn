@@ -354,6 +354,7 @@ struct Session {
         "auth_deadline","h2_ping_timeout","h2_goaway_no_error","h2_goaway_error","h2_reset_no_error","h2_reset_error",
         "h2_peer_end_stream","h2_stream_closed","h2_stream_error","h2_invalid_frame","h2_local_goaway_error",
         "h2_local_reset_error","h2_flooded","h2_no_memory","h2_bad_client_magic","http2_receive",
+        "tls_verify_name","tls_verify_expired","tls_verify_not_yet_valid","tls_verify_untrusted","tls_verify_failed",
         "tls_handshake","tls_write","tls_read","tls_peer_closed","h2_required","h2_alps_invalid","tun_write",
         "http_alpn_required","http_version_mismatch","h1_headers_invalid","h1_framing_invalid","h1_protocol_invalid",
         "h1_host_invalid","h1_extra_message","h1_chunk_invalid","h1_chunk_limit","h1_trailers_forbidden",
