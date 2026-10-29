@@ -89,6 +89,10 @@ node scripts/clean-vpn-native-runtime-config.mjs create \
 
 `endpoint` — адрес exit, доступный клиентам; `exit-address` — адрес самого exit
 в namespace/контейнерной сети (он может отличаться при публикации порта).
+`--port=3443` задаёт порт назначения клиента и, по умолчанию, listener exit.
+При явной публикации `3443:4443/tcp` добавьте `--exit-port=4443`: клиент продолжит
+подключаться к `3443`, exit будет слушать `4443`. Без этих опций остаётся `443`.
+Правила совместного запуска с действующим VPN: [тестовые порты](clean-vpn-native-test-ports.md).
 Скрипт создаёт `exit/`, `client-1/`, `client-2/`, offline `authority/` и manifest.
 У каждого клиента свой PSK и адрес. Передавать клиенту только его каталог,
 exit — только `exit/`; **не монтировать весь bundle** и не передавать `authority/`.
@@ -163,9 +167,12 @@ node scripts/clean-vpn-native-container.mjs status --engine=docker --name=cvpn-c
 внутри `/config`, по умолчанию `engine.json`.
 
 Exit запускается аналогично с `--role=exit`, статическим `--ip=...` в выбранной
-network и config `address`, равным этому IP. Для внешнего входа на порт 443
-добавить `--publish=443` (port config должен быть 443). Это явная публикация
+network и config `address`, равным этому IP. Для внешнего входа на порт 3443
+добавить `--publish=3443`: launcher публикует `3443:config.port/tcp`.
+Например, exit config с `port: 4443` даёт `3443:4443/tcp`. Это явная публикация
 порта Linux container host; без `--publish` наружу ничего не публикуется.
+Docker internal-only bridge не подходит для внешней публикации: используйте
+отдельную обычную bridge network и проверьте фактическое отображение порта.
 На client порты не публикуются. Existing legacy сервисы launcher не останавливает.
 
 Launcher использует read-only rootfs, `--cap-drop=ALL`, только NET_ADMIN,

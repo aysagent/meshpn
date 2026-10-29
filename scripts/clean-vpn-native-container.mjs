@@ -7,6 +7,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { isIPv4 } from 'node:net';
+import { publishedExitPort } from './lib/native-port.mjs';
 const { values: v, positionals } = parseArgs({ allowPositionals: true, options: Object.fromEntries([
   'engine', 'connection', 'name', 'image', 'role', 'network', 'ip', 'publish', 'config-dir', 'config-volume', 'config-file', 'lan-network', 'lan-ip', 'lan-subnet', 'lab-owner'
 ].map(k => [k, { type: 'string' }])) });
@@ -41,7 +42,7 @@ if (action === 'start') {
   config ??= JSON.parse(p(['run', '--rm', '--network=none', '--cap-drop=ALL', '--read-only',
     '--memory=32m', '--pids-limit=16', '--mount', mount, '--entrypoint=cat', v.image, '/config/' + file]));
   assert.equal(config.role, v.role, 'config_role_mismatch');
-  if (v.publish) assert.equal(config.port, 443, 'published_exit_requires_config_port_443');
+  const published = v.publish ? publishedExitPort(config, v.publish) : null;
   const parent = p(['run', '--rm', '--network=host', '--cap-drop=ALL', '--entrypoint=readlink', v.image, '/proc/self/ns/net']).trim();
   assert.match(parent, /^net:\[\d+\]$/);
   const lan = Boolean(v['lan-network'] || v['lan-ip'] || v['lan-subnet']);
@@ -61,7 +62,7 @@ if (action === 'start') {
     args.push('--label', 'org.meshpn.native-runtime-lab=' + v['lab-owner']);
   }
   if (v.role === 'exit' || lan) args.push('--sysctl=net.ipv4.ip_forward=1');
-  if (v.publish) args.push('--publish', `${v.publish}:443/tcp`);
+  if (published) args.push('--publish', published);
   if (lan) args.push('-e', 'CVPN_UPLINK=auto', '-e', 'CVPN_LAN_INTERFACE=auto', '-e', `CVPN_LAN_SUBNET=${v['lan-subnet']}`);
   args.push(v.image, '/config/' + file);
   p(args);

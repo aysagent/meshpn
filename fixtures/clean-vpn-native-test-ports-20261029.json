@@ -1,0 +1,344 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-test-ports-acceptance",
+  "date": "2026-10-29",
+  "status": "passed",
+  "physicalHostsAccessed": false,
+  "macNetworkSettingsChanged": false,
+  "unitTests": {
+    "passed": 16,
+    "failed": 0,
+    "files": [
+      "scripts/test-native-runtime-config.mjs",
+      "scripts/test-pcap-fingerprints.mjs"
+    ]
+  },
+  "coexistence": {
+    "schema": 1,
+    "kind": "native-test-port-coexistence",
+    "status": "passed",
+    "engineSha256": "f087b391f148359fc81b7d70cc9d5c1f1830b0fad532321820d8a1938ccced56",
+    "baselinePort": 443,
+    "testPort": 3443,
+    "baselineHttpsProbes": 36,
+    "checks": [
+      "baseline 443 installed and serving real TUN DNS HTTPS",
+      "boring-tls 3443 data path; baseline 443 unchanged",
+      "boring-tls exit crash recovery independent of baseline",
+      "boring-tls exit stop blocks candidate without direct or 443 fallback",
+      "boring-tls cleanup leaves baseline 443 healthy",
+      "combo-tls 3443 data path; baseline 443 unchanged",
+      "combo-tls exit crash recovery independent of baseline",
+      "combo-tls exit stop blocks candidate without direct or 443 fallback",
+      "combo-tls cleanup leaves baseline 443 healthy",
+      "transparent-tls 3443 data path; baseline 443 unchanged",
+      "transparent-tls exit crash recovery independent of baseline",
+      "transparent-tls exit stop blocks candidate without direct or 443 fallback",
+      "transparent-tls cleanup leaves baseline 443 healthy"
+    ],
+    "phases": [
+      {
+        "transport": "boring-tls",
+        "port": 3443,
+        "profiledPacketHellos": 3,
+        "transparentFingerprintMatches": 0,
+        "baselinePreserved": true
+      },
+      {
+        "transport": "combo-tls",
+        "port": 3443,
+        "profiledPacketHellos": 2,
+        "transparentFingerprintMatches": 2,
+        "baselinePreserved": true
+      },
+      {
+        "transport": "transparent-tls",
+        "port": 3443,
+        "profiledPacketHellos": 0,
+        "transparentFingerprintMatches": 3,
+        "baselinePreserved": true
+      }
+    ],
+    "limitations": [
+      "disposable-systemd-netns-with-local-origin",
+      "not-physical-Radxa-or-VPS",
+      "same-address-port-DNAT-model-not-container-publish-test",
+      "transparent-SNI-token-changes-name-even-when-JA3-JA4-match",
+      "no-WAN-performance-or-long-soak-claim"
+    ],
+    "imageId": "fd3c0994e14849b6be2d9226cc8ea69a97cb0a7c7a5b84227dba8d495e77cdcd",
+    "sourceSnapshotSha256": "0bf9d55a61a452bce497575c06f8ca4093de6a3592d1ebffdbd82141baeb1390",
+    "sourceFiles": {
+      "scripts/lib/native-port-coexistence-lab.mjs": "b19b4f8bc02754f7e8833a20f154289b0bc96776d4492707822ebdede6bdad73",
+      "scripts/clean-vpn-pcap-fingerprints.mjs": "e1651b99591aba327fddf93138e4fdd88a010d6deea1f22a5ed8f2bf624fe6b6",
+      "scripts/lib/native-port.mjs": "da728db07b0906f0320823dcb391dd32d8bac7b726ea77cb02ea79218678ff50"
+    }
+  },
+  "podman": {
+    "kind": "native-runtime-container-lab",
+    "status": "passed",
+    "port": 3443,
+    "scope": "internal-lab-only",
+    "imageId": "e1942dd095830c121155d9133d63d5a86ef565bf7eb1248ea52dac6f25c43e38",
+    "architecture": "arm64",
+    "engineSha256": "f0eb2a326e6c67491da4e1d895745b3e3c125c5208fc38446e396cb8e8490d72",
+    "checks": [
+      "profiled-tunnel-and-dns-udp-tcp",
+      "public-launcher-start-status",
+      "loopback-dns-https-tcp-udp",
+      "foreign-rules-preserved",
+      "same-namespace-reentry-audited",
+      "unreachable-upstreams-unhealthy",
+      "dns-restores-with-upstream",
+      "wrong-name-unhealthy",
+      "wrong-psk-unhealthy",
+      "wrong-ca-unhealthy",
+      "unreachable-exit-unhealthy",
+      "without-net-admin-refused",
+      "without-tun-refused",
+      "host-network-refused-before-mutation",
+      "public-launcher-stop-and-restart",
+      "unprivileged-shared-namespace-application",
+      "pid1-sigkill-shared-namespace-no-direct-fallback",
+      "dead-engine-app-dns-blocked",
+      "replacement-works-old-namespace-stays-blocked",
+      "client-sigterm-clean",
+      "container-restart-healthy",
+      "independent-clienthello-profile-matched",
+      "exit-sigterm-clean",
+      "public-launcher-owned-remove"
+    ],
+    "cleanup": {
+      "status": "passed"
+    },
+    "backend": "dedicated-rootful-Podman-VM",
+    "rawReportSha256": "0657469b55883039638ffb8220c860fbba612c66eb1546b5c37bb44af2afa668",
+    "wire": {
+      "pcapSha256": "6d7fc3daca582a9216e6ff14c525cafaa3f574c9a1b8fd4ff0495898f07292de",
+      "destination": "10.77.0.2",
+      "port": 3443,
+      "counts": {
+        "packets": 280,
+        "selected": 280,
+        "withoutSyn": 0,
+        "fragmented": 0,
+        "truncated": 0
+      },
+      "limitations": [
+        "ethernet-ipv4-tcp-only",
+        "first-clienthello-only-no-HRR",
+        "requires-captured-SYN",
+        "prefix-limit-64KiB",
+        "no-checksum-verification",
+        "no-capture-drop-proof",
+        "shared-JA3-JA4-parser-with-project-sniffer-not-independent-algorithm",
+        "no-browser-equivalence-or-leak-verdict"
+      ],
+      "connections": [
+        {
+          "source": "10.77.0.3",
+          "sni": [
+            "runtime.test"
+          ],
+          "ja3": "f7b5bc133b9649cba9226a876d2d04e9",
+          "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+          "status": "observed",
+          "profileStatus": "matched"
+        },
+        {
+          "source": "10.77.0.5",
+          "sni": [
+            "wrong.test"
+          ],
+          "ja3": "e36abd2bb9831a0b50e862d21c213ef1",
+          "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+          "status": "observed",
+          "profileStatus": "matched"
+        },
+        {
+          "source": "10.77.0.6",
+          "sni": [
+            "runtime.test"
+          ],
+          "ja3": "db1a93f5c4da9134993a092435a1389b",
+          "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+          "status": "observed",
+          "profileStatus": "matched"
+        },
+        {
+          "source": "10.77.0.6",
+          "sni": [
+            "runtime.test"
+          ],
+          "ja3": "e82ec7a331c6e9c0e40d0c33a5da25b5",
+          "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+          "status": "observed",
+          "profileStatus": "matched"
+        },
+        {
+          "source": "10.77.0.6",
+          "sni": [
+            "runtime.test"
+          ],
+          "ja3": "1696b1a1873a1322b972037cf791eff2",
+          "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+          "status": "observed",
+          "profileStatus": "matched"
+        },
+        {
+          "source": "10.77.0.6",
+          "sni": [
+            "runtime.test"
+          ],
+          "ja3": "2bf9b725084788ec82efbcd662cc541e",
+          "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+          "status": "observed",
+          "profileStatus": "matched"
+        },
+        {
+          "source": "10.77.0.6",
+          "sni": [
+            "runtime.test"
+          ],
+          "ja3": "f90f46880c9a447f6964fc23d397f6ae",
+          "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+          "status": "observed",
+          "profileStatus": "matched"
+        },
+        {
+          "source": "10.77.0.6",
+          "sni": [
+            "runtime.test"
+          ],
+          "ja3": "3cd574e4eb5f9f6b72ffdd50cd5346f8",
+          "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+          "status": "observed",
+          "profileStatus": "matched"
+        },
+        {
+          "source": "10.77.0.7",
+          "sni": [
+            "runtime.test"
+          ],
+          "ja3": "69e79eecd716a5dc01d4446332367d7b",
+          "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+          "status": "observed",
+          "profileStatus": "matched"
+        },
+        {
+          "source": "10.77.0.7",
+          "sni": [
+            "runtime.test"
+          ],
+          "ja3": "8d54af819cc393b759e761c372414d43",
+          "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+          "status": "observed",
+          "profileStatus": "matched"
+        },
+        {
+          "source": "10.77.0.3",
+          "sni": [
+            "runtime.test"
+          ],
+          "ja3": "8ec48c7b55f8a1a26ce6b469a1449937",
+          "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+          "status": "observed",
+          "profileStatus": "matched"
+        },
+        {
+          "source": "10.77.0.20",
+          "sni": [
+            "runtime.test"
+          ],
+          "ja3": "315bd93e008b0895399ef8275c2bcc72",
+          "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+          "status": "observed",
+          "profileStatus": "matched"
+        },
+        {
+          "source": "10.77.0.20",
+          "sni": [
+            "runtime.test"
+          ],
+          "ja3": "ca6d5300df8b4c21d798d8fe7e94b08c",
+          "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+          "status": "observed",
+          "profileStatus": "matched"
+        }
+      ]
+    }
+  },
+  "dockerPublish": {
+    "kind": "native-runtime-container-lab",
+    "status": "passed",
+    "port": 4443,
+    "publishedPort": 3443,
+    "scope": "explicit-publish-on-container-engine-host",
+    "imageId": "sha256:e1942dd095830c121155d9133d63d5a86ef565bf7eb1248ea52dac6f25c43e38",
+    "architecture": "arm64",
+    "engineSha256": "f0eb2a326e6c67491da4e1d895745b3e3c125c5208fc38446e396cb8e8490d72",
+    "publishedMapping": "0.0.0.0:3443\n[::]:3443",
+    "checks": [
+      "public-exit-launcher-explicit-port-mapping",
+      "busy-published-port-refused-existing-exit-unchanged",
+      "profiled-tunnel-and-dns-udp-tcp",
+      "public-launcher-start-status",
+      "loopback-dns-https-tcp-udp",
+      "foreign-rules-preserved",
+      "same-namespace-reentry-audited",
+      "unreachable-upstreams-unhealthy",
+      "dns-restores-with-upstream",
+      "wrong-name-unhealthy",
+      "wrong-psk-unhealthy",
+      "wrong-ca-unhealthy",
+      "unreachable-exit-unhealthy",
+      "without-net-admin-refused",
+      "without-tun-refused",
+      "host-network-refused-before-mutation",
+      "public-launcher-stop-and-restart",
+      "unprivileged-shared-namespace-application",
+      "pid1-sigkill-shared-namespace-no-direct-fallback",
+      "dead-engine-app-dns-blocked",
+      "replacement-works-old-namespace-stays-blocked",
+      "client-sigterm-clean",
+      "container-restart-healthy",
+      "exit-sigterm-clean",
+      "public-launcher-owned-remove"
+    ],
+    "cleanup": {
+      "status": "passed"
+    },
+    "backend": "Docker-28.5.2-inside-network-none-Podman-container",
+    "rawReportSha256": "8c99e4ca7c3f2c86deeea9ae5c07c9179a8712cd6fbdbce6cb441a99da2c1c84"
+  },
+  "cleanup": {
+    "status": "passed",
+    "temporaryCoexistenceContainersRemoved": true,
+    "runtimeContainersNetworksVolumesRemoved": true,
+    "nestedDockerRemovedWithAnonymousVolume": true,
+    "nestedDockerOuterNetworkMode": "none",
+    "nestedDockerOuterPublishedPorts": {}
+  },
+  "initialFixtureCorrections": [
+    "front namespace lacked origin default route",
+    "transparent replay directory must exist with mode 0700",
+    "fresh namespace forwarding must explicitly start disabled",
+    "restore default routes after strict-profile links-down preparation",
+    "root-level report path parent handling",
+    "Docker internal-only bridge did not expose requested published port; retested ordinary bridge inside NIC-less daemon"
+  ],
+  "limitations": [
+    "ARM64 local fixture, not physical Radxa/VPS coexistence acceptance",
+    "cached previously tested engine artifacts; no C++ source rebuild in this change",
+    "container image is an older artifact than the systemd coexistence engine; SHA256 recorded separately",
+    "bounded functional run, not WAN benchmark or long soak",
+    "transparent JA3/JA4 preservation does not imply byte-identical ClientHello or full browser mimicry",
+    "combo/transparent public container lifecycle remains separate work"
+  ],
+  "adminRegression": {
+    "passed": 6,
+    "failed": 0,
+    "file": "admin/test/admin.test.mjs",
+    "initialSandboxRun": "4 passed; two loopback HTTP fixtures denied EPERM; all six passed with local socket permission"
+  }
+}

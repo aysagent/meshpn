@@ -10,6 +10,10 @@ Node VPN для него не требуется. [Текущий план и г
 **Постоянная boring-tls пара Radxa↔VPS включена**, админка привязана к native;
 проверены физические reboot, условные часы и восстановление engine.
 [Команды управления, результаты и оставшиеся границы](scripts/clean-vpn-native-daily-20261029.md).
+Развитие transparent/combo продолжается отдельно от работающей пары:
+[тестовые порты `3443`, изоляция и лабораторная приёмка](scripts/clean-vpn-native-test-ports.md).
+Один только другой порт не изолирует маршруты, TUN и firewall — тестам нужен
+отдельный network namespace или контейнер.
 Для existing VPS готов [scoped exit owner](scripts/clean-vpn-native-exit-host.md),
 сохраняющий чужие firewall rules и службы. [Итог ночной приёмки и следующий этап](scripts/clean-vpn-native-night-20261029-report.md).
 

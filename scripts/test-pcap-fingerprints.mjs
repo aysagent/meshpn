@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { inspectPcap } from './clean-vpn-pcap-fingerprints.mjs';
+import os from 'node:os';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+import { inspectPcap,parsePcapArgs } from './clean-vpn-pcap-fingerprints.mjs';
 
 const destination = '154.62.226.216', options = { destination };
 const body = Buffer.concat([Buffer.from('0303', 'hex'), Buffer.alloc(32),
@@ -26,6 +29,20 @@ function pcap(packets, le = true) {
     const h = Buffer.alloc(16); u32(h, p.length, 8); u32(h, p.length, 12); return [h, p];
   })]);
 }
+test('CLI observes only requested 3443 flows from a mixed-port capture',()=>{
+  const packets=[packet(100,undefined,2),packet(101,hello),packet(200,undefined,2),packet(201,hello)];
+  for(const p of packets.slice(2))p.writeUInt16BE(3443,36);
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pcap-ports-')),file=path.join(dir,'wire.pcap');
+  try {
+    fs.writeFileSync(file,pcap(packets));
+    const result=JSON.parse(execFileSync(process.execPath,['scripts/clean-vpn-pcap-fingerprints.mjs','--pcap='+file,'--destination='+destination,'--port=3443'],{encoding:'utf8'}));
+    assert.equal(result.counts.selected,2);assert.equal(result.connections.length,1);
+    assert.equal(result.connections[0].firstPacket,3);assert.equal(result.connections[0].status,'observed');
+    assert.equal(parsePcapArgs(['--pcap='+file,'--destination='+destination]).port,443);
+    for(const tail of [['--port=0'],['--port=3443','--port=443'],['--unknown=1']])
+      assert.throws(()=>parsePcapArgs(['--pcap='+file,'--destination='+destination,...tail]));
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
 for (const le of [true, false]) test(`observed JA4 from classic pcap endian=${le}`, () => {
   const r = inspectPcap(pcap([packet(100, undefined, 2), packet(101, hello)], le), options);
   assert.equal(r.connections[0].status, 'observed');

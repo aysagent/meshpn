@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Rootful container lab only. Unique resources, internal bridge, no published
-// ports, no host network writes, no physical-machine access.
+// Rootful container lab only. Internal bridge by default. Explicit
+// CVPN_LAB_PUBLISH_PORT tests publishing on the engine host: use an isolated VM.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,11 +12,14 @@ import { inspectPcap } from './clean-vpn-pcap-fingerprints.mjs';
 import { cleanupLab } from './clean-vpn-native-runtime-cleanup.mjs';
 import { nativeProcessProbe, latencySummary } from './lib/native-runtime-metrics.mjs';
 import { applicationProbe, parseApplicationTimings } from './lib/native-runtime-application-probe.mjs';
+import { tcpPort } from './lib/native-port.mjs';
 
 const cli = JSON.parse(process.env.CVPN_CONTAINER_COMMAND ?? '["podman"]');
 assert.ok(Array.isArray(cli) && cli.length && cli.every(x => typeof x === 'string'));
 const image = process.env.CVPN_RUNTIME_IMAGE; assert.ok(image, 'CVPN_RUNTIME_IMAGE required');
 const observerImage = process.env.CVPN_OBSERVER_IMAGE;
+const port = tcpPort(process.env.CVPN_LAB_PORT ?? 443);
+const publishedPort = process.env.CVPN_LAB_PUBLISH_PORT === undefined ? null : tcpPort(process.env.CVPN_LAB_PUBLISH_PORT);
 const gateway = process.env.CVPN_GATEWAY === '1';
 const testLauncher = process.env.CVPN_TEST_LAUNCHER === '1';
 const soakSeconds = Number(process.env.CVPN_SOAK_SECONDS ?? 0);
@@ -45,7 +48,7 @@ const wait = async (name, check, seconds = 25) => {
 };
 const put = (name, data) => fs.writeFileSync(path.join(root, name), data, { mode: 0o600 });
 let completed = false, error, cleanupErrors = [], networkCreated = false, volumeCreated = false, lanCreated = false;
-const report = { schema: 1, kind: 'native-runtime-container-lab', image, backend: cli, firewallBackend: backend, checks, status: 'running', scope: 'internal-lab-only' };
+const report = { schema: 1, kind: 'native-runtime-container-lab', image, port, publishedPort, backend: cli, firewallBackend: backend, checks, status: 'running', scope: publishedPort ? 'explicit-publish-on-container-engine-host' : 'internal-lab-only' };
 const ownership = reportPath + '.ownership.json';
 const ownershipFd = fs.openSync(ownership, 'wx', 0o600);
 try { fs.writeFileSync(ownershipFd, JSON.stringify({ schema: 1, kind: 'native-runtime-lab-ownership', prefix, cli, temp: root }) + '\n'); fs.fsyncSync(ownershipFd); }
@@ -56,7 +59,7 @@ try {
   report.engineSha256 = p(['run', '--rm', '--network=none', '--entrypoint=sha256sum', image, '/usr/local/bin/clean-vpn-engine']).split(/\s+/)[0];
   const parent = p(['run', '--rm', '--network=host', '--entrypoint=readlink', image, '/proc/self/ns/net']).trim();
   assert.match(parent, /^net:\[\d+\]$/);
-  p(['network', 'create', '--label', label, '--internal', '--subnet=10.77.0.0/24', network]); networkCreated = true;
+  p(['network', 'create', '--label', label, ...(publishedPort ? [] : ['--internal']), '--subnet=10.77.0.0/24', network]); networkCreated = true;
   if (gateway) { p(['network', 'create', '--label', label, '--internal', '--subnet=192.168.88.0/24', lanNetwork]); lanCreated = true; }
   p(['volume', 'create', '--label', label, volume]); volumeCreated = true;
   const init = prefix + '-init'; containers.push(init);
@@ -67,14 +70,14 @@ try {
   p(['exec', init, 'openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2', '-subj', '/CN=wrong-ca',
     '-keyout', '/config/wrong-key.pem', '-out', '/config/wrong-ca.pem']);
   put('psk', randomBytes(32));
-  const client = { version: 1, role: 'client', tun: 'cvpn0', address: '10.77.0.2', port: 443,
+  const client = { version: 1, role: 'client', tun: 'cvpn0', address: publishedPort ? '10.77.0.1' : '10.77.0.2', port: publishedPort ?? port,
     secret_path: '/config/psk', ca: '/config/cert.pem', server_name: 'runtime.test', dns: true, tls_profile_path: '/config/profile.json' };
   put('client.json', JSON.stringify(client));
   put('wrong.psk', randomBytes(32));
   const negatives = [['wrong-name', { server_name: 'wrong.test' }], ['wrong-psk', { secret_path: '/config/wrong.psk' }],
     ['wrong-ca', { ca: '/config/wrong-ca.pem' }], ['unreachable-exit', { address: '10.77.0.99' }]];
   for (const [label, patch] of negatives) put(label + '.json', JSON.stringify({ ...client, ...patch }));
-  put('exit.json', JSON.stringify({ version: 1, role: 'exit', tun: 'cvpn0', address: '10.77.0.2', port: 443,
+  put('exit.json', JSON.stringify({ version: 1, role: 'exit', tun: 'cvpn0', address: '10.77.0.2', port,
     secret_path: '/config/psk', cert: '/config/cert.pem', key: '/config/key.pem', alps: true }));
   put('profile.json', fs.readFileSync('fixtures/native-tls-profiles/chromium-156-bounded-cold.json'));
   put('origin.mjs', fs.readFileSync('scripts/lib/native-runtime-lab-origin.mjs'));
@@ -88,9 +91,25 @@ try {
   await wait(origin, () => assert.match(p(['logs', origin]), /ORIGIN_READY/));
   const exit = prefix + '-exit'; containers.push(exit);
   const defaultRoute = 'ip route show default | grep -q . || ip route add default via 10.77.0.1 dev eth0; ';
-  p([...base(exit), '--ip=10.77.0.2', '--sysctl=net.ipv4.ip_forward=1', '--entrypoint=sh', image, '-ec',
+  if(publishedPort){
+    const engine=path.basename(cli[0]);assert.ok(['docker','podman'].includes(engine),'direct_engine_cli_required');
+    const args=['scripts/clean-vpn-native-container.mjs','start','--engine='+engine,'--name='+exit,'--role=exit','--image='+image,'--network='+network,'--ip=10.77.0.2','--config-volume='+volume,'--config-file=exit.json','--publish='+publishedPort,'--lab-owner='+prefix];
+    if(cli.length>1){assert.deepEqual(cli.slice(1,2),['--connection']);assert.equal(cli.length,3);args.push('--connection='+cli[2]);}
+    execFileSync(process.execPath,args,{encoding:'utf8',timeout:60000,env:{...process.env,PATH:path.dirname(cli[0])+':'+process.env.PATH},stdio:['ignore','pipe','pipe']});
+    e(exit,'ip','route','add','198.18.0.80/32','via','10.77.0.4','dev','eth0');
+    report.publishedMapping=p(['port',exit,String(port)+'/tcp']).trim();progress('public-exit-launcher-explicit-port-mapping');
+  }else p([...base(exit), '--ip=10.77.0.2', '--sysctl=net.ipv4.ip_forward=1', '--entrypoint=sh', image, '-ec',
     defaultRoute + 'ip route add 198.18.0.80/32 via 10.77.0.4 dev eth0; exec native-runtime /config/exit.json']);
   await wait(exit, () => e(exit, 'node', '/opt/clean-vpn/clean-vpn-native-runtime-health.mjs'));
+  if (publishedPort) {
+    const originalPid = JSON.parse(p(['inspect', exit]))[0].State.Pid;
+    const collision = prefix + '-port-collision'; containers.push(collision);
+    assert.throws(() => p([...base(collision), '--ip=10.77.0.5', '--publish', `${publishedPort}:${port}/tcp`,
+      '--entrypoint=sleep', image, '60']), /port is already allocated|address already in use/i);
+    assert.equal(JSON.parse(p(['inspect', exit]))[0].State.Pid, originalPid);
+    e(exit, 'node', '/opt/clean-vpn/clean-vpn-native-runtime-health.mjs');
+    progress('busy-published-port-refused-existing-exit-unchanged');
+  }
   // Fixture-only DNS destinations; no public upstream queries leave this bridge.
   for (const server of ['1.1.1.1', '8.8.8.8']) for (const proto of ['udp', 'tcp'])
     e(exit, iptables, '-t', 'nat', '-A', 'PREROUTING', '-i', 'cvpn0', '-d', server, '-p', proto, '--dport', '53', '-j', 'DNAT', '--to-destination', '10.77.0.4:5353');
@@ -99,7 +118,7 @@ try {
     containers.push(capture);
     p(['run', '-d', '--name', capture, '--label', label, '--memory=96m', '--pids-limit=96', '--network=container:' + exit, '--cap-drop=ALL', '--cap-add=NET_RAW', '--cap-add=SETUID', '--cap-add=SETGID',
       '-v', `${volume}:/capture`, '--entrypoint=sh', observerImage, '-c',
-      'exec tcpdump -p -n -U -i eth0 -s 0 -c 20000 -w - "tcp dst port 443" > /capture/wire.pcap 2>/capture/capture.log']);
+      `exec tcpdump -p -n -U -i eth0 -s 0 -c 20000 -w - "tcp dst port ${port}" > /capture/wire.pcap 2>/capture/capture.log`]);
     await wait(capture, () => assert.match(e(init, 'cat', '/config/capture.log'), /listening on eth0/));
   }
   const clientName = prefix + '-client'; containers.push(clientName);
@@ -268,7 +287,7 @@ try {
     p(['cp', `${init}:/config/wire.pcap`, path.join(root, 'wire.pcap')]);
     fs.copyFileSync(path.join(root, 'wire.pcap'), reportPath + '.pcap', fs.constants.COPYFILE_EXCL);
     fs.chmodSync(reportPath + '.pcap', 0o600);
-    report.wire = inspectPcap(fs.readFileSync(path.join(root, 'wire.pcap')), { destination: '10.77.0.2', profile: JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/chromium-156-bounded-cold.json', 'utf8')) });
+    report.wire = inspectPcap(fs.readFileSync(path.join(root, 'wire.pcap')), { destination: '10.77.0.2', port, profile: JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/chromium-156-bounded-cold.json', 'utf8')) });
     assert.ok(report.wire.connections.length > 0);
     assert.ok(report.wire.connections.every(c => c.profile?.status === 'matched'));
     report.capture = e(init, 'cat', '/config/capture.log').trim(); progress('independent-clienthello-profile-matched');

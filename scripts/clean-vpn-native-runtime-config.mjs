@@ -8,11 +8,12 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runtimePlan } from './lib/native-runtime-plan.mjs';
+import { tcpPort } from './lib/native-port.mjs';
 
 const defaultProfile = fileURLToPath(new URL('../fixtures/native-tls-profiles/chromium-156-bounded-cold.json', import.meta.url));
 export function parseRuntimeConfig(args) {
   const { values: v, positionals } = parseArgs({ args, allowPositionals: true, options: {
-    help: { type: 'boolean' }, ...Object.fromEntries(['directory', 'mode', 'endpoint', 'exit-address', 'server-name', 'clients', 'days', 'profile'].map(k => [k, { type: 'string' }])) } });
+    help: { type: 'boolean' }, ...Object.fromEntries(['directory', 'mode', 'endpoint', 'exit-address', 'port', 'exit-port', 'server-name', 'clients', 'days', 'profile'].map(k => [k, { type: 'string' }])) } });
   if (v.help) return { help: true };
   assert.deepEqual(positionals, ['create'], 'create required');
   // parseArgs accepts duplicate options; credentials must never depend on the
@@ -27,15 +28,17 @@ export function parseRuntimeConfig(args) {
   const clients = Number(v.clients ?? 1), days = Number(v.days ?? 90);
   assert.ok(Number.isInteger(clients) && clients >= 1 && clients <= 32, 'clients_1_to_32');
   assert.ok(Number.isInteger(days) && days >= 1 && days <= 365, 'days_1_to_365');
-  const common = { version: 1, tun: 'cvpn0', port: 443 };
+  const port = tcpPort(v.port ?? 443), exitPort = tcpPort(v['exit-port'] ?? port);
+  const common = { version: 1, tun: 'cvpn0', port };
   runtimePlan({ ...common, role: 'client', address: v.endpoint, dns: true });
-  runtimePlan({ ...common, role: 'exit', address: v['exit-address'] });
+  runtimePlan({ ...common, port: exitPort, role: 'exit', address: v['exit-address'] });
   const profile = fs.readFileSync(v.profile ?? defaultProfile);
   assert.ok(profile.length <= 16384); JSON.parse(profile);
-  return { directory: v.directory, mode: v.mode, endpoint: v.endpoint, exitAddress: v['exit-address'], serverName: v['server-name'], clients, days, profile };
+  return { directory: v.directory, mode: v.mode, endpoint: v.endpoint, port, exitPort, exitAddress: v['exit-address'], serverName: v['server-name'], clients, days, profile };
 }
 
 export function createRuntimeConfig(o) {
+  const port = tcpPort(o.port ?? 443), exitPort = tcpPort(o.exitPort ?? port);
   // Parent must already exist; never follow an unexpected symlink when
   // publishing keys. /tmp's sticky bit is allowed, arbitrary writable parents aren't.
   const uid = process.getuid();
@@ -66,13 +69,13 @@ export function createRuntimeConfig(o) {
       write(`${role}/psk`, secret); write(`exit/peer-${i}.psk`, secret);
       write(`${role}/ca.pem`, fs.readFileSync(path.join(o.directory, 'authority/ca.pem')));
       write(`${role}/profile.json`, o.profile);
-      json(`${role}/engine.json`, { version: 1, role: 'client', tun: 'cvpn0', address: o.endpoint, port: 443,
+      json(`${role}/engine.json`, { version: 1, role: 'client', tun: 'cvpn0', address: o.endpoint, port,
         dns: true, peer_ipv4: peer, server_name: o.serverName, ca: at(role, 'ca.pem'), secret_path: at(role, 'psk'), tls_profile_path: at(role, 'profile.json') });
       peers.push({ ipv4: peer, secret_path: at('exit', `peer-${i}.psk`) }); clients.push({ directory: role, ipv4: peer });
     }
-    json('exit/engine.json', { version: 1, role: 'exit', tun: 'cvpn0', address: o.exitAddress, port: 443, alps: true,
+    json('exit/engine.json', { version: 1, role: 'exit', tun: 'cvpn0', address: o.exitAddress, port: exitPort, alps: true,
       cert: at('exit', 'cert.pem'), key: at('exit', 'key.pem'), peers });
-    const manifest = { schema: 1, kind: 'native-runtime-config', mode: o.mode, endpoint: o.endpoint, exitAddress: o.exitAddress,
+    const manifest = { schema: 1, kind: 'native-runtime-config', mode: o.mode, endpoint: o.endpoint, port, exitPort, exitAddress: o.exitAddress,
       serverName: o.serverName, clients, certificateDays: o.days, profileSha256: createHash('sha256').update(o.profile).digest('hex'),
       networkChanged: false, nativeValidation: 'required-on-target-before-start',
       distribution: 'Each client gets only its client-N directory. Exit gets only exit/. Keep authority/ offline; never mount the whole bundle.' };
@@ -82,7 +85,7 @@ export function createRuntimeConfig(o) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const o = parseRuntimeConfig(process.argv.slice(2));
-    if (o.help) console.log('Usage: node scripts/clean-vpn-native-runtime-config.mjs create --directory=/NEW/private/bundle --mode=container|standalone --endpoint=EXIT_IPV4 --exit-address=EXIT_NAMESPACE_IPV4 --server-name=vpn.example.net [--clients=1..32] [--days=1..365] [--profile=/profile.json]\nOffline only; creates private CA, unique per-client PSKs and Chromium subset profiles. Existing directory is never overwritten. Container files use /config paths; standalone files use the new absolute directory. Copy only the intended role directory; Linux runtime requires root-owned credentials.');
+    if (o.help) console.log('Usage: node scripts/clean-vpn-native-runtime-config.mjs create --directory=/NEW/private/bundle --mode=container|standalone --endpoint=EXIT_IPV4 --exit-address=EXIT_NAMESPACE_IPV4 --server-name=vpn.example.net [--port=443] [--exit-port=PORT] [--clients=1..32] [--days=1..365] [--profile=/profile.json]\nOffline only; creates private CA, unique per-client PSKs and Chromium subset profiles. --port is the client destination port; --exit-port defaults to it and sets the exit listener (use a different value only with explicit port mapping). Existing directory is never overwritten. Container files use /config paths; standalone files use the new absolute directory. Copy only the intended role directory; Linux runtime requires root-owned credentials.');
     else console.log(JSON.stringify(createRuntimeConfig(o), null, 2));
   } catch (error) { console.error('NATIVE_CONFIG=failed: ' + (error.code ?? error.message) + '\nNo network or service settings changed. Any incomplete new directory is retained for inspection.'); process.exitCode = 1; }
 }

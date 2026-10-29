@@ -8,9 +8,20 @@ import { createHash } from 'node:crypto';
 import { parseFirstTlsClientHelloFromTcpBuf, ja3ComponentsFromClientHelloBody } from './lib/tls-clienthello-ja3.mjs';
 import { observeTlsProfile } from './lib/native-tls-profile-observer.mjs';
 import { ja4FromClientHelloBody } from './lib/tls-clienthello-ja4.mjs';
+import { tcpPort } from './lib/native-port.mjs';
 
 const MAX_FILE = 64 * 1024 * 1024, PREFIX = 65536, MAX_STREAMS = 128;
 const check = (ok, code) => { if (!ok) throw Error(code); };
+export function parsePcapArgs(args) {
+  const values = {};
+  for (const arg of args) {
+    const m = /^--(pcap|destination|port|profile)=(.+)$/.exec(arg);
+    check(m && !Object.hasOwn(values, m[1]), 'invalid_observer_option');
+    values[m[1]] = m[2];
+  }
+  check(values.pcap && isIPv4(values.destination), 'usage_pcap_destination_optional_port_profile');
+  return { file: values.pcap, destination: values.destination, port: tcpPort(values.port ?? 443), profileFile: values.profile };
+}
 export function inspectPcap(bytes, { destination, port = 443, profile = null }) {
   check(isIPv4(destination) && Number.isInteger(port) && port > 0 && port < 65536, 'invalid_endpoint');
   check(bytes.length >= 24 && bytes.length <= MAX_FILE, 'pcap_size');
@@ -98,17 +109,16 @@ export function inspectPcap(bytes, { destination, port = 443, profile = null }) 
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const args = process.argv.slice(2);
-    check((args.length === 2 || (args.length === 3 && args[2].startsWith('--profile='))) && args[0].startsWith('--pcap=') && args[1].startsWith('--destination='), 'usage_pcap_then_destination');
-    const file = args[0].slice(7), stat = fs.statSync(file);
+    const {file, destination, port, profileFile} = parsePcapArgs(process.argv.slice(2));
+    const stat = fs.statSync(file);
     check(stat.isFile() && stat.size <= MAX_FILE, 'pcap_size');
     let profile = null;
-    if (args[2]) {
-      const profileFile = args[2].slice('--profile='.length), info = fs.lstatSync(profileFile);
+    if (profileFile) {
+      const info = fs.lstatSync(profileFile);
       check(info.isFile() && !info.isSymbolicLink() && info.size > 0 && info.size <= 16384, 'invalid_profile_file');
       profile = JSON.parse(fs.readFileSync(profileFile));
     }
-    const report = inspectPcap(fs.readFileSync(file), { destination: args[1].slice(14), profile });
+    const report = inspectPcap(fs.readFileSync(file), { destination, port, profile });
     console.log(JSON.stringify(report, null, 2));
     process.exitCode = !report.connections.some(c => c.status === 'observed') ? 1
       : profile && report.connections.some(c => c.profile?.status !== 'matched') ? 2 : 0;
