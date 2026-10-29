@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "kind": "native-peer-reload-lab",
+  "date": "2026-10-30",
+  "platform": "Linux arm64 inside Podman on macOS",
+  "productionHostsChanged": false,
+  "macNetworkChanged": false,
+  "build": {
+    "compiler": "GCC, C++17, O2, g0, Wall/Wextra/Wpedantic/Werror",
+    "dependencies": "existing pinned ARM64 BoringSSL/nghttp2/Brotli static cache",
+    "scope": "changed engine/fixture/integration/relay targets rebuilt; unchanged CTest targets reused from same dependency cache"
+  },
+  "tests": {
+    "liveReload": {"passed": 5, "failed": 0, "skipped": 0, "transports": ["boring-H2", "boring-H1", "combo-H2", "combo-H1", "standalone-transparent"]},
+    "http1MultiPeerWanAndReloadInitialGroup": {"passed": 22, "failed": 0, "note": "includes first four liveReload tests; do not add counts as independent coverage"},
+    "clockDataPlaneProfileComboTransparent": {"initialPassed": 42, "initialFailed": 2, "total": 44, "failureReason": "runner lacked TUN device and writable namespace sysctls", "networkGroupRerunPassed": 7, "networkGroupRerunFailed": 0},
+    "ctest": {"passed": 13, "failed": 0},
+    "relayQuotaLiveRevocationSanitizers": {"passed": true, "asan": true, "ubsan": true, "leakDetection": true, "dependencyLibrariesInstrumented": false}
+  },
+  "checked": [
+    "add without restarting engine or reconnecting unchanged packet client",
+    "reject duplicate peers, missing key and immutable setting changes",
+    "combo rejects uninitialized relay replay state before packet peer publication",
+    "rotate key and revoke close old packet identities",
+    "deny all through empty peers and restore standalone transparent peers",
+    "raw-config SHA256 and successful revision acknowledgements",
+    "relay workers from same source address retain quotas for unchanged identity",
+    "revoked relay workers cancel and denied fresh identity opens no origin",
+    "durable replay retained without reopening locked journals",
+    "same relay key cannot move to new replay path",
+    "real REDIRECT and no-direct-fallback regression in isolated namespaces",
+    "profile fingerprints, HRR, ALPS, ML-DSA, authentication and clock regressions"
+  ],
+  "limitations": [
+    "local Linux lab, no physical deployment or WAN benchmark",
+    "packet reload uses fixture packet boundary, not host routes",
+    "signal publication acknowledgement is not a wait for all cancelled relay workers to exit",
+    "relay limits and non-peer engine settings require separate lifecycle change",
+    "controller must serialize file updates and match journal acknowledgement",
+    "old daily binaries do not gain reload support until separately updated"
+  ]
+}

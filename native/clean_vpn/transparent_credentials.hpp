@@ -5,14 +5,15 @@ namespace cvpn::transparent {
 class RelayCredentials {
   const TransparentConfig& config_;
   std::vector<std::shared_ptr<SniAuthorization>> keys_;
+  SniAuthorization inactive_;
   std::string directory(size_t i) const {
-    return config_.replay_directory + (config_.peers.empty() ? "" : "/" + config_.peers[i].id);
+    return config_.replay_directory + (!config_.secret_path.empty() ? "" : "/" + config_.peers[i].id);
   }
 public:
-  template<class Read> RelayCredentials(const TransparentConfig& c, Read read) : config_(c) {
-    const size_t count = c.peers.empty() ? 1 : c.peers.size();
+  template<class Read> RelayCredentials(const TransparentConfig& c, Read read) : config_(c), inactive_(Digest{},c.public_name) {
+    const size_t count = !c.secret_path.empty() ? 1 : c.peers.size();
     for (size_t i=0; i<count; ++i) {
-      auto bytes = read(c.peers.empty() ? c.secret_path : c.peers[i].secret_path);
+      auto bytes = read(!c.secret_path.empty() ? c.secret_path : c.peers[i].secret_path);
       struct Clean { std::string& b; ~Clean(){ OPENSSL_cleanse(b.data(),b.size()); } } clean{bytes};
       require(bytes.size()==32,"secret_length");
       Digest key{}; std::copy(bytes.begin(),bytes.end(),key.begin());
@@ -22,7 +23,7 @@ public:
       keys_.push_back(std::move(auth));
     }
   }
-  const SniAuthorization& primary() const { return *keys_.front(); }
+  const SniAuthorization& primary() const { return keys_.empty() ? inactive_ : *keys_.front(); }
   void initialize() const {
     require(!config_.client,"relay_init_exit_only");
     if (!config_.peers.empty()) {
@@ -34,11 +35,22 @@ public:
     }
     for (size_t i=0;i<keys_.size();++i) ReplayWindow state(directory(i),keys_[i]->replay_scope(),true);
   }
+  ExitAdmission::Peers prepare(const ExitAdmission& active) const {
+    require(!config_.client,"relay_exit_required");
+    ExitAdmission::Peers next; next.reserve(keys_.size());
+    for (size_t i=0;i<keys_.size();++i) {
+      auto kept=active.retained(*keys_[i],directory(i));
+      if (kept) next.push_back(std::move(kept));
+      else next.push_back(std::make_shared<ExitAdmission::Peer>(keys_[i],
+        std::make_shared<ReplayWindow>(directory(i),keys_[i]->replay_scope()),directory(i)));
+    }
+    return next;
+  }
   std::shared_ptr<ExitAdmission> open() const {
     require(!config_.client,"relay_exit_required");
     auto admission=std::make_shared<ExitAdmission>(config_.limits.sessions,config_.limits.per_client);
     for (size_t i=0;i<keys_.size();++i)
-      admission->add(keys_[i],std::make_shared<ReplayWindow>(directory(i),keys_[i]->replay_scope()));
+      admission->add(keys_[i],std::make_shared<ReplayWindow>(directory(i),keys_[i]->replay_scope()),directory(i));
     return admission;
   }
 };

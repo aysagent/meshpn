@@ -34,7 +34,7 @@ for(const mixed of [false,true])test(`native exit multiplexes ${mixed?'mixed HTT
     const checked = JSON.parse(execFileSync(path.join(build, 'clean-vpn-engine'), ['--check-config', configs[name]], { encoding: 'utf8' }));
     assert.equal(checked.valid, true); assert.equal(checked.peers, name === 'exit' ? 3 : 1);
   }
-  for (const patch of [{ peers: [] }, { peers: Array(33).fill(peers[0]) }, { peers: [peers[0], peers[0]] },
+  for (const patch of [{ peers: Array(33).fill(peers[0]) }, { peers: [peers[0], peers[0]] },
     { peers: [peers[0], { ...peers[1], secret_path: peers[0].secret_path }] },
     { peers: [{ ...peers[0], ipv4: '10.99.0.1' }] }, { peer_ipv4: peers[0].ipv4 },
     { secret_path: peers[0].secret_path }, { peers: [{ ...peers[0], unknown: true }] }]) {

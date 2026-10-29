@@ -54,8 +54,9 @@ struct RelayLimits {
             lifetime_ms && lifetime_ms <= 600000 && sessions && sessions <= 256 && per_client && per_client <= 256, "relay_limits");
   }
 };
-inline void socket_wait(int fd, short events, uint64_t end, const std::atomic<bool>& stop) {
+inline void socket_wait(int fd, short events, uint64_t end, const std::atomic<bool>& stop, const std::shared_ptr<const ExitAdmission::Peer>& identity = {}) {
   while (!stop.load()) {
+    require(!identity || !identity->revoked.load(), "relay_peer_revoked");
     require(monotonic_ms() < end, "relay_socket_timeout"); pollfd p{fd, events, 0};
     int rc = poll(&p, 1, 25); require(rc >= 0 || errno == EINTR, "relay_poll");
     if (rc > 0) {
@@ -78,11 +79,12 @@ inline FirstHello socket_hello(int fd, uint64_t end, const std::atomic<bool>& st
   }
   throw std::runtime_error("relay_hello_state");
 }
-inline void socket_connect(int fd, const Destination& dst, uint64_t end, const std::atomic<bool>& stop) {
+inline void socket_connect(int fd, const Destination& dst, uint64_t end, const std::atomic<bool>& stop, const std::shared_ptr<const ExitAdmission::Peer>& identity = {}) {
+  require(!identity || !identity->revoked.load(), "relay_peer_revoked");
   auto a = socket_address(dst);
   int rc = connect(fd, reinterpret_cast<sockaddr*>(&a), sizeof(a));
   require(rc == 0 || errno == EINPROGRESS, "relay_connect");
-  if (rc != 0) socket_wait(fd, POLLOUT, end, stop);
+  if (rc != 0) socket_wait(fd, POLLOUT, end, stop, identity);
   int error = 0; socklen_t n = sizeof(error);
   require(getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &n) == 0 && !error, "relay_connect");
 }
@@ -98,14 +100,14 @@ inline void relay_session(int accepted, bool client, const SniAuthorization& aut
   RelaySocket left(accepted); limits.check();
   const int one = 1; require(setsockopt(left.fd,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(one)) == 0, "relay_socket_option");
   const auto started = monotonic_ms(); auto first = socket_hello(left.fd, started + limits.hello_ms, stop);
-  Destination target; Bytes prefix; std::string output_sni; std::shared_ptr<void> quota;
+  Destination target; Bytes prefix; std::string output_sni; std::shared_ptr<void> quota; std::shared_ptr<const ExitAdmission::Peer> identity;
   if (client) {
     policy.check(client_origin); target = exit;
     prefix = auth.seal(first.hello, client_origin, wall_seconds()); output_sni = parse(prefix).sni;
   } else {
     auto clock = [] { return std::make_pair(wall_seconds(), monotonic_ms()); };
     AuthorizedHello authorized;
-    if (admission) { auto session = admission->accept(first.hello,policy,clock); authorized = std::move(session.hello); quota = std::move(session.lease); }
+    if (admission) { auto session = admission->accept(first.hello,policy,clock); authorized = std::move(session.hello); quota = std::move(session.lease); identity = std::move(session.identity); }
     else authorized = auth.accept(first.hello,policy,replay,clock);
     target = authorized.destination; prefix = std::move(authorized.restored); output_sni = std::move(authorized.origin_sni);
   }
@@ -117,7 +119,7 @@ inline void relay_session(int accepted, bool client, const SniAuthorization& aut
   // All exit admission, including replay reservation, precedes this connect.
   // A failed connect still consumes the token. No alternate destination retry.
   if (!client) policy.check(target); // recheck after durable I/O, immediately before connect
-  socket_connect(right.fd, target, monotonic_ms() + limits.connect_ms, stop);
+  socket_connect(right.fd, target, monotonic_ms() + limits.connect_ms, stop, identity);
   Queue to_right, to_left;
   auto push = [&](Queue& q, Bytes b) {
     require(b.size() <= RelayLimits::queue_bytes - q.size(), "relay_queue_limit");
@@ -135,6 +137,7 @@ inline void relay_session(int accepted, bool client, const SniAuthorization& aut
   // One feed can finish an already buffered 64 KiB hello and emit its tail.
   constexpr size_t reserve = 128 * 1024;
   while (!stop.load()) {
+    require(!identity || !identity->revoked.load(), "relay_peer_revoked");
     const auto now = monotonic_ms(); gate.check_timeout(now);
     require(now - started < limits.lifetime_ms && now - last_io < limits.idle_ms &&
             (!drain_started || now - drain_started < limits.drain_ms), "relay_session_timeout");

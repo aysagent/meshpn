@@ -53,7 +53,7 @@ struct TransparentConfig {
       require(!p.empty() && p.front() == '/' && p.find('\0') == std::string::npos, "relay_secret_path"); return p;
     };
     if (j.contains("peers")) {
-      const auto& list = j.at("peers"); require(list.is_array() && !list.empty() && list.size() <= 32, "relay_peer_config");
+      const auto& list = j.at("peers"); require(list.is_array() && list.size() <= 32, "relay_peer_config");
       std::set<std::string> ids;
       for (const auto& p : list) {
         require(p.is_object() && p.size() == 2 && p.contains("id") && p.contains("secret_path"), "relay_peer_config");

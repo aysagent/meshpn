@@ -67,6 +67,22 @@ struct Child {
     }
     throw std::runtime_error("state_timeout: "+wanted);
   }
+  json await_reload(const char* status,uint64_t revision) {
+    const auto end=Clock::now()+std::chrono::seconds(3);
+    while(Clock::now()<end) {
+      size_t e;
+      while((e=input.find('\n'))!=std::string::npos) {
+        auto j=json::parse(input.substr(0,e));input.erase(0,e+1);
+        if(j.at("event")!="peer_reload")continue;
+        require(j.at("status")==status&&j.at("revision")==revision,"reload_result");
+        require(j.at("config_sha256").get<std::string>().size()==64,"reload_digest");
+        std::cout<<"RELOAD_ACK "<<j.dump()<<"\n";return j;
+      }
+      char b[4096];auto n=read(events,b,sizeof(b));
+      if(n>0)input.append(b,n);else {require(n!=0,"reload_engine_exit");pollfd p{events,POLLIN,0};poll(&p,1,10);}
+    }
+    throw std::runtime_error("reload_ack_timeout");
+  }
   void reject_for(int ms){
     auto end=Clock::now()+std::chrono::milliseconds(ms);bool attempted=false;
     while(Clock::now()<end){
@@ -206,6 +222,38 @@ int main(int argc,char** argv){
   signal(SIGPIPE,SIG_IGN);
   std::cout<<std::unitbuf;
   try{
+    if(argc==5&&std::string(argv[4])=="peer-reload") {
+      const std::string directory=argv[2], config=argv[3];
+      const auto a_config=directory+"/a.json",b_config=directory+"/b.json",rotated_config=directory+"/rotated.json";
+      Child server(argv[1],config.c_str(),true);server.await_state("listening");
+      Child a(argv[1],a_config.c_str());a.await_state("ready");server.await_state("ready");
+      const auto server_pid=server.pid,client_pid=a.pid;uint64_t revision=0;
+      auto reload=[&](const char* stage,bool valid) {
+        std::ifstream source(directory+"/"+stage+".json");require(bool(source),"reload_stage_file");
+        const std::string bytes((std::istreambuf_iterator<char>(source)),std::istreambuf_iterator<char>());
+        {std::ofstream output(config+".next");output<<bytes;require(bool(output),"reload_stage_write");}
+        require(rename((config+".next").c_str(),config.c_str())==0,"reload_stage_rename");
+        require(kill(server.pid,SIGHUP)==0,"reload_signal");
+        auto ack=server.await_reload(valid?"applied":"rejected",revision+(valid?1:0));if(valid)++revision;
+        require(server.pid==server_pid&&a.pid==client_pid,"reload_pid_changed");
+      };
+      reload("add",true);Child b(argv[1],b_config.c_str());b.await_state("ready");
+      for(int i=0;i<10;++i){peer_transfer(a,server,b,false,2);peer_transfer(server,b,a,true,3);}
+      a.healthy_status();
+      for(const auto stage:{"invalid","immutable","missing-key"}) {
+        reload(stage,false);peer_transfer(b,server,a,false,3);peer_transfer(server,a,b,true,2);a.healthy_status();
+      }
+      if(std::ifstream(directory+"/invalid-relay.json")){reload("invalid-relay",false);peer_transfer(b,server,a,false,3);a.healthy_status();}
+      reload("rotate",true);b.reject_for(700);
+      Child rotated(argv[1],rotated_config.c_str());rotated.await_state("ready");
+      peer_transfer(rotated,server,a,false,3);peer_transfer(server,a,rotated,true,2);a.healthy_status();
+      b.stop();reload("revoke",true);rotated.reject_for(700);
+      transfer(a,server,65535,false,55);transfer(server,a,65535,true,56);a.healthy_status();
+      rotated.stop();reload("deny",true);a.reject_for(700);a.stop();
+      server.stop();
+      std::cout<<"PEER_RELOAD_PASS add_invalid_immutable_missing_rotate_revoke_deny_no_restart_preserve_unaffected\n";
+      return 0;
+    }
     if(argc==6&&std::string(argv[4])=="h2-budget"){
       const int count=std::stoi(argv[5]);require(count==1||count==4||count==8,"budget_peer_count");
       h2_budget(argv[1],argv[2],argv[3],count);return 0;
@@ -405,20 +453,30 @@ int main(int argc,char** argv){
     }
     // Bounded two-host probe. The fixture owns a datagram socketpair, never a
     // TUN or host route. Each endpoint runs separately with fresh trial keys.
-    if(argc==4&&(std::string(argv[3])=="wan-client"||std::string(argv[3])=="wan-exit")){
+    if((argc==4||argc==5)&&(std::string(argv[3])=="wan-client"||std::string(argv[3])=="wan-exit")){
       const bool client=std::string(argv[3])=="wan-client";
+      in_addr peer_ip{};const std::string peer_text=argc==5?argv[4]:"10.99.0.2";
+      require(inet_pton(AF_INET,peer_text.c_str(),&peer_ip)==1,"wan_peer_ipv4");
+      const uint32_t address=ntohl(peer_ip.s_addr);
+      require((address&0xffffff00)==0x0a630000&&(address&255)>=2&&(address&255)<=254,"wan_peer_ipv4");
+      auto packet_for=[&](size_t size,bool reverse,uint8_t seed){
+        auto bytes=packet(size,reverse,seed);std::memcpy(bytes.data()+(reverse?16:12),&peer_ip.s_addr,4);
+        bytes[10]=bytes[11]=0;uint32_t sum=0;for(size_t i=0;i<20;i+=2)sum+=(uint16_t(bytes[i])<<8)|bytes[i+1];
+        while(sum>>16)sum=(sum&65535)+(sum>>16);
+        bytes[10]=(~sum)>>8;bytes[11]=~sum;return bytes;
+      };
       Child peer(argv[1],argv[2],!client);peer.await_state(client?"ready":"listening");
       if(!client){std::cout<<"WAN_LISTENING"<<std::endl;peer.await_state("ready",60000);}
       auto receive=[&](const Bytes& expected){pollfd p{peer.packet,POLLIN,0};require(poll(&p,1,10000)>0,"wan_packet_timeout");Bytes got(65536);const auto n=recv(peer.packet,got.data(),got.size(),0);require(n>0,"wan_packet_read");got.resize(n);require(got==expected,"wan_packet_bytes");};
       auto send_packet=[&](const Bytes& b){require(send(peer.packet,b.data(),b.size(),0)==ssize_t(b.size()),"wan_packet_send");};
       unsigned count=0;size_t bytes=0;
       for(unsigned round=0;round<8;round++)for(size_t size:{64,1400,16384,65535}){
-        if(client){send_packet(packet(size,false,count));receive(packet(size,true,count));}
-        else{receive(packet(size,false,count));send_packet(packet(size,true,count));}
+        if(client){send_packet(packet_for(size,false,count));receive(packet_for(size,true,count));}
+        else{receive(packet_for(size,false,count));send_packet(packet_for(size,true,count));}
         count++;bytes+=size;
       }
       // Exit must not stop before its final downlink has actually arrived.
-      if(client)send_packet(packet(64,false,250));else receive(packet(64,false,250));
+      if(client)send_packet(packet_for(64,false,250));else receive(packet_for(64,false,250));
       if(client)std::this_thread::sleep_for(std::chrono::milliseconds(300));
       peer.stop();std::cout<<json({{"kind","native-wan-fixture"},{"role",client?"client":"exit"},{"packets_each_direction",count},{"bytes_each_direction",bytes},{"status","passed"},{"real_tun",false}}).dump()<<std::endl;return 0;
     }

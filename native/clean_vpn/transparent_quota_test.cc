@@ -48,6 +48,16 @@ static void same_address_sockets(const Hello& h, const std::vector<std::shared_p
   auto c=connect(1),pc=receive_origin();need(admission->active()==3);
   // Both identities arrive from precisely the same source IPv4, not different NATs.
   for(auto* app:{a.get(),b.get(),c.get()}){sockaddr_in local{};socklen_t n=sizeof(local);need(getsockname(app->fd,reinterpret_cast<sockaddr*>(&local),&n)==0&&ntohl(local.sin_addr.s_addr)==0x7f000001);}
+  // Reload retains the first identity and its quota, but cancels the second.
+  // Both were authenticated from the same source address.
+  auto kept=admission->retained(*keys[0],"");need(bool(kept));
+  admission->replace({kept});
+  until([&]{char byte;const auto n=recv(c->fd,&byte,1,0);return n==0||(n<0&&errno==ECONNRESET);});
+  until([&]{return admission->active()==2;});
+  for(auto* app:{a.get(),b.get()}){char byte;need(recv(app->fd,&byte,1,0)<0&&errno==EAGAIN);}
+  auto denied=connect(1);until([&]{char byte;const auto n=recv(denied->fd,&byte,1,0);return n==0||(n<0&&errno==ECONNRESET);});
+  need(accept4(origin.fd,nullptr,nullptr,SOCK_NONBLOCK|SOCK_CLOEXEC)<0&&errno==EAGAIN);
+  admission->replace({});until([&]{return admission->active()==0;});
   exit.reset();need(admission->active()==0);
 }
 int main() { try {
@@ -101,11 +111,22 @@ int main() { try {
   credentials.initialize();fails([&]{credentials.initialize();},"relay_peer_replay_exists_or_create_failed");
   const auto saved=token(0);
   {auto live=credentials.open();auto first=live->accept(saved,policy,clock);auto second=live->accept(token(1),policy,clock);need(live->active()==2);}
-  {auto reopened=credentials.open();fails([&]{reopened->accept(saved,policy,clock);},"relay_replayed");}
+  {auto reopened=credentials.open();fails([&]{reopened->accept(saved,policy,clock);},"relay_replayed");
+    // Live replacement must reuse the locked ReplayWindow, never reset/reopen it.
+    auto next=credentials.prepare(*reopened);need(next.size()==2);
+    reopened->replace(std::move(next));fails([&]{reopened->accept(saved,policy,clock);},"relay_replayed");
+    auto bad=config;bad["peers"][1]["id"]="changed-path";TransparentConfig changed(bad);
+    RelayCredentials moved(changed,[](const std::string& p){std::string key(32,0);key[0]=p=="/key-a"?1:2;return key;});
+    fails([&]{moved.prepare(*reopened);},"relay_reload_replay_path_changed");
+    auto ok=reopened->accept(token(1),policy,clock);need(reopened->active()==1);
+    auto retained=reopened->retained(*keys[1],std::string(temp)+"/b");need(bool(retained));
+    reopened->replace({retained});need(!ok.identity->revoked.load()&&reopened->active()==1);
+    reopened->replace({});need(ok.identity->revoked.load());ok.lease.reset();need(reopened->active()==0);
+  }
   // Removing a peer revokes its key; retained peer keeps its original replay scope.
   config["peers"].erase(0);TransparentConfig revoked(config);
   RelayCredentials remaining(revoked,[](const std::string&){std::string key(32,0);key[0]=2;return key;});
   {auto live=remaining.open();fails([&]{live->accept(token(0),policy,clock);},"relay_token_auth");auto ok=live->accept(token(1),policy,clock);}
-  std::cout<<"QUOTA_PASS=key_identity_per_peer_global_concurrent_release_replay_revocation_config_same_ip_sockets\n";
+  std::cout<<"QUOTA_PASS=key_identity_per_peer_global_concurrent_release_replay_revocation_config_same_ip_sockets_live_reload\n";
   return 0;
 } catch(const std::exception& e){std::cerr<<e.what()<<"\n";return 1;} }

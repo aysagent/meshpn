@@ -20,6 +20,7 @@
 #include <nghttp2/nghttp2.h>
 #include <openssl/ssl.h>
 #include <openssl/hmac.h>
+#include <openssl/sha.h>
 #include <openssl/rand.h>
 #include <openssl/mem.h>
 #include <arpa/inet.h>
@@ -45,6 +46,8 @@ using json = nlohmann::json;
 using namespace cvpn;
 using Clock = std::chrono::steady_clock;
 static volatile sig_atomic_t interrupted = 0;
+static volatile sig_atomic_t reload_requested = 0;
+static void on_reload(int) { reload_requested = 1; }
 static void on_signal(int) { interrupted = 1; }
 static void check(bool ok, const char* msg) { if (!ok) throw std::runtime_error(msg); }
 struct Fd {
@@ -107,7 +110,7 @@ struct Config {
     peer_ipv4=j.value("peer_ipv4",peer_ipv4);peer_address=peer_ip(peer_ipv4);
     if(j.contains("peers")){
       check(!client&&!j.contains("secret_path")&&!j.contains("peer_ipv4"),"peer_config_conflict");
-      const auto& list=j.at("peers");check(list.is_array()&&!list.empty()&&list.size()<=32,"peer_limit");
+      const auto& list=j.at("peers");check(list.is_array()&&list.size()<=32,"peer_limit");
       for(const auto& p:list){
         check(p.is_object()&&p.size()==2&&p.contains("ipv4")&&p.contains("secret_path"),"peer_config");
         Peer next{peer_ip(p.at("ipv4").get<std::string>()),file(p.at("secret_path").get<std::string>(),32,true)};
@@ -128,6 +131,44 @@ struct Config {
     } else {cert=j.at("cert").get<std::string>(); key=j.at("key").get<std::string>();}
   }
   ~Config(){for(auto& p:peers)OPENSSL_cleanse(p.secret.data(),p.secret.size());}
+};
+// Local signal only; no network-facing configuration endpoint. A reload may
+// replace identities, never listeners, TLS settings, paths of replay roots,
+// policy, limits or routing. The caller prepares all resources before commit.
+class PeerReload {
+  std::string path_, active_digest_;
+  json immutable_;
+  uint64_t revision_=0;
+  static json immutable(json value) {
+    if(value.value("transport",std::string{})=="combo-tls") {
+      value["boring"]=immutable(value.at("boring"));
+      value["transparent"]=immutable(value.at("transparent"));
+    } else {
+      value.erase("peers");value.erase("secret_path");value.erase("peer_ipv4");
+    }
+    return value;
+  }
+  static std::string digest(const std::string& bytes) {
+    uint8_t out[SHA256_DIGEST_LENGTH];SHA256(reinterpret_cast<const uint8_t*>(bytes.data()),bytes.size(),out);
+    constexpr char hex[]="0123456789abcdef";std::string text; text.reserve(sizeof(out)*2);
+    for(auto b:out){text+=hex[b>>4];text+=hex[b&15];}return text;
+  }
+public:
+  PeerReload(std::string path,const std::string& raw)
+    :path_(std::move(path)),active_digest_(digest(raw)),immutable_(immutable(json::parse(raw))){}
+  template<class Apply> void poll(Apply apply) {
+    if(!reload_requested)return;
+    reload_requested=0;std::string requested;bool success=false;
+    try {
+      const auto raw=file(path_,16384);requested=digest(raw);const auto next=json::parse(raw);
+      check(next.at("role")=="exit"&&immutable(next)==immutable_,"reload_immutable_config");
+      auto committed_digest=requested; // Allocate before the publication boundary.
+      apply(next); ++revision_;active_digest_.swap(committed_digest);success=true;
+    }catch(const std::exception&){} // No file contents or key material in diagnostics.
+    auto record=json({{"version",1},{"event","peer_reload"},{"status",success?"applied":"rejected"},
+      {"revision",revision_},{"config_sha256",requested},{"active_config_sha256",active_digest_}}).dump()+"\n";
+    if(write(STDOUT_FILENO,record.data(),record.size())!=ssize_t(record.size()))interrupted=1;
+  }
 };
 struct Control {
   int input_fd=STDIN_FILENO;
@@ -613,7 +654,8 @@ static void handshake(SSL* ssl,int fd,Control& ctl,Clock::time_point deadline,ui
 }
 // One bounded reactor owns listener, sessions and TUN. Slow TLS/auth peers do
 // not block established tunnels; no per-packet threads, processes or IPC.
-static void run_exit(const Config& config,SSL_CTX* context,int listener,int tun,Control& ctl,combo::Exit* dispatch=nullptr){
+static void run_exit(Config& config,SSL_CTX* context,int listener,int tun,Control& ctl,PeerReload& reload,
+                     combo::Exit* dispatch=nullptr,std::shared_ptr<transparent::ExitAdmission> relay_admission={}){
   struct Connection {
     Fd fd;
     std::unique_ptr<SSL,decltype(&SSL_free)> ssl{nullptr,SSL_free};
@@ -630,6 +672,42 @@ static void run_exit(const Config& config,SSL_CTX* context,int listener,int tun,
   uint64_t generation=ctl.generation;
   while(!ctl.stop&&!interrupted){
     ctl.read_commands();if(ctl.stop)break;
+    reload.poll([&](const json& next) {
+      std::unique_ptr<combo::Config> combined;
+      if(dispatch)combined=std::make_unique<combo::Config>(next);
+      Config candidate(combined?combined->boring:next);check(!candidate.client,"reload_exit_only");
+      std::unique_ptr<transparent::RelayCredentials> credentials;
+      transparent::ExitAdmission::Peers relay_peers;
+      if(combined) {
+        credentials=std::make_unique<transparent::RelayCredentials>(combined->relay,[&](const std::string& path) {
+          auto key=file(path,32,true);bool separate=true;
+          for(const auto& peer:candidate.peers)separate=separate&&key!=peer.secret;
+          if(!separate){OPENSSL_cleanse(key.data(),key.size());check(false,"combo_separate_keys");}
+          return key;
+        });
+        relay_peers=credentials->prepare(*relay_admission);
+      }
+      // Determine deletions before the allocation-free publication phase. A
+      // pending authentication is discarded too: it must use one generation.
+      std::set<Connection*> remove;
+      for(const auto& entry:connections) {
+        const auto& session=entry->session;bool keep=false;
+        if(session&&session->ready)for(const auto& old:config.peers)
+          if(old.address==session->peer_address)for(const auto& fresh:candidate.peers)
+            keep=keep||(fresh.address==old.address&&fresh.secret==old.secret);
+        if(!keep)remove.insert(entry.get());
+      }
+      auto commit=[&]() noexcept {
+        for(auto it=connections.begin();it!=connections.end();) {
+          if(!remove.count(it->get())){++it;continue;}
+          if((*it)->session){auto owner=owners.find((*it)->session->peer_address);
+            if(owner!=owners.end()&&owner->second==(*it)->session.get())owners.erase(owner);}
+          it=connections.erase(it);
+        }
+        config.peers.swap(candidate.peers);
+      };
+      if(relay_admission)relay_admission->replace(std::move(relay_peers),commit);else commit();
+    });
     if(!ctl.uplink||generation!=ctl.generation){connections.clear();owners.clear();generation=ctl.generation;}
     if(!ctl.uplink){pollfd p{ctl.input_fd,POLLIN,0};poll(&p,1,50);continue;}
     auto now=Clock::now();
@@ -721,7 +799,7 @@ static void run_exit(const Config& config,SSL_CTX* context,int listener,int tun,
     check(poll(fds.data(),fds.size(),10)>=0||errno==EINTR,"poll");
   }
 }
-static int transparent_engine(const json& j, bool validate, bool initialize, bool service) {
+static int transparent_engine(const json& j, bool validate, bool initialize, bool service, PeerReload& reload) {
   namespace tr = cvpn::transparent;
   tr::TransparentConfig c(j);
   tr::RelayCredentials credentials(c,[](const std::string& p){return file(p,32,true);});
@@ -746,18 +824,25 @@ static int transparent_engine(const json& j, bool validate, bool initialize, boo
     check(notify.state("listening"),"relay_notify");
     constexpr char ready[]="{\"event\":\"state\",\"state\":\"listening\",\"transport\":\"transparent-tls\"}\n";
     check(write(STDOUT_FILENO,ready,sizeof(ready)-1)==ssize_t(sizeof(ready)-1),"relay_output");
-    while(!interrupted&&!relay.broken) poll(nullptr,0,25);
+    while(!interrupted&&!relay.broken) {
+      if(!c.client)reload.poll([&](const json& next) {
+        tr::TransparentConfig candidate(next);
+        tr::RelayCredentials keys(candidate,[](const std::string& p){return file(p,32,true);});
+        admission->replace(keys.prepare(*admission));
+      });
+      poll(nullptr,0,25);
+    }
     broken=relay.broken;
   }
   check(notify.state("stopped"),"relay_notify");return broken?1:0;
 }
 int main(int argc,char** argv){
-  signal(SIGPIPE,SIG_IGN);signal(SIGTERM,on_signal);signal(SIGINT,on_signal);
+  signal(SIGPIPE,SIG_IGN);signal(SIGTERM,on_signal);signal(SIGINT,on_signal);signal(SIGHUP,on_reload);
   try{
     if(argc==2&&std::string(argv[1])=="--capabilities"){
       std::cout<<json({{"version",1},{"engine","clean-vpn-native-m1"},{"transport","boring-tls"},
         {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2","http/1.1"}},{"http_versions",{"2","1.1","auto"}},
-        {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"connection_modes",{"on-demand","persistent"}},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
+        {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"connection_modes",{"on-demand","persistent"}},{"multi_peer",true},{"peer_reload",{{"signal","SIGHUP"},{"exit_only",true},{"event","peer_reload"},{"empty_peers",true}}},{"max_peers",32},{"browser_profiles",false},
         {"experimental_tls_profiles",{{"schema",1},{"scenario","cold"},{"prewire_check",true},{"certificate_compression",{2}},{"alps",{{"codepoint",17613},{"http2_settings",true},{"experimental",true}}},{"transports",{"boring-tls","combo-tls-boring"}}}},
         {"profile_policy",profile_policy::describe()},{"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
         {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"destination_policies",{"explicit-ipv4-destinations","public-https"}},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true},{"relay_client_keys",true},{"relay_limits",{{"default_sessions",128},{"default_per_client",64},{"max_sessions",256},{"pending",16},{"queue_bytes_per_direction",262144}}}}},
@@ -772,10 +857,11 @@ int main(int argc,char** argv){
     int count=effective_argc-(service?1:0);
     check(validate||initialize||((count==3||count==5)&&std::string(argv[1])=="--config"),"usage_config");int test=-1;
     if(count==5){check(std::string(argv[3])=="--test-packet-fd","usage_fixture");test=std::stoi(argv[4]);check(test>2,"fixture_fd");}
-    const auto config=json::parse(file(argv[2],16384));
+    const auto raw_config=file(argv[2],16384);const auto config=json::parse(raw_config);
+    PeerReload reload(argv[2],raw_config);
     if(config.is_object()&&config.value("transport",std::string{})=="transparent-tls"){
       check(!clock_recovery,"clock_recovery_boring_client_only");
-      check(test<0,"relay_no_packet_fd");return transparent_engine(config,validate,initialize,service);
+      check(test<0,"relay_no_packet_fd");return transparent_engine(config,validate,initialize,service,reload);
     }
     std::unique_ptr<combo::Config> combined;
     if(config.is_object()&&config.value("transport",std::string{})=="combo-tls") {
@@ -832,7 +918,7 @@ int main(int argc,char** argv){
       OPENSSL_cleanse(secret.data(),secret.size());
       auto result=json({{"valid",true},{"role",c.client?"client":"exit"},{"peers",c.client?1:c.peers.size()}});
       if(c.tls_profile)result["tls_profile"]=c.tls_profile->report();
-      if(combined){result["transport"]="combo-tls";result["relay_limits"]={{"sessions",combined->relay.limits.sessions},{"per_client",combined->relay.limits.per_client}};result["relay_identities"]=combined->relay.peers.empty()?1:combined->relay.peers.size();}
+      if(combined){result["transport"]="combo-tls";result["relay_limits"]={{"sessions",combined->relay.limits.sessions},{"per_client",combined->relay.limits.per_client}};result["relay_identities"]=!combined->relay.secret_path.empty()?1:combined->relay.peers.size();}
       std::cout<<result.dump()<<"\n";return 0;
     }
     if(!service)nonblock(STDIN_FILENO);
@@ -848,6 +934,7 @@ int main(int argc,char** argv){
     }
     std::unique_ptr<transparent::RelayListener> combo_client;
     std::unique_ptr<combo::Exit> combo_exit;
+    std::shared_ptr<transparent::ExitAdmission> relay_admission;
     if(combined) {
       const auto& relay=combined->relay;
       if(c.client) {
@@ -861,14 +948,14 @@ int main(int argc,char** argv){
           relay.policy(),relay.limits,std::shared_ptr<transparent::ReplayWindow>{},true);
         ctl.branch_failed=&combo_client->broken;
       } else {
-        auto admission=combo_credentials->open();
+        relay_admission=combo_credentials->open();
         const int owned=listener.n;listener.n=-1;
-        combo_exit=std::make_unique<combo::Exit>(owned,combo_credentials->primary(),relay.public_name,relay.policy(),std::shared_ptr<transparent::ReplayWindow>{},relay.limits,std::move(admission));
+        combo_exit=std::make_unique<combo::Exit>(owned,combo_credentials->primary(),relay.public_name,relay.policy(),std::shared_ptr<transparent::ReplayWindow>{},relay.limits,relay_admission);
         ctl.branch_failed=&combo_exit->broken;
       }
     }
     ctl.set(c.client?"idle":"listening");
-    if(!c.client){run_exit(c,ctx.get(),listener.n,tun.n,ctl,combo_exit.get());ctl.set("stopped");return service&&!interrupted?1:0;}
+    if(!c.client){run_exit(c,ctx.get(),listener.n,tun.n,ctl,reload,combo_exit.get(),relay_admission);ctl.set("stopped");return service&&!interrupted?1:0;}
     bool demand_wait=false;Bytes pending;
     while(!ctl.stop&&!interrupted){
       ctl.read_commands();if(ctl.stop)break;
