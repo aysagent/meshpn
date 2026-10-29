@@ -44,6 +44,8 @@ node device/tests/test-wg-clock.mjs
 node device/tests/test-vpn-ingress.mjs
 node device/tests/test-vpn-queue.mjs
 node device/tests/test-vpn-worker-stop.mjs
+node device/tests/test-vpn-init.mjs
+node device/tests/test-vpn-connect.mjs
 node device/tests/test-vpn-udp-batch.mjs
 wg_src=device/managed_components/esphome__wireguard/src
 if [[ -f "$wg_src/crypto/refc/chacha20.c" ]]; then

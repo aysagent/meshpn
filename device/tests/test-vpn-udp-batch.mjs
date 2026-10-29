@@ -24,6 +24,7 @@ const source = `
 #include <sys/socket.h>
 #include <unistd.h>
 #include "meshvpn_vpn.h"
+#include "meshvpn_vpn_stream.h"
 #define MESHVPN_VPN_MTU 1400
 #define LOCK() ((void)0)
 #define UNLOCK() ((void)0)

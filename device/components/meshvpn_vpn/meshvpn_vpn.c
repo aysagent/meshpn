@@ -49,6 +49,11 @@ typedef struct {
     uint16_t lengths[MESHVPN_VPN_RX_BATCH_FRAMES];
     uint8_t data[MESHVPN_VPN_RX_BATCH_BYTES];
 } rx_batch_t;
+typedef struct {
+    meshvpn_vpn_rx_stream_t stream;
+    uint8_t bytes[MESHVPN_VPN_SOCKET_RX_BYTES];
+    rx_batch_t batch;
+} rx_worker_buffers_t;
 static packet_t *s_queue;
 static unsigned s_head, s_count;
 typedef struct {
@@ -581,7 +586,9 @@ static int connect_exit(const meshvpn_vpn_status_t *cfg, esp_tls_t **tls_out)
     struct sockaddr_in remote = { .sin_family = AF_INET, .sin_port = htons(port) };
     memcpy(&remote.sin_addr.s_addr, addr, 4);
     if (bind(fd, (struct sockaddr *)&local, sizeof(local)) < 0) goto fail;
-    fcntl(fd, F_SETFL, O_NONBLOCK); state(cfg->generation, "connecting", false, 0);
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) goto fail;
+    state(cfg->generation, "connecting", false, 0);
     if (datagram) {
         if (connect(fd, (struct sockaddr *)&remote, sizeof(remote)) < 0) goto fail;
         return fd;
@@ -596,13 +603,17 @@ static int connect_exit(const meshvpn_vpn_status_t *cfg, esp_tls_t **tls_out)
     if (rc < 0 && errno != EINPROGRESS) goto fail;
     for (int i = 0; rc < 0 && i < 50 && session(cfg->generation); i++) {
         fd_set wr; FD_ZERO(&wr); FD_SET(fd, &wr); struct timeval tv = { .tv_usec = 100000 };
-        if (select(fd + 1, NULL, &wr, NULL, &tv) > 0) {
+        int ready = select(fd + 1, NULL, &wr, NULL, &tv);
+        if (ready < 0 && errno != EINTR) goto fail;
+        if (ready > 0) {
             int e = 0; socklen_t n = sizeof(e);
-            if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &e, &n) || e) { errno = e; goto fail; } rc = 0;
+            if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &e, &n) < 0) goto fail;
+            if (e) { errno = e; goto fail; }
+            rc = 0;
         }
     }
     if (rc == 0 && session(cfg->generation)) return fd;
-    errno = ETIMEDOUT;
+    errno = session(cfg->generation) ? ETIMEDOUT : ECANCELED;
 fail: { int e = errno; close(fd); errno = e; return -1; }
 }
 static void socket_failure(uint32_t generation, int error, const char *reason)
@@ -867,14 +878,12 @@ static void socket_tx_worker(void *arg)
 }
 static void __attribute__((unused)) worker(void *arg)
 {
-    (void)arg;
-    meshvpn_vpn_rx_stream_t *d = heap_caps_calloc(1, sizeof(*d), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    uint8_t *rx = heap_caps_malloc(MESHVPN_VPN_SOCKET_RX_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    rx_batch_t *rx_batch = heap_caps_calloc(1, sizeof(*rx_batch), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!d || !rx || !rx_batch) {
-        free(d); free(rx); free(rx_batch);
-        state(s.generation, "no_memory", false, ENOMEM); vTaskDelete(NULL); return;
-    }
+    /* Permanent storage is owned by this task, allocated before task creation.
+     * Startup must not report success and then silently lose its RX worker. */
+    rx_worker_buffers_t *buffers = arg;
+    meshvpn_vpn_rx_stream_t *d = &buffers->stream;
+    uint8_t *rx = buffers->bytes;
+    rx_batch_t *rx_batch = &buffers->batch;
     unsigned backoff = 1;
     for (;;) {
         meshvpn_vpn_status_t cfg; meshvpn_vpn_get_status(&cfg);
@@ -1008,24 +1017,32 @@ retry:
 }
 esp_err_t meshvpn_vpn_init(void)
 {
+    if (s.implemented) return ESP_ERR_INVALID_STATE;
     strlcpy(s.state, "disabled", sizeof(s.state)); strlcpy(s.transport, "tcp", sizeof(s.transport));
     strlcpy(s.address, "10.99.0.2", sizeof(s.address)); s.wg_handshake_age = UINT32_MAX;
     /* Keep a blackhole route even in builds without transport workers, so a
      * saved enable flag cannot turn into DIRECT when flashing another build. */
-    if (esp_netif_tcpip_exec(add_netif, NULL) != ESP_OK) return ESP_FAIL;
+    if (!s_ready && esp_netif_tcpip_exec(add_netif, NULL) != ESP_OK) return ESP_FAIL;
 #if CONFIG_MESHVPN_VPN_ENABLE
+    rx_worker_buffers_t *rx_buffers = heap_caps_calloc(1, sizeof(*rx_buffers), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     s_queue = heap_caps_calloc(MESHVPN_VPN_SLOTS, sizeof(packet_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     s_socket_tx_batch = heap_caps_calloc(1, sizeof(*s_socket_tx_batch), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_queue || !s_socket_tx_batch) return ESP_ERR_NO_MEM;
+    if (!rx_buffers || !s_queue || !s_socket_tx_batch) goto failed;
     if (xTaskCreate(socket_tx_worker, "vpn_tx", 4096, s_socket_tx_batch,
-                    MESHVPN_VPN_WORKER_PRIORITY, &s_socket_tx_task) != pdPASS) return ESP_ERR_NO_MEM;
+                    MESHVPN_VPN_WORKER_PRIORITY, &s_socket_tx_task) != pdPASS) goto failed;
     /* ESP-TLS performs the handshake on this task. Keep extra headroom over
      * TCP/UDP without permanently starving Wi-Fi of internal/DMA RAM. */
-    if (xTaskCreate(worker, "vpn_rx", 6144, NULL, MESHVPN_VPN_WORKER_PRIORITY,
-                    &s_socket_rx_task) != pdPASS) {
-        vTaskDelete(s_socket_tx_task); s_socket_tx_task = NULL; return ESP_ERR_NO_MEM;
-    }
+    if (xTaskCreate(worker, "vpn_rx", 6144, rx_buffers, MESHVPN_VPN_WORKER_PRIORITY,
+                    &s_socket_rx_task) != pdPASS) goto failed;
     s.implemented = true;
+    return ESP_OK;
+failed:
+    if (s_socket_tx_task) vTaskDelete(s_socket_tx_task);
+    s_socket_tx_task = s_socket_rx_task = NULL;
+    free(rx_buffers);
+    free(s_socket_tx_batch); s_socket_tx_batch = NULL;
+    free(s_queue); s_queue = NULL;
+    return ESP_ERR_NO_MEM;
 #endif
     return ESP_OK;
 }

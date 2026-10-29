@@ -109,7 +109,7 @@ int main(void)
     assert(meshvpn_hosted_tx_submit(0, (void *)1, "x", 1519, send) == ESP_ERR_INVALID_ARG);
     meshvpn_hosted_tx_throttle(true); clock_us = 1000;
     for (unsigned i = 0; i < MESHVPN_HOSTED_TX_SLOTS; i++) assert(submit(0, i) == ESP_OK);
-    assert(submit(0, 64) == ESP_ERR_ESP_NETIF_NO_MEM);
+    assert(submit(0, 64) == ESP_ERR_ESP_NETIF_TX_FAILED);
     assert(!service(0) && !attempts[0]);
     /* Congested STA must not starve AP, even with a full STA staging queue. */
     assert(submit(1, 0) == ESP_OK && !service(1) && successes[1] == 1);
@@ -139,7 +139,7 @@ int main(void)
     meshvpn_hosted_tx_throttle(false);
     allow_policy = false; assert(stage(0, 65) == ESP_OK && service(0));
     assert(attempts[0] == before && s_stats.queue[0].failed == 1); allow_policy = true;
-    fail_publish = true; assert(stage(0, 65) == ESP_ERR_ESP_NETIF_NO_MEM);
+    fail_publish = true; assert(stage(0, 65) == ESP_ERR_ESP_NETIF_TX_FAILED);
     fail_publish = false; assert_empty();
     assert(submit(0, 65) == ESP_OK && !service(0)); assert_empty();
     concurrent_submit = true; result[0] = ESP_ERR_ESP_NETIF_TX_FAILED;

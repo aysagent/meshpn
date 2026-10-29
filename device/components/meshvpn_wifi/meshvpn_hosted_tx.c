@@ -196,7 +196,10 @@ esp_err_t meshvpn_hosted_tx_submit(unsigned ifx, void *channel, const void *fram
     if (xQueueReceive(s_free[ifx], &slot, 0) != pdTRUE) {
         portENTER_CRITICAL(&s_lock); q->full++; portEXIT_CRITICAL(&s_lock);
         if (direct) release_direct(ifx);
-        return ESP_ERR_ESP_NETIF_NO_MEM;
+        /* wlanif maps TX_FAILED to ERR_BUF/ENOBUFS. NETIF_NO_MEM falls
+         * through to ERR_IF/errno -1 in IDF 5.5.5. This is queue capacity,
+         * not a failed heap allocation. */
+        return ESP_ERR_ESP_NETIF_TX_FAILED;
     }
     tx_slot_t *p = &s_pool[ifx * MESHVPN_HOSTED_TX_SLOTS + slot];
     p->queued_us = esp_timer_get_time(); p->generation = generation; p->policy = policy;
@@ -213,7 +216,7 @@ esp_err_t meshvpn_hosted_tx_submit(unsigned ifx, void *channel, const void *fram
         portENTER_CRITICAL(&s_lock); q->in_use--; q->enqueued--; q->failed++; portEXIT_CRITICAL(&s_lock);
         BaseType_t returned = xQueueSend(s_free[ifx], &slot, 0); assert(returned == pdTRUE);
         if (direct) release_direct(ifx);
-        return ESP_ERR_ESP_NETIF_NO_MEM;
+        return ESP_ERR_ESP_NETIF_TX_FAILED;
     }
     if (direct) release_direct(ifx);
     meshvpn_hosted_tx_capacity();
