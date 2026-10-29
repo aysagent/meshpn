@@ -6,6 +6,7 @@
 #include "service_notify.hpp"
 #include "transparent_config.hpp"
 #include "combo.hpp"
+#include "transparent_credentials.hpp"
 #include "tls_profile.hpp"
 #include "http2_alps.hpp"
 #ifdef CVPN_TEST_PACKET_FD
@@ -666,28 +667,25 @@ static void run_exit(const Config& config,SSL_CTX* context,int listener,int tun,
 static int transparent_engine(const json& j, bool validate, bool initialize, bool service) {
   namespace tr = cvpn::transparent;
   tr::TransparentConfig c(j);
-  struct Secret { std::string bytes; ~Secret() { OPENSSL_cleanse(bytes.data(),bytes.size()); } } secret{file(c.secret_path,32,true)};
-  check(secret.bytes.size()==32,"secret_length"); tr::Digest key{};
-  std::copy(secret.bytes.begin(),secret.bytes.end(),key.begin());
-  struct CleanKey { tr::Digest& key; ~CleanKey() { OPENSSL_cleanse(key.data(),key.size()); } } clean{key};
-  tr::SniAuthorization auth(key,c.public_name);
+  tr::RelayCredentials credentials(c,[](const std::string& p){return file(p,32,true);});
+  const auto& auth=credentials.primary();
   if(validate){std::cout<<json({{"valid",true},{"transport","transparent-tls"},{"role",c.client?"client":"exit"},{"scope",c.public_https?"public-https":"explicit-destinations"}}).dump()<<"\n";return 0;}
   if(initialize){
-    check(!c.client,"relay_init_exit_only"); tr::ReplayWindow replay(c.replay_directory,auth.replay_scope(),true);
+    check(!c.client,"relay_init_exit_only"); credentials.initialize();
     std::cout<<"{\"replay_initialized\":true}\n";return 0;
   }
   check(service,"relay_service_mode_required");
   std::shared_ptr<tr::ReplayWindow> replay;
-  if(!c.client) replay=std::make_shared<tr::ReplayWindow>(c.replay_directory,auth.replay_scope());
+  auto admission=c.client?std::shared_ptr<tr::ExitAdmission>{}:credentials.open();
   tr::RelaySocket listener(socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0));check(listener.fd>=0,"relay_listener");
   int one=1;check(setsockopt(listener.fd,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one))==0,"relay_listener");
   auto address=tr::socket_address(c.listen);
-  check(bind(listener.fd,reinterpret_cast<sockaddr*>(&address),sizeof(address))==0&&listen(listener.fd,16)==0,"relay_listen_bind");
+  check(bind(listener.fd,reinterpret_cast<sockaddr*>(&address),sizeof(address))==0&&listen(listener.fd,128)==0,"relay_listen_bind");
   ServiceNotify notify(true);nonblock(STDOUT_FILENO);
   int owned=listener.fd;listener.fd=-1;
   bool broken=false;
   {
-    tr::RelayListener relay(owned,c.client,auth,{},c.exit,c.policy(),{},replay,c.client);
+    tr::RelayListener relay(owned,c.client,auth,{},c.exit,c.policy(),c.limits,replay,c.client,admission);
     check(notify.state("listening"),"relay_notify");
     constexpr char ready[]="{\"event\":\"state\",\"state\":\"listening\",\"transport\":\"transparent-tls\"}\n";
     check(write(STDOUT_FILENO,ready,sizeof(ready)-1)==ssize_t(sizeof(ready)-1),"relay_output");
@@ -705,7 +703,7 @@ int main(int argc,char** argv){
         {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"connection_modes",{"on-demand","persistent"}},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
         {"experimental_tls_profiles",{{"schema",1},{"scenario","cold"},{"prewire_check",true},{"certificate_compression",{2}},{"alps",{{"codepoint",17613},{"http2_settings",true},{"experimental",true}}},{"transports",{"boring-tls","combo-tls-boring"}}}},
         {"profile_policy",profile_policy::describe()},{"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
-        {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"destination_policies",{"explicit-ipv4-destinations","public-https"}},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true}}},
+        {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"destination_policies",{"explicit-ipv4-destinations","public-https"}},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true},{"relay_client_keys",true},{"relay_limits",{{"default_sessions",128},{"default_per_client",64},{"max_sessions",256},{"pending",16},{"queue_bytes_per_direction",262144}}}}},
           {"combo-tls",{{"roles",{"client","exit"}},{"single_exit_listener",true},{"client_stdio_control",true},{"packet_ipc",false},{"site_provisioning",true}}}}}}).dump()<<"\n";return 0;
     }
     bool validate=argc==3&&std::string(argv[1])=="--check-config";
@@ -733,16 +731,16 @@ int main(int argc,char** argv){
     Config c(combined?combined->boring:config);std::string secret;
     check(!clock_recovery||(c.client&&!combined),"clock_recovery_boring_client_only");
     if(c.client){secret=file(c.secret_path,32,true);check(secret.size()==32,"secret_length");}
-    std::unique_ptr<transparent::SniAuthorization> combo_auth;
+    std::unique_ptr<transparent::RelayCredentials> combo_credentials;
     if(combined) {
-      auto relay_key=file(combined->relay.secret_path,32,true);
-      struct Clean { std::string& s; ~Clean(){OPENSSL_cleanse(s.data(),s.size());} } clean{relay_key};
-      check(relay_key.size()==32,"secret_length");
-      check(!c.client||relay_key!=secret,"combo_separate_keys");
-      for(const auto& peer:c.peers)check(relay_key!=peer.secret,"combo_separate_keys");
-      transparent::Digest key{};std::copy(relay_key.begin(),relay_key.end(),key.begin());
-      struct CleanDigest { transparent::Digest& b; ~CleanDigest(){OPENSSL_cleanse(b.data(),b.size());} } clean_digest{key};
-      combo_auth=std::make_unique<transparent::SniAuthorization>(key,combined->relay.public_name);
+      combo_credentials=std::make_unique<transparent::RelayCredentials>(combined->relay,[&](const std::string& path){
+        auto key=file(path,32,true);
+        // Check before returning key material; always cleanse on rejection.
+        bool separate=!c.client||key!=secret;
+        for(const auto& peer:c.peers)separate=separate&&key!=peer.secret;
+        if(!separate){OPENSSL_cleanse(key.data(),key.size());check(false,"combo_separate_keys");}
+        return key;
+      });
     }
     std::unique_ptr<SSL_CTX,decltype(&SSL_CTX_free)> ctx(SSL_CTX_new(TLS_method()),SSL_CTX_free);check(bool(ctx),"tls_context");
     check(SSL_CTX_set_min_proto_version(ctx.get(),TLS1_3_VERSION)==1&&SSL_CTX_set_max_proto_version(ctx.get(),TLS1_3_VERSION)==1,"tls_version");
@@ -769,14 +767,14 @@ int main(int argc,char** argv){
     }
     if(initialize) {
       check(!c.client,"relay_init_exit_only");
-      transparent::ReplayWindow replay(combined->relay.replay_directory,combo_auth->replay_scope(),true);
+      combo_credentials->initialize();
       std::cout<<"{\"replay_initialized\":true}\n";return 0;
     }
     if(validate){
       OPENSSL_cleanse(secret.data(),secret.size());
       auto result=json({{"valid",true},{"role",c.client?"client":"exit"},{"peers",c.client?1:c.peers.size()}});
       if(c.tls_profile)result["tls_profile"]=c.tls_profile->report();
-      if(combined)result["transport"]="combo-tls";
+      if(combined){result["transport"]="combo-tls";result["relay_limits"]={{"sessions",combined->relay.limits.sessions},{"per_client",combined->relay.limits.per_client}};result["relay_identities"]=combined->relay.peers.empty()?1:combined->relay.peers.size();}
       std::cout<<result.dump()<<"\n";return 0;
     }
     if(!service)nonblock(STDIN_FILENO);
@@ -788,7 +786,7 @@ int main(int argc,char** argv){
     Fd listener;
     if(!c.client){
       listener.n=socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);check(listener.n>=0,"listen_socket");int one=1;setsockopt(listener.n,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));
-      auto addr=endpoint(c);check(bind(listener.n,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))==0&&listen(listener.n,8)==0,"listen_bind");
+      auto addr=endpoint(c);check(bind(listener.n,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))==0&&listen(listener.n,combined?128:8)==0,"listen_bind");
     }
     std::unique_ptr<transparent::RelayListener> combo_client;
     std::unique_ptr<combo::Exit> combo_exit;
@@ -799,15 +797,15 @@ int main(int argc,char** argv){
         check(socket.fd>=0,"combo_listener");int one=1;
         check(setsockopt(socket.fd,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one))==0,"combo_listener");
         const auto address=transparent::socket_address(relay.listen);
-        check(bind(socket.fd,reinterpret_cast<const sockaddr*>(&address),sizeof(address))==0&&listen(socket.fd,16)==0,"combo_bind");
+        check(bind(socket.fd,reinterpret_cast<const sockaddr*>(&address),sizeof(address))==0&&listen(socket.fd,128)==0,"combo_bind");
         const int owned=socket.fd;socket.fd=-1;
-        combo_client=std::make_unique<transparent::RelayListener>(owned,true,*combo_auth,transparent::Destination{},relay.exit,
-          relay.policy(),transparent::RelayLimits{},std::shared_ptr<transparent::ReplayWindow>{},true);
+        combo_client=std::make_unique<transparent::RelayListener>(owned,true,combo_credentials->primary(),transparent::Destination{},relay.exit,
+          relay.policy(),relay.limits,std::shared_ptr<transparent::ReplayWindow>{},true);
         ctl.branch_failed=&combo_client->broken;
       } else {
-        auto replay=std::make_shared<transparent::ReplayWindow>(relay.replay_directory,combo_auth->replay_scope());
+        auto admission=combo_credentials->open();
         const int owned=listener.n;listener.n=-1;
-        combo_exit=std::make_unique<combo::Exit>(owned,*combo_auth,relay.public_name,relay.policy(),std::move(replay));
+        combo_exit=std::make_unique<combo::Exit>(owned,combo_credentials->primary(),relay.public_name,relay.policy(),std::shared_ptr<transparent::ReplayWindow>{},relay.limits,std::move(admission));
         ctl.branch_failed=&combo_exit->broken;
       }
     }

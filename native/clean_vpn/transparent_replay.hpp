@@ -92,6 +92,7 @@ public:
 #ifdef CVPN_TEST_REPLAY_JOURNAL
   inline static void (*fault_hook)(const char*) = nullptr;
 #endif
+  static int open_directory(const std::string& path) { return directory(path); }
   const Digest& scope() const { return scope_; }
   ReplayJournal(const std::string& path, const Digest& scope, bool initialize = false)
       : dir_(directory(path)), lock_(lock_file(initialize)), scope_(scope) {

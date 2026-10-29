@@ -76,6 +76,17 @@ public:
                  context.size(), replay_scope_.data(), &n) && n == replay_scope_.size(), "relay_crypto");
   }
   const Digest& replay_scope() const { return replay_scope_; }
+  // Bounded exit key-ring lookup; no client-controlled identity or wire change.
+  // Only AEAD success selects a quota. Full binding/policy/replay follows below.
+  bool authenticates(const Hello& incoming) const {
+    const auto wire = decode(incoming.sni);
+    require(wire.size() >= 12 + 16 + 49, "relay_token_format");
+    Bytes pt(wire.size()); size_t n = 0;
+    const bool ok = EVP_AEAD_CTX_open(aead_.get(), pt.data(), &n, pt.size(), wire.data(), 12,
+      wire.data()+12, wire.size()-12, reinterpret_cast<const uint8_t*>(aad_.data()), aad_.size()) == 1;
+    OPENSSL_cleanse(pt.data(),pt.size()); return ok;
+  }
+
   // n1 is a new native wire format, independent of legacy Node enc-SNI v2.
   // Authenticate the ORIGINAL record prefix as well as destination and SNI.
   Bytes seal(const Hello& hello, const Destination& dst, uint64_t wall) const {

@@ -68,6 +68,7 @@ class Exit {
   tr::DestinationPolicy policy_;
   std::shared_ptr<tr::ReplayWindow> replay_;
   tr::RelayLimits limits_;
+  std::shared_ptr<tr::ExitAdmission> admission_;
   std::atomic<bool> stop_{false};
   std::atomic<size_t> peeking_{0}, relaying_{0};
   std::mutex mutex_;
@@ -87,15 +88,15 @@ class Exit {
       if (accepted.fd < 0) { tr::require(errno == EAGAIN || errno == EINTR, "combo_accept"); continue; }
       const auto now = tr::monotonic_ms();
       if (now - window >= 1000) { window = now; admissions = 0; }
-      if (admissions >= 32 || peeking_ >= 16 || jobs_.size() >= 32) { ++dropped; continue; }
+      if (admissions >= 32 || peeking_ >= 16 || jobs_.size() >= limits_.sessions + tr::RelayLimits::pending) { ++dropped; continue; }
       ++admissions; ++peeking_;
       auto job = std::make_unique<Job>(); auto* done = &job->done; const int fd = accepted.fd;
       job->thread = std::thread([this, fd, done, now] {
         tr::RelaySocket socket(fd); bool pending = true, relay = false;
         try {
           const auto branch = peek(socket.fd,name_,now + limits_.hello_ms,stop_);
-          --peeking_; pending = false;
           if (branch == Branch::boring) {
+            --peeking_; pending = false;
             std::lock_guard<std::mutex> lock(mutex_);
             tr::require(boring_.size() < 16, "combo_boring_queue");
             auto owned = std::make_unique<tr::RelaySocket>(socket.fd); socket.fd = -1;
@@ -103,10 +104,11 @@ class Exit {
             ++boring_selected;
           } else {
             const auto previous = relaying_.fetch_add(1); relay = true;
-            tr::require(previous < limits_.sessions, "combo_relay_limit");
+            tr::require(previous < limits_.sessions + (admission_ ? tr::RelayLimits::pending : 0), "combo_relay_limit");
             ++relay_selected;
             const int owned = socket.fd; socket.fd = -1;
-            tr::relay_session(owned,false,auth_,{},{},policy_,*replay_,stop_,limits_);
+            tr::relay_session(owned,false,auth_,{},{},policy_,*replay_,stop_,limits_,nullptr,nullptr,admission_.get(),
+              [&] { --peeking_; pending=false; });
           }
         } catch (...) { ++rejected; }
         if (pending) --peeking_;
@@ -122,13 +124,16 @@ public:
   std::atomic<uint64_t> boring_selected{0}, relay_selected{0}, rejected{0}, dropped{0};
   size_t pending() const { return peeking_.load(); }
   Exit(int fd, const tr::SniAuthorization& auth, std::string name, tr::DestinationPolicy policy,
-       std::shared_ptr<tr::ReplayWindow> replay, tr::RelayLimits limits = {})
+       std::shared_ptr<tr::ReplayWindow> replay, tr::RelayLimits limits = {}, std::shared_ptr<tr::ExitAdmission> admission = {})
     : listener_(fd), auth_(auth), name_(std::move(name)), policy_(std::move(policy)),
-      replay_(std::move(replay)), limits_(limits) {
-    tr::require(bool(replay_), "combo_replay_required"); replay_->check_scope(auth_.replay_scope()); limits_.check();
+      replay_(std::move(replay)), limits_(limits), admission_(std::move(admission)) {
+    tr::require(bool(replay_) || bool(admission_), "combo_replay_required");
+    if (!replay_) replay_=std::make_shared<tr::ReplayWindow>();
+    if (!admission_) replay_->check_scope(auth_.replay_scope());
+    limits_.check();
     tr::require(tr::hostname(name_), "combo_public_name");
     const int flags = fcntl(fd,F_GETFL); tr::require(flags >= 0 && (flags & O_NONBLOCK), "combo_nonblocking");
-    jobs_.reserve(32);
+    jobs_.reserve(limits_.sessions + tr::RelayLimits::pending);
     thread_ = std::thread([this] { try { run(); } catch (...) { broken = true; stop_ = true; jobs_.clear(); } });
   }
   // Ownership transfers to reactor; empty is the same as nonblocking accept.

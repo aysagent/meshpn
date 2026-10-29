@@ -10,6 +10,9 @@ struct TransparentConfig {
   bool client;
   Destination listen, exit{};
   std::string public_name, secret_path, replay_directory;
+  struct Peer { std::string id, secret_path; };
+  std::vector<Peer> peers;
+  RelayLimits limits;
   std::vector<Destination> destinations;
   bool public_https = false;
   std::vector<std::string> deny_ipv4;
@@ -38,13 +41,36 @@ struct TransparentConfig {
     std::set<std::string> fields{"version","transport","role","listen","public_name","secret_path"};
     fields.insert(j.contains("destinations") ? "destinations" : "destination_policy");
     fields.insert(client ? "exit" : "replay_directory");
+    if (j.contains("peers")) { require(!client && !j.contains("secret_path"), "relay_peer_config"); fields.erase("secret_path"); fields.insert("peers"); }
+    if (j.contains("limits")) fields.insert("limits");
     require(j.size() == fields.size(), "relay_config_fields");
     for (const auto& field : fields) require(j.contains(field), "relay_config_fields");
     listen = endpoint(j.at("listen"));
     require(listen.ipv4[0] < 224, "relay_listen_address");
     public_name = j.at("public_name").get<std::string>(); require(hostname(public_name), "relay_public_name");
-    secret_path = j.at("secret_path").get<std::string>();
-    require(!secret_path.empty() && secret_path.front() == '/' && secret_path.find('\0') == std::string::npos, "relay_secret_path");
+    auto secret = [](const nlohmann::json& value) {
+      const auto p = value.get<std::string>();
+      require(!p.empty() && p.front() == '/' && p.find('\0') == std::string::npos, "relay_secret_path"); return p;
+    };
+    if (j.contains("peers")) {
+      const auto& list = j.at("peers"); require(list.is_array() && !list.empty() && list.size() <= 32, "relay_peer_config");
+      std::set<std::string> ids;
+      for (const auto& p : list) {
+        require(p.is_object() && p.size() == 2 && p.contains("id") && p.contains("secret_path"), "relay_peer_config");
+        const auto id = p.at("id").get<std::string>();
+        require(!id.empty() && id.size() <= 32 && id.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_-") == std::string::npos && ids.insert(id).second, "relay_peer_id");
+        peers.push_back({id,secret(p.at("secret_path"))});
+      }
+    } else secret_path = secret(j.at("secret_path"));
+    if (j.contains("limits")) {
+      const auto& l = j.at("limits");
+      require(l.is_object() && l.size() == 2 && l.contains("sessions") && l.contains("per_client") &&
+        l.at("sessions").is_number_integer() && l.at("per_client").is_number_integer(), "relay_limits");
+      const auto total=l.at("sessions").get<int64_t>(), per=l.at("per_client").get<int64_t>();
+      require(total >= 2 && total <= 256 && per > 0 && per < total, "relay_quota_config");
+      limits.sessions=size_t(total); limits.per_client=size_t(per);
+    }
+    limits.check();
     if (j.contains("destinations")) {
       const auto& allowed = j.at("destinations"); require(allowed.is_array() && !allowed.empty() && allowed.size() <= 64, "relay_policy_config");
       for (const auto& a : allowed) {
