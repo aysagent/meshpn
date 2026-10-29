@@ -1,0 +1,414 @@
+{
+  "schema": 1,
+  "kind": "native-combo-multi-client",
+  "status": "passed",
+  "image": "localhost/clean-vpn-native-runtime:reload-20261030",
+  "clients": 4,
+  "limits": {
+    "sessions": 128,
+    "perClient": 64
+  },
+  "checks": [
+    "generated-role-bundles-independent-client-keys-and-LANs",
+    "all-clients-progress-under-concurrent-packet-and-relay-load",
+    "one-client-at-quota-cannot-starve-other-clients",
+    "full-global-cap-with-slow-readers-packet-branch-survives",
+    "all-clients-recover-without-engine-restart-and-resources-reclaimed",
+    "all-native-PID1-SIGTERM-clean"
+  ],
+  "imageId": "cd844576415690d0995cedcd72db0c71efbf7b0e7e23270169c203be3a39f480",
+  "engineSha256": "3ee2d7c510d78bc8c0c3081efdc3572652d3765d9a441136926be2241268e837",
+  "normal": [
+    {
+      "client": 0,
+      "rounds": 1737,
+      "elapsedMs": 900045.142226994
+    },
+    {
+      "client": 1,
+      "rounds": 1738,
+      "elapsedMs": 900044.7307259738
+    },
+    {
+      "client": 2,
+      "rounds": 1735,
+      "elapsedMs": 900487.3668879867
+    },
+    {
+      "client": 3,
+      "rounds": 1738,
+      "elapsedMs": 900488.5485980213
+    }
+  ],
+  "duration": {
+    "requestedSeconds": 900,
+    "elapsedSeconds": 903.526851917,
+    "sampleIntervalMs": 5000,
+    "samples": 151
+  },
+  "peak": {
+    "exit": {
+      "rssKiB": 6864,
+      "fds": 25,
+      "threads": 6
+    },
+    "client-0": {
+      "rssKiB": 6456,
+      "fds": 12,
+      "threads": 6
+    },
+    "client-1": {
+      "rssKiB": 6452,
+      "fds": 10,
+      "threads": 4
+    },
+    "client-2": {
+      "rssKiB": 6468,
+      "fds": 8,
+      "threads": 3
+    },
+    "client-3": {
+      "rssKiB": 6480,
+      "fds": 12,
+      "threads": 6
+    }
+  },
+  "retainedMemory": {
+    "exit": {
+      "firstThirdMedianKiB": 6856,
+      "lastThirdMedianKiB": 6848,
+      "growthKiB": -8
+    },
+    "client-0": {
+      "firstThirdMedianKiB": 6436,
+      "lastThirdMedianKiB": 6424,
+      "growthKiB": -12
+    },
+    "client-1": {
+      "firstThirdMedianKiB": 6436,
+      "lastThirdMedianKiB": 6452,
+      "growthKiB": 16
+    },
+    "client-2": {
+      "firstThirdMedianKiB": 6460,
+      "lastThirdMedianKiB": 6468,
+      "growthKiB": 8
+    },
+    "client-3": {
+      "firstThirdMedianKiB": 6472,
+      "lastThirdMedianKiB": 6480,
+      "growthKiB": 8
+    }
+  },
+  "pressure": [
+    {
+      "client": 1,
+      "packet": 8,
+      "relay": 8,
+      "relayRefused": 0
+    },
+    {
+      "client": 2,
+      "packet": 8,
+      "relay": 8,
+      "relayRefused": 0
+    },
+    {
+      "client": 3,
+      "packet": 8,
+      "relay": 8,
+      "relayRefused": 0
+    }
+  ],
+  "relayFairness": "authenticated-key-quota-with-global-cap",
+  "starvationObserved": false,
+  "capacity": {
+    "sessions": 128,
+    "perClient": 64,
+    "slowReaders": true,
+    "samples": [
+      {
+        "rssKiB": 32516,
+        "fds": 273,
+        "sockets": 261,
+        "threads": 130,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 260,
+        "tcpTimeWait": 431,
+        "udpSockets": 0
+      },
+      {
+        "rssKiB": 32516,
+        "fds": 273,
+        "sockets": 261,
+        "threads": 130,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 260,
+        "tcpTimeWait": 400,
+        "udpSockets": 0
+      },
+      {
+        "rssKiB": 32608,
+        "fds": 273,
+        "sockets": 261,
+        "threads": 130,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 260,
+        "tcpTimeWait": 401,
+        "udpSockets": 0
+      },
+      {
+        "rssKiB": 32608,
+        "fds": 273,
+        "sockets": 261,
+        "threads": 130,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 260,
+        "tcpTimeWait": 368,
+        "udpSockets": 0
+      },
+      {
+        "rssKiB": 32608,
+        "fds": 273,
+        "sockets": 261,
+        "threads": 130,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 260,
+        "tcpTimeWait": 368,
+        "udpSockets": 0
+      },
+      {
+        "rssKiB": 32672,
+        "fds": 273,
+        "sockets": 261,
+        "threads": 130,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 260,
+        "tcpTimeWait": 342,
+        "udpSockets": 0
+      },
+      {
+        "rssKiB": 32672,
+        "fds": 273,
+        "sockets": 261,
+        "threads": 130,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 260,
+        "tcpTimeWait": 342,
+        "udpSockets": 0
+      },
+      {
+        "rssKiB": 32672,
+        "fds": 273,
+        "sockets": 261,
+        "threads": 130,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 260,
+        "tcpTimeWait": 310,
+        "udpSockets": 0
+      },
+      {
+        "rssKiB": 32672,
+        "fds": 273,
+        "sockets": 261,
+        "threads": 130,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 260,
+        "tcpTimeWait": 310,
+        "udpSockets": 0
+      },
+      {
+        "rssKiB": 32672,
+        "fds": 273,
+        "sockets": 261,
+        "threads": 130,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 260,
+        "tcpTimeWait": 310,
+        "udpSockets": 0
+      }
+    ],
+    "cgroupMemoryBytes": 210427904,
+    "cpuSeconds": 0.33,
+    "sampleSeconds": 18.145699832999963
+  },
+  "settled": {
+    "cvpnrt-2593159ca5429ccc-exit": {
+      "rssKiB": 16552,
+      "fds": 17,
+      "sockets": 5,
+      "threads": 2,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 4,
+      "tcpTimeWait": 257,
+      "udpSockets": 0
+    },
+    "cvpnrt-2593159ca5429ccc-c0": {
+      "rssKiB": 11460,
+      "fds": 8,
+      "sockets": 4,
+      "threads": 3,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 1,
+      "tcpTimeWait": 133,
+      "udpSockets": 1
+    },
+    "cvpnrt-2593159ca5429ccc-c1": {
+      "rssKiB": 11120,
+      "fds": 8,
+      "sockets": 4,
+      "threads": 3,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 1,
+      "tcpTimeWait": 72,
+      "udpSockets": 1
+    },
+    "cvpnrt-2593159ca5429ccc-c2": {
+      "rssKiB": 11092,
+      "fds": 8,
+      "sockets": 4,
+      "threads": 3,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 1,
+      "tcpTimeWait": 71,
+      "udpSockets": 1
+    },
+    "cvpnrt-2593159ca5429ccc-c3": {
+      "rssKiB": 11000,
+      "fds": 8,
+      "sockets": 4,
+      "threads": 3,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 1,
+      "tcpTimeWait": 79,
+      "udpSockets": 1
+    }
+  },
+  "cleanup": {
+    "status": "cleaned",
+    "removed": [
+      {
+        "type": "container",
+        "name": "cvpnrt-2593159ca5429ccc-init"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-2593159ca5429ccc-origin"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-2593159ca5429ccc-exit"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-2593159ca5429ccc-c0"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-2593159ca5429ccc-a0"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-2593159ca5429ccc-c1"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-2593159ca5429ccc-a1"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-2593159ca5429ccc-c2"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-2593159ca5429ccc-a2"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-2593159ca5429ccc-c3"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-2593159ca5429ccc-a3"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-2593159ca5429ccc-exit-config"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-2593159ca5429ccc-origin-config"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-2593159ca5429ccc-replay"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-2593159ca5429ccc-config0"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-2593159ca5429ccc-config1"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-2593159ca5429ccc-config2"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-2593159ca5429ccc-config3"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-2593159ca5429ccc-lan0"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-2593159ca5429ccc-lan1"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-2593159ca5429ccc-lan2"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-2593159ca5429ccc-lan3"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-2593159ca5429ccc-net"
+      }
+    ]
+  }
+}

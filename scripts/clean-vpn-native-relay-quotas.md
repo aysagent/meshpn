@@ -157,3 +157,38 @@ key-ring; production admission не изменялся. Сборки, грани
 в [машиночитаемом отчёте](../fixtures/clean-vpn-native-relay-quotas-20261029.json).
 Следующая проверка — более длительная mixed нагрузка с новыми квотами и churn;
 отдельно измерять влияние уменьшенных очередей на throughput/задержку.
+
+## Продолжительный прогон 2026-10-30 после peer reload
+
+Повторена mixed-нагрузка **900 секунд**, четыре независимых клиента, общий
+exit, лимиты 128/64. Каждый round проверяет packet/DNS application probe и
+HTTPS relay; получено **6948 успешных rounds** (1735–1738 на клиента), ни одного
+неуспешного round. В 151 снимке native exit peak RSS 6864 KiB, клиенты ≤6480 KiB;
+разница медиан первой/последней трети: exit −8 KiB, клиенты от −12 до +16 KiB.
+Это ограниченный soak, не доказательство отсутствия утечек при любой нагрузке.
+
+После него повторены fairness и capacity: один ключ удерживал 64 relay,
+остальные три завершили по 8/8 packet и 8/8 relay. При 128 slow readers
+packet продолжал работать, лишние relay отклонялись. Exit peak RSS 32672 KiB,
+130 threads/273 FD; после снятия давления FD/threads вернулись к baseline,
+PID всех пяти engine сохранились. SIGTERM чистый, все принадлежащие стенду
+контейнеры/сети/volumes удалены.
+
+[Полный отчёт](../fixtures/clean-vpn-native-multi-client-soak-20261030.json)
+содержит engine/image hashes. Engine соответствует c552787; более поздняя
+startup-телеметрия `peer_reload_ready` из c6db792 проверена отдельно 23 тестами
+и не входила в этот 15-минутный прогон. Runtime использует проверенный новый
+native artifact поверх cached Ubuntu runtime; это не новая release source build.
+
+```sh
+CVPN_CONTAINER_COMMAND='["podman","--connection","meshpn-clean-vpn-lab-root"]' \
+CVPN_RUNTIME_IMAGE=localhost/clean-vpn-native-runtime:reload-20261030 \
+CVPN_MULTI_CLIENTS=4 CVPN_MULTI_SECONDS=900 \
+CVPN_RELAY_SESSIONS=128 CVPN_RELAY_PER_CLIENT=64 CVPN_MULTI_CAPACITY=1 \
+node scripts/clean-vpn-native-multi-client-lab.mjs /tmp/new-private-report.json
+```
+
+Harness допускает до 1800 секунд; для длительного запуска измеряет RSS по
+первой/последней трети, увеличивает deadline дочерней нагрузки и срок helper
+контейнеров. Прогресс печатается примерно каждые 30 секунд. Проверки таймаутов,
+лимитов ресурсов, fairness и cleanup не отключаются.

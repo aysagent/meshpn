@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Three independent clients and LANs, one exit, generated private role bundles.
+// Three or four independent clients and LANs, one exit, generated private role bundles.
 // No host bindings or physical machines. Run only on a dedicated Linux engine.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -22,12 +22,13 @@ const prefix='cvpnrt-'+randomBytes(8).toString('hex'),label='org.meshpn.native-r
 const root=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'cvpn-multi-'));
 const opts={encoding:'utf8',timeout:60000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']};
 const p=a=>execFileSync(cli[0],[...cli.slice(1),...a],opts).trim();
-const pa=async a=>(await promisify(execFile)(cli[0],[...cli.slice(1),...a],{...opts,timeout:90000})).stdout.trim();
+const pa=async a=>(await promisify(execFile)(cli[0],[...cli.slice(1),...a],{...opts,timeout:Math.max(90000,(seconds+60)*1000)})).stdout.trim();
 const e=(name,...a)=>p(['exec',name,...a]);
 const net=prefix+'-net',exit=prefix+'-exit',init=prefix+'-init',origin=prefix+'-origin',replay=prefix+'-replay';
 const exitVolume=prefix+'-exit-config',originVolume=prefix+'-origin-config';
 const clientCount=Number(process.env.CVPN_MULTI_CLIENTS??3),sessions=Number(process.env.CVPN_RELAY_SESSIONS??128),perClient=Number(process.env.CVPN_RELAY_PER_CLIENT??64),seconds=Number(process.env.CVPN_MULTI_SECONDS??60);
-assert.ok(Number.isInteger(clientCount)&&clientCount>=3&&clientCount<=4&&Number.isInteger(sessions)&&sessions>=2&&sessions<=256&&Number.isInteger(perClient)&&perClient>0&&perClient<sessions&&seconds>=15&&seconds<=120);
+assert.ok(Number.isInteger(clientCount)&&clientCount>=3&&clientCount<=4&&Number.isInteger(sessions)&&sessions>=2&&sessions<=256&&Number.isInteger(perClient)&&perClient>0&&perClient<sessions&&Number.isInteger(seconds)&&seconds>=15&&seconds<=1800);
+const lifetime=String(seconds+1800),sampleIntervalMs=seconds>=300?5000:1000;
 const clients=Array.from({length:clientCount},(_,i)=>i).map(i=>({i,name:prefix+'-c'+i,app:prefix+'-a'+i,volume:prefix+'-config'+i,lan:prefix+'-lan'+i,
   ip:'10.77.0.'+(10+i),subnet:`192.168.${88+i}.0/24`,gateway:`192.168.${88+i}.2`,appIP:`192.168.${88+i}.3`}));
 const ownership={schema:1,kind:'native-runtime-lab-ownership',prefix,cli};
@@ -61,7 +62,7 @@ try{
   for(const c of clients)p(['network','create','--label',label,'--internal','--subnet='+c.subnet,c.lan]);
   for(const v of [exitVolume,originVolume,replay,...clients.map(c=>c.volume)])p(['volume','create','--label',label,v]);
   p(['run','-d','--name',init,'--label',label,'--network=none','--no-healthcheck',
-    '-v',exitVolume+':/exit','-v',originVolume+':/origin','-v',replay+':/replay',...clients.flatMap(c=>['-v',c.volume+':/c'+c.i]),'--entrypoint=sleep',image,'1200']);
+    '-v',exitVolume+':/exit','-v',originVolume+':/origin','-v',replay+':/replay',...clients.flatMap(c=>['-v',c.volume+':/c'+c.i]),'--entrypoint=sleep',image,lifetime]);
   p(['cp',bundle+'/exit/.',init+':/exit/']);
   for(const c of clients){
     const dir=bundle+'/client-'+(c.i+1);
@@ -87,7 +88,7 @@ https.createServer({key:fs.readFileSync('/config/key.pem'),cert:fs.readFileSync(
   for(const c of clients){
     launch(c);await wait(()=>assert.match(health(c.name),/relay-https/));
     p(['run','-d','--name',c.app,'--label',label,'--network',c.lan,'--ip='+c.appIP,'--cap-add=NET_ADMIN','--no-healthcheck','-v',c.volume+':/config:ro','--entrypoint=sh',image,'-ec',
-      'ip route replace default via '+c.gateway+'; exec sleep 1200']);
+      'ip route replace default via '+c.gateway+'; exec sleep '+lifetime]);
     probe(c,applicationProbe(c.gateway,'/config/ca.pem'));probe(c,relay);
   }
   step('generated-role-bundles-independent-client-keys-and-LANs');
@@ -95,12 +96,27 @@ https.createServer({key:fs.readFileSync('/config/key.pem'),cert:fs.readFileSync(
   const workload=c=>`const output=console.log;console.log=()=>{};const packet=async()=>{${applicationProbe(c.gateway,'/config/ca.pem')}},relay=async()=>{${relay}};
 let rounds=0;const start=performance.now();do{await Promise.all([packet(),relay()]);rounds++;await new Promise(r=>setTimeout(r,500));}while(performance.now()-start<${seconds*1000});output(JSON.stringify({rounds,elapsedMs:performance.now()-start}));`;
   let done=false,loadError;const job=Promise.all(clients.map(async c=>({client:c.i,...JSON.parse(await pa(['exec',c.app,'node','--input-type=module','-e',workload(c)]))}))).catch(e=>{loadError=e;}).finally(()=>done=true);
-  const samples=[];while(!done){samples.push(snapshot());await delay(1000);}report.normal=await job;if(loadError)throw loadError;
+  const samples=[],started=performance.now();let lastProgress=started;
+  while(!done){
+    samples.push(snapshot());
+    if(performance.now()-lastProgress>=30000){console.log('MULTI_CLIENT_LOAD_SECONDS='+Math.round((performance.now()-started)/1000));lastProgress=performance.now();}
+    await delay(sampleIntervalMs);
+  }
+  report.normal=await job;if(loadError)throw loadError;
+  report.duration={requestedSeconds:seconds,elapsedSeconds:(performance.now()-started)/1000,sampleIntervalMs,samples:samples.length};
   for(const r of report.normal)assert.ok(r.rounds>=10&&r.elapsedMs>=seconds*1000);
   report.peak={};for(const n of Object.keys(initial)){
     for(const s of samples){assert.equal(s[n].nativeProcesses,1);assert.equal(s[n].zombies,0);assert.ok(s[n].rssKiB<131072&&s[n].fds<128&&s[n].threads<48);}
     report.peak[n===exit?'exit':'client-'+clients.find(c=>c.name===n).i]=Object.fromEntries(['rssKiB','fds','threads'].map(k=>[k,Math.max(...samples.map(s=>s[n][k]))]));
-  }step('all-clients-progress-under-concurrent-packet-and-relay-load');
+  }
+  const median=xs=>{const sorted=[...xs].sort((a,b)=>a-b);return sorted[Math.floor(sorted.length/2)];};
+  const third=Math.max(1,Math.floor(samples.length/3));report.retainedMemory={};
+  for(const n of Object.keys(initial)){
+    const firstMedian=median(samples.slice(0,third).map(s=>s[n].rssKiB)),lastMedian=median(samples.slice(-third).map(s=>s[n].rssKiB));
+    report.retainedMemory[n===exit?'exit':'client-'+clients.find(c=>c.name===n).i]={firstThirdMedianKiB:firstMedian,lastThirdMedianKiB:lastMedian,growthKiB:lastMedian-firstMedian};
+    assert.ok(lastMedian-firstMedian<8192,'mixed_load_retained_memory_growth');
+  }
+  step('all-clients-progress-under-concurrent-packet-and-relay-load');
   // Hold one authenticated client's entire quota; other identities must still progress.
   const holder=(target,flood=false)=>`const https=require('node:https'),fs=require('node:fs'),requests=new Set();let active=0,ready=false;
 const add=()=>{const q=https.get({host:'11.22.33.44',port:443,path:'${flood?'/flood':'/hold'}',servername:'runtime.test',ca:fs.readFileSync('/config/ca.pem'),agent:false},r=>{
