@@ -1,5 +1,7 @@
 #include "meshvpn_vpn_tls.h"
 #include "meshvpn_vpn_trust.h"
+#include "meshvpn_vpn_client_identity.h"
+#include "nvs.h"
 #include "mbedtls/x509.h"
 
 #include "sdkconfig.h"
@@ -61,8 +63,15 @@ esp_err_t meshvpn_vpn_tls_connect(const char *server, const char *tls_server_nam
     if (ca_error != ESP_OK) {
         record("ca_missing_or_unreadable", ca_error, 0, 0); errno = EACCES; return ca_error;
     }
+    meshvpn_client_identity_t *identity = NULL;
+    esp_err_t identity_error = meshvpn_client_identity_load(&identity);
+    if (identity_error != ESP_OK && identity_error != ESP_ERR_NVS_NOT_FOUND) {
+        free(ca); record("client_identity_unreadable", identity_error, 0, 0);
+        errno = identity_error == ESP_ERR_NO_MEM ? ENOMEM : EACCES;
+        return identity_error; /* Never downgrade a broken saved identity to anonymous TLS. */
+    }
     esp_tls_t *tls = esp_tls_init();
-    if (!tls) { free(ca); record("no_memory", ESP_ERR_NO_MEM, 0, 0); errno = ENOMEM; return ESP_ERR_NO_MEM; }
+    if (!tls) { meshvpn_client_identity_free(identity); free(ca); record("no_memory", ESP_ERR_NO_MEM, 0, 0); errno = ENOMEM; return ESP_ERR_NO_MEM; }
     esp_tls_cfg_t cfg = {0};
     cfg.if_name = &iface;
     cfg.timeout_ms = 5000;
@@ -71,6 +80,12 @@ esp_err_t meshvpn_vpn_tls_connect(const char *server, const char *tls_server_nam
     cfg.common_name = tls_server_name;
     cfg.cacert_buf = (const unsigned char *)ca;
     cfg.cacert_bytes = strlen(ca) + 1;
+    if (identity) {
+        cfg.clientcert_buf = (const unsigned char *)identity->certificate;
+        cfg.clientcert_bytes = strlen(identity->certificate) + 1;
+        cfg.clientkey_buf = (const unsigned char *)identity->private_key;
+        cfg.clientkey_bytes = strlen(identity->private_key) + 1;
+    }
     record("connecting", 0, 0, 0);
     ESP_LOGI(TAG, "TLS 1.2 connect start: internal free=%u largest=%u, PSRAM free=%u, rx stack spare=%u",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
@@ -78,6 +93,7 @@ esp_err_t meshvpn_vpn_tls_connect(const char *server, const char *tls_server_nam
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
              (unsigned)uxTaskGetStackHighWaterMark(NULL));
     int result = esp_tls_conn_new_sync(host, strlen(host), port, &cfg, tls);
+    meshvpn_client_identity_free(identity);
     free(ca); /* ESP-TLS parsed its own CA chain during the synchronous handshake. */
     ESP_LOGI(TAG, "TLS connect done (%d): internal free=%u largest=%u, PSRAM free=%u, rx stack spare=%u",
              result,

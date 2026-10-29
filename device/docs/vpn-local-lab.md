@@ -86,3 +86,32 @@ pending application output (default 256 KiB per connection). Overflow closes
 that connection; it never drops bytes from the middle of a framed stream and
 continues. `startPeer()` accepts `maxPendingBytes` and `writeDelayMs` for tests.
 These limits exclude kernel/TLS buffers and do not add UDP delivery guarantees.
+
+## Tests without any board
+
+`bash device/scripts/test-host.sh` includes the production JavaScript exit and a
+C client using the firmware's framing and host mbedTLS. TCP, UDP and raw TLS bind
+only to `127.0.0.1` on ephemeral ports. The harness replaces the TUN and system
+network setup with an in-memory boundary; no sudo, firewall, routes, Wi-Fi or
+macOS certificate installation is needed. This proves transport/bridge
+interoperability, not Linux NAT or device forwarding. Root npm dependencies and
+ESP-IDF v5.5.5 sources must already be installed.
+
+It also checks optional raw mTLS: valid clients exchange packets, missing,
+wrong-CA and expired identities deliver no packets to TUN. Production trust
+connection tests independently check server CA/name/time and corrupt client
+identity handling. Test credentials are disposable and remain in private temp
+artifact directories. Never deploy them.
+
+Packet-path fuzzing is separate from the normal test suite:
+
+```sh
+bash device/scripts/fuzz-vpn.sh 120
+```
+
+It requires clang with libFuzzer, ASan and UBSan. Apple clang installations may
+lack the libFuzzer runtime; supply a compatible prebuilt runtime using
+`LIBFUZZER_ARCHIVE=/path/to/libFuzzer.a`. The script installs nothing. It prints
+the corpus/artifact directory, exercises exact-sized buffers, packet validation,
+checksum repair, MSS/ICMP handling and fragmented stream/batch framing. A clean
+run is evidence for those paths, not proof of firmware or radio stability.

@@ -183,6 +183,7 @@ import {
   wireTransparentTlsEncSniSession,
 } from './lib/transparent-tls-runtime.mjs';
 import { loadExitDnsUpstreamPolicy } from './lib/dns-upstream-exit.mjs';
+import { rawTlsClientAuthOptions } from './lib/tls-raw-client-auth.mjs';
 // node-datachannel — native addon; только для --type=webrtc (не rtc-chrome). Lazy import в ensureNodeDatachannelLoaded().
 // @matrixai/logger — CJS; в ESM класс лежит в .default, не в корне namespace.
 import matrixAiLogger from '@matrixai/logger';
@@ -4131,6 +4132,8 @@ function parseArgs(argv) {
       out.tlsProbeFullProxyPerIp = parseInt(a.slice('--tls-probe-full-proxy-per-ip='.length), 10);
     } else if (a.startsWith('--http-vers=')) {
       out.tlsHttpVers = a.slice('--http-vers='.length).trim();
+    } else if (a.startsWith('--tls-raw-client-ca=')) {
+      out.tlsRawClientCa = a.slice('--tls-raw-client-ca='.length);
     } else if (a === '--tls-raw') {
       out.tlsRaw = true;
     } else if (a.startsWith('--ws-chrome-executable=')) {
@@ -9389,6 +9392,7 @@ async function runExit({
   tlsServerName,
   tlsHttpVers,
   tlsRaw,
+  tlsRawClientCa,
   signaling,
   wsServer,
   punch,
@@ -9408,6 +9412,8 @@ async function runExit({
       '[clean-vpn] --type=rtc-chrome только для --role=client; на exit используйте --type=webrtc',
     );
   }
+  if (tlsRawClientCa != null && (!tlsRaw || type !== 'tls')) throw new Error('--tls-raw-client-ca requires exit --type=tls --tls-raw');
+  const rawClientAuth = rawTlsClientAuthOptions(tlsRawClientCa);
   const tunName = findFreeTunName();
   const { tun, name: ifname } = openTunNative(tunName);
   setupTunIp('exit', ifname);
@@ -9877,6 +9883,7 @@ async function runExit({
     });
     if (tlsRaw) {
       const rawTlsSrv = tls.createServer({
+        ...rawClientAuth,
         cert: creds.cert,
         key: creds.key,
         minVersion: 'TLSv1.2',
@@ -9884,6 +9891,7 @@ async function runExit({
         ciphers: 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256',
         ecdhCurve: TLS_VPN_ECDH_CURVES,
       }, (sock) => {
+        if (rawClientAuth.requestCert && !sock.authorized) { sock.destroy(); return; }
         console.log('[clean-vpn] tls raw connected', sock.remoteAddress);
         sock.setNoDelay(true);
         startBridge(sock, null, 'tcp');
@@ -9894,7 +9902,7 @@ async function runExit({
       });
       rawTlsSrv.on('error', (err) => console.error('[clean-vpn] tls raw server:', err?.message || err));
       rawTlsSrv.listen(port, host, () => {
-        console.log(`[clean-vpn] exit TLS raw ${host}:${port} (TLS 1.2; raw IPv4 framing; no HMAC/Bearer)`);
+        console.log(`[clean-vpn] exit TLS raw ${host}:${port} (TLS 1.2; raw IPv4 framing; client auth: ${rawClientAuth.requestCert ? 'mTLS' : 'none'}; no HMAC/Bearer)`);
       });
       tcpSrv = rawTlsSrv;
       return;
@@ -12008,6 +12016,7 @@ async function main() {
 --type=quic: Node.js 25+, node --experimental-quic и бинарь с node_use_quic (см. шапку файла)
 --type=quic-ext: npm install @infisical/quic (prebuild под платформу), Node 18+, см. шапку файла
 --tls-cert-dir=DIR: для --type=tls, boring-tls (client), combo-tls и exit tls/combo — fullchain.pem+privkey.pem (LE) или ca/cert/key как у QUIC; здесь же лежит общий clean-vpn-hmac.key
+--tls-raw-client-ca=PATH: optional client CA for mutual TLS; only exit --type=tls --tls-raw; missing/untrusted clients are rejected before TUN attachment
 --tls-raw: только exit + --type=tls; обычный TLS 1.2 без HTTP/2, Bearer/HMAC и JA3-мимикрии, затем raw IPv4 framing как у --type=tcp (тестовый режим)
 --tls-server-name=HOST: только client + tls | boring-tls | combo-tls — проверка сертификата (CN/SAN); также ClientHello SNI для **TUN-туннеля** (boring-путь при combo), если не задан --tls-client-sni. Если --server — IP и оба не заданы, для проверки используется clean-vpn; при ошибочном --tls-server-name=www.google.com и IP тоже принудительно clean-vpn (маскировку SNI см. --tls-client-sni); на exit игнорируется
 --tls-client-sni=HOST: только client + tls | boring-tls | combo-tls — явный SNI в ClientHello (TUN-путь boring); без флага при проверке cert=clean-vpn (часто IP без --tls-server-name) SNI по умолчанию www.google.com; иначе SNI = имя проверки. Маркера VPN в открытой части ClientHello нет — exit отличает VPN по Bearer внутри TLS (TLS 1.3; ALPN по умолчанию h2 + http/1.1; HTTP/1.1 → GET /clean-vpn, HTTP/2 → POST /clean-vpn на одном stream).
@@ -12048,6 +12057,10 @@ async function main() {
   if (args.punch && args.type !== 'udp') {
     console.error('[clean-vpn] --punch допустим только с --type=udp');
     process.exit(1);
+  }
+
+  if (args.tlsRawClientCa != null && (args.role !== 'exit' || args.type !== 'tls' || !args.tlsRaw || !args.tlsRawClientCa.trim())) {
+    throw new Error('--tls-raw-client-ca=PATH requires --role=exit --type=tls --tls-raw');
   }
 
   if (args.tlsRaw && (args.role !== 'exit' || args.type !== 'tls')) {

@@ -4,6 +4,7 @@ import path from 'node:path';
 import tls from 'node:tls';
 import assert from 'node:assert/strict';
 import {execFileSync,spawn} from 'node:child_process';
+import {clientPKI} from './helpers/client-pki.mjs';
 const root=new URL('../',import.meta.url),idf=process.env.IDF_PATH,libs=process.argv[2];
 if(!idf||!libs)throw Error('Set IDF_PATH and pass host mbedTLS library directory');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'meshpn-vpn-trust-'));
@@ -39,26 +40,27 @@ for(const [name,start,end] of [['valid','20250101000000Z','20400101000000Z'],['e
  fs.writeFileSync(path.join(dir,'index'),'');
  openssl('ca','-batch','-config','ca.cnf','-in','server.csr','-out',name+'.pem','-startdate',start,'-enddate',end,'-notext');
 }
+clientPKI(dir);
 const bin=path.join(dir,'test');
 execFileSync(process.env.CC||'cc',['-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-pthread',
  '-I'+dir,...['tests/stubs','components/meshvpn_vpn/include'].map(p=>'-I'+new URL(p,root).pathname),
  '-I'+path.join(idf,'components/mbedtls/mbedtls/include'),new URL('tests/test_vpn_trust.c',root).pathname,
  new URL('components/meshvpn_vpn/meshvpn_vpn_frame.c',root).pathname,
  ...['libmbedtls.a','libmbedx509.a','libmbedcrypto.a'].map(p=>path.join(libs,p)),'-o',bin],{stdio:'inherit'});
-for(const [cert,ca,name,reason] of [['valid','ca','exit.example','verified'],['valid','ca','wrong.example','certificate_name_mismatch'],['valid','other','exit.example','certificate_untrusted'],['expired','ca','exit.example','certificate_expired'],['future','ca','exit.example','certificate_not_yet_valid']]){
+for(const [cert,ca,name,reason,identity,mutual] of [['valid','ca','exit.example','verified'],['valid','ca','wrong.example','certificate_name_mismatch'],['valid','other','exit.example','certificate_untrusted'],['expired','ca','exit.example','certificate_expired'],['future','ca','exit.example','certificate_not_yet_valid'],['valid','ca','exit.example','verified','client',true],['valid','ca','exit.example','handshake_failed',null,true],['valid','ca','exit.example','handshake_failed','wrong',true],['valid','ca','exit.example','handshake_failed','expired-client',true]]){
  let received=0;
  const sockets=new Set();
- const server=tls.createServer({key:fs.readFileSync(path.join(dir,'server.key')),cert:fs.readFileSync(path.join(dir,cert+'.pem')),minVersion:'TLSv1.2',maxVersion:'TLSv1.2'},s=>{s.on('error',()=>{});s.on('data',b=>received+=b.length);});
+ const server=tls.createServer({key:fs.readFileSync(path.join(dir,'server.key')),cert:fs.readFileSync(path.join(dir,cert+'.pem')),minVersion:'TLSv1.2',maxVersion:'TLSv1.2',...(mutual?{ca:fs.readFileSync(path.join(dir,'ca.pem')),requestCert:true,rejectUnauthorized:true}:{})},s=>{s.on('error',()=>{});s.on('data',b=>received+=b.length);});
  server.on('connection',s=>{sockets.add(s);s.on('close',()=>sockets.delete(s));});server.on('tlsClientError',()=>{});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
  try{
   await new Promise((resolve,reject)=>{
-   const p=spawn(bin,[String(server.address().port),path.join(dir,ca+'.pem'),name,reason,path.join(dir,'valid.pem')],{stdio:['ignore','pipe','pipe']});let output='';
+   const p=spawn(bin,[String(server.address().port),path.join(dir,ca+'.pem'),name,reason,path.join(dir,'valid.pem'),...(identity?[path.join(dir,identity+'.pem'),path.join(dir,identity+'.key')]:[])],{stdio:['ignore','pipe','pipe']});let output='';
    const timer=setTimeout(()=>{p.kill();reject(Error('TLS trust test timed out'));},20000);
    p.stdout.on('data',b=>output+=b);p.stderr.on('data',b=>output+=b);p.on('error',reject);
    p.on('close',code=>{clearTimeout(timer);code===0?resolve():reject(Error(output));});
   });
-  assert.equal(received,0,'no tunnel data before accepted handshake');console.log('TLS trust: '+reason+' (3 fresh connections)');
+  assert.equal(received,0,'no tunnel data before accepted handshake');console.log('TLS trust: '+reason+' client='+identity+' mTLS='+!!mutual+' (3 fresh connections)');
  }finally{for(const s of sockets)s.destroy();await new Promise(r=>server.close(r));}
 }
 console.log('TLS trust artifacts: '+dir);

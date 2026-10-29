@@ -6,6 +6,7 @@
 #include "meshvpn_vpn_stream.h"
 #include "meshvpn_vpn_tls.h"
 #include "meshvpn_vpn_trust.h"
+#include "meshvpn_vpn_client_identity.h"
 #include <time.h>
 #include "meshvpn_local_download.h"
 #include "meshvpn_local_upload.h"
@@ -940,6 +941,7 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     meshvpn_vpn_tls_diag_t td; meshvpn_vpn_tls_get_diag(&td);
     cJSON_AddBoolToObject(tls_status, "verification_required", true);
     cJSON_AddBoolToObject(tls_status, "ca_configured", meshvpn_vpn_ca_configured());
+    cJSON_AddBoolToObject(tls_status, "client_identity_configured", meshvpn_client_identity_configured());
     cJSON_AddBoolToObject(tls_status, "clock_ready", time(NULL) >= 1704067200);
     cJSON_AddStringToObject(tls_status, "last_handshake", td.reason);
     cJSON_AddNumberToObject(tls_status, "sdk_error", td.sdk_error);
@@ -1378,6 +1380,33 @@ static esp_err_t handler_certificate(httpd_req_t *req)
     return err == ESP_OK ? ok(req) : error(req, "400 Bad Request", "Invalid certificate/key or storage error");
 }
 static void vpn_wipe(void *p, size_t len);
+static esp_err_t handler_vpn_client_identity(httpd_req_t *req)
+{
+    if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
+    cJSON *in = body(req, (MESHVPN_CLIENT_CERT_MAX + MESHVPN_CLIENT_KEY_MAX) * 2 + 256);
+    if (!in) return ESP_FAIL;
+    meshvpn_vpn_config_t cfg = {0};
+    esp_err_t err = meshvpn_config_load_vpn(&cfg);
+    cJSON *cert = cJSON_GetObjectItemCaseSensitive(in, "certificate_pem");
+    cJSON *key = cJSON_GetObjectItemCaseSensitive(in, "private_key_pem");
+    if (err == ESP_OK)
+        err = cJSON_IsString(cert) && cJSON_IsString(key) ?
+            meshvpn_client_identity_save(cert->valuestring, key->valuestring) : ESP_ERR_INVALID_ARG;
+    if (cJSON_IsString(key)) vpn_wipe(key->valuestring, strlen(key->valuestring));
+    cJSON_Delete(in);
+    if (err != ESP_OK) {
+        vpn_wipe(&cfg, sizeof(cfg));
+        return error(req, err == ESP_ERR_INVALID_ARG ? "400 Bad Request" : "500 Internal Server Error",
+            "Cannot save TLS client identity: supply matching client certificate and unencrypted private key PEM, or both empty to remove. Check storage on persistence failure.");
+    }
+    if (cfg.enabled && !strcmp(cfg.transport, "tls")) {
+        err = meshvpn_vpn_start(&cfg);
+        meshvpn_dns_clear_cache();
+    }
+    vpn_wipe(&cfg, sizeof(cfg));
+    return err == ESP_OK ? ok(req) : error(req, "500 Internal Server Error", "Client identity saved, but TLS restart failed. Inspect VPN status.");
+}
+
 static esp_err_t handler_vpn_ca(httpd_req_t *req)
 {
     if (meshvpn_web_require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -1710,6 +1739,7 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/certificate", HTTP_GET, handler_certificate), ROUTE("/api/certificate", HTTP_POST, handler_certificate),
         ROUTE("/api/vpn/config", HTTP_POST, handler_vpn_config),
         ROUTE("/api/vpn/tls-ca", HTTP_POST, handler_vpn_ca),
+        ROUTE("/api/vpn/tls-client-identity", HTTP_POST, handler_vpn_client_identity),
         ROUTE("/api/vpn/tls-ca", HTTP_GET, handler_vpn_ca),
         ROUTE("/api/vpn/restart", HTTP_POST, handler_vpn_restart),
         ROUTE("/api/vpn/check", HTTP_POST, handler_vpn_check),

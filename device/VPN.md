@@ -242,8 +242,9 @@ The board now requires verification of the exit certificate chain, DNS name and
 validity dates. There is no insecure switch. An existing TLS profile without a
 CA/name stops connecting after this update until those fields are provisioned.
 The wire protocol remains raw TLS 1.2: no normal clean-vpn HTTP/exporter/Bearer
-handshake, client authentication or browser JA3/JA4 emulation. Restrict access to
-the raw exit on the server; certificate validation authenticates the exit, not its
+handshake or browser JA3/JA4 emulation. Optional client authentication is described
+below. Without it, restrict access to the raw exit on the server;
+certificate validation authenticates the exit, not its
 clients.
 
 In **VPN → TLS**:
@@ -362,3 +363,61 @@ The local peer is synthetic and forwards no internet traffic. Its successful
 HTTP/DNS responses cannot establish WAN performance or the public exit address.
 The lab restores VPN settings in `finally`; avoid simultaneous manual edits or
 another login during a test (the firmware has one active admin session).
+
+
+## Optional raw TLS client authentication (mTLS)
+
+The **JavaScript exit** supports a dedicated client CA. Existing raw TLS commands
+without the flag keep their previous behavior. This is not the native exit's
+configuration and is not the profiled TLS/Bearer protocol.
+
+```sh
+sudo env PATH="$PATH" node scripts/clean-vpn.js --role=exit --type=tls \
+  --tls-raw --server=0.0.0.0:8765 --tls-raw-client-ca=/secure/client-ca.pem
+```
+
+The file must contain CA certificates only (up to 32 KiB). When enabled, the exit
+requires a currently valid client certificate signed by this CA before attaching
+the connection to the tunnel. Missing, expired and untrusted certificates are
+rejected. Use a dedicated client CA: every valid client certificate it issues is
+eligible; there is no per-device ACL or revocation service in this implementation.
+The existing single-peer tunnel/address model is unchanged.
+
+Example credentials, generated in a private directory on a trusted computer:
+
+```sh
+umask 077
+mkdir client-credentials
+cd client-credentials
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+  -keyout client-ca.key -out client-ca.pem -days 3650 -subj /CN=MeshPN-client-CA \
+  -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+  -keyout device.key -out device.csr -subj /CN=MeshPN-device
+cat > client.ext <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=clientAuth
+EOF
+openssl x509 -req -in device.csr -CA client-ca.pem -CAkey client-ca.key \
+  -CAcreateserial -out device.pem -days 365 -sha256 -extfile client.ext
+```
+
+In **VPN → TLS → Client authentication**, paste `device.pem` and `device.key`,
+then save. Use HTTPS admin when importing the private key. Keep `client-ca.key`
+off the board and exit; the exit needs only `client-ca.pem`. Server trust remains
+separate: the board still needs its exit CA, correct TLS server name and clock.
+
+The board checks the certificate/key pair, certificate purpose and bounded PEM
+format, stores the pair in one NVS blob, and reconnects active TLS. Certificate
+chain limit: 8192 bytes; unencrypted private key: 4096 bytes. Client identity
+persists across transport changes. Explicit removal clears both fields. A saved
+but unreadable/corrupt identity fails the connection instead of falling back to
+anonymous TLS. API status exposes only whether a pair is saved, never the key.
+This change does not enable flash/NVS encryption; physical flash protection is a
+separate deployment requirement. Temporary key buffers are wiped before freeing.
+
+Authenticated API: `POST /api/vpn/tls-client-identity` with
+`certificate_pem` and `private_key_pem`; both empty means explicit removal.
+Tests cover real loopback mTLS and production storage/connection code. Memory
+peaks and use on each physical board still require acceptance.

@@ -199,6 +199,7 @@ done
 "$test_dir/ingress-session"
 node device/tests/test-ip-ranges.mjs
 node device/tests/test-web-ui.mjs
+node device/tests/test-vpn-profile-check.mjs
 node device/tests/test-captive.mjs
 "$cc" "${flags[@]}" -Idevice/tests/stubs -Idevice/components/meshvpn_config/include \
   device/tests/test_hostname.c device/components/meshvpn_config/meshvpn_config_hostname.c -o "$test_dir/hostname"
@@ -250,6 +251,8 @@ if [[ -n "${IDF_PATH:-}" ]]; then
   cmake -S "$source_dir" -B "$test_dir/mbedtls" -DENABLE_PROGRAMS=OFF -DENABLE_TESTING=OFF > "$test_dir/mbedtls.log" 2>&1
   cmake --build "$test_dir/mbedtls" -j 4 >> "$test_dir/mbedtls.log" 2>&1
   node device/tests/test-vpn-trust.mjs "$test_dir/mbedtls/library"
+  node device/tests/test-vpn-client-identity.mjs "$test_dir/mbedtls/library"
+  node device/tests/test-vpn-real-exit.mjs "$test_dir/mbedtls/library"
   node device/tests/test-vpn-tls-io.mjs "$test_dir/mbedtls/library"
   node device/tests/test-vpn-config.mjs "$test_dir/mbedtls/library/libmbedcrypto.a"
   bash device/scripts/create-admin-ca.sh "$test_dir/tls" > "$test_dir/certificates.log" 2>&1

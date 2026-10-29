@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "scope": "Fingerprint reference only, not a complete replayable helper profile",
+  "source": "fixtures/native-browser-captures/chromium-linux-arm64-156.0.8078.47-h2.json",
+  "source_sha256": "c49bcf9a9ea453aceba7960cf260d24c19a53d18c341e10bc49f53d52c5af3df",
+  "sample_index": 1,
+  "conditions": "Private test CA and automation flags are capture conditions, not a stock public-Web browser baseline.",
+  "profile": {
+    "schema_version": "1",
+    "user_agent": "Chrome/156.0.8078.47",
+    "legacy_version": 771,
+    "cipher_suites": [
+      4865,
+      4866,
+      4867,
+      49195,
+      49199,
+      49196,
+      49200,
+      52393,
+      52392,
+      49171,
+      49172,
+      156,
+      157,
+      47,
+      53
+    ],
+    "extension_types": [
+      5,
+      23,
+      43,
+      35,
+      65281,
+      17613,
+      51764,
+      13,
+      0,
+      11,
+      45,
+      27,
+      16,
+      65037,
+      10,
+      18,
+      51
+    ],
+    "supported_groups": [
+      4588,
+      29,
+      23,
+      24
+    ],
+    "ec_point_formats": [
+      0
+    ],
+    "ja3_string": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,5-23-43-35-65281-17613-51764-13-0-11-45-27-16-65037-10-18-51,4588-29-23-24,0",
+    "ja3_md5": "ed63604b6e93c62437468be3f6b387c3",
+    "ja4": {
+      "fingerprint": "t13d1517h2_8daaf6152771_cb7bf5808d99"
+    },
+    "tls_info": {
+      "alpn": [
+        "h2",
+        "http/1.1"
+      ],
+      "supported_versions": [
+        772,
+        771
+      ]
+    },
+    "signature_algorithms": [
+      2308,
+      2309,
+      2310,
+      1027,
+      2052,
+      1025,
+      1283,
+      2053,
+      1281,
+      2054,
+      1537
+    ]
+  }
+}

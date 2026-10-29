@@ -22,6 +22,7 @@ const source=`
 #include "meshvpn_vpn_frame.h"
 #include "meshvpn_vpn_profile.h"
 #include "meshvpn_vpn_trust.h"
+#include "meshvpn_vpn_client_identity.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/platform_util.h"
 #include "cJSON.h"
@@ -49,14 +50,15 @@ static bool auth=true,save_fail=false,apply_fail=false;
 static unsigned saves,applies,cache_clears;
 static const char *last_error_message;
 static cJSON *request;
-static unsigned ca_saves;
+static unsigned ca_saves,identity_saves;
+esp_err_t meshvpn_client_identity_save(const char*c,const char*k){if(save_fail)return ESP_FAIL;if((*c||*k)&&(strcmp(c,"cert")||strcmp(k,"key")))return ESP_ERR_INVALID_ARG;identity_saves++;return ESP_OK;}
 static bool ca_load_fail;
 static char exported_ca[32];
 esp_err_t meshvpn_vpn_ca_load(char **pem){*pem=NULL;if(ca_load_fail)return ESP_FAIL;if(!ca_configured)return ESP_ERR_NVS_NOT_FOUND;*pem=malloc(3);memcpy(*pem,"ca",3);return ESP_OK;}
 
 esp_err_t meshvpn_vpn_ca_save(const char *p){if(!strcmp(p,"bad"))return ESP_ERR_INVALID_ARG;if(save_fail)return ESP_FAIL;ca_configured=*p!=0;ca_saves++;return ESP_OK;}
 static esp_err_t meshvpn_web_require_auth(httpd_req_t*r){(void)r;return auth?ESP_OK:ESP_FAIL;}
-static cJSON *body(httpd_req_t*r,int max){(void)r;assert(max==1024||max==MESHVPN_VPN_CA_MAX*2+128);return cJSON_Duplicate(request,true);}
+static cJSON *body(httpd_req_t*r,int max){(void)r;assert(max==1024||max==MESHVPN_VPN_CA_MAX*2+128||max==(MESHVPN_CLIENT_CERT_MAX+MESHVPN_CLIENT_KEY_MAX)*2+256);return cJSON_Duplicate(request,true);}
 static esp_err_t error(httpd_req_t*r,const char*s,const char*m){(void)r;(void)s;last_error_message=m;return ESP_FAIL;}
 static esp_err_t send_json(httpd_req_t*r,cJSON*j){(void)r;if(j->child){cJSON *p=cJSON_GetObjectItem(j,"ca_pem");assert(cJSON_IsString(p));strcpy(exported_ca,p->valuestring);}cJSON_Delete(j);return ESP_OK;}
 esp_err_t meshvpn_config_load_vpn(meshvpn_vpn_config_t*c){*c=saved;return load_fail?ESP_FAIL:ESP_OK;}
@@ -148,6 +150,19 @@ replace("tls_server_name","exit.example");assert(handler_vpn_config(&r)==ESP_FAI
 ca_configured=true;assert(handler_vpn_config(&r)==ESP_OK);replace("tls_server_name","https://exit.example");
 assert(handler_vpn_config(&r)==ESP_FAIL);cJSON_Delete(request);
 request=cJSON_CreateObject();cJSON_AddStringToObject(request,"ca_pem","ca");
+replace("certificate_pem","cert");replace("private_key_pem","key");
+auth=false;assert(handler_vpn_client_identity(&r)==ESP_FAIL&&!identity_saves);auth=true;
+load_fail=true;assert(handler_vpn_client_identity(&r)==ESP_FAIL&&!identity_saves);load_fail=false;
+replace("private_key_pem","bad");assert(handler_vpn_client_identity(&r)==ESP_FAIL&&!identity_saves);
+replace("private_key_pem","key");save_fail=true;assert(handler_vpn_client_identity(&r)==ESP_FAIL&&!identity_saves);save_fail=false;
+unsigned prior_identity_applies=applies;assert(handler_vpn_client_identity(&r)==ESP_OK&&identity_saves==1&&applies==prior_identity_applies+1);
+replace("certificate_pem","");replace("private_key_pem","");
+assert(handler_vpn_client_identity(&r)==ESP_OK&&identity_saves==2);
+strcpy(saved.transport,"wireguard");prior_identity_applies=applies;
+replace("certificate_pem","cert");replace("private_key_pem","key");
+assert(handler_vpn_client_identity(&r)==ESP_OK&&identity_saves==3&&applies==prior_identity_applies);
+strcpy(saved.transport,"tls");apply_fail=true;
+assert(handler_vpn_client_identity(&r)==ESP_FAIL&&identity_saves==4);apply_fail=false;
 auth=false;assert(handler_vpn_ca(&r)==ESP_FAIL&&!ca_saves);auth=true;
 load_fail=true;assert(handler_vpn_ca(&r)==ESP_FAIL&&!ca_saves);load_fail=false;
 replace("ca_pem","bad");assert(handler_vpn_ca(&r)==ESP_FAIL&&!ca_saves);
