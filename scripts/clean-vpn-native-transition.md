@@ -4,7 +4,10 @@
 для нескольких клиентов одного exit. [Два клиента в systemd-лаборатории](../fixtures/clean-vpn-native-host-multi-report.json)
 прошли DNS/HTTPS, независимый restart/crash, общий crash exit и cleanup.
 Исправлен DNS-перехват запросов приложений с source=TUN: исключение теперь по
-native SO_MARK. Совместный wrong-clock + host-profile VM gate ещё выполняется.
+native SO_MARK. Совместный [wrong-clock + host-profile gate](clean-vpn-native-clock.md#совместная-приёмка-host-profile-29-октября)
+прошёл: три загрузки, 19 шагов, SSH requests 3/0/1. Scoped combo lifecycle
+прошёл двухклиентную матрицу. [Incoming prerequisites](clean-vpn-native-incoming.md)
+проверены для boring и combo; это не приёмка приложения public-proxy/Caddy.
 
 
 ## Актуальный scope 2026-10-29
@@ -15,8 +18,8 @@ regressions; 30 проверок в трёх загрузках VM с update/rol
 физические smoke Radxa↔VPS прошли, включая engine и owner SIGKILL. Свежая админка
 управляет native network owner без старого Node VPN (23 unit + 9 integration).
 Сводка: [план 29 октября](clean-vpn-native-night-20261029.md). Совместная приёмка
-нового host-profile с ошибочными часами и физический boot/power-loss остаются
-отдельными задачами. Scoped exit owner уже реализован и прошёл отдельный
+нового host-profile с ошибочными часами завершена; физический boot/power-loss остаётся
+отдельной задачей. Scoped exit owner уже реализован и прошёл отдельный
 физический smoke без постоянной активации.
 
 По уточнению пользователя старый Node.js VPN не является поддерживаемым продуктом.

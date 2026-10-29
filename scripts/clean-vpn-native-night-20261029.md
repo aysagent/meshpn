@@ -16,7 +16,8 @@ Node допускается для админки и управления; се�
 2. **Готово, 5ebaf47:** cold boot с установленными службами, clock-profile и binary
    updater; откат плохого бинарника, crash recovery owner, отказ guard.
    NVM Node проверен на Radxa; delayed uplink/live down-up/gateway — в systemd.
-   Clock-profile присутствует, но time fault в новой host-связке ещё не проверен.
+   Дополнительный совместный time-fault gate завершён: три загрузки, 19 шагов,
+   реальные SSH requests 3/0/1, native DNS и cleanup owner.
 3. **Физические smoke прошли:** временная физическая проверка boring-tls Radxa ↔ VPS: подготовка выключенной
    установки, bounded activation, DNS/HTTPS, сохранённый TLS профиль и независимый
    pcap. Сохранить USB SSH и чужие правила/службы; по завершении убрать свой runtime.
@@ -25,11 +26,13 @@ Node допускается для админки и управления; се�
    после успешного короткого сценария и с независимым ограничением времени.
 5. **Готово, 2506b6c:** админка: start/stop/restart через сетевой owner, диагностика обеих служб,
    установка без обязательного присутствия legacy; выбор профиля с откатом.
-6. **Podman повторно проверен:** 27 сценариев с часовой нагрузкой, LAN ingress,
-   independent capture и cleanup. Docker имеет предыдущую приёмку; в эту ночь
-   повторно не запускался. Host-profile systemd и namespace runtime разделены.
-7. Резерв после основных gates: scoped постоянный exit owner, несколько клиентов,
-   combo lifecycle, входящие соединения для будущего public-proxy, документация.
+6. **Podman и Docker повторно проверены:** Podman — 27 сценариев с часовой нагрузкой;
+   Docker — 23 сценария, LAN ingress, independent capture и cleanup.
+   Host-profile systemd и namespace runtime разделены.
+7. **Резерв реализован в лаборатории:** scoped exit owner, несколько клиентов,
+   combo lifecycle и входящие соединения для будущего public-proxy. Для входа
+   добавлены opt-in persistent reconnect и точный INPUT grant. Boring/combo
+   прошли отдельные systemd-матрицы; public-proxy/Caddy приложение не тестировалось.
 
 ## Границы
 
@@ -63,6 +66,9 @@ FD=6/socket=2; zombies=0. Это малая лабораторная нагру�
 Резервный [scoped exit owner](clean-vpn-native-exit-host.md) завершён: 23 kernel,
 11 systemd и 32 общих regression tests; включён в 30-case boot-матрицу.
 Отдельный физический smoke прошёл, exit owner SIGKILL recovery 11.143 с.
-Постоянная установка на физическом VPS не активирована. Остальные резервные
-направления (multi-client host-profile, combo lifecycle, public-proxy ingress)
-остаются отдельными этапами, их реализация этим отчётом не заявляется.
+Постоянная установка на физическом VPS не активирована. Продолжение завершило
+[multi-client host-profile](clean-vpn-native-host-network.md), scoped combo и
+[входящий IP/mTLS путь](clean-vpn-native-incoming.md). Машиночитаемые отчёты
+связаны из этих документов. Оставшиеся физические действия — постоянная
+активация/привязка админки и power-loss/boot на реальной плате — отложены,
+лабораторные результаты за них не выдаются.
