@@ -115,3 +115,33 @@ The final normal Waveshare configuration also had an incomplete VPN download
 at the 35 s deadline. Partial-body rates are not successful benchmark results.
 Waveshare performance remains unresolved, including without VPN; the Stamp
 improvement must not be generalized to this board or to the phone AP test.
+
+## Final flash and health
+
+Both identity-bound P4s were automatically flashed with committed firmware
+`3ba7a9f`; ROM entry, programming and return to application CDC succeeded without
+buttons or unplugging. Both joined the saved Wi-Fi, authenticated `boring-tls`
+over H2 with certificate verification error 0, and returned VPS public IP
+154.62.226.216 through their respective USB interfaces. VPN and kill switch
+remain enabled; tunnel addresses remain Stamp 10.99.0.4 / Waveshare 10.99.0.3.
+Observed internal minimum free was 78,584 / 77,176 bytes (Stamp / Waveshare),
+with HTTP task stack spare 3,924 / 4,008 bytes. These are short health checks,
+not endurance or speed acceptance.
+
+A final local STA control used authenticated `/api/diag/link-download` and
+`link-upload` over Mac's unchanged en0 connection to the home AP. It bypasses
+Internet/VPS transport, but includes the Mac Wi-Fi leg and the AP:
+
+| Board | Board → Mac, 8 MiB requested | Mac → board, 1 MiB |
+|---|---|---|
+| Waveshare | Incomplete: 1,531,904 bytes in 30.87 s, curl 18 | 0.92 Mbit/s, HTTP 200 |
+| Stamp | Complete: 4.28 Mbit/s, HTTP 200 | 22.13 Mbit/s, HTTP 200 |
+
+The Waveshare partial-body transfer is a failure, not a valid throughput result.
+The initial attempt at the USB-only endpoint through STA returned expected HTTP
+403; it was replaced by the existing authenticated local-link endpoint, without
+changing access restrictions. Post-test Wi-Fi/VPN remained up on both boards.
+Host SDIO queue-full, expiry and RX-drop counters were zero on Waveshare in this
+final boot. This local failure further excludes VPS-only explanations, but does
+not distinguish C6 radio/firmware from its interaction with the AP. MAC/network
+settings, C6 firmware/calibration, Mac Wi-Fi and router were not changed.
