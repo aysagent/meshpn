@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { isIPv4 } from 'node:net';
 import {validateRelayHealth} from './native-relay-health.mjs';
 import { validateTransparentNetworkProfile, transparentSpecialIPv4 } from './native-transparent-network.mjs';
-const privateDnsOutput=tun=>['udp','tcp'].map(proto=>`-o ${tun} -s 10.99.0.1/32 -d 10.99.0.0/24 -p ${proto} --sport 1055 -m conntrack --ctstate ESTABLISHED --ctdir REPLY -j ACCEPT`);
+const privateDnsOutput=tun=>['udp','tcp'].map(proto=>`-s 10.99.0.1/32 -d 10.99.0.0/24 -o ${tun} -p ${proto} --sport 1055 -m conntrack --ctstate ESTABLISHED --ctdir REPLY -j ACCEPT`);
 
 // Shared by provisioning and health. Full credential/schema validation remains
 // in the native engine, before the runtime performs network mutations.
@@ -105,6 +105,9 @@ export function runtimePlan(c, { uplink = 'eth0', mtu = 1400, lan = null, relayH
   if (client) {
     rules.output.push(`-d ${c.address}/32 -o ${uplink} -p tcp --dport ${c.port} -j ACCEPT`, `-o ${c.tun} -j ACCEPT`);
     for (const proto of ['udp', 'tcp']) {
+      // OUTPUT can retain the original uplink interface after local DNS DNAT
+      // (e.g. Podman's bridge resolver). Permit only the translated local stub.
+      rules.output.push(`-d ${address}/32 -p ${proto} --dport 1053 -m addrtype --dst-type LOCAL -m conntrack --ctstate DNAT -j ACCEPT`);
       for (const server of ['1.1.1.1', '8.8.8.8']) rules.dns.push(`-s ${address}/32 -d ${server}/32 -p ${proto} --dport 53 -m mark --mark 0x43564e -j ACCEPT`);
       // Includes 127.0.0.11 (Docker embedded resolver), never host DNS fallback.
       rules.dns.push(`-p ${proto} --dport 53 -j DNAT --to-destination ${address}:1053`);
@@ -122,7 +125,7 @@ export function runtimePlan(c, { uplink = 'eth0', mtu = 1400, lan = null, relayH
         rules.mss.push(`${direction} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mtu - 40}`);
     }
   } else {
-    if(c.private_peer_dns){for(const proto of ['udp','tcp'])rules.input.push(`-i ${c.tun} -s 10.99.0.0/24 -d 10.99.0.1/32 -p ${proto} --dport 1055 -j ACCEPT`);rules.output.push(...privateDnsOutput(c.tun));}
+    if(c.private_peer_dns){for(const proto of ['udp','tcp'])rules.input.push(`-s 10.99.0.0/24 -d 10.99.0.1/32 -i ${c.tun} -p ${proto} --dport 1055 -j ACCEPT`);rules.output.push(...privateDnsOutput(c.tun));}
     rules.input.push(`-d ${c.address}/32 -i ${uplink} -p tcp --dport ${c.port} -j ACCEPT`);
     rules.output.push(`-o ${uplink} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT`);
     rules.forward.push(`-s 10.99.0.0/24 -i ${c.tun} -o ${uplink} -j ACCEPT`,

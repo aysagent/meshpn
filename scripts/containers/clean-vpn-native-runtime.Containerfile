@@ -36,7 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=selected /out/ /usr/local/bin/
 RUN cd /usr/local/bin && sha256sum -c engine.sha256 && ./clean-vpn-engine --capabilities
 COPY scripts/clean-vpn-native-runtime.mjs scripts/clean-vpn-native-runtime-health.mjs /opt/clean-vpn/
-COPY scripts/lib/native-runtime-plan.mjs scripts/lib/native-relay-health.mjs scripts/lib/native-transparent-network.mjs /opt/clean-vpn/lib/
+COPY scripts/lib/native-runtime-plan.mjs scripts/lib/native-runtime-address.mjs scripts/lib/native-relay-health.mjs scripts/lib/native-transparent-network.mjs /opt/clean-vpn/lib/
 COPY scripts/containers/native-runtime-entrypoint.sh /usr/local/bin/native-runtime
 COPY provenance.json /opt/clean-vpn/source-provenance.json
 RUN chmod 0755 /usr/local/bin/native-runtime

@@ -7,7 +7,7 @@
 - [Alpine: сборка, размеры, архитектуры](clean-vpn-native-alpine.md).
 - [Машиночитаемый отчёт](../fixtures/clean-vpn-native-containers-20261030.json).
 
-Оставшиеся границы: amd64 runner, отдельный Docker daemon, явная host USB/Wi-Fi/DNS
+Оставшиеся границы: amd64 runner, явная host USB/Wi-Fi/DNS
 интеграция и наблюдатель. Физическую работающую пару не изменяли.
 
 Исходные требования:

@@ -1,0 +1,24 @@
+# Exit only: engine.json must opt in with private_peer_dns:true and registry must
+# exist. Same namespace as vpn; no host publication, no Docker/Podman socket.
+services:
+  vpn:
+    environment:
+      CVPN_CLIENTS_DIRECTORY: /config/clients
+  peer-dns:
+    image: ${CVPN_MANAGED_IMAGE:?set managed VPN image}
+    restart: unless-stopped
+    depends_on: [vpn]
+    network_mode: service:vpn
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    mem_limit: 64m
+    volumes:
+      # Directory mount is necessary: registry replacement and sibling journal
+      # must remain visible. This trusted root sidecar CAN read config keys;
+      # resolver code reads only registry/journal. Web never gets this volume.
+      - config:/config:ro
+    entrypoint: [node, /opt/clean-vpn/scripts/clean-vpn-native-peer-dns.mjs]
+    command: [run, --registry=/config/clients/registry.json, --port=1055]

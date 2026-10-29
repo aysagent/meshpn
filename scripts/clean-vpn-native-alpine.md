@@ -60,6 +60,7 @@ emulation не меняли во время других лабораторны�
 amd64 builder/runner либо согласованная настройка отдельной VM. Поддержку amd64
 по одному multiarch base manifest не заявляем.
 
-Docker daemon, rootless mode, физические Radxa/VPS, cold boot и host Wi-Fi/USB/DNS
-этим отчётом не подтверждены. Для ежедневного включения нового image на реальной
+После базового отчёта отдельная Docker 28.5.2 / Compose 2.40.3 лаборатория
+прошла managed private-DNS gate 11/11 на ARM64. Rootless mode, физические
+Radxa/VPS, cold boot и host Wi-Fi/USB/DNS этими прогонами не подтверждены. Для ежедневного включения нового image на реальной
 машине остаётся отдельный bounded smoke с восстановлением состояния.

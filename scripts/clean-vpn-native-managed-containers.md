@@ -15,8 +15,8 @@ restart; `stop` через API сохраняется в private state и пер
 ## Границы поддержки
 
 - Linux rootful Docker/Podman, `/dev/net/tun`, NET_ADMIN/NET_RAW внутри namespace.
-  Реальная проверка выполнена на ARM64 Podman machine; Docker daemon отдельно
-  пока не проверен. На macOS Linux-сеть находится внутри Podman VM.
+  Реальная проверка выполнена на ARM64 Podman machine и отдельно на Docker
+  28.5.2 / Compose 2.40.3 внутри изолированной Linux-лаборатории. На macOS Linux-сеть находится внутри Podman VM.
 - `boring-tls` и `combo-tls` используют существующий native runtime. Для combo
   нужна отдельная LAN сеть и инициализированный durable replay state.
 - UI показывает только поддержанные возможности: start/stop/restart, состояние,
@@ -152,3 +152,47 @@ TLS capture, add/revoke без смены PID, stop/start и SIGKILL recovery; �
 удаляет только свои контейнеры, volumes и bridge. Он использует 10.77.91.0/24 и
 порты VM loopback 18181/18182/19181/19182; запускать без другого такого теста.
 Результаты и ограничения — [отчёт](../fixtures/clean-vpn-native-containers-20261030.json).
+
+## Optional private DNS sidecar
+
+Для exit с реестром клиентов добавить
+`-f scripts/containers/native-managed.private-dns.yml`. При первоначальном
+импорте exit bundle указать `--private-peer-dns` вместе с
+`--clients-endpoint=...`; это ставит `private_peer_dns:true` в native exit
+config. Для combo флаг находится в `boring`, а реестр и replay identity map
+готовятся отдельно. Нужен engine, объявляющий `private_peer_dns` в capabilities.
+
+Sidecar слушает только `127.0.0.1:1055` внутри namespace VPN. Native exit
+передаёт ему авторизованные приватные запросы из TUN, а клиент направляет
+`*.mpn` и приватные PTR только в этот канал. Публичные имена продолжают
+использовать обычные upstream. Отказ sidecar даёт SERVFAIL для private zone;
+открытого fallback для неё нет. Смена, добавление и отзыв имён видны без
+перезапуска; pending registry transaction означает SERVFAIL.
+
+Сервис root, cap_drop ALL, read-only rootfs/config и no-new-privileges; у него
+нет container-engine socket и опубликованных портов. **Это доверенный
+control-plane сервис:** read-only config volume содержит ключи, и root sidecar
+технически может их прочитать, хотя resolver код читает только registry и
+соседний journal. Web volume ключей не получает. Отдельная проекция без ключей
+потребует своего атомарного протокола публикации/инвалидации. Монтирование одного
+registry файла не подходит: atomic rename оставит mount на старом inode.
+
+Compose задаёт `CVPN_CONTAINER_DNS` (по умолчанию `1.1.1.1`) именно для
+resolver VPN-контейнера. Podman может записать адрес своего bridge proxy
+в `/etc/resolv.conf`, сохранив upstream в настройках engine. Клиентский runtime
+перехватывает UDP/TCP53 и
+передаёт запросы native DNS stub; это не изменение DNS хоста. Явный адрес нужен
+также в internal bridge, где Podman иначе может оставить пустой resolver config.
+Sidecar не выполняет рекурсивных запросов и собственный resolver не использует.
+
+Лаборатория: `CVPN_MANAGED_PRIVATE_DNS=1` добавляет overlay только exit-проекту
+`test-native-managed-compose.mjs`. Проверяются UDP/TCP `.mpn`, обычный NSS
+`getent`, публичный DNS positive control, registry transaction/revoke, остановка
+и запуск sidecar, отсутствие приватных запросов в журнале public fixture.
+
+Для DNS к on-link bridge resolver добавлено узкое разрешение OUTPUT только
+`own-TUN-IP:1053` после `conntrack DNAT` и при `addrtype LOCAL`. Оно учитывает
+сохранённый первоначальный uplink в OUTPUT hook после DNAT и не открывает DNS
+наружу до создания TUN/адреса. `test-native-runtime-local-dns.mjs` подтверждает
+pre-TUN drop и canonical audit в отдельном namespace без NIC; общий Compose
+проверяет обычный NSS и отсутствие port53 fallback при остановленном engine.

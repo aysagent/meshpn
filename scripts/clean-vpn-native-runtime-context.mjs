@@ -10,13 +10,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 assert.equal(process.argv.length, 3, 'Usage: node scripts/clean-vpn-native-runtime-context.mjs NEW_DIRECTORY');
 const output = path.resolve(process.argv[2]); assert.equal(fs.existsSync(output), false, 'new_context_required');
 const files = ['scripts/clean-vpn-native-runtime.mjs', 'scripts/clean-vpn-native-runtime-health.mjs',
-  'scripts/lib/native-runtime-plan.mjs', 'scripts/lib/native-relay-health.mjs', 'scripts/lib/native-transparent-network.mjs', 'scripts/containers/native-runtime-entrypoint.sh',
+  'scripts/lib/native-runtime-plan.mjs', 'scripts/lib/native-runtime-address.mjs', 'scripts/lib/native-relay-health.mjs', 'scripts/lib/native-transparent-network.mjs', 'scripts/containers/native-runtime-entrypoint.sh',
   'scripts/containers/clean-vpn-native-runtime.Containerfile', 'scripts/containers/clean-vpn-native-alpine.Containerfile', 'fixtures/native-tls-profiles/cold-h2.json'];
 files.push('scripts/clean-vpn-container-broker.mjs', 'scripts/clean-vpn-container-web.mjs', 'scripts/containers/clean-vpn-managed.Containerfile',
   'admin/server.mjs', 'admin/lib/common.mjs', 'admin/lib/command.mjs', 'admin/lib/metrics.mjs',
   'admin/lib/vpn-settings-transaction.mjs', 'admin/lib/auth.mjs', 'admin/lib/captive.mjs',
   'admin/lib/clients.mjs', 'admin/lib/certificates.mjs', 'admin/lib/diagnostics.mjs', 'scripts/lib/native-client-manager.mjs', 'scripts/lib/native-client-service.mjs',
-  'scripts/clean-vpn-native-clients.mjs', 'scripts/lib/native-client-bundles.mjs', 'scripts/lib/native-network-profile.mjs',
+  'scripts/clean-vpn-native-clients.mjs', 'scripts/clean-vpn-native-peer-dns.mjs', 'scripts/lib/native-peer-dns.mjs', 'scripts/lib/lab-dns-wire.mjs', 'scripts/lib/native-client-bundles.mjs', 'scripts/lib/native-network-profile.mjs',
   'scripts/lib/native-browser-capture-server.mjs', 'scripts/lib/native-browser-capture.mjs',
   'scripts/lib/native-tls-profile-observer.mjs', 'scripts/lib/tls-clienthello-ja3.mjs',
   'scripts/lib/tls-clienthello-ja4.mjs', 'scripts/lib/http2-prefix-observer.mjs');

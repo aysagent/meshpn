@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "kind": "native-managed-compose-lab",
+  "status": "passed",
+  "checks": [
+    "compose-pair-supervised-engines-active",
+    "real-tun-authenticated-packet-roundtrip",
+    "compose-private-dns-udp-tcp-nss-and-public-positive-control",
+    "compose-private-dns-transaction-servfail-without-public-fallback",
+    "client-add-revoke-reload-without-existing-client-interruption",
+    "compose-private-dns-revoke-outage-and-recovery-no-public-fallback",
+    "both-roles-http-admin-auth-diagnostics-and-verified-TLS-browser-capture",
+    "stop-retains-guard-no-packet-forwarding",
+    "stopped-engine-cannot-bypass-DNS-through-direct-port53",
+    "start-restores-packet-path",
+    "engine-sigkill-auto-recovery"
+  ],
+  "scope": "internal bridge; real namespace runtime and HTTP admin; no physical hosts or reboot",
+  "images": [
+    {
+      "name": "localhost/cvpn-managed-alpine:private-dns-local-20261030",
+      "id": "361ee1c9b6309297c35d1bae2172d36b5147e48d712f2c97f73dafb220a83d72",
+      "architecture": "arm64",
+      "size": 109205033
+    },
+    {
+      "name": "localhost/cvpn-managed-web-alpine:status-20261030",
+      "id": "860d7fba27f836e3b49409368f56b64950eb8480f65e089559933153fa9a782c",
+      "architecture": "arm64",
+      "size": 77817936
+    }
+  ],
+  "cleanupErrors": [],
+  "nativeEngineSha256": "88228c10f55c9991b98f03d4cddacc60b0602560be97528322fa696dd40561a7",
+  "nativeSnapshot": "a9cb8bd",
+  "resolverRaceFix": "09dc688",
+  "preTunGuard": {
+    "status": "passed",
+    "backend": "nft",
+    "scope": "network-none disposable namespace; no TUN/local address; DNAT observed but LOCAL allow zero and OUTPUT drop positive"
+  },
+  "fixes": [
+    "canonical private-DNS iptables rule order",
+    "allow DNAT to own local DNS stub even with original on-link uplink route",
+    "addrtype LOCAL required before DNS allowance; no pre-TUN WAN escape"
+  ],
+  "limitations": [
+    "trusted root DNS sidecar can read private config volume; web cannot",
+    "no physical hosts/reboot",
+    "private DNS overlay opt-in only"
+  ]
+}
