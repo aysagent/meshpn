@@ -23,6 +23,7 @@ function record(name,hello){
  const wire=tlsClientHandshakeProfileWithJa4FromTcpBuf(hello);assert(wire.ok);
  const actual=wire.ja3.components;
  const result=checkProfile(reference.profile,hello);
+ if(name.startsWith('bssl-prefs-')||name.startsWith('bssl-handshake-'))assert(result.match,`Profile mismatch: ${name}`);
  const fieldDiff={};
  for(const [expected,got] of [['cipher_suites',actual.cipher_suites_decimal_grease_filtered],['extension_types',actual.extension_types_decimal_grease_filtered],['supported_groups',actual.supported_groups_decimal_grease_filtered],['signature_algorithms',wire.tls.signature_algorithms??[]],['ec_point_formats',actual.ec_point_formats_decimal]]){
   const want=reference.profile[expected];assert(Array.isArray(got),expected);
@@ -39,7 +40,7 @@ for(const [backend,bin,modes] of [['mbedtls',mbedBin,['tls12','tls13','prefs']],
  }
 }
 const handshakes=[],exporters=new Set();
-async function connectProbe(backend,bin,ca,shouldPass,group=null){
+async function connectProbe(backend,bin,ca,shouldPass,group=null,mutation=null){
  let serverExporter=null,wire=Buffer.alloc(0),sockets=new Set();
  let serverDone;
  const serverHandshake=new Promise(resolve=>{serverDone=resolve;});
@@ -58,7 +59,7 @@ async function connectProbe(backend,bin,ca,shouldPass,group=null){
  await new Promise(r=>srv.listen(0,'127.0.0.1',r));
  let stdout='',stderr='',code;
  try{
-  code=await new Promise((resolve,reject)=>{const c=spawn(bin,['connect',String(srv.address().port),ca],{stdio:['ignore','pipe','pipe']});const timer=setTimeout(()=>c.kill('SIGKILL'),15000);c.stdout.on('data',b=>stdout+=b);c.stderr.on('data',b=>stderr+=b);c.once('error',reject);c.once('close',v=>{clearTimeout(timer);resolve(v);});});
+  code=await new Promise((resolve,reject)=>{const c=spawn(bin,['connect',String(srv.address().port),ca],{stdio:['ignore','pipe','pipe'],env:{...process.env,...(mutation?{MESHPN_PROFILE_MUTATE:mutation}:{})}});const timer=setTimeout(()=>c.kill('SIGKILL'),15000);c.stdout.on('data',b=>stdout+=b);c.stderr.on('data',b=>stderr+=b);c.once('error',reject);c.once('close',v=>{clearTimeout(timer);resolve(v);});});
   if(shouldPass){
    let timer;
    try{assert.equal(await Promise.race([serverHandshake,new Promise(resolve=>{timer=setTimeout(()=>resolve('timeout'),3000);})]),true,'server must complete the handshake too');}
@@ -67,12 +68,18 @@ async function connectProbe(backend,bin,ca,shouldPass,group=null){
   if(shouldPass){assert.equal(code,0,stderr);const match=stdout.trim().match(/^TLSv1\.3 ([a-f0-9]{64})$/);assert(match,stdout);assert.equal(match[1],serverExporter);assert(!exporters.has(serverExporter),"Exporter reused on a fresh connection");exporters.add(serverExporter);record(`${backend}-handshake-${handshakes.length}`,wire);}
   else {
    assert.equal(code,backend==='bssl'?6:1,'negative case must fail in TLS, not by timeout/signal/setup');
-   assert.match(stderr,backend==='bssl'?/CERTIFICATE_VERIFY_FAILED/:/handshake error -\d+/);
+   if(!mutation)assert.match(stderr,backend==='bssl'?/CERTIFICATE_VERIFY_FAILED/:/handshake error -\d+/);
+   else {
+    assert.match(stderr,/PROFILE_GATE hellos=\d+ match=0 sent=0 /,'mismatch must send zero TLS bytes');
+    const gate=stderr.match(/PROFILE_GATE[^\n]*ja3=(\S*) ja4=(\S*)/);assert(gate);
+    if(mutation==='order'){assert.notEqual(gate[1],reference.profile.ja3_md5);assert.equal(gate[2],reference.profile.ja4.fingerprint);}
+    if(mutation==='signature_order'){assert.equal(gate[1],reference.profile.ja3_md5);assert.notEqual(gate[2],reference.profile.ja4.fingerprint);}
+   }
    assert.equal(serverExporter,null,'negative handshake reached server secure connection');
   }
   if(backend==='bssl'){const h=stderr.match(/BSSL_HEAP calls=(\d+) peak=(\d+)/);assert(h&&Number(h[1])>0&&Number(h[2])>0,"BoringSSL allocator hooks inactive");}
   fs.writeFileSync(path.join(out,`${backend}-connection-${handshakes.length}.log`),stderr);
-  handshakes.push({backend,heap:stderr.match(/BSSL_HEAP.*$/m)?.[0]??null,trusted_ca:ca===pki.ca,constrained_group:group,expected_accept:shouldPass,accepted:code===0,exporter_equal:shouldPass?true:null,exit_code:code});
+  handshakes.push({backend,heap:stderr.match(/BSSL_HEAP.*$/m)?.[0]??null,trusted_ca:ca===pki.ca,constrained_group:group,mutation,expected_accept:shouldPass,accepted:code===0,exporter_equal:shouldPass?true:null,exit_code:code});
  }finally{for(const s of sockets)s.destroy();await new Promise(r=>srv.close(r));await new Promise(r=>tlsServer.close(r));}
 }
 for(const [backend,bin] of [['mbedtls',mbedBin],['bssl',bsslBin]]){
@@ -81,6 +88,8 @@ for(const [backend,bin] of [['mbedtls',mbedBin],['bssl',bsslBin]]){
 }
 for(let i=0;i<3;i++)await connectProbe('bssl',bsslBin,pki.ca,true,'X25519MLKEM768');
 await connectProbe('mbedtls',mbedBin,pki.ca,false,'X25519MLKEM768');
+for(const mutation of ['order','signature_order','alpn','no_gate'])await connectProbe('bssl',bsslBin,pki.ca,false,null,mutation);
+for(let i=0;i<3;i++)await connectProbe('bssl',bsslBin,pki.ca,true,'P-256'); // HelloRetryRequest
 // Observe the project's current desktop helper as-is; do not patch it.
 if(helper){for(let i=0;i<3;i++){
  let capture=Buffer.alloc(0),child;

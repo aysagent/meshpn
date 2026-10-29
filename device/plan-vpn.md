@@ -7,6 +7,15 @@
 
 ## Текущее состояние
 
+29 октября, следующий блок: достигнуто точное совпадение JA3/JA4 фиксированного
+профиля. Все 12 профилированных captures совпали; TLS 1.3/exporter, HRR и
+настоящие Brotli/ALPS handshake проходят. Локальный gate блокирует запись при
+несовпадении; тесты JA3-only/JA4-only/ALPN/missing observer отправили 0 TLS bytes.
+Общий opt-in компонент для S3/P4 имеет отдельный 32 KiB PSRAM worker и bounded
+allocator без internal fallback. Он ещё не подключён как VPN-транспорт:
+HTTP/auth/binding, lifecycle и аппаратная приёмка остаются.
+[Результаты](reports/2026-10-29-profiled-tls-gate.md).
+
 29 октября, feasibility профилированного TLS: минимальный библиотечный BoringSSL
 собран для S3 и P4; на host прошли 9 TLS 1.3 handshake с проверкой CA/имени и
 совпадающим exporter, включая 3 с X25519MLKEM768-only сервером. Все 27 новых
@@ -216,7 +225,7 @@ VPN оставлен выключенным для диагностики.
 | Дополнительный `udp` | Реализован, ручные speed tests XIAO выполнены | Регрессия текущей сборки и измерение потерь на одинаковом пути |
 | WireGuard | Реализован; пользователь проверял соединение и интернет на XIAO | Ресурсы/долгая нагрузка/rekey текущей сборки; производительность отдельно от plain TCP/UDP |
 | Этап 3: обычный `tls` | Реализован raw TLS 1.2 через esp-tls/mbedTLS с exit `--type=tls --tls-raw`, CA/name/date checks, опциональным mTLS и host tests | Аппаратная приёмка; совместимый exporter/Bearer/HTTP handshake отсутствует |
-| Этап 4: профилированный TLS | Минимальный BoringSSL собран для S3/P4; host TLS 1.3/exporter проверены, точный профиль не воспроизведён | Семантика/порядок расширений, стек/allocator/RNG, импорт профиля и обязательная проверка JA3/JA4 каждой сессии |
+| Этап 4: профилированный TLS | Точный фиксированный профиль + gate в общем компоненте; TLS 1.3/Brotli/ALPS/HRR host tests; 32 KiB PSRAM worker и bounded allocator; сборки S3/P4 | VPN HTTP/auth/binding и lifecycle, импорт профиля, hardware память/stack/RNG и приёмка |
 | Этап 5: `transparent-tls` | Не реализован | enc-SNI, восстановление CH, relay и LAN interception |
 | Этап 6: `combo-tls` | Не реализован | Совместить защищённый IP-туннель и transparent flows |
 
@@ -789,10 +798,10 @@ handshake peak memory и sustained throughput, без переноса стар�
 
 ### Этап 4 — отдельный транспорт `boring-tls` (профилированный TLS)
 
-- Продолжить изолированный BoringSSL prototype: полный профиль, ALPS/trust anchors/
-  certificate compression/ECH GREASE и порядок расширений до transcript hash.
-  Сначала точный capture и успешный handshake, затем интеграция. До неё требуется
-  отдельное решение для стека: ML-KEM превышает текущие 6 KiB VPN worker.
+- Точный фиксированный prototype, нативные расширения и gate выполнены:
+  [отчёт](reports/2026-10-29-profiled-tls-gate.md). Общий компонент использует
+  отдельный 32 KiB PSRAM worker; память/стек на платах ещё не измерены.
+  Следом — совместимый HTTP/auth протокол и lifecycle в VPN, затем UI профиля.
 - Подключить backend, прошедший feasibility gate; BoringSSL не обязателен.
 - Тот же серверный протокол, что у `tls`, но профиль и строгая проверка JA3/JA4
   обязательны. Это аналог boring-tls по функции, не обязательный порт его helper.

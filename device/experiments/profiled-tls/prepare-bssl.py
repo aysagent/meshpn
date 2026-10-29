@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Copy pinned, already-patched clean-vpn BoringSSL; never mutate its build tree."""
 import pathlib,shutil,subprocess,sys,json,hashlib
+import runpy
+order_patch=runpy.run_path(str(pathlib.Path(__file__).with_name('patch-order.py')))
 src,dst=map(pathlib.Path,sys.argv[1:])
 pin='a7481f34712bc056a47ab91015536166b3a6cebb'
 if subprocess.check_output(['git','-C',str(src),'rev-parse','HEAD'],text=True).strip()!=pin:
@@ -31,8 +33,9 @@ p=dst/'crypto/mem.cc';s=p.read_text()
 for name in ['OPENSSL_memory_alloc','OPENSSL_memory_free','OPENSSL_memory_get_size']:
     s=s.replace('if ('+name+' != nullptr)', '#if defined(MESHPN_PROBE_ALLOCATOR)\n  if (true)\n#else\n  if ('+name+' != nullptr)\n#endif\n')
 p.write_text(s)
+order_patch['apply'](dst)
 manifest={'upstream_commit':pin,'input_diff_sha256':hashlib.sha256(subprocess.check_output(['git','-C',str(src),'diff','--no-ext-diff','HEAD'])).hexdigest(),
- 'probe_changes':['Xtensa little-endian 32-bit target','uint32_t extension indices','optional explicit host allocator hooks'],
- 'port_files_sha256':{str(p.relative_to(dst)):hashlib.sha256(p.read_bytes()).hexdigest() for p in [dst/'include/openssl/target.h',dst/'ssl/extensions.cc',dst/'crypto/mem.cc']}}
+ 'probe_changes':['Xtensa little-endian 32-bit target','uint32_t extension indices','optional explicit host allocator hooks','per-SSL native extension writer order'],
+ 'port_files_sha256':{str(p.relative_to(dst)):hashlib.sha256(p.read_bytes()).hexdigest() for p in [dst/'include/openssl/target.h',dst/'ssl/extensions.cc',dst/'crypto/mem.cc',dst/'ssl/internal.h',dst/'ssl/ssl_lib.cc',dst/'include/openssl/ssl.h']}}
 (dst/'meshpn-probe-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
 print(dst)

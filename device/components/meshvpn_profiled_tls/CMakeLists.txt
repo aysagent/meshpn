@@ -1,0 +1,22 @@
+if(NOT CONFIG_MESHVPN_PROFILED_TLS_ENABLE)
+    idf_component_register(INCLUDE_DIRS "include" REQUIRES pthread esp_hw_support lwip esp_psram)
+    return()
+endif()
+set(bssl "$ENV{MESHPN_PROBE_BSSL_SOURCE}")
+set(brotli "$ENV{MESHPN_PROBE_BROTLI_SOURCE}")
+if(NOT EXISTS "${bssl}/meshpn-probe-manifest.json" OR NOT EXISTS "${brotli}/meshpn-source-revision")
+    message(FATAL_ERROR "Profiled TLS requires isolated pinned sources prepared by experiments/profiled-tls scripts")
+endif()
+include("${bssl}/gen/sources.cmake")
+set(sources ${SSL_SOURCES} ${CRYPTO_SOURCES} ${BCM_SOURCES})
+list(REMOVE_ITEM sources crypto/rand/getentropy.cc)
+list(TRANSFORM sources PREPEND "${bssl}/")
+file(GLOB brotli_sources "${brotli}/c/common/*.c" "${brotli}/c/dec/*.c")
+idf_component_register(SRCS "profile_client.cc" "profile_gate.cc" "profile_worker.c"
+    "profile_entropy.cc" "profile_allocator.cc" ${sources} ${brotli_sources}
+    INCLUDE_DIRS "include" "${bssl}/include" PRIV_INCLUDE_DIRS "${brotli}/c/include"
+    REQUIRES pthread esp_hw_support lwip esp_psram)
+target_compile_definitions(${COMPONENT_LIB} PUBLIC OPENSSL_NO_ASM OPENSSL_SMALL OPENSSL_NO_FILESYSTEM OPENSSL_NO_POSIX_IO OPENSSL_NO_SOCK)
+target_compile_definitions(${COMPONENT_LIB} PRIVATE BORINGSSL_IMPLEMENTATION MESHPN_PROBE_ALLOCATOR)
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-error -Wno-format -Wno-unused-function -fstack-usage)
+target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)

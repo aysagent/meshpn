@@ -1,0 +1,19 @@
+menu "Profiled TLS backend (experimental)"
+    config MESHVPN_PROFILED_TLS_ENABLE
+        bool "Build isolated profiled TLS backend"
+        default n
+        depends on SPIRAM && (IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32P4)
+        select FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
+        help
+            Compile the frozen-profile backend and its dedicated PSRAM executor.
+            This does not add a VPN transport to the admin UI. Requires pinned
+            prepared BoringSSL/Brotli sources; see experiments/profiled-tls.
+    config MESHVPN_PROFILED_TLS_STACK_BYTES
+        int "Profiled TLS executor stack bytes"
+        depends on MESHVPN_PROFILED_TLS_ENABLE
+        range 32768 65536
+        default 32768
+        help
+            Separate lazy PSRAM stack. ML-KEM nested frames exceed 8 KiB before
+            TLS/RTOS overhead. Actual high-water still needs hardware validation.
+endmenu

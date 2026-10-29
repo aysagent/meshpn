@@ -39,3 +39,11 @@ Next: select a complete reproducible target profile, implement the remaining
 extension semantics/order and device memory/I/O integration, capture
 every new device connection at exit, and block activation on missing or mismatched
 validation. Matching JA3/JA4 alone does not establish full browser equivalence.
+
+The next [implementation block](../reports/2026-10-29-profiled-tls-gate.md) now
+matches all 12 profiled BoringSSL captures to the frozen reference. A common
+ESP32 component computes both fingerprints locally and gates the socket BIO
+before writing. Wrong order/signature order/ALPN/missing observer send zero TLS
+bytes; fresh HRR ClientHellos are checked again. This supports one cold profile,
+not arbitrary JSON imports. It is not yet connected to the VPN transport selector;
+HTTP/auth/exporter binding and hardware acceptance remain.

@@ -9,6 +9,8 @@ export IDF_PATH="${IDF_PATH:-$HOME/esp/esp-idf-meshpn-v5.5.5}"
 mkdir -m 700 -p "$2"
 out="$(cd "$2" && pwd)"
 python3 "$here/prepare-bssl.py" "${BSSL_SOURCE:-$here/../../../native/boring_tls/build/_deps/boringssl-src}" "$out/bssl-source" >"$out/prepare.log"
+bash "$here/prepare-brotli.sh" "$out/brotli-source"
+export MESHPN_PROBE_BROTLI_SOURCE="$out/brotli-source"
 export MESHPN_PROBE_BSSL_SOURCE="$out/bssl-source" IDF_TARGET="$1"
 # All dependencies are local SDK components; no registry resolution is needed.
 export IDF_COMPONENT_MANAGER=0
