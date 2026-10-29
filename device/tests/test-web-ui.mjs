@@ -223,6 +223,19 @@ for(const part of text.split('static const char ').slice(1)){
         assert(elements['vpn-internet'].textContent.includes('DNS/HTTPS not verified'));
         status.vpn.internet_probe.age_sec=61;await vm.runInContext('poll()',context);
         assert(elements['vpn-internet'].textContent.includes('outdated'));
+        for(const age of [null, -1, '0']) {
+          status.vpn.internet_probe.age_sec=age;await vm.runInContext('poll()',context);
+          assert(elements['vpn-internet'].textContent.includes('age unknown'));
+          assert.notEqual(elements['vpn-internet'].className,'success');
+        }
+        const a={board:'stamp',build:'abc',boot_count:2,uptime_sec:10,net:{usb_ip:'192.168.12.1',interfaces:[{ip:'192.168.12.1',mac:'02:00:00:00:00:01'}]},memory:{internal:{free:1000}},
+          wifi:{tx_failures:{hosted_dma:{sta:{events:1}}}}};
+        const b=JSON.parse(JSON.stringify(a));b.uptime_sec=20;b.memory.internal.free=900;b.wifi.tx_failures.hosted_dma.sta.events=3;
+        context.baseline=a;context.current=b;
+        let compared=vm.runInContext('compareDiagnostics(baseline,current)',context);
+        assert.equal(compared.memory.internal.delta,-100);assert.equal(compared.tx_failures['hosted_dma.sta'],2);
+        b.boot_count=3;compared=vm.runInContext('compareDiagnostics(baseline,current)',context);
+        assert.equal(compared.same_boot,false);assert.equal(Object.keys(compared.tx_failures).length,0);
         status.vpn.internet_probe={tested:true,ok:false,age_sec:0,error:110};await vm.runInContext('poll()',context);
         assert(elements['vpn-internet'].textContent.includes('FAILED'));
         vm.runInContext('renderVpn(null)',context);

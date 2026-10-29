@@ -47,3 +47,42 @@ The synthetic peer validates IPv4 and ICMP/TCP/UDP checksums before replying
 TCP/TLS connection or UDP endpoint, so a reconnect cannot inherit a previous
 connection's SYN/ACK state. These safeguards are tested on loopback; they do
 not replace a successful hardware tunnel test.
+
+## Repeated offline connections and slow peers
+
+From the repository root, without a board or VPS:
+
+```sh
+VPN_PEER_STRESS_ROUNDS=100 VPN_PEER_STRESS_OUT=/tmp/meshpn-peer-stress.json \
+  node device/tests/test-vpn-peer-stress.mjs
+IDF_PATH=/Users/yurich/esp/esp-idf-meshpn-v5.5.5 \
+  bash device/scripts/test-host.sh
+```
+
+The first test runs TCP/UDP/TLS echo cycles, fragmented stream headers, partial
+disconnects, and non-reading TCP/TLS clients. It checks packet counts and that
+tracked sockets, flows and queued output are released. Memory samples are saved,
+but RSS changes alone do not prove a leak or absence of one. This exercises the
+Node test peer, not an ESP32 RTOS, radio, WireGuard or an internet exit.
+
+The full host suite prints its temporary artifact directory. To repeat the
+production TLS I/O wrapper with its built mbedTLS libraries in one process per
+scenario, use that directory:
+
+```sh
+VPN_TLS_IO_ROUNDS=12 node device/tests/test-vpn-tls-io.mjs \
+  /tmp/meshpn-host-tests.REPLACE/mbedtls/library
+```
+
+`VPN_TLS_IO_ROUNDS` accepts 1–100. Each round creates and destroys a fresh TLS
+context/socket; the default is 128 verified frames each way. Both fragmentation
+and forced read/write backpressure scenarios run. At most 64 frames remain
+unacknowledged, keeping extended runs bounded. Certificate verification remains
+enabled. ASan/UBSan and the production TX-worker cancellation tests are separate
+checks; this is not a complete firmware lifecycle simulation.
+
+The synthetic TCP/TLS peer now honours `write()` backpressure and bounds its
+pending application output (default 256 KiB per connection). Overflow closes
+that connection; it never drops bytes from the middle of a framed stream and
+continues. `startPeer()` accepts `maxPendingBytes` and `writeDelayMs` for tests.
+These limits exclude kernel/TLS buffers and do not add UDP delivery guarantees.

@@ -46,6 +46,28 @@ def save(path, value):
     perf.private_json(tmp, value); os.replace(tmp, path)
 
 
+def usb_identity(status):
+    return next((v['mac'] for v in status.get('net', {}).get('interfaces', [])
+                 if v.get('ip') == status['net'].get('usb_ip') and v.get('mac')), None)
+
+
+def acquire_lock(path):
+    """A/B parent can pass its already locked open file, never a bypass flag."""
+    inherited = os.environ.get('MESHPN_DUAL_LOCK_FD')
+    if inherited is not None:
+        fd = int(inherited)
+        expected, actual = path.stat(), os.fstat(fd)
+        if (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino):
+            raise RuntimeError('Inherited bench lock does not match lock file')
+        f = os.fdopen(os.dup(fd), 'a')
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        f = open(path, 'a')
+    try: fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BaseException: f.close(); raise
+    return f
+
+
 def wan_transfer(interface):
     """Keep partial bytes/time on failure; only a complete body gets a rate."""
     command = ['/usr/bin/curl', '--noproxy', '*', '-4', '--interface', interface,
@@ -71,6 +93,8 @@ def restore(path, journal):
     board = perf.Board(journal['address'])
     s = board.api('/api/status')
     if s['board'] != journal['board']: raise RuntimeError('Restoration identity mismatch')
+    if journal.get('usb_mac') and usb_identity(s) != journal['usb_mac']:
+        raise RuntimeError('Restoration USB MAC mismatch')
     try: board.api('/api/diag/net-bench', {'cancel': True})
     except Exception: pass
     try: board.api('/api/diag/sta-tcp?target=0.0.0.0', b'')
@@ -186,6 +210,10 @@ def run(args):
     out = Path(args.out); out.mkdir(mode=0o700, parents=False, exist_ok=False)
     path = out / 'restore.json'
     before, dut_before = board.api('/api/status'), dut.api('/api/status')
+    for status, expected in [(before, getattr(args, 'expected_client_mac', None)),
+                             (dut_before, getattr(args, 'expected_dut_mac', None))]:
+        if expected and usb_identity(status) != expected:
+            raise RuntimeError('Expected USB MAC mismatch; no profile changes made')
     for s, expected, name in [(before, NAMES[args.client], profile), (dut_before, NAMES[other], dut_profile)]:
         if s['board'] != expected or s['net']['usb_ip'] != name['usb']:
             raise RuntimeError('Board identity mismatch')
@@ -195,6 +223,7 @@ def run(args):
     original = {k: before['wifi'][k] for k in ['paused', 'profile_id']}
     profiles = board.api('/api/wifi/profiles')['profiles']
     journal = dict(board=before['board'], address=profile['usb'], original=original,
+                   usb_mac=usb_identity(before),
                    previous_ids=[p['id'] for p in profiles], restored=False,
                    temporary_ssid=dut_before['net']['ap_ssid'] if uses_ap else None)
     save(path, journal)
@@ -314,6 +343,12 @@ def pending_journals(root):
             yield path
 
 
+def pending_ab_journals(root):
+    for path in root.rglob('radio-ab.json'):
+        if not json.loads(path.read_text()).get('restored'):
+            yield path
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--client',choices=list(NAMES),default='waveshare')
@@ -323,6 +358,7 @@ def main():
     p.add_argument('--nodelay',type=int,choices=[0,1],default=1,
                    help='link HTTP download socket TCP_NODELAY; 0 allows coalescing; not a radio setting')
     p.add_argument('--host');p.add_argument('--out')
+    p.add_argument('--expected-client-mac');p.add_argument('--expected-dut-mac')
     p.add_argument('--seconds',type=int,default=10);p.add_argument('--repeats',type=int,default=3)
     p.add_argument('--rates',type=int,nargs='*',default=[4,8,12,16,20,24,32])
     p.add_argument('--protocols',choices=['tcp','udp'],nargs='+',default=['tcp','udp'],
@@ -335,9 +371,11 @@ def main():
         p.error('bounded seconds/repeats/rates/gap required')
     if not a.restore and (not a.out or (a.role in ('peer','direct') and not a.host)):p.error('--host and --out required')
     lock=BASE/'perf-results'/'dual-bench.lock'
-    with open(lock,'a') as f:
-        fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    with acquire_lock(lock):
         if a.restore:restore(a.restore,json.loads(a.restore.read_text()));return
+        if 'MESHPN_DUAL_LOCK_FD' not in os.environ:
+            for path in pending_ab_journals(BASE/'perf-results'):
+                raise RuntimeError('Restore A/B firmware session first with p4-radio-ab.py --restore '+str(path))
         for path in pending_journals(BASE/'perf-results'):
             raise RuntimeError('Restore previous run first: '+str(path))
         signal.signal(signal.SIGTERM,lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))

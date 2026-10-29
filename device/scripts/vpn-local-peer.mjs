@@ -69,9 +69,12 @@ function dns(query) {
   return out;
 }
 
-export async function startPeer({host = '127.0.0.1', port = 0, type = 'tcp', key, cert, fragmentFrames = false} = {}) {
+export async function startPeer({host = '127.0.0.1', port = 0, type = 'tcp', key, cert, fragmentFrames = false, maxPendingBytes = 262144, writeDelayMs = 0} = {}) {
   if (!['tcp', 'udp', 'tls'].includes(type)) throw Error('Unknown local peer transport');
-  const stats = {connections: 0, packets_in: 0, packets_out: 0, invalid: 0, dns: 0, http: 0, mss: [], errors: []};
+  if (!Number.isInteger(maxPendingBytes) || maxPendingBytes < 1404 || maxPendingBytes > 8388608 ||
+      !Number.isInteger(writeDelayMs) || writeDelayMs < 0 || writeDelayMs > 1000) throw Error('Invalid peer output bounds');
+  const writers = new Set();
+  const stats = {output_overflow: 0, output_high_water: 0, connections: 0, packets_in: 0, packets_out: 0, invalid: 0, dns: 0, http: 0, mss: [], errors: []};
   const sockets = new Set(), flows = new Map();
   let server, nextSequence = 10000, nextConnection = 0, closing = false;
   function answer(p, emit, scope) {
@@ -166,20 +169,42 @@ export async function startPeer({host = '127.0.0.1', port = 0, type = 'tcp', key
   function stream(socket) {
     stats.connections++; sockets.add(socket); socket.setNoDelay(true);
     const scope = `stream:${++nextConnection}/`;
-    let input = Buffer.alloc(0), pending = Promise.resolve();
+    let input = Buffer.alloc(0);
+    const output = {queue: [], bytes: 0, active: false}; writers.add(output);
+    async function pump() {
+      if (output.active) return;
+      output.active = true;
+      try {
+        while (output.queue.length && !socket.destroyed) {
+          const b = output.queue.shift();
+          const step = fragmentFrames ? 17 : b.length;
+          for (let i = 0; i < b.length && !socket.destroyed; i += step) {
+            if (!socket.write(b.subarray(i, i + step))) {
+              await new Promise(resolve => {
+                const done = () => { socket.off('drain', done); socket.off('close', done); resolve(); };
+                socket.once('drain', done); socket.once('close', done);
+              });
+            }
+            if (fragmentFrames || writeDelayMs) await new Promise(resolve => setTimeout(resolve, writeDelayMs || 1));
+          }
+          if (!socket.destroyed) output.bytes -= b.length;
+        }
+      } finally { output.active = false; }
+    }
     const emit = p => {
+      if (socket.destroyed) return;
       const header = Buffer.alloc(4); header.writeUInt32BE(p.length);
       const b = Buffer.concat([header, p]);
-      if (!fragmentFrames) { socket.write(b); return; }
-      pending = pending.then(async () => {
-        for (let i = 0; i < b.length && !socket.destroyed; i += 17) {
-          socket.write(b.subarray(i, i + 17)); await new Promise(resolve => setTimeout(resolve, 1));
-        }
-      }).catch(() => {});
+      if (output.bytes + b.length > maxPendingBytes) {
+        stats.output_overflow++; socket.destroy(); return;
+      }
+      output.queue.push(b); output.bytes += b.length;
+      stats.output_high_water = Math.max(stats.output_high_water, output.bytes);
+      pump().catch(() => socket.destroy());
     };
     socket.on('data', b => {
       input = Buffer.concat([input, b]);
-      while (input.length >= 4) {
+      while (input.length >= 4 && !socket.destroyed) {
         const length = input.readUInt32BE(0);
         if (length < 20 || length > 1400) { stats.invalid++; socket.destroy(); return; }
         if (input.length < length + 4) break;
@@ -189,7 +214,7 @@ export async function startPeer({host = '127.0.0.1', port = 0, type = 'tcp', key
     });
     socket.on('error', e => { if (!closing && stats.errors.length < 32) stats.errors.push(e.code ?? e.message); });
     socket.on('close', () => {
-      sockets.delete(socket);
+      sockets.delete(socket); output.queue.length = 0; output.bytes = 0; writers.delete(output);
       for (const id of flows.keys()) if (id.startsWith(scope)) flows.delete(id);
     });
   }
@@ -203,6 +228,9 @@ export async function startPeer({host = '127.0.0.1', port = 0, type = 'tcp', key
     server.on('tlsClientError', e => { if (!closing && stats.errors.length < 32) stats.errors.push(e.code ?? e.message); });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
   }
-  return {port: server.address().port, stats, drop() { for (const s of sockets) s.destroy(); flows.clear(); },
-    async close() { closing = true; for (const s of sockets) s.destroy(); await new Promise(resolve => server.close(resolve)); }};
+  return {port: server.address().port, stats, resources() {
+      return {sockets: sockets.size, flows: flows.size, writers: writers.size,
+        queued_bytes: [...writers].reduce((n, w) => n + w.bytes, 0)};
+    }, drop() { for (const s of sockets) s.destroy(); flows.clear(); },
+    async close() { closing = true; for (const s of sockets) s.destroy(); await new Promise(resolve => server.close(resolve)); flows.clear(); }};
 }

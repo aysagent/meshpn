@@ -33,7 +33,9 @@ bool meshvpn_hosted_transport_dma_cache_snapshot(unsigned ifx, uint32_t *cached,
     for interface in ("STA", "AP"):
         old = (f"copy_buff = mempool_alloc(((struct mempool*)chan_arr[ESP_{interface}_IF]->memp), "
                "MAX_TRANSPORT_BUFFER_SIZE, true);\n\tassert(copy_buff);")
-        new = old.replace("\tassert(copy_buff);", "\tif (!copy_buff) return ESP_ERR_ESP_NETIF_NO_MEM;")
+        ifx = 0 if interface == 'STA' else 1
+        new = old.replace("\tassert(copy_buff);",
+                          f"\tif (!copy_buff) {{ meshvpn_tx_failure(4, {ifx}, MAX_TRANSPORT_BUFFER_SIZE, ESP_ERR_ESP_NETIF_NO_MEM); return ESP_ERR_ESP_NETIF_NO_MEM; }}")
         if source.count(old) != 1:
             raise ValueError(f"ESP-Hosted {interface} TX source changed; re-audit the memory patch")
         source = source.replace(old, new, 1)
@@ -52,7 +54,7 @@ bool meshvpn_hosted_transport_dma_cache_snapshot(unsigned ifx, uint32_t *cached,
                    f"\treturn meshvpn_hosted_tx_submit({ifx}, h, buffer, len, {name}_direct);\n"
                    "}\n\n")
         source = source.replace(next_decl, wrapper + next_decl, 1)
-    source = '#include "esp_hosted_config.h"\n#include "meshvpn_hosted_tx.h"\n' + source
+    source = '#include "esp_hosted_config.h"\n#include "meshvpn_hosted_tx.h"\nextern void meshvpn_tx_failure(unsigned, unsigned, unsigned, int);\n' + source
     return source
 
 

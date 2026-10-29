@@ -11,6 +11,23 @@ static portMUX_TYPE s_tx_lock = portMUX_INITIALIZER_UNLOCKED;
 static meshvpn_wifi_tx_diag_t s_tx[2];
 static meshvpn_sdio_call_t s_sdio[4];
 static meshvpn_sdio_drop_t s_sdio_drops[4];
+static meshvpn_tx_failure_t s_tx_failures[5][3];
+
+void meshvpn_tx_failure(unsigned stage, unsigned ifx, unsigned bytes, int error)
+{
+    if (stage >= 5 || ifx >= 3) return;
+    int64_t now = esp_timer_get_time();
+    portENTER_CRITICAL(&s_tx_lock);
+    meshvpn_tx_failure_t *f = &s_tx_failures[stage][ifx];
+    f->events++; f->last_us = now; f->last_bytes = bytes; f->last_error = error;
+    portEXIT_CRITICAL(&s_tx_lock);
+}
+void meshvpn_tx_failure_snapshot(meshvpn_tx_failure_t out[5][3])
+{
+    portENTER_CRITICAL(&s_tx_lock);
+    for (unsigned i = 0; i < 5; i++) for (unsigned j = 0; j < 3; j++) out[i][j] = s_tx_failures[i][j];
+    portEXIT_CRITICAL(&s_tx_lock);
+}
 
 static void record(wifi_interface_t ifx, size_t len, int err, uint64_t us, bool ref)
 {

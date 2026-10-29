@@ -52,7 +52,7 @@ def clean(s):
     out = {k: s[k] for k in keep if k in s}
     w = s.get('wifi', {})
     out['wifi'] = {k: w[k] for k in ['state', 'connected', 'ip', 'rssi', 'disconnect_reason',
-                                   'radio', 'tx', 'hosted'] if k in w}
+                                   'radio', 'tx', 'tx_failures', 'hosted'] if k in w}
     v = s.get('vpn', {})
     out['vpn'] = {k: v[k] for k in ['enabled', 'connected', 'state', 'transport'] if k in v}
     return out

@@ -39,6 +39,8 @@ static TaskHandle_t s_socket_rx_task=(void *)1;
 static jmp_buf finished;
 static unsigned waits,notifications,shutdowns,link_calls;
 static bool cancel_only;
+static bool cancel_after_select, partial_then_cancel, cancelled;
+static unsigned writes;
 static unsigned ulTaskNotifyTake(int clear,unsigned ticks) {
  (void)clear;(void)ticks;
  if(waits++)longjmp(finished,1);
@@ -50,7 +52,7 @@ static void xTaskNotifyGive(TaskHandle_t task) {
 static void vTaskDelay(unsigned n) { (void)n; }
 static bool socket_link_current(uint32_t e,uint32_t g,int fd) {
  assert(e==s_socket.epoch && g==s_socket.generation && fd==s_socket.fd);
- return !cancel_only && link_calls++==0;
+ link_calls++; return !cancel_only && !cancelled;
 }
 static bool load_udp_packet(uint8_t *p,uint16_t *length,uint32_t g) {
  (void)g;memset(p,0,20);*length=20;return true;
@@ -61,11 +63,15 @@ static void load_tx_batch(meshvpn_vpn_tx_batch_t *b,uint32_t g) {
 static int64_t esp_timer_get_time(void) { return 100; }
 static ssize_t tunnel_write(esp_tls_t *t,SemaphoreHandle_t m,int fd,const void *p,size_t n) {
  (void)t;(void)m;(void)p;(void)n;assert(fd==s_socket.fd);
+ writes++;
+ if(partial_then_cancel)return 1;
  errno=ECONNRESET;return -1;
 }
 static bool tls_would_block(ssize_t n) { (void)n;return false; }
 static int selected(int n,fd_set *r,fd_set *w,fd_set *e,struct timeval *t) {
- (void)n;(void)r;(void)w;(void)e;(void)t;return 1;
+ (void)n;(void)r;(void)w;(void)e;(void)t;
+ if(cancel_after_select || (partial_then_cancel && writes))cancelled=true;
+ return 1;
 }
 static int shut(int fd,int how) {
  assert(fd==s_socket.fd && how==SHUT_RDWR);
@@ -83,15 +89,21 @@ static void run(bool active,bool datagram,bool tls,bool cancel) {
  memset(&s_socket,0,sizeof(s_socket));memset(&s,0,sizeof(s));
  s_socket.fd=42;s_socket.epoch=9;s_socket.generation=3;
  s_socket.active=active;s_socket.datagram=datagram;s_socket.tls=tls;
- waits=notifications=shutdowns=link_calls=0;cancel_only=cancel;
+ waits=notifications=shutdowns=link_calls=writes=0;cancel_only=cancel;cancelled=false;
  meshvpn_vpn_tx_batch_t batch={0};
  if(!setjmp(finished))socket_tx_worker(&batch);
  assert(s_socket.tx_stopped && notifications==1);
- assert(shutdowns==(unsigned)(active&&!cancel));
+ assert(shutdowns==(unsigned)(active&&!cancel&&!cancel_after_select&&!partial_then_cancel));
+ if(cancel_after_select)assert(writes==0 && s.tx_dropped==1);
+ if(partial_then_cancel)assert(writes==1 && s.tx_dropped==1);
 }
 int main(int argc,char **argv) {
  if(argc>1 && !strcmp(argv[1],"early"))run(false,false,true,false);
- else {run(true,true,false,false);run(true,false,false,false);run(true,false,true,false);run(true,false,true,true);}
+ else {
+  run(true,true,false,false);run(true,false,false,false);run(true,false,true,false);run(true,false,true,true);
+  cancel_after_select=true;run(true,false,false,false);run(true,false,true,false);cancel_after_select=false;
+  partial_then_cancel=true;run(true,false,false,false);run(true,false,true,false);
+ }
  puts("TX worker stop acknowledgement and last socket access ordering passed");
 }
 `;

@@ -39,6 +39,7 @@ node device/tests/test-vpn-storage.mjs
 node device/tests/test-vpn-probe.mjs
 node device/tests/test-vpn-local-restore.mjs
 node device/tests/test-vpn-local-peer.mjs
+node device/tests/test-vpn-peer-stress.mjs
 node device/tests/test-p4-radio-mode.mjs
 node device/tests/test-wg-clock.mjs
 node device/tests/test-vpn-ingress.mjs
@@ -46,6 +47,8 @@ node device/tests/test-vpn-queue.mjs
 node device/tests/test-vpn-worker-stop.mjs
 node device/tests/test-vpn-init.mjs
 node device/tests/test-vpn-connect.mjs
+python3 -B device/tests/test_instrument_net_tx.py
+python3 -B device/tests/test_radio_ab.py
 node device/tests/test-vpn-udp-batch.mjs
 wg_src=device/managed_components/esphome__wireguard/src
 if [[ -f "$wg_src/crypto/refc/chacha20.c" ]]; then

@@ -25,3 +25,14 @@ void meshvpn_wifi_sdio_snapshot(meshvpn_sdio_call_t out[4]); /* read/write block
 typedef struct { uint64_t events, bytes; } meshvpn_sdio_drop_t;
 void meshvpn_wifi_sdio_drop_snapshot(meshvpn_sdio_drop_t out[4]); /* packet copy, oversized stream, malformed, payload OOM */
 void meshvpn_hosted_rx_drop(unsigned reason, unsigned bytes);
+
+/* Failure sites, not additive packet loss: one packet may hit several sites
+ * or retry. Interface 0=STA, 1=AP, 2=unknown (socket allocation precedes route). */
+typedef struct {
+    uint64_t events;
+    int64_t last_us;
+    unsigned last_bytes;
+    int last_error;
+} meshvpn_tx_failure_t;
+void meshvpn_tx_failure(unsigned stage, unsigned ifx, unsigned bytes, int error);
+void meshvpn_tx_failure_snapshot(meshvpn_tx_failure_t out[5][3]);

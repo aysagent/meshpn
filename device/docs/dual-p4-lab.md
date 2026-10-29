@@ -129,3 +129,91 @@ the existing access point, not the other board's SoftAP; do not label its result
 AP+STA forwarding throughput. No temporary Wi-Fi profile is created. Recovery
 checks also inspect nested nightly run directories and ignore unrelated VPN
 restore schemas.
+
+## Frozen firmware A/B/A, prepared offline
+
+`p4-radio-ab.py` compares **STA 11ax allowed (A)** with **STA b/g/n (B)** on the
+selected client, then returns to A. It changes neither AP defaults nor C6 firmware.
+This is the next unmeasured Waveshare control, not a demonstrated speed fix.
+Build both images from the same unchanged checkout and SDK. Their `sdkconfig`
+values must differ only in `CONFIG_MESHVPN_P4_STA_DISABLE_11AX` (A unset, B=y).
+Use separate build directories; never rebuild them concurrently because managed
+components are shared. Project and SDK version strings must also match, but
+matching `-dirty` versions do not prove identical source contents.
+
+All commands here run from the repository root. Planning is offline by default:
+
+```sh
+python3 device/scripts/p4-radio-ab.py --client waveshare \
+  --a-build device/build-waveshare_esp32_p4_wifi6-ncm-2315835351-wg1 \
+  --b-build device/build-offline-wave-sta-bgn-20261029
+```
+
+When both bound boards are connected and hardware testing is authorized, activate
+the pinned ESP-IDF environment and explicitly add execution and a new output path:
+
+```sh
+python device/scripts/p4-radio-ab.py --client waveshare \
+  --a-build device/build-waveshare_esp32_p4_wifi6-ncm-2315835351-wg1 \
+  --b-build device/build-offline-wave-sta-bgn-20261029 \
+  --radio-interface sta --rates 1 4 8 12 16 --seconds 5 --repeats 3 \
+  --execute --out device/perf-results/wave-sta-ab-RUN
+```
+
+The default STA↔STA path keeps both boards on home Wi-Fi; `--radio-interface ap`
+uses the peer board's AP and temporarily selects its profile on the client.
+Neither mode switches Mac Wi-Fi or needs an incoming Mac listener. Neither is a
+phone-through-AP internet benchmark. C6 readback checks allowed 11ax protocol,
+not the negotiated PHY of a particular link.
+
+Before mutation the tool checks both API USB MACs against their project bindings,
+requires online STA and VPN off, freezes copies of all flash artifacts with
+SHA-256, and saves the selected original profile. Every flash uses the existing
+same-connection eFuse MAC check. A busy USB port gets at most 20 retries at
+30-second intervals; identity failures are not retried with another port.
+
+**A is the explicit recovery firmware**, even if a different image was installed
+before the experiment; this tool does not back up flash/NVS. On normal completion,
+error or SIGTERM it attempts A restoration, child-journal cleanup and selection
+of the original Wi-Fi profile. SIGKILL/power loss or unavailable hardware can
+prevent recovery. Before another run, recover the saved journal:
+
+```sh
+python device/scripts/p4-radio-ab.py \
+  --restore device/perf-results/wave-sta-ab-RUN/radio-ab.json
+```
+
+Both orchestrators share a lock and refuse unfinished journals. A/B child jobs
+inherit the actual locked file descriptor. Do not edit profiles/bindings or
+operate the boards from another tool concurrently. Frozen artifacts and reports
+stay in the private run directory. `summary.json` retains failed runs; ratios
+require three complete phases with at least three successes each and no failures.
+Use A2/A1 to assess drift before attributing a B/A1 difference to radio settings.
+
+## TX failures and snapshot comparison
+
+`wifi.tx_failures` records selected failure sites since boot, separately for
+`sta`, `ap`, and `unknown` (the socket layer does not yet know the output netif):
+
+| Stage | Meaning | `last_error` domain |
+|---|---|---|
+| `udp_netbuf` | `lwip_sendto` netbuf allocation, including raw sockets | lwIP `err_t` |
+| `wlanif_linearize` | Failed contiguous copy of a chained Wi-Fi pbuf | lwIP `err_t` |
+| `driver_no_memory` | Wi-Fi transmit returned `ESP_ERR_NO_MEM` | ESP error code |
+| `driver_rejected` | Other Wi-Fi transmit rejection | ESP error code |
+| `hosted_dma` | Hosted Wi-Fi transport copy-buffer allocation failed | ESP error code |
+
+Each entry has `events`, `last_bytes`, `last_error`, and `age_ms` (null before an
+event). Hosted DMA availability is explicit; it is unavailable on XIAO. These
+are not all possible lwIP allocations and are not socket errno values. One
+failure can appear at multiple layers or on retries: do not sum them as packet
+loss. Hooks allocate nothing and run only on failures; they do not change
+ownership, return codes, buffer counts or retry policy. Pinned SDK sources are
+copied/instrumented in each build directory; the installed SDK is not edited.
+
+In Diagnostics, **Save comparison baseline** keeps the displayed snapshot in
+page memory; **Compare snapshots** compares it with the currently displayed one.
+Resume polling first if it is paused. Reload/navigation clears the baseline.
+Counter deltas require matching USB MAC, board, build, boot count and increasing
+uptime; otherwise they are omitted. Memory remains a before/after observation,
+not proof of a leak. Internal and DMA heaps overlap and must not be added.

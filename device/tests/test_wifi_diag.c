@@ -36,6 +36,16 @@ SDIO_REAL(write_reg)
 #endif
 int main(void)
 {
+    meshvpn_tx_failure_t failures[5][3];
+    now = 1000;
+    meshvpn_tx_failure(0, 2, 1200, -1);
+    meshvpn_tx_failure(4, 0, 1664, 123);
+    meshvpn_tx_failure(5, 0, 1, 1); /* Invalid indices must not touch storage. */
+    meshvpn_tx_failure(1, 3, 1, 1);
+    meshvpn_tx_failure_snapshot(failures);
+    assert(failures[0][2].events == 1 && failures[0][2].last_bytes == 1200);
+    assert(failures[4][0].events == 1 && failures[4][0].last_error == 123);
+    assert(failures[4][0].last_us == 1000 && !failures[1][0].events);
     char buffer[1], ref[1];
     expected_buffer = buffer; expected_ref = ref; expected_len = 1200;
     const int errors[] = {ESP_OK, ESP_ERR_NO_MEM, ESP_ERR_INVALID_ARG, ESP_ERR_WIFI_IF,

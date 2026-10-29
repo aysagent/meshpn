@@ -98,4 +98,5 @@ if(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
     endif()
 endif()
 
+include("${CMAKE_SOURCE_DIR}/cmake/net-tx-diagnostics.cmake")
 idf_build_set_property(COMPILE_OPTIONS "-I${CMAKE_SOURCE_DIR}/components/meshvpn_net/include" APPEND)

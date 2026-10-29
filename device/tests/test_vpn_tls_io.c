@@ -1,6 +1,7 @@
 /* Real mbedTLS over nonblocking loopback TCP; production I/O wrappers/framer. */
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
+#include <stdatomic.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -44,6 +45,7 @@ static int socket_fd;
 static bool backpressure, fault_io;
 static unsigned send_steps, recv_steps, forced_write_waits, forced_read_waits;
 static unsigned target_packets;
+static atomic_uint received;
 /* Deterministic nonblocking BIO stalls after the real TLS handshake. These
  * exercise mbedTLS record buffering, not a mock of the production wrappers. */
 static int bounded_send(void *ctx,const unsigned char *buf,size_t len){
@@ -68,6 +70,8 @@ static void*writer(void*unused){
  (void)unused;uint8_t p[1400];unsigned i=0,accepted=0;size_t accepted_bytes=0,expected_bytes=0;
  meshvpn_vpn_tx_batch_t batch={0};
  while(i<target_packets){
+  int64_t window_deadline=esp_timer_get_time()+15000000;
+  while(i-atomic_load(&received)>=64){assert(esp_timer_get_time()<window_deadline);pause_ms();}
   memset(&batch,0,sizeof(batch));
   unsigned limit=backpressure?MESHVPN_VPN_BATCH_FRAMES:1;
   for(unsigned count=0;count<limit&&i<target_packets;count++,i++){
@@ -90,14 +94,15 @@ static void*writer(void*unused){
  assert(accepted==target_packets&&accepted_bytes==expected_bytes);
  return NULL;
 }
-static unsigned received;
 static bool packet_received(void*ctx,const uint8_t*p,size_t n){
  (void)ctx;assert(n==(backpressure||received%16==0?1400:100)&&p[9]==1&&p[20]==0&&p[27]==(uint8_t)received);
  for(size_t j=28;j<n;j++)assert(p[j]==(uint8_t)(received^0xa5));
  assert(!memcmp(p+12,(uint8_t[]){198,18,0,1,10,99,0,2},8));received++;return true;
 }
 int main(int argc,char**argv){
- (void)TAG;assert(argc==4);backpressure=!strcmp(argv[3],"backpressure");
+ (void)TAG;assert(argc==5);unsigned rounds=(unsigned)atoi(argv[4]);assert(rounds>=1&&rounds<=100);
+ for(unsigned round=0;round<rounds;round++){
+ received=0;fault_io=false;send_steps=recv_steps=forced_write_waits=forced_read_waits=0;memset(&s,0,sizeof(s));backpressure=!strcmp(argv[3],"backpressure");
  target_packets=backpressure&&PACKETS>256?256:PACKETS;
  mbedtls_net_context socket;mbedtls_net_init(&socket);
  assert(!mbedtls_net_connect(&socket,"127.0.0.1",argv[1],MBEDTLS_NET_PROTO_TCP));socket_fd=socket.fd;
@@ -136,5 +141,7 @@ int main(int argc,char**argv){
  printf("TLS_IO_OK packets=%u read_calls=%llu write_calls=%llu forced_write_waits=%u forced_read_waits=%u\n",received,
   (unsigned long long)s.transport_read.calls,(unsigned long long)s.transport_write.calls,forced_write_waits,forced_read_waits);
  mbedtls_net_free(&socket);mbedtls_ssl_free(&connection.ssl);mbedtls_ssl_config_free(&config);
- mbedtls_x509_crt_free(&ca);mbedtls_ctr_drbg_free(&rng);mbedtls_entropy_free(&entropy);return 0;
+ mbedtls_x509_crt_free(&ca);mbedtls_ctr_drbg_free(&rng);mbedtls_entropy_free(&entropy);
+ }
+ return 0;
 }

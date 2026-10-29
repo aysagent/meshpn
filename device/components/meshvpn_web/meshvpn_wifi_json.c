@@ -16,6 +16,30 @@ static void number_or_null(cJSON *obj, const char *name, esp_err_t err, double v
 
 void meshvpn_wifi_diagnostics_json(cJSON *wifi)
 {
+    meshvpn_tx_failure_t failures[5][3];
+    meshvpn_tx_failure_snapshot(failures);
+    cJSON *sites = cJSON_AddObjectToObject(wifi, "tx_failures");
+    cJSON_AddBoolToObject(sites, "available", true);
+#if CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE
+    cJSON_AddBoolToObject(sites, "hosted_dma_available", true);
+#else
+    cJSON_AddBoolToObject(sites, "hosted_dma_available", false);
+#endif
+    cJSON_AddStringToObject(sites, "scope", "since boot; failure sites may overlap/retry, not additive packet loss; udp_netbuf includes raw sockets; not all lwIP allocations; errno follows later translation");
+    const char *stages[] = {"udp_netbuf", "wlanif_linearize", "driver_no_memory", "driver_rejected", "hosted_dma"};
+    const char *interfaces[] = {"sta", "ap", "unknown"};
+    for (unsigned i = 0; i < 5; i++) {
+        cJSON *stage = cJSON_AddObjectToObject(sites, stages[i]);
+        for (unsigned j = 0; j < 3; j++) {
+            const meshvpn_tx_failure_t *f = &failures[i][j];
+            cJSON *v = cJSON_AddObjectToObject(stage, interfaces[j]);
+            cJSON_AddNumberToObject(v, "events", (double)f->events);
+            cJSON_AddNumberToObject(v, "last_bytes", f->last_bytes);
+            cJSON_AddNumberToObject(v, "last_error", f->last_error);
+            if (f->events) cJSON_AddNumberToObject(v, "age_ms", (esp_timer_get_time() - f->last_us) / 1000.0);
+            else cJSON_AddNullToObject(v, "age_ms");
+        }
+    }
     meshvpn_wifi_tx_diag_t stats[2];
     meshvpn_wifi_tx_snapshot(stats);
     cJSON *tx = cJSON_AddObjectToObject(wifi, "tx");

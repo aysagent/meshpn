@@ -807,6 +807,9 @@ static void socket_tx_worker(void *arg)
                 }
             }
             if (ready > 0) {
+                /* select may have slept while apply/reconnect changed policy.
+                 * Do not begin another write on an already cancelled session. */
+                if (!socket_link_current(epoch, generation, fd)) break;
                 const uint8_t *data = datagram ? tx->data : tx->data + tx->used;
                 size_t length = datagram ? udp_length : tx->length - tx->used;
                 int n = (int)tunnel_write(tls, tls_mutex, fd, data, length);
