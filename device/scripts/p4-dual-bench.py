@@ -114,6 +114,7 @@ def save_link_attempt(out, repeat, direction, row, dut, client=None):
 def radio_tests(args, out, board, dut, client_ip, ap_ip, other):
     """Direct STA-to-AP RF, with the second P4 as peer. No Mac listener/NAT."""
     records = []
+    interface = getattr(args, "radio_interface", "ap")
     for repeat in range(args.repeats):
         cases=[('tcp',8000)]+[('udp',r*1000) for r in args.rates]
         for protocol, rate in cases:
@@ -122,14 +123,15 @@ def radio_tests(args, out, board, dut, client_ip, ap_ip, other):
                 nonce = None
                 row = dict(role='radio',client=args.client,dut=other,repeat=repeat,
                     protocol=protocol,direction=direction,target_mbps=rate/1000,
-                    scope='STA client to AP listener on second P4; local RF, not AP+STA internet',
+                    scope=('STA client to AP listener on second P4; local RF, not AP+STA internet' if interface=='ap' else
+                           'STA to STA through existing LAN; two radio hops, not direct AP or internet'),
                     complete=False,receiver_mbps=None)
                 try:
                     row['before']={'client':perf.clean(board.api('/api/status')),
                                    'dut':perf.clean(dut.api('/api/status'))}
                     common = dict(port=18765,seconds=args.seconds,rate_kbps=rate,
                                   protocol=protocol,direction=direction)
-                    server = dut.api('/api/diag/net-bench',dict(common,role='server',interface='ap',target=client_ip))
+                    server = dut.api('/api/diag/net-bench',dict(common,role='server',interface=interface,target=client_ip))
                     nonce = server['nonce']; ready_deadline = time.monotonic()+3
                     while server['running'] and not server.get('listening') and time.monotonic()<ready_deadline:
                         time.sleep(.05); server=dut.api('/api/diag/net-bench')
@@ -189,16 +191,18 @@ def run(args):
             raise RuntimeError('Board identity mismatch')
         if s['vpn']['enabled'] or not s['wifi']['connected']:
             raise RuntimeError('Both boards must be connected with VPN off')
+    uses_ap = args.role in ('peer','link','wan') or (args.role=='radio' and getattr(args,'radio_interface','ap')=='ap')
     original = {k: before['wifi'][k] for k in ['paused', 'profile_id']}
     profiles = board.api('/api/wifi/profiles')['profiles']
     journal = dict(board=before['board'], address=profile['usb'], original=original,
                    previous_ids=[p['id'] for p in profiles], restored=False,
-                   temporary_ssid=dut_before['net']['ap_ssid'] if args.role in ('peer','link','wan','radio') else None)
+                   temporary_ssid=dut_before['net']['ap_ssid'] if uses_ap else None)
     save(path, journal)
     perf.private_json(out/'before-client.json', before); perf.private_json(out/'before-dut.json', dut_before)
     peer = None
     try:
-        if args.role in ('peer','link','wan','radio'):
+        connected = before
+        if uses_ap:
             ssid = journal['temporary_ssid']
             existing = [p for p in profiles if p['ssid'] == ssid and p['enabled']]
             if existing:
@@ -218,7 +222,8 @@ def run(args):
                 raise RuntimeError('Client did not obtain DUT AP subnet')
             time.sleep(5)
         if args.role == 'radio':
-            radio_tests(args,out,board,dut,connected['wifi']['ip'],dut_before['net']['ap_ip'],other)
+            radio_tests(args,out,board,dut,connected['wifi']['ip'],
+                        dut_before['net']['ap_ip'] if uses_ap else dut_before['wifi']['ip'],other)
             return
         if args.role in ('link','wan'):
             interfaces=json.loads(subprocess.check_output(['node','-e',
@@ -300,10 +305,21 @@ def run(args):
         restore(path, journal)
 
 
+def pending_journals(root):
+    # Runs may be nested inside a nightly directory. Other lab tools have a
+    # different restore schema and must not be fed to this recovery handler.
+    for path in root.rglob('restore.json'):
+        journal=json.loads(path.read_text())
+        if all(k in journal for k in ('board','address','original','previous_ids')) and not journal.get('restored'):
+            yield path
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--client',choices=list(NAMES),default='waveshare')
     p.add_argument('--role',choices=['direct','peer','link','wan','radio'],default='peer')
+    p.add_argument('--radio-interface', choices=['ap','sta'], default='ap',
+                   help='radio peer interface; sta keeps both boards on the existing LAN')
     p.add_argument('--nodelay',type=int,choices=[0,1],default=1,
                    help='link HTTP download socket TCP_NODELAY; 0 allows coalescing; not a radio setting')
     p.add_argument('--host');p.add_argument('--out')
@@ -314,6 +330,7 @@ def main():
     p.add_argument('--gap',type=float,default=2)
     p.add_argument('--restore',type=Path)
     a=p.parse_args()
+    if a.radio_interface != "ap" and a.role != "radio":p.error("--radio-interface sta requires --role radio")
     if not 1<=a.seconds<=60 or not 1<=a.repeats<=100 or any(r<1 or r>32 for r in a.rates) or not 0<=a.gap<=60:
         p.error('bounded seconds/repeats/rates/gap required')
     if not a.restore and (not a.out or (a.role in ('peer','direct') and not a.host)):p.error('--host and --out required')
@@ -321,9 +338,8 @@ def main():
     with open(lock,'a') as f:
         fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
         if a.restore:restore(a.restore,json.loads(a.restore.read_text()));return
-        for path in (BASE/'perf-results').glob('*/restore.json'):
-            if not json.loads(path.read_text()).get('restored'):
-                raise RuntimeError('Restore previous run first: '+str(path))
+        for path in pending_journals(BASE/'perf-results'):
+            raise RuntimeError('Restore previous run first: '+str(path))
         signal.signal(signal.SIGTERM,lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
         os.umask(0o077)
         run(a)

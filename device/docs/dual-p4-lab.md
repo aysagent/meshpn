@@ -114,3 +114,18 @@ in-flight buffers. The reserved SDIO RX stream is separate. It is sampled
 under the pool lock, separately from TX/RX counters; no allocation policy is
 changed. A fall in heap free space followed by a rise in this cache is not
 by itself a leak. Compare idle snapshots, not historical minimum-free alone.
+
+For a separate STA-to-STA control through the existing LAN, keep both boards on
+home Wi-Fi and select the peer's STA interface:
+
+```sh
+python3 device/scripts/p4-dual-bench.py --client stamp --role radio \
+  --radio-interface sta --protocols udp --rates 1 4 8 --seconds 5 --repeats 1 \
+  --out device/perf-results/radio-sta-control
+```
+
+Both STA addresses must be on the same subnet. This uses two radio hops through
+the existing access point, not the other board's SoftAP; do not label its results
+AP+STA forwarding throughput. No temporary Wi-Fi profile is created. Recovery
+checks also inspect nested nightly run directories and ignore unrelated VPN
+restore schemas.

@@ -28,6 +28,46 @@ class RestoreTests(unittest.TestCase):
         for _,body in client.calls:
             if body:self.assertEqual((body['target'],body['nonce']),('192.168.11.1',41))
 
+    def test_sta_radio_does_not_select_or_create_wifi_profile(self):
+        class Board:
+            def __init__(self,address): self.address=address
+            def api(self,path,body=None):
+                assert body is None, 'STA control must not mutate Wi-Fi'
+                if path=='/api/wifi/profiles':return {'profiles':[{'id':1}]}
+                assert path=='/api/status'
+                stamp=self.address=='192.168.12.1'
+                return dict(board='m5_stamp_p4_c6' if stamp else 'waveshare_esp32_p4_wifi6',
+                    net=dict(usb_ip=self.address),vpn=dict(enabled=False),
+                    wifi=dict(connected=True,paused=False,profile_id=1,ip='192.168.1.19' if stamp else '192.168.1.11'))
+        with tempfile.TemporaryDirectory() as d,patch.object(m.perf,'Board',Board), \
+                patch.object(m,'radio_tests') as radio,patch.object(m,'restore'):
+            args=SimpleNamespace(client='stamp',role='radio',radio_interface='sta',out=str(Path(d)/'run'))
+            m.run(args)
+            self.assertEqual(radio.call_args.args[4:6],('192.168.1.19','192.168.1.11'))
+            self.assertIsNone(json.loads((Path(d)/'run/restore.json').read_text())['temporary_ssid'])
+
+    def test_pending_journals_include_nested_runs_but_not_other_lab_schemas(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);nested=root/'night'/'run';nested.mkdir(parents=True)
+            journal=dict(board='board',address='192.168.12.1',original={},previous_ids=[],restored=False)
+            (nested/'restore.json').write_text(json.dumps(journal))
+            other=root/'vpn';other.mkdir();(other/'restore.json').write_text(json.dumps({'restored':False,'vpn':{}}))
+            self.assertEqual(list(m.pending_journals(root)),[nested/'restore.json'])
+            journal['restored']=True;(nested/'restore.json').write_text(json.dumps(journal))
+            self.assertEqual(list(m.pending_journals(root)),[])
+
+    def test_radio_sta_listener_interface(self):
+        class Board:
+            def __init__(self):self.started=[]
+            def api(self,path,body=None):
+                if body:self.started.append(body)
+                return dict(nonce=41,running=bool(body),listening=True,connected=True,error=0,bytes=1000)
+        client,server=Board(),Board()
+        args=SimpleNamespace(repeats=1,rates=[],seconds=1,gap=0,client='stamp',radio_interface='sta')
+        with tempfile.TemporaryDirectory() as d,patch.object(m.time,'sleep'):
+            m.radio_tests(args,Path(d),client,server,'192.168.1.19','192.168.1.11','waveshare')
+        self.assertTrue(all(b['interface']=='sta' for b in server.started))
+
     def test_radio_client_loss_still_cancels_server_and_keeps_failure(self):
         class LostClient:
             def api(self,path,body=None):
