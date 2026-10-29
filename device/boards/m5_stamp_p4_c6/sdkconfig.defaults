@@ -4,6 +4,7 @@ CONFIG_IDF_TARGET="esp32p4"
 # CONFIG_MESHVPN_BOARD_WAVESHARE_ESP32_P4_WIFI6 is not set
 # CONFIG_MESHVPN_BOARD_XIAO_ESP32S3 is not set
 CONFIG_MESHVPN_BOARD_M5_STAMP_P4_C6=y
+CONFIG_MESHVPN_TUNNEL_HOST_OCTET=4
 
 # Initial pre-v3 P4 image. Confirm the physical chip revision on first binding.
 # Do not force flashing a v3 chip: pre-v3 and v3 images are incompatible.

@@ -31,6 +31,12 @@ typedef struct { unsigned char data[1400]; } packet_t;
 typedef struct { unsigned char data[45000]; } meshvpn_vpn_tx_batch_t;
 typedef struct { unsigned char data[56000]; } rx_worker_buffers_t;
 static struct { bool implemented; char state[24],transport[24],address[24]; uint32_t wg_handshake_age; } s;
+typedef struct { uint8_t bytes[4]; } ip4_addr_t;
+#define IP4_ADDR(p,a,b,c,d) (*(p)=(ip4_addr_t){{a,b,c,d}})
+static void ip4addr_ntoa_r(const ip4_addr_t *ip,char *out,size_t len) {
+ snprintf(out,len,"%u.%u.%u.%u",ip->bytes[0],ip->bytes[1],ip->bytes[2],ip->bytes[3]);
+}
+${production.slice(production.indexOf('static ip4_addr_t tunnel_address(void)'),production.indexOf('esp_err_t meshvpn_vpn_validate_config('))}
 static bool s_ready, fail_netif;
 static packet_t *s_queue;
 static meshvpn_vpn_tx_batch_t *s_socket_tx_batch;
@@ -79,6 +85,7 @@ int main(void) {
    assert(netif_adds==1); /* Failed startup retry must not re-add the same netif. */
  }
  fail_step=0;step=0;assert(meshvpn_vpn_init()==ESP_OK);
+ char expected[24];snprintf(expected,sizeof(expected),"10.99.0.%d",CONFIG_MESHVPN_TUNNEL_HOST_OCTET);assert(!strcmp(s.address,expected));
  assert(s.implemented && live_allocs==3 && live_tasks==2 && rx_arg);
  assert(meshvpn_vpn_init()==ESP_ERR_INVALID_STATE && netif_adds==1 && step==5);
  assert(entropy_starts==CONFIG_MESHVPN_PROFILED_TLS_ENABLE);
@@ -90,9 +97,9 @@ int main(void) {
 `;
 const file = path.join(dir, 'test.c'), binary = path.join(dir, 'test');
 fs.writeFileSync(file, source);
-for (const profiled of [0,1]) {
+for (const host of [2,3,4]) for (const profiled of [0,1]) {
 execFileSync(process.env.CC || 'cc', ['-std=c11', '-Wall', '-Wextra', '-Werror',
-  '-DCONFIG_IDF_TARGET_ESP32P4=1', '-DCONFIG_MESHVPN_PROFILED_TLS_ENABLE='+profiled,
+  '-DCONFIG_MESHVPN_TUNNEL_HOST_OCTET='+host, '-DCONFIG_IDF_TARGET_ESP32P4=1', '-DCONFIG_MESHVPN_PROFILED_TLS_ENABLE='+profiled,
   '-fsanitize=address,undefined', file, '-o', binary], {stdio:'inherit'});
 execFileSync(binary, [], {stdio:'inherit'});
 }

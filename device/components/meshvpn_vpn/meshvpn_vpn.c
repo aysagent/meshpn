@@ -127,6 +127,12 @@ static esp_err_t set_state(void *arg)
 { state_change_t *c = arg; state_core(c->g, c->name, c->up, c->error); return ESP_OK; }
 static void state(uint32_t g, const char *name, bool up, int error)
 { state_change_t c = {g, name, up, error}; esp_netif_tcpip_exec(set_state, &c); }
+static ip4_addr_t tunnel_address(void)
+{
+    ip4_addr_t address;
+    IP4_ADDR(&address, 10, 99, 0, CONFIG_MESHVPN_TUNNEL_HOST_OCTET);
+    return address;
+}
 esp_err_t meshvpn_vpn_validate_config(const meshvpn_vpn_config_t *c)
 {
     const char *error = meshvpn_vpn_config_error(c);
@@ -170,7 +176,7 @@ static esp_err_t apply_config(void *arg)
 #endif
     meshvpn_wg_stop();
     ip4_addr_t address;
-    if (strcmp(c->transport, "wireguard") || !ip4addr_aton(c->wg_address, &address)) IP4_ADDR(&address,10,99,0,2);
+    if (strcmp(c->transport, "wireguard") || !ip4addr_aton(c->wg_address, &address)) address = tunnel_address();
     netif_set_ipaddr(&s_vpn, &address);
     /* Unsupported saved profiles must never silently enable DIRECT. */
     LOCK(); s_config = *c;
@@ -352,7 +358,7 @@ static err_t net_init(struct netif *n)
 static esp_err_t add_netif(void *arg)
 {
     (void)arg; ip4_addr_t ip, mask, gw;
-    IP4_ADDR(&ip, 10,99,0,2); IP4_ADDR(&mask, 255,255,255,255); IP4_ADDR(&gw, 10,99,0,1);
+    ip = tunnel_address(); IP4_ADDR(&mask, 255,255,255,255); IP4_ADDR(&gw, 10,99,0,1);
     if (!netif_add(&s_vpn, &ip, &mask, &gw, NULL, net_init, ip4_input)) return ESP_FAIL;
     netif_set_up(&s_vpn); netif_set_link_up(&s_vpn); s_ready = true; return ESP_OK;
 }
@@ -1155,7 +1161,8 @@ esp_err_t meshvpn_vpn_init(void)
     if (!entropy_started) { bootloader_random_enable(); entropy_started = true; }
 #endif
     strlcpy(s.state, "disabled", sizeof(s.state)); strlcpy(s.transport, "tcp", sizeof(s.transport));
-    strlcpy(s.address, "10.99.0.2", sizeof(s.address)); s.wg_handshake_age = UINT32_MAX;
+    ip4_addr_t initial_address = tunnel_address();
+    ip4addr_ntoa_r(&initial_address, s.address, sizeof(s.address)); s.wg_handshake_age = UINT32_MAX;
     /* Keep a blackhole route even in builds without transport workers, so a
      * saved enable flag cannot turn into DIRECT when flashing another build. */
     if (!s_ready && esp_netif_tcpip_exec(add_netif, NULL) != ESP_OK) return ESP_FAIL;

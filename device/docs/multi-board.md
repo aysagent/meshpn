@@ -3,10 +3,14 @@
 Обе платы используют общий код. Различия аппаратуры и начальной сети задаются
 профилями сборки; рабочие результаты сохраняем отдельно по платам и build.
 
-| Профиль | USB Ethernet | Wi-Fi AP | mDNS / DNS | STA |
-|---|---|---|---|---|
-| waveshare_esp32_p4_wifi6 | 192.168.10.1/24 | 192.168.11.1/24 | dongle.local | DHCP |
-| m5_stamp_p4_c6 | 192.168.12.1/24 | 192.168.13.1/24 | dongle-stamp.local | DHCP |
+| Профиль | USB Ethernet | Wi-Fi AP | mDNS / DNS | STA | clean-vpn IPv4 |
+|---|---|---|---|---|---|
+| waveshare_esp32_p4_wifi6 | 192.168.10.1/24 | 192.168.11.1/24 | dongle.local | DHCP | 10.99.0.3 |
+| m5_stamp_p4_c6 | 192.168.12.1/24 | 192.168.13.1/24 | dongle-stamp.local | DHCP | 10.99.0.4 |
+
+Туннельные адреса фиксированы для TCP/UDP/TLS/boring-tls, должны совпадать
+с peer-записями native exit. WireGuard сохраняет свой Address. XIAO использует
+`10.99.0.2`. [Настройка exit](profiled-tls.md#exit-и-настройки).
 
 После прошивки новые адреса выдаёт DHCP USB/AP. При старой аренде обновить
 подключение клиента. Админка доступна по имени через USB, AP и STA; mDNS

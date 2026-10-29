@@ -14,6 +14,17 @@ menu "meshvpn Board"
             bool "Waveshare ESP32-P4-WIFI6"
     endchoice
 
+    config MESHVPN_TUNNEL_HOST_OCTET
+        int "clean-vpn tunnel host (10.99.0.X)"
+        range 2 254
+        default 4 if MESHVPN_BOARD_M5_STAMP_P4_C6
+        default 3 if MESHVPN_BOARD_WAVESHARE_ESP32_P4_WIFI6
+        default 2
+        help
+            Static client address for TCP, UDP, TLS and boring-tls. Must match
+            this client's peer address on the exit. WireGuard uses its saved
+            Address instead. Use distinct values for simultaneous clients.
+
     config MESHVPN_HOSTNAME_DEFAULT
         string "Default local hostname (one DNS label)"
         default "dongle-stamp" if MESHVPN_BOARD_M5_STAMP_P4_C6

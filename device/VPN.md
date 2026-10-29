@@ -1,5 +1,11 @@
 # Experimental device VPN
 
+Current static tunnel addresses: **XIAO 10.99.0.2, Waveshare 10.99.0.3,
+Stamp 10.99.0.4** (TCP/UDP/TLS/boring-tls). WireGuard uses its saved Address.
+The historical JS exit commands below assume `.2`: that exit hardcodes its
+TUN route and NAT source. For the P4 defaults use a native exit configured for
+the corresponding peer; see [profiled TLS](docs/profiled-tls.md).
+
 ## Plain clean-vpn transports
 
 The firmware implements `tcp` (formerly `socket`): TCP carrying `[uint32 big-endian length][IPv4]`.

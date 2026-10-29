@@ -16,7 +16,7 @@ const source=`
 #include <string.h>
 typedef struct ip4_addr {uint32_t addr;} ip4_addr_t;
 struct netif {ip4_addr_t ip,mask;};
-static struct netif s_vpn={{0x0a630002},{0xffffffff}},usb={{0xc0a80701},{0xffffff00}},ap={{0xc0a80401},{0xffffff00}};
+static struct netif s_vpn={{(0x0a630000|TUNNEL_HOST)},{0xffffffff}},usb={{0xc0a80701},{0xffffff00}},ap={{0xc0a80401},{0xffffff00}};
 static struct netif *s_usb=&usb,*s_ap=&ap;
 static bool s_ready=true;static uint32_t s_probe_epoch;
 static struct { bool enabled,kill_switch,connected; char transport[32];
@@ -66,6 +66,8 @@ s_usb=NULL;assert(meshvpn_vpn_route(&apclient,&wan)==&s_vpn);
 return 0;
 }`;
 fs.writeFileSync(path.join(dir,'test.c'),source);
-execFileSync(process.env.CC||'cc',['-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',path.join(dir,'test.c'),'-o',path.join(dir,'test')]);
+for(const host of [2,3,4]) {
+execFileSync(process.env.CC||'cc',['-DTUNNEL_HOST='+host,'-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',path.join(dir,'test.c'),'-o',path.join(dir,'test')]);
 execFileSync(path.join(dir,'test'));
+}
 console.log('Production VPN routing policy: USB/AP, outer bypass, local access and disconnected blackhole passed');
