@@ -123,3 +123,15 @@ disabled by default and does not yet add a VPN transport to the admin UI. Host h
 figures count BoringSSL requested allocations only: no allocator overhead,
 stack or other firmware tasks, and host pointer sizes differ from ESP32.
 No BoringSSL sources or generated build products are vendored here.
+
+## HTTP/2 transport integration
+
+`test-profiled-tunnel.mjs` also prepares pinned nghttp2 1.68.0 with
+`prepare-nghttp2.sh` and `nghttp2-host/CMakeLists.txt` (ASan/UBSan).
+`NGHTTP2_SOURCE` can point to a checkout at commit
+`534b74b72524e962c18c7146470914632ca7eb2d`; only its committed tree is exported.
+Otherwise the script fetches that pin. The session runs on the existing PSRAM
+worker, shares the bounded allocator and selects H1/H2 through ALPN.
+Tests use real JS exit connections for both versions and adversarial H2 peers.
+[Integration and limits](../../docs/profiled-tls.md),
+[results](../../reports/2026-10-29-profiled-tls-http2.md).

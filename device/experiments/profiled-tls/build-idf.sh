@@ -10,6 +10,8 @@ mkdir -m 700 -p "$2"
 out="$(cd "$2" && pwd)"
 python3 "$here/prepare-bssl.py" "${BSSL_SOURCE:-$here/../../../native/boring_tls/build/_deps/boringssl-src}" "$out/bssl-source" >"$out/prepare.log"
 bash "$here/prepare-brotli.sh" "$out/brotli-source"
+bash "$here/prepare-nghttp2.sh" "$out/nghttp2-source"
+export MESHPN_PROBE_NGHTTP2_SOURCE="$out/nghttp2-source"
 export MESHPN_PROBE_BROTLI_SOURCE="$out/brotli-source"
 export MESHPN_PROBE_BSSL_SOURCE="$out/bssl-source" IDF_TARGET="$1"
 # All dependencies are local SDK components; no registry resolution is needed.

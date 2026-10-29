@@ -3,7 +3,7 @@
 This component is opt-in (`CONFIG_MESHVPN_PROFILED_TLS_ENABLE=n` by default).
 It supplies the frozen Chromium capture profile, a local ClientHello gate, a
 socket BIO that enforces the gate, bounded PSRAM allocation and a dedicated
-FreeRTOS executor. It is wired into the separate **boring-tls** VPN transport, with HTTP/1.1 Bearer v2 and single-owner RX/TX.
+FreeRTOS executor. It is wired into the separate **boring-tls** VPN transport, with ALPN-selected HTTP/2 or HTTP/1.1 Bearer v2 and single-owner RX/TX.
 [Build, exit flags, admin settings and limitations](../../docs/profiled-tls.md).
 The ordinary `tls` transport remains esp-tls/mbedTLS.
 
@@ -42,8 +42,11 @@ configuration on the caller before/after the TLS job. Do not forcibly delete
 an in-progress TLS job; use bounded nonblocking I/O with cooperative cancellation.
 
 The integrated session verifies CA/name/time, exports the channel binding,
-requires a strict HTTP/1.1 tunnel ACK before marking connected, and checks
+requires a strict HTTP tunnel ACK before marking connected, and checks
 configuration cancellation throughout nonblocking I/O. Credentials/endpoints
 are persisted by the VPN config component. Real board memory/stack validation
-is still required; arbitrary profiles and HTTP/2 are not implemented. Do not send raw IPv4 framing on a negotiated
-HTTP/2 connection. Matching JA3/JA4 does not establish complete browser fidelity.
+is still required; arbitrary profile import is not implemented. HTTP/2 uses pinned
+nghttp2 (see `nghttp2.cmake`) with custom bounded PSRAM session allocation, HPACK,
+flow control and one duplex POST stream. Raw IPv4 framing is wrapped in DATA.
+Nonempty peer ALPS settings are explicitly rejected pending an ALPS adapter.
+Matching JA3/JA4 does not establish complete browser or HTTP/2 fingerprint fidelity.

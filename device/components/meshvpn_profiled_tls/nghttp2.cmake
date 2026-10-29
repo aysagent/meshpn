@@ -1,0 +1,12 @@
+# Pinned library-only build, shared by ESP-IDF and the sanitizer host test.
+if(NOT EXISTS "${nghttp2}/meshpn-source-revision")
+    message(FATAL_ERROR "Prepare pinned nghttp2 with prepare-nghttp2.sh")
+endif()
+file(READ "${nghttp2}/meshpn-source-revision" nghttp2_revision)
+string(STRIP "${nghttp2_revision}" nghttp2_revision)
+if(NOT nghttp2_revision STREQUAL "534b74b72524e962c18c7146470914632ca7eb2d")
+    message(FATAL_ERROR "Unexpected nghttp2 source revision")
+endif()
+file(GLOB nghttp2_sources "${nghttp2}/lib/*.c")
+set_source_files_properties(${nghttp2_sources} PROPERTIES COMPILE_DEFINITIONS
+    "NGHTTP2_STATICLIB;BUILDING_NGHTTP2;HAVE_ARPA_INET_H=1;HAVE_NETINET_IN_H=1;HAVE_UNISTD_H=1;HAVE_CLOCK_GETTIME=1;HAVE_DECL_CLOCK_MONOTONIC=1")

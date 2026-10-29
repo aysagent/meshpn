@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.16)
+project(meshpn_nghttp2_host C)
+set(nghttp2 "$ENV{MESHPN_PROBE_NGHTTP2_SOURCE}")
+include("${CMAKE_CURRENT_LIST_DIR}/../../../components/meshvpn_profiled_tls/nghttp2.cmake")
+add_library(meshpn_nghttp2 STATIC ${nghttp2_sources})
+target_include_directories(meshpn_nghttp2 PUBLIC "${nghttp2}/lib/includes")
+target_compile_options(meshpn_nghttp2 PRIVATE -fsanitize=address,undefined -g)

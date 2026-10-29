@@ -11,7 +11,7 @@ typedef struct {
     char phase[32], alpn[16];
     meshvpn_profile_check_t actual;
     unsigned hellos;
-    int error, ssl_error;
+    int error, ssl_error, http2_error;
     long verify_error;
     bool authenticated;
     uint64_t tls_bytes_sent;
@@ -35,7 +35,7 @@ typedef struct {
 } meshvpn_profile_tunnel_options_t;
 /* Returns errno-style failure (ECANCELED on orderly config cancellation).
  * No packet callbacks run before verified TLS + exact profile + v2 auth ACK.
- * H1-only initial implementation: exit must select http/1.1 from offered ALPN. */
+ * ALPN chooses HTTP/2 POST duplex or HTTP/1.1 GET + framed tunnel. */
 int meshvpn_profile_tunnel_run(const meshvpn_profile_tunnel_options_t *options);
 /* Bounded, strict ACK parser; does not accept a public HTTP 200 cover page. */
 bool meshvpn_profile_http_ack(const char *headers, size_t length);

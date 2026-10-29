@@ -17,7 +17,8 @@ extern "C" {
 #include <fstream>
 #include <iterator>
 struct Test {
-    uint8_t frame[144]{};
+    uint8_t frame[1404]{};
+    size_t frame_length=144;
     meshvpn_vpn_decoder_t rx{};
     unsigned sent=0,received=0,ready=0,peeks=0;
     size_t offset=0;
@@ -32,10 +33,10 @@ static void ready(void *p) { static_cast<Test*>(p)->ready++; }
 static size_t peek(void *p,const uint8_t **out) {
     auto&t=*static_cast<Test*>(p);assert(t.ready==1);t.peeks++;
     if(t.sent>=t.total)return 0;
-    *out=t.frame+t.offset;return sizeof(t.frame)-t.offset;
+    *out=t.frame+t.offset;return t.frame_length-t.offset;
 }
-static void sent(void *p,size_t n) { auto&t=*static_cast<Test*>(p);t.offset+=n;assert(t.offset<=sizeof(t.frame));if(t.offset==sizeof(t.frame)){t.sent++;t.offset=0;} }
-static bool packet(void*p,const uint8_t*b,size_t n) { auto&t=*static_cast<Test*>(p);if(n!=140||memcmp(b,t.frame+4,140)){t.failed=true;return false;}t.received++;return true; }
+static void sent(void *p,size_t n) { auto&t=*static_cast<Test*>(p);t.offset+=n;assert(t.offset<=t.frame_length);if(t.offset==t.frame_length){t.sent++;t.offset=0;} }
+static bool packet(void*p,const uint8_t*b,size_t n) { auto&t=*static_cast<Test*>(p);if(n!=t.frame_length-4||memcmp(b,t.frame+4,n)){t.failed=true;return false;}t.received++;return true; }
 static bool receive(void*p,const uint8_t*b,size_t n) { auto&t=*static_cast<Test*>(p);return meshvpn_vpn_decode(&t.rx,b,n,packet,p); }
 static bool healthy(void*p) { return !static_cast<Test*>(p)->failed; }
 static std::string readfile(const char *p) {std::ifstream f(p);return std::string(std::istreambuf_iterator<char>(f),{});}
@@ -44,10 +45,12 @@ int run_once(int argc,char**argv) {
     if(argc!=6)return 2;
     Test test;std::string mode=argv[5];test.cancel_ready=mode=="cancel";
     if(mode=="disconnect"||mode=="invalid"||mode=="backpressure")test.total=10000000;
-    meshvpn_vpn_frame_header(test.frame,140);
-    auto*p=test.frame+4;p[0]=0x45;p[2]=0;p[3]=140;p[8]=64;p[9]=17;
-    p[12]=10;p[13]=99;p[15]=2;p[16]=1;p[17]=1;p[18]=1;p[19]=1;p[24]=0;p[25]=120;
-    assert(meshvpn_vpn_repair_checksums(p,140));
+    if(mode=="bulk") {test.frame_length=1404;test.total=1024;}
+    size_t packet_length=test.frame_length-4;
+    meshvpn_vpn_frame_header(test.frame,packet_length);
+    auto*p=test.frame+4;p[0]=0x45;p[2]=packet_length>>8;p[3]=packet_length;p[8]=64;p[9]=17;
+    p[12]=10;p[13]=99;p[15]=2;p[16]=1;p[17]=1;p[18]=1;p[19]=1;p[24]=(packet_length-20)>>8;p[25]=packet_length-20;
+    assert(meshvpn_vpn_repair_checksums(p,packet_length));
     int fd=socket(AF_INET,SOCK_STREAM,0);assert(fd>=0);
     sockaddr_in addr{};addr.sin_family=AF_INET;addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);addr.sin_port=htons(atoi(argv[1]));
     assert(connect(fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))==0);
@@ -57,8 +60,8 @@ int run_once(int argc,char**argv) {
         &test,current,diagnostic,ready,peek,sent,receive,healthy};
     if(mode=="cancel_auth"||mode=="cancel_handshake")test.end=std::chrono::steady_clock::now()+std::chrono::milliseconds(100);
     int rc=meshvpn_profile_tunnel_run(&o);close(fd);
-    printf("{\"rc\":%d,\"ready\":%u,\"packets\":%u,\"sent\":%u,\"peeks\":%u,\"phase\":\"%s\",\"ja3\":\"%s\",\"ja4\":\"%s\",\"hellos\":%u,\"tls_bytes\":%llu}\n",rc,test.ready,test.received,test.sent,test.peeks,test.diag.phase,test.diag.actual.ja3,test.diag.actual.ja4,test.diag.hellos,static_cast<unsigned long long>(test.diag.tls_bytes_sent));
-    if(mode=="success")return !(rc==ECANCELED&&test.received==64&&test.ready==1&&test.diag.actual.match);
+    printf("{\"rc\":%d,\"ready\":%u,\"packets\":%u,\"sent\":%u,\"peeks\":%u,\"phase\":\"%s\",\"alpn\":\"%s\",\"ja3\":\"%s\",\"ja4\":\"%s\",\"hellos\":%u,\"tls_bytes\":%llu}\n",rc,test.ready,test.received,test.sent,test.peeks,test.diag.phase,test.diag.alpn,test.diag.actual.ja3,test.diag.actual.ja4,test.diag.hellos,static_cast<unsigned long long>(test.diag.tls_bytes_sent));
+    if(mode=="success"||mode=="bulk")return !(rc==ECANCELED&&test.received==test.total&&test.ready==1&&test.diag.actual.match);
     if(mode=="cancel")return !(rc==ECANCELED&&test.ready==1&&test.peeks==0);
     if(mode=="disconnect"||mode=="invalid"||mode=="backpressure")return !(rc!=0&&test.ready==1&&test.received<test.total);
     return !(rc!=0&&test.ready==0&&test.peeks==0);

@@ -81,7 +81,7 @@ if [[ "$DWC2_TELEMETRY" == 0 ]]; then
   config_files+=("$DEVICE_DIR/profiles/dwc2_telemetry_off.defconfig")
 fi
 if [[ "$PROFILED_TLS" == 1 ]]; then
-  config_files+=("$DEVICE_DIR/profiles/profiled_tls.defconfig" "$DEVICE_DIR/components/meshvpn_profiled_tls/Kconfig" "$MESHPN_PROBE_BSSL_SOURCE/meshpn-probe-manifest.json")
+  config_files+=("$DEVICE_DIR/profiles/profiled_tls.defconfig" "$DEVICE_DIR/components/meshvpn_profiled_tls/Kconfig" "$MESHPN_PROBE_BSSL_SOURCE/meshpn-probe-manifest.json" "$MESHPN_PROBE_NGHTTP2_SOURCE/meshpn-source-revision")
 fi
 config_id="$(cksum "${config_files[@]}" | cksum | awk '{print $1}')"
 BUILD_DIR="$DEVICE_DIR/build-$BOARD-$PROFILE-$config_id-wg$WIREGUARD_PERF"

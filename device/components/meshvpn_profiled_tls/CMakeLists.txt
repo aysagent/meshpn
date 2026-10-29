@@ -12,9 +12,11 @@ set(sources ${SSL_SOURCES} ${CRYPTO_SOURCES} ${BCM_SOURCES})
 list(REMOVE_ITEM sources crypto/rand/getentropy.cc)
 list(TRANSFORM sources PREPEND "${bssl}/")
 file(GLOB brotli_sources "${brotli}/c/common/*.c" "${brotli}/c/dec/*.c")
+set(nghttp2 "$ENV{MESHPN_PROBE_NGHTTP2_SOURCE}")
+include("${CMAKE_CURRENT_LIST_DIR}/nghttp2.cmake")
 idf_component_register(SRCS "profile_client.cc" "profile_gate.cc" "profile_worker.c"
-    "profile_entropy.cc" "profile_allocator.cc" "profile_tunnel.cc" ${sources} ${brotli_sources}
-    INCLUDE_DIRS "include" "${bssl}/include" PRIV_INCLUDE_DIRS "${brotli}/c/include"
+    "profile_entropy.cc" "profile_allocator.cc" "profile_tunnel.cc" ${sources} ${brotli_sources} ${nghttp2_sources}
+    INCLUDE_DIRS "include" "${bssl}/include" PRIV_INCLUDE_DIRS "${brotli}/c/include" "${nghttp2}/lib/includes"
     REQUIRES pthread esp_hw_support lwip esp_psram)
 target_compile_definitions(${COMPONENT_LIB} PUBLIC OPENSSL_NO_ASM OPENSSL_SMALL OPENSSL_NO_FILESYSTEM OPENSSL_NO_POSIX_IO OPENSSL_NO_SOCK)
 target_compile_definitions(${COMPONENT_LIB} PRIVATE BORINGSSL_IMPLEMENTATION MESHPN_PROBE_ALLOCATOR)

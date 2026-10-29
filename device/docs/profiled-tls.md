@@ -2,6 +2,8 @@
 
 Транспорт `boring-tls` использует TLS 1.3, фиксированный браузерный ClientHello,
 проверку сертификата/имени/времени и clean-vpn Bearer **v2** с TLS exporter.
+Поддержаны **HTTP/2 и HTTP/1.1**, как у JS clean-vpn `boring-tls`: выбор через ALPN,
+по умолчанию сервер предпочитает HTTP/2. Версии HTTP/1.2 в этом протоколе нет.
 Каждый новый ClientHello, включая повторный после HRR, проверяется локально до
 отправки. При несовпадении JA3 или JA4 соединение закрывается.
 
@@ -28,7 +30,9 @@ BUILD_ONLY=1 PROFILED_TLS=1 BOARD=waveshare_esp32_p4_wifi6 npm run device:flash
 `device/build-profiled-deps-*`. Если checkout helper отсутствует, он получает
 фиксированный BoringSSL commit и применяет шесть патчей из репозитория.
 Первичная подготовка может требовать интернет; установленный ESP-IDF и исходники
-desktop helper не изменяются. Кэш отделён от обычных сборок.
+desktop helper не изменяются. Кэш отделён от обычных сборок. HTTP/2 использует библиотечную часть nghttp2
+1.68.0, commit `534b74b72524e962c18c7146470914632ca7eb2d`, в отдельном
+`device/build-profiled-nghttp2-*`; установленный SDK не изменяется.
 
 Без `PROFILED_TLS=1` выбор транспорта виден, но его включение возвращает явную
 ошибку «not compiled». Сохранённый включённый профиль в такой сборке не
@@ -36,15 +40,24 @@ desktop helper не изменяются. Кэш отделён от обычн�
 
 ## Exit и настройки
 
-Использовать обычный JS exit с HTTP/1.1, **без `--tls-raw`**. Пример с уже
+Использовать обычный JS exit, **без `--tls-raw`**. Пример с уже
 подготовленными сертификатами и 32-байтовым shared key:
 
 ```sh
 sudo env PATH="$PATH" node scripts/clean-vpn.js \
-  --role=exit --server=0.0.0.0:443 --type=tls --http-vers=1.1 \
+  --role=exit --server=0.0.0.0:443 --type=tls \
   --tls-cert-dir=/absolute/path/to/certs \
   --shared-hmac-key=/absolute/path/to/clean-vpn-hmac.key
 ```
+
+Для принудительной проверки HTTP/1.1 можно добавить `--http-vers=1.1` на exit.
+Без этого ограничения плата автоматически использует согласованный HTTP/2.
+На плате отдельный переключатель версии HTTP не требуется.
+
+HTTP/1.1 открывает GET `/clean-vpn`; HTTP/2 — один POST stream того же пути.
+В обоих случаях IP передаётся только после корректного tunnel ACK, с тем же
+Bearer v2. В HTTP/2 кадры IPv4 идут внутри DATA; SETTINGS, HPACK, PING и окна
+потока обрабатывает nghttp2. HTTP/3 этим транспортом не реализуется.
 
 Если используется `--tls-public-name`, он должен соответствовать TLS server name
 на плате; иначе exit может направить соединение в cover/passthrough.
@@ -82,7 +95,9 @@ Optional mTLS из раздела basic TLS к этому транспорту �
 существующая кнопка TCP 1.1.1.1:443; она не подтверждает DNS/HTTPS.
 
 `vpn.profiled_tls` содержит attempt/generation, phase, expected/actual JA3 и JA4,
-match, ClientHello count, ALPN, authenticated, SSL/verification error.
+match, ClientHello count, ALPN, authenticated, SSL/verification error и `http2_error`.
+`http2_error` содержит код библиотеки nghttp2 (отрицательный) либо код GOAWAY
+(неотрицательный); причину закрытия уточняет `phase`.
 `tls_bytes_sent` — снимок на момент смены phase, не непрерывный счётчик нагрузки.
 Диагностика очищается при смене конфигурации и начале новой попытки — прошлый
 match не разрешает новое соединение. Детальная последняя ошибка также остаётся
@@ -92,7 +107,11 @@ match не разрешает новое соединение. Детальна�
 |---|---|
 | `profile_mismatch` | Реальный ClientHello не совпал; он не отправлен |
 | `tls_handshake` / `certificate` | Проверить CA, имя, сроки сертификата, SSL/verify error |
-| `exit_requires_http1` | Нужен exit `--http-vers=1.1`; HTTP/2 пока не реализован |
+| `unsupported_alpn` | Exit не выбрал h2 или http/1.1 |
+| `h2_alps_unsupported` | Exit прислал непустые ALPS settings; этот вариант пока не интегрирован |
+| `h2_protocol` / `h2_headers_limit` | Некорректный HTTP/2 или превышен лимит заголовков |
+| `h2_reset` / `h2_goaway` / `h2_end_stream` | Exit закрыл поток/сессию; клиент переподключается |
+| `h2_flow_timeout` | В очереди есть данные, но нет прогресса отправки 5 секунд |
 | `tls_version` | Требуется TLS 1.3; raw TLS exit несовместим |
 | `auth_rejected` | Неверный shared key, время или получена cover/некорректная страница |
 | `auth_wait` / `tx_timeout` | Истёк ограниченный срок ожидания |
@@ -104,7 +123,12 @@ match не разрешает новое соединение. Детальна�
 в PSRAM; обычный 6 KiB VPN worker лишь готовит/закрывает сокет и загружает CA.
 Чтение NVS вынесено до PSRAM worker. Криптографические allocations ограничены
 1 MiB без fallback во внутреннюю/DMA RAM. Worker завершается кооперативно;
-его задача не удаляется посреди SSL-вызова. После окончания сессии доступен
+его задача не удаляется посреди SSL-вызова. nghttp2 session/HPACK/output
+используют тот же ограниченный PSRAM allocator. Две небольшие временные структуры
+настройки nghttp2 используют системный malloc и освобождаются сразу после создания
+сессии. Лимит decoded response headers — 4096 байт/64 поля, HPACK — 4096 байт;
+разрешён один поток, push отключён. Окна приёма — 256 KiB, это разрешённый объём
+в полёте, а не отдельный буфер такого размера. После окончания сессии доступен
 `last_worker_stack_spare_bytes`; достаточность запаса на платах ещё не измерена.
 
 На P4 сборка с backend включает внутренний SAR entropy source при инициализации
@@ -126,6 +150,12 @@ Host-тест запускает настоящий JS exit с заменой т
 через реальные loopback TCP/TLS sockets. Рабочий процесс не меняет маршруты,
 NAT, firewall и Wi-Fi. Это проверка протокола, отмены, framing и памяти, не
 подтверждение аппаратной скорости, Wi-Fi/USB/NAPT или stack high-water ESP32.
+
+Host-тесты проверяют обе версии с настоящим JS exit, многократные соединения,
+передачу за пределами окна, нулевые/малые окна и некорректные HTTP/2 кадры.
+Непустые ALPS settings от native exit пока отклоняются явно; совместимость
+с native exit этим тестом не подтверждается. HTTP/2 SETTINGS и HTTP-заголовки
+не воспроизводят браузерный HTTP-отпечаток; точность JA3/JA4 сохраняется отдельно.
 
 Далее: прошить подключённую плату, проверить USB/AP → VPN, публичный IP,
 переподключение/kill switch и high-water/heap под нагрузкой. Затем повторить

@@ -23,3 +23,12 @@ if [[ ! -d "$profile_deps" ]]; then
 fi
 export MESHPN_PROBE_BSSL_SOURCE="$profile_deps/bssl"
 export MESHPN_PROBE_BROTLI_SOURCE="$profile_deps/brotli"
+profile_h2_id="$(cksum "$profile_lab/prepare-nghttp2.sh" | awk '{print $1}')"
+profile_h2_deps="$DEVICE_DIR/build-profiled-nghttp2-$profile_h2_id"
+if [[ ! -d "$profile_h2_deps" ]]; then
+  profile_h2_tmp="$(mktemp -d "$DEVICE_DIR/build-profiled-nghttp2-tmp.XXXXXX")"
+  bash "$profile_lab/prepare-nghttp2.sh" "$profile_h2_tmp/source"
+  mv "$profile_h2_tmp/source" "$profile_h2_deps"
+  rmdir "$profile_h2_tmp"
+fi
+export MESHPN_PROBE_NGHTTP2_SOURCE="$profile_h2_deps"
