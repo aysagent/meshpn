@@ -1,0 +1,6 @@
+# Optional published exit. Bind a specific Linux host address deliberately;
+# default is loopback, not a public listener.
+services:
+  vpn:
+    ports:
+      - "${CVPN_BIND_ADDRESS:-127.0.0.1}:${CVPN_PUBLISH_PORT:-3443}:${CVPN_LISTEN_PORT:-443}/tcp"

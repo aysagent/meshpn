@@ -1,0 +1,12 @@
+# Combo needs a second isolated LAN. This override never moves a physical NIC.
+services:
+  vpn:
+    environment:
+      CVPN_LAN_INTERFACE: auto
+      CVPN_LAN_SUBNET: ${CVPN_LAN_SUBNET:?set private LAN CIDR}
+    networks:
+      lan: {ipv4_address: "${CVPN_LAN_IP:?set container LAN IPv4}"}
+networks:
+  lan:
+    external: true
+    name: ${CVPN_LAN_NETWORK:?set pre-created LAN network}

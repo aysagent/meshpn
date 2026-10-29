@@ -1,6 +1,7 @@
 // Application traffic for the isolated real-TUN lab. No Node packet fixture.
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <poll.h>
 #include <unistd.h>
 #include <signal.h>

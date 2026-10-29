@@ -1,0 +1,65 @@
+# One selected role per project: client + admin OR exit + admin. Two projects
+# with distinct config directories, volumes and admin ports form a lab pair.
+# Linux rootful engine; no host network/routes/firewall changes by VPN runtime.
+services:
+  vpn:
+    image: ${CVPN_MANAGED_IMAGE:?set managed VPN image}
+    read_only: true
+    restart: unless-stopped
+    stop_grace_period: 20s
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, NET_RAW, NET_BIND_SERVICE, CHOWN, FOWNER]
+    devices: [/dev/net/tun:/dev/net/tun]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 320
+    mem_limit: 384m
+    healthcheck:
+      test: [CMD, node, /opt/clean-vpn/clean-vpn-native-runtime-health.mjs]
+      interval: 30s
+      timeout: 6s
+      start_period: 20s
+      retries: 2
+    tmpfs: [/run:mode=755, /tmp:mode=1777]
+    sysctls: {net.ipv4.ip_forward: "1"}
+    environment:
+      CVPN_PARENT_NETNS: ${CVPN_PARENT_NETNS:?set Linux host namespace anchor}
+      CVPN_UPLINK: auto
+      MPN_ADMIN_GID: ${MPN_ADMIN_GID:-1000}
+      CVPN_CLIENTS_DIRECTORY: ${CVPN_CLIENTS_DIRECTORY:-}
+    volumes:
+      - config:/config:rw
+      - broker:/run/meshpn-admin
+      - replay:/replay
+    networks:
+      uplink: {ipv4_address: "${CVPN_CONTAINER_IP:?set container IPv4}"}
+  admin:
+    image: ${CVPN_ADMIN_IMAGE:?set managed web image}
+    restart: unless-stopped
+    depends_on: [vpn]
+    # Frontend binds 127.0.0.1 only on the Linux container host. Access with an
+    # SSH forward or the existing USB-bound host proxy; never a public listener.
+    network_mode: host
+    user: "${MPN_ADMIN_UID:-1000}:${MPN_ADMIN_GID:-1000}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 32
+    mem_limit: 192m
+    volumes:
+      - web:/var/lib/meshpn-admin-web:rw
+      - broker:/run/meshpn-admin:ro
+    tmpfs: ["/tmp:size=8m,mode=1777"]
+    command: [node, scripts/clean-vpn-container-web.mjs, /var/lib/meshpn-admin-web/web.json]
+volumes:
+  config:
+    external: true
+    name: ${CVPN_CONFIG_VOLUME:?set pre-provisioned private config volume}
+  web:
+    external: true
+    name: ${CVPN_WEB_VOLUME:?set pre-provisioned web state volume}
+  broker: {}
+  replay: {}
+networks:
+  uplink:
+    external: true
+    name: ${CVPN_UPLINK_NETWORK:?set pre-created isolated uplink network}

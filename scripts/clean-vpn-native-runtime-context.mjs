@@ -11,7 +11,16 @@ assert.equal(process.argv.length, 3, 'Usage: node scripts/clean-vpn-native-runti
 const output = path.resolve(process.argv[2]); assert.equal(fs.existsSync(output), false, 'new_context_required');
 const files = ['scripts/clean-vpn-native-runtime.mjs', 'scripts/clean-vpn-native-runtime-health.mjs',
   'scripts/lib/native-runtime-plan.mjs', 'scripts/lib/native-relay-health.mjs', 'scripts/lib/native-transparent-network.mjs', 'scripts/containers/native-runtime-entrypoint.sh',
-  'scripts/containers/clean-vpn-native-runtime.Containerfile', 'fixtures/native-tls-profiles/cold-h2.json'];
+  'scripts/containers/clean-vpn-native-runtime.Containerfile', 'scripts/containers/clean-vpn-native-alpine.Containerfile', 'fixtures/native-tls-profiles/cold-h2.json'];
+files.push('scripts/clean-vpn-container-broker.mjs', 'scripts/clean-vpn-container-web.mjs', 'scripts/containers/clean-vpn-managed.Containerfile',
+  'admin/server.mjs', 'admin/lib/common.mjs', 'admin/lib/command.mjs', 'admin/lib/metrics.mjs',
+  'admin/lib/vpn-settings-transaction.mjs', 'admin/lib/auth.mjs', 'admin/lib/captive.mjs',
+  'admin/lib/clients.mjs', 'scripts/lib/native-client-manager.mjs', 'scripts/lib/native-client-service.mjs',
+  'scripts/clean-vpn-native-clients.mjs', 'scripts/lib/native-client-bundles.mjs', 'scripts/lib/native-network-profile.mjs',
+  'scripts/lib/native-browser-capture-server.mjs', 'scripts/lib/native-browser-capture.mjs',
+  'scripts/lib/native-tls-profile-observer.mjs', 'scripts/lib/tls-clienthello-ja3.mjs',
+  'scripts/lib/tls-clienthello-ja4.mjs', 'scripts/lib/http2-prefix-observer.mjs');
+for (const f of fs.readdirSync(path.join(root, 'admin/public'))) if (/\.(js|css|html)$/.test(f)) files.push('admin/public/'+f);
 for (const dir of ['native/clean_vpn', 'native/boring_tls', 'native/boring_tls/patches']) {
   for (const f of fs.readdirSync(path.join(root, dir))) if (f === 'CMakeLists.txt' || /\.(cc|c|h|hpp|patch)$/.test(f)) files.push(`${dir}/${f}`);
 }
