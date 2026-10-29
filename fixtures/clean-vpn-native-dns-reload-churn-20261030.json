@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "kind": "native-private-dns-reload-churn",
+  "date": "2026-10-30",
+  "status": "normal-engine-passed-tsan-separate",
+  "engineSha256": "48df7b82267565fd8ec64103b2f78c35aa5cb5c5421b7b650023b78bf4a40298",
+  "checks": 12,
+  "reloadRounds": 6,
+  "reloadAcknowledgementsInChurn": 9,
+  "heldNativeTcpWorkers": 2,
+  "workersConfirmedByThreadCount": true,
+  "revokedWorkersReclaimedBeforeClientSocketsClosed": true,
+  "oldKeyDiscoveryRefused": true,
+  "rotatedKeyClientRecovered": true,
+  "unrelatedPeerUdpTcpDnsAndIcmpPreserved": true,
+  "exitAndUnrelatedPeerPidsUnchanged": true,
+  "privatePublicFallback": 0,
+  "namespacesAndProcessesCleaned": true,
+  "physicalHostsChanged": false,
+  "macNetworkChanged": false,
+  "scope": "isolated privileged NIC-less Linux container, actual native TUN/TLS/DNS, no daemon restarts outside fixture"
+}

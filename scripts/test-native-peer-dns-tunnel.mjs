@@ -16,6 +16,7 @@ assert.equal(fs.readFileSync('/etc/meshpn-admin-disposable-lab','utf8').trim(),'
 assert.deepEqual(JSON.parse(ip('-j','link')).map(x=>x.ifname),['lo']);assert.equal(ip('netns','list'),'');
 const engine=process.env.CVPN_BUILD?process.env.CVPN_BUILD+'/clean-vpn-engine-dns':'/native/clean-vpn-engine-dns';
 const soakSeconds=Number(process.env.CVPN_PEER_DNS_SOAK_SECONDS??0);assert.ok(soakSeconds===0||Number.isInteger(soakSeconds)&&soakSeconds>=300&&soakSeconds<=600);
+const reloadRounds=Number(process.env.CVPN_PEER_DNS_RELOAD_ROUNDS??0);assert.ok(reloadRounds===0||Number.isInteger(reloadRounds)&&reloadRounds>=2&&reloadRounds<=16);
 const root=fs.mkdtempSync('/var/lib/peer-tunnel-'), namespaces=[],children=[],checks=[];
 const cli=fileURLToPath(new URL('./clean-vpn-native-peer-dns.mjs',import.meta.url));
 const mark=x=>{checks.push(x);console.log('PEER_DNS_TUNNEL_CHECK '+x);};
@@ -96,8 +97,42 @@ try{
   console.log(JSON.stringify({kind:'private-dns-soak',seconds:Math.round((performance.now()-started)/1000),rounds,minimumQueries:rounds*28,initial,final,peak:Object.fromEntries(['exit','client','other'].map(n=>[n,{fd:Math.max(...samples.map(s=>s[n].fd)),rssKiB:Math.max(...samples.map(s=>s[n].rssKiB)),threads:Math.max(...samples.map(s=>s[n].threads))}])),privatePublicFallback:counts().length-before.length}));mark('bounded private DNS fault soak resource recovery and zero public fallback');
  }
  await runSoak();
+ if(reloadRounds){
+  const exec=promisify(execFile),stablePid=other.pid,exitPid=exit.pid;
+  const request=(name,address,tcp)=>exec('ip',['netns','exec',name,'dig','@'+address,'-p','1053','tablet.mpn','A','+noall','+comments','+answer','+time=3','+tries=1',...(tcp?['+tcp']:[])],{timeout:5000,maxBuffer:65536}).then(r=>assert.match(r.stdout,/10\.99\.0\.3/));
+  const stable=()=>Promise.all([false,true].map(tcp=>request('pdother','10.99.0.3',tcp)).concat(exec('ip',['netns','exec','pdother','busybox','ping','-n','-c','3','-i','0.05','-W','2','1.1.1.1'],{timeout:8000,maxBuffer:65536}).then(r=>assert.match(r.stdout,/ 0% packet loss/))));
+  const nativeThreads=()=>Number(/Threads:\s+(\d+)/.exec(fs.readFileSync('/proc/'+exit.pid+'/status','utf8'))[1]);
+  await delay(100);const initialThreads=nativeThreads();
+  let revision=0;
+  const reload=async next=>{put('exit.next',next);fs.renameSync(root+'/exit.next',root+'/exit.json');assert.equal(exit.kill('SIGHUP'),true);const expected=++revision;await ready(()=>{const records=fs.readFileSync(root+'/exit.log','utf8').split('\n').filter(l=>l.includes('"event":"peer_reload"')).map(l=>JSON.parse(l));assert.equal(records.at(-1)?.status,'applied');assert.equal(records.at(-1)?.revision,expected);});assert.equal(exit.pid,exitPid);assert.equal(other.pid,stablePid);};
+  // Partial TCP DNS messages keep worker threads in read_all/permitted while
+  // the native main thread replaces the requester set under SIGHUP.
+  put('reload-hold.mjs',`import net from 'node:net';import fs from 'node:fs';const sockets=[];await Promise.all(Array.from({length:2},()=>new Promise((resolve,reject)=>{const s=net.connect({host:'10.99.0.1',port:1055,localAddress:'10.99.0.2'},()=>{s.write(Buffer.from([0]));resolve();});s.on('error',()=>{});sockets.push(s);setTimeout(()=>reject(Error('connect timeout')),3000).unref();})));fs.writeFileSync(${JSON.stringify(root+'/reload-held')},'ready');setInterval(()=>{},1000);`);
+  const held=child('pdclient','node',[root+'/reload-hold.mjs'],'reload-hold');await ready(()=>assert.ok(fs.existsSync(root+'/reload-held')));await ready(()=>assert.ok(nativeThreads()>=initialThreads+2,'both held native DNS workers must be running'));
+  for(let i=0;i<reloadRounds;i++){
+   const queries=Promise.all([stable(),...[false,true].map(tcp=>request('pdclient','10.99.0.2',tcp))]);queries.catch(()=>{});
+   await delay(5);await reload({...exitConfig,peers:i%2?exitConfig.peers:[...exitConfig.peers].reverse()});await queries;
+  }
+  // Remove peer A with outstanding workers; peer B must continue through the
+  // same packet session while the DNS source allowlist loses A's address.
+  let ongoing=stable();ongoing.catch(()=>{});await reload({...exitConfig,peers:[exitConfig.peers[1]]});await ongoing;await ready(()=>assert.ok(nativeThreads()<=initialThreads,'revocation must reclaim held DNS workers before local sockets close'));
+  await stop(client);await stop(held);
+  let refused=false;try{run('ip',['netns','exec','pdclient',engine,'--discover-address',root+'/client.json']);}catch(e){assert.equal(e.status,1,'revoked discovery must fail normally, not crash/sanitizer exit');assert.equal(String(e.stdout??''),'');refused=true;}assert.equal(refused,true);
+  fs.writeFileSync(root+'/rotated.key',randomBytes(32),{mode:0o600});
+  const rotated={...exitConfig,peers:[{...peer,secret_path:root+'/rotated.key'},exitConfig.peers[1]]};
+  ongoing=stable();ongoing.catch(()=>{});await reload(rotated);await ongoing;
+  refused=false;try{run('ip',['netns','exec','pdclient',engine,'--discover-address',root+'/client.json']);}catch(e){assert.equal(e.status,1);assert.equal(String(e.stdout??''),'');refused=true;}assert.equal(refused,true);
+  const originalClient=JSON.parse(fs.readFileSync(root+'/client.json'));put('client-rotated.json',{...originalClient,secret_path:root+'/rotated.key'});
+  client=child('pdclient',engine,['--config',root+'/client-rotated.json','--service'],'client-rotated');await ready(()=>assert.match(dig('pdclient','tablet.mpn'),/10\.99\.0\.3/));await stable();
+  await stop(client);ongoing=stable();ongoing.catch(()=>{});await reload(exitConfig);await ongoing;
+  client=child('pdclient',engine,['--config',root+'/client.json','--service'],'client-restored');await ready(()=>assert.match(dig('pdclient','tablet.mpn'),/10\.99\.0\.3/));await stable();
+  assert.deepEqual(counts(),before);assert.equal(other.pid,stablePid);assert.equal(exit.pid,exitPid);
+  console.log(JSON.stringify({kind:'private-dns-native-reload-churn',rounds:reloadRounds,reloads:revision,heldTcpWorkers:2,heldWorkersConfirmedAndRevoked:true,stablePeerPid:stablePid,exitPid,privatePublicFallback:0,rotationAndRevoke:true}));
+  mark('native peer replacement overlaps private UDP/TCP workers; revoke and rotation preserve unrelated DNS and ICMP');
+ }
  const old=exit.pid;put('exit.next',{...exitConfig,peers:[]});fs.renameSync(root+'/exit.next',root+'/exit.json');exit.kill('SIGHUP');await delay(300);assert.equal(exit.pid,old);assert.match(fs.readFileSync(root+'/exit.log','utf8'),/"event":"peer_reload"/);
  assert.doesNotMatch(dig('pdclient','tablet.mpn'),/10\.99\.0\.3/);assert.deepEqual(counts(),before);mark('native revoke removes tunnel and bridge requester authorization without restart');
+ for(const name of fs.readdirSync(root).filter(x=>x.endsWith('.log')))assert.doesNotMatch(fs.readFileSync(root+'/'+name,'utf8'),/WARNING: ThreadSanitizer|ERROR: (?:AddressSanitizer|LeakSanitizer)|runtime error:/,name);
  passed=true;
 }finally{
  if(!passed){for(const n of namespaces)console.error(n+' routes '+ns(n,'ip','route')+' rules '+ns(n,'iptables-save'));console.error('public queries '+JSON.stringify(counts()));}
