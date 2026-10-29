@@ -51,6 +51,7 @@ if (action === 'start') {
     assert.equal(config.transparent.replay_directory, '/replay/state', 'container_replay_path');
     p(['volume', 'inspect', v['replay-volume']]);
   } else assert.equal(v['replay-volume'], undefined, 'replay_volume_exit_combo_only');
+  if(combo){const l=config.transparent.limits??{sessions:128,per_client:64};assert.ok(Number.isInteger(l.sessions)&&l.sessions>=2&&l.sessions<=256&&Number.isInteger(l.per_client)&&l.per_client>0&&l.per_client<l.sessions,'relay_quota_bounds');}
   if(v['relay-health']!==undefined){assert.equal(v['relay-health'],'relay-health.json');assert.ok(combo&&v.role==='client','relay_health_combo_client_only');}
   const published = v.publish ? publishedExitPort(packet, v.publish) : null;
   const parent = p(['run', '--rm', '--network=host', '--cap-drop=ALL', '--entrypoint=readlink', v.image, '/proc/self/ns/net']).trim();
@@ -63,7 +64,7 @@ if (action === 'start') {
     assert.match(v['lan-subnet'] ?? '', /^192\.168\.\d+\.\d+\/(?:1[6-9]|2[0-9]|30)$/);
   }
   const args = ['create', '--name', v.name, '--label=org.meshpn.native-runtime=1', '--restart=no', '--network', v.network,
-    '--memory=256m', '--pids-limit=128',
+    `--memory=${combo?128+3*Number(config.transparent.limits?.sessions??128):256}m`, `--pids-limit=${combo?64+Number(config.transparent.limits?.sessions??128):128}`,
     '--cap-drop=ALL', '--cap-add=NET_ADMIN', '--cap-add=NET_RAW', '--cap-add=NET_BIND_SERVICE', '--device=/dev/net/tun',
     '--security-opt=no-new-privileges', '--read-only', '--tmpfs=/run:rw,nosuid,nodev,mode=755', '--tmpfs=/tmp:rw,nosuid,nodev,mode=1777',
     '--mount', mount, '-e', `CVPN_PARENT_NETNS=${parent}`];

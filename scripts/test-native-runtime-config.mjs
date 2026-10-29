@@ -20,19 +20,24 @@ test('combo bundle gives unique packet identities, separate shared relay key and
     assert.notEqual(clients[0].boring.peer_ipv4,clients[1].boring.peer_ipv4);
     for(let i=1;i<=2;i++){
       assert.deepEqual(get(`client-${i}/psk`),get(`exit/peer-${i}.psk`));
-      assert.deepEqual(get(`client-${i}/relay.psk`),get('exit/relay.psk'));
+      assert.deepEqual(get(`client-${i}/relay.psk`),get(`exit/relay-${i}.psk`));
       assert.notDeepEqual(get(`client-${i}/psk`),get(`client-${i}/relay.psk`));
       assert.equal(clients[i-1].transparent.exit.port,3443);assert.equal(clients[i-1].boring.sni,'relay.example');
       runtimePlan(clients[i-1],{lan:{interface:'eth1',subnet:'192.168.88.0/24'}});
     }
     assert.notDeepEqual(get('client-1/psk'),get('client-2/psk'));
+    assert.notDeepEqual(get('client-1/relay.psk'),get('client-2/relay.psk'));
+    assert.equal(exit.transparent.peers.length,2);assert.equal(exit.transparent.secret_path,undefined);
+    assert.deepEqual(exit.transparent.limits,{sessions:128,per_client:64});
     assert.equal(exit.transparent.listen.port,4443);runtimePlan(exit);
     assert.equal(exit.transparent.replay_directory,mode==='container'?'/replay/state':dir+'/exit/replay');
     assert.equal(fs.existsSync(dir+'/exit/replay'),false);
     assert.throws(()=>createRuntimeConfig(parseRuntimeConfig([...a,'--mode='+mode,'--transport=combo-tls','--public-name=relay.example'])),/EEXIST/);
   }}finally{fs.rmSync(root,{recursive:true,force:true});}
   for(const extra of [['--transport=combo-tls'],['--transport=transparent-tls'],['--public-name=relay.example'],
-    ['--transport=combo-tls','--public-name=relay.example','--relay-port=1053']])assert.throws(()=>parseRuntimeConfig([...args('/new/unused'),...extra]));
+    ['--transport=combo-tls','--public-name=relay.example','--relay-port=1053'],
+    ...['0','257','1e3'].map(n=>['--transport=combo-tls','--public-name=relay.example','--relay-sessions='+n]),
+    ['--transport=combo-tls','--public-name=relay.example','--relay-per-client=128']])assert.throws(()=>parseRuntimeConfig([...args('/new/unused'),...extra]));
 });
 test('offline bundle isolates credentials, verifies server identity and refuses overwrites', () => {
   const root = fs.mkdtempSync(path.join(base, 'native-config-test-'));

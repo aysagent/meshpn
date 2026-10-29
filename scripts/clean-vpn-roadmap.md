@@ -11,11 +11,12 @@
 guard и crash/recreate контейнеров. Продолжение:
 [15-минутный mixed soak и netem delay/loss/reorder/blackout](clean-vpn-native-combo-resilience.md).
 Продолжение — [offline combo bundles, active relay health и три независимых
-клиента](clean-vpn-native-combo-provisioning.md). В тесте перегрузки выявлено:
-один клиент может занять все общие 16 relay slots, вытеснив остальные relay
-запросы; packet/DNS продолжают работать. Следующий native этап — отдельная
-аутентифицированная relay identity и квоты по клиенту (не только source IP),
-затем повторная проверка fairness, включая клиентов за общим NAT.
+клиента](clean-vpn-native-combo-provisioning.md). Найденное вытеснение одним
+клиентом исправлено в [native relay quotas](clean-vpn-native-relay-quotas.md):
+отдельные ключи/replay, общий предел 128, личный 64, configurable до 256,
+отдельный pre-auth cap и ограниченные relay queues. Capacity/fairness проверяется
+на четырёх клиентах в локальном стенде. Следующее — длительная нагрузка с новыми
+квотами и churn/переподключениями; throughput/влияние очередей измерять отдельно.
 Физическое сосуществование проверять позднее на отдельном порту **и в отдельном
 netns**, с отдельными ключами, конфигурацией и replay state.
 

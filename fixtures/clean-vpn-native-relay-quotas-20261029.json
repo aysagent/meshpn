@@ -1,0 +1,503 @@
+{
+  "schema": 1,
+  "kind": "native-relay-quota-acceptance",
+  "date": "2026-10-29",
+  "status": "passed",
+  "scope": {
+    "physicalNodesAccessed": false,
+    "macNetworkChanged": false,
+    "environment": "dedicated ARM64 Podman Linux VM; isolated internal networks; nested Docker without external NIC",
+    "build": "native engine rebuilt from source with cached pinned dependencies; Release, CVPN_LOW_MEMORY_BUILD=ON",
+    "sanitizers": "quota/fault C++ tests compiled with ASAN+UBSAN; linked BoringSSL cache not rebuilt with sanitizers"
+  },
+  "defaults": {
+    "sessions": 128,
+    "perClient": 64,
+    "maxSessions": 256,
+    "preauthPending": 16,
+    "admissionsPerSecond": 32,
+    "queueBytesPerDirection": 262144,
+    "containerMemoryMiB": "128 + 3 * sessions",
+    "containerPids": "64 + sessions"
+  },
+  "matrix": [
+    {
+      "sessions": 64,
+      "perClient": 32,
+      "status": "passed",
+      "imageId": "sha256:c9993a49311a756b39d0b136c2c0dda861c6edbee3bb7dc89a05f67348d2f461",
+      "engineSha256": "90ef6a24a76adc0d3d162da66e4b382c5cf04e1529f2bcc16cc7c49ee5c43349",
+      "normal": [
+        {
+          "client": 0,
+          "rounds": 29,
+          "elapsedMs": 15157.602885991335
+        },
+        {
+          "client": 1,
+          "rounds": 29,
+          "elapsedMs": 15134.885327994823
+        },
+        {
+          "client": 2,
+          "rounds": 29,
+          "elapsedMs": 15196.327665001154
+        },
+        {
+          "client": 3,
+          "rounds": 29,
+          "elapsedMs": 15265.708716988564
+        }
+      ],
+      "checks": [
+        "generated-role-bundles-independent-client-keys-and-LANs",
+        "all-clients-progress-under-concurrent-packet-and-relay-load",
+        "one-client-at-quota-cannot-starve-other-clients",
+        "full-global-cap-with-slow-readers-packet-branch-survives",
+        "all-clients-recover-without-engine-restart-and-resources-reclaimed",
+        "all-native-PID1-SIGTERM-clean"
+      ],
+      "otherClientsWithFirstAtQuota": [
+        {
+          "client": 1,
+          "packet": 8,
+          "relay": 8,
+          "relayRefused": 0
+        },
+        {
+          "client": 2,
+          "packet": 8,
+          "relay": 8,
+          "relayRefused": 0
+        },
+        {
+          "client": 3,
+          "packet": 8,
+          "relay": 8,
+          "relayRefused": 0
+        }
+      ],
+      "capacity": {
+        "slowReaders": true,
+        "samples": 10,
+        "peakRssKiB": 20056,
+        "threads": 66,
+        "fds": 145,
+        "endIntervalCgroupMemoryBytes": 162914304
+      },
+      "settled": [
+        {
+          "rssKiB": 14124,
+          "fds": 17,
+          "sockets": 5,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 4,
+          "tcpTimeWait": 185,
+          "udpSockets": 1
+        },
+        {
+          "rssKiB": 9160,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 73,
+          "udpSockets": 2
+        },
+        {
+          "rssKiB": 8764,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 51,
+          "udpSockets": 2
+        },
+        {
+          "rssKiB": 8748,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 50,
+          "udpSockets": 2
+        },
+        {
+          "rssKiB": 8728,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 55,
+          "udpSockets": 2
+        }
+      ],
+      "cleanup": "cleaned",
+      "rawReportSha256": "2db05343b6bf25e5dc9f9dc856f1e9ed823d35f1ea55c5051f9d230cd07a0895"
+    },
+    {
+      "sessions": 128,
+      "perClient": 64,
+      "status": "passed",
+      "imageId": "sha256:e8368ef997bd2b06f00d0cdb402a66fe7a1a98d03d7644f53bf24bd6e2a158f7",
+      "engineSha256": "d215b9df1f4432706b6148bfb36ac1ce0d003575083f977597696e06b0c24cd8",
+      "normal": [
+        {
+          "client": 0,
+          "rounds": 30,
+          "elapsedMs": 15423.736584991217
+        },
+        {
+          "client": 1,
+          "rounds": 30,
+          "elapsedMs": 15442.682474017143
+        },
+        {
+          "client": 2,
+          "rounds": 30,
+          "elapsedMs": 15502.671227008104
+        },
+        {
+          "client": 3,
+          "rounds": 29,
+          "elapsedMs": 15083.74045598507
+        }
+      ],
+      "checks": [
+        "generated-role-bundles-independent-client-keys-and-LANs",
+        "all-clients-progress-under-concurrent-packet-and-relay-load",
+        "one-client-at-quota-cannot-starve-other-clients",
+        "full-global-cap-with-slow-readers-packet-branch-survives",
+        "all-clients-recover-without-engine-restart-and-resources-reclaimed",
+        "all-native-PID1-SIGTERM-clean"
+      ],
+      "otherClientsWithFirstAtQuota": [
+        {
+          "client": 1,
+          "packet": 8,
+          "relay": 8,
+          "relayRefused": 0
+        },
+        {
+          "client": 2,
+          "packet": 8,
+          "relay": 8,
+          "relayRefused": 0
+        },
+        {
+          "client": 3,
+          "packet": 8,
+          "relay": 8,
+          "relayRefused": 0
+        }
+      ],
+      "capacity": {
+        "slowReaders": true,
+        "samples": 10,
+        "peakRssKiB": 32668,
+        "threads": 130,
+        "fds": 273,
+        "endIntervalCgroupMemoryBytes": 214908928,
+        "cpuSeconds": 0.39,
+        "sampleSeconds": 21.042852790999984
+      },
+      "settled": [
+        {
+          "rssKiB": 19180,
+          "fds": 17,
+          "sockets": 5,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 4,
+          "tcpTimeWait": 227,
+          "udpSockets": 1
+        },
+        {
+          "rssKiB": 11412,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 116,
+          "udpSockets": 2
+        },
+        {
+          "rssKiB": 11052,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 56,
+          "udpSockets": 2
+        },
+        {
+          "rssKiB": 10972,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 57,
+          "udpSockets": 2
+        },
+        {
+          "rssKiB": 10928,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 55,
+          "udpSockets": 2
+        }
+      ],
+      "cleanup": "cleaned",
+      "rawReportSha256": "8ec459be97fcd9bae54385a160c0de3c26166c0843ccb3d215a269b5146a024e"
+    },
+    {
+      "sessions": 256,
+      "perClient": 64,
+      "status": "passed",
+      "imageId": "sha256:12c33753a0ecd293277952d6d7dbd342ccc0e2374fdfeed5b9efb0b6e3105777",
+      "engineSha256": "022364b92555a635749a362c35e1db66343e522714d71209690ce9be43594bc3",
+      "normal": [
+        {
+          "client": 0,
+          "rounds": 29,
+          "elapsedMs": 15089.158294022083
+        },
+        {
+          "client": 1,
+          "rounds": 29,
+          "elapsedMs": 15151.620631992817
+        },
+        {
+          "client": 2,
+          "rounds": 29,
+          "elapsedMs": 15156.250218987465
+        },
+        {
+          "client": 3,
+          "rounds": 29,
+          "elapsedMs": 15022.855202019215
+        }
+      ],
+      "checks": [
+        "generated-role-bundles-independent-client-keys-and-LANs",
+        "all-clients-progress-under-concurrent-packet-and-relay-load",
+        "one-client-at-quota-cannot-starve-other-clients",
+        "full-global-cap-with-slow-readers-packet-branch-survives",
+        "all-clients-recover-without-engine-restart-and-resources-reclaimed",
+        "all-native-PID1-SIGTERM-clean"
+      ],
+      "otherClientsWithFirstAtQuota": [
+        {
+          "client": 1,
+          "packet": 8,
+          "relay": 8,
+          "relayRefused": 0
+        },
+        {
+          "client": 2,
+          "packet": 8,
+          "relay": 8,
+          "relayRefused": 0
+        },
+        {
+          "client": 3,
+          "packet": 8,
+          "relay": 8,
+          "relayRefused": 0
+        }
+      ],
+      "capacity": {
+        "slowReaders": true,
+        "samples": 10,
+        "peakRssKiB": 56796,
+        "threads": 258,
+        "fds": 529,
+        "endIntervalCgroupMemoryBytes": 273002496,
+        "cpuSeconds": 1.03,
+        "sampleSeconds": 23.154799167000004
+      },
+      "settled": [
+        {
+          "rssKiB": 34848,
+          "fds": 17,
+          "sockets": 5,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 4,
+          "tcpTimeWait": 194,
+          "udpSockets": 1
+        },
+        {
+          "rssKiB": 12968,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 111,
+          "udpSockets": 2
+        },
+        {
+          "rssKiB": 13064,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 57,
+          "udpSockets": 2
+        },
+        {
+          "rssKiB": 13016,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 58,
+          "udpSockets": 2
+        },
+        {
+          "rssKiB": 12952,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 59,
+          "udpSockets": 2
+        }
+      ],
+      "cleanup": "cleaned",
+      "rawReportSha256": "2f2c0810b01237758c948354e5da311d5c6fa31432f416eefe1786aa8d6e89a4"
+    }
+  ],
+  "lifecycle": {
+    "status": "passed",
+    "checks": [
+      "uninitialized-replay-start-refused-without-reset",
+      "explicit-init-and-repeat-init-refusal",
+      "public-launcher-real-TUN-DNS-and-LAN-HTTPS-relay",
+      "direct-uplink-HTTPS-blocked-LAN-relay-works",
+      "second-owner-free-port-and-netns-refused-existing-pair-healthy",
+      "independent-pcap-packet-profile-and-original-relay-JA3-JA4-match",
+      "same-namespace-reentry-preserves-foreign-rules",
+      "parallel-packet-and-four-relay-users-bounded-load-resources-reclaimed",
+      "overload-rejects-excess-relays-packet-branch-and-fresh-requests-survive",
+      "relay-failure-does-not-downgrade-to-packet-branch",
+      "relay-health-rejects-wrong-CA-hostname-and-body",
+      "active-relay-health-refuses-missing-redirect-and-blocked-origin-with-packet-healthy",
+      "recreated-exit-listens-with-original-replay-state",
+      "exit-SIGKILL-recreate-preserves-replay-and-recovers-both-paths",
+      "client-SIGKILL-held-namespace-remains-closed",
+      "fresh-client-namespace-recovers-both-paths",
+      "native-PID1-SIGTERM-clean"
+    ],
+    "imageId": "12c33753a0ecd293277952d6d7dbd342ccc0e2374fdfeed5b9efb0b6e3105777",
+    "engineSha256": "022364b92555a635749a362c35e1db66343e522714d71209690ce9be43594bc3",
+    "observer": {
+      "wireSha256": "d33c8e080a6b621d854b54c85e3f3e2d4a2025b2f15acc43302d1afc8a6bed4d",
+      "applicationSha256": "0269ba5100c62621ef25bbf501c796046d69dec366788fc5cfa12e29f9d4869c",
+      "packetProfileMatches": 1,
+      "relayFingerprintMatches": 4,
+      "scope": "ClientHello-only-not-full-browser-equivalence"
+    },
+    "exitRecreateMs": 5122.393291999993,
+    "clientRecreateMs": 5745.870042000024,
+    "cleanup": "cleaned",
+    "rawReportSha256": "95034cc64643db35bc5c7b7e15ee4000fdebd8c2048ef3e6cf3226774d5e0950"
+  },
+  "tests": {
+    "jsUnit": {
+      "passed": 26,
+      "failed": 0,
+      "skipped": 0
+    },
+    "ctest": {
+      "passed": 12,
+      "failed": 0
+    },
+    "quotaFinal": "key identity, quotas, concurrent reservations/releases, replay after restart, revocation, config bounds; real sockets with the same source IPv4",
+    "asanQuota": "passed including same-source-IP sockets",
+    "asanFault": "passed: fragmented two-hop wire, 128 churn rounds, EOF/reset, slowloris, idle/drain/lifetime/handshake deadlines, owners released",
+    "tlsSockets": "passed TLS12/TLS13-HRR, 2 MiB echo, 8 MiB slow-consumer backpressure, durable replay, admission"
+  },
+  "logSha256": {
+    "unit-final.log": "d20b13b87fb2200e63334d2c422bac4bf170500c2d9691b5a43f2ee5bbdd96d7",
+    "quota-ctest-v2.log": "e905be93f9f91734ab682e47a77ac936bec08208a3367b2f09e64f7f2f03efde",
+    "quota-asan-final.log": "e65d4a44e9f5cd35a9f7ba6575a776f8f278b21a2472433df0c19c34c290d8ed",
+    "quota-fault-asan.log": "ca74294daa15b30bf96225b87be19bc746e595173419beb7992096eb0d426a0e",
+    "quota-sockets.log": "c74f2eb220c59884684b8c79149393c4b91a9716333075fd7244ea0f2570d192",
+    "quota-test-final.log": "e65d4a44e9f5cd35a9f7ba6575a776f8f278b21a2472433df0c19c34c290d8ed"
+  },
+  "buildDifferences": [
+    "64: initial quota image; capabilities and replay-required constructor check added afterward.",
+    "128: second image; later change preserves original fixture listener cap when no key-ring is supplied. Production listener always supplies key-ring.",
+    "256 and lifecycle: final engine/image. Final same-source-IP test added afterward without production changes."
+  ],
+  "limitations": [
+    "Bounded capacity test, not long soak or maximum-throughput benchmark.",
+    "Per-key concurrency quotas, not bandwidth guarantees or reserved capacity for every peer.",
+    "Preauthentication flood may still fill the bounded shared admission gate.",
+    "Cgroup measurement is end-of-interval, not overall peak; includes kernel/cache, and is not linear with sessions.",
+    "Same-source-IP sockets tested; no full shared-NAT router topology in this run.",
+    "Independent pcap compares ClientHello fingerprints, not complete browser indistinguishability.",
+    "Single-key existing configurations remain one identity; no automatic credential or replay migration."
+  ],
+  "sourceSha256": {
+    "native/clean_vpn/transparent_admission.hpp": "3cef0c0cf41bd0d8ae5fe23ee787795eb58ed60295b90938eab3872affb3bf4b",
+    "native/clean_vpn/transparent_credentials.hpp": "3f5914711e99a9fc2d5dda93e997166c68526989005d15f0774fe0ff303b24f2",
+    "native/clean_vpn/transparent_quota_test.cc": "7c7e50c0e7aa4fa2816927a5c59faa022510dc98211a5990a16908ead25d9785",
+    "native/clean_vpn/transparent_socket.hpp": "6768bf30ce780ed8ed0da9255d21e7503dcb4199d90443bb125bf1ba49595f42",
+    "native/clean_vpn/transparent_config.hpp": "217e549e2da117ad7f6f9ef38510d84e39daed2ef6eebd24996e7bd7235403fe",
+    "native/clean_vpn/transparent_auth.hpp": "c5f09d378c20c970df32fd3312ff4f322de92bd2ed5f66cd5ed0c8503e872eee",
+    "native/clean_vpn/transparent_replay.hpp": "89b623fe320cc3947f2cb68abd1fa78458142ff6be2c49c53fe615c3885c3c19",
+    "native/clean_vpn/combo.hpp": "bff62ddf85abfb187cc866f9e4fd3d6593819303a58ec392db3c233d1d598ed3",
+    "native/clean_vpn/engine.cc": "62d7aa2a194ccdbc4be64feb4da1d32aa99e5ba0228fabe3936b423a0a9466d9",
+    "native/clean_vpn/CMakeLists.txt": "07bd31f6161828ff459203a167198bb38ba7756bcc55f55939def1900712fa42",
+    "scripts/clean-vpn-native-runtime-config.mjs": "85e4825d8539f4b655abc457807a6be940204db3dd01a362f9b1e631fbb7bc4a",
+    "scripts/clean-vpn-native-container.mjs": "f441d4516e8c47e61d056f8de5e5bfc2381fe0ca6fe15ca810e45ea6c1b4996c",
+    "scripts/clean-vpn-native-multi-client-lab.mjs": "9a99b449b1b4337b52a70ff23361955a148fd70024f0299d5ce2b140e8a8841d"
+  }
+}

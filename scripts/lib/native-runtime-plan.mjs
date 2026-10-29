@@ -15,7 +15,7 @@ export function runtimePacketConfig(c) {
   assert.equal(r.version, 1); assert.equal(r.transport, 'transparent-tls');
   assert.equal(r.destination_policy?.mode, 'public-https', 'runtime_combo_requires_public_https');
   assert.equal(r.destinations, undefined);
-  assert.notEqual(p.secret_path, r.secret_path, 'combo_separate_keys_required');
+  if(r.secret_path!==undefined)assert.notEqual(p.secret_path, r.secret_path, 'combo_separate_keys_required');
   if (c.role === 'client') {
     assert.equal(r.exit.ipv4, p.address); assert.equal(r.exit.port, p.port);
     assert.equal(p.sni, r.public_name);

@@ -149,3 +149,6 @@ Native RSS в mixed-load пиках был меньше 6.7 MiB на проце�
 Продолжение — [длительный mixed soak и netem loss/delay/reordering](clean-vpn-native-combo-resilience.md)
 в этой же изолированной лаборатории. Физическая приёмка — отдельно,
 без остановки повседневной пары.
+
+Новые offline bundles используют отдельные relay keys/replay для клиентов.
+Лимиты, sizing контейнера и новые тесты: [relay quotas](clean-vpn-native-relay-quotas.md).

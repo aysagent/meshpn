@@ -26,11 +26,13 @@ const pa=async a=>(await promisify(execFile)(cli[0],[...cli.slice(1),...a],{...o
 const e=(name,...a)=>p(['exec',name,...a]);
 const net=prefix+'-net',exit=prefix+'-exit',init=prefix+'-init',origin=prefix+'-origin',replay=prefix+'-replay';
 const exitVolume=prefix+'-exit-config',originVolume=prefix+'-origin-config';
-const clients=[0,1,2].map(i=>({i,name:prefix+'-c'+i,app:prefix+'-a'+i,volume:prefix+'-config'+i,lan:prefix+'-lan'+i,
+const clientCount=Number(process.env.CVPN_MULTI_CLIENTS??3),sessions=Number(process.env.CVPN_RELAY_SESSIONS??128),perClient=Number(process.env.CVPN_RELAY_PER_CLIENT??64),seconds=Number(process.env.CVPN_MULTI_SECONDS??60);
+assert.ok(Number.isInteger(clientCount)&&clientCount>=3&&clientCount<=4&&Number.isInteger(sessions)&&sessions>=2&&sessions<=256&&Number.isInteger(perClient)&&perClient>0&&perClient<sessions&&seconds>=15&&seconds<=120);
+const clients=Array.from({length:clientCount},(_,i)=>i).map(i=>({i,name:prefix+'-c'+i,app:prefix+'-a'+i,volume:prefix+'-config'+i,lan:prefix+'-lan'+i,
   ip:'10.77.0.'+(10+i),subnet:`192.168.${88+i}.0/24`,gateway:`192.168.${88+i}.2`,appIP:`192.168.${88+i}.3`}));
 const ownership={schema:1,kind:'native-runtime-lab-ownership',prefix,cli};
 fs.writeFileSync(output+'.ownership.json',JSON.stringify(ownership)+'\n',{flag:'wx',mode:0o600});
-const report={schema:1,kind:'native-combo-multi-client',status:'failed',image,clients:3,checks:[]};
+const report={schema:1,kind:'native-combo-multi-client',status:'failed',image,clients:clientCount,limits:{sessions,perClient},checks:[]};
 const step=s=>{report.checks.push(s);console.log('MULTI_CLIENT='+s);};
 const wait=async fn=>{const end=Date.now()+30000;let error;while(Date.now()<end){try{return fn();}catch(e){error=e;await delay(250);}}throw error;};
 const health=name=>e(name,'node','/opt/clean-vpn/clean-vpn-native-runtime-health.mjs');
@@ -54,7 +56,7 @@ try{
   report.engineSha256=p(['run','--rm','--network=none','--entrypoint=sha256sum',image,'/usr/local/bin/clean-vpn-engine']).split(/\s/)[0];
   const bundle=path.join(root,'bundle');
   createRuntimeConfig(parseRuntimeConfig(['create','--directory='+bundle,'--mode=container','--endpoint=10.77.0.2','--exit-address=10.77.0.2',
-    '--server-name=runtime.test','--clients=3','--port=3443','--transport=combo-tls','--public-name=relay.example']));
+    '--server-name=runtime.test','--clients='+clientCount,'--relay-sessions='+sessions,'--relay-per-client='+perClient,'--port=3443','--transport=combo-tls','--public-name=relay.example']));
   p(['network','create','--label',label,'--internal','--subnet=10.77.0.0/24',net]);
   for(const c of clients)p(['network','create','--label',label,'--internal','--subnet='+c.subnet,c.lan]);
   for(const v of [exitVolume,originVolume,replay,...clients.map(c=>c.volume)])p(['volume','create','--label',label,v]);
@@ -70,6 +72,7 @@ try{
   const originCode=fs.readFileSync('scripts/lib/native-runtime-lab-origin.mjs','utf8')+String.raw`
 https.createServer({key:fs.readFileSync('/config/key.pem'),cert:fs.readFileSync('/config/cert.pem')},(q,r)=>{
  if(q.url==='/hold'){r.writeHead(200);r.write('hold\n');const t=setInterval(()=>r.write('hold\n'),500);r.on('close',()=>clearInterval(t));}
+ else if(q.url==='/flood'){r.writeHead(200);let bytes=0;const block=Buffer.alloc(16384,0x41);const pump=()=>{while(bytes<16*1024*1024){bytes+=block.length;if(!r.write(block))return;} };r.on('drain',pump);pump();}
  else r.end('multi-ok\n');
 }).listen(443,'0.0.0.0');`;
   fs.writeFileSync(root+'/origin.mjs',originCode,{mode:0o600});p(['cp',root+'/origin.mjs',init+':/origin/origin.mjs']);
@@ -87,38 +90,57 @@ https.createServer({key:fs.readFileSync('/config/key.pem'),cert:fs.readFileSync(
       'ip route replace default via '+c.gateway+'; exec sleep 1200']);
     probe(c,applicationProbe(c.gateway,'/config/ca.pem'));probe(c,relay);
   }
-  step('generated-role-bundles-three-independent-clients-and-LANs');
+  step('generated-role-bundles-independent-client-keys-and-LANs');
   const initial=snapshot(),pids=[exit,...clients.map(c=>c.name)].map(n=>JSON.parse(p(['inspect',n]))[0].State.Pid);
   const workload=c=>`const output=console.log;console.log=()=>{};const packet=async()=>{${applicationProbe(c.gateway,'/config/ca.pem')}},relay=async()=>{${relay}};
-let rounds=0;const start=performance.now();do{await Promise.all([packet(),relay()]);rounds++;await new Promise(r=>setTimeout(r,500));}while(performance.now()-start<60000);output(JSON.stringify({rounds,elapsedMs:performance.now()-start}));`;
+let rounds=0;const start=performance.now();do{await Promise.all([packet(),relay()]);rounds++;await new Promise(r=>setTimeout(r,500));}while(performance.now()-start<${seconds*1000});output(JSON.stringify({rounds,elapsedMs:performance.now()-start}));`;
   let done=false,loadError;const job=Promise.all(clients.map(async c=>({client:c.i,...JSON.parse(await pa(['exec',c.app,'node','--input-type=module','-e',workload(c)]))}))).catch(e=>{loadError=e;}).finally(()=>done=true);
   const samples=[];while(!done){samples.push(snapshot());await delay(1000);}report.normal=await job;if(loadError)throw loadError;
-  for(const r of report.normal)assert.ok(r.rounds>=10&&r.elapsedMs>=60000);
+  for(const r of report.normal)assert.ok(r.rounds>=10&&r.elapsedMs>=seconds*1000);
   report.peak={};for(const n of Object.keys(initial)){
     for(const s of samples){assert.equal(s[n].nativeProcesses,1);assert.equal(s[n].zombies,0);assert.ok(s[n].rssKiB<131072&&s[n].fds<128&&s[n].threads<48);}
     report.peak[n===exit?'exit':'client-'+clients.find(c=>c.name===n).i]=Object.fromEntries(['rssKiB','fds','threads'].map(k=>[k,Math.max(...samples.map(s=>s[n][k]))]));
   }step('all-clients-progress-under-concurrent-packet-and-relay-load');
-  // Fill all 16 shared relay slots from one client. This measures global-cap
-  // fairness honestly; it does not manufacture a per-client guarantee.
-  const hold=String.raw`const https=require('node:https'),fs=require('node:fs'),requests=new Set();let active=0,ready=false;
-const add=()=>{const q=https.get({host:'11.22.33.44',port:443,path:'/hold',servername:'runtime.test',ca:fs.readFileSync('/config/ca.pem'),agent:false},r=>{
- active++;r.on('data',()=>{});r.on('close',()=>active--);if(active===16&&!ready){ready=true;console.log('HOLD_READY=16');}});
+  // Hold one authenticated client's entire quota; other identities must still progress.
+  const holder=(target,flood=false)=>`const https=require('node:https'),fs=require('node:fs'),requests=new Set();let active=0,ready=false;
+const add=()=>{const q=https.get({host:'11.22.33.44',port:443,path:'${flood?'/flood':'/hold'}',servername:'runtime.test',ca:fs.readFileSync('/config/ca.pem'),agent:false},r=>{
+ active++;${flood?"r.pause();":"r.on('data',()=>{});"}r.on('close',()=>active--);if(active===${target}&&!ready){ready=true;console.log('HOLD_READY='+active);}});
  requests.add(q);q.on('error',()=>{});q.on('close',()=>requests.delete(q));};
-const fill=setInterval(()=>{if(requests.size<16)add();},100);setTimeout(()=>{clearInterval(fill);for(const q of requests)q.destroy();},45000);`;
-  fs.writeFileSync(root+'/hold.cjs',hold,{mode:0o600});p(['cp',root+'/hold.cjs',init+':/c0/hold.cjs']);
-  // App rootfs is writable, credentials remain read-only.
-  e(clients[0].app,'sh','-ec','node /config/hold.cjs >/tmp/hold.log 2>&1 & echo $! >/tmp/hold.pid');
-  await wait(()=>assert.match(e(clients[0].app,'cat','/tmp/hold.log'),/HOLD_READY=16/));
+const fill=setInterval(()=>{if(requests.size<${target})add();},100);setTimeout(()=>{clearInterval(fill);for(const q of requests)q.destroy();},90000);`;
+  const startHold=(c,target,flood=false)=>{
+    fs.writeFileSync(root+'/hold.cjs',holder(target,flood),{mode:0o600});p(['cp',root+'/hold.cjs',init+':/c'+c.i+'/hold.cjs']);
+    e(c.app,'sh','-ec','node /config/hold.cjs >/tmp/hold.log 2>&1 & echo $! >/tmp/hold.pid');
+  };
+  const stopHold=c=>e(c.app,'sh','-ec','kill "$(cat /tmp/hold.pid)"');
+  startHold(clients[0],perClient);
+  await wait(()=>assert.match(e(clients[0].app,'cat','/tmp/hold.log'),new RegExp('HOLD_READY='+perClient)));
+  assert.throws(()=>probe(clients[0],relay),'same authenticated client must hit its quota');
   const pressure=c=>`const output=console.log;console.log=()=>{};const packet=async()=>{${applicationProbe(c.gateway,'/config/ca.pem')}},relay=async()=>{${relay}};
 const counts={packet:0,relay:0,relayRefused:0};for(let i=0;i<8;i++){await packet();counts.packet++;try{await relay();counts.relay++;}catch{counts.relayRefused++;}await new Promise(r=>setTimeout(r,200));}output(JSON.stringify(counts));`;
   report.pressure=await Promise.all(clients.slice(1).map(async c=>({client:c.i,...JSON.parse(await pa(['exec',c.app,'node','--input-type=module','-e',pressure(c)]))})));
-  for(const r of report.pressure){assert.equal(r.packet,8);assert.equal(r.relay+r.relayRefused,8);}
-  report.relayFairness='no-per-client-guarantee-global-16-slot-cap';
-  report.starvationObserved=report.pressure.some(r=>r.relay===0);
-  step('saturated-relay-cap-measured-packet-clients-continue');
-  e(clients[0].app,'sh','-ec','kill "$(cat /tmp/hold.pid)"');
+  for(const r of report.pressure){assert.equal(r.packet,8);assert.equal(r.relay,8);assert.equal(r.relayRefused,0);}
+  report.relayFairness='authenticated-key-quota-with-global-cap';report.starvationObserved=false;
+  step('one-client-at-quota-cannot-starve-other-clients');stopHold(clients[0]);
+  for(const c of clients)await wait(()=>health(c.name));
+  if(process.env.CVPN_MULTI_CAPACITY==='1'){
+    assert.equal(sessions%clientCount,0);const each=sessions/clientCount;assert.ok(each<=perClient);
+    for(const c of clients)startHold(c,each,true);
+    for(const c of clients)await wait(()=>assert.match(e(c.app,'cat','/tmp/hold.log'),new RegExp('HOLD_READY='+each)));
+    const cpu=()=>{const s=e(exit,'cat','/proc/1/stat').split(') ')[1].split(' ');return Number(s[11])+Number(s[12]);};
+    const tickHz=Number(e(exit,'getconf','CLK_TCK')),cpuStart=cpu(),sampleStart=performance.now();
+    const capacity=[];
+    for(let i=0;i<10;i++){capacity.push(snapshot());await delay(1000);}
+    report.capacity={sessions,perClient,slowReaders:true,samples:capacity.map(x=>x[exit]),
+      cgroupMemoryBytes:Number(e(exit,'cat','/sys/fs/cgroup/memory.current')),
+      cpuSeconds:(cpu()-cpuStart)/tickHz,sampleSeconds:(performance.now()-sampleStart)/1000};
+    assert.ok(capacity.every(x=>x[exit].threads>=sessions+1&&x[exit].fds>=sessions*2));
+    assert.throws(()=>probe(clients[0],relay),'full global cap must reject excess');
+    for(const c of clients)probe(c,applicationProbe(c.gateway,'/config/ca.pem'));
+    step('full-global-cap-with-slow-readers-packet-branch-survives');
+    for(const c of clients)stopHold(c);
+  }
   for(const c of clients){await wait(()=>health(c.name));probe(c,applicationProbe(c.gateway,'/config/ca.pem'));probe(c,relay);}
-  await wait(()=>{const after=snapshot();for(const n of Object.keys(initial)){assert.ok(after[n].fds<=initial[n].fds&&after[n].threads<=initial[n].threads);assert.ok(after[n].rssKiB-initial[n].rssKiB<32768);}report.settled=after;});
+  await wait(()=>{const after=snapshot();for(const n of Object.keys(initial)){assert.ok(after[n].fds<=initial[n].fds&&after[n].threads<=initial[n].threads);assert.ok(after[n].rssKiB-initial[n].rssKiB<131072);}report.settled=after;});
   assert.deepEqual([exit,...clients.map(c=>c.name)].map(n=>JSON.parse(p(['inspect',n]))[0].State.Pid),pids);
   step('all-clients-recover-without-engine-restart-and-resources-reclaimed');
   for(const n of [exit,...clients.map(c=>c.name)]){p(['stop','--time=5',n]);assert.equal(JSON.parse(p(['inspect',n]))[0].State.ExitCode,0);}
