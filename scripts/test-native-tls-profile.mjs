@@ -54,7 +54,7 @@ test('profile validation is strict, offline and reports effective immutable sett
   assert.equal(checkConfig(f,baseline,combo).status,0);
 });
 
-async function exchange(f,p,{mode='service',changes={},combo=false,compression=null,signature=null,alps=false,alpsFault=null,clientAlps=false,h2Observe=false}={}) {
+async function exchange(f,p,{mode='service',changes={},exitChanges={},combo=false,compression=null,signature=null,alps=false,alpsFault=null,clientAlps=false,h2Observe=false}={}) {
   const reserve=net.createServer();reserve.listen(0,'127.0.0.1');await once(reserve,'listening');const backend=reserve.address().port;await new Promise(r=>reserve.close(r));
   const captures=[],sockets=new Set(); captures.hrr=false;
   const proxy=net.createServer(client=>{
@@ -73,7 +73,7 @@ async function exchange(f,p,{mode='service',changes={},combo=false,compression=n
   try {
   fs.writeFileSync(f.dir+'/profile.json',JSON.stringify(p));
   let clientConfig={...config(f,proxy.address().port),...changes};
-  let exitConfig={version:1,role:'exit',address:'127.0.0.1',port:backend,tun:'cvtest0',secret_path:f.secret,cert:f.serverCert??f.cert,key:f.serverKey??f.key,...(alps?{alps:true}:{})};
+  let exitConfig={version:1,role:'exit',address:'127.0.0.1',port:backend,tun:'cvtest0',secret_path:f.secret,cert:f.serverCert??f.cert,key:f.serverKey??f.key,...(alps?{alps:true}:{}),...exitChanges};
   if(combo) {
     const relay=f.dir+'/relay.psk';fs.writeFileSync(relay,randomBytes(32),{mode:0o600});
     fs.mkdirSync(f.dir+'/replay',{mode:0o700});
@@ -404,4 +404,27 @@ test('bounded Chromium-derived pilot profile preserves supported fields and veri
   for(const changes of [{ca:other.cert},{server_name:'wrong.localhost'},{secret_path:other.secret}])
     await exchange(f,p,{mode:'reject',changes});
   console.log(JSON.stringify({boundedChromiumPilot:{reports,browserEquivalent:false}}));
+});
+
+
+test('HTTP/1.1-only profile: prewire verification, real tunnel and independent fingerprints', {timeout:45000},async t=>{
+ const f=fixture(t),p=structuredClone(baseline);p.id='synthetic-cold-h1';p.tls.alpn=['http/1.1'];
+ assert.equal(checkConfig(f,p,{...config(f),http_version:'1.1'}).status,0);
+ assert.equal(checkConfig(f,p,{...config(f),http_version:'2'}).status,1);
+ for(const wire of await exchange(f,p,{changes:{http_version:'1.1'},exitChanges:{http_version:'1.1'}})){
+  const observed=observeTlsProfile(wire,p);assert.equal(observed.status,'matched');assert.deepEqual(observed.actual.alpn,['http/1.1']);
+  const candidate=compileTlsProfileCandidate(wire,{id:'captured-h1',extensionOrder:'fixed',padding:'exact',echMode:'disabled'});
+  assert.equal(candidate.status,'candidate');assert.equal(checkConfig(f,candidate.profile,{...config(f),http_version:'auto'}).status,0);
+ }
+});
+
+test('browser profile remains unchanged on HTTP/1.1 negotiation, including combo boring branch', {timeout:45000},async t=>{
+ const p=JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/chromium-156-bounded-cold.json'));
+ assert.deepEqual(p.tls.alpn,['h2','http/1.1']);
+ for(const combo of[false,true]){
+  const f=fixture(t);assert.equal(checkConfig(f,p,{...config(f),http_version:'1.1'}).status,1,'must not rewrite profile ALPN');
+  for(const wire of await exchange(f,p,{combo,changes:{http_version:'auto'},exitChanges:{http_version:'1.1'},alps:true})){
+   const r=observeTlsProfile(wire,p);assert.equal(r.status,'matched',JSON.stringify(r.differences));assert.deepEqual(r.actual.alpn,p.tls.alpn);
+  }
+ }
 });

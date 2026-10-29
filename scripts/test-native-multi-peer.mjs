@@ -9,7 +9,7 @@ import { randomBytes } from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 
 // Node creates fixture PKI/config only. C++ generates and verifies all packets.
-test('native exit multiplexes authenticated peers despite stalled TLS, duplicate identity and spoofing', { timeout: 45000 }, async t => {
+for(const mixed of [false,true])test(`native exit multiplexes ${mixed?'mixed HTTP/1.1 + H2':'H2'} peers despite stalled TLS, duplicate identity and spoofing`, { timeout: 45000 }, async t => {
   const build = path.resolve(process.env.CVPN_BUILD ?? 'native/clean_vpn/build');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cv-native-multi-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -28,7 +28,7 @@ test('native exit multiplexes authenticated peers despite stalled TLS, duplicate
     a: { role: 'client', peer_ipv4: peers[0].ipv4, secret_path: peers[0].secret_path, ca: cert, server_name: 'localhost' },
     b: { role: 'client', peer_ipv4: peers[1].ipv4, secret_path: peers[1].secret_path, ca: cert, server_name: 'localhost' },
     spoof: { role: 'client', peer_ipv4: peers[1].ipv4, secret_path: peers[2].secret_path, ca: cert, server_name: 'localhost' } })) {
-    configs[name] = path.join(dir, `${name}.json`); fs.writeFileSync(configs[name], JSON.stringify({ ...common, ...fields }));
+    configs[name] = path.join(dir, `${name}.json`); fs.writeFileSync(configs[name], JSON.stringify({ ...common, ...fields, ...(mixed&&['a','spoof'].includes(name)?{http_version:'1.1'}:{}) }));
   }
   for (const name of ['a', 'b', 'exit']) {
     const checked = JSON.parse(execFileSync(path.join(build, 'clean-vpn-engine'), ['--check-config', configs[name]], { encoding: 'utf8' }));
@@ -59,7 +59,7 @@ test('native exit multiplexes authenticated peers despite stalled TLS, duplicate
     const secret_path = path.join(dir, `many-${i}`), ipv4 = `10.99.0.${i + 2}`;
     fs.writeFileSync(secret_path, randomBytes(32), { mode: 0o600 });
     fs.writeFileSync(path.join(dir, `client-${i}.json`), JSON.stringify({ ...common, role: 'client',
-      peer_ipv4: ipv4, secret_path, ca: cert, server_name: 'localhost' }));
+      peer_ipv4: ipv4, secret_path, ca: cert, server_name: 'localhost', ...(mixed&&i%2===0?{http_version:'1.1'}:{}) }));
     return { ipv4, secret_path };
   });
   fs.writeFileSync(configs.exit, JSON.stringify({ ...common, role: 'exit', peers: many, cert, key }));

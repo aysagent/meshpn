@@ -10,7 +10,7 @@ import { once } from 'node:events';
 
 // Node provisions test config/PKI only. Native integration-test generates and
 // checks every IP packet; native engine runs the entire TLS/H2/IP path.
-test('native client/exit data plane: packets, control, reconnect, blackhole', { timeout: 90000 }, async t => {
+for(const http_version of ['2','1.1'])test(`native HTTP ${http_version} data plane: packets, control, reconnect, blackhole`, { timeout: 90000 }, async t => {
   const build = path.resolve(process.env.CVPN_BUILD ?? 'native/clean_vpn/build');
   const capabilities=JSON.parse(execFileSync(path.join(build,'clean-vpn-engine'),['--capabilities'],{encoding:'utf8'}));
   assert.equal(capabilities.packet_ipc,false);assert.equal(capabilities.mode,'ipv4-packets');assert.equal(capabilities.multi_peer,true);assert.equal(capabilities.max_peers,32);
@@ -21,7 +21,7 @@ test('native client/exit data plane: packets, control, reconnect, blackhole', { 
   fs.writeFileSync(secret,randomBytes(32),{mode:0o600});
   const listener=net.createServer();listener.listen(0,'127.0.0.1');await once(listener,'listening');
   const port=listener.address().port;await new Promise(r=>listener.close(r));
-  const common={version:1,address:'127.0.0.1',port,tun:'cvtest0',secret_path:secret};
+  const common={version:1,http_version,address:'127.0.0.1',port,tun:'cvtest0',secret_path:secret};
   const client=path.join(dir,'client.json'), server=path.join(dir,'exit.json');
   fs.writeFileSync(client,JSON.stringify({...common,role:'client',server_name:'localhost',ca:cert}));
   fs.writeFileSync(server,JSON.stringify({...common,role:'exit',cert,key}));

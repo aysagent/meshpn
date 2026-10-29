@@ -382,7 +382,7 @@ int main(int argc,char** argv){
       const auto code=std::string(argv[3]).substr(13);
       Child client(argv[1],argv[2]);client.await_state(code);
       pollfd p{client.packet,POLLIN,0};require(poll(&p,1,50)==0,"fault_injected_packet");
-      if(code=="h2_peer_end_stream"||code=="h2_goaway_no_error"){
+      if(code=="h2_peer_end_stream"||code=="h2_goaway_no_error"||code=="h1_peer_end_stream"){
         client.await_state("idle_wait");
         std::this_thread::sleep_for(std::chrono::milliseconds(1200));
         client.command("{\"op\":\"status\"}\n");
@@ -458,7 +458,9 @@ int main(int argc,char** argv){
     client.command("{\"op\":\"uplink\",\"ready\":true}\n");client.await_state("ready");server.await_state("ready");
     transfer(client,server,4096,false,3);transfer(server,client,4096,true,4);
     std::cout<<"uplink reconnect PASS\n";
-    kill(server.pid,SIGSTOP);auto begin=Clock::now();client.await_state("h2_ping_timeout",9000);
+    json server_config;std::ifstream server_input(argv[3]);server_input>>server_config;
+    const bool h1=server_config.value("http_version",std::string{})=="1.1";
+    kill(server.pid,SIGSTOP);auto begin=Clock::now();client.await_state(h1?"h1_ping_timeout":"h2_ping_timeout",9000);
     kill(server.pid,SIGCONT);client.await_state("ready",15000);server.await_state("ready",15000);
     transfer(client,server,1400,false,5);transfer(server,client,1400,true,6);
     std::cout<<"blackhole recovery "<<std::chrono::duration<double>(Clock::now()-begin).count()<<"s PASS\n";

@@ -19,6 +19,7 @@ export function observeTlsProfile(wire, profile) {
   assert.ok(['[]','["h2"]'].includes(JSON.stringify(applicationSettings)));
   assert.equal(applicationSettings.length>0,t.extension_types.includes(17613));
   assert.equal(applicationSettings.length>0,Object.hasOwn(profile,'http2'));
+  assert.ok(!applicationSettings.length||t.alpn.includes('h2'));
   const compression=Object.hasOwn(t,'certificate_compression')?t.certificate_compression:[];
   assert.ok(['[]','[2]'].includes(JSON.stringify(compression)));
   assert.equal(compression.length>0,t.extension_types.includes(27));
@@ -30,7 +31,7 @@ export function observeTlsProfile(wire, profile) {
   }
   assert.ok(t.optional_extension_types.length===0||JSON.stringify(t.optional_extension_types)==='[21]');
   assert.ok(!t.optional_extension_types.some(n=>t.extension_types.includes(n)));
-  assert.ok(['["h2"]','["h2","http/1.1"]'].includes(JSON.stringify(t.alpn)));
+  assert.ok(['["h2"]','["h2","http/1.1"]','["http/1.1"]'].includes(JSON.stringify(t.alpn)));
   for(const key of ['grease','permute_extensions','ech_grease','ocsp','sct'])assert.equal(typeof t[key],'boolean');
   for(const [key,id] of [['ech_grease',65037],['ocsp',5],['sct',18]])assert.equal(t[key],t.extension_types.includes(id));
   const measurement=measureTlsClientHello(wire), actual=measurement.actual;
@@ -136,7 +137,7 @@ export function compileTlsProfileCandidate(wire, {id,extensionOrder,padding,echM
   for(const signature of a.signature_algorithms)if(!allowedSignatures.has(signature))unsupported.push(`signature:${signature}`);
   if(a.certificate_compression.length && JSON.stringify(a.certificate_compression)!=='[2]')unsupported.push('certificate-compression-algorithms');
   if(!['[772]','[772,771]'].includes(JSON.stringify(a.supported_versions)))unsupported.push('versions');
-  if(!['["h2"]','["h2","http/1.1"]'].includes(JSON.stringify(a.alpn)))unsupported.push('alpn');
+  if(!['["h2"]','["h2","http/1.1"]','["http/1.1"]'].includes(JSON.stringify(a.alpn)))unsupported.push('alpn');
   if(!a.extension_types.includes(0))unsupported.push('missing-sni');
   if(a.extension_types.includes(65037)!==(echMode==='grease'))unsupported.push('declared-ech-mode');
   const p={schema:1,kind:'clean-vpn-native-tls-profile',id,scenario:'cold',tls:{

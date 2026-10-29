@@ -2,6 +2,7 @@
 // payload IPC. The supervisor must provision the selected transport's network
 // guard first (TUN/routes for boring-tls; interception for scoped transparent).
 #include "protocol.hpp"
+#include "http1.hpp"
 #include "dns_relay.hpp"
 #include "service_notify.hpp"
 #include "transparent_config.hpp"
@@ -65,6 +66,7 @@ struct Config {
   struct Peer { uint32_t address; std::string secret; };
   std::vector<Peer> peers;
   std::unique_ptr<profile::Profile> tls_profile;
+  std::string http_version;
   std::string peer_ipv4="10.99.0.2";
   uint32_t peer_address=0;
   bool client;
@@ -73,10 +75,11 @@ struct Config {
   uint16_t port;
   explicit Config(const json& j) {
     check(j.is_object(),"config_object");
-    const std::set<std::string> fields={"version","role","address","port","server_name","sni","ca","cert","key","tun","secret_path","dns","peer_ipv4","peers","tls_profile_path","alps","connection_mode"};
+    const std::set<std::string> fields={"version","role","address","port","server_name","sni","ca","cert","key","tun","secret_path","dns","peer_ipv4","peers","tls_profile_path","alps","connection_mode","http_version"};
     for(auto it=j.begin();it!=j.end();++it) check(fields.count(it.key()),"unknown_config_field");
     check(j.at("version")==1,"config_version");
     auto role=j.at("role").get<std::string>(); check(role=="client"||role=="exit","role"); client=role=="client";
+    http_version=j.value("http_version",client?"2":"auto");check(http_version=="2"||http_version=="1.1"||http_version=="auto","http_version");
     if(j.contains("connection_mode")) {
       check(client&&j.at("connection_mode").is_string(),"connection_mode_client_only");
       const auto mode=j.at("connection_mode").get<std::string>();
@@ -88,6 +91,9 @@ struct Config {
       check(client,"profile_client_only");
       auto path=j.at("tls_profile_path").get<std::string>();check(!path.empty()&&path[0]=='/',"profile_absolute_path");
       tls_profile=std::make_unique<profile::Profile>(json::parse(file(path,16384)));
+      const auto& offered=tls_profile->document.at("tls").at("alpn");
+      check(http_version!="1.1"||offered==json::array({"http/1.1"}),"profile_http_version_conflict");
+      check(http_version!="2"||std::find(offered.begin(),offered.end(),"h2")!=offered.end(),"profile_http_version_conflict");
     }
     dns=j.value("dns",false);check(!dns||client,"dns_client_only");
     address=j.at("address").get<std::string>(); in_addr ip{};
@@ -217,9 +223,18 @@ static int packet_fd(const Config& c, int test_fd) {
   check(ioctl(fd.n,TUNSETIFF,&req)==0&&c.tun==req.ifr_name,"tun_attach");
   int result=fd.n;fd.n=-1;return result;
 }
-static int alpn(SSL*,const uint8_t** out,uint8_t* outlen,const uint8_t* in,unsigned n,void*) {
-  for(unsigned i=0;i<n;){unsigned len=in[i++];if(len>n-i)return SSL_TLSEXT_ERR_ALERT_FATAL;
-    if(len==2&&std::memcmp(in+i,"h2",2)==0){*out=in+i;*outlen=2;return SSL_TLSEXT_ERR_OK;}i+=len;}
+static bool is_http1(SSL* ssl) {
+  const uint8_t* p=nullptr;unsigned n=0;SSL_get0_alpn_selected(ssl,&p,&n);
+  if(n==2&&std::memcmp(p,"h2",2)==0)return false;
+  check(n==8&&std::memcmp(p,"http/1.1",8)==0,"http_alpn_required");return true;
+}
+static int alpn(SSL*,const uint8_t** out,uint8_t* outlen,const uint8_t* in,unsigned n,void* data) {
+  const auto& c=*static_cast<const Config*>(data);
+  for(const std::string wanted:{"h2","http/1.1"}){
+    if((c.http_version=="2"&&wanted!="h2")||(c.http_version=="1.1"&&wanted!="http/1.1"))continue;
+    for(unsigned i=0;i<n;){unsigned len=in[i++];if(!len||len>n-i)return SSL_TLSEXT_ERR_ALERT_FATAL;
+      if(len==wanted.size()&&std::memcmp(in+i,wanted.data(),len)==0){*out=in+i;*outlen=len;return SSL_TLSEXT_ERR_OK;}i+=len;}
+  }
   return SSL_TLSEXT_ERR_ALERT_FATAL;
 }
 static std::array<uint8_t,32> exporter(SSL* ssl) {
@@ -256,6 +271,8 @@ static void h2check(int rc){check(rc>=0,"http2_error");}
 struct Session {
   const Config& config;Control& ctl;SSL* ssl;const std::string& secret;
   nghttp2_session* h2=nullptr;
+  bool h1=false;http1::Parser h1_parser{config.client};http1::Records h1_records;
+  Clock::time_point h1_control_window=Clock::now();unsigned h1_controls=0;
   Queue outgoing, network, packets; Decoder decoder;
 #ifdef CVPN_TEST_PACKET_FD
   http2_alps_fixture::Observer wire_observer{config.client};
@@ -280,7 +297,10 @@ struct Session {
         "auth_deadline","h2_ping_timeout","h2_goaway_no_error","h2_goaway_error","h2_reset_no_error","h2_reset_error",
         "h2_peer_end_stream","h2_stream_closed","h2_stream_error","h2_invalid_frame","h2_local_goaway_error",
         "h2_local_reset_error","h2_flooded","h2_no_memory","h2_bad_client_magic","http2_receive",
-        "tls_handshake","tls_write","tls_read","tls_peer_closed","h2_required","h2_alps_invalid","tun_write"})
+        "tls_handshake","tls_write","tls_read","tls_peer_closed","h2_required","h2_alps_invalid","tun_write",
+        "http_alpn_required","http_version_mismatch","h1_headers_invalid","h1_framing_invalid","h1_protocol_invalid",
+        "h1_host_invalid","h1_extra_message","h1_chunk_invalid","h1_chunk_limit","h1_trailers_forbidden",
+        "h1_peer_end_stream","h1_truncated_record","h1_ping_timeout","h1_control_limit"})
       if(std::strcmp(message,code)==0)return code;
     return "h2_callback_failure";
   }
@@ -361,29 +381,58 @@ struct Session {
     if(id==s.stream)s.fail(error==NGHTTP2_NO_ERROR?"h2_stream_closed":"h2_stream_error");
     return 0;
   }
-  static int data_cb(nghttp2_session* h,uint8_t,int32_t id,const uint8_t* b,size_t n,void* u){
-    return safe(u,[&](Session& s){
-      check(s.ready&&id==s.stream,"data_before_auth");
-      s.decoder.feed(b,n,[&](Bytes p){
+  void receive_packet(Bytes p){
         // M1 does not deliver multicast to the client TUN. A legacy exit may
         // send its own IGMP reports (e.g. 10.99.0.1 -> 224.0.0.22). Discard
         // the validated frame without tearing down the authenticated session.
         // Decoder has already checked IPv4 size/header/checksum; unicast
         // destination and exit-side source isolation below remain strict.
-        if(s.config.client&&(p[16]&0xf0)==0xe0){s.ctl.dropped++;return;}
+        if(config.client&&(p[16]&0xf0)==0xe0){ctl.dropped++;return;}
         // Current single-peer address contract, enforced before TUN injection.
-        size_t off=s.config.client?16:12;
-        if(std::memcmp(p.data()+off,&s.peer_address,4)!=0){s.ctl.rejected_address(p,s.config.client);s.ctl.dropped++;throw std::runtime_error("peer_address");}
-        if(!s.config.client){
+        size_t off=config.client?16:12;
+        if(std::memcmp(p.data()+off,&peer_address,4)!=0){ctl.rejected_address(p,config.client);ctl.dropped++;throw std::runtime_error("peer_address");}
+        if(!config.client){
           // No implicit client-to-client routing through the shared TUN.
-          for(const auto& peer:s.config.peers)check(std::memcmp(p.data()+16,&peer.address,4)!=0,"peer_destination");
+          for(const auto& peer:config.peers)check(std::memcmp(p.data()+16,&peer.address,4)!=0,"peer_destination");
         }
-        s.packets.push(std::move(p));
+        packets.push(std::move(p));
+  }
+  static int data_cb(nghttp2_session* h,uint8_t,int32_t id,const uint8_t* b,size_t n,void* u){
+    return safe(u,[&](Session& s){check(s.ready&&id==s.stream,"data_before_auth");
+      s.decoder.feed(b,n,[&](Bytes p){s.receive_packet(std::move(p));});h2check(nghttp2_session_consume(h,id,n));});
+  }
+  void h1_feed(const uint8_t* b,size_t n){
+    h1_parser.feed(b,n,[&](const http1::Headers& received){
+      headers=received;
+      if(config.client){
+        if(headers[":status"]=="409"&&headers["x-clean-vpn-error"]=="clock-skew")throw std::runtime_error("auth_clock_skew");
+        check(headers[":status"]=="200","vpn_response_rejected");ready=true;headers.clear();ctl.set("ready");
+      }else respond();
+    },[&](const uint8_t* data,size_t length){
+      check(ready,"data_before_auth");h1_records.feed(data,length,[&](Bytes p){receive_packet(std::move(p));},[&](bool pong,const std::array<uint8_t,8>& nonce){
+        const auto now=Clock::now();if(now-h1_control_window>=std::chrono::seconds(1)){h1_control_window=now;h1_controls=0;}
+        check(++h1_controls<=16,"h1_control_limit");
+        if(!pong)network.push(http1::control(true,nonce));
+        else if(ping_pending&&CRYPTO_memcmp(nonce.data(),ping.data(),8)==0){ping_pending=false;next_ping=now+std::chrono::seconds(2);}
       });
-      h2check(nghttp2_session_consume(h,id,n));
-    });
+    },[&](){check(h1_records.idle(),"h1_truncated_record");throw std::runtime_error("h1_peer_end_stream");});
+  }
+  void pump(){
+    if(!h1){const int sent=nghttp2_session_send(h2);if(failure)throw std::runtime_error(failure);h2check(sent);return;}
+    // Leave room for liveness control even when a recipient is backpressured.
+    for(unsigned i=0;i<32&&!outgoing.empty();i++){
+      const auto n=std::min<size_t>(16384,outgoing.front_size());if(network.size()+n+80>queue_limit)break;
+      network.push(http1::chunk(outgoing.data(),n));outgoing.consume(n);
+    }
   }
   void submit_headers(const std::vector<std::pair<std::string,std::string>>& list,bool request){
+    if(h1){
+      std::map<std::string,std::string> fields(list.begin(),list.end());
+      std::string text=request?"POST /clean-vpn HTTP/1.1\r\nHost: "+config.name+"\r\n":fields[":status"]=="200"?"HTTP/1.1 200 OK\r\n":"HTTP/1.1 409 Conflict\r\n";
+      text+="Transfer-Encoding: chunked\r\nContent-Type: application/octet-stream\r\nX-Clean-Vpn-Protocol: h1-v1\r\n";
+      for(const auto& f:fields)if(f.first[0]!=':'&&f.first!="content-type")text+=f.first+": "+f.second+"\r\n";
+      text+="\r\n";network.push(Bytes(text.begin(),text.end()));stream=1;return;
+    }
     std::vector<nghttp2_nv> nv;
     for(const auto& kv:list)nv.push_back({reinterpret_cast<uint8_t*>(const_cast<char*>(kv.first.data())),reinterpret_cast<uint8_t*>(const_cast<char*>(kv.second.data())),kv.first.size(),kv.second.size(),NGHTTP2_NV_FLAG_NONE});
     nghttp2_data_provider provider{};provider.read_callback=data_read;
@@ -391,6 +440,14 @@ struct Session {
     else h2check(nghttp2_submit_response(h2,stream,nv.data(),nv.size(),&provider));
   }
   void init(){
+    h1=is_http1(ssl);
+    check(config.http_version=="auto"||(h1?config.http_version=="1.1":config.http_version=="2"),"http_version_mismatch");
+    if(h1){
+      check(!SSL_has_application_settings(ssl),"h2_alps_invalid");
+      if(config.client){const auto window=int64_t(time(nullptr))/900;
+        submit_headers({{"authorization","Bearer "+token(secret,exporter(ssl),window)},{"x-clean-vpn-window",std::to_string(window)}},true);}
+      return;
+    }
     nghttp2_session_callbacks* raw=nullptr;h2check(nghttp2_session_callbacks_new(&raw));
     std::unique_ptr<nghttp2_session_callbacks,decltype(&nghttp2_session_callbacks_del)> cb(raw,nghttp2_session_callbacks_del);
     nghttp2_session_callbacks_set_send_callback(raw,send_cb);
@@ -463,10 +520,10 @@ struct Session {
       if(failure)throw std::runtime_error(failure);
       if(!ready)check(Clock::now()<deadline,"auth_deadline");
       if(ready){
-        if(ping_pending)check(Clock::now()<ping_deadline,"h2_ping_timeout");
-        else if(Clock::now()>=next_ping){check(RAND_bytes(ping.data(),ping.size())==1,"random");h2check(nghttp2_submit_ping(h2,NGHTTP2_FLAG_NONE,ping.data()));ping_pending=true;ping_deadline=Clock::now()+std::chrono::seconds(5);}
+        if(ping_pending)check(Clock::now()<ping_deadline,h1?"h1_ping_timeout":"h2_ping_timeout");
+        else if(Clock::now()>=next_ping){check(RAND_bytes(ping.data(),ping.size())==1,"random");if(h1)network.push(http1::control(false,ping));else h2check(nghttp2_submit_ping(h2,NGHTTP2_FLAG_NONE,ping.data()));ping_pending=true;ping_deadline=Clock::now()+std::chrono::seconds(5);}
       }
-      int sent=nghttp2_session_send(h2);if(failure)throw std::runtime_error(failure);h2check(sent);
+      pump();
       bool read_wants_write=false;
       if(!network.empty()){
         int n=SSL_write(ssl,network.data(),network.front_size());
@@ -479,8 +536,9 @@ struct Session {
         if(n<=0){int e=SSL_get_error(ssl,n);check(e!=SSL_ERROR_ZERO_RETURN,"tls_peer_closed");
           check(e==SSL_ERROR_WANT_READ||e==SSL_ERROR_WANT_WRITE,"tls_read");read_wants_write=e==SSL_ERROR_WANT_WRITE;break;}
 #ifdef CVPN_TEST_PACKET_FD
-        wire_observer.feed(buffer.data(),n);
+        if(!h1)wire_observer.feed(buffer.data(),n);
 #endif
+        if(h1){h1_feed(buffer.data(),n);continue;}
         ssize_t used=nghttp2_session_mem_recv(h2,buffer.data(),n);
         if(failure)throw std::runtime_error(failure);
         check(used!=NGHTTP2_ERR_FLOODED,"h2_flooded");
@@ -511,7 +569,7 @@ struct Session {
       }
       // Newly read TUN packets must arm writable interest in this tick, not
       // wait for the next polling timeout before serialising HTTP/2 DATA.
-      sent=nghttp2_session_send(h2);if(failure)throw std::runtime_error(failure);h2check(sent);
+      pump();
       return (packets.size()<queue_limit-max_packet-16384?POLLIN:0)|(!network.empty()||read_wants_write?POLLOUT:0);
   }
   void enqueue(const uint8_t* data,size_t n){
@@ -548,7 +606,7 @@ static void handshake(SSL* ssl,int fd,Control& ctl,Clock::time_point deadline,ui
   while(true){int n=SSL_do_handshake(ssl);if(n==1)break;int e=SSL_get_error(ssl,n);
     if(e!=SSL_ERROR_WANT_READ&&e!=SSL_ERROR_WANT_WRITE)throw std::runtime_error(tls_failure(ssl));
     wait_fd(fd,e==SSL_ERROR_WANT_READ?POLLIN:POLLOUT,ctl,deadline,generation);}
-  const uint8_t* proto=nullptr;unsigned n=0;SSL_get0_alpn_selected(ssl,&proto,&n);check(n==2&&std::memcmp(proto,"h2",2)==0,"h2_required");
+  (void)is_http1(ssl);
 #ifdef CVPN_TEST_PACKET_FD
   signature_fixture::accepted(ssl);
 #endif
@@ -604,8 +662,7 @@ static void run_exit(const Config& config,SSL_CTX* context,int listener,int tun,
         if(!c.session){
           int result=SSL_do_handshake(c.ssl.get());
           if(result==1){
-            const uint8_t* proto=nullptr;unsigned length=0;SSL_get0_alpn_selected(c.ssl.get(),&proto,&length);
-            check(length==2&&std::memcmp(proto,"h2",2)==0,"h2_required");
+            (void)is_http1(c.ssl.get());
             c.session=std::make_unique<Session>(config,ctl,c.ssl.get(),no_secret);
             auto* session=c.session.get();
             session->claim=[&owners,session](uint32_t address){return owners.emplace(address,session).second;};
@@ -699,7 +756,7 @@ int main(int argc,char** argv){
   try{
     if(argc==2&&std::string(argv[1])=="--capabilities"){
       std::cout<<json({{"version",1},{"engine","clean-vpn-native-m1"},{"transport","boring-tls"},
-        {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2"}},
+        {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2","http/1.1"}},{"http_versions",{"2","1.1","auto"}},
         {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"connection_modes",{"on-demand","persistent"}},{"multi_peer",true},{"max_peers",32},{"browser_profiles",false},
         {"experimental_tls_profiles",{{"schema",1},{"scenario","cold"},{"prewire_check",true},{"certificate_compression",{2}},{"alps",{{"codepoint",17613},{"http2_settings",true},{"experimental",true}}},{"transports",{"boring-tls","combo-tls-boring"}}}},
         {"profile_policy",profile_policy::describe()},{"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
@@ -748,7 +805,8 @@ int main(int argc,char** argv){
     SSL_CTX_set_session_cache_mode(ctx.get(),SSL_SESS_CACHE_OFF);
     if(c.client){
       SSL_CTX_set_verify(ctx.get(),SSL_VERIFY_PEER,nullptr);check(SSL_CTX_load_verify_locations(ctx.get(),c.ca.c_str(),nullptr)==1,"ca_load");
-      const uint8_t ap[]={2,'h','2'};check(SSL_CTX_set_alpn_protos(ctx.get(),ap,sizeof(ap))==0,"alpn");
+      const Bytes ap=c.http_version=="1.1"?Bytes{8,'h','t','t','p','/','1','.','1'}:c.http_version=="auto"?Bytes{2,'h','2',8,'h','t','t','p','/','1','.','1'}:Bytes{2,'h','2'};
+      check(SSL_CTX_set_alpn_protos(ctx.get(),ap.data(),ap.size())==0,"alpn");
       if(c.tls_profile) {
         c.tls_profile->context(ctx.get());
         // Compile/verify compatibility before TUN, listeners or routes. This
@@ -759,7 +817,7 @@ int main(int argc,char** argv){
       }
     } else {
       check(SSL_CTX_use_certificate_chain_file(ctx.get(),c.cert.c_str())==1&&SSL_CTX_use_PrivateKey_file(ctx.get(),c.key.c_str(),SSL_FILETYPE_PEM)==1&&SSL_CTX_check_private_key(ctx.get())==1,"server_key");
-      SSL_CTX_set_alpn_select_cb(ctx.get(),alpn,nullptr);
+      SSL_CTX_set_alpn_select_cb(ctx.get(),alpn,&c);
 #ifdef CVPN_TEST_PACKET_FD
       check(certificate_compression_fixture::enable(ctx.get()),"fixture_compression");
       check(signature_fixture::enable(ctx.get()),"fixture_signature");
@@ -878,7 +936,7 @@ int main(int argc,char** argv){
         // Incoming services cannot wake a disconnected client through its TUN.
         // Opt-in persistence uses the ordinary bounded reconnect path, including
         // all TLS/auth checks, without synthesizing application/DNS traffic.
-        demand_wait=!c.persistent&&authenticated&&(reason=="h2_peer_end_stream"||reason=="h2_goaway_no_error"||reason=="h2_stream_closed");
+        demand_wait=!c.persistent&&authenticated&&(reason=="h2_peer_end_stream"||reason=="h2_goaway_no_error"||reason=="h2_stream_closed"||reason=="h1_peer_end_stream");
       }
       if(socket_fd.n>=0){close(socket_fd.n);socket_fd.n=-1;}
       if(!pending.empty()){pending.clear();ctl.dropped++;}

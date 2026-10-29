@@ -1,5 +1,10 @@
 # Полный native-переход: рабочий статус
 
+29 октября: [HTTP/1.1 внешнего native-туннеля](clean-vpn-native-http1.md)
+реализован рядом с H2: `http_version`, mixed-peer exit, exporter auth, bounded
+chunked parser и heartbeat. Локально проверены независимый HTTP peer,
+профили/JA3/JA4 и combo; физическая пара этим изменением не обновлялась.
+
 Дополнение 29 октября: host-profile поддерживает отдельные `peer_ipv4` и PSK
 для нескольких клиентов одного exit. [Два клиента в systemd-лаборатории](../fixtures/clean-vpn-native-host-multi-report.json)
 прошли DNS/HTTPS, независимый restart/crash, общий crash exit и cleanup.

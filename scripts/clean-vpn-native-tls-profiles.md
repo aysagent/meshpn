@@ -34,8 +34,9 @@ pinned BoringSSL revision, настройки и ограничения. Неп�
 Каждое реальное соединение получает новый SSL object, свежие random и key shares.
 Его первый ClientHello также формируется в memory BIO и проверяется до отправки
 TLS-байтов. После проверки отправляются именно эти байты с сохранением TLS
-transcript. CA/hostname, exporter-bound PSK и обязательный negotiated `h2`
-остаются действующими. Профиль не меняет маршруты, DNS, firewall или H2 окна.
+transcript. CA/hostname и exporter-bound PSK остаются действующими. Negotiated
+ALPN должен соответствовать `http_version`; [доступны H2 и HTTP/1.1](clean-vpn-native-http1.md).
+Профиль не меняет маршруты, DNS или firewall.
 
 ## Схема
 
@@ -52,8 +53,9 @@ transcript. CA/hostname, exporter-bound PSK и обязательный negotiat
   API стека. Unsupported IDs, дубли и неверный порядок shares отклоняются.
   [ML-DSA 44/65/87](clean-vpn-native-mldsa.md) включаются явно в signature algorithms;
   trust-anchor extension пока запрещено до реализации выбора цепочки/retry.
-- ALPN: `h2` либо `h2,http/1.1`; exit обязан выбрать h2. Это объявление ALPN,
-  не реализация H1 VPN fallback.
+- ALPN: `h2`, `h2,http/1.1` либо `http/1.1`. Native реализует обе версии;
+  для смешанного профиля разрешение выбора H1 задаётся `http_version:"auto"`.
+  ALPN сохранённого профиля не переписывается. ALPS поддержан только для H2.
 - GREASE, permutation, ECH GREASE, запросы OCSP/SCT включаются API BoringSSL.
   ECH GREASE не шифрует реальный SNI. Запрос OCSP/SCT не означает самостоятельную
   политику обязательной проверки stapled response/CT.

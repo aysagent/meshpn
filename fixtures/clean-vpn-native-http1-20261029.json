@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-http1-lab-report",
+  "date": "2026-10-29",
+  "baseRevision": "188f2794d937c51801585df5cf1cb4c4123a5586",
+  "environment": {
+    "os": "Linux",
+    "arch": "aarch64",
+    "runtime": "isolated Podman container",
+    "network": "none (loopback TLS tests only)",
+    "node": "v24.22.1",
+    "buildType": "Release",
+    "lowMemoryBuild": true,
+    "buildJobs": 2,
+    "physicalNodesChanged": false,
+    "hostNetworkChanged": false,
+    "realTunTest": false
+  },
+  "engineSha256": "9bcaaabc92ddad7997254d47d27d453887e841da36313e888d4107b51fc96936",
+  "checks": [
+    {
+      "command": "ctest --test-dir /cache/build --output-on-failure",
+      "passed": 13,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "CVPN_BUILD=/cache/build node --test scripts/test-native-data-plane.mjs scripts/test-native-multi-peer.mjs",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "CVPN_BUILD=/cache/build node --test scripts/test-native-http1.mjs",
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "CVPN_BUILD=/cache/build node --test scripts/test-native-tls-profile.mjs scripts/test-native-clock-auth.mjs scripts/test-native-profile-policy.mjs",
+      "passed": 44,
+      "failed": 1,
+      "skipped": 0,
+      "failure": "Policy CLI dependency was absent from curated container source copy; fixed lab inventory and reran policy suite below. All 35 TLS-profile/clock tests passed."
+    },
+    {
+      "command": "CVPN_BUILD=/cache/build node --test scripts/test-native-profile-policy.mjs",
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer native/clean_vpn/http1_test.cc -o /tmp/http1-asan && /tmp/http1-asan",
+      "result": "pass"
+    }
+  ],
+  "finalDistinctTests": {
+    "passed": 76,
+    "unresolvedFailures": 0,
+    "skipped": 0,
+    "note": "13 CTest + 4 data-plane/multi-peer + 14 independent HTTP1 + 35 TLS/clock + 10 policy; sanitizer pass additional."
+  },
+  "coverage": [
+    "HTTP1 and H2 bidirectional packet delivery through real TLS; fixture packet fd only",
+    "CA/hostname/PSK rejection and TLS exporter binding",
+    "HTTP chunk/header/record fragmentation and framing attacks",
+    "native HTTP interoperability with independent Node HTTP/HTTPS parsers",
+    "graceful response end, idle without reconnect, first-packet wake",
+    "truncated record rejected and reconnect verified",
+    "heartbeat timeout, reconnect, backpressure, bounded FD/RSS",
+    "mixed H1/H2 peers up to 32; duplicate identity/source isolation",
+    "saved H1-only and mixed Chromium ALPN; independent ClientHello/JA3/JA4 comparison",
+    "combo boring branch and ALPS not negotiated on H1"
+  ],
+  "limitations": [
+    "No physical Radxa/VPS installation or smoke",
+    "No real-TUN HTTP1 throughput comparison",
+    "Not full browser HTTP behavior equivalence",
+    "UI selector and H1 browser capture page not implemented; engine JSON setting"
+  ],
+  "sourceSha256": {
+    "native/clean_vpn/engine.cc": "80e2d2d87a4972917260139056ab7debd97d1b185dcf2a5a799739c19f5a8749",
+    "native/clean_vpn/http1.hpp": "4d068179d90d3f8441a76a34615713a78339c3bae5b2107bd4769f260d7d566e",
+    "native/clean_vpn/http1_test.cc": "ef0af7cb7c6151d78f0db38a7195e985a39d2607a0afa59e277a97eb182d0799",
+    "native/clean_vpn/integration_test.cc": "3d650aa89a817f2664e1e5f388195ea5d0fb40ba788f132e91d04185e2b75f0a",
+    "native/clean_vpn/tls_profile.hpp": "bbe7a63adfba3af483a596d7298eec5decbd7fdcd3742dedd2165fe632fce90d",
+    "scripts/test-native-http1.mjs": "27cf484a848a6972d537a85505f1d7a431569c2c15a8fa397ad1616e257fd065",
+    "scripts/test-native-data-plane.mjs": "925b29cd1efb199e4eb5dfb8866d7fc6e333f4b35d703899d4eaedc3f0d6d601",
+    "scripts/test-native-multi-peer.mjs": "f2ea9ac5b2665b647b8386101ec03da731a7133351e03a9e19c6b87e667247fe",
+    "scripts/test-native-tls-profile.mjs": "4fe66eed3dfae8b95685762f5a5c540b1ee96c5187d23dff445a267d42f80420"
+  },
+  "logSha256": {
+    "http1-asan.log": "010850ba1e69a402b4b347685a2b21735502ec40ce8315636f5c89a5d04dae4d",
+    "http1-ctest.log": "36eca33fb3b12b4a8516f18aef199c5af48ff7c8d4bde6c3560e7fc93f75c0ed",
+    "http1-independent-final.log": "30253c8be41ea087847511f2175b2879c3163f78b3a2dad8f53c67a86f0ab21c",
+    "http1-integration.log": "6e290e85304eb53f29b2be9e160531beefba180a189bc21102f29d165dea62e8",
+    "http1-policy-final.log": "1f6330fd323e60903d5d217c6e26215f879598dddacc599c8928143cab3c194b",
+    "http1-regressions-final.log": "a7e53ce02c73fbb3e74e91a9a1d80507f5b84e62089d32efd0203fa057dab539"
+  }
+}

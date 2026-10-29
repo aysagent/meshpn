@@ -109,7 +109,8 @@ struct Profile {
     for (auto n:extensions) require(profile_policy::extensions.count(n),"profile_extension_unsupported");
     for (auto key:{"grease","permute_extensions","ech_grease","ocsp","sct"}) require(t.at(key).is_boolean(),"profile_boolean");
     grease_enabled=t.at("grease"); permute=t.at("permute_extensions"); ech=t.at("ech_grease"); ocsp=t.at("ocsp"); sct=t.at("sct");
-    require(t.at("alpn")==json::array({"h2"}) || t.at("alpn")==json::array({"h2","http/1.1"}),"profile_alpn");
+    require(t.at("alpn")==json::array({"h2"}) || t.at("alpn")==json::array({"h2","http/1.1"}) || t.at("alpn")==json::array({"http/1.1"}),"profile_alpn");
+    require(!alps || t.at("alpn")!=json::array({"http/1.1"}),"profile_alps_protocol");
     for (const auto& p:t.at("alpn")) { auto s=p.get<std::string>(); alpn.push_back(s.size()); alpn.insert(alpn.end(),s.begin(),s.end()); }
     sha256=digest(j.dump());
   }

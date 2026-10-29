@@ -3,6 +3,8 @@
 ## clean-vpn: эксплуатация, транспорты и быстрый старт
 
 **Актуальный приоритет — native C++ `clean-vpn-engine`, `boring-tls`.**
+[Внешний туннель поддерживает HTTP/2 и HTTP/1.1](scripts/clean-vpn-native-http1.md)
+через `http_version` в engine JSON; на client по умолчанию остаётся HTTP/2.
 [Самостоятельный lifecycle Radxa](scripts/clean-vpn-native-host-network.md) уже
 проверен временным Radxa↔VPS запуском: DNS/HTTPS, перезапуск engine и сетевого
 контроллера, сохранённый Chromium-derived профиль и независимый pcap. Старый
