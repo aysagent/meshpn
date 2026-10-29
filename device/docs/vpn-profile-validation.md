@@ -29,6 +29,13 @@ is a mismatch against this particular reference even when sorted values match.
 Tests capture three new ordinary Node ClientHellos, check exact references and
 negative/missing/truncated cases, and reject their match to the Chromium
 reference. No ESP32 TLS mimicry or on-device validation gate is implemented here.
-Next: select a reproducible target profile, evaluate an ESP32 backend, capture
+The [isolated backend experiment](../experiments/profiled-tls/README.md) now
+compares actual mbedTLS/BoringSSL/helper ClientHellos and TLS 1.3 exporters;
+minimal BoringSSL builds for S3/P4 pass. None of its 27 captures matches the
+browser reference. See [results and stack limits](../reports/2026-10-29-profiled-tls-feasibility.md).
+This is not a supported profiled firmware transport.
+
+Next: select a complete reproducible target profile, implement the remaining
+extension semantics/order and device memory/I/O integration, capture
 every new device connection at exit, and block activation on missing or mismatched
 validation. Matching JA3/JA4 alone does not establish full browser equivalence.

@@ -7,6 +7,17 @@
 
 ## Текущее состояние
 
+29 октября, feasibility профилированного TLS: минимальный библиотечный BoringSSL
+собран для S3 и P4; на host прошли 9 TLS 1.3 handshake с проверкой CA/имени и
+совпадающим exporter, включая 3 с X25519MLKEM768-only сервером. Все 27 новых
+ClientHello проверены: точных совпадений с браузерным эталоном **0**. BoringSSL —
+кандидат для продолжения, а не готовый транспорт: остаются семантика/порядок
+расширений, свежая обязательная валидация и HTTP/auth протокол. Текущего 6 KiB
+стека VPN worker недостаточно для этого ML-KEM; device heap/stack ещё не измерены.
+Обычный `tls` и конфигурация прошивки не менялись.
+[Отчёт](reports/2026-10-29-profiled-tls-feasibility.md),
+[воспроизводимый эксперимент](experiments/profiled-tls/README.md).
+
 29 октября, третий offline-блок: настоящий JS exit проверен с C-клиентом по
 TCP/UDP/raw TLS на loopback (TUN заменён тестовой границей). Добавлен отдельный
 опциональный mTLS: клиентский сертификат/ключ в админке, атомарное хранение пары,
@@ -204,8 +215,8 @@ VPN оставлен выключенным для диагностики.
 | Этап 2: LAN forwarding | USB/AP, NAPT, DNS, kill switch, UI, reconnect реализованы; есть ручные результаты XIAO | Полная матрица двух LAN, аварий и packet capture с exit для текущей сборки |
 | Дополнительный `udp` | Реализован, ручные speed tests XIAO выполнены | Регрессия текущей сборки и измерение потерь на одинаковом пути |
 | WireGuard | Реализован; пользователь проверял соединение и интернет на XIAO | Ресурсы/долгая нагрузка/rekey текущей сборки; производительность отдельно от plain TCP/UDP |
-| Этап 3: обычный `tls` | Реализован raw TLS 1.2 через esp-tls/mbedTLS с exit `--type=tls --tls-raw`, обязательными CA/name/date checks и host TLS tests | Аппаратная приёмка проверки сертификатов; client auth и совместимый exporter/Bearer/HTTP handshake отсутствуют |
-| Этап 4: профилированный TLS | Не реализован | Feasibility на выбранном backend, импорт профиля и точная проверка JA3/JA4 каждого соединения |
+| Этап 3: обычный `tls` | Реализован raw TLS 1.2 через esp-tls/mbedTLS с exit `--type=tls --tls-raw`, CA/name/date checks, опциональным mTLS и host tests | Аппаратная приёмка; совместимый exporter/Bearer/HTTP handshake отсутствует |
+| Этап 4: профилированный TLS | Минимальный BoringSSL собран для S3/P4; host TLS 1.3/exporter проверены, точный профиль не воспроизведён | Семантика/порядок расширений, стек/allocator/RNG, импорт профиля и обязательная проверка JA3/JA4 каждой сессии |
 | Этап 5: `transparent-tls` | Не реализован | enc-SNI, восстановление CH, relay и LAN interception |
 | Этап 6: `combo-tls` | Не реализован | Совместить защищённый IP-туннель и transparent flows |
 
@@ -441,13 +452,17 @@ signature_algorithms wire и TLS 1.2 cipher wire/EMS. Это эталон сущ
 
 Ранний feasibility gate:
 
+Частично выполнен 29 октября: [измерения и ограничения](reports/2026-10-29-profiled-tls-feasibility.md).
+Далее перечислены критерии всего gate, а не уже доказанные возможности устройства.
+
 - Собрать минимальный TLS-клиент под Xtensa/ESP-IDF без JSON IPC/POSIX main helper;
   проверить RNG, время, сокеты/BIO, threading, allocator, размер flash/стеков.
 - Сравнить штатный/адаптированный Mbed TLS, библиотечный порт BoringSSL и,
   при необходимости, другой поддерживаемый backend. Критерии: управляемость
   ClientHello, доступ к его фактическим байтам, точный JA3/JA4, exporter,
   корректный handshake и память на XIAO. Поддержка нужных возможностей у
-  каждого кандидата пока не доказана; выбор не предрешён.
+  каждого кандидата требует проверки. Host-эксперимент выбрал BoringSSL для
+  следующего прототипа; полный gate ещё не пройден.
 - Backend без воспроизведения профиля пригоден для промежуточного `tls`,
   но не для режима с обязательным профилем. Если другой backend обеспечивает
   профиль и протокол, отдельный перенос BoringSSL не нужен.
@@ -456,12 +471,13 @@ signature_algorithms wire и TLS 1.2 cipher wire/EMS. Это эталон сущ
   нужного exporter API. Если API отсутствует, отдельно оценить обновление/
   адаптацию библиотеки, не самодельную криптографию или отключение binding.
 - Измерить пик internal/DMA/PSRAM во время handshake, а не только память idle.
-  В [Kconfig ESP-IDF v5.4.1](https://github.com/espressif/esp-idf/blob/v5.4.1/components/mbedtls/Kconfig)
-  TLS 1.3 выключен по умолчанию и несовместим с `MBEDTLS_DYNAMIC_BUFFER`;
+  В текущем продукте на IDF 5.5.5 TLS 1.3 выключен; host probe с defaults
+  подмодуля mbedTLS не подтверждает совместимость с настройками firmware;
   входной TLS record buffer нельзя произвольно уменьшить до MTU IP-туннеля.
 - Общая документация [сборки закреплённого BoringSSL](https://boringssl.googlesource.com/boringssl/+/a7481f34712bc056a47ab91015536166b3a6cebb/BUILDING.md)
   описывает cross-compilation и `OPENSSL_SMALL`, но не является доказательством
-  готового порта на XIAO. Совместимость и стоимость порта пока не установлены.
+  готового порта на XIAO. Минимальная сборка теперь подтверждена, runtime и
+  стоимость интеграции в полный продукт ещё не установлены.
 
 ## 4. transparent-tls и combo-tls — отдельный потоковый proxy
 
@@ -773,6 +789,10 @@ handshake peak memory и sustained throughput, без переноса стар�
 
 ### Этап 4 — отдельный транспорт `boring-tls` (профилированный TLS)
 
+- Продолжить изолированный BoringSSL prototype: полный профиль, ALPS/trust anchors/
+  certificate compression/ECH GREASE и порядок расширений до transcript hash.
+  Сначала точный capture и успешный handshake, затем интеграция. До неё требуется
+  отдельное решение для стека: ML-KEM превышает текущие 6 KiB VPN worker.
 - Подключить backend, прошедший feasibility gate; BoringSSL не обязателен.
 - Тот же серверный протокол, что у `tls`, но профиль и строгая проверка JA3/JA4
   обязательны. Это аналог boring-tls по функции, не обязательный порт его helper.
