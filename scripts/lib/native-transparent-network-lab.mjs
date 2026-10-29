@@ -45,7 +45,11 @@ const inside = (e, exe, args, input) => run('nsenter', [...nsargs(e), exe, ...ar
 const nip = (e, ...args) => inside(e, 'ip', args);
 async function holder() {
   const e = start('unshare', ['--net', fixture, '--public-holder', cert, key, own]);
-  await wait(e, x => x.lines.some(l => l.stage === 'namespace-ready')); return e;
+  await wait(e, x => x.lines.some(l => l.stage === 'namespace-ready'));
+  // A fresh namespace may inherit forwarding=1 from the Linux host. Establish
+  // the fixture's closed baseline only after its namespace identity is checked;
+  // do not weaken the production guard's fresh-install precondition.
+  inside(e, 'sysctl', ['-w', 'net.ipv4.ip_forward=0']);return e;
 }
 function interfacePair(a, nameA, b, nameB, id) {
   ip('link', 'add', 'left' + id, 'type', 'veth', 'peer', 'name', 'right' + id);
