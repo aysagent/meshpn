@@ -185,6 +185,12 @@ resolver VPN-контейнера. Podman может записать адрес
 также в internal bridge, где Podman иначе может оставить пустой resolver config.
 Sidecar не выполняет рекурсивных запросов и собственный resolver не использует.
 
+Этот overlay обеспечивает `.mpn` для клиентов через native DNS. Собственный
+`getent <client>.mpn` внутри exit-контейнера пока не подключён: localhost:1055
+не является libc resolver на порту53. На exit доступен явный запрос к
+127.0.0.1:1055; host systemd-resolved zone integration остаётся отдельной
+процедурой. Широкий redirect DNS exit/хоста этим overlay не устанавливается.
+
 Лаборатория: `CVPN_MANAGED_PRIVATE_DNS=1` добавляет overlay только exit-проекту
 `test-native-managed-compose.mjs`. Проверяются UDP/TCP `.mpn`, обычный NSS
 `getent`, публичный DNS positive control, registry transaction/revoke, остановка
@@ -196,3 +202,29 @@ Sidecar не выполняет рекурсивных запросов и со�
 наружу до создания TUN/адреса. `test-native-runtime-local-dns.mjs` подтверждает
 pre-TUN drop и canonical audit в отдельном namespace без NIC; общий Compose
 проверяет обычный NSS и отсутствие port53 fallback при остановленном engine.
+
+## Получение адреса клиента от exit
+
+Для нового client bundle с `address_assignment: "v1"` и без `peer_ipv4`
+добавить `-f scripts/containers/native-managed.address-discovery.yml` к
+клиентскому Compose. Overlay передаёт runtime `CVPN_ADDRESS_DISCOVERY=1`.
+Exit должен поддерживать authenticated address discovery и знать ключ этого
+клиента. Адрес сохраняет exit registry; это стабильное назначение по identity,
+а не случайная DHCP-аренда при каждом соединении.
+
+Первый запуск выполняется в новом namespace. До получения проверенного ответа
+разрешён только точный endpoint exit; затем runtime создаёт эффективный config
+и маршруты с выданным адресом. Исходный `/config/engine.json` остаётся без
+фиксированного IP. `/status.vpn.assignedIPv4` и `/settings.vpn.assignedIPv4`
+показывают адрес из эффективного `/run/clean-vpn/engine.json` либо `null`,
+если назначения ещё нет. Значение `.2` по умолчанию не подставляется.
+
+Обычный restart подтверждает то же назначение. При изменении source config
+или назначения на exit контейнер нужно пересоздать: имеющийся namespace нельзя
+молча перенастроить под другой peer. Настройки DNS/маршрутов хоста не меняются.
+
+`CVPN_MANAGED_ADDRESS_DISCOVERY=1 CVPN_MANAGED_PRIVATE_DNS=1` в
+`test-native-managed-compose.mjs` проверяет фактическое назначение `.3`,
+неизменность source config, TUN, публичный/приватный NSS, stop/start и SIGKILL.
+На ARM64 Alpine этот прогон прошёл 12/12; результат и точные images сохранены
+в [отчёте](../fixtures/clean-vpn-native-managed-address-20261030.json).

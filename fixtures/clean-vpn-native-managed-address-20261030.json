@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "kind": "native-managed-compose-lab",
+  "status": "passed",
+  "checks": [
+    "compose-pair-supervised-engines-active",
+    "authenticated-address-discovery-actual-assignment-and-immutable-source",
+    "real-tun-authenticated-packet-roundtrip",
+    "compose-private-dns-udp-tcp-nss-and-public-positive-control",
+    "compose-private-dns-transaction-servfail-without-public-fallback",
+    "client-add-revoke-reload-without-existing-client-interruption",
+    "compose-private-dns-revoke-outage-and-recovery-no-public-fallback",
+    "both-roles-http-admin-auth-diagnostics-and-verified-TLS-browser-capture",
+    "stop-retains-guard-no-packet-forwarding",
+    "stopped-engine-cannot-bypass-DNS-through-direct-port53",
+    "start-restores-packet-path",
+    "engine-sigkill-auto-recovery"
+  ],
+  "scope": "internal bridge; real namespace runtime and HTTP admin; no physical hosts or reboot",
+  "images": [
+    {
+      "name": "localhost/cvpn-managed-alpine:address-final-20261030",
+      "id": "9138335d00dc0f5b911ba54c911f10eb19fecc671a939a2bae1c54619200f173",
+      "architecture": "arm64",
+      "size": 109222958
+    },
+    {
+      "name": "localhost/cvpn-managed-web-alpine:status-20261030",
+      "id": "860d7fba27f836e3b49409368f56b64950eb8480f65e089559933153fa9a782c",
+      "architecture": "arm64",
+      "size": 77817936
+    }
+  ],
+  "cleanupErrors": [],
+  "nativeSource": "1f57b89",
+  "engineSha256": "b8c76e55b88cefe2ddb468efff606ed2c4d72a2828bebee46a17cfc858e7bf27",
+  "runtimeImage": "f86a6d7eee71f211849806cef9706b9fd2f6c2f0d60dc337ae07d3732a61a813",
+  "limits": [
+    "ARM64 Podman Linux VM",
+    "no physical hosts or reboot",
+    "exit-container own NSS zone integration not included",
+    "30-minute soak applies to prior private-DNS source snapshot, not this image"
+  ]
+}

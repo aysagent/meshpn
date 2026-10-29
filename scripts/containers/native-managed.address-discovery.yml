@@ -1,0 +1,6 @@
+# Client only, explicit source config address_assignment:"v1" and no peer_ipv4.
+# Fresh namespace for initial bootstrap; restart reuses a validated assignment.
+services:
+  vpn:
+    environment:
+      CVPN_ADDRESS_DISCOVERY: "1"
