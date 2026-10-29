@@ -513,7 +513,8 @@ esp_err_t meshvpn_net_start_bridge(void)
                                                meshvpn_net_on_event, NULL));
 #endif
 
-#if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
+/* P4 creates both Wi-Fi netifs itself, including STA-only builds. */
+#if CONFIG_IDF_TARGET_ESP32P4 || defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_SOFTAP)
     err = esp_wifi_start();
     if (err != ESP_OK) return err;
 #endif

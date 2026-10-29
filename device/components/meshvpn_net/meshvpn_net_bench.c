@@ -97,8 +97,10 @@ static int server_peer(int listener,const meshvpn_net_bench_config_t *c,uint64_t
             if(fd<0)return -1;
             if(peer.sin_addr.s_addr!=c->target){close(fd);continue;}
             uint8_t received[32];
-            if(fcntl(fd,F_SETFL,O_NONBLOCK)<0||exchange(fd,received,32,false,false,end)<0||
-               memcmp(received,hello,32)) {close(fd);errno=EPROTO;return -1;}
+            int failure=0;
+            if(fcntl(fd,F_SETFL,O_NONBLOCK)<0||exchange(fd,received,32,false,false,end)<0)failure=errno;
+            else if(memcmp(received,hello,32))failure=EPROTO;
+            if(failure){close(fd);errno=failure;return -1;}
         }
         if(exchange(fd,hello,32,true,c->udp,end)<0){if(fd!=listener)close(fd);return -1;}
         return fd;

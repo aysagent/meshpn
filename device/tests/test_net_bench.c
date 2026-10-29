@@ -104,6 +104,18 @@ static void server_test(meshvpn_net_bench_config_t c){
  if(c.udp)assert(!r.invalid&&!r.duplicates);
  usleep(100000);
 }
+static void server_partial_cancel(meshvpn_net_bench_config_t c){
+ c.server=true;c.udp=false;c.ap=true;
+ assert(meshvpn_net_bench_start(&c)==ESP_OK);
+ meshvpn_net_bench_result_t r;uint64_t end=now()+1000000;
+ do {usleep(1000);meshvpn_net_bench_status(&r);}while(r.running&&!r.listening&&now()<end);
+ assert(r.listening);
+ int fd=socket(AF_INET,SOCK_STREAM,0);assert(fd>=0);
+ struct sockaddr_in peer={.sin_family=AF_INET,.sin_port=htons(c.port),.sin_addr.s_addr=c.target};
+ assert(!connect(fd,(struct sockaddr*)&peer,sizeof(peer)));assert(send(fd,"MNB1",4,0)==4);
+ usleep(100000);meshvpn_net_bench_cancel();r=wait_done();close(fd);
+ assert(!r.connected&&r.error==ECANCELED);
+}
 int main(int argc,char **argv){
  assert(argc==3);int port=atoi(argv[1]),server_port=atoi(argv[2]);
  uint8_t data[1200]={0},seen[UDP_SEEN_BYTES]={0};
@@ -150,5 +162,6 @@ int main(int argc,char **argv){
  c.port++;assert(meshvpn_net_bench_start(&c)==ESP_OK);assert(wait_done().error==ETIMEDOUT);
  c.port++;assert(meshvpn_net_bench_start(&c)==ESP_OK);usleep(100000);__atomic_store_n(&vpn_enabled,true,__ATOMIC_RELAXED);
  assert(wait_done().error==ECANCELED);__atomic_store_n(&vpn_enabled,false,__ATOMIC_RELAXED);
+ c.port++;server_partial_cancel(c);
  puts("P4 benchmark worker: client/server TCP/UDP directions, nonce, subnet, busy, cancel, VPN transition, OOM and bounds passed");return 0;
 }

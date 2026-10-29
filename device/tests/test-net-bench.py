@@ -22,9 +22,9 @@ with tempfile.TemporaryDirectory(prefix='meshpn-bench-') as tmp:
         for s in held:s.close()
         held=[]
         probe=socket.socket();probe.bind(('127.0.0.1',0));port=probe.getsockname()[1];probe.close()
-        if port>65527:continue
+        if port>65526:continue
         try:
-            for offset in range(1,9):
+            for offset in range(1,10):
                 s=socket.socket();held.append(s);s.bind(('127.0.0.1',port+offset))
             break
         except OSError:continue
