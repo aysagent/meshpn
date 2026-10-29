@@ -38,6 +38,8 @@ export function nativeSitePlan({ name, target, site, engine, capability }) {
     assert.ok(packet.transport === undefined || packet.transport === 'boring-tls', 'transport_mismatch');
     assert.equal(packet.tun, p.tun);
     assert.equal(packet.address, p.endpoint); assert.equal(packet.port, p.port);
+    assert.equal(packet.private_peer_dns ?? false, p.private_peer_dns ?? false, 'private_peer_dns_owner_mismatch');
+    if(packet.private_peer_dns)assert.equal(capability.private_peer_dns?.exit_opt_in,true,'private_peer_dns_capability_required');
   }
   const routedClient = !transparent && p.role === 'client';
   if (routedClient) {

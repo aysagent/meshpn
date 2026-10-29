@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import {isIPv4} from 'node:net';
 
 export function validateNativeExitHost(c){
-  assert.deepEqual(Object.keys(c).sort(),['version','endpoint','port','uplink','tun','engine_unit','network_unit'].sort());
+  assert.deepEqual(Object.keys(c).sort(),['version','endpoint','port','uplink','tun','engine_unit','network_unit',...('private_peer_dns' in c?['private_peer_dns']:[])].sort());
+  if('private_peer_dns' in c)assert.equal(typeof c.private_peer_dns,'boolean');
   assert.equal(c.version,1);assert.ok(isIPv4(c.endpoint)&&!/^(0|127|169\.254)\./.test(c.endpoint));
   assert.ok(Number.isInteger(c.port)&&c.port>0&&c.port<65536);
   assert.match(c.uplink,/^[a-zA-Z][a-zA-Z0-9_-]{0,14}$/);assert.notEqual(c.uplink,'lo');
@@ -19,6 +20,10 @@ export function nativeExitHostRules(c,id){
     {table:'filter',chain:'FORWARD',spec:['-i',c.tun,'-o',c.uplink,'-s','10.99.0.0/24',...tag,'-j','ACCEPT']},
     {table:'filter',chain:'FORWARD',spec:['-i',c.uplink,'-o',c.tun,'-d','10.99.0.0/24','-m','conntrack','--ctstate','ESTABLISHED,RELATED',...tag,'-j','ACCEPT']},
     {table:'nat',chain:'POSTROUTING',spec:['-s','10.99.0.0/24','-o',c.uplink,...tag,'-j','MASQUERADE']},
+    ...(c.private_peer_dns?['udp','tcp'].flatMap(proto=>[
+      {table:'filter',chain:'INPUT',spec:['-i',c.tun,'-s','10.99.0.0/24','-d','10.99.0.1/32','-p',proto,'-m',proto,'--dport','1055',...tag,'-j','ACCEPT']},
+      {table:'filter',chain:'OUTPUT',spec:['-o',c.tun,'-s','10.99.0.1/32','-d','10.99.0.0/24','-p',proto,'-m',proto,'--sport','1055','-m','conntrack','--ctstate','ESTABLISHED','--ctdir','REPLY',...tag,'-j','ACCEPT']},
+    ]):[]),
   ];
 }
 const number=ip=>ip.split('.').reduce((n,v)=>n*256+Number(v),0);
@@ -47,10 +52,11 @@ export function nativeExitHostNetwork(c,{run,store,scope,randomId,createTun}){
     if(s.stage!=='released')assert.deepEqual(s.config,c,'native_exit_config_owner_mismatch');
     assert.match(s.id,/^[a-f0-9]{24}$/);assert.ok(['nf_tables','legacy'].includes(s.firewall));
     assert.ok(['prepared','active','restoring','released'].includes(s.stage));
-    assert.ok(Number.isInteger(s.count)&&s.count>=0&&s.count<=3);
+    const ruleCount=nativeExitHostRules(s.config,s.id).length;
+    assert.ok(Number.isInteger(s.count)&&s.count>=0&&s.count<=ruleCount);
     assert.deepEqual(Object.keys(s.uplink).sort(),['ifindex','name']);assert.equal(s.uplink.name,s.config.uplink);assert.ok(Number.isInteger(s.uplink.ifindex)&&s.uplink.ifindex>0);
     if(s.tun){assert.deepEqual(Object.keys(s.tun).sort(),['alias','ifindex','kind']);assert.equal(s.tun.kind,'tun');assert.equal(s.tun.alias,'cvpn-native-exit-host-'+s.id);assert.ok(Number.isInteger(s.tun.ifindex)&&s.tun.ifindex>0);}
-    if(s.stage==='active')assert.ok(s.tun&&s.count===3);
+    if(s.stage==='active')assert.ok(s.tun&&s.count===ruleCount);
     if(s.stage==='released')assert.equal(s.count,0);
   };
   const save=s=>{validate(s);store.write(s);};

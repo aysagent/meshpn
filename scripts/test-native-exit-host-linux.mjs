@@ -16,7 +16,7 @@ cmd('sysctl',['-w','net.ipv4.ip_forward=1']);
 ipt('-N','FOREIGN_SENTINEL');ipt('-A','FORWARD','-j','FOREIGN_SENTINEL');ipt('-t','nat','-A','POSTROUTING','-s','198.51.100.0/24','-o','eth0','-j','MASQUERADE');
 const snapshot=()=>({filter:ipt('-S'),nat:ipt('-t','nat','-S'),routes:ip('-N','-j','-4','route','show','table','all'),forward:cmd('sysctl',['-n','net.ipv4.ip_forward'])});
 const before=snapshot();let checks=0,crashAt=null,afterTun=false,active=false,store,owner;
-let config={version:1,endpoint:'192.0.2.1',port:443,uplink:'eth0',tun:'cvexit0',engine_unit:'native-test.service',network_unit:'native-test-network.service'};
+let config={version:1,endpoint:'192.0.2.1',port:443,uplink:'eth0',tun:'cvexit0',engine_unit:'native-test.service',network_unit:'native-test-network.service',...(process.env.CVPN_PRIVATE_PEER_DNS==='1'?{private_peer_dns:true}:{})};
 const check=(name,fn)=>{fn();checks++;console.log('EXIT_HOST_CHECK '+name);};
 const close=()=>store?.close();
 function open(){
@@ -45,12 +45,12 @@ try{
   check('different instance cannot take active ownership',()=>assert.throws(()=>owner.recover(),/native_exit_config_owner_mismatch/));
   close();config=previous;open();owner.recover();close();config={...previous,engine_unit:'native-next.service',network_unit:'native-next-network.service'};open();
   check('new instance follows released journal',()=>{owner.recover();owner.prepare();owner.tick();owner.recover();baseline();});
-  for(const point of ['intent','identity','rule1','rule2','rule3']){
+  for(const point of ['intent','identity',...Array.from({length:config.private_peer_dns?7:3},(_,i)=>'rule'+(i+1))]){
     crashAt=s=>point==='intent'?s.stage==='prepared'&&!s.tun:point==='identity'?s.stage==='prepared'&&!!s.tun&&s.count===0:s.count===Number(point.at(-1));
     check('interrupt '+point,()=>assert.throws(()=>owner.prepare(),/simulated_crash/));crashAt=null;close();open();
     check('recover '+point,()=>{owner.recover();baseline();});
   }
   afterTun=true;check('interrupt persistent TUN before identity commit',()=>assert.throws(()=>owner.prepare(),/simulated_crash/));afterTun=false;close();open();
   check('recover TUN by durable alias intent',()=>{owner.recover();baseline();});
-  console.log(JSON.stringify({status:'passed',checks,scope:'real netns TUN/routes/iptables; systemd state injected; no payload or physical host'}));
+  console.log(JSON.stringify({status:'passed',checks,privatePeerDns:config.private_peer_dns===true,scope:'real netns TUN/routes/iptables; systemd state injected; no payload or physical host'}));
 }finally{close();}

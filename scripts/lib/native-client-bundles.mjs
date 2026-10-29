@@ -16,7 +16,8 @@ const absolute = p => {
 };
 const hostname = s => typeof s === 'string' && s.length <= 253 && s.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label));
 export function planNativeClients(input) {
-  fields(input, ['version', 'transport', 'endpoint', 'port', 'server_name', 'public_name', 'cert', 'key', 'ca', 'deploy_root', 'exit', 'clients', 'deny_ipv4']);
+  fields(input, ['version', 'transport', 'endpoint', 'port', 'server_name', 'public_name', 'cert', 'key', 'ca', 'deploy_root', 'exit', 'clients', 'deny_ipv4', 'private_peer_dns']);
+  if('private_peer_dns' in input)assert.equal(typeof input.private_peer_dns,'boolean');
   assert.equal(input.version, 1);
   assert.ok(['boring-tls', 'combo-tls'].includes(input.transport));
   assert.ok(hostname(input.server_name), 'server_name required');
@@ -33,6 +34,7 @@ export function planNativeClients(input) {
     const profile = { version: 1, role, tun: 'tun0', tun_address: address, mtu: 1400,
       uplink: owner.uplink, endpoint: input.endpoint, port: input.port,
       lan: role === 'exit' ? null : owner.lan ?? null,
+      ...(role==='exit'&&'private_peer_dns' in input?{private_peer_dns:input.private_peer_dns}:{}),
       ...(combo ? { transport: 'combo-tls', listen_port: role === 'exit' ? input.port : 33002, deny_ipv4: input.deny_ipv4 ?? [] } : {}) };
     nativeNetworkPlan(profile);
     return { link_unit: owner.link_unit, profile };
@@ -56,7 +58,7 @@ export function planNativeClients(input) {
   });
   return { transport: input.transport, deployRoot: root,
     exit: { site: site(input.exit, 'exit', '10.99.0.1/24'),
-      config: wrap({ ...common, role: 'exit', cert: root + '/cert.pem', key: root + '/key.pem', peers }) }, clients };
+      config: wrap({ ...common, role: 'exit', cert: root + '/cert.pem', key: root + '/key.pem', peers, ...('private_peer_dns' in input?{private_peer_dns:input.private_peer_dns}:{}) }) }, clients };
 }
 
 function readInput(file, secret = false) {

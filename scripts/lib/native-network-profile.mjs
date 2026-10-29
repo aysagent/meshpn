@@ -11,7 +11,8 @@ function cidr(value) {
   return { ip, bits: Number(bits), base: Math.floor(number(ip) / 2 ** (32 - Number(bits))) };
 }
 export function validateNativeNetworkProfile(c) {
-  keys(c, ['version', 'role', 'tun', 'tun_address', 'mtu', 'uplink', 'endpoint', 'port', 'lan']);
+  keys(c, ['version', 'role', 'tun', 'tun_address', 'mtu', 'uplink', 'endpoint', 'port', 'lan', ...('private_peer_dns' in c ? ['private_peer_dns'] : [])]);
+  if ('private_peer_dns' in c) { assert.equal(c.role, 'exit', 'private_peer_dns_exit_only'); assert.equal(typeof c.private_peer_dns, 'boolean'); }
   assert.equal(c.version, 1); assert.ok(['client', 'exit'].includes(c.role));
   iface(c.tun); iface(c.uplink); assert.notEqual(c.tun, c.uplink);
   assert.ok(isIPv4(c.endpoint)); assert.ok(number(c.endpoint) > 0 && number(c.endpoint) < 0xe0000000);
@@ -65,6 +66,9 @@ export function nativeNetworkPlan(input) {
         `-A FORWARD -i ${c.tun} -o ${dev} -d ${subnet} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT`);
     }
   } else {
+    if(c.private_peer_dns)for(const proto of ['udp','tcp'])filter.push(
+      `-A INPUT -i ${c.tun} -s ${network} -d ${ip}/32 -p ${proto} -m ${proto} --dport 1055 -j ACCEPT`,
+      `-A OUTPUT -o ${c.tun} -s ${ip}/32 -d ${network} -p ${proto} -m ${proto} --sport 1055 -m conntrack --ctstate ESTABLISHED --ctdir REPLY -j ACCEPT`);
     filter.push(`-A INPUT -i ${c.uplink} -d ${c.endpoint}/32 -p tcp -m tcp --dport ${c.port} -j ACCEPT`,
       combo ? `-A OUTPUT -o ${c.uplink} -s ${c.endpoint}/32 -p tcp -m tcp --sport ${c.port} -m conntrack --ctstate ESTABLISHED --ctdir REPLY -j ACCEPT` :
         `-A OUTPUT -o ${c.uplink} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT`,

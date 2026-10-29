@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { isIPv4 } from 'node:net';
 import {validateRelayHealth} from './native-relay-health.mjs';
 import { validateTransparentNetworkProfile, transparentSpecialIPv4 } from './native-transparent-network.mjs';
+const privateDnsOutput=tun=>['udp','tcp'].map(proto=>`-o ${tun} -s 10.99.0.1/32 -d 10.99.0.0/24 -p ${proto} --sport 1055 -m conntrack --ctstate ESTABLISHED --ctdir REPLY -j ACCEPT`);
 
 // Shared by provisioning and health. Full credential/schema validation remains
 // in the native engine, before the runtime performs network mutations.
@@ -62,6 +63,7 @@ function comboRuntimePlan(c, options) {
     assert.equal(relayHealth,null,'relay_health_client_only');
     const output = chain('OUTPUT');
     output.splice(0, output.length, '-o lo -j ACCEPT',
+      ...(packet.private_peer_dns?privateDnsOutput(packet.tun):[]),
       `-s ${packet.address}/32 -o ${plan.uplink} -p tcp --sport ${packet.port} -m conntrack --ctstate ESTABLISHED --ctdir REPLY -j ACCEPT`,
       ...denied.map(dst => `-d ${dst} -o ${plan.uplink} -j DROP`),
       `-o ${plan.uplink} -p tcp --dport 443 -j ACCEPT`, '-j DROP');
@@ -74,6 +76,7 @@ export function runtimePlan(c, { uplink = 'eth0', mtu = 1400, lan = null, relayH
   assert.equal(relayHealth,null,'relay_health_combo_only');
   assert.equal(c.version, 1);
   assert.ok(['client', 'exit'].includes(c.role));
+  if('private_peer_dns' in c){assert.equal(c.role,'exit','private_peer_dns_exit_only');assert.equal(typeof c.private_peer_dns,'boolean');}
   assert.equal(c.transport, undefined, 'runtime_v1_requires_boring_tls');
   assert.equal(c.tun, 'cvpn0', 'runtime_owns_cvpn0');
   assert.match(uplink, /^[a-zA-Z][a-zA-Z0-9_-]{0,14}$/);
@@ -119,6 +122,7 @@ export function runtimePlan(c, { uplink = 'eth0', mtu = 1400, lan = null, relayH
         rules.mss.push(`${direction} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss ${mtu - 40}`);
     }
   } else {
+    if(c.private_peer_dns){for(const proto of ['udp','tcp'])rules.input.push(`-i ${c.tun} -s 10.99.0.0/24 -d 10.99.0.1/32 -p ${proto} --dport 1055 -j ACCEPT`);rules.output.push(...privateDnsOutput(c.tun));}
     rules.input.push(`-d ${c.address}/32 -i ${uplink} -p tcp --dport ${c.port} -j ACCEPT`);
     rules.output.push(`-o ${uplink} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT`);
     rules.forward.push(`-s 10.99.0.0/24 -i ${c.tun} -o ${uplink} -j ACCEPT`,

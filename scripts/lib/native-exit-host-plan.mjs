@@ -15,7 +15,7 @@ export function nativeExitHostPlan({name,target,profile,engine,node='/usr/bin/no
   assert.ok(engine.transport===undefined||engine.transport==='boring-tls');
   for(const p of [target,node]){assert.match(p,/^\/[\w./-]+$/);assert.equal(path.normalize(p),p);}
   const network=`native-${name}-network.service`,unit=`native-${name}.service`;
-  const config=validateNativeExitHost({version:1,endpoint:engine.address,port:engine.port,uplink:profile.uplink,tun:engine.tun,engine_unit:unit,network_unit:network});
+  const config=validateNativeExitHost({version:1,endpoint:engine.address,port:engine.port,uplink:profile.uplink,tun:engine.tun,engine_unit:unit,network_unit:network,...('private_peer_dns' in engine?{private_peer_dns:engine.private_peer_dns}:{})});
   const body=`[Unit]
 Description=clean-vpn scoped exit network owner
 After=network.target
