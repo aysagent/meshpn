@@ -1,0 +1,194 @@
+{
+  "schema": 1,
+  "kind": "native-containers-validation",
+  "date": "2026-10-30",
+  "scope": "ARM64 rootful Podman machine only; physical Radxa/VPS and Mac routing/DNS untouched",
+  "packagingCommits": [
+    "6b1ff45",
+    "c7d0371"
+  ],
+  "nativeReadinessCommit": "c6db792",
+  "nativeEngineSha256": "e009a2b77d5c9a3fdda65ef7b78c753bafd1e700086d1e4b5b473071c3d754f2",
+  "nativeEngineNote": "musl source build; stripped final engine copied as a verified additional runtime layer after c6db792 readiness marker",
+  "tests": {
+    "broker": {
+      "passed": 4,
+      "failed": 0
+    },
+    "ctest": {
+      "passed": 13,
+      "failed": 0,
+      "seconds": 18.95
+    },
+    "nativeRegressions": {
+      "passed": 48,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 148.267,
+      "suites": [
+        "HTTP1",
+        "TLS profiles / JA3 / JA4 / ALPS / compression / ML-DSA",
+        "transparent",
+        "combo",
+        "WAN fixture H1/H2",
+        "peer reload boring/combo H1/H2 and standalone transparent"
+      ]
+    },
+    "managedCompose": {
+      "schema": 1,
+      "kind": "native-managed-compose-lab",
+      "status": "passed",
+      "checks": [
+        "compose-pair-supervised-engines-active",
+        "real-tun-authenticated-packet-roundtrip",
+        "client-add-revoke-reload-without-existing-client-interruption",
+        "both-roles-http-admin-auth-diagnostics-and-verified-TLS-browser-capture",
+        "stop-retains-guard-no-packet-forwarding",
+        "start-restores-packet-path",
+        "engine-sigkill-auto-recovery"
+      ],
+      "scope": "internal bridge; real namespace runtime and HTTP admin; no physical hosts or reboot",
+      "images": [
+        {
+          "name": "localhost/cvpn-managed-alpine:status-20261030",
+          "id": "687541fa401b3ab7dc189685918fc4b14c07d3d6e11a59e2bd6a5b9d6e1adbba",
+          "architecture": "arm64",
+          "size": 109066707
+        },
+        {
+          "name": "localhost/cvpn-managed-web-alpine:status-20261030",
+          "id": "860d7fba27f836e3b49409368f56b64950eb8480f65e089559933153fa9a782c",
+          "architecture": "arm64",
+          "size": 77817936
+        }
+      ],
+      "cleanupErrors": []
+    },
+    "runtimeNft": {
+      "schema": 1,
+      "kind": "native-runtime-container-lab",
+      "image": "localhost/cvpn-alpine-runtime:arm64-marker-20261030",
+      "port": 443,
+      "publishedPort": null,
+      "backend": [
+        "podman",
+        "--connection",
+        "meshpn-clean-vpn-lab-root"
+      ],
+      "firewallBackend": "nft",
+      "checks": [
+        "profiled-tunnel-and-dns-udp-tcp",
+        "loopback-dns-https-tcp-udp",
+        "foreign-rules-preserved",
+        "same-namespace-reentry-audited",
+        "unreachable-upstreams-unhealthy",
+        "dns-restores-with-upstream",
+        "wrong-name-unhealthy",
+        "wrong-psk-unhealthy",
+        "wrong-ca-unhealthy",
+        "unreachable-exit-unhealthy",
+        "without-net-admin-refused",
+        "without-tun-refused",
+        "host-network-refused-before-mutation",
+        "unprivileged-shared-namespace-application",
+        "pid1-sigkill-shared-namespace-no-direct-fallback",
+        "dead-engine-app-dns-blocked",
+        "replacement-works-old-namespace-stays-blocked",
+        "client-sigterm-clean",
+        "container-restart-healthy",
+        "exit-sigterm-clean"
+      ],
+      "status": "passed",
+      "scope": "internal-lab-only",
+      "imageId": "46118b9b6a223dd8af76d06dbb820d792dc16d9129dd0d2c219239522a0d3375",
+      "architecture": "arm64",
+      "engineSha256": "e009a2b77d5c9a3fdda65ef7b78c753bafd1e700086d1e4b5b473071c3d754f2",
+      "clientLogs": [
+        "{\"kind\":\"native-runtime-network\",\"phase\":\"guarded\",\"role\":\"client\",\"namespace\":\"net:[4026534091]\",\"fingerprint\":\"72aace688d6ec83a7e2a4b07e79b94d86330ac733397b03f4cd6d46206a07c97\"}",
+        "{\"dropped_packets\":0,\"event\":\"state\",\"generation\":0,\"rx_packets\":0,\"state\":\"idle\",\"tx_packets\":0,\"version\":1}",
+        "{\"dropped_packets\":0,\"event\":\"state\",\"generation\":0,\"rx_packets\":0,\"state\":\"connecting\",\"tx_packets\":0,\"version\":1}",
+        "{\"dropped_packets\":0,\"event\":\"state\",\"generation\":0,\"rx_packets\":0,\"state\":\"handshake\",\"tx_packets\":0,\"version\":1}",
+        "{\"dropped_packets\":0,\"event\":\"state\",\"generation\":0,\"rx_packets\":0,\"state\":\"ready\",\"tx_packets\":0,\"version\":1}"
+      ],
+      "cleanup": {
+        "status": "passed"
+      }
+    },
+    "runtimeLegacy": {
+      "schema": 1,
+      "kind": "native-runtime-container-lab",
+      "image": "localhost/cvpn-alpine-runtime:arm64-marker-20261030",
+      "port": 443,
+      "publishedPort": null,
+      "backend": [
+        "podman",
+        "--connection",
+        "meshpn-clean-vpn-lab-root"
+      ],
+      "firewallBackend": "legacy",
+      "checks": [
+        "profiled-tunnel-and-dns-udp-tcp",
+        "loopback-dns-https-tcp-udp",
+        "foreign-rules-preserved",
+        "same-namespace-reentry-audited",
+        "unreachable-upstreams-unhealthy",
+        "dns-restores-with-upstream",
+        "wrong-name-unhealthy",
+        "wrong-psk-unhealthy",
+        "wrong-ca-unhealthy",
+        "unreachable-exit-unhealthy",
+        "without-net-admin-refused",
+        "without-tun-refused",
+        "host-network-refused-before-mutation",
+        "unprivileged-shared-namespace-application",
+        "pid1-sigkill-shared-namespace-no-direct-fallback",
+        "dead-engine-app-dns-blocked",
+        "replacement-works-old-namespace-stays-blocked",
+        "client-sigterm-clean",
+        "container-restart-healthy",
+        "exit-sigterm-clean"
+      ],
+      "status": "passed",
+      "scope": "internal-lab-only",
+      "imageId": "46118b9b6a223dd8af76d06dbb820d792dc16d9129dd0d2c219239522a0d3375",
+      "architecture": "arm64",
+      "engineSha256": "e009a2b77d5c9a3fdda65ef7b78c753bafd1e700086d1e4b5b473071c3d754f2",
+      "clientLogs": [
+        "{\"kind\":\"native-runtime-network\",\"phase\":\"guarded\",\"role\":\"client\",\"namespace\":\"net:[4026534185]\",\"fingerprint\":\"338af6744c082a0756e4dcea2b7c6f0c353dd7f42c0ed76117afce3c56730afb\"}",
+        "{\"dropped_packets\":0,\"event\":\"state\",\"generation\":0,\"rx_packets\":0,\"state\":\"idle\",\"tx_packets\":0,\"version\":1}",
+        "{\"dropped_packets\":0,\"event\":\"state\",\"generation\":0,\"rx_packets\":0,\"state\":\"connecting\",\"tx_packets\":0,\"version\":1}",
+        "{\"dropped_packets\":0,\"event\":\"state\",\"generation\":0,\"rx_packets\":0,\"state\":\"handshake\",\"tx_packets\":0,\"version\":1}",
+        "{\"dropped_packets\":0,\"event\":\"state\",\"generation\":0,\"rx_packets\":0,\"state\":\"ready\",\"tx_packets\":0,\"version\":1}"
+      ],
+      "cleanup": {
+        "status": "passed"
+      }
+    }
+  },
+  "imageSizesNote": "inspect Size: uncompressed local bytes, shared layers counted per image; Ubuntu comparison used earlier packaging snapshot, not identical-code benchmark",
+  "baselineImageSizesBytes": {
+    "alpineNative": 105617294,
+    "alpineManaged": 105825727,
+    "alpineWeb": 77808148,
+    "ubuntuManaged": 217435322,
+    "debianWeb": 261989617
+  },
+  "fixedDuringValidation": [
+    "BoringSSL musl requires linux-headers",
+    "socket test requires explicit sys/time.h",
+    "Alpine utility paths need explicit /usr/sbin aliases and util-linux",
+    "capture hostname localhost is trusted-config-only and tested with CA verification",
+    "final peer_reload_ready test required matching final native source",
+    "serial compiler retry after one of two cc1plus processes was killed; default JOBS now 1",
+    "Compose provider needs explicit Podman path wrapper; --podman-args placed connection flag after subcommand and failed before start"
+  ],
+  "limitations": [
+    "amd64 Alpine build blocked at first /bin/sh by Exec format error; VM-wide binfmt untouched",
+    "Docker daemon and rootless mode not tested",
+    "host USB/Wi-Fi/DNS/mDNS/kill switch integration not provided by managed Compose",
+    "independent observer capture namespace not integrated with container admin",
+    "container peer .mpn resolver installation remains separate",
+    "physical cold boot and production activation not attempted",
+    "APK/APT package versions are not all locked; bit-identical rebuild not claimed"
+  ]
+}
