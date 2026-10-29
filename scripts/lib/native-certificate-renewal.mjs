@@ -45,7 +45,7 @@ export function prepareCertificateRenewal(o,{validateCandidate=file=>command(o.e
   command('openssl',['verify','-purpose','sslserver','-verify_hostname',o.serverName,'-CAfile',trustPath,'-untrusted',chain,chain]);
   const candidate=structuredClone(config),next=config.transport==='combo-tls'?candidate.boring:candidate;next.cert=chain;next.key=key;
   const candidatePath=put('engine.json',JSON.stringify(candidate,null,2)+'\n');validateCandidate(candidatePath);
-  if(!read(o.config).equals(sourceBytes)||!read(packet.cert).equals(oldBytes)||!read(o.caCert).equals(signingBytes)||!read(o.caKey,true).equals(keyBytes))fail('source_material_changed');
+  if(!read(o.config).equals(sourceBytes)||!read(packet.cert).equals(oldBytes)||!read(o.caCert).equals(signingBytes)||!read(o.trust??o.caCert).equals(trustBytes)||!read(o.caKey,true).equals(keyBytes))fail('source_material_changed');
   const manifest={schema:1,kind:'native-certificate-renewal-candidate',installed:false,serviceChanged:false,trustChanged:false,serverName:o.serverName,sans,days,sourceConfigSha256:hash(sourceBytes),candidateConfigSha256:hash(read(candidatePath)),previousLeafSha256:hash(old[0].cert.raw),candidateLeafSha256:hash(fresh.raw),trustSha256:hash(trustBytes),validFrom:fresh.validFrom,validTo:fresh.validTo,nativeConfigValidated:true};
   put('manifest.json',JSON.stringify(manifest,null,2)+'\n');for(const f of fs.readdirSync(o.output))fs.chmodSync(path.join(o.output,f),0o600);complete=true;return manifest;
  }finally{keyBytes.fill(0);if(!complete)fs.rmSync(o.output,{recursive:true,force:true});}

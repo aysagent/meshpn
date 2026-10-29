@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {importClientBundle} from './lib/native-client-manager.mjs';
+import {prepareCertificateRenewal} from './lib/native-certificate-renewal.mjs';
+const directory=t=>{const p=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-control-review-')));t.after(()=>fs.rmSync(p,{recursive:true,force:true}));return p;};
+test('rejected enrollment preserves private diagnostic artifacts and refuses overwrite',async t=>{
+ const dir=directory(t),output=dir+'/client';
+ const bundle={version:1,kind:'clean-vpn-client-enrollment',name:'laptop',ipv4:'10.99.0.17',config:{version:1,role:'client',peer_ipv4:'10.99.0.17',secret_path:'@bundle/psk',ca:'@bundle/ca.pem'},files:{psk:Buffer.alloc(32,7).toString('base64'),'ca.pem':Buffer.from('test-public-ca').toString('base64')}};
+ await assert.rejects(importClientBundle(bundle,output,{validateConfig:async()=>{throw Error('injected_native_rejection');}}),/injected_native_rejection/);
+ assert.equal(fs.existsSync(output),true,'documented failed-import artifacts are retained without activation');
+ const before=fs.readFileSync(output+'/engine.json');
+ await assert.rejects(importClientBundle(bundle,output,{validateConfig:async()=>assert.fail('must not validate an existing directory')}),{code:'EEXIST'});
+ assert.deepEqual(fs.readFileSync(output+'/engine.json'),before);
+ assert.equal(fs.statSync(output+'/psk').mode&0o777,0o600);
+});
+test('renewal refuses explicit trust replacement during candidate validation',t=>{
+ const dir=directory(t),ssl=args=>execFileSync('openssl',args,{stdio:'pipe',timeout:30000});
+ ssl(['req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:prime256v1','-nodes','-days','3','-subj','/CN=Review CA','-addext','basicConstraints=critical,CA:TRUE','-keyout',dir+'/ca.key','-out',dir+'/ca.pem']);fs.chmodSync(dir+'/ca.key',0o600);
+ ssl(['req','-new','-newkey','ec','-pkeyopt','ec_paramgen_curve:prime256v1','-nodes','-subj','/CN=review.example','-keyout',dir+'/old.key','-out',dir+'/old.csr']);
+ fs.writeFileSync(dir+'/ext','basicConstraints=critical,CA:FALSE\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:review.example\n');
+ ssl(['x509','-req','-in',dir+'/old.csr','-CA',dir+'/ca.pem','-CAkey',dir+'/ca.key','-set_serial','123','-days','2','-extfile',dir+'/ext','-out',dir+'/old.pem']);
+ const source=JSON.stringify({version:1,role:'exit',cert:dir+'/old.pem',key:dir+'/old.key'});fs.writeFileSync(dir+'/engine.json',source,{mode:0o600});fs.copyFileSync(dir+'/ca.pem',dir+'/trust.pem');
+ const output=dir+'/candidate';
+ assert.throws(()=>prepareCertificateRenewal({config:dir+'/engine.json',caCert:dir+'/ca.pem',caKey:dir+'/ca.key',trust:dir+'/trust.pem',serverName:'review.example',engine:process.execPath,output,days:1},{validateCandidate(){fs.writeFileSync(dir+'/trust.next','concurrent replacement');fs.renameSync(dir+'/trust.next',dir+'/trust.pem');}}),/source_material_changed/);
+ assert.equal(fs.existsSync(output),false);assert.equal(fs.readFileSync(dir+'/engine.json','utf8'),source);assert.equal(fs.readFileSync(dir+'/trust.pem','utf8'),'concurrent replacement');
+});
