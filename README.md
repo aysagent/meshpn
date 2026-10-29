@@ -23,16 +23,18 @@ Node VPN для него не требуется. [Текущий план и г
 
 - [Клиенты по имени](scripts/clean-vpn-native-clients.md): `add laptop`, автоматический
   стабильный IPv4, отдельные ключи, экспорт комплекта, отзыв и ротация. Новый exit
-  применяет список по SIGHUP без отключения неизменённых клиентов. Выдача адреса
-  происходит при регистрации; согласование адреса в handshake пока разрабатывается.
+  применяет список по SIGHUP без отключения неизменённых клиентов. Есть opt-in
+  [получение адреса от exit](scripts/clean-vpn-native-runtime-address.md) перед
+  настройкой изолированного клиента; прежние host-установки сохраняют фиксированный режим.
 - [Админка exit](admin/EXIT-INSTALL.md): отдельный localhost web/API, управление
   клиентами и установка systemd; [USB-админка клиента](admin/README.md) сохраняется.
 - [Имена `laptop.mpn`](scripts/clean-vpn-native-peer-dns.md): приватный resolver
   и отдельная системная DNS-зона. Передача зоны от клиента через native туннель
   проверена в лаборатории; public DNS fallback для неё запрещён. Включение — opt-in.
 - [Общий Compose VPN + админка](scripts/clean-vpn-native-managed-containers.md):
-  один запуск, отдельный непривилегированный web, без Docker socket. Проверен Podman;
-  отдельный прогон Docker daemon остаётся необходимым.
+  один запуск, отдельный непривилегированный web, без Docker socket. Проверены Podman
+  и [Docker Engine/Compose на ARM64 Linux](scripts/clean-vpn-native-docker-compat.md),
+  включая отдельный resolver `.mpn`, NSS и аварийное восстановление.
 - [Alpine](scripts/clean-vpn-native-alpine.md): исходная сборка BoringSSL/native
   под musl, проверенная arm64-версия. Размер runtime около 101 MiB; amd64 ещё не
   проверен в текущей лаборатории.

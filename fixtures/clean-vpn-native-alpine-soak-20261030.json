@@ -1,0 +1,291 @@
+{
+  "schema": 1,
+  "kind": "native-combo-multi-client",
+  "status": "passed",
+  "image": "localhost/cvpn-alpine-runtime:private-dns-20261030",
+  "clients": 4,
+  "limits": {
+    "sessions": 128,
+    "perClient": 64
+  },
+  "checks": [
+    "generated-role-bundles-independent-client-keys-and-LANs",
+    "all-clients-progress-under-concurrent-packet-and-relay-load",
+    "one-client-at-quota-cannot-starve-other-clients",
+    "all-clients-recover-without-engine-restart-and-resources-reclaimed",
+    "all-native-PID1-SIGTERM-clean"
+  ],
+  "imageId": "f6f10de97c7c7f1b33edd2903c2d3fcec7f4adf71211a690397e1b0a11400206",
+  "engineSha256": "88228c10f55c9991b98f03d4cddacc60b0602560be97528322fa696dd40561a7",
+  "normal": [
+    {
+      "client": 0,
+      "rounds": 3506,
+      "elapsedMs": 1800295.5299179999
+    },
+    {
+      "client": 1,
+      "rounds": 3503,
+      "elapsedMs": 1800197.463557
+    },
+    {
+      "client": 2,
+      "rounds": 3503,
+      "elapsedMs": 1800251.2071
+    },
+    {
+      "client": 3,
+      "rounds": 3501,
+      "elapsedMs": 1800272.104841
+    }
+  ],
+  "duration": {
+    "requestedSeconds": 1800,
+    "elapsedSeconds": 1804.6677895829998,
+    "sampleIntervalMs": 5000,
+    "samples": 319
+  },
+  "peak": {
+    "exit": {
+      "rssKiB": 6192,
+      "fds": 23,
+      "threads": 5
+    },
+    "client-0": {
+      "rssKiB": 5924,
+      "fds": 13,
+      "threads": 6
+    },
+    "client-1": {
+      "rssKiB": 6020,
+      "fds": 12,
+      "threads": 5
+    },
+    "client-2": {
+      "rssKiB": 5852,
+      "fds": 13,
+      "threads": 6
+    },
+    "client-3": {
+      "rssKiB": 5920,
+      "fds": 10,
+      "threads": 4
+    }
+  },
+  "retainedMemory": {
+    "exit": {
+      "firstThirdMedianKiB": 6104,
+      "lastThirdMedianKiB": 5872,
+      "growthKiB": -232
+    },
+    "client-0": {
+      "firstThirdMedianKiB": 5872,
+      "lastThirdMedianKiB": 5620,
+      "growthKiB": -252
+    },
+    "client-1": {
+      "firstThirdMedianKiB": 5972,
+      "lastThirdMedianKiB": 5708,
+      "growthKiB": -264
+    },
+    "client-2": {
+      "firstThirdMedianKiB": 5800,
+      "lastThirdMedianKiB": 5544,
+      "growthKiB": -256
+    },
+    "client-3": {
+      "firstThirdMedianKiB": 5872,
+      "lastThirdMedianKiB": 5616,
+      "growthKiB": -256
+    }
+  },
+  "pressure": [
+    {
+      "client": 1,
+      "packet": 8,
+      "relay": 8,
+      "relayRefused": 0
+    },
+    {
+      "client": 2,
+      "packet": 8,
+      "relay": 8,
+      "relayRefused": 0
+    },
+    {
+      "client": 3,
+      "packet": 8,
+      "relay": 8,
+      "relayRefused": 0
+    }
+  ],
+  "relayFairness": "authenticated-key-quota-with-global-cap",
+  "starvationObserved": false,
+  "settled": {
+    "cvpnrt-69738c3389da2104-exit": {
+      "rssKiB": 5968,
+      "fds": 17,
+      "sockets": 5,
+      "threads": 2,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 4,
+      "tcpTimeWait": 471,
+      "udpSockets": 0
+    },
+    "cvpnrt-69738c3389da2104-c0": {
+      "rssKiB": 5628,
+      "fds": 8,
+      "sockets": 4,
+      "threads": 3,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 1,
+      "tcpTimeWait": 186,
+      "udpSockets": 1
+    },
+    "cvpnrt-69738c3389da2104-c1": {
+      "rssKiB": 5708,
+      "fds": 8,
+      "sockets": 4,
+      "threads": 3,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 1,
+      "tcpTimeWait": 111,
+      "udpSockets": 1
+    },
+    "cvpnrt-69738c3389da2104-c2": {
+      "rssKiB": 5540,
+      "fds": 8,
+      "sockets": 4,
+      "threads": 3,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 1,
+      "tcpTimeWait": 134,
+      "udpSockets": 1
+    },
+    "cvpnrt-69738c3389da2104-c3": {
+      "rssKiB": 5616,
+      "fds": 8,
+      "sockets": 4,
+      "threads": 3,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 1,
+      "tcpTimeWait": 121,
+      "udpSockets": 1
+    }
+  },
+  "cleanup": {
+    "status": "cleaned",
+    "removed": [
+      {
+        "type": "container",
+        "name": "cvpnrt-69738c3389da2104-init"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-69738c3389da2104-origin"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-69738c3389da2104-exit"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-69738c3389da2104-c0"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-69738c3389da2104-a0"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-69738c3389da2104-c1"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-69738c3389da2104-a1"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-69738c3389da2104-c2"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-69738c3389da2104-a2"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-69738c3389da2104-c3"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-69738c3389da2104-a3"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-69738c3389da2104-exit-config"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-69738c3389da2104-origin-config"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-69738c3389da2104-replay"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-69738c3389da2104-config0"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-69738c3389da2104-config1"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-69738c3389da2104-config2"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-69738c3389da2104-config3"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-69738c3389da2104-lan0"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-69738c3389da2104-lan1"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-69738c3389da2104-lan2"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-69738c3389da2104-lan3"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-69738c3389da2104-net"
+      }
+    ]
+  },
+  "scope": "ARM64 Alpine musl, isolated Podman internal networks, four independent combo clients/LANs, fixed enrollment, no physical hosts",
+  "sourceNativeSnapshot": "a9cb8bd private-DNS-capable engine; opt-in private_peer_dns disabled in this combo workload; before address discovery native delta",
+  "limitations": [
+    "bounded 30-minute local load, not WAN stability or performance benchmark",
+    "per-client quota isolation exercised; full global cap slow-reader scenario belongs to separate 15-minute fixture",
+    "network settings in Mac and physical daily hosts unchanged",
+    "reported RSS is native processes, not whole-container memory"
+  ]
+}
