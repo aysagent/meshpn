@@ -222,11 +222,51 @@ static void soak(Child& client,Child* server,int seconds){
     {"packets",rounds*2},{"bytes",bytes},{"resource_samples",samples},{"peak_rss_kib",peak},{"max_rss_growth_kib",growth},
     {"unexpected_reconnects",0},{"dropped_packets",0},{"payload_verified",true}}).dump()<<" PASS\n";
 }
+static json discover_address(const char* engine,const std::string& config,bool success){
+  int output[2];require(pipe(output)==0,"discovery_pipe");const auto parent=getpid();const auto child=fork();require(child>=0,"discovery_fork");
+  if(child==0){
+    if(prctl(PR_SET_PDEATHSIG,SIGKILL)!=0||getppid()!=parent)_exit(126);
+    dup2(output[1],STDOUT_FILENO);for(int fd=3;fd<1024;++fd)close(fd);
+    execl(engine,engine,"--discover-address",config.c_str(),nullptr);_exit(127);
+  }
+  close(output[1]);fcntl(output[0],F_SETFL,O_NONBLOCK);std::string text;int status=0;bool ended=false;
+  const auto deadline=Clock::now()+std::chrono::seconds(13);
+  while(Clock::now()<deadline){
+    char buffer[2048];const auto n=read(output[0],buffer,sizeof(buffer));if(n>0)text.append(buffer,n);
+    if(text.size()>4096)break;
+    if(waitpid(child,&status,WNOHANG)==child){ended=true;ssize_t remaining;while((remaining=read(output[0],buffer,sizeof(buffer)))>0)text.append(buffer,remaining);break;}
+    pollfd fd{output[0],POLLIN,0};poll(&fd,1,10);
+  }
+  close(output[0]);if(!ended){kill(child,SIGKILL);waitpid(child,&status,0);throw std::runtime_error("discovery_deadline");}
+  require(WIFEXITED(status)&&(WEXITSTATUS(status)==0)==success,"discovery_exit_status");
+  if(!success){require(text.empty(),"unverified_discovery_output");return {};}
+  auto result=json::parse(text);require(result.size()==5&&result.at("version")==1&&result.at("event")=="address_discovery"&&result.at("status")=="verified"&&result.at("assignment")=="v1","discovery_metadata");return result;
+}
 #include "h2_budget_test.hpp"
 int main(int argc,char** argv){
   signal(SIGPIPE,SIG_IGN);
   std::cout<<std::unitbuf;
   try{
+    if(argc==6&&std::string(argv[4])=="address-assignment"){
+      const std::string directory=argv[2],config=argv[3],a_config=directory+"/a.json",b_config=directory+"/b.json";
+      Child server(argv[1],config.c_str(),true);server.await_state("listening");
+      Child a(argv[1],a_config.c_str());a.await_state("ready");server.await_state("ready");
+      const auto server_pid=server.pid,client_pid=a.pid;
+      require(discover_address(argv[5],a_config,true).at("ipv4")=="10.99.0.2","discovery_active_identity");
+      require(discover_address(argv[5],directory+"/discover.json",true).at("ipv4")=="10.99.0.3","discovery_registry_identity");
+      require(discover_address(argv[5],directory+"/mismatch.json",true).at("ipv4")=="10.99.0.3","discovery_ignores_claimed_address");
+      discover_address(argv[5],directory+"/wrong-key.json",false);discover_address(argv[5],directory+"/wrong-name.json",false);
+      {Child mismatch(argv[1],(directory+"/mismatch.json").c_str());mismatch.reject_for(700);mismatch.stop();}
+      Child b(argv[1],b_config.c_str());b.await_state("ready");
+      for(int i=0;i<4;++i){peer_transfer(a,server,b,false,2);peer_transfer(server,b,a,true,3);}
+      a.healthy_status();require(server.pid==server_pid&&a.pid==client_pid,"discovery_restarted_existing_session");
+      std::ifstream source(directory+"/revoke.json");const std::string bytes((std::istreambuf_iterator<char>(source)),std::istreambuf_iterator<char>());
+      {std::ofstream output(config+".next");output<<bytes;require(bool(output),"discovery_revoke_write");}
+      require(rename((config+".next").c_str(),config.c_str())==0&&kill(server.pid,SIGHUP)==0,"discovery_revoke");server.await_reload("applied",1);
+      b.reject_for(700);discover_address(argv[5],directory+"/discover.json",false);
+      transfer(a,server,1400,false,1);transfer(server,a,1400,true,2);a.healthy_status();
+      b.stop();a.stop();server.stop();std::cout<<"ADDRESS_ASSIGNMENT_PASS no_TUN_discovery_auth_registry_bound_active_session_preserved_mismatch_revoke\n";return 0;
+    }
     if(argc==5&&std::string(argv[4])=="peer-reload") {
       const std::string directory=argv[2], config=argv[3];
       const auto a_config=directory+"/a.json",b_config=directory+"/b.json",rotated_config=directory+"/rotated.json";

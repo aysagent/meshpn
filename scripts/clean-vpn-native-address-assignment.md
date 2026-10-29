@@ -1,8 +1,9 @@
 # Native runtime address assignment: wire primitive and remaining gates
 
-Status: the standalone offer codec and its tests exist. **Runtime address
-discovery and owner integration are not implemented/enabled yet.** Current
-client bundles still carry their assigned IPv4 from enrollment.
+Status: the native offer codec, no-TUN discovery CLI and full-session address
+proof are implemented behind explicit opt-in. Existing fixed-address clients
+continue unchanged. Runtime owner integration is a separate gate; this document
+does not claim automatic assignment on daily physical installations.
 
 ## Authority and compatibility
 
@@ -51,26 +52,57 @@ entire allowed address pool are tested by `address-offer-test`. The codec cannot
 prove the caller supplied an authenticated peer; the engine must enforce that
 boundary before calling `encode`.
 
-## Required native integration
+## Native protocol and CLI
 
-1. Add explicit version/purpose negotiation to the encrypted HTTP headers. New
-   discovery must fail on absent/unknown version; do not silently fall back to a
-   fixed local address when an old exit ignores the negotiation request.
-2. Authenticate the request first, then construct the offer from that matched
-   peer's address. Never reflect a requested address. Duplicate headers, DATA
-   before auth and malformed offers are rejected by both H1/H2 paths.
-3. Discovery is bounded, carries no tunnel payload, does not claim or evict a
-   live packet owner, and terminates after its authenticated response. Add
-   native `--discover-address` without opening TUN or starting DNS. It must use
-   the normal CA/hostname checks and saved TLS profile, and output only the
-   verified address plus negotiation metadata, not keys or raw MACs.
-4. Full packet session repeats the purpose-separated proof and requires the
-   exact discovered address before reading/writing any TUN packet. Reassignment
-   between discovery and connect fails closed and triggers bounded rediscovery;
-   the server's source-address enforcement remains authoritative.
-5. Discovery and full-session connections use the current peer generation.
-   Invalid reload retains the old mapping; valid reassignment cancels old
-   sessions. Deleted/revoked keys receive no offer. Never reset relay replay.
+Client requests `x-clean-vpn-address-mode: discover-v1` or `session-v1` in
+its ordinary authenticated H1/H2 request. Exit replies with the same mode and
+`x-clean-vpn-address-offer` only after matching the PSK to a configured peer.
+Unknown modes are refused. An absent response mode/proof from an old exit is
+rejected by a new opt-in client.
+
+```sh
+/path/to/clean-vpn-engine --discover-address /private/client.json
+```
+
+This command is client-only, also accepts the boring branch of combo, and uses
+the existing CA/hostname, TLS profile, exporter-bound auth and clock checks.
+It does not open TUN, start DNS or bind a transparent listener. The `tun` config
+field remains syntactically required but need not exist. `dns: true` is ignored
+for discovery only. Connect/auth are bounded by the existing 3/10-second budgets;
+there is no automatic retry or readiness notification. Success prints exactly:
+
+```json
+{"version":1,"event":"address_discovery","status":"verified","assignment":"v1","ipv4":"10.99.0.3"}
+```
+
+Property order is unspecified. Failure/cancellation exits nonzero without a
+verified stdout record. Error diagnostics use the fixed internal vocabulary;
+no keys, MACs or untrusted response text are printed.
+
+Discovery emits an authenticated response without packet ownership and ends it
+(H2 HEADERS+END_STREAM; H1 zero chunk). No tunnel payload is accepted. A currently
+connected identity can discover its assignment without evicting its session.
+Partial responses, extra payload and missing stream termination are rejected.
+Current pending-connection, admission-rate and deadline budgets still apply.
+
+For the following full packet connection, set `address_assignment: "v1"` and
+an explicit `peer_ipv4` obtained from discovery in the effective config. Before
+ready or TUN packet I/O, the client requires the purpose-separated proof to
+match that exact address. A missing `peer_ipv4` in normal run is refused; no
+silent default .2 is used for this mode. Reassignment between discovery and
+connect fails closed. The server independently continues to enforce packet
+source and session ownership, so the offer cannot authorize a different address.
+
+Invalid reload retains the mapping. Valid rotation/revoke cancels affected
+sessions; pending discoveries are discarded with the old generation. Relay
+replay state is unaffected. Native integration tests check two identities,
+active-session discovery, ignored locally claimed IP, valid bidirectional packet
+traffic, mismatch rejection and revoke while an unrelated peer remains active.
+
+An independent Node TLS issuer verifies the client's auth and supplies valid or
+mutated offers for H1/H2: old exit, absent proof, wrong mode/key/exporter/purpose,
+changed IPv4, noncanonical hex, payload and incomplete responses. This does not
+reuse the native offer encoder.
 
 ## Required owner transaction
 
@@ -93,9 +125,9 @@ There is no independent DHCP allocator inside the native reactor.
 
 ## Acceptance gates before enabling
 
-- Real H1/H2 native discovery and full-session tests, two different PSKs returning
-  different registry addresses, old clients interoperating, old exit rejecting
-  new discovery safely, certificate/name/wrong-key/time failures rejected.
+- Keep native H1/H2 discovery/full-session and legacy-client regressions green;
+  add explicit time-skew/profile and concurrent discovery/reassignment coverage
+  before enabling broadly.
 - Wrong/missing/mutated/replayed offers, wrong-purpose proofs, explicit requested
   IP, pre-auth DATA, reused key collision, concurrent discoveries and revoke/
   rotation/reassignment races, bounded CPU/memory/connection lifetime.
@@ -105,3 +137,25 @@ There is no independent DHCP allocator inside the native reactor.
   direct DNS or direct internet fallback.
 - Only then a bounded physical trial; existing daily installations stay fixed
   until explicitly upgraded. Codec tests alone do not satisfy these gates.
+
+## Native validation, 2026-10-30
+
+```sh
+CVPN_BUILD=/absolute/build node --test --test-concurrency=1 \
+  scripts/test-native-address-assignment.mjs
+```
+
+Thirty assignment cases passed: four real native boring/combo × H2/H1 tests and
+26 independent issuer cases, including ten-second deadline and SIGTERM refusal.
+The H2 native cases also run the saved `synthetic-cold-h2` profile during discovery
+and the full session. These are in an unprivileged Linux lab with an absent TUN;
+production discovery succeeds despite `dns: true`, confirming that discovery
+opens neither TUN nor the DNS listener. Packet testing uses only the dedicated
+C++ fixture packet boundary; discovery uses the production binary.
+
+Twenty-three existing HTTP1/multi-peer/reload/WAN-fixture cases and two complete
+H1/H2 data-plane cases passed too, covering fixed-address interoperability,
+reconnect, blackhole, backpressure and wrong CA/name/PSK. Offer codec tests passed
+normally and under ASAN/UBSAN with leak detection; dependency libraries in that
+codec sanitizer run were not instrumented. No physical deployment was performed
+for address assignment. Runtime owner validation is tracked separately.

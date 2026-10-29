@@ -2,6 +2,7 @@
 // payload IPC. The supervisor must provision the selected transport's network
 // guard first (TUN/routes for boring-tls; interception for scoped transparent).
 #include "protocol.hpp"
+#include "address_offer.hpp"
 #include "http1.hpp"
 #include "dns_relay.hpp"
 #include "service_notify.hpp"
@@ -74,14 +75,16 @@ struct Config {
   uint32_t peer_address=0;
   bool client;
   bool dns=false, private_peer_dns=false, alps=false, persistent=false;
+  bool address_assignment=false, discovery=false;
   std::string address, name, sni, ca, cert, key, tun, secret_path;
   uint16_t port;
   explicit Config(const json& j) {
     check(j.is_object(),"config_object");
-    const std::set<std::string> fields={"version","role","address","port","server_name","sni","ca","cert","key","tun","secret_path","dns","peer_ipv4","peers","tls_profile_path","alps","connection_mode","http_version","private_peer_dns"};
+    const std::set<std::string> fields={"version","role","address","port","server_name","sni","ca","cert","key","tun","secret_path","dns","peer_ipv4","peers","tls_profile_path","alps","connection_mode","http_version","private_peer_dns","address_assignment"};
     for(auto it=j.begin();it!=j.end();++it) check(fields.count(it.key()),"unknown_config_field");
     check(j.at("version")==1,"config_version");
     auto role=j.at("role").get<std::string>(); check(role=="client"||role=="exit","role"); client=role=="client";
+    if(j.contains("address_assignment")){check(client&&j.at("address_assignment")=="v1","address_assignment_client_v1");address_assignment=true;}
     http_version=j.value("http_version",client?"2":"auto");check(http_version=="2"||http_version=="1.1"||http_version=="auto","http_version");
     if(j.contains("connection_mode")) {
       check(client&&j.at("connection_mode").is_string(),"connection_mode_client_only");
@@ -183,10 +186,11 @@ struct Control {
   const std::atomic<bool>* branch_failed=nullptr;
   std::atomic<bool> dns_idle{false}, dns_demand{false};
   unsigned address_reports=0;
-  bool stop=false, uplink=true;
+  bool stop=false, uplink=true, quiet=false;
   uint64_t generation=0, tx=0, rx=0, dropped=0;
   std::string input, state="starting";
   void emit(const std::string& event) {
+    if(quiet)return;
     auto record=json({{"version",1},{"event",event},{"state",state},{"generation",generation},
       {"tx_packets",tx},{"rx_packets",rx},{"dropped_packets",dropped}});
 #ifdef CVPN_TEST_PACKET_FD
@@ -314,6 +318,11 @@ static bool authenticated_clock_skew(const std::string& provided,const std::stri
   return CRYPTO_memcmp(expected.data(),provided.data()+7,32)==0;
 }
 static void h2check(int rc){check(rc>=0,"http2_error");}
+struct OfferKey {
+  address_offer::Key bytes{};
+  explicit OfferKey(const std::string& key){check(key.size()==bytes.size(),"secret_length");std::memcpy(bytes.data(),key.data(),bytes.size());}
+  ~OfferKey(){OPENSSL_cleanse(bytes.data(),bytes.size());}
+};
 struct Session {
   const Config& config;Control& ctl;SSL* ssl;const std::string& secret;
   nghttp2_session* h2=nullptr;
@@ -325,6 +334,7 @@ struct Session {
   h2_budget_fixture::Queues budget_queues{outgoing,network,packets,ssl};
 #endif
   int32_t stream=-1;bool ready=false,deferred=false,clock_rejected=false;
+  bool discovery_response=false,offer_verified=false,discovery_done=false;
   uint32_t peer_address;
   std::function<bool(uint32_t)> claim;
   const char* failure=nullptr;
@@ -339,6 +349,7 @@ struct Session {
     // surface library exceptions, peer headers, GOAWAY debug data or payloads.
     for(const char* code:{"unexpected_headers","headers_limit","duplicate_header","request_invalid",
         "auth_rejected","auth_clock_skew","peer_busy","early_end","vpn_response_rejected","data_before_auth","peer_address","peer_destination",
+        "address_mode","address_offer_missing","address_offer_ipv4","address_offer_format","address_offer_auth","address_offer_purpose","address_offer_hmac","address_offer_mismatch","discovery_incomplete","discovery_payload",
         "invalid_ipv4","invalid_frame_length","queue_limit","queue_consume","http2_error","exporter","hmac",
         "auth_deadline","h2_ping_timeout","h2_goaway_no_error","h2_goaway_error","h2_reset_no_error","h2_reset_error",
         "h2_peer_end_stream","h2_stream_closed","h2_stream_error","h2_invalid_frame","h2_local_goaway_error",
@@ -373,11 +384,22 @@ struct Session {
       check(s.headers.emplace(std::string(reinterpret_cast<const char*>(name),nl),std::string(reinterpret_cast<const char*>(value),vl)).second,"duplicate_header");
     });
   }
+  void accept_response(){
+    check(headers[":status"]=="200"&&headers["content-type"]=="application/octet-stream","vpn_response_rejected");
+    if(config.discovery||config.address_assignment){
+      check(headers["x-clean-vpn-address-mode"]==(config.discovery?"discover-v1":"session-v1")&&headers.count("x-clean-vpn-address-offer"),"address_offer_missing");
+      OfferKey key(secret);const auto assigned=address_offer::verify(headers.at("x-clean-vpn-address-offer"),key.bytes,exporter(ssl),config.discovery?address_offer::Purpose::Discovery:address_offer::Purpose::Session);
+      uint32_t address=0;std::memcpy(&address,assigned.data(),assigned.size());
+      if(config.discovery){peer_address=address;offer_verified=true;return;}
+      check(address==config.peer_address,"address_offer_mismatch");
+    }
+    ready=true;ctl.set("ready");
+  }
   void respond(){
     check(headers[":method"]=="POST"&&headers[":path"]=="/clean-vpn"&&headers[":scheme"]=="https","request_invalid");
-    bool authenticated=false;
+    bool authenticated=false;const Config::Peer* identity=nullptr;
     for(const auto& peer:config.peers)if(authenticate(headers["authorization"],peer.secret,ssl)){
-      authenticated=true;peer_address=peer.address;
+      authenticated=true;peer_address=peer.address;identity=&peer;
     }
     if(!authenticated){
       bool skew=false;
@@ -389,9 +411,19 @@ struct Session {
       }
     }
     check(authenticated,"auth_rejected");
+    const auto mode=headers.find("x-clean-vpn-address-mode");
+    std::vector<std::pair<std::string,std::string>> response={{":status","200"},{"content-type","application/octet-stream"}};
+    if(mode!=headers.end()){
+      check(mode->second=="discover-v1"||mode->second=="session-v1","address_mode");
+      discovery_response=mode->second=="discover-v1";
+      OfferKey key(identity->secret);address_offer::Address address{};std::memcpy(address.data(),&peer_address,address.size());
+      response.emplace_back("x-clean-vpn-address-mode",mode->second);
+      response.emplace_back("x-clean-vpn-address-offer",address_offer::encode(address,key.bytes,exporter(ssl),discovery_response?address_offer::Purpose::Discovery:address_offer::Purpose::Session));
+      if(discovery_response){stream=1;submit_headers(response,false,true);headers.clear();return;}
+    }
     check(!claim||claim(peer_address),"peer_busy");
     stream=1;
-    submit_headers({{":status","200"},{"content-type","application/octet-stream"}},false);
+    submit_headers(response,false);
     ready=true;headers.clear(); // Exit reactor claims address before packet I/O.
   }
   static int frame_cb(nghttp2_session*,const nghttp2_frame* f,void* u){
@@ -399,9 +431,13 @@ struct Session {
       if(f->hd.type==NGHTTP2_HEADERS){
         if(s.config.client&&s.headers[":status"]=="409"&&s.headers["x-clean-vpn-error"]=="clock-skew")
           throw std::runtime_error("auth_clock_skew");
+        if(s.config.client&&s.config.discovery){
+          s.accept_response();check(f->hd.flags&NGHTTP2_FLAG_END_STREAM,"discovery_incomplete");s.discovery_done=true;s.headers.clear();
+        }else {
         check(!(f->hd.flags&NGHTTP2_FLAG_END_STREAM),"early_end");
-        if(s.config.client){check(s.headers[":status"]=="200"&&s.headers["content-type"]=="application/octet-stream","vpn_response_rejected");s.ready=true;s.headers.clear();s.ctl.set("ready");}
+        if(s.config.client){s.accept_response();s.headers.clear();}
         else s.respond();
+        }
       }
       if(f->hd.type==NGHTTP2_GOAWAY)s.fail(f->goaway.error_code==NGHTTP2_NO_ERROR?"h2_goaway_no_error":"h2_goaway_error");
       if(f->hd.type==NGHTTP2_RST_STREAM&&f->hd.stream_id==s.stream)
@@ -424,7 +460,7 @@ struct Session {
   }
   static int stream_close_cb(nghttp2_session*,int32_t id,uint32_t error,void* u){
     auto& s=*static_cast<Session*>(u);
-    if(id==s.stream)s.fail(error==NGHTTP2_NO_ERROR?"h2_stream_closed":"h2_stream_error");
+    if(id==s.stream&&!(error==NGHTTP2_NO_ERROR&&s.discovery_done))s.fail(error==NGHTTP2_NO_ERROR?"h2_stream_closed":"h2_stream_error");
     return 0;
   }
   void receive_packet(Bytes p){
@@ -452,16 +488,16 @@ struct Session {
       headers=received;
       if(config.client){
         if(headers[":status"]=="409"&&headers["x-clean-vpn-error"]=="clock-skew")throw std::runtime_error("auth_clock_skew");
-        check(headers[":status"]=="200","vpn_response_rejected");ready=true;headers.clear();ctl.set("ready");
+        accept_response();headers.clear();
       }else respond();
     },[&](const uint8_t* data,size_t length){
-      check(ready,"data_before_auth");h1_records.feed(data,length,[&](Bytes p){receive_packet(std::move(p));},[&](bool pong,const std::array<uint8_t,8>& nonce){
+      check(!config.discovery&&!discovery_response,"discovery_payload");check(ready,"data_before_auth");h1_records.feed(data,length,[&](Bytes p){receive_packet(std::move(p));},[&](bool pong,const std::array<uint8_t,8>& nonce){
         const auto now=Clock::now();if(now-h1_control_window>=std::chrono::seconds(1)){h1_control_window=now;h1_controls=0;}
         check(++h1_controls<=16,"h1_control_limit");
         if(!pong)network.push(http1::control(true,nonce));
         else if(ping_pending&&CRYPTO_memcmp(nonce.data(),ping.data(),8)==0){ping_pending=false;next_ping=now+std::chrono::seconds(2);}
       });
-    },[&](){check(h1_records.idle(),"h1_truncated_record");throw std::runtime_error("h1_peer_end_stream");});
+    },[&](){check(h1_records.idle(),"h1_truncated_record");if(config.discovery){check(offer_verified,"discovery_incomplete");discovery_done=true;return;}throw std::runtime_error("h1_peer_end_stream");});
   }
   void pump(){
     if(!h1){const int sent=nghttp2_session_send(h2);if(failure)throw std::runtime_error(failure);h2check(sent);return;}
@@ -471,19 +507,19 @@ struct Session {
       network.push(http1::chunk(outgoing.data(),n));outgoing.consume(n);
     }
   }
-  void submit_headers(const std::vector<std::pair<std::string,std::string>>& list,bool request){
+  void submit_headers(const std::vector<std::pair<std::string,std::string>>& list,bool request,bool end_stream=false){
     if(h1){
       std::map<std::string,std::string> fields(list.begin(),list.end());
       std::string text=request?"POST /clean-vpn HTTP/1.1\r\nHost: "+config.name+"\r\n":fields[":status"]=="200"?"HTTP/1.1 200 OK\r\n":"HTTP/1.1 409 Conflict\r\n";
       text+="Transfer-Encoding: chunked\r\nContent-Type: application/octet-stream\r\nX-Clean-Vpn-Protocol: h1-v1\r\n";
       for(const auto& f:fields)if(f.first[0]!=':'&&f.first!="content-type")text+=f.first+": "+f.second+"\r\n";
-      text+="\r\n";network.push(Bytes(text.begin(),text.end()));stream=1;return;
+      text+="\r\n";if(end_stream)text+="0\r\n\r\n";network.push(Bytes(text.begin(),text.end()));stream=1;return;
     }
     std::vector<nghttp2_nv> nv;
     for(const auto& kv:list)nv.push_back({reinterpret_cast<uint8_t*>(const_cast<char*>(kv.first.data())),reinterpret_cast<uint8_t*>(const_cast<char*>(kv.second.data())),kv.first.size(),kv.second.size(),NGHTTP2_NV_FLAG_NONE});
     nghttp2_data_provider provider{};provider.read_callback=data_read;
     if(request){stream=nghttp2_submit_request(h2,nullptr,nv.data(),nv.size(),&provider,nullptr);h2check(stream);}
-    else h2check(nghttp2_submit_response(h2,stream,nv.data(),nv.size(),&provider));
+    else h2check(nghttp2_submit_response(h2,stream,nv.data(),nv.size(),end_stream?nullptr:&provider));
   }
   void init(){
     h1=is_http1(ssl);
@@ -491,7 +527,9 @@ struct Session {
     if(h1){
       check(!SSL_has_application_settings(ssl),"h2_alps_invalid");
       if(config.client){const auto window=int64_t(time(nullptr))/900;
-        submit_headers({{"authorization","Bearer "+token(secret,exporter(ssl),window)},{"x-clean-vpn-window",std::to_string(window)}},true);}
+        std::vector<std::pair<std::string,std::string>> request={{"authorization","Bearer "+token(secret,exporter(ssl),window)},{"x-clean-vpn-window",std::to_string(window)}};
+        if(config.discovery||config.address_assignment)request.emplace_back("x-clean-vpn-address-mode",config.discovery?"discover-v1":"session-v1");
+        submit_headers(request,true);}
       return;
     }
     nghttp2_session_callbacks* raw=nullptr;h2check(nghttp2_session_callbacks_new(&raw));
@@ -556,9 +594,11 @@ struct Session {
     }
     if(config.client){
       const auto window=int64_t(time(nullptr))/900;
-      submit_headers({{":method","POST"},{":path","/clean-vpn"},{":scheme","https"},{":authority",config.name},
+      std::vector<std::pair<std::string,std::string>> request={{":method","POST"},{":path","/clean-vpn"},{":scheme","https"},{":authority",config.name},
         {"authorization","Bearer "+token(secret,exporter(ssl),window)},
-        {"x-clean-vpn-window",std::to_string(window)},{"accept","*/*"}},true);
+        {"x-clean-vpn-window",std::to_string(window)},{"accept","*/*"}};
+      if(config.discovery||config.address_assignment)request.emplace_back("x-clean-vpn-address-mode",config.discovery?"discover-v1":"session-v1");
+      submit_headers(request,true);
     }
   }
   short step(int tun,Clock::time_point deadline,Bytes& pending,bool shared_tun=false){
@@ -576,6 +616,7 @@ struct Session {
         if(n>0)network.consume(n);
         else{int e=SSL_get_error(ssl,n);check(e==SSL_ERROR_WANT_READ||e==SSL_ERROR_WANT_WRITE,"tls_write");}
       }
+      if(discovery_response&&network.empty()){discovery_done=true;return 0;}
       // Bounded per-tick work: control/health cannot be starved by flood traffic.
       for(int i=0;i<32&&packets.size()<queue_limit-max_packet-16384;i++){
         int n=SSL_read(ssl,buffer.data(),16384);
@@ -584,15 +625,16 @@ struct Session {
 #ifdef CVPN_TEST_PACKET_FD
         if(!h1)wire_observer.feed(buffer.data(),n);
 #endif
-        if(h1){h1_feed(buffer.data(),n);continue;}
+        if(h1){h1_feed(buffer.data(),n);if(discovery_done)break;continue;}
         ssize_t used=nghttp2_session_mem_recv(h2,buffer.data(),n);
         if(failure)throw std::runtime_error(failure);
         check(used!=NGHTTP2_ERR_FLOODED,"h2_flooded");
         check(used!=NGHTTP2_ERR_NOMEM,"h2_no_memory");
         check(used!=NGHTTP2_ERR_BAD_CLIENT_MAGIC,"h2_bad_client_magic");
         check(used==n,"http2_receive");
+        if(discovery_done)break;
       }
-      if(!shared_tun){
+      if(!shared_tun&&!config.discovery){
       for(int i=0;i<32&&!packets.empty();i++){
         ssize_t n=write(tun,packets.data(),packets.front_size());
         if(n<0&&(errno==EAGAIN||errno==EWOULDBLOCK))break;
@@ -626,6 +668,7 @@ struct Session {
     init();
     while(!ctl.stop&&!interrupted&&ctl.uplink&&ctl.generation==generation){
       short netevents=step(tun,deadline,pending);
+      if(config.discovery&&discovery_done)return;
       ctl.read_commands();
       short tunevents=(ready&&outgoing.size()<queue_limit-max_packet-4?POLLIN:0)|(!packets.empty()?POLLOUT:0);
       pollfd fds[]={{socket,netevents,0},{tun,tunevents,0},{ctl.input_fd,POLLIN,0}};
@@ -759,6 +802,7 @@ static void run_exit(Config& config,SSL_CTX* context,int listener,int tun,Contro
         }
         if(c.session){
           c.interest=c.session->step(tun,c.deadline,pending,true);
+          if(c.session->discovery_done){it=connections.erase(it);continue;}
           // A per-session budget gives other authenticated peers a turn.
           for(int n=0;n<8&&!c.session->packets.empty();n++){
             auto& packets=c.session->packets;
@@ -853,21 +897,24 @@ int main(int argc,char** argv){
         {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"private_peer_dns",{{"client_zone_guard",true},{"exit_opt_in",true},{"endpoint","10.99.0.1:1055"},{"upstream","127.0.0.1:1055"}}},{"connection_modes",{"on-demand","persistent"}},{"multi_peer",true},{"peer_reload",{{"signal","SIGHUP"},{"exit_only",true},{"event","peer_reload"},{"empty_peers",true}}},{"max_peers",32},{"browser_profiles",false},
         {"experimental_tls_profiles",{{"schema",1},{"scenario","cold"},{"prewire_check",true},{"certificate_compression",{2}},{"alps",{{"codepoint",17613},{"http2_settings",true},{"experimental",true}}},{"transports",{"boring-tls","combo-tls-boring"}}}},
         {"profile_policy",profile_policy::describe()},{"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
+        {"address_assignment",{{"version",1},{"discovery_cli",true},{"session_proof",true},{"owner_required",true}}},
         {"experimental_transports",{{"transparent-tls",{{"roles",{"client","exit"}},{"destination_policies",{"explicit-ipv4-destinations","public-https"}},{"client_interception","SO_ORIGINAL_DST"},{"durable_replay",true},{"relay_client_keys",true},{"relay_limits",{{"default_sessions",128},{"default_per_client",64},{"max_sessions",256},{"pending",16},{"queue_bytes_per_direction",262144}}}}},
           {"combo-tls",{{"roles",{"client","exit"}},{"single_exit_listener",true},{"client_stdio_control",true},{"packet_ipc",false},{"site_provisioning",true}}}}}}).dump()<<"\n";return 0;
     }
     bool validate=argc==3&&std::string(argv[1])=="--check-config";
     bool initialize=argc==3&&std::string(argv[1])=="--init-transparent-replay";
+    const bool discover=argc==3&&std::string(argv[1])=="--discover-address";
     const bool clock_recovery=argc>3&&std::string(argv[argc-1])=="--clock-recovery";
     const int effective_argc=argc-(clock_recovery?1:0);
     bool service=(effective_argc==4||effective_argc==6)&&std::string(argv[effective_argc-1])=="--service";
     check(!clock_recovery||service,"clock_recovery_requires_service");
     int count=effective_argc-(service?1:0);
-    check(validate||initialize||((count==3||count==5)&&std::string(argv[1])=="--config"),"usage_config");int test=-1;
+    check(validate||initialize||discover||((count==3||count==5)&&std::string(argv[1])=="--config"),"usage_config");int test=-1;
     if(count==5){check(std::string(argv[3])=="--test-packet-fd","usage_fixture");test=std::stoi(argv[4]);check(test>2,"fixture_fd");}
     const auto raw_config=file(argv[2],16384);const auto config=json::parse(raw_config);
     PeerReload reload(argv[2],raw_config);
     if(config.is_object()&&config.value("transport",std::string{})=="transparent-tls"){
+      check(!discover,"address_discovery_packet_client_only");
       check(!clock_recovery,"clock_recovery_boring_client_only");
       check(test<0,"relay_no_packet_fd");return transparent_engine(config,validate,initialize,service,reload);
     }
@@ -880,6 +927,7 @@ int main(int argc,char** argv){
     }
     check(!initialize||bool(combined),"relay_config_required");
     Config c(combined?combined->boring:config);std::string secret;
+    check(!discover||c.client,"address_discovery_client_only");c.discovery=discover;
     check(!clock_recovery||(c.client&&!combined),"clock_recovery_boring_client_only");
     if(c.client){secret=file(c.secret_path,32,true);check(secret.size()==32,"secret_length");}
     std::unique_ptr<transparent::RelayCredentials> combo_credentials;
@@ -929,12 +977,14 @@ int main(int argc,char** argv){
       if(combined){result["transport"]="combo-tls";result["relay_limits"]={{"sessions",combined->relay.limits.sessions},{"per_client",combined->relay.limits.per_client}};result["relay_identities"]=!combined->relay.secret_path.empty()?1:combined->relay.peers.size();}
       std::cout<<result.dump()<<"\n";return 0;
     }
-    if(!service)nonblock(STDIN_FILENO);
+    if(!discover&&!service)nonblock(STDIN_FILENO);
     nonblock(STDOUT_FILENO);Control ctl;ServiceNotify notify(service);
     if(service){ctl.input_fd=-1;ctl.notify=&notify;}
-    Fd tun(packet_fd(c,test));
+    if(discover){ctl.input_fd=-1;ctl.quiet=true;}
+    if(!discover&&c.address_assignment)check((combined?combined->boring:config).contains("peer_ipv4"),"assigned_ipv4_required");
+    Fd tun(discover?-1:packet_fd(c,test));
     std::atomic<bool> private_dns_ready{true};std::unique_ptr<DnsRelay> dns,private_dns;
-    if(c.dns)dns=std::make_unique<DnsRelay>(c.tun,ctl.dns_ready,ctl.dns_failed,&ctl.dns_idle,&ctl.dns_demand,c.peer_ipv4);
+    if(c.dns&&!discover)dns=std::make_unique<DnsRelay>(c.tun,ctl.dns_ready,ctl.dns_failed,&ctl.dns_idle,&ctl.dns_demand,c.peer_ipv4);
     if(c.private_peer_dns){DnsRelay::Peers allowed;for(const auto& peer:c.peers)allowed.insert(peer.address);private_dns=std::make_unique<DnsRelay>(c.tun,private_dns_ready,ctl.dns_failed,nullptr,nullptr,"10.99.0.1",true,std::move(allowed));}
     Fd listener;
     if(!c.client){
@@ -944,7 +994,7 @@ int main(int argc,char** argv){
     std::unique_ptr<transparent::RelayListener> combo_client;
     std::unique_ptr<combo::Exit> combo_exit;
     std::shared_ptr<transparent::ExitAdmission> relay_admission;
-    if(combined) {
+    if(combined&&!discover) {
       const auto& relay=combined->relay;
       if(c.client) {
         transparent::RelaySocket socket(::socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0));
@@ -1017,9 +1067,19 @@ int main(int argc,char** argv){
         }
         ctl.set("handshake");handshake(ssl.get(),socket_fd.n,ctl,deadline,generation);
         Session s(c,ctl,ssl.get(),secret);
-        try{s.run(socket_fd.n,tun.n,deadline,generation,pending);}
+        try{
+          s.run(socket_fd.n,tun.n,deadline,generation,pending);
+          if(discover){
+            check(s.discovery_done&&s.offer_verified,"discovery_incomplete");
+            address_offer::Address address{};std::memcpy(address.data(),&s.peer_address,address.size());
+            const auto record=json({{"version",1},{"event","address_discovery"},{"status","verified"},{"assignment","v1"},{"ipv4",address_offer::address_text(address)}}).dump()+"\n";
+            OPENSSL_cleanse(secret.data(),secret.size());
+            check(write(STDOUT_FILENO,record.data(),record.size())==ssize_t(record.size()),"discovery_output");return 0;
+          }
+        }
         catch(...){authenticated=s.ready;throw;}
       }catch(const std::exception& e){
+        if(discover){OPENSSL_cleanse(secret.data(),secret.size());std::cerr<<"address discovery refused: "<<Session::callback_error(e.what())<<"\n";return 1;}
         // Only fixed internal error codes, never input headers, keys or payload.
         ctl.set(e.what());
         const std::string reason=e.what();
@@ -1045,6 +1105,6 @@ int main(int argc,char** argv){
       auto retry=Clock::now()+std::chrono::milliseconds(250);
       while(!ctl.stop&&!interrupted&&Clock::now()<retry){ctl.read_commands();pollfd p{ctl.input_fd,POLLIN,0};poll(&p,1,25);}
     }
-    OPENSSL_cleanse(secret.data(),secret.size());ctl.set(ctl.dns_failed?"dns_failed":"stopped");return ctl.dns_failed||(service&&!interrupted)?1:0;
+    OPENSSL_cleanse(secret.data(),secret.size());ctl.set(ctl.dns_failed?"dns_failed":"stopped");return discover||ctl.dns_failed||(service&&!interrupted)?1:0;
   }catch(...){std::cerr<<"clean-vpn-engine: configuration or startup refused\n";return 1;}
 }

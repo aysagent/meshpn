@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "kind": "native-address-assignment-validation",
+  "date": "2026-10-30",
+  "status": "native-protocol-passed-owner-gate-separate",
+  "environment": "isolated-Linux-Podman-laboratory",
+  "productionEngineSha256": "537fdb8b2b321091f4c8122dcacac927438dd2f0a379c9d98975c1c69018d0bf",
+  "tests": {
+    "nativeAddressAssignment": 4,
+    "independentIssuer": 26,
+    "legacyHttp1MultiPeerReloadWanFixture": 23,
+    "completeH1H2DataPlane": 2,
+    "uniqueJsCases": 55,
+    "skipped": 0,
+    "codecIndependentHmacVectorsAndMutations": "passed",
+    "codecAddressUndefinedLeakSanitizers": "passed-dependencies-not-instrumented"
+  },
+  "scope": [
+    "production-no-TUN-no-DNS-discovery-with-dns-enabled-and-absent-interface",
+    "PSK-to-registry-IPv4-authority-not-client-selected-IP",
+    "active-identity-discovery-without-session-claim-or-eviction",
+    "full-session-purpose-proof-and-exact-IPv4-before-ready",
+    "revoke-blocks-discovery-and-disconnects-only-affected-session",
+    "saved-synthetic-cold-h2-profile-in-boring-and-combo-discovery",
+    "wrong-key-exporter-purpose-address-mode-canonical-format-rejected",
+    "old-exit-missing-proof-payload-and-incomplete-response-rejected",
+    "ten-second-stall-deadline-and-SIGTERM-fail-without-verified-output"
+  ],
+  "physicalDeployments": false,
+  "remainingGates": [
+    "fresh-runtime-owner-transaction-and-real-TUN-DNS-integration",
+    "host-daily-owner-autoconfiguration-not-supported-by-this-native-change",
+    "broader-concurrent-discovery-and-reassignment-fault-load"
+  ]
+}
