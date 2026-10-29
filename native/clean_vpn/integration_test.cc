@@ -407,7 +407,7 @@ int main(int argc,char** argv){
     // TUN or host route. Each endpoint runs separately with fresh trial keys.
     if(argc==4&&(std::string(argv[3])=="wan-client"||std::string(argv[3])=="wan-exit")){
       const bool client=std::string(argv[3])=="wan-client";
-      Child peer(argv[1],argv[2]);peer.await_state(client?"ready":"listening");
+      Child peer(argv[1],argv[2],!client);peer.await_state(client?"ready":"listening");
       if(!client){std::cout<<"WAN_LISTENING"<<std::endl;peer.await_state("ready",60000);}
       auto receive=[&](const Bytes& expected){pollfd p{peer.packet,POLLIN,0};require(poll(&p,1,10000)>0,"wan_packet_timeout");Bytes got(65536);const auto n=recv(peer.packet,got.data(),got.size(),0);require(n>0,"wan_packet_read");got.resize(n);require(got==expected,"wan_packet_bytes");};
       auto send_packet=[&](const Bytes& b){require(send(peer.packet,b.data(),b.size(),0)==ssize_t(b.size()),"wan_packet_send");};
