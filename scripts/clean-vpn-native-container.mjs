@@ -8,8 +8,9 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { isIPv4 } from 'node:net';
 import { publishedExitPort } from './lib/native-port.mjs';
+import { runtimePacketConfig } from './lib/native-runtime-plan.mjs';
 const { values: v, positionals } = parseArgs({ allowPositionals: true, options: Object.fromEntries([
-  'engine', 'connection', 'name', 'image', 'role', 'network', 'ip', 'publish', 'config-dir', 'config-volume', 'config-file', 'lan-network', 'lan-ip', 'lan-subnet', 'lab-owner'
+  'engine', 'connection', 'name', 'image', 'role', 'network', 'ip', 'publish', 'config-dir', 'config-volume', 'config-file', 'lan-network', 'lan-ip', 'lan-subnet', 'lab-owner', 'replay-volume'
 ].map(k => [k, { type: 'string' }])) });
 const action = positionals[0];
 assert.ok(positionals.length === 1 && ['start', 'status', 'stop', 'remove'].includes(action), 'start|status|stop|remove required');
@@ -42,10 +43,19 @@ if (action === 'start') {
   config ??= JSON.parse(p(['run', '--rm', '--network=none', '--cap-drop=ALL', '--read-only',
     '--memory=32m', '--pids-limit=16', '--mount', mount, '--entrypoint=cat', v.image, '/config/' + file]));
   assert.equal(config.role, v.role, 'config_role_mismatch');
-  const published = v.publish ? publishedExitPort(config, v.publish) : null;
+  const packet = runtimePacketConfig(config);
+  const combo = config.transport === 'combo-tls';
+  if (combo && v.role === 'exit') {
+    assert.match(v['replay-volume'] ?? '', /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/, 'explicit_replay_volume_required');
+    assert.notEqual(v['replay-volume'], v['config-volume'], 'separate_replay_volume_required');
+    assert.equal(config.transparent.replay_directory, '/replay/state', 'container_replay_path');
+    p(['volume', 'inspect', v['replay-volume']]);
+  } else assert.equal(v['replay-volume'], undefined, 'replay_volume_exit_combo_only');
+  const published = v.publish ? publishedExitPort(packet, v.publish) : null;
   const parent = p(['run', '--rm', '--network=host', '--cap-drop=ALL', '--entrypoint=readlink', v.image, '/proc/self/ns/net']).trim();
   assert.match(parent, /^net:\[\d+\]$/);
   const lan = Boolean(v['lan-network'] || v['lan-ip'] || v['lan-subnet']);
+  if (combo && v.role === 'client') assert.ok(lan, 'combo_runtime_requires_explicit_lan');
   if (lan) {
     assert.equal(v.role, 'client'); assert.match(v['lan-network'] ?? '', /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/);
     assert.ok(!['host', 'none', v.network].includes(v['lan-network'])); assert.ok(isIPv4(v['lan-ip']));
@@ -57,12 +67,14 @@ if (action === 'start') {
     '--security-opt=no-new-privileges', '--read-only', '--tmpfs=/run:rw,nosuid,nodev,mode=755', '--tmpfs=/tmp:rw,nosuid,nodev,mode=1777',
     '--mount', mount, '-e', `CVPN_PARENT_NETNS=${parent}`];
   if (v.ip) args.push('--ip', v.ip);
+  if (v.ip || lan) args.push('-e', 'CVPN_ANNOUNCE_IPV4=1');
   if (v['lab-owner']) {
     assert.match(v['lab-owner'], /^cvpnrt-[a-f0-9]{16}$/); assert.ok(v.name.startsWith(v['lab-owner'] + '-'));
     args.push('--label', 'org.meshpn.native-runtime-lab=' + v['lab-owner']);
   }
   if (v.role === 'exit' || lan) args.push('--sysctl=net.ipv4.ip_forward=1');
   if (published) args.push('--publish', published);
+  if (v['replay-volume']) args.push('--mount', `type=volume,src=${v['replay-volume']},dst=/replay`);
   if (lan) args.push('-e', 'CVPN_UPLINK=auto', '-e', 'CVPN_LAN_INTERFACE=auto', '-e', `CVPN_LAN_SUBNET=${v['lan-subnet']}`);
   args.push(v.image, '/config/' + file);
   p(args);

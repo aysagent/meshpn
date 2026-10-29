@@ -1,0 +1,405 @@
+{
+  "schema": 1,
+  "kind": "native-combo-runtime-acceptance",
+  "date": "2026-10-29",
+  "status": "passed",
+  "scope": "dedicated-linux-arm64-Podman-VM-and-NIC-less-nested-Docker; no physical hosts or Mac networking changes",
+  "versions": {
+    "podmanServer": "6.1.4",
+    "nestedDockerServer": "28.5.2"
+  },
+  "build": "artifact packaging of cached production engine; control files rebuilt, no claim of fresh engine compilation",
+  "sourceSha256": {
+    "scripts/clean-vpn-native-container.mjs": "3470cd6f471bf8cdd6a18687281510b8044ffe3f0dfee40422cf3505985b803c",
+    "scripts/clean-vpn-native-runtime.mjs": "5e602b3fa99ffd7bfdc86c76cfdfe1b0c99c61235bc905152326f56af6ba8907",
+    "scripts/clean-vpn-native-runtime-health.mjs": "f4806e403cf353210c179b790536f42a24f2967bcd15e7ac15f6d68a67a6f7b2",
+    "scripts/lib/native-runtime-plan.mjs": "961371de8ab763e53553dcc7dd7a3375824dc69eea84ba940008b685cef90d48",
+    "scripts/clean-vpn-native-combo-runtime-lab.mjs": "836e8c9d7a54cf2bfd972089a1a8e55b4e543013d036de9860d19b5aaf88c44b",
+    "scripts/test-native-combo-runtime.mjs": "8e543f027ee803f504b6b4c9f9bd51345c105a3ed909e1e629784b349855123a"
+  },
+  "unit": {
+    "passed": 19,
+    "failed": 0,
+    "skipped": 0
+  },
+  "podman": {
+    "status": "passed",
+    "imageId": "a88d0378f5acc5b78eb9387e2254a3970f85031d138388948f41120f0b0fb962",
+    "architecture": "arm64",
+    "engineSha256": "f087b391f148359fc81b7d70cc9d5c1f1830b0fad532321820d8a1938ccced56",
+    "checks": [
+      "uninitialized-replay-start-refused-without-reset",
+      "explicit-init-and-repeat-init-refusal",
+      "public-launcher-real-TUN-DNS-and-LAN-HTTPS-relay",
+      "direct-uplink-HTTPS-blocked-LAN-relay-works",
+      "second-owner-free-port-and-netns-refused-existing-pair-healthy",
+      "independent-pcap-packet-profile-and-original-relay-JA3-JA4-match",
+      "same-namespace-reentry-preserves-foreign-rules",
+      "parallel-packet-and-four-relay-users-bounded-load-resources-reclaimed",
+      "overload-rejects-excess-relays-packet-branch-and-fresh-requests-survive",
+      "relay-failure-does-not-downgrade-to-packet-branch",
+      "recreated-exit-listens-with-original-replay-state",
+      "exit-SIGKILL-recreate-preserves-replay-and-recovers-both-paths",
+      "client-SIGKILL-held-namespace-remains-closed",
+      "fresh-client-namespace-recovers-both-paths",
+      "native-PID1-SIGTERM-clean"
+    ],
+    "load": {
+      "rounds": 116,
+      "relayRequests": 464,
+      "packetBatches": 116,
+      "elapsedMs": 60421.864444985986,
+      "seconds": 60,
+      "samples": 130,
+      "initial": {
+        "client": {
+          "rssKiB": 6300,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 5,
+          "udpSockets": 1
+        },
+        "exit": {
+          "rssKiB": 6392,
+          "fds": 8,
+          "sockets": 2,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 3,
+          "udpSockets": 0
+        }
+      },
+      "peak": {
+        "client": {
+          "rssKiB": 6544,
+          "fds": 17,
+          "threads": 8
+        },
+        "exit": {
+          "rssKiB": 6768,
+          "fds": 14,
+          "threads": 6
+        }
+      },
+      "settled": {
+        "client": {
+          "rssKiB": 6496,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 481,
+          "udpSockets": 1
+        },
+        "exit": {
+          "rssKiB": 6768,
+          "fds": 8,
+          "sockets": 2,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 448,
+          "udpSockets": 0
+        }
+      }
+    },
+    "burst": {
+      "total": 64,
+      "rejected": 32,
+      "completed": 32
+    },
+    "observer": {
+      "wireSha256": "9ffa509d44215dd14a150d0b696fd13291d527c23de989fbe816cf1735a6f3cd",
+      "applicationSha256": "b24e0a2ca2a57089238b0744559485b715beefc0c565f4dde737f0c87c1f687e",
+      "packetProfileMatches": 1,
+      "relayFingerprintMatches": 2,
+      "scope": "ClientHello-only-not-full-browser-equivalence"
+    },
+    "cleanup": "cleaned",
+    "recoveryArpObserved": true,
+    "rawReportSha256": "0e5011e8448a270795c799b3e7b6ad50835a1836590a90a3b970c34b3878fa74"
+  },
+  "docker": {
+    "status": "passed",
+    "imageId": "sha256:a88d0378f5acc5b78eb9387e2254a3970f85031d138388948f41120f0b0fb962",
+    "architecture": "arm64",
+    "engineSha256": "f087b391f148359fc81b7d70cc9d5c1f1830b0fad532321820d8a1938ccced56",
+    "checks": [
+      "uninitialized-replay-start-refused-without-reset",
+      "explicit-init-and-repeat-init-refusal",
+      "public-launcher-real-TUN-DNS-and-LAN-HTTPS-relay",
+      "direct-uplink-HTTPS-blocked-LAN-relay-works",
+      "second-owner-free-port-and-netns-refused-existing-pair-healthy",
+      "independent-pcap-packet-profile-and-original-relay-JA3-JA4-match",
+      "same-namespace-reentry-preserves-foreign-rules",
+      "parallel-packet-and-four-relay-users-bounded-load-resources-reclaimed",
+      "overload-rejects-excess-relays-packet-branch-and-fresh-requests-survive",
+      "relay-failure-does-not-downgrade-to-packet-branch",
+      "recreated-exit-listens-with-original-replay-state",
+      "exit-SIGKILL-recreate-preserves-replay-and-recovers-both-paths",
+      "client-SIGKILL-held-namespace-remains-closed",
+      "fresh-client-namespace-recovers-both-paths",
+      "native-PID1-SIGTERM-clean"
+    ],
+    "load": {
+      "rounds": 115,
+      "relayRequests": 460,
+      "packetBatches": 115,
+      "elapsedMs": 60447.90145500004,
+      "seconds": 60,
+      "samples": 110,
+      "initial": {
+        "client": {
+          "rssKiB": 6304,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 7,
+          "udpSockets": 2
+        },
+        "exit": {
+          "rssKiB": 6396,
+          "fds": 8,
+          "sockets": 2,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 3,
+          "udpSockets": 1
+        }
+      },
+      "peak": {
+        "client": {
+          "rssKiB": 6556,
+          "fds": 17,
+          "threads": 9
+        },
+        "exit": {
+          "rssKiB": 6772,
+          "fds": 15,
+          "threads": 6
+        }
+      },
+      "settled": {
+        "client": {
+          "rssKiB": 6496,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 475,
+          "udpSockets": 2
+        },
+        "exit": {
+          "rssKiB": 6772,
+          "fds": 8,
+          "sockets": 2,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 448,
+          "udpSockets": 1
+        }
+      }
+    },
+    "burst": {
+      "total": 64,
+      "rejected": 48,
+      "completed": 16
+    },
+    "observer": {
+      "wireSha256": "07e5941250e9e14c7b5180645f24d1bfdb5331e9c1786471b2d70f40e11c05b4",
+      "applicationSha256": "d5e7f6045b3e21eb6eae75e9a0d5be62cbf7013388e54d7d66ab24df4d71c52b",
+      "packetProfileMatches": 1,
+      "relayFingerprintMatches": 2,
+      "scope": "ClientHello-only-not-full-browser-equivalence"
+    },
+    "exitRecreateMs": 11492.27075000001,
+    "clientRecreateMs": 9359.207500000019,
+    "cleanup": "cleaned",
+    "recoveryArpObserved": true,
+    "rawReportSha256": "0bc86f4673d6ac85e5d1c459fa13c09408be0a7e10f1f5931735891820cf6f02"
+  },
+  "boringRegression": {
+    "status": "passed",
+    "checks": [
+      "profiled-tunnel-and-dns-udp-tcp",
+      "public-launcher-start-status",
+      "loopback-dns-https-tcp-udp",
+      "foreign-rules-preserved",
+      "same-namespace-reentry-audited",
+      "unreachable-upstreams-unhealthy",
+      "dns-restores-with-upstream",
+      "wrong-name-unhealthy",
+      "wrong-psk-unhealthy",
+      "wrong-ca-unhealthy",
+      "unreachable-exit-unhealthy",
+      "without-net-admin-refused",
+      "without-tun-refused",
+      "host-network-refused-before-mutation",
+      "public-launcher-stop-and-restart",
+      "unprivileged-shared-namespace-application",
+      "pid1-sigkill-shared-namespace-no-direct-fallback",
+      "dead-engine-app-dns-blocked",
+      "replacement-works-old-namespace-stays-blocked",
+      "client-sigterm-clean",
+      "container-restart-healthy",
+      "independent-clienthello-profile-matched",
+      "exit-sigterm-clean",
+      "public-launcher-owned-remove"
+    ],
+    "imageId": "a88d0378f5acc5b78eb9387e2254a3970f85031d138388948f41120f0b0fb962",
+    "cleanup": "passed",
+    "pcapSha256": "039762ba913415b07c8a15cb79cff4a68b3472992287b646ad084c5729ebd77f"
+  },
+  "durableReplay": {
+    "status": "passed",
+    "imageId": "db1596a2a363384570bfd957339702c7116f9ad16b326b002a5d3748c4817fe8",
+    "engineSha256": "f087b391f148359fc81b7d70cc9d5c1f1830b0fad532321820d8a1938ccced56",
+    "scope": "experimental-engine-packaging-not-public-launcher-or-routing-acceptance",
+    "phases": [
+      {
+        "schema": 1,
+        "kind": "native-runtime-replay-phase",
+        "transport": "transparent-tls",
+        "phase": "first",
+        "checks": [
+          "production-engine-config-valid",
+          "explicit-init-only-and-repeat-init-refused",
+          "durable-scope-second-owner-free-port-and-tun-refused",
+          "native-so-original-dst-tls-relay-fresh-request"
+        ],
+        "status": "passed",
+        "replayStateSha256": "df0d354a9e47133149b13f154afaa53de06b9637958c4a7402284c00d237d9e3"
+      },
+      {
+        "schema": 1,
+        "kind": "native-runtime-replay-phase",
+        "transport": "transparent-tls",
+        "phase": "readonly",
+        "checks": [
+          "production-engine-config-valid",
+          "readonly-state-refused-without-reset"
+        ],
+        "status": "passed",
+        "replayStateSha256": "df0d354a9e47133149b13f154afaa53de06b9637958c4a7402284c00d237d9e3"
+      },
+      {
+        "schema": 1,
+        "kind": "native-runtime-replay-phase",
+        "transport": "transparent-tls",
+        "phase": "recreated",
+        "checks": [
+          "production-engine-config-valid",
+          "durable-scope-second-owner-free-port-and-tun-refused",
+          "captured-token-rejected-after-container-sigkill-recreation",
+          "native-so-original-dst-tls-relay-fresh-request",
+          "same-captured-token-valid-in-independent-fresh-fixture-scope",
+          "second-owner-starts-after-original-owner-released-lock"
+        ],
+        "status": "passed",
+        "replayStateSha256": "7c566a4c08f6c554649d9b1d6eeb06251ea70372f23cd5d3c5fd99c063a41d0f"
+      },
+      {
+        "schema": 1,
+        "kind": "native-runtime-replay-phase",
+        "transport": "combo-tls",
+        "phase": "first",
+        "checks": [
+          "production-engine-config-valid",
+          "explicit-init-only-and-repeat-init-refused",
+          "durable-scope-second-owner-free-port-and-tun-refused",
+          "combo-boring-authenticated-on-shared-exit-listener",
+          "native-so-original-dst-tls-relay-fresh-request"
+        ],
+        "status": "passed",
+        "replayStateSha256": "d85da642b83b5e0e2ae461e2e6250fca988f642c84f7c92c329c0f1c79fb06c6"
+      },
+      {
+        "schema": 1,
+        "kind": "native-runtime-replay-phase",
+        "transport": "combo-tls",
+        "phase": "readonly",
+        "checks": [
+          "production-engine-config-valid",
+          "readonly-state-refused-without-reset"
+        ],
+        "status": "passed",
+        "replayStateSha256": "d85da642b83b5e0e2ae461e2e6250fca988f642c84f7c92c329c0f1c79fb06c6"
+      },
+      {
+        "schema": 1,
+        "kind": "native-runtime-replay-phase",
+        "transport": "combo-tls",
+        "phase": "recreated",
+        "checks": [
+          "production-engine-config-valid",
+          "durable-scope-second-owner-free-port-and-tun-refused",
+          "captured-token-rejected-after-container-sigkill-recreation",
+          "combo-boring-authenticated-on-shared-exit-listener",
+          "native-so-original-dst-tls-relay-fresh-request",
+          "same-captured-token-valid-in-independent-fresh-fixture-scope",
+          "second-owner-starts-after-original-owner-released-lock"
+        ],
+        "status": "passed",
+        "replayStateSha256": "d7125e28efdd37080dafe8d347743035f3fa74cd2d3e3e50d31362dc40232b52"
+      }
+    ],
+    "cleanup": "cleaned"
+  },
+  "developmentFailures": [
+    {
+      "run": "combo-r1",
+      "issue": "iptables canonical option order mismatch rejected by audit",
+      "resolution": "generator ordering corrected; audit retained"
+    },
+    {
+      "run": "combo-r2",
+      "issue": "unpaced parallel load hit existing relay admission limits",
+      "resolution": "paced normal workload plus separate 64-request overload gate; production caps unchanged"
+    },
+    {
+      "run": "combo-r3/r4",
+      "issue": "exit recreation changed MAC while client retained old ARP neighbor; reconnect timed out",
+      "resolution": "runtime announces assigned uplink/LAN IPv4 on static-IP launch; no foreign neighbor-table flush"
+    },
+    {
+      "run": "combo-r5",
+      "issue": "passed before fix, showing timing dependence rather than reliable recovery",
+      "resolution": "final Podman and Docker repeated with explicit bounded ARP announcements"
+    }
+  ],
+  "limitations": [
+    "two 60-second mixed-load runs, not a long soak or throughput benchmark",
+    "client health means live packet DNS plus local relay listener, not end-to-end relay availability",
+    "pcap confirms first ClientHello fields/JA3/JA4, not full browser equivalence",
+    "combo launcher currently requires explicit LAN and public-https; standalone transparent launcher unsupported",
+    "offline runtime-config generator remains boring-only",
+    "replay packaging suite preceded ARP-only image update; same engine hash, final public-launcher lifecycle uses updated image",
+    "Docker recreate timings include CLI/capture/probe overhead; Podman report predates timing-only instrumentation"
+  ]
+}

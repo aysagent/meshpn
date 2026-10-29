@@ -1,8 +1,65 @@
 // Network control only. All tunnel/TLS/DNS payload processing remains native.
 import assert from 'node:assert/strict';
 import { isIPv4 } from 'node:net';
+import { validateTransparentNetworkProfile, transparentSpecialIPv4 } from './native-transparent-network.mjs';
+
+// Shared by provisioning and health. Full credential/schema validation remains
+// in the native engine, before the runtime performs network mutations.
+export function runtimePacketConfig(c) {
+  if (c.transport !== 'combo-tls') return c;
+  assert.deepEqual(Object.keys(c).sort(), ['boring', 'role', 'transparent', 'transport', 'version']);
+  assert.equal(c.version, 1);
+  const p = c.boring, r = c.transparent;
+  assert.equal(p.role, c.role); assert.equal(r.role, c.role);
+  assert.equal(r.version, 1); assert.equal(r.transport, 'transparent-tls');
+  assert.equal(r.destination_policy?.mode, 'public-https', 'runtime_combo_requires_public_https');
+  assert.equal(r.destinations, undefined);
+  assert.notEqual(p.secret_path, r.secret_path, 'combo_separate_keys_required');
+  if (c.role === 'client') {
+    assert.equal(r.exit.ipv4, p.address); assert.equal(r.exit.port, p.port);
+    assert.equal(p.sni, r.public_name);
+    assert.notEqual(r.listen.port, 1053, 'relay_dns_listener_collision');
+  } else {
+    assert.equal(r.listen.ipv4, p.address); assert.equal(r.listen.port, p.port);
+    assert.equal(typeof r.replay_directory, 'string');
+  }
+  return p;
+}
+
+function comboRuntimePlan(c, options) {
+  const packet = runtimePacketConfig(c), r = c.transparent;
+  const plan = runtimePlan(packet, options), client = c.role === 'client';
+  if (client) {
+    assert.ok(plan.lan, 'combo_runtime_requires_explicit_lan');
+    assert.equal(r.listen.ipv4, '0.0.0.0', 'combo_runtime_lan_listener_required');
+  }
+  validateTransparentNetworkProfile({ version: 1, transport: 'transparent-tls', role: c.role,
+    uplink: plan.uplink, endpoint: packet.address, port: packet.port, listen_port: r.listen.port,
+    lan: plan.lan, deny_ipv4: r.destination_policy.deny_ipv4 });
+  const filter = plan.tables.find(t => t.family === 4 && t.name === 'filter');
+  const chain = hook => filter.entries.find(e => e.hook === hook).rules;
+  const denied = [...transparentSpecialIPv4, ...r.destination_policy.deny_ipv4, packet.address + '/32'];
+  if (client) {
+    const from = `-s ${plan.lan.subnet} -i ${plan.lan.interface}`;
+    const ingress = plan.tables.find(t => t.family === 4 && t.name === 'nat').entries.find(e => e.hook === 'PREROUTING').rules;
+    for (const dst of denied) ingress.push(`-s ${plan.lan.subnet} -d ${dst} -i ${plan.lan.interface} -j RETURN`);
+    ingress.push(`${from} -m addrtype --dst-type LOCAL -j RETURN`,
+      `${from} -p tcp --dport 443 -j REDIRECT --to-ports ${r.listen.port}`);
+    chain('INPUT').splice(-1, 0, `${from} -p tcp --dport ${r.listen.port} -m conntrack --ctstate DNAT -j ACCEPT`);
+    // An ineligible HTTPS destination must never fall through to the TUN.
+    chain('FORWARD').unshift(`${from} -p tcp --dport 443 -j DROP`);
+  } else {
+    const output = chain('OUTPUT');
+    output.splice(0, output.length, '-o lo -j ACCEPT',
+      `-s ${packet.address}/32 -o ${plan.uplink} -p tcp --sport ${packet.port} -m conntrack --ctstate ESTABLISHED --ctdir REPLY -j ACCEPT`,
+      ...denied.map(dst => `-d ${dst} -o ${plan.uplink} -j DROP`),
+      `-o ${plan.uplink} -p tcp --dport 443 -j ACCEPT`, '-j DROP');
+  }
+  return { ...plan, transport: 'combo-tls', relayPort: r.listen.port };
+}
 
 export function runtimePlan(c, { uplink = 'eth0', mtu = 1400, lan = null } = {}) {
+  if (c.transport === 'combo-tls') return comboRuntimePlan(c, { uplink, mtu, lan });
   assert.equal(c.version, 1);
   assert.ok(['client', 'exit'].includes(c.role));
   assert.equal(c.transport, undefined, 'runtime_v1_requires_boring_tls');
@@ -70,6 +127,24 @@ export function runtimePlan(c, { uplink = 'eth0', mtu = 1400, lan = null } = {})
 export function restoreTable(t) {
   return `*${t.name}\n${t.entries.map(e => `:${e.chain} - [0:0]`).join('\n')}\n` +
     t.entries.flatMap(e => [`-I ${e.hook} 1 -j ${e.chain}`, ...e.rules.map(r => `-A ${e.chain} ${r}`)]).join('\n') + '\nCOMMIT\n';
+}
+
+// Static-IP container recreation may change the link address while peers still
+// cache its predecessor. Announce only addresses actually assigned to our two
+// approved interfaces; never flush a peer/host neighbor table.
+export function runtimeAnnouncements(plan, links) {
+  const commands = [];
+  for (const iface of [plan.uplink, ...(plan.lan ? [plan.lan.interface] : [])]) {
+    const matches = links.filter(l => l.ifname === iface);
+    assert.equal(matches.length, 1, 'announcement_interface_missing');
+    const addresses = matches[0].addr_info.filter(a => a.family === 'inet');
+    assert.ok(addresses.length > 0 && addresses.length <= 8, 'bounded_interface_addresses_required');
+    for (const a of addresses) {
+      assert.ok(isIPv4(a.local) && !/^(0|127)\./.test(a.local));
+      commands.push(['-q', '-U', '-c', '2', '-w', '2', '-I', iface, a.local]);
+    }
+  }
+  return commands;
 }
 
 // iptables normalizes -p tcp into -p tcp -m tcp; compare canonical tokens.

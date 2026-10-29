@@ -5,6 +5,7 @@ import dgram from 'node:dgram';
 import net from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
+import { runtimePacketConfig } from './lib/native-runtime-plan.mjs';
 
 // Bounded live DNS exchange, never a cached ready-file or a PID-only assertion.
 export function dnsProbe(host, port, tcp, name = 'example.com') {
@@ -49,13 +50,17 @@ async function main() {
   assert.match(directory, /^\/run\/clean-vpn(?:-[a-zA-Z0-9_-]{1,48})?$/);
   const state = JSON.parse(fs.readFileSync(directory + '/network.json', 'utf8'));
   assert.equal(state.namespace, fs.readlinkSync('/proc/self/ns/net')); assert.equal(state.phase, 'ready');
-  const c = JSON.parse(fs.readFileSync(directory + '/engine.json', 'utf8'));
+  const config = JSON.parse(fs.readFileSync(directory + '/engine.json', 'utf8')), c = runtimePacketConfig(config);
+  const listening = value => {
+    const port = value.toString(16).toUpperCase().padStart(4, '0');
+    assert.ok(fs.readFileSync('/proc/net/tcp', 'utf8').split('\n').some(l => l.trim().split(/\s+/)[1]?.endsWith(':' + port) && l.trim().split(/\s+/)[3] === '0A'));
+  };
   if (c.role === 'client') {
     await Promise.all([false, true].map(tcp => dnsProbe(c.peer_ipv4 ?? '10.99.0.2', 1053, tcp)));
-    console.log('NATIVE_HEALTH=authenticated-tunnel-and-dns');
+    if (config.transport === 'combo-tls') listening(config.transparent.listen.port);
+    console.log(config.transport === 'combo-tls' ? 'NATIVE_HEALTH=authenticated-packet-dns-and-local-relay-listener' : 'NATIVE_HEALTH=authenticated-tunnel-and-dns');
   } else {
-    const port = c.port.toString(16).toUpperCase().padStart(4, '0');
-    assert.ok(fs.readFileSync('/proc/net/tcp', 'utf8').split('\n').some(l => l.trim().split(/\s+/)[1]?.endsWith(':' + port) && l.trim().split(/\s+/)[3] === '0A'));
+    listening(c.port);
     console.log('NATIVE_HEALTH=exit-listening-only');
   }
 }

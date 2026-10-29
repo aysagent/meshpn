@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { runtimePlan, restoreTable, auditRuntimeTables } from './lib/native-runtime-plan.mjs';
+import { runtimePlan, runtimePacketConfig, runtimeAnnouncements, restoreTable, auditRuntimeTables } from './lib/native-runtime-plan.mjs';
 
 const run = (cmd, args, input) => execFileSync(cmd, args, { encoding: 'utf8', input, timeout: 15000, maxBuffer: 1024 * 1024 });
 const read = p => fs.readFileSync(p, 'utf8');
@@ -21,7 +21,7 @@ function main() {
   const namespace = fs.readlinkSync('/proc/self/ns/net');
   assert.notEqual(namespace, parent, 'host_network_refused');
   const source = process.argv[2]; assert.ok(source.startsWith('/'));
-  const configText = privateFile(source), c = JSON.parse(configText);
+  const configText = privateFile(source), config = JSON.parse(configText), c = runtimePacketConfig(config);
   let lan = process.env.CVPN_LAN_INTERFACE || process.env.CVPN_LAN_SUBNET
     ? { interface: process.env.CVPN_LAN_INTERFACE, subnet: process.env.CVPN_LAN_SUBNET } : null;
   let uplink = process.env.CVPN_UPLINK ?? 'eth0';
@@ -29,7 +29,7 @@ function main() {
   if (uplink === 'auto' || lan?.interface === 'auto') {
     // Validate values before using them in discovery. Names below are only
     // placeholders for pure validation, never passed to a network command.
-    runtimePlan(c, { uplink: 'cvpnuplink', mtu, lan: lan ? { ...lan, interface: 'cvpnlan' } : null });
+    runtimePlan(config, { uplink: 'cvpnuplink', mtu, lan: lan ? { ...lan, interface: 'cvpnlan' } : null });
     const addresses = JSON.parse(run('ip', ['-j', '-4', 'addr', 'show']));
     if (lan?.interface === 'auto') {
       const [network, prefix] = lan.subnet.split('/'), bits = Number(prefix);
@@ -46,7 +46,11 @@ function main() {
       }
     }
   }
-  const plan = runtimePlan(c, { uplink, mtu, lan });
+  const plan = runtimePlan(config, { uplink, mtu, lan });
+  assert.ok(process.env.CVPN_ANNOUNCE_IPV4 === undefined || process.env.CVPN_ANNOUNCE_IPV4 === '1', 'invalid_announcement_mode');
+  const announce = process.env.CVPN_ANNOUNCE_IPV4 === '1'
+    ? runtimeAnnouncements(plan, JSON.parse(run('ip', ['-j', '-4', 'addr', 'show']))) : [];
+  if (announce.length) run('arping', ['-V']); // Dependency preflight before network writes.
   const backend = process.env.CVPN_IPTABLES_BACKEND ?? 'nft';
   assert.ok(['nft', 'legacy'].includes(backend), 'explicit_firewall_backend_required');
   plan.firewallBackend = backend;
@@ -121,6 +125,7 @@ function main() {
   }
   // Private snapshot: engine receives exactly the configuration just validated.
   fs.writeFileSync(state + '/engine.json', configText, { mode: 0o600 });
+  for (const args of announce) run('arping', args);
   console.log(JSON.stringify({ kind: 'native-runtime-network', phase: 'guarded', role: plan.role, namespace, fingerprint }));
 }
 try { main(); } catch (error) {

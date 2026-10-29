@@ -6,8 +6,10 @@
 engine. Рабочего Node proxy/controller в data plane нет.
 
 Текущие проверки и границы перечислены в
-`fixtures/clean-vpn-native-runtime-report.json`. Этот runtime не объявляет
-`combo-tls`/`transparent-tls` production: их конфиги здесь пока отклоняются.
+`fixtures/clean-vpn-native-runtime-report.json`. Дополнение 2026-10-29:
+[экспериментальный combo LAN runtime](clean-vpn-native-combo-runtime.md) принимает
+`combo-tls` с отдельным replay volume и явной LAN. Это не production-статус;
+standalone `transparent-tls` конфиги launcher пока отклоняет.
 `tls` из Node-версии также не является отдельным C++ транспортом.
 
 ## Контракт

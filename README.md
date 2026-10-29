@@ -20,7 +20,7 @@ Node VPN для него не требуется. [Текущий план и г
 | Native transport | Проверенный путь и ограничения |
 | --- | --- |
 | `boring-tls` | Основной путь к личной эксплуатации: standalone, Docker/Podman, отдельный host-profile Radxa; частичная мимикрия ClientHello/H2. |
-| `combo-tls` | Экспериментальный packet + HTTPS relay; scoped host lifecycle проверен в лаборатории, на повседневной паре пока не включён. |
+| `combo-tls` | Экспериментальный packet + HTTPS relay; scoped host lifecycle и [контейнерный LAN runtime](scripts/clean-vpn-native-combo-runtime.md). На повседневной паре пока не включён. |
 | `transparent-tls` | Экспериментальный HTTPS relay; не универсальный IP VPN. Ограничение сырого TUN из Node-таблицы ниже не является описанием native relay. |
 | `tls` | Отдельного native транспорта под этим именем нет; TLS реализован через BoringSSL в `boring-tls`. |
 

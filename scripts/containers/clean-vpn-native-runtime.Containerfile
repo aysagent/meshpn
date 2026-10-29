@@ -31,12 +31,12 @@ FROM ${ENGINE_STAGE} AS selected
 FROM ${BASE} AS runtime
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    nodejs iproute2 iptables ca-certificates libstdc++6 \
+    nodejs iproute2 iptables iputils-arping ca-certificates libstdc++6 \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=selected /out/ /usr/local/bin/
 RUN cd /usr/local/bin && sha256sum -c engine.sha256 && ./clean-vpn-engine --capabilities
 COPY scripts/clean-vpn-native-runtime.mjs scripts/clean-vpn-native-runtime-health.mjs /opt/clean-vpn/
-COPY scripts/lib/native-runtime-plan.mjs /opt/clean-vpn/lib/
+COPY scripts/lib/native-runtime-plan.mjs scripts/lib/native-transparent-network.mjs /opt/clean-vpn/lib/
 COPY scripts/containers/native-runtime-entrypoint.sh /usr/local/bin/native-runtime
 COPY provenance.json /opt/clean-vpn/source-provenance.json
 RUN chmod 0755 /usr/local/bin/native-runtime

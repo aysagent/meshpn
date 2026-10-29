@@ -31,8 +31,10 @@ node scripts/clean-vpn-native-runtime-config.mjs create \
 контейнере использовать `--publish=3443`. Генератор сам ничего не публикует,
 не устанавливает службы и не меняет сеть. Передавать каждой роли только её
 каталог из bundle, как описано в [runtime](clean-vpn-native-runtime.md).
-Container launcher по-прежнему предназначен для boring-tls: этот шаг не добавляет
-в него поддержку lifecycle combo/transparent.
+Первичная приёмка портов использовала boring-tls launcher. Следующее дополнение:
+[combo LAN runtime](clean-vpn-native-combo-runtime.md) с явным replay volume,
+совместной нагрузкой packet/relay и crash/recreate в отдельных контейнерах.
+Standalone transparent launcher пока не добавлен.
 
 Независимая проверка сохранённого capture:
 
@@ -129,9 +131,10 @@ Linux-стенду; для Mac использовать вложенный Docke
 
 ## Что дальше
 
-1. Transparent: закрепить матрицу фрагментации/размеров ClientHello, таймаутов,
-   обрывов, replay и освобождения ресурсов на тестовом порту.
-2. Combo: одновременная нагрузка на packet/relay ветки, их health/recovery;
-   затем отдельный контейнерный lifecycle с явным replay volume.
+1. Завершён bounded checkpoint: [transparent faults](clean-vpn-native-transparent.md)
+   и [combo нагрузка/lifecycle](clean-vpn-native-combo-runtime.md). Продолжение —
+   длительный mixed soak, loss/delay/reordering и новые случаи по его результатам.
+2. Расширять готовность launcher отдельно от native engine: автоматический
+   combo bundle, end-to-end relay health и standalone transparent provisioning.
 3. Когда узлы доступны — ограниченный тест на отдельном порту и в отдельных
    namespace, сохраняя повседневную пару; затем независимый capture и benchmark.

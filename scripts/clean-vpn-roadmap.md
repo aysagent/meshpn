@@ -4,8 +4,13 @@
 [тестовые порты и изолированная разработка transparent/combo](clean-vpn-native-test-ports.md).
 Действующую Radxa↔VPS пару не останавливать и не обновлять ради испытаний.
 Текущий этап — локальная Linux-лаборатория на Mac, без подключения к узлам.
-После приёмки `3443` — прозрачный HTTPS relay (границы ClientHello, обрывы,
-ресурсы/replay), затем combo (обе ветки, health/recovery и контейнерный lifecycle).
+Приёмка `3443` пройдена. Следующий bounded checkpoint также реализован:
+[transparent faults](clean-vpn-native-transparent.md) и
+[combo LAN runtime](clean-vpn-native-combo-runtime.md): фрагментация ClientHello,
+таймауты/обрывы/ресурсы, replay, совместная нагрузка обеих веток, namespace
+guard и crash/recreate контейнеров. Далее — длительный mixed soak и netem
+loss/delay/reordering; combo bundle и end-to-end relay health остаются отдельными
+расширениями (нынешний health не доказывает доступность HTTPS origin).
 Физическое сосуществование проверять позднее на отдельном порту **и в отдельном
 netns**, с отдельными ключами, конфигурацией и replay state.
 
