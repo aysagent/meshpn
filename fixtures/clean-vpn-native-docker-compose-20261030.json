@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "kind": "native-managed-compose-lab",
+  "status": "passed",
+  "checks": [
+    "compose-pair-supervised-engines-active",
+    "real-tun-authenticated-packet-roundtrip",
+    "compose-private-dns-udp-tcp-nss-and-public-positive-control",
+    "compose-private-dns-transaction-servfail-without-public-fallback",
+    "client-add-revoke-reload-without-existing-client-interruption",
+    "compose-private-dns-revoke-outage-and-recovery-no-public-fallback",
+    "both-roles-http-admin-auth-diagnostics-and-verified-TLS-browser-capture",
+    "stop-retains-guard-no-packet-forwarding",
+    "stopped-engine-cannot-bypass-DNS-through-direct-port53",
+    "start-restores-packet-path",
+    "engine-sigkill-auto-recovery"
+  ],
+  "scope": "internal bridge; real namespace runtime and HTTP admin; no physical hosts or reboot",
+  "images": [
+    {
+      "name": "localhost/cvpn-managed-alpine:private-dns-local-20261030",
+      "id": "sha256:361ee1c9b6309297c35d1bae2172d36b5147e48d712f2c97f73dafb220a83d72",
+      "architecture": "arm64",
+      "size": 108258049
+    },
+    {
+      "name": "localhost/cvpn-managed-web-alpine:status-20261030",
+      "id": "sha256:860d7fba27f836e3b49409368f56b64950eb8480f65e089559933153fa9a782c",
+      "architecture": "arm64",
+      "size": 77235276
+    }
+  ],
+  "cleanupErrors": [],
+  "environment": {
+    "engine": "Docker Engine 28.5.2",
+    "compose": "Docker Compose 2.40.3",
+    "architecture": "arm64",
+    "kernel": "7.2.5-200.fc44.aarch64",
+    "storageDriver": "vfs",
+    "cgroupDriver": "systemd",
+    "isolation": "NIC-less disposable systemd container inside the existing Podman Linux VM; nested daemon, Unix socket, private image storage; no host Docker socket"
+  },
+  "limitations": [
+    "not Docker Desktop or amd64 acceptance",
+    "no physical host deployment or cold reboot",
+    "does not test address-discovery overlay; source uses fixed client IPv4",
+    "no internet connectivity in outer daemon container",
+    "image size is local Docker uncompressed inspect Size; not directly comparable to Podman accounting"
+  ],
+  "cleanupVerification": {
+    "nestedContainersRemaining": 0,
+    "nestedVolumesRemaining": 0,
+    "nestedNetworks": [
+      "host",
+      "none"
+    ],
+    "supersededPlainDindRemoved": true
+  },
+  "sourceGateCommit": "71df06f"
+}
