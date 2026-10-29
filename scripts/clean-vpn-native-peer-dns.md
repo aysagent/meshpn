@@ -277,3 +277,35 @@ WAN и поддельный разрешённый source IP, native SIGHUP revo
 Применяются сгенерированные production `nativeNetworkPlan` firewall rules,
 а не разрешение всего трафика. Unit relay отдельно проверяет pending TCP revoke,
 per-peer saturation и освобождение FD. Никакие физические узлы не обновлялись.
+
+### Ограниченный fault/soak
+
+Для такого же изолированного стенда доступен один прогон 300–600 секунд:
+
+```sh
+CVPN_DISPOSABLE_HOST_NET=1 CVPN_PEER_DNS_SOAK_SECONDS=300 \
+  node scripts/test-native-peer-dns-tunnel.mjs
+```
+
+Он запускает двух реальных TLS/TUN клиентов, держит четыре TCP-запроса одного
+peer и проверяет DNS второго, затем повторяет UDP/TCP на фоне atomic rename,
+revoke, pending transaction, повреждения registry и остановки/запуска backend.
+Для каждого этапа проверяется ожидаемый A/NXDOMAIN/SERVFAIL, счётчик public
+upstream не должен увеличиваться. В конце сравниваются FD, threads и RSS
+обоих клиентов и exit; все процессы/netns/interface удаляются.
+
+Прогон 2026-10-30: 301 секунда, 633 раунда, минимум 17 724 приватных запроса,
+64 restart registry backend, **0 private→public fallback**. За этот прогон:
+
+| Процесс | FD до → после | Threads до → после | RSS KiB до → после |
+| --- | --- | --- | --- |
+| Exit | 9 → 9 | 2 → 2 | 6476 → 6532 |
+| Client 1 | 7 → 7 | 2 → 2 | 6376 → 6424 |
+| Client 2 | 7 → 7 | 2 → 2 | 6356 → 6412 |
+
+Сэмплы берутся после полного раунда; это проверка восстановления ресурсов,
+не измерение мгновенного максимума под пиковым количеством jobs. Native binary
+в этом soak соответствовал `a9cb8bd`. Во время параллельного аудита найден и
+исправлен inode/rollback race (`09dc688`); новый resolver отдельно прошёл
+23/23 Linux unit/cross-process проверки и повтор коротких реальных TLS/TUN и
+systemd-resolved матриц. Этот тест не заменяет длительную эксплуатацию.
