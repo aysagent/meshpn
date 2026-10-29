@@ -2,7 +2,7 @@
   "schema": 1,
   "kind": "native-private-dns-reload-churn",
   "date": "2026-10-30",
-  "status": "normal-engine-passed-tsan-separate",
+  "status": "normal-and-full-engine-tsan-passed",
   "engineSha256": "48df7b82267565fd8ec64103b2f78c35aa5cb5c5421b7b650023b78bf4a40298",
   "checks": 12,
   "reloadRounds": 6,
@@ -18,5 +18,18 @@
   "namespacesAndProcessesCleaned": true,
   "physicalHostsChanged": false,
   "macNetworkChanged": false,
-  "scope": "isolated privileged NIC-less Linux container, actual native TUN/TLS/DNS, no daemon restarts outside fixture"
+  "scope": "isolated privileged NIC-less Linux container, actual native TUN/TLS/DNS, no daemon restarts outside fixture",
+  "threadSanitizerFollowup": {
+    "checks": 12,
+    "engineSha256": "56d15d8ef5e0e046478303a0fac2667fc19f52c5e952bda66a7ef7cef0fdb69c",
+    "sourceEngineSha256": "4fdd69e13e1b67037ed75160ea29e811bf1285941f18071e7deb890e69e7ff43",
+    "signalFlags": "lock-free atomic sig_atomic_t; reload exchange(0)",
+    "options": "halt_on_error=1:exitcode=66:log_path=/tmp/tsan-private",
+    "reportFilesAfterFullCleanup": 0,
+    "warningOrFatalInHarnessLog": false,
+    "rawLogSha256": "a989db11a182794eff6185f063088411f43fc9ea0783245b6f530b3a5c684851",
+    "dependencyLibrariesInstrumented": false,
+    "applicationThreadBudgetRelaxed": false,
+    "cleanup": "lo-only; zero named netns; no native or fixture processes remaining"
+  }
 }
