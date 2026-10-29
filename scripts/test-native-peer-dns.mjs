@@ -106,6 +106,12 @@ test('registry reads reject symlinks, permissive modes and oversize contents', t
   fs.symlinkSync(tmp.filename, path.join(tmp.directory, 'linked')); assert.throws(() => readPeerDnsRegistry(path.join(tmp.directory, 'linked')));
   tmp.publish('x'.repeat(PEER_DNS_LIMITS.registryBytes + 1)); assert.throws(() => readPeerDnsRegistry(tmp.filename));
 });
+test('unfinished manager transaction fails closed including a dangling marker symlink', t => {
+  const tmp = temporary(t), marker = path.join(tmp.directory, 'transaction.json');
+  fs.writeFileSync(marker, '{}', { mode: 0o600 }); assert.throws(() => readPeerDnsRegistry(tmp.filename), /peer_dns_transaction_pending/);
+  fs.unlinkSync(marker); fs.symlinkSync(path.join(tmp.directory, 'absent'), marker); assert.throws(() => readPeerDnsRegistry(tmp.filename), /peer_dns_transaction_pending/);
+  fs.unlinkSync(marker); assert.equal(readPeerDnsRegistry(tmp.filename).forward.size, 1);
+});
 test('UDP and fragmented/pipelined TCP serve same live registry and fail closed after corruption', async t => {
   const tmp = temporary(t), server = await startPeerDns({ registry: tmp.filename, port: 0 }); t.after(() => server.close());
   const q = makeDnsQuery('laptop.mpn'); assert.equal(parseDns(await udpQuery(server.port, q)).counts[0], 1);

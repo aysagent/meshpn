@@ -20,7 +20,7 @@ export function peerDnsSnapshot(registry) {
   requireValue(Array.isArray(registry.clients) && registry.clients.length <= 254, 'peer_dns_registry_clients');
   const names = new Set(), ips = new Set(), forward = new Map(), reverse = new Map();
   for (const client of registry.clients) {
-    requireValue(client && typeof client.name === 'string' && /^[a-z][a-z0-9-]{0,30}[a-z0-9]$|^[a-z]$/.test(client.name), 'peer_dns_client_name');
+    requireValue(client && typeof client.name === 'string' && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(client.name), 'peer_dns_client_name');
     requireValue(typeof client.ipv4 === 'string' && /^10\.99\.0\.(?:[2-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-4])$/.test(client.ipv4), 'peer_dns_client_ipv4');
     requireValue(typeof client.revoked === 'boolean', 'peer_dns_client_revoked');
     requireValue(!names.has(client.name) && !ips.has(client.ipv4), 'peer_dns_duplicate_client');
@@ -43,6 +43,12 @@ export function readPeerDnsRegistry(filename) {
       && (!(st.mode & 0o022) || (st.mode & 0o1000)), 'peer_dns_registry_parent');
     if (dir === '/') break;
   }
+  const noPending = () => {
+    try { fs.lstatSync(path.join(path.dirname(filename), 'transaction.json')); }
+    catch (error) { if (error.code === 'ENOENT') return; throw error; }
+    throw new Error('peer_dns_transaction_pending');
+  };
+  noPending();
   const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   try {
     const st = fs.fstatSync(fd);
@@ -54,7 +60,8 @@ export function readPeerDnsRegistry(filename) {
       if (!count) break;
       used += count; requireValue(used <= MAX_REGISTRY, 'peer_dns_registry_size');
     }
-    return peerDnsSnapshot(JSON.parse(bytes.subarray(0, used).toString('utf8')));
+    const snapshot = peerDnsSnapshot(JSON.parse(bytes.subarray(0, used).toString('utf8')));
+    noPending(); return snapshot;
   } finally { fs.closeSync(fd); }
 }
 
