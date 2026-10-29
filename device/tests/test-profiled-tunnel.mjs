@@ -36,6 +36,8 @@ const common=['-g','-Wall','-Wextra','-Werror','-fsanitize=address,undefined'];
 execFileSync('cc',['-std=c11',...common,'-I'+root+'components/meshvpn_vpn/include','-c',root+'components/meshvpn_vpn/meshvpn_vpn_frame.c','-o',dir+'/frame.o'],{stdio:'inherit'});
 execFileSync('c++',['-std=c++17',...common,'-I'+h2source+'/lib/includes','-I'+dir,'-I'+deps+'/bssl-source/include','-I'+deps+'/brotli-source/c/include','-I'+root+'components/meshvpn_profiled_tls/include','-I'+root+'components/meshvpn_vpn/include',
  root+'tests/test_profile_tunnel.cc',...['profile_tunnel.cc','profile_client.cc','profile_gate.cc'].map(f=>root+'components/meshvpn_profiled_tls/'+f),root+'components/meshvpn_profiled_tls/profile_allocator.cc',root+'tests/profile_heap_adapter.cc',dir+'/frame.o',deps+'/bssl/libssl.a',deps+'/bssl/libcrypto.a',deps+'/brotli/libbrotlidec.a',deps+'/brotli/libbrotlicommon.a',h2build+'/libmeshpn_nghttp2.a','-o',dir+'/client'],{stdio:'inherit'});
+execFileSync('cc',['-std=c11',...common,'-I'+h2source+'/lib/includes','-I'+root+'components/meshvpn_profiled_tls',root+'tests/test_profile_alps.c',h2build+'/libmeshpn_nghttp2.a','-o',dir+'/test-alps'],{stdio:'inherit'});
+execFileSync(dir+'/test-alps',[],{stdio:'inherit'});
 const results=[];
 async function client(port,mode='success',opts={}) {
  const report=await new Promise((resolve,reject)=>{

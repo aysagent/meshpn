@@ -8,5 +8,8 @@ if(NOT nghttp2_revision STREQUAL "534b74b72524e962c18c7146470914632ca7eb2d")
     message(FATAL_ERROR "Unexpected nghttp2 source revision")
 endif()
 file(GLOB nghttp2_sources "${nghttp2}/lib/*.c")
+set(profile_h2_alps "${CMAKE_CURRENT_LIST_DIR}/profile_h2_alps.c")
+list(APPEND nghttp2_sources "${profile_h2_alps}")
+set_source_files_properties("${profile_h2_alps}" PROPERTIES INCLUDE_DIRECTORIES "${nghttp2}/lib")
 set_source_files_properties(${nghttp2_sources} PROPERTIES COMPILE_DEFINITIONS
     "NGHTTP2_STATICLIB;BUILDING_NGHTTP2;HAVE_ARPA_INET_H=1;HAVE_NETINET_IN_H=1;HAVE_UNISTD_H=1;HAVE_CLOCK_GETTIME=1;HAVE_DECL_CLOCK_MONOTONIC=1")

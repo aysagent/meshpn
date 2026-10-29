@@ -135,3 +135,8 @@ worker, shares the bounded allocator and selects H1/H2 through ALPN.
 Tests use real JS exit connections for both versions and adversarial H2 peers.
 [Integration and limits](../../docs/profiled-tls.md),
 [results](../../reports/2026-10-29-profiled-tls-http2.md).
+
+The primary interoperability target is now the current native engine.
+`device/tests/build-native-exit-lab.sh` and `test-native-profiled-tunnel.mjs`
+exercise it with ALPS on/off and malformed settings, without TUN/NAT.
+[Native verification](../../reports/2026-10-29-native-profiled-tls-alps.md).

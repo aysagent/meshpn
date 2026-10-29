@@ -48,5 +48,9 @@ are persisted by the VPN config component. Real board memory/stack validation
 is still required; arbitrary profile import is not implemented. HTTP/2 uses pinned
 nghttp2 (see `nghttp2.cmake`) with custom bounded PSRAM session allocation, HPACK,
 flow control and one duplex POST stream. Raw IPv4 framing is wrapped in DATA.
-Nonempty peer ALPS settings are explicitly rejected pending an ALPS adapter.
+The native exit ALPS subset (codepoint 17613, at most six unique settings IDs
+1–6 in one bounded SETTINGS frame) is applied before stream creation. The
+private nghttp2 adapter shares the native pin and must be re-audited on upgrade.
+No synthetic SETTINGS ACK or h2c upgrade is used. Current native engine tests
+cover ALPS on/off; JS exit tests retain H1 compatibility.
 Matching JA3/JA4 does not establish complete browser or HTTP/2 fingerprint fidelity.

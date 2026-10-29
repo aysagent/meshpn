@@ -19,7 +19,9 @@
 с фиксированным JA3/JA4-профилем, TLS 1.3, HTTP/2 и HTTP/1.1 Bearer v2 и PSRAM worker.
 [HTTP/2: реализация и offline-проверки](reports/2026-10-29-profiled-tls-http2.md).
 Настройки/ключ/endpoint сохраняются, диагностика показывает профиль каждой попытки.
-Локальный JS exit проверен, доступны сборки всех трёх плат с `PROFILED_TLS=1`.
+Проверен актуальный native exit с ALPS on/off; JS exit оставлен для совместимости.
+[Native/ALPS: отчёт](reports/2026-10-29-native-profiled-tls-alps.md).
+Доступны сборки всех трёх плат с `PROFILED_TLS=1`.
 Без аппаратной приёмки не заявляются скорость и достаточность памяти под нагрузкой.
 [Настройка](docs/profiled-tls.md), [отчёт](reports/2026-10-29-profiled-tls-transport.md).
 

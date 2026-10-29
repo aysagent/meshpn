@@ -965,6 +965,8 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(profile, "error", vs.profiled.error);
     cJSON_AddNumberToObject(profile, "ssl_error", vs.profiled.ssl_error);
     cJSON_AddNumberToObject(profile, "http2_error", vs.profiled.http2_error);
+    cJSON_AddBoolToObject(profile, "alps", vs.profiled.alps);
+    cJSON_AddNumberToObject(profile, "alps_bytes", vs.profiled.alps_bytes);
     cJSON_AddNumberToObject(profile, "verify_error", vs.profiled.verify_error);
     cJSON_AddNumberToObject(profile, "tls_bytes_sent", vs.profiled.tls_bytes_sent);
     if (vs.profiled_stack_spare) cJSON_AddNumberToObject(profile, "last_worker_stack_spare_bytes", vs.profiled_stack_spare);

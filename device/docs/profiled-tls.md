@@ -2,8 +2,8 @@
 
 Транспорт `boring-tls` использует TLS 1.3, фиксированный браузерный ClientHello,
 проверку сертификата/имени/времени и clean-vpn Bearer **v2** с TLS exporter.
-Поддержаны **HTTP/2 и HTTP/1.1**, как у JS clean-vpn `boring-tls`: выбор через ALPN,
-по умолчанию сервер предпочитает HTTP/2. Версии HTTP/1.2 в этом протоколе нет.
+Актуальный **native clean-vpn использует HTTP/2**, поддержан с ALPS и без него.
+HTTP/1.1 сохранён для обратной совместимости со старым JS exit; выбор через ALPN. Версии HTTP/1.2 в этом протоколе нет.
 Каждый новый ClientHello, включая повторный после HRR, проверяется локально до
 отправки. При несовпадении JA3 или JA4 соединение закрывается.
 
@@ -39,6 +39,31 @@ desktop helper не изменяются. Кэш отделён от обычн�
 переключается автоматически на DIRECT при включённом kill switch.
 
 ## Exit и настройки
+
+### Актуальный native exit
+
+Использовать native `boring-tls` listener с HTTP/2. На плате выбрать `boring-tls`,
+указать адрес/порт, имя сертификата, доверенный CA и shared key выбранного peer.
+32-байтовый файл `secret_path` native exit соответствует 64 hex-символам поля
+Shared HMAC key на плате. Адрес этого peer должен быть **10.99.0.2** — адрес
+нынешнего транспорта платы. Не назначать его второму одновременно работающему
+клиенту с отдельным ключом.
+
+ALPS на exit можно оставить выключенным либо включить `"alps": true` в его
+конфигурации: оба режима проверены. На плате дополнительного переключателя нет.
+При ALPS настройки HTTP/2 применяются до открытия stream 1, без лишнего ACK.
+Поддержан codepoint 17613 и ограниченный формат текущего native exit; некорректные
+настройки отклоняются до HTTP-авторизации и отправки IP. SETTINGS на проводе
+после handshake продолжают обрабатываться обычным образом.
+
+Native engine запускается через его существующий config/service, а не командой
+`node scripts/clean-vpn.js`. Развёртывание и управление:
+[native exit](../../scripts/clean-vpn-native-exit-host.md),
+[настройки ALPS](../../scripts/clean-vpn-native-alps.md).
+Эти тесты не проверяют публичный combo-dispatch/transparent relay: проверен
+непосредственно native boring-tls listener.
+
+### Старый JS exit (обратная совместимость)
 
 Использовать обычный JS exit, **без `--tls-raw`**. Пример с уже
 подготовленными сертификатами и 32-байтовым shared key:
@@ -95,7 +120,7 @@ Optional mTLS из раздела basic TLS к этому транспорту �
 существующая кнопка TCP 1.1.1.1:443; она не подтверждает DNS/HTTPS.
 
 `vpn.profiled_tls` содержит attempt/generation, phase, expected/actual JA3 и JA4,
-match, ClientHello count, ALPN, authenticated, SSL/verification error и `http2_error`.
+match, ClientHello count, ALPN, authenticated, SSL/verification error и `http2_error`, `alps` и `alps_bytes`.
 `http2_error` содержит код библиотеки nghttp2 (отрицательный) либо код GOAWAY
 (неотрицательный); причину закрытия уточняет `phase`.
 `tls_bytes_sent` — снимок на момент смены phase, не непрерывный счётчик нагрузки.
@@ -108,7 +133,7 @@ match не разрешает новое соединение. Детальна�
 | `profile_mismatch` | Реальный ClientHello не совпал; он не отправлен |
 | `tls_handshake` / `certificate` | Проверить CA, имя, сроки сертификата, SSL/verify error |
 | `unsupported_alpn` | Exit не выбрал h2 или http/1.1 |
-| `h2_alps_unsupported` | Exit прислал непустые ALPS settings; этот вариант пока не интегрирован |
+| `h2_alps_invalid` | ALPS peer не соответствует поддержанному ограниченному формату |
 | `h2_protocol` / `h2_headers_limit` | Некорректный HTTP/2 или превышен лимит заголовков |
 | `h2_reset` / `h2_goaway` / `h2_end_stream` | Exit закрыл поток/сессию; клиент переподключается |
 | `h2_flow_timeout` | В очереди есть данные, но нет прогресса отправки 5 секунд |
@@ -153,10 +178,34 @@ NAT, firewall и Wi-Fi. Это проверка протокола, отмены
 
 Host-тесты проверяют обе версии с настоящим JS exit, многократные соединения,
 передачу за пределами окна, нулевые/малые окна и некорректные HTTP/2 кадры.
-Непустые ALPS settings от native exit пока отклоняются явно; совместимость
-с native exit этим тестом не подтверждается. HTTP/2 SETTINGS и HTTP-заголовки
+Отдельный тест запускает актуальный native engine в изолированном Linux-контейнере
+с AF_UNIX вместо TUN. Проверены ALPS on/off, повторные сессии, bulk, неверный ключ/CA/имя
+и семь повреждённых ALPS payload. Это проверка production TLS/H2/auth/framing,
+а не системного развёртывания exit, NAT или VPS. HTTP/2 SETTINGS и HTTP-заголовки
 не воспроизводят браузерный HTTP-отпечаток; точность JA3/JA4 сохраняется отдельно.
 
 Далее: прошить подключённую плату, проверить USB/AP → VPN, публичный IP,
 переподключение/kill switch и high-water/heap под нагрузкой. Затем повторить
 с остальными платами. Производительность пока не заявляется.
+
+### Воспроизведение native interoperability
+
+На Mac используется существующая лаборатория Podman. Нужны её build image и
+read-only cache с pinned native библиотеками; команда их не обновляет и не
+запускает сеть/маршрутизацию. Каталог результатов должен находиться под общей с
+VM директорией проекта, не в Mac `/tmp`.
+
+Из `device/`:
+
+```sh
+bash tests/build-native-exit-lab.sh perf-results/native-device-build-new
+# HOST_RUN — каталог, напечатанный test-profiled-tunnel.mjs после успешного запуска.
+node tests/test-native-profiled-tunnel.mjs HOST_RUN/client perf-results/native-device-build-new
+```
+
+`MESHPN_PODMAN_CONNECTION`, `MESHPN_NATIVE_LAB_IMAGE`, `MESHPN_NATIVE_LAB_CACHE`
+позволяют указать другую подготовленную лабораторию. Контейнер использует
+`--network=none --cap-drop=all`. Mac proxy слушает только 127.0.0.1 и пересылает
+зашифрованный TLS через stdio в loopback native engine. Корневой `native/` не
+изменяется; engine компилируется из текущего исходника, SHA сохраняются с отчётом.
+[Результат проверки](../reports/2026-10-29-native-profiled-tls-alps.md).

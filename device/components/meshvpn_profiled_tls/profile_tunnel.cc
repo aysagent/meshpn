@@ -6,6 +6,7 @@
 #include <openssl/pem.h>
 #include <openssl/x509.h>
 #include <nghttp2/nghttp2.h>
+#include "profile_h2_alps.h"
 #include <algorithm>
 #include <sys/select.h>
 #include <fcntl.h>
@@ -232,6 +233,14 @@ struct Http2 {
         int rc=nghttp2_session_client_new3(&session,cb,this,opt,&memory);
         nghttp2_session_callbacks_del(cb);nghttp2_option_del(opt);
         if(rc)return lib_error(rc);
+        c.diag.alps=SSL_has_application_settings(c.ssl.get());
+        if(c.diag.alps) {
+            const uint8_t *peer=nullptr;size_t length=0;
+            SSL_get0_peer_application_settings(c.ssl.get(),&peer,&length);
+            c.diag.alps_bytes=length;
+            rc=meshvpn_h2_apply_alps(session,peer,length);
+            if(rc) {c.diag.http2_error=rc;return fail("h2_alps_invalid",EPROTO);}
+        }
         const nghttp2_settings_entry settings[]={
             {NGHTTP2_SETTINGS_ENABLE_PUSH,0},{NGHTTP2_SETTINGS_HEADER_TABLE_SIZE,4096},
             {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE,262144},{NGHTTP2_SETTINGS_MAX_HEADER_LIST_SIZE,4096}};
@@ -348,11 +357,6 @@ int meshvpn_profile_tunnel_run(const meshvpn_profile_tunnel_options_t *options) 
     char token[33]{},request[640]{};
     if(!bearer(c.ssl.get(),o.psk_hex,token))return c.failure("exporter_or_key",EACCES);
     if(http2) {
-        // JS clean-vpn does not send ALPS. Do not silently ignore a different
-        // server's negotiated HTTP/2 settings; that needs an ALPS adapter.
-        const uint8_t *settings=nullptr;size_t length=0;
-        SSL_get0_peer_application_settings(c.ssl.get(),&settings,&length);
-        if(length){OPENSSL_cleanse(token,sizeof(token));return c.failure("h2_alps_unsupported",EPROTONOSUPPORT);}
         Http2 h(c);int rc=h.setup(token);OPENSSL_cleanse(token,sizeof(token));
         if(rc)return c.failure(h.phase,h.error);
         return h.run();

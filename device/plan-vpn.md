@@ -12,10 +12,14 @@
 точный gate до отправки ClientHello, проверка tunnel ACK, RX/TX, отмена и reconnect
 на одном PSRAM worker. Ключ/endpoint сохраняются отдельно; NVS v1–v5 мигрируют
 в v6. Локальный настоящий JS exit проверен без VPS и плат.
-Требуются `PROFILED_TLS=1` и JS exit `--type=tls` без `--tls-raw`. Версия HTTP
-выбирается через ALPN; `--http-vers=1.1` на exit необязателен. HTTP/2 с pinned
+Требуется `PROFILED_TLS=1`; основной exit — текущий native `boring-tls` (HTTP/2).
+Для старого JS exit остаётся `--type=tls` без `--tls-raw` и ALPN H2/H1. HTTP/2 с pinned
 nghttp2 проверен с настоящим JS exit, малыми/нулевыми окнами и ошибками протокола.
-Произвольный импорт, native ALPS settings и аппаратные измерения остаются.
+Native ALPS добавлен и проверен с текущим `native/clean_vpn/engine.cc`: H2,
+Bearer v2, повторные соединения, bulk и отказ на повреждённых ALPS. JS exit
+сохраняется как регрессия обратной совместимости, а не актуальная целевая реализация.
+Произвольный импорт и аппаратные измерения остаются.
+[Native + ALPS: отчёт](reports/2026-10-29-native-profiled-tls-alps.md).
 [HTTP/2: результаты](reports/2026-10-29-profiled-tls-http2.md).
 [Настройка](docs/profiled-tls.md), [отчёт](reports/2026-10-29-profiled-tls-transport.md).
 
@@ -237,7 +241,7 @@ VPN оставлен выключенным для диагностики.
 | Дополнительный `udp` | Реализован, ручные speed tests XIAO выполнены | Регрессия текущей сборки и измерение потерь на одинаковом пути |
 | WireGuard | Реализован; пользователь проверял соединение и интернет на XIAO | Ресурсы/долгая нагрузка/rekey текущей сборки; производительность отдельно от plain TCP/UDP |
 | Этап 3: обычный `tls` | Реализован raw TLS 1.2 через esp-tls/mbedTLS с exit `--type=tls --tls-raw`, CA/name/date checks, опциональным mTLS и host tests | Аппаратная приёмка; совместимый exporter/Bearer/HTTP handshake отсутствует |
-| Этап 4: профилированный TLS | Фиксированный профиль + gate; TLS 1.3, H1/H2/Bearer v2, RX/TX/lifecycle, настройки и диагностика; 32 KiB PSRAM worker; host real-exit tests, сборки трёх плат | Произвольный импорт, native ALPS settings, hardware память/stack/RNG/скорость и приёмка |
+| Этап 4: профилированный TLS | Фиксированный профиль + gate; TLS 1.3, H1/H2/Bearer v2, RX/TX/lifecycle, настройки и диагностика; 32 KiB PSRAM worker; host real-exit tests, сборки трёх плат | Произвольный импорт, hardware память/stack/RNG/скорость и приёмка |
 | Этап 5: `transparent-tls` | Не реализован | enc-SNI, восстановление CH, relay и LAN interception |
 | Этап 6: `combo-tls` | Не реализован | Совместить защищённый IP-туннель и transparent flows |
 

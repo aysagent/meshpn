@@ -12,6 +12,8 @@ typedef struct {
     meshvpn_profile_check_t actual;
     unsigned hellos;
     int error, ssl_error, http2_error;
+    bool alps;
+    size_t alps_bytes;
     long verify_error;
     bool authenticated;
     uint64_t tls_bytes_sent;

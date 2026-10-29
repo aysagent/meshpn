@@ -1,4 +1,4 @@
-// Exercise exactly the production TLS session against the real JS exit.
+// Exercise exactly the production TLS session against real exit implementations.
 #include "profile_tunnel.h"
 extern "C" {
 #include "meshvpn_vpn_frame.h"
@@ -24,6 +24,7 @@ struct Test {
     size_t offset=0;
     bool failed=false,cancel_ready=false;
     unsigned total=64;
+    bool native=false;
     meshvpn_profile_tunnel_diag_t diag{};
     std::chrono::steady_clock::time_point end=std::chrono::steady_clock::now()+std::chrono::seconds(14);
 };
@@ -36,14 +37,25 @@ static size_t peek(void *p,const uint8_t **out) {
     *out=t.frame+t.offset;return t.frame_length-t.offset;
 }
 static void sent(void *p,size_t n) { auto&t=*static_cast<Test*>(p);t.offset+=n;assert(t.offset<=t.frame_length);if(t.offset==t.frame_length){t.sent++;t.offset=0;} }
-static bool packet(void*p,const uint8_t*b,size_t n) { auto&t=*static_cast<Test*>(p);if(n!=t.frame_length-4||memcmp(b,t.frame+4,n)){t.failed=true;return false;}t.received++;return true; }
+static bool packet(void *p,const uint8_t *b,size_t n) {
+    auto &t=*static_cast<Test*>(p);
+    uint8_t expected[1400];
+    memcpy(expected,t.frame+4,t.frame_length-4);
+    if(t.native) {
+        memcpy(expected+12,t.frame+20,4);
+        memcpy(expected+16,t.frame+16,4);
+        assert(meshvpn_vpn_repair_checksums(expected,t.frame_length-4));
+    }
+    if(n!=t.frame_length-4 || memcmp(b,expected,n)) {t.failed=true;return false;}
+    t.received++;return true;
+}
 static bool receive(void*p,const uint8_t*b,size_t n) { auto&t=*static_cast<Test*>(p);return meshvpn_vpn_decode(&t.rx,b,n,packet,p); }
 static bool healthy(void*p) { return !static_cast<Test*>(p)->failed; }
 static std::string readfile(const char *p) {std::ifstream f(p);return std::string(std::istreambuf_iterator<char>(f),{});}
 int run_once(int argc,char**argv) {
     signal(SIGPIPE,SIG_IGN);
     if(argc!=6)return 2;
-    Test test;std::string mode=argv[5];test.cancel_ready=mode=="cancel";
+    Test test;test.native=getenv("MESHPN_NATIVE_EXIT")!=nullptr;std::string mode=argv[5];test.cancel_ready=mode=="cancel";
     if(mode=="disconnect"||mode=="invalid"||mode=="backpressure")test.total=10000000;
     if(mode=="bulk") {test.frame_length=1404;test.total=1024;}
     size_t packet_length=test.frame_length-4;
@@ -60,7 +72,7 @@ int run_once(int argc,char**argv) {
         &test,current,diagnostic,ready,peek,sent,receive,healthy};
     if(mode=="cancel_auth"||mode=="cancel_handshake")test.end=std::chrono::steady_clock::now()+std::chrono::milliseconds(100);
     int rc=meshvpn_profile_tunnel_run(&o);close(fd);
-    printf("{\"rc\":%d,\"ready\":%u,\"packets\":%u,\"sent\":%u,\"peeks\":%u,\"phase\":\"%s\",\"alpn\":\"%s\",\"ja3\":\"%s\",\"ja4\":\"%s\",\"hellos\":%u,\"tls_bytes\":%llu}\n",rc,test.ready,test.received,test.sent,test.peeks,test.diag.phase,test.diag.alpn,test.diag.actual.ja3,test.diag.actual.ja4,test.diag.hellos,static_cast<unsigned long long>(test.diag.tls_bytes_sent));
+    printf("{\"rc\":%d,\"ready\":%u,\"packets\":%u,\"sent\":%u,\"peeks\":%u,\"phase\":\"%s\",\"alpn\":\"%s\",\"ja3\":\"%s\",\"ja4\":\"%s\",\"alps\":%s,\"alps_bytes\":%zu,\"hellos\":%u,\"tls_bytes\":%llu}\n",rc,test.ready,test.received,test.sent,test.peeks,test.diag.phase,test.diag.alpn,test.diag.actual.ja3,test.diag.actual.ja4,test.diag.alps?"true":"false",test.diag.alps_bytes,test.diag.hellos,static_cast<unsigned long long>(test.diag.tls_bytes_sent));
     if(mode=="success"||mode=="bulk")return !(rc==ECANCELED&&test.received==test.total&&test.ready==1&&test.diag.actual.match);
     if(mode=="cancel")return !(rc==ECANCELED&&test.ready==1&&test.peeks==0);
     if(mode=="disconnect"||mode=="invalid"||mode=="backpressure")return !(rc!=0&&test.ready==1&&test.received<test.total);
