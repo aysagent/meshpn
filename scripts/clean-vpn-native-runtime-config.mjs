@@ -13,7 +13,7 @@ import { tcpPort } from './lib/native-port.mjs';
 const defaultProfile = fileURLToPath(new URL('../fixtures/native-tls-profiles/chromium-156-bounded-cold.json', import.meta.url));
 export function parseRuntimeConfig(args) {
   const { values: v, positionals } = parseArgs({ args, allowPositionals: true, options: {
-    help: { type: 'boolean' }, ...Object.fromEntries(['directory', 'mode', 'endpoint', 'exit-address', 'port', 'exit-port', 'server-name', 'clients', 'days', 'profile'].map(k => [k, { type: 'string' }])) } });
+    help: { type: 'boolean' }, ...Object.fromEntries(['directory', 'mode', 'endpoint', 'exit-address', 'port', 'exit-port', 'server-name', 'clients', 'days', 'profile', 'transport', 'public-name', 'relay-port'].map(k => [k, { type: 'string' }])) } });
   if (v.help) return { help: true };
   assert.deepEqual(positionals, ['create'], 'create required');
   // parseArgs accepts duplicate options; credentials must never depend on the
@@ -29,12 +29,19 @@ export function parseRuntimeConfig(args) {
   assert.ok(Number.isInteger(clients) && clients >= 1 && clients <= 32, 'clients_1_to_32');
   assert.ok(Number.isInteger(days) && days >= 1 && days <= 365, 'days_1_to_365');
   const port = tcpPort(v.port ?? 443), exitPort = tcpPort(v['exit-port'] ?? port);
+  const transport=v.transport??'boring-tls';assert.ok(['boring-tls','combo-tls'].includes(transport),'supported_transport_required');
+  const publicName=v['public-name'],relayPort=tcpPort(v['relay-port']??10443);
+  if(transport==='combo-tls'){
+    assert.match(publicName??'',/^(?=.{1,100}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/,'public_name_required');
+    assert.ok(publicName.split('.').every(l=>l.length<=63));
+    assert.ok(![1053,2222].includes(relayPort),'relay_reserved_port');
+  }else assert.ok(publicName===undefined&&v['relay-port']===undefined,'combo_options_only');
   const common = { version: 1, tun: 'cvpn0', port };
   runtimePlan({ ...common, role: 'client', address: v.endpoint, dns: true });
   runtimePlan({ ...common, port: exitPort, role: 'exit', address: v['exit-address'] });
   const profile = fs.readFileSync(v.profile ?? defaultProfile);
   assert.ok(profile.length <= 16384); JSON.parse(profile);
-  return { directory: v.directory, mode: v.mode, endpoint: v.endpoint, port, exitPort, exitAddress: v['exit-address'], serverName: v['server-name'], clients, days, profile };
+  return { transport, publicName, relayPort, directory: v.directory, mode: v.mode, endpoint: v.endpoint, port, exitPort, exitAddress: v['exit-address'], serverName: v['server-name'], clients, days, profile };
 }
 
 export function createRuntimeConfig(o) {
@@ -63,19 +70,29 @@ export function createRuntimeConfig(o) {
       '-set_serial', '0x' + randomBytes(16).toString('hex'), '-days', String(o.days), '-extfile', 'authority/extensions.cnf', '-out', 'exit/cert.pem']);
     openssl(['verify', '-purpose', 'sslserver', '-verify_hostname', o.serverName, '-CAfile', 'authority/ca.pem', 'exit/cert.pem']);
     const at = (role, name) => o.mode === 'container' ? '/config/' + name : path.join(o.directory, role, name);
+    const combo=o.transport==='combo-tls',relaySecret=combo?randomBytes(32):null;
+    if(combo)write('exit/relay.psk',relaySecret);
+    const wrap=(role,packet,directory=role)=>combo?{version:1,transport:'combo-tls',role,boring:packet,transparent:{
+      version:1,transport:'transparent-tls',role,public_name:o.publicName,secret_path:at(directory,'relay.psk'),
+      destination_policy:{mode:'public-https',deny_ipv4:[]},
+      listen:{ipv4:role==='client'?'0.0.0.0':o.exitAddress,port:role==='client'?o.relayPort:exitPort},
+      ...(role==='client'?{exit:{ipv4:o.endpoint,port}}:{replay_directory:o.mode==='container'?'/replay/state':path.join(o.directory,'exit','replay')})}}:packet;
     const peers = [], clients = [];
     for (let i = 1; i <= o.clients; i++) {
       const role = `client-${i}`, peer = `10.99.0.${i + 1}`, secret = randomBytes(32);
       write(`${role}/psk`, secret); write(`exit/peer-${i}.psk`, secret);
       write(`${role}/ca.pem`, fs.readFileSync(path.join(o.directory, 'authority/ca.pem')));
       write(`${role}/profile.json`, o.profile);
-      json(`${role}/engine.json`, { version: 1, role: 'client', tun: 'cvpn0', address: o.endpoint, port,
-        dns: true, peer_ipv4: peer, server_name: o.serverName, ca: at(role, 'ca.pem'), secret_path: at(role, 'psk'), tls_profile_path: at(role, 'profile.json') });
+      if(combo)write(`${role}/relay.psk`,relaySecret);
+      const packet={ version: 1, role: 'client', tun: 'cvpn0', address: o.endpoint, port,
+        dns: true, peer_ipv4: peer, server_name: o.serverName, ca: at(role, 'ca.pem'), secret_path: at(role, 'psk'), tls_profile_path: at(role, 'profile.json'),...(combo?{sni:o.publicName}:{}) };
+      const config=wrap('client',packet,role);
+      json(`${role}/engine.json`,config);
       peers.push({ ipv4: peer, secret_path: at('exit', `peer-${i}.psk`) }); clients.push({ directory: role, ipv4: peer });
     }
-    json('exit/engine.json', { version: 1, role: 'exit', tun: 'cvpn0', address: o.exitAddress, port: exitPort, alps: true,
-      cert: at('exit', 'cert.pem'), key: at('exit', 'key.pem'), peers });
-    const manifest = { schema: 1, kind: 'native-runtime-config', mode: o.mode, endpoint: o.endpoint, port, exitPort, exitAddress: o.exitAddress,
+    json('exit/engine.json', wrap('exit', { version: 1, role: 'exit', tun: 'cvpn0', address: o.exitAddress, port: exitPort, alps: true,
+      cert: at('exit', 'cert.pem'), key: at('exit', 'key.pem'), peers }));
+    const manifest = { schema: 1, kind: 'native-runtime-config', transport:o.transport??'boring-tls', ...(combo?{publicName:o.publicName,relayPort:o.relayPort,relayIdentity:'shared-relay-PSK-per-exit; packet-PSKs-unique',replay:'explicit-init-on-target; never reset on restart'}:{}), mode: o.mode, endpoint: o.endpoint, port, exitPort, exitAddress: o.exitAddress,
       serverName: o.serverName, clients, certificateDays: o.days, profileSha256: createHash('sha256').update(o.profile).digest('hex'),
       networkChanged: false, nativeValidation: 'required-on-target-before-start',
       distribution: 'Each client gets only its client-N directory. Exit gets only exit/. Keep authority/ offline; never mount the whole bundle.' };
@@ -85,7 +102,7 @@ export function createRuntimeConfig(o) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const o = parseRuntimeConfig(process.argv.slice(2));
-    if (o.help) console.log('Usage: node scripts/clean-vpn-native-runtime-config.mjs create --directory=/NEW/private/bundle --mode=container|standalone --endpoint=EXIT_IPV4 --exit-address=EXIT_NAMESPACE_IPV4 --server-name=vpn.example.net [--port=443] [--exit-port=PORT] [--clients=1..32] [--days=1..365] [--profile=/profile.json]\nOffline only; creates private CA, unique per-client PSKs and Chromium subset profiles. --port is the client destination port; --exit-port defaults to it and sets the exit listener (use a different value only with explicit port mapping). Existing directory is never overwritten. Container files use /config paths; standalone files use the new absolute directory. Copy only the intended role directory; Linux runtime requires root-owned credentials.');
+    if (o.help) console.log('Usage: node scripts/clean-vpn-native-runtime-config.mjs create --directory=/NEW/private/bundle --mode=container|standalone --endpoint=EXIT_IPV4 --exit-address=EXIT_NAMESPACE_IPV4 --server-name=vpn.example.net [--port=443] [--exit-port=PORT] [--clients=1..32] [--days=1..365] [--profile=/profile.json] [--transport=boring-tls|combo-tls] [--public-name=relay.example --relay-port=10443]\nCombo requires --public-name, explicit LAN at launch and a separately initialized exit replay volume. Offline only; creates private CA, unique per-client PSKs and Chromium subset profiles. --port is the client destination port; --exit-port defaults to it and sets the exit listener (use a different value only with explicit port mapping). Existing directory is never overwritten. Container files use /config paths; standalone files use the new absolute directory. Copy only the intended role directory; Linux runtime requires root-owned credentials.');
     else console.log(JSON.stringify(createRuntimeConfig(o), null, 2));
   } catch (error) { console.error('NATIVE_CONFIG=failed: ' + (error.code ?? error.message) + '\nNo network or service settings changed. Any incomplete new directory is retained for inspection.'); process.exitCode = 1; }
 }

@@ -6,8 +6,34 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseRuntimeConfig, createRuntimeConfig } from './clean-vpn-native-runtime-config.mjs';
 import { tcpPort, publishedExitPort } from './lib/native-port.mjs';
+import {runtimePlan} from './lib/native-runtime-plan.mjs';
 const base = fs.realpathSync(os.tmpdir());
 const args = dir => ['create', '--directory=' + dir, '--mode=container', '--endpoint=192.0.2.10', '--exit-address=172.30.77.2', '--server-name=runtime.test', '--clients=2'];
+test('combo bundle gives unique packet identities, separate shared relay key and explicit replay state',()=>{
+  const root=fs.mkdtempSync(path.join(base,'native-combo-config-'));
+  try{for(const mode of ['container','standalone']){
+    const dir=path.join(root,mode),a=args(dir).filter(a=>!a.startsWith('--mode='));
+    const m=createRuntimeConfig(parseRuntimeConfig([...a,'--mode='+mode,'--transport=combo-tls','--public-name=relay.example','--port=3443','--exit-port=4443']));
+    const get=f=>fs.readFileSync(path.join(dir,f));
+    const clients=[1,2].map(i=>JSON.parse(get(`client-${i}/engine.json`))),exit=JSON.parse(get('exit/engine.json'));
+    assert.equal(m.transport,'combo-tls');assert.equal(exit.boring.peers.length,2);
+    assert.notEqual(clients[0].boring.peer_ipv4,clients[1].boring.peer_ipv4);
+    for(let i=1;i<=2;i++){
+      assert.deepEqual(get(`client-${i}/psk`),get(`exit/peer-${i}.psk`));
+      assert.deepEqual(get(`client-${i}/relay.psk`),get('exit/relay.psk'));
+      assert.notDeepEqual(get(`client-${i}/psk`),get(`client-${i}/relay.psk`));
+      assert.equal(clients[i-1].transparent.exit.port,3443);assert.equal(clients[i-1].boring.sni,'relay.example');
+      runtimePlan(clients[i-1],{lan:{interface:'eth1',subnet:'192.168.88.0/24'}});
+    }
+    assert.notDeepEqual(get('client-1/psk'),get('client-2/psk'));
+    assert.equal(exit.transparent.listen.port,4443);runtimePlan(exit);
+    assert.equal(exit.transparent.replay_directory,mode==='container'?'/replay/state':dir+'/exit/replay');
+    assert.equal(fs.existsSync(dir+'/exit/replay'),false);
+    assert.throws(()=>createRuntimeConfig(parseRuntimeConfig([...a,'--mode='+mode,'--transport=combo-tls','--public-name=relay.example'])),/EEXIST/);
+  }}finally{fs.rmSync(root,{recursive:true,force:true});}
+  for(const extra of [['--transport=combo-tls'],['--transport=transparent-tls'],['--public-name=relay.example'],
+    ['--transport=combo-tls','--public-name=relay.example','--relay-port=1053']])assert.throws(()=>parseRuntimeConfig([...args('/new/unused'),...extra]));
+});
 test('offline bundle isolates credentials, verifies server identity and refuses overwrites', () => {
   const root = fs.mkdtempSync(path.join(base, 'native-config-test-'));
   try {
