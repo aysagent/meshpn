@@ -1,0 +1,187 @@
+{
+  "schema": 1,
+  "kind": "native-runtime-container-lab",
+  "image": "localhost/clean-vpn-native-runtime:final-arm64",
+  "imageId": "sha256:e1942dd095830c121155d9133d63d5a86ef565bf7eb1248ea52dac6f25c43e38",
+  "architecture": "arm64",
+  "engineSha256": "f0eb2a326e6c67491da4e1d895745b3e3c125c5208fc38446e396cb8e8490d72",
+  "checks": [
+    "profiled-tunnel-and-dns-udp-tcp",
+    "loopback-dns-https-tcp-udp",
+    "isolated-lan-gateway-dns-https-tcp-udp",
+    "foreign-rules-preserved",
+    "same-namespace-reentry-audited",
+    "unreachable-upstreams-unhealthy",
+    "dns-restores-with-upstream",
+    "wrong-name-unhealthy",
+    "wrong-psk-unhealthy",
+    "wrong-ca-unhealthy",
+    "unreachable-exit-unhealthy",
+    "without-net-admin-refused",
+    "without-tun-refused",
+    "host-network-refused-before-mutation",
+    "unprivileged-shared-namespace-application",
+    "pid1-sigkill-shared-namespace-no-direct-fallback",
+    "lan-gateway-crash-no-direct-fallback",
+    "dead-engine-app-dns-blocked",
+    "replacement-works-old-namespace-stays-blocked",
+    "client-sigterm-clean",
+    "container-restart-healthy",
+    "independent-clienthello-profile-matched",
+    "exit-sigterm-clean"
+  ],
+  "status": "passed",
+  "scope": "internal-lab-only",
+  "firewallBackend": "nft",
+  "capture": "tcpdump: listening on eth0, link-type EN10MB (Ethernet), snapshot length 262144 bytes\n344 packets captured\n356 packets received by filter\n0 packets dropped by kernel",
+  "cleanup": {
+    "status": "passed"
+  },
+  "daemon": "Docker 28.5.2 (vfs) inside isolated Podman Linux VM; no published ports",
+  "independentCapture": {
+    "source": "offline-tcpdump-pcap",
+    "pcapSha256": "e000d5e8c0c998ef048cd862752af95a5c8dbc535cd356d95bd241d685a02758",
+    "counts": {
+      "packets": 344,
+      "selected": 344,
+      "withoutSyn": 0,
+      "fragmented": 0,
+      "truncated": 0
+    },
+    "connections": [
+      {
+        "status": "observed",
+        "ja3": "7da8f0a0169dcac0f3dcc8d52522dab2",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "ebd801d84634b0e03029c09ad34fe8a2",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "4bd786c6777808a561f27fcbac18eb10",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "0f23e4b46c4051b28025c942f318d0aa",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "0e5a1220a3e9fc61fc39219ad416d22f",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "6d638c743ff76bc97e5d655ebddc0f9a",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "3f32cf44f79755c105f2ddabaf5916fa",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "50b5eaf828b634ecda87524270182f13",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "a1d042674c39bfa77a0ccfb8dbdfcf9e",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "f0a3bcc91e42876bb901b049c0915c37",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "f8a5d8bd472b5beab58db0a4a87e9e25",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "3a9750a755d28318477d1fd7032cf24f",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "16f8e3ffb23578114305b466ae06f988",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "75558785ef8e377aac5d20e3525ce606",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "fb3b8aa60f535fb74276d7510ab7d2f0",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "78776ccba4d0897e7c536370673c1492",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "bf278823ed11ba666fb153a295850cf8",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "29d01cd03f7a3400e3dc4dcc9781171f",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "9dee4c326d31e3ea27ae7fc6d958cf3c",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "1c390e0e5b3e21fd82cd84e7fdf59840",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      },
+      {
+        "status": "observed",
+        "ja3": "6865f7015c03df8f26f4b40c65add553",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "profileStatus": "matched"
+      }
+    ]
+  },
+  "fullReportSha256": "0647782c9d93cc6e548edb3ff111a71c30cc92fbc1a33787adafd39f30e72747",
+  "limitations": [
+    "bounded smoke, not soak or capacity benchmark",
+    "reused previously verified ARM64 runtime image; native binary unchanged",
+    "separate namespace runtime acceptance; not host-profile systemd acceptance",
+    "partial Chromium profile match does not establish full browser indistinguishability"
+  ]
+}

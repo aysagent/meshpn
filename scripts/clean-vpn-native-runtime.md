@@ -378,3 +378,10 @@ Lab записывает приватный `.ownership.json` до создан�
 volume и network. Без совпадения cleanup отказывает. Это отдельный recovery
 для лаборатории, подходящий для `ExecStopPost` временного systemd unit;
 он не управляет production VPN или чужими контейнерами.
+
+Повторная приёмка 2026-10-29: Docker 28.5.2/vfs в изолированной Linux VM,
+ARM64 native runtime, LAN ingress и отдельный tcpdump observer. **23/23** checks,
+cleanup passed. [Компактный отчёт](../fixtures/clean-vpn-native-docker-20261029.json)
+содержит image/engine/pcap hashes и фактические отпечатки. Повторно использован
+проверенный runtime image; это bounded smoke, не новый soak и не приёмка
+host-profile systemd. Внешние порты не публиковались.
