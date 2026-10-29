@@ -60,3 +60,10 @@ handshake с прежним CA; старый leaf/key также остаётс�
 ошибочное имя, чужой CA/key/trust, недостаточный срок, плохие permissions,
 clientAuth purpose, занятый output и очистка после отказа native validation.
 Это не physical deployment и не тест рестарта рабочего VPN.
+
+Независимый review дополнительно проверяет замену отдельного trust-файла во
+время native validation: кандидат отклоняется и очищается, новый файл trust
+оператора сохраняется. Команда для этой проверки:
+`node --test scripts/test-native-control-plane-review.mjs`.
+Повтор Linux laboratory 2026-10-30 с `CVPN_ENGINE` и matching fixture прошёл
+12/12 без пропусков (10 renewal, включая native H1/H2, и 2 control-plane review).
