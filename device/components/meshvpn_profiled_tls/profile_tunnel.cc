@@ -322,20 +322,23 @@ int meshvpn_profile_tunnel_run(const meshvpn_profile_tunnel_options_t *options) 
     const auto &o=*options;
     if(o.fd<0||o.fd>=FD_SETSIZE||!o.current||!o.peek||!o.sent||!o.receive||!o.ready||!o.healthy)return EINVAL;
     Connection c{o,{},{},{},{}};
+    const auto *model=o.model?o.model:&meshpn_builtin_profile;
+    memcpy(c.diag.expected_ja3,model->ja3,sizeof(model->ja3));
+    memcpy(c.diag.expected_ja4,model->ja4,sizeof(model->ja4));
     c.report("starting");
-    if(!o.profile||strcmp(o.profile,MESHPN_TLS_PROFILE_ID))return c.failure("unsupported_profile",EINVAL);
+    if(!o.profile||strcmp(o.profile,model->id))return c.failure("unsupported_profile",EINVAL);
     if(!o.name || !*o.name || strlen(o.name)>128)return c.failure("server_name",EINVAL);
     for(const char *p=o.name;*p;p++)if(!((*p>='a'&&*p<='z')||(*p>='A'&&*p<='Z')||(*p>='0'&&*p<='9')||*p=='.'||*p=='-'))return c.failure("server_name",EINVAL);
     if(time(nullptr)<1704067200)return c.failure("clock",EAGAIN);
     int flags=fcntl(o.fd,F_GETFL,0);if(flags<0 || !(flags&O_NONBLOCK))return c.failure("nonblocking_required",EINVAL);
     if(!c.current())return c.failure("cancelled",ECANCELED);
-    c.ctx.reset(meshvpn_profiled_context(true));
+    c.ctx.reset(meshvpn_profiled_context(true,model));
     if(!c.ctx)return c.failure("no_memory",ENOMEM);
     if(!load_ca(c.ctx.get(),o.ca_pem))return c.failure("ca_invalid",EACCES);
     c.ssl.reset(SSL_new(c.ctx.get()));
-    if(!c.ssl || !meshvpn_profiled_connection(c.ssl.get()) ||
+    if(!c.ssl || !meshvpn_profiled_connection(c.ssl.get(),model) ||
        !SSL_set_tlsext_host_name(c.ssl.get(),o.name) || !SSL_set1_host(c.ssl.get(),o.name) ||
-       !meshvpn_profiled_attach_fd(c.ssl.get(),o.fd,&c.gate))return c.failure("tls_setup",ENOMEM);
+       !meshvpn_profiled_attach_fd(c.ssl.get(),o.fd,&c.gate,model))return c.failure("tls_setup",ENOMEM);
     c.report("handshake");int64_t deadline=now_us()+10000000;
     for(;;) {
         if(!c.current())return c.failure("cancelled",ECANCELED);

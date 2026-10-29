@@ -1,5 +1,6 @@
 #pragma once
 #include "meshvpn_profiled_tls.h"
+#include "profile_model.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -9,6 +10,7 @@ extern "C" {
 #define MESHPN_PROFILE_READ_BYTES 4096
 typedef struct {
     char phase[32], alpn[16];
+    char expected_ja3[33], expected_ja4[37];
     meshvpn_profile_check_t actual;
     unsigned hellos;
     int error, ssl_error, http2_error;
@@ -34,6 +36,7 @@ typedef struct {
     void (*sent)(void *arg, size_t length);
     bool (*receive)(void *arg, const uint8_t *bytes, size_t length);
     bool (*healthy)(void *arg); /* partial-frame deadlines, uplink health */
+    const meshpn_tls_profile_t *model; /* immutable, owned by caller */
 } meshvpn_profile_tunnel_options_t;
 /* Returns errno-style failure (ECANCELED on orderly config cancellation).
  * No packet callbacks run before verified TLS + exact profile + v2 auth ACK.

@@ -1,3 +1,4 @@
+#include "meshvpn_vpn_profiles.h"
 #include "meshvpn_web.h"
 #include "meshvpn_web_tls.h"
 #include "meshvpn_session.h"
@@ -550,6 +551,10 @@ static cJSON *body(httpd_req_t *req, size_t limit)
         free(buf); error(req, "408 Request Timeout", "Incomplete request"); return NULL;
     }
     buf[done] = 0;
+    if (!strncmp(req->uri, "/api/vpn/profiles", 17) && !meshpn_profile_json_text_safe(buf, done)) {
+        memset(buf, 0, done); free(buf);
+        error(req, "400 Bad Request", "Profile JSON exceeds nesting limits or contains NUL"); return NULL;
+    }
     cJSON *in = cJSON_ParseWithLengthOpts(buf, done + 1, NULL, true);
     memset(buf, 0, done); free(buf);
     if (!cJSON_IsObject(in)) {
@@ -954,8 +959,8 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(profile, "attempt", vs.profiled_attempt);
     cJSON_AddNumberToObject(profile, "generation", vs.generation);
     cJSON_AddStringToObject(profile, "phase", vs.profiled.phase);
-    cJSON_AddStringToObject(profile, "expected_ja3", MESHPN_TLS_PROFILE_JA3);
-    cJSON_AddStringToObject(profile, "expected_ja4", MESHPN_TLS_PROFILE_JA4);
+    cJSON_AddStringToObject(profile, "expected_ja3", vs.profiled.expected_ja3);
+    cJSON_AddStringToObject(profile, "expected_ja4", vs.profiled.expected_ja4);
     cJSON_AddStringToObject(profile, "actual_ja3", vs.profiled.actual.ja3);
     cJSON_AddStringToObject(profile, "actual_ja4", vs.profiled.actual.ja4);
     cJSON_AddBoolToObject(profile, "match", vs.profiled.actual.match);
@@ -1404,6 +1409,54 @@ static esp_err_t handler_certificate(httpd_req_t *req)
     cJSON_Delete(in);
     return err == ESP_OK ? ok(req) : error(req, "400 Bad Request", "Invalid certificate/key or storage error");
 }
+static void profile_metadata(cJSON *arr,const meshpn_tls_profile_t *p,bool builtin){
+ cJSON *o=cJSON_CreateObject();
+ cJSON_AddStringToObject(o,"id",p->id);cJSON_AddStringToObject(o,"name",p->name);
+ cJSON_AddStringToObject(o,"ja3",p->ja3);cJSON_AddStringToObject(o,"ja4",p->ja4);
+ cJSON_AddBoolToObject(o,"builtin",builtin);cJSON_AddItemToArray(arr,o);
+}
+#if CONFIG_MESHVPN_PROFILED_TLS_ENABLE
+typedef struct {meshpn_tls_profile_t *p;meshvpn_profile_check_t actual;} profile_preview_job_t;
+static esp_err_t profile_preview_job(void *arg){
+ profile_preview_job_t *j=arg;return meshpn_profile_preview(j->p,&j->actual)?ESP_OK:ESP_ERR_NOT_SUPPORTED;
+}
+#endif
+static esp_err_t handler_browser_profiles(httpd_req_t *req){
+ if(meshvpn_web_require_auth(req)!=ESP_OK)return ESP_FAIL;
+ meshpn_tls_profile_t *p=heap_caps_malloc(sizeof(*p),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+ if(!p)return error(req,"503 Service Unavailable","Profile memory unavailable");
+ if(req->method==HTTP_GET){
+  cJSON *out=cJSON_CreateObject(),*arr=cJSON_AddArrayToObject(out,"profiles");
+  profile_metadata(arr,&meshpn_builtin_profile,true);
+  for(unsigned i=0;i<MESHPN_PROFILE_SLOTS;i++){
+   esp_err_t e=meshvpn_vpn_profile_slot(i,p);
+   if(e==ESP_OK)profile_metadata(arr,p,false);
+   else if(e!=ESP_ERR_NVS_NOT_FOUND){free(p);cJSON_Delete(out);return error(req,"500 Internal Server Error","Cannot read browser profile storage");}
+  }free(p);return send_json(req,out);
+ }
+ if(!strcmp(req->uri,"/api/vpn/profiles/delete")){
+  free(p);cJSON *in=body(req,128);if(!in)return ESP_FAIL;
+  cJSON *id=cJSON_GetObjectItemCaseSensitive(in,"id");
+  esp_err_t e=cJSON_IsString(id)?meshvpn_vpn_profile_delete(id->valuestring):ESP_ERR_INVALID_ARG;
+  cJSON_Delete(in);
+  return e==ESP_OK?ok(req):error(req,"409 Conflict","Cannot delete built-in, selected or missing profile. Save another selection first.");
+ }
+#if CONFIG_MESHVPN_PROFILED_TLS_ENABLE
+ cJSON *in=body(req,MESHPN_PROFILE_JSON_MAX);if(!in){free(p);return ESP_FAIL;}
+ bool valid=meshpn_profile_parse(in,p);cJSON_Delete(in);
+ if(!valid){free(p);return error(req,"400 Bad Request","Unsupported browser profile schema or TLS features. Use the capture page JSON.");}
+ profile_preview_job_t job={.p=p};uint32_t spare=0;
+ esp_err_t e=meshvpn_profiled_tls_run(profile_preview_job,&job,&spare);
+ if(e!=ESP_OK){
+  free(p);return error(req,"422 Unprocessable Content","Cannot reproduce this profile: generated ClientHello does not match JA3/JA4, or preview memory unavailable. Profile was not saved.");
+ }
+ e=meshvpn_vpn_profile_save(p);free(p);
+ return e==ESP_OK?ok(req):error(req,"409 Conflict","Profile not saved: duplicate id, catalog full (4 imports), or storage failure. Delete an unused profile first.");
+#else
+ free(p);return error(req,"501 Not Implemented","Profile import requires PROFILED_TLS=1 build");
+#endif
+}
+
 static void vpn_wipe(void *p, size_t len);
 static esp_err_t handler_vpn_client_identity(httpd_req_t *req)
 {
@@ -1552,7 +1605,7 @@ static esp_err_t handler_vpn_config(httpd_req_t *req)
     VPN_READ_FIELD(wg_public_key, false, "PublicKey: paste only the 44-character Base64 value, without the PublicKey = label or quotes.");
     VPN_READ_FIELD(wg_private_key, true, "PrivateKey: paste only the 44-character Base64 value, without the PrivateKey = label or quotes.");
     VPN_READ_FIELD(wg_preshared_key, true, "PresharedKey: paste only the 44-character Base64 value, without its label or quotes.");
-    VPN_READ_FIELD(tls_profile, false, "Profile: select Chromium 156 capture #1.");
+    VPN_READ_FIELD(tls_profile, false, "Profile: select an imported or built-in browser profile.");
     VPN_READ_FIELD(tls_psk_hex, true, "Shared HMAC key: enter 64 hex characters.");
     VPN_READ_FIELD(tls_server_name, false, "TLS server name: enter a hostname up to 128 characters.");
 #undef VPN_READ_FIELD
@@ -1707,7 +1760,7 @@ esp_err_t meshvpn_web_start(void)
     if (err != ESP_OK) return err;
     s_https = s_https_configured;
     httpd_config_t server = HTTPD_DEFAULT_CONFIG();
-    server.max_uri_handlers = 40;
+    server.max_uri_handlers = 44;
     server.uri_match_fn = httpd_uri_match_wildcard;
     /* HTTP's observed high-water mark leaves >3 KiB spare at 9 KiB.
      * Keep the larger stack for HTTPS handshakes. */
@@ -1767,6 +1820,9 @@ esp_err_t meshvpn_web_start(void)
         ROUTE("/api/system/reboot", HTTP_POST, handler_system),
         ROUTE("/api/system/factory-reset", HTTP_POST, handler_system),
         ROUTE("/api/certificate", HTTP_GET, handler_certificate), ROUTE("/api/certificate", HTTP_POST, handler_certificate),
+        ROUTE("/api/vpn/profiles", HTTP_GET, handler_browser_profiles),
+        ROUTE("/api/vpn/profiles", HTTP_POST, handler_browser_profiles),
+        ROUTE("/api/vpn/profiles/delete", HTTP_POST, handler_browser_profiles),
         ROUTE("/api/vpn/config", HTTP_POST, handler_vpn_config),
         ROUTE("/api/vpn/tls-ca", HTTP_POST, handler_vpn_ca),
         ROUTE("/api/vpn/tls-client-identity", HTTP_POST, handler_vpn_client_identity),

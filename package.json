@@ -41,6 +41,7 @@
     "build:boring-tls-helper": "cmake -S native/boring_tls -B native/boring_tls/build -DCMAKE_BUILD_TYPE=Release && cmake --build native/boring_tls/build --target boring-tls-helper --parallel $(node -p \"Math.max(1, require('os').cpus().length - 1)\")",
     "build:boring-tls-helper-lowmem": "cmake -S native/boring_tls -B native/boring_tls/build -DCMAKE_BUILD_TYPE=Release && cmake --build native/boring_tls/build --target boring-tls-helper --parallel 1",
     "device:setup": "./device/scripts/setup-macos.sh",
+    "device:profile:capture": "node device/scripts/browser-profile-capture.mjs",
     "device:flash": "./device/scripts/flash.sh",
     "device:flash:p4": "BOARD=waveshare_esp32_p4_wifi6 ./device/scripts/flash.sh",
     "device:bind:p4": "BOARD=waveshare_esp32_p4_wifi6 DEVICE_BIND_ONLY=1 ./device/scripts/flash.sh",

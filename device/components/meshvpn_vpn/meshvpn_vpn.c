@@ -1,3 +1,4 @@
+#include "meshvpn_vpn_profiles.h"
 /* clean-vpn client. Hooks never wait on the network; dedicated RX/TX workers
  * share the full-duplex outer socket. All netif/input operations execute on
  * the lwIP thread. */
@@ -153,7 +154,7 @@ const char *meshvpn_vpn_config_error(const meshvpn_vpn_config_t *c)
 #if !CONFIG_MESHVPN_PROFILED_TLS_ENABLE
         return "Profiled TLS is not compiled. Build with PROFILED_TLS=1.";
 #endif
-        if (strcmp(c->tls_profile, MESHPN_TLS_PROFILE_ID)) return "Select the supported Chromium 156 capture profile.";
+        if (!meshvpn_vpn_profile_exists(c->tls_profile)) return "Browser profile not found. Import it first.";
         if (strlen(c->tls_psk_hex) != 64 || strspn(c->tls_psk_hex, "0123456789abcdefABCDEF") != 64)
             return "Shared HMAC key: enter 64 hex characters (32 bytes), matching exit --shared-hmac-key.";
     }
@@ -1007,13 +1008,16 @@ static void __attribute__((unused)) worker(void *arg)
             LOCK(); memcpy(psk, s_config.tls_psk_hex, sizeof(psk)); UNLOCK();
             profiled_job_t job = {.generation=cfg.generation, .rx=buffers, .tx=s_socket_tx_batch};
             memset(d, 0, sizeof(*d)); memset(job.tx, 0, sizeof(*job.tx));
-            esp_err_t loaded = meshvpn_vpn_ca_load(&ca);
+            meshpn_tls_profile_t *model=heap_caps_malloc(sizeof(*model), MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+            esp_err_t loaded=model?meshvpn_vpn_profile_load(cfg.tls_profile,model):ESP_ERR_NO_MEM;
+            const char *load_reason=loaded==ESP_OK?"profile_ca":"profile_load";
+            if(loaded==ESP_OK) loaded = meshvpn_vpn_ca_load(&ca);
             if (loaded == ESP_OK) {
                 job.options = (meshvpn_profile_tunnel_options_t){.fd=fd, .name=cfg.tls_server_name,
                     .ca_pem=ca, .psk_hex=psk, .profile=cfg.tls_profile, .arg=&job,
                     .current=profiled_current, .diagnostic=profiled_diag, .ready=profiled_ready,
                     .peek=profiled_peek, .sent=profiled_sent, .receive=profiled_receive,
-                    .healthy=profiled_healthy};
+                    .healthy=profiled_healthy, .model=model};
                 uint32_t spare=0;
                 error=meshvpn_profiled_tls_run(profiled_run, &job, &spare);
                 LOCK(); if (s.generation==cfg.generation) s.profiled_stack_spare=spare;
@@ -1023,10 +1027,10 @@ static void __attribute__((unused)) worker(void *arg)
                 socket_failure(cfg.generation, error, job.diagnostic.phase[0] ? job.diagnostic.phase : "profile_worker");
             } else {
                 error=loaded==ESP_ERR_NO_MEM?ENOMEM:EACCES;
-                socket_failure(cfg.generation,error,"profile_ca");
+                socket_failure(cfg.generation,error,load_reason);
             }
             volatile char *secret=psk; for(size_t i=0;i<sizeof(psk);i++) secret[i]=0;
-            free(ca); close(fd);
+            free(model); free(ca); close(fd);
             failure_reason="profile_session";
             goto retry;
         }

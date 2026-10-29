@@ -1,0 +1,268 @@
+{
+  "version": "Chrome/156.0.8078.47",
+  "platform": "linux",
+  "architecture": "arm64",
+  "conditions": "Headless Chromium, fresh process per sample, disposable private CA, no proxy, container loopback only. TLS fingerprint snapshot; not full browser equivalence.",
+  "certificateValidation": true,
+  "hostTrustStoreChanged": false,
+  "profiles": [
+    {
+      "schema": 1,
+      "id": "p-a53ddda552ebf96d743d3de6",
+      "name": "Chrome/156.0.0.0 X11; Linux x86_64",
+      "ja3": "87e80351c11d869d7b49657c23e04a66",
+      "ja4": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+      "tls": {
+        "cipher_suites": [
+          4865,
+          4866,
+          4867,
+          49195,
+          49199,
+          49196,
+          49200,
+          52393,
+          52392,
+          49171,
+          49172,
+          156,
+          157,
+          47,
+          53
+        ],
+        "supported_groups": [
+          4588,
+          29,
+          23,
+          24
+        ],
+        "key_share_groups": [
+          4588,
+          29
+        ],
+        "signature_algorithms": [
+          2308,
+          2309,
+          2310,
+          1027,
+          2052,
+          1025,
+          1283,
+          2053,
+          1281,
+          2054,
+          1537
+        ],
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "supported_versions": [
+          772,
+          771
+        ],
+        "extension_types": [
+          51764,
+          43,
+          13,
+          45,
+          10,
+          65037,
+          23,
+          5,
+          17613,
+          51,
+          0,
+          65281,
+          18,
+          16,
+          27,
+          35,
+          11
+        ],
+        "grease": true,
+        "certificate_compression": [
+          2
+        ],
+        "application_settings": [
+          "h2"
+        ],
+        "ec_point_formats": [
+          0
+        ]
+      }
+    },
+    {
+      "schema": 1,
+      "id": "p-ff3def60127b648bdabee125",
+      "name": "Chrome/156.0.0.0 X11; Linux x86_64",
+      "ja3": "1d6470fb9d6b4a1fd83a6df76c31485f",
+      "ja4": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+      "tls": {
+        "cipher_suites": [
+          4865,
+          4866,
+          4867,
+          49195,
+          49199,
+          49196,
+          49200,
+          52393,
+          52392,
+          49171,
+          49172,
+          156,
+          157,
+          47,
+          53
+        ],
+        "supported_groups": [
+          4588,
+          29,
+          23,
+          24
+        ],
+        "key_share_groups": [
+          4588,
+          29
+        ],
+        "signature_algorithms": [
+          2308,
+          2309,
+          2310,
+          1027,
+          2052,
+          1025,
+          1283,
+          2053,
+          1281,
+          2054,
+          1537
+        ],
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "supported_versions": [
+          772,
+          771
+        ],
+        "extension_types": [
+          43,
+          13,
+          65037,
+          27,
+          0,
+          17613,
+          35,
+          65281,
+          11,
+          51,
+          23,
+          18,
+          16,
+          51764,
+          10,
+          5,
+          45
+        ],
+        "grease": true,
+        "certificate_compression": [
+          2
+        ],
+        "application_settings": [
+          "h2"
+        ],
+        "ec_point_formats": [
+          0
+        ]
+      }
+    },
+    {
+      "schema": 1,
+      "id": "p-470d4151c6c21963380fd644",
+      "name": "Chrome/156.0.0.0 X11; Linux x86_64",
+      "ja3": "b497b0fc89bd9860fefb28425d9aadae",
+      "ja4": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+      "tls": {
+        "cipher_suites": [
+          4865,
+          4866,
+          4867,
+          49195,
+          49199,
+          49196,
+          49200,
+          52393,
+          52392,
+          49171,
+          49172,
+          156,
+          157,
+          47,
+          53
+        ],
+        "supported_groups": [
+          4588,
+          29,
+          23,
+          24
+        ],
+        "key_share_groups": [
+          4588,
+          29
+        ],
+        "signature_algorithms": [
+          2308,
+          2309,
+          2310,
+          1027,
+          2052,
+          1025,
+          1283,
+          2053,
+          1281,
+          2054,
+          1537
+        ],
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "supported_versions": [
+          772,
+          771
+        ],
+        "extension_types": [
+          51,
+          51764,
+          18,
+          43,
+          17613,
+          45,
+          13,
+          35,
+          10,
+          23,
+          65281,
+          5,
+          11,
+          16,
+          0,
+          27,
+          65037
+        ],
+        "grease": true,
+        "certificate_compression": [
+          2
+        ],
+        "application_settings": [
+          "h2"
+        ],
+        "ec_point_formats": [
+          0
+        ]
+      }
+    }
+  ]
+}

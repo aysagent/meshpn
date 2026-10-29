@@ -10,6 +10,7 @@ extern "C" {
  * Every new ClientHello (including HRR) must be checked afresh. */
 typedef struct { bool match; char ja3[33]; char ja4[37]; } meshvpn_profile_check_t;
 bool meshvpn_profiled_tls_check(const uint8_t *hello, size_t length, meshvpn_profile_check_t *out);
+bool meshvpn_profiled_tls_check_expected(const uint8_t *hello, size_t length, const char *ja3, const char *ja4, meshvpn_profile_check_t *out);
 #ifdef ESP_PLATFORM
 #include "esp_err.h"
 /* Synchronous executor: fn must enforce bounded I/O/cancellation, must not save

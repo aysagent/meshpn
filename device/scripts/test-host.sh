@@ -232,6 +232,7 @@ if [[ -n "${IDF_PATH:-}" ]]; then
   python3 -B device/tests/test_instrument_wifi_rx.py
   node device/tests/test-napt-icmp.mjs
   json_dir="$IDF_PATH/components/json/cJSON"
+  node device/tests/test-browser-profile-storage.mjs device/tests/fixtures/browser-profile-capture-chromium156.json
   "$cc" "${flags[@]}" -pthread -Idevice/tests/wg_diag_stubs -Idevice/tests/usb_stubs \
     -Idevice/tests/cpu_stubs -Idevice/components/meshvpn_vpn/include \
     -Idevice/components/meshvpn_web/include -I"$json_dir" \

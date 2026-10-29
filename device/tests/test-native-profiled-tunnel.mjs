@@ -24,6 +24,8 @@ const image=process.env.MESHPN_NATIVE_LAB_IMAGE||'localhost/meshpn-clean-vpn-lab
 const podArgs=['--connection',connection],exec=promisify(execFile);
 const pod=async(...args)=>(await exec('podman',[...podArgs,...args],{timeout:30000,maxBuffer:1024*1024})).stdout.trim();
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
+const imported=process.env.MESHPN_TEST_PROFILE?JSON.parse(fs.readFileSync(process.env.MESHPN_TEST_PROFILE)):null;
+const expectedJa3=imported?.ja3||'ed63604b6e93c62437468be3f6b387c3',expectedJa4=imported?.ja4||'t13d1517h2_8daaf6152771_cb7bf5808d99';
 const scenarios=[],captures=[];
 for(const scenario of ['no-alps','alps','ack','stream','truncated','extra-frame','window','unknown','duplicate']) {
  const sub=path.join(dir,scenario);fs.mkdirSync(sub,{mode:0o700});
@@ -65,7 +67,7 @@ for(const scenario of ['no-alps','alps','ack','stream','truncated','extra-frame'
    const {stdout,stderr}=await exec(client,[String(proxy.address().port),ca,keyFile,name,mode],
     {env:{...process.env,MESHPN_NATIVE_EXIT:'1'},timeout:90000,maxBuffer:1024*1024});
    const entries=stdout.trim().split('\n').map(x=>JSON.parse(x));
-   for(const e of entries)if(e.hellos){assert.equal(e.ja3,'ed63604b6e93c62437468be3f6b387c3');assert.equal(e.ja4,'t13d1517h2_8daaf6152771_cb7bf5808d99');}
+   for(const e of entries)if(e.hellos){assert.equal(e.ja3,expectedJa3);assert.equal(e.ja4,expectedJa4);}
    reports.push({mode,entries,heap:stderr.trim()});return entries.at(-1);
   }
   if(['no-alps','alps'].includes(scenario)) {
@@ -104,6 +106,6 @@ for(const scenario of ['no-alps','alps','ack','stream','truncated','extra-frame'
   engineSha256:createHash('sha256').update(fs.readFileSync(build+'/clean-vpn-engine-fixture')).digest('hex'),scenarios,captures},null,2)+'\n');
  console.log(`Native ${scenario}: ${counts.packets} packet round-trips passed`);
 }
-for(const c of captures){assert.equal(c.ja3,'ed63604b6e93c62437468be3f6b387c3');assert.equal(c.ja4,'t13d1517h2_8daaf6152771_cb7bf5808d99');}
+for(const c of captures){assert.equal(c.ja3,expectedJa3);assert.equal(c.ja4,expectedJa4);}
 fs.writeFileSync(dir+'/passed', 'Native interoperability and independent ClientHello checks passed\n');
 console.log(`Native profiled TLS tests passed: ${dir}/result.json`);

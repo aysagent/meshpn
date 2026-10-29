@@ -29,7 +29,7 @@ struct Text {
 };
 void hex(const uint8_t*p,size_t n,char*out){static const char digits[]="0123456789abcdef";for(size_t i=0;i<n;i++){out[2*i]=digits[p[i]>>4];out[2*i+1]=digits[p[i]&15];}out[2*n]=0;}
 }
-extern "C" bool meshvpn_profiled_tls_check(const uint8_t*hello,size_t length,meshvpn_profile_check_t*out){
+extern "C" bool meshvpn_profiled_tls_check_expected(const uint8_t*hello,size_t length,const char*ja3,const char*ja4,meshvpn_profile_check_t*out){
  if(!out)return false;
  *out={};
  if(!hello||length<4||length>8192||hello[0]!=1||((size_t(hello[1])<<16)|(size_t(hello[2])<<8)|hello[3])!=length-4)return false;
@@ -81,6 +81,8 @@ extern "C" bool meshvpn_profiled_tls_check(const uint8_t*hello,size_t length,mes
  text={};if(!text.ids(ext_hash,",",true)||!text.put("_")||!text.ids(sigs,",",true))return false;
  SHA256(reinterpret_cast<const uint8_t*>(text.data),text.n,hash);char extension_hash[13];hex(hash,6,extension_hash);
  snprintf(out->ja4,sizeof(out->ja4),"t13d%02u%02uh2_%s_%s",unsigned(ciphers.n),unsigned(extensions.n),cipher_hash,extension_hash);
- out->match=!strcmp(out->ja3,"ed63604b6e93c62437468be3f6b387c3")&&!strcmp(out->ja4,"t13d1517h2_8daaf6152771_cb7bf5808d99");
+ out->match=ja3&&ja4&&!strcmp(out->ja3,ja3)&&!strcmp(out->ja4,ja4);
  return out->match;
 }
+
+extern "C" bool meshvpn_profiled_tls_check(const uint8_t*h,size_t n,meshvpn_profile_check_t*out){return meshvpn_profiled_tls_check_expected(h,n,"ed63604b6e93c62437468be3f6b387c3","t13d1517h2_8daaf6152771_cb7bf5808d99",out);}

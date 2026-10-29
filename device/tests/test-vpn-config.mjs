@@ -42,6 +42,7 @@ static size_t test_strlcpy(char*d,const char*s,size_t n){size_t l=strlen(s);if(n
 static bool plain_transport(const char*n){return n&&(!strcmp(n,"tcp")||!strcmp(n,"socket")||!strcmp(n,"udp")||!strcmp(n,"tls")||!strcmp(n,"boring-tls"));}
 ${wg}
 ${section(read('components/meshvpn_vpn/meshvpn_vpn_trust.c'),'bool meshvpn_vpn_tls_name_valid(', 'bool meshvpn_vpn_ca_valid(')}
+bool meshvpn_vpn_profile_exists(const char *id){return !strcmp(id,MESHPN_TLS_PROFILE_ID);}
 ${validate}
 enum { HTTP_POST, HTTP_GET };
 typedef struct { int method; } httpd_req_t;

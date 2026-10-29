@@ -1,5 +1,6 @@
 // Exercise exactly the production TLS session against real exit implementations.
 #include "profile_tunnel.h"
+#include "cJSON.h"
 extern "C" {
 #include "meshvpn_vpn_frame.h"
 }
@@ -69,7 +70,13 @@ int run_once(int argc,char**argv) {
     assert(fcntl(fd,F_SETFL,fcntl(fd,F_GETFL,0)|O_NONBLOCK)==0);
     std::string ca=readfile(argv[2]),key=readfile(argv[3]);
     meshvpn_profile_tunnel_options_t o{fd,argv[4],ca.c_str(),key.c_str(),mode=="profile"?"unsupported":MESHPN_TLS_PROFILE_ID,
-        &test,current,diagnostic,ready,peek,sent,receive,healthy};
+        &test,current,diagnostic,ready,peek,sent,receive,healthy,nullptr};
+    meshpn_tls_profile_t model{};
+    if(const char *file=getenv("MESHPN_TEST_PROFILE")){
+        std::string content=readfile(file);cJSON *json=cJSON_Parse(content.c_str());
+        assert(meshpn_profile_parse(json,&model));cJSON_Delete(json);
+        o.model=&model;if(mode!="profile")o.profile=model.id;
+    }
     if(mode=="cancel_auth"||mode=="cancel_handshake")test.end=std::chrono::steady_clock::now()+std::chrono::milliseconds(100);
     int rc=meshvpn_profile_tunnel_run(&o);close(fd);
     printf("{\"rc\":%d,\"ready\":%u,\"packets\":%u,\"sent\":%u,\"peeks\":%u,\"phase\":\"%s\",\"alpn\":\"%s\",\"ja3\":\"%s\",\"ja4\":\"%s\",\"alps\":%s,\"alps_bytes\":%zu,\"hellos\":%u,\"tls_bytes\":%llu}\n",rc,test.ready,test.received,test.sent,test.peeks,test.diag.phase,test.diag.alpn,test.diag.actual.ja3,test.diag.actual.ja4,test.diag.alps?"true":"false",test.diag.alps_bytes,test.diag.hellos,static_cast<unsigned long long>(test.diag.tls_bytes_sent));
