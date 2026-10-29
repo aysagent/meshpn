@@ -19,6 +19,27 @@ Node VPN для него не требуется. [Текущий план и г
 Для existing VPS готов [scoped exit owner](scripts/clean-vpn-native-exit-host.md),
 сохраняющий чужие firewall rules и службы. [Итог ночной приёмки и следующий этап](scripts/clean-vpn-native-night-20261029-report.md).
 
+Новые возможности разрабатываются и проверяются отдельно от повседневной пары:
+
+- [Клиенты по имени](scripts/clean-vpn-native-clients.md): `add laptop`, автоматический
+  стабильный IPv4, отдельные ключи, экспорт комплекта, отзыв и ротация. Новый exit
+  применяет список по SIGHUP без отключения неизменённых клиентов. Выдача адреса
+  происходит при регистрации; согласование адреса в handshake пока разрабатывается.
+- [Админка exit](admin/EXIT-INSTALL.md): отдельный localhost web/API, управление
+  клиентами и установка systemd; [USB-админка клиента](admin/README.md) сохраняется.
+- [Имена `laptop.mpn`](scripts/clean-vpn-native-peer-dns.md): приватный resolver
+  и отдельная системная DNS-зона. Передача зоны от клиента через native туннель
+  проверена в лаборатории; public DNS fallback для неё запрещён. Включение — opt-in.
+- [Общий Compose VPN + админка](scripts/clean-vpn-native-managed-containers.md):
+  один запуск, отдельный непривилегированный web, без Docker socket. Проверен Podman;
+  отдельный прогон Docker daemon остаётся необходимым.
+- [Alpine](scripts/clean-vpn-native-alpine.md): исходная сборка BoringSSL/native
+  под musl, проверенная arm64-версия. Размер runtime около 101 MiB; amd64 ещё не
+  проверен в текущей лаборатории.
+
+[Ход текущей ночной работы](scripts/clean-vpn-native-night-20261030.md).
+Эти изменения не означают, что новые бинарники уже установлены на Radxa/VPS.
+
 | Native transport | Проверенный путь и ограничения |
 | --- | --- |
 | `boring-tls` | Основной путь к личной эксплуатации: standalone, Docker/Podman, отдельный host-profile Radxa; частичная мимикрия ClientHello/H2. |
@@ -46,7 +67,8 @@ PSK/IP, приватный комплект каждому клиенту, `bori
 Новый opt-in [standalone / Docker / Podman runtime](scripts/clean-vpn-native-runtime.md)
 запускает `boring-tls` с native DNS и сохранённым TLS-профилем в отдельном Linux
 namespace, с проверкой readiness и защитой после аварии. Постоянная установка
-на физических узлах не выполняется; матрица приёмки приведена в его документации.
+новых экспериментальных режимов на физических узлах не выполняется; матрица
+приёмки приведена в его документации. Повседневная boring-tls пара описана выше.
 Для native также есть экспериментальные [cold TLS профили](scripts/clean-vpn-native-tls-profiles.md),
 [Brotli certificate compression](scripts/clean-vpn-native-certificate-compression.md) и
 [ALPS с профильными H2 SETTINGS/window](scripts/clean-vpn-native-alps.md).
