@@ -110,7 +110,9 @@ Cleanup проверяет собственные имена и labels; ownershi
 Проверяются одновременно packet DNS/HTTPS/TCP/UDP и четыре relay запроса за
 итерацию, отдельный burst из 64 запросов, освобождение FD/threads и bounded RSS,
 replay ownership, отказ relay без fallback, SIGKILL/recreate обеих сторон и
-SIGTERM. Нагрузка ограничена 30–300 сек; это не часовой soak и не benchmark.
+SIGTERM. Нагрузка ограничена 30–1800 сек; default 60, это не benchmark.
+Для длительного прогона и опциональной матрицы сетевых помех см.
+[combo resilience](clean-vpn-native-combo-resilience.md).
 Production limits (16 relay slots, 32 новых admissions/sec) не повышались;
 отказы при перегрузке ожидаемы и проверяются отдельно от штатной нагрузки.
 
@@ -139,6 +141,6 @@ Native RSS в mixed-load пиках был меньше 6.7 MiB на проце�
 Ранние отказы из-за порядка iptables options, перегрузки непейсированной
 нагрузкой и устаревшего ARP сохранены в отчёте вместе с исправлениями.
 
-Дальше — длительный mixed soak и netem loss/delay/reordering в этой же
-изолированной лаборатории, затем отдельная физическая приёмка без остановки
-повседневной пары.
+Продолжение — [длительный mixed soak и netem loss/delay/reordering](clean-vpn-native-combo-resilience.md)
+в этой же изолированной лаборатории. Физическая приёмка — отдельно,
+без остановки повседневной пары.

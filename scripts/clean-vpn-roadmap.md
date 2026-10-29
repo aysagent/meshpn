@@ -8,9 +8,11 @@
 [transparent faults](clean-vpn-native-transparent.md) и
 [combo LAN runtime](clean-vpn-native-combo-runtime.md): фрагментация ClientHello,
 таймауты/обрывы/ресурсы, replay, совместная нагрузка обеих веток, namespace
-guard и crash/recreate контейнеров. Далее — длительный mixed soak и netem
-loss/delay/reordering; combo bundle и end-to-end relay health остаются отдельными
-расширениями (нынешний health не доказывает доступность HTTPS origin).
+guard и crash/recreate контейнеров. Продолжение:
+[15-минутный mixed soak и netem delay/loss/reorder/blackout](clean-vpn-native-combo-resilience.md).
+Следующие локальные расширения — offline combo bundle, end-to-end relay health
+(нынешний health не доказывает доступность HTTPS origin), затем независимые
+клиенты и fairness при перегрузке.
 Физическое сосуществование проверять позднее на отдельном порту **и в отдельном
 netns**, с отдельными ключами, конфигурацией и replay state.
 

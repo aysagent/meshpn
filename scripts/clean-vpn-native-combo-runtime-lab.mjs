@@ -11,14 +11,18 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {cleanupLab} from './clean-vpn-native-runtime-cleanup.mjs';
 import {applicationProbe} from './lib/native-runtime-application-probe.mjs';
 import {nativeProcessProbe} from './lib/native-runtime-metrics.mjs';
+import {netemPhases,netemCommands,tcpCountersProbe,bulkRelayProbe,faultWorkload,assertNetemEvidence} from './lib/native-combo-netem.mjs';
 import {inspectPcap} from './clean-vpn-pcap-fingerprints.mjs';
 
 const cli=JSON.parse(process.env.CVPN_CONTAINER_COMMAND??'["podman"]');
 assert.ok(Array.isArray(cli)&&cli.length&&cli.every(v=>typeof v==='string'));
 const image=process.env.CVPN_RUNTIME_IMAGE;assert.ok(image);
 const observerImage=process.env.CVPN_OBSERVER_IMAGE;
-const seconds=Number(process.env.CVPN_COMBO_LOAD_SECONDS??60);assert.ok(Number.isInteger(seconds)&&seconds>=30&&seconds<=300);
+const netem=process.env.CVPN_COMBO_NETEM==='1';
+assert.ok(process.env.CVPN_COMBO_NETEM===undefined||netem,'CVPN_COMBO_NETEM_must_be_1');
+const seconds=Number(process.env.CVPN_COMBO_LOAD_SECONDS??60);assert.ok(Number.isInteger(seconds)&&seconds>=30&&seconds<=1800);
 const reportPath=path.resolve(process.argv[2]??'');assert.ok(process.argv.length===3&&!fs.existsSync(reportPath));
+const lifetime=String(seconds+1800);
 const prefix='cvpnrt-'+randomBytes(8).toString('hex'), label='org.meshpn.native-runtime-lab='+prefix;
 const net=prefix+'-net',lan=prefix+'-lan',config=prefix+'-config',replay=prefix+'-replay';
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-combo-runtime-'));
@@ -72,7 +76,7 @@ try{
   p(['network','create','--label',label,'--internal','--subnet=10.77.0.0/24',net]);
   p(['network','create','--label',label,'--internal','--subnet=192.168.88.0/24',lan]);
   for(const volume of [config,replay])p(['volume','create','--label',label,volume]);
-  p(['run','-d','--name',names.init,'--label',label,'--network=none','--no-healthcheck','-v',config+':/config','-v',replay+':/replay','--entrypoint=sleep',image,'1200']);
+  p(['run','-d','--name',names.init,'--label',label,'--network=none','--no-healthcheck','-v',config+':/config','-v',replay+':/replay','--entrypoint=sleep',image,lifetime]);
   e(names.init,'openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','2','-subj','/CN=runtime.test','-addext','subjectAltName=DNS:runtime.test','-keyout','/config/key.pem','-out','/config/cert.pem');
   put('packet.psk',randomBytes(32));put('relay.psk',randomBytes(32));
   put('profile.json',fs.readFileSync('fixtures/native-tls-profiles/chromium-156-bounded-cold.json'));
@@ -87,7 +91,7 @@ try{
   }
   const second=structuredClone(configs.exit);second.boring.address=second.transparent.listen.ipv4='10.77.0.6';second.boring.port=second.transparent.listen.port=3444;
   put('second.json',JSON.stringify(second));
-  put('origin.mjs',fs.readFileSync('scripts/lib/native-runtime-lab-origin.mjs','utf8')+`\nhttps.createServer({key:fs.readFileSync('/config/key.pem'),cert:fs.readFileSync('/config/cert.pem')},(q,r)=>r.end('relay-ok\\n')).listen(443,'0.0.0.0');\n`);
+  put('origin.mjs',fs.readFileSync('scripts/lib/native-runtime-lab-origin.mjs','utf8')+`\nhttps.createServer({key:fs.readFileSync('/config/key.pem'),cert:fs.readFileSync('/config/cert.pem')},(q,r)=>r.end(q.url==='/bulk'?Buffer.alloc(256*1024,0x5a):'relay-ok\\n')).listen(443,'0.0.0.0');\n`);
   p(['cp',root+'/.',names.init+':/config/']);e(names.init,'sh','-ec','chmod 600 /config/*; mkdir -m 700 /replay/state');
   // A fresh volume is NOT silently initialized by ordinary start.
   launch('exit');await wait(()=>assert.equal(JSON.parse(p(['inspect',names.exit]))[0].State.Running,false));
@@ -103,7 +107,7 @@ try{
   if(observerImage){capture('wire',names.exit,'tcp dst port 3443');await wait(()=>assert.match(e(names.init,'cat','/config/wire.log'),/listening/));}
   launch('client');await wait(()=>health(names.client));
   p(['run','-d','--name',names.app,'--label',label,'--network',lan,'--ip=192.168.88.3','--cap-add=NET_ADMIN','--no-healthcheck','-v',config+':/config:ro','--entrypoint=sh',image,'-ec',
-    'ip route replace default via 192.168.88.2; exec sleep 1200']);
+    'ip route replace default via 192.168.88.2; exec sleep '+lifetime]);
   if(observerImage){capture('original',names.app,'dst host 11.22.33.44 and tcp dst port 443');await wait(()=>assert.match(e(names.init,'cat','/config/original.log'),/listening/));}
   probe(packetProbe);probe(relayProbe);step('public-launcher-real-TUN-DNS-and-LAN-HTTPS-relay');
   // A direct route is deliberately reachable; the guard must still block it.
@@ -132,10 +136,13 @@ try{
   let loadDone=false,loadResult,loadError;
   // Stay below the production 32 admissions/s guard. Saturation is exercised
   // separately as expected rejection, never by raising production limits.
-  const workload=`const packet=async()=>{${packetProbe}},relay=async()=>{${relayProbe}};let rounds=0;const start=performance.now();do{await Promise.all([packet(),...Array.from({length:4},relay)]);rounds++;await new Promise(r=>setTimeout(r,500));}while(performance.now()-start<${seconds*1000});console.log('COMBO_LOAD='+JSON.stringify({rounds,relayRequests:rounds*4,packetBatches:rounds,elapsedMs:performance.now()-start}));`;
+  const workload=`const output=console.log;console.log=()=>{};const packet=async()=>{${packetProbe}},relay=async()=>{${relayProbe}};let rounds=0;const start=performance.now();do{await Promise.all([packet(),...Array.from({length:4},relay)]);rounds++;await new Promise(r=>setTimeout(r,500));}while(performance.now()-start<${seconds*1000});output('COMBO_LOAD='+JSON.stringify({rounds,relayRequests:rounds*4,packetBatches:rounds,elapsedMs:performance.now()-start}));`;
   const job=pa(['exec',names.app,'node','--input-type=module','-e',workload],{timeout:(seconds+20)*1000}).then(v=>loadResult=v,e=>loadError=e).finally(()=>loadDone=true);
-  while(!loadDone){assert.ok(performance.now()-start<(seconds+20)*1000);samples.push(await snapshot());await delay(250);}
-  await job;if(loadError){report.loadFailure={samples,stderr:loadError.stderr,completedPacketBatches:(loadError.stdout?.match(/APPLICATION_PROBES_OK/g)??[]).length};throw loadError;}
+  let progress=0;
+  while(!loadDone){assert.ok(performance.now()-start<(seconds+20)*1000);samples.push(await snapshot());
+    const elapsed=Math.floor((performance.now()-start)/1000);if(elapsed-progress>=30){progress=elapsed;console.log('COMBO_LOAD_PROGRESS='+elapsed+'/'+seconds);}
+    await delay(seconds>300?5000:250);}
+  await job;if(loadError){report.loadFailure={samples,stderr:loadError.stderr,completedPacketBatches:null,reason:'quiet-workload-did-not-emit-final-counters'};throw loadError;}
   const line=loadResult.split('\n').find(l=>l.startsWith('COMBO_LOAD='));assert.ok(line);
   report.load={...JSON.parse(line.slice(11)),seconds,samples: samples.length,initial,peak:{}};
   assert.ok(report.load.rounds>=2&&report.load.elapsedMs>=seconds*1000);
@@ -145,11 +152,63 @@ try{
   }
   let settled;for(let i=0;i<40;i++){settled=await snapshot();if(['client','exit'].every(r=>settled[r].fds<=initial[r].fds&&settled[r].threads<=initial[r].threads))break;await delay(250);}
   for(const r of ['client','exit']){assert.ok(settled[r].fds<=initial[r].fds);assert.ok(settled[r].threads<=initial[r].threads);assert.ok(settled[r].rssKiB-initial[r].rssKiB<32768);}
+  report.load.windows={};
+  for(const r of ['client','exit']){
+    const width=Math.max(1,Math.floor(samples.length/3));
+    const median=xs=>xs.map(x=>x[r].rssKiB).sort((a,b)=>a-b)[Math.floor(xs.length/2)];
+    const first=median(samples.slice(0,width)),last=median(samples.slice(-width));
+    report.load.windows[r]={firstThirdMedianRssKiB:first,lastThirdMedianRssKiB:last,growthKiB:last-first};
+    assert.ok(last-first<8192,'steady_state_RSS_growth');
+  }
   report.load.settled=settled;assert.deepEqual(['client','exit'].map(r=>JSON.parse(p(['inspect',names[r]]))[0].State.Pid),pids);
   step('parallel-packet-and-four-relay-users-bounded-load-resources-reclaimed');
   const burst=`const relay=async()=>{${relayProbe}};const [requests]=await Promise.all([Promise.allSettled(Array.from({length:64},relay)),(async()=>{${packetProbe}})()]);const rejected=requests.filter(r=>r.status==='rejected').length;if(!rejected)throw Error('admission_cap_not_observed');console.log('BURST='+JSON.stringify({total:requests.length,rejected,completed:requests.length-rejected}));`;
   const burstOutput=probe(burst);report.burst=JSON.parse(burstOutput.split('\n').find(l=>l.startsWith('BURST=')).slice(6));
   await delay(1200);probe(packetProbe);probe(relayProbe);step('overload-rejects-excess-relays-packet-branch-and-fresh-requests-survive');
+  if(netem){
+    report.netem=[];
+    const tcp=()=>Object.fromEntries(['client','exit'].map(r=>[r,JSON.parse(e(names[r],'node','-e',tcpCountersProbe))]));
+    const qdisc=()=>Object.fromEntries(['client','exit'].map(r=>[r,JSON.parse(e(names[r],'tc','-s','-j','qdisc','show','dev','eth0'))]));
+    const namespaces=Object.fromEntries(['client','exit'].map(r=>[r,e(names[r],'readlink','/proc/self/ns/net')]));
+    for(const phase of netemPhases){
+      const result={name:phase.name,seconds:phase.seconds,args:phase.args,before:tcp(),samples:[]};report.netem.push(result);
+      const owned=new Set();console.log('NETEM_PHASE='+phase.name);
+      try{
+        for(const role of ['client','exit']){
+          assert.equal(e(names[role],'readlink','/proc/self/ns/net'),namespaces[role]);
+          assert.ok(qdisc()[role].every(q=>q.kind==='noqueue'),'foreign_qdisc_refused');
+          const commands=netemCommands(role,phase);
+          e(names[role],'tc',...commands[0]);owned.add(role);
+          for(const args of commands.slice(1))e(names[role],'tc',...args);
+        }
+        let done=false,output,error;
+        const job=pa(['exec',names.app,'node','--input-type=module','-e',faultWorkload(packetProbe,phase.seconds)],{timeout:(phase.seconds+30)*1000})
+          .then(s=>output=s,e=>error=e).finally(()=>done=true);
+        while(!done){result.samples.push(await snapshot());await delay(1000);}await job;
+        if(error)throw error;
+        result.load=JSON.parse(output.split('\n').find(l=>l.startsWith('NETEM_LOAD=')).slice(11));
+        result.qdisc=qdisc();result.after=tcp();result.observed=assertNetemEvidence(phase,result);
+        for(const sample of result.samples)for(const role of ['client','exit']){
+          const x=sample[role];assert.equal(x.nativeProcesses,1);assert.equal(x.zombies,0);
+          assert.ok(x.rssKiB<131072&&x.fds<128&&x.threads<48,'fault_resource_budget');
+        }
+      }finally{
+        for(const role of owned){
+          assert.equal(e(names[role],'readlink','/proc/self/ns/net'),namespaces[role]);
+          assert.ok(qdisc()[role].some(q=>q.root&&q.kind==='prio'&&q.handle==='1:'),'owned_qdisc_changed');
+          e(names[role],'tc','qdisc','del','dev','eth0','root','handle','1:');
+        }
+        result.removed=qdisc();assert.ok(Object.values(result.removed).every(qs=>qs.every(q=>q.kind==='noqueue')));
+      }
+      const recoveryStart=performance.now();await wait(()=>health(names.client),30000);probe(packetProbe);probe(bulkRelayProbe);
+      result.recoveryMs=performance.now()-recoveryStart;
+      await wait(()=>{result.settled=null;const x=Object.fromEntries(['client','exit'].map(r=>[r,JSON.parse(e(names[r],'node','-e',nativeProcessProbe))]));
+        for(const r of ['client','exit']){assert.ok(x[r].fds<=initial[r].fds&&x[r].threads<=initial[r].threads);assert.ok(x[r].rssKiB-initial[r].rssKiB<32768);}
+        result.settled=x;},30000);
+      assert.deepEqual(['client','exit'].map(r=>JSON.parse(p(['inspect',names[r]]))[0].State.Pid),pids);
+      result.status='passed';step('netem-'+phase.name+'-both-paths-recover-resources-reclaimed');
+    }
+  }
   // Block relay admission without interrupting the authenticated packet branch.
   e(names.client,'iptables-nft','-I','CVPN_R_INPUT','1','-p','tcp','--dport','10443','-j','REJECT');
   assert.throws(()=>probe(relayProbe));probe(packetProbe);health(names.client);
@@ -162,7 +221,7 @@ try{
   step('recreated-exit-listens-with-original-replay-state');
   await wait(()=>health(names.client),30000);recoveryCapture();probe(packetProbe);probe(relayProbe);
   report.exitRecreateMs=performance.now()-exitRecoveryStart;step('exit-SIGKILL-recreate-preserves-replay-and-recovers-both-paths');
-  p(['run','-d','--name',names.holder,'--label',label,'--network=container:'+names.client,'--cap-drop=ALL','--no-healthcheck','--entrypoint=sleep',image,'1200']);
+  p(['run','-d','--name',names.holder,'--label',label,'--network=container:'+names.client,'--cap-drop=ALL','--no-healthcheck','--entrypoint=sleep',image,lifetime]);
   p(['kill','--signal=KILL',names.client]);assert.throws(()=>probe(relayProbe));assert.throws(()=>probe(packetProbe));
   assert.match(e(names.holder,'cat','/proc/net/route'),/cvpn0/);step('client-SIGKILL-held-namespace-remains-closed');
   p(['rm','-f',names.holder]);p(['rm',names.client]);const clientRecoveryStart=performance.now();launch('client');await wait(()=>health(names.client));probe(packetProbe);probe(relayProbe);

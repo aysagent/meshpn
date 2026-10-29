@@ -1,0 +1,1275 @@
+{
+  "schema": 1,
+  "kind": "native-combo-resilience-acceptance",
+  "date": "2026-10-29",
+  "status": "passed",
+  "scope": "dedicated ARM64 Linux Podman VM; NIC-less nested Docker; no Radxa/VPS or Mac network changes",
+  "engineChanged": false,
+  "runtimeImageRebuilt": false,
+  "unit": {
+    "passed": 23,
+    "failed": 0,
+    "skipped": 0
+  },
+  "podmanSoak": {
+    "status": "passed",
+    "imageId": "a88d0378f5acc5b78eb9387e2254a3970f85031d138388948f41120f0b0fb962",
+    "architecture": "arm64",
+    "engineSha256": "f087b391f148359fc81b7d70cc9d5c1f1830b0fad532321820d8a1938ccced56",
+    "checks": [
+      "uninitialized-replay-start-refused-without-reset",
+      "explicit-init-and-repeat-init-refusal",
+      "public-launcher-real-TUN-DNS-and-LAN-HTTPS-relay",
+      "direct-uplink-HTTPS-blocked-LAN-relay-works",
+      "second-owner-free-port-and-netns-refused-existing-pair-healthy",
+      "independent-pcap-packet-profile-and-original-relay-JA3-JA4-match",
+      "same-namespace-reentry-preserves-foreign-rules",
+      "parallel-packet-and-four-relay-users-bounded-load-resources-reclaimed",
+      "overload-rejects-excess-relays-packet-branch-and-fresh-requests-survive",
+      "relay-failure-does-not-downgrade-to-packet-branch",
+      "recreated-exit-listens-with-original-replay-state",
+      "exit-SIGKILL-recreate-preserves-replay-and-recovers-both-paths",
+      "client-SIGKILL-held-namespace-remains-closed",
+      "fresh-client-namespace-recovers-both-paths",
+      "native-PID1-SIGTERM-clean"
+    ],
+    "load": {
+      "rounds": 1740,
+      "relayRequests": 6960,
+      "packetBatches": 1740,
+      "elapsedMs": 900244.1014280021,
+      "seconds": 900,
+      "samples": 173,
+      "initial": {
+        "client": {
+          "rssKiB": 6300,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 6,
+          "udpSockets": 1
+        },
+        "exit": {
+          "rssKiB": 6396,
+          "fds": 8,
+          "sockets": 2,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 3,
+          "udpSockets": 0
+        }
+      },
+      "peak": {
+        "client": {
+          "rssKiB": 6580,
+          "fds": 16,
+          "threads": 8
+        },
+        "exit": {
+          "rssKiB": 6812,
+          "fds": 15,
+          "threads": 6
+        }
+      },
+      "windows": {
+        "client": {
+          "firstThirdMedianRssKiB": 6504,
+          "lastThirdMedianRssKiB": 6524,
+          "growthKiB": 20
+        },
+        "exit": {
+          "firstThirdMedianRssKiB": 6804,
+          "lastThirdMedianRssKiB": 6812,
+          "growthKiB": 8
+        }
+      },
+      "settled": {
+        "client": {
+          "rssKiB": 6528,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 483,
+          "udpSockets": 1
+        },
+        "exit": {
+          "rssKiB": 6812,
+          "fds": 8,
+          "sockets": 2,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 470,
+          "udpSockets": 0
+        }
+      }
+    },
+    "burst": {
+      "total": 64,
+      "rejected": 48,
+      "completed": 16
+    },
+    "observer": {
+      "wireSha256": "76b41d24487b5d2ab902e75538a59d191606b424e62b79ea11febf206d481b9e",
+      "applicationSha256": "0195bdded15c9ac98ebbfe96b735ab3b9428768c7cb5005a60caf0fe4198b5e6",
+      "packetProfileMatches": 1,
+      "relayFingerprintMatches": 2,
+      "scope": "ClientHello-only-not-full-browser-equivalence"
+    },
+    "exitRecreateMs": 4796.261749999947,
+    "clientRecreateMs": 5653.9551659999415,
+    "cleanup": "cleaned"
+  },
+  "nestedDockerNetem": {
+    "status": "passed",
+    "imageId": "sha256:a88d0378f5acc5b78eb9387e2254a3970f85031d138388948f41120f0b0fb962",
+    "architecture": "arm64",
+    "engineSha256": "f087b391f148359fc81b7d70cc9d5c1f1830b0fad532321820d8a1938ccced56",
+    "checks": [
+      "uninitialized-replay-start-refused-without-reset",
+      "explicit-init-and-repeat-init-refusal",
+      "public-launcher-real-TUN-DNS-and-LAN-HTTPS-relay",
+      "direct-uplink-HTTPS-blocked-LAN-relay-works",
+      "second-owner-free-port-and-netns-refused-existing-pair-healthy",
+      "independent-pcap-packet-profile-and-original-relay-JA3-JA4-match",
+      "same-namespace-reentry-preserves-foreign-rules",
+      "parallel-packet-and-four-relay-users-bounded-load-resources-reclaimed",
+      "overload-rejects-excess-relays-packet-branch-and-fresh-requests-survive",
+      "netem-delay-both-paths-recover-resources-reclaimed",
+      "netem-loss-both-paths-recover-resources-reclaimed",
+      "netem-reorder-both-paths-recover-resources-reclaimed",
+      "netem-blackout-both-paths-recover-resources-reclaimed",
+      "relay-failure-does-not-downgrade-to-packet-branch",
+      "recreated-exit-listens-with-original-replay-state",
+      "exit-SIGKILL-recreate-preserves-replay-and-recovers-both-paths",
+      "client-SIGKILL-held-namespace-remains-closed",
+      "fresh-client-namespace-recovers-both-paths",
+      "native-PID1-SIGTERM-clean"
+    ],
+    "load": {
+      "rounds": 59,
+      "relayRequests": 236,
+      "packetBatches": 59,
+      "elapsedMs": 30375.901820003986,
+      "seconds": 30,
+      "samples": 64,
+      "initial": {
+        "client": {
+          "rssKiB": 6292,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 8,
+          "udpSockets": 2
+        },
+        "exit": {
+          "rssKiB": 6388,
+          "fds": 8,
+          "sockets": 2,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 3,
+          "udpSockets": 1
+        }
+      },
+      "peak": {
+        "client": {
+          "rssKiB": 6548,
+          "fds": 12,
+          "threads": 6
+        },
+        "exit": {
+          "rssKiB": 6716,
+          "fds": 14,
+          "threads": 5
+        }
+      },
+      "windows": {
+        "client": {
+          "firstThirdMedianRssKiB": 6460,
+          "lastThirdMedianRssKiB": 6492,
+          "growthKiB": 32
+        },
+        "exit": {
+          "firstThirdMedianRssKiB": 6696,
+          "lastThirdMedianRssKiB": 6704,
+          "growthKiB": 8
+        }
+      },
+      "settled": {
+        "client": {
+          "rssKiB": 6488,
+          "fds": 8,
+          "sockets": 4,
+          "threads": 3,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 271,
+          "udpSockets": 2
+        },
+        "exit": {
+          "rssKiB": 6716,
+          "fds": 8,
+          "sockets": 2,
+          "threads": 2,
+          "nativeProcesses": 1,
+          "namespaceProcesses": 2,
+          "zombies": 0,
+          "tcpEstablished": 1,
+          "tcpTimeWait": 234,
+          "udpSockets": 1
+        }
+      }
+    },
+    "burst": {
+      "total": 64,
+      "rejected": 48,
+      "completed": 16
+    },
+    "observer": {
+      "wireSha256": "b8050a5bfc601456e4a5b4f2e4aeb076cb9871b7694092eca42a6cf28b9c3336",
+      "applicationSha256": "8d5429e028120d06612f5b3e3c554e0846067e8a8d05512994363ceb0d6f6f85",
+      "packetProfileMatches": 1,
+      "relayFingerprintMatches": 2,
+      "scope": "ClientHello-only-not-full-browser-equivalence"
+    },
+    "exitRecreateMs": 5932.423417000013,
+    "clientRecreateMs": 6200.2471659999865,
+    "cleanup": "cleaned",
+    "phases": [
+      {
+        "name": "delay",
+        "seconds": 30,
+        "args": [
+          "delay",
+          "60ms",
+          "10ms",
+          "distribution",
+          "normal"
+        ],
+        "before": {
+          "client": {
+            "outOfOrder": 0,
+            "retransmits": 17
+          },
+          "exit": {
+            "outOfOrder": 0,
+            "retransmits": 0
+          }
+        },
+        "load": {
+          "packet": {
+            "attempts": 22,
+            "success": 22,
+            "errors": {}
+          },
+          "relay": {
+            "attempts": 44,
+            "success": 44,
+            "errors": {}
+          },
+          "integrityErrors": 0,
+          "elapsedMs": 30457.09401999414
+        },
+        "qdisc": {
+          "client": [
+            {
+              "kind": "prio",
+              "handle": "1:",
+              "root": true,
+              "refcnt": 7,
+              "options": {
+                "bands": 3,
+                "priomap": [
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2
+                ],
+                "multiqueue": false
+              },
+              "bytes": 530163,
+              "packets": 5436,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            },
+            {
+              "kind": "netem",
+              "handle": "20:",
+              "parent": "1:2",
+              "options": {
+                "limit": 1000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0.01,
+                  "correlation": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 530163,
+              "packets": 5436,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ],
+          "exit": [
+            {
+              "kind": "prio",
+              "handle": "1:",
+              "root": true,
+              "refcnt": 7,
+              "options": {
+                "bands": 3,
+                "priomap": [
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2
+                ],
+                "multiqueue": false
+              },
+              "bytes": 12801539,
+              "packets": 10957,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            },
+            {
+              "kind": "netem",
+              "handle": "20:",
+              "parent": "1:2",
+              "options": {
+                "limit": 1000,
+                "delay": {
+                  "delay": 0.06,
+                  "jitter": 0.01,
+                  "correlation": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 12674442,
+              "packets": 9609,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        "after": {
+          "client": {
+            "outOfOrder": 2827,
+            "retransmits": 93
+          },
+          "exit": {
+            "outOfOrder": 171,
+            "retransmits": 259
+          }
+        },
+        "observed": {
+          "drops": 0,
+          "outOfOrder": 2998
+        },
+        "removed": {
+          "client": [
+            {
+              "kind": "noqueue",
+              "handle": "0:",
+              "root": true,
+              "refcnt": 2,
+              "options": {},
+              "bytes": 0,
+              "packets": 0,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ],
+          "exit": [
+            {
+              "kind": "noqueue",
+              "handle": "0:",
+              "root": true,
+              "refcnt": 2,
+              "options": {},
+              "bytes": 0,
+              "packets": 0,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        "recoveryMs": 700.1396249999962,
+        "settled": {
+          "client": {
+            "rssKiB": 6944,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 289,
+            "udpSockets": 2
+          },
+          "exit": {
+            "rssKiB": 7744,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 193,
+            "udpSockets": 1
+          }
+        },
+        "status": "passed",
+        "resourceSamples": 25,
+        "peak": {
+          "client": {
+            "rssKiB": 6856,
+            "fds": 16,
+            "threads": 7
+          },
+          "exit": {
+            "rssKiB": 7936,
+            "fds": 12,
+            "threads": 4
+          }
+        }
+      },
+      {
+        "name": "loss",
+        "seconds": 45,
+        "args": [
+          "delay",
+          "20ms",
+          "loss",
+          "1%"
+        ],
+        "before": {
+          "client": {
+            "outOfOrder": 2828,
+            "retransmits": 93
+          },
+          "exit": {
+            "outOfOrder": 171,
+            "retransmits": 260
+          }
+        },
+        "load": {
+          "packet": {
+            "attempts": 61,
+            "success": 61,
+            "errors": {}
+          },
+          "relay": {
+            "attempts": 122,
+            "success": 122,
+            "errors": {}
+          },
+          "integrityErrors": 0,
+          "elapsedMs": 45504.923729002476
+        },
+        "qdisc": {
+          "client": [
+            {
+              "kind": "prio",
+              "handle": "1:",
+              "root": true,
+              "refcnt": 7,
+              "options": {
+                "bands": 3,
+                "priomap": [
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2
+                ],
+                "multiqueue": false
+              },
+              "bytes": 667044,
+              "packets": 6264,
+              "drops": 60,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 171,
+              "qlen": 2
+            },
+            {
+              "kind": "netem",
+              "handle": "20:",
+              "parent": "1:2",
+              "options": {
+                "limit": 1000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "loss-random": {
+                  "loss": 0.01,
+                  "correlation": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 666702,
+              "packets": 6260,
+              "drops": 60,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 171,
+              "qlen": 2
+            }
+          ],
+          "exit": [
+            {
+              "kind": "prio",
+              "handle": "1:",
+              "root": true,
+              "refcnt": 7,
+              "options": {
+                "bands": 3,
+                "priomap": [
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2
+                ],
+                "multiqueue": false
+              },
+              "bytes": 34517154,
+              "packets": 28560,
+              "drops": 113,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            },
+            {
+              "kind": "netem",
+              "handle": "20:",
+              "parent": "1:2",
+              "options": {
+                "limit": 1000,
+                "delay": {
+                  "delay": 0.02,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "loss-random": {
+                  "loss": 0.01,
+                  "correlation": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 34172683,
+              "packets": 24961,
+              "drops": 113,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        "after": {
+          "client": {
+            "outOfOrder": 3930,
+            "retransmits": 114
+          },
+          "exit": {
+            "outOfOrder": 184,
+            "retransmits": 484
+          }
+        },
+        "observed": {
+          "drops": 173,
+          "outOfOrder": 1115
+        },
+        "removed": {
+          "client": [
+            {
+              "kind": "noqueue",
+              "handle": "0:",
+              "root": true,
+              "refcnt": 2,
+              "options": {},
+              "bytes": 0,
+              "packets": 0,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ],
+          "exit": [
+            {
+              "kind": "noqueue",
+              "handle": "0:",
+              "root": true,
+              "refcnt": 2,
+              "options": {},
+              "bytes": 0,
+              "packets": 0,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        "recoveryMs": 863.22537499998,
+        "settled": {
+          "client": {
+            "rssKiB": 7124,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 150,
+            "udpSockets": 2
+          },
+          "exit": {
+            "rssKiB": 7832,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 127,
+            "udpSockets": 1
+          }
+        },
+        "status": "passed",
+        "resourceSamples": 37,
+        "peak": {
+          "client": {
+            "rssKiB": 7032,
+            "fds": 15,
+            "threads": 7
+          },
+          "exit": {
+            "rssKiB": 8028,
+            "fds": 12,
+            "threads": 4
+          }
+        }
+      },
+      {
+        "name": "reorder",
+        "seconds": 30,
+        "args": [
+          "delay",
+          "40ms",
+          "reorder",
+          "25%",
+          "50%"
+        ],
+        "before": {
+          "client": {
+            "outOfOrder": 3930,
+            "retransmits": 114
+          },
+          "exit": {
+            "outOfOrder": 184,
+            "retransmits": 484
+          }
+        },
+        "load": {
+          "packet": {
+            "attempts": 32,
+            "success": 32,
+            "errors": {}
+          },
+          "relay": {
+            "attempts": 64,
+            "success": 64,
+            "errors": {}
+          },
+          "integrityErrors": 0,
+          "elapsedMs": 30255.42885400355
+        },
+        "qdisc": {
+          "client": [
+            {
+              "kind": "prio",
+              "handle": "1:",
+              "root": true,
+              "refcnt": 7,
+              "options": {
+                "bands": 3,
+                "priomap": [
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2
+                ],
+                "multiqueue": false
+              },
+              "bytes": 505522,
+              "packets": 5273,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            },
+            {
+              "kind": "netem",
+              "handle": "20:",
+              "parent": "1:2",
+              "options": {
+                "limit": 1000,
+                "delay": {
+                  "delay": 0.04,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "reorder": {
+                  "reorder": 0.25,
+                  "correlation": 0.5
+                },
+                "ecn": false,
+                "gap": 1
+              },
+              "bytes": 505522,
+              "packets": 5273,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 360,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ],
+          "exit": [
+            {
+              "kind": "prio",
+              "handle": "1:",
+              "root": true,
+              "refcnt": 7,
+              "options": {
+                "bands": 3,
+                "priomap": [
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2
+                ],
+                "multiqueue": false
+              },
+              "bytes": 18916847,
+              "packets": 15662,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            },
+            {
+              "kind": "netem",
+              "handle": "20:",
+              "parent": "1:2",
+              "options": {
+                "limit": 1000,
+                "delay": {
+                  "delay": 0.04,
+                  "jitter": 0,
+                  "correlation": 0
+                },
+                "reorder": {
+                  "reorder": 0.25,
+                  "correlation": 0.5
+                },
+                "ecn": false,
+                "gap": 1
+              },
+              "bytes": 18736755,
+              "packets": 13780,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 448,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        "after": {
+          "client": {
+            "outOfOrder": 4242,
+            "retransmits": 138
+          },
+          "exit": {
+            "outOfOrder": 213,
+            "retransmits": 1031
+          }
+        },
+        "observed": {
+          "drops": 0,
+          "outOfOrder": 341
+        },
+        "removed": {
+          "client": [
+            {
+              "kind": "noqueue",
+              "handle": "0:",
+              "root": true,
+              "refcnt": 2,
+              "options": {},
+              "bytes": 0,
+              "packets": 0,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ],
+          "exit": [
+            {
+              "kind": "noqueue",
+              "handle": "0:",
+              "root": true,
+              "refcnt": 2,
+              "options": {},
+              "bytes": 0,
+              "packets": 0,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        "recoveryMs": 713.6938749999972,
+        "settled": {
+          "client": {
+            "rssKiB": 7112,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 144,
+            "udpSockets": 2
+          },
+          "exit": {
+            "rssKiB": 7836,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 122,
+            "udpSockets": 1
+          }
+        },
+        "status": "passed",
+        "resourceSamples": 25,
+        "peak": {
+          "client": {
+            "rssKiB": 7124,
+            "fds": 15,
+            "threads": 7
+          },
+          "exit": {
+            "rssKiB": 8044,
+            "fds": 12,
+            "threads": 4
+          }
+        }
+      },
+      {
+        "name": "blackout",
+        "seconds": 8,
+        "args": [
+          "loss",
+          "100%"
+        ],
+        "before": {
+          "client": {
+            "outOfOrder": 4242,
+            "retransmits": 138
+          },
+          "exit": {
+            "outOfOrder": 213,
+            "retransmits": 1031
+          }
+        },
+        "load": {
+          "packet": {
+            "attempts": 3,
+            "success": 0,
+            "errors": {
+              "dns_health_response": 3
+            }
+          },
+          "relay": {
+            "attempts": 6,
+            "success": 0,
+            "errors": {
+              "ECONNRESET": 6
+            }
+          },
+          "integrityErrors": 0,
+          "elapsedMs": 9688.542732998729
+        },
+        "qdisc": {
+          "client": [
+            {
+              "kind": "prio",
+              "handle": "1:",
+              "root": true,
+              "refcnt": 7,
+              "options": {
+                "bands": 3,
+                "priomap": [
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2
+                ],
+                "multiqueue": false
+              },
+              "bytes": 0,
+              "packets": 0,
+              "drops": 31,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            },
+            {
+              "kind": "netem",
+              "handle": "20:",
+              "parent": "1:2",
+              "options": {
+                "limit": 1000,
+                "loss-random": {
+                  "loss": 1,
+                  "correlation": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 0,
+              "packets": 0,
+              "drops": 31,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ],
+          "exit": [
+            {
+              "kind": "prio",
+              "handle": "1:",
+              "root": true,
+              "refcnt": 7,
+              "options": {
+                "bands": 3,
+                "priomap": [
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2,
+                  2
+                ],
+                "multiqueue": false
+              },
+              "bytes": 105,
+              "packets": 1,
+              "drops": 6,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            },
+            {
+              "kind": "netem",
+              "handle": "20:",
+              "parent": "1:2",
+              "options": {
+                "limit": 1000,
+                "loss-random": {
+                  "loss": 1,
+                  "correlation": 0
+                },
+                "ecn": false,
+                "gap": 0
+              },
+              "bytes": 0,
+              "packets": 0,
+              "drops": 6,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        "after": {
+          "client": {
+            "outOfOrder": 4242,
+            "retransmits": 164
+          },
+          "exit": {
+            "outOfOrder": 213,
+            "retransmits": 1037
+          }
+        },
+        "observed": {
+          "drops": 37,
+          "outOfOrder": 0
+        },
+        "removed": {
+          "client": [
+            {
+              "kind": "noqueue",
+              "handle": "0:",
+              "root": true,
+              "refcnt": 2,
+              "options": {},
+              "bytes": 0,
+              "packets": 0,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ],
+          "exit": [
+            {
+              "kind": "noqueue",
+              "handle": "0:",
+              "root": true,
+              "refcnt": 2,
+              "options": {},
+              "bytes": 0,
+              "packets": 0,
+              "drops": 0,
+              "overlimits": 0,
+              "requeues": 0,
+              "backlog": 0,
+              "qlen": 0
+            }
+          ]
+        },
+        "recoveryMs": 1133.1307909999741,
+        "settled": {
+          "client": {
+            "rssKiB": 7224,
+            "fds": 8,
+            "sockets": 4,
+            "threads": 3,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 103,
+            "udpSockets": 2
+          },
+          "exit": {
+            "rssKiB": 7852,
+            "fds": 8,
+            "sockets": 2,
+            "threads": 2,
+            "nativeProcesses": 1,
+            "namespaceProcesses": 2,
+            "zombies": 0,
+            "tcpEstablished": 1,
+            "tcpTimeWait": 77,
+            "udpSockets": 1
+          }
+        },
+        "status": "passed",
+        "resourceSamples": 8,
+        "peak": {
+          "client": {
+            "rssKiB": 7204,
+            "fds": 18,
+            "threads": 9
+          },
+          "exit": {
+            "rssKiB": 7836,
+            "fds": 8,
+            "threads": 2
+          }
+        }
+      }
+    ]
+  },
+  "rawReportSha256": {
+    "soak.json": "bc93b89fb33385dda5457c7465f12e18c81b07612b9b95b989df7d75c9bb8435",
+    "netem-docker.json": "a7667bd74773511340a5ac4645f3e2d706aa1419c48c8c4127079165f110cc90"
+  },
+  "finalSourceSha256": {
+    "scripts/clean-vpn-native-combo-runtime-lab.mjs": "16a569492c42ff94c84b87993446715ab2dc87d7ba0af7875ebd7d56b0ce8d21",
+    "scripts/lib/native-combo-netem.mjs": "78bbb7fe52778649c22893df4699c1610c4078add669e09c4193bd234c54ae61",
+    "scripts/test-native-combo-netem.mjs": "376e364c6b54312cb988818a8b9ba9cf213891781c7e4d82dfc08743c1d83a67"
+  },
+  "validationNotes": [
+    "900-second soak started before optional fault phases were added; same sustained workload and resource assertions",
+    "netem options validation strengthened after capture and reapplied offline to all four captured phase reports",
+    "production image a88d0378 and engine f087b391 reused unchanged; fault code runs in the lab controller"
+  ],
+  "limitations": [
+    "15-minute bounded soak, not multi-hour operation or capacity benchmark",
+    "pcap validates initial ClientHello only, not the full soak/netem interval",
+    "netem egress emulation and TCP out-of-order kernel counters, not a wire reorder percentage measurement",
+    "5-second long-run resource sampling can miss short peaks; RSS bounds do not prove absence of all leaks",
+    "one native client/exit pair; concurrent requests are not independent VPN clients"
+  ]
+}
