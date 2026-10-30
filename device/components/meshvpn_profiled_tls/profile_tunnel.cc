@@ -68,6 +68,9 @@ struct Connection {
     meshvpn_profile_tunnel_diag_t diag{};
     int64_t published_us=0, active_us=0;
     void publish() {
+#if defined(MESHPN_P4_GCM)
+        diag.gcm_psram_fallbacks=meshvpn_profile_gcm_psram_fallbacks();
+#endif
         diag.actual=gate.check; diag.hellos=gate.hellos;
         diag.tls_bytes_sent=gate.sent_bytes;
         if(ssl)diag.verify_error=SSL_get_verify_result(ssl.get());
@@ -113,7 +116,15 @@ struct Connection {
         return current()?0:ECANCELED;
     }
     int tls_error(int result) {
-        int e=SSL_get_error(ssl.get(),result);diag.ssl_error=e;return e;
+        int e=SSL_get_error(ssl.get(),result);diag.ssl_error=e;
+        // Preserve the first library failure before teardown clears its queue.
+        // Numeric errno alone conflates allocation, record and peer failures.
+        if(e!=SSL_ERROR_WANT_READ && e!=SSL_ERROR_WANT_WRITE && e!=SSL_ERROR_NONE) {
+            diag.library_error=ERR_peek_error();
+            const char *reason=diag.library_error?ERR_reason_error_string(diag.library_error):nullptr;
+            snprintf(diag.library_error_reason,sizeof(diag.library_error_reason),"%s",reason?reason:"");
+        }
+        return e;
     }
     int failure(const char *phase,int e) { diag.authenticated=false; report(phase,e);return e; }
 };

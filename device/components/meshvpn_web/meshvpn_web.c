@@ -989,6 +989,8 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddStringToObject(profile, "alpn", vs.profiled.alpn);
     cJSON_AddNumberToObject(profile, "error", vs.profiled.error);
     cJSON_AddNumberToObject(profile, "ssl_error", vs.profiled.ssl_error);
+    cJSON_AddNumberToObject(profile, "library_error", vs.profiled.library_error);
+    cJSON_AddStringToObject(profile, "library_error_reason", vs.profiled.library_error_reason);
     cJSON_AddNumberToObject(profile, "http2_error", vs.profiled.http2_error);
     cJSON_AddNumberToObject(profile, "h2_connection_credit", vs.profiled.h2_connection_credit);
     cJSON_AddNumberToObject(profile, "h2_stream_credit", vs.profiled.h2_stream_credit);
@@ -1001,7 +1003,8 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(profile, "tls_bytes_sent", vs.profiled.tls_bytes_sent);
     cJSON_AddStringToObject(profile, "cipher", vs.profiled.cipher);
 #if CONFIG_MESHVPN_PROFILED_TLS_P4_GCM
-    cJSON_AddStringToObject(profile, "aes_gcm_backend", "ESP-IDF DMA; per-connection hardware self-test");
+    cJSON_AddStringToObject(profile, "aes_gcm_backend", "ESP-IDF DMA with PSRAM/partial-hardware fallback; per-connection self-test");
+    cJSON_AddNumberToObject(profile, "gcm_psram_fallbacks_since_boot", vs.profiled.gcm_psram_fallbacks);
 #else
     cJSON_AddStringToObject(profile, "aes_gcm_backend", "BoringSSL software");
 #endif

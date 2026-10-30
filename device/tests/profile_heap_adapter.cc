@@ -6,6 +6,7 @@
 struct alignas(std::max_align_t) Header { size_t size; };
 static size_t live, peak, calls;
 extern "C" void *heap_caps_malloc(size_t size, int caps) {
+    if ((caps & 16) && std::getenv("MESHPN_TEST_DMA_ALLOC_FAIL")) return nullptr;
     assert(caps==3 || caps==(8|16|2)); // PSRAM or GCM internal DMA slab
     const char *limit=std::getenv("MESHPN_TEST_ALLOC_FAIL_AFTER");
     if(limit && calls++>=std::strtoull(limit,nullptr,10))return nullptr;

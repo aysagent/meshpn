@@ -21,9 +21,12 @@ fs.writeFileSync(out+'/esp_heap_caps.h',`#pragma once
 #define MALLOC_CAP_INTERNAL 1
 #define MALLOC_CAP_DMA 2
 #define MALLOC_CAP_8BIT 4
+#define MALLOC_CAP_SPIRAM 8
 extern "C" void *heap_caps_malloc(size_t,int);
 extern "C" void heap_caps_free(void*);
 `);
 const idf=process.env.IDF_PATH||path.join(process.env.HOME,'esp/esp-idf-meshpn-v5.5.5');
 execFileSync('c++',['-std=c++17','-O1','-g','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I'+out,'-I'+source+'/include','-I'+idf+'/components/mbedtls/mbedtls/include','-I'+root+'components/meshvpn_profiled_tls/include',root+'tests/test_profile_gcm.cc',root+'components/meshvpn_profiled_tls/profile_gcm.cc',root+'experiments/profiled-tls/heap_hooks.cc',build+'/libcrypto.a',mbed+'/library/libmbedcrypto.a','-o',out+'/test'],{stdio:'inherit'});
 execFileSync(out+'/test',[out+'/vectors.txt'],{stdio:'inherit'});
+
+execFileSync(out+'/test',[out+'/vectors.txt'],{stdio:'inherit',env:{...process.env,MESHPN_TEST_DMA_ALLOC_FAIL:'1'}});

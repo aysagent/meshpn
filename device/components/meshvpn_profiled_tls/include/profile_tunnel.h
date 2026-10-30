@@ -15,6 +15,9 @@ typedef struct {
     meshvpn_profile_check_t actual;
     unsigned hellos;
     int error, ssl_error, http2_error;
+    uint32_t library_error;
+    uint32_t gcm_psram_fallbacks; /* since boot, across connections */
+    char library_error_reason[96];
     int32_t h2_connection_credit, h2_stream_credit;
     uint64_t h2_blocked_calls;
     /* Per connection. ACK counted only after its entire frame is accepted by

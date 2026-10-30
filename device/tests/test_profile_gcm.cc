@@ -1,4 +1,5 @@
 #include "profile_gcm.h"
+#include "esp_heap_caps.h"
 #include <openssl/err.h>
 #include <algorithm>
 #include <cassert>
@@ -10,7 +11,8 @@
 
 static bool fail_alloc;
 static std::unordered_map<void *, size_t> allocations;
-extern "C" void *heap_caps_malloc(size_t size, int) {
+extern "C" void *heap_caps_malloc(size_t size, int caps) {
+    if ((caps & MALLOC_CAP_DMA) && std::getenv("MESHPN_TEST_DMA_ALLOC_FAIL")) return nullptr;
     if (fail_alloc) return nullptr;
     void *p=malloc(size); assert(p); allocations[p]=size; return p;
 }
@@ -92,5 +94,6 @@ int main(int argc,char **argv) {
     CRYPTO_IOVEC too_big{out,data,18433};
     assert(!meshvpn_profile_gcm(true,key,16,{&too_big,1},nonce,{},tag,nullptr,16));ERR_clear_error();
     assert(allocations.empty()&&count>=50);
+    assert((meshvpn_profile_gcm_psram_fallbacks()>0)==(std::getenv("MESHPN_TEST_DMA_ALLOC_FAIL")!=nullptr));
     std::cout<<"GCM vectors/negative/in-place/OOM/nonce tests passed: "<<count<<" vectors\n";
 }

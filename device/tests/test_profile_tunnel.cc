@@ -1,6 +1,7 @@
 // Exercise exactly the production TLS session against real exit implementations.
 #include "profile_tunnel.h"
 #include "cJSON.h"
+#include <openssl/ssl.h>
 extern "C" {
 #include "meshvpn_vpn_frame.h"
 }
@@ -94,6 +95,12 @@ int run_once(int argc,char**argv) {
     }
     if(mode=="cancel_auth"||mode=="cancel_handshake")test.end=std::chrono::steady_clock::now()+std::chrono::milliseconds(100);
     int rc=meshvpn_profile_tunnel_run(&o);close(fd);
+    // A failed TLS operation must retain its library reason across report()
+    // and callback publication; ordinary cancellation has no library error.
+    if(test.diag.ssl_error==SSL_ERROR_SSL) {
+        assert(test.diag.library_error!=0);
+        assert(test.diag.library_error_reason[0]);
+    }
     if(test.heartbeat) {
         assert(test.diag.h2_ping_received>=3);
         assert(test.diag.h2_ping_ack_tls==test.diag.h2_ping_received);
