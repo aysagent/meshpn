@@ -70,11 +70,15 @@ Compose проверяет обе роли, actual TUN packets, HTTP auth, brows
 [JSON отчёте](../fixtures/clean-vpn-native-containers-20261030.json).
 
 Прямой amd64 container build остановился на первом `/bin/sh`: `Exec format
-error`. VM-wide binfmt не меняли. Вместо этого подтверждён отдельный native ARM
-QEMU, который загрузил amd64 Linux kernel и Alpine 3.22.7 musl userspace без NIC,
-host share, KVM или диска. Это проверка runner, **не** сборка native engine для
-amd64. Его воспроизводимый smoke описан [отдельно](clean-vpn-native-amd64-qemu.md);
-поддержку engine по одному multiarch base manifest не заявляем.
+error`. VM-wide binfmt не меняли. Сначала отдельный native ARM QEMU загрузил
+amd64 Linux kernel и Alpine 3.22.7 musl userspace без NIC, host share, KVM или
+диска: [минимальный smoke](clean-vpn-native-amd64-qemu.md). Затем в отдельной
+офлайн VM с собственным ext4-диском выполнена полная исходная amd64 сборка:
+CTest 14/14 и 55/55 интеграционных сценариев. После внесения исправления
+`400e7d8` оба engine пересобраны: CTest 14/14 и 56/56, включая worker-directed
+SIGHUP/SIGTERM, без пропусков. Это native amd64 приёмка, но не проверка полного
+amd64 Compose/network-owner или производительности.
+[Состав source snapshot и повтор из кеша](clean-vpn-native-amd64-build-lab.md).
 
 После базового отчёта отдельная Docker 28.5.2 / Compose 2.40.3 лаборатория
 прошла managed private-DNS gate 11/11 на ARM64. Rootless mode, физические

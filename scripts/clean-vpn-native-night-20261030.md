@@ -38,8 +38,10 @@ Mac не переключаются; новые экземпляры — тол�
    nft/legacy runtime по 20/20. После DNS/discovery — CTest 14/14,
    managed Compose по 12/12. Исправленная signal-safe сборка отдельно прошла
    [Docker 12/12](../fixtures/clean-vpn-native-docker-signal-fixed-20261030.json).
-   Для amd64 поднята отдельная offline QEMU VM без NIC/binfmt: Alpine/GCC
-   уже работают, полная сборка из проверенных APK и pinned sources идёт.
+   В отдельной offline amd64 QEMU VM без NIC/binfmt прошла полная исходная
+   сборка, CTest 14/14 и 55/55 интеграционных сценариев. После исправления
+   `400e7d8` — пересборка обоих engine, CTest 14/14 и 56/56 без пропусков.
+   [Повтор из сохранённого кеша и границы](clean-vpn-native-amd64-build-lab.md).
 8. Резерв: authenticated address discovery/session proof готов; native 75
    уникальных JS-сценариев, включая конкурентный reload; ASAN/UBSAN/LSan 34/34.
    Изолированный Linux owner — по 8/8 nft и legacy: TUN/NSS, повторный запуск, отказ при смене
@@ -47,7 +49,7 @@ Mac не переключаются; новые экземпляры — тол�
    Контейнерная упаковка discovery принята. Offline leaf renewal под прежним CA
    и review — 12/12 с настоящим native H1/H2; исправлена гонка изменения `--trust`.
    Admin certificate dates и allowlisted diagnostic export готовы,
-   admin regression 47/47 и Chromium DOM. Продолжаются docs и долгие проверки.
+   admin regression 47/47 и Chromium DOM. Документация и долгие проверки завершены.
    Discovery/full ClientHello сверены независимым observer с сохранённым
    частичным Chromium-профилем. Отказ по сроку сертификата/clock-skew проверен
    без изменения часов; автоматического SSH-time recovery у isolated owner нет.
@@ -58,6 +60,6 @@ Mac не переключаются; новые экземпляры — тол�
 и настоящий DNS churn 12/12. Финальный native snapshot включает это исправление;
 предыдущие отчёты сохраняют собственные source/binary SHA.
 
-Состояние обновляется по мере приёмки; эта запись не заменяет итоговый отчёт.
+Все перечисленные этапы завершены; [сводный отчёт и оставшиеся границы](clean-vpn-native-night-20261030-report.md).
 Изменения в `device/` ведёт отдельная работа пользователя — не включать в наши
 коммиты и не откатывать.
