@@ -1,0 +1,692 @@
+{
+  "schema": 1,
+  "kind": "physical-combo-neutral-certificate-dns-framing",
+  "date": "2026-10-30",
+  "status": "bounded-h2-h1-passed",
+  "scope": "real Radxa client to VPS exit, production engines in separate namespaces, TCP/Unix bridges on3443, real TUN/DNS and synthetic verified HTTPS relay",
+  "engineSourceSha256": "4fdd69e13e1b67037ed75160ea29e811bf1285941f18071e7deb890e69e7ff43",
+  "dnsRelayHeaderSha256": "7c9135e139cea6f17587bf60ca8d926a7637b746ec7da49ba483dd65b933898e",
+  "productionDelta": "faceb23",
+  "diagnosticFixtureDelta": "0e6896d",
+  "neutralCaGeneratorDelta": "a603e9f",
+  "gcc12TestHelperDelta": "18b3ace",
+  "binaries": {
+    "client": {
+      "engineSha256": "7c991f48de5b5d25eecf0a9b65810dd98b0f2ba6c06122140663fff752015a62",
+      "builtEngineSha256": "61889542a76b025995d89c496e373ad35f3fdd2d81cb3d041b977ef0e0eb21b5",
+      "portFree": true
+    },
+    "exit": {
+      "engineSha256": "34cbdb14d6eb87ee57e3720674759d4325b14e2171401be26f5ef9606e6a56d1",
+      "builtEngineSha256": "4518f7f5575f5fa558b0e3ead46d3a8ee5b19b818d3e50b4f043162a160ae901",
+      "portFree": true
+    }
+  },
+  "cases": [
+    {
+      "trial": "cvpn-new-c793f2c388",
+      "httpVersion": "2",
+      "status": "passed",
+      "checks": [
+        "named clients added with unique identities; original unused identity revoked",
+        "discovery assigned laptop .3; native TUN DNS UDP/TCP and synthetic TCP verified",
+        "independent canary discovery .4 while laptop session remains active",
+        "canary key rotation: old denied, new accepted, laptop DNS and data preserved",
+        "canary revoked in native authorization and private DNS without restarting laptop or exit",
+        "pending registry transaction fails closed; DNS and data recover",
+        "eight additional mixed steady probes passed after fault recovery"
+      ],
+      "certificateName": "personal-cert.internal",
+      "certificateSha256": "77140258ed096d5a207c29b3f6e0896c816ec70f849f2a7b17f377687c53ffb7",
+      "stableTrialPids": {
+        "exit": "594025",
+        "client": "11459"
+      },
+      "steadyExplicitProbes": 8,
+      "backgroundPassed": 28,
+      "backgroundFailures": [
+        {
+          "event": "packet_wan_probe",
+          "reason": "dns_response_mismatch {\"transport\":\"udp\",\"length\":28,\"idMatch\":true,\"flags\":\"8182\",\"rcode\":2,\"qd\":1,\"questionMatch\":true}",
+          "sequence": 18,
+          "status": "failed",
+          "phase": "intentional-registry-marker"
+        },
+        {
+          "event": "packet_wan_probe",
+          "reason": "TLS/SSL connection has been closed (EOF) (_ssl.c:992)",
+          "sequence": 30,
+          "status": "failed",
+          "phase": "cleanup"
+        }
+      ],
+      "hostUnchanged": {
+        "exit": true,
+        "client": true
+      },
+      "portReleased": {
+        "exit": true,
+        "client": true
+      },
+      "observer": {
+        "packetConnections": 6,
+        "packetMatched": 6,
+        "packetJa4": [
+          "t13d0915h2_f91f431d341e_54d72502093d"
+        ],
+        "packetJa3Sorted": [
+          "9fc752c58190630c49e1812906b40077"
+        ],
+        "wireCounts": {
+          "packets": 1528,
+          "selected": 1528,
+          "withoutSyn": 0,
+          "fragmented": 0,
+          "truncated": 0
+        },
+        "pcapSha256": "e4e7cc1c8828939056eff422b8f0ef7dbde3ec85a64ca2c21df19bb4fdda1a37",
+        "relayConnections": 81,
+        "originalRelay": 80,
+        "matchedRelay": 80,
+        "relayWithoutOriginalCapture": 1,
+        "originalPcapSha256": "8a0ac8ae1bdfe3439cca3a0e8482bf1cd8eba7296a3d2995e715fe7a3eb2c120"
+      },
+      "dns": [
+        {
+          "file": "client-dns.pcap",
+          "packets": 526,
+          "dnsMessages": 172,
+          "queriesUnanswered": 0,
+          "responsesUnmatched": 0,
+          "rcodeCounts": [
+            {
+              "protocol": "tcp",
+              "name": "canary.mpn",
+              "rcode": 3,
+              "count": 1
+            },
+            {
+              "protocol": "tcp",
+              "name": "laptop.mpn",
+              "rcode": 0,
+              "count": 39
+            },
+            {
+              "protocol": "tcp",
+              "name": "laptop.mpn",
+              "rcode": 2,
+              "count": 1
+            },
+            {
+              "protocol": "tcp",
+              "name": "missing.mpn",
+              "rcode": 3,
+              "count": 1
+            },
+            {
+              "protocol": "udp",
+              "name": "canary.mpn",
+              "rcode": 3,
+              "count": 1
+            },
+            {
+              "protocol": "udp",
+              "name": "laptop.mpn",
+              "rcode": 0,
+              "count": 40
+            },
+            {
+              "protocol": "udp",
+              "name": "laptop.mpn",
+              "rcode": 2,
+              "count": 2
+            },
+            {
+              "protocol": "udp",
+              "name": "missing.mpn",
+              "rcode": 3,
+              "count": 1
+            }
+          ],
+          "successfulLaptopQueryToCompleteResponse": {
+            "udp": {
+              "count": 40,
+              "minMs": 115.413,
+              "medianMs": 123.2715,
+              "maxMs": 332.318
+            },
+            "tcp": {
+              "count": 39,
+              "minMs": 224.776,
+              "medianMs": 273.831,
+              "maxMs": 610.925
+            }
+          }
+        },
+        {
+          "file": "exit-cvpw0.pcap",
+          "packets": 507,
+          "dnsMessages": 166,
+          "queriesUnanswered": 0,
+          "responsesUnmatched": 0,
+          "rcodeCounts": [
+            {
+              "protocol": "tcp",
+              "name": "canary.mpn",
+              "rcode": 3,
+              "count": 1
+            },
+            {
+              "protocol": "tcp",
+              "name": "laptop.mpn",
+              "rcode": 0,
+              "count": 38
+            },
+            {
+              "protocol": "tcp",
+              "name": "laptop.mpn",
+              "rcode": 2,
+              "count": 1
+            },
+            {
+              "protocol": "tcp",
+              "name": "missing.mpn",
+              "rcode": 3,
+              "count": 1
+            },
+            {
+              "protocol": "udp",
+              "name": "canary.mpn",
+              "rcode": 3,
+              "count": 1
+            },
+            {
+              "protocol": "udp",
+              "name": "laptop.mpn",
+              "rcode": 0,
+              "count": 38
+            },
+            {
+              "protocol": "udp",
+              "name": "laptop.mpn",
+              "rcode": 2,
+              "count": 2
+            },
+            {
+              "protocol": "udp",
+              "name": "missing.mpn",
+              "rcode": 3,
+              "count": 1
+            }
+          ],
+          "successfulLaptopQueryToCompleteResponse": {
+            "udp": {
+              "count": 38,
+              "minMs": 0.933,
+              "medianMs": 1.245,
+              "maxMs": 2.988
+            },
+            "tcp": {
+              "count": 38,
+              "minMs": 1.36,
+              "medianMs": 2.07,
+              "maxMs": 7.027
+            }
+          }
+        }
+      ],
+      "captureKernelDrops": 0,
+      "reportSha256": "30ddecaa3737a534ce10cce03f1ee5f52114049569ed994f3341d3cc35fc1def"
+    },
+    {
+      "trial": "cvpn-new-842573aee1",
+      "httpVersion": "1.1",
+      "status": "passed",
+      "checks": [
+        "named clients added with unique identities; original unused identity revoked",
+        "discovery assigned laptop .3; native TUN DNS UDP/TCP and synthetic TCP verified",
+        "independent canary discovery .4 while laptop session remains active",
+        "canary key rotation: old denied, new accepted, laptop DNS and data preserved",
+        "canary revoked in native authorization and private DNS without restarting laptop or exit",
+        "pending registry transaction fails closed; DNS and data recover",
+        "eight additional mixed steady probes passed after fault recovery"
+      ],
+      "certificateName": "personal-cert.internal",
+      "certificateSha256": "77140258ed096d5a207c29b3f6e0896c816ec70f849f2a7b17f377687c53ffb7",
+      "stableTrialPids": {
+        "exit": "598070",
+        "client": "13462"
+      },
+      "steadyExplicitProbes": 8,
+      "backgroundPassed": 27,
+      "backgroundFailures": [
+        {
+          "event": "packet_wan_probe",
+          "reason": "dns_response_mismatch {\"transport\":\"udp\",\"length\":28,\"idMatch\":true,\"flags\":\"8182\",\"rcode\":2,\"qd\":1,\"questionMatch\":true}",
+          "sequence": 18,
+          "status": "failed",
+          "phase": "intentional-registry-marker"
+        },
+        {
+          "event": "packet_wan_probe",
+          "reason": "dns_response_mismatch {\"transport\":\"udp\",\"length\":28,\"idMatch\":true,\"flags\":\"8182\",\"rcode\":2,\"qd\":1,\"questionMatch\":true}",
+          "sequence": 19,
+          "status": "failed",
+          "phase": "intentional-registry-marker"
+        },
+        {
+          "event": "packet_wan_probe",
+          "reason": "dns_response_mismatch {\"transport\":\"udp\",\"length\":28,\"idMatch\":true,\"flags\":\"8182\",\"rcode\":2,\"qd\":1,\"questionMatch\":true}",
+          "sequence": 20,
+          "status": "failed",
+          "phase": "intentional-registry-marker"
+        },
+        {
+          "event": "packet_wan_probe",
+          "reason": "TLS/SSL connection has been closed (EOF) (_ssl.c:992)",
+          "sequence": 31,
+          "status": "failed",
+          "phase": "cleanup"
+        }
+      ],
+      "hostUnchanged": {
+        "exit": true,
+        "client": true
+      },
+      "portReleased": {
+        "exit": true,
+        "client": true
+      },
+      "observer": {
+        "packetConnections": 6,
+        "packetMatched": 6,
+        "packetJa4": [
+          "t13d0915h2_f91f431d341e_54d72502093d"
+        ],
+        "packetJa3Sorted": [
+          "9fc752c58190630c49e1812906b40077"
+        ],
+        "wireCounts": {
+          "packets": 1618,
+          "selected": 1618,
+          "withoutSyn": 0,
+          "fragmented": 0,
+          "truncated": 0
+        },
+        "pcapSha256": "b90ab6248d3085373dbc118ec79cd4b54af5b1f5e8d7209537de7f905e3d3d2e",
+        "relayConnections": 80,
+        "originalRelay": 78,
+        "matchedRelay": 78,
+        "relayWithoutOriginalCapture": 2,
+        "originalPcapSha256": "1e4d5c57011536dd10db727099a43b3317facc05837ae9287029434afecc78fa"
+      },
+      "dns": [
+        {
+          "file": "client-dns.pcap",
+          "packets": 532,
+          "dnsMessages": 174,
+          "queriesUnanswered": 0,
+          "responsesUnmatched": 0,
+          "rcodeCounts": [
+            {
+              "protocol": "tcp",
+              "name": "canary.mpn",
+              "rcode": 3,
+              "count": 1
+            },
+            {
+              "protocol": "tcp",
+              "name": "laptop.mpn",
+              "rcode": 0,
+              "count": 39
+            },
+            {
+              "protocol": "tcp",
+              "name": "laptop.mpn",
+              "rcode": 2,
+              "count": 1
+            },
+            {
+              "protocol": "tcp",
+              "name": "missing.mpn",
+              "rcode": 3,
+              "count": 1
+            },
+            {
+              "protocol": "udp",
+              "name": "canary.mpn",
+              "rcode": 3,
+              "count": 1
+            },
+            {
+              "protocol": "udp",
+              "name": "laptop.mpn",
+              "rcode": 0,
+              "count": 39
+            },
+            {
+              "protocol": "udp",
+              "name": "laptop.mpn",
+              "rcode": 2,
+              "count": 4
+            },
+            {
+              "protocol": "udp",
+              "name": "missing.mpn",
+              "rcode": 3,
+              "count": 1
+            }
+          ],
+          "successfulLaptopQueryToCompleteResponse": {
+            "udp": {
+              "count": 39,
+              "minMs": 83.472,
+              "medianMs": 93.915,
+              "maxMs": 548.915
+            },
+            "tcp": {
+              "count": 39,
+              "minMs": 169.038,
+              "medianMs": 216.606,
+              "maxMs": 667.833
+            }
+          }
+        },
+        {
+          "file": "exit-cvpw0.pcap",
+          "packets": 508,
+          "dnsMessages": 166,
+          "queriesUnanswered": 0,
+          "responsesUnmatched": 0,
+          "rcodeCounts": [
+            {
+              "protocol": "tcp",
+              "name": "canary.mpn",
+              "rcode": 3,
+              "count": 1
+            },
+            {
+              "protocol": "tcp",
+              "name": "laptop.mpn",
+              "rcode": 0,
+              "count": 37
+            },
+            {
+              "protocol": "tcp",
+              "name": "laptop.mpn",
+              "rcode": 2,
+              "count": 1
+            },
+            {
+              "protocol": "tcp",
+              "name": "missing.mpn",
+              "rcode": 3,
+              "count": 1
+            },
+            {
+              "protocol": "udp",
+              "name": "canary.mpn",
+              "rcode": 3,
+              "count": 1
+            },
+            {
+              "protocol": "udp",
+              "name": "laptop.mpn",
+              "rcode": 0,
+              "count": 37
+            },
+            {
+              "protocol": "udp",
+              "name": "laptop.mpn",
+              "rcode": 2,
+              "count": 4
+            },
+            {
+              "protocol": "udp",
+              "name": "missing.mpn",
+              "rcode": 3,
+              "count": 1
+            }
+          ],
+          "successfulLaptopQueryToCompleteResponse": {
+            "udp": {
+              "count": 37,
+              "minMs": 0.958,
+              "medianMs": 1.224,
+              "maxMs": 3.125
+            },
+            "tcp": {
+              "count": 37,
+              "minMs": 1.422,
+              "medianMs": 2.058,
+              "maxMs": 7.359
+            }
+          }
+        }
+      ],
+      "captureKernelDrops": 0,
+      "reportSha256": "3df5cd1ddc814c087950daf98b29fb246ee3ee5534ab56692aad9976fda02f64"
+    }
+  ],
+  "previousCaptureReanalyzed": [
+    {
+      "file": "client-dns.pcap",
+      "packets": 394,
+      "dnsMessages": 102,
+      "queriesUnanswered": 0,
+      "responsesUnmatched": 0,
+      "rcodeCounts": [
+        {
+          "protocol": "tcp",
+          "name": "canary.mpn",
+          "rcode": 3,
+          "count": 1
+        },
+        {
+          "protocol": "tcp",
+          "name": "laptop.mpn",
+          "rcode": 0,
+          "count": 21
+        },
+        {
+          "protocol": "tcp",
+          "name": "laptop.mpn",
+          "rcode": 2,
+          "count": 1
+        },
+        {
+          "protocol": "tcp",
+          "name": "missing.mpn",
+          "rcode": 3,
+          "count": 1
+        },
+        {
+          "protocol": "udp",
+          "name": "canary.mpn",
+          "rcode": 3,
+          "count": 1
+        },
+        {
+          "protocol": "udp",
+          "name": "laptop.mpn",
+          "rcode": 0,
+          "count": 21
+        },
+        {
+          "protocol": "udp",
+          "name": "laptop.mpn",
+          "rcode": 2,
+          "count": 4
+        },
+        {
+          "protocol": "udp",
+          "name": "missing.mpn",
+          "rcode": 3,
+          "count": 1
+        }
+      ],
+      "successfulLaptopQueryToCompleteResponse": {
+        "udp": {
+          "count": 21,
+          "minMs": 81.246,
+          "medianMs": 86.863,
+          "maxMs": 250.445
+        },
+        "tcp": {
+          "count": 21,
+          "minMs": 281.842,
+          "medianMs": 302.263,
+          "maxMs": 492.93
+        }
+      }
+    },
+    {
+      "file": "exit-cvpw0.pcap",
+      "packets": 360,
+      "dnsMessages": 94,
+      "queriesUnanswered": 0,
+      "responsesUnmatched": 0,
+      "rcodeCounts": [
+        {
+          "protocol": "tcp",
+          "name": "canary.mpn",
+          "rcode": 3,
+          "count": 1
+        },
+        {
+          "protocol": "tcp",
+          "name": "laptop.mpn",
+          "rcode": 0,
+          "count": 19
+        },
+        {
+          "protocol": "tcp",
+          "name": "laptop.mpn",
+          "rcode": 2,
+          "count": 1
+        },
+        {
+          "protocol": "tcp",
+          "name": "missing.mpn",
+          "rcode": 3,
+          "count": 1
+        },
+        {
+          "protocol": "udp",
+          "name": "canary.mpn",
+          "rcode": 3,
+          "count": 1
+        },
+        {
+          "protocol": "udp",
+          "name": "laptop.mpn",
+          "rcode": 0,
+          "count": 19
+        },
+        {
+          "protocol": "udp",
+          "name": "laptop.mpn",
+          "rcode": 2,
+          "count": 4
+        },
+        {
+          "protocol": "udp",
+          "name": "missing.mpn",
+          "rcode": 3,
+          "count": 1
+        }
+      ],
+      "successfulLaptopQueryToCompleteResponse": {
+        "udp": {
+          "count": 19,
+          "minMs": 1.194,
+          "medianMs": 1.509,
+          "maxMs": 3.736
+        },
+        "tcp": {
+          "count": 19,
+          "minMs": 160.901,
+          "medianMs": 205.025,
+          "maxMs": 274.953
+        }
+      }
+    }
+  ],
+  "certificate": {
+    "name": "personal-cert.internal",
+    "issuer": "Personal Certificate Authority",
+    "caSha256": "a5b7305447ebaa4569954b67e8bc2c984c1d092abdb5ae9e2d20af236431ad33",
+    "leafSha256": "77140258ed096d5a207c29b3f6e0896c816ec70f849f2a7b17f377687c53ffb7",
+    "dailyInstalled": false
+  },
+  "radxaRecovery": {
+    "agentRebooted": false,
+    "bootId": "aa441626-a4d3-4913-8a82-dd8bfae42842",
+    "initramfsFsck": [
+      "recovering journal",
+      "contains a file system with errors, check forced"
+    ],
+    "ext4ErrorCountAfterTrial": 0,
+    "selectedBackupBytes": 80271360,
+    "selectedBackupEntries": 1577,
+    "selectedBackupSha256": "b94b08c1e7f410a93826ee08ca7ec038d1ab81e1e0a56e68343fef42af5c0f94",
+    "hardwareCauseEstablished": false
+  },
+  "nativeDnsGates": {
+    "client": "passed",
+    "exit": "passed",
+    "standalonePrefixWrites": 0,
+    "existingDnsRelayRegression": "passed both nodes"
+  },
+  "earlierFailedAttempts": [
+    {
+      "trial": "cvpn-new-d45baf473d",
+      "status": "failed before client readiness",
+      "reason": "self-signed leaf trust rejected; initial wrapper hid native reason",
+      "hostUnchanged": true
+    },
+    {
+      "trial": "cvpn-new-4f8ca784c5",
+      "status": "failed before client readiness",
+      "reason": "tls_verify_untrusted; explicit keyUsage lacks keyCertSign for self-issued pinned BoringSSL trust lookup",
+      "hostUnchanged": true
+    }
+  ],
+  "safety": {
+    "dailyRestarted": false,
+    "dailyBinaryChanged": false,
+    "hostRoutesFirewallDnsChanged": false,
+    "macNetworkChanged": false,
+    "temporaryVpsSwapRemoved": true,
+    "trialDirectoriesRemoved": true,
+    "testPortReleased": true
+  },
+  "limitations": [
+    "bounded smoke, not sustained WAN acceptance",
+    "older isolated physical DNS failure remains unexplained and did not recur",
+    "different physical runs/build libc/WAN RTT: not a controlled throughput benchmark",
+    "independent packet capture, shared JA3/JA4 parser, partial browser profile only",
+    "3 wire relay ClientHellos lacked paired original capture; excluded from158 matched pairs",
+    "loopback raw AF_PACKET capture includes duplicate UDP packets; DNS counts here use client/exitTUN captures",
+    "new identity tested only in isolated trial; daily trust/config unchanged",
+    "ext4 recovery permits work but does not prove storage hardware reliable"
+  ],
+  "ctest": {
+    "client": {
+      "passed": 14,
+      "failed": 0,
+      "seconds": 21.73
+    },
+    "exit": {
+      "initialPassed": 13,
+      "initialNotRun": [
+        "address-offer"
+      ],
+      "missingTargetBuilt": true,
+      "followupPassed": 1,
+      "finalDistinctPassed": 14,
+      "initialSeconds": 18.72,
+      "followupSeconds": 0.01
+    }
+  }
+}
