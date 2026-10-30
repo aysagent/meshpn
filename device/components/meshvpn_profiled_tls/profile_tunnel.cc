@@ -191,6 +191,7 @@ struct Http2 {
         if(!h.c.current())return h.fail("cancelled",ECANCELED);
         if(f->hd.type==NGHTTP2_GOAWAY)return h.fail("h2_goaway",ECONNRESET);
         if(f->hd.type==NGHTTP2_PUSH_PROMISE)return h.fail("h2_push");
+        if(f->hd.type==NGHTTP2_PING && !(f->hd.flags&NGHTTP2_FLAG_ACK))h.c.diag.h2_ping_received++;
         if(f->hd.stream_id!=h.stream)return 0;
         if(f->hd.type==NGHTTP2_RST_STREAM)return h.fail("h2_reset",ECONNRESET);
         if((f->hd.type==NGHTTP2_HEADERS || f->hd.type==NGHTTP2_DATA) && (f->hd.flags&NGHTTP2_FLAG_END_STREAM))
@@ -295,6 +296,7 @@ struct Http2 {
         bssl::UniquePtr<uint8_t> buffer(static_cast<uint8_t*>(OPENSSL_malloc(MESHPN_PROFILE_READ_BYTES)));
         if(!buffer)return c.failure("no_memory",ENOMEM);
         const uint8_t *out=nullptr;size_t left=0;
+        bool ping_ack=false;
         int read_want=SSL_ERROR_WANT_READ,write_want=SSL_ERROR_WANT_WRITE;
         int64_t auth_deadline=now_us()+5000000,write_deadline=0,flow_deadline=0;
         c.report("h2_authenticating");
@@ -320,6 +322,11 @@ struct Http2 {
                 if(error)return c.failure(phase,error);
                 if(n<0){lib_error(static_cast<int>(n));return c.failure(phase,error);}
                 left=static_cast<size_t>(n);
+                // mem_send2 returns one serialized frame (or the client magic).
+                // Retain this marker across WANT_WRITE/partial TLS writes.
+                ping_ack=left==17 && out[0]==0 && out[1]==0 && out[2]==8 &&
+                    out[3]==NGHTTP2_PING && out[4]==NGHTTP2_FLAG_ACK &&
+                    out[5]==0 && out[6]==0 && out[7]==0 && out[8]==0;
                 if(left)write_deadline=now_us()+5000000;
                 else if(!nghttp2_session_want_read(session) && !nghttp2_session_want_write(session))
                     return c.failure("h2_session_closed",ECONNRESET);
@@ -329,6 +336,7 @@ struct Http2 {
                 int n=c.write(out,left);
                 if(n>0) {
                     out+=n;left-=n;progress=true;write_want=SSL_ERROR_WANT_WRITE;
+                    if(!left && ping_ack) {c.diag.h2_ping_ack_tls++;ping_ack=false;}
                     if(!left && staged) {c.o.sent(c.o.arg,staged);staged=0;flow_deadline=0;}
                 } else {write_want=c.tls_error(n);if(!wants(write_want))return c.failure("tls_write",EPIPE);}
                 if(left && now_us()>=write_deadline)return c.failure("tx_timeout",ETIMEDOUT);

@@ -33,7 +33,7 @@ typedef struct {
     uint32_t cwnd, snd_wnd, rcv_wnd, snd_buf, unacked_bytes, unsent_bytes, ooseq_bytes;
     uint32_t srtt_ms, rto_ms;
     uint16_t local_port, mss;
-    uint8_t retransmits, dupacks, snd_scale, rcv_scale;
+    uint8_t retransmits, dupacks, snd_scale, rcv_scale, tos;
 } meshvpn_vpn_tcp_diag_t;
 
 typedef struct {

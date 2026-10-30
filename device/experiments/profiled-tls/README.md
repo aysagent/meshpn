@@ -140,3 +140,15 @@ The primary interoperability target is now the current native engine.
 `device/tests/build-native-exit-lab.sh` and `test-native-profiled-tunnel.mjs`
 exercise it with ALPS on/off and malformed settings, without TUN/NAT.
 [Native verification](../../reports/2026-10-29-native-profiled-tls-alps.md).
+
+The native suite also keeps H2 sessions open for 12 seconds, both idle after
+an exchange and during paced packet traffic, and checks at least three PINGs
+and complete ACK frames accepted by TLS. This does not prove behavior during
+WAN loss or long TCP backpressure. Diagnostics distinguish `h2_ping_received`
+from `h2_ping_ack_tls`; the second is not a peer-delivery acknowledgement.
+
+If the shared Podman VM lacks x86 binfmt registration, pass
+`MESHPN_NATIVE_LAB_QEMU=/usr/bin/qemu-x86_64-static` (path inside the VM).
+The runner mounts and invokes that emulator only in its own containers;
+it does not modify VM-wide handlers or restart the VM. Omit the option when
+native execution/binfmt is already available.

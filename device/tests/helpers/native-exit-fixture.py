@@ -51,7 +51,8 @@ def serve(executable, directory):
     left, right = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
     try:
         with open(out / "engine.log", "wb") as log:
-            engine = subprocess.Popen([executable, "--config", str(out / "config.json"),
+            prefix = [os.environ["MESHPN_FIXTURE_QEMU"]] if os.environ.get("MESHPN_FIXTURE_QEMU") else []
+            engine = subprocess.Popen(prefix + [executable, "--config", str(out / "config.json"),
                                        "--test-packet-fd", str(right.fileno())],
                                       pass_fds=(right.fileno(),), stdin=subprocess.PIPE,
                                       stdout=log, stderr=log)

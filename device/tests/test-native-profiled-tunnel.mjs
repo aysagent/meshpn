@@ -22,6 +22,11 @@ fs.writeFileSync(dir+'/wrong.hex',randomBytes(32).toString('hex'),{mode:0o600});
 const connection=process.env.MESHPN_PODMAN_CONNECTION||'meshpn-clean-vpn-lab-root';
 const image=process.env.MESHPN_NATIVE_LAB_IMAGE||'localhost/meshpn-clean-vpn-lab:1f35b200e5e912e7';
 const podArgs=['--connection',connection],exec=promisify(execFile);
+// Optional per-container emulator when the lab VM has no binfmt registration.
+// Does not change VM-wide handlers or restart other agents' containers.
+const qemu=process.env.MESHPN_NATIVE_LAB_QEMU;
+if(qemu)assert.ok(path.isAbsolute(qemu),'QEMU path must be absolute inside the lab VM');
+const python=qemu?['/fixture-qemu','/usr/bin/python3']:['python3'];
 const pod=async(...args)=>(await exec('podman',[...podArgs,...args],{timeout:30000,maxBuffer:1024*1024})).stdout.trim();
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const imported=process.env.MESHPN_TEST_PROFILE?JSON.parse(fs.readFileSync(process.env.MESHPN_TEST_PROFILE)):null;
@@ -37,8 +42,9 @@ for(const scenario of ['no-alps','alps','ack','stream','truncated','extra-frame'
   const args=['run','-d','--network=none','--cap-drop=all','--platform=linux/amd64',
    '-v',`${root}:/source:ro`,'-v',`${build}:/binary:ro`,'-v',`${dir}:/artifacts`,
    '-e','CVPN_TEST_H2_OBSERVER=1'];
+  if(qemu)args.push('-v',`${qemu}:/fixture-qemu:ro`,'-e','MESHPN_FIXTURE_QEMU=/fixture-qemu');
   if(!['no-alps','alps'].includes(scenario))args.push('-e',`CVPN_TEST_ALPS=${scenario}`);
-  id=await pod(...args,image,'python3','/source/device/tests/helpers/native-exit-fixture.py',
+  id=await pod(...args,image,...python,'/source/device/tests/helpers/native-exit-fixture.py',
    '/binary/clean-vpn-engine-fixture',`/artifacts/${scenario}`);
   let listening=false;
   for(let i=0;i<150;i++) {
@@ -48,7 +54,7 @@ for(const scenario of ['no-alps','alps','ack','stream','truncated','extra-frame'
   assert.ok(listening,'Native exit did not listen: '+(fs.existsSync(sub+'/engine.log')?fs.readFileSync(sub+'/engine.log','utf8'):await pod('logs',id)));
   proxy=net.createServer(s=>{
    sockets.add(s);let captured=false,prefix=Buffer.alloc(0);
-   const relay=spawn('podman',[...podArgs,'exec','-i',id,'python3','/source/device/tests/helpers/native-exit-fixture.py','relay'],{stdio:['pipe','pipe','pipe']});
+   const relay=spawn('podman',[...podArgs,'exec','-i',id,...python,'/source/device/tests/helpers/native-exit-fixture.py','relay'],{stdio:['pipe','pipe','pipe']});
    relays.add(relay);let stderr='';relay.stderr.on('data',b=>stderr+=b);
    s.on('error',()=>{});relay.stdin.on('error',()=>{});
    s.on('data',b=>{
@@ -71,7 +77,7 @@ for(const scenario of ['no-alps','alps','ack','stream','truncated','extra-frame'
    reports.push({mode,entries,heap:stderr.trim()});return entries.at(-1);
   }
   if(['no-alps','alps'].includes(scenario)) {
-   for(const mode of ['success','repeat','bulk','cancel']) {
+   for(const mode of ['success','repeat','bulk','cancel','heartbeat','heartbeat-load']) {
     const r=await run(mode);assert.equal(r.alpn,'h2');assert.equal(r.alps,scenario==='alps');
     assert.equal(r.alps_bytes,scenario==='alps'?27:0);
    }
@@ -92,7 +98,7 @@ for(const scenario of ['no-alps','alps','ack','stream','truncated','extra-frame'
  }
  const counts=JSON.parse(fs.readFileSync(sub+'/counts.json'));
  const valid=['no-alps','alps'].includes(scenario);
- assert.equal(counts.packets,valid?64*21+1024:0);
+ assert.equal(counts.packets,valid?64*21+1024+64+1024:0);
  const log=fs.readFileSync(sub+'/engine.log','utf8');
  if(scenario==='alps') {
   // ALPS is acknowledged by TLS: client sends its own SETTINGS, no unsolicited ACK.

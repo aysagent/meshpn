@@ -17,6 +17,9 @@ typedef struct {
     int error, ssl_error, http2_error;
     int32_t h2_connection_credit, h2_stream_credit;
     uint64_t h2_blocked_calls;
+    /* Per connection. ACK counted only after its entire frame is accepted by
+     * SSL_write, not when nghttp2 merely queues/serializes it. Not peer receipt. */
+    uint64_t h2_ping_received, h2_ping_ack_tls;
     bool alps;
     size_t alps_bytes;
     long verify_error;

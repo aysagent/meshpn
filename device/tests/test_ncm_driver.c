@@ -50,7 +50,13 @@ bool tud_control_xfer(uint8_t rhport, const tusb_control_request_t *request, voi
 bool tud_control_status(uint8_t rhport, const tusb_control_request_t *request)
 { (void)rhport; (void)request; return true; }
 uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t size) { memcpy(dst, ref, size); return size; }
-bool tud_network_recv_cb(const uint8_t *src, uint16_t size) { (void)src; (void)size; rx_frames++; return true; }
+static bool rx_renew;
+static unsigned rx_expected;
+bool tud_network_recv_cb(const uint8_t *src, uint16_t size) {
+    rx_frames++;
+    if (rx_renew) { assert(size==64 && src[0]==rx_expected++); tud_network_recv_renew(); }
+    return true;
+}
 void tud_network_init_cb(void) {}
 
 static void init(void)
@@ -201,10 +207,36 @@ static void test_rx_recovery(void)
     assert(rx_frames==delivered+1);
     puts("NCM RX: empty/failed blocks recycle pool; following valid packet delivered: OK");
 }
+static void test_rx_reentrant(void)
+{
+    init(); recv_try_to_start_new_reception(0);
+    unsigned before=rx_frames; rx_expected=0; rx_renew=true;
+    for (unsigned i=0;i<5;i++) {
+        recv_ntb_t *ntb=ncm_interface.recv_tinyusb_ntb; assert(ntb);
+        memset(ntb,0,sizeof(*ntb));
+        ntb->nth.dwSignature=NTH16_SIGNATURE;
+        ntb->nth.wHeaderLength=sizeof(nth16_t); ntb->nth.wBlockLength=256;
+        ntb->nth.wNdpIndex=sizeof(nth16_t);
+        ndp16_t *ndp=(ndp16_t *)(ntb->data+sizeof(nth16_t));
+        ndp->dwSignature=NDP16_SIGNATURE_NCM0;
+        ndp->wLength=sizeof(ndp16_t)+4*sizeof(ndp16_datagram_t);
+        ndp16_datagram_t *entry=(ndp16_datagram_t *)(ndp+1);
+        for(unsigned j=0;j<3;j++) {
+            entry[j].wDatagramIndex=64+j*64;entry[j].wDatagramLength=64;
+            ntb->data[64+j*64]=i*3+j;
+        }
+        assert(netd_xfer_cb(0,0x02,XFER_RESULT_SUCCESS,256));
+        assert(rx_frames==before+(i+1)*3 && !ncm_interface.recv_glue_ntb);
+        assert(ncm_interface.recv_tinyusb_ntb);
+    }
+    rx_renew=false;
+    puts("NCM RX: esp_tinyusb-style reentrant renewal delivers each datagram once in order: OK");
+}
 int main(void)
 {
     test_rx_bounds();
     test_rx_recovery();
+    test_rx_reentrant();
     if (!CONFIG_MESHVPN_NCM_TELEMETRY) { assert(!stats().available); return 0; }
     init();
     assert(stats().available && stats().state.free == 6);

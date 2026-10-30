@@ -982,7 +982,7 @@ static esp_err_t profiled_tcp_snapshot(void *arg)
             ip4_addr_get_u32(ip_2_ip4(&p->remote_ip)) != q->peer.sin_addr.s_addr) continue;
         meshvpn_vpn_tcp_diag_t *d = &q->result;
         d->available = true; d->sampled_us = esp_timer_get_time();
-        d->local_port = p->local_port; d->mss = p->mss;
+        d->local_port = p->local_port; d->mss = p->mss; d->tos = p->tos;
         d->cwnd = p->cwnd; d->snd_wnd = p->snd_wnd; d->rcv_wnd = p->rcv_wnd; d->snd_buf = p->snd_buf;
         d->srtt_ms = p->sa > 0 ? (uint32_t)p->sa * TCP_SLOW_INTERVAL / 8 : 0;
         d->rto_ms = p->rto > 0 ? (uint32_t)p->rto * TCP_SLOW_INTERVAL : 0;

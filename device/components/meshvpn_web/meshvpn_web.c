@@ -992,6 +992,8 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(profile, "h2_connection_credit", vs.profiled.h2_connection_credit);
     cJSON_AddNumberToObject(profile, "h2_stream_credit", vs.profiled.h2_stream_credit);
     cJSON_AddNumberToObject(profile, "h2_blocked_calls", vs.profiled.h2_blocked_calls);
+    cJSON_AddNumberToObject(profile, "h2_ping_received", vs.profiled.h2_ping_received);
+    cJSON_AddNumberToObject(profile, "h2_ping_ack_tls", vs.profiled.h2_ping_ack_tls);
     cJSON_AddBoolToObject(profile, "alps", vs.profiled.alps);
     cJSON_AddNumberToObject(profile, "alps_bytes", vs.profiled.alps_bytes);
     cJSON_AddNumberToObject(profile, "verify_error", vs.profiled.verify_error);
@@ -1019,7 +1021,7 @@ static esp_err_t handler_api_status(httpd_req_t *req)
         PROFILE_TCP(cwnd); PROFILE_TCP(snd_wnd); PROFILE_TCP(rcv_wnd); PROFILE_TCP(snd_buf);
         PROFILE_TCP(unacked_bytes); PROFILE_TCP(unsent_bytes); PROFILE_TCP(ooseq_bytes);
         PROFILE_TCP(srtt_ms); PROFILE_TCP(rto_ms); PROFILE_TCP(retransmits); PROFILE_TCP(dupacks);
-        PROFILE_TCP(snd_scale); PROFILE_TCP(rcv_scale);
+        PROFILE_TCP(snd_scale); PROFILE_TCP(rcv_scale); PROFILE_TCP(tos);
 #undef PROFILE_TCP
     }
     if (vs.profiled_stack_spare) cJSON_AddNumberToObject(profile, "last_worker_stack_spare_bytes", vs.profiled_stack_spare);
