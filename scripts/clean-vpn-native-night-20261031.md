@@ -12,9 +12,9 @@
    сценария, 14 настоящих systemd gates и 9 физических gates. Guard off даёт
    direct USB HTTPS/DNS, guard on + start возвращает VPN. Ремонт оставлен с
    включёнными combo и защитой; VPS не перезапускался.
-2. **Следующее:** длительная isolated combo-приёмка актуального daily binary,
-   четыре клиента, relay quotas/slow readers, память/FD/threads и cleanup.
-   Затем netem/crash сценарии. Сохранять точный binary hash, ошибки и границы.
+2. **Готово:** [30 минут на точном daily binary](clean-vpn-native-daily-soak-20261031.md),
+   четыре клиента, 14073 mixed rounds, quota isolation и cleanup.
+   Следующее — netem/crash на отдельном runtime; новые бинарники не ставить в daily.
 3. Диагностика причин отказов relay/packet/H2/DNS в engine и админке; никакого
    вывода «исправлено» по одному успешному повтору. Отдельно TLS без SNI сейчас
    отклоняется transparent; совместимость исследовать без прямого обхода.

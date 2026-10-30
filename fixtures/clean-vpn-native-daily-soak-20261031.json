@@ -1,0 +1,291 @@
+{
+  "schema": 1,
+  "kind": "native-combo-multi-client",
+  "status": "passed",
+  "image": "localhost/cvpn-runtime:daily-20261031",
+  "clients": 4,
+  "limits": {
+    "sessions": 128,
+    "perClient": 64
+  },
+  "checks": [
+    "generated-role-bundles-independent-client-keys-and-LANs",
+    "all-clients-progress-under-concurrent-packet-and-relay-load",
+    "one-client-at-quota-cannot-starve-other-clients",
+    "all-clients-recover-without-engine-restart-and-resources-reclaimed",
+    "all-native-PID1-SIGTERM-clean"
+  ],
+  "imageId": "72ed80d0a4d3bcdf92cdcbc2726d3c10aaabd597cc03063a1bff2c97dc728629",
+  "engineSha256": "fcdacc399607bc5cec2d5ec4ed18670d66d349513678c485773c06cc2e5e5c1d",
+  "normal": [
+    {
+      "client": 0,
+      "rounds": 3520,
+      "elapsedMs": 1800330.8124980032
+    },
+    {
+      "client": 1,
+      "rounds": 3519,
+      "elapsedMs": 1800318.2209159732
+    },
+    {
+      "client": 2,
+      "rounds": 3517,
+      "elapsedMs": 1800313.7430430055
+    },
+    {
+      "client": 3,
+      "rounds": 3517,
+      "elapsedMs": 1800272.6440919936
+    }
+  ],
+  "duration": {
+    "requestedSeconds": 1800,
+    "elapsedSeconds": 1800.798074791,
+    "sampleIntervalMs": 5000,
+    "samples": 312
+  },
+  "peak": {
+    "exit": {
+      "rssKiB": 6516,
+      "fds": 25,
+      "threads": 6
+    },
+    "client-0": {
+      "rssKiB": 6096,
+      "fds": 12,
+      "threads": 6
+    },
+    "client-1": {
+      "rssKiB": 6092,
+      "fds": 11,
+      "threads": 4
+    },
+    "client-2": {
+      "rssKiB": 6080,
+      "fds": 10,
+      "threads": 4
+    },
+    "client-3": {
+      "rssKiB": 6092,
+      "fds": 12,
+      "threads": 5
+    }
+  },
+  "retainedMemory": {
+    "exit": {
+      "firstThirdMedianKiB": 6508,
+      "lastThirdMedianKiB": 6516,
+      "growthKiB": 8
+    },
+    "client-0": {
+      "firstThirdMedianKiB": 6096,
+      "lastThirdMedianKiB": 6096,
+      "growthKiB": 0
+    },
+    "client-1": {
+      "firstThirdMedianKiB": 6092,
+      "lastThirdMedianKiB": 6092,
+      "growthKiB": 0
+    },
+    "client-2": {
+      "firstThirdMedianKiB": 6080,
+      "lastThirdMedianKiB": 6080,
+      "growthKiB": 0
+    },
+    "client-3": {
+      "firstThirdMedianKiB": 6092,
+      "lastThirdMedianKiB": 6092,
+      "growthKiB": 0
+    }
+  },
+  "pressure": [
+    {
+      "client": 1,
+      "packet": 8,
+      "relay": 8,
+      "relayRefused": 0
+    },
+    {
+      "client": 2,
+      "packet": 8,
+      "relay": 8,
+      "relayRefused": 0
+    },
+    {
+      "client": 3,
+      "packet": 8,
+      "relay": 8,
+      "relayRefused": 0
+    }
+  ],
+  "relayFairness": "authenticated-key-quota-with-global-cap",
+  "starvationObserved": false,
+  "settled": {
+    "cvpnrt-87ea3e6114a64597-exit": {
+      "rssKiB": 12284,
+      "fds": 17,
+      "sockets": 5,
+      "threads": 2,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 4,
+      "tcpTimeWait": 473,
+      "udpSockets": 0
+    },
+    "cvpnrt-87ea3e6114a64597-c0": {
+      "rssKiB": 7324,
+      "fds": 8,
+      "sockets": 4,
+      "threads": 3,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 1,
+      "tcpTimeWait": 182,
+      "udpSockets": 1
+    },
+    "cvpnrt-87ea3e6114a64597-c1": {
+      "rssKiB": 6092,
+      "fds": 8,
+      "sockets": 4,
+      "threads": 3,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 1,
+      "tcpTimeWait": 118,
+      "udpSockets": 1
+    },
+    "cvpnrt-87ea3e6114a64597-c2": {
+      "rssKiB": 6080,
+      "fds": 8,
+      "sockets": 4,
+      "threads": 3,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 1,
+      "tcpTimeWait": 133,
+      "udpSockets": 1
+    },
+    "cvpnrt-87ea3e6114a64597-c3": {
+      "rssKiB": 6092,
+      "fds": 8,
+      "sockets": 4,
+      "threads": 3,
+      "nativeProcesses": 1,
+      "namespaceProcesses": 2,
+      "zombies": 0,
+      "tcpEstablished": 1,
+      "tcpTimeWait": 121,
+      "udpSockets": 1
+    }
+  },
+  "cleanup": {
+    "status": "cleaned",
+    "removed": [
+      {
+        "type": "container",
+        "name": "cvpnrt-87ea3e6114a64597-init"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-87ea3e6114a64597-origin"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-87ea3e6114a64597-exit"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-87ea3e6114a64597-c0"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-87ea3e6114a64597-a0"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-87ea3e6114a64597-c1"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-87ea3e6114a64597-a1"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-87ea3e6114a64597-c2"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-87ea3e6114a64597-a2"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-87ea3e6114a64597-c3"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-87ea3e6114a64597-a3"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-87ea3e6114a64597-exit-config"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-87ea3e6114a64597-origin-config"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-87ea3e6114a64597-replay"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-87ea3e6114a64597-config0"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-87ea3e6114a64597-config1"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-87ea3e6114a64597-config2"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-87ea3e6114a64597-config3"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-87ea3e6114a64597-lan0"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-87ea3e6114a64597-lan1"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-87ea3e6114a64597-lan2"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-87ea3e6114a64597-lan3"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-87ea3e6114a64597-net"
+      }
+    ]
+  },
+  "scope": "Exact accepted Radxa engine artifact; four isolated container clients and LANs; no WAN or physical reconfiguration",
+  "profile": "chromium-156-bounded-cold.json (runtime-config default); partial profile, not full browser equivalence",
+  "limitations": [
+    "Not a WAN/throughput/latency benchmark",
+    "Normal-load RSS peak is sampled; pressure phase has separate settled metrics",
+    "Private peer DNS and address discovery are not enabled",
+    "Compiler and other isolated tests ran concurrently on the same Podman VM"
+  ]
+}
