@@ -10,11 +10,12 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {NativeClientManager,importClientBundle,readClientPrivate} from './lib/native-client-manager.mjs';
 import {main as clientCli} from './clean-vpn-native-clients.mjs';
 const put=(p,b)=>fs.writeFileSync(p,typeof b==='string'||Buffer.isBuffer(b)?b:JSON.stringify(b),{mode:0o600});
-async function fixture(t,{combo=false,applyConfig}={}){
+async function fixture(t,{combo=false,explicitPolicy=false,applyConfig}={}){
  const dir=fs.mkdtempSync(fs.realpathSync(os.tmpdir())+'/cvpn-clients-');t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  put(dir+'/existing.psk',randomBytes(32));put(dir+'/ca.pem','test CA');put(dir+'/profile.json',{kind:'profile'});
  const p={version:1,role:'exit',address:'192.0.2.1',port:443,tun:'cvexit0',cert:dir+'/cert.pem',key:dir+'/key.pem',peers:[{ipv4:'10.99.0.2',secret_path:dir+'/existing.psk'}]};
  let config=p;if(combo){put(dir+'/relay.psk',randomBytes(32));config={version:1,transport:'combo-tls',role:'exit',boring:p,transparent:{version:1,transport:'transparent-tls',role:'exit',public_name:'relay.example',peers:[{id:'initial',secret_path:dir+'/relay.psk'}],listen:{ipv4:'192.0.2.1',port:443},replay_directory:dir+'/replay',limits:{sessions:128,per_client:64},destination_policy:{mode:'public-https',deny_ipv4:[]}}};}
+ if(explicitPolicy){delete config.transparent.destination_policy;config.transparent.destinations=[{ipv4:'11.22.33.44',port:443}];}
  put(dir+'/config.json',config);const initialized=[];
  const validateConfig=async file=>{const c=JSON.parse(readClientPrivate(file));const p=c.boring??c;for(const peer of p.peers??[])assert.equal(readClientPrivate(peer.secret_path).length,32);};
  const manager=new NativeClientManager({directory:dir+'/state',validateConfig,applyConfig,initializeRelay:async c=>initialized.push(c)});
@@ -98,4 +99,14 @@ for(const combo of [false,true])test(`explicit discovery enrollment has no cache
 });
 test('discovery CLI refuses ambiguous booleans and non-export actions before reading state',async()=>{
  for(const args of [['list','--address-discovery'],['export','laptop','--address-discovery=false'],['export','laptop','--address-discovery','--address-discovery'],['add','laptop','--offline=false']])await assert.rejects(clientCli(args),/client_(address_discovery_export_only|boolean_option|option)/);
+});
+
+for(const explicitPolicy of [false,true])test(`combo enrollment preserves ${explicitPolicy?'explicit':'public'} destination policy`,async t=>{
+ const f=await fixture(t,{combo:true,explicitPolicy});await f.manager.add('laptop');
+ const before=structuredClone(f.config.transparent),key=explicitPolicy?'destinations':'destination_policy',absent=explicitPolicy?'destination_policy':'destinations';
+ for(const step of ['initial','rotated']){
+  if(step==='rotated')await f.manager.rotate('laptop');
+  const bundle=await f.manager.export('laptop');assert.deepEqual(bundle.config.transparent[key],before[key]);assert.equal(Object.hasOwn(bundle.config.transparent,absent),false);
+  await importClientBundle(bundle,f.dir+'/'+step,{validateConfig:async file=>{const c=JSON.parse(readClientPrivate(file));assert.deepEqual(c.transparent[key],before[key]);assert.equal(Object.hasOwn(c.transparent,absent),false);assert.equal(readClientPrivate(c.transparent.secret_path).length,32);}});
+ }
 });
