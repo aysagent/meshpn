@@ -173,7 +173,16 @@ def inside(args):
     try:
         if args.role == 'client':
             listeners.append(relay.Listener(socket.AF_INET, (INNER, PORT), relay.forward(socket.AF_UNIX, str(directory/'bridge.sock'), args.seconds+10)))
-            result = json.loads(relay.run(args.engine, '--discover-address', str(directory/'engine.json')))
+            try:
+                result = json.loads(relay.run(args.engine, '--discover-address', str(directory/'engine.json')))
+            except subprocess.CalledProcessError as error:
+                diagnostic = (error.stderr or '')[:4096]
+                write_private(directory/'discovery.log', diagnostic)
+                prefix = 'address discovery refused: '
+                reason = diagnostic.strip().removeprefix(prefix)
+                if not diagnostic.startswith(prefix) or not 1 <= len(reason) <= 96 or not all(c in 'abcdefghijklmnopqrstuvwxyz0123456789_' for c in reason):
+                    reason = 'native_refused'
+                raise RuntimeError('address_discovery_failed: '+reason) from None
             if set(result) != {'version','event','status','assignment','ipv4'} or result['version'] != 1 or result['event'] != 'address_discovery' or result['status'] != 'verified' or result['assignment'] != 'v1':
                 raise RuntimeError('unverified_discovery')
             address = str(ipaddress.IPv4Address(result['ipv4']))
