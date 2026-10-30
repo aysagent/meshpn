@@ -67,7 +67,7 @@ export function createRuntimeConfig(o) {
   const oldMask = process.umask(0o077);
   try {
     for (const dir of ['authority', 'exit', ...Array.from({ length: o.clients }, (_, i) => `client-${i + 1}`)]) fs.mkdirSync(path.join(o.directory, dir), { mode: 0o700 });
-    openssl(['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', String(o.days), '-subj', '/CN=clean-vpn private CA',
+    openssl(['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', String(o.days), '-subj', '/CN=Personal Certificate Authority',
       '-addext', 'basicConstraints=critical,CA:TRUE,pathlen:0', '-addext', 'keyUsage=critical,keyCertSign,cRLSign', '-keyout', 'authority/ca.key', '-out', 'authority/ca.pem']);
     openssl(['req', '-new', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=' + o.serverName, '-keyout', 'exit/key.pem', '-out', 'authority/exit.csr']);
     write('authority/extensions.cnf', `basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:${o.serverName}\n`);
