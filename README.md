@@ -36,7 +36,7 @@ Node VPN для него не требуется. [Текущий план и г
   и [Docker Engine/Compose на ARM64 Linux](scripts/clean-vpn-native-docker-compat.md),
   включая отдельный resolver `.mpn`, NSS и аварийное восстановление.
 - [Alpine](scripts/clean-vpn-native-alpine.md): исходная сборка BoringSSL/native
-  под musl, проверенная arm64-версия. Размер runtime около 101 MiB; amd64 ещё не
+  под musl, проверенная arm64-версия. Размер runtime около 104 MiB; amd64 ещё не
   проверен в текущей лаборатории.
 
 [Ход текущей ночной работы](scripts/clean-vpn-native-night-20261030.md).

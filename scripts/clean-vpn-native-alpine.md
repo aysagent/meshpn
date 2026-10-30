@@ -44,6 +44,21 @@ Native зависимости используют существующие pinn
 На проверенном Alpine Node 22.23.4; Debian frontend использует Node 24.
 Снижение размера образа не доказывает снижение памяти или рост скорости engine.
 
+После private DNS, discovery и исправления сигналов `400e7d8` актуальные
+ARM64 образы измерены повторно тем же `podman image inspect Size`:
+
+| Образ | Байты | MiB | Image ID, начало |
+|---|---:|---:|---|
+| Native runtime | 108969007 | 103.9 | `58d01b02a361` |
+| VPN + supervisor | 109222956 | 104.2 | `38bee9f2f35e` |
+| Web/API | 77817936 | 74.2 | `860d7fba27f8` |
+
+[Финальный managed receipt](../fixtures/clean-vpn-native-managed-signal-fixed-20261030.json)
+содержит полные идентификаторы и SHA engine. Импорт того же image ID в Docker
+даёт несколько другое значение Size; его отдельный результат сохранён в
+[Docker receipt](../fixtures/clean-vpn-native-docker-signal-fixed-20261030.json).
+Для сравнения размеров используйте один и тот же engine и способ подсчёта.
+
 ## Проверки и границы
 
 ARM64 musl собран и проверен в изолированных контейнерах Podman на Apple Silicon.
