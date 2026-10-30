@@ -103,3 +103,23 @@ test('optional saved-profile comparison uses reassembled wire and exposes mismat
   assert.ok(r.connections[0].profile.differences.some(d=>d.field==='cipher_suites'));
   assert.doesNotMatch(JSON.stringify(r),/private_key|client_random/);
 });
+
+test('combo SNI scope still reports other fingerprints without profile mismatch verdict',()=>{
+ const profile=JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/cold-h2.json'));
+ const bytes=pcap([packet(100,undefined,2),packet(101,hello)]);
+ const r=inspectPcap(bytes,{...options,profile,profileSni:'packet.example'});
+ assert.equal(r.connections[0].status,'observed');assert.ok(r.connections[0].ja4);assert.equal(r.connections[0].profile,undefined);
+ // This synthetic flight has no SNI; the default observer still compares it.
+ assert.equal(inspectPcap(bytes,{...options,profile}).connections[0].profile.status,'mismatch');
+});
+
+test('combo packet SNI gets a saved-profile verdict; relay SNI keeps fingerprints only',()=>{
+ const profile=JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/cold-h2.json'));
+ for(const [name,compared] of [['PaCkEt.Example',true],['encrypted.packet.example',false]]){
+  const host=Buffer.from(name),ext=Buffer.alloc(9);ext.writeUInt16BE(0,0);ext.writeUInt16BE(host.length+5,2);ext.writeUInt16BE(host.length+3,4);ext[6]=0;ext.writeUInt16BE(host.length,7);
+  const b=Buffer.concat([body.subarray(0,43),ext,host,body.subarray(43)]);b.writeUInt16BE(7+ext.length+host.length,41);
+  const h=Buffer.alloc(4);h[0]=1;h.writeUIntBE(b.length,1,3);
+  const r=inspectPcap(pcap([packet(100,undefined,2),packet(101,record(Buffer.concat([h,b])))]),{...options,profile,profileSni:'packet.example'});
+  assert.equal(r.connections[0].status,'observed');assert.equal(!!r.connections[0].profile,compared);assert.ok(r.connections[0].ja4);
+ }
+});

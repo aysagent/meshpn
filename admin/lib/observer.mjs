@@ -8,7 +8,7 @@ import {command} from './command.mjs';
 // systemd unit enforces the deadline even if the broker/browser disappears.
 export class Observer{
  constructor({interface:iface,directory,spawnChild=spawn,run=command}){this.iface=iface;this.directory=directory;this.spawnChild=spawnChild;this.run=run;this.child=null;this.result=null;}
- start({destination,port,profile,seconds=20}){
+ start({destination,port,profile,profileSni=null,seconds=20}){
   need(!this.child,'observer_busy',409);need(Number.isInteger(seconds)&&seconds>=5&&seconds<=60,'observer_duration');
   const file=this.directory+'/observer.pcap',fd=fs.openSync(file,'w',0o600),unit='meshpn-admin-observe-'+randomBytes(12).toString('hex')+'.service';
   this.unit=unit;this.stopping=false;
@@ -19,7 +19,7 @@ export class Observer{
   child.stderr.on('data',b=>{if(stderr.length<8192)stderr+=b.toString();});
   child.on('error',()=>{failure='capture_service_unavailable';});
   child.once('close',code=>{fs.closeSync(fd);this.child=null;this.unit=null;
-   try{need(!failure,failure);need(code===0||/\d+ packets captured/.test(stderr),'capture_service_failed');const report=inspectPcap(fs.readFileSync(file),{destination,port,profile});this.result={status:'complete',serviceExit:code,bytes,report,kernelDrops:Number(/(\d+) packets dropped by kernel/.exec(stderr)?.[1]??-1),scope:'ClientHello fields from independent pcap; not browser indistinguishability',pcapAvailable:true};}
+   try{need(!failure,failure);need(code===0||/\d+ packets captured/.test(stderr),'capture_service_failed');const report=inspectPcap(fs.readFileSync(file),{destination,port,profile,profileSni});this.result={status:'complete',serviceExit:code,bytes,report,kernelDrops:Number(/(\d+) packets dropped by kernel/.exec(stderr)?.[1]??-1),scope:profileSni?'Saved profile compared only with packet SNI; other ClientHellos observed without a saved-profile verdict':'ClientHello fields from independent pcap; not browser indistinguishability',pcapAvailable:true};}
    catch(e){this.result={status:'failed',error:/^[a-z_]+$/.test(e.message)?e.message:'capture_incomplete',bytes};}
   });return this.result;
  }

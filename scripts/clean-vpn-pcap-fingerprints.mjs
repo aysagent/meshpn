@@ -22,7 +22,7 @@ export function parsePcapArgs(args) {
   check(values.pcap && isIPv4(values.destination), 'usage_pcap_destination_optional_port_profile');
   return { file: values.pcap, destination: values.destination, port: tcpPort(values.port ?? 443), profileFile: values.profile };
 }
-export function inspectPcap(bytes, { destination, port = 443, profile = null }) {
+export function inspectPcap(bytes, { destination, port = 443, profile = null, profileSni = null }) {
   check(isIPv4(destination) && Number.isInteger(port) && port > 0 && port < 65536, 'invalid_endpoint');
   check(bytes.length >= 24 && bytes.length <= MAX_FILE, 'pcap_size');
   const magic = bytes.subarray(0, 4).toString('hex');
@@ -96,7 +96,7 @@ export function inspectPcap(bytes, { destination, port = 443, profile = null }) 
       return { ...result, status: 'observed', sni: hello.sni, alpn: hello.alpn,
         clientHelloBytes: hello.clientHelloBody.length, ja3: ja3.ja3Digest, ja3String: ja3.ja3String,
         ja4: ja4FromClientHelloBody(hello.clientHelloBody).fingerprint,
-        ...(profile ? { profile: observeTlsProfile(stream.data.subarray(0, hello.bytesConsumed), profile) } : {}) };
+        ...(profile && (profileSni === null || hello.sni.length === 1 && hello.sni[0].toLowerCase() === profileSni.toLowerCase()) ? { profile: observeTlsProfile(stream.data.subarray(0, hello.bytesConsumed), profile) } : {}) };
     } catch { return { ...result, status: 'not_valid_clienthello' }; }
   });
   return { schema: 1, kind: 'clean-vpn-pcap-fingerprints', source: 'offline-tcpdump-pcap',

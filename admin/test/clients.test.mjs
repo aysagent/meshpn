@@ -83,8 +83,9 @@ test('HTTP enrollment download requires changed password, POST and CSRF and is a
   assert.equal(calls.filter(([route]) => route === '/clients/export').length, 1);
 });
 
-test('host combo client does not advertise packet-only profile settings or observer operations',async t=>{
- const {b,calls}=await broker(t,'client',false,'combo-tls');const s=await b.dispatch('/status');
- for(const key of ['observer','profileImport','vpnSettings'])assert.equal(s.capabilities[key],false);assert.deepEqual(s.capabilities.probes,[]);assert.deepEqual(s.capabilities.transports,['combo-tls']);
- calls.length=0;for(const route of ['/vpn/settings','/profile/import','/probe','/observer/start'])await assert.rejects(b.dispatch(route,{}),/transport_control_not_supported/);assert.equal(calls.length,0);
+test('host combo exposes packet controls with explicit transport and nested endpoint',async t=>{
+ const {b}=await broker(t,'client',false,'combo-tls');const s=await b.dispatch('/status');
+ for(const key of ['observer','profileImport','vpnSettings'])assert.equal(s.capabilities[key],true);
+ assert.deepEqual(s.capabilities.probes,['exit','dns','internet']);assert.deepEqual(s.capabilities.transports,['combo-tls']);
+ assert.equal((await b.dispatch('/settings')).vpn.address,'192.0.2.1');
 });

@@ -136,3 +136,28 @@ test('standalone admin controls network owner and keeps engine identity for read
   bindings='guard.service';const before=calls.filter(c=>c[1]==='restart').length;
   assert.equal((await action('restart')).error,'network_owner_binding_required');assert.equal(calls.filter(c=>c[1]==='restart').length,before);
 });
+
+test('combo profile edits preserve relay credentials and policy; endpoint/name migration refused',async t=>{
+ const f=fixture(t);fs.mkdirSync(f.options.state+'/profiles');
+ const relay={role:'client',transport:'transparent-tls',public_name:'relay.example',secret_path:'/relay.psk',exit:{ipv4:'192.0.2.1',port:443},destination_policy:{mode:'public-https'}};
+ const original={version:1,transport:'combo-tls',role:'client',boring:{...f.before,sni:'relay.example'},transparent:relay};atomic(f.options.config,original);
+ const calls=[];const b=await createBroker({version:1,usbAddress:'192.168.7.1',usbInterface:'usb0',wifiInterface:'wlan0',
+ vpnUnit:f.options.unit,guardUnit:'guard.service',guardScript:'/guard',state:f.options.state,profiles:f.options.state+'/profiles',
+ engine:'/engine',vpnConfig:f.options.config,socket:f.options.state+'/socket',nativeManaged:true,publishMdns:false},
+ {run:async(file,args)=>{calls.push([file,...args]);return{out:'Type=notify\nActiveState=inactive\nSubState=dead\nMainPID=0\n'};}});t.after(()=>b.close());
+ const payload={address:'192.0.2.1',port:443,serverName:'new.example',sni:'relay.example',profile:null};
+ const apply=async p=>{await b.dispatch('/vpn/settings',p);for(let i=0;i<100;i++){await new Promise(r=>setImmediate(r));const job=(await b.dispatch('/status')).jobs[0];if(job.status!=='running')return job;}throw Error('job_timeout');};
+ assert.equal((await apply(payload)).status,'passed');const saved=readJson(f.options.config);
+ assert.deepEqual(saved.transparent,relay);assert.equal(saved.boring.server_name,'new.example');assert.equal(saved.transport,'combo-tls');assert.equal(saved.tls_profile_path,undefined);
+ assert.equal((await apply({...payload,sni:'another.example'})).error,'combo_name_requires_exit_migration');
+ assert.equal((await apply({...payload,address:'192.0.2.2'})).error,'endpoint_change_requires_owner_migration');
+ assert.deepEqual(readJson(f.options.config),saved);
+ atomic(f.options.state+'/profiles/new.json',{kind:'clean-vpn-native-tls-profile',id:'new',scenario:'fixture'});
+ assert.equal((await apply({...payload,profile:'new.json'})).status,'passed');
+ assert.equal(readJson(f.options.config).boring.tls_profile_path,f.options.state+'/profiles/new.json');
+ assert.deepEqual(readJson(f.options.config).transparent,relay);
+ await b.dispatch('/profile/import',{profile:{kind:'clean-vpn-native-tls-profile',id:'imported'}});
+ for(let i=0;i<100;i++){await new Promise(r=>setImmediate(r));if((await b.dispatch('/status')).jobs[0].status!=='running')break;}
+ const candidate=readJson(f.options.state+'/profile-check.json');assert.deepEqual(candidate.transparent,relay);assert.equal(candidate.boring.tls_profile_path,f.options.state+'/profile-candidate.json');
+ calls.length=0;await b.dispatch('/probe',{kind:'exit'});await new Promise(r=>setImmediate(r));assert.ok(calls.some(c=>c[0]==='/bin/ping'&&c.at(-1)==='192.0.2.1'));
+});
