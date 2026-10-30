@@ -131,8 +131,9 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     packetOutput.tls_profile_path = target + '/tls-profile.json';
   }
   if (packetInput.secret_path) packetOutput.secret_path = copy(packetInput.secret_path, 'peer.psk', true);
-  if (packetInput.peers) packetOutput.peers = packetInput.peers.map((peer, i) => ({ ipv4: peer.ipv4, secret_path: copy(peer.secret_path, `peer-${i}.psk`, true) }));
-  if (combo) relayOutput.secret_path = copy(relay.secret_path, 'relay.psk', true);
+  if (!transparent && packetInput.peers) packetOutput.peers = packetInput.peers.map((peer, i) => ({ ipv4: peer.ipv4, secret_path: copy(peer.secret_path, `peer-${i}.psk`, true) }));
+  if (combo && relay.secret_path) relayOutput.secret_path = copy(relay.secret_path, 'relay.psk', true);
+  if ((transparent || combo) && relay.peers) relayOutput.peers = relay.peers.map((peer,i)=>({id:peer.id,secret_path:copy(peer.secret_path,`relay-peer-${i}.psk`,true)}));
   if (clock) {
     const pin = regular(clock.known_hosts, 4096).toString('ascii').trim().split(/\s+/);
     const raw = Buffer.from(pin[2] ?? '', 'base64');
@@ -179,7 +180,9 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     // Alternate root is a test/install staging root, not a chroot. Use actual
     // owned paths for initialization; published config keeps deployment paths.
     const initConfig = structuredClone(rewritten), initRelay = combo ? initConfig.transparent : initConfig;
-    initRelay.secret_path = at(initRelay.secret_path); initRelay.replay_directory = bundle + '/replay';
+    if(initRelay.secret_path)initRelay.secret_path = at(initRelay.secret_path);
+    if(initRelay.peers)initRelay.peers=initRelay.peers.map(peer=>({...peer,secret_path:at(peer.secret_path)}));
+    initRelay.replay_directory = bundle + '/replay';
     if (combo) {
       for (const key of ['cert', 'key']) initConfig.boring[key] = at(initConfig.boring[key]);
       if (initConfig.boring.secret_path) initConfig.boring.secret_path = at(initConfig.boring.secret_path);

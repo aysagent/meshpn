@@ -76,3 +76,20 @@ test('transparent rejects policy mismatch, unbound external units and adoption o
   assert.throws(() => installNative({ ...old, apply: true }), /fresh_replay_source_must_not_exist/);
   for (const o of [unbound, mismatch, old]) assert.equal(fs.existsSync(o.root + '/opt/clean-vpn-native'), false);
 });
+
+test('transparent exit installs named relay credentials with independent durable replay',t=>{
+  const o=fixture(t)('named'),c=JSON.parse(fs.readFileSync(o.config));
+  const second=o.root+'/second.psk';fs.writeFileSync(second,Buffer.alloc(32,0x43),{mode:0o600});
+  c.peers=[{id:'first',secret_path:c.secret_path},{id:'second',secret_path:second}];delete c.secret_path;
+  fs.writeFileSync(o.config,JSON.stringify(c));assert.equal(installNative({...o,apply:true}).status,'installed-disabled');
+  const bundle=o.root+'/opt/clean-vpn-native/named',actual=JSON.parse(fs.readFileSync(bundle+'/config.json'));
+  assert.equal(actual.secret_path,undefined);assert.deepEqual(actual.peers.map(p=>p.id),['first','second']);
+  for(let i=0;i<2;i++){
+    const file=o.root+actual.peers[i].secret_path;
+    assert.deepEqual(fs.readFileSync(file),fs.readFileSync(c.peers[i].secret_path));assert.equal(fs.statSync(file).mode&0o777,0o600);
+    fs.unlinkSync(c.peers[i].secret_path);actual.peers[i].secret_path=file;
+    assert.ok(fs.existsSync(bundle+'/replay/'+actual.peers[i].id+'/state'));
+  }
+  actual.replay_directory=o.root+actual.replay_directory;const file=o.root+'/actual.json';fs.writeFileSync(file,JSON.stringify(actual));
+  execFileSync(o.binary,['--check-config',file]);
+});

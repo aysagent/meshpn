@@ -117,3 +117,26 @@ test('scoped combo host profiles bind USB redirect and preserve exit replay owne
     assert.equal(fs.existsSync(o.root+'/etc/systemd/system/multi-user.target.wants'),false);
   }
 });
+
+test('multi-client combo installs distinct relay keys and replay state without source paths',t=>{
+ const o=fixture(t)('multi-relay'),input=JSON.parse(fs.readFileSync(o.config));
+ const other=o.root+'/relay-second.psk';fs.writeFileSync(other,Buffer.alloc(32,4),{mode:0o600});
+ input.transparent.peers=[{id:'radxa',secret_path:input.transparent.secret_path},{id:'laptop',secret_path:other}];delete input.transparent.secret_path;
+ fs.writeFileSync(o.config,JSON.stringify(input));assert.equal(installNative({...o,apply:true}).status,'installed-disabled');
+ const target='/opt/clean-vpn-native/multi-relay',bundle=o.root+target,c=JSON.parse(fs.readFileSync(bundle+'/config.json'));
+ assert.equal(c.transparent.secret_path,undefined);assert.deepEqual(c.transparent.peers.map(p=>p.id),['radxa','laptop']);
+ for(let i=0;i<2;i++){
+  assert.equal(c.transparent.peers[i].secret_path,target+`/relay-peer-${i}.psk`);
+  assert.equal(fs.statSync(bundle+`/relay-peer-${i}.psk`).mode&0o777,0o600);
+  assert.deepEqual(fs.readFileSync(bundle+`/relay-peer-${i}.psk`),fs.readFileSync(input.transparent.peers[i].secret_path));
+  assert.ok(fs.existsSync(bundle+'/replay/'+c.transparent.peers[i].id+'/state'));
+  fs.unlinkSync(input.transparent.peers[i].secret_path);c.transparent.peers[i].secret_path=o.root+c.transparent.peers[i].secret_path;
+ }
+ c.transparent.replay_directory=o.root+c.transparent.replay_directory;
+ for(const key of ['cert','key'])c.boring[key]=o.root+c.boring[key];
+ for(const peer of c.boring.peers)peer.secret_path=o.root+peer.secret_path;
+ const actual=o.root+'/actual.json';fs.writeFileSync(actual,JSON.stringify(c));execFileSync(o.binary,['--check-config',actual]);
+ const before=c.transparent.peers.map(p=>fs.readFileSync(bundle+'/replay/'+p.id+'/state'));
+ assert.throws(()=>execFileSync(o.binary,['--init-transparent-replay',actual],{stdio:'pipe'}));
+ assert.deepEqual(c.transparent.peers.map(p=>fs.readFileSync(bundle+'/replay/'+p.id+'/state')),before);
+});
