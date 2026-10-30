@@ -40,6 +40,17 @@ typedef struct {
     uint32_t tx_wait_gt_25ms;
 } meshvpn_usb_stats_t;
 
+/* P4 host -> device handoffs, since boot. Stack acceptance is not forwarding
+ * or application delivery. dispatch_failed overlaps a callback attempt. */
+typedef struct {
+    bool available;
+    uint64_t callbacks, bytes, dispatch_failed;
+    uint64_t stack_calls, invalid_buffer, netif_down, no_mem, copy_failed;
+    uint64_t input_failed, accepted;
+    int last_input_error;
+} meshvpn_usb_rx_stats_t;
+void meshvpn_usb_rx_snapshot(meshvpn_usb_rx_stats_t *out);
+
 esp_err_t meshvpn_usb_init(void);
 const char *meshvpn_usb_profile_name(void);
 

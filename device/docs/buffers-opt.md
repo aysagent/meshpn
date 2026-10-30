@@ -536,3 +536,23 @@ npm run device:perf -- user@SERVER:22 --paths both --quick --seconds 15 --runs 3
 ## Что не менялось в рамках исходного аудита
 
 Изначально создан только этот документ. Последующие исправление статистики, NCM-телеметрия, эксперимент с паузой и её откат описаны в начале. Размеры пулов, copy-mode и affinity по-прежнему не менялись. Подтверждённого устойчивого end-to-end ускорения пока нет.
+
+## NCM RX validation (30 October 2026)
+
+The pinned generated driver also applies RX correctness fixes independently of
+`CONFIG_MESHVPN_NCM_TELEMETRY`: minimum NTH length before reading fields, complete
+NDP/table containment inside the declared NTB block, and datagram containment
+inside that block rather than trailing USB padding. Empty/half-empty first
+entries and failed USB completions are recycled instead of entering the glue
+queue. Previously an empty entry could pin that queue indefinitely.
+
+With telemetry enabled, `usb.ncm.rx_blocks` counts OUT completions and
+`rx_rejected` counts rejected/empty blocks (including zero-byte completions),
+not a count of Ethernet packets lost. P4 `usb.rx` separately records callback,
+netif handoff and input failure; acceptance there does not prove forwarding.
+
+The real generated-driver tests exercise exact-size truncated buffers under
+ASan/UBSan, 20,000 malformed cases per variant, empty-pool recovery followed by
+valid traffic, and telemetry on/off. These defects have been reproduced in the
+host harness; the reported phone upload stall has not yet been attributed to
+them by a capture from the phone.

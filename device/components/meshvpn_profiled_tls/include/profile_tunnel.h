@@ -8,12 +8,15 @@ extern "C" {
 #define MESHPN_TLS_PROFILE_JA3 "ed63604b6e93c62437468be3f6b387c3"
 #define MESHPN_TLS_PROFILE_JA4 "t13d1517h2_8daaf6152771_cb7bf5808d99"
 #define MESHPN_PROFILE_READ_BYTES 4096
+#define MESHPN_PROFILE_H2_SEND_BYTES 4096
 typedef struct {
     char phase[32], alpn[16];
     char expected_ja3[33], expected_ja4[37];
     meshvpn_profile_check_t actual;
     unsigned hellos;
     int error, ssl_error, http2_error;
+    int32_t h2_connection_credit, h2_stream_credit;
+    uint64_t h2_blocked_calls;
     bool alps;
     size_t alps_bytes;
     long verify_error;

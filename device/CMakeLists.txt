@@ -58,6 +58,7 @@ idf_build_set_property(DEPENDENCIES_LOCK
 project(meshvpn_device)
 include("${CMAKE_SOURCE_DIR}/cmake/board-identity.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/lwip-napt.cmake")
+include("${CMAKE_SOURCE_DIR}/experiments/tcp-sack/build.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/wireguard-performance.cmake")
 if(CONFIG_MESHVPN_VPN_ENABLE AND NOT CONFIG_LWIP_IP4_REASSEMBLY)
     message(FATAL_ERROR "VPN forwarding requires IPv4 reassembly before NAPT. Regenerate sdkconfig.")

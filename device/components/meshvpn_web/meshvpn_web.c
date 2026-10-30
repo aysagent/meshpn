@@ -339,20 +339,24 @@ static esp_err_t handler_sta_tcp_trace(httpd_req_t *req)
     bool ap=httpd_req_get_url_query_str(req,query,sizeof(query))==ESP_OK &&
         httpd_query_key_value(query,"interface",iface,sizeof(iface))==ESP_OK && !strcmp(iface,"ap");
     if (req->method == HTTP_POST) {
-        char target[16]; ip4_addr_t ip;
-        if (req->content_len || ap || httpd_req_get_url_query_str(req,query,sizeof(query))!=ESP_OK ||
-            httpd_query_key_value(query,"target",target,sizeof(target))!=ESP_OK || !ip4addr_aton(target,&ip))
-            return error(req,"400 Bad Request","Empty POST with target=private STA peer IPv4 (0.0.0.0 cancels)");
-        esp_err_t err=meshvpn_ap_probe_tcp_client(ip.addr);
-        if (err!=ESP_OK) return error(req,"409 Conflict","Requires VPN off and private unicast peer on connected STA subnet");
+        char target[16], vpn[8]; ip4_addr_t ip;
+        if (req->content_len || ap || httpd_req_get_url_query_str(req,query,sizeof(query))!=ESP_OK)
+            return error(req,"400 Bad Request","Empty POST with target=private STA peer IPv4 or vpn=1");
+        bool vpn_mode=httpd_query_key_value(query,"vpn",vpn,sizeof(vpn))==ESP_OK;
+        bool target_mode=httpd_query_key_value(query,"target",target,sizeof(target))==ESP_OK;
+        if (vpn_mode == target_mode || (vpn_mode ? strcmp(vpn,"1")!=0 : !ip4addr_aton(target,&ip)))
+            return error(req,"400 Bad Request","Choose target=private STA peer IPv4 (0.0.0.0 cancels) or vpn=1");
+        esp_err_t err=vpn_mode ? meshvpn_ap_probe_tcp_vpn() : meshvpn_ap_probe_tcp_client(ip.addr);
+        if (err!=ESP_OK) return error(req,"409 Conflict",vpn_mode ? "Requires a fresh connected profiled TLS TCP socket" : "Requires VPN off and private unicast peer on connected STA subnet");
     }
     meshvpn_sta_tcp_trace_t trace;
     if(ap) meshvpn_ap_probe_ap_tcp(&trace); else meshvpn_ap_probe_sta_tcp(&trace);
     cJSON *out = cJSON_CreateObject();
-    cJSON_AddStringToObject(out, "scope", "HTTP TCP flow; default local server or explicitly armed STA client to private peer (120s); RX before lwIP / TX accepted by SDIO, not RF delivery; last 64 headers only; bytes include repeats; SACK records first block; no payload");
+    cJSON_AddStringToObject(out, "scope", "Default local HTTP, armed private HTTP peer (120s), or exact current VPN outer TCP tuple (30s); RX before lwIP / TX accepted by SDIO, not RF delivery; last 64 headers only; bytes include repeats; SACK records first block; no payload");
     cJSON_AddStringToObject(out,"interface",ap?"ap":"sta");
     cJSON_AddBoolToObject(out,"client",trace.client);
     cJSON_AddBoolToObject(out,"armed",trace.armed);
+    cJSON_AddBoolToObject(out,"vpn",trace.vpn);
     char address[16]; const uint8_t *b = (const uint8_t *)&trace.peer;
     snprintf(address, sizeof(address), "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
     cJSON_AddStringToObject(out, "peer", address); b = (const uint8_t *)&trace.local;
@@ -831,6 +835,19 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     meshvpn_usb_stats_t us;
     meshvpn_usb_get_stats(&us);
     cJSON *usb = cJSON_AddObjectToObject(root, "usb");
+    meshvpn_usb_rx_stats_t usb_rx;
+    meshvpn_usb_rx_snapshot(&usb_rx);
+    cJSON *rx = cJSON_AddObjectToObject(usb, "rx");
+    cJSON_AddBoolToObject(rx, "available", usb_rx.available);
+    cJSON_AddStringToObject(rx, "scope", "since boot; P4 host-to-device callbacks and netif input; accepted = lwIP handoff, not forwarded delivery; dispatch failures overlap callbacks; does not include USB controller/NTB parser losses");
+    if (usb_rx.available) {
+#define USB_RX(field) cJSON_AddNumberToObject(rx, #field, (double)usb_rx.field)
+        USB_RX(callbacks); USB_RX(bytes); USB_RX(dispatch_failed);
+        USB_RX(stack_calls); USB_RX(invalid_buffer); USB_RX(netif_down);
+        USB_RX(no_mem); USB_RX(copy_failed); USB_RX(input_failed); USB_RX(accepted);
+        USB_RX(last_input_error);
+#undef USB_RX
+    }
     cJSON_AddStringToObject(usb, "profile", meshvpn_usb_profile_name());
     cJSON_AddBoolToObject(usb, "host_ready", us.host_ready);
     cJSON_AddBoolToObject(usb, "ncm_double_buffer_configured", us.ncm_double_buffer_configured);
@@ -882,6 +899,7 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     meshvpn_ncm_stats_t nd;
     meshvpn_ncm_get_stats(&nd);
     cJSON *ncm = cJSON_AddObjectToObject(usb, "ncm");
+    cJSON_AddStringToObject(ncm, "rx_scope", "rx_blocks: OUT completions; rx_rejected: failed transfer, malformed or empty NTB recycled before netif; includes zero-length completions, not Ethernet packet losses");
     cJSON_AddBoolToObject(ncm, "available", nd.available);
     if (nd.available) {
 #define ADD_NCM_COUNTER(name) cJSON_AddNumberToObject(ncm, #name, nd.name);
@@ -971,11 +989,19 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     cJSON_AddNumberToObject(profile, "error", vs.profiled.error);
     cJSON_AddNumberToObject(profile, "ssl_error", vs.profiled.ssl_error);
     cJSON_AddNumberToObject(profile, "http2_error", vs.profiled.http2_error);
+    cJSON_AddNumberToObject(profile, "h2_connection_credit", vs.profiled.h2_connection_credit);
+    cJSON_AddNumberToObject(profile, "h2_stream_credit", vs.profiled.h2_stream_credit);
+    cJSON_AddNumberToObject(profile, "h2_blocked_calls", vs.profiled.h2_blocked_calls);
     cJSON_AddBoolToObject(profile, "alps", vs.profiled.alps);
     cJSON_AddNumberToObject(profile, "alps_bytes", vs.profiled.alps_bytes);
     cJSON_AddNumberToObject(profile, "verify_error", vs.profiled.verify_error);
     cJSON_AddNumberToObject(profile, "tls_bytes_sent", vs.profiled.tls_bytes_sent);
     cJSON_AddStringToObject(profile, "cipher", vs.profiled.cipher);
+#if CONFIG_MESHVPN_PROFILED_TLS_P4_GCM
+    cJSON_AddStringToObject(profile, "aes_gcm_backend", "ESP-IDF DMA; per-connection hardware self-test");
+#else
+    cJSON_AddStringToObject(profile, "aes_gcm_backend", "BoringSSL software");
+#endif
     cJSON *profile_io = cJSON_AddObjectToObject(profile, "io");
     cJSON_AddStringToObject(profile_io, "scope", "per connection, post-handshake; bytes include HTTP framing; SSL call time includes socket I/O and preemption, not isolated crypto; published once per second");
 #define PROFILE_IO(name) cJSON_AddNumberToObject(profile_io, #name, vs.profiled.name)
@@ -1028,6 +1054,12 @@ static esp_err_t handler_api_status(httpd_req_t *req)
     VPN_COUNTER(direct_dns_blocked);
 #undef VPN_COUNTER
     cJSON *socket_diag = cJSON_AddObjectToObject(vpn, "socket");
+    cJSON *ecn = cJSON_AddObjectToObject(socket_diag, "tx_ecn");
+    cJSON_AddStringToObject(ecn, "scope", "since boot; valid inner IPv4 submission attempts, including rejects; no packet modification");
+    cJSON_AddNumberToObject(ecn, "not_ect", vs.tx_ecn[0]);
+    cJSON_AddNumberToObject(ecn, "ect1", vs.tx_ecn[1]);
+    cJSON_AddNumberToObject(ecn, "ect0", vs.tx_ecn[2]);
+    cJSON_AddNumberToObject(ecn, "ce", vs.tx_ecn[3]);
     cJSON *timings = cJSON_AddObjectToObject(socket_diag, "timings");
     cJSON_AddStringToObject(timings, "scope", "since boot, TCP/UDP/TLS; wall time includes preemption; RX core/dispatch per batch, queue wait per dequeued packet, I/O per call");
 #define VPN_TIMING(name) do { \

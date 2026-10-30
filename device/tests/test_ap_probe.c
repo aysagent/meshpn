@@ -27,6 +27,10 @@ static uint32_t random_value = 0x12345678;
 static int64_t esp_timer_get_time(void) { return clock_us; }
 static uint32_t esp_random(void) { return ++random_value; }
 static bool meshvpn_vpn_is_enabled(void) { return vpn_enabled; }
+static bool vpn_tuple_valid;
+static uint32_t vpn_peer;
+static bool meshvpn_vpn_tcp_peer(uint32_t *p,uint16_t *r,uint16_t *l)
+{ if(!vpn_tuple_valid)return false;*p=vpn_peer;*r=443;*l=45001;return true; }
 static esp_err_t esp_netif_tcpip_exec(esp_err_t (*fn)(void *), void *arg) { return fn(arg); }
 static SemaphoreHandle_t xSemaphoreCreateBinary(void)
 { SemaphoreHandle_t s=calloc(1,sizeof(*s)); assert(s);live_sem++;return s; }
@@ -165,6 +169,27 @@ static void test_tcp_client(void)
  assert(meshvpn_ap_probe_tcp_client(0)==ESP_OK);meshvpn_ap_probe_sta_tcp(&v);
  assert(!v.armed&&!v.client&&!v.total_events);
 }
+static void test_tcp_vpn(void)
+{
+ assert(meshvpn_ap_probe_tcp_vpn()==ESP_ERR_INVALID_STATE);
+ vpn_tuple_valid=true;vpn_peer=0x01010101;
+ s_sta->link=false;assert(meshvpn_ap_probe_tcp_vpn()==ESP_ERR_INVALID_STATE);s_sta->link=true;
+ assert(meshvpn_ap_probe_tcp_vpn()==ESP_OK);
+ uint8_t h[40]={0};h[0]=0x45;h[9]=6;w16(h+2,40);h[32]=0x50;h[33]=0x10;
+ memcpy(h+12,&vpn_peer,4);memcpy(h+16,&s_sta->ip.addr,4);
+ w16(h+20,443);w16(h+22,45001);w32(h+24,9000);
+ assert(meshvpn_vpn_repair_checksums(h,40));sta_tcp(false,h,40,40);
+ meshvpn_sta_tcp_trace_t v;meshvpn_ap_probe_sta_tcp(&v);
+ assert(v.vpn&&v.armed&&v.total_events==1&&v.peer_port==443&&v.local_port==45001);
+ w16(h+22,45002);sta_tcp(false,h,40,40);w16(h+22,45001);
+ w16(h+20,444);sta_tcp(false,h,40,40);w16(h+20,443);
+ h[12]^=1;sta_tcp(false,h,40,40);h[12]^=1;
+ meshvpn_ap_probe_sta_tcp(&v);assert(v.total_events==1);
+ clock_us+=30000000;sta_tcp(false,h,40,40);meshvpn_ap_probe_sta_tcp(&v);
+ assert(!v.armed&&v.vpn&&v.total_events==1);
+ assert(meshvpn_ap_probe_tcp_client(0)==ESP_OK);meshvpn_ap_probe_sta_tcp(&v);
+ assert(!v.vpn&&!v.armed&&!v.total_events);vpn_tuple_valid=false;
+}
 int main(void)
 {
  struct netif ap={.up=true,.link=true,.napt=true,.output=ordinary},sta={.up=true,.link=true};
@@ -212,7 +237,7 @@ int main(void)
  ethernet[14+33]^=0x40;
  for(unsigned i=0;i<32;i++)meshvpn_ap_probe_tx(0,ethernet,sizeof(ethernet));
  assert(s_checksums[2].bad_tcp==1&&s_checksums[2].checked==2);
- test_sta_tcp();test_tcp_client();
+ test_sta_tcp();test_tcp_client();test_tcp_vpn();
  /* Forwarded USB SYNs get their own ingress stage; USB admin is excluded. */
  uint8_t uh[40]={0};uh[0]=0x45;uh[9]=6;w16(uh+2,40);uh[32]=0x50;uh[33]=2;
  uint8_t usrc[]={192,168,10,2},udst[]={192,168,13,1};memcpy(uh+12,usrc,4);memcpy(uh+16,udst,4);

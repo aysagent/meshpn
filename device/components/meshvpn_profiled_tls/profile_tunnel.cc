@@ -1,5 +1,8 @@
 #include "profile_tunnel.h"
 #include "profile_client.h"
+#if defined(MESHPN_P4_GCM)
+#include "profile_gcm.h"
+#endif
 #include <openssl/err.h>
 #include <openssl/hmac.h>
 #include <openssl/mem.h>
@@ -227,7 +230,9 @@ struct Http2 {
         const uint8_t *bytes=nullptr;size_t n=h.c.o.peek(h.c.o.arg,&bytes);
         if(!n)return NGHTTP2_ERR_DEFERRED;
         if(!bytes||h.staged)return h.fail("h2_tx_buffer");
-        n=std::min(n,std::min(length,size_t(MESHPN_PROFILE_READ_BYTES)));
+        // Keep the transmit budget independent of RX scratch space. Larger
+        // DATA frames need a measured transport/memory benefit before enabling.
+        n=std::min(n,std::min(length,size_t(MESHPN_PROFILE_H2_SEND_BYTES)));
         memcpy(buffer,bytes,n);h.staged=n;
         // Do not advance the VPN queue until these framed bytes reach SSL_write.
         // No EOF: request DATA remains open in both directions for the session.
@@ -294,13 +299,15 @@ struct Http2 {
         int64_t auth_deadline=now_us()+5000000,write_deadline=0,flow_deadline=0;
         c.report("h2_authenticating");
         while(c.current()) {
+            c.diag.h2_connection_credit=nghttp2_session_get_remote_window_size(session);
+            c.diag.h2_stream_credit=nghttp2_session_get_stream_remote_window_size(session,stream);
             c.periodic();
             if(!c.o.healthy(c.o.arg))return c.failure("packet_path",EIO);
             if(error)return c.failure(phase,error);
             if(!c.diag.authenticated && now_us()>=auth_deadline)return c.failure("auth_timeout",ETIMEDOUT);
             if(c.diag.authenticated) {
                 const uint8_t *unused=nullptr;size_t queued=c.o.peek(c.o.arg,&unused);
-                if(queued) {if(!flow_deadline)flow_deadline=now_us()+5000000;}
+                if(queued) {if(c.diag.h2_connection_credit<=0 || c.diag.h2_stream_credit<=0)c.diag.h2_blocked_calls++;if(!flow_deadline)flow_deadline=now_us()+5000000;}
                 else flow_deadline=0;
                 // Resuming a non-deferred stream is a harmless INVALID_ARGUMENT.
                 int rc=nghttp2_session_resume_data(session,stream);
@@ -351,6 +358,9 @@ int meshvpn_profile_tunnel_run(const meshvpn_profile_tunnel_options_t *options) 
     const auto &o=*options;
     if(o.fd<0||o.fd>=FD_SETSIZE||!o.current||!o.peek||!o.sent||!o.receive||!o.ready||!o.healthy)return EINVAL;
     Connection c{o,{},{},{},{}};
+#if defined(MESHPN_P4_GCM)
+    if(!meshvpn_profile_gcm_self_test())return c.failure("gcm_self_test",EIO);
+#endif
     const auto *model=o.model?o.model:&meshpn_builtin_profile;
     memcpy(c.diag.expected_ja3,model->ja3,sizeof(model->ja3));
     memcpy(c.diag.expected_ja4,model->ja4,sizeof(model->ja4));

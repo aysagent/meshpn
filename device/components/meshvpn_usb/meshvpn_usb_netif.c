@@ -23,9 +23,18 @@
 #include "sdkconfig.h"
 #include "tinyusb.h"
 #include "tinyusb_net.h"
+#include "freertos/FreeRTOS.h"
 
 static const char *TAG = "meshvpn_usb_netif";
 static esp_netif_t *s_usb_netif;
+static portMUX_TYPE s_rx_lock = portMUX_INITIALIZER_UNLOCKED;
+static meshvpn_usb_rx_stats_t s_rx = {.available = true};
+#define RX_COUNT(field) do { portENTER_CRITICAL(&s_rx_lock); s_rx.field++; portEXIT_CRITICAL(&s_rx_lock); } while (0)
+void meshvpn_usb_rx_snapshot(meshvpn_usb_rx_stats_t *out)
+{
+    if (!out) return;
+    portENTER_CRITICAL(&s_rx_lock); *out = s_rx; portEXIT_CRITICAL(&s_rx_lock);
+}
 
 #if CONFIG_TINYUSB_NET_MODE_NCM && CONFIG_TINYUSB_CDC_ENABLED && CONFIG_TINYUSB_CDC_COUNT == 1
 /* Keep the NCM identity distinct from the ESP32-S3/default esp_tinyusb
@@ -118,14 +127,22 @@ static void usb_netif_input(void *h, void *buffer, size_t len, void *l2_buffer)
 {
     struct netif *netif = h;
     esp_netif_t *esp_netif = esp_netif_get_handle_from_netif_impl(netif);
+    RX_COUNT(stack_calls);
     if (!buffer || !netif_is_up(netif)) {
+        if (!buffer) RX_COUNT(invalid_buffer); else RX_COUNT(netif_down);
         if (l2_buffer && esp_netif) esp_netif_free_rx_buffer(esp_netif, l2_buffer);
         return;
     }
 
 #if CONFIG_LWIP_L2_TO_L3_COPY
     struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_RAM);
-    if (!p || pbuf_take(p, buffer, len) != ERR_OK) {
+    if (!p) {
+        RX_COUNT(no_mem);
+        if (l2_buffer && esp_netif) esp_netif_free_rx_buffer(esp_netif, l2_buffer);
+        return;
+    }
+    if (pbuf_take(p, buffer, len) != ERR_OK) {
+        RX_COUNT(copy_failed);
         if (p) pbuf_free(p);
         if (l2_buffer && esp_netif) esp_netif_free_rx_buffer(esp_netif, l2_buffer);
         return;
@@ -134,12 +151,18 @@ static void usb_netif_input(void *h, void *buffer, size_t len, void *l2_buffer)
 #else
     struct pbuf *p = esp_pbuf_allocate(esp_netif, buffer, len, l2_buffer);
     if (!p) {
+        RX_COUNT(no_mem);
         if (l2_buffer && esp_netif) esp_netif_free_rx_buffer(esp_netif, l2_buffer);
         return;
     }
 #endif
 
-    if (netif->input(p, netif) != ERR_OK) pbuf_free(p);
+    err_t input_error = netif->input(p, netif);
+    portENTER_CRITICAL(&s_rx_lock);
+    if (input_error == ERR_OK) s_rx.accepted++;
+    else { s_rx.input_failed++; s_rx.last_input_error = input_error; }
+    portEXIT_CRITICAL(&s_rx_lock);
+    if (input_error != ERR_OK) pbuf_free(p);
 }
 
 static err_t usb_netif_init(struct netif *netif)
@@ -166,8 +189,10 @@ static err_t usb_netif_init(struct netif *netif)
 static esp_err_t usb_recv(void *buffer, uint16_t len, void *ctx)
 {
     (void)ctx;
-    if (!s_usb_netif) return ESP_ERR_INVALID_STATE;
-    return esp_netif_receive(s_usb_netif, buffer, len, NULL);
+    portENTER_CRITICAL(&s_rx_lock); s_rx.callbacks++; s_rx.bytes += len; portEXIT_CRITICAL(&s_rx_lock);
+    esp_err_t err = s_usb_netif ? esp_netif_receive(s_usb_netif, buffer, len, NULL) : ESP_ERR_INVALID_STATE;
+    if (err != ESP_OK) RX_COUNT(dispatch_failed);
+    return err;
 }
 
 esp_netif_t *meshvpn_usb_create_netif(uint32_t ip_addr, uint32_t netmask,

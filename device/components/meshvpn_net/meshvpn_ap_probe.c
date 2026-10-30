@@ -33,6 +33,7 @@ static meshvpn_sta_tcp_trace_t s_tcp, s_ap_tcp;
 static uint64_t s_tcp_started, s_ap_tcp_started;
 static uint32_t s_tcp_target, s_tcp_generation;
 static uint64_t s_tcp_until;
+static uint16_t s_tcp_remote_port, s_tcp_local_port;
 static esp_err_t tcp_client_arm(void *arg)
 {
     uint32_t peer = *(uint32_t *)arg;
@@ -51,6 +52,7 @@ static esp_err_t tcp_client_arm(void *arg)
     uint64_t now = esp_timer_get_time();
     portENTER_CRITICAL(&s_flow_lock);
     s_tcp_target = peer; s_tcp_until = peer ? now + 120000000 : 0; s_tcp_generation++;
+    s_tcp_remote_port = peer ? 80 : 0; s_tcp_local_port = 0;
     memset(&s_tcp, 0, sizeof(s_tcp)); s_tcp_started = 0;
     s_tcp.client = peer != 0;
     portEXIT_CRITICAL(&s_flow_lock);
@@ -58,6 +60,23 @@ static esp_err_t tcp_client_arm(void *arg)
 }
 esp_err_t meshvpn_ap_probe_tcp_client(uint32_t peer)
 { return esp_netif_tcpip_exec(tcp_client_arm, &peer); }
+static esp_err_t tcp_vpn_arm(void *arg)
+{
+    (void)arg; uint32_t peer; uint16_t remote, local;
+    if (!s_sta || !netif_is_up(s_sta) || !netif_is_link_up(s_sta) ||
+        !meshvpn_vpn_tcp_peer(&peer, &remote, &local)) return ESP_ERR_INVALID_STATE;
+    uint64_t now = esp_timer_get_time();
+    portENTER_CRITICAL(&s_flow_lock);
+    s_tcp_target=peer; s_tcp_remote_port=remote; s_tcp_local_port=local;
+    s_tcp_until=now+30000000; s_tcp_generation++; s_tcp_started=now;
+    memset(&s_tcp,0,sizeof(s_tcp)); s_tcp.client=true; s_tcp.vpn=true;
+    s_tcp.peer=peer; s_tcp.local=netif_ip4_addr(s_sta)->addr;
+    s_tcp.peer_port=remote; s_tcp.local_port=local;
+    portEXIT_CRITICAL(&s_flow_lock);
+    return ESP_OK;
+}
+esp_err_t meshvpn_ap_probe_tcp_vpn(void)
+{ return esp_netif_tcpip_exec(tcp_vpn_arm, NULL); }
 static err_t output(struct netif *, struct pbuf *, const ip4_addr_t *);
 /* Default Wi-Fi netifs acquire output during start, after LAN registration. */
 static void attach_output(void)
@@ -81,9 +100,11 @@ static void wifi_tcp(bool ap, bool tx, const uint8_t *h, size_t n, size_t wire_l
     meshvpn_sta_tcp_trace_t *trace=ap?&s_ap_tcp:&s_tcp;
     uint64_t *started=ap?&s_ap_tcp_started:&s_tcp_started;
     uint32_t target = 0, generation = 0; uint64_t until = 0;
+    uint16_t remote_filter=0, local_filter=0;
     if (!ap) {
         portENTER_CRITICAL(&s_flow_lock);
         target=s_tcp_target; generation=s_tcp_generation; until=s_tcp_until;
+        remote_filter=s_tcp_remote_port; local_filter=s_tcp_local_port;
         portEXIT_CRITICAL(&s_flow_lock);
         if (target && (uint64_t)esp_timer_get_time() >= until) return;
     }
@@ -96,7 +117,7 @@ static void wifi_tcp(bool ap, bool tx, const uint8_t *h, size_t n, size_t wire_l
     memcpy(&local, h + (tx ? 12 : 16), 4); memcpy(&peer, h + (tx ? 16 : 12), 4);
     uint16_t local_port=r16(t+(tx?0:2)), port=r16(t+(tx?2:0));
     if (local != netif_ip4_addr(local_netif)->addr ||
-        (target ? peer != target || port != 80 : local_port != 80)) return;
+        (target ? peer != target || port != remote_filter || (local_filter && local_port != local_filter) : local_port != 80)) return;
     meshvpn_sta_tcp_event_t e = {.seq=r32(t+4), .ack=r32(t+8), .flags=t[13],
         .window=r16(t+14), .payload=total-ihl-thl, .tx=tx};
     if (total <= n) {
@@ -122,7 +143,7 @@ static void wifi_tcp(bool ap, bool tx, const uint8_t *h, size_t n, size_t wire_l
     if (!ap && (generation != s_tcp_generation || (target && now >= s_tcp_until))) {
         portEXIT_CRITICAL(&s_flow_lock); return;
     }
-    if (tx == (target != 0) && (e.flags & 0x12) == 2 && (!trace->total_events || trace->peer != peer ||
+    if (!local_filter && tx == (target != 0) && (e.flags & 0x12) == 2 && (!trace->total_events || trace->peer != peer ||
         trace->local != local || trace->peer_port != port || trace->local_port != local_port || trace->initial_seq != e.seq)) {
         memset(trace, 0, sizeof(*trace)); (*started) = now;
         trace->peer=peer; trace->local=local; trace->peer_port=port; trace->initial_seq=e.seq;

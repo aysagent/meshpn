@@ -1,5 +1,7 @@
 if(NOT CONFIG_MESHVPN_PROFILED_TLS_ENABLE)
-    idf_component_register(SRCS "profile_capture_wire.c" "profile_model.c" INCLUDE_DIRS "include" REQUIRES pthread esp_hw_support lwip esp_psram json)
+    # IDF also evaluates this branch during early dependency expansion, before
+    # Kconfig is available. Declare the optional backend's dependency here too.
+    idf_component_register(SRCS "profile_capture_wire.c" "profile_model.c" INCLUDE_DIRS "include" REQUIRES pthread esp_hw_support lwip esp_psram json PRIV_REQUIRES mbedtls)
     return()
 endif()
 set(bssl "$ENV{MESHPN_PROBE_BSSL_SOURCE}")
@@ -14,10 +16,18 @@ list(TRANSFORM sources PREPEND "${bssl}/")
 file(GLOB brotli_sources "${brotli}/c/common/*.c" "${brotli}/c/dec/*.c")
 set(nghttp2 "$ENV{MESHPN_PROBE_NGHTTP2_SOURCE}")
 include("${CMAKE_CURRENT_LIST_DIR}/nghttp2.cmake")
+set(gcm_sources)
+if(CONFIG_MESHVPN_PROFILED_TLS_P4_GCM)
+    list(APPEND gcm_sources "profile_gcm.cc")
+endif()
 idf_component_register(SRCS "profile_capture_wire.c" "profile_model.c" "profile_capture.cc" "profile_client.cc" "profile_gate.cc" "profile_worker.c"
-    "profile_entropy.cc" "profile_allocator.cc" "profile_tunnel.cc" ${sources} ${brotli_sources} ${nghttp2_sources}
+    "profile_entropy.cc" "profile_allocator.cc" "profile_tunnel.cc" ${gcm_sources} ${sources} ${brotli_sources} ${nghttp2_sources}
     INCLUDE_DIRS "include" "${bssl}/include" PRIV_INCLUDE_DIRS "${brotli}/c/include" "${nghttp2}/lib/includes"
-    REQUIRES pthread esp_hw_support lwip esp_psram json)
+    REQUIRES pthread esp_hw_support lwip esp_psram json
+    PRIV_REQUIRES mbedtls)
+if(CONFIG_MESHVPN_PROFILED_TLS_P4_GCM)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE MESHPN_P4_GCM)
+endif()
 target_compile_definitions(${COMPONENT_LIB} PUBLIC OPENSSL_NO_ASM OPENSSL_SMALL OPENSSL_NO_FILESYSTEM OPENSSL_NO_POSIX_IO OPENSSL_NO_SOCK)
 target_compile_definitions(${COMPONENT_LIB} PRIVATE BORINGSSL_IMPLEMENTATION MESHPN_PROBE_ALLOCATOR)
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-error -Wno-format -Wno-unused-function -fstack-usage)

@@ -33,6 +33,7 @@ typedef struct { struct { uint32_t addr; } ip; } esp_netif_ip_info_t;
 typedef struct { char transport[16],server[32],tls_server_name[64]; uint32_t generation; } meshvpn_vpn_status_t;
 static enum { SUCCESS, GETFLAGS, SETFLAGS, BIND, SELECT, SOCKOPT, SOERROR, TIMEOUT, CANCEL, INTERRUPT } scenario;
 static unsigned closed, connects, selects;
+static int nodelay;
 static esp_netif_t netif;
 static esp_netif_t *esp_netif_get_handle_from_ifkey(const char *key) { (void)key;return &netif; }
 static bool esp_netif_is_netif_up(esp_netif_t *n) { (void)n;return true; }
@@ -56,7 +57,7 @@ static int flags_sock(int fd,int cmd,int flags) {
  if(cmd==F_GETFL)return O_APPEND;
  assert(cmd==F_SETFL && flags==(O_APPEND|O_NONBLOCK));return 0;
 }
-static int set_opt(int fd,int level,int opt,const void *v,socklen_t n) { (void)fd;(void)level;(void)opt;(void)v;(void)n;return 0; }
+static int set_opt(int fd,int level,int opt,const void *v,socklen_t n) { (void)fd;(void)n;if(level==IPPROTO_TCP && opt==TCP_NODELAY)nodelay=*(const int *)v;return 0; }
 static int connect_sock(int fd,const struct sockaddr *a,socklen_t n) { (void)a;(void)n;assert(fd==42);connects++;errno=EINPROGRESS;return -1; }
 static int select_sock(int n,fd_set *r,fd_set *w,fd_set *e,struct timeval *t) {
  (void)n;(void)r;(void)w;(void)e;assert(t->tv_usec==100000);selects++;
@@ -80,17 +81,17 @@ static int close_sock(int fd) { assert(fd==42);closed++;errno=EIO;return 0; }
 #define close close_sock
 ${production.slice(begin,end)}
 static void run(int which,int error,const char *transport) {
- scenario=which;closed=connects=selects=0;errno=0;
+ scenario=which;closed=connects=selects=0;errno=0;nodelay=-1;
  meshvpn_vpn_status_t cfg={.generation=7};strcpy(cfg.transport,transport);
  esp_tls_t *tls=(void *)1;int fd=connect_exit(&cfg,&tls);assert(!tls);
  if(error) {assert(fd==-1 && errno==error && closed==1);}
- else {assert(fd==42 && !closed);}
+ else {assert(fd==42 && !closed);assert(nodelay==(!strcmp(transport,"boring-tls")?0:1));}
  if(which==GETFLAGS||which==SETFLAGS||which==BIND)assert(!connects);
  if(which==SELECT||which==SOCKOPT||which==CANCEL)assert(selects==1);
  if(which==TIMEOUT)assert(selects==50);
 }
 int main(void) {
- run(SUCCESS,0,"tcp");run(INTERRUPT,0,"tcp");
+ run(SUCCESS,0,"tcp");run(SUCCESS,0,"boring-tls");run(INTERRUPT,0,"tcp");
  run(GETFLAGS,EBADF,"tcp");run(SETFLAGS,EINVAL,"tcp");run(SETFLAGS,EINVAL,"udp");
  run(BIND,EADDRNOTAVAIL,"tcp");run(SELECT,EBADF,"tcp");
  run(SOCKOPT,ENOBUFS,"tcp");run(SOERROR,ECONNREFUSED,"tcp");

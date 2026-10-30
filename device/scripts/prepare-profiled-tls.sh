@@ -2,7 +2,7 @@
 # Sourced by flash.sh. Isolated, pinned dependencies; never edits the desktop helper.
 profile_lab="$DEVICE_DIR/experiments/profiled-tls"
 profile_patch_dir="$DEVICE_DIR/../native/boring_tls/patches"
-profile_deps_id="$(cksum "$profile_lab/prepare-bssl.py" "$profile_lab/patch-order.py" "$profile_lab/prepare-brotli.sh" "$profile_patch_dir"/*.patch | cksum | awk '{print $1}')"
+profile_deps_id="$(cksum "$profile_lab/prepare-bssl.py" "$profile_lab/patch-order.py" "$profile_lab/patch-gcm.py" "$profile_lab/prepare-brotli.sh" "$profile_patch_dir"/*.patch | cksum | awk '{print $1}')"
 profile_deps="$DEVICE_DIR/build-profiled-deps-$profile_deps_id"
 if [[ ! -d "$profile_deps" ]]; then
   profile_tmp="$(mktemp -d "$DEVICE_DIR/build-profiled-deps-tmp.XXXXXX")"

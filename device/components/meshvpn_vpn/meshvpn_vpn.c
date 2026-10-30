@@ -99,6 +99,25 @@ void meshvpn_vpn_get_status(meshvpn_vpn_status_t *out) { LOCK(); *out = s; UNLOC
 bool meshvpn_vpn_is_connected(void) { LOCK(); bool v = s.connected; UNLOCK(); return v; }
 static bool enabled(void) { LOCK(); bool v = s.enabled; UNLOCK(); return v; }
 bool meshvpn_vpn_is_enabled(void) { return enabled(); }
+bool meshvpn_vpn_tcp_peer(uint32_t *peer, uint16_t *remote_port, uint16_t *local_port)
+{
+    char server[MESHVPN_VPN_SERVER_MAX + 1]; uint16_t local = 0;
+    int64_t now = esp_timer_get_time();
+    LOCK();
+    bool valid = s.enabled && s.connected && !strcmp(s.transport, "boring-tls") &&
+        s.profiled_tcp.available && s.profiled_tcp.local_port &&
+        s.profiled_tcp.sampled_us > 0 && now >= s.profiled_tcp.sampled_us &&
+        now - s.profiled_tcp.sampled_us < 3000000;
+    if (valid) { memcpy(server, s.server, sizeof(server)); local = s.profiled_tcp.local_port; }
+    UNLOCK();
+    uint8_t address[4]; uint16_t port;
+    if (!valid || !meshvpn_vpn_endpoint(server, address, &port)) return false;
+    memcpy(peer, address, 4); *remote_port = port; *local_port = local;
+    return true;
+}
+#ifdef MESHPN_EXPERIMENT_SACK
+#include "../../experiments/tcp-sack/recovery.inc"
+#endif
 static bool session(uint32_t g) { LOCK(); bool v = s.enabled && s.generation == g; UNLOCK(); return v; }
 static bool plain_transport(const char *name)
 { return name && (!strcmp(name, "tcp") || !strcmp(name, "socket") || !strcmp(name, "udp") || !strcmp(name, "tls") || !strcmp(name, "boring-tls")); }
@@ -261,6 +280,7 @@ esp_err_t meshvpn_vpn_send_ipv4(const uint8_t *p, uint16_t len)
 {
     if (len > MESHVPN_VPN_MTU || !meshvpn_vpn_ipv4_valid(p, len)) return ESP_ERR_INVALID_ARG;
     LOCK();
+    s.tx_ecn[p[1] & 3]++;
     if (!s.connected || !s_queue) { s.tx_dropped++; UNLOCK(); return ESP_ERR_INVALID_STATE; }
     if (s_count == MESHVPN_VPN_SLOTS) { s.queue_full++; s.tx_dropped++; UNLOCK(); return ESP_ERR_NO_MEM; }
     packet_t *q = &s_queue[(s_head + s_count) % MESHVPN_VPN_SLOTS];
@@ -637,7 +657,10 @@ static int connect_exit(const meshvpn_vpn_status_t *cfg, esp_tls_t **tls_out)
     setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
     setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval));
     setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
+    /* H2 emits small control/ACK records alongside DATA. Allow TCP to coalesce
+     * those writes; plain TCP/UDP and esp-tls retain their existing policy. */
+    int nodelay = strcmp(cfg->transport, "boring-tls") != 0;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
     int rc = connect(fd, (struct sockaddr *)&remote, sizeof(remote));
     if (rc < 0 && errno != EINPROGRESS) goto fail;
     for (int i = 0; rc < 0 && i < 50 && session(cfg->generation); i++) {

@@ -25,15 +25,15 @@ CONFIG_SPIRAM=y
 # Prefer PSRAM for lwIP payloads to reduce pressure on internal/SDIO DMA RAM.
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 CONFIG_LWIP_WND_SCALE=y
-CONFIG_LWIP_TCP_RCV_SCALE=2
-CONFIG_LWIP_TCP_WND_DEFAULT=131072
+CONFIG_LWIP_TCP_RCV_SCALE=4
+CONFIG_LWIP_TCP_WND_DEFAULT=524288
 # Keep queued TX payload bounded independently of the larger receive window.
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
 CONFIG_LWIP_TCP_SACK_OUT=y
 # Reduce delayed ACK and RTT-estimator granularity for the outer WAN TCP socket.
 CONFIG_LWIP_TCP_TMR_INTERVAL=100
-# 131072 / MSS 1360 + 2, rounded up.
-CONFIG_LWIP_TCP_RECVMBOX_SIZE=100
+# 524288 / MSS 1360 + 2, rounded up.
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=400
 # ESP-IDF 5.4 still gates the P4's supported 200 MHz PSRAM mode behind this
 # feature switch. Without it Kconfig silently falls back to 20 MHz.
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y
@@ -102,3 +102,6 @@ CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_MESHVPN_USB_SUBNET_OCTET_2=12
 CONFIG_MESHVPN_AP_SUBNET_OCTET_2=13
 CONFIG_MESHVPN_HOSTNAME_DEFAULT="dongle-stamp"
+
+# Test P4 AES-GCM record backend with unchanged TLS profile/nonce checks.
+CONFIG_MESHVPN_PROFILED_TLS_P4_GCM=y

@@ -206,6 +206,13 @@ void meshvpn_usb_get_stats(meshvpn_usb_stats_t *out)
      * start an endpoint transfer. Only the TinyUSB task may do that. */
 }
 
+#if !CONFIG_IDF_TARGET_ESP32P4
+void meshvpn_usb_rx_snapshot(meshvpn_usb_rx_stats_t *out)
+{
+    if (out) memset(out, 0, sizeof(*out)); /* iot_bridge RX is not instrumented. */
+}
+#endif
+
 esp_err_t meshvpn_usb_init(void)
 {
     ESP_LOGI(TAG, "USB profile: %s", meshvpn_usb_profile_name());

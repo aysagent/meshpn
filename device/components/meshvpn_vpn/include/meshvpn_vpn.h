@@ -66,6 +66,7 @@ typedef struct {
     uint32_t generation, reconnects, packets_in, packets_out;
     uint32_t queue_full, queue_expired, rx_invalid, rx_dropped, tx_dropped;
     uint32_t queue_depth, queue_high_water;
+    uint32_t tx_ecn[4]; /* Valid IPv4 submission attempts, including queue rejects. */
     uint32_t mtu_feedback, mtu_feedback_failed;
     uint32_t direct_dns_blocked;
     meshvpn_vpn_timing_t tx_queue_wait, transport_read, transport_write;
@@ -104,6 +105,8 @@ esp_err_t meshvpn_vpn_start(const meshvpn_vpn_config_t *cfg);
 esp_err_t meshvpn_vpn_stop(void);
 bool meshvpn_vpn_is_connected(void);
 bool meshvpn_vpn_is_enabled(void);
+/* Fresh, connected profiled-TLS outer TCP tuple. Addresses are network order. */
+bool meshvpn_vpn_tcp_peer(uint32_t *peer, uint16_t *remote_port, uint16_t *local_port);
 /* Worker/HTTP task only. Bounded TCP reachability test bound to the VPN netif. */
 esp_err_t meshvpn_vpn_check_internet(void);
 esp_err_t meshvpn_vpn_request_internet_check(void);

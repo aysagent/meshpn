@@ -11,6 +11,8 @@ import {startRealExit} from './helpers/real-exit.mjs';
 import {createLabPKI} from '../scripts/create-vpn-lab-pki.mjs';
 const deps=process.argv[2];if(!deps)throw Error('Pass the build-host.sh output directory');
 const root=new URL('../',import.meta.url).pathname;
+// Optional alternate record backend; same tunnel/profile/negative suite.
+const gcmMbed=process.env.MESHPN_TEST_GCM_MBEDTLS;
 const h2source=path.resolve(deps,'nghttp2-source'),h2build=path.resolve(deps,'nghttp2');
 if(!fs.existsSync(h2source))execFileSync('bash',[root+'experiments/profiled-tls/prepare-nghttp2.sh',h2source],{stdio:'inherit'});
 execFileSync('cmake',['-S',root+'experiments/profiled-tls/nghttp2-host','-B',h2build],{env:{...process.env,MESHPN_PROBE_NGHTTP2_SOURCE:h2source},stdio:'pipe'});
@@ -23,6 +25,8 @@ fs.writeFileSync(dir+'/esp_heap_caps.h',`#pragma once
 #include <stddef.h>
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_8BIT 2
+#define MALLOC_CAP_INTERNAL 8
+#define MALLOC_CAP_DMA 16
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -36,8 +40,8 @@ const common=['-g','-Wall','-Wextra','-Werror','-fsanitize=address,undefined'];
 execFileSync('cc',['-std=c11',...common,'-I'+root+'components/meshvpn_vpn/include','-c',root+'components/meshvpn_vpn/meshvpn_vpn_frame.c','-o',dir+'/frame.o'],{stdio:'inherit'});
 const json=path.join(os.homedir(),'esp/esp-idf-meshpn-v5.5.5/components/json/cJSON');
 for(const [file,name] of [[root+'components/meshvpn_profiled_tls/profile_model.c','model'],[json+'/cJSON.c','json']])execFileSync('cc',['-std=c11',...common,'-Wno-deprecated-declarations','-I'+root+'components/meshvpn_profiled_tls/include','-I'+json,'-c',file,'-o',dir+'/'+name+'.o'],{stdio:'inherit'});
-execFileSync('c++',['-std=c++17',...common,'-I'+json,'-I'+h2source+'/lib/includes','-I'+dir,'-I'+deps+'/bssl-source/include','-I'+deps+'/brotli-source/c/include','-I'+root+'components/meshvpn_profiled_tls/include','-I'+root+'components/meshvpn_vpn/include',
- root+'tests/test_profile_tunnel.cc',...['profile_tunnel.cc','profile_client.cc','profile_gate.cc'].map(f=>root+'components/meshvpn_profiled_tls/'+f),root+'components/meshvpn_profiled_tls/profile_allocator.cc',root+'tests/profile_heap_adapter.cc',dir+'/frame.o',dir+'/model.o',dir+'/json.o',deps+'/bssl/libssl.a',deps+'/bssl/libcrypto.a',deps+'/brotli/libbrotlidec.a',deps+'/brotli/libbrotlicommon.a',h2build+'/libmeshpn_nghttp2.a','-o',dir+'/client'],{stdio:'inherit'});
+execFileSync('c++',['-std=c++17',...common,...(gcmMbed?['-DMESHPN_P4_GCM','-I'+path.join(os.homedir(),'esp/esp-idf-meshpn-v5.5.5/components/mbedtls/mbedtls/include')]:[]),'-I'+json,'-I'+h2source+'/lib/includes','-I'+dir,'-I'+deps+'/bssl-source/include','-I'+deps+'/brotli-source/c/include','-I'+root+'components/meshvpn_profiled_tls/include','-I'+root+'components/meshvpn_vpn/include',
+ root+'tests/test_profile_tunnel.cc',...['profile_tunnel.cc','profile_client.cc','profile_gate.cc'].map(f=>root+'components/meshvpn_profiled_tls/'+f),...(gcmMbed?[root+'components/meshvpn_profiled_tls/profile_gcm.cc']:[]),root+'components/meshvpn_profiled_tls/profile_allocator.cc',root+'tests/profile_heap_adapter.cc',dir+'/frame.o',dir+'/model.o',dir+'/json.o',deps+'/bssl/libssl.a',deps+'/bssl/libcrypto.a',...(gcmMbed?[path.join(gcmMbed,'library/libmbedcrypto.a')]:[]),deps+'/brotli/libbrotlidec.a',deps+'/brotli/libbrotlicommon.a',h2build+'/libmeshpn_nghttp2.a','-o',dir+'/client'],{stdio:'inherit'});
 execFileSync('cc',['-std=c11',...common,'-I'+h2source+'/lib/includes','-I'+root+'components/meshvpn_profiled_tls',root+'tests/test_profile_alps.c',h2build+'/libmeshpn_nghttp2.a','-o',dir+'/test-alps'],{stdio:'inherit'});
 execFileSync(dir+'/test-alps',[],{stdio:'inherit'});
 const results=[];
