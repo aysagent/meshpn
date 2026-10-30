@@ -38,6 +38,15 @@ class DnsRelay {
   void write_all(int fd,const uint8_t* p,size_t n,Time::time_point end,bool upstream){
     while(n){wait(fd,POLLOUT,end,upstream);ssize_t k=send(fd,p,n,MSG_NOSIGNAL);if(k<0&&(errno==EAGAIN||errno==EINTR))continue;dns::need(k>0);p+=k;n-=k;}
   }
+  void write_frame(int fd,const Bytes& payload,Time::time_point end,bool upstream){
+    // RFC 7766 section 8: offer length and message to TCP together, avoiding
+    // a small prefix waiting for a delayed ACK before Nagle releases the body.
+    // write_all still handles partial writes and cancellation; TCP may fragment.
+    dns::need(payload.size()<=65535);Bytes frame(payload.size()+2);
+    frame[0]=uint8_t(payload.size()>>8);frame[1]=uint8_t(payload.size());
+    std::copy(payload.begin(),payload.end(),frame.begin()+2);
+    write_all(fd,frame.data(),frame.size(),end,upstream);
+  }
   void read_all(int fd,uint8_t* p,size_t n,Time::time_point end,bool upstream){
     while(n){wait(fd,POLLIN,end,upstream);ssize_t k=recv(fd,p,n,0);if(k<0&&(errno==EAGAIN||errno==EINTR))continue;dns::need(k>0);p+=k;n-=k;}
   }
@@ -54,7 +63,7 @@ class DnsRelay {
     wait(s.fd,POLLOUT,end,true);int error=0;socklen_t len=sizeof(error);dns::need(getsockopt(s.fd,SOL_SOCKET,SO_ERROR,&error,&len)==0&&!error);
     Bytes answer;
     if(tcp){
-      uint8_t prefix[]={uint8_t(query.size()>>8),uint8_t(query.size())};write_all(s.fd,prefix,2,end,true);write_all(s.fd,query.data(),query.size(),end,true);
+      write_frame(s.fd,query,end,true);uint8_t prefix[2];
       read_all(s.fd,prefix,2,end,true);size_t n=(size_t(prefix[0])<<8)|prefix[1];dns::need(n>=12);answer.resize(n);read_all(s.fd,answer.data(),n,end,true);
     }else{
       wait(s.fd,POLLOUT,end,true);dns::need(send(s.fd,query.data(),query.size(),0)==ssize_t(query.size()));wait(s.fd,POLLIN,end,true);
@@ -86,8 +95,8 @@ class DnsRelay {
     Socket s(fd);auto end=Time::now()+std::chrono::seconds(10);
     try{for(unsigned requests=0;alive()&&permitted(request_peer_)&&requests<32;requests++){
       uint8_t prefix[2];read_all(s.fd,prefix,2,end,false);size_t n=(size_t(prefix[0])<<8)|prefix[1];dns::need(n>=12&&(!private_bridge_||n<=4096));
-      Bytes query(n);read_all(s.fd,query.data(),n,end,false);auto answer=resolve(query,true);prefix[0]=answer.size()>>8;prefix[1]=answer.size();
-      write_all(s.fd,prefix,2,end,false);write_all(s.fd,answer.data(),answer.size(),end,false);
+      Bytes query(n);read_all(s.fd,query.data(),n,end,false);auto answer=resolve(query,true);
+      write_frame(s.fd,answer,end,false);
     }}catch(...){}
   }
   void run(){

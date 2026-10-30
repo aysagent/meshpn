@@ -1,0 +1,110 @@
+{
+  "kind": "native-dns-tcp-framing-regression",
+  "date": "2026-10-30",
+  "scope": "disposable Linux namespace; production DnsRelay class; independent TCP endpoints",
+  "kernel": "7.2.5-200.fc44.aarch64",
+  "baseline": {
+    "sourceRevision": "7bd90d88ef6bc6b20feb715ab356ae7ee93194d7",
+    "dnsRelayHeaderSha256": "573e15645eb5bc74b9dacd8354fa4681a4364329792f52576fa1b38cfdab1828",
+    "executableSha256": "9cc64e722b9c1cdfd49333573f1ad524df11f9670bc3ed34c71dade581ae790c",
+    "standalonePrefixSends": 10,
+    "samplesMicroseconds": [
+      {
+        "upstreamBodyGap": 41620,
+        "downstreamBodyGap": 41478,
+        "total": 83681
+      },
+      {
+        "upstreamBodyGap": 41331,
+        "downstreamBodyGap": 42344,
+        "total": 84176
+      },
+      {
+        "upstreamBodyGap": 43106,
+        "downstreamBodyGap": 41846,
+        "total": 85412
+      },
+      {
+        "upstreamBodyGap": 41504,
+        "downstreamBodyGap": 40783,
+        "total": 82820
+      },
+      {
+        "upstreamBodyGap": 44358,
+        "downstreamBodyGap": 45538,
+        "total": 90610
+      }
+    ],
+    "injectedShortWrites": 618,
+    "injectedEintr": 182,
+    "injectedEagain": 104,
+    "originRequests": 10,
+    "framingCancellationGate": "passed"
+  },
+  "instrumentation": {
+    "productionOptionsChanged": false,
+    "receiverQuickAck": 0,
+    "schedulingGapAfterStandalonePrefixMs": 2,
+    "mechanism": "test-executable linker --wrap=send"
+  },
+  "limitations": [
+    "not proof of earlier physical combo SERVFAIL cause",
+    "timing diagnostic only; structural framing gate",
+    "no physical host modifications"
+  ],
+  "candidate": {
+    "dnsRelayHeaderSha256": "7c9135e139cea6f17587bf60ca8d926a7637b746ec7da49ba483dd65b933898e",
+    "executableSha256": "04256c5cc70d928196665b1180273181574271b2f5276f9001a4b487c051b0cf",
+    "standalonePrefixSends": 0,
+    "samplesMicroseconds": [
+      {
+        "upstreamBodyGap": 11,
+        "downstreamBodyGap": 1,
+        "total": 1008
+      },
+      {
+        "upstreamBodyGap": 3,
+        "downstreamBodyGap": 2,
+        "total": 968
+      },
+      {
+        "upstreamBodyGap": 1,
+        "downstreamBodyGap": 1,
+        "total": 962
+      },
+      {
+        "upstreamBodyGap": 3,
+        "downstreamBodyGap": 1,
+        "total": 752
+      },
+      {
+        "upstreamBodyGap": 1,
+        "downstreamBodyGap": 4,
+        "total": 988
+      }
+    ],
+    "injectedShortWrites": 618,
+    "injectedEintr": 181,
+    "injectedEagain": 103,
+    "originRequests": 10,
+    "framingCancellationGate": "passed",
+    "existingDnsRelayGate": "passed;100queries,saturation,cancellation,FDcleanup,privateDNS",
+    "productionEngineSha256": "c8d64588ae98707f7a7b6f1f6773d00fa0d62decfab2fa80542aedb3f2fcff9e",
+    "ctest": {
+      "passed": 14,
+      "failed": 0,
+      "durationSeconds": 20.28,
+      "build": "fresh project executables via direct compiler, cached pinned dependency static libraries; manifest generated from current CMake add_test entries",
+      "dependenciesRecompiled": false
+    },
+    "dnsWireMutations": 30000
+  },
+  "localArtifacts": {
+    "buildScript": "/private/tmp/cvpn-dns-tcp-build-20261030.sh",
+    "buildLog": "/private/tmp/cvpn-dns-tcp-build-20261030.log",
+    "ctestLog": "/private/tmp/cvpn-dns-tcp-ctest-20261030.log",
+    "additionalBaselineRunLog": "/private/tmp/cvpn-dns-tcp-baseline-repeat-20261030.log",
+    "additionalCandidateRunLog": "/private/tmp/cvpn-dns-tcp-candidate-repeat-20261030.log",
+    "note": "additional runs have their own timing samples; primary samples above are retained from tool output"
+  }
+}
