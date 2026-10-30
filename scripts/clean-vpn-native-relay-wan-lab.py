@@ -45,13 +45,13 @@ def private(path, expected_size=None):
         raise RuntimeError('credential_size')
 
 
-def bridge(left, right):
+def bridge(left, right, lifetime=30):
     """Two bounded queues with backpressure, half-close and absolute lifetime."""
     streams = (left, right)
     queues = [bytearray(), bytearray()]
     ended = [False, False]
     shut = [False, False]
-    until = time.monotonic() + 30
+    until = time.monotonic() + lifetime
     for s in streams:
         s.setblocking(False)
     while not STOP.is_set() and time.monotonic() < until:
@@ -130,12 +130,12 @@ class Listener:
             t.join(0.2)
 
 
-def forward(family, address):
+def forward(family, address, lifetime=30):
     def connected(incoming):
         with socket.socket(family, socket.SOCK_STREAM) as outgoing:
             outgoing.settimeout(5)
             outgoing.connect(address)
-            bridge(incoming, outgoing)
+            bridge(incoming, outgoing, lifetime)
     return connected
 
 
