@@ -38,7 +38,7 @@ static void option(int fd,int level,int name,int n){need(setsockopt(fd,level,nam
 static void timeout(int fd){timeval limit{2,0};need(setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&limit,sizeof(limit))==0,"timeout");}
 static void read_exact(int fd,uint8_t* p,size_t n){while(n){auto k=recv(fd,p,n,0);need(k>0,"read_exact");p+=k;n-=size_t(k);}}
 static void send_exact(int fd,const Bytes& bytes,bool pieces=false){size_t at=0;while(at<bytes.size()){const auto n=pieces?size_t(1):bytes.size()-at;auto k=__real_send(fd,bytes.data()+at,n,MSG_NOSIGNAL);need(k>0,"send_exact");at+=size_t(k);if(pieces)std::this_thread::sleep_for(std::chrono::microseconds(200));}}
-static Bytes frame(const Bytes& body){Bytes b{uint8_t(body.size()>>8),uint8_t(body.size())};b.insert(b.end(),body.begin(),body.end());return b;}
+static Bytes frame(const Bytes& body){need(body.size()<=65535,"frame_length");Bytes b(body.size()+2);b[0]=uint8_t(body.size()>>8);b[1]=uint8_t(body.size());std::copy(body.begin(),body.end(),b.begin()+2);return b;}
 static Bytes question(){return {0x12,0x34,1,0,0,1,0,0,0,0,0,0,4,'t','e','s','t',3,'m','p','n',0,0,1,0,1};}
 static Bytes answer(const Bytes& q,bool large){auto b=dns::failure(q,large?0:3);if(large){dns::put16(b,6,1);b.insert(b.end(),{0xc0,12,0,16,0,1,0,0,0,0,0xea,0x60});b.resize(b.size()+60000,0x5a);}return b;}
 struct Origin{
