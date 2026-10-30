@@ -23,6 +23,11 @@ Standalone transparent, exit и site-owned clock lifecycle этим путём �
 node scripts/clean-vpn-native-clock-vm.mjs /tmp/combo-clock-report.json --combo --host-profile
 ```
 
+Приёмка 31 октября: [три загрузки, четыре SSH-запроса](../fixtures/clean-vpn-native-combo-clock-20261031.json).
+Проверены плохие часы, healthy restart/boot без SSH, неверные ключ/имя/CA,
+network timeout, действительно истёкший сертификат, сохранение attempt budget,
+неверный SSH pin, HMAC clock skew, guard и cleanup TUN/DNS/routes/NAT.
+
 В этой fixture combo client соединяется boring-веткой с обычным boring exit;
 она проверяет установленный owner, clock handoff и повторное освобождение relay
 listener. Relay HTTPS-трафик и combo exit проверяются отдельным WAN-стендом.
