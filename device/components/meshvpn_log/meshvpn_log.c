@@ -14,6 +14,10 @@
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#if CONFIG_IDF_TARGET_ESP32P4 && CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH && CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF
+#include "freertos/task.h"
+#include "freertos/idf_additions.h"
+#endif
 
 static const char *TAG = "meshvpn_log";
 
@@ -107,12 +111,9 @@ const char *meshvpn_log_reset_reason_name(void)
     return reset_reason_str(esp_reset_reason());
 }
 
-void meshvpn_log_report_boot(uint32_t boot_count)
-{
-    esp_reset_reason_t reason = esp_reset_reason();
-    ESP_LOGW(TAG, "boot #%" PRIu32 ", last reset: %s", boot_count, reset_reason_str(reason));
-
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH && CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF
+static void report_last_crash(void)
+{
     if (esp_core_dump_image_check() != ESP_OK) {
         return;
     }
@@ -150,8 +151,8 @@ void meshvpn_log_report_boot(uint32_t boot_count)
     }
 
     free(summary);
-#endif
 }
+#endif
 
 size_t meshvpn_log_copy(char *out, size_t out_len)
 {
@@ -190,4 +191,44 @@ size_t meshvpn_log_copy(char *out, size_t out_len)
 
     xSemaphoreGive(s_lock);
     return total;
+}
+
+#if CONFIG_IDF_TARGET_ESP32P4 && CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH && CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF
+static void report_crash_task(void *arg)
+{
+    SemaphoreHandle_t done = arg;
+    report_last_crash();
+    /* Do not access the caller's state after publication. The caller joins
+     * and deletes this task using the matching WithCaps API. */
+    xSemaphoreGive(done);
+    vTaskSuspend(NULL);
+}
+#endif
+
+void meshvpn_log_report_boot(uint32_t boot_count)
+{
+    esp_reset_reason_t reason = esp_reset_reason();
+    ESP_LOGW(TAG, "boot #%" PRIu32 ", last reset: %s", boot_count, reset_reason_str(reason));
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH && CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF
+#if CONFIG_IDF_TARGET_ESP32P4
+    /* P4 INTERNAL also includes SPM/TCM. IDF 5.5.5's flash-mmap cache
+     * guard rejects stacks there; reading an existing dump can otherwise
+     * cause a boot loop. DMA capability selects ordinary internal DRAM.
+     * Never fall back to the caller's potentially incompatible stack. */
+    SemaphoreHandle_t done = xSemaphoreCreateBinary();
+    if (!done) { ESP_LOGW(TAG, "Crash summary skipped: no completion semaphore"); return; }
+    TaskHandle_t task = NULL;
+    if (xTaskCreateWithCaps(report_crash_task, "crash_summary", 6144, done, 2,
+                           &task, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT) != pdPASS) {
+        vSemaphoreDelete(done);
+        ESP_LOGW(TAG, "Crash summary skipped: no DRAM stack");
+        return;
+    }
+    xSemaphoreTake(done, portMAX_DELAY);
+    vTaskDeleteWithCaps(task);
+    vSemaphoreDelete(done);
+#else
+    report_last_crash();
+#endif
+#endif
 }

@@ -187,6 +187,11 @@ for psram_enabled in 0 1; do
     -Idevice/components/meshvpn_log/include device/tests/test_log_buffer.c -o "$test_dir/log-buffer-$psram_enabled"
   "$test_dir/log-buffer-$psram_enabled"
 done
+"$cc" "${flags[@]}" -DCONFIG_IDF_TARGET_ESP32P4=1 -DCONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=1 \
+  -DCONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=1 -DpdTRUE=1 \
+  -Idevice/tests/log_stubs -Idevice/tests/cpu_stubs -Idevice/tests/stubs \
+  -Idevice/components/meshvpn_log/include device/tests/test_log_crash.c -o "$test_dir/log-crash"
+"$test_dir/log-crash"
 "$cc" "${flags[@]}" -Idevice/components/meshvpn_web/include \
   device/tests/test_cpu_math.c -o "$test_dir/cpu-math"
 "$test_dir/cpu-math"
