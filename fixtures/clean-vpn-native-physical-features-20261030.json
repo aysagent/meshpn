@@ -1,0 +1,392 @@
+{
+  "schema": 1,
+  "kind": "native-physical-new-features-acceptance",
+  "date": "2026-10-30",
+  "status": "bounded-smoke-passed-prior-dns-failure-unresolved",
+  "scope": "Radxa ARM64 glibc client to VPS AMD64 private musl runtime; separate netns, real TUN, host TCP-Unix byte bridges, port3443; daily installation unchanged",
+  "source": {
+    "engineSourceSha256": "4fdd69e13e1b67037ed75160ea29e811bf1285941f18071e7deb890e69e7ff43",
+    "fixtureRevision": "f1cc282",
+    "clientBuildCheckout": "fd49dff",
+    "amd64ArtifactBase": "ed5bf16",
+    "amd64EngineOverlay": "400e7d8",
+    "managerExplicitPolicyFix": "b038586"
+  },
+  "binaries": {
+    "radxa": "22199fc58efca94af53af44a2f314adf725d5a283e7c8a73e13c29f5d4eff430",
+    "vps": "2d2a13bd0f28ba02a3e8a391a118b8257a1b4163e960ddbe9a8df3f274f591d1",
+    "vpsTransferArchiveSha256": "810dafc27d4863935254f996962a5c76dda9c01ffc1f118ba1d89e74dcfb6dd9",
+    "vpsPrivateLoaderNotServiceOwnerCompatible": true
+  },
+  "onHostChecks": {
+    "radxaCtest": {
+      "passed": 14,
+      "failed": 0,
+      "seconds": 21.06
+    },
+    "radxaPrivateNetworkNative": {
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0
+    },
+    "vpsPrivateNetworkNative": {
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "cases": [
+    {
+      "transport": "boring-tls",
+      "packetHttp": "2",
+      "diagnosticRepeat": false,
+      "mixedRelay": false,
+      "status": "passed",
+      "checks": [
+        "named clients added with unique identities; original unused identity revoked",
+        "discovery assigned laptop .3; native TUN DNS UDP/TCP and synthetic TCP verified",
+        "independent canary discovery .4 while laptop session remains active",
+        "canary key rotation: old denied, new accepted, laptop DNS and data preserved",
+        "canary revoked in native authorization and private DNS without restarting laptop or exit",
+        "pending registry transaction fails closed; DNS and data recover"
+      ],
+      "laptopIpv4": "10.99.0.3",
+      "canaryIpv4": "10.99.0.4",
+      "echoBytes": 3584,
+      "reloads": 2,
+      "trialPidsUnchanged": true,
+      "hostUnchanged": {
+        "exit": true,
+        "client": true
+      },
+      "portReleased": {
+        "exit": true,
+        "client": true
+      },
+      "observer": {
+        "packetConnections": 6,
+        "packetMatched": 6,
+        "packetJa4": [
+          "t13d0915h2_f91f431d341e_54d72502093d"
+        ],
+        "packetJa3Sorted": [
+          "9fc752c58190630c49e1812906b40077"
+        ],
+        "wireCounts": {
+          "packets": 550,
+          "selected": 550,
+          "withoutSyn": 0,
+          "fragmented": 0,
+          "truncated": 0
+        },
+        "pcapSha256": "4f4e7499297ee5d18f4bf53b0df74cdeb1b4ee397ef7e9b4705908cdc20d37b5",
+        "relayConnections": 0
+      },
+      "captureKernelDrops": 0,
+      "rawReportSha256": "5ed190ccc6e5faeab3068e6acd362aeab807601fc6bbf6d4a46d7eb9a737325f"
+    },
+    {
+      "transport": "boring-tls",
+      "packetHttp": "1.1",
+      "diagnosticRepeat": false,
+      "mixedRelay": false,
+      "status": "passed",
+      "checks": [
+        "named clients added with unique identities; original unused identity revoked",
+        "discovery assigned laptop .3; native TUN DNS UDP/TCP and synthetic TCP verified",
+        "independent canary discovery .4 while laptop session remains active",
+        "canary key rotation: old denied, new accepted, laptop DNS and data preserved",
+        "canary revoked in native authorization and private DNS without restarting laptop or exit",
+        "pending registry transaction fails closed; DNS and data recover"
+      ],
+      "laptopIpv4": "10.99.0.3",
+      "canaryIpv4": "10.99.0.4",
+      "echoBytes": 3584,
+      "reloads": 2,
+      "trialPidsUnchanged": true,
+      "hostUnchanged": {
+        "exit": true,
+        "client": true
+      },
+      "portReleased": {
+        "exit": true,
+        "client": true
+      },
+      "observer": {
+        "packetConnections": 6,
+        "packetMatched": 6,
+        "packetJa4": [
+          "t13d0915h2_f91f431d341e_54d72502093d"
+        ],
+        "packetJa3Sorted": [
+          "9fc752c58190630c49e1812906b40077"
+        ],
+        "wireCounts": {
+          "packets": 556,
+          "selected": 556,
+          "withoutSyn": 0,
+          "fragmented": 0,
+          "truncated": 0
+        },
+        "pcapSha256": "32bf76ca7b71b49a2aa4a0ffec308459aced60274b18776e78f4b790ded946dd",
+        "relayConnections": 0
+      },
+      "captureKernelDrops": 0,
+      "rawReportSha256": "c78f238ec0eba92227fe4657d67c820ad6f6b29e1cd20b5a4c125ea9a4720328"
+    },
+    {
+      "transport": "combo-tls",
+      "packetHttp": "2",
+      "diagnosticRepeat": false,
+      "mixedRelay": true,
+      "status": "passed",
+      "checks": [
+        "named clients added with unique identities; original unused identity revoked",
+        "discovery assigned laptop .3; native TUN DNS UDP/TCP and synthetic TCP verified",
+        "independent canary discovery .4 while laptop session remains active",
+        "canary key rotation: old denied, new accepted, laptop DNS and data preserved",
+        "canary revoked in native authorization and private DNS without restarting laptop or exit",
+        "pending registry transaction fails closed; DNS and data recover"
+      ],
+      "laptopIpv4": "10.99.0.3",
+      "canaryIpv4": "10.99.0.4",
+      "echoBytes": 3584,
+      "reloads": 2,
+      "trialPidsUnchanged": true,
+      "hostUnchanged": {
+        "exit": true,
+        "client": true
+      },
+      "portReleased": {
+        "exit": true,
+        "client": true
+      },
+      "observer": {
+        "packetConnections": 6,
+        "packetMatched": 6,
+        "packetJa4": [
+          "t13d0915h2_f91f431d341e_54d72502093d"
+        ],
+        "packetJa3Sorted": [
+          "9fc752c58190630c49e1812906b40077"
+        ],
+        "wireCounts": {
+          "packets": 835,
+          "selected": 835,
+          "withoutSyn": 0,
+          "fragmented": 0,
+          "truncated": 0
+        },
+        "pcapSha256": "0b8a8a3bb8780f4390ce547b1a9df113e3b2d1815e517dfcdc1417f44a161ccc",
+        "relayConnections": 40,
+        "originalRelay": 40,
+        "matchedRelay": 40,
+        "relayWithoutOriginalCapture": 0,
+        "originalPcapSha256": "4512bc7fa41343dda63845c7096a379b23b4e6444724cd37237ebfd7da8ffa09"
+      },
+      "captureKernelDrops": 0,
+      "rawReportSha256": "24d42c020312db2a544495cdfc8f57d5c92af17ebbe6cbc4b5b21c9c235493b5"
+    },
+    {
+      "transport": "combo-tls",
+      "packetHttp": "1.1",
+      "diagnosticRepeat": false,
+      "mixedRelay": true,
+      "status": "passed",
+      "checks": [
+        "named clients added with unique identities; original unused identity revoked",
+        "discovery assigned laptop .3; native TUN DNS UDP/TCP and synthetic TCP verified",
+        "independent canary discovery .4 while laptop session remains active",
+        "canary key rotation: old denied, new accepted, laptop DNS and data preserved",
+        "canary revoked in native authorization and private DNS without restarting laptop or exit",
+        "pending registry transaction fails closed; DNS and data recover"
+      ],
+      "laptopIpv4": "10.99.0.3",
+      "canaryIpv4": "10.99.0.4",
+      "echoBytes": 3584,
+      "reloads": 2,
+      "trialPidsUnchanged": true,
+      "hostUnchanged": {
+        "exit": true,
+        "client": true
+      },
+      "portReleased": {
+        "exit": true,
+        "client": true
+      },
+      "observer": {
+        "packetConnections": 6,
+        "packetMatched": 6,
+        "packetJa4": [
+          "t13d0915h2_f91f431d341e_54d72502093d"
+        ],
+        "packetJa3Sorted": [
+          "9fc752c58190630c49e1812906b40077"
+        ],
+        "wireCounts": {
+          "packets": 871,
+          "selected": 871,
+          "withoutSyn": 0,
+          "fragmented": 0,
+          "truncated": 0
+        },
+        "pcapSha256": "97a589f6457a223da9c91b32cef044ed967708b45474f026c6f2ded80b8c3f7e",
+        "relayConnections": 38,
+        "originalRelay": 37,
+        "matchedRelay": 37,
+        "relayWithoutOriginalCapture": 1,
+        "originalPcapSha256": "4b5d5d953283242f75808cfd484fee45f4711c5eafa5afda48f3847ca08b40a5"
+      },
+      "captureKernelDrops": 0,
+      "rawReportSha256": "5aee8c33389dfddff8990e5bee2f049b90f68167ae4617ba736099f31d1414f5"
+    },
+    {
+      "transport": "combo-tls",
+      "packetHttp": "2",
+      "diagnosticRepeat": true,
+      "mixedRelay": true,
+      "status": "passed",
+      "checks": [
+        "named clients added with unique identities; original unused identity revoked",
+        "discovery assigned laptop .3; native TUN DNS UDP/TCP and synthetic TCP verified",
+        "independent canary discovery .4 while laptop session remains active",
+        "canary key rotation: old denied, new accepted, laptop DNS and data preserved",
+        "canary revoked in native authorization and private DNS without restarting laptop or exit",
+        "pending registry transaction fails closed; DNS and data recover"
+      ],
+      "laptopIpv4": "10.99.0.3",
+      "canaryIpv4": "10.99.0.4",
+      "echoBytes": 3584,
+      "reloads": 2,
+      "trialPidsUnchanged": true,
+      "hostUnchanged": {
+        "exit": true,
+        "client": true
+      },
+      "portReleased": {
+        "exit": true,
+        "client": true
+      },
+      "observer": {
+        "packetConnections": 6,
+        "packetMatched": 6,
+        "packetJa4": [
+          "t13d0915h2_f91f431d341e_54d72502093d"
+        ],
+        "packetJa3Sorted": [
+          "9fc752c58190630c49e1812906b40077"
+        ],
+        "wireCounts": {
+          "packets": 905,
+          "selected": 905,
+          "withoutSyn": 0,
+          "fragmented": 0,
+          "truncated": 0
+        },
+        "pcapSha256": "4b6049dce8962c428e5e865148e262705fb43278d3b2e77c5a59155d34daa8b9",
+        "relayConnections": 44,
+        "originalRelay": 44,
+        "matchedRelay": 44,
+        "relayWithoutOriginalCapture": 0,
+        "originalPcapSha256": "d5b8002e01a000784e9dce2bf21b759af573d63962a853cf9357085a06a5c335"
+      },
+      "captureKernelDrops": 0,
+      "rawReportSha256": "d520a37bac05d60eddcce89a163b00e3e2a0a5dc5bee9f2dc577b85b3fdd80af"
+    }
+  ],
+  "standaloneTransparent": {
+    "status": "passed",
+    "requests": 8,
+    "tls12": 4,
+    "tls13": 4,
+    "bytesEach": 163840,
+    "originalWireJa3Ja4AlpnMatched": 8,
+    "captureKernelDrops": 0,
+    "hostUnchanged": {
+      "exit": true,
+      "client": true
+    },
+    "portReleased": {
+      "exit": true,
+      "client": true
+    },
+    "rawReportSha256": "d51fdf0e1c6cab8aefce9987eb45df0cca7e2dbfee08824239c8228ab64357c2",
+    "originalPcapSha256": "1acaf56e0bf6d86416f6306a4be35bcfe9daf077be703c53532845b32a71d9b9",
+    "wirePcapSha256": "84ecb5e0c9227ec788d1be45e7c66332b44322fa7197e92d03924ec82a458e4d",
+    "exitHashInRawReportIsWrapperNotElf": true
+  },
+  "finalDnsCapture": {
+    "exitPackets": 988,
+    "clientPackets": 394,
+    "kernelDropped": 0,
+    "unmatchedQueries": 0,
+    "expectedServfail": {
+      "udp": 4,
+      "tcp": 1,
+      "phase": "pending registry transaction"
+    },
+    "unexpectedDnsErrors": 0,
+    "clientUdpRttMs": {
+      "minimum": 81.246,
+      "median": 87.591,
+      "maximum": 250.445
+    },
+    "exitUdpProcessingMs": {
+      "minimum": 0.824,
+      "median": 1.473,
+      "maximum": 3.736
+    },
+    "captureWindowsDiffer": true,
+    "cleanupEchoEofNotCountedAsDnsFailure": true
+  },
+  "intermediateFailures": [
+    {
+      "stage": "first VPS isolated local tests",
+      "reason": "test bundle placed on existing noexec /run",
+      "resolution": "moved only trial bundle into private project build directory; no mount changes;14/14 passed"
+    },
+    {
+      "stage": "first packet trial preparation before VPN start",
+      "reason": "coordinator variable collision",
+      "resolution": "fixed coordinator; trial resources removed; before/after host state unchanged"
+    },
+    {
+      "stage": "first combo H2 packet-only trial after canary rotation",
+      "reason": "dns_response_mismatch; old probe did not preserve RCODE or timing",
+      "resolution": "unresolved; no native timeout or quota changes; expanded diagnostic capture; following mixed H2/H1/H2 trials passed",
+      "rawReportSha256": "54484ce7e6a532c80831d3e4b74c240968aeee738e7a47982f25be09217e0354",
+      "outboundPcapDidNotExplainFailure": true
+    }
+  ],
+  "safety": {
+    "macNetworkChanged": false,
+    "dailyServicesRestarted": false,
+    "dailyPidAndInvocationUnchanged": true,
+    "dailyBinaryHashesUnchanged": true,
+    "hostRoutesFirewallDnsForwardingUnchanged": true,
+    "temporaryCredentialsRemoved": true,
+    "testPortReleased": true,
+    "runningTrialUnits": 0,
+    "vpsTemporaryArtifactRemoved": true,
+    "radxaBuildCacheKept": true,
+    "beforeSnapshotSha256": "99b486b4b5f58fd53acfbc88a7b639431476ec6a4b238403842444ea99ad1aee",
+    "finalSnapshotSha256": "99b486b4b5f58fd53acfbc88a7b639431476ec6a4b238403842444ea99ad1aee"
+  },
+  "limitations": [
+    "bounded physical smoke, not prolonged WAN acceptance or throughput benchmark",
+    "one earlier combo DNS failure remains unexplained",
+    "TCP-Unix bridges change buffering/timing",
+    "cold partial Chromium-derived profile, not complete browser equivalence",
+    "H1 chosen by exit while client offers unchanged h2/http1 profile; JA4 describes ClientHello offer",
+    "DNS tested explicitly against native stub in disposable namespaces, not physical host NSS/DNS lifecycle",
+    "combo relay uses synthetic explicit destination policy, not public-https WAN destination coverage",
+    "one combo H1 wire relay ClientHello precedes original-side capture; excluded from paired match count",
+    "private musl loader bundle not installed and incompatible with normal service-owner executable identity checks",
+    "no daily update, reboot or real-host dynamic-address owner installation"
+  ],
+  "followup": [
+    "local TCP DNS framing/delayed-ACK latency regression with before/after evidence",
+    "repeat instrumented WAN DNS trial if original intermittent failure recurs",
+    "separate bounded deployment decision for daily boring-tls update"
+  ]
+}

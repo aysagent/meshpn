@@ -42,6 +42,9 @@ Node VPN для него не требуется. [Текущий план и г
 
 [Ход текущей ночной работы](scripts/clean-vpn-native-night-20261030.md).
 [Сводный отчёт и оставшиеся границы](scripts/clean-vpn-native-night-20261030-report.md).
+[Физическая проверка новых функций Radxa↔VPS](scripts/clean-vpn-native-physical-features-20261030.md):
+изолированная матрица boring/combo H1/H2 и transparent прошла; один предыдущий
+DNS-отказ combo остаётся необъяснённым. Daily-установка не заменялась.
 Эти изменения не означают, что новые бинарники уже установлены на Radxa/VPS.
 
 | Native transport | Проверенный путь и ограничения |
