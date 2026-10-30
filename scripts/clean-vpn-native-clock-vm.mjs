@@ -43,7 +43,7 @@ try{
   // QEMU's normal RTC supplies reference time; this is not an NTP accuracy test.
   fs.writeFileSync(root+'/sync.c','#include <sys/timex.h>\nint main(){struct timex t={0};if(adjtimex(&t)<0)return 1;t.modes=ADJ_STATUS|ADJ_MAXERROR|ADJ_ESTERROR;t.maxerror=1000;t.esterror=1000;t.status&=~STA_UNSYNC;return adjtimex(&t)<0;}\n');
   run('cc',[root+'/sync.c','-o',root+'/sync']);
-  const modnames=['tun','virtio_pci','virtio_net','virtio_blk','ext4','nf_tables','nft_compat','xt_conntrack','xt_tcpudp','iptable_filter','ip6table_filter',...(hostProfile?['dummy','nft_chain_nat','nft_nat','nft_masq','xt_comment','xt_addrtype','xt_mark','xt_TCPMSS','xt_nat','xt_MASQUERADE','ipt_REJECT','ip6t_REJECT','xt_multiport','iptable_nat','iptable_mangle','nf_conntrack_netlink',...(combo?['nft_redir']:[])]:[])];
+  const modnames=['tun','virtio_pci','virtio_net','virtio_blk','ext4','nf_tables','nft_compat','xt_conntrack','xt_tcpudp','iptable_filter','ip6table_filter',...(hostProfile?['dummy','nft_chain_nat','nft_nat','nft_masq','xt_comment','xt_addrtype','xt_mark','xt_TCPMSS','xt_nat','xt_MASQUERADE','ipt_REJECT','ip6t_REJECT','xt_multiport','iptable_nat','iptable_mangle','nf_conntrack_netlink',...(combo?['nft_redir','xt_REDIRECT']:[])]:[])];
   const modules=[...new Set(modnames.flatMap(name=>run('modprobe',['--set-version',release,'--show-depends',name]).trim().split('\n').filter(x=>!x.startsWith('builtin ')).map(x=>{x=x.replace(/(\/dummy\.ko) numdummies=0$/, '$1');assert.match(x,/^insmod \/lib\/modules\/[a-zA-Z0-9_./-]+\.ko\s*$/);return x.trim().split(/\s+/)[1];})))];
   const pythonBase=run('/usr/bin/python3',['-c','import sys;print("/usr/lib/python%d.%d"%sys.version_info[:2])']).trim();
   const cases=['main','expired','wrongpin','skew','wrongkey','wrongname','untrusted','timeout'];
@@ -54,12 +54,21 @@ try{
     const binary=(src,dest=src)=>{if(copied.has(dest))return;copied.add(dest);put(dest,fs.readFileSync(src),0o755);
       for(const lib of run('ldd',[src]).match(/\/[^\s()]+/g)??[])if(!copied.has(lib)){copied.add(lib);put(lib,fs.readFileSync(lib),0o755);}};
     const source=(src,dest)=>{const b=fs.readFileSync(src);sourceHashes[src]=hash(b);put(dest,b);};
+    const copiedSources=new Set();
+    const sourceWithDependencies=(src,dest)=>{
+      if(copiedSources.has(dest))return;copiedSources.add(dest);assert.ok(copiedSources.size<=128);
+      source(src,dest);
+      for(const match of fs.readFileSync(src,'utf8').matchAll(/\bfrom\s+['"](\.[^'"]+)['"]/g)){
+        const dependency=path.normalize(path.join(path.dirname(src),match[1]));assert.ok(dependency.startsWith('scripts/'));
+        sourceWithDependencies(dependency,path.normalize(path.join(path.dirname(dest),match[1])));
+      }
+    };
     put('/bin/busybox',fs.readFileSync('/bin/busybox'),0o755);fs.symlinkSync('busybox',guest+'/bin/sh');
     for(const src of ['/usr/local/bin/node','/usr/bin/openssl','/usr/sbin/ip','/usr/bin/date','/usr/bin/timeout','/usr/bin/python3','/usr/bin/ssh','/usr/bin/ssh-keygen','/usr/sbin/sshd','/usr/lib/systemd/systemd','/usr/lib/systemd/systemd-executor','/usr/bin/systemctl','/usr/bin/timedatectl','/usr/lib/systemd/systemd-timedated','/usr/bin/dbus-daemon','/usr/sbin/iptables-nft','/usr/sbin/ip6tables-nft'])binary(src);
     if(hostProfile){
       for(const p of ['/bin/bash','/usr/bin/env','/usr/bin/flock','/usr/bin/stat','/usr/sbin/sysctl','/usr/sbin/conntrack'])binary(p);
       for(const p of ['iptables','ip6tables','iptables-save','ip6tables-save','iptables-restore','ip6tables-restore'])binary('/usr/sbin/xtables-nft-multi','/usr/sbin/'+p);
-      source('scripts/clean-vpn-native-runtime-health.mjs','/opt/cvpn/health.mjs');
+      sourceWithDependencies('scripts/clean-vpn-native-runtime-health.mjs','/opt/cvpn/health.mjs');
       source('scripts/autostart/killswitch.sh','/usr/local/bin/clean-vpn-killswitch.sh');fs.chmodSync(guest+'/usr/local/bin/clean-vpn-killswitch.sh',0o755);
     }
     binary(build+'/clean-vpn-engine','/opt/cvpn/engine');sourceHashes.engine=hash(fs.readFileSync(build+'/clean-vpn-engine'));
@@ -116,6 +125,11 @@ mount --bind /state/clock-${c} /opt/clean-vpn-native/${c}/clock-state`).join('\n
           installNative({root:guest,name:c,binary:build+'/clean-vpn-engine',config:input,hostProfile:host,clockProfile:clock,apply:true});
           for(const [name,log] of [[`native-${c}.service`,`engine-${c}`],[`native-${c}-clock.service`,`recovery-${c}`],[`native-${c}-network.service`,`owner-${c}`]])
             put('/etc/systemd/system/'+name+'.d/clock-vm.conf',`[Unit]\nDefaultDependencies=no\n[Service]\nEnvironment=PATH=/usr/local/bin:/usr/sbin:/usr/bin:/bin\nStandardOutput=append:/run/${log}.log\nStandardError=append:/run/${log}.log\n`);
+          // Fixture-only diagnostics: owner commands contain networking metadata,
+          // never credentials. Preserve bounded stderr in the private serial log.
+          if(combo){const script=guest+`/opt/clean-vpn-native/${c}/control/clean-vpn-native-host-network.mjs`;
+            fs.writeFileSync(script,fs.readFileSync(script,'utf8').replace('catch(e){const reason=',
+              "catch(e){console.error('CLOCK_VM_OWNER_DIAGNOSTIC='+JSON.stringify({message:e.message,stderr:String(e.stderr??'').slice(0,2048)}));const reason="));}
           // Keep a single inode for identical engine copies in the initramfs.
           fs.unlinkSync(guest+`/opt/clean-vpn-native/${c}/engine`);fs.linkSync(guest+'/opt/cvpn/engine',guest+`/opt/clean-vpn-native/${c}/engine`);
           continue;
