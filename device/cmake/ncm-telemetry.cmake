@@ -1,6 +1,7 @@
 # Replace one source in TinyUSB's target with a generated build copy.
-# No dependency checkout modifications and no instrumentation for ECM/RNDIS.
-if(CONFIG_MESHVPN_NCM_TELEMETRY)
+# RX safety fixes apply even when telemetry is disabled. No checkout edits.
+# ECM/RNDIS do not use this driver.
+if(CONFIG_TINYUSB_NET_MODE_NCM)
     idf_component_get_property(ncm_tusb_lib espressif__tinyusb COMPONENT_LIB)
     idf_component_get_property(ncm_tusb_dir espressif__tinyusb COMPONENT_DIR)
     idf_build_get_property(ncm_python PYTHON)
@@ -33,7 +34,7 @@ if(CONFIG_MESHVPN_NCM_TELEMETRY)
     # TinyUSB is linked after the application components. Pull the observer
     # from meshvpn_usb even if no web consumer references its object yet.
     target_link_options(${ncm_tusb_lib} INTERFACE "LINKER:--undefined=meshvpn_ncm_record")
-    message(STATUS "MeshPN: passive NCM telemetry enabled (pinned generated driver)")
+    message(STATUS "MeshPN: bounded NCM RX validation + optional telemetry (pinned generated driver)")
 endif()
 
 if(CONFIG_MESHVPN_DWC2_TELEMETRY)

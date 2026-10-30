@@ -166,9 +166,10 @@ if [[ -f "$ncm_src/class/net/ncm_device.c" ]]; then
     "$test_dir/usb-fifo-descriptor-$cdc_count"
   done
   python3 device/scripts/instrument-ncm.py "$ncm_src/class/net/ncm_device.c" "$test_dir/ncm_device.c"
-  for variant in 0:0 1:0 1:1; do
-    event_enabled=${variant%:*}; dwc_enabled=${variant#*:}
-    "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_DWC2_TELEMETRY="$dwc_enabled" -DCONFIG_MESHVPN_USB_TX_EVENT_WAIT="$event_enabled" -DMESHVPN_NCM_SOURCE="\"$test_dir/ncm_device.c\"" \
+  for variant in 1:0:0 1:1:0 1:1:1 0:0:0; do
+    telemetry_enabled=${variant%%:*}; pair=${variant#*:}
+    event_enabled=${pair%:*}; dwc_enabled=${pair#*:}
+    "$cc" "${flags[@]}" -pthread -DCONFIG_MESHVPN_NCM_TELEMETRY="$telemetry_enabled" -DCONFIG_MESHVPN_DWC2_TELEMETRY="$dwc_enabled" -DCONFIG_MESHVPN_USB_TX_EVENT_WAIT="$event_enabled" -DMESHVPN_NCM_SOURCE="\"$test_dir/ncm_device.c\"" \
       -Idevice/tests/ncm_stubs -Idevice/tests/usb_stubs -Idevice/tests/cpu_stubs \
       -I"$ncm_src" -I"$ncm_src/class/net" -Idevice/components/meshvpn_usb/include \
       device/tests/test_ncm_driver.c device/components/meshvpn_usb/meshvpn_ncm_diag.c \

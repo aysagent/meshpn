@@ -22,6 +22,7 @@ HELPER = '''
 #include "meshvpn_usb_tx_queue.h"
 #endif
 static void mesh_ncm_observe(meshvpn_ncm_event_t event, uint32_t bytes, uint16_t frames) {
+#if CONFIG_MESHVPN_NCM_TELEMETRY
   meshvpn_ncm_state_t state = {
     .pool = XMIT_NTB_N,
     .glue = ncm_interface.xmit_glue_ntb != NULL,
@@ -39,6 +40,9 @@ static void mesh_ncm_observe(meshvpn_ncm_event_t event, uint32_t bytes, uint16_t
   state.ready = ncm_interface.xmit_ready_ntb[0] != NULL;
   #endif
   meshvpn_ncm_record(event, &state, bytes, frames);
+#else
+  (void)event; (void)bytes; (void)frames;
+#endif
 }
 '''
 

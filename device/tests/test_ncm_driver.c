@@ -189,7 +189,7 @@ static void test_rx_recovery(void)
         assert(rx_frames==delivered && !ncm_interface.recv_glue_ntb);
         assert(rx_submissions==submits+1 && ncm_interface.recv_tinyusb_ntb);
     }
-    assert(stats().rx_rejected-rejected==RECV_NTB_N*3);
+    if (CONFIG_MESHVPN_NCM_TELEMETRY) assert(stats().rx_rejected-rejected==RECV_NTB_N*3);
     recv_ntb_t *ntb=ncm_interface.recv_tinyusb_ntb;
     ndp16_datagram_t *entry=(ndp16_datagram_t *)(ntb->data+sizeof(nth16_t)+sizeof(ndp16_t));
     entry[0].wDatagramIndex=64;entry[0].wDatagramLength=64;
@@ -205,6 +205,7 @@ int main(void)
 {
     test_rx_bounds();
     test_rx_recovery();
+    if (!CONFIG_MESHVPN_NCM_TELEMETRY) { assert(!stats().available); return 0; }
     init();
     assert(stats().available && stats().state.free == 6);
     uint8_t packet[1514]={0};
