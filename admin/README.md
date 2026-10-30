@@ -1,8 +1,8 @@
 # MeshPN: админка Radxa через USB
 
-29 октября: существующая админка [привязана к постоянному native boring-tls](../scripts/clean-vpn-native-daily-20261029.md).
-Проверены физический autostart, backend stop/start, rollback ошибочного TLS-имени
-и tcpdump-наблюдатель на реальном reconnect. Пароль и Wi-Fi сохранены.
+31 октября админка [привязана к постоянному native combo-tls](../scripts/clean-vpn-native-combo-daily-20261031.md).
+Проверены autostart после reboot Radxa, профиль/observer обеих веток,
+реальный USB HTTPS/DNS и SIGKILL recovery. Пароль и Wi-Fi сохранены.
 
 Для OpenWrt подготовлен отдельный [план локальных пакетов и LuCI](../scripts/clean-vpn-openwrt.md)
 с захватом профиля и независимым наблюдателем. Текущий installer ниже предназначен

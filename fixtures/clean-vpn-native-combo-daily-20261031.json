@@ -1,0 +1,226 @@
+{
+  "schema": 1,
+  "kind": "native-combo-daily-admission",
+  "status": "personal-pilot-active",
+  "date": "2026-10-31",
+  "branch": "feat/clean-vpn-native-data-plane",
+  "installations": {
+    "client": {
+      "bundle": "/opt/clean-vpn-native/combo-daily",
+      "engineUnit": "native-combo-daily.service",
+      "networkUnit": "native-combo-daily-network.service",
+      "engineSha256": "fcdacc399607bc5cec2d5ec4ed18670d66d349513678c485773c06cc2e5e5c1d",
+      "ipv4": "10.99.0.2",
+      "bootEnabled": true
+    },
+    "exit": {
+      "bundle": "/opt/clean-vpn-native/combo-daily-exit",
+      "engineUnit": "native-combo-daily-exit.service",
+      "networkUnit": "native-combo-daily-exit-network.service",
+      "engineSha256": "9e1b4747e975b3ef61e938a126e37abaaf8d36802275e24b826083a0ec412091",
+      "endpoint": "154.62.226.216:443",
+      "peerIpv4": [
+        "10.99.0.2",
+        "10.99.0.3",
+        "10.99.0.4"
+      ],
+      "packetKeysPreserved": true,
+      "relayIdentities": 3,
+      "relayLimits": {
+        "sessions": 128,
+        "perClient": 64
+      },
+      "bootEnabled": true
+    }
+  },
+  "certificate": {
+    "serverName": "personal-cert.internal",
+    "issuer": "Personal Certificate Authority",
+    "packetSni": "www.trustpilot.com",
+    "validTo": "2027-10-30T20:30:46Z",
+    "caPrivateKeyStayedOnVps": true,
+    "previousNativeBundlesRetainedDisabled": true
+  },
+  "tests": {
+    "adminAndPcapMac": {
+      "passed": 63
+    },
+    "adminSelectedArm64": {
+      "passed": 47
+    },
+    "comboInstallerNativeLinux": {
+      "passed": 11
+    },
+    "otherInstallerRegressionsNativeLinux": {
+      "passed": 12
+    },
+    "binaryUpdaterUnit": {
+      "passed": 18
+    },
+    "finalNativeCtest": {
+      "client": 14,
+      "exit": 14
+    },
+    "privateDnsBudgetRegression": {
+      "baseline": "fails delayed private-answer assertion",
+      "nativeArmLab": "passed",
+      "physicalClient": "passed",
+      "physicalExit": "passed",
+      "delayedReplyMs": 1400,
+      "budgetMs": 3000,
+      "silentTimeoutMeasuredRangeMs": [
+        2800,
+        4000
+      ],
+      "publicFallback": false
+    }
+  },
+  "wan": {
+    "trial": "cvpn-new-7e352fc3e6",
+    "status": "passed",
+    "steadyChecks": 60,
+    "steadyPassed": 60,
+    "lastSteadyElapsedSeconds": 747.508,
+    "realHttpsVerified": 61,
+    "hostSnapshotsUnchanged": {
+      "exit": true,
+      "client": true
+    },
+    "testPortReleased": {
+      "exit": true,
+      "client": true
+    },
+    "observer": {
+      "packetConnections": 6,
+      "packetMatched": 6,
+      "packetJa4": [
+        "t13d0915h2_f91f431d341e_54d72502093d"
+      ],
+      "packetJa3Sorted": [
+        "9fc752c58190630c49e1812906b40077"
+      ],
+      "wireCounts": {
+        "packets": 9192,
+        "selected": 9192,
+        "withoutSyn": 0,
+        "fragmented": 0,
+        "truncated": 0
+      },
+      "pcapSha256": "8fbeb1285ad1620dcb846f7253a29ff67376586ee57c18ffc2dc58aca4a09dad",
+      "relayConnections": 61,
+      "originalRelay": 61,
+      "matchedRelay": 61,
+      "relayWithoutOriginalCapture": 0,
+      "originalPcapSha256": "b3750225a6eb648c99f5ff7712849763736463d3dbac2282205c88f75bc9f596"
+    },
+    "fullBackgroundJournal": {
+      "total": 442,
+      "passed": 439,
+      "intentionalPendingTransactionFailures": [
+        32
+      ],
+      "cleanupFailuresAfterStopping": [
+        442
+      ],
+      "deliveryBudgetTimeout": {
+        "sequence": 291,
+        "queryArrivedAtExitMs": 4238.148,
+        "exitResolverReplyMs": 1.459,
+        "replyReachedClientMs": 4262.115,
+        "queryId": 36127,
+        "action": "SERVFAIL at bounded three-second deadline; late valid answer discarded",
+        "engineReconnected": false
+      }
+    },
+    "priorRunFailuresRetained": {
+      "trial": "cvpn-new-b0809850ff",
+      "reason": "h2_ping_timeout with TCP retransmissions; client self-reconnected"
+    },
+    "priorMixedRun": {
+      "trial": "cvpn-new-eec37aec00",
+      "checks": 60,
+      "passed": 58,
+      "failures": [
+        "one upstream TLS disconnect, cause not established",
+        "private TCP reply after 1451.443ms exceeded old 1200ms budget"
+      ]
+    },
+    "kernelDrops": {
+      "clientWire": 0,
+      "clientDns": 0,
+      "clientOriginalRelay": 0
+    }
+  },
+  "physicalLive": {
+    "smoke": {
+      "status": "passed",
+      "clientRestarted": true,
+      "networkPidPreserved": true,
+      "clockStatePreserved": true,
+      "usbHttpsRequests": 3,
+      "usbDnsUdpTcp": true,
+      "oldClientPid": "69953",
+      "newClientPid": "70599"
+    },
+    "observer": {
+      "status": "passed",
+      "source": "independent-usb0-and-wlan0-tcpdump",
+      "packetConnections": 1,
+      "packetMatched": 1,
+      "packetJa4": [
+        "t13d0915h2_f91f431d341e_54d72502093d"
+      ],
+      "originalRelay": 3,
+      "relayMatched": 3,
+      "transparentJa4": [
+        "t13d4907h2_0d8feac7bc37_7395dae3b2f3"
+      ],
+      "wirePcapSha256": "9fd94683adada09703feec652a129c16588396f134bde82dfa7e424eef31d8e6",
+      "originalPcapSha256": "f6c05744de63f8e240722989e06239a247bec0d83fe44d837b991e8edc5e90f9"
+    },
+    "postBoot": {
+      "exit": {
+        "MainPID": "637821",
+        "StatusText": "ready",
+        "ActiveState": "active"
+      },
+      "client": {
+        "MainPID": "2191",
+        "StatusText": "ready",
+        "ActiveState": "active"
+      },
+      "status": "passed",
+      "bootId": "f880b7fe-2073-49fc-9449-b377c31ee0a7",
+      "priorBootId": "aa441626-a4d3-4913-8a82-dd8bfae42842",
+      "softwareReboot": true,
+      "physicalPowerRemovalTested": false,
+      "clockHelperStarted": false,
+      "ext4Errors": 0,
+      "adminComboCapabilities": true,
+      "hostNssFreshName": true
+    },
+    "rollbackAcceptedAndDisabled": true,
+    "temporaryRollbackUnitFilesRemoved": true,
+    "macDefaultRoutePreserved": true,
+    "macNetworkSettingsModified": false,
+    "vpsRebooted": false,
+    "temporaryBuildSwapRemoved": true
+  },
+  "spareClientBundles": {
+    "10.99.0.3": "/var/lib/clean-vpn-combo-upgrade-20261031/exports/10.99.0.3.bundle.json",
+    "10.99.0.4": "/var/lib/clean-vpn-combo-upgrade-20261031/exports/10.99.0.4.bundle.json",
+    "importValidated": true,
+    "containsCredentials": true,
+    "exportRegistryControlsLiveExit": false
+  },
+  "limitations": [
+    "personal-pilot-not-general-Linux-or-capacity-acceptance",
+    "physical-reboot-tested-not-power-removal",
+    "JA3-JA4-field-match-is-not-full-browser-equivalence",
+    "shared-project-fingerprint-parser",
+    "WAN-stalls-beyond-DNS-budget-return-SERVFAIL-without-open-fallback",
+    "daily-private-mpn-resolver-not-enabled",
+    "IPv4-only; relay-TCP443-from-USB-only; QUIC-uses-packet-branch",
+    "VPS-boot-enable-verified-but-VPS-not-rebooted"
+  ]
+}

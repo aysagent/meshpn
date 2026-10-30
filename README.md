@@ -2,18 +2,17 @@
 
 ## clean-vpn: эксплуатация, транспорты и быстрый старт
 
-**Актуальный приоритет — native C++ `clean-vpn-engine`, `boring-tls`.**
+**На личной паре Radxa↔VPS включён native C++ `combo-tls` с автозапуском.**
+[Текущее состояние, команды и результаты 31 октября](scripts/clean-vpn-native-combo-daily-20261031.md):
+реальный USB HTTPS/DNS, профиль/observer, `personal-cert.internal`, SIGKILL recovery и reboot.
 [Внешний туннель поддерживает HTTP/2 и HTTP/1.1](scripts/clean-vpn-native-http1.md)
 через `http_version` в engine JSON; на client по умолчанию остаётся HTTP/2.
 [Самостоятельный lifecycle Radxa](scripts/clean-vpn-native-host-network.md) уже
 проверен временным Radxa↔VPS запуском: DNS/HTTPS, перезапуск engine и сетевого
 контроллера, сохранённый Chromium-derived профиль и независимый pcap. Старый
-Node VPN для него не требуется. [Текущий план и границы](scripts/clean-vpn-native-night-20261029.md).
-**Постоянная boring-tls пара Radxa↔VPS включена**, админка привязана к native;
-проверены физические reboot, условные часы и восстановление engine.
-[Команды управления, результаты и оставшиеся границы](scripts/clean-vpn-native-daily-20261029.md).
-Развитие transparent/combo продолжается отдельно от работающей пары:
-[тестовые порты `3443`, изоляция и лабораторная приёмка](scripts/clean-vpn-native-test-ports.md).
+Node VPN для него не требуется. [Исходный план 29 октября](scripts/clean-vpn-native-night-20261029.md).
+Boring-tls остаётся packet-веткой combo и отдельным вариантом запуска.
+Следующие изменения проверяются на [3443 в отдельных namespace/контейнерах](scripts/clean-vpn-native-test-ports.md).
 Один только другой порт не изолирует маршруты, TUN и firewall — тестам нужен
 отдельный network namespace или контейнер.
 Для existing VPS готов [scoped exit owner](scripts/clean-vpn-native-exit-host.md),
@@ -42,24 +41,19 @@ Node VPN для него не требуется. [Текущий план и г
 
 [Ход текущей ночной работы](scripts/clean-vpn-native-night-20261030.md).
 [Сводный отчёт и оставшиеся границы](scripts/clean-vpn-native-night-20261030-report.md).
-[Физическая проверка новых функций Radxa↔VPS](scripts/clean-vpn-native-physical-features-20261030.md):
-изолированная матрица boring/combo H1/H2 и transparent прошла; один предыдущий
-DNS-отказ combo остаётся необъяснённым. Daily-установка не заменялась.
-[Локальное исправление DNS/TCP framing и проверка отказов](scripts/clean-vpn-native-dns-tcp-20261030.md)
-устраняет воспроизведённую задержку; причина того единичного отказа ещё не доказана.
-Эти изменения не означают, что новые бинарники уже установлены на Radxa/VPS.
-Повторный WAN trial встретил ошибки EXT4 на Radxa; после новой загрузки
-initramfs fsck восстановил доступ, daily VPN активен, выбранные данные сохранены.
-[Диагностика и кандидат `personal-cert.internal`](scripts/clean-vpn-native-trial-blocker-20261030.md).
-Новый сертификат пока не установлен в daily-пару.
-[Повторный физический combo H2/H1 trial завершён](scripts/clean-vpn-native-combo-neutral-wan-20261030.md):
-нейтральная CA/leaf цепочка принята, задержка TCP DNS на exit устранена,
-новых ошибок EXT4 при сборке/тестах не было; рабочая пара сохранена.
+История: [изолированная матрица boring/combo H1/H2 и transparent](scripts/clean-vpn-native-physical-features-20261030.md),
+[DNS/TCP framing](scripts/clean-vpn-native-dns-tcp-20261030.md),
+[восстановление EXT4 и neutral certificate candidate](scripts/clean-vpn-native-trial-blocker-20261030.md),
+[повторный H2/H1 WAN trial](scripts/clean-vpn-native-combo-neutral-wan-20261030.md).
+31 октября в рабочую пару доставлены эти исправления и
+[private DNS budget fix](scripts/clean-vpn-native-dns-private-budget-20261031.md),
+сертификат и combo активированы; ограничения фонового WAN и physical power removal
+зафиксированы в [последней приёмке](scripts/clean-vpn-native-combo-daily-20261031.md).
 
 | Native transport | Проверенный путь и ограничения |
 | --- | --- |
 | `boring-tls` | Основной путь к личной эксплуатации: standalone, Docker/Podman, отдельный host-profile Radxa; частичная мимикрия ClientHello/H2. |
-| `combo-tls` | Экспериментальный packet + HTTPS relay; scoped host lifecycle и [контейнерный LAN runtime](scripts/clean-vpn-native-combo-runtime.md). На повседневной паре пока не включён. |
+| `combo-tls` | Личный pilot Radxa↔VPS включён: packet + HTTPS relay, scoped host lifecycle; есть [контейнерный LAN runtime](scripts/clean-vpn-native-combo-runtime.md). Другие установки/нагрузки требуют своей приёмки. |
 | `transparent-tls` | Экспериментальный HTTPS relay; не универсальный IP VPN. Ограничение сырого TUN из Node-таблицы ниже не является описанием native relay. |
 | `tls` | Отдельного native транспорта под этим именем нет; TLS реализован через BoringSSL в `boring-tls`. |
 

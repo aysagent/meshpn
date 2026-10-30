@@ -1,5 +1,8 @@
 # Combo Radxa↔VPS: DNS framing и personal-cert.internal
 
+**Продолжение 31 октября:** [рабочая пара переключена на combo-tls](clean-vpn-native-combo-daily-20261031.md).
+Ниже исторический snapshot; актуальные unit names, certificate и команды — по ссылке.
+
 Повторный физический bounded trial 30 октября завершён: **combo H2 и H1 прошли**.
 Использованы свежие native engine на самой Radxa и VPS, отдельные namespaces,
 TUN и TCP/Unix bridges на внешнем порту 3443. Повседневный boring-tls не
