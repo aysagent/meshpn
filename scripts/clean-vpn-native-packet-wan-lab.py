@@ -13,11 +13,13 @@ import os
 from pathlib import Path
 import signal
 import socket
+import ssl
 import struct
 import subprocess
 import sys
 import time
 
+sys.dont_write_bytecode = True
 HELPER = Path(__file__).with_name('clean-vpn-native-relay-wan-lab.py')
 spec = importlib.util.spec_from_file_location('relay_fixture', HELPER)
 relay = importlib.util.module_from_spec(spec)
@@ -65,7 +67,7 @@ def dns_probe(address, name, tcp):
         else:
             answer = sock.recv(4097)
     if not 12 <= len(answer) <= 4096 or answer[:2] != ident or not answer[2] & 0x80 or answer[3] & 15 or answer[4:6] != b'\0\1' or answer[12:12+len(question)] != question:
-        raise RuntimeError('dns_response_mismatch')
+        raise RuntimeError('dns_response_mismatch '+json.dumps({'transport':'tcp' if tcp else 'udp','length':len(answer),'idMatch':answer[:2]==ident,'flags':answer[2:4].hex(),'rcode':answer[3]&15 if len(answer)>=4 else None,'qd':int.from_bytes(answer[4:6],'big') if len(answer)>=6 else None,'questionMatch':answer[12:12+len(question)]==question},separators=(',',':')))
     at = 12+len(question)
     addresses = []
     for _ in range(struct.unpack('!H', answer[6:8])[0]):
@@ -96,7 +98,50 @@ def dns_probe(address, name, tcp):
     return {'transport': 'tcp' if tcp else 'udp', 'name': name, 'addresses': addresses}
 
 
-def probe(address, name):
+def relay_config(path):
+    relay.private(Path(path))
+    config = json.loads(Path(path).read_text())
+    if config.get('transport') != 'combo-tls':
+        raise RuntimeError('relay_probe_combo_required')
+    transparent = config['transparent']
+    if transparent.get('destinations') != [{'ipv4': ORIGIN, 'port': 443}] or 'destination_policy' in transparent:
+        raise RuntimeError('relay_probe_scoped_origin_required')
+    return config
+
+
+def https_probe(config):
+    packet = config['boring']
+    if packet.get('role') != 'client':
+        raise RuntimeError('relay_probe_client_required')
+    relay.private(Path(packet['ca']))
+    name = packet['server_name']
+    if not name or len(name) > 253 or not all(c.isascii() and (c.isalnum() or c in '.-') for c in name):
+        raise RuntimeError('relay_probe_name_required')
+    requests = []
+    for version in (ssl.TLSVersion.TLSv1_2, ssl.TLSVersion.TLSv1_3):
+        context = ssl.create_default_context(cafile=packet['ca'])
+        context.minimum_version = context.maximum_version = version
+        context.set_alpn_protocols(['http/1.1'])
+        with socket.create_connection((ORIGIN, 443), timeout=8) as raw:
+            with context.wrap_socket(raw, server_hostname=name) as tls:
+                negotiated = tls.version()
+                tls.sendall(('GET / HTTP/1.1\r\nHost: '+name+'\r\nConnection: close\r\n\r\n').encode('ascii'))
+                response = bytearray()
+                while True:
+                    part = tls.recv(4096)
+                    if not part:
+                        break
+                    response.extend(part)
+                    if len(response) > 8192+len(BODY):
+                        raise RuntimeError('relay_response_limit')
+                header, body = bytes(response).split(b'\r\n\r\n', 1)
+                if not header.startswith(b'HTTP/1.1 200 OK\r\n') or body != BODY:
+                    raise RuntimeError('relay_response_mismatch')
+                requests.append({'tls': negotiated, 'bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest(), 'certificateVerified': True})
+    return requests
+
+
+def probe(address, name, config_path=None):
     value = ipaddress.IPv4Address(address)
     if value not in ipaddress.IPv4Network('10.99.0.0/24') or not 2 <= (int(value) & 255) <= 254:
         raise RuntimeError('assigned_address_required')
@@ -107,9 +152,10 @@ def probe(address, name):
         response = recv_all(sock, len(BODY))
         if response != BODY:
             raise RuntimeError('echo_mismatch')
+    requests = https_probe(relay_config(config_path)) if config_path else None
     return {'event': 'packet_wan_probe', 'status': 'passed', 'ipv4': address,
             'dns': dns, 'echoBytes': len(BODY), 'echoSha256': hashlib.sha256(response).hexdigest(),
-            'realTun': True, 'nativeDns': True}
+            'realTun': True, 'nativeDns': True, **({'relayHttps': requests} if requests is not None else {})}
 
 
 def inside(args):
@@ -148,6 +194,9 @@ def inside(args):
         relay.run('ip', 'link', 'set', TUN, 'mtu', '1400', 'up')
         if args.role == 'client':
             relay.run('ip', 'route', 'add', 'default', 'dev', TUN)
+            if args.relay_probe:
+                relay_port = config['transparent']['listen']['port']
+                relay.run('iptables', '-t', 'nat', '-A', 'OUTPUT', '-d', ORIGIN, '-p', 'tcp', '--dport', '443', '-j', 'REDIRECT', '--to-ports', str(relay_port))
         else:
             relay.run('ip', 'addr', 'add', ORIGIN+'/32', 'dev', 'lo')
             def echo(sock):
@@ -156,6 +205,25 @@ def inside(args):
                     raise RuntimeError('echo_request')
                 sock.sendall(data)
             listeners.append(relay.Listener(socket.AF_INET, (ORIGIN, 18080), echo))
+            if args.relay_probe:
+                packet = relay_config(config_path)['boring']
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                context.load_cert_chain(packet['cert'], packet['key'])
+                context.set_alpn_protocols(['http/1.1'])
+                def origin(raw):
+                    # Only a local relay dial may reach this synthetic origin;
+                    # packet-tunnel clients have 10.99.0.x source addresses.
+                    if raw.getpeername()[0] != ORIGIN:
+                        raise RuntimeError('relay_origin_requires_local_dial')
+                    with context.wrap_socket(raw, server_side=True) as tls:
+                        header = bytearray()
+                        while b'\r\n\r\n' not in header:
+                            data = tls.recv(1024)
+                            if not data or len(header)+len(data) > 8192:
+                                raise RuntimeError('relay_request_header')
+                            header.extend(data)
+                        tls.sendall(b'HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: '+str(len(BODY)).encode()+b'\r\n\r\n'+BODY)
+                listeners.append(relay.Listener(socket.AF_INET, (ORIGIN, 443), origin))
             with open(directory/'resolver.log', 'xb') as log:
                 os.chmod(directory/'resolver.log', 0o600)
                 resolver = subprocess.Popen([args.node, args.registry_script, 'run', '--registry='+args.registry_file], stdout=log, stderr=log)
@@ -180,7 +248,7 @@ def inside(args):
             if args.role == 'client':
                 sequence += 1
                 try:
-                    relay.emit(sequence=sequence, **probe(address, args.peer_name))
+                    relay.emit(sequence=sequence, **probe(address, args.peer_name, str(config_path) if args.relay_probe else None))
                 except (OSError, RuntimeError) as error:
                     relay.emit(event='packet_wan_probe', status='failed', sequence=sequence, reason=str(error)[:200])
             STOP.wait(1)
@@ -197,8 +265,9 @@ def main():
         parser = argparse.ArgumentParser()
         parser.add_argument('--address', required=True)
         parser.add_argument('--name', required=True)
+        parser.add_argument('--config', help='Private combo client config enables CA-verified relay HTTPS probe')
         args = parser.parse_args(sys.argv[2:])
-        relay.emit(**probe(args.address, args.name))
+        relay.emit(**probe(args.address, args.name, args.config))
         return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--role', choices=['client','exit'], required=True)
@@ -208,6 +277,7 @@ def main():
     parser.add_argument('--port', type=int, default=3443)
     parser.add_argument('--seconds', type=int, default=120)
     parser.add_argument('--peer-name', default='laptop.mpn')
+    parser.add_argument('--relay-probe', action='store_true')
     parser.add_argument('--node')
     parser.add_argument('--registry-script')
     parser.add_argument('--registry-file')
@@ -222,6 +292,8 @@ def main():
         raise RuntimeError('private_directory_required')
     relay.private(directory/'engine.json')
     config = json.loads((directory/'engine.json').read_text())
+    if args.relay_probe:
+        relay_config(directory/'engine.json')
     packet = config.get('boring', config)
     if packet.get('role') != args.role or packet.get('address') != INNER or packet.get('port') != PORT or packet.get('tun') != TUN:
         raise RuntimeError('fixed_namespace_endpoint_required')

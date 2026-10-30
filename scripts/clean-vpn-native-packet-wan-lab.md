@@ -77,3 +77,33 @@ registry transaction SERVFAIL and recovery, process cleanup, released host port,
 and byte-identical host link/address/route/rule/firewall/DNS snapshots. The saved
 profile was unchanged. This is a short local gate, not a completed physical WAN
 trial, multi-hour stability result, or transparent branch traffic test.
+
+## Optional mixed combo branch probe
+
+For a bounded mixed-branch trial, add `--relay-probe` to **both** role commands.
+Before initializing the manager, set both transparent configurations to exactly
+`destinations: [{"ipv4":"11.22.33.44","port":443}]` and remove
+`destination_policy`. This explicit policy is fixture-only: the normal
+`public-https` policy correctly rejects an origin assigned to the exit itself.
+The fixture refuses `--relay-probe` for a non-combo config or a broader policy.
+Enrollment export/import preserves either supported policy representation.
+
+The exit serves HTTPS with its existing configured certificate/key. Only a local
+relay dial may reach this synthetic TLS origin: a direct packet-tunnel source is
+rejected. Inside the fresh client namespace, one OUTPUT REDIRECT rule targets
+only `11.22.33.44:443` and the configured transparent listener. No host firewall
+rule is installed. Each probe retains the packet DNS/TCP checks and additionally
+fetches the exact body through TLS 1.2 and TLS 1.3, checking CA and hostname.
+Results add `relayHttps` entries with TLS version, byte count and SHA-256.
+
+For the on-demand probe, append `--config /run/PRIVATE/laptop/engine.json`.
+The automatic probe uses the effective client config; the source config remains
+unchanged. Timeouts are the existing relay fixture's eight-second socket timeout.
+Probe errors include bounded DNS transport/header diagnostics for investigation;
+the fixture never silently retries a failed probe.
+
+The local gate additionally passed two mixed combo cases (H2/H1 packet branches),
+for six cases total. Both TLS versions passed with the saved packet profile
+unchanged. Temporarily removing the namespace REDIRECT caused the HTTPS probe to
+fail, proving the success depended on the relay branch; restoring it recovered.
+Hot reload, marker recovery and unchanged host settings were checked again.
