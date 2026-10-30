@@ -38,7 +38,8 @@ static int pbuf_take_at(struct pbuf*p,const void*in,unsigned len,unsigned off){
  for(unsigned i=0;i<len;i++){unsigned a=off+i;if(a<p->split)p->head[a]=((const u8_t*)in)[i];else p->tail[a-p->split]=((const u8_t*)in)[i];}return 0;
 }
 static struct ip_napt_entry*ip_napt_find(u8_t proto,u32_t remote,u16_t port,u16_t mapped,u8_t dest){
- lookups++;assert(dest==1);
+ lookups++;
+ if(!dest)return proto==entry.proto&&remote==entry.src&&port==entry.sport?&entry:NULL;
  return proto==entry.proto&&remote==entry.dest&&port==entry.dport&&mapped==entry.mport?&entry:NULL;
 }
 #include "napt-checksum.inc"
@@ -77,8 +78,49 @@ static void run(unsigned proto,unsigned quoted,unsigned split,unsigned type){
  memcpy(&header,outer,sizeof(header));unsigned before=lookups;
  assert(!meshpn_napt_icmp_error(&p,&header));assert(lookups==before); // inner IP checksum invalid
 }
+static void outbound(unsigned proto,unsigned quoted,unsigned split,unsigned type,unsigned options){
+ unsigned ihl=20+options;u8_t inner[80]={0},outer[160]={0x45};
+ inner[0]=0x40|ihl/4;inner[3]=80;inner[8]=64;inner[9]=proto;
+ inet_pton(AF_INET,"198.18.0.1",inner+12);inet_pton(AF_INET,"192.168.12.2",inner+16);
+ u8_t *l4=inner+ihl;l4[1]=80;l4[2]=0xc3;l4[3]=0x51; // remote80 -> local50001
+ l4[12]=0x50;l4[13]=0x10;
+ if(proto==17){l4[4]=0;l4[5]=80-ihl;}
+ if(proto==1){l4[0]=0;l4[1]=0;l4[4]=0xc3;l4[5]=0x51;}
+ assert(meshvpn_vpn_repair_checksums(inner,sizeof(inner)));
+ entry=(struct ip_napt_entry){.proto=proto,.sport=htons(50001),.mport=htons(40000),.dport=htons(proto==1?50001:80)};
+ memcpy(&entry.src,inner+16,4);memcpy(&entry.dest,inner+12,4);
+ unsigned n=28+quoted;outer[2]=n>>8;outer[3]=n;outer[8]=64;outer[9]=1;
+ memcpy(outer+12,inner+16,4);memcpy(outer+16,inner+12,4);
+ outer[20]=type;outer[21]=type==3?4:0;outer[26]=5;outer[27]=0;
+ memcpy(outer+28,inner,quoted);assert(meshvpn_vpn_repair_checksums(outer,n));
+ struct pbuf p={.tot_len=n,.split=split};pbuf_take_at(&p,outer,n,0);
+ struct ip_hdr header;memcpy(&header,outer,sizeof(header));u32_t external;
+ inet_pton(AF_INET,"10.99.0.4",&external);
+ // Source lookup alone must not authorize an unrelated remote destination/port.
+ entry.dport^=htons(1);assert(!meshpn_napt_icmp_error_map(&p,&header,&external));entry.dport^=htons(1);
+ entry.dest^=htonl(1);assert(!meshpn_napt_icmp_error_map(&p,&header,&external));entry.dest^=htonl(1);
+ u8_t unchanged[160];pbuf_copy_partial(&p,unchanged,n,0);assert(!memcmp(unchanged,outer,n));
+ assert(meshpn_napt_icmp_error_map(&p,&header,&external));pbuf_copy_partial(&p,outer,n,0);
+ assert(!check(outer,20)&&!check(outer+20,n-20));
+ assert(!memcmp(outer+12,&external,4)&&!memcmp(outer+28+16,&external,4));
+ assert(!memcmp(outer+16,&entry.dest,4)&&!check(outer+28,ihl));
+ assert(outer[26]==5&&outer[27]==0);
+ assert(!memcmp(outer+28+ihl+(proto==1?4:2),&entry.mport,2));
+ if(proto==17||proto==1||quoted>=ihl+18){
+  memcpy(inner,outer+28,quoted);u8_t expected[80];memcpy(expected,inner,sizeof(inner));
+  assert(meshvpn_vpn_repair_checksums(expected,sizeof(expected)));
+  unsigned offset=ihl+(proto==17?6:proto==1?2:16);
+  assert(!memcmp(inner+offset,expected+offset,2));
+ }
+ // Truncated ICMP quotations cannot access beyond the first eight L4 bytes.
+ p.tot_len=28+ihl+7;header.len=htons(p.tot_len);
+ assert(!meshpn_napt_icmp_error_map(&p,&header,&external));
+}
 int main(void){
- for(unsigned p=0;p<3;p++)for(unsigned q=28;q<=60;q+=2)for(unsigned split=1;split<28+q;split+=7)
+ for(unsigned p=0;p<3;p++)for(unsigned q=28;q<=60;q++)for(unsigned split=1;split<28+q;split+=7)
   for(unsigned t=0;t<3;t++)run((unsigned[]){6,17,1}[p],q,split,(unsigned[]){3,11,12}[t]);
- puts("NAPT ICMP: TCP/UDP/echo quotes, port/address/checksum restoration, short/chained packets and MTU preserved");
+ for(unsigned proto=0;proto<3;proto++)for(unsigned options=0;options<=4;options+=4)
+  for(unsigned q=28+options;q<=60;q++)for(unsigned split=1;split<28+q;split+=7)
+   for(unsigned t=0;t<3;t++)outbound((unsigned[]){6,17,1}[proto],q,split,(unsigned[]){3,11,12}[t],options);
+ puts("NAPT ICMP bidirectional: TCP/UDP/echo quotes, port/address/checksum restoration, short/chained packets and MTU preserved");
 }

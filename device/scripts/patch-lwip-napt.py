@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a build-only lwIP NAPT source with safe TCP SYN retransmits.
+"""Generate a build-only lwIP NAPT source with safe SYN retransmits and bidirectional ICMP errors.
 
 ESP-IDF 5.4.1 refreshes an existing TCP mapping by calling ip_napt_free().
 Once a SYN-ACK has been observed, that helper deliberately emits forged-source
@@ -51,9 +51,28 @@ def patch(source: str) -> str:
     anchor = "  if (ip_napt_max == 0) return;"
     if source.count(anchor) != 1:
         raise ValueError("Expected one lwIP NAPT receive guard")
-    return source.replace(anchor, anchor + "\n\n#if LWIP_ICMP\n"
+    source = source.replace(anchor, anchor + "\n\n#if LWIP_ICMP\n"
                           "  if (IPH_PROTO(iphdr) == IP_PROTO_ICMP && meshpn_napt_icmp_error(p, iphdr)) return;\n"
                           "#endif", 1)
+    forward = "ip_napt_forward(struct pbuf *p, struct ip_hdr *iphdr, struct netif *inp, struct netif *outp)"
+    if source.count(forward) != 1:
+        raise ValueError("Expected one lwIP NAPT forwarding implementation")
+    start = source.index(forward)
+    tail = source[start:]
+    anchor = "  if (IPH_PROTO(iphdr) == IP_PROTO_ICMP) {"
+    if tail.count(anchor) != 1:
+        raise ValueError("Expected one forwarding ICMP branch")
+    tail = tail.replace(anchor, anchor + """
+    u8_t type;
+    if (pbuf_copy_partial(p, &type, 1, IPH_HL(iphdr) * 4) != 1) return ERR_VAL;
+    if (type == 3 || type == 11 || type == 12) {
+      u32_t external = ip_2_ip4(&outp->ip_addr)->addr;
+      /* Unmapped/malformed ICMP errors must not leak a LAN source address
+       * into the tunnel (native exit rejects it and closes the session). */
+      return meshpn_napt_icmp_error_map(p, iphdr, &external) ? ERR_OK : ERR_RTE;
+    }
+""", 1)
+    return source[:start] + tail
 
 
 def main() -> None:

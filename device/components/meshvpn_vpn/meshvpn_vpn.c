@@ -372,6 +372,12 @@ static err_t output(struct netif *n, struct pbuf *p, const ip4_addr_t *dst)
           &s.socket_last_tx_proto, &s.socket_last_tx_sport, &s.socket_last_tx_dport);
     s.socket_last_tx_us = esp_timer_get_time();
     UNLOCK();
+    /* A native peer is authorized for exactly the tunnel address. Preserve
+     * the session when an unsupported/untranslated LAN packet reaches us;
+     * sending it would make the exit reject the entire authenticated stream. */
+    if (!ip4_addr_cmp(&packet_src, netif_ip4_addr(&s_vpn))) {
+        COUNT(tx_dropped); return ERR_RTE;
+    }
     return meshvpn_vpn_send_ipv4(buf, p->tot_len) == ESP_OK ? ERR_OK : ERR_RTE;
 }
 static err_t net_init(struct netif *n)

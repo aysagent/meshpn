@@ -34,6 +34,7 @@ flags=(-std=c11 -Wall -Wextra -Werror -Wno-deprecated-declarations -fsanitize=ad
 "$test_dir/vpn-profile"
 node device/tests/test-vpn-wire.mjs "$test_dir/vpn-frame"
 node device/tests/test-vpn-routing.mjs
+node device/tests/test-vpn-output.mjs
 node device/tests/test-vpn-dns.mjs
 node device/tests/test-vpn-storage.mjs
 node device/tests/test-vpn-probe.mjs
