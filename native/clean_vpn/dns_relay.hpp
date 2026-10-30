@@ -59,7 +59,12 @@ class DnsRelay {
     const uint32_t mark=0x43564e;
     if(!private_bridge_)dns::need(setsockopt(s.fd,SOL_SOCKET,SO_MARK,&mark,sizeof(mark))==0);
     auto local=address(private_bridge_?"127.0.0.1":local_ip_.c_str(),0),remote=address(server,port);dns::need(bind(s.fd,reinterpret_cast<sockaddr*>(&local),sizeof(local))==0);
-    auto end=Time::now()+std::chrono::milliseconds(1200);int rc=connect(s.fd,reinterpret_cast<sockaddr*>(&remote),sizeof(remote));dns::need(rc==0||errno==EINPROGRESS);
+    // The private resolver is one authenticated hop across the tunnel. Its
+    // budget includes TCP connect: one retransmission can consume >1.2s even
+    // when the authoritative loopback answer itself takes only milliseconds.
+    // The exit loopback bridge and fixed public upstream budgets stay short.
+    const auto budget=std::chrono::milliseconds(!private_bridge_&&port==1055?3000:1200);
+    auto end=Time::now()+budget;int rc=connect(s.fd,reinterpret_cast<sockaddr*>(&remote),sizeof(remote));dns::need(rc==0||errno==EINPROGRESS);
     wait(s.fd,POLLOUT,end,true);int error=0;socklen_t len=sizeof(error);dns::need(getsockopt(s.fd,SOL_SOCKET,SO_ERROR,&error,&len)==0&&!error);
     Bytes answer;
     if(tcp){
