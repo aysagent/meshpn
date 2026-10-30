@@ -73,7 +73,7 @@ def private_directory(value):
 
 def capture(args):
     namespace = check_namespace(args.parent_netns)
-    if not 1 <= args.seconds <= 300 or not 1 <= args.max_packets <= 100000 or not 1024 <= args.max_bytes <= 64*1024*1024:
+    if not 1 <= args.seconds <= 1800 or not 1 <= args.max_packets <= 100000 or not 1024 <= args.max_bytes <= 64*1024*1024:
         raise RuntimeError('capture_limits')
     directory_fd = private_directory(args.directory)
     sockets, outputs = [], {}

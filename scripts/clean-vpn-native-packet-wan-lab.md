@@ -107,3 +107,8 @@ for six cases total. Both TLS versions passed with the saved packet profile
 unchanged. Temporarily removing the namespace REDIRECT caused the HTTPS probe to
 fail, proving the success depended on the relay branch; restoring it recovered.
 Hot reload, marker recovery and unchanged host settings were checked again.
+
+Для ограниченного soak `--seconds` допускает 15–1800 секунд. DNS capture
+также ограничен 1800 секундами; прежние ограничения числа пакетов и размера
+файлов сохраняются. Внешний transient unit должен иметь собственный RuntimeMaxSec
+с запасом на cleanup. Это не daemon или постоянная установка.

@@ -293,7 +293,7 @@ def main():
     parser.add_argument('--inside', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--parent-netns', help=argparse.SUPPRESS)
     args = parser.parse_args()
-    if sys.platform != 'linux' or os.geteuid() != 0 or not 15 <= args.seconds <= 300 or not 1024 <= args.port <= 65535:
+    if sys.platform != 'linux' or os.geteuid() != 0 or not 15 <= args.seconds <= 1800 or not 1024 <= args.port <= 65535:
         raise RuntimeError('root_linux_bounded_trial_required')
     ipaddress.IPv4Address(args.exit_address)
     directory = Path(args.directory)
