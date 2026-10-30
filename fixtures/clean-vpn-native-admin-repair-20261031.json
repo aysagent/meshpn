@@ -1,0 +1,105 @@
+{
+  "status": "passed",
+  "checks": [
+    {
+      "check": "initial USB combo HTTPS and UDP/TCP DNS",
+      "result": {
+        "https": true,
+        "dnsUdp": true,
+        "dnsTcp": true,
+        "viaExit": true
+      }
+    },
+    {
+      "check": "actual settings write and engine restart in systemd sandbox",
+      "result": {
+        "saved": true,
+        "restarted": true,
+        "applied": true,
+        "requiresNativeMigration": false,
+        "requiresStart": false
+      }
+    },
+    {
+      "check": "USB after settings apply",
+      "result": {
+        "https": true,
+        "dnsUdp": true,
+        "dnsTcp": true,
+        "viaExit": true
+      }
+    },
+    {
+      "check": "VPN stop preserves guard",
+      "result": {
+        "blocked": true
+      }
+    },
+    {
+      "check": "save stopped VPN preserves stopped state",
+      "result": {
+        "saved": true,
+        "restarted": false,
+        "applied": false,
+        "requiresNativeMigration": false,
+        "requiresStart": true
+      }
+    },
+    {
+      "check": "VPN restart from stopped state",
+      "result": {
+        "https": true,
+        "dnsUdp": true,
+        "dnsTcp": true,
+        "viaExit": true
+      }
+    },
+    {
+      "check": "guard off releases direct USB HTTPS and DNS",
+      "result": {
+        "https": true,
+        "dnsUdp": true,
+        "dnsTcp": true,
+        "viaExit": false
+      }
+    },
+    {
+      "check": "guard on and VPN start restore combo",
+      "result": {
+        "https": true,
+        "dnsUdp": true,
+        "dnsTcp": true,
+        "viaExit": true
+      }
+    },
+    {
+      "check": "final installed combo and working controls",
+      "result": {
+        "vpn": {
+          "MainPID": "22311",
+          "ActiveState": "active",
+          "SubState": "running",
+          "UnitFileState": "static"
+        },
+        "network": {
+          "MainPID": "20879",
+          "ActiveState": "active",
+          "SubState": "running",
+          "UnitFileState": "enabled"
+        },
+        "guard": true,
+        "pending": false,
+        "transport": "combo-tls"
+      }
+    }
+  ],
+  "source": "44f2bb5",
+  "scope": "real Radxa admin broker and USB client; no Mac network settings changed",
+  "systemNetworkSettingsChangedOnMac": false,
+  "limitations": [
+    "physical broker API and USB traffic; browser interactions covered separately by Chromium fixture",
+    "no transport switching in UI",
+    "TLS without SNI is rejected by transparent branch",
+    "no reboot or power-loss during this repair"
+  ]
+}

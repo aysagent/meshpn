@@ -1,5 +1,11 @@
 # clean-vpn: цели и порядок дальнейшей работы
 
+Актуальный checkpoint **2026-10-31**: [повседневная native combo-пара](clean-vpn-native-combo-daily-20261031.md)
+и [исправление админки после смены bundle](clean-vpn-native-admin-repair-20261031.md).
+Guard/direct/VPN/settings проверены физическими операциями, не одной проверкой
+active services. [Текущая автономная очередь](clean-vpn-native-night-20261031.md).
+Записи ниже — предыдущие checkpoints; они не отменяют текущую установку combo.
+
 Новый приоритет **2026-10-29, после активации повседневной пары**:
 [тестовые порты и изолированная разработка transparent/combo](clean-vpn-native-test-ports.md).
 Действующую Radxa↔VPS пару не останавливать и не обновлять ради испытаний.

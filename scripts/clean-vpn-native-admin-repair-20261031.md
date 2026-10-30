@@ -51,5 +51,9 @@ start → DNS/HTTPS через VPS. Mac использовал существу�
 закрывается. Обычный HTTPS с SNI (`one.one.one.one`, `example.org`) проходит.
 Это отдельная задача совместимости; исправление broker её не устраняет.
 
-Полное обновление админки на Radxa и повторная физическая приёмка фиксируются
-отдельным follow-up после установки этой ревизии.
+Штатный `--update` из **44f2bb5** установлен на Radxa. После него прошли
+**9 физических gates**: исходный USB HTTPS/DNS, запись настроек с restart,
+повторный USB обмен, stop с guard, сохранение в stopped state, start, guard off
+с реальным direct HTTPS/DNS UDP/TCP, guard on/start и конечное active состояние
+без pending journal. [Санитизированная приёмка](../fixtures/clean-vpn-native-admin-repair-20261031.json).
+Рабочая пара оставлена в combo с включённой защитой. VPS не перезапускался.
