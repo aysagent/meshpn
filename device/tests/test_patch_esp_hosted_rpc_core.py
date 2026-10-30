@@ -137,6 +137,21 @@ int main(void){
 
 
 class HostedRpcCoreTests(unittest.TestCase):
+    def test_wifi_init_wire_compatibility(self):
+        hosted = ROOT / "managed_components/espressif__esp_hosted/common"
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "wifi-init"
+            subprocess.run(["cc", "-std=gnu11", "-Wall", "-Wextra", "-Werror",
+                            "-fsanitize=address,undefined",
+                            "-I" + str(ROOT / "components/meshvpn_wifi/include"),
+                            "-I" + str(hosted / "proto"),
+                            "-I" + str(hosted / "protobuf-c"),
+                            str(ROOT / "tests/test_hosted_wifi_init.c"),
+                            str(hosted / "proto/esp_hosted_rpc.pb-c.c"),
+                            str(hosted / "protobuf-c/protobuf-c/protobuf-c.c"),
+                            "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True, timeout=10)
+
     def test_failed_submit_does_not_read_freed_request(self):
         slave_if = SOURCE.parent.parent / "slaveif/rpc_slave_if.c"
         source = module.patch_slave_if(slave_if.read_text())

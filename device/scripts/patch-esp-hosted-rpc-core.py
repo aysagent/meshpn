@@ -17,6 +17,19 @@ def replace_function(source: str, signature: str, body: str) -> str:
 
 
 def patch(source: str) -> str:
+    source = '#include "meshvpn_hosted_wifi_init.h"\n' + source
+    source = replace_once(source, "\tRpc   req = {0};",
+                          "\tRpc   req = {0};\n\tmeshvpn_hosted_wifi_init_extra_t wifi_init_extra;")
+    source = replace_once(source, "\t/* 3. Protobuf msg size */", '''
+    if (req.msg_id == RPC_ID__Req_WifiInit) {
+        const wifi_init_config_t *cfg = &app_req->u.wifi_init_config;
+        const int32_t extra[4] = {cfg->rx_mgmt_buf_type, cfg->rx_mgmt_buf_num,
+                                 cfg->tx_hetb_queue_num, cfg->dump_hesigb_enable};
+        meshvpn_hosted_wifi_init_extend(req.req_wifi_init->cfg, &wifi_init_extra, extra);
+        ESP_LOGI(TAG, "Wi-Fi init extras: rx_mgmt_type=%d rx_mgmt_count=%d tx_hetb=%d hesigb=%d",
+                 (int)extra[0], (int)extra[1], (int)extra[2], (int)extra[3]);
+    }
+\t/* 3. Protobuf msg size */''')
     source = replace_once(source, "\tvoid * sem;\n} sync_rsp_t;",
                           "\tvoid * sem;\n\tctrl_cmd_t *response;\n\tuint32_t response_id;\n} sync_rsp_t;")
     source = replace_once(source, "static uint32_t uid = 0;",
