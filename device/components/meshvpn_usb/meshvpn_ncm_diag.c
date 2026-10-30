@@ -74,6 +74,12 @@ void meshvpn_ncm_record(meshvpn_ncm_event_t event, const meshvpn_ncm_state_t *st
     case MESH_NCM_ZLP_ERROR:
         s_diag.zlp_errors++;
         break;
+    case MESH_NCM_RX_BLOCK:
+        s_diag.rx_blocks++;
+        break;
+    case MESH_NCM_RX_REJECTED:
+        s_diag.rx_rejected++;
+        break;
     case MESH_NCM_SAMPLE:
         break;
     }

@@ -4,7 +4,8 @@
 Pinned to espressif/tinyusb 0.21.0~1. Reject changed inputs until the hooks have
 been audited again. The replacement calls the original xfer exactly once and
 only observes its result. Optional worker notification runs AFTER the original
-completion processing; other insertions are read-only diagnostics.
+completion processing. RX validation also bounds every NTH/NDP/table access
+against the received and declared block lengths; other hooks are diagnostics.
 """
 import argparse
 import hashlib
@@ -52,6 +53,32 @@ def instrument(source: bytes) -> str:
         if text.count(old) != 1:
             raise ValueError(f"Expected exactly one NCM hook anchor: {old[:100]!r}")
         text = text.replace(old, new, 1)
+
+    # The pinned upstream parser trusts NDP wLength before dereferencing the
+    # final entry. Validate each containing range before reading its contents.
+    replace("  const nth16_t *nth16 = &(ntb->nth);", """  if (!ntb || len < sizeof(nth16_t) || len > CFG_TUD_NCM_OUT_NTB_MAX_SIZE) return false;
+  const nth16_t *nth16 = &(ntb->nth);""")
+    replace("  if (nth16->wBlockLength > len) {",
+            "  if (nth16->wBlockLength < sizeof(nth16_t) + sizeof(ndp16_t) + 2 * sizeof(ndp16_datagram_t) || nth16->wBlockLength > len) {")
+    replace("  if (nth16->wNdpIndex < sizeof(nth16) || nth16->wNdpIndex > len - (sizeof(ndp16_t) + 2 * sizeof(ndp16_datagram_t))) {",
+            "  if (nth16->wNdpIndex < sizeof(nth16_t) || nth16->wNdpIndex > nth16->wBlockLength - (sizeof(ndp16_t) + 2 * sizeof(ndp16_datagram_t))) {")
+    replace("  if (ndp16->wLength < sizeof(ndp16_t) + 2 * sizeof(ndp16_datagram_t)) {", """  if (ndp16->wLength < sizeof(ndp16_t) + 2 * sizeof(ndp16_datagram_t) ||
+      ndp16->wLength > nth16->wBlockLength - nth16->wNdpIndex ||
+      (ndp16->wLength - sizeof(ndp16_t)) % sizeof(ndp16_datagram_t) != 0) {""")
+    replace("  while (ndp16_datagram[ndx].wDatagramIndex != 0 && ndp16_datagram[ndx].wDatagramLength != 0) {",
+            "  while (ndx < max_ndx && ndp16_datagram[ndx].wDatagramIndex != 0 && ndp16_datagram[ndx].wDatagramLength != 0) {")
+    replace("    if (ndp16_datagram[ndx].wDatagramIndex > len) {",
+            "    if (ndp16_datagram[ndx].wDatagramIndex > nth16->wBlockLength) {")
+    replace("    if (ndp16_datagram[ndx].wDatagramIndex + ndp16_datagram[ndx].wDatagramLength > len) {",
+            "    if (ndp16_datagram[ndx].wDatagramLength > nth16->wBlockLength - ndp16_datagram[ndx].wDatagramIndex) {")
+
+    # Empty/half-empty first entries would strand recv_glue_ntb forever:
+    # the glue routine cannot deliver them and never releases the buffer.
+    replace("  int ndx = 0;", """  if (!ndp16_datagram[0].wDatagramIndex || !ndp16_datagram[0].wDatagramLength) return false;
+  int ndx = 0;""")
+    replace("    if (!recv_validate_datagram(ncm_interface.recv_tinyusb_ntb, xferred_bytes)) {", """    mesh_ncm_observe(MESH_NCM_RX_BLOCK, xferred_bytes, 0);
+    if (result != XFER_RESULT_SUCCESS || !recv_validate_datagram(ncm_interface.recv_tinyusb_ntb, xferred_bytes)) {
+      mesh_ncm_observe(MESH_NCM_RX_REJECTED, xferred_bytes, 0);""")
 
     anchor = "CFG_TUD_MEM_SECTION static ncm_epbuf_t ncm_epbuf;"
     replace(anchor, anchor + "\n" + HELPER)

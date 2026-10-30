@@ -1,11 +1,12 @@
 /* Exercise the real generated driver, replacing only USB core/hardware calls. */
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include MESHVPN_NCM_SOURCE
 
 static bool endpoint_busy, submit_ok = true;
-static unsigned submissions;
+static unsigned submissions, rx_submissions, rx_frames;
 static uint16_t last_bytes;
 static int64_t now_us;
 #if CONFIG_MESHVPN_USB_TX_EVENT_WAIT
@@ -25,6 +26,7 @@ bool usbd_edpt_busy(uint8_t rhport, uint8_t ep) { (void)rhport; (void)ep; return
 bool usbd_edpt_xfer(uint8_t rhport, uint8_t ep, uint8_t *buffer, uint16_t bytes, bool is_isr)
 {
     (void)rhport; (void)buffer;
+    if (ep == 0x02) { assert(!is_isr); rx_submissions++; return true; }
     assert(ep == 0x81 && !is_isr);
     submissions++;
     if (submit_ok) {
@@ -48,7 +50,7 @@ bool tud_control_xfer(uint8_t rhport, const tusb_control_request_t *request, voi
 bool tud_control_status(uint8_t rhport, const tusb_control_request_t *request)
 { (void)rhport; (void)request; return true; }
 uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t size) { memcpy(dst, ref, size); return size; }
-bool tud_network_recv_cb(const uint8_t *src, uint16_t size) { (void)src; (void)size; return true; }
+bool tud_network_recv_cb(const uint8_t *src, uint16_t size) { (void)src; (void)size; rx_frames++; return true; }
 void tud_network_init_cb(void) {}
 
 static void init(void)
@@ -90,8 +92,119 @@ static void complete(xfer_result_t result)
     assert(capacity_notifications==notifications_before+1);
 #endif
 }
+/* Allocate only the received bytes: ASan then detects even reads that would
+ * ordinarily remain inside the reusable NTB allocation as stale tail data. */
+static bool validate_exact(const recv_ntb_t *source, size_t len)
+{
+    void *bytes=malloc(len ? len : 1);
+    assert(bytes);
+    memcpy(bytes,source,len);
+    bool valid=recv_validate_datagram(bytes,(uint32_t)len);
+    free(bytes);
+    return valid;
+}
+static void test_rx_bounds(void)
+{
+    recv_ntb_t ntb={0};
+    ntb.nth.dwSignature=NTH16_SIGNATURE;
+    ntb.nth.wHeaderLength=sizeof(nth16_t);
+    ntb.nth.wBlockLength=128;
+    ntb.nth.wNdpIndex=sizeof(nth16_t);
+    ndp16_t *ndp=(ndp16_t *)(ntb.data+ntb.nth.wNdpIndex);
+    ndp->dwSignature=NDP16_SIGNATURE_NCM0;
+    ndp->wLength=sizeof(ndp16_t)+3*sizeof(ndp16_datagram_t);
+    ndp16_datagram_t *entry=(ndp16_datagram_t *)((uint8_t *)ndp+sizeof(*ndp));
+    entry[0].wDatagramIndex=64; entry[0].wDatagramLength=32;
+    entry[1].wDatagramIndex=96; entry[1].wDatagramLength=32;
+    assert(validate_exact(&ntb,128));
+    assert(validate_exact(&ntb,160)); /* USB padding after wBlockLength */
+    for (unsigned n=0;n<128;n++) assert(!validate_exact(&ntb,n));
+    recv_ntb_t good=ntb;
+    entry[1].wDatagramLength=33;
+    assert(!validate_exact(&ntb,160)); /* padding is not datagram data */
+    ntb=good; ndp->wLength=65535;
+    assert(!validate_exact(&ntb,128));
+    ndp->wLength=120; /* table extends beyond block */
+    assert(!validate_exact(&ntb,128));
+    ndp->wLength=17; /* fractional entry */
+    assert(!validate_exact(&ntb,128));
+    ntb=good; ntb.nth.wNdpIndex=127;
+    assert(!validate_exact(&ntb,128));
+    ntb.nth.wNdpIndex=sizeof(nth16_t)-1;
+    assert(!validate_exact(&ntb,128));
+    ntb=good; ntb.nth.wBlockLength=0;
+    assert(!validate_exact(&ntb,128));
+    ntb=good; entry[2].wDatagramIndex=64;
+    assert(!validate_exact(&ntb,128)); /* terminator required */
+    ntb=good; ndp->wNextNdpIndex=64;
+    assert(!validate_exact(&ntb,128)); /* unsupported chain */
+    ntb=good; entry[1].wDatagramIndex=0; entry[1].wDatagramLength=0;
+    ndp->wLength=sizeof(ndp16_t)+2*sizeof(ndp16_datagram_t);
+    assert(validate_exact(&ntb,128)); /* ordinary single frame */
+    entry[0].wDatagramIndex=0; entry[0].wDatagramLength=0;
+    assert(!validate_exact(&ntb,128)); /* empty NTB must not pin glue buffer */
+    entry[0].wDatagramIndex=64;
+    assert(!validate_exact(&ntb,128)); /* half-empty first entry */
+    assert(!recv_validate_datagram(NULL,0));
+    assert(!recv_validate_datagram(&ntb,CFG_TUD_NCM_OUT_NTB_MAX_SIZE+1));
+
+    /* Deterministic malformed-input sweep of lengths, offsets, and tables.
+     * Safety is checked by ASan/UBSan, independently of accept/reject policy. */
+    uint32_t random=0x4e434d;
+    for (unsigned i=0;i<20000;i++) {
+        ntb=good;
+        random=random*1664525u+1013904223u;
+        size_t len=random%257;
+        for (unsigned j=0;j<6;j++) {
+            random=random*1664525u+1013904223u;
+            size_t offset=random%128;
+            random=random*1664525u+1013904223u;
+            ntb.data[offset]=(uint8_t)(random>>24);
+        }
+        (void)validate_exact(&ntb,len);
+    }
+    puts("NCM RX exact-buffer truncation/table bounds and 20000 malformed cases: OK");
+}
+static void test_rx_recovery(void)
+{
+    init();
+    recv_try_to_start_new_reception(0);
+    assert(ncm_interface.recv_tinyusb_ntb);
+    unsigned delivered=rx_frames;
+    uint32_t rejected=stats().rx_rejected;
+    /* More bad/empty blocks than the entire RX pool, then valid traffic. */
+    for (unsigned i=0;i<RECV_NTB_N*3;i++) {
+        recv_ntb_t *ntb=ncm_interface.recv_tinyusb_ntb;
+        assert(ntb);
+        memset(ntb,0,sizeof(*ntb));
+        ntb->nth.dwSignature=NTH16_SIGNATURE;
+        ntb->nth.wHeaderLength=sizeof(nth16_t);
+        ntb->nth.wBlockLength=128;
+        ntb->nth.wNdpIndex=sizeof(nth16_t);
+        ndp16_t *ndp=(ndp16_t *)(ntb->data+sizeof(nth16_t));
+        ndp->dwSignature=NDP16_SIGNATURE_NCM0;
+        ndp->wLength=sizeof(ndp16_t)+2*sizeof(ndp16_datagram_t);
+        unsigned submits=rx_submissions;
+        assert(netd_xfer_cb(0,0x02,XFER_RESULT_SUCCESS,128));
+        assert(rx_frames==delivered && !ncm_interface.recv_glue_ntb);
+        assert(rx_submissions==submits+1 && ncm_interface.recv_tinyusb_ntb);
+    }
+    assert(stats().rx_rejected-rejected==RECV_NTB_N*3);
+    recv_ntb_t *ntb=ncm_interface.recv_tinyusb_ntb;
+    ndp16_datagram_t *entry=(ndp16_datagram_t *)(ntb->data+sizeof(nth16_t)+sizeof(ndp16_t));
+    entry[0].wDatagramIndex=64;entry[0].wDatagramLength=64;
+    assert(netd_xfer_cb(0,0x02,XFER_RESULT_SUCCESS,128));
+    assert(rx_frames==delivered+1 && !ncm_interface.recv_glue_ntb);
+    /* Failed USB completion must not deliver stale data from an older NTB. */
+    *ncm_interface.recv_tinyusb_ntb=*ntb;
+    assert(netd_xfer_cb(0,0x02,XFER_RESULT_FAILED,128));
+    assert(rx_frames==delivered+1);
+    puts("NCM RX: empty/failed blocks recycle pool; following valid packet delivered: OK");
+}
 int main(void)
 {
+    test_rx_bounds();
+    test_rx_recovery();
     init();
     assert(stats().available && stats().state.free == 6);
     uint8_t packet[1514]={0};

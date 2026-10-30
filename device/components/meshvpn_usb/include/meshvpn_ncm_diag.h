@@ -9,6 +9,7 @@ typedef enum {
     MESH_NCM_START, MESH_NCM_START_ERROR,
     MESH_NCM_COMPLETE, MESH_NCM_COMPLETE_ERROR,
     MESH_NCM_ZLP, MESH_NCM_ZLP_ERROR,
+    MESH_NCM_RX_BLOCK, MESH_NCM_RX_REJECTED,
 } meshvpn_ncm_event_t;
 
 typedef struct {
@@ -18,7 +19,7 @@ typedef struct {
 
 /* Shared list keeps C JSON serialization consistent with storage. */
 #define MESHVPN_NCM_COUNTERS(X) \
-    X(samples) X(initializations) X(busy) X(busy_no_free) X(busy_active) \
+    X(rx_blocks) X(rx_rejected) X(samples) X(initializations) X(busy) X(busy_no_free) X(busy_active) \
     X(ntb_started) X(start_errors) X(bytes_started) X(frames_started) \
     X(ntb_completed) X(completion_errors) X(bytes_completed) X(zlp_completed) X(zlp_errors) \
     X(completion_timed) X(completion_le_1ms) X(completion_1_5ms) \
