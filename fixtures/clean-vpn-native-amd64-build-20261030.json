@@ -1,0 +1,166 @@
+{
+  "schema": 1,
+  "kind": "native-amd64-offline-build-acceptance",
+  "date": "2026-10-30",
+  "status": "passed",
+  "scope": "Linux x86_64 Alpine musl guest under ARM64 QEMU TCG; offline native build and loopback test gates",
+  "rootfsPreparation": "clean-vpn-native-amd64-rootfs-20261030.json",
+  "source": {
+    "baseRevision": "ed5bf16f10ddb71b2a6759f9058ec3abd8b2d344",
+    "overlayRevision": "400e7d8dd227fe0945878b2a89922b70eb35cbd5",
+    "baseAllowlistFiles": 68,
+    "additionalSourceFiles": [
+      "scripts/test-native-signal-concurrency.mjs"
+    ],
+    "replacedSourceFiles": [
+      "native/clean_vpn/engine.cc"
+    ],
+    "sourceIsCompositeSnapshot": true,
+    "dependenciesUnchanged": true
+  },
+  "isolation": {
+    "guestNic": false,
+    "containerNetwork": "none",
+    "guestHostShares": false,
+    "hostNetworkSettingsChanged": false,
+    "binfmtChanged": false,
+    "globalVmSettingsChanged": false,
+    "containerUid": 1000,
+    "capDrop": [
+      "ALL"
+    ],
+    "noNewPrivileges": true,
+    "readOnlyContainerRootfs": true,
+    "writableDisk": "owned ext4 volume only",
+    "guestRamMiB": 2048,
+    "guestCpus": 1,
+    "containerMemoryGiB": 3,
+    "pidLimit": 128,
+    "perRunTimeoutSeconds": 5400
+  },
+  "images": {
+    "bootImageId": "77524b0e1069e4b2e0ee4a5eeddd826ec5a5a3defee2b03a0c39304daf8d21b3",
+    "journalAwareOverlayImageId": "0bb50c8710f8d0d7b223cb3a44d441587eb4e465ebbb230e1af8f00d3342c3d1"
+  },
+  "build": {
+    "type": "Release",
+    "lowMemoryBuild": true,
+    "optimizationPreserved": true,
+    "jobs": 1,
+    "fetchContentFullyDisconnected": true,
+    "gcc": "14.2.0",
+    "cmake": "3.31.7",
+    "node": "22.23.4"
+  },
+  "baseline": {
+    "status": "passed",
+    "engineSourceSha256": "e0060e47a88f733db58f7f3b23cdfc5da0c10765133322913f46a50ab3fcce3a",
+    "engineSha256": "237888084f900688acccf476939d0c40fa5257142f601b3850bcc5db7a282659",
+    "engineBytes": 4289888,
+    "elfMachine": 62,
+    "libc": "musl-x86_64",
+    "ctest": {
+      "passed": 14,
+      "failed": 0,
+      "seconds": 23.82
+    },
+    "nodeTests": {
+      "passed": 55,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 137906.748893
+    },
+    "guestMarkers": [
+      "AMD64_NATIVE_BUILD_TEST=passed",
+      "AMD64_NATIVE_BUILD_EXIT=0"
+    ],
+    "artifacts": {
+      "consoleSha256": "77e178c79fe58f0c499cb0cf3cad1a4e03e7dd120c5cf928838126bd9c4b8b48",
+      "buildLogSha256": "a52649d6573efadf7fdef034c258d18afc58a7a3a28ce2c732c40064f7229ac1",
+      "ctestLogSha256": "34a6fedb74766db2426458544dcce5dcb50e5e3693ba357bedcc1505d2a38897",
+      "sourceManifestSha256": "91ca34f4ab4656bb50301468be32ce7192d429a7a23246315eaaa2114082373b"
+    },
+    "startedAt": "2026-10-29T23:37:52.379777967Z",
+    "finishedAt": "2026-10-30T00:41:11.745534919Z",
+    "elapsedSeconds": 3799.366,
+    "ninjaSteps": 519
+  },
+  "fixed": {
+    "status": "passed",
+    "engineSourceSha256": "4fdd69e13e1b67037ed75160ea29e811bf1285941f18071e7deb890e69e7ff43",
+    "engineSha256": "2d2a13bd0f28ba02a3e8a391a118b8257a1b4163e960ddbe9a8df3f274f591d1",
+    "engineBytes": 4289888,
+    "elfMachine": 62,
+    "libc": "musl-x86_64",
+    "ctest": {
+      "passed": 14,
+      "failed": 0,
+      "seconds": 23.86
+    },
+    "nodeTests": {
+      "passed": 56,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 138612.506444
+    },
+    "guestMarkers": [
+      "AMD64_NATIVE_BUILD_TEST=passed",
+      "AMD64_NATIVE_BUILD_EXIT=0"
+    ],
+    "artifacts": {
+      "consoleSha256": "666a358b5789f65747229933bb047092be0258a44020ba3f41caf75d5504d923",
+      "buildLogSha256": "252b38bbb38636504a3e598143279974b7c5f7402813b0f8b42af5d05fd5091f",
+      "ctestLogSha256": "0edc68fe295c87fc6317f350f76da615fe253a8f1d2cfa5d040255a1b6fc36b0",
+      "sourceManifestSha256": "91ca34f4ab4656bb50301468be32ce7192d429a7a23246315eaaa2114082373b"
+    },
+    "startedAt": "2026-10-30T00:45:25.673420591Z",
+    "finishedAt": "2026-10-30T00:54:40.586057787Z",
+    "elapsedSeconds": 554.913,
+    "ninjaSteps": 4,
+    "overlayReceiptSha256": "824b8bdc77f596757d0d60324302d86c449347086768a73899dd485368f09a62",
+    "forcedObjectRebuild": [
+      "clean-vpn-engine-fixture/engine.cc.o",
+      "clean-vpn-engine/engine.cc.o"
+    ],
+    "extraRegression": "worker-directed tgkill: eight SIGHUP reload acknowledgments then SIGTERM clean stop"
+  },
+  "intermediateFailures": [
+    {
+      "stage": "initial guest bootstrap",
+      "guestExit": 141,
+      "cause": "pipefail plus version-output head caused SIGPIPE",
+      "resolution": "consume version output with sed before baseline build; prune source allowlist before native build"
+    },
+    {
+      "stage": "first fixed guest before compilation",
+      "guestExit": 1,
+      "cause": "unrecovered ext4 journal replay overwrote newly allocated offline overlay inodes",
+      "resolution": "stopped-disk e2fsck journal recovery, exact overlay replay, second fsck and dumped byte/hash checks before successful fixed-v2 boot",
+      "failureConsoleSha256": "7b0d88ea613c1eb8196a19b3ad5400f17f9af35c468916f7628e11f5ad9a8656"
+    }
+  ],
+  "coverage": [
+    "CTest HTTP1/HTTP2 ALPS/protocol/address-proof/DNS-wire/service-notify/transparent codec replay fault quota/combo/wire throughput/TLS profile/certificate compression",
+    "boring and combo H1/H2 discovery/full-session proof and concurrent discovery",
+    "independent proof issuer invalid key exporter purpose address payload deadline cancellation cases",
+    "expired/future certificate and clock-skew fail-closed behavior",
+    "external observer saved-profile JA3/JA4 comparison for discovery versus full sessions",
+    "boring/combo live peer reload and transparent empty-peer reload",
+    "worker-targeted SIGHUP and SIGTERM synchronization"
+  ],
+  "limitations": [
+    "not an AMD64 Docker/Podman Compose integration gate",
+    "not physical client/exit deployment",
+    "no claim of native AMD64 TUN route firewall owner acceptance",
+    "TCG timings are not throughput benchmarks",
+    "saved partial Chromium profile is not stock browser equivalence",
+    "composite pinned source snapshot is not a claim about arbitrary later HEAD"
+  ],
+  "cleanup": {
+    "guestPoweredOff": true,
+    "compileCachePreserved": true,
+    "baselineAndFixedArtifactsSeparate": true,
+    "journalRecoveredBeforeFinalExport": true
+  },
+  "runbook": "../scripts/clean-vpn-native-amd64-build-lab.md"
+}
