@@ -382,6 +382,7 @@ static esp_err_t handler_sta_tcp_trace(httpd_req_t *req)
         TCP_FIELD(elapsed_ms); TCP_FIELD(seq); TCP_FIELD(ack); TCP_FIELD(flags); TCP_FIELD(tx);
         TCP_FIELD(payload); TCP_FIELD(window); TCP_FIELD(sack_blocks); TCP_FIELD(sack_left); TCP_FIELD(sack_right);
         TCP_FIELD(checksum_checked); TCP_FIELD(bad_ip); TCP_FIELD(bad_tcp);
+        TCP_FIELD(tos); TCP_FIELD(ttl);
 #undef TCP_FIELD
     }
     return send_json(req,out);

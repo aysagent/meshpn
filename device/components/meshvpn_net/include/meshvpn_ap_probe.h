@@ -33,7 +33,7 @@ typedef struct { uint64_t seen, checked, skipped, bad_ip, bad_tcp, bad_udp; } me
 typedef struct {
     uint32_t elapsed_ms, seq, ack, sack_left, sack_right;
     uint16_t payload, window;
-    uint8_t flags, tx, sack_blocks, checksum_checked, bad_ip, bad_tcp;
+    uint8_t flags, tx, sack_blocks, checksum_checked, bad_ip, bad_tcp, tos, ttl;
 } meshvpn_sta_tcp_event_t;
 typedef struct {
     uint32_t peer, local, initial_seq, packets[2], data_bytes[2], total_events;

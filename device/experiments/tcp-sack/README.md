@@ -10,8 +10,17 @@ queue loss worse. See `../../reports/2026-10-30-vpn-night.md`.
 changes the window or carries data. `MESHPN_EXPERIMENT_PARTIAL=1` additionally
 experiments with partial-ACK fast recovery. Both are restricted to the exact
 current owned boring-tls connection, never arbitrary forwarded TCP flows.
-The SDK checkout and PCB ABI are unchanged. Clear both environment variables
+The SDK checkout and PCB ABI are unchanged. Clear all three experiment environment variables
 and reconfigure before a normal build.
+
+`MESHPN_EXPERIMENT_BURST=1` (requires SACK and PARTIAL) adds a bounded,
+experimental missing-segment repair pass at `tcp_output`. It tracks at most four
+validated SACK ranges and 128 repair entries, sends at most two eligible whole
+segments per pass, and conservatively accounts for both originals and repairs
+against congestion credit. It does not free unacknowledged data. Busy pbufs,
+failed output, receive-window limits, wraparound and the RTO fallback are covered
+by the actual-core ASan/UBSan harness. The measured gaps became shorter, but
+sustained upload did **not** improve; this remains disabled in normal firmware.
 
 The experiment is deliberately not described as a complete SACK scoreboard,
 RACK, or full RFC 6582 implementation. Evidence parsing rejects malformed,

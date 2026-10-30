@@ -4,6 +4,9 @@ static struct {
     uint16_t remote, local;
     bool partial_seen;
 } meshpn_recovery;
+#if MESHPN_EXPERIMENT_BURST
+static void meshpn_burst_reset(void);
+#endif
 static bool meshpn_owned_tcp(struct tcp_pcb *pcb)
 {
     uint32_t peer; uint16_t remote,local;
@@ -12,14 +15,25 @@ static bool meshpn_owned_tcp(struct tcp_pcb *pcb)
     if(meshpn_recovery.peer!=peer || meshpn_recovery.remote!=remote || meshpn_recovery.local!=local){
         memset(&meshpn_recovery,0,sizeof(meshpn_recovery));meshpn_recovery.peer=peer;
         meshpn_recovery.remote=remote;meshpn_recovery.local=local;
+#if MESHPN_EXPERIMENT_BURST
+        meshpn_burst_reset();
+#endif
     }
     return true;
 }
+#if MESHPN_EXPERIMENT_BURST
+#include "burst.inc"
+#endif
 int meshvpn_vpn_sack_dupack(struct tcp_pcb *pcb,const struct tcp_hdr *hdr,
                           unsigned n,unsigned n1,const void *second,u32_t ack,unsigned flags)
 {
     if(pcb->state!=ESTABLISHED || !(flags&TCP_ACK) || (flags&(TCP_SYN|TCP_FIN|TCP_RST)) ||
-       !(pcb->flags&TF_SACK) || !pcb->unacked || pcb->rtime<0 || ack!=pcb->lastack || !meshpn_owned_tcp(pcb))return 0;
+       !(pcb->flags&TF_SACK) || !pcb->unacked || pcb->rtime<0 || !meshpn_owned_tcp(pcb))return 0;
+#if MESHPN_EXPERIMENT_BURST
+    if(TCP_SEQ_GEQ(ack,pcb->lastack) && TCP_SEQ_LEQ(ack,pcb->snd_nxt))
+        meshpn_sack_update((const uint8_t *)(hdr+1),n1,second,n,ack,pcb->snd_nxt);
+#endif
+    if(ack!=pcb->lastack)return 0;
     if(meshpn_recovery.ack!=ack){meshpn_recovery.ack=ack;meshpn_recovery.right=ack;}
     return meshpn_sack_evidence((const uint8_t *)(hdr+1),n1,second,n,ack,pcb->snd_nxt,&meshpn_recovery.right);
 }
@@ -27,6 +41,11 @@ void meshvpn_vpn_recovery_enter(struct tcp_pcb *pcb)
 {
     if(!meshpn_owned_tcp(pcb))return;
     meshpn_recovery.recovery_end=pcb->snd_nxt;meshpn_recovery.partial_seen=false;
+#if MESHPN_EXPERIMENT_BURST
+    meshpn_burst.repairs=0;
+    /* tcp_rexmit_fast already moved the first repair to unsent. */
+    meshpn_sack_record(pcb->unsent);
+#endif
 }
 int meshvpn_vpn_partial_ack(struct tcp_pcb *pcb,u32_t ack)
 {
@@ -40,5 +59,10 @@ int meshvpn_vpn_partial_ack(struct tcp_pcb *pcb,u32_t ack)
 }
 void meshvpn_vpn_recovery_timeout(struct tcp_pcb *pcb)
 {
-    if(meshpn_owned_tcp(pcb))tcp_clear_flags(pcb,TF_INFR);
+    if(meshpn_owned_tcp(pcb)) {
+        tcp_clear_flags(pcb,TF_INFR);
+#if MESHPN_EXPERIMENT_BURST
+        memset(&meshpn_burst,0,sizeof(meshpn_burst));
+#endif
+    }
 }

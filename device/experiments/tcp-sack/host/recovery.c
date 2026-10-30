@@ -209,6 +209,71 @@ static void sack_window_and_data(struct netif *n,unsigned payload) {
   }
   tcp_abort(pcb);puts("PASS new SACK evidence with changing windows/payload; repeated SACK does not advance threshold");
 }
+#if MESHPN_EXPERIMENT_BURST
+static void put32(uint8_t *p,uint32_t value)
+{ value=lwip_htonl(value);memcpy(p,&value,4); }
+static void sack_ack(struct netif *n,struct tcp_pcb *pcb,uint32_t left,uint32_t right)
+{
+  struct pbuf *p=pbuf_alloc(PBUF_RAW,52,PBUF_RAM);assert(p);memset(p->payload,0,52);
+  struct ip_hdr *ip=p->payload;struct tcp_hdr *t=(void*)((uint8_t*)p->payload+20);
+  t->src=lwip_htons(40000);t->dest=lwip_htons(pcb->local_port);t->seqno=lwip_htonl(pcb->rcv_nxt);
+  t->ackno=lwip_htonl(pcb->lastack);TCPH_HDRLEN_FLAGS_SET(t,8,TCP_ACK);t->wnd=lwip_htons(24000);
+  uint8_t *o=(void*)(t+1);o[0]=1;o[1]=1;o[2]=5;o[3]=10;put32(o+4,left);put32(o+8,right);
+  assert(pbuf_remove_header(p,20)==0);t->chksum=inet_chksum_pseudo(p,6,32,&remote,&local);
+  assert(pbuf_add_header(p,20)==0);IPH_VHL_SET(ip,4,5);IPH_LEN_SET(ip,lwip_htons(52));
+  IPH_TTL_SET(ip,64);IPH_PROTO_SET(ip,6);ip4_addr_copy(ip->src,remote);ip4_addr_copy(ip->dest,local);
+  IPH_CHKSUM_SET(ip,inet_chksum(ip,20));assert(ip4_input(p,n)==ERR_OK);
+}
+static void burst_recovery(struct netif *n,uint32_t base)
+{
+  struct tcp_pcb *pcb=connection(base);ack(n,pcb,pcb->snd_nxt);
+  base=pcb->snd_nxt;memset(&meshpn_recovery,0,sizeof(meshpn_recovery));memset(&meshpn_burst,0,sizeof(meshpn_burst));
+  pcb->flags|=TF_SACK;pcb->mss=600;pcb->cwnd=pcb->snd_wnd=24000;
+  char bytes[600]={0};
+  for(unsigned i=0;i<24;i++){assert(tcp_write(pcb,bytes,sizeof(bytes),TCP_WRITE_FLAG_COPY)==ERR_OK);assert(tcp_output(pcb)==ERR_OK);}
+  unsigned before=outputs,qlen=pcb->snd_queuelen;tcpwnd_size_t free_before=pcb->snd_buf;
+  sack_ack(n,pcb,base+3600,base+13200);
+  sack_ack(n,pcb,base+3600,base+13800);
+  sack_ack(n,pcb,base+3600,base+14400);
+  assert(pcb->flags&TF_INFR);
+  for(unsigned i=0;i<4;i++)sack_ack(n,pcb,base+3600,base+14400);
+  assert(outputs==before+6); /* six gaps repaired before any cumulative ACK/timer */
+  assert(pcb->snd_buf==free_before && pcb->snd_queuelen==qlen); /* SACK is advisory */
+  assert(meshpn_burst.repairs==6 && pcb->snd_nxt==base+14400);
+  before=outputs;for(unsigned i=0;i<4;i++)sack_ack(n,pcb,base+3600,base+14400);
+  assert(outputs==before); /* repeated reports must not repeat repair */
+  ack(n,pcb,base+14400);assert(!(pcb->flags&TF_INFR) && !pcb->unacked);
+  tcp_abort(pcb);puts("PASS six-segment burst repaired without timer; no duplicate repair or premature free");
+}
+static void burst_bounds(struct netif *n)
+{
+  struct tcp_pcb *pcb=connection(1000);pcb->flags|=TF_SACK;
+  memset(&meshpn_burst,0,sizeof(meshpn_burst));
+  uint8_t options[20]={1,1,5,18};put32(options+4,1641);put32(options+8,2382);put32(options+12,1738);put32(options+16,2479);
+  for(unsigned split=0;split<=20;split++) {
+    meshpn_sack_update(options,split,options+split,20,1000,3679);
+    assert(meshpn_burst.count==1 && meshpn_burst.ranges[0].left==1641 && meshpn_burst.ranges[0].right==2479);
+  }
+  put32(options+16,4000);meshpn_sack_update(options,20,NULL,20,1000,3679);assert(!meshpn_burst.count);
+  options[3]=19;meshpn_sack_update(options,20,NULL,20,1000,3679);assert(!meshpn_burst.count);
+  meshpn_sack_update(NULL,1,NULL,20,1000,3679);assert(!meshpn_burst.count);
+  pcb->flags|=TF_INFR;meshpn_recovery.recovery_end=3679;
+  meshpn_burst.count=1;meshpn_burst.ranges[0]=(meshpn_sack_range_t){1641,3679};pcb->mss=600;
+  assert(meshvpn_vpn_sack_candidate(pcb,pcb->unacked));
+  pcb->cwnd=0;assert(!meshvpn_vpn_sack_candidate(pcb,pcb->unacked));pcb->cwnd=12000;
+  pcb->snd_wnd=0;assert(!meshvpn_vpn_sack_candidate(pcb,pcb->unacked));pcb->snd_wnd=12000;
+  pcb->local_port++;assert(!meshvpn_vpn_sack_candidate(pcb,pcb->unacked));pcb->local_port--;
+  unsigned before=outputs;fail_output=1;assert(tcp_output(pcb)==ERR_OK);assert(outputs==before+1 && !meshpn_burst.repairs);
+  fail_output=0;pbuf_ref(pcb->unacked->p);before=outputs;assert(tcp_output(pcb)==ERR_OK);assert(outputs==before);
+  pbuf_free(pcb->unacked->p);assert(tcp_output(pcb)==ERR_OK);assert(meshpn_burst.repairs==1);
+  meshvpn_vpn_recovery_timeout(pcb);assert(!meshpn_burst.count && !meshpn_burst.repairs && !(pcb->flags&TF_INFR));
+  meshpn_burst.count=meshpn_burst.repairs=1;uint32_t old_peer=remote.addr;
+  remote.addr^=lwip_htonl(4);ip_addr_copy_from_ip4(pcb->remote_ip,remote);
+  assert(meshpn_owned_tcp(pcb) && !meshpn_burst.count && !meshpn_burst.repairs);
+  remote.addr=old_peer;ip_addr_copy_from_ip4(pcb->remote_ip,remote);
+  tcp_abort(pcb);puts("PASS burst parser, wrap-safe limits, cwnd/window, ownership, failed output, busy pbuf and RTO fallback");
+}
+#endif
 int main(void) {
   struct netif n = {0}; ip4_addr_t mask,gateway;
   lwip_init(); IP4_ADDR(&local,192,168,1,2); IP4_ADDR(&remote,192,168,1,3);
@@ -219,6 +284,9 @@ int main(void) {
   run(&n,1000); run(&n,0xfffffc00U); normal_and_single_duplicate(&n);
 #if LWIP_TCP_PARTIAL_ACK_RECOVERY
   failed_output_and_timeout(&n); recovery_boundary(&n); partial_timer_and_busy_segment(&n);
+#endif
+#if MESHPN_EXPERIMENT_BURST
+  burst_recovery(&n,1000);burst_recovery(&n,0xffffe000U);burst_bounds(&n);
 #endif
   return 0;
 }

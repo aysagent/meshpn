@@ -119,7 +119,7 @@ static void wifi_tcp(bool ap, bool tx, const uint8_t *h, size_t n, size_t wire_l
     if (local != netif_ip4_addr(local_netif)->addr ||
         (target ? peer != target || port != remote_filter || (local_filter && local_port != local_filter) : local_port != 80)) return;
     meshvpn_sta_tcp_event_t e = {.seq=r32(t+4), .ack=r32(t+8), .flags=t[13],
-        .window=r16(t+14), .payload=total-ihl-thl, .tx=tx};
+        .window=r16(t+14), .payload=total-ihl-thl, .tx=tx, .tos=h[1], .ttl=h[8]};
     if (total <= n) {
         struct pbuf l4 = {.payload=(uint8_t *)t, .len=total-ihl, .tot_len=total-ihl};
         ip4_addr_t src, dst; memcpy(&src.addr,h+12,4); memcpy(&dst.addr,h+16,4);
