@@ -131,10 +131,46 @@ test('standalone admin controls network owner and keeps engine identity for read
   t.after(()=>broker.close());
   const action=async a=>{await broker.dispatch('/vpn/action',{action:a});for(let i=0;i<100;i++){await new Promise(r=>setImmediate(r));const s=await broker.dispatch('/status');if(s.jobs[0].status!=='running')return s.jobs[0];}throw Error('job_timeout');};
   for(const a of ['stop','start','restart'])assert.equal((await action(a)).status,'passed');
-  assert.deepEqual(calls.filter(c=>c[0]==='/usr/bin/systemctl'&&['start','stop','restart'].includes(c[1])).map(c=>c.slice(1)),[['stop','native-network.service'],['start','native-network.service'],['restart','native-network.service']]);
+  assert.deepEqual(calls.filter(c=>c[0]==='/usr/bin/systemctl'&&['start','stop','restart'].includes(c[1])).map(c=>c.slice(1)),[['stop','native-network.service'],['start','native-network.service'],['start','--no-block',f.options.unit],['restart','native-network.service'],['start','--no-block',f.options.unit]]);
   const status=await broker.dispatch('/status');assert.equal(status.network.ActiveState,'active');assert.equal(status.capabilities.networkOwner,true);
   bindings='guard.service';const before=calls.filter(c=>c[1]==='restart').length;
   assert.equal((await action('restart')).error,'network_owner_binding_required');assert.equal(calls.filter(c=>c[1]==='restart').length,before);
+});
+
+test('start repairs stopped engine under active owner without restarting healthy engine',async t=>{
+ const f=fixture(t);fs.mkdirSync(f.options.state+'/profiles');let engineActive=false;const calls=[];
+ const network='native-network.service';
+ const b=await createBroker({version:1,usbAddress:'192.168.7.1',usbInterface:'usb0',wifiInterface:'wlan0',vpnUnit:f.options.unit,networkUnit:network,guardUnit:'guard.service',guardScript:'/guard',state:f.options.state,profiles:f.options.state+'/profiles',engine:'/engine',vpnConfig:f.options.config,socket:f.options.state+'/socket',nativeManaged:true,publishMdns:false},{run:async(file,args)=>{
+  calls.push([file,...args]);if(file==='/guard')return{out:'IPv4: cvks4\nIPv6: cvks4'};
+  if(file==='/usr/bin/systemctl'){
+   if(args.includes('BindsTo'))return{out:network+' guard.service'};
+   if(args[0]==='start'){if(args.at(-1)===f.options.unit)engineActive=true;return{out:''};}
+   const active=args[1]===network||engineActive;
+   return{out:`Type=notify\nActiveState=${active?'active':'inactive'}\nSubState=${active?'running':'dead'}\nMainPID=${active?123:0}\nStatusText=${active?'ready':''}\n`};
+  }return{out:''};
+ }});t.after(()=>b.close());
+ for(let n=0;n<2;n++){
+  await b.dispatch('/vpn/action',{action:'start'});await new Promise(r=>setImmediate(r));
+  const job=(await b.dispatch('/status')).jobs[0];assert.equal(job.status,'passed',job.error);assert.equal(engineActive,true);
+ }
+ assert(!calls.some(c=>c.includes('restart')));
+ assert.equal(calls.filter(c=>c[1]==='start'&&c.at(-1)===f.options.unit).length,2);
+});
+
+test('blocked recovery keeps diagnostics and emergency stop available without clearing journal',async t=>{
+ const f=fixture(t);fs.mkdirSync(f.options.state+'/profiles');
+ const config=fs.readFileSync(f.options.config,'utf8'),settings=fs.readFileSync(f.options.settings,'utf8');
+ atomic(f.tx.file,{version:1,phase:'rollback',binding:f.tx.binding,running:false,entries:[{before:config,after:JSON.stringify(f.after)},{before:settings,after:'{}'}]});
+ let fail=true;const calls=[];
+ const b=await createBroker({version:1,usbAddress:'192.168.7.1',usbInterface:'usb0',wifiInterface:'wlan0',vpnUnit:f.options.unit,guardUnit:'guard.service',guardScript:'/guard',state:f.options.state,profiles:f.options.state+'/profiles',engine:'/engine',vpnConfig:f.options.config,socket:f.options.state+'/socket',nativeManaged:true,publishMdns:false},{run:async(file,args)=>{
+  calls.push([file,...args]);if(args[0]==='stop'&&fail)throw Error('command_failed');
+  return{out:file==='/guard'?'IPv4: cvks4\nIPv6: cvks4':'Type=notify\nActiveState=inactive\nSubState=dead\nMainPID=0\n'};
+ }});t.after(()=>b.close());
+ const s=await b.dispatch('/status');assert.deepEqual(s.vpnSettingsRecovery,{status:'blocked',error:'command_failed',pending:true});
+ assert.equal((await b.dispatch('/settings')).vpn.transport,'boring-tls');
+ await assert.rejects(b.dispatch('/vpn/action',{action:'start'}),/vpn_transaction_recovery_required/);
+ fail=false;await b.dispatch('/vpn/action',{action:'stop'});await new Promise(r=>setImmediate(r));assert.equal((await b.dispatch('/status')).jobs[0].status,'passed');
+ assert.equal(f.tx.load().phase,'rollback');assert(!calls.some(c=>['start','restart'].includes(c[1])));
 });
 
 test('combo profile edits preserve relay credentials and policy; endpoint/name migration refused',async t=>{

@@ -48,12 +48,39 @@ try{
  run('node',['/project/admin/install.mjs','--apply','--native-name=admin-lab']);
  assert.equal(prop(engine,'MainPID'),'0');assert.equal(prop(network,'MainPID'),'0');check('fresh-admin-install-does-not-start-vpn');
  await wait(()=>request('/settings'));assert.equal((await request('/settings')).vpn.nativeManaged,true);check('broker-native-binding');
+ // Reproduce the physical upgrade failure with a real systemd mount sandbox:
+ // the old drop-in grants writes to a previous bundle, not the selected one.
+ const brokerUnit='/etc/systemd/system/meshpn-admin-broker.service';
+ const selectedBundle='/opt/clean-vpn-native/admin-lab';
+ put(brokerUnit,fs.readFileSync(brokerUnit,'utf8').replace(' '+selectedBundle+' /run/meshpn-admin',' /run/meshpn-admin'),0o644);
+ fs.mkdirSync('/opt/clean-vpn-native/previous',{recursive:true});
+ put('/etc/systemd/system/meshpn-admin-broker.service.d/native-daily.conf','# clean-vpn-daily-native-binding\n[Service]\nReadWritePaths=/opt/clean-vpn-native/previous\n',0o644);
+ ctl('daemon-reload');ctl('restart','meshpn-admin-broker.service');await wait(()=>request('/settings'));
+ const oldSettings=await request('/settings');
+ const failed=await request('/vpn/settings',{address:oldSettings.vpn.address,port:oldSettings.vpn.port,serverName:oldSettings.vpn.serverName,sni:oldSettings.vpn.sni,profile:null});
+ await wait(async()=>{const j=(await request('/status')).jobs.find(j=>j.id===failed.id);assert.equal(j?.status,'failed');});
+ ctl('restart','meshpn-admin-broker.service');
+ await wait(async()=>{const s=await request('/status');assert.equal(s.vpnSettingsRecovery.status,'blocked');assert.equal(s.vpnSettingsRecovery.pending,true);});
+ check('readonly-old-binding-reproduced-diagnostics-stay-available');
+ run('node',['/project/admin/install.mjs','--update']);
+ await wait(async()=>assert.equal((await request('/status')).vpnSettingsRecovery.pending,false));
+ assert.ok(fs.readFileSync(brokerUnit,'utf8').includes(' '+selectedBundle+' /run/meshpn-admin'));
+ assert.equal(fs.existsSync('/etc/systemd/system/meshpn-admin-broker.service.d/native-daily.conf'),false);
+ assert.equal(prop(engine,'MainPID'),'0');assert.equal(prop(network,'MainPID'),'0');
+ check('update-repairs-sandbox-and-recovers-journal-without-starting-vpn');
  const login=ns('usb','curl',['-sS','--max-time','10','--noproxy','*','-H','Host: mpn.local','-H','Origin: http://mpn.local','-H','Content-Type: application/json','-d','{"password":"admin"}','http://192.168.7.1/api/login']);assert.equal(JSON.parse(login).defaultPassword,true);check('USB-web-login');
  await job('/vpn/action',{action:'start'});assert.equal(prop(engine,'ActiveState'),'active');check('admin-starts-network-and-engine');
+ const ownerPid=prop(network,'MainPID');ctl('stop',engine);assert.equal(prop(network,'MainPID'),ownerPid);
+ await job('/vpn/action',{action:'start'});assert.equal(prop(engine,'ActiveState'),'active');assert.equal(prop(network,'MainPID'),ownerPid);
+ check('admin-start-recovers-stopped-engine-with-active-owner');
  const https=()=>assert.equal(ns('usb','curl',['-fsS','--max-time','10','--noproxy','*','--cacert','/config/cert.pem','--resolve','runtime.test:8443:198.18.0.80','https://runtime.test:8443/']),'native-runtime-https-ok');https();check('USB-native-HTTPS');
  const configured=await request('/settings');await job('/vpn/settings',{address:configured.vpn.address,port:configured.vpn.port,serverName:configured.vpn.serverName,sni:configured.vpn.sni,profile:'chromium-156-bounded-cold.json'});https();check('admin-profile-apply-and-native-restart');
  await job('/vpn/action',{action:'stop'});assert.equal(prop(engine,'MainPID'),'0');assert.ok(!JSON.parse(ip('-j','link')).some(l=>l.ifname==='tun0'));assert.throws(https);check('admin-stop-cleans-network-keeps-guard');
  await job('/vpn/action',{action:'start'});https();await job('/vpn/action',{action:'restart'});https();check('admin-restart-recreates-network');
+ await job('/guard',{enabled:false,confirmDirect:true});assert.equal(prop(engine,'MainPID'),'0');assert.equal(prop(network,'MainPID'),'0');assert.equal((await request('/status')).guard.active,false);
+ check('admin-disable-guard-cleans-vpn-and-releases-protection');
+ await job('/guard',{enabled:true});assert.equal((await request('/status')).guard.active,true);await job('/vpn/action',{action:'start'});https();
+ check('admin-reenable-guard-and-vpn-restores-USB-HTTPS');
  await job('/vpn/action',{action:'stop'});run('node',['/project/admin/install.mjs','--remove']);check('remove-admin-keeps-native-stopped');
  console.log(JSON.stringify({status:'passed',checks,scope:'real native host-profile + fresh address-bound admin installer in isolated systemd container',limitations:['container socket BindToDevice cleared: no udev device units; not physical USB socket acceptance']}));
 }catch(e){for(const u of [network,engine,guard,'meshpn-admin-broker.service','meshpn-admin-web.service'])try{console.error(run('journalctl',['--no-pager','-u',u,'-n','35']));}catch{}throw e;}

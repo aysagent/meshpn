@@ -44,7 +44,9 @@ export async function createBroker(c,{run=command,clientsFactory=createClientAdm
   ready:async()=>{const s=await nativeState();need(s.Type==='notify'&&s.ActiveState==='active'&&s.SubState==='running'&&Number(s.MainPID)>0&&(isExit?['ready','listening','handshake']:['ready','idle_wait']).includes(s.StatusText),'native_not_ready');await service.guard();}
  };
  const transaction=new VpnSettingsTransaction({state:c.state,config:c.vpnConfig,settings:settingsFile,unit:c.vpnUnit,managed:c.nativeManaged,networkUnit:c.networkUnit},service);
- const recovery=await transaction.recover();settings=readJson(settingsFile,{hostname:'mpn',profile:null});
+ let recovery;try{recovery=await transaction.recover();}catch(e){recovery={status:'blocked',error:safeError(e)};}
+ const pendingTransaction=()=>{try{return !!transaction.load();}catch{return true;}};
+ settings=readJson(settingsFile,{hostname:'mpn',profile:null});
  async function lifecycle(action){
   if(action!=='stop'&&!isExit){
    need((await guard()).active,'enable_guard_first',409);
@@ -52,6 +54,10 @@ export async function createBroker(c,{run=command,clientsFactory=createClientAdm
   }
   await run('/usr/bin/systemctl',[action,activationUnit],{timeout:210000});
   if(c.networkUnit&&action!=='stop'){
+   // Starting an already-active owner is a systemd no-op. Recovery or an
+   // explicit engine stop can leave that owner alive with the engine stopped.
+   // Queue only a start: a healthy engine must keep its existing connection.
+   await run('/usr/bin/systemctl',['start','--no-block',c.vpnUnit],{timeout:15000});
    const deadline=performance.now()+60000;let error;
    do{try{await service.ready();return unit(c.vpnUnit);}catch(e){error=e;}await delay(500);}while(performance.now()<deadline);
    throw error;
@@ -77,13 +83,13 @@ export async function createBroker(c,{run=command,clientsFactory=createClientAdm
  async function dispatch(route,p={}){
  if(!['/status','/settings','/logs','/observer','/observer/pcap','/clients'].includes(route)){
   need(!jobs.current,'operation_in_progress',409);
-  need(!transaction.load(),'vpn_transaction_recovery_required',409);
+  need((route==='/vpn/action'&&p.action==='stop')||!pendingTransaction(),'vpn_transaction_recovery_required',409);
  }
  if(route.startsWith('/clients'))need(clients,'clients_not_configured',409);
  if(isExit&&['/hostname','/vpn/settings','/guard','/wifi/scan','/wifi/save','/wifi/connect','/wifi/delete','/probe','/observer/start','/observer/stop','/observer/pcap','/profile/import'].includes(route))need(false,'client_only_operation',409);
  if(!isExit&&!packetControls&&['/vpn/settings','/profile/import','/probe','/observer/start'].includes(route))need(false,'transport_control_not_supported',409);
  switch(route){
- case '/status':{const [v,g,w]=await Promise.all([unit(c.vpnUnit).catch(()=>({ActiveState:'unknown'})),guard().catch(()=>({active:null})),(wifi?wifi.status():Promise.resolve({wpa_state:'not_applicable'})).catch(()=>({wpa_state:'unavailable'}))]);return{metrics:metrics.sample(),certificates:certificateStatus(vpn()),vpn:v,network:c.networkUnit?await unit(c.networkUnit).catch(()=>({ActiveState:'unknown'})):null,guard:g,wifi:w,captive:readPortalState(path.dirname(c.socket)+'/captive.json'),mdns:mdnsState,jobs:jobs.history,vpnSettingsRecovery:{...recovery,pending:!!transaction.load()},capabilities:{nativeManaged:!!c.nativeManaged,networkOwner:!!c.networkUnit,role:isExit?'exit':'client',clients:!!clients,wifi:isExit?false:'wpa_supplicant-owned-profiles',guardToggle:!isExit,hostnameChange:!isExit,observer:packetControls,profileImport:packetControls,vpnSettings:packetControls,probes:packetControls?['exit','dns','internet']:[],routingRules:false,dnsUpstreamConfig:false,transports:[initialVpn.transport??'boring-tls']}};}
+ case '/status':{const [v,g,w]=await Promise.all([unit(c.vpnUnit).catch(()=>({ActiveState:'unknown'})),guard().catch(()=>({active:null})),(wifi?wifi.status():Promise.resolve({wpa_state:'not_applicable'})).catch(()=>({wpa_state:'unavailable'}))]);return{metrics:metrics.sample(),certificates:certificateStatus(vpn()),vpn:v,network:c.networkUnit?await unit(c.networkUnit).catch(()=>({ActiveState:'unknown'})):null,guard:g,wifi:w,captive:readPortalState(path.dirname(c.socket)+'/captive.json'),mdns:mdnsState,jobs:jobs.history,vpnSettingsRecovery:{...recovery,pending:pendingTransaction()},capabilities:{nativeManaged:!!c.nativeManaged,networkOwner:!!c.networkUnit,role:isExit?'exit':'client',clients:!!clients,wifi:isExit?false:'wpa_supplicant-owned-profiles',guardToggle:!isExit,hostnameChange:!isExit,observer:packetControls,profileImport:packetControls,vpnSettings:packetControls,probes:packetControls?['exit','dns','internet']:[],routingRules:false,dnsUpstreamConfig:false,transports:[initialVpn.transport??'boring-tls']}};}
  case '/settings':{const raw=vpn(),v=raw.transport==='combo-tls'?raw.boring:raw;return{hostname:settings.hostname,adminUrl:'http://'+settings.hostname+'.local/',vpn:{role:isExit?'exit':'client',address:v.address,port:v.port,serverName:v.server_name,sni:v.sni,profile:settings.profile??(v.tls_profile_path?path.basename(v.tls_profile_path):null),dns:v.dns===true,transport:raw.transport??'boring-tls',nativeManaged:!!c.nativeManaged},dns:{mode:isExit?'exit':'tunnel',upstreams:isExit?'Private .mpn resolver is opt-in; host DNS unchanged':'native fixed upstreams; editing not supported by engine',integrationManaged:!!c.networkUnit},profiles:isExit?[]:profiles(),wifi:wifi?wifi.list():[]};}
  case '/clients':exact(p,[]);return publicClientList(await clients.list());
  case '/clients/add':exact(p,['name']);return jobs.start('client-add',async()=>publicClientList(await clients.add(p.name)));

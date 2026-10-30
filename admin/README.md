@@ -41,12 +41,12 @@ HTTP. Не публикуйте этот порт в LAN или интернет
   broker восстанавливает их после старта/перезапуска wpa_supplicant.
 - Имя `name.local` только на usb0 через Avahi; Linux hostname не меняется.
   Если имя занято или mDNS недоступен, USB-IP остаётся запасным входом.
-- Native boring-tls: SNI, имя сертификата, выбор/import сохранённого профиля.
+- Native boring-tls и boring-ветка combo-tls: SNI, имя сертификата, выбор/import сохранённого профиля.
   Перед сохранением — настоящий `engine --check-config`. При привязке свежей
   админки через `--native-name` настройки применяются к установленному native
   instance с журналом и откатом; start/stop управляют его сетевым owner.
-  Существующая физическая админка пока не перепривязана: без `nativeManaged`
-  сохраняется только **candidate**. Новую привязку проверили в Linux-лаборатории.
+  На текущей Radxa привязана установка `combo-daily`. Без `nativeManaged`
+  сохраняется только **candidate**.
 - DNS/HTTPS/ICMP-пробы, последние 120 строк журнала, выгрузка диагностики.
 - `/capture`: отдельный TLS/H2 сервер на USB:8443, 3 минуты, до 32 образцов,
   token/authority validation, bundle с JA3/JA4, структурой Hello, H2 и
@@ -54,12 +54,15 @@ HTTP. Не публикуйте этот порт в LAN или интернет
   и сохранить. Он не активируется автоматически.
 - Независимый наблюдатель: настоящий tcpdump на Wi-Fi к текущему exit,
   5–60 секунд, до 5000 пакетов/16 MiB. JA3/JA4 и поля берутся из pcap,
-  сравниваются с выбранным candidate-профилем. Исходный pcap можно скачать.
+  сравниваются с выбранным candidate-профилем. В combo сверка packet-профиля
+  ограничена packet SNI; остальные ClientHello сохраняют собственные отпечатки.
+  Исходный pcap можно скачать.
 
 Смена endpoint пока отклоняется: сначала требуется согласованная миграция
 маршрута к exit и разрешений guard. DNS upstream в данном native engine
 фиксированы, поэтому редактирование не имитируется. Правила IP/domain/GeoIP,
-WPA3/Enterprise, AP и управление другими транспортами ещё не реализованы.
+WPA3/Enterprise, AP и переключение между транспортами из UI ещё не реализованы.
+Транспорт показывается по настоящему config; фиктивного выбора `boring-tls` нет.
 `active` у systemd не доказывает рабочий интернет — используйте отдельную пробу.
 Совпадение профиля не означает полную неотличимость от браузера.
 
@@ -283,3 +286,9 @@ The observer shows fingerprints of all captured connections, but compares the
 saved profile only with the exact packet SNI. Relay ClientHellos receive no
 saved-profile verdict: validating preservation requires an additional capture
 at the application side. Exit client enrollment remains a separate control.
+
+31 октября исправлен [сбой записи настроек после смены native bundle](../scripts/clean-vpn-native-admin-repair-20261031.md):
+`--update` проверяет выбранную установку и обновляет ограниченный `ReadWritePaths`,
+сохраняя `ProtectSystem=strict`. Незавершённое восстановление доступно в диагностике
+и не обрушает broker. Кнопки показывают ход операции; отключение защиты ждёт
+очистки DNS/маршрутов. Неприменённый выбор kill switch не сбрасывается polling.

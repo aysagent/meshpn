@@ -6,6 +6,7 @@ import {need,atomic,readJson} from './lib/common.mjs';
 import {nativeAdminBinding} from './lib/native-binding.mjs';
 import {captiveUnit,captiveUnitName} from './lib/captive-unit.mjs';
 import {usbAdminSocketUnit,upgradeUsbAdminSocket} from './lib/socket-unit.mjs';
+import {brokerWritablePaths,upgradeBrokerUnit,verifyLegacyBrokerBinding} from './lib/broker-unit.mjs';
 const root=path.dirname(path.dirname(fileURLToPath(import.meta.url))),base='/opt/meshpn-admin',etc='/etc/meshpn-admin';
 const run=(file,args)=>execFileSync(file,args,{encoding:'utf8',timeout:30000,stdio:['ignore','pipe','pipe']}).trim();
 need(process.platform==='linux'&&process.getuid()===0,'linux_root_required');
@@ -32,6 +33,14 @@ function updateGuard(){
 }
 if(process.argv[2]==='--update'){
  need(readJson(etc+'/manifest.json').kind==='meshpn-admin-owned-install','install_manifest');
+ const broker=readJson(etc+'/broker.json');
+ need(broker.nativeManaged===true&&typeof broker.bundle==='string'&&broker.bundle.startsWith('/opt/clean-vpn-native/'),'native_host_install_required');
+ const binding=nativeAdminBinding(broker.bundle.slice('/opt/clean-vpn-native/'.length));
+ for(const key of ['bundle','vpnUnit','networkUnit','guardUnit','guardScript','engine','vpnConfig','nativeManaged'])need(broker[key]===binding[key],'admin_native_binding_changed');
+ const unitPath='/etc/systemd/system/meshpn-admin-broker.service';
+ const unitText=upgradeBrokerUnit(fs.readFileSync(unitPath,'utf8'),broker);
+ const legacyBinding='/etc/systemd/system/meshpn-admin-broker.service.d/native-daily.conf';
+ if(fs.existsSync(legacyBinding))verifyLegacyBrokerBinding(fs.readFileSync(legacyBinding,'utf8'));
  captivePreflight();
  const socketPath='/etc/systemd/system/meshpn-admin.socket';
  const socketText=upgradeUsbAdminSocket(fs.readFileSync(socketPath,'utf8'));
@@ -41,7 +50,9 @@ if(process.argv[2]==='--update'){
  if(['enabled','enabled-runtime'].includes(socketEnabled))run('/usr/bin/systemctl',['disable','meshpn-admin.socket']);
  atomic(socketPath,socketText,0o644);
  updateGuard();
- const unitPath='/etc/systemd/system/meshpn-admin-broker.service',unitText=fs.readFileSync(unitPath,'utf8');need(unitText.startsWith('# meshpn-admin-owned-v1\n'),'unit_changed');atomic(unitPath,unitText.replace('After=network.target avahi-daemon.service\n','After=network.target avahi-daemon.service clean-vpn-killswitch.service\n'),0o644);run('/usr/bin/systemctl',['daemon-reload']);
+ atomic(unitPath,unitText,0o644);
+ if(fs.existsSync(legacyBinding))fs.unlinkSync(legacyBinding);
+ run('/usr/bin/systemctl',['daemon-reload']);
  for(const dir of['admin','scripts/lib'])fs.cpSync(path.join(root,dir),path.join(base,dir),{recursive:true,filter:p=>!p.includes('/test/')&&!p.endsWith('/WORK.md')});
  fs.copyFileSync(root+'/scripts/clean-vpn-pcap-fingerprints.mjs',base+'/scripts/clean-vpn-pcap-fingerprints.mjs');
  const manifest=readJson(etc+'/manifest.json');atomic(etc+'/manifest.json',{...manifest,sourceCommit:run('git',['-C',root,'rev-parse','HEAD']),updatedAt:new Date().toISOString()});
@@ -90,13 +101,14 @@ for(const file of ['scripts/clean-vpn-pcap-fingerprints.mjs'])fs.copyFileSync(pa
 fs.copyFileSync(node,base+'/node');fs.chmodSync(base+'/node',0o755);
 const state='/var/lib/meshpn-admin-broker';fs.mkdirSync(state,{mode:0o700});fs.mkdirSync(state+'/profiles',{mode:0o755});
 fs.copyFileSync(root+'/fixtures/native-tls-profiles/chromium-156-bounded-cold.json',state+'/profiles/chromium-156-bounded-cold.json');
-if(vpn.tls_profile_path)fs.copyFileSync(vpn.tls_profile_path,state+'/profiles/'+path.basename(vpn.tls_profile_path));
+const packet=vpn.transport==='combo-tls'?vpn.boring:vpn;
+if(packet.tls_profile_path)fs.copyFileSync(packet.tls_profile_path,state+'/profiles/'+path.basename(packet.tls_profile_path));
 const web={version:1,address:'192.168.7.1',subnet:'192.168.7.0/24',port:80,capturePort:8443,hostname:'mpn',state:'/var/lib/meshpn-admin-web',brokerSocket:'/run/meshpn-admin/broker.sock'};
 const broker={version:1,usbAddress:web.address,usbInterface:'usb0',wifiInterface:'wlan0',...native,state,profiles:state+'/profiles',socket:web.brokerSocket};
 atomic(etc+'/web.json',web,0o644);atomic(etc+'/web-container.json',{...web,address:'127.0.0.1',subnet:'127.0.0.0/8',port:8080,capturePort:18443,publicAddress:web.address,publicPort:80,publicCapturePort:8443,loopbackProxy:true,container:true},0o644);atomic(etc+'/broker.json',broker);atomic(etc+'/manifest.json',{...plan,kind:'meshpn-admin-owned-install',sourceCommit:run('git',['-C',root,'rev-parse','HEAD'])});
 const common='NoNewPrivileges=yes\nProtectSystem=strict\nProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectControlGroups=yes\nPrivateTmp=yes\nRestrictSUIDSGID=yes\nLockPersonality=yes\nUMask=0077\n';
 const bodies={
- 'meshpn-admin-broker.service':`[Unit]\nDescription=MeshPN restricted system broker\nAfter=network.target avahi-daemon.service clean-vpn-killswitch.service\nWants=avahi-daemon.service\n[Service]\nType=simple\nUser=root\nGroup=meshpn-admin\nRuntimeDirectory=meshpn-admin\nRuntimeDirectoryMode=0750\nStateDirectory=meshpn-admin-broker\nStateDirectoryMode=0700\nExecStartPre=${base}/node ${base}/admin/usb-mdns.mjs up\nExecStopPost=${base}/node ${base}/admin/usb-mdns.mjs down\nExecStart=${base}/node ${base}/admin/broker.mjs ${etc}/broker.json\nRestart=on-failure\nRestartSec=3\n${common}ProtectHome=read-only\nReadWritePaths=${state} ${native.bundle} /run/meshpn-admin -/run/clean-vpn-killswitch -/run/xtables.lock\nCapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SETUID CAP_SETGID CAP_DAC_READ_SEARCH\nTasksMax=48\nMemoryMax=192M\n[Install]\nWantedBy=multi-user.target\n`,
+ 'meshpn-admin-broker.service':`[Unit]\nDescription=MeshPN restricted system broker\nAfter=network.target avahi-daemon.service clean-vpn-killswitch.service\nWants=avahi-daemon.service\n[Service]\nType=simple\nUser=root\nGroup=meshpn-admin\nRuntimeDirectory=meshpn-admin\nRuntimeDirectoryMode=0750\nStateDirectory=meshpn-admin-broker\nStateDirectoryMode=0700\nExecStartPre=${base}/node ${base}/admin/usb-mdns.mjs up\nExecStopPost=${base}/node ${base}/admin/usb-mdns.mjs down\nExecStart=${base}/node ${base}/admin/broker.mjs ${etc}/broker.json\nRestart=on-failure\nRestartSec=3\n${common}ProtectHome=read-only\nReadWritePaths=${brokerWritablePaths(broker)}\nCapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SETUID CAP_SETGID CAP_DAC_READ_SEARCH\nTasksMax=48\nMemoryMax=192M\n[Install]\nWantedBy=multi-user.target\n`,
  'meshpn-admin-web.service':`[Unit]\nDescription=MeshPN USB administration\nRequires=meshpn-admin-broker.service\nAfter=meshpn-admin-broker.service\n[Service]\nType=simple\nUser=meshpn-admin\nGroup=meshpn-admin\nStateDirectory=meshpn-admin-web\nStateDirectoryMode=0700\nExecStart=${base}/node ${base}/admin/server.mjs ${etc}/web.json\nRestart=on-failure\nRestartSec=2\n${common}ProtectHome=yes\nReadWritePaths=/var/lib/meshpn-admin-web\nCapabilityBoundingSet=\nRestrictAddressFamilies=AF_UNIX AF_INET\nTasksMax=32\nMemoryMax=192M\n`,
  'meshpn-admin.socket':usbAdminSocketUnit()};
 atomic(captivePath,captiveUnit(),0o644);
