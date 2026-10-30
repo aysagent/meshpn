@@ -76,9 +76,9 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   const clock = clockProfile ? JSON.parse(regular(clockProfile, 8192, true)) : null;
   const clockUnit = `native-${name}-clock.service`;
   if (clock) {
-    need(!site && !transparent && !combo && input.role === 'client', 'clock_external_boring_client_only');
+    need(!site && !transparent && input.role === 'client', 'clock_external_packet_client_only');
     need(JSON.stringify(Object.keys(clock).sort()) === JSON.stringify(['host','identity','known_hosts','port','user','version']), 'clock_profile_fields');
-    need(clock.version === 1 && isIPv4(clock.host) && clock.host === input.address && Number.isInteger(clock.port) && clock.port > 0 && clock.port < 65536 && /^[a-z][a-z0-9_-]{0,31}$/.test(clock.user), 'clock_profile_invalid');
+    need(clock.version === 1 && isIPv4(clock.host) && clock.host === (combo ? input.boring.address : input.address) && Number.isInteger(clock.port) && clock.port > 0 && clock.port < 65536 && /^[a-z][a-z0-9_-]{0,31}$/.test(clock.user), 'clock_profile_invalid');
     need(![networkUnit,guardUnit].includes(clockUnit), 'clock_dependency_cycle');
   }
   const units = site?.units ?? new Map([[unitName, nativeServiceUnit({ binary: target + '/engine', config: target + '/config.json', networkUnit, guardUnit, role: input.role, transport:input.transport??'boring-tls', ...(combo&&input.role==='exit'?{replayDirectory:target+'/replay'}:{}), scopedExit:host?.scopedExit??false, ...(clock ? {clockRecoveryUnit: clockUnit} : {}) })]]);

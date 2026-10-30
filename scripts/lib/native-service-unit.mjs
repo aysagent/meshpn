@@ -5,7 +5,7 @@ export function nativeServiceUnit({ binary, config, networkUnit, guardUnit, tran
   if (scopedExit && (role !== 'exit' || !['boring-tls','combo-tls'].includes(transport) || networkUnit !== guardUnit || (transport === 'combo-tls' && replayDirectory === undefined))) throw Error('native_service_scoped_exit_only');
   if (clockRecoveryUnit !== undefined) {
     clockUnitName(clockRecoveryUnit);
-    if (role !== 'client' || transport !== 'boring-tls' || [networkUnit,guardUnit].includes(clockRecoveryUnit)) throw Error('clock_recovery_boring_client_only');
+    if (role !== 'client' || !['boring-tls','combo-tls'].includes(transport) || [networkUnit,guardUnit].includes(clockRecoveryUnit)) throw Error('clock_recovery_packet_client_only');
   }
   if (!['boring-tls', 'transparent-tls', 'combo-tls'].includes(transport)) throw Error('native_service_transport');
   if (replayDirectory !== undefined && transport === 'boring-tls') throw Error('native_service_replay_transport');

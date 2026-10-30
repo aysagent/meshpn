@@ -922,7 +922,7 @@ int main(int argc,char** argv){
     PeerReload reload(argv[2],raw_config);
     if(config.is_object()&&config.value("transport",std::string{})=="transparent-tls"){
       check(!discover,"address_discovery_packet_client_only");
-      check(!clock_recovery,"clock_recovery_boring_client_only");
+      check(!clock_recovery,"clock_recovery_packet_client_only");
       check(test<0,"relay_no_packet_fd");return transparent_engine(config,validate,initialize,service,reload);
     }
     std::unique_ptr<combo::Config> combined;
@@ -935,7 +935,7 @@ int main(int argc,char** argv){
     check(!initialize||bool(combined),"relay_config_required");
     Config c(combined?combined->boring:config);std::string secret;
     check(!discover||c.client,"address_discovery_client_only");c.discovery=discover;
-    check(!clock_recovery||(c.client&&!combined),"clock_recovery_boring_client_only");
+    check(!clock_recovery||c.client,"clock_recovery_packet_client_only");
     if(c.client){secret=file(c.secret_path,32,true);check(secret.size()==32,"secret_length");}
     std::unique_ptr<transparent::RelayCredentials> combo_credentials;
     if(combined) {

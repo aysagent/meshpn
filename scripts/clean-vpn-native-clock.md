@@ -9,6 +9,26 @@ OnFailure → отдельная служба восстановления → �
 На момент этого checkpoint интеграция ещё не была установлена на физических узлах.
 Никакого безусловного `ExecStartPre` для синхронизации часов нет.
 
+## Combo client
+
+Installer и service renderer поддерживают тот же opt-in handoff для combo
+клиента с внешним network owner (`--host-profile`). Диагноз поступает из
+boring-ветки после обычной TLS/PSK проверки. При выходе engine освобождает и
+relay listener/worker threads, затем отдельная служба может менять время.
+Standalone transparent, exit и site-owned clock lifecycle этим путём не включаются.
+
+Проверка в двух независимых QEMU kernels:
+
+```sh
+node scripts/clean-vpn-native-clock-vm.mjs /tmp/combo-clock-report.json --combo --host-profile
+```
+
+В этой fixture combo client соединяется boring-веткой с обычным boring exit;
+она проверяет установленный owner, clock handoff и повторное освобождение relay
+listener. Relay HTTPS-трафик и combo exit проверяются отдельным WAN-стендом.
+Изменять часы физического узла или Podman host для этой проверки не требуется.
+При переносе установки сохраняют `clock-state` (trusted floor и attempt budget).
+
 ## Условие запуска
 
 1. Сначала клиент делает обычное соединение с полной проверкой CA, имени,

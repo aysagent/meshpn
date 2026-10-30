@@ -13,10 +13,16 @@ test('only specific native exit codes hand off; time privilege stays out of engi
   assert.doesNotMatch(b,/WantedBy|ExecStartPre|CAP_NET_ADMIN|CAP_NET_RAW/);
 });
 test('explicit client opt-in and safe unit/path names are required',()=>{
-  for(const change of [{role:'exit'},{role:undefined},{transport:'combo-tls'},{transport:'transparent-tls'},
+  for(const change of [{role:'exit'},{role:undefined},{transport:'transparent-tls'},
     {clockRecoveryUnit:engine.guardUnit},{clockRecoveryUnit:'foo.service\nExecStart=id'}])assert.throws(()=>nativeServiceUnit({...engine,...change}));
   for(const field of ['script','config','stateDirectory'])for(const value of ['/a b','/a%p','/a/../b','/a\nExecStart=id'])assert.throws(()=>nativeClockRecoveryUnit({...recovery,[field]:value}));
   assert.throws(()=>nativeClockRecoveryUnit({...recovery,consumerUnit:'bad@.service'}));
   assert.throws(()=>nativeClockRecoveryUnit({...recovery,namespace:'a/b'}));
   assert.match(nativeClockRecoveryUnit({...recovery,namespace:'client'}),/NetworkNamespacePath=\/run\/netns\/client/);
+});
+
+test('combo clock handoff keeps ordinary failure retry and separate time authority',()=>{
+ const unit=nativeServiceUnit({...engine,transport:'combo-tls'});
+ assert.match(unit,/--service --clock-recovery/);assert.match(unit,/RestartPreventExitStatus=75 76 77/);
+ assert.doesNotMatch(unit,/CAP_SYS_TIME|ReadWritePaths=/);
 });
