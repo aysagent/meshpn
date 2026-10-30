@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Namespace-local supervisor. No Docker socket, host filesystem or arbitrary
 // command API. It owns exactly one configured engine child and its guard.
+import {projectEngineDiagnostics} from './lib/native-engine-diagnostics.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
@@ -28,15 +29,15 @@ export async function boundedCommand(file,args,{timeout=15000}={}) {
 
 export class ContainerEngine {
  constructor({config,engine,runtime,health,state='/run/clean-vpn'}, {run=boundedCommand,start=spawn}={}) {
-  Object.assign(this,{config,engine,runtime,health,state,run,spawn:start});this.child=null;this.desired=false;this.closing=false;this.lines=[];this.engineState='stopped';this.restarts=[];this.reloadEvents=[];this.reloadSequence=0;
+  Object.assign(this,{config,engine,runtime,health,state,run,spawn:start});this.child=null;this.desired=false;this.closing=false;this.lines=[];this.engineState='stopped';this.restarts=[];this.reloadEvents=[];this.reloadSequence=0;this.engineDiagnostics=null;this.diagnosticsAt=0;
  }
  log(text){for(const line of String(text).split('\n').filter(Boolean)){this.lines.push(/password|secret|authorization|bearer|private.key|psk|BEGIN .*KEY/i.test(line)?'[sensitive log omitted]':line.slice(0,1024));}this.lines=this.lines.slice(-120);}
  async prepare(){await this.run(process.execPath,[this.runtime,this.config]);}
  async start(){
   need(!this.child,'engine_already_running',409);this.desired=true;clearTimeout(this.retry);
-  await this.prepare();this.engineState='starting';
+  await this.prepare();this.engineState='starting';this.engineDiagnostics=null;this.diagnosticsAt=0;
   const child=this.spawn(this.engine,['--config',this.state+'/engine.json','--service'],{env:process.env,stdio:['ignore','pipe','pipe']});this.child=child;let buffer='';
-  child.stdout.on('data',b=>{buffer+=b.toString();if(buffer.length>16384){buffer='';this.log('engine_output_limit');child.kill('SIGTERM');return;}let i;while((i=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,i);buffer=buffer.slice(i+1);this.log(line);try{const event=JSON.parse(line);if(event.event==='state'&&typeof event.state==='string')this.engineState=event.state;if(event.event==='peer_reload'){this.reloadEvents.push({sequence:++this.reloadSequence,...event});this.reloadEvents=this.reloadEvents.slice(-32);}}catch{}}});
+  child.stdout.on('data',b=>{buffer+=b.toString();if(buffer.length>16384){buffer='';this.log('engine_output_limit');child.kill('SIGTERM');return;}let i;while((i=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,i);buffer=buffer.slice(i+1);this.log(line);try{const event=JSON.parse(line);const diagnostic=projectEngineDiagnostics(event);if(diagnostic){this.engineDiagnostics=diagnostic;this.diagnosticsAt=Date.now();}if(event.event==='state'&&typeof event.state==='string')this.engineState=event.state;if(event.event==='peer_reload'){this.reloadEvents.push({sequence:++this.reloadSequence,...event});this.reloadEvents=this.reloadEvents.slice(-32);}}catch{}}});
   child.stderr.on('data',b=>this.log(b));child.on('error',()=>this.log('engine_spawn_failed'));
   child.once('close',()=>{if(this.child!==child)return;this.child=null;this.engineState=this.desired?'failed':'stopped';if(this.desired&&!this.closing){const now=Date.now();this.restarts=this.restarts.filter(t=>now-t<60000);if(this.restarts.length<5){this.restarts.push(now);this.retry=setTimeout(()=>{this.start().catch(()=>{this.engineState='failed';this.log('engine_restart_failed');});},2000);}else this.log('engine_restart_limit');}});
   await this.ready();
@@ -69,7 +70,7 @@ export async function createContainerBroker(c,{engine=new ContainerEngine(c),run
  async function dispatch(route,p={}) {
   if(!['/status','/settings','/logs','/observer'].includes(route)){need(!jobs.current,'operation_in_progress',409);need(!transaction.load(),'vpn_transaction_recovery_required',409);}
   switch(route){
-   case '/status':return{metrics:metrics.sample(),certificates:certificateStatus(vpn()),vpn:vpnStatus(),network:{ActiveState:fs.existsSync(engine.state+'/network.json')?'active':'unknown'},guard:{active:fs.existsSync(engine.state+'/network.json')?true:null,summary:'Namespace guard retained while engine stopped; no host guard control'},wifi:{wpa_state:'unsupported'},captive:{active:false},mdns:{status:'unsupported'},jobs:jobs.history,vpnSettingsRecovery:{...recovery,pending:!!transaction.load()},capabilities};
+   case '/status':return{metrics:metrics.sample(),certificates:certificateStatus(vpn()),engineDiagnostics:engine.child&&engine.engineDiagnostics?{...engine.engineDiagnostics,status:Date.now()-engine.diagnosticsAt<=120000?'sampled':'stale',ageMs:Date.now()-engine.diagnosticsAt}:{status:engine.child?'unavailable':'stopped'},vpn:vpnStatus(),network:{ActiveState:fs.existsSync(engine.state+'/network.json')?'active':'unknown'},guard:{active:fs.existsSync(engine.state+'/network.json')?true:null,summary:'Namespace guard retained while engine stopped; no host guard control'},wifi:{wpa_state:'unsupported'},captive:{active:false},mdns:{status:'unsupported'},jobs:jobs.history,vpnSettingsRecovery:{...recovery,pending:!!transaction.load()},capabilities};
    case '/settings':{const v=vpn(),p=packet(v);return{hostname:settings.hostname,adminUrl:'http://127.0.0.1:'+(c.webPort??8080)+'/',vpn:{role,addressAssignment:p.address_assignment??'fixed',assignedIPv4:role==='client'?vpnStatus().assignedIPv4:null,address:p.address,port:p.port,serverName:p.server_name,sni:p.sni,profile:settings.profile??(p.tls_profile_path?path.basename(p.tls_profile_path):null),dns:p.dns===true,transport:v.transport??'boring-tls',nativeManaged:true,containerManaged:true},dns:{mode:role==='client'?'tunnel':'exit',upstreams:'native fixed upstreams; host DNS unchanged',integrationManaged:false},profiles:profiles(),wifi:[],capabilities};}
    case '/vpn/action':exact(p,['action']);need(['start','stop','restart'].includes(p.action),'vpn_action');return jobs.start('vpn-'+p.action,async()=>{settings={...settings,desired:p.action!=='stop'};atomic(settingsFile,settings);if(p.action==='start'&&engine.child)return engine.status();await engine[p.action]();return engine.status();});
    case '/logs':exact(p,['service']);need(['vpn','admin','network'].includes(p.service),'log_service');return{lines:engine.lines.slice()};

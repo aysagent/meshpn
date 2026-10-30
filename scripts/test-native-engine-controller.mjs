@@ -14,6 +14,12 @@ function fixture() {
   return { ctl, child, killed };
 }
 const status = { version: 1, event: 'state', state: 'ready', generation: 0, tx_packets: 3, rx_packets: 2, dropped_packets: 0 };
+test('native diagnostic metadata never acts as a new ready state, and extra payload is fatal',()=>{
+ const {ctl,child,killed}=fixture();let sample,states=0;ctl.on('diagnostic',e=>sample=e);ctl.on('status',()=>states++);ctl.on('fault',()=>{});
+ const event={...status,event:'diagnostics',diagnostics:{schema:1,scope:'process-lifetime-sampled',packet:{ready_events:1,session_ends:0,last_end:null}}};
+ child.stdout.write(JSON.stringify(event)+'\n');assert.deepEqual(sample,event);assert.equal(states,0);assert.deepEqual(killed,[]);
+ child.stdout.write(JSON.stringify({...event,secret:'PRIVATE'})+'\n');assert.deepEqual(killed,['SIGKILL']);child.emit('close',null,'SIGKILL');
+});
 test('address metadata has separate event and cannot carry extra packet fields', () => {
   const { ctl, child, killed } = fixture(); let got;
   ctl.on('diagnostic', e => got = e); ctl.on('status', () => assert.fail('not a status')); ctl.on('fault', () => {});

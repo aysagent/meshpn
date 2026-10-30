@@ -1,0 +1,37 @@
+// Real service-mode events on loopback; no TUN, network changes or TLS bypass.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import net from 'node:net';
+import tls from 'node:tls';
+import {spawn,spawnSync} from 'node:child_process';
+import {once} from 'node:events';
+import {randomBytes} from 'node:crypto';
+import {projectEngineDiagnostics,validNativeDiagnostics} from './lib/native-engine-diagnostics.mjs';
+const build=path.resolve(process.env.CVPN_BUILD??'native/clean_vpn/build');
+test('service publishes bounded relay phase diagnostics without origin connects or input metadata',{timeout:42000},async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-diagnostics-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const reservation=net.createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');const port=reservation.address().port;await new Promise(r=>reservation.close(r));
+ const origin=net.createServer(s=>{originConnects++;s.destroy();});let originConnects=0;
+ origin.listen(0,'127.0.0.1');await once(origin,'listening');t.after(()=>origin.close());
+ const secret=randomBytes(32),config=dir+'/engine.json';fs.writeFileSync(dir+'/key',secret,{mode:0o600});fs.mkdirSync(dir+'/replay',{mode:0o700});
+ fs.writeFileSync(config,JSON.stringify({version:1,transport:'transparent-tls',role:'exit',listen:{ipv4:'127.0.0.1',port},public_name:'relay.example',secret_path:dir+'/key',replay_directory:dir+'/replay',destinations:[{ipv4:'127.0.0.1',port:origin.address().port}]}),{mode:0o600});
+ const binary=build+'/clean-vpn-engine';const init=spawnSync(binary,['--init-transparent-replay',config],{encoding:'utf8',timeout:3000});assert.equal(init.status,0,init.stderr);
+ const env={...process.env};delete env.NOTIFY_SOCKET;
+ const child=spawn(binary,['--config',config,'--service'],{env,stdio:['ignore','pipe','pipe']});let output='',buffer='',stderr='';const events=[];
+ t.after(async()=>{if(child.exitCode===null){child.kill('SIGTERM');await once(child,'close');}});
+ child.stderr.on('data',b=>stderr+=b);child.stdout.on('data',b=>{output+=b;buffer+=b;assert(output.length<16384);let i;while((i=buffer.indexOf('\n'))>=0){events.push(JSON.parse(buffer.slice(0,i)));buffer=buffer.slice(i+1);}});
+ const wait=async predicate=>{const end=Date.now()+37000;while(!predicate()){assert.equal(child.exitCode,null,stderr);assert(Date.now()<end,'native diagnostic deadline');await new Promise(r=>setTimeout(r,25));}};
+ await wait(()=>events.some(e=>e.event==='state'&&e.state==='listening'));const started=Date.now();
+ const malformed=net.connect(port,'127.0.0.1');malformed.on('error',()=>{});await once(malformed,'connect');malformed.write('GET /');await new Promise(r=>malformed.once('close',r));
+ const privateName='n1.private-label.relay.example';const unauthorized=tls.connect({host:'127.0.0.1',port,servername:privateName});unauthorized.on('error',()=>{});await new Promise(r=>unauthorized.once('close',r));
+ await wait(()=>events.some(e=>e.event==='diagnostics'));
+ const sample=events.find(e=>e.event==='diagnostics'),elapsedMs=Date.now()-started,projected=projectEngineDiagnostics(sample);
+ assert.equal(validNativeDiagnostics(sample),true);assert(elapsedMs>=28000&&elapsedMs<37000);assert.equal(originConnects,0);assert(projected);
+ assert.equal(projected.relay.accepted,2);assert.equal(projected.relay.failed,2);assert.equal(projected.relay.active,0);assert.equal(projected.relay.pending,0);
+ assert.equal(projected.relay.failuresByPhase.client_hello,1);assert.equal(projected.relay.failuresByPhase.authorization,1);assert.equal(projected.relay.lastFailure.phase,'authorization');
+ assert(Buffer.byteLength(JSON.stringify(sample))<4096);assert(!output.includes(privateName));assert(!output.includes(secret.toString('hex')));assert.equal(stderr,'');
+ t.diagnostic(JSON.stringify({elapsedMs,projected,originConnects,source:'real native service stdout'}));
+});

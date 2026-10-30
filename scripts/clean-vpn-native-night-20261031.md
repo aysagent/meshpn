@@ -15,7 +15,8 @@
 2. **Готово:** [30 минут на точном daily binary](clean-vpn-native-daily-soak-20261031.md),
    четыре клиента, 14073 mixed rounds, quota isolation и cleanup.
    Следующее — netem/crash на отдельном runtime; новые бинарники не ставить в daily.
-3. Диагностика причин отказов relay/packet/H2/DNS в engine и админке; никакого
+3. **Готово локально:** [диагностика relay/packet/H2/DNS](clean-vpn-native-diagnostics.md),
+   typed counters и строгие readers, CTest 14/14, H1/H2/service 3/3, Linux controllers 49/49. Никакого
    вывода «исправлено» по одному успешному повтору. Отдельно TLS без SNI сейчас
    отклоняется transparent; совместимость исследовать без прямого обхода.
 4. H2 mimicry: исполняемый bounded contract, ALPS agreement, wire comparison;

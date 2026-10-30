@@ -84,11 +84,15 @@ int main(int argc,char** argv){
       private_origin.mode=0;private_origin.delay_ms=1400;
       for(bool tcp:{false,true})DNS_EXPECT(dns::response(query(private_q,tcp),private_q).rcode==3);
       private_origin.delay_ms=0;
-      private_origin.mode=4;auto timeout_start=std::chrono::steady_clock::now();
+      private_origin.mode=4;const auto metrics_before=relay->diagnostics();auto timeout_start=std::chrono::steady_clock::now();
       DNS_EXPECT(dns::response(query(private_q),private_q).rcode==2);
       const auto elapsed=std::chrono::steady_clock::now()-timeout_start;
       DNS_EXPECT(elapsed>=std::chrono::milliseconds(2800)&&elapsed<std::chrono::seconds(4));private_origin.mode=0;
       DNS_EXPECT(primary.requests+backup.requests==public_count);
+      const auto metrics_after=relay->diagnostics();
+      DNS_EXPECT(metrics_after.upstream_timeouts==metrics_before.upstream_timeouts+1&&
+        metrics_after.servfail==metrics_before.servfail+1&&metrics_after.private_queries==metrics_before.private_queries+1&&
+        metrics_after.answers==metrics_before.answers);
       auto encoded=q;encoded[12]=8;encoded.insert(encoded.end()-5,{'.','m','p','n'});
       DNS_EXPECT(dns::response(query(encoded),encoded).rcode==1&&primary.requests+backup.requests==public_count);
       for(int i=0;i<100;i++)DNS_EXPECT(dns::response(query(q,i%2),q).rcode==3);
@@ -116,6 +120,13 @@ int main(int argc,char** argv){
       DNS_EXPECT(dns::response(query(private_q,true,"10.99.0.1",1055,client_ip),private_q).rcode==3);
       denied=false;try{query(private_q,true,"10.99.0.1",1055,"127.0.0.1");}catch(...){denied=true;}DNS_EXPECT(denied&&!failed);
     }
+    // A single instantaneous final proc count failed under load. Observe
+    // convergence for at most 500ms, as in relay resource tests. Keep exact
+    // FD/task bounds and print the initial/final evidence; persistent leaks fail.
+    auto cleanup_end=std::chrono::steady_clock::now()+std::chrono::milliseconds(500);
+    const auto first_fds=entries("/proc/self/fd"),first_tasks=entries("/proc/self/task");
+    while((entries("/proc/self/fd")!=baseline||entries("/proc/self/task")>baseline_tasks)&&std::chrono::steady_clock::now()<cleanup_end)std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    if(first_fds!=baseline||first_tasks>baseline_tasks)std::cout<<"DNS_CLEANUP_OBSERVATION first_fds="<<first_fds<<" baseline_fds="<<baseline<<" first_tasks="<<first_tasks<<" baseline_tasks="<<baseline_tasks<<" final_fds="<<entries("/proc/self/fd")<<" final_tasks="<<entries("/proc/self/task")<<'\n';
     DNS_EXPECT(entries("/proc/self/fd")==baseline&&entries("/proc/self/task")<=baseline_tasks);std::cout<<"native DNS UDP/TCP, identity, fallback, EDNS, truncation, 100 queries, saturation, cancellation, FD cleanup PASS\n";
   }catch(const std::exception& e){std::cerr<<e.what()<<" errno="<<errno<<"\n";return 1;}
 }

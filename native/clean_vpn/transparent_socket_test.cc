@@ -184,6 +184,9 @@ static void durable_socket_restart(SSL_CTX* cc, SSL_CTX* sc, const SniAuthorizat
     RelayListener exit(e.release(),false,auth,{}, {},DestinationPolicy({dst}),{},replay);
     denied(endpoint,wire); until([&] { return exit.failed == 1; });
     need(exit.last_failure() == "relay_replayed" && origin.connections == 1);
+    const auto diagnostic=exit.diagnostics.snapshot();
+    need(diagnostic.last_phase==RelayPhase::authorization&&diagnostic.last_code=="relay_replayed"&&
+      diagnostic.phases[size_t(RelayPhase::authorization)]==1);
     // A storage failure precedes origin connect and poisons live admission.
     const std::string pending = std::string(p) + "/pending";
     { ReplayFd fd(open(pending.c_str(),O_WRONLY|O_CREAT|O_EXCL,0600)); need(fd.get() >= 0); }
@@ -278,8 +281,8 @@ static nlohmann::json final_packet_state(Child& child, uint64_t rounds) {
   unsigned ready=0;
   while(std::getline(lines,line)) {
     const auto event=nlohmann::json::parse(line);
-    if(event.value("state","")=="ready") ++ready;
-    if(event.value("state","")=="stopped") stopped=event;
+    if(event.value("event","")=="state"&&event.value("state","")=="ready") ++ready;
+    if(event.value("event","")=="state"&&event.value("state","")=="stopped") stopped=event;
   }
   need(ready==1 && !stopped.is_null());
   need(stopped.at("generation")==0 && stopped.at("tx_packets")==rounds+1 &&

@@ -124,6 +124,9 @@ static void churn(const SniAuthorization& auth, const Hello& h) {
     }, 1500);
     need(at >= 2 && monotonic_ms() - start >= 150 && monotonic_ms() - start < 1000);
     need(exit.last_failure() == "relay_socket_timeout"); closed(app.fd);
+    const auto diagnostic=exit.diagnostics.snapshot();
+    need(diagnostic.last_code=="relay_socket_timeout"&&diagnostic.last_phase==RelayPhase::hello&&
+      diagnostic.last_monotonic_ms>=start&&diagnostic.phases[size_t(RelayPhase::hello)]==rounds+1);
   }
   // Fill every admission slot, then demonstrate rejection and full reclamation.
   std::vector<std::unique_ptr<RelaySocket>> stalled;
@@ -162,7 +165,9 @@ static void deadlines(const SniAuthorization& auth, const Hello& h) {
       }
       return exit.failed == 1;
     }, mode == "handshake" ? 12000 : 2000);
-    need(exit.last_failure() == (mode == "handshake" ? "relay_handshake_timeout" : "relay_session_timeout"));
+    need(exit.last_failure() == "relay_"+mode+"_timeout");
+    const auto diagnostic=exit.diagnostics.snapshot();const auto phase=mode=="handshake"?RelayPhase::tls_prefix:RelayPhase::stream;
+    need(diagnostic.last_phase==phase&&diagnostic.phases[size_t(phase)]==1);
     if (mode == "handshake") need(monotonic_ms() - start >= 9500);
     closed(app.fd); closed(peer.fd); need(!exit.broken);
     std::cout << "FAULT_PASS=absolute_" << mode << "_deadline elapsed_ms=" << monotonic_ms() - start << '\n';

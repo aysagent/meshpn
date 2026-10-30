@@ -13,7 +13,7 @@ const capabilities={role:'client',nativeManaged:true,networkOwner:true,wifi:fals
 const reservation=net.createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');const port=reservation.address().port;await new Promise(r=>reservation.close(r));
 const app=await createAdmin({address:'127.0.0.1',subnet:'127.0.0.0/8',port,state,lab:true},{rpc:async(route,p)=>{
  if(route==='/settings')return{hostname:'mpn',adminUrl:'/',vpn:{role:'client',transport:'combo-tls',nativeManaged:true,address:'192.0.2.1',port:443,sni:'relay.example',serverName:'personal-cert.internal'},dns:{mode:'tunnel',upstreams:'fixture'},profiles:[],wifi:[],capabilities};
- if(route==='/status')return{metrics:{time:Date.now(),timezone:'UTC',temperatures:[],memory:{},uptimeSeconds:1,cpu:[],network:[]},vpn:{ActiveState:'active'},network:{ActiveState:'active'},guard:{active:guard},wifi:{},jobs:job?[job]:[],capabilities,vpnSettingsRecovery:{pending:false}};
+ if(route==='/status')return{metrics:{time:Date.now(),timezone:'UTC',temperatures:[],memory:{},uptimeSeconds:1,cpu:[],network:[]},vpn:{ActiveState:'active'},network:{ActiveState:'active'},guard:{active:guard},engineDiagnostics:{status:'sampled',schema:1,scope:'process-lifetime-sampled',dns:{upstream_timeouts:1}},wifi:{},jobs:job?[job]:[],capabilities,vpnSettingsRecovery:{pending:false}};
  if(route==='/guard'){calls.push(p);assert.deepEqual(p,{enabled:false,confirmDirect:true});job={id:'guard-fixture',kind:'guard',status:'running'};return job;}
  throw Error('unexpected_route');
 }});
@@ -26,7 +26,7 @@ try{
  await page.goto(url+'/');
  await page.type('#login-password','browser fixture password');await page.$eval('#login-form',f=>f.requestSubmit());
  try{await page.waitForFunction(()=>document.querySelector('#vpn-transport').textContent==='combo-tls',{polling:100});}catch(e){console.error(JSON.stringify({errors,dom:await page.evaluate(()=>({message:document.querySelector('#message').textContent,login:document.querySelector('#login').hidden,transport:document.querySelector('#vpn-transport').textContent}))}));throw e;}
- assert.equal(await page.evaluate(()=>!!document.querySelector('#vpn-form select:disabled')),false);
+ assert.equal(await page.evaluate(()=>!!document.querySelector('#vpn-form select:disabled')),false);assert.equal(await page.evaluate(()=>document.querySelector('#engine-diagnostics').textContent.includes('upstream_timeouts')),true);
  await page.evaluate(()=>document.querySelector('#guard-enabled').click());
  // Previously a polling refresh could undo a selection before Apply.
  await new Promise(r=>setTimeout(r,3400));assert.equal(await page.$eval('#guard-enabled',e=>e.checked),false);

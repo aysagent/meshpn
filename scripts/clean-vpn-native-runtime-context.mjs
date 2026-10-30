@@ -15,7 +15,7 @@ const files = ['scripts/clean-vpn-native-runtime.mjs', 'scripts/clean-vpn-native
 files.push('scripts/clean-vpn-container-broker.mjs', 'scripts/clean-vpn-container-web.mjs', 'scripts/containers/clean-vpn-managed.Containerfile',
   'admin/server.mjs', 'admin/lib/common.mjs', 'admin/lib/command.mjs', 'admin/lib/metrics.mjs',
   'admin/lib/vpn-settings-transaction.mjs', 'admin/lib/auth.mjs', 'admin/lib/captive.mjs',
-  'admin/lib/clients.mjs', 'admin/lib/certificates.mjs', 'admin/lib/diagnostics.mjs', 'scripts/lib/native-client-manager.mjs', 'scripts/lib/native-client-service.mjs',
+  'scripts/lib/native-engine-diagnostics.mjs', 'admin/lib/engine-diagnostics.mjs', 'admin/lib/clients.mjs', 'admin/lib/certificates.mjs', 'admin/lib/diagnostics.mjs', 'scripts/lib/native-client-manager.mjs', 'scripts/lib/native-client-service.mjs',
   'scripts/clean-vpn-native-clients.mjs', 'scripts/clean-vpn-native-peer-dns.mjs', 'scripts/lib/native-peer-dns.mjs', 'scripts/lib/lab-dns-wire.mjs', 'scripts/lib/native-client-bundles.mjs', 'scripts/lib/native-network-profile.mjs',
   'scripts/lib/native-browser-capture-server.mjs', 'scripts/lib/native-browser-capture.mjs',
   'scripts/lib/native-tls-profile-observer.mjs', 'scripts/lib/tls-clienthello-ja3.mjs',

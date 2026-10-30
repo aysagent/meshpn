@@ -292,3 +292,8 @@ at the application side. Exit client enrollment remains a separate control.
 сохраняя `ProtectSystem=strict`. Незавершённое восстановление доступно в диагностике
 и не обрушает broker. Кнопки показывают ход операции; отключение защиты ждёт
 очистки DNS/маршрутов. Неприменённый выбор kill switch не сбрасывается polling.
+
+В source добавлена [типизированная диагностика движка](../scripts/clean-vpn-native-diagnostics.md):
+packet session endings, relay phases/limits/queues и DNS failures. Требуется новый
+native binary; старый показывает unavailable. Эта лабораторная сборка не была
+установлена в работающую повседневную пару.

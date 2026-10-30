@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import { trialDiagnostics } from './lib/native-trial-diagnostics.mjs';
 
 const event = state => ({ version: 1, event: 'state', state, generation: 1, tx_packets: 2, rx_packets: 3, dropped_packets: 4 });
+test('native snapshots cannot manufacture readiness or state transitions',()=>{
+ const d=trialDiagnostics();const sample={...event('ready'),event:'diagnostics',diagnostics:{schema:1,scope:'process-lifetime-sampled',packet:{ready_events:1,session_ends:1,last_end:{code:'h2_ping_timeout',monotonic_ms:10}}}};
+ assert.equal(d.state(sample),null);assert.equal(d.snapshot().readySeen,false);assert.deepEqual(d.snapshot().stateCounts,{});
+ assert.equal(d.snapshot().engineDiagnostics.packet.lastEnd.code,'h2_ping_timeout');
+ assert.throws(()=>d.state({...sample,payload:'PRIVATE'}),/invalid_native_status/);
+});
 test('address diagnostics bounded, preserve last state, and forbid payload fields', () => {
   const d = trialDiagnostics(); d.state(event('ready'));
   const v = { version: 1, event: 'peer_address_rejected', role: 'client', source: '1.1.1.1', destination: '10.99.0.3', protocol: 17 };

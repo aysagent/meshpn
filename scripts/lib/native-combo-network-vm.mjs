@@ -165,7 +165,7 @@ try {
           await until(() => e.output.includes('"state":"stopped"'));
           const states = e.output.trim().split('\n').map(s => JSON.parse(s));
           const end = states.findLast(s => s.state === 'stopped');
-          result[name] = { readyCount: states.filter(s => s.state === 'ready').length, generation: end.generation,
+          result[name] = { readyCount: states.filter(s => s.event === 'state' && s.state === 'ready').length, generation: end.generation,
             txPackets: end.tx_packets, rxPackets: end.rx_packets, droppedPackets: end.dropped_packets };
         }
         return result;

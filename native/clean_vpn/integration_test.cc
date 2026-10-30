@@ -64,6 +64,9 @@ struct Child {
             &&inet_pton(AF_INET,j.at("source").get<std::string>().c_str(),&src)==1
             &&inet_pton(AF_INET,j.at("destination").get<std::string>().c_str(),&dst)==1,"address_metadata");continue;
         }
+        if(j.at("event")=="diagnostics"){
+          require(j.size()==8&&j.at("diagnostics").at("schema")==1&&j.at("diagnostics").at("scope")=="process-lifetime-sampled","diagnostics_metadata");continue;
+        }
         require(j.size()==7&&!j.contains("packet")&&!j.contains("payload"),"metadata_only");
         if(j.at("state")==wanted)return j;
       }
@@ -134,6 +137,19 @@ struct Child {
       else{require(n!=0,"engine_exited");pollfd p{events,POLLIN,0};poll(&p,1,10);}
     }
     throw std::runtime_error("budget_status_timeout");
+  }
+  json diagnostic_status(){
+    command("{\"op\":\"diagnostics\"}\n");const auto end=Clock::now()+std::chrono::seconds(2);
+    while(Clock::now()<end){
+      size_t e;while((e=input.find('\n'))!=std::string::npos){
+        const auto raw=input.substr(0,e);auto j=json::parse(raw);input.erase(0,e+1);
+        if(j.at("event")!="diagnostics")continue;
+        require(j.size()==8&&raw.size()<4096&&j.at("state")=="ready","diagnostics_event_bound");
+        const auto& d=j.at("diagnostics");require(d.at("schema")==1&&d.at("scope")=="process-lifetime-sampled"&&d.at("packet").at("ready_events")>=1,"diagnostics_packet_ready");
+        require(!d.contains("config")&&!d.contains("secret")&&!d.contains("payload"),"diagnostics_privacy");return d;
+      }
+      char b[4096];const auto n=read(events,b,sizeof(b));if(n>0)input.append(b,n);else{require(n!=0,"engine_exited");pollfd p{events,POLLIN,0};poll(&p,1,20);}
+    }throw std::runtime_error("diagnostics_timeout");
   }
   void stop(){
     if(service)kill(pid,SIGTERM);else command("{\"op\":\"stop\"}\n");
@@ -217,6 +233,7 @@ static void soak(Child& client,Child* server,int seconds){
   for(auto* child:{&client,server})if(child){
     auto state=child->healthy_status();
     require(state.at("tx_packets")==rounds&&state.at("rx_packets")==rounds&&state.at("dropped_packets")==0,"soak_final_counts");
+    child->diagnostic_status();
   }
   std::cout<<"soak "<<json({{"seconds",std::chrono::duration<double>(Clock::now()-start).count()},
     {"packets",rounds*2},{"bytes",bytes},{"resource_samples",samples},{"peak_rss_kib",peak},{"max_rss_growth_kib",growth},

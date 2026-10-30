@@ -26,11 +26,13 @@ class DnsRelay {
   static inline thread_local uint32_t request_peer_=0;
   bool permitted(uint32_t peer){if(!private_bridge_)return true;std::lock_guard<std::mutex> lock(peers_mutex_);return peers_.count(peer);}
   Socket udp_{-1},tcp_{-1};std::thread loop_;std::vector<std::unique_ptr<Job>> jobs_;
+  std::atomic<uint64_t> queries_{0},answers_{0},servfail_{0},private_queries_{0},upstream_attempts_{0},upstream_errors_{0},upstream_timeouts_{0};
   static sockaddr_in address(const char* ip,unsigned port){sockaddr_in a{};a.sin_family=AF_INET;a.sin_port=htons(port);dns::need(inet_pton(AF_INET,ip,&a.sin_addr)==1);return a;}
   bool alive()const{return !stop_;}
   void wait(int fd,short events,Time::time_point end,bool upstream){
     while(alive()&&permitted(request_peer_)&&(!upstream||ready_)){
-      dns::need(Time::now()<end);pollfd p{fd,events,0};int rc=poll(&p,1,25);dns::need(rc>=0||errno==EINTR);
+      if(Time::now()>=end)throw std::runtime_error(upstream?"dns_upstream_timeout":"dns_client_timeout");
+      pollfd p{fd,events,0};int rc=poll(&p,1,25);dns::need(rc>=0||errno==EINTR);
       if(rc>0){dns::need(!(p.revents&(POLLNVAL|POLLERR)));if(p.revents&(events|POLLHUP))return;}
     }
     throw std::runtime_error("dns_cancelled");
@@ -51,6 +53,7 @@ class DnsRelay {
     while(n){wait(fd,POLLIN,end,upstream);ssize_t k=recv(fd,p,n,0);if(k<0&&(errno==EAGAIN||errno==EINTR))continue;dns::need(k>0);p+=k;n-=k;}
   }
   Bytes exchange(const Bytes& query,const char* server,unsigned port,bool tcp){
+    ++upstream_attempts_;
     dns::need(ready_);Socket s(socket(AF_INET,(tcp?SOCK_STREAM:SOCK_DGRAM)|SOCK_NONBLOCK|SOCK_CLOEXEC,0));dns::need(s.fd>=0);
     if(!private_bridge_)dns::need(setsockopt(s.fd,SOL_SOCKET,SO_BINDTODEVICE,tun_.c_str(),tun_.size()+1)==0);
     // Distinguish the native resolver from ordinary host DNS, which can use
@@ -77,8 +80,10 @@ class DnsRelay {
     auto r=dns::response(answer,query);dns::need(r.rcode!=2);return answer;
   }
   Bytes resolve(const Bytes& original,bool tcp){
+    ++queries_;
     auto q=dns::parse(original,true);if(q.edns_version)return dns::failure(original,16);
     bool private_name;try{private_name=dns::private_peer_name(q.question);}catch(...){return dns::failure(original,1);}
+    if(private_name)++private_queries_;
     if(private_bridge_&&!private_name)return dns::failure(original,5);
     dns::need(permitted(request_peer_));
     if(!ready_&&idle_&&*idle_){
@@ -91,9 +96,14 @@ class DnsRelay {
     for(const char* server:servers)try{
       auto answer=exchange(wire,server,private_name?1055:53,tcp);answer[0]=original[0];answer[1]=original[1];
       auto r=dns::response(answer,original);
+      ++answers_;
       if(!tcp&&answer.size()>q.udp_size){auto short_answer=dns::failure(original,r.rcode,true);dns::put16(short_answer,2,0x8200|(r.flags&0x019f));return short_answer;}
       return answer;
-    }catch(...){if(!alive())throw;}
+    }catch(const std::exception& e){
+      if(std::strcmp(e.what(),"dns_upstream_timeout")==0)++upstream_timeouts_;else ++upstream_errors_;
+      if(!alive())throw;
+    }catch(...){++upstream_errors_;if(!alive())throw;}
+    ++servfail_;
     return dns::failure(original);
   }
   void tcp_client(int fd){
@@ -127,6 +137,8 @@ class DnsRelay {
     jobs_.clear();
   }
 public:
+  struct Diagnostics {uint64_t queries,answers,servfail,private_queries,upstream_attempts,upstream_errors,upstream_timeouts;};
+  Diagnostics diagnostics() const {return{queries_.load(),answers_.load(),servfail_.load(),private_queries_.load(),upstream_attempts_.load(),upstream_errors_.load(),upstream_timeouts_.load()};}
   using Peers=std::set<uint32_t>;
   void replace_peers(Peers&& peers)noexcept{std::lock_guard<std::mutex> lock(peers_mutex_);peers_.swap(peers);}
   DnsRelay(const std::string& tun,std::atomic<bool>& ready,std::atomic<bool>& failed,

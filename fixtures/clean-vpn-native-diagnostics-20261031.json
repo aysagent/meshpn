@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-engine-diagnostics",
+  "status": "passed",
+  "engineSha256": "2d3d26a984008030fdc285d03dfb1ac98244e41d132170da5c08c98ea8ebe648",
+  "fixtureSha256": "e46a3fbd804d76af681ac9629f0dcbc24049d4c2ce1fb093bb90e3508697440a",
+  "architecture": "linux-arm64",
+  "nativeCtest": {
+    "passed": 14,
+    "failed": 0,
+    "skipped": 0
+  },
+  "nativeIntegration": {
+    "scenarios": [
+      "HTTP2 packet/auth/reconnect/service",
+      "HTTP1.1 packet/auth/reconnect/service",
+      "standalone service diagnostics, fixed cadence, no origin on rejection"
+    ],
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0
+  },
+  "nativeDns": {
+    "passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "initialFailure": "instantaneous final FD/task count in one run; root cause unproven",
+    "finalCondition": "exact same FD/task bounds must converge within 500ms; initial/final observations printed on mismatch"
+  },
+  "linuxControllers": {
+    "passed": 49,
+    "failed": 0,
+    "skipped": 0,
+    "includes": [
+      "strict metadata",
+      "trial/crash",
+      "real tcpdump in isolated netns",
+      "real route recovery"
+    ]
+  },
+  "combo35Seconds": {
+    "passed": true,
+    "scope": "earlier diagnostics build before final fixed-vocabulary hardening; periodic event must not count as a reconnect"
+  },
+  "sample": {
+    "periodMs": 30000,
+    "relayFailures": 2,
+    "clientHelloPhase": 1,
+    "authorizationPhase": 1,
+    "originConnects": 0
+  },
+  "privacy": [
+    "fixed reason vocabulary",
+    "no source names, packet bodies, keys or domains",
+    "PID and invocation binding; snapshot cache keyed by both",
+    "typed counters only; unknown fields cannot enter exported diagnostics"
+  ],
+  "physicalNodesUpdated": false,
+  "hostNetworkChanged": false,
+  "limitations": [
+    "Process-local sampled counters, not one atomic transaction",
+    "Self-reported metadata, not independent pcap evidence",
+    "After-ServerHello phase is not end-to-end TLS verification",
+    "No claim that diagnostic counters fix WAN or upstream failures"
+  ]
+}

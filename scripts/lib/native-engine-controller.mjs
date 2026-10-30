@@ -1,3 +1,4 @@
+import {validNativeDiagnostics} from './native-engine-diagnostics.mjs';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
@@ -22,6 +23,7 @@ export class NativeEngineController extends EventEmitter {
         const line = this.#pending.slice(0, end); this.#pending = this.#pending.slice(end + 1);
         try {
           const event = JSON.parse(line);
+          if (validNativeDiagnostics(event)) { this.emit('diagnostic', event); continue; }
           if (validAddressDiagnostic(event)) { this.emit('diagnostic', event); continue; }
           const keys = ['version', 'event', 'state', 'generation', 'tx_packets', 'rx_packets', 'dropped_packets'];
           if (!event || Array.isArray(event) || Object.keys(event).length !== keys.length || keys.some(k => !(k in event)) ||

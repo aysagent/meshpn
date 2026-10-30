@@ -1,5 +1,6 @@
 // Temporary systemd engine adapter for the existing Radxa route/DNS owner.
 // No packet IPC. Does not replace/enable any installed unit or modify clocks.
+import {validNativeDiagnostics} from './native-engine-diagnostics.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import {EventEmitter} from 'node:events';
@@ -42,7 +43,7 @@ export class NativeSystemdTrialController extends EventEmitter{
   this.timer=setInterval(()=>this.poll(),200);this.started=performance.now();
  }
  poll(){if(this.closed||this.stopping)return;try{
-  const st=fs.statSync(this.log);require(st.size<=256*1024&&st.size>=this.offset,'clock_trial_output_limit');if(st.size>this.offset){const fd=fs.openSync(this.log,'r'),b=Buffer.alloc(st.size-this.offset);try{fs.readSync(fd,b,0,b.length,this.offset);}finally{fs.closeSync(fd);}this.offset=st.size;this.pending+=b;for(;;){const i=this.pending.indexOf('\n');if(i<0)break;const line=this.pending.slice(0,i);this.pending=this.pending.slice(i+1);const event=JSON.parse(line);if(validAddressDiagnostic(event)){this.emit('diagnostic',event);continue;}require(event.version===1&&['state','status'].includes(event.event)&&/^[a-z0-9_]{1,64}$/.test(event.state)&&['generation','tx_packets','rx_packets','dropped_packets'].every(k=>Number.isSafeInteger(event[k])&&event[k]>=0),'clock_trial_event');this.lastState=event;this.emit('status',event);}}
+  const st=fs.statSync(this.log);require(st.size<=256*1024&&st.size>=this.offset,'clock_trial_output_limit');if(st.size>this.offset){const fd=fs.openSync(this.log,'r'),b=Buffer.alloc(st.size-this.offset);try{fs.readSync(fd,b,0,b.length,this.offset);}finally{fs.closeSync(fd);}this.offset=st.size;this.pending+=b;for(;;){const i=this.pending.indexOf('\n');if(i<0)break;const line=this.pending.slice(0,i);this.pending=this.pending.slice(i+1);const event=JSON.parse(line);if(validNativeDiagnostics(event)){this.emit('diagnostic',event);continue;}if(validAddressDiagnostic(event)){this.emit('diagnostic',event);continue;}require(event.version===1&&['state','status'].includes(event.event)&&/^[a-z0-9_]{1,64}$/.test(event.state)&&['generation','tx_packets','rx_packets','dropped_packets'].every(k=>Number.isSafeInteger(event[k])&&event[k]>=0),'clock_trial_event');this.lastState=event;this.emit('status',event);}}
   const state=run('show',this.unit,'-p','ActiveState','--value');if(state==='failed'||state==='inactive'){this.failedAt??=performance.now();require(performance.now()-this.failedAt<(this.cleanupInstalled?210000:45000),'clock_trial_recovery_failed');}else this.failedAt=null;
  }catch{this.emit('fault',{reason:'clock_trial_service_failed'});this.stop();}}
  status(){if(this.lastState)this.emit('status',this.lastState);}

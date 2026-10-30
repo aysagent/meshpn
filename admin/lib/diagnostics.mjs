@@ -1,4 +1,5 @@
 // Explicit projection: never serialize raw configs, jobs/results or credentials.
+import {publicEngineDiagnostics} from './engine-diagnostics.mjs';
 const scalar=v=>typeof v==='boolean'||(typeof v==='number'&&Number.isFinite(v))||(typeof v==='string'&&v.length<=512);
 const pick=(o,keys)=>Object.fromEntries(keys.filter(k=>scalar(o?.[k])).map(k=>[k,o[k]]));
 const list=(v,n,fn)=>Array.isArray(v)?v.slice(0,n).map(fn):[];
@@ -11,6 +12,7 @@ export function diagnosticExport(status={},settings={}){
   metrics:{...pick(m,['time','timezone','uptimeSeconds']),memory:pick(m.memory,['MemTotal','MemAvailable','SwapTotal','SwapFree']),cpu:list(m.cpu,256,x=>pick(x,['core','percent'])),temperatures:list(m.temperatures,32,x=>pick(x,['celsius'])),network:list(m.network,64,x=>pick(x,['interface','rxBytes','txBytes','rxDropped','txDropped']))},
   vpn:{...pick(status.vpn,['ActiveState','SubState','UnitFileState','MainPID']),settings:pick(settings.vpn,['role','address','port','serverName','sni','profile','dns','transport','nativeManaged'])},
   network:pick(status.network,['ActiveState','SubState','UnitFileState','MainPID']),
+  engineDiagnostics:publicEngineDiagnostics(status.engineDiagnostics),
   guard:pick(status.guard,['active']),wifi:pick(status.wifi,['wpa_state']),
   dns:pick(settings.dns,['mode','upstreams','integrationManaged']),
   capabilities:pick(status.capabilities,['nativeManaged','networkOwner','containerManaged','role','clients','wifi','guardToggle','hostnameChange','observer','profileImport','vpnSettings','routingRules','dnsUpstreamConfig']),

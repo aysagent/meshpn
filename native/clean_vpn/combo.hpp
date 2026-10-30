@@ -92,7 +92,7 @@ class Exit {
       ++admissions; ++peeking_;
       auto job = std::make_unique<Job>(); auto* done = &job->done; const int fd = accepted.fd;
       job->thread = std::thread([this, fd, done, now] {
-        tr::RelaySocket socket(fd); bool pending = true, relay = false;
+        tr::RelaySocket socket(fd); bool pending = true, relay = false;tr::RelayPhase phase=tr::RelayPhase::dispatch;
         try {
           const auto branch = peek(socket.fd,name_,now + limits_.hello_ms,stop_);
           if (branch == Branch::boring) {
@@ -108,9 +108,10 @@ class Exit {
             ++relay_selected;
             const int owned = socket.fd; socket.fd = -1;
             tr::relay_session(owned,false,auth_,{},{},policy_,*replay_,stop_,limits_,nullptr,nullptr,admission_.get(),
-              [&] { --peeking_; pending=false; });
+              [&] { --peeking_; pending=false; }, &phase);
           }
-        } catch (...) { ++rejected; }
+        } catch (const std::exception& e) { diagnostics.failure(phase,e.what());++rejected; }
+        catch (...) { diagnostics.failure(phase,"relay_internal");++rejected; }
         if (pending) --peeking_;
         if (relay) --relaying_;
         *done = true;
@@ -120,9 +121,11 @@ class Exit {
     jobs_.clear();
   }
 public:
+  tr::RelayDiagnostics diagnostics;
   std::atomic<bool> broken{false};
   std::atomic<uint64_t> boring_selected{0}, relay_selected{0}, rejected{0}, dropped{0};
   size_t pending() const { return peeking_.load(); }
+  size_t active_relays() const { return relaying_.load(); }
   Exit(int fd, const tr::SniAuthorization& auth, std::string name, tr::DestinationPolicy policy,
        std::shared_ptr<tr::ReplayWindow> replay, tr::RelayLimits limits = {}, std::shared_ptr<tr::ExitAdmission> admission = {})
     : listener_(fd), auth_(auth), name_(std::move(name)), policy_(std::move(policy)),

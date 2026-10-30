@@ -184,6 +184,30 @@ public:
     if(write(STDOUT_FILENO,record.data(),record.size())!=ssize_t(record.size()))interrupted=1;
   }
 };
+static json relay_failures(const transparent::RelayDiagnostics& d) {
+  const auto s=d.snapshot();json phases=json::object();
+  for(size_t i=0;i<s.phases.size();i++)phases[transparent::relay_phase_names[i]]=s.phases[i];
+  return {{"failures_by_phase",phases},{"last_failure",s.last_code.empty()?json(nullptr):json({
+    {"code",s.last_code},{"phase",transparent::relay_phase_names[size_t(s.last_phase)]},{"monotonic_ms",s.last_monotonic_ms}})}};
+}
+static json relay_status(const transparent::RelayListener& relay) {
+  auto status=relay_failures(relay.diagnostics);
+  status.update({{"accepted",relay.accepted.load()},{"completed",relay.completed.load()},
+    {"failed",relay.failed.load()},{"admission_dropped",relay.admission_dropped.load()},
+    {"active",relay.active()},{"pending",relay.pending()},{"peak_queue_bytes",relay.peak_queue.load()},
+    {"backpressure_polls",relay.paused_polls.load()},{"broken",relay.broken.load()}});return status;
+}
+static json relay_status(const combo::Exit& relay) {
+  auto status=relay_failures(relay.diagnostics);
+  status.update({{"packet_selected",relay.boring_selected.load()},{"relay_selected",relay.relay_selected.load()},
+    {"rejected",relay.rejected.load()},{"admission_dropped",relay.dropped.load()},
+    {"active",relay.active_relays()},{"pending",relay.pending()},{"broken",relay.broken.load()}});return status;
+}
+static json dns_status(const DnsRelay& relay) {
+  const auto s=relay.diagnostics();return{{"queries",s.queries},{"answers",s.answers},{"servfail",s.servfail},
+    {"private_queries",s.private_queries},{"upstream_attempts",s.upstream_attempts},
+    {"upstream_errors",s.upstream_errors},{"upstream_timeouts",s.upstream_timeouts}};
+}
 struct Control {
   int input_fd=STDIN_FILENO;
   ServiceNotify* notify=nullptr;
@@ -194,11 +218,16 @@ struct Control {
   unsigned address_reports=0;
   bool stop=false, uplink=true, quiet=false;
   uint64_t generation=0, tx=0, rx=0, dropped=0;
+  std::function<json()> diagnostic_provider;
+  Clock::time_point diagnostics_at=Clock::now();
+  uint64_t ready_events=0,session_ends=0,last_session_end_ms=0;
+  const char* last_session_end=nullptr;
   std::string input, state="starting";
   void emit(const std::string& event) {
     if(quiet)return;
     auto record=json({{"version",1},{"event",event},{"state",state},{"generation",generation},
       {"tx_packets",tx},{"rx_packets",rx},{"dropped_packets",dropped}});
+    if(diagnostic_provider&&event=="diagnostics")record["diagnostics"]=diagnostic_provider();
 #ifdef CVPN_TEST_PACKET_FD
     if(event=="status"&&h2_budget_fixture::enabled())record["fixture_h2_budget"]=h2_budget_fixture::status();
 #endif
@@ -208,9 +237,18 @@ struct Control {
     if(n!=ssize_t(line.size())) stop=true;
   }
   void set(const std::string& s){
+    if(s=="ready")++ready_events;
     if(s=="ready")dns_demand=false; // Coalesce concurrent DNS wake requests.
     dns_idle=s=="idle_wait";dns_ready=s=="ready";state=s;emit("state");
     if(notify&&!notify->state(s))stop=true;
+  }
+  void ended(const char* fixed_code){
+    ++session_ends;last_session_end=fixed_code;
+    last_session_end_ms=uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());
+  }
+  json packet_diagnostics() const {
+    return{{"ready_events",ready_events},{"session_ends",session_ends},{"last_end",last_session_end?json({
+      {"code",last_session_end},{"monotonic_ms",last_session_end_ms}}):json(nullptr)}};
   }
   void rejected_address(const Bytes& packet,bool client){
     // Bounded, explicit metadata only. Never expose packet bytes or ports.
@@ -224,6 +262,9 @@ struct Control {
   }
   void read_commands() {
     if(interrupted||dns_failed||(branch_failed&&branch_failed->load()))stop=true;
+    if(notify&&diagnostic_provider&&Clock::now()-diagnostics_at>=std::chrono::seconds(30)){
+      diagnostics_at=Clock::now();emit("diagnostics");
+    }
     if(input_fd<0)return;
     char b[1024]; ssize_t n=-1;
     unsigned reads=0;
@@ -236,6 +277,7 @@ struct Control {
           auto j=json::parse(line); check(j.is_object(),"command_object");
           auto op=j.at("op").get<std::string>();
           if(op=="status"&&j.size()==1) emit("status");
+          else if(op=="diagnostics"&&j.size()==1)emit("diagnostics");
           else if(op=="stop"&&j.size()==1) stop=true;
           else if(op=="uplink"&&j.size()==2&&j.at("ready").is_boolean()){
             bool next=j.at("ready"); if(next!=uplink){uplink=next;generation++;set(next?"uplink_ready":"waiting_uplink");}
@@ -353,7 +395,8 @@ struct Session {
   static const char* callback_error(const char* message){
     // Only our own fixed vocabulary can cross the metadata boundary. Never
     // surface library exceptions, peer headers, GOAWAY debug data or payloads.
-    for(const char* code:{"unexpected_headers","headers_limit","duplicate_header","request_invalid",
+    for(const char* code:{"connect","connect_socket","connect_deadline","timeout","cancelled","socket_error","poll","tls_socket","tls_sni","tls_identity","tcp_nodelay","profile_hello_write",
+        "unexpected_headers","headers_limit","duplicate_header","request_invalid",
         "auth_rejected","auth_clock_skew","peer_busy","early_end","vpn_response_rejected","data_before_auth","peer_address","peer_destination",
         "address_mode","address_offer_missing","address_offer_ipv4","address_offer_format","address_offer_auth","address_offer_purpose","address_offer_hmac","address_offer_mismatch","discovery_incomplete","discovery_payload",
         "invalid_ipv4","invalid_frame_length","queue_limit","queue_consume","http2_error","exporter","hmac",
@@ -820,6 +863,7 @@ static void run_exit(Config& config,SSL_CTX* context,int listener,int tun,Contro
         }
         ++it;
       }catch(const std::exception& error){
+        ctl.ended(Session::callback_error(error.what()));
         if(c.session){auto owner=owners.find(c.session->peer_address);
           if(owner!=owners.end()&&owner->second==c.session.get())owners.erase(owner);}
         // Untrusted sessions cannot flood the bounded control channel.
@@ -883,7 +927,13 @@ static int transparent_engine(const json& j, bool validate, bool initialize, boo
     check(notify.state("listening"),"relay_notify");
     constexpr char ready[]="{\"event\":\"state\",\"state\":\"listening\",\"transport\":\"transparent-tls\"}\n";
     check(write(STDOUT_FILENO,ready,sizeof(ready)-1)==ssize_t(sizeof(ready)-1),"relay_output");
+    auto diagnostics_at=Clock::now();
     while(!interrupted&&!relay.broken) {
+      if(Clock::now()-diagnostics_at>=std::chrono::seconds(30)){
+        diagnostics_at=Clock::now();const auto line=json({{"version",1},{"event","diagnostics"},{"state","listening"},
+          {"diagnostics",{{"schema",1},{"scope","process-lifetime-sampled"},{"relay",relay_status(relay)}}}}).dump()+"\n";
+        if(write(STDOUT_FILENO,line.data(),line.size())!=ssize_t(line.size())){broken=true;break;}
+      }
       if(!c.client)reload.poll([&](const json& next) {
         tr::TransparentConfig candidate(next);
         tr::RelayCredentials keys(candidate,[](const std::string& p){return file(p,32,true);});
@@ -891,7 +941,7 @@ static int transparent_engine(const json& j, bool validate, bool initialize, boo
       });
       poll(nullptr,0,25);
     }
-    broken=relay.broken;
+    broken=broken||relay.broken;
   }
   check(notify.state("stopped"),"relay_notify");return broken?1:0;
 }
@@ -901,7 +951,7 @@ int main(int argc,char** argv){
     if(argc==2&&std::string(argv[1])=="--capabilities"){
       std::cout<<json({{"version",1},{"engine","clean-vpn-native-m1"},{"transport","boring-tls"},
         {"roles",{"client","exit"}},{"mode","ipv4-packets"},{"alpn",{"h2","http/1.1"}},{"http_versions",{"2","1.1","auto"}},
-        {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"private_peer_dns",{{"client_zone_guard",true},{"exit_opt_in",true},{"endpoint","10.99.0.1:1055"},{"upstream","127.0.0.1:1055"}}},{"connection_modes",{"on-demand","persistent"}},{"multi_peer",true},{"peer_reload",{{"signal","SIGHUP"},{"exit_only",true},{"event","peer_reload"},{"empty_peers",true}}},{"max_peers",32},{"browser_profiles",false},
+        {"dns","native-udp-tcp-fixed-upstreams"},{"dns_socket_mark","0x43564e"},{"private_peer_dns",{{"client_zone_guard",true},{"exit_opt_in",true},{"endpoint","10.99.0.1:1055"},{"upstream","127.0.0.1:1055"}}},{"connection_modes",{"on-demand","persistent"}},{"multi_peer",true},{"peer_reload",{{"signal","SIGHUP"},{"exit_only",true},{"event","peer_reload"},{"empty_peers",true}}},{"max_peers",32},{"diagnostics",{{"schema",1},{"event","diagnostics"},{"service_interval_seconds",30},{"scope","process-lifetime-sampled"}}},{"browser_profiles",false},
         {"experimental_tls_profiles",{{"schema",1},{"scenario","cold"},{"prewire_check",true},{"certificate_compression",{2}},{"alps",{{"codepoint",17613},{"http2_settings",true},{"experimental",true}}},{"transports",{"boring-tls","combo-tls-boring"}}}},
         {"profile_policy",profile_policy::describe()},{"packet_ipc",false},{"service_mode",true},{"provisioning","external-control-plane"},
         {"address_assignment",{{"version",1},{"discovery_cli",true},{"session_proof",true},{"owner_required",true}}},
@@ -1020,6 +1070,13 @@ int main(int argc,char** argv){
         ctl.branch_failed=&combo_exit->broken;
       }
     }
+    if(!discover)ctl.diagnostic_provider=[&]{
+      json record={{"schema",1},{"scope","process-lifetime-sampled"},{"packet",ctl.packet_diagnostics()}};
+      if(combined)record["relay"]=c.client?relay_status(*combo_client):relay_status(*combo_exit);
+      if(dns)record["dns"]=dns_status(*dns);
+      if(private_dns)record["private_dns"]=dns_status(*private_dns);
+      return record;
+    };
     if(!c.client)reload.ready();
     ctl.set(c.client?"idle":"listening");
     if(!c.client){run_exit(c,ctx.get(),listener.n,tun.n,ctl,reload,combo_exit.get(),relay_admission,private_dns.get());ctl.set(ctl.dns_failed?"dns_failed":"stopped");return ctl.dns_failed||(service&&!interrupted)?1:0;}
@@ -1086,6 +1143,7 @@ int main(int argc,char** argv){
         }
         catch(...){authenticated=s.ready;throw;}
       }catch(const std::exception& e){
+        ctl.ended(Session::callback_error(e.what()));
         if(discover){OPENSSL_cleanse(secret.data(),secret.size());std::cerr<<"address discovery refused: "<<Session::callback_error(e.what())<<"\n";return 1;}
         // Only fixed internal error codes, never input headers, keys or payload.
         ctl.set(e.what());

@@ -1,6 +1,7 @@
 #pragma once
 #include "transparent_admission.hpp"
 #include "transparent_handshake.hpp"
+#include "relay_diagnostics.hpp"
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/tcp.h>
@@ -96,11 +97,14 @@ inline void relay_session(int accepted, bool client, const SniAuthorization& aut
                           const DestinationPolicy& policy, ReplayWindow& replay,
                           const std::atomic<bool>& stop, const RelayLimits& limits,
                           std::atomic<size_t>* peak_queue = nullptr, std::atomic<uint64_t>* paused_polls = nullptr,
-                          const ExitAdmission* admission = nullptr, std::function<void()> admitted = {}) {
+                          const ExitAdmission* admission = nullptr, std::function<void()> admitted = {}, RelayPhase* diagnostic_phase=nullptr) {
+  auto phase=[&](RelayPhase value){if(diagnostic_phase)*diagnostic_phase=value;};
+  phase(RelayPhase::hello);
   RelaySocket left(accepted); limits.check();
   const int one = 1; require(setsockopt(left.fd,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(one)) == 0, "relay_socket_option");
   const auto started = monotonic_ms(); auto first = socket_hello(left.fd, started + limits.hello_ms, stop);
   Destination target; Bytes prefix; std::string output_sni; std::shared_ptr<void> quota; std::shared_ptr<const ExitAdmission::Peer> identity;
+  phase(RelayPhase::authorization);
   if (client) {
     policy.check(client_origin); target = exit;
     prefix = auth.seal(first.hello, client_origin, wall_seconds()); output_sni = parse(prefix).sni;
@@ -119,7 +123,9 @@ inline void relay_session(int accepted, bool client, const SniAuthorization& aut
   // All exit admission, including replay reservation, precedes this connect.
   // A failed connect still consumes the token. No alternate destination retry.
   if (!client) policy.check(target); // recheck after durable I/O, immediately before connect
+  phase(RelayPhase::connect);
   socket_connect(right.fd, target, monotonic_ms() + limits.connect_ms, stop, identity);
+  phase(RelayPhase::tls_prefix);
   Queue to_right, to_left;
   auto push = [&](Queue& q, Bytes b) {
     require(b.size() <= RelayLimits::queue_bytes - q.size(), "relay_queue_limit");
@@ -137,10 +143,13 @@ inline void relay_session(int accepted, bool client, const SniAuthorization& aut
   // One feed can finish an already buffered 64 KiB hello and emit its tail.
   constexpr size_t reserve = 128 * 1024;
   while (!stop.load()) {
+    // Opaque means a ServerHello was forwarded, not verified end-to-end TLS.
+    phase(gate.opaque()?RelayPhase::stream:RelayPhase::tls_prefix);
     require(!identity || !identity->revoked.load(), "relay_peer_revoked");
     const auto now = monotonic_ms(); gate.check_timeout(now);
-    require(now - started < limits.lifetime_ms && now - last_io < limits.idle_ms &&
-            (!drain_started || now - drain_started < limits.drain_ms), "relay_session_timeout");
+    require(now - started < limits.lifetime_ms,"relay_lifetime_timeout");
+    require(now - last_io < limits.idle_ms,"relay_idle_timeout");
+    require(!drain_started || now - drain_started < limits.drain_ms,"relay_drain_timeout");
     if (eof_left && to_right.empty() && !shut_right) {
       require(shutdown(right.fd, SHUT_WR) == 0, "relay_shutdown"); shut_right = true;
     }
@@ -198,6 +207,7 @@ class RelayListener {
   RelayLimits limits_;
   std::shared_ptr<ExitAdmission> admission_;
   std::atomic<size_t> pending_{0};
+  std::atomic<size_t> active_{0};
   bool client_;
   bool redirected_;
   std::atomic<bool> stop_{false};
@@ -223,7 +233,8 @@ class RelayListener {
       ++arrivals; ++pending_;
       auto job = std::make_unique<Job>(); auto* done = &job->done;
       job->thread = std::thread([this, fd, done] {
-        bool pending = true;
+        bool pending = true;RelayPhase phase=RelayPhase::redirect;
+        ++active_;
         try {
           Destination origin = origin_;
           if (client_ && redirected_) {
@@ -232,16 +243,18 @@ class RelayListener {
             try { origin = original_destination(fd); policy_.check(origin); }
             catch (...) { close(fd); throw; }
           }
-          relay_session(fd, client_, auth_, origin, exit_, policy_, *replay_, stop_, limits_, &peak_queue, &paused_polls, admission_.get(), [&] { --pending_; pending=false; }); ++completed;
+          relay_session(fd, client_, auth_, origin, exit_, policy_, *replay_, stop_, limits_, &peak_queue, &paused_polls, admission_.get(), [&] { --pending_; pending=false; }, &phase); ++completed;
         }
         catch (const std::exception& e) {
+          diagnostics.failure(phase,e.what());
           std::lock_guard<std::mutex> lock(diagnostic_mutex_);
           const std::string code = e.what();
           last_failure_ = code.size() <= 64 && (code.rfind("relay_",0) == 0 || code.rfind("hello_",0) == 0 || code == "queue_limit") ? code : "relay_internal";
           ++failed;
         }
-        catch (...) { ++failed; }
+        catch (...) { diagnostics.failure(phase,"relay_internal");++failed; }
         if (pending) --pending_;
+        --active_;
         *done = true;
       });
       pending.fd = -1; jobs_.push_back(std::move(job)); ++accepted;
@@ -249,6 +262,9 @@ class RelayListener {
     jobs_.clear();
   }
 public:
+  RelayDiagnostics diagnostics;
+  size_t active() const { return active_.load(); }
+  size_t pending() const { return pending_.load(); }
   std::atomic<uint64_t> accepted{0}, completed{0}, failed{0}, admission_dropped{0};
   std::atomic<size_t> peak_queue{0};
   std::atomic<uint64_t> paused_polls{0};

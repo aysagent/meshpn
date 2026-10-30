@@ -76,7 +76,19 @@ static void dispatch(){
   const auto start=tr::monotonic_ms();exit.reset();need(tr::monotonic_ms()-start<1000);
   std::cout<<"native combo dispatch: relay replay/wrong-key/tamper never downgrade, bounded admission, no HOL, cancelled stop PASS\n";
 }
+static void diagnostic_concurrency(){
+  tr::RelayDiagnostics diagnostic;
+  std::vector<std::thread> workers;
+  for(unsigned n=0;n<4;n++)workers.emplace_back([&]{for(unsigned i=0;i<1000;i++)diagnostic.failure(tr::RelayPhase::authorization,"relay_token_auth");});
+  for(auto& worker:workers)worker.join();
+  auto s=diagnostic.snapshot();need(s.phases[size_t(tr::RelayPhase::authorization)]==4000&&s.last_code=="relay_token_auth");
+  diagnostic.failure(tr::RelayPhase::hello,"hello_error contains private.example");
+  s=diagnostic.snapshot();need(s.last_code=="relay_internal"&&s.last_phase==tr::RelayPhase::hello&&s.last_monotonic_ms>0);
+  diagnostic.failure(tr::RelayPhase::hello,"hello_private_secret");need(diagnostic.snapshot().last_code=="relay_internal");
+  std::cout<<"native diagnostics: concurrent fixed counters and secret-free reason projection PASS\n";
+}
 int main(){try{
+  diagnostic_concurrency();
   const auto boring=hello("relay.example"), relay=hello("n1.invalid.relay.example");
   need(combo::classify(tr::parse(boring),"RELAY.example")==combo::Branch::boring);
   need(combo::classify(tr::parse(relay),"relay.example")==combo::Branch::transparent);
