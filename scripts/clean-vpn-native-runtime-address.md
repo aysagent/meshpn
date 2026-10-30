@@ -29,6 +29,13 @@ conflict: the runtime refuses to proceed and keeps its rules. Recreate the
 owned namespace/container to adopt a changed assignment. There is no automatic
 live route replacement, stale cached address or `.2` fallback.
 
+In this first owner version, a failed initial discovery (including an
+unreachable exit) also leaves an incomplete setup requiring namespace/container
+recreation. It does not retry that first transaction automatically. Once setup
+has completed, a failed reconfirmation preserves the complete journal and can
+be retried under the audited existing guard. This is another reason to keep
+discovery opt-in; ordinary fixed-address startup/reconnect behavior is unchanged.
+
 The extra bootstrap chains remain underneath the normal runtime chains. The
 engine never removes either guard on shutdown. Cleanup is destruction of the
 owned namespace/container, not flushing host tables. DNS/route settings of the

@@ -14,7 +14,7 @@
 | `laptop.mpn` | Приватный UDP/TCP resolver, scoped systemd-resolved zone на exit, клиентский DNS через authenticated tunnel; без public fallback | [DNS](clean-vpn-native-peer-dns.md) |
 | Админка | Управление клиентами exit, capabilities по роли/транспорту, сроки сертификатов, диагностический экспорт без credentials | [Отдельная установка exit](../admin/EXIT-INSTALL.md) |
 | VPN + web одним запуском | Managed Compose, отдельный непривилегированный web, Unix broker, без Docker socket у приложения, optional DNS sidecar | [Compose](clean-vpn-native-managed-containers.md) |
-| Alpine | Исходная ARM64 musl сборка, runtime около 101 MiB на первоначальном измеренном snapshot; финальные образы имеют отдельные ID/размеры в отчётах | [Alpine](clean-vpn-native-alpine.md) |
+| Alpine | Исходная ARM64 musl сборка, runtime 103.9 MiB, VPN + supervisor 104.2 MiB, web 74.2 MiB на финальном ARM64 snapshot; точные ID в отчётах | [Alpine](clean-vpn-native-alpine.md) |
 | Получение адреса от exit | Opt-in H1/H2 discovery с PSK/TLS-exporter proof, затем отдельное подтверждение полной сессии; изолированный owner и Compose | [Runtime assignment](clean-vpn-native-runtime-address.md) |
 | Обновление сертификата | Новый leaf/key под прежним CA в отдельном candidate-каталоге, без установки или restart; проверка неизменности trust | [Renewal](clean-vpn-native-certificate-renewal.md) |
 
