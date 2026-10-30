@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Opt-in binary updates for a fresh, named boring-tls installation. No network
+// Opt-in binary updates for a fresh, named boring-tls/combo-tls installation. No network
 // mutation and no legacy adoption. Inputs are trusted administrator binaries.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,12 +15,19 @@ export function installFilePath(bundle,name) {
   need(typeof name==='string'&&name.split('/').every(part=>/^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*$/.test(part)),'update_manifest_path');
   return bundle+'/'+name;
 }
+export function supportedUpdateManifest(manifest){
+  if(!['boring-tls','combo-tls'].includes(manifest.transport)||!['client','exit'].includes(manifest.role)||!Array.isArray(manifest.mutableDirectories))return false;
+  const expected=manifest.transport==='combo-tls'&&manifest.role==='exit'
+    ?[{name:'replay',mode:448,purpose:'durable-replay-no-automatic-reset'}]
+    :manifest.clockUnit&&manifest.role==='client'?[{name:'clock-state',mode:448,purpose:'clock-budget-and-floor-no-reset'}]:[];
+  return !(manifest.clockUnit&&manifest.role!=='client')&&JSON.stringify(manifest.mutableDirectories)===JSON.stringify(expected);
+}
 export function recoveryUnit({name,bundle,node}) {
   return `[Unit]\nDescription=clean-vpn binary recovery ${name}\nBefore=native-${name}.service\nAfter=local-fs.target\nRequiresMountsFor=${bundle}\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=${node} ${bundle}/update-control/clean-vpn-native-update.mjs --recover-boot ${name}\nTimeoutStartSec=30\nUMask=0077\n`;
 }
 async function main(args) {
   if(args.length===1&&args[0]==='--help') {
-    console.log('Usage: --enroll NAME | --apply NAME /absolute/trusted-engine SHA256 | --recover NAME | --status NAME\nFresh named boring-tls install only. Enroll while stopped; never enables VPN. Apply uses a bounded transient systemd unit with independent recovery. Cold-boot recovery precedes engine. No config/key/network update.');return;
+    console.log('Usage: --enroll NAME | --apply NAME /absolute/trusted-engine SHA256 | --recover NAME | --status NAME\nFresh named boring-tls/combo-tls host install only. Enroll while stopped; never enables VPN. Apply uses a bounded transient systemd unit with independent recovery. Cold-boot recovery precedes engine. No config/key/network update.');return;
   }
   const [action,name,binary,expected,...extra]=args;
   need(process.platform==='linux'&&process.getuid()===0,'update_linux_root');
@@ -30,8 +37,7 @@ async function main(args) {
   need(fs.readFileSync('/proc/1/comm','utf8').trim()==='systemd','update_systemd');
   const bundle='/opt/clean-vpn-native/'+name, unit='native-'+name+'.service';
   const manifest=JSON.parse(readOwned(bundle+'/installed.json'));
-  need(manifest.schema===1&&manifest.name===name&&manifest.unit===unit&&manifest.transport==='boring-tls'&&
-    (manifest.mutableDirectories.length===0 || (manifest.clockUnit && JSON.stringify(manifest.mutableDirectories)===JSON.stringify([{name:'clock-state',mode:448,purpose:'clock-budget-and-floor-no-reset'}])))&&manifest.networkUnit&&manifest.guardUnit,'update_named_external_boring_install');
+  need(manifest.schema===1&&manifest.name===name&&manifest.unit===unit&&supportedUpdateManifest(manifest)&&manifest.networkUnit&&manifest.guardUnit,'update_named_external_packet_install');
   const json=x=>JSON.stringify(x,null,2)+'\n';
   if(action==='--enroll') {
     const state=props(unit);need(['inactive','failed'].includes(state.ActiveState)&&state.MainPID==='0','update_enroll_stopped');

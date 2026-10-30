@@ -5,7 +5,7 @@
 Updater сохраняет `clock-state/` и сериализуется с clock helper общим flock.
 
 2026-10-28. Опциональное обновление **только engine** у новой именованной
-boring-tls установки, созданной `clean-vpn-native-install.mjs` с внешними
+boring-tls/combo-tls host установки, созданной `clean-vpn-native-install.mjs` с внешними
 network/guard units. Это не миграция legacy clean-vpn и не обновление DNS,
 unit-файлов, Node runtime, библиотек ОС или конфигурации.
 
@@ -97,3 +97,9 @@ Cold-boot стенд использует persistent ext4 с восстанов�
 Он не равен отключению питания физической Radxa и не доказывает свойства её
 носителя при power loss. Физический pilot не должен заменять legacy installation
 либо reboot VPS без отдельной необходимости и проверенного пути восстановления.
+
+Для combo exit updater также разрешает ровно один mutable directory `replay/`
+с исходным контрактом durable replay. Журналы identities и clock-state не входят
+в копируемые релизы и не инициализируются updater. Ключи, config, units и
+контроллеры остаются защищёнными во время транзакции. Site targets и standalone
+transparent этим расширением не принимаются.

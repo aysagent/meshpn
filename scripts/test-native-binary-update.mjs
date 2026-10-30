@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {NativeBinaryUpdate,binaryDigest,writeDurable} from './lib/native-binary-update.mjs';
-import {recoveryUnit,installFilePath} from './clean-vpn-native-update.mjs';
+import {recoveryUnit,installFilePath,supportedUpdateManifest} from './clean-vpn-native-update.mjs';
 test('nested install manifest paths stay inside the bundle',()=>{
   for(const name of ['engine','control/lib/native-host-network.mjs','units/native-host-network.service'])assert.equal(installFilePath('/opt/test',name),'/opt/test/'+name);
   for(const name of ['../engine','control/../../engine','/etc/passwd','control//a','control/./a','control/','control\\a',''])assert.throws(()=>installFilePath('/opt/test',name),/update_manifest_path/);
@@ -87,4 +87,16 @@ test('insufficient disk refuses before service mutation or journal publication',
   const f=fixture(t),stat=fs.statfsSync;fs.statfsSync=()=>({bavail:0,bsize:4096});
   try{await assert.rejects(f.update.apply(f.dir+'/candidate',binaryDigest(next)),/insufficient_disk/);}finally{fs.statfsSync=stat;}
   assert.deepEqual(f.calls,[]);assert.equal(f.update.pending(),null);assert.deepEqual(fs.readFileSync(f.bundle+'/engine'),old);
+});
+
+test('host combo updates preserve only declared mutable clock or replay state',()=>{
+ const clock={name:'clock-state',mode:448,purpose:'clock-budget-and-floor-no-reset'},replay={name:'replay',mode:448,purpose:'durable-replay-no-automatic-reset'};
+ for(const transport of ['boring-tls','combo-tls']){
+  assert.ok(supportedUpdateManifest({transport,role:'client',mutableDirectories:[]}));
+  assert.ok(supportedUpdateManifest({transport,role:'client',clockUnit:'clock.service',mutableDirectories:[clock]}));
+  assert.equal(supportedUpdateManifest({transport,role:'exit',mutableDirectories:transport==='combo-tls'?[replay]:[]}),true);
+  assert.equal(supportedUpdateManifest({transport,role:'exit',clockUnit:'clock.service',mutableDirectories:[clock]}),false);
+ }
+ for(const change of [{transport:'transparent-tls'},{role:'relay'},{mutableDirectories:[]},{mutableDirectories:[{...replay,mode:511}]},{mutableDirectories:[replay,clock]},{mutableDirectories:[{...replay,name:'../replay'}]}])
+  assert.equal(supportedUpdateManifest({transport:'combo-tls',role:'exit',mutableDirectories:[replay],...change}),false);
 });
