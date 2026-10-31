@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "date": "2026-10-31",
+  "source": "f3b0471",
+  "scope": "physical Radxa admin, USB traffic, unchanged VPS exit",
+  "localTests": {"linuxPassed": 86, "linuxFailed": 0, "browserFixturePassed": true},
+  "power": {
+    "physicalCancelRequests": 0,
+    "physicalUnconfirmedRebootHttp": 409,
+    "physicalUnconfirmedPoweroffHttp": 409,
+    "confirmedActionsTestedWithFakeRpc": ["reboot", "poweroff"],
+    "physicalPowerActions": 0
+  },
+  "modeSwitches": [
+    {"from": "combo-tls", "to": "boring-tls", "passed": true, "elapsedMs": 32217},
+    {"from": "boring-tls", "to": "combo-tls", "passed": true, "elapsedMs": 29928},
+    {"from": "combo-tls", "to": "boring-tls", "passed": true, "elapsedMs": 32044}
+  ],
+  "brokerRestart": {"nativePidPreserved": true, "profilePreserved": true, "availableModes": ["boring-tls", "combo-tls"]},
+  "speedtest": {
+    "transport": "boring-tls",
+    "browser": "Chrome 156",
+    "path": "isolated browser proxy -> USB en9 -> Radxa -> boring-tls -> VPS",
+    "completed": true,
+    "downloadMbps": 40.64,
+    "uploadMbps": 44.91,
+    "pingMs": 86,
+    "proxyBudgetBytes": 536870912,
+    "proxyDeadlineSeconds": 150
+  },
+  "afterLoadRestart": {
+    "passed": true,
+    "elapsedMs": 1602,
+    "nativeReady": true,
+    "guardActive": true,
+    "journalPending": false,
+    "usbDnsPassed": 4,
+    "usbHttpsPassed": 3,
+    "usbDownloadBytes": 1048576,
+    "httpsViaExit": true
+  },
+  "final": {"transport": "boring-tls", "profile": "native-daily-installed.json", "comboRedirect": false, "exitPidUnchanged": true},
+  "macSystemSettingsChanged": false,
+  "limitations": [
+    "initial WAN ClientHello loss has no established cause or fix",
+    "first physical mode switch failed before the owner-readiness fix; journal recovery subsequently succeeded",
+    "physical reboot and poweroff were not executed",
+    "transparent-only and container mode switching remain unsupported",
+    "WAN speed test is functional evidence, not a comparative benchmark"
+  ]
+}

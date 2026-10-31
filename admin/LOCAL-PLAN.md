@@ -7,7 +7,11 @@ The later [broker sandbox repair](../scripts/clean-vpn-native-admin-repair-20261
 is installed and physically checked: save/stop/start and guard off/direct USB
 DNS/HTTPS work. Host combo/boring selection and confirmed device power actions
 are now implemented; transparent-only and container mode switching remain pending.
-The next physical check is mode switching with the existing guard/DNS owner.
+Physical mode switching with the existing guard/DNS owner passed in both
+directions; the pair is left on boring-tls with its saved profile and guard.
+See [transport/power acceptance](../scripts/clean-vpn-native-transport-power-20261031.md).
+WAN ClientHello loss remains an unresolved reliability item; a successful
+later run does not establish its cause or fix.
 New native/profile/UI work is tracked in
 [the 31 October queue](../scripts/clean-vpn-native-night-20261031.md) and
 [its report](../scripts/clean-vpn-native-night-20261031-report.md), with separate
