@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-openwrt-vm-smoke",
+  "status": "passed",
+  "architecture": "arm64",
+  "source": "https://downloads.openwrt.org/releases/25.12.6/targets/armsr/armv8/openwrt-25.12.6-armsr-armv8-generic-ext4-rootfs.img.gz",
+  "downloadSha256": "3f25a4ee0537f0a4336833047d7933e884c29450eefb7ac758155cbd0f5278d3",
+  "kernelSha256": "2b9ce48df5536e993ee691339057828488e4a31be9c2bb5d3f6120f1135fcbb0",
+  "diskSha256": "02548ce31e882f117169a40422cde73463d9f768e84429ff84786b4d67ae8dc9",
+  "qemuImage": {
+    "id": "dd70431f2f14dec26d7b9a50cceaad9ef4c17acffbc76854c38adcccf33e03f9",
+    "architecture": "arm64"
+  },
+  "scope": "real OpenWrt procd/UCI boot and supervision fixture; no VPN engine, LuCI, routing or packet acceptance",
+  "payloadSha256": null,
+  "hostNetworkChanged": false,
+  "physicalHostsTouched": false,
+  "guestNic": false,
+  "hostShare": false,
+  "persistentGuestDisk": false,
+  "globalBinfmtChanged": false,
+  "releaseSignatureVerified": false,
+  "timing": "QEMU TCG functional boot only; not performance evidence",
+  "exitCode": 0,
+  "containerState": {
+    "OOMKilled": false,
+    "ExitCode": 0,
+    "Error": ""
+  },
+  "checks": [
+    "official-image-hash",
+    "aarch64-OpenWrt-procd-PID1",
+    "guest-loopback-only",
+    "real-ubus-system-board",
+    "UCI-write-read-commit",
+    "procd-owned-fixture-start",
+    "SIGKILL-respawn-new-PID",
+    "procd-stop-and-cleanup"
+  ],
+  "elapsedMs": 43950,
+  "consoleSha256": "8e4d45468f6bd32bd55a15a346a182478e7dfc69e5ae58ec902c6cd1cdc8ea49",
+  "cleanup": "owned-container-removed; disk remains pristine; snapshot discarded"
+}

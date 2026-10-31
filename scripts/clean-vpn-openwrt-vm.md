@@ -6,6 +6,11 @@ QEMU внутри Podman VM. [Receipt](../fixtures/clean-vpn-openwrt-vm-20261031
 завершения контейнера и повторный успешный прогон. Это начало OpenWrt-стенда,
 не готовый VPN-пакет или приёмка LuCI.
 
+Дополнительно тот же runner проверен с `--architecture=arm64`:
+[ARMv8 receipt](../fixtures/clean-vpn-openwrt-arm-vm-20261031.json).
+Это настоящий aarch64 guest, не ARM binary в x86 user namespace. procd/UCI и
+respawn/stop прошли; границы изоляции остались теми же.
+
 Проверены procd как PID 1, настоящий ubus system board, UCI write/read/commit,
 запуск отдельной тестовой службы (`sleep`), её respawn с новым PID после SIGKILL,
 stop и удаление собственных конфигураций. У guest только loopback. Сетевой
@@ -45,6 +50,23 @@ Directory/report должны быть новыми. Cache image уже долж
 runner не скачивает одноимённый неизвестный образ. В нём ARM64 QEMU 8.2.2,
 его собственный loader/libraries и BIOS, проверенные предыдущим bootstrap.
 Guest остаётся x86_64; это userspace TCG, не VM-wide binfmt.
+
+Для ARMv8 используются два файла из
+[официального каталога armsr/armv8](https://downloads.openwrt.org/releases/25.12.6/targets/armsr/armv8/):
+
+```text
+openwrt-25.12.6-armsr-armv8-generic-ext4-rootfs.img.gz
+3f25a4ee0537f0a4336833047d7933e884c29450eefb7ac758155cbd0f5278d3
+openwrt-25.12.6-armsr-armv8-generic-kernel.bin
+2b9ce48df5536e993ee691339057828488e4a31be9c2bb5d3f6120f1135fcbb0
+```
+
+Передать `--architecture=arm64` и cache image
+`localhost/cvpn-openwrt-arm-qemu:20261031` с native ARM `qemu-system-aarch64`.
+Используются machine `virt`, Cortex-A53, root `/dev/vda`, console `ttyAMA0`;
+BIOS x86 здесь не нужен. Имя скачанного файла не является проверкой: runner
+проверяет именно закреплённые SHA. Остальные параметры и новые output paths
+аналогичны x86 примеру. Для x86 `--architecture=amd64` можно задать явно.
 
 Container — UID1000, read-only rootfs, no-new-privileges, cap_drop ALL, network
 none, 1.5 GiB memory cap, 2 host CPU quota; guest — 384 MiB/1 CPU, TCG cache

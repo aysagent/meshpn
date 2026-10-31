@@ -8,9 +8,11 @@ import {gunzipSync} from 'node:zlib';
 import {execFileSync,spawn,spawnSync} from 'node:child_process';
 import {once} from 'node:events';
 import assert from 'node:assert/strict';
-const {values:v}=parseArgs({options:Object.fromEntries(['connection','qemu-image','image-gz','kernel','payload-disk','directory','report'].map(k=>[k,{type:'string'}]))});
-const expected='f8538784d0288b4133a99ac2a68443e4922ffde6343e80df56a5882364b9d499';
-const source='https://downloads.openwrt.org/releases/25.12.6/targets/x86/64/openwrt-25.12.6-x86-64-generic-ext4-combined.img.gz';
+const {values:v}=parseArgs({options:Object.fromEntries(['architecture','connection','qemu-image','image-gz','kernel','payload-disk','directory','report'].map(k=>[k,{type:'string'}]))});
+const architecture=v.architecture??'amd64';assert.ok(['amd64','arm64'].includes(architecture),'guest_architecture');
+const target=architecture==='amd64'?{machine:'x86_64',image:'f8538784d0288b4133a99ac2a68443e4922ffde6343e80df56a5882364b9d499',kernel:'8f70595f3a6eec3112e007450a1a600153904deffa52ab368712342583cb387c',path:'x86/64/openwrt-25.12.6-x86-64-generic-ext4-combined.img.gz'}:
+ {machine:'aarch64',image:'3f25a4ee0537f0a4336833047d7933e884c29450eefb7ac758155cbd0f5278d3',kernel:'2b9ce48df5536e993ee691339057828488e4a31be9c2bb5d3f6120f1135fcbb0',path:'armsr/armv8/openwrt-25.12.6-armsr-armv8-generic-ext4-rootfs.img.gz'};
+const expected=target.image,source='https://downloads.openwrt.org/releases/25.12.6/targets/'+target.path;
 const sha=b=>createHash('sha256').update(b).digest('hex');
 assert.match(v.connection??'',/^[a-zA-Z0-9_.-]+$/);assert.match(v['qemu-image']??'',/^[a-zA-Z0-9][a-zA-Z0-9_./:@-]*$/);
 for(const k of['directory','report'])assert.ok(v[k]&&path.isAbsolute(v[k])&&!fs.existsSync(v[k]),'new_absolute_output_required');
@@ -19,7 +21,7 @@ const fd=fs.openSync(v['image-gz'],fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW
 try{const st=fs.fstatSync(fd);assert.ok(st.isFile()&&st.size<=20*1024*1024);compressed=fs.readFileSync(fd);}finally{fs.closeSync(fd);}
 assert.equal(sha(compressed),expected,'official_download_sha256');
 const disk=gunzipSync(compressed,{maxOutputLength:256*1024*1024});
-assert.ok(v.kernel&&path.isAbsolute(v.kernel));const kernel=fs.readFileSync(v.kernel);assert.ok(kernel.length<=8*1024*1024);assert.equal(sha(kernel),'8f70595f3a6eec3112e007450a1a600153904deffa52ab368712342583cb387c','official_kernel_sha256');
+assert.ok(v.kernel&&path.isAbsolute(v.kernel));const kernel=fs.readFileSync(v.kernel);assert.ok(kernel.length<=32*1024*1024);assert.equal(sha(kernel),target.kernel,'official_kernel_sha256');
 let payloadSha256=null;
 if(v['payload-disk']){
  assert.ok(path.isAbsolute(v['payload-disk']));const pfd=fs.openSync(v['payload-disk'],fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
@@ -34,7 +36,7 @@ cat /sys/devices/system/clocksource/clocksource0/available_clocksource
 sleep 15
 . /etc/openwrt_release
 test "$DISTRIB_RELEASE" = 25.12.6
-test "$(uname -m)" = x86_64
+test "$(uname -m)" = ${target.machine}
 test "$(cat /proc/1/comm)" = procd
 test "$(ls /sys/class/net)" = lo
 ubus call system board >/tmp/cvpn-board.json
@@ -84,17 +86,19 @@ sh /mnt/cvpn-payload/run.sh
 umount /mnt/cvpn-payload
 `:'';
 const guestBytes=Buffer.from(guest+payloadGuest);
-const report={schema:1,kind:'clean-vpn-openwrt-vm-smoke',status:'running',source,downloadSha256:expected,kernelSha256:sha(kernel),diskSha256:sha(disk),qemuImage:{id:image.Id,architecture:image.Architecture},
+const report={schema:1,kind:'clean-vpn-openwrt-vm-smoke',status:'running',architecture,source,downloadSha256:expected,kernelSha256:sha(kernel),diskSha256:sha(disk),qemuImage:{id:image.Id,architecture:image.Architecture},
  scope:payloadSha256?'real OpenWrt procd/UCI and supplied native FD fixture; no TUN/WAN/LuCI acceptance':'real OpenWrt procd/UCI boot and supervision fixture; no VPN engine, LuCI, routing or packet acceptance',payloadSha256,
  hostNetworkChanged:false,physicalHostsTouched:false,guestNic:false,hostShare:false,persistentGuestDisk:false,globalBinfmtChanged:false,releaseSignatureVerified:false,timing:'QEMU TCG functional boot only; not performance evidence'};
 let child,log='',promptBuffer='',activated=false,created=false;const startedAt=Date.now();
 // UART/console input buffers are small: wait for each fresh shell prompt.
 const chunks=[];for(let i=0;i<guestBytes.length;i+=16)chunks.push([...guestBytes.subarray(i,i+16)].map(n=>'\\0'+n.toString(8).padStart(3,'0')).join(''));
 const commands=[': >/tmp/cvpn-smoke.sh',...chunks.map(chunk=>"printf '%b' '"+chunk+"' >>/tmp/cvpn-smoke.sh"),'sh /tmp/cvpn-smoke.sh; cvpn_result=$?; printf "\\nCVPN_OPENWRT_RESULT=%s\\n" "$cvpn_result"; poweroff -f'];
+const bootArgs=architecture==='amd64'?['-cpu','max','-machine','pc,dump-guest-core=off','-bios','/opt/seabios/bios-256k.bin','-L','/opt/qemu-data','-kernel','/openwrt-kernel','-append','root=/dev/vda2 rootfstype=ext4 rootwait rw console=ttyS0,115200','-drive','file=/openwrt.img,if=virtio,format=raw,snapshot=on',...(payloadSha256?['-drive','file=/cvpn-payload.ext4,if=virtio,format=raw,readonly=on']:[])]:
+ ['-cpu','cortex-a53','-machine','virt,dump-guest-core=off','-kernel','/openwrt-kernel','-append','root=/dev/vda rootfstype=ext4 rootwait rw console=ttyAMA0,115200','-drive','file=/openwrt.img,if=none,id=cvroot,format=raw,snapshot=on','-device','virtio-blk-pci,drive=cvroot',...(payloadSha256?['-drive','file=/cvpn-payload.ext4,if=none,id=cvpayload,format=raw,readonly=on','-device','virtio-blk-pci,drive=cvpayload']:[])];
 try{
  created=true;
  child=spawn('podman',[...cli,'run','-i','--name',tag,'--pull=never','--network=none','--read-only','--cap-drop=ALL','--security-opt=no-new-privileges','--pids-limit=32','--memory=1536m','--cpus=2','--tmpfs=/tmp:mode=1777,size=128m','-v',diskPath+':/openwrt.img:ro','-v',v.kernel+':/openwrt-kernel:ro',...(payloadSha256?['-v',v['payload-disk']+':/cvpn-payload.ext4:ro']:[]),image.Id,
-  '-nodefaults','-no-user-config','-nic','none','-display','none','-monitor','none','-no-reboot','-serial','stdio','-accel','tcg,thread=single,tb-size=128','-cpu','max','-m','384','-smp','1','-machine','pc,dump-guest-core=off','-bios','/opt/seabios/bios-256k.bin','-L','/opt/qemu-data','-kernel','/openwrt-kernel','-append','root=/dev/vda2 rootfstype=ext4 rootwait rw console=ttyS0,115200','-drive','file=/openwrt.img,if=virtio,format=raw,snapshot=on',...(payloadSha256?['-drive','file=/cvpn-payload.ext4,if=virtio,format=raw,readonly=on']:[])],{stdio:['pipe','pipe','pipe']});
+  '-nodefaults','-no-user-config','-nic','none','-display','none','-monitor','none','-no-reboot','-serial','stdio','-accel','tcg,thread=single,tb-size=128','-m','384','-smp','1',...bootArgs],{stdio:['pipe','pipe','pipe']});
  child.stdin.on('error',()=>{});
  const receive=b=>{
   log+=b.toString();if(log.length>2*1024*1024){child.kill('SIGKILL');return;}
@@ -108,7 +112,10 @@ try{
  report.exitCode=code;try{const state=JSON.parse(run(['inspect',tag]))[0].State;report.containerState={OOMKilled:state.OOMKilled,ExitCode:state.ExitCode,Error:String(state.Error??'').slice(0,256)};}catch{}
  assert.equal(code,0,'qemu_exit');assert.match(log,/\r?\nCVPN_OPENWRT_VERSION=25\.12\.6\r?\n/);assert.match(log,/\r?\nCVPN_OPENWRT_PROCD_UCI=passed\r?\n/);assert.match(log,/\r?\nCVPN_OPENWRT_RESULT=0\r?\n/);
  if(payloadSha256)assert.match(log,/\r?\nCVPN_OPENWRT_NATIVE=passed\r?\n/);
- report.status='passed';report.checks=['official-image-hash','x86_64-OpenWrt-procd-PID1','guest-loopback-only','real-ubus-system-board','UCI-write-read-commit','procd-owned-fixture-start','SIGKILL-respawn-new-PID','procd-stop-and-cleanup',...(payloadSha256?['local-payload-hash','native-FD-fixture-passed']:[])];
+ report.guestPackageInstalled=/\r?\nCVPN_OPENWRT_PACKAGE=installed-and-checked\r?\n/.test(log);
+ report.normalTunPassed=/\r?\nCVPN_OPENWRT_NORMAL_TUN=passed\r?\n/.test(log);
+ report.status='passed';report.checks=['official-image-hash',target.machine+'-OpenWrt-procd-PID1','guest-loopback-only','real-ubus-system-board','UCI-write-read-commit','procd-owned-fixture-start','SIGKILL-respawn-new-PID','procd-stop-and-cleanup',...(payloadSha256?['local-payload-hash','native-FD-fixture-passed']:[]),...(report.guestPackageInstalled?['local-APK-install-and-production-check-config']:[]),...(report.normalTunPassed?['normal-engine-real-TUN-H1-H2-route-removal-and-stop-negative-controls']:[])];
+ if(report.normalTunPassed)report.scope='real OpenWrt procd/UCI, native fixture FD and normal TUN H1/H2 with isolated source-policy routing; no WAN/LuCI acceptance';
 }catch(e){report.status='failed';report.error=e.code??'guest-smoke-failed';report.failure=String(e.message).slice(0,512);process.exitCode=1;}
 finally{
  if(created)try{run(['rm','-f',tag]);}catch{}

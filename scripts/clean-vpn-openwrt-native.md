@@ -33,6 +33,42 @@ ext4 носитель только для чтения содержит явно
 производительность, SDK ABI/package installation, LuCI или browser equivalence.
 SDK-пакет имеет другой compiler/flags и требует отдельной приёмки.
 
+## Дополнение: normal engine и настоящий TUN
+
+После первого FD smoke тот же generic amd64 normal engine прошёл настоящий
+OpenWrt TUN dataplane на H2 и H1. [Отдельный receipt](../fixtures/clean-vpn-openwrt-normal-tun-20261031.json)
+фиксирует binaries, helper/script/media SHA, отрицательные контроли и cleanup.
+
+Внутри одноразовой VM установили официальный matching `kmod-tun` через
+подписанный repository index и штатные guest keys. Прямая установка standalone
+APK сначала была отклонена как `UNTRUSTED`; явный offline repository update и
+установка по package name прошли. Signature verification не отключали.
+
+Production engine с `packet_ipc:false` запущен в двух ролях с persistent
+`cvctun0`/`cvetun0`. Source-policy routes заставляют ICMP request и reply пройти
+через разные TUN и authenticated TLS, несмотря на обе тестовые IP aliases в
+одной VM. Четыре echo request/reply на каждый HTTP protocol прошли; normal
+engine counters это подтверждают. Удаление маршрута даёт `unreachable` до
+LOCAL fallback; остановленный client не пропускает пакеты. После восстановления
+маршрута обмен снова работает. Оба native процесса завершаются SIGTERM с code 0.
+
+Изменения только внутри disposable guest: две собственные policy tables,
+rules и fw4 zone, тестовые адреса и sysctls. После test остаётся только `lo`,
+собственная zone удалена; весь snapshot дополнительно отбрасывается при poweroff.
+Helper [tun-device.c](../openwrt/lab/tun-device.c) заменяет отсутствующий
+BusyBox `ip tuntap`, принимает только две фиксированные test interface names и
+в APK не устанавливается. Его SDK compiler не делает generic engine SDK build.
+
+Для повтора payload helper дополнительно принимает **вместе** `--tun-helper`,
+`--tun-module`, `--tun-index`. Последние два должны совпасть с закреплёнными
+официальными SHA для выбранной архитектуры, до генерации private credentials.
+Helper — static ELF соответствующей архитектуры. Shell fixture находится в
+[openwrt/lab/tun-smoke.sh](../openwrt/lab/tun-smoke.sh); запускать его только
+через этот NIC-less VM harness. Это не installer физического роутера.
+
+Пока не проверены WAN/NAT, DNS/kill switch, netifd ownership и reboot recovery,
+LuCI/rpcd/capture/observer. TUN тест в одной VM не закрывает эти пункты.
+
 ## Повтор с новыми static amd64 artifacts
 
 `clean-vpn-openwrt-native-payload.mjs` принимает три ELF: normal engine,

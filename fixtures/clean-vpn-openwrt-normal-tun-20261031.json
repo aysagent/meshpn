@@ -1,0 +1,131 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-openwrt-normal-tun",
+  "date": "2026-10-31",
+  "status": "passed",
+  "architecture": "amd64",
+  "engineSource": "generic Alpine musl static, not OpenWrt SDK APK",
+  "payload": {
+    "schema": 1,
+    "kind": "openwrt-native-lab-payload",
+    "architecture": "amd64",
+    "binaries": {
+      "engine": {
+        "sha256": "a6eec6c9f185a4fa1f57ae7862719fb7a3c3c0eabfdc41dd12fceabf0dbfd3bd",
+        "bytes": 6624312
+      },
+      "fixture": {
+        "sha256": "ba15cb9112a0ddb1f69f816868c69b68fb875109a94a5ecd9edf026cb1b8cbf7",
+        "bytes": 7507408
+      },
+      "integration": {
+        "sha256": "dc3a025f1b3d06228bf0150cc830a2fd95e863f90bcba47ba223897d18e18d46",
+        "bytes": 2740024
+      },
+      "tun-device": {
+        "sha256": "893183807fb6e4a2d805fa6ba8408edb2374419d33a08429d9eb51871355e8e3",
+        "bytes": 99536
+      }
+    },
+    "profileSha256": "baaf251e0de975de15d1d501b2630235f3210fe15efe49e3dfcb326e72d99e2f",
+    "packageSha256": null,
+    "tun": {
+      "moduleSha256": "7cd0d957458e6feb37afffed1a972532977bbb4a5acc1349a7aeb2366a91a074",
+      "indexSha256": "ce8105f6fe7a6070c5964fd02174d637606ccf96d6d8f42078e6efe726a0c6cb",
+      "scriptSha256": "1a63ff1f7b1799a274cb8513a199193310619cd2a3fef8891fb44474086b3122"
+    },
+    "credentials": "fresh-test-only-never-production",
+    "scope": "static engine and fixture FD TLS plus normal TUN H1/H2 with isolated source-policy routing; no WAN/LuCI/browser-equivalence claim"
+  },
+  "vm": {
+    "schema": 1,
+    "kind": "clean-vpn-openwrt-vm-smoke",
+    "status": "passed",
+    "architecture": "amd64",
+    "source": "https://downloads.openwrt.org/releases/25.12.6/targets/x86/64/openwrt-25.12.6-x86-64-generic-ext4-combined.img.gz",
+    "downloadSha256": "f8538784d0288b4133a99ac2a68443e4922ffde6343e80df56a5882364b9d499",
+    "kernelSha256": "8f70595f3a6eec3112e007450a1a600153904deffa52ab368712342583cb387c",
+    "diskSha256": "27d6a99117a6d9c2a8eedbfda0f8baa7a3149f7ddfa168f4bb0ae13815130162",
+    "qemuImage": {
+      "id": "fe1f0a4ecacd161717dc718d9f9b203dffed776b90e20e23a60b383bbb1fe546",
+      "architecture": "arm64"
+    },
+    "scope": "real OpenWrt procd/UCI, native fixture FD and normal TUN H1/H2 with isolated source-policy routing; no WAN/LuCI acceptance",
+    "payloadSha256": "23877346cedca108e5e95af03454e62a4a1411d405858f773d2c735ec2b44bd6",
+    "hostNetworkChanged": false,
+    "physicalHostsTouched": false,
+    "guestNic": false,
+    "hostShare": false,
+    "persistentGuestDisk": false,
+    "globalBinfmtChanged": false,
+    "releaseSignatureVerified": false,
+    "timing": "QEMU TCG functional boot only; not performance evidence",
+    "exitCode": 0,
+    "containerState": {
+      "OOMKilled": false,
+      "ExitCode": 0,
+      "Error": ""
+    },
+    "guestPackageInstalled": false,
+    "normalTunPassed": true,
+    "checks": [
+      "official-image-hash",
+      "x86_64-OpenWrt-procd-PID1",
+      "guest-loopback-only",
+      "real-ubus-system-board",
+      "UCI-write-read-commit",
+      "procd-owned-fixture-start",
+      "SIGKILL-respawn-new-PID",
+      "procd-stop-and-cleanup",
+      "local-payload-hash",
+      "native-FD-fixture-passed",
+      "normal-engine-real-TUN-H1-H2-route-removal-and-stop-negative-controls"
+    ],
+    "elapsedMs": 51088,
+    "consoleSha256": "dde34d488316fd5bd595ff3d2bd3d3654c67154caf2034915edcddefa95a99fe",
+    "logTail": ":\"state\",\"generation\":0,\"rx_packets\":50,\"state\":\"listening\",\"tx_packets\":50,\"version\":1}\r\nengine 2652 {\"dropped_packets\":0,\"event\":\"state\",\"generation\":0,\"rx_packets\":50,\"state\":\"stopped\",\"tx_packets\":50,\"version\":1}\r\nservice mode ignores stdin/EOF, 100 packets, SIGTERM clean stop PASS\r\nCVPN_OPENWRT_NATIVE_H1=passed\r\nengine 2655 {\"config_sha256\":\"c0380bc473245a773e024d955a164df5caffff03499b9a416a62606388d0c585\",\"event\":\"peer_reload_ready\",\"version\":1}\r\nengine 2655 {\"dropped_packets\":0,\"event\":\"state\",\"generation\":0,\"rx_packets\":0,\"state\":\"listening\",\"tx_packets\":0,\"version\":1}\r\nengine 2656 {\"dropped_packets\":1,\"event\":\"state\",\"generation\":0,\"rx_packets\":0,\"state\":\"stopped\",\"tx_packets\":0,\"version\":1}\r\nengine 2655 {\"dropped_packets\":0,\"event\":\"state\",\"generation\":0,\"rx_packets\":0,\"state\":\"stopped\",\"tx_packets\":0,\"version\":1}\r\nnegative authentication PASS\r\nCVPN_OPENWRT_NATIVE_PSK_REJECTION=passed\r\n [/mnt/cvpn-payload/packages.adb]\r\nOK: 1295 distinct packages available\r\n(1/1) Installing kmod-tun (6.12.112-r1)\r\n\u001b7  0%                                             \u001b8\u001b[0K\u001b7 28% ############                                \u001b8\u001b[0K  Executing kmod-tun-6.12.112-r1.post-install\r\n\u001b7 28% ############                                [   36.792089] kmodloader: loading kernel modules from /etc/modules.d/*\r\n[   36.802079] tun: Universal TUN/TAP device driver, 1.6\r\n[   36.816303] kmodloader: done loading kernel modules from /etc/modules.d/*\r\n\u001b8\u001b[0K\u001b7100% ############################################\u001b8\u001b[0K\u001b7[syncing disks...]\u001b8\u001b[0KOK: 19.4 MiB in 183 packages\r\nnet.ipv4.conf.all.rp_filter = 0\r\nnet.ipv4.conf.all.accept_local = 1\r\nnet.ipv4.conf.default.rp_filter = 0\r\nnet.ipv4.conf.default.accept_local = 1\r\nnet.ipv4.conf.lo.rp_filter = 0\r\nnet.ipv4.conf.lo.accept_local = 1\r\nnet.ipv4.conf.cvctun0.rp_filter = 0\r\nnet.ipv4.conf.cvctun0.accept_local = 1\r\nnet.ipv4.conf.cvetun0.rp_filter = 0\r\nnet.ipv4.conf.cvetun0.accept_local = 1\r\nPING 198.18.0.80 (198.18.0.80) from 10.99.0.2: 56 data bytes\r\n64 bytes from 198.18.0.80: seq=0 ttl=64 time=8.610 ms\r\n64 bytes from 198.18.0.80: seq=1 ttl=64 time=6.599 ms\r\n64 bytes from 198.18.0.80: seq=2 ttl=64 time=2.079 ms\r\n\r\n--- 198.18.0.80 ping statistics ---\r\n3 packets transmitted, 3 packets received, 0% packet loss\r\nround-trip min/avg/max = 2.079/5.762/8.610 ms\r\nPING 198.18.0.80 (198.18.0.80) from 10.99.0.2: 56 data bytes\r\nping: sendto: Host is unreachable\r\nPING 198.18.0.80 (198.18.0.80) from 10.99.0.2: 56 data bytes\r\n64 bytes from 198.18.0.80: seq=0 ttl=64 time=2.383 ms\r\n\r\n--- 198.18.0.80 ping statistics ---\r\n1 packets transmitted, 1 packets received, 0% packet loss\r\nround-trip min/avg/max = 2.383/2.383/2.383 ms\r\nPING 198.18.0.80 (198.18.0.80) from 10.99.0.2: 56 data bytes\r\n\r\n--- 198.18.0.80 ping statistics ---\r\n1 packets transmitted, 0 packets received, 100% packet loss\r\nCVPN_OPENWRT_NORMAL_TUN_2=passed\r\nPING 198.18.0.80 (198.18.0.80) from 10.99.0.2: 56 data bytes\r\n64 bytes from 198.18.0.80: seq=0 ttl=64 time=3.081 ms\r\n64 bytes from 198.18.0.80: seq=1 ttl=64 time=1.753 ms\r\n64 bytes from 198.18.0.80: seq=2 ttl=64 time=1.668 ms\r\n\r\n--- 198.18.0.80 ping statistics ---\r\n3 packets transmitted, 3 packets received, 0% packet loss\r\nround-trip min/avg/max = 1.668/2.167/3.081 ms\r\nPING 198.18.0.80 (198.18.0.80) from 10.99.0.2: 56 data bytes\r\nping: sendto: Host is unreachable\r\nPING 198.18.0.80 (198.18.0.80) from 10.99.0.2: 56 data bytes\r\n64 bytes from 198.18.0.80: seq=0 ttl=64 time=17.547 ms\r\n\r\n--- 198.18.0.80 ping statistics ---\r\n1 packets transmitted, 1 packets received, 0% packet loss\r\nround-trip min/avg/max = 17.547/17.547/17.547 ms\r\nPING 198.18.0.80 (198.18.0.80) from 10.99.0.2: 56 data bytes\r\n\r\n--- 198.18.0.80 ping statistics ---\r\n1 packets transmitted, 0 packets received, 100% packet loss\r\nCVPN_OPENWRT_NORMAL_TUN_1.1=passed\r\nCVPN_OPENWRT_NORMAL_TUN=passed\r\nCVPN_OPENWRT_NATIVE=passed\r\n+ umount /mnt/cvpn-payload\r\n[   49.189679] EXT4-fs (vdb): unmounting filesystem 9bed209a-04dd-43e4-afec-9fa27555b640.\r\n\r\nCVPN_OPENWRT_RESULT=0\r\n[   49.218210] ACPI: PM: Preparing to enter system sleep state S5\r\n[   49.219718] reboot: Power down\r\n",
+    "cleanup": "owned-container-removed; disk remains pristine; snapshot discarded"
+  },
+  "testSources": {
+    "openwrt/lab/tun-device.c": "cc31cd80962cb4c07c823aa3f112e114e8d15d1d3e675b9952821b8292c45fd1",
+    "openwrt/lab/tun-smoke.sh": "1a63ff1f7b1799a274cb8513a199193310619cd2a3fef8891fb44474086b3122",
+    "scripts/clean-vpn-openwrt-native-payload.mjs": "a9705265402a861f69056a70eb8859ae719319d0562a8600b01c7132b730ff86",
+    "scripts/clean-vpn-openwrt-vm-smoke.mjs": "1fe767efed3c48b21702f7fccf6d18ad3bea5839c0da5267813629db8c02221d"
+  },
+  "normalEngine": {
+    "packetIpc": false,
+    "tunDevices": [
+      "cvctun0",
+      "cvetun0"
+    ],
+    "protocols": [
+      "2",
+      "1.1"
+    ],
+    "positiveIcmpRequestsPerProtocol": 4,
+    "negativeControls": [
+      "route removal returns unreachable before LOCAL fallback",
+      "client stop gives no response"
+    ],
+    "cleanStop": true,
+    "loopbackOnlyAfterCleanup": true
+  },
+  "moduleTrust": {
+    "offlineOfficialRepositoryUpdate": "succeeded with existing guest keys",
+    "signatureVerificationDisabled": false,
+    "moduleInstall": "kmod-tun 6.12.112-r1",
+    "initialAttempts": [
+      "direct APK refused UNTRUSTED",
+      "index not updated: refused UNTRUSTED",
+      "explicit offline repository update then add by package name: passed"
+    ]
+  },
+  "limitations": [
+    "no WAN/NAT acceptance",
+    "no DNS or kill switch acceptance",
+    "no real network manager transaction or reboot recovery",
+    "no LuCI/rpcd adapter",
+    "no throughput claim",
+    "SDK package is a distinct artifact requiring its own acceptance"
+  ]
+}
