@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "source": "18644a2",
+  "status": "repair-tested-phone-acceptance-pending",
+  "reportedClient": "iPhone over USB Ethernet",
+  "lab": {
+    "beforeFixtureSha256": "89ec5afa7d2ef4e0714d0a602bcdde6c6b7500417a62a910616245d26630841e",
+    "afterFixtureSha256": "2d446f05035059f92af7b1d4a5a89ca97033dca093bd849f62c98b175876d1f2",
+    "beforeH2Failure": "h2_ping_timeout",
+    "beforeH1Failure": "h1_ping_timeout",
+    "afterDataPlanePassed": 2,
+    "relatedRegressionsPassed": 38,
+    "skipped": 0,
+    "sustainedRecipientPressureSeconds": 10,
+    "postPressureBidirectionalPackets": true,
+    "actualBlackholeRecovery": true
+  },
+  "physical": {
+    "radxaCtestPassed": 14,
+    "vpsCtestPassed": 14,
+    "radxaEngineSha256": "492f60926fdd10d77fd61f71c4ab6e38298a8b9d127fafc7a56607e89faf9fc8",
+    "vpsEngineSha256": "36e9b83adfd330d2f88337e352fc2c325f088b98e6b35bd9488bcd183f7bb2cb",
+    "endpointPort": 443,
+    "restartMs": 1767,
+    "comboUsbDnsPassed": 4,
+    "comboUsbHttpsPassed": 3,
+    "comboUsbDownloadBytes": 1048576,
+    "udpUploadMbps": 40,
+    "udpUploadSeconds": 20,
+    "udpUploadLostPercent": 0,
+    "udpDownloadOfferedMbps": 80,
+    "udpDownloadSeconds": 25,
+    "udpDownloadReceivedMbps": 42.80837694400015,
+    "udpDownloadLostPercent": 45.6891273986493,
+    "simultaneousChromeSpeedtest": {
+      "completed": true,
+      "downloadMbps": 42.57,
+      "uploadMbps": 44.29,
+      "pingMs": 280,
+      "browserUsesUsbHttpProxy": true,
+      "isPhoneAcceptance": false
+    },
+    "unplannedSessionEndsDuringMixedLoad": 0,
+    "readyEventsDuringMixedLoad": 1,
+    "boringAfterComboLoad": {"dnsPassed": 4, "httpsPassed": 3, "downloadBytes": 1048576},
+    "comboAfterReturn": {"dnsPassed": 4, "httpsPassed": 3, "downloadBytes": 1048576},
+    "modeSwitchToBoringMs": 32536,
+    "modeSwitchBackToComboMs": 30572,
+    "finalMode": "combo-tls",
+    "guardActive": true,
+    "profilePreserved": true,
+    "temporaryBuildSwapRemoved": true,
+    "publicDiagnosticPortsOpened": false,
+    "macSystemSettingsChanged": false
+  },
+  "independentObserver": {
+    "status": "matched",
+    "profileId": "chromium-156-bounded-cold-v1",
+    "ja3": "2e4c31fc01dbe74acfbc592f248a592b",
+    "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+    "differences": [],
+    "kernelDrops": 0
+  },
+  "limitations": [
+    "iPhone over USB failure has not yet been reproduced after this repair",
+    "HTTP proxy tests do not exercise phone QUIC or ECH behavior",
+    "initial WAN ClientHello and reverse ACK losses remain unattributed",
+    "independent bounded TLS profile match does not establish full browser indistinguishability"
+  ]
+}

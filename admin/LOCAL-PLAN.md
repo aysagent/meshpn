@@ -8,10 +8,15 @@ is installed and physically checked: save/stop/start and guard off/direct USB
 DNS/HTTPS work. Host combo/boring selection and confirmed device power actions
 are now implemented; transparent-only and container mode switching remain pending.
 Physical mode switching with the existing guard/DNS owner passed in both
-directions; the pair is left on boring-tls with its saved profile and guard.
+directions. After the later packet queue/liveness repair the pair is on
+combo-tls with its saved profile and guard; USB iPhone acceptance is still open.
 See [transport/power acceptance](../scripts/clean-vpn-native-transport-power-20261031.md).
 WAN ClientHello loss remains an unresolved reliability item; a successful
 later run does not establish its cause or fix.
+The user's USB iPhone acceptance remains open after a reported post-Speedtest
+failure. [The packet queue/liveness repair](../scripts/clean-vpn-native-ping-pressure-20261031.md)
+has a failing-before/passing-after regression; desktop HTTP proxy tests do not
+replace the physical phone test.
 New native/profile/UI work is tracked in
 [the 31 October queue](../scripts/clean-vpn-native-night-20261031.md) and
 [its report](../scripts/clean-vpn-native-night-20261031-report.md), with separate
