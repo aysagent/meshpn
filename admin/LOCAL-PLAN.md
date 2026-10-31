@@ -1,5 +1,14 @@
 # Native continuation, 2026-10-28
 
+Latest investigation, **2026-11-01**: [iPhone USB/WAN and JS/native comparison](../scripts/clean-vpn-native-iphone-investigation-20261101.md).
+Phone acceptance remains open. For 182 captured pairs the JS rebuild with the
+same SNI matches native byte for byte; later read/peek and wire probes no longer
+reproduce the earlier 443 loss. These controls are not an iPhone repair.
+The user explicitly rejected automatic transparent-to-boring fallback; do not add it.
+Separate admin fixes accept static-page query strings and expose combo relay
+counters alongside packet readiness. No native wire-format change is justified
+by the current evidence.
+
 Current continuation, **2026-10-31**: the dated checkpoints below are historical.
 Native combo autostart is installed on the personal Radxa/VPS pair; see the
 [current physical state](../scripts/clean-vpn-native-combo-daily-20261031.md).

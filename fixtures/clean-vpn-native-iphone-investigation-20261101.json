@@ -1,0 +1,609 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-iphone-investigation",
+  "date": "2026-11-01",
+  "iphoneAcceptance": "open",
+  "automaticFallbackAdded": false,
+  "nativeTransportChanged": false,
+  "workingExitPort": 443,
+  "macSystemNetworkChanged": false,
+  "captured": {
+    "tcpFlows": 395,
+    "clientHellos": 185,
+    "pairedHellos": 182,
+    "jsRebuildMatchesNativeForSameSni": 182,
+    "different": 0,
+    "selectedFailures": [
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1540,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1540,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1540,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1540,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1540,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1540,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1540,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1540,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "example.org",
+        "usbAcked": 1535,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1663,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 140
+          }
+        ]
+      },
+      {
+        "origin": "example.org",
+        "usbAcked": 1535,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1663,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 140
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1540,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      },
+      {
+        "origin": "www.speedtest.net",
+        "usbAcked": 1541,
+        "usbResponseBytes": 0,
+        "wan": [
+          {
+            "helloBytes": 1671,
+            "acked": 0,
+            "responseBytes": 0,
+            "sniLength": 148
+          }
+        ]
+      }
+    ]
+  },
+  "wireProbes": {
+    "security": "Expired captured token, or invalid synthetic authorization; no origin application session established. EOF is expected authentication rejection, not HTTPS success.",
+    "readVsPeek": {
+      "externalPort": 443,
+      "syntheticSynMss": 1232,
+      "attemptsPerMode": 3,
+      "completeHellosPerMode": 3,
+      "response": "TLS fatal alert from diagnostic listener",
+      "temporaryNatRuleRemoved": true,
+      "temporaryListenerStopped": true
+    },
+    "laterNative443Series": [
+      {
+        "variant": "original",
+        "index": 0,
+        "bytes": 1684,
+        "result": "eof",
+        "ms": 170,
+        "acked": 1685
+      },
+      {
+        "variant": "fresh-random",
+        "index": 0,
+        "bytes": 1684,
+        "result": "eof",
+        "ms": 169,
+        "acked": 1685
+      },
+      {
+        "variant": "js-shape",
+        "index": 0,
+        "bytes": 1619,
+        "result": "eof",
+        "ms": 166,
+        "acked": 1620
+      },
+      {
+        "variant": "root",
+        "index": 0,
+        "bytes": 1545,
+        "result": "record-22",
+        "ms": 171,
+        "acked": 1546
+      },
+      {
+        "variant": "original",
+        "index": 1,
+        "bytes": 1684,
+        "result": "eof",
+        "ms": 168,
+        "acked": 1685
+      },
+      {
+        "variant": "fresh-random",
+        "index": 1,
+        "bytes": 1684,
+        "result": "eof",
+        "ms": 168,
+        "acked": 1685
+      },
+      {
+        "variant": "js-shape",
+        "index": 1,
+        "bytes": 1619,
+        "result": "eof",
+        "ms": 168,
+        "acked": 1620
+      },
+      {
+        "variant": "root",
+        "index": 1,
+        "bytes": 1545,
+        "result": "record-22",
+        "ms": 172,
+        "acked": 1546
+      },
+      {
+        "variant": "original",
+        "index": 2,
+        "bytes": 1684,
+        "result": "eof",
+        "ms": 169,
+        "acked": 1685
+      },
+      {
+        "variant": "fresh-random",
+        "index": 2,
+        "bytes": 1684,
+        "result": "eof",
+        "ms": 170,
+        "acked": 1685
+      },
+      {
+        "variant": "js-shape",
+        "index": 2,
+        "bytes": 1618,
+        "result": "eof",
+        "ms": 170,
+        "acked": 1619
+      },
+      {
+        "variant": "root",
+        "index": 2,
+        "bytes": 1545,
+        "result": "record-22",
+        "ms": 171,
+        "acked": 1546
+      },
+      {
+        "variant": "original",
+        "index": 3,
+        "bytes": 1684,
+        "result": "eof",
+        "ms": 170,
+        "acked": 1685
+      },
+      {
+        "variant": "fresh-random",
+        "index": 3,
+        "bytes": 1684,
+        "result": "eof",
+        "ms": 168,
+        "acked": 1685
+      },
+      {
+        "variant": "js-shape",
+        "index": 3,
+        "bytes": 1618,
+        "result": "eof",
+        "ms": 169,
+        "acked": 1619
+      },
+      {
+        "variant": "root",
+        "index": 3,
+        "bytes": 1545,
+        "result": "record-22",
+        "ms": 171,
+        "acked": 1546
+      },
+      {
+        "variant": "original",
+        "index": 4,
+        "bytes": 1684,
+        "result": "eof",
+        "ms": 170,
+        "acked": 1685
+      },
+      {
+        "variant": "fresh-random",
+        "index": 4,
+        "bytes": 1684,
+        "result": "eof",
+        "ms": 171,
+        "acked": 1685
+      },
+      {
+        "variant": "js-shape",
+        "index": 4,
+        "bytes": 1618,
+        "result": "eof",
+        "ms": 168,
+        "acked": 1619
+      },
+      {
+        "variant": "root",
+        "index": 4,
+        "bytes": 1545,
+        "result": "record-22",
+        "ms": 181,
+        "acked": 1546
+      },
+      {
+        "variant": "original",
+        "index": 5,
+        "bytes": 1684,
+        "result": "eof",
+        "ms": 169,
+        "acked": 1685
+      },
+      {
+        "variant": "fresh-random",
+        "index": 5,
+        "bytes": 1684,
+        "result": "eof",
+        "ms": 167,
+        "acked": 1685
+      },
+      {
+        "variant": "js-shape",
+        "index": 5,
+        "bytes": 1618,
+        "result": "eof",
+        "ms": 169,
+        "acked": 1619
+      },
+      {
+        "variant": "root",
+        "index": 5,
+        "bytes": 1545,
+        "result": "record-22",
+        "ms": 231,
+        "acked": 1546
+      }
+    ]
+  },
+  "desktopProxy": {
+    "outboundInterface": "USB",
+    "browser": "Chrome/156.0.8078.79",
+    "quic": false,
+    "http200": [
+      "https://example.org",
+      "https://internet.yandex.ru",
+      "https://www.speedtest.net"
+    ],
+    "iphoneAcceptance": false,
+    "speedMeasurementPerformed": false
+  },
+  "limitations": [
+    "Intermittent 443 failure no longer reproduced in these later runs.",
+    "Short js-shape probes test only wire delivery, not actual JS authentication or JS end-to-end relay.",
+    "Read/peek test used a diagnostic listener and a distinct MSS marker.",
+    "No conclusion that token length, record version or MSG_PEEK caused the captured failure.",
+    "USB had a separate missing-IP/ARP failure; one temporary re-enumeration restored DHCP but did not fix all HTTPS.",
+    "Raw ClientHello, encoded SNI tokens, public random values, keys and packet captures excluded."
+  ]
+}
